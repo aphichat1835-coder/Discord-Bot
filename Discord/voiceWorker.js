@@ -260,7 +260,9 @@ async function cleanupIdleSessions() {
     const maxIdle = config.limits.idleTimeoutMs;
     const sessions = sessionManager.getAllSessions();
     for (const [id, session] of sessions) {
-        if (now - session.startedAt > maxIdle) {
+        const lastSeen = session.lastActivity ?? session.startedAt;
+        if (now - lastSeen > maxIdle) {
+            console.log(`[CLEANUP] Session ${id} idle for ${Math.round((now - lastSeen) / 3600000)}h — stopping`);
             await stopSession(id);
         }
     }

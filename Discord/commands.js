@@ -49,7 +49,8 @@ const slashCommandsData = [
         name: "timeout", description: "ระงับสิทธิ์การพิมพ์ชั่วคราว",
         options: [
             { type: 6, name: "member",  description: "สมาชิกที่ต้องการระงับ", required: true },
-            { type: 4, name: "minutes", description: "จำนวนนาที", required: true, minValue: 1 }
+            { type: 4, name: "minutes", description: "จำนวนนาที", required: true, minValue: 1 },
+            { type: 3, name: "reason",  description: "เหตุผล", required: false }
         ]
     },
 ];
@@ -99,7 +100,6 @@ function getPanelEmbed() {
             "```"
         )
         .addFields({ name: "📋  รายการเซสชันที่ใช้งานอยู่", value: "```yaml\n" + sessionList + "\n```", inline: false })
-        .setImage(config.system.bannerUrl)
         .setFooter({ text: `⏱ อัปเดตล่าสุด: ${new Date().toLocaleTimeString("th-TH")}  │  Enterprise Edition` })
         .setTimestamp();
 }
@@ -204,7 +204,7 @@ async function handleMessage(msg) {
 
     try {
         switch (cmd) {
-            case "clear":
+            case "clear": {
                 const amount = parseInt(args[0]);
                 if (!amount || amount < 1 || amount > 100) return msg.reply("> ⛔  กรุณาระบุจำนวนข้อความ 1–100");
                 await msg.delete().catch(() => {});
@@ -212,6 +212,7 @@ async function handleMessage(msg) {
                 const m = await msg.channel.send(`> 🗑️  ลบข้อความสำเร็จ ${deleted?.size || amount} รายการ`);
                 setTimeout(() => m.delete().catch(() => {}), 3000);
                 break;
+            }
             case "say":
                 if (!args.length) return msg.reply("> ⛔  กรุณาระบุข้อความ");
                 await msg.delete().catch(() => {});
@@ -265,13 +266,14 @@ async function handleMessage(msg) {
                     ).setTimestamp());
                 break;
             }
-            case "panel":
+            case "panel": {
                 const old = panelMessages.get(msg.channel.id);
                 if (old) await old.delete().catch(() => {});
                 const panel = await msg.channel.send({ embeds: [getPanelEmbed()], components:[getPanelRow()] });
                 panelMessages.set(msg.channel.id, panel);
                 await msg.delete().catch(() => {});
                 break;
+            }
             case "help":
                 await msg.reply({ embeds: [getHelpPages()[0]], components: [getHelpRow(0)], allowedMentions: { repliedUser: false } });
                 break;
@@ -280,17 +282,19 @@ async function handleMessage(msg) {
                 await msg.guild.channels.create(config.channels.logName, { type: "GUILD_TEXT" });
                 await msg.reply("> ✅  สร้างห้อง Log สำเร็จ");
                 break;
-            case "userinfo":
+            case "userinfo": {
                 const u = target?.user || msg.author;
                 await msg.reply({ embeds:[new MessageEmbed().setTitle("👤  ข้อมูลสมาชิก").setColor(config.system.themeColor).setDescription(`\`\`\`yaml\nUsername : ${u.tag}\nUser ID  : ${u.id}\nCreated  : ${u.createdAt.toLocaleDateString("th-TH")}\n\`\`\``).setThumbnail(u.displayAvatarURL({ dynamic: true, size: 256 })).setTimestamp()] });
                 break;
+            }
             case "serverinfo":
                 await msg.reply({ embeds:[new MessageEmbed().setTitle("🌐  ข้อมูลเซิร์ฟเวอร์").setColor(config.system.themeColor).setDescription(`\`\`\`yaml\nServer Name : ${msg.guild.name}\nServer ID   : ${msg.guild.id}\nMembers     : ${msg.guild.memberCount}\nCreated     : ${msg.guild.createdAt.toLocaleDateString("th-TH")}\n\`\`\``).setTimestamp()] });
                 break;
-            case "stats":
+            case "stats": {
                 const report = sessionManager.systemMetrics.getReport();
                 await msg.reply({ embeds:[new MessageEmbed().setTitle("📊  System Analytics").setColor(config.system.themeColor).setDescription("```yaml\n" + `Sessions Started : ${report.sessionsStarted}\nFailed Attempts  : ${report.sessionsFailed}\nSuccess Rate     : ${report.successRate}\nTotal Reconnects : ${report.reconnects}\nSystem Uptime    : ${report.uptimeHours} hours\n` + "```").setTimestamp()] });
                 break;
+            }
         }
     } catch (err) { console.error("❌ [COMMAND] Error:", err.message); }
 }
@@ -388,8 +392,8 @@ async function handleInteraction(interaction) {
                 case "timeout": {
                     const member = interaction.options.getMember("member");
                     const mins = interaction.options.getInteger("minutes");
+                    const reason = interaction.options.getString("reason") || "ไม่ระบุเหตุผล";
                     if (!member) return interaction.reply({ content: "> ⛔  ไม่พบสมาชิก", ephemeral: true });
-                    const reason = "ไม่ระบุเหตุผล";
                     await member.timeout(mins * 60000);
                     await interaction.reply({ content: `> ⏳  ระงับสิทธิ์ \`${member.user.tag}\` ${mins} นาทีแล้ว`, ephemeral: true });
                     await sendLog(interaction.guild, buildModerationEmbed("⏳  ระงับสิทธิ์ชั่วคราว", interaction.user, member.user, reason, mins));

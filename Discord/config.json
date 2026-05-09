@@ -15,6 +15,6 @@
     "system": {
         "databaseFile": "./database.json",
         "themeColor": "#2b2d31",
-        "bannerUrl": "https://i.imgur.com/PLACEHOLDER.gif"
+        "bannerUrl": ""
     }
 }

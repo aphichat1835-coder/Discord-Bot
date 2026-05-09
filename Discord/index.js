@@ -11,7 +11,8 @@ const commands = require("./commands");
 const app = express();
 app.get("/", (_req, res) => res.send("Enterprise Voice System Online"));
 app.get("/ping", (_req, res) => res.send("PONG"));
-app.listen(3000, () => console.log("[EXPRESS] Server online on port 3000"));
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`[EXPRESS] Server online on port ${PORT}`));
 
 if (!process.env.TOKEN_MANAGER) {
     console.error("[CONFIG] TOKEN_MANAGER not configured in environment");
