@@ -1,18 +1,10 @@
 {
-  "name": "discord-bot",
+  "name": "phomueangtai-enterprise",
   "version": "1.0.0",
-  "description": "Phomueangtai Enterprise Discord Bot",
-  "main": "index.js",
+  "description": "Phomueangtai Enterprise Discord Bot — voice session management system",
+  "private": true,
   "scripts": {
-    "start": "node index.js",
-    "dev": "node index.js"
-  },
-  "dependencies": {
-    "discord.js": "13.17.1",
-    "discord.js-selfbot-v13": "^3.4.0",
-    "@discordjs/voice": "^0.16.1",
-    "express": "^4.18.2",
-    "sodium-native": "^4.0.0",
-    "opusscript": "^0.0.8"
+    "start": "cd Discord && node index.js",
+    "dev": "cd Discord && node index.js"
   }
 }
