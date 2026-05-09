@@ -1,264 +1,133 @@
-// ════════════════════════════════════════════════════════════════════════════
-//  🧠  SESSION MANAGER  —  ENTERPRISE EDITION
-// ════════════════════════════════════════════════════════════════════════════
-//  คลังจัดการข้อมูลเซสชันแบบ Thread-Safe พร้อมระบบป้องกัน Memory Leak
-// ════════════════════════════════════════════════════════════════════════════
+const fs = require("fs").promises;
+const config = require("./config.json");
 
 const sessions = new Map();
 const reconnectTracking = new Map();
 const sessionLocks = new Set();
 
-// ════════════════════════════════════════════════════════════════════════════
-//  📊  METRICS COLLECTOR (ระบบเก็บสถิติ)
-// ════════════════════════════════════════════════════════════════════════════
 class MetricsCollector {
     constructor() {
-        this.metrics = {
-            sessionsStarted: 0,
-            sessionsFailed: 0,
-            reconnects: 0,
-            uptime: Date.now(),
-        };
+        this.metrics = { sessionsStarted: 0, sessionsFailed: 0, reconnects: 0, uptime: Date.now() };
     }
-
-    increment(metric) {
-        this.metrics[metric] = (this.metrics[metric] || 0) + 1;
-    }
-
+    increment(metric) { this.metrics[metric] = (this.metrics[metric] || 0) + 1; }
     getReport() {
         const total = this.metrics.sessionsStarted + this.metrics.sessionsFailed;
         return {
             ...this.metrics,
             uptimeHours: ((Date.now() - this.metrics.uptime) / 3600000).toFixed(2),
-            successRate: total === 0 ? '0.00%' : ((this.metrics.sessionsStarted / total) * 100).toFixed(2) + '%',
+            successRate: total === 0 ? '0.00%' : ((this.metrics.sessionsStarted / total) * 100).toFixed(2) + '%'
         };
     }
 }
 const systemMetrics = new MetricsCollector();
 
-// ════════════════════════════════════════════════════════════════════════════
-//  📝  CORE SESSION OPERATIONS
-// ════════════════════════════════════════════════════════════════════════════
-
-/**
- * สร้างเซสชันใหม่ในระบบ
- * @param {string} sessionId - รหัสเซสชันเฉพาะ
- * @param {Object} data - ข้อมูลเซสชัน
- */
-function createSession(sessionId, data) {
-    if (sessions.has(sessionId)) {
-        console.warn(`⚠️  [SESSION] Duplicate session creation attempt: ${sessionId}`);
-        return false;
+class RateLimiter {
+    constructor(maxRequests, windowMs) {
+        this.max = maxRequests;
+        this.window = windowMs;
+        this.requests = new Map();
     }
+    canRequest(key) {
+        const now = Date.now();
+        const userReqs = this.requests.get(key) ||[];
+        const validReqs = userReqs.filter(time => now - time < this.window);
+        if (validReqs.length >= this.max) return false;
+        validReqs.push(now);
+        this.requests.set(key, validReqs);
+        return true;
+    }
+}
+const actionLimiter = new RateLimiter(config.limits.rateLimitRequests, config.limits.rateLimitWindowMs);
 
-    sessions.set(sessionId, {
-        ...data,
-        createdAt: Date.now(),
-        lastActivity: Date.now(),
-    });
+let isSaving = false;
+let pendingSave = false;
 
-    console.log(`✅ [SESSION] Created: ${sessionId}`);
+async function saveDatabase() {
+    if (isSaving) {
+        pendingSave = true;
+        return;
+    }
+    isSaving = true;
+    try {
+        const data = [...sessions.values()].map(s => ({
+            token: s.token,
+            serverId: s.serverId,
+            voiceId: s.voiceId,
+            startedAt: s.startedAt
+        }));
+        await fs.writeFile(config.system.databaseFile, JSON.stringify(data, null, 2));
+    } catch (err) {
+        console.error("[DATABASE] Save error:", err.message);
+    } finally {
+        isSaving = false;
+        if (pendingSave) {
+            pendingSave = false;
+            saveDatabase();
+        }
+    }
+}
+
+async function loadDatabase() {
+    try {
+        const data = await fs.readFile(config.system.databaseFile, "utf8");
+        return JSON.parse(data);
+    } catch {
+        return[];
+    }
+}
+
+function createSession(sessionId, data) {
+    if (sessions.has(sessionId)) return false;
+    sessions.set(sessionId, { ...data, createdAt: Date.now(), lastActivity: Date.now() });
+    saveDatabase();
     return true;
 }
 
-/**
- * ดึงข้อมูลเซสชัน
- * @param {string} sessionId - รหัสเซสชัน
- * @returns {Object|null} ข้อมูลเซสชัน หรือ null ถ้าไม่พบ
- */
 function getSession(sessionId) {
     const session = sessions.get(sessionId);
-    if (session) {
-        session.lastActivity = Date.now();
-    }
+    if (session) session.lastActivity = Date.now();
     return session ?? null;
 }
 
-/**
- * ดึงข้อมูลเซสชันทั้งหมด
- * @returns {Map} Map ของเซสชันทั้งหมด
- */
-function getAllSessions() {
-    return sessions;
-}
+function getAllSessions() { return sessions; }
 
-/**
- * ลบเซสชันออกจากระบบ พร้อม Cleanup
- * @param {string} sessionId - รหัสเซสชัน
- */
 function deleteSession(sessionId) {
-    if (!sessions.has(sessionId)) {
-        console.warn(`⚠️  [SESSION] Delete attempt on non-existent session: ${sessionId}`);
-        return false;
-    }
-
     const session = sessions.get(sessionId);
+    if (!session) return false;
 
-    // Cleanup connection
-    if (session?.connection) {
-        try {
-            session.connection.destroy();
-        } catch (err) {
-            console.error(`❌ [SESSION] Connection cleanup error: ${err.message}`);
-        }
+    if (session.connection) {
+        try { session.connection.destroy(); } catch {}
     }
-
-    // Cleanup bot instance
-    if (session?.bot) {
-        try {
-            session.bot.removeAllListeners();
-            session.bot.destroy();
-        } catch (err) {
-            console.error(`❌ [SESSION] Bot cleanup error: ${err.message}`);
-        }
-    }
-
-    // Clear timers
-    if (session?.reconnectTimer) {
-        clearTimeout(session.reconnectTimer);
-    }
+    if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
 
     sessions.delete(sessionId);
     reconnectTracking.delete(sessionId);
     sessionLocks.delete(sessionId);
-
-    console.log(`✅ [SESSION] Deleted: ${sessionId}`);
+    saveDatabase();
     return true;
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-//  🔄  RECONNECT TRACKING SYSTEM
-// ════════════════════════════════════════════════════════════════════════════
-
-/**
- * บันทึกการ Reconnect และคืนจำนวนครั้งใน 60 วินาที
- * @param {string} sessionId - รหัสเซสชัน
- * @returns {number} จำนวนครั้งที่ Reconnect ใน 60 วินาทีล่าสุด
- */
 function addReconnect(sessionId) {
     const now = Date.now();
-    const WINDOW = 60_000; // 60 seconds
-
     let history = reconnectTracking.get(sessionId) ||[];
-    history = history.filter((timestamp) => now - timestamp < WINDOW);
+    history = history.filter(t => now - t < 60000);
     history.push(now);
-
     reconnectTracking.set(sessionId, history);
-    systemMetrics.increment('reconnects'); // เก็บสถิติ
-
-    console.log(`📊 [RECONNECT] Session ${sessionId}: ${history.length} attempts in last 60s`);
+    systemMetrics.increment('reconnects');
     return history.length;
 }
 
-/**
- * ล้างประวัติการ Reconnect
- * @param {string} sessionId - รหัสเซสชัน
- */
-function clearReconnect(sessionId) {
-    reconnectTracking.delete(sessionId);
-    console.log(`🧹 [RECONNECT] Cleared history for session ${sessionId}`);
-}
-
-/**
- * ดูจำนวนครั้งการ Reconnect โดยไม่เพิ่มค่า
- * @param {string} sessionId - รหัสเซสชัน
- * @returns {number} จำนวนครั้ง
- */
-function getReconnectCount(sessionId) {
-    const now = Date.now();
-    const WINDOW = 60_000;
-
-    let history = reconnectTracking.get(sessionId) ||[];
-    history = history.filter((timestamp) => now - timestamp < WINDOW);
-    reconnectTracking.set(sessionId, history);
-
-    return history.length;
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-//  🔒  SESSION LOCK MECHANISM
-// ════════════════════════════════════════════════════════════════════════════
-
-/**
- * ล็อกเซสชันเพื่อป้องกัน Race Condition
- * @param {string} sessionId - รหัสเซสชัน
- * @returns {boolean} true ถ้าล็อกสำเร็จ, false ถ้ามีการล็อกอยู่แล้ว
- */
+function clearReconnect(sessionId) { reconnectTracking.delete(sessionId); }
 function lockSession(sessionId) {
-    if (sessionLocks.has(sessionId)) {
-        return false;
-    }
+    if (sessionLocks.has(sessionId)) return false;
     sessionLocks.add(sessionId);
     return true;
 }
-
-/**
- * ปลดล็อกเซสชัน
- * @param {string} sessionId - รหัสเซสชัน
- */
-function unlockSession(sessionId) {
-    sessionLocks.delete(sessionId);
-}
-
-/**
- * ตรวจสอบว่าเซสชันถูกล็อกอยู่หรือไม่
- * @param {string} sessionId - รหัสเซสชัน
- * @returns {boolean}
- */
-function isSessionLocked(sessionId) {
-    return sessionLocks.has(sessionId);
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-//  🧹  MAINTENANCE & CLEANUP
-// ════════════════════════════════════════════════════════════════════════════
-
-/**
- * ตรวจสอบและลบเซสชันที่ไม่มีการใช้งาน (Idle Timeout)
- * @param {number} maxIdleTime - เวลาไม่มีกิจกรรมสูงสุด (milliseconds)
- * @returns {number} จำนวนเซสชันที่ถูกลบ
- */
-function cleanupIdleSessions(maxIdleTime = 3600_000) {
-    const now = Date.now();
-    let cleanedCount = 0;
-
-    for (const[sessionId, session] of sessions) {
-        if (now - session.startedAt > maxIdleTime) {
-            console.log(`🧹 [CLEANUP] Removing stale session: ${sessionId}`);
-            deleteSession(sessionId);
-            cleanedCount++;
-        }
-    }
-
-    if (cleanedCount > 0) {
-        console.log(`✅ [CLEANUP] Removed ${cleanedCount} stale session(s)`);
-    }
-
-    return cleanedCount;
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-//  📤  MODULE EXPORTS
-// ════════════════════════════════════════════════════════════════════════════
+function unlockSession(sessionId) { sessionLocks.delete(sessionId); }
+function isSessionLocked(sessionId) { return sessionLocks.has(sessionId); }
 
 module.exports = {
-    // Core Operations
-    createSession,
-    getSession,
-    getAllSessions,
-    deleteSession,
-
-    // Reconnect Tracking
-    addReconnect,
-    clearReconnect,
-    getReconnectCount,
-
-    // Session Locking
-    lockSession,
-    unlockSession,
-    isSessionLocked,
-
-    // Maintenance & Metrics
-    cleanupIdleSessions,
-    systemMetrics,
+    createSession, getSession, getAllSessions, deleteSession,
+    addReconnect, clearReconnect, lockSession, unlockSession, isSessionLocked,
+    systemMetrics, actionLimiter, loadDatabase, saveDatabase
 };

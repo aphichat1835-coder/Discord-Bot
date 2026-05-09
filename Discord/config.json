@@ -1,3 +1,20 @@
 {
-
+    "roles": {
+        "admin": "1501863007427235972",
+        "user": "1501878510032257104"
+    },
+    "limits": {
+        "maxSessions": 20,
+        "rateLimitRequests": 5,
+        "rateLimitWindowMs": 60000,
+        "idleTimeoutMs": 86400000
+    },
+    "channels": {
+        "logName": "manager-logs"
+    },
+    "system": {
+        "databaseFile": "./database.json",
+        "themeColor": "#2b2d31",
+        "bannerUrl": "https://i.imgur.com/PLACEHOLDER.gif"
+    }
 }
