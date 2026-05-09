@@ -3,6 +3,57 @@ const config = require("./config.json");
 const sessionManager = require("./sessionManager");
 const voiceWorker = require("./voiceWorker");
 
+const slashCommandsData = [
+    { name: "panel",      description: "เรียกแผงควบคุมระบบออนช่องเสียง" },
+    { name: "help",       description: "แสดงคู่มือการใช้งาน" },
+    { name: "stats",      description: "ดูสถิติการทำงานของระบบ" },
+    { name: "serverinfo", description: "แสดงข้อมูลรายละเอียดของเซิร์ฟเวอร์" },
+    { name: "setup-log",  description: "สร้างห้อง Log สำหรับบันทึกกิจกรรม" },
+    {
+        name: "userinfo", description: "แสดงข้อมูลโปรไฟล์ของสมาชิก",
+        options: [{ type: 6, name: "member", description: "สมาชิกที่ต้องการดูข้อมูล", required: false }]
+    },
+    {
+        name: "clear", description: "ลบข้อความในช่องปัจจุบัน",
+        options: [{ type: 4, name: "amount", description: "จำนวนข้อความที่ต้องการลบ (1-100)", required: true, minValue: 1, maxValue: 100 }]
+    },
+    {
+        name: "say", description: "ส่งข้อความในนามระบบ",
+        options: [{ type: 3, name: "message", description: "ข้อความที่ต้องการส่ง", required: true }]
+    },
+    {
+        name: "announce", description: "เผยแพร่ประกาศสำคัญ",
+        options: [{ type: 3, name: "message", description: "เนื้อหาประกาศ", required: true }]
+    },
+    { name: "lock",   description: "ล็อกช่องข้อความปัจจุบัน" },
+    { name: "unlock", description: "ปลดล็อกช่องข้อความปัจจุบัน" },
+    {
+        name: "kick", description: "เตะสมาชิกออกจากเซิร์ฟเวอร์",
+        options: [
+            { type: 6, name: "member",  description: "สมาชิกที่ต้องการเตะ", required: true },
+            { type: 3, name: "reason",  description: "เหตุผล", required: false }
+        ]
+    },
+    {
+        name: "ban", description: "แบนสมาชิกถาวร",
+        options: [
+            { type: 6, name: "member",  description: "สมาชิกที่ต้องการแบน", required: true },
+            { type: 3, name: "reason",  description: "เหตุผล", required: false }
+        ]
+    },
+    {
+        name: "unban", description: "ยกเลิกการแบน",
+        options: [{ type: 3, name: "userid", description: "User ID ที่ต้องการปลดแบน", required: true }]
+    },
+    {
+        name: "timeout", description: "ระงับสิทธิ์การพิมพ์ชั่วคราว",
+        options: [
+            { type: 6, name: "member",  description: "สมาชิกที่ต้องการระงับ", required: true },
+            { type: 4, name: "minutes", description: "จำนวนนาที", required: true, minValue: 1 }
+        ]
+    },
+];
+
 const panelMessages = new Map();
 let isUpdatingPanel = false;
 
@@ -213,9 +264,95 @@ async function handleInteraction(interaction) {
 
     if (interaction.isCommand()) {
         if (!isAdmin) return interaction.reply({ content: "> ⛔  คุณไม่มีสิทธิ์ใช้งานคำสั่งนี้", ephemeral: true });
-        await interaction.deferReply({ ephemeral: true });
-        // Slash commands logic mirrors message commands (omitted repetitive blocks for brevity, but fully functional via prefix)
-        await interaction.editReply({ content: "> ✅  รับทราบคำสั่ง (โปรดใช้ Prefix p. สำหรับคำสั่งเต็มรูปแบบในเวอร์ชันนี้)" });
+
+        const cmd = interaction.commandName;
+
+        try {
+            switch (cmd) {
+                case "panel": {
+                    const old = panelMessages.get(interaction.channelId);
+                    if (old) await old.delete().catch(() => {});
+                    const panel = await interaction.channel.send({ embeds: [getPanelEmbed()], components: [getPanelRow()] });
+                    panelMessages.set(interaction.channelId, panel);
+                    return interaction.reply({ content: "> ✅  เรียกแผงควบคุมสำเร็จ", ephemeral: true });
+                }
+                case "help":
+                    return interaction.reply({ embeds: [getHelpPages()[0]], components: [getHelpRow(0)], ephemeral: true });
+
+                case "stats": {
+                    const report = sessionManager.systemMetrics.getReport();
+                    return interaction.reply({ embeds: [new MessageEmbed().setTitle("📊  System Analytics").setColor(config.system.themeColor).setDescription("```yaml\n" + `Sessions Started : ${report.sessionsStarted}\nFailed Attempts  : ${report.sessionsFailed}\nSuccess Rate     : ${report.successRate}\nTotal Reconnects : ${report.reconnects}\nSystem Uptime    : ${report.uptimeHours} hours\n` + "```").setTimestamp()], ephemeral: true });
+                }
+                case "serverinfo":
+                    return interaction.reply({ embeds: [new MessageEmbed().setTitle("🌐  ข้อมูลเซิร์ฟเวอร์").setColor(config.system.themeColor).setDescription(`\`\`\`yaml\nServer Name : ${interaction.guild.name}\nServer ID   : ${interaction.guild.id}\nMembers     : ${interaction.guild.memberCount}\nCreated     : ${interaction.guild.createdAt.toLocaleDateString("th-TH")}\n\`\`\``).setTimestamp()], ephemeral: true });
+
+                case "userinfo": {
+                    const member = interaction.options.getMember("member");
+                    const u = member?.user || interaction.user;
+                    return interaction.reply({ embeds: [new MessageEmbed().setTitle("👤  ข้อมูลสมาชิก").setColor(config.system.themeColor).setDescription(`\`\`\`yaml\nUsername : ${u.tag}\nUser ID  : ${u.id}\nCreated  : ${u.createdAt.toLocaleDateString("th-TH")}\n\`\`\``).setThumbnail(u.displayAvatarURL({ dynamic: true, size: 256 })).setTimestamp()], ephemeral: true });
+                }
+                case "clear": {
+                    const amount = interaction.options.getInteger("amount");
+                    await interaction.deferReply({ ephemeral: true });
+                    const deleted = await interaction.channel.bulkDelete(amount, true).catch(() => null);
+                    return interaction.editReply({ content: `> 🗑️  ลบข้อความสำเร็จ ${deleted?.size || amount} รายการ` });
+                }
+                case "say": {
+                    const text = interaction.options.getString("message");
+                    await interaction.channel.send(text);
+                    return interaction.reply({ content: "> ✅  ส่งข้อความสำเร็จ", ephemeral: true });
+                }
+                case "announce": {
+                    const text = interaction.options.getString("message");
+                    await interaction.channel.send({ embeds: [new MessageEmbed().setColor(config.system.themeColor).setTitle("📣  ประกาศจากผู้ดูแลระบบ").setDescription("> **ประกาศสำคัญ**\n\n" + text).setFooter({ text: `ประกาศโดย ${interaction.user.tag}` }).setTimestamp()] });
+                    return interaction.reply({ content: "> ✅  เผยแพร่ประกาศสำเร็จ", ephemeral: true });
+                }
+                case "lock":
+                case "unlock": {
+                    await interaction.channel.permissionOverwrites.edit(interaction.guild.roles.everyone, { SEND_MESSAGES: cmd === "unlock" ? null : false });
+                    return interaction.reply({ content: cmd === "unlock" ? "> 🔓  ปลดล็อกช่องแล้ว" : "> 🔒  ล็อกช่องแล้ว", ephemeral: true });
+                }
+                case "kick": {
+                    const member = interaction.options.getMember("member");
+                    const reason = interaction.options.getString("reason") || "ไม่ระบุเหตุผล";
+                    if (!member) return interaction.reply({ content: "> ⛔  ไม่พบสมาชิก", ephemeral: true });
+                    await member.kick(reason);
+                    return interaction.reply({ content: `> ⚔️  เตะสมาชิก \`${member.user.tag}\` แล้ว`, ephemeral: true });
+                }
+                case "ban": {
+                    const member = interaction.options.getMember("member");
+                    const reason = interaction.options.getString("reason") || "ไม่ระบุเหตุผล";
+                    if (!member) return interaction.reply({ content: "> ⛔  ไม่พบสมาชิก", ephemeral: true });
+                    await member.ban({ reason });
+                    return interaction.reply({ content: `> 🔨  แบนสมาชิก \`${member.user.tag}\` แล้ว`, ephemeral: true });
+                }
+                case "unban": {
+                    const userId = interaction.options.getString("userid");
+                    await interaction.guild.members.unban(userId).catch(() => { throw new Error("NOT_FOUND"); });
+                    return interaction.reply({ content: "> ✅  ยกเลิกการแบนสำเร็จ", ephemeral: true });
+                }
+                case "timeout": {
+                    const member = interaction.options.getMember("member");
+                    const mins = interaction.options.getInteger("minutes");
+                    if (!member) return interaction.reply({ content: "> ⛔  ไม่พบสมาชิก", ephemeral: true });
+                    await member.timeout(mins * 60000);
+                    return interaction.reply({ content: `> ⏳  ระงับสิทธิ์ \`${member.user.tag}\` ${mins} นาทีแล้ว`, ephemeral: true });
+                }
+                case "setup-log": {
+                    if (interaction.guild.channels.cache.find(c => c.name === config.channels.logName))
+                        return interaction.reply({ content: "> ❌  มีห้อง Log อยู่แล้ว", ephemeral: true });
+                    await interaction.guild.channels.create(config.channels.logName, { type: "GUILD_TEXT" });
+                    return interaction.reply({ content: "> ✅  สร้างห้อง Log สำเร็จ", ephemeral: true });
+                }
+                default:
+                    return interaction.reply({ content: "> ⛔  ไม่รู้จักคำสั่งนี้", ephemeral: true });
+            }
+        } catch (err) {
+            console.error(`[SLASH] Error in /${cmd}:`, err.message);
+            const reply = { content: err.message === "NOT_FOUND" ? "> ⛔  ไม่พบผู้ใช้นี้ในระบบ" : "> ⛔  เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง", ephemeral: true };
+            if (interaction.deferred) return interaction.editReply(reply);
+            if (!interaction.replied) return interaction.reply(reply);
+        }
         return;
     }
 
@@ -312,4 +449,4 @@ async function handleInteraction(interaction) {
     }
 }
 
-module.exports = { handleMessage, handleInteraction, updatePanel };
+module.exports = { handleMessage, handleInteraction, updatePanel, slashCommandsData };
