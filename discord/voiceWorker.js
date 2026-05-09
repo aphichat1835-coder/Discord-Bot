@@ -38,12 +38,67 @@ class OperationQueue {
 }
 const stopQueue = new OperationQueue(3);
 
-function connectToVoice(selfBot, serverId, voiceId, tokenTail) {
-    try {
-        const guild = selfBot.guilds.cache.get(serverId);
-        if (!guild || !guild.voiceAdapterCreator) return null;
-        const channel = guild.channels.cache.get(voiceId);
-        if (!channel || channel.type !== 2) return null;
+        function connectToVoice(selfBot, serverId, voiceId, tokenTail) {
+            try {
+                console.log(`\n🔍 [DEBUG][${tokenTail}] กำลังตรวจสอบข้อมูล...`);
+                const guild = selfBot.guilds.cache.get(serverId);
+                if (!guild) {
+                    console.error(`❌ [DEBUG][${tokenTail}] ไม่พบ Server ID: ${serverId} (บัญชีนี้อาจจะไม่ได้อยู่ในเซิร์ฟเวอร์)`);
+                    return null;
+                }
+
+                const channel = guild.channels.cache.get(voiceId);
+                if (!channel) {
+                    console.error(`❌ [DEBUG][${tokenTail}] ไม่พบ Voice ID: ${voiceId} (บัญชีนี้อาจจะมองไม่เห็นห้องนี้)`);
+                    return null;
+                }
+
+                if (!channel.isVoice()) {
+                    console.error(`❌ [DEBUG][${tokenTail}] ห้องนี้ไม่ใช่ช่องเสียง (Type: ${channel.type})`);
+                    return null;
+                }
+
+                console.log(`⏳[DEBUG][${tokenTail}] กำลังพยายามเชื่อมต่อห้อง: ${channel.name}...`);
+
+                const existingConn = getVoiceConnection(guild.id, selfBot.user.id);
+                if (existingConn) try { existingConn.destroy(); } catch {}
+
+                const conn = joinVoiceChannel({
+                    channelId: channel.id, 
+                    guildId: guild.id,
+                    adapterCreator: guild.voiceAdapterCreator,
+                    selfMute: true, 
+                    selfDeaf: true,
+                    group: selfBot.user.id
+                });
+
+                // ติดตามสถานะการเชื่อมต่อแบบละเอียด
+                conn.on("stateChange", (oldState, newState) => {
+                    console.log(`🔄[VOICE-STATE][${tokenTail}] เปลี่ยนสถานะ: ${oldState.status} ➡️ ${newState.status}`);
+                });
+
+                conn.on("error", (error) => {
+                    console.error(`❌[VOICE-ERROR][${tokenTail}] เกิดข้อผิดพลาด:`, error.message);
+                });
+
+                const connTimer = setTimeout(() => {
+                    if (conn.state.status !== VoiceConnectionStatus.Ready) {
+                        console.error(`⏰ [DEBUG][${tokenTail}] หมดเวลาเชื่อมต่อ (15 วิ)! สถานะสุดท้ายคือ: ${conn.state.status}`);
+                        conn.destroy();
+                    }
+                }, CONFIG.CONNECTION_TIMEOUT);
+
+                conn.once(VoiceConnectionStatus.Ready, () => {
+                    clearTimeout(connTimer);
+                    console.log(`✅ [DEBUG][${tokenTail}] เชื่อมต่อช่องเสียงสำเร็จ!`);
+                });
+
+                return conn;
+            } catch (err) { 
+                console.error(`❌ [DEBUG-CATCH][${tokenTail}] โค้ดพังระหว่างเชื่อมต่อ:`, err.message);
+                return null; 
+            }
+        }
 
         // FIX: Isolate connection per client using group
         const existingConn = getVoiceConnection(guild.id, selfBot.user.id);
