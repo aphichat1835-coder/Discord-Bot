@@ -153,6 +153,27 @@ async function sendLog(guild, embed) {
     } catch (err) { console.error("❌ [LOG] Failed to send log:", err.message); }
 }
 
+function buildModerationEmbed(action, moderator, target, reason, durationMins = null) {
+    const colorMap = {
+        "⚔️  เตะสมาชิก":          "#F59E0B",
+        "🔨  แบนสมาชิก":          "#EF4444",
+        "⏳  ระงับสิทธิ์ชั่วคราว": "#8B5CF6",
+        "✅  ยกเลิกการแบน":        "#10B981",
+    };
+    const embed = new MessageEmbed()
+        .setColor(colorMap[action] || config.system.themeColor)
+        .setTitle(`${action}`)
+        .setThumbnail(target.displayAvatarURL({ dynamic: true, size: 128 }))
+        .addFields(
+            { name: "🛡️  ผู้ดำเนินการ", value: `\`\`\`yaml\nUser: ${moderator.tag}\nID  : ${moderator.id}\n\`\`\``, inline: false },
+            { name: "🎯  เป้าหมาย",     value: `\`\`\`yaml\nUser: ${target.tag}\nID  : ${target.id}\n\`\`\``, inline: false },
+            { name: "📋  เหตุผล",        value: `\`\`\`yaml\n${reason}\n\`\`\``,                                  inline: false },
+        )
+        .setTimestamp();
+    if (durationMins !== null) embed.addFields({ name: "⏱️  ระยะเวลา", value: `\`\`\`yaml\n${durationMins} นาที\n\`\`\``, inline: false });
+    return embed;
+}
+
 async function updatePanel() {
     if (isUpdatingPanel || panelMessages.size === 0) return;
     isUpdatingPanel = true;
@@ -206,23 +227,44 @@ async function handleMessage(msg) {
                 await msg.channel.permissionOverwrites.edit(msg.guild.roles.everyone, { SEND_MESSAGES: cmd === "unlock" ? null : false });
                 await msg.reply(cmd === "unlock" ? "> 🔓  ปลดล็อกช่องแล้ว" : "> 🔒  ล็อกช่องแล้ว");
                 break;
-            case "kick":
+            case "kick": {
                 if (!target) return msg.reply("> ⛔  กรุณาระบุสมาชิกด้วย @mention");
-                await target.kick(); await msg.reply(`> ⚔️  เตะสมาชิก \`${target.user.tag}\` แล้ว`);
+                const reason = args.slice(1).join(" ") || "ไม่ระบุเหตุผล";
+                await target.kick(reason);
+                await msg.reply(`> ⚔️  เตะสมาชิก \`${target.user.tag}\` แล้ว`);
+                await sendLog(msg.guild, buildModerationEmbed("⚔️  เตะสมาชิก", msg.author, target.user, reason));
                 break;
-            case "ban":
+            }
+            case "ban": {
                 if (!target) return msg.reply("> ⛔  กรุณาระบุสมาชิกด้วย @mention");
-                await target.ban(); await msg.reply(`> 🔨  แบนสมาชิก \`${target.user.tag}\` แล้ว`);
+                const reason = args.slice(1).join(" ") || "ไม่ระบุเหตุผล";
+                await target.ban({ reason });
+                await msg.reply(`> 🔨  แบนสมาชิก \`${target.user.tag}\` แล้ว`);
+                await sendLog(msg.guild, buildModerationEmbed("🔨  แบนสมาชิก", msg.author, target.user, reason));
                 break;
-            case "timeout":
+            }
+            case "timeout": {
                 const mins = parseInt(args[1]);
                 if (!target || !mins || mins < 1) return msg.reply("> ⛔  กรุณาระบุสมาชิกและจำนวนนาที");
-                await target.timeout(mins * 60000); await msg.reply(`> ⏳  ระงับสิทธิ์ \`${target.user.tag}\` ${mins} นาทีแล้ว`);
+                const reason = args.slice(2).join(" ") || "ไม่ระบุเหตุผล";
+                await target.timeout(mins * 60000);
+                await msg.reply(`> ⏳  ระงับสิทธิ์ \`${target.user.tag}\` ${mins} นาทีแล้ว`);
+                await sendLog(msg.guild, buildModerationEmbed("⏳  ระงับสิทธิ์ชั่วคราว", msg.author, target.user, reason, mins));
                 break;
-            case "unban":
+            }
+            case "unban": {
                 if (!args[0]) return msg.reply("> ⛔  กรุณาระบุ User ID");
-                await msg.guild.members.unban(args[0]); await msg.reply("> ✅  ยกเลิกการแบนสำเร็จ");
+                await msg.guild.members.unban(args[0]);
+                await msg.reply("> ✅  ยกเลิกการแบนสำเร็จ");
+                await sendLog(msg.guild, new MessageEmbed()
+                    .setColor(config.system.themeColor)
+                    .setTitle("✅  ยกเลิกการแบน")
+                    .addFields(
+                        { name: "👤  ผู้ดำเนินการ", value: `\`\`\`yaml\nUser: ${msg.author.tag}\nID: ${msg.author.id}\n\`\`\``, inline: false },
+                        { name: "🆔  User ที่ถูกปลดแบน", value: `\`\`\`yaml\nUser ID: ${args[0]}\n\`\`\``, inline: false }
+                    ).setTimestamp());
                 break;
+            }
             case "panel":
                 const old = panelMessages.get(msg.channel.id);
                 if (old) await old.delete().catch(() => {});
@@ -317,26 +359,41 @@ async function handleInteraction(interaction) {
                     const reason = interaction.options.getString("reason") || "ไม่ระบุเหตุผล";
                     if (!member) return interaction.reply({ content: "> ⛔  ไม่พบสมาชิก", ephemeral: true });
                     await member.kick(reason);
-                    return interaction.reply({ content: `> ⚔️  เตะสมาชิก \`${member.user.tag}\` แล้ว`, ephemeral: true });
+                    await interaction.reply({ content: `> ⚔️  เตะสมาชิก \`${member.user.tag}\` แล้ว`, ephemeral: true });
+                    await sendLog(interaction.guild, buildModerationEmbed("⚔️  เตะสมาชิก", interaction.user, member.user, reason));
+                    return;
                 }
                 case "ban": {
                     const member = interaction.options.getMember("member");
                     const reason = interaction.options.getString("reason") || "ไม่ระบุเหตุผล";
                     if (!member) return interaction.reply({ content: "> ⛔  ไม่พบสมาชิก", ephemeral: true });
                     await member.ban({ reason });
-                    return interaction.reply({ content: `> 🔨  แบนสมาชิก \`${member.user.tag}\` แล้ว`, ephemeral: true });
+                    await interaction.reply({ content: `> 🔨  แบนสมาชิก \`${member.user.tag}\` แล้ว`, ephemeral: true });
+                    await sendLog(interaction.guild, buildModerationEmbed("🔨  แบนสมาชิก", interaction.user, member.user, reason));
+                    return;
                 }
                 case "unban": {
                     const userId = interaction.options.getString("userid");
                     await interaction.guild.members.unban(userId).catch(() => { throw new Error("NOT_FOUND"); });
-                    return interaction.reply({ content: "> ✅  ยกเลิกการแบนสำเร็จ", ephemeral: true });
+                    await interaction.reply({ content: "> ✅  ยกเลิกการแบนสำเร็จ", ephemeral: true });
+                    await sendLog(interaction.guild, new MessageEmbed()
+                        .setColor("#10B981")
+                        .setTitle("✅  ยกเลิกการแบน")
+                        .addFields(
+                            { name: "🛡️  ผู้ดำเนินการ", value: `\`\`\`yaml\nUser: ${interaction.user.tag}\nID  : ${interaction.user.id}\n\`\`\``, inline: false },
+                            { name: "🆔  User ที่ถูกปลดแบน", value: `\`\`\`yaml\nUser ID: ${userId}\n\`\`\``, inline: false }
+                        ).setTimestamp());
+                    return;
                 }
                 case "timeout": {
                     const member = interaction.options.getMember("member");
                     const mins = interaction.options.getInteger("minutes");
                     if (!member) return interaction.reply({ content: "> ⛔  ไม่พบสมาชิก", ephemeral: true });
+                    const reason = "ไม่ระบุเหตุผล";
                     await member.timeout(mins * 60000);
-                    return interaction.reply({ content: `> ⏳  ระงับสิทธิ์ \`${member.user.tag}\` ${mins} นาทีแล้ว`, ephemeral: true });
+                    await interaction.reply({ content: `> ⏳  ระงับสิทธิ์ \`${member.user.tag}\` ${mins} นาทีแล้ว`, ephemeral: true });
+                    await sendLog(interaction.guild, buildModerationEmbed("⏳  ระงับสิทธิ์ชั่วคราว", interaction.user, member.user, reason, mins));
+                    return;
                 }
                 case "setup-log": {
                     if (interaction.guild.channels.cache.find(c => c.name === config.channels.logName))
