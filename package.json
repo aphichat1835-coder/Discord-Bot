@@ -1,10 +1,5 @@
 {
   "name": "phomueangtai-enterprise",
   "version": "1.0.0",
-  "description": "Phomueangtai Enterprise Discord Bot — voice session management system",
-  "private": true,
-  "scripts": {
-    "start": "cd Discord && node index.js",
-    "dev": "cd Discord && node index.js"
-  }
+  "private": true
 }
