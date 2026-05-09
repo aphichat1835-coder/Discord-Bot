@@ -1,5 +1,18 @@
 {
-  "name": "workspace",
-  "version": "0.0.0",
-  "private": true
+  "name": "discord-bot",
+  "version": "1.0.0",
+  "description": "Phomueangtai Enterprise Discord Bot",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "13.17.1",
+    "discord.js-selfbot-v13": "^3.4.0",
+    "@discordjs/voice": "^0.16.1",
+    "express": "^4.18.2",
+    "sodium-native": "^4.0.0",
+    "opusscript": "^0.0.8"
+  }
 }
