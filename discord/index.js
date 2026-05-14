@@ -8,11 +8,17 @@ const sessionManager = require("./sessionManager");
 const voiceWorker = require("./voiceWorker");
 const commands = require("./commands");
 
+// ════════════════════════════════════════════════════════════════════════════
+//  🌐  EXPRESS SERVER (FOR UPTIMEROBOT)
+// ════════════════════════════════════════════════════════════════════════════
 const app = express();
-app.get("/", (_req, res) => res.send("Enterprise Voice System Online"));
+app.get("/", (_req, res) => res.send("🟢 Enterprise Voice System Online - Ready for UptimeRobot"));
 app.get("/ping", (_req, res) => res.send("PONG"));
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`[EXPRESS] Server online on port ${PORT}`));
+app.listen(PORT, () => {
+    console.log(`✅ [EXPRESS] Server online on port ${PORT}`);
+    console.log(`🌐[UPTIME] นำลิงก์ Webview ของ Replit ไปใส่ใน UptimeRobot ได้เลย!`);
+});
 
 if (!process.env.TOKEN_MANAGER) {
     console.error("[CONFIG] TOKEN_MANAGER not configured in environment");

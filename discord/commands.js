@@ -3,7 +3,7 @@ const config = require("./config.json");
 const sessionManager = require("./sessionManager");
 const voiceWorker = require("./voiceWorker");
 
-const slashCommandsData = [
+const slashCommandsData =[
     { name: "panel",      description: "เรียกแผงควบคุมระบบออนช่องเสียง" },
     { name: "help",       description: "แสดงคู่มือการใช้งาน" },
     { name: "stats",      description: "ดูสถิติการทำงานของระบบ" },
@@ -11,43 +11,43 @@ const slashCommandsData = [
     { name: "setup-log",  description: "สร้างห้อง Log สำหรับบันทึกกิจกรรม" },
     {
         name: "userinfo", description: "แสดงข้อมูลโปรไฟล์ของสมาชิก",
-        options: [{ type: 6, name: "member", description: "สมาชิกที่ต้องการดูข้อมูล", required: false }]
+        options:[{ type: 6, name: "member", description: "สมาชิกที่ต้องการดูข้อมูล", required: false }]
     },
     {
         name: "clear", description: "ลบข้อความในช่องปัจจุบัน",
-        options: [{ type: 4, name: "amount", description: "จำนวนข้อความที่ต้องการลบ (1-100)", required: true, minValue: 1, maxValue: 100 }]
+        options:[{ type: 4, name: "amount", description: "จำนวนข้อความที่ต้องการลบ (1-100)", required: true, minValue: 1, maxValue: 100 }]
     },
     {
         name: "say", description: "ส่งข้อความในนามระบบ",
-        options: [{ type: 3, name: "message", description: "ข้อความที่ต้องการส่ง", required: true }]
+        options:[{ type: 3, name: "message", description: "ข้อความที่ต้องการส่ง", required: true }]
     },
     {
         name: "announce", description: "เผยแพร่ประกาศสำคัญ",
-        options: [{ type: 3, name: "message", description: "เนื้อหาประกาศ", required: true }]
+        options:[{ type: 3, name: "message", description: "เนื้อหาประกาศ", required: true }]
     },
     { name: "lock",   description: "ล็อกช่องข้อความปัจจุบัน" },
     { name: "unlock", description: "ปลดล็อกช่องข้อความปัจจุบัน" },
     {
         name: "kick", description: "เตะสมาชิกออกจากเซิร์ฟเวอร์",
-        options: [
+        options:[
             { type: 6, name: "member",  description: "สมาชิกที่ต้องการเตะ", required: true },
             { type: 3, name: "reason",  description: "เหตุผล", required: false }
         ]
     },
     {
         name: "ban", description: "แบนสมาชิกถาวร",
-        options: [
+        options:[
             { type: 6, name: "member",  description: "สมาชิกที่ต้องการแบน", required: true },
             { type: 3, name: "reason",  description: "เหตุผล", required: false }
         ]
     },
     {
         name: "unban", description: "ยกเลิกการแบน",
-        options: [{ type: 3, name: "userid", description: "User ID ที่ต้องการปลดแบน", required: true }]
+        options:[{ type: 3, name: "userid", description: "User ID ที่ต้องการปลดแบน", required: true }]
     },
     {
         name: "timeout", description: "ระงับสิทธิ์การพิมพ์ชั่วคราว",
-        options: [
+        options:[
             { type: 6, name: "member",  description: "สมาชิกที่ต้องการระงับ", required: true },
             { type: 4, name: "minutes", description: "จำนวนนาที", required: true, minValue: 1 },
             { type: 3, name: "reason",  description: "เหตุผล", required: false }
@@ -63,9 +63,6 @@ if (process.env.WEBHOOK_LOG_URL) {
     logWebhook = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-//  🎨  UI/UX COMPONENTS (ENTERPRISE DESIGN)
-// ════════════════════════════════════════════════════════════════════════════
 function formatUptime(ms) {
     const s = Math.floor(ms / 1000);
     const h = Math.floor(s / 3600);
@@ -86,11 +83,11 @@ function getPanelEmbed() {
 
     if (sessionList.length > 850) sessionList = sessionList.slice(0, 850) + "\n  … กด [📡 สถานะ] เพื่อดูรายการทั้งหมด";
 
-    return new MessageEmbed()
+    const embed = new MessageEmbed()
         .setTitle("⚙️  ENTERPRISE VOICE MANAGEMENT SYSTEM")
         .setColor(config.system.themeColor)
         .setDescription(
-            "> **ระบบจัดการการเชื่อมต่อช่องเสียงอัตโนมัติ 24 ชั่วโมง**\n" +
+            "> **บริการรับออนช่องเสียงฟรี ออนฟรีตลอด 24 ชม.**\n" +
             "> ตั้งค่าและควบคุมเซสชันผ่านแผงควบคุมด้านล่าง\n\n" +
             "```ansi\n" +
             "\u001b[1;36mSYSTEM STATUS\u001b[0m\n" +
@@ -102,6 +99,13 @@ function getPanelEmbed() {
         .addFields({ name: "📋  รายการเซสชันที่ใช้งานอยู่", value: "```yaml\n" + sessionList + "\n```", inline: false })
         .setFooter({ text: `⏱ อัปเดตล่าสุด: ${new Date().toLocaleTimeString("th-TH")}  │  Enterprise Edition` })
         .setTimestamp();
+
+    // FIX: ป้องกันบอทพังถ้าไม่ได้ใส่ลิงก์รูปภาพ
+    if (config.system.bannerUrl && config.system.bannerUrl.startsWith("http")) {
+        embed.setImage(config.system.bannerUrl);
+    }
+
+    return embed;
 }
 
 function getPanelRow() {
@@ -148,9 +152,9 @@ async function sendLog(guild, embed) {
             await logWebhook.send({ embeds: [embed] }).catch(() => {});
         } else if (guild) {
             const ch = guild.channels.cache.find(c => c.name === config.channels.logName && c.type === "GUILD_TEXT");
-            if (ch) await ch.send({ embeds: [embed] }).catch(() => {});
+            if (ch) await ch.send({ embeds:[embed] }).catch(() => {});
         }
-    } catch (err) { console.error("❌ [LOG] Failed to send log:", err.message); }
+    } catch (err) { console.error("❌[LOG] Failed to send log:", err.message); }
 }
 
 function buildModerationEmbed(action, moderator, target, reason, durationMins = null) {
@@ -191,9 +195,6 @@ async function updatePanel() {
     } finally { isUpdatingPanel = false; }
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-//  ⌨️  MESSAGE COMMAND HANDLER
-// ════════════════════════════════════════════════════════════════════════════
 async function handleMessage(msg) {
     if (!msg.guild || msg.author.bot || !msg.content.startsWith("p.")) return;
     if (!msg.member?.roles.cache.has(config.roles.admin)) return;
@@ -258,7 +259,7 @@ async function handleMessage(msg) {
                 await msg.guild.members.unban(args[0]);
                 await msg.reply("> ✅  ยกเลิกการแบนสำเร็จ");
                 await sendLog(msg.guild, new MessageEmbed()
-                    .setColor(config.system.themeColor)
+                    .setColor("#10B981")
                     .setTitle("✅  ยกเลิกการแบน")
                     .addFields(
                         { name: "👤  ผู้ดำเนินการ", value: `\`\`\`yaml\nUser: ${msg.author.tag}\nID: ${msg.author.id}\n\`\`\``, inline: false },
@@ -299,9 +300,6 @@ async function handleMessage(msg) {
     } catch (err) { console.error("❌ [COMMAND] Error:", err.message); }
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-//  🎮  INTERACTION HANDLER
-// ════════════════════════════════════════════════════════════════════════════
 async function handleInteraction(interaction) {
     if (!interaction.guild) return;
 
@@ -323,19 +321,19 @@ async function handleInteraction(interaction) {
                     return interaction.reply({ content: "> ✅  เรียกแผงควบคุมสำเร็จ", ephemeral: true });
                 }
                 case "help":
-                    return interaction.reply({ embeds: [getHelpPages()[0]], components: [getHelpRow(0)], ephemeral: true });
+                    return interaction.reply({ embeds:[getHelpPages()[0]], components: [getHelpRow(0)], ephemeral: true });
 
                 case "stats": {
                     const report = sessionManager.systemMetrics.getReport();
-                    return interaction.reply({ embeds: [new MessageEmbed().setTitle("📊  System Analytics").setColor(config.system.themeColor).setDescription("```yaml\n" + `Sessions Started : ${report.sessionsStarted}\nFailed Attempts  : ${report.sessionsFailed}\nSuccess Rate     : ${report.successRate}\nTotal Reconnects : ${report.reconnects}\nSystem Uptime    : ${report.uptimeHours} hours\n` + "```").setTimestamp()], ephemeral: true });
+                    return interaction.reply({ embeds:[new MessageEmbed().setTitle("📊  System Analytics").setColor(config.system.themeColor).setDescription("```yaml\n" + `Sessions Started : ${report.sessionsStarted}\nFailed Attempts  : ${report.sessionsFailed}\nSuccess Rate     : ${report.successRate}\nTotal Reconnects : ${report.reconnects}\nSystem Uptime    : ${report.uptimeHours} hours\n` + "```").setTimestamp()], ephemeral: true });
                 }
                 case "serverinfo":
-                    return interaction.reply({ embeds: [new MessageEmbed().setTitle("🌐  ข้อมูลเซิร์ฟเวอร์").setColor(config.system.themeColor).setDescription(`\`\`\`yaml\nServer Name : ${interaction.guild.name}\nServer ID   : ${interaction.guild.id}\nMembers     : ${interaction.guild.memberCount}\nCreated     : ${interaction.guild.createdAt.toLocaleDateString("th-TH")}\n\`\`\``).setTimestamp()], ephemeral: true });
+                    return interaction.reply({ embeds:[new MessageEmbed().setTitle("🌐  ข้อมูลเซิร์ฟเวอร์").setColor(config.system.themeColor).setDescription(`\`\`\`yaml\nServer Name : ${interaction.guild.name}\nServer ID   : ${interaction.guild.id}\nMembers     : ${interaction.guild.memberCount}\nCreated     : ${interaction.guild.createdAt.toLocaleDateString("th-TH")}\n\`\`\``).setTimestamp()], ephemeral: true });
 
                 case "userinfo": {
                     const member = interaction.options.getMember("member");
                     const u = member?.user || interaction.user;
-                    return interaction.reply({ embeds: [new MessageEmbed().setTitle("👤  ข้อมูลสมาชิก").setColor(config.system.themeColor).setDescription(`\`\`\`yaml\nUsername : ${u.tag}\nUser ID  : ${u.id}\nCreated  : ${u.createdAt.toLocaleDateString("th-TH")}\n\`\`\``).setThumbnail(u.displayAvatarURL({ dynamic: true, size: 256 })).setTimestamp()], ephemeral: true });
+                    return interaction.reply({ embeds:[new MessageEmbed().setTitle("👤  ข้อมูลสมาชิก").setColor(config.system.themeColor).setDescription(`\`\`\`yaml\nUsername : ${u.tag}\nUser ID  : ${u.id}\nCreated  : ${u.createdAt.toLocaleDateString("th-TH")}\n\`\`\``).setThumbnail(u.displayAvatarURL({ dynamic: true, size: 256 })).setTimestamp()], ephemeral: true });
                 }
                 case "clear": {
                     const amount = interaction.options.getInteger("amount");
@@ -350,7 +348,7 @@ async function handleInteraction(interaction) {
                 }
                 case "announce": {
                     const text = interaction.options.getString("message");
-                    await interaction.channel.send({ embeds: [new MessageEmbed().setColor(config.system.themeColor).setTitle("📣  ประกาศจากผู้ดูแลระบบ").setDescription("> **ประกาศสำคัญ**\n\n" + text).setFooter({ text: `ประกาศโดย ${interaction.user.tag}` }).setTimestamp()] });
+                    await interaction.channel.send({ embeds:[new MessageEmbed().setColor(config.system.themeColor).setTitle("📣  ประกาศจากผู้ดูแลระบบ").setDescription("> **ประกาศสำคัญ**\n\n" + text).setFooter({ text: `ประกาศโดย ${interaction.user.tag}` }).setTimestamp()] });
                     return interaction.reply({ content: "> ✅  เผยแพร่ประกาศสำเร็จ", ephemeral: true });
                 }
                 case "lock":
@@ -433,7 +431,7 @@ async function handleInteraction(interaction) {
         if (interaction.customId.startsWith("help_")) {
             const parts = interaction.customId.split("_");
             const newPage = parts[1] === "prev" ? parseInt(parts[2]) - 1 : parseInt(parts[2]) + 1;
-            if (newPage >= 0 && newPage <= 2) return interaction.update({ embeds: [getHelpPages()[newPage]], components: [getHelpRow(newPage)] });
+            if (newPage >= 0 && newPage <= 2) return interaction.update({ embeds:[getHelpPages()[newPage]], components: [getHelpRow(newPage)] });
         }
 
         if (interaction.customId === "btn_start") {
@@ -470,7 +468,7 @@ async function handleInteraction(interaction) {
             const sessions =[...sessionManager.getAllSessions().values()];
             if (!sessions.length) return interaction.reply({ content: "> ⛔  ไม่มีเซสชันที่ทำงานอยู่", ephemeral: true });
             const menu = new MessageSelectMenu().setCustomId("select_stop").setPlaceholder("🔽  เลือกเซสชันที่ต้องการหยุด").addOptions(sessions.slice(0, 25).map(s => ({ label: safeSlice(`****${s.tokenTail}  ·  ${s.serverName || s.serverId}`, 100), value: s.sessionId })));
-            return interaction.reply({ content: "> **⏹  เลือกเซสชันที่ต้องการหยุดการทำงาน:**", components: [new MessageActionRow().addComponents(menu)], ephemeral: true });
+            return interaction.reply({ content: "> **⏹  เลือกเซสชันที่ต้องการหยุดการทำงาน:**", components:[new MessageActionRow().addComponents(menu)], ephemeral: true });
         }
     }
 

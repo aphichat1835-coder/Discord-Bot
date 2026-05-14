@@ -24,12 +24,12 @@ args = "Discord Bot"
 name = "Discord Bot"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = " node index.js"
-
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd discord && node index.js"
 
 [agent]
 stack = "PNPM_WORKSPACE"
