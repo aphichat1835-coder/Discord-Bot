@@ -1,4 +1,4 @@
-onconst fs = require("fs").promises;
+const fs = require("fs").promises;
 const config = require("./config.json");
 
 const sessions = new Map();
