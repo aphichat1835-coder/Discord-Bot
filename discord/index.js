@@ -9,7 +9,7 @@ const voiceWorker = require("./voiceWorker");
 const commands = require("./commands");
 
 // ════════════════════════════════════════════════════════════════════════════
-//  🌐  EXPRESS SERVER (FOR UPTIMEROBOT)
+//  🌐  EXPRESS SERVER (FOR UPTIMEROBOT & DASHBOARD)
 // ════════════════════════════════════════════════════════════════════════════
 const app = express();
 const startTime = Date.now();
@@ -116,9 +116,10 @@ app.get("/", (_req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+// ✅ แก้ไข: เติม '0.0.0.0' เพื่อให้ Replit เปิดหน้าเว็บออกสู่ภายนอกได้
+app.listen(PORT, '0.0.0.0', () => {
     console.log(`✅ [EXPRESS] Server online on port ${PORT}`);
-    console.log(`🌐[UPTIME] นำลิงก์ Webview ของ Replit ไปใส่ใน UptimeRobot ได้เลย!`);
+    console.log(`🌐 [UPTIME] นำลิงก์ Webview ของ Replit ไปใส่ใน UptimeRobot ได้เลย!`);
 });
 
 if (!process.env.TOKEN_MANAGER) {
@@ -160,20 +161,57 @@ client.on("interactionCreate", async (interaction) => {
 
 client.on("error", (err) => console.error("[CLIENT] Error:", err.message));
 
+// ════════════════════════════════════════════════════════════════════════════
+//  🔄  DAEMONS (BACKGROUND TASKS)
+// ════════════════════════════════════════════════════════════════════════════
 setInterval(() => commands.updatePanel().catch(() => {}), 15000);
 setInterval(() => voiceWorker.healthCheck().catch(() => {}), 30000);
 setInterval(() => voiceWorker.cleanupIdleSessions().catch(() => {}), 3600000);
 
+// ✅ กู้คืน: ระบบล้างขยะและเซฟข้อมูลอัตโนมัติ (ป้องกัน RAM เต็ม)
+setInterval(() => sessionManager.actionLimiter.cleanup(), 300000);
+setInterval(() => sessionManager.createBackup().catch(() => {}), 3600000);
+setInterval(async () => {
+    const panelMessages = commands.getPanelMessages();
+    for (const [channelId, msg] of panelMessages) {
+        try { await msg.fetch(); }
+        catch (err) {
+            if (err.code === 10008 || err.code === 10003) {
+                panelMessages.delete(channelId);
+            }
+        }
+    }
+}, 3600000);
+
+// ════════════════════════════════════════════════════════════════════════════
+//  🛑  GRACEFUL SHUTDOWN
+// ════════════════════════════════════════════════════════════════════════════
 async function shutdown(signal) {
     console.log(`\n[SHUTDOWN] Received ${signal} — initiating cleanup...`);
+
+    // ✅ กู้คืน: ระบบหน่วงเวลาปิดบอท เพื่อให้เซฟข้อมูลลง Database ทัน
+    const shutdownTimeout = setTimeout(() => {
+        console.error("[SHUTDOWN] Timeout reached, forcing exit");
+        process.exit(1);
+    }, 8000);
+
     try {
-        await voiceWorker.stopAll();
+        await sessionManager.createBackup();
+        await sessionManager.saveDatabase();
+
+        const sessions = [...sessionManager.getAllSessions().keys()];
+        await Promise.allSettled(sessions.map(id => voiceWorker.stopSession(id)));
+
         client.destroy();
         console.log("[SHUTDOWN] Cleanup complete");
+
+        clearTimeout(shutdownTimeout);
+        process.exit(0);
     } catch (err) {
         console.error("[SHUTDOWN] Error:", err.message);
+        clearTimeout(shutdownTimeout);
+        process.exit(1);
     }
-    process.exit(0);
 }
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
