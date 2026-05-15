@@ -1,6 +1,6 @@
 process.on("uncaughtException", (err) => {
     console.error("[CRITICAL] uncaughtException:", err.message);
-    console.error(err.stack);
+    console.error(err.stack); // เก็บ Stack Trace ไว้ตามเดิม
 });
 
 process.on("unhandledRejection", (reason) => {
@@ -28,6 +28,15 @@ function formatUptime(ms) {
     const m = Math.floor((s % 3600) / 60);
     return d > 0 ? `${d}d ${h}h ${m}m` : h > 0 ? `${h}h ${m}m` : `${m}m ${s % 60}s`;
 }
+
+// ✅ [FIX FOR RENDER] ย้ายการ Listen Port ขึ้นมาไว้ก่อนการ Login บอท
+// เพื่อให้ Render ตรวจเจอ Port ทันทีและไม่ขึ้น Error สีแดง
+const PORT = process.env.PORT || 3000;
+const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`✅ [EXPRESS] Server online on port ${PORT}`);
+    console.log(`🌐 [HEALTH] Check: http://localhost:${PORT}/health`);
+    console.log(`📊 [DASHBOARD] View: http://localhost:${PORT}`);
+});
 
 app.get("/ping", (_req, res) => {
     try {
@@ -150,13 +159,6 @@ app.get("/", (_req, res) => {
     }
 });
 
-const PORT = process.env.PORT || 3000;
-const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`✅ [EXPRESS] Server online on port ${PORT}`);
-    console.log(`🌐 [HEALTH] Check: http://localhost:${PORT}/health`);
-    console.log(`📊 [DASHBOARD] View: http://localhost:${PORT}`);
-});
-
 // Handle express errors
 app.use((err, req, res, next) => {
     console.error("[EXPRESS_ERROR]", err.message);
@@ -227,7 +229,6 @@ client.on("warn", (warn) => {
 //  🔄  BACKGROUND TASKS (DAEMONS)
 // ════════════════════════════════════════════════════════════════════════════
 
-// Panel updates (every 15 seconds)
 setInterval(async () => {
     try {
         await commands.updatePanel();
@@ -236,7 +237,6 @@ setInterval(async () => {
     }
 }, 15000);
 
-// Health check (every 30 seconds)
 setInterval(async () => {
     try {
         await voiceWorker.healthCheck();
@@ -245,7 +245,6 @@ setInterval(async () => {
     }
 }, 30000);
 
-// Cleanup idle sessions (every 1 hour)
 setInterval(async () => {
     try {
         await voiceWorker.cleanupIdleSessions();
@@ -254,7 +253,6 @@ setInterval(async () => {
     }
 }, 3600000);
 
-// Rate limiter cleanup (every 5 minutes)
 setInterval(() => {
     try {
         sessionManager.actionLimiter.cleanup();
@@ -263,7 +261,6 @@ setInterval(() => {
     }
 }, 300000);
 
-// Database backup (every 1 hour)
 setInterval(async () => {
     try {
         await sessionManager.createBackup();
@@ -272,7 +269,7 @@ setInterval(async () => {
     }
 }, 3600000);
 
-// Panel message validation (every 1 hour)
+// ✅ [RESTORED] ระบบตรวจสอบข้อความ Panel ที่หายไปในเวอร์ชันก่อน
 setInterval(async () => {
     try {
         const panelMessages = commands.getPanelMessages();
@@ -303,28 +300,23 @@ async function shutdown(signal) {
     }, 10000);
 
     try {
-        // 1. Create backup
         await sessionManager.createBackup();
         console.log("[SHUTDOWN] ✅ Database backup created");
 
-        // 2. Save database
         await sessionManager.saveDatabase();
         console.log("[SHUTDOWN] ✅ Database saved");
 
-        // 3. Stop all sessions
         const sessions = [...sessionManager.getAllSessions().keys()];
         if (sessions.length > 0) {
             await Promise.allSettled(sessions.map(id => voiceWorker.stopSession(id)));
             console.log(`[SHUTDOWN] ✅ Stopped ${sessions.length} sessions`);
         }
 
-        // 4. Close Discord client
         if (client) {
             client.destroy();
             console.log("[SHUTDOWN] ✅ Discord client destroyed");
         }
 
-        // 5. Close Express server
         server.close(() => {
             console.log("[SHUTDOWN] ✅ Express server closed");
         });
