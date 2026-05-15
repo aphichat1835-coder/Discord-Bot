@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: discord-bot-manager
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /ping
+    healthCheckInterval: 30
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: TOKEN_MANAGER
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
