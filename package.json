@@ -5,22 +5,13 @@
   "private": true,
   "main": "discord/index.js",
   "scripts": {
-    "start": "cd discord && node index.js",
-    "dev": "cd discord && node index.js",
+    "start": "node discord/index.js",
+    "dev": "node discord/index.js",
     "test": "echo 'No tests configured'"
   },
   "engines": {
-    "node": ">=18.0.0",
-    "npm": ">=9.0.0"
+    "node": ">=18.0.0"
   },
-  "keywords": [
-    "discord",
-    "bot",
-    "voice",
-    "enterprise"
-  ],
-  "author": "Phomueangtai Enterprise",
-  "license": "MIT",
   "dependencies": {
     "@discordjs/voice": "^0.19.2",
     "discord.js": "^13.17.1",
