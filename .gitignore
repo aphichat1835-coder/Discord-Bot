@@ -1,18 +1,35 @@
-# dependencies
+# discord dependencies
 node_modules
-Discord/node_modules
+discord/node_modules
 
 # database (contains sensitive tokens)
-Discord/database.json
+discord/database.json
+backups/
+*.tmp
 
 # logs
 npm-debug.log
 yarn-error.log
+*.log
 
 # System Files
 .DS_Store
 Thumbs.db
 
-# Replit
+# Replit/IDE
 .cache/
 .local/
+.replit
+replit.nix
+*.vscode
+.idea/
+
+# Environment
+.env
+.env.local
+
+# OS
+.cache
+*.swp
+*.swo
+*~
