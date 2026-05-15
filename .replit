@@ -1,14 +1,17 @@
-modules = ["nodejs-24"]
-run = "cd discord && node index.js"
+modules = ["nodejs-18"]
+run = "npm start"
 
-[agent]
-stack = "PNPM_WORKSPACE"
-expertMode = true
+[env]
+NODE_ENV = "development"
+NPM_INSTALL_FLAGS = "--legacy-peer-deps"
+
+[nix]
+channel = "stable-22.11"
 
 [[ports]]
 localPort = 3000
 externalPort = 80
 
 [deployment]
+run = ["sh", "-c", "npm install && npm start"]
 deploymentTarget = "cloudrun"
-run = ["sh", "-c", "cd discord && node index.js"]
