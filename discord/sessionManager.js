@@ -7,13 +7,13 @@ const reconnectTracking = new Map();
 const sessionLocks = new Set();
 
 // ════════════════════════════════════════════════════════════════
-//  🔐  SECURITY: TOKEN ENCRYPTION & WEAKMAP (คงเดิม 100%)
+//  🔐  SECURITY: TOKEN ENCRYPTION & WEAKMAP
 // ════════════════════════════════════════════════════════════════
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY ? 
     crypto.createHash('sha256').update(process.env.ENCRYPTION_KEY).digest('base64').substring(0, 32) : 
     'default-key-change-me-32-chars!!';
 
-// ✅ MongoDB Schema สำหรับเก็บข้อมูลแทนไฟล์ JSON
+// ✅ MongoDB Schema
 const sessionSchema = new mongoose.Schema({
     sessionId: { type: String, required: true, unique: true },
     token: String,
@@ -59,7 +59,7 @@ if (ENCRYPTION_KEY === 'default-key-change-me-32-chars!!') {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  📊  METRICS & RATE LIMITER (คงเดิม 100% ทุกบรรทัด)
+//  📊  METRICS & RATE LIMITER
 // ════════════════════════════════════════════════════════════════
 class MetricsCollector {
     constructor() {
@@ -116,14 +116,11 @@ class RateLimiter {
 const actionLimiter = new RateLimiter(config.limits.rateLimitRequests, config.limits.rateLimitWindowMs);
 
 // ════════════════════════════════════════════════════════════════
-//  💾  PERSISTENCE (MONGODB CLOUD VERSION)
+//  💾  PERSISTENCE (MONGODB VERSION)
 // ════════════════════════════════════════════════════════════════
 async function connectDB() {
     try {
-        if (!process.env.MONGO_URI) {
-            console.error("❌ [DATABASE] MONGO_URI is not defined in environment variables!");
-            return;
-        }
+        if (!process.env.MONGO_URI) throw new Error("MONGO_URI_MISSING");
         await mongoose.connect(process.env.MONGO_URI);
         console.log("✅ [DATABASE] Connected to MongoDB Atlas Successfully");
     } catch (err) {
@@ -132,15 +129,12 @@ async function connectDB() {
 }
 
 async function saveDatabase() {
-    // ในระบบ MongoDB ข้อมูลจะถูกบันทึกทันทีผ่านฟังก์ชัน createSession
-    // ฟังก์ชันนี้คงไว้เพื่อไม่ให้ index.js เรียกใช้แล้ว Error
     console.log("[DATABASE] Cloud synchronization verified.");
 }
 
 async function loadDatabase() {
     try {
         const data = await SessionModel.find({});
-        // ถอดรหัส Token ก่อนส่งกลับไปใช้งาน
         return data.map(s => ({
             ...s._doc,
             token: decryptToken(s.token)
@@ -152,13 +146,11 @@ async function loadDatabase() {
 }
 
 async function createBackup() {
-    // MongoDB Atlas มีระบบ Backup ในตัวอยู่แล้ว 
-    // แต่เราคงฟังก์ชันไว้ตามโครงสร้างเดิมของคุณ
-    console.log(`[BACKUP] MongoDB Atlas automatic backup is active.`);
+    console.log("[BACKUP] MongoDB Atlas provides automatic backups.");
 }
 
 // ════════════════════════════════════════════════════════════════
-//  📢  NOTIFICATION SYSTEM (คงเดิม 100%)
+//  📢  NOTIFICATION SYSTEM
 // ════════════════════════════════════════════════════════════════
 const ALERT_WEBHOOK = process.env.ALERT_WEBHOOK_URL;
 let alertWebhook = null;
@@ -186,27 +178,21 @@ async function sendAlert(title, description, color = '#f85149') {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  📝  CORE SESSION OPERATIONS (คงเดิม 100% แต่เปลี่ยนที่เก็บ)
+//  📝  CORE SESSION OPERATIONS
 // ════════════════════════════════════════════════════════════════
 async function createSession(sessionId, data, token) {
     if (sessions.has(sessionId)) return false;
     
-    try {
-        // บันทึกลง MongoDB (Upsert)
-        const encryptedToken = encryptToken(token);
-        await SessionModel.findOneAndUpdate(
-            { sessionId }, 
-            { ...data, token: encryptedToken }, 
-            { upsert: true, new: true }
-        );
+    const encryptedToken = encryptToken(token);
+    await SessionModel.findOneAndUpdate(
+        { sessionId }, 
+        { ...data, token: encryptedToken }, 
+        { upsert: true }
+    );
 
-        sessions.set(sessionId, { ...data, createdAt: Date.now(), lastActivity: Date.now() });
-        storeToken(sessions.get(sessionId), token);
-        return true;
-    } catch (err) {
-        console.error("[DATABASE] Create session error:", err.message);
-        return false;
-    }
+    sessions.set(sessionId, { ...data, createdAt: Date.now(), lastActivity: Date.now() });
+    storeToken(sessions.get(sessionId), token);
+    return true;
 }
 
 function getSession(sessionId) {
@@ -230,7 +216,6 @@ async function deleteSession(sessionId) {
         try { session.connection.destroy(); } catch {}
     }
 
-    // ลบออกจาก MongoDB และ Memory
     await SessionModel.deleteOne({ sessionId });
     sessions.delete(sessionId);
     reconnectTracking.delete(sessionId);
