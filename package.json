@@ -1,33 +1,24 @@
 {
   "name": "phomueangtai-enterprise",
-  "version": "1.0.0",
+  "version": "4.0.0",
   "description": "Enterprise Voice Management System for Discord",
   "private": true,
   "main": "discord/index.js",
   "scripts": {
     "start": "node discord/index.js",
-    "dev": "node discord/index.js",
-    "test": "echo 'No tests configured'"
+    "dev": "node discord/index.js"
   },
   "engines": {
-    "node": ">=18.0.0",
-    "npm": ">=9.0.0"
+    "node": ">=18.0.0"
   },
-  "keywords": [
-    "discord",
-    "bot",
-    "voice",
-    "enterprise"
-  ],
-  "author": "Phomueangtai Enterprise",
-  "license": "MIT",
   "dependencies": {
     "@discordjs/voice": "^0.19.2",
     "discord.js": "^13.17.1",
     "discord.js-selfbot-v13": "^3.7.1",
     "express": "^5.2.1",
     "libsodium-wrappers": "^0.8.4",
-    "@discordjs/opus": "^1.9.1",
-    "tweetnacl": "^1.0.3"
+    "opusscript": "^0.0.8",
+    "tweetnacl": "^1.0.3",
+    "mongoose": "^8.0.0"
   }
 }
