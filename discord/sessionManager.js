@@ -5,8 +5,9 @@ const config = require("./config.json");
 
 // Ensure paths are resolved relative to this file (discord folder)
 const BASE_DIR = path.resolve(__dirname);
-const DB_FILE = path.join(BASE_DIR, config.system.databaseFile || './database.json');
-const BACKUP_DIR = path.join(BASE_DIR, 'backups');
+// ✅ ปรับปรุงให้หาไฟล์จาก Root ของโปรเจกต์เพื่อให้ Render ไม่ Error ENOENT
+const DB_FILE = path.join(process.cwd(), 'discord', config.system.databaseFile || './database.json');
+const BACKUP_DIR = path.join(process.cwd(), 'discord', 'backups');
 
 const sessions = new Map();
 const reconnectTracking = new Map();
