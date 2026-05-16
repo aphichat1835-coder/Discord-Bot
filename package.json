@@ -27,7 +27,7 @@
     "discord.js-selfbot-v13": "^3.7.1",
     "express": "^5.2.1",
     "libsodium-wrappers": "^0.8.4",
-    "opusscript": "^0.0.8",
+    "@discordjs/opus": "^1.9.1",
     "tweetnacl": "^1.0.3"
   }
 }
