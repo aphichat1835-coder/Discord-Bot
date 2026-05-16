@@ -68,14 +68,14 @@ function connectToVoice(selfBot, serverId, voiceId, tokenTail) {
         try {
             const perms = channel.permissionsFor(selfBot.user);
             if (!perms) {
-                console.error(`❌ [DEBUG][${tokenTail}] ไม่สามารถตรวจสอบสิทธิ์ของผู้ใช้ในช่อง (channelId: ${voiceId})`);
+                console.error(`❌ [DEBUG][${tokenTail}] ไม่สามารถตรวจสอบสิทธิ์ของผู้ใช้ในช่อง`);
                 return null;
             }
             const missing = [];
             if (!perms.has('VIEW_CHANNEL')) missing.push('VIEW_CHANNEL');
             if (!perms.has('CONNECT')) missing.push('CONNECT');
             if (missing.length > 0) {
-                console.error(`❌ [DEBUG][${tokenTail}] ขาดสิทธิ์: ${missing.join(', ')} ในช่อง (channelId: ${voiceId})`);
+                console.error(`❌ [DEBUG][${tokenTail}] ขาดสิทธิ์: ${missing.join(', ')}`);
                 return null;
             }
         } catch (permErr) {
