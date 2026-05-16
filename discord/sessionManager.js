@@ -3,13 +3,18 @@ const path = require("path");
 const crypto = require("crypto");
 const config = require("./config.json");
 
+// Ensure paths are resolved relative to this file (discord folder)
+const BASE_DIR = path.resolve(__dirname);
+const DB_FILE = path.join(BASE_DIR, config.system.databaseFile || './database.json');
+const BACKUP_DIR = path.join(BASE_DIR, 'backups');
+
 const sessions = new Map();
 const reconnectTracking = new Map();
 const sessionLocks = new Set();
 
-// ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════
 //  🔐  SECURITY: TOKEN ENCRYPTION & WEAKMAP
-// ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY ? 
     crypto.createHash('sha256').update(process.env.ENCRYPTION_KEY).digest('base64').substring(0, 32) : 
     'default-key-change-me-32-chars!!';
@@ -43,9 +48,14 @@ function getToken(sessionObj) {
     return tokenStore.get(sessionObj)?.[TOKEN_SYMBOL];
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// Warn if using default encryption key
+if (ENCRYPTION_KEY === 'default-key-change-me-32-chars!!') {
+    console.warn('[SECURITY] ENCRYPTION_KEY not set. Using default key — this is insecure. Please set ENCRYPTION_KEY env var.');
+}
+
+// ════════════════════════════════════════════════════════════════
 //  📊  METRICS & RATE LIMITER
-// ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════
 class MetricsCollector {
     constructor() {
         this.metrics = { sessionsStarted: 0, sessionsFailed: 0, reconnects: 0, uptime: Date.now() };
@@ -100,9 +110,9 @@ class RateLimiter {
 }
 const actionLimiter = new RateLimiter(config.limits.rateLimitRequests, config.limits.rateLimitWindowMs);
 
-// ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════
 //  💾  PERSISTENCE (ATOMIC DATABASE & BACKUP)
-// ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════
 let isSaving = false;
 let pendingSave = false;
 
@@ -120,9 +130,9 @@ async function saveDatabase() {
             startedAt: s.startedAt
         }));
 
-        const tempFile = config.system.databaseFile + '.tmp';
+        const tempFile = DB_FILE + '.tmp';
         await fs.writeFile(tempFile, JSON.stringify(data, null, 2));
-        await fs.rename(tempFile, config.system.databaseFile);
+        await fs.rename(tempFile, DB_FILE);
     } catch (err) {
         console.error("[DATABASE] Save error:", err.message);
     } finally {
@@ -136,9 +146,11 @@ async function saveDatabase() {
 
 async function loadDatabase() {
     try {
-        const data = await fs.readFile(config.system.databaseFile, "utf8");
+        const data = await fs.readFile(DB_FILE, "utf8");
         return JSON.parse(data);
-    } catch {
+    } catch (err) {
+        if (err.code === 'ENOENT') return [];
+        console.error('[DATABASE] load error:', err.message);
         return [];
     }
 }
@@ -146,18 +158,28 @@ async function loadDatabase() {
 const MAX_BACKUPS = 24;
 async function createBackup() {
     try {
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const backupFile = `./backups/database-${timestamp}.json`;
+        // If DB file doesn't exist, skip backup (not an error)
+        try {
+            await fs.access(DB_FILE);
+        } catch (err) {
+            if (err.code === 'ENOENT') {
+                console.warn('[BACKUP] database file not found, skipping backup');
+                return;
+            }
+            throw err;
+        }
 
-        await fs.mkdir('./backups', { recursive: true });
-        await fs.copyFile(config.system.databaseFile, backupFile);
+        await fs.mkdir(BACKUP_DIR, { recursive: true });
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const backupFile = path.join(BACKUP_DIR, `database-${timestamp}.json`);
+        await fs.copyFile(DB_FILE, backupFile);
         console.log(`[BACKUP] Created: ${backupFile}`);
 
-        const backups = await fs.readdir('./backups');
+        const backups = await fs.readdir(BACKUP_DIR);
         const sorted = backups.filter(f => f.startsWith('database-')).sort().reverse();
 
         for (let i = MAX_BACKUPS; i < sorted.length; i++) {
-            await fs.unlink(`./backups/${sorted[i]}`);
+            await fs.unlink(path.join(BACKUP_DIR, sorted[i]));
             console.log(`[BACKUP] Deleted old backup: ${sorted[i]}`);
         }
     } catch (err) {
@@ -165,9 +187,9 @@ async function createBackup() {
     }
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════
 //  📢  NOTIFICATION SYSTEM
-// ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════
 const ALERT_WEBHOOK = process.env.ALERT_WEBHOOK_URL;
 let alertWebhook = null;
 
@@ -193,9 +215,9 @@ async function sendAlert(title, description, color = '#f85149') {
     }
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════
 //  📝  CORE SESSION OPERATIONS
-// ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════
 function createSession(sessionId, data, token) {
     if (sessions.has(sessionId)) return false;
     sessions.set(sessionId, { ...data, createdAt: Date.now(), lastActivity: Date.now() });
