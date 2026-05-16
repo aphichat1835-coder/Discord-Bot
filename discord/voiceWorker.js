@@ -9,6 +9,7 @@ const CONFIG = {
     CONNECTION_TIMEOUT: 15000,
 };
 
+// ✅ เปลี่ยน Key จาก token เป็น sessionId เพื่อให้ 1 token แยกเงาได้หลาย session
 const clientPool = new Map(); 
 
 function getClientPoolSize() {
@@ -82,7 +83,7 @@ function connectToVoice(selfBot, serverId, voiceId, tokenTail) {
             console.warn(`⚠️ [DEBUG][${tokenTail}] ตรวจสอบสิทธิ์ล้มเหลว: ${permErr.message}`);
         }
 
-        const existingConn = getVoiceConnection(guild.id);
+        const existingConn = getVoiceConnection(guild.id, selfBot.user.id);
         if (existingConn) try { existingConn.destroy(); } catch {}
 
         const conn = joinVoiceChannel({
@@ -108,8 +109,9 @@ function connectToVoice(selfBot, serverId, voiceId, tokenTail) {
     }
 }
 
-async function cleanupClient(token) {
-    const poolData = clientPool.get(token);
+// ✅ เปลี่ยนการ Cleanup ให้ใช้ sessionId
+async function cleanupClient(sessionId) {
+    const poolData = clientPool.get(sessionId);
     if (!poolData) return;
 
     try {
@@ -124,17 +126,18 @@ async function cleanupClient(token) {
         console.error(`[CLEANUP] Error cleaning client: ${err.message}`);
     }
 
-    clientPool.delete(token);
+    clientPool.delete(sessionId);
 }
 
-async function getOrCreateClient(token) {
-    if (clientPool.has(token)) {
-        const existing = clientPool.get(token);
+// ✅ เปลี่ยนการสร้าง Client ให้ผูกกับ sessionId เพื่อแยกเงา
+async function getOrCreateClient(token, sessionId) {
+    if (clientPool.has(sessionId)) {
+        const existing = clientPool.get(sessionId);
         if (existing.client.user && existing.client.ws.status === 0) {
             return existing.client;
         } else {
-            console.warn(`[POOL] Stale client for token ...${token.slice(-4)}, recreating`);
-            await cleanupClient(token);
+            console.warn(`[POOL] Stale client for session ${sessionId}, recreating`);
+            await cleanupClient(sessionId);
         }
     }
 
@@ -148,7 +151,7 @@ async function getOrCreateClient(token) {
         const timer = setTimeout(() => {
             if (!isDestroyed) {
                 isDestroyed = true;
-                console.error(`[LOGIN] Timeout for token ...${token.slice(-4)}`);
+                console.error(`[LOGIN] Timeout for session ${sessionId}`);
                 selfBot.destroy().catch(() => {});
                 reject(new Error("LOGIN_TIMEOUT"));
             }
@@ -180,45 +183,31 @@ async function getOrCreateClient(token) {
 
     const poolData = { 
         client: selfBot, 
-        activeSessions: new Set(),
+        sessionId: sessionId,
         listeners: []
     };
 
-    clientPool.set(token, poolData);
+    clientPool.set(sessionId, poolData);
 
-    const errorHandler = () => handleClientFailure(token);
-    const invalidatedHandler = () => handleClientFailure(token);
+    const errorHandler = () => handleClientFailure(sessionId);
+    const invalidatedHandler = () => handleClientFailure(sessionId);
     const voiceStateHandler = (oldState, newState) => {
         if (!selfBot.user || oldState.id !== selfBot.user.id) return;
         if (oldState.channelId && !newState.channelId) {
-            const guildId = oldState.guild.id;
-            const pData = clientPool.get(token);
-            if (!pData) return;
-
-            let targetSessionId = null;
-            for (const sId of pData.activeSessions) {
-                const sess = sessionManager.getSession(sId);
-                if (sess && sess.serverId === guildId) {
-                    targetSessionId = sId;
-                    break;
-                }
-            }
-
-            if (!targetSessionId) return;
-            const sess = sessionManager.getSession(targetSessionId);
-            if (!sess || sess.reconnecting || sessionManager.isSessionLocked(targetSessionId)) return;
-            if (!sessionManager.lockSession(targetSessionId)) return;
+            const sess = sessionManager.getSession(sessionId);
+            if (!sess || sess.reconnecting || sessionManager.isSessionLocked(sessionId)) return;
+            if (!sessionManager.lockSession(sessionId)) return;
 
             sess.reconnecting = true;
-            const attempts = sessionManager.addReconnect(targetSessionId);
+            const attempts = sessionManager.addReconnect(sessionId);
 
             if (attempts >= CONFIG.MAX_RECONNECT_ATTEMPTS) {
                 sessionManager.sendAlert(
                     'Session Failed',
                     `Session ` + "`****${sess.tokenTail}`" + ` exceeded max reconnect attempts (${CONFIG.MAX_RECONNECT_ATTEMPTS}) and was terminated.\n\nServer: ${sess.serverName}`
                 );
-                stopSession(targetSessionId);
-                sessionManager.unlockSession(targetSessionId);
+                stopSession(sessionId);
+                sessionManager.unlockSession(sessionId);
                 return;
             }
 
@@ -227,16 +216,15 @@ async function getOrCreateClient(token) {
 
             sess.reconnectTimer = setTimeout(() => {
                 try {
-                    const currentSess = sessionManager.getSession(targetSessionId);
+                    const currentSess = sessionManager.getSession(sessionId);
                     if (currentSess && selfBot.user) {
-                        const tokenStr = sessionManager.getToken(currentSess);
                         const newConn = connectToVoice(selfBot, currentSess.serverId, currentSess.voiceId, currentSess.tokenTail);
                         if (newConn) currentSess.connection = newConn;
                     }
                 } finally {
-                    const currentSess = sessionManager.getSession(targetSessionId);
+                    const currentSess = sessionManager.getSession(sessionId);
                     if (currentSess) { currentSess.reconnecting = false; currentSess.reconnectTimer = null; }
-                    sessionManager.unlockSession(targetSessionId);
+                    sessionManager.unlockSession(sessionId);
                 }
             }, backoffDelay);
         }
@@ -255,26 +243,13 @@ async function getOrCreateClient(token) {
     return selfBot;
 }
 
-function handleClientFailure(token) {
-    const poolData = clientPool.get(token);
+function handleClientFailure(sessionId) {
+    const poolData = clientPool.get(sessionId);
     if (!poolData) return;
 
-    for (const sessionId of poolData.activeSessions) {
-        sessionManager.systemMetrics.increment('sessionsFailed');
-        sessionManager.deleteSession(sessionId);
-    }
-
-    cleanupClient(token);
-}
-
-function releaseClient(token, sessionId) {
-    const poolData = clientPool.get(token);
-    if (!poolData) return;
-
-    poolData.activeSessions.delete(sessionId);
-    if (poolData.activeSessions.size === 0) {
-        cleanupClient(token);
-    }
+    sessionManager.systemMetrics.increment('sessionsFailed');
+    sessionManager.deleteSession(sessionId);
+    cleanupClient(sessionId);
 }
 
 async function startSession(token, serverId, voiceId, isResume = false) {
@@ -286,10 +261,9 @@ async function startSession(token, serverId, voiceId, isResume = false) {
     if (sessionManager.getSession(sessionId)) throw new Error("SESSION_EXISTS");
 
     try {
-        const selfBot = await getOrCreateClient(token);
-        const poolData = clientPool.get(token);
-        poolData.activeSessions.add(sessionId);
-
+        // ✅ ส่ง sessionId เข้าไปเพื่อให้สร้าง Client แยกเงา
+        const selfBot = await getOrCreateClient(token, sessionId);
+        
         const sessionData = {
             sessionId, tokenTail, serverId, voiceId,
             serverName: selfBot.guilds.cache.get(serverId)?.name || serverId,
@@ -316,9 +290,8 @@ async function stopSession(sessionId) {
     const session = sessionManager.getSession(sessionId);
     if (!session) return;
 
-    const token = sessionManager.getToken(session);
     sessionManager.deleteSession(sessionId);
-    if (token) releaseClient(token, sessionId);
+    await cleanupClient(sessionId);
 }
 
 async function stopAll() {
@@ -362,11 +335,10 @@ async function autoResume() {
 async function healthCheck() {
     const sessions = sessionManager.getAllSessions();
     for (const [sessionId, session] of sessions) {
-        const token = sessionManager.getToken(session);
-        if (!token) continue;
-
-        const poolData = clientPool.get(token);
-        if (!poolData || !poolData.client.user) { stopSession(sessionId); continue; }
+        const poolData = clientPool.get(sessionId);
+        if (!poolData || !poolData.client.user) { 
+            continue; 
+        }
 
         const connStatus = session.connection?.state?.status;
         const needsRecovery = !session.connection || connStatus === VoiceConnectionStatus.Destroyed || connStatus === VoiceConnectionStatus.Disconnected;
