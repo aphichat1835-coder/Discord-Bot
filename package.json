@@ -1,6 +1,6 @@
 {
   "name": "phomueangtai-enterprise",
-  "version": "4.0.0",
+  "version": "4.0.1",
   "description": "Enterprise Voice Management System for Discord",
   "private": true,
   "main": "discord/index.js",
