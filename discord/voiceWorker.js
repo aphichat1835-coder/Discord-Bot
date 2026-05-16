@@ -57,10 +57,9 @@ function connectToVoice(selfBot, serverId, voiceId, tokenTail) {
             return null;
         }
 
-        // Accept both normal voice and stage voice channel types (discord.js v13 uses strings)
+        // Accept both normal voice and stage voice channel types
         const isVoiceChannel = channel.type === 'GUILD_VOICE' || channel.type === 'GUILD_STAGE_VOICE';
         if (!isVoiceChannel) {
-            // Log channel type for debugging (some sharded or cached states may differ)
             console.error(`❌ [DEBUG][${tokenTail}] ห้องนี้ไม่ใช่ช่องเสียง (Type: ${channel.type})`);
             return null;
         }
@@ -109,7 +108,6 @@ function connectToVoice(selfBot, serverId, voiceId, tokenTail) {
     }
 }
 
-// ✅ เปลี่ยนการ Cleanup ให้ใช้ sessionId
 async function cleanupClient(sessionId) {
     const poolData = clientPool.get(sessionId);
     if (!poolData) return;
@@ -129,7 +127,6 @@ async function cleanupClient(sessionId) {
     clientPool.delete(sessionId);
 }
 
-// ✅ เปลี่ยนการสร้าง Client ให้ผูกกับ sessionId เพื่อแยกเงา
 async function getOrCreateClient(token, sessionId) {
     if (clientPool.has(sessionId)) {
         const existing = clientPool.get(sessionId);
@@ -261,7 +258,6 @@ async function startSession(token, serverId, voiceId, isResume = false) {
     if (sessionManager.getSession(sessionId)) throw new Error("SESSION_EXISTS");
 
     try {
-        // ✅ ส่ง sessionId เข้าไปเพื่อให้สร้าง Client แยกเงา
         const selfBot = await getOrCreateClient(token, sessionId);
         
         const sessionData = {
@@ -271,7 +267,7 @@ async function startSession(token, serverId, voiceId, isResume = false) {
             startedAt: Date.now(),
         };
 
-        sessionManager.createSession(sessionId, sessionData, token);
+        await sessionManager.createSession(sessionId, sessionData, token);
 
         const session = sessionManager.getSession(sessionId);
         const conn = connectToVoice(selfBot, serverId, voiceId, tokenTail);
@@ -290,7 +286,7 @@ async function stopSession(sessionId) {
     const session = sessionManager.getSession(sessionId);
     if (!session) return;
 
-    sessionManager.deleteSession(sessionId);
+    await sessionManager.deleteSession(sessionId);
     await cleanupClient(sessionId);
 }
 
@@ -303,11 +299,11 @@ async function autoResume() {
     const savedData = await sessionManager.loadDatabase();
     if (!savedData || savedData.length === 0) return;
 
-    console.log(`[RESUME] Attempting to restore ${savedData.length} sessions...`);
+    console.log(`[RESUME] Attempting to restore ${savedData.length} sessions from Cloud...`);
     let restored = 0;
 
     const BATCH_SIZE = 3;
-    const DELAY_BETWEEN_BATCHES = 2000;
+    const DELAY_BETWEEN_BATCHES = 5000;
 
     for (let i = 0; i < savedData.length; i += BATCH_SIZE) {
         const batch = savedData.slice(i, i + BATCH_SIZE);
@@ -315,8 +311,7 @@ async function autoResume() {
         await Promise.allSettled(
             batch.map(async (data) => {
                 try {
-                    const token = sessionManager.decryptToken(data.token);
-                    await startSession(token, data.serverId, data.voiceId, true);
+                    await startSession(data.token, data.serverId, data.voiceId, true);
                     restored++;
                 } catch (err) {
                     console.error(`[RESUME] Failed for server ${data.serverId}: ${err.message}`);
