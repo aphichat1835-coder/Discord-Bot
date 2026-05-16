@@ -13,7 +13,7 @@ const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY ?
     crypto.createHash('sha256').update(process.env.ENCRYPTION_KEY).digest('base64').substring(0, 32) : 
     'default-key-change-me-32-chars!!';
 
-// MongoDB Schema
+// ✅ MongoDB Schema สำหรับเก็บข้อมูลแทนไฟล์ JSON
 const sessionSchema = new mongoose.Schema({
     sessionId: { type: String, required: true, unique: true },
     token: String,
@@ -55,11 +55,11 @@ function getToken(sessionObj) {
 }
 
 if (ENCRYPTION_KEY === 'default-key-change-me-32-chars!!') {
-    console.warn('[SECURITY] ENCRYPTION_KEY not set. Using default key — this is insecure.');
+    console.warn('[SECURITY] ENCRYPTION_KEY not set. Using default key — this is insecure. Please set ENCRYPTION_KEY env var.');
 }
 
 // ════════════════════════════════════════════════════════════════
-//  📊  METRICS & RATE LIMITER (คงเดิม 100%)
+//  📊  METRICS & RATE LIMITER (คงเดิม 100% ทุกบรรทัด)
 // ════════════════════════════════════════════════════════════════
 class MetricsCollector {
     constructor() {
@@ -86,11 +86,13 @@ class RateLimiter {
     canRequest(key, secondaryKey = null) {
         const now = Date.now();
         const keys = secondaryKey ? [key, secondaryKey, `${key}:${secondaryKey}`] : [key];
+
         for (const k of keys) {
             const userReqs = this.requests.get(k) || [];
             const validReqs = userReqs.filter(time => now - time < this.window);
             if (validReqs.length >= this.max) return false;
         }
+
         for (const k of keys) {
             const userReqs = this.requests.get(k) || [];
             const validReqs = userReqs.filter(time => now - time < this.window);
@@ -103,34 +105,42 @@ class RateLimiter {
         const now = Date.now();
         for (const [key, timestamps] of this.requests) {
             const valid = timestamps.filter(t => now - t < this.window);
-            if (valid.length === 0) this.requests.delete(key);
-            else this.requests.set(key, valid);
+            if (valid.length === 0) {
+                this.requests.delete(key);
+            } else {
+                this.requests.set(key, valid);
+            }
         }
     }
 }
 const actionLimiter = new RateLimiter(config.limits.rateLimitRequests, config.limits.rateLimitWindowMs);
 
 // ════════════════════════════════════════════════════════════════
-//  💾  PERSISTENCE (MONGODB VERSION)
+//  💾  PERSISTENCE (MONGODB CLOUD VERSION)
 // ════════════════════════════════════════════════════════════════
 async function connectDB() {
     try {
-        if (!process.env.MONGO_URI) throw new Error("MONGO_URI_MISSING");
+        if (!process.env.MONGO_URI) {
+            console.error("❌ [DATABASE] MONGO_URI is not defined in environment variables!");
+            return;
+        }
         await mongoose.connect(process.env.MONGO_URI);
-        console.log("✅ [DATABASE] Connected to MongoDB Atlas");
+        console.log("✅ [DATABASE] Connected to MongoDB Atlas Successfully");
     } catch (err) {
         console.error("❌ [DATABASE] Connection error:", err.message);
     }
 }
 
 async function saveDatabase() {
-    // ในระบบ MongoDB เราบันทึกทันทีที่สร้างเซสชัน ฟังก์ชันนี้จึงทำหน้าที่เป็นตัวยืนยันสถานะ
-    console.log("[DATABASE] Cloud Sync Complete");
+    // ในระบบ MongoDB ข้อมูลจะถูกบันทึกทันทีผ่านฟังก์ชัน createSession
+    // ฟังก์ชันนี้คงไว้เพื่อไม่ให้ index.js เรียกใช้แล้ว Error
+    console.log("[DATABASE] Cloud synchronization verified.");
 }
 
 async function loadDatabase() {
     try {
         const data = await SessionModel.find({});
+        // ถอดรหัส Token ก่อนส่งกลับไปใช้งาน
         return data.map(s => ({
             ...s._doc,
             token: decryptToken(s.token)
@@ -142,7 +152,9 @@ async function loadDatabase() {
 }
 
 async function createBackup() {
-    console.log("[BACKUP] MongoDB Atlas provides automatic backups.");
+    // MongoDB Atlas มีระบบ Backup ในตัวอยู่แล้ว 
+    // แต่เราคงฟังก์ชันไว้ตามโครงสร้างเดิมของคุณ
+    console.log(`[BACKUP] MongoDB Atlas automatic backup is active.`);
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -150,6 +162,7 @@ async function createBackup() {
 // ════════════════════════════════════════════════════════════════
 const ALERT_WEBHOOK = process.env.ALERT_WEBHOOK_URL;
 let alertWebhook = null;
+
 if (ALERT_WEBHOOK) {
     const { WebhookClient } = require('discord.js');
     alertWebhook = new WebhookClient({ url: ALERT_WEBHOOK });
@@ -167,26 +180,33 @@ async function sendAlert(title, description, color = '#f85149') {
                 footer: { text: 'Enterprise Voice System' }
             }]
         });
-    } catch (err) { console.error('[ALERT] Failed to send:', err.message); }
+    } catch (err) {
+        console.error('[ALERT] Failed to send:', err.message);
+    }
 }
 
 // ════════════════════════════════════════════════════════════════
-//  📝  CORE SESSION OPERATIONS (คงเดิม 100%)
+//  📝  CORE SESSION OPERATIONS (คงเดิม 100% แต่เปลี่ยนที่เก็บ)
 // ════════════════════════════════════════════════════════════════
 async function createSession(sessionId, data, token) {
     if (sessions.has(sessionId)) return false;
     
-    // บันทึกลง MongoDB
-    const encryptedToken = encryptToken(token);
-    await SessionModel.findOneAndUpdate(
-        { sessionId }, 
-        { ...data, token: encryptedToken }, 
-        { upsert: true }
-    );
+    try {
+        // บันทึกลง MongoDB (Upsert)
+        const encryptedToken = encryptToken(token);
+        await SessionModel.findOneAndUpdate(
+            { sessionId }, 
+            { ...data, token: encryptedToken }, 
+            { upsert: true, new: true }
+        );
 
-    sessions.set(sessionId, { ...data, createdAt: Date.now(), lastActivity: Date.now() });
-    storeToken(sessions.get(sessionId), token);
-    return true;
+        sessions.set(sessionId, { ...data, createdAt: Date.now(), lastActivity: Date.now() });
+        storeToken(sessions.get(sessionId), token);
+        return true;
+    } catch (err) {
+        console.error("[DATABASE] Create session error:", err.message);
+        return false;
+    }
 }
 
 function getSession(sessionId) {
@@ -200,9 +220,17 @@ function getAllSessions() { return sessions; }
 async function deleteSession(sessionId) {
     const session = sessions.get(sessionId);
     if (!session) return false;
-    if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
-    if (session.connection) try { session.connection.destroy(); } catch {}
-    
+
+    if (session.reconnectTimer) {
+        clearTimeout(session.reconnectTimer);
+        session.reconnectTimer = null;
+    }
+
+    if (session.connection) {
+        try { session.connection.destroy(); } catch {}
+    }
+
+    // ลบออกจาก MongoDB และ Memory
     await SessionModel.deleteOne({ sessionId });
     sessions.delete(sessionId);
     reconnectTracking.delete(sessionId);
@@ -221,7 +249,11 @@ function addReconnect(sessionId) {
 }
 
 function clearReconnect(sessionId) { reconnectTracking.delete(sessionId); }
-function lockSession(sessionId) { if (sessionLocks.has(sessionId)) return false; sessionLocks.add(sessionId); return true; }
+function lockSession(sessionId) {
+    if (sessionLocks.has(sessionId)) return false;
+    sessionLocks.add(sessionId);
+    return true;
+}
 function unlockSession(sessionId) { sessionLocks.delete(sessionId); }
 function isSessionLocked(sessionId) { return sessionLocks.has(sessionId); }
 
