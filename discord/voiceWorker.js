@@ -45,7 +45,10 @@ const stopQueue = new OperationQueue(3);
 function connectToVoice(selfBot, serverId, voiceId, tokenTail) {
     try {
         const guild = selfBot.guilds.cache.get(serverId);
-        if (!guild || !guild.voiceAdapterCreator) return null;
+        if (!guild || !guild.voiceAdapterCreator) {
+            console.error(`❌ [DEBUG][${tokenTail}] ไม่พบ guild หรือไม่มี voiceAdapterCreator (serverId: ${serverId})`);
+            return null;
+        }
         const channel = guild.channels.cache.get(voiceId);
 
         if (!channel) {
@@ -56,8 +59,27 @@ function connectToVoice(selfBot, serverId, voiceId, tokenTail) {
         // Accept both normal voice and stage voice channel types (discord.js v13 uses strings)
         const isVoiceChannel = channel.type === 'GUILD_VOICE' || channel.type === 'GUILD_STAGE_VOICE';
         if (!isVoiceChannel) {
+            // Log channel type for debugging (some sharded or cached states may differ)
             console.error(`❌ [DEBUG][${tokenTail}] ห้องนี้ไม่ใช่ช่องเสียง (Type: ${channel.type})`);
             return null;
+        }
+
+        // Permission checks: ensure the account can view and connect to the channel
+        try {
+            const perms = channel.permissionsFor(selfBot.user);
+            if (!perms) {
+                console.error(`❌ [DEBUG][${tokenTail}] ไม่สามารถตรวจสอบสิทธิ์ของผู้ใช้ในช่อง (channelId: ${voiceId})`);
+                return null;
+            }
+            const missing = [];
+            if (!perms.has('VIEW_CHANNEL')) missing.push('VIEW_CHANNEL');
+            if (!perms.has('CONNECT')) missing.push('CONNECT');
+            if (missing.length > 0) {
+                console.error(`❌ [DEBUG][${tokenTail}] ขาดสิทธิ์: ${missing.join(', ')} ในช่อง (channelId: ${voiceId})`);
+                return null;
+            }
+        } catch (permErr) {
+            console.warn(`⚠️ [DEBUG][${tokenTail}] ตรวจสอบสิทธิ์ล้มเหลว: ${permErr.message}`);
         }
 
         const existingConn = getVoiceConnection(guild.id);
@@ -73,12 +95,17 @@ function connectToVoice(selfBot, serverId, voiceId, tokenTail) {
         });
 
         const connTimer = setTimeout(() => {
-            if (conn.state.status !== VoiceConnectionStatus.Ready) conn.destroy();
+            try {
+                if (conn.state && conn.state.status !== VoiceConnectionStatus.Ready) conn.destroy();
+            } catch (e) { try { conn.destroy(); } catch {} }
         }, CONFIG.CONNECTION_TIMEOUT);
 
         conn.once(VoiceConnectionStatus.Ready, () => clearTimeout(connTimer));
         return conn;
-    } catch { return null; }
+    } catch (err) {
+        console.error(`❌ [DEBUG][connectToVoice] Error: ${err?.message || err}`);
+        return null;
+    }
 }
 
 async function cleanupClient(token) {
