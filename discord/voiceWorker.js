@@ -48,8 +48,15 @@ function connectToVoice(selfBot, serverId, voiceId, tokenTail) {
         if (!guild || !guild.voiceAdapterCreator) return null;
         const channel = guild.channels.cache.get(voiceId);
 
-        if (!channel || (channel.type !== 2 && channel.type !== 13)) {
-            console.error(`❌ [DEBUG][${tokenTail}] ห้องนี้ไม่ใช่ช่องเสียง (Type: ${channel?.type})`);
+        if (!channel) {
+            console.error(`❌ [DEBUG][${tokenTail}] ไม่พบช่อง (channelId: ${voiceId})`);
+            return null;
+        }
+
+        // Accept both normal voice and stage voice channel types (discord.js v13 uses strings)
+        const isVoiceChannel = channel.type === 'GUILD_VOICE' || channel.type === 'GUILD_STAGE_VOICE';
+        if (!isVoiceChannel) {
+            console.error(`❌ [DEBUG][${tokenTail}] ห้องนี้ไม่ใช่ช่องเสียง (Type: ${channel.type})`);
             return null;
         }
 
@@ -181,7 +188,7 @@ async function getOrCreateClient(token) {
             if (attempts >= CONFIG.MAX_RECONNECT_ATTEMPTS) {
                 sessionManager.sendAlert(
                     'Session Failed',
-                    `Session \`****${sess.tokenTail}\` exceeded max reconnect attempts (${CONFIG.MAX_RECONNECT_ATTEMPTS}) and was terminated.\n\nServer: ${sess.serverName}`
+                    `Session ` + "`****${sess.tokenTail}`" + ` exceeded max reconnect attempts (${CONFIG.MAX_RECONNECT_ATTEMPTS}) and was terminated.\n\nServer: ${sess.serverName}`
                 );
                 stopSession(targetSessionId);
                 sessionManager.unlockSession(targetSessionId);
