@@ -9,7 +9,6 @@ const CONFIG = {
     CONNECTION_TIMEOUT: 15000,
 };
 
-// ✅ เปลี่ยน Key จาก token เป็น sessionId เพื่อให้ 1 token แยกเงาได้หลาย session
 const clientPool = new Map(); 
 
 function getClientPoolSize() {
@@ -38,7 +37,14 @@ class OperationQueue {
         if (this.running >= this.concurrency || this.queue.length === 0) return;
         this.running++;
         const { fn, resolve, reject } = this.queue.shift();
-        try { resolve(await fn()); } catch (err) { reject(err); } finally { this.running--; this.process(); }
+        try { 
+            resolve(await fn()); 
+        } catch (err) { 
+            reject(err); 
+        } finally { 
+            this.running--; 
+            this.process(); 
+        }
     }
 }
 const stopQueue = new OperationQueue(3);
@@ -57,14 +63,12 @@ function connectToVoice(selfBot, serverId, voiceId, tokenTail) {
             return null;
         }
 
-        // Accept both normal voice and stage voice channel types
         const isVoiceChannel = channel.type === 'GUILD_VOICE' || channel.type === 'GUILD_STAGE_VOICE';
         if (!isVoiceChannel) {
             console.error(`❌ [DEBUG][${tokenTail}] ห้องนี้ไม่ใช่ช่องเสียง (Type: ${channel.type})`);
             return null;
         }
 
-        // Permission checks: ensure the account can view and connect to the channel
         try {
             const perms = channel.permissionsFor(selfBot.user);
             if (!perms) {
@@ -201,7 +205,7 @@ async function getOrCreateClient(token, sessionId) {
             if (attempts >= CONFIG.MAX_RECONNECT_ATTEMPTS) {
                 sessionManager.sendAlert(
                     'Session Failed',
-                    `Session ` + "`****${sess.tokenTail}`" + ` exceeded max reconnect attempts (${CONFIG.MAX_RECONNECT_ATTEMPTS}) and was terminated.\n\nServer: ${sess.serverName}`
+                    `Session ****${sess.tokenTail} exceeded max reconnect attempts (${CONFIG.MAX_RECONNECT_ATTEMPTS}) and was terminated.\n\nServer: ${sess.serverName}`
                 );
                 stopSession(sessionId);
                 sessionManager.unlockSession(sessionId);
@@ -271,13 +275,18 @@ async function startSession(token, serverId, voiceId, isResume = false) {
 
         const session = sessionManager.getSession(sessionId);
         const conn = connectToVoice(selfBot, serverId, voiceId, tokenTail);
-        if (conn) session.connection = conn;
+        if (conn) {
+            session.connection = conn;
+        } else {
+            await stopSession(sessionId);
+            throw new Error("VOICE_NOT_FOUND");
+        }
 
         if (!isResume) sessionManager.systemMetrics.increment('sessionsStarted');
 
         return tokenTail;
     } catch (err) {
-        sessionManager.systemMetrics.increment('sessionsFailed');
+        if (!isResume) sessionManager.systemMetrics.increment('sessionsFailed');
         throw err;
     }
 }
@@ -293,6 +302,14 @@ async function stopSession(sessionId) {
 async function stopAll() {
     const sessionIds = [...sessionManager.getAllSessions().keys()];
     await Promise.allSettled(sessionIds.map(id => stopQueue.add(() => stopSession(id))));
+}
+
+async function pauseAll() {
+    const sessionIds = [...sessionManager.getAllSessions().keys()];
+    await Promise.allSettled(sessionIds.map(async (id) => {
+        await sessionManager.pauseSession(id);
+        await cleanupClient(id);
+    }));
 }
 
 async function autoResume() {
@@ -341,12 +358,16 @@ async function healthCheck() {
         if (needsRecovery && !session.reconnecting && !sessionManager.isSessionLocked(sessionId)) {
             if (!sessionManager.lockSession(sessionId)) continue;
             session.reconnecting = true;
-            const conn = connectToVoice(poolData.client, session.serverId, session.voiceId, session.tokenTail);
-            if (conn) session.connection = conn;
-            session.reconnecting = false;
-            sessionManager.unlockSession(sessionId);
+            try {
+                const conn = connectToVoice(poolData.client, session.serverId, session.voiceId, session.tokenTail);
+                if (conn) session.connection = conn;
+            } finally {
+                session.reconnecting = false;
+                sessionManager.unlockSession(sessionId);
+            }
         }
     }
+    setTimeout(healthCheck, 30000);
 }
 
 async function cleanupIdleSessions() {
@@ -362,4 +383,6 @@ async function cleanupIdleSessions() {
     }
 }
 
-module.exports = { startSession, stopSession, stopAll, healthCheck, autoResume, cleanupIdleSessions, getClientPoolSize };
+setTimeout(healthCheck, 30000);
+
+module.exports = { startSession, stopSession, stopAll, pauseAll, autoResume, cleanupIdleSessions, getClientPoolSize };
