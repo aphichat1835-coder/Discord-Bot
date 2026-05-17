@@ -10,11 +10,44 @@
         "idleTimeoutMs": 86400000
     },
     "channels": {
-        "logName": "manager-logs"
+        "actionLog": "manager-logs",
+        "errorLog": "error-logs"
     },
     "system": {
         "databaseFile": "./database.json",
         "themeColor": "#2b2d31",
-        "bannerUrl": ""
+        "bannerUrl": "https://cdn.discordapp.com/attachments/1463891557940854900/1505324265224929280/image0.gif?ex=6a0a35f8&is=6a08e478&hm=e0672464b94638d244e9e8f7664fd5cd7103c625ba11fd42e8ce961f4821f870&"
+    },
+    "emojis": {
+        "universe": "<a:UNIVERSE52:1505294987133452392>",
+        "dreamworld": "<a:129_dreamworld:1505303132840661032>",
+        "dev": "<:developer:1505303237585141770>",
+        "signal": "<a:a09_onew1ss:1471875969823281253>",
+        "stop": "<a:emoji_138:1411758419735613520>",
+        "halt": "<a:r05_onew1ss:1471485924033695875>",
+        "lock": "<:a00_onew1ss:1471892553002520587>",
+        "key": "🔑",
+        "shield": "<:a00_onew1ss:1471892553002520587>",
+        "alert": "<a:crt18:1505295030892494948>",
+        "save": "<a:crt17:1505295037213184161>",
+        "robot": "🤖",
+        "sword": "<:block:1464698500364108011>",
+        "hammer": "<:1d84bdad45ba49bba8c4bc58ccd6de24:1383225796310863975>",
+        "hourglass": "<a:01:1464333851299024957>",
+        "trash": "🗑️",
+        "target": "<a:SP:1418496150998220841>",
+        "announce": "<a:r12_onew1ss:1471894323757846642>",
+        "clipboard": "📋",
+        "user": "👤",
+        "globe": "🌐",
+        "sound": "🔊",
+        "chart": "📊",
+        "books": "📚",
+        "success": "<a:Halloween_clyde_black:1418502999893999727>",
+        "fail": "<a:DG17:1348267108269691036>",
+        "no_entry": "<a:emoji_29:1505287558303842454>",
+        "warning": "⚠️",
+        "refresh": "<a:b20_onew1ss:1494160910065860679>",
+        "timer": "⏱️"
     }
 }
