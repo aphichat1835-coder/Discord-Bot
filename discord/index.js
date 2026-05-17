@@ -262,6 +262,7 @@ client.on("interactionCreate", async (interaction) => { try { await commands.han
 client.on("error", (err) => { console.error("[CLIENT_ERROR]", err.message); });
 client.on("warn", (warn) => { console.warn("[CLIENT_WARN]", warn); });
 
+// 🔄 BACKGROUND TASKS
 setInterval(async () => { try { await commands.updatePanel(); } catch (err) { console.error("[PANEL_UPDATE] Error:", err.message); } }, 15000);
 setInterval(async () => { try { await voiceWorker.cleanupIdleSessions(); } catch (err) { console.error("[CLEANUP_IDLE] Error:", err.message); } }, 3600000);
 setInterval(() => { try { sessionManager.actionLimiter.cleanup(); } catch (err) { console.error("[LIMITER_CLEANUP] Error:", err.message); } }, 300000);
@@ -279,6 +280,15 @@ setInterval(async () => {
         }
     } catch (err) { console.error("[PANEL_VALIDATION] Error:", err.message); }
 }, 3600000);
+
+// ศูนย์กลางควบคุม Health Check ป้องกัน Thundering Herd
+setInterval(async () => {
+    try {
+        await voiceWorker.healthCheck();
+    } catch (err) {
+        console.error("[HEALTH_CHECK] Error:\n", err.message);
+    }
+}, 30000);
 
 async function shutdown(signal) {
     console.log(`\n⛔ [SHUTDOWN] Received ${signal} — initiating graceful shutdown...`);
