@@ -367,7 +367,6 @@ async function healthCheck() {
             }
         }
     }
-    setTimeout(healthCheck, 30000);
 }
 
 async function cleanupIdleSessions() {
@@ -383,6 +382,7 @@ async function cleanupIdleSessions() {
     }
 }
 
-setTimeout(healthCheck, 30000);
+// นำ setTimeout(healthCheck) ออกไปแล้ว เพื่อให้ index.js เป็นคนควบคุมจังหวะ 100% ป้องกันพายุรีเควสต์
 
-module.exports = { startSession, stopSession, stopAll, pauseAll, autoResume, cleanupIdleSessions, getClientPoolSize };
+module.exports = { startSession, stopSession, stopAll, pauseAll, autoResume, cleanupIdleSessions, getClientPoolSize, healthCheck };
+
