@@ -13,7 +13,6 @@ const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY ?
     crypto.createHash('sha256').update(process.env.ENCRYPTION_KEY).digest('base64').substring(0, 32) : 
     'default-key-change-me-32-chars!!';
 
-// ✅ MongoDB Schema
 const sessionSchema = new mongoose.Schema({
     sessionId: { type: String, required: true, unique: true },
     token: String,
@@ -21,26 +20,42 @@ const sessionSchema = new mongoose.Schema({
     voiceId: String,
     serverName: String,
     tokenTail: String,
-    startedAt: { type: Number, default: Date.now }
+    startedAt: { type: Number, default: Date.now },
+    lastActivity: { type: Number, default: Date.now }
 });
 const SessionModel = mongoose.model("Session", sessionSchema);
 
+const snapshotSchema = new mongoose.Schema({
+    snapshotId: { type: String, required: true, unique: true },
+    guildId: String,
+    data: Object,
+    createdAt: { type: Number, default: Date.now }
+});
+const SnapshotModel = mongoose.model("Snapshot", snapshotSchema);
+
 function encryptToken(text) {
+    if (!text) return null;
     const iv = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY), iv);
+    const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY, 'utf8'), iv);
     let encrypted = cipher.update(text, 'utf8', 'hex');
     encrypted += cipher.final('hex');
     return iv.toString('hex') + ':' + encrypted;
 }
 
 function decryptToken(text) {
+    if (!text) return null;
     const parts = text.split(':');
-    const iv = Buffer.from(parts.shift(), 'hex');
-    const encryptedText = parts.join(':');
-    const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY), iv);
-    let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
-    decrypted += decipher.final('utf8');
-    return decrypted;
+    if (parts.length < 2) return null;
+    try {
+        const iv = Buffer.from(parts.shift(), 'hex');
+        const encryptedText = parts.join(':');
+        const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY, 'utf8'), iv);
+        let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
+        decrypted += decipher.final('utf8');
+        return decrypted;
+    } catch (err) {
+        return null;
+    }
 }
 
 const tokenStore = new WeakMap();
@@ -83,22 +98,14 @@ class RateLimiter {
         this.window = windowMs;
         this.requests = new Map();
     }
-    canRequest(key, secondaryKey = null) {
+    canRequest(key) {
         const now = Date.now();
-        const keys = secondaryKey ? [key, secondaryKey, `${key}:${secondaryKey}`] : [key];
+        const userReqs = this.requests.get(key) || [];
+        const validReqs = userReqs.filter(time => now - time < this.window);
+        if (validReqs.length >= this.max) return false;
 
-        for (const k of keys) {
-            const userReqs = this.requests.get(k) || [];
-            const validReqs = userReqs.filter(time => now - time < this.window);
-            if (validReqs.length >= this.max) return false;
-        }
-
-        for (const k of keys) {
-            const userReqs = this.requests.get(k) || [];
-            const validReqs = userReqs.filter(time => now - time < this.window);
-            validReqs.push(now);
-            this.requests.set(k, validReqs);
-        }
+        validReqs.push(now);
+        this.requests.set(key, validReqs);
         return true;
     }
     cleanup() {
@@ -116,7 +123,7 @@ class RateLimiter {
 const actionLimiter = new RateLimiter(config.limits.rateLimitRequests, config.limits.rateLimitWindowMs);
 
 // ════════════════════════════════════════════════════════════════
-//  💾  PERSISTENCE (MONGODB VERSION)
+//  💾  PERSISTENCE
 // ════════════════════════════════════════════════════════════════
 async function connectDB() {
     try {
@@ -135,10 +142,14 @@ async function saveDatabase() {
 async function loadDatabase() {
     try {
         const data = await SessionModel.find({});
-        return data.map(s => ({
-            ...s._doc,
-            token: decryptToken(s.token)
-        }));
+        const validData = [];
+        for (const s of data) {
+            const rawToken = decryptToken(s.token);
+            if (rawToken) {
+                validData.push({ ...s._doc, token: rawToken });
+            }
+        }
+        return validData;
     } catch (err) {
         console.error('[DATABASE] Load error:', err.message);
         return [];
@@ -147,6 +158,12 @@ async function loadDatabase() {
 
 async function createBackup() {
     console.log("[BACKUP] MongoDB Atlas provides automatic backups.");
+}
+
+async function saveSnapshot(guildId, snapshotData) {
+    const snapshotId = `${guildId}_${Date.now()}`;
+    await SnapshotModel.create({ snapshotId, guildId, data: snapshotData });
+    return snapshotId;
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -186,7 +203,7 @@ async function createSession(sessionId, data, token) {
     const encryptedToken = encryptToken(token);
     await SessionModel.findOneAndUpdate(
         { sessionId }, 
-        { ...data, token: encryptedToken }, 
+        { ...data, token: encryptedToken, lastActivity: Date.now() }, 
         { upsert: true }
     );
 
@@ -197,7 +214,10 @@ async function createSession(sessionId, data, token) {
 
 function getSession(sessionId) {
     const session = sessions.get(sessionId);
-    if (session) session.lastActivity = Date.now();
+    if (session) {
+        session.lastActivity = Date.now();
+        SessionModel.updateOne({ sessionId }, { lastActivity: session.lastActivity }).catch(()=>{});
+    }
     return session ?? null;
 }
 
@@ -223,6 +243,15 @@ async function deleteSession(sessionId) {
     return true;
 }
 
+async function pauseSession(sessionId) {
+    const session = sessions.get(sessionId);
+    if (!session) return false;
+    if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
+    if (session.connection) { try { session.connection.destroy(); } catch {} }
+    sessionLocks.delete(sessionId);
+    return true;
+}
+
 function addReconnect(sessionId) {
     const now = Date.now();
     let history = reconnectTracking.get(sessionId) || [];
@@ -243,8 +272,8 @@ function unlockSession(sessionId) { sessionLocks.delete(sessionId); }
 function isSessionLocked(sessionId) { return sessionLocks.has(sessionId); }
 
 module.exports = {
-    connectDB, createSession, getSession, getAllSessions, deleteSession,
+    connectDB, createSession, getSession, getAllSessions, deleteSession, pauseSession,
     addReconnect, clearReconnect, lockSession, unlockSession, isSessionLocked,
     systemMetrics, actionLimiter, loadDatabase, saveDatabase,
-    getToken, decryptToken, createBackup, sendAlert
+    getToken, decryptToken, createBackup, sendAlert, saveSnapshot
 };
