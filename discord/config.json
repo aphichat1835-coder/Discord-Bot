@@ -10,8 +10,7 @@
         "idleTimeoutMs": 86400000
     },
     "channels": {
-        "actionLog": "manager-logs",
-        "errorLog": "error-logs"
+        "logName": "manager-logs"
     },
     "system": {
         "databaseFile": "./database.json",
