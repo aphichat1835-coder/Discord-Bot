@@ -8,7 +8,8 @@ process.on("unhandledRejection", (reason) => {
     console.error("[CRITICAL] unhandledRejection:", reason?.message ?? reason);
 });
 
-const { Client, Intents } = require("discord.js");
+// [BUG FIX]: ย้าย MessageEmbed มาประกาศรวมไว้ที่ด้านบนสุดตามหลัก Best Practice
+const { Client, Intents, MessageEmbed } = require("discord.js");
 const express = require("express");
 const config = require("./config.json");
 const sessionManager = require("./sessionManager");
@@ -244,12 +245,61 @@ client.once("ready", async () => {
     } catch (err) { console.error("[RESUME] Error during session resume:", err.message); }
 });
 
+const mentionSpamTracker = new Map();
+
 client.on("messageCreate", async (msg) => { 
     if (msg.guild && !msg.author.bot && msg.mentions.everyone && !msg.member.permissions.has("ADMINISTRATOR")) {
-        await msg.delete().catch(()=>{});
-        await msg.member.timeout(600000, "Anti-Raid").catch(()=>{});
-        msg.channel.send(`> ${config.emojis.shield} <@${msg.author.id}> ถูกระงับสิทธิ์ชั่วคราวฐานสแปมแท็ก`);
+        const now = Date.now();
+        let userData = mentionSpamTracker.get(msg.author.id) || { messages: [], timestamps: [] };
+        
+        // [BUG FIX]: กรองทั้ง timestamps และ messages ที่เก่าเกิน 1 นาทีออก เพื่อป้องกัน Memory Leak
+        const cutoff = now - 60000;
+        const filteredTimestamps = [];
+        const filteredMessages = [];
+        for (let i = 0; i < userData.timestamps.length; i++) {
+            if (userData.timestamps[i] >= cutoff) {
+                filteredTimestamps.push(userData.timestamps[i]);
+                filteredMessages.push(userData.messages[i]);
+            }
+        }
+        userData.timestamps = filteredTimestamps;
+        userData.messages = filteredMessages;
+        
+        userData.timestamps.push(now);
+        userData.messages.push(msg);
+        mentionSpamTracker.set(msg.author.id, userData);
+
+        if (userData.timestamps.length > 5) {
+            for (const spamMsg of userData.messages) {
+                await spamMsg.delete().catch(() => {});
+            }
+            
+            await msg.member.timeout(600000, "สแปมแท็ก @everyone เกิน 5 ครั้ง").catch(()=>{});
+            
+            // [NEW FEATURE]: ส่งข้อความเตือนและลบทิ้งอัตโนมัติภายใน 1 นาที
+            msg.channel.send(`<@${msg.author.id}> <a:b20_onew1ss:1494160910065860679> อย่าเเสปมเเท็ก <a:b20_onew1ss:1494160910065860679>`)
+                .then(warningMsg => {
+                    setTimeout(() => {
+                        warningMsg.delete().catch(() => {});
+                    }, 60000);
+                })
+                .catch(()=>{});
+            
+            const logChannel = msg.guild.channels.cache.find(c => c.name === config.channels.logName);
+            if (logChannel) {
+                const embed = new MessageEmbed()
+                    .setColor("#ED4245")
+                    .setTitle("🚨 ระบบป้องกันสแปมแท็กทำงาน")
+                    .setDescription(`**ผู้ใช้:** <@${msg.author.id}> (${msg.author.tag})\n**การกระทำ:** สแปมแท็ก @everyone เกิน 5 ครั้ง\n**บทลงโทษ:** ลบข้อความที่สแปมทั้งหมด และ Timeout 10 นาที`)
+                    .setTimestamp();
+                logChannel.send({ embeds: [embed] }).catch(() => {});
+            }
+            
+            mentionSpamTracker.delete(msg.author.id);
+            return; 
+        }
     }
+    
     commands.snipes.set(msg.channel.id, msg);
     try { await commands.handleMessage(msg); } catch (err) { console.error("[MESSAGE] Error:", err.message); } 
 });
