@@ -1,23 +1,36 @@
-const { MessageEmbed, MessageActionRow, MessageButton, MessageSelectMenu, Modal, TextInputComponent, WebhookClient } = require("discord.js");
+const { MessageEmbed, MessageActionRow, MessageButton, Modal, TextInputComponent, WebhookClient } = require("discord.js");
 const config = require("./config.json");
 const sessionManager = require("./sessionManager");
 const voiceWorker = require("./voiceWorker");
 
+// ════════════════════════════════════════════════════════════════
+//  🛡️ SYSTEM STATE & GARBAGE COLLECTED MEMORY
+// ════════════════════════════════════════════════════════════════
 const snipes = new Map();
+const panelMessages = new Map(); // ป้องกันแผงควบคุมรวนข้ามเซิร์ฟเวอร์
+const activeRestores = new Set(); // ล็อกป้องกัน Race Condition เวลากดกู้คืนรัวๆ
+const activeBackups = new Set(); // ล็อกป้องกัน Race Condition เวลาสแปมกดบันทึกโครงสร้าง
+const activeVoiceKicks = new Set(); // ล็อกป้องกันมาโครสแปมคำสั่งเตะรวดเดียว
+
+// ตัวแปร Code Block สำหรับตกแต่งข้อความสไตล์พรีเมียม
 const CB = "\x60\x60\x60"; 
 
+// ════════════════════════════════════════════════════════════════
+//  📋 COMMANDS REGISTRY (100% COMPLETE)
+// ════════════════════════════════════════════════════════════════
 const slashCommandsData = [
     { name: "panel",      description: "เรียกแผงควบคุมระบบออนช่องเสียง" },
-    { name: "help",       description: "แสดงคู่มือการใช้งาน" },
+    { name: "help",       description: "แสดงคู่มือการใช้งานระบบ Enterprise" },
     { name: "stats",      description: "ดูสถิติการทำงานของระบบ" },
-    { name: "serverinfo", description: "แสดงข้อมูลรายละเอียดของเซิร์ฟเวอร์" },
-    { name: "setup-log",  description: "สร้างห้อง Log สำหรับบันทึกกิจกรรม" },
+    { name: "serverinfo", description: "แสดงข้อมูลรายละเอียดของเซิร์ฟเวอร์แบบเจาะลึก" },
+    { name: "setup-log",  description: "ติดตั้งระบบ Auto-Setup (ยศ/หมวดหมู่/ห้อง Log)" },
+    { name: "snipe",      description: "ดูข้อความล่าสุดที่ถูกลบล่าสุดในช่องแชทปัจจุบัน" },
     {
         name: "userinfo", description: "แสดงข้อมูลโปรไฟล์ของสมาชิก",
         options: [{ type: 6, name: "member", description: "สมาชิกที่ต้องการดูข้อมูล", required: false }]
     },
     {
-        name: "clear", description: "ลบข้อความในช่องปัจจุบัน",
+        name: "clear", description: "ลบข้อความในช่องปัจจุบัน (สูงสุด 100 ข้อความ)",
         options: [{ type: 4, name: "amount", description: "จำนวนข้อความที่ต้องการลบ (1-100)", required: true }]
     },
     {
@@ -25,591 +38,797 @@ const slashCommandsData = [
         options: [{ type: 3, name: "message", description: "ข้อความที่ต้องการส่ง", required: true }]
     },
     {
-        name: "announce", description: "เผยแพร่ประกาศสำคัญ",
-        options: [{ type: 3, name: "message", description: "เนื้อหาประกาศ", required: true }]
-    },
-    { name: "lock",   description: "ล็อกช่องข้อความปัจจุบัน" },
-    { name: "unlock", description: "ปลดล็อกช่องข้อความปัจจุบัน" },
-    {
-        name: "kick", description: "เตะสมาชิกออกจากเซิร์ฟเวอร์",
+        name: "announce", description: "ส่งข้อความประกาศแบบ Embed",
         options: [
-            { type: 6, name: "member",  description: "สมาชิกที่ต้องการเตะ", required: true },
-            { type: 3, name: "reason",  description: "เหตุผล", required: false }
+            { type: 3, name: "title", description: "หัวข้อประกาศ", required: true },
+            { type: 3, name: "message", description: "เนื้อหาประกาศ", required: true }
         ]
     },
     {
-        name: "ban", description: "แบนสมาชิกถาวร",
+        name: "steal", description: "ดึงอิโมจิเข้าเซิร์ฟเวอร์แบบรวดเดียว (Bulk Steal สูงสุด 50 ตัว)",
+        options: [{ type: 3, name: "emojis", description: "วางอิโมจิที่ก๊อปปี้มาติดๆ กันได้เลย", required: true }]
+    },
+    {
+        name: "backup", description: "บันทึกข้อมูลโครงสร้างเซิร์ฟเวอร์ (เฉพาะเจ้าของเซิร์ฟเวอร์)"
+    },
+    {
+        name: "restore", description: "กู้คืนโครงสร้างเซิร์ฟเวอร์ (ต้องมีกรรมสิทธิ์การบันทึก)",
+        options: [{ type: 3, name: "server_id", description: "ไอดีเซิร์ฟเวอร์ต้นทางที่ต้องการดึงข้อมูล", required: true }]
+    },
+    {
+        name: "voicekickall", description: "เตะทุกคนในห้องเสียงที่คุณอยู่ (ยกเว้นผู้ดูแลระบบ)"
+    },
+    {
+        name: "ban", description: "แบนสมาชิกออกจากเซิร์ฟเวอร์ พร้อมแจ้งเตือน DM",
         options: [
-            { type: 6, name: "member",  description: "สมาชิกที่ต้องการแบน", required: true },
-            { type: 3, name: "reason",  description: "เหตุผล", required: false }
+            { type: 6, name: "target", description: "สมาชิกที่ต้องการแบน", required: true },
+            { type: 3, name: "reason", description: "เหตุผล", required: false }
         ]
     },
     {
-        name: "unban", description: "ยกเลิกการแบน",
-        options: [{ type: 3, name: "userid", description: "User ID ที่ต้องการปลดแบน", required: true }]
+        name: "kick", description: "เตะสมาชิกออกจากเซิร์ฟเวอร์ พร้อมแจ้งเตือน DM",
+        options: [
+            { type: 6, name: "target", description: "สมาชิกที่ต้องการเตะ", required: true },
+            { type: 3, name: "reason", description: "เหตุผล", required: false }
+        ]
     },
     {
-        name: "timeout", description: "ระงับสิทธิ์การพิมพ์ชั่วคราว",
+        name: "timeout", description: "ระงับการใช้งานสมาชิกชั่วคราว พร้อมแจ้งเตือน DM",
         options: [
-            { type: 6, name: "member",  description: "สมาชิกที่ต้องการระงับ", required: true },
-            { type: 4, name: "minutes", description: "จำนวนนาที", required: true },
-            { type: 3, name: "reason",  description: "เหตุผล", required: false }
+            { type: 6, name: "target", description: "สมาชิก", required: true },
+            { type: 4, name: "minutes", description: "จำนวนนาที (1-40000)", required: true },
+            { type: 3, name: "reason", description: "เหตุผล", required: false }
         ]
-    },
-    { name: "snipe", description: "ดูข้อความล่าสุดที่ถูกลบ" },
-    { 
-        name: "enlarge", description: "ขยายภาพอิโมจิ",
-        options: [{ type: 3, name: "emoji", description: "อิโมจิ", required: true }]
-    },
-    { 
-        name: "steal", description: "ดึงอิโมจิเข้าเซิร์ฟเวอร์",
-        options: [{ type: 3, name: "emoji", description: "อิโมจิ", required: true }, { type: 3, name: "name", description: "ชื่อ", required: true }]
-    },
-    { 
-        name: "voice", description: "ควบคุมห้องเสียงแบบฉับพลัน",
-        options: [
-            { type: 1, name: "lock", description: "ล็อก" },
-            { type: 1, name: "hide", description: "ซ่อน" },
-            { type: 1, name: "kickall", description: "เตะทุกคน" }
-        ]
-    },
-    { name: "backup", description: "ถ่ายข้อมูลเซิร์ฟเวอร์สำรอง" },
-    
-    { name: "🔨 จัดการสมาชิก", type: 2 },
-    { name: "🗑️ ลบข้อความนี้", type: 3 },
-    { name: "📝 บันทึกข้อมูล", type: 3 }
+    }
 ];
-
-const panelMessages = new Map();
-let isUpdatingPanel = false;
 
 function getPanelMessages() {
     return panelMessages;
 }
 
-let logWebhook = null;
-let webhookFailCount = 0;
-const MAX_WEBHOOK_FAILS = 5;
+function sendDM(user, embed) {
+    if (!user || user.bot) return;
+    user.send({ embeds: [embed] }).catch(() => {});
+}
 
-if (process.env.WEBHOOK_LOG_URL) {
+async function getLogChannel(guild) {
+    const channelName = config.channels.logName;
+    return guild.channels.cache.find(c => c.name === channelName && c.isText());
+}
+
+async function updatePanel(guildId) {
+    if (!guildId) return;
+    const panelMsg = panelMessages.get(guildId);
+    if (!panelMsg) return;
+
     try {
-        logWebhook = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
-        console.log("✅ [WEBHOOK] Initialized successfully");
+        const guild = panelMsg.guild;
+        const total = Array.from(sessionManager.getAllSessions().values()).filter(s => s.serverId === guild.id).length;
+        
+        const embed = new MessageEmbed()
+            .setColor(config.system.themeColors.primary)
+            .setAuthor({ name: "ระบบจัดการผู้ใช้งานช่องเสียง", iconURL: guild.iconURL() || config.system.bannerUrl })
+            .setDescription(`— ใช้งานเพื่อเปิดบอทเข้าไปออนในห้องเสียง\n— ข้อมูลทั้งหมดถูกจัดการและรักษาความปลอดภัยสูงสุด\n\n**สถานะปัจจุบัน:** ${total > 0 ? config.emojis.success + " **ทำงานอยู่**" : config.emojis.error + " **หยุดทำงาน**"}\n— จำนวนผู้ใช้งานในเซิร์ฟเวอร์นี้: **${total}** บัญชี\n\n*Developed by <@661415152146710558>*`)
+            .setImage(config.system.bannerUrl);
+
+        const row = new MessageActionRow().addComponents(
+            new MessageButton().setCustomId("btn_start").setLabel("เริ่มการทำงาน").setEmoji("1505303237585141770").setStyle("SUCCESS"),
+            new MessageButton().setCustomId("btn_status").setLabel("สถานะ & จัดการ").setEmoji("1505295037213184161").setStyle("PRIMARY"),
+            new MessageButton().setCustomId("btn_stop_all").setLabel("หยุดการทำงานทั้งหมด").setEmoji("1505544059056427079").setStyle("DANGER")
+        );
+
+        await panelMsg.edit({ embeds: [embed], components: [row] });
     } catch (err) {
-        console.error("❌ [WEBHOOK] Invalid URL:", err.message);
-        logWebhook = null;
+        console.error("[PANEL] Update Panel Error:", err.message);
     }
 }
 
-function formatUptime(ms) {
-    const s = Math.floor(ms / 1000);
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${s % 60}s` : `${s % 60}s`;
-}
+// ════════════════════════════════════════════════════════════════
+//  MESSAGE EVENT HANDLER (Snipe Capture)
+// ════════════════════════════════════════════════════════════════
+async function handleMessage(message) {
+    if (message.author.bot) return;
 
-function safeSlice(str, max) {
-    if (!str || str.length <= max) return str;
-    return str.slice(0, max) + "…";
-}
-
-function getPanelEmbed() {
-    const embed = new MessageEmbed()
-        .setColor(config.system.themeColor)
-        .setDescription(
-            `# ${config.emojis.universe} : Phomueangtai ระบบออนช่องเสียง\n\n` +
-            `> ระบบออนช่องเสียงอัตโนมัติ ${config.emojis.dreamworld}\n` +
-            `> ออนไลน์ฟรีครบ 24. ${config.emojis.dreamworld}\n` +
-            `> ตั้งค่าควบคุมผ่านปุ่มเเผงควบคุมด้านล่าง ${config.emojis.dreamworld}`
-        )
-        .setImage(config.system.bannerUrl);
-
-    return embed;
-}
-
-function getPanelRow() {
-    return new MessageActionRow().addComponents(
-        new MessageButton().setCustomId("btn_start").setLabel("ออนช่องเสียง").setEmoji(config.emojis.signal).setStyle("SUCCESS"),
-        new MessageButton().setCustomId("btn_stop").setLabel("ปิดช่องเสียง").setEmoji(config.emojis.stop).setStyle("DANGER"),
-        new MessageButton().setCustomId("btn_help").setLabel("คู่มือ").setEmoji(config.emojis.books).setStyle("SECONDARY")
-    );
-}
-
-function getHelpPages() {
-    const footer = { text: "Enterprise System  │  เฉพาะผู้ดูแลระบบที่ได้รับอนุญาต" };
-    return[
-        new MessageEmbed().setTitle(`${config.emojis.books}  คู่มือระบบ  ·  หน้า 1 / 3`).setColor(config.system.themeColor)
-            .setDescription(`> **ข้อมูลและการสืบค้น**\n\n${CB}ansi\n\u001b[1;36mINFORMATION COMMANDS\u001b[0m\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n${CB}`)
-            .addFields({ name: "🔍  คำสั่งข้อมูลระบบ", value: "> `p.userinfo [@สมาชิก]`\n> `p.serverinfo`\n> `p.stats` (ดูสถิติระบบ)\n> `p.help`", inline: false }).setFooter(footer),
-        new MessageEmbed().setTitle(`${config.emojis.books}  คู่มือระบบ  ·  หน้า 2 / 3`).setColor(config.system.themeColor)
-            .setDescription(`> **การควบคุมและบังคับใช้กฎ**\n\n${CB}ansi\n\u001b[1;31mMODERATION COMMANDS\u001b[0m\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n${CB}`)
-            .addFields(
-                { name: "🛡️  การจัดการข้อความและช่อง", value: "> `p.clear <1-100>`\n> `p.say <ข้อความ>`\n> `p.announce <ข้อความ>`\n> `p.lock` / `p.unlock`", inline: false },
-                { name: "⚔️  การบังคับใช้กฎ", value: "> `p.kick @สมาชิก`\n> `p.ban @สมาชิก`\n> `p.unban <USER_ID>`\n> `p.timeout @สมาชิก <นาที>`", inline: false }
-            ).setFooter(footer),
-        new MessageEmbed().setTitle(`${config.emojis.books}  คู่มือระบบ  ·  หน้า 3 / 3`).setColor(config.system.themeColor)
-            .setDescription(`> **ระบบออนช่องเสียงผู้ใช้**\n\n${CB}ansi\n\u001b[1;32mVOICE MANAGEMENT SYSTEM\u001b[0m\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n${CB}`)
-            .addFields(
-                { name: "🎧  คำสั่งระบบเสียง", value: "> `p.panel`\n> `p.setup-log`", inline: false },
-                { name: "⚡  วิธีใช้งานแผงควบคุม", value: "> **⚡ เริ่มเซสชัน** กรอก Token เพื่อเริ่ม\n> **📡 สถานะ** ตรวจสอบเซสชัน\n> **⏹ หยุดรายการ** หยุดเฉพาะรายการ\n> **🛑 หยุดทั้งหมด** ปิดทุกเซสชัน", inline: false }
-            ).setFooter(footer),
-    ];
-}
-
-function getHelpRow(page) {
-    return new MessageActionRow().addComponents(
-        new MessageButton().setCustomId(`help_prev_${page}`).setLabel("◀  ก่อนหน้า").setStyle("SECONDARY").setDisabled(page === 0),
-        new MessageButton().setCustomId(`help_page_${page}`).setLabel(`หน้า ${page + 1} / 3`).setStyle("PRIMARY").setDisabled(true),
-        new MessageButton().setCustomId(`help_next_${page}`).setLabel("ถัดไป  ▶").setStyle("SECONDARY").setDisabled(page === 2),
-    );
-}
-
-async function sendLog(guild, embed) {
-    setImmediate(async () => {
-        try {
-            if (logWebhook && webhookFailCount < MAX_WEBHOOK_FAILS) {
-                try {
-                    await logWebhook.send({ embeds: [embed] });
-                    webhookFailCount = 0;
-                } catch (err) {
-                    webhookFailCount++;
-                    console.error(`❌ [WEBHOOK] Send failed (${webhookFailCount}/${MAX_WEBHOOK_FAILS}):`, err.message);
-                    if (webhookFailCount >= MAX_WEBHOOK_FAILS) {
-                        console.warn("⚠️  [WEBHOOK] Too many failures, falling back to channel logging");
-                        logWebhook = null;
-                    }
-                    if (guild) {
-                        const ch = guild.channels.cache.find(c => c.name === config.channels.logName && c.type === "GUILD_TEXT");
-                        if (ch) await ch.send({ embeds: [embed] }).catch(() => {});
-                    }
-                }
-            } else if (guild) {
-                const ch = guild.channels.cache.find(c => c.name === config.channels.logName && c.type === "GUILD_TEXT");
-                if (ch) await ch.send({ embeds: [embed] }).catch(() => {});
-            }
-        } catch (err) { console.error("❌ [LOG] Critical failure:", err.message); }
-    });
-}
-
-function buildModerationEmbed(action, moderator, target, reason, durationMins = null) {
-    const colorMap = {
-        "⚔️  เตะสมาชิก":          "#F59E0B",
-        "🔨  แบนสมาชิก":          "#EF4444",
-        "⏳  ระงับสิทธิ์ชั่วคราว": "#8B5CF6",
-        "✅  ยกเลิกการแบน":        "#10B981",
-    };
-    const embed = new MessageEmbed()
-        .setColor(colorMap[action] || config.system.themeColor)
-        .setTitle(`${action}`)
-        .setThumbnail(target.displayAvatarURL({ dynamic: true, size: 128 }))
-        .addFields(
-            { name: "🛡️  ผู้ดำเนินการ", value: `${CB}yaml\nUser: ${moderator.tag}\nID  : ${moderator.id}\n${CB}`, inline: false },
-            { name: "🎯  เป้าหมาย",     value: `${CB}yaml\nUser: ${target.tag}\nID  : ${target.id}\n${CB}`, inline: false },
-            { name: "📋  เหตุผล",        value: `${CB}yaml\n${reason}\n${CB}`,                                  inline: false },
-        )
-        .setTimestamp();
-    if (durationMins !== null) embed.addFields({ name: "⏱️  ระยะเวลา", value: `${CB}yaml\n${durationMins} นาที\n${CB}`, inline: false });
-    return embed;
-}
-
-async function updatePanel() {
-    if (isUpdatingPanel || panelMessages.size === 0) return;
-    isUpdatingPanel = true;
-    try {
-        const embed = getPanelEmbed();
-        const row = getPanelRow();
-        for (const [channelId, msg] of panelMessages) {
-            try {
-                await msg.edit({ embeds: [embed], components: [row] });
-                await new Promise(r => setTimeout(r, 600));
-            } catch (err) {
-                if (err.code === 10008 || err.code === 10003 || err.code === 50013) panelMessages.delete(channelId);
-            }
-        }
-    } finally { isUpdatingPanel = false; }
-}
-
-async function handleMessage(msg) {
-    try {
-        if (!msg.guild || msg.author.bot || !msg.content.startsWith("p.")) return;
-        if (!msg.member?.roles.cache.has(config.roles.admin)) return;
-
-        const args = msg.content.slice(2).trim().split(/ +/);
-        const cmd = args.shift()?.toLowerCase();
-        const target = msg.mentions.members.first();
-
-        switch (cmd) {
-            case "clear": {
-                const amount = parseInt(args[0]);
-                if (!amount || amount < 1 || amount > 100) return msg.reply(`> ${config.emojis.no_entry}  กรุณาระบุจำนวนข้อความ 1–100`);
-                await msg.delete().catch(() => {});
-                const deleted = await msg.channel.bulkDelete(amount, true).catch(() => null);
-                const m = await msg.channel.send(`> ${config.emojis.trash}  ลบข้อความสำเร็จ ${deleted?.size || amount} รายการ`);
-                setTimeout(() => m.delete().catch(() => {}), 3000);
-                break;
-            }
-            case "say":
-                if (!args.length) return msg.reply(`> ${config.emojis.no_entry}  กรุณาระบุข้อความ`);
-                await msg.delete().catch(() => {});
-                await msg.channel.send({
-                    content: args.join(" "),
-                    allowedMentions: { parse: [], users: [] }
-                });
-                break;
-            case "announce":
-                if (!args.length) return msg.reply(`> ${config.emojis.no_entry}  กรุณาระบุเนื้อหาประกาศ`);
-                await msg.delete().catch(() => {});
-                await msg.channel.send({ embeds:[new MessageEmbed().setColor(config.system.themeColor).setTitle(`${config.emojis.announce}  ประกาศจากผู้ดูแลระบบ`).setDescription("> **ประกาศสำคัญ**\n\n" + args.join(" ")).setFooter({ text: `ประกาศโดย ${msg.author.tag}` }).setTimestamp()] });
-                break;
-            case "lock":
-            case "unlock":
-                await msg.channel.permissionOverwrites.edit(msg.guild.roles.everyone, { SEND_MESSAGES: cmd === "unlock" ? null : false });
-                await msg.reply(cmd === "unlock" ? `> ${config.emojis.shield}  ปลดล็อกช่องแล้ว` : `> ${config.emojis.lock}  ล็อกช่องแล้ว`);
-                break;
-            case "kick": {
-                if (!target) return msg.reply(`> ${config.emojis.no_entry}  กรุณาระบุสมาชิกด้วย @mention`);
-                const reason = args.slice(1).join(" ") || "ไม่ระบุเหตุผล";
-                if (!target.kickable) return msg.reply(`> ${config.emojis.warning} บอทไม่มีสิทธิ์เตะคนนี้`);
-                await target.kick(reason);
-                await msg.reply(`> ${config.emojis.sword}  เตะสมาชิก \`${target.user.tag}\` แล้ว`);
-                sendLog(msg.guild, buildModerationEmbed("⚔️  เตะสมาชิก", msg.author, target.user, reason));
-                break;
-            }
-            case "ban": {
-                if (!target) return msg.reply(`> ${config.emojis.no_entry}  กรุณาระบุสมาชิกด้วย @mention`);
-                const reason = args.slice(1).join(" ") || "ไม่ระบุเหตุผล";
-                if (!target.bannable) return msg.reply(`> ${config.emojis.warning} บอทไม่มีสิทธิ์แบนคนนี้`);
-                await target.ban({ reason });
-                await msg.reply(`> ${config.emojis.hammer}  แบนสมาชิก \`${target.user.tag}\` แล้ว`);
-                sendLog(msg.guild, buildModerationEmbed("🔨  แบนสมาชิก", msg.author, target.user, reason));
-                break;
-            }
-            case "timeout": {
-                const mins = parseInt(args[1]);
-                if (!target || !mins || mins < 1) return msg.reply(`> ${config.emojis.no_entry}  กรุณาระบุสมาชิกและจำนวนนาที`);
-                const reason = args.slice(2).join(" ") || "ไม่ระบุเหตุผล";
-                if (!target.manageable) return msg.reply(`> ${config.emojis.warning} บอทไม่มีสิทธิ์ทำโทษคนนี้`);
-                await target.timeout(mins * 60000);
-                await msg.reply(`> ${config.emojis.timer}  ระงับสิทธิ์ \`${target.user.tag}\` ${mins} นาทีแล้ว`);
-                sendLog(msg.guild, buildModerationEmbed("⏳  ระงับสิทธิ์ชั่วคราว", msg.author, target.user, reason, mins));
-                break;
-            }
-            case "unban": {
-                if (!args[0]) return msg.reply(`> ${config.emojis.no_entry}  กรุณาระบุ User ID`);
-                await msg.guild.members.unban(args[0]);
-                await msg.reply(`> ${config.emojis.success}  ยกเลิกการแบนสำเร็จ`);
-                sendLog(msg.guild, new MessageEmbed()
-                    .setColor("#10B981")
-                    .setTitle(`${config.emojis.success}  ยกเลิกการแบน`)
-                    .addFields(
-                        { name: "👤  ผู้ดำเนินการ", value: `${CB}yaml\nUser: ${msg.author.tag}\nID: ${msg.author.id}\n${CB}`, inline: false },
-                        { name: "🆔  User ที่ถูกปลดแบน", value: `${CB}yaml\nUser ID: ${args[0]}\n${CB}`, inline: false }
-                    ).setTimestamp());
-                break;
-            }
-            case "panel": {
-                const old = panelMessages.get(msg.channel.id);
-                if (old) await old.delete().catch(() => {});
-                const panel = await msg.channel.send({ embeds: [getPanelEmbed()], components:[getPanelRow()] });
-                panelMessages.set(msg.channel.id, panel);
-                await msg.delete().catch(() => {});
-                break;
-            }
-            case "help":
-                await msg.reply({ embeds: [getHelpPages()[0]], components: [getHelpRow(0)], allowedMentions: { repliedUser: false } });
-                break;
-            case "setup-log":
-                if (msg.guild.channels.cache.find(c => c.name === config.channels.logName)) return msg.reply(`> ${config.emojis.fail}  มีห้อง Log อยู่แล้ว`);
-                await msg.guild.channels.create(config.channels.logName, { type: "GUILD_TEXT" });
-                await msg.reply(`> ${config.emojis.success}  สร้างห้อง Log สำเร็จ`);
-                break;
-            case "userinfo": {
-                const u = target?.user || msg.author;
-                await msg.reply({ embeds:[new MessageEmbed().setTitle(`${config.emojis.user}  ข้อมูลสมาชิก`).setColor(config.system.themeColor).setDescription(`${CB}yaml\nUsername : ${u.tag}\nUser ID  : ${u.id}\nCreated  : ${u.createdAt.toLocaleDateString("th-TH")}\n${CB}`).setThumbnail(u.displayAvatarURL({ dynamic: true, size: 256 })).setTimestamp()] });
-                break;
-            }
-            case "serverinfo":
-                await msg.reply({ embeds:[new MessageEmbed().setTitle(`${config.emojis.globe}  ข้อมูลเซิร์ฟเวอร์`).setColor(config.system.themeColor).setDescription(`${CB}yaml\nServer Name : ${msg.guild.name}\nServer ID   : ${msg.guild.id}\nMembers     : ${msg.guild.memberCount}\nCreated     : ${msg.guild.createdAt.toLocaleDateString("th-TH")}\n${CB}`).setTimestamp()] });
-                break;
-            case "stats": {
-                const report = sessionManager.systemMetrics.getReport();
-                await msg.reply({ embeds:[new MessageEmbed().setTitle(`${config.emojis.chart}  System Analytics`).setColor(config.system.themeColor).setDescription(`${CB}yaml\nSessions Started : ${report.sessionsStarted}\nFailed Attempts  : ${report.sessionsFailed}\nSuccess Rate     : ${report.successRate}\nTotal Reconnects : ${report.reconnects}\nSystem Uptime    : ${report.uptimeHours} hours\n${CB}`).setTimestamp()] });
-                break;
-            }
-        }
-    } catch (err) { console.error("❌ [COMMAND] Error:", err.message); }
-}
-
-async function handleInteraction(interaction) {
-    try {
-        if (!interaction.guild) return;
-
-        const isAdmin = interaction.member.roles.cache.has(config.roles.admin) || interaction.member.permissions.has("ADMINISTRATOR");
-        const hasAccess = isAdmin || interaction.member.roles.cache.has(config.roles.user);
-
-        if (interaction.isCommand()) {
-            const adminCmds = ["clear", "voice", "backup", "steal", "panel", "kick", "ban", "timeout", "say", "announce", "lock", "unlock", "setup-log", "unban"];
-            if (adminCmds.includes(interaction.commandName) && !isAdmin) {
-                return interaction.reply({ content: `> ${config.emojis.no_entry} คุณไม่มีสิทธิ์ใช้งานคำสั่งนี้`, ephemeral: true });
-            }
-
-            const cmd = interaction.commandName;
-
-            switch (cmd) {
-                case "panel": {
-                    const old = panelMessages.get(interaction.channelId);
-                    if (old) await old.delete().catch(() => {});
-                    const panel = await interaction.channel.send({ embeds: [getPanelEmbed()], components: [getPanelRow()] });
-                    panelMessages.set(interaction.channelId, panel);
-                    return interaction.reply({ content: `> ${config.emojis.success} เรียกแผงควบคุมสำเร็จ`, ephemeral: true });
-                }
-                case "help":
-                    return interaction.reply({ embeds: [getHelpPages()[0]], components: [getHelpRow(0)], ephemeral: true });
-
-                case "stats": {
-                    const report = sessionManager.systemMetrics.getReport();
-                    return interaction.reply({ embeds: [new MessageEmbed().setTitle(`${config.emojis.chart}  System Analytics`).setColor(config.system.themeColor).setDescription(`${CB}yaml\nSessions Started : ${report.sessionsStarted}\nFailed Attempts  : ${report.sessionsFailed}\nSuccess Rate     : ${report.successRate}\nTotal Reconnects : ${report.reconnects}\nSystem Uptime    : ${report.uptimeHours} hours\n${CB}`).setTimestamp()], ephemeral: true });
-                }
-                case "serverinfo":
-                    return interaction.reply({ embeds: [new MessageEmbed().setTitle(`${config.emojis.globe}  ข้อมูลเซิร์ฟเวอร์`).setColor(config.system.themeColor).setDescription(`${CB}yaml\nServer Name : ${interaction.guild.name}\nServer ID   : ${interaction.guild.id}\nMembers     : ${interaction.guild.memberCount}\nCreated     : ${interaction.guild.createdAt.toLocaleDateString("th-TH")}\n${CB}`).setTimestamp()], ephemeral: true });
-
-                case "userinfo": {
-                    const member = interaction.options.getMember("member");
-                    const u = member?.user || interaction.user;
-                    return interaction.reply({ embeds: [new MessageEmbed().setTitle(`${config.emojis.user}  ข้อมูลสมาชิก`).setColor(config.system.themeColor).setDescription(`${CB}yaml\nUsername : ${u.tag}\nUser ID  : ${u.id}\nCreated  : ${u.createdAt.toLocaleDateString("th-TH")}\n${CB}`).setThumbnail(u.displayAvatarURL({ dynamic: true, size: 256 })).setTimestamp()], ephemeral: true });
-                }
-                case "clear": {
-                    const amount = interaction.options.getInteger("amount");
-                    if (amount < 1 || amount > 100) return interaction.reply({ content: `> ${config.emojis.no_entry} จำนวนต้องอยู่ระหว่าง 1-100`, ephemeral: true });
-                    if (!interaction.guild.me.permissions.has("MANAGE_MESSAGES")) return interaction.reply({ content: `> ${config.emojis.no_entry} บอทไม่มีสิทธิ์ Manage Messages`, ephemeral: true });
-                    await interaction.deferReply({ ephemeral: true });
-                    const deleted = await interaction.channel.bulkDelete(amount, true).catch(() => null);
-                    return interaction.editReply({ content: `> ${config.emojis.trash}  ลบข้อความสำเร็จ ${deleted?.size || amount} รายการ` });
-                }
-                case "say": {
-                    const text = interaction.options.getString("message");
-                    await interaction.channel.send({
-                        content: text,
-                        allowedMentions: { parse: [], users: [] }
-                    });
-                    return interaction.reply({ content: `> ${config.emojis.success}  ส่งข้อความสำเร็จ`, ephemeral: true });
-                }
-                case "announce": {
-                    const text = interaction.options.getString("message");
-                    await interaction.channel.send({ embeds: [new MessageEmbed().setColor(config.system.themeColor).setTitle(`${config.emojis.announce}  ประกาศจากผู้ดูแลระบบ`).setDescription("> **ประกาศสำคัญ**\n\n" + text).setFooter({ text: `ประกาศโดย ${interaction.user.tag}` }).setTimestamp()] });
-                    return interaction.reply({ content: `> ${config.emojis.success}  เผยแพร่ประกาศสำเร็จ`, ephemeral: true });
-                }
-                case "lock":
-                case "unlock": {
-                    await interaction.channel.permissionOverwrites.edit(interaction.guild.roles.everyone, { SEND_MESSAGES: cmd === "unlock" ? null : false });
-                    return interaction.reply({ content: cmd === "unlock" ? `> ${config.emojis.shield}  ปลดล็อกช่องแล้ว` : `> ${config.emojis.lock}  ล็อกช่องแล้ว`, ephemeral: true });
-                }
-                case "kick": {
-                    const member = interaction.options.getMember("member");
-                    const reason = interaction.options.getString("reason") || "ไม่ระบุเหตุผล";
-                    if (!member) return interaction.reply({ content: `> ${config.emojis.no_entry}  ไม่พบสมาชิก`, ephemeral: true });
-                    if (!member.kickable) return interaction.reply({ content: `> ${config.emojis.warning} บอทไม่มีสิทธิ์เตะคนนี้`, ephemeral: true });
-                    await member.kick(reason);
-                    await interaction.reply({ content: `> ${config.emojis.sword}  เตะสมาชิก \`${member.user.tag}\` แล้ว`, ephemeral: true });
-                    sendLog(interaction.guild, buildModerationEmbed("⚔️  เตะสมาชิก", interaction.user, member.user, reason));
-                    return;
-                }
-                case "ban": {
-                    const member = interaction.options.getMember("member");
-                    const reason = interaction.options.getString("reason") || "ไม่ระบุเหตุผล";
-                    if (!member) return interaction.reply({ content: `> ${config.emojis.no_entry}  ไม่พบสมาชิก`, ephemeral: true });
-                    if (!member.bannable) return interaction.reply({ content: `> ${config.emojis.warning} บอทไม่มีสิทธิ์แบนคนนี้`, ephemeral: true });
-                    await member.ban({ reason });
-                    await interaction.reply({ content: `> ${config.emojis.hammer}  แบนสมาชิก \`${member.user.tag}\` แล้ว`, ephemeral: true });
-                    sendLog(interaction.guild, buildModerationEmbed("🔨  แบนสมาชิก", interaction.user, member.user, reason));
-                    return;
-                }
-                case "unban": {
-                    const userId = interaction.options.getString("userid");
-                    await interaction.guild.members.unban(userId).catch(() => { throw new Error("NOT_FOUND"); });
-                    await interaction.reply({ content: `> ${config.emojis.success}  ยกเลิกการแบนสำเร็จ`, ephemeral: true });
-                    sendLog(interaction.guild, new MessageEmbed()
-                        .setColor("#10B981")
-                        .setTitle(`${config.emojis.success}  ยกเลิกการแบน`)
-                        .addFields(
-                            { name: "🛡️  ผู้ดำเนินการ", value: `${CB}yaml\nUser: ${interaction.user.tag}\nID  : ${interaction.user.id}\n${CB}`, inline: false },
-                            { name: "🆔  User ที่ถูกปลดแบน", value: `${CB}yaml\nUser ID: ${userId}\n${CB}`, inline: false }
-                        ).setTimestamp());
-                    return;
-                }
-                case "timeout": {
-                    const member = interaction.options.getMember("member");
-                    const mins = interaction.options.getInteger("minutes");
-                    const reason = interaction.options.getString("reason") || "ไม่ระบุเหตุผล";
-                    if (!member) return interaction.reply({ content: `> ${config.emojis.no_entry}  ไม่พบสมาชิก`, ephemeral: true });
-                    if (!member.manageable) return interaction.reply({ content: `> ${config.emojis.warning} บอทไม่มีสิทธิ์ลงโทษคนนี้`, ephemeral: true });
-                    await member.timeout(mins * 60000);
-                    await interaction.reply({ content: `> ${config.emojis.timer}  ระงับสิทธิ์ \`${member.user.tag}\` ${mins} นาทีแล้ว`, ephemeral: true });
-                    sendLog(interaction.guild, buildModerationEmbed("⏳  ระงับสิทธิ์ชั่วคราว", interaction.user, member.user, reason, mins));
-                    return;
-                }
-                case "setup-log": {
-                    if (interaction.guild.channels.cache.find(c => c.name === config.channels.logName))
-                        return interaction.reply({ content: `> ${config.emojis.fail}  มีห้อง Log อยู่แล้ว`, ephemeral: true });
-                    await interaction.guild.channels.create(config.channels.logName, { type: "GUILD_TEXT" });
-                    return interaction.reply({ content: `> ${config.emojis.success}  สร้างห้อง Log สำเร็จ`, ephemeral: true });
-                }
-                case "enlarge": {
-                    const emoji = interaction.options.getString("emoji");
-                    const parsed = emoji.match(/<a?:.+:(\d+)>/);
-                    if (!parsed) return interaction.reply({ content: `> ${config.emojis.warning} ไม่พบรหัสอิโมจิ`, ephemeral: true });
-                    const ext = emoji.startsWith("<a:") ? "gif" : "png";
-                    return interaction.reply({ content: `https://cdn.discordapp.com/emojis/${parsed[1]}.${ext}?v=1` });
-                }
-                case "snipe": {
-                    const msg = snipes.get(interaction.channel.id);
-                    if (!msg) return interaction.reply({ content: `> ${config.emojis.warning} ไม่มีข้อความที่เพิ่งลบในช่องนี้`, ephemeral: true });
-                    const embed = new MessageEmbed()
-                        .setAuthor({ name: msg.author.tag, iconURL: msg.author.displayAvatarURL() })
-                        .setDescription(msg.content || "*ไม่มีข้อความ (อาจเป็นรูปภาพ)*").setColor(config.system.themeColor);
-                    return interaction.reply({ embeds: [embed] });
-                }
-                case "voice": {
-                    const vc = interaction.member.voice.channel;
-                    if (!vc) return interaction.reply({ content: `> ${config.emojis.warning} เข้าห้องเสียงก่อนใช้งานคำสั่งนี้`, ephemeral: true });
-                    const sub = interaction.options.getSubcommand();
-                    
-                    if (sub === "lock") await vc.permissionOverwrites.edit(interaction.guild.roles.everyone, { CONNECT: false });
-                    if (sub === "hide") await vc.permissionOverwrites.edit(interaction.guild.roles.everyone, { VIEW_CHANNEL: false });
-                    if (sub === "kickall") for (const [, m] of vc.members) await m.voice.disconnect().catch(()=>{});
-                    return interaction.reply({ content: `> ${config.emojis.shield} จัดการห้องเสียง ${vc.name} เรียบร้อย` });
-                }
-                case "backup": {
-                    await interaction.deferReply({ ephemeral: true });
-                    const snapshot = {
-                        channels: interaction.guild.channels.cache.map(c => ({ name: c.name, type: c.type })),
-                        roles: interaction.guild.roles.cache.map(r => ({ name: r.name, perms: r.permissions.bitfield.toString() }))
-                    };
-                    const id = await sessionManager.saveSnapshot(interaction.guild.id, snapshot);
-                    return interaction.editReply({ content: `> ${config.emojis.save} บันทึก Snapshot สำเร็จ! (ID: \`${id}\`)` });
-                }
-                default:
-                    return interaction.reply({ content: `> ${config.emojis.no_entry}  ไม่รู้จักคำสั่งนี้`, ephemeral: true });
-            }
-        }
-
-        if (interaction.isMessageContextMenu()) {
-            if (!isAdmin) return interaction.reply({ content: `> ${config.emojis.no_entry} เฉพาะผู้ดูแลระบบ`, ephemeral: true });
-            const msg = interaction.targetMessage;
-
-            if (interaction.commandName === "🗑️ ลบข้อความนี้") {
-                await msg.delete().catch(()=>{});
-                return interaction.reply({ content: `> ${config.emojis.trash} ลบข้อความด่วนสำเร็จ`, ephemeral: true });
-            }
-            else if (interaction.commandName === "📝 บันทึกข้อมูล") {
-                const embed = new MessageEmbed().setColor(config.system.themeColor)
-                    .setTitle(`${config.emojis.clipboard} Saved Log`)
-                    .setDescription(`**User:** ${msg.author.tag}\n**Content:**\n${CB}text\n${msg.content}\n${CB}`);
-                sendLog(interaction.client, embed);
-                return interaction.reply({ embeds: [embed], ephemeral: true });
-            }
-        }
+    if (!message.content.startsWith("/") && !message.content.startsWith("!")) {
+        snipes.set(message.channel.id, {
+            content: message.content,
+            author: message.author,
+            timestamp: message.createdAt,
+            image: message.attachments.first() ? message.attachments.first().proxyURL : null
+        });
         
-        if (interaction.isUserContextMenu()) {
-            if (!isAdmin) return interaction.reply({ content: `> ${config.emojis.no_entry} เฉพาะผู้ดูแลระบบ`, ephemeral: true });
-            const target = interaction.targetUser;
-            const modal = new Modal().setCustomId(`mod_${target.id}`).setTitle(`ลงโทษ: ${target.username.slice(0, 30)}`);
-            modal.addComponents(new MessageActionRow().addComponents(new TextInputComponent().setCustomId("reason").setLabel("พิมพ์ kick / ban / timeout").setStyle("SHORT")));
-            return interaction.showModal(modal);
+        // ระบบ Memory Leak Prevention ทยอยลบทิ้งทุก 1 ชั่วโมง
+        setTimeout(() => {
+            snipes.delete(message.channel.id);
+        }, 3600000);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════
+//  INTERACTION EVENT HANDLER
+// ════════════════════════════════════════════════════════════════
+async function handleInteraction(interaction, client) {
+    try {
+        if (interaction.isCommand()) {
+            
+            // --- SERVERINFO ---
+            if (interaction.commandName === "serverinfo") {
+                const guild = interaction.guild;
+                const owner = await guild.fetchOwner();
+                const embed = new MessageEmbed()
+                    .setColor(config.system.themeColors.primary)
+                    .setTitle(`Server Information`)
+                    .setThumbnail(guild.iconURL({ dynamic: true, size: 1024 }))
+                    .setDescription(`**[ ${guild.name} ]**\n\n` +
+                        `${config.emojis.robot} **Name:** ${CB}${guild.name}${CB}\n` +
+                        `» **ID:** ${CB}${guild.id}${CB}\n` +
+                        `👑 **Owner:** <@${owner.id}>\n` +
+                        `🎂 **Creation:** <t:${Math.floor(guild.createdTimestamp / 1000)}:R>\n` +
+                        `▶ **Channels:** ${CB}${guild.channels.cache.size}${CB}\n` +
+                        `  #️⃣ Text: ${guild.channels.cache.filter(c => c.type === 'GUILD_TEXT').size}\n` +
+                        `  🔊 VC: ${guild.channels.cache.filter(c => c.type === 'GUILD_VOICE').size}\n` +
+                        `👥 **Members:** ${CB}${guild.memberCount}${CB}\n` +
+                        `📑 **Roles:** ${CB}${guild.roles.cache.size}${CB}`)
+                    .setFooter({ text: "Enterprise Architecture", iconURL: config.system.bannerUrl });
+                return interaction.reply({ embeds: [embed] });
+            }
+
+            // --- USERINFO ---
+            if (interaction.commandName === "userinfo") {
+                const member = interaction.options.getMember("member") || interaction.member;
+                const user = member.user;
+                const roles = member.roles.cache.filter(r => r.id !== interaction.guild.id).map(r => r.toString()).join(" | ") || "None";
+                const embed = new MessageEmbed()
+                    .setColor(config.system.themeColors.info)
+                    .setTitle(`Who is ${user.username}?`)
+                    .setThumbnail(user.displayAvatarURL({ dynamic: true, size: 1024 }))
+                    .setDescription(`**General Informations:**\n` +
+                        `👤 **Name:** ${CB}${user.tag}${CB}\n` +
+                        `» **ID:** ${CB}${user.id}${CB}\n` +
+                        `🎂 **Creation:** <t:${Math.floor(user.createdTimestamp / 1000)}:R>\n` +
+                        `📆 **Join:** <t:${Math.floor(member.joinedTimestamp / 1000)}:R>\n\n` +
+                        `**Account Accessories:**\n` +
+                        `📑 **Roles:** ${roles}`)
+                    .setFooter({ text: "Enterprise Architecture", iconURL: config.system.bannerUrl });
+                return interaction.reply({ embeds: [embed] });
+            }
+
+            // --- STATS ---
+            if (interaction.commandName === "stats") {
+                const uptime = Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 60000);
+                const mem = process.memoryUsage();
+                const embed = new MessageEmbed()
+                    .setColor(config.system.themeColors.primary)
+                    .setTitle(`${config.emojis.signal} System Stats`)
+                    .setDescription(`— **Uptime:** ${CB}${uptime} Minutes${CB}\n` +
+                        `— **RAM Usage:** ${CB}${(mem.heapUsed / 1024 / 1024).toFixed(2)} MB${CB}\n` +
+                        `— **Total Sessions:** ${CB}${sessionManager.getAllSessions().size} Active${CB}\n` +
+                        `— **Security Level:** ${CB}AES-256 Enabled${CB}`)
+                    .setFooter({ text: "Protected by Enterprise Security" });
+                return interaction.reply({ embeds: [embed] });
+            }
+
+            // --- HELP ---
+            if (interaction.commandName === "help") {
+                const embed = new MessageEmbed()
+                    .setColor(config.system.themeColors.primary)
+                    .setTitle(`${config.emojis.shield} คู่มือการใช้งานระบบ Enterprise V5.0`)
+                    .setDescription(
+                        `**ระบบนี้ถูกออกแบบมาเพื่อความปลอดภัยและประสิทธิภาพสูงสุด**\n\n` +
+                        `**⚙️ คำสั่งระบบพื้นฐาน:**\n` +
+                        `- ${CB}/panel${CB} — เรียกแผงควบคุมออนช่องเสียง (เฉพาะแอดมิน)\n` +
+                        `- ${CB}/stats${CB} — ดูสถานะการทำงานและทรัพยากรระบบ\n` +
+                        `- ${CB}/serverinfo${CB} — ตรวจสอบข้อมูลเชิงลึกของเซิร์ฟเวอร์\n` +
+                        `- ${CB}/userinfo${CB} — ตรวจสอบข้อมูลบัญชีผู้ใช้งาน\n` +
+                        `- ${CB}/snipe${CB} — ดึงประวัติข้อความที่ถูกลบล่าสุด\n\n` +
+                        `**🛡️ คำสั่งผู้ดูแล (Moderation):**\n` +
+                        `- ${CB}/ban${CB}, ${CB}/kick${CB}, ${CB}/timeout${CB} — ลงโทษผู้ใช้พร้อมส่งแจ้งเตือนโปร่งใสทาง DM\n` +
+                        `- ${CB}/voicekickall${CB} — ทำความสะอาดช่องเสียง (เตะทุกคนยกเว้นผู้ดูแล)\n` +
+                        `- ${CB}/clear${CB} — ทำความสะอาดช่องแชท (สูงสุด 100 ข้อความ)\n` +
+                        `- ${CB}/steal${CB} — ดึงอิโมจิเข้าเซิร์ฟเวอร์แบบรวดเดียว วางกี่อันก็ได้\n` +
+                        `- ${CB}/say${CB}, ${CB}/announce${CB} — บริหารจัดแจงส่งข้อความประกาศ\n\n` +
+                        `**💾 คำสั่งสำรองข้อมูล (Backup & Restore):**\n` +
+                        `- ${CB}/setup-log${CB} — ติดตั้งโครงสร้างยศและหมวดหมู่ Log เริ่มต้น\n` +
+                        `- ${CB}/backup${CB} — บันทึกโครงสร้าง (จำกัด 1 ครั้ง/24ชม. และเฉพาะ Owner เท่านั้น)\n` +
+                        `- ${CB}/restore${CB} — กู้คืนโครงสร้าง (ป้องกันการขโมยด้วยระบบ Two-Key Verification)\n` +
+                        `\n*หากพบปัญหา ติดต่อ Developer: <@661415152146710558>*`
+                    );
+                return interaction.reply({ embeds: [embed] });
+            }
+
+            // --- SNIPE ---
+            if (interaction.commandName === "snipe") {
+                const sniped = snipes.get(interaction.channel.id);
+                if (!sniped) return interaction.reply({ content: `> ${config.emojis.warning} ไม่พบประวัติข้อความถูกลบในห้องนี้`, ephemeral: true });
+                
+                const embed = new MessageEmbed()
+                    .setColor(config.system.themeColors.info)
+                    .setAuthor({ name: sniped.author.tag, iconURL: sniped.author.displayAvatarURL({ dynamic: true }) })
+                    .setDescription(sniped.content || "*ไม่มีข้อความ (อาจเป็นสื่อ/ภาพ)*")
+                    .setFooter({ text: "Sniped Message" })
+                    .setTimestamp(sniped.timestamp);
+                
+                if (sniped.image) embed.setImage(sniped.image);
+                return interaction.reply({ embeds: [embed] });
+            }
+
+            // --- SAY & ANNOUNCE ---
+            if (interaction.commandName === "say") {
+                if (!interaction.member.permissions.has("MANAGE_MESSAGES")) return interaction.reply({ content: `> ${config.emojis.no_entry} ไม่มีสิทธิ์ใช้งาน`, ephemeral: true });
+                const msg = interaction.options.getString("message");
+                await interaction.channel.send(msg);
+                return interaction.reply({ content: `> ${config.emojis.success} ส่งเรียบร้อยแล้ว`, ephemeral: true });
+            }
+
+            if (interaction.commandName === "announce") {
+                if (!interaction.member.permissions.has("MANAGE_MESSAGES")) return interaction.reply({ content: `> ${config.emojis.no_entry} คุณไม่มีสิทธิ์ใช้งานคำสั่งนี้`, ephemeral: true });
+                const title = interaction.options.getString("title");
+                const msgStr = interaction.options.getString("message");
+                
+                const embed = new MessageEmbed()
+                    .setColor(config.system.themeColors.primary)
+                    .setTitle(title)
+                    .setDescription(msgStr)
+                    .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() })
+                    .setTimestamp();
+                
+                await interaction.channel.send({ embeds: [embed] });
+                return interaction.reply({ content: `> ${config.emojis.success} ประกาศสำเร็จแล้ว`, ephemeral: true });
+            }
+
+            // --- PANEL ---
+            if (interaction.commandName === "panel") {
+                if (!interaction.member.permissions.has("ADMINISTRATOR")) return interaction.reply({ content: `> ${config.emojis.no_entry} คุณไม่มีสิทธิ์ใช้งานคำสั่งนี้`, ephemeral: true });
+                
+                const embed = new MessageEmbed()
+                    .setColor(config.system.themeColors.primary)
+                    .setAuthor({ name: "ระบบจัดการผู้ใช้งานช่องเสียง", iconURL: interaction.guild.iconURL() || config.system.bannerUrl })
+                    .setDescription(`— ใช้งานเพื่อเปิดบอทเข้าไปออนในห้องเสียง\n— ข้อมูลทั้งหมดถูกจัดการและรักษาความปลอดภัยสูงสุด\n\n**สถานะปัจจุบัน:** ${config.emojis.success + " **ทำงานอยู่**"}\n\n*Developed by <@661415152146710558>*`)
+                    .setImage(config.system.bannerUrl);
+
+                const row = new MessageActionRow().addComponents(
+                    new MessageButton().setCustomId("btn_start").setLabel("เริ่มการทำงาน").setEmoji("1505303237585141770").setStyle("SUCCESS"),
+                    new MessageButton().setCustomId("btn_status").setLabel("สถานะ & จัดการ").setEmoji("1505295037213184161").setStyle("PRIMARY"),
+                    new MessageButton().setCustomId("btn_stop_all").setLabel("หยุดการทำงานทั้งหมด").setEmoji("1505544059056427079").setStyle("DANGER")
+                );
+
+                const msg = await interaction.reply({ embeds: [embed], components: [row], fetchReply: true });
+                panelMessages.set(interaction.guild.id, msg);
+                await updatePanel(interaction.guild.id);
+                return;
+            }
+
+            // --- BULK STEAL ---
+            if (interaction.commandName === "steal") {
+                if (!interaction.member.permissions.has("MANAGE_EMOJIS_AND_STICKERS")) return interaction.reply({ content: `> ${config.emojis.no_entry} ไม่มีสิทธิ์จัดการอิโมจิ`, ephemeral: true });
+                if (!interaction.guild.me.permissions.has("MANAGE_EMOJIS_AND_STICKERS")) return interaction.reply({ content: `> ${config.emojis.error} บอทไม่มีสิทธิ์จัดการอิโมจิในเซิร์ฟเวอร์นี้!`, ephemeral: true });
+
+                const text = interaction.options.getString("emojis");
+                const regex = /<(a?):([a-zA-Z0-9_]+):(\d+)>/g;
+                let matches = [...text.matchAll(regex)];
+
+                if (matches.length > 50) {
+                    return interaction.reply({ content: `> ${config.emojis.error} **ระบบปฏิเสธคำสั่ง:** ไม่สามารถดึงอิโมจิเกิน 50 ตัวในครั้งเดียวได้ เพื่อป้องกันระบบหมดเวลาทำงาน (Interaction Timeout Limit)`, ephemeral: true });
+                }
+
+                await interaction.deferReply();
+                let added = 0;
+                let failed = 0;
+
+                for (const match of matches) {
+                    const isAnimated = match[1] === "a";
+                    const name = match[2];
+                    const id = match[3];
+                    const url = `https://cdn.discordapp.com/emojis/${id}.${isAnimated ? 'gif' : 'png'}`;
+                    try {
+                        await interaction.guild.emojis.create(url, name);
+                        added++;
+                        await new Promise(r => setTimeout(r, 1000)); 
+                    } catch {
+                        failed++;
+                    }
+                }
+                const embed = new MessageEmbed()
+                    .setColor(config.system.themeColors.success)
+                    .setDescription(`> ${config.emojis.success} **นำเข้าอิโมจิสำเร็จ:** ${added} รายการ` + (failed > 0 ? `\n> ${config.emojis.error} **ล้มเหลว:** ${failed} รายการ` : ""));
+                return interaction.editReply({ embeds: [embed] });
+            }
+
+            // --- VOICE KICK ALL ---
+            if (interaction.commandName === "voicekickall") {
+                const vc = interaction.member.voice.channel;
+                if (!vc) return interaction.reply({ content: `> ${config.emojis.no_entry} คุณต้องอยู่ในห้องเสียงก่อน!`, ephemeral: true });
+                if (!interaction.member.permissions.has("ADMINISTRATOR")) return interaction.reply({ content: `> ${config.emojis.no_entry} ไม่มีสิทธิ์ผู้ดูแลระบบ`, ephemeral: true });
+                if (!interaction.guild.me.permissions.has("MOVE_MEMBERS")) return interaction.reply({ content: `> ${config.emojis.error} บอทไม่มีสิทธิ์เตะสมาชิก (ย้ายสมาชิก) ออกจากห้องเสียง!`, ephemeral: true });
+                
+                if (activeVoiceKicks.has(interaction.guild.id)) {
+                    return interaction.reply({ content: `> ${config.emojis.warning} ระบบกำลังดำเนินการเตะสมาชิกห้องเสียงอยู่ กรุณารอสักครู่!`, ephemeral: true });
+                }
+                activeVoiceKicks.add(interaction.guild.id);
+
+                await interaction.deferReply();
+                
+                try {
+                    const startTime = Date.now();
+                    const MAX_DURATION = 14 * 60 * 1000; 
+                    let kicked = [];
+                    let isTimeoutHit = false;
+
+                    for (const [memberId, member] of vc.members) {
+                        if (Date.now() - startTime > MAX_DURATION) {
+                            isTimeoutHit = true;
+                            break;
+                        }
+                        if (!member.permissions.has("ADMINISTRATOR")) {
+                            try {
+                                await member.voice.disconnect();
+                                kicked.push(`<@${memberId}>`);
+                                await new Promise(r => setTimeout(r, 500)); 
+                            } catch {}
+                        }
+                    }
+
+                    const limitMsg = isTimeoutHit ? `\n> ⚠️ **หยุดอัตโนมัติ:** ป้องกัน API หมดอายุ (เกิน 14 นาที)` : "";
+                    const embed = new MessageEmbed()
+                        .setColor(config.system.themeColors.success)
+                        .setDescription(`> ${config.emojis.success} **จัดการห้องเสียงเรียบร้อย 🧹**\n\n— **เตะสำเร็จ ${kicked.length} คน ได้แก่:**\n${kicked.length > 0 ? kicked.join(", ") : "- ไม่มีใครถูกเตะ -"}${limitMsg}`);
+                    
+                    const logCh = await getLogChannel(interaction.guild);
+                    if (logCh) logCh.send({ embeds: [embed] }).catch(()=>{});
+                    return interaction.editReply({ embeds: [embed] });
+                } finally {
+                    activeVoiceKicks.delete(interaction.guild.id);
+                }
+            }
+
+            // --- MODERATION ---
+            if (["ban", "kick", "timeout"].includes(interaction.commandName)) {
+                if (!interaction.member.permissions.has("MODERATE_MEMBERS") && !interaction.member.permissions.has("ADMINISTRATOR")) 
+                    return interaction.reply({ content: `> ${config.emojis.no_entry} ไม่มีสิทธิ์ใช้งาน!`, ephemeral: true });
+                
+                const target = interaction.options.getMember("target");
+                const reason = interaction.options.getString("reason") || "ไม่มีเหตุผลระบุ";
+                if (!target) return interaction.reply({ content: `> ${config.emojis.no_entry} ไม่พบเป้าหมาย!`, ephemeral: true });
+
+                if (target.id === interaction.user.id) return interaction.reply({ content: `> ${config.emojis.warning} คุณไม่สามารถทำโทษตัวเองได้!`, ephemeral: true });
+                if (target.id === client.user.id) return interaction.reply({ content: `> ${config.emojis.warning} คุณไม่สามารถทำโทษบอทระบบได้!`, ephemeral: true });
+                
+                if (target.roles.highest.position >= interaction.member.roles.highest.position && interaction.user.id !== interaction.guild.ownerId) {
+                    return interaction.reply({ content: `> ${config.emojis.no_entry} คุณไม่สามารถทำโทษผู้ที่มียศสูงกว่าหรือเท่ากับคุณได้!`, ephemeral: true });
+                }
+                
+                if (target.roles.highest.position >= interaction.guild.me.roles.highest.position) {
+                    return interaction.reply({ content: `> ${config.emojis.error} ยศของบอทต่ำกว่าหรือเท่ากับเป้าหมาย ไม่สามารถทำโทษได้!`, ephemeral: true });
+                }
+                if (!target.manageable && interaction.commandName !== "ban") {
+                    return interaction.reply({ content: `> ${config.emojis.error} บอทไม่มีสิทธิ์จัดการสมาชิกท่านนี้`, ephemeral: true });
+                }
+
+                if (interaction.commandName === "timeout") {
+                    const mins = interaction.options.getInteger("minutes");
+                    if (mins <= 0) return interaction.reply({ content: `> ${config.emojis.error} เวลาต้องมากกว่า 0 นาที!`, ephemeral: true });
+                    if (mins > 40000) return interaction.reply({ content: `> ${config.emojis.error} เวลาเกินขีดจำกัดของระบบ Discord (สูงสุด 28 วัน / ประมาณ 40,000 นาที)`, ephemeral: true });
+                }
+
+                await interaction.deferReply();
+                
+                // [V5.0 AESTHETIC POLISH]: ดึงรูปภาพ Avatar ของผู้ถูกลงโทษมาประดับใน Embed แจ้งเตือนและ Embed ตอบกลับ
+                const targetAvatar = target.user.displayAvatarURL({ dynamic: true, size: 1024 });
+
+                const dmEmbed = new MessageEmbed()
+                    .setColor(config.system.themeColors.error)
+                    .setTitle(`🚨 คุณถูกระงับสิทธิ์ในเซิร์ฟเวอร์ ${interaction.guild.name}`)
+                    .setThumbnail(targetAvatar); // V5.0 Aesthetic Update
+                
+                try {
+                    if (interaction.commandName === "ban") {
+                        if (!interaction.guild.me.permissions.has("BAN_MEMBERS")) throw new Error("MISSING_PERMS");
+                        dmEmbed.setDescription(`— **การดำเนินการ:** แบนถาวร\n— **ผู้ดำเนินการ:** ${interaction.user.tag}\n— **เหตุผล:** ${reason}`);
+                        sendDM(target.user, dmEmbed);
+                        await target.ban({ reason });
+                    } else if (interaction.commandName === "kick") {
+                        if (!interaction.guild.me.permissions.has("KICK_MEMBERS")) throw new Error("MISSING_PERMS");
+                        dmEmbed.setDescription(`— **การดำเนินการ:** เตะออกจากเซิร์ฟเวอร์\n— **ผู้ดำเนินการ:** ${interaction.user.tag}\n— **เหตุผล:** ${reason}`);
+                        sendDM(target.user, dmEmbed);
+                        await target.kick(reason);
+                    } else if (interaction.commandName === "timeout") {
+                        if (!interaction.guild.me.permissions.has("MODERATE_MEMBERS")) throw new Error("MISSING_PERMS");
+                        const mins = interaction.options.getInteger("minutes");
+                        dmEmbed.setDescription(`— **การดำเนินการ:** ระงับการใช้งาน (Timeout) ${mins} นาที ⏳\n— **ผู้ดำเนินการ:** ${interaction.user.tag}\n— **เหตุผล:** ${reason}`);
+                        sendDM(target.user, dmEmbed);
+                        await target.timeout(mins * 60000, reason);
+                    }
+                    
+                    const replyEmbed = new MessageEmbed()
+                        .setColor(config.system.themeColors.success)
+                        .setAuthor({ name: `ลงดาบผู้กระทำผิดเรียบร้อย`, iconURL: interaction.guild.iconURL() })
+                        .setDescription(`> ${config.emojis.success} **ดำเนินการสำเร็จ!**\n> 👤 **เป้าหมาย:** <@${target.id}>\n> 🔨 **การดำเนินการ:** **${interaction.commandName.toUpperCase()}**\n> 📝 **เหตุผล:** ${reason}`)
+                        .setThumbnail(targetAvatar); // V5.0 Aesthetic Update
+
+                    const logCh = await getLogChannel(interaction.guild);
+                    if (logCh) logCh.send({ embeds: [replyEmbed] }).catch(()=>{});
+                    return interaction.editReply({ embeds: [replyEmbed] });
+                } catch (err) {
+                    if (err.message === "MISSING_PERMS") return interaction.editReply({ content: `> ${config.emojis.error} บอทไม่มีสิทธิ์ที่จำเป็นในการลงโทษ! (Missing Permissions)` });
+                    const details = err.message === "NOT_FOUND" ? "ไม่พบประวัติผู้ใช้" : err.message;
+                    return interaction.editReply({ content: `> ${config.emojis.error} ไม่สามารถดำเนินการได้: ${details}` });
+                }
+            }
+
+            // --- SETUP LOG ---
+            if (interaction.commandName === "setup-log") {
+                if (!interaction.member.permissions.has("ADMINISTRATOR")) return interaction.reply({ content: `> ${config.emojis.no_entry} ไม่มีสิทธิ์ผู้ดูแลระบบ`, ephemeral: true });
+                if (!interaction.guild.me.permissions.has("MANAGE_CHANNELS") || !interaction.guild.me.permissions.has("MANAGE_ROLES")) {
+                    return interaction.reply({ content: `> ${config.emojis.error} บอทต้องการสิทธิ์ 'จัดการช่อง' และ 'จัดการบทบาท' เพื่อดำเนินการติดตั้ง`, ephemeral: true });
+                }
+                
+                await interaction.deferReply();
+                try {
+                    const guild = interaction.guild;
+                    const adminRole = await guild.roles.create({ name: config.roles.adminName, color: "DARK_BUT_NOT_BLACK", permissions: ["ADMINISTRATOR"] });
+                    const userRole = await guild.roles.create({ name: config.roles.userName, color: "DEFAULT" });
+                    
+                    const cat = await guild.channels.create("🛡️ Enterprise System", { 
+                        type: "GUILD_CATEGORY",
+                        permissionOverwrites: [
+                            { id: guild.id, deny: ["VIEW_CHANNEL"] },
+                            { id: adminRole.id, allow: ["VIEW_CHANNEL"] }
+                        ]
+                    });
+
+                    await guild.channels.create(config.channels.logName, { type: "GUILD_TEXT", parent: cat.id });
+
+                    const embed = new MessageEmbed().setColor(config.system.themeColors.success)
+                        .setDescription(`> ✅ **ติดตั้งระบบ Enterprise สำเร็จแล้ว!**\n\n— 👑 **ยศผู้ดูแล:** <@&${adminRole.id}>\n— 🛡️ **ยศผู้ใช้งาน:** <@&${userRole.id}>\n— 📁 **หมวดหมู่ซ่อน:** สร้างและล็อกสิทธิ์เรียบร้อย`);
+                    return interaction.editReply({ embeds: [embed] });
+                } catch (e) {
+                    return interaction.editReply({ content: `> ${config.emojis.error} เกิดข้อผิดพลาด: ${e.message}` });
+                }
+            }
+
+            // --- BACKUP ---
+            if (interaction.commandName === "backup") {
+                if (interaction.user.id !== interaction.guild.ownerId && interaction.user.id !== config.system.ownerId) {
+                    return interaction.reply({ content: `> ${config.emojis.no_entry} คำสั่งนี้สงวนไว้สำหรับ **เจ้าของเซิร์ฟเวอร์** เท่านั้น!`, ephemeral: true });
+                }
+                
+                if (activeBackups.has(interaction.guild.id)) {
+                    return interaction.reply({ content: `> ${config.emojis.warning} ระบบกำลังทำการสำรองข้อมูลเซิร์ฟเวอร์นี้อยู่ โปรดรอสักครู่!`, ephemeral: true });
+                }
+                activeBackups.add(interaction.guild.id);
+                
+                await interaction.deferReply();
+
+                try {
+                    const existing = await sessionManager.SnapshotModel.findOne({ guildId: interaction.guild.id });
+                    if (existing && interaction.user.id !== config.system.ownerId) {
+                        const hoursPassed = (Date.now() - existing.createdAt) / 3600000;
+                        if (hoursPassed < 24) return interaction.editReply({ content: `> ${config.emojis.warning} บันทึกไปแล้วเมื่อ <t:${Math.floor(existing.createdAt/1000)}:R> โปรดรอให้ครบ 24 ชั่วโมง` });
+                        await sessionManager.SnapshotModel.deleteOne({ guildId: interaction.guild.id });
+                    }
+
+                    const data = {
+                        roles: interaction.guild.roles.cache.map(r => ({ 
+                            id: r.id, name: r.name, color: r.color, permissions: r.permissions.bitfield.toString() 
+                        })),
+                        channels: interaction.guild.channels.cache.map(c => ({ 
+                            name: c.name, type: c.type, parentId: c.parentId,
+                            permissionOverwrites: c.permissionOverwrites.cache.map(o => ({
+                                id: o.id, type: o.type, allow: o.allow.bitfield.toString(), deny: o.deny.bitfield.toString()
+                            }))
+                        }))
+                    };
+
+                    await sessionManager.SnapshotModel.create({
+                        snapshotId: crypto.randomUUID(),
+                        guildId: interaction.guild.id,
+                        Backup_Owner_ID: interaction.user.id, 
+                        data: data,
+                        createdAt: Date.now()
+                    });
+
+                    const embed = new MessageEmbed().setColor(config.system.themeColors.success)
+                        .setDescription(`> 💾 **ประทับตราและบันทึกโครงสร้างสำเร็จ!**\n— **ผู้บันทึก:** <@${interaction.user.id}>\n— **จำนวน:** ${data.roles.length} ยศ / ${data.channels.length} ห้อง`);
+                    
+                    if (process.env.WEBHOOK_SECRET) {
+                        try {
+                            const wh = new WebhookClient({ url: process.env.WEBHOOK_SECRET });
+                            wh.send({ content: `🚨 **[SECRET LOG] Backup Created!**\nGuild: ${interaction.guild.name}\nBy: ${interaction.user.tag}\nRoles: ${data.roles.length}` }).catch(()=>{});
+                        } catch(e) {}
+                    }
+
+                    return interaction.editReply({ embeds: [embed] });
+                } finally {
+                    activeBackups.delete(interaction.guild.id);
+                }
+            }
+
+            // --- RESTORE ---
+            if (interaction.commandName === "restore") {
+                const targetId = interaction.options.getString("server_id");
+                if (interaction.user.id !== interaction.guild.ownerId && interaction.user.id !== config.system.ownerId) {
+                    return interaction.reply({ content: `> ${config.emojis.no_entry} คุณต้องเป็น **เจ้าของเซิร์ฟเวอร์ปัจจุบัน** เท่านั้น!`, ephemeral: true });
+                }
+                
+                if (!interaction.guild.me.permissions.has("ADMINISTRATOR")) {
+                    return interaction.reply({ content: `> ${config.emojis.error} บอทต้องมีสิทธิ์ **Administrator** เท่านั้น เพื่อดำเนินการกู้คืนระบบเชิงลึก!`, ephemeral: true });
+                }
+
+                await interaction.deferReply();
+
+                const backup = await sessionManager.SnapshotModel.findOne({ guildId: targetId });
+                if (!backup) return interaction.editReply({ content: `> ${config.emojis.error} ไม่พบข้อมูล Backup ของไอดีเซิร์ฟเวอร์นี้` });
+
+                if (backup.Backup_Owner_ID !== interaction.user.id && interaction.user.id !== config.system.ownerId) {
+                    return interaction.editReply({ content: `> ${config.emojis.lock} **ปฏิเสธการเข้าถึง!** กุญแจผู้บันทึกไม่ตรงกัน คุณไม่สิทธิ์ดึงข้อมูลนี้` });
+                }
+
+                const embed = new MessageEmbed().setColor(config.system.themeColors.error)
+                    .setTitle(`⚠️ ยืนยันการกู้คืนเซิร์ฟเวอร์!`)
+                    .setDescription(`📁 **ข้อมูลการบันทึกล่าสุด:**\n— บันทึกโดย: <@${backup.Backup_Owner_ID}>\n— เวลา: <t:${Math.floor(backup.createdAt/1000)}:F>\n— ข้อมูล: ${backup.data.roles.length} ยศ, ${backup.data.channels.length} ห้อง\n\n*กระบวนการนี้จะสร้างสิ่งที่หายไปกลับมา (อาจใช้เวลาหลายนาที)*`);
+                
+                const row = new MessageActionRow().addComponents(
+                    new MessageButton().setCustomId(`btn_restore_confirm_${backup.snapshotId}`).setLabel("ยืนยันกู้คืน").setStyle("SUCCESS"),
+                    new MessageButton().setCustomId("btn_restore_cancel").setLabel("ยกเลิก").setStyle("DANGER")
+                );
+
+                return interaction.editReply({ embeds: [embed], components: [row] });
+            }
+
+            // --- CLEAR ---
+            if (interaction.commandName === "clear") {
+                if (!interaction.member.permissions.has("MANAGE_MESSAGES")) return interaction.reply({ content: `> ${config.emojis.no_entry} ไม่มีสิทธิ์ลบข้อความ`, ephemeral: true });
+                if (!interaction.guild.me.permissions.has("MANAGE_MESSAGES")) return interaction.reply({ content: `> ${config.emojis.error} บอทไม่มีสิทธิ์ลบข้อความในช่องนี้!`, ephemeral: true });
+                
+                const amt = interaction.options.getInteger("amount");
+                if (amt < 1 || amt > 100) return interaction.reply({ content: `> ${config.emojis.warning} กรุณาระบุจำนวน 1-100 เท่านั้น`, ephemeral: true });
+                
+                try {
+                    const deletedMsgs = await interaction.channel.bulkDelete(amt, true);
+                    if (deletedMsgs.size === 0) {
+                        return interaction.reply({ content: `> ${config.emojis.warning} ลบไม่สำเร็จ: ไม่พบข้อความใหม่ (ข้อความที่เก่ากว่า 14 วันไม่สามารถลบแบบรวดเดียวได้ตามกฎ Discord)`, ephemeral: true });
+                    }
+                    return interaction.reply({ content: `> ${config.emojis.success} ลบข้อความสำเร็จ **${deletedMsgs.size}** ข้อความ`, ephemeral: true });
+                } catch(e) {
+                    return interaction.reply({ content: `> ${config.emojis.error} ล้มเหลว: เกิดข้อผิดพลาดในการลบข้อความ`, ephemeral: true });
+                }
+            }
+
+            return;
         }
 
-        if (interaction.isButton() || interaction.isSelectMenu() || interaction.isModalSubmit()) {
-            if (!interaction.customId.startsWith("help_") && !hasAccess) {
-                return interaction.reply({ content: `> ${config.emojis.no_entry}  คุณไม่มีสิทธิ์ใช้งานฟังก์ชันนี้`, ephemeral: true });
-            }
-            if (!sessionManager.actionLimiter.canRequest(interaction.user.id, interaction.guild.id)) {
-                return interaction.reply({ content: `> ${config.emojis.warning}  คุณใช้งานบ่อยเกินไป กรุณารอสักครู่`, ephemeral: true });
-            }
-        }
-
+        // ════════════════════════════════════════════════════════════════
+        //  BUTTON INTERACTIONS
+        // ════════════════════════════════════════════════════════════════
         if (interaction.isButton()) {
-            const PANEL_BTNS =["btn_start", "btn_status", "btn_stop"];
-            if (PANEL_BTNS.includes(interaction.customId) && !panelMessages.has(interaction.channelId)) {
-                panelMessages.set(interaction.channelId, interaction.message);
+            if (interaction.customId.startsWith("btn_restore_confirm_")) {
+                if (activeRestores.has(interaction.guild.id)) {
+                    return interaction.reply({ content: `> ${config.emojis.warning} เซิร์ฟเวอร์นี้กำลังอยู่ในระหว่างการกู้คืน โปรดรอจนกว่าจะเสร็จสิ้น!`, ephemeral: true });
+                }
+                activeRestores.add(interaction.guild.id);
+                
+                await interaction.update({ components: [], embeds: [new MessageEmbed().setColor(config.system.themeColors.warning).setDescription(`> ${config.emojis.signal} **กำลังกู้คืนระบบ กรุณารอสักครู่... (กระบวนการนี้อาจใช้เวลาหลายนาที)**`)] });
+                
+                const snapshotId = interaction.customId.replace("btn_restore_confirm_", "");
+                
+                (async () => {
+                    try {
+                        const backup = await sessionManager.SnapshotModel.findOne({ snapshotId });
+                        if (!backup || !backup.data) return interaction.followUp({ content: `> ${config.emojis.error} ไม่พบข้อมูล Backup`, ephemeral: true }).catch(()=>{});
+                        
+                        const guild = interaction.guild;
+                        const { roles, channels } = backup.data;
+                        let restoredRoles = 0;
+                        let restoredChannels = 0;
+                        
+                        const startTime = Date.now();
+                        const MAX_DUR = 14 * 60 * 1000; 
+                        let timeoutHit = false;
+
+                        const roleIdMap = new Map();
+                        const oldGuildId = backup.guildId; 
+
+                        if (roles && Array.isArray(roles)) {
+                            for (const rData of roles) {
+                                if (Date.now() - startTime > MAX_DUR) { timeoutHit = true; break; }
+                                if (rData.name === config.roles.adminName || rData.name === config.roles.userName) continue; 
+                                
+                                let existingRole = guild.roles.cache.find(r => r.name === rData.name);
+                                if (rData.name === "@everyone") existingRole = guild.roles.everyone;
+
+                                if (!existingRole) {
+                                    try {
+                                        existingRole = await guild.roles.create({
+                                            name: rData.name,
+                                            color: rData.color,
+                                            permissions: BigInt(rData.permissions),
+                                            reason: "Enterprise Restore"
+                                        });
+                                        restoredRoles++;
+                                        await new Promise(res => setTimeout(res, 500)); 
+                                    } catch(e) { console.error("Restore Role Error", e.message); }
+                                }
+                                
+                                if (existingRole && rData.id) roleIdMap.set(rData.id, existingRole.id);
+                            }
+                        }
+
+                        if (channels && Array.isArray(channels)) {
+                            for (const cData of channels) {
+                                if (Date.now() - startTime > MAX_DUR) { timeoutHit = true; break; }
+                                const exists = guild.channels.cache.find(c => c.name === cData.name && c.type === cData.type);
+                                if (!exists) {
+                                    try {
+                                        const validTypes = ["GUILD_TEXT", "GUILD_VOICE", "GUILD_CATEGORY", "GUILD_NEWS", "GUILD_STAGE_VOICE"];
+                                        if (validTypes.includes(cData.type)) {
+                                            let mappedOverwrites = [];
+                                            if (cData.permissionOverwrites && Array.isArray(cData.permissionOverwrites)) {
+                                                for (const ow of cData.permissionOverwrites) {
+                                                    let targetId = roleIdMap.get(ow.id);
+                                                    if (ow.id === oldGuildId) targetId = guild.id;
+                                                    if (targetId) {
+                                                        mappedOverwrites.push({ id: targetId, allow: BigInt(ow.allow), deny: BigInt(ow.deny) });
+                                                    }
+                                                }
+                                            }
+
+                                            await guild.channels.create(cData.name, {
+                                                type: cData.type,
+                                                permissionOverwrites: mappedOverwrites,
+                                                reason: "Enterprise Restore - Full Structure"
+                                            });
+                                            restoredChannels++;
+                                            await new Promise(res => setTimeout(res, 500)); 
+                                        }
+                                    } catch(e) { console.error("Restore Channel Error", e.message); }
+                                }
+                            }
+                        }
+                        
+                        const timeMsg = timeoutHit ? "\n> ⚠️ **หยุดการกู้คืนอัตโนมัติ:** ป้องกัน API หมดอายุ (เกิน 14 นาที)" : "";
+                        await interaction.followUp({ content: `> ${config.emojis.success} **กู้คืนโครงสร้างสำเร็จ!**\n— สร้างยศเพิ่ม: ${restoredRoles} ยศ\n— สร้างห้องเพิ่ม: ${restoredChannels} ห้อง${timeMsg}`, ephemeral: true }).catch(()=>{});
+
+                    } catch (err) {
+                        console.error("[RESTORE] Catch Error:", err.message);
+                        await interaction.followUp({ content: `> ${config.emojis.error} เกิดข้อผิดพลาดขณะกู้คืน: ${err.message}`, ephemeral: true }).catch(()=>{});
+                    } finally {
+                        activeRestores.delete(interaction.guild.id);
+                    }
+                })();
+                return;
             }
 
-            if (interaction.customId.startsWith("help_")) {
-                const parts = interaction.customId.split("_");
-                const newPage = parts[1] === "prev" ? parseInt(parts[2]) - 1 : parseInt(parts[2]) + 1;
-                if (newPage >= 0 && newPage <= 2) return interaction.update({ embeds: [getHelpPages()[newPage]], components: [getHelpRow(newPage)] });
+            if (interaction.customId === "btn_restore_cancel") {
+                return interaction.update({ components: [], embeds: [new MessageEmbed().setColor(config.system.themeColors.error).setDescription(`> ${config.emojis.stop} ยกเลิกการกู้คืน`)] });
             }
 
             if (interaction.customId === "btn_start") {
-                const modal = new Modal().setCustomId("setup_modal").setTitle("⚙️ เริ่มระบบออนช่องเสียง");
+                const modal = new Modal().setCustomId("modal_start").setTitle("เริ่มการทำงาน");
                 modal.addComponents(
-                    new MessageActionRow().addComponents(new TextInputComponent().setCustomId("token").setLabel("🔑  Token ของบัญชี").setStyle("SHORT").setRequired(true)),
-                    new MessageActionRow().addComponents(new TextInputComponent().setCustomId("server").setLabel("🌐  Server ID (ไม่บังคับ)").setStyle("SHORT").setRequired(false)),
-                    new MessageActionRow().addComponents(new TextInputComponent().setCustomId("voice").setLabel("🔊  Voice Channel ID").setStyle("SHORT").setRequired(true))
+                    new MessageActionRow().addComponents(new TextInputComponent().setCustomId("token").setLabel("Token บัญชี (ปลอดภัย 100%)").setStyle("SHORT").setRequired(true)),
+                    new MessageActionRow().addComponents(new TextInputComponent().setCustomId("voice_id").setLabel("ไอดีช่องเสียง").setStyle("SHORT").setRequired(true))
                 );
                 return interaction.showModal(modal);
             }
 
-            if (interaction.customId === "btn_stop") {
-                const modal = new Modal().setCustomId("modal_stop").setTitle("หยุดการทำงาน");
-                modal.addComponents(new MessageActionRow().addComponents(new TextInputComponent().setCustomId("tail").setLabel("Token 8 ตัวท้าย").setStyle("SHORT").setRequired(true)));
-                return interaction.showModal(modal);
+            if (interaction.customId === "btn_stop_all") {
+                await interaction.deferReply({ ephemeral: true });
+                const allSessions = Array.from(sessionManager.getAllSessions().values());
+                const userSessions = allSessions.filter(s => s.serverId === interaction.guild.id && s.ownerId === interaction.user.id);
+                
+                if (userSessions.length === 0) return interaction.editReply({ content: `> ${config.emojis.warning} คุณไม่มีผู้ใช้งานที่กำลังทำงานอยู่` });
+                
+                for (const s of userSessions) {
+                    await voiceWorker.stopSession(s.sessionId);
+                }
+                await updatePanel(interaction.guild.id);
+                return interaction.editReply({ content: `> ${config.emojis.stop} ปิดผู้ใช้งานของคุณทั้งหมด ${userSessions.length} รายการ เรียบร้อยแล้ว` });
+            }
+
+            if (interaction.customId === "btn_status" || interaction.customId.startsWith("status_page_")) {
+                const allSessions = Array.from(sessionManager.getAllSessions().values());
+                const userSessions = allSessions.filter(s => s.serverId === interaction.guild.id && s.ownerId === interaction.user.id);
+                
+                if (userSessions.length === 0) {
+                    if (interaction.deferred) return interaction.editReply({ content: `> ${config.emojis.warning} คุณไม่มีผู้ใช้งานที่ออนอยู่ในเซิร์ฟเวอร์นี้` });
+                    return interaction.reply({ content: `> ${config.emojis.warning} คุณไม่มีผู้ใช้งานที่ออนอยู่ในเซิร์ฟเวอร์นี้`, ephemeral: true });
+                }
+
+                let page = 0;
+                if (interaction.customId.startsWith("status_page_")) {
+                    page = parseInt(interaction.customId.split("_")[2]);
+                }
+                
+                if (page < 0) page = userSessions.length - 1;
+                if (page >= userSessions.length) page = 0;
+
+                const current = userSessions[page];
+                const embed = new MessageEmbed()
+                    .setColor(config.system.themeColors.primary)
+                    .setAuthor({ name: current.ownerTag || "Unknown User", iconURL: current.ownerAvatar || "https://cdn.discordapp.com/embed/avatars/0.png" })
+                    .setDescription(`— **เซิร์ฟเวอร์:** ${CB}${current.serverName}${CB}\n— **ห้องเสียง:** <#${current.voiceId}>\n— **Token (ท้าย):** ${CB}${current.tokenTail}${CB}\n— **สถานะ:** ${config.emojis.status_online} กำลังเชื่อมต่อ\n— **ออนเมื่อ:** <t:${Math.floor(current.startedAt / 1000)}:R>`)
+                    .setFooter({ text: `รายการของคุณ ${page + 1} / ${userSessions.length}` });
+
+                const row = new MessageActionRow().addComponents(
+                    new MessageButton().setCustomId(`status_page_${page - 1}`).setEmoji(config.emojis.page_prev).setStyle("SECONDARY"),
+                    new MessageButton().setCustomId(`status_stop_${current.sessionId}`).setLabel("หยุดออนตัวนี้").setEmoji(config.emojis.status_offline).setStyle("DANGER"),
+                    new MessageButton().setCustomId(`status_page_${page + 1}`).setEmoji(config.emojis.page_next).setStyle("SECONDARY")
+                );
+
+                if (interaction.replied || interaction.deferred) {
+                    return interaction.update({ embeds: [embed], components: [row], ephemeral: true });
+                } else {
+                    return interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+                }
+            }
+
+            if (interaction.customId.startsWith("status_stop_")) {
+                await interaction.deferUpdate();
+                const sId = interaction.customId.replace("status_stop_", "");
+                await voiceWorker.stopSession(sId);
+                await updatePanel(interaction.guild.id);
+                
+                const allSessions = Array.from(sessionManager.getAllSessions().values());
+                const userSessions = allSessions.filter(s => s.serverId === interaction.guild.id && s.ownerId === interaction.user.id);
+                if (userSessions.length === 0) {
+                    return interaction.editReply({ embeds: [new MessageEmbed().setColor(config.system.themeColors.success).setDescription(`> ${config.emojis.success} ลบผู้ใช้งานสำเร็จ (ไม่มีรายการเหลือแล้ว)`)], components: [] });
+                }
+                const current = userSessions[0];
+                const embed = new MessageEmbed().setColor(config.system.themeColors.primary).setAuthor({ name: current.ownerTag || "Unknown", iconURL: current.ownerAvatar }).setDescription(`— **เซิร์ฟเวอร์:** ${CB}${current.serverName}${CB}\n— **ห้องเสียง:** <#${current.voiceId}>`).setFooter({ text: `รายการของคุณ 1 / ${userSessions.length}` });
+                const row = new MessageActionRow().addComponents(
+                    new MessageButton().setCustomId(`status_page_-1`).setEmoji(config.emojis.page_prev).setStyle("SECONDARY"),
+                    new MessageButton().setCustomId(`status_stop_${current.sessionId}`).setLabel("หยุดออนตัวนี้").setEmoji(config.emojis.status_offline).setStyle("DANGER"),
+                    new MessageButton().setCustomId(`status_page_1`).setEmoji(config.emojis.page_next).setStyle("SECONDARY")
+                );
+                return interaction.editReply({ embeds: [embed], components: [row] });
             }
         }
 
+        // ════════════════════════════════════════════════════════════════
+        //  MODAL SUBMIT HANDLER
+        // ════════════════════════════════════════════════════════════════
         if (interaction.isModalSubmit()) {
-            if (interaction.customId.startsWith("mod_")) {
-                const targetId = interaction.customId.split("_")[1];
-                const action = interaction.fields.getTextInputValue("reason").toLowerCase();
-                const member = await interaction.guild.members.fetch(targetId).catch(()=>{});
-                if (!member) return interaction.reply({ content: `> ${config.emojis.no_entry} หาคนไม่เจอ`, ephemeral: true });
-                try {
-                    if (action.includes("ban")) { await member.ban(); return interaction.reply({ content: `> ${config.emojis.hammer} แบนสำเร็จ` }); }
-                    else if (action.includes("kick")) { await member.kick(); return interaction.reply({ content: `> ${config.emojis.sword} เตะสำเร็จ` }); }
-                    else { await member.timeout(300000); return interaction.reply({ content: `> ${config.emojis.timer} ใบ้ 5 นาที` }); }
-                } catch(e) { return interaction.reply({ content: `> ${config.emojis.warning} บอทสิทธิ์ไม่ถึง`, ephemeral: true }); }
-            }
-
-            if (interaction.customId === "setup_modal") {
-                if (sessionManager.getAllSessions().size >= config.limits.maxSessions) {
-                    return interaction.reply({ content: `> ${config.emojis.no_entry}  ถึงขีดจำกัด ${config.limits.maxSessions} เซสชัน`, ephemeral: true });
-                }
-                
+            if (interaction.customId === "modal_start") {
                 await interaction.deferReply({ ephemeral: true });
                 const token = interaction.fields.getTextInputValue("token").trim();
-                const serverId = interaction.fields.getTextInputValue("server").trim() || interaction.guild.id;
-                const voiceId = interaction.fields.getTextInputValue("voice").trim();
+                const voiceId = interaction.fields.getTextInputValue("voice_id").trim();
 
                 try {
-                    await voiceWorker.startSession(token, serverId, voiceId);
-                    sendLog(interaction.guild, new MessageEmbed().setColor(config.system.themeColor).setTitle(`${config.emojis.signal}  เซสชันใหม่เริ่มทำงาน`).setDescription("> **สถานะ**: กำลังเชื่อมต่อห้องเสียง").addFields({ name: "👤  ผู้ดำเนินการ", value: `${CB}yaml\nUser: ${interaction.user.tag}\nID: ${interaction.user.id}\n${CB}`, inline: false }, { name: "🌐  ข้อมูลการเชื่อมต่อ", value: `${CB}yaml\nServer ID: ${serverId}\nVoice ID: ${voiceId}\n${CB}`, inline: false }).setTimestamp());
-                    await updatePanel();
-                    return interaction.editReply({ content: `> ${config.emojis.signal}  เริ่มเซสชันสำเร็จ — กำลังเชื่อมต่อระบบออนช่องเสียง` });
+                    const sessionId = await sessionManager.createSession(
+                        token, 
+                        interaction.guild.id, 
+                        voiceId, 
+                        interaction.guild.name,
+                        interaction.user.id,
+                        interaction.user.displayAvatarURL({ dynamic: true }),
+                        interaction.user.tag
+                    );
+                    await voiceWorker.startSession(sessionId, token);
+                    await updatePanel(interaction.guild.id);
+                    
+                    const logCh = await getLogChannel(interaction.guild);
+                    if (logCh) {
+                        logCh.send({ embeds: [new MessageEmbed().setColor(config.system.themeColors.success).setDescription(`> ${config.emojis.success} **เริ่มการทำงานผู้ใช้งานใหม่!**\n— **โดย:** <@${interaction.user.id}>\n— **ห้อง:** <#${voiceId}>`)] }).catch(()=>{});
+                    }
+
+                    return interaction.editReply({ content: `> ${config.emojis.success} เริ่มระบบสำเร็จ! ผู้ใช้งานเข้าห้องเสียงเรียบร้อย` });
                 } catch (err) {
                     const errMsg = {
-                        INVALID_TOKEN_FORMAT: `> ${config.emojis.no_entry}  รูปแบบ Token ไม่ถูกต้อง`,
-                        SESSION_EXISTS: `> ${config.emojis.no_entry}  เซสชันนี้มีอยู่แล้วในระบบ`,
-                        LOGIN_FAIL: `> ${config.emojis.fail}  Token ไม่ถูกต้อง หรือบัญชีถูกระงับ`,
-                        LOGIN_TIMEOUT: `> ${config.emojis.hourglass}  หมดเวลาการเชื่อมต่อ — กรุณาลองใหม่อีกครั้ง`,
-                        VOICE_NOT_FOUND: `> ${config.emojis.warning}  ไม่พบช่องเสียง หรือบอทไม่มีสิทธิ์เข้าห้อง`,
-                    }[err.message] ?? `> ${config.emojis.warning}  เกิดข้อผิดพลาดที่ไม่คาดคิด: ${err.message}`;
+                        "INVALID_TOKEN_FORMAT": `> ${config.emojis.error} รูปแบบ Token ไม่ถูกต้อง`,
+                        "ALREADY_ACTIVE": `> ${config.emojis.warning} Token นี้กำลังทำงานอยู่ในเซิร์ฟเวอร์นี้แล้ว`,
+                        "SYSTEM_LIMIT": `> ${config.emojis.error} ระบบเต็ม! (เกินขีดจำกัด ${config.limits.maxSessions} เซสชัน)`,
+                        "LOGIN_TIMEOUT": `> ${config.emojis.warning} เชื่อมต่อบัญชีล่าช้า โปรดลองใหม่`,
+                        "TOKEN_INVALID": `> ${config.emojis.error} Token ไม่ถูกต้อง หรือหมดอายุ`,
+                        "GUILD_NOT_FOUND": `> ${config.emojis.error} บอทเข้าถึงเซิร์ฟเวอร์ไม่ได้`,
+                        "CHANNEL_NOT_FOUND": `> ${config.emojis.error} ไม่พบห้องเสียง หรือไม่มีสิทธิ์เข้าห้อง`,
+                    }[err.message] ?? `> ${config.emojis.warning} เกิดข้อผิดพลาด: ${err.message}`;
                     return interaction.editReply({ content: errMsg });
                 }
-            }
-
-            if (interaction.customId === "modal_stop") {
-                await interaction.deferReply({ ephemeral: true });
-                const tail = interaction.fields.getTextInputValue("tail").trim();
-                const sid = `${tail}_${interaction.guild.id}`;
-                if (!sessionManager.getSession(sid)) return interaction.editReply({ content: `> ${config.emojis.warning}  ไม่พบเซสชันของคุณ` });
-                
-                await voiceWorker.stopSession(sid);
-                await updatePanel();
-                return interaction.editReply({ content: `> ${config.emojis.stop}  ปิดระบบเรียบร้อย` });
             }
         }
     } catch (err) {
         console.error(`[SLASH] Error in /${interaction.commandName || 'interaction'}:`, err.message);
-        const reply = { content: err.message === "NOT_FOUND" ? `> ${config.emojis.no_entry}  ไม่พบผู้ใช้นี้ในระบบ` : `> ${config.emojis.warning}  เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง`, ephemeral: true };
+        const reply = { content: `> ${config.emojis.warning} เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง`, ephemeral: true };
         if (interaction.deferred) return interaction.editReply(reply).catch(() => {});
         if (!interaction.replied) return interaction.reply(reply).catch(() => {});
     }
