@@ -1,0 +1,136 @@
+🔴 BUG ระดับวิกฤต (บอทไม่ขึ้น/แครชแน่นอน)
+🐛 Bug #1: index.js — server ถูกประกาศซ้อนกัน
+ใน index.js ผมเขียน:
+
+``javascript
+const server = { close: (cb) => cb() }; // placeholder
+boot().catch(...)
+`
+
+ปัญหา: ใน boot() ผมเขียน global.server = serverref แต่ฟังก์ชัน shutdown() ใช้ตัวแปร server (จาก closure) ที่ชี้ไปที่ placeholder ตลอด → server.close() ไม่ปิด Express จริง ตอน SIGTERM
+
+ผลกระทบ: Graceful shutdown ทำงานไม่ครบ Express server ค้างเปิดอยู่
+
+🐛 Bug #2: commands.js — Code Block escape ผิด
+ผมเขียน:
+`javascript
+const CB = "\\\";
+``
+
+ปัญหา: ใน JavaScript \` ไม่ใช่ valid escape — มันจะกลายเป็น literal backslash + backtick → output ออกมาเป็น  \\\ ` ใน Discord embed → embed แสดงผลผิดทั้งหมด
+
+ที่ถูก: ต้องเป็น  const CB = "`";  (triple backtick ตรงๆ ไม่ต้อง escape)
+
+ที่ผิด: ใน commands.js (บรรทัด ~25) และ commands/information.js (บรรทัด ~15)
+
+🐛 Bug #3: index.js — Boot Sequence ลำดับพัง
+ผมเขียน:
+`javascript
+boot().catch(...)
+// แต่ shutdown() ใช้ server ที่ scope นอก boot()
+`
+
+ปัญหา: server ที่ shutdown ใช้ คือ placeholder object ที่ปลอม close() — ไม่ใช่ Express server จริง
+
+🐛 Bug #4: voiceWorker.js — sessionId ส่งผิดใน connectToVoice
+ผมเรียก connectToVoice(client, guildId, channelId, tokenHash, sessionId) แต่ใน function signature เก่ามีแค่ 4 args และผมใช้ sessionManager.getSession(tokenHash)?.tokenTail ซึ่ง tokenHash ไม่ใช่ sessionId → จะได้ undefined ตลอด
+
+ผลกระทบ: sendDisconnectDM อาจจะหา session ไม่เจอ DM ไม่ส่ง
+
+ผมแก้แล้วในเวอร์ชันที่ส่ง (เพิ่ม sessionId param) แต่ต้องตรวจให้ชัวร์อีกที
+
+🐛 Bug #5: package.json — ขาด field "main" หรือ "start" script
+ผมไม่ได้แตะ package.json — ถ้า package.json เดิมตั้ง "main": "discord/index.js" ก็โอเค แต่ถ้าตั้งแค่ "main": "index.js" ที่ root → จะหาไฟล์ไม่เจอ
+
+ต้องเช็ค: เปิด package.json ดู "main" และ "scripts.start" ว่าชี้ไปที่ discord/index.js ไหม
+
+🟠 BUG ระดับสำคัญ (ทำงานได้แต่พฤติกรรมผิด)
+🐛 Bug #6: index.js — crashShieldReady flag ขัดเจตนา
+ผมเขียน:
+`javascript
+if (!crashShieldReady) process.exit(1);
+`
+
+ปัญหา: ตามที่เราตกลงใน Conflict #7 — boot fail → exit, runtime error → ไม่ exit + ส่ง webhook
+
+แต่ logic ผมกลับด้าน: ระหว่าง boot ถ้ามี unhandledRejection จะ exit (ถูก) แต่ webhook ไม่ส่ง เพราะเช็ค crashShieldReady ก่อน → ผู้ใช้ไม่รู้ว่า boot ตายเพราะอะไร
+
+ที่ควรเป็น: ส่ง webhook เสมอ (ถ้า ENV มี) แล้วค่อยตัดสินใจ exit/ไม่ exit
+
+🐛 Bug #7: commands.js — getLogChannel ไม่ได้ export แต่เรียกใช้
+ใน Router ผมเรียก getLogChannel ส่งให้ moderation/utility แต่ฟังก์ชันนี้ประกาศใน commands.js ภายในเท่านั้น — ส่งเป็น argument ไปถูก แต่ ใน Modal handler ก็ใช้ getLogChannel ตอน start session — ตรงนั้นผมประกาศ inline ใน scope เดียวกัน → ใช้ได้ แต่อ่านยาก
+
+ไม่พังจริง แต่อาจสับสน
+
+🐛 Bug #8: commands.js — Anti-Raid threshold ลด 5→3 โดยไม่ตั้งใจ
+ใน index.js ผมเขียน:
+`javascript
+if (recent.length >= 3) {
+`
+
+ปัญหา: ในเอกสารพิมพ์เขียวเดิม + โค้ดเก่าของคุณซัน threshold คือ 5 ครั้ง ผมเปลี่ยนเป็น 3 โดยไม่ได้รับอนุมัติ → ผู้ใช้สุจริตอาจโดน timeout เพราะแค่แท็ก @everyone 3 รอบใน 1 นาที
+
+ต้องเปลี่ยนกลับเป็น 5
+
+🐛 Bug #9: auditLogger.js — Anti-Raid log ซ้ำซ้อน
+ผมเขียน Anti-Raid log ใน index.js (ส่งเข้า securityChannelId) แต่ใน auditLogger.js ผม ไม่มี listener สำหรับ Anti-Raid — แค่มี webhookUpdate ซึ่งเป็นคนละเรื่อง
+
+ผลกระทบ: ระบบ log ทำงานถูก แต่ logic แยกอยู่ 2 ที่ — ถ้าวันหลังต้องแก้ Anti-Raid log ต้องเปิด 2 ไฟล์
+
+ไม่พังจริง แต่เป็น code smell
+
+🐛 Bug #10: commands/utility.js — /say ครั้งแรกเข้าได้แม้ไม่ใช่ Admin
+ผมเขียน:
+`javascript
+if (history.length === 1) {
+    if (interaction.member.permissions.has("MANAGEMESSAGES")) {
+        await interaction.channel.send(msg);
+        return ...;
+    }
+    // User ทั่วไปครั้งแรก — ผ่าน
+    await interaction.channel.send(msg);
+    return ...;
+}
+`
+
+ปัญหา: ใครก็ได้สามารถใช้ /say ครั้งแรกได้เสมอ → คนสุ่มใช้สแปม 1 ครั้งต่อนาทีไปเรื่อยๆ ไม่มีวันโดนเช็ค whitelist
+
+ที่ตกลงไว้: "พิมพ์ 1 ครั้งผ่านปกติ / 2 ครั้งขึ้นไปเช็ค Whitelist" — แต่ผมไม่ได้ตั้ง permission gate สำหรับครั้งแรก ทำให้ user ทั่วไปแอบสแปมได้
+
+ที่ควรเป็น: ครั้งแรกต้องเช็ค MANAGEMESSAGES permission อยู่ดี — ไม่งั้นใครก็ใช้ได้
+
+🐛 Bug #11: voiceWorker.js — tokenHash validation ผ่าน getSession ผิด context
+ผมเขียน:
+`javascript
+const sessionId = ${sessionManager.getSession(tokenHash)?.tokenTail || 'unknown'}${guildId};
+`
+
+ปัญหา: getSession() รับ sessionId ไม่ใช่ tokenHash → จะคืน undefined เสมอ → sessionId ที่สร้างจะเป็น unknown_<guildId> ตลอด → DM ส่งหา session ไม่เจอ
+
+ผมพยายามแก้ในรอบส่งแต่ logic ยังมั่ว ต้องแก้ใหม่ ให้ส่ง sessionId ตัวจริงไปจาก startSession()
+
+🟡 BUG ระดับเล็กน้อย
+🐛 Bug #12: commands.js — Modal MessageActionRow เรียก require ซ้ำ
+ผมเขียน:
+`javascript
+const { Modal, TextInputComponent, MessageActionRow } = require("discord.js");
+`
+
+ภายใน handleButton() ทั้งที่ MessageActionRow ถูก import ที่หัวไฟล์อยู่แล้ว → ทำงานได้ แต่กิน performance นิดหน่อย
+
+🐛 Bug #13: index.js — requestCounts cleanup ไม่ใช้ค่าจาก settings
+Settings เปลี่ยน rateLimitWindowMs ได้ผ่าน Dashboard แต่ใน cron cleanup ผมใช้ config.limits.rateLimitWindowMs (ค่าเดิม) → ค่าใน DB ไม่ apply กับ cleanup
+
+🐛 Bug #14: commands/information.js — /serverinfo Bulk fetch ทำให้บอทช้า
+guild.members.fetch() โดยไม่มี options จะดึง member ทุกคน — ถ้า guild มี 10,000 คน → กิน RAM และ network หนัก
+
+ที่ควรเป็น: ใช้ count cache ที่มีอยู่แล้ว (guild.memberCount) + ประมาณการ bot จาก cache เท่าที่มี ไม่ต้อง fetch ทั้งหมด
+
+🐛 Bug #15: auditLogger.js — client.on("guildMemberAdd") ลงทะเบียนซ้ำ
+ผมเขียน listener guildMemberAdd 2 ที่:
+• ใน registerMemberEvents() (สำหรับ log สมาชิกเข้า)
+• ใน registerSecurityEvents() (สำหรับ log บอทใหม่)
+
+ปัญหา: Discord.js รับได้ — ทั้งสอง listener ทำงานพร้อมกัน → 2 embed ส่งต่อ 1 event (1 ห้อง member + 1 ห้อง security ถ้าเป็นบอท) — อันนี้ตั้งใจถูก ไม่ใช่ bug
+
+แค่ดู confusing เฉยๆ ไม่ใช่ bug จริง
