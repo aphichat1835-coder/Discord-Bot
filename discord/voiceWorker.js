@@ -1,36 +1,50 @@
+/*
+================================================================================
+⚠️ [AI COGNITIVE DIRECTIVE] ⚠️
+DO NOT MODIFY: MAX_RECONNECT_ATTEMPTS, CONNECTION_TIMEOUT, LOGIN_TIMEOUT.
+DO NOT REMOVE: isShuttingDown flag — critical for SIGTERM safety (เฟส 8+18).
+DO NOT SIMPLIFY: OperationQueue concurrency — prevents IP ban from Discord.
+================================================================================
+*/
+
 const { Client: SelfClient } = require("discord.js-selfbot-v13");
 const { joinVoiceChannel, VoiceConnectionStatus, getVoiceConnection } = require("@discordjs/voice");
 const crypto = require("crypto");
 const sessionManager = require("./sessionManager");
 const config = require("./config.json");
 
+// ════════════════════════════════════════════════════════════════════════════
+//  ⚙️  REGION 1: CONFIG (จาก config.json — เฟส 9)
+// ════════════════════════════════════════════════════════════════════════════
 const CONFIG = {
-    MAX_RECONNECT_ATTEMPTS: 7,
-    LOGIN_TIMEOUT: 35000,
-    CONNECTION_TIMEOUT: 15000,
+    MAX_RECONNECT_ATTEMPTS: config.voice_worker.maxReconnectAttempts || 7,
+    LOGIN_TIMEOUT: config.voice_worker.loginTimeout || 35000,
+    CONNECTION_TIMEOUT: config.voice_worker.connectionTimeout || 15000,
+    DM_THROTTLE_MS: config.voice_worker.dmThrottleMs || 20000,
 };
 
-// เปลี่ยน Key ของ Map จาก Token ท้าย 8 ตัว เป็น SHA-256 Hash ป้องกันการชนกัน 100%
-const clientPool = new Map(); 
+// ════════════════════════════════════════════════════════════════════════════
+//  🗺️  REGION 2: STATE
+// ════════════════════════════════════════════════════════════════════════════
+const clientPool = new Map();
 let mainClient = null;
 
-function setMainClient(client) {
-    mainClient = client;
-}
+// เฟส 18+8: Global shutdown flag — Voice Worker เช็คก่อน reconnect ทุกครั้ง
+let isShuttingDown = false;
 
-function getClientPoolSize() {
-    return clientPool.size;
-}
+function setShuttingDown(val) { isShuttingDown = val; }
+function setMainClient(client) { mainClient = client; }
+function getClientPoolSize() { return clientPool.size; }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  🔐  REGION 3: TOKEN VALIDATION & HASHING
+// ════════════════════════════════════════════════════════════════════════════
 function validateToken(token) {
     const tokenRegex = /^[\w-]{24,}\.[\w-]{6,}\.[\w-]{27,}$/;
-    if (!tokenRegex.test(token)) {
-        throw new Error("INVALID_TOKEN_FORMAT");
-    }
+    if (!tokenRegex.test(token)) throw new Error("INVALID_TOKEN_FORMAT");
     return true;
 }
 
-// ฟังก์ชันแปลง Token เป็น SHA-256 Hash เพื่อใช้เป็น Key ปลอดภัยใน clientPool
 function getSessionTokenHash(sessionId, session) {
     if (session.tokenHash) return session.tokenHash;
     const token = sessionManager.getToken(sessionId);
@@ -41,9 +55,9 @@ function getSessionTokenHash(sessionId, session) {
     return null;
 }
 
-// ════════════════════════════════════════════════════════════════
-//  🚀  LOGIN CONCURRENCY MANAGER (ป้องกันการ Login พร้อมกันรัวๆ)
-// ════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
+//  🚦  REGION 4: OPERATION QUEUE (ป้องกัน Login พร้อมกันรัวๆ)
+// ════════════════════════════════════════════════════════════════════════════
 class OperationQueue {
     constructor(concurrency = 3) {
         this.queue = [];
@@ -60,29 +74,31 @@ class OperationQueue {
         if (this.running >= this.concurrency || this.queue.length === 0) return;
         this.running++;
         const { fn, resolve, reject } = this.queue.shift();
-        try { 
-            resolve(await fn()); 
-        } catch (err) { 
-            reject(err); 
+        try {
+            resolve(await fn());
+        } catch (err) {
+            reject(err);
         } finally {
             this.running--;
             this.process();
         }
     }
 }
-const loginQueue = new OperationQueue(2); // ลิมิต Login พร้อมกันแค่ 2 ตัว ป้องกัน IP โดนแบน
+const loginQueue = new OperationQueue(2);
 
-// ════════════════════════════════════════════════════════════════
-//  🎧  VOICE SESSION CONTROLLER
-// ════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
+//  🎧  REGION 5: START SESSION
+// ════════════════════════════════════════════════════════════════════════════
 async function startSession(sessionId, tokenString) {
+    if (isShuttingDown) throw new Error("SYSTEM_SHUTTING_DOWN");
+
     const session = sessionManager.getSession(sessionId);
     if (!session) throw new Error("SESSION_NOT_FOUND");
-    
+
     validateToken(tokenString);
 
     if (!sessionManager.lockSession(sessionId)) {
-        console.warn(`[WORKER] ⚠️ Session ${sessionId} is currently locked. Skipping start.`);
+        console.warn(`[WORKER] ⚠️ Session ${sessionId} is locked. Skipping.`);
         throw new Error("SESSION_LOCKED");
     }
 
@@ -90,67 +106,62 @@ async function startSession(sessionId, tokenString) {
         const tokenHash = getSessionTokenHash(sessionId, session);
         if (!tokenHash) throw new Error("TOKEN_DECRYPTION_FAILED");
 
-        // ตรวจสอบจาก Pool ด้วย Hash ขั้นสูง
         if (clientPool.has(tokenHash)) {
             session.client = clientPool.get(tokenHash);
             console.log(`[WORKER] ♻️ Reused existing client for Token Hash.`);
         } else {
             const newClient = new SelfClient({ checkUpdate: false });
-            
             try {
                 await loginQueue.add(async () => {
                     const loginPromise = newClient.login(tokenString);
-                    const timeoutPromise = new Promise((_, r) => setTimeout(() => r(new Error("LOGIN_TIMEOUT")), CONFIG.LOGIN_TIMEOUT));
+                    const timeoutPromise = new Promise((_, r) =>
+                        setTimeout(() => r(new Error("LOGIN_TIMEOUT")), CONFIG.LOGIN_TIMEOUT)
+                    );
                     await Promise.race([loginPromise, timeoutPromise]);
                 });
 
                 newClient.on("ready", () => {
-                    console.log(`[WORKER] 🟢 Self-bot User Connected: ${newClient.user.tag} (ID: ${newClient.user.id})`);
-                    newClient.user.setStatus('idle'); 
+                    console.log(`[WORKER] 🟢 Self-bot connected: ${newClient.user.tag}`);
+                    newClient.user.setStatus('idle');
                 });
 
                 clientPool.set(tokenHash, newClient);
                 session.client = newClient;
             } catch (err) {
-                // Ghost Client Eradication! ทำลายร่างซอมบี้ทิ้งทันทีหากล็อกอินไม่สำเร็จ
-                console.error(`[WORKER] ❌ Login failed for session ${sessionId}. Destroying ghost client to prevent Memory Leak.`);
+                console.error(`[WORKER] ❌ Login failed for ${sessionId}. Destroying ghost client.`);
                 try { newClient.destroy(); } catch (e) {}
-                
                 if (err.message.includes("TOKEN_INVALID")) throw new Error("TOKEN_INVALID");
                 throw err;
             }
         }
 
-        // Advanced Rate-Limiter (Jitter Delay)
-        // สุ่มดีเลย์ 1.5 - 3.5 วินาที เกลี่ยทราฟฟิกให้สมูท ไม่ให้บอทยิง Request เข้าห้องพร้อมกันเป็นแพ
+        // Jitter delay กัน rate limit
         const jitterDelay = Math.floor(1500 + Math.random() * 2000);
         await new Promise(r => setTimeout(r, jitterDelay));
 
-        const conn = connectToVoice(session.client, session.serverId, session.voiceId, tokenHash);
+        const conn = connectToVoice(session.client, session.serverId, session.voiceId, tokenHash, sessionId);
         session.connection = conn;
-        console.log(`[WORKER] 🎧 Successfully connected to voice in Guild: ${session.serverId}`);
+        console.log(`[WORKER] 🎧 Voice connected for Guild: ${session.serverId}`);
         return true;
     } finally {
         sessionManager.unlockSession(sessionId);
     }
 }
 
-function connectToVoice(client, guildId, channelId, tokenHash) {
+// ════════════════════════════════════════════════════════════════════════════
+//  🔊  REGION 6: VOICE CONNECTION
+// ════════════════════════════════════════════════════════════════════════════
+function connectToVoice(client, guildId, channelId, tokenHash, sessionId) {
     const guild = client.guilds.cache.get(guildId);
-    if (!guild) {
-        console.error(`[WORKER] ❌ Guild Not Found: ${guildId}`);
-        throw new Error("GUILD_NOT_FOUND");
-    }
-    
+    if (!guild) throw new Error("GUILD_NOT_FOUND");
+
     const channel = guild.channels.cache.get(channelId);
-    if (!channel || !channel.isVoice()) {
-        console.error(`[WORKER] ❌ Channel Not Found or Invalid: ${channelId} in Guild: ${guildId}`);
-        throw new Error("CHANNEL_NOT_FOUND");
-    }
+    if (!channel || !channel.isVoice()) throw new Error("CHANNEL_NOT_FOUND");
 
     const existingConn = getVoiceConnection(guildId);
     if (existingConn) {
-        if (existingConn.joinConfig.channelId === channelId && existingConn.state.status === VoiceConnectionStatus.Ready) {
+        if (existingConn.joinConfig.channelId === channelId &&
+            existingConn.state.status === VoiceConnectionStatus.Ready) {
             return existingConn;
         }
         existingConn.destroy();
@@ -165,64 +176,104 @@ function connectToVoice(client, guildId, channelId, tokenHash) {
         group: client.user.id
     });
 
-    const sessionId = `${sessionManager.getSession(tokenHash)?.tokenTail || 'unknown'}_${guildId}`;
+    // เฟส 9: reconnect counter จริง — ไม่ใช่ dead code อีกต่อไป
+    let reconnectAttempts = 0;
 
     connection.on(VoiceConnectionStatus.Disconnected, async () => {
-        try {
-            console.log(`[WORKER] ⚠️ Connection dropped for ${sessionId}. Attempting to reconnect...`);
-            await Promise.race([
-                new Promise(resolve => connection.once(VoiceConnectionStatus.Signalling, resolve)),
-                new Promise(resolve => connection.once(VoiceConnectionStatus.Connecting, resolve)),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), 5000))
-            ]);
-        } catch (error) {
-            console.error(`[WORKER] ❌ Connection strictly failed for ${sessionId}. Destroying connection.`);
+        // เฟส 18: เช็ค shutting down ก่อน reconnect
+        if (isShuttingDown) {
+            console.log(`[WORKER] ⏸️ Shutdown in progress — skipping reconnect for ${sessionId}`);
+            return;
+        }
+
+        reconnectAttempts++;
+        console.log(`[WORKER] ⚠️ Voice dropped for ${sessionId}. Attempt ${reconnectAttempts}/${CONFIG.MAX_RECONNECT_ATTEMPTS}`);
+
+        // เฟส 9: Anti-Infinite Reconnect — หยุดที่ 7 ครั้ง
+        if (reconnectAttempts > CONFIG.MAX_RECONNECT_ATTEMPTS) {
+            console.error(`[WORKER] 💀 Max reconnect attempts (${CONFIG.MAX_RECONNECT_ATTEMPTS}) reached for ${sessionId}. Aborting.`);
             if (connection.state.status !== VoiceConnectionStatus.Destroyed) {
                 connection.destroy();
             }
-            
-            // ค้นหา Session แบบกว้างๆ ในกรณีฉุกเฉิน
-            let session = null;
-            for (const [id, s] of sessionManager.getAllSessions()) {
-                if (s.serverId === guildId && s.voiceId === channelId) {
-                    session = s;
-                    break;
-                }
+            await sendDisconnectDM(sessionId, guildId, channelId, true);
+            return;
+        }
+
+        try {
+            await Promise.race([
+                new Promise(resolve => connection.once(VoiceConnectionStatus.Signalling, resolve)),
+                new Promise(resolve => connection.once(VoiceConnectionStatus.Connecting, resolve)),
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('TIMEOUT')), CONFIG.CONNECTION_TIMEOUT)
+                )
+            ]);
+            // reconnect สำเร็จ
+            reconnectAttempts = 0;
+        } catch (error) {
+            console.error(`[WORKER] ❌ Reconnect failed for ${sessionId}: ${error.message}`);
+            if (connection.state.status !== VoiceConnectionStatus.Destroyed) {
+                connection.destroy();
             }
-            
-            // Strict Null Pointer Catching ปกป้องระบบ DM ขั้นสุด
-            if (!session || !session.ownerId || !mainClient) return; 
-
-            try {
-                const owner = await mainClient.users.fetch(session.ownerId).catch(() => null);
-                if (owner) {
-                    // [V4.9 FINAL]: UI/UX - คำนวณ Uptime และใช้ Custom Emojis ในการแจ้งเตือน
-                    const uptimeMs = Date.now() - session.startedAt;
-                    const hours = Math.floor(uptimeMs / 3600000);
-                    const minutes = Math.floor((uptimeMs % 3600000) / 60000);
-                    const uptimeStr = hours > 0 ? `${hours} ชั่วโมง ${minutes} นาที` : `${minutes} นาที`;
-
-                    const dmMessage = `> ${config.emojis.alert} **ระบบแจ้งเตือนช่องเสียงขัดข้อง**\n` +
-                                      `> ${config.emojis.warning} **ผู้ใช้งาน:** \`${session.ownerTag}\`\n` +
-                                      `> ${config.emojis.robot} **เซิร์ฟเวอร์:** **${session.serverName}**\n` +
-                                      `> 🎙️ **ห้องเสียง:** <#${session.voiceId}>\n` +
-                                      `> ⏱️ **ระยะเวลาที่ออนล่าสุด:** ${uptimeStr}\n` +
-                                      `> 🔄 *ระบบกำลังพยายามกู้คืนสัญญาณอัตโนมัติ กรุณารอสักครู่...*`;
-
-                    owner.send(dmMessage).catch(()=>{});
-                }
-            } catch(e) {
-                console.error(`[WORKER] ❌ Failed to dispatch disconnect DM for ${sessionId}: ${e.message}`);
-            }
+            await sendDisconnectDM(sessionId, guildId, channelId, false);
         }
     });
 
     return connection;
 }
 
-// ════════════════════════════════════════════════════════════════
-//  🛑  TERMINATION & RESOURCE RECLAMATION
-// ════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
+//  📨  REGION 7: DM NOTIFICATION (เฟส 8)
+// ════════════════════════════════════════════════════════════════════════════
+const lastDMSent = new Map(); // throttle กัน DM สแปม
+
+async function sendDisconnectDM(sessionId, guildId, channelId, isAborted) {
+    if (!mainClient) return;
+
+    // เช็ค throttle — ไม่ส่ง DM ถี่เกิน CONFIG.DM_THROTTLE_MS
+    const lastSent = lastDMSent.get(sessionId) || 0;
+    if (Date.now() - lastSent < CONFIG.DM_THROTTLE_MS) return;
+    lastDMSent.set(sessionId, Date.now());
+
+    let session = null;
+    for (const [id, s] of sessionManager.getAllSessions()) {
+        if (s.serverId === guildId && s.voiceId === channelId) {
+            session = s;
+            break;
+        }
+    }
+
+    if (!session || !session.ownerId) return;
+
+    try {
+        const owner = await mainClient.users.fetch(session.ownerId).catch(() => null);
+        if (!owner) return;
+
+        const uptimeMs = Date.now() - session.startedAt;
+        const hours = Math.floor(uptimeMs / 3600000);
+        const minutes = Math.floor((uptimeMs % 3600000) / 60000);
+        const uptimeStr = hours > 0 ? `${hours} ชั่วโมง ${minutes} นาที` : `${minutes} นาที`;
+
+        const abortMsg = isAborted
+            ? `> ❌ **ระบบยกเลิกการเชื่อมต่อแล้ว** (เกิน ${CONFIG.MAX_RECONNECT_ATTEMPTS} ครั้ง)`
+            : `> 🔄 *ระบบกำลังพยายามกู้คืนสัญญาณ กรุณารอสักครู่...*`;
+
+        const dmMessage =
+            `> ${config.emojis.alert} **ระบบแจ้งเตือนช่องเสียงขัดข้อง**\n` +
+            `> ${config.emojis.warning} **ผู้ใช้งาน:** \`${session.ownerTag}\`\n` +
+            `> ${config.emojis.robot} **เซิร์ฟเวอร์:** **${session.serverName}**\n` +
+            `> 🎙️ **ห้องเสียง:** <#${session.voiceId}>\n` +
+            `> ⏱️ **ระยะเวลาออนล่าสุด:** ${uptimeStr}\n` +
+            abortMsg;
+
+        owner.send(dmMessage).catch(() => {});
+    } catch (e) {
+        console.error(`[WORKER] ❌ Failed to send disconnect DM for ${sessionId}: ${e.message}`);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  🛑  REGION 8: STOP / PAUSE / CLEANUP
+// ════════════════════════════════════════════════════════════════════════════
 async function stopSession(sessionId) {
     const session = sessionManager.getSession(sessionId);
     if (!session) {
@@ -234,82 +285,73 @@ async function stopSession(sessionId) {
     const clientRef = session.client || (tokenHash ? clientPool.get(tokenHash) : null);
 
     if (session.connection) {
-        try { 
-            session.connection.destroy(); 
-        } catch(e) {
-            console.error(`[WORKER] ⚠️ Error destroying connection for ${sessionId}: ${e.message}`);
-        }
+        try { session.connection.destroy(); } catch (e) {}
     }
 
     await sessionManager.deleteSession(sessionId);
-    console.log(`[WORKER] 🛑 Stopped session securely: ${sessionId}`);
+    console.log(`[WORKER] 🛑 Stopped session: ${sessionId}`);
 
-    // Memory Leak Eradicator (คืนแรมให้เซิร์ฟเวอร์ 100%)
+    // Memory Leak Eradicator
     if (tokenHash && clientRef) {
         const allSessions = Array.from(sessionManager.getAllSessions().values());
-        // ตรวจสอบว่ายังมีเซสชันอื่นที่ใช้ Token Hash เดียวกันนี้ค้างอยู่หรือไม่
         const inUse = allSessions.some(s => getSessionTokenHash(s.sessionId, s) === tokenHash);
-        
         if (!inUse) {
-            console.log(`[CLEANUP] 🗑️ No active sessions left for this Token Hash. Executing Client Self-Destruct.`);
-            try { 
-                clientRef.destroy(); 
-            } catch(e) {
-                console.error(`[CLEANUP] ⚠️ Failed to destroy client object for hash: ${e.message}`);
-            }
+            console.log(`[CLEANUP] 🗑️ No active sessions for this hash. Destroying client.`);
+            try { clientRef.destroy(); } catch (e) {}
             clientPool.delete(tokenHash);
+            lastDMSent.delete(sessionId);
             console.log(`[CLEANUP] ✅ Client removed from pool. RAM reclaimed.`);
         }
     }
-
     return true;
 }
 
 async function stopAll() {
     const sessions = sessionManager.getAllSessions();
-    console.log(`[WORKER] 🛑 Initiating Global Stop for ${sessions.size} active sessions...`);
-    for (const [id] of sessions) {
-        await stopSession(id);
-    }
+    console.log(`[WORKER] 🛑 Global Stop: ${sessions.size} sessions...`);
+    for (const [id] of sessions) await stopSession(id);
     clientPool.clear();
-    console.log(`[WORKER] ✅ Global Stop Complete. Client Pool flushed.`);
+    lastDMSent.clear();
+    console.log(`[WORKER] ✅ Global Stop Complete.`);
 }
 
 async function pauseAll() {
+    // เฟส 18: ตั้ง flag ก่อน pause เพื่อกัน reconnect loop
+    isShuttingDown = true;
     const sessions = sessionManager.getAllSessions();
-    console.log(`[WORKER] ⏸️ Initiating Global Pause for ${sessions.size} active sessions...`);
-    for (const [id] of sessions) {
-        await sessionManager.pauseSession(id);
-    }
+    console.log(`[WORKER] ⏸️ Global Pause: ${sessions.size} sessions...`);
+    for (const [id] of sessions) await sessionManager.pauseSession(id);
 }
 
-// ════════════════════════════════════════════════════════════════
-//  🔄  RECOVERY & MAINTENANCE PROTOCOLS
-// ════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
+//  🔄  REGION 9: AUTO RESUME & HEALTH CHECK
+// ════════════════════════════════════════════════════════════════════════════
 async function autoResume() {
     const sessions = sessionManager.getAllSessions();
     console.log(`[WORKER] 🔄 Auto-resuming ${sessions.size} dormant sessions...`);
     let count = 0;
     for (const [id, session] of sessions) {
+        if (isShuttingDown) break;
         try {
             const token = sessionManager.getToken(id);
             if (token) {
                 await startSession(id, token);
                 count++;
-                // เกลี่ยโหลดกันสแปมตอนบอทรีบูต (Warm-up Jitter Delay)
                 const warmUpJitter = Math.floor(2000 + Math.random() * 1500);
                 await new Promise(r => setTimeout(r, warmUpJitter));
             }
         } catch (err) {
-            console.error(`[WORKER] ❌ Failed to auto-resume ${id}:`, err.message);
+            console.error(`[WORKER] ❌ Failed to auto-resume ${id}: ${err.message}`);
         }
     }
-    console.log(`[WORKER] ✅ Successfully recovered ${count}/${sessions.size} sessions.`);
+    console.log(`[WORKER] ✅ Recovered ${count}/${sessions.size} sessions.`);
 }
 
 async function healthCheck() {
+    if (isShuttingDown) return;
     const sessions = sessionManager.getAllSessions();
     for (const [sessionId, session] of sessions) {
+        if (isShuttingDown) break;
         const tokenHash = getSessionTokenHash(sessionId, session);
         if (!tokenHash) continue;
 
@@ -317,21 +359,21 @@ async function healthCheck() {
         if (!poolData) continue;
 
         const connStatus = session.connection?.state?.status;
-        const needsRecovery = !session.connection || connStatus === VoiceConnectionStatus.Destroyed || connStatus === VoiceConnectionStatus.Disconnected;
+        const needsRecovery = !session.connection ||
+            connStatus === VoiceConnectionStatus.Destroyed ||
+            connStatus === VoiceConnectionStatus.Disconnected;
 
         if (needsRecovery && !session.reconnecting && !sessionManager.isSessionLocked(sessionId)) {
             if (!sessionManager.lockSession(sessionId)) continue;
             session.reconnecting = true;
-            console.log(`[HEARTBEAT] 🩺 Recovering dead voice connection for ${sessionId}...`);
+            console.log(`[HEARTBEAT] 🩺 Recovering dead connection for ${sessionId}...`);
             try {
-                // Jitter Delay ใน Health Check 
                 const recoveryJitter = Math.floor(1000 + Math.random() * 2000);
                 await new Promise(res => setTimeout(res, recoveryJitter));
-                
-                const conn = connectToVoice(session.client, session.serverId, session.voiceId, tokenHash);
+                const conn = connectToVoice(session.client, session.serverId, session.voiceId, tokenHash, sessionId);
                 if (conn) session.connection = conn;
-                console.log(`[HEARTBEAT] 💖 Successfully restored connection for ${sessionId}.`);
-            } catch(e) {
+                console.log(`[HEARTBEAT] 💖 Restored connection for ${sessionId}.`);
+            } catch (e) {
                 console.error(`[HEARTBEAT] 💔 Recovery failed for ${sessionId}: ${e.message}`);
             } finally {
                 session.reconnecting = false;
@@ -342,20 +384,24 @@ async function healthCheck() {
 }
 
 async function cleanupIdleSessions() {
+    if (isShuttingDown) return;
     const now = Date.now();
     const maxIdle = config.limits.idleTimeoutMs;
     const sessions = sessionManager.getAllSessions();
     for (const [id, session] of sessions) {
         const lastSeen = session.lastActivity ?? session.startedAt;
         if (now - lastSeen > maxIdle) {
-            console.log(`[CLEANUP] 🧹 Session ${id} idle for ${Math.round((now - lastSeen) / 3600000)}h — initiating automated shutdown.`);
+            console.log(`[CLEANUP] 🧹 Session ${id} idle for ${Math.round((now - lastSeen) / 3600000)}h — shutting down.`);
             await stopSession(id);
         }
     }
 }
 
-module.exports = { 
-    setMainClient, startSession, stopSession, stopAll, pauseAll, 
-    autoResume, cleanupIdleSessions, getClientPoolSize, healthCheck 
+// ════════════════════════════════════════════════════════════════════════════
+//  📤  REGION 10: EXPORTS
+// ════════════════════════════════════════════════════════════════════════════
+module.exports = {
+    setMainClient, setShuttingDown, getClientPoolSize,
+    startSession, stopSession, stopAll, pauseAll,
+    autoResume, healthCheck, cleanupIdleSessions
 };
-
