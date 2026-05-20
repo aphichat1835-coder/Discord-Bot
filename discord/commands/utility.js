@@ -153,25 +153,27 @@ async function handleSteal(interaction) {
     const available = maxEmojis - currentCount;
     const toSteal   = Math.min(matches.length, available);
 
-    await interaction.deferReply();
-    let added  = 0;
-    let failed = 0;
+        await interaction.deferReply();
+        let added  = 0;
+        let failed = 0;
 
-    for (let i = 0; i < toSteal; i++) {
-        const match = matches[i];
-        const isAnimated = match[1] === "a";
-        const name = match[2];
-        const id   = match[3];
-        const url  = `[cdn.discordapp.com](https://cdn.discordapp.com/emojis/${id}.${isAnimated) ? 'gif' : 'png'}`;
+        for (let i = 0; i < toSteal; i++) {
+            const match = matches[i];
+            const isAnimated = match[1] === "a";
+            const name = match[2];
+            const id   = match[3];
 
-        try {
-            await interaction.guild.emojis.create(url, name);
-            added++;
-            // เฟส 19+API Ceiling: delay 1 วิ กันชน rate limit
-            await new Promise(r => setTimeout(r, 1000));
-        } catch (e) {
-            failed++;
-        }
+            // ✅ แก้ไขปีกกา และดึง URL แบบเพียวๆ ไม่ให้ติดรูปแบบ Markdown
+            const url  = `https://cdn.discordapp.com/emojis/${id}.${isAnimated ? 'gif' : 'png'}`;
+
+            try {
+                await interaction.guild.emojis.create(url, name);
+                added++;
+                // เฟส 19+API Ceiling: delay 1 วิ กันชน rate limit
+                await new Promise(r => setTimeout(r, 1000));
+            } catch (e) {
+                failed++;
+            }
 
         // อัปเดต progress ทุก 10 ตัว
         if (added % 10 === 0 && added > 0) {
