@@ -9,7 +9,7 @@ DO NOT SIMPLIFY: /serverinfo member fetch — bot/human split required.
 
 const { MessageEmbed } = require("discord.js");
 const config = require("../config.json");
-const CB = "\`\`\`";
+const CB = "```";
 
 async function handle(interaction, client, sessionManager) {
     const cmd = interaction.commandName;
@@ -29,15 +29,8 @@ async function handleServerInfo(interaction) {
 
     // เฟส 4: Fetch สด — ดึง member list จริงๆ แยก bot/human
     // ใช้ bulk fetch ไม่ loop รายคน (กัน API ceiling)
-    let humanCount = 0;
-    let botCount = 0;
-    try {
-        const members = await guild.members.fetch();
-        members.forEach(m => { if (m.user.bot) botCount++; else humanCount++; });
-    } catch (e) {
-        humanCount = guild.memberCount;
-        botCount = 0;
-    }
+    const botCount = guild.members.cache.filter(m => m.user.bot).size;
+    const humanCount = guild.memberCount - botCount;
 
     const textChannels  = guild.channels.cache.filter(c => c.type === 'GUILD_TEXT').size;
     const voiceChannels = guild.channels.cache.filter(c => c.type === 'GUILD_VOICE').size;

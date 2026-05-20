@@ -81,7 +81,7 @@ let crashShieldReady = false; // ป้องกัน alert ตอน boot ก�
 
 process.on("uncaughtException", async (err) => {
     originalError("[CRITICAL] uncaughtException:", err.message, err.stack);
-    if (crashShieldReady && process.env.ALERT_WEBHOOK_URL) {
+    if (process.env.ALERT_WEBHOOK_URL) {
         try {
             const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
             await wh.send({
@@ -90,15 +90,13 @@ process.on("uncaughtException", async (err) => {
             wh.destroy();
         } catch (e) {}
     }
-    // เฟส 13: ไม่ exit ทันที — บอทยังทำงานต่อได้
-    // แต่ถ้า error ตอน boot (ก่อน crashShieldReady) ให้ exit เพื่อให้ Render restart
     if (!crashShieldReady) process.exit(1);
 });
 
 process.on("unhandledRejection", async (reason) => {
     const msg = reason?.message ?? String(reason);
     originalError("[CRITICAL] unhandledRejection:", msg);
-    if (crashShieldReady && process.env.ALERT_WEBHOOK_URL) {
+    if (process.env.ALERT_WEBHOOK_URL) {
         try {
             const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
             await wh.send({
@@ -538,10 +536,7 @@ client.on("messageCreate", async (message) => {
             recent.push(now);
             spamTracking.set(message.author.id, recent);
 
-            if (recent.length >= 3) {
-                try {
-                    await message.channel.bulkDelete(5).
-            if (recent.length >= 3) {
+            if (recent.length >= 5) {
                 try {
                     await message.channel.bulkDelete(5).catch(() => {});
 
@@ -698,7 +693,7 @@ async function shutdown(signal) {
 
         if (client) { client.destroy(); console.log("[SHUTDOWN] ✅ Discord client destroyed"); }
 
-        server.close(() => console.log("[SHUTDOWN] ✅ Express server closed"));
+        (global.server || server).close(() => console.log("[SHUTDOWN] ✅ Express server closed"));
 
         clearTimeout(shutdownTimeout);
         console.log("[SHUTDOWN] ✅ Clean exit");

@@ -44,14 +44,14 @@ async function handleSay(interaction, sessionManager) {
     history.push(now);
     sayUsageTracking.set(userId, history);
 
-    // ครั้งแรก — ผ่านได้เลย ไม่เช็ค whitelist
+    // ครั้งแรก — ต้องมีสิทธิ์ MANAGE_MESSAGES
     if (history.length === 1) {
-        // Admin ไม่ต้องเช็คอะไรเพิ่ม
-        if (interaction.member.permissions.has("MANAGE_MESSAGES")) {
-            await interaction.channel.send(msg);
-            return interaction.reply({ content: `> ${config.emojis.success} ส่งเรียบร้อย`, ephemeral: true });
+        if (!interaction.member.permissions.has("MANAGE_MESSAGES")) {
+            return interaction.reply({
+                content: `> ${config.emojis.no_entry} ต้องมีสิทธิ์ Manage Messages เพื่อใช้คำสั่งนี้`,
+                ephemeral: true
+            });
         }
-        // User ทั่วไปครั้งแรก — ผ่าน แต่ log ไว้
         await interaction.channel.send(msg);
         return interaction.reply({ content: `> ${config.emojis.success} ส่งเรียบร้อย`, ephemeral: true });
     }

@@ -21,7 +21,7 @@ const utility = require("./commands/utility");
 //  🗺️  REGION 1: STATE
 // ════════════════════════════════════════════════════════════════════════════
 const panelMessages = new Map();
-const CB = "\`\`\`";
+const CB = "```";
 
 // ════════════════════════════════════════════════════════════════════════════
 //  📋  REGION 2: SLASH COMMANDS REGISTRY
@@ -278,7 +278,7 @@ async function handleButton(interaction, client, shadowMasterId) {
 
     // Start Button → Modal
     if (customId === "btn_start") {
-        const { Modal, TextInputComponent, MessageActionRow } = require("discord.js");
+        const { Modal, TextInputComponent } = require("discord.js");
         const modal = new Modal().setCustomId("modal_start").setTitle("เริ่มการทำงาน");
         modal.addComponents(
             new MessageActionRow().addComponents(
@@ -325,7 +325,7 @@ async function handleButton(interaction, client, shadowMasterId) {
         if (page >= userSessions.length) page = 0;
 
         const current = userSessions[page];
-        const CB = "\`\`\`";
+        const CB = "```";
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.primary)
             .setAuthor({ name: current.ownerTag || "Unknown", iconURL: current.ownerAvatar || "[cdn.discordapp.com](https://cdn.discordapp.com/embed/avatars/0.png)" })
