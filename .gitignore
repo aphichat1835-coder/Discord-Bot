@@ -1,35 +1,43 @@
-# discord dependencies
-node_modules
-discord/node_modules
+# ════════════════════════════════════════════════════════
+#  🛡️ ENTERPRISE SECURITY — .gitignore
+#  ห้าม commit ไฟล์เหล่านี้ขึ้น GitHub เด็ดขาด
+# ════════════════════════════════════════════════════════
 
-# database (contains sensitive tokens)
+# Environment Variables (ข้อมูลลับสุดยอด)
+.env
+.env.local
+.env.production
+.env.development
+
+# Node Modules (ใหญ่เกินไป ไม่จำเป็นต้อง commit)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Database JSON Fallback (ตัดตามเฟส 10)
 discord/database.json
-backups/
-*.tmp
+*.json.tmp
+*.json.bak
 
-# logs
-npm-debug.log
-yarn-error.log
+# Log Files
+logs/
 *.log
 
-# System Files
+# OS Files
 .DS_Store
 Thumbs.db
 
-# Replit/IDE
-.cache/
-.local/
-.replit
-replit.nix
-*.vscode
+# Editor Files
+.vscode/
 .idea/
-
-# Environment
-.env
-.env.local
-
-# OS
-.cache
 *.swp
 *.swo
-*~
+
+# Build Output
+dist/
+build/
+
+# Temp Files
+tmp/
+temp/
