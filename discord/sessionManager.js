@@ -176,20 +176,19 @@ async function connectDB() {
     if (!process.env.MONGO_URI) {
         throw new Error("[DATABASE] ❌ FATAL: Missing MONGO_URI Environment Variable. System cannot start.");
     }
-    await mongoose.connect(process.env.MONGO_URI, {
-        useNewUrlParser: true,
-        useUnifiedTopology: true,
-        // เฟส 14: keepAlive กันหลุด + เฟส 20: maxPoolSize กัน connection หมด
-        keepAlive: true,
-        keepAliveInitialDelay: 300000,
-        serverSelectionTimeoutMS: 5000,
-        maxPoolSize: 20,
-        minPoolSize: 2
-    });
-    dbConnected = true;
-    console.log("[DATABASE] 🟢 MongoDB Connected with keepAlive + Pool(20) enabled.");
+if (!process.env.MONGO_URI) {
+    throw new Error("[DATABASE] ❌ FATAL: Missing MONGO_URI Environment Variable. System cannot start.");
 }
 
+await mongoose.connect(process.env.MONGO_URI, {
+    serverSelectionTimeoutMS: 5000,
+    maxPoolSize: 20,
+    minPoolSize: 2
+});
+
+dbConnected = true;
+console.log("[DATABASE] 🟢 MongoDB Connected with Pool(20) enabled.");
+}
 // ════════════════════════════════════════════════════════════════════════════
 //  💾  REGION 6: SESSION LOAD (MongoDB Only — เฟส 10)
 // ════════════════════════════════════════════════════════════════════════════
