@@ -411,6 +411,21 @@ app.post("/api/approve", async (req, res) => {
         await sessionManager.ApprovedGuildModel.create({ guildId });
         await sessionManager.PendingGuildModel.deleteOne({ guildId });
         console.log(`[SYSTEM] ✅ Guild ${guildId} approved via Dashboard.`);
+
+        if (process.env.WEBHOOK_LOG_URL) {
+            try {
+                const guild = client.guilds.cache.get(guildId);
+                const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
+                wh.send({
+                    content: `✅ **[GUILD APPROVED]**\n` +
+                             `**Guild:** ${guild ? `${guild.name} (\`${guildId}\`)` : `\`${guildId}\``}\n` +
+                             `**Members:** ${guild ? guild.memberCount : 'N/A'}\n` +
+                             `**Approved at:** <t:${Math.floor(Date.now() / 1000)}:F>`
+                }).catch(() => {});
+                wh.destroy();
+            } catch (e) {}
+        }
+
         res.json({ success: true });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
