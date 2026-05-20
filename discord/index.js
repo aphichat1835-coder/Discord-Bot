@@ -385,8 +385,9 @@ app.get("/approved", async (req, res) => {
             <td style="padding:8px;">${name}</td>
             <td style="padding:8px;text-align:center;">${members}</td>
             <td style="padding:8px;text-align:center;">${approvedAt}</td>
-            <td style="padding:8px;text-align:center;">
+            <td style="padding:8px;text-align:center;display:flex;gap:6px;justify-content:center;">
                 <button onclick="removeGuild('${a.guildId}')" style="background:#ED4245;color:#fff;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;">ลบ</button>
+                <button onclick="kickGuild('${a.guildId}')" style="background:#FEE75C;color:#000;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;">เตะบอท</button>
             </td></tr>`;
     }).join("");
 
@@ -429,6 +430,17 @@ app.get("/approved", async (req, res) => {
             async function removeGuild(guildId) {
                 if (!confirm('ลบ ' + guildId + ' ออกจาก Approved list?')) return;
                 const r = await fetch('/api/approved/remove', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': '${API_SECRET}' },
+                    body: JSON.stringify({ guildId })
+                });
+                const d = await r.json();
+                if (d.success) location.reload();
+                else alert('Error: ' + (d.error || 'Unknown'));
+            }
+            async function kickGuild(guildId) {
+                if (!confirm('เตะบอทออกจาก ' + guildId + ' และลบออกจาก Approved list?')) return;
+                const r = await fetch('/api/approved/kick', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': '${API_SECRET}' },
                     body: JSON.stringify({ guildId })
@@ -525,6 +537,35 @@ app.post("/api/whitelist/add", async (req, res) => {
         if (!userId || typeof userId !== 'string') return res.status(400).json({ success: false, error: "Invalid userId" });
         await sessionManager.addWhitelist(userId, 'dashboard');
         console.log(`[WHITELIST] ✅ Added ${userId} via Dashboard.`);
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// Approved Guild Kick Bot
+app.post("/api/approved/kick", async (req, res) => {
+    if (!checkAuth(req, res)) return;
+    try {
+        const { guildId } = req.body;
+        if (!guildId || typeof guildId !== 'string') return res.status(400).json({ success: false, error: "Invalid guildId" });
+        const guild = client.guilds.cache.get(guildId);
+        if (!guild) return res.status(404).json({ success: false, error: "บอทไม่ได้อยู่ใน guild นี้" });
+        const guildName = guild.name;
+        await guild.leave();
+        await sessionManager.ApprovedGuildModel.deleteOne({ guildId });
+        console.log(`[SYSTEM] 👢 Bot kicked from guild ${guildName} (${guildId}) via Dashboard.`);
+        if (process.env.WEBHOOK_LOG_URL) {
+            try {
+                const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
+                wh.send({
+                    content: `👢 **[BOT KICKED]**\n` +
+                             `**Guild:** ${guildName} (\`${guildId}\`)\n` +
+                             `**Kicked at:** <t:${Math.floor(Date.now() / 1000)}:F>`
+                }).catch(() => {});
+                wh.destroy();
+            } catch (e) {}
+        }
         res.json({ success: true });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
