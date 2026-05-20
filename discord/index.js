@@ -205,6 +205,7 @@ app.get("/", async (req, res) => {
                 <a href="/">🏠 หน้าหลัก</a>
                 <a href="/settings">⚙️ ตั้งค่า</a>
                 <a href="/whitelist">📋 Whitelist</a>
+                <a href="/approved">✅ Approved</a>
                 <a href="/logs">📜 Logs</a>
             </div>
             <div class="stats-grid">
@@ -252,7 +253,7 @@ app.get("/settings", async (req, res) => {
         </style></head><body>
         <div class="container">
             <h2 style="color:#57F287;">⚙️ System Settings</h2>
-            <div class="nav"><a href="/">🏠 หน้าหลัก</a><a href="/whitelist">📋 Whitelist</a><a href="/logs">📜 Logs</a></div>
+            <div class="nav"><a href="/">🏠 หน้าหลัก</a><a href="/whitelist">📋 Whitelist</a><a href="/approved">✅ Approved</a><a href="/logs">📜 Logs</a></div>
             <div id="msg" class="msg"></div>
             <div class="card">
                 <h3 style="margin-top:0;">🎛️ General Config</h3>
@@ -313,7 +314,7 @@ app.get("/whitelist", async (req, res) => {
         </style></head><body>
         <div class="container">
             <h2 style="color:#57F287;">📋 /say Whitelist</h2>
-            <div class="nav"><a href="/">🏠 หน้าหลัก</a><a href="/settings">⚙️ ตั้งค่า</a><a href="/logs">📜 Logs</a></div>
+            <div class="nav"><a href="/">🏠 หน้าหลัก</a><a href="/settings">⚙️ ตั้งค่า</a><a href="/approved">✅ Approved</a><a href="/logs">📜 Logs</a></div>
             <div class="card">
                 <h3 style="margin-top:0;">เพิ่ม User ID
     <div class="card">
@@ -364,11 +365,79 @@ app.get("/logs", (req, res) => {
         </style></head><body>
         <div class="container">
             <h2 style="color:#57F287;">📜 System Logs (${webLogs.length}/${MAX_LOGS})</h2>
-            <div class="nav"><a href="/">🏠 หน้าหลัก</a><a href="/settings">⚙️ ตั้งค่า</a><a href="/whitelist">📋 Whitelist</a></div>
+            <div class="nav"><a href="/">🏠 หน้าหลัก</a><a href="/settings">⚙️ ตั้งค่า</a><a href="/whitelist">📋 Whitelist</a><a href="/approved">✅ Approved</a></div>
             <div class="terminal">${logsHtml}</div>
         </div>
         <script>setTimeout(()=>location.reload(),10000);</script>
         </body></html>`);
+});
+
+// --- หน้า Approved Guilds ---
+app.get("/approved", async (req, res) => {
+    const approvedList = await sessionManager.ApprovedGuildModel.find({}).catch(() => []);
+    const rows = approvedList.map(a => {
+        const guild = client.guilds.cache.get(a.guildId);
+        const name = guild ? guild.name : 'ไม่พบในบอท';
+        const members = guild ? guild.memberCount : '-';
+        const approvedAt = a.approvedAt ? `<t:${Math.floor(a.approvedAt / 1000)}:R>` : '-';
+        return `<tr>
+            <td style="padding:8px;font-family:monospace;font-size:0.85em;">${a.guildId}</td>
+            <td style="padding:8px;">${name}</td>
+            <td style="padding:8px;text-align:center;">${members}</td>
+            <td style="padding:8px;text-align:center;">${approvedAt}</td>
+            <td style="padding:8px;text-align:center;">
+                <button onclick="removeGuild('${a.guildId}')" style="background:#ED4245;color:#fff;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;">ลบ</button>
+            </td></tr>`;
+    }).join("");
+
+    res.send(`<!DOCTYPE html><html><head>
+        <title>Approved Guilds — Enterprise</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            body{background:#111;color:#fff;font-family:sans-serif;margin:0;padding:20px;}
+            .container{max-width:800px;margin:0 auto;}
+            .card{background:#1a1a1a;padding:20px;border-radius:15px;margin-bottom:20px;}
+            table{width:100%;border-collapse:collapse;}
+            th{text-align:left;padding:8px;color:#aaa;border-bottom:1px solid #333;}
+            tr:nth-child(even){background:#222;}
+            .nav{display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;}
+            .nav a{background:#222;color:#57F287;padding:8px 16px;border-radius:8px;text-decoration:none;font-size:0.9em;}
+            .nav a:hover{background:#333;}
+        </style></head><body>
+        <div class="container">
+            <h2 style="color:#57F287;">✅ Approved Guilds (${approvedList.length} เซิร์ฟเวอร์)</h2>
+            <div class="nav">
+                <a href="/">🏠 หน้าหลัก</a>
+                <a href="/settings">⚙️ ตั้งค่า</a>
+                <a href="/whitelist">📋 Whitelist</a>
+                <a href="/logs">📜 Logs</a>
+            </div>
+            <div class="card">
+                <table>
+                    <thead><tr>
+                        <th>Guild ID</th>
+                        <th>ชื่อเซิร์ฟเวอร์</th>
+                        <th style="text-align:center;">สมาชิก</th>
+                        <th style="text-align:center;">อนุมัติเมื่อ</th>
+                        <th style="text-align:center;">จัดการ</th>
+                    </tr></thead>
+                    <tbody>${rows || '<tr><td colspan="5" style="padding:16px;color:#aaa;text-align:center;">ยังไม่มีเซิร์ฟเวอร์ที่อนุมัติ</td></tr>'}</tbody>
+                </table>
+            </div>
+        </div>
+        <script>
+            async function removeGuild(guildId) {
+                if (!confirm('ลบ ' + guildId + ' ออกจาก Approved list?')) return;
+                const r = await fetch('/api/approved/remove', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': '${API_SECRET}' },
+                    body: JSON.stringify({ guildId })
+                });
+                const d = await r.json();
+                if (d.success) location.reload();
+                else alert('Error: ' + (d.error || 'Unknown'));
+            }
+        </script></body></html>`);
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -456,6 +525,32 @@ app.post("/api/whitelist/add", async (req, res) => {
         if (!userId || typeof userId !== 'string') return res.status(400).json({ success: false, error: "Invalid userId" });
         await sessionManager.addWhitelist(userId, 'dashboard');
         console.log(`[WHITELIST] ✅ Added ${userId} via Dashboard.`);
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// Approved Guild Remove
+app.post("/api/approved/remove", async (req, res) => {
+    if (!checkAuth(req, res)) return;
+    try {
+        const { guildId } = req.body;
+        if (!guildId || typeof guildId !== 'string') return res.status(400).json({ success: false, error: "Invalid guildId" });
+        await sessionManager.ApprovedGuildModel.deleteOne({ guildId });
+        console.log(`[SYSTEM] 🗑️ Guild ${guildId} removed from approved list via Dashboard.`);
+        if (process.env.WEBHOOK_LOG_URL) {
+            try {
+                const guild = client.guilds.cache.get(guildId);
+                const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
+                wh.send({
+                    content: `🗑️ **[GUILD REMOVED]**\n` +
+                             `**Guild:** ${guild ? `${guild.name} (\`${guildId}\`)` : `\`${guildId}\``}\n` +
+                             `**Removed at:** <t:${Math.floor(Date.now() / 1000)}:F>`
+                }).catch(() => {});
+                wh.destroy();
+            } catch (e) {}
+        }
         res.json({ success: true });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
