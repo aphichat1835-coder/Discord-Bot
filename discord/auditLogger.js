@@ -1,0 +1,286 @@
+/*
+================================================================================
+⚠️ [AI COGNITIVE DIRECTIVE] ⚠️
+DO NOT MODIFY: Event listener structure — each listener maps to a specific
+audit log channel from LogChannelMapModel.
+DO NOT REMOVE: Any event listener — each one serves เฟส 25 requirements.
+================================================================================
+*/
+
+const { MessageEmbed } = require("discord.js");
+
+// ════════════════════════════════════════════════════════════════════════════
+//  🗺️  REGION 1: HELPER — ดึงห้อง log จาก DB
+// ════════════════════════════════════════════════════════════════════════════
+async function getAuditChannel(guild, sessionManager, type) {
+    try {
+        const map = await sessionManager.getLogChannelMap(guild.id);
+        if (!map) return null;
+        const channelId = map[`${type}ChannelId`];
+        if (!channelId) return null;
+        return guild.channels.cache.get(channelId) || null;
+    } catch (e) {
+        return null;
+    }
+}
+
+async function sendAuditLog(guild, sessionManager, type, embed) {
+    const ch = await getAuditChannel(guild, sessionManager, type);
+    if (ch) ch.send({ embeds: [embed] }).catch(() => {});
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  📝  REGION 2: MESSAGE EVENTS
+// ════════════════════════════════════════════════════════════════════════════
+function registerMessageEvents(client, sessionManager) {
+    const config = require("./config.json");
+
+    // ข้อความถูกลบ
+    client.on("messageDelete", async (message) => {
+        if (!message.guild || message.author?.bot) return;
+        const embed = new MessageEmbed()
+            .setColor(config.system.themeColors.error)
+            .setTitle("🗑️ ข้อความถูกลบ")
+            .setDescription(
+                `**ผู้ส่ง:** <@${message.author?.id}> (\`${message.author?.tag}\`)\n` +
+                `**ช่อง:** <#${message.channel.id}>\n` +
+                `**เนื้อหา:** ${message.content || "*ไม่มีข้อความ (สื่อ/ไฟล์)*"}`
+            )
+            .setTimestamp();
+        await sendAuditLog(message.guild, sessionManager, 'message', embed);
+    });
+
+    // ข้อความถูกแก้ไข
+    client.on("messageUpdate", async (oldMsg, newMsg) => {
+        if (!newMsg.guild || newMsg.author?.bot) return;
+        if (oldMsg.content === newMsg.content) return;
+        const embed = new MessageEmbed()
+            .setColor(config.system.themeColors.warning)
+            .setTitle("✏️ ข้อความถูกแก้ไข")
+            .setDescription(
+                `**ผู้ส่ง:** <@${newMsg.author?.id}>\n` +
+                `**ช่อง:** <#${newMsg.channel.id}>\n` +
+                `**ก่อน:** ${oldMsg.content || "*ไม่มีข้อมูลเดิม*"}\n` +
+                `**หลัง:** ${newMsg.content}`
+            )
+            .setURL(newMsg.url)
+            .setTimestamp();
+        await sendAuditLog(newMsg.guild, sessionManager, 'message', embed);
+    });
+
+    // Bulk Delete (Clear)
+    client.on("messageDeleteBulk", async (messages) => {
+        const first = messages.first();
+        if (!first?.guild) return;
+        const embed = new MessageEmbed()
+            .setColor(config.system.themeColors.error)
+            .setTitle("🧹 ลบข้อความหมู่ (Bulk Delete)")
+            .setDescription(
+                `**ช่อง:** <#${first.channel.id}>\n` +
+                `**จำนวน:** ${messages.size} ข้อความ`
+            )
+            .setTimestamp();
+        await sendAuditLog(first.guild, sessionManager, 'message', embed);
+    });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  👥  REGION 3: MEMBER EVENTS
+// ════════════════════════════════════════════════════════════════════════════
+function registerMemberEvents(client, sessionManager) {
+    const config = require("./config.json");
+
+    // สมาชิกเข้า
+    client.on("guildMemberAdd", async (member) => {
+        const accountAgeDays = Math.floor((Date.now() - member.user.createdTimestamp) / 86400000);
+        const isNew = accountAgeDays < config.risk_thresholds.newAccountAgeDays;
+        const embed = new MessageEmbed()
+            .setColor(isNew ? config.system.themeColors.error : config.system.themeColors.success)
+            .setTitle("✅ สมาชิกใหม่เข้าร่วม")
+            .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
+            .setDescription(
+                `**ผู้ใช้:** <@${member.id}> (\`${member.user.tag}\`)\n` +
+                `**บัญชีสร้างเมื่อ:** <t:${Math.floor(member.user.createdTimestamp / 1000)}:R>\n` +
+                (isNew ? `⚠️ **บัญชีใหม่มาก! (${accountAgeDays} วัน)**` : ``)
+            )
+            .setTimestamp();
+        await sendAuditLog(member.guild, sessionManager, 'member', embed);
+    });
+
+    // สมาชิกออก
+    client.on("guildMemberRemove", async (member) => {
+        const embed = new MessageEmbed()
+            .setColor(config.system.themeColors.warning)
+            .setTitle("👋 สมาชิกออกจากเซิร์ฟเวอร์")
+            .setDescription(
+                `**ผู้ใช้:** <@${member.id}> (\`${member.user.tag}\`)\n` +
+                `**เข้าร่วมเมื่อ:** <t:${Math.floor(member.joinedTimestamp / 1000)}:R>`
+            )
+            .setTimestamp();
+        await sendAuditLog(member.guild, sessionManager, 'member', embed);
+    });
+
+    // ยศเปลี่ยน
+    client.on("guildMemberUpdate", async (oldMember, newMember) => {
+        const addedRoles = newMember.roles.cache.filter(r => !oldMember.roles.cache.has(r.id));
+        const removedRoles = oldMember.roles.cache.filter(r => !newMember.roles.cache.has(r.id));
+        if (addedRoles.size === 0 && removedRoles.size === 0) return;
+        const embed = new MessageEmbed()
+            .setColor(config.system.themeColors.info)
+            .setTitle("🎭 ยศสมาชิกเปลี่ยน")
+            .setDescription(
+                `**ผู้ใช้:** <@${newMember.id}>\n` +
+                (addedRoles.size > 0 ? `**เพิ่มยศ:** ${addedRoles.map(r => r.toString()).join(', ')}\n` : '') +
+                (removedRoles.size > 0 ? `**ลบยศ:** ${removedRoles.map(r => r.toString()).join(', ')}` : '')
+            )
+            .setTimestamp();
+        await sendAuditLog(newMember.guild, sessionManager, 'member', embed);
+    });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  🔊  REGION 4: VOICE EVENTS
+// ════════════════════════════════════════════════════════════════════════════
+function registerVoiceEvents(client, sessionManager) {
+    const config = require("./config.json");
+
+    client.on("voiceStateUpdate", async (oldState, newState) => {
+        const member = newState.member;
+        if (!member || member.user.bot) return;
+
+        let title = '';
+        let color = config.system.themeColors.info;
+        let desc = `**ผู้ใช้:** <@${member.id}>`;
+
+        if (!oldState.channelId && newState.channelId) {
+            title = '🔊 เข้าห้องเสียง';
+            color = config.system.themeColors.success;
+            desc += `\n**ห้อง:** <#${newState.channelId}>`;
+        } else if (oldState.channelId && !newState.channelId) {
+            title = '🔇 ออกจากห้องเสียง';
+            color = config.system.themeColors.error;
+            desc += `\n**ห้อง:** <#${oldState.channelId}>`;
+        } else if (oldState.channelId !== newState.channelId) {
+            title = '🔀 ย้ายห้องเสียง';
+            desc += `\n**จาก:** <#${oldState.channelId}>\n**ไป:** <#${newState.channelId}>`;
+        } else if (!oldState.serverMute && newState.serverMute) {
+            title = '🔇 ถูก Server Mute';
+            color = config.system.themeColors.warning;
+            desc += `\n**ห้อง:** <#${newState.channelId}>`;
+        } else if (!oldState.serverDeaf && newState.serverDeaf) {
+            title = '🔕 ถูก Server Deafen';
+            color = config.system.themeColors.warning;
+            desc += `\n**ห้อง:** <#${newState.channelId}>`;
+        } else return;
+
+        const embed = new MessageEmbed()
+            .setColor(color).setTitle(title)
+            .setDescription(desc).setTimestamp();
+        await sendAuditLog(newState.guild, sessionManager, 'voice', embed);
+    });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  ⚙️  REGION 5: SERVER EVENTS
+// ════════════════════════════════════════════════════════════════════════════
+function registerServerEvents(client, sessionManager) {
+    const config = require("./config.json");
+
+    // ห้องถูกสร้าง
+    client.on("channelCreate", async (channel) => {
+        if (!channel.guild) return;
+        const embed = new MessageEmbed()
+            .setColor(config.system.themeColors.success)
+            .setTitle("➕ ห้องใหม่ถูกสร้าง")
+            .setDescription(`**ชื่อ:** ${channel.name}\n**ประเภท:** ${channel.type}`)
+            .setTimestamp();
+        await sendAuditLog(channel.guild, sessionManager, 'server', embed);
+    });
+
+    // ห้องถูกลบ
+    client.on("channelDelete", async (channel) => {
+        if (!channel.guild) return;
+        const embed = new MessageEmbed()
+            .setColor(config.system.themeColors.error)
+            .setTitle("🗑️ ห้องถูกลบ")
+            .setDescription(`**ชื่อ:** ${channel.name}\n**ประเภท:** ${channel.type}`)
+            .setTimestamp();
+        await sendAuditLog(channel.guild, sessionManager, 'server', embed);
+    });
+
+    // ยศถูกสร้าง/ลบ
+    client.on("roleCreate", async (role) => {
+        const embed = new MessageEmbed()
+            .setColor(config.system.themeColors.success)
+            .setTitle("🎭 ยศใหม่ถูกสร้าง")
+            .setDescription(`**ชื่อ:** ${role.name}\n**ID:** \`${role.id}\``)
+            .setTimestamp();
+        await sendAuditLog(role.guild, sessionManager, 'server', embed);
+    });
+
+    client.on("roleDelete", async (role) => {
+        const embed = new MessageEmbed()
+            .setColor(config.system.themeColors.error)
+            .setTitle("🗑️ ยศถูกลบ")
+            .setDescription(`**ชื่อ:** ${role.name}\n**ID:** \`${role.id}\``)
+            .setTimestamp();
+        await sendAuditLog(role.guild, sessionManager, 'server', embed);
+    });
+
+    // อิโมจิถูกเพิ่ม
+    client.on("emojiCreate", async (emoji) => {
+        const embed = new MessageEmbed()
+            .setColor(config.system.themeColors.info)
+            .setTitle("😀 อิโมจิใหม่ถูกเพิ่ม")
+            .setDescription(`**ชื่อ:** ${emoji.name}\n**ID:** \`${emoji.id}\``)
+            .setThumbnail(emoji.url)
+            .setTimestamp();
+        await sendAuditLog(emoji.guild, sessionManager, 'server', embed);
+    });
+
+    // Webhook ถูกสร้าง (security risk)
+    client.on("webhookUpdate", async (channel) => {
+        const embed = new MessageEmbed()
+            .setColor(config.system.themeColors.error)
+            .setTitle("🚨 Webhook ในห้องเปลี่ยนแปลง")
+            .setDescription(`**ช่อง:** <#${channel.id}>\n⚠️ มีการสร้าง/แก้ไข/ลบ Webhook — ตรวจสอบทันที!`)
+            .setTimestamp();
+        await sendAuditLog(channel.guild, sessionManager, 'security', embed);
+    });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  🚨  REGION 6: SECURITY EVENTS
+// ════════════════════════════════════════════════════════════════════════════
+function registerSecurityEvents(client, sessionManager) {
+    const config = require("./config.json");
+
+    // บอทไม่ได้รับการยืนยันตัวตนถูกเชิญ
+    client.on("guildMemberAdd", async (member) => {
+        if (!member.user.bot) return;
+        if (member.user.id === client.user?.id) return;
+        const embed = new MessageEmbed()
+            .setColor(config.system.themeColors.error)
+            .setTitle("🤖 บอทใหม่ถูกเชิญเข้าเซิร์ฟเวอร์")
+            .setDescription(
+                `**บอท:** <@${member.id}> (\`${member.user.tag}\`)\n` +
+                `**Verified:** ${member.user.flags?.has('VERIFIED_BOT') ? '✅ ใช่' : '❌ ไม่ได้ยืนยัน — ระวัง!'}`
+            )
+            .setTimestamp();
+        await sendAuditLog(member.guild, sessionManager, 'security', embed);
+    });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  📤  REGION 7: REGISTER ALL + EXPORT
+// ════════════════════════════════════════════════════════════════════════════
+function register(client, sessionManager) {
+    registerMessageEvents(client, sessionManager);
+    registerMemberEvents(client, sessionManager);
+    registerVoiceEvents(client, sessionManager);
+    registerServerEvents(client, sessionManager);
+    registerSecurityEvents(client, sessionManager);
+    console.log("[AUDIT] ✅ Audit Logger registered — 5 channel categories active.");
+}
+
+module.exports = { register };
