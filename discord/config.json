@@ -9,13 +9,32 @@
         "maxSessions": 20,
         "rateLimitRequests": 5,
         "rateLimitWindowMs": 60000,
-        "idleTimeoutMs": 86400000
+        "idleTimeoutMs": 86400000,
+        "spamTrackingMaxUsers": 1000,
+        "webLogsMaxEntries": 500
     },
     "channels": {
         "logName": "manager-logs"
     },
+    "audit_channels": {
+        "categoryName": "🛡️ ENTERPRISE AUDIT",
+        "message": "log-ข้อความ",
+        "member": "log-สมาชิก",
+        "voice": "log-ช่องเสียง",
+        "server": "log-เซิร์ฟเวอร์",
+        "security": "log-ความปลอดภัย"
+    },
+    "voice_worker": {
+        "maxReconnectAttempts": 7,
+        "loginTimeout": 35000,
+        "connectionTimeout": 15000,
+        "dmThrottleMs": 20000
+    },
+    "risk_thresholds": {
+        "newAccountAgeDays": 7,
+        "suspiciousAccountAgeDays": 30
+    },
     "system": {
-        "databaseFile": "./database.json",
         "themeColors": {
             "primary": "#57F287",
             "success": "#57F287",
@@ -23,7 +42,7 @@
             "error": "#ED4245",
             "info": "#5865F2"
         },
-        "bannerUrl": "https://cdn.discordapp.com/attachments/1463891557940854900/1505324265224929280/image0.gif?ex=6a0a35f8&is=6a08e478&hm=e0672464b94638d244e9e8f7664fd5cd7103c625ba11fd42e8ce961f4821f870&",
+        "bannerUrl": "[cdn.discordapp.com](https://cdn.discordapp.com/attachments/1463891557940854900/1505324265224929280/image0.gif?ex=6a0a35f8&is=6a08e478&hm=e0672464b94638d244e9e8f7664fd5cd7103c625ba11fd42e8ce961f4821f870&)",
         "ownerId": "661415152146710558"
     },
     "emojis": {
@@ -47,6 +66,13 @@
         "page_prev": "◀️",
         "page_next": "▶️",
         "status_online": "🟢",
-        "status_offline": "🔴"
+        "status_offline": "🔴",
+        "dashboard": "🎛️",
+        "ping": "🏓",
+        "stats": "📊",
+        "cpu": "💻",
+        "spam_alert_start": "<a:b20_phomueang:1505303181733789909>",
+        "spam_alert_end": "<a:b20_phomueang:1505303181733789909>",
+        "no_permission": "<a:Di_phomueang:1505544059056427079>"
     }
 }
