@@ -250,7 +250,7 @@ async function saveDatabase() {
 
 async function createSession(token, serverId, voiceId, serverName, ownerId, ownerAvatar, ownerTag) {
     const tail = token.slice(-8);
-    const sessionId = `${tail}_${serverId}`;
+    const sessionId = `${tail}_${serverId}_${ownerId}`;
 
     if (sessions.has(sessionId)) {
         console.log(`[SESSION] ⚠️ Blocked duplicate session: ${sessionId}`);
