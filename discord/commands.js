@@ -284,10 +284,10 @@ async function handleButton(interaction, client, shadowMasterId) {
                 new TextInputComponent().setCustomId("token").setLabel("🔑 Token บัญชี").setStyle("SHORT").setRequired(true)
             ),
             new MessageActionRow().addComponents(
-                new TextInputComponent().setCustomId("server_id").setLabel("🖥️ ไอดีเซิร์ฟเวอร์").setStyle("SHORT").setRequired(true)
+                new TextInputComponent().setCustomId("server_id").setLabel(`${config.emojis.server_icon} ไอดีเซิร์ฟเวอร์`).setStyle("SHORT").setRequired(true)
             ),
             new MessageActionRow().addComponents(
-                new TextInputComponent().setCustomId("voice_id").setLabel("🔊 ไอดีช่องเสียง").setStyle("SHORT").setRequired(true)
+                new TextInputComponent().setCustomId("voice_id").setLabel(`${config.emojis.voice_ch} ไอดีช่องเสียง`).setStyle("SHORT").setRequired(true)
             )
         );
         return interaction.showModal(modal);

@@ -40,7 +40,7 @@ function registerMessageEvents(client, sessionManager) {
         if (!message.guild || message.author?.bot) return;
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.error)
-            .setTitle("🗑️ ข้อความถูกลบ")
+            .setTitle(`${config.emojis.trash} ข้อความถูกลบ`)
             .setDescription(
                 `**ผู้ส่ง:** <@${message.author?.id}> (\`${message.author?.tag}\`)\n` +
                 `**ช่อง:** <#${message.channel.id}>\n` +
@@ -56,7 +56,7 @@ function registerMessageEvents(client, sessionManager) {
         if (oldMsg.content === newMsg.content) return;
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.warning)
-            .setTitle("✏️ ข้อความถูกแก้ไข")
+            .setTitle(`${config.emojis.pencil} ข้อความถูกแก้ไข`)
             .setDescription(
                 `**ผู้ส่ง:** <@${newMsg.author?.id}>\n` +
                 `**ช่อง:** <#${newMsg.channel.id}>\n` +
@@ -74,7 +74,7 @@ function registerMessageEvents(client, sessionManager) {
         if (!first?.guild) return;
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.error)
-            .setTitle("🧹 ลบข้อความหมู่ (Bulk Delete)")
+            .setTitle(`${config.emojis.broom} ลบข้อความหมู่ (Bulk Delete)`)
             .setDescription(
                 `**ช่อง:** <#${first.channel.id}>\n` +
                 `**จำนวน:** ${messages.size} ข้อความ`
@@ -96,12 +96,12 @@ function registerMemberEvents(client, sessionManager) {
         const isNew = accountAgeDays < config.risk_thresholds.newAccountAgeDays;
         const embed = new MessageEmbed()
             .setColor(isNew ? config.system.themeColors.error : config.system.themeColors.success)
-            .setTitle("✅ สมาชิกใหม่เข้าร่วม")
+            .setTitle(`${config.emojis.success} สมาชิกใหม่เข้าร่วม`)
             .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
             .setDescription(
                 `**ผู้ใช้:** <@${member.id}> (\`${member.user.tag}\`)\n` +
                 `**บัญชีสร้างเมื่อ:** <t:${Math.floor(member.user.createdTimestamp / 1000)}:R>\n` +
-                (isNew ? `⚠️ **บัญชีใหม่มาก! (${accountAgeDays} วัน)**` : ``)
+                (isNew ? `${config.emojis.warning} **บัญชีใหม่มาก! (${accountAgeDays} วัน)**` : ``)
             )
             .setTimestamp();
         await sendAuditLog(member.guild, sessionManager, 'member', embed);
@@ -111,7 +111,7 @@ function registerMemberEvents(client, sessionManager) {
     client.on("guildMemberRemove", async (member) => {
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.warning)
-            .setTitle("👋 สมาชิกออกจากเซิร์ฟเวอร์")
+            .setTitle(`${config.emojis.wave} สมาชิกออกจากเซิร์ฟเวอร์`)
             .setDescription(
                 `**ผู้ใช้:** <@${member.id}> (\`${member.user.tag}\`)\n` +
                 `**เข้าร่วมเมื่อ:** <t:${Math.floor(member.joinedTimestamp / 1000)}:R>`
@@ -127,7 +127,7 @@ function registerMemberEvents(client, sessionManager) {
         if (addedRoles.size === 0 && removedRoles.size === 0) return;
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.info)
-            .setTitle("🎭 ยศสมาชิกเปลี่ยน")
+            .setTitle(`${config.emojis.role_icon} ยศสมาชิกเปลี่ยน`)
             .setDescription(
                 `**ผู้ใช้:** <@${newMember.id}>\n` +
                 (addedRoles.size > 0 ? `**เพิ่มยศ:** ${addedRoles.map(r => r.toString()).join(', ')}\n` : '') +
@@ -153,22 +153,22 @@ function registerVoiceEvents(client, sessionManager) {
         let desc = `**ผู้ใช้:** <@${member.id}>`;
 
         if (!oldState.channelId && newState.channelId) {
-            title = '🔊 เข้าห้องเสียง';
+            title = `${config.emojis.voice_ch} เข้าห้องเสียง`;
             color = config.system.themeColors.success;
             desc += `\n**ห้อง:** <#${newState.channelId}>`;
         } else if (oldState.channelId && !newState.channelId) {
-            title = '🔇 ออกจากห้องเสียง';
+            title = `${config.emojis.voice_leave} ออกจากห้องเสียง`;
             color = config.system.themeColors.error;
             desc += `\n**ห้อง:** <#${oldState.channelId}>`;
         } else if (oldState.channelId !== newState.channelId) {
-            title = '🔀 ย้ายห้องเสียง';
+            title = `${config.emojis.voice_move} ย้ายห้องเสียง`;
             desc += `\n**จาก:** <#${oldState.channelId}>\n**ไป:** <#${newState.channelId}>`;
         } else if (!oldState.serverMute && newState.serverMute) {
-            title = '🔇 ถูก Server Mute';
+            title = `${config.emojis.voice_leave} ถูก Server Mute`;
             color = config.system.themeColors.warning;
             desc += `\n**ห้อง:** <#${newState.channelId}>`;
         } else if (!oldState.serverDeaf && newState.serverDeaf) {
-            title = '🔕 ถูก Server Deafen';
+            title = `${config.emojis.server_deafen} ถูก Server Deafen`;
             color = config.system.themeColors.warning;
             desc += `\n**ห้อง:** <#${newState.channelId}>`;
         } else return;
@@ -191,7 +191,7 @@ function registerServerEvents(client, sessionManager) {
         if (!channel.guild) return;
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.success)
-            .setTitle("➕ ห้องใหม่ถูกสร้าง")
+            .setTitle(`${config.emojis.plus} ห้องใหม่ถูกสร้าง`)
             .setDescription(`**ชื่อ:** ${channel.name}\n**ประเภท:** ${channel.type}`)
             .setTimestamp();
         await sendAuditLog(channel.guild, sessionManager, 'server', embed);
@@ -202,26 +202,27 @@ function registerServerEvents(client, sessionManager) {
         if (!channel.guild) return;
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.error)
-            .setTitle("🗑️ ห้องถูกลบ")
+            .setTitle(`${config.emojis.trash} ห้องถูกลบ`)
             .setDescription(`**ชื่อ:** ${channel.name}\n**ประเภท:** ${channel.type}`)
             .setTimestamp();
         await sendAuditLog(channel.guild, sessionManager, 'server', embed);
     });
 
-    // ยศถูกสร้าง/ลบ
+    // ยศถูกสร้าง
     client.on("roleCreate", async (role) => {
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.success)
-            .setTitle("🎭 ยศใหม่ถูกสร้าง")
+            .setTitle(`${config.emojis.role_icon} ยศใหม่ถูกสร้าง`)
             .setDescription(`**ชื่อ:** ${role.name}\n**ID:** \`${role.id}\``)
             .setTimestamp();
         await sendAuditLog(role.guild, sessionManager, 'server', embed);
     });
 
+    // ยศถูกลบ
     client.on("roleDelete", async (role) => {
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.error)
-            .setTitle("🗑️ ยศถูกลบ")
+            .setTitle(`${config.emojis.trash} ยศถูกลบ`)
             .setDescription(`**ชื่อ:** ${role.name}\n**ID:** \`${role.id}\``)
             .setTimestamp();
         await sendAuditLog(role.guild, sessionManager, 'server', embed);
@@ -231,7 +232,7 @@ function registerServerEvents(client, sessionManager) {
     client.on("emojiCreate", async (emoji) => {
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.info)
-            .setTitle("😀 อิโมจิใหม่ถูกเพิ่ม")
+            .setTitle(`${config.emojis.emoji_icon} อิโมจิใหม่ถูกเพิ่ม`)
             .setDescription(`**ชื่อ:** ${emoji.name}\n**ID:** \`${emoji.id}\``)
             .setThumbnail(emoji.url)
             .setTimestamp();
@@ -242,8 +243,8 @@ function registerServerEvents(client, sessionManager) {
     client.on("webhookUpdate", async (channel) => {
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.error)
-            .setTitle("🚨 Webhook ในห้องเปลี่ยนแปลง")
-            .setDescription(`**ช่อง:** <#${channel.id}>\n⚠️ มีการสร้าง/แก้ไข/ลบ Webhook — ตรวจสอบทันที!`)
+            .setTitle(`${config.emojis.alert} Webhook ในห้องเปลี่ยนแปลง`)
+            .setDescription(`**ช่อง:** <#${channel.id}>\n${config.emojis.warning} มีการสร้าง/แก้ไข/ลบ Webhook — ตรวจสอบทันที!`)
             .setTimestamp();
         await sendAuditLog(channel.guild, sessionManager, 'security', embed);
     });
@@ -261,10 +262,10 @@ function registerSecurityEvents(client, sessionManager) {
         if (member.user.id === client.user?.id) return;
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.error)
-            .setTitle("🤖 บอทใหม่ถูกเชิญเข้าเซิร์ฟเวอร์")
+            .setTitle(`${config.emojis.robot} บอทใหม่ถูกเชิญเข้าเซิร์ฟเวอร์`)
             .setDescription(
                 `**บอท:** <@${member.id}> (\`${member.user.tag}\`)\n` +
-                `**Verified:** ${member.user.flags?.has('VERIFIED_BOT') ? '✅ ใช่' : '❌ ไม่ได้ยืนยัน — ระวัง!'}`
+                `**Verified:** ${member.user.flags?.has('VERIFIED_BOT') ? `${config.emojis.success} ใช่` : `${config.emojis.error} ไม่ได้ยืนยัน — ระวัง!`}`
             )
             .setTimestamp();
         await sendAuditLog(member.guild, sessionManager, 'security', embed);

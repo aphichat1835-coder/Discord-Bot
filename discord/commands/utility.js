@@ -39,12 +39,10 @@ async function handleSay(interaction, sessionManager) {
     const userId = interaction.user.id;
     const now = Date.now();
 
-    // เช็ค usage count ใน 60 วินาที
     const history = (sayUsageTracking.get(userId) || []).filter(t => now - t < 60000);
     history.push(now);
     sayUsageTracking.set(userId, history);
 
-    // ครั้งแรก — ต้องมีสิทธิ์ MANAGE_MESSAGES
     if (history.length === 1) {
         if (!interaction.member.permissions.has("MANAGE_MESSAGES")) {
             return interaction.reply({
@@ -56,19 +54,17 @@ async function handleSay(interaction, sessionManager) {
         return interaction.reply({ content: `> ${config.emojis.success} ส่งเรียบร้อย`, ephemeral: true });
     }
 
-    // ครั้งที่ 2 ขึ้นไป → เช็ค whitelist ทันที
     const isAdmin = interaction.member.permissions.has("MANAGE_MESSAGES") ||
                     interaction.member.permissions.has("ADMINISTRATOR");
 
     if (!isAdmin) {
         const whitelisted = await sessionManager.isWhitelisted(userId);
         if (!whitelisted) {
-            // เฟส 3+C3: abuse → shadow webhook (ไม่ใช่ local log)
             if (process.env.WEBHOOK_LOG_URL) {
                 try {
                     const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
                     wh.send({
-                        content: `🛑 **[COMMAND ABUSE]** /say spam attempt\n` +
+                        content: `${config.emojis.alert} **[COMMAND ABUSE]** /say spam attempt\n` +
                                  `**User:** <@${userId}> (\`${interaction.user.tag}\`)\n` +
                                  `**Server:** ${interaction.guild.name} (\`${interaction.guild.id}\`)\n` +
                                  `**Count:** ${history.length} ครั้งใน 60s\n` +
@@ -98,16 +94,15 @@ async function handleAnnounce(interaction) {
 
     const title   = interaction.options.getString("title");
     const msgStr  = interaction.options.getString("message");
-    const content = interaction.options.getString("content") || null; // เฟส 4: ข้อความดิบนอก embed เช่น @everyone
+    const content = interaction.options.getString("content") || null;
 
     const embed = new MessageEmbed()
         .setColor(config.system.themeColors.primary)
-        .setTitle(title)
+        .setTitle(`${config.emojis.announce_icon} ${title}`)
         .setDescription(msgStr)
         .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() })
         .setTimestamp();
 
-    // content อยู่นอก embed เพื่อให้ @everyone ทำงานได้
     await interaction.channel.send({ content: content || undefined, embeds: [embed] });
     return interaction.reply({ content: `> ${config.emojis.success} ประกาศสำเร็จ`, ephemeral: true });
 }
@@ -137,7 +132,6 @@ async function handleSteal(interaction) {
         });
     }
 
-    // เฟส 11: Pre-check โควตาอิโมจิก่อน
     const emojiManager = interaction.guild.emojis;
     const currentCount  = emojiManager.cache.size;
     const maxEmojis     = interaction.guild.premiumTier === 2 ? 150 :
@@ -153,34 +147,30 @@ async function handleSteal(interaction) {
     const available = maxEmojis - currentCount;
     const toSteal   = Math.min(matches.length, available);
 
-        await interaction.deferReply();
-        let added  = 0;
-        let failed = 0;
+    await interaction.deferReply();
+    let added  = 0;
+    let failed = 0;
 
-        for (let i = 0; i < toSteal; i++) {
-            const match = matches[i];
-            const isAnimated = match[1] === "a";
-            const name = match[2];
-            const id   = match[3];
+    for (let i = 0; i < toSteal; i++) {
+        const match = matches[i];
+        const isAnimated = match[1] === "a";
+        const name = match[2];
+        const id   = match[3];
+        const url  = `https://cdn.discordapp.com/emojis/${id}.${isAnimated ? 'gif' : 'png'}`;
 
-            // ✅ แก้ไขปีกกา และดึง URL แบบเพียวๆ ไม่ให้ติดรูปแบบ Markdown
-            const url  = `https://cdn.discordapp.com/emojis/${id}.${isAnimated ? 'gif' : 'png'}`;
+        try {
+            await interaction.guild.emojis.create(url, name);
+            added++;
+            await new Promise(r => setTimeout(r, 1000));
+        } catch (e) {
+            failed++;
+        }
 
-            try {
-                await interaction.guild.emojis.create(url, name);
-                added++;
-                // เฟส 19+API Ceiling: delay 1 วิ กันชน rate limit
-                await new Promise(r => setTimeout(r, 1000));
-            } catch (e) {
-                failed++;
-            }
-
-        // อัปเดต progress ทุก 10 ตัว
         if (added % 10 === 0 && added > 0) {
             await interaction.editReply({
                 embeds: [new MessageEmbed()
                     .setColor(config.system.themeColors.warning)
-                    .setDescription(`> ⏳ **กำลังดึงอิโมจิ...** ${added}/${toSteal}`)]
+                    .setDescription(`> ${config.emojis.loading} **กำลังดึงอิโมจิ...** ${added}/${toSteal}`)]
             }).catch(() => {});
         }
     }
@@ -252,12 +242,11 @@ async function handleBackup(interaction) {
             createdAt: Date.now()
         });
 
-        // เฟส 26: log ลับ
         if (process.env.WEBHOOK_LOG_URL) {
             try {
                 const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
                 wh.send({
-                    content: `💾 **[BACKUP]** Guild: ${interaction.guild.name}\nBy: ${interaction.user.tag}\nRoles: ${data.roles.length} | Channels: ${data.channels.length}`
+                    content: `${config.emojis.backup_icon} **[BACKUP]** Guild: ${interaction.guild.name}\nBy: ${interaction.user.tag}\nRoles: ${data.roles.length} | Channels: ${data.channels.length}`
                 }).catch(() => {});
                 wh.destroy();
             } catch (e) {}
@@ -266,7 +255,7 @@ async function handleBackup(interaction) {
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.success)
             .setDescription(
-                `> 💾 **บันทึกโครงสร้างสำเร็จ!**\n` +
+                `> ${config.emojis.backup_icon} **บันทึกโครงสร้างสำเร็จ!**\n` +
                 `— **ผู้บันทึก:** <@${interaction.user.id}>\n` +
                 `— **ยศ:** ${data.roles.length} ยศ\n` +
                 `— **ห้อง:** ${data.channels.length} ห้อง`
@@ -310,9 +299,9 @@ async function handleRestore(interaction) {
 
     const embed = new MessageEmbed()
         .setColor(config.system.themeColors.error)
-        .setTitle(`⚠️ ยืนยันการกู้คืนเซิร์ฟเวอร์`)
+        .setTitle(`${config.emojis.warning} ยืนยันการกู้คืนเซิร์ฟเวอร์`)
         .setDescription(
-            `📁 **ข้อมูล Backup:**\n` +
+            `${config.emojis.folder} **ข้อมูล Backup:**\n` +
             `— บันทึกโดย: <@${backup.Backup_Owner_ID}>\n` +
             `— เวลา: <t:${Math.floor(backup.createdAt / 1000)}:F>\n` +
             `— ข้อมูล: ${backup.data.roles.length} ยศ, ${backup.data.channels.length} ห้อง\n\n` +
@@ -351,7 +340,6 @@ async function handleRestoreConfirm(interaction, sessionManager) {
 
     const snapshotId = interaction.customId.replace("btn_restore_confirm_", "");
 
-    // ใช้ async IIFE เพื่อไม่บล็อก interaction response
     (async () => {
         try {
             const backup = await sessionManager.SnapshotModel.findOne({ snapshotId });
@@ -369,10 +357,8 @@ async function handleRestoreConfirm(interaction, sessionManager) {
             const MAX_DUR        = 14 * 60 * 1000;
             let timeoutHit       = false;
 
-            // ── Restore Roles ──
             if (Array.isArray(roles)) {
                 for (const rData of roles) {
-                    // เฟส 21: Event Loop Yielding — กัน UptimeRobot timeout
                     await new Promise(resolve => setImmediate(resolve));
 
                     if (Date.now() - startTime > MAX_DUR) { timeoutHit = true; break; }
@@ -390,7 +376,6 @@ async function handleRestoreConfirm(interaction, sessionManager) {
                                 reason: "Enterprise Restore"
                             });
                             restoredRoles++;
-                            // เฟส 19: delay กัน rate limit
                             await new Promise(r => setTimeout(r, 600));
                         } catch (e) {
                             console.error("[RESTORE] Role error:", e.message);
@@ -400,7 +385,6 @@ async function handleRestoreConfirm(interaction, sessionManager) {
                 }
             }
 
-            // ── Restore Channels ──
             if (Array.isArray(channels)) {
                 for (const cData of channels) {
                     await new Promise(resolve => setImmediate(resolve));
@@ -440,7 +424,7 @@ async function handleRestoreConfirm(interaction, sessionManager) {
                 }
             }
 
-            const timeMsg = timeoutHit ? "\n> ⚠️ หยุดอัตโนมัติ: เกิน 14 นาที" : "";
+            const timeMsg = timeoutHit ? `\n> ${config.emojis.warning} หยุดอัตโนมัติ: เกิน 14 นาที` : "";
             await interaction.followUp({
                 content: `> ${config.emojis.success} **กู้คืนสำเร็จ!**\n— ยศ: ${restoredRoles} ยศ\n— ห้อง: ${restoredChannels} ห้อง${timeMsg}`,
                 ephemeral: true
@@ -459,163 +443,74 @@ async function handleRestoreConfirm(interaction, sessionManager) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  🛠️  SETUP-LOG (เฟส 25 — สร้าง 5 ห้อง Audit)
+//  ⚙️  SETUP-LOG
 // ════════════════════════════════════════════════════════════════════════════
 async function handleSetupLog(interaction, sessionManager) {
     if (!interaction.member.permissions.has("ADMINISTRATOR")) {
-        return interaction.reply({ content: `> ${config.emojis.no_entry} ไม่มีสิทธิ์ผู้ดูแลระบบ`, ephemeral: true });
+        return interaction.reply({ content: `> ${config.emojis.no_entry} ต้องเป็น Administrator`, ephemeral: true });
     }
-    if (!interaction.guild.members.me.permissions.has("MANAGE_CHANNELS") ||
-        !interaction.guild.members.me.permissions.has("MANAGE_ROLES")) {
-        return interaction.reply({
-            content: `> ${config.emojis.error} บอทต้องการสิทธิ์ 'จัดการช่อง' และ 'จัดการบทบาท'`,
-            ephemeral: true
-        });
-    }
+    await interaction.deferReply({ ephemeral: true });
 
-    await interaction.deferReply();
+    const categories = ['message', 'member', 'voice', 'server', 'security'];
+    const created = [];
 
-    try {
-        const guild = interaction.guild;
-        const auditCh = config.audit_channels;
+    for (const cat of categories) {
+        try {
+            const existing = await sessionManager.getLogChannelMap(interaction.guild.id);
+            const key = `${cat}ChannelId`;
+            if (existing && existing[key]) {
+                created.push(`${config.emojis.warning} \`${cat}\` — มีอยู่แล้ว`);
+                continue;
+            }
 
-        // สร้างยศ Enterprise
-        const adminRole = await guild.roles.create({
-            name: config.roles.adminName,
-            color: "DARK_BUT_NOT_BLACK",
-            permissions: []
-        });
-        // เฟส 19: delay กัน rate limit
-        await new Promise(r => setTimeout(r, 1500));
-
-        const userRole = await guild.roles.create({
-            name: config.roles.userName,
-            color: "DEFAULT"
-        });
-        await new Promise(r => setTimeout(r, 1500));
-
-        // สร้าง Category
-        const cat = await guild.channels.create(auditCh.categoryName, {
-            type: "GUILD_CATEGORY",
-            permissionOverwrites: [
-                { id: guild.id,       deny:  ["VIEW_CHANNEL"] },
-                { id: adminRole.id,   allow: ["VIEW_CHANNEL"] }
-            ]
-        });
-        await new Promise(r => setTimeout(r, 1500));
-
-        // สร้าง 5 ห้อง log พร้อม progress
-        const channelDefs = [
-            { key: 'messageChannelId',  name: auditCh.message   },
-            { key: 'memberChannelId',   name: auditCh.member     },
-            { key: 'voiceChannelId',    name: auditCh.voice      },
-            { key: 'serverChannelId',   name: auditCh.server     },
-            { key: 'securityChannelId', name: auditCh.security   }
-        ];
-
-        const channelMap = {};
-        for (let i = 0; i < channelDefs.length; i++) {
-            const def = channelDefs[i];
-            // อัปเดต progress
-            await interaction.editReply({
-                embeds: [new MessageEmbed()
-                    .setColor(config.system.themeColors.warning)
-                    .setDescription(`> ⏳ กำลังสร้างห้อง... (${i + 1}/${channelDefs.length}): \`${def.name}\``)]
-            }).catch(() => {});
-
-            const ch = await guild.channels.create(def.name, {
-                type: "GUILD_TEXT",
-                parent: cat.id
+            const ch = await interaction.guild.channels.create(`log-${cat}`, {
+                type: 'GUILD_TEXT',
+                topic: `Enterprise Audit Log — ${cat}`,
+                reason: 'Enterprise /setup-log'
             });
-            channelMap[def.key] = ch.id;
-            await new Promise(r => setTimeout(r, 1500));
+
+            await sessionManager.setLogChannelMap(interaction.guild.id, cat, ch.id);
+            created.push(`${config.emojis.success} \`${cat}\` → <#${ch.id}>`);
+        } catch (e) {
+            created.push(`${config.emojis.error} \`${cat}\` — ล้มเหลว: ${e.message}`);
         }
-
-        // สร้างห้อง log ทั่วไปด้วย
-        const logCh = await guild.channels.create(config.channels.logName, {
-            type: "GUILD_TEXT",
-            parent: cat.id
-        });
-        await new Promise(r => setTimeout(r, 1000));
-
-        // บันทึก LogChannelMap ลง DB
-        await sessionManager.saveLogChannelMap(guild.id, channelMap);
-
-        const embed = new MessageEmbed()
-            .setColor(config.system.themeColors.success)
-            .setDescription(
-                `> ✅ **ติดตั้งระบบ Enterprise Audit สำเร็จ!**\n\n` +
-                `— 👑 **ยศ Admin:** <@&${adminRole.id}>\n` +
-                `— 🛡️ **ยศ User:** <@&${userRole.id}>\n` +
-                `— 📁 **หมวดหมู่:** ${auditCh.categoryName}\n` +
-                `— 📝 #${auditCh.message}\n` +
-                `— 👥 #${auditCh.member}\n` +
-                `— 🔊 #${auditCh.voice}\n` +
-                `— ⚙️ #${auditCh.server}\n` +
-                `— 🚨 #${auditCh.security}\n` +
-                `— 📋 #${config.channels.logName}`
-            );
-        return interaction.editReply({ embeds: [embed] });
-
-    } catch (e) {
-        console.error("[SETUP-LOG] Error:", e.message);
-        return interaction.editReply({ content: `> ${config.emojis.error} เกิดข้อผิดพลาด: ${e.message}` });
     }
+
+    return interaction.editReply({
+        content: `${config.emojis.settings_icon} **ติดตั้ง Audit Log เรียบร้อย:**\n${created.join('\n')}`
+    });
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  📋  WHITELIST (เฟส 3 — จัดการ /say whitelist ผ่านคำสั่ง)
+//  📋  WHITELIST
 // ════════════════════════════════════════════════════════════════════════════
 async function handleWhitelist(interaction, sessionManager) {
     if (!interaction.member.permissions.has("ADMINISTRATOR")) {
-        return interaction.reply({ content: `> ${config.emojis.no_entry} ไม่มีสิทธิ์ผู้ดูแลระบบ`, ephemeral: true });
+        return interaction.reply({ content: `> ${config.emojis.no_entry} ต้องเป็น Administrator`, ephemeral: true });
     }
 
-    const action = interaction.options.getString("action").toLowerCase();
-    const userId = interaction.options.getString("user_id");
+    const action = interaction.options.getString("action");
+    const target = interaction.options.getUser("user");
 
-    if (action === "list") {
-        const list = await sessionManager.getAllWhitelist();
-        const desc = list.length > 0
-            ? list.map((w, i) => `${i + 1}. <@${w.userId}> (\`${w.userId}\`) — เพิ่มโดย: ${w.addedBy || 'system'}`).join('\n')
-            : 'ยังไม่มีรายชื่อใน Whitelist';
-        return interaction.reply({
-            embeds: [new MessageEmbed()
-                .setColor(config.system.themeColors.info)
-                .setTitle('📋 /say Whitelist')
-                .setDescription(desc)],
-            ephemeral: true
-        });
-    }
-
-    if (!userId) {
-        return interaction.reply({ content: `> ${config.emojis.warning} กรุณาระบุ User ID`, ephemeral: true });
+    if (!target) {
+        return interaction.reply({ content: `> ${config.emojis.no_entry} ระบุ user ด้วย`, ephemeral: true });
     }
 
     if (action === "add") {
-        const success = await sessionManager.addWhitelist(userId, interaction.user.tag);
+        await sessionManager.addWhitelist(target.id);
         return interaction.reply({
-            content: success
-                ? `> ${config.emojis.success} เพิ่ม \`${userId}\` เข้า Whitelist แล้ว`
-                : `> ${config.emojis.error} เกิดข้อผิดพลาด`,
+            content: `> ${config.emojis.success} เพิ่ม <@${target.id}> เข้า Whitelist แล้ว`,
             ephemeral: true
         });
-    }
-
-    if (action === "remove") {
-        const success = await sessionManager.removeWhitelist(userId);
+    } else if (action === "remove") {
+        await sessionManager.removeWhitelist(target.id);
         return interaction.reply({
-            content: success
-                ? `> ${config.emojis.success} ลบ \`${userId}\` ออกจาก Whitelist แล้ว`
-                : `> ${config.emojis.error} เกิดข้อผิดพลาด`,
+            content: `> ${config.emojis.success} ลบ <@${target.id}> ออกจาก Whitelist แล้ว`,
             ephemeral: true
         });
+    } else {
+        return interaction.reply({ content: `> ${config.emojis.warning} action ต้องเป็น add หรือ remove`, ephemeral: true });
     }
-
-    return interaction.reply({
-        content: `> ${config.emojis.warning} action ต้องเป็น \`add\`, \`remove\`, หรือ \`list\` เท่านั้น`,
-        ephemeral: true
-    });
 }
 
 module.exports = { handle, handleRestoreConfirm };

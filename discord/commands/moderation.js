@@ -48,7 +48,6 @@ async function handleVoiceKickAll(interaction, getLogChannel) {
         let isTimeoutHit = false;
 
         for (const [memberId, member] of vc.members) {
-            // เฟส 21: Event Loop Yielding — กัน UptimeRobot timeout
             await new Promise(resolve => setImmediate(resolve));
 
             if (Date.now() - startTime > MAX_DURATION) { isTimeoutHit = true; break; }
@@ -61,11 +60,11 @@ async function handleVoiceKickAll(interaction, getLogChannel) {
             }
         }
 
-        const limitMsg = isTimeoutHit ? `\n> ⚠️ **หยุดอัตโนมัติ:** เกิน 14 นาที` : "";
+        const limitMsg = isTimeoutHit ? `\n> ${config.emojis.warning} **หยุดอัตโนมัติ:** เกิน 14 นาที` : "";
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.success)
             .setDescription(
-                `> ${config.emojis.success} **จัดการห้องเสียงเรียบร้อย 🧹**\n\n` +
+                `> ${config.emojis.success} **จัดการห้องเสียงเรียบร้อย** ${config.emojis.broom}\n\n` +
                 `— **เตะสำเร็จ ${kicked.length} คน:**\n` +
                 `${kicked.length > 0 ? kicked.join(", ") : "- ไม่มีใครถูกเตะ -"}${limitMsg}`
             );
@@ -95,7 +94,6 @@ async function handleClear(interaction) {
     }
 
     try {
-        // เฟส C1: Fetch สด แล้ว bulkDelete
         const deletedMsgs = await interaction.channel.bulkDelete(amt, true);
         if (deletedMsgs.size === 0) {
             return interaction.reply({
@@ -153,7 +151,7 @@ async function handleModeration(interaction, client, getLogChannel) {
 
     const dmEmbed = new MessageEmbed()
         .setColor(config.system.themeColors.error)
-        .setTitle(`🚨 คุณถูกระงับสิทธิ์ในเซิร์ฟเวอร์ ${interaction.guild.name}`)
+        .setTitle(`${config.emojis.punishment} คุณถูกระงับสิทธิ์ในเซิร์ฟเวอร์ ${interaction.guild.name}`)
         .setThumbnail(targetAvatar);
 
     try {
@@ -172,7 +170,7 @@ async function handleModeration(interaction, client, getLogChannel) {
         } else if (interaction.commandName === "timeout") {
             if (!interaction.guild.members.me.permissions.has("MODERATE_MEMBERS")) throw new Error("MISSING_PERMS");
             const mins = interaction.options.getInteger("minutes");
-            dmEmbed.setDescription(`— **การดำเนินการ:** Timeout ${mins} นาที ⏳\n— **ผู้ดำเนินการ:** ${interaction.user.tag}\n— **เหตุผล:** ${reason}`);
+            dmEmbed.setDescription(`— **การดำเนินการ:** Timeout ${mins} นาที ${config.emojis.timeout_icon}\n— **ผู้ดำเนินการ:** ${interaction.user.tag}\n— **เหตุผล:** ${reason}`);
             target.user.send({ embeds: [dmEmbed] }).catch(() => {});
             await target.timeout(mins * 60000, reason);
         }
@@ -182,9 +180,9 @@ async function handleModeration(interaction, client, getLogChannel) {
             .setAuthor({ name: "ลงดาบผู้กระทำผิดเรียบร้อย", iconURL: interaction.guild.iconURL() })
             .setDescription(
                 `> ${config.emojis.success} **ดำเนินการสำเร็จ!**\n` +
-                `> 👤 **เป้าหมาย:** <@${target.id}>\n` +
-                `> 🔨 **การดำเนินการ:** **${interaction.commandName.toUpperCase()}**\n` +
-                `> 📝 **เหตุผล:** ${reason}`
+                `> ${config.emojis.user} **เป้าหมาย:** <@${target.id}>\n` +
+                `> ${config.emojis.hammer} **การดำเนินการ:** **${interaction.commandName.toUpperCase()}**\n` +
+                `> ${config.emojis.note} **เหตุผล:** ${reason}`
             )
             .setThumbnail(targetAvatar);
 
