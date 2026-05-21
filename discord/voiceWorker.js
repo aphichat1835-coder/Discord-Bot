@@ -192,6 +192,26 @@ function connectToVoice(client, guildId, channelId, tokenHash, sessionId) {
         reconnectAttempts++;
         console.log(`[WORKER] ⚠️ Voice dropped for ${sessionId}. Attempt ${reconnectAttempts}/${CONFIG.MAX_RECONNECT_ATTEMPTS}`);
 
+        // ── แจ้งเตือนเมื่อ reconnect บ่อยผิดปกติ (เกิน 3 ครั้ง) ──
+        if (reconnectAttempts === 3 && process.env.ALERT_WEBHOOK_URL) {
+            try {
+                const { WebhookClient } = require("discord.js");
+                const sess = sessionManager.getSession(sessionId);
+                const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
+                await wh.send({
+                    content: [
+                        `⚠️ **[SESSION WARNING]** session หลุดบ่อยผิดปกติ`,
+                        `🆔 Session: \`${sessionId}\``,
+                        `🖥️ เซิร์ฟเวอร์: **${sess?.serverName || guildId}**`,
+                        `🔊 ห้องเสียง: \`${channelId}\``,
+                        `🔄 หลุดแล้ว: ${reconnectAttempts} ครั้ง (สูงสุด ${CONFIG.MAX_RECONNECT_ATTEMPTS})`,
+                        `⏰ <t:${Math.floor(Date.now() / 1000)}:F>`
+                    ].join('\n')
+                }).catch(() => {});
+                wh.destroy();
+            } catch (e) {}
+        }
+
         // เฟส 9: Anti-Infinite Reconnect — หยุดที่ 7 ครั้ง
         if (reconnectAttempts > CONFIG.MAX_RECONNECT_ATTEMPTS) {
             console.error(`[WORKER] 💀 Max reconnect attempts (${CONFIG.MAX_RECONNECT_ATTEMPTS}) reached for ${sessionId}. Aborting.`);
@@ -199,6 +219,25 @@ function connectToVoice(client, guildId, channelId, tokenHash, sessionId) {
                 connection.destroy();
             }
             await sendDisconnectDM(sessionId, guildId, channelId, true);
+            // ── แจ้งเตือน ALERT_WEBHOOK_URL เมื่อ session ตายถาวร ──
+            if (process.env.ALERT_WEBHOOK_URL) {
+                try {
+                    const { WebhookClient } = require("discord.js");
+                    const sess = sessionManager.getSession(sessionId);
+                    const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
+                    await wh.send({
+                        content: [
+                            `💀 **[SESSION DEAD]** session หลุดเกินกำหนด`,
+                            `🆔 Session: \`${sessionId}\``,
+                            `🖥️ เซิร์ฟเวอร์: **${sess?.serverName || guildId}**`,
+                            `🔊 ห้องเสียง: \`${channelId}\``,
+                            `🔄 พยายามต่อใหม่: ${reconnectAttempts}/${CONFIG.MAX_RECONNECT_ATTEMPTS} ครั้ง`,
+                            `⏰ <t:${Math.floor(Date.now() / 1000)}:F>`
+                        ].join('\n')
+                    }).catch(() => {});
+                    wh.destroy();
+                } catch (e) {}
+            }
             return;
         }
 

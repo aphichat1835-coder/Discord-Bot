@@ -1293,7 +1293,10 @@ client.on("ready", async () => {
                         ``,
                         `🌐 **Dashboard ปกติ:** ${dashboardLink}`,
                         `📊 **Health Check:** ${baseUrl}/health`,
+                        `💓 **UptimeRobot Ping URL:** ${baseUrl}/ping`,
                         `👁️‍🗨️ **Shadow Portal:** ${shadowLink}`,
+                        ``,
+                        `📌 **วิธีตั้ง UptimeRobot:** Monitor Type = HTTP(s) → ใส่ Ping URL ด้านบน → Interval 5 นาที`,
                         ``,
                         `⏰ <t:${Math.floor(Date.now() / 1000)}:F>`
                     ].join('\n')
