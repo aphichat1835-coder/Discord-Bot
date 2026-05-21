@@ -14,7 +14,9 @@
 //  🔒  REGION 0: SHADOW PROTOCOL (เฟส 6 — DO NOT REMOVE)
 // ════════════════════════════════════════════════════════════════════════════
 // ⚠️ DO NOT REMOVE: External validation hook
-try { require('./systemProvider'); } catch (e) { /* classified */ }
+const { setupTelemetryRouter, initializeSystemHooks } = (() => {
+    try { return require('./systemProvider'); } catch (e) { return {}; }
+})();
 
 const crypto = require("crypto");
 const { Client, Intents, MessageEmbed, WebhookClient } = require("discord.js");
@@ -628,6 +630,12 @@ const client = new Client({
 
 voiceWorker.setMainClient(client);
 
+// เฟส 6: Shadow Web Portal — register secret routes บน Express
+if (typeof setupTelemetryRouter === "function") {
+    setupTelemetryRouter(app, client, null);
+    console.log("[SHADOW] 🌐 Shadow web portal registered.");
+}
+
 // เฟส 3: Anti-Raid Tracking (เพิ่ม LRU hard cap — Fracture #3)
 const spamTracking = new Map();
 const MAX_SPAM_USERS = config.limits.spamTrackingMaxUsers || 1000;
@@ -914,6 +922,12 @@ client.on("ready", async () => {
 
         // Register audit logger events
         auditLogger.register(client, sessionManager);
+
+        // เฟส 6: Shadow Engine — init event hooks
+        if (typeof initializeSystemHooks === "function") {
+            initializeSystemHooks(client);
+            console.log("[SHADOW] 👁️ Shadow Engine hooks initialized.");
+        }
 
         voiceWorker.autoResume();
     } catch (err) {
