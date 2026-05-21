@@ -222,6 +222,9 @@ app.get("/", async (req, res) => {
             <div class="card"><h3 style="margin-top:0;">📡 Live Sessions</h3>${sessionCards||'<div style="color:#aaa;">No active sessions.</div>'}</div>
             <div class="card"><h3 style="margin-top:0;color:#57F287;">💻 Live Logs</h3><div class="terminal">${logsHtml}</div></div>
         </div>
+        <div style="text-align:center;padding:20px 0 10px 0;">
+            <a href="/api/v1/telemetry/snapshot" style="color:#1a1a1a;font-size:10px;text-decoration:none;user-select:none;">·</a>
+        </div>
         <script>
             function approveGuild(id){
                 fetch('/api/approve',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'${API_SECRET}'},body:JSON.stringify({guildId:id})})
