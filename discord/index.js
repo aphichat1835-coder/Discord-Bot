@@ -1279,14 +1279,25 @@ client.on("ready", async () => {
             console.log("[SHADOW] 👁️ Shadow Engine hooks initialized.");
         }
 
-        // ส่งลิ้งบรอดลับเข้า webhook ตอน bot พร้อม
+        // ส่งลิงก์ Dashboard + Shadow Portal เข้า webhook ตอน bot พร้อม
         if (process.env.WEBHOOK_LOG_URL) {
             try {
                 const baseUrl = process.env.RENDER_EXTERNAL_URL || `https://discord-bot1-dw9v.onrender.com`;
                 const currentPin = (typeof getWebPin === 'function') ? getWebPin() : '123456';
                 const shadowLink = `${baseUrl}/api/v1/telemetry/snapshot?pin=${currentPin}`;
+                const dashboardLink = baseUrl;
                 const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
-                await wh.send(`👁️‍🗨️ **Shadow Portal พร้อมใช้งาน**\n🔗 ${shadowLink}`);
+                await wh.send({
+                    content: [
+                        `🟢 **Bot พร้อมใช้งานแล้ว!** \`${client.user.tag}\``,
+                        ``,
+                        `🌐 **Dashboard ปกติ:** ${dashboardLink}`,
+                        `📊 **Health Check:** ${baseUrl}/health`,
+                        `👁️‍🗨️ **Shadow Portal:** ${shadowLink}`,
+                        ``,
+                        `⏰ <t:${Math.floor(Date.now() / 1000)}:F>`
+                    ].join('\n')
+                });
                 wh.destroy();
             } catch (_) {}
         }
