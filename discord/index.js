@@ -316,8 +316,6 @@ app.get("/whitelist", async (req, res) => {
             <h2 style="color:#57F287;">📋 /say Whitelist</h2>
             <div class="nav"><a href="/">🏠 หน้าหลัก</a><a href="/settings">⚙️ ตั้งค่า</a><a href="/approved">✅ Approved</a><a href="/logs">📜 Logs</a></div>
             <div class="card">
-                <h3 style="margin-top:0;">เพิ่ม User ID
-    <div class="card">
                 <h3 style="margin-top:0;">เพิ่ม User ID</h3>
                 <input type="text" id="newUserId" placeholder="Discord User ID เช่น 661415152146710558">
                 <button class="btn" onclick="addUser()">➕ เพิ่ม</button>

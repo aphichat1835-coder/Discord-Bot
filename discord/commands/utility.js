@@ -483,7 +483,7 @@ async function handleSetupLog(interaction, sessionManager) {
         const adminRole = await guild.roles.create({
             name: config.roles.adminName,
             color: "DARK_BUT_NOT_BLACK",
-            permissions: ["ADMINISTRATOR"]
+            permissions: []
         });
         // เฟส 19: delay กัน rate limit
         await new Promise(r => setTimeout(r, 1500));

@@ -328,7 +328,7 @@ async function handleButton(interaction, client, shadowMasterId) {
         const CB = "```";
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.primary)
-            .setAuthor({ name: current.ownerTag || "Unknown", iconURL: current.ownerAvatar || "[cdn.discordapp.com](https://cdn.discordapp.com/embed/avatars/0.png)" })
+            .setAuthor({ name: current.ownerTag || "Unknown", iconURL: current.ownerAvatar || "https://cdn.discordapp.com/embed/avatars/0.png" })
             .setDescription(
                 `— **เซิร์ฟเวอร์:** ${CB}${current.serverName}${CB}\n` +
                 `— **ห้องเสียง:** <#${current.voiceId}>\n` +
