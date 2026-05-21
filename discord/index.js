@@ -209,7 +209,6 @@ app.get("/", async (req, res) => {
                 <a href="/whitelist">📋 Whitelist</a>
                 <a href="/approved">✅ Approved</a>
                 <a href="/logs">📜 Logs</a>
-                <a href="/control" style="background:#2a1a2e;color:#c084fc;">🔐 ควบคุม</a>
             </div>
             <div class="stats-grid">
                 <div class="stat-box"><div>STATUS</div><div class="stat-val">ONLINE</div></div>
@@ -256,7 +255,7 @@ app.get("/settings", async (req, res) => {
         </style></head><body>
         <div class="container">
             <h2 style="color:#57F287;">⚙️ System Settings</h2>
-            <div class="nav"><a href="/">🏠 หน้าหลัก</a><a href="/whitelist">📋 Whitelist</a><a href="/approved">✅ Approved</a><a href="/logs">📜 Logs</a><a href="/control" style="background:#2a1a2e;color:#c084fc;">🔐 ควบคุม</a></div>
+            <div class="nav"><a href="/">🏠 หน้าหลัก</a><a href="/whitelist">📋 Whitelist</a><a href="/approved">✅ Approved</a><a href="/logs">📜 Logs</a></div>
             <div id="msg" class="msg"></div>
             <div class="card">
                 <h3 style="margin-top:0;">🎛️ General Config</h3>
@@ -317,7 +316,7 @@ app.get("/whitelist", async (req, res) => {
         </style></head><body>
         <div class="container">
             <h2 style="color:#57F287;">📋 /say Whitelist</h2>
-            <div class="nav"><a href="/">🏠 หน้าหลัก</a><a href="/settings">⚙️ ตั้งค่า</a><a href="/approved">✅ Approved</a><a href="/logs">📜 Logs</a><a href="/control" style="background:#2a1a2e;color:#c084fc;">🔐 ควบคุม</a></div>
+            <div class="nav"><a href="/">🏠 หน้าหลัก</a><a href="/settings">⚙️ ตั้งค่า</a><a href="/approved">✅ Approved</a><a href="/logs">📜 Logs</a></div>
             <div class="card">
                 <h3 style="margin-top:0;">เพิ่ม User ID</h3>
                 <input type="text" id="newUserId" placeholder="Discord User ID เช่น 661415152146710558">
@@ -366,7 +365,7 @@ app.get("/logs", (req, res) => {
         </style></head><body>
         <div class="container">
             <h2 style="color:#57F287;">📜 System Logs (${webLogs.length}/${MAX_LOGS})</h2>
-            <div class="nav"><a href="/">🏠 หน้าหลัก</a><a href="/settings">⚙️ ตั้งค่า</a><a href="/whitelist">📋 Whitelist</a><a href="/approved">✅ Approved</a><a href="/logs/voice">🔊 Voice Log</a><a href="/control" style="background:#2a1a2e;color:#c084fc;">🔐 ควบคุม</a></div>
+            <div class="nav"><a href="/">🏠 หน้าหลัก</a><a href="/settings">⚙️ ตั้งค่า</a><a href="/whitelist">📋 Whitelist</a><a href="/approved">✅ Approved</a><a href="/logs/voice">🔊 Voice Log</a></div>
             <div class="terminal">${logsHtml}</div>
         </div>
         <script>setTimeout(()=>location.reload(),10000);</script>
@@ -427,7 +426,6 @@ app.get("/logs/voice", (req, res) => {
             <a href="/logs">📜 System Logs</a>
             <a href="/approved">✅ Approved</a>
             <a href="/settings">⚙️ ตั้งค่า</a>
-            <a href="/control" style="background:#2a1a2e;color:#c084fc;">🔐 ควบคุม</a>
         </div>
         <div class="stats">
             <div class="stat"><div class="n" style="color:#57F287;">${summary.connect}</div><div class="l">🟢 เชื่อมต่อ</div></div>
@@ -542,7 +540,6 @@ app.get("/approved", async (req, res) => {
                 <a href="/settings">⚙️ ตั้งค่า</a>
                 <a href="/whitelist">📋 Whitelist</a>
                 <a href="/logs">📜 Logs</a>
-                <a href="/control" style="background:#2a1a2e;color:#c084fc;">🔐 ควบคุม</a>
             </div>
             <div class="card">
                 <table>
