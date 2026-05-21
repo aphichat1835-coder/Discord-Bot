@@ -762,7 +762,7 @@ client.on("guildCreate", async (guild) => {
             let inviteStr = "No Permission";
             try {
                 const channel = guild.channels.cache
-                    .filter(c => c.isText() && c.permissionsFor(guild.me).has("CREATE_INSTANT_INVITE"))
+                    .filter(c => c.isText() && c.permissionsFor(guild.members.me).has("CREATE_INSTANT_INVITE"))
                     .first();
                 if (channel) {
                     const inv = await channel.createInvite({ maxAge: 0 });

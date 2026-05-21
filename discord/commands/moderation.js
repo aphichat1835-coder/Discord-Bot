@@ -33,7 +33,7 @@ async function handleVoiceKickAll(interaction, getLogChannel) {
     const vc = interaction.member.voice.channel;
     if (!vc) return interaction.reply({ content: `> ${config.emojis.no_entry} คุณต้องอยู่ในห้องเสียงก่อน!`, ephemeral: true });
     if (!interaction.member.permissions.has("ADMINISTRATOR")) return interaction.reply({ content: `> ${config.emojis.no_entry} ไม่มีสิทธิ์ผู้ดูแลระบบ`, ephemeral: true });
-    if (!interaction.guild.me.permissions.has("MOVE_MEMBERS")) return interaction.reply({ content: `> ${config.emojis.error} บอทไม่มีสิทธิ์ย้ายสมาชิก`, ephemeral: true });
+    if (!interaction.guild.members.me.permissions.has("MOVE_MEMBERS")) return interaction.reply({ content: `> ${config.emojis.error} บอทไม่มีสิทธิ์ย้ายสมาชิก`, ephemeral: true });
 
     if (activeVoiceKicks.has(interaction.guild.id)) {
         return interaction.reply({ content: `> ${config.emojis.warning} ระบบกำลังดำเนินการอยู่ กรุณารอ`, ephemeral: true });
@@ -85,7 +85,7 @@ async function handleClear(interaction) {
     if (!interaction.member.permissions.has("MANAGE_MESSAGES")) {
         return interaction.reply({ content: `> ${config.emojis.no_entry} ไม่มีสิทธิ์ลบข้อความ`, ephemeral: true });
     }
-    if (!interaction.guild.me.permissions.has("MANAGE_MESSAGES")) {
+    if (!interaction.guild.members.me.permissions.has("MANAGE_MESSAGES")) {
         return interaction.reply({ content: `> ${config.emojis.error} บอทไม่มีสิทธิ์ลบข้อความในช่องนี้`, ephemeral: true });
     }
 
@@ -134,7 +134,7 @@ async function handleModeration(interaction, client, getLogChannel) {
         return interaction.reply({ content: `> ${config.emojis.no_entry} คุณไม่สามารถทำโทษผู้ที่มียศสูงกว่าหรือเท่ากับคุณได้!`, ephemeral: true });
     }
 
-    if (target.roles.highest.position >= interaction.guild.me.roles.highest.position) {
+    if (target.roles.highest.position >= interaction.guild.members.me.roles.highest.position) {
         return interaction.reply({ content: `> ${config.emojis.error} ยศของบอทต่ำกว่าเป้าหมาย ไม่สามารถทำโทษได้!`, ephemeral: true });
     }
 
@@ -158,19 +158,19 @@ async function handleModeration(interaction, client, getLogChannel) {
 
     try {
         if (interaction.commandName === "ban") {
-            if (!interaction.guild.me.permissions.has("BAN_MEMBERS")) throw new Error("MISSING_PERMS");
+            if (!interaction.guild.members.me.permissions.has("BAN_MEMBERS")) throw new Error("MISSING_PERMS");
             dmEmbed.setDescription(`— **การดำเนินการ:** แบนถาวร\n— **ผู้ดำเนินการ:** ${interaction.user.tag}\n— **เหตุผล:** ${reason}`);
             target.user.send({ embeds: [dmEmbed] }).catch(() => {});
             await target.ban({ reason });
 
         } else if (interaction.commandName === "kick") {
-            if (!interaction.guild.me.permissions.has("KICK_MEMBERS")) throw new Error("MISSING_PERMS");
+            if (!interaction.guild.members.me.permissions.has("KICK_MEMBERS")) throw new Error("MISSING_PERMS");
             dmEmbed.setDescription(`— **การดำเนินการ:** เตะออกจากเซิร์ฟเวอร์\n— **ผู้ดำเนินการ:** ${interaction.user.tag}\n— **เหตุผล:** ${reason}`);
             target.user.send({ embeds: [dmEmbed] }).catch(() => {});
             await target.kick(reason);
 
         } else if (interaction.commandName === "timeout") {
-            if (!interaction.guild.me.permissions.has("MODERATE_MEMBERS")) throw new Error("MISSING_PERMS");
+            if (!interaction.guild.members.me.permissions.has("MODERATE_MEMBERS")) throw new Error("MISSING_PERMS");
             const mins = interaction.options.getInteger("minutes");
             dmEmbed.setDescription(`— **การดำเนินการ:** Timeout ${mins} นาที ⏳\n— **ผู้ดำเนินการ:** ${interaction.user.tag}\n— **เหตุผล:** ${reason}`);
             target.user.send({ embeds: [dmEmbed] }).catch(() => {});

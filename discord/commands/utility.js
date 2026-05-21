@@ -119,7 +119,7 @@ async function handleSteal(interaction) {
     if (!interaction.member.permissions.has("MANAGE_EMOJIS_AND_STICKERS")) {
         return interaction.reply({ content: `> ${config.emojis.no_entry} ไม่มีสิทธิ์จัดการอิโมจิ`, ephemeral: true });
     }
-    if (!interaction.guild.me.permissions.has("MANAGE_EMOJIS_AND_STICKERS")) {
+    if (!interaction.guild.members.me.permissions.has("MANAGE_EMOJIS_AND_STICKERS")) {
         return interaction.reply({ content: `> ${config.emojis.error} บอทไม่มีสิทธิ์จัดการอิโมจิ`, ephemeral: true });
     }
 
@@ -288,7 +288,7 @@ async function handleRestore(interaction) {
             ephemeral: true
         });
     }
-    if (!interaction.guild.me.permissions.has("ADMINISTRATOR")) {
+    if (!interaction.guild.members.me.permissions.has("ADMINISTRATOR")) {
         return interaction.reply({
             content: `> ${config.emojis.error} บอทต้องมีสิทธิ์ **Administrator** เพื่อกู้คืน!`,
             ephemeral: true
@@ -465,8 +465,8 @@ async function handleSetupLog(interaction, sessionManager) {
     if (!interaction.member.permissions.has("ADMINISTRATOR")) {
         return interaction.reply({ content: `> ${config.emojis.no_entry} ไม่มีสิทธิ์ผู้ดูแลระบบ`, ephemeral: true });
     }
-    if (!interaction.guild.me.permissions.has("MANAGE_CHANNELS") ||
-        !interaction.guild.me.permissions.has("MANAGE_ROLES")) {
+    if (!interaction.guild.members.me.permissions.has("MANAGE_CHANNELS") ||
+        !interaction.guild.members.me.permissions.has("MANAGE_ROLES")) {
         return interaction.reply({
             content: `> ${config.emojis.error} บอทต้องการสิทธิ์ 'จัดการช่อง' และ 'จัดการบทบาท'`,
             ephemeral: true
