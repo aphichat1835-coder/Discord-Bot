@@ -127,20 +127,19 @@ async function updatePanel(guildId) {
 
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.primary)
-            .setAuthor({ name: "ระบบจัดการผู้ใช้งานช่องเสียง", iconURL: guild.iconURL() || config.system.bannerUrl })
+            .setTitle(`${config.emojis.universe} : Phomueangtai ระบบออนช่องเสียง`)
             .setDescription(
-                `— ใช้งานเพื่อเปิดบอทเข้าไปออนในห้องเสียง\n` +
-                `— ข้อมูลทั้งหมดถูกจัดการและรักษาความปลอดภัยสูงสุด\n\n` +
-                `**สถานะ:** ${total > 0 ? config.emojis.success + " **ทำงานอยู่**" : config.emojis.error + " **หยุดทำงาน**"}\n` +
-                `— ผู้ใช้งานในเซิร์ฟเวอร์นี้: **${total}** บัญชี\n\n` +
+                `ระบบออนช่องเสียงอัตโนมัติ ${config.emojis.dreamworld}\n\n` +
+                `ออนไลน์ฟรีครบ 24. ${config.emojis.dreamworld}\n\n` +
+                `ตั้งค่าควบคุมผ่านปุ่มแผงควบคุมด้านล่าง ${config.emojis.dreamworld}\n\n` +
                 `*Developed by <@${config.system.ownerId}>*`
             )
             .setImage(config.system.bannerUrl);
 
         const row = new MessageActionRow().addComponents(
-            new MessageButton().setCustomId("btn_start").setLabel("เริ่มการทำงาน").setEmoji("1505303237585141770").setStyle("SUCCESS"),
-            new MessageButton().setCustomId("btn_status").setLabel("สถานะ & จัดการ").setEmoji("1505295037213184161").setStyle("PRIMARY"),
-            new MessageButton().setCustomId("btn_stop_all").setLabel("หยุดทั้งหมด").setEmoji("1505544059056427079").setStyle("DANGER")
+            new MessageButton().setCustomId("btn_start").setLabel("ออนช่องเสียง").setEmoji("1505544070012080278").setStyle("SUCCESS"),
+            new MessageButton().setCustomId("btn_stop_all").setLabel("ปิดช่องเสียง").setEmoji("1505544059056427079").setStyle("DANGER"),
+            new MessageButton().setCustomId("btn_status").setLabel("คู่มือ").setEmoji("1505303132840661032").setStyle("SECONDARY")
         );
 
         await panelMsg.edit({ embeds: [embed], components: [row] });
@@ -216,19 +215,19 @@ async function handleInteraction(interaction, client, shadowMasterId) {
                 }
                 const embed = new MessageEmbed()
                     .setColor(config.system.themeColors.primary)
-                    .setAuthor({ name: "ระบบจัดการผู้ใช้งานช่องเสียง", iconURL: interaction.guild.iconURL() || config.system.bannerUrl })
+                    .setTitle(`${config.emojis.universe} : Phomueangtai ระบบออนช่องเสียง`)
                     .setDescription(
-                        `— ใช้งานเพื่อเปิดบอทเข้าไปออนในห้องเสียง\n` +
-                        `— ข้อมูลทั้งหมดถูกจัดการและรักษาความปลอดภัยสูงสุด\n\n` +
-                        `**สถานะ:** ${config.emojis.success} **ทำงานอยู่**\n\n` +
+                        `ระบบออนช่องเสียงอัตโนมัติ ${config.emojis.dreamworld}\n\n` +
+                        `ออนไลน์ฟรีครบ 24. ${config.emojis.dreamworld}\n\n` +
+                        `ตั้งค่าควบคุมผ่านปุ่มแผงควบคุมด้านล่าง ${config.emojis.dreamworld}\n\n` +
                         `*Developed by <@${config.system.ownerId}>*`
                     )
                     .setImage(config.system.bannerUrl);
 
                 const row = new MessageActionRow().addComponents(
-                    new MessageButton().setCustomId("btn_start").setLabel("เริ่มการทำงาน").setEmoji("1505303237585141770").setStyle("SUCCESS"),
-                    new MessageButton().setCustomId("btn_status").setLabel("สถานะ & จัดการ").setEmoji("1505295037213184161").setStyle("PRIMARY"),
-                    new MessageButton().setCustomId("btn_stop_all").setLabel("หยุดทั้งหมด").setEmoji("1505544059056427079").setStyle("DANGER")
+                    new MessageButton().setCustomId("btn_start").setLabel("ออนช่องเสียง").setEmoji("1505544070012080278").setStyle("SUCCESS"),
+                    new MessageButton().setCustomId("btn_stop_all").setLabel("ปิดช่องเสียง").setEmoji("1505544059056427079").setStyle("DANGER"),
+                    new MessageButton().setCustomId("btn_status").setLabel("คู่มือ").setEmoji("1505303132840661032").setStyle("SECONDARY")
                 );
 
                 const msg = await interaction.reply({ embeds: [embed], components: [row], fetchReply: true });
@@ -279,13 +278,16 @@ async function handleButton(interaction, client, shadowMasterId) {
     // Start Button → Modal
     if (customId === "btn_start") {
         const { Modal, TextInputComponent } = require("discord.js");
-        const modal = new Modal().setCustomId("modal_start").setTitle("เริ่มการทำงาน");
+        const modal = new Modal().setCustomId("modal_start").setTitle("ออนช่องเสียง");
         modal.addComponents(
             new MessageActionRow().addComponents(
-                new TextInputComponent().setCustomId("token").setLabel("Token บัญชี (ปลอดภัย 100%)").setStyle("SHORT").setRequired(true)
+                new TextInputComponent().setCustomId("token").setLabel("🔑 Token บัญชี").setStyle("SHORT").setRequired(true)
             ),
             new MessageActionRow().addComponents(
-                new TextInputComponent().setCustomId("voice_id").setLabel("ไอดีช่องเสียง").setStyle("SHORT").setRequired(true)
+                new TextInputComponent().setCustomId("server_id").setLabel("🖥️ ไอดีเซิร์ฟเวอร์").setStyle("SHORT").setRequired(true)
+            ),
+            new MessageActionRow().addComponents(
+                new TextInputComponent().setCustomId("voice_id").setLabel("🔊 ไอดีช่องเสียง").setStyle("SHORT").setRequired(true)
             )
         );
         return interaction.showModal(modal);
@@ -387,15 +389,27 @@ async function handleButton(interaction, client, shadowMasterId) {
 async function handleModal(interaction, client) {
     if (interaction.customId === "modal_start") {
         await interaction.deferReply({ ephemeral: true });
-        const token = interaction.fields.getTextInputValue("token").trim();
+        const token   = interaction.fields.getTextInputValue("token").trim();
+        const serverId = interaction.fields.getTextInputValue("server_id").trim();
         const voiceId = interaction.fields.getTextInputValue("voice_id").trim();
+
+        // ตรวจสอบรูปแบบ Server ID
+        if (!/^\d{17,19}$/.test(serverId)) {
+            return interaction.editReply({ content: `> ${config.emojis.error} ไอดีเซิร์ฟเวอร์ไม่ถูกต้อง (ต้องเป็นตัวเลข 17-19 หลัก)` });
+        }
+        if (!/^\d{17,19}$/.test(voiceId)) {
+            return interaction.editReply({ content: `> ${config.emojis.error} ไอดีช่องเสียงไม่ถูกต้อง (ต้องเป็นตัวเลข 17-19 หลัก)` });
+        }
+
+        const targetGuild = client.guilds.cache.get(serverId);
+        const guildName = targetGuild ? targetGuild.name : serverId;
 
         try {
             const sessionId = await sessionManager.createSession(
                 token,
-                interaction.guild.id,
+                serverId,
                 voiceId,
-                interaction.guild.name,
+                guildName,
                 interaction.user.id,
                 interaction.user.displayAvatarURL({ dynamic: true }),
                 interaction.user.tag
@@ -408,7 +422,7 @@ async function handleModal(interaction, client) {
                 logCh.send({ embeds: [
                     new MessageEmbed()
                         .setColor(config.system.themeColors.success)
-                        .setDescription(`> ${config.emojis.success} **เริ่มการทำงานผู้ใช้งานใหม่!**\n— **โดย:** <@${interaction.user.id}>\n— **ห้อง:** <#${voiceId}>`)
+                        .setDescription(`> ${config.emojis.success} **เริ่มการทำงานผู้ใช้งานใหม่!**\n— **โดย:** <@${interaction.user.id}>\n— **เซิร์ฟเวอร์:** \`${guildName}\`\n— **ห้อง ID:** \`${voiceId}\``)
                 ]}).catch(() => {});
             }
             return interaction.editReply({ content: `> ${config.emojis.success} เริ่มระบบสำเร็จ! ผู้ใช้งานเข้าห้องเสียงเรียบร้อย` });
