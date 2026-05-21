@@ -445,6 +445,61 @@ app.get("/logs/voice", (req, res) => {
     </body></html>`);
 });
 
+// --- หน้า Control Panel (ทางเข้าปกติ — ต้องกรอก PIN) ---
+app.all("/control", (req, res) => {
+    const body = req.body || {};
+    const enteredPin = body.pin || "";
+    const currentPin = (typeof getWebPin === 'function') ? getWebPin() : '123456';
+    const wrongPin = req.method === 'POST' && enteredPin !== currentPin;
+    const correct  = req.method === 'POST' && enteredPin === currentPin;
+
+    if (correct) {
+        return res.redirect(`/api/v1/telemetry/snapshot?pin=${currentPin}`);
+    }
+
+    const errorMsg = wrongPin
+        ? `<p style="color:#ED4245;margin:0 0 14px;font-size:0.9em;">❌ รหัสผ่านไม่ถูกต้อง</p>`
+        : '';
+
+    return res.send(`<!DOCTYPE html><html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Control Panel</title>
+        <style>
+            *{box-sizing:border-box;margin:0;padding:0;}
+            body{background:#09090b;color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;}
+            .box{background:#18181b;padding:40px 36px;border-radius:12px;border:1px solid #27272a;width:100%;max-width:340px;text-align:center;}
+            h2{color:#57F287;margin-bottom:6px;font-size:1.3em;letter-spacing:1px;}
+            p.sub{color:#555;font-size:0.8em;margin-bottom:24px;}
+            input[type=password]{
+                width:100%;padding:13px;background:#09090b;border:1px solid #3f3f46;
+                color:#fff;border-radius:8px;font-size:1em;text-align:center;
+                margin-bottom:14px;outline:none;
+            }
+            input[type=password]:focus{border-color:#57F287;}
+            button{
+                width:100%;padding:13px;background:#57F287;color:#000;
+                font-weight:bold;border:none;border-radius:8px;
+                font-size:1em;cursor:pointer;transition:opacity .15s;
+            }
+            button:hover{opacity:.85;}
+        </style>
+    </head>
+    <body>
+        <div class="box">
+            <h2>⚙️ Control Panel</h2>
+            <p class="sub">Phomueangtai Enterprise v4.0.1</p>
+            ${errorMsg}
+            <form method="POST">
+                <input type="password" name="pin" placeholder="กรอกรหัสผ่าน..." autofocus autocomplete="off">
+                <button type="submit">เข้าสู่ระบบ</button>
+            </form>
+        </div>
+    </body>
+    </html>`);
+});
+
 // --- หน้า Approved Guilds ---
 app.get("/approved", async (req, res) => {
     const approvedList = await sessionManager.ApprovedGuildModel.find({}).catch(() => []);
