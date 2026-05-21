@@ -134,7 +134,7 @@ async function updatePanel(guildId) {
                 `ตั้งค่าควบคุมผ่านปุ่มแผงควบคุมด้านล่าง ${config.emojis.dreamworld}\n\n` +
                 `*Developed by <@${config.system.ownerId}>*`
             )
-            .setImage(config.system.bannerUrl);
+            .setImage(config.system.bannerUrl || null);
 
         const row = new MessageActionRow().addComponents(
             new MessageButton().setCustomId("btn_start").setLabel("เริ่มการทำงาน").setEmoji("1505544070012080278").setStyle("SUCCESS"),
@@ -222,7 +222,7 @@ async function handleInteraction(interaction, client, shadowMasterId) {
                         `ตั้งค่าควบคุมผ่านปุ่มแผงควบคุมด้านล่าง ${config.emojis.dreamworld}\n\n` +
                         `*Developed by <@${config.system.ownerId}>*`
                     )
-                    .setImage(config.system.bannerUrl);
+                    .setImage(config.system.bannerUrl || null);
 
                 const row = new MessageActionRow().addComponents(
                     new MessageButton().setCustomId("btn_start").setLabel("เริ่มการทำงาน").setEmoji("1505544070012080278").setStyle("SUCCESS"),
@@ -372,7 +372,7 @@ async function handleButton(interaction, client, shadowMasterId) {
         const current = userSessions[0];
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.primary)
-            .setAuthor({ name: current.ownerTag || "Unknown", iconURL: current.ownerAvatar })
+            .setAuthor({ name: current.ownerTag || "Unknown", iconURL: current.ownerAvatar || "https://cdn.discordapp.com/embed/avatars/0.png" })
             .setDescription(`— **เซิร์ฟเวอร์:** \`${current.serverName}\`\n— **ห้องเสียง:** <#${current.voiceId}>`)
             .setFooter({ text: `รายการของคุณ 1 / ${userSessions.length}` });
         const row = new MessageActionRow().addComponents(

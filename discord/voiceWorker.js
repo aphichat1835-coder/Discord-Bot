@@ -176,6 +176,9 @@ function connectToVoice(client, guildId, channelId, tokenHash, sessionId) {
         group: client.user.id
     });
 
+    // กันเตือน MaxListenersExceeded — แต่ละ connection มี listeners หลายตัวเป็นเรื่องปกติ
+    connection.setMaxListeners(20);
+
     // เฟส 9: reconnect counter จริง — ไม่ใช่ dead code อีกต่อไป
     let reconnectAttempts = 0;
 
@@ -417,10 +420,73 @@ async function cleanupIdleSessions() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  📤  REGION 10: EXPORTS
+//  📊  REGION 11: VOICE EVENT LOG (สำหรับ Dashboard)
+// ════════════════════════════════════════════════════════════════════════════
+const VOICE_LOG_MAX = 200;
+const voiceEventLog = [];
+
+function pushVoiceLog(type, sessionId, detail = "") {
+    voiceEventLog.unshift({
+        ts: Date.now(),
+        type,      // 'connect' | 'disconnect' | 'recover' | 'drop' | 'fail'
+        sessionId,
+        detail
+    });
+    if (voiceEventLog.length > VOICE_LOG_MAX) voiceEventLog.length = VOICE_LOG_MAX;
+}
+
+function getVoiceLogs() { return voiceEventLog.slice(); }
+
+// ────────────────────────────────────────────────────────────────────────────
+// Hook pushVoiceLog เข้าจุดสำคัญใน connectToVoice โดยใช้ wrapper บน console.log
+// ────────────────────────────────────────────────────────────────────────────
+const _origLog = console.log.bind(console);
+const _origWarn = console.warn.bind(console);
+const _origError = console.error.bind(console);
+
+console.log = (...args) => {
+    _origLog(...args);
+    const msg = args.join(' ');
+    if (msg.includes('[WORKER] 🎧 Voice connected')) {
+        const m = msg.match(/Guild: (\S+)/);
+        pushVoiceLog('connect', m?.[1] || '?', 'Voice connected');
+    } else if (msg.includes('[HEARTBEAT] 💖 Restored')) {
+        const m = msg.match(/for (\S+)\./);
+        pushVoiceLog('recover', m?.[1] || '?', 'Restored by healthCheck');
+    } else if (msg.includes('[WORKER] ✅ Passive reconnect OK')) {
+        const m = msg.match(/for (\S+)\./);
+        pushVoiceLog('recover', m?.[1] || '?', 'Passive reconnect OK');
+    } else if (msg.includes('[WORKER] ✅ Auto-reconnected')) {
+        const m = msg.match(/for (\S+) /);
+        pushVoiceLog('recover', m?.[1] || '?', 'Auto-reconnect OK');
+    }
+};
+console.warn = (...args) => {
+    _origWarn(...args);
+    const msg = args.join(' ');
+    if (msg.includes('[WORKER] ⚡ Passive reconnect timed out')) {
+        const m = msg.match(/for (\S+) /);
+        pushVoiceLog('drop', m?.[1] || '?', 'Passive timeout → urgent recovery');
+    }
+};
+console.error = (...args) => {
+    _origError(...args);
+    const msg = args.join(' ');
+    if (msg.includes('[WORKER] ⚠️ Voice dropped') || msg.includes('[WORKER] ❌ Reconnect failed')) {
+        const m = msg.match(/for (\S+)[.:]/);
+        pushVoiceLog('disconnect', m?.[1] || '?', msg.replace(/\[WORKER\] /, '').substring(0, 80));
+    } else if (msg.includes('[HEARTBEAT] 💔 Recovery failed')) {
+        const m = msg.match(/for (\S+):/);
+        pushVoiceLog('fail', m?.[1] || '?', 'Recovery failed');
+    }
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+//  📤  REGION 12: EXPORTS
 // ════════════════════════════════════════════════════════════════════════════
 module.exports = {
     setMainClient, setShuttingDown, getClientPoolSize,
     startSession, stopSession, stopAll, pauseAll,
-    autoResume, healthCheck, cleanupIdleSessions
+    autoResume, healthCheck, cleanupIdleSessions,
+    getVoiceLogs
 };

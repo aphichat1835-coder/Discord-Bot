@@ -365,11 +365,84 @@ app.get("/logs", (req, res) => {
         </style></head><body>
         <div class="container">
             <h2 style="color:#57F287;">📜 System Logs (${webLogs.length}/${MAX_LOGS})</h2>
-            <div class="nav"><a href="/">🏠 หน้าหลัก</a><a href="/settings">⚙️ ตั้งค่า</a><a href="/whitelist">📋 Whitelist</a><a href="/approved">✅ Approved</a></div>
+            <div class="nav"><a href="/">🏠 หน้าหลัก</a><a href="/settings">⚙️ ตั้งค่า</a><a href="/whitelist">📋 Whitelist</a><a href="/approved">✅ Approved</a><a href="/logs/voice">🔊 Voice Log</a></div>
             <div class="terminal">${logsHtml}</div>
         </div>
         <script>setTimeout(()=>location.reload(),10000);</script>
         </body></html>`);
+});
+
+// --- หน้า Voice Connection Log (real-time) ---
+app.get("/logs/voice", (req, res) => {
+    const logs = voiceWorker.getVoiceLogs();
+    const colorMap = { connect:'#57F287', recover:'#5865F2', drop:'#FEE75C', disconnect:'#ff9944', fail:'#ED4245' };
+    const iconMap  = { connect:'🟢', recover:'💖', drop:'⚡', disconnect:'⚠️', fail:'💔' };
+
+    const rows = logs.length === 0
+        ? `<tr><td colspan="4" style="text-align:center;padding:20px;color:#555;">ยังไม่มี Event — บอทยังไม่ได้เชื่อมต่อ Voice หลัง Deploy ล่าสุด</td></tr>`
+        : logs.map(e => {
+            const d = new Date(e.ts);
+            const time = d.toLocaleTimeString('th-TH', { hour12: false });
+            const color = colorMap[e.type] || '#aaa';
+            const icon  = iconMap[e.type]  || '❓';
+            const typeLabel = { connect:'เชื่อมต่อ', recover:'กู้คืน', drop:'หลุด (urgent)', disconnect:'หลุด', fail:'ล้มเหลว' }[e.type] || e.type;
+            return `<tr>
+                <td style="padding:8px;color:#aaa;font-size:0.8em;white-space:nowrap;">${time}</td>
+                <td style="padding:8px;color:${color};font-weight:bold;">${icon} ${typeLabel}</td>
+                <td style="padding:8px;font-family:monospace;font-size:0.8em;color:#ccc;word-break:break-all;">${e.sessionId}</td>
+                <td style="padding:8px;color:#aaa;font-size:0.85em;">${e.detail}</td>
+            </tr>`;
+        }).join("");
+
+    const summary = { connect:0, recover:0, drop:0, disconnect:0, fail:0 };
+    logs.forEach(e => { if (summary[e.type] !== undefined) summary[e.type]++; });
+
+    res.send(`<!DOCTYPE html><html><head>
+        <title>Voice Log — Enterprise</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            *{box-sizing:border-box;}
+            body{background:#0d0d0f;color:#fff;font-family:sans-serif;margin:0;padding:20px;}
+            .container{max-width:900px;margin:0 auto;}
+            .nav{display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;}
+            .nav a{background:#18181b;color:#57F287;padding:8px 14px;border-radius:8px;text-decoration:none;font-size:0.85em;border:1px solid #27272a;}
+            .nav a:hover{background:#27272a;}
+            .stats{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px;}
+            .stat{background:#18181b;border:1px solid #27272a;border-radius:8px;padding:12px 18px;text-align:center;min-width:100px;}
+            .stat .n{font-size:1.8em;font-weight:bold;line-height:1.1;}
+            .stat .l{font-size:0.7em;color:#aaa;margin-top:2px;}
+            table{width:100%;border-collapse:collapse;background:#18181b;border-radius:10px;overflow:hidden;}
+            th{text-align:left;padding:10px 8px;color:#aaa;border-bottom:1px solid #27272a;font-size:0.85em;}
+            tr:nth-child(even){background:#1f1f22;}
+            td{vertical-align:top;}
+            .badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:0.75em;}
+        </style>
+    </head><body>
+    <div class="container">
+        <h2 style="color:#57F287;margin-bottom:6px;">🔊 Voice Connection Log</h2>
+        <p style="color:#555;font-size:0.85em;margin:0 0 16px;">อัปเดตอัตโนมัติทุก 15 วิ — เก็บ ${logs.length}/${200} events ล่าสุด</p>
+        <div class="nav">
+            <a href="/">🏠 หน้าหลัก</a>
+            <a href="/logs">📜 System Logs</a>
+            <a href="/approved">✅ Approved</a>
+            <a href="/settings">⚙️ ตั้งค่า</a>
+        </div>
+        <div class="stats">
+            <div class="stat"><div class="n" style="color:#57F287;">${summary.connect}</div><div class="l">🟢 เชื่อมต่อ</div></div>
+            <div class="stat"><div class="n" style="color:#5865F2;">${summary.recover}</div><div class="l">💖 กู้คืน</div></div>
+            <div class="stat"><div class="n" style="color:#FEE75C;">${summary.drop}</div><div class="l">⚡ หลุด (urgent)</div></div>
+            <div class="stat"><div class="n" style="color:#ff9944;">${summary.disconnect}</div><div class="l">⚠️ หลุด</div></div>
+            <div class="stat"><div class="n" style="color:#ED4245;">${summary.fail}</div><div class="l">💔 ล้มเหลว</div></div>
+        </div>
+        <table>
+            <thead><tr>
+                <th>เวลา</th><th>สถานะ</th><th>Session ID</th><th>รายละเอียด</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+        </table>
+    </div>
+    <script>setTimeout(()=>location.reload(),15000);</script>
+    </body></html>`);
 });
 
 // --- หน้า Approved Guilds ---

@@ -64,7 +64,7 @@ async function handleServerInfo(interaction) {
             `**📑 Roles:** ${CB}${guild.roles.cache.size}${CB}\n` +
             `**🚀 Boost:** ${CB}${boostLabel}${CB}`
         )
-        .setFooter({ text: "Enterprise Architecture", iconURL: config.system.bannerUrl })
+        .setFooter({ text: "Enterprise Architecture", iconURL: config.system.bannerUrl || undefined })
         .setTimestamp();
 
     return interaction.editReply({ embeds: [embed] });
@@ -151,7 +151,7 @@ async function handleUserInfo(interaction) {
             `🪝 **Webhook Perm:** ${hasWebhook ? '⚠️ มีสิทธิ์จัดการ Webhook' : '✅ ไม่มีสิทธิ์'}\n` +
             `📑 **Roles:** ${roles}`
         )
-        .setFooter({ text: "Enterprise Architecture", iconURL: config.system.bannerUrl })
+        .setFooter({ text: "Enterprise Architecture", iconURL: config.system.bannerUrl || undefined })
         .setTimestamp();
 
     return interaction.editReply({ embeds: [embed] });
