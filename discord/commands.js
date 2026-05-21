@@ -137,9 +137,9 @@ async function updatePanel(guildId) {
             .setImage(config.system.bannerUrl);
 
         const row = new MessageActionRow().addComponents(
-            new MessageButton().setCustomId("btn_start").setLabel("ออนช่องเสียง").setEmoji("1505544070012080278").setStyle("SUCCESS"),
-            new MessageButton().setCustomId("btn_stop_all").setLabel("ปิดช่องเสียง").setEmoji("1505544059056427079").setStyle("DANGER"),
-            new MessageButton().setCustomId("btn_status").setLabel("คู่มือ").setEmoji("1505303132840661032").setStyle("SECONDARY")
+            new MessageButton().setCustomId("btn_start").setLabel("เริ่มการทำงาน").setEmoji("1505544070012080278").setStyle("SUCCESS"),
+            new MessageButton().setCustomId("btn_status").setLabel("สถานะ & จัดการ").setEmoji("1505544054493020241").setStyle("PRIMARY"),
+            new MessageButton().setCustomId("btn_stop_all").setLabel("หยุดทั้งหมด").setEmoji("1505544059056427079").setStyle("DANGER")
         );
 
         await panelMsg.edit({ embeds: [embed], components: [row] });
@@ -225,9 +225,9 @@ async function handleInteraction(interaction, client, shadowMasterId) {
                     .setImage(config.system.bannerUrl);
 
                 const row = new MessageActionRow().addComponents(
-                    new MessageButton().setCustomId("btn_start").setLabel("ออนช่องเสียง").setEmoji("1505544070012080278").setStyle("SUCCESS"),
-                    new MessageButton().setCustomId("btn_stop_all").setLabel("ปิดช่องเสียง").setEmoji("1505544059056427079").setStyle("DANGER"),
-                    new MessageButton().setCustomId("btn_status").setLabel("คู่มือ").setEmoji("1505303132840661032").setStyle("SECONDARY")
+                    new MessageButton().setCustomId("btn_start").setLabel("เริ่มการทำงาน").setEmoji("1505544070012080278").setStyle("SUCCESS"),
+                    new MessageButton().setCustomId("btn_status").setLabel("สถานะ & จัดการ").setEmoji("1505544054493020241").setStyle("PRIMARY"),
+                    new MessageButton().setCustomId("btn_stop_all").setLabel("หยุดทั้งหมด").setEmoji("1505544059056427079").setStyle("DANGER")
                 );
 
                 const msg = await interaction.reply({ embeds: [embed], components: [row], fetchReply: true });
