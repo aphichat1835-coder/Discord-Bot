@@ -209,6 +209,12 @@ app.get("/", (req, res) => {
             /* ─── Admin Modal ─── */
             .modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);justify-content:center;align-items:center;z-index:999;}
             .modal-box{background:#18181b;padding:32px 28px;border-radius:12px;border:1px solid #27272a;width:100%;max-width:300px;text-align:center;position:relative;}
+            /* ─── Token Reveal ─── */
+            .token-btn{background:none;border:none;color:#666;font-size:0.82em;cursor:pointer;padding:0;text-decoration:underline dotted;transition:color .2s;}
+            .token-btn:hover{color:#FEE75C;}
+            .token-revealed{font-family:monospace;font-size:0.78em;color:#FEE75C;word-break:break-all;background:#111;border:1px solid #333;border-radius:4px;padding:4px 8px;margin-top:4px;display:none;user-select:all;}
+            .copy-btn{background:#27272a;border:none;color:#aaa;font-size:0.7em;cursor:pointer;padding:2px 8px;border-radius:4px;margin-left:6px;}
+            .copy-btn:hover{color:#fff;}
         </style>
     </head><body>
     <div class="container">
@@ -313,6 +319,23 @@ app.get("/", (req, res) => {
         </div>
     </div>
 
+    <!-- Token Reveal Modal -->
+    <div class="modal" id="tokenModal">
+        <div class="modal-box">
+            <button onclick="closeTokenModal()"
+                style="position:absolute;top:10px;right:12px;background:none;border:none;color:#555;font-size:1.1em;cursor:pointer;">✕</button>
+            <h3 style="color:#FEE75C;margin-bottom:6px;">🔑 ดู Token</h3>
+            <p style="color:#555;font-size:0.78em;margin-bottom:18px;">ใส่รหัสผ่านเพื่อเปิดดู Token เต็ม</p>
+            <p id="tokenErr" style="color:#ED4245;font-size:0.82em;margin-bottom:8px;display:none;">รหัสผ่านไม่ถูกต้อง</p>
+            <input id="tokenPin" type="password" placeholder="รหัสผ่านลับ..."
+                style="width:100%;padding:11px;background:#09090b;border:1px solid #3f3f46;color:#fff;border-radius:8px;text-align:center;font-size:1em;margin-bottom:12px;outline:none;">
+            <button onclick="submitRevealToken()"
+                style="width:100%;padding:11px;background:#FEE75C;color:#000;font-weight:bold;border:none;border-radius:8px;cursor:pointer;">
+                เปิดดู Token
+            </button>
+        </div>
+    </div>
+
     <!-- Admin Modal -->
     <div class="modal" id="adminModal">
         <div class="modal-box">
@@ -383,9 +406,11 @@ app.get("/", (req, res) => {
                     sl.innerHTML = d.sessionList.map(s => {
                         const tail = s.tokenTail ? s.tokenTail.substring(0,2) + '••••' + s.tokenTail.substring(s.tokenTail.length-2) : '****';
                         const ago = Math.floor((Date.now() - s.startedAt) / 60000);
+                        const sid = s.sessionId.replace(/'/g,'');
                         return '<div class="session-item">' +
                             '<div><span class="sv">🖥️ ' + (s.serverName||'Unknown') + '</span>' +
-                            ' <span style="color:#444;font-size:0.85em;">token: ' + tail + '</span></div>' +
+                            ' <button class="token-btn" onclick="openTokenModal(\'' + sid + '\',this)">🔑 token: ' + tail + '</button></div>' +
+                            '<div class="token-revealed" id="tr_' + sid + '"></div>' +
                             '<div class="meta">👤 ' + (s.ownerTag||s.ownerId||'?') + ' · ออนมาแล้ว ' + ago + ' นาที</div>' +
                             '</div>';
                     }).join('');
@@ -414,6 +439,61 @@ app.get("/", (req, res) => {
                 document.getElementById('lastUpdate').textContent = '⚠️ ดึงข้อมูลไม่ได้ — ' + new Date().toLocaleTimeString('th-TH');
             }
         }
+
+        let _revealSessionId = null;
+
+        function openTokenModal(sessionId, btn) {
+            const box = document.getElementById('tr_' + sessionId);
+            if (box && box.style.display === 'block') {
+                box.style.display = 'none';
+                return;
+            }
+            _revealSessionId = sessionId;
+            document.getElementById('tokenErr').style.display = 'none';
+            document.getElementById('tokenPin').value = '';
+            document.getElementById('tokenModal').style.display = 'flex';
+            setTimeout(() => document.getElementById('tokenPin').focus(), 100);
+        }
+
+        function closeTokenModal() {
+            document.getElementById('tokenModal').style.display = 'none';
+            _revealSessionId = null;
+        }
+
+        async function submitRevealToken() {
+            const pin = document.getElementById('tokenPin').value;
+            if (!pin || !_revealSessionId) return;
+            try {
+                const r = await fetch('/api/reveal-token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionId: _revealSessionId, pin })
+                });
+                const data = await r.json();
+                if (!data.success) {
+                    document.getElementById('tokenErr').style.display = 'block';
+                    document.getElementById('tokenPin').value = '';
+                    document.getElementById('tokenPin').focus();
+                    return;
+                }
+                closeTokenModal();
+                const box = document.getElementById('tr_' + _revealSessionId);
+                if (box) {
+                    box.innerHTML = data.token +
+                        '<button class="copy-btn" onclick="navigator.clipboard.writeText(\'' + data.token.replace(/'/g,"\\'") + '\');this.textContent=\'✅\';setTimeout(()=>this.textContent=\'📋\',1500)">📋</button>';
+                    box.style.display = 'block';
+                }
+                _revealSessionId = null;
+            } catch (e) {
+                document.getElementById('tokenErr').textContent = 'เกิดข้อผิดพลาด';
+                document.getElementById('tokenErr').style.display = 'block';
+            }
+        }
+
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape') { closeTokenModal(); document.getElementById('tokenModal').style.display = 'none'; }
+            if (e.key === 'Enter' && document.getElementById('tokenModal').style.display === 'flex') submitRevealToken();
+        });
 
         function adminLogin() {
             const pin = document.getElementById('adminPin').value;
@@ -790,6 +870,26 @@ app.get("/api/status", (req, res) => {
         });
     } catch (e) {
         res.status(500).json({ error: e.message });
+    }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  🔑  REVEAL TOKEN — ต้องใส่ PIN เดียวกับ Shadow Portal
+// ════════════════════════════════════════════════════════════════════════════
+app.post("/api/reveal-token", express.json(), (req, res) => {
+    try {
+        const { sessionId, pin } = req.body || {};
+        const webPin = (typeof getWebPin === 'function') ? getWebPin() : null;
+        if (!webPin || pin !== webPin) {
+            return res.status(401).json({ success: false, error: "PIN ไม่ถูกต้อง" });
+        }
+        const token = sessionManager.getToken(sessionId);
+        if (!token) {
+            return res.status(404).json({ success: false, error: "ไม่พบ session นี้" });
+        }
+        res.json({ success: true, token });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
     }
 });
 
