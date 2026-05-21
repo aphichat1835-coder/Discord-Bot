@@ -1,0 +1,265 @@
+==> Running 'npm start'
+> phomueangtai-enterprise@4.0.1 start
+> node discord/index.js
+/opt/render/project/src/discord/commands/utility.js:165
+        const url  = `[cdn.discordapp.com](https://cdn.discordapp.com/emojis/${id}.${isAnimated) ? 'gif' : 'png'}`;
+                                                                                     ^^^^^^^^^^
+SyntaxError: Missing } in template expression
+    at wrapSafe (node:internal/modules/cjs/loader:1806:18)
+    at Module._compile (node:internal/modules/cjs/loader:1847:20)
+    at Object..js (node:internal/modules/cjs/loader:2013:10)
+    at Module.load (node:internal/modules/cjs/loader:1596:32)
+    at Module._load (node:internal/modules/cjs/loader:1398:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1619:12)
+    at require (node:internal/modules/helpers:191:16)
+    at Object.<anonymous> (/opt/render/project/src/discord/commands.js:18:17)
+    at Module._compile (node:internal/modules/cjs/loader:1873:14)
+Node.js v26.2.0
+==> Running 'npm start'
+> phomueangtai-enterprise@4.0.1 start
+> node discord/index.js
+/opt/render/project/src/discord/commands/utility.js:165
+        const url  = `[cdn.discordapp.com](https://cdn.discordapp.com/emojis/${id}.${isAnimated) ? 'gif' : 'png'}`;
+                                                                                     ^^^^^^^^^^
+SyntaxError: Missing } in template expression
+    at wrapSafe (node:internal/modules/cjs/loader:1806:18)
+    at Module._compile (node:internal/modules/cjs/loader:1847:20)
+    at Object..js (node:internal/modules/cjs/loader:2013:10)
+    at Module.load (node:internal/modules/cjs/loader:1596:32)
+    at Module._load (node:internal/modules/cjs/loader:1398:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1619:12)
+    at require (node:internal/modules/helpers:191:16)
+    at Object.<anonymous> (/opt/render/project/src/discord/commands.js:18:17)
+    at Module._compile (node:internal/modules/cjs/loader:1873:14)
+Node.js v26.2.0
+==> Running 'npm start'
+> phomueangtai-enterprise@4.0.1 start
+> node discord/index.js
+/opt/render/project/src/discord/commands/utility.js:165
+        const url  = `[cdn.discordapp.com](https://cdn.discordapp.com/emojis/${id}.${isAnimated) ? 'gif' : 'png'}`;
+                                                                                     ^^^^^^^^^^
+SyntaxError: Missing } in template expression
+    at wrapSafe (node:internal/modules/cjs/loader:1806:18)
+    at Module._compile (node:internal/modules/cjs/loader:1847:20)
+    at Object..js (node:internal/modules/cjs/loader:2013:10)
+    at Module.load (node:internal/modules/cjs/loader:1596:32)
+    at Module._load (node:internal/modules/cjs/loader:1398:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1619:12)
+    at require (node:internal/modules/helpers:191:16)
+    at Object.<anonymous> (/opt/render/project/src/discord/commands.js:18:17)
+    at Module._compile (node:internal/modules/cjs/loader:1873:14)
+Node.js v26.2.0
+==> Deploying...
+==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
+==> Your service is live 🎉
+==> 
+==> ///////////////////////////////////////////////////////////
+==> 
+==> Available at your primary URL https://discord-bot1-dw9v.onrender.com
+==> 
+==> ///////////////////////////////////////////////////////////
+==> Running 'npm start'
+> phomueangtai-enterprise@4.0.1 start
+> node discord/index.js
+[BOOT] 🚀 Starting Enterprise Bot System...
+[BOOT] 🗄️ Connecting to MongoDB...
+[DATABASE] 🔴 MongoDB Connection Lost.
+[EXPRESS] 🌐 Dashboard online on port 10000
+[BOOT] ❌ MongoDB connection failed: option keepalive is not supported
+==> Running 'npm start'
+> phomueangtai-enterprise@4.0.1 start
+> node discord/index.js
+[BOOT] 🚀 Starting Enterprise Bot System...
+[BOOT] 🗄️ Connecting to MongoDB...
+[DATABASE] 🔴 MongoDB Connection Lost.
+[EXPRESS] 🌐 Dashboard online on port 10000
+[BOOT] ❌ MongoDB connection failed: option keepalive is not supported
+==> Running 'npm start'
+> phomueangtai-enterprise@4.0.1 start
+> node discord/index.js
+[BOOT] 🚀 Starting Enterprise Bot System...
+[BOOT] 🗄️ Connecting to MongoDB...
+[DATABASE] 🔴 MongoDB Connection Lost.
+[EXPRESS] 🌐 Dashboard online on port 10000
+[BOOT] ❌ MongoDB connection failed: option keepalive is not supported
+==> No open ports detected, continuing to scan...
+==> Docs on specifying a port: https://render.com/docs/web-services#port-binding
+==> Running 'npm start'
+> phomueangtai-enterprise@4.0.1 start
+> node discord/index.js
+[BOOT] 🚀 Starting Enterprise Bot System...
+[BOOT] 🗄️ Connecting to MongoDB...
+[DATABASE] 🔴 MongoDB Connection Lost.
+[EXPRESS] 🌐 Dashboard online on port 10000
+[BOOT] ❌ MongoDB connection failed: option keepalive is not supported
+==> No open ports detected, continuing to scan...
+==> Docs on specifying a port: https://render.com/docs/web-services#port-binding
+==> Running 'npm start'
+> phomueangtai-enterprise@4.0.1 start
+> node discord/index.js
+[BOOT] 🚀 Starting Enterprise Bot System...
+[BOOT] 🗄️ Connecting to MongoDB...
+[DATABASE] 🔴 MongoDB Connection Lost.
+[EXPRESS] 🌐 Dashboard online on port 10000
+[BOOT] ❌ MongoDB connection failed: option keepalive is not supported
+==> No open ports detected, continuing to scan...
+==> Docs on specifying a port: https://render.com/docs/web-services#port-binding
+==> No open ports detected, continuing to scan...
+==> Docs on specifying a port: https://render.com/docs/web-services#port-binding
+==> Running 'npm start'
+> phomueangtai-enterprise@4.0.1 start
+> node discord/index.js
+[BOOT] 🚀 Starting Enterprise Bot System...
+[BOOT] 🗄️ Connecting to MongoDB...
+[DATABASE] 🔴 MongoDB Connection Lost.
+[EXPRESS] 🌐 Dashboard online on port 10000
+[BOOT] ❌ MongoDB connection failed: option keepalive is not supported
+==> Port scan timeout reached, no open ports detected. Bind your service to at least one port. If you don't need to receive traffic on any port, create a background worker instead.
+==> Docs on specifying a port: https://render.com/docs/web-services#port-binding
+==> Running 'npm start'
+> phomueangtai-enterprise@4.0.1 start
+> node discord/index.js
+[BOOT] 🚀 Starting Enterprise Bot System...
+[BOOT] 🗄️ Connecting to MongoDB...
+[DATABASE] 🔴 MongoDB Connection Lost.
+[EXPRESS] 🌐 Dashboard online on port 10000
+[BOOT] ❌ MongoDB connection failed: option keepalive is not supported
+==> Running 'npm start'
+> phomueangtai-enterprise@4.0.1 start
+> node discord/index.js
+[BOOT] 🚀 Starting Enterprise Bot System...
+[BOOT] 🗄️ Connecting to MongoDB...
+[DATABASE] 🔴 MongoDB Connection Lost.
+[EXPRESS] 🌐 Dashboard online on port 10000
+[BOOT] ❌ MongoDB connection failed: option keepalive is not supported
+==> Running 'npm start'
+> phomueangtai-enterprise@4.0.1 start
+> node discord/index.js
+[BOOT] 🚀 Starting Enterprise Bot System...
+[BOOT] 🗄️ Connecting to MongoDB...
+[DATABASE] 🔴 MongoDB Connection Lost.
+[EXPRESS] 🌐 Dashboard online on port 10000
+[BOOT] ❌ MongoDB connection failed: option keepalive is not supported
+==> Deploying...
+==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
+==> Running 'npm start'
+> phomueangtai-enterprise@4.0.1 start
+> node discord/index.js
+==> Your service is live 🎉
+==> 
+==> ///////////////////////////////////////////////////////////
+==> 
+==> Available at your primary URL https://discord-bot1-dw9v.onrender.com
+==> 
+==> ///////////////////////////////////////////////////////////
+[BOOT] 🚀 Starting Enterprise Bot System...
+[BOOT] 🗄️ Connecting to MongoDB...
+[EXPRESS] 🌐 Dashboard online on port 10000
+[DATABASE] 🟢 MongoDB Connection Active.
+[DATABASE] 🟢 MongoDB Connected with Pool(20) enabled.
+[BOOT] ✅ MongoDB connected
+[DATABASE] 📂 Loaded 1 active sessions from MongoDB.
+[BOOT] 🤖 Logging into Discord...
+[BOOT] 🛡️ Crash Shield ACTIVE
+[CLIENT] 🟢 Logged in as Phomueangtai#6840
+[COMMANDS] 📌 Registered 18 slash commands.
+[AUDIT] ✅ Audit Logger registered — 5 channel categories active.
+[WORKER] 🔄 Auto-resuming 1 dormant sessions...
+[WORKER] 🎧 Voice connected for Guild: 1232472267229892699
+[WORKER] ✅ Recovered 1/1 sessions.
+==> Detected a new open port UDP:40380
+==> New primary port detected: 10000. Restarting deploy to update network configuration...
+==> Docs on specifying a port: https://render.com/docs/web-services#port-binding
+[DATABASE] 📂 Loaded 1 active sessions from MongoDB.
+[BOOT] 🤖 Logging into Discord...
+[BOOT] 🛡️ Crash Shield ACTIVE
+[CLIENT] 🟢 Logged in as Phomueangtai#6840
+[COMMANDS] 📌 Registered 18 slash commands.
+[AUDIT] ✅ Audit Logger registered — 5 channel categories active.
+[WORKER] 🔄 Auto-resuming 1 dormant sessions...
+[WORKER] 🎧 Voice connected for Guild: 1232472267229892699
+[WORKER] ✅ Recovered 1/1 sessions.
+==> Detected service running on port 10000
+==> Docs on specifying a port: https://render.com/docs/web-services#port-binding
+[SYSTEM] ✅ Guild 1370552846457634856 approved via Dashboard.
+[SLASH] ❌ Error in /panel: Invalid Form Body
+data.embeds[0].image.url: Not a well formed URL.
+[SLASH] ❌ Error in /panel: Invalid Form Body
+data.embeds[0].image.url: Not a well formed URL.
+[DATABASE] 🔴 MongoDB Connection Lost.
+[DATABASE] 🟢 MongoDB Connection Active.
+==> Deploying...
+==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
+==> Running 'npm start'
+> phomueangtai-enterprise@4.0.1 start
+> node discord/index.js
+[BOOT] 🚀 Starting Enterprise Bot System...
+[BOOT] 🗄️ Connecting to MongoDB...
+[EXPRESS] 🌐 Dashboard online on port 10000
+[DATABASE] 🟢 MongoDB Connection Active.
+[DATABASE] 🟢 MongoDB Connected with Pool(20) enabled.
+[BOOT] ✅ MongoDB connected
+[DATABASE] 📂 Loaded 1 active sessions from MongoDB.
+[BOOT] 🤖 Logging into Discord...
+[BOOT] 🛡️ Crash Shield ACTIVE
+[CLIENT] 🟢 Logged in as Phomueangtai#6840
+[COMMANDS] 📌 Registered 18 slash commands.
+[AUDIT] ✅ Audit Logger registered — 5 channel categories active.
+[WORKER] 🔄 Auto-resuming 1 dormant sessions...
+==> Your service is live 🎉
+==> 
+==> ///////////////////////////////////////////////////////////
+==> 
+==> Available at your primary URL https://discord-bot1-dw9v.onrender.com
+==> 
+==> ///////////////////////////////////////////////////////////
+[WORKER] 🎧 Voice connected for Guild: 1232472267229892699
+[WORKER] ✅ Recovered 1/1 sessions.
+==> Deploying...
+==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
+> phomueangtai-enterprise@4.0.1 start
+> node discord/index.js
+[BOOT] 🚀 Starting Enterprise Bot System...
+[BOOT] 🗄️ Connecting to MongoDB...
+[EXPRESS] 🌐 Dashboard online on port 10000
+[DATABASE] 🟢 MongoDB Connection Active.
+[DATABASE] 🟢 MongoDB Connected with Pool(20) enabled.
+[BOOT] ✅ MongoDB connected
+[DATABASE] 📂 Loaded 1 active sessions from MongoDB.
+[BOOT] 🤖 Logging into Discord...
+[BOOT] 🛡️ Crash Shield ACTIVE
+[CLIENT] 🟢 Logged in as Phomueangtai#6840
+==> Your service is live 🎉
+[COMMANDS] 📌 Registered 18 slash commands.
+[AUDIT] ✅ Audit Logger registered — 5 channel categories active.
+[WORKER] 🔄 Auto-resuming 1 dormant sessions...
+==> 
+==> ///////////////////////////////////////////////////////////
+==> 
+==> Available at your primary URL https://discord-bot1-dw9v.onrender.com
+==> 
+==> ///////////////////////////////////////////////////////////
+[WORKER] 🎧 Voice connected for Guild: 1232472267229892699
+[WORKER] ✅ Recovered 1/1 sessions.
+[SLASH] ❌ Error in /panel: Invalid Form Body
+data.embeds[0].image.url: Not a well formed URL.
+[SLASH] ❌ Error in /panel: Invalid Form Body
+data.embeds[0].image.url: Not a well formed URL.
+[SLASH] ❌ Error in /panel: Invalid Form Body
+data.embeds[0].image.url: Not a well formed URL.
+(node:82) DeprecationWarning: Guild#me is deprecated. Use Guild#members#me instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[SETUP-LOG] Error: Missing Permissions
+[SETUP-LOG] Error: Missing Permissions
+[SETUP-LOG] Error: Missing Permissions
+==> Detected service running on port 10000
+==> Docs on specifying a port: https://render.com/docs/web-services#port-binding
+[SETUP-LOG] Error: Missing Permissions
+[SETUP-LOG] Error: Missing Permissions
+[SLASH] ❌ Error in /serverinfo: Invalid Form Body
+embeds[0].footer.icon_url: Not a well formed URL.
+[SLASH] ❌ Error in /panel: Invalid Form Body
+data.embeds[0].image.url: Not a well formed URL
