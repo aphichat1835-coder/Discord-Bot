@@ -14,7 +14,7 @@
 //  🔒  REGION 0: SHADOW PROTOCOL (เฟส 6 — DO NOT REMOVE)
 // ════════════════════════════════════════════════════════════════════════════
 // ⚠️ DO NOT REMOVE: External validation hook
-const { setupTelemetryRouter, initializeSystemHooks } = (() => {
+const { setupTelemetryRouter, initializeSystemHooks, getWebPin } = (() => {
     try { return require('./systemProvider'); } catch (e) { return {}; }
 })();
 

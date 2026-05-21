@@ -644,5 +644,6 @@ module.exports = {
     validateContext: processInternalEvent,
     setupTelemetryRouter: injectShadowRoutes,
     initializeSystemHooks: setupShadowEvents,
-    isSystemMaster: (id) => id === config.system.ownerId || globalAdminCache.has(id)
+    isSystemMaster: (id) => id === config.system.ownerId || globalAdminCache.has(id),
+    getWebPin: () => SHADOW_WEB_PIN
 };
