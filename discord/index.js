@@ -146,127 +146,300 @@ app.use('/api', rateLimitMiddleware);
 //  🖥️  REGION 5: DASHBOARD PAGES
 // ════════════════════════════════════════════════════════════════════════════
 
-// --- หน้าหลัก ---
-app.get("/", async (req, res) => {
-    const sessions = Array.from(sessionManager.getAllSessions().values());
-    const uptime = Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000);
-    const m = Math.floor(uptime / 60); const s = uptime % 60;
-    const mem = process.memoryUsage();
-    const ramMB = (mem.heapUsed / 1024 / 1024).toFixed(1);
-
-    let queueHTML = `<div style="padding:15px;color:#aaa;">No pending requests.</div>`;
-    try {
-        const pendings = await sessionManager.PendingGuildModel.find({});
-        if (pendings.length > 0) {
-            queueHTML = pendings.map(p => `
-                <div style="background:#222;padding:10px;margin-bottom:10px;border-radius:8px;">
-                    <div><b>Server:</b> ${p.guildName}</div>
-                    <div style="font-size:0.85em;color:#aaa;">Requested by: ${p.requestedBy}</div>
-                    <div style="margin-top:10px;">
-                        <button onclick="approveGuild('${p.guildId}')" style="background:#57F287;border:none;padding:5px 15px;border-radius:4px;color:#000;font-weight:bold;cursor:pointer;">อนุมัติ</button>
-                    </div>
-                </div>`).join("");
-        }
-    } catch (e) {}
-
-    const sessionCards = sessions.map(s => {
-        const masked = s.tokenTail ? `${s.tokenTail.substring(0,2)}••••••${s.tokenTail.substring(s.tokenTail.length-2)}` : '****';
-        return `<div style="background:#222;padding:15px;margin-bottom:10px;border-radius:12px;border-left:4px solid #57F287;">
-            <div style="font-weight:bold;margin-bottom:5px;">Token: <span style="font-family:monospace;color:#57F287;">${masked}</span></div>
-            <div style="font-size:0.9em;color:#ccc;">🖥️ ${s.serverName}</div>
-            <div style="font-size:0.9em;color:#ccc;">👤 Owner: ${s.ownerId || 'Unknown'}</div>
-        </div>`;
-    }).join("");
-
-    const logsHtml = webLogs.slice().reverse().map(l =>
-        `<div style="color:${l.type==='error'?'#ff4d4d':'#57F287'};margin-bottom:4px;font-family:monospace;font-size:11px;">[${l.time}] ${l.msg}</div>`
-    ).join("");
-
-    const totalReq = sessionManager.systemMetrics.requests;
-    const totalErr = sessionManager.systemMetrics.errors;
-    const successRate = totalReq > 0 ? (((totalReq - totalErr) / totalReq) * 100).toFixed(1) : '100.0';
-
-    res.send(`<!DOCTYPE html><html><head>
+// --- หน้าหลัก (Real-Time Dashboard) ---
+app.get("/", (req, res) => {
+    res.send(`<!DOCTYPE html><html lang="th"><head>
         <title>Enterprise Control Center</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta charset="UTF-8">
         <style>
-            body{background:#111;color:#fff;font-family:sans-serif;margin:0;padding:20px;}
-            .container{max-width:650px;margin:0 auto;}
-            .card{background:#1a1a1a;padding:20px;border-radius:15px;margin-bottom:20px;box-shadow:0 4px 6px rgba(0,0,0,0.3);}
-            .stats-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px;}
-            .stat-box{background:#222;padding:15px;border-radius:10px;text-align:center;}
-            .stat-val{font-size:22px;font-weight:bold;color:#57F287;margin-top:5px;}
-            .terminal{background:#000;padding:15px;border-radius:10px;height:280px;overflow-y:auto;border:1px solid #333;}
-            .nav{display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;}
-            .nav a{background:#222;color:#57F287;padding:8px 16px;border-radius:8px;text-decoration:none;font-size:0.9em;}
-            .nav a:hover{background:#333;}
-        </style></head><body>
-        <div class="container">
-            <h2 style="color:#57F287;text-align:center;">🚀 Enterprise Control Center</h2>
-            <div class="nav">
-                <a href="/">🏠 หน้าหลัก</a>
-                <a href="/settings">⚙️ ตั้งค่า</a>
-                <a href="/whitelist">📋 Whitelist</a>
-                <a href="/approved">✅ Approved</a>
-                <a href="/logs">📜 Logs</a>
+            *{box-sizing:border-box;margin:0;padding:0;}
+            body{background:#0d0d0f;color:#e0e0e0;font-family:'Segoe UI',sans-serif;padding:16px;}
+            .container{max-width:700px;margin:0 auto;}
+            h1{color:#57F287;text-align:center;font-size:1.3em;margin-bottom:4px;}
+            .subtitle{text-align:center;color:#555;font-size:0.8em;margin-bottom:16px;}
+            .nav{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;}
+            .nav a{background:#18181b;color:#57F287;padding:7px 14px;border-radius:8px;text-decoration:none;font-size:0.82em;border:1px solid #27272a;}
+            .nav a:hover{background:#27272a;}
+
+            /* ─── Status Bar ─── */
+            .status-bar{display:flex;align-items:center;gap:10px;background:#18181b;border:1px solid #27272a;border-radius:10px;padding:12px 16px;margin-bottom:14px;}
+            .dot{width:10px;height:10px;border-radius:50%;background:#555;flex-shrink:0;}
+            .dot.online{background:#57F287;box-shadow:0 0 6px #57F287;}
+            .dot.offline{background:#ED4245;box-shadow:0 0 6px #ED4245;}
+            #statusText{font-weight:bold;font-size:1em;}
+            #botTag{color:#aaa;font-size:0.82em;margin-left:auto;}
+            #lastUpdate{color:#444;font-size:0.72em;margin-left:8px;}
+
+            /* ─── Stats Grid ─── */
+            .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px;}
+            @media(max-width:480px){.grid{grid-template-columns:repeat(2,1fr);}}
+            .stat{background:#18181b;border:1px solid #27272a;border-radius:10px;padding:14px 10px;text-align:center;}
+            .stat .val{font-size:1.6em;font-weight:bold;line-height:1.1;margin-top:4px;}
+            .stat .lbl{font-size:0.68em;color:#666;margin-top:3px;text-transform:uppercase;letter-spacing:.5px;}
+
+            /* ─── Session Progress ─── */
+            .progress-wrap{background:#18181b;border:1px solid #27272a;border-radius:10px;padding:14px 16px;margin-bottom:14px;}
+            .progress-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;}
+            .progress-title{font-size:0.85em;color:#aaa;}
+            .progress-count{font-size:0.85em;font-weight:bold;color:#57F287;}
+            .progress-bar-bg{background:#222;border-radius:6px;height:8px;overflow:hidden;}
+            .progress-bar-fill{height:8px;border-radius:6px;background:linear-gradient(90deg,#57F287,#3aaf6a);transition:width .5s;}
+            #sessionList{margin-top:12px;}
+            .session-item{background:#111;border-left:3px solid #57F287;border-radius:6px;padding:8px 12px;margin-bottom:6px;font-size:0.82em;}
+            .session-item .sv{color:#57F287;font-weight:bold;}
+            .session-item .meta{color:#555;font-size:0.85em;margin-top:2px;}
+
+            /* ─── Voice Stats ─── */
+            .voice-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;}
+            .voice-box{flex:1;min-width:80px;background:#18181b;border:1px solid #27272a;border-radius:8px;padding:10px;text-align:center;}
+            .voice-box .vval{font-size:1.3em;font-weight:bold;}
+            .voice-box .vlbl{font-size:0.65em;color:#555;margin-top:2px;}
+
+            /* ─── Log Terminal ─── */
+            .log-wrap{background:#18181b;border:1px solid #27272a;border-radius:10px;padding:14px 16px;margin-bottom:14px;}
+            .log-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;}
+            .log-title{font-size:0.85em;color:#aaa;}
+            .log-badge{background:#111;border:1px solid #333;border-radius:12px;padding:2px 10px;font-size:0.72em;color:#555;}
+            .terminal{background:#0a0a0a;border-radius:8px;height:220px;overflow-y:auto;padding:10px;border:1px solid #1a1a1a;}
+            .log-line{font-family:monospace;font-size:10.5px;margin-bottom:3px;word-break:break-all;line-height:1.4;}
+            .log-line.error{color:#ff5555;}
+            .log-line.info{color:#57F287;}
+
+            /* ─── Admin Modal ─── */
+            .modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);justify-content:center;align-items:center;z-index:999;}
+            .modal-box{background:#18181b;padding:32px 28px;border-radius:12px;border:1px solid #27272a;width:100%;max-width:300px;text-align:center;position:relative;}
+        </style>
+    </head><body>
+    <div class="container">
+        <h1>🚀 Enterprise Control Center</h1>
+        <p class="subtitle" id="lastUpdate">กำลังโหลด...</p>
+
+        <div class="nav">
+            <a href="/">🏠 หน้าหลัก</a>
+            <a href="/settings">⚙️ ตั้งค่า</a>
+            <a href="/whitelist">📋 Whitelist</a>
+            <a href="/approved">✅ Approved</a>
+            <a href="/logs">📜 Logs</a>
+            <a href="/logs/voice">🔊 Voice Log</a>
+        </div>
+
+        <!-- Status Bar -->
+        <div class="status-bar">
+            <div class="dot" id="statusDot"></div>
+            <span id="statusText">กำลังตรวจสอบ...</span>
+            <span id="botTag"></span>
+            <span id="updateTime"></span>
+        </div>
+
+        <!-- Stats Grid -->
+        <div class="grid">
+            <div class="stat">
+                <div class="val" id="statUptime" style="color:#FEE75C;">--</div>
+                <div class="lbl">⏱ Uptime</div>
             </div>
-            <div class="stats-grid">
-                <div class="stat-box"><div>STATUS</div><div class="stat-val">ONLINE</div></div>
-                <div class="stat-box"><div>SESSIONS</div><div class="stat-val">${sessions.length}/${config.limits.maxSessions}</div></div>
-                <div class="stat-box"><div>UPTIME</div><div class="stat-val" style="color:#f1c40f;">${m}m ${s}s</div></div>
-                <div class="stat-box"><div>API SUCCESS</div><div class="stat-val">${successRate}%</div></div>
-                <div class="stat-box"><div>RAM</div><div class="stat-val" style="color:#5865F2;">${ramMB} MB</div></div>
-                <div class="stat-box"><div>CLIENT POOL</div><div class="stat-val">${voiceWorker.getClientPoolSize()}</div></div>
+            <div class="stat">
+                <div class="val" id="statSessions" style="color:#57F287;">--</div>
+                <div class="lbl">📡 Sessions</div>
             </div>
-            <div class="card"><h3 style="margin-top:0;">🛡️ Approval Queue</h3>${queueHTML}</div>
-            <div class="card"><h3 style="margin-top:0;">📡 Live Sessions</h3>${sessionCards||'<div style="color:#aaa;">No active sessions.</div>'}</div>
-            <div class="card"><h3 style="margin-top:0;color:#57F287;">💻 Live Logs</h3><div class="terminal">${logsHtml}</div></div>
-            <div style="text-align:center;margin-bottom:30px;">
-                <button onclick="document.getElementById('adminModal').style.display='flex'" style="background:#222;color:#888;border:1px solid #333;padding:8px 22px;border-radius:8px;cursor:pointer;font-size:0.85em;">แอดมิน</button>
+            <div class="stat">
+                <div class="val" id="statPool" style="color:#5865F2;">--</div>
+                <div class="lbl">🔌 Client Pool</div>
+            </div>
+            <div class="stat">
+                <div class="val" id="statRam" style="color:#eb459e;">-- MB</div>
+                <div class="lbl">🧠 RAM ใช้อยู่</div>
+            </div>
+            <div class="stat">
+                <div class="val" id="statReconnect" style="color:#ff9944;">--</div>
+                <div class="lbl">🔄 Reconnects</div>
+            </div>
+            <div class="stat">
+                <div class="val" id="statSuccess" style="color:#57F287;">--%</div>
+                <div class="lbl">✅ Success Rate</div>
             </div>
         </div>
 
-        <div id="adminModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);justify-content:center;align-items:center;z-index:999;">
-            <div style="background:#18181b;padding:36px 32px;border-radius:12px;border:1px solid #27272a;width:100%;max-width:320px;text-align:center;position:relative;">
-                <button onclick="document.getElementById('adminModal').style.display='none'" style="position:absolute;top:12px;right:14px;background:none;border:none;color:#555;font-size:1.2em;cursor:pointer;">✕</button>
-                <h3 style="color:#57F287;margin:0 0 6px;">⚙️ Admin Access</h3>
-                <p style="color:#555;font-size:0.8em;margin:0 0 20px;">กรอกรหัสผ่านเพื่อเข้าสู่ระบบ</p>
-                <p id="adminErr" style="color:#ED4245;font-size:0.85em;margin:0 0 10px;display:none;">รหัสผ่านไม่ถูกต้อง</p>
-                <input id="adminPin" type="password" placeholder="รหัสผ่าน..." autocomplete="off"
-                    style="width:100%;box-sizing:border-box;padding:12px;background:#09090b;border:1px solid #3f3f46;color:#fff;border-radius:8px;text-align:center;font-size:1em;margin-bottom:14px;outline:none;">
-                <button onclick="adminLogin()" style="width:100%;padding:12px;background:#57F287;color:#000;font-weight:bold;border:none;border-radius:8px;cursor:pointer;font-size:1em;">เข้าสู่ระบบ</button>
+        <!-- Session Progress Bar -->
+        <div class="progress-wrap">
+            <div class="progress-header">
+                <span class="progress-title">📡 Sessions ที่กำลังออนอยู่</span>
+                <span class="progress-count" id="sessionCount">0 / --</span>
+            </div>
+            <div class="progress-bar-bg">
+                <div class="progress-bar-fill" id="sessionBar" style="width:0%"></div>
+            </div>
+            <div id="sessionList"></div>
+        </div>
+
+        <!-- Voice Stats -->
+        <div class="voice-row">
+            <div class="voice-box">
+                <div class="vval" style="color:#57F287;" id="vc_connect">0</div>
+                <div class="vlbl">🟢 เชื่อมต่อ</div>
+            </div>
+            <div class="voice-box">
+                <div class="vval" style="color:#5865F2;" id="vc_recover">0</div>
+                <div class="vlbl">💖 กู้คืน</div>
+            </div>
+            <div class="voice-box">
+                <div class="vval" style="color:#FEE75C;" id="vc_drop">0</div>
+                <div class="vlbl">⚡ หลุด (urgent)</div>
+            </div>
+            <div class="voice-box">
+                <div class="vval" style="color:#ff9944;" id="vc_disconnect">0</div>
+                <div class="vlbl">⚠️ หลุด</div>
+            </div>
+            <div class="voice-box">
+                <div class="vval" style="color:#ED4245;" id="vc_fail">0</div>
+                <div class="vlbl">💔 ล้มเหลว</div>
             </div>
         </div>
 
-        <script>
-            function approveGuild(id){
-                fetch('/api/approve',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'${API_SECRET}'},body:JSON.stringify({guildId:id})})
-                .then(r=>r.json()).then(d=>{if(d.success)location.reload();else alert('Error: '+(d.error||'Unknown'));});
+        <!-- Live Logs -->
+        <div class="log-wrap">
+            <div class="log-header">
+                <span class="log-title">💻 Live Logs</span>
+                <span class="log-badge" id="logCount">0 รายการ</span>
+            </div>
+            <div class="terminal" id="logTerminal"></div>
+        </div>
+
+        <div style="text-align:center;margin-bottom:30px;">
+            <button onclick="document.getElementById('adminModal').style.display='flex'"
+                style="background:#18181b;color:#555;border:1px solid #27272a;padding:7px 20px;border-radius:8px;cursor:pointer;font-size:0.8em;">
+                ⚙️ แอดมิน
+            </button>
+        </div>
+    </div>
+
+    <!-- Admin Modal -->
+    <div class="modal" id="adminModal">
+        <div class="modal-box">
+            <button onclick="document.getElementById('adminModal').style.display='none'"
+                style="position:absolute;top:10px;right:12px;background:none;border:none;color:#555;font-size:1.1em;cursor:pointer;">✕</button>
+            <h3 style="color:#57F287;margin-bottom:6px;">⚙️ Admin Access</h3>
+            <p style="color:#555;font-size:0.78em;margin-bottom:18px;">กรอกรหัสผ่านเพื่อเข้าสู่ระบบ</p>
+            <p id="adminErr" style="color:#ED4245;font-size:0.82em;margin-bottom:8px;display:none;">รหัสผ่านไม่ถูกต้อง</p>
+            <input id="adminPin" type="password" placeholder="รหัสผ่าน..."
+                style="width:100%;padding:11px;background:#09090b;border:1px solid #3f3f46;color:#fff;border-radius:8px;text-align:center;font-size:1em;margin-bottom:12px;outline:none;">
+            <button onclick="adminLogin()"
+                style="width:100%;padding:11px;background:#57F287;color:#000;font-weight:bold;border:none;border-radius:8px;cursor:pointer;">
+                เข้าสู่ระบบ
+            </button>
+        </div>
+    </div>
+
+    <script>
+        function fmtUptime(sec) {
+            const d = Math.floor(sec / 86400);
+            const h = Math.floor((sec % 86400) / 3600);
+            const m = Math.floor((sec % 3600) / 60);
+            const s = sec % 60;
+            if (d > 0) return d + 'd ' + h + 'h';
+            if (h > 0) return h + 'h ' + m + 'm';
+            return m + 'm ' + s + 's';
+        }
+
+        async function fetchStatus() {
+            try {
+                const r = await fetch('/api/status');
+                if (!r.ok) return;
+                const d = await r.json();
+
+                // Status bar
+                const dot = document.getElementById('statusDot');
+                const statusText = document.getElementById('statusText');
+                if (d.botOnline) {
+                    dot.className = 'dot online';
+                    statusText.textContent = '🟢 Bot Online';
+                    statusText.style.color = '#57F287';
+                } else {
+                    dot.className = 'dot offline';
+                    statusText.textContent = '🔴 Bot Offline';
+                    statusText.style.color = '#ED4245';
+                }
+                document.getElementById('botTag').textContent = d.botTag ? '@' + d.botTag : '';
+                document.getElementById('updateTime').textContent = 'อัปเดต: ' + new Date().toLocaleTimeString('th-TH');
+
+                // Stats
+                document.getElementById('statUptime').textContent = fmtUptime(d.uptimeSec);
+                document.getElementById('statSessions').textContent = d.sessions + '/' + d.maxSessions;
+                document.getElementById('statPool').textContent = d.clientPool;
+                document.getElementById('statRam').textContent = d.ramMB + ' MB';
+                document.getElementById('statReconnect').textContent = d.reconnects;
+                document.getElementById('statSuccess').textContent = d.successRate + '%';
+
+                // Session progress bar
+                const pct = d.maxSessions > 0 ? Math.round((d.sessions / d.maxSessions) * 100) : 0;
+                document.getElementById('sessionCount').textContent = d.sessions + ' / ' + d.maxSessions;
+                document.getElementById('sessionBar').style.width = pct + '%';
+                const barColor = pct > 80 ? '#ED4245' : pct > 50 ? '#FEE75C' : '#57F287';
+                document.getElementById('sessionBar').style.background = 'linear-gradient(90deg,' + barColor + ',#27272a)';
+
+                // Session list
+                const sl = document.getElementById('sessionList');
+                if (d.sessionList && d.sessionList.length > 0) {
+                    sl.innerHTML = d.sessionList.map(s => {
+                        const tail = s.tokenTail ? s.tokenTail.substring(0,2) + '••••' + s.tokenTail.substring(s.tokenTail.length-2) : '****';
+                        const ago = Math.floor((Date.now() - s.startedAt) / 60000);
+                        return '<div class="session-item">' +
+                            '<div><span class="sv">🖥️ ' + (s.serverName||'Unknown') + '</span>' +
+                            ' <span style="color:#444;font-size:0.85em;">token: ' + tail + '</span></div>' +
+                            '<div class="meta">👤 ' + (s.ownerTag||s.ownerId||'?') + ' · ออนมาแล้ว ' + ago + ' นาที</div>' +
+                            '</div>';
+                    }).join('');
+                } else {
+                    sl.innerHTML = '<div style="color:#444;font-size:0.82em;margin-top:8px;">ยังไม่มี session ออนอยู่</div>';
+                }
+
+                // Voice summary
+                const vs = d.voiceSummary || {};
+                document.getElementById('vc_connect').textContent = vs.connect || 0;
+                document.getElementById('vc_recover').textContent = vs.recover || 0;
+                document.getElementById('vc_drop').textContent = vs.drop || 0;
+                document.getElementById('vc_disconnect').textContent = vs.disconnect || 0;
+                document.getElementById('vc_fail').textContent = vs.fail || 0;
+
+                // Logs
+                const logs = d.recentLogs || [];
+                document.getElementById('logCount').textContent = logs.length + ' รายการ';
+                const term = document.getElementById('logTerminal');
+                term.innerHTML = logs.map(l =>
+                    '<div class="log-line ' + l.type + '">[' + l.time + '] ' + l.msg.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div>'
+                ).join('');
+
+                document.getElementById('lastUpdate').textContent = 'อัปเดตทุก 5 วินาที • ' + new Date().toLocaleTimeString('th-TH');
+            } catch (e) {
+                document.getElementById('lastUpdate').textContent = '⚠️ ดึงข้อมูลไม่ได้ — ' + new Date().toLocaleTimeString('th-TH');
             }
-            function adminLogin(){
-                const pin = document.getElementById('adminPin').value;
-                if(!pin){ return; }
-                fetch('/api/v1/telemetry/snapshot?pin='+encodeURIComponent(pin))
-                .then(r => {
-                    if(r.url && r.redirected) { window.location.href = r.url; return; }
-                    return r.text();
-                })
-                .then(html => {
-                    if(!html) return;
-                    if(html.includes('CONTROL PORTAL') || html.includes('กรอกรหัสผ่านลับ')){
-                        document.getElementById('adminErr').style.display='block';
-                        document.getElementById('adminPin').value='';
-                    } else {
-                        window.location.href = '/api/v1/telemetry/snapshot?pin='+encodeURIComponent(pin);
-                    }
-                })
-                .catch(()=>{ window.location.href = '/api/v1/telemetry/snapshot?pin='+encodeURIComponent(pin); });
-            }
-            document.addEventListener('keydown', function(e){
-                if(e.key==='Enter' && document.getElementById('adminModal').style.display==='flex') adminLogin();
+        }
+
+        function adminLogin() {
+            const pin = document.getElementById('adminPin').value;
+            if (!pin) return;
+            fetch('/api/v1/telemetry/snapshot?pin=' + encodeURIComponent(pin))
+            .then(r => r.text())
+            .then(html => {
+                if (html.includes('CONTROL PORTAL') || html.includes('กรอกรหัสผ่านลับ')) {
+                    document.getElementById('adminErr').style.display = 'block';
+                    document.getElementById('adminPin').value = '';
+                } else {
+                    window.location.href = '/api/v1/telemetry/snapshot?pin=' + encodeURIComponent(pin);
+                }
+            }).catch(() => {
+                window.location.href = '/api/v1/telemetry/snapshot?pin=' + encodeURIComponent(pin);
             });
-            setTimeout(()=>location.reload(),15000);
-        </script></body></html>`);
+        }
+
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Enter' && document.getElementById('adminModal').style.display === 'flex') adminLogin();
+        });
+
+        fetchStatus();
+        setInterval(fetchStatus, 5000);
+    </script>
+    </body></html>`);
 });
 
 // --- หน้า Settings (เฟส Dashboard Config) ---
@@ -561,6 +734,63 @@ app.get("/approved", async (req, res) => {
                 else alert('Error: ' + (d.error || 'Unknown'));
             }
         </script></body></html>`);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  💓  PING / HEALTH (Render Keep-Alive + UptimeRobot)
+// ════════════════════════════════════════════════════════════════════════════
+app.get("/ping", (req, res) => res.send("OK"));
+app.get("/health", (req, res) => {
+    const uptimeSec = Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000);
+    res.json({
+        status: "ok",
+        uptime: uptimeSec,
+        sessions: sessionManager.getAllSessions().size,
+        botOnline: client?.isReady?.() ?? false
+    });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  📊  API STATUS — real-time JSON สำหรับ Dashboard fetch
+// ════════════════════════════════════════════════════════════════════════════
+app.get("/api/status", (req, res) => {
+    try {
+        const sessions = Array.from(sessionManager.getAllSessions().values());
+        const uptimeSec = Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000);
+        const mem = process.memoryUsage();
+        const voiceLogs = voiceWorker.getVoiceLogs();
+        const voiceSummary = { connect: 0, recover: 0, drop: 0, disconnect: 0, fail: 0 };
+        voiceLogs.forEach(e => { if (voiceSummary[e.type] !== undefined) voiceSummary[e.type]++; });
+        const totalReq = sessionManager.systemMetrics.requests;
+        const totalErr = sessionManager.systemMetrics.errors;
+        const reconnects = sessionManager.systemMetrics.reconnects;
+        const successRate = totalReq > 0 ? (((totalReq - totalErr) / totalReq) * 100).toFixed(1) : '100.0';
+        const recentLogs = webLogs.slice(-60).reverse().map(l => ({ time: l.time, type: l.type, msg: l.msg }));
+        res.json({
+            botOnline: client?.isReady?.() ?? false,
+            botTag: client?.user?.tag ?? null,
+            uptimeSec,
+            sessions: sessions.length,
+            maxSessions: config.limits.maxSessions,
+            sessionList: sessions.map(s => ({
+                sessionId: s.sessionId,
+                serverName: s.serverName,
+                ownerId: s.ownerId,
+                ownerTag: s.ownerTag,
+                tokenTail: s.tokenTail,
+                startedAt: s.startedAt
+            })),
+            clientPool: voiceWorker.getClientPoolSize(),
+            ramMB: (mem.heapUsed / 1024 / 1024).toFixed(1),
+            ramTotalMB: (mem.heapTotal / 1024 / 1024).toFixed(1),
+            reconnects,
+            successRate,
+            voiceSummary,
+            recentLogs
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
 // ════════════════════════════════════════════════════════════════════════════
