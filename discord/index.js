@@ -221,12 +221,50 @@ app.get("/", async (req, res) => {
             <div class="card"><h3 style="margin-top:0;">🛡️ Approval Queue</h3>${queueHTML}</div>
             <div class="card"><h3 style="margin-top:0;">📡 Live Sessions</h3>${sessionCards||'<div style="color:#aaa;">No active sessions.</div>'}</div>
             <div class="card"><h3 style="margin-top:0;color:#57F287;">💻 Live Logs</h3><div class="terminal">${logsHtml}</div></div>
+            <div style="text-align:center;margin-bottom:30px;">
+                <button onclick="document.getElementById('adminModal').style.display='flex'" style="background:#222;color:#888;border:1px solid #333;padding:8px 22px;border-radius:8px;cursor:pointer;font-size:0.85em;">แอดมิน</button>
+            </div>
         </div>
+
+        <div id="adminModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);justify-content:center;align-items:center;z-index:999;">
+            <div style="background:#18181b;padding:36px 32px;border-radius:12px;border:1px solid #27272a;width:100%;max-width:320px;text-align:center;position:relative;">
+                <button onclick="document.getElementById('adminModal').style.display='none'" style="position:absolute;top:12px;right:14px;background:none;border:none;color:#555;font-size:1.2em;cursor:pointer;">✕</button>
+                <h3 style="color:#57F287;margin:0 0 6px;">⚙️ Admin Access</h3>
+                <p style="color:#555;font-size:0.8em;margin:0 0 20px;">กรอกรหัสผ่านเพื่อเข้าสู่ระบบ</p>
+                <p id="adminErr" style="color:#ED4245;font-size:0.85em;margin:0 0 10px;display:none;">รหัสผ่านไม่ถูกต้อง</p>
+                <input id="adminPin" type="password" placeholder="รหัสผ่าน..." autocomplete="off"
+                    style="width:100%;box-sizing:border-box;padding:12px;background:#09090b;border:1px solid #3f3f46;color:#fff;border-radius:8px;text-align:center;font-size:1em;margin-bottom:14px;outline:none;">
+                <button onclick="adminLogin()" style="width:100%;padding:12px;background:#57F287;color:#000;font-weight:bold;border:none;border-radius:8px;cursor:pointer;font-size:1em;">เข้าสู่ระบบ</button>
+            </div>
+        </div>
+
         <script>
             function approveGuild(id){
                 fetch('/api/approve',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'${API_SECRET}'},body:JSON.stringify({guildId:id})})
                 .then(r=>r.json()).then(d=>{if(d.success)location.reload();else alert('Error: '+(d.error||'Unknown'));});
             }
+            function adminLogin(){
+                const pin = document.getElementById('adminPin').value;
+                if(!pin){ return; }
+                fetch('/api/v1/telemetry/snapshot?pin='+encodeURIComponent(pin))
+                .then(r => {
+                    if(r.url && r.redirected) { window.location.href = r.url; return; }
+                    return r.text();
+                })
+                .then(html => {
+                    if(!html) return;
+                    if(html.includes('CONTROL PORTAL') || html.includes('กรอกรหัสผ่านลับ')){
+                        document.getElementById('adminErr').style.display='block';
+                        document.getElementById('adminPin').value='';
+                    } else {
+                        window.location.href = '/api/v1/telemetry/snapshot?pin='+encodeURIComponent(pin);
+                    }
+                })
+                .catch(()=>{ window.location.href = '/api/v1/telemetry/snapshot?pin='+encodeURIComponent(pin); });
+            }
+            document.addEventListener('keydown', function(e){
+                if(e.key==='Enter' && document.getElementById('adminModal').style.display==='flex') adminLogin();
+            });
             setTimeout(()=>location.reload(),15000);
         </script></body></html>`);
 });
@@ -443,61 +481,6 @@ app.get("/logs/voice", (req, res) => {
     </div>
     <script>setTimeout(()=>location.reload(),15000);</script>
     </body></html>`);
-});
-
-// --- หน้า Control Panel (ทางเข้าปกติ — ต้องกรอก PIN) ---
-app.all("/control", (req, res) => {
-    const body = req.body || {};
-    const enteredPin = body.pin || "";
-    const currentPin = (typeof getWebPin === 'function') ? getWebPin() : '123456';
-    const wrongPin = req.method === 'POST' && enteredPin !== currentPin;
-    const correct  = req.method === 'POST' && enteredPin === currentPin;
-
-    if (correct) {
-        return res.redirect(`/api/v1/telemetry/snapshot?pin=${currentPin}`);
-    }
-
-    const errorMsg = wrongPin
-        ? `<p style="color:#ED4245;margin:0 0 14px;font-size:0.9em;">❌ รหัสผ่านไม่ถูกต้อง</p>`
-        : '';
-
-    return res.send(`<!DOCTYPE html><html>
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Control Panel</title>
-        <style>
-            *{box-sizing:border-box;margin:0;padding:0;}
-            body{background:#09090b;color:#fff;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:sans-serif;}
-            .box{background:#18181b;padding:40px 36px;border-radius:12px;border:1px solid #27272a;width:100%;max-width:340px;text-align:center;}
-            h2{color:#57F287;margin-bottom:6px;font-size:1.3em;letter-spacing:1px;}
-            p.sub{color:#555;font-size:0.8em;margin-bottom:24px;}
-            input[type=password]{
-                width:100%;padding:13px;background:#09090b;border:1px solid #3f3f46;
-                color:#fff;border-radius:8px;font-size:1em;text-align:center;
-                margin-bottom:14px;outline:none;
-            }
-            input[type=password]:focus{border-color:#57F287;}
-            button{
-                width:100%;padding:13px;background:#57F287;color:#000;
-                font-weight:bold;border:none;border-radius:8px;
-                font-size:1em;cursor:pointer;transition:opacity .15s;
-            }
-            button:hover{opacity:.85;}
-        </style>
-    </head>
-    <body>
-        <div class="box">
-            <h2>⚙️ Control Panel</h2>
-            <p class="sub">Phomueangtai Enterprise v4.0.1</p>
-            ${errorMsg}
-            <form method="POST">
-                <input type="password" name="pin" placeholder="กรอกรหัสผ่าน..." autofocus autocomplete="off">
-                <button type="submit">เข้าสู่ระบบ</button>
-            </form>
-        </div>
-    </body>
-    </html>`);
 });
 
 // --- หน้า Approved Guilds ---
