@@ -347,9 +347,13 @@ async function autoResume() {
     console.log(`[WORKER] ✅ Recovered ${count}/${sessions.size} sessions.`);
 }
 
+const recoveryTimestamps = new Map();
+const RECOVERY_COOLDOWN_MS = 60000;
+
 async function healthCheck() {
     if (isShuttingDown) return;
     const sessions = sessionManager.getAllSessions();
+    const now = Date.now();
     for (const [sessionId, session] of sessions) {
         if (isShuttingDown) break;
         const tokenHash = getSessionTokenHash(sessionId, session);
@@ -363,9 +367,13 @@ async function healthCheck() {
             connStatus === VoiceConnectionStatus.Destroyed ||
             connStatus === VoiceConnectionStatus.Disconnected;
 
-        if (needsRecovery && !session.reconnecting && !sessionManager.isSessionLocked(sessionId)) {
+        const lastRecovered = recoveryTimestamps.get(sessionId) || 0;
+        const onCooldown = (now - lastRecovered) < RECOVERY_COOLDOWN_MS;
+
+        if (needsRecovery && !onCooldown && !session.reconnecting && !sessionManager.isSessionLocked(sessionId)) {
             if (!sessionManager.lockSession(sessionId)) continue;
             session.reconnecting = true;
+            recoveryTimestamps.set(sessionId, now);
             console.log(`[HEARTBEAT] 🩺 Recovering dead connection for ${sessionId}...`);
             try {
                 const recoveryJitter = Math.floor(1000 + Math.random() * 2000);

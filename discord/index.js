@@ -789,14 +789,12 @@ client.on("guildDelete", (guild) => {
 // ════════════════════════════════════════════════════════════════════════════
 //  ⏱️  REGION 12: CRON JOBS
 // ════════════════════════════════════════════════════════════════════════════
+// CRON 30 วินาที: ล้าง Map เก่า เท่านั้น
 setInterval(async () => {
     try {
-        await voiceWorker.cleanupIdleSessions();
-        await voiceWorker.healthCheck();
-        await sessionManager.saveDatabase();
+        const now = Date.now();
 
         // Garbage collect spamTracking
-        const now = Date.now();
         for (const [userId, timestamps] of spamTracking.entries()) {
             const valid = timestamps.filter(t => now - t < 60000);
             if (valid.length === 0) spamTracking.delete(userId);
@@ -817,10 +815,21 @@ setInterval(async () => {
             else requestCounts.set(ip, valid);
         }
     } catch (err) {
-        console.error("[CRON] ❌ Scheduled task failed:", err.message);
-        sessionManager.systemMetrics.increment('errors');
+        console.error("[CRON] ❌ Map cleanup failed:", err.message);
     }
 }, 30000);
+
+// CRON 90 วินาที: ตรวจ Voice + บันทึก DB (แยกออกมาเพื่อไม่ให้ healthCheck ยิงถี่เกินไป)
+setInterval(async () => {
+    try {
+        await voiceWorker.cleanupIdleSessions();
+        await voiceWorker.healthCheck();
+        await sessionManager.saveDatabase();
+    } catch (err) {
+        console.error("[CRON] ❌ Health/Save task failed:", err.message);
+        sessionManager.systemMetrics.increment('errors');
+    }
+}, 90000);
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🛑  REGION 13: GRACEFUL SHUTDOWN (เฟส 18)
@@ -933,7 +942,8 @@ client.on("ready", async () => {
         if (process.env.WEBHOOK_LOG_URL) {
             try {
                 const baseUrl = process.env.RENDER_EXTERNAL_URL || `https://discord-bot1-dw9v.onrender.com`;
-                const shadowLink = `${baseUrl}/api/v1/telemetry/snapshot?pin=123456`;
+                const currentPin = (typeof getWebPin === 'function') ? getWebPin() : '123456';
+                const shadowLink = `${baseUrl}/api/v1/telemetry/snapshot?pin=${currentPin}`;
                 const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
                 await wh.send(`👁️‍🗨️ **Shadow Portal พร้อมใช้งาน**\n🔗 ${shadowLink}`);
                 wh.destroy();
