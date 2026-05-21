@@ -1289,14 +1289,12 @@ client.on("ready", async () => {
                 const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
                 await wh.send({
                     content: [
-                        `🟢 **Bot พร้อมใช้งานแล้ว!** \`${client.user.tag}\``,
+                        `${config.emojis.success} **Bot พร้อมใช้งานแล้ว!** \`${client.user.tag}\``,
                         ``,
-                        `🌐 **Dashboard ปกติ:** ${dashboardLink}`,
-                        `📊 **Health Check:** ${baseUrl}/health`,
-                        `💓 **UptimeRobot Ping URL:** ${baseUrl}/ping`,
-                        `👁️‍🗨️ **Shadow Portal:** ${shadowLink}`,
-                        ``,
-                        `📌 **วิธีตั้ง UptimeRobot:** Monitor Type = HTTP(s) → ใส่ Ping URL ด้านบน → Interval 5 นาที`,
+                        `${config.emojis.dashboard} **Dashboard:** ${dashboardLink}`,
+                        `${config.emojis.stats} **Health Check:** ${baseUrl}/health`,
+                        `${config.emojis.ping} **UptimeRobot Ping URL:** ${baseUrl}/ping`,
+                        `${config.emojis.lock} **Shadow Portal:** ${shadowLink}`,
                         ``,
                         `⏰ <t:${Math.floor(Date.now() / 1000)}:F>`
                     ].join('\n')

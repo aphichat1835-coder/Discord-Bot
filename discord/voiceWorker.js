@@ -200,11 +200,11 @@ function connectToVoice(client, guildId, channelId, tokenHash, sessionId) {
                 const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
                 await wh.send({
                     content: [
-                        `⚠️ **[SESSION WARNING]** session หลุดบ่อยผิดปกติ`,
-                        `🆔 Session: \`${sessionId}\``,
-                        `🖥️ เซิร์ฟเวอร์: **${sess?.serverName || guildId}**`,
-                        `🔊 ห้องเสียง: \`${channelId}\``,
-                        `🔄 หลุดแล้ว: ${reconnectAttempts} ครั้ง (สูงสุด ${CONFIG.MAX_RECONNECT_ATTEMPTS})`,
+                        `${config.emojis.warning} **[SESSION WARNING]** session หลุดบ่อยผิดปกติ`,
+                        `${config.emojis.robot} Session: \`${sessionId}\``,
+                        `${config.emojis.signal} เซิร์ฟเวอร์: **${sess?.serverName || guildId}**`,
+                        `${config.emojis.halt} ห้องเสียง: \`${channelId}\``,
+                        `${config.emojis.alert} หลุดแล้ว: **${reconnectAttempts}** ครั้ง (สูงสุด ${CONFIG.MAX_RECONNECT_ATTEMPTS})`,
                         `⏰ <t:${Math.floor(Date.now() / 1000)}:F>`
                     ].join('\n')
                 }).catch(() => {});
@@ -227,11 +227,11 @@ function connectToVoice(client, guildId, channelId, tokenHash, sessionId) {
                     const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
                     await wh.send({
                         content: [
-                            `💀 **[SESSION DEAD]** session หลุดเกินกำหนด`,
-                            `🆔 Session: \`${sessionId}\``,
-                            `🖥️ เซิร์ฟเวอร์: **${sess?.serverName || guildId}**`,
-                            `🔊 ห้องเสียง: \`${channelId}\``,
-                            `🔄 พยายามต่อใหม่: ${reconnectAttempts}/${CONFIG.MAX_RECONNECT_ATTEMPTS} ครั้ง`,
+                            `${config.emojis.error} **[SESSION DEAD]** session หลุดเกินกำหนด ระบบหยุดแล้ว`,
+                            `${config.emojis.robot} Session: \`${sessionId}\``,
+                            `${config.emojis.signal} เซิร์ฟเวอร์: **${sess?.serverName || guildId}**`,
+                            `${config.emojis.stop} ห้องเสียง: \`${channelId}\``,
+                            `${config.emojis.no_entry} พยายามต่อใหม่: **${reconnectAttempts}/${CONFIG.MAX_RECONNECT_ATTEMPTS}** ครั้ง — ยกเลิกแล้ว`,
                             `⏰ <t:${Math.floor(Date.now() / 1000)}:F>`
                         ].join('\n')
                     }).catch(() => {});
