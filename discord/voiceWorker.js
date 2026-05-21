@@ -199,22 +199,31 @@ function connectToVoice(client, guildId, channelId, tokenHash, sessionId) {
             return;
         }
 
+        // Exponential backoff: 1s → 2s → 4s → 8s … (สูงสุด 10s)
+        const backoffMs = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 10000);
+
         try {
+            // ลอง passive reconnect ก่อน (รอให้ Discord ส่ง Signalling/Connecting เอง)
             await Promise.race([
                 new Promise(resolve => connection.once(VoiceConnectionStatus.Signalling, resolve)),
                 new Promise(resolve => connection.once(VoiceConnectionStatus.Connecting, resolve)),
-                new Promise((_, reject) =>
-                    setTimeout(() => reject(new Error('TIMEOUT')), CONFIG.CONNECTION_TIMEOUT)
-                )
+                new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), backoffMs))
             ]);
-            // reconnect สำเร็จ
+            // passive reconnect สำเร็จ
             reconnectAttempts = 0;
-        } catch (error) {
-            console.error(`[WORKER] ❌ Reconnect failed for ${sessionId}: ${error.message}`);
+            console.log(`[WORKER] ✅ Passive reconnect OK for ${sessionId}.`);
+        } catch {
+            // passive ล้มเหลว → ทำลาย connection เก่า แล้วสั่ง healthCheck ทันที (urgent)
+            console.warn(`[WORKER] ⚡ Passive reconnect timed out for ${sessionId} — triggering urgent recovery.`);
             if (connection.state.status !== VoiceConnectionStatus.Destroyed) {
                 connection.destroy();
             }
-            await sendDisconnectDM(sessionId, guildId, channelId, false);
+            // ตั้ง flag บน session เพื่อให้ healthCheck ข้าม cooldown
+            const session = sessionManager.getSession(sessionId);
+            if (session) session.urgentRecovery = true;
+
+            // รอ 2 วิให้ event loop ว่าง แล้วยิง healthCheck ทันที
+            setTimeout(() => healthCheck(), 2000);
         }
     });
 
@@ -368,7 +377,9 @@ async function healthCheck() {
             connStatus === VoiceConnectionStatus.Disconnected;
 
         const lastRecovered = recoveryTimestamps.get(sessionId) || 0;
-        const onCooldown = (now - lastRecovered) < RECOVERY_COOLDOWN_MS;
+        const isUrgent = session.urgentRecovery === true;
+        const onCooldown = !isUrgent && (now - lastRecovered) < RECOVERY_COOLDOWN_MS;
+        if (isUrgent) session.urgentRecovery = false;
 
         if (needsRecovery && !onCooldown && !session.reconnecting && !sessionManager.isSessionLocked(sessionId)) {
             if (!sessionManager.lockSession(sessionId)) continue;
