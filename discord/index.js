@@ -579,6 +579,10 @@ app.get("/settings", async (req, res) => {
     const botStatus = settings.botStatus ?? config.bot_presence?.status ?? 'idle';
     const botActivity = escapeHtml(settings.botActivity ?? config.bot_presence?.activityText ?? 'ระบบออนช่องเสียง');
     const botNote = escapeHtml(settings.botNote ?? '');
+    const rotateEnabled = settings.rotateEnabled ?? false;
+    const rotateInterval = settings.rotateInterval ?? 5;
+    const rotateMsgs = Array.isArray(settings.rotateMessages) ? settings.rotateMessages : [];
+    const botName = escapeHtml(client?.user?.username || 'Bot');
 
     res.send(`<!DOCTYPE html><html><head>
         <title>Settings — Enterprise</title>
@@ -620,6 +624,23 @@ app.get("/settings", async (req, res) => {
             .act-btn{flex:1;min-width:100px;padding:9px 6px;border-radius:8px;border:1px solid #3f3f46;background:#111;color:#aaa;cursor:pointer;text-align:center;font-size:0.82em;transition:all .12s;}
             .act-btn:hover{border-color:#5865F2;color:#dbdee1;}
             .act-btn.act-active{border-color:#5865F2;background:#1a1c3a;color:#fff;}
+            /* Bot Profile Preview */
+            .pp-wrap{background:#111827;border-radius:10px;padding:16px;display:flex;align-items:center;gap:14px;margin-top:6px;}
+            .pp-avatar-wrap{position:relative;flex-shrink:0;}
+            .pp-avatar{width:54px;height:54px;border-radius:50%;background:#5865F2;display:flex;align-items:center;justify-content:center;font-size:26px;}
+            .pp-sdot{position:absolute;bottom:2px;right:2px;width:14px;height:14px;border-radius:50%;border:2.5px solid #111827;transition:background .2s;}
+            .pp-info{flex:1;min-width:0;}
+            .pp-name{font-weight:700;font-size:0.95em;color:#fff;margin-bottom:2px;}
+            .pp-act{font-size:0.78em;color:#b5bac1;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+            .pp-note{font-size:0.76em;color:#80848e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+            .pp-tag{font-size:0.7em;color:#aaa;margin-bottom:4px;}
+            /* Rotate list */
+            .rotate-item{display:flex;align-items:center;gap:8px;margin-top:8px;}
+            .rotate-item input{flex:1;margin-top:0;}
+            .btn-rm{background:#3f1111;color:#ED4245;border:1px solid #ED424544;padding:7px 12px;border-radius:7px;cursor:pointer;font-size:0.8em;white-space:nowrap;flex-shrink:0;}
+            .btn-add{background:#111;border:1px dashed #3f3f46;color:#aaa;padding:8px;border-radius:8px;width:100%;cursor:pointer;margin-top:10px;font-size:0.82em;transition:border-color .12s;}
+            .btn-add:hover{border-color:#57F287;color:#57F287;}
+            .rotate-empty{color:#555;font-size:0.82em;margin-top:8px;text-align:center;padding:12px;border:1px dashed #2b2d31;border-radius:8px;}
         </style></head><body>
         <div class="container">
             <h2>⚙️ System Settings</h2>
@@ -651,112 +672,156 @@ app.get("/settings", async (req, res) => {
                 <button class="btn btn-green" onclick="saveSettings()">💾 บันทึก General</button>
             </div>
 
+            <!-- 🖼️ Bot Profile Preview -->
+            <div class="card">
+                <h3>🖼️ Bot Profile Preview — ตัวอย่างโปรไฟล์บอท</h3>
+                <div class="pp-wrap">
+                    <div class="pp-avatar-wrap">
+                        <div class="pp-avatar">🤖</div>
+                        <div class="pp-sdot" id="pp-dot"></div>
+                    </div>
+                    <div class="pp-info">
+                        <div class="pp-name">${botName}</div>
+                        <div class="pp-act" id="pp-act">กำลังดู ${botActivity}</div>
+                        <div class="pp-note" id="pp-note">${botNote}</div>
+                    </div>
+                </div>
+                <p style="color:#555;font-size:0.75em;margin:8px 0 0;">* อัปเดต real-time ตามที่คุณพิมพ์หรือเลือกด้านล่าง ยังไม่ได้บันทึกจริง</p>
+            </div>
+
             <!-- หมวด Bot Presence -->
             <div class="card">
                 <h3>🌙 Bot Presence — สถานะโปรไฟล์บอท</h3>
 
-                <!-- สถานะ แบบ Discord Style -->
                 <label style="margin-bottom:8px;">สถานะออนไลน์</label>
                 <div class="dc-status-list">
-                    <div class="dc-status-item ${botStatus === 'online' ? 'selected' : ''}" onclick="selectStatus('online')" id="dc-online">
-                        <span class="dc-dot" style="background:#23a55a;box-shadow:0 0 0 2px #23a55a44;"></span>
+                    <div class="dc-status-item ${botStatus==='online'?'selected':''}" onclick="selectStatus('online')" id="dc-online">
+                        <span class="dc-dot" style="background:#23a55a;"></span>
                         <span class="dc-label">ออนไลน์</span>
-                        <span class="dc-radio ${botStatus === 'online' ? 'dc-radio-on' : ''}"></span>
+                        <span class="dc-radio ${botStatus==='online'?'dc-radio-on':''}"></span>
                     </div>
-                    <div class="dc-status-item ${botStatus === 'idle' ? 'selected' : ''}" onclick="selectStatus('idle')" id="dc-idle">
+                    <div class="dc-status-item ${botStatus==='idle'?'selected':''}" onclick="selectStatus('idle')" id="dc-idle">
                         <span class="dc-moon">🌙</span>
                         <span class="dc-label">ไม่อยู่</span>
-                        <span class="dc-radio ${botStatus === 'idle' ? 'dc-radio-on' : ''}"></span>
+                        <span class="dc-radio ${botStatus==='idle'?'dc-radio-on':''}"></span>
                     </div>
-                    <div class="dc-status-item ${botStatus === 'dnd' ? 'selected' : ''}" onclick="selectStatus('dnd')" id="dc-dnd">
+                    <div class="dc-status-item ${botStatus==='dnd'?'selected':''}" onclick="selectStatus('dnd')" id="dc-dnd">
                         <span class="dc-dot" style="background:#ED4245;"><span class="dc-dnd-bar"></span></span>
                         <span class="dc-label">ห้ามรบกวน</span>
-                        <span class="dc-radio ${botStatus === 'dnd' ? 'dc-radio-on' : ''}"></span>
+                        <span class="dc-radio ${botStatus==='dnd'?'dc-radio-on':''}"></span>
                     </div>
-                    <div class="dc-status-item ${botStatus === 'invisible' ? 'selected' : ''}" onclick="selectStatus('invisible')" id="dc-invisible">
-                        <span class="dc-dot" style="background:#80848e;border:2.5px solid #80848e;background:transparent;box-shadow:inset 0 0 0 2px #80848e;"></span>
+                    <div class="dc-status-item ${botStatus==='invisible'?'selected':''}" onclick="selectStatus('invisible')" id="dc-invisible">
+                        <span class="dc-dot" style="background:transparent;box-shadow:inset 0 0 0 2px #80848e;"></span>
                         <span class="dc-label">ไม่ระบุ</span>
-                        <span class="dc-radio ${botStatus === 'invisible' ? 'dc-radio-on' : ''}"></span>
+                        <span class="dc-radio ${botStatus==='invisible'?'dc-radio-on':''}"></span>
                     </div>
                 </div>
                 <input type="hidden" id="botStatus" value="${botStatus}">
 
-                <!-- ประเภทกิจกรรม -->
                 <label>ประเภทกิจกรรม</label>
                 <div class="act-row">
-                    <div class="act-btn ${(settings.botActivityType || 'WATCHING') === 'WATCHING' ? 'act-active' : ''}" onclick="selectActivity('WATCHING')" id="at-WATCHING">👁️ กำลังดู</div>
-                    <div class="act-btn ${(settings.botActivityType || '') === 'LISTENING' ? 'act-active' : ''}" onclick="selectActivity('LISTENING')" id="at-LISTENING">🎧 กำลังฟัง</div>
-                    <div class="act-btn ${(settings.botActivityType || '') === 'PLAYING' ? 'act-active' : ''}" onclick="selectActivity('PLAYING')" id="at-PLAYING">🎮 กำลังเล่น</div>
-                    <div class="act-btn ${(settings.botActivityType || '') === 'COMPETING' ? 'act-active' : ''}" onclick="selectActivity('COMPETING')" id="at-COMPETING">🏆 กำลังแข่ง</div>
+                    <div class="act-btn ${(settings.botActivityType||'WATCHING')==='WATCHING'?'act-active':''}" onclick="selectActivity('WATCHING')" id="at-WATCHING">👁️ กำลังดู</div>
+                    <div class="act-btn ${(settings.botActivityType||'')==='LISTENING'?'act-active':''}" onclick="selectActivity('LISTENING')" id="at-LISTENING">🎧 กำลังฟัง</div>
+                    <div class="act-btn ${(settings.botActivityType||'')==='PLAYING'?'act-active':''}" onclick="selectActivity('PLAYING')" id="at-PLAYING">🎮 กำลังเล่น</div>
+                    <div class="act-btn ${(settings.botActivityType||'')==='COMPETING'?'act-active':''}" onclick="selectActivity('COMPETING')" id="at-COMPETING">🏆 กำลังแข่ง</div>
                 </div>
-                <input type="hidden" id="botActivityType" value="${settings.botActivityType || 'WATCHING'}">
+                <input type="hidden" id="botActivityType" value="${settings.botActivityType||'WATCHING'}">
 
-                <!-- ข้อความกิจกรรม -->
                 <label id="actLabel">👁️ ข้อความ "กำลังดู..."</label>
-                <input type="text" id="botActivity" value="${botActivity}" placeholder="เช่น ระบบออนช่องเสียง" maxlength="128">
+                <input type="text" id="botActivity" value="${botActivity}" placeholder="เช่น ระบบออนช่องเสียง" maxlength="128" oninput="updatePreview()">
 
-                <!-- โน้ต -->
                 <label>📝 โน้ต (ข้อความใต้ชื่อบอท เช่น Developed by MC)</label>
-                <input type="text" id="botNote" value="${botNote}" placeholder="เช่น Developed by Phomueangtai" maxlength="128">
+                <input type="text" id="botNote" value="${botNote}" placeholder="เช่น Developed by Phomueangtai" maxlength="128" oninput="updatePreview()">
 
                 <button class="btn btn-blue" onclick="savePresence()">✅ บันทึกและใช้งานทันที</button>
+            </div>
+
+            <!-- 🔄 Auto-Rotate -->
+            <div class="card">
+                <h3>🔄 Auto-Rotate Activity — สลับข้อความอัตโนมัติ</h3>
+
+                <label>สถานะ Auto-Rotate</label>
+                <select id="rotateEnabled">
+                    <option value="false" ${!rotateEnabled?'selected':''}>❌ ปิด Auto-Rotate</option>
+                    <option value="true" ${rotateEnabled?'selected':''}>✅ เปิด Auto-Rotate</option>
+                </select>
+
+                <label>หมุนทุกกี่นาที</label>
+                <input type="number" id="rotateInterval" value="${rotateInterval}" min="1" max="120" placeholder="เช่น 5">
+
+                <label>ข้อความที่จะสลับกัน (เพิ่มได้ไม่จำกัด)</label>
+                <div id="rotate-list">
+                    ${rotateMsgs.length ? rotateMsgs.map((m,i) => `
+                    <div class="rotate-item" id="ri-${i}">
+                        <input type="text" value="${escapeHtml(m)}" placeholder="ข้อความที่ ${i+1}" maxlength="128">
+                        <button class="btn-rm" onclick="removeRotateMsg(${i})">✕ ลบ</button>
+                    </div>`).join('') : '<div class="rotate-empty" id="rotate-empty">ยังไม่มีข้อความ — กด ➕ เพิ่มได้เลย</div>'}
+                </div>
+                <button class="btn-add" onclick="addRotateMsg()">➕ เพิ่มข้อความ</button>
+                <button class="btn btn-blue" onclick="saveRotate()" style="margin-top:10px;">💾 บันทึก Auto-Rotate</button>
+                <p style="color:#555;font-size:0.75em;margin:8px 0 0;">* เมื่อเปิด จะใช้สถานะ + ประเภทกิจกรรมตามที่ตั้งค่าไว้ด้านบน แต่สลับข้อความตามรายการนี้</p>
             </div>
         </div>
 
         <script>
-            // ── init label กิจกรรมตามค่าที่บันทึกไว้ ──
+            const statusColors = { online:'#23a55a', idle:'#f0b232', dnd:'#ED4245', invisible:'transparent' };
+            const actLabelsFull = {
+                WATCHING:'👁️ ข้อความ "กำลังดู..."',
+                LISTENING:'🎧 ข้อความ "กำลังฟัง..."',
+                PLAYING:'🎮 ข้อความ "กำลังเล่น..."',
+                COMPETING:'🏆 ข้อความ "กำลังแข่ง..."'
+            };
+            const actLabelShort = { WATCHING:'กำลังดู', LISTENING:'กำลังฟัง', PLAYING:'กำลังเล่น', COMPETING:'กำลังแข่ง' };
+
+            function updatePreview() {
+                const act  = (document.getElementById('botActivity').value || '').trim() || '...';
+                const note = (document.getElementById('botNote').value || '').trim();
+                const type = document.getElementById('botActivityType').value || 'WATCHING';
+                const st   = document.getElementById('botStatus').value || 'idle';
+                document.getElementById('pp-act').textContent  = (actLabelShort[type]||'กำลังดู') + ' ' + act;
+                document.getElementById('pp-note').textContent = note;
+                const dot = document.getElementById('pp-dot');
+                if (st === 'invisible') {
+                    dot.style.background = 'transparent';
+                    dot.style.boxShadow  = 'inset 0 0 0 2px #80848e';
+                } else {
+                    dot.style.background = statusColors[st] || '#23a55a';
+                    dot.style.boxShadow  = '0 0 0 2px ' + (statusColors[st]||'#23a55a') + '55';
+                }
+            }
+
             window.addEventListener('DOMContentLoaded', () => {
                 const saved = document.getElementById('botActivityType').value || 'WATCHING';
-                const labels = {
-                    WATCHING:  '👁️ ข้อความ "กำลังดู..."',
-                    LISTENING: '🎧 ข้อความ "กำลังฟัง..."',
-                    PLAYING:   '🎮 ข้อความ "กำลังเล่น..."',
-                    COMPETING: '🏆 ข้อความ "กำลังแข่ง..."'
-                };
-                const lbl = document.getElementById('actLabel');
-                if (lbl) lbl.textContent = labels[saved] || labels['WATCHING'];
+                document.getElementById('actLabel').textContent = actLabelsFull[saved] || actLabelsFull['WATCHING'];
+                updatePreview();
             });
 
-            // ── label แต่ละประเภทกิจกรรม ──
-            const actLabels = {
-                WATCHING:  '👁️ ข้อความ "กำลังดู..."',
-                LISTENING: '🎧 ข้อความ "กำลังฟัง..."',
-                PLAYING:   '🎮 ข้อความ "กำลังเล่น..."',
-                COMPETING: '🏆 ข้อความ "กำลังแข่ง..."'
-            };
-
-            // ── เลือกสถานะ (Discord radio style) ──
             function selectStatus(s) {
                 document.getElementById('botStatus').value = s;
                 ['online','idle','dnd','invisible'].forEach(x => {
-                    const item  = document.getElementById('dc-' + x);
-                    const radio = item.querySelector('.dc-radio');
-                    if (x === s) {
-                        item.classList.add('selected');
-                        radio.classList.add('dc-radio-on');
-                    } else {
-                        item.classList.remove('selected');
-                        radio.classList.remove('dc-radio-on');
-                    }
+                    const item = document.getElementById('dc-' + x);
+                    item.classList.toggle('selected', x === s);
+                    item.querySelector('.dc-radio').classList.toggle('dc-radio-on', x === s);
                 });
+                updatePreview();
             }
 
-            // ── เลือกประเภทกิจกรรม ──
             function selectActivity(t) {
                 document.getElementById('botActivityType').value = t;
                 ['WATCHING','LISTENING','PLAYING','COMPETING'].forEach(x => {
                     document.getElementById('at-' + x).classList.toggle('act-active', x === t);
                 });
-                document.getElementById('actLabel').textContent = actLabels[t] || actLabels['WATCHING'];
+                document.getElementById('actLabel').textContent = actLabelsFull[t] || actLabelsFull['WATCHING'];
+                updatePreview();
             }
 
             function showMsg(text, ok) {
                 const msg = document.getElementById('msg');
-                msg.style.display = 'block';
+                msg.style.display    = 'block';
                 msg.style.background = ok ? '#0d1f14' : '#1f0d0d';
-                msg.style.border = ok ? '1px solid #57F28755' : '1px solid #ED424555';
-                msg.style.color = ok ? '#57F287' : '#ED4245';
-                msg.textContent = text;
+                msg.style.border     = ok ? '1px solid #57F28755' : '1px solid #ED424555';
+                msg.style.color      = ok ? '#57F287' : '#ED4245';
+                msg.textContent      = text;
                 setTimeout(() => { msg.style.display = 'none'; }, 4000);
             }
 
@@ -770,7 +835,7 @@ app.get("/settings", async (req, res) => {
                 try {
                     const r = await fetch('/api/settings', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'${API_SECRET}'}, body:JSON.stringify(body) });
                     const d = await r.json();
-                    showMsg(d.success ? '✅ บันทึก General สำเร็จ' : '❌ Error: ' + (d.error || 'Unknown'), d.success);
+                    showMsg(d.success ? '✅ บันทึก General สำเร็จ' : '❌ Error: '+(d.error||'Unknown'), d.success);
                 } catch(e) { showMsg('❌ เชื่อมต่อไม่ได้', false); }
             }
 
@@ -787,7 +852,48 @@ app.get("/settings", async (req, res) => {
                         body: JSON.stringify({ botStatus, botActivityType, botActivity, botNote })
                     });
                     const d = await r.json();
-                    showMsg(d.success ? '✅ อัปเดตสถานะบอทแล้ว มีผลทันที!' : '❌ Error: ' + (d.error || 'Unknown'), d.success);
+                    showMsg(d.success ? '✅ อัปเดตสถานะบอทแล้ว มีผลทันที!' : '❌ Error: '+(d.error||'Unknown'), d.success);
+                } catch(e) { showMsg('❌ เชื่อมต่อไม่ได้', false); }
+            }
+
+            let rotateCount = ${rotateMsgs.length};
+
+            function addRotateMsg() {
+                const list = document.getElementById('rotate-list');
+                const empty = document.getElementById('rotate-empty');
+                if (empty) empty.remove();
+                const div = document.createElement('div');
+                div.className = 'rotate-item';
+                div.id = 'ri-' + rotateCount;
+                const idx = rotateCount;
+                div.innerHTML = '<input type="text" placeholder="ข้อความที่ ' + (idx+1) + '" maxlength="128"><button class="btn-rm" onclick="removeRotateMsg(' + idx + ')">✕ ลบ</button>';
+                list.appendChild(div);
+                rotateCount++;
+            }
+
+            function removeRotateMsg(idx) {
+                const el = document.getElementById('ri-' + idx);
+                if (el) el.remove();
+                if (!document.querySelectorAll('.rotate-item').length) {
+                    document.getElementById('rotate-list').innerHTML = '<div class="rotate-empty" id="rotate-empty">ยังไม่มีข้อความ — กด ➕ เพิ่มได้เลย</div>';
+                }
+            }
+
+            async function saveRotate() {
+                const rotateEnabled  = document.getElementById('rotateEnabled').value === 'true';
+                const rotateInterval = parseInt(document.getElementById('rotateInterval').value) || 5;
+                const msgs = [...document.querySelectorAll('.rotate-item input')].map(i => i.value.trim()).filter(Boolean);
+                if (rotateEnabled && !msgs.length) return showMsg('❌ กรุณาเพิ่มข้อความอย่างน้อย 1 ข้อความ', false);
+                try {
+                    const r = await fetch('/api/presence/rotate', {
+                        method:'POST',
+                        headers:{'Content-Type':'application/json','Authorization':'${API_SECRET}'},
+                        body: JSON.stringify({ rotateEnabled, rotateInterval, rotateMessages: msgs })
+                    });
+                    const d = await r.json();
+                    showMsg(d.success
+                        ? (rotateEnabled ? '✅ Auto-Rotate เปิดแล้ว! สลับทุก '+rotateInterval+' นาที' : '✅ ปิด Auto-Rotate แล้ว')
+                        : '❌ Error: '+(d.error||'Unknown'), d.success);
                 } catch(e) { showMsg('❌ เชื่อมต่อไม่ได้', false); }
             }
         </script></body></html>`);
@@ -1684,6 +1790,34 @@ app.post("/api/settings", async (req, res) => {
     }
 });
 
+// ── Auto-Rotate Timer (server-side) ──
+let _rotateTimer = null;
+let _rotateIdx   = 0;
+
+async function startRotateTimer() {
+    if (_rotateTimer) { clearInterval(_rotateTimer); _rotateTimer = null; }
+    try {
+        const s = await sessionManager.getAllSettings();
+        if (!s.rotateEnabled) return;
+        const msgs = Array.isArray(s.rotateMessages) ? s.rotateMessages.filter(Boolean) : [];
+        if (!msgs.length) return;
+        const intervalMs = Math.max(1, parseInt(s.rotateInterval) || 5) * 60 * 1000;
+        const actType    = ['WATCHING','LISTENING','PLAYING','COMPETING'].includes(s.botActivityType) ? s.botActivityType : 'WATCHING';
+        const status     = ['online','idle','dnd','invisible'].includes(s.botStatus) ? s.botStatus : 'idle';
+        _rotateIdx = 0;
+        _rotateTimer = setInterval(() => {
+            if (!client?.isReady?.()) return;
+            const msg = msgs[_rotateIdx % msgs.length];
+            client.user.setPresence({ status, activities: [{ name: msg, type: actType }] });
+            console.log(`[ROTATE] 🔄 [${_rotateIdx % msgs.length + 1}/${msgs.length}] ${msg}`);
+            _rotateIdx++;
+        }, intervalMs);
+        console.log(`[ROTATE] ✅ Started — ${msgs.length} ข้อความ, ทุก ${s.rotateInterval || 5} นาที`);
+    } catch (e) {
+        console.error(`[ROTATE] ❌ ${e.message}`);
+    }
+}
+
 // ── Bot Presence API — บันทึกและใช้งานทันที ──
 app.post("/api/presence", async (req, res) => {
     if (!checkAuth(req, res)) return;
@@ -1717,6 +1851,29 @@ app.post("/api/presence", async (req, res) => {
             console.log(`[PRESENCE] ✅ Status: ${botStatus} | ${actType}: ${botActivity} | Note: ${botNote || '-'}`);
         }
 
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// ── Auto-Rotate API ──
+app.post("/api/presence/rotate", async (req, res) => {
+    if (!checkAuth(req, res)) return;
+    try {
+        const { rotateEnabled, rotateInterval, rotateMessages } = req.body;
+        if (typeof rotateEnabled !== 'boolean') {
+            return res.status(400).json({ success: false, error: 'rotateEnabled ต้องเป็น boolean' });
+        }
+        const interval = Math.max(1, parseInt(rotateInterval) || 5);
+        const msgs = Array.isArray(rotateMessages) ? rotateMessages.map(m => String(m).trim().slice(0, 128)).filter(Boolean) : [];
+
+        await sessionManager.setSetting('rotateEnabled',  rotateEnabled);
+        await sessionManager.setSetting('rotateInterval', interval);
+        await sessionManager.setSetting('rotateMessages', msgs);
+
+        await startRotateTimer();
+        console.log(`[ROTATE] 💾 Saved — Enabled: ${rotateEnabled} | ${msgs.length} ข้อความ | ทุก ${interval} นาที`);
         res.json({ success: true });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
@@ -2144,6 +2301,10 @@ client.on("ready", async () => {
     } catch (e) {
         console.error(`[PRESENCE] ❌ Failed to set presence: ${e.message}`);
     }
+
+    // เริ่ม Auto-Rotate timer (ถ้าเปิดใช้งานไว้)
+    await startRotateTimer();
+
     try {
         await client.application.commands.set(commands.slashCommandsData);
         console.log(`[COMMANDS] 📌 Registered ${commands.slashCommandsData.length} slash commands.`);
