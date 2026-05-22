@@ -976,6 +976,7 @@ app.get("/session/:sessionId", (req, res) => {
                 <div style="border-top:1px solid #27272a;margin:10px 0;"></div>
                 <div class="info-row"><span class="info-label">🔄 Reconnect</span><span class="info-value" id="sReconnect" style="color:#ff9944;">--</span></div>
                 <div class="info-row"><span class="info-label">สถานะ</span><span class="info-value" id="sStatus">--</span></div>
+                <div class="info-row"><span class="info-label">🔑 Token</span><span class="info-value" id="sTokenHealth">--</span></div>
             </div>
         </div>
 
@@ -1087,6 +1088,9 @@ app.get("/session/:sessionId", (req, res) => {
         const rc = d.reconnectCount || 0;
         document.getElementById('sReconnect').textContent = rc > 0 ? rc + ' ครั้ง' : 'ยังไม่มี';
         document.getElementById('sStatus').innerHTML = '<span style="color:#57F287;">🟢 Online</span>';
+        document.getElementById('sTokenHealth').innerHTML = d.tokenInvalid
+            ? '<span style="color:#ED4245;">❌ มีปัญหา — ตรวจสอบ Token ใหม่</span>'
+            : '<span style="color:#57F287;">✅ ปกติ</span>';
 
         renderToken(d.tokenTail);
         renderLogs(d.voiceLogs || []);
@@ -1354,6 +1358,7 @@ app.get("/api/session/:sessionId", (req, res) => {
             startedAt: session.startedAt,
             lastActivity: session.lastActivity,
             reconnectCount: session.reconnectCount || 0,
+            tokenInvalid: session.tokenInvalid || false,
             voiceLogs: sessionLogs
         });
     } catch (e) {

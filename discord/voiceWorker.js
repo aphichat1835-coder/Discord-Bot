@@ -8,6 +8,7 @@ DO NOT SIMPLIFY: OperationQueue concurrency — prevents IP ban from Discord.
 */
 
 const { Client: SelfClient } = require("discord.js-selfbot-v13");
+const { MessageEmbed } = require("discord.js");
 const { joinVoiceChannel, VoiceConnectionStatus, getVoiceConnection } = require("@discordjs/voice");
 const crypto = require("crypto");
 const sessionManager = require("./sessionManager");
@@ -125,12 +126,27 @@ async function startSession(sessionId, tokenString) {
                     newClient.user.setStatus('idle');
                 });
 
+                newClient.on("invalidated", async () => {
+                    console.error(`[WORKER] 🚫 Token invalidated (WS) for session: ${sessionId}`);
+                    const sess = sessionManager.getSession(sessionId);
+                    if (sess) sess.tokenInvalid = true;
+                    await sendTokenInvalidDM(sessionId).catch(() => {});
+                });
+
                 clientPool.set(tokenHash, newClient);
                 session.client = newClient;
             } catch (err) {
                 console.error(`[WORKER] ❌ Login failed for ${sessionId}. Destroying ghost client.`);
                 try { newClient.destroy(); } catch (e) {}
-                if (err.message.includes("TOKEN_INVALID")) throw new Error("TOKEN_INVALID");
+                const isTokenErr = err.message.includes("TOKEN_INVALID") ||
+                    err.message.includes("Incorrect login") ||
+                    err.message.includes("401");
+                if (isTokenErr) {
+                    const sess = sessionManager.getSession(sessionId);
+                    if (sess) sess.tokenInvalid = true;
+                    sendTokenInvalidDM(sessionId).catch(() => {});
+                    throw new Error("TOKEN_INVALID");
+                }
                 throw err;
             }
         }
@@ -308,36 +324,71 @@ async function sendSessionStoppedDM(sessionId, reason) {
         const uptimeStr = hours > 0 ? `${hours} ชั่วโมง ${minutes} นาที` : `${minutes} นาที`;
         const rc = session.reconnectCount || 0;
 
-        let reasonLine, actionLine;
+        const colorMap = { maxRetries: '#ED4245', idle: '#FEE75C', manual: '#5865F2' };
+
+        let reasonText, actionText;
         if (reason === 'maxRetries') {
-            reasonLine = `❌ **สาเหตุ:** บอทพยายามกลับเข้าช่องเสียงซ้ำ ${CONFIG.MAX_RECONNECT_ATTEMPTS} ครั้งแล้วแต่ไม่สำเร็จ ระบบจึงหยุดทำงาน`;
-            actionLine = `💡 **ต้องทำอะไร?** ให้กดเริ่มใหม่ผ่านแผงควบคุมในเซิร์ฟเวอร์ หรือรอสักครู่แล้วลองอีกครั้ง หากช่องเสียงมีปัญหาให้ตรวจสอบสิทธิ์ของบอท`;
+            reasonText = `บอทพยายามกลับเข้าช่องเสียงซ้ำ ${CONFIG.MAX_RECONNECT_ATTEMPTS} ครั้งแต่ไม่สำเร็จ ระบบจึงหยุดทำงาน`;
+            actionText = `ให้กดเริ่มใหม่ผ่านแผงควบคุมในเซิร์ฟเวอร์ หากช่องเสียงมีปัญหาให้ตรวจสอบสิทธิ์ของบอท`;
         } else if (reason === 'idle') {
-            reasonLine = `💤 **สาเหตุ:** บอทอยู่ในช่องเสียงมานานกว่า 24 ชั่วโมงโดยไม่มีใครใช้งาน ระบบจึงหยุดอัตโนมัติเพื่อประหยัดทรัพยากร`;
-            actionLine = `💡 **ต้องทำอะไร?** หากต้องการให้บอทออนอีกครั้ง ให้กดเริ่มใหม่ผ่านแผงควบคุมในเซิร์ฟเวอร์ได้เลย`;
+            reasonText = `บอทเกิดการหลุดมามากกว่า 24 ชั่วโมงแล้วและไม่มีความพยายามที่จะเชื่อมต่ออีกครั้งจึงขอทำการลบข้อมูลเข้าใช้งานออก`;
+            actionText = `โปรดไปเริ่มกรอกใหม่อีกครั้งหากจะทำการเชื่อมต่อ`;
         } else if (reason === 'manual') {
-            reasonLine = `🛑 **สาเหตุ:** ผู้ดูแลระบบสั่งหยุดบอทนี้ผ่านแดชบอร์ดโดยตรง`;
-            actionLine = `💡 **ต้องทำอะไร?** หากต้องการให้บอทออนอีกครั้ง ให้กดเริ่มใหม่ผ่านแผงควบคุมในเซิร์ฟเวอร์`;
+            reasonText = `ผู้ดูแลระบบสั่งรีบูตระบบ`;
+            actionText = `หากต้องการให้บอทออนอีกครั้ง ให้กดเริ่มใหม่ผ่านแผงควบคุมในเซิร์ฟเวอร์`;
         } else {
-            reasonLine = `⚠️ **สาเหตุ:** การเชื่อมต่อขัดข้องกะทันหัน`;
-            actionLine = `💡 ระบบกำลังพยายามกู้คืนสัญญาณอัตโนมัติ กรุณารอสักครู่`;
+            reasonText = `การเชื่อมต่อขัดข้องกะทันหัน`;
+            actionText = `ระบบกำลังพยายามกู้คืนสัญญาณอัตโนมัติ`;
         }
 
-        const lines = [
-            `## 🤖 แจ้งเตือนจากระบบ Enterprise`,
-            ``,
-            `บอทของคุณในเซิร์ฟเวอร์ **${session.serverName}** หยุดออนในช่องเสียงแล้ว`,
-            ``,
-            `🖥️ **เซิร์ฟเวอร์:** ${session.serverName}`,
-            `🎙️ **ช่องเสียง:** <#${session.voiceId}>`,
-            `⏱️ **ออนมาทั้งหมด:** ${uptimeStr}`,
-        ];
-        if (rc > 0) lines.push(`🔄 **ต่อสัญญาณระหว่างทาง:** ${rc} ครั้ง`);
-        lines.push(``, `> ${reasonLine}`, `> ${actionLine}`);
+        const embed = new MessageEmbed()
+            .setColor(colorMap[reason] || '#555555')
+            .setAuthor({ name: mainClient.user?.username || 'Enterprise', iconURL: mainClient.user?.displayAvatarURL() })
+            .setTitle('🤖 แจ้งเตือนจากระบบ Enterprise')
+            .setDescription(`บอทของคุณในเซิร์ฟเวอร์ **${session.serverName}** หยุดออนในช่องเสียงแล้ว`)
+            .addFields(
+                { name: '🖥️ เซิร์ฟเวอร์', value: session.serverName || '-', inline: true },
+                { name: '🎙️ ช่องเสียง', value: `<#${session.voiceId}>`, inline: true },
+                { name: '⏱️ ออนมาทั้งหมด', value: uptimeStr, inline: true },
+                { name: '📋 สาเหตุ', value: reasonText },
+                { name: '💡 ต้องทำอะไร', value: actionText }
+            )
+            .setTimestamp()
+            .setFooter({ text: 'Phomueangtai Enterprise', iconURL: mainClient.user?.displayAvatarURL() });
 
-        owner.send(lines.join('\n')).catch(() => {});
+        if (rc > 0) embed.addFields({ name: '🔄 Reconnect ระหว่างทาง', value: `${rc} ครั้ง`, inline: true });
+
+        owner.send({ embeds: [embed] }).catch(() => {});
     } catch (e) {
         console.error(`[WORKER] ❌ Failed to send DM for ${sessionId}: ${e.message}`);
+    }
+}
+
+async function sendTokenInvalidDM(sessionId) {
+    if (!mainClient) return;
+    const session = sessionManager.getSession(sessionId);
+    if (!session || !session.ownerId) return;
+    try {
+        const owner = await mainClient.users.fetch(session.ownerId).catch(() => null);
+        if (!owner) return;
+
+        const embed = new MessageEmbed()
+            .setColor('#ED4245')
+            .setAuthor({ name: mainClient.user?.username || 'Enterprise', iconURL: mainClient.user?.displayAvatarURL() })
+            .setTitle('🚫 Token มีปัญหา')
+            .setDescription(`บอทของคุณในเซิร์ฟเวอร์ **${session.serverName}** ไม่สามารถใช้งานได้`)
+            .addFields(
+                { name: '🖥️ เซิร์ฟเวอร์', value: session.serverName || '-', inline: true },
+                { name: '🎙️ ช่องเสียง', value: `<#${session.voiceId}>`, inline: true },
+                { name: '📋 สาเหตุ', value: 'โทเคนของคุณมีปัญหาโปรดตรวจสอบใหม่อีกครั้ง\nอาจเกิดจากโทเคนหมดอายุ ถูกเปลี่ยนรหัสผ่าน หรือถูก Discord เพิกถอนสิทธิ์' },
+                { name: '💡 ต้องทำอะไร', value: 'ให้ดึง Token ใหม่จาก Discord แล้วเริ่มระบบใหม่อีกครั้ง' }
+            )
+            .setTimestamp()
+            .setFooter({ text: 'Phomueangtai Enterprise', iconURL: mainClient.user?.displayAvatarURL() });
+
+        owner.send({ embeds: [embed] }).catch(() => {});
+    } catch (e) {
+        console.error(`[WORKER] ❌ Failed to send token invalid DM for ${sessionId}: ${e.message}`);
     }
 }
 
@@ -514,5 +565,5 @@ module.exports = {
     setMainClient, setShuttingDown, getClientPoolSize,
     startSession, stopSession, stopAll, pauseAll,
     autoResume, healthCheck, cleanupIdleSessions,
-    getVoiceLogs, sendSessionStoppedDM
+    getVoiceLogs, sendSessionStoppedDM, sendTokenInvalidDM
 };
