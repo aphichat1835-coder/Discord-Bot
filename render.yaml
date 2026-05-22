@@ -4,7 +4,7 @@ services:
     env: node
     plan: free
     buildCommand: npm install
-    startCommand: npm start
+    startCommand: node discord/index.js
     healthCheckPath: /ping
     healthCheckInterval: 30
     envVars:
@@ -15,4 +15,12 @@ services:
       - key: TOKEN_MANAGER
         sync: false
       - key: ENCRYPTION_KEY
+        sync: false
+      - key: MONGO_URI
+        sync: false
+      - key: API_SECRET
+        sync: false
+      - key: WEBHOOK_LOG_URL
+        sync: false
+      - key: ALERT_WEBHOOK_URL
         sync: false
