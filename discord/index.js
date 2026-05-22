@@ -576,55 +576,150 @@ app.get("/settings", async (req, res) => {
     const rateLimitReq = settings.rateLimitRequests ?? config.limits.rateLimitRequests;
     const antiRaidEnabled = settings.antiRaidEnabled ?? true;
     const idleTimeoutHrs = settings.idleTimeoutHrs ?? 24;
+    const botStatus = settings.botStatus ?? config.bot_presence?.status ?? 'idle';
+    const botActivity = escapeHtml(settings.botActivity ?? config.bot_presence?.activityText ?? 'ระบบออนช่องเสียง');
+    const botNote = escapeHtml(settings.botNote ?? '');
 
     res.send(`<!DOCTYPE html><html><head>
         <title>Settings — Enterprise</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
-            body{background:#111;color:#fff;font-family:sans-serif;margin:0;padding:20px;}
-            .container{max-width:600px;margin:0 auto;}
-            .card{background:#1a1a1a;padding:20px;border-radius:15px;margin-bottom:20px;}
-            input,select{background:#222;color:#fff;border:1px solid #444;padding:8px 12px;border-radius:8px;width:100%;box-sizing:border-box;margin-top:5px;}
-            label{color:#aaa;font-size:0.9em;display:block;margin-top:12px;}
-            .btn{background:#57F287;color:#000;border:none;padding:10px 24px;border-radius:8px;font-weight:bold;cursor:pointer;margin-top:16px;width:100%;}
-            .nav{display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap;}
-            .nav a{background:#222;color:#57F287;padding:8px 16px;border-radius:8px;text-decoration:none;font-size:0.9em;}
-            .msg{padding:10px;border-radius:8px;margin-bottom:16px;display:none;}
+            *{box-sizing:border-box;}
+            body{background:#0d0d0f;color:#e0e0e0;font-family:'Segoe UI',sans-serif;margin:0;padding:20px;}
+            .container{max-width:620px;margin:0 auto;}
+            h2{color:#57F287;margin-bottom:4px;}
+            .subtitle{color:#555;font-size:0.82em;margin-bottom:18px;}
+            .card{background:#18181b;border:1px solid #27272a;padding:20px;border-radius:12px;margin-bottom:18px;}
+            .card h3{margin-top:0;font-size:1em;color:#aaa;border-bottom:1px solid #27272a;padding-bottom:10px;margin-bottom:14px;}
+            input,select,textarea{background:#111;color:#fff;border:1px solid #3f3f46;padding:9px 12px;border-radius:8px;width:100%;margin-top:6px;font-size:0.9em;outline:none;}
+            input:focus,select:focus,textarea:focus{border-color:#57F287;}
+            textarea{resize:vertical;min-height:60px;font-family:inherit;}
+            label{color:#aaa;font-size:0.82em;display:block;margin-top:14px;}
+            .btn{border:none;padding:10px 20px;border-radius:8px;font-weight:bold;cursor:pointer;margin-top:14px;width:100%;font-size:0.95em;}
+            .btn-green{background:#57F287;color:#000;}
+            .btn-blue{background:#5865F2;color:#fff;}
+            .nav{display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;}
+            .nav a{background:#18181b;color:#57F287;padding:7px 14px;border-radius:8px;text-decoration:none;font-size:0.82em;border:1px solid #27272a;}
+            .nav a:hover{background:#27272a;}
+            .msg{padding:10px 14px;border-radius:8px;margin-bottom:14px;display:none;font-size:0.88em;}
+            .status-row{display:flex;gap:8px;margin-top:6px;}
+            .status-btn{flex:1;padding:10px 6px;border-radius:8px;border:2px solid #27272a;background:#111;color:#aaa;cursor:pointer;text-align:center;font-size:0.85em;transition:all .15s;}
+            .status-btn.active-online{border-color:#57F287;color:#57F287;background:#0d1f14;}
+            .status-btn.active-idle{border-color:#FEE75C;color:#FEE75C;background:#1f1c0d;}
+            .status-btn.active-dnd{border-color:#ED4245;color:#ED4245;background:#1f0d0d;}
+            .dot-preview{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:middle;}
         </style></head><body>
         <div class="container">
-            <h2 style="color:#57F287;">⚙️ System Settings</h2>
-            <div class="nav"><a href="/">🏠 หน้าหลัก</a><a href="/whitelist">📋 Whitelist</a><a href="/approved">✅ Approved</a><a href="/logs">📜 Logs</a></div>
+            <h2>⚙️ System Settings</h2>
+            <p class="subtitle">จัดการการตั้งค่าระบบทั้งหมดได้ที่นี่</p>
+            <div class="nav">
+                <a href="/">🏠 หน้าหลัก</a>
+                <a href="/whitelist">📋 Whitelist</a>
+                <a href="/approved">✅ Approved</a>
+                <a href="/logs">📜 Logs</a>
+                <a href="/logs/voice">🔊 Voice Log</a>
+            </div>
+
             <div id="msg" class="msg"></div>
+
+            <!-- หมวด General -->
             <div class="card">
-                <h3 style="margin-top:0;">🎛️ General Config</h3>
-                <label>Max Sessions (ปัจจุบัน: ${maxSessions})</label>
+                <h3>🎛️ General Config</h3>
+                <label>Max Sessions (จำนวนผู้ใช้สูงสุดพร้อมกัน)</label>
                 <input type="number" id="maxSessions" value="${maxSessions}" min="1" max="100">
-                <label>Rate Limit Requests / นาที (ปัจจุบัน: ${rateLimitReq})</label>
+                <label>Rate Limit — รับคำขอสูงสุด (ครั้ง/นาที)</label>
                 <input type="number" id="rateLimitRequests" value="${rateLimitReq}" min="1" max="60">
-                <label>Idle Timeout (ชั่วโมง, ปัจจุบัน: ${idleTimeoutHrs})</label>
+                <label>Idle Timeout — หยุดอัตโนมัติหลัง (ชั่วโมง)</label>
                 <input type="number" id="idleTimeoutHrs" value="${idleTimeoutHrs}" min="1" max="168">
                 <label>Anti-Raid Tag System</label>
                 <select id="antiRaidEnabled">
-                    <option value="true" ${antiRaidEnabled?'selected':''}>✅ เปิดใช้งาน</option>
-                    <option value="false" ${!antiRaidEnabled?'selected':''}>❌ ปิดใช้งาน</option>
+                    <option value="true" ${antiRaidEnabled ? 'selected' : ''}>✅ เปิดใช้งาน</option>
+                    <option value="false" ${!antiRaidEnabled ? 'selected' : ''}>❌ ปิดใช้งาน</option>
                 </select>
-                <button class="btn" onclick="saveSettings()">💾 บันทึกการตั้งค่า</button>
+                <button class="btn btn-green" onclick="saveSettings()">💾 บันทึก General</button>
+            </div>
+
+            <!-- หมวด Bot Presence -->
+            <div class="card">
+                <h3>🌙 Bot Presence — สถานะโปรไฟล์บอท</h3>
+
+                <label>สถานะบอท (เลือกได้ 1 อย่าง)</label>
+                <div class="status-row">
+                    <div class="status-btn ${botStatus === 'online' ? 'active-online' : ''}" id="sb-online" onclick="selectStatus('online')">
+                        <span class="dot-preview" style="background:#57F287;"></span>🟢 Online
+                    </div>
+                    <div class="status-btn ${botStatus === 'idle' ? 'active-idle' : ''}" id="sb-idle" onclick="selectStatus('idle')">
+                        <span class="dot-preview" style="background:#FEE75C;"></span>🌙 Idle
+                    </div>
+                    <div class="status-btn ${botStatus === 'dnd' ? 'active-dnd' : ''}" id="sb-dnd" onclick="selectStatus('dnd')">
+                        <span class="dot-preview" style="background:#ED4245;"></span>🔴 DND
+                    </div>
+                </div>
+                <input type="hidden" id="botStatus" value="${botStatus}">
+
+                <label>👁️ ข้อความ "กำลังดู..." (Watching)</label>
+                <input type="text" id="botActivity" value="${botActivity}" placeholder="เช่น ระบบออนช่องเสียง, Phomueangtai Enterprise" maxlength="128">
+
+                <label>📝 โน้ต (Custom Status / บรรทัดที่ 2)</label>
+                <textarea id="botNote" placeholder="เช่น พัฒนาโดย Phomueangtai | ออนช่องเสียง 24ชม." maxlength="128">${botNote}</textarea>
+
+                <button class="btn btn-blue" onclick="savePresence()">🌙 บันทึกและใช้งานทันที</button>
             </div>
         </div>
+
         <script>
-            async function saveSettings(){
-                const body={
-                    maxSessions:parseInt(document.getElementById('maxSessions').value),
-                    rateLimitRequests:parseInt(document.getElementById('rateLimitRequests').value),
-                    idleTimeoutHrs:parseInt(document.getElementById('idleTimeoutHrs').value),
-                    antiRaidEnabled:document.getElementById('antiRaidEnabled').value==='true'
+            let currentStatus = '${botStatus}';
+
+            function selectStatus(s) {
+                currentStatus = s;
+                document.getElementById('botStatus').value = s;
+                ['online','idle','dnd'].forEach(x => {
+                    const el = document.getElementById('sb-' + x);
+                    el.className = 'status-btn';
+                    if (x === s) {
+                        if (s === 'online') el.classList.add('active-online');
+                        else if (s === 'idle') el.classList.add('active-idle');
+                        else if (s === 'dnd') el.classList.add('active-dnd');
+                    }
+                });
+            }
+
+            function showMsg(text, ok) {
+                const msg = document.getElementById('msg');
+                msg.style.display = 'block';
+                msg.style.background = ok ? '#0d1f14' : '#1f0d0d';
+                msg.style.border = ok ? '1px solid #57F28755' : '1px solid #ED424555';
+                msg.style.color = ok ? '#57F287' : '#ED4245';
+                msg.textContent = text;
+                setTimeout(() => { msg.style.display = 'none'; }, 4000);
+            }
+
+            async function saveSettings() {
+                const body = {
+                    maxSessions: parseInt(document.getElementById('maxSessions').value),
+                    rateLimitRequests: parseInt(document.getElementById('rateLimitRequests').value),
+                    idleTimeoutHrs: parseInt(document.getElementById('idleTimeoutHrs').value),
+                    antiRaidEnabled: document.getElementById('antiRaidEnabled').value === 'true'
                 };
-                const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'${API_SECRET}'},body:JSON.stringify(body)});
-                const d=await r.json();
-                const msg=document.getElementById('msg');
-                msg.style.display='block';
-                msg.style.background=d.success?'#1a3a1a':'#3a1a1a';
-                msg.textContent=d.success?'✅ บันทึกสำเร็จ':'❌ Error: '+(d.error||'Unknown');
+                try {
+                    const r = await fetch('/api/settings', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'${API_SECRET}'}, body:JSON.stringify(body) });
+                    const d = await r.json();
+                    showMsg(d.success ? '✅ บันทึก General สำเร็จ' : '❌ Error: ' + (d.error || 'Unknown'), d.success);
+                } catch(e) { showMsg('❌ เชื่อมต่อไม่ได้', false); }
+            }
+
+            async function savePresence() {
+                const body = {
+                    botStatus: document.getElementById('botStatus').value,
+                    botActivity: document.getElementById('botActivity').value.trim(),
+                    botNote: document.getElementById('botNote').value.trim()
+                };
+                if (!body.botActivity) return showMsg('❌ กรุณากรอกข้อความ กำลังดู...', false);
+                try {
+                    const r = await fetch('/api/presence', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'${API_SECRET}'}, body:JSON.stringify(body) });
+                    const d = await r.json();
+                    showMsg(d.success ? '✅ อัปเดตสถานะบอทแล้ว มีผลทันที!' : '❌ Error: ' + (d.error || 'Unknown'), d.success);
+                } catch(e) { showMsg('❌ เชื่อมต่อไม่ได้', false); }
             }
         </script></body></html>`);
 });
@@ -1520,6 +1615,39 @@ app.post("/api/settings", async (req, res) => {
     }
 });
 
+// ── Bot Presence API — บันทึกและใช้งานทันที ──
+app.post("/api/presence", async (req, res) => {
+    if (!checkAuth(req, res)) return;
+    try {
+        const { botStatus, botActivity, botNote } = req.body;
+        const validStatuses = ['online', 'idle', 'dnd'];
+        if (!validStatuses.includes(botStatus)) {
+            return res.status(400).json({ success: false, error: 'สถานะไม่ถูกต้อง' });
+        }
+        if (!botActivity || typeof botActivity !== 'string') {
+            return res.status(400).json({ success: false, error: 'กรุณากรอกข้อความ กำลังดู...' });
+        }
+
+        await sessionManager.setSetting('botStatus', botStatus);
+        await sessionManager.setSetting('botActivity', botActivity.slice(0, 128));
+        await sessionManager.setSetting('botNote', (botNote || '').slice(0, 128));
+
+        const activities = [{ name: botActivity.slice(0, 128), type: 'WATCHING' }];
+        if (botNote && botNote.trim()) {
+            activities.push({ name: botNote.trim().slice(0, 128), type: 'CUSTOM' });
+        }
+
+        if (client?.isReady?.()) {
+            client.user.setPresence({ status: botStatus, activities });
+            console.log(`[PRESENCE] ✅ Updated via Dashboard — Status: ${botStatus} | Watching: ${botActivity} | Note: ${botNote || '-'}`);
+        }
+
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 // Whitelist Add
 app.post("/api/whitelist/add", async (req, res) => {
     if (!checkAuth(req, res)) return;
@@ -1921,14 +2049,20 @@ client.on("ready", async () => {
     console.log(`[CLIENT] 🟢 Logged in as ${client.user.tag}`);
     voiceWorker.setShuttingDown(false);
 
-    // ตั้งสถานะพระจันทร์ + กำลังดู...
+    // โหลดค่า Presence จาก DB (ถ้ายังไม่มีใน DB ใช้ค่าจาก config)
     try {
-        const presenceText = config.bot_presence?.activityText || 'ระบบออนช่องเสียง';
-        client.user.setPresence({
-            status: config.bot_presence?.status || 'idle',
-            activities: [{ name: presenceText, type: 'WATCHING' }]
-        });
-        console.log(`[PRESENCE] 🌙 Status set to idle — Watching: ${presenceText}`);
+        const savedSettings = await sessionManager.getAllSettings();
+        const presenceStatus   = savedSettings.botStatus   || config.bot_presence?.status   || 'idle';
+        const presenceActivity = savedSettings.botActivity || config.bot_presence?.activityText || 'ระบบออนช่องเสียง';
+        const presenceNote     = savedSettings.botNote     || '';
+
+        const activities = [{ name: presenceActivity, type: 'WATCHING' }];
+        if (presenceNote.trim()) {
+            activities.push({ name: presenceNote.trim(), type: 'CUSTOM' });
+        }
+
+        client.user.setPresence({ status: presenceStatus, activities });
+        console.log(`[PRESENCE] 🌙 Status: ${presenceStatus} | Watching: ${presenceActivity}${presenceNote ? ' | Note: ' + presenceNote : ''}`);
     } catch (e) {
         console.error(`[PRESENCE] ❌ Failed to set presence: ${e.message}`);
     }
