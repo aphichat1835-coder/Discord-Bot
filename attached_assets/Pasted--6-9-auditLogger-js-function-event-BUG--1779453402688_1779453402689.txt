@@ -1,0 +1,125 @@
+📄 ไฟล์ 6/9: auditLogger.js
+✅ จุดดี
+แยก function ตามหมวด — ดูง่าย
+ครบทุก event ที่จำเป็น
+🔴 BUG วิกฤต
+Bug A-1: ❗ messageDelete ไม่ filter ข้อความที่ระบบลบเอง (Anti-Raid bulkDelete) → log สแปม
+ใน index.js Anti-Raid:
+await message.channel.bulkDelete(5).catch(() => {});
+
+→ auditLogger จับ messageDelete × 5 + messageDeleteBulk × 1 = 6 logs ต่อ 1 anti-raid event
+🩹 แก้: ใส่ flag ใน global Set ก่อนสั่งลบ:
+global.systemDeletes = global.systemDeletes || new Set();
+global.systemDeletes.add(message.id);
+
+แล้วใน auditLogger เช็ค if (global.systemDeletes.has(msg.id)) { skip; }
+Bug A-2: guildMemberAdd ลงทะเบียน 2 ครั้ง — log สมาชิกใหม่ 2 รอบ
+function registerMemberEvents() {
+    client.on("guildMemberAdd", ...);  // ครั้งที่ 1 — log สมาชิก
+}
+function registerSecurityEvents() {
+    client.on("guildMemberAdd", ...);  // ครั้งที่ 2 — log บอท
+}
+
+ปัญหา: ถ้า user (ไม่ใช่บอท) เข้า → ครั้งที่ 1 ทำงาน, ครั้งที่ 2 check if (!member.user.bot) return; ผ่าน
+ถ้าบอท → ครั้งที่ 1 ทำงาน (log เข้า member channel), ครั้งที่ 2 log เข้า security channel → มี 2 log สำหรับบอท
+ไม่ใช่ bug จริง — เป็น design intent (member channel + security channel) ✅
+🟠 Bug รอง
+Bug A-3: messageUpdate ไม่เช็ค embed-only update
+Discord ส่ง messageUpdate event ทุกครั้งที่ embed ถูก resolve (เช่น link preview) → log "ข้อความถูกแก้ไข" ทั้งที่ user ไม่ได้แก้
+🩹 แก้:
+if (oldMsg.content === newMsg.content) return;  // ← มีแล้ว ✅
+if (!oldMsg.content && !newMsg.content) return;  // ← เพิ่ม กัน embed-only
+
+Bug A-4: voiceStateUpdate ไม่ track selfMute/selfDeaf → ไม่รู้ว่าใครปิดไมค์ตัวเอง
+มีแค่ serverMute/serverDeaf (ถูกบังคับ)
+ไม่ใช่ bug — เป็น design intent (เฟส 25 บอกแค่ server-level)
+Bug A-5: webhookUpdate event ใน discord.js v13 ไม่มี — มีแค่ใน v14+
+client.on("webhookUpdate", async (channel) => { ... });
+
+ปัญหา: ใน v13 ใช้ event ชื่อ webhookUpdate แต่ payload เป็น TextChannel ตรงๆ (correct)
+ใน v14 เปลี่ยนเป็น webhooksUpdate (มี s)
+ถ้า package.json ใช้ discord.js v13.x → OK ✅
+ถ้าใช้ v14+ → event ไม่ fire → ตรวจ package.json
+📄 ไฟล์ 7/9: commands.js (Router) — ต่อ
+🔴 BUG วิกฤต (ต่อ)
+Bug R-1: ❗ handleModal modal_start ไม่ตรวจ ownership ของ Token
+บรรทัด ~360:
+async function handleModal(interaction, client) {
+    if (interaction.customId === "modal_start") {
+        const token = interaction.fields.getTextInputValue("token").trim();
+        const serverId = interaction.fields.getTextInputValue("server_id").trim();
+        const voiceId = interaction.fields.getTextInputValue("voice_id").trim();
+        ...
+        const sessionId = await sessionManager.createSession(
+            token, serverId, voiceId, guildName,
+            interaction.user.id,   // ← owner คือคนที่กดปุ่ม
+            ...
+        );
+
+ปัญหา: ใครก็ตามที่กดปุ่ม "เริ่มการทำงาน" แล้วใส่ token ของคนอื่น จะกลายเป็น "owner" ของ session นั้น
+→ คนอื่นกดดู Token ผ่าน /api/reveal-token (ที่ใช้แค่ PIN) → ขโมย token คนอื่น
+ผลกระทบ:
+ผู้ใช้ A เอา token ของผู้ใช้ B มาใส่ → B โดน A "เป็นเจ้าของ" session
+A ใช้ Dashboard → reveal token → ได้ token B
+A เข้าควบคุมบัญชี B ทันที
+🩹 แก้: ต้องมี mechanism ยืนยัน:
+Token validate กับ Discord API ก่อน → ดึง user.id จาก token จริง
+เทียบกับ interaction.user.id → ถ้าไม่ตรง = reject
+หรือง่ายกว่า: บอกใน Modal label ชัดเจน ว่า "ใส่ Token ของตัวเองเท่านั้น" + log warning ลง shadow webhook
+Bug R-2: customId status_page_-1 ตอน first page → parse เป็น NaN
+บรรทัด ~325:
+let page = 0;
+if (customId.startsWith("status_page_")) {
+    page = parseInt(customId.split("_")[2]) || 0;
+}
+if (page < 0) page = userSessions.length - 1;
+
+ปัญหา: parseInt("-1") = -1 → ตก if (page < 0) → page = length - 1 ✅ OK
+แต่ถ้า customId = "status_page_" (อาจเกิดจาก bug) → split("_")[2] = "" → parseInt("") = NaN → NaN || 0 = 0✅ OK
+จริงๆ ไม่ใช่ bug แต่ defensive ดี — ✅ ผ่าน
+Bug R-3: restorePanels() ไม่ลบ panel state ของ guild ที่บอทออกแล้ว
+บรรทัด ~210:
+async function restorePanels(client) {
+    const states = await sessionManager.PanelStateModel.find({});
+    for (const state of states) {
+        const guild = client.guilds.cache.get(state.guildId);
+        if (!guild) continue;  // ← แค่ skip ไม่ลบ DB
+        ...
+    }
+}
+
+ปัญหา: Guild ที่บอทถูก kick ออก → state ค้างใน DB ตลอดกาล → DB ใหญ่เรื่อยๆ
+🩹 แก้: ถ้า !guild → await PanelStateModel.deleteOne({ guildId: state.guildId })
+🟠 Bug รอง
+Bug R-4: handleInteraction increment 'requests' เฉพาะ isCommand() ไม่นับ button/modal
+if (interaction.isCommand()) {
+    sessionManager.systemMetrics.increment('requests');
+    ...
+}
+
+→ Button/modal interaction ไม่ถูกนับ → Success rate ใน Dashboard เพี้ยน
+→ Error ถูกนับใน catch (ทุก type) → ratio บิดเบือน (denominator เล็ก, numerator ใหญ่)
+🩹 แก้: ย้าย increment ขึ้นไปบรรทัดบนสุดของ try block
+Bug R-5: cleanupGuild ลบแค่ panelMessages ใน RAM ไม่ลบ PanelStateModel ใน DB
+function cleanupGuild(guildId) {
+    panelMessages.delete(guildId);
+}
+
+→ ตอน guildDelete event → state ค้างใน DB → restorePanels ครั้งต่อไป loop เจอ guild ที่ไม่อยู่แล้ว
+🩹 แก้:
+async function cleanupGuild(guildId) {
+    panelMessages.delete(guildId);
+    await sessionManager.PanelStateModel.deleteOne({ guildId }).catch(() => {});
+}
+
+Bug R-6: getLogChannel ค้นหา channel ทุกครั้งโดยใช้ name match — ช้า + ผิดได้
+async function getLogChannel(guild) {
+    return guild.channels.cache.find(c => c.name === config.channels.logName && c.isText()) || null;
+}
+
+ปัญหา:
+ถ้า user เปลี่ยนชื่อห้องเป็นภาษาอื่น/มี emoji → หาไม่เจอ
+O(n) — channel เยอะ = ช้า
+ถ้ามี 2 ห้องชื่อเหมือนกัน → เลือกตัวแรก (อาจไม่ใช่ที่ตั้งใจ)
+🩹 แก้: เก็บ channel ID ลง LogChannelMapModel (มีอยู่แล้ว) แทนการ match ชื่อ

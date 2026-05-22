@@ -1,0 +1,71 @@
+📄 ไฟล์ 8/9: commands/moderation.js
+✅ จุดดี
+Race condition guards (activeVoiceKicks)
+Permission chain ตรวจครบ
+setImmediate ใน loop
+finally block unlock guards ทุกที่
+ใช้ guild.members.me (v13.15+)
+🔴 BUG วิกฤต
+Bug M-1: handleVoiceKickAll vc.members Map ถูก mutate ระหว่าง loop
+บรรทัด ~50:
+for (const [memberId, member] of vc.members) {
+    ...
+    await member.voice.disconnect();  // ← ตัด member ออกจาก vc.members!
+    ...
+}
+
+ปัญหา: Iterating Map ขณะ delete = unsafe ใน JavaScript
+→ บางครั้ง iterator skip member → เตะไม่ครบ
+→ หรือ throw Concurrent modification
+🩹 แก้: Snapshot ก่อน loop:
+const membersSnapshot = Array.from(vc.members.values());
+for (const member of membersSnapshot) { ... }
+
+Bug M-2: DM ส่งก่อน ban/kick — แต่ถ้าคนปิด DM แล้ว ban → user ไม่ได้รับแจ้ง
+ปัญหานี้ไม่ใช่ของโค้ดผม — เป็น Discord limitation
+ที่ทำได้คือ DM ก่อน action ✅ ซึ่งโค้ดทำถูกแล้ว — ไม่ใช่ bug จริง
+🟠 Bug รอง
+Bug M-3: target.user.send ไม่ await — ถ้า throw จะกลายเป็น unhandledRejection
+target.user.send({ embeds: [dmEmbed] }).catch(() => {});
+
+มี .catch(() => {}) แล้ว ✅ — แต่ไม่ await หมายความว่า DM อาจส่งหลัง ban เสร็จ
+ไม่ใช่ bug — เป็น fire-and-forget pattern ที่ถูกต้อง
+Bug M-4: handleClear bulkDelete(amt, true) รอ Promise แต่ไม่จับ specific error
+const deletedMsgs = await interaction.channel.bulkDelete(amt, true);
+
+ปัญหา: bulkDelete throw error type หลายแบบ:
+DiscordAPIError [50034] — ข้อความเก่ากว่า 14 วัน
+DiscordAPIError [10008] — channel ไม่มีอยู่แล้ว
+DiscordAPIError [50013] — missing permission
+ตอนนี้ catch รวมเป็น "ล้มเหลว" — user ไม่รู้สาเหตุ
+🩹 แก้: แยก error code ใน catch:
+catch (e) {
+    if (e.code === 50034) return interaction.reply({content: "ข้อความเก่ากว่า 14 วัน"});
+    ...
+}
+
+🟠 Bug รอง (ต่อ)
+Bug M-5: handleModeration ตรวจไม่ครบ — ban/kick เจ้าของ guild ได้
+ตอนนี้เช็ค:
+if (target.id === interaction.user.id) return ...;  // ตัวเอง
+if (target.id === client.user.id) return ...;        // บอท
+if (target.roles.highest.position >= interaction.member.roles.highest.position && interaction.user.id !== interaction.guild.ownerId) return ...;
+
+ปัญหา: ไม่มีบรรทัด if (target.id === interaction.guild.ownerId) return ...;
+→ Admin ที่ยศสูงกว่า owner (ถ้ามี) → ban owner ได้ (ตามทฤษฎี)
+→ จริงๆ Discord block ban owner อยู่แล้ว แต่จะ throw error ที่ catch ไม่ user-friendly
+🩹 แก้: เพิ่มเช็ค:
+if (target.id === interaction.guild.ownerId) {
+    return interaction.reply({ content: `> ${config.emojis.no_entry} ไม่สามารถลงโทษเจ้าของเซิร์ฟเวอร์ได้!`, ephemeral: true });
+}
+
+Bug M-6: replyEmbed ส่งเข้า getLogChannel ที่หาด้วยชื่อ — ไม่ใช่ห้อง audit log
+const logCh = await getLogChannel(interaction.guild);  // หา channel ชื่อ "manager-logs"
+if (logCh) logCh.send({ embeds: [replyEmbed] }).catch(() => {});
+
+ปัญหา: ห้อง manager-logs คือห้อง log ของ session/moderation รวม — แต่ถ้าใช้ /setup-log แล้ว ระบบสร้างห้อง audit แยก (log-สมาชิก etc.) → log moderation ไม่ได้ใช้ห้องนั้น
+→ User งง: ทำไม log /ban ไม่ไปอยู่ใน log-สมาชิก
+🩹 แก้: ตัดสินใจ design — moderation log ไปอยู่ที่ไหน?
+Option A: ใช้ getLogChannel (manager-logs) — ตอนนี้ทำ
+Option B: ใช้ LogChannelMap.memberChannelId — สอดคล้องกับ audit logger
+แนะนำ B เพราะคุณซันสร้างระบบ audit log สวยงามแล้ว

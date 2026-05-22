@@ -70,7 +70,8 @@ async function handleVoiceKickAll(interaction, getLogChannel) {
                 `${kicked.length > 0 ? kicked.join(", ") : "- ไม่มีใครถูกเตะ -"}${limitMsg}`
             );
 
-        const logCh = await getLogChannel(interaction.guild);
+        const logMap = await sessionManager.getLogChannelMap(interaction.guild.id);
+        const logCh = logMap?.memberChannelId ? interaction.guild.channels.cache.get(logMap.memberChannelId) : null;
         if (logCh) logCh.send({ embeds: [embed] }).catch(() => {});
         return interaction.editReply({ embeds: [embed] });
     } finally {
@@ -107,6 +108,15 @@ async function handleClear(interaction) {
             ephemeral: true
         });
     } catch (e) {
+        if (e.code === 50034) {
+            return interaction.reply({ content: `> ${config.emojis.warning} ข้อความบางส่วนเก่าเกิน 14 วัน ลบแบบรวดเดียวไม่ได้`, ephemeral: true });
+        }
+        if (e.code === 50013) {
+            return interaction.reply({ content: `> ${config.emojis.error} บอทไม่มีสิทธิ์ลบข้อความในช่องนี้`, ephemeral: true });
+        }
+        if (e.code === 10008) {
+            return interaction.reply({ content: `> ${config.emojis.warning} ข้อความบางรายการถูกลบไปแล้ว`, ephemeral: true });
+        }
         return interaction.reply({ content: `> ${config.emojis.error} ล้มเหลว: ${e.message}`, ephemeral: true });
     }
 }
@@ -188,7 +198,8 @@ async function handleModeration(interaction, client, getLogChannel) {
             )
             .setThumbnail(targetAvatar);
 
-        const logCh = await getLogChannel(interaction.guild);
+        const logMap = await sessionManager.getLogChannelMap(interaction.guild.id);
+        const logCh = logMap?.memberChannelId ? interaction.guild.channels.cache.get(logMap.memberChannelId) : null;
         if (logCh) logCh.send({ embeds: [replyEmbed] }).catch(() => {});
         return interaction.editReply({ embeds: [replyEmbed] });
 

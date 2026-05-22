@@ -1,0 +1,113 @@
+📄 ไฟล์ 5/9: index.js (Main Entry) — ต่อ
+✅ จุดดี
+Strict boot sequence ครบ
+Environment validation ครบ 4 ตัว
+Dashboard มี real-time fetch ทุก 5 วินาที
+Token reveal modal มี PIN protection
+Shutdown timeout safety net (10s)
+CRON แยก 30s/90s
+🔴 BUG วิกฤต
+Bug I-1: ❗ shutdown() reference server ที่เป็น placeholder
+บรรทัด ~820:
+(global.server || server).close(() => console.log("..."));
+
+บรรทัดท้ายสุด:
+const server = { close: (cb) => cb() }; // placeholder ก่อน Express พร้อม
+
+ปัญหา:
+ตอน shutdown() ถูกเรียก → global.server มีค่าจริง (เซ็ตใน boot()) → OK
+แต่ ถ้า SIGTERM มาก่อน boot เสร็จ → global.server ยังไม่ถูกเซ็ต → fallback ไป server = placeholder fake → Express ไม่ได้ปิดจริง
+ผลกระทบ: Express server ค้างเปิดอยู่ตอน Render kill process → next deploy อาจติด port
+🩹 แก้: ตั้งตัวแปรเป็น let serverInstance = null ที่ scope module → assign ใน boot() → check null ใน shutdown
+Bug I-2: crashShieldReady flag ทำให้ runtime error เงียบไม่ส่ง alert
+บรรทัด ~85:
+process.on("uncaughtException", async (err) => {
+    originalError(...);
+    if (process.env.ALERT_WEBHOOK_URL) {
+        try { await wh.send(...); } catch (e) {}
+    }
+    if (!crashShieldReady) process.exit(1);
+});
+
+ปัญหา: Logic ถูกแล้ว (ส่ง webhook เสมอ, exit เฉพาะตอน boot) ✅
+แต่: ตอน boot ถ้ามี uncaughtException → ส่ง webhook → wh.send เป็น async แต่ไม่ await จริงๆ ทันแล้ว process.exit(1) มาก่อน → webhook ไม่ทันส่ง
+🩹 แก้: ใส่ await wh.send(...) แล้วใส่ await new Promise(r => setTimeout(r, 500)) ก่อน exit เพื่อให้ webhook ทันยิงจริง
+Bug I-3: HTML inject XSS ใน /whitelist page
+บรรทัด ~390:
+const rows = list.map(w =>
+    `<tr><td>${w.userId}</td>
+    <td>${w.addedBy||'-'}</td>
+    ...`
+).join("");
+
+ปัญหา: w.addedBy มาจาก DB → ถ้ามีใครเพิ่ม whitelist ผ่าน command แล้วใช้ username ที่มี <script> → XSS ใน Dashboard
+ทำได้เพราะ:
+Discord allow special chars ใน username
+ไม่มี HTML escape
+ความเสี่ยงจริง: ต่ำ (มีแค่คุณซันใช้ Dashboard) แต่เป็น security smell
+🩹 แก้: เพิ่ม helper:
+const esc = s => String(s||'').replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));
+
+แล้วใช้ทุกจุดที่ inject user data ลง HTML
+Bug I-4: ❗ interactionCreate handler ไม่ await commands.handleInteraction
+บรรทัด ~970:
+client.on("interactionCreate", async (interaction) => {
+    if (interaction.guild && !interaction.isAutocomplete()) {
+        ...
+        if (isProtectedCommand || isProtectedButton) {
+            const approved = await checkApproval(interaction.guild, interaction.user);
+            if (!approved) { ... return ... }
+        }
+    }
+    commands.handleInteraction(interaction, client, SHADOW_MASTER_ID);  // ← ไม่มี await!
+});
+
+ปัญหา: ถ้า commands.handleInteraction throw error → unhandledRejection → crash shield จับ → ส่ง webhook → fine แต่ user เห็น "Interaction failed"
+🩹 แก้:
+await commands.handleInteraction(...).catch(err => {
+    console.error("[INTERACT] Top-level catch:", err.message);
+});
+
+Bug I-5: หน้า /approved ใช้ client ตอน render — ทำงานได้แต่เป็น forward reference
+บรรทัด ~600:
+const guild = client.guilds.cache.get(a.guildId);
+
+ความจริง: ใช้ได้เพราะ Express route เป็น lazy — แต่ถ้ามีคนเข้าหน้า /approved ก่อน client ready (รอ login) → client.guilds.cache = empty Map → guild = undefined → แสดง "ไม่พบในบอท" ทุก row
+🩹 แก้: เช็ค if (!client.isReady()) return res.send('<p>กำลังโหลด...</p>') ก่อน
+🟠 Bug รอง
+Bug I-6: Rate Limiter requestCounts ใช้ req.ip ที่อาจเป็น ::1 หรือ proxy IP
+Render ใช้ reverse proxy → req.ip จะเป็น IP ของ proxy ไม่ใช่ user
+→ ทุก request จาก Render proxy เดียวกัน → กิน 1 slot ของ rate limit ร่วมกัน
+→ User ทั่วโลกใช้ Dashboard จะถูก lump เข้าด้วยกัน
+🩹 แก้: เพิ่มใน Express:
+app.set('trust proxy', 1);
+
+แล้ว req.ip จะอ่านจาก X-Forwarded-For header ที่ Render ส่งมา
+Bug I-7: webLogs ring buffer ไม่ thread-safe กับ HTML render
+ขณะ Dashboard render → webLogs.slice().reverse() — ถ้ามี log ใหม่เข้ามาระหว่างนั้น → จะ skip log ตัวล่าสุด (race ระยะสั้น)
+ไม่ใช่ bug ใหญ่ — แค่อาจเห็น log ดีเลย์ 5 วินาที — ไม่ต้องแก้
+Bug I-8: API endpoint /api/reveal-token ไม่ใช้ checkAuth แต่ใช้ webPin แทน
+บรรทัด ~705:
+app.post("/api/reveal-token", express.json(), (req, res) => {
+    const { sessionId, pin } = req.body || {};
+    const webPin = (typeof getWebPin === 'function') ? getWebPin() : null;
+    if (!webPin || pin !== webPin) {
+        return res.status(401).json({...});
+    }
+
+ปัญหา:
+PIN เริ่มต้นคือ "123456" ใน systemProvider.js → ถ้าลืมเปลี่ยน = ใครก็เปิด token ได้
+ไม่มี rate limit เฉพาะ endpoint นี้ (ใช้ /api/* middleware = 5 ครั้ง/นาที = brute force ได้ ~7200 ครั้ง/วัน — เดา 6 หลักได้)
+🩹 แก้:
+บังคับเปลี่ยน PIN ตอน boot ถ้ายังเป็น "123456" (throw error)
+เพิ่ม intrusion log ทุกครั้งที่ PIN ผิด
+Block IP 1 ชั่วโมง หลังพยายามผิด 5 ครั้ง
+Bug I-9: Modal import แตกออก 2 จุดใน commands.js — ใน handleButton ใช้ require runtime
+ใน commands.js บรรทัด ~280 (handleButton "btn_start"):
+const { Modal, TextInputComponent } = require("discord.js");
+
+ทั้งที่ระบบ require cache แล้ว — ไม่ใช่ bug แต่ inefficient + อ่านยาก
+🩹 แก้: import ที่หัวไฟล์
+Bug I-10: Anti-Raid ส่ง webhook log ทุกครั้งที่จับสแปม แต่ไม่มี Anti-Spam สำหรับ webhook เอง
+ถ้ามี mass raid 100 คน → 100 webhook ส่งใน 30 วินาที → Webhook rate limit ของ Discord = 30 req/60s → โดน 429 → webhook ถูก block
+🩹 แก้: Debounce / batch webhook ทุก 5 วินาที

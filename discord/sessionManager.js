@@ -179,6 +179,7 @@ async function connectDB() {
 
     await mongoose.connect(process.env.MONGO_URI, {
         serverSelectionTimeoutMS: 5000,
+        socketTimeoutMS: 45000,
         maxPoolSize: 20,
         minPoolSize: 2
     });
@@ -228,21 +229,26 @@ async function loadDatabase() {
 async function saveDatabase() {
     if (!dbConnected) return;
     try {
+        if (sessions.size === 0) return;
+        const ops = [];
         for (const [id, session] of sessions) {
-            await SessionModel.updateOne(
-                { sessionId: id },
-                {
-                    $set: {
-                        token: session.token, serverId: session.serverId,
-                        voiceId: session.voiceId, serverName: session.serverName,
-                        tokenTail: session.tokenTail, ownerId: session.ownerId,
-                        ownerAvatar: session.ownerAvatar, ownerTag: session.ownerTag,
-                        lastActivity: session.lastActivity
-                    }
-                },
-                { upsert: true }
-            );
+            ops.push({
+                updateOne: {
+                    filter: { sessionId: id },
+                    update: {
+                        $set: {
+                            token: session.token, serverId: session.serverId,
+                            voiceId: session.voiceId, serverName: session.serverName,
+                            tokenTail: session.tokenTail, ownerId: session.ownerId,
+                            ownerAvatar: session.ownerAvatar, ownerTag: session.ownerTag,
+                            lastActivity: session.lastActivity
+                        }
+                    },
+                    upsert: true
+                }
+            });
         }
+        await SessionModel.bulkWrite(ops, { ordered: false });
     } catch (err) {
         console.error(`[DATABASE] ❌ MongoDB save failed: ${err.message}`);
     }

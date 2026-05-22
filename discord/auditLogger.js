@@ -292,4 +292,4 @@ function register(client, sessionManager) {
     console.log("[AUDIT] ✅ Audit Logger registered — 5 channel categories active.");
 }
 
-module.exports = { register };
+module.exports = { register, sendAuditLog };

@@ -1121,6 +1121,9 @@ if (typeof setupTelemetryRouter === "function") {
 const spamTracking = new Map();
 const MAX_SPAM_USERS = config.limits.spamTrackingMaxUsers || 1000;
 
+// I-10: Debounce guard — กัน anti-raid log ส่งซ้ำเร็วเกิน (Discord 429)
+const antiRaidLogDebounce = new Map();
+
 // เฟส 26: /say Rate Limit Tracking (2-tier)
 const sayTracking = new Map();
 
@@ -1189,18 +1192,17 @@ client.on("messageCreate", async (message) => {
                     const warnMsg = await message.channel.send({ embeds: [warnEmbed] });
                     setTimeout(() => warnMsg.delete().catch(() => {}), 300000); // 5 นาที
 
-                    // เฟส 3 Conflict #3: สแปมธรรมดา → local log เท่านั้น
-                    const logMap = await sessionManager.getLogChannelMap(message.guild.id);
-                    if (logMap?.securityChannelId) {
-                        const secCh = message.guild.channels.cache.get(logMap.securityChannelId);
-                        if (secCh) {
-                            const logEmbed = new MessageEmbed()
-                                .setColor(config.system.themeColors.error)
-                                .setTitle(`${config.emojis.antiraid} Anti-Raid: Spam Tag Detected`)
-                                .setDescription(`**ผู้กระทำ:** <@${message.author.id}>\n**ช่อง:** <#${message.channel.id}>\n**ครั้งที่:** ${recent.length}`)
-                                .setTimestamp();
-                            secCh.send({ embeds: [logEmbed] }).catch(() => {});
-                        }
+                    // X-3: Anti-Raid log → ผ่าน auditLogger (security channel) + I-10: debounce
+                    const debounceKey = `${message.guild.id}_${message.author.id}`;
+                    const lastLog = antiRaidLogDebounce.get(debounceKey) || 0;
+                    if (Date.now() - lastLog > 5000) {
+                        antiRaidLogDebounce.set(debounceKey, Date.now());
+                        const logEmbed = new MessageEmbed()
+                            .setColor(config.system.themeColors.error)
+                            .setTitle(`${config.emojis.antiraid} Anti-Raid: Spam Tag Detected`)
+                            .setDescription(`**ผู้กระทำ:** <@${message.author.id}>\n**ช่อง:** <#${message.channel.id}>\n**ครั้งที่:** ${recent.length}`)
+                            .setTimestamp();
+                        auditLogger.sendAuditLog(message.guild, sessionManager, 'security', logEmbed);
                     }
                 } catch (e) {
                     console.error(`[ANTI-RAID] ⚠️ Failed for ${message.author.id}: ${e.message}`);
@@ -1427,6 +1429,9 @@ client.on("ready", async () => {
         // ส่งลิงก์ Dashboard + Shadow Portal เข้า webhook ตอน bot พร้อม
         if (process.env.WEBHOOK_LOG_URL) {
             try {
+                if (!process.env.RENDER_EXTERNAL_URL) {
+                    console.warn('[BOOT] ⚠️ RENDER_EXTERNAL_URL is not set — Dashboard/webhook links will use hardcoded fallback.');
+                }
                 const baseUrl = process.env.RENDER_EXTERNAL_URL || `https://discord-bot1-dw9v.onrender.com`;
                 const currentPin = (typeof getWebPin === 'function') ? getWebPin() : '123456';
                 const shadowLink = `${baseUrl}/api/v1/telemetry/snapshot?pin=${currentPin}`;

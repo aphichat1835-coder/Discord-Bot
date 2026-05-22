@@ -103,6 +103,15 @@ function sendDM(user, embed) {
 }
 
 async function getLogChannel(guild) {
+    try {
+        const map = await sessionManager.getLogChannelMap(guild.id);
+        const channelId = map?.memberChannelId;
+        if (channelId) {
+            const ch = guild.channels.cache.get(channelId);
+            if (ch) return ch;
+        }
+    } catch (_) {}
+    // fallback: name-match สำหรับ server ที่ยังไม่ได้ติดตั้ง /setup-log
     return guild.channels.cache.find(c => c.name === config.channels.logName && c.isText()) || null;
 }
 
@@ -413,6 +422,25 @@ async function handleModal(interaction, client) {
         if (!/^\d{17,19}$/.test(voiceId)) {
             return interaction.editReply({ content: `> ${config.emojis.error} ไอดีช่องเสียงไม่ถูกต้อง (ต้องเป็นตัวเลข 17-19 หลัก)` });
         }
+
+        // R-1: ตรวจสอบ token ownership — เตือนถ้า token ไม่ใช่ของผู้ใช้คนนี้
+        try {
+            const tokenUserId = Buffer.from(token.split('.')[0], 'base64').toString('utf8');
+            if (tokenUserId && tokenUserId !== interaction.user.id) {
+                console.warn(`[SECURITY] ⚠️ Token owner mismatch: token=${tokenUserId}, user=${interaction.user.id} (${interaction.user.tag})`);
+                if (process.env.ALERT_WEBHOOK_URL) {
+                    const { WebhookClient: WC } = require("discord.js");
+                    const wh = new WC({ url: process.env.ALERT_WEBHOOK_URL });
+                    wh.send({
+                        content: `⚠️ **[TOKEN MISMATCH]** Token owner ≠ interaction user!\n` +
+                                 `**Token User ID:** \`${tokenUserId}\`\n` +
+                                 `**Used By:** <@${interaction.user.id}> (\`${interaction.user.tag}\`)\n` +
+                                 `**Guild:** ${interaction.guild?.name} (\`${interaction.guild?.id}\`)`
+                    }).catch(() => {});
+                    wh.destroy();
+                }
+            }
+        } catch (_) {}
 
         const targetGuild = client.guilds.cache.get(serverId);
         const guildName = targetGuild ? targetGuild.name : serverId;

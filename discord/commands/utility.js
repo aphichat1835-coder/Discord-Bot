@@ -78,6 +78,13 @@ async function handleSay(interaction, sessionManager) {
                 ephemeral: true
             });
         }
+        // Whitelist hard cap: 10 ครั้ง/นาที (U-3)
+        if (history.length > 10) {
+            return interaction.reply({
+                content: `> ${config.emojis.no_entry} เกินขีดจำกัด 10 ครั้ง/นาที กรุณารอสักครู่`,
+                ephemeral: true
+            });
+        }
     }
 
     await interaction.channel.send(msg);
@@ -270,22 +277,21 @@ async function handleBackup(interaction) {
 //  🔄  RESTORE
 // ════════════════════════════════════════════════════════════════════════════
 async function handleRestore(interaction) {
+    await interaction.deferReply({ ephemeral: true });
+
     if (interaction.user.id !== interaction.guild.ownerId &&
         interaction.user.id !== config.system.ownerId) {
-        return interaction.reply({
-            content: `> ${config.emojis.no_entry} คุณต้องเป็น **เจ้าของเซิร์ฟเวอร์** เท่านั้น!`,
-            ephemeral: true
+        return interaction.editReply({
+            content: `> ${config.emojis.no_entry} คุณต้องเป็น **เจ้าของเซิร์ฟเวอร์** เท่านั้น!`
         });
     }
     if (!interaction.guild.members.me.permissions.has("ADMINISTRATOR")) {
-        return interaction.reply({
-            content: `> ${config.emojis.error} บอทต้องมีสิทธิ์ **Administrator** เพื่อกู้คืน!`,
-            ephemeral: true
+        return interaction.editReply({
+            content: `> ${config.emojis.error} บอทต้องมีสิทธิ์ **Administrator** เพื่อกู้คืน!`
         });
     }
 
     const targetId = interaction.options.getString("server_id");
-    await interaction.deferReply();
 
     const backup = await sessionManager.SnapshotModel.findOne({ guildId: targetId });
     if (!backup) {
@@ -454,6 +460,33 @@ async function handleSetupLog(interaction, sessionManager) {
     const categories = ['message', 'member', 'voice', 'server', 'security'];
     const created = [];
 
+    // U-8: สร้าง/หา Category สำหรับ Audit Log + permission Admin only
+    let auditCategory = interaction.guild.channels.cache.find(
+        c => c.type === 'GUILD_CATEGORY' && c.name === config.audit_channels.categoryName
+    );
+    if (!auditCategory) {
+        try {
+            const overwrites = [
+                { id: interaction.guild.id, deny: ['VIEW_CHANNEL'] },
+                { id: interaction.guild.members.me.id, allow: ['VIEW_CHANNEL', 'SEND_MESSAGES', 'READ_MESSAGE_HISTORY'] }
+            ];
+            if (interaction.guild.roles.cache.has(config.roles.fallbackAdminId)) {
+                overwrites.push({ id: config.roles.fallbackAdminId, allow: ['VIEW_CHANNEL', 'READ_MESSAGE_HISTORY'] });
+            }
+            auditCategory = await interaction.guild.channels.create(config.audit_channels.categoryName, {
+                type: 'GUILD_CATEGORY',
+                permissionOverwrites: overwrites,
+                reason: 'Enterprise /setup-log'
+            });
+            created.push(`${config.emojis.category} **หมวดหมู่:** ${auditCategory.name}`);
+        } catch (e) {
+            created.push(`${config.emojis.error} **หมวดหมู่** — ล้มเหลว: ${e.message}`);
+        }
+    }
+
+    // U-7: แสดง progress เริ่มต้น
+    await interaction.editReply({ content: `${config.emojis.loading} **กำลังสร้าง Audit Log channels...**` });
+
     for (const cat of categories) {
         try {
             const existing = await sessionManager.getLogChannelMap(interaction.guild.id);
@@ -463,14 +496,22 @@ async function handleSetupLog(interaction, sessionManager) {
                 continue;
             }
 
-            const ch = await interaction.guild.channels.create(`log-${cat}`, {
+            const createOptions = {
                 type: 'GUILD_TEXT',
                 topic: `Enterprise Audit Log — ${cat}`,
                 reason: 'Enterprise /setup-log'
-            });
+            };
+            if (auditCategory) createOptions.parent = auditCategory.id;
 
+            const ch = await interaction.guild.channels.create(`log-${cat}`, createOptions);
             await sessionManager.setLogChannelMap(interaction.guild.id, cat, ch.id);
             created.push(`${config.emojis.success} \`${cat}\` → <#${ch.id}>`);
+
+            // U-7: อัปเดต progress + delay 1500ms กัน rate limit
+            await interaction.editReply({
+                content: `${config.emojis.loading} **กำลังติดตั้ง...**\n${created.join('\n')}`
+            });
+            await new Promise(r => setTimeout(r, 1500));
         } catch (e) {
             created.push(`${config.emojis.error} \`${cat}\` — ล้มเหลว: ${e.message}`);
         }

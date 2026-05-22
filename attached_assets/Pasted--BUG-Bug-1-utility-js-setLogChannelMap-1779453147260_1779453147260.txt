@@ -1,0 +1,61 @@
+🔴 BUG วิกฤต (ต้องแก้ทันที — บอทพังหรือฟีเจอร์ไม่ทำงาน)
+🐛 Bug #1: utility.js เรียก setLogChannelMap ที่ไม่มีในระบบ — /setup-log พัง
+ใน commands/utility.js บรรทัด ~280:
+await sessionManager.setLogChannelMap(interaction.guild.id, cat, ch.id);
+
+แต่ใน sessionManager.js มีแค่:
+async function saveLogChannelMap(guildId, channels) { ... }
+
+→ เป็นคนละชื่อฟังก์ชัน + รับ argument คนละแบบ!
+ผลกระทบ: /setup-log จะแครชทันทีตอนสร้างห้องแรก → Audit Logger ใช้ไม่ได้ทั้งระบบ
+🐛 Bug #2: utility.js /whitelist อ่าน option ผิด field — คำสั่งใช้ไม่ได้
+// utility.js
+const target = interaction.options.getUser("user");
+
+แต่ใน commands.js slash registry:
+options: [
+    { type: 3, name: "action",  description: "add / remove / list", required: true },
+    { type: 3, name: "user_id", description: "Discord User ID",     required: false }
+]
+
+→ Discord ส่ง user_id เป็น string ไม่ใช่ user (USER type 6)
+→ getUser("user") จะคืน null เสมอ → คำสั่งตอบ "ระบุ user ด้วย" ทุกครั้ง
+ผลกระทบ: /whitelist add/remove ใช้ไม่ได้เลย + list ไม่มี handler
+🐛 Bug #3: index.js หน้า /approved ใช้ client ก่อนถูกประกาศ
+// บรรทัด ~600 — หน้า /approved
+const guild = client.guilds.cache.get(a.guildId);
+
+แต่ const client = new Client(...) อยู่บรรทัด ~870 (REGION 7) — หลังการประกาศ route
+ทำไมไม่พัง: เพราะ Express route เป็น lazy execution — ตอน user เข้าหน้าจริง client ถูกประกาศแล้ว
+
+
+
+
+
+
+Phomueangtai Enterprise — Line-by-Line Forensic Analysis
+ผมจะแบ่งเป็น 9 ส่วนตามไฟล์ + 1 ส่วน Cross-File Integration ตรวจครบทุกจุด
+📄 ไฟล์ 1/9: config.json — ตรวจทุก key
+✅ จุดดี
+มี emoji ครบ ~80 ตัว — รองรับการอ้างอิงจากทุกไฟล์
+มี voice_worker config แยกออกมาแล้ว
+มี audit_channels พร้อม category name
+🔴 BUG วิกฤต
+Bug C-1: Emoji key command_log_icon กับ intrusion_icon ใช้ emoji ซ้ำกัน
+"intrusion_icon": "🛑",
+"command_log_icon": "📡"
+
+ไม่ใช่ bug จริง แค่สังเกต — โอเค
+Bug C-2: bannerUrl ใช้ Discord CDN URL ที่มี ex= parameter (signed URL)
+"bannerUrl": "https://cdn.discordapp.com/.../image0.gif?ex=6a0ed338&is=6a0d81b8&hm=..."
+
+Discord signed URL หมดอายุภายใน 24 ชั่วโมง → หลังนั้น banner ใน panel embed จะหายไป → Discord อาจ throw Invalid Form Body
+🩹 แก้: อัปโหลดรูปไป imgur.com / GitHub raw / Cloudflare Images แทน
+🟠 Bug รอง
+Bug C-3: themeColors.warning ใช้ค่า #FEE75C แต่ warning emoji ใช้ <a:Di_phomueang> ซึ่งเป็นรูปเดียวกับ stop
+"stop": "<a:Di_phomueang:1505544059056427079>",
+"warning": "<a:Di_phomueang:1505544059056427079>",
+"no_permission": "<a:Di_phomueang:1505544059056427079>"
+
+3 keys ใช้รูปเดียวกัน → user จะแยกไม่ออกระหว่าง "หยุด" "เตือน" "ไม่มีสิทธิ์"
+🩹 แก้: ให้ค่าต่างกันแต่ละชนิด

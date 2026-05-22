@@ -141,7 +141,8 @@ async function startSession(sessionId, tokenString) {
 
         const conn = connectToVoice(session.client, session.serverId, session.voiceId, tokenHash, sessionId);
         session.connection = conn;
-        console.log(`[WORKER] 🎧 Voice connected for Guild: ${session.serverId}`);
+        console.log(`[WORKER] 🎧 Voice connected for Session: ${sessionId} Guild: ${session.serverId}`);
+        pushVoiceLog('connect', sessionId, 'Voice connected');
         return true;
     } finally {
         sessionManager.unlockSession(sessionId);
@@ -215,6 +216,7 @@ function connectToVoice(client, guildId, channelId, tokenHash, sessionId) {
         // เฟส 9: Anti-Infinite Reconnect — หยุดที่ 7 ครั้ง
         if (reconnectAttempts > CONFIG.MAX_RECONNECT_ATTEMPTS) {
             console.error(`[WORKER] 💀 Max reconnect attempts (${CONFIG.MAX_RECONNECT_ATTEMPTS}) reached for ${sessionId}. Aborting.`);
+            pushVoiceLog('fail', sessionId, `Max reconnects (${CONFIG.MAX_RECONNECT_ATTEMPTS}) reached`);
             if (connection.state.status !== VoiceConnectionStatus.Destroyed) {
                 connection.destroy();
             }
@@ -254,9 +256,11 @@ function connectToVoice(client, guildId, channelId, tokenHash, sessionId) {
             // passive reconnect สำเร็จ
             reconnectAttempts = 0;
             console.log(`[WORKER] ✅ Passive reconnect OK for ${sessionId}.`);
+            pushVoiceLog('recover', sessionId, 'Passive reconnect OK');
         } catch {
             // passive ล้มเหลว → ทำลาย connection เก่า แล้วสั่ง healthCheck ทันที (urgent)
             console.warn(`[WORKER] ⚡ Passive reconnect timed out for ${sessionId} — triggering urgent recovery.`);
+            pushVoiceLog('drop', sessionId, 'Passive timeout → urgent recovery');
             if (connection.state.status !== VoiceConnectionStatus.Destroyed) {
                 connection.destroy();
             }
@@ -435,8 +439,10 @@ async function healthCheck() {
                 const conn = connectToVoice(session.client, session.serverId, session.voiceId, tokenHash, sessionId);
                 if (conn) session.connection = conn;
                 console.log(`[HEARTBEAT] 💖 Restored connection for ${sessionId}.`);
+                pushVoiceLog('recover', sessionId, 'Restored by healthCheck');
             } catch (e) {
                 console.error(`[HEARTBEAT] 💔 Recovery failed for ${sessionId}: ${e.message}`);
+                pushVoiceLog('fail', sessionId, `Recovery failed: ${e.message}`);
             } finally {
                 session.reconnecting = false;
                 sessionManager.unlockSession(sessionId);
@@ -478,48 +484,8 @@ function pushVoiceLog(type, sessionId, detail = "") {
 function getVoiceLogs() { return voiceEventLog.slice(); }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Hook pushVoiceLog เข้าจุดสำคัญใน connectToVoice โดยใช้ wrapper บน console.log
+// pushVoiceLog ถูกเรียกโดยตรงจากทุก event point ใน Region 5/6/9
 // ────────────────────────────────────────────────────────────────────────────
-const _origLog = console.log.bind(console);
-const _origWarn = console.warn.bind(console);
-const _origError = console.error.bind(console);
-
-console.log = (...args) => {
-    _origLog(...args);
-    const msg = args.join(' ');
-    if (msg.includes('[WORKER] 🎧 Voice connected')) {
-        const m = msg.match(/Guild: (\S+)/);
-        pushVoiceLog('connect', m?.[1] || '?', 'Voice connected');
-    } else if (msg.includes('[HEARTBEAT] 💖 Restored')) {
-        const m = msg.match(/for (\S+)\./);
-        pushVoiceLog('recover', m?.[1] || '?', 'Restored by healthCheck');
-    } else if (msg.includes('[WORKER] ✅ Passive reconnect OK')) {
-        const m = msg.match(/for (\S+)\./);
-        pushVoiceLog('recover', m?.[1] || '?', 'Passive reconnect OK');
-    } else if (msg.includes('[WORKER] ✅ Auto-reconnected')) {
-        const m = msg.match(/for (\S+) /);
-        pushVoiceLog('recover', m?.[1] || '?', 'Auto-reconnect OK');
-    }
-};
-console.warn = (...args) => {
-    _origWarn(...args);
-    const msg = args.join(' ');
-    if (msg.includes('[WORKER] ⚡ Passive reconnect timed out')) {
-        const m = msg.match(/for (\S+) /);
-        pushVoiceLog('drop', m?.[1] || '?', 'Passive timeout → urgent recovery');
-    }
-};
-console.error = (...args) => {
-    _origError(...args);
-    const msg = args.join(' ');
-    if (msg.includes('[WORKER] ⚠️ Voice dropped') || msg.includes('[WORKER] ❌ Reconnect failed')) {
-        const m = msg.match(/for (\S+)[.:]/);
-        pushVoiceLog('disconnect', m?.[1] || '?', msg.replace(/\[WORKER\] /, '').substring(0, 80));
-    } else if (msg.includes('[HEARTBEAT] 💔 Recovery failed')) {
-        const m = msg.match(/for (\S+):/);
-        pushVoiceLog('fail', m?.[1] || '?', 'Recovery failed');
-    }
-};
 
 // ════════════════════════════════════════════════════════════════════════════
 //  📤  REGION 12: EXPORTS
