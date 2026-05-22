@@ -1,0 +1,30 @@
+2026-05-22T20:02:14.759172931Z     at Module._load (node:internal/modules/cjs/loader:1296:5)
+2026-05-22T20:02:14.759175201Z     at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+2026-05-22T20:02:14.759177511Z     at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+2026-05-22T20:02:14.759179711Z     at node:internal/main/run_main_module:33:47 {
+2026-05-22T20:02:14.759182351Z   code: 'MODULE_NOT_FOUND',
+2026-05-22T20:02:14.759185281Z   requireStack: []
+2026-05-22T20:02:14.759187541Z }
+2026-05-22T20:02:14.759189661Z 
+2026-05-22T20:02:14.759191791Z Node.js v26.2.0
+2026-05-22T20:03:03.850817347Z ==> Running 'node index.js'
+2026-05-22T20:03:04.053136743Z node:internal/modules/cjs/loader:1522
+2026-05-22T20:03:04.053158584Z   throw err;
+2026-05-22T20:03:04.053162184Z   ^
+2026-05-22T20:03:04.053164324Z 
+2026-05-22T20:03:04.053166874Z Error: Cannot find module '/opt/render/project/src/index.js'
+2026-05-22T20:03:04.053169804Z     at Module._resolveFilename (node:internal/modules/cjs/loader:1519:15)
+2026-05-22T20:03:04.053171764Z     at wrapResolveFilename (node:internal/modules/cjs/loader:1073:27)
+2026-05-22T20:03:04.053175994Z     at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1097:10)
+2026-05-22T20:03:04.053177944Z     at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1124:12)
+2026-05-22T20:03:04.053179894Z     at Module._load (node:internal/modules/cjs/loader:1296:5)
+2026-05-22T20:03:04.053182224Z     at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+2026-05-22T20:03:04.053185494Z     at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+2026-05-22T20:03:04.053188624Z     at node:internal/main/run_main_module:33:47 {
+2026-05-22T20:03:04.053192164Z   code: 'MODULE_NOT_FOUND',
+2026-05-22T20:03:04.053195694Z   requireStack: []
+2026-05-22T20:03:04.053198305Z }
+2026-05-22T20:03:04.053201045Z 
+2026-05-22T20:03:04.053204075Z Node.js v26.2.0
+2026-05-22T20:03:12.096396187Z ==> Exited with status 1
+2026-05-22T20:03:12.098643627Z ==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys
