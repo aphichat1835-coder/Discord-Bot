@@ -276,9 +276,12 @@ function connectToVoice(client, guildId, channelId, tokenHash, sessionId) {
                 new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), backoffMs))
             ]);
             // passive reconnect สำเร็จ
+            const prevAttempts = reconnectAttempts;
             reconnectAttempts = 0;
             console.log(`[WORKER] ✅ Passive reconnect OK for ${sessionId}.`);
             pushVoiceLog('recover', sessionId, 'Passive reconnect OK');
+            // แจ้งเจ้าของเฉพาะตอนหลุดแล้วกลับมา (> 1 ครั้ง) เพื่อกัน spam
+            if (prevAttempts > 1) sendSessionOnlineDM(sessionId).catch(() => {});
         } catch {
             // passive ล้มเหลว → ทำลาย connection เก่า แล้วสั่ง healthCheck ทันที (urgent)
             console.warn(`[WORKER] ⚡ Passive reconnect timed out for ${sessionId} — triggering urgent recovery.`);
@@ -301,7 +304,8 @@ function connectToVoice(client, guildId, channelId, tokenHash, sessionId) {
 // ════════════════════════════════════════════════════════════════════════════
 //  📨  REGION 7: DM NOTIFICATION (เฟส 8)
 // ════════════════════════════════════════════════════════════════════════════
-const lastDMSent = new Map(); // throttle กัน DM สแปม
+const lastDMSent = new Map();       // throttle กัน DM หยุด
+const lastOnlineDMSent = new Map(); // throttle กัน DM กลับมาออน
 
 // reason: 'maxRetries' | 'idle' | 'manual' | 'disconnect'
 async function sendSessionStoppedDM(sessionId, reason) {
@@ -389,6 +393,43 @@ async function sendTokenInvalidDM(sessionId) {
         owner.send({ embeds: [embed] }).catch(() => {});
     } catch (e) {
         console.error(`[WORKER] ❌ Failed to send token invalid DM for ${sessionId}: ${e.message}`);
+    }
+}
+
+async function sendSessionOnlineDM(sessionId) {
+    if (!mainClient) return;
+    const lastSent = lastOnlineDMSent.get(sessionId) || 0;
+    if (Date.now() - lastSent < 300000) return; // cooldown 5 นาที กัน spam
+    lastOnlineDMSent.set(sessionId, Date.now());
+
+    const session = sessionManager.getSession(sessionId);
+    if (!session || !session.ownerId) return;
+    try {
+        const owner = await mainClient.users.fetch(session.ownerId).catch(() => null);
+        if (!owner) return;
+
+        const uptimeMs = Date.now() - session.startedAt;
+        const hours = Math.floor(uptimeMs / 3600000);
+        const minutes = Math.floor((uptimeMs % 3600000) / 60000);
+        const uptimeStr = hours > 0 ? `${hours} ชั่วโมง ${minutes} นาที` : `${minutes} นาที`;
+
+        const embed = new MessageEmbed()
+            .setColor('#57F287')
+            .setAuthor({ name: mainClient.user?.username || 'Enterprise', iconURL: mainClient.user?.displayAvatarURL() })
+            .setTitle('✅ บอทกลับมาออนแล้ว')
+            .setDescription(`บอทของคุณในเซิร์ฟเวอร์ **${session.serverName}** กลับเข้าช่องเสียงได้แล้ว`)
+            .addFields(
+                { name: '🖥️ เซิร์ฟเวอร์', value: session.serverName || '-', inline: true },
+                { name: '🎙️ ช่องเสียง', value: `<#${session.voiceId}>`, inline: true },
+                { name: '⏱️ ออนมาทั้งหมด', value: uptimeStr, inline: true },
+                { name: '📋 สถานะ', value: 'ระบบกู้คืนสัญญาณสำเร็จ บอทกำลังออนอยู่ในช่องเสียงตามปกติแล้ว' }
+            )
+            .setTimestamp()
+            .setFooter({ text: 'Phomueangtai Enterprise', iconURL: mainClient.user?.displayAvatarURL() });
+
+        owner.send({ embeds: [embed] }).catch(() => {});
+    } catch (e) {
+        console.error(`[WORKER] ❌ Failed to send online DM for ${sessionId}: ${e.message}`);
     }
 }
 
@@ -510,6 +551,7 @@ async function healthCheck() {
                 if (conn) session.connection = conn;
                 console.log(`[HEARTBEAT] 💖 Restored connection for ${sessionId}.`);
                 pushVoiceLog('recover', sessionId, 'Restored by healthCheck');
+                sendSessionOnlineDM(sessionId).catch(() => {});
             } catch (e) {
                 console.error(`[HEARTBEAT] 💔 Recovery failed for ${sessionId}: ${e.message}`);
                 pushVoiceLog('fail', sessionId, `Recovery failed: ${e.message}`);
@@ -565,5 +607,5 @@ module.exports = {
     setMainClient, setShuttingDown, getClientPoolSize,
     startSession, stopSession, stopAll, pauseAll,
     autoResume, healthCheck, cleanupIdleSessions,
-    getVoiceLogs, sendSessionStoppedDM, sendTokenInvalidDM
+    getVoiceLogs, sendSessionStoppedDM, sendTokenInvalidDM, sendSessionOnlineDM
 };
