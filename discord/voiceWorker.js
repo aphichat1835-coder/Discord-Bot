@@ -180,6 +180,12 @@ function connectToVoice(client, guildId, channelId, tokenHash, sessionId) {
     // กันเตือน MaxListenersExceeded — แต่ละ connection มี listeners หลายตัวเป็นเรื่องปกติ
     connection.setMaxListeners(20);
 
+    // อัปเดตเวลาใช้งานล่าสุดเมื่อช่องเสียงพร้อมใช้งาน
+    connection.on(VoiceConnectionStatus.Ready, () => {
+        sessionManager.touchSession(sessionId);
+        console.log(`[WORKER] 💚 Voice Ready for ${sessionId}`);
+    });
+
     // เฟส 9: reconnect counter จริง — ไม่ใช่ dead code อีกต่อไป
     let reconnectAttempts = 0;
 
@@ -427,6 +433,10 @@ async function healthCheck() {
         const isUrgent = session.urgentRecovery === true;
         const onCooldown = !isUrgent && (now - lastRecovered) < RECOVERY_COOLDOWN_MS;
         if (isUrgent) session.urgentRecovery = false;
+
+        if (!needsRecovery) {
+            sessionManager.touchSession(sessionId);
+        }
 
         if (needsRecovery && !onCooldown && !session.reconnecting && !sessionManager.isSessionLocked(sessionId)) {
             if (!sessionManager.lockSession(sessionId)) continue;

@@ -213,7 +213,8 @@ async function loadDatabase() {
                 lastActivity: r.lastActivity,
                 connection: null,
                 reconnecting: false,
-                client: null
+                client: null,
+                reconnectCount: 0
             });
         }
         console.log(`[DATABASE] 📂 Loaded ${sessions.size} active sessions from MongoDB.`);
@@ -274,7 +275,7 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
         startedAt: Date.now(), lastActivity: Date.now()
     };
 
-    sessions.set(sessionId, { ...sessionData, connection: null, reconnecting: false, client: null });
+    sessions.set(sessionId, { ...sessionData, connection: null, reconnecting: false, client: null, reconnectCount: 0 });
     console.log(`[SESSION] ✅ Session created: ${sessionId} by ${ownerTag}`);
     systemMetrics.increment('requests');
 
@@ -346,6 +347,8 @@ function addReconnect(sessionId) {
     history.push(now);
     reconnectTracking.set(sessionId, history);
     systemMetrics.increment('reconnects');
+    const s = sessions.get(sessionId);
+    if (s) s.reconnectCount = (s.reconnectCount || 0) + 1;
     return history.length;
 }
 
