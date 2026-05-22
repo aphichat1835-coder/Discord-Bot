@@ -137,9 +137,9 @@ async function updatePanel(guildId) {
             .setImage(config.system.bannerUrl || null);
 
         const row = new MessageActionRow().addComponents(
-            new MessageButton().setCustomId("btn_start").setLabel("เริ่มการทำงาน").setEmoji("1505544070012080278").setStyle("SUCCESS"),
-            new MessageButton().setCustomId("btn_status").setLabel("สถานะ & จัดการ").setEmoji("1505544054493020241").setStyle("PRIMARY"),
-            new MessageButton().setCustomId("btn_stop_all").setLabel("หยุดทั้งหมด").setEmoji("1505544059056427079").setStyle("DANGER")
+            new MessageButton().setCustomId("btn_start").setLabel("เริ่มการทำงาน").setEmoji(config.emojis.signal).setStyle("SUCCESS"),
+            new MessageButton().setCustomId("btn_status").setLabel("สถานะ & จัดการ").setEmoji(config.emojis.ping).setStyle("PRIMARY"),
+            new MessageButton().setCustomId("btn_stop_all").setLabel("หยุดทั้งหมด").setEmoji(config.emojis.stop).setStyle("DANGER")
         );
 
         await panelMsg.edit({ embeds: [embed], components: [row] });
