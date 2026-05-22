@@ -226,7 +226,7 @@ function connectToVoice(client, guildId, channelId, tokenHash, sessionId) {
             if (connection.state.status !== VoiceConnectionStatus.Destroyed) {
                 connection.destroy();
             }
-            await sendDisconnectDM(sessionId, guildId, channelId, true);
+            await sendSessionStoppedDM(sessionId, 'maxRetries');
             // ── แจ้งเตือน ALERT_WEBHOOK_URL เมื่อ session ตายถาวร ──
             if (process.env.ALERT_WEBHOOK_URL) {
                 try {
@@ -287,22 +287,15 @@ function connectToVoice(client, guildId, channelId, tokenHash, sessionId) {
 // ════════════════════════════════════════════════════════════════════════════
 const lastDMSent = new Map(); // throttle กัน DM สแปม
 
-async function sendDisconnectDM(sessionId, guildId, channelId, isAborted) {
+// reason: 'maxRetries' | 'idle' | 'manual' | 'disconnect'
+async function sendSessionStoppedDM(sessionId, reason) {
     if (!mainClient) return;
 
-    // เช็ค throttle — ไม่ส่ง DM ถี่เกิน CONFIG.DM_THROTTLE_MS
     const lastSent = lastDMSent.get(sessionId) || 0;
     if (Date.now() - lastSent < CONFIG.DM_THROTTLE_MS) return;
     lastDMSent.set(sessionId, Date.now());
 
-    let session = null;
-    for (const [id, s] of sessionManager.getAllSessions()) {
-        if (s.serverId === guildId && s.voiceId === channelId) {
-            session = s;
-            break;
-        }
-    }
-
+    const session = sessionManager.getSession(sessionId);
     if (!session || !session.ownerId) return;
 
     try {
@@ -313,22 +306,38 @@ async function sendDisconnectDM(sessionId, guildId, channelId, isAborted) {
         const hours = Math.floor(uptimeMs / 3600000);
         const minutes = Math.floor((uptimeMs % 3600000) / 60000);
         const uptimeStr = hours > 0 ? `${hours} ชั่วโมง ${minutes} นาที` : `${minutes} นาที`;
+        const rc = session.reconnectCount || 0;
 
-        const abortMsg = isAborted
-            ? `> ❌ **ระบบยกเลิกการเชื่อมต่อแล้ว** (เกิน ${CONFIG.MAX_RECONNECT_ATTEMPTS} ครั้ง)`
-            : `> 🔄 *ระบบกำลังพยายามกู้คืนสัญญาณ กรุณารอสักครู่...*`;
+        let reasonLine, actionLine;
+        if (reason === 'maxRetries') {
+            reasonLine = `❌ **สาเหตุ:** บอทพยายามกลับเข้าช่องเสียงซ้ำ ${CONFIG.MAX_RECONNECT_ATTEMPTS} ครั้งแล้วแต่ไม่สำเร็จ ระบบจึงหยุดทำงาน`;
+            actionLine = `💡 **ต้องทำอะไร?** ให้กดเริ่มใหม่ผ่านแผงควบคุมในเซิร์ฟเวอร์ หรือรอสักครู่แล้วลองอีกครั้ง หากช่องเสียงมีปัญหาให้ตรวจสอบสิทธิ์ของบอท`;
+        } else if (reason === 'idle') {
+            reasonLine = `💤 **สาเหตุ:** บอทอยู่ในช่องเสียงมานานกว่า 24 ชั่วโมงโดยไม่มีใครใช้งาน ระบบจึงหยุดอัตโนมัติเพื่อประหยัดทรัพยากร`;
+            actionLine = `💡 **ต้องทำอะไร?** หากต้องการให้บอทออนอีกครั้ง ให้กดเริ่มใหม่ผ่านแผงควบคุมในเซิร์ฟเวอร์ได้เลย`;
+        } else if (reason === 'manual') {
+            reasonLine = `🛑 **สาเหตุ:** ผู้ดูแลระบบสั่งหยุดบอทนี้ผ่านแดชบอร์ดโดยตรง`;
+            actionLine = `💡 **ต้องทำอะไร?** หากต้องการให้บอทออนอีกครั้ง ให้กดเริ่มใหม่ผ่านแผงควบคุมในเซิร์ฟเวอร์`;
+        } else {
+            reasonLine = `⚠️ **สาเหตุ:** การเชื่อมต่อขัดข้องกะทันหัน`;
+            actionLine = `💡 ระบบกำลังพยายามกู้คืนสัญญาณอัตโนมัติ กรุณารอสักครู่`;
+        }
 
-        const dmMessage =
-            `> ${config.emojis.alert} **ระบบแจ้งเตือนช่องเสียงขัดข้อง**\n` +
-            `> ${config.emojis.warning} **ผู้ใช้งาน:** \`${session.ownerTag}\`\n` +
-            `> ${config.emojis.robot} **เซิร์ฟเวอร์:** **${session.serverName}**\n` +
-            `> 🎙️ **ห้องเสียง:** <#${session.voiceId}>\n` +
-            `> ⏱️ **ระยะเวลาออนล่าสุด:** ${uptimeStr}\n` +
-            abortMsg;
+        const lines = [
+            `## 🤖 แจ้งเตือนจากระบบ Enterprise`,
+            ``,
+            `บอทของคุณในเซิร์ฟเวอร์ **${session.serverName}** หยุดออนในช่องเสียงแล้ว`,
+            ``,
+            `🖥️ **เซิร์ฟเวอร์:** ${session.serverName}`,
+            `🎙️ **ช่องเสียง:** <#${session.voiceId}>`,
+            `⏱️ **ออนมาทั้งหมด:** ${uptimeStr}`,
+        ];
+        if (rc > 0) lines.push(`🔄 **ต่อสัญญาณระหว่างทาง:** ${rc} ครั้ง`);
+        lines.push(``, `> ${reasonLine}`, `> ${actionLine}`);
 
-        owner.send(dmMessage).catch(() => {});
+        owner.send(lines.join('\n')).catch(() => {});
     } catch (e) {
-        console.error(`[WORKER] ❌ Failed to send disconnect DM for ${sessionId}: ${e.message}`);
+        console.error(`[WORKER] ❌ Failed to send DM for ${sessionId}: ${e.message}`);
     }
 }
 
@@ -470,6 +479,7 @@ async function cleanupIdleSessions() {
         const lastSeen = session.lastActivity ?? session.startedAt;
         if (now - lastSeen > maxIdle) {
             console.log(`[CLEANUP] 🧹 Session ${id} idle for ${Math.round((now - lastSeen) / 3600000)}h — shutting down.`);
+            await sendSessionStoppedDM(id, 'idle');
             await stopSession(id);
         }
     }
@@ -504,5 +514,5 @@ module.exports = {
     setMainClient, setShuttingDown, getClientPoolSize,
     startSession, stopSession, stopAll, pauseAll,
     autoResume, healthCheck, cleanupIdleSessions,
-    getVoiceLogs
+    getVoiceLogs, sendSessionStoppedDM
 };

@@ -438,11 +438,12 @@ app.get("/", (req, res) => {
                         }
                         return '<div class="session-item">' +
                             '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">' +
-                            '<span class="sv">🖥️ ' + (s.serverName||'Unknown') + '</span>' +
+                            '<a class="sv" href="/session/' + sid + '" style="text-decoration:none;color:#57F287;">🖥️ ' + (s.serverName||'Unknown') + '</a>' +
                             '<span style="color:#444;font-size:0.75em;flex-shrink:0;">⏱ ' + uptimeStr + '</span></div>' +
                             '<div style="margin:4px 0;">' + tokenBlock + '</div>' +
                             '<div class="meta">👤 ' + (s.ownerTag||s.ownerId||'?') +
-                            (rc > 0 ? ' · 🔄 ' + rc + ' ครั้ง' : '') + '</div>' +
+                            (rc > 0 ? ' · 🔄 ' + rc + ' ครั้ง' : '') +
+                            ' · <a href="/session/' + sid + '" style="color:#444;font-size:0.9em;text-decoration:none;">ดูรายละเอียด →</a></div>' +
                             '</div>';
                     }).join('');
                 } else {
@@ -868,6 +869,369 @@ app.get("/approved", async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
+//  📋  SESSION DETAIL PAGE — หน้ารายละเอียด session รายตัว
+// ════════════════════════════════════════════════════════════════════════════
+app.get("/session/:sessionId", (req, res) => {
+    const safeId = escapeHtml(req.params.sessionId);
+    res.send(`<!DOCTYPE html><html lang="th"><head>
+    <title>Session Detail — Enterprise</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <meta charset="UTF-8">
+    <style>
+        *{box-sizing:border-box;margin:0;padding:0;}
+        body{background:#0d0d0f;color:#e0e0e0;font-family:'Segoe UI',sans-serif;padding:16px;}
+        .container{max-width:700px;margin:0 auto;}
+        .nav{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center;}
+        .nav a{background:#18181b;color:#57F287;padding:7px 14px;border-radius:8px;text-decoration:none;font-size:0.82em;border:1px solid #27272a;}
+        .nav a:hover{background:#27272a;}
+        h1{font-size:1.2em;color:#57F287;margin-bottom:4px;}
+        .sub{color:#444;font-size:0.78em;margin-bottom:16px;}
+
+        .status-bar{display:flex;align-items:center;gap:10px;background:#18181b;border:1px solid #27272a;border-radius:10px;padding:12px 16px;margin-bottom:14px;}
+        .dot{width:10px;height:10px;border-radius:50%;background:#555;flex-shrink:0;}
+        .dot.online{background:#57F287;box-shadow:0 0 6px #57F287;}
+        .dot.offline{background:#ED4245;box-shadow:0 0 6px #ED4245;}
+        #statusText{font-weight:bold;}
+        #uptimeLive{color:#FEE75C;font-size:0.82em;margin-left:auto;}
+
+        .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;}
+        @media(max-width:480px){.grid2{grid-template-columns:1fr;}}
+        .card{background:#18181b;border:1px solid #27272a;border-radius:10px;padding:16px;}
+        .card h3{font-size:0.85em;color:#aaa;text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;border-bottom:1px solid #27272a;padding-bottom:8px;}
+        .info-row{display:flex;justify-content:space-between;align-items:flex-start;padding:6px 0;border-bottom:1px solid #1a1a1d;font-size:0.83em;gap:8px;}
+        .info-row:last-child{border-bottom:none;}
+        .info-label{color:#555;flex-shrink:0;}
+        .info-value{color:#e0e0e0;text-align:right;word-break:break-all;}
+        .big-stat{text-align:center;padding:10px 0;}
+        .big-num{font-size:2em;font-weight:bold;line-height:1.1;}
+        .big-lbl{font-size:0.7em;color:#555;margin-top:3px;text-transform:uppercase;letter-spacing:.5px;}
+
+        .token-card{background:#18181b;border:1px solid #27272a;border-radius:10px;padding:16px;margin-bottom:14px;}
+        .token-card h3{font-size:0.85em;color:#aaa;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;}
+        .token-masked{color:#555;font-size:0.85em;cursor:pointer;font-family:monospace;letter-spacing:.5px;transition:color .2s;user-select:none;padding:8px 12px;background:#111;border-radius:6px;display:inline-block;border:1px solid #27272a;}
+        .token-masked:hover{color:#FEE75C;border-color:#FEE75C44;}
+        .token-full-wrap{font-family:monospace;font-size:0.8em;color:#FEE75C;word-break:break-all;background:#0d0d00;border:1px solid #FEE75C33;border-radius:6px;padding:10px 12px;display:flex;align-items:flex-start;gap:8px;}
+        .copy-btn{background:#27272a;border:none;color:#aaa;font-size:0.72em;cursor:pointer;padding:4px 10px;border-radius:4px;flex-shrink:0;margin-top:1px;}
+        .copy-btn:hover{color:#fff;}
+        .reveal-hint{font-size:0.72em;color:#444;margin-top:6px;}
+        .reveal-bar{background:#0d0d00;border:1px solid #FEE75C33;border-radius:6px;padding:5px 10px;font-size:0.75em;color:#FEE75C;display:none;margin-top:8px;}
+
+        .log-card{background:#18181b;border:1px solid #27272a;border-radius:10px;padding:16px;margin-bottom:14px;}
+        .log-card h3{font-size:0.85em;color:#aaa;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;}
+        .log-table{width:100%;border-collapse:collapse;font-size:0.78em;}
+        .log-table th{text-align:left;padding:6px 8px;color:#555;border-bottom:1px solid #27272a;}
+        .log-table td{padding:6px 8px;vertical-align:top;border-bottom:1px solid #1a1a1d;}
+        .log-table tr:last-child td{border-bottom:none;}
+        .ev-connect{color:#57F287;} .ev-recover{color:#5865F2;} .ev-drop{color:#FEE75C;} .ev-disconnect{color:#ff9944;} .ev-fail{color:#ED4245;}
+
+        .stop-zone{background:#18181b;border:1px solid #27272a;border-radius:10px;padding:20px;text-align:center;margin-bottom:20px;}
+        .stop-zone p{color:#555;font-size:0.8em;margin-bottom:14px;}
+        .btn-stop{background:#ED4245;color:#fff;border:none;padding:11px 28px;border-radius:8px;font-weight:bold;font-size:0.9em;cursor:pointer;}
+        .btn-stop:hover{background:#c0393c;}
+        .btn-stop:disabled{background:#333;color:#666;cursor:not-allowed;}
+
+        .modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.78);justify-content:center;align-items:center;z-index:999;}
+        .modal-box{background:#18181b;padding:30px 26px;border-radius:12px;border:1px solid #27272a;width:100%;max-width:300px;text-align:center;position:relative;}
+        #notFound{text-align:center;padding:60px 20px;color:#444;}
+    </style>
+</head><body>
+<div class="container">
+    <div class="nav">
+        <a href="/">← หน้าหลัก</a>
+        <span style="color:#444;font-size:0.8em;margin-left:4px;">Session Detail</span>
+    </div>
+
+    <div id="notFound" style="display:none;">
+        <h2 style="color:#ED4245;margin-bottom:8px;">❌ ไม่พบ Session นี้</h2>
+        <p style="font-size:0.85em;">Session อาจหยุดทำงานแล้ว หรือ ID ไม่ถูกต้อง</p>
+        <a href="/" style="color:#57F287;font-size:0.82em;">← กลับหน้าหลัก</a>
+    </div>
+
+    <div id="pageContent">
+        <h1 id="pageTitle">⏳ กำลังโหลด...</h1>
+        <p class="sub" id="pageSubtitle"></p>
+
+        <div class="status-bar">
+            <div class="dot" id="sDot"></div>
+            <span id="statusText">กำลังตรวจสอบ...</span>
+            <span id="uptimeLive">--</span>
+        </div>
+
+        <div class="grid2">
+            <div class="card">
+                <h3>📋 ข้อมูล Session</h3>
+                <div class="info-row"><span class="info-label">เซิร์ฟเวอร์</span><span class="info-value" id="iServer">--</span></div>
+                <div class="info-row"><span class="info-label">ช่องเสียง</span><span class="info-value" id="iVoice">--</span></div>
+                <div class="info-row"><span class="info-label">เจ้าของ</span><span class="info-value" id="iOwner">--</span></div>
+                <div class="info-row"><span class="info-label">เริ่มออนเมื่อ</span><span class="info-value" id="iStarted">--</span></div>
+                <div class="info-row"><span class="info-label">ใช้งานล่าสุด</span><span class="info-value" id="iActivity">--</span></div>
+                <div class="info-row"><span class="info-label">Session ID</span><span class="info-value" id="iSid" style="font-family:monospace;font-size:0.75em;color:#555;">--</span></div>
+            </div>
+            <div class="card">
+                <h3>📊 สถิติ</h3>
+                <div class="big-stat">
+                    <div class="big-num" id="sUptime" style="color:#FEE75C;">--</div>
+                    <div class="big-lbl">⏱ เวลาออนทั้งหมด</div>
+                </div>
+                <div style="border-top:1px solid #27272a;margin:10px 0;"></div>
+                <div class="info-row"><span class="info-label">🔄 Reconnect</span><span class="info-value" id="sReconnect" style="color:#ff9944;">--</span></div>
+                <div class="info-row"><span class="info-label">สถานะ</span><span class="info-value" id="sStatus">--</span></div>
+            </div>
+        </div>
+
+        <div class="token-card">
+            <h3>🔑 Token</h3>
+            <div id="tokenDisplay"></div>
+            <div class="reveal-hint" id="revealHint">คลิกที่ Token เพื่อดูแบบเต็ม (ต้องใช้รหัสผ่าน)</div>
+            <div class="reveal-bar" id="revealBarDetail"></div>
+        </div>
+
+        <div class="log-card">
+            <h3>📡 ประวัติการเชื่อมต่อ <span id="logCount" style="color:#555;font-weight:normal;text-transform:none;letter-spacing:0;"> — 0 รายการ</span></h3>
+            <div id="logTableWrap">
+                <p style="color:#444;font-size:0.82em;text-align:center;padding:20px 0;">ยังไม่มีประวัติสำหรับ session นี้</p>
+            </div>
+        </div>
+
+        <div class="stop-zone">
+            <h3 style="color:#ED4245;margin-bottom:8px;">🛑 หยุด Session นี้</h3>
+            <p>เมื่อหยุดแล้ว บอทจะออกจากช่องเสียงทันที และเจ้าของจะได้รับแจ้งเตือนทาง DM<br>หากต้องการให้บอทออนใหม่ต้องกดเริ่มใหม่เองในเซิร์ฟเวอร์</p>
+            <button class="btn-stop" id="btnStop" onclick="openStopModal()">🛑 หยุด Session นี้</button>
+        </div>
+    </div>
+</div>
+
+<!-- Token Reveal Modal -->
+<div class="modal" id="tokenModal" onclick="if(event.target===this)closeTokenModal()">
+    <div class="modal-box">
+        <button onclick="closeTokenModal()" style="position:absolute;top:10px;right:12px;background:none;border:none;color:#555;font-size:1.1em;cursor:pointer;">✕</button>
+        <h3 style="color:#FEE75C;margin-bottom:6px;">🔑 ดู Token เต็ม</h3>
+        <p style="color:#555;font-size:0.78em;margin-bottom:18px;">กรอกรหัสผ่านเพื่อแสดง Token เป็นเวลา 5 นาที</p>
+        <p id="tokenErr" style="color:#ED4245;font-size:0.82em;margin-bottom:8px;display:none;">รหัสผ่านไม่ถูกต้อง</p>
+        <input id="tokenPin" type="password" placeholder="รหัสผ่านลับ..." style="width:100%;padding:11px;background:#09090b;border:1px solid #3f3f46;color:#fff;border-radius:8px;text-align:center;font-size:1em;margin-bottom:12px;outline:none;">
+        <button onclick="submitReveal()" style="width:100%;padding:11px;background:#FEE75C;color:#000;font-weight:bold;border:none;border-radius:8px;cursor:pointer;">✅ เปิดดู Token</button>
+    </div>
+</div>
+
+<!-- Stop Session Modal -->
+<div class="modal" id="stopModal" onclick="if(event.target===this)closeStopModal()">
+    <div class="modal-box">
+        <button onclick="closeStopModal()" style="position:absolute;top:10px;right:12px;background:none;border:none;color:#555;font-size:1.1em;cursor:pointer;">✕</button>
+        <h3 style="color:#ED4245;margin-bottom:6px;">🛑 ยืนยันการหยุด</h3>
+        <p style="color:#555;font-size:0.78em;margin-bottom:18px;">กรอกรหัสผ่านเพื่อยืนยัน<br>บอทจะออกจากช่องเสียงทันทีและแจ้ง DM เจ้าของ</p>
+        <p id="stopErr" style="color:#ED4245;font-size:0.82em;margin-bottom:8px;display:none;">รหัสผ่านไม่ถูกต้อง</p>
+        <input id="stopPin" type="password" placeholder="รหัสผ่านลับ..." style="width:100%;padding:11px;background:#09090b;border:1px solid #3f3f46;color:#fff;border-radius:8px;text-align:center;font-size:1em;margin-bottom:12px;outline:none;">
+        <button onclick="submitStop()" style="width:100%;padding:11px;background:#ED4245;color:#fff;font-weight:bold;border:none;border-radius:8px;cursor:pointer;">🛑 หยุด Session</button>
+    </div>
+</div>
+
+<script>
+    const SESSION_ID = '${safeId}';
+    let sessionData = null;
+    const revealState = { expiry: 0, token: null, _timer: null };
+
+    function fmtUptime(ms) {
+        const h = Math.floor(ms / 3600000);
+        const m = Math.floor((ms % 3600000) / 60000);
+        const s = Math.floor((ms % 60000) / 1000);
+        if (h > 0) return h + 'h ' + m + 'm';
+        if (m > 0) return m + 'm ' + s + 's';
+        return s + 's';
+    }
+
+    function fmtTime(ts) {
+        return new Date(ts).toLocaleString('th-TH', { hour12: false });
+    }
+
+    function fmtTimeAgo(ts) {
+        const diff = Math.floor((Date.now() - ts) / 1000);
+        if (diff < 60) return diff + ' วินาทีที่แล้ว';
+        if (diff < 3600) return Math.floor(diff/60) + ' นาทีที่แล้ว';
+        if (diff < 86400) return Math.floor(diff/3600) + ' ชั่วโมงที่แล้ว';
+        return Math.floor(diff/86400) + ' วันที่แล้ว';
+    }
+
+    async function fetchDetail() {
+        try {
+            const r = await fetch('/api/session/' + SESSION_ID);
+            const d = await r.json();
+            if (!d.found) {
+                document.getElementById('pageContent').style.display = 'none';
+                document.getElementById('notFound').style.display = 'block';
+                return;
+            }
+            sessionData = d;
+            renderDetail(d);
+        } catch (e) {}
+    }
+
+    function renderDetail(d) {
+        document.getElementById('pageTitle').textContent = '🖥️ ' + (d.serverName || 'Unknown');
+        document.getElementById('pageSubtitle').textContent = 'Session ID: ' + d.sessionId;
+
+        const sDot = document.getElementById('sDot');
+        sDot.className = 'dot online';
+        document.getElementById('statusText').textContent = '🟢 กำลังออนอยู่';
+
+        const uptimeMs = Date.now() - d.startedAt;
+        document.getElementById('uptimeLive').textContent = '⏱ ' + fmtUptime(uptimeMs);
+        document.getElementById('sUptime').textContent = fmtUptime(uptimeMs);
+
+        document.getElementById('iServer').textContent = d.serverName || '-';
+        document.getElementById('iVoice').textContent = '#' + d.voiceId;
+        document.getElementById('iOwner').textContent = d.ownerTag || d.ownerId || '-';
+        document.getElementById('iStarted').textContent = fmtTime(d.startedAt);
+        document.getElementById('iActivity').textContent = d.lastActivity ? fmtTimeAgo(d.lastActivity) : '-';
+        document.getElementById('iSid').textContent = d.sessionId;
+
+        const rc = d.reconnectCount || 0;
+        document.getElementById('sReconnect').textContent = rc > 0 ? rc + ' ครั้ง' : 'ยังไม่มี';
+        document.getElementById('sStatus').innerHTML = '<span style="color:#57F287;">🟢 Online</span>';
+
+        renderToken(d.tokenTail);
+        renderLogs(d.voiceLogs || []);
+    }
+
+    function renderToken(tail) {
+        const masked = tail ? tail.substring(0,2) + '••••' + tail.substring(tail.length-2) : '••••••••';
+        const wrap = document.getElementById('tokenDisplay');
+        const hint = document.getElementById('revealHint');
+        if (revealState.expiry > Date.now() && revealState.token) {
+            const safeT = revealState.token.replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\'");
+            wrap.innerHTML = '<div class="token-full-wrap"><span style="flex:1;word-break:break-all;">' + revealState.token + '</span><button class="copy-btn" onclick="navigator.clipboard.writeText(\\'' + safeT + '\\');this.textContent=\\'✅\\';setTimeout(()=>this.textContent=\\'📋\\',1500)">📋</button></div>';
+            hint.style.display = 'none';
+        } else {
+            wrap.innerHTML = '<span class="token-masked" onclick="openRevealModal()" title="คลิกเพื่อดู Token เต็ม">🔑 ' + masked + '</span>';
+            hint.style.display = 'block';
+        }
+    }
+
+    function renderLogs(logs) {
+        const wrap = document.getElementById('logTableWrap');
+        document.getElementById('logCount').textContent = ' — ' + logs.length + ' รายการ';
+        if (!logs.length) {
+            wrap.innerHTML = '<p style="color:#444;font-size:0.82em;text-align:center;padding:20px 0;">ยังไม่มีประวัติสำหรับ session นี้</p>';
+            return;
+        }
+        const colorMap = { connect:'ev-connect', recover:'ev-recover', drop:'ev-drop', disconnect:'ev-disconnect', fail:'ev-fail' };
+        const iconMap  = { connect:'🟢', recover:'💖', drop:'⚡', disconnect:'⚠️', fail:'💔' };
+        const labelMap = { connect:'เชื่อมต่อสำเร็จ', recover:'กู้คืนสัญญาณ', drop:'สัญญาณหลุด (ด่วน)', disconnect:'หลุดการเชื่อมต่อ', fail:'เชื่อมต่อไม่สำเร็จ' };
+        wrap.innerHTML = '<table class="log-table"><thead><tr><th>เวลา</th><th>สถานะ</th><th>รายละเอียด</th></tr></thead><tbody>' +
+            logs.map(l => {
+                const t = new Date(l.ts).toLocaleTimeString('th-TH', { hour12: false });
+                const cls = colorMap[l.type] || '';
+                const icon = iconMap[l.type] || '❓';
+                const lbl = labelMap[l.type] || l.type;
+                return '<tr><td style="color:#444;white-space:nowrap;">' + t + '</td><td class="' + cls + '">' + icon + ' ' + lbl + '</td><td style="color:#666;">' + (l.detail||'-') + '</td></tr>';
+            }).join('') + '</tbody></table>';
+    }
+
+    // ── Token Reveal ──
+    function openRevealModal() {
+        if (revealState.expiry > Date.now()) return;
+        document.getElementById('tokenErr').style.display = 'none';
+        document.getElementById('tokenErr').textContent = 'รหัสผ่านไม่ถูกต้อง';
+        document.getElementById('tokenPin').value = '';
+        document.getElementById('tokenModal').style.display = 'flex';
+        setTimeout(() => document.getElementById('tokenPin').focus(), 80);
+    }
+    function closeTokenModal() { document.getElementById('tokenModal').style.display = 'none'; }
+
+    async function submitReveal() {
+        const pin = document.getElementById('tokenPin').value;
+        if (!pin) return;
+        try {
+            const r = await fetch('/api/reveal-all-tokens', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ pin }) });
+            const data = await r.json();
+            if (!data.success) {
+                document.getElementById('tokenErr').textContent = data.error || 'รหัสผ่านไม่ถูกต้อง';
+                document.getElementById('tokenErr').style.display = 'block';
+                document.getElementById('tokenPin').value = '';
+                document.getElementById('tokenPin').focus();
+                return;
+            }
+            closeTokenModal();
+            revealState.expiry = Date.now() + 5 * 60 * 1000;
+            revealState.token = data.tokens[SESSION_ID] || null;
+            if (sessionData) renderToken(sessionData.tokenTail);
+            startRevealBar();
+        } catch (e) {
+            document.getElementById('tokenErr').textContent = 'เกิดข้อผิดพลาด';
+            document.getElementById('tokenErr').style.display = 'block';
+        }
+    }
+
+    function startRevealBar() {
+        const bar = document.getElementById('revealBarDetail');
+        if (!bar) return;
+        if (revealState._timer) clearInterval(revealState._timer);
+        bar.style.display = 'block';
+        revealState._timer = setInterval(() => {
+            const left = revealState.expiry - Date.now();
+            if (left <= 0) {
+                clearInterval(revealState._timer); revealState._timer = null;
+                revealState.token = null; revealState.expiry = 0;
+                bar.style.display = 'none';
+                if (sessionData) renderToken(sessionData.tokenTail);
+                return;
+            }
+            const m = Math.floor(left / 60000), s = Math.floor((left % 60000) / 1000);
+            bar.textContent = '🔓 Token เต็มโชว์อยู่ — ซ่อนอีก ' + m + ':' + String(s).padStart(2,'0') + ' นาที';
+        }, 1000);
+    }
+
+    // ── Stop Session ──
+    function openStopModal() {
+        document.getElementById('stopErr').style.display = 'none';
+        document.getElementById('stopPin').value = '';
+        document.getElementById('stopModal').style.display = 'flex';
+        setTimeout(() => document.getElementById('stopPin').focus(), 80);
+    }
+    function closeStopModal() { document.getElementById('stopModal').style.display = 'none'; }
+
+    async function submitStop() {
+        const pin = document.getElementById('stopPin').value;
+        if (!pin) return;
+        const btn = document.getElementById('btnStop');
+        try {
+            const r = await fetch('/api/stop-session', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ sessionId: SESSION_ID, pin }) });
+            const data = await r.json();
+            if (!data.success) {
+                document.getElementById('stopErr').textContent = data.error || 'รหัสผ่านไม่ถูกต้อง';
+                document.getElementById('stopErr').style.display = 'block';
+                document.getElementById('stopPin').value = '';
+                document.getElementById('stopPin').focus();
+                return;
+            }
+            closeStopModal();
+            btn.textContent = '✅ หยุดแล้ว';
+            btn.disabled = true;
+            document.getElementById('sDot').className = 'dot offline';
+            document.getElementById('statusText').textContent = '🔴 หยุดทำงานแล้ว';
+            document.getElementById('uptimeLive').textContent = '';
+            document.getElementById('sStatus').innerHTML = '<span style="color:#ED4245;">🔴 Stopped</span>';
+            setTimeout(() => { window.location.href = '/'; }, 2500);
+        } catch (e) {
+            document.getElementById('stopErr').textContent = 'เกิดข้อผิดพลาด';
+            document.getElementById('stopErr').style.display = 'block';
+        }
+    }
+
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') { closeTokenModal(); closeStopModal(); }
+        if (e.key === 'Enter') {
+            if (document.getElementById('tokenModal').style.display === 'flex') submitReveal();
+            if (document.getElementById('stopModal').style.display === 'flex') submitStop();
+        }
+    });
+
+    fetchDetail();
+    setInterval(fetchDetail, 8000);
+</script>
+</body></html>`);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
 //  💓  PING / HEALTH (Render Keep-Alive + UptimeRobot)
 // ════════════════════════════════════════════════════════════════════════════
 app.get("/ping", (req, res) => res.send("OK"));
@@ -963,6 +1327,71 @@ app.post("/api/reveal-token", express.json(), (req, res) => {
             return res.status(404).json({ success: false, error: "ไม่พบ session นี้" });
         }
         res.json({ success: true, token });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  📋  SESSION DETAIL API — ข้อมูล session รายตัวพร้อม voice logs
+// ════════════════════════════════════════════════════════════════════════════
+app.get("/api/session/:sessionId", (req, res) => {
+    try {
+        const sid = req.params.sessionId;
+        const session = sessionManager.getSession(sid);
+        if (!session) return res.json({ found: false });
+        const allLogs = voiceWorker.getVoiceLogs();
+        const sessionLogs = allLogs.filter(l => l.sessionId === sid).slice(0, 40);
+        res.json({
+            found: true,
+            sessionId: session.sessionId,
+            serverName: session.serverName,
+            serverId: session.serverId,
+            voiceId: session.voiceId,
+            ownerId: session.ownerId,
+            ownerTag: session.ownerTag,
+            tokenTail: session.tokenTail,
+            startedAt: session.startedAt,
+            lastActivity: session.lastActivity,
+            reconnectCount: session.reconnectCount || 0,
+            voiceLogs: sessionLogs
+        });
+    } catch (e) {
+        res.status(500).json({ found: false, error: e.message });
+    }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  🛑  STOP SESSION — หยุด session รายตัว ต้องใส่ PIN ก่อน
+// ════════════════════════════════════════════════════════════════════════════
+app.post("/api/stop-session", express.json(), async (req, res) => {
+    try {
+        const ip = req.ip;
+        const now = Date.now();
+        const record = revealTokenAttempts.get(ip) || { count: 0, lockedUntil: 0 };
+        if (record.lockedUntil > now) {
+            const mins = Math.ceil((record.lockedUntil - now) / 60000);
+            return res.status(429).json({ success: false, error: `ลองผิดเกินกำหนด ล็อค ${mins} นาที` });
+        }
+        const { sessionId, pin } = req.body || {};
+        const webPin = (typeof getWebPin === 'function') ? getWebPin() : null;
+        if (!webPin || pin !== webPin) {
+            record.count = (record.count || 0) + 1;
+            if (record.count >= REVEAL_TOKEN_MAX_ATTEMPTS) {
+                record.lockedUntil = now + REVEAL_TOKEN_LOCKOUT_MS;
+                record.count = 0;
+            }
+            revealTokenAttempts.set(ip, record);
+            return res.status(401).json({ success: false, error: 'PIN ไม่ถูกต้อง' });
+        }
+        revealTokenAttempts.delete(ip);
+        if (!sessionId) return res.status(400).json({ success: false, error: 'ไม่ระบุ sessionId' });
+        const session = sessionManager.getSession(sessionId);
+        if (!session) return res.status(404).json({ success: false, error: 'ไม่พบ session นี้' });
+        await voiceWorker.sendSessionStoppedDM(sessionId, 'manual');
+        await voiceWorker.stopSession(sessionId);
+        console.log(`[DASHBOARD] 🛑 Session ${sessionId} stopped via session detail page`);
+        res.json({ success: true });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }
