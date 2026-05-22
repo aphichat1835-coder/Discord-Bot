@@ -602,12 +602,24 @@ app.get("/settings", async (req, res) => {
             .nav a{background:#18181b;color:#57F287;padding:7px 14px;border-radius:8px;text-decoration:none;font-size:0.82em;border:1px solid #27272a;}
             .nav a:hover{background:#27272a;}
             .msg{padding:10px 14px;border-radius:8px;margin-bottom:14px;display:none;font-size:0.88em;}
-            .status-row{display:flex;gap:8px;margin-top:6px;}
-            .status-btn{flex:1;padding:10px 6px;border-radius:8px;border:2px solid #27272a;background:#111;color:#aaa;cursor:pointer;text-align:center;font-size:0.85em;transition:all .15s;}
-            .status-btn.active-online{border-color:#57F287;color:#57F287;background:#0d1f14;}
-            .status-btn.active-idle{border-color:#FEE75C;color:#FEE75C;background:#1f1c0d;}
-            .status-btn.active-dnd{border-color:#ED4245;color:#ED4245;background:#1f0d0d;}
-            .dot-preview{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:middle;}
+            /* Discord-style status list */
+            .dc-status-list{background:#111;border-radius:10px;overflow:hidden;border:1px solid #2b2d31;margin-top:6px;}
+            .dc-status-item{display:flex;align-items:center;gap:14px;padding:14px 16px;cursor:pointer;border-bottom:1px solid #2b2d31;transition:background .12s;user-select:none;}
+            .dc-status-item:last-child{border-bottom:none;}
+            .dc-status-item:hover{background:#1e1f22;}
+            .dc-status-item.selected{background:#1e1f22;}
+            .dc-dot{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;flex-shrink:0;}
+            .dc-dnd-bar{display:block;width:10px;height:3px;background:#fff;border-radius:2px;}
+            .dc-moon{font-size:16px;width:20px;text-align:center;flex-shrink:0;}
+            .dc-label{flex:1;font-size:0.95em;color:#dbdee1;}
+            .dc-radio{width:20px;height:20px;border-radius:50%;border:2px solid #4e5058;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:all .12s;}
+            .dc-radio.dc-radio-on{border-color:#5865F2;background:#5865F2;}
+            .dc-radio.dc-radio-on::after{content:'';width:8px;height:8px;border-radius:50%;background:#fff;}
+            /* Activity type buttons */
+            .act-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;}
+            .act-btn{flex:1;min-width:100px;padding:9px 6px;border-radius:8px;border:1px solid #3f3f46;background:#111;color:#aaa;cursor:pointer;text-align:center;font-size:0.82em;transition:all .12s;}
+            .act-btn:hover{border-color:#5865F2;color:#dbdee1;}
+            .act-btn.act-active{border-color:#5865F2;background:#1a1c3a;color:#fff;}
         </style></head><body>
         <div class="container">
             <h2>⚙️ System Settings</h2>
@@ -643,45 +655,99 @@ app.get("/settings", async (req, res) => {
             <div class="card">
                 <h3>🌙 Bot Presence — สถานะโปรไฟล์บอท</h3>
 
-                <label>สถานะบอท (เลือกได้ 1 อย่าง)</label>
-                <div class="status-row">
-                    <div class="status-btn ${botStatus === 'online' ? 'active-online' : ''}" id="sb-online" onclick="selectStatus('online')">
-                        <span class="dot-preview" style="background:#57F287;"></span>🟢 Online
+                <!-- สถานะ แบบ Discord Style -->
+                <label style="margin-bottom:8px;">สถานะออนไลน์</label>
+                <div class="dc-status-list">
+                    <div class="dc-status-item ${botStatus === 'online' ? 'selected' : ''}" onclick="selectStatus('online')" id="dc-online">
+                        <span class="dc-dot" style="background:#23a55a;box-shadow:0 0 0 2px #23a55a44;"></span>
+                        <span class="dc-label">ออนไลน์</span>
+                        <span class="dc-radio ${botStatus === 'online' ? 'dc-radio-on' : ''}"></span>
                     </div>
-                    <div class="status-btn ${botStatus === 'idle' ? 'active-idle' : ''}" id="sb-idle" onclick="selectStatus('idle')">
-                        <span class="dot-preview" style="background:#FEE75C;"></span>🌙 Idle
+                    <div class="dc-status-item ${botStatus === 'idle' ? 'selected' : ''}" onclick="selectStatus('idle')" id="dc-idle">
+                        <span class="dc-moon">🌙</span>
+                        <span class="dc-label">ไม่อยู่</span>
+                        <span class="dc-radio ${botStatus === 'idle' ? 'dc-radio-on' : ''}"></span>
                     </div>
-                    <div class="status-btn ${botStatus === 'dnd' ? 'active-dnd' : ''}" id="sb-dnd" onclick="selectStatus('dnd')">
-                        <span class="dot-preview" style="background:#ED4245;"></span>🔴 DND
+                    <div class="dc-status-item ${botStatus === 'dnd' ? 'selected' : ''}" onclick="selectStatus('dnd')" id="dc-dnd">
+                        <span class="dc-dot" style="background:#ED4245;"><span class="dc-dnd-bar"></span></span>
+                        <span class="dc-label">ห้ามรบกวน</span>
+                        <span class="dc-radio ${botStatus === 'dnd' ? 'dc-radio-on' : ''}"></span>
+                    </div>
+                    <div class="dc-status-item ${botStatus === 'invisible' ? 'selected' : ''}" onclick="selectStatus('invisible')" id="dc-invisible">
+                        <span class="dc-dot" style="background:#80848e;border:2.5px solid #80848e;background:transparent;box-shadow:inset 0 0 0 2px #80848e;"></span>
+                        <span class="dc-label">ไม่ระบุ</span>
+                        <span class="dc-radio ${botStatus === 'invisible' ? 'dc-radio-on' : ''}"></span>
                     </div>
                 </div>
                 <input type="hidden" id="botStatus" value="${botStatus}">
 
-                <label>👁️ ข้อความ "กำลังดู..." (Watching)</label>
-                <input type="text" id="botActivity" value="${botActivity}" placeholder="เช่น ระบบออนช่องเสียง, Phomueangtai Enterprise" maxlength="128">
+                <!-- ประเภทกิจกรรม -->
+                <label>ประเภทกิจกรรม</label>
+                <div class="act-row">
+                    <div class="act-btn ${(settings.botActivityType || 'WATCHING') === 'WATCHING' ? 'act-active' : ''}" onclick="selectActivity('WATCHING')" id="at-WATCHING">👁️ กำลังดู</div>
+                    <div class="act-btn ${(settings.botActivityType || '') === 'LISTENING' ? 'act-active' : ''}" onclick="selectActivity('LISTENING')" id="at-LISTENING">🎧 กำลังฟัง</div>
+                    <div class="act-btn ${(settings.botActivityType || '') === 'PLAYING' ? 'act-active' : ''}" onclick="selectActivity('PLAYING')" id="at-PLAYING">🎮 กำลังเล่น</div>
+                    <div class="act-btn ${(settings.botActivityType || '') === 'COMPETING' ? 'act-active' : ''}" onclick="selectActivity('COMPETING')" id="at-COMPETING">🏆 กำลังแข่ง</div>
+                </div>
+                <input type="hidden" id="botActivityType" value="${settings.botActivityType || 'WATCHING'}">
 
-                <label>📝 โน้ต (Custom Status / บรรทัดที่ 2)</label>
-                <textarea id="botNote" placeholder="เช่น พัฒนาโดย Phomueangtai | ออนช่องเสียง 24ชม." maxlength="128">${botNote}</textarea>
+                <!-- ข้อความกิจกรรม -->
+                <label id="actLabel">👁️ ข้อความ "กำลังดู..."</label>
+                <input type="text" id="botActivity" value="${botActivity}" placeholder="เช่น ระบบออนช่องเสียง" maxlength="128">
 
-                <button class="btn btn-blue" onclick="savePresence()">🌙 บันทึกและใช้งานทันที</button>
+                <!-- โน้ต -->
+                <label>📝 โน้ต (ข้อความใต้ชื่อบอท เช่น Developed by MC)</label>
+                <input type="text" id="botNote" value="${botNote}" placeholder="เช่น Developed by Phomueangtai" maxlength="128">
+
+                <button class="btn btn-blue" onclick="savePresence()">✅ บันทึกและใช้งานทันที</button>
             </div>
         </div>
 
         <script>
-            let currentStatus = '${botStatus}';
+            // ── init label กิจกรรมตามค่าที่บันทึกไว้ ──
+            window.addEventListener('DOMContentLoaded', () => {
+                const saved = document.getElementById('botActivityType').value || 'WATCHING';
+                const labels = {
+                    WATCHING:  '👁️ ข้อความ "กำลังดู..."',
+                    LISTENING: '🎧 ข้อความ "กำลังฟัง..."',
+                    PLAYING:   '🎮 ข้อความ "กำลังเล่น..."',
+                    COMPETING: '🏆 ข้อความ "กำลังแข่ง..."'
+                };
+                const lbl = document.getElementById('actLabel');
+                if (lbl) lbl.textContent = labels[saved] || labels['WATCHING'];
+            });
 
+            // ── label แต่ละประเภทกิจกรรม ──
+            const actLabels = {
+                WATCHING:  '👁️ ข้อความ "กำลังดู..."',
+                LISTENING: '🎧 ข้อความ "กำลังฟัง..."',
+                PLAYING:   '🎮 ข้อความ "กำลังเล่น..."',
+                COMPETING: '🏆 ข้อความ "กำลังแข่ง..."'
+            };
+
+            // ── เลือกสถานะ (Discord radio style) ──
             function selectStatus(s) {
-                currentStatus = s;
                 document.getElementById('botStatus').value = s;
-                ['online','idle','dnd'].forEach(x => {
-                    const el = document.getElementById('sb-' + x);
-                    el.className = 'status-btn';
+                ['online','idle','dnd','invisible'].forEach(x => {
+                    const item  = document.getElementById('dc-' + x);
+                    const radio = item.querySelector('.dc-radio');
                     if (x === s) {
-                        if (s === 'online') el.classList.add('active-online');
-                        else if (s === 'idle') el.classList.add('active-idle');
-                        else if (s === 'dnd') el.classList.add('active-dnd');
+                        item.classList.add('selected');
+                        radio.classList.add('dc-radio-on');
+                    } else {
+                        item.classList.remove('selected');
+                        radio.classList.remove('dc-radio-on');
                     }
                 });
+            }
+
+            // ── เลือกประเภทกิจกรรม ──
+            function selectActivity(t) {
+                document.getElementById('botActivityType').value = t;
+                ['WATCHING','LISTENING','PLAYING','COMPETING'].forEach(x => {
+                    document.getElementById('at-' + x).classList.toggle('act-active', x === t);
+                });
+                document.getElementById('actLabel').textContent = actLabels[t] || actLabels['WATCHING'];
             }
 
             function showMsg(text, ok) {
@@ -709,14 +775,17 @@ app.get("/settings", async (req, res) => {
             }
 
             async function savePresence() {
-                const body = {
-                    botStatus: document.getElementById('botStatus').value,
-                    botActivity: document.getElementById('botActivity').value.trim(),
-                    botNote: document.getElementById('botNote').value.trim()
-                };
-                if (!body.botActivity) return showMsg('❌ กรุณากรอกข้อความ กำลังดู...', false);
+                const botStatus       = document.getElementById('botStatus').value;
+                const botActivityType = document.getElementById('botActivityType').value;
+                const botActivity     = document.getElementById('botActivity').value.trim();
+                const botNote         = document.getElementById('botNote').value.trim();
+                if (!botActivity) return showMsg('❌ กรุณากรอกข้อความกิจกรรม', false);
                 try {
-                    const r = await fetch('/api/presence', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'${API_SECRET}'}, body:JSON.stringify(body) });
+                    const r = await fetch('/api/presence', {
+                        method:'POST',
+                        headers:{'Content-Type':'application/json','Authorization':'${API_SECRET}'},
+                        body: JSON.stringify({ botStatus, botActivityType, botActivity, botNote })
+                    });
                     const d = await r.json();
                     showMsg(d.success ? '✅ อัปเดตสถานะบอทแล้ว มีผลทันที!' : '❌ Error: ' + (d.error || 'Unknown'), d.success);
                 } catch(e) { showMsg('❌ เชื่อมต่อไม่ได้', false); }
@@ -1619,27 +1688,33 @@ app.post("/api/settings", async (req, res) => {
 app.post("/api/presence", async (req, res) => {
     if (!checkAuth(req, res)) return;
     try {
-        const { botStatus, botActivity, botNote } = req.body;
-        const validStatuses = ['online', 'idle', 'dnd'];
+        const { botStatus, botActivityType, botActivity, botNote } = req.body;
+
+        const validStatuses      = ['online', 'idle', 'dnd', 'invisible'];
+        const validActivityTypes = ['WATCHING', 'LISTENING', 'PLAYING', 'COMPETING'];
+
         if (!validStatuses.includes(botStatus)) {
             return res.status(400).json({ success: false, error: 'สถานะไม่ถูกต้อง' });
         }
-        if (!botActivity || typeof botActivity !== 'string') {
-            return res.status(400).json({ success: false, error: 'กรุณากรอกข้อความ กำลังดู...' });
+        if (!botActivity || typeof botActivity !== 'string' || !botActivity.trim()) {
+            return res.status(400).json({ success: false, error: 'กรุณากรอกข้อความกิจกรรม' });
         }
 
-        await sessionManager.setSetting('botStatus', botStatus);
-        await sessionManager.setSetting('botActivity', botActivity.slice(0, 128));
-        await sessionManager.setSetting('botNote', (botNote || '').slice(0, 128));
+        const actType = validActivityTypes.includes(botActivityType) ? botActivityType : 'WATCHING';
 
-        const activities = [{ name: botActivity.slice(0, 128), type: 'WATCHING' }];
+        await sessionManager.setSetting('botStatus',       botStatus);
+        await sessionManager.setSetting('botActivityType', actType);
+        await sessionManager.setSetting('botActivity',     botActivity.trim().slice(0, 128));
+        await sessionManager.setSetting('botNote',         (botNote || '').trim().slice(0, 128));
+
+        const activities = [{ name: botActivity.trim().slice(0, 128), type: actType }];
         if (botNote && botNote.trim()) {
             activities.push({ name: botNote.trim().slice(0, 128), type: 'CUSTOM' });
         }
 
         if (client?.isReady?.()) {
             client.user.setPresence({ status: botStatus, activities });
-            console.log(`[PRESENCE] ✅ Updated via Dashboard — Status: ${botStatus} | Watching: ${botActivity} | Note: ${botNote || '-'}`);
+            console.log(`[PRESENCE] ✅ Status: ${botStatus} | ${actType}: ${botActivity} | Note: ${botNote || '-'}`);
         }
 
         res.json({ success: true });
@@ -2056,13 +2131,16 @@ client.on("ready", async () => {
         const presenceActivity = savedSettings.botActivity || config.bot_presence?.activityText || 'ระบบออนช่องเสียง';
         const presenceNote     = savedSettings.botNote     || '';
 
-        const activities = [{ name: presenceActivity, type: 'WATCHING' }];
+        const validTypes = ['WATCHING','LISTENING','PLAYING','COMPETING'];
+        const presenceType = validTypes.includes(savedSettings.botActivityType) ? savedSettings.botActivityType : 'WATCHING';
+
+        const activities = [{ name: presenceActivity, type: presenceType }];
         if (presenceNote.trim()) {
             activities.push({ name: presenceNote.trim(), type: 'CUSTOM' });
         }
 
         client.user.setPresence({ status: presenceStatus, activities });
-        console.log(`[PRESENCE] 🌙 Status: ${presenceStatus} | Watching: ${presenceActivity}${presenceNote ? ' | Note: ' + presenceNote : ''}`);
+        console.log(`[PRESENCE] 🌙 Status: ${presenceStatus} | ${presenceType}: ${presenceActivity}${presenceNote ? ' | Note: ' + presenceNote : ''}`);
     } catch (e) {
         console.error(`[PRESENCE] ❌ Failed to set presence: ${e.message}`);
     }
