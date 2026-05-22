@@ -6,7 +6,7 @@
         "fallbackUserId": "1501878510032257104"
     },
     "limits": {
-        "maxSessions": 20,
+        "maxSessions": 30,
         "rateLimitRequests": 5,
         "rateLimitWindowMs": 60000,
         "idleTimeoutMs": 86400000,
