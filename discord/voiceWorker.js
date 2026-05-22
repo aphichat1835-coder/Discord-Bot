@@ -340,6 +340,7 @@ async function stopSession(sessionId) {
     }
 
     await sessionManager.deleteSession(sessionId);
+    recoveryTimestamps.delete(sessionId);
     console.log(`[WORKER] 🛑 Stopped session: ${sessionId}`);
 
     // Memory Leak Eradicator

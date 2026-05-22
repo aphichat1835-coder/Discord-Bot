@@ -8,7 +8,7 @@ DO NOT REMOVE: handleMessage — used by index.js messageCreate event.
 ================================================================================
 */
 
-const { MessageEmbed, MessageActionRow, MessageButton } = require("discord.js");
+const { MessageEmbed, MessageActionRow, MessageButton, Modal, TextInputComponent } = require("discord.js");
 const config = require("./config.json");
 const sessionManager = require("./sessionManager");
 const voiceWorker = require("./voiceWorker");
@@ -108,8 +108,11 @@ async function getLogChannel(guild) {
 
 function getPanelMessages() { return panelMessages; }
 
-function cleanupGuild(guildId) {
+async function cleanupGuild(guildId) {
     panelMessages.delete(guildId);
+    await sessionManager.PanelStateModel.deleteOne({ guildId }).catch(e =>
+        console.error(`[PANEL] ❌ cleanupGuild DB delete failed for ${guildId}: ${e.message}`)
+    );
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -158,11 +161,21 @@ async function restorePanels(client) {
         for (const state of states) {
             try {
                 const guild = client.guilds.cache.get(state.guildId);
-                if (!guild) continue;
+                if (!guild) {
+                    await sessionManager.PanelStateModel.deleteOne({ guildId: state.guildId }).catch(() => {});
+                    continue;
+                }
                 const channel = guild.channels.cache.get(state.channelId);
-                if (!channel) continue;
+                if (!channel) {
+                    await sessionManager.PanelStateModel.deleteOne({ guildId: state.guildId }).catch(() => {});
+                    continue;
+                }
                 const msg = await channel.messages.fetch(state.messageId).catch(() => null);
-                if (!msg) continue;
+                if (!msg) {
+                    await sessionManager.PanelStateModel.deleteOne({ guildId: state.guildId }).catch(() => {});
+                    console.log(`[PANEL] 🗑️ Stale panel state removed for guild: ${state.guildId}`);
+                    continue;
+                }
                 panelMessages.set(state.guildId, msg);
                 await updatePanel(state.guildId);
                 console.log(`[PANEL] ♻️ Restored panel for guild: ${state.guildId}`);
@@ -188,8 +201,9 @@ async function handleMessage(message) {
 // ════════════════════════════════════════════════════════════════════════════
 async function handleInteraction(interaction, client, shadowMasterId) {
     try {
+        sessionManager.systemMetrics.increment('requests');
+
         if (interaction.isCommand()) {
-            sessionManager.systemMetrics.increment('requests');
 
             const cmd = interaction.commandName;
 
@@ -277,7 +291,6 @@ async function handleButton(interaction, client, shadowMasterId) {
 
     // Start Button → Modal
     if (customId === "btn_start") {
-        const { Modal, TextInputComponent } = require("discord.js");
         const modal = new Modal().setCustomId("modal_start").setTitle("ออนช่องเสียง");
         modal.addComponents(
             new MessageActionRow().addComponents(

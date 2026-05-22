@@ -372,7 +372,7 @@ async function handleRestoreConfirm(interaction, sessionManager) {
                             existingRole = await guild.roles.create({
                                 name: rData.name,
                                 color: rData.color,
-                                permissions: BigInt(rData.permissions),
+                                permissions: BigInt(rData.permissions || "0"),
                                 reason: "Enterprise Restore"
                             });
                             restoredRoles++;
@@ -403,8 +403,8 @@ async function handleRestoreConfirm(interaction, sessionManager) {
                                         if (targetId) {
                                             mappedOverwrites.push({
                                                 id: targetId,
-                                                allow: BigInt(ow.allow),
-                                                deny:  BigInt(ow.deny)
+                                                allow: BigInt(ow.allow || "0"),
+                                                deny:  BigInt(ow.deny  || "0")
                                             });
                                         }
                                     }
@@ -490,26 +490,38 @@ async function handleWhitelist(interaction, sessionManager) {
     }
 
     const action = interaction.options.getString("action");
-    const target = interaction.options.getUser("user");
+    const userId = interaction.options.getString("user_id");
 
-    if (!target) {
-        return interaction.reply({ content: `> ${config.emojis.no_entry} ระบุ user ด้วย`, ephemeral: true });
+    if (action === "list") {
+        const wl = await sessionManager.getAllWhitelist();
+        if (wl.length === 0) {
+            return interaction.reply({ content: `> ${config.emojis.warning} ยังไม่มีรายชื่อใน Whitelist`, ephemeral: true });
+        }
+        const lines = wl.map((w, i) => `${i + 1}. <@${w.userId}> (\`${w.userId}\`)`).join('\n');
+        return interaction.reply({
+            content: `> ${config.emojis.success} **Whitelist (${wl.length} คน):**\n${lines}`,
+            ephemeral: true
+        });
+    }
+
+    if (!userId) {
+        return interaction.reply({ content: `> ${config.emojis.no_entry} ต้องระบุ user_id สำหรับ action \`${action}\``, ephemeral: true });
     }
 
     if (action === "add") {
-        await sessionManager.addWhitelist(target.id);
+        await sessionManager.addWhitelist(userId, interaction.user.id);
         return interaction.reply({
-            content: `> ${config.emojis.success} เพิ่ม <@${target.id}> เข้า Whitelist แล้ว`,
+            content: `> ${config.emojis.success} เพิ่ม <@${userId}> เข้า Whitelist แล้ว`,
             ephemeral: true
         });
     } else if (action === "remove") {
-        await sessionManager.removeWhitelist(target.id);
+        await sessionManager.removeWhitelist(userId);
         return interaction.reply({
-            content: `> ${config.emojis.success} ลบ <@${target.id}> ออกจาก Whitelist แล้ว`,
+            content: `> ${config.emojis.success} ลบ <@${userId}> ออกจาก Whitelist แล้ว`,
             ephemeral: true
         });
     } else {
-        return interaction.reply({ content: `> ${config.emojis.warning} action ต้องเป็น add หรือ remove`, ephemeral: true });
+        return interaction.reply({ content: `> ${config.emojis.warning} action ต้องเป็น add, remove หรือ list`, ephemeral: true });
     }
 }
 

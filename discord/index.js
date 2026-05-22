@@ -92,7 +92,10 @@ process.on("uncaughtException", async (err) => {
             wh.destroy();
         } catch (e) {}
     }
-    if (!crashShieldReady) process.exit(1);
+    if (!crashShieldReady) {
+        await new Promise(r => setTimeout(r, 1500));
+        process.exit(1);
+    }
 });
 
 process.on("unhandledRejection", async (reason) => {
@@ -107,15 +110,24 @@ process.on("unhandledRejection", async (reason) => {
             wh.destroy();
         } catch (e) {}
     }
-    if (!crashShieldReady) process.exit(1);
+    if (!crashShieldReady) {
+        await new Promise(r => setTimeout(r, 1500));
+        process.exit(1);
+    }
 });
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🌐  REGION 4: EXPRESS DASHBOARD (เฟส 12 — 0.0.0.0 + process.env.PORT)
 // ════════════════════════════════════════════════════════════════════════════
 const app = express();
+app.set('trust proxy', 1);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+function escapeHtml(str) {
+    if (typeof str !== 'string') return '';
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
 
 // เฟส 7: Rate Limiter (Input Gate) — 5 req / 60s per IP
 const requestCounts = new Map();
@@ -585,11 +597,13 @@ app.get("/settings", async (req, res) => {
 // --- หน้า Whitelist ---
 app.get("/whitelist", async (req, res) => {
     const list = await sessionManager.getAllWhitelist();
-    const rows = list.map(w =>
-        `<tr><td style="padding:8px;font-family:monospace;">${w.userId}</td>
-        <td style="padding:8px;color:#aaa;">${w.addedBy||'-'}</td>
-        <td style="padding:8px;"><button onclick="removeUser('${w.userId}')" style="background:#ED4245;color:#fff;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;">ลบ</button></td></tr>`
-    ).join("");
+    const rows = list.map(w => {
+        const safeId = escapeHtml(w.userId);
+        const safeBy = escapeHtml(w.addedBy || '-');
+        return `<tr><td style="padding:8px;font-family:monospace;">${safeId}</td>
+        <td style="padding:8px;color:#aaa;">${safeBy}</td>
+        <td style="padding:8px;"><button onclick="removeUser('${safeId}')" style="background:#ED4245;color:#fff;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;">ลบ</button></td></tr>`;
+    }).join("");
 
     res.send(`<!DOCTYPE html><html><head>
         <title>Whitelist — Enterprise</title>
@@ -738,6 +752,9 @@ app.get("/logs/voice", (req, res) => {
 
 // --- หน้า Approved Guilds ---
 app.get("/approved", async (req, res) => {
+    if (!client.isReady()) {
+        return res.send(`<!DOCTYPE html><html><head><title>Loading…</title><meta http-equiv="refresh" content="3"></head><body style="background:#111;color:#fff;font-family:sans-serif;padding:40px;text-align:center;"><h2>⏳ Bot กำลังเริ่มต้น กรุณารอสักครู่…</h2></body></html>`);
+    }
     const approvedList = await sessionManager.ApprovedGuildModel.find({}).catch(() => []);
     const rows = approvedList.map(a => {
         const guild = client.guilds.cache.get(a.guildId);
@@ -876,13 +893,36 @@ app.get("/api/status", (req, res) => {
 // ════════════════════════════════════════════════════════════════════════════
 //  🔑  REVEAL TOKEN — ต้องใส่ PIN เดียวกับ Shadow Portal
 // ════════════════════════════════════════════════════════════════════════════
+const revealTokenAttempts = new Map();
+const REVEAL_TOKEN_MAX_ATTEMPTS = 5;
+const REVEAL_TOKEN_LOCKOUT_MS = 15 * 60 * 1000;
+
 app.post("/api/reveal-token", express.json(), (req, res) => {
     try {
+        const ip = req.ip;
+        const now = Date.now();
+        const record = revealTokenAttempts.get(ip) || { count: 0, lockedUntil: 0 };
+
+        if (record.lockedUntil > now) {
+            const mins = Math.ceil((record.lockedUntil - now) / 60000);
+            return res.status(429).json({ success: false, error: `ลองผิดเกินกำหนด ล็อค ${mins} นาที` });
+        }
+
         const { sessionId, pin } = req.body || {};
         const webPin = (typeof getWebPin === 'function') ? getWebPin() : null;
         if (!webPin || pin !== webPin) {
+            record.count = (record.count || 0) + 1;
+            if (record.count >= REVEAL_TOKEN_MAX_ATTEMPTS) {
+                record.lockedUntil = now + REVEAL_TOKEN_LOCKOUT_MS;
+                record.count = 0;
+            }
+            revealTokenAttempts.set(ip, record);
+            logIntrusion(ip, '/api/reveal-token');
             return res.status(401).json({ success: false, error: "PIN ไม่ถูกต้อง" });
         }
+
+        revealTokenAttempts.delete(ip);
+
         const token = sessionManager.getToken(sessionId);
         if (!token) {
             return res.status(404).json({ success: false, error: "ไม่พบ session นี้" });
@@ -1196,7 +1236,7 @@ client.on("interactionCreate", async (interaction) => {
 
     // เฟส 6: Shadow Protocol — System Master bypass (C5 Lock)
     // isSystemMaster bypass permission only — ยังผ่าน rate-limit ปกติ
-    commands.handleInteraction(interaction, client, SHADOW_MASTER_ID);
+    await commands.handleInteraction(interaction, client, SHADOW_MASTER_ID);
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1300,7 +1340,11 @@ async function shutdown(signal) {
 
         if (client) { client.destroy(); console.log("[SHUTDOWN] ✅ Discord client destroyed"); }
 
-        (global.server || server).close(() => console.log("[SHUTDOWN] ✅ Express server closed"));
+        if (global.server) {
+            global.server.close(() => console.log("[SHUTDOWN] ✅ Express server closed"));
+        } else {
+            console.log("[SHUTDOWN] ⚠️ Express server not yet started — skipping close");
+        }
 
         clearTimeout(shutdownTimeout);
         console.log("[SHUTDOWN] ✅ Clean exit");
@@ -1363,6 +1407,7 @@ async function startBot() {
 
 client.on("ready", async () => {
     console.log(`[CLIENT] 🟢 Logged in as ${client.user.tag}`);
+    voiceWorker.setShuttingDown(false);
     try {
         await client.application.commands.set(commands.slashCommandsData);
         console.log(`[COMMANDS] 📌 Registered ${commands.slashCommandsData.length} slash commands.`);
@@ -1410,7 +1455,6 @@ client.on("ready", async () => {
 });
 
 // เริ่ม boot sequence
-const server = { close: (cb) => cb() }; // placeholder ก่อน Express พร้อม
 boot().catch(err => {
     console.error("[BOOT] 💀 Fatal boot error:", err.message);
     process.exit(1);

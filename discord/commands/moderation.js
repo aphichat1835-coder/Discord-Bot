@@ -47,14 +47,15 @@ async function handleVoiceKickAll(interaction, getLogChannel) {
         let kicked = [];
         let isTimeoutHit = false;
 
-        for (const [memberId, member] of vc.members) {
+        const memberSnapshot = Array.from(vc.members.values());
+        for (const member of memberSnapshot) {
             await new Promise(resolve => setImmediate(resolve));
 
             if (Date.now() - startTime > MAX_DURATION) { isTimeoutHit = true; break; }
             if (!member.permissions.has("ADMINISTRATOR")) {
                 try {
                     await member.voice.disconnect();
-                    kicked.push(`<@${memberId}>`);
+                    kicked.push(`<@${member.id}>`);
                     await new Promise(r => setTimeout(r, 500));
                 } catch (e) {}
             }
@@ -124,6 +125,7 @@ async function handleModeration(interaction, client, getLogChannel) {
     if (!target) return interaction.reply({ content: `> ${config.emojis.no_entry} ไม่พบเป้าหมาย!`, ephemeral: true });
     if (target.id === interaction.user.id) return interaction.reply({ content: `> ${config.emojis.warning} คุณไม่สามารถทำโทษตัวเองได้!`, ephemeral: true });
     if (target.id === client.user.id) return interaction.reply({ content: `> ${config.emojis.warning} คุณไม่สามารถทำโทษบอทระบบได้!`, ephemeral: true });
+    if (target.id === interaction.guild.ownerId) return interaction.reply({ content: `> ${config.emojis.no_entry} ไม่สามารถทำโทษเจ้าของเซิร์ฟเวอร์ได้!`, ephemeral: true });
 
     if (
         target.roles.highest.position >= interaction.member.roles.highest.position &&

@@ -284,6 +284,10 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
 }
 
 function getSession(sessionId) {
+    return sessions.get(sessionId) || null;
+}
+
+function touchSession(sessionId) {
     const s = sessions.get(sessionId);
     if (s) s.lastActivity = Date.now();
     return s;
@@ -499,6 +503,28 @@ async function saveLogChannelMap(guildId, channels) {
     }
 }
 
+async function setLogChannelMap(guildId, category, channelId) {
+    const keyMap = {
+        message:  'messageChannelId',
+        member:   'memberChannelId',
+        voice:    'voiceChannelId',
+        server:   'serverChannelId',
+        security: 'securityChannelId'
+    };
+    const key = keyMap[category];
+    if (!key) return;
+    try {
+        await LogChannelMapModel.updateOne(
+            { guildId },
+            { $set: { [key]: channelId, updatedAt: Date.now() } },
+            { upsert: true }
+        );
+    } catch (err) {
+        console.error(`[AUDIT] ❌ setLogChannelMap failed: ${err.message}`);
+        systemMetrics.increment('errors');
+    }
+}
+
 async function getLogChannelMap(guildId) {
     try {
         return await LogChannelMapModel.findOne({ guildId });
@@ -540,7 +566,10 @@ module.exports = {
     savePanelState, getPanelState,
 
     // Log Channel Map
-    saveLogChannelMap, getLogChannelMap,
+    saveLogChannelMap, setLogChannelMap, getLogChannelMap,
+
+    // Session Touch (explicit lastActivity update)
+    touchSession,
 
     // Models (ใช้ใน index.js + commands.js)
     SessionModel, SnapshotModel, ApprovedGuildModel, PendingGuildModel,

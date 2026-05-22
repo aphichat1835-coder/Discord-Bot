@@ -35,9 +35,14 @@ async function sendAuditLog(guild, sessionManager, type, embed) {
 function registerMessageEvents(client, sessionManager) {
     const config = require("./config.json");
 
+    // Map ติดตาม bulk-delete ล่าสุด → ป้องกัน messageDelete ซ้ำ (Bug A-1)
+    const recentBulkChannels = new Map();
+
     // ข้อความถูกลบ
     client.on("messageDelete", async (message) => {
         if (!message.guild || message.author?.bot) return;
+        const bulkTs = recentBulkChannels.get(message.channel.id);
+        if (bulkTs && Date.now() - bulkTs < 3000) return;
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.error)
             .setTitle(`${config.emojis.trash} ข้อความถูกลบ`)
@@ -53,6 +58,7 @@ function registerMessageEvents(client, sessionManager) {
     // ข้อความถูกแก้ไข
     client.on("messageUpdate", async (oldMsg, newMsg) => {
         if (!newMsg.guild || newMsg.author?.bot) return;
+        if (!oldMsg.content && !newMsg.content) return;
         if (oldMsg.content === newMsg.content) return;
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.warning)
@@ -72,6 +78,8 @@ function registerMessageEvents(client, sessionManager) {
     client.on("messageDeleteBulk", async (messages) => {
         const first = messages.first();
         if (!first?.guild) return;
+        recentBulkChannels.set(first.channel.id, Date.now());
+        setTimeout(() => recentBulkChannels.delete(first.channel.id), 3000);
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.error)
             .setTitle(`${config.emojis.broom} ลบข้อความหมู่ (Bulk Delete)`)

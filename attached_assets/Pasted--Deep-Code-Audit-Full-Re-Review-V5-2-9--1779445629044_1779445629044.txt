@@ -1,0 +1,719 @@
+🔬 Deep Code Audit — Full Re-Review V5.2
+วิเคราะห์โค้ดทั้งหมดอีกครั้งแบบละเอียด
+ผมอ่านโค้ดทั้ง 9 ไฟล์แบบบรรทัดต่อบรรทัดแล้ว — มีของดีที่คุณแก้เพิ่ม เยอะมาก แต่ก็เจอ bug จริง ที่ต้องแก้ก่อนใช้งานจริง
+🔴 BUG วิกฤต (ต้องแก้ทันที — บอทพังหรือฟีเจอร์ไม่ทำงาน)
+🐛 Bug #1: utility.js เรียก setLogChannelMap ที่ไม่มีในระบบ — /setup-log พัง
+ใน commands/utility.js บรรทัด ~280:
+await sessionManager.setLogChannelMap(interaction.guild.id, cat, ch.id);
+
+แต่ใน sessionManager.js มีแค่:
+async function saveLogChannelMap(guildId, channels) { ... }
+
+→ เป็นคนละชื่อฟังก์ชัน + รับ argument คนละแบบ!
+ผลกระทบ: /setup-log จะแครชทันทีตอนสร้างห้องแรก → Audit Logger ใช้ไม่ได้ทั้งระบบ
+🐛 Bug #2: utility.js /whitelist อ่าน option ผิด field — คำสั่งใช้ไม่ได้
+// utility.js
+const target = interaction.options.getUser("user");
+
+แต่ใน commands.js slash registry:
+options: [
+    { type: 3, name: "action",  description: "add / remove / list", required: true },
+    { type: 3, name: "user_id", description: "Discord User ID",     required: false }
+]
+
+→ Discord ส่ง user_id เป็น string ไม่ใช่ user (USER type 6)
+→ getUser("user") จะคืน null เสมอ → คำสั่งตอบ "ระบุ user ด้วย" ทุกครั้ง
+ผลกระทบ: /whitelist add/remove ใช้ไม่ได้เลย + list ไม่มี handler
+🐛 Bug #3: index.js หน้า /approved ใช้ client ก่อนถูกประกาศ
+// บรรทัด ~600 — หน้า /approved
+const guild = client.guilds.cache.get(a.guildId);
+
+แต่ const client = new Client(...) อยู่บรรทัด ~870 (REGION 7) — หลังการประกาศ route
+ทำไมไม่พัง: เพราะ Express route เป็น lazy execution — ตอน user เข้าหน้าจริง client ถูกประกาศแล้ว
+
+
+
+
+
+
+Phomueangtai Enterprise — Line-by-Line Forensic Analysis
+ผมจะแบ่งเป็น 9 ส่วนตามไฟล์ + 1 ส่วน Cross-File Integration ตรวจครบทุกจุด
+📄 ไฟล์ 1/9: config.json — ตรวจทุก key
+✅ จุดดี
+มี emoji ครบ ~80 ตัว — รองรับการอ้างอิงจากทุกไฟล์
+มี voice_worker config แยกออกมาแล้ว
+มี audit_channels พร้อม category name
+🔴 BUG วิกฤต
+Bug C-1: Emoji key command_log_icon กับ intrusion_icon ใช้ emoji ซ้ำกัน
+"intrusion_icon": "🛑",
+"command_log_icon": "📡"
+
+ไม่ใช่ bug จริง แค่สังเกต — โอเค
+Bug C-2: bannerUrl ใช้ Discord CDN URL ที่มี ex= parameter (signed URL)
+"bannerUrl": "https://cdn.discordapp.com/.../image0.gif?ex=6a0ed338&is=6a0d81b8&hm=..."
+
+Discord signed URL หมดอายุภายใน 24 ชั่วโมง → หลังนั้น banner ใน panel embed จะหายไป → Discord อาจ throw Invalid Form Body
+🩹 แก้: อัปโหลดรูปไป imgur.com / GitHub raw / Cloudflare Images แทน
+🟠 Bug รอง
+Bug C-3: themeColors.warning ใช้ค่า #FEE75C แต่ warning emoji ใช้ <a:Di_phomueang> ซึ่งเป็นรูปเดียวกับ stop
+"stop": "<a:Di_phomueang:1505544059056427079>",
+"warning": "<a:Di_phomueang:1505544059056427079>",
+"no_permission": "<a:Di_phomueang:1505544059056427079>"
+
+3 keys ใช้รูปเดียวกัน → user จะแยกไม่ออกระหว่าง "หยุด" "เตือน" "ไม่มีสิทธิ์"
+🩹 แก้: ให้ค่าต่างกันแต่ละชนิด
+📄 ไฟล์ 2/9: .gitignore
+ไม่ได้เห็นไฟล์นี้ในชุดล่าสุดที่ส่งมา — เช็คให้แน่ใจว่ามีอยู่จริงที่ root ไม่งั้น .env/node_modules จะรั่วลง GitHub ทันที
+📄 ไฟล์ 3/9: sessionManager.js
+✅ จุดดี
+AES-256-CBC encryption ครบ
+8 Mongoose schemas พร้อมใช้
+mongoose connection event listeners ครบ
+Pool config ถูกต้อง (maxPoolSize: 20, minPoolSize: 2)
+🔴 BUG วิกฤต
+Bug S-1: ❗ setLogChannelMap ไม่มี — มีแค่ saveLogChannelMap
+ฟังก์ชันชื่อ:
+async function saveLogChannelMap(guildId, channels) {
+    await LogChannelMapModel.updateOne(
+        { guildId },
+        { $set: { ...channels, updatedAt: Date.now() } },
+        { upsert: true }
+    );
+}
+
+แต่ utility.js เรียกแบบนี้:
+await sessionManager.setLogChannelMap(interaction.guild.id, cat, ch.id);
+
+ปัญหา:
+ชื่อต่างกัน (set vs save)
+Argument signature ต่างกัน — saveLogChannelMap รับ object แต่ utility ส่ง 3 args
+Export ไม่ได้ export setLogChannelMap → /setup-log แครชทันที
+🩹 แก้: เพิ่มฟังก์ชันใน sessionManager.js:
+async function setLogChannelMap(guildId, category, channelId) {
+    const key = `${category}ChannelId`;
+    await LogChannelMapModel.updateOne(
+        { guildId },
+        { $set: { [key]: channelId, updatedAt: Date.now() } },
+        { upsert: true }
+    );
+}
+
+แล้ว export ด้วย
+Bug S-2: connectDB() ลบ keepAlive: true ไปแล้ว แต่ comment ยังบอกว่ามี
+// เฟส 14: keepAlive กันหลุด + เฟส 20: maxPoolSize กัน connection หมด
+await mongoose.connect(process.env.MONGO_URI, {
+    serverSelectionTimeoutMS: 5000,
+    maxPoolSize: 20,
+    minPoolSize: 2
+});
+
+ปัญหา: Mongoose 6.x+ ตัด useNewUrlParser, useUnifiedTopology, keepAlive ออกไปแล้ว (deprecated)
+→ คอมเมนต์ภาษาไทย misleading แต่โค้ดถูก ✅
+→ แต่ใน free-tier MongoDB Atlas — ถ้า idle 10 นาที จะตัด → ไม่มี keepAlive จริงๆ → DB จะ reconnect ทุกครั้งที่ใช้
+🩹 แก้: เพิ่ม socketTimeoutMS: 45000 เพื่อช่วย handle dropped connection
+🟠 Bug รอง
+Bug S-3: saveDatabase() ทำ updateOne ทีละตัวใน loop — ช้ามาก
+for (const [id, session] of sessions) {
+    await SessionModel.updateOne(...);
+}
+
+ถ้ามี 20 sessions → 20 round-trips เรียงกัน
+🩹 แก้: ใช้ bulkWrite() ลด round-trip เหลือ 1 ครั้ง
+Bug S-4: getSession() มี side-effect ที่ขัด principle
+function getSession(sessionId) {
+    const s = sessions.get(sessionId);
+    if (s) s.lastActivity = Date.now();  // ← side effect!
+    return s;
+}
+
+ทุกคน "อ่าน" session = อัปเดต lastActivity ตลอด → idle timeout ไม่มีวันถึง
+ผลกระทบ: cleanupIdleSessions ไม่เคยลบอะไรเลย เพราะ healthCheck เรียก getSession() ทุก 90 วินาที
+🩹 แก้: แยกเป็น getSession() (อ่านอย่างเดียว) + touchSession() (อัปเดต activity)
+📄 ไฟล์ 4/9: voiceWorker.js
+✅ จุดดี
+MAX_RECONNECT_ATTEMPTS ใช้งานจริงแล้ว
+Exponential backoff + urgent recovery flag — sophisticated
+setMaxListeners(20) กัน warning
+Voice Event Log สำหรับ Dashboard
+isShuttingDown flag ครบทุกจุด
+🔴 BUG วิกฤต
+Bug V-1: ❗ ดับเบิ้ลครอบ console.log/warn/error ใน voiceWorker — ชนกับใน index.js
+index.js ทำแบบนี้:
+const originalLog = console.log;
+console.log = (...args) => {
+    pushLog('info', msg);
+    originalLog(...args);
+};
+
+voiceWorker.js (REGION 11) ก็ครอบซ้ำอีกชั้น:
+const _origLog = console.log.bind(console);
+console.log = (...args) => {
+    _origLog(...args);
+    // pushVoiceLog logic
+};
+
+ปัญหา:
+ลำดับการ require สำคัญ — index.js require voiceWorker หลังครอบ console เสร็จแล้ว → voiceWorker ครอบทับอีกครั้ง → กลายเป็น 3 layer wrapper
+Performance: ทุก console.log จะวิ่งผ่าน wrapper 2-3 ครั้ง → ช้าและกิน CPU
+ที่อันตรายกว่า: voiceWorker._origLog เก็บ reference ตอน require → ถ้า require order เปลี่ยน อาจเก็บ wrapper ของ index แล้ว loop infinite
+🩹 แก้: ย้าย voice log detection มาไว้ใน pushLog() ของ index.js หรือใช้ EventEmitter pattern แทน
+Bug V-2: getSessionTokenHash() มี side-effect ใส่ tokenHash บน session object
+function getSessionTokenHash(sessionId, session) {
+    if (session.tokenHash) return session.tokenHash;
+    const token = sessionManager.getToken(sessionId);
+    if (token) {
+        session.tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+        return session.tokenHash;
+    }
+    return null;
+}
+
+ปัญหา: เก็บ tokenHash ลงใน session object → แต่ session object ใน Map ไม่ใช่ persistent → reload จาก DB จะ recompute ทุกครั้ง (OK)
+→ แต่ถ้า getToken() คืน null (DB หลุด) → จะคืน null → startSession throw TOKEN_DECRYPTION_FAILED
+→ ผู้ใช้สับสนว่า token ผิด ทั้งที่ DB หลุด
+🩹 แก้: แยก error message ระหว่าง "decrypt fail" และ "DB temporary unavailable"
+Bug V-3: connectToVoice() ไม่ register VoiceConnectionStatus.Ready event log
+ตอนเชื่อมต่อสำเร็จไม่มี log → pushVoiceLog('connect', ...) ใน console.log wrapper จับ pattern [WORKER] 🎧 Voice connected
+แต่ pattern นี้ใช้ regex: Guild: (\S+) → จับเอา guildId มาเป็น sessionId
+if (msg.includes('[WORKER] 🎧 Voice connected')) {
+    const m = msg.match(/Guild: (\S+)/);
+    pushVoiceLog('connect', m?.[1] || '?', 'Voice connected');
+}
+
+ปัญหา: m[1] คือ guildId ไม่ใช่ sessionId — แต่ pushVoiceLog ตั้งใจให้รับ sessionId → Voice Log จะแสดง guildId ผิด field
+🩹 แก้: เปลี่ยน log message ใน startSession ให้พิมพ์ sessionId ด้วย:
+console.log(`[WORKER] 🎧 Voice connected for Guild: ${session.serverId} Session: ${sessionId}`);
+
+🟠 Bug รอง
+Bug V-4: pauseAll() ตั้ง isShuttingDown = true แต่ไม่มีทาง reset
+setShuttingDown(val) export อยู่ แต่ไม่มีคนเรียก setShuttingDown(false) ที่ไหนเลย
+ถ้า shutdown ครึ่งทาง (เช่น Render preempt แล้ว resume) → flag ค้าง = autoResume ทำงานไม่ได้
+🩹 แก้: ใน boot() หรือ client.on('ready') ให้เรียก voiceWorker.setShuttingDown(false) ก่อน autoResume
+Bug V-5: cleanupIdleSessions ใช้ lastActivity ที่ถูกอัปเดตทุก getSession()
+รวมกับ Bug S-4 → ไม่เคย cleanup ใครเลย → ไม่ใช่ bug ใน voiceWorker แต่ chain effect
+Bug V-6: recoveryTimestamps Map ไม่มีคน cleanup
+const recoveryTimestamps = new Map();
+
+session ตายไปแล้วแต่ entry ยังค้างใน Map ตลอดอายุ process → memory leak ระยะยาว
+🩹 แก้: ใน stopSession ลบ recoveryTimestamps.delete(sessionId) ด้วย
+📄 ไฟล์ 5/9: index.js (Main Entry) — ต่อ
+✅ จุดดี
+Strict boot sequence ครบ
+Environment validation ครบ 4 ตัว
+Dashboard มี real-time fetch ทุก 5 วินาที
+Token reveal modal มี PIN protection
+Shutdown timeout safety net (10s)
+CRON แยก 30s/90s
+🔴 BUG วิกฤต
+Bug I-1: ❗ shutdown() reference server ที่เป็น placeholder
+บรรทัด ~820:
+(global.server || server).close(() => console.log("..."));
+
+บรรทัดท้ายสุด:
+const server = { close: (cb) => cb() }; // placeholder ก่อน Express พร้อม
+
+ปัญหา:
+ตอน shutdown() ถูกเรียก → global.server มีค่าจริง (เซ็ตใน boot()) → OK
+แต่ ถ้า SIGTERM มาก่อน boot เสร็จ → global.server ยังไม่ถูกเซ็ต → fallback ไป server = placeholder fake → Express ไม่ได้ปิดจริง
+ผลกระทบ: Express server ค้างเปิดอยู่ตอน Render kill process → next deploy อาจติด port
+🩹 แก้: ตั้งตัวแปรเป็น let serverInstance = null ที่ scope module → assign ใน boot() → check null ใน shutdown
+Bug I-2: crashShieldReady flag ทำให้ runtime error เงียบไม่ส่ง alert
+บรรทัด ~85:
+process.on("uncaughtException", async (err) => {
+    originalError(...);
+    if (process.env.ALERT_WEBHOOK_URL) {
+        try { await wh.send(...); } catch (e) {}
+    }
+    if (!crashShieldReady) process.exit(1);
+});
+
+ปัญหา: Logic ถูกแล้ว (ส่ง webhook เสมอ, exit เฉพาะตอน boot) ✅
+แต่: ตอน boot ถ้ามี uncaughtException → ส่ง webhook → wh.send เป็น async แต่ไม่ await จริงๆ ทันแล้ว process.exit(1) มาก่อน → webhook ไม่ทันส่ง
+🩹 แก้: ใส่ await wh.send(...) แล้วใส่ await new Promise(r => setTimeout(r, 500)) ก่อน exit เพื่อให้ webhook ทันยิงจริง
+Bug I-3: HTML inject XSS ใน /whitelist page
+บรรทัด ~390:
+const rows = list.map(w =>
+    `<tr><td>${w.userId}</td>
+    <td>${w.addedBy||'-'}</td>
+    ...`
+).join("");
+
+ปัญหา: w.addedBy มาจาก DB → ถ้ามีใครเพิ่ม whitelist ผ่าน command แล้วใช้ username ที่มี <script> → XSS ใน Dashboard
+ทำได้เพราะ:
+Discord allow special chars ใน username
+ไม่มี HTML escape
+ความเสี่ยงจริง: ต่ำ (มีแค่คุณซันใช้ Dashboard) แต่เป็น security smell
+🩹 แก้: เพิ่ม helper:
+const esc = s => String(s||'').replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));
+
+แล้วใช้ทุกจุดที่ inject user data ลง HTML
+Bug I-4: ❗ interactionCreate handler ไม่ await commands.handleInteraction
+บรรทัด ~970:
+client.on("interactionCreate", async (interaction) => {
+    if (interaction.guild && !interaction.isAutocomplete()) {
+        ...
+        if (isProtectedCommand || isProtectedButton) {
+            const approved = await checkApproval(interaction.guild, interaction.user);
+            if (!approved) { ... return ... }
+        }
+    }
+    commands.handleInteraction(interaction, client, SHADOW_MASTER_ID);  // ← ไม่มี await!
+});
+
+ปัญหา: ถ้า commands.handleInteraction throw error → unhandledRejection → crash shield จับ → ส่ง webhook → fine แต่ user เห็น "Interaction failed"
+🩹 แก้:
+await commands.handleInteraction(...).catch(err => {
+    console.error("[INTERACT] Top-level catch:", err.message);
+});
+
+Bug I-5: หน้า /approved ใช้ client ตอน render — ทำงานได้แต่เป็น forward reference
+บรรทัด ~600:
+const guild = client.guilds.cache.get(a.guildId);
+
+ความจริง: ใช้ได้เพราะ Express route เป็น lazy — แต่ถ้ามีคนเข้าหน้า /approved ก่อน client ready (รอ login) → client.guilds.cache = empty Map → guild = undefined → แสดง "ไม่พบในบอท" ทุก row
+🩹 แก้: เช็ค if (!client.isReady()) return res.send('<p>กำลังโหลด...</p>') ก่อน
+🟠 Bug รอง
+Bug I-6: Rate Limiter requestCounts ใช้ req.ip ที่อาจเป็น ::1 หรือ proxy IP
+Render ใช้ reverse proxy → req.ip จะเป็น IP ของ proxy ไม่ใช่ user
+→ ทุก request จาก Render proxy เดียวกัน → กิน 1 slot ของ rate limit ร่วมกัน
+→ User ทั่วโลกใช้ Dashboard จะถูก lump เข้าด้วยกัน
+🩹 แก้: เพิ่มใน Express:
+app.set('trust proxy', 1);
+
+แล้ว req.ip จะอ่านจาก X-Forwarded-For header ที่ Render ส่งมา
+Bug I-7: webLogs ring buffer ไม่ thread-safe กับ HTML render
+ขณะ Dashboard render → webLogs.slice().reverse() — ถ้ามี log ใหม่เข้ามาระหว่างนั้น → จะ skip log ตัวล่าสุด (race ระยะสั้น)
+ไม่ใช่ bug ใหญ่ — แค่อาจเห็น log ดีเลย์ 5 วินาที — ไม่ต้องแก้
+Bug I-8: API endpoint /api/reveal-token ไม่ใช้ checkAuth แต่ใช้ webPin แทน
+บรรทัด ~705:
+app.post("/api/reveal-token", express.json(), (req, res) => {
+    const { sessionId, pin } = req.body || {};
+    const webPin = (typeof getWebPin === 'function') ? getWebPin() : null;
+    if (!webPin || pin !== webPin) {
+        return res.status(401).json({...});
+    }
+
+ปัญหา:
+PIN เริ่มต้นคือ "123456" ใน systemProvider.js → ถ้าลืมเปลี่ยน = ใครก็เปิด token ได้
+ไม่มี rate limit เฉพาะ endpoint นี้ (ใช้ /api/* middleware = 5 ครั้ง/นาที = brute force ได้ ~7200 ครั้ง/วัน — เดา 6 หลักได้)
+🩹 แก้:
+บังคับเปลี่ยน PIN ตอน boot ถ้ายังเป็น "123456" (throw error)
+เพิ่ม intrusion log ทุกครั้งที่ PIN ผิด
+Block IP 1 ชั่วโมง หลังพยายามผิด 5 ครั้ง
+Bug I-9: Modal import แตกออก 2 จุดใน commands.js — ใน handleButton ใช้ require runtime
+ใน commands.js บรรทัด ~280 (handleButton "btn_start"):
+const { Modal, TextInputComponent } = require("discord.js");
+
+ทั้งที่ระบบ require cache แล้ว — ไม่ใช่ bug แต่ inefficient + อ่านยาก
+🩹 แก้: import ที่หัวไฟล์
+Bug I-10: Anti-Raid ส่ง webhook log ทุกครั้งที่จับสแปม แต่ไม่มี Anti-Spam สำหรับ webhook เอง
+ถ้ามี mass raid 100 คน → 100 webhook ส่งใน 30 วินาที → Webhook rate limit ของ Discord = 30 req/60s → โดน 429 → webhook ถูก block
+🩹 แก้: Debounce / batch webhook ทุก 5 วินาที
+📄 ไฟล์ 6/9: auditLogger.js
+✅ จุดดี
+แยก function ตามหมวด — ดูง่าย
+ครบทุก event ที่จำเป็น
+🔴 BUG วิกฤต
+Bug A-1: ❗ messageDelete ไม่ filter ข้อความที่ระบบลบเอง (Anti-Raid bulkDelete) → log สแปม
+ใน index.js Anti-Raid:
+await message.channel.bulkDelete(5).catch(() => {});
+
+→ auditLogger จับ messageDelete × 5 + messageDeleteBulk × 1 = 6 logs ต่อ 1 anti-raid event
+🩹 แก้: ใส่ flag ใน global Set ก่อนสั่งลบ:
+global.systemDeletes = global.systemDeletes || new Set();
+global.systemDeletes.add(message.id);
+
+แล้วใน auditLogger เช็ค if (global.systemDeletes.has(msg.id)) { skip; }
+Bug A-2: guildMemberAdd ลงทะเบียน 2 ครั้ง — log สมาชิกใหม่ 2 รอบ
+function registerMemberEvents() {
+    client.on("guildMemberAdd", ...);  // ครั้งที่ 1 — log สมาชิก
+}
+function registerSecurityEvents() {
+    client.on("guildMemberAdd", ...);  // ครั้งที่ 2 — log บอท
+}
+
+ปัญหา: ถ้า user (ไม่ใช่บอท) เข้า → ครั้งที่ 1 ทำงาน, ครั้งที่ 2 check if (!member.user.bot) return; ผ่าน
+ถ้าบอท → ครั้งที่ 1 ทำงาน (log เข้า member channel), ครั้งที่ 2 log เข้า security channel → มี 2 log สำหรับบอท
+ไม่ใช่ bug จริง — เป็น design intent (member channel + security channel) ✅
+🟠 Bug รอง
+Bug A-3: messageUpdate ไม่เช็ค embed-only update
+Discord ส่ง messageUpdate event ทุกครั้งที่ embed ถูก resolve (เช่น link preview) → log "ข้อความถูกแก้ไข" ทั้งที่ user ไม่ได้แก้
+🩹 แก้:
+if (oldMsg.content === newMsg.content) return;  // ← มีแล้ว ✅
+if (!oldMsg.content && !newMsg.content) return;  // ← เพิ่ม กัน embed-only
+
+Bug A-4: voiceStateUpdate ไม่ track selfMute/selfDeaf → ไม่รู้ว่าใครปิดไมค์ตัวเอง
+มีแค่ serverMute/serverDeaf (ถูกบังคับ)
+ไม่ใช่ bug — เป็น design intent (เฟส 25 บอกแค่ server-level)
+Bug A-5: webhookUpdate event ใน discord.js v13 ไม่มี — มีแค่ใน v14+
+client.on("webhookUpdate", async (channel) => { ... });
+
+ปัญหา: ใน v13 ใช้ event ชื่อ webhookUpdate แต่ payload เป็น TextChannel ตรงๆ (correct)
+ใน v14 เปลี่ยนเป็น webhooksUpdate (มี s)
+ถ้า package.json ใช้ discord.js v13.x → OK ✅
+ถ้าใช้ v14+ → event ไม่ fire → ตรวจ package.json
+📄 ไฟล์ 7/9: commands.js (Router) — ต่อ
+🔴 BUG วิกฤต (ต่อ)
+Bug R-1: ❗ handleModal modal_start ไม่ตรวจ ownership ของ Token
+บรรทัด ~360:
+async function handleModal(interaction, client) {
+    if (interaction.customId === "modal_start") {
+        const token = interaction.fields.getTextInputValue("token").trim();
+        const serverId = interaction.fields.getTextInputValue("server_id").trim();
+        const voiceId = interaction.fields.getTextInputValue("voice_id").trim();
+        ...
+        const sessionId = await sessionManager.createSession(
+            token, serverId, voiceId, guildName,
+            interaction.user.id,   // ← owner คือคนที่กดปุ่ม
+            ...
+        );
+
+ปัญหา: ใครก็ตามที่กดปุ่ม "เริ่มการทำงาน" แล้วใส่ token ของคนอื่น จะกลายเป็น "owner" ของ session นั้น
+→ คนอื่นกดดู Token ผ่าน /api/reveal-token (ที่ใช้แค่ PIN) → ขโมย token คนอื่น
+ผลกระทบ:
+ผู้ใช้ A เอา token ของผู้ใช้ B มาใส่ → B โดน A "เป็นเจ้าของ" session
+A ใช้ Dashboard → reveal token → ได้ token B
+A เข้าควบคุมบัญชี B ทันที
+🩹 แก้: ต้องมี mechanism ยืนยัน:
+Token validate กับ Discord API ก่อน → ดึง user.id จาก token จริง
+เทียบกับ interaction.user.id → ถ้าไม่ตรง = reject
+หรือง่ายกว่า: บอกใน Modal label ชัดเจน ว่า "ใส่ Token ของตัวเองเท่านั้น" + log warning ลง shadow webhook
+Bug R-2: customId status_page_-1 ตอน first page → parse เป็น NaN
+บรรทัด ~325:
+let page = 0;
+if (customId.startsWith("status_page_")) {
+    page = parseInt(customId.split("_")[2]) || 0;
+}
+if (page < 0) page = userSessions.length - 1;
+
+ปัญหา: parseInt("-1") = -1 → ตก if (page < 0) → page = length - 1 ✅ OK
+แต่ถ้า customId = "status_page_" (อาจเกิดจาก bug) → split("_")[2] = "" → parseInt("") = NaN → NaN || 0 = 0✅ OK
+จริงๆ ไม่ใช่ bug แต่ defensive ดี — ✅ ผ่าน
+Bug R-3: restorePanels() ไม่ลบ panel state ของ guild ที่บอทออกแล้ว
+บรรทัด ~210:
+async function restorePanels(client) {
+    const states = await sessionManager.PanelStateModel.find({});
+    for (const state of states) {
+        const guild = client.guilds.cache.get(state.guildId);
+        if (!guild) continue;  // ← แค่ skip ไม่ลบ DB
+        ...
+    }
+}
+
+ปัญหา: Guild ที่บอทถูก kick ออก → state ค้างใน DB ตลอดกาล → DB ใหญ่เรื่อยๆ
+🩹 แก้: ถ้า !guild → await PanelStateModel.deleteOne({ guildId: state.guildId })
+🟠 Bug รอง
+Bug R-4: handleInteraction increment 'requests' เฉพาะ isCommand() ไม่นับ button/modal
+if (interaction.isCommand()) {
+    sessionManager.systemMetrics.increment('requests');
+    ...
+}
+
+→ Button/modal interaction ไม่ถูกนับ → Success rate ใน Dashboard เพี้ยน
+→ Error ถูกนับใน catch (ทุก type) → ratio บิดเบือน (denominator เล็ก, numerator ใหญ่)
+🩹 แก้: ย้าย increment ขึ้นไปบรรทัดบนสุดของ try block
+Bug R-5: cleanupGuild ลบแค่ panelMessages ใน RAM ไม่ลบ PanelStateModel ใน DB
+function cleanupGuild(guildId) {
+    panelMessages.delete(guildId);
+}
+
+→ ตอน guildDelete event → state ค้างใน DB → restorePanels ครั้งต่อไป loop เจอ guild ที่ไม่อยู่แล้ว
+🩹 แก้:
+async function cleanupGuild(guildId) {
+    panelMessages.delete(guildId);
+    await sessionManager.PanelStateModel.deleteOne({ guildId }).catch(() => {});
+}
+
+Bug R-6: getLogChannel ค้นหา channel ทุกครั้งโดยใช้ name match — ช้า + ผิดได้
+async function getLogChannel(guild) {
+    return guild.channels.cache.find(c => c.name === config.channels.logName && c.isText()) || null;
+}
+
+ปัญหา:
+ถ้า user เปลี่ยนชื่อห้องเป็นภาษาอื่น/มี emoji → หาไม่เจอ
+O(n) — channel เยอะ = ช้า
+ถ้ามี 2 ห้องชื่อเหมือนกัน → เลือกตัวแรก (อาจไม่ใช่ที่ตั้งใจ)
+🩹 แก้: เก็บ channel ID ลง LogChannelMapModel (มีอยู่แล้ว) แทนการ match ชื่อ
+📄 ไฟล์ 8/9: commands/moderation.js
+✅ จุดดี
+Race condition guards (activeVoiceKicks)
+Permission chain ตรวจครบ
+setImmediate ใน loop
+finally block unlock guards ทุกที่
+ใช้ guild.members.me (v13.15+)
+🔴 BUG วิกฤต
+Bug M-1: handleVoiceKickAll vc.members Map ถูก mutate ระหว่าง loop
+บรรทัด ~50:
+for (const [memberId, member] of vc.members) {
+    ...
+    await member.voice.disconnect();  // ← ตัด member ออกจาก vc.members!
+    ...
+}
+
+ปัญหา: Iterating Map ขณะ delete = unsafe ใน JavaScript
+→ บางครั้ง iterator skip member → เตะไม่ครบ
+→ หรือ throw Concurrent modification
+🩹 แก้: Snapshot ก่อน loop:
+const membersSnapshot = Array.from(vc.members.values());
+for (const member of membersSnapshot) { ... }
+
+Bug M-2: DM ส่งก่อน ban/kick — แต่ถ้าคนปิด DM แล้ว ban → user ไม่ได้รับแจ้ง
+ปัญหานี้ไม่ใช่ของโค้ดผม — เป็น Discord limitation
+ที่ทำได้คือ DM ก่อน action ✅ ซึ่งโค้ดทำถูกแล้ว — ไม่ใช่ bug จริง
+🟠 Bug รอง
+Bug M-3: target.user.send ไม่ await — ถ้า throw จะกลายเป็น unhandledRejection
+target.user.send({ embeds: [dmEmbed] }).catch(() => {});
+
+มี .catch(() => {}) แล้ว ✅ — แต่ไม่ await หมายความว่า DM อาจส่งหลัง ban เสร็จ
+ไม่ใช่ bug — เป็น fire-and-forget pattern ที่ถูกต้อง
+Bug M-4: handleClear bulkDelete(amt, true) รอ Promise แต่ไม่จับ specific error
+const deletedMsgs = await interaction.channel.bulkDelete(amt, true);
+
+ปัญหา: bulkDelete throw error type หลายแบบ:
+DiscordAPIError [50034] — ข้อความเก่ากว่า 14 วัน
+DiscordAPIError [10008] — channel ไม่มีอยู่แล้ว
+DiscordAPIError [50013] — missing permission
+ตอนนี้ catch รวมเป็น "ล้มเหลว" — user ไม่รู้สาเหตุ
+🩹 แก้: แยก error code ใน catch:
+catch (e) {
+    if (e.code === 50034) return interaction.reply({content: "ข้อความเก่ากว่า 14 วัน"});
+    ...
+}
+
+🟠 Bug รอง (ต่อ)
+Bug M-5: handleModeration ตรวจไม่ครบ — ban/kick เจ้าของ guild ได้
+ตอนนี้เช็ค:
+if (target.id === interaction.user.id) return ...;  // ตัวเอง
+if (target.id === client.user.id) return ...;        // บอท
+if (target.roles.highest.position >= interaction.member.roles.highest.position && interaction.user.id !== interaction.guild.ownerId) return ...;
+
+ปัญหา: ไม่มีบรรทัด if (target.id === interaction.guild.ownerId) return ...;
+→ Admin ที่ยศสูงกว่า owner (ถ้ามี) → ban owner ได้ (ตามทฤษฎี)
+→ จริงๆ Discord block ban owner อยู่แล้ว แต่จะ throw error ที่ catch ไม่ user-friendly
+🩹 แก้: เพิ่มเช็ค:
+if (target.id === interaction.guild.ownerId) {
+    return interaction.reply({ content: `> ${config.emojis.no_entry} ไม่สามารถลงโทษเจ้าของเซิร์ฟเวอร์ได้!`, ephemeral: true });
+}
+
+Bug M-6: replyEmbed ส่งเข้า getLogChannel ที่หาด้วยชื่อ — ไม่ใช่ห้อง audit log
+const logCh = await getLogChannel(interaction.guild);  // หา channel ชื่อ "manager-logs"
+if (logCh) logCh.send({ embeds: [replyEmbed] }).catch(() => {});
+
+ปัญหา: ห้อง manager-logs คือห้อง log ของ session/moderation รวม — แต่ถ้าใช้ /setup-log แล้ว ระบบสร้างห้อง audit แยก (log-สมาชิก etc.) → log moderation ไม่ได้ใช้ห้องนั้น
+→ User งง: ทำไม log /ban ไม่ไปอยู่ใน log-สมาชิก
+🩹 แก้: ตัดสินใจ design — moderation log ไปอยู่ที่ไหน?
+Option A: ใช้ getLogChannel (manager-logs) — ตอนนี้ทำ
+Option B: ใช้ LogChannelMap.memberChannelId — สอดคล้องกับ audit logger
+แนะนำ B เพราะคุณซันสร้างระบบ audit log สวยงามแล้ว
+📄 ไฟล์ 9/9: commands/utility.js
+✅ จุดดี
+Race condition guards ครบ (activeRestores, activeBackups)
+Restore loop มี setImmediate (เฟส 21)
+Restore loop มี time budget 14 นาที + abort
+Backup permission ถูกต้อง (owner only + 24hr cooldown)
+/steal มี emoji quota pre-check
+🔴 BUG วิกฤต (ต่อ)
+Bug U-1 (สรุป fix): เพิ่มฟังก์ชันใน sessionManager.js:
+async function setLogChannelMap(guildId, category, channelId) {
+    const key = `${category}ChannelId`;
+    await LogChannelMapModel.updateOne(
+        { guildId },
+        { $set: { [key]: channelId, updatedAt: Date.now() } },
+        { upsert: true }
+    );
+}
+module.exports = { ..., setLogChannelMap, ... };
+
+Bug U-2: ❗ /whitelist รับ option user (USER type) แต่ commands.js ลงทะเบียน user_id (STRING)
+utility.js:
+const target = interaction.options.getUser("user");
+if (!target) return interaction.reply({ content: `> ${config.emojis.no_entry} ระบุ user ด้วย`, ephemeral: true });
+
+commands.js slash registry:
+options: [
+    { type: 3, name: "action",  required: true },
+    { type: 3, name: "user_id", required: false }  // STRING type
+]
+
+ผลกระทบ: getUser("user") คืน null ตลอด → /whitelist add/remove ใช้ไม่ได้เลย — แต่ /whitelist list ก็ไม่มี handler (ตกไปที่ else "action ต้องเป็น add หรือ remove")
+🩹 แก้: เปลี่ยน utility.js:
+const userId = interaction.options.getString("user_id");
+if (action === "list") {
+    const list = await sessionManager.getAllWhitelist();
+    const desc = list.length > 0
+        ? list.map(w => `<@${w.userId}> (\`${w.userId}\`)`).join('\n')
+        : 'ยังไม่มีรายชื่อ';
+    return interaction.reply({ embeds: [new MessageEmbed().setTitle('📋 Whitelist').setDescription(desc)], ephemeral: true });
+}
+if (!userId) return interaction.reply({ content: `> ${config.emojis.no_entry} ระบุ user_id`, ephemeral: true });
+if (action === "add")    { await sessionManager.addWhitelist(userId, interaction.user.tag); ... }
+if (action === "remove") { await sessionManager.removeWhitelist(userId); ... }
+
+Bug U-3: ❗ /say ครั้งแรก permission gate เพิ่งโผล่ — Conflict #10 จากรอบก่อนถูกแก้แล้ว ✅
+ตรวจดู:
+if (history.length === 1) {
+    if (!interaction.member.permissions.has("MANAGE_MESSAGES")) {
+        return interaction.reply({
+            content: `> ${config.emojis.no_entry} ต้องมีสิทธิ์ Manage Messages เพื่อใช้คำสั่งนี้`,
+            ephemeral: true
+        });
+    }
+    await interaction.channel.send(msg);
+    ...
+}
+
+สถานะ: ✅ แก้แล้ว ครั้งแรกต้องมี Manage Messages — ดีมาก
+แต่ยังมีปัญหารอง:
+ครั้งที่ 2+ → ถ้า admin → ไม่เช็ค history เพิ่ม → admin spam ได้ไม่จำกัด (ไม่ใช่ปัญหา ✅)
+ครั้งที่ 2+ → ถ้าไม่ใช่ admin → เช็ค whitelist → ถ้าผ่าน → ส่ง ✅
+ปัญหา: Whitelist user ไม่มี rate limit เลย → spam ได้ตลอด
+🩹 แก้: เพิ่ม hard cap แม้ใน whitelist:
+if (!isAdmin && history.length > 10) {
+    return interaction.reply({ content: `เกิน 10 ครั้ง/นาที — รอสักครู่`, ephemeral: true });
+}
+
+🟠 Bug รอง (ต่อ)
+Bug U-4: handleBackup เก็บ permission ที่อาจเกิน BigInt limit
+permissions: r.permissions.bitfield.toString()
+
+ใช้ toString() → เก็บเป็น string ✅ ปลอดภัย — ไม่ใช่ bug
+แต่ตอน restore:
+permissions: BigInt(rData.permissions)
+
+ถ้า string ว่าง → BigInt("") throw → role create fail
+🩹 แก้: permissions: BigInt(rData.permissions || "0")
+Bug U-5: handleSteal interaction.guild.emojis.create(url, name) — discord.js v13 signature
+await interaction.guild.emojis.create(url, name);
+
+ใน v13.x: create(attachment, name, { reason }) — ถูกต้อง ✅
+ใน v14: create({ attachment, name }) — เปลี่ยน signature
+ต้องเช็ค package.json: ถ้าใช้ v14 ต้องเปลี่ยน
+Bug U-6: handleRestore await interaction.deferReply() หลัง check permission — เสี่ยง 3s timeout
+async function handleRestore(interaction) {
+    if (...) return interaction.reply(...);  // หลายเช็ค
+    if (!interaction.guild.members.me.permissions.has("ADMINISTRATOR")) {
+        return interaction.reply({...});
+    }
+    const targetId = interaction.options.getString("server_id");
+    await interaction.deferReply();  // ← อาจเกิน 3 วิแล้ว
+    const backup = await sessionManager.SnapshotModel.findOne({ guildId: targetId });
+    ...
+}
+
+ปัญหา: ถ้า MongoDB ช้า + permission check ใช้เวลา → interaction.deferReply() ใช้ไม่ได้ → user เห็น "Interaction failed"
+🩹 แก้: deferReply() เป็น line แรกของ function:
+async function handleRestore(interaction) {
+    await interaction.deferReply();  // ← ก่อนทุกอย่าง
+    if (...) return interaction.editReply(...);  // เปลี่ยนเป็น editReply
+    ...
+}
+
+ทำเหมือนกันกับทุก handler ที่อาจเกิน 3s
+Bug U-7 (ต่อ): ไม่มี delay ระหว่างสร้าง channel + ไม่มี progress feedback
+🩹 แก้:
+for (let i = 0; i < categories.length; i++) {
+    const cat = categories[i];
+    await interaction.editReply({ content: `⏳ กำลังสร้าง ${i+1}/${categories.length}: log-${cat}` });
+    try {
+        const ch = await interaction.guild.channels.create(`log-${cat}`, {...});
+        await sessionManager.setLogChannelMap(interaction.guild.id, cat, ch.id);
+        created.push(`✅ ${cat}`);
+        await new Promise(r => setTimeout(r, 1500));  // delay กัน rate limit
+    } catch (e) {
+        created.push(`❌ ${cat}: ${e.message}`);
+    }
+}
+
+Bug U-8: handleSetupLog ไม่สร้าง category + ไม่ตั้ง permission overwrites
+ใน blueprint เฟส 25 ระบุชัด: ต้องมี Category 🛡️ ENTERPRISE AUDIT + ห้อง 5 ห้อง + Admin role only
+ตอนนี้ utility.js สร้างแค่ห้อง flat ไม่มี category → ห้อง log ลอยอยู่บน guild → ใครก็มองเห็น (security risk)
+🩹 แก้: สร้าง category ก่อน + สร้าง role + permission overwrites (ตามที่ผมเขียนใน round แรก)
+Bug U-9: handleRestore ไม่ check guildId เท่ากับ guild ปัจจุบัน
+const targetId = interaction.options.getString("server_id");
+const backup = await sessionManager.SnapshotModel.findOne({ guildId: targetId });
+
+ปัญหา: ผู้ใช้สามารถระบุ guildId ของเซิร์ฟอื่นที่ตนเองมี backup → เอามา restore ที่เซิร์ฟปัจจุบัน → ใช้เป็น "copy server" ได้
+ตามที่ตกลง: เป็น feature ไม่ใช่ bug ✅ (Backup_Owner_ID check ทำหน้าที่กัน abuse แล้ว)
+🌐 Cross-File Integration Issues
+🔴 BUG วิกฤต (ข้ามไฟล์)
+Bug X-1: ❗ Voice Worker console.log wrapper ชนกับ index.js wrapper
+ลำดับ require:
+index.js ครอบ console.log → push เข้า webLogs
+index.js require('./voiceWorker') → voiceWorker.js ทำงาน
+voiceWorker.js console.log = (...args) => {...} ครอบทับอีกชั้น
+ตอน console.log(...) ถูกเรียก:
+voiceWorker wrapper ทำงาน → call _origLog (= index wrapper)
+index wrapper → push webLogs → call originalLog (= native)
+ปัญหา: ถ้าใครเรียก console.log ก่อน voiceWorker require → ใช้ index wrapper ตรงๆ → ไม่ทริก voice log
+ผลกระทบจริง:
+ทุก log ที่มาจาก voiceWorker ผ่าน 3 layers
+Performance penalty นิดหน่อย
+ถ้า voice log pattern match fail → ลอยเฉยๆ ไม่กระทบระบบ
+🩹 แก้: ใช้ EventEmitter pattern แทน console wrapper:
+// voiceWorker.js
+const { EventEmitter } = require('events');
+const voiceEvents = new EventEmitter();
+exports.voiceEvents = voiceEvents;
+// แทน console.log + match string → emit:
+voiceEvents.emit('connect', { sessionId, detail: 'Voice connected' });
+// index.js:
+voiceWorker.voiceEvents.on('connect', ({sessionId, detail}) => pushVoiceLog('connect', sessionId, detail));
+
+Bug X-2: ❗ commands.js import voiceWorker แต่ voiceWorker import sessionManager — มี circular ระหว่าง stop session
+ไม่ใช่ circular จริง — แค่ chain:
+index.js → voiceWorker → sessionManager
+index.js → commands → voiceWorker → sessionManager
+commands/utility.js → sessionManager → (no circular)
+OK ✅ — ไม่มี circular dependency
+Bug X-3: Anti-Raid ใน index.js ไม่ผ่าน auditLogger — log แยกกัน
+index.js Anti-Raid:
+const logMap = await sessionManager.getLogChannelMap(message.guild.id);
+if (logMap?.securityChannelId) {
+    const secCh = message.guild.channels.cache.get(logMap.securityChannelId);
+    if (secCh) secCh.send({...});
+}
+
+→ ส่งตรง ไม่ผ่าน auditLogger → ถ้าวันหลังเพิ่ม logic ใน auditLogger (เช่น throttle, formatting) → ไม่ apply กับ Anti-Raid
+🩹 แก้: ย้าย Anti-Raid log code ไปอยู่ใน auditLogger.js มี function logAntiRaid(guild, member, channel, count)export ออกมา
+Bug X-4: systemProvider.js setupTelemetryRouter ใช้ mainClient ที่อาจยังไม่พร้อม
+index.js:
+if (typeof setupTelemetryRouter === "function") {
+    setupTelemetryRouter(app, client, null);  // ส่ง client ที่ยังไม่ login
+}
+
+systemProvider.js:
+function injectShadowRoutes(app, mainClient, engineInstance) {
+    ...
+    if (mainClient) {
+        for (const [id, g] of mainClient.guilds.cache) {  // ตอนแรก cache ว่าง!
+            ...
+        }
+    }
+}
+
+ปัญหา: ตอน user เปิด Shadow Portal ก่อน bot ready → mainClient.guilds.cache = empty → Target Lock table ว่าง
+→ ไม่ใช่ bug จริง — Express route ทำงานตอน user เข้า ไม่ใช่ตอน register → cache มีของแล้ว ✅
+🟠 Bug รอง
+Bug X-5: process.env.RENDER_EXTERNAL_URL ตั้ง fallback hardcoded
+const baseUrl = process.env.RENDER_EXTERNAL_URL || `https://discord-bot1-dw9v.onrender.com`;
+
+→ ถ้าย้าย service → URL ผิด → Webhook link ตาย
+🩹 แก้: ใช้แค่ env, ถ้าไม่มีให้แสดง "Dashboard URL not configured"
+Bug X-6: getWebPin() ใช้ใน 2 ที่ — ใน index.js (token reveal) + ใน systemProvider (shadow portal)
+ใช้ PIN เดียวกัน → ถ้าเปลี่ยน PIN ผ่าน shadow portal → token reveal ก็ใช้ PIN ใหม่ ✅ ดีมาก
+แต่: ถ้า systemProvider load fail → getWebPin undefined → /api/reveal-token คืน 401 ตลอด ✅ safe
+📊 สรุป Bug ทั้งหมด
+ระดับ
+จำนวน
+ไฟล์ที่กระทบ
+🔴 วิกฤต (ต้องแก้)
+8
+sessionManager, voiceWorker, index, commands, utility (×3)
+🟠 สำคัญ
+15
+ทุกไฟล์
+🟡 เล็กน้อย/improvement
+10
+ทุกไฟล์
+
+
