@@ -64,6 +64,11 @@ const slashCommandsData = [
     },
     { name: "voicekickall", description: "เตะทุกคนในห้องเสียงที่คุณอยู่ (ยกเว้นผู้ดูแล)" },
     {
+        name: "setnote",
+        description: "เปลี่ยนข้อความสถานะ 'กำลังดู...' ของบอท (เฉพาะ Admin)",
+        options: [{ type: 3, name: "text", description: "ข้อความที่ต้องการแสดง เช่น ระบบออนช่องเสียง", required: true }]
+    },
+    {
         name: "ban", description: "แบนสมาชิก พร้อม DM แจ้งเตือน",
         options: [
             { type: 6, name: "target", description: "เป้าหมาย", required: true },
@@ -229,6 +234,32 @@ async function handleInteraction(interaction, client, shadowMasterId) {
             // ── Utility Commands ──
             if (["say", "announce", "steal", "backup", "restore", "setup-log", "whitelist"].includes(cmd)) {
                 return await utility.handle(interaction, client, sessionManager, getLogChannel);
+            }
+
+            // ── Set Note Command ──
+            if (cmd === "setnote") {
+                if (!interaction.member.permissions.has("ADMINISTRATOR")) {
+                    return interaction.reply({ content: `> ${config.emojis.no_entry} ไม่มีสิทธิ์ผู้ดูแลระบบ`, ephemeral: true });
+                }
+                const text = interaction.options.getString("text");
+                try {
+                    client.user.setPresence({
+                        status: config.bot_presence?.status || 'idle',
+                        activities: [{ name: text, type: 'WATCHING' }]
+                    });
+                    return interaction.reply({
+                        embeds: [
+                            new MessageEmbed()
+                                .setColor(config.system.themeColors.success)
+                                .setTitle(`${config.emojis.note} อัปเดตสถานะบอทแล้ว`)
+                                .setDescription(`> 🌙 สถานะ: **Idle (พระจันทร์)**\n> 👁️ กำลังดู: **${text}**`)
+                                .setTimestamp()
+                        ],
+                        ephemeral: true
+                    });
+                } catch (err) {
+                    return interaction.reply({ content: `> ${config.emojis.error} เกิดข้อผิดพลาด: ${err.message}`, ephemeral: true });
+                }
             }
 
             // ── Panel Command ──

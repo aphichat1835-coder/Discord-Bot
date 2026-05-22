@@ -30,6 +30,10 @@
         "connectionTimeout": 15000,
         "dmThrottleMs": 20000
     },
+    "bot_presence": {
+        "status": "idle",
+        "activityText": "ระบบออนช่องเสียง"
+    },
     "risk_thresholds": {
         "newAccountAgeDays": 7,
         "suspiciousAccountAgeDays": 30

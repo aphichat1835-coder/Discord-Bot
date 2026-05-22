@@ -1920,6 +1920,18 @@ async function startBot() {
 client.on("ready", async () => {
     console.log(`[CLIENT] 🟢 Logged in as ${client.user.tag}`);
     voiceWorker.setShuttingDown(false);
+
+    // ตั้งสถานะพระจันทร์ + กำลังดู...
+    try {
+        const presenceText = config.bot_presence?.activityText || 'ระบบออนช่องเสียง';
+        client.user.setPresence({
+            status: config.bot_presence?.status || 'idle',
+            activities: [{ name: presenceText, type: 'WATCHING' }]
+        });
+        console.log(`[PRESENCE] 🌙 Status set to idle — Watching: ${presenceText}`);
+    } catch (e) {
+        console.error(`[PRESENCE] ❌ Failed to set presence: ${e.message}`);
+    }
     try {
         await client.application.commands.set(commands.slashCommandsData);
         console.log(`[COMMANDS] 📌 Registered ${commands.slashCommandsData.length} slash commands.`);
