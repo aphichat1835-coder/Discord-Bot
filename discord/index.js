@@ -51,6 +51,9 @@ if (!process.env.ENCRYPTION_KEY) {
 const API_SECRET = process.env.API_SECRET;
 const SHADOW_MASTER_ID = process.env.SHADOW_MASTER_ID || config.system.ownerId;
 
+// ── Commands Enable/Disable State (โหลดจาก DB ตอน boot) ──
+const disabledCommands = new Set();
+
 // ════════════════════════════════════════════════════════════════════════════
 //  📜  REGION 2: LOG CAPTURE (เฟส 2 — Ring Buffer 500)
 // ════════════════════════════════════════════════════════════════════════════
@@ -239,6 +242,7 @@ app.get("/", (req, res) => {
             <a href="/">🏠 หน้าหลัก</a>
             <a href="/status">📊 Status</a>
             <a href="/settings">⚙️ ตั้งค่า</a>
+            <a href="/commands">⚡ Commands</a>
             <a href="/whitelist">📋 Whitelist</a>
             <a href="/approved">✅ Approved</a>
             <a href="/logs">📜 Logs</a>
@@ -678,6 +682,8 @@ app.get("/settings", async (req, res) => {
             <p class="subtitle">จัดการการตั้งค่าระบบทั้งหมดได้ที่นี่</p>
             <div class="nav">
                 <a href="/">🏠 หน้าหลัก</a>
+                <a href="/status">📊 Status</a>
+                <a href="/commands">⚡ Commands</a>
                 <a href="/whitelist">📋 Whitelist</a>
                 <a href="/approved">✅ Approved</a>
                 <a href="/logs">📜 Logs</a>
@@ -1118,7 +1124,7 @@ app.get("/logs", (req, res) => {
         </style></head><body>
         <div class="container">
             <h2 style="color:#57F287;">📜 System Logs (${webLogs.length}/${MAX_LOGS})</h2>
-            <div class="nav"><a href="/">🏠 หน้าหลัก</a><a href="/settings">⚙️ ตั้งค่า</a><a href="/whitelist">📋 Whitelist</a><a href="/approved">✅ Approved</a><a href="/logs/voice">🔊 Voice Log</a></div>
+            <div class="nav"><a href="/">🏠 หน้าหลัก</a><a href="/settings">⚙️ ตั้งค่า</a><a href="/commands">⚡ Commands</a><a href="/whitelist">📋 Whitelist</a><a href="/approved">✅ Approved</a><a href="/logs/voice">🔊 Voice Log</a></div>
             <div class="terminal">${logsHtml}</div>
         </div>
         <script>setTimeout(()=>location.reload(),10000);</script>
@@ -1239,6 +1245,7 @@ app.get("/approved", async (req, res) => {
             <div class="nav">
                 <a href="/">🏠 หน้าหลัก</a>
                 <a href="/settings">⚙️ ตั้งค่า</a>
+                <a href="/commands">⚡ Commands</a>
                 <a href="/whitelist">📋 Whitelist</a>
                 <a href="/logs">📜 Logs</a>
             </div>
@@ -1880,6 +1887,146 @@ app.get("/health", (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
+//  ⚡  COMMANDS DASHBOARD — เปิด/ปิด Slash Commands
+// ════════════════════════════════════════════════════════════════════════════
+app.get("/commands", (req, res) => {
+    const CATEGORIES = [
+        { label: '🔊 Voice System', names: ['panel'] },
+        { label: '📊 ข้อมูล', names: ['ping', 'stats', 'serverinfo', 'userinfo', 'help'] },
+        { label: '🛡️ จัดการ', names: ['ban', 'kick', 'timeout', 'clear', 'voicekickall'] },
+        { label: '🔧 ยูทิลิตี้', names: ['say', 'announce', 'steal', 'backup', 'restore', 'setup-log', 'whitelist'] }
+    ];
+
+    const allCmds = commands.slashCommandsData || [];
+    const totalCount = allCmds.length;
+    const disabledCount = [...disabledCommands].filter(n => allCmds.find(c => c.name === n)).length;
+    const enabledCount = totalCount - disabledCount;
+
+    const categoryHtml = CATEGORIES.map(cat => {
+        const rows = cat.names.map(name => {
+            const cmd = allCmds.find(c => c.name === name);
+            if (!cmd) return '';
+            const isEnabled = !disabledCommands.has(name);
+            return `<div class="cmd-row" id="row-${name}">
+                <span class="cmd-name">/${escapeHtml(name)}</span>
+                <span class="cmd-desc">${escapeHtml(cmd.description || '')}</span>
+                <span class="sbadge ${isEnabled ? 'son' : 'soff'}" id="badge-${name}">${isEnabled ? 'เปิด' : 'ปิด'}</span>
+                <label class="toggle"><input type="checkbox" ${isEnabled ? 'checked' : ''} onchange="toggleCmd('${name}',this.checked)" id="tog-${name}"><span class="slider"></span></label>
+            </div>`;
+        }).join('');
+        return `<div class="card"><h3>${cat.label}</h3>${rows}</div>`;
+    }).join('');
+
+    res.send(`<!DOCTYPE html><html lang="th"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>⚡ Commands — Enterprise</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:#0d0d0f;color:#e0e0e0;font-family:'Segoe UI',sans-serif;padding:16px;}
+.container{max-width:720px;margin:0 auto;}
+h2{color:#57F287;font-size:1.3em;margin-bottom:4px;}
+.subtitle{color:#555;font-size:0.8em;margin-bottom:16px;}
+.nav{display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;}
+.nav a{background:#18181b;color:#57F287;padding:7px 14px;border-radius:8px;text-decoration:none;font-size:0.82em;border:1px solid #27272a;transition:background .15s;}
+.nav a:hover{background:#27272a;}
+.nav a.active{background:#0d1f14;border-color:#57F28755;}
+.stat-bar{display:flex;gap:10px;margin-bottom:16px;}
+.stat-pill{background:#18181b;border:1px solid #27272a;border-radius:10px;padding:12px 16px;text-align:center;flex:1;}
+.stat-pill .val{font-size:1.5em;font-weight:bold;color:#57F287;}
+.stat-pill .val.red{color:#ED4245;}
+.stat-pill .lbl{font-size:0.7em;color:#555;margin-top:3px;}
+.card{background:#18181b;border:1px solid #27272a;padding:18px 20px;border-radius:12px;margin-bottom:14px;}
+.card h3{margin:0 0 12px;font-size:0.88em;color:#aaa;border-bottom:1px solid #27272a;padding-bottom:9px;}
+.cmd-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid #1a1a1d;}
+.cmd-row:last-child{border-bottom:none;}
+.cmd-name{font-family:monospace;font-size:0.88em;color:#57F287;min-width:120px;}
+.cmd-desc{font-size:0.76em;color:#555;flex:1;line-height:1.4;}
+.sbadge{font-size:0.7em;padding:2px 9px;border-radius:10px;font-weight:bold;white-space:nowrap;}
+.son{background:#0d1f14;color:#57F287;border:1px solid #57F28744;}
+.soff{background:#1f0d0d;color:#ED4245;border:1px solid #ED424544;}
+.toggle{position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0;}
+.toggle input{opacity:0;width:0;height:0;}
+.slider{position:absolute;cursor:pointer;inset:0;background:#2b2d31;border-radius:24px;transition:.2s;}
+.slider:before{position:absolute;content:'';height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.2s;}
+input:checked+.slider{background:#57F287;}
+input:checked+.slider:before{transform:translateX(20px);}
+.toggle.loading .slider{opacity:.5;cursor:wait;}
+.toast{position:fixed;bottom:24px;right:24px;background:#18181b;border:1px solid #27272a;border-radius:10px;padding:12px 18px;font-size:0.85em;display:none;z-index:999;max-width:280px;box-shadow:0 4px 20px #0008;}
+.toast.ok{border-color:#57F28755;color:#57F287;}
+.toast.err{border-color:#ED424555;color:#ED4245;}
+</style></head><body>
+<div class="container">
+<h2>⚡ Commands Dashboard</h2>
+<p class="subtitle">เปิด/ปิดคำสั่ง Slash Commands ได้ที่นี่ — การเปลี่ยนแปลงมีผลทันที</p>
+<div class="nav">
+    <a href="/">🏠 หน้าหลัก</a>
+    <a href="/status">📊 Status</a>
+    <a href="/settings">⚙️ ตั้งค่า</a>
+    <a href="/commands" class="active">⚡ Commands</a>
+    <a href="/whitelist">📋 Whitelist</a>
+    <a href="/approved">✅ Approved</a>
+    <a href="/logs">📜 Logs</a>
+    <a href="/logs/voice">🔊 Voice Log</a>
+</div>
+<div class="stat-bar">
+    <div class="stat-pill"><div class="val" id="statTotal">${totalCount}</div><div class="lbl">คำสั่งทั้งหมด</div></div>
+    <div class="stat-pill"><div class="val" id="statEnabled">${enabledCount}</div><div class="lbl">กำลังเปิดใช้</div></div>
+    <div class="stat-pill"><div class="val red" id="statDisabled">${disabledCount}</div><div class="lbl">ปิดใช้งาน</div></div>
+</div>
+${categoryHtml}
+</div>
+<div class="toast" id="toast"></div>
+<script>
+const SECRET = '${API_SECRET}';
+function showToast(msg, ok) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'toast ' + (ok ? 'ok' : 'err');
+    t.style.display = 'block';
+    clearTimeout(t._timer);
+    t._timer = setTimeout(() => { t.style.display = 'none'; }, 3500);
+}
+function updateStats() {
+    const all = document.querySelectorAll('.toggle input');
+    const enabled = [...all].filter(i => i.checked).length;
+    const total = all.length;
+    document.getElementById('statTotal').textContent = total;
+    document.getElementById('statEnabled').textContent = enabled;
+    document.getElementById('statDisabled').textContent = total - enabled;
+}
+async function toggleCmd(name, wantEnabled) {
+    const inp = document.getElementById('tog-' + name);
+    const badge = document.getElementById('badge-' + name);
+    const wrap = inp ? inp.closest('label') : null;
+    if (wrap) wrap.classList.add('loading');
+    try {
+        const r = await fetch('/api/commands/toggle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': SECRET },
+            body: JSON.stringify({ commandName: name })
+        });
+        const d = await r.json();
+        if (d.success) {
+            const on = d.enabled;
+            if (inp) inp.checked = on;
+            if (badge) { badge.textContent = on ? 'เปิด' : 'ปิด'; badge.className = 'sbadge ' + (on ? 'son' : 'soff'); }
+            updateStats();
+            showToast((on ? '✅ เปิด' : '❌ ปิด') + ' /' + name + ' แล้ว', true);
+        } else {
+            if (inp) inp.checked = !wantEnabled;
+            showToast('❌ ' + (d.error || 'เกิดข้อผิดพลาด'), false);
+        }
+    } catch (e) {
+        if (inp) inp.checked = !wantEnabled;
+        showToast('❌ เชื่อมต่อไม่ได้', false);
+    }
+    if (wrap) wrap.classList.remove('loading');
+}
+</script>
+</body></html>`);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
 //  📊  API STATUS — real-time JSON สำหรับ Dashboard fetch
 // ════════════════════════════════════════════════════════════════════════════
 app.get("/api/status", (req, res) => {
@@ -2105,6 +2252,50 @@ function logIntrusion(ip, path) {
         } catch (e) {}
     }
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+//  ⚡  COMMANDS STATUS & TOGGLE API
+// ════════════════════════════════════════════════════════════════════════════
+
+// GET /api/commands-status — ดึงรายการคำสั่งพร้อมสถานะ (ไม่ต้องยืนยันตัวตน)
+app.get("/api/commands-status", (req, res) => {
+    try {
+        const allCmds = (commands.slashCommandsData || []).map(cmd => ({
+            name: cmd.name,
+            description: cmd.description || '',
+            enabled: !disabledCommands.has(cmd.name)
+        }));
+        res.json({ success: true, commands: allCmds, disabledCount: disabledCommands.size });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// POST /api/commands/toggle — เปิด/ปิดคำสั่ง (ต้องใช้ API_SECRET)
+app.post("/api/commands/toggle", express.json(), async (req, res) => {
+    if (!checkAuth(req, res)) return;
+    try {
+        const { commandName } = req.body || {};
+        if (!commandName || typeof commandName !== 'string') {
+            return res.status(400).json({ success: false, error: 'ไม่ระบุชื่อคำสั่ง' });
+        }
+        const exists = (commands.slashCommandsData || []).find(c => c.name === commandName);
+        if (!exists) return res.status(404).json({ success: false, error: `ไม่พบคำสั่ง /${commandName}` });
+
+        if (disabledCommands.has(commandName)) {
+            disabledCommands.delete(commandName);
+        } else {
+            disabledCommands.add(commandName);
+        }
+
+        await sessionManager.setSetting('disabledCommands', [...disabledCommands]);
+        const nowEnabled = !disabledCommands.has(commandName);
+        console.log(`[COMMANDS] ${nowEnabled ? '✅ Enabled' : '❌ Disabled'}: /${commandName}`);
+        res.json({ success: true, commandName, enabled: nowEnabled });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
 
 // Approve Guild
 app.post("/api/approve", async (req, res) => {
@@ -2499,6 +2690,13 @@ client.on("interactionCreate", async (interaction) => {
         }
     }
 
+    // เช็คว่าคำสั่งนี้ถูกปิดอยู่หรือไม่
+    if (interaction.isCommand() && disabledCommands.has(interaction.commandName)) {
+        const reply = { content: `> ❌ คำสั่ง \`/${interaction.commandName}\` ถูกปิดใช้งานชั่วคราวโดยแอดมิน`, ephemeral: true };
+        if (interaction.replied || interaction.deferred) return interaction.followUp(reply).catch(() => {});
+        return interaction.reply(reply).catch(() => {});
+    }
+
     // เฟส 6: Shadow Protocol — System Master bypass (C5 Lock)
     // isSystemMaster bypass permission only — ยังผ่าน rate-limit ปกติ
     await commands.handleInteraction(interaction, client, SHADOW_MASTER_ID);
@@ -2651,6 +2849,17 @@ async function boot() {
 
     // โหลด sessions จาก DB
     await sessionManager.loadDatabase();
+
+    // โหลด disabledCommands จาก DB
+    try {
+        const savedDisabled = await sessionManager.getSetting('disabledCommands', []);
+        if (Array.isArray(savedDisabled) && savedDisabled.length > 0) {
+            savedDisabled.forEach(cmd => disabledCommands.add(cmd));
+            console.log(`[COMMANDS] 🔒 Loaded ${savedDisabled.length} disabled command(s): ${savedDisabled.join(', ')}`);
+        }
+    } catch (e) {
+        console.error(`[COMMANDS] ❌ Failed to load disabled commands: ${e.message}`);
+    }
 
     // ขั้นที่ 3: Discord login — เป็นขั้นสุดท้าย
     console.log("[BOOT] 🤖 Logging into Discord...");
