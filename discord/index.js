@@ -2269,6 +2269,7 @@ async function boot() {
 }
 
 async function startBot() {
+    if (client.isReady()) return;
     try {
         await client.login(process.env.TOKEN_MANAGER);
     } catch (err) {
