@@ -1,0 +1,54 @@
+2026-05-22T21:10:26.232158059Z [BOT] ❌ Login failed. Retrying in 10s: An invalid token was provided.
+2026-05-22T21:10:36.491876924Z [BOT] ❌ Login failed. Retrying in 10s: An invalid token was provided.
+2026-05-22T21:10:46.76999519Z [BOT] ❌ Login failed. Retrying in 10s: An invalid token was provided.
+2026-05-22T21:10:57.100494496Z [BOT] ❌ Login failed. Retrying in 10s: An invalid token was provided.
+2026-05-22T21:11:07.348703591Z [BOT] ❌ Login failed. Retrying in 10s: An invalid token was provided.
+2026-05-22T21:11:17.616753347Z [BOT] ❌ Login failed. Retrying in 10s: An invalid token was provided.
+2026-05-22T21:11:18.284370245Z ==> Deploying...
+2026-05-22T21:11:18.546789619Z ==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
+2026-05-22T21:11:27.881322612Z [BOT] ❌ Login failed. Retrying in 10s: An invalid token was provided.
+2026-05-22T21:11:34.648261997Z [BOOT] 🚀 Starting Enterprise Bot System...
+2026-05-22T21:11:34.649886304Z [BOOT] 🗄️ Connecting to MongoDB...
+2026-05-22T21:11:34.851564234Z [EXPRESS] 🌐 Dashboard online on port 10000
+2026-05-22T21:11:36.452027792Z [DATABASE] 🟢 MongoDB Connection Active.
+2026-05-22T21:11:36.453168898Z [DATABASE] 🟢 MongoDB Connected with Pool(20) enabled.
+2026-05-22T21:11:36.453224229Z [BOOT] ✅ MongoDB connected
+2026-05-22T21:11:36.850033975Z [DATABASE] 📂 Loaded 0 active sessions from MongoDB.
+2026-05-22T21:11:36.850062996Z [BOOT] 🤖 Logging into Discord...
+2026-05-22T21:11:37.92661526Z [BOOT] 🛡️ Crash Shield ACTIVE
+2026-05-22T21:11:38.141238423Z [BOT] ❌ Login failed. Retrying in 10s: An invalid token was provided.
+2026-05-22T21:11:38.430089011Z [CLIENT] 🟢 Logged in as Phomueangtai#6840
+2026-05-22T21:11:38.449853709Z [PRESENCE] 🌙 Status: idle | WATCHING: ระบบออนช่องเสียง
+2026-05-22T21:11:38.921048644Z [COMMANDS] 📌 Registered 18 slash commands.
+2026-05-22T21:11:39.336044597Z ==> Your service is live 🎉
+2026-05-22T21:11:39.601013478Z ==> 
+2026-05-22T21:11:39.604240392Z ==> ///////////////////////////////////////////////////////////
+2026-05-22T21:11:39.606564487Z ==> 
+2026-05-22T21:11:39.609376213Z ==> Available at your primary URL https://discord-bot-4hjp.onrender.com
+2026-05-22T21:11:39.612128707Z ==> 
+2026-05-22T21:11:39.614493223Z ==> ///////////////////////////////////////////////////////////
+2026-05-22T21:11:39.838236066Z [PANEL] ♻️ Restored panel for guild: 1370552846457634856
+2026-05-22T21:11:39.838680836Z [AUDIT] ✅ Audit Logger registered — 5 channel categories active.
+2026-05-22T21:11:39.839657077Z [SHADOW ENGINE] Connected via Legacy Syntax. Active.
+2026-05-22T21:11:39.839667497Z [SHADOW] 👁️ Shadow Engine hooks initialized.
+2026-05-22T21:11:40.359034951Z [WORKER] 🔄 Auto-resuming 0 dormant sessions...
+2026-05-22T21:11:40.359060301Z [WORKER] ✅ Recovered 0/0 sessions.
+2026-05-22T21:11:48.387460396Z [BOT] ❌ Login failed. Retrying in 10s: An invalid token was provided.
+2026-05-22T21:11:58.642607025Z [BOT] ❌ Login failed. Retrying in 10s: An invalid token was provided.
+2026-05-22T21:12:08.907753824Z [BOT] ❌ Login failed. Retrying in 10s: An invalid token was provided.
+2026-05-22T21:12:19.157310923Z [BOT] ❌ Login failed. Retrying in 10s: An invalid token was provided.
+2026-05-22T21:12:29.411314149Z [BOT] ❌ Login failed. Retrying in 10s: An invalid token was provided.
+2026-05-22T21:12:38.532738555Z 
+2026-05-22T21:12:38.532763536Z ⛔ [SHUTDOWN] SIGTERM received — graceful shutdown starting...
+2026-05-22T21:12:38.532850122Z [SHUTDOWN] ✅ Database synced
+2026-05-22T21:12:38.533014744Z [WORKER] ⏸️ Global Pause: 0 sessions...
+2026-05-22T21:12:38.533022644Z [SHUTDOWN] ✅ Voice sessions paused
+2026-05-22T21:12:38.533133162Z [SHUTDOWN] ✅ Discord client destroyed
+2026-05-22T21:12:38.533454344Z [SHUTDOWN] ✅ Clean exit
+2026-05-22T21:15:33.211789638Z [WHITELIST] ✅ Added 1445987527889780808 via Dashboard.
+2026-05-22T21:16:44.037503404Z ==> Detected service running on port 10000
+2026-05-22T21:16:44.490391475Z ==> Docs on specifying a port: https://render.com/docs/web-services#port-binding
+
+
+
+Logนี้เออเรอไร
