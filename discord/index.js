@@ -54,6 +54,9 @@ const SHADOW_MASTER_ID = process.env.SHADOW_MASTER_ID || config.system.ownerId;
 // ── Commands Enable/Disable State (โหลดจาก DB ตอน boot) ──
 const disabledCommands = new Set();
 
+// ── Commands Audit Log (ring buffer 100 รายการ) ──
+const commandAuditLog = [];
+
 // ════════════════════════════════════════════════════════════════════════════
 //  📜  REGION 2: LOG CAPTURE (เฟส 2 — Ring Buffer 500)
 // ════════════════════════════════════════════════════════════════════════════
@@ -1974,6 +1977,10 @@ input:checked+.slider:before{transform:translateX(20px);}
     <div class="stat-pill"><div class="val red" id="statDisabled">${disabledCount}</div><div class="lbl">ปิดใช้งาน</div></div>
 </div>
 ${categoryHtml}
+<div class="card" id="auditCard">
+    <h3>📋 Audit Log — ประวัติการเปิด/ปิดคำสั่ง <span id="auditCount" style="color:#555;font-size:0.85em;font-weight:normal;"></span></h3>
+    <div id="auditBody" style="font-size:0.8em;color:#555;text-align:center;padding:18px 0;">กำลังโหลด...</div>
+</div>
 </div>
 <div class="toast" id="toast"></div>
 <script>
@@ -2012,6 +2019,7 @@ async function toggleCmd(name, wantEnabled) {
             if (badge) { badge.textContent = on ? 'เปิด' : 'ปิด'; badge.className = 'sbadge ' + (on ? 'son' : 'soff'); }
             updateStats();
             showToast((on ? '✅ เปิด' : '❌ ปิด') + ' /' + name + ' แล้ว', true);
+            fetchAuditLog();
         } else {
             if (inp) inp.checked = !wantEnabled;
             showToast('❌ ' + (d.error || 'เกิดข้อผิดพลาด'), false);
@@ -2022,6 +2030,47 @@ async function toggleCmd(name, wantEnabled) {
     }
     if (wrap) wrap.classList.remove('loading');
 }
+function fmtTime(ts) {
+    const d = new Date(ts);
+    const pad = n => String(n).padStart(2,'0');
+    return pad(d.getDate())+'/'+pad(d.getMonth()+1)+'/'+d.getFullYear()+' '+pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());
+}
+async function fetchAuditLog() {
+    try {
+        const r = await fetch('/api/commands-audit');
+        const d = await r.json();
+        const body = document.getElementById('auditBody');
+        const countEl = document.getElementById('auditCount');
+        if (!d.success || !d.log.length) {
+            body.innerHTML = '<span style="color:#333;">ยังไม่มีประวัติ — กด toggle คำสั่งใดก็ได้เพื่อเริ่ม</span>';
+            countEl.textContent = '';
+            return;
+        }
+        countEl.textContent = '(' + d.log.length + ' รายการ)';
+        body.innerHTML = '<table style="width:100%;border-collapse:collapse;">'
+            + '<thead><tr>'
+            + '<th style="text-align:left;color:#555;padding:4px 8px;border-bottom:1px solid #222;font-weight:normal;">เวลา</th>'
+            + '<th style="text-align:left;color:#555;padding:4px 8px;border-bottom:1px solid #222;font-weight:normal;">คำสั่ง</th>'
+            + '<th style="text-align:center;color:#555;padding:4px 8px;border-bottom:1px solid #222;font-weight:normal;">การกระทำ</th>'
+            + '<th style="text-align:left;color:#555;padding:4px 8px;border-bottom:1px solid #222;font-weight:normal;">IP</th>'
+            + '</tr></thead><tbody>'
+            + d.log.slice(0, 30).map(e => '<tr>'
+                + '<td style="padding:5px 8px;color:#444;white-space:nowrap;">' + fmtTime(e.timestamp) + '</td>'
+                + '<td style="padding:5px 8px;font-family:monospace;color:#57F287;">/' + e.commandName + '</td>'
+                + '<td style="padding:5px 8px;text-align:center;">'
+                    + (e.action === 'enabled'
+                        ? '<span style="background:#0d1f14;color:#57F287;border:1px solid #57F28744;padding:1px 8px;border-radius:8px;font-size:0.88em;">เปิด ✅</span>'
+                        : '<span style="background:#1f0d0d;color:#ED4245;border:1px solid #ED424544;padding:1px 8px;border-radius:8px;font-size:0.88em;">ปิด ❌</span>')
+                + '</td>'
+                + '<td style="padding:5px 8px;color:#444;font-family:monospace;font-size:0.85em;">' + e.ip + '</td>'
+                + '</tr>').join('')
+            + '</tbody></table>';
+    } catch (e) {
+        document.getElementById('auditBody').textContent = '⚠️ ดึงข้อมูลไม่ได้';
+    }
+}
+fetchAuditLog();
+setInterval(fetchAuditLog, 15000);
 </script>
 </body></html>`);
 });
@@ -2291,10 +2340,30 @@ app.post("/api/commands/toggle", express.json(), async (req, res) => {
         await sessionManager.setSetting('disabledCommands', [...disabledCommands]);
         const nowEnabled = !disabledCommands.has(commandName);
         console.log(`[COMMANDS] ${nowEnabled ? '✅ Enabled' : '❌ Disabled'}: /${commandName}`);
+
+        // บันทึก Audit Log (ring buffer 100)
+        const auditEntry = { commandName, action: nowEnabled ? 'enabled' : 'disabled', ip: req.ip, timestamp: Date.now() };
+        if (commandAuditLog.length >= 100) commandAuditLog.shift();
+        commandAuditLog.push(auditEntry);
+
+        // ส่ง Webhook แจ้งเตือน Discord
+        if (process.env.WEBHOOK_LOG_URL) {
+            try {
+                const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
+                wh.send({ content: `⚡ **[COMMANDS DASHBOARD]** \`/${commandName}\` ถูก**${nowEnabled ? 'เปิด ✅' : 'ปิด ❌'}** โดย IP \`${req.ip}\`` }).catch(() => {});
+                wh.destroy();
+            } catch (e) {}
+        }
+
         res.json({ success: true, commandName, enabled: nowEnabled });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
     }
+});
+
+// GET /api/commands-audit — ดึงประวัติการเปิด/ปิดคำสั่ง
+app.get("/api/commands-audit", (req, res) => {
+    res.json({ success: true, log: [...commandAuditLog].reverse() });
 });
 
 // Approve Guild
