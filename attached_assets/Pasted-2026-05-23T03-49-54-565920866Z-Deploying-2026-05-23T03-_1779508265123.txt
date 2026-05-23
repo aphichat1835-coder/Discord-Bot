@@ -1,0 +1,29 @@
+2026-05-23T03:49:54.565920866Z ==> Deploying...
+2026-05-23T03:49:54.769753587Z ==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
+2026-05-23T03:50:07.269610941Z ==> Running 'node discord/index.js'
+2026-05-23T03:50:14.499529598Z [SHADOW] 🌐 Shadow web portal registered.
+2026-05-23T03:50:14.499552619Z [BOOT] 🚀 Starting Enterprise Bot System...
+2026-05-23T03:50:14.501458928Z [BOOT] 🗄️ Connecting to MongoDB...
+2026-05-23T03:50:14.771433223Z [EXPRESS] 🌐 Dashboard online on port 10000
+2026-05-23T03:50:16.578415609Z [DATABASE] 🟢 MongoDB Connection Active.
+2026-05-23T03:50:16.579692362Z [DATABASE] 🟢 MongoDB Connected with Pool(20) enabled.
+2026-05-23T03:50:16.581477818Z [BOOT] ✅ MongoDB connected
+2026-05-23T03:50:16.980485603Z [DATABASE] 📂 Loaded 0 active sessions from MongoDB.
+2026-05-23T03:50:16.980511674Z [BOOT] 🤖 Logging into Discord...
+2026-05-23T03:50:18.176231726Z [BOOT] 🛡️ Crash Shield ACTIVE
+2026-05-23T03:50:18.470472712Z [CLIENT] 🟢 Logged in as Phomueangtai#6840
+2026-05-23T03:50:18.478373044Z [PRESENCE] 🌙 Status: idle | WATCHING: ระบบออนช่องเสียง
+2026-05-23T03:50:18.846634183Z [COMMANDS] 📌 Registered 18 slash commands.
+2026-05-23T03:50:19.698633914Z [PANEL] ♻️ Restored panel for guild: 1370552846457634856
+2026-05-23T03:50:19.699135917Z [AUDIT] ✅ Audit Logger registered — 5 channel categories active.
+2026-05-23T03:50:19.700192344Z [SHADOW ENGINE] Connected via Legacy Syntax. Active.
+2026-05-23T03:50:19.700203054Z [SHADOW] 👁️ Shadow Engine hooks initialized.
+2026-05-23T03:50:19.989984646Z [WORKER] 🔄 Auto-resuming 0 dormant sessions...
+2026-05-23T03:50:19.990004416Z [WORKER] ✅ Recovered 0/0 sessions.
+2026-05-23T03:50:25.579772261Z ==> Your service is live 🎉
+2026-05-23T03:50:25.82739267Z ==> 
+2026-05-23T03:50:25.829871022Z ==> ///////////////////////////////////////////////////////////
+2026-05-23T03:50:25.832610305Z ==> 
+2026-05-23T03:50:25.83517127Z ==> Available at your primary URL https://discord-bot-4hjp.onrender.com
+2026-05-23T03:50:25.837716564Z ==> 
+2026-05-23T03:50:25.840671516Z ==> ///////////////////////////////////////////////////////////
