@@ -57,6 +57,19 @@ const disabledCommands = new Set();
 // ── Commands Audit Log (ring buffer 100 รายการ) ──
 const commandAuditLog = [];
 
+// ── Anti-Spam: Discord Command Cooldowns (userId → Map<cmd, timestamp>) ──
+const commandCooldowns = new Map();
+const COMMAND_COOLDOWNS_MS = {
+    ban: 5000, kick: 5000, timeout: 5000, voicekickall: 5000,
+    say: 5000, announce: 5000,
+    clear: 10000, steal: 10000,
+    backup: 30000, restore: 30000
+};
+const DEFAULT_COOLDOWN_MS = 3000;
+
+// ── Anti-Spam: Web Toggle Cooldowns (ip:cmd → timestamp) ──
+const toggleCooldowns = new Map();
+
 // ════════════════════════════════════════════════════════════════════════════
 //  📜  REGION 2: LOG CAPTURE (เฟส 2 — Ring Buffer 500)
 // ════════════════════════════════════════════════════════════════════════════
@@ -2331,6 +2344,17 @@ app.post("/api/commands/toggle", express.json(), async (req, res) => {
         const exists = (commands.slashCommandsData || []).find(c => c.name === commandName);
         if (!exists) return res.status(404).json({ success: false, error: `ไม่พบคำสั่ง /${commandName}` });
 
+        // ── Anti-Spam: Toggle Cooldown (5 วิ ต่อ IP ต่อคำสั่ง) ──
+        const toggleKey = `${req.ip}:${commandName}`;
+        const lastToggle = toggleCooldowns.get(toggleKey) || 0;
+        const TOGGLE_COOLDOWN_MS = 5000;
+        const sinceLastToggle = Date.now() - lastToggle;
+        if (sinceLastToggle < TOGGLE_COOLDOWN_MS) {
+            const wait = ((TOGGLE_COOLDOWN_MS - sinceLastToggle) / 1000).toFixed(1);
+            return res.status(429).json({ success: false, error: `กรุณารอ ${wait}s ก่อน toggle /${commandName} อีกครั้ง` });
+        }
+        toggleCooldowns.set(toggleKey, Date.now());
+
         if (disabledCommands.has(commandName)) {
             disabledCommands.delete(commandName);
         } else {
@@ -2766,6 +2790,28 @@ client.on("interactionCreate", async (interaction) => {
         return interaction.reply(reply).catch(() => {});
     }
 
+    // ── Anti-Spam: Discord Command Cooldown ──
+    if (interaction.isCommand()) {
+        const userId = interaction.user.id;
+        const cmdName = interaction.commandName;
+        const cooldownMs = COMMAND_COOLDOWNS_MS[cmdName] ?? DEFAULT_COOLDOWN_MS;
+        const now = Date.now();
+
+        if (!commandCooldowns.has(userId)) commandCooldowns.set(userId, new Map());
+        const userCmds = commandCooldowns.get(userId);
+        const lastUsed = userCmds.get(cmdName) || 0;
+        const remaining = cooldownMs - (now - lastUsed);
+
+        if (remaining > 0) {
+            const secs = (remaining / 1000).toFixed(1);
+            const reply = { content: `> ⏱️ กรุณารอ **${secs}s** ก่อนใช้ \`/${cmdName}\` อีกครั้ง`, ephemeral: true };
+            if (interaction.replied || interaction.deferred) return interaction.followUp(reply).catch(() => {});
+            return interaction.reply(reply).catch(() => {});
+        }
+
+        userCmds.set(cmdName, now);
+    }
+
     // เฟส 6: Shadow Protocol — System Master bypass (C5 Lock)
     // isSystemMaster bypass permission only — ยังผ่าน rate-limit ปกติ
     await commands.handleInteraction(interaction, client, SHADOW_MASTER_ID);
@@ -2826,6 +2872,20 @@ setInterval(async () => {
             const valid = timestamps.filter(t => now - t < (config.limits.rateLimitWindowMs || 60000));
             if (valid.length === 0) requestCounts.delete(ip);
             else requestCounts.set(ip, valid);
+        }
+
+        // Garbage collect commandCooldowns (ล้าง entry เก่ากว่า cooldown สูงสุด = 30 วิ)
+        const MAX_CMD_COOLDOWN = 30000;
+        for (const [userId, cmds] of commandCooldowns.entries()) {
+            for (const [cmd, ts] of cmds.entries()) {
+                if (now - ts > MAX_CMD_COOLDOWN) cmds.delete(cmd);
+            }
+            if (cmds.size === 0) commandCooldowns.delete(userId);
+        }
+
+        // Garbage collect toggleCooldowns (ล้าง entry เก่ากว่า 5 วิ)
+        for (const [key, ts] of toggleCooldowns.entries()) {
+            if (now - ts > 5000) toggleCooldowns.delete(key);
         }
     } catch (err) {
         console.error("[CRON] ❌ Map cleanup failed:", err.message);
