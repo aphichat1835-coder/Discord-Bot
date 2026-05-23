@@ -80,6 +80,7 @@ console.error = (...args) => {
 //  💥  REGION 3: GLOBAL CRASH SHIELD (เฟส 13)
 // ════════════════════════════════════════════════════════════════════════════
 let crashShieldReady = false; // ป้องกัน alert ตอน boot ก่อน webhook พร้อม
+let botReadyAt = null;        // เวลาที่บอท login สำเร็จครั้งล่าสุด
 
 process.on("uncaughtException", async (err) => {
     originalError("[CRITICAL] uncaughtException:", err.message, err.stack);
@@ -236,6 +237,7 @@ app.get("/", (req, res) => {
 
         <div class="nav">
             <a href="/">🏠 หน้าหลัก</a>
+            <a href="/status">📊 Status</a>
             <a href="/settings">⚙️ ตั้งค่า</a>
             <a href="/whitelist">📋 Whitelist</a>
             <a href="/approved">✅ Approved</a>
@@ -251,11 +253,18 @@ app.get("/", (req, res) => {
             <span id="updateTime"></span>
         </div>
 
+        <!-- Bot Online Duration Banner -->
+        <div id="onlineBanner" style="display:none;background:linear-gradient(135deg,#0d1f14,#0a1a10);border:1px solid #57F28744;border-radius:10px;padding:14px 18px;margin-bottom:14px;text-align:center;">
+            <div style="font-size:0.72em;color:#57F287;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">🟢 บอทออนต่อเนื่องมาแล้ว</div>
+            <div id="onlineDuration" style="font-size:2em;font-weight:900;color:#57F287;letter-spacing:1px;">--</div>
+            <div id="onlineSince" style="font-size:0.72em;color:#3a8a52;margin-top:3px;">ตั้งแต่ --</div>
+        </div>
+
         <!-- Stats Grid -->
         <div class="grid">
             <div class="stat">
                 <div class="val" id="statUptime" style="color:#FEE75C;">--</div>
-                <div class="lbl">⏱ Uptime</div>
+                <div class="lbl">⏱ System Uptime</div>
             </div>
             <div class="stat">
                 <div class="val" id="statSessions" style="color:#57F287;">--</div>
@@ -377,6 +386,16 @@ app.get("/", (req, res) => {
             if (h > 0) return h + 'h ' + m + 'm';
             return m + 'm ' + s + 's';
         }
+        function fmtUptimeFull(sec) {
+            const d = Math.floor(sec / 86400);
+            const h = Math.floor((sec % 86400) / 3600);
+            const m = Math.floor((sec % 3600) / 60);
+            const s = sec % 60;
+            if (d > 0) return d + ' วัน ' + h + ' ชม. ' + m + ' นาที';
+            if (h > 0) return h + ' ชม. ' + m + ' นาที ' + s + ' วิ';
+            if (m > 0) return m + ' นาที ' + s + ' วิ';
+            return s + ' วินาที';
+        }
 
         async function fetchStatus() {
             try {
@@ -398,6 +417,18 @@ app.get("/", (req, res) => {
                 }
                 document.getElementById('botTag').textContent = d.botTag ? '@' + d.botTag : '';
                 document.getElementById('updateTime').textContent = 'อัปเดต: ' + new Date().toLocaleTimeString('th-TH');
+
+                // Bot Online Duration Banner
+                const banner = document.getElementById('onlineBanner');
+                if (d.botOnline && d.botOnlineSec !== null) {
+                    banner.style.display = 'block';
+                    document.getElementById('onlineDuration').textContent = fmtUptimeFull(d.botOnlineSec);
+                    const sinceMs = Date.now() - (d.botOnlineSec * 1000);
+                    const sinceDate = new Date(sinceMs);
+                    document.getElementById('onlineSince').textContent = 'ตั้งแต่ ' + sinceDate.toLocaleString('th-TH', {day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
+                } else {
+                    banner.style.display = 'none';
+                }
 
                 // Stats
                 document.getElementById('statUptime').textContent = fmtUptime(d.uptimeSec);
@@ -1508,6 +1539,223 @@ app.get("/session/:sessionId", (req, res) => {
 // ════════════════════════════════════════════════════════════════════════════
 //  💓  PING / HEALTH (Render Keep-Alive + UptimeRobot)
 // ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
+//  📊  STATUS PAGE — หน้าสถานะบอท (ออนต่อเนื่องกี่วัน)
+// ════════════════════════════════════════════════════════════════════════════
+app.get("/status", (req, res) => {
+    res.send(`<!DOCTYPE html><html lang="th"><head>
+        <title>Status — Phomueangtai Enterprise</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta charset="UTF-8">
+        <style>
+            *{box-sizing:border-box;margin:0;padding:0;}
+            body{background:#0d0d0f;color:#e0e0e0;font-family:'Segoe UI',sans-serif;padding:16px;}
+            .container{max-width:560px;margin:0 auto;}
+            h1{color:#57F287;text-align:center;font-size:1.25em;margin-bottom:4px;}
+            .sub{text-align:center;color:#555;font-size:0.78em;margin-bottom:18px;}
+            .nav{display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;}
+            .nav a{background:#18181b;color:#57F287;padding:7px 14px;border-radius:8px;text-decoration:none;font-size:0.82em;border:1px solid #27272a;}
+            .nav a:hover{background:#27272a;}
+            .nav a.active{background:#1a2e1f;border-color:#57F287;}
+
+            /* Hero uptime box */
+            .hero{background:linear-gradient(135deg,#0a1a10,#081208);border:1px solid #57F28755;border-radius:14px;padding:28px 20px;text-align:center;margin-bottom:16px;}
+            .hero-label{font-size:0.72em;color:#57F287;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;}
+            .hero-time{font-size:2.8em;font-weight:900;color:#57F287;line-height:1;}
+            .hero-since{font-size:0.75em;color:#3a8a52;margin-top:10px;}
+            .offline-hero{background:linear-gradient(135deg,#1a0a0a,#120808);border-color:#ED424555;}
+            .offline-hero .hero-label, .offline-hero .hero-time, .offline-hero .hero-since{color:#ED4245;}
+
+            /* Status row */
+            .status-row{display:flex;align-items:center;gap:10px;background:#18181b;border:1px solid #27272a;border-radius:10px;padding:12px 16px;margin-bottom:12px;}
+            .dot{width:10px;height:10px;border-radius:50%;}
+            .dot.online{background:#57F287;box-shadow:0 0 8px #57F28788;}
+            .dot.offline{background:#ED4245;box-shadow:0 0 8px #ED424588;}
+            .dot.db{background:#5865F2;box-shadow:0 0 8px #5865F288;}
+            .s-label{font-size:0.85em;color:#aaa;}
+            .s-val{margin-left:auto;font-size:0.85em;font-weight:bold;}
+
+            /* Grid */
+            .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px;}
+            .card{background:#18181b;border:1px solid #27272a;border-radius:10px;padding:14px 12px;text-align:center;}
+            .card .cv{font-size:1.5em;font-weight:bold;margin-top:4px;}
+            .card .cl{font-size:0.68em;color:#666;text-transform:uppercase;letter-spacing:.5px;}
+
+            /* Spinner */
+            .spin{display:inline-block;width:18px;height:18px;border:2px solid #27272a;border-top-color:#57F287;border-radius:50%;animation:spin .8s linear infinite;margin-bottom:16px;}
+            @keyframes spin{to{transform:rotate(360deg)}}
+        </style>
+    </head><body>
+    <div class="container">
+        <h1>📊 สถานะระบบ</h1>
+        <p class="sub" id="lastUp">กำลังโหลด...</p>
+
+        <div class="nav">
+            <a href="/">🏠 หน้าหลัก</a>
+            <a href="/status" class="active">📊 Status</a>
+            <a href="/settings">⚙️ ตั้งค่า</a>
+            <a href="/logs">📜 Logs</a>
+        </div>
+
+        <div style="text-align:center;padding:20px 0;" id="loadingBox">
+            <div class="spin"></div>
+            <div style="color:#555;font-size:0.82em;">กำลังดึงข้อมูล...</div>
+        </div>
+
+        <!-- Hero Online Duration -->
+        <div class="hero" id="heroBox" style="display:none;">
+            <div class="hero-label" id="heroLabel">🟢 บอทออนต่อเนื่องมาแล้ว</div>
+            <div class="hero-time" id="heroTime">--</div>
+            <div class="hero-since" id="heroSince">ตั้งแต่ --</div>
+        </div>
+
+        <!-- Status Rows -->
+        <div id="statusRows" style="display:none;">
+            <div class="status-row">
+                <div class="dot" id="dotBot"></div>
+                <span class="s-label">Discord Bot</span>
+                <span class="s-val" id="valBot">--</span>
+            </div>
+            <div class="status-row">
+                <div class="dot db"></div>
+                <span class="s-label">MongoDB</span>
+                <span class="s-val" id="valDB" style="color:#5865F2;">กำลังตรวจ...</span>
+            </div>
+            <div class="status-row">
+                <div class="dot online" style="background:#FEE75C;box-shadow:0 0 8px #FEE75C88;"></div>
+                <span class="s-label">⏱ System Uptime (process)</span>
+                <span class="s-val" id="valUptime" style="color:#FEE75C;">--</span>
+            </div>
+
+            <!-- Stats Grid -->
+            <div class="grid" style="margin-top:12px;">
+                <div class="card">
+                    <div class="cl">📡 Sessions</div>
+                    <div class="cv" id="cvSessions" style="color:#57F287;">--</div>
+                </div>
+                <div class="card">
+                    <div class="cl">🧠 RAM</div>
+                    <div class="cv" id="cvRam" style="color:#eb459e;">-- MB</div>
+                </div>
+                <div class="card">
+                    <div class="cl">🔄 Reconnects</div>
+                    <div class="cv" id="cvReconn" style="color:#ff9944;">--</div>
+                </div>
+                <div class="card">
+                    <div class="cl">✅ Success Rate</div>
+                    <div class="cv" id="cvSuccess" style="color:#57F287;">--%</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script>
+        function fmtUptimeFull(sec) {
+            const d = Math.floor(sec / 86400);
+            const h = Math.floor((sec % 86400) / 3600);
+            const m = Math.floor((sec % 3600) / 60);
+            const s = sec % 60;
+            if (d > 0) return d + ' วัน ' + h + ' ชม. ' + m + ' นาที';
+            if (h > 0) return h + ' ชม. ' + m + ' นาที ' + s + ' วิ';
+            if (m > 0) return m + ' นาที ' + s + ' วิ';
+            return s + ' วินาที';
+        }
+        function fmtShort(sec) {
+            const d = Math.floor(sec / 86400);
+            const h = Math.floor((sec % 86400) / 3600);
+            const m = Math.floor((sec % 3600) / 60);
+            if (d > 0) return d + 'd ' + h + 'h ' + m + 'm';
+            if (h > 0) return h + 'h ' + m + 'm';
+            return m + 'm ' + Math.floor(sec % 60) + 's';
+        }
+
+        let _onlineSec = null;
+        let _sysSec = null;
+        let _ticker = null;
+
+        function tick() {
+            if (_onlineSec !== null) {
+                _onlineSec++;
+                document.getElementById('heroTime').textContent = fmtUptimeFull(_onlineSec);
+            }
+            if (_sysSec !== null) {
+                _sysSec++;
+                document.getElementById('valUptime').textContent = fmtShort(_sysSec);
+            }
+        }
+
+        async function load() {
+            try {
+                const r = await fetch('/api/status');
+                if (!r.ok) throw new Error();
+                const d = await r.json();
+
+                document.getElementById('loadingBox').style.display = 'none';
+                document.getElementById('heroBox').style.display = 'block';
+                document.getElementById('statusRows').style.display = 'block';
+                document.getElementById('lastUp').textContent = 'อัปเดต: ' + new Date().toLocaleTimeString('th-TH');
+
+                // Hero box
+                const hero = document.getElementById('heroBox');
+                if (d.botOnline && d.botOnlineSec !== null) {
+                    hero.className = 'hero';
+                    document.getElementById('heroLabel').textContent = '🟢 บอทออนต่อเนื่องมาแล้ว';
+                    _onlineSec = d.botOnlineSec;
+                    document.getElementById('heroTime').textContent = fmtUptimeFull(_onlineSec);
+                    const sinceMs = Date.now() - (d.botOnlineSec * 1000);
+                    document.getElementById('heroSince').textContent = 'ตั้งแต่ ' + new Date(sinceMs).toLocaleString('th-TH', {day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
+                } else {
+                    hero.className = 'hero offline-hero';
+                    document.getElementById('heroLabel').textContent = '🔴 บอทออฟไลน์';
+                    document.getElementById('heroTime').textContent = 'ไม่มีการเชื่อมต่อ';
+                    document.getElementById('heroSince').textContent = '';
+                    _onlineSec = null;
+                }
+
+                // Bot status row
+                const dotBot = document.getElementById('dotBot');
+                const valBot = document.getElementById('valBot');
+                if (d.botOnline) {
+                    dotBot.className = 'dot online';
+                    valBot.textContent = '🟢 Online — ' + (d.botTag || '');
+                    valBot.style.color = '#57F287';
+                } else {
+                    dotBot.className = 'dot offline';
+                    valBot.textContent = '🔴 Offline';
+                    valBot.style.color = '#ED4245';
+                }
+
+                // DB status (ตรวจจาก ping)
+                try {
+                    const hp = await fetch('/health');
+                    const hd = await hp.json();
+                    document.getElementById('valDB').textContent = hd.status === 'ok' ? '🟢 Connected' : '🔴 Error';
+                    document.getElementById('valDB').style.color = hd.status === 'ok' ? '#5865F2' : '#ED4245';
+                } catch { document.getElementById('valDB').textContent = '⚠️ ตรวจไม่ได้'; }
+
+                // System uptime
+                _sysSec = d.uptimeSec;
+                document.getElementById('valUptime').textContent = fmtShort(_sysSec);
+
+                // Cards
+                document.getElementById('cvSessions').textContent = d.sessions + '/' + d.maxSessions;
+                document.getElementById('cvRam').textContent = d.ramMB + ' MB';
+                document.getElementById('cvReconn').textContent = d.reconnects;
+                document.getElementById('cvSuccess').textContent = d.successRate + '%';
+
+                // Start live ticker
+                if (_ticker) clearInterval(_ticker);
+                _ticker = setInterval(tick, 1000);
+            } catch (e) {
+                document.getElementById('loadingBox').innerHTML = '<div style="color:#ED4245;">⚠️ ดึงข้อมูลไม่ได้</div>';
+            }
+        }
+
+        load();
+        setInterval(load, 30000);
+    </script>
+    </body></html>`);
+});
+
 app.get("/ping", (req, res) => res.send("OK"));
 app.get("/health", (req, res) => {
     const uptimeSec = Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000);
@@ -1535,10 +1783,12 @@ app.get("/api/status", (req, res) => {
         const reconnects = sessionManager.systemMetrics.reconnects;
         const successRate = totalReq > 0 ? (((totalReq - totalErr) / totalReq) * 100).toFixed(1) : '100.0';
         const recentLogs = webLogs.slice(-60).reverse().map(l => ({ time: l.time, type: l.type, msg: l.msg }));
+        const botOnlineSec = botReadyAt ? Math.floor((Date.now() - botReadyAt) / 1000) : null;
         res.json({
             botOnline: client?.isReady?.() ?? false,
             botTag: client?.user?.tag ?? null,
             uptimeSec,
+            botOnlineSec,
             sessions: sessions.length,
             maxSessions: config.limits.maxSessions,
             sessionList: sessions.map(s => ({
@@ -2279,6 +2529,7 @@ async function startBot() {
 }
 
 client.on("ready", async () => {
+    botReadyAt = Date.now();
     console.log(`[CLIENT] 🟢 Logged in as ${client.user.tag}`);
     voiceWorker.setShuttingDown(false);
 
