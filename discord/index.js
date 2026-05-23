@@ -2676,41 +2676,33 @@ client.on("ready", async () => {
     console.log(`[CLIENT] 🟢 Logged in as ${client.user.tag}`);
     voiceWorker.setShuttingDown(false);
 
-    // โหลดค่า Presence จาก DB (ถ้ายังไม่มีใน DB ใช้ค่าจาก config)
+    // โหลดค่า Settings จาก DB ครั้งเดียว — ใช้ร่วมกันทั้ง Presence + Naturalness
     try {
         const savedSettings = await sessionManager.getAllSettings();
+
+        // ─── Presence ───
         const presenceStatus   = savedSettings.botStatus   || config.bot_presence?.status   || 'idle';
         const presenceActivity = savedSettings.botActivity || config.bot_presence?.activityText || 'ระบบออนช่องเสียง';
         const presenceNote     = savedSettings.botNote     || '';
-
         const validTypes = ['WATCHING','LISTENING','PLAYING','COMPETING'];
         const presenceType = validTypes.includes(savedSettings.botActivityType) ? savedSettings.botActivityType : 'WATCHING';
-
         const activities = [{ name: presenceActivity, type: presenceType }];
-        if (presenceNote.trim()) {
-            activities.push({ name: presenceNote.trim(), type: 'CUSTOM' });
-        }
-
+        if (presenceNote.trim()) activities.push({ name: presenceNote.trim(), type: 'CUSTOM' });
         client.user.setPresence({ status: presenceStatus, activities });
         console.log(`[PRESENCE] 🌙 Status: ${presenceStatus} | ${presenceType}: ${presenceActivity}${presenceNote ? ' | Note: ' + presenceNote : ''}`);
+
+        // ─── Naturalness ───
+        const naturalEnabled    = savedSettings.naturalEnabled    ?? false;
+        const naturalIntervalMs = savedSettings.naturalIntervalMs ?? 3600000;
+        const naturalDurationMs = savedSettings.naturalDurationMs ?? 30000;
+        voiceWorker.applyNaturalSettings({ enabled: naturalEnabled, intervalMs: naturalIntervalMs, durationMs: naturalDurationMs });
+        console.log(`[NATURAL] ⚙️ Loaded from DB — enabled:${naturalEnabled} interval:${naturalIntervalMs}ms`);
     } catch (e) {
-        console.error(`[PRESENCE] ❌ Failed to set presence: ${e.message}`);
+        console.error(`[SETTINGS] ❌ Failed to load settings from DB: ${e.message}`);
     }
 
     // เริ่ม Auto-Rotate timer (ถ้าเปิดใช้งานไว้)
     await startRotateTimer();
-
-    // โหลดและ apply Naturalness settings จาก DB
-    try {
-        const ns = await sessionManager.getAllSettings();
-        const naturalEnabled   = ns.naturalEnabled   ?? false;
-        const naturalIntervalMs = ns.naturalIntervalMs ?? 3600000;
-        const naturalDurationMs = ns.naturalDurationMs ?? 30000;
-        voiceWorker.applyNaturalSettings({ enabled: naturalEnabled, intervalMs: naturalIntervalMs, durationMs: naturalDurationMs });
-        console.log(`[NATURAL] ⚙️ Loaded from DB — enabled:${naturalEnabled} interval:${naturalIntervalMs}ms`);
-    } catch (e) {
-        console.error(`[NATURAL] ❌ Failed to load settings: ${e.message}`);
-    }
 
     try {
         await client.application.commands.set(commands.slashCommandsData);

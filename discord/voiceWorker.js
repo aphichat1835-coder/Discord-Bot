@@ -497,6 +497,8 @@ async function pauseAll() {
     isShuttingDown = true;
     const sessions = sessionManager.getAllSessions();
     console.log(`[WORKER] ⏸️ Global Pause: ${sessions.size} sessions...`);
+    // หยุด naturalness timers ทั้งหมดก่อน pause (pauseAll ไม่ผ่าน stopSession)
+    stopAllNaturalTimers();
     for (const [id] of sessions) await sessionManager.pauseSession(id);
 }
 
