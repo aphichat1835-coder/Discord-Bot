@@ -1643,13 +1643,6 @@ fetchAuditLog(); setInterval(fetchAuditLog,15000);
 app.get("/session/:sessionId", (req, res) => {
     const safeId = escapeHtml(req.params.sessionId);
     res.send(`<!DOCTYPE html><html lang="th"><head>
-<meta charset="UTF-8"><meta name="viewport" content="
-// ════════════════════════════════════════════════════════════════════════════
-//  📋  SESSION DETAIL PAGE
-// ════════════════════════════════════════════════════════════════════════════
-app.get("/session/:sessionId", (req, res) => {
-    const safeId = escapeHtml(req.params.sessionId);
-    res.send(`<!DOCTYPE html><html lang="th"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Session Detail — Enterprise</title>
 <style>${THEME_CSS}
@@ -2131,7 +2124,7 @@ async function submitStop(){
               } catch(e) { res.status(500).json({success:false,error:e.message}); }
           });
 
-          app.get("/api/commands-audit", (req, res) => res.json({success:true, log:[...commandAuditLog].reverse()}));
+          app.get("/api/commands-audit", (req, res) => { if(!checkAuth(req,res)) return; res.json({success:true, log:[...commandAuditLog].reverse()}); });
 
           app.post("/api/approve", async (req, res) => {
               if(!checkAuth(req,res)) return;
@@ -2222,6 +2215,7 @@ async function submitStop(){
           });
 
           app.get("/api/settings/natural", (req, res) => {
+              if(!checkAuth(req,res)) return;
               try { res.json({success:true, settings:voiceWorker.getNaturalSettings()}); }
               catch(e) { res.status(500).json({success:false,error:e.message}); }
           });
@@ -2537,8 +2531,6 @@ async function submitStop(){
 
                           console.log("[BOOT] 🤖 Logging into Discord...");
                           await startBot();
-                          crashShieldReady = true;
-                          console.log("[BOOT] 🛡️ Crash Shield ACTIVE");
                       }
 
                       async function startBot() {
@@ -2553,7 +2545,9 @@ async function submitStop(){
 
                       client.on("ready", async () => {
                           botReadyAt = Date.now();
+                          crashShieldReady = true;
                           console.log(`[CLIENT] 🟢 Logged in as ${client.user.tag}`);
+                          console.log("[BOOT] 🛡️ Crash Shield ACTIVE");
                           voiceWorker.setShuttingDown(false);
 
                           try {
