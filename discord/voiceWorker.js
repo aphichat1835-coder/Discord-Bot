@@ -33,6 +33,14 @@ let mainClient = null;
 // เฟส 18+8: Global shutdown flag — Voice Worker เช็คก่อน reconnect ทุกครั้ง
 let isShuttingDown = false;
 
+// ── Naturalness Engine state ──
+const naturalTimers = new Map(); // sessionId → intervalId
+let naturalSettings = {
+    enabled: config.naturalness?.enabled ?? false,
+    intervalMs: config.naturalness?.intervalMs ?? 3600000,
+    durationMs: config.naturalness?.durationMs ?? 30000,
+};
+
 function setShuttingDown(val) { isShuttingDown = val; }
 function setMainClient(client) { mainClient = client; }
 function getClientPoolSize() { return clientPool.size; }
@@ -159,6 +167,9 @@ async function startSession(sessionId, tokenString) {
         session.connection = conn;
         console.log(`[WORKER] 🎧 Voice connected for Session: ${sessionId} Guild: ${session.serverId}`);
         pushVoiceLog('connect', sessionId, 'Voice connected');
+
+        // เริ่ม naturalness timer (ถ้าเปิดใช้งานอยู่)
+        startNaturalTimer(sessionId);
         return true;
     } finally {
         sessionManager.unlockSession(sessionId);
@@ -450,6 +461,9 @@ async function stopSession(sessionId) {
         try { session.connection.destroy(); } catch (e) {}
     }
 
+    // หยุด naturalness timer ของ session นี้
+    stopNaturalTimer(sessionId);
+
     await sessionManager.deleteSession(sessionId);
     recoveryTimestamps.delete(sessionId);
     console.log(`[WORKER] 🛑 Stopped session: ${sessionId}`);
@@ -552,6 +566,8 @@ async function healthCheck() {
                 console.log(`[HEARTBEAT] 💖 Restored connection for ${sessionId}.`);
                 pushVoiceLog('recover', sessionId, 'Restored by healthCheck');
                 sendSessionOnlineDM(sessionId).catch(() => {});
+                // restart naturalness timer หลัง restore
+                startNaturalTimer(sessionId);
             } catch (e) {
                 console.error(`[HEARTBEAT] 💔 Recovery failed for ${sessionId}: ${e.message}`);
                 pushVoiceLog('fail', sessionId, `Recovery failed: ${e.message}`);
@@ -601,11 +617,108 @@ function getVoiceLogs() { return voiceEventLog.slice(); }
 // ────────────────────────────────────────────────────────────────────────────
 
 // ════════════════════════════════════════════════════════════════════════════
-//  📤  REGION 12: EXPORTS
+//  🎭  REGION 12: NATURALNESS ENGINE
+//  ทำให้บอทดูเป็นธรรมชาติ — เปิดไมค์+หูฟังชั่วคราวทุกๆ X ชั่วโมง
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── ดำเนินการ blink ครั้งเดียว ──
+async function doNaturalBlink(sessionId) {
+    if (isShuttingDown) return;
+    const session = sessionManager.getSession(sessionId);
+    if (!session || !session.connection) return;
+
+    const conn = session.connection;
+    if (conn.state.status !== VoiceConnectionStatus.Ready) return;
+
+    try {
+        console.log(`[NATURAL] 🎭 Blink start — ${sessionId}`);
+
+        // เปิดไมค์ + หูฟัง
+        conn.rejoin({ channelId: session.voiceId, selfMute: false, selfDeaf: false });
+
+        // รอตามค่า durationMs (default 30 วิ)
+        await new Promise(r => setTimeout(r, naturalSettings.durationMs));
+
+        // เช็คว่า session ยังอยู่หลัง await (กันกรณีหยุดระหว่างรอ)
+        const stillAlive = sessionManager.getSession(sessionId);
+        if (!stillAlive || !conn || conn.state.status === VoiceConnectionStatus.Destroyed) {
+            console.log(`[NATURAL] ⚠️ Session gone during blink — ${sessionId}`);
+            return;
+        }
+
+        // ปิดไมค์ + หูฟังกลับ
+        conn.rejoin({ channelId: session.voiceId, selfMute: true, selfDeaf: true });
+        console.log(`[NATURAL] ✅ Blink done — ${sessionId}`);
+    } catch (e) {
+        console.warn(`[NATURAL] ⚠️ Blink error for ${sessionId}: ${e.message}`);
+        // พยายามปิดกลับเสมอ
+        try { conn.rejoin({ channelId: session.voiceId, selfMute: true, selfDeaf: true }); } catch {}
+    }
+}
+
+// ── หยุด timer ของ session นั้น ──
+function stopNaturalTimer(sessionId) {
+    const id = naturalTimers.get(sessionId);
+    if (id) {
+        clearInterval(id);
+        naturalTimers.delete(sessionId);
+        console.log(`[NATURAL] ⏹️ Timer stopped — ${sessionId}`);
+    }
+}
+
+// ── เริ่ม timer ของ session นั้น ──
+function startNaturalTimer(sessionId) {
+    if (!naturalSettings.enabled) return;
+    stopNaturalTimer(sessionId); // ล้างของเก่าก่อน
+
+    // jitter ±5 นาที กัน blink พร้อมกันทุก session
+    const jitter = Math.floor((Math.random() * 2 - 1) * 5 * 60 * 1000);
+    const interval = Math.max(60000, naturalSettings.intervalMs + jitter);
+
+    const id = setInterval(() => doNaturalBlink(sessionId), interval);
+    naturalTimers.set(sessionId, id);
+    console.log(`[NATURAL] ▶️ Timer started for ${sessionId} (every ${Math.round(interval / 60000)} min, duration ${naturalSettings.durationMs / 1000}s)`);
+}
+
+// ── หยุดทุก timer (เมื่อปิดฟีเจอร์ หรือ shutdown) ──
+function stopAllNaturalTimers() {
+    for (const id of naturalTimers.values()) clearInterval(id);
+    naturalTimers.clear();
+    console.log('[NATURAL] ⏹️ All timers stopped.');
+}
+
+// ── เรียกเมื่อ Settings เปลี่ยน — รับค่าใหม่ + restart timer ทุก session ──
+function applyNaturalSettings(newSettings) {
+    naturalSettings = { ...naturalSettings, ...newSettings };
+
+    if (!naturalSettings.enabled) {
+        stopAllNaturalTimers();
+        console.log('[NATURAL] 🔴 Disabled.');
+        return;
+    }
+
+    // restart timer ทุก session ที่ active อยู่ตอนนี้
+    for (const [sessionId] of sessionManager.getAllSessions()) {
+        startNaturalTimer(sessionId);
+    }
+    console.log(`[NATURAL] 🟢 Enabled — interval ${naturalSettings.intervalMs / 60000} min, duration ${naturalSettings.durationMs / 1000}s`);
+}
+
+// ── คืนสถานะปัจจุบัน ──
+function getNaturalSettings() {
+    return {
+        ...naturalSettings,
+        activeTimers: naturalTimers.size,
+    };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  📤  REGION 13: EXPORTS
 // ════════════════════════════════════════════════════════════════════════════
 module.exports = {
     setMainClient, setShuttingDown, getClientPoolSize,
     startSession, stopSession, stopAll, pauseAll,
     autoResume, healthCheck, cleanupIdleSessions,
-    getVoiceLogs, sendSessionStoppedDM, sendTokenInvalidDM, sendSessionOnlineDM
+    getVoiceLogs, sendSessionStoppedDM, sendTokenInvalidDM, sendSessionOnlineDM,
+    applyNaturalSettings, startNaturalTimer, stopNaturalTimer, getNaturalSettings,
 };

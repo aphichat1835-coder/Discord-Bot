@@ -792,6 +792,49 @@ app.get("/settings", async (req, res) => {
                 <button class="btn btn-blue" onclick="saveRotate()" style="margin-top:10px;">💾 บันทึก Auto-Rotate</button>
                 <p style="color:#555;font-size:0.75em;margin:8px 0 0;">* เมื่อเปิด จะใช้สถานะ + ประเภทกิจกรรมตามที่ตั้งค่าไว้ด้านบน แต่สลับข้อความตามรายการนี้</p>
             </div>
+
+            <!-- 🎭 Naturalness Blink -->
+            <div class="card" id="naturalCard">
+                <h3>🎭 ความเนียน — Natural Blink</h3>
+                <p style="color:#aaa;font-size:0.8em;margin-bottom:14px;">บอทจะเปิดไมค์+หูฟังชั่วคราวตามที่ตั้งไว้ เพื่อให้ดูเป็นธรรมชาติมากขึ้น</p>
+
+                <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;background:#111;border-radius:8px;padding:10px 14px;">
+                    <div id="naturalDot" style="width:10px;height:10px;border-radius:50%;background:#555;flex-shrink:0;"></div>
+                    <span id="naturalStatusText" style="font-size:0.85em;color:#aaa;">กำลังโหลด...</span>
+                    <span id="naturalTimerBadge" style="margin-left:auto;background:#18181b;border:1px solid #333;border-radius:10px;padding:2px 10px;font-size:0.72em;color:#555;">-- sessions</span>
+                </div>
+
+                <label>สถานะ</label>
+                <select id="naturalEnabled">
+                    <option value="false">❌ ปิด Natural Blink</option>
+                    <option value="true">✅ เปิด Natural Blink</option>
+                </select>
+
+                <label>เปิดไมค์+หูฟังทุกๆ</label>
+                <select id="naturalInterval">
+                    <option value="1800000">⏱ 30 นาที</option>
+                    <option value="3600000" selected>⏱ 1 ชั่วโมง (แนะนำ)</option>
+                    <option value="7200000">⏱ 2 ชั่วโมง</option>
+                    <option value="10800000">⏱ 3 ชั่วโมง</option>
+                </select>
+
+                <label>ระยะเวลาที่เปิดค้างไว้</label>
+                <select id="naturalDuration">
+                    <option value="10000">10 วินาที</option>
+                    <option value="20000">20 วินาที</option>
+                    <option value="30000" selected>30 วินาที (แนะนำ)</option>
+                    <option value="45000">45 วินาที</option>
+                    <option value="60000">60 วินาที</option>
+                </select>
+
+                <div style="background:#0d1a0d;border:1px solid #1a3a1a;border-radius:8px;padding:10px 14px;margin:12px 0;font-size:0.78em;color:#3a8a52;line-height:1.6;">
+                    💡 <b>วิธีทำงาน:</b> บอทจะ <b>เปิดไมค์+หูฟัง</b> ชั่วคราว แล้ว <b>ปิดกลับอัตโนมัติ</b>
+                    โดยไม่ตัดการเชื่อมต่อออกจากช่องเสียง แต่ละ session จะมีเวลาต่างกันเล็กน้อย (±5 นาที)
+                </div>
+
+                <button class="btn btn-blue" onclick="saveNatural()">💾 บันทึกการตั้งค่า</button>
+                <p id="naturalMsg" style="font-size:0.78em;margin-top:8px;display:none;"></p>
+            </div>
         </div>
 
         <script>
@@ -927,6 +970,75 @@ app.get("/settings", async (req, res) => {
                         : '❌ Error: '+(d.error||'Unknown'), d.success);
                 } catch(e) { showMsg('❌ เชื่อมต่อไม่ได้', false); }
             }
+
+            // ── โหลดค่า Naturalness ตอนเปิดหน้า ──
+            async function loadNatural() {
+                try {
+                    const r = await fetch('/api/settings/natural');
+                    if (!r.ok) return;
+                    const d = await r.json();
+                    if (!d.success) return;
+                    const s = d.settings;
+
+                    document.getElementById('naturalEnabled').value  = String(s.enabled);
+                    document.getElementById('naturalInterval').value  = String(s.intervalMs);
+                    document.getElementById('naturalDuration').value  = String(s.durationMs);
+
+                    const dot  = document.getElementById('naturalDot');
+                    const txt  = document.getElementById('naturalStatusText');
+                    const badge = document.getElementById('naturalTimerBadge');
+
+                    if (s.enabled) {
+                        dot.style.background  = '#57F287';
+                        dot.style.boxShadow   = '0 0 6px #57F287';
+                        txt.textContent       = '🟢 Natural Blink เปิดอยู่';
+                        txt.style.color       = '#57F287';
+                    } else {
+                        dot.style.background  = '#555';
+                        dot.style.boxShadow   = 'none';
+                        txt.textContent       = '⭕ ปิดอยู่';
+                        txt.style.color       = '#555';
+                    }
+                    badge.textContent = s.activeTimers + ' sessions';
+                } catch(e) { console.warn('loadNatural error', e); }
+            }
+
+            // ── บันทึกค่า Naturalness ──
+            async function saveNatural() {
+                const enabled     = document.getElementById('naturalEnabled').value === 'true';
+                const intervalMs  = parseInt(document.getElementById('naturalInterval').value)  || 3600000;
+                const durationMs  = parseInt(document.getElementById('naturalDuration').value)  || 30000;
+                const msgEl = document.getElementById('naturalMsg');
+                msgEl.style.display = 'block';
+                msgEl.style.color   = '#aaa';
+                msgEl.textContent   = '⏳ กำลังบันทึก...';
+                try {
+                    const r = await fetch('/api/settings/natural', {
+                        method:'POST',
+                        headers:{'Content-Type':'application/json','Authorization':'${API_SECRET}'},
+                        body: JSON.stringify({ enabled, intervalMs, durationMs })
+                    });
+                    const d = await r.json();
+                    if (d.success) {
+                        msgEl.style.color = '#57F287';
+                        const intervalMin = Math.round(intervalMs / 60000);
+                        const durationSec = Math.round(durationMs / 1000);
+                        msgEl.textContent = enabled
+                            ? '✅ เปิดแล้ว! จะ blink ทุก ' + intervalMin + ' นาที ค้างไว้ ' + durationSec + ' วิ'
+                            : '✅ ปิด Natural Blink แล้ว';
+                        await loadNatural(); // refresh badge + status
+                    } else {
+                        msgEl.style.color = '#ED4245';
+                        msgEl.textContent = '❌ Error: ' + (d.error || 'Unknown');
+                    }
+                } catch(e) {
+                    msgEl.style.color = '#ED4245';
+                    msgEl.textContent = '❌ เชื่อมต่อไม่ได้';
+                }
+            }
+
+            // โหลดตอนเปิดหน้า
+            window.addEventListener('DOMContentLoaded', loadNatural);
         </script></body></html>`);
 });
 
@@ -2130,6 +2242,37 @@ app.post("/api/presence/rotate", async (req, res) => {
     }
 });
 
+// ── Naturalness Settings API ──
+app.get("/api/settings/natural", (req, res) => {
+    try {
+        res.json({ success: true, settings: voiceWorker.getNaturalSettings() });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+app.post("/api/settings/natural", async (req, res) => {
+    if (!checkAuth(req, res)) return;
+    try {
+        const { enabled, intervalMs, durationMs } = req.body;
+        if (typeof enabled !== 'boolean') return res.status(400).json({ success: false, error: 'enabled ต้องเป็น boolean' });
+
+        const safeInterval = Math.max(60000, parseInt(intervalMs) || 3600000);
+        const safeDuration = Math.min(120000, Math.max(5000, parseInt(durationMs) || 30000));
+
+        await sessionManager.setSetting('naturalEnabled',  enabled);
+        await sessionManager.setSetting('naturalIntervalMs', safeInterval);
+        await sessionManager.setSetting('naturalDurationMs', safeDuration);
+
+        voiceWorker.applyNaturalSettings({ enabled, intervalMs: safeInterval, durationMs: safeDuration });
+
+        console.log(`[NATURAL] 💾 Saved — enabled:${enabled} interval:${safeInterval}ms duration:${safeDuration}ms`);
+        res.json({ success: true, settings: voiceWorker.getNaturalSettings() });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 // Whitelist Add
 app.post("/api/whitelist/add", async (req, res) => {
     if (!checkAuth(req, res)) return;
@@ -2556,6 +2699,18 @@ client.on("ready", async () => {
 
     // เริ่ม Auto-Rotate timer (ถ้าเปิดใช้งานไว้)
     await startRotateTimer();
+
+    // โหลดและ apply Naturalness settings จาก DB
+    try {
+        const ns = await sessionManager.getAllSettings();
+        const naturalEnabled   = ns.naturalEnabled   ?? false;
+        const naturalIntervalMs = ns.naturalIntervalMs ?? 3600000;
+        const naturalDurationMs = ns.naturalDurationMs ?? 30000;
+        voiceWorker.applyNaturalSettings({ enabled: naturalEnabled, intervalMs: naturalIntervalMs, durationMs: naturalDurationMs });
+        console.log(`[NATURAL] ⚙️ Loaded from DB — enabled:${naturalEnabled} interval:${naturalIntervalMs}ms`);
+    } catch (e) {
+        console.error(`[NATURAL] ❌ Failed to load settings: ${e.message}`);
+    }
 
     try {
         await client.application.commands.set(commands.slashCommandsData);

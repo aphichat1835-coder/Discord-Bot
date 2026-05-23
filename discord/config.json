@@ -49,6 +49,11 @@
         "bannerUrl": "https://cdn.discordapp.com/attachments/1463891557940854900/1505324265224929280/image0.gif?ex=6a0ed338&is=6a0d81b8&hm=baace86d4452aed3e24d07a0fcb6d829aa2235b49b88404a8b901900a933c228&",
         "ownerId": "661415152146710558"
     },
+    "naturalness": {
+        "enabled": false,
+        "intervalMs": 3600000,
+        "durationMs": 30000
+    },
     "emojis": {
         "universe": "<a:ERSE52_phomueang:1505294987133452392>",
         "dreamworld": "<a:129_phomueang:1505303132840661032>",
