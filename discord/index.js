@@ -2103,7 +2103,7 @@ async function submitStop(){
                   const lastToggle = toggleCooldowns.get(toggleKey)||0;
                   if(Date.now()-lastToggle < 5000) {
                       const wait = ((5000-(Date.now()-lastToggle))/1000).toFixed(1);
-                      return res.status(429).json({success:false,error:`กรุณารอ ${wait}s`});
+                      return res.status(429).json({success:false,error:`กรุณารอ ${wait}s ก่อน toggle /${commandName} อีกครั้ง`});
                   }
                   toggleCooldowns.set(toggleKey, Date.now());
                   if(disabledCommands.has(commandName)) disabledCommands.delete(commandName);
@@ -2601,17 +2601,20 @@ async function submitStop(){
                               }
                               if(process.env.WEBHOOK_LOG_URL) {
                                   try {
-                                      const baseUrl = process.env.RENDER_EXTERNAL_URL||'[your-app.onrender.com](https://your-app.onrender.com)';
-                                      const currentPin = (typeof getWebPin==='function')?getWebPin():'???';
+                                      if(!process.env.RENDER_EXTERNAL_URL) {
+                                          console.warn('[BOOT] ⚠️ RENDER_EXTERNAL_URL is not set — Dashboard/webhook links will use hardcoded fallback.');
+                                      }
+                                      const baseUrl = process.env.RENDER_EXTERNAL_URL||`https://discord-bot1-dw9v.onrender.com`;
+                                      const currentPin = (typeof getWebPin==='function')?getWebPin():'123456';
                                       const wh = new WebhookClient({url:process.env.WEBHOOK_LOG_URL});
                                       await wh.send({
                                           content:[
-                                              `${config.emojis.success} **Bot พร้อมแล้ว!** \`${client.user.tag}\``,
+                                              `${config.emojis.success} **Bot พร้อมใช้งานแล้ว!** \`${client.user.tag}\``,
                                               ``,
-                                              `🌐 **Dashboard:** ${baseUrl}`,
-                                              `💚 **Health:** ${baseUrl}/health`,
-                                              `🏓 **Ping URL:** ${baseUrl}/ping`,
-                                              `👁️‍🗨️ **Shadow Portal:** ${baseUrl}/api/v1/telemetry/snapshot?pin=${currentPin}`,
+                                              `${config.emojis.dashboard||'🌐'} **Dashboard:** ${baseUrl}`,
+                                              `${config.emojis.stats||'💚'} **Health Check:** ${baseUrl}/health`,
+                                              `${config.emojis.ping||'🏓'} **UptimeRobot Ping URL:** ${baseUrl}/ping`,
+                                              `${config.emojis.lock||'👁️‍🗨️'} **Shadow Portal:** ${baseUrl}/api/v1/telemetry/snapshot?pin=${currentPin}`,
                                               ``,
                                               `⏰ <t:${Math.floor(Date.now()/1000)}:F>`
                                           ].join('\n')
