@@ -1,0 +1,255 @@
+ได้ครับ อ่านโค้ดละเอียดทุกไฟล์แล้ว (เว้น systemProvider.js) เจอบัคทั้งหมด 15 จุด จัดเรียงตามความรุนแรง:
+
+🔴 Critical — อาจ Crash หรือพังระบบ
+
+BUG #1 — deleteSession() ทำลาย Client ที่ยังใช้อยู่ร่วมกัน
+
+ไฟล์: sessionManager.js Region 7
+
+// sessionManager.js บรรทัด 312
+async function deleteSession(sessionId) {
+    ...
+    if (session.client) { try { session.client.destroy(); } catch {} } // ← ปัญหา
+}
+
+
+ปัญหา: session.client เป็น reference ไปที่ object เดียวกับใน clientPool ใน voiceWorker.js ถ้ามี 2 Sessions ที่ใช้ Token เดียวกัน (เช่น user เดียวใน 2 เซิร์ฟ) — การลบ Session แรกจะ destroy() selfbot client ที่ Session ที่สองยังใช้อยู่ด้วย ทำให้ Session ที่สองหลุดเงียบๆ โดยไม่มีการแจ้งเตือน
+
+แก้ไข: ลบบรรทัด session.client.destroy() ออกจาก deleteSession() ปล่อยให้ voiceWorker.stopSession() จัดการ client lifecycle เองผ่าน clientPool
+
+BUG #2 — healthCheck() Crash เมื่อ session.client === null
+
+ไฟล์: voiceWorker.js Region 9
+
+async function healthCheck() {
+    for (const [sessionId, session] of sessions) {
+        const tokenHash = getSessionTokenHash(sessionId, session);
+        const poolData = clientPool.get(tokenHash);
+        if (!poolData) continue; // ← กรองแค่ pool แต่ไม่เช็ค session.client
+
+        if (needsRecovery && !onCooldown && ...) {
+            const conn = connectToVoice(
+                session.client, // ← อาจเป็น null ถ้า autoResume ล้มเหลว!
+                ...
+            );
+        }
+    }
+}
+
+
+ปัญหา: connectToVoice(null, ...) จะ throw TypeError: Cannot read properties of null (reading 'guilds') ถ้า autoResume() ล้มเหลวสำหรับ Session นั้น แต่ session ยังอยู่ในฐานข้อมูล
+
+แก้ไข:
+
+if (!session.client) continue; // เพิ่มก่อน if (needsRecovery...)
+
+
+BUG #3 — Anti-Raid ปนข้ามเซิร์ฟเวอร์ (Cross-Guild Contamination)
+
+ไฟล์: index/events.js บรรทัด 35
+
+// Key ใช้แค่ userId ไม่มี guildId
+const userHistory = spamTracking.get(message.author.id) || [];
+
+
+ปัญหา: ถ้า User A พิมพ์ @everyone 4 ครั้งใน Server X แล้วพิมพ์อีกครั้งใน Server Y — จะถูก timeout ใน Server Y ทั้งที่ทำผิดแค่ครั้งเดียว เพราะ counter ไม่แยกกัน
+
+แก้ไข:
+
+const trackKey = `${message.guild.id}_${message.author.id}`;
+const userHistory = spamTracking.get(trackKey) || [];
+// ใช้ trackKey แทน message.author.id ทุกที่
+
+
+BUG #4 — botReadyAt ถูก Freeze เป็น null ตั้งแต่ Boot
+
+ไฟล์: index.js บรรทัด 171, index/server.js บรรทัด 136
+
+// index.js — ส่งเป็น getter
+registerRoutes({
+    get botReadyAt() { return system.botReadyAt; }, // ← getter
+});
+
+// index/server.js — destructure แล้ว evaluate ทันที
+function registerRoutes({ ..., botReadyAt, ... }) {
+    // botReadyAt ถูก evaluate ตอน registerRoutes() ถูกเรียก
+    // ซึ่งเป็นช่วง boot ก่อน client.ready → ค่า = null ตลอดไป
+    const botOnlineSec = (typeof botReadyAt === 'function' ? botReadyAt() : botReadyAt)
+    // typeof null === 'object' ไม่ใช่ 'function' → botOnlineSec = null ทุกครั้ง
+}
+
+
+ปัญหา: /api/status คืนค่า botOnlineSec: null ตลอด แม้บอทออนแล้ว
+
+แก้ไข: เปลี่ยนจาก getter เป็น function:
+
+// index.js
+registerRoutes({
+    getBotReadyAt: () => system.botReadyAt,
+});
+// server.js
+const botOnlineSec = getBotReadyAt()
+    ? Math.floor((Date.now() - getBotReadyAt()) / 1000) : null;
+
+
+🟠 Medium — ปัญหาประสิทธิภาพ / ข้อมูลผิด
+
+BUG #5 — DB Query ทุกข้อความที่ส่ง (Performance Killer)
+
+ไฟล์: index/events.js บรรทัด 26
+
+client.on("messageCreate", async (message) => {
+    // ⚠️ ทำ MongoDB query ทุกครั้งที่มีใครส่งข้อความ
+    const antiRaidEnabled = await sessionManager.getSetting('antiRaidEnabled', true);
+
+
+ปัญหา: ถ้ามี 10 เซิร์ฟเวอร์ แต่ละเซิร์ฟส่งข้อความ 100 ครั้ง/นาที = DB query 1,000 ครั้ง/นาที เฉพาะฟีเจอร์นี้อย่างเดียว
+
+แก้ไข: Cache ค่าไว้ใน memory แล้วอัปเดตจาก DB ทุก 60 วินาที:
+
+let _antiRaidCached = true;
+let _antiRaidCacheTs = 0;
+async function getAntiRaidEnabled() {
+    if (Date.now() - _antiRaidCacheTs > 60000) {
+        _antiRaidCached = await sessionManager.getSetting('antiRaidEnabled', true);
+        _antiRaidCacheTs = Date.now();
+    }
+    return _antiRaidCached;
+}
+
+
+BUG #6 — revealTokenAttempts Map รั่วหน่วยความจำ
+
+ไฟล์: index/server.js บรรทัด 11
+
+const revealTokenAttempts = new Map();
+// ลบออกเฉพาะตอนล็อกอินสำเร็จ แต่ entry ที่ผ่านช่วง lockout ไม่เคยถูกลบ
+
+
+ปัญหา: IP ที่พยายามแล้วหยุดจะ stuck ใน Map ตลอดไป ใช้งานหลายเดือน Map ใหญ่ขึ้นเรื่อยๆ
+
+แก้ไข: เพิ่มการ cleanup ใน cron หรือก่อน check:
+
+// ใน makeCheckRevealPin ตอนเช็ค
+if (rec.lockedUntil > 0 && rec.lockedUntil < now) {
+    revealTokenAttempts.delete(ip); // lockout หมดแล้ว ลบออก
+}
+
+
+BUG #7 — addReconnect() ถูก Export แต่ไม่เคยถูกเรียก
+
+ไฟล์: sessionManager.js บรรทัด 344, voiceWorker.js ทั้งไฟล์
+
+// sessionManager.js — มีฟังก์ชัน
+function addReconnect(sessionId) {
+    ...
+    if (s) s.reconnectCount = (s.reconnectCount || 0) + 1;
+}
+
+
+grep "addReconnect" voiceWorker.js  # → ไม่เจออะไรเลย
+
+
+ปัญหา: session.reconnectCount ที่แสดงใน DM แจ้งเตือน (reconnect ระหว่างทาง: X ครั้ง) และ Dashboard จะเป็น 0 ตลอด เพราะ addReconnect() ไม่เคยถูกเรียกจาก voiceWorker
+
+แก้ไข: เรียก sessionManager.addReconnect(sessionId) ใน VoiceConnectionStatus.Disconnected handler ของ connectToVoice()
+
+BUG #8 — Approval Gate ครอบคลุมแค่ 3 Commands
+
+ไฟล์: index/events.js บรรทัด 95-99
+
+const isProtectedCommand = interaction.isCommand()
+    && ["panel", "backup", "restore"].includes(interaction.commandName);
+const isProtectedButton = interaction.isButton()
+    && ["btn_start", "btn_status"].includes(interaction.customId);
+// commands อื่นๆ เช่น /ban /kick /say /announce ผ่านได้โดยไม่ต้องอนุมัติ
+
+
+ปัญหา: Guild ที่ยังไม่ approved สามารถใช้คำสั่ง Moderation ได้ทั้งหมด
+
+BUG #9 — commands.handleMessage() ถูกเรียกหลัง Anti-Raid ทำงาน
+
+ไฟล์: index/events.js บรรทัด 89
+
+client.on("messageCreate", async (message) => {
+    ...
+    if (antiRaidEnabled && message.mentions.everyone) {
+        if (recent.length >= 5) {
+            await message.channel.bulkDelete(5); // ← ข้อความถูกลบไปแล้ว
+        }
+    }
+    commands.handleMessage(message); // ← ยังเรียกต่อแม้ข้อความโดน delete
+});
+
+
+🟡 Low — ข้อมูลไม่สมบูรณ์ / ปัญหาเล็กน้อย
+
+BUG #10 — pauseAll() ไม่ล้าง clientPool
+
+ไฟล์: voiceWorker.js บรรทัด 505-511
+
+async function pauseAll() {
+    isShuttingDown = true;
+    stopAllNaturalTimers();
+    for (const [id] of sessions) await sessionManager.pauseSession(id);
+    // ← clientPool ไม่ถูกล้าง → selfbot clients ค้างอยู่ใน memory ตอน shutdown
+}
+
+
+BUG #11 — applyNaturalSettings() เปิด Timer สำหรับ Session ที่ยังไม่ Connect
+
+ไฟล์: voiceWorker.js บรรทัด 659
+
+for (const [sessionId] of sessionManager.getAllSessions()) {
+    startNaturalTimer(sessionId); // ← รวม session ที่ client = null ด้วย
+}
+// doNaturalBlink() จะ return early แต่ timer ยังรันอยู่เรื่อยๆ
+
+
+BUG #12 — member.joinedTimestamp อาจ null ใน AuditLogger
+
+ไฟล์: auditLogger.js บรรทัด 101
+
+`**เข้าร่วมเมื่อ:** <t:${Math.floor(member.joinedTimestamp / 1000)}:R>`
+// Math.floor(null / 1000) = 0 → แสดง Jan 1, 1970
+
+
+BUG #13 — Voice AuditLogger ขาด Event Unmute/Undeafen
+
+ไฟล์: auditLogger.js Region 4
+
+} else if (!oldState.serverMute && newState.serverMute) {
+    title = `ถูก Server Mute`; // ✅ มี
+// ⚠️ ขาด: oldState.serverMute && !newState.serverMute → คืนเสียง
+// ⚠️ ขาด: oldState.serverDeaf && !newState.serverDeaf → คืน Deafen
+
+
+BUG #14 — Dashboard โดน Rate Limit ตัวเอง
+
+ไฟล์: index/server.js บรรทัด 27
+
+// config: rateLimitRequests = 5 per 60s
+// dashboard poll /api/status ทุก 5s = 12 requests/min → โดน 429
+app.use('/api', createRateLimiter(requestCounts, config));
+
+
+แก้ไข: เพิ่ม Whitelist สำหรับ /api/status หรือขึ้น limit เป็น 30-60 req/min
+
+BUG #15 — /api/approve คืน 500 เมื่อ Guild อนุมัติซ้ำ
+
+ไฟล์: index/server.js บรรทัด 215
+
+await sessionManager.ApprovedGuildModel.create({ guildId });
+// guildId เป็น unique → throw duplicate key error → 500 Internal Server Error
+// ควรเป็น 409 Conflict หรือ upsert แทน
+
+
+สรุปภาพรวม
+
+|ระดับ      |จำนวน|รายการที่วิกฤตที่สุด                                            |
+|----------|----|----------------------------------------------------------|
+|🔴 Critical|4   |BUG #2 Crash healthCheck, BUG #1 shared client destroy    |
+|🟠 Medium  |5   |BUG #5 DB query ทุก message, BUG #7 reconnectCount = 0 ตลอด|
+|🟡 Low     |6   |BUG #13 audit ไม่สมบูรณ์, BUG #14 rate limit                 |
+
+แนะนำแก้ก่อน: BUG #1, #2, #3, #5 เพราะส่งผลโดยตรงต่อความเสถียรและความถูกต้องของระบบ
