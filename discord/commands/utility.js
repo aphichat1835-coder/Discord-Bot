@@ -65,8 +65,7 @@ async function handleSay(interaction, sessionManager) {
         return interaction.editReply({ content: `> ${config.emojis.success} ส่งเรียบร้อย` });
     }
 
-    const isAdmin = interaction.member.permissions.has("MANAGE_MESSAGES") ||
-                    interaction.member.permissions.has("ADMINISTRATOR");
+    const isAdmin = interaction.member.permissions.has("ADMINISTRATOR");
 
     if (!isAdmin) {
         const whitelisted = await sessionManager.isWhitelisted(userId);

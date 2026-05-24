@@ -1233,7 +1233,7 @@ function renderLogs(logs){
     const label={connect:'เชื่อมต่อสำเร็จ',recover:'กู้คืนสัญญาณ',drop:'สัญญาณหลุด (ด่วน)',disconnect:'หลุดการเชื่อมต่อ',fail:'เชื่อมต่อไม่สำเร็จ'};
     wrap.innerHTML='<table style="font-size:0.8em;"><thead><tr><th>เวลา</th><th>สถานะ</th><th>รายละเอียด</th></tr></thead><tbody>'+
         logs.map(l=>'<tr><td style="color:var(--text3);white-space:nowrap;">'+new Date(l.ts).toLocaleTimeString('th-TH',{hour12:false})+'</td>'+
-            '<td style="'+(colorCls[l.type]||'color:var(--text2)')+'">'+icon[l.type]||'❓'+' '+(label[l.type]||l.type)+'</td>'+
+            '<td style="'+(colorCls[l.type]||'color:var(--text2)')+'">'+( icon[l.type]||'❓')+' '+(label[l.type]||l.type)+'</td>'+
             '<td style="color:var(--text3);">'+(l.detail||'-')+'</td></tr>').join('')+
         '</tbody></table>';
 }
