@@ -2110,6 +2110,7 @@ async function submitStop(){
                   else disabledCommands.add(commandName);
                   await sessionManager.setSetting('disabledCommands',[...disabledCommands]);
                   const nowEnabled = !disabledCommands.has(commandName);
+                  console.log(`[COMMANDS] ${nowEnabled?'✅ Enabled':'❌ Disabled'}: /${commandName}`);
                   const auditEntry = {commandName, action:nowEnabled?'enabled':'disabled', ip:req.ip, timestamp:Date.now()};
                   if(commandAuditLog.length>=100) commandAuditLog.shift();
                   commandAuditLog.push(auditEntry);
@@ -2124,7 +2125,7 @@ async function submitStop(){
               } catch(e) { res.status(500).json({success:false,error:e.message}); }
           });
 
-          app.get("/api/commands-audit", (req, res) => { if(!checkAuth(req,res)) return; res.json({success:true, log:[...commandAuditLog].reverse()}); });
+          app.get("/api/commands-audit", (req, res) => { res.json({success:true, log:[...commandAuditLog].reverse()}); });
 
           app.post("/api/approve", async (req, res) => {
               if(!checkAuth(req,res)) return;
@@ -2133,12 +2134,12 @@ async function submitStop(){
                   if(!guildId||typeof guildId!=='string') return res.status(400).json({success:false,error:"Invalid guildId"});
                   await sessionManager.ApprovedGuildModel.create({guildId});
                   await sessionManager.PendingGuildModel.deleteOne({guildId});
-                  console.log(`[SYSTEM] ✅ Guild ${guildId} approved.`);
+                  console.log(`[SYSTEM] ✅ Guild ${guildId} approved via Dashboard.`);
                   if(process.env.WEBHOOK_LOG_URL) {
                       try {
                           const guild = client.guilds.cache.get(guildId);
                           const wh = new WebhookClient({url:process.env.WEBHOOK_LOG_URL});
-                          wh.send({content:`✅ **[GUILD APPROVED]** ${guild?`${guild.name} (\`${guildId}\`)`:`\`${guildId}\``} | Members: ${guild?guild.memberCount:'N/A'}`}).catch(()=>{});
+                          wh.send({content:`${config.emojis.success} **[GUILD APPROVED]**\n**Guild:** ${guild?`${guild.name} (\`${guildId}\`)`:`\`${guildId}\``}\n**Members:** ${guild?guild.memberCount:'N/A'}\n**Approved at:** <t:${Math.floor(Date.now()/1000)}:F>`}).catch(()=>{});
                           wh.destroy();
                       } catch(e) {}
                   }
@@ -2154,6 +2155,7 @@ async function submitStop(){
                   if(rateLimitRequests) await sessionManager.setSetting('rateLimitRequests', rateLimitRequests);
                   if(idleTimeoutHrs) await sessionManager.setSetting('idleTimeoutHrs', idleTimeoutHrs);
                   if(antiRaidEnabled!==undefined) await sessionManager.setSetting('antiRaidEnabled', antiRaidEnabled);
+                  console.log(`[SETTINGS] ✅ Settings updated via Dashboard.`);
                   res.json({success:true});
               } catch(e) { res.status(500).json({success:false,error:e.message}); }
           });
@@ -2173,6 +2175,7 @@ async function submitStop(){
                       const activities=[{name:botActivity.trim().slice(0,128),type:actType}];
                       if(botNote?.trim()) activities.push({name:botNote.trim().slice(0,128),type:'CUSTOM'});
                       client.user.setPresence({status:botStatus, activities});
+                      console.log(`[PRESENCE] ✅ Status: ${botStatus} | ${actType}: ${botActivity.trim().slice(0,128)} | Note: ${(botNote||'').trim()||'-'}`);
                   }
                   res.json({success:true});
               } catch(e) { res.status(500).json({success:false,error:e.message}); }
@@ -2194,8 +2197,10 @@ async function submitStop(){
                       if(!client?.isReady?.()) return;
                       const msg = msgs[_rotateIdx%msgs.length];
                       client.user.setPresence({status, activities:[{name:msg,type:actType}]});
+                      console.log(`[ROTATE] 🔄 [${_rotateIdx%msgs.length+1}/${msgs.length}] ${msg}`);
                       _rotateIdx++;
                   }, intervalMs);
+                  console.log(`[ROTATE] ✅ Started — ${msgs.length} ข้อความ, ทุก ${s.rotateInterval||5} นาที`);
               } catch(e) { console.error(`[ROTATE] ❌ ${e.message}`); }
           }
 
@@ -2210,6 +2215,7 @@ async function submitStop(){
                   await sessionManager.setSetting('rotateInterval', interval);
                   await sessionManager.setSetting('rotateMessages', msgs);
                   await startRotateTimer();
+                  console.log(`[ROTATE] 💾 Saved — Enabled: ${rotateEnabled} | ${msgs.length} ข้อความ | ทุก ${interval} นาที`);
                   res.json({success:true});
               } catch(e) { res.status(500).json({success:false,error:e.message}); }
           });
@@ -2231,6 +2237,7 @@ async function submitStop(){
                   await sessionManager.setSetting('naturalIntervalMs', safeInterval);
                   await sessionManager.setSetting('naturalDurationMs', safeDuration);
                   voiceWorker.applyNaturalSettings({enabled, intervalMs:safeInterval, durationMs:safeDuration});
+                  console.log(`[NATURAL] 💾 Saved — enabled:${enabled} interval:${safeInterval}ms duration:${safeDuration}ms`);
                   res.json({success:true, settings:voiceWorker.getNaturalSettings()});
               } catch(e) { res.status(500).json({success:false,error:e.message}); }
           });
@@ -2241,6 +2248,7 @@ async function submitStop(){
                   const { userId } = req.body;
                   if(!userId||typeof userId!=='string') return res.status(400).json({success:false,error:"Invalid userId"});
                   await sessionManager.addWhitelist(userId,'dashboard');
+                  console.log(`[WHITELIST] ✅ Added ${userId} via Dashboard.`);
                   res.json({success:true});
               } catch(e) { res.status(500).json({success:false,error:e.message}); }
           });
@@ -2251,6 +2259,7 @@ async function submitStop(){
                   const { userId } = req.body;
                   if(!userId||typeof userId!=='string') return res.status(400).json({success:false,error:"Invalid userId"});
                   await sessionManager.removeWhitelist(userId);
+                  console.log(`[WHITELIST] 🗑️ Removed ${userId} via Dashboard.`);
                   res.json({success:true});
               } catch(e) { res.status(500).json({success:false,error:e.message}); }
           });
@@ -2265,10 +2274,11 @@ async function submitStop(){
                   const guildName = guild.name;
                   await guild.leave();
                   await sessionManager.ApprovedGuildModel.deleteOne({guildId});
+                  console.log(`[SYSTEM] 👢 Bot kicked from guild ${guildName} (${guildId}) via Dashboard.`);
                   if(process.env.WEBHOOK_LOG_URL) {
                       try {
                           const wh = new WebhookClient({url:process.env.WEBHOOK_LOG_URL});
-                          wh.send({content:`👢 **[BOT KICKED]** ${guildName} (\`${guildId}\`)`}).catch(()=>{});
+                          wh.send({content:`${config.emojis.guild_kick||'👢'} **[BOT KICKED]**\n**Guild:** ${guildName} (\`${guildId}\`)\n**Kicked at:** <t:${Math.floor(Date.now()/1000)}:F>`}).catch(()=>{});
                           wh.destroy();
                       } catch(e) {}
                   }
@@ -2282,6 +2292,15 @@ async function submitStop(){
                   const { guildId } = req.body;
                   if(!guildId||typeof guildId!=='string') return res.status(400).json({success:false,error:"Invalid guildId"});
                   await sessionManager.ApprovedGuildModel.deleteOne({guildId});
+                  console.log(`[SYSTEM] 🗑️ Guild ${guildId} removed from approved list via Dashboard.`);
+                  if(process.env.WEBHOOK_LOG_URL) {
+                      try {
+                          const guild = client.guilds.cache.get(guildId);
+                          const wh = new WebhookClient({url:process.env.WEBHOOK_LOG_URL});
+                          wh.send({content:`${config.emojis.trash||'🗑️'} **[GUILD REMOVED]**\n**Guild:** ${guild?`${guild.name} (\`${guildId}\`)`:`\`${guildId}\``}\n**Removed at:** <t:${Math.floor(Date.now()/1000)}:F>`}).catch(()=>{});
+                          wh.destroy();
+                      } catch(e) {}
+                  }
                   res.json({success:true});
               } catch(e) { res.status(500).json({success:false,error:e.message}); }
           });
@@ -2525,7 +2544,7 @@ async function submitStop(){
                               const savedDisabled = await sessionManager.getSetting('disabledCommands',[]);
                               if(Array.isArray(savedDisabled)&&savedDisabled.length>0) {
                                   savedDisabled.forEach(cmd=>disabledCommands.add(cmd));
-                                  console.log(`[COMMANDS] 🔒 Loaded ${savedDisabled.length} disabled command(s)`);
+                                  console.log(`[COMMANDS] 🔒 Loaded ${savedDisabled.length} disabled command(s): ${savedDisabled.join(', ')}`);
                               }
                           } catch(e) { console.error(`[COMMANDS] ❌ Failed to load disabled commands: ${e.message}`); }
 
@@ -2560,13 +2579,14 @@ async function submitStop(){
                               const activities = [{name:presenceActivity, type:presenceType}];
                               if(presenceNote.trim()) activities.push({name:presenceNote.trim(), type:'CUSTOM'});
                               client.user.setPresence({status:presenceStatus, activities});
-                              console.log(`[PRESENCE] 🌙 ${presenceStatus} | ${presenceType}: ${presenceActivity}`);
+                              console.log(`[PRESENCE] 🌙 Status: ${presenceStatus} | ${presenceType}: ${presenceActivity}${presenceNote?` | Note: ${presenceNote}`:''}`);
 
                               const naturalEnabled    = s.naturalEnabled    ?? false;
                               const naturalIntervalMs = s.naturalIntervalMs ?? 3600000;
                               const naturalDurationMs = s.naturalDurationMs ?? 30000;
                               voiceWorker.applyNaturalSettings({enabled:naturalEnabled, intervalMs:naturalIntervalMs, durationMs:naturalDurationMs});
-                          } catch(e) { console.error(`[SETTINGS] ❌ Failed to load settings: ${e.message}`); }
+                              console.log(`[NATURAL] ⚙️ Loaded from DB — enabled:${naturalEnabled} interval:${naturalIntervalMs}ms`);
+                          } catch(e) { console.error(`[SETTINGS] ❌ Failed to load settings from DB: ${e.message}`); }
 
                           await startRotateTimer();
 
