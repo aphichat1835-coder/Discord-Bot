@@ -357,7 +357,7 @@ async function handleButton(interaction, client, shadowMasterId) {
                 `— **เซิร์ฟเวอร์:** ${CB}${current.serverName}${CB}\n` +
                 `— **ห้องเสียง:** <#${current.voiceId}>\n` +
                 `— **Token (ท้าย):** ${CB}${current.tokenTail}${CB}\n` +
-                `— **สถานะ:** ${config.emojis.status_online} กำลังเชื่อมต่อ\n` +
+                `— **สถานะ:** ${(() => { const st = current.connection?.state?.status; if (!st || st === 'destroyed' || st === 'disconnected') return `${config.emojis.status_offline} ไม่ได้เชื่อมต่อ`; if (st === 'ready') return `${config.emojis.status_online} เชื่อมต่ออยู่`; return `${config.emojis.signal} กำลังเชื่อมต่อ`; })()}\n` +
                 `— **ออนเมื่อ:** <t:${Math.floor(current.startedAt / 1000)}:R>`
             )
             .setFooter({ text: `รายการของคุณ ${page + 1} / ${userSessions.length}` });
@@ -378,6 +378,14 @@ async function handleButton(interaction, client, shadowMasterId) {
     if (customId.startsWith("status_stop_")) {
         await interaction.deferUpdate();
         const sId = customId.replace("status_stop_", "");
+        const targetSession = sessionManager.getSession(sId);
+        if (!targetSession || targetSession.ownerId !== interaction.user.id) {
+            return interaction.editReply({
+                embeds: [new MessageEmbed().setColor(config.system.themeColors.error)
+                    .setDescription(`> ${config.emojis.no_entry} คุณไม่มีสิทธิ์หยุดรายการนี้`)],
+                components: []
+            });
+        }
         await voiceWorker.stopSession(sId);
         await updatePanel(interaction.guild.id);
 
@@ -443,10 +451,16 @@ async function handleModal(interaction, client) {
         } catch (_) {}
 
         const targetGuild = client.guilds.cache.get(serverId);
-        const guildName = targetGuild ? targetGuild.name : serverId;
+        const guildName = targetGuild ? targetGuild.name : "เซิร์ฟเวอร์ไม่ทราบชื่อ";
 
+        const TOKEN_PATTERN = /^[\w-]{24,}\.[\w-]{6}\.[\w-]{27,}$/;
+        if (!TOKEN_PATTERN.test(token)) {
+            return interaction.editReply({ content: `> ${config.emojis.error} รูปแบบ Token ไม่ถูกต้อง` });
+        }
+
+        let sessionId = null;
         try {
-            const sessionId = await sessionManager.createSession(
+            sessionId = await sessionManager.createSession(
                 token,
                 serverId,
                 voiceId,
@@ -469,6 +483,9 @@ async function handleModal(interaction, client) {
             return interaction.editReply({ content: `> ${config.emojis.success} เริ่มระบบสำเร็จ! ผู้ใช้งานเข้าห้องเสียงเรียบร้อย` });
 
         } catch (err) {
+            if (sessionId) {
+                await sessionManager.deleteSession(sessionId).catch(() => {});
+            }
             sessionManager.systemMetrics.increment('errors');
             const errMap = {
                 "INVALID_TOKEN_FORMAT": `> ${config.emojis.error} รูปแบบ Token ไม่ถูกต้อง`,

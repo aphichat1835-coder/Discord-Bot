@@ -1,0 +1,1 @@
+- [Phomueangtai Enterprise Bot](phomueangtai-bot.md) — Node.js 18+, discord.js v13+selfbot-v13, all 52 bugs fully patched across 9 files.

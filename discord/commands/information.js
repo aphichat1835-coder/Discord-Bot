@@ -27,8 +27,8 @@ async function handleServerInfo(interaction) {
     await interaction.deferReply();
     const guild = interaction.guild;
 
-    const botCount = guild.members.cache.filter(m => m.user.bot).size;
-    const humanCount = guild.memberCount - botCount;
+    const botCount   = guild.members.cache.filter(m => m.user.bot).size;
+    const humanCount = Math.max(0, guild.memberCount - botCount);
 
     const textChannels  = guild.channels.cache.filter(c => c.type === 'GUILD_TEXT').size;
     const voiceChannels = guild.channels.cache.filter(c => c.type === 'GUILD_VOICE').size;
@@ -135,7 +135,7 @@ async function handleUserInfo(interaction) {
             `${config.emojis.user} **Name:** ${CB}${user.tag}${CB}\n` +
             `» **ID:** ${CB}${user.id}${CB}\n` +
             `${config.emojis.created} **Created:** <t:${Math.floor(user.createdTimestamp / 1000)}:R>\n` +
-            `${config.emojis.calendar} **Joined:** <t:${Math.floor(member.joinedTimestamp / 1000)}:R>\n` +
+            `${config.emojis.calendar} **Joined:** ${member.joinedTimestamp ? `<t:${Math.floor(member.joinedTimestamp / 1000)}:R>` : 'ไม่ทราบ'}\n` +
             `${config.emojis.color_icon} **Color:** ${CB}${hexColor}${CB}\n\n` +
             `**Account Accessories:**\n` +
             `${config.emojis.badge} **Badges:** ${badgeStr}\n` +
@@ -181,7 +181,7 @@ async function handleStats(interaction, sessionManager) {
 // ════════════════════════════════════════════════════════════════════════════
 async function handlePing(interaction, client, sessionManager) {
     const sent = await interaction.reply({ content: `${config.emojis.ping} กำลังวัด...`, fetchReply: true });
-    const latency = sent.createdTimestamp - interaction.createdTimestamp;
+    const latency = Math.max(0, sent.createdTimestamp - interaction.createdTimestamp);
     const wsLatency = client.ws.ping;
     const uptime = Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000);
     const m = Math.floor(uptime / 60);

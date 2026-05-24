@@ -120,9 +120,17 @@ async function startSession(sessionId, tokenString) {
         if (!tokenHash) throw new Error("TOKEN_DECRYPTION_FAILED");
 
         if (clientPool.has(tokenHash)) {
-            session.client = clientPool.get(tokenHash);
-            console.log(`[WORKER] ♻️ Reused existing client for Token Hash.`);
-        } else {
+            const pooledClient = clientPool.get(tokenHash);
+            if (pooledClient && pooledClient.isReady?.()) {
+                session.client = pooledClient;
+                console.log(`[WORKER] ♻️ Reused existing client for Token Hash.`);
+            } else {
+                clientPool.delete(tokenHash);
+                console.log(`[WORKER] 🔄 Stale client in pool — will re-login.`);
+            }
+        }
+
+        if (!session.client) {
             const newClient = new SelfClient({ checkUpdate: false });
             try {
                 await loginQueue.add(async () => {
@@ -228,6 +236,7 @@ function connectToVoice(client, guildId, channelId, tokenHash, sessionId) {
         }
 
         reconnectAttempts++;
+        sessionManager.addReconnect(sessionId).catch(() => {});
         console.log(`[WORKER] ⚠️ Voice dropped for ${sessionId}. Attempt ${reconnectAttempts}/${CONFIG.MAX_RECONNECT_ATTEMPTS}`);
 
         // ── แจ้งเตือนเมื่อ reconnect บ่อยผิดปกติ (เกิน 3 ครั้ง) ──
@@ -508,6 +517,8 @@ async function pauseAll() {
     // หยุด naturalness timers ทั้งหมดก่อน pause (pauseAll ไม่ผ่าน stopSession)
     stopAllNaturalTimers();
     for (const [id] of sessions) await sessionManager.pauseSession(id);
+    clientPool.clear();
+    console.log(`[WORKER] 🗑️ Client pool cleared on pause.`);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -548,6 +559,7 @@ async function healthCheck() {
 
         const poolData = clientPool.get(tokenHash);
         if (!poolData) continue;
+        if (!session.client) continue;
 
         const connStatus = session.connection?.state?.status;
         const needsRecovery = !session.connection ||
@@ -592,7 +604,8 @@ async function healthCheck() {
 async function cleanupIdleSessions() {
     if (isShuttingDown) return;
     const now = Date.now();
-    const maxIdle = config.limits.idleTimeoutMs;
+    const savedHrs = await sessionManager.getSetting('idleTimeoutHrs', null).catch(() => null);
+    const maxIdle  = savedHrs ? (parseInt(savedHrs) * 3600000) : config.limits.idleTimeoutMs;
     const sessions = sessionManager.getAllSessions();
     for (const [id, session] of sessions) {
         const lastSeen = session.lastActivity ?? session.startedAt;
@@ -707,9 +720,11 @@ function applyNaturalSettings(newSettings) {
         return;
     }
 
-    // restart timer ทุก session ที่ active อยู่ตอนนี้
-    for (const [sessionId] of sessionManager.getAllSessions()) {
-        startNaturalTimer(sessionId);
+    // restart timer เฉพาะ session ที่ client connect อยู่
+    for (const [sessionId, session] of sessionManager.getAllSessions()) {
+        if (session.client?.isReady?.()) {
+            startNaturalTimer(sessionId);
+        }
     }
     console.log(`[NATURAL] 🟢 Enabled — interval ${naturalSettings.intervalMs / 60000} min, duration ${naturalSettings.durationMs / 1000}s`);
 }

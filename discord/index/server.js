@@ -105,12 +105,11 @@ function registerRoutes({
     const checkAuth      = makeCheckAuth(API_SECRET);
     const checkRevealPin = makeCheckRevealPin(getWebPin);
 
-    // Rate limiter ทุก /api/*
-    app.use('/api', createRateLimiter(requestCounts, config));
+    const rateLimiter = createRateLimiter(requestCounts, config);
 
-    // ── Health / Ping ──
-    app.get("/ping",   (req, res) => res.send("OK"));
-    app.get("/health", (req, res) => {
+    // ── Health / Ping (ใช้ rate limiter เดียวกัน) ──
+    app.get("/ping",   rateLimiter, (req, res) => res.send("OK"));
+    app.get("/health", rateLimiter, (req, res) => {
         const uptimeSec = Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000);
         res.json({
             status: "ok", uptime: uptimeSec,
@@ -119,7 +118,7 @@ function registerRoutes({
         });
     });
 
-    // ── API Status (real-time JSON) ──
+    // ── API Status (real-time JSON) — ลงทะเบียนก่อน rate limiter ทั่วไป ──
     app.get("/api/status", (req, res) => {
         try {
             const sessions    = Array.from(sessionManager.getAllSessions().values());
@@ -156,6 +155,9 @@ function registerRoutes({
             });
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
+
+    // Rate limiter ทุก /api/* (ลงหลัง /api/status เพื่อยกเว้น polling route)
+    app.use('/api', rateLimiter);
 
     // ── Session Detail API ──
     app.get("/api/session/:sessionId", (req, res) => {
@@ -204,7 +206,7 @@ function registerRoutes({
     // ── Stop Session ──
     app.post("/api/stop-session", express.json(), async (req, res) => {
         try {
-            if (!checkRevealPin(req, res)) return;
+            if (!checkAuth(req, res)) return;
             const { sessionId } = req.body || {};
             if (!sessionId) return res.status(400).json({ success: false, error: 'ไม่ระบุ sessionId' });
             const session = sessionManager.getSession(sessionId);
@@ -372,13 +374,13 @@ function registerRoutes({
         try {
             const { guildId } = req.body;
             if (!guildId || typeof guildId !== 'string') return res.status(400).json({ success: false, error: "Invalid guildId" });
-            await sessionManager.ApprovedGuildModel.create({ guildId });
+            await sessionManager.ApprovedGuildModel.updateOne({ guildId }, { $setOnInsert: { guildId } }, { upsert: true });
             await sessionManager.PendingGuildModel.deleteOne({ guildId });
             if (process.env.WEBHOOK_LOG_URL) {
                 try {
                     const guild = client.guilds.cache.get(guildId);
                     const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
-                    wh.send({ content: `✅ **[GUILD APPROVED]** ${guild ? `${guild.name} (\`${guildId}\`)` : `\`${guildId}\``}` }).catch(() => {});
+                    await wh.send({ content: `✅ **[GUILD APPROVED]** ${guild ? `${guild.name} (\`${guildId}\`)` : `\`${guildId}\``}` }).catch(() => {});
                     wh.destroy();
                 } catch (e) {}
             }
@@ -404,12 +406,17 @@ function registerRoutes({
             const guild = client.guilds.cache.get(guildId);
             if (!guild) return res.status(404).json({ success: false, error: "บอทไม่ได้อยู่ใน guild นี้" });
             const guildName = guild.name;
+            const guildSessions = Array.from(sessionManager.getAllSessions().values())
+                .filter(s => s.serverId === guildId);
+            for (const s of guildSessions) {
+                await voiceWorker.stopSession(s.sessionId).catch(() => {});
+            }
             await guild.leave();
             await sessionManager.ApprovedGuildModel.deleteOne({ guildId });
             if (process.env.WEBHOOK_LOG_URL) {
                 try {
                     const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
-                    wh.send({ content: `👢 **[BOT KICKED]** ${guildName} (\`${guildId}\`)` }).catch(() => {});
+                    await wh.send({ content: `👢 **[BOT KICKED]** ${guildName} (\`${guildId}\`)` }).catch(() => {});
                     wh.destroy();
                 } catch (e) {}
             }

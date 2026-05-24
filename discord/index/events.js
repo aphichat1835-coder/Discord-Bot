@@ -11,11 +11,13 @@ const { MessageEmbed, WebhookClient } = require("discord.js");
 function register({
     client, config, sessionManager, voiceWorker,
     commands, auditLogger,
-    spamTracking, antiRaidLogDebounce, sayTracking,
+    spamTracking, antiRaidLogDebounce,
     disabledCommands, commandCooldowns, COMMAND_COOLDOWNS_MS,
     DEFAULT_COOLDOWN_MS, SHADOW_MASTER_ID,
     checkApproval, MAX_SPAM_USERS
 }) {
+    let _antiRaidCache = null;
+    let _antiRaidExpiry = 0;
 
     // ════════════════════════════════════════════════════════════════════════
     //  💬  messageCreate — Anti-Raid
@@ -23,7 +25,12 @@ function register({
     client.on("messageCreate", async (message) => {
         if (message.author.bot || !message.guild) return;
 
-        const antiRaidEnabled = await sessionManager.getSetting('antiRaidEnabled', true);
+        const now = Date.now();
+        if (!_antiRaidCache || now > _antiRaidExpiry) {
+            _antiRaidCache  = await sessionManager.getSetting('antiRaidEnabled', true);
+            _antiRaidExpiry = now + 60000;
+        }
+        const antiRaidEnabled = _antiRaidCache;
 
         if (antiRaidEnabled && message.mentions.everyone) {
             const isAdmin = message.member.permissions.has("ADMINISTRATOR")
@@ -36,11 +43,11 @@ function register({
                     spamTracking.delete(firstKey);
                 }
 
-                const userHistory = spamTracking.get(message.author.id) || [];
-                const now = Date.now();
-                const recent = userHistory.filter(t => now - t < 60000);
+                const spamKey     = `${message.guild.id}_${message.author.id}`;
+                const userHistory = spamTracking.get(spamKey) || [];
+                const recent      = userHistory.filter(t => now - t < 60000);
                 recent.push(now);
-                spamTracking.set(message.author.id, recent);
+                spamTracking.set(spamKey, recent);
 
                 if (recent.length >= 5) {
                     try {
@@ -78,13 +85,12 @@ function register({
                     } catch (e) {
                         console.error(`[ANTI-RAID] ⚠️ Failed for ${message.author.id}: ${e.message}`);
                     } finally {
-                        spamTracking.delete(message.author.id);
+                        spamTracking.delete(`${message.guild.id}_${message.author.id}`);
                     }
                 }
             }
         }
 
-        commands.handleMessage(message);
     });
 
     // ════════════════════════════════════════════════════════════════════════
@@ -95,7 +101,11 @@ function register({
             const isProtectedCommand = interaction.isCommand()
                 && ["panel", "backup", "restore"].includes(interaction.commandName);
             const isProtectedButton = interaction.isButton()
-                && ["btn_start", "btn_status"].includes(interaction.customId);
+                && (
+                    ["btn_start", "btn_status", "btn_stop_all"].includes(interaction.customId)
+                    || interaction.customId.startsWith("status_stop_")
+                    || interaction.customId.startsWith("status_page_")
+                );
 
             if (isProtectedCommand || isProtectedButton) {
                 const approved = await checkApproval(interaction.guild, interaction.user);
@@ -164,7 +174,7 @@ function register({
                         inviteStr = inv.url;
                     }
                 } catch (e) {}
-                wh.send({
+                await wh.send({
                     content: `🤖 **บอทถูกเชิญเข้าเซิร์ฟเวอร์ใหม่!**\n` +
                              `**ชื่อ:** ${guild.name}\n` +
                              `**คน:** ${guild.memberCount}\n` +

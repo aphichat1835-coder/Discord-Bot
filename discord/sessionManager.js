@@ -309,7 +309,6 @@ async function deleteSession(sessionId) {
 
     if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
     if (session.connection) { try { session.connection.destroy(); } catch {} }
-    if (session.client) { try { session.client.destroy(); } catch {} }
 
     sessions.delete(sessionId);
     reconnectTracking.delete(sessionId);

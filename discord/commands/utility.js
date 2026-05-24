@@ -57,7 +57,11 @@ async function handleSay(interaction, sessionManager) {
 
     const history = (sayUsageTracking.get(userId) || []).filter(t => now - t < 60000);
     history.push(now);
-    sayUsageTracking.set(userId, history);
+    if (history.length > 0) {
+        sayUsageTracking.set(userId, history);
+    } else {
+        sayUsageTracking.delete(userId);
+    }
 
     if (history.length === 1) {
         await interaction.deferReply({ ephemeral: true });
@@ -160,34 +164,47 @@ async function handleSteal(interaction) {
         });
     }
 
-    const emojiManager = interaction.guild.emojis;
-    const currentCount  = emojiManager.cache.size;
-    const maxEmojis     = interaction.guild.premiumTier === 2 ? 150 :
-                          interaction.guild.premiumTier === 3 ? 250 : 100;
+    const emojiManager  = interaction.guild.emojis;
+    const tier          = interaction.guild.premiumTier || 0;
+    const maxPerType    = tier === 3 ? 250 : tier === 2 ? 150 : tier === 1 ? 100 : 50;
+    const staticCount   = emojiManager.cache.filter(e => !e.animated).size;
+    const animatedCount = emojiManager.cache.filter(e => e.animated).size;
+    const staticFree    = Math.max(0, maxPerType - staticCount);
+    const animatedFree  = Math.max(0, maxPerType - animatedCount);
 
-    if (currentCount >= maxEmojis) {
+    if (staticFree === 0 && animatedFree === 0) {
         return interaction.reply({
-            content: `> ${config.emojis.error} **เซิร์ฟเวอร์อิโมจิเต็มแล้ว!** (${currentCount}/${maxEmojis}) ลบอิโมจิเก่าออกก่อน`,
+            content: `> ${config.emojis.error} **เซิร์ฟเวอร์อิโมจิเต็มทั้งหมด!** (สถิต ${staticCount}/${maxPerType}, แอนิเมต ${animatedCount}/${maxPerType})`,
             ephemeral: true
         });
     }
 
-    const available = maxEmojis - currentCount;
-    const toSteal   = Math.min(matches.length, available);
+    const toSteal = Math.min(
+        matches.length,
+        matches.filter(m => m[1] === 'a').length <= animatedFree
+            ? matches.length
+            : matches.filter(m => m[1] !== 'a').length + animatedFree
+    );
 
     await interaction.deferReply();
-    let added  = 0;
-    let failed = 0;
+    let added   = 0;
+    let failed  = 0;
+    let skipped = 0;
 
-    for (let i = 0; i < toSteal; i++) {
-        const match = matches[i];
+    let staticAdded = 0, animatedAdded = 0;
+    for (let i = 0; i < matches.length; i++) {
+        const match      = matches[i];
         const isAnimated = match[1] === "a";
-        const name = match[2];
-        const id   = match[3];
-        const url  = `https://cdn.discordapp.com/emojis/${id}.${isAnimated ? 'gif' : 'png'}`;
+        const name       = match[2];
+        const id         = match[3];
+        const url        = `https://cdn.discordapp.com/emojis/${id}.${isAnimated ? 'gif' : 'png'}`;
+
+        if (isAnimated && animatedAdded >= animatedFree) { skipped++; continue; }
+        if (!isAnimated && staticAdded >= staticFree)    { skipped++; continue; }
 
         try {
             await interaction.guild.emojis.create(url, name);
+            if (isAnimated) animatedAdded++; else staticAdded++;
             added++;
             await new Promise(r => setTimeout(r, 1000));
         } catch (e) {
@@ -203,7 +220,6 @@ async function handleSteal(interaction) {
         }
     }
 
-    const skipped = matches.length - toSteal;
     const embed = new MessageEmbed()
         .setColor(config.system.themeColors.success)
         .setDescription(
@@ -253,7 +269,7 @@ async function handleBackup(interaction) {
                 permissions: r.permissions.bitfield.toString()
             })),
             channels: interaction.guild.channels.cache.map(c => ({
-                name: c.name, type: c.type, parentId: c.parentId,
+                id: c.id, name: c.name, type: c.type, parentId: c.parentId,
                 permissionOverwrites: c.permissionOverwrites.cache.map(o => ({
                     id: o.id, type: o.type,
                     allow: o.allow.bitfield.toString(),
@@ -413,49 +429,76 @@ async function handleRestoreConfirm(interaction, sessionManager) {
             }
 
             if (Array.isArray(channels)) {
-                for (const cData of channels) {
-                    await new Promise(resolve => setImmediate(resolve));
+                const categoryIdMap = new Map();
+                const validTypes = ["GUILD_TEXT","GUILD_VOICE","GUILD_CATEGORY","GUILD_NEWS","GUILD_STAGE_VOICE"];
 
+                function buildOverwrites(cData) {
+                    const out = [];
+                    if (!Array.isArray(cData.permissionOverwrites)) return out;
+                    for (const ow of cData.permissionOverwrites) {
+                        let targetId = roleIdMap.get(ow.id);
+                        if (ow.id === oldGuildId) targetId = guild.id;
+                        if (targetId) out.push({ id: targetId, allow: BigInt(ow.allow || "0"), deny: BigInt(ow.deny || "0") });
+                    }
+                    return out;
+                }
+
+                // Pass 1: สร้าง Category ก่อน → เก็บ old ID → new ID
+                for (const cData of channels) {
+                    if (cData.type !== 'GUILD_CATEGORY') continue;
+                    await new Promise(resolve => setImmediate(resolve));
                     if (Date.now() - startTime > MAX_DUR) { timeoutHit = true; break; }
-                    const exists = guild.channels.cache.find(c => c.name === cData.name && c.type === cData.type);
-                    if (!exists) {
+
+                    const exists = guild.channels.cache.find(c => c.name === cData.name && c.type === 'GUILD_CATEGORY');
+                    if (exists) {
+                        if (cData.id) categoryIdMap.set(cData.id, exists.id);
+                    } else {
                         try {
-                            const validTypes = ["GUILD_TEXT","GUILD_VOICE","GUILD_CATEGORY","GUILD_NEWS","GUILD_STAGE_VOICE"];
-                            if (validTypes.includes(cData.type)) {
-                                let mappedOverwrites = [];
-                                if (Array.isArray(cData.permissionOverwrites)) {
-                                    for (const ow of cData.permissionOverwrites) {
-                                        let targetId = roleIdMap.get(ow.id);
-                                        if (ow.id === oldGuildId) targetId = guild.id;
-                                        if (targetId) {
-                                            mappedOverwrites.push({
-                                                id: targetId,
-                                                allow: BigInt(ow.allow || "0"),
-                                                deny:  BigInt(ow.deny  || "0")
-                                            });
-                                        }
-                                    }
+                            const newCat = await guild.channels.create(cData.name, {
+                                type: 'GUILD_CATEGORY',
+                                permissionOverwrites: buildOverwrites(cData),
+                                reason: "Enterprise Restore"
+                            });
+                            if (cData.id) categoryIdMap.set(cData.id, newCat.id);
+                            restoredChannels++;
+                            await new Promise(r => setTimeout(r, 600));
+                        } catch (e) { console.error("[RESTORE] Category error:", e.message); }
+                    }
+                }
+
+                // Pass 2: สร้างห้องที่เหลือพร้อม parent ที่ถูกต้อง
+                if (!timeoutHit) {
+                    for (const cData of channels) {
+                        if (cData.type === 'GUILD_CATEGORY') continue;
+                        await new Promise(resolve => setImmediate(resolve));
+                        if (Date.now() - startTime > MAX_DUR) { timeoutHit = true; break; }
+
+                        const exists = guild.channels.cache.find(c => c.name === cData.name && c.type === cData.type);
+                        if (!exists) {
+                            try {
+                                if (validTypes.includes(cData.type)) {
+                                    const parentId = cData.parentId ? (categoryIdMap.get(cData.parentId) || undefined) : undefined;
+                                    await guild.channels.create(cData.name, {
+                                        type: cData.type,
+                                        parent: parentId,
+                                        permissionOverwrites: buildOverwrites(cData),
+                                        reason: "Enterprise Restore"
+                                    });
+                                    restoredChannels++;
+                                    await new Promise(r => setTimeout(r, 600));
                                 }
-                                await guild.channels.create(cData.name, {
-                                    type: cData.type,
-                                    permissionOverwrites: mappedOverwrites,
-                                    reason: "Enterprise Restore"
-                                });
-                                restoredChannels++;
-                                await new Promise(r => setTimeout(r, 600));
-                            }
-                        } catch (e) {
-                            console.error("[RESTORE] Channel error:", e.message);
+                            } catch (e) { console.error("[RESTORE] Channel error:", e.message); }
                         }
                     }
                 }
             }
 
             const timeMsg = timeoutHit ? `\n> ${config.emojis.warning} หยุดอัตโนมัติ: เกิน 14 นาที` : "";
-            await interaction.followUp({
-                content: `> ${config.emojis.success} **กู้คืนสำเร็จ!**\n— ยศ: ${restoredRoles} ยศ\n— ห้อง: ${restoredChannels} ห้อง${timeMsg}`,
-                ephemeral: true
-            }).catch(() => {});
+            const resultMsg = `> ${config.emojis.success} **กู้คืนสำเร็จ!**\n— ยศ: ${restoredRoles} ยศ\n— ห้อง: ${restoredChannels} ห้อง${timeMsg}`;
+            const sent = await interaction.followUp({ content: resultMsg, ephemeral: true }).catch(() => null);
+            if (!sent) {
+                interaction.user.send({ content: `${resultMsg}\n*(แจ้งทาง DM เพราะ interaction หมดอายุ)*` }).catch(() => {});
+            }
 
         } catch (err) {
             console.error("[RESTORE] Error:", err.message);
@@ -513,8 +556,12 @@ async function handleSetupLog(interaction, sessionManager) {
             const existing = await sessionManager.getLogChannelMap(interaction.guild.id);
             const key = `${cat}ChannelId`;
             if (existing && existing[key]) {
-                created.push(`${config.emojis.warning} \`${cat}\` — มีอยู่แล้ว`);
-                continue;
+                const channelStillExists = interaction.guild.channels.cache.has(existing[key]);
+                if (channelStillExists) {
+                    created.push(`${config.emojis.warning} \`${cat}\` — มีอยู่แล้ว (<#${existing[key]}>)`);
+                    continue;
+                }
+                await sessionManager.setLogChannelMap(interaction.guild.id, cat, null).catch(() => {});
             }
 
             const createOptions = {
@@ -568,6 +615,13 @@ async function handleWhitelist(interaction, sessionManager) {
 
     if (!userId) {
         return interaction.reply({ content: `> ${config.emojis.no_entry} ต้องระบุ user_id สำหรับ action \`${action}\``, ephemeral: true });
+    }
+
+    if (!/^\d{17,19}$/.test(userId)) {
+        return interaction.reply({
+            content: `> ${config.emojis.no_entry} User ID ต้องเป็นตัวเลข 17–19 หลักเท่านั้น`,
+            ephemeral: true
+        });
     }
 
     if (action === "add") {

@@ -93,7 +93,7 @@ function initCrashShield(config) {
 //  ⏱️  CRON JOBS
 // ════════════════════════════════════════════════════════════════════════════
 function initCronJobs({
-    spamTracking, sayTracking, requestCounts,
+    spamTracking, requestCounts,
     commandCooldowns, toggleCooldowns, antiRaidLogDebounce,
     sessionManager, voiceWorker, config
 }) {
@@ -106,10 +106,6 @@ function initCronJobs({
             for (const [uid, ts] of spamTracking.entries()) {
                 const v = ts.filter(t => now - t < 60000);
                 if (!v.length) spamTracking.delete(uid); else spamTracking.set(uid, v);
-            }
-            for (const [uid, ts] of sayTracking.entries()) {
-                const v = ts.filter(t => now - t < 60000);
-                if (!v.length) sayTracking.delete(uid); else sayTracking.set(uid, v);
             }
             for (const [ip, ts] of requestCounts.entries()) {
                 const v = ts.filter(t => now - t < windowMs);
@@ -132,8 +128,11 @@ function initCronJobs({
         }
     }, 30000);
 
-    // CRON 90s: Health + DB save
+    // CRON 90s: Health + DB save (lock ป้องกัน overlap)
+    let _cronRunning = false;
     setInterval(async () => {
+        if (_cronRunning) { console.warn("[CRON] ⚠️ Previous cycle still running — skipped."); return; }
+        _cronRunning = true;
         try {
             await voiceWorker.cleanupIdleSessions();
             await voiceWorker.healthCheck();
@@ -141,6 +140,8 @@ function initCronJobs({
         } catch (err) {
             console.error("[CRON] ❌ Health/Save failed:", err.message);
             sessionManager.systemMetrics.increment('errors');
+        } finally {
+            _cronRunning = false;
         }
     }, 90000);
 }

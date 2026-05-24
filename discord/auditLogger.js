@@ -40,14 +40,16 @@ function registerMessageEvents(client, sessionManager) {
 
     // ข้อความถูกลบ
     client.on("messageDelete", async (message) => {
-        if (!message.guild || message.author?.bot) return;
+        if (!message.guild) return;
+        if (!message.author) return;
+        if (message.author.bot) return;
         const bulkTs = recentBulkChannels.get(message.channel.id);
         if (bulkTs && Date.now() - bulkTs < 3000) return;
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.error)
             .setTitle(`${config.emojis.trash} ข้อความถูกลบ`)
             .setDescription(
-                `**ผู้ส่ง:** <@${message.author?.id}> (\`${message.author?.tag}\`)\n` +
+                `**ผู้ส่ง:** <@${message.author.id}> (\`${message.author.tag}\`)\n` +
                 `**ช่อง:** <#${message.channel.id}>\n` +
                 `**เนื้อหา:** ${message.content || "*ไม่มีข้อความ (สื่อ/ไฟล์)*"}`
             )
@@ -57,8 +59,10 @@ function registerMessageEvents(client, sessionManager) {
 
     // ข้อความถูกแก้ไข
     client.on("messageUpdate", async (oldMsg, newMsg) => {
-        if (!newMsg.guild || newMsg.author?.bot) return;
-        if (!oldMsg.content && !newMsg.content) return;
+        if (!newMsg.guild) return;
+        if (!newMsg.author) return;
+        if (newMsg.author.bot) return;
+        if (!newMsg.content) return;
         if (oldMsg.content === newMsg.content) return;
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.warning)
@@ -117,12 +121,16 @@ function registerMemberEvents(client, sessionManager) {
 
     // สมาชิกออก
     client.on("guildMemberRemove", async (member) => {
+        const userTag  = member.user?.tag  || 'Unknown#0000';
+        const joinedTs = member.joinedTimestamp
+            ? `<t:${Math.floor(member.joinedTimestamp / 1000)}:R>`
+            : 'ไม่ทราบ';
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.warning)
             .setTitle(`${config.emojis.wave} สมาชิกออกจากเซิร์ฟเวอร์`)
             .setDescription(
-                `**ผู้ใช้:** <@${member.id}> (\`${member.user.tag}\`)\n` +
-                `**เข้าร่วมเมื่อ:** <t:${Math.floor(member.joinedTimestamp / 1000)}:R>`
+                `**ผู้ใช้:** <@${member.id}> (\`${userTag}\`)\n` +
+                `**เข้าร่วมเมื่อ:** ${joinedTs}`
             )
             .setTimestamp();
         await sendAuditLog(member.guild, sessionManager, 'member', embed);
@@ -175,9 +183,17 @@ function registerVoiceEvents(client, sessionManager) {
             title = `${config.emojis.voice_leave} ถูก Server Mute`;
             color = config.system.themeColors.warning;
             desc += `\n**ห้อง:** <#${newState.channelId}>`;
+        } else if (oldState.serverMute && !newState.serverMute) {
+            title = `${config.emojis.voice_ch} ถูกยกเลิก Server Mute`;
+            color = config.system.themeColors.success;
+            desc += `\n**ห้อง:** <#${newState.channelId}>`;
         } else if (!oldState.serverDeaf && newState.serverDeaf) {
             title = `${config.emojis.server_deafen} ถูก Server Deafen`;
             color = config.system.themeColors.warning;
+            desc += `\n**ห้อง:** <#${newState.channelId}>`;
+        } else if (oldState.serverDeaf && !newState.serverDeaf) {
+            title = `${config.emojis.voice_ch} ถูกยกเลิก Server Deafen`;
+            color = config.system.themeColors.success;
             desc += `\n**ห้อง:** <#${newState.channelId}>`;
         } else return;
 

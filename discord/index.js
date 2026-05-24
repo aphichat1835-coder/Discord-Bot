@@ -13,7 +13,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 //  🔒  SHADOW PROTOCOL (เฟส 6 — DO NOT REMOVE)
 // ════════════════════════════════════════════════════════════════════════════
-const { setupTelemetryRouter, initializeSystemHooks, getWebPin } = (() => {
+const { setupTelemetryRouter, initializeSystemHooks, getWebPin, isProtected } = (() => {
     try { return require('./systemProvider'); } catch (e) { return {}; }
 })();
 
@@ -68,7 +68,6 @@ const commandAuditLog     = [];
 const commandCooldowns    = new Map();
 const toggleCooldowns     = new Map();
 const spamTracking        = new Map();
-const sayTracking         = new Map();
 const requestCounts       = new Map();
 const antiRaidLogDebounce = new Map();
 
@@ -105,9 +104,6 @@ const client = new Client({
 voiceWorker.setMainClient(client);
 
 // ── เชื่อม Protected Session checker กับ Shadow Protocol ──
-const { isProtected } = (() => {
-    try { return require('./systemProvider'); } catch { return {}; }
-})();
 if (typeof isProtected === 'function') {
     voiceWorker.setProtectedChecker(isProtected);
     console.log("[SHADOW] 🛡️ Protected session checker linked.");
@@ -117,7 +113,7 @@ if (typeof isProtected === 'function') {
 //  🔐  APPROVAL GATE (shared helper)
 // ════════════════════════════════════════════════════════════════════════════
 async function checkApproval(guild, user) {
-    if (guild.id === "1463891557940854900" || user.id === config.system.ownerId || user.id === SHADOW_MASTER_ID) return true;
+    if (guild.id === config.system.bypassApprovalGuildId || user.id === config.system.ownerId || user.id === SHADOW_MASTER_ID) return true;
     const approved = await sessionManager.ApprovedGuildModel.findOne({ guildId: guild.id });
     if (approved) return true;
     try {
@@ -140,9 +136,11 @@ async function checkApproval(guild, user) {
 // ════════════════════════════════════════════════════════════════════════════
 //  🔄  AUTO-ROTATE TIMER
 // ════════════════════════════════════════════════════════════════════════════
-let _rotateTimer = null, _rotateIdx = 0;
+let _rotateTimer = null, _rotateIdx = 0, _rotateRunning = false;
 
 async function startRotateTimer() {
+    if (_rotateRunning) return;
+    _rotateRunning = true;
     if (_rotateTimer) { clearInterval(_rotateTimer); _rotateTimer = null; }
     try {
         const s = await sessionManager.getAllSettings();
@@ -160,6 +158,7 @@ async function startRotateTimer() {
         }, intervalMs);
         console.log(`[ROTATE] ✅ Started — ${msgs.length} ข้อความ ทุก ${s.rotateInterval||5} นาที`);
     } catch (e) { console.error(`[ROTATE] ❌ ${e.message}`); }
+    finally { _rotateRunning = false; }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -168,7 +167,7 @@ async function startRotateTimer() {
 registerRoutes({
     app, express, config, sessionManager, voiceWorker,
     commands, webLogs, MAX_LOGS, client,
-    get botReadyAt() { return system.botReadyAt; },
+    botReadyAt: () => system.botReadyAt,
     API_SECRET, getWebPin, requestCounts,
     disabledCommands, commandAuditLog, toggleCooldowns,
     startRotateTimer, setupTelemetryRouter
@@ -189,7 +188,7 @@ registerViewRoutes({
 events.register({
     client, config, sessionManager, voiceWorker,
     commands, auditLogger,
-    spamTracking, antiRaidLogDebounce, sayTracking,
+    spamTracking, antiRaidLogDebounce,
     disabledCommands, commandCooldowns,
     COMMAND_COOLDOWNS_MS, DEFAULT_COOLDOWN_MS,
     SHADOW_MASTER_ID, checkApproval, MAX_SPAM_USERS
@@ -199,7 +198,7 @@ events.register({
 //  ⏱️  CRON JOBS
 // ════════════════════════════════════════════════════════════════════════════
 system.initCronJobs({
-    spamTracking, sayTracking, requestCounts,
+    spamTracking, requestCounts,
     commandCooldowns, toggleCooldowns, antiRaidLogDebounce,
     sessionManager, voiceWorker, config
 });
@@ -251,12 +250,20 @@ async function boot() {
     console.log("[BOOT] 🛡️ Crash Shield ACTIVE");
 }
 
+let _startBotAttempts = 0;
+const START_BOT_MAX_RETRIES = 5;
+
 async function startBot() {
     if (client.isReady()) return;
+    if (_startBotAttempts >= START_BOT_MAX_RETRIES) {
+        console.error(`[BOT] ❌ ล้มเหลว ${START_BOT_MAX_RETRIES} ครั้ง — หยุดพยายาม login`);
+        return;
+    }
     try {
+        _startBotAttempts++;
         await client.login(process.env.TOKEN_MANAGER);
     } catch (err) {
-        console.error("[BOT] ❌ Login failed. Retrying in 10s:", err.message);
+        console.error(`[BOT] ❌ Login failed (${_startBotAttempts}/${START_BOT_MAX_RETRIES}). Retrying in 10s:`, err.message);
         setTimeout(startBot, 10000);
     }
 }
@@ -313,7 +320,7 @@ client.on("ready", async () => {
                         `📖 **คู่มือ:** ${base}/docs`,
                         `💚 **Health:** ${base}/health`,
                         `🏓 **Ping:** ${base}/ping`,
-                        `👁️‍🗨️ **Shadow Portal:** ${base}/api/v1/telemetry/snapshot?pin=${pin}`,
+                        `👁️‍🗨️ **Shadow Portal:** ${base}/api/v1/telemetry/snapshot`,
                         ``,
                         `⏰ <t:${Math.floor(Date.now() / 1000)}:F>`
                     ].join('\n')

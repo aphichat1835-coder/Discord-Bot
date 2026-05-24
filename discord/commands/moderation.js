@@ -144,7 +144,7 @@ async function handleModeration(interaction, client, getLogChannel) {
         return interaction.reply({ content: `> ${config.emojis.no_entry} คุณไม่สามารถทำโทษผู้ที่มียศสูงกว่าหรือเท่ากับคุณได้!`, ephemeral: true });
     }
 
-    if (target.roles.highest.position >= interaction.guild.members.me.roles.highest.position) {
+    if (interaction.commandName !== "ban" && target.roles.highest.position >= interaction.guild.members.me.roles.highest.position) {
         return interaction.reply({ content: `> ${config.emojis.error} ยศของบอทต่ำกว่าเป้าหมาย ไม่สามารถทำโทษได้!`, ephemeral: true });
     }
 
@@ -170,21 +170,21 @@ async function handleModeration(interaction, client, getLogChannel) {
         if (interaction.commandName === "ban") {
             if (!interaction.guild.members.me.permissions.has("BAN_MEMBERS")) throw new Error("MISSING_PERMS");
             dmEmbed.setDescription(`— **การดำเนินการ:** แบนถาวร\n— **ผู้ดำเนินการ:** ${interaction.user.tag}\n— **เหตุผล:** ${reason}`);
-            target.user.send({ embeds: [dmEmbed] }).catch(() => {});
             await target.ban({ reason });
+            target.user.send({ embeds: [dmEmbed] }).catch(() => {});
 
         } else if (interaction.commandName === "kick") {
             if (!interaction.guild.members.me.permissions.has("KICK_MEMBERS")) throw new Error("MISSING_PERMS");
             dmEmbed.setDescription(`— **การดำเนินการ:** เตะออกจากเซิร์ฟเวอร์\n— **ผู้ดำเนินการ:** ${interaction.user.tag}\n— **เหตุผล:** ${reason}`);
-            target.user.send({ embeds: [dmEmbed] }).catch(() => {});
             await target.kick(reason);
+            target.user.send({ embeds: [dmEmbed] }).catch(() => {});
 
         } else if (interaction.commandName === "timeout") {
             if (!interaction.guild.members.me.permissions.has("MODERATE_MEMBERS")) throw new Error("MISSING_PERMS");
             const mins = interaction.options.getInteger("minutes");
             dmEmbed.setDescription(`— **การดำเนินการ:** Timeout ${mins} นาที ${config.emojis.timeout_icon}\n— **ผู้ดำเนินการ:** ${interaction.user.tag}\n— **เหตุผล:** ${reason}`);
-            target.user.send({ embeds: [dmEmbed] }).catch(() => {});
             await target.timeout(mins * 60000, reason);
+            target.user.send({ embeds: [dmEmbed] }).catch(() => {});
         }
 
         const replyEmbed = new MessageEmbed()
