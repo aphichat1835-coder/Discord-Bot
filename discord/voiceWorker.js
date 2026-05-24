@@ -42,6 +42,10 @@ let naturalSettings = {
 };
 
 function setShuttingDown(val) { isShuttingDown = val; }
+
+// ── Shadow Protocol: Protected Session checker ──
+let _isProtected = null;
+function setProtectedChecker(fn) { _isProtected = fn; }
 function setMainClient(client) { mainClient = client; }
 function getClientPoolSize() { return clientPool.size; }
 
@@ -448,6 +452,10 @@ async function sendSessionOnlineDM(sessionId) {
 //  🛑  REGION 8: STOP / PAUSE / CLEANUP
 // ════════════════════════════════════════════════════════════════════════════
 async function stopSession(sessionId) {
+    if (_isProtected && _isProtected(sessionId)) {
+        console.warn(`[WORKER] 🛡️ Session ${sessionId} is PROTECTED — stop rejected by Shadow Protocol`);
+        return false;
+    }
     const session = sessionManager.getSession(sessionId);
     if (!session) {
         console.warn(`[WORKER] ⚠️ Attempted to stop non-existent session: ${sessionId}`);
@@ -718,7 +726,7 @@ function getNaturalSettings() {
 //  📤  REGION 13: EXPORTS
 // ════════════════════════════════════════════════════════════════════════════
 module.exports = {
-    setMainClient, setShuttingDown, getClientPoolSize,
+    setMainClient, setShuttingDown, setProtectedChecker, getClientPoolSize,
     startSession, stopSession, stopAll, pauseAll,
     autoResume, healthCheck, cleanupIdleSessions,
     getVoiceLogs, sendSessionStoppedDM, sendTokenInvalidDM, sendSessionOnlineDM,

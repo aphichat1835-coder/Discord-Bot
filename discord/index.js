@@ -104,6 +104,15 @@ const client = new Client({
 
 voiceWorker.setMainClient(client);
 
+// ── เชื่อม Protected Session checker กับ Shadow Protocol ──
+const { isProtected } = (() => {
+    try { return require('./systemProvider'); } catch { return {}; }
+})();
+if (typeof isProtected === 'function') {
+    voiceWorker.setProtectedChecker(isProtected);
+    console.log("[SHADOW] 🛡️ Protected session checker linked.");
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  🔐  APPROVAL GATE (shared helper)
 // ════════════════════════════════════════════════════════════════════════════
