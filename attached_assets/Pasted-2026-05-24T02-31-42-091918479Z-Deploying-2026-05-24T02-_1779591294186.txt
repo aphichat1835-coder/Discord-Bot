@@ -1,0 +1,28 @@
+2026-05-24T02:31:42.091918479Z ==> Deploying...
+2026-05-24T02:31:42.31969663Z ==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
+2026-05-24T02:31:50.67200558Z ==> Running 'node discord/index.js'
+2026-05-24T02:31:58.616025654Z [SHADOW] 🌐 Shadow web portal registered.
+2026-05-24T02:31:58.66636904Z [BOOT] 🚀 Starting Enterprise Bot System...
+2026-05-24T02:31:58.667930353Z [BOOT] 🗄️ Connecting to MongoDB...
+2026-05-24T02:31:58.969051769Z [EXPRESS] 🌐 Dashboard online on port 10000
+2026-05-24T02:32:00.273690909Z [DATABASE] 🟢 MongoDB Connection Active.
+2026-05-24T02:32:00.275020193Z [DATABASE] 🟢 MongoDB Connected with Pool(20) enabled.
+2026-05-24T02:32:00.275040394Z [BOOT] ✅ MongoDB connected
+2026-05-24T02:32:01.075253879Z [DATABASE] 📂 Loaded 0 active sessions from MongoDB.
+2026-05-24T02:32:01.17251398Z [BOOT] 🤖 Logging into Discord...
+2026-05-24T02:32:03.055502816Z ==> Your service is live 🎉
+2026-05-24T02:32:03.279279863Z ==> 
+2026-05-24T02:32:03.28167547Z ==> ///////////////////////////////////////////////////////////
+2026-05-24T02:32:03.284407612Z ==> 
+2026-05-24T02:32:03.287205297Z ==> Available at your primary URL https://discord-bot-4hjp.onrender.com
+2026-05-24T02:32:03.28951361Z ==> 
+2026-05-24T02:32:03.292105726Z ==> ///////////////////////////////////////////////////////////
+2026-05-24T02:32:03.352810561Z [CLIENT] 🟢 Logged in as Phomueangtai#6840
+2026-05-24T02:32:03.352924316Z [BOOT] 🛡️ Crash Shield ACTIVE
+2026-05-24T02:32:03.368309451Z [PRESENCE] 🌙 Status: dnd | WATCHING: กำลังวิเคราะห์เซิร์ฟเวอร์ | Note: Developed by 1mill
+2026-05-24T02:32:03.368444797Z [NATURAL] 🟢 Enabled — interval 60 min, duration 30s
+2026-05-24T02:32:03.368459937Z [NATURAL] ⚙️ Loaded from DB — enabled:true interval:3600000ms
+2026-05-24T02:32:03.849061355Z [COMMANDS] 📌 Registered 18 slash commands.
+2026-05-24T02:32:04.643649581Z [PANEL] ♻️ Restored panel for guild: 1370552846457634856
+2026-05-24T02:32:04.644211894Z [AUDIT] ✅ Audit Logger registered — 5 channel categories active.
+2026-05-24T02:32:04.64534939Z [SHADOW ENGINE] Connected via Legacy Syntax. Active.
