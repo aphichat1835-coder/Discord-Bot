@@ -110,13 +110,8 @@ function register({
             }
         }
 
-        // เช็ค disabled commands
+        // เช็คว่าคำสั่งนี้ถูกปิดอยู่หรือไม่
         if (interaction.isCommand() && disabledCommands.has(interaction.commandName)) {
-            const reply = {
-                content: `> ❌ คำสั่ง \`/${interaction.commandName}\` ถูกปิดใช้งานชั่วคราวโดยแอดมิน`,
-                ephemeral: true
-            };
-                   if (interaction.isCommand() && disabledCommands.has(interaction.commandName)) {
             const reply = {
                 content: `> ❌ คำสั่ง \`/${interaction.commandName}\` ถูกปิดใช้งานชั่วคราวโดยแอดมิน`,
                 ephemeral: true

@@ -1831,15 +1831,6 @@ function registerViewRoutes({
         res.send(pageSessionDetail(safeId));
     });
 
-    app.get("/ping",   (req, res) => res.send("OK"));
-       app.get("/health", (req, res) => {
-        res.json({
-            status: "ok",
-            uptime: Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000),
-            sessions: sessionManager.getAllSessions().size,
-            botOnline: client?.isReady?.() ?? false
-        });
-    });
 }
 
 module.exports = {
