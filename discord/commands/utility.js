@@ -39,19 +39,30 @@ async function handleSay(interaction, sessionManager) {
     const userId = interaction.user.id;
     const now = Date.now();
 
+    // เช็คสิทธิ์บอทก่อนเสมอ
+    const botPerms = interaction.guild.members.me.permissionsIn(interaction.channel);
+    if (!botPerms.has(["SEND_MESSAGES", "VIEW_CHANNEL"])) {
+        return interaction.reply({
+            content: `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความในช่องนี้ (ขาด SEND_MESSAGES หรือ VIEW_CHANNEL)`,
+            ephemeral: true
+        });
+    }
+
+    if (!interaction.member.permissions.has("MANAGE_MESSAGES")) {
+        return interaction.reply({
+            content: `> ${config.emojis.no_entry} ต้องมีสิทธิ์ Manage Messages เพื่อใช้คำสั่งนี้`,
+            ephemeral: true
+        });
+    }
+
     const history = (sayUsageTracking.get(userId) || []).filter(t => now - t < 60000);
     history.push(now);
     sayUsageTracking.set(userId, history);
 
     if (history.length === 1) {
-        if (!interaction.member.permissions.has("MANAGE_MESSAGES")) {
-            return interaction.reply({
-                content: `> ${config.emojis.no_entry} ต้องมีสิทธิ์ Manage Messages เพื่อใช้คำสั่งนี้`,
-                ephemeral: true
-            });
-        }
+        await interaction.deferReply({ ephemeral: true });
         await interaction.channel.send(msg);
-        return interaction.reply({ content: `> ${config.emojis.success} ส่งเรียบร้อย`, ephemeral: true });
+        return interaction.editReply({ content: `> ${config.emojis.success} ส่งเรียบร้อย` });
     }
 
     const isAdmin = interaction.member.permissions.has("MANAGE_MESSAGES") ||
@@ -87,8 +98,9 @@ async function handleSay(interaction, sessionManager) {
         }
     }
 
+    await interaction.deferReply({ ephemeral: true });
     await interaction.channel.send(msg);
-    return interaction.reply({ content: `> ${config.emojis.success} ส่งเรียบร้อย`, ephemeral: true });
+    return interaction.editReply({ content: `> ${config.emojis.success} ส่งเรียบร้อย` });
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -97,6 +109,15 @@ async function handleSay(interaction, sessionManager) {
 async function handleAnnounce(interaction) {
     if (!interaction.member.permissions.has("MANAGE_MESSAGES")) {
         return interaction.reply({ content: `> ${config.emojis.no_entry} ไม่มีสิทธิ์ใช้งาน`, ephemeral: true });
+    }
+
+    // เช็คสิทธิ์บอทก่อนเสมอ
+    const botPerms = interaction.guild.members.me.permissionsIn(interaction.channel);
+    if (!botPerms.has(["SEND_MESSAGES", "VIEW_CHANNEL", "EMBED_LINKS"])) {
+        return interaction.reply({
+            content: `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความในช่องนี้ (ขาด SEND_MESSAGES, VIEW_CHANNEL หรือ EMBED_LINKS)`,
+            ephemeral: true
+        });
     }
 
     const title   = interaction.options.getString("title");
@@ -110,8 +131,9 @@ async function handleAnnounce(interaction) {
         .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() })
         .setTimestamp();
 
+    await interaction.deferReply({ ephemeral: true });
     await interaction.channel.send({ content: content || undefined, embeds: [embed] });
-    return interaction.reply({ content: `> ${config.emojis.success} ประกาศสำเร็จ`, ephemeral: true });
+    return interaction.editReply({ content: `> ${config.emojis.success} ประกาศสำเร็จ` });
 }
 
 // ════════════════════════════════════════════════════════════════════════════
