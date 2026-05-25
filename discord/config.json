@@ -55,6 +55,11 @@
         "intervalMs": 3600000,
         "durationMs": 30000
     },
+    "auto_deaf": {
+        "enabled": false,
+        "intervalMs": 3600000,
+        "openDurationMs": 60000
+    },
     "emojis": {
         "universe": "<a:ERSE52_phomueang:1505294987133452392>",
         "dreamworld": "<a:129_phomueang:1505303132840661032>",

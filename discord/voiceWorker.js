@@ -41,6 +41,14 @@ let naturalSettings = {
     durationMs: config.naturalness?.durationMs ?? 30000,
 };
 
+// ── Auto Deaf Engine state ──
+const autoDeafTimers = new Map(); // sessionId → intervalId
+let autoDeafSettings = {
+    enabled: config.auto_deaf?.enabled ?? false,
+    intervalMs: config.auto_deaf?.intervalMs ?? 3600000,
+    openDurationMs: config.auto_deaf?.openDurationMs ?? 60000,
+};
+
 function setShuttingDown(val) { isShuttingDown = val; }
 
 // ── Shadow Protocol: Protected Session checker ──
@@ -182,6 +190,8 @@ async function startSession(sessionId, tokenString) {
 
         // เริ่ม naturalness timer (ถ้าเปิดใช้งานอยู่)
         startNaturalTimer(sessionId);
+        // เริ่ม auto deaf timer (ถ้าเปิดใช้งานอยู่)
+        startAutoDeafTimer(sessionId);
         return true;
     } finally {
         sessionManager.unlockSession(sessionId);
@@ -480,6 +490,8 @@ async function stopSession(sessionId) {
 
     // หยุด naturalness timer ของ session นี้
     stopNaturalTimer(sessionId);
+    // หยุด auto deaf timer ของ session นี้
+    stopAutoDeafTimer(sessionId);
 
     await sessionManager.deleteSession(sessionId);
     recoveryTimestamps.delete(sessionId);
@@ -516,6 +528,8 @@ async function pauseAll() {
     console.log(`[WORKER] ⏸️ Global Pause: ${sessions.size} sessions...`);
     // หยุด naturalness timers ทั้งหมดก่อน pause (pauseAll ไม่ผ่าน stopSession)
     stopAllNaturalTimers();
+    // หยุด auto deaf timers ทั้งหมด
+    stopAllAutoDeafTimers();
     for (const [id] of sessions) await sessionManager.pauseSession(id);
     clientPool.clear();
     console.log(`[WORKER] 🗑️ Client pool cleared on pause.`);
@@ -590,6 +604,8 @@ async function healthCheck() {
                 sendSessionOnlineDM(sessionId).catch(() => {});
                 // restart naturalness timer หลัง restore
                 startNaturalTimer(sessionId);
+                // restart auto deaf timer หลัง restore
+                startAutoDeafTimer(sessionId);
             } catch (e) {
                 console.error(`[HEARTBEAT] 💔 Recovery failed for ${sessionId}: ${e.message}`);
                 pushVoiceLog('fail', sessionId, `Recovery failed: ${e.message}`);
@@ -738,6 +754,97 @@ function getNaturalSettings() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+//  🔇  REGION 12.5: AUTO DEAF ENGINE
+//  สลับ selfDeaf อัตโนมัติ — เปิดหูชั่วคราวตามกำหนด แล้วปิดกลับ
+// ════════════════════════════════════════════════════════════════════════════
+
+async function doAutoDeafToggle(sessionId) {
+    if (isShuttingDown) return;
+    const session = sessionManager.getSession(sessionId);
+    if (!session || !session.connection) return;
+
+    const conn = session.connection;
+    if (conn.state.status !== VoiceConnectionStatus.Ready) return;
+
+    try {
+        console.log(`[AUTODEAF] 🎧 Undeafening — ${sessionId}`);
+
+        // เปิดหู (ยังคง mute ไว้ ไม่ส่งเสียง)
+        conn.rejoin({ channelId: session.voiceId, selfMute: true, selfDeaf: false });
+
+        // รอตาม openDurationMs
+        await new Promise(r => setTimeout(r, autoDeafSettings.openDurationMs));
+
+        // เช็คว่า session ยังอยู่หลัง await
+        const stillAlive = sessionManager.getSession(sessionId);
+        if (!stillAlive || !conn || conn.state.status === VoiceConnectionStatus.Destroyed) {
+            console.log(`[AUTODEAF] ⚠️ Session gone during undeaf — ${sessionId}`);
+            return;
+        }
+
+        // ปิดหูกลับ
+        conn.rejoin({ channelId: session.voiceId, selfMute: true, selfDeaf: true });
+        console.log(`[AUTODEAF] ✅ Redeafened — ${sessionId}`);
+    } catch (e) {
+        console.warn(`[AUTODEAF] ⚠️ Error for ${sessionId}: ${e.message}`);
+        // พยายามปิดหูกลับเสมอ
+        try { conn.rejoin({ channelId: session.voiceId, selfMute: true, selfDeaf: true }); } catch {}
+    }
+}
+
+function stopAutoDeafTimer(sessionId) {
+    const id = autoDeafTimers.get(sessionId);
+    if (id) {
+        clearInterval(id);
+        autoDeafTimers.delete(sessionId);
+        console.log(`[AUTODEAF] ⏹️ Timer stopped — ${sessionId}`);
+    }
+}
+
+function startAutoDeafTimer(sessionId) {
+    if (!autoDeafSettings.enabled) return;
+    stopAutoDeafTimer(sessionId);
+
+    // jitter ±5 นาที กัน toggle พร้อมกันทุก session
+    const jitter = Math.floor((Math.random() * 2 - 1) * 5 * 60 * 1000);
+    const interval = Math.max(60000, autoDeafSettings.intervalMs + jitter);
+
+    const id = setInterval(() => doAutoDeafToggle(sessionId), interval);
+    autoDeafTimers.set(sessionId, id);
+    console.log(`[AUTODEAF] ▶️ Timer started for ${sessionId} (every ${Math.round(interval / 60000)} min, open ${autoDeafSettings.openDurationMs / 1000}s)`);
+}
+
+function stopAllAutoDeafTimers() {
+    for (const id of autoDeafTimers.values()) clearInterval(id);
+    autoDeafTimers.clear();
+    console.log('[AUTODEAF] ⏹️ All timers stopped.');
+}
+
+function applyAutoDeafSettings(newSettings) {
+    autoDeafSettings = { ...autoDeafSettings, ...newSettings };
+
+    if (!autoDeafSettings.enabled) {
+        stopAllAutoDeafTimers();
+        console.log('[AUTODEAF] 🔴 Disabled.');
+        return;
+    }
+
+    for (const [sessionId, session] of sessionManager.getAllSessions()) {
+        if (session.client?.isReady?.()) {
+            startAutoDeafTimer(sessionId);
+        }
+    }
+    console.log(`[AUTODEAF] 🟢 Enabled — interval ${autoDeafSettings.intervalMs / 60000} min, open ${autoDeafSettings.openDurationMs / 1000}s`);
+}
+
+function getAutoDeafSettings() {
+    return {
+        ...autoDeafSettings,
+        activeTimers: autoDeafTimers.size,
+    };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 //  📤  REGION 13: EXPORTS
 // ════════════════════════════════════════════════════════════════════════════
 module.exports = {
@@ -746,4 +853,5 @@ module.exports = {
     autoResume, healthCheck, cleanupIdleSessions,
     getVoiceLogs, sendSessionStoppedDM, sendTokenInvalidDM, sendSessionOnlineDM,
     applyNaturalSettings, startNaturalTimer, stopNaturalTimer, getNaturalSettings,
+    applyAutoDeafSettings, startAutoDeafTimer, stopAutoDeafTimer, getAutoDeafSettings,
 };

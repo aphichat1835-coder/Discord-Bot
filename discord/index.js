@@ -291,6 +291,11 @@ client.on("ready", async () => {
             intervalMs: s.naturalIntervalMs ?? 3600000,
             durationMs: s.naturalDurationMs ?? 30000
         });
+        voiceWorker.applyAutoDeafSettings({
+            enabled:        s.autoDeafEnabled        ?? false,
+            intervalMs:     s.autoDeafIntervalMs     ?? 3600000,
+            openDurationMs: s.autoDeafOpenDurationMs ?? 60000
+        });
     } catch (e) { console.error(`[SETTINGS] ❌ Failed to load: ${e.message}`); }
 
     await startRotateTimer();

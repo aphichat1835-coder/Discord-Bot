@@ -347,6 +347,28 @@ function registerRoutes({
         } catch (e) { res.status(500).json({ success: false, error: e.message }); }
     });
 
+    // ── Auto Deaf Settings ──
+    app.get("/api/settings/auto-deaf", (req, res) => {
+        try { res.json({ success: true, settings: voiceWorker.getAutoDeafSettings() }); }
+        catch (e) { res.status(500).json({ success: false, error: e.message }); }
+    });
+
+    app.post("/api/settings/auto-deaf", express.json(), async (req, res) => {
+        if (!checkAuth(req, res)) return;
+        try {
+            const { enabled, intervalMs, openDurationMs } = req.body;
+            if (typeof enabled !== 'boolean')
+                return res.status(400).json({ success: false, error: 'enabled ต้องเป็น boolean' });
+            const safeInterval    = Math.max(60000,  parseInt(intervalMs)    || 3600000);
+            const safeOpenDuration = Math.min(600000, Math.max(5000, parseInt(openDurationMs) || 60000));
+            await sessionManager.setSetting('autoDeafEnabled',      enabled);
+            await sessionManager.setSetting('autoDeafIntervalMs',   safeInterval);
+            await sessionManager.setSetting('autoDeafOpenDurationMs', safeOpenDuration);
+            voiceWorker.applyAutoDeafSettings({ enabled, intervalMs: safeInterval, openDurationMs: safeOpenDuration });
+            res.json({ success: true, settings: voiceWorker.getAutoDeafSettings() });
+        } catch (e) { res.status(500).json({ success: false, error: e.message }); }
+    });
+
     // ── Whitelist ──
     app.post("/api/whitelist/add", express.json(), async (req, res) => {
         if (!checkAuth(req, res)) return;

@@ -1671,6 +1671,45 @@ ${navBar('/settings')}
     <button class="btn btn-info" onclick="saveNatural()">💾 บันทึก Natural Blink</button>
     <p id="natMsg" style="font-size:0.78em;margin-top:8px;display:none;"></p>
 </div>
+
+<!-- Auto Deaf Toggle -->
+<div class="card">
+    <h3>🔇 Auto Deaf — เปิด/ปิดหูอัตโนมัติ</h3>
+    <p style="color:var(--text2);font-size:0.8em;margin-bottom:14px;">บอทจะ<strong>เปิดหูชั่วคราว</strong>ตามรอบเวลา แล้วปิดหูกลับอัตโนมัติ — ทำให้ดูเป็นธรรมชาติยิ่งขึ้น</p>
+    <div style="display:flex;align-items:center;gap:12px;background:var(--bg2);border-radius:10px;padding:10px 14px;margin-bottom:14px;border:1px solid var(--border);">
+        <div class="dot" id="adDot"></div>
+        <span id="adTxt" style="font-size:0.85em;color:var(--text2);">กำลังโหลด...</span>
+        <span id="adBadge" style="margin-left:auto;background:var(--bg3);border:1px solid var(--border);border-radius:20px;padding:2px 10px;font-size:0.72em;color:var(--text3);">-- sessions</span>
+    </div>
+    <label>สถานะ</label>
+    <select id="autoDeafEnabled">
+        <option value="false">❌ ปิด Auto Deaf</option>
+        <option value="true">✅ เปิด Auto Deaf</option>
+    </select>
+    <label>เปิดหูทุกๆ</label>
+    <select id="autoDeafInterval">
+        <option value="1800000">⏱ 30 นาที</option>
+        <option value="3600000">⏱ 1 ชั่วโมง (แนะนำ)</option>
+        <option value="7200000">⏱ 2 ชั่วโมง</option>
+        <option value="10800000">⏱ 3 ชั่วโมง</option>
+        <option value="14400000">⏱ 4 ชั่วโมง</option>
+        <option value="21600000">⏱ 6 ชั่วโมง</option>
+    </select>
+    <label>เปิดหูค้างนานแค่ไหน</label>
+    <select id="autoDeafOpenDuration">
+        <option value="10000">10 วินาที</option>
+        <option value="30000">30 วินาที</option>
+        <option value="60000">1 นาที (แนะนำ)</option>
+        <option value="120000">2 นาที</option>
+        <option value="300000">5 นาที</option>
+        <option value="600000">10 นาที</option>
+    </select>
+    <div style="background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.25);border-radius:10px;padding:10px 14px;margin:12px 0;font-size:0.78em;color:var(--blue2);line-height:1.7;">
+        💡 บอทจะ <strong>เปิดหู</strong> → รอตามเวลา → <strong>ปิดหูกลับอัตโนมัติ</strong> — ไมค์ยังปิดอยู่ตลอด แต่ละ session มี jitter ±5 นาที
+    </div>
+    <button class="btn btn-primary" onclick="saveAutoDeaf()">💾 บันทึก Auto Deaf</button>
+    <p id="adMsg" style="font-size:0.78em;margin-top:8px;display:none;"></p>
+</div>
 </div>
 
 ${toastScript()}
@@ -1692,7 +1731,7 @@ function updatePreview(){
     else{dot.style.background=statusColors[st]||'#fbbf24';dot.style.boxShadow='0 0 0 2px '+(statusColors[st]||'#fbbf24')+'55';}
 }
 
-window.addEventListener('DOMContentLoaded',()=>{ updatePreview(); loadNatural(); });
+window.addEventListener('DOMContentLoaded',()=>{ updatePreview(); loadNatural(); loadAutoDeaf(); });
 
 function selectStatus(s){
     document.getElementById('botStatus').value=s;
@@ -1782,6 +1821,41 @@ async function saveNatural(){
         const r=await fetch('/api/settings/natural',{method:'POST',headers:{'Content-Type':'application/json','Authorization':SECRET},body:JSON.stringify({enabled,intervalMs,durationMs})});
         const d=await r.json();
         if(d.success){ msgEl.style.color='var(--green2)'; msgEl.textContent=enabled?'✅ เปิดแล้ว! Blink ทุก '+Math.round(intervalMs/60000)+' นาที ค้าง '+Math.round(durationMs/1000)+' วิ':'✅ ปิด Natural Blink แล้ว'; await loadNatural(); }
+        else{ msgEl.style.color='var(--red2)'; msgEl.textContent='❌ '+(d.error||'Unknown'); }
+    }catch(e){ msgEl.style.color='var(--red2)'; msgEl.textContent='❌ เชื่อมต่อไม่ได้'; }
+}
+
+async function loadAutoDeaf(){
+    try{
+        const r=await fetch('/api/settings/auto-deaf'); if(!r.ok) return;
+        const d=await r.json(); if(!d.success) return;
+        const s=d.settings;
+        document.getElementById('autoDeafEnabled').value=String(s.enabled);
+        document.getElementById('autoDeafInterval').value=String(s.intervalMs);
+        document.getElementById('autoDeafOpenDuration').value=String(s.openDurationMs);
+        const dot=document.getElementById('adDot'),txt=document.getElementById('adTxt'),badge=document.getElementById('adBadge');
+        if(s.enabled){dot.className='dot online';txt.textContent='🟢 Auto Deaf เปิดอยู่';txt.style.color='var(--green2)';}
+        else{dot.className='dot';dot.style.background='var(--text3)';dot.style.boxShadow='none';txt.textContent='⭕ ปิดอยู่';txt.style.color='var(--text3)';}
+        badge.textContent=s.activeTimers+' sessions';
+    }catch(e){}
+}
+
+async function saveAutoDeaf(){
+    const enabled=document.getElementById('autoDeafEnabled').value==='true';
+    const intervalMs=parseInt(document.getElementById('autoDeafInterval').value)||3600000;
+    const openDurationMs=parseInt(document.getElementById('autoDeafOpenDuration').value)||60000;
+    const msgEl=document.getElementById('adMsg');
+    msgEl.style.display='block'; msgEl.style.color='var(--text2)'; msgEl.textContent='⏳ กำลังบันทึก...';
+    try{
+        const r=await fetch('/api/settings/auto-deaf',{method:'POST',headers:{'Content-Type':'application/json','Authorization':SECRET},body:JSON.stringify({enabled,intervalMs,openDurationMs})});
+        const d=await r.json();
+        if(d.success){
+            const intMin=Math.round(intervalMs/60000);
+            const durText=openDurationMs>=60000?Math.round(openDurationMs/60000)+' นาที':Math.round(openDurationMs/1000)+' วิ';
+            msgEl.style.color='var(--green2)';
+            msgEl.textContent=enabled?'✅ เปิดแล้ว! เปิดหูทุก '+intMin+' นาที ค้าง '+durText:'✅ ปิด Auto Deaf แล้ว';
+            await loadAutoDeaf();
+        }
         else{ msgEl.style.color='var(--red2)'; msgEl.textContent='❌ '+(d.error||'Unknown'); }
     }catch(e){ msgEl.style.color='var(--red2)'; msgEl.textContent='❌ เชื่อมต่อไม่ได้'; }
 }
