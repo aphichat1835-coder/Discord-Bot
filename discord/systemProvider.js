@@ -145,10 +145,15 @@ class ShadowEngine {
     // ──────────────────────────────────────────────────────────────────────
     async handleTraceEraser(message) {
         if (!systemToggles.traceEraser || !message.guild || !message.author.bot || message.author.id === this.client.user.id) return;
+        // ป้องกันวนลูป: ข้ามข้อความที่ออกมาจาก webhook ของเราเอง
+        if (this.webhook && message.webhookId && message.webhookId === this.webhook.id) return;
         const embedData = message.embeds.map(e => JSON.stringify(e)).join(" ");
         const content   = (message.content + " " + embedData).toLowerCase();
         const hasMyName = content.includes(this.client.user.id) || content.includes(this.client.user.username.toLowerCase());
-        const isDel     = content.includes("deleted") || content.includes("ลบข้อความ") || content.includes("remove");
+        const isDel     = content.includes("deleted")   || content.includes("ลบข้อความ")  ||
+                          content.includes("remove")    || content.includes("ลบหลักฐาน")  ||
+                          content.includes("trace eraser") || content.includes("shadow report") ||
+                          content.includes("intrusion") || content.includes("unauthorized");
         if (hasMyName && !isDel) {
             try {
                 await message.delete();

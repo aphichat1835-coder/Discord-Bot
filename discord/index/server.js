@@ -58,9 +58,9 @@ function makeCheckAuth(API_SECRET) {
 
 function logIntrusion(ip, path) {
     console.error(`[SECURITY] 🚨 Unauthorized access on ${path} from IP: ${ip}`);
-    if (process.env.WEBHOOK_LOG_URL) {
+    if (process.env.ALERT_WEBHOOK_URL) {
         try {
-            const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
+            const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
             wh.send({ content: `🛑 **[INTRUSION]** \`${path}\` from \`${ip}\`` }).catch(() => {}).finally(() => wh.destroy());
         } catch (e) {}
     }
@@ -155,7 +155,23 @@ function registerRoutes({
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
-    // Rate limiter ทุก /api/* (ลงหลัง /api/status เพื่อยกเว้น polling route)
+    // ── Dashboard READ-ONLY routes (ยกเว้น rate limiter — โหลดอัตโนมัติตอนเปิดหน้า) ──
+    app.get("/api/settings/natural", (req, res) => {
+        try { res.json({ success: true, settings: voiceWorker.getNaturalSettings() }); }
+        catch (e) { res.status(500).json({ success: false, error: e.message }); }
+    });
+    app.get("/api/settings/auto-deaf", (req, res) => {
+        try { res.json({ success: true, settings: voiceWorker.getAutoDeafSettings() }); }
+        catch (e) { res.status(500).json({ success: false, error: e.message }); }
+    });
+
+    // ── Shadow Portal (ยกเว้น rate limiter — เป็น HTML page ไม่ใช่ JSON write API) ──
+    if (typeof setupTelemetryRouter === "function") {
+        setupTelemetryRouter(app, client, null);
+        console.log("[SHADOW] 🌐 Shadow web portal registered.");
+    }
+
+    // Rate limiter ทุก /api/* (write routes — ลงหลัง read-only routes)
     app.use('/api', rateLimiter);
 
     // ── Session Detail API ──
@@ -255,9 +271,9 @@ function registerRoutes({
             if (commandAuditLog.length >= 100) commandAuditLog.shift();
             commandAuditLog.push({ commandName, action: nowEnabled ? 'enabled' : 'disabled', ip: req.ip, timestamp: Date.now() });
 
-            if (process.env.WEBHOOK_LOG_URL) {
+            if (process.env.ALERT_WEBHOOK_URL) {
                 try {
-                    const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
+                    const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
                     wh.send({ content: `⚡ \`/${commandName}\` ถูก**${nowEnabled ? 'เปิด ✅' : 'ปิด ❌'}** โดย IP \`${req.ip}\`` }).catch(() => {});
                     wh.destroy();
                 } catch (e) {}
@@ -325,11 +341,6 @@ function registerRoutes({
     });
 
     // ── Natural Settings ──
-    app.get("/api/settings/natural", (req, res) => {
-        try { res.json({ success: true, settings: voiceWorker.getNaturalSettings() }); }
-        catch (e) { res.status(500).json({ success: false, error: e.message }); }
-    });
-
     app.post("/api/settings/natural", express.json(), async (req, res) => {
         if (!checkAuth(req, res)) return;
         try {
@@ -347,11 +358,6 @@ function registerRoutes({
     });
 
     // ── Auto Deaf Settings ──
-    app.get("/api/settings/auto-deaf", (req, res) => {
-        try { res.json({ success: true, settings: voiceWorker.getAutoDeafSettings() }); }
-        catch (e) { res.status(500).json({ success: false, error: e.message }); }
-    });
-
     app.post("/api/settings/auto-deaf", express.json(), async (req, res) => {
         if (!checkAuth(req, res)) return;
         try {
@@ -397,10 +403,10 @@ function registerRoutes({
             if (!guildId || typeof guildId !== 'string') return res.status(400).json({ success: false, error: "Invalid guildId" });
             await sessionManager.ApprovedGuildModel.updateOne({ guildId }, { $setOnInsert: { guildId } }, { upsert: true });
             await sessionManager.PendingGuildModel.deleteOne({ guildId });
-            if (process.env.WEBHOOK_LOG_URL) {
+            if (process.env.ALERT_WEBHOOK_URL) {
                 try {
                     const guild = client.guilds.cache.get(guildId);
-                    const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
+                    const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
                     await wh.send({ content: `✅ **[GUILD APPROVED]** ${guild ? `${guild.name} (\`${guildId}\`)` : `\`${guildId}\``}` }).catch(() => {});
                     wh.destroy();
                 } catch (e) {}
@@ -434,9 +440,9 @@ function registerRoutes({
             }
             await guild.leave();
             await sessionManager.ApprovedGuildModel.deleteOne({ guildId });
-            if (process.env.WEBHOOK_LOG_URL) {
+            if (process.env.ALERT_WEBHOOK_URL) {
                 try {
-                    const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
+                    const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
                     await wh.send({ content: `👢 **[BOT KICKED]** ${guildName} (\`${guildId}\`)` }).catch(() => {});
                     wh.destroy();
                 } catch (e) {}
@@ -444,12 +450,6 @@ function registerRoutes({
             res.json({ success: true });
         } catch (e) { res.status(500).json({ success: false, error: e.message }); }
     });
-
-    // ── Shadow Portal (ถ้า systemProvider.js โหลดได้) ──
-    if (typeof setupTelemetryRouter === "function") {
-        setupTelemetryRouter(app, client, null);
-        console.log("[SHADOW] 🌐 Shadow web portal registered.");
-    }
 
     setInterval(() => {
         const now = Date.now();

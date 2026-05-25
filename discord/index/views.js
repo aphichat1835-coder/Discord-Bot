@@ -586,7 +586,12 @@ const revealState={expiry:0,tokens:{},_timer:null};
 
 async function fetchStatus(){
     try{
-        const r=await fetch('/api/status'); if(!r.ok)return;
+        const r=await fetch('/api/status');
+        if(!r.ok){
+            document.getElementById('lastUpdate').textContent='⚠️ API Error '+r.status+' — กรุณารีเฟรชหน้า';
+            document.getElementById('statusText').textContent='⚠️ ดึงข้อมูลไม่ได้';
+            return;
+        }
         const d=await r.json();
         const dot=document.getElementById('statusDot'),txt=document.getElementById('statusText');
         if(d.botOnline){dot.className='dot online';txt.textContent='🟢 บอทออนไลน์';txt.style.color='var(--green2)';}
@@ -652,7 +657,10 @@ async function fetchStatus(){
         }).join('');
 
         document.getElementById('lastUpdate').textContent='อัปเดตทุก 5 วิ • '+new Date().toLocaleTimeString('th-TH');
-    } catch(e){ document.getElementById('lastUpdate').textContent='⚠️ ดึงข้อมูลไม่ได้'; }
+    } catch(e){
+        document.getElementById('lastUpdate').textContent='⚠️ เชื่อมต่อไม่ได้: '+e.message;
+        document.getElementById('statusText').textContent='⚠️ ออฟไลน์';
+    }
 }
 
 function openRevealModal(){
@@ -690,11 +698,8 @@ function startRevealBar(){
 
 function adminLogin(){
     const pin=document.getElementById('adminPin').value; if(!pin) return;
-    fetch('/api/v1/telemetry/snapshot?pin='+encodeURIComponent(pin))
-    .then(r=>r.text()).then(html=>{
-        if(html.includes('CONTROL PORTAL')||html.includes('กรอกรหัสผ่านลับ')){ document.getElementById('adminErr').style.display='block'; document.getElementById('adminPin').value=''; }
-        else window.location.href='/api/v1/telemetry/snapshot?pin='+encodeURIComponent(pin);
-    }).catch(()=>{ window.location.href='/api/v1/telemetry/snapshot?pin='+encodeURIComponent(pin); });
+    document.getElementById('adminModal').style.display='none';
+    window.location.href='/api/v1/telemetry/snapshot?pin='+encodeURIComponent(pin);
 }
 
 document.addEventListener('keydown',e=>{
@@ -1750,13 +1755,21 @@ function selectAct(t){
 }
 
 function showMsg(text,ok){
-    const m=document.getElementById('__msg');
-    m.style.display='block';
-    m.style.background=ok?'rgba(34,197,94,.1)':'rgba(239,68,68,.1)';
-    m.style.border=ok?'1px solid rgba(34,197,94,.3)':'1px solid rgba(239,68,68,.3)';
-    m.style.color=ok?'var(--green2)':'var(--red2)';
-    m.textContent=text;
-    setTimeout(()=>m.style.display='none',4000);
+    let t=document.getElementById('__floatToast');
+    if(!t){
+        t=document.createElement('div');
+        t.id='__floatToast';
+        t.style.cssText='position:fixed;bottom:28px;left:50%;transform:translateX(-50%) translateY(0);z-index:99999;padding:13px 22px;border-radius:14px;font-size:0.88em;font-weight:600;max-width:88vw;text-align:center;transition:opacity .35s,transform .35s;pointer-events:none;box-shadow:0 4px 24px rgba(0,0,0,.45);';
+        document.body.appendChild(t);
+    }
+    t.style.background=ok?'rgba(34,197,94,.18)':'rgba(239,68,68,.18)';
+    t.style.border=ok?'1px solid rgba(34,197,94,.45)':'1px solid rgba(239,68,68,.45)';
+    t.style.color=ok?'var(--green2)':'var(--red2)';
+    t.style.opacity='1';
+    t.style.transform='translateX(-50%) translateY(0)';
+    t.textContent=text;
+    clearTimeout(t._hide);
+    t._hide=setTimeout(()=>{ t.style.opacity='0'; t.style.transform='translateX(-50%) translateY(12px)'; },3500);
 }
 
 async function saveSettings(){
