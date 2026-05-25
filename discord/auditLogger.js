@@ -10,13 +10,21 @@ DO NOT REMOVE: Any event listener — each one serves เฟส 25 requirements.
 const { MessageEmbed } = require("discord.js");
 
 // ════════════════════════════════════════════════════════════════════════════
-//  🗺️  REGION 1: HELPER — ดึงห้อง log จาก DB
+//  🗺️  REGION 1: HELPER — ดึงห้อง log จาก DB (with in-memory cache 5 min)
 // ════════════════════════════════════════════════════════════════════════════
+const auditChannelCache = new Map(); // guildId → { map, expiry }
+
 async function getAuditChannel(guild, sessionManager, type) {
     try {
-        const map = await sessionManager.getLogChannelMap(guild.id);
-        if (!map) return null;
-        const channelId = map[`${type}ChannelId`];
+        const now = Date.now();
+        let cached = auditChannelCache.get(guild.id);
+        if (!cached || now > cached.expiry) {
+            const map = await sessionManager.getLogChannelMap(guild.id);
+            cached = { map, expiry: now + 300000 };
+            auditChannelCache.set(guild.id, cached);
+        }
+        if (!cached.map) return null;
+        const channelId = cached.map[`${type}ChannelId`];
         if (!channelId) return null;
         return guild.channels.cache.get(channelId) || null;
     } catch (e) {
@@ -308,4 +316,4 @@ function register(client, sessionManager) {
     console.log("[AUDIT] ✅ Audit Logger registered — 5 channel categories active.");
 }
 
-module.exports = { register, sendAuditLog };
+module.exports = { register, sendAuditLog, invalidateAuditCache: (guildId) => auditChannelCache.delete(guildId) };

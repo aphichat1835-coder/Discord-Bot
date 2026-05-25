@@ -80,7 +80,7 @@ function register({
                                     `**ครั้งที่:** ${recent.length}`
                                 )
                                 .setTimestamp();
-                            auditLogger.sendAuditLog(message.guild, sessionManager, 'security', logEmbed);
+                            auditLogger.sendAuditLog(message.guild, sessionManager, 'security', logEmbed).catch(() => {});
                         }
                     } catch (e) {
                         console.error(`[ANTI-RAID] ⚠️ Failed for ${message.author.id}: ${e.message}`);
@@ -170,7 +170,7 @@ function register({
                         .filter(c => c.isText() && c.permissionsFor(guild.members.me).has("CREATE_INSTANT_INVITE"))
                         .first();
                     if (channel) {
-                        const inv = await channel.createInvite({ maxAge: 0 });
+                        const inv = await channel.createInvite({ maxAge: 3600 });
                         inviteStr = inv.url;
                     }
                 } catch (e) {}

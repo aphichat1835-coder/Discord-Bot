@@ -10,8 +10,6 @@ DO NOT SIMPLIFY: Permission check chain — each check serves a specific purpose
 const { MessageEmbed, MessageActionRow, MessageButton } = require("discord.js");
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");
-const voiceWorker = require("../voiceWorker");
-
 // Race Condition Guards
 const activeVoiceKicks = new Set();
 
@@ -67,11 +65,15 @@ async function handleVoiceKickAll(interaction, getLogChannel) {
             .setDescription(
                 `> ${config.emojis.success} **จัดการห้องเสียงเรียบร้อย** ${config.emojis.broom}\n\n` +
                 `— **เตะสำเร็จ ${kicked.length} คน:**\n` +
-                `${kicked.length > 0 ? kicked.join(", ") : "- ไม่มีใครถูกเตะ -"}${limitMsg}`
+                `${kicked.length > 0
+                    ? (kicked.length > 50
+                        ? kicked.slice(0, 50).join(", ") + `\n... และอีก ${kicked.length - 50} คน`
+                        : kicked.join(", "))
+                    : "- ไม่มีใครถูกเตะ -"}${limitMsg}`
             );
 
         const logMap = await sessionManager.getLogChannelMap(interaction.guild.id);
-        const logCh = logMap?.memberChannelId ? interaction.guild.channels.cache.get(logMap.memberChannelId) : null;
+        const logCh = logMap?.voiceChannelId ? interaction.guild.channels.cache.get(logMap.voiceChannelId) : null;
         if (logCh) logCh.send({ embeds: [embed] }).catch(() => {});
         return interaction.editReply({ embeds: [embed] });
     } finally {

@@ -55,13 +55,9 @@ async function handleSay(interaction, sessionManager) {
         });
     }
 
-    const history = (sayUsageTracking.get(userId) || []).filter(t => now - t < 60000);
-    history.push(now);
-    if (history.length > 0) {
-        sayUsageTracking.set(userId, history);
-    } else {
-        sayUsageTracking.delete(userId);
-    }
+    const prevHistory = (sayUsageTracking.get(userId) || []).filter(t => now - t < 60000);
+    const history = [...prevHistory, now];
+    sayUsageTracking.set(userId, history);
 
     if (history.length === 1) {
         await interaction.deferReply({ ephemeral: true });
@@ -83,8 +79,7 @@ async function handleSay(interaction, sessionManager) {
                                  `**Server:** ${interaction.guild.name} (\`${interaction.guild.id}\`)\n` +
                                  `**Count:** ${history.length} ครั้งใน 60s\n` +
                                  `**Message:** ${msg.substring(0, 200)}`
-                    }).catch(() => {});
-                    wh.destroy();
+                    }).catch(() => {}).finally(() => wh.destroy());
                 } catch (e) {}
             }
             return interaction.reply({
@@ -179,12 +174,9 @@ async function handleSteal(interaction) {
         });
     }
 
-    const toSteal = Math.min(
-        matches.length,
-        matches.filter(m => m[1] === 'a').length <= animatedFree
-            ? matches.length
-            : matches.filter(m => m[1] !== 'a').length + animatedFree
-    );
+    const animatedToSteal = Math.min(matches.filter(m => m[1] === 'a').length, animatedFree);
+    const staticToSteal   = Math.min(matches.filter(m => m[1] !== 'a').length, staticFree);
+    const toSteal = animatedToSteal + staticToSteal;
 
     await interaction.deferReply();
     let added   = 0;
@@ -260,7 +252,6 @@ async function handleBackup(interaction) {
                     content: `> ${config.emojis.warning} บันทึกไปแล้วเมื่อ <t:${Math.floor(existing.createdAt / 1000)}:R> โปรดรอให้ครบ 24 ชั่วโมง`
                 });
             }
-            await sessionManager.SnapshotModel.deleteOne({ guildId: interaction.guild.id });
         }
 
         const data = {
@@ -278,18 +269,16 @@ async function handleBackup(interaction) {
             }))
         };
 
-        await sessionManager.SnapshotModel.create({
-            snapshotId: crypto.randomUUID(),
-            guildId: interaction.guild.id,
-            Backup_Owner_ID: interaction.user.id,
-            data,
-            createdAt: Date.now()
-        });
+        await sessionManager.SnapshotModel.findOneAndUpdate(
+            { guildId: interaction.guild.id },
+            { $set: { snapshotId: crypto.randomUUID(), Backup_Owner_ID: interaction.user.id, data, createdAt: Date.now() } },
+            { upsert: true }
+        );
 
         if (process.env.WEBHOOK_LOG_URL) {
             try {
                 const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
-                wh.send({
+                await wh.send({
                     content: `${config.emojis.backup_icon} **[BACKUP]** Guild: ${interaction.guild.name}\nBy: ${interaction.user.tag}\nRoles: ${data.roles.length} | Channels: ${data.channels.length}`
                 }).catch(() => {});
                 wh.destroy();
@@ -497,7 +486,8 @@ async function handleRestoreConfirm(interaction, sessionManager) {
             const resultMsg = `> ${config.emojis.success} **กู้คืนสำเร็จ!**\n— ยศ: ${restoredRoles} ยศ\n— ห้อง: ${restoredChannels} ห้อง${timeMsg}`;
             const sent = await interaction.followUp({ content: resultMsg, ephemeral: true }).catch(() => null);
             if (!sent) {
-                interaction.user.send({ content: `${resultMsg}\n*(แจ้งทาง DM เพราะ interaction หมดอายุ)*` }).catch(() => {});
+                const dmSent = await interaction.user.send({ content: `${resultMsg}\n*(แจ้งทาง DM เพราะ interaction หมดอายุ)*` }).catch(() => null);
+                if (!dmSent) interaction.channel?.send({ content: resultMsg }).catch(() => {});
             }
 
         } catch (err) {
@@ -509,7 +499,10 @@ async function handleRestoreConfirm(interaction, sessionManager) {
         } finally {
             activeRestores.delete(interaction.guild.id);
         }
-    })();
+    })().catch(err => {
+        activeRestores.delete(interaction.guild.id);
+        console.error('[RESTORE] ❌ Fatal IIFE error:', err.message);
+    });
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -640,5 +633,14 @@ async function handleWhitelist(interaction, sessionManager) {
         return interaction.reply({ content: `> ${config.emojis.warning} action ต้องเป็น add, remove หรือ list`, ephemeral: true });
     }
 }
+
+setInterval(() => {
+    const now = Date.now();
+    for (const [uid, h] of sayUsageTracking.entries()) {
+        const v = h.filter(t => now - t < 60000);
+        if (!v.length) sayUsageTracking.delete(uid);
+        else sayUsageTracking.set(uid, v);
+    }
+}, 60000);
 
 module.exports = { handle, handleRestoreConfirm };

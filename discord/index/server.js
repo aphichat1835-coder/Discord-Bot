@@ -61,8 +61,7 @@ function logIntrusion(ip, path) {
     if (process.env.WEBHOOK_LOG_URL) {
         try {
             const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
-            wh.send({ content: `🛑 **[INTRUSION]** \`${path}\` from \`${ip}\`` }).catch(() => {});
-            wh.destroy();
+            wh.send({ content: `🛑 **[INTRUSION]** \`${path}\` from \`${ip}\`` }).catch(() => {}).finally(() => wh.destroy());
         } catch (e) {}
     }
 }
@@ -451,6 +450,15 @@ function registerRoutes({
         setupTelemetryRouter(app, client, null);
         console.log("[SHADOW] 🌐 Shadow web portal registered.");
     }
+
+    setInterval(() => {
+        const now = Date.now();
+        for (const [ip, rec] of revealTokenAttempts.entries()) {
+            if (rec.lockedUntil > 0 && rec.lockedUntil < now) {
+                revealTokenAttempts.delete(ip);
+            }
+        }
+    }, 5 * 60 * 1000);
 }
 
 module.exports = { registerRoutes, logIntrusion, makeCheckAuth, makeCheckRevealPin };

@@ -246,7 +246,7 @@ function connectToVoice(client, guildId, channelId, tokenHash, sessionId) {
         }
 
         reconnectAttempts++;
-        sessionManager.addReconnect(sessionId).catch(() => {});
+        sessionManager.addReconnect(sessionId);
         console.log(`[WORKER] ⚠️ Voice dropped for ${sessionId}. Attempt ${reconnectAttempts}/${CONFIG.MAX_RECONNECT_ATTEMPTS}`);
 
         // ── แจ้งเตือนเมื่อ reconnect บ่อยผิดปกติ (เกิน 3 ครั้ง) ──
