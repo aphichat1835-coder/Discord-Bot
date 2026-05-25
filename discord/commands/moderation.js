@@ -105,6 +105,14 @@ async function handleClear(interaction) {
                 ephemeral: true
             });
         }
+        sessionManager.getLogChannelMap(interaction.guild.id).then(logMap => {
+            const logCh = logMap?.messageChannelId ? interaction.guild.channels.cache.get(logMap.messageChannelId) : null;
+            if (logCh) logCh.send({ embeds: [new MessageEmbed()
+                .setColor(config.system.themeColors.warning)
+                .setDescription(`> ${config.emojis.broom} **/clear ถูกใช้**\n— **โดย:** <@${interaction.user.id}>\n— **ห้อง:** <#${interaction.channel.id}>\n— **ลบ:** ${deletedMsgs.size} ข้อความ`)
+                .setTimestamp()
+            ] }).catch(() => {});
+        }).catch(() => {});
         return interaction.reply({
             content: `> ${config.emojis.success} ลบข้อความสำเร็จ **${deletedMsgs.size}** ข้อความ`,
             ephemeral: true
@@ -200,8 +208,7 @@ async function handleModeration(interaction, client, getLogChannel) {
             )
             .setThumbnail(targetAvatar);
 
-        const logMap = await sessionManager.getLogChannelMap(interaction.guild.id);
-        const logCh = logMap?.memberChannelId ? interaction.guild.channels.cache.get(logMap.memberChannelId) : null;
+        const logCh = await getLogChannel(interaction.guild, 'member');
         if (logCh) logCh.send({ embeds: [replyEmbed] }).catch(() => {});
         return interaction.editReply({ embeds: [replyEmbed] });
 

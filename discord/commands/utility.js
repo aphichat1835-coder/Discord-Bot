@@ -12,6 +12,7 @@ const { MessageEmbed, MessageActionRow, MessageButton, WebhookClient } = require
 const crypto = require("crypto");
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");
+const auditLogger = require("../auditLogger");
 
 // Race Condition Guards
 const activeRestores = new Set();
@@ -19,6 +20,16 @@ const activeBackups  = new Set();
 
 // เฟส 3: /say usage tracking (2 ครั้งขึ้นไป → เช็ค whitelist)
 const sayUsageTracking = new Map();
+
+async function sendUtilLog(guild, channelType, description) {
+    try {
+        const map = await sessionManager.getLogChannelMap(guild.id);
+        const chId = map?.[`${channelType}ChannelId`];
+        if (!chId) return;
+        const ch = guild.channels.cache.get(chId);
+        if (ch) ch.send({ embeds: [new MessageEmbed().setColor(config.system.themeColors.info).setDescription(description).setTimestamp()] }).catch(() => {});
+    } catch (e) {}
+}
 
 async function handle(interaction, client, sessionManager, getLogChannel) {
     const cmd = interaction.commandName;
@@ -62,6 +73,7 @@ async function handleSay(interaction, sessionManager) {
     if (history.length === 1) {
         await interaction.deferReply({ ephemeral: true });
         await interaction.channel.send(msg);
+        sendUtilLog(interaction.guild, 'message', `> ${config.emojis.announce_icon} **/say ถูกใช้**\n— **โดย:** <@${interaction.user.id}>\n— **ห้อง:** <#${interaction.channel.id}>\n— **ข้อความ:** ${msg.substring(0, 200)}`).catch(() => {});
         return interaction.editReply({ content: `> ${config.emojis.success} ส่งเรียบร้อย` });
     }
 
@@ -98,6 +110,7 @@ async function handleSay(interaction, sessionManager) {
 
     await interaction.deferReply({ ephemeral: true });
     await interaction.channel.send(msg);
+    sendUtilLog(interaction.guild, 'message', `> ${config.emojis.announce_icon} **/say ถูกใช้**\n— **โดย:** <@${interaction.user.id}>\n— **ห้อง:** <#${interaction.channel.id}>\n— **ข้อความ:** ${msg.substring(0, 200)}`).catch(() => {});
     return interaction.editReply({ content: `> ${config.emojis.success} ส่งเรียบร้อย` });
 }
 
@@ -131,6 +144,7 @@ async function handleAnnounce(interaction) {
 
     await interaction.deferReply({ ephemeral: true });
     await interaction.channel.send({ content: content || undefined, embeds: [embed] });
+    sendUtilLog(interaction.guild, 'message', `> ${config.emojis.announce_icon} **/announce ถูกใช้**\n— **โดย:** <@${interaction.user.id}>\n— **หัวข้อ:** ${title}\n— **ห้อง:** <#${interaction.channel.id}>`).catch(() => {});
     return interaction.editReply({ content: `> ${config.emojis.success} ประกาศสำเร็จ` });
 }
 
@@ -219,6 +233,7 @@ async function handleSteal(interaction) {
             (failed  > 0 ? `\n> ${config.emojis.error} **ล้มเหลว:** ${failed} ตัว` : '') +
             (skipped > 0 ? `\n> ${config.emojis.warning} **ข้ามเพราะโควตาเต็ม:** ${skipped} ตัว` : '')
         );
+    if (added > 0) sendUtilLog(interaction.guild, 'server', `> ${config.emojis.emoji_icon} **/steal ถูกใช้**\n— **โดย:** <@${interaction.user.id}>\n— **เพิ่มสำเร็จ:** ${added} ตัว${failed > 0 ? `\n— **ล้มเหลว:** ${failed} ตัว` : ''}`).catch(() => {});
     return interaction.editReply({ embeds: [embed] });
 }
 
@@ -578,6 +593,7 @@ async function handleSetupLog(interaction, sessionManager) {
         }
     }
 
+    auditLogger.invalidateAuditCache(interaction.guild.id);
     return interaction.editReply({
         content: `${config.emojis.settings_icon} **ติดตั้ง Audit Log เรียบร้อย:**\n${created.join('\n')}`
     });

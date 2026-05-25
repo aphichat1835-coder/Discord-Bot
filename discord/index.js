@@ -301,10 +301,16 @@ client.on("ready", async () => {
     await startRotateTimer();
 
     try {
+        auditLogger.register(client, sessionManager);
+        console.log("[AUDIT] ✅ Audit Logger registered.");
+    } catch (auditErr) {
+        console.error("[AUDIT] ❌ Failed to register Audit Logger:", auditErr.message);
+    }
+
+    try {
         await client.application.commands.set(commands.slashCommandsData);
         console.log(`[COMMANDS] 📌 Registered ${commands.slashCommandsData.length} slash commands.`);
         await commands.restorePanels(client);
-        auditLogger.register(client, sessionManager);
 
         if (typeof initializeSystemHooks === "function") {
             initializeSystemHooks(client);

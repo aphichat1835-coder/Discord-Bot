@@ -102,10 +102,10 @@ function sendDM(user, embed) {
     user.send({ embeds: [embed] }).catch(() => {});
 }
 
-async function getLogChannel(guild) {
+async function getLogChannel(guild, type = 'member') {
     try {
         const map = await sessionManager.getLogChannelMap(guild.id);
-        const channelId = map?.memberChannelId;
+        const channelId = map?.[`${type}ChannelId`];
         if (channelId) {
             const ch = guild.channels.cache.get(channelId);
             if (ch) return ch;

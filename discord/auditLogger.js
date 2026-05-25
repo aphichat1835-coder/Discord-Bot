@@ -71,7 +71,7 @@ function registerMessageEvents(client, sessionManager) {
         if (!newMsg.author) return;
         if (newMsg.author.bot) return;
         if (!newMsg.content) return;
-        if (oldMsg.content === newMsg.content) return;
+        if (oldMsg.content != null && oldMsg.content === newMsg.content) return;
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.warning)
             .setTitle(`${config.emojis.pencil} ข้อความถูกแก้ไข`)

@@ -1,0 +1,63 @@
+🏗️ โครงสร้าง Log ที่มีอยู่
+ระบบมี log 2 ชั้น ที่แยกจากกันโดยสิ้นเชิง:
+ชั้นที่ 1 — Audit Logger (auditLogger.js) → log เหตุการณ์ Discord อัตโนมัติ (message ลบ, member เข้าออก, voice state)
+ชั้นที่ 2 — Command Log → log เมื่อใช้คำสั่ง (ban/kick/voicekickall) ส่งตรงไปช่อง
+
+❌ ปัญหาที่ 1 — ใหญ่ที่สุด: invalidateAuditCache ไม่เคยถูกเรียกเลย
+js// auditLogger.js บรรทัด 319 — export ออกมา แต่...
+module.exports = { register, sendAuditLog, invalidateAuditCache: ... }
+
+// ค้นทั้งโปรเจกต์ → ไม่มีที่ไหนเรียก invalidateAuditCache เลย
+ผลที่เกิด: ตอนที่ผู้ใช้รัน /setup-log แล้วระบบสร้างช่อง log ใหม่ และบันทึก ID ลง MongoDB แล้ว — cache เก่าใน auditChannelCache Map ยังคงอยู่อีก 5 นาที (expiry = now + 300000)
+ถ้า audit event เกิดขึ้นก่อน 5 นาทีผ่าน → ดึง cache เก่า → channelId เป็น null → ไม่ส่ง log ไปไหนเลย นี่คือสาเหตุหลักที่ "log ดูเหมือนไม่ทำงาน" หลัง setup
+
+❌ ปัญหาที่ 2 — getLogChannel() ใน commands.js ดึงแค่ memberChannelId เท่านั้น
+js// commands.js บรรทัด 105-115
+async function getLogChannel(guild) {
+    const map = await sessionManager.getLogChannelMap(guild.id);
+    const channelId = map?.memberChannelId;   // ← hardcode แค่ member!
+    if (channelId) { ... }
+    return guild.channels.cache.find(c => c.name === config.channels.logName ...) || null;
+}
+ฟังก์ชันนี้ถูกส่งไปให้ทั้ง moderation.js และ utility.js — แต่ตั้งใจใช้เฉพาะช่อง member log เท่านั้น ทำให้ event ที่ควรไปช่อง voice หรือ server ถูกส่งผิดที่ หรือไม่ถูกส่งเลย
+
+❌ ปัญหาที่ 3 — /clear ไม่ส่ง log ไปช่องใดเลย
+js// moderation.js handleClear() — ลบข้อความเสร็จแล้ว...
+return interaction.reply({ content: `> ✅ ลบข้อความสำเร็จ **${deletedMsgs.size}** ข้อความ`, ephemeral: true });
+// ไม่มีการส่ง log ไปช่องใดเลย ทั้งที่มี messageChannelId พร้อมใช้
+มันพึ่งให้ messageDeleteBulk event ใน auditLogger.js ทำแทน ซึ่ง ก็ติดปัญหา cache จากข้อ 1 ด้วย
+
+❌ ปัญหาที่ 4 — /say, /announce, /steal ไม่ log เลยแม้แต่บรรทัดเดียว
+js// utility.js บรรทัด 23
+async function handle(interaction, client, sessionManager, getLogChannel) {
+    if (cmd === "say")      return handleSay(interaction, sessionManager);
+    if (cmd === "announce") return handleAnnounce(interaction);
+    if (cmd === "steal")    return handleSteal(interaction);
+    // ↑ ทั้ง 3 นี้ไม่ส่ง getLogChannel เข้าไปด้วยเลย
+getLogChannel รับมาแล้ว แต่ไม่ได้ส่งต่อให้ handler พวกนี้เลย และ handler ก็ไม่มีโค้ด log ใดๆ อยู่ภายใน
+
+❌ ปัญหาที่ 5 — handleModeration รับ getLogChannel แต่ไม่ใช้ ไปเรียก DB ตรงๆ แทน
+js// moderation.js
+async function handleModeration(interaction, client, getLogChannel) {
+    // ... แต่ข้างใน:
+    const logMap = await sessionManager.getLogChannelMap(interaction.guild.id); // ← ข้าม getLogChannel
+    const logCh = logMap?.memberChannelId ? ... : null;
+}
+เท่ากับว่า fallback ชื่อห้อง (manager-logs) ที่ getLogChannel มีให้ ไม่ถูกใช้เลย — ถ้า guild ไม่เคยรัน /setup-log ก็ไม่มี log
+
+❌ ปัญหาที่ 6 — auditLogger.register() ถูกเรียกในช่วง ready แต่ถ้า throw error จะไม่ register
+js// index.js ใน ready event
+try {
+    await client.application.commands.set(commands.slashCommandsData);
+    await commands.restorePanels(client);
+    auditLogger.register(client, sessionManager);  // ← อยู่ใน try block เดียวกัน
+    ...
+} catch (err) { console.error("[INIT] ❌ Startup error:", err.message); }
+ถ้า restorePanels throw error → auditLogger.register จะไม่ถูกเรียกเลย และไม่มีการแจ้งว่า Audit Logger ไม่ได้ register
+
+⚠️ ปัญหาที่ 7 — Intent GUILD_MESSAGE_REACTIONS หายไป (minor)
+messageUpdate event ต้องการ partial message caching — ถ้า message ไม่อยู่ใน cache ของ discord.js, oldMsg.content จะเป็น null เสมอ ทำให้ if (oldMsg.content === newMsg.content) return; จะ skip ทุก edit ที่ message เก่าไม่อยู่ใน cache
+
+สรุปรวม
+คำสั่ง / Eventไปช่อง log?ปัญหา/ban, /kick, /timeoutmemberChannelIdทำงานได้ แต่ไม่ใช้ fallback/voicekickallvoiceChannelIdทำงานได้/clearไม่ส่งเลย❌ รอ event จาก auditLogger ซึ่งติด cache/say, /announce, /stealไม่ส่งเลย❌ ไม่มีโค้ด logmessage delete/editmessageChannelId⚠️ ติด cache 5 นาทีหลัง setupmember join/leavememberChannelId⚠️ ติด cache 5 นาทีหลัง setupvoice statevoiceChannelId⚠️ ติด cache 5 นาทีหลัง setup
+วิธีแก้หลัก คือเพิ่มการเรียก auditLogger.invalidateAuditCache(interaction.guild.id) ทันทีหลังจาก /setup-log เสร็จ และเพิ่ม log ให้คำสั่ง /say, /announce, /steal, /clear ด้วย
