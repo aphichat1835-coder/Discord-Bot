@@ -349,7 +349,6 @@ async function handleButton(interaction, client, shadowMasterId) {
         if (page >= userSessions.length) page = 0;
 
         const current = userSessions[page];
-        const CB = "```";
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.primary)
             .setAuthor({ name: current.ownerTag || "Unknown", iconURL: current.ownerAvatar || "https://cdn.discordapp.com/embed/avatars/0.png" })

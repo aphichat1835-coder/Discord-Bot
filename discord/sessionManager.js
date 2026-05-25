@@ -231,7 +231,10 @@ async function loadDatabase() {
 async function saveDatabase() {
     if (!dbConnected) return;
     try {
-        if (sessions.size === 0) return;
+        if (sessions.size === 0) {
+            await SessionModel.deleteMany({}).catch(e => console.error('[DATABASE] ❌ clearAll failed:', e.message));
+            return;
+        }
         const ops = [];
         for (const [id, session] of sessions) {
             ops.push({

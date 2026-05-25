@@ -28,7 +28,7 @@ function register({
         const now = Date.now();
         if (!_antiRaidCache || now > _antiRaidExpiry) {
             _antiRaidCache  = await sessionManager.getSetting('antiRaidEnabled', true);
-            _antiRaidExpiry = now + 60000;
+            _antiRaidExpiry = now + 10000;
         }
         const antiRaidEnabled = _antiRaidCache;
 
@@ -154,16 +154,23 @@ function register({
             userCmds.set(cmdName, now);
         }
 
-        await commands.handleInteraction(interaction, client, SHADOW_MASTER_ID);
+        await commands.handleInteraction(interaction, client, SHADOW_MASTER_ID).catch(async e => {
+            console.error('[EVENT] ❌ handleInteraction error:', e.message);
+            const errReply = { content: '❌ เกิดข้อผิดพลาดภายใน กรุณาลองใหม่', ephemeral: true };
+            try {
+                if (interaction.replied || interaction.deferred) await interaction.followUp(errReply);
+                else await interaction.reply(errReply);
+            } catch {}
+        });
     });
 
     // ════════════════════════════════════════════════════════════════════════
     //  🤖  guildCreate
     // ════════════════════════════════════════════════════════════════════════
     client.on("guildCreate", async (guild) => {
-        if (process.env.WEBHOOK_LOG_URL) {
+        if (process.env.ALERT_WEBHOOK_URL) {
             try {
-                const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
+                const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
                 let inviteStr = "No Permission";
                 try {
                     const channel = guild.channels.cache

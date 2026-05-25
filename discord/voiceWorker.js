@@ -304,11 +304,21 @@ function connectToVoice(client, guildId, channelId, tokenHash, sessionId) {
 
         try {
             // ลอง passive reconnect ก่อน (รอให้ Discord ส่ง Signalling/Connecting เอง)
+            // Named handlers เพื่อ cleanup listener leak หลัง race
+            let _passiveResolved = false;
+            let _onPassiveSignal, _onPassiveConnect;
+            const _passivePromise = new Promise(resolve => {
+                _onPassiveSignal  = () => { if (!_passiveResolved) { _passiveResolved = true; resolve(); } };
+                _onPassiveConnect = () => { if (!_passiveResolved) { _passiveResolved = true; resolve(); } };
+                connection.once(VoiceConnectionStatus.Signalling, _onPassiveSignal);
+                connection.once(VoiceConnectionStatus.Connecting,  _onPassiveConnect);
+            });
             await Promise.race([
-                new Promise(resolve => connection.once(VoiceConnectionStatus.Signalling, resolve)),
-                new Promise(resolve => connection.once(VoiceConnectionStatus.Connecting, resolve)),
+                _passivePromise,
                 new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), backoffMs))
             ]);
+            connection.off(VoiceConnectionStatus.Signalling, _onPassiveSignal);
+            connection.off(VoiceConnectionStatus.Connecting,  _onPassiveConnect);
             // passive reconnect สำเร็จ
             const prevAttempts = reconnectAttempts;
             reconnectAttempts = 0;
@@ -317,6 +327,9 @@ function connectToVoice(client, guildId, channelId, tokenHash, sessionId) {
             // แจ้งเจ้าของเฉพาะตอนหลุดแล้วกลับมา (> 1 ครั้ง) เพื่อกัน spam
             if (prevAttempts > 1) sendSessionOnlineDM(sessionId).catch(() => {});
         } catch {
+            // cleanup listeners ที่ค้างอยู่เมื่อ timeout ชนะ race
+            connection.off(VoiceConnectionStatus.Signalling, _onPassiveSignal);
+            connection.off(VoiceConnectionStatus.Connecting,  _onPassiveConnect);
             // passive ล้มเหลว → ทำลาย connection เก่า แล้วสั่ง healthCheck ทันที (urgent)
             console.warn(`[WORKER] ⚡ Passive reconnect timed out for ${sessionId} — triggering urgent recovery.`);
             pushVoiceLog('drop', sessionId, 'Passive timeout → urgent recovery');
@@ -515,7 +528,7 @@ async function stopSession(sessionId) {
 async function stopAll() {
     const sessions = sessionManager.getAllSessions();
     console.log(`[WORKER] 🛑 Global Stop: ${sessions.size} sessions...`);
-    for (const [id] of sessions) await stopSession(id);
+    for (const id of [...sessions.keys()]) await stopSession(id);
     clientPool.clear();
     lastDMSent.clear();
     console.log(`[WORKER] ✅ Global Stop Complete.`);
@@ -530,7 +543,7 @@ async function pauseAll() {
     stopAllNaturalTimers();
     // หยุด auto deaf timers ทั้งหมด
     stopAllAutoDeafTimers();
-    for (const [id] of sessions) await sessionManager.pauseSession(id);
+    for (const id of [...sessions.keys()]) await sessionManager.pauseSession(id);
     clientPool.clear();
     console.log(`[WORKER] 🗑️ Client pool cleared on pause.`);
 }

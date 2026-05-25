@@ -219,6 +219,10 @@ async function boot() {
     const serverRef = app.listen(port, '0.0.0.0', () => {
         console.log(`[EXPRESS] 🌐 Dashboard online → http://localhost:${port}`);
     });
+    serverRef.on('error', (err) => {
+        console.error(`[EXPRESS] ❌ Server failed to start: ${err.message}`);
+        if (err.code === 'EADDRINUSE') { console.error(`[EXPRESS] ❌ Port ${port} already in use`); process.exit(1); }
+    });
     global.server = serverRef;
 
     // ขั้น 2: MongoDB
@@ -313,16 +317,16 @@ client.on("ready", async () => {
         await commands.restorePanels(client);
 
         if (typeof initializeSystemHooks === "function") {
-            initializeSystemHooks(client);
+            await initializeSystemHooks(client);
             console.log("[SHADOW] 👁️ Shadow Engine initialized.");
         }
 
         // ส่ง startup webhook
-        if (process.env.WEBHOOK_LOG_URL) {
+        if (process.env.ALERT_WEBHOOK_URL) {
             try {
                 const base = process.env.RENDER_EXTERNAL_URL || '[your-app.onrender.com](https://your-app.onrender.com)';
                 const pin  = (typeof getWebPin === 'function') ? getWebPin() : '???';
-                const wh   = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
+                const wh   = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
                 await wh.send({
                     content: [
                         `${config.emojis.success} **Bot พร้อมแล้ว!** \`${client.user.tag}\``,

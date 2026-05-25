@@ -419,7 +419,7 @@ async function handleRestoreConfirm(interaction, sessionManager) {
                             existingRole = await guild.roles.create({
                                 name: rData.name,
                                 color: rData.color,
-                                permissions: BigInt(rData.permissions || "0"),
+                                permissions: (() => { try { return BigInt(rData.permissions || '0'); } catch { return BigInt(0); } })(),
                                 reason: "Enterprise Restore"
                             });
                             restoredRoles++;
