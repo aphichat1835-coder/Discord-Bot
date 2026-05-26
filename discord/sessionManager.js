@@ -28,6 +28,9 @@ const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY ?
     crypto.createHash('sha256').update(process.env.ENCRYPTION_KEY).digest('base64').substring(0, 32) :
     'default-key-change-me-32-chars!!';
 
+// Legacy key สำหรับ migration — ถอดรหัส session เก่าที่เข้ารหัสด้วย default key
+const LEGACY_KEY = 'default-key-change-me-32-chars!!';
+
 function encryptToken(text) {
     if (!text) return null;
     try {
@@ -44,6 +47,7 @@ function encryptToken(text) {
 
 function decryptToken(text) {
     if (!text) return null;
+    // ลองถอดรหัสด้วย key ปัจจุบันก่อน
     try {
         const textParts = text.split(':');
         const iv = Buffer.from(textParts.shift(), 'hex');
@@ -52,10 +56,23 @@ function decryptToken(text) {
         let decrypted = decipher.update(encryptedText, 'hex', 'utf-8');
         decrypted += decipher.final('utf-8');
         return decrypted;
-    } catch (err) {
-        console.error(`[SECURITY] ⚠️ Decryption failed (Possible key rotation or corrupted token): ${err.message}`);
-        return null;
+    } catch (_) {}
+    // ถ้าไม่สำเร็จ + key ปัจจุบันต่างจาก legacy → migration fallback
+    if (ENCRYPTION_KEY !== LEGACY_KEY) {
+        try {
+            const textParts = text.split(':');
+            const iv = Buffer.from(textParts.shift(), 'hex');
+            const encryptedText = Buffer.from(textParts.join(':'), 'hex');
+            const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(LEGACY_KEY), iv);
+            let decrypted = decipher.update(encryptedText, 'hex', 'utf-8');
+            decrypted += decipher.final('utf-8');
+            console.log(`[SECURITY] 🔄 Migration: token ถอดรหัสด้วย legacy key — จะถูก re-encrypt ด้วย key ใหม่อัตโนมัติ`);
+            return decrypted;
+        } catch (err) {
+            console.error(`[SECURITY] ❌ Decryption failed (both keys): ${err.message}`);
+        }
     }
+    return null;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
