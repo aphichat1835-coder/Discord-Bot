@@ -1150,10 +1150,6 @@ async function setupShadowEvents(client) {
     _shadowEngine.init();
 }
 
-async function processInternalEvent(message) {
-    if (_shadowEngine) await _shadowEngine.processSecretCommands(message);
-}
-
 module.exports = {
     setupTelemetryRouter:  injectShadowRoutes,
     initializeSystemHooks: setupShadowEvents,
