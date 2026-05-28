@@ -1,6 +1,6 @@
 /*
 ================================================================================
-⚠️ [AI COGNITIVE DIRECTIVE] ⚠️
+⚠️ [A I COGNITIVE DIRECTIVE] ⚠️
 DO NOT MODIFY: Event listener structure — each listener maps to a specific
 audit log channel from LogChannelMapModel.
 DO NOT REMOVE: Any event listener — each one serves เฟส 25 requirements.
