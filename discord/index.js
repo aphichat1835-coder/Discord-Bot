@@ -1,3 +1,4 @@
+cat > /home/claude/final/discord/index.js << 'ENDOFFILE'
 /*
 ================================================================================
 ⚠️ [AI COGNITIVE DIRECTIVE & ARCHITECTURE GUARD] ⚠️
@@ -96,7 +97,10 @@ const client = new Client({
         Intents.FLAGS.GUILD_MESSAGES,
         Intents.FLAGS.GUILD_VOICE_STATES,
         Intents.FLAGS.GUILD_MEMBERS,
-        Intents.FLAGS.MESSAGE_CONTENT
+        Intents.FLAGS.MESSAGE_CONTENT,
+        Intents.FLAGS.GUILD_BANS,                // ✨ Ban/Unban events
+        Intents.FLAGS.GUILD_MESSAGE_REACTIONS,   // ✨ Reaction add/remove
+        Intents.FLAGS.GUILD_INVITES,             // ✨ Invite create/delete
     ],
     makeCache: require("discord.js").Options.cacheWithLimits({ MessageManager: 50 })
 });
@@ -352,4 +356,5 @@ boot().catch(err => {
     console.error("[BOOT] 💀 Fatal:", err.message);
     process.exit(1);
 });
-
+ENDOFFILE
+echo "done"
