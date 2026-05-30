@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Phomueangtai Bot — Dashboard</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #0e0e1a;
+      color: #e0e0ff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .card {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      backdrop-filter: blur(10px);
+      border-radius: 16px;
+      padding: 48px 40px;
+      text-align: center;
+      max-width: 480px;
+      width: 90%;
+    }
+    .logo { font-size: 2.5rem; margin-bottom: 12px; }
+    h1 { font-size: 1.6rem; margin-bottom: 8px; color: #c9b6ff; }
+    p { color: #9090bb; margin-bottom: 32px; font-size: 0.95rem; line-height: 1.6; }
+    .btn {
+      display: inline-block;
+      padding: 12px 32px;
+      background: #5865f2;
+      color: #fff;
+      border-radius: 8px;
+      text-decoration: none;
+      font-size: 1rem;
+      font-weight: 600;
+      transition: background 0.2s;
+    }
+    .btn:hover { background: #4752c4; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">🤖</div>
+    <h1>Phomueangtai Enterprise Bot</h1>
+    <p>เข้าสู่ระบบด้วยบัญชี Discord ของคุณ<br>เพื่อตั้งค่าบอทในเซิร์ฟเวอร์ของคุณ</p>
+    <a href="/auth/discord" class="btn">🔐 เข้าสู่ระบบด้วย Discord</a>
+  </div>
+</body>
+</html>
