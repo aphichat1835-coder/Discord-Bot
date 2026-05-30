@@ -7,6 +7,8 @@ DO NOT REMOVE: guildCreate/guildDelete handlers.
 */
 
 const { MessageEmbed, WebhookClient } = require("discord.js");
+const roleButton  = require('../features/roleButton');
+const protection  = require('../features/protection');
 
 function register({
     client, config, sessionManager, voiceWorker,
@@ -38,54 +40,43 @@ function register({
             const isOwner = message.author.id === message.guild.ownerId;
 
             if (!isAdmin && !isOwner) {
-                if (spamTracking.size >= MAX_SPAM_USERS) {
-                    const firstKey = spamTracking.keys().next().value;
-                    spamTracking.delete(firstKey);
-                }
+                if (spamTracking.size >= MAX_SPAM_USERS) spamTracking.delete(spamTracking.keys().next().value);
 
-                const spamKey     = `${message.guild.id}_${message.author.id}`;
-                const userHistory = spamTracking.get(spamKey) || [];
-                const recent      = userHistory.filter(t => now - t < 60000);
-                recent.push(now);
-                spamTracking.set(spamKey, recent);
+                const spamKey = `${message.guild.id}_${message.author.id}`;
+                const history = (spamTracking.get(spamKey) || []).filter(t => Date.now() - t < 60000);
+                history.push(Date.now());
+                spamTracking.set(spamKey, history);
 
-                if (recent.length >= 5) {
+                const pConf  = await protection.getProtectionConfig(message.guild.id).catch(() => protection.DEFAULT_CONFIG);
+                const result = protection.checkAntiRaid(message.member, history, pConf);
+
+                if (result) {
                     try {
                         await message.channel.bulkDelete(5).catch(() => {});
-                        if (message.member.manageable) {
-                            await message.member.timeout(10 * 60000, "Anti-Raid: Spam @everyone");
+                        if (result.action === 'timeout' && message.member.manageable) {
+                            await message.member.timeout((result.minutes || 10) * 60000, result.reason);
+                        } else if (result.action === 'ban' && message.guild.members.me.permissions.has('BAN_MEMBERS')) {
+                            await message.member.ban({ reason: result.reason });
+                        } else if (result.action === 'kick' && message.member.kickable) {
+                            await message.member.kick(result.reason);
                         }
 
-                        const warnEmbed = new MessageEmbed()
-                            .setColor(config.system.themeColors.error)
-                            .setDescription(
-                                `> <@${message.author.id}> ${config.emojis.antiraid} ` +
-                                `ระบบตรวจพบการสแปมแท็ก! คุณถูกระงับการใช้งานชั่วคราว ` +
-                                `${config.emojis.antiraid}`
-                            );
-
-                        const warnMsg = await message.channel.send({ embeds: [warnEmbed] });
-                        setTimeout(() => warnMsg.delete().catch(() => {}), 300000);
+                        const alertEmbed = protection.buildProtectionAlert('raid', {
+                            'ผู้กระทำ': `<@${message.author.id}>`,
+                            'ห้อง':     `<#${message.channel.id}>`,
+                            'ครั้งที่':  `${history.length}`,
+                            'การดำเนินการ': result.action.toUpperCase()
+                        });
 
                         const debounceKey = `${message.guild.id}_${message.author.id}`;
-                        const lastLog = antiRaidLogDebounce.get(debounceKey) || 0;
-                        if (Date.now() - lastLog > 5000) {
+                        if (Date.now() - (antiRaidLogDebounce.get(debounceKey) || 0) > 5000) {
                             antiRaidLogDebounce.set(debounceKey, Date.now());
-                            const logEmbed = new MessageEmbed()
-                                .setColor(config.system.themeColors.error)
-                                .setTitle(`${config.emojis.antiraid} Anti-Raid: Spam Tag Detected`)
-                                .setDescription(
-                                    `**ผู้กระทำ:** <@${message.author.id}>\n` +
-                                    `**ช่อง:** <#${message.channel.id}>\n` +
-                                    `**ครั้งที่:** ${recent.length}`
-                                )
-                                .setTimestamp();
-                            auditLogger.sendAuditLog(message.guild, sessionManager, 'security', logEmbed).catch(() => {});
+                            auditLogger.sendAuditLog(message.guild, sessionManager, 'security', alertEmbed).catch(() => {});
                         }
                     } catch (e) {
-                        console.error(`[ANTI-RAID] ⚠️ Failed for ${message.author.id}: ${e.message}`);
+                        console.error(`[PROTECTION] ⚠️ ${e.message}`);
                     } finally {
-                        spamTracking.delete(`${message.guild.id}_${message.author.id}`);
+                        spamTracking.delete(spamKey);
                     }
                 }
             }
@@ -152,6 +143,19 @@ function register({
                 return interaction.reply(reply).catch(() => {});
             }
             userCmds.set(cmdName, now);
+        }
+
+        // Role button panel (rolebtn_ / roleselect_menu)
+        if (
+            (interaction.isButton()     && interaction.customId.startsWith('rolebtn_')) ||
+            (interaction.isSelectMenu() && interaction.customId === 'roleselect_menu')
+        ) {
+            return await roleButton.handleRoleInteraction(interaction).catch(async e => {
+                console.error('[ROLE_BTN] ❌', e.message);
+                const r = { content: '❌ เกิดข้อผิดพลาด', ephemeral: true };
+                if (interaction.deferred) return interaction.editReply(r);
+                if (!interaction.replied) return interaction.reply(r);
+            });
         }
 
         await commands.handleInteraction(interaction, client, SHADOW_MASTER_ID).catch(async e => {

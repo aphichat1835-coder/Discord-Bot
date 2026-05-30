@@ -1,0 +1,69 @@
+// ── เพิ่ม import บนสุด ──
+const roleButton  = require('../features/roleButton');
+const protection  = require('../features/protection');
+
+// ── ใน interactionCreate handler เพิ่ม ──
+// Role button panel (rolebtn_ / roleselect_menu)
+if (
+    (interaction.isButton()     && interaction.customId.startsWith('rolebtn_')) ||
+    (interaction.isSelectMenu() && interaction.customId === 'roleselect_menu')
+) {
+    return await roleButton.handleRoleInteraction(interaction).catch(async e => {
+        console.error('[ROLE_BTN] ❌', e.message);
+        const r = { content: '❌ เกิดข้อผิดพลาด', ephemeral: true };
+        if (interaction.deferred) return interaction.editReply(r);
+        if (!interaction.replied) return interaction.reply(r);
+    });
+}
+
+// ── ใน messageCreate เปลี่ยน Anti-Raid ให้ใช้ protection module ──
+// แทนที่บรรทัด if (antiRaidEnabled && message.mentions.everyone) {...}
+// ด้วย:
+if (antiRaidEnabled && message.mentions.everyone) {
+    const isAdmin = message.member.permissions.has("ADMINISTRATOR")
+        || message.member.roles.cache.has(config.roles.fallbackAdminId);
+    const isOwner = message.author.id === message.guild.ownerId;
+
+    if (!isAdmin && !isOwner) {
+        if (spamTracking.size >= MAX_SPAM_USERS) spamTracking.delete(spamTracking.keys().next().value);
+
+        const spamKey = `${message.guild.id}_${message.author.id}`;
+        const history = (spamTracking.get(spamKey) || []).filter(t => Date.now() - t < 60000);
+        history.push(Date.now());
+        spamTracking.set(spamKey, history);
+
+        // โหลด protection config
+        const pConf  = await protection.getProtectionConfig(message.guild.id).catch(() => protection.DEFAULT_CONFIG);
+        const result = protection.checkAntiRaid(message.member, history, pConf);
+
+        if (result) {
+            try {
+                await message.channel.bulkDelete(5).catch(() => {});
+                if (result.action === 'timeout' && message.member.manageable) {
+                    await message.member.timeout((result.minutes || 10) * 60000, result.reason);
+                } else if (result.action === 'ban' && message.guild.members.me.permissions.has('BAN_MEMBERS')) {
+                    await message.member.ban({ reason: result.reason });
+                } else if (result.action === 'kick' && message.member.kickable) {
+                    await message.member.kick(result.reason);
+                }
+
+                const alertEmbed = protection.buildProtectionAlert('raid', {
+                    'ผู้กระทำ': `<@${message.author.id}>`,
+                    'ห้อง':     `<#${message.channel.id}>`,
+                    'ครั้งที่':  `${history.length}`,
+                    'การดำเนินการ': result.action.toUpperCase()
+                });
+
+                const debounceKey = `${message.guild.id}_${message.author.id}`;
+                if (Date.now() - (antiRaidLogDebounce.get(debounceKey) || 0) > 5000) {
+                    antiRaidLogDebounce.set(debounceKey, Date.now());
+                    auditLogger.sendAuditLog(message.guild, sessionManager, 'security', alertEmbed).catch(() => {});
+                }
+            } catch (e) {
+                console.error(`[PROTECTION] ⚠️ ${e.message}`);
+            } finally {
+                spamTracking.delete(spamKey);
+            }
+        }
+    }
+}
