@@ -230,7 +230,7 @@ async function handleInteraction(interaction, client, shadowMasterId) {
             }
 
             // ── Utility Commands ──
-            if (["say", "announce", "steal", "backup", "restore", "setup-log", "whitelist"].includes(cmd)) {
+            if (["say", "announce", "steal", "backup", "restore", "setup-log", "whitelist", "setup"].includes(cmd)) {
                 return await utility.handle(interaction, client, sessionManager, getLogChannel);
             }
 
