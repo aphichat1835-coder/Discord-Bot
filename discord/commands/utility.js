@@ -40,6 +40,7 @@ async function handle(interaction, client, sessionManager, getLogChannel) {
     if (cmd === "restore")    return handleRestore(interaction);
     if (cmd === "setup-log")  return handleSetupLog(interaction, sessionManager);
     if (cmd === "whitelist")  return handleWhitelist(interaction, sessionManager);
+    if (cmd === "setup")      return handleSetup(interaction);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -647,6 +648,55 @@ async function handleWhitelist(interaction, sessionManager) {
         });
     } else {
         return interaction.reply({ content: `> ${config.emojis.warning} action ต้องเป็น add, remove หรือ list`, ephemeral: true });
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  ⚙️  SETUP
+// ════════════════════════════════════════════════════════════════════════════
+async function handleSetup(interaction) {
+    const dashUrl = process.env.DASHBOARD_URL;
+
+    if (!dashUrl) {
+        return interaction.reply({
+            content: `> ${config.emojis.warning} ยังไม่ได้ตั้งค่า DASHBOARD_URL กรุณาติดต่อ <@${config.system.ownerId}>`,
+            ephemeral: true
+        });
+    }
+
+    const isAdmin = interaction.member.permissions.has("ADMINISTRATOR") || interaction.user.id === interaction.guild.ownerId;
+    if (!isAdmin) {
+        return interaction.reply({
+            content: `> ${config.emojis.no_entry} ต้องมีสิทธิ์ Administrator เพื่อตั้งค่าบอท`,
+            ephemeral: true
+        });
+    }
+
+    const loginUrl = `${dashUrl}/oauth/admin?guild_id=${interaction.guild.id}`;
+
+    const embed = new MessageEmbed()
+        .setColor(config.system.themeColors.info)
+        .setTitle(`${config.emojis.settings_icon} ตั้งค่าบอทในเซิร์ฟเวอร์ของคุณ`)
+        .setDescription(
+            `กดลิงก์ด้านล่างเพื่อเข้าสู่ระบบและตั้งค่าบอทในเซิร์ฟเวอร์ **${interaction.guild.name}**\n\n` +
+            `> **[🔗 เข้าสู่ Dashboard](${loginUrl})**\n\n` +
+            `ฟีเจอร์ที่ตั้งค่าได้:\n` +
+            `— ✅ ระบบยืนยันตัวตน\n` +
+            `— 📊 ดูสถิติสมาชิก\n` +
+            `— 🔒 ตั้งค่าความปลอดภัย\n\n` +
+            `*ลิงก์นี้ใช้ได้เฉพาะคุณเท่านั้น*`
+        )
+        .setFooter({ text: 'ลิงก์หมดอายุเมื่อ session หมด' })
+        .setTimestamp();
+
+    try {
+        await interaction.user.send({ embeds: [embed] });
+        return interaction.reply({
+            content: `> ${config.emojis.success} ส่งลิงก์ Dashboard ทาง DM แล้ว!`,
+            ephemeral: true
+        });
+    } catch {
+        return interaction.reply({ embeds: [embed], ephemeral: true });
     }
 }
 
