@@ -9,13 +9,17 @@ const OAuthUser = require('../models/OAuthUser');
 const GuildConfig = require('../models/GuildConfig');
 const VerifyLog = require('../models/VerifyLog');
 
-const BASE_URL = (process.env.DASHBOARD_URL || 'http://localhost:3001').replace(/\/$/, '');
+const BASE_URL = (
+    process.env.PUBLIC_DASHBOARD_URL ||
+    process.env.DASHBOARD_URL ||
+    'http://localhost:3001'
+).replace(/\/$/, '');
+
 const REDIRECT_URI = `${BASE_URL}/auth/callback`;
 const ADMIN_REDIRECT_URI = `${BASE_URL}/auth/admin-callback`;
 
 const VERIFY_SCOPE = 'identify email connections guilds guilds.members.read guilds.join';
 const ADMIN_SCOPE = 'identify guilds';
-
 const CALLBACK_STATE_MAX_AGE_MS = 10 * 60 * 1000;
 
 function getStateSecret() {
@@ -29,17 +33,12 @@ function getStateSecret() {
     );
 }
 
-function signEncodedPayload(encodedPayload) {
+function requireStateSecret() {
     const secret = getStateSecret();
-
     if (!secret) {
-        throw new Error('Missing VERIFY_STATE_SECRET/API_SECRET/ENCRYPTION_KEY for verify state signing');
+        throw new Error('Missing VERIFY_STATE_SECRET/API_SECRET/INTERNAL_API_SECRET/SESSION_SECRET/ENCRYPTION_KEY');
     }
-
-    return crypto
-        .createHmac('sha256', secret)
-        .update(encodedPayload)
-        .digest('base64url');
+    return secret;
 }
 
 function safeEqual(a, b) {
@@ -47,6 +46,21 @@ function safeEqual(a, b) {
     const bb = Buffer.from(String(b || ''), 'utf8');
 
     return aa.length === bb.length && crypto.timingSafeEqual(aa, bb);
+}
+
+function signEncodedPayload(encodedPayload) {
+    return crypto
+        .createHmac('sha256', requireStateSecret())
+        .update(encodedPayload)
+        .digest('base64url');
+}
+
+function signCompactStateData(data) {
+    return crypto
+        .createHmac('sha256', requireStateSecret())
+        .update(data)
+        .digest('base64url')
+        .slice(0, 22);
 }
 
 function encodeSignedState(payload) {
@@ -72,6 +86,51 @@ function decodeSignedState(token) {
     }
 }
 
+function decodeCompactCallbackState(token) {
+    try {
+        const parts = String(token || '').split('.');
+
+        if (parts.length !== 7) return null;
+
+        const [version, guildId, roleId, user, ts36, nonce, sig] = parts;
+
+        if (
+            version !== '3' ||
+            !guildId ||
+            !roleId ||
+            !user ||
+            !ts36 ||
+            !nonce ||
+            !sig
+        ) {
+            return null;
+        }
+
+        const data = `${version}|${guildId}|${roleId}|${user}|${ts36}|${nonce}`;
+        const expected = signCompactStateData(data);
+
+        if (!safeEqual(sig, expected)) return null;
+
+        const ts = parseInt(ts36, 36);
+
+        if (!Number.isFinite(ts)) return null;
+        if (Date.now() - ts > CALLBACK_STATE_MAX_AGE_MS) return null;
+
+        return {
+            v: 3,
+            type: 'verify-callback',
+            guildId,
+            roleId,
+            expectedUserId: user === '0' ? null : user,
+            ts,
+            nonce,
+            mode: 'compact-direct-oauth'
+        };
+    } catch {
+        return null;
+    }
+}
+
 function decodePanelState(token) {
     const parsed = decodeSignedState(token);
 
@@ -84,15 +143,12 @@ function decodePanelState(token) {
             type: 'verify-panel',
             guildId: parsed.guildId,
             roleId: parsed.roleId,
+            expectedUserId: parsed.expectedUserId || null,
             iat: parsed.iat || null,
             nonce: parsed.nonce || null
         };
     }
 
-    /**
-     * Legacy support:
-     * old state was user-bound.
-     */
     if (parsed.type === 'verify') {
         if (!parsed.guildId || !parsed.roleId || !parsed.userId) return null;
 
@@ -101,6 +157,19 @@ function decodePanelState(token) {
             guildId: parsed.guildId,
             roleId: parsed.roleId,
             expectedUserId: parsed.userId,
+            ts: parsed.ts || Date.now(),
+            nonce: parsed.nonce || null
+        };
+    }
+
+    if (parsed.type === 'verify-callback') {
+        if (!parsed.guildId || !parsed.roleId) return null;
+
+        return {
+            type: 'verify-callback-legacy-panel',
+            guildId: parsed.guildId,
+            roleId: parsed.roleId,
+            expectedUserId: parsed.expectedUserId || parsed.userId || null,
             ts: parsed.ts || Date.now(),
             nonce: parsed.nonce || null
         };
@@ -122,6 +191,10 @@ function encodeCallbackState(data) {
 }
 
 function decodeCallbackState(state) {
+    const compact = decodeCompactCallbackState(state);
+
+    if (compact) return compact;
+
     const parsed = decodeSignedState(state);
 
     if (!parsed || parsed.type !== 'verify-callback') return null;
@@ -131,7 +204,11 @@ function decodeCallbackState(state) {
         return null;
     }
 
-    return parsed;
+    return {
+        ...parsed,
+        expectedUserId: parsed.expectedUserId || parsed.userId || null,
+        mode: 'legacy-json-oauth'
+    };
 }
 
 function getAccountCreatedAt(userId) {
@@ -171,11 +248,15 @@ function buildPolicySnapshot(v = {}) {
     return {
         enabled: v.enabled !== false,
         blockVPN: v.blockVPN !== false,
-        minAccountAgeDays: Number.isFinite(Number(v.minAccountAgeDays)) ? Number(v.minAccountAgeDays) : 7,
+        minAccountAgeDays: Number.isFinite(Number(v.minAccountAgeDays))
+            ? Number(v.minAccountAgeDays)
+            : 7,
         requireEmail: !!v.requireEmail,
         requireEmailVerified: !!v.requireEmailVerified,
         requireConnections: !!v.requireConnections,
-        minConnections: Number.isFinite(Number(v.minConnections)) ? Number(v.minConnections) : 1,
+        minConnections: Number.isFinite(Number(v.minConnections))
+            ? Number(v.minConnections)
+            : 1,
         allowedCountries: normalizeCountryList(v.allowedCountries),
         blockedCountries: normalizeCountryList(v.blockedCountries)
     };
@@ -225,6 +306,72 @@ function buildRiskSummary({ ageDays, policy, ipInfo, connections, emailOk }) {
     };
 }
 
+function normalizeConnections(connections = []) {
+    return (connections || []).map(c => ({
+        type: c.type,
+        id: c.id,
+        name: c.name,
+        verified: c.verified,
+        visibility: c.visibility,
+        friendSync: c.friend_sync,
+        showActivity: c.show_activity,
+        twoWayLink: c.two_way_link,
+        revoked: c.revoked,
+        integrations: c.integrations || [],
+        metadata: c.metadata || {},
+        raw: c
+    }));
+}
+
+function normalizeGuilds(guilds = []) {
+    return (guilds || []).map(g => ({
+        id: g.id,
+        name: g.name,
+        icon: g.icon,
+        owner: !!g.owner,
+        permissions: String(g.permissions || '0'),
+        features: g.features || [],
+        approximateMemberCount: g.approximate_member_count || null,
+        approximatePresenceCount: g.approximate_presence_count || null,
+        raw: g
+    }));
+}
+
+function buildDiscordSnapshot(profile, connections, memberInfo, stateObj) {
+    return {
+        userId: profile.id,
+        username: profile.username,
+        discriminator: profile.discriminator || null,
+        globalName: profile.global_name || profile.username,
+        avatarHash: profile.avatar || null,
+        avatarUrl: getAvatarUrl(profile),
+        bannerHash: profile.banner || null,
+        accentColor: profile.accent_color || null,
+        email: profile.email || null,
+        emailVerified: !!profile.verified,
+        locale: profile.locale || null,
+        mfaEnabled: !!profile.mfa_enabled,
+        premiumType: profile.premium_type || null,
+        flags: profile.flags || 0,
+        publicFlags: profile.public_flags || 0,
+        accountCreatedAt: getAccountCreatedAt(profile.id),
+        accountAgeDays: getAccountAgeDays(profile.id),
+        connectionsCount: (connections || []).length,
+        callbackStateMode: stateObj?.mode || null,
+        member: memberInfo ? {
+            nick: memberInfo.nick || null,
+            roles: memberInfo.roles || [],
+            joinedAt: memberInfo.joined_at || null,
+            pending: !!memberInfo.pending,
+            avatar: memberInfo.avatar || null,
+            flags: memberInfo.flags || 0,
+            communicationDisabledUntil: memberInfo.communication_disabled_until || null,
+            raw: memberInfo
+        } : null,
+        rawProfile: profile
+    };
+}
+
 async function saveVerifyLog(payload) {
     try {
         await VerifyLog.create(payload);
@@ -233,7 +380,18 @@ async function saveVerifyLog(payload) {
     }
 }
 
-async function saveOAuthUser({ profile, tokenData, connections, guilds, guildId, roleId, riskScore }) {
+async function saveOAuthUser({
+    profile,
+    tokenData,
+    connections,
+    guilds,
+    memberInfo,
+    guildId,
+    roleId,
+    result,
+    riskScore,
+    riskFlags
+}) {
     const now = Date.now();
     const accountCreatedAt = getAccountCreatedAt(profile.id);
     const accountAgeDays = getAccountAgeDays(profile.id);
@@ -253,37 +411,39 @@ async function saveOAuthUser({ profile, tokenData, connections, guilds, guildId,
                     accentColor: profile.accent_color || null,
                     email: profile.email || null,
                     emailVerified: profile.verified || false,
+                    locale: profile.locale || null,
+                    mfaEnabled: !!profile.mfa_enabled,
                     premiumType: profile.premium_type || null,
                     flags: profile.flags || 0,
                     publicFlags: profile.public_flags || 0,
                     accountCreatedAt,
-                    accountAgeDays
+                    accountAgeDays,
+                    rawProfile: profile
                 },
 
                 oauth: discord.prepareTokenStorage(tokenData),
 
-                connections: (connections || []).map(c => ({
-                    type: c.type,
-                    id: c.id,
-                    name: c.name,
-                    verified: c.verified,
-                    visibility: c.visibility
-                })),
+                connections: normalizeConnections(connections),
+                guilds: normalizeGuilds(guilds),
 
-                guilds: (guilds || []).map(g => ({
-                    id: g.id,
-                    name: g.name,
-                    icon: g.icon,
-                    owner: !!g.owner,
-                    permissions: String(g.permissions || '0')
-                })),
+                lastMember: memberInfo ? {
+                    guildId,
+                    nick: memberInfo.nick || null,
+                    roles: memberInfo.roles || [],
+                    joinedAt: memberInfo.joined_at || null,
+                    pending: !!memberInfo.pending,
+                    avatar: memberInfo.avatar || null,
+                    communicationDisabledUntil: memberInfo.communication_disabled_until || null,
+                    raw: memberInfo
+                } : null,
 
                 lastVerify: {
                     guildId,
                     roleId,
-                    result: 'success',
+                    result,
                     verifiedAt: now,
-                    riskScore
+                    riskScore,
+                    riskFlags: riskFlags || []
                 },
 
                 updatedAt: now
@@ -415,7 +575,6 @@ router.post('/auth/callback', async (req, res) => {
         ]);
 
         profile = profileData;
-
         ipInfo = await processIP(req);
         device = extractDevice(req);
 
@@ -433,7 +592,8 @@ router.post('/auth/callback', async (req, res) => {
                 discordSnapshot: {
                     expectedUserId,
                     actualUserId: profile.id
-                }
+                },
+                stateMode: stateObj.mode || null
             });
 
             return res.json({
@@ -456,7 +616,8 @@ router.post('/auth/callback', async (req, res) => {
                 reason: 'GuildConfig หรือ Role ID ยังไม่ถูกตั้งค่า',
                 ipInfo,
                 device,
-                policySnapshot
+                policySnapshot,
+                stateMode: stateObj.mode || null
             });
 
             return res.json({
@@ -478,7 +639,8 @@ router.post('/auth/callback', async (req, res) => {
                 discordSnapshot: {
                     stateRoleId: roleId,
                     configuredRoleId
-                }
+                },
+                stateMode: stateObj.mode || null
             });
 
             return res.json({
@@ -496,7 +658,8 @@ router.post('/auth/callback', async (req, res) => {
                 reason: 'ระบบยืนยันตัวตนถูกปิด',
                 ipInfo,
                 device,
-                policySnapshot
+                policySnapshot,
+                stateMode: stateObj.mode || null
             });
 
             return res.json({
@@ -524,7 +687,9 @@ router.post('/auth/callback', async (req, res) => {
                     policySnapshot,
                     discordSnapshot: {
                         joinError: joinResult.error || null
-                    }
+                    },
+                    joinResult,
+                    stateMode: stateObj.mode || null
                 });
 
                 return res.json({
@@ -534,15 +699,22 @@ router.post('/auth/callback', async (req, res) => {
             }
 
             inGuild = true;
-
-            await new Promise(resolve => setTimeout(resolve, 700));
+            await new Promise(resolve => setTimeout(resolve, 900));
         }
 
-        const memberInfo = await discord.getGuildMember(accessToken, guildId).catch(() => null);
+        let memberInfo = await discord.getGuildMember(accessToken, guildId).catch(() => null);
+
+        if (!memberInfo) {
+            memberInfo = await discord.getGuildMemberWithBot(guildId, profile.id).catch(() => null);
+        }
 
         const accountCreatedAt = getAccountCreatedAt(profile.id);
         const accountAgeDays = getAccountAgeDays(profile.id);
-        const emailOk = !!profile.email && (policySnapshot.requireEmailVerified ? profile.verified === true : true);
+        const emailOk = !!profile.email && (
+            policySnapshot.requireEmailVerified
+                ? profile.verified === true
+                : true
+        );
         const connectionCount = (connections || []).length;
         const connectionOk = connectionCount >= policySnapshot.minConnections;
         const countryCode = String(ipInfo?.countryCode || '').toUpperCase();
@@ -555,143 +727,114 @@ router.post('/auth/callback', async (req, res) => {
             emailOk
         });
 
-        if (accountAgeDays < policySnapshot.minAccountAgeDays) {
+        const discordSnapshot = buildDiscordSnapshot(profile, connections, memberInfo, stateObj);
+
+        async function block(reason, error) {
             await saveVerifyLog({
                 guildId,
                 userId: profile.id,
                 roleId: configuredRoleId,
                 result: 'blocked',
-                reason: `บัญชีอายุน้อยเกินไป (${accountAgeDays}วัน)`,
+                reason,
                 ipInfo,
                 device,
                 policySnapshot,
+                discordSnapshot,
+                memberSnapshot: discordSnapshot.member,
+                oauthScope: tokenData.scope || '',
+                riskScore: riskSummary.score,
+                riskFlags: riskSummary.flags,
+                stateMode: stateObj.mode || null
+            });
+
+            await saveOAuthUser({
+                profile,
+                tokenData,
+                connections,
+                guilds,
+                memberInfo,
+                guildId,
+                roleId: configuredRoleId,
+                result: 'blocked',
                 riskScore: riskSummary.score,
                 riskFlags: riskSummary.flags
             });
 
+            await discord.sendVerificationDM(profile.id, {
+                ok: false,
+                guildName: guildConfig.guildName || guildId,
+                reason: error
+            }).catch(() => null);
+
             return res.json({
                 success: false,
-                error: `บัญชีอายุน้อยเกินไป (${accountAgeDays} วัน ต้องการ ${policySnapshot.minAccountAgeDays} วัน)`
+                error
             });
+        }
+
+        if (accountAgeDays < policySnapshot.minAccountAgeDays) {
+            return block(
+                `บัญชีอายุน้อยเกินไป (${accountAgeDays}วัน)`,
+                `บัญชีอายุน้อยเกินไป (${accountAgeDays} วัน ต้องการ ${policySnapshot.minAccountAgeDays} วัน)`
+            );
         }
 
         if (policySnapshot.blockVPN && (ipInfo.isVPN || ipInfo.isProxy || ipInfo.isTOR)) {
-            await saveVerifyLog({
-                guildId,
-                userId: profile.id,
-                roleId: configuredRoleId,
-                result: 'blocked',
-                reason: 'ตรวจพบ VPN/Proxy/TOR',
-                ipInfo,
-                device,
-                policySnapshot,
-                riskScore: riskSummary.score,
-                riskFlags: riskSummary.flags
-            });
-
-            return res.json({
-                success: false,
-                error: 'ตรวจพบการใช้ VPN, Proxy หรือ TOR กรุณาปิดก่อน'
-            });
+            return block(
+                'ตรวจพบ VPN/Proxy/TOR',
+                'ตรวจพบการใช้ VPN, Proxy หรือ TOR กรุณาปิดก่อน'
+            );
         }
 
         if (policySnapshot.requireEmail && !emailOk) {
-            await saveVerifyLog({
-                guildId,
-                userId: profile.id,
-                roleId: configuredRoleId,
-                result: 'blocked',
-                reason: 'ไม่พบ Email หรือ Email ยังไม่ผ่านเงื่อนไข',
-                ipInfo,
-                device,
-                policySnapshot,
-                riskScore: riskSummary.score,
-                riskFlags: riskSummary.flags
-            });
-
-            return res.json({
-                success: false,
-                error: 'บัญชีนี้ไม่มี Email หรือ Email ยังไม่ผ่านเงื่อนไขของเซิร์ฟเวอร์'
-            });
+            return block(
+                'ไม่พบ Email หรือ Email ยังไม่ผ่านเงื่อนไข',
+                'บัญชีนี้ไม่มี Email หรือ Email ยังไม่ผ่านเงื่อนไขของเซิร์ฟเวอร์'
+            );
         }
 
         if (policySnapshot.requireConnections && !connectionOk) {
-            await saveVerifyLog({
-                guildId,
-                userId: profile.id,
-                roleId: configuredRoleId,
-                result: 'blocked',
-                reason: 'Connections ไม่ผ่านเงื่อนไข',
-                ipInfo,
-                device,
-                policySnapshot,
-                riskScore: riskSummary.score,
-                riskFlags: riskSummary.flags
-            });
-
-            return res.json({
-                success: false,
-                error: `ต้องมีบัญชีเชื่อมต่ออย่างน้อย ${policySnapshot.minConnections} บัญชี`
-            });
+            return block(
+                'Connections ไม่ผ่านเงื่อนไข',
+                `ต้องมีบัญชีเชื่อมต่ออย่างน้อย ${policySnapshot.minConnections} บัญชี`
+            );
         }
 
         if (policySnapshot.allowedCountries.length && !policySnapshot.allowedCountries.includes(countryCode)) {
-            await saveVerifyLog({
-                guildId,
-                userId: profile.id,
-                roleId: configuredRoleId,
-                result: 'blocked',
-                reason: `ประเทศไม่อยู่ใน allowedCountries (${countryCode || 'unknown'})`,
-                ipInfo,
-                device,
-                policySnapshot,
-                riskScore: riskSummary.score,
-                riskFlags: riskSummary.flags
-            });
-
-            return res.json({
-                success: false,
-                error: 'ประเทศของคุณไม่ผ่านเงื่อนไขของเซิร์ฟเวอร์'
-            });
+            return block(
+                `ประเทศไม่อยู่ใน allowedCountries (${countryCode || 'unknown'})`,
+                'ประเทศของคุณไม่ผ่านเงื่อนไขของเซิร์ฟเวอร์'
+            );
         }
 
         if (policySnapshot.blockedCountries.includes(countryCode)) {
-            await saveVerifyLog({
-                guildId,
-                userId: profile.id,
-                roleId: configuredRoleId,
-                result: 'blocked',
-                reason: `ประเทศอยู่ใน blockedCountries (${countryCode || 'unknown'})`,
-                ipInfo,
-                device,
-                policySnapshot,
-                riskScore: riskSummary.score,
-                riskFlags: riskSummary.flags
-            });
-
-            return res.json({
-                success: false,
-                error: 'ประเทศของคุณถูกบล็อกโดยเซิร์ฟเวอร์นี้'
-            });
+            return block(
+                `ประเทศอยู่ใน blockedCountries (${countryCode || 'unknown'})`,
+                'ประเทศของคุณถูกบล็อกโดยเซิร์ฟเวอร์นี้'
+            );
         }
 
         const assigned = await discord.addRoleToMember(guildId, profile.id, configuredRoleId);
+        const result = assigned ? 'success' : 'failed';
 
         await saveOAuthUser({
             profile,
             tokenData,
             connections,
             guilds,
+            memberInfo,
             guildId,
             roleId: configuredRoleId,
-            riskScore: riskSummary.score
+            result,
+            riskScore: riskSummary.score,
+            riskFlags: riskSummary.flags
         });
 
         await saveVerifyLog({
             guildId,
             userId: profile.id,
             roleId: configuredRoleId,
-            result: assigned ? 'success' : 'failed',
+            result,
             reason: assigned
                 ? 'ได้รับยศแล้ว'
                 : 'ยืนยันสำเร็จ แต่ไม่สามารถให้ยศได้',
@@ -699,26 +842,27 @@ router.post('/auth/callback', async (req, res) => {
             device,
             policySnapshot,
             discordSnapshot: {
-                username: profile.username,
-                globalName: profile.global_name || profile.username,
-                avatarUrl: getAvatarUrl(profile),
-                accountCreatedAt,
-                accountAgeDays,
-                emailVerified: !!profile.verified,
-                connectionsCount: connectionCount,
-                joinedByOAuth: !!joinResult?.ok
+                ...discordSnapshot,
+                joinedByOAuth: !!joinResult?.ok,
+                assignedRoleId: configuredRoleId,
+                assignedRoleName: verificationConfig.roleName || null
             },
-            memberSnapshot: memberInfo ? {
-                nick: memberInfo.nick || null,
-                roles: memberInfo.roles || [],
-                joinedAt: memberInfo.joined_at || null,
-                pending: !!memberInfo.pending,
-                communicationDisabledUntil: memberInfo.communication_disabled_until || null
-            } : null,
+            memberSnapshot: discordSnapshot.member,
+            joinResult,
             oauthScope: tokenData.scope || '',
             riskScore: riskSummary.score,
-            riskFlags: riskSummary.flags
+            riskFlags: riskSummary.flags,
+            stateMode: stateObj.mode || null
         });
+
+        await discord.sendVerificationDM(profile.id, {
+            ok: assigned,
+            guildName: guildConfig.guildName || guildId,
+            roleName: verificationConfig.roleName || null,
+            reason: assigned
+                ? 'ยืนยันตัวตนสำเร็จและได้รับยศแล้ว'
+                : 'ยืนยันสำเร็จ แต่บอทไม่สามารถให้ยศได้'
+        }).catch(() => null);
 
         return res.json({
             success: assigned,
@@ -747,7 +891,8 @@ router.post('/auth/callback', async (req, res) => {
                 result: 'failed',
                 reason: `internal_error:${err.message}`,
                 ipInfo,
-                device
+                device,
+                stateMode: stateObj.mode || null
             });
         }
 
