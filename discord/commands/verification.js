@@ -38,7 +38,11 @@ function getStateSecret() {
 }
 
 function getDashboardUrl() {
-    return String(process.env.DASHBOARD_URL || "").replace(/\/$/, "");
+    return String(
+        process.env.PUBLIC_DASHBOARD_URL ||
+        process.env.DASHBOARD_URL ||
+        ""
+    ).replace(/\/$/, "");
 }
 
 function b64url(input) {
@@ -63,11 +67,6 @@ function createSignedState(payload) {
     return `${encoded}.${signPayload(encoded)}`;
 }
 
-/**
- * Panel token สำหรับ LINK button
- * สำคัญ: ห้ามผูก userId เพราะปุ่ม URL เป็นปุ่ม static ทุกคนเห็นเหมือนกัน
- * userId จะรู้ตอน OAuth callback จาก Discord
- */
 function createPanelVerifyState({ guildId, roleId }) {
     return createSignedState({
         v: 3,
@@ -79,10 +78,6 @@ function createPanelVerifyState({ guildId, roleId }) {
     });
 }
 
-/**
- * Legacy token สำหรับปุ่มเก่า verify_oauth_
- * เก็บไว้กัน panel เก่าที่เคยสร้างไว้ก่อนแก้ระบบ
- */
 function createLegacyUserVerifyState({ guildId, roleId, userId }) {
     return createSignedState({
         v: 2,
@@ -200,8 +195,8 @@ async function handleSetupVerify(interaction) {
         if (!dashboardUrl) {
             return interaction.editReply({
                 content:
-                    `> ${config.emojis.error} ยังไม่ได้ตั้งค่า DASHBOARD_URL\n` +
-                    `> ต้องตั้ง DASHBOARD_URL เป็น URL ของ Dashboard 3 เช่น https://klangnua.wisdom-th.net`
+                    `> ${config.emojis.error} ยังไม่ได้ตั้งค่า PUBLIC_DASHBOARD_URL หรือ DASHBOARD_URL\n` +
+                    `> แนะนำให้ตั้ง PUBLIC_DASHBOARD_URL เป็น URL ของ Dashboard 3 / Service 2`
             });
         }
 
@@ -228,7 +223,7 @@ async function handleSetupVerify(interaction) {
             new MessageButton()
                 .setStyle("LINK")
                 .setURL(verifyUrl)
-                .setLabel(`✅ ยืนยันตัวตนเข้าดิส`)
+                .setLabel("✅ ยืนยันตัวตนเข้าดิส")
                 .setEmoji("✅")
         );
     } else {
@@ -359,17 +354,13 @@ async function handleVerifyButton(interaction) {
         }
     }
 
-    /**
-     * Legacy panel เก่าเท่านั้น
-     * Panel ใหม่จะไม่เข้า branch นี้แล้ว เพราะใช้ LINK button
-     */
     if (customId.startsWith("verify_oauth_")) {
         const roleId = customId.replace("verify_oauth_", "");
         const dashboardUrl = getDashboardUrl();
 
         if (!dashboardUrl) {
             return interaction.reply({
-                content: `> ${config.emojis.error} DASHBOARD_URL ยังไม่ได้ตั้งค่า`,
+                content: `> ${config.emojis.error} PUBLIC_DASHBOARD_URL/DASHBOARD_URL ยังไม่ได้ตั้งค่า`,
                 ephemeral: true
             });
         }
