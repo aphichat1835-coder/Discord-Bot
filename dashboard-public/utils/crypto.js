@@ -1,74 +1,119 @@
 /*
- * AES-256-GCM — ใช้ร่วมกันทั้งระบบ Token + IP
- * Key เดียวกับ main bot (ENCRYPTION_KEY env var)
- *
- * Format ใหม่ (GCM):  "gcm:<iv_hex>:<authTag_hex>:<ciphertext_hex>"
- * Format เก่า (CBC):  "<iv_hex>:<ciphertext_hex>"  — รองรับ backward compat
+ * Dashboard Public Crypto Utilities
+ * - New writes use AES-256-GCM with an authenticated tag.
+ * - Legacy AES-256-CBC values are still readable for backward compatibility.
+ * - Raw IP/device lookup keys use HMAC-SHA256 hashes for safe matching.
  */
 const crypto = require('crypto');
 
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY
-    ? crypto.createHash('sha256').update(process.env.ENCRYPTION_KEY).digest('base64').substring(0, 32)
-    : null;
-
-if (!ENCRYPTION_KEY) throw new Error('[CRYPTO] ❌ Missing ENCRYPTION_KEY');
-
-// ── encrypt ด้วย AES-256-GCM ──
-function encrypt(text) {
-    if (!text) return null;
-    try {
-        const iv      = crypto.randomBytes(12); // 96-bit nonce (NIST recommended)
-        const cipher  = crypto.createCipheriv('aes-256-gcm', Buffer.from(ENCRYPTION_KEY), iv);
-        let enc        = cipher.update(text, 'utf-8', 'hex');
-        enc           += cipher.final('hex');
-        const authTag  = cipher.getAuthTag().toString('hex'); // 128-bit auth tag
-        return `gcm:${iv.toString('hex')}:${authTag}:${enc}`;
-    } catch (e) {
-        console.error('[CRYPTO] GCM encrypt error:', e.message);
-        return null;
-    }
+function getKey() {
+    const secret = process.env.ENCRYPTION_KEY;
+    if (!secret) throw new Error('[CRYPTO] Missing ENCRYPTION_KEY');
+    return crypto.createHash('sha256').update(String(secret)).digest(); // 32 bytes
 }
 
-// ── decrypt รองรับทั้ง GCM (ใหม่) และ CBC (เก่า) ──
-function decrypt(text) {
-    if (!text) return null;
+function getHashKey() {
+    return crypto.createHash('sha256')
+        .update(`${process.env.ENCRYPTION_KEY || 'missing'}:${process.env.API_SECRET || process.env.INTERNAL_API_SECRET || 'dashboard'}`)
+        .digest();
+}
 
-    // ── GCM path: prefix "gcm:" ──
-    if (text.startsWith('gcm:')) {
+function encryptData(value) {
+    if (value === undefined || value === null || value === '') return null;
+
+    const plain = typeof value === 'string' ? value : JSON.stringify(value);
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', getKey(), iv);
+
+    const ciphertext = Buffer.concat([
+        cipher.update(plain, 'utf8'),
+        cipher.final()
+    ]);
+
+    const tag = cipher.getAuthTag();
+
+    return `v2:gcm:${iv.toString('base64url')}:${tag.toString('base64url')}:${ciphertext.toString('base64url')}`;
+}
+
+function decryptData(payload) {
+    if (!payload || typeof payload !== 'string') return null;
+
+    if (payload.startsWith('v2:gcm:') || payload.startsWith('gcm:')) {
         try {
-            const parts    = text.split(':');
-            // parts: ['gcm', iv, authTag, ...ciphertext]
-            const iv       = Buffer.from(parts[1], 'hex');
-            const authTag  = Buffer.from(parts[2], 'hex');
-            const encBuf   = Buffer.from(parts.slice(3).join(':'), 'hex');
-            const dec      = crypto.createDecipheriv('aes-256-gcm', Buffer.from(ENCRYPTION_KEY), iv);
-            dec.setAuthTag(authTag);
-            let result     = dec.update(encBuf, 'hex', 'utf-8');
-            result        += dec.final('utf-8');
-            return result;
-        } catch (e) {
-            console.error('[CRYPTO] GCM decrypt error:', e.message);
+            const parts = payload.split(':');
+            const offset = parts[0] === 'v2' ? 2 : 1;
+
+            const iv = Buffer.from(parts[offset], 'base64url');
+            const tag = Buffer.from(parts[offset + 1], 'base64url');
+            const ciphertext = Buffer.from(parts.slice(offset + 2).join(':'), 'base64url');
+
+            const decipher = crypto.createDecipheriv('aes-256-gcm', getKey(), iv);
+            decipher.setAuthTag(tag);
+
+            return Buffer.concat([
+                decipher.update(ciphertext),
+                decipher.final()
+            ]).toString('utf8');
+        } catch (err) {
+            console.error('[CRYPTO] GCM decrypt failed:', err.message);
             return null;
         }
     }
 
-    // ── CBC path (backward compat): "iv:ciphertext" ──
     try {
-        const parts  = text.split(':');
-        const iv     = Buffer.from(parts.shift(), 'hex');
-        const encBuf = Buffer.from(parts.join(':'), 'hex');
-        const dec    = crypto.createDecipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY), iv);
-        let result   = dec.update(encBuf, 'hex', 'utf-8');
-        result      += dec.final('utf-8');
-        return result;
-    } catch (e) {
-        console.error('[CRYPTO] CBC decrypt error:', e.message);
+        const parts = payload.split(':');
+        if (parts.length < 2) return null;
+
+        const iv = Buffer.from(parts.shift(), 'hex');
+        const ciphertext = Buffer.from(parts.join(':'), 'hex');
+
+        const decipher = crypto.createDecipheriv('aes-256-cbc', getKey(), iv);
+
+        return Buffer.concat([
+            decipher.update(ciphertext),
+            decipher.final()
+        ]).toString('utf8');
+    } catch (err) {
+        console.error('[CRYPTO] CBC legacy decrypt failed:', err.message);
         return null;
     }
 }
 
+function hmacValue(value, prefix = 'value') {
+    if (value === undefined || value === null || value === '') return null;
+
+    return crypto
+        .createHmac('sha256', getHashKey())
+        .update(`${prefix}:${String(value).trim().toLowerCase()}`)
+        .digest('hex');
+}
+
+function safeJsonDecrypt(payload, fallback = null) {
+    const raw = decryptData(payload);
+    if (!raw) return fallback;
+
+    try {
+        return JSON.parse(raw);
+    } catch {
+        return fallback;
+    }
+}
+
 module.exports = {
-    encrypt, decrypt,
-    encryptToken: encrypt, decryptToken: decrypt,
-    encryptIP:    encrypt, decryptIP:    decrypt
+    encryptData,
+    decryptData,
+    safeJsonDecrypt,
+    hmacValue,
+
+    encrypt: encryptData,
+    decrypt: decryptData,
+
+    encryptToken: encryptData,
+    decryptToken: decryptData,
+
+    encryptIP: encryptData,
+    decryptIP: decryptData,
+
+    hashIP: (ip) => hmacValue(ip, 'ip'),
+    hashFingerprint: (fp) => hmacValue(fp, 'fingerprint')
 };
