@@ -16,6 +16,41 @@ const sessionManager = require("../sessionManager");
 let GuildConfig = null;
 try { GuildConfig = require("../../dashboard-public/models/GuildConfig"); } catch {}
 
+function getStateSecret() {
+    return String(
+        process.env.VERIFY_STATE_SECRET ||
+        process.env.API_SECRET ||
+        process.env.INTERNAL_API_SECRET ||
+        process.env.SESSION_SECRET ||
+        process.env.ENCRYPTION_KEY ||
+        ''
+    );
+}
+
+function b64url(input) {
+    return Buffer.from(input).toString('base64url');
+}
+
+function signPayload(encodedPayload) {
+    const secret = getStateSecret();
+    if (!secret) throw new Error('Missing VERIFY_STATE_SECRET/API_SECRET/ENCRYPTION_KEY for verify state signing');
+    return crypto.createHmac('sha256', secret).update(encodedPayload).digest('base64url');
+}
+
+function createVerifyState({ guildId, roleId, userId }) {
+    const payload = {
+        v: 2,
+        type: 'verify',
+        guildId,
+        roleId,
+        userId,
+        ts: Date.now(),
+        nonce: crypto.randomBytes(16).toString('hex')
+    };
+    const encoded = b64url(JSON.stringify(payload));
+    return `${encoded}.${signPayload(encoded)}`;
+}
+
 async function handle(interaction, client) {
     if (interaction.commandName === "setup-verify") {
         return handleSetupVerify(interaction);
@@ -180,9 +215,14 @@ async function handleVerifyButton(interaction) {
     if (customId.startsWith("verify_oauth_")) {
         const roleId    = customId.replace("verify_oauth_", "");
         const baseUrl   = process.env.DASHBOARD_URL || process.env.RENDER_EXTERNAL_URL || "http://localhost:3001";
-        const nonce     = crypto.randomBytes(8).toString("hex");
-        const stateCode = Buffer.from(`${guild.id}:${roleId}:${interaction.user.id}:${Date.now()}:${nonce}`).toString("base64url");
-        const verifyUrl = `${baseUrl.replace(/\/$/, "")}/verify?t=${stateCode}`;
+        let stateCode;
+        try {
+            stateCode = createVerifyState({ guildId: guild.id, roleId, userId: interaction.user.id });
+        } catch (err) {
+            console.error('[VERIFY] State signing failed:', err.message);
+            return interaction.reply({ content: `> ${config.emojis.error} ระบบยังไม่ได้ตั้งค่า secret สำหรับยืนยันลิงก์`, ephemeral: true });
+        }
+        const verifyUrl = `${baseUrl.replace(/\/$/, "")}/verify?t=${encodeURIComponent(stateCode)}`;
 
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.info)
