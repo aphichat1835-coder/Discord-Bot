@@ -82,6 +82,40 @@ function register({
             }
         }
 
+        // ── Anti-Spam (ข้อความธรรมดา) ──
+        if (antiRaidEnabled) {
+            const spamKey  = `spam_${message.guild.id}_${message.author.id}`;
+            const spamHist = (spamTracking.get(spamKey) || []).filter(t => Date.now() - t < 5000);
+            spamHist.push(Date.now());
+            spamTracking.set(spamKey, spamHist);
+
+            const pConf      = await protection.getProtectionConfig(message.guild.id).catch(() => protection.DEFAULT_CONFIG);
+            const spamResult = protection.checkAntiSpam(message.member, spamHist, pConf);
+            if (spamResult) {
+                try {
+                    await message.delete().catch(() => {});
+                    if (spamResult.action === 'timeout' && message.member.manageable) {
+                        await message.member.timeout(spamResult.minutes * 60000, spamResult.reason);
+                    } else if (spamResult.action === 'kick' && message.member.kickable) {
+                        await message.member.kick(spamResult.reason);
+                    } else if (spamResult.action === 'ban') {
+                        await message.member.ban({ reason: spamResult.reason });
+                    }
+                    spamTracking.delete(spamKey);
+                } catch (e) { console.error(`[ANTI-SPAM] ⚠️ ${e.message}`); }
+            }
+
+            // ── Link Filter ──
+            const pConfLink  = pConf;
+            const linkResult = protection.checkLinkFilter(message, pConfLink);
+            if (linkResult) {
+                message.delete().catch(() => {});
+                message.channel.send({
+                    content: `> 🔗 <@${message.author.id}> ลิงก์ถูกบล็อกโดยระบบ`
+                }).then(m => setTimeout(() => m.delete().catch(() => {}), 5000)).catch(() => {});
+            }
+        }
+
     });
 
     // ════════════════════════════════════════════════════════════════════════

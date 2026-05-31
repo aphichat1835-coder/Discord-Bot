@@ -7,7 +7,7 @@
     },
     "limits": {
         "maxSessions": 30,
-        "rateLimitRequests": 5,
+        "rateLimitRequests": 30,
         "rateLimitWindowMs": 60000,
         "idleTimeoutMs": 86400000,
         "spamTrackingMaxUsers": 1000,

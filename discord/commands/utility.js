@@ -31,6 +31,25 @@ async function sendUtilLog(guild, channelType, description) {
     } catch (e) {}
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  🛡️  INPUT SANITIZATION
+// ════════════════════════════════════════════════════════════════════════════
+const BLOCKED_PATTERNS = [
+    /discord\.gg\/\S+/gi,
+    /https?:\/\/\S+\.(exe|bat|cmd|sh|ps1)/gi,
+];
+
+function sanitizeMessage(msg) {
+    if (!msg || typeof msg !== 'string') return '';
+    let clean = msg.slice(0, 1000);
+    clean = clean.replace(/@everyone/g, '@\u200beveryone');
+    clean = clean.replace(/@here/g,     '@\u200bhere');
+    for (const pattern of BLOCKED_PATTERNS) {
+        clean = clean.replace(pattern, '[ลิงก์ถูกบล็อก]');
+    }
+    return clean.trim();
+}
+
 async function handle(interaction, client, sessionManager, getLogChannel) {
     const cmd = interaction.commandName;
     if (cmd === "say")        return handleSay(interaction, sessionManager);
@@ -47,8 +66,14 @@ async function handle(interaction, client, sessionManager, getLogChannel) {
 //  📢  SAY (เฟส 3 — Dynamic Rate-Limit + Whitelist)
 // ════════════════════════════════════════════════════════════════════════════
 async function handleSay(interaction, sessionManager) {
-    const msg = interaction.options.getString("message");
+    const rawMsg = interaction.options.getString("message");
+    const msg    = sanitizeMessage(rawMsg);
     const userId = interaction.user.id;
+
+    if (!msg) return interaction.reply({
+        content: `> ${config.emojis.error} ข้อความว่างหรือถูกบล็อกทั้งหมด`,
+        ephemeral: true
+    });
     const now = Date.now();
 
     // เช็คสิทธิ์บอทก่อนเสมอ
@@ -132,8 +157,8 @@ async function handleAnnounce(interaction) {
         });
     }
 
-    const title   = interaction.options.getString("title");
-    const msgStr  = interaction.options.getString("message");
+    const title   = sanitizeMessage(interaction.options.getString("title")).slice(0, 256);
+    const msgStr  = sanitizeMessage(interaction.options.getString("message"));
     const content = interaction.options.getString("content") || null;
 
     const embed = new MessageEmbed()

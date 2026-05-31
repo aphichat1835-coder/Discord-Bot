@@ -69,6 +69,44 @@ function checkAntiRaid(member, spamHistory, protConfig) {
     };
 }
 
+// ── เช็ค Anti-Spam (ข้อความธรรมดา ไม่ใช่ @everyone) ──
+function checkAntiSpam(member, msgHistory, protConfig) {
+    const v = protConfig?.antiSpam;
+    if (!v?.enabled) return null;
+    const recent = (msgHistory || []).filter(t => Date.now() - t < v.windowMs);
+    if (recent.length < v.maxMessages) return null;
+    if (member.permissions.has('ADMINISTRATOR')) return null;
+    return {
+        action:  v.action || 'timeout',
+        minutes: 5,
+        reason:  `Anti-Spam: ส่งข้อความ ${recent.length} ครั้ง ใน ${v.windowMs / 1000}s`
+    };
+}
+
+// ── เช็ค Link Filter ──
+const INVITE_REGEX = /discord(?:app)?\.(?:com\/invite|gg)\/[a-zA-Z0-9\-]+/i;
+
+function checkLinkFilter(message, protConfig) {
+    const v = protConfig?.linkFilter;
+    if (!v?.enabled) return null;
+    const content = message.content || '';
+    if (v.blockInvites && INVITE_REGEX.test(content)) {
+        return { shouldDelete: true, reason: 'Link Filter: Discord invite ถูกบล็อก' };
+    }
+    const urlMatches = content.match(/https?:\/\/[^\s]+/gi) || [];
+    const blocked = urlMatches.filter(url => {
+        try {
+            const hostname = new URL(url).hostname.toLowerCase();
+            if (!v.allowedDomains?.length) return false;
+            return !v.allowedDomains.some(d => hostname === d || hostname.endsWith('.' + d));
+        } catch { return false; }
+    });
+    if (blocked.length > 0) {
+        return { shouldDelete: true, reason: 'Link Filter: domain ไม่ได้รับอนุญาต' };
+    }
+    return null;
+}
+
 // ── สร้าง embed แจ้งเตือน protection ──
 function buildProtectionAlert(type, data) {
     const colors  = { raid: config.system.themeColors.error, spam: config.system.themeColors.warning };
@@ -98,6 +136,8 @@ module.exports = {
     getProtectionConfig,
     setProtectionConfig,
     checkAntiRaid,
+    checkAntiSpam,
+    checkLinkFilter,
     buildProtectionAlert,
     DEFAULT_CONFIG
 };
