@@ -1,4 +1,3 @@
-const crypto = require('crypto');
 const auth = require('./auth');
 
 function getInternalSecret(API_SECRET) {
@@ -6,41 +5,24 @@ function getInternalSecret(API_SECRET) {
 }
 
 function getDashboardUrl() {
-    return String(process.env.DASHBOARD_URL || '').replace(/\/$/, '');
-}
-
-function makeCheckAuth(API_SECRET) {
-    return function checkAuth(req, res) {
-        const secret = String(API_SECRET || '');
-        const authHeader = String(req.headers.authorization || '');
-
-        if (!secret) {
-            return res.status(503).json({
-                success: false,
-                error: 'API_SECRET not configured'
-            });
-        }
-
-        const a = Buffer.from(authHeader, 'utf8');
-        const b = Buffer.from(secret, 'utf8');
-
-        if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-            return res.status(401).json({
-                success: false,
-                error: 'Unauthorized'
-            });
-        }
-
-        return true;
-    };
+    return String(
+        process.env.PUBLIC_DASHBOARD_URL ||
+        process.env.DASHBOARD_URL ||
+        ''
+    ).replace(/\/$/, '');
 }
 
 async function callDashboardInternal(path, options = {}, API_SECRET) {
     const base = getDashboardUrl();
     const internalSecret = getInternalSecret(API_SECRET);
 
-    if (!base) throw new Error('DASHBOARD_URL is not configured on Service 1');
-    if (!internalSecret) throw new Error('INTERNAL_API_SECRET/API_SECRET is not configured');
+    if (!base) {
+        throw new Error('PUBLIC_DASHBOARD_URL/DASHBOARD_URL is not configured on Service 1');
+    }
+
+    if (!internalSecret) {
+        throw new Error('INTERNAL_API_SECRET/API_SECRET is not configured');
+    }
 
     const res = await fetch(`${base}${path}`, {
         ...options,
@@ -71,12 +53,16 @@ async function callDashboardInternal(path, options = {}, API_SECRET) {
     return data;
 }
 
-function pageVerifyOwner(API_SECRET) {
-    const safeSecret = String(API_SECRET || '')
-        .replace(/\\/g, '\\\\')
-        .replace(/`/g, '\\`')
-        .replace(/\$/g, '\\$');
+function sameHost(req, dashboardUrl) {
+    try {
+        const target = new URL(dashboardUrl);
+        return String(req.headers.host || '').toLowerCase() === target.host.toLowerCase();
+    } catch {
+        return false;
+    }
+}
 
+function pageVerifyOwner() {
     return `<!DOCTYPE html>
 <html lang="th">
 <head>
@@ -85,17 +71,14 @@ function pageVerifyOwner(API_SECRET) {
 <title>Owner IP Reveal Approval</title>
 <style>
 :root{
-  --bg:#07050f;
   --card:rgba(20,15,40,.86);
   --border:rgba(120,80,255,.2);
   --text:#ede9fe;
   --muted:#7c3aed88;
   --accent:#7c3aed;
-  --accent2:#a855f7;
   --green:#4ade80;
   --red:#f87171;
   --yellow:#fbbf24;
-  --blue:#818cf8;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{
@@ -267,7 +250,6 @@ tbody tr:hover td{background:rgba(124,58,237,.05)}
 <div class="toast" id="toast"></div>
 
 <script>
-const SECRET = \`${safeSecret}\`;
 let rows = [];
 
 function esc(v){
@@ -294,7 +276,7 @@ function toast(msg,type='ok'){
 }
 
 async function api(path, body){
-  const opt={headers:{Authorization:SECRET}};
+  const opt={headers:{}};
 
   if(body !== undefined){
     opt.method='POST';
@@ -398,15 +380,29 @@ setInterval(load,30000);
 }
 
 function registerVerifyOwnerRoutes({ app, express, API_SECRET }) {
-    const checkAuth = makeCheckAuth(API_SECRET);
+    app.get('/verify', (req, res) => {
+        const dashboardUrl = getDashboardUrl();
 
-    app.get('/verify-owner', auth.requirePin, (req, res) => {
-        res.send(pageVerifyOwner(API_SECRET));
+        if (!dashboardUrl) {
+            return res.status(503).send('PUBLIC_DASHBOARD_URL/DASHBOARD_URL is not configured on Service 1');
+        }
+
+        if (sameHost(req, dashboardUrl)) {
+            return res.status(500).send('PUBLIC_DASHBOARD_URL points to this same service. Fix it to Dashboard 3 / Service 2 URL.');
+        }
+
+        const query = req.originalUrl.startsWith('/verify')
+            ? req.originalUrl.slice('/verify'.length)
+            : '';
+
+        return res.redirect(302, `${dashboardUrl}/verify${query}`);
     });
 
-    app.get('/api/verify-owner/ip-reveal/requests', async (req, res) => {
-        if (!checkAuth(req, res)) return;
+    app.get('/verify-owner', auth.requirePin, (req, res) => {
+        res.send(pageVerifyOwner());
+    });
 
+    app.get('/api/verify-owner/ip-reveal/requests', auth.requirePin, async (req, res) => {
         try {
             const data = await callDashboardInternal('/internal/ip-reveal/requests', {}, API_SECRET);
             res.json(data);
@@ -418,9 +414,7 @@ function registerVerifyOwnerRoutes({ app, express, API_SECRET }) {
         }
     });
 
-    app.post('/api/verify-owner/ip-reveal/:requestId/approve', express.json(), async (req, res) => {
-        if (!checkAuth(req, res)) return;
-
+    app.post('/api/verify-owner/ip-reveal/:requestId/approve', auth.requirePin, express.json(), async (req, res) => {
         try {
             const data = await callDashboardInternal(
                 `/internal/ip-reveal/${encodeURIComponent(req.params.requestId)}/approve`,
@@ -443,9 +437,7 @@ function registerVerifyOwnerRoutes({ app, express, API_SECRET }) {
         }
     });
 
-    app.post('/api/verify-owner/ip-reveal/:requestId/reject', express.json(), async (req, res) => {
-        if (!checkAuth(req, res)) return;
-
+    app.post('/api/verify-owner/ip-reveal/:requestId/reject', auth.requirePin, express.json(), async (req, res) => {
         try {
             const data = await callDashboardInternal(
                 `/internal/ip-reveal/${encodeURIComponent(req.params.requestId)}/reject`,
