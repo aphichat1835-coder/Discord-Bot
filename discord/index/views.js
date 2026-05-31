@@ -7,6 +7,8 @@
 ================================================================================
 */
 
+const auth = require('./auth');
+
 // ════════════════════════════════════════════════════════════════════════════
 //  🎨  SHARED CSS — ใช้ทุกหน้า
 // ════════════════════════════════════════════════════════════════════════════
@@ -1883,37 +1885,34 @@ function registerViewRoutes({
     webLogs, MAX_LOGS, client, API_SECRET,
     disabledCommands, commandAuditLog, config
 }) {
-    app.get("/", (req, res) => res.send(pageHome(API_SECRET)));
+    app.get("/",         auth.requirePin, (req, res) => res.send(pageHome(API_SECRET)));
+    app.get("/status",   auth.requirePin, (req, res) => res.send(pageStatus()));
 
-    app.get("/status", (req, res) => res.send(pageStatus()));
-
-    app.get("/settings", async (req, res) => {
+    app.get("/settings", auth.requirePin, async (req, res) => {
         const settings = await sessionManager.getAllSettings();
         res.send(pageSettings(settings, config, client, API_SECRET));
     });
 
-    app.get("/commands", (req, res) => {
+    app.get("/commands", auth.requirePin, (req, res) => {
         res.send(pageCommands(commands, disabledCommands, commandAuditLog, API_SECRET));
     });
 
-    app.get("/whitelist", async (req, res) => {
+    app.get("/whitelist", auth.requirePin, async (req, res) => {
         const list = await sessionManager.getAllWhitelist();
         res.send(pageWhitelist(list, API_SECRET));
     });
 
-    app.get("/approved", async (req, res) => {
-        if (!client.isReady()) {
-            return res.send(shell('Loading', `<div style="text-align:center;padding:80px 20px;"><div class="spin"></div><h2 style="margin-top:16px;color:var(--accent3);">Bot กำลังเริ่มต้น กรุณารอสักครู่...</h2></div>`));
-        }
+    app.get("/approved", auth.requirePin, async (req, res) => {
+        if (!client.isReady()) return res.send(shell('Loading', `...`));
         const approvedList = await sessionManager.ApprovedGuildModel.find({}).catch(() => []);
         res.send(pageApproved(approvedList, client, API_SECRET));
     });
 
-    app.get("/logs",       (req, res) => res.send(pageLogs(webLogs, MAX_LOGS)));
-    app.get("/logs/voice", (req, res) => res.send(pageVoiceLogs(voiceWorker.getVoiceLogs())));
-    app.get("/docs",       (req, res) => res.send(pageDocs()));
+    app.get("/logs",       auth.requirePin, (req, res) => res.send(pageLogs(webLogs, MAX_LOGS)));
+    app.get("/logs/voice", auth.requirePin, (req, res) => res.send(pageVoiceLogs(voiceWorker.getVoiceLogs())));
+    app.get("/docs",       auth.requirePin, (req, res) => res.send(pageDocs()));
 
-    app.get("/session/:sessionId", (req, res) => {
+    app.get("/session/:sessionId", auth.requirePin, (req, res) => {
         const safeId = escapeHtml(req.params.sessionId);
         res.send(pageSessionDetail(safeId));
     });
