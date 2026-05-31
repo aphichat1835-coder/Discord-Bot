@@ -1,5 +1,16 @@
 const net = require('net');
-const { encryptIP, hashIP, hashFingerprint } = require('./crypto');
+const crypto = require('crypto');
+const { encryptIP } = require('./crypto');
+
+function hmacValue(value, prefix = 'value') {
+    if (value === undefined || value === null || value === '') return null;
+    const key = crypto.createHash('sha256')
+        .update(`${process.env.ENCRYPTION_KEY || 'missing'}:${process.env.API_SECRET || process.env.INTERNAL_API_SECRET || 'dashboard'}`)
+        .digest();
+    return crypto.createHmac('sha256', key)
+        .update(`${prefix}:${String(value).trim().toLowerCase()}`)
+        .digest('hex');
+}
 
 function firstHeaderValue(value) {
     if (!value) return null;
@@ -68,7 +79,7 @@ function extractDevice(req) {
         language: body.language || req.headers['accept-language']?.split(',')[0] || 'unknown',
         timezone: body.timezone || 'unknown',
         screenSize: body.screenSize || 'unknown',
-        fingerprintHash: hashFingerprint(fingerprintSource)
+        fingerprintHash: hmacValue(fingerprintSource, 'fingerprint')
     };
 }
 
@@ -77,7 +88,7 @@ async function lookupIP(ip) {
         return {
             status: 'local', country: 'unknown', countryCode: 'unknown', region: 'unknown', city: 'unknown',
             zip: 'unknown', lat: null, lon: null, timezone: 'unknown', isp: 'local/private', org: 'local/private', as: 'unknown',
-            proxy: false, vpn: false, tor: false
+            proxy: false, vpn: false, tor: false, hosting: false
         };
     }
 
@@ -109,9 +120,10 @@ async function processIP(req) {
     const isProxy = !!lookup.proxy;
     const isVPN = !!lookup.vpn || !!lookup.hosting;
     const isTOR = !!lookup.tor;
-    const ipInfo = {
+
+    return {
         encryptedRawIp: encryptIP(rawIp),
-        ipHash: hashIP(rawIp),
+        ipHash: hmacValue(rawIp, 'ip'),
         country: lookup.country || 'unknown',
         countryCode: lookup.countryCode || 'unknown',
         region: lookup.regionName || lookup.region || 'unknown',
@@ -132,8 +144,6 @@ async function processIP(req) {
         lookupStatus: lookup.status || 'unknown',
         lookupAt: Date.now()
     };
-
-    return ipInfo;
 }
 
 module.exports = {
