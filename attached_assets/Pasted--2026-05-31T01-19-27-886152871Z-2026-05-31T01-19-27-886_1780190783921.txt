@@ -1,0 +1,31 @@
+
+2026-05-31T01:19:27.886152871Z 
+2026-05-31T01:19:27.886161302Z 1 moderate severity vulnerability
+2026-05-31T01:19:27.886163662Z 
+2026-05-31T01:19:27.886166751Z To address all issues, run:
+2026-05-31T01:19:27.886169242Z   npm audit fix
+2026-05-31T01:19:27.886171662Z 
+2026-05-31T01:19:27.886174082Z Run `npm audit` for details.
+2026-05-31T01:19:30.270440161Z ==> Uploading build...
+2026-05-31T01:19:33.797161227Z ==> Uploaded in 2.0s. Compression took 1.5s
+2026-05-31T01:19:33.817859728Z ==> Build successful 🎉
+2026-05-31T01:19:38.821436828Z ==> Deploying...
+2026-05-31T01:19:39.024400041Z ==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
+2026-05-31T01:19:47.762442825Z ==> Running 'node discord/index.js'
+2026-05-31T01:19:48.471580464Z /opt/render/project/src/discord/index.js:1
+2026-05-31T01:19:48.471610256Z cat > /home/claude/final/discord/index.js << 'ENDOFFILE'
+2026-05-31T01:19:48.471613846Z       ^
+2026-05-31T01:19:48.471617126Z 
+2026-05-31T01:19:48.471620247Z SyntaxError: Invalid regular expression flags
+2026-05-31T01:19:48.471623317Z     at wrapSafe (node:internal/modules/cjs/loader:1806:18)
+2026-05-31T01:19:48.471627847Z     at Module._compile (node:internal/modules/cjs/loader:1847:20)
+2026-05-31T01:19:48.471631027Z     at Object..js (node:internal/modules/cjs/loader:2013:10)
+2026-05-31T01:19:48.471633908Z     at Module.load (node:internal/modules/cjs/loader:1596:32)
+2026-05-31T01:19:48.471636748Z     at Module._load (node:internal/modules/cjs/loader:1398:12)
+2026-05-31T01:19:48.471639678Z     at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+2026-05-31T01:19:48.471644339Z     at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+2026-05-31T01:19:48.471647179Z     at node:internal/main/run_main_module:33:47
+2026-05-31T01:19:48.471649819Z 
+2026-05-31T01:19:48.471652929Z Node.js v26.2.0
+2026-05-31T01:19:50.102596324Z ==> Exited with status 1
+2026-05-31T01:19:50.105086642Z ==> Common ways to troubleshoot your deploy: 

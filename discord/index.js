@@ -1,4 +1,3 @@
-cat > /home/claude/final/discord/index.js << 'ENDOFFILE'
 /*
 ================================================================================
 ⚠️ [AI COGNITIVE DIRECTIVE & ARCHITECTURE GUARD] ⚠️
@@ -356,5 +355,3 @@ boot().catch(err => {
     console.error("[BOOT] 💀 Fatal:", err.message);
     process.exit(1);
 });
-ENDOFFILE
-echo "done"
