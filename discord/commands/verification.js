@@ -13,10 +13,53 @@ const crypto = require("crypto");
 const { MessageEmbed, MessageActionRow, MessageButton } = require("discord.js");
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");
+let GuildConfig = null;
+try { GuildConfig = require("../../dashboard-public/models/GuildConfig"); } catch {}
 
 async function handle(interaction, client) {
     if (interaction.commandName === "setup-verify") {
         return handleSetupVerify(interaction);
+    }
+}
+
+async function syncGuildConfig(interaction, role, channel, panelMsg) {
+    if (!GuildConfig) return;
+    try {
+        await GuildConfig.findOneAndUpdate(
+            { guildId: interaction.guild.id },
+            {
+                $set: {
+                    guildId: interaction.guild.id,
+                    guildName: interaction.guild.name,
+                    setupBy: interaction.user.id,
+                    updatedAt: Date.now(),
+                    'verification.enabled': true,
+                    'verification.roleId': role.id,
+                    'verification.roleName': role.name,
+                    'verification.channelId': channel.id,
+                    'verification.messageId': panelMsg.id,
+                    'verification.verifyPath': '/verify',
+                    'verification.updatedBy': interaction.user.id,
+                    'verification.updatedAt': Date.now()
+                },
+                $setOnInsert: {
+                    createdAt: Date.now(),
+                    'verification.blockVPN': true,
+                    'verification.minAccountAgeDays': 7,
+                    'verification.requireEmail': false,
+                    'verification.requireEmailVerified': false,
+                    'verification.requireConnections': false,
+                    'verification.minConnections': 1,
+                    'security.storeOAuthTokens': true,
+                    'security.storeRawIpEncrypted': true,
+                    'security.ipRevealRequiresOwnerApproval': true,
+                    'security.retentionMode': 'until_admin_delete'
+                }
+            },
+            { upsert: true }
+        );
+    } catch (err) {
+        console.error('[VERIFY] GuildConfig sync failed:', err.message);
     }
 }
 
@@ -80,6 +123,7 @@ async function handleSetupVerify(interaction) {
                 createdAt: Date.now()
             }
         );
+        await syncGuildConfig(interaction, role, channel, panelMsg);
 
         const resultEmbed = new MessageEmbed()
             .setColor(config.system.themeColors.success)
