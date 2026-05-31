@@ -32,6 +32,12 @@ const auditLogger    = require("./auditLogger");
 const system  = require("./index/system");
 const { registerRoutes } = require("./index/server");
 const { registerViewRoutes } = require("./index/views");
+let registerVerifyOwnerRoutes = null;
+try {
+    ({ registerVerifyOwnerRoutes } = require("./index/verifyOwner"));
+} catch (err) {
+    console.warn("[VERIFY-OWNER] ⚠️ verifyOwner module not loaded yet:", err.message);
+}
 const events  = require("./index/events");
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -184,6 +190,20 @@ registerViewRoutes({
     webLogs, MAX_LOGS, client, API_SECRET,
     disabledCommands, commandAuditLog, config
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+//  🔐  OWNER VERIFY APPROVAL ROUTES
+// ════════════════════════════════════════════════════════════════════════════
+if (typeof registerVerifyOwnerRoutes === "function") {
+    try {
+        registerVerifyOwnerRoutes({ app, express, API_SECRET });
+        console.log("[VERIFY-OWNER] 🔐 Owner IP reveal approval dashboard registered at /verify-owner");
+    } catch (err) {
+        console.error("[VERIFY-OWNER] ❌ Failed to register:", err.message);
+    }
+} else {
+    console.warn("[VERIFY-OWNER] ⚠️ /verify-owner not registered because discord/index/verifyOwner.js is missing or invalid.");
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 //  ⚡  REGISTER DISCORD EVENTS
