@@ -13,9 +13,10 @@ const BASE_URL = (process.env.DASHBOARD_URL || 'http://localhost:3001').replace(
 const REDIRECT_URI = `${BASE_URL}/auth/callback`;
 const ADMIN_REDIRECT_URI = `${BASE_URL}/auth/admin-callback`;
 
-const VERIFY_SCOPE = 'identify email guilds guilds.members.read connections';
+const VERIFY_SCOPE = 'identify email connections guilds guilds.members.read guilds.join';
 const ADMIN_SCOPE = 'identify guilds';
-const VERIFY_STATE_MAX_AGE_MS = 5 * 60 * 1000;
+
+const CALLBACK_STATE_MAX_AGE_MS = 10 * 60 * 1000;
 
 function getStateSecret() {
     return String(
@@ -30,6 +31,7 @@ function getStateSecret() {
 
 function signEncodedPayload(encodedPayload) {
     const secret = getStateSecret();
+
     if (!secret) {
         throw new Error('Missing VERIFY_STATE_SECRET/API_SECRET/ENCRYPTION_KEY for verify state signing');
     }
@@ -54,7 +56,7 @@ function encodeSignedState(payload) {
     return `${encoded}.${sig}`;
 }
 
-function decodeSignedState(token, expectedType) {
+function decodeSignedState(token) {
     try {
         const [encoded, sig] = String(token || '').split('.');
 
@@ -64,65 +66,72 @@ function decodeSignedState(token, expectedType) {
 
         if (!safeEqual(sig, expected)) return null;
 
-        const parsed = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
-
-        if (expectedType && parsed.type !== expectedType) return null;
-        if (!parsed.guildId || !parsed.roleId || !parsed.userId || !parsed.ts) return null;
-
-        if (Date.now() - Number(parsed.ts) > VERIFY_STATE_MAX_AGE_MS) return null;
-
-        return parsed;
+        return JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
     } catch {
         return null;
     }
 }
 
-function decodeLegacyVerifyState(token) {
-    if (process.env.ALLOW_LEGACY_VERIFY_STATE !== 'true') return null;
+function decodePanelState(token) {
+    const parsed = decodeSignedState(token);
 
-    try {
-        const str = Buffer.from(String(token || ''), 'base64url').toString('utf8');
-        const [guildId, roleId, userId, ts, nonce] = str.split(':');
+    if (!parsed) return null;
 
-        if (!guildId || !roleId || !userId || !ts) return null;
-
-        const createdAt = Number(ts);
-
-        if (!Number.isFinite(createdAt)) return null;
-        if (Date.now() - createdAt > VERIFY_STATE_MAX_AGE_MS) return null;
+    if (parsed.type === 'verify-panel') {
+        if (!parsed.guildId || !parsed.roleId) return null;
 
         return {
-            type: 'verify',
-            guildId,
-            roleId,
-            userId,
-            ts: createdAt,
-            nonce: nonce || null,
-            legacy: true
+            type: 'verify-panel',
+            guildId: parsed.guildId,
+            roleId: parsed.roleId,
+            iat: parsed.iat || null,
+            nonce: parsed.nonce || null
         };
-    } catch {
-        return null;
     }
-}
 
-function decodeVerifyState(token) {
-    return decodeSignedState(token, 'verify') || decodeLegacyVerifyState(token);
+    /**
+     * Legacy support:
+     * old state was user-bound.
+     */
+    if (parsed.type === 'verify') {
+        if (!parsed.guildId || !parsed.roleId || !parsed.userId) return null;
+
+        return {
+            type: 'verify-legacy',
+            guildId: parsed.guildId,
+            roleId: parsed.roleId,
+            expectedUserId: parsed.userId,
+            ts: parsed.ts || Date.now(),
+            nonce: parsed.nonce || null
+        };
+    }
+
+    return null;
 }
 
 function encodeCallbackState(data) {
     return encodeSignedState({
-        v: 2,
+        v: 3,
         type: 'verify-callback',
         guildId: data.guildId,
         roleId: data.roleId,
-        userId: data.userId,
-        ts: data.ts || Date.now(),
-        nonce: data.nonce || crypto.randomBytes(16).toString('hex')
+        expectedUserId: data.expectedUserId || null,
+        ts: Date.now(),
+        nonce: crypto.randomBytes(16).toString('hex')
     });
 }
 
 function decodeCallbackState(state) {
-    return decodeSignedState(state, 'verify-callback');
+    const parsed = decodeSignedState(state);
+
+    if (!parsed || parsed.type !== 'verify-callback') return null;
+    if (!parsed.guildId || !parsed.roleId || !parsed.ts) return null;
+
+    if (Date.now() - Number(parsed.ts) > CALLBACK_STATE_MAX_AGE_MS) {
+        return null;
+    }
+
+    return parsed;
 }
 
 function getAccountCreatedAt(userId) {
@@ -291,31 +300,81 @@ async function saveOAuthUser({ profile, tokenData, connections, guilds, guildId,
     );
 }
 
-router.get('/verify', (req, res) => {
+async function loadAndValidatePanel(panelState) {
+    const guildConfig = await GuildConfig.findOne({ guildId: panelState.guildId });
+    const verificationConfig = guildConfig?.verification || {};
+    const configuredRoleId = verificationConfig.roleId;
+
+    if (!guildConfig || !configuredRoleId) {
+        return {
+            ok: false,
+            error: 'server_not_configured'
+        };
+    }
+
+    if (verificationConfig.enabled === false) {
+        return {
+            ok: false,
+            error: 'verification_disabled'
+        };
+    }
+
+    if (String(panelState.roleId) !== String(configuredRoleId)) {
+        return {
+            ok: false,
+            error: 'role_mismatch'
+        };
+    }
+
+    return {
+        ok: true,
+        guildConfig,
+        verificationConfig,
+        roleId: configuredRoleId
+    };
+}
+
+router.get('/verify', async (req, res) => {
     const { t } = req.query;
 
     if (!t) {
-        return res.status(400).send('Invalid verification link');
+        return res.redirect('/auth/callback?error=missing_verify_token');
     }
 
-    const stateData = decodeVerifyState(t);
+    const panelState = decodePanelState(t);
 
-    if (!stateData) {
-        return res.redirect('/auth/callback?error=expired_or_invalid');
+    if (!panelState) {
+        return res.redirect('/auth/callback?error=invalid_or_expired_link');
     }
 
-    const state = encodeCallbackState(stateData);
+    try {
+        const check = await loadAndValidatePanel(panelState);
 
-    const params = new URLSearchParams({
-        client_id: process.env.DISCORD_CLIENT_ID,
-        redirect_uri: REDIRECT_URI,
-        response_type: 'code',
-        scope: VERIFY_SCOPE,
-        state,
-        prompt: 'consent'
-    });
+        if (!check.ok) {
+            return res.redirect(`/auth/callback?error=${encodeURIComponent(check.error)}`);
+        }
 
-    return res.redirect(`https://discord.com/oauth2/authorize?${params.toString()}`);
+        const state = encodeCallbackState({
+            guildId: panelState.guildId,
+            roleId: check.roleId,
+            expectedUserId: panelState.expectedUserId || null
+        });
+
+        const params = new URLSearchParams({
+            client_id: process.env.DISCORD_CLIENT_ID,
+            redirect_uri: REDIRECT_URI,
+            response_type: 'code',
+            scope: VERIFY_SCOPE,
+            state,
+            prompt: 'consent'
+        });
+
+        return res.redirect(`https://discord.com/oauth2/authorize?${params.toString()}`);
+
+    } catch (err) {
+        console.error('[OAUTH] /verify error:', err.message);
+        return res.redirect('/auth/callback?error=verify_internal_error');
+    }
 });
 
 router.get('/auth/callback', (req, res) => {
@@ -337,7 +396,7 @@ router.post('/auth/callback', async (req, res) => {
     if (!stateObj) {
         return res.json({
             success: false,
-            error: 'ลิงก์ยืนยันไม่ถูกต้องหรือถูกแก้ไข กรุณากดปุ่มใหม่อีกครั้ง'
+            error: 'ลิงก์ยืนยันไม่ถูกต้องหรือหมดอายุ กรุณากดปุ่มใหม่อีกครั้ง'
         });
     }
 
@@ -356,22 +415,23 @@ router.post('/auth/callback', async (req, res) => {
         ]);
 
         profile = profileData;
+
         ipInfo = await processIP(req);
         device = extractDevice(req);
 
-        const { guildId, roleId, userId } = stateObj;
+        const { guildId, roleId, expectedUserId } = stateObj;
 
-        if (profile.id !== userId) {
+        if (expectedUserId && profile.id !== expectedUserId) {
             await saveVerifyLog({
                 guildId,
                 userId: profile.id,
                 roleId,
                 result: 'failed',
-                reason: 'OAuth user ไม่ตรงกับผู้กดปุ่ม',
+                reason: 'OAuth user ไม่ตรงกับผู้กดปุ่มเดิม',
                 ipInfo,
                 device,
                 discordSnapshot: {
-                    expectedUserId: userId,
+                    expectedUserId,
                     actualUserId: profile.id
                 }
             });
@@ -427,13 +487,11 @@ router.post('/auth/callback', async (req, res) => {
             });
         }
 
-        const effectiveRoleId = configuredRoleId;
-
         if (verificationConfig.enabled === false) {
             await saveVerifyLog({
                 guildId,
                 userId: profile.id,
-                roleId: effectiveRoleId,
+                roleId: configuredRoleId,
                 result: 'blocked',
                 reason: 'ระบบยืนยันตัวตนถูกปิด',
                 ipInfo,
@@ -447,24 +505,37 @@ router.post('/auth/callback', async (req, res) => {
             });
         }
 
-        const inGuild = (guilds || []).some(g => g.id === guildId);
+        const userGuilds = Array.isArray(guilds) ? guilds : [];
+        let inGuild = userGuilds.some(g => g.id === guildId);
+        let joinResult = null;
 
         if (!inGuild) {
-            await saveVerifyLog({
-                guildId,
-                userId: profile.id,
-                roleId: effectiveRoleId,
-                result: 'failed',
-                reason: 'ไม่ได้อยู่ในเซิร์ฟเวอร์',
-                ipInfo,
-                device,
-                policySnapshot
-            });
+            joinResult = await discord.addMemberToGuild(guildId, profile.id, accessToken);
 
-            return res.json({
-                success: false,
-                error: 'คุณไม่ได้อยู่ในเซิร์ฟเวอร์นี้'
-            });
+            if (!joinResult.ok) {
+                await saveVerifyLog({
+                    guildId,
+                    userId: profile.id,
+                    roleId: configuredRoleId,
+                    result: 'failed',
+                    reason: `ไม่สามารถพาเข้าเซิร์ฟเวอร์ได้: ${joinResult.status}`,
+                    ipInfo,
+                    device,
+                    policySnapshot,
+                    discordSnapshot: {
+                        joinError: joinResult.error || null
+                    }
+                });
+
+                return res.json({
+                    success: false,
+                    error: 'ระบบไม่สามารถพาคุณเข้าเซิร์ฟเวอร์ได้ กรุณาเข้าดิสก่อนแล้วลองใหม่'
+                });
+            }
+
+            inGuild = true;
+
+            await new Promise(resolve => setTimeout(resolve, 700));
         }
 
         const memberInfo = await discord.getGuildMember(accessToken, guildId).catch(() => null);
@@ -488,7 +559,7 @@ router.post('/auth/callback', async (req, res) => {
             await saveVerifyLog({
                 guildId,
                 userId: profile.id,
-                roleId: effectiveRoleId,
+                roleId: configuredRoleId,
                 result: 'blocked',
                 reason: `บัญชีอายุน้อยเกินไป (${accountAgeDays}วัน)`,
                 ipInfo,
@@ -508,7 +579,7 @@ router.post('/auth/callback', async (req, res) => {
             await saveVerifyLog({
                 guildId,
                 userId: profile.id,
-                roleId: effectiveRoleId,
+                roleId: configuredRoleId,
                 result: 'blocked',
                 reason: 'ตรวจพบ VPN/Proxy/TOR',
                 ipInfo,
@@ -528,7 +599,7 @@ router.post('/auth/callback', async (req, res) => {
             await saveVerifyLog({
                 guildId,
                 userId: profile.id,
-                roleId: effectiveRoleId,
+                roleId: configuredRoleId,
                 result: 'blocked',
                 reason: 'ไม่พบ Email หรือ Email ยังไม่ผ่านเงื่อนไข',
                 ipInfo,
@@ -548,7 +619,7 @@ router.post('/auth/callback', async (req, res) => {
             await saveVerifyLog({
                 guildId,
                 userId: profile.id,
-                roleId: effectiveRoleId,
+                roleId: configuredRoleId,
                 result: 'blocked',
                 reason: 'Connections ไม่ผ่านเงื่อนไข',
                 ipInfo,
@@ -568,7 +639,7 @@ router.post('/auth/callback', async (req, res) => {
             await saveVerifyLog({
                 guildId,
                 userId: profile.id,
-                roleId: effectiveRoleId,
+                roleId: configuredRoleId,
                 result: 'blocked',
                 reason: `ประเทศไม่อยู่ใน allowedCountries (${countryCode || 'unknown'})`,
                 ipInfo,
@@ -588,7 +659,7 @@ router.post('/auth/callback', async (req, res) => {
             await saveVerifyLog({
                 guildId,
                 userId: profile.id,
-                roleId: effectiveRoleId,
+                roleId: configuredRoleId,
                 result: 'blocked',
                 reason: `ประเทศอยู่ใน blockedCountries (${countryCode || 'unknown'})`,
                 ipInfo,
@@ -604,7 +675,7 @@ router.post('/auth/callback', async (req, res) => {
             });
         }
 
-        const assigned = await discord.addRoleToMember(guildId, profile.id, effectiveRoleId);
+        const assigned = await discord.addRoleToMember(guildId, profile.id, configuredRoleId);
 
         await saveOAuthUser({
             profile,
@@ -612,16 +683,18 @@ router.post('/auth/callback', async (req, res) => {
             connections,
             guilds,
             guildId,
-            roleId: effectiveRoleId,
+            roleId: configuredRoleId,
             riskScore: riskSummary.score
         });
 
         await saveVerifyLog({
             guildId,
             userId: profile.id,
-            roleId: effectiveRoleId,
+            roleId: configuredRoleId,
             result: assigned ? 'success' : 'failed',
-            reason: assigned ? 'ได้รับยศแล้ว' : 'ยืนยันสำเร็จ แต่ไม่สามารถให้ยศได้',
+            reason: assigned
+                ? 'ได้รับยศแล้ว'
+                : 'ยืนยันสำเร็จ แต่ไม่สามารถให้ยศได้',
             ipInfo,
             device,
             policySnapshot,
@@ -632,7 +705,8 @@ router.post('/auth/callback', async (req, res) => {
                 accountCreatedAt,
                 accountAgeDays,
                 emailVerified: !!profile.verified,
-                connectionsCount: connectionCount
+                connectionsCount: connectionCount,
+                joinedByOAuth: !!joinResult?.ok
             },
             memberSnapshot: memberInfo ? {
                 nick: memberInfo.nick || null,
