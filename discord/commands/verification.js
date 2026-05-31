@@ -1,15 +1,16 @@
- /*
+/*
 ================================================================================
 ⚠️ [AI COGNITIVE DIRECTIVE] ⚠️
 DO NOT REMOVE: handle, handleVerifyButton exports.
 
 verify_type:
 - false = กดปุ่มได้ยศเลยแบบเดิม
-- true  = OAuth2 direct URL button
+- true  = OAuth2 direct Discord authorize URL button
 
 Important:
 - OAuth2 panel ใหม่ต้องใช้ LINK button เท่านั้น
-- ห้ามให้ user กดแล้วบอท reply ลิงก์อีกชั้น
+- ปุ่ม OAuth ต้องเปิด discord.com/oauth2/authorize โดยตรง
+- ห้ามให้ user กดแล้วบอท reply ลิงก์อีกชั้นสำหรับ panel ใหม่
 - handleVerifyButton ยังเก็บ verify_oauth_ ไว้เพื่อ legacy panel เก่าเท่านั้น
 ================================================================================
 */
@@ -25,6 +26,8 @@ try {
 } catch (err) {
     console.warn("[VERIFY] GuildConfig model unavailable:", err.message);
 }
+
+const VERIFY_SCOPE = "identify email connections guilds guilds.members.read guilds.join";
 
 function getStateSecret() {
     return String(
@@ -43,6 +46,17 @@ function getDashboardUrl() {
         process.env.DASHBOARD_URL ||
         ""
     ).replace(/\/$/, "");
+}
+
+function getDiscordClientId(interaction) {
+    return String(
+        process.env.DISCORD_CLIENT_ID ||
+        config?.discord?.clientId ||
+        config?.system?.clientId ||
+        interaction?.client?.application?.id ||
+        interaction?.client?.user?.id ||
+        ""
+    );
 }
 
 function b64url(input) {
@@ -67,27 +81,64 @@ function createSignedState(payload) {
     return `${encoded}.${signPayload(encoded)}`;
 }
 
-function createPanelVerifyState({ guildId, roleId }) {
+/**
+ * State สำหรับ Discord OAuth callback โดยตรง
+ * LINK button เป็น static จึงยังไม่รู้ userId ตอนสร้าง panel
+ * userId จะรู้ตอน Discord redirect กลับ /auth/callback
+ */
+function createCallbackState({ guildId, roleId, expectedUserId = null }) {
     return createSignedState({
         v: 3,
-        type: "verify-panel",
+        type: "verify-callback",
         guildId,
         roleId,
-        iat: Date.now(),
+        expectedUserId,
+        ts: Date.now(),
         nonce: crypto.randomBytes(16).toString("hex")
     });
 }
 
+/**
+ * Legacy state สำหรับปุ่มเก่า verify_oauth_
+ * ใช้เฉพาะ panel เก่าที่เคยสร้างไว้ก่อนเปลี่ยนเป็น LINK button
+ */
 function createLegacyUserVerifyState({ guildId, roleId, userId }) {
     return createSignedState({
         v: 2,
-        type: "verify",
+        type: "verify-callback",
         guildId,
         roleId,
-        userId,
+        expectedUserId: userId,
         ts: Date.now(),
         nonce: crypto.randomBytes(16).toString("hex")
     });
+}
+
+function buildDiscordAuthorizeUrl({ interaction, guildId, roleId, expectedUserId = null }) {
+    const dashboardUrl = getDashboardUrl();
+    const clientId = getDiscordClientId(interaction);
+
+    if (!dashboardUrl) {
+        throw new Error("Missing PUBLIC_DASHBOARD_URL/DASHBOARD_URL");
+    }
+
+    if (!clientId) {
+        throw new Error("Missing DISCORD_CLIENT_ID/Application ID");
+    }
+
+    const redirectUri = `${dashboardUrl}/auth/callback`;
+    const state = createCallbackState({ guildId, roleId, expectedUserId });
+
+    const params = new URLSearchParams({
+        client_id: clientId,
+        redirect_uri: redirectUri,
+        response_type: "code",
+        scope: VERIFY_SCOPE,
+        state,
+        prompt: "consent"
+    });
+
+    return `https://discord.com/oauth2/authorize?${params.toString()}`;
 }
 
 async function syncGuildConfig(interaction, role, channel, panelMsg) {
@@ -108,7 +159,8 @@ async function syncGuildConfig(interaction, role, channel, panelMsg) {
                     "verification.roleName": role.name,
                     "verification.channelId": channel.id,
                     "verification.messageId": panelMsg.id,
-                    "verification.verifyPath": "/verify",
+                    "verification.verifyPath": "/auth/callback",
+                    "verification.oauthMode": "direct-discord-authorize",
                     "verification.updatedBy": interaction.user.id,
                     "verification.updatedAt": Date.now()
                 },
@@ -190,39 +242,28 @@ async function handleSetupVerify(interaction) {
     const row = new MessageActionRow();
 
     if (verifyType) {
-        const dashboardUrl = getDashboardUrl();
-
-        if (!dashboardUrl) {
-            return interaction.editReply({
-                content:
-                    `> ${config.emojis.error} ยังไม่ได้ตั้งค่า PUBLIC_DASHBOARD_URL หรือ DASHBOARD_URL\n` +
-                    `> แนะนำให้ตั้ง PUBLIC_DASHBOARD_URL เป็น URL ของ Dashboard 3 / Service 2`
-            });
-        }
-
-        let stateCode;
+        let authorizeUrl;
 
         try {
-            stateCode = createPanelVerifyState({
+            authorizeUrl = buildDiscordAuthorizeUrl({
+                interaction,
                 guildId: interaction.guild.id,
                 roleId: role.id
             });
         } catch (err) {
-            console.error("[VERIFY] Panel state signing failed:", err.message);
+            console.error("[VERIFY] Direct OAuth URL build failed:", err.message);
 
             return interaction.editReply({
                 content:
-                    `> ${config.emojis.error} ระบบยังไม่ได้ตั้งค่า secret สำหรับยืนยันลิงก์\n` +
-                    `> ให้ตั้ง VERIFY_STATE_SECRET ให้ตรงกันทั้ง Service 1 และ Service 2`
+                    `> ${config.emojis.error} สร้างลิงก์ OAuth ไม่สำเร็จ: ${err.message}\n` +
+                    `> ต้องตั้ง PUBLIC_DASHBOARD_URL, VERIFY_STATE_SECRET และถ้าจำเป็นให้ตั้ง DISCORD_CLIENT_ID ด้วย`
             });
         }
-
-        const verifyUrl = `${dashboardUrl}/verify?t=${encodeURIComponent(stateCode)}`;
 
         row.addComponents(
             new MessageButton()
                 .setStyle("LINK")
-                .setURL(verifyUrl)
+                .setURL(authorizeUrl)
                 .setLabel("✅ ยืนยันตัวตนเข้าดิส")
                 .setEmoji("✅")
         );
@@ -251,6 +292,7 @@ async function handleSetupVerify(interaction) {
                 channelId: channel.id,
                 messageId: panelMsg.id,
                 verifyType,
+                oauthMode: verifyType ? "direct-discord-authorize" : "direct-role",
                 setBy: interaction.user.id,
                 updatedAt: Date.now(),
                 createdAt: Date.now()
@@ -268,7 +310,7 @@ async function handleSetupVerify(interaction) {
                 {
                     name: "🔒 ประเภท",
                     value: verifyType
-                        ? "🔐 OAuth2 Direct URL Button"
+                        ? "🔐 OAuth2 Direct Discord Authorize"
                         : "✅ กดรับยศเลย",
                     inline: true
                 },
@@ -283,8 +325,8 @@ async function handleSetupVerify(interaction) {
             resultEmbed.addFields({
                 name: "🌐 Flow",
                 value:
-                    "กดปุ่ม → Discord OAuth → เว็บประมวลผล → สำเร็จ/ล้มเหลว\n" +
-                    "ไม่มีการ reply ลิงก์เพิ่มใน Discord แล้ว",
+                    "กดปุ่ม → Discord OAuth authorize → เว็บประมวลผล → สำเร็จ/ล้มเหลว\n" +
+                    "ปุ่มจะเปิดหน้า Discord โดยตรง ไม่ผ่าน /verify ก่อนแล้ว",
                 inline: false
             });
         }
@@ -354,40 +396,35 @@ async function handleVerifyButton(interaction) {
         }
     }
 
+    /**
+     * Legacy panel เก่าเท่านั้น
+     * Panel ใหม่จะไม่เข้า branch นี้แล้ว เพราะใช้ LINK button ไป Discord authorize ตรง ๆ
+     */
     if (customId.startsWith("verify_oauth_")) {
         const roleId = customId.replace("verify_oauth_", "");
-        const dashboardUrl = getDashboardUrl();
 
-        if (!dashboardUrl) {
-            return interaction.reply({
-                content: `> ${config.emojis.error} PUBLIC_DASHBOARD_URL/DASHBOARD_URL ยังไม่ได้ตั้งค่า`,
-                ephemeral: true
-            });
-        }
-
-        let stateCode;
+        let authorizeUrl;
 
         try {
-            stateCode = createLegacyUserVerifyState({
+            authorizeUrl = buildDiscordAuthorizeUrl({
+                interaction,
                 guildId: guild.id,
                 roleId,
-                userId: interaction.user.id
+                expectedUserId: interaction.user.id
             });
         } catch (err) {
-            console.error("[VERIFY] Legacy state signing failed:", err.message);
+            console.error("[VERIFY] Legacy direct OAuth URL build failed:", err.message);
 
             return interaction.reply({
-                content: `> ${config.emojis.error} ระบบยังไม่ได้ตั้งค่า secret สำหรับยืนยันลิงก์`,
+                content: `> ${config.emojis.error} สร้างลิงก์ OAuth ไม่สำเร็จ: ${err.message}`,
                 ephemeral: true
             });
         }
-
-        const verifyUrl = `${dashboardUrl}/verify?t=${encodeURIComponent(stateCode)}`;
 
         return interaction.reply({
             content:
                 `> แผงนี้เป็นแผงเก่า กรุณาให้แอดมินสร้างแผงใหม่\n` +
-                `> [คลิกเพื่อยืนยันตัวตน](${verifyUrl})`,
+                `> [คลิกเพื่อยืนยันตัวตน](${authorizeUrl})`,
             ephemeral: true
         });
     }
