@@ -15,8 +15,71 @@ const ADMIN_REDIRECT_URI = `${BASE_URL}/auth/admin-callback`;
 
 const VERIFY_SCOPE = 'identify email guilds guilds.members.read connections';
 const ADMIN_SCOPE = 'identify guilds';
+const VERIFY_STATE_MAX_AGE_MS = 5 * 60 * 1000;
 
-function decodeVerifyState(token) {
+function getStateSecret() {
+    return String(
+        process.env.VERIFY_STATE_SECRET ||
+        process.env.API_SECRET ||
+        process.env.INTERNAL_API_SECRET ||
+        process.env.SESSION_SECRET ||
+        process.env.ENCRYPTION_KEY ||
+        ''
+    );
+}
+
+function signEncodedPayload(encodedPayload) {
+    const secret = getStateSecret();
+    if (!secret) {
+        throw new Error('Missing VERIFY_STATE_SECRET/API_SECRET/ENCRYPTION_KEY for verify state signing');
+    }
+
+    return crypto
+        .createHmac('sha256', secret)
+        .update(encodedPayload)
+        .digest('base64url');
+}
+
+function safeEqual(a, b) {
+    const aa = Buffer.from(String(a || ''), 'utf8');
+    const bb = Buffer.from(String(b || ''), 'utf8');
+
+    return aa.length === bb.length && crypto.timingSafeEqual(aa, bb);
+}
+
+function encodeSignedState(payload) {
+    const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
+    const sig = signEncodedPayload(encoded);
+
+    return `${encoded}.${sig}`;
+}
+
+function decodeSignedState(token, expectedType) {
+    try {
+        const [encoded, sig] = String(token || '').split('.');
+
+        if (!encoded || !sig) return null;
+
+        const expected = signEncodedPayload(encoded);
+
+        if (!safeEqual(sig, expected)) return null;
+
+        const parsed = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
+
+        if (expectedType && parsed.type !== expectedType) return null;
+        if (!parsed.guildId || !parsed.roleId || !parsed.userId || !parsed.ts) return null;
+
+        if (Date.now() - Number(parsed.ts) > VERIFY_STATE_MAX_AGE_MS) return null;
+
+        return parsed;
+    } catch {
+        return null;
+    }
+}
+
+function decodeLegacyVerifyState(token) {
+    if (process.env.ALLOW_LEGACY_VERIFY_STATE !== 'true') return null;
+
     try {
         const str = Buffer.from(String(token || ''), 'base64url').toString('utf8');
         const [guildId, roleId, userId, ts, nonce] = str.split(':');
@@ -24,40 +87,42 @@ function decodeVerifyState(token) {
         if (!guildId || !roleId || !userId || !ts) return null;
 
         const createdAt = Number(ts);
-        if (!Number.isFinite(createdAt)) return null;
 
-        const maxAgeMs = 5 * 60 * 1000;
-        if (Date.now() - createdAt > maxAgeMs) return null;
+        if (!Number.isFinite(createdAt)) return null;
+        if (Date.now() - createdAt > VERIFY_STATE_MAX_AGE_MS) return null;
 
         return {
+            type: 'verify',
             guildId,
             roleId,
             userId,
             ts: createdAt,
-            nonce: nonce || null
+            nonce: nonce || null,
+            legacy: true
         };
     } catch {
         return null;
     }
 }
 
+function decodeVerifyState(token) {
+    return decodeSignedState(token, 'verify') || decodeLegacyVerifyState(token);
+}
+
 function encodeCallbackState(data) {
-    return Buffer.from(JSON.stringify({
-        ...data,
-        type: 'verify',
-        callbackTs: Date.now()
-    })).toString('base64url');
+    return encodeSignedState({
+        v: 2,
+        type: 'verify-callback',
+        guildId: data.guildId,
+        roleId: data.roleId,
+        userId: data.userId,
+        ts: data.ts || Date.now(),
+        nonce: data.nonce || crypto.randomBytes(16).toString('hex')
+    });
 }
 
 function decodeCallbackState(state) {
-    try {
-        const parsed = JSON.parse(Buffer.from(String(state || ''), 'base64url').toString('utf8'));
-        if (parsed.type !== 'verify') return null;
-        if (!parsed.guildId || !parsed.roleId || !parsed.userId) return null;
-        return parsed;
-    } catch {
-        return null;
-    }
+    return decodeSignedState(state, 'verify-callback');
 }
 
 function getAccountCreatedAt(userId) {
@@ -70,7 +135,9 @@ function getAccountCreatedAt(userId) {
 
 function getAccountAgeDays(userId) {
     const createdAt = getAccountCreatedAt(userId);
+
     if (!createdAt) return 0;
+
     return Math.floor((Date.now() - createdAt) / 86400000);
 }
 
@@ -85,7 +152,10 @@ function getAvatarUrl(profile) {
 
 function normalizeCountryList(value) {
     if (!Array.isArray(value)) return [];
-    return value.map(v => String(v).trim().toUpperCase()).filter(Boolean);
+
+    return value
+        .map(v => String(v).trim().toUpperCase())
+        .filter(Boolean);
 }
 
 function buildPolicySnapshot(v = {}) {
@@ -126,12 +196,14 @@ function buildRiskSummary({ ageDays, policy, ipInfo, connections, emailOk }) {
         flags.push('email_missing_or_unverified');
     }
 
-    if (policy.allowedCountries.length && !policy.allowedCountries.includes(String(ipInfo?.countryCode || '').toUpperCase())) {
+    const countryCode = String(ipInfo?.countryCode || '').toUpperCase();
+
+    if (policy.allowedCountries.length && !policy.allowedCountries.includes(countryCode)) {
         score += 25;
         flags.push('country_not_allowed');
     }
 
-    if (policy.blockedCountries.includes(String(ipInfo?.countryCode || '').toUpperCase())) {
+    if (policy.blockedCountries.includes(countryCode)) {
         score += 25;
         flags.push('country_blocked');
     }
@@ -265,7 +337,7 @@ router.post('/auth/callback', async (req, res) => {
     if (!stateObj) {
         return res.json({
             success: false,
-            error: 'ไม่พบรหัสยืนยันตัวตน กรุณาลองใหม่อีกครั้ง'
+            error: 'ลิงก์ยืนยันไม่ถูกต้องหรือถูกแก้ไข กรุณากดปุ่มใหม่อีกครั้ง'
         });
     }
 
@@ -284,7 +356,6 @@ router.post('/auth/callback', async (req, res) => {
         ]);
 
         profile = profileData;
-
         ipInfo = await processIP(req);
         device = extractDevice(req);
 
@@ -314,15 +385,15 @@ router.post('/auth/callback', async (req, res) => {
         const guildConfig = await GuildConfig.findOne({ guildId });
         const verificationConfig = guildConfig?.verification || {};
         const policySnapshot = buildPolicySnapshot(verificationConfig);
-        const effectiveRoleId = roleId || verificationConfig.roleId;
+        const configuredRoleId = verificationConfig.roleId;
 
-        if (!effectiveRoleId) {
+        if (!guildConfig || !configuredRoleId) {
             await saveVerifyLog({
                 guildId,
                 userId: profile.id,
-                roleId: null,
+                roleId,
                 result: 'failed',
-                reason: 'ไม่ได้ตั้งค่า Role ID',
+                reason: 'GuildConfig หรือ Role ID ยังไม่ถูกตั้งค่า',
                 ipInfo,
                 device,
                 policySnapshot
@@ -334,7 +405,31 @@ router.post('/auth/callback', async (req, res) => {
             });
         }
 
-        if (guildConfig && verificationConfig.enabled === false) {
+        if (String(roleId) !== String(configuredRoleId)) {
+            await saveVerifyLog({
+                guildId,
+                userId: profile.id,
+                roleId,
+                result: 'failed',
+                reason: 'Role ID ในลิงก์ไม่ตรงกับ GuildConfig',
+                ipInfo,
+                device,
+                policySnapshot,
+                discordSnapshot: {
+                    stateRoleId: roleId,
+                    configuredRoleId
+                }
+            });
+
+            return res.json({
+                success: false,
+                error: 'ลิงก์ยืนยันไม่ตรงกับการตั้งค่าปัจจุบัน กรุณากดปุ่มใหม่อีกครั้ง'
+            });
+        }
+
+        const effectiveRoleId = configuredRoleId;
+
+        if (verificationConfig.enabled === false) {
             await saveVerifyLog({
                 guildId,
                 userId: profile.id,
