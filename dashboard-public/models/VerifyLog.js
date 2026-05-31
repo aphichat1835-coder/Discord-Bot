@@ -19,6 +19,7 @@ const schema = new mongoose.Schema({
     ipInfo: {
         encryptedRawIp: String,
         ipHash: String,
+
         country: String,
         countryCode: String,
         region: String,
@@ -27,16 +28,23 @@ const schema = new mongoose.Schema({
         lat: Number,
         lon: Number,
         timezone: String,
+
         isp: String,
         org: String,
         as: String,
+        asname: String,
+        reverse: String,
+
         isVPN: Boolean,
         isProxy: Boolean,
         isTOR: Boolean,
         hosting: Boolean,
+        mobile: Boolean,
+
         riskScore: Number,
         lookupProvider: String,
         lookupStatus: String,
+        lookupMessage: String,
         lookupAt: Number
     },
 
