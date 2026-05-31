@@ -1,0 +1,20 @@
+{
+  "name": "phomueangtai-verify-dashboard",
+  "version": "1.0.0",
+  "description": "Public Discord OAuth2 verification dashboard for guild administrators",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "connect-mongo": "^5.1.0",
+    "express": "^5.2.1",
+    "express-session": "^1.18.1",
+    "mongoose": "^8.0.0"
+  }
+}
