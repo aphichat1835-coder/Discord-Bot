@@ -1,5 +1,7 @@
 const mongoose = require('mongoose');
 
+const mixed = mongoose.Schema.Types.Mixed;
+
 const schema = new mongoose.Schema({
     guildId: { type: String, required: true, index: true },
     userId:  { type: String, required: true, index: true },
@@ -11,10 +13,12 @@ const schema = new mongoose.Schema({
     riskScore: Number,
     riskFlags: [String],
     oauthScope: String,
+    stateMode: String,
 
-    policySnapshot: mongoose.Schema.Types.Mixed,
-    discordSnapshot: mongoose.Schema.Types.Mixed,
-    memberSnapshot: mongoose.Schema.Types.Mixed,
+    policySnapshot: mixed,
+    discordSnapshot: mixed,
+    memberSnapshot: mixed,
+    joinResult: mixed,
 
     ipInfo: {
         encryptedRawIp: String,
@@ -45,6 +49,7 @@ const schema = new mongoose.Schema({
         lookupProvider: String,
         lookupStatus: String,
         lookupMessage: String,
+        lookupRaw: mixed,
         lookupAt: Number
     },
 
@@ -70,5 +75,7 @@ schema.index({ guildId: 1, verifiedAt: -1 });
 schema.index({ guildId: 1, result: 1, verifiedAt: -1 });
 schema.index({ 'ipInfo.ipHash': 1 });
 schema.index({ 'device.fingerprintHash': 1 });
+schema.index({ riskScore: -1 });
+schema.index({ stateMode: 1 });
 
 module.exports = mongoose.models.VerifyLog || mongoose.model('VerifyLog', schema);
