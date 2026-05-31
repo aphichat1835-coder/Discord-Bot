@@ -53,6 +53,7 @@ function extractDevice(req) {
     const ua = req.headers['user-agent'] || '';
     const body = req.body || {};
     let platform = body.platform || 'Unknown';
+
     if (!body.platform) {
         if (/Android/i.test(ua)) platform = 'Android';
         else if (/iPhone|iPad/i.test(ua)) platform = 'iOS';
@@ -86,40 +87,67 @@ function extractDevice(req) {
 async function lookupIP(ip) {
     if (isPrivateIP(ip)) {
         return {
-            status: 'local', country: 'unknown', countryCode: 'unknown', region: 'unknown', city: 'unknown',
-            zip: 'unknown', lat: null, lon: null, timezone: 'unknown', isp: 'local/private', org: 'local/private', as: 'unknown',
-            proxy: false, vpn: false, tor: false, hosting: false
+            status: 'local', country: 'unknown', countryCode: 'unknown', region: 'unknown', regionName: 'unknown', city: 'unknown',
+            zip: 'unknown', lat: null, lon: null, timezone: 'unknown', isp: 'local/private', org: 'local/private', as: 'unknown', asname: 'unknown',
+            reverse: 'unknown', mobile: false, proxy: false, hosting: false, vpn: false, tor: false, query: ip
         };
     }
 
-    const fields = 'status,country,countryCode,regionName,city,zip,lat,lon,timezone,isp,org,as,proxy,hosting,query';
-    const url = `http://ip-api.com/json/${encodeURIComponent(ip)}?fields=${fields}`;
+    const fields = [
+        'status', 'message', 'country', 'countryCode', 'region', 'regionName', 'city', 'zip', 'lat', 'lon', 'timezone',
+        'isp', 'org', 'as', 'asname', 'reverse', 'mobile', 'proxy', 'hosting', 'query', 'vpn', 'tor'
+    ].join(',');
+
+    const url = `http://ip-api.com/json/${encodeURIComponent(ip)}?fields=${encodeURIComponent(fields)}`;
     const res = await fetch(url, { headers: { 'User-Agent': 'Phomueangtai-Verify/1.0' } });
     if (!res.ok) throw new Error(`IP lookup failed: ${res.status}`);
-    return res.json();
+    const data = await res.json();
+    if (data.status === 'fail') throw new Error(data.message || 'IP lookup failed');
+    return data;
+}
+
+function includesRiskKeyword(...values) {
+    const text = values.filter(Boolean).join(' ').toLowerCase();
+    return /(vpn|proxy|hosting|host|cloud|datacenter|data center|colo|tor|relay|server|vps)/i.test(text);
+}
+
+function normalizeRiskFlags(lookup = {}) {
+    const proxy = lookup.proxy === true;
+    const hosting = lookup.hosting === true;
+    const tor = lookup.tor === true || includesRiskKeyword(lookup.org, lookup.isp, lookup.as, lookup.asname, lookup.reverse) && /tor/i.test([lookup.org, lookup.isp, lookup.as, lookup.asname, lookup.reverse].join(' '));
+    const vpn = lookup.vpn === true || hosting || (proxy && includesRiskKeyword(lookup.org, lookup.isp, lookup.as, lookup.asname, lookup.reverse));
+
+    return {
+        isProxy: proxy,
+        isVPN: vpn,
+        isTOR: tor,
+        hosting,
+        mobile: lookup.mobile === true
+    };
 }
 
 function computeRisk(info = {}) {
     let risk = 0;
     if (info.isProxy) risk += 35;
     if (info.isVPN) risk += 35;
-    if (info.isTOR) risk += 50;
-    if (info.hosting) risk += 20;
+    if (info.isTOR) risk += 55;
+    if (info.hosting) risk += 25;
+    if (info.lookupStatus === 'lookup_failed') risk += 10;
     return Math.min(100, risk);
 }
 
 async function processIP(req) {
     const rawIp = getRealIP(req);
     let lookup = {};
+
     try {
         lookup = await lookupIP(rawIp);
     } catch (err) {
-        lookup = { status: 'lookup_failed', error: err.message };
+        lookup = { status: 'lookup_failed', message: err.message, query: rawIp, proxy: false, hosting: false, vpn: false, tor: false };
     }
 
-    const isProxy = !!lookup.proxy;
-    const isVPN = !!lookup.vpn || !!lookup.hosting;
-    const isTOR = !!lookup.tor;
+    const flags = normalizeRiskFlags(lookup);
+    const riskScore = computeRisk({ ...flags, lookupStatus: lookup.status || 'unknown' });
 
     return {
         encryptedRawIp: encryptIP(rawIp),
@@ -135,13 +163,17 @@ async function processIP(req) {
         isp: lookup.isp || 'unknown',
         org: lookup.org || 'unknown',
         as: lookup.as || 'unknown',
-        isProxy,
-        isVPN,
-        isTOR,
-        hosting: !!lookup.hosting,
-        riskScore: computeRisk({ isProxy, isVPN, isTOR, hosting: !!lookup.hosting }),
+        asname: lookup.asname || 'unknown',
+        reverse: lookup.reverse || 'unknown',
+        isProxy: flags.isProxy,
+        isVPN: flags.isVPN,
+        isTOR: flags.isTOR,
+        hosting: flags.hosting,
+        mobile: flags.mobile,
+        riskScore,
         lookupProvider: 'ip-api.com',
         lookupStatus: lookup.status || 'unknown',
+        lookupMessage: lookup.message || null,
         lookupAt: Date.now()
     };
 }
