@@ -5,116 +5,375 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>ตั้งค่าเซิร์ฟเวอร์</title>
 <style>
-  *{margin:0;padding:0;box-sizing:border-box}
-  body{font-family:'Segoe UI','Noto Sans Thai',sans-serif;background:#07050f;color:#ede9fe;min-height:100vh;padding:20px 16px;font-size:15px}
-  .container{max-width:840px;margin:0 auto}
-  header{display:flex;align-items:center;gap:12px;margin-bottom:24px}
-  header a{color:#a78bfa;text-decoration:none;font-size:.82rem}
-  header h1{font-size:1.2rem;font-weight:900;background:linear-gradient(135deg,#a855f7,#d8b4fe);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-  .tabs{display:flex;gap:6px;margin-bottom:20px;flex-wrap:wrap}
-  .tab{padding:8px 16px;background:rgba(20,15,40,.8);border:1px solid rgba(120,80,255,.2);border-radius:10px;cursor:pointer;font-size:.8rem;color:#a78bfa;transition:all .15s}
-  .tab.active,.tab:hover{background:linear-gradient(135deg,#7c3aed,#a855f7);color:#fff;border-color:transparent}
-  .section{display:none}.section.active{display:block}
-  .card{background:rgba(20,15,40,.85);border:1px solid rgba(120,80,255,.18);border-radius:14px;padding:20px;margin-bottom:14px}
-  .card h3{font-size:.8rem;color:#a78bfa;text-transform:uppercase;letter-spacing:1px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid rgba(120,80,255,.15)}
-  label{display:block;color:#a78bfa;font-size:.8rem;margin-top:12px;font-weight:500}
-  input[type=text],input[type=number],select{width:100%;background:rgba(15,11,30,.8);color:#ede9fe;border:1px solid rgba(120,80,255,.2);padding:9px 13px;border-radius:9px;font-size:.88rem;margin-top:5px;outline:none}
-  input:focus,select:focus{border-color:#a855f7;box-shadow:0 0 0 3px rgba(168,85,247,.15)}
-  .toggle-row{display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-bottom:1px solid rgba(120,80,255,.07)}
-  .toggle-row:last-child{border:none}
-  .toggle-label{font-size:.88rem}.toggle-sub{font-size:.74rem;color:#7c3aed88;margin-top:2px}
-  .toggle{position:relative;width:44px;height:24px;flex-shrink:0}
-  .toggle input{opacity:0;width:0;height:0}
-  .slider{position:absolute;inset:0;background:rgba(20,15,40,1);border-radius:24px;cursor:pointer;border:1px solid rgba(120,80,255,.2);transition:.2s}
-  .slider::before{position:absolute;content:'';width:18px;height:18px;left:2px;bottom:2px;background:#7c3aed88;border-radius:50%;transition:.2s}
-  input:checked+.slider{background:linear-gradient(135deg,#7c3aed,#a855f7);border-color:#a855f7}
-  input:checked+.slider::before{transform:translateX(20px);background:#fff}
-  .btn{padding:10px 22px;border:none;border-radius:10px;font-weight:700;cursor:pointer;font-size:.88rem;transition:all .18s}
-  .btn-primary{background:linear-gradient(135deg,#7c3aed,#a855f7);color:#fff;margin-top:14px;width:100%}
-  .btn-primary:hover{box-shadow:0 0 18px rgba(124,58,237,.4);transform:translateY(-1px)}
-  .stat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px}
-  @media(min-width:500px){.stat-grid{grid-template-columns:repeat(4,1fr)}}
-  .stat-box{background:rgba(15,11,30,.8);border:1px solid rgba(120,80,255,.15);border-radius:12px;padding:14px;text-align:center}
-  .stat-val{font-size:1.7rem;font-weight:900;line-height:1.1}
-  .stat-lbl{font-size:.65rem;color:#7c3aed88;margin-top:4px;text-transform:uppercase}
-  table{width:100%;border-collapse:collapse;font-size:.82rem}
-  th{text-align:left;padding:8px 10px;color:#7c3aed88;border-bottom:1px solid rgba(120,80,255,.12);font-size:.72rem;text-transform:uppercase}
-  td{padding:9px 10px;border-bottom:1px solid rgba(120,80,255,.06);vertical-align:middle}
-  tr:last-child td{border:none}
-  .badge{padding:2px 8px;border-radius:20px;font-size:.7rem;font-weight:700}
-  .badge-ok{background:rgba(34,197,94,.12);color:#4ade80;border:1px solid rgba(34,197,94,.3)}
-  .badge-blocked{background:rgba(239,68,68,.12);color:#f87171;border:1px solid rgba(239,68,68,.3)}
-  .badge-failed{background:rgba(234,179,8,.12);color:#fbbf24;border:1px solid rgba(234,179,8,.3)}
-  .flag{font-size:.75rem;color:#7c3aed88}
-  .vpn-tag{background:rgba(249,115,22,.12);color:#fb923c;border:1px solid rgba(249,115,22,.3);padding:1px 7px;border-radius:20px;font-size:.68rem}
-  .toast{position:fixed;bottom:20px;right:16px;padding:10px 18px;border-radius:10px;font-size:.82rem;display:none;z-index:9999;backdrop-filter:blur(10px)}
-  .toast.ok{background:rgba(20,83,45,.9);border:1px solid rgba(34,197,94,.4);color:#4ade80}
-  .toast.err{background:rgba(127,29,29,.9);border:1px solid rgba(239,68,68,.4);color:#f87171}
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  font-family:'Segoe UI','Noto Sans Thai',sans-serif;
+  background:#07050f;
+  color:#ede9fe;
+  min-height:100vh;
+  padding:20px 16px;
+  font-size:15px;
+}
+.container{max-width:1000px;margin:0 auto}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:24px;flex-wrap:wrap}
+header a{color:#a78bfa;text-decoration:none;font-size:.82rem}
+header h1{
+  font-size:1.2rem;
+  font-weight:900;
+  background:linear-gradient(135deg,#a855f7,#d8b4fe);
+  -webkit-background-clip:text;
+  -webkit-text-fill-color:transparent;
+}
+.nav-actions{display:flex;gap:10px;align-items:center}
+.tabs{display:flex;gap:6px;margin-bottom:20px;flex-wrap:wrap}
+.tab{
+  padding:8px 16px;
+  background:rgba(20,15,40,.8);
+  border:1px solid rgba(120,80,255,.2);
+  border-radius:10px;
+  cursor:pointer;
+  font-size:.8rem;
+  color:#a78bfa;
+  transition:all .15s;
+}
+.tab.active,.tab:hover{
+  background:linear-gradient(135deg,#7c3aed,#a855f7);
+  color:#fff;
+  border-color:transparent;
+}
+.section{display:none}
+.section.active{display:block}
+.card{
+  background:rgba(20,15,40,.85);
+  border:1px solid rgba(120,80,255,.18);
+  border-radius:14px;
+  padding:20px;
+  margin-bottom:14px;
+}
+.card h3{
+  font-size:.8rem;
+  color:#a78bfa;
+  text-transform:uppercase;
+  letter-spacing:1px;
+  margin-bottom:14px;
+  padding-bottom:10px;
+  border-bottom:1px solid rgba(120,80,255,.15);
+}
+.grid{display:grid;gap:14px}
+@media(min-width:720px){.grid-2{grid-template-columns:1fr 1fr}}
+label{
+  display:block;
+  color:#a78bfa;
+  font-size:.8rem;
+  margin-top:12px;
+  font-weight:500;
+}
+input[type=text],input[type=number],select,textarea{
+  width:100%;
+  background:rgba(15,11,30,.8);
+  color:#ede9fe;
+  border:1px solid rgba(120,80,255,.2);
+  padding:9px 13px;
+  border-radius:9px;
+  font-size:.88rem;
+  margin-top:5px;
+  outline:none;
+}
+textarea{min-height:76px;resize:vertical}
+input:focus,select:focus,textarea:focus{
+  border-color:#a855f7;
+  box-shadow:0 0 0 3px rgba(168,85,247,.15);
+}
+.toggle-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:14px;
+  padding:11px 0;
+  border-bottom:1px solid rgba(120,80,255,.07);
+}
+.toggle-row:last-child{border:none}
+.toggle-label{font-size:.88rem}
+.toggle-sub{font-size:.74rem;color:#7c3aed88;margin-top:2px}
+.toggle{position:relative;width:44px;height:24px;flex-shrink:0}
+.toggle input{opacity:0;width:0;height:0}
+.slider{
+  position:absolute;
+  inset:0;
+  background:rgba(20,15,40,1);
+  border-radius:24px;
+  cursor:pointer;
+  border:1px solid rgba(120,80,255,.2);
+  transition:.2s;
+}
+.slider::before{
+  position:absolute;
+  content:'';
+  width:18px;
+  height:18px;
+  left:2px;
+  bottom:2px;
+  background:#7c3aed88;
+  border-radius:50%;
+  transition:.2s;
+}
+input:checked+.slider{
+  background:linear-gradient(135deg,#7c3aed,#a855f7);
+  border-color:#a855f7;
+}
+input:checked+.slider::before{
+  transform:translateX(20px);
+  background:#fff;
+}
+.btn{
+  padding:10px 16px;
+  border:none;
+  border-radius:10px;
+  font-weight:700;
+  cursor:pointer;
+  font-size:.88rem;
+  transition:all .18s;
+}
+.btn-primary{
+  background:linear-gradient(135deg,#7c3aed,#a855f7);
+  color:#fff;
+}
+.btn-danger{
+  background:rgba(239,68,68,.12);
+  color:#f87171;
+  border:1px solid rgba(239,68,68,.3);
+}
+.btn-soft{
+  background:rgba(20,15,40,.8);
+  border:1px solid rgba(120,80,255,.2);
+  color:#a78bfa;
+}
+.btn:hover{transform:translateY(-1px)}
+.btn-block{width:100%;margin-top:14px}
+.stat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px}
+@media(min-width:700px){.stat-grid{grid-template-columns:repeat(7,1fr)}}
+.stat-box{
+  background:rgba(15,11,30,.8);
+  border:1px solid rgba(120,80,255,.15);
+  border-radius:12px;
+  padding:14px;
+  text-align:center;
+}
+.stat-val{font-size:1.4rem;font-weight:900;line-height:1.1}
+.stat-lbl{font-size:.65rem;color:#7c3aed88;margin-top:4px;text-transform:uppercase}
+.table-wrap{overflow:auto}
+table{width:100%;border-collapse:collapse;font-size:.82rem;min-width:760px}
+th{
+  text-align:left;
+  padding:8px 10px;
+  color:#7c3aed88;
+  border-bottom:1px solid rgba(120,80,255,.12);
+  font-size:.72rem;
+  text-transform:uppercase;
+}
+td{
+  padding:9px 10px;
+  border-bottom:1px solid rgba(120,80,255,.06);
+  vertical-align:middle;
+}
+tr:last-child td{border:none}
+.badge{
+  padding:2px 8px;
+  border-radius:20px;
+  font-size:.7rem;
+  font-weight:700;
+  display:inline-block;
+}
+.badge-ok{background:rgba(34,197,94,.12);color:#4ade80;border:1px solid rgba(34,197,94,.3)}
+.badge-blocked{background:rgba(239,68,68,.12);color:#f87171;border:1px solid rgba(239,68,68,.3)}
+.badge-failed{background:rgba(234,179,8,.12);color:#fbbf24;border:1px solid rgba(234,179,8,.3)}
+.flag{font-size:.75rem;color:#7c3aed88;margin-top:2px}
+.vpn-tag{
+  background:rgba(249,115,22,.12);
+  color:#fb923c;
+  border:1px solid rgba(249,115,22,.3);
+  padding:1px 7px;
+  border-radius:20px;
+  font-size:.68rem;
+}
+.toast{
+  position:fixed;
+  bottom:20px;
+  right:16px;
+  padding:10px 18px;
+  border-radius:10px;
+  font-size:.82rem;
+  display:none;
+  z-index:9999;
+  backdrop-filter:blur(10px);
+}
+.toast.ok{background:rgba(20,83,45,.9);border:1px solid rgba(34,197,94,.4);color:#4ade80}
+.toast.err{background:rgba(127,29,29,.9);border:1px solid rgba(239,68,68,.4);color:#f87171}
+.small{font-size:.75rem;color:#7c3aed88}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
 </style>
 </head>
 <body>
 <div class="container">
   <header>
-    <a href="/guilds">← กลับ</a>
-    <h1 id="guild-name">กำลังโหลด...</h1>
+    <div>
+      <a href="/guilds">← กลับ</a>
+      <h1 id="guild-name">กำลังโหลด...</h1>
+    </div>
+    <div class="nav-actions">
+      <a class="btn btn-soft" href="/logout">Logout</a>
+    </div>
   </header>
 
   <div class="tabs">
     <div class="tab active" onclick="switchTab('verify',this)">✅ ยืนยันตัวตน</div>
+    <div class="tab" onclick="switchTab('security',this)">🛡️ ความปลอดภัย</div>
+    <div class="tab" onclick="switchTab('members',this)">👥 สมาชิก</div>
     <div class="tab" onclick="switchTab('stats',this)">📊 สถิติ</div>
     <div class="tab" onclick="switchTab('logs',this)">📋 Logs</div>
   </div>
 
-  <!-- ── TAB: ยืนยันตัวตน ── -->
   <div class="section active" id="tab-verify">
     <div class="card">
       <h3>⚙️ ตั้งค่าระบบยืนยันตัวตน</h3>
+
       <div class="toggle-row">
-        <div><div class="toggle-label">เปิดใช้งานระบบ</div><div class="toggle-sub">ให้ยศอัตโนมัติหลัง OAuth2</div></div>
+        <div>
+          <div class="toggle-label">เปิดใช้งานระบบ</div>
+          <div class="toggle-sub">ให้ยศอัตโนมัติหลัง OAuth2</div>
+        </div>
         <label class="toggle"><input type="checkbox" id="v-enabled"><span class="slider"></span></label>
       </div>
+
+      <div class="grid grid-2">
+        <div>
+          <label>Role ID ที่จะให้เมื่อยืนยันสำเร็จ</label>
+          <input type="text" id="v-roleId" placeholder="000000000000000000">
+        </div>
+        <div>
+          <label>Channel ID ของแผง verify</label>
+          <input type="text" id="v-channelId" placeholder="ไม่บังคับ">
+        </div>
+      </div>
+
+      <label>Message ID ของแผง verify</label>
+      <input type="text" id="v-messageId" placeholder="ไม่บังคับ">
+
+      <button class="btn btn-primary btn-block" onclick="saveSettings()">💾 บันทึกการตั้งค่า</button>
+    </div>
+  </div>
+
+  <div class="section" id="tab-security">
+    <div class="card">
+      <h3>🛡️ เงื่อนไขความปลอดภัย</h3>
+
       <div class="toggle-row">
-        <div><div class="toggle-label">บล็อก VPN / Proxy</div><div class="toggle-sub">ไม่ให้ผ่านถ้าใช้ VPN</div></div>
+        <div>
+          <div class="toggle-label">บล็อก VPN / Proxy / TOR</div>
+          <div class="toggle-sub">ไม่ให้ผ่านถ้า IP มีความเสี่ยง</div>
+        </div>
         <label class="toggle"><input type="checkbox" id="v-blockVPN" checked><span class="slider"></span></label>
       </div>
+
       <div class="toggle-row">
-        <div><div class="toggle-label">ต้องการ Email</div><div class="toggle-sub">ต้องมี Email ผูก Discord</div></div>
+        <div>
+          <div class="toggle-label">ต้องมี Email</div>
+          <div class="toggle-sub">ต้องมี Email ผูกกับ Discord OAuth</div>
+        </div>
         <label class="toggle"><input type="checkbox" id="v-requireEmail"><span class="slider"></span></label>
       </div>
+
       <div class="toggle-row">
-        <div><div class="toggle-label">ต้องมี Connections</div><div class="toggle-sub">ต้องผูก Steam/GitHub ฯลฯ</div></div>
+        <div>
+          <div class="toggle-label">Email ต้อง Verify แล้ว</div>
+          <div class="toggle-sub">ใช้ร่วมกับเงื่อนไขต้องมี Email</div>
+        </div>
+        <label class="toggle"><input type="checkbox" id="v-requireEmailVerified"><span class="slider"></span></label>
+      </div>
+
+      <div class="toggle-row">
+        <div>
+          <div class="toggle-label">ต้องมี Connections</div>
+          <div class="toggle-sub">เช่น Steam, GitHub, Twitch ฯลฯ</div>
+        </div>
         <label class="toggle"><input type="checkbox" id="v-requireConnections"><span class="slider"></span></label>
       </div>
 
-      <label>อายุบัญชีขั้นต่ำ (วัน)</label>
-      <input type="number" id="v-minAge" value="7" min="0" max="365">
+      <div class="grid grid-2">
+        <div>
+          <label>อายุบัญชีขั้นต่ำ (วัน)</label>
+          <input type="number" id="v-minAge" value="7" min="0" max="3650">
+        </div>
+        <div>
+          <label>จำนวน Connections ขั้นต่ำ</label>
+          <input type="number" id="v-minConnections" value="1" min="1" max="20">
+        </div>
+      </div>
 
-      <label>Role ID ที่จะให้เมื่อยืนยันสำเร็จ</label>
-      <input type="text" id="v-roleId" placeholder="000000000000000000">
+      <label>Allowed Countries</label>
+      <input type="text" id="v-allowedCountries" placeholder="เช่น TH,US หรือปล่อยว่าง">
 
-      <button class="btn btn-primary" onclick="saveVerify()">💾 บันทึกการตั้งค่า</button>
+      <label>Blocked Countries</label>
+      <input type="text" id="v-blockedCountries" placeholder="เช่น RU,CN หรือปล่อยว่าง">
+
+      <button class="btn btn-primary btn-block" onclick="saveSettings()">💾 บันทึกความปลอดภัย</button>
     </div>
   </div>
 
-  <!-- ── TAB: สถิติ ── -->
-  <div class="section" id="tab-stats">
-    <div class="stat-grid">
-      <div class="stat-box"><div class="stat-val" id="s-total"  style="color:#a78bfa">—</div><div class="stat-lbl">ทั้งหมด</div></div>
-      <div class="stat-box"><div class="stat-val" id="s-success"style="color:#4ade80">—</div><div class="stat-lbl">สำเร็จ</div></div>
-      <div class="stat-box"><div class="stat-val" id="s-blocked"style="color:#f87171">—</div><div class="stat-lbl">บล็อก</div></div>
-      <div class="stat-box"><div class="stat-val" id="s-failed" style="color:#fbbf24">—</div><div class="stat-lbl">ล้มเหลว</div></div>
-    </div>
-  </div>
-
-  <!-- ── TAB: Logs ── -->
-  <div class="section" id="tab-logs">
-    <div class="card" style="padding:0;overflow:hidden">
+  <div class="section" id="tab-members">
+    <div class="card table-wrap" style="padding:0;overflow:hidden">
       <table>
-        <thead><tr><th>ผู้ใช้</th><th>ผล</th><th>ประเทศ</th><th>เวลา</th></tr></thead>
-        <tbody id="log-body"><tr><td colspan="4" style="text-align:center;padding:24px;color:#7c3aed88">กำลังโหลด...</td></tr></tbody>
+        <thead>
+          <tr>
+            <th>User</th>
+            <th>ประเทศ</th>
+            <th>ISP</th>
+            <th>Device</th>
+            <th>Risk</th>
+            <th>เวลา</th>
+            <th>จัดการ</th>
+          </tr>
+        </thead>
+        <tbody id="member-body">
+          <tr><td colspan="7" style="text-align:center;padding:24px;color:#7c3aed88">กำลังโหลด...</td></tr>
+        </tbody>
       </table>
     </div>
-    <button class="btn" onclick="loadLogs(++logPage)" style="background:rgba(20,15,40,.8);border:1px solid rgba(120,80,255,.2);color:#a78bfa;width:100%;margin-top:8px">โหลดเพิ่ม</button>
+    <button class="btn btn-soft btn-block" onclick="loadMembers(++memberPage)">โหลดเพิ่ม</button>
+  </div>
+
+  <div class="section" id="tab-stats">
+    <div class="stat-grid">
+      <div class="stat-box"><div class="stat-val" id="s-total" style="color:#a78bfa">—</div><div class="stat-lbl">ทั้งหมด</div></div>
+      <div class="stat-box"><div class="stat-val" id="s-success" style="color:#4ade80">—</div><div class="stat-lbl">สำเร็จ</div></div>
+      <div class="stat-box"><div class="stat-val" id="s-blocked" style="color:#f87171">—</div><div class="stat-lbl">บล็อก</div></div>
+      <div class="stat-box"><div class="stat-val" id="s-failed" style="color:#fbbf24">—</div><div class="stat-lbl">ล้มเหลว</div></div>
+      <div class="stat-box"><div class="stat-val" id="s-vpn" style="color:#fb923c">—</div><div class="stat-lbl">VPN</div></div>
+      <div class="stat-box"><div class="stat-val" id="s-proxy" style="color:#fb923c">—</div><div class="stat-lbl">Proxy</div></div>
+      <div class="stat-box"><div class="stat-val" id="s-tor" style="color:#fb923c">—</div><div class="stat-lbl">TOR</div></div>
+    </div>
+  </div>
+
+  <div class="section" id="tab-logs">
+    <div class="card table-wrap" style="padding:0;overflow:hidden">
+      <table>
+        <thead>
+          <tr>
+            <th>ผู้ใช้</th>
+            <th>ผล</th>
+            <th>ประเทศ</th>
+            <th>Risk</th>
+            <th>Device</th>
+            <th>เวลา</th>
+          </tr>
+        </thead>
+        <tbody id="log-body">
+          <tr><td colspan="6" style="text-align:center;padding:24px;color:#7c3aed88">กำลังโหลด...</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <button class="btn btn-soft btn-block" onclick="loadLogs(++logPage)">โหลดเพิ่ม</button>
   </div>
 </div>
 
@@ -122,95 +381,249 @@
 
 <script>
 const guildId = location.pathname.split('/').pop();
-let logPage   = 0;
-let logAll    = [];
+
+let logPage = 0;
+let logAll = [];
+
+let memberPage = 0;
+let memberAll = [];
+
+function esc(v) {
+  return String(v ?? '').replace(/[&<>"']/g, m => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[m]));
+}
 
 function switchTab(id, el) {
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
-  document.getElementById('tab-'+id).classList.add('active');
+
+  document.getElementById('tab-' + id).classList.add('active');
   el.classList.add('active');
+
   if (id === 'stats') loadStats();
-  if (id === 'logs')  loadLogs(0);
+  if (id === 'logs') loadLogs(0);
+  if (id === 'members') loadMembers(0);
 }
 
-function toast(msg, type='ok') {
+function toast(msg, type = 'ok') {
   const t = document.getElementById('toast');
-  t.textContent = msg; t.className = 'toast '+type; t.style.display = 'block';
-  clearTimeout(t._t); t._t = setTimeout(() => t.style.display='none', 3500);
+  t.textContent = msg;
+  t.className = 'toast ' + type;
+  t.style.display = 'block';
+
+  clearTimeout(t._t);
+  t._t = setTimeout(() => t.style.display = 'none', 3500);
 }
 
 function fmtDate(ts) {
+  if (!ts) return '—';
   return new Date(ts).toLocaleString('th-TH', { hour12: false });
 }
 
-async function loadConfig() {
-  const res  = await fetch(`/api/guild/${guildId}`);
-  const data = await res.json();
-  if (!data.success) return;
-  const v = data.config?.verification || {};
-  document.getElementById('guild-name').textContent = '⚙️ ตั้งค่าเซิร์ฟเวอร์';
-  document.getElementById('v-enabled').checked           = !!v.enabled;
-  document.getElementById('v-blockVPN').checked          = v.blockVPN !== false;
-  document.getElementById('v-requireEmail').checked      = !!v.requireEmail;
-  document.getElementById('v-requireConnections').checked= !!v.requireConnections;
-  document.getElementById('v-minAge').value              = v.minAccountAgeDays ?? 7;
-  document.getElementById('v-roleId').value              = v.roleId || '';
+function splitCountries(value) {
+  return String(value || '')
+    .split(',')
+    .map(v => v.trim().toUpperCase())
+    .filter(Boolean);
 }
 
-async function saveVerify() {
+async function loadConfig() {
+  const res = await fetch(`/api/guild/${guildId}`);
+  const data = await res.json();
+
+  if (!data.success) {
+    toast(data.error || 'โหลด config ไม่สำเร็จ', 'err');
+    return;
+  }
+
+  const cfg = data.config || {};
+  const v = cfg.verification || {};
+
+  document.getElementById('guild-name').textContent = cfg.guildName
+    ? `⚙️ ${cfg.guildName}`
+    : '⚙️ ตั้งค่าเซิร์ฟเวอร์';
+
+  document.getElementById('v-enabled').checked = v.enabled !== false;
+  document.getElementById('v-blockVPN').checked = v.blockVPN !== false;
+  document.getElementById('v-requireEmail').checked = !!v.requireEmail;
+  document.getElementById('v-requireEmailVerified').checked = !!v.requireEmailVerified;
+  document.getElementById('v-requireConnections').checked = !!v.requireConnections;
+
+  document.getElementById('v-minAge').value = v.minAccountAgeDays ?? 7;
+  document.getElementById('v-minConnections').value = v.minConnections ?? 1;
+
+  document.getElementById('v-roleId').value = v.roleId || '';
+  document.getElementById('v-channelId').value = v.channelId || '';
+  document.getElementById('v-messageId').value = v.messageId || '';
+
+  document.getElementById('v-allowedCountries').value = (v.allowedCountries || []).join(',');
+  document.getElementById('v-blockedCountries').value = (v.blockedCountries || []).join(',');
+}
+
+async function saveSettings() {
   const body = {
     verification: {
-      enabled:            document.getElementById('v-enabled').checked,
-      blockVPN:           document.getElementById('v-blockVPN').checked,
-      requireEmail:       document.getElementById('v-requireEmail').checked,
+      enabled: document.getElementById('v-enabled').checked,
+      blockVPN: document.getElementById('v-blockVPN').checked,
+      requireEmail: document.getElementById('v-requireEmail').checked,
+      requireEmailVerified: document.getElementById('v-requireEmailVerified').checked,
       requireConnections: document.getElementById('v-requireConnections').checked,
-      minAccountAgeDays:  parseInt(document.getElementById('v-minAge').value) || 7,
-      roleId:             document.getElementById('v-roleId').value.trim() || null
+      minAccountAgeDays: parseInt(document.getElementById('v-minAge').value) || 7,
+      minConnections: parseInt(document.getElementById('v-minConnections').value) || 1,
+      roleId: document.getElementById('v-roleId').value.trim() || null,
+      channelId: document.getElementById('v-channelId').value.trim() || null,
+      messageId: document.getElementById('v-messageId').value.trim() || null,
+      allowedCountries: splitCountries(document.getElementById('v-allowedCountries').value),
+      blockedCountries: splitCountries(document.getElementById('v-blockedCountries').value)
     }
   };
+
   try {
-    const res  = await fetch(`/api/guild/${guildId}/settings`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const res = await fetch(`/api/guild/${guildId}/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
     const data = await res.json();
     toast(data.success ? '✅ บันทึกแล้ว' : '❌ ' + data.error, data.success ? 'ok' : 'err');
-  } catch { toast('❌ เกิดข้อผิดพลาด', 'err'); }
+  } catch {
+    toast('❌ เกิดข้อผิดพลาด', 'err');
+  }
 }
 
 async function loadStats() {
-  const res  = await fetch(`/api/guild/${guildId}/stats`);
+  const res = await fetch(`/api/guild/${guildId}/stats`);
   const data = await res.json();
+
   if (!data.success) return;
+
   const s = data.stats;
-  document.getElementById('s-total').textContent   = s.total;
-  document.getElementById('s-success').textContent = s.success;
-  document.getElementById('s-blocked').textContent = s.blocked;
-  document.getElementById('s-failed').textContent  = s.failed;
+
+  document.getElementById('s-total').textContent = s.total ?? 0;
+  document.getElementById('s-success').textContent = s.success ?? 0;
+  document.getElementById('s-blocked').textContent = s.blocked ?? 0;
+  document.getElementById('s-failed').textContent = s.failed ?? 0;
+  document.getElementById('s-vpn').textContent = s.vpn ?? 0;
+  document.getElementById('s-proxy').textContent = s.proxy ?? 0;
+  document.getElementById('s-tor').textContent = s.tor ?? 0;
 }
 
 async function loadLogs(page = 0) {
   logPage = page;
   if (page === 0) logAll = [];
-  const res  = await fetch(`/api/guild/${guildId}/logs?page=${page}&limit=20`);
+
+  const res = await fetch(`/api/guild/${guildId}/logs?page=${page}&limit=20`);
   const data = await res.json();
+
   if (!data.success) return;
+
   logAll = [...logAll, ...data.logs];
 
   const body = document.getElementById('log-body');
+
   if (!logAll.length) {
-    body.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:24px;color:#7c3aed88">ยังไม่มี Log</td></tr>';
+    body.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:#7c3aed88">ยังไม่มี Log</td></tr>';
     return;
   }
+
   body.innerHTML = logAll.map(l => {
     const badge = l.result === 'success' ? 'badge-ok' : l.result === 'blocked' ? 'badge-blocked' : 'badge-failed';
     const label = l.result === 'success' ? 'สำเร็จ' : l.result === 'blocked' ? 'บล็อก' : 'ล้มเหลว';
-    const vpn   = (l.ipInfo?.isVPN || l.ipInfo?.isProxy) ? '<span class="vpn-tag">VPN</span>' : '';
+    const vpn = (l.ipInfo?.isVPN || l.ipInfo?.isProxy || l.ipInfo?.isTOR)
+      ? '<span class="vpn-tag">VPN</span>'
+      : '';
+
     return `<tr>
-      <td style="font-family:monospace;font-size:.75rem;color:#a78bfa">${l.userId}</td>
-      <td><span class="badge ${badge}">${label}</span>${l.reason ? `<div class="flag">${l.reason}</div>` : ''}</td>
-      <td>${l.ipInfo?.country || '—'} ${vpn}</td>
+      <td class="mono">${esc(l.userId)}</td>
+      <td><span class="badge ${badge}">${label}</span>${l.reason ? `<div class="flag">${esc(l.reason)}</div>` : ''}</td>
+      <td>${esc(l.ipInfo?.country || '—')} ${vpn}<div class="flag">${esc(l.ipInfo?.isp || '')}</div></td>
+      <td>${esc(l.riskScore ?? l.ipInfo?.riskScore ?? 0)}</td>
+      <td>${esc(l.device?.browser || '—')}<div class="flag">${esc(l.device?.os || '')}</div></td>
       <td style="color:#7c3aed88;font-size:.75rem;white-space:nowrap">${fmtDate(l.verifiedAt)}</td>
     </tr>`;
   }).join('');
+}
+
+async function loadMembers(page = 0) {
+  memberPage = page;
+  if (page === 0) memberAll = [];
+
+  const res = await fetch(`/api/guild/${guildId}/members?page=${page}&limit=20`);
+  const data = await res.json();
+
+  if (!data.success) return;
+
+  memberAll = [...memberAll, ...data.members];
+
+  const body = document.getElementById('member-body');
+
+  if (!memberAll.length) {
+    body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px;color:#7c3aed88">ยังไม่มีสมาชิกที่ยืนยันสำเร็จ</td></tr>';
+    return;
+  }
+
+  body.innerHTML = memberAll.map(m => {
+    const vpn = m.isVPN ? '<span class="vpn-tag">VPN</span>' : '';
+    const pending = m.revealRequest ? '<div class="flag">รออนุมัติ IP</div>' : '';
+
+    return `<tr>
+      <td>
+        <div class="mono">${esc(m.userId)}</div>
+        <div class="flag">${esc(m.globalName || m.username || '')}</div>
+      </td>
+      <td>${esc(m.country || '—')} ${vpn}<div class="flag">${esc(m.city || '')}</div></td>
+      <td>${esc(m.isp || '—')}</td>
+      <td>${esc(m.deviceType || '—')}<div class="flag">${esc(m.browser || '')} ${esc(m.os || '')}</div></td>
+      <td>${esc(m.riskScore ?? 0)}</td>
+      <td style="color:#7c3aed88;font-size:.75rem;white-space:nowrap">${fmtDate(m.verifiedAt)}</td>
+      <td>
+        <div class="actions">
+          <button class="btn btn-soft" onclick="requestReveal('${esc(m.userId)}','${esc(m.logId)}')">ขอ IP</button>
+          <button class="btn btn-danger" onclick="deleteData('${esc(m.userId)}')">ลบข้อมูล</button>
+        </div>
+        ${pending}
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function requestReveal(userId, logId) {
+  const reason = prompt('เหตุผลในการขอดู IP จริง');
+  if (reason === null) return;
+
+  const res = await fetch(`/api/guild/${guildId}/reveal-ip/request`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId, verifyLogId: logId, reason })
+  });
+
+  const data = await res.json();
+  toast(data.success ? '✅ ส่งคำขอแล้ว รอเจ้าของบอทอนุมัติ' : '❌ ' + data.error, data.success ? 'ok' : 'err');
+
+  if (data.success) loadMembers(0);
+}
+
+async function deleteData(userId) {
+  if (!confirm(`ลบข้อมูล verify logs ของ ${userId} ในเซิร์ฟนี้?`)) return;
+
+  const res = await fetch(`/api/guild/${guildId}/member/${userId}/data`, {
+    method: 'DELETE'
+  });
+
+  const data = await res.json();
+  toast(data.success ? '✅ ลบข้อมูลแล้ว' : '❌ ' + data.error, data.success ? 'ok' : 'err');
+
+  if (data.success) {
+    loadMembers(0);
+    loadLogs(0);
+    loadStats();
+  }
 }
 
 loadConfig();
