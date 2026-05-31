@@ -22,54 +22,79 @@ const reconnectTracking = new Map();
 const sessionLocks = new Set();
 
 // ════════════════════════════════════════════════════════════════════════════
-//  🔐  REGION 2: ENCRYPTION (AES-256-CBC)
+//  🔐  REGION 2: ENCRYPTION (AES-256-GCM)
 // ════════════════════════════════════════════════════════════════════════════
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY ?
     crypto.createHash('sha256').update(process.env.ENCRYPTION_KEY).digest('base64').substring(0, 32) :
     'default-key-change-me-32-chars!!';
 
-// Legacy key สำหรับ migration — ถอดรหัส session เก่าที่เข้ารหัสด้วย default key
+// Legacy key สำหรับ backward compat — ถอดรหัส session เก่าที่เข้ารหัสด้วย default key (CBC)
 const LEGACY_KEY = 'default-key-change-me-32-chars!!';
 
+// ── encrypt ด้วย AES-256-GCM ──
+// Format: "gcm:<iv_hex>:<authTag_hex>:<ciphertext_hex>"
 function encryptToken(text) {
     if (!text) return null;
     try {
-        const iv = crypto.randomBytes(16);
-        const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY), iv);
+        const iv      = crypto.randomBytes(12); // 96-bit nonce (NIST recommended)
+        const cipher  = crypto.createCipheriv('aes-256-gcm', Buffer.from(ENCRYPTION_KEY), iv);
         let encrypted = cipher.update(text, 'utf-8', 'hex');
-        encrypted += cipher.final('hex');
-        return iv.toString('hex') + ':' + encrypted;
+        encrypted    += cipher.final('hex');
+        const authTag = cipher.getAuthTag().toString('hex'); // 128-bit auth tag
+        return `gcm:${iv.toString('hex')}:${authTag}:${encrypted}`;
     } catch (err) {
         console.error(`[SECURITY] ❌ Failed to encrypt token: ${err.message}`);
         return null;
     }
 }
 
+// ── decrypt รองรับทั้ง GCM (ใหม่) และ CBC (เก่า) ──
 function decryptToken(text) {
     if (!text) return null;
-    // ลองถอดรหัสด้วย key ปัจจุบันก่อน
-    try {
-        const textParts = text.split(':');
-        const iv = Buffer.from(textParts.shift(), 'hex');
-        const encryptedText = Buffer.from(textParts.join(':'), 'hex');
-        const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY), iv);
-        let decrypted = decipher.update(encryptedText, 'hex', 'utf-8');
-        decrypted += decipher.final('utf-8');
-        return decrypted;
-    } catch (_) {}
-    // ถ้าไม่สำเร็จ + key ปัจจุบันต่างจาก legacy → migration fallback
-    if (ENCRYPTION_KEY !== LEGACY_KEY) {
+
+    // ── GCM path: prefix "gcm:" ──
+    if (text.startsWith('gcm:')) {
         try {
-            const textParts = text.split(':');
-            const iv = Buffer.from(textParts.shift(), 'hex');
-            const encryptedText = Buffer.from(textParts.join(':'), 'hex');
-            const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(LEGACY_KEY), iv);
-            let decrypted = decipher.update(encryptedText, 'hex', 'utf-8');
-            decrypted += decipher.final('utf-8');
-            console.log(`[SECURITY] 🔄 Migration: token ถอดรหัสด้วย legacy key — จะถูก re-encrypt ด้วย key ใหม่อัตโนมัติ`);
+            const parts     = text.split(':');
+            // parts: ['gcm', iv, authTag, ...ciphertext]
+            const iv        = Buffer.from(parts[1], 'hex');
+            const authTag   = Buffer.from(parts[2], 'hex');
+            const encrypted = Buffer.from(parts.slice(3).join(':'), 'hex');
+            const decipher  = crypto.createDecipheriv('aes-256-gcm', Buffer.from(ENCRYPTION_KEY), iv);
+            decipher.setAuthTag(authTag);
+            let decrypted   = decipher.update(encrypted, 'hex', 'utf-8');
+            decrypted      += decipher.final('utf-8');
             return decrypted;
         } catch (err) {
-            console.error(`[SECURITY] ❌ Decryption failed (both keys): ${err.message}`);
+            console.error(`[SECURITY] ❌ GCM decryption failed: ${err.message}`);
+            return null;
+        }
+    }
+
+    // ── CBC path (backward compat): "iv:ciphertext" ──
+    try {
+        const textParts     = text.split(':');
+        const iv            = Buffer.from(textParts.shift(), 'hex');
+        const encryptedText = Buffer.from(textParts.join(':'), 'hex');
+        const decipher      = crypto.createDecipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY), iv);
+        let decrypted       = decipher.update(encryptedText, 'hex', 'utf-8');
+        decrypted          += decipher.final('utf-8');
+        return decrypted;
+    } catch (_) {}
+
+    // ── Legacy CBC key fallback ──
+    if (ENCRYPTION_KEY !== LEGACY_KEY) {
+        try {
+            const textParts     = text.split(':');
+            const iv            = Buffer.from(textParts.shift(), 'hex');
+            const encryptedText = Buffer.from(textParts.join(':'), 'hex');
+            const decipher      = crypto.createDecipheriv('aes-256-cbc', Buffer.from(LEGACY_KEY), iv);
+            let decrypted       = decipher.update(encryptedText, 'hex', 'utf-8');
+            decrypted          += decipher.final('utf-8');
+            console.log(`[SECURITY] 🔄 CBC→GCM migration: token ถอดรหัสด้วย legacy key — จะถูก re-encrypt เป็น GCM อัตโนมัติ`);
+            return decrypted;
+        } catch (err) {
+            console.error(`[SECURITY] ❌ Decryption failed (GCM + CBC + legacy): ${err.message}`);
         }
     }
     return null;
