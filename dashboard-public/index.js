@@ -20,6 +20,7 @@ const path       = require('path');
 
 const oauthRoutes = require('./routes/oauth');
 const guildRoutes = require('./routes/guild');
+const apiRoutes   = require('./routes/api');
 
 const app  = express();
 const PORT = process.env.PORT_DASHBOARD || 3001;
@@ -46,6 +47,7 @@ app.use(session({
 // ── Routes ──
 app.use('/', oauthRoutes);
 app.use('/', guildRoutes);
+app.use('/', apiRoutes);
 
 // ── Static pages ──
 app.get('/',        (req, res) => res.sendFile(path.join(__dirname, 'views/home.html')));
