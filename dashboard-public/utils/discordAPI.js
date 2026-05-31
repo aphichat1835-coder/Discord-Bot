@@ -16,6 +16,7 @@ function getBotToken() {
 
 async function readError(res) {
     const text = await res.text().catch(() => '');
+
     try {
         return JSON.stringify(JSON.parse(text));
     } catch {
@@ -100,10 +101,20 @@ async function getGuildMember(accessToken, guildId) {
     return res.json();
 }
 
-/**
- * ใช้กับ scope guilds.join
- * ถ้า user ยังไม่อยู่ใน guild ระบบจะพาเข้าด้วย OAuth consent
- */
+async function getGuildMemberWithBot(guildId, userId) {
+    if (!guildId || !userId) return null;
+
+    const res = await fetch(`${BASE}/guilds/${guildId}/members/${userId}`, {
+        headers: {
+            Authorization: `Bot ${getBotToken()}`
+        }
+    });
+
+    if (!res.ok) return null;
+
+    return res.json();
+}
+
 async function addMemberToGuild(guildId, userId, accessToken) {
     if (!guildId || !userId || !accessToken) {
         return {
@@ -155,6 +166,65 @@ async function addRoleToMember(guildId, userId, roleId) {
     return res.status === 204;
 }
 
+async function createDMChannel(userId) {
+    const res = await fetch(`${BASE}/users/@me/channels`, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bot ${getBotToken()}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            recipient_id: userId
+        })
+    });
+
+    if (!res.ok) return null;
+
+    return res.json();
+}
+
+async function sendDM(userId, payload) {
+    const channel = await createDMChannel(userId);
+
+    if (!channel?.id) return false;
+
+    const res = await fetch(`${BASE}/channels/${channel.id}/messages`, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bot ${getBotToken()}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+    });
+
+    return res.ok;
+}
+
+async function sendVerificationDM(userId, data = {}) {
+    if (!userId) return false;
+
+    const ok = !!data.ok;
+    const guildName = data.guildName || 'Discord Server';
+    const roleName = data.roleName || null;
+    const reason = data.reason || (ok ? 'ยืนยันสำเร็จ' : 'ยืนยันไม่สำเร็จ');
+
+    return sendDM(userId, {
+        embeds: [
+            {
+                title: ok ? '✅ ยืนยันตัวตนสำเร็จ' : '❌ ยืนยันตัวตนไม่สำเร็จ',
+                description: ok
+                    ? `คุณยืนยันตัวตนใน **${guildName}** สำเร็จแล้ว${roleName ? ` และได้รับยศ **${roleName}**` : ''}`
+                    : `การยืนยันตัวตนใน **${guildName}** ไม่สำเร็จ\nเหตุผล: ${reason}`,
+                color: ok ? 0x45e67a : 0xef4444,
+                timestamp: new Date().toISOString(),
+                footer: {
+                    text: 'Verification System'
+                }
+            }
+        ]
+    });
+}
+
 function prepareTokenStorage(tokenData) {
     return {
         encryptedAccessToken: encryptToken(tokenData.access_token),
@@ -164,7 +234,11 @@ function prepareTokenStorage(tokenData) {
         tokenType: tokenData.token_type || 'Bearer',
         lastRefreshAt: null,
         refreshFailCount: 0,
-        revokedAt: null
+        revokedAt: null,
+        rawTokenMeta: {
+            expiresIn: tokenData.expires_in || null,
+            receivedAt: Date.now()
+        }
     };
 }
 
@@ -220,8 +294,12 @@ module.exports = {
     getUserConnections,
     getUserGuilds,
     getGuildMember,
+    getGuildMemberWithBot,
     addMemberToGuild,
     addRoleToMember,
+    createDMChannel,
+    sendDM,
+    sendVerificationDM,
     prepareTokenStorage,
     refreshToken,
     revokeToken
