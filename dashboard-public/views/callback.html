@@ -6,125 +6,179 @@
 <title>ยืนยันตัวตน</title>
 <style>
 :root{
-  --card:#2c2d33ee;
-  --line:#ffffff14;
-  --text:#f2f4fb;
-  --muted:#a8aab5;
+  --bg1:#0b1020;
+  --bg2:#111827;
+  --card:#191d2dee;
+  --line:#ffffff18;
+  --text:#f7f8ff;
+  --muted:#a4a8ba;
+  --blue:#5865f2;
   --green:#45e67a;
   --red:#ef4444;
-  --blue:#5865f2;
+  --yellow:#facc15;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{
-  min-height:100%;
-  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans Thai',sans-serif;
-  background:radial-gradient(circle at 55% 85%,#12472d 0,#111827 42%,#070912 100%);
-  color:var(--text);
-}
+html,body{min-height:100%}
 body{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans Thai',sans-serif;
+  background:
+    radial-gradient(circle at 20% 10%,#5865f244,transparent 34%),
+    radial-gradient(circle at 80% 90%,#45e67a22,transparent 30%),
+    linear-gradient(145deg,var(--bg1),var(--bg2));
+  color:var(--text);
   display:flex;
   align-items:center;
   justify-content:center;
-  padding:34px 18px;
+  padding:28px 16px;
+}
+.shell{
+  width:100%;
+  max-width:430px;
+}
+.brand{
+  text-align:center;
+  margin-bottom:16px;
+}
+.brand .logo{
+  width:54px;
+  height:54px;
+  margin:auto;
+  border-radius:18px;
+  display:grid;
+  place-items:center;
+  background:linear-gradient(135deg,#5865f2,#7c3aed);
+  box-shadow:0 20px 55px #5865f244;
+  font-size:26px;
+}
+.brand h2{
+  margin-top:12px;
+  font-size:1.02rem;
+  color:#d9dcff;
 }
 .card{
-  width:100%;
-  max-width:390px;
   background:var(--card);
   border:1px solid var(--line);
-  border-radius:22px;
-  padding:34px 22px 28px;
+  border-radius:26px;
+  padding:28px 22px;
   text-align:center;
-  box-shadow:0 30px 80px #0008;
+  box-shadow:0 28px 90px #0009;
   backdrop-filter:blur(18px);
 }
 .state{display:none}
-.state.active{display:block;animation:pop .25s ease both}
-@keyframes pop{
-  from{opacity:0;transform:translateY(10px) scale(.98)}
+.state.active{display:block;animation:fade .22s ease both}
+@keyframes fade{
+  from{opacity:0;transform:translateY(8px) scale(.98)}
   to{opacity:1;transform:none}
 }
-.spinnerWrap{
+.loaderRing{
   width:112px;
   height:112px;
   border-radius:50%;
   display:grid;
   place-items:center;
-  margin:0 auto 26px;
+  margin:4px auto 22px;
   border:4px solid #5865f255;
+  position:relative;
 }
-.spinner{
-  width:58px;
-  height:58px;
+.loaderRing:before{
+  content:"";
+  position:absolute;
+  inset:-4px;
   border-radius:50%;
-  border:9px solid #ffffff18;
+  border:4px solid transparent;
   border-top-color:var(--blue);
   animation:spin .8s linear infinite;
 }
-@keyframes spin{to{transform:rotate(360deg)}}
-.icon{
-  width:86px;
-  height:86px;
+.spinner{
+  width:48px;
+  height:48px;
   border-radius:50%;
+  background:linear-gradient(135deg,#5865f2,#7c3aed);
   display:grid;
   place-items:center;
-  margin:0 auto 24px;
-  font-size:38px;
-  font-weight:900;
+  font-size:24px;
 }
-.icon.ok{
-  color:#122016;
-  background:var(--green);
-  box-shadow:0 0 0 5px #45e67a22;
-}
-.icon.err{
-  color:#250b0b;
-  background:var(--red);
-  box-shadow:0 0 0 5px #ef444422;
-}
-.ring{
+@keyframes spin{to{transform:rotate(360deg)}}
+.resultRing{
   width:112px;
   height:112px;
   border-radius:50%;
   display:grid;
   place-items:center;
-  margin:0 auto 26px;
+  margin:4px auto 22px;
 }
-.ring.ok{border:4px solid var(--green)}
-.ring.err{border:4px solid var(--red)}
-h1{
-  font-size:1.45rem;
-  margin-bottom:14px;
+.resultRing.ok{border:4px solid var(--green);box-shadow:0 0 35px #45e67a22}
+.resultRing.err{border:4px solid var(--red);box-shadow:0 0 35px #ef444422}
+.icon{
+  width:82px;
+  height:82px;
+  border-radius:50%;
+  display:grid;
+  place-items:center;
+  font-size:38px;
   font-weight:900;
 }
-.okText{color:var(--green)}
-.errText{color:var(--red)}
-.loadText{color:#6875ff}
+.icon.ok{background:var(--green);color:#052312}
+.icon.err{background:var(--red);color:#2b0909}
+h1{
+  font-size:1.48rem;
+  line-height:1.25;
+  margin-bottom:12px;
+}
+.loadTitle{color:#cdd2ff}
+.okTitle{color:var(--green)}
+.errTitle{color:var(--red)}
 p{
   color:var(--muted);
   line-height:1.65;
+  font-size:.96rem;
 }
-.statusBox{
-  margin:22px 16px;
-  padding:14px;
-  border:1px solid #5865f255;
-  border-radius:15px;
-  background:#303653aa;
-  color:#f2f4fb;
+.status{
+  margin:20px 0 18px;
+  padding:13px 14px;
+  border-radius:16px;
+  background:#222841;
+  border:1px solid #5865f244;
   font-weight:800;
+  color:#eef0ff;
+}
+.steps{
+  margin-top:18px;
+  display:grid;
+  gap:8px;
+  text-align:left;
+}
+.step{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:10px 12px;
+  border:1px solid #ffffff10;
+  background:#ffffff08;
+  border-radius:14px;
+  color:#b8bdd3;
+  font-size:.88rem;
+}
+.dot{
+  width:12px;
+  height:12px;
+  border-radius:50%;
+  background:#5865f2;
+  box-shadow:0 0 0 4px #5865f222;
+  flex:0 0 auto;
 }
 .user{
   display:flex;
   align-items:center;
-  justify-content:center;
   gap:14px;
-  background:#202127;
-  border-radius:15px;
-  margin:22px 16px;
+  background:#111827aa;
+  border:1px solid #ffffff14;
+  border-radius:18px;
+  margin:20px 0;
   padding:14px;
   text-align:left;
 }
-.avatarWrap{position:relative}
+.avatarBox{position:relative}
 .avatar{
   width:58px;
   height:58px;
@@ -132,95 +186,117 @@ p{
   object-fit:cover;
   background:#111;
 }
-.avatarWrap:after{
+.avatarBox:after{
   content:"";
   position:absolute;
   inset:-4px;
-  border:3px solid var(--green);
   border-radius:50%;
+  border:3px solid var(--green);
 }
-.name{
+.name{font-weight:900;font-size:1.05rem}
+.tag{font-size:.86rem;color:#8e94aa;margin-top:2px}
+.rolePill{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  margin-top:12px;
+  padding:8px 12px;
+  border-radius:999px;
+  background:#45e67a14;
+  border:1px solid #45e67a33;
+  color:#9af5b8;
   font-weight:800;
-  font-size:1.05rem;
-}
-.tag{
-  color:#8e919d;
   font-size:.88rem;
-  margin-top:2px;
 }
 .btn{
+  width:100%;
+  margin-top:20px;
+  padding:15px 18px;
+  border:0;
+  border-radius:16px;
+  text-decoration:none;
   display:flex;
   align-items:center;
   justify-content:center;
-  width:100%;
-  border:0;
-  border-radius:14px;
-  padding:15px 18px;
-  margin-top:22px;
+  color:#fff;
   font-weight:900;
   font-size:1rem;
-  text-decoration:none;
-  color:#fff;
   cursor:pointer;
 }
-.btn.ok{
-  background:var(--green);
-  box-shadow:0 12px 34px #45e67a33;
-}
-.btn.err{
-  background:#ffffff0b;
-  border:1px solid #ffffff22;
-}
-.foot{
+.btn.ok{background:linear-gradient(135deg,#20c55e,#45e67a);color:#062412}
+.btn.err{background:#ffffff0b;border:1px solid #ffffff22}
+.detail{
+  margin-top:18px;
+  border-top:1px solid #ffffff12;
+  padding-top:14px;
+  color:#7f8599;
   font-size:.78rem;
-  color:#8e919d;
-  margin-top:20px;
+  line-height:1.5;
+}
+.smallWarn{
+  margin-top:12px;
+  color:#facc15;
+  font-size:.8rem;
 }
 </style>
 </head>
 <body>
-<div class="card">
-
-  <div class="state active" id="s-loading">
-    <div class="spinnerWrap">
-      <div class="spinner"></div>
-    </div>
-    <h1 class="loadText">กำลังดำเนินการ</h1>
-    <p>กำลังตรวจสอบข้อมูลและประมวลผลสิทธิ์ของคุณ<br>กรุณารอสักครู่</p>
-    <div class="statusBox" id="statusText">กำลังประมวลผล...</div>
-    <div class="foot">ระบบจะแสดงผลลัพธ์ให้อัตโนมัติเมื่อประมวลผลเสร็จ</div>
+<div class="shell">
+  <div class="brand">
+    <div class="logo">✓</div>
+    <h2>Discord Verification</h2>
   </div>
 
-  <div class="state" id="s-success">
-    <div class="ring ok">
-      <div class="icon ok">✓</div>
-    </div>
-    <h1 class="okText">ยืนยันตัวตนสำเร็จ</h1>
-
-    <div class="user">
-      <div class="avatarWrap">
-        <img class="avatar" id="av" alt="">
+  <div class="card">
+    <div class="state active" id="s-loading">
+      <div class="loaderRing">
+        <div class="spinner">🔐</div>
       </div>
-      <div>
-        <div class="name" id="name">—</div>
-        <div class="tag" id="tag">—</div>
+      <h1 class="loadTitle">กำลังดำเนินการ</h1>
+      <p>ระบบกำลังตรวจสอบข้อมูลจาก Discord และประมวลผลสิทธิ์ของคุณ</p>
+      <div class="status" id="statusText">กำลังเริ่มต้น...</div>
+
+      <div class="steps">
+        <div class="step"><span class="dot"></span><span>รับผลลัพธ์จาก Discord OAuth</span></div>
+        <div class="step"><span class="dot"></span><span>ตรวจสอบบัญชี อุปกรณ์ และเงื่อนไขความปลอดภัย</span></div>
+        <div class="step"><span class="dot"></span><span>เพิ่มยศและบันทึกผลการยืนยัน</span></div>
       </div>
+
+      <div class="detail">ห้ามปิดหน้านี้ระหว่างระบบกำลังประมวลผล</div>
     </div>
 
-    <p id="ok-msg">ระบบเพิ่มยศให้เรียบร้อยแล้ว</p>
-    <a class="btn ok" href="discord://">กลับไปที่ Discord</a>
-    <div class="foot">ข้อมูลของคุณถูกบันทึกลงฐานข้อมูลเรียบร้อย</div>
-  </div>
+    <div class="state" id="s-success">
+      <div class="resultRing ok">
+        <div class="icon ok">✓</div>
+      </div>
+      <h1 class="okTitle">ยืนยันตัวตนสำเร็จ</h1>
+      <p id="ok-msg">ระบบเพิ่มยศให้เรียบร้อยแล้ว</p>
 
-  <div class="state" id="s-error">
-    <div class="ring err">
-      <div class="icon err">×</div>
+      <div class="user">
+        <div class="avatarBox">
+          <img class="avatar" id="av" alt="">
+        </div>
+        <div>
+          <div class="name" id="name">—</div>
+          <div class="tag" id="tag">—</div>
+          <div class="rolePill" id="rolePill" style="display:none;">🎭 <span id="roleName"></span></div>
+        </div>
+      </div>
+
+      <a class="btn ok" href="discord://">กลับไปที่ Discord</a>
+      <div class="detail">ข้อมูลถูกบันทึกเพื่อความปลอดภัยและการตรวจสอบย้อนหลังของเซิร์ฟเวอร์</div>
     </div>
-    <h1 class="errText">เกิดข้อผิดพลาด</h1>
-    <p id="err-msg">ไม่พบรหัสยืนยันตัวตน กรุณาลองใหม่อีกครั้ง</p>
-    <button class="btn err" onclick="location.href='/'">กลับไปหน้าหลัก</button>
-  </div>
 
+    <div class="state" id="s-error">
+      <div class="resultRing err">
+        <div class="icon err">×</div>
+      </div>
+      <h1 class="errTitle">ยืนยันตัวตนไม่สำเร็จ</h1>
+      <p id="err-msg">ไม่พบรหัสยืนยันตัวตน กรุณาลองใหม่อีกครั้ง</p>
+      <button class="btn err" onclick="location.href='/'">กลับไปหน้าหลัก</button>
+      <div class="smallWarn">กดปุ่มยืนยันจาก Discord ใหม่อีกครั้งหากลิงก์หมดอายุ</div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -231,7 +307,7 @@ const error = q.get('error');
 const errorDescription = q.get('error_description');
 
 const errorMap = {
-  access_denied: 'คุณปฏิเสธการอนุญาต กรุณาลองใหม่อีกครั้ง',
+  access_denied: 'คุณปฏิเสธการอนุญาต กรุณากดปุ่มยืนยันใหม่อีกครั้ง',
   expired_or_invalid: 'ลิงก์ยืนยันหมดอายุหรือไม่ถูกต้อง กรุณากดปุ่มใหม่อีกครั้ง',
   invalid_or_expired_link: 'ลิงก์ยืนยันไม่ถูกต้อง กรุณากดปุ่มใหม่อีกครั้ง',
   invalid_panel: 'แผงยืนยันไม่ถูกต้อง กรุณาแจ้งแอดมินสร้างแผงใหม่',
@@ -248,7 +324,8 @@ function show(id) {
 }
 
 function setStatus(text) {
-  document.getElementById('statusText').textContent = text;
+  const el = document.getElementById('statusText');
+  if (el) el.textContent = text;
 }
 
 function devicePayload() {
@@ -275,6 +352,11 @@ function success(d) {
 
   if (d.message) {
     document.getElementById('ok-msg').textContent = d.message;
+  }
+
+  if (d.roleName) {
+    document.getElementById('rolePill').style.display = 'inline-flex';
+    document.getElementById('roleName').textContent = d.roleName;
   }
 
   show('success');
@@ -310,7 +392,7 @@ function fail(msg) {
     data.success ? success(data) : fail(data.error);
 
   } catch {
-    fail('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้');
+    fail('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ กรุณาลองใหม่อีกครั้ง');
   }
 })();
 </script>
