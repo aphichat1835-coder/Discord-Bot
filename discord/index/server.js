@@ -9,6 +9,7 @@ DO NOT REMOVE: /api/reveal-token lockout logic.
 
 const crypto = require("crypto");
 const { WebhookClient } = require("discord.js");
+const auth = require('./auth');
 
 const revealTokenAttempts = new Map();
 const REVEAL_MAX     = 5;
@@ -105,6 +106,50 @@ function registerRoutes({
     const checkRevealPin = makeCheckRevealPin(getWebPin);
 
     const rateLimiter = createRateLimiter(requestCounts, config);
+
+    // ── PIN Authentication Routes ──
+    app.get('/auth/pin', (req, res) => {
+        const next = req.query.next || '/';
+        res.send(auth.pinPageHTML(false, next));
+    });
+
+    app.post('/auth/pin', require('express').urlencoded({ extended: false }), (req, res) => {
+        const { pin, next } = req.body || {};
+        const correctPin = auth.PIN();
+
+        if (!correctPin) return res.redirect(next || '/');
+
+        const ip = req.ip;
+        if (!app._pinAttempts) app._pinAttempts = new Map();
+        const attempts = app._pinAttempts.get(ip) || { count: 0, resetAt: Date.now() + 600000 };
+        if (Date.now() > attempts.resetAt) { attempts.count = 0; attempts.resetAt = Date.now() + 600000; }
+        if (attempts.count >= 8) {
+            return res.status(429).send('Too many attempts. Wait 10 minutes.');
+        }
+
+        const pinBuf = Buffer.from(pin || '', 'utf8');
+        const corBuf = Buffer.from(correctPin, 'utf8');
+        const valid  = pinBuf.length === corBuf.length && crypto.timingSafeEqual(pinBuf, corBuf);
+
+        if (!valid) {
+            attempts.count++;
+            app._pinAttempts.set(ip, attempts);
+            const safeNext = (next || '/').replace(/[<>"]/g, '');
+            return res.send(auth.pinPageHTML(true, safeNext));
+        }
+
+        app._pinAttempts.delete(ip);
+        const token    = auth.makeToken();
+        const isProd   = process.env.NODE_ENV === 'production';
+        const safePath = (next || '/').startsWith('/') ? next : '/';
+        res.setHeader('Set-Cookie', auth.setCookieHeader(token, isProd));
+        res.redirect(safePath);
+    });
+
+    app.get('/auth/logout', (req, res) => {
+        res.setHeader('Set-Cookie', `${auth.COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly`);
+        res.redirect('/auth/pin');
+    });
 
     // ── Health / Ping (ใช้ rate limiter เดียวกัน) ──
     app.get("/ping",   rateLimiter, (req, res) => res.send("OK"));
