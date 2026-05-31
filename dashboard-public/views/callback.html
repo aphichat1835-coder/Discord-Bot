@@ -6,14 +6,13 @@
 <title>ยืนยันตัวตน</title>
 <style>
 :root{
-  --bg:#090b14;
   --card:#2c2d33ee;
   --line:#ffffff14;
   --text:#f2f4fb;
   --muted:#a8aab5;
   --green:#45e67a;
   --red:#ef4444;
-  --discord:#5865f2;
+  --blue:#5865f2;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{
@@ -45,14 +44,22 @@ body{
   from{opacity:0;transform:translateY(10px) scale(.98)}
   to{opacity:1;transform:none}
 }
-.spinner{
-  width:64px;
-  height:64px;
+.spinnerWrap{
+  width:112px;
+  height:112px;
   border-radius:50%;
-  border:4px solid #ffffff18;
-  border-top-color:#fff;
-  margin:4px auto 24px;
-  animation:spin .7s linear infinite;
+  display:grid;
+  place-items:center;
+  margin:0 auto 26px;
+  border:4px solid #5865f255;
+}
+.spinner{
+  width:58px;
+  height:58px;
+  border-radius:50%;
+  border:9px solid #ffffff18;
+  border-top-color:var(--blue);
+  animation:spin .8s linear infinite;
 }
 @keyframes spin{to{transform:rotate(360deg)}}
 .icon{
@@ -67,12 +74,12 @@ body{
 }
 .icon.ok{
   color:#122016;
-  background:#45e67a;
+  background:var(--green);
   box-shadow:0 0 0 5px #45e67a22;
 }
 .icon.err{
   color:#250b0b;
-  background:#ef4444;
+  background:var(--red);
   box-shadow:0 0 0 5px #ef444422;
 }
 .ring{
@@ -92,9 +99,19 @@ h1{
 }
 .okText{color:var(--green)}
 .errText{color:var(--red)}
+.loadText{color:#6875ff}
 p{
   color:var(--muted);
   line-height:1.65;
+}
+.statusBox{
+  margin:22px 16px;
+  padding:14px;
+  border:1px solid #5865f255;
+  border-radius:15px;
+  background:#303653aa;
+  color:#f2f4fb;
+  font-weight:800;
 }
 .user{
   display:flex;
@@ -165,9 +182,13 @@ p{
 <div class="card">
 
   <div class="state active" id="s-loading">
-    <div class="spinner"></div>
-    <h1>กำลังยืนยันตัวตน...</h1>
-    <p>กรุณารอสักครู่</p>
+    <div class="spinnerWrap">
+      <div class="spinner"></div>
+    </div>
+    <h1 class="loadText">กำลังดำเนินการ</h1>
+    <p>กำลังตรวจสอบข้อมูลและประมวลผลสิทธิ์ของคุณ<br>กรุณารอสักครู่</p>
+    <div class="statusBox" id="statusText">กำลังประมวลผล...</div>
+    <div class="foot">ระบบจะแสดงผลลัพธ์ให้อัตโนมัติเมื่อประมวลผลเสร็จ</div>
   </div>
 
   <div class="state" id="s-success">
@@ -207,10 +228,27 @@ const q = new URLSearchParams(location.search);
 const code = q.get('code');
 const state = q.get('state');
 const error = q.get('error');
+const errorDescription = q.get('error_description');
+
+const errorMap = {
+  access_denied: 'คุณปฏิเสธการอนุญาต กรุณาลองใหม่อีกครั้ง',
+  expired_or_invalid: 'ลิงก์ยืนยันหมดอายุหรือไม่ถูกต้อง กรุณากดปุ่มใหม่อีกครั้ง',
+  invalid_or_expired_link: 'ลิงก์ยืนยันไม่ถูกต้อง กรุณากดปุ่มใหม่อีกครั้ง',
+  invalid_panel: 'แผงยืนยันไม่ถูกต้อง กรุณาแจ้งแอดมินสร้างแผงใหม่',
+  role_mismatch: 'ลิงก์นี้ไม่ตรงกับการตั้งค่าปัจจุบัน กรุณากดปุ่มใหม่อีกครั้ง',
+  verification_disabled: 'ระบบยืนยันตัวตนของเซิร์ฟเวอร์นี้ยังไม่เปิดใช้งาน',
+  server_not_configured: 'เซิร์ฟเวอร์นี้ยังไม่ได้ตั้งค่าระบบยืนยันตัวตน',
+  missing_verify_token: 'ไม่พบรหัสยืนยันตัวตน กรุณากดปุ่มใหม่อีกครั้ง',
+  verify_internal_error: 'ระบบยืนยันตัวตนขัดข้อง กรุณาลองใหม่อีกครั้ง'
+};
 
 function show(id) {
   document.querySelectorAll('.state').forEach(e => e.classList.remove('active'));
   document.getElementById('s-' + id).classList.add('active');
+}
+
+function setStatus(text) {
+  document.getElementById('statusText').textContent = text;
 }
 
 function devicePayload() {
@@ -248,24 +286,29 @@ function fail(msg) {
 }
 
 (async () => {
-  if (error === 'access_denied') {
-    return fail('คุณปฏิเสธการอนุญาต กรุณาลองใหม่อีกครั้ง');
+  if (error) {
+    return fail(errorMap[error] || errorDescription || 'เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง');
   }
 
   if (!code) {
-    return fail('ไม่พบรหัสยืนยันตัวตน กรุณาลองใหม่อีกครั้ง');
+    return fail('ไม่พบรหัสยืนยันตัวตน กรุณากดปุ่มใหม่อีกครั้ง');
   }
 
   try {
+    setStatus('กำลังส่งข้อมูลไปยังเซิร์ฟเวอร์...');
+
     const res = await fetch('/auth/callback', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code, state, ...devicePayload() })
     });
 
+    setStatus('กำลังตรวจสอบผลลัพธ์...');
+
     const data = await res.json();
 
     data.success ? success(data) : fail(data.error);
+
   } catch {
     fail('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้');
   }
