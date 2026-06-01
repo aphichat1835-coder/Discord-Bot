@@ -1,6 +1,6 @@
 # =========================================================
 # Phomueangtai Enterprise Discord System — .gitignore
-# Never commit secrets, generated files, dependency folders, logs, or local caches.
+# ป้องกันไม่ให้ secrets, generated files, dependencies, logs และ local cache หลุดขึ้น GitHub
 # =========================================================
 
 # -------------------------
@@ -12,7 +12,9 @@
 *.env
 *.local
 
+# -------------------------
 # Secret/key material
+# -------------------------
 *.pem
 *.key
 *.p12
@@ -27,7 +29,9 @@ credentials/
 credential/
 private/
 
+# -------------------------
 # Tokens / local config dumps
+# -------------------------
 *tokens*.json
 *token*.json
 *secret*.json
@@ -59,6 +63,7 @@ temp/
 .parcel-cache/
 .next/
 .nuxt/
+.turbo/
 coverage/
 .nyc_output/
 
@@ -97,8 +102,11 @@ Thumbs.db
 *.swo
 
 # -------------------------
-# Misc local artifacts
+# Local deployment/tooling artifacts
 # -------------------------
+.vercel/
+.netlify/
+.render-local/
 *.pid
 *.seed
 *.tgz
