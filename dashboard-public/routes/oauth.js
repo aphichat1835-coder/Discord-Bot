@@ -396,15 +396,23 @@ function buildDiscordSnapshot(profile, connections, memberInfo, stateObj) {
     };
 }
 
-async function saveVerifyLog(payload) {
+async function safeSideEffect(label, fn, fallback = null) {
     try {
-        await VerifyLog.create(payload);
+        return await fn();
     } catch (err) {
-        console.error('[VERIFY_LOG] failed:', err.message);
+        console.error(`[VERIFY] ${label} failed:`, err.message);
+        return fallback;
     }
 }
 
-async function updateIpIdentityTracking({
+async function saveVerifyLogSafe(payload) {
+    return safeSideEffect('saveVerifyLog', async () => {
+        await VerifyLog.create(payload);
+        return true;
+    }, false);
+}
+
+async function updateIpIdentityTrackingSafe({
     guildId,
     guildName,
     profile,
@@ -415,160 +423,168 @@ async function updateIpIdentityTracking({
     result,
     riskSummary
 }) {
-    if (!guildId || !profile?.id || !ipInfo?.ipHash) return null;
+    return safeSideEffect('updateIpIdentityTracking', async () => {
+        if (!guildId || !profile?.id || !ipInfo?.ipHash) return null;
 
-    const now = Date.now();
+        const now = Date.now();
 
-    let doc = await IpIdentityLink.findOne({
-        guildId,
-        ipHash: ipInfo.ipHash
-    });
-
-    if (!doc) {
-        doc = new IpIdentityLink({
+        let doc = await IpIdentityLink.findOne({
             guildId,
-            guildName,
-            ipHash: ipInfo.ipHash,
-            encryptedRawIp: ipInfo.encryptedRawIp,
-            firstSeenAt: now,
-            users: [],
-            deviceFingerprints: [],
-            roleSnapshots: [],
-            createdAt: now
+            ipHash: ipInfo.ipHash
         });
-    }
 
-    doc.guildName = guildName || doc.guildName || guildId;
-    doc.encryptedRawIp = ipInfo.encryptedRawIp || doc.encryptedRawIp;
-    doc.lastSeenAt = now;
-    doc.totalVerifications = (doc.totalVerifications || 0) + 1;
-
-    doc.lastResult = result;
-    doc.lastRoleId = roleId;
-
-    doc.lastRiskScore = riskSummary?.score || ipInfo.riskScore || 0;
-    doc.maxRiskScore = Math.max(doc.maxRiskScore || 0, doc.lastRiskScore || 0);
-    doc.lastRiskFlags = riskSummary?.flags || [];
-
-    doc.lastCountry = ipInfo.country;
-    doc.lastCountryCode = ipInfo.countryCode;
-    doc.lastRegion = ipInfo.region;
-    doc.lastCity = ipInfo.city;
-    doc.lastTimezone = ipInfo.timezone;
-    doc.lastIsp = ipInfo.isp;
-    doc.lastOrg = ipInfo.org;
-    doc.lastAs = ipInfo.as;
-    doc.lastAsname = ipInfo.asname;
-
-    doc.isVPN = !!ipInfo.isVPN;
-    doc.isProxy = !!ipInfo.isProxy;
-    doc.isTOR = !!ipInfo.isTOR;
-    doc.hosting = !!ipInfo.hosting;
-    doc.mobile = !!ipInfo.mobile;
-
-    doc.lastIpInfo = ipInfo;
-    doc.lastDevice = device;
-
-    const roles = memberInfo?.roles || [];
-
-    let user = doc.users.find(u => u.userId === profile.id);
-
-    if (!user) {
-        user = {
-            userId: profile.id,
-            firstSeenAt: now,
-            verifyCount: 0,
-            successCount: 0,
-            blockedCount: 0,
-            failedCount: 0
-        };
-        doc.users.push(user);
-    }
-
-    user.username = profile.username;
-    user.globalName = profile.global_name || profile.username;
-    user.displayTag = displayTag(profile);
-    user.avatarUrl = getAvatarUrl(profile);
-    user.lastSeenAt = now;
-    user.verifyCount = (user.verifyCount || 0) + 1;
-    user.lastResult = result;
-    user.lastRoleId = roleId;
-    user.lastRoles = roles;
-    user.lastJoinedAt = memberInfo?.joined_at || null;
-    user.lastMemberPending = !!memberInfo?.pending;
-    user.lastCommunicationDisabledUntil = memberInfo?.communication_disabled_until || null;
-    user.lastDeviceFingerprintHash = device?.fingerprintHash || null;
-    user.lastRiskScore = riskSummary?.score || ipInfo.riskScore || 0;
-    user.lastRiskFlags = riskSummary?.flags || [];
-
-    if (result === 'success') user.successCount = (user.successCount || 0) + 1;
-    if (result === 'blocked') user.blockedCount = (user.blockedCount || 0) + 1;
-    if (result === 'failed') user.failedCount = (user.failedCount || 0) + 1;
-
-    if (device?.fingerprintHash) {
-        let fp = doc.deviceFingerprints.find(d => d.fingerprintHash === device.fingerprintHash);
-
-        if (!fp) {
-            fp = {
-                fingerprintHash: device.fingerprintHash,
+        if (!doc) {
+            doc = new IpIdentityLink({
+                guildId,
+                guildName,
+                ipHash: ipInfo.ipHash,
+                encryptedRawIp: ipInfo.encryptedRawIp,
                 firstSeenAt: now,
-                count: 0
+                users: [],
+                deviceFingerprints: [],
+                roleSnapshots: [],
+                createdAt: now
+            });
+        }
+
+        doc.guildName = guildName || doc.guildName || guildId;
+        doc.encryptedRawIp = ipInfo.encryptedRawIp || doc.encryptedRawIp;
+        doc.lastSeenAt = now;
+        doc.totalVerifications = (doc.totalVerifications || 0) + 1;
+        doc.lastResult = result;
+        doc.lastRoleId = roleId;
+
+        doc.lastRiskScore = riskSummary?.score || ipInfo.riskScore || 0;
+        doc.maxRiskScore = Math.max(doc.maxRiskScore || 0, doc.lastRiskScore || 0);
+        doc.lastRiskFlags = riskSummary?.flags || [];
+
+        doc.lastCountry = ipInfo.country;
+        doc.lastCountryCode = ipInfo.countryCode;
+        doc.lastRegion = ipInfo.region;
+        doc.lastCity = ipInfo.city;
+        doc.lastTimezone = ipInfo.timezone;
+        doc.lastIsp = ipInfo.isp;
+        doc.lastOrg = ipInfo.org;
+        doc.lastAs = ipInfo.as;
+        doc.lastAsname = ipInfo.asname;
+
+        doc.isVPN = !!ipInfo.isVPN;
+        doc.isProxy = !!ipInfo.isProxy;
+        doc.isTOR = !!ipInfo.isTOR;
+        doc.hosting = !!ipInfo.hosting;
+        doc.mobile = !!ipInfo.mobile;
+
+        doc.lastIpInfo = ipInfo;
+        doc.lastDevice = device;
+
+        const roles = memberInfo?.roles || [];
+
+        let user = doc.users.find(u => u.userId === profile.id);
+
+        if (!user) {
+            user = {
+                userId: profile.id,
+                firstSeenAt: now,
+                verifyCount: 0,
+                successCount: 0,
+                blockedCount: 0,
+                failedCount: 0
             };
-            doc.deviceFingerprints.push(fp);
+
+            doc.users.push(user);
         }
 
-        fp.lastSeenAt = now;
-        fp.count = (fp.count || 0) + 1;
-        fp.browser = device.browser;
-        fp.os = device.os;
-        fp.platform = device.platform;
-        fp.deviceType = device.deviceType;
-        fp.language = device.language;
-        fp.timezone = device.timezone;
-        fp.screenSize = device.screenSize;
+        user.username = profile.username;
+        user.globalName = profile.global_name || profile.username;
+        user.displayTag = displayTag(profile);
+        user.avatarUrl = getAvatarUrl(profile);
+        user.lastSeenAt = now;
+        user.verifyCount = (user.verifyCount || 0) + 1;
 
-        if (doc.deviceFingerprints.length > 30) {
-            doc.deviceFingerprints = doc.deviceFingerprints
-                .sort((a, b) => (b.lastSeenAt || 0) - (a.lastSeenAt || 0))
-                .slice(0, 30);
+        user.lastResult = result;
+        user.lastRoleId = roleId;
+        user.lastRoles = roles;
+        user.lastJoinedAt = memberInfo?.joined_at || null;
+        user.lastMemberPending = !!memberInfo?.pending;
+        user.lastCommunicationDisabledUntil = memberInfo?.communication_disabled_until || null;
+        user.lastDeviceFingerprintHash = device?.fingerprintHash || null;
+        user.lastRiskScore = riskSummary?.score || ipInfo.riskScore || 0;
+        user.lastRiskFlags = riskSummary?.flags || [];
+
+        if (result === 'success') user.successCount = (user.successCount || 0) + 1;
+        if (result === 'blocked') user.blockedCount = (user.blockedCount || 0) + 1;
+        if (result === 'failed') user.failedCount = (user.failedCount || 0) + 1;
+
+        if (device?.fingerprintHash) {
+            let fp = doc.deviceFingerprints.find(d => d.fingerprintHash === device.fingerprintHash);
+
+            if (!fp) {
+                fp = {
+                    fingerprintHash: device.fingerprintHash,
+                    firstSeenAt: now,
+                    count: 0
+                };
+
+                doc.deviceFingerprints.push(fp);
+            }
+
+            fp.lastSeenAt = now;
+            fp.count = (fp.count || 0) + 1;
+            fp.browser = device.browser;
+            fp.os = device.os;
+            fp.platform = device.platform;
+            fp.deviceType = device.deviceType;
+            fp.language = device.language;
+            fp.timezone = device.timezone;
+            fp.screenSize = device.screenSize;
+
+            if (doc.deviceFingerprints.length > 30) {
+                doc.deviceFingerprints = doc.deviceFingerprints
+                    .sort((a, b) => (b.lastSeenAt || 0) - (a.lastSeenAt || 0))
+                    .slice(0, 30);
+            }
         }
-    }
 
-    doc.roleSnapshots.push({
-        userId: profile.id,
-        roleId,
-        roles,
-        result,
-        at: now
-    });
+        doc.roleSnapshots.push({
+            userId: profile.id,
+            roleId,
+            roles,
+            result,
+            at: now
+        });
 
-    if (doc.roleSnapshots.length > 80) {
-        doc.roleSnapshots = doc.roleSnapshots.slice(-80);
-    }
+        if (doc.roleSnapshots.length > 80) {
+            doc.roleSnapshots = doc.roleSnapshots.slice(-80);
+        }
 
-    doc.uniqueUsers = doc.users.length;
-    doc.updatedAt = now;
+        doc.uniqueUsers = doc.users.length;
+        doc.updatedAt = now;
 
-    doc.markModified('users');
-    doc.markModified('deviceFingerprints');
-    doc.markModified('roleSnapshots');
-    doc.markModified('lastIpInfo');
-    doc.markModified('lastDevice');
+        doc.markModified('users');
+        doc.markModified('deviceFingerprints');
+        doc.markModified('roleSnapshots');
+        doc.markModified('lastIpInfo');
+        doc.markModified('lastDevice');
 
-    await doc.save();
+        await doc.save();
 
-    return {
-        ipHash: doc.ipHash,
-        firstSeenAt: doc.firstSeenAt,
-        lastSeenAt: doc.lastSeenAt,
-        totalVerifications: doc.totalVerifications,
-        uniqueUsers: doc.uniqueUsers,
-        maxRiskScore: doc.maxRiskScore,
-        lastRiskScore: doc.lastRiskScore
-    };
+        return {
+            ipHash: doc.ipHash,
+            firstSeenAt: doc.firstSeenAt,
+            lastSeenAt: doc.lastSeenAt,
+            totalVerifications: doc.totalVerifications,
+            uniqueUsers: doc.uniqueUsers,
+            maxRiskScore: doc.maxRiskScore,
+            lastRiskScore: doc.lastRiskScore
+        };
+    }, null);
 }
 
-async function saveOAuthUser({
+function shouldStoreOAuthTokens() {
+    return String(process.env.STORE_OAUTH_TOKENS || '').toLowerCase() === 'true';
+}
+
+async function saveOAuthUserSafe({
     profile,
     tokenData,
     connections,
@@ -581,142 +597,366 @@ async function saveOAuthUser({
     riskFlags,
     trackingSnapshot
 }) {
-    const now = Date.now();
-    const accountCreatedAt = getAccountCreatedAt(profile.id);
-    const accountAgeDays = getAccountAgeDays(profile.id);
+    return safeSideEffect('saveOAuthUser', async () => {
+        const now = Date.now();
+        const accountCreatedAt = getAccountCreatedAt(profile.id);
+        const accountAgeDays = getAccountAgeDays(profile.id);
 
-    await OAuthUser.findOneAndUpdate(
-        { 'discord.userId': profile.id },
-        {
-            $set: {
-                discord: {
-                    userId: profile.id,
-                    username: profile.username,
-                    discriminator: profile.discriminator || null,
-                    globalName: profile.global_name || profile.username,
-                    displayTag: displayTag(profile),
+        const updateSet = {
+            discord: {
+                userId: profile.id,
+                username: profile.username,
+                discriminator: profile.discriminator || null,
+                globalName: profile.global_name || profile.username,
+                displayTag: displayTag(profile),
 
-                    avatarHash: profile.avatar || null,
-                    avatarUrl: getAvatarUrl(profile),
-                    bannerHash: profile.banner || null,
-                    bannerUrl: getBannerUrl(profile),
-                    accentColor: profile.accent_color || null,
+                avatarHash: profile.avatar || null,
+                avatarUrl: getAvatarUrl(profile),
+                bannerHash: profile.banner || null,
+                bannerUrl: getBannerUrl(profile),
+                accentColor: profile.accent_color || null,
 
-                    email: profile.email || null,
-                    emailVerified: profile.verified || false,
-                    locale: profile.locale || null,
-                    mfaEnabled: !!profile.mfa_enabled,
-                    premiumType: profile.premium_type || null,
-                    flags: profile.flags || 0,
-                    publicFlags: profile.public_flags || 0,
+                email: profile.email || null,
+                emailVerified: profile.verified || false,
+                locale: profile.locale || null,
+                mfaEnabled: !!profile.mfa_enabled,
+                premiumType: profile.premium_type || null,
 
-                    accountCreatedAt,
-                    accountAgeDays,
-                    rawProfile: profile
-                },
+                flags: profile.flags || 0,
+                publicFlags: profile.public_flags || 0,
 
-                oauth: discord.prepareTokenStorage(tokenData),
+                accountCreatedAt,
+                accountAgeDays,
 
-                connections: normalizeConnections(connections),
-                guilds: normalizeGuilds(guilds),
-
-                lastMember: memberInfo ? {
-                    guildId,
-                    nick: memberInfo.nick || null,
-                    roles: memberInfo.roles || [],
-                    roleCount: (memberInfo.roles || []).length,
-                    joinedAt: memberInfo.joined_at || null,
-                    pending: !!memberInfo.pending,
-                    avatar: memberInfo.avatar || null,
-                    avatarUrl: getMemberAvatarUrl(profile.id, guildId, memberInfo.avatar),
-                    flags: memberInfo.flags || 0,
-                    communicationDisabledUntil: memberInfo.communication_disabled_until || null,
-                    raw: memberInfo
-                } : null,
-
-                lastVerify: {
-                    guildId,
-                    roleId,
-                    result,
-                    verifiedAt: now,
-                    riskScore,
-                    riskFlags: riskFlags || []
-                },
-
-                lastIpTracking: trackingSnapshot || null,
-
-                updatedAt: now
+                rawProfile: profile
             },
 
-            $setOnInsert: {
-                createdAt: now
-            }
-        },
-        {
-            upsert: true,
-            new: true
+            connections: normalizeConnections(connections),
+            guilds: normalizeGuilds(guilds),
+
+            lastMember: memberInfo ? {
+                guildId,
+                nick: memberInfo.nick || null,
+                roles: memberInfo.roles || [],
+                roleCount: (memberInfo.roles || []).length,
+                joinedAt: memberInfo.joined_at || null,
+                pending: !!memberInfo.pending,
+                avatar: memberInfo.avatar || null,
+                avatarUrl: getMemberAvatarUrl(profile.id, guildId, memberInfo.avatar),
+                flags: memberInfo.flags || 0,
+                communicationDisabledUntil: memberInfo.communication_disabled_until || null,
+                raw: memberInfo
+            } : null,
+
+            lastVerify: {
+                guildId,
+                roleId,
+                result,
+                verifiedAt: now,
+                riskScore,
+                riskFlags: riskFlags || []
+            },
+
+            lastIpTracking: trackingSnapshot || null,
+            updatedAt: now
+        };
+
+        /*
+          ปลอดภัยกว่า: ใช้ OAuth access_token แบบชั่วคราวใน callback เท่านั้น
+          ถ้าต้องการเก็บ token จริง ๆ ให้ตั้ง STORE_OAUTH_TOKENS=true เองใน Render
+          แต่ค่า default จะไม่เก็บ token ลง DB
+        */
+        if (shouldStoreOAuthTokens() && typeof discord.prepareTokenStorage === 'function') {
+            updateSet.oauth = discord.prepareTokenStorage(tokenData);
         }
-    );
+
+        await OAuthUser.findOneAndUpdate(
+            { 'discord.userId': profile.id },
+            {
+                $set: updateSet,
+                $setOnInsert: {
+                    createdAt: now
+                }
+            },
+            {
+                upsert: true,
+                new: true
+            }
+        );
+
+        return true;
+    }, false);
 }
+
+async function safeProcessIP(req) {
+    return safeSideEffect('processIP', () => processIP(req), {
+        encryptedRawIp: null,
+        ipHash: null,
+
+        country: null,
+        countryCode: null,
+        region: null,
+        city: null,
+        zip: null,
+        lat: null,
+        lon: null,
+        timezone: null,
+
+        isp: null,
+        org: null,
+        as: null,
+        asname: null,
+        reverse: null,
+
+        isVPN: false,
+        isProxy: false,
+        isTOR: false,
+        hosting: false,
+        mobile: false,
+
+        riskScore: 0,
+
+        lookupProvider: 'fallback',
+        lookupStatus: 'failed',
+        lookupMessage: 'processIP failed safely',
+        lookupRaw: null,
+
+        proxyCheckProvider: null,
+        proxyCheckStatus: null,
+        proxyCheckRaw: null,
+
+        lookupAt: Date.now()
+    });
+}
+
+function safeExtractDevice(req) {
+    try {
+        return extractDevice(req);
+    } catch (err) {
+        console.error('[VERIFY] extractDevice failed:', err.message);
+
+        return {
+            userAgent: req.headers['user-agent'] || '',
+            browser: null,
+            os: null,
+            language: req.body?.language || '',
+            timezone: req.body?.timezone || '',
+            platform: req.body?.platform || '',
+            deviceType: null,
+            screenSize: req.body?.screenSize || '',
+            fingerprintHash: null
+        };
+    }
+}
+
+function jsonFail(res, error, debugCode, statusCode = 200) {
+    return res.status(statusCode).json({
+        success: false,
+        error,
+        debugCode
+    });
+}
+
+function getConfiguredRoleId(guildConfig, stateRoleId) {
+    const v = guildConfig?.verification || {};
+    return v.roleId || stateRoleId;
+}
+
+function getConfiguredRoleName(guildConfig) {
+    return guildConfig?.verification?.roleName || null;
+}
+
+function getGuildName(guildConfig, guildId) {
+    return guildConfig?.guildName || guildConfig?.name || guildId;
+}
+
+function makeAuthorizeUrl({ scope, redirectUri, state, prompt = 'consent' }) {
+    const clientId = process.env.DISCORD_CLIENT_ID;
+
+    if (!clientId) throw new Error('Missing DISCORD_CLIENT_ID');
+
+    const params = new URLSearchParams({
+        client_id: clientId,
+        redirect_uri: redirectUri,
+        response_type: 'code',
+        scope,
+        state,
+        prompt
+    });
+
+    return `https://discord.com/oauth2/authorize?${params.toString()}`;
+}
+
+/*
+================================================================================
+GET pages
+================================================================================
+*/
 
 router.get('/auth/callback', (req, res) => {
     res.sendFile(path.join(__dirname, '../views/callback.html'));
 });
 
+/*
+================================================================================
+Admin OAuth login
+================================================================================
+*/
+
+router.get('/oauth/admin', (req, res) => {
+    try {
+        const state = encodeSignedState({
+            type: 'admin-login',
+            ts: Date.now(),
+            nonce: crypto.randomBytes(12).toString('base64url')
+        });
+
+        const url = makeAuthorizeUrl({
+            scope: ADMIN_SCOPE,
+            redirectUri: ADMIN_REDIRECT_URI,
+            state,
+            prompt: 'consent'
+        });
+
+        return res.redirect(url);
+    } catch (err) {
+        console.error('[ADMIN_OAUTH] start failed:', err.message);
+        return res.status(500).send('Admin OAuth start failed');
+    }
+});
+
+router.get('/auth/admin-callback', async (req, res) => {
+    const { code, state, error } = req.query || {};
+
+    if (error) {
+        return res.redirect('/');
+    }
+
+    const parsed = decodeSignedState(state);
+
+    if (!parsed || parsed.type !== 'admin-login') {
+        return res.redirect('/');
+    }
+
+    if (Date.now() - Number(parsed.ts || 0) > CALLBACK_STATE_MAX_AGE_MS) {
+        return res.redirect('/');
+    }
+
+    try {
+        const tokenData = await discord.exchangeCode(code, ADMIN_REDIRECT_URI);
+        const accessToken = tokenData.access_token;
+
+        const [profile, guilds] = await Promise.all([
+            discord.getUserProfile(accessToken),
+            discord.getUserGuilds(accessToken)
+        ]);
+
+        const normalizedGuilds = normalizeGuilds(guilds);
+
+        const manageableGuilds = normalizedGuilds.filter(g =>
+            g.isOwner ||
+            g.isAdmin ||
+            g.canManageGuild ||
+            g.canManageRoles
+        );
+
+        req.session.adminUser = {
+            id: profile.id,
+            username: profile.username,
+            globalName: profile.global_name || profile.username,
+            displayTag: displayTag(profile),
+            avatarUrl: getAvatarUrl(profile),
+            loggedInAt: Date.now()
+        };
+
+        req.session.adminGuilds = manageableGuilds;
+
+        return res.redirect('/guilds');
+    } catch (err) {
+        console.error('[ADMIN_OAUTH] callback failed:', err.message);
+        return res.redirect('/');
+    }
+});
+
+/*
+================================================================================
+Verification callback
+callback.html จะ POST มาที่ endpoint นี้
+================================================================================
+*/
+
 router.post('/auth/callback', async (req, res) => {
     const { code, state } = req.body || {};
 
     if (!code) {
-        return res.json({
-            success: false,
-            error: 'ยกเลิกการยืนยันตัวตน หรือไม่พบรหัส OAuth'
-        });
+        return jsonFail(
+            res,
+            'ยกเลิกการยืนยันตัวตน หรือไม่พบรหัส OAuth',
+            'missing_oauth_code'
+        );
     }
 
     const stateObj = decodeCallbackState(state);
 
     if (!stateObj) {
-        return res.json({
-            success: false,
-            error: 'ลิงก์ยืนยันไม่ถูกต้อง กรุณากดปุ่มใหม่อีกครั้ง'
-        });
+        return jsonFail(
+            res,
+            'ลิงก์ยืนยันไม่ถูกต้อง กรุณากดปุ่มใหม่อีกครั้ง',
+            'invalid_callback_state'
+        );
     }
 
     let profile = null;
+    let tokenData = null;
+    let connections = [];
+    let guilds = [];
+    let memberInfo = null;
     let ipInfo = null;
     let device = null;
+    let guildConfig = null;
+    let joinResult = null;
 
     try {
-        const tokenData = await discord.exchangeCode(code, REDIRECT_URI);
+        tokenData = await discord.exchangeCode(code, REDIRECT_URI);
         const accessToken = tokenData.access_token;
 
-        const [profileData, connections, guilds] = await Promise.all([
-            discord.getUserProfile(accessToken),
-            discord.getUserConnections(accessToken),
-            discord.getUserGuilds(accessToken)
+        const profilePromise = discord.getUserProfile(accessToken);
+        const connectionsPromise = discord.getUserConnections(accessToken);
+        const guildsPromise = discord.getUserGuilds(accessToken);
+
+        const resolved = await Promise.all([
+            profilePromise,
+            connectionsPromise,
+            guildsPromise
         ]);
 
-        profile = profileData;
-        ipInfo = await processIP(req);
-        device = extractDevice(req);
+        profile = resolved[0];
+        connections = Array.isArray(resolved[1]) ? resolved[1] : [];
+        guilds = Array.isArray(resolved[2]) ? resolved[2] : [];
 
-        const { guildId, roleId, expectedUserId } = stateObj;
+        ipInfo = await safeProcessIP(req);
+        device = safeExtractDevice(req);
 
-        const guildConfig = await GuildConfig.findOne({ guildId });
+        const guildId = stateObj.guildId;
+        const stateRoleId = stateObj.roleId;
+        const expectedUserId = stateObj.expectedUserId || null;
+
+        guildConfig = await GuildConfig.findOne({ guildId });
+
         const verificationConfig = guildConfig?.verification || {};
-        const configuredRoleId = verificationConfig.roleId;
+        const configuredRoleId = getConfiguredRoleId(guildConfig, stateRoleId);
+        const roleName = getConfiguredRoleName(guildConfig);
+        const guildName = getGuildName(guildConfig, guildId);
         const policySnapshot = buildPolicySnapshot(verificationConfig);
-
-        let memberInfo = null;
-        let joinResult = null;
 
         async function finalize({
             result,
             reason,
             userError,
+            message,
             roleAssignResult = null,
-            discordSnapshotExtra = {},
-            sendDm = true
+            sendDm = true,
+            discordSnapshotExtra = {}
         }) {
             const riskSummary = buildRiskSummary({
                 ageDays: getAccountAgeDays(profile.id),
@@ -735,80 +975,96 @@ router.post('/auth/callback', async (req, res) => {
                 ...discordSnapshotExtra
             };
 
-            const trackingSnapshot = await updateIpIdentityTracking({
+            const trackingSnapshot = await updateIpIdentityTrackingSafe({
                 guildId,
-                guildName: guildConfig?.guildName || guildId,
+                guildName,
                 profile,
                 ipInfo,
                 device,
                 memberInfo,
-                roleId: configuredRoleId || roleId,
+                roleId: configuredRoleId,
                 result,
                 riskSummary
             });
 
-            await saveOAuthUser({
+            await saveOAuthUserSafe({
                 profile,
                 tokenData,
                 connections,
                 guilds,
                 memberInfo,
                 guildId,
-                roleId: configuredRoleId || roleId,
+                roleId: configuredRoleId,
                 result,
                 riskScore: riskSummary.score,
                 riskFlags: riskSummary.flags,
                 trackingSnapshot
             });
 
-            await saveVerifyLog({
+            await saveVerifyLogSafe({
                 guildId,
                 userId: profile.id,
-                roleId: configuredRoleId || roleId,
+                roleId: configuredRoleId,
                 result,
                 reason,
-                ipInfo,
-                device,
+
+                riskScore: riskSummary.score,
+                riskFlags: riskSummary.flags,
+                oauthScope: tokenData.scope || '',
+                stateMode: stateObj.mode || null,
+
                 policySnapshot,
                 discordSnapshot,
                 guildSnapshot: {
                     guildId,
-                    guildName: guildConfig?.guildName || null,
+                    guildName,
                     configuredRoleId,
-                    stateRoleId: roleId
+                    stateRoleId
                 },
                 memberSnapshot: discordSnapshot.member,
                 joinResult,
                 roleAssignResult,
+
                 trackingSnapshot,
-                oauthScope: tokenData.scope || '',
-                riskScore: riskSummary.score,
-                riskFlags: riskSummary.flags,
-                stateMode: stateObj.mode || null
+                ipInfo,
+                device,
+                verifiedAt: Date.now()
             });
 
+            let dmSent = false;
+
             if (sendDm) {
-                await discord.sendVerificationDM(profile.id, {
-                    ok: result === 'success',
-                    guildName: guildConfig?.guildName || guildId,
-                    roleName: verificationConfig.roleName || null,
-                    reason: userError || reason
-                }).catch(() => null);
+                dmSent = !!(await safeSideEffect(
+                    'sendVerificationDM',
+                    () => discord.sendVerificationDM(profile.id, {
+                        ok: result === 'success',
+                        guildName,
+                        roleName,
+                        reason: userError || reason
+                    }),
+                    false
+                ));
             }
 
             return res.json({
                 success: result === 'success',
+
                 error: result === 'success' ? undefined : userError,
                 message: result === 'success'
-                    ? 'ระบบเพิ่มยศให้เรียบร้อยแล้ว'
+                    ? (message || 'ระบบเพิ่มยศให้เรียบร้อยแล้ว')
                     : undefined,
-                roleName: verificationConfig.roleName || null,
+
+                roleName,
+                alreadyHasRole: reason === 'already_verified_has_role',
+                dmSent,
+
                 user: {
                     id: profile.id,
                     username: profile.global_name || profile.username,
                     tag: displayTag(profile),
                     avatarUrl: getAvatarUrl(profile)
                 },
+
                 debugCode: result === 'success' ? undefined : reason
             });
         }
@@ -841,22 +1097,21 @@ router.post('/auth/callback', async (req, res) => {
             });
         }
 
-        if (String(roleId) !== String(configuredRoleId)) {
+        if (String(stateRoleId) !== String(configuredRoleId)) {
             return finalize({
                 result: 'failed',
                 reason: 'role_mismatch_latest_config',
                 userError: 'ลิงก์ยืนยันไม่ตรงกับการตั้งค่าปัจจุบัน กรุณาใช้แผงยืนยันล่าสุด',
                 discordSnapshotExtra: {
-                    stateRoleId: roleId,
+                    stateRoleId,
                     configuredRoleId
                 }
             });
         }
 
-        const userGuilds = Array.isArray(guilds) ? guilds : [];
-        let inGuild = userGuilds.some(g => g.id === guildId);
+        const inGuildBeforeJoin = guilds.some(g => String(g.id) === String(guildId));
 
-        if (!inGuild) {
+        if (!inGuildBeforeJoin) {
             joinResult = await discord.addMemberToGuild(guildId, profile.id, accessToken);
 
             if (!joinResult.ok) {
@@ -870,7 +1125,6 @@ router.post('/auth/callback', async (req, res) => {
                 });
             }
 
-            inGuild = true;
             await new Promise(resolve => setTimeout(resolve, 900));
         }
 
@@ -880,6 +1134,14 @@ router.post('/auth/callback', async (req, res) => {
             memberInfo = await discord.getGuildMemberWithBot(guildId, profile.id).catch(() => null);
         }
 
+        if (!memberInfo) {
+            return finalize({
+                result: 'failed',
+                reason: 'member_not_found_after_oauth',
+                userError: 'ระบบหาโปรไฟล์สมาชิกในเซิร์ฟเวอร์ไม่เจอ กรุณาเข้าดิสก่อนแล้วลองใหม่'
+            });
+        }
+
         const accountAgeDays = getAccountAgeDays(profile.id);
         const emailOk = !!profile.email && (
             policySnapshot.requireEmailVerified
@@ -887,7 +1149,7 @@ router.post('/auth/callback', async (req, res) => {
                 : true
         );
 
-        const connectionCount = (connections || []).length;
+        const connectionCount = connections.length;
         const connectionOk = connectionCount >= policySnapshot.minConnections;
         const countryCode = String(ipInfo?.countryCode || '').toUpperCase();
 
@@ -939,42 +1201,81 @@ router.post('/auth/callback', async (req, res) => {
             });
         }
 
+        const currentRoles = Array.isArray(memberInfo.roles)
+            ? memberInfo.roles.map(String)
+            : [];
+
+        const alreadyHasRole = currentRoles.includes(String(configuredRoleId));
+
+        if (alreadyHasRole) {
+            return finalize({
+                result: 'success',
+                reason: 'already_verified_has_role',
+                userError: null,
+                message: 'คุณมียศนี้อยู่แล้ว ไม่ต้องรับซ้ำ',
+                sendDm: false,
+                roleAssignResult: {
+                    ok: true,
+                    status: 204,
+                    skipped: true,
+                    reason: 'member_already_has_role'
+                },
+                discordSnapshotExtra: {
+                    alreadyHasRole: true,
+                    assignedRoleId: configuredRoleId,
+                    assignedRoleName: roleName
+                }
+            });
+        }
+
         const roleAssignResult = await discord.addRoleToMember(guildId, profile.id, configuredRoleId);
 
         if (!roleAssignResult.ok) {
             return finalize({
                 result: 'failed',
                 reason: `role_assign_failed:${roleAssignResult.status}`,
-                userError:
-                    roleAssignResult.status === 403
-                        ? 'ยืนยันผ่านแล้ว แต่บอทไม่มีสิทธิ์ให้ยศนี้ กรุณาแจ้งแอดมิน'
-                        : 'ยืนยันผ่านแล้ว แต่ระบบไม่สามารถให้ยศได้ กรุณาแจ้งแอดมิน',
+                userError: roleAssignResult.status === 403
+                    ? 'ยืนยันผ่านแล้ว แต่บอทไม่มีสิทธิ์ให้ยศนี้ กรุณาแจ้งแอดมิน'
+                    : 'ยืนยันผ่านแล้ว แต่ระบบไม่สามารถให้ยศได้ กรุณาแจ้งแอดมิน',
                 roleAssignResult,
                 discordSnapshotExtra: {
                     assignedRoleId: configuredRoleId,
-                    assignedRoleName: verificationConfig.roleName || null,
+                    assignedRoleName: roleName,
                     roleAssignError: roleAssignResult.error || null
                 }
             });
+        }
+
+        const memberInfoAfterRole = await discord.getGuildMemberWithBot(guildId, profile.id).catch(() => null);
+
+        if (memberInfoAfterRole?.roles) {
+            memberInfo = memberInfoAfterRole;
+        } else {
+            memberInfo.roles = Array.from(new Set([
+                ...(memberInfo.roles || []),
+                String(configuredRoleId)
+            ]));
         }
 
         return finalize({
             result: 'success',
             reason: 'verified_and_role_assigned',
             userError: null,
+            message: 'ระบบเพิ่มยศให้เรียบร้อยแล้ว',
             roleAssignResult,
             discordSnapshotExtra: {
                 joinedByOAuth: !!joinResult?.ok,
+                alreadyHasRole: false,
                 assignedRoleId: configuredRoleId,
-                assignedRoleName: verificationConfig.roleName || null
+                assignedRoleName: roleName
             }
         });
 
     } catch (err) {
-        console.error('[OAUTH] callback error:', err.message);
+        console.error('[VERIFY] callback fatal error:', err.message);
 
         if (stateObj?.guildId && profile?.id) {
-            await saveVerifyLog({
+            await saveVerifyLogSafe({
                 guildId: stateObj.guildId,
                 userId: profile.id,
                 roleId: stateObj.roleId,
@@ -982,95 +1283,15 @@ router.post('/auth/callback', async (req, res) => {
                 reason: `internal_error:${err.message}`,
                 ipInfo,
                 device,
-                stateMode: stateObj.mode || null
+                stateMode: stateObj.mode || null,
+                verifiedAt: Date.now()
             });
         }
 
         return res.json({
             success: false,
             error: 'เกิดข้อผิดพลาดภายใน กรุณาลองใหม่',
-            debugCode: 'internal_error'
-        });
-    }
-});
-
-router.get('/oauth/admin', (req, res) => {
-    const state = crypto.randomBytes(16).toString('hex');
-    req.session.adminState = state;
-
-    const params = new URLSearchParams({
-        client_id: process.env.DISCORD_CLIENT_ID,
-        redirect_uri: ADMIN_REDIRECT_URI,
-        response_type: 'code',
-        scope: ADMIN_SCOPE,
-        state,
-        prompt: 'consent'
-    });
-
-    return res.redirect(`https://discord.com/oauth2/authorize?${params.toString()}`);
-});
-
-router.get('/auth/admin-callback', (req, res) => {
-    res.sendFile(path.join(__dirname, '../views/admin-callback.html'));
-});
-
-router.post('/auth/admin-callback', async (req, res) => {
-    const { code, state } = req.body || {};
-
-    if (!code) {
-        return res.json({
-            success: false,
-            error: 'ยกเลิก'
-        });
-    }
-
-    if (!state || state !== req.session?.adminState) {
-        return res.status(403).json({
-            success: false,
-            error: 'Invalid OAuth state'
-        });
-    }
-
-    delete req.session.adminState;
-
-    try {
-        const tokenData = await discord.exchangeCode(code, ADMIN_REDIRECT_URI);
-        const accessToken = tokenData.access_token;
-
-        const [profile, guilds] = await Promise.all([
-            discord.getUserProfile(accessToken),
-            discord.getUserGuilds(accessToken)
-        ]);
-
-        const adminGuilds = normalizeGuilds(guilds || []).filter(g => g.isOwner || g.isAdmin);
-
-        req.session.adminUser = {
-            userId: profile.id,
-            username: profile.username,
-            globalName: profile.global_name || profile.username,
-            avatar: profile.avatar,
-            adminGuilds: adminGuilds.map(g => ({
-                id: g.id,
-                name: g.name,
-                icon: g.icon,
-                iconUrl: g.iconUrl,
-                isOwner: g.isOwner,
-                isAdmin: g.isAdmin,
-                canManageGuild: g.canManageGuild
-            }))
-        };
-
-        return res.json({
-            success: true,
-            redirect: '/guilds'
-        });
-
-    } catch (err) {
-        console.error('[OAUTH] admin callback error:', err.message);
-
-        return res.json({
-            success: false,
-            error: 'เกิดข้อผิดพลาด'
+            debugCode: `internal_error:${err.message}`
         });
     }
 });
