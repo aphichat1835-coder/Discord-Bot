@@ -13,6 +13,7 @@
   --text:#f7f8ff;
   --muted:#a4a8ba;
   --blue:#5865f2;
+  --purple:#7c3aed;
   --green:#45e67a;
   --red:#ef4444;
   --yellow:#facc15;
@@ -22,53 +23,68 @@ html,body{min-height:100%}
 body{
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans Thai',sans-serif;
   background:
-    radial-gradient(circle at 20% 10%,#5865f244,transparent 34%),
-    radial-gradient(circle at 80% 90%,#45e67a22,transparent 30%),
+    radial-gradient(circle at 18% 8%,#5865f244,transparent 34%),
+    radial-gradient(circle at 80% 88%,#45e67a24,transparent 32%),
     linear-gradient(145deg,var(--bg1),var(--bg2));
   color:var(--text);
   display:flex;
   align-items:center;
   justify-content:center;
-  padding:28px 16px;
+  padding:30px 16px;
 }
 .shell{
   width:100%;
-  max-width:430px;
+  max-width:450px;
 }
 .brand{
   text-align:center;
-  margin-bottom:16px;
+  margin-bottom:18px;
 }
 .brand .logo{
-  width:54px;
-  height:54px;
+  width:58px;
+  height:58px;
   margin:auto;
-  border-radius:18px;
+  border-radius:20px;
   display:grid;
   place-items:center;
-  background:linear-gradient(135deg,#5865f2,#7c3aed);
+  background:linear-gradient(135deg,var(--blue),var(--purple));
   box-shadow:0 20px 55px #5865f244;
-  font-size:26px;
+  font-size:28px;
 }
 .brand h2{
   margin-top:12px;
-  font-size:1.02rem;
+  font-size:1.08rem;
   color:#d9dcff;
 }
 .card{
   background:var(--card);
   border:1px solid var(--line);
-  border-radius:26px;
-  padding:28px 22px;
+  border-radius:28px;
+  padding:30px 22px;
   text-align:center;
   box-shadow:0 28px 90px #0009;
   backdrop-filter:blur(18px);
 }
 .state{display:none}
-.state.active{display:block;animation:fade .22s ease both}
+.state.active{display:block;animation:fade .25s ease both}
 @keyframes fade{
-  from{opacity:0;transform:translateY(8px) scale(.98)}
+  from{opacity:0;transform:translateY(10px) scale(.98)}
   to{opacity:1;transform:none}
+}
+.loaderWrap{
+  width:128px;
+  height:128px;
+  margin:0 auto 24px;
+  position:relative;
+  display:grid;
+  place-items:center;
+}
+.loaderGlow{
+  position:absolute;
+  inset:0;
+  border-radius:50%;
+  background:radial-gradient(circle,#5865f230,transparent 62%);
+  animation:pulse 1.7s ease-in-out infinite;
 }
 .loaderRing{
   width:112px;
@@ -76,29 +92,41 @@ body{
   border-radius:50%;
   display:grid;
   place-items:center;
-  margin:4px auto 22px;
   border:4px solid #5865f255;
   position:relative;
 }
 .loaderRing:before{
   content:"";
   position:absolute;
-  inset:-4px;
+  inset:-5px;
   border-radius:50%;
-  border:4px solid transparent;
+  border:5px solid transparent;
   border-top-color:var(--blue);
-  animation:spin .8s linear infinite;
+  border-right-color:#7c3aed99;
+  animation:spin .85s linear infinite;
+}
+.loaderRing:after{
+  content:"";
+  position:absolute;
+  inset:18px;
+  border-radius:50%;
+  border:1px solid #ffffff18;
 }
 .spinner{
-  width:48px;
-  height:48px;
+  width:52px;
+  height:52px;
   border-radius:50%;
-  background:linear-gradient(135deg,#5865f2,#7c3aed);
+  background:linear-gradient(135deg,var(--blue),var(--purple));
   display:grid;
   place-items:center;
   font-size:24px;
+  box-shadow:0 12px 34px #5865f244;
 }
 @keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{
+  0%,100%{transform:scale(.96);opacity:.65}
+  50%{transform:scale(1.08);opacity:1}
+}
 .resultRing{
   width:112px;
   height:112px;
@@ -121,41 +149,42 @@ body{
 .icon.ok{background:var(--green);color:#052312}
 .icon.err{background:var(--red);color:#2b0909}
 h1{
-  font-size:1.48rem;
+  font-size:1.5rem;
   line-height:1.25;
   margin-bottom:12px;
 }
-.loadTitle{color:#cdd2ff}
+.loadTitle{color:#d7dbff}
 .okTitle{color:var(--green)}
 .errTitle{color:var(--red)}
 p{
   color:var(--muted);
-  line-height:1.65;
+  line-height:1.7;
   font-size:.96rem;
 }
 .status{
-  margin:20px 0 18px;
-  padding:13px 14px;
-  border-radius:16px;
+  margin:22px 0 18px;
+  padding:14px 16px;
+  border-radius:17px;
   background:#222841;
   border:1px solid #5865f244;
-  font-weight:800;
+  font-weight:900;
   color:#eef0ff;
+  text-align:center;
 }
 .steps{
   margin-top:18px;
   display:grid;
-  gap:8px;
+  gap:9px;
   text-align:left;
 }
 .step{
   display:flex;
   align-items:center;
   gap:10px;
-  padding:10px 12px;
+  padding:11px 12px;
   border:1px solid #ffffff10;
   background:#ffffff08;
-  border-radius:14px;
+  border-radius:15px;
   color:#b8bdd3;
   font-size:.88rem;
 }
@@ -163,7 +192,7 @@ p{
   width:12px;
   height:12px;
   border-radius:50%;
-  background:#5865f2;
+  background:var(--blue);
   box-shadow:0 0 0 4px #5865f222;
   flex:0 0 auto;
 }
@@ -235,7 +264,7 @@ p{
 }
 .smallWarn{
   margin-top:12px;
-  color:#facc15;
+  color:var(--yellow);
   font-size:.8rem;
 }
 </style>
@@ -249,8 +278,11 @@ p{
 
   <div class="card">
     <div class="state active" id="s-loading">
-      <div class="loaderRing">
-        <div class="spinner">🔐</div>
+      <div class="loaderWrap">
+        <div class="loaderGlow"></div>
+        <div class="loaderRing">
+          <div class="spinner">🔐</div>
+        </div>
       </div>
       <h1 class="loadTitle">กำลังดำเนินการ</h1>
       <p>ระบบกำลังตรวจสอบข้อมูลจาก Discord และประมวลผลสิทธิ์ของคุณ</p>
@@ -283,7 +315,7 @@ p{
         </div>
       </div>
 
-      <a class="btn ok" href="discord://">กลับไปที่ Discord</a>
+      <a class="btn ok" href="https://discord.com/channels/@me">กลับไปที่ Discord</a>
       <div class="detail">ข้อมูลถูกบันทึกเพื่อความปลอดภัยและการตรวจสอบย้อนหลังของเซิร์ฟเวอร์</div>
     </div>
 
@@ -293,8 +325,8 @@ p{
       </div>
       <h1 class="errTitle">ยืนยันตัวตนไม่สำเร็จ</h1>
       <p id="err-msg">ไม่พบรหัสยืนยันตัวตน กรุณาลองใหม่อีกครั้ง</p>
-      <button class="btn err" onclick="location.href='/'">กลับไปหน้าหลัก</button>
-      <div class="smallWarn">กดปุ่มยืนยันจาก Discord ใหม่อีกครั้งหากลิงก์หมดอายุ</div>
+      <a class="btn err" href="https://discord.com/channels/@me">กลับไปที่ Discord</a>
+      <div class="smallWarn">กดปุ่มยืนยันจาก Discord ใหม่อีกครั้งหากลิงก์มีปัญหา</div>
     </div>
   </div>
 </div>
@@ -314,87 +346,100 @@ const errorMap = {
   role_mismatch: 'ลิงก์นี้ไม่ตรงกับการตั้งค่าปัจจุบัน กรุณากดปุ่มใหม่อีกครั้ง',
   verification_disabled: 'ระบบยืนยันตัวตนของเซิร์ฟเวอร์นี้ยังไม่เปิดใช้งาน',
   server_not_configured: 'เซิร์ฟเวอร์นี้ยังไม่ได้ตั้งค่าระบบยืนยันตัวตน',
-  missing_verify_token: 'ไม่พบรหัสยืนยันตัวตน กรุณากดปุ่มใหม่อีกครั้ง',
-  verify_internal_error: 'ระบบยืนยันตัวตนขัดข้อง กรุณาลองใหม่อีกครั้ง'
+  missing_verify_token: 'ไม่พบรหัสยืนยันตัวตน กรุณากดปุ่มจาก Discord ใหม่อีกครั้ง',
+  verify_internal_error: 'ระบบยืนยันตัวตนมีปัญหาภายใน กรุณาลองใหม่อีกครั้ง'
 };
 
-function show(id) {
+function show(id){
   document.querySelectorAll('.state').forEach(e => e.classList.remove('active'));
-  document.getElementById('s-' + id).classList.add('active');
+  document.getElementById(id).classList.add('active');
 }
 
-function setStatus(text) {
-  const el = document.getElementById('statusText');
-  if (el) el.textContent = text;
+function setStatus(t){
+  document.getElementById('statusText').textContent = t;
 }
 
-function devicePayload() {
-  let tz = 'unknown';
-
-  try {
-    tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown';
-  } catch {}
-
-  return {
-    timezone: tz,
-    language: navigator.language || 'unknown',
-    platform: navigator.platform || 'unknown',
-    screenSize: `${screen.width}x${screen.height}`
-  };
+function fail(msg){
+  document.getElementById('err-msg').textContent = msg || 'ยืนยันตัวตนไม่สำเร็จ';
+  show('s-error');
 }
 
-function success(d) {
-  const u = d.user || {};
+function success(data){
+  document.getElementById('ok-msg').textContent = data.message || 'ระบบเพิ่มยศให้เรียบร้อยแล้ว';
 
-  document.getElementById('av').src = u.avatarUrl || 'https://cdn.discordapp.com/embed/avatars/0.png';
-  document.getElementById('name').textContent = u.username || '—';
-  document.getElementById('tag').textContent = u.tag || '';
+  if (data.user) {
+    document.getElementById('name').textContent = data.user.username || 'Discord User';
+    document.getElementById('tag').textContent = data.user.tag || data.user.id || '—';
 
-  if (d.message) {
-    document.getElementById('ok-msg').textContent = d.message;
+    const av = document.getElementById('av');
+    if (data.user.avatarUrl) {
+      av.src = data.user.avatarUrl;
+      av.style.display = 'block';
+    } else {
+      av.style.display = 'none';
+    }
   }
 
-  if (d.roleName) {
+  if (data.roleName) {
+    document.getElementById('roleName').textContent = data.roleName;
     document.getElementById('rolePill').style.display = 'inline-flex';
-    document.getElementById('roleName').textContent = d.roleName;
   }
 
-  show('success');
+  show('s-success');
 }
 
-function fail(msg) {
-  document.getElementById('err-msg').textContent = msg || 'เกิดข้อผิดพลาด กรุณาลองใหม่';
-  show('error');
-}
-
-(async () => {
+async function run(){
   if (error) {
-    return fail(errorMap[error] || errorDescription || 'เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง');
+    fail(errorMap[error] || decodeURIComponent(errorDescription || error));
+    return;
   }
 
-  if (!code) {
-    return fail('ไม่พบรหัสยืนยันตัวตน กรุณากดปุ่มใหม่อีกครั้ง');
+  if (!code || !state) {
+    fail('ไม่พบรหัสยืนยันตัวตน กรุณากดปุ่มจาก Discord ใหม่อีกครั้ง');
+    return;
   }
 
   try {
-    setStatus('กำลังส่งข้อมูลไปยังเซิร์ฟเวอร์...');
+    setStatus('กำลังรับผลลัพธ์จาก Discord...');
+    await new Promise(r => setTimeout(r, 350));
+
+    setStatus('กำลังตรวจสอบข้อมูลและเงื่อนไข...');
+    const payload = {
+      code,
+      state,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+      language: navigator.language || '',
+      platform: navigator.platform || '',
+      screenSize: `${screen.width}x${screen.height}`,
+      viewportSize: `${window.innerWidth}x${window.innerHeight}`
+    };
 
     const res = await fetch('/auth/callback', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, state, ...devicePayload() })
+      body: JSON.stringify(payload)
     });
 
-    setStatus('กำลังตรวจสอบผลลัพธ์...');
+    setStatus('กำลังสรุปผลการยืนยัน...');
+    const data = await res.json().catch(() => null);
 
-    const data = await res.json();
+    if (!data) {
+      fail('ระบบตอบกลับไม่ถูกต้อง กรุณาลองใหม่');
+      return;
+    }
 
-    data.success ? success(data) : fail(data.error);
+    if (data.success) {
+      success(data);
+    } else {
+      fail(data.error || data.message || 'ยืนยันตัวตนไม่สำเร็จ');
+    }
 
-  } catch {
-    fail('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ กรุณาลองใหม่อีกครั้ง');
+  } catch (err) {
+    fail('เชื่อมต่อระบบไม่สำเร็จ กรุณาลองใหม่');
   }
-})();
+}
+
+run();
 </script>
 </body>
 </html>
