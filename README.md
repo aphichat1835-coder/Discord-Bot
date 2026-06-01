@@ -1,75 +1,95 @@
 # Phomueangtai Enterprise Discord System
 
-A two-service Discord system for bot management, OAuth2 verification, role assignment, logging, and web dashboards.
+ระบบนี้เป็นโปรเจกต์ **Discord bot + web dashboard + OAuth2 verification** แบบแยก 2 service สำหรับจัดการบอท Discord, ระบบยืนยันตัวตน, การให้ยศ, logging, dashboard และงานดูแลเซิร์ฟเวอร์
 
-This repository currently contains:
-
-- **Service 1 — Main Discord bot**: slash commands, owner/admin dashboard routes, voice/session subsystems, audit logging, panels, and command routing.
-- **Service 2 — Dashboard Public / Verification Dashboard**: Discord OAuth2 verification flow, guild-admin dashboard foundation, internal APIs, verification logs, risk/device/IP summaries, and role assignment through the bot token.
-
-> Security note: never commit real tokens, API keys, database URLs, passwords, webhook URLs, or `.env` files. Use `.env.example` only as a template with fake placeholder values.
+> หมายเหตุความปลอดภัย: ห้าม commit token จริง, API key, database URL, password, webhook URL, `.env` หรือ secret ใด ๆ ลง GitHub เด็ดขาด ให้ใช้ `.env.example` เป็น template เท่านั้น
 
 ---
 
-## Current project status
+## Overview
 
-The current stable feature is the **Discord OAuth2 verification system**:
+โปรเจกต์นี้มี 2 ส่วนหลัก:
 
-1. An administrator runs `/setup-verify`.
-2. The bot sends a verification panel to a selected channel.
-3. A member clicks the button and authorizes through Discord OAuth2.
-4. Service 2 handles `/auth/callback`.
-5. The system checks the user profile, member status, configured policy, IP/device summary, and role state.
-6. The bot assigns the configured role when verification succeeds.
-7. The system writes verification logs and tracking summaries.
-8. The user sees a success/failure page and may receive a DM notification.
+- **Service 1 — Main Discord Bot**: บอทหลักสำหรับ slash commands, owner/admin dashboard routes, voice/session subsystems, audit logging, panel และระบบคำสั่งต่าง ๆ
+- **Service 2 — Dashboard Public / Verification Dashboard**: เว็บสำหรับ Discord OAuth2 verification, guild-admin dashboard foundation, internal APIs, verification logs, risk/device/IP summaries และการให้ยศผ่าน bot token
 
-Recently completed work:
+โปรเจกต์นี้เหมาะกับการทำระบบยืนยันตัวตนของสมาชิก Discord ผ่าน OAuth2 และระบบ dashboard สำหรับเจ้าของโปรเจกต์หรือแอดมินเซิร์ฟเวอร์
 
-- `/setup-verify` now uses `button_text` instead of separate `button_label` and `button_emoji` options.
-- Button text can include emoji in one field, for example `✅ ยืนยันตัวตน ✅`.
-- The verification panel validates bot permissions, role hierarchy, and managed roles before sending.
-- The public callback page no longer exposes debug output through URL query parameters.
-
-Planned future work:
-
-- Full Dashboard Public renovation: Overview, Settings, Verified Users, Logs, Risk & Network, Panel Manager, Data & Privacy.
-- Owner Dashboard expansion: global monitoring, guild control, user intelligence, sensitive reveal approval, data deletion, security center.
-- Security/data audit: environment checks, AES-GCM verification, route guard review, schema/index cleanup, dead-code review.
-- Audit Log improvements after verification/dashboard systems are stable.
+สถานะปัจจุบัน: **work in progress** แต่ระบบ OAuth2 verification core ผ่านการทดสอบใช้งานจริงแล้ว
 
 ---
 
-## Repository structure
+## Features
+
+### เสร็จแล้ว / Stable enough for current phase
+
+- Discord bot startup + Express server
+- MongoDB connection
+- Slash command registration
+- `/setup-verify` สำหรับสร้างแผงยืนยันตัวตน
+- OAuth2 verification callback ผ่าน `dashboard-public`
+- Role assignment หลังยืนยันสำเร็จ
+- Repeat verification handling: ถ้ามียศอยู่แล้ว ไม่ให้ซ้ำและไม่ DM ซ้ำ
+- Success/failure callback page
+- Verification logging และ IP/device/risk summary foundation
+- `.env.example`, `.gitignore`, `README.md`, `CONTEXT.md`, `AGENTS.md` สำหรับช่วยให้ AI ทำงานต่อแม่นขึ้น
+
+### กำลังพัฒนา / Planned
+
+- Dashboard Public renovation
+- Owner Dashboard expansion
+- Data deletion / retention controls
+- Owner-only sensitive reveal controls
+- Security Center / env checker
+- Full route guard and crypto audit
+- Audit Log improvements หลังระบบ verify/dashboard เสถียร
+
+---
+
+## Tech Stack
+
+- Runtime: Node.js `>=18.0.0`
+- Language: JavaScript / CommonJS
+- Package manager: npm
+- Bot framework: `discord.js` v13
+- Voice: `@discordjs/voice`, `opusscript`, `libsodium-wrappers`, `tweetnacl`
+- Web framework: Express
+- Database: MongoDB ผ่าน Mongoose
+- Sessions: `express-session` + `connect-mongo` ใน Service 2
+- Deployment target: Render หรือ Node-compatible hosting provider
+
+---
+
+## Project Structure
 
 ```txt
 .
-├── package.json                     # Service 1 package, root app entry: discord/index.js
-├── .env.example                     # Safe fake environment template
-├── README.md                        # Human + AI setup guide
-├── CONTEXT.md                       # Project architecture/context for AI agents
-├── AGENTS.md                        # Rules for AI coding agents
+├── package.json                     # Service 1 package, entry point: discord/index.js
+├── .env.example                     # ตัวอย่าง environment variables แบบ placeholder
+├── README.md                        # คู่มือสำหรับคนและ AI
+├── CONTEXT.md                       # บริบทเชิงลึกของโปรเจกต์สำหรับ AI agent
+├── AGENTS.md                        # กฎสำหรับ AI coding agent
 ├── discord/
 │   ├── index.js                     # Service 1 boot sequence: Express → MongoDB → Discord
-│   ├── commands.js                  # Slash command registry/router only
+│   ├── commands.js                  # Slash command registry/router
 │   ├── commands/
 │   │   ├── moderation.js
 │   │   ├── information.js
 │   │   ├── utility.js
-│   │   └── verification.js          # /setup-verify logic
+│   │   └── verification.js          # Logic ของ /setup-verify
 │   ├── index/
 │   │   ├── server.js                # Service 1 API routes
-│   │   ├── views.js                 # Service 1 HTML view routes
-│   │   ├── system.js                # System utilities / crash / cron helpers
+│   │   ├── views.js                 # Service 1 HTML routes
+│   │   ├── system.js                # System/crash/cron helpers
 │   │   ├── events.js                # Discord event registration
 │   │   └── verifyOwner.js           # Owner-only reveal approval route foundation
-│   ├── features/                    # Feature modules
+│   ├── features/
 │   ├── auditLogger.js
 │   ├── sessionManager.js
 │   ├── systemProvider.js
 │   └── voiceWorker.js
 └── dashboard-public/
-    ├── package.json                 # Service 2 package, entry: index.js
+    ├── package.json                 # Service 2 package, entry point: index.js
     ├── index.js                     # Service 2 Express app
     ├── routes/
     │   ├── oauth.js                 # OAuth2 callback + admin OAuth
@@ -97,20 +117,22 @@ Planned future work:
 
 ## Requirements
 
+ก่อนรันโปรเจกต์ต้องมี:
+
 - Node.js `>=18.0.0`
 - npm
 - MongoDB connection string
-- Discord bot application + bot token
-- Discord OAuth2 application settings
-- Render or another Node-compatible hosting provider
+- Discord Application และ bot token จาก Discord Developer Portal
+- Discord OAuth2 redirect URIs สำหรับ Service 2
+- Environment variables ที่จำเป็นใน local `.env` หรือ Render Environment Variables
 
 ---
 
-## Install dependencies
+## Installation
 
-### Service 1 — Main bot
+### Service 1 — Main Bot
 
-Run from the repository root:
+รันจาก root repo:
 
 ```bash
 npm install
@@ -118,7 +140,7 @@ npm install
 
 ### Service 2 — Dashboard Public
 
-Run from the `dashboard-public` directory:
+รันจากโฟลเดอร์ `dashboard-public`:
 
 ```bash
 cd dashboard-public
@@ -127,11 +149,17 @@ npm install
 
 ---
 
-## Environment setup
+## Environment Variables
 
-Copy `.env.example` as a reference only. Do not commit real `.env` files.
+สร้าง `.env` เองจาก `.env.example` สำหรับ local development หรือใส่ค่าใน Render Environment Variables สำหรับ production
 
-Service 1 requires at minimum:
+```bash
+cp .env.example .env
+```
+
+ห้าม commit `.env` และห้ามใส่ค่าจริงใน `.env.example`
+
+Service 1 ต้องใช้หลัก ๆ:
 
 ```txt
 MONGO_URI
@@ -141,44 +169,42 @@ ENCRYPTION_KEY
 NODE_ENV
 ```
 
-Service 2 requires at minimum:
+Service 2 ต้องใช้หลัก ๆ:
 
 ```txt
 MONGO_URI
 TOKEN_MANAGER
 DISCORD_CLIENT_ID
 DISCORD_CLIENT_SECRET
-ENCRYPTION_KEY
 SESSION_SECRET
-DASHBOARD_URL or PUBLIC_DASHBOARD_URL
+ENCRYPTION_KEY
+DASHBOARD_URL หรือ PUBLIC_DASHBOARD_URL
 ```
 
-Discord Developer Portal OAuth2 Redirect URIs for Service 2:
+Discord Developer Portal OAuth2 Redirect URIs ที่ต้องตั้งสำหรับ Service 2:
 
 ```txt
 https://YOUR-DASHBOARD-PUBLIC-SERVICE.onrender.com/auth/callback
 https://YOUR-DASHBOARD-PUBLIC-SERVICE.onrender.com/auth/admin-callback
 ```
 
-Use real values only in Render Environment Variables or local `.env` files that are ignored by Git.
-
 ---
 
-## Run locally
+## Running Locally
 
-### Service 1 — Main bot
+### Service 1 — Main Bot
 
 ```bash
 npm start
 ```
 
-Equivalent:
+หรือ:
 
 ```bash
 npm run dev
 ```
 
-Both run:
+ทั้งสองคำสั่งรัน:
 
 ```bash
 node discord/index.js
@@ -191,14 +217,14 @@ cd dashboard-public
 npm start
 ```
 
-Equivalent:
+หรือ:
 
 ```bash
 cd dashboard-public
 npm run dev
 ```
 
-Both run:
+ทั้งสองคำสั่งรัน:
 
 ```bash
 node index.js
@@ -206,11 +232,13 @@ node index.js
 
 ---
 
-## Basic syntax checks
+## Testing / Validation
 
-There is currently no automated `npm test` script. Use these basic checks before deploying code changes.
+ตอนนี้ยังไม่มี automated `npm test` script ใน `package.json`
 
-Service 1:
+ใช้ basic syntax checks เหล่านี้ก่อน deploy:
+
+### Service 1
 
 ```bash
 node --check discord/index.js
@@ -218,7 +246,7 @@ node --check discord/commands.js
 node --check discord/commands/verification.js
 ```
 
-Service 2:
+### Service 2
 
 ```bash
 cd dashboard-public
@@ -228,113 +256,130 @@ node --check routes/guild.js
 node --check routes/api.js
 ```
 
-HTML files such as `dashboard-public/views/callback.html` should be checked by opening the page in a browser or with an HTML validator.
+HTML files เช่น `dashboard-public/views/callback.html` ควรตรวจด้วย browser หรือ HTML validator
+
+### Smoke test สำหรับระบบ verification
+
+1. ใช้ `/setup-verify` แบบใส่แค่ `channel` และ `role`
+2. ใช้ `/setup-verify` พร้อม `button_text: ✅ ยืนยันตัวตน ✅`
+3. ตรวจว่า bot ส่ง panel ได้โดยไม่มี `Invalid Form Body`
+4. กด verify ด้วยบัญชีปกติ
+5. ตรวจว่า OAuth redirect กลับมาที่ Service 2 ถูกต้อง
+6. ตรวจว่า role ถูกให้จริง
+7. กดซ้ำด้วยบัญชีที่มียศอยู่แล้ว
+8. ตรวจว่าไม่มี DM ซ้ำและ role ไม่หาย
+9. ทดสอบบัญชีใหม่ถ้าเปิด account-age policy
+10. ตรวจว่า failure page ไม่โชว์ debug details
+11. ตรวจ Render logs ว่าไม่มี major runtime errors
 
 ---
 
-## Smoke test checklist
+## Deployment
 
-After deploying verification changes:
+โปรเจกต์นี้ deploy ได้แบบแยก 2 Render Web Services
 
-1. Run `/setup-verify` with only `channel` and `role`.
-2. Run `/setup-verify` with `button_text: ✅ ยืนยันตัวตน ✅`.
-3. Confirm the bot sends a panel without `Invalid Form Body`.
-4. Click the verification button with a normal account.
-5. Confirm OAuth redirects back to Service 2.
-6. Confirm success page appears.
-7. Confirm the configured role is assigned.
-8. Confirm DM notification behavior is correct.
-9. Click again with an account that already has the role.
-10. Confirm no duplicate DM and no role removal.
-11. Test a new account if account-age policy is enabled.
-12. Confirm failure pages do not show debug details.
-13. Check Render logs for major errors.
-
----
-
-## Render deployment overview
-
-### Service 1 — Main bot
+### Service 1 — Main Bot
 
 - Root Directory: repository root
 - Build Command: `npm install`
 - Start Command: `npm start`
-- Required environment variables: see `.env.example`
+- Environment Variables: ดู `.env.example`
 
 ### Service 2 — Dashboard Public
 
 - Root Directory: `dashboard-public`
 - Build Command: `npm install`
 - Start Command: `npm start`
-- Required environment variables: see `.env.example`
+- Environment Variables: ดู `.env.example`
 
-Deploy Service 1 after changing files under `discord/`.
-Deploy Service 2 after changing files under `dashboard-public/`.
+Deploy Service 1 เมื่อแก้ไฟล์ใต้ `discord/`
+Deploy Service 2 เมื่อแก้ไฟล์ใต้ `dashboard-public/`
 
----
-
-## Safe development workflow
-
-Recommended workflow for future work:
-
-```bash
-git switch main
-git pull
-git switch -c feature/dashboard-public-renovation
-```
-
-Then work in a feature branch, open a Pull Request, let review bots run, inspect the diff, and merge only after smoke tests are planned.
-
-Before large changes, create a local backup branch or tag:
-
-```bash
-git branch backup/verify-core-stable-before-next-phase
-# or
-git tag verify-core-stable-before-next-phase
-```
-
-Do not push secrets. Do not deploy automatically after a large refactor unless the change has been reviewed.
+ห้ามใส่ secret ลง GitHub ให้ใส่ใน Render Environment Variables เท่านั้น
 
 ---
 
-## AI agent notes
+## Safety / Security Notes
 
-AI coding agents must read these files before editing:
-
-1. `README.md`
-2. `CONTEXT.md`
-3. `AGENTS.md`
-4. `package.json`
-5. `dashboard-public/package.json`
-
-Important guardrails:
-
-- Do not edit `.env`.
-- Do not add real secrets to any file.
-- Do not expand OAuth scopes or sensitive data collection without explicit review.
-- Do not rewrite large mixed-responsibility files unless required and reviewed.
-- Prefer feature branches and small Pull Requests.
-- Do not touch `voiceWorker.js`, `systemProvider.js`, or legacy session behavior unless the task explicitly requires it.
+- ห้าม commit `.env`
+- ห้าม hardcode Discord bot token
+- ห้าม log token, OAuth token, password, database URL หรือ webhook URL
+- ห้ามเก็บ Discord user token
+- ห้ามทำ selfbot หรือ token grabber flow
+- ใช้ Discord bot token และ OAuth2 scopes แบบโปร่งใสเท่านั้น
+- ถ้า token หรือ secret หลุด ให้ rotate ทันที
+- ตรวจ AI-generated code ก่อนรันหรือ deploy เสมอ
+- เก็บ raw IP หรือข้อมูลละเอียดอ่อนให้ owner-only และต้องมี audit log
+- อย่าเปิด debug details ให้ public user เห็น
 
 ---
 
 ## Troubleshooting
 
-| Issue | Check |
+| ปัญหา | จุดที่ควรตรวจ |
 |---|---|
-| Bot will not start | `TOKEN_MANAGER`, `MONGO_URI`, `API_SECRET`, `ENCRYPTION_KEY` |
-| Dashboard Public will not start | `MONGO_URI`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `SESSION_SECRET`, `TOKEN_MANAGER` |
-| OAuth redirect fails | Discord Developer Portal Redirect URI must match Service 2 URL exactly |
-| Role not assigned | Bot token, bot role position, target role hierarchy, `TOKEN_MANAGER` in Service 2 |
+| Bot ไม่ start | `TOKEN_MANAGER`, `MONGO_URI`, `API_SECRET`, `ENCRYPTION_KEY` |
+| Dashboard Public ไม่ start | `MONGO_URI`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `SESSION_SECRET`, `TOKEN_MANAGER` |
+| OAuth redirect fail | Redirect URI ใน Discord Developer Portal ต้องตรงกับ Service 2 URL |
+| ให้ยศไม่ได้ | Bot role hierarchy, target role, `TOKEN_MANAGER` ใน Service 2, bot permissions |
 | Panel button invalid | OAuth URL length, `PUBLIC_DASHBOARD_URL`, emoji format |
-| Debug visible to users | `callback.html` should keep public debug disabled |
+| Debug โผล่หน้าเว็บ | `callback.html` ต้อง keep public debug disabled |
+| Render build fail | ตรวจ Node version, build command, environment variables |
 
 ---
 
-## Documentation files
+## Useful Commands
 
-- `README.md`: install/run/deploy/use guide.
-- `CONTEXT.md`: detailed project context and architecture for future agents.
-- `AGENTS.md`: rules for safe AI coding agent work.
-- `.env.example`: fake placeholder environment template.
-- `.gitignore`: prevents secrets and generated files from being committed.
+```bash
+# Git status
+git status --short --untracked-files=all
+
+# ดู diff ก่อน commit
+git diff -- README.md CONTEXT.md AGENTS.md .gitignore .env.example
+
+# Install Service 1
+npm install
+
+# Start Service 1
+npm start
+
+# Install Service 2
+cd dashboard-public
+npm install
+
+# Start Service 2
+cd dashboard-public
+npm start
+```
+
+---
+
+## Maintainer Notes
+
+ก่อนให้ AI แก้โค้ด ให้สั่งให้อ่าน:
+
+```txt
+AGENTS.md
+CONTEXT.md
+README.md
+package.json
+dashboard-public/package.json
+```
+
+ก่อนทำงานใหญ่ ให้สร้าง backup branch หรือ tag:
+
+```bash
+git branch backup/verify-core-stable-before-next-phase
+# หรือ
+git tag verify-core-stable-before-next-phase
+```
+
+ก่อน deploy ให้ตรวจ:
+
+```txt
+- ไม่มี .env ถูก track
+- ไม่มี secret ใน diff
+- validation commands ผ่าน
+- smoke test plan พร้อม
+- รู้ว่าต้อง redeploy Service 1 หรือ Service 2
+```
