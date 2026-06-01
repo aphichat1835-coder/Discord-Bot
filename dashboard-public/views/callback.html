@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>ยืนยันตัวตน</title>
+
 <style>
 :root{
   --bg1:#0b1020;
@@ -18,8 +19,17 @@
   --red:#ef4444;
   --yellow:#facc15;
 }
-*{box-sizing:border-box;margin:0;padding:0}
-html,body{min-height:100%}
+
+*{
+  box-sizing:border-box;
+  margin:0;
+  padding:0;
+}
+
+html,body{
+  min-height:100%;
+}
+
 body{
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans Thai',sans-serif;
   background:
@@ -32,14 +42,17 @@ body{
   justify-content:center;
   padding:30px 16px;
 }
+
 .shell{
   width:100%;
   max-width:450px;
 }
+
 .brand{
   text-align:center;
   margin-bottom:18px;
 }
+
 .brand .logo{
   width:58px;
   height:58px;
@@ -51,11 +64,13 @@ body{
   box-shadow:0 20px 55px #5865f244;
   font-size:28px;
 }
+
 .brand h2{
   margin-top:12px;
   font-size:1.08rem;
   color:#d9dcff;
 }
+
 .card{
   background:var(--card);
   border:1px solid var(--line);
@@ -65,12 +80,27 @@ body{
   box-shadow:0 28px 90px #0009;
   backdrop-filter:blur(18px);
 }
-.state{display:none}
-.state.active{display:block;animation:fade .25s ease both}
-@keyframes fade{
-  from{opacity:0;transform:translateY(10px) scale(.98)}
-  to{opacity:1;transform:none}
+
+.state{
+  display:none;
 }
+
+.state.active{
+  display:block;
+  animation:fade .25s ease both;
+}
+
+@keyframes fade{
+  from{
+    opacity:0;
+    transform:translateY(10px) scale(.98);
+  }
+  to{
+    opacity:1;
+    transform:none;
+  }
+}
+
 .loaderWrap{
   width:128px;
   height:128px;
@@ -79,6 +109,7 @@ body{
   display:grid;
   place-items:center;
 }
+
 .loaderGlow{
   position:absolute;
   inset:0;
@@ -86,6 +117,7 @@ body{
   background:radial-gradient(circle,#5865f230,transparent 62%);
   animation:pulse 1.7s ease-in-out infinite;
 }
+
 .loaderRing{
   width:112px;
   height:112px;
@@ -95,6 +127,7 @@ body{
   border:4px solid #5865f255;
   position:relative;
 }
+
 .loaderRing:before{
   content:"";
   position:absolute;
@@ -105,6 +138,7 @@ body{
   border-right-color:#7c3aed99;
   animation:spin .85s linear infinite;
 }
+
 .loaderRing:after{
   content:"";
   position:absolute;
@@ -112,6 +146,7 @@ body{
   border-radius:50%;
   border:1px solid #ffffff18;
 }
+
 .spinner{
   width:52px;
   height:52px;
@@ -122,11 +157,24 @@ body{
   font-size:24px;
   box-shadow:0 12px 34px #5865f244;
 }
-@keyframes spin{to{transform:rotate(360deg)}}
-@keyframes pulse{
-  0%,100%{transform:scale(.96);opacity:.65}
-  50%{transform:scale(1.08);opacity:1}
+
+@keyframes spin{
+  to{
+    transform:rotate(360deg);
+  }
 }
+
+@keyframes pulse{
+  0%,100%{
+    transform:scale(.96);
+    opacity:.65;
+  }
+  50%{
+    transform:scale(1.08);
+    opacity:1;
+  }
+}
+
 .resultRing{
   width:112px;
   height:112px;
@@ -135,8 +183,17 @@ body{
   place-items:center;
   margin:4px auto 22px;
 }
-.resultRing.ok{border:4px solid var(--green);box-shadow:0 0 35px #45e67a22}
-.resultRing.err{border:4px solid var(--red);box-shadow:0 0 35px #ef444422}
+
+.resultRing.ok{
+  border:4px solid var(--green);
+  box-shadow:0 0 35px #45e67a22;
+}
+
+.resultRing.err{
+  border:4px solid var(--red);
+  box-shadow:0 0 35px #ef444422;
+}
+
 .icon{
   width:82px;
   height:82px;
@@ -146,21 +203,41 @@ body{
   font-size:38px;
   font-weight:900;
 }
-.icon.ok{background:var(--green);color:#052312}
-.icon.err{background:var(--red);color:#2b0909}
+
+.icon.ok{
+  background:var(--green);
+  color:#052312;
+}
+
+.icon.err{
+  background:var(--red);
+  color:#2b0909;
+}
+
 h1{
   font-size:1.5rem;
   line-height:1.25;
   margin-bottom:12px;
 }
-.loadTitle{color:#d7dbff}
-.okTitle{color:var(--green)}
-.errTitle{color:var(--red)}
+
+.loadTitle{
+  color:#d7dbff;
+}
+
+.okTitle{
+  color:var(--green);
+}
+
+.errTitle{
+  color:var(--red);
+}
+
 p{
   color:var(--muted);
   line-height:1.7;
   font-size:.96rem;
 }
+
 .status{
   margin:22px 0 18px;
   padding:14px 16px;
@@ -171,12 +248,14 @@ p{
   color:#eef0ff;
   text-align:center;
 }
+
 .steps{
   margin-top:18px;
   display:grid;
   gap:9px;
   text-align:left;
 }
+
 .step{
   display:flex;
   align-items:center;
@@ -188,6 +267,7 @@ p{
   color:#b8bdd3;
   font-size:.88rem;
 }
+
 .dot{
   width:12px;
   height:12px;
@@ -196,6 +276,7 @@ p{
   box-shadow:0 0 0 4px #5865f222;
   flex:0 0 auto;
 }
+
 .user{
   display:flex;
   align-items:center;
@@ -207,7 +288,11 @@ p{
   padding:14px;
   text-align:left;
 }
-.avatarBox{position:relative}
+
+.avatarBox{
+  position:relative;
+}
+
 .avatar{
   width:58px;
   height:58px;
@@ -215,6 +300,7 @@ p{
   object-fit:cover;
   background:#111;
 }
+
 .avatarBox:after{
   content:"";
   position:absolute;
@@ -222,8 +308,18 @@ p{
   border-radius:50%;
   border:3px solid var(--green);
 }
-.name{font-weight:900;font-size:1.05rem}
-.tag{font-size:.86rem;color:#8e94aa;margin-top:2px}
+
+.name{
+  font-weight:900;
+  font-size:1.05rem;
+}
+
+.tag{
+  font-size:.86rem;
+  color:#8e94aa;
+  margin-top:2px;
+}
+
 .rolePill{
   display:inline-flex;
   align-items:center;
@@ -237,6 +333,7 @@ p{
   font-weight:800;
   font-size:.88rem;
 }
+
 .btn{
   width:100%;
   margin-top:20px;
@@ -252,8 +349,17 @@ p{
   font-size:1rem;
   cursor:pointer;
 }
-.btn.ok{background:linear-gradient(135deg,#20c55e,#45e67a);color:#062412}
-.btn.err{background:#ffffff0b;border:1px solid #ffffff22}
+
+.btn.ok{
+  background:linear-gradient(135deg,#20c55e,#45e67a);
+  color:#062412;
+}
+
+.btn.err{
+  background:#ffffff0b;
+  border:1px solid #ffffff22;
+}
+
 .detail{
   margin-top:18px;
   border-top:1px solid #ffffff12;
@@ -262,6 +368,25 @@ p{
   font-size:.78rem;
   line-height:1.5;
 }
+
+.debugBox{
+  margin-top:14px;
+  padding:12px 14px;
+  border-radius:14px;
+  background:#00000028;
+  border:1px solid #ffffff16;
+  color:#d8dbe8;
+  font-size:.78rem;
+  line-height:1.45;
+  text-align:left;
+  word-break:break-word;
+  display:none;
+}
+
+.debugBox b{
+  color:var(--yellow);
+}
+
 .smallWarn{
   margin-top:12px;
   color:var(--yellow);
@@ -269,6 +394,7 @@ p{
 }
 </style>
 </head>
+
 <body>
 <div class="shell">
   <div class="brand">
@@ -284,8 +410,10 @@ p{
           <div class="spinner">🔐</div>
         </div>
       </div>
+
       <h1 class="loadTitle">กำลังดำเนินการ</h1>
       <p>ระบบกำลังตรวจสอบข้อมูลจาก Discord และประมวลผลสิทธิ์ของคุณ</p>
+
       <div class="status" id="statusText">กำลังเริ่มต้น...</div>
 
       <div class="steps">
@@ -301,6 +429,7 @@ p{
       <div class="resultRing ok">
         <div class="icon ok">✓</div>
       </div>
+
       <h1 class="okTitle">ยืนยันตัวตนสำเร็จ</h1>
       <p id="ok-msg">ระบบเพิ่มยศให้เรียบร้อยแล้ว</p>
 
@@ -308,14 +437,17 @@ p{
         <div class="avatarBox">
           <img class="avatar" id="av" alt="">
         </div>
+
         <div>
           <div class="name" id="name">—</div>
           <div class="tag" id="tag">—</div>
-          <div class="rolePill" id="rolePill" style="display:none;">🎭 <span id="roleName"></span></div>
+          <div class="rolePill" id="rolePill" style="display:none;">
+            🎭 <span id="roleName"></span>
+          </div>
         </div>
       </div>
 
-      <a class="btn ok" href="https://discord.com/channels/@me">กลับไปที่ Discord</a>
+      <a class="btn ok" href="https://discord.com/">กลับไปที่ Discord</a>
       <div class="detail">ข้อมูลถูกบันทึกเพื่อความปลอดภัยและการตรวจสอบย้อนหลังของเซิร์ฟเวอร์</div>
     </div>
 
@@ -323,9 +455,13 @@ p{
       <div class="resultRing err">
         <div class="icon err">×</div>
       </div>
+
       <h1 class="errTitle">ยืนยันตัวตนไม่สำเร็จ</h1>
       <p id="err-msg">ไม่พบรหัสยืนยันตัวตน กรุณาลองใหม่อีกครั้ง</p>
-      <a class="btn err" href="https://discord.com/channels/@me">กลับไปที่ Discord</a>
+
+      <div class="debugBox" id="err-detail"></div>
+
+      <a class="btn err" href="https://discord.com/">กลับไปที่ Discord</a>
       <div class="smallWarn">กดปุ่มยืนยันจาก Discord ใหม่อีกครั้งหากลิงก์มีปัญหา</div>
     </div>
   </div>
@@ -359,8 +495,19 @@ function setStatus(t){
   document.getElementById('statusText').textContent = t;
 }
 
-function fail(msg){
+function fail(msg, detail){
   document.getElementById('err-msg').textContent = msg || 'ยืนยันตัวตนไม่สำเร็จ';
+
+  const detailBox = document.getElementById('err-detail');
+
+  if (detail) {
+    detailBox.style.display = 'block';
+    detailBox.textContent = `Debug: ${detail}`;
+  } else {
+    detailBox.style.display = 'none';
+    detailBox.textContent = '';
+  }
+
   show('s-error');
 }
 
@@ -372,6 +519,7 @@ function success(data){
     document.getElementById('tag').textContent = data.user.tag || data.user.id || '—';
 
     const av = document.getElementById('av');
+
     if (data.user.avatarUrl) {
       av.src = data.user.avatarUrl;
       av.style.display = 'block';
@@ -390,12 +538,12 @@ function success(data){
 
 async function run(){
   if (error) {
-    fail(errorMap[error] || decodeURIComponent(errorDescription || error));
+    fail(errorMap[error] || decodeURIComponent(errorDescription || error), error);
     return;
   }
 
   if (!code || !state) {
-    fail('ไม่พบรหัสยืนยันตัวตน กรุณากดปุ่มจาก Discord ใหม่อีกครั้ง');
+    fail('ไม่พบรหัสยืนยันตัวตน กรุณากดปุ่มจาก Discord ใหม่อีกครั้ง', 'missing_code_or_state');
     return;
   }
 
@@ -404,6 +552,7 @@ async function run(){
     await new Promise(r => setTimeout(r, 350));
 
     setStatus('กำลังตรวจสอบข้อมูลและเงื่อนไข...');
+
     const payload = {
       code,
       state,
@@ -421,21 +570,25 @@ async function run(){
     });
 
     setStatus('กำลังสรุปผลการยืนยัน...');
+
     const data = await res.json().catch(() => null);
 
     if (!data) {
-      fail('ระบบตอบกลับไม่ถูกต้อง กรุณาลองใหม่');
+      fail('ระบบตอบกลับไม่ถูกต้อง กรุณาลองใหม่', `invalid_json_status_${res.status}`);
       return;
     }
 
     if (data.success) {
       success(data);
     } else {
-      fail(data.error || data.message || 'ยืนยันตัวตนไม่สำเร็จ');
+      fail(
+        data.error || data.message || 'ยืนยันตัวตนไม่สำเร็จ',
+        data.debugCode || `http_${res.status}`
+      );
     }
 
   } catch (err) {
-    fail('เชื่อมต่อระบบไม่สำเร็จ กรุณาลองใหม่');
+    fail('เชื่อมต่อระบบไม่สำเร็จ กรุณาลองใหม่', err?.message || 'client_fetch_failed');
   }
 }
 
