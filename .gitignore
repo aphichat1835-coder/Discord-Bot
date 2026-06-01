@@ -1,43 +1,104 @@
-# ════════════════════════════════════════════════════════
-#  🛡️ ENTERPRISE SECURITY — .gitignore
-#  ห้าม commit ไฟล์เหล่านี้ขึ้น GitHub เด็ดขาด
-# ════════════════════════════════════════════════════════
+# =========================================================
+# Phomueangtai Enterprise Discord System — .gitignore
+# Never commit secrets, generated files, dependency folders, logs, or local caches.
+# =========================================================
 
-# Environment Variables (ข้อมูลลับสุดยอด)
+# -------------------------
+# Environment / secrets
+# -------------------------
 .env
-.env.local
-.env.production
-.env.development
+.env.*
+!.env.example
+*.env
+*.local
 
-# Node Modules (ใหญ่เกินไป ไม่จำเป็นต้อง commit)
+# Secret/key material
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.csr
+*.jks
+*.keystore
+secrets/
+secret/
+credentials/
+credential/
+private/
+
+# Tokens / local config dumps
+*tokens*.json
+*token*.json
+*secret*.json
+*credential*.json
+*credentials*.json
+
+# -------------------------
+# Dependencies
+# -------------------------
 node_modules/
+dashboard-public/node_modules/
+
+# -------------------------
+# Logs
+# -------------------------
+logs/
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
 
-# Database JSON Fallback (ตัดตามเฟส 10)
+# -------------------------
+# Runtime / temp / cache
+# -------------------------
+tmp/
+temp/
+.cache/
+.parcel-cache/
+.next/
+.nuxt/
+coverage/
+.nyc_output/
+
+# -------------------------
+# Build output
+# -------------------------
+dist/
+build/
+out/
+
+# -------------------------
+# Database / local state / backups
+# -------------------------
 discord/database.json
 *.json.tmp
 *.json.bak
+*.bak
+*.backup
+*.sqlite
+*.sqlite3
+*.db
+*.dump
 
-# Log Files
-logs/
-*.log
-
-# OS Files
+# -------------------------
+# OS files
+# -------------------------
 .DS_Store
 Thumbs.db
 
-# Editor Files
+# -------------------------
+# Editor / IDE
+# -------------------------
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# Build Output
-dist/
-build/
-
-# Temp Files
-tmp/
-temp/
+# -------------------------
+# Misc local artifacts
+# -------------------------
+*.pid
+*.seed
+*.tgz
