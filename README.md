@@ -65,7 +65,10 @@
 ```txt
 .
 ├── package.json                     # Service 1 package, entry point: discord/index.js
+├── package-lock.json                # npm lock file for Service 1
+├── render.yaml                      # Render Blueprint draft สำหรับ deploy แบบ 2 services
 ├── .env.example                     # ตัวอย่าง environment variables แบบ placeholder
+├── .gitignore                       # กัน secrets/generated files ไม่ให้หลุดเข้า Git
 ├── README.md                        # คู่มือสำหรับคนและ AI
 ├── CONTEXT.md                       # บริบทเชิงลึกของโปรเจกต์สำหรับ AI agent
 ├── AGENTS.md                        # กฎสำหรับ AI coding agent
@@ -90,6 +93,7 @@
 │   └── voiceWorker.js
 └── dashboard-public/
     ├── package.json                 # Service 2 package, entry point: index.js
+    ├── package-lock.json            # npm lock file for Service 2
     ├── index.js                     # Service 2 Express app
     ├── routes/
     │   ├── oauth.js                 # OAuth2 callback + admin OAuth
@@ -278,6 +282,8 @@ HTML files เช่น `dashboard-public/views/callback.html` ควรตร�
 
 โปรเจกต์นี้ deploy ได้แบบแยก 2 Render Web Services
 
+### Option A — Manual Render setup
+
 ### Service 1 — Main Bot
 
 - Root Directory: repository root
@@ -292,10 +298,31 @@ HTML files เช่น `dashboard-public/views/callback.html` ควรตร�
 - Start Command: `npm start`
 - Environment Variables: ดู `.env.example`
 
+### Option B — Render Blueprint
+
+มีไฟล์ `render.yaml` สำหรับใช้เป็น Render Blueprint แบบ 2 services:
+
+```txt
+Service 1: discord-bot-4hjp
+Service 2: discordbot-dashboard-public
+```
+
+ก่อนใช้ `render.yaml` จริง ต้องเช็กชื่อ service ใน Render Dashboard ให้ตรงกับของจริง เพราะถ้าชื่อไม่ตรง Render อาจสร้าง service ใหม่แทนการอัปเดตของเดิม
+
+`render.yaml` ไม่เก็บ secret จริง ให้ตั้งค่า environment variables ใน Render Dashboard ตาม `.env.example`
+
 Deploy Service 1 เมื่อแก้ไฟล์ใต้ `discord/`
 Deploy Service 2 เมื่อแก้ไฟล์ใต้ `dashboard-public/`
 
 ห้ามใส่ secret ลง GitHub ให้ใส่ใน Render Environment Variables เท่านั้น
+
+---
+
+## Legacy docs status
+
+เอกสารเก่าอย่าง `DEPLOYMENT_2_SERVICES.md` และ `RENDER_DEPLOYMENT.md` เป็นข้อมูลช่วยจำรุ่นก่อน ข้อมูลสำคัญถูกย้าย/สรุปไว้ใน `README.md`, `CONTEXT.md`, `.env.example` และ `render.yaml` แล้ว
+
+ถ้า review แล้วไม่มีข้อมูลใหม่เพิ่ม สามารถลบหรือย้ายไป `docs/legacy/` ได้
 
 ---
 
@@ -325,6 +352,7 @@ Deploy Service 2 เมื่อแก้ไฟล์ใต้ `dashboard-public
 | Panel button invalid | OAuth URL length, `PUBLIC_DASHBOARD_URL`, emoji format |
 | Debug โผล่หน้าเว็บ | `callback.html` ต้อง keep public debug disabled |
 | Render build fail | ตรวจ Node version, build command, environment variables |
+| Render Blueprint สร้าง service ใหม่ | เช็ก `name` ใน `render.yaml` ว่าตรงกับ service เดิมใน Render หรือไม่ |
 
 ---
 
@@ -335,7 +363,7 @@ Deploy Service 2 เมื่อแก้ไฟล์ใต้ `dashboard-public
 git status --short --untracked-files=all
 
 # ดู diff ก่อน commit
-git diff -- README.md CONTEXT.md AGENTS.md .gitignore .env.example
+git diff -- README.md CONTEXT.md AGENTS.md .gitignore .env.example render.yaml package-lock.json dashboard-public/package-lock.json .replit
 
 # Install Service 1
 npm install
