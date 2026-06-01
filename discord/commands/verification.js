@@ -138,7 +138,49 @@ function buildDiscordAuthorizeUrl({ interaction, guildId, roleId, expectedUserId
     return url;
 }
 
-function parseButtonEmoji(input, fallback = null) {
+function isLikelyUnicodeEmoji(raw) {
+    if (!raw || typeof raw !== "string") return false;
+    if (raw.length > 32) return false;
+
+    // กันเคส :emoji_name: / ตัวอักษรธรรมดา / custom mention ที่ไม่ครบ ไม่ให้หลุดไปเป็น emoji.name แล้ว Discord reject
+    if (/[A-Za-z0-9_:<>]/.test(raw)) return false;
+
+    try {
+        return /\p{Extended_Pictographic}/u.test(raw) || /[\u2600-\u27BF]/u.test(raw);
+    } catch {
+        return /[\u2600-\u27BF]/.test(raw);
+    }
+}
+
+function getEmojiFromCache(client, query) {
+    const raw = cleanText(query, "");
+    if (!raw || !client?.emojis?.cache) return null;
+
+    if (/^\d{17,22}$/.test(raw)) {
+        const foundById = client.emojis.cache.get(raw);
+        if (!foundById) return null;
+
+        return {
+            id: foundById.id,
+            name: foundById.name,
+            animated: !!foundById.animated
+        };
+    }
+
+    const nameOnly = raw.match(/^:?(?<name>[A-Za-z0-9_]{2,32}):?$/)?.groups?.name;
+    if (!nameOnly) return null;
+
+    const foundByName = client.emojis.cache.find(e => e.name === nameOnly);
+    if (!foundByName) return null;
+
+    return {
+        id: foundByName.id,
+        name: foundByName.name,
+        animated: !!foundByName.animated
+    };
+}
+
+function parseButtonEmoji(input, fallback = null, client = null) {
     const raw = cleanText(input, fallback || "");
 
     if (!raw) return null;
@@ -153,19 +195,37 @@ function parseButtonEmoji(input, fallback = null) {
         };
     }
 
-    if (/^\d{17,22}$/.test(raw)) return raw;
+    const cachedCustom = getEmojiFromCache(client, raw);
+    if (cachedCustom) return cachedCustom;
 
-    return raw;
+    if (isLikelyUnicodeEmoji(raw)) return raw;
+
+    return null;
 }
 
-function applyEmoji(button, emojiInput, fallback) {
-    const emoji = parseButtonEmoji(emojiInput, fallback);
+function emojiToDisplay(emoji, fallback = "") {
+    if (!emoji) return cleanText(fallback, "");
+    if (typeof emoji === "string") return emoji;
+    if (emoji.id && emoji.name) return `<${emoji.animated ? "a" : ""}:${emoji.name}:${emoji.id}>`;
+    return cleanText(fallback, "");
+}
+
+function resolveButtonEmoji(input, fallback, client) {
+    const primary = parseButtonEmoji(input, null, client);
+    if (primary) return primary;
+
+    return parseButtonEmoji(fallback, null, client);
+}
+
+function applyEmoji(button, emojiInput, fallback, client) {
+    const emoji = resolveButtonEmoji(emojiInput, fallback, client);
 
     if (!emoji) return button;
 
     try {
         return button.setEmoji(emoji);
-    } catch {
+    } catch (err) {
+        console.warn("[VERIFY] Invalid button emoji ignored:", err.message);
         return button;
     }
 }
@@ -286,6 +346,16 @@ async function handleSetupVerify(interaction) {
     );
 
     const buttonLabel = buttonLabelInput.slice(0, 80);
+    const resolvedButtonEmoji = resolveButtonEmoji(
+        buttonEmojiInput,
+        verifyType ? DEFAULT_PANEL.buttonEmojiOAuth : DEFAULT_PANEL.buttonEmojiRole,
+        interaction.client
+    );
+    const buttonEmojiDisplay = emojiToDisplay(
+        resolvedButtonEmoji,
+        verifyType ? DEFAULT_PANEL.buttonEmojiOAuth : DEFAULT_PANEL.buttonEmojiRole
+    );
+    const usedEmojiFallback = !!buttonEmojiInput && buttonEmojiDisplay !== buttonEmojiInput;
 
     if (!channel?.isText?.()) {
         return interaction.editReply({
@@ -330,14 +400,14 @@ async function handleSetupVerify(interaction) {
             .setURL(authorizeUrl)
             .setLabel(buttonLabel);
 
-        row.addComponents(applyEmoji(button, buttonEmojiInput, DEFAULT_PANEL.buttonEmojiOAuth));
+        row.addComponents(applyEmoji(button, buttonEmojiInput, DEFAULT_PANEL.buttonEmojiOAuth, interaction.client));
     } else {
         const button = new MessageButton()
             .setCustomId(`verify_role_${role.id}`)
             .setLabel(buttonLabel)
             .setStyle("SUCCESS");
 
-        row.addComponents(applyEmoji(button, buttonEmojiInput, DEFAULT_PANEL.buttonEmojiRole));
+        row.addComponents(applyEmoji(button, buttonEmojiInput, DEFAULT_PANEL.buttonEmojiRole, interaction.client));
     }
 
     try {
@@ -369,7 +439,7 @@ async function handleSetupVerify(interaction) {
                 titleUrl,
                 showTimestamp: showTs,
                 buttonLabel,
-                buttonEmoji: buttonEmojiInput
+                buttonEmoji: buttonEmojiDisplay
             },
             setBy: interaction.user.id,
             updatedAt: Date.now(),
@@ -388,7 +458,7 @@ async function handleSetupVerify(interaction) {
             titleUrl,
             showTs,
             buttonLabel,
-            buttonEmoji: buttonEmojiInput
+            buttonEmoji: buttonEmojiDisplay
         });
 
         const resultEmbed = new MessageEmbed()
@@ -396,13 +466,14 @@ async function handleSetupVerify(interaction) {
             .setTitle(`${config.emojis.success} ติดตั้งแผงยืนยันสำเร็จ`)
             .setDescription(
                 `แผงยืนยันถูกส่งไปที่ <#${channel.id}> แล้ว\n` +
-                `ปุ่ม OAuth จะเปิดหน้าอนุญาต Discord โดยตรง และไม่หมดอายุเองจากอายุ state`
+                `ปุ่ม OAuth จะเปิดหน้าอนุญาต Discord โดยตรง และไม่หมดอายุเองจากอายุ state` +
+                (usedEmojiFallback ? `\n\n⚠️ Emoji ที่กรอกไม่ถูกต้องหรือบอทมองไม่เห็น จึงใช้ emoji สำรองแทน` : "")
             )
             .addFields(
                 { name: "📌 ช่อง", value: `<#${channel.id}>`, inline: true },
                 { name: "🎭 ยศ", value: `<@&${role.id}>`, inline: true },
                 { name: "🔒 ประเภท", value: verifyType ? "OAuth2 Direct Authorize" : "กดรับยศทันที", inline: true },
-                { name: "🧩 ปุ่ม", value: `${buttonEmojiInput || ""} ${buttonLabel}`, inline: true },
+                { name: "🧩 ปุ่ม", value: `${buttonEmojiDisplay || ""} ${buttonLabel}`, inline: true },
                 { name: "🎨 สี", value: colorHex, inline: true },
                 { name: "🕐 เวลา", value: showTs ? "เปิด" : "ปิด", inline: true }
             )
