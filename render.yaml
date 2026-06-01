@@ -1,0 +1,42 @@
+# Render Blueprint for Phomueangtai Enterprise Discord System
+#
+# This blueprint defines the two Render Web Services used by this project.
+# It intentionally does NOT store secret environment values in the repo.
+# Add all required environment variables manually in Render Dashboard using .env.example as the reference.
+#
+# IMPORTANT:
+# - Confirm these service names match your existing Render services before syncing.
+# - If the names do not match, Render may create new services instead of updating existing ones.
+# - This file is documentation/deployment config only. It does not deploy anything by itself.
+
+previews:
+  generation: manual
+
+services:
+  # Service 1: Main Discord Bot / Owner Dashboard
+  - type: web
+    runtime: node
+    name: discord-bot-4hjp
+    region: singapore
+    plan: free
+    branch: main
+    rootDir: .
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /ping
+    autoDeployTrigger: off
+    maxShutdownDelaySeconds: 60
+
+  # Service 2: Dashboard Public / OAuth2 Verification Dashboard
+  - type: web
+    runtime: node
+    name: discordbot-dashboard-public
+    region: singapore
+    plan: free
+    branch: main
+    rootDir: dashboard-public
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /ping
+    autoDeployTrigger: off
+    maxShutdownDelaySeconds: 60
