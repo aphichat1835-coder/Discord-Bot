@@ -1,5 +1,20 @@
 const mongoose = require('mongoose');
 
+const panelSchema = new mongoose.Schema({
+    content:        { type: String, default: '' },
+    title:          String,
+    description:    String,
+    color:          String,
+    imageUrl:       String,
+    thumbnailUrl:   String,
+    footerText:     String,
+    titleUrl:       String,
+    showTimestamp:  { type: Boolean, default: false },
+    buttonLabel:    String,
+    buttonEmoji:    String,
+    verifyType:     String
+}, { _id: false, minimize: false });
+
 const schema = new mongoose.Schema({
     guildId:   { type: String, required: true, unique: true },
     guildName: String,
@@ -10,7 +25,11 @@ const schema = new mongoose.Schema({
         roleName:             String,
         channelId:            String,
         messageId:            String,
-        verifyPath:           { type: String, default: '/verify' },
+
+        verifyPath:           { type: String, default: '/auth/callback' },
+        oauthMode:            String,
+        directStateMode:      String,
+
         blockVPN:             { type: Boolean, default: true },
         minAccountAgeDays:    { type: Number,  default: 7 },
         requireEmail:         { type: Boolean, default: false },
@@ -19,6 +38,9 @@ const schema = new mongoose.Schema({
         minConnections:       { type: Number,  default: 1 },
         allowedCountries:     { type: [String], default: [] },
         blockedCountries:     { type: [String], default: [] },
+
+        panel:                { type: panelSchema, default: () => ({}) },
+
         updatedBy:            String,
         updatedAt:            { type: Number, default: Date.now }
     },
@@ -35,4 +57,11 @@ const schema = new mongoose.Schema({
     updatedAt: { type: Number, default: Date.now }
 }, { minimize: false });
 
-module.exports = mongoose.models.GuildConfig || mongoose.model('GuildConfig', schema);
+schema.index({ guildId: 1 }, { unique: true });
+schema.index({ 'verification.roleId': 1 });
+schema.index({ 'verification.channelId': 1 });
+schema.index({ updatedAt: -1 });
+
+module.exports =
+    mongoose.models.GuildConfig ||
+    mongoose.model('GuildConfig', schema);
