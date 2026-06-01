@@ -57,7 +57,6 @@ const schema = new mongoose.Schema({
     updatedAt: { type: Number, default: Date.now }
 }, { minimize: false });
 
-schema.index({ guildId: 1 }, { unique: true });
 schema.index({ 'verification.roleId': 1 });
 schema.index({ 'verification.channelId': 1 });
 schema.index({ updatedAt: -1 });
