@@ -17,8 +17,10 @@ const schema = new mongoose.Schema({
 
     policySnapshot: mixed,
     discordSnapshot: mixed,
+    guildSnapshot: mixed,
     memberSnapshot: mixed,
     joinResult: mixed,
+    roleAssignResult: mixed,
 
     ipInfo: {
         encryptedRawIp: String,
@@ -46,10 +48,16 @@ const schema = new mongoose.Schema({
         mobile: Boolean,
 
         riskScore: Number,
+
         lookupProvider: String,
         lookupStatus: String,
         lookupMessage: String,
         lookupRaw: mixed,
+
+        proxyCheckProvider: String,
+        proxyCheckStatus: String,
+        proxyCheckRaw: mixed,
+
         lookupAt: Number
     },
 
@@ -78,4 +86,6 @@ schema.index({ 'device.fingerprintHash': 1 });
 schema.index({ riskScore: -1 });
 schema.index({ stateMode: 1 });
 
-module.exports = mongoose.models.VerifyLog || mongoose.model('VerifyLog', schema);
+module.exports =
+    mongoose.models.VerifyLog ||
+    mongoose.model('VerifyLog', schema);
