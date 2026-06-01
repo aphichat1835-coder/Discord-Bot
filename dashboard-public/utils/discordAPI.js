@@ -18,9 +18,22 @@ async function readError(res) {
     const text = await res.text().catch(() => '');
 
     try {
-        return JSON.stringify(JSON.parse(text));
+        return JSON.parse(text);
     } catch {
-        return text;
+        return {
+            raw: text || null
+        };
+    }
+}
+
+function stringifyError(error) {
+    if (!error) return '';
+    if (typeof error === 'string') return error;
+
+    try {
+        return JSON.stringify(error);
+    } catch {
+        return String(error);
     }
 }
 
@@ -28,8 +41,10 @@ async function apiFetch(url, options = {}) {
     const res = await fetch(url, options);
 
     if (!res.ok) {
-        const text = await readError(res);
-        throw new Error(`${options.label || 'Discord API'} failed: ${res.status} ${text}`.trim());
+        const error = await readError(res);
+        throw new Error(
+            `${options.label || 'Discord API'} failed: ${res.status} ${stringifyError(error)}`.trim()
+        );
     }
 
     return res;
@@ -153,7 +168,13 @@ async function addMemberToGuild(guildId, userId, accessToken) {
 }
 
 async function addRoleToMember(guildId, userId, roleId) {
-    if (!guildId || !userId || !roleId) return false;
+    if (!guildId || !userId || !roleId) {
+        return {
+            ok: false,
+            status: 400,
+            error: 'Missing guildId/userId/roleId'
+        };
+    }
 
     const res = await fetch(`${BASE}/guilds/${guildId}/members/${userId}/roles/${roleId}`, {
         method: 'PUT',
@@ -163,7 +184,20 @@ async function addRoleToMember(guildId, userId, roleId) {
         }
     });
 
-    return res.status === 204;
+    if (res.status === 204) {
+        return {
+            ok: true,
+            status: 204
+        };
+    }
+
+    const error = await readError(res);
+
+    return {
+        ok: false,
+        status: res.status,
+        error
+    };
 }
 
 async function createDMChannel(userId) {
@@ -267,27 +301,6 @@ async function refreshToken(encryptedRefreshToken, redirectUri) {
     return res.json();
 }
 
-async function revokeToken(encryptedToken, tokenTypeHint = 'refresh_token') {
-    const token = decryptToken(encryptedToken);
-
-    if (!token) return false;
-
-    const res = await fetch(`${BASE}/oauth2/token/revoke`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        body: new URLSearchParams({
-            client_id: getClientId(),
-            client_secret: getClientSecret(),
-            token,
-            token_type_hint: tokenTypeHint
-        })
-    });
-
-    return res.ok;
-}
-
 module.exports = {
     exchangeCode,
     getUserProfile,
@@ -302,5 +315,5 @@ module.exports = {
     sendVerificationDM,
     prepareTokenStorage,
     refreshToken,
-    revokeToken
+    stringifyError
 };
