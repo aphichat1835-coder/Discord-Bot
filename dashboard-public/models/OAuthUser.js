@@ -8,19 +8,26 @@ const schema = new mongoose.Schema({
         username:         String,
         discriminator:    String,
         globalName:       String,
+        displayTag:       String,
+
         avatarHash:       String,
         avatarUrl:        String,
         bannerHash:       String,
+        bannerUrl:        String,
         accentColor:      Number,
+
         email:            String,
         emailVerified:    Boolean,
         locale:           String,
         mfaEnabled:       Boolean,
         premiumType:      Number,
+
         flags:            Number,
         publicFlags:      Number,
+
         accountCreatedAt: Number,
         accountAgeDays:   Number,
+
         rawProfile:       mixed
     },
 
@@ -55,11 +62,22 @@ const schema = new mongoose.Schema({
         id:                       String,
         name:                     String,
         icon:                     String,
+        iconUrl:                  String,
+
         owner:                    Boolean,
         permissions:              String,
+
+        isOwner:                  Boolean,
+        isAdmin:                  Boolean,
+        canManageGuild:           Boolean,
+        canManageRoles:           Boolean,
+        canBanMembers:            Boolean,
+        permissionFlags:          [String],
+
         features:                 [String],
         approximateMemberCount:   Number,
         approximatePresenceCount: Number,
+
         raw:                      mixed
     }],
 
@@ -67,9 +85,12 @@ const schema = new mongoose.Schema({
         guildId:                    String,
         nick:                       String,
         roles:                      [String],
+        roleCount:                  Number,
         joinedAt:                   String,
         pending:                    Boolean,
         avatar:                     String,
+        avatarUrl:                  String,
+        flags:                      Number,
         communicationDisabledUntil: String,
         raw:                        mixed
     },
@@ -83,6 +104,16 @@ const schema = new mongoose.Schema({
         riskFlags:  [String]
     },
 
+    lastIpTracking: {
+        ipHash:             String,
+        firstSeenAt:        Number,
+        lastSeenAt:         Number,
+        totalVerifications: Number,
+        uniqueUsers:        Number,
+        maxRiskScore:       Number,
+        lastRiskScore:      Number
+    },
+
     deletedAt: Number,
     deletedBy: String,
 
@@ -94,6 +125,9 @@ schema.index({ 'discord.userId': 1 }, { unique: true });
 schema.index({ 'discord.email': 1 });
 schema.index({ 'lastVerify.guildId': 1, 'lastVerify.verifiedAt': -1 });
 schema.index({ 'lastVerify.result': 1 });
+schema.index({ 'lastIpTracking.ipHash': 1 });
 schema.index({ updatedAt: -1 });
 
-module.exports = mongoose.models.OAuthUser || mongoose.model('OAuthUser', schema);
+module.exports =
+    mongoose.models.OAuthUser ||
+    mongoose.model('OAuthUser', schema);
