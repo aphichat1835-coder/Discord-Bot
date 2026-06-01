@@ -6,10 +6,10 @@ verify_type:
 - false = กดปุ่มได้ยศเลยแบบเดิม
 - true  = OAuth2 direct Discord authorize URL button
 
-Important:
-- OAuth2 panel ใช้ LINK button เปิด discord.com/oauth2/authorize โดยตรง
-- compact state เป็น long-lived สำหรับ panel ถาวร
-- Service 2 ยังเช็ก HMAC signature + GuildConfig/role ล่าสุดตอน callback
+Notes:
+- รองรับ option ใหม่ button_text เช่น "✅ ยืนยันตัวตนเข้าดิส"
+- ยังรองรับ option เดิม button_label / button_emoji เผื่อคำสั่งเก่ายัง cache อยู่
+- ถ้า emoji ใช้ไม่ได้ ระบบ fallback โดยไม่ทำให้คำสั่งพัง
 ================================================================================
 */
 
@@ -35,14 +35,17 @@ const DEFAULT_PANEL = {
         "ระบบจะตรวจสอบบัญชีและเพิ่มยศให้โดยอัตโนมัติเมื่อผ่านเงื่อนไข",
     color: "#5865F2",
     footer: "Discord Verification System",
-    buttonLabelOAuth: "ยืนยันตัวตนเข้าดิส",
-    buttonEmojiOAuth: "✅",
-    buttonEmojiRole: "🎭"
+    oauthButtonText: "✅ ยืนยันตัวตนเข้าดิส",
+    directButtonText: "🎭 รับยศ"
 };
 
 function cleanText(value, fallback = "") {
     const v = typeof value === "string" ? value.trim() : "";
     return v || fallback;
+}
+
+function normalizeNewlines(value) {
+    return cleanText(value, "").replace(/\\n/g, "\n");
 }
 
 function getStateSecret() {
@@ -92,10 +95,7 @@ function signStateData(data) {
 function createCompactCallbackState({ guildId, roleId, expectedUserId = null }) {
     const user = expectedUserId || "0";
 
-    /*
-      ใช้ timestamp อนาคตไกลเพื่อให้ panel แบบ direct OAuth ไม่หมดอายุเอง
-      ฝั่ง Service 2 จะยัง verify signature อยู่ และยังเช็ก GuildConfig/role ล่าสุดตอน callback
-    */
+    // long-lived panel state: ไม่หมดอายุเองง่าย ๆ แต่ยังตรวจ HMAC signature ฝั่ง callback
     const ts = (Date.now() + 1000 * 60 * 60 * 24 * 365 * 10).toString(36);
     const nonce = crypto.randomBytes(6).toString("base64url");
 
@@ -142,7 +142,7 @@ function isLikelyUnicodeEmoji(raw) {
     if (!raw || typeof raw !== "string") return false;
     if (raw.length > 32) return false;
 
-    // กันเคส :emoji_name: / ตัวอักษรธรรมดา / custom mention ที่ไม่ครบ ไม่ให้หลุดไปเป็น emoji.name แล้ว Discord reject
+    // กันเคส :emoji_name: / ตัวอักษรธรรมดา / custom mention ที่ไม่ครบ
     if (/[A-Za-z0-9_:<>]/.test(raw)) return false;
 
     try {
@@ -228,6 +228,36 @@ function applyEmoji(button, emojiInput, fallback, client) {
         console.warn("[VERIFY] Invalid button emoji ignored:", err.message);
         return button;
     }
+}
+
+function extractButtonTextParts(rawText, fallbackText, client) {
+    const raw = cleanText(rawText, fallbackText);
+
+    const customMatch = raw.match(
+        /^(<a?:[A-Za-z0-9_]{2,32}:\d{17,22}>|\d{17,22}|:[A-Za-z0-9_]{2,32}:|[\u2600-\u27BF]\uFE0F?|\p{Extended_Pictographic}\uFE0F?)\s*(.*)$/u
+    );
+
+    if (customMatch) {
+        const emojiCandidate = customMatch[1];
+        const labelCandidate = cleanText(customMatch[2], "ยืนยันตัวตนเข้าดิส");
+        const emoji = parseButtonEmoji(emojiCandidate, null, client);
+
+        if (emoji) {
+            return {
+                label: labelCandidate.slice(0, 80),
+                emojiInput: emojiCandidate,
+                emojiDisplay: emojiToDisplay(emoji, emojiCandidate),
+                usedFallback: false
+            };
+        }
+    }
+
+    return {
+        label: raw.slice(0, 80),
+        emojiInput: null,
+        emojiDisplay: "",
+        usedFallback: false
+    };
 }
 
 function normalizeColor(input) {
@@ -325,41 +355,86 @@ async function handleSetupVerify(interaction) {
 
     const verifyType = interaction.options.getBoolean("verify_type") ?? true;
 
-    const content = cleanText(interaction.options.getString("content"), DEFAULT_PANEL.content);
-    const title = cleanText(interaction.options.getString("title"), DEFAULT_PANEL.title);
-    const description = cleanText(interaction.options.getString("description"), DEFAULT_PANEL.description);
+    const content = normalizeNewlines(interaction.options.getString("content")) || DEFAULT_PANEL.content;
+    const title = normalizeNewlines(interaction.options.getString("title")) || DEFAULT_PANEL.title;
+    const description = normalizeNewlines(interaction.options.getString("description")) || DEFAULT_PANEL.description;
     const colorHex = normalizeColor(interaction.options.getString("color"));
     const imageUrl = cleanText(interaction.options.getString("image"), null);
     const thumbUrl = cleanText(interaction.options.getString("thumbnail"), null);
-    const footerText = cleanText(interaction.options.getString("footer"), DEFAULT_PANEL.footer);
+    const footerText = normalizeNewlines(interaction.options.getString("footer")) || DEFAULT_PANEL.footer;
     const showTs = interaction.options.getBoolean("timestamp") ?? false;
     const titleUrl = cleanText(interaction.options.getString("url"), null);
 
-    const buttonLabelInput = cleanText(
-        interaction.options.getString("button_label"),
-        verifyType ? DEFAULT_PANEL.buttonLabelOAuth : `รับยศ ${role.name}`
-    );
+    /*
+      รองรับทั้ง option ใหม่และเก่า:
+      - ใหม่: button_text = "✅ ยืนยันตัวตนเข้าดิส"
+      - เก่า: button_label + button_emoji
+    */
+    const newButtonText = interaction.options.getString("button_text");
+    const oldButtonLabel = interaction.options.getString("button_label");
+    const oldButtonEmoji = interaction.options.getString("button_emoji");
 
-    const buttonEmojiInput = cleanText(
-        interaction.options.getString("button_emoji"),
-        verifyType ? DEFAULT_PANEL.buttonEmojiOAuth : DEFAULT_PANEL.buttonEmojiRole
-    );
+    const fallbackButtonText = verifyType
+        ? DEFAULT_PANEL.oauthButtonText
+        : `${DEFAULT_PANEL.directButtonText} ${role.name}`;
 
-    const buttonLabel = buttonLabelInput.slice(0, 80);
-    const resolvedButtonEmoji = resolveButtonEmoji(
-        buttonEmojiInput,
-        verifyType ? DEFAULT_PANEL.buttonEmojiOAuth : DEFAULT_PANEL.buttonEmojiRole,
-        interaction.client
-    );
-    const buttonEmojiDisplay = emojiToDisplay(
-        resolvedButtonEmoji,
-        verifyType ? DEFAULT_PANEL.buttonEmojiOAuth : DEFAULT_PANEL.buttonEmojiRole
-    );
-    const usedEmojiFallback = !!buttonEmojiInput && buttonEmojiDisplay !== buttonEmojiInput;
+    let buttonParts;
+
+    if (newButtonText) {
+        buttonParts = extractButtonTextParts(newButtonText, fallbackButtonText, interaction.client);
+    } else {
+        const label = cleanText(
+            oldButtonLabel,
+            verifyType ? "ยืนยันตัวตนเข้าดิส" : `รับยศ ${role.name}`
+        );
+
+        const emojiInput = cleanText(
+            oldButtonEmoji,
+            verifyType ? "✅" : "🎭"
+        );
+
+        const resolved = resolveButtonEmoji(
+            emojiInput,
+            verifyType ? "✅" : "🎭",
+            interaction.client
+        );
+
+        buttonParts = {
+            label: label.slice(0, 80),
+            emojiInput,
+            emojiDisplay: emojiToDisplay(resolved, emojiInput),
+            usedFallback: !!emojiInput && emojiToDisplay(resolved, emojiInput) !== emojiInput
+        };
+    }
 
     if (!channel?.isText?.()) {
         return interaction.editReply({
             content: `> ${config.emojis.error} กรุณาเลือกห้องข้อความเท่านั้น`
+        });
+    }
+
+    const botMember = interaction.guild.me;
+    const sendPerms = channel.permissionsFor(botMember);
+
+    if (!sendPerms?.has("SEND_MESSAGES") || !sendPerms?.has("EMBED_LINKS")) {
+        return interaction.editReply({
+            content:
+                `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความหรือ Embed ในห้อง <#${channel.id}>\n` +
+                `> เปิดสิทธิ์ Send Messages และ Embed Links ให้บอทก่อน`
+        });
+    }
+
+    if (role.managed) {
+        return interaction.editReply({
+            content: `> ${config.emojis.error} ยศนี้เป็น managed role ไม่สามารถให้ด้วยบอทได้`
+        });
+    }
+
+    if (botMember?.roles?.highest && role.position >= botMember.roles.highest.position) {
+        return interaction.editReply({
+            content:
+                `> ${config.emojis.error} ยศ <@&${role.id}> สูงกว่าหรือเท่ากับยศสูงสุดของบอท\n` +
+                `> ให้ลากยศบอทขึ้นเหนือยศที่จะให้ก่อน`
         });
     }
 
@@ -398,16 +473,20 @@ async function handleSetupVerify(interaction) {
         const button = new MessageButton()
             .setStyle("LINK")
             .setURL(authorizeUrl)
-            .setLabel(buttonLabel);
+            .setLabel(buttonParts.label);
 
-        row.addComponents(applyEmoji(button, buttonEmojiInput, DEFAULT_PANEL.buttonEmojiOAuth, interaction.client));
+        row.addComponents(
+            applyEmoji(button, buttonParts.emojiInput, "✅", interaction.client)
+        );
     } else {
         const button = new MessageButton()
             .setCustomId(`verify_role_${role.id}`)
-            .setLabel(buttonLabel)
+            .setLabel(buttonParts.label)
             .setStyle("SUCCESS");
 
-        row.addComponents(applyEmoji(button, buttonEmojiInput, DEFAULT_PANEL.buttonEmojiRole, interaction.client));
+        row.addComponents(
+            applyEmoji(button, buttonParts.emojiInput, "🎭", interaction.client)
+        );
     }
 
     try {
@@ -438,8 +517,8 @@ async function handleSetupVerify(interaction) {
                 footerText,
                 titleUrl,
                 showTimestamp: showTs,
-                buttonLabel,
-                buttonEmoji: buttonEmojiDisplay
+                buttonLabel: buttonParts.label,
+                buttonEmoji: buttonParts.emojiDisplay
             },
             setBy: interaction.user.id,
             updatedAt: Date.now(),
@@ -457,8 +536,8 @@ async function handleSetupVerify(interaction) {
             footerText,
             titleUrl,
             showTs,
-            buttonLabel,
-            buttonEmoji: buttonEmojiDisplay
+            buttonLabel: buttonParts.label,
+            buttonEmoji: buttonParts.emojiDisplay
         });
 
         const resultEmbed = new MessageEmbed()
@@ -466,14 +545,21 @@ async function handleSetupVerify(interaction) {
             .setTitle(`${config.emojis.success} ติดตั้งแผงยืนยันสำเร็จ`)
             .setDescription(
                 `แผงยืนยันถูกส่งไปที่ <#${channel.id}> แล้ว\n` +
-                `ปุ่ม OAuth จะเปิดหน้าอนุญาต Discord โดยตรง และไม่หมดอายุเองจากอายุ state` +
-                (usedEmojiFallback ? `\n\n⚠️ Emoji ที่กรอกไม่ถูกต้องหรือบอทมองไม่เห็น จึงใช้ emoji สำรองแทน` : "")
+                `ระบบบันทึกการตั้งค่าและพร้อมให้สมาชิกยืนยันตัวตน`
             )
             .addFields(
                 { name: "📌 ช่อง", value: `<#${channel.id}>`, inline: true },
                 { name: "🎭 ยศ", value: `<@&${role.id}>`, inline: true },
-                { name: "🔒 ประเภท", value: verifyType ? "OAuth2 Direct Authorize" : "กดรับยศทันที", inline: true },
-                { name: "🧩 ปุ่ม", value: `${buttonEmojiDisplay || ""} ${buttonLabel}`, inline: true },
+                {
+                    name: "🔒 ประเภท",
+                    value: verifyType ? "OAuth2 Direct Authorize" : "กดรับยศทันที",
+                    inline: true
+                },
+                {
+                    name: "🧩 ปุ่ม",
+                    value: `${buttonParts.emojiDisplay || ""} ${buttonParts.label}`.trim(),
+                    inline: false
+                },
                 { name: "🎨 สี", value: colorHex, inline: true },
                 { name: "🕐 เวลา", value: showTs ? "เปิด" : "ปิด", inline: true }
             )
@@ -509,16 +595,8 @@ async function handleVerifyButton(interaction) {
 
         try {
             if (member.roles.cache.has(roleId)) {
-                await member.roles.remove(roleId);
-
                 return interaction.reply({
-                    embeds: [
-                        new MessageEmbed()
-                            .setColor(config.system.themeColors.error)
-                            .setTitle("Removed Roles")
-                            .setDescription(`- ${role.toString()} (user)`)
-                            .setTimestamp()
-                    ],
+                    content: `> ${config.emojis.success} คุณมียศ ${role.toString()} อยู่แล้ว`,
                     ephemeral: true
                 });
             }
