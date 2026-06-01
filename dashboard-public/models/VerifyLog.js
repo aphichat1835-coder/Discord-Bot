@@ -22,6 +22,16 @@ const schema = new mongoose.Schema({
     joinResult: mixed,
     roleAssignResult: mixed,
 
+    trackingSnapshot: {
+        ipHash: String,
+        firstSeenAt: Number,
+        lastSeenAt: Number,
+        totalVerifications: Number,
+        uniqueUsers: Number,
+        maxRiskScore: Number,
+        lastRiskScore: Number
+    },
+
     ipInfo: {
         encryptedRawIp: String,
         ipHash: String,
@@ -85,6 +95,7 @@ schema.index({ 'ipInfo.ipHash': 1 });
 schema.index({ 'device.fingerprintHash': 1 });
 schema.index({ riskScore: -1 });
 schema.index({ stateMode: 1 });
+schema.index({ 'trackingSnapshot.uniqueUsers': -1 });
 
 module.exports =
     mongoose.models.VerifyLog ||
