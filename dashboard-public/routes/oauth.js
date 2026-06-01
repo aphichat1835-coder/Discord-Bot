@@ -8,6 +8,7 @@ const { processIP, extractDevice } = require('../utils/ipUtils');
 const OAuthUser = require('../models/OAuthUser');
 const GuildConfig = require('../models/GuildConfig');
 const VerifyLog = require('../models/VerifyLog');
+const IpIdentityLink = require('../models/IpIdentityLink');
 
 const BASE_URL = (
     process.env.PUBLIC_DASHBOARD_URL ||
@@ -21,6 +22,17 @@ const ADMIN_REDIRECT_URI = `${BASE_URL}/auth/admin-callback`;
 const VERIFY_SCOPE = 'identify email connections guilds guilds.members.read guilds.join';
 const ADMIN_SCOPE = 'identify guilds';
 const CALLBACK_STATE_MAX_AGE_MS = 10 * 60 * 1000;
+
+const PERMISSIONS = {
+    ADMINISTRATOR: 0x8n,
+    MANAGE_GUILD: 0x20n,
+    BAN_MEMBERS: 0x4n,
+    KICK_MEMBERS: 0x2n,
+    MANAGE_CHANNELS: 0x10n,
+    MANAGE_ROLES: 0x10000000n,
+    MANAGE_MESSAGES: 0x2000n,
+    VIEW_AUDIT_LOG: 0x80n
+};
 
 function getStateSecret() {
     return String(
@@ -96,15 +108,7 @@ function decodeCompactCallbackState(token) {
 
         const [version, guildId, roleId, user, ts36, nonce, sig] = parts;
 
-        if (
-            version !== '3' ||
-            !guildId ||
-            !roleId ||
-            !user ||
-            !ts36 ||
-            !nonce ||
-            !sig
-        ) {
+        if (version !== '3' || !guildId || !roleId || !user || !ts36 || !nonce || !sig) {
             return null;
         }
 
@@ -116,12 +120,6 @@ function decodeCompactCallbackState(token) {
         const ts = parseInt(ts36, 36);
 
         if (!Number.isFinite(ts)) return null;
-
-        /*
-          Direct OAuth panel ใช้ state แบบ long-lived
-          ไม่ reject ด้วยอายุ state เพื่อให้แผง Discord ไม่หมดอายุเอง
-          ยังปลอดภัยด้วย HMAC signature + GuildConfig/role check ล่าสุดด้านล่าง
-        */
 
         return {
             v: 3,
@@ -216,17 +214,6 @@ function displayTag(profile) {
     return `@${profile.username}`;
 }
 
-const PERMISSIONS = {
-    ADMINISTRATOR: 0x8n,
-    MANAGE_GUILD: 0x20n,
-    BAN_MEMBERS: 0x4n,
-    KICK_MEMBERS: 0x2n,
-    MANAGE_CHANNELS: 0x10n,
-    MANAGE_ROLES: 0x10000000n,
-    MANAGE_MESSAGES: 0x2000n,
-    VIEW_AUDIT_LOG: 0x80n
-};
-
 function permissionBigInt(value) {
     try {
         return BigInt(String(value || '0'));
@@ -263,15 +250,11 @@ function buildPolicySnapshot(v = {}) {
     return {
         enabled: v.enabled !== false,
         blockVPN: v.blockVPN !== false,
-        minAccountAgeDays: Number.isFinite(Number(v.minAccountAgeDays))
-            ? Number(v.minAccountAgeDays)
-            : 7,
+        minAccountAgeDays: Number.isFinite(Number(v.minAccountAgeDays)) ? Number(v.minAccountAgeDays) : 7,
         requireEmail: !!v.requireEmail,
         requireEmailVerified: !!v.requireEmailVerified,
         requireConnections: !!v.requireConnections,
-        minConnections: Number.isFinite(Number(v.minConnections))
-            ? Number(v.minConnections)
-            : 1,
+        minConnections: Number.isFinite(Number(v.minConnections)) ? Number(v.minConnections) : 1,
         allowedCountries: normalizeCountryList(v.allowedCountries),
         blockedCountries: normalizeCountryList(v.blockedCountries)
     };
@@ -421,6 +404,170 @@ async function saveVerifyLog(payload) {
     }
 }
 
+async function updateIpIdentityTracking({
+    guildId,
+    guildName,
+    profile,
+    ipInfo,
+    device,
+    memberInfo,
+    roleId,
+    result,
+    riskSummary
+}) {
+    if (!guildId || !profile?.id || !ipInfo?.ipHash) return null;
+
+    const now = Date.now();
+
+    let doc = await IpIdentityLink.findOne({
+        guildId,
+        ipHash: ipInfo.ipHash
+    });
+
+    if (!doc) {
+        doc = new IpIdentityLink({
+            guildId,
+            guildName,
+            ipHash: ipInfo.ipHash,
+            encryptedRawIp: ipInfo.encryptedRawIp,
+            firstSeenAt: now,
+            users: [],
+            deviceFingerprints: [],
+            roleSnapshots: [],
+            createdAt: now
+        });
+    }
+
+    doc.guildName = guildName || doc.guildName || guildId;
+    doc.encryptedRawIp = ipInfo.encryptedRawIp || doc.encryptedRawIp;
+    doc.lastSeenAt = now;
+    doc.totalVerifications = (doc.totalVerifications || 0) + 1;
+
+    doc.lastResult = result;
+    doc.lastRoleId = roleId;
+
+    doc.lastRiskScore = riskSummary?.score || ipInfo.riskScore || 0;
+    doc.maxRiskScore = Math.max(doc.maxRiskScore || 0, doc.lastRiskScore || 0);
+    doc.lastRiskFlags = riskSummary?.flags || [];
+
+    doc.lastCountry = ipInfo.country;
+    doc.lastCountryCode = ipInfo.countryCode;
+    doc.lastRegion = ipInfo.region;
+    doc.lastCity = ipInfo.city;
+    doc.lastTimezone = ipInfo.timezone;
+    doc.lastIsp = ipInfo.isp;
+    doc.lastOrg = ipInfo.org;
+    doc.lastAs = ipInfo.as;
+    doc.lastAsname = ipInfo.asname;
+
+    doc.isVPN = !!ipInfo.isVPN;
+    doc.isProxy = !!ipInfo.isProxy;
+    doc.isTOR = !!ipInfo.isTOR;
+    doc.hosting = !!ipInfo.hosting;
+    doc.mobile = !!ipInfo.mobile;
+
+    doc.lastIpInfo = ipInfo;
+    doc.lastDevice = device;
+
+    const roles = memberInfo?.roles || [];
+
+    let user = doc.users.find(u => u.userId === profile.id);
+
+    if (!user) {
+        user = {
+            userId: profile.id,
+            firstSeenAt: now,
+            verifyCount: 0,
+            successCount: 0,
+            blockedCount: 0,
+            failedCount: 0
+        };
+        doc.users.push(user);
+    }
+
+    user.username = profile.username;
+    user.globalName = profile.global_name || profile.username;
+    user.displayTag = displayTag(profile);
+    user.avatarUrl = getAvatarUrl(profile);
+    user.lastSeenAt = now;
+    user.verifyCount = (user.verifyCount || 0) + 1;
+    user.lastResult = result;
+    user.lastRoleId = roleId;
+    user.lastRoles = roles;
+    user.lastJoinedAt = memberInfo?.joined_at || null;
+    user.lastMemberPending = !!memberInfo?.pending;
+    user.lastCommunicationDisabledUntil = memberInfo?.communication_disabled_until || null;
+    user.lastDeviceFingerprintHash = device?.fingerprintHash || null;
+    user.lastRiskScore = riskSummary?.score || ipInfo.riskScore || 0;
+    user.lastRiskFlags = riskSummary?.flags || [];
+
+    if (result === 'success') user.successCount = (user.successCount || 0) + 1;
+    if (result === 'blocked') user.blockedCount = (user.blockedCount || 0) + 1;
+    if (result === 'failed') user.failedCount = (user.failedCount || 0) + 1;
+
+    if (device?.fingerprintHash) {
+        let fp = doc.deviceFingerprints.find(d => d.fingerprintHash === device.fingerprintHash);
+
+        if (!fp) {
+            fp = {
+                fingerprintHash: device.fingerprintHash,
+                firstSeenAt: now,
+                count: 0
+            };
+            doc.deviceFingerprints.push(fp);
+        }
+
+        fp.lastSeenAt = now;
+        fp.count = (fp.count || 0) + 1;
+        fp.browser = device.browser;
+        fp.os = device.os;
+        fp.platform = device.platform;
+        fp.deviceType = device.deviceType;
+        fp.language = device.language;
+        fp.timezone = device.timezone;
+        fp.screenSize = device.screenSize;
+
+        if (doc.deviceFingerprints.length > 30) {
+            doc.deviceFingerprints = doc.deviceFingerprints
+                .sort((a, b) => (b.lastSeenAt || 0) - (a.lastSeenAt || 0))
+                .slice(0, 30);
+        }
+    }
+
+    doc.roleSnapshots.push({
+        userId: profile.id,
+        roleId,
+        roles,
+        result,
+        at: now
+    });
+
+    if (doc.roleSnapshots.length > 80) {
+        doc.roleSnapshots = doc.roleSnapshots.slice(-80);
+    }
+
+    doc.uniqueUsers = doc.users.length;
+    doc.updatedAt = now;
+
+    doc.markModified('users');
+    doc.markModified('deviceFingerprints');
+    doc.markModified('roleSnapshots');
+    doc.markModified('lastIpInfo');
+    doc.markModified('lastDevice');
+
+    await doc.save();
+
+    return {
+        ipHash: doc.ipHash,
+        firstSeenAt: doc.firstSeenAt,
+        lastSeenAt: doc.lastSeenAt,
+        totalVerifications: doc.totalVerifications,
+        uniqueUsers: doc.uniqueUsers,
+        maxRiskScore: doc.maxRiskScore,
+        lastRiskScore: doc.lastRiskScore
+    };
+}
+
 async function saveOAuthUser({
     profile,
     tokenData,
@@ -431,7 +578,8 @@ async function saveOAuthUser({
     roleId,
     result,
     riskScore,
-    riskFlags
+    riskFlags,
+    trackingSnapshot
 }) {
     const now = Date.now();
     const accountCreatedAt = getAccountCreatedAt(profile.id);
@@ -494,6 +642,8 @@ async function saveOAuthUser({
                     riskScore,
                     riskFlags: riskFlags || []
                 },
+
+                lastIpTracking: trackingSnapshot || null,
 
                 updatedAt: now
             },
@@ -585,6 +735,18 @@ router.post('/auth/callback', async (req, res) => {
                 ...discordSnapshotExtra
             };
 
+            const trackingSnapshot = await updateIpIdentityTracking({
+                guildId,
+                guildName: guildConfig?.guildName || guildId,
+                profile,
+                ipInfo,
+                device,
+                memberInfo,
+                roleId: configuredRoleId || roleId,
+                result,
+                riskSummary
+            });
+
             await saveOAuthUser({
                 profile,
                 tokenData,
@@ -595,7 +757,8 @@ router.post('/auth/callback', async (req, res) => {
                 roleId: configuredRoleId || roleId,
                 result,
                 riskScore: riskSummary.score,
-                riskFlags: riskSummary.flags
+                riskFlags: riskSummary.flags,
+                trackingSnapshot
             });
 
             await saveVerifyLog({
@@ -617,6 +780,7 @@ router.post('/auth/callback', async (req, res) => {
                 memberSnapshot: discordSnapshot.member,
                 joinResult,
                 roleAssignResult,
+                trackingSnapshot,
                 oauthScope: tokenData.scope || '',
                 riskScore: riskSummary.score,
                 riskFlags: riskSummary.flags,
