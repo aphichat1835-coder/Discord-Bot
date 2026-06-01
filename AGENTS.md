@@ -1,110 +1,309 @@
-# AI Agent Rules
+# AGENTS.md — AI Coding Agent Rules
 
-This repository contains a Discord bot, OAuth2 verification service, dashboards, MongoDB models, environment-sensitive configuration, and security-sensitive user/session data.
+ไฟล์นี้คือกฎหลักสำหรับ AI coding agents ที่จะทำงานใน repository นี้ เช่น ChatGPT, Codex, Claude, Copilot หรือ automation agent อื่น ๆ
 
-AI coding agents must follow these rules strictly.
+โปรเจกต์นี้มี Discord bot, OAuth2 verification service, dashboards, MongoDB models, environment-sensitive configuration และข้อมูล user/session ที่อ่อนไหว ดังนั้น AI ต้องทำงานแบบระวังสูงสุด
 
 ---
 
-## Primary rule
+## Purpose
 
-Do not make broad code changes without understanding the current architecture and the active task.
+เป้าหมายของไฟล์นี้คือ:
 
-Before editing, read:
+- ทำให้ AI เข้าใจขอบเขตก่อนแก้ไฟล์
+- ลดการแก้โค้ดผิดส่วน
+- ป้องกัน secrets หลุด
+- ป้องกันการ rewrite โปรเจกต์โดยไม่จำเป็น
+- บังคับให้ AI plan → implement → review → validate อย่างเป็นขั้นตอน
 
-1. `README.md`
+---
+
+## Required Reading Order
+
+ก่อนเริ่มงานทุกครั้ง AI ต้องอ่านตามลำดับนี้:
+
+1. `AGENTS.md`
 2. `CONTEXT.md`
-3. `AGENTS.md`
+3. `README.md`
 4. `package.json`
 5. `dashboard-public/package.json`
-6. Any file directly involved in the requested change
+6. ไฟล์ที่เกี่ยวข้องโดยตรงกับ task นั้น ๆ
+
+ห้ามเริ่มแก้ทันทีโดยยังไม่เข้าใจบริบท
 
 ---
 
-## Files agents may edit freely for documentation tasks
+## Core Rules
 
-For documentation-only tasks, edit only:
+กฎหลัก:
+
+- Do not edit files immediately.
+- Plan first for complex tasks.
+- Ask clarifying questions if the task is ambiguous.
+- Keep changes small and focused.
+- Do not rewrite unrelated code.
+- Do not remove existing features without approval.
+- Do not change architecture without approval.
+- Do not add dependencies without approval.
+- Do not edit `package.json` unless explicitly approved.
+- Do not commit, push, or deploy unless explicitly instructed.
+- Summarize changes after every edit.
+- Provide test/validation commands after code changes.
+- Be honest about tests that were not run.
+
+---
+
+## Project Overview
+
+Repository นี้เป็นระบบ **Two-service Discord automation and verification platform**
+
+```txt
+Service 1 = Main Discord Bot / Owner System
+Service 2 = Dashboard Public / Verification Dashboard
+```
+
+Service 1 ดูแล Discord bot, slash commands, owner/admin dashboard routes, voice/session subsystem, audit logging และ verification panel setup
+
+Service 2 ดูแล Discord OAuth2 verification callback, guild-admin dashboard foundation, internal APIs, verification logs, IP/device/risk summaries และ role assignment ผ่าน bot token
+
+อ่านรายละเอียดเพิ่มใน `CONTEXT.md`
+
+---
+
+## Repository Layout
+
+```txt
+.
+├── package.json
+├── README.md
+├── CONTEXT.md
+├── AGENTS.md
+├── .env.example
+├── .gitignore
+├── discord/
+│   ├── index.js
+│   ├── commands.js
+│   ├── commands/
+│   │   └── verification.js
+│   ├── index/
+│   ├── features/
+│   ├── sessionManager.js
+│   ├── systemProvider.js
+│   └── voiceWorker.js
+└── dashboard-public/
+    ├── package.json
+    ├── index.js
+    ├── routes/
+    ├── models/
+    ├── utils/
+    ├── views/
+    └── public/
+```
+
+Important notes:
+
+- `discord/index.js` คือ Service 1 entry point
+- `dashboard-public/index.js` คือ Service 2 entry point
+- `discord/commands.js` ควรเป็น command registry/router เท่านั้น
+- `discord/commands/verification.js` คือ logic หลักของ `/setup-verify`
+- `dashboard-public/routes/oauth.js` เป็น security-sensitive OAuth/verification backend
+
+---
+
+## Setup Commands
+
+### Service 1 — Main Bot
+
+Install:
+
+```bash
+npm install
+```
+
+Dev:
+
+```bash
+npm run dev
+```
+
+Start:
+
+```bash
+npm start
+```
+
+### Service 2 — Dashboard Public
+
+Install:
+
+```bash
+cd dashboard-public
+npm install
+```
+
+Dev:
+
+```bash
+cd dashboard-public
+npm run dev
+```
+
+Start:
+
+```bash
+cd dashboard-public
+npm start
+```
+
+### Test / lint / build
+
+```txt
+No npm test script currently found
+No lint script currently found
+No build script currently found
+```
+
+อย่า invent command ที่ไม่มีจริงใน `package.json`
+
+---
+
+## Validation Commands
+
+เมื่อแก้ JavaScript ฝั่ง Service 1:
+
+```bash
+node --check discord/index.js
+node --check discord/commands.js
+node --check discord/commands/verification.js
+```
+
+เมื่อแก้ JavaScript ฝั่ง Service 2:
+
+```bash
+cd dashboard-public
+node --check index.js
+node --check routes/oauth.js
+node --check routes/guild.js
+node --check routes/api.js
+```
+
+เมื่อแก้ docs เท่านั้น:
+
+```bash
+git diff -- README.md CONTEXT.md AGENTS.md .gitignore .env.example
+```
+
+เมื่อแก้ environment variables:
+
+```bash
+git diff -- .env.example README.md CONTEXT.md AGENTS.md
+```
+
+ห้าม run deploy เองถ้าไม่ได้รับคำสั่งชัดเจน
+
+---
+
+## Coding Conventions
+
+AI ต้องรักษา style เดิมของโปรเจกต์:
+
+- Follow existing code style.
+- Use existing module patterns.
+- Use existing naming style.
+- Avoid unnecessary abstraction.
+- Avoid big rewrites.
+- Prefer readable code.
+- Keep error handling consistent.
+- Do not reformat unrelated files.
+- Do not change behavior outside the requested scope.
+
+ถ้าเจอไฟล์ใหญ่หรือหลายระบบปนกัน ให้แก้แบบ surgical change เท่านั้น เว้นแต่เจ้าของโปรเจกต์อนุมัติให้ refactor
+
+---
+
+## Documentation Rules
+
+ต้อง update docs เมื่อมีการเปลี่ยนแปลงเหล่านี้:
+
+- เพิ่ม environment variable ใหม่
+- เปลี่ยน command หรือ script
+- เปลี่ยน setup/install process
+- เปลี่ยน deploy process
+- เพิ่มฟีเจอร์ใหญ่
+- เปลี่ยน behavior สำคัญ
+- เปลี่ยน OAuth scopes
+- เพิ่ม dependency
+
+ไฟล์ docs ที่ควรพิจารณา:
 
 ```txt
 README.md
 CONTEXT.md
 AGENTS.md
 .env.example
-.gitignore
 ```
 
-Do not edit code files during documentation-only tasks.
+ห้าม document ฟีเจอร์ที่ไม่มีจริงว่าเสร็จแล้ว ให้แยก `planned`, `work in progress`, `stable` ให้ชัด
 
 ---
 
-## Never edit or expose secrets
+## Environment and Secrets Rules
 
-Never edit, create, print, summarize, or commit real secrets.
+กฎนี้สำคัญที่สุด:
 
-Do not touch:
+- Never read, print, log, expose, or commit real secrets.
+- Never modify `.env` directly.
+- Never create `.env` with real values.
+- Update `.env.example` only with placeholder values.
+- If a secret appears in code, docs, logs, screenshot, or diff, stop and warn the user.
+- Do not include API keys, tokens, cookies, passwords, database URLs, private keys, webhook URLs, session values, or credentials in commits or docs.
 
-```txt
-.env
-.env.* with real values
-local secret files
-private keys
-bot tokens
-OAuth client secrets
-database URLs
-webhook URLs
-API secrets
-session secrets
-```
-
-Never place real values in:
+ห้ามใส่ค่าจริงใน:
 
 ```txt
 README.md
 CONTEXT.md
 AGENTS.md
 .env.example
-logs
-comments
 commit messages
 Pull Request bodies
+comments
+logs
 ```
 
-Use fake placeholders only, for example:
+ใช้ placeholder เท่านั้น เช่น:
 
 ```txt
 TOKEN_MANAGER=YOUR_DISCORD_BOT_TOKEN
-MONGO_URI=mongodb+srv://USER:PASSWORD@cluster.example.mongodb.net/database
 DISCORD_CLIENT_SECRET=YOUR_DISCORD_CLIENT_SECRET
+MONGO_URI=mongodb+srv://USER:PASSWORD@cluster.example.mongodb.net/database
 ```
 
 ---
 
-## Branch and commit safety
+## Discord / Bot Safety Rules
 
-Preferred workflow:
+เพราะ repo นี้เป็น Discord bot + OAuth2 project ต้องทำตามกฎนี้:
 
-```bash
-git switch main
-git pull
-git switch -c feature/<short-task-name>
-```
+- Use official bot token flow only.
+- Do not use Discord user tokens.
+- Do not create selfbot behavior.
+- Do not collect Discord tokens from users.
+- Do not collect passwords, cookies, or credentials.
+- Do not log user credentials.
+- Do not add phishing-like verification flows.
+- Keep OAuth scopes minimal and documented.
+- Treat bot token, OAuth client secret, webhook URL, API secret, session secret, and database URL as secrets.
+- Do not expand OAuth scopes without explicit approval.
+- Do not collect IP addresses or personal data unless clearly necessary, documented, and owner-approved.
 
-Rules:
-
-- Prefer feature branches over direct `main` edits.
-- Keep PRs small and reviewable.
-- Do not force-push unless explicitly approved.
-- Do not deploy unless explicitly asked.
-- Do not push secrets.
-- Do not rewrite unrelated files.
-
-If the user explicitly asks to edit `main`, keep the change minimal and report exactly what was changed.
+Current verification scopes should remain documented and reviewed before changes.
 
 ---
 
-## Protected or high-risk areas
+## Protected / High-Risk Areas
 
-Do not modify these unless the task explicitly requires it and the change is narrow:
+ห้ามแก้ไฟล์เหล่านี้โดยไม่จำเป็น และต้องขออนุญาตถ้างานไม่ได้ระบุชัด:
 
 ```txt
 discord/voiceWorker.js
@@ -114,186 +313,120 @@ discord/index.js boot sequence
 discord/index/system.js crash/shutdown behavior
 discord/index/events.js event routing
 dashboard-public/routes/oauth.js callback security logic
-crypto/encryption utilities
-models containing indexes or sensitive data
+dashboard-public/utils/crypto.js
+dashboard-public/models/* database schema/indexes
+package.json
+package-lock.json
+render.yaml
+.github/workflows/*
 ```
 
-Important existing guardrails:
-
-- `discord/index.js` boot order is Express → MongoDB → Discord.
-- Render port binding must use `process.env.PORT` and `0.0.0.0`.
-- `systemProvider.js` hooks are part of the owner/shadow system and should not be removed.
-- `commands.js` should remain mostly a router/registry. Put command behavior in command modules.
+ถ้าจำเป็นต้องแตะ ให้ทำ plan ก่อนและอธิบาย risk
 
 ---
 
-## OAuth2 verification rules
+## Git Rules
 
-The current verification system uses Discord OAuth2 Authorization Code Flow.
+- Check `git status` before changes.
+- Do not commit unless the user explicitly asks.
+- Do not push unless the user explicitly asks.
+- Do not deploy unless the user explicitly asks.
+- If changes are risky, suggest backup branch or tag first.
+- Keep commits focused.
+- Do not force-push unless explicitly approved.
+- After changes, summarize changed files and reasons.
 
-Allowed/current verification scopes:
-
-```txt
-identify
-email
-connections
-guilds
-guilds.members.read
-guilds.join
-```
-
-Do not add sensitive or unusual OAuth scopes unless explicitly approved and documented.
-
-Do not implement collection of private messages, unauthorized account control, credential capture, or user-token login flows.
-
-Use the bot token only through approved server-side code paths. Do not expose bot tokens or OAuth tokens to the browser.
+ถ้าแก้ผ่าน GitHub Contents API ต้องแจ้งผู้ใช้ว่า GitHub จะสร้าง commit อัตโนมัติ
 
 ---
 
-## Public debug and error handling
+## Agent Workflow
 
-Do not expose raw internal debug details to normal users.
+### Phase 1: Inspect
 
-Public pages should show safe, user-readable errors only.
+- Read required docs
+- Inspect relevant files
+- Identify current state
+- Do not edit yet
 
-Internal details should go to:
+### Phase 2: Plan
 
-```txt
-Render logs
-VerifyLog
-Owner-only dashboard sections
-```
+- Explain understanding
+- List files to change
+- Explain risks
+- Ask for confirmation when scope is large or sensitive
 
-If editing `dashboard-public/views/callback.html`, keep public debug disabled unless an owner-only server-controlled mechanism is added.
+### Phase 3: Implement
 
----
+- Make focused edits only
+- Do not touch unrelated files
+- Stop if scope expands
+- Do not add dependencies unless approved
 
-## Data privacy rules
+### Phase 4: Review
 
-This project may store Discord profile summaries, guild/member summaries, IP hashes, encrypted IP data, device summaries, and risk flags.
+- Summarize diff
+- Explain why each file changed
+- Mention any risk or uncertainty
 
-Rules:
+### Phase 5: Validate
 
-- Do not expose raw IP addresses to guild administrators.
-- Owner-only reveal features must require explicit owner control and logging.
-- Public dashboard views should use summaries and hashes where possible.
-- Data deletion and retention controls should be considered before expanding data collection.
-- Avoid adding new personal-data fields unless necessary for the requested feature.
+- Run or recommend validation commands
+- Report result honestly
+- If unable to run, explain exactly what the user should run
 
----
+### Phase 6: Next Step
 
-## Editing large files
-
-Some files are large and mix multiple systems. Avoid full rewrites.
-
-Use surgical changes when possible.
-
-Especially avoid full rewrites of:
-
-```txt
-discord/commands.js
-discord/index.js
-dashboard-public/routes/oauth.js
-discord/voiceWorker.js
-discord/sessionManager.js
-```
-
-If a large rewrite is truly required:
-
-1. Explain why.
-2. List all affected behavior.
-3. Ask for approval.
-4. Prefer a feature branch.
-5. Include a rollback plan.
+- Suggest next safe action
+- Wait for approval before commit/push/deploy unless already authorized
 
 ---
 
-## Dependency changes
+## Done Definition
 
-Do not edit `package.json` or install new dependencies unless necessary.
+งานถือว่าเสร็จเมื่อ:
 
-If a dependency change is needed:
-
-1. Explain the reason.
-2. Explain the security impact.
-3. Ask for approval before editing.
-4. Update README/CONTEXT if approved.
-
----
-
-## Testing expectations
-
-Before claiming a code change is safe, run or recommend relevant checks.
-
-Current basic checks:
-
-```bash
-node --check discord/index.js
-node --check discord/commands.js
-node --check discord/commands/verification.js
-
-cd dashboard-public
-node --check index.js
-node --check routes/oauth.js
-node --check routes/guild.js
-node --check routes/api.js
-```
-
-Manual smoke tests for verification changes:
-
-```txt
-/setup-verify with channel + role only
-/setup-verify with button_text
-OAuth success path
-Repeat verification path
-New-account policy path
-Failure page without public debug
-Render logs without major runtime errors
-```
-
-Do not invent test results. If a test was not run, say it was not run.
+- Requested feature/docs change is implemented
+- No unrelated files changed
+- No secrets exposed
+- Environment variables are documented if changed
+- README/CONTEXT/AGENTS updated if needed
+- Validation command is provided
+- User can understand what changed and why
 
 ---
 
-## Deployment rules
+## When to Stop and Ask
 
-Do not deploy unless the user explicitly asks.
+AI ต้องหยุดถามก่อนถ้า:
 
-When deployment is requested, state which service needs redeploying:
-
-```txt
-Service 1: root / discord bot
-Service 2: dashboard-public
-```
-
-Deploy Service 1 after changes under `discord/`.
-Deploy Service 2 after changes under `dashboard-public/`.
-
----
-
-## Documentation update rules
-
-When adding or changing features, update docs if behavior changes:
-
-```txt
-README.md
-CONTEXT.md
-.env.example if environment variables changed
-AGENTS.md if agent safety rules changed
-```
-
-Do not document fake features as completed. Mark planned work as planned.
+- Need to change architecture
+- Need to add dependency
+- Need to change package manager
+- Need to edit deployment config
+- Need to touch secrets
+- Need to remove a feature
+- Need to change database schema
+- Need to create GitHub Actions
+- Need to create or edit `render.yaml`
+- Need to change OAuth scopes
+- Need to change authentication logic
+- Existing code suggests security/privacy risk
+- Requirements are unclear
 
 ---
 
-## Response style for future agents
+## Output Format After Work
 
-When reporting work:
+หลังทำงาน ให้ตอบตามนี้:
 
-1. State exactly which files changed.
-2. State what changed in each file.
-3. State what was not touched.
-4. State what tests/checks were run or not run.
-5. State next recommended steps.
+1. Summary
+2. Files changed
+3. What changed
+4. Why changed
+5. Safety check
+6. How to test / validate
+7. Risks / notes
+8. Next recommended step
 
-Be honest about uncertainty. Do not claim 100% safety without evidence.
+ห้ามอ้างว่าทดสอบแล้วถ้าไม่ได้ทดสอบจริง
