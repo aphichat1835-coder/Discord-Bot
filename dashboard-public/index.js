@@ -14,8 +14,15 @@ if (!process.env.TOKEN_MANAGER)         { console.error('[FATAL] Missing TOKEN_M
 if (!process.env.ENCRYPTION_KEY)        { console.error('[FATAL] Missing ENCRYPTION_KEY');        process.exit(1); }
 if (!process.env.SESSION_SECRET)        { console.error('[FATAL] Missing SESSION_SECRET');        process.exit(1); }
 
-if (!process.env.DASHBOARD_URL && !process.env.PUBLIC_DASHBOARD_URL) {
-    console.warn('[WARN] DASHBOARD_URL/PUBLIC_DASHBOARD_URL not set; OAuth redirect may use localhost fallback.');
+if (
+    !process.env.DASHBOARD_URL &&
+    !process.env.PUBLIC_DASHBOARD_URL &&
+    !process.env.PUBLIC_BASE_URL &&
+    !process.env.DASHBOARD_PUBLIC_URL
+) {
+    console.warn(
+        '[WARN] DASHBOARD_URL/PUBLIC_DASHBOARD_URL/PUBLIC_BASE_URL/DASHBOARD_PUBLIC_URL not set; OAuth redirect may use localhost fallback.'
+    );
 }
 
 if (!process.env.API_SECRET && !process.env.INTERNAL_API_SECRET) {
@@ -39,8 +46,16 @@ const PORT = process.env.PORT || process.env.PORT_DASHBOARD || 3001;
 
 app.set('trust proxy', 1);
 
-app.use(express.json({ limit: '512kb' }));
-app.use(express.urlencoded({ extended: true, limit: '512kb' }));
+app.disable('x-powered-by');
+
+app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    next();
+});
+
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.use(session({
@@ -91,6 +106,10 @@ app.get('/logout', (req, res) => {
     req.session.destroy(() => res.redirect('/'));
 });
 
+app.get('/auth/logout', (req, res) => {
+    req.session.destroy(() => res.redirect('/'));
+});
+
 app.get('/ping', (_req, res) => {
     res.send('OK');
 });
@@ -99,7 +118,8 @@ app.get('/health', (_req, res) => {
     res.json({
         status: 'ok',
         service: 'dashboard-public',
-        uptime: process.uptime()
+        uptime: process.uptime(),
+        timestamp: Date.now()
     });
 });
 
