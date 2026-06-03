@@ -97,6 +97,7 @@ async function apiFetch(url, options = {}) {
 
 async function safeApiFetch(url, options = {}) {
     const res = await fetch(url, options);
+
     const data = await res.json().catch(async () => {
         const text = await res.text().catch(() => "");
         return text ? { raw: text } : null;
@@ -124,6 +125,7 @@ function toBigIntPermission(value) {
 
 function hasPermission(permissionValue, flag) {
     const perms = toBigIntPermission(permissionValue);
+
     return (perms & PERMISSIONS.ADMINISTRATOR) === PERMISSIONS.ADMINISTRATOR ||
         (perms & flag) === flag;
 }
@@ -145,11 +147,12 @@ function normalizeRole(role = {}) {
 function normalizeChannel(channel = {}) {
     return {
         id: channel.id,
+        guildId: channel.guild_id || channel.guildId || null,
         name: channel.name,
         type: channel.type,
         parentId: channel.parent_id || null,
         position: channel.position || 0,
-        permissionOverwrites: channel.permission_overwrites || [],
+        permissionOverwrites: channel.permission_overwrites || channel.permissionOverwrites || [],
         topic: channel.topic || null,
         nsfw: !!channel.nsfw
     };
@@ -324,7 +327,15 @@ async function getGuildChannels(guildId) {
     if (!res.ok) return [];
 
     const channels = await res.json();
-    return sortChannelsForDashboard(Array.isArray(channels) ? channels : []);
+
+    return sortChannelsForDashboard(
+        Array.isArray(channels)
+            ? channels.map(channel => ({
+                ...channel,
+                guild_id: channel.guild_id || id
+            }))
+            : []
+    );
 }
 
 async function getGuildMemberWithBot(guildId, userId) {
@@ -402,21 +413,40 @@ function applyChannelOverwrites(basePermissions, member, channel) {
             ? channel.permission_overwrites
             : [];
 
+    const guildId = String(channel?.guildId || channel?.guild_id || "");
     const memberRoleIds = new Set((member?.roles || []).map(String));
+    const memberUserId = String(member?.user?.id || member?.id || "");
 
-    // everyone overwrite = guild id style role overwrite, applied first when matched by role id
+    /*
+      Discord permission overwrite order:
+      1. @everyone overwrite = overwrite id ตรงกับ guildId
+      2. role overwrites ของ role ที่ member มี
+      3. member-specific overwrite
+    */
+
+    // 1) @everyone overwrite
     for (const ow of overwrites) {
-        if (ow.type !== 0) continue;
+        if (Number(ow.type) !== 0) continue;
+        if (!guildId || String(ow.id) !== guildId) continue;
+
+        perms &= ~toBigIntPermission(ow.deny);
+        perms |= toBigIntPermission(ow.allow);
+    }
+
+    // 2) role overwrites
+    for (const ow of overwrites) {
+        if (Number(ow.type) !== 0) continue;
+        if (guildId && String(ow.id) === guildId) continue;
         if (!memberRoleIds.has(String(ow.id))) continue;
 
         perms &= ~toBigIntPermission(ow.deny);
         perms |= toBigIntPermission(ow.allow);
     }
 
-    // member-specific overwrite
+    // 3) member-specific overwrite
     for (const ow of overwrites) {
-        if (ow.type !== 1) continue;
-        if (String(ow.id) !== String(member?.user?.id || member?.id || "")) continue;
+        if (Number(ow.type) !== 1) continue;
+        if (String(ow.id) !== memberUserId) continue;
 
         perms &= ~toBigIntPermission(ow.deny);
         perms |= toBigIntPermission(ow.allow);
@@ -472,8 +502,7 @@ function validateBotCanManageRole({ botMember, roles, targetRoleId }) {
     if (!hasManageRoles) {
         errors.push("บอทไม่มีสิทธิ์ Manage Roles");
     }
-
-    checks.push({
+      checks.push({
         name: "role_not_managed",
         label: "Role ไม่ใช่ managed role",
         ok: !target.managed,
@@ -527,28 +556,29 @@ function validateBotCanUseChannel({ botMember, roles, channel }) {
         {
             name: "view_channel",
             label: "บอทมองเห็นห้อง",
-            ok: canView,
-            detail: canView ? "ผ่าน" : "บอทไม่มีสิทธิ์ View Channel"
+            ok: !!channel && canView,
+            detail: !!channel && canView ? "ผ่าน" : "บอทไม่มีสิทธิ์ View Channel หรือไม่พบห้อง"
         },
         {
             name: "send_messages",
             label: "บอทส่งข้อความได้",
-            ok: canSend,
-            detail: canSend ? "ผ่าน" : "บอทไม่มีสิทธิ์ Send Messages"
+            ok: !!channel && canSend,
+            detail: !!channel && canSend ? "ผ่าน" : "บอทไม่มีสิทธิ์ Send Messages หรือไม่พบห้อง"
         },
         {
             name: "embed_links",
             label: "บอทส่ง Embed ได้",
-            ok: canEmbed,
-            detail: canEmbed ? "ผ่าน" : "บอทไม่มีสิทธิ์ Embed Links"
+            ok: !!channel && canEmbed,
+            detail: !!channel && canEmbed ? "ผ่าน" : "บอทไม่มีสิทธิ์ Embed Links หรือไม่พบห้อง"
         }
     ];
 
     const errors = [];
+
     if (!channel) errors.push("ไม่พบ channel เป้าหมาย");
-    if (!canView) errors.push("บอทไม่มีสิทธิ์ View Channel");
-    if (!canSend) errors.push("บอทไม่มีสิทธิ์ Send Messages");
-    if (!canEmbed) errors.push("บอทไม่มีสิทธิ์ Embed Links");
+    if (channel && !canView) errors.push("บอทไม่มีสิทธิ์ View Channel");
+    if (channel && !canSend) errors.push("บอทไม่มีสิทธิ์ Send Messages");
+    if (channel && !canEmbed) errors.push("บอทไม่มีสิทธิ์ Embed Links");
 
     return {
         ok: errors.length === 0,
@@ -568,6 +598,14 @@ async function addMemberToGuild(guildId, userId, accessToken) {
             ok: false,
             status: 400,
             error: "Missing guildId/userId/accessToken"
+        };
+    }
+
+    if (!hasBotToken()) {
+        return {
+            ok: false,
+            status: 500,
+            error: "Missing bot token"
         };
     }
 
@@ -605,6 +643,14 @@ async function addRoleToMember(guildId, userId, roleId) {
             ok: false,
             status: 400,
             error: "Missing guildId/userId/roleId"
+        };
+    }
+
+    if (!hasBotToken()) {
+        return {
+            ok: false,
+            status: 500,
+            error: "Missing bot token"
         };
     }
 
@@ -646,7 +692,7 @@ async function getChannel(channelId) {
 
     if (!res.ok) return null;
 
-    return res.json();
+    return normalizeChannel(await res.json());
 }
 
 async function fetchChannelMessage(channelId, messageId) {
@@ -667,6 +713,7 @@ async function fetchChannelMessage(channelId, messageId) {
 
     if (!res.ok) {
         const error = await readError(res);
+
         return {
             ok: false,
             status: res.status,
@@ -702,6 +749,7 @@ async function createChannelMessage(channelId, payload) {
 
     if (!res.ok) {
         const error = await readError(res);
+
         return {
             ok: false,
             status: res.status,
@@ -738,6 +786,7 @@ async function editChannelMessage(channelId, messageId, payload) {
 
     if (!res.ok) {
         const error = await readError(res);
+
         return {
             ok: false,
             status: res.status,
@@ -821,9 +870,9 @@ async function sendVerificationDM(userId, data = {}) {
    Token Storage
 ============================================================================= */
 
-function prepareTokenStorage(tokenData) {
+function prepareTokenStorage(tokenData = {}) {
     return {
-        encryptedAccessToken: encryptToken(tokenData.access_token),
+        encryptedAccessToken: encryptToken(tokenData.access_token || ""),
         encryptedRefreshToken: encryptToken(tokenData.refresh_token || ""),
         expiresAt: Date.now() + ((tokenData.expires_in || 0) * 1000),
         scope: tokenData.scope || "",
@@ -855,6 +904,11 @@ module.exports = {
     snowflake,
     toBigIntPermission,
     hasPermission,
+
+    normalizeRole,
+    normalizeChannel,
+    sortRolesForDashboard,
+    sortChannelsForDashboard,
 
     exchangeCode,
     refreshToken,
