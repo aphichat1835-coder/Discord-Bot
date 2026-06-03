@@ -10,32 +10,57 @@ const panelSchema = new mongoose.Schema({
     footerText:     String,
     titleUrl:       String,
     showTimestamp:  { type: Boolean, default: false },
+
+    buttonText:     String,
     buttonLabel:    String,
     buttonEmoji:    String,
-    verifyType:     String
+
+    verifyType:     { type: String, default: 'oauth' },
+    legacyVerifyType: String
 }, { _id: false, minimize: false });
 
 const schema = new mongoose.Schema({
-    guildId:   { type: String, required: true, unique: true },
+    guildId:   { type: String, required: true, unique: true, index: true },
     guildName: String,
 
     verification: {
         enabled:              { type: Boolean, default: true },
+
         roleId:               String,
         roleName:             String,
+
         channelId:            String,
+        channelName:          String,
+
         messageId:            String,
 
         verifyPath:           { type: String, default: '/auth/callback' },
-        oauthMode:            String,
+
+        /*
+          ค่าใหม่สำหรับ Dashboard v2:
+          - oauth  = OAuth2 Verification
+          - direct = กดรับยศทันที
+        */
+        verifyType:           { type: String, default: 'oauth' },
+        oauthMode:            { type: String, default: 'oauth' },
+
+        /*
+          ค่าเก่าเก็บไว้เพื่อ compatibility:
+          - direct-discord-authorize-long-lived-state
+          - direct-role
+        */
+        legacyOauthMode:      String,
         directStateMode:      String,
 
         blockVPN:             { type: Boolean, default: true },
         minAccountAgeDays:    { type: Number,  default: 7 },
+
         requireEmail:         { type: Boolean, default: false },
         requireEmailVerified: { type: Boolean, default: false },
+
         requireConnections:   { type: Boolean, default: false },
         minConnections:       { type: Number,  default: 1 },
+
         allowedCountries:     { type: [String], default: [] },
         blockedCountries:     { type: [String], default: [] },
 
@@ -46,7 +71,12 @@ const schema = new mongoose.Schema({
     },
 
     security: {
-        storeOAuthTokens:              { type: Boolean, default: true },
+        /*
+          default เป็น false จะปลอดภัยกว่า:
+          OAuth access token ใช้ตอน callback พอ
+          ถ้าจะเก็บ token จริงค่อยเปิด STORE_OAUTH_TOKENS=true
+        */
+        storeOAuthTokens:              { type: Boolean, default: false },
         storeRawIpEncrypted:           { type: Boolean, default: true },
         ipRevealRequiresOwnerApproval: { type: Boolean, default: true },
         retentionMode:                 { type: String, default: 'until_admin_delete' }
@@ -59,6 +89,8 @@ const schema = new mongoose.Schema({
 
 schema.index({ 'verification.roleId': 1 });
 schema.index({ 'verification.channelId': 1 });
+schema.index({ 'verification.messageId': 1 });
+schema.index({ 'verification.verifyType': 1 });
 schema.index({ updatedAt: -1 });
 
 module.exports =
