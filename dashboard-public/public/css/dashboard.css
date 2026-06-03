@@ -1725,3 +1725,253 @@ tbody tr:hover td {
     grid-template-columns: 1fr;
   }
 }
+
+/*
+================================================================================
+  Dashboard Public v2 — Final UI Patch
+  เพิ่มเติมสำหรับ Dashboard v2, modal detail, toast show, mobile polish
+================================================================================
+*/
+
+.btn.is-loading,
+.btn[aria-busy="true"] {
+  opacity: 0.78;
+  pointer-events: none;
+  cursor: wait;
+}
+
+.toast.show {
+  display: block;
+  animation: toastIn 0.18s ease both;
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.modal {
+  max-height: min(88vh, 820px);
+  overflow: auto;
+}
+
+.modal-wide {
+  width: min(920px, 100%);
+}
+
+.detail-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.detail-section {
+  padding: 13px;
+  border-radius: 16px;
+  background: rgba(148, 163, 184, 0.07);
+  border: 1px solid var(--line);
+}
+
+.detail-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+  color: #bfdbfe;
+  font-size: 0.78rem;
+  font-weight: 1000;
+  text-transform: uppercase;
+  letter-spacing: 0.55px;
+}
+
+.detail-section-body {
+  display: grid;
+  gap: 8px;
+}
+
+.detail-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.7fr) minmax(0, 1.3fr);
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.detail-row:last-child {
+  border-bottom: 0;
+}
+
+.detail-key {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.detail-value {
+  min-width: 0;
+  color: var(--text);
+  font-weight: 800;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.raw-json,
+.json-block,
+pre.json-block {
+  max-height: 320px;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  border-radius: 14px;
+  color: #dbeafe;
+  background: rgba(2, 6, 23, 0.78);
+  border: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.inline-code,
+.copyable,
+.code-pill {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: #dbeafe;
+  background: rgba(2, 6, 23, 0.58);
+  border: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  word-break: break-all;
+}
+
+.user-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.user-avatar-sm {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  object-fit: cover;
+  background: #111827;
+  border: 1px solid rgba(34, 211, 238, 0.32);
+}
+
+.user-line-main {
+  min-width: 0;
+}
+
+.user-line-name {
+  font-weight: 950;
+  color: var(--text);
+}
+
+.user-line-sub {
+  margin-top: 2px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+
+.risk-low {
+  color: #bbf7d0;
+}
+
+.risk-medium {
+  color: #fde68a;
+}
+
+.risk-high {
+  color: #fecaca;
+}
+
+.status-dot {
+  width: 9px;
+  height: 9px;
+  display: inline-block;
+  border-radius: 999px;
+  background: var(--muted-2);
+}
+
+.status-dot.ok {
+  background: var(--green);
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.12);
+}
+
+.status-dot.warn {
+  background: var(--yellow);
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.12);
+}
+
+.status-dot.err {
+  background: var(--red);
+  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.12);
+}
+
+.embed-preview {
+  overflow: hidden;
+}
+
+.embed-preview a {
+  color: #93c5fd;
+  text-decoration: none;
+}
+
+.embed-preview a:hover {
+  color: #fff;
+  text-decoration: underline;
+}
+
+.table-wrap td,
+.table-wrap th {
+  max-width: 320px;
+}
+
+.table-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 740px) {
+  .detail-row {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+
+  .detail-value {
+    font-size: 0.82rem;
+  }
+
+  .modal {
+    padding: 16px;
+  }
+
+  .table-actions .btn {
+    width: 100%;
+  }
+
+  .toast {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    max-width: none;
+  }
+}
