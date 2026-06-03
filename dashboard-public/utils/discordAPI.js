@@ -1,6 +1,34 @@
-const { encryptToken, decryptToken } = require('./crypto');
+/*
+================================================================================
+  Discord API Utilities — Dashboard Public v2
 
-const BASE = 'https://discord.com/api/v10';
+  รวม helper เดิม + helper ใหม่สำหรับ:
+  - OAuth exchange / refresh
+  - fetch user profile / guilds / member
+  - add member / add role
+  - DM
+  - dashboard verify panel: roles/channels/bot member/create/edit/fetch message
+  - permission validation helpers
+================================================================================
+*/
+
+const { encryptToken, decryptToken } = require("./crypto");
+
+const BASE = "https://discord.com/api/v10";
+
+const PERMISSIONS = Object.freeze({
+    VIEW_CHANNEL: 1n << 10n,
+    SEND_MESSAGES: 1n << 11n,
+    EMBED_LINKS: 1n << 14n,
+    MANAGE_ROLES: 1n << 28n,
+    ADMINISTRATOR: 1n << 3n
+});
+
+const TEXT_CHANNEL_TYPES = new Set([
+    0,  // GuildText
+    5,  // GuildAnnouncement
+    15  // GuildForum
+]);
 
 function getClientId() {
     return process.env.DISCORD_CLIENT_ID;
@@ -11,11 +39,28 @@ function getClientSecret() {
 }
 
 function getBotToken() {
-    return process.env.TOKEN_MANAGER;
+    return (
+        process.env.TOKEN_MANAGER ||
+        process.env.BOT_TOKEN ||
+        process.env.DISCORD_BOT_TOKEN ||
+        process.env.TOKEN ||
+        ""
+    );
+}
+
+function hasBotToken() {
+    return !!getBotToken();
+}
+
+function botHeaders(extra = {}) {
+    return {
+        Authorization: `Bot ${getBotToken()}`,
+        ...extra
+    };
 }
 
 async function readError(res) {
-    const text = await res.text().catch(() => '');
+    const text = await res.text().catch(() => "");
 
     try {
         return JSON.parse(text);
@@ -27,8 +72,8 @@ async function readError(res) {
 }
 
 function stringifyError(error) {
-    if (!error) return '';
-    if (typeof error === 'string') return error;
+    if (!error) return "";
+    if (typeof error === "string") return error;
 
     try {
         return JSON.stringify(error);
@@ -43,25 +88,134 @@ async function apiFetch(url, options = {}) {
     if (!res.ok) {
         const error = await readError(res);
         throw new Error(
-            `${options.label || 'Discord API'} failed: ${res.status} ${stringifyError(error)}`.trim()
+            `${options.label || "Discord API"} failed: ${res.status} ${stringifyError(error)}`.trim()
         );
     }
 
     return res;
 }
 
+async function safeApiFetch(url, options = {}) {
+    const res = await fetch(url, options);
+    const data = await res.json().catch(async () => {
+        const text = await res.text().catch(() => "");
+        return text ? { raw: text } : null;
+    });
+
+    return {
+        ok: res.ok,
+        status: res.status,
+        data
+    };
+}
+
+function snowflake(value) {
+    const v = String(value || "").trim();
+    return /^\d{17,22}$/.test(v) ? v : null;
+}
+
+function toBigIntPermission(value) {
+    try {
+        return BigInt(String(value || "0"));
+    } catch {
+        return 0n;
+    }
+}
+
+function hasPermission(permissionValue, flag) {
+    const perms = toBigIntPermission(permissionValue);
+    return (perms & PERMISSIONS.ADMINISTRATOR) === PERMISSIONS.ADMINISTRATOR ||
+        (perms & flag) === flag;
+}
+
+function normalizeRole(role = {}) {
+    return {
+        id: role.id,
+        name: role.name,
+        color: role.color || 0,
+        hoist: !!role.hoist,
+        position: role.position || 0,
+        permissions: role.permissions || "0",
+        managed: !!role.managed,
+        mentionable: !!role.mentionable,
+        tags: role.tags || null
+    };
+}
+
+function normalizeChannel(channel = {}) {
+    return {
+        id: channel.id,
+        name: channel.name,
+        type: channel.type,
+        parentId: channel.parent_id || null,
+        position: channel.position || 0,
+        permissionOverwrites: channel.permission_overwrites || [],
+        topic: channel.topic || null,
+        nsfw: !!channel.nsfw
+    };
+}
+
+function sortRolesForDashboard(roles = []) {
+    return roles
+        .map(normalizeRole)
+        .filter(role => role.id)
+        .sort((a, b) => {
+            if (b.position !== a.position) return b.position - a.position;
+            return String(a.name || "").localeCompare(String(b.name || ""));
+        });
+}
+
+function sortChannelsForDashboard(channels = []) {
+    return channels
+        .map(normalizeChannel)
+        .filter(channel => channel.id && TEXT_CHANNEL_TYPES.has(channel.type))
+        .sort((a, b) => {
+            if (a.position !== b.position) return a.position - b.position;
+            return String(a.name || "").localeCompare(String(b.name || ""));
+        });
+}
+
+/* =============================================================================
+   OAuth / User
+============================================================================= */
+
 async function exchangeCode(code, redirectUri) {
     const res = await apiFetch(`${BASE}/oauth2/token`, {
-        label: 'exchangeCode',
-        method: 'POST',
+        label: "exchangeCode",
+        method: "POST",
         headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
+            "Content-Type": "application/x-www-form-urlencoded"
         },
         body: new URLSearchParams({
             client_id: getClientId(),
             client_secret: getClientSecret(),
-            grant_type: 'authorization_code',
+            grant_type: "authorization_code",
             code,
+            redirect_uri: redirectUri
+        })
+    });
+
+    return res.json();
+}
+
+async function refreshToken(encryptedRefreshToken, redirectUri) {
+    const refreshTokenValue = decryptToken(encryptedRefreshToken);
+
+    if (!refreshTokenValue) {
+        throw new Error("Cannot decrypt refresh token");
+    }
+
+    const res = await apiFetch(`${BASE}/oauth2/token`, {
+        label: "refreshToken",
+        method: "POST",
+        headers: {
+            "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: new URLSearchParams({
+            client_id: getClientId(),
+            client_secret: getClientSecret(),
+            grant_type: "refresh_token",
+            refresh_token: refreshTokenValue,
             redirect_uri: redirectUri
         })
     });
@@ -71,7 +225,7 @@ async function exchangeCode(code, redirectUri) {
 
 async function getUserProfile(accessToken) {
     const res = await apiFetch(`${BASE}/users/@me`, {
-        label: 'getUserProfile',
+        label: "getUserProfile",
         headers: {
             Authorization: `Bearer ${accessToken}`
         }
@@ -116,13 +270,15 @@ async function getGuildMember(accessToken, guildId) {
     return res.json();
 }
 
-async function getGuildMemberWithBot(guildId, userId) {
-    if (!guildId || !userId) return null;
+/* =============================================================================
+   Bot Guild / Member / Roles / Channels
+============================================================================= */
 
-    const res = await fetch(`${BASE}/guilds/${guildId}/members/${userId}`, {
-        headers: {
-            Authorization: `Bot ${getBotToken()}`
-        }
+async function getCurrentBotUser() {
+    if (!hasBotToken()) return null;
+
+    const res = await fetch(`${BASE}/users/@me`, {
+        headers: botHeaders()
     });
 
     if (!res.ok) return null;
@@ -130,21 +286,297 @@ async function getGuildMemberWithBot(guildId, userId) {
     return res.json();
 }
 
+async function getGuild(guildId) {
+    const id = snowflake(guildId);
+    if (!id || !hasBotToken()) return null;
+
+    const res = await fetch(`${BASE}/guilds/${id}?with_counts=true`, {
+        headers: botHeaders()
+    });
+
+    if (!res.ok) return null;
+
+    return res.json();
+}
+
+async function getGuildRoles(guildId) {
+    const id = snowflake(guildId);
+    if (!id || !hasBotToken()) return [];
+
+    const res = await fetch(`${BASE}/guilds/${id}/roles`, {
+        headers: botHeaders()
+    });
+
+    if (!res.ok) return [];
+
+    const roles = await res.json();
+    return sortRolesForDashboard(Array.isArray(roles) ? roles : []);
+}
+
+async function getGuildChannels(guildId) {
+    const id = snowflake(guildId);
+    if (!id || !hasBotToken()) return [];
+
+    const res = await fetch(`${BASE}/guilds/${id}/channels`, {
+        headers: botHeaders()
+    });
+
+    if (!res.ok) return [];
+
+    const channels = await res.json();
+    return sortChannelsForDashboard(Array.isArray(channels) ? channels : []);
+}
+
+async function getGuildMemberWithBot(guildId, userId) {
+    const gid = snowflake(guildId);
+    const uid = snowflake(userId);
+
+    if (!gid || !uid || !hasBotToken()) return null;
+
+    const res = await fetch(`${BASE}/guilds/${gid}/members/${uid}`, {
+        headers: botHeaders()
+    });
+
+    if (!res.ok) return null;
+
+    return res.json();
+}
+
+async function getBotMember(guildId, botUserId = null) {
+    const bot = botUserId ? { id: botUserId } : await getCurrentBotUser();
+
+    if (!bot?.id) return null;
+
+    return getGuildMemberWithBot(guildId, bot.id);
+}
+
+function resolveMemberHighestRole(member, roles = []) {
+    if (!member?.roles || !Array.isArray(member.roles)) {
+        return null;
+    }
+
+    const roleMap = new Map(roles.map(role => [String(role.id), role]));
+
+    let highest = null;
+
+    for (const roleId of member.roles) {
+        const role = roleMap.get(String(roleId));
+        if (!role) continue;
+
+        if (!highest || Number(role.position || 0) > Number(highest.position || 0)) {
+            highest = role;
+        }
+    }
+
+    return highest;
+}
+
+function computeMemberGuildPermissions(member, roles = []) {
+    if (!member?.roles || !Array.isArray(member.roles)) {
+        return "0";
+    }
+
+    const roleMap = new Map(roles.map(role => [String(role.id), role]));
+    let perms = 0n;
+
+    for (const roleId of member.roles) {
+        const role = roleMap.get(String(roleId));
+        if (!role) continue;
+
+        perms |= toBigIntPermission(role.permissions);
+    }
+
+    return perms.toString();
+}
+
+function applyChannelOverwrites(basePermissions, member, channel) {
+    let perms = toBigIntPermission(basePermissions);
+
+    if ((perms & PERMISSIONS.ADMINISTRATOR) === PERMISSIONS.ADMINISTRATOR) {
+        return perms.toString();
+    }
+
+    const overwrites = Array.isArray(channel?.permissionOverwrites)
+        ? channel.permissionOverwrites
+        : Array.isArray(channel?.permission_overwrites)
+            ? channel.permission_overwrites
+            : [];
+
+    const memberRoleIds = new Set((member?.roles || []).map(String));
+
+    // everyone overwrite = guild id style role overwrite, applied first when matched by role id
+    for (const ow of overwrites) {
+        if (ow.type !== 0) continue;
+        if (!memberRoleIds.has(String(ow.id))) continue;
+
+        perms &= ~toBigIntPermission(ow.deny);
+        perms |= toBigIntPermission(ow.allow);
+    }
+
+    // member-specific overwrite
+    for (const ow of overwrites) {
+        if (ow.type !== 1) continue;
+        if (String(ow.id) !== String(member?.user?.id || member?.id || "")) continue;
+
+        perms &= ~toBigIntPermission(ow.deny);
+        perms |= toBigIntPermission(ow.allow);
+    }
+
+    return perms.toString();
+}
+
+function validateBotCanManageRole({ botMember, roles, targetRoleId }) {
+    const target = roles.find(role => String(role.id) === String(targetRoleId));
+    const highest = resolveMemberHighestRole(botMember, roles);
+    const guildPerms = computeMemberGuildPermissions(botMember, roles);
+
+    const checks = [];
+    const errors = [];
+    const warnings = [];
+
+    if (!target) {
+        errors.push("ไม่พบ role เป้าหมายในเซิร์ฟเวอร์");
+        checks.push({
+            name: "role_exists",
+            label: "พบ role เป้าหมาย",
+            ok: false,
+            detail: "Role ID ไม่ตรงกับ role ในเซิร์ฟเวอร์"
+        });
+
+        return {
+            ok: false,
+            target,
+            highest,
+            checks,
+            warnings,
+            errors
+        };
+    }
+
+    checks.push({
+        name: "role_exists",
+        label: "พบ role เป้าหมาย",
+        ok: true,
+        detail: `${target.name} (${target.id})`
+    });
+
+    const hasManageRoles = hasPermission(guildPerms, PERMISSIONS.MANAGE_ROLES);
+
+    checks.push({
+        name: "manage_roles",
+        label: "บอทมีสิทธิ์ Manage Roles",
+        ok: hasManageRoles,
+        detail: hasManageRoles ? "ผ่าน" : "บอทไม่มีสิทธิ์ Manage Roles"
+    });
+
+    if (!hasManageRoles) {
+        errors.push("บอทไม่มีสิทธิ์ Manage Roles");
+    }
+
+    checks.push({
+        name: "role_not_managed",
+        label: "Role ไม่ใช่ managed role",
+        ok: !target.managed,
+        detail: target.managed ? "Role นี้ถูกจัดการโดย integration/bot อื่น" : "ผ่าน"
+    });
+
+    if (target.managed) {
+        errors.push("Role เป้าหมายเป็น managed role ไม่สามารถให้ด้วยบอทได้");
+    }
+
+    const hierarchyOk = !!highest && Number(target.position || 0) < Number(highest.position || 0);
+
+    checks.push({
+        name: "role_hierarchy",
+        label: "ยศบอทสูงกว่า role เป้าหมาย",
+        ok: hierarchyOk,
+        detail: highest
+            ? `Bot highest: ${highest.name} (${highest.position}) / Target: ${target.name} (${target.position})`
+            : "ไม่พบ highest role ของบอท"
+    });
+
+    if (!hierarchyOk) {
+        errors.push("ยศบอทต้องอยู่สูงกว่า role ที่จะให้");
+    }
+
+    return {
+        ok: errors.length === 0,
+        target,
+        highest,
+        checks,
+        warnings,
+        errors
+    };
+}
+
+function validateBotCanUseChannel({ botMember, roles, channel }) {
+    const guildPerms = computeMemberGuildPermissions(botMember, roles);
+    const channelPerms = applyChannelOverwrites(guildPerms, botMember, channel);
+
+    const canView = hasPermission(channelPerms, PERMISSIONS.VIEW_CHANNEL);
+    const canSend = hasPermission(channelPerms, PERMISSIONS.SEND_MESSAGES);
+    const canEmbed = hasPermission(channelPerms, PERMISSIONS.EMBED_LINKS);
+
+    const checks = [
+        {
+            name: "channel_exists",
+            label: "พบ channel เป้าหมาย",
+            ok: !!channel,
+            detail: channel ? `#${channel.name} (${channel.id})` : "ไม่พบ channel"
+        },
+        {
+            name: "view_channel",
+            label: "บอทมองเห็นห้อง",
+            ok: canView,
+            detail: canView ? "ผ่าน" : "บอทไม่มีสิทธิ์ View Channel"
+        },
+        {
+            name: "send_messages",
+            label: "บอทส่งข้อความได้",
+            ok: canSend,
+            detail: canSend ? "ผ่าน" : "บอทไม่มีสิทธิ์ Send Messages"
+        },
+        {
+            name: "embed_links",
+            label: "บอทส่ง Embed ได้",
+            ok: canEmbed,
+            detail: canEmbed ? "ผ่าน" : "บอทไม่มีสิทธิ์ Embed Links"
+        }
+    ];
+
+    const errors = [];
+    if (!channel) errors.push("ไม่พบ channel เป้าหมาย");
+    if (!canView) errors.push("บอทไม่มีสิทธิ์ View Channel");
+    if (!canSend) errors.push("บอทไม่มีสิทธิ์ Send Messages");
+    if (!canEmbed) errors.push("บอทไม่มีสิทธิ์ Embed Links");
+
+    return {
+        ok: errors.length === 0,
+        checks,
+        warnings: [],
+        errors
+    };
+}
+
+/* =============================================================================
+   Guild Join / Role
+============================================================================= */
+
 async function addMemberToGuild(guildId, userId, accessToken) {
     if (!guildId || !userId || !accessToken) {
         return {
             ok: false,
             status: 400,
-            error: 'Missing guildId/userId/accessToken'
+            error: "Missing guildId/userId/accessToken"
         };
     }
 
     const res = await fetch(`${BASE}/guilds/${guildId}/members/${userId}`, {
-        method: 'PUT',
+        method: "PUT",
         headers: {
             Authorization: `Bot ${getBotToken()}`,
-            'Content-Type': 'application/json',
-            'X-Audit-Log-Reason': encodeURIComponent('OAuth2 Verification guilds.join')
+            "Content-Type": "application/json",
+            "X-Audit-Log-Reason": encodeURIComponent("OAuth2 Verification guilds.join")
         },
         body: JSON.stringify({
             access_token: accessToken
@@ -172,15 +604,15 @@ async function addRoleToMember(guildId, userId, roleId) {
         return {
             ok: false,
             status: 400,
-            error: 'Missing guildId/userId/roleId'
+            error: "Missing guildId/userId/roleId"
         };
     }
 
     const res = await fetch(`${BASE}/guilds/${guildId}/members/${userId}/roles/${roleId}`, {
-        method: 'PUT',
+        method: "PUT",
         headers: {
             Authorization: `Bot ${getBotToken()}`,
-            'X-Audit-Log-Reason': encodeURIComponent('OAuth2 Verification role grant')
+            "X-Audit-Log-Reason": encodeURIComponent("OAuth2 Verification role grant")
         }
     });
 
@@ -200,15 +632,142 @@ async function addRoleToMember(guildId, userId, roleId) {
     };
 }
 
+/* =============================================================================
+   Messages / Verification Panel
+============================================================================= */
+
+async function getChannel(channelId) {
+    const id = snowflake(channelId);
+    if (!id || !hasBotToken()) return null;
+
+    const res = await fetch(`${BASE}/channels/${id}`, {
+        headers: botHeaders()
+    });
+
+    if (!res.ok) return null;
+
+    return res.json();
+}
+
+async function fetchChannelMessage(channelId, messageId) {
+    const cid = snowflake(channelId);
+    const mid = snowflake(messageId);
+
+    if (!cid || !mid || !hasBotToken()) {
+        return {
+            ok: false,
+            status: 400,
+            error: "Missing channelId/messageId/bot token"
+        };
+    }
+
+    const res = await fetch(`${BASE}/channels/${cid}/messages/${mid}`, {
+        headers: botHeaders()
+    });
+
+    if (!res.ok) {
+        const error = await readError(res);
+        return {
+            ok: false,
+            status: res.status,
+            error
+        };
+    }
+
+    return {
+        ok: true,
+        status: res.status,
+        message: await res.json()
+    };
+}
+
+async function createChannelMessage(channelId, payload) {
+    const cid = snowflake(channelId);
+
+    if (!cid || !hasBotToken()) {
+        return {
+            ok: false,
+            status: 400,
+            error: "Missing channelId/bot token"
+        };
+    }
+
+    const res = await fetch(`${BASE}/channels/${cid}/messages`, {
+        method: "POST",
+        headers: botHeaders({
+            "Content-Type": "application/json"
+        }),
+        body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+        const error = await readError(res);
+        return {
+            ok: false,
+            status: res.status,
+            error
+        };
+    }
+
+    return {
+        ok: true,
+        status: res.status,
+        message: await res.json()
+    };
+}
+
+async function editChannelMessage(channelId, messageId, payload) {
+    const cid = snowflake(channelId);
+    const mid = snowflake(messageId);
+
+    if (!cid || !mid || !hasBotToken()) {
+        return {
+            ok: false,
+            status: 400,
+            error: "Missing channelId/messageId/bot token"
+        };
+    }
+
+    const res = await fetch(`${BASE}/channels/${cid}/messages/${mid}`, {
+        method: "PATCH",
+        headers: botHeaders({
+            "Content-Type": "application/json"
+        }),
+        body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+        const error = await readError(res);
+        return {
+            ok: false,
+            status: res.status,
+            error
+        };
+    }
+
+    return {
+        ok: true,
+        status: res.status,
+        message: await res.json()
+    };
+}
+
+/* =============================================================================
+   DM
+============================================================================= */
+
 async function createDMChannel(userId) {
+    const uid = snowflake(userId);
+
+    if (!uid || !hasBotToken()) return null;
+
     const res = await fetch(`${BASE}/users/@me/channels`, {
-        method: 'POST',
-        headers: {
-            Authorization: `Bot ${getBotToken()}`,
-            'Content-Type': 'application/json'
-        },
+        method: "POST",
+        headers: botHeaders({
+            "Content-Type": "application/json"
+        }),
         body: JSON.stringify({
-            recipient_id: userId
+            recipient_id: uid
         })
     });
 
@@ -223,11 +782,10 @@ async function sendDM(userId, payload) {
     if (!channel?.id) return false;
 
     const res = await fetch(`${BASE}/channels/${channel.id}/messages`, {
-        method: 'POST',
-        headers: {
-            Authorization: `Bot ${getBotToken()}`,
-            'Content-Type': 'application/json'
-        },
+        method: "POST",
+        headers: botHeaders({
+            "Content-Type": "application/json"
+        }),
         body: JSON.stringify(payload)
     });
 
@@ -238,34 +796,38 @@ async function sendVerificationDM(userId, data = {}) {
     if (!userId) return false;
 
     const ok = !!data.ok;
-    const guildName = data.guildName || 'Discord Server';
+    const guildName = data.guildName || "Discord Server";
     const roleName = data.roleName || null;
-    const reason = data.reason || (ok ? 'ยืนยันสำเร็จ' : 'ยืนยันไม่สำเร็จ');
+    const reason = data.reason || (ok ? "ยืนยันสำเร็จ" : "ยืนยันไม่สำเร็จ");
 
     return sendDM(userId, {
         embeds: [
             {
-                title: ok ? '✅ ยืนยันตัวตนสำเร็จ' : '❌ ยืนยันตัวตนไม่สำเร็จ',
+                title: ok ? "✅ ยืนยันตัวตนสำเร็จ" : "❌ ยืนยันตัวตนไม่สำเร็จ",
                 description: ok
-                    ? `คุณยืนยันตัวตนใน **${guildName}** สำเร็จแล้ว${roleName ? ` และได้รับยศ **${roleName}**` : ''}`
+                    ? `คุณยืนยันตัวตนใน **${guildName}** สำเร็จแล้ว${roleName ? ` และได้รับยศ **${roleName}**` : ""}`
                     : `การยืนยันตัวตนใน **${guildName}** ไม่สำเร็จ\nเหตุผล: ${reason}`,
                 color: ok ? 0x45e67a : 0xef4444,
                 timestamp: new Date().toISOString(),
                 footer: {
-                    text: 'Verification System'
+                    text: "Verification System"
                 }
             }
         ]
     });
 }
 
+/* =============================================================================
+   Token Storage
+============================================================================= */
+
 function prepareTokenStorage(tokenData) {
     return {
         encryptedAccessToken: encryptToken(tokenData.access_token),
-        encryptedRefreshToken: encryptToken(tokenData.refresh_token || ''),
+        encryptedRefreshToken: encryptToken(tokenData.refresh_token || ""),
         expiresAt: Date.now() + ((tokenData.expires_in || 0) * 1000),
-        scope: tokenData.scope || '',
-        tokenType: tokenData.token_type || 'Bearer',
+        scope: tokenData.scope || "",
+        tokenType: tokenData.token_type || "Bearer",
         lastRefreshAt: null,
         refreshFailCount: 0,
         revokedAt: null,
@@ -276,44 +838,54 @@ function prepareTokenStorage(tokenData) {
     };
 }
 
-async function refreshToken(encryptedRefreshToken, redirectUri) {
-    const refreshTokenValue = decryptToken(encryptedRefreshToken);
-
-    if (!refreshTokenValue) {
-        throw new Error('Cannot decrypt refresh token');
-    }
-
-    const res = await apiFetch(`${BASE}/oauth2/token`, {
-        label: 'refreshToken',
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        body: new URLSearchParams({
-            client_id: getClientId(),
-            client_secret: getClientSecret(),
-            grant_type: 'refresh_token',
-            refresh_token: refreshTokenValue,
-            redirect_uri: redirectUri
-        })
-    });
-
-    return res.json();
-}
-
 module.exports = {
+    BASE,
+    PERMISSIONS,
+
+    getClientId,
+    getClientSecret,
+    getBotToken,
+    hasBotToken,
+
+    readError,
+    stringifyError,
+    apiFetch,
+    safeApiFetch,
+
+    snowflake,
+    toBigIntPermission,
+    hasPermission,
+
     exchangeCode,
+    refreshToken,
     getUserProfile,
     getUserConnections,
     getUserGuilds,
     getGuildMember,
+
+    getCurrentBotUser,
+    getGuild,
+    getGuildRoles,
+    getGuildChannels,
     getGuildMemberWithBot,
+    getBotMember,
+    resolveMemberHighestRole,
+    computeMemberGuildPermissions,
+    applyChannelOverwrites,
+    validateBotCanManageRole,
+    validateBotCanUseChannel,
+
     addMemberToGuild,
     addRoleToMember,
+
+    getChannel,
+    fetchChannelMessage,
+    createChannelMessage,
+    editChannelMessage,
+
     createDMChannel,
     sendDM,
     sendVerificationDM,
-    prepareTokenStorage,
-    refreshToken,
-    stringifyError
+
+    prepareTokenStorage
 };
