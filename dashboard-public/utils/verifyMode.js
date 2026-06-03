@@ -2,6 +2,15 @@
 ================================================================================
   Verify Mode Utils
   ใช้ normalize ค่า verifyType จากหลาย format ให้ระบบอ่านตรงกัน
+
+  Dashboard v2 mode:
+  - oauth  = OAuth2 Verification
+  - direct = กดรับยศทันที
+
+  Legacy mode:
+  - oauth2
+  - direct-role
+  - direct-discord-authorize-long-lived-state
 ================================================================================
 */
 
@@ -13,19 +22,29 @@ const VERIFY_MODES = Object.freeze({
 const LEGACY_VERIFY_MODE_MAP = Object.freeze({
   oauth: VERIFY_MODES.OAUTH,
   oauth2: VERIFY_MODES.OAUTH,
+  "oauth-2": VERIFY_MODES.OAUTH,
   "discord-oauth": VERIFY_MODES.OAUTH,
   "discord_oauth": VERIFY_MODES.OAUTH,
   "direct-discord-authorize-long-lived-state": VERIFY_MODES.OAUTH,
+  "direct_discord_authorize_long_lived_state": VERIFY_MODES.OAUTH,
+  "link": VERIFY_MODES.OAUTH,
+  "url": VERIFY_MODES.OAUTH,
 
   direct: VERIFY_MODES.DIRECT,
   "direct-role": VERIFY_MODES.DIRECT,
   direct_role: VERIFY_MODES.DIRECT,
   instant: VERIFY_MODES.DIRECT,
   "instant-role": VERIFY_MODES.DIRECT,
-  button: VERIFY_MODES.DIRECT
+  instant_role: VERIFY_MODES.DIRECT,
+  button: VERIFY_MODES.DIRECT,
+  "button-role": VERIFY_MODES.DIRECT,
+  button_role: VERIFY_MODES.DIRECT
 });
 
 function normalizeVerifyMode(value) {
+  if (value === true) return VERIFY_MODES.OAUTH;
+  if (value === false) return VERIFY_MODES.DIRECT;
+
   const raw = String(value || "").trim().toLowerCase();
 
   if (!raw) return VERIFY_MODES.OAUTH;
@@ -36,6 +55,13 @@ function normalizeVerifyMode(value) {
 function toLegacyCommandVerifyMode(value) {
   const mode = normalizeVerifyMode(value);
   return mode === VERIFY_MODES.DIRECT ? "direct-role" : "oauth2";
+}
+
+function toLegacyOauthMode(value) {
+  const mode = normalizeVerifyMode(value);
+  return mode === VERIFY_MODES.DIRECT
+    ? "direct-role"
+    : "direct-discord-authorize-long-lived-state";
 }
 
 function toDashboardVerifyMode(value) {
@@ -73,7 +99,9 @@ function normalizePanel(panel = {}) {
   }
 
   if (!next.buttonText) {
-    next.buttonText = "✅ ยืนยันตัวตน ✅";
+    next.buttonText = next.verifyType === VERIFY_MODES.DIRECT
+      ? "🎭 รับยศ"
+      : "✅ ยืนยันตัวตน ✅";
   }
 
   if (!next.buttonLabel) {
@@ -95,6 +123,11 @@ function normalizeVerificationConfig(config = {}) {
   );
 
   next.oauthMode = next.verifyType;
+  next.panel.verifyType = next.verifyType;
+
+  if (!next.legacyOauthMode) {
+    next.legacyOauthMode = toLegacyOauthMode(next.verifyType);
+  }
 
   return next;
 }
@@ -103,6 +136,7 @@ module.exports = {
   VERIFY_MODES,
   normalizeVerifyMode,
   toLegacyCommandVerifyMode,
+  toLegacyOauthMode,
   toDashboardVerifyMode,
   isOauthMode,
   isDirectMode,
