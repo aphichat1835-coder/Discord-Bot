@@ -17,6 +17,7 @@ const DEFAULT_PANEL = Object.freeze({
   footerText: "Discord Verification System",
   titleUrl: "",
   buttonText: "✅ ยืนยันตัวตน ✅",
+  buttonLabel: "✅ ยืนยันตัวตน ✅",
   verifyType: "oauth",
   showTimestamp: false
 });
@@ -32,7 +33,11 @@ function sanitizeUrl(value) {
 
   try {
     const u = new URL(raw);
-    if (!["http:", "https:"].includes(u.protocol)) return "";
+
+    if (!["http:", "https:"].includes(u.protocol)) {
+      return "";
+    }
+
     return u.toString();
   } catch {
     return "";
@@ -52,7 +57,9 @@ function parseEmbedColor(value) {
 
   if (/^\d+$/.test(raw)) {
     const n = Number(raw);
-    if (Number.isFinite(n) && n >= 0 && n <= 0xffffff) return n;
+    if (Number.isFinite(n) && n >= 0 && n <= 0xffffff) {
+      return n;
+    }
   }
 
   return 0x5865f2;
@@ -68,13 +75,27 @@ function normalizePanelInput(panel = {}) {
   next.title = sanitizeText(next.title, 256) || DEFAULT_PANEL.title;
   next.description = sanitizeText(next.description, 4000) || DEFAULT_PANEL.description;
   next.color = sanitizeText(next.color, 16) || DEFAULT_PANEL.color;
+
   next.imageUrl = sanitizeUrl(next.imageUrl || next.image || next.gifUrl);
   next.thumbnailUrl = sanitizeUrl(next.thumbnailUrl || next.thumbnail);
-  next.footerText = sanitizeText(next.footerText || next.footer, 2048);
   next.titleUrl = sanitizeUrl(next.titleUrl || next.url);
-  next.buttonText = sanitizeText(next.buttonText || next.buttonLabel, 80) || DEFAULT_PANEL.buttonText;
-  next.buttonLabel = next.buttonText;
-  next.verifyType = normalizeVerifyMode(next.verifyType || next.mode);
+
+  next.footerText = sanitizeText(next.footerText || next.footer, 2048);
+
+  const buttonText = sanitizeText(
+    next.buttonText || next.buttonLabel,
+    80
+  ) || DEFAULT_PANEL.buttonText;
+
+  next.buttonText = buttonText;
+  next.buttonLabel = buttonText;
+
+  next.verifyType = normalizeVerifyMode(
+    next.verifyType ||
+    next.mode ||
+    next.oauthMode
+  );
+
   next.showTimestamp = !!next.showTimestamp;
 
   return next;
@@ -84,7 +105,9 @@ function buildOAuthUrl({ baseUrl, state }) {
   const cleanBase = String(baseUrl || "").replace(/\/+$/, "");
   const cleanState = String(state || "").trim();
 
-  if (!cleanBase || !cleanState) return "";
+  if (!cleanBase || !cleanState) {
+    return "";
+  }
 
   return `${cleanBase}/auth/discord?state=${encodeURIComponent(cleanState)}`;
 }
@@ -94,18 +117,30 @@ function buildButtonUrl({ panel, oauthUrl, directCustomId }) {
 
   if (mode === "direct") {
     return {
-      type: "button",
-      style: 2,
+      type: 2,
+      style: 3,
       label: panel.buttonText,
-      custom_id: directCustomId || "verify_direct_role"
+      custom_id: directCustomId || "verify_role_missing"
+    };
+  }
+
+  const cleanOauthUrl = sanitizeUrl(oauthUrl);
+
+  if (!cleanOauthUrl) {
+    return {
+      type: 2,
+      style: 2,
+      label: "OAuth URL ยังไม่พร้อม",
+      custom_id: "verify_oauth_url_missing",
+      disabled: true
     };
   }
 
   return {
-    type: "button",
+    type: 2,
     style: 5,
     label: panel.buttonText,
-    url: oauthUrl
+    url: cleanOauthUrl
   };
 }
 
@@ -121,15 +156,21 @@ function buildEmbed(panel) {
   }
 
   if (panel.imageUrl) {
-    embed.image = { url: panel.imageUrl };
+    embed.image = {
+      url: panel.imageUrl
+    };
   }
 
   if (panel.thumbnailUrl) {
-    embed.thumbnail = { url: panel.thumbnailUrl };
+    embed.thumbnail = {
+      url: panel.thumbnailUrl
+    };
   }
 
   if (panel.footerText) {
-    embed.footer = { text: panel.footerText };
+    embed.footer = {
+      text: panel.footerText
+    };
   }
 
   if (panel.showTimestamp) {
@@ -146,6 +187,7 @@ function buildPanelPayload({
   allowedMentions = { parse: [] }
 } = {}) {
   const cleanPanel = normalizePanelInput(panel);
+
   const components = [
     {
       type: 1,
