@@ -24,6 +24,19 @@
       .replaceAll("'", "&#039;");
   }
 
+  function showToast(message, type = "info") {
+    const toast = $("#toast");
+    if (!toast) return;
+
+    toast.textContent = message;
+    toast.className = `toast show ${type}`;
+
+    clearTimeout(showToast._timer);
+    showToast._timer = setTimeout(() => {
+      toast.classList.remove("show");
+    }, 2600);
+  }
+
   function initials(name) {
     const clean = String(name || "S").trim();
     if (!clean) return "S";
@@ -38,13 +51,40 @@
 
   function iconUrl(guild) {
     if (!guild?.id || !guild?.icon) return "";
-    return `https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.webp?size=128`;
+
+    const ext = String(guild.icon).startsWith("a_") ? "gif" : "webp";
+    return `https://cdn.discordapp.com/icons/${encodeURIComponent(guild.id)}/${encodeURIComponent(guild.icon)}.${ext}?size=128`;
   }
 
   function permissionLabel(guild) {
-    if (guild.owner) return "Owner";
+    if (guild.owner || guild.isOwner) return "Owner";
+    if (guild.isAdmin) return "Administrator";
+    if (guild.canManageGuild) return "Manage Guild";
+    if (guild.canManageRoles) return "Manage Roles";
     if (guild.permissionsText) return guild.permissionsText;
-    return "Administrator";
+    return "จัดการได้";
+  }
+
+  function permissionBadges(guild) {
+    const badges = [];
+
+    if (guild.owner || guild.isOwner) {
+      badges.push(`<span class="badge badge-ok">Owner</span>`);
+    } else if (guild.isAdmin) {
+      badges.push(`<span class="badge badge-info">Administrator</span>`);
+    } else if (guild.canManageGuild) {
+      badges.push(`<span class="badge badge-cyan">Manage Guild</span>`);
+    } else if (guild.canManageRoles) {
+      badges.push(`<span class="badge badge-cyan">Manage Roles</span>`);
+    } else {
+      badges.push(`<span class="badge badge-muted">${h(permissionLabel(guild))}</span>`);
+    }
+
+    if (guild.canManage !== false) {
+      badges.push(`<span class="badge badge-cyan">Dashboard</span>`);
+    }
+
+    return badges.join("");
   }
 
   function filterGuilds() {
@@ -55,7 +95,9 @@
     return state.guilds.filter((guild) => {
       const name = String(guild.name || "").toLowerCase();
       const id = String(guild.id || "").toLowerCase();
-      return name.includes(q) || id.includes(q);
+      const label = permissionLabel(guild).toLowerCase();
+
+      return name.includes(q) || id.includes(q) || label.includes(q);
     });
   }
 
@@ -72,8 +114,7 @@
         <div class="guild-card-meta mono">${h(guild.id || "—")}</div>
 
         <div class="flex items-center gap-8 mt-12 flex-wrap">
-          <span class="badge badge-info">${h(permissionLabel(guild))}</span>
-          <span class="badge badge-cyan">จัดการได้</span>
+          ${permissionBadges(guild)}
         </div>
       </a>
     `;
@@ -92,6 +133,7 @@
           <div>กำลังโหลดรายชื่อเซิร์ฟเวอร์...</div>
         </div>
       `;
+
       if (count) count.textContent = "กำลังโหลด";
       return;
     }
@@ -106,7 +148,12 @@
       grid.innerHTML = `
         <div class="empty" style="grid-column: 1 / -1;">
           <b>ไม่พบเซิร์ฟเวอร์ที่คุณมีสิทธิ์จัดการ</b><br>
-          <span class="small">ต้องเป็น Owner หรือมีสิทธิ์ Administrator ในเซิร์ฟเวอร์นั้น</span>
+          <span class="small">
+            ต้องเป็น Owner หรือมีสิทธิ์ Administrator / Manage Guild / Manage Roles ในเซิร์ฟเวอร์นั้น
+          </span>
+          <div class="mt-14">
+            <a class="btn btn-primary" href="/auth/login">Login ใหม่ด้วย Discord</a>
+          </div>
         </div>
       `;
       return;
@@ -137,6 +184,14 @@
 
       const data = await res.json().catch(() => null);
 
+      if (res.status === 401) {
+        showToast("Session หมดอายุ กรุณา Login ใหม่", "err");
+        setTimeout(() => {
+          location.href = "/auth/login";
+        }, 650);
+        return;
+      }
+
       if (!res.ok || !data?.success) {
         throw new Error(data?.error || `HTTP ${res.status}`);
       }
@@ -144,6 +199,8 @@
       state.guilds = Array.isArray(data.guilds) ? data.guilds : [];
       state.loading = false;
       render();
+
+      showToast("โหลดรายชื่อเซิร์ฟเวอร์แล้ว", "ok");
     } catch (err) {
       state.loading = false;
 
@@ -158,6 +215,8 @@
 
       const count = $("#guild-count");
       if (count) count.textContent = "โหลดไม่ได้";
+
+      showToast("โหลดเซิร์ฟเวอร์ไม่สำเร็จ", "err");
     }
   }
 
