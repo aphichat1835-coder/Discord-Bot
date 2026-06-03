@@ -1280,3 +1280,201 @@
       });
     }
   }
+  function debounce(fn, delay = 350) {
+    let timer = null;
+
+    return (...args) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => fn(...args), delay);
+    };
+  }
+
+  function bindMembersControls() {
+    const prev = $("btn-members-prev");
+    const next = $("btn-members-next");
+    const refresh = $("btn-members-refresh");
+
+    if (prev) {
+      prev.addEventListener("click", () => {
+        loadMembers(Math.max(0, state.membersPage - 1));
+      });
+    }
+
+    if (next) {
+      next.addEventListener("click", () => {
+        loadMembers(state.membersPage + 1);
+      });
+    }
+
+    if (refresh) {
+      refresh.addEventListener("click", () => {
+        loadMembers(state.membersPage);
+      });
+    }
+
+    const debouncedReload = debounce(() => {
+      state.membersPage = 0;
+      loadMembers(0);
+    }, 350);
+
+    ["members-search", "members-result", "members-risk"].forEach((id) => {
+      const el = $(id);
+      if (!el) return;
+
+      el.addEventListener("input", debouncedReload);
+      el.addEventListener("change", debouncedReload);
+    });
+  }
+
+  function bindLogsControls() {
+    const prev = $("btn-logs-prev");
+    const next = $("btn-logs-next");
+    const refresh = $("btn-logs-refresh");
+
+    if (prev) {
+      prev.addEventListener("click", () => {
+        loadLogs(Math.max(0, state.logsPage - 1));
+      });
+    }
+
+    if (next) {
+      next.addEventListener("click", () => {
+        loadLogs(state.logsPage + 1);
+      });
+    }
+
+    if (refresh) {
+      refresh.addEventListener("click", () => {
+        loadLogs(state.logsPage);
+      });
+    }
+
+    const debouncedReload = debounce(() => {
+      state.logsPage = 0;
+      loadLogs(0);
+    }, 350);
+
+    ["logs-search", "logs-result", "logs-risk"].forEach((id) => {
+      const el = $(id);
+      if (!el) return;
+
+      el.addEventListener("input", debouncedReload);
+      el.addEventListener("change", debouncedReload);
+    });
+  }
+
+  function bindUtilityActions() {
+    qsa("[data-copy]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        copyText(btn.dataset.copy || "", "คัดลอกแล้ว");
+      });
+    });
+
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeDetailModal();
+        closeSidebar();
+      }
+    });
+  }
+
+  function syncTabToHash(tab) {
+    if (!tab) return;
+
+    try {
+      history.replaceState(null, "", `#${encodeURIComponent(tab)}`);
+    } catch {
+      // ignore
+    }
+  }
+
+  function bindHashTabs() {
+    qsa("[data-tab]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        syncTabToHash(btn.dataset.tab);
+      });
+    });
+
+    window.addEventListener("hashchange", () => {
+      const tab = decodeURIComponent(location.hash.replace(/^#/, "") || "overview");
+      const exists = qsa("[data-section]").some((section) => section.dataset.section === tab);
+
+      if (exists) {
+        switchTab(tab);
+      }
+    });
+  }
+
+  function updateMobileTitle() {
+    const mobile = $("guild-title-mobile");
+    const title = $("guild-title");
+
+    if (mobile && title) {
+      mobile.textContent = title.textContent || "Guild Dashboard";
+    }
+  }
+
+  function patchGuildInfoObserver() {
+    const title = $("guild-title");
+    if (!title) return;
+
+    const observer = new MutationObserver(updateMobileTitle);
+    observer.observe(title, {
+      childList: true,
+      characterData: true,
+      subtree: true
+    });
+
+    updateMobileTitle();
+  }
+
+  async function bootInitialData() {
+    if (!state.guildId) {
+      showToast("ไม่พบ Guild ID จาก URL", "err");
+
+      setHtml("overview-error", `
+        <div class="alert alert-danger">
+          ไม่พบ Guild ID จาก URL กรุณากลับไปเลือกเซิร์ฟเวอร์ใหม่
+        </div>
+      `);
+
+      return;
+    }
+
+    await Promise.allSettled([
+      loadOverview(),
+      loadResources()
+    ]);
+
+    const tabFromHash = decodeURIComponent(location.hash.replace(/^#/, "") || "overview");
+    const hasTab = qsa("[data-section]").some((section) => section.dataset.section === tabFromHash);
+
+    switchTab(hasTab ? tabFromHash : "overview");
+  }
+
+  function init() {
+    state.guildId = getGuildIdFromPath();
+
+    bindSidebar();
+    bindTabs();
+    bindHashTabs();
+
+    bindPreviewInputs();
+    bindVerificationActions();
+
+    bindMembersControls();
+    bindLogsControls();
+
+    bindModal();
+    bindUtilityActions();
+    patchGuildInfoObserver();
+
+    bootInitialData();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+})();
