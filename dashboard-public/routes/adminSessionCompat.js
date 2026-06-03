@@ -33,6 +33,69 @@ function normalizeAdminUserId(adminUser) {
     }
 }
 
+function normalizeGuild(guild = {}) {
+    const owner = !!guild.owner || !!guild.isOwner;
+
+    return {
+        ...guild,
+
+        id: String(guild.id || ''),
+        name: String(guild.name || 'Unknown Server'),
+        icon: guild.icon || null,
+
+        owner,
+        isOwner: owner,
+
+        permissions: String(guild.permissions || '0'),
+
+        isAdmin: guild.isAdmin !== undefined
+            ? !!guild.isAdmin
+            : !!guild.canManage || owner,
+
+        canManage: guild.canManage !== undefined
+            ? !!guild.canManage
+            : !!guild.isAdmin || owner,
+
+        canManageGuild: guild.canManageGuild !== undefined
+            ? !!guild.canManageGuild
+            : !!guild.canManage || !!guild.isAdmin || owner,
+
+        canManageRoles: guild.canManageRoles !== undefined
+            ? !!guild.canManageRoles
+            : !!guild.canManage || !!guild.isAdmin || owner
+    };
+}
+
+function dedupeGuilds(guilds = []) {
+    const map = new Map();
+
+    for (const rawGuild of guilds) {
+        const guild = normalizeGuild(rawGuild);
+        if (!guild.id) continue;
+
+        const existing = map.get(guild.id);
+
+        if (!existing) {
+            map.set(guild.id, guild);
+            continue;
+        }
+
+        map.set(guild.id, {
+            ...existing,
+            ...guild,
+
+            owner: existing.owner || guild.owner,
+            isOwner: existing.isOwner || guild.isOwner,
+            isAdmin: existing.isAdmin || guild.isAdmin,
+            canManage: existing.canManage || guild.canManage,
+            canManageGuild: existing.canManageGuild || guild.canManageGuild,
+            canManageRoles: existing.canManageRoles || guild.canManageRoles
+        });
+    }
+
+    return Array.from(map.values());
+}
+
 function normalizeAdminGuilds(req) {
     if (!req.session?.adminUser) return;
 
@@ -46,21 +109,15 @@ function normalizeAdminGuilds(req) {
         ? adminUser.adminGuilds
         : null;
 
-    if (!userGuilds && sessionGuilds) {
-        adminUser.adminGuilds = sessionGuilds;
-    }
+    let merged = [];
 
-    if (!sessionGuilds && userGuilds) {
-        req.session.adminGuilds = userGuilds;
-    }
+    if (sessionGuilds) merged = merged.concat(sessionGuilds);
+    if (userGuilds) merged = merged.concat(userGuilds);
 
-    if (!isArray(req.session.adminGuilds)) {
-        req.session.adminGuilds = [];
-    }
+    merged = dedupeGuilds(merged);
 
-    if (!isArray(adminUser.adminGuilds)) {
-        adminUser.adminGuilds = req.session.adminGuilds;
-    }
+    req.session.adminGuilds = merged;
+    adminUser.adminGuilds = merged;
 }
 
 router.use((req, _res, next) => {
