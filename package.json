@@ -6,7 +6,12 @@
   "main": "discord/index.js",
   "scripts": {
     "start": "node discord/index.js",
-    "dev": "node discord/index.js"
+    "dev": "node discord/index.js",
+    "test": "jest"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": ["**/tests/**/*.test.js"]
   },
   "engines": {
     "node": ">=18.0.0"
@@ -17,8 +22,11 @@
     "discord.js-selfbot-v13": "^3.7.1",
     "express": "^5.2.1",
     "libsodium-wrappers": "^0.8.4",
+    "mongoose": "^8.0.0",
     "opusscript": "^0.0.8",
-    "tweetnacl": "^1.0.3",
-    "mongoose": "^8.0.0"
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "jest": "^30.4.2"
   }
 }
