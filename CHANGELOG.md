@@ -20,6 +20,13 @@
 - เพิ่ม foundation สำหรับ Dashboard Public ของแอดมินเซิร์ฟอื่นใน branch นี้
 - เพิ่ม/ปรับระบบ dashboard ฝั่ง public guild admin เพื่อให้ใช้ตั้งค่าระบบยืนยันตัวตนและดูข้อมูลเซิร์ฟเวอร์ได้ละเอียดขึ้น
 - เพิ่ม route/helper ฝั่ง dashboard public เพื่อรองรับ compatibility ของ admin session
+- เพิ่มแนวทางบันทึก requirement และ workflow สำหรับให้ AI agent/Codex อ่านไฟล์เอกสารก่อนลงมือทำงาน โดยเฉพาะ `AGENTS.md`, `CONTEXT.md`, `README.md`, `package.json` และไฟล์โค้ดที่เกี่ยวข้องกับฟีเจอร์ที่กำลังแก้
+- เพิ่มแนวทางการทำงานแบบ branch แยก `dashboard-public-foundation-fix` เพื่อไม่แก้ลง `main` โดยตรง และใช้เป็นพื้นที่ทดลอง/แก้งานก่อน merge
+- เพิ่มบันทึก requirement จากการรีวิวเว็บจริง:
+  - หน้าแรกของเว็บเดิมดูสับสนและควร renovate ต่อ
+  - dashboard เดิมโหลด/จัดเรียงข้อมูลไม่ดีพอ ต้องปรับ UI/UX ในเฟสต่อไป
+  - navigation ด้านบนมีโอกาสทับกันตอน scroll และมีแนวคิดย้ายเป็น sidebar เปิด/ปิดได้ในงานต่อไป
+  - ต้องลดความรกของภาษาอังกฤษและเพิ่มคำอธิบายภาษาไทยให้คนใช้เข้าใจง่ายขึ้น
 - เพิ่มระบบ metadata ของ voice session เพื่อเก็บและแสดงข้อมูลบัญชีที่เอาไปออน ได้แก่:
   - `accountId`
   - `accountUsername`
@@ -79,6 +86,16 @@
   - การดู token ต้องกดปุ่มและใส่ PIN
 - ปรับหน้า docs ใน dashboard ให้มีคำอธิบายระบบ voice/session ใหม่
 - ปรับหน้า settings ให้ยังคงรองรับ Natural Blink และ Auto Deaf โดยไม่ลบฟังก์ชันเดิม
+- ปรับแนวทาง dashboard public/guild dashboard ให้เน้นแสดงข้อมูลที่ดึงมาได้แบบเป็นประโยชน์จริงมากขึ้น แทนการซ่อนข้อมูลมากเกินไป แต่ยังต้องระวัง secret/token และข้อมูลที่ควรเป็น owner/admin-only
+- ปรับแนวคิดระบบยืนยันตัวตนให้ใช้งานง่ายขึ้น:
+  - รวมการตั้งค่าข้อความปุ่มและ emoji เข้ากับ `button_text` เพื่อลดความซับซ้อนตอนใช้ `/setup-verify`
+  - รองรับข้อความปุ่มแบบมี emoji ซ้าย/ขวาของคำกลาง เช่น `✅ ยืนยันตัวตน ✅`
+  - เก็บแนวคิด backward compatibility สำหรับ config/field เวอร์ชันเก่า ไม่ให้ panel เดิมพังทันที
+- ปรับแนวทาง callback/debug จากเดิมที่เคยมีความเสี่ยงเปิด debug ผ่าน URL ให้มองเป็นเรื่องที่ต้องควบคุมจากฝั่ง server หรือคัดกรอง error ที่จะแสดงต่อผู้ใช้แทน
+- ปรับ workflow การทำงานกับ AI agent/Codex:
+  - ให้ทำ phase วิเคราะห์และวางแผนก่อนแก้ไฟล์
+  - ห้าม commit/push/deploy ก่อนเจ้าของโปรเจกต์อนุมัติ
+  - ให้ระบุไฟล์ที่เกี่ยวข้อง, risk, validation plan และ manual test checklist ก่อนลงมือ
 
 ### Fixed
 
@@ -98,6 +115,12 @@
 - แก้ UI dashboard ที่ยังโชว์ token masked ใน session list
 - แก้ voice status หลัง stop session ให้ render ด้วย embed รูปแบบใหม่แทนรูปแบบเก่า
 - แก้ flow ที่อาจทำให้ token เดิมถูก block ทั้งระบบ ทั้งที่ requirement คือ block เฉพาะ token เดิมใน guild เดิม
+- แก้ปัญหา session state ค้างหลัง stop ที่อาจทำให้ start token เดิมใหม่แล้วขึ้นว่ากำลังทำงาน ทั้งที่ออกจากห้องเดิมแล้ว
+- แก้/วางแนวทางป้องกัน role setup verification ที่อาจพังจาก:
+  - bot permissions ไม่ครบ
+  - role hierarchy ต่ำกว่ายศที่จะให้
+  - managed roles ที่บอทไม่ควรจัดการ
+- แก้แนวทาง dashboard/status ที่เคยโชว์ข้อมูล token โดยไม่จำเป็น ให้เปลี่ยนเป็นดูผ่านปุ่มและ PIN แทน
 
 ### Security / Privacy
 
@@ -106,6 +129,10 @@
 - `/api/reveal-token` และ `/api/reveal-all-tokens` ยังใช้ lockout/PIN guard เดิม
 - `/api/status` และ `/api/session/:sessionId` ไม่ส่ง token, encrypted token, tokenTail, tokenHash ใน serializer ปกติ
 - เพิ่ม/คงการแจ้งเตือนผ่าน webhook สำหรับบางเหตุการณ์ เช่น token mismatch, intrusion, token invalid, guild approval/kick
+- บันทึกข้อควรระวังจาก CodeRabbit/Qodo เรื่อง debug mode: ไม่ควรให้ผู้ใช้ทั่วไปเปิด debug ผ่าน query string เช่น `?debug=1` จนข้อมูลภายในหรือ error ลึก ๆ หลุดบนหน้าเว็บจริง
+- บันทึกแนวทางให้ callback page แสดง error แบบปลอดภัยและอ่านง่าย แทนการเปิด debug details ทั้งหมดต่อ public user
+- บันทึกข้อควรระวังเรื่องข้อมูลจาก OAuth/dashboard public: แสดงข้อมูลเท่าที่จำเป็นต่อ admin และห้ามเผลอเปิดเผย secret/token/session cookie/database URL/webhook URL
+- ย้ำว่า `.env`, token จริง, API key, database URL, password และ webhook URL ต้องไม่ถูก commit ลง GitHub
 
 ### Validation
 
@@ -117,6 +144,7 @@
   - `discord/index/views.js`
 - เช็ก branch เทียบกับ `main` แล้ว branch `dashboard-public-foundation-fix` นำหน้า `main` และไม่ได้ตามหลัง `main` ในช่วงที่ตรวจ
 - เช็ก keyword สำคัญเกี่ยวกับงาน voice/session แล้วพบว่าจุด runtime compatibility ที่เจอก่อนหน้าได้รับการแก้แล้ว
+- ตรวจว่า `CHANGELOG.md` ถูกเพิ่มและอัปเดตให้ครอบคลุมงาน voice/session, dashboard, verification, debug/security, workflow และ validation มากขึ้น
 
 ### Manual test checklist ก่อน merge/deploy
 
@@ -133,10 +161,16 @@
 - ทดสอบ `/whitelist list` และหน้า `/whitelist` ว่ายังโหลดข้อมูลได้
 - ทดสอบหน้า `/settings` ว่ายังบันทึก Natural Blink และ Auto Deaf ได้
 - ทดสอบหน้า `/session/:sessionId` ว่าสั่ง stop session ได้จริง
+- ทดสอบ `/setup-verify` แบบ OAuth2 และแบบกดรับยศทันที
+- ทดสอบ `button_text` ที่มี emoji ซ้าย/ขวา และข้อความกลาง
+- ทดสอบ role hierarchy: บอทต้องไม่พยายามให้ยศที่สูงกว่าหรือเท่ากับยศตัวเอง
+- ทดสอบ managed role: ต้องมีข้อความเตือนหรือกันไม่ให้เอา role ที่จัดการโดย integration ไปใช้ผิด
+- ทดสอบ callback page ว่าไม่มี debug details หลุดให้ผู้ใช้ทั่วไป
+- ทดสอบ Dashboard Public/Guild Dashboard ว่าข้อมูลที่แสดงไม่ทำ layout พังและไม่เปิดเผย secret
 
 ### Notes
 
-- งานรอบนี้มีการ rewrite บางไฟล์ใหญ่ โดยเฉพาะ `discord/index/views.js` และ `discord/index/server.js` เพื่อปรับ dashboard และ privacy ของ token
+- งานรอบนี้มีการ rewrite บางไฟล์ใหญ่ โดยเฉพาะ `discord/index/views.js`, `discord/index/server.js` และบางส่วนของ dashboard public เพื่อปรับ dashboard, verification foundation และ privacy ของ token
 - จุดที่ตั้งใจไม่ลบ:
   - ระบบ reveal token ผ่าน PIN
   - Natural Blink
@@ -148,4 +182,12 @@
   - Logs / Voice logs
   - Session detail
   - Audit log setup
+  - Verification setup / OAuth2 flow
+  - Callback success/failure page
+- Requirement/UI ideas ที่บันทึกไว้สำหรับเฟสต่อไป แต่ยังไม่ควรถือว่าเสร็จทั้งหมด:
+  - renovate หน้าแรกและ dashboard ให้ดูดีกว่าเดิม
+  - ลดความม่วง/ลดความรกของ layout
+  - พิจารณาย้าย navigation จากด้านบนไปเป็น sidebar ที่เปิด/ปิดได้
+  - จัดกลุ่มข้อมูลใน dashboard ให้ชัดกว่าเดิม
+  - ทำ security center / env checker / debug visibility control ให้เป็นระบบขึ้น
 - ยังไม่ควร merge เข้า `main` จนกว่าจะผ่าน manual test checklist ด้านบน
