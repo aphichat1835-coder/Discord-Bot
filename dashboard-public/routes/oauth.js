@@ -13,6 +13,8 @@ const IpIdentityLink = require('../models/IpIdentityLink');
 const BASE_URL = (
     process.env.PUBLIC_DASHBOARD_URL ||
     process.env.DASHBOARD_URL ||
+    process.env.PUBLIC_BASE_URL ||
+    process.env.DASHBOARD_PUBLIC_URL ||
     'http://localhost:3001'
 ).replace(/\/$/, '');
 
@@ -376,6 +378,9 @@ function buildDiscordSnapshot(profile, connections, memberInfo, stateObj) {
         accountAgeDays: getAccountAgeDays(profile.id),
 
         connectionsCount: (connections || []).length,
+        connections: normalizeConnections(connections),
+
+        guildsCount: 0,
         callbackStateMode: stateObj?.mode || null,
 
         member: memberInfo ? {
@@ -395,7 +400,6 @@ function buildDiscordSnapshot(profile, connections, memberInfo, stateObj) {
         rawProfile: profile
     };
 }
-
 async function safeSideEffect(label, fn, fallback = null) {
     try {
         return await fn();
@@ -426,7 +430,7 @@ async function updateIpIdentityTrackingSafe({
     return safeSideEffect('updateIpIdentityTracking', async () => {
         if (!guildId || !profile?.id || !ipInfo?.ipHash) return null;
 
-        const now = Date.now();
+        const nowMs = Date.now();
 
         let doc = await IpIdentityLink.findOne({
             guildId,
@@ -439,17 +443,17 @@ async function updateIpIdentityTrackingSafe({
                 guildName,
                 ipHash: ipInfo.ipHash,
                 encryptedRawIp: ipInfo.encryptedRawIp,
-                firstSeenAt: now,
+                firstSeenAt: nowMs,
                 users: [],
                 deviceFingerprints: [],
                 roleSnapshots: [],
-                createdAt: now
+                createdAt: nowMs
             });
         }
 
         doc.guildName = guildName || doc.guildName || guildId;
         doc.encryptedRawIp = ipInfo.encryptedRawIp || doc.encryptedRawIp;
-        doc.lastSeenAt = now;
+        doc.lastSeenAt = nowMs;
         doc.totalVerifications = (doc.totalVerifications || 0) + 1;
         doc.lastResult = result;
         doc.lastRoleId = roleId;
@@ -484,7 +488,7 @@ async function updateIpIdentityTrackingSafe({
         if (!user) {
             user = {
                 userId: profile.id,
-                firstSeenAt: now,
+                firstSeenAt: nowMs,
                 verifyCount: 0,
                 successCount: 0,
                 blockedCount: 0,
@@ -498,7 +502,7 @@ async function updateIpIdentityTrackingSafe({
         user.globalName = profile.global_name || profile.username;
         user.displayTag = displayTag(profile);
         user.avatarUrl = getAvatarUrl(profile);
-        user.lastSeenAt = now;
+        user.lastSeenAt = nowMs;
         user.verifyCount = (user.verifyCount || 0) + 1;
 
         user.lastResult = result;
@@ -521,14 +525,14 @@ async function updateIpIdentityTrackingSafe({
             if (!fp) {
                 fp = {
                     fingerprintHash: device.fingerprintHash,
-                    firstSeenAt: now,
+                    firstSeenAt: nowMs,
                     count: 0
                 };
 
                 doc.deviceFingerprints.push(fp);
             }
 
-            fp.lastSeenAt = now;
+            fp.lastSeenAt = nowMs;
             fp.count = (fp.count || 0) + 1;
             fp.browser = device.browser;
             fp.os = device.os;
@@ -550,7 +554,7 @@ async function updateIpIdentityTrackingSafe({
             roleId,
             roles,
             result,
-            at: now
+            at: nowMs
         });
 
         if (doc.roleSnapshots.length > 80) {
@@ -558,7 +562,7 @@ async function updateIpIdentityTrackingSafe({
         }
 
         doc.uniqueUsers = doc.users.length;
-        doc.updatedAt = now;
+        doc.updatedAt = nowMs;
 
         doc.markModified('users');
         doc.markModified('deviceFingerprints');
@@ -598,7 +602,7 @@ async function saveOAuthUserSafe({
     trackingSnapshot
 }) {
     return safeSideEffect('saveOAuthUser', async () => {
-        const now = Date.now();
+        const nowMs = Date.now();
         const accountCreatedAt = getAccountCreatedAt(profile.id);
         const accountAgeDays = getAccountAgeDays(profile.id);
 
@@ -652,19 +656,18 @@ async function saveOAuthUserSafe({
                 guildId,
                 roleId,
                 result,
-                verifiedAt: now,
+                verifiedAt: nowMs,
                 riskScore,
                 riskFlags: riskFlags || []
             },
 
             lastIpTracking: trackingSnapshot || null,
-            updatedAt: now
+            updatedAt: nowMs
         };
 
         /*
-          ปลอดภัยกว่า: ใช้ OAuth access_token แบบชั่วคราวใน callback เท่านั้น
-          ถ้าต้องการเก็บ token จริง ๆ ให้ตั้ง STORE_OAUTH_TOKENS=true เองใน Render
-          แต่ค่า default จะไม่เก็บ token ลง DB
+          ค่า default ไม่เก็บ OAuth token ลง DB
+          ถ้าต้องการเก็บจริงให้ตั้ง STORE_OAUTH_TOKENS=true เอง
         */
         if (shouldStoreOAuthTokens() && typeof discord.prepareTokenStorage === 'function') {
             updateSet.oauth = discord.prepareTokenStorage(tokenData);
@@ -675,7 +678,7 @@ async function saveOAuthUserSafe({
             {
                 $set: updateSet,
                 $setOnInsert: {
-                    createdAt: now
+                    createdAt: nowMs
                 }
             },
             {
@@ -740,20 +743,43 @@ function safeExtractDevice(req) {
             browser: null,
             os: null,
             language: req.body?.language || '',
+            languages: Array.isArray(req.body?.languages) ? req.body.languages : [],
             timezone: req.body?.timezone || '',
             platform: req.body?.platform || '',
             deviceType: null,
             screenSize: req.body?.screenSize || '',
+            viewportSize: req.body?.viewportSize || '',
+            colorDepth: req.body?.colorDepth || null,
+            devicePixelRatio: req.body?.devicePixelRatio || null,
+            touchPoints: req.body?.touchPoints || null,
+            referrer: req.body?.referrer || '',
             fingerprintHash: null
         };
     }
 }
 
-function jsonFail(res, error, debugCode, statusCode = 200) {
+function makeRequestId(prefix = 'verify') {
+    return `${prefix}_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`;
+}
+
+function publicDebugCode(code) {
+    const raw = String(code || 'unknown_error');
+
+    return raw
+        .split(':')[0]
+        .replace(/[^a-zA-Z0-9_-]/g, '_')
+        .slice(0, 80) || 'unknown_error';
+}
+
+function jsonFail(res, error, debugCode, statusCode = 200, requestId = null) {
+    const code = publicDebugCode(debugCode);
+
     return res.status(statusCode).json({
         success: false,
         error,
-        debugCode
+        code,
+        debugCode: code,
+        requestId
     });
 }
 
@@ -786,10 +812,9 @@ function makeAuthorizeUrl({ scope, redirectUri, state, prompt = 'consent' }) {
 
     return `https://discord.com/oauth2/authorize?${params.toString()}`;
 }
-
 /*
 ================================================================================
-GET pages
+  GET pages / aliases
 ================================================================================
 */
 
@@ -797,9 +822,23 @@ router.get('/auth/callback', (req, res) => {
     res.sendFile(path.join(__dirname, '../views/callback.html'));
 });
 
+router.get('/auth/login', (req, res) => {
+    return res.redirect('/oauth/admin');
+});
+
+router.get('/auth/logout', (req, res) => {
+    try {
+        req.session.destroy(() => {
+            res.redirect('/');
+        });
+    } catch {
+        res.redirect('/');
+    }
+});
+
 /*
 ================================================================================
-Admin OAuth login
+  Admin OAuth login
 ================================================================================
 */
 
@@ -869,7 +908,10 @@ router.get('/auth/admin-callback', async (req, res) => {
             loggedInAt: Date.now()
         };
 
-        req.session.adminGuilds = manageableGuilds;
+        req.session.adminGuilds = manageableGuilds.map(g => ({
+            ...g,
+            canManage: true
+        }));
 
         return res.redirect('/guilds');
     } catch (err) {
@@ -880,19 +922,22 @@ router.get('/auth/admin-callback', async (req, res) => {
 
 /*
 ================================================================================
-Verification callback
-callback.html จะ POST มาที่ endpoint นี้
+  Verification callback
+  callback.html จะ POST มาที่ endpoint นี้
 ================================================================================
 */
 
 router.post('/auth/callback', async (req, res) => {
+    const requestId = makeRequestId('verify');
     const { code, state } = req.body || {};
 
     if (!code) {
         return jsonFail(
             res,
             'ยกเลิกการยืนยันตัวตน หรือไม่พบรหัส OAuth',
-            'missing_oauth_code'
+            'missing_oauth_code',
+            200,
+            requestId
         );
     }
 
@@ -902,7 +947,9 @@ router.post('/auth/callback', async (req, res) => {
         return jsonFail(
             res,
             'ลิงก์ยืนยันไม่ถูกต้อง กรุณากดปุ่มใหม่อีกครั้ง',
-            'invalid_callback_state'
+            'invalid_callback_state',
+            200,
+            requestId
         );
     }
 
@@ -972,6 +1019,8 @@ router.post('/auth/callback', async (req, res) => {
 
             const discordSnapshot = {
                 ...buildDiscordSnapshot(profile, connections, memberInfo, stateObj),
+                guildsCount: Array.isArray(guilds) ? guilds.length : 0,
+                guilds: normalizeGuilds(guilds),
                 ...discordSnapshotExtra
             };
 
@@ -1005,6 +1054,7 @@ router.post('/auth/callback', async (req, res) => {
                 guildId,
                 userId: profile.id,
                 roleId: configuredRoleId,
+                requestId,
                 result,
                 reason,
 
@@ -1054,6 +1104,10 @@ router.post('/auth/callback', async (req, res) => {
                     ? (message || 'ระบบเพิ่มยศให้เรียบร้อยแล้ว')
                     : undefined,
 
+                code: result === 'success' ? undefined : publicDebugCode(reason),
+                debugCode: result === 'success' ? undefined : publicDebugCode(reason),
+                requestId,
+
                 roleName,
                 alreadyHasRole: reason === 'already_verified_has_role',
                 dmSent,
@@ -1063,13 +1117,10 @@ router.post('/auth/callback', async (req, res) => {
                     username: profile.global_name || profile.username,
                     tag: displayTag(profile),
                     avatarUrl: getAvatarUrl(profile)
-                },
-
-                debugCode: result === 'success' ? undefined : reason
+                }
             });
         }
-
-        if (expectedUserId && profile.id !== expectedUserId) {
+                if (expectedUserId && profile.id !== expectedUserId) {
             return finalize({
                 result: 'failed',
                 reason: 'oauth_user_mismatch',
@@ -1270,17 +1321,17 @@ router.post('/auth/callback', async (req, res) => {
                 assignedRoleName: roleName
             }
         });
-
-    } catch (err) {
-        console.error('[VERIFY] callback fatal error:', err.message);
+            } catch (err) {
+        console.error(`[VERIFY] callback fatal error [${requestId}]:`, err.message);
 
         if (stateObj?.guildId && profile?.id) {
             await saveVerifyLogSafe({
                 guildId: stateObj.guildId,
                 userId: profile.id,
                 roleId: stateObj.roleId,
+                requestId,
                 result: 'failed',
-                reason: `internal_error:${err.message}`,
+                reason: 'internal_error',
                 ipInfo,
                 device,
                 stateMode: stateObj.mode || null,
@@ -1291,7 +1342,9 @@ router.post('/auth/callback', async (req, res) => {
         return res.json({
             success: false,
             error: 'เกิดข้อผิดพลาดภายใน กรุณาลองใหม่',
-            debugCode: `internal_error:${err.message}`
+            code: 'internal_error',
+            debugCode: 'internal_error',
+            requestId
         });
     }
 });
