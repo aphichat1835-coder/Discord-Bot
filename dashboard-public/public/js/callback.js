@@ -2,6 +2,7 @@
 ================================================================================
   Dashboard Public v2 — Verification Callback JS
   - ไม่โชว์ debug ลึกบน public callback
+  - แสดง requestId ให้ผู้ใช้เอาไปแจ้งแอดมินได้
   - ส่งข้อมูล browser/device summary ให้ backend ใช้บันทึก
 ================================================================================
 */
@@ -19,15 +20,38 @@
 
   const errorMap = {
     access_denied: "คุณปฏิเสธการอนุญาต กรุณากดปุ่มยืนยันใหม่อีกครั้ง",
+
+    missing_code_or_state: "ไม่พบรหัสยืนยันตัวตน กรุณากดปุ่มจาก Discord ใหม่อีกครั้ง",
+    missing_oauth_code: "ไม่พบรหัส OAuth กรุณากดปุ่มยืนยันใหม่อีกครั้ง",
+    invalid_callback_state: "ลิงก์ยืนยันไม่ถูกต้อง กรุณากดปุ่มใหม่อีกครั้ง",
+
     expired_or_invalid: "ลิงก์ยืนยันหมดอายุหรือไม่ถูกต้อง กรุณากดปุ่มใหม่อีกครั้ง",
     invalid_or_expired_link: "ลิงก์ยืนยันไม่ถูกต้อง กรุณากดปุ่มใหม่อีกครั้ง",
     invalid_panel: "แผงยืนยันไม่ถูกต้อง กรุณาแจ้งแอดมินสร้างแผงใหม่",
+
     role_mismatch: "ลิงก์นี้ไม่ตรงกับการตั้งค่าปัจจุบัน กรุณากดปุ่มใหม่อีกครั้ง",
+    role_mismatch_latest_config: "ลิงก์ยืนยันไม่ตรงกับการตั้งค่าปัจจุบัน กรุณาใช้แผงล่าสุด",
+    guild_config_missing_role: "ระบบยังไม่ได้ตั้งค่า Role ID กรุณาแจ้งแอดมิน",
     verification_disabled: "ระบบยืนยันตัวตนของเซิร์ฟเวอร์นี้ยังไม่เปิดใช้งาน",
     server_not_configured: "เซิร์ฟเวอร์นี้ยังไม่ได้ตั้งค่าระบบยืนยันตัวตน",
+
+    oauth_user_mismatch: "บัญชี Discord ไม่ตรงกับผู้ที่กดปุ่มยืนยัน",
+    guild_join_failed: "ระบบไม่สามารถพาคุณเข้าเซิร์ฟเวอร์ได้ กรุณาเข้าดิสก่อนแล้วลองใหม่",
+    member_not_found_after_oauth: "ระบบหาโปรไฟล์สมาชิกในเซิร์ฟเวอร์ไม่เจอ กรุณาเข้าดิสก่อนแล้วลองใหม่",
+
+    new_account: "บัญชี Discord อายุน้อยเกินไป ไม่ผ่านเงื่อนไขของเซิร์ฟเวอร์",
+    network_risk_vpn_proxy_tor: "ตรวจพบการใช้ VPN, Proxy หรือ TOR กรุณาปิดก่อน",
+    email_requirement_failed: "บัญชีนี้ไม่มี Email หรือ Email ยังไม่ผ่านเงื่อนไขของเซิร์ฟเวอร์",
+    connections_requirement_failed: "บัญชีนี้ยังไม่ผ่านเงื่อนไข connections ของเซิร์ฟเวอร์",
+    country_not_allowed: "ประเทศของคุณไม่ผ่านเงื่อนไขของเซิร์ฟเวอร์",
+    country_blocked: "ประเทศของคุณถูกบล็อกโดยเซิร์ฟเวอร์นี้",
+
+    role_assign_failed: "ยืนยันผ่านแล้ว แต่ระบบไม่สามารถให้ยศได้ กรุณาแจ้งแอดมิน",
     missing_verify_token: "ไม่พบรหัสยืนยันตัวตน กรุณากดปุ่มจาก Discord ใหม่อีกครั้ง",
+
     verify_internal_error: "ระบบยืนยันตัวตนมีปัญหาภายใน กรุณาลองใหม่อีกครั้ง",
-    internal_error: "ระบบมีปัญหาภายใน กรุณาลองใหม่อีกครั้ง"
+    internal_error: "ระบบมีปัญหาภายใน กรุณาลองใหม่อีกครั้ง",
+    invalid_json_response: "ระบบตอบกลับไม่ถูกต้อง กรุณาลองใหม่"
   };
 
   function $(id) {
@@ -51,6 +75,21 @@
   function setText(id, text) {
     const el = $(id);
     if (el) el.textContent = text ?? "";
+  }
+
+  function cleanCode(codeLike) {
+    return String(codeLike || "")
+      .split(":")[0]
+      .replace(/[^a-zA-Z0-9_-]/g, "_")
+      .slice(0, 80);
+  }
+
+  function getFriendlyError(dataOrCode, fallback) {
+    const code = typeof dataOrCode === "string"
+      ? cleanCode(dataOrCode)
+      : cleanCode(dataOrCode?.code || dataOrCode?.debugCode);
+
+    return errorMap[code] || fallback || "ยืนยันตัวตนไม่สำเร็จ";
   }
 
   function fail(message, detail, requestId) {
@@ -111,7 +150,9 @@
     return {
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "",
       language: navigator.language || "",
-      languages: Array.isArray(navigator.languages) ? navigator.languages.slice(0, 8) : [],
+      languages: Array.isArray(navigator.languages)
+        ? navigator.languages.slice(0, 8)
+        : [],
       platform: navigator.platform || "",
       userAgent: navigator.userAgent || "",
       screenSize,
@@ -167,12 +208,15 @@
       const data = await res.json().catch(() => null);
 
       if (!data) {
-        fail("ระบบตอบกลับไม่ถูกต้อง กรุณาลองใหม่", "invalid_json_response");
+        fail(
+          errorMap.invalid_json_response,
+          "invalid_json_response"
+        );
         return;
       }
 
       if (!res.ok || data.success === false) {
-        const friendly = errorMap[data.code] || data.error || "ยืนยันตัวตนไม่สำเร็จ";
+        const friendly = getFriendlyError(data, data.error || "ยืนยันตัวตนไม่สำเร็จ");
         fail(friendly, data.debugCode || data.code, data.requestId);
         return;
       }
