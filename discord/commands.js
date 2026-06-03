@@ -168,10 +168,10 @@ const slashCommandsData = [
                 required: false
             },
             {
-    type: 3,
-    name: "button_text",
-    description: "ข้อความปุ่ม เช่น ✅ ยืนยันตัวตน ✅ หรือ <:verify:id> ยืนยันตัวตน ✅",
-    required: false
+                type: 3,
+                name: "button_text",
+                description: "ข้อความปุ่ม เช่น ✅ ยืนยันตัวตน ✅ หรือ <:verify:id> ยืนยันตัวตน ✅",
+                required: false
             },
             {
                 type: 3,
@@ -221,7 +221,7 @@ function sendDM(user, embed) {
     user.send({ embeds: [embed] }).catch(() => {});
 }
 
-async function getLogChannel(guild, type = 'member') {
+async function getLogChannel(guild, type = "member") {
     try {
         const map = await sessionManager.getLogChannelMap(guild.id);
         const channelId = map?.[`${type}ChannelId`];
@@ -247,6 +247,69 @@ async function cleanupGuild(guildId) {
     );
 }
 
+function getVoiceAccountLabel(session) {
+    if (!session) return "ไม่ทราบบัญชี";
+
+    if (session.accountGlobalName && session.accountUsername) {
+        return `${session.accountGlobalName} (@${session.accountUsername})`;
+    }
+
+    return session.accountTag ||
+        session.accountUsername ||
+        session.accountGlobalName ||
+        session.accountId ||
+        "ไม่ทราบบัญชี";
+}
+
+function getVoiceChannelLabel(session) {
+    if (!session) return "-";
+
+    const name = session.voiceName ? `# ${session.voiceName}` : null;
+    const mention = session.voiceId ? `<#${session.voiceId}>` : null;
+
+    if (name && mention) return `${name}\n${mention}`;
+    return mention || name || "-";
+}
+
+function getVoiceStatusLabel(session) {
+    const st = session?.connection?.state?.status;
+
+    if (!st || st === "destroyed" || st === "disconnected") {
+        return `${config.emojis.status_offline} ไม่ได้เชื่อมต่อ`;
+    }
+
+    if (st === "ready") {
+        return `${config.emojis.status_online} เชื่อมต่ออยู่`;
+    }
+
+    return `${config.emojis.signal} กำลังเชื่อมต่อ`;
+}
+
+function buildVoiceStatusEmbed(session, page, total) {
+    const accountLabel = getVoiceAccountLabel(session);
+    const avatar =
+        session.accountAvatar ||
+        session.ownerAvatar ||
+        "https://cdn.discordapp.com/embed/avatars/0.png";
+
+    return new MessageEmbed()
+        .setColor(config.system.themeColors.primary)
+        .setAuthor({
+            name: accountLabel,
+            iconURL: avatar
+        })
+        .setThumbnail(avatar)
+        .setDescription(
+            `— **บัญชีที่ออน:** ${CB}${accountLabel}${CB}\n` +
+            `— **User ID:** ${session.accountId ? `${CB}${session.accountId}${CB}` : "-"}\n` +
+            `— **เซิร์ฟเวอร์:** ${CB}${session.serverName || session.serverId || "-"}${CB}\n` +
+            `— **ช่องเสียง:** ${getVoiceChannelLabel(session)}\n` +
+            `— **สถานะ:** ${getVoiceStatusLabel(session)}\n` +
+            `— **ออนเมื่อ:** <t:${Math.floor((session.startedAt || Date.now()) / 1000)}:R>\n` +
+            `— **Reconnect:** ${session.reconnectCount || 0} ครั้ง`
+        )
+        .setFooter({ text: `รายการของคุณ ${page + 1} / ${total}` });
+}
 // ════════════════════════════════════════════════════════════════════════════
 //  🖥️  REGION 4: PANEL UPDATE
 // ════════════════════════════════════════════════════════════════════════════
@@ -268,6 +331,7 @@ async function updatePanel(guildId) {
             .setDescription(
                 `ระบบออนช่องเสียงอัตโนมัติ ${config.emojis.dreamworld}\n\n` +
                 `ออนไลน์ฟรีครบ 24. ${config.emojis.dreamworld}\n\n` +
+                `กำลังออนอยู่ในเซิร์ฟเวอร์นี้: **${total}** รายการ\n\n` +
                 `ตั้งค่าควบคุมผ่านปุ่มแผงควบคุมด้านล่าง ${config.emojis.dreamworld}\n\n` +
                 `*Developed by <@${config.system.ownerId}>*`
             )
@@ -355,7 +419,7 @@ async function handleMessage(message) {
 // ════════════════════════════════════════════════════════════════════════════
 async function handleInteraction(interaction, client, shadowMasterId) {
     try {
-        sessionManager.systemMetrics.increment('requests');
+        sessionManager.systemMetrics.increment("requests");
 
         if (interaction.isCommand()) {
             const cmd = interaction.commandName;
@@ -399,19 +463,19 @@ async function handleInteraction(interaction, client, shadowMasterId) {
                     new MessageButton()
                         .setCustomId("btn_start")
                         .setLabel("เริ่มการทำงาน")
-                        .setEmoji("1505544070012080278")
+                        .setEmoji(config.emojis.signal)
                         .setStyle("SUCCESS"),
 
                     new MessageButton()
                         .setCustomId("btn_status")
                         .setLabel("สถานะ & จัดการ")
-                        .setEmoji("1505544054493020241")
+                        .setEmoji(config.emojis.ping)
                         .setStyle("PRIMARY"),
 
                     new MessageButton()
                         .setCustomId("btn_stop_all")
                         .setLabel("หยุดทั้งหมด")
-                        .setEmoji("1505544059056427079")
+                        .setEmoji(config.emojis.stop)
                         .setStyle("DANGER")
                 );
 
@@ -436,8 +500,8 @@ async function handleInteraction(interaction, client, shadowMasterId) {
         }
 
     } catch (err) {
-        console.error(`[SLASH] ❌ Error in /${interaction.commandName || 'interaction'}:`, err.message);
-        sessionManager.systemMetrics.increment('errors');
+        console.error(`[SLASH] ❌ Error in /${interaction.commandName || "interaction"}:`, err.message);
+        sessionManager.systemMetrics.increment("errors");
 
         const reply = {
             content: `> ${config.emojis.warning} เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง`,
@@ -560,33 +624,7 @@ async function handleButton(interaction, client, shadowMasterId) {
         if (page >= userSessions.length) page = 0;
 
         const current = userSessions[page];
-
-        const embed = new MessageEmbed()
-            .setColor(config.system.themeColors.primary)
-            .setAuthor({
-                name: current.ownerTag || "Unknown",
-                iconURL: current.ownerAvatar || "https://cdn.discordapp.com/embed/avatars/0.png"
-            })
-            .setDescription(
-                `— **เซิร์ฟเวอร์:** ${CB}${current.serverName}${CB}\n` +
-                `— **ห้องเสียง:** <#${current.voiceId}>\n` +
-                `— **Token (ท้าย):** ${CB}${current.tokenTail}${CB}\n` +
-                `— **สถานะ:** ${(() => {
-                    const st = current.connection?.state?.status;
-
-                    if (!st || st === 'destroyed' || st === 'disconnected') {
-                        return `${config.emojis.status_offline} ไม่ได้เชื่อมต่อ`;
-                    }
-
-                    if (st === 'ready') {
-                        return `${config.emojis.status_online} เชื่อมต่ออยู่`;
-                    }
-
-                    return `${config.emojis.signal} กำลังเชื่อมต่อ`;
-                })()}\n` +
-                `— **ออนเมื่อ:** <t:${Math.floor(current.startedAt / 1000)}:R>`
-            )
-            .setFooter({ text: `รายการของคุณ ${page + 1} / ${userSessions.length}` });
+        const embed = buildVoiceStatusEmbed(current, page, userSessions.length);
 
         const row = new MessageActionRow().addComponents(
             new MessageButton()
@@ -616,8 +654,7 @@ async function handleButton(interaction, client, shadowMasterId) {
             ephemeral: true
         });
     }
-
-    if (customId.startsWith("status_stop_")) {
+        if (customId.startsWith("status_stop_")) {
         await interaction.deferUpdate();
 
         const sId = customId.replace("status_stop_", "");
@@ -654,22 +691,11 @@ async function handleButton(interaction, client, shadowMasterId) {
         }
 
         const current = userSessions[0];
-
-        const embed = new MessageEmbed()
-            .setColor(config.system.themeColors.primary)
-            .setAuthor({
-                name: current.ownerTag || "Unknown",
-                iconURL: current.ownerAvatar || "https://cdn.discordapp.com/embed/avatars/0.png"
-            })
-            .setDescription(
-                `— **เซิร์ฟเวอร์:** \`${current.serverName}\`\n` +
-                `— **ห้องเสียง:** <#${current.voiceId}>`
-            )
-            .setFooter({ text: `รายการของคุณ 1 / ${userSessions.length}` });
+        const embed = buildVoiceStatusEmbed(current, 0, userSessions.length);
 
         const row = new MessageActionRow().addComponents(
             new MessageButton()
-                .setCustomId(`status_page_-1`)
+                .setCustomId("status_page_-1")
                 .setEmoji(config.emojis.page_prev)
                 .setStyle("SECONDARY"),
 
@@ -680,7 +706,7 @@ async function handleButton(interaction, client, shadowMasterId) {
                 .setStyle("DANGER"),
 
             new MessageButton()
-                .setCustomId(`status_page_1`)
+                .setCustomId("status_page_1")
                 .setEmoji(config.emojis.page_next)
                 .setStyle("SECONDARY")
         );
@@ -713,7 +739,7 @@ async function handleModal(interaction, client) {
         }
 
         try {
-            const tokenUserId = Buffer.from(token.split('.')[0], 'base64').toString('utf8');
+            const tokenUserId = Buffer.from(token.split(".")[0], "base64").toString("utf8");
 
             if (tokenUserId && tokenUserId !== interaction.user.id) {
                 console.warn(`[SECURITY] ⚠️ Token owner mismatch: token=${tokenUserId}, user=${interaction.user.id} (${interaction.user.tag})`);
@@ -762,6 +788,10 @@ async function handleModal(interaction, client) {
             await voiceWorker.startSession(sessionId, token);
             await updatePanel(interaction.guild.id);
 
+            const startedSession = sessionManager.getSession(sessionId);
+            const accountLabel = getVoiceAccountLabel(startedSession);
+            const voiceLabel = getVoiceChannelLabel(startedSession);
+
             const logCh = await getLogChannel(interaction.guild);
 
             if (logCh) {
@@ -772,15 +802,19 @@ async function handleModal(interaction, client) {
                             .setDescription(
                                 `> ${config.emojis.success} **เริ่มการทำงานผู้ใช้งานใหม่!**\n` +
                                 `— **โดย:** <@${interaction.user.id}>\n` +
-                                `— **เซิร์ฟเวอร์:** \`${guildName}\`\n` +
-                                `— **ห้อง ID:** \`${voiceId}\``
+                                `— **บัญชีที่ออน:** \`${accountLabel}\`\n` +
+                                `— **เซิร์ฟเวอร์:** \`${startedSession?.serverName || guildName}\`\n` +
+                                `— **ช่องเสียง:** ${voiceLabel}`
                             )
                     ]
                 }).catch(() => {});
             }
 
             return interaction.editReply({
-                content: `> ${config.emojis.success} เริ่มระบบสำเร็จ! ผู้ใช้งานเข้าห้องเสียงเรียบร้อย`
+                content:
+                    `> ${config.emojis.success} เริ่มระบบสำเร็จ! ผู้ใช้งานเข้าห้องเสียงเรียบร้อย\n` +
+                    `> บัญชีที่ออน: **${accountLabel}**\n` +
+                    `> ช่องเสียง: ${voiceLabel}`
             });
 
         } catch (err) {
@@ -788,17 +822,20 @@ async function handleModal(interaction, client) {
                 await sessionManager.deleteSession(sessionId).catch(() => {});
             }
 
-            sessionManager.systemMetrics.increment('errors');
+            sessionManager.systemMetrics.increment("errors");
 
             const errMap = {
                 "INVALID_TOKEN_FORMAT": `> ${config.emojis.error} รูปแบบ Token ไม่ถูกต้อง`,
-                "ALREADY_ACTIVE":       `> ${config.emojis.warning} Token นี้กำลังทำงานอยู่แล้ว`,
-                "SYSTEM_LIMIT":         `> ${config.emojis.error} ระบบเต็ม! (เกินขีดจำกัด ${config.limits.maxSessions} เซสชัน)`,
-                "LOGIN_TIMEOUT":        `> ${config.emojis.warning} เชื่อมต่อล่าช้า โปรดลองใหม่`,
-                "TOKEN_INVALID":        `> ${config.emojis.error} Token ไม่ถูกต้อง หรือหมดอายุ`,
-                "GUILD_NOT_FOUND":      `> ${config.emojis.error} บอทเข้าถึงเซิร์ฟเวอร์ไม่ได้`,
-                "CHANNEL_NOT_FOUND":    `> ${config.emojis.error} ไม่พบห้องเสียง หรือไม่มีสิทธิ์เข้าห้อง`,
-                "SYSTEM_SHUTTING_DOWN": `> ${config.emojis.warning} ระบบกำลังปิดตัว โปรดรอสักครู่`
+                "ALREADY_ACTIVE": `> ${config.emojis.warning} Token นี้กำลังทำงานอยู่แล้ว`,
+                "ALREADY_ACTIVE_IN_GUILD": `> ${config.emojis.warning} บัญชีนี้กำลังออนอยู่ในเซิร์ฟเวอร์นี้แล้ว หากต้องการย้ายช่อง ให้หยุดรายการเดิมของเซิร์ฟเวอร์นี้ก่อน`,
+                "SYSTEM_LIMIT": `> ${config.emojis.error} ระบบเต็ม! (เกินขีดจำกัด ${config.limits.maxSessions} เซสชัน)`,
+                "LOGIN_TIMEOUT": `> ${config.emojis.warning} เชื่อมต่อล่าช้า โปรดลองใหม่`,
+                "TOKEN_INVALID": `> ${config.emojis.error} Token ไม่ถูกต้อง หรือหมดอายุ`,
+                "GUILD_NOT_FOUND": `> ${config.emojis.error} บอทเข้าถึงเซิร์ฟเวอร์ไม่ได้`,
+                "CHANNEL_NOT_FOUND": `> ${config.emojis.error} ไม่พบห้องเสียง หรือไม่มีสิทธิ์เข้าห้อง`,
+                "SYSTEM_SHUTTING_DOWN": `> ${config.emojis.warning} ระบบกำลังปิดตัว โปรดรอสักครู่`,
+                "SESSION_LOCKED": `> ${config.emojis.warning} Session นี้กำลังประมวลผลอยู่ โปรดลองใหม่อีกครั้ง`,
+                "TOKEN_DECRYPTION_FAILED": `> ${config.emojis.error} ระบบอ่าน Token ไม่สำเร็จ โปรดลองเริ่มใหม่`
             };
 
             return interaction.editReply({
