@@ -58,59 +58,133 @@ function isPrivateIP(ip) {
 }
 
 function parseBrowser(ua) {
+    if (/Discord/i.test(ua)) return 'Discord WebView';
     if (/Edg\//i.test(ua)) return 'Edge';
     if (/OPR\//i.test(ua)) return 'Opera';
     if (/Chrome\//i.test(ua) && !/Chromium/i.test(ua)) return 'Chrome';
     if (/Firefox\//i.test(ua)) return 'Firefox';
     if (/Safari\//i.test(ua) && !/Chrome\//i.test(ua)) return 'Safari';
-    if (/Discord/i.test(ua)) return 'Discord WebView';
     return 'Unknown';
 }
 
 function parseOS(ua, platform) {
-    if (platform && platform !== 'Unknown') return platform;
+    const rawPlatform = String(platform || '').trim();
+
+    if (rawPlatform && rawPlatform !== 'Unknown') {
+        if (/iphone|ipad|ipod/i.test(rawPlatform)) return 'iOS';
+        if (/android/i.test(rawPlatform)) return 'Android';
+        if (/win/i.test(rawPlatform)) return 'Windows';
+        if (/mac/i.test(rawPlatform)) return 'macOS';
+        if (/linux/i.test(rawPlatform)) return 'Linux';
+        return rawPlatform.slice(0, 80);
+    }
+
     if (/Android/i.test(ua)) return 'Android';
     if (/iPhone|iPad|iPod/i.test(ua)) return 'iOS';
     if (/Windows/i.test(ua)) return 'Windows';
     if (/Mac OS X|Macintosh/i.test(ua)) return 'macOS';
     if (/Linux/i.test(ua)) return 'Linux';
+
     return 'Unknown';
+}
+
+function parseDeviceType(ua, body = {}) {
+    if (body.touchPoints && Number(body.touchPoints) > 0 && /iPad|Tablet/i.test(ua)) {
+        return 'tablet';
+    }
+
+    if (/iPad|Tablet/i.test(ua)) return 'tablet';
+    if (/Mobile|Android|iPhone|iPod/i.test(ua)) return 'mobile';
+
+    return 'desktop';
+}
+
+function safeString(value, fallback = '') {
+    if (value === undefined || value === null) return fallback;
+    return String(value).slice(0, 500);
+}
+
+function safeSmallString(value, fallback = '') {
+    if (value === undefined || value === null) return fallback;
+    return String(value).slice(0, 120);
+}
+
+function safeNumber(value, fallback = null) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+}
+
+function safeLanguages(value, fallbackLanguage = '') {
+    if (Array.isArray(value)) {
+        return value
+            .map(v => safeSmallString(v, ''))
+            .filter(Boolean)
+            .slice(0, 12);
+    }
+
+    if (fallbackLanguage) return [fallbackLanguage];
+
+    return [];
 }
 
 function extractDevice(req) {
     const ua = req.headers['user-agent'] || '';
     const body = req.body || {};
-    const platform = parseOS(ua, body.platform || 'Unknown');
+
     const browser = parseBrowser(ua);
-    const deviceType = /Mobile|Android|iPhone|iPad|iPod/i.test(ua) ? 'mobile' : 'desktop';
+    const platform = safeSmallString(body.platform || 'Unknown', 'Unknown');
+    const os = parseOS(ua, platform);
+    const deviceType = parseDeviceType(ua, body);
 
-    const language =
-        body.language ||
-        req.headers['accept-language']?.split(',')[0] ||
-        'unknown';
+    const acceptLanguage = req.headers['accept-language']?.split(',')[0] || '';
 
-    const timezone = body.timezone || 'unknown';
-    const screenSize = body.screenSize || 'unknown';
+    const language = safeSmallString(
+        body.language || acceptLanguage || 'unknown',
+        'unknown'
+    );
+
+    const languages = safeLanguages(body.languages, language);
+
+    const timezone = safeSmallString(body.timezone || 'unknown', 'unknown');
+    const screenSize = safeSmallString(body.screenSize || 'unknown', 'unknown');
+    const viewportSize = safeSmallString(body.viewportSize || 'unknown', 'unknown');
+
+    const colorDepth = safeNumber(body.colorDepth, null);
+    const devicePixelRatio = safeNumber(body.devicePixelRatio, null);
+    const touchPoints = safeNumber(body.touchPoints, 0);
+    const referrer = safeString(body.referrer || '', '');
 
     const fingerprintSource = [
         ua,
         language,
+        languages.join(','),
         timezone,
         screenSize,
+        viewportSize,
         platform,
+        os,
         browser,
-        deviceType
+        deviceType,
+        colorDepth ?? '',
+        devicePixelRatio ?? '',
+        touchPoints ?? ''
     ].join('|');
 
     return {
-        userAgent: String(ua).substring(0, 500),
+        userAgent: safeString(ua, ''),
         browser,
-        os: platform,
+        os,
+        language,
+        languages,
+        timezone,
         platform,
         deviceType,
-        language,
-        timezone,
         screenSize,
+        viewportSize,
+        colorDepth,
+        devicePixelRatio,
+        touchPoints,
+        referrer,
         fingerprintHash: hmacValue(fingerprintSource, 'fingerprint')
     };
 }
@@ -142,6 +216,7 @@ async function lookupWithIpApi(ip) {
     ].join(',');
 
     const url = `http://ip-api.com/json/${encodeURIComponent(ip)}?fields=${encodeURIComponent(fields)}`;
+
     const res = await fetch(url, {
         headers: {
             'User-Agent': 'Phomueangtai-Verify/1.1'
@@ -160,6 +235,7 @@ async function lookupWithIpApi(ip) {
         provider: 'ip-api.com',
         raw: data,
         status: data.status,
+
         country: data.country,
         countryCode: data.countryCode,
         region: data.regionName || data.region,
@@ -168,16 +244,19 @@ async function lookupWithIpApi(ip) {
         lat: data.lat,
         lon: data.lon,
         timezone: data.timezone,
+
         isp: data.isp,
         org: data.org,
         as: data.as,
         asname: data.asname,
         reverse: data.reverse,
+
         mobile: data.mobile === true,
         proxy: data.proxy === true,
         hosting: data.hosting === true,
         vpn: data.vpn === true,
         tor: data.tor === true,
+
         query: data.query,
         message: data.message || null
     };
@@ -189,6 +268,7 @@ async function lookupIP(ip) {
             provider: 'local',
             raw: null,
             status: 'local',
+
             country: 'unknown',
             countryCode: 'unknown',
             region: 'unknown',
@@ -197,16 +277,19 @@ async function lookupIP(ip) {
             lat: null,
             lon: null,
             timezone: 'unknown',
+
             isp: 'local/private',
             org: 'local/private',
             as: 'unknown',
             asname: 'unknown',
             reverse: 'unknown',
+
             mobile: false,
             proxy: false,
             hosting: false,
             vpn: false,
             tor: false,
+
             query: ip,
             message: null
         };
@@ -269,6 +352,7 @@ async function processIP(req) {
             status: 'lookup_failed',
             message: err.message,
             query: rawIp,
+
             country: 'unknown',
             countryCode: 'unknown',
             region: 'unknown',
@@ -277,11 +361,13 @@ async function processIP(req) {
             lat: null,
             lon: null,
             timezone: 'unknown',
+
             isp: 'unknown',
             org: 'unknown',
             as: 'unknown',
             asname: 'unknown',
             reverse: 'unknown',
+
             mobile: false,
             proxy: false,
             hosting: false,
@@ -291,6 +377,7 @@ async function processIP(req) {
     }
 
     const flags = normalizeRiskFlags(lookup);
+
     const riskScore = computeRisk({
         ...flags,
         lookupStatus: lookup.status || 'unknown'
@@ -327,6 +414,11 @@ async function processIP(req) {
         lookupStatus: lookup.status || 'unknown',
         lookupMessage: lookup.message || null,
         lookupRaw: lookup.raw || null,
+
+        proxyCheckProvider: null,
+        proxyCheckStatus: null,
+        proxyCheckRaw: null,
+
         lookupAt: Date.now()
     };
 }
