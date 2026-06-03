@@ -617,7 +617,39 @@ async function deleteSession(sessionId) {
 
     return true;
 }
+async function pauseSession(sessionId) {
+    const session = sessions.get(sessionId);
+    if (!session) return false;
 
+    if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
+
+    if (session.connection) {
+        try {
+            session.connection.destroy();
+        } catch {}
+        session.connection = null;
+    }
+
+    session.reconnecting = false;
+    session.lastActivity = Date.now();
+
+    if (dbConnected) {
+        try {
+            await SessionModel.updateOne(
+                { sessionId },
+                { $set: { lastActivity: session.lastActivity } }
+            );
+        } catch (err) {
+            console.error(`[DATABASE] ❌ Failed to pause session ${sessionId}: ${err.message}`);
+            systemMetrics.increment("errors");
+        }
+    }
+
+    return true;
+}
+
+async function clearAllSessions() {
+    for (const [sessionId, session] of sessions) {
 async function clearAllSessions() {
     for (const [sessionId, session] of sessions) {
         try {
