@@ -330,7 +330,7 @@ function countActiveSessionsByTokenHash(tokenHash) {
 
 // ════════════════════════════════════════════════════════════════════════════
 //  💾 REGION 7: SESSION LOAD / SAVE
-// ════════════════════════════════════════════════════════════════════════════
+// ═══��════════════════════════════════════════════════════════════════════════
 async function loadDatabase() {
     if (!dbConnected) {
         console.error("[DATABASE] ⚠️ Cannot load sessions: DB not connected. Boot sequence will retry.");
@@ -974,6 +974,37 @@ async function saveLogChannelMap(guildId, map = {}) {
     }
 }
 
+async function setLogChannelMap(guildId, category, channelId) {
+    if (!dbConnected) return false;
+    const keyMap = {
+        message: "messageChannelId",
+        member: "memberChannelId",
+        voice: "voiceChannelId",
+        server: "serverChannelId",
+        security: "securityChannelId"
+    };
+    const key = keyMap[category];
+    if (!key) return false;
+    try {
+        await LogChannelMapModel.updateOne(
+            { guildId },
+            {
+                $set: {
+                    guildId,
+                    [key]: channelId || null,
+                    updatedAt: Date.now()
+                }
+            },
+            { upsert: true }
+        );
+        return true;
+    } catch (err) {
+        console.error(`[DATABASE] ❌ Failed to set log channel map ${category} for ${guildId}: ${err.message}`);
+        systemMetrics.increment("errors");
+        return false;
+    }
+}
+
 async function getLogChannelMap(guildId) {
     if (!dbConnected) return null;
 
@@ -1066,6 +1097,10 @@ async function getWhitelist(scope = "say") {
         systemMetrics.increment("errors");
         return [];
     }
+}
+
+async function getAllWhitelist(scope = "say") {
+    return getWhitelist(scope);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1335,6 +1370,7 @@ module.exports = {
 
     // Log channels
     saveLogChannelMap,
+    setLogChannelMap,
     getLogChannelMap,
     deleteLogChannelMap,
 
@@ -1343,6 +1379,7 @@ module.exports = {
     addWhitelist,
     removeWhitelist,
     getWhitelist,
+    getAllWhitelist,
 
     // Settings
     setSetting,
@@ -1351,6 +1388,7 @@ module.exports = {
     getAllSettings,
 
     // Metrics
+    systemMetrics,
     getSystemMetrics,
 
     // Raw models for existing internal dashboards/tools
