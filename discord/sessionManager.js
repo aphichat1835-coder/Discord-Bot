@@ -650,8 +650,6 @@ async function pauseSession(sessionId) {
 
 async function clearAllSessions() {
     for (const [sessionId, session] of sessions) {
-async function clearAllSessions() {
-    for (const [sessionId, session] of sessions) {
         try {
             if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
             if (session.connection) session.connection.destroy();
