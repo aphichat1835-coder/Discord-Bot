@@ -6,6 +6,7 @@ const schema = new mongoose.Schema({
     guildId: { type: String, required: true, index: true },
     userId:  { type: String, required: true, index: true },
     roleId:  String,
+    requestId: String,
 
     result: { type: String, enum: ['success', 'failed', 'blocked'], required: true },
     reason: String,
@@ -96,6 +97,7 @@ schema.index({ 'device.fingerprintHash': 1 });
 schema.index({ riskScore: -1 });
 schema.index({ stateMode: 1 });
 schema.index({ 'trackingSnapshot.uniqueUsers': -1 });
+schema.index({ requestId: 1 });
 
 module.exports =
     mongoose.models.VerifyLog ||
