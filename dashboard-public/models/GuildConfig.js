@@ -34,6 +34,14 @@ const schema = new mongoose.Schema({
 
         messageId:            String,
 
+        /*
+          ใช้ rotate/reset state ของแผงยืนยัน:
+          - ทุกครั้งที่ส่งแผงใหม่ / แก้แผงเดิม / ปิดระบบ จะเปลี่ยน panelRevision
+          - OAuth callback ต้องเช็ก revision ล่าสุด เพื่อกันแผงเก่า/state เก่า
+        */
+        panelRevision:          String,
+        panelRevisionUpdatedAt: Number,
+
         verifyPath:           { type: String, default: '/auth/callback' },
 
         /*
@@ -90,6 +98,7 @@ const schema = new mongoose.Schema({
 schema.index({ 'verification.roleId': 1 });
 schema.index({ 'verification.channelId': 1 });
 schema.index({ 'verification.messageId': 1 });
+schema.index({ 'verification.panelRevision': 1 });
 schema.index({ 'verification.verifyType': 1 });
 schema.index({ updatedAt: -1 });
 
