@@ -810,7 +810,7 @@ function makePanelPayload(req, { guildId, verification }) {
       verifyType: mode
     },
     oauthUrl,
-    directCustomId: `verify_direct:${guildId}:${verification.roleId}`,
+    directCustomId: `verify_role_${verification.roleId}`,
     allowedMentions: { parse: [] }
   });
 }
@@ -1245,7 +1245,7 @@ router.patch("/api/guild/:guildId/verify/panel/update", requireAdmin, requireGui
     if (!existing.ok) {
       return res.status(404).json({
         success: false,
-        error: "หา message เดิมไม่เจอ หรือบอทไม่มีสิทธิ์อ่าน message นี้ ให้กดส่งแผงใหม่เอง",
+        error: "หา message เดิมไม่เจอ หรือบอทไม่มีสิทธิ์อ่าน message นี้ ให้กดส่งแผงใหม่ดัก",
         discordStatus: existing.status,
         discordError: existing.error
       });
