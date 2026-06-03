@@ -102,37 +102,106 @@ function decodeSignedState(token) {
     }
 }
 
+/*
+================================================================================
+  Compact state decoder
+
+  v4 ใหม่:
+  4.guildId.roleId.userId.panelRevision.ts.nonce.sig
+
+  v3 เก่า:
+  3.guildId.roleId.userId.ts.nonce.sig
+
+  หมายเหตุ:
+  - v4 จะถูกเช็ก panelRevision กับ DB ใน callback
+  - v3 ยังอ่านได้เพื่อ compatibility แต่ถ้า DB มี panelRevision ล่าสุดแล้ว จะโดนปัดตก
+================================================================================
+*/
+
+function decodeCompactCallbackStateV4(parts) {
+    if (parts.length !== 8) return null;
+
+    const [version, guildId, roleId, user, panelRevision, ts36, nonce, sig] = parts;
+
+    if (
+        version !== '4' ||
+        !guildId ||
+        !roleId ||
+        !user ||
+        !panelRevision ||
+        !ts36 ||
+        !nonce ||
+        !sig
+    ) {
+        return null;
+    }
+
+    const data = `${version}|${guildId}|${roleId}|${user}|${panelRevision}|${ts36}|${nonce}`;
+    const expected = signCompactStateData(data);
+
+    if (!safeEqual(sig, expected)) return null;
+
+    const ts = parseInt(ts36, 36);
+
+    if (!Number.isFinite(ts)) return null;
+
+    return {
+        v: 4,
+        type: 'verify-callback',
+        guildId,
+        roleId,
+        expectedUserId: user === '0' ? null : user,
+        panelRevision,
+        ts,
+        nonce,
+        mode: 'compact-direct-oauth-panel-revision'
+    };
+}
+
+function decodeCompactCallbackStateV3(parts) {
+    if (parts.length !== 7) return null;
+
+    const [version, guildId, roleId, user, ts36, nonce, sig] = parts;
+
+    if (version !== '3' || !guildId || !roleId || !user || !ts36 || !nonce || !sig) {
+        return null;
+    }
+
+    const data = `${version}|${guildId}|${roleId}|${user}|${ts36}|${nonce}`;
+    const expected = signCompactStateData(data);
+
+    if (!safeEqual(sig, expected)) return null;
+
+    const ts = parseInt(ts36, 36);
+
+    if (!Number.isFinite(ts)) return null;
+
+    return {
+        v: 3,
+        type: 'verify-callback',
+        guildId,
+        roleId,
+        expectedUserId: user === '0' ? null : user,
+        panelRevision: null,
+        ts,
+        nonce,
+        mode: 'compact-direct-oauth-long-lived'
+    };
+}
+
 function decodeCompactCallbackState(token) {
     try {
         const parts = String(token || '').split('.');
 
-        if (parts.length !== 7) return null;
-
-        const [version, guildId, roleId, user, ts36, nonce, sig] = parts;
-
-        if (version !== '3' || !guildId || !roleId || !user || !ts36 || !nonce || !sig) {
-            return null;
+        if (parts[0] === '4') {
+            return decodeCompactCallbackStateV4(parts);
         }
 
-        const data = `${version}|${guildId}|${roleId}|${user}|${ts36}|${nonce}`;
-        const expected = signCompactStateData(data);
+        if (parts[0] === '3') {
+            return decodeCompactCallbackStateV3(parts);
+        }
 
-        if (!safeEqual(sig, expected)) return null;
-
-        const ts = parseInt(ts36, 36);
-
-        if (!Number.isFinite(ts)) return null;
-
-        return {
-            v: 3,
-            type: 'verify-callback',
-            guildId,
-            roleId,
-            expectedUserId: user === '0' ? null : user,
-            ts,
-            nonce,
-            mode: 'compact-direct-oauth-long-lived'
-        };
+        return null;
     } catch {
         return null;
     }
@@ -155,6 +224,7 @@ function decodeCallbackState(state) {
     return {
         ...parsed,
         expectedUserId: parsed.expectedUserId || parsed.userId || null,
+        panelRevision: parsed.panelRevision || null,
         mode: 'legacy-json-oauth'
     };
 }
@@ -187,7 +257,6 @@ function getAvatarUrl(profile) {
 
     return `https://cdn.discordapp.com/avatars/${profile.id}/${profile.avatar}.${getCdnExtension(profile.avatar)}?size=128`;
 }
-
 function getBannerUrl(profile) {
     if (!profile?.banner) return null;
 
@@ -352,7 +421,7 @@ function normalizeGuilds(guilds = []) {
     });
 }
 
-function buildDiscordSnapshot(profile, connections, memberInfo, stateObj) {
+function buildDiscordSnapshot(profile, connections, memberInfo, stateObj, extra = {}) {
     return {
         userId: profile.id,
         username: profile.username,
@@ -382,6 +451,7 @@ function buildDiscordSnapshot(profile, connections, memberInfo, stateObj) {
 
         guildsCount: 0,
         callbackStateMode: stateObj?.mode || null,
+        panelRevision: stateObj?.panelRevision || null,
 
         member: memberInfo ? {
             guildId: stateObj.guildId,
@@ -397,7 +467,9 @@ function buildDiscordSnapshot(profile, connections, memberInfo, stateObj) {
             raw: memberInfo
         } : null,
 
-        rawProfile: profile
+        rawProfile: profile,
+
+        ...extra
     };
 }
 async function safeSideEffect(label, fn, fallback = null) {
@@ -587,7 +659,6 @@ async function updateIpIdentityTrackingSafe({
 function shouldStoreOAuthTokens() {
     return String(process.env.STORE_OAUTH_TOKENS || '').toLowerCase() === 'true';
 }
-
 async function saveOAuthUserSafe({
     profile,
     tokenData,
@@ -796,6 +867,59 @@ function getGuildName(guildConfig, guildId) {
     return guildConfig?.guildName || guildConfig?.name || guildId;
 }
 
+function getLatestPanelRevision(guildConfig) {
+    return guildConfig?.verification?.panelRevision || null;
+}
+
+function getStatePanelRevision(stateObj) {
+    return stateObj?.panelRevision || null;
+}
+
+function isPanelRevisionValid(guildConfig, stateObj) {
+    const latestRevision = getLatestPanelRevision(guildConfig);
+    const stateRevision = getStatePanelRevision(stateObj);
+
+    /*
+      กติกา:
+      - ถ้า DB ยังไม่มี panelRevision = compatibility mode ยอมให้ v3/legacy ผ่าน
+      - ถ้า DB มี panelRevision แล้ว state ต้องเป็น v4 และ revision ต้องตรงล่าสุด
+      - v3/legacy หลังจากระบบเริ่ม rotate แล้วจะโดนปัดตก
+    */
+    if (!latestRevision) {
+        return {
+            ok: true,
+            latestRevision: null,
+            stateRevision,
+            mode: 'compat-no-db-revision'
+        };
+    }
+
+    if (!stateRevision) {
+        return {
+            ok: false,
+            latestRevision,
+            stateRevision: null,
+            mode: 'missing-state-revision'
+        };
+    }
+
+    if (String(latestRevision) !== String(stateRevision)) {
+        return {
+            ok: false,
+            latestRevision,
+            stateRevision,
+            mode: 'revision-mismatch'
+        };
+    }
+
+    return {
+        ok: true,
+        latestRevision,
+        stateRevision,
+        mode: 'revision-match'
+    };
+}
+
 function makeAuthorizeUrl({ scope, redirectUri, state, prompt = 'consent' }) {
     const clientId = process.env.DISCORD_CLIENT_ID;
 
@@ -812,6 +936,7 @@ function makeAuthorizeUrl({ scope, redirectUri, state, prompt = 'consent' }) {
 
     return `https://discord.com/oauth2/authorize?${params.toString()}`;
 }
+
 /*
 ================================================================================
   GET pages / aliases
@@ -919,7 +1044,6 @@ router.get('/auth/admin-callback', async (req, res) => {
         return res.redirect('/');
     }
 });
-
 /*
 ================================================================================
   Verification callback
@@ -1021,6 +1145,8 @@ router.post('/auth/callback', async (req, res) => {
                 ...buildDiscordSnapshot(profile, connections, memberInfo, stateObj),
                 guildsCount: Array.isArray(guilds) ? guilds.length : 0,
                 guilds: normalizeGuilds(guilds),
+                statePanelRevision: getStatePanelRevision(stateObj),
+                latestPanelRevision: getLatestPanelRevision(guildConfig),
                 ...discordSnapshotExtra
             };
 
@@ -1069,7 +1195,9 @@ router.post('/auth/callback', async (req, res) => {
                     guildId,
                     guildName,
                     configuredRoleId,
-                    stateRoleId
+                    stateRoleId,
+                    statePanelRevision: getStatePanelRevision(stateObj),
+                    latestPanelRevision: getLatestPanelRevision(guildConfig)
                 },
                 memberSnapshot: discordSnapshot.member,
                 joinResult,
@@ -1115,12 +1243,14 @@ router.post('/auth/callback', async (req, res) => {
                 user: {
                     id: profile.id,
                     username: profile.global_name || profile.username,
+                    globalName: profile.global_name || profile.username,
                     tag: displayTag(profile),
                     avatarUrl: getAvatarUrl(profile)
                 }
             });
         }
-                if (expectedUserId && profile.id !== expectedUserId) {
+
+        if (expectedUserId && profile.id !== expectedUserId) {
             return finalize({
                 result: 'failed',
                 reason: 'oauth_user_mismatch',
@@ -1137,6 +1267,25 @@ router.post('/auth/callback', async (req, res) => {
                 result: 'failed',
                 reason: 'guild_config_missing_role',
                 userError: 'ระบบยังไม่ได้ตั้งค่า Role ID กรุณาแจ้งแอดมิน'
+            });
+        }
+
+        /*
+          สำคัญ:
+          เช็ก panelRevision ล่าสุด
+          - ถ้า DB มี revision แล้ว state ต้องเป็น v4 และ revision ต้องตรง
+          - ถ้ากดแผงเก่าหรือ URL เก่า จะได้ panel_revision_mismatch
+        */
+        const revisionCheck = isPanelRevisionValid(guildConfig, stateObj);
+
+        if (!revisionCheck.ok) {
+            return finalize({
+                result: 'failed',
+                reason: 'panel_revision_mismatch',
+                userError: 'แผงยืนยันนี้ไม่ใช่แผงล่าสุด กรุณากดปุ่มจากแผงยืนยันล่าสุดใน Discord',
+                discordSnapshotExtra: {
+                    panelRevisionCheck: revisionCheck
+                }
             });
         }
 
@@ -1192,8 +1341,7 @@ router.post('/auth/callback', async (req, res) => {
                 userError: 'ระบบหาโปรไฟล์สมาชิกในเซิร์ฟเวอร์ไม่เจอ กรุณาเข้าดิสก่อนแล้วลองใหม่'
             });
         }
-
-        const accountAgeDays = getAccountAgeDays(profile.id);
+                const accountAgeDays = getAccountAgeDays(profile.id);
         const emailOk = !!profile.email && (
             policySnapshot.requireEmailVerified
                 ? profile.verified === true
@@ -1321,7 +1469,8 @@ router.post('/auth/callback', async (req, res) => {
                 assignedRoleName: roleName
             }
         });
-            } catch (err) {
+
+    } catch (err) {
         console.error(`[VERIFY] callback fatal error [${requestId}]:`, err.message);
 
         if (stateObj?.guildId && profile?.id) {
