@@ -1252,6 +1252,7 @@ module.exports = {
     getAllSessionSummaries,
     getVoiceSessionSummary,
     deleteSession,
+    pauseSession,
     clearAllSessions,
 
     // Voice identity helpers
@@ -1275,6 +1276,13 @@ module.exports = {
     resetReconnectInfo,
     canAttemptReconnect,
     recordReconnectAttempt,
+
+    // Backward-compatible aliases for existing project files
+    lockSession: acquireSessionLock,
+    unlockSession: releaseSessionLock,
+    addReconnect: recordReconnectAttempt,
+    clearReconnect: resetReconnectInfo,
+    getToken: getSessionToken,
 
     // Guild approvals
     getApprovedGuilds,
