@@ -1,15 +1,16 @@
 /*
 ================================================================================
-Verification Command Module
+  Verification Command Module — Dashboard Public v2 compatible
 
-verify_type:
-- false = กดปุ่มได้ยศเลยแบบเดิม
-- true  = OAuth2 direct Discord authorize URL button
+  verify_type:
+  - false = กดปุ่มได้ยศเลยแบบเดิม
+  - true  = OAuth2 direct Discord authorize URL button
 
-Notes:
-- รองรับ option ใหม่ button_text เช่น "✅ ยืนยันตัวตนเข้าดิส"
-- ยังรองรับ option เดิม button_label / button_emoji เผื่อคำสั่งเก่ายัง cache อยู่
-- ถ้า emoji ใช้ไม่ได้ ระบบ fallback โดยไม่ทำให้คำสั่งพัง
+  Notes:
+  - รองรับ option ใหม่ button_text เช่น "✅ ยืนยันตัวตนเข้าดิส"
+  - ยังรองรับ option เดิม button_label / button_emoji เผื่อคำสั่งเก่ายัง cache อยู่
+  - ถ้า emoji ใช้ไม่ได้ ระบบ fallback โดยไม่ทำให้คำสั่งพัง
+  - Sync GuildConfig ให้หน้า Dashboard อิงแผงล่าสุดจาก Discord ได้ตรงขึ้น
 ================================================================================
 */
 
@@ -48,6 +49,14 @@ function normalizeNewlines(value) {
     return cleanText(value, "").replace(/\\n/g, "\n");
 }
 
+function boolToDashboardVerifyType(value) {
+    return value ? "oauth" : "direct";
+}
+
+function boolToLegacyOauthMode(value) {
+    return value ? "direct-discord-authorize-long-lived-state" : "direct-role";
+}
+
 function getStateSecret() {
     return String(
         process.env.VERIFY_STATE_SECRET ||
@@ -63,6 +72,9 @@ function getDashboardUrl() {
     return String(
         process.env.PUBLIC_DASHBOARD_URL ||
         process.env.DASHBOARD_URL ||
+        process.env.PUBLIC_BASE_URL ||
+        process.env.DASHBOARD_PUBLIC_URL ||
+        process.env.RENDER_EXTERNAL_URL ||
         ""
     ).replace(/\/$/, "");
 }
@@ -110,7 +122,7 @@ function buildDiscordAuthorizeUrl({ interaction, guildId, roleId, expectedUserId
     const clientId = getDiscordClientId(interaction);
 
     if (!dashboardUrl) {
-        throw new Error("Missing PUBLIC_DASHBOARD_URL/DASHBOARD_URL");
+        throw new Error("Missing PUBLIC_DASHBOARD_URL/DASHBOARD_URL/PUBLIC_BASE_URL");
     }
 
     if (!clientId) {
@@ -146,7 +158,7 @@ function isLikelyUnicodeEmoji(raw) {
     if (/[A-Za-z0-9_:<>]/.test(raw)) return false;
 
     try {
-        return /\p{Extended_Pictographic}/u.test(raw) || /[\u2600-\u27BF]/u.test(raw);
+        return /\p{Extended_Pictographic}/u.test(raw) || /[\u2600-\u27BF]/.test(raw);
     } catch {
         return /[\u2600-\u27BF]/.test(raw);
     }
@@ -229,7 +241,6 @@ function applyEmoji(button, emojiInput, fallback, client) {
         return button;
     }
 }
-
 function extractButtonTextParts(rawText, fallbackText, client) {
     const raw = cleanText(rawText, fallbackText);
 
@@ -269,11 +280,14 @@ function normalizeColor(input) {
         return config?.system?.themeColors?.primary || DEFAULT_PANEL.color;
     }
 
-    return colorHex;
+    return colorHex.toUpperCase();
 }
 
 async function syncGuildConfig(interaction, role, channel, panelMsg, panelData) {
     if (!GuildConfig) return;
+
+    const dashboardVerifyType = boolToDashboardVerifyType(panelData.verifyType);
+    const legacyOauthMode = boolToLegacyOauthMode(panelData.verifyType);
 
     try {
         await GuildConfig.findOneAndUpdate(
@@ -289,11 +303,13 @@ async function syncGuildConfig(interaction, role, channel, panelMsg, panelData) 
                     "verification.roleId": role.id,
                     "verification.roleName": role.name,
                     "verification.channelId": channel.id,
+                    "verification.channelName": channel.name,
                     "verification.messageId": panelMsg.id,
+
                     "verification.verifyPath": "/auth/callback",
-                    "verification.oauthMode": panelData.verifyType
-                        ? "direct-discord-authorize-long-lived-state"
-                        : "direct-role",
+                    "verification.verifyType": dashboardVerifyType,
+                    "verification.oauthMode": dashboardVerifyType,
+                    "verification.legacyOauthMode": legacyOauthMode,
                     "verification.directStateMode": "long-lived-panel",
                     "verification.updatedBy": interaction.user.id,
                     "verification.updatedAt": Date.now(),
@@ -307,9 +323,13 @@ async function syncGuildConfig(interaction, role, channel, panelMsg, panelData) 
                     "verification.panel.footerText": panelData.footerText || null,
                     "verification.panel.titleUrl": panelData.titleUrl || null,
                     "verification.panel.showTimestamp": !!panelData.showTs,
+
+                    "verification.panel.buttonText": panelData.buttonLabel,
                     "verification.panel.buttonLabel": panelData.buttonLabel,
                     "verification.panel.buttonEmoji": panelData.buttonEmoji,
-                    "verification.panel.verifyType": panelData.verifyType ? "oauth2" : "direct-role"
+
+                    "verification.panel.verifyType": dashboardVerifyType,
+                    "verification.panel.legacyVerifyType": panelData.verifyType ? "oauth2" : "direct-role"
                 },
                 $setOnInsert: {
                     createdAt: Date.now(),
@@ -321,7 +341,7 @@ async function syncGuildConfig(interaction, role, channel, panelMsg, panelData) 
                     "verification.requireConnections": false,
                     "verification.minConnections": 1,
 
-                    "security.storeOAuthTokens": true,
+                    "security.storeOAuthTokens": false,
                     "security.storeRawIpEncrypted": true,
                     "security.ipRevealRequiresOwnerApproval": true,
                     "security.retentionMode": "until_admin_delete"
@@ -488,25 +508,35 @@ async function handleSetupVerify(interaction) {
             applyEmoji(button, buttonParts.emojiInput, "🎭", interaction.client)
         );
     }
-
-    try {
+        try {
         const panelPayload = {
             embeds: [embed],
             components: [row]
         };
 
-        if (content) panelPayload.content = content;
+        if (content) {
+            panelPayload.content = content;
+        }
 
         const panelMsg = await channel.send(panelPayload);
+
+        const dashboardVerifyType = boolToDashboardVerifyType(verifyType);
+        const legacyOauthMode = boolToLegacyOauthMode(verifyType);
 
         await sessionManager.setSetting(`verify_config_${interaction.guild.id}_${role.id}`, {
             roleId: role.id,
             roleName: role.name,
             guildId: interaction.guild.id,
+            guildName: interaction.guild.name,
             channelId: channel.id,
+            channelName: channel.name,
             messageId: panelMsg.id,
+
             verifyType,
-            oauthMode: verifyType ? "direct-discord-authorize-long-lived-state" : "direct-role",
+            dashboardVerifyType,
+            oauthMode: dashboardVerifyType,
+            legacyOauthMode,
+
             panel: {
                 content,
                 title,
@@ -517,9 +547,15 @@ async function handleSetupVerify(interaction) {
                 footerText,
                 titleUrl,
                 showTimestamp: showTs,
+
+                buttonText: buttonParts.label,
                 buttonLabel: buttonParts.label,
-                buttonEmoji: buttonParts.emojiDisplay
+                buttonEmoji: buttonParts.emojiDisplay,
+
+                verifyType: dashboardVerifyType,
+                legacyVerifyType: verifyType ? "oauth2" : "direct-role"
             },
+
             setBy: interaction.user.id,
             updatedAt: Date.now(),
             createdAt: Date.now()
@@ -548,8 +584,16 @@ async function handleSetupVerify(interaction) {
                 `ระบบบันทึกการตั้งค่าและพร้อมให้สมาชิกยืนยันตัวตน`
             )
             .addFields(
-                { name: "📌 ช่อง", value: `<#${channel.id}>`, inline: true },
-                { name: "🎭 ยศ", value: `<@&${role.id}>`, inline: true },
+                {
+                    name: "📌 ช่อง",
+                    value: `<#${channel.id}>`,
+                    inline: true
+                },
+                {
+                    name: "🎭 ยศ",
+                    value: `<@&${role.id}>`,
+                    inline: true
+                },
                 {
                     name: "🔒 ประเภท",
                     value: verifyType ? "OAuth2 Direct Authorize" : "กดรับยศทันที",
@@ -560,8 +604,21 @@ async function handleSetupVerify(interaction) {
                     value: `${buttonParts.emojiDisplay || ""} ${buttonParts.label}`.trim(),
                     inline: false
                 },
-                { name: "🎨 สี", value: colorHex, inline: true },
-                { name: "🕐 เวลา", value: showTs ? "เปิด" : "ปิด", inline: true }
+                {
+                    name: "🎨 สี",
+                    value: colorHex,
+                    inline: true
+                },
+                {
+                    name: "🕐 เวลา",
+                    value: showTs ? "เปิด" : "ปิด",
+                    inline: true
+                },
+                {
+                    name: "🆔 Message ID",
+                    value: `\`${panelMsg.id}\``,
+                    inline: false
+                }
             )
             .setFooter({ text: `ตั้งค่าโดย ${interaction.user.tag}` })
             .setTimestamp();
