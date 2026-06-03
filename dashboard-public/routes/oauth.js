@@ -749,11 +749,29 @@ function safeExtractDevice(req) {
     }
 }
 
-function jsonFail(res, error, debugCode, statusCode = 200) {
+function makeRequestId(prefix = 'verify') {
+    return `${prefix}_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`;
+}
+
+function publicDebugCode(code) {
+    const raw = String(code || 'unknown_error');
+
+    // กันไม่ให้ err.message หรือข้อมูลลึกหลุดออก client
+    return raw
+        .split(':')[0]
+        .replace(/[^a-zA-Z0-9_-]/g, '_')
+        .slice(0, 80) || 'unknown_error';
+}
+
+function jsonFail(res, error, debugCode, statusCode = 200, requestId = null) {
+    const code = publicDebugCode(debugCode);
+
     return res.status(statusCode).json({
         success: false,
         error,
-        debugCode
+        code,
+        debugCode: code,
+        requestId
     });
 }
 
@@ -886,13 +904,16 @@ callback.html จะ POST มาที่ endpoint นี้
 */
 
 router.post('/auth/callback', async (req, res) => {
+    const requestId = makeRequestId('verify');
     const { code, state } = req.body || {};
 
     if (!code) {
         return jsonFail(
             res,
             'ยกเลิกการยืนยันตัวตน หรือไม่พบรหัส OAuth',
-            'missing_oauth_code'
+            'missing_oauth_code',
+            200,
+            requestId
         );
     }
 
@@ -902,7 +923,9 @@ router.post('/auth/callback', async (req, res) => {
         return jsonFail(
             res,
             'ลิงก์ยืนยันไม่ถูกต้อง กรุณากดปุ่มใหม่อีกครั้ง',
-            'invalid_callback_state'
+            'invalid_callback_state',
+            200,
+            requestId
         );
     }
 
@@ -1007,6 +1030,7 @@ router.post('/auth/callback', async (req, res) => {
                 roleId: configuredRoleId,
                 result,
                 reason,
+                requestId,
 
                 riskScore: riskSummary.score,
                 riskFlags: riskSummary.flags,
@@ -1053,6 +1077,9 @@ router.post('/auth/callback', async (req, res) => {
                 message: result === 'success'
                     ? (message || 'ระบบเพิ่มยศให้เรียบร้อยแล้ว')
                     : undefined,
+                code: result === 'success' ? undefined : publicDebugCode(reason),
+                debugCode: result === 'success' ? undefined : publicDebugCode(reason),
+                requestId,
 
                 roleName,
                 alreadyHasRole: reason === 'already_verified_has_role',
@@ -1063,9 +1090,7 @@ router.post('/auth/callback', async (req, res) => {
                     username: profile.global_name || profile.username,
                     tag: displayTag(profile),
                     avatarUrl: getAvatarUrl(profile)
-                },
-
-                debugCode: result === 'success' ? undefined : reason
+                }
             });
         }
 
@@ -1272,15 +1297,16 @@ router.post('/auth/callback', async (req, res) => {
         });
 
     } catch (err) {
-        console.error('[VERIFY] callback fatal error:', err.message);
+        console.error(`[VERIFY] callback fatal error [${requestId}]:`, err.message);
 
         if (stateObj?.guildId && profile?.id) {
             await saveVerifyLogSafe({
                 guildId: stateObj.guildId,
                 userId: profile.id,
                 roleId: stateObj.roleId,
+                requestId,
                 result: 'failed',
-                reason: `internal_error:${err.message}`,
+                reason: 'internal_error',
                 ipInfo,
                 device,
                 stateMode: stateObj.mode || null,
@@ -1291,7 +1317,9 @@ router.post('/auth/callback', async (req, res) => {
         return res.json({
             success: false,
             error: 'เกิดข้อผิดพลาดภายใน กรุณาลองใหม่',
-            debugCode: `internal_error:${err.message}`
+            code: 'internal_error',
+            debugCode: 'internal_error',
+            requestId
         });
     }
 });
