@@ -9,6 +9,7 @@
   - Members / logs APIs with detailed verification data
   - Raw IP exposure for guild admin dashboard when encrypted IP is available
   - Existing reveal/delete behavior preserved
+  - Panel Revision / Rotate State for long-lived OAuth panel state
 ================================================================================
 */
 
@@ -29,7 +30,6 @@ const {
 const {
   normalizePanelInput,
   buildPanelPayload,
-  buildOAuthUrl,
   buildValidationSummary
 } = require("../utils/panelBuilder");
 
@@ -79,7 +79,9 @@ function normalizeGuild(guild = {}) {
     permissions: String(guild.permissions || "0"),
     isAdmin: guild.isAdmin !== undefined ? !!guild.isAdmin : true,
     isOwner: guild.isOwner !== undefined ? !!guild.isOwner : !!guild.owner,
-    canManage: guild.canManage !== undefined ? !!guild.canManage : true
+    canManage: guild.canManage !== undefined ? !!guild.canManage : true,
+    canManageGuild: guild.canManageGuild !== undefined ? !!guild.canManageGuild : !!guild.canManage || !!guild.isAdmin || !!guild.owner,
+    canManageRoles: guild.canManageRoles !== undefined ? !!guild.canManageRoles : !!guild.canManage || !!guild.isAdmin || !!guild.owner
   };
 }
 
@@ -212,6 +214,8 @@ function getPublicBaseUrl(req) {
   const envUrl =
     process.env.PUBLIC_BASE_URL ||
     process.env.DASHBOARD_PUBLIC_URL ||
+    process.env.PUBLIC_DASHBOARD_URL ||
+    process.env.DASHBOARD_URL ||
     process.env.RENDER_EXTERNAL_URL ||
     "";
 
@@ -306,6 +310,15 @@ function mergeVerificationConfig(existing = {}, incoming = {}) {
   const merged = {
     ...current,
     ...clean,
+
+    /*
+      สำคัญ:
+      อย่าให้ save settings ปกติไปล้าง panelRevision เดิม
+      panelRevision จะเปลี่ยนเฉพาะตอน send/update/disable เท่านั้น
+    */
+    panelRevision: current.panelRevision || clean.panelRevision || null,
+    panelRevisionUpdatedAt: current.panelRevisionUpdatedAt || clean.panelRevisionUpdatedAt || null,
+
     panel: normalizePanel({
       ...(current.panel || {}),
       ...(clean.panel || {})
@@ -462,7 +475,8 @@ function safeDiscordSnapshot(snapshot = {}) {
         }))
       : [],
 
-    callbackStateMode: snapshot.callbackStateMode || snapshot.stateMode || null
+    callbackStateMode: snapshot.callbackStateMode || snapshot.stateMode || null,
+    panelRevision: snapshot.panelRevision || null
   };
 }
 
@@ -526,6 +540,8 @@ function serializeGuildFromSession(guild = {}) {
     isOwner: !!guild.isOwner,
     isAdmin: !!guild.isAdmin,
     canManage: !!guild.canManage,
+    canManageGuild: !!guild.canManageGuild,
+    canManageRoles: !!guild.canManageRoles,
     permissions: guild.permissions || "0"
   };
 }
@@ -647,6 +663,7 @@ function buildLogQuery(guildId, reqQuery = {}) {
       { userId: q },
       { roleId: q },
       { reason: rx },
+      { requestId: q },
       { "discordSnapshot.username": rx },
       { "discordSnapshot.globalName": rx },
       { "discordSnapshot.email": rx },
@@ -727,6 +744,12 @@ function buildRiskSummary(logs = []) {
   };
 }
 
+const crypto = require("crypto");
+
+function makePanelRevision(prefix = "panel") {
+  return `${prefix}_${Date.now().toString(36)}_${crypto.randomBytes(8).toString("hex")}`;
+}
+
 function getStateSecret() {
   return String(
     process.env.VERIFY_STATE_SECRET ||
@@ -748,8 +771,6 @@ function requireStateSecret() {
   return secret;
 }
 
-const crypto = require("crypto");
-
 function signStateData(data) {
   return crypto
     .createHmac("sha256", requireStateSecret())
@@ -757,19 +778,28 @@ function signStateData(data) {
     .digest("base64url")
     .slice(0, 22);
 }
-
-function createCompactCallbackState({ guildId, roleId, expectedUserId = null }) {
+function createCompactCallbackState({
+  guildId,
+  roleId,
+  expectedUserId = null,
+  panelRevision = null
+}) {
   const user = expectedUserId || "0";
+
+  const revision = String(panelRevision || "legacy")
+    .replace(/[^a-zA-Z0-9_-]/g, "_")
+    .slice(0, 80) || "legacy";
+
   const ts = (Date.now() + 1000 * 60 * 60 * 24 * 365 * 10).toString(36);
   const nonce = crypto.randomBytes(6).toString("base64url");
 
-  const data = `3|${guildId}|${roleId}|${user}|${ts}|${nonce}`;
+  const data = `4|${guildId}|${roleId}|${user}|${revision}|${ts}|${nonce}`;
   const sig = signStateData(data);
 
-  return `3.${guildId}.${roleId}.${user}.${ts}.${nonce}.${sig}`;
+  return `4.${guildId}.${roleId}.${user}.${revision}.${ts}.${nonce}.${sig}`;
 }
 
-function buildDiscordAuthorizeUrl(req, { guildId, roleId }) {
+function buildDiscordAuthorizeUrl(req, { guildId, roleId, panelRevision = null }) {
   const dashboardUrl = getPublicBaseUrl(req);
   const clientId = process.env.DISCORD_CLIENT_ID;
 
@@ -777,7 +807,13 @@ function buildDiscordAuthorizeUrl(req, { guildId, roleId }) {
   if (!clientId) throw new Error("Missing DISCORD_CLIENT_ID");
 
   const redirectUri = `${dashboardUrl}/auth/callback`;
-  const state = createCompactCallbackState({ guildId, roleId, expectedUserId: null });
+
+  const state = createCompactCallbackState({
+    guildId,
+    roleId,
+    expectedUserId: null,
+    panelRevision
+  });
 
   const params = new URLSearchParams({
     client_id: clientId,
@@ -800,7 +836,8 @@ function makePanelPayload(req, { guildId, verification }) {
   if (mode === "oauth") {
     oauthUrl = buildDiscordAuthorizeUrl(req, {
       guildId,
-      roleId: verification.roleId
+      roleId: verification.roleId,
+      panelRevision: verification.panelRevision
     });
   }
 
@@ -1041,6 +1078,7 @@ async function validateVerificationConfig(req, guildId, verification) {
     errors
   });
 }
+
 /* =============================================================================
    View Route
 ============================================================================= */
@@ -1063,7 +1101,6 @@ router.get("/api/guilds", requireAdmin, (req, res) => {
     guilds
   });
 });
-
 /* =============================================================================
    Config / Resources
 ============================================================================= */
@@ -1170,12 +1207,21 @@ router.post("/api/guild/:guildId/verify/panel/send", requireAdmin, requireGuildA
     }
 
     const channelId = cleanSnowflake(verification.channelId);
+
     if (!channelId) {
       return res.status(400).json({
         success: false,
         error: "Channel ID ไม่ถูกต้อง"
       });
     }
+
+    /*
+      สำคัญ:
+      ส่งแผงใหม่ = rotate state ใหม่เสมอ
+      แผงเก่าที่มี state เก่าจะถูก callback ปัดตกเมื่อ oauth.js เช็ก panelRevision
+    */
+    verification.panelRevision = makePanelRevision("panel");
+    verification.panelRevisionUpdatedAt = now();
 
     const payload = makePanelPayload(req, { guildId, verification });
     const sent = await discordAPI.createChannelMessage(channelId, payload);
@@ -1205,6 +1251,8 @@ router.post("/api/guild/:guildId/verify/panel/send", requireAdmin, requireGuildA
       message: "ส่งแผงยืนยันตัวตนใหม่แล้ว",
       messageId: verification.messageId,
       channelId: verification.channelId,
+      panelRevision: verification.panelRevision,
+      panelRevisionUpdatedAt: verification.panelRevisionUpdatedAt,
       config: serializeConfig(config),
       validation
     });
@@ -1245,11 +1293,19 @@ router.patch("/api/guild/:guildId/verify/panel/update", requireAdmin, requireGui
     if (!existing.ok) {
       return res.status(404).json({
         success: false,
-        error: "หา message เดิมไม่เจอ หรือบอทไม่มีสิทธิ์อ่าน message นี้ ให้กดส่งแผงใหม่ดัก",
+        error: "หา message เดิมไม่เจอ หรือบอทไม่มีสิทธิ์อ่าน message นี้ ให้กดส่งแผงใหม่แทน",
         discordStatus: existing.status,
         discordError: existing.error
       });
     }
+
+    /*
+      สำคัญ:
+      แก้แผงเดิม = rotate state ใหม่เสมอ
+      message เดิมยังอยู่ แต่ URL ในปุ่มจะเปลี่ยนเป็น state revision ล่าสุด
+    */
+    verification.panelRevision = makePanelRevision("panel");
+    verification.panelRevisionUpdatedAt = now();
 
     const payload = makePanelPayload(req, { guildId, verification });
     const edited = await discordAPI.editChannelMessage(channelId, messageId, payload);
@@ -1279,6 +1335,8 @@ router.patch("/api/guild/:guildId/verify/panel/update", requireAdmin, requireGui
       message: "แก้ไขแผงเดิมใน Discord แล้ว",
       messageId,
       channelId,
+      panelRevision: verification.panelRevision,
+      panelRevisionUpdatedAt: verification.panelRevisionUpdatedAt,
       config: serializeConfig(config),
       validation
     });
@@ -1295,7 +1353,13 @@ router.post("/api/guild/:guildId/verify/disable", requireAdmin, requireGuildAdmi
     const config = await ensureGuildConfig(guildId, req.adminGuild?.name);
     const verification = mergeVerificationConfig(config.verification || {}, req.body || {});
 
+    /*
+      ปิดระบบ = rotate revision เป็น disabled ทันที
+      ต่อให้มีคนกดแผงเก่า callback ก็จะไม่ตรงกับ revision ล่าสุด
+    */
     verification.enabled = false;
+    verification.panelRevision = makePanelRevision("disabled");
+    verification.panelRevisionUpdatedAt = now();
     verification.updatedBy = adminId;
     verification.updatedAt = now();
 
@@ -1308,6 +1372,8 @@ router.post("/api/guild/:guildId/verify/disable", requireAdmin, requireGuildAdmi
     res.json({
       success: true,
       message: "ปิดระบบยืนยันตัวตนแล้ว",
+      panelRevision: verification.panelRevision,
+      panelRevisionUpdatedAt: verification.panelRevisionUpdatedAt,
       config: serializeConfig(config)
     });
   } catch (err) {
@@ -1346,7 +1412,6 @@ router.get("/api/guild/:guildId/logs", requireAdmin, requireGuildAdmin, async (r
     return sendServerError(res, "logs", err, "โหลด logs ไม่สำเร็จ");
   }
 });
-
 router.get("/api/guild/:guildId/members", requireAdmin, requireGuildAdmin, async (req, res) => {
   try {
     const { guildId } = req.params;
@@ -1374,6 +1439,7 @@ router.get("/api/guild/:guildId/members", requireAdmin, requireGuildAdmin, async
     return sendServerError(res, "members", err, "โหลด members ไม่สำเร็จ");
   }
 });
+
 router.get("/api/guild/:guildId/stats", requireAdmin, requireGuildAdmin, async (req, res) => {
   try {
     const { guildId } = req.params;
