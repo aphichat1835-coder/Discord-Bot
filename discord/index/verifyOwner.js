@@ -587,6 +587,7 @@ function renderOverview(){
         '<span class="badge enabled">OK '+esc(s.success || 0)+'</span>'+
         '<span class="badge disabled">Blocked '+esc(s.blocked || 0)+'</span>'+
         '<span class="badge warn">Risk '+esc(s.highRisk || 0)+'</span>'+
+        '<span class="badge warn">Old Panel '+esc(s.panelRevisionMismatch || 0)+'</span>'+
       '</td>'+
       '<td>'+
         '<button class="btn soft" onclick="loadGuildDetail(\\''+esc(g.guildId)+'\\')">Details</button>'+
@@ -679,7 +680,9 @@ async function loadGuildDetail(guildId){
         (x.result || '-')+
         ' / '+(x.reason || '-')+
         ' / user '+(x.userId || '-')+
-        ' / request '+(x.requestId || '-');
+        ' / request '+(x.requestId || '-')+
+        ' / stateRev '+(x.statePanelRevision || '-')+
+        ' / latestRev '+(x.latestPanelRevision || '-');
     }).join('\\n');
 
     const panelRevision =
@@ -787,7 +790,7 @@ function registerVerifyOwnerRoutes({ app, express, API_SECRET }) {
 
     app.get('/api/verify-owner/overview', auth.requirePin, async (req, res) => {
         try {
-            const data = await callDashboardInternal('/internal/overview', {}, API_SECRET);
+            const data = await callDashboardInternal('/internal/overview?enabled=all', {}, API_SECRET);
 
             res.json(data);
         } catch (err) {
