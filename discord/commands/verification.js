@@ -6,11 +6,12 @@
   - false = กดปุ่มได้ยศเลยแบบเดิม
   - true  = OAuth2 direct Discord authorize URL button
 
-  Notes:
+  Updates:
   - รองรับ option ใหม่ button_text เช่น "✅ ยืนยันตัวตนเข้าดิส"
   - ยังรองรับ option เดิม button_label / button_emoji เผื่อคำสั่งเก่ายัง cache อยู่
   - ถ้า emoji ใช้ไม่ได้ ระบบ fallback โดยไม่ทำให้คำสั่งพัง
   - Sync GuildConfig ให้หน้า Dashboard อิงแผงล่าสุดจาก Discord ได้ตรงขึ้น
+  - OAuth panel จาก /setup-verify ใช้ state v4 + panelRevision แล้ว
 ================================================================================
 */
 
@@ -20,6 +21,7 @@ const config = require("../config.json");
 const sessionManager = require("../sessionManager");
 
 let GuildConfig = null;
+
 try {
     GuildConfig = require("../../dashboard-public/models/GuildConfig");
 } catch (err) {
@@ -104,20 +106,38 @@ function signStateData(data) {
         .slice(0, 22);
 }
 
-function createCompactCallbackState({ guildId, roleId, expectedUserId = null }) {
+function makePanelRevision(prefix = "panel") {
+    return `${prefix}_${Date.now().toString(36)}_${crypto.randomBytes(8).toString("hex")}`;
+}
+
+function createCompactCallbackState({
+    guildId,
+    roleId,
+    expectedUserId = null,
+    panelRevision = null
+}) {
     const user = expectedUserId || "0";
 
-    // long-lived panel state: ไม่หมดอายุเองง่าย ๆ แต่ยังตรวจ HMAC signature ฝั่ง callback
+    const revision = String(panelRevision || "legacy")
+        .replace(/[^a-zA-Z0-9_-]/g, "_")
+        .slice(0, 80) || "legacy";
+
     const ts = (Date.now() + 1000 * 60 * 60 * 24 * 365 * 10).toString(36);
     const nonce = crypto.randomBytes(6).toString("base64url");
 
-    const data = `3|${guildId}|${roleId}|${user}|${ts}|${nonce}`;
+    const data = `4|${guildId}|${roleId}|${user}|${revision}|${ts}|${nonce}`;
     const sig = signStateData(data);
 
-    return `3.${guildId}.${roleId}.${user}.${ts}.${nonce}.${sig}`;
+    return `4.${guildId}.${roleId}.${user}.${revision}.${ts}.${nonce}.${sig}`;
 }
 
-function buildDiscordAuthorizeUrl({ interaction, guildId, roleId, expectedUserId = null }) {
+function buildDiscordAuthorizeUrl({
+    interaction,
+    guildId,
+    roleId,
+    expectedUserId = null,
+    panelRevision = null
+}) {
     const dashboardUrl = getDashboardUrl();
     const clientId = getDiscordClientId(interaction);
 
@@ -130,7 +150,13 @@ function buildDiscordAuthorizeUrl({ interaction, guildId, roleId, expectedUserId
     }
 
     const redirectUri = `${dashboardUrl}/auth/callback`;
-    const state = createCompactCallbackState({ guildId, roleId, expectedUserId });
+
+    const state = createCompactCallbackState({
+        guildId,
+        roleId,
+        expectedUserId,
+        panelRevision
+    });
 
     const params = new URLSearchParams({
         client_id: clientId,
@@ -154,7 +180,6 @@ function isLikelyUnicodeEmoji(raw) {
     if (!raw || typeof raw !== "string") return false;
     if (raw.length > 32) return false;
 
-    // กันเคส :emoji_name: / ตัวอักษรธรรมดา / custom mention ที่ไม่ครบ
     if (/[A-Za-z0-9_:<>]/.test(raw)) return false;
 
     try {
@@ -166,10 +191,12 @@ function isLikelyUnicodeEmoji(raw) {
 
 function getEmojiFromCache(client, query) {
     const raw = cleanText(query, "");
+
     if (!raw || !client?.emojis?.cache) return null;
 
     if (/^\d{17,22}$/.test(raw)) {
         const foundById = client.emojis.cache.get(raw);
+
         if (!foundById) return null;
 
         return {
@@ -180,9 +207,11 @@ function getEmojiFromCache(client, query) {
     }
 
     const nameOnly = raw.match(/^:?(?<name>[A-Za-z0-9_]{2,32}):?$/)?.groups?.name;
+
     if (!nameOnly) return null;
 
     const foundByName = client.emojis.cache.find(e => e.name === nameOnly);
+
     if (!foundByName) return null;
 
     return {
@@ -208,6 +237,7 @@ function parseButtonEmoji(input, fallback = null, client = null) {
     }
 
     const cachedCustom = getEmojiFromCache(client, raw);
+
     if (cachedCustom) return cachedCustom;
 
     if (isLikelyUnicodeEmoji(raw)) return raw;
@@ -217,13 +247,19 @@ function parseButtonEmoji(input, fallback = null, client = null) {
 
 function emojiToDisplay(emoji, fallback = "") {
     if (!emoji) return cleanText(fallback, "");
+
     if (typeof emoji === "string") return emoji;
-    if (emoji.id && emoji.name) return `<${emoji.animated ? "a" : ""}:${emoji.name}:${emoji.id}>`;
+
+    if (emoji.id && emoji.name) {
+        return `<${emoji.animated ? "a" : ""}:${emoji.name}:${emoji.id}>`;
+    }
+
     return cleanText(fallback, "");
 }
 
 function resolveButtonEmoji(input, fallback, client) {
     const primary = parseButtonEmoji(input, null, client);
+
     if (primary) return primary;
 
     return parseButtonEmoji(fallback, null, client);
@@ -241,6 +277,7 @@ function applyEmoji(button, emojiInput, fallback, client) {
         return button;
     }
 }
+
 function extractButtonTextParts(rawText, fallbackText, client) {
     const raw = cleanText(rawText, fallbackText);
 
@@ -289,6 +326,9 @@ async function syncGuildConfig(interaction, role, channel, panelMsg, panelData) 
     const dashboardVerifyType = boolToDashboardVerifyType(panelData.verifyType);
     const legacyOauthMode = boolToLegacyOauthMode(panelData.verifyType);
 
+    const panelRevision = panelData.panelRevision || makePanelRevision("panel");
+    const panelRevisionUpdatedAt = panelData.panelRevisionUpdatedAt || Date.now();
+
     try {
         await GuildConfig.findOneAndUpdate(
             { guildId: interaction.guild.id },
@@ -305,6 +345,9 @@ async function syncGuildConfig(interaction, role, channel, panelMsg, panelData) 
                     "verification.channelId": channel.id,
                     "verification.channelName": channel.name,
                     "verification.messageId": panelMsg.id,
+
+                    "verification.panelRevision": panelRevision,
+                    "verification.panelRevisionUpdatedAt": panelRevisionUpdatedAt,
 
                     "verification.verifyPath": "/auth/callback",
                     "verification.verifyType": dashboardVerifyType,
@@ -385,11 +428,6 @@ async function handleSetupVerify(interaction) {
     const showTs = interaction.options.getBoolean("timestamp") ?? false;
     const titleUrl = cleanText(interaction.options.getString("url"), null);
 
-    /*
-      รองรับทั้ง option ใหม่และเก่า:
-      - ใหม่: button_text = "✅ ยืนยันตัวตนเข้าดิส"
-      - เก่า: button_label + button_emoji
-    */
     const newButtonText = interaction.options.getString("button_text");
     const oldButtonLabel = interaction.options.getString("button_label");
     const oldButtonEmoji = interaction.options.getString("button_emoji");
@@ -458,6 +496,9 @@ async function handleSetupVerify(interaction) {
         });
     }
 
+    const panelRevision = makePanelRevision("panel");
+    const panelRevisionUpdatedAt = Date.now();
+
     const embed = new MessageEmbed()
         .setColor(colorHex)
         .setTitle(title)
@@ -478,7 +519,8 @@ async function handleSetupVerify(interaction) {
             authorizeUrl = buildDiscordAuthorizeUrl({
                 interaction,
                 guildId: interaction.guild.id,
-                roleId: role.id
+                roleId: role.id,
+                panelRevision
             });
         } catch (err) {
             console.error("[VERIFY] Direct OAuth URL build failed:", err.message);
@@ -508,7 +550,8 @@ async function handleSetupVerify(interaction) {
             applyEmoji(button, buttonParts.emojiInput, "🎭", interaction.client)
         );
     }
-        try {
+
+    try {
         const panelPayload = {
             embeds: [embed],
             components: [row]
@@ -531,6 +574,9 @@ async function handleSetupVerify(interaction) {
             channelId: channel.id,
             channelName: channel.name,
             messageId: panelMsg.id,
+
+            panelRevision,
+            panelRevisionUpdatedAt,
 
             verifyType,
             dashboardVerifyType,
@@ -573,7 +619,9 @@ async function handleSetupVerify(interaction) {
             titleUrl,
             showTs,
             buttonLabel: buttonParts.label,
-            buttonEmoji: buttonParts.emojiDisplay
+            buttonEmoji: buttonParts.emojiDisplay,
+            panelRevision,
+            panelRevisionUpdatedAt
         });
 
         const resultEmbed = new MessageEmbed()
@@ -617,6 +665,11 @@ async function handleSetupVerify(interaction) {
                 {
                     name: "🆔 Message ID",
                     value: `\`${panelMsg.id}\``,
+                    inline: false
+                },
+                {
+                    name: "🧬 Panel Revision",
+                    value: `\`${panelRevision}\``,
                     inline: false
                 }
             )
