@@ -12,6 +12,7 @@
   - ถ้า emoji ใช้ไม่ได้ ระบบ fallback โดยไม่ทำให้คำสั่งพัง
   - Sync GuildConfig ให้หน้า Dashboard อิงแผงล่าสุดจาก Discord ได้ตรงขึ้น
   - OAuth panel จาก /setup-verify ใช้ state v4 + panelRevision แล้ว
+  - Legacy verify_oauth_ button ไม่สร้าง OAuth URL ต่อแล้ว เพื่อกันแผงเก่าชน panelRevision
 ================================================================================
 */
 
@@ -733,30 +734,10 @@ async function handleVerifyButton(interaction) {
     }
 
     if (customId.startsWith("verify_oauth_")) {
-        const roleId = customId.replace("verify_oauth_", "");
-
-        let authorizeUrl;
-
-        try {
-            authorizeUrl = buildDiscordAuthorizeUrl({
-                interaction,
-                guildId: guild.id,
-                roleId,
-                expectedUserId: interaction.user.id
-            });
-        } catch (err) {
-            console.error("[VERIFY] Legacy direct OAuth URL build failed:", err.message);
-
-            return interaction.reply({
-                content: `> ${config.emojis.error} สร้างลิงก์ OAuth ไม่สำเร็จ: ${err.message}`,
-                ephemeral: true
-            });
-        }
-
         return interaction.reply({
             content:
-                `> แผงนี้เป็นแผงเก่า กรุณาให้แอดมินสร้างแผงใหม่\n` +
-                `> [คลิกเพื่อยืนยันตัวตน](${authorizeUrl})`,
+                `> แผงยืนยันนี้เป็นแผงเก่าแล้ว\n` +
+                `> กรุณาให้แอดมินกดส่งแผงใหม่ หรือแก้แผงล่าสุดจากหน้า Dashboard`,
             ephemeral: true
         });
     }
