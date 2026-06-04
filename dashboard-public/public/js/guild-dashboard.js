@@ -485,6 +485,7 @@
     setText(SELECTORS.statTor, fmtNumber(stats.tor));
     setText(SELECTORS.statPending, fmtNumber(stats.pendingReveal));
   }
+
     function renderOverviewLogs(logs = []) {
     const box = $(SELECTORS.overviewLogs);
     if (!box) return;
@@ -1431,7 +1432,6 @@
   async function bootInitialData() {
     if (!state.guildId) {
       showToast("ไม่พบ Guild ID จาก URL", "err");
-
       setHtml("overview-error", `
         <div class="alert alert-danger">
           ไม่พบ Guild ID จาก URL กรุณากลับไปเลือกเซิร์ฟเวอร์ใหม่
