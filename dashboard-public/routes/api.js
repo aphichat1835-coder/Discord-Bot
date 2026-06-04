@@ -114,6 +114,16 @@ function safeRecentLog(log) {
         os: raw.device?.os || null,
         platform: raw.device?.platform || null,
 
+        statePanelRevision:
+            raw.guildSnapshot?.statePanelRevision ||
+            raw.discordSnapshot?.statePanelRevision ||
+            null,
+
+        latestPanelRevision:
+            raw.guildSnapshot?.latestPanelRevision ||
+            raw.discordSnapshot?.latestPanelRevision ||
+            null,
+
         verifiedAt: raw.verifiedAt || null,
         createdAt: raw.createdAt || raw.verifiedAt || null
     };
@@ -144,39 +154,72 @@ function safeRevealRequest(request) {
     };
 }
 
+function emptyStats() {
+    return {
+        total: 0,
+        success: 0,
+        blocked: 0,
+        failed: 0,
+        vpn: 0,
+        proxy: 0,
+        tor: 0,
+        hosting: 0,
+        highRisk: 0,
+        panelRevisionMismatch: 0,
+        lastAt: null
+    };
+}
+
 router.get('/internal/overview', async (req, res) => {
     if (!checkAuth(req, res)) return;
 
     try {
-        const configs = await GuildConfig.find({ 'verification.enabled': true })
+        const showAll = String(req.query.enabled || '').toLowerCase() === 'all';
+
+        const configFilter = showAll
+            ? {}
+            : { 'verification.enabled': true };
+
+        const configs = await GuildConfig.find(configFilter)
             .select('guildId guildName updatedAt verification security')
             .lean();
 
         const guildIds = configs.map(c => c.guildId);
 
-        const stats = await VerifyLog.aggregate([
-            {
-                $match: {
-                    guildId: { $in: guildIds },
-                    deletedAt: { $exists: false }
+        const stats = guildIds.length
+            ? await VerifyLog.aggregate([
+                {
+                    $match: {
+                        guildId: { $in: guildIds },
+                        deletedAt: { $exists: false }
+                    }
+                },
+                {
+                    $group: {
+                        _id: '$guildId',
+                        total: { $sum: 1 },
+                        success: { $sum: { $cond: [{ $eq: ['$result', 'success'] }, 1, 0] } },
+                        blocked: { $sum: { $cond: [{ $eq: ['$result', 'blocked'] }, 1, 0] } },
+                        failed: { $sum: { $cond: [{ $eq: ['$result', 'failed'] }, 1, 0] } },
+                        vpn: { $sum: { $cond: [{ $eq: ['$ipInfo.isVPN', true] }, 1, 0] } },
+                        proxy: { $sum: { $cond: [{ $eq: ['$ipInfo.isProxy', true] }, 1, 0] } },
+                        tor: { $sum: { $cond: [{ $eq: ['$ipInfo.isTOR', true] }, 1, 0] } },
+                        hosting: { $sum: { $cond: [{ $eq: ['$ipInfo.hosting', true] }, 1, 0] } },
+                        highRisk: { $sum: { $cond: [{ $gte: ['$riskScore', 70] }, 1, 0] } },
+                        panelRevisionMismatch: {
+                            $sum: {
+                                $cond: [
+                                    { $eq: ['$reason', 'panel_revision_mismatch'] },
+                                    1,
+                                    0
+                                ]
+                            }
+                        },
+                        lastAt: { $max: '$verifiedAt' }
+                    }
                 }
-            },
-            {
-                $group: {
-                    _id: '$guildId',
-                    total: { $sum: 1 },
-                    success: { $sum: { $cond: [{ $eq: ['$result', 'success'] }, 1, 0] } },
-                    blocked: { $sum: { $cond: [{ $eq: ['$result', 'blocked'] }, 1, 0] } },
-                    failed: { $sum: { $cond: [{ $eq: ['$result', 'failed'] }, 1, 0] } },
-                    vpn: { $sum: { $cond: [{ $eq: ['$ipInfo.isVPN', true] }, 1, 0] } },
-                    proxy: { $sum: { $cond: [{ $eq: ['$ipInfo.isProxy', true] }, 1, 0] } },
-                    tor: { $sum: { $cond: [{ $eq: ['$ipInfo.isTOR', true] }, 1, 0] } },
-                    hosting: { $sum: { $cond: [{ $eq: ['$ipInfo.hosting', true] }, 1, 0] } },
-                    highRisk: { $sum: { $cond: [{ $gte: ['$riskScore', 70] }, 1, 0] } },
-                    lastAt: { $max: '$verifiedAt' }
-                }
-            }
-        ]);
+            ])
+            : [];
 
         const statsMap = Object.fromEntries(stats.map(s => [s._id, s]));
 
@@ -185,24 +228,14 @@ router.get('/internal/overview', async (req, res) => {
             guildName: c.guildName || 'Unknown',
             verification: c.verification || {},
             security: c.security || {},
-            stats: statsMap[c.guildId] || {
-                total: 0,
-                success: 0,
-                blocked: 0,
-                failed: 0,
-                vpn: 0,
-                proxy: 0,
-                tor: 0,
-                hosting: 0,
-                highRisk: 0,
-                lastAt: null
-            }
+            stats: statsMap[c.guildId] || emptyStats()
         }));
 
         res.json({
             success: true,
             guilds: result,
-            total: result.length
+            total: result.length,
+            showAll
         });
 
     } catch (err) {
@@ -238,6 +271,15 @@ router.get('/internal/guild/:guildId/stats', async (req, res) => {
                         tor: { $sum: { $cond: [{ $eq: ['$ipInfo.isTOR', true] }, 1, 0] } },
                         hosting: { $sum: { $cond: [{ $eq: ['$ipInfo.hosting', true] }, 1, 0] } },
                         highRisk: { $sum: { $cond: [{ $gte: ['$riskScore', 70] }, 1, 0] } },
+                        panelRevisionMismatch: {
+                            $sum: {
+                                $cond: [
+                                    { $eq: ['$reason', 'panel_revision_mismatch'] },
+                                    1,
+                                    0
+                                ]
+                            }
+                        },
                         lastAt: { $max: '$verifiedAt' }
                     }
                 }
@@ -248,6 +290,8 @@ router.get('/internal/guild/:guildId/stats', async (req, res) => {
                 .limit(10)
                 .select(
                     'requestId userId roleId result reason ' +
+                    'guildSnapshot.statePanelRevision guildSnapshot.latestPanelRevision ' +
+                    'discordSnapshot.statePanelRevision discordSnapshot.latestPanelRevision ' +
                     'ipInfo.country ipInfo.countryCode ipInfo.city ipInfo.isp ' +
                     'ipInfo.isVPN ipInfo.isProxy ipInfo.isTOR ipInfo.hosting ' +
                     'device.browser device.os device.platform ' +
@@ -259,18 +303,7 @@ router.get('/internal/guild/:guildId/stats', async (req, res) => {
         res.json({
             success: true,
             config: safeConfig(config),
-            stats: counts[0] || {
-                total: 0,
-                success: 0,
-                blocked: 0,
-                failed: 0,
-                vpn: 0,
-                proxy: 0,
-                tor: 0,
-                hosting: 0,
-                highRisk: 0,
-                lastAt: null
-            },
+            stats: counts[0] || emptyStats(),
             recent: recentLogs.map(safeRecentLog)
         });
 
@@ -445,6 +478,7 @@ router.post('/internal/ip-reveal/:requestId/approve', async (req, res) => {
         request.approvedAt = Date.now();
         request.ownerNote = ownerNote || '';
         request.updatedAt = Date.now();
+
         await request.save();
 
         res.json({
