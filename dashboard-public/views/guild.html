@@ -1,632 +1,1129 @@
 <!DOCTYPE html>
 <html lang="th">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>ตั้งค่าเซิร์ฟเวอร์</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{
-  font-family:'Segoe UI','Noto Sans Thai',sans-serif;
-  background:#07050f;
-  color:#ede9fe;
-  min-height:100vh;
-  padding:20px 16px;
-  font-size:15px;
-}
-.container{max-width:1000px;margin:0 auto}
-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:24px;flex-wrap:wrap}
-header a{color:#a78bfa;text-decoration:none;font-size:.82rem}
-header h1{
-  font-size:1.2rem;
-  font-weight:900;
-  background:linear-gradient(135deg,#a855f7,#d8b4fe);
-  -webkit-background-clip:text;
-  -webkit-text-fill-color:transparent;
-}
-.nav-actions{display:flex;gap:10px;align-items:center}
-.tabs{display:flex;gap:6px;margin-bottom:20px;flex-wrap:wrap}
-.tab{
-  padding:8px 16px;
-  background:rgba(20,15,40,.8);
-  border:1px solid rgba(120,80,255,.2);
-  border-radius:10px;
-  cursor:pointer;
-  font-size:.8rem;
-  color:#a78bfa;
-  transition:all .15s;
-}
-.tab.active,.tab:hover{
-  background:linear-gradient(135deg,#7c3aed,#a855f7);
-  color:#fff;
-  border-color:transparent;
-}
-.section{display:none}
-.section.active{display:block}
-.card{
-  background:rgba(20,15,40,.85);
-  border:1px solid rgba(120,80,255,.18);
-  border-radius:14px;
-  padding:20px;
-  margin-bottom:14px;
-}
-.card h3{
-  font-size:.8rem;
-  color:#a78bfa;
-  text-transform:uppercase;
-  letter-spacing:1px;
-  margin-bottom:14px;
-  padding-bottom:10px;
-  border-bottom:1px solid rgba(120,80,255,.15);
-}
-.grid{display:grid;gap:14px}
-@media(min-width:720px){.grid-2{grid-template-columns:1fr 1fr}}
-label{
-  display:block;
-  color:#a78bfa;
-  font-size:.8rem;
-  margin-top:12px;
-  font-weight:500;
-}
-input[type=text],input[type=number],select,textarea{
-  width:100%;
-  background:rgba(15,11,30,.8);
-  color:#ede9fe;
-  border:1px solid rgba(120,80,255,.2);
-  padding:9px 13px;
-  border-radius:9px;
-  font-size:.88rem;
-  margin-top:5px;
-  outline:none;
-}
-textarea{min-height:76px;resize:vertical}
-input:focus,select:focus,textarea:focus{
-  border-color:#a855f7;
-  box-shadow:0 0 0 3px rgba(168,85,247,.15);
-}
-.toggle-row{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:14px;
-  padding:11px 0;
-  border-bottom:1px solid rgba(120,80,255,.07);
-}
-.toggle-row:last-child{border:none}
-.toggle-label{font-size:.88rem}
-.toggle-sub{font-size:.74rem;color:#7c3aed88;margin-top:2px}
-.toggle{position:relative;width:44px;height:24px;flex-shrink:0}
-.toggle input{opacity:0;width:0;height:0}
-.slider{
-  position:absolute;
-  inset:0;
-  background:rgba(20,15,40,1);
-  border-radius:24px;
-  cursor:pointer;
-  border:1px solid rgba(120,80,255,.2);
-  transition:.2s;
-}
-.slider::before{
-  position:absolute;
-  content:'';
-  width:18px;
-  height:18px;
-  left:2px;
-  bottom:2px;
-  background:#7c3aed88;
-  border-radius:50%;
-  transition:.2s;
-}
-input:checked+.slider{
-  background:linear-gradient(135deg,#7c3aed,#a855f7);
-  border-color:#a855f7;
-}
-input:checked+.slider::before{
-  transform:translateX(20px);
-  background:#fff;
-}
-.btn{
-  padding:10px 16px;
-  border:none;
-  border-radius:10px;
-  font-weight:700;
-  cursor:pointer;
-  font-size:.88rem;
-  transition:all .18s;
-}
-.btn-primary{
-  background:linear-gradient(135deg,#7c3aed,#a855f7);
-  color:#fff;
-}
-.btn-danger{
-  background:rgba(239,68,68,.12);
-  color:#f87171;
-  border:1px solid rgba(239,68,68,.3);
-}
-.btn-soft{
-  background:rgba(20,15,40,.8);
-  border:1px solid rgba(120,80,255,.2);
-  color:#a78bfa;
-}
-.btn:hover{transform:translateY(-1px)}
-.btn-block{width:100%;margin-top:14px}
-.stat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px}
-@media(min-width:700px){.stat-grid{grid-template-columns:repeat(7,1fr)}}
-.stat-box{
-  background:rgba(15,11,30,.8);
-  border:1px solid rgba(120,80,255,.15);
-  border-radius:12px;
-  padding:14px;
-  text-align:center;
-}
-.stat-val{font-size:1.4rem;font-weight:900;line-height:1.1}
-.stat-lbl{font-size:.65rem;color:#7c3aed88;margin-top:4px;text-transform:uppercase}
-.table-wrap{overflow:auto}
-table{width:100%;border-collapse:collapse;font-size:.82rem;min-width:760px}
-th{
-  text-align:left;
-  padding:8px 10px;
-  color:#7c3aed88;
-  border-bottom:1px solid rgba(120,80,255,.12);
-  font-size:.72rem;
-  text-transform:uppercase;
-}
-td{
-  padding:9px 10px;
-  border-bottom:1px solid rgba(120,80,255,.06);
-  vertical-align:middle;
-}
-tr:last-child td{border:none}
-.badge{
-  padding:2px 8px;
-  border-radius:20px;
-  font-size:.7rem;
-  font-weight:700;
-  display:inline-block;
-}
-.badge-ok{background:rgba(34,197,94,.12);color:#4ade80;border:1px solid rgba(34,197,94,.3)}
-.badge-blocked{background:rgba(239,68,68,.12);color:#f87171;border:1px solid rgba(239,68,68,.3)}
-.badge-failed{background:rgba(234,179,8,.12);color:#fbbf24;border:1px solid rgba(234,179,8,.3)}
-.flag{font-size:.75rem;color:#7c3aed88;margin-top:2px}
-.vpn-tag{
-  background:rgba(249,115,22,.12);
-  color:#fb923c;
-  border:1px solid rgba(249,115,22,.3);
-  padding:1px 7px;
-  border-radius:20px;
-  font-size:.68rem;
-}
-.toast{
-  position:fixed;
-  bottom:20px;
-  right:16px;
-  padding:10px 18px;
-  border-radius:10px;
-  font-size:.82rem;
-  display:none;
-  z-index:9999;
-  backdrop-filter:blur(10px);
-}
-.toast.ok{background:rgba(20,83,45,.9);border:1px solid rgba(34,197,94,.4);color:#4ade80}
-.toast.err{background:rgba(127,29,29,.9);border:1px solid rgba(239,68,68,.4);color:#f87171}
-.small{font-size:.75rem;color:#7c3aed88}
-.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-.actions{display:flex;gap:8px;flex-wrap:wrap}
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Guild Dashboard — Discord Verification</title>
+  <link rel="stylesheet" href="/css/dashboard.css">
 </head>
+
 <body>
-<div class="container">
-  <header>
-    <div>
-      <a href="/guilds">← กลับ</a>
-      <h1 id="guild-name">กำลังโหลด...</h1>
-    </div>
-    <div class="nav-actions">
-      <a class="btn btn-soft" href="/logout">Logout</a>
-    </div>
-  </header>
+  <div class="mobile-bar">
+    <div class="mobile-bar-inner">
+      <button id="sidebar-toggle" class="btn btn-soft btn-sm" type="button">
+        ☰ เมนู
+      </button>
 
-  <div class="tabs">
-    <div class="tab active" onclick="switchTab('verify',this)">✅ ยืนยันตัวตน</div>
-    <div class="tab" onclick="switchTab('security',this)">🛡️ ความปลอดภัย</div>
-    <div class="tab" onclick="switchTab('members',this)">👥 สมาชิก</div>
-    <div class="tab" onclick="switchTab('stats',this)">📊 สถิติ</div>
-    <div class="tab" onclick="switchTab('logs',this)">📋 Logs</div>
-  </div>
-
-  <div class="section active" id="tab-verify">
-    <div class="card">
-      <h3>⚙️ ตั้งค่าระบบยืนยันตัวตน</h3>
-
-      <div class="toggle-row">
-        <div>
-          <div class="toggle-label">เปิดใช้งานระบบ</div>
-          <div class="toggle-sub">ให้ยศอัตโนมัติหลัง OAuth2</div>
+      <div style="min-width:0;">
+        <div id="guild-title-mobile" style="font-weight:1000;" class="truncate">
+          Guild Dashboard
         </div>
-        <label class="toggle"><input type="checkbox" id="v-enabled"><span class="slider"></span></label>
-      </div>
-
-      <div class="grid grid-2">
-        <div>
-          <label>Role ID ที่จะให้เมื่อยืนยันสำเร็จ</label>
-          <input type="text" id="v-roleId" placeholder="000000000000000000">
-        </div>
-        <div>
-          <label>Channel ID ของแผง verify</label>
-          <input type="text" id="v-channelId" placeholder="ไม่บังคับ">
+        <div class="xsmall muted truncate">
+          Verification Admin Panel
         </div>
       </div>
 
-      <label>Message ID ของแผง verify</label>
-      <input type="text" id="v-messageId" placeholder="ไม่บังคับ">
-
-      <button class="btn btn-primary btn-block" onclick="saveSettings()">💾 บันทึกการตั้งค่า</button>
+      <a class="btn btn-soft btn-sm" href="/guilds">
+        เซิร์ฟ
+      </a>
     </div>
   </div>
 
-  <div class="section" id="tab-security">
-    <div class="card">
-      <h3>🛡️ เงื่อนไขความปลอดภัย</h3>
+  <div id="sidebar-backdrop" class="sidebar-backdrop"></div>
 
-      <div class="toggle-row">
-        <div>
-          <div class="toggle-label">บล็อก VPN / Proxy / TOR</div>
-          <div class="toggle-sub">ไม่ให้ผ่านถ้า IP มีความเสี่ยง</div>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-icon">🛡️</div>
+        <div style="min-width:0;">
+          <div class="brand-title">Verify Dashboard</div>
+          <div class="brand-sub">Discord + Security</div>
         </div>
-        <label class="toggle"><input type="checkbox" id="v-blockVPN" checked><span class="slider"></span></label>
+
+        <button id="sidebar-close" class="btn btn-soft btn-sm" type="button" style="margin-left:auto;">
+          ✕
+        </button>
       </div>
 
-      <div class="toggle-row">
-        <div>
-          <div class="toggle-label">ต้องมี Email</div>
-          <div class="toggle-sub">ต้องมี Email ผูกกับ Discord OAuth</div>
+      <div class="server-card">
+        <div class="server-head">
+          <div id="side-icon" class="server-icon">S</div>
+          <div style="min-width:0;">
+            <div id="side-name" class="server-name">กำลังโหลด...</div>
+            <div id="side-perm" class="brand-sub">Admin access</div>
+          </div>
         </div>
-        <label class="toggle"><input type="checkbox" id="v-requireEmail"><span class="slider"></span></label>
+
+        <div id="side-id" class="server-id mono">—</div>
       </div>
 
-      <div class="toggle-row">
-        <div>
-          <div class="toggle-label">Email ต้อง Verify แล้ว</div>
-          <div class="toggle-sub">ใช้ร่วมกับเงื่อนไขต้องมี Email</div>
-        </div>
-        <label class="toggle"><input type="checkbox" id="v-requireEmailVerified"><span class="slider"></span></label>
+      <nav class="nav">
+        <button class="nav-item active" type="button" data-tab="overview">
+          <span class="nav-item-left">
+            <span class="nav-icon">🏠</span>
+            <span class="nav-label">ภาพรวม</span>
+          </span>
+          <span>›</span>
+        </button>
+
+        <button class="nav-item" type="button" data-tab="verification">
+          <span class="nav-item-left">
+            <span class="nav-icon">🔐</span>
+            <span class="nav-label">ตั้งค่ายืนยันตัวตน</span>
+          </span>
+          <span>›</span>
+        </button>
+
+        <button class="nav-item" type="button" data-tab="security">
+          <span class="nav-item-left">
+            <span class="nav-icon">🧪</span>
+            <span class="nav-label">Security / Policy</span>
+          </span>
+          <span>›</span>
+        </button>
+
+        <button class="nav-item" type="button" data-tab="members">
+          <span class="nav-item-left">
+            <span class="nav-icon">👥</span>
+            <span class="nav-label">สมาชิกที่ยืนยันแล้ว</span>
+          </span>
+          <span>›</span>
+        </button>
+
+        <button class="nav-item" type="button" data-tab="logs">
+          <span class="nav-item-left">
+            <span class="nav-icon">📜</span>
+            <span class="nav-label">Verify Logs</span>
+          </span>
+          <span>›</span>
+        </button>
+
+        <button class="nav-item" type="button" data-tab="risk">
+          <span class="nav-item-left">
+            <span class="nav-icon">🌐</span>
+            <span class="nav-label">Risk & Network</span>
+          </span>
+          <span>›</span>
+        </button>
+
+        <button class="nav-item" type="button" data-tab="privacy">
+          <span class="nav-item-left">
+            <span class="nav-icon">🗂️</span>
+            <span class="nav-label">Data & Privacy</span>
+          </span>
+          <span>›</span>
+        </button>
+      </nav>
+
+      <div class="alert alert-info mt-18">
+        Dashboard นี้แสดงข้อมูลละเอียดที่ระบบดึง/เก็บได้จากการยืนยันตัวตนของเซิร์ฟเวอร์นี้
       </div>
 
-      <div class="toggle-row">
-        <div>
-          <div class="toggle-label">ต้องมี Connections</div>
-          <div class="toggle-sub">เช่น Steam, GitHub, Twitch ฯลฯ</div>
+      <div class="mt-14">
+        <a class="btn btn-soft btn-block" href="/guilds">
+          ← กลับไปเลือกเซิร์ฟเวอร์
+        </a>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="topbar">
+        <div style="min-width:0;">
+          <div class="breadcrumb">
+            <a href="/guilds">Guilds</a>
+            <span>/</span>
+            <span>Dashboard</span>
+          </div>
+
+          <h1 id="guild-title" class="title-lg gradient-text truncate">
+            กำลังโหลด Dashboard...
+          </h1>
+
+          <p id="guild-subtitle" class="card-desc">
+            กำลังโหลดข้อมูลเซิร์ฟเวอร์และระบบยืนยันตัวตน
+          </p>
         </div>
-        <label class="toggle"><input type="checkbox" id="v-requireConnections"><span class="slider"></span></label>
+
+        <div class="topbar-actions">
+          <button class="btn btn-soft" type="button" onclick="location.reload()">
+            🔄 รีเฟรช
+          </button>
+
+          <a class="btn btn-soft" href="/guilds">
+            เปลี่ยนเซิร์ฟเวอร์
+          </a>
+        </div>
       </div>
 
-      <div class="grid grid-2">
-        <div>
-          <label>อายุบัญชีขั้นต่ำ (วัน)</label>
-          <input type="number" id="v-minAge" value="7" min="0" max="3650">
+      <div id="overview-error" class="mb-0"></div>
+
+      <section data-section="overview">
+        <div class="grid grid-4">
+          <div class="stat-card">
+            <div id="stat-total" class="num" style="color:var(--discord);">0</div>
+            <div class="label">Verify ทั้งหมด</div>
+            <div class="sub">จำนวนรายการยืนยันในเซิร์ฟเวอร์นี้</div>
+          </div>
+
+          <div class="stat-card">
+            <div id="stat-success" class="num" style="color:var(--green-2);">0</div>
+            <div class="label">สำเร็จ</div>
+            <div id="stat-rate" class="sub">Success rate 0%</div>
+          </div>
+
+          <div class="stat-card">
+            <div id="stat-blocked" class="num" style="color:var(--red-2);">0</div>
+            <div class="label">ถูกบล็อก/ไม่ผ่าน</div>
+            <div class="sub">ไม่ผ่าน policy หรือเกิด error</div>
+          </div>
+
+          <div class="stat-card">
+            <div id="stat-risk" class="num" style="color:var(--yellow-2);">0</div>
+            <div class="label">High Risk</div>
+            <div class="sub">กลุ่มที่ควรตรวจเพิ่ม</div>
+          </div>
         </div>
-        <div>
-          <label>จำนวน Connections ขั้นต่ำ</label>
-          <input type="number" id="v-minConnections" value="1" min="1" max="20">
+
+        <div class="grid grid-4 mt-14">
+          <div class="stat-card">
+            <div id="stat-vpn" class="num" style="color:var(--cyan);">0</div>
+            <div class="label">VPN</div>
+            <div class="sub">ตรวจจากข้อมูล network</div>
+          </div>
+
+          <div class="stat-card">
+            <div id="stat-proxy" class="num" style="color:var(--blue);">0</div>
+            <div class="label">Proxy</div>
+            <div class="sub">proxy / anonymizer</div>
+          </div>
+
+          <div class="stat-card">
+            <div id="stat-tor" class="num" style="color:var(--purple);">0</div>
+            <div class="label">TOR</div>
+            <div class="sub">เครือข่าย TOR</div>
+          </div>
+
+          <div class="stat-card">
+            <div id="stat-pending" class="num" style="color:var(--yellow-2);">0</div>
+            <div class="label">Pending Requests</div>
+            <div class="sub">คำขอที่รอจัดการ</div>
+          </div>
         </div>
+
+        <div class="grid grid-2 mt-18">
+          <div class="card card-pad">
+            <div class="card-header">
+              <div>
+                <h2>สถานะระบบยืนยันตัวตน</h2>
+                <div class="card-desc">
+                  สรุป config ล่าสุดที่ Dashboard ใช้งานอยู่
+                </div>
+              </div>
+              <span id="overview-enabled" class="badge badge-muted">Loading</span>
+            </div>
+
+            <div class="kv">
+              <div class="kv-row">
+                <div class="kv-key">ยศหลังยืนยัน</div>
+                <div id="overview-role" class="kv-val">—</div>
+              </div>
+
+              <div class="kv-row">
+                <div class="kv-key">ช่องแผงยืนยัน</div>
+                <div id="overview-channel" class="kv-val">—</div>
+              </div>
+
+              <div class="kv-row">
+                <div class="kv-key">Message ID ของแผง</div>
+                <div id="overview-message" class="kv-val mono">—</div>
+              </div>
+
+              <div class="kv-row">
+                <div class="kv-key">โหมด</div>
+                <div id="overview-mode" class="kv-val">—</div>
+              </div>
+
+              <div class="kv-row">
+                <div class="kv-key">อัปเดตล่าสุด</div>
+                <div id="overview-updated" class="kv-val">—</div>
+              </div>
+
+              <div class="kv-row">
+                <div class="kv-key">แหล่งข้อมูลล่าสุด</div>
+                <div id="overview-source" class="kv-val">—</div>
+              </div>
+            </div>
+
+            <div class="alert alert-info mt-14">
+              ถ้าแผงถูกสร้างผ่าน <span class="mono">/setup-verify</span> ใน Discord
+              หน้าเว็บจะอิง config ล่าสุดที่ sync เข้า database
+            </div>
+          </div>
+
+          <div class="card card-pad">
+            <div class="card-header">
+              <div>
+                <h2>Quick Actions</h2>
+                <div class="card-desc">
+                  ทางลัดสำหรับจัดการแผงยืนยันตัวตน
+                </div>
+              </div>
+            </div>
+
+            <div class="grid">
+              <button class="btn btn-primary btn-block" type="button" data-tab="verification">
+                🔐 ไปตั้งค่าแผงยืนยันตัวตน
+              </button>
+
+              <button class="btn btn-security btn-block" type="button" data-tab="members">
+                👥 ดูสมาชิกที่ยืนยันแล้ว
+              </button>
+
+              <button class="btn btn-soft btn-block" type="button" data-tab="risk">
+                🌐 ดู Risk & Network
+              </button>
+
+              <button class="btn btn-soft btn-block" type="button" data-tab="logs">
+                📜 ดู Verify Logs
+              </button>
+            </div>
+
+            <div class="alert alert-warn mt-14">
+              Log Center เต็มยังพักไว้ก่อน รอบนี้เน้น Dashboard, Verification Panel และข้อมูลละเอียดที่มีอยู่
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-2 mt-18">
+          <div class="card card-pad">
+            <div class="card-header">
+              <div>
+                <h2>สมาชิกที่ยืนยันล่าสุด</h2>
+                <div class="card-desc">
+                  แสดงข้อมูลบัญชี, IP, network และ device แบบสรุป
+                </div>
+              </div>
+
+              <button class="btn btn-soft btn-sm" type="button" data-tab="members">
+                ดูทั้งหมด
+              </button>
+            </div>
+
+            <div id="overview-members" class="list">
+              <div class="loading-box">
+                <div class="spinner"></div>
+                <div>กำลังโหลดสมาชิก...</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card card-pad">
+            <div class="card-header">
+              <div>
+                <h2>Verify Logs ล่าสุด</h2>
+                <div class="card-desc">
+                  สรุปผลยืนยันล่าสุดพร้อมเหตุผลและ network
+                </div>
+              </div>
+
+              <button class="btn btn-soft btn-sm" type="button" data-tab="logs">
+                ดูทั้งหมด
+              </button>
+            </div>
+
+            <div id="overview-logs" class="list">
+              <div class="loading-box">
+                <div class="spinner"></div>
+                <div>กำลังโหลด logs...</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+            <section data-section="verification" class="hidden">
+        <div class="grid grid-2">
+          <div class="card card-pad">
+            <div class="card-header">
+              <div>
+                <h2>ตั้งค่าระบบยืนยันตัวตน</h2>
+                <div class="card-desc">
+                  ตั้งค่า role/channel/message และโหมดการยืนยันตัวตนของเซิร์ฟเวอร์นี้
+                </div>
+              </div>
+              <span class="badge badge-info">Config</span>
+            </div>
+
+            <div class="toggle-row">
+              <div>
+                <div class="toggle-title">เปิดระบบยืนยันตัวตน</div>
+                <div class="toggle-sub">
+                  ปิดแล้ว callback จะไม่ให้ยศ ถึงแม้แผงเดิมยังอยู่ใน Discord
+                </div>
+              </div>
+
+              <label class="toggle">
+                <input id="v-enabled" type="checkbox" checked>
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="form-row form-row-2 mt-14">
+              <div>
+                <label for="v-roleId">Role ID ที่จะให้หลังยืนยัน</label>
+                <input id="v-roleId" type="text" inputmode="numeric" placeholder="เช่น 123456789012345678">
+                <div class="field-hint">
+                  ต้องเป็น role ที่บอทมีสิทธิ์ Manage Roles และอยู่ต่ำกว่ายศสูงสุดของบอท
+                </div>
+              </div>
+
+              <div>
+                <label for="v-channelId">Channel ID สำหรับแผงยืนยัน</label>
+                <input id="v-channelId" type="text" inputmode="numeric" placeholder="เช่น 123456789012345678">
+                <div class="field-hint">
+                  ห้องข้อความที่บอทจะส่งหรือแก้ไขแผงยืนยันตัวตน
+                </div>
+              </div>
+            </div>
+
+            <label for="v-messageId">Message ID ของแผงเดิม</label>
+            <input id="v-messageId" type="text" inputmode="numeric" placeholder="ถ้ามีแผงเดิม ระบบจะแก้ message นี้แทนการส่งใหม่">
+            <div class="field-hint">
+              ถ้ามีค่า messageId แล้วกด “แก้แผงเดิม” บอทจะ edit message เดิมทันที ไม่ลบทิ้งและไม่ส่งซ้ำ
+            </div>
+
+            <div class="grid grid-2 mt-14">
+              <div>
+                <div class="label">เลือก Role จากรายการ</div>
+                <div id="role-options" class="flex flex-wrap gap-8">
+                  <div class="loading-box" style="width:100%;padding:16px;">
+                    <div class="spinner"></div>
+                    <div>กำลังโหลด role...</div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div class="label">เลือก Channel จากรายการ</div>
+                <div id="channel-options" class="flex flex-wrap gap-8">
+                  <div class="loading-box" style="width:100%;padding:16px;">
+                    <div class="spinner"></div>
+                    <div>กำลังโหลด channel...</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="alert alert-warn mt-16">
+              ถ้าแผงเดิมถูกลบออกจาก Discord แล้ว การแก้ message เดิมจะล้มเหลว ระบบจะแจ้งให้ส่งแผงใหม่เอง
+              ไม่สร้างแผงใหม่เงียบ ๆ
+            </div>
+          </div>
+
+          <div class="card card-pad">
+            <div class="card-header">
+              <div>
+                <h2>Panel Appearance</h2>
+                <div class="card-desc">
+                  ตั้งค่าข้อความ สี รูป GIF ปุ่ม และตัวอย่าง embed ก่อนส่งจริง
+                </div>
+              </div>
+              <span class="badge badge-cyan">Preview</span>
+            </div>
+
+            <label for="p-content">Content ด้านบน embed</label>
+            <textarea id="p-content" placeholder="ข้อความธรรมดาก่อน embed ถ้าไม่ใช้ให้ปล่อยว่าง"></textarea>
+
+            <label for="p-title">Title</label>
+            <input id="p-title" type="text" maxlength="256" placeholder="🔐 ยืนยันตัวตนเพื่อเข้าดิส">
+
+            <label for="p-description">Description</label>
+            <textarea id="p-description" maxlength="4000" placeholder="กดปุ่มด้านล่างเพื่อยืนยันตัวตน..."></textarea>
+
+            <div class="form-row form-row-2">
+              <div>
+                <label for="p-color">สี embed</label>
+                <input id="p-color" type="text" maxlength="7" placeholder="#5865F2">
+              </div>
+
+              <div>
+                <label for="p-verifyType">โหมดยืนยันตัวตน</label>
+                <select id="p-verifyType">
+                  <option value="oauth">OAuth2 Verification</option>
+                  <option value="direct">กดรับยศทันที</option>
+                </select>
+              </div>
+            </div>
+
+            <label for="p-buttonText">ข้อความปุ่ม / button_text</label>
+            <input id="p-buttonText" type="text" maxlength="80" placeholder="✅ ยืนยันตัวตน ✅">
+            <div class="field-hint">
+              ใส่ emoji รวมกับข้อความได้เลย เช่น ✅ ยืนยันตัวตน ✅
+            </div>
+
+            <label for="p-imageUrl">Image / GIF URL</label>
+            <input id="p-imageUrl" type="url" placeholder="https://...gif หรือ https://...png">
+
+            <label for="p-thumbnailUrl">Thumbnail URL</label>
+            <input id="p-thumbnailUrl" type="url" placeholder="https://...png">
+
+            <label for="p-footerText">Footer</label>
+            <input id="p-footerText" type="text" maxlength="2048" placeholder="Discord Verification System">
+
+            <label for="p-titleUrl">Title URL</label>
+            <input id="p-titleUrl" type="url" placeholder="https://...">
+
+            <div class="toggle-row">
+              <div>
+                <div class="toggle-title">แสดง Timestamp</div>
+                <div class="toggle-sub">
+                  ใส่เวลาปัจจุบันไว้ท้าย embed
+                </div>
+              </div>
+
+              <label class="toggle">
+                <input id="p-showTimestamp" type="checkbox">
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-2 mt-18">
+          <div class="card card-pad">
+            <div class="card-header">
+              <div>
+                <h2>ตัวอย่างแผงยืนยัน</h2>
+                <div class="card-desc">
+                  ตัวอย่างคร่าว ๆ ก่อนบอทส่ง/แก้ข้อความจริงใน Discord
+                </div>
+              </div>
+            </div>
+
+            <div id="embed-preview" class="embed-preview">
+              <div class="embed-preview-title">🔐 ยืนยันตัวตนเพื่อเข้าดิส</div>
+              <div class="embed-preview-desc">กดปุ่มด้านล่างเพื่อยืนยันตัวตนผ่าน Discord OAuth2</div>
+            </div>
+
+            <div id="button-preview">
+              <div class="button-preview">✅ ยืนยันตัวตน ✅</div>
+            </div>
+          </div>
+
+          <div class="card card-pad">
+            <div class="card-header">
+              <div>
+                <h2>Actions</h2>
+                <div class="card-desc">
+                  ตรวจสอบ บันทึก ส่งใหม่ หรือแก้แผงเดิมใน Discord
+                </div>
+              </div>
+            </div>
+
+            <div class="grid">
+              <button id="btn-validate-panel" class="btn btn-security btn-block" type="button">
+                🧪 ตรวจสอบก่อนใช้งาน
+              </button>
+
+              <button id="btn-save-settings" class="btn btn-soft btn-block" type="button">
+                💾 บันทึก config
+              </button>
+
+              <button id="btn-update-panel" class="btn btn-primary btn-block" type="button">
+                ✏️ แก้แผงเดิมใน Discord
+              </button>
+
+              <button id="btn-send-panel" class="btn btn-security btn-block" type="button">
+                🚀 ส่งแผงใหม่
+              </button>
+
+              <button id="btn-disable-verification" class="btn btn-danger btn-block" type="button">
+                ⛔ ปิดระบบยืนยันตัวตน
+              </button>
+            </div>
+
+            <div class="alert alert-info mt-14">
+              แนะนำให้กด “ตรวจสอบก่อนใช้งาน” ก่อนส่งหรือแก้แผง เพื่อเช็ก role hierarchy, managed role,
+              channel permission และ permission ของบอท
+            </div>
+          </div>
+        </div>
+
+        <div id="validation-box" class="card card-pad mt-18 hidden">
+          <div class="card-header">
+            <div>
+              <h2>ผลการตรวจสอบ</h2>
+              <div class="card-desc">
+                รายละเอียดการตรวจ permission, role, channel และ env ที่จำเป็น
+              </div>
+            </div>
+          </div>
+
+          <div id="validation-body"></div>
+        </div>
+      </section>
+
+      <section data-section="security" class="hidden">
+        <div class="grid grid-2">
+          <div class="card card-pad">
+            <div class="card-header">
+              <div>
+                <h2>Security / Policy</h2>
+                <div class="card-desc">
+                  ตั้งค่าเงื่อนไขการยืนยันตัวตนและการกรองความเสี่ยง
+                </div>
+              </div>
+              <span class="badge badge-warn">Policy</span>
+            </div>
+
+            <div class="toggle-row">
+              <div>
+                <div class="toggle-title">Block VPN / Proxy / TOR</div>
+                <div class="toggle-sub">
+                  กันบัญชีที่ตรวจพบว่าใช้ VPN, Proxy, TOR หรือ Hosting network
+                </div>
+              </div>
+
+              <label class="toggle">
+                <input id="v-blockVPN" type="checkbox" checked>
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="toggle-row">
+              <div>
+                <div class="toggle-title">Require Email</div>
+                <div class="toggle-sub">
+                  ต้องมี email ในบัญชี Discord ที่ OAuth ส่งกลับมา
+                </div>
+              </div>
+
+              <label class="toggle">
+                <input id="v-requireEmail" type="checkbox">
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="toggle-row">
+              <div>
+                <div class="toggle-title">Require Email Verified</div>
+                <div class="toggle-sub">
+                  ต้องยืนยัน email แล้วเท่านั้น
+                </div>
+              </div>
+
+              <label class="toggle">
+                <input id="v-requireEmailVerified" type="checkbox">
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="toggle-row">
+              <div>
+                <div class="toggle-title">Require Connections</div>
+                <div class="toggle-sub">
+                  ต้องมีบัญชีเชื่อมต่อขั้นต่ำตามจำนวนที่ตั้งไว้
+                </div>
+              </div>
+
+              <label class="toggle">
+                <input id="v-requireConnections" type="checkbox">
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="form-row form-row-2 mt-14">
+              <div>
+                <label for="v-minAge">อายุบัญชีขั้นต่ำ (วัน)</label>
+                <input id="v-minAge" type="number" min="0" max="3650" value="7">
+              </div>
+
+              <div>
+                <label for="v-minConnections">Connections ขั้นต่ำ</label>
+                <input id="v-minConnections" type="number" min="1" max="20" value="1">
+              </div>
+            </div>
+
+            <label for="v-allowedCountries">Allowed Countries</label>
+            <input id="v-allowedCountries" type="text" placeholder="TH,US,JP ถ้าไม่กำหนดให้ปล่อยว่าง">
+            <div class="field-hint">
+              ใส่ country code คั่นด้วย comma เช่น TH,US,JP
+            </div>
+
+            <label for="v-blockedCountries">Blocked Countries</label>
+            <input id="v-blockedCountries" type="text" placeholder="CN,RU,... ถ้าไม่ใช้ให้ปล่อยว่าง">
+          </div>
+
+          <div class="card card-pad">
+            <div class="card-header">
+              <div>
+                <h2>Policy Notes</h2>
+                <div class="card-desc">
+                  อธิบายเงื่อนไขที่ระบบจะใช้ประเมินสมาชิกตอนยืนยันตัวตน
+                </div>
+              </div>
+            </div>
+
+            <div class="list">
+              <div class="list-item">
+                <div class="list-title">
+                  <span>🌐 Network Risk</span>
+                  <span class="badge badge-cyan">IP / ASN / ISP</span>
+                </div>
+                <div class="list-meta">
+                  ระบบสามารถแสดง raw IP, ประเทศ, เมือง, ISP, ASN, VPN, Proxy, TOR, Hosting
+                  ตามข้อมูลที่เก็บและถอดรหัสได้
+                </div>
+              </div>
+
+              <div class="list-item">
+                <div class="list-title">
+                  <span>👤 Account Risk</span>
+                  <span class="badge badge-info">Discord Profile</span>
+                </div>
+                <div class="list-meta">
+                  ตรวจอายุบัญชี, email, email verified, locale, flags, connections และ guild summary เท่าที่ OAuth ให้มา
+                </div>
+              </div>
+
+              <div class="list-item">
+                <div class="list-title">
+                  <span>🎭 Role Assignment</span>
+                  <span class="badge badge-warn">Permission</span>
+                </div>
+                <div class="list-meta">
+                  ก่อนส่งแผงควร validate ว่าบอทมียศสูงกว่า role เป้าหมาย และ role ไม่ใช่ managed role
+                </div>
+              </div>
+
+              <div class="list-item sensitive">
+                <div class="list-title">
+                  <span>⚠️ Sensitive Data</span>
+                  <span class="badge badge-warn">Raw IP</span>
+                </div>
+                <div class="list-meta">
+                  หน้าแอดมินเซิร์ฟนี้จะแสดงข้อมูลละเอียดรวมถึง raw IP ตาม requirement ของระบบส่วนตัว
+                  ห้ามเอาข้อมูลไปใช้นอกเหนือจากการดูแลเซิร์ฟเวอร์
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+            <section data-section="members" class="hidden">
+        <div class="card card-pad">
+          <div class="card-header">
+            <div>
+              <h2>สมาชิกที่ยืนยันแล้ว</h2>
+              <div class="card-desc">
+                แสดงข้อมูลสมาชิกที่ระบบบันทึกจากการยืนยันตัวตน รวมถึงบัญชี Discord, IP จริง, network, device และ risk score
+              </div>
+            </div>
+
+            <span class="badge badge-cyan">Detailed Data</span>
+          </div>
+
+          <div class="alert alert-warn">
+            หน้านี้แสดงข้อมูลละเอียดตามที่ระบบเก็บได้ รวมถึง raw IP ถ้าระบบถอดรหัสได้ ใช้เพื่อดูแลเซิร์ฟเวอร์เท่านั้น
+          </div>
+
+          <div class="form-row form-row-3 mt-16">
+            <div>
+              <label for="members-search">ค้นหา</label>
+              <input id="members-search" type="search" placeholder="User ID / username / IP / email">
+            </div>
+
+            <div>
+              <label for="members-result">ผลการยืนยัน</label>
+              <select id="members-result">
+                <option value="">ทั้งหมด</option>
+                <option value="success">Success</option>
+                <option value="failed">Failed</option>
+                <option value="blocked">Blocked</option>
+              </select>
+            </div>
+
+            <div>
+              <label for="members-risk">ระดับความเสี่ยง</label>
+              <select id="members-risk">
+                <option value="">ทั้งหมด</option>
+                <option value="high">High Risk</option>
+                <option value="medium">Medium Risk</option>
+                <option value="low">Low Risk</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="flex justify-between items-center gap-10 flex-wrap mt-16">
+            <div class="muted small">
+              กด “รายละเอียด” เพื่อดูข้อมูลเต็มของ user/log นั้น
+            </div>
+
+            <div class="flex gap-8 flex-wrap">
+              <button id="btn-members-prev" class="btn btn-soft btn-sm" type="button">
+                ← ก่อนหน้า
+              </button>
+
+              <span id="members-page" class="badge badge-muted">หน้า 1</span>
+
+              <button id="btn-members-next" class="btn btn-soft btn-sm" type="button">
+                ถัดไป →
+              </button>
+
+              <button id="btn-members-refresh" class="btn btn-soft btn-sm" type="button">
+                รีเฟรช
+              </button>
+            </div>
+          </div>
+
+          <div class="table-wrap mt-16">
+            <table>
+              <thead>
+                <tr>
+                  <th>บัญชี</th>
+                  <th>ผล</th>
+                  <th>Risk</th>
+                  <th>IP / Network</th>
+                  <th>Device</th>
+                  <th>Connections</th>
+                  <th>เวลา</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+
+              <tbody id="members-body">
+                <tr>
+                  <td colspan="8">
+                    <div class="loading-box">
+                      <div class="spinner"></div>
+                      <div>กำลังโหลดสมาชิก...</div>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section data-section="logs" class="hidden">
+        <div class="card card-pad">
+          <div class="card-header">
+            <div>
+              <h2>Verify Logs</h2>
+              <div class="card-desc">
+                ประวัติการยืนยันตัวตนล่าสุดแบบละเอียด แต่ยังไม่ใช่ Log Center เต็มที่เราพักไว้ทำทีหลัง
+              </div>
+            </div>
+
+            <span class="badge badge-info">Verification History</span>
+          </div>
+
+          <div class="form-row form-row-3">
+            <div>
+              <label for="logs-search">ค้นหา</label>
+              <input id="logs-search" type="search" placeholder="User ID / username / IP / reason">
+            </div>
+
+            <div>
+              <label for="logs-result">ผลลัพธ์</label>
+              <select id="logs-result">
+                <option value="">ทั้งหมด</option>
+                <option value="success">Success</option>
+                <option value="failed">Failed</option>
+                <option value="blocked">Blocked</option>
+                <option value="pending">Pending</option>
+              </select>
+            </div>
+
+            <div>
+              <label for="logs-risk">Risk</label>
+              <select id="logs-risk">
+                <option value="">ทั้งหมด</option>
+                <option value="high">High Risk</option>
+                <option value="medium">Medium Risk</option>
+                <option value="low">Low Risk</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="flex justify-between items-center gap-10 flex-wrap mt-16">
+            <div class="muted small">
+              Log นี้เน้น verify/callback/result ก่อน ส่วน Admin Action Log เต็มพักไว้เฟส Log Center
+            </div>
+
+            <div class="flex gap-8 flex-wrap">
+              <button id="btn-logs-prev" class="btn btn-soft btn-sm" type="button">
+                ← ก่อนหน้า
+              </button>
+
+              <span id="logs-page" class="badge badge-muted">หน้า 1</span>
+
+              <button id="btn-logs-next" class="btn btn-soft btn-sm" type="button">
+                ถัดไป →
+              </button>
+
+              <button id="btn-logs-refresh" class="btn btn-soft btn-sm" type="button">
+                รีเฟรช
+              </button>
+            </div>
+          </div>
+
+          <div class="table-wrap mt-16">
+            <table>
+              <thead>
+                <tr>
+                  <th>บัญชี</th>
+                  <th>ผล</th>
+                  <th>Risk</th>
+                  <th>IP / Location</th>
+                  <th>Reason</th>
+                  <th>Role Result</th>
+                  <th>เวลา</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+
+              <tbody id="logs-body">
+                <tr>
+                  <td colspan="8">
+                    <div class="loading-box">
+                      <div class="spinner"></div>
+                      <div>กำลังโหลด logs...</div>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section data-section="risk" class="hidden">
+        <div class="grid grid-2">
+          <div class="card card-pad">
+            <div class="card-header">
+              <div>
+                <h2>ประเทศ / พื้นที่</h2>
+                <div class="card-desc">
+                  สรุปประเทศหรือพื้นที่ที่พบจากการยืนยันตัวตน
+                </div>
+              </div>
+            </div>
+
+            <div id="risk-countries" class="list">
+              <div class="loading-box">
+                <div class="spinner"></div>
+                <div>กำลังโหลดข้อมูลประเทศ...</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card card-pad">
+            <div class="card-header">
+              <div>
+                <h2>ISP / ASN</h2>
+                <div class="card-desc">
+                  สรุปผู้ให้บริการอินเทอร์เน็ตและ ASN ที่พบ
+                </div>
+              </div>
+            </div>
+
+            <div id="risk-isps" class="list">
+              <div class="loading-box">
+                <div class="spinner"></div>
+                <div>กำลังโหลด ISP...</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card card-pad">
+            <div class="card-header">
+              <div>
+                <h2>Device / Browser</h2>
+                <div class="card-desc">
+                  สรุป browser, OS, platform, timezone และข้อมูลอุปกรณ์
+                </div>
+              </div>
+            </div>
+
+            <div id="risk-devices" class="list">
+              <div class="loading-box">
+                <div class="spinner"></div>
+                <div>กำลังโหลด device...</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card card-pad">
+            <div class="card-header">
+              <div>
+                <h2>เหตุผลที่ไม่ผ่าน</h2>
+                <div class="card-desc">
+                  สรุป reason / policy result ที่พบซ้ำบ่อย
+                </div>
+              </div>
+            </div>
+
+            <div id="risk-reasons" class="list">
+              <div class="loading-box">
+                <div class="spinner"></div>
+                <div>กำลังโหลด reasons...</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card card-pad mt-18">
+          <div class="card-header">
+            <div>
+              <h2>Recent Risk Logs</h2>
+              <div class="card-desc">
+                รายการล่าสุดที่มีข้อมูล risk/network/device ให้ดูแบบละเอียด
+              </div>
+            </div>
+
+            <span class="badge badge-warn">Sensitive</span>
+          </div>
+
+          <div id="risk-recent" class="list">
+            <div class="loading-box">
+              <div class="spinner"></div>
+              <div>กำลังโหลด risk logs...</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section data-section="privacy" class="hidden">
+        <div class="grid grid-2">
+          <div class="card card-pad">
+            <div class="card-header">
+              <div>
+                <h2>Data & Privacy</h2>
+                <div class="card-desc">
+                  อธิบายข้อมูลที่ระบบแสดงและขอบเขตการใช้งานใน Dashboard นี้
+                </div>
+              </div>
+
+              <span class="badge badge-warn">Sensitive</span>
+            </div>
+
+            <div class="list">
+              <div class="list-item sensitive">
+                <div class="list-title">
+                  <span>🌐 Raw IP</span>
+                  <span class="badge badge-warn">แสดงในหน้าแอดมิน</span>
+                </div>
+                <div class="list-meta">
+                  ระบบจะแสดง IP จริงในหน้า members/logs/detail ถ้า backend มีข้อมูลและถอดรหัสได้
+                  ตาม requirement ของบอทส่วนตัวและเซิร์ฟเพื่อน
+                </div>
+              </div>
+
+              <div class="list-item">
+                <div class="list-title">
+                  <span>👤 Discord Account</span>
+                  <span class="badge badge-info">OAuth Data</span>
+                </div>
+                <div class="list-meta">
+                  แสดงข้อมูลบัญชี เช่น user id, username, global name, email, email verified, locale, flags,
+                  connections และ guild summary เท่าที่ระบบเก็บไว้
+                </div>
+              </div>
+
+              <div class="list-item">
+                <div class="list-title">
+                  <span>📱 Device / Browser</span>
+                  <span class="badge badge-cyan">Client Summary</span>
+                </div>
+                <div class="list-meta">
+                  แสดงข้อมูล browser, OS, timezone, language, screen, viewport และข้อมูลอุปกรณ์อื่น ๆ ที่ callback ส่งมา
+                </div>
+              </div>
+
+              <div class="list-item">
+                <div class="list-title">
+                  <span>🎭 Role / Member</span>
+                  <span class="badge badge-ok">Guild Context</span>
+                </div>
+                <div class="list-meta">
+                  แสดงผลการให้ยศ, role assignment result, nickname, joinedAt และ member roles ตามข้อมูลที่มี
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card card-pad">
+            <div class="card-header">
+              <div>
+                <h2>สิ่งที่ยังพักไว้ก่อน</h2>
+                <div class="card-desc">
+                  ไม่ทำในรอบนี้ เพื่อไม่ให้ scope บานและไม่ชนกับ Log Center ที่พักไว้
+                </div>
+              </div>
+            </div>
+
+            <div class="list">
+              <div class="list-item">
+                <div class="list-title">
+                  <span>📜 Log Center เต็ม</span>
+                  <span class="badge badge-muted">Later</span>
+                </div>
+                <div class="list-meta">
+                  Admin action logs, role assignment logs, data deletion logs, advanced filters และ audit center เต็มยังพักไว้
+                </div>
+              </div>
+
+              <div class="list-item">
+                <div class="list-title">
+                  <span>🗑️ Data Deletion เต็ม</span>
+                  <span class="badge badge-muted">Later</span>
+                </div>
+                <div class="list-meta">
+                  รอบนี้ยังไม่ขยายระบบลบข้อมูลทั้งชุด เพราะควรทำหลังมี Log/Audit Center ที่ตามรอยได้ก่อน
+                </div>
+              </div>
+
+              <div class="list-item">
+                <div class="list-title">
+                  <span>🧰 Env Checker เต็ม</span>
+                  <span class="badge badge-muted">Later</span>
+                </div>
+                <div class="list-meta">
+                  Security Center/Env Checker แบบเต็มพักไว้ก่อน แต่ validation panel จะตรวจ env ที่จำเป็นต่อ verification เท่าที่ทำได้
+                </div>
+              </div>
+            </div>
+
+            <div class="alert alert-info mt-16">
+              รอบนี้โฟกัสหลักคือ Dashboard Public v2, Verification Admin Center,
+              edit existing panel และ callback hardening
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="detail-modal" class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-head">
+        <h2 id="detail-modal-title" class="modal-title">รายละเอียด</h2>
+        <button class="modal-close" type="button" data-close-modal>✕</button>
       </div>
 
-      <label>Allowed Countries</label>
-      <input type="text" id="v-allowedCountries" placeholder="เช่น TH,US หรือปล่อยว่าง">
+      <div id="detail-modal-body"></div>
 
-      <label>Blocked Countries</label>
-      <input type="text" id="v-blockedCountries" placeholder="เช่น RU,CN หรือปล่อยว่าง">
-
-      <button class="btn btn-primary btn-block" onclick="saveSettings()">💾 บันทึกความปลอดภัย</button>
+      <div class="modal-actions">
+        <button class="btn btn-soft" type="button" data-close-modal>
+          ปิด
+        </button>
+      </div>
     </div>
   </div>
 
-  <div class="section" id="tab-members">
-    <div class="card table-wrap" style="padding:0;overflow:hidden">
-      <table>
-        <thead>
-          <tr>
-            <th>User</th>
-            <th>ประเทศ</th>
-            <th>ISP</th>
-            <th>Device</th>
-            <th>Risk</th>
-            <th>เวลา</th>
-            <th>จัดการ</th>
-          </tr>
-        </thead>
-        <tbody id="member-body">
-          <tr><td colspan="7" style="text-align:center;padding:24px;color:#7c3aed88">กำลังโหลด...</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <button class="btn btn-soft btn-block" onclick="loadMembers(++memberPage)">โหลดเพิ่ม</button>
-  </div>
+  <div id="toast" class="toast"></div>
 
-  <div class="section" id="tab-stats">
-    <div class="stat-grid">
-      <div class="stat-box"><div class="stat-val" id="s-total" style="color:#a78bfa">—</div><div class="stat-lbl">ทั้งหมด</div></div>
-      <div class="stat-box"><div class="stat-val" id="s-success" style="color:#4ade80">—</div><div class="stat-lbl">สำเร็จ</div></div>
-      <div class="stat-box"><div class="stat-val" id="s-blocked" style="color:#f87171">—</div><div class="stat-lbl">บล็อก</div></div>
-      <div class="stat-box"><div class="stat-val" id="s-failed" style="color:#fbbf24">—</div><div class="stat-lbl">ล้มเหลว</div></div>
-      <div class="stat-box"><div class="stat-val" id="s-vpn" style="color:#fb923c">—</div><div class="stat-lbl">VPN</div></div>
-      <div class="stat-box"><div class="stat-val" id="s-proxy" style="color:#fb923c">—</div><div class="stat-lbl">Proxy</div></div>
-      <div class="stat-box"><div class="stat-val" id="s-tor" style="color:#fb923c">—</div><div class="stat-lbl">TOR</div></div>
-    </div>
-  </div>
-
-  <div class="section" id="tab-logs">
-    <div class="card table-wrap" style="padding:0;overflow:hidden">
-      <table>
-        <thead>
-          <tr>
-            <th>ผู้ใช้</th>
-            <th>ผล</th>
-            <th>ประเทศ</th>
-            <th>Risk</th>
-            <th>Device</th>
-            <th>เวลา</th>
-          </tr>
-        </thead>
-        <tbody id="log-body">
-          <tr><td colspan="6" style="text-align:center;padding:24px;color:#7c3aed88">กำลังโหลด...</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <button class="btn btn-soft btn-block" onclick="loadLogs(++logPage)">โหลดเพิ่ม</button>
-  </div>
-</div>
-
-<div class="toast" id="toast"></div>
-
-<script>
-const guildId = location.pathname.split('/').pop();
-
-let logPage = 0;
-let logAll = [];
-
-let memberPage = 0;
-let memberAll = [];
-
-function esc(v) {
-  return String(v ?? '').replace(/[&<>"']/g, m => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;'
-  }[m]));
-}
-
-function switchTab(id, el) {
-  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-  document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
-
-  document.getElementById('tab-' + id).classList.add('active');
-  el.classList.add('active');
-
-  if (id === 'stats') loadStats();
-  if (id === 'logs') loadLogs(0);
-  if (id === 'members') loadMembers(0);
-}
-
-function toast(msg, type = 'ok') {
-  const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.className = 'toast ' + type;
-  t.style.display = 'block';
-
-  clearTimeout(t._t);
-  t._t = setTimeout(() => t.style.display = 'none', 3500);
-}
-
-function fmtDate(ts) {
-  if (!ts) return '—';
-  return new Date(ts).toLocaleString('th-TH', { hour12: false });
-}
-
-function splitCountries(value) {
-  return String(value || '')
-    .split(',')
-    .map(v => v.trim().toUpperCase())
-    .filter(Boolean);
-}
-
-async function loadConfig() {
-  const res = await fetch(`/api/guild/${guildId}`);
-  const data = await res.json();
-
-  if (!data.success) {
-    toast(data.error || 'โหลด config ไม่สำเร็จ', 'err');
-    return;
-  }
-
-  const cfg = data.config || {};
-  const v = cfg.verification || {};
-
-  document.getElementById('guild-name').textContent = cfg.guildName
-    ? `⚙️ ${cfg.guildName}`
-    : '⚙️ ตั้งค่าเซิร์ฟเวอร์';
-
-  document.getElementById('v-enabled').checked = v.enabled !== false;
-  document.getElementById('v-blockVPN').checked = v.blockVPN !== false;
-  document.getElementById('v-requireEmail').checked = !!v.requireEmail;
-  document.getElementById('v-requireEmailVerified').checked = !!v.requireEmailVerified;
-  document.getElementById('v-requireConnections').checked = !!v.requireConnections;
-
-  document.getElementById('v-minAge').value = v.minAccountAgeDays ?? 7;
-  document.getElementById('v-minConnections').value = v.minConnections ?? 1;
-
-  document.getElementById('v-roleId').value = v.roleId || '';
-  document.getElementById('v-channelId').value = v.channelId || '';
-  document.getElementById('v-messageId').value = v.messageId || '';
-
-  document.getElementById('v-allowedCountries').value = (v.allowedCountries || []).join(',');
-  document.getElementById('v-blockedCountries').value = (v.blockedCountries || []).join(',');
-}
-
-async function saveSettings() {
-  const body = {
-    verification: {
-      enabled: document.getElementById('v-enabled').checked,
-      blockVPN: document.getElementById('v-blockVPN').checked,
-      requireEmail: document.getElementById('v-requireEmail').checked,
-      requireEmailVerified: document.getElementById('v-requireEmailVerified').checked,
-      requireConnections: document.getElementById('v-requireConnections').checked,
-      minAccountAgeDays: parseInt(document.getElementById('v-minAge').value) || 7,
-      minConnections: parseInt(document.getElementById('v-minConnections').value) || 1,
-      roleId: document.getElementById('v-roleId').value.trim() || null,
-      channelId: document.getElementById('v-channelId').value.trim() || null,
-      messageId: document.getElementById('v-messageId').value.trim() || null,
-      allowedCountries: splitCountries(document.getElementById('v-allowedCountries').value),
-      blockedCountries: splitCountries(document.getElementById('v-blockedCountries').value)
-    }
-  };
-
-  try {
-    const res = await fetch(`/api/guild/${guildId}/settings`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-
-    const data = await res.json();
-    toast(data.success ? '✅ บันทึกแล้ว' : '❌ ' + data.error, data.success ? 'ok' : 'err');
-  } catch {
-    toast('❌ เกิดข้อผิดพลาด', 'err');
-  }
-}
-
-async function loadStats() {
-  const res = await fetch(`/api/guild/${guildId}/stats`);
-  const data = await res.json();
-
-  if (!data.success) return;
-
-  const s = data.stats;
-
-  document.getElementById('s-total').textContent = s.total ?? 0;
-  document.getElementById('s-success').textContent = s.success ?? 0;
-  document.getElementById('s-blocked').textContent = s.blocked ?? 0;
-  document.getElementById('s-failed').textContent = s.failed ?? 0;
-  document.getElementById('s-vpn').textContent = s.vpn ?? 0;
-  document.getElementById('s-proxy').textContent = s.proxy ?? 0;
-  document.getElementById('s-tor').textContent = s.tor ?? 0;
-}
-
-async function loadLogs(page = 0) {
-  logPage = page;
-  if (page === 0) logAll = [];
-
-  const res = await fetch(`/api/guild/${guildId}/logs?page=${page}&limit=20`);
-  const data = await res.json();
-
-  if (!data.success) return;
-
-  logAll = [...logAll, ...data.logs];
-
-  const body = document.getElementById('log-body');
-
-  if (!logAll.length) {
-    body.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:#7c3aed88">ยังไม่มี Log</td></tr>';
-    return;
-  }
-
-  body.innerHTML = logAll.map(l => {
-    const badge = l.result === 'success' ? 'badge-ok' : l.result === 'blocked' ? 'badge-blocked' : 'badge-failed';
-    const label = l.result === 'success' ? 'สำเร็จ' : l.result === 'blocked' ? 'บล็อก' : 'ล้มเหลว';
-    const vpn = (l.ipInfo?.isVPN || l.ipInfo?.isProxy || l.ipInfo?.isTOR)
-      ? '<span class="vpn-tag">VPN</span>'
-      : '';
-
-    return `<tr>
-      <td class="mono">${esc(l.userId)}</td>
-      <td><span class="badge ${badge}">${label}</span>${l.reason ? `<div class="flag">${esc(l.reason)}</div>` : ''}</td>
-      <td>${esc(l.ipInfo?.country || '—')} ${vpn}<div class="flag">${esc(l.ipInfo?.isp || '')}</div></td>
-      <td>${esc(l.riskScore ?? l.ipInfo?.riskScore ?? 0)}</td>
-      <td>${esc(l.device?.browser || '—')}<div class="flag">${esc(l.device?.os || '')}</div></td>
-      <td style="color:#7c3aed88;font-size:.75rem;white-space:nowrap">${fmtDate(l.verifiedAt)}</td>
-    </tr>`;
-  }).join('');
-}
-
-async function loadMembers(page = 0) {
-  memberPage = page;
-  if (page === 0) memberAll = [];
-
-  const res = await fetch(`/api/guild/${guildId}/members?page=${page}&limit=20`);
-  const data = await res.json();
-
-  if (!data.success) return;
-
-  memberAll = [...memberAll, ...data.members];
-
-  const body = document.getElementById('member-body');
-
-  if (!memberAll.length) {
-    body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px;color:#7c3aed88">ยังไม่มีสมาชิกที่ยืนยันสำเร็จ</td></tr>';
-    return;
-  }
-
-  body.innerHTML = memberAll.map(m => {
-    const vpn = m.isVPN ? '<span class="vpn-tag">VPN</span>' : '';
-    const pending = m.revealRequest ? '<div class="flag">รออนุมัติ IP</div>' : '';
-
-    return `<tr>
-      <td>
-        <div class="mono">${esc(m.userId)}</div>
-        <div class="flag">${esc(m.globalName || m.username || '')}</div>
-      </td>
-      <td>${esc(m.country || '—')} ${vpn}<div class="flag">${esc(m.city || '')}</div></td>
-      <td>${esc(m.isp || '—')}</td>
-      <td>${esc(m.deviceType || '—')}<div class="flag">${esc(m.browser || '')} ${esc(m.os || '')}</div></td>
-      <td>${esc(m.riskScore ?? 0)}</td>
-      <td style="color:#7c3aed88;font-size:.75rem;white-space:nowrap">${fmtDate(m.verifiedAt)}</td>
-      <td>
-        <div class="actions">
-          <button class="btn btn-soft" onclick="requestReveal('${esc(m.userId)}','${esc(m.logId)}')">ขอ IP</button>
-          <button class="btn btn-danger" onclick="deleteData('${esc(m.userId)}')">ลบข้อมูล</button>
-        </div>
-        ${pending}
-      </td>
-    </tr>`;
-  }).join('');
-}
-
-async function requestReveal(userId, logId) {
-  const reason = prompt('เหตุผลในการขอดู IP จริง');
-  if (reason === null) return;
-
-  const res = await fetch(`/api/guild/${guildId}/reveal-ip/request`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userId, verifyLogId: logId, reason })
-  });
-
-  const data = await res.json();
-  toast(data.success ? '✅ ส่งคำขอแล้ว รอเจ้าของบอทอนุมัติ' : '❌ ' + data.error, data.success ? 'ok' : 'err');
-
-  if (data.success) loadMembers(0);
-}
-
-async function deleteData(userId) {
-  if (!confirm(`ลบข้อมูล verify logs ของ ${userId} ในเซิร์ฟนี้?`)) return;
-
-  const res = await fetch(`/api/guild/${guildId}/member/${userId}/data`, {
-    method: 'DELETE'
-  });
-
-  const data = await res.json();
-  toast(data.success ? '✅ ลบข้อมูลแล้ว' : '❌ ' + data.error, data.success ? 'ok' : 'err');
-
-  if (data.success) {
-    loadMembers(0);
-    loadLogs(0);
-    loadStats();
-  }
-}
-
-loadConfig();
-</script>
+  <script src="/js/guild-dashboard.js"></script>
 </body>
 </html>

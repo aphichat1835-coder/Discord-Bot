@@ -7,6 +7,8 @@ const schema = new mongoose.Schema({
     userId:  { type: String, required: true, index: true },
     roleId:  String,
 
+    requestId: String,
+
     result: { type: String, enum: ['success', 'failed', 'blocked'], required: true },
     reason: String,
 
@@ -76,15 +78,23 @@ const schema = new mongoose.Schema({
         browser: String,
         os: String,
         language: String,
+        languages: [String],
         timezone: String,
         platform: String,
         deviceType: String,
         screenSize: String,
+        viewportSize: String,
+        colorDepth: Number,
+        devicePixelRatio: Number,
+        touchPoints: Number,
+        referrer: String,
         fingerprintHash: String
     },
 
     deletedAt: Number,
     deletedBy: String,
+
+    createdAt: { type: Number, default: Date.now },
     verifiedAt: { type: Number, default: Date.now }
 }, { minimize: false });
 
@@ -95,6 +105,7 @@ schema.index({ 'ipInfo.ipHash': 1 });
 schema.index({ 'device.fingerprintHash': 1 });
 schema.index({ riskScore: -1 });
 schema.index({ stateMode: 1 });
+schema.index({ requestId: 1 });
 schema.index({ 'trackingSnapshot.uniqueUsers': -1 });
 
 module.exports =

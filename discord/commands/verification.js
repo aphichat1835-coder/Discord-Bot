@@ -1,15 +1,18 @@
 /*
 ================================================================================
-Verification Command Module
+  Verification Command Module — Dashboard Public v2 compatible
 
-verify_type:
-- false = กดปุ่มได้ยศเลยแบบเดิม
-- true  = OAuth2 direct Discord authorize URL button
+  verify_type:
+  - false = กดปุ่มได้ยศเลยแบบเดิม
+  - true  = OAuth2 direct Discord authorize URL button
 
-Notes:
-- รองรับ option ใหม่ button_text เช่น "✅ ยืนยันตัวตนเข้าดิส"
-- ยังรองรับ option เดิม button_label / button_emoji เผื่อคำสั่งเก่ายัง cache อยู่
-- ถ้า emoji ใช้ไม่ได้ ระบบ fallback โดยไม่ทำให้คำสั่งพัง
+  Updates:
+  - รองรับ option ใหม่ button_text เช่น "✅ ยืนยันตัวตนเข้าดิส"
+  - ยังรองรับ option เดิม button_label / button_emoji เผื่อคำสั่งเก่ายัง cache อยู่
+  - ถ้า emoji ใช้ไม่ได้ ระบบ fallback โดยไม่ทำให้คำสั่งพัง
+  - Sync GuildConfig ให้หน้า Dashboard อิงแผงล่าสุดจาก Discord ได้ตรงขึ้น
+  - OAuth panel จาก /setup-verify ใช้ state v4 + panelRevision แล้ว
+  - Legacy verify_oauth_ button ไม่สร้าง OAuth URL ต่อแล้ว เพื่อกันแผงเก่าชน panelRevision
 ================================================================================
 */
 
@@ -19,6 +22,7 @@ const config = require("../config.json");
 const sessionManager = require("../sessionManager");
 
 let GuildConfig = null;
+
 try {
     GuildConfig = require("../../dashboard-public/models/GuildConfig");
 } catch (err) {
@@ -48,6 +52,14 @@ function normalizeNewlines(value) {
     return cleanText(value, "").replace(/\\n/g, "\n");
 }
 
+function boolToDashboardVerifyType(value) {
+    return value ? "oauth" : "direct";
+}
+
+function boolToLegacyOauthMode(value) {
+    return value ? "direct-discord-authorize-long-lived-state" : "direct-role";
+}
+
 function getStateSecret() {
     return String(
         process.env.VERIFY_STATE_SECRET ||
@@ -63,6 +75,9 @@ function getDashboardUrl() {
     return String(
         process.env.PUBLIC_DASHBOARD_URL ||
         process.env.DASHBOARD_URL ||
+        process.env.PUBLIC_BASE_URL ||
+        process.env.DASHBOARD_PUBLIC_URL ||
+        process.env.RENDER_EXTERNAL_URL ||
         ""
     ).replace(/\/$/, "");
 }
@@ -92,25 +107,43 @@ function signStateData(data) {
         .slice(0, 22);
 }
 
-function createCompactCallbackState({ guildId, roleId, expectedUserId = null }) {
+function makePanelRevision(prefix = "panel") {
+    return `${prefix}_${Date.now().toString(36)}_${crypto.randomBytes(8).toString("hex")}`;
+}
+
+function createCompactCallbackState({
+    guildId,
+    roleId,
+    expectedUserId = null,
+    panelRevision = null
+}) {
     const user = expectedUserId || "0";
 
-    // long-lived panel state: ไม่หมดอายุเองง่าย ๆ แต่ยังตรวจ HMAC signature ฝั่ง callback
+    const revision = String(panelRevision || "legacy")
+        .replace(/[^a-zA-Z0-9_-]/g, "_")
+        .slice(0, 80) || "legacy";
+
     const ts = (Date.now() + 1000 * 60 * 60 * 24 * 365 * 10).toString(36);
     const nonce = crypto.randomBytes(6).toString("base64url");
 
-    const data = `3|${guildId}|${roleId}|${user}|${ts}|${nonce}`;
+    const data = `4|${guildId}|${roleId}|${user}|${revision}|${ts}|${nonce}`;
     const sig = signStateData(data);
 
-    return `3.${guildId}.${roleId}.${user}.${ts}.${nonce}.${sig}`;
+    return `4.${guildId}.${roleId}.${user}.${revision}.${ts}.${nonce}.${sig}`;
 }
 
-function buildDiscordAuthorizeUrl({ interaction, guildId, roleId, expectedUserId = null }) {
+function buildDiscordAuthorizeUrl({
+    interaction,
+    guildId,
+    roleId,
+    expectedUserId = null,
+    panelRevision = null
+}) {
     const dashboardUrl = getDashboardUrl();
     const clientId = getDiscordClientId(interaction);
 
     if (!dashboardUrl) {
-        throw new Error("Missing PUBLIC_DASHBOARD_URL/DASHBOARD_URL");
+        throw new Error("Missing PUBLIC_DASHBOARD_URL/DASHBOARD_URL/PUBLIC_BASE_URL");
     }
 
     if (!clientId) {
@@ -118,7 +151,13 @@ function buildDiscordAuthorizeUrl({ interaction, guildId, roleId, expectedUserId
     }
 
     const redirectUri = `${dashboardUrl}/auth/callback`;
-    const state = createCompactCallbackState({ guildId, roleId, expectedUserId });
+
+    const state = createCompactCallbackState({
+        guildId,
+        roleId,
+        expectedUserId,
+        panelRevision
+    });
 
     const params = new URLSearchParams({
         client_id: clientId,
@@ -142,11 +181,10 @@ function isLikelyUnicodeEmoji(raw) {
     if (!raw || typeof raw !== "string") return false;
     if (raw.length > 32) return false;
 
-    // กันเคส :emoji_name: / ตัวอักษรธรรมดา / custom mention ที่ไม่ครบ
     if (/[A-Za-z0-9_:<>]/.test(raw)) return false;
 
     try {
-        return /\p{Extended_Pictographic}/u.test(raw) || /[\u2600-\u27BF]/u.test(raw);
+        return /\p{Extended_Pictographic}/u.test(raw) || /[\u2600-\u27BF]/.test(raw);
     } catch {
         return /[\u2600-\u27BF]/.test(raw);
     }
@@ -154,10 +192,12 @@ function isLikelyUnicodeEmoji(raw) {
 
 function getEmojiFromCache(client, query) {
     const raw = cleanText(query, "");
+
     if (!raw || !client?.emojis?.cache) return null;
 
     if (/^\d{17,22}$/.test(raw)) {
         const foundById = client.emojis.cache.get(raw);
+
         if (!foundById) return null;
 
         return {
@@ -168,9 +208,11 @@ function getEmojiFromCache(client, query) {
     }
 
     const nameOnly = raw.match(/^:?(?<name>[A-Za-z0-9_]{2,32}):?$/)?.groups?.name;
+
     if (!nameOnly) return null;
 
     const foundByName = client.emojis.cache.find(e => e.name === nameOnly);
+
     if (!foundByName) return null;
 
     return {
@@ -196,6 +238,7 @@ function parseButtonEmoji(input, fallback = null, client = null) {
     }
 
     const cachedCustom = getEmojiFromCache(client, raw);
+
     if (cachedCustom) return cachedCustom;
 
     if (isLikelyUnicodeEmoji(raw)) return raw;
@@ -205,13 +248,19 @@ function parseButtonEmoji(input, fallback = null, client = null) {
 
 function emojiToDisplay(emoji, fallback = "") {
     if (!emoji) return cleanText(fallback, "");
+
     if (typeof emoji === "string") return emoji;
-    if (emoji.id && emoji.name) return `<${emoji.animated ? "a" : ""}:${emoji.name}:${emoji.id}>`;
+
+    if (emoji.id && emoji.name) {
+        return `<${emoji.animated ? "a" : ""}:${emoji.name}:${emoji.id}>`;
+    }
+
     return cleanText(fallback, "");
 }
 
 function resolveButtonEmoji(input, fallback, client) {
     const primary = parseButtonEmoji(input, null, client);
+
     if (primary) return primary;
 
     return parseButtonEmoji(fallback, null, client);
@@ -269,11 +318,17 @@ function normalizeColor(input) {
         return config?.system?.themeColors?.primary || DEFAULT_PANEL.color;
     }
 
-    return colorHex;
+    return colorHex.toUpperCase();
 }
 
 async function syncGuildConfig(interaction, role, channel, panelMsg, panelData) {
     if (!GuildConfig) return;
+
+    const dashboardVerifyType = boolToDashboardVerifyType(panelData.verifyType);
+    const legacyOauthMode = boolToLegacyOauthMode(panelData.verifyType);
+
+    const panelRevision = panelData.panelRevision || makePanelRevision("panel");
+    const panelRevisionUpdatedAt = panelData.panelRevisionUpdatedAt || Date.now();
 
     try {
         await GuildConfig.findOneAndUpdate(
@@ -289,11 +344,16 @@ async function syncGuildConfig(interaction, role, channel, panelMsg, panelData) 
                     "verification.roleId": role.id,
                     "verification.roleName": role.name,
                     "verification.channelId": channel.id,
+                    "verification.channelName": channel.name,
                     "verification.messageId": panelMsg.id,
+
+                    "verification.panelRevision": panelRevision,
+                    "verification.panelRevisionUpdatedAt": panelRevisionUpdatedAt,
+
                     "verification.verifyPath": "/auth/callback",
-                    "verification.oauthMode": panelData.verifyType
-                        ? "direct-discord-authorize-long-lived-state"
-                        : "direct-role",
+                    "verification.verifyType": dashboardVerifyType,
+                    "verification.oauthMode": dashboardVerifyType,
+                    "verification.legacyOauthMode": legacyOauthMode,
                     "verification.directStateMode": "long-lived-panel",
                     "verification.updatedBy": interaction.user.id,
                     "verification.updatedAt": Date.now(),
@@ -307,9 +367,13 @@ async function syncGuildConfig(interaction, role, channel, panelMsg, panelData) 
                     "verification.panel.footerText": panelData.footerText || null,
                     "verification.panel.titleUrl": panelData.titleUrl || null,
                     "verification.panel.showTimestamp": !!panelData.showTs,
+
+                    "verification.panel.buttonText": panelData.buttonLabel,
                     "verification.panel.buttonLabel": panelData.buttonLabel,
                     "verification.panel.buttonEmoji": panelData.buttonEmoji,
-                    "verification.panel.verifyType": panelData.verifyType ? "oauth2" : "direct-role"
+
+                    "verification.panel.verifyType": dashboardVerifyType,
+                    "verification.panel.legacyVerifyType": panelData.verifyType ? "oauth2" : "direct-role"
                 },
                 $setOnInsert: {
                     createdAt: Date.now(),
@@ -321,7 +385,7 @@ async function syncGuildConfig(interaction, role, channel, panelMsg, panelData) 
                     "verification.requireConnections": false,
                     "verification.minConnections": 1,
 
-                    "security.storeOAuthTokens": true,
+                    "security.storeOAuthTokens": false,
                     "security.storeRawIpEncrypted": true,
                     "security.ipRevealRequiresOwnerApproval": true,
                     "security.retentionMode": "until_admin_delete"
@@ -365,11 +429,6 @@ async function handleSetupVerify(interaction) {
     const showTs = interaction.options.getBoolean("timestamp") ?? false;
     const titleUrl = cleanText(interaction.options.getString("url"), null);
 
-    /*
-      รองรับทั้ง option ใหม่และเก่า:
-      - ใหม่: button_text = "✅ ยืนยันตัวตนเข้าดิส"
-      - เก่า: button_label + button_emoji
-    */
     const newButtonText = interaction.options.getString("button_text");
     const oldButtonLabel = interaction.options.getString("button_label");
     const oldButtonEmoji = interaction.options.getString("button_emoji");
@@ -438,6 +497,9 @@ async function handleSetupVerify(interaction) {
         });
     }
 
+    const panelRevision = makePanelRevision("panel");
+    const panelRevisionUpdatedAt = Date.now();
+
     const embed = new MessageEmbed()
         .setColor(colorHex)
         .setTitle(title)
@@ -458,7 +520,8 @@ async function handleSetupVerify(interaction) {
             authorizeUrl = buildDiscordAuthorizeUrl({
                 interaction,
                 guildId: interaction.guild.id,
-                roleId: role.id
+                roleId: role.id,
+                panelRevision
             });
         } catch (err) {
             console.error("[VERIFY] Direct OAuth URL build failed:", err.message);
@@ -495,18 +558,32 @@ async function handleSetupVerify(interaction) {
             components: [row]
         };
 
-        if (content) panelPayload.content = content;
+        if (content) {
+            panelPayload.content = content;
+        }
 
         const panelMsg = await channel.send(panelPayload);
+
+        const dashboardVerifyType = boolToDashboardVerifyType(verifyType);
+        const legacyOauthMode = boolToLegacyOauthMode(verifyType);
 
         await sessionManager.setSetting(`verify_config_${interaction.guild.id}_${role.id}`, {
             roleId: role.id,
             roleName: role.name,
             guildId: interaction.guild.id,
+            guildName: interaction.guild.name,
             channelId: channel.id,
+            channelName: channel.name,
             messageId: panelMsg.id,
+
+            panelRevision,
+            panelRevisionUpdatedAt,
+
             verifyType,
-            oauthMode: verifyType ? "direct-discord-authorize-long-lived-state" : "direct-role",
+            dashboardVerifyType,
+            oauthMode: dashboardVerifyType,
+            legacyOauthMode,
+
             panel: {
                 content,
                 title,
@@ -517,9 +594,15 @@ async function handleSetupVerify(interaction) {
                 footerText,
                 titleUrl,
                 showTimestamp: showTs,
+
+                buttonText: buttonParts.label,
                 buttonLabel: buttonParts.label,
-                buttonEmoji: buttonParts.emojiDisplay
+                buttonEmoji: buttonParts.emojiDisplay,
+
+                verifyType: dashboardVerifyType,
+                legacyVerifyType: verifyType ? "oauth2" : "direct-role"
             },
+
             setBy: interaction.user.id,
             updatedAt: Date.now(),
             createdAt: Date.now()
@@ -537,7 +620,9 @@ async function handleSetupVerify(interaction) {
             titleUrl,
             showTs,
             buttonLabel: buttonParts.label,
-            buttonEmoji: buttonParts.emojiDisplay
+            buttonEmoji: buttonParts.emojiDisplay,
+            panelRevision,
+            panelRevisionUpdatedAt
         });
 
         const resultEmbed = new MessageEmbed()
@@ -548,8 +633,16 @@ async function handleSetupVerify(interaction) {
                 `ระบบบันทึกการตั้งค่าและพร้อมให้สมาชิกยืนยันตัวตน`
             )
             .addFields(
-                { name: "📌 ช่อง", value: `<#${channel.id}>`, inline: true },
-                { name: "🎭 ยศ", value: `<@&${role.id}>`, inline: true },
+                {
+                    name: "📌 ช่อง",
+                    value: `<#${channel.id}>`,
+                    inline: true
+                },
+                {
+                    name: "🎭 ยศ",
+                    value: `<@&${role.id}>`,
+                    inline: true
+                },
                 {
                     name: "🔒 ประเภท",
                     value: verifyType ? "OAuth2 Direct Authorize" : "กดรับยศทันที",
@@ -560,8 +653,26 @@ async function handleSetupVerify(interaction) {
                     value: `${buttonParts.emojiDisplay || ""} ${buttonParts.label}`.trim(),
                     inline: false
                 },
-                { name: "🎨 สี", value: colorHex, inline: true },
-                { name: "🕐 เวลา", value: showTs ? "เปิด" : "ปิด", inline: true }
+                {
+                    name: "🎨 สี",
+                    value: colorHex,
+                    inline: true
+                },
+                {
+                    name: "🕐 เวลา",
+                    value: showTs ? "เปิด" : "ปิด",
+                    inline: true
+                },
+                {
+                    name: "🆔 Message ID",
+                    value: `\`${panelMsg.id}\``,
+                    inline: false
+                },
+                {
+                    name: "🧬 Panel Revision",
+                    value: `\`${panelRevision}\``,
+                    inline: false
+                }
             )
             .setFooter({ text: `ตั้งค่าโดย ${interaction.user.tag}` })
             .setTimestamp();
@@ -623,30 +734,10 @@ async function handleVerifyButton(interaction) {
     }
 
     if (customId.startsWith("verify_oauth_")) {
-        const roleId = customId.replace("verify_oauth_", "");
-
-        let authorizeUrl;
-
-        try {
-            authorizeUrl = buildDiscordAuthorizeUrl({
-                interaction,
-                guildId: guild.id,
-                roleId,
-                expectedUserId: interaction.user.id
-            });
-        } catch (err) {
-            console.error("[VERIFY] Legacy direct OAuth URL build failed:", err.message);
-
-            return interaction.reply({
-                content: `> ${config.emojis.error} สร้างลิงก์ OAuth ไม่สำเร็จ: ${err.message}`,
-                ephemeral: true
-            });
-        }
-
         return interaction.reply({
             content:
-                `> แผงนี้เป็นแผงเก่า กรุณาให้แอดมินสร้างแผงใหม่\n` +
-                `> [คลิกเพื่อยืนยันตัวตน](${authorizeUrl})`,
+                `> แผงยืนยันนี้เป็นแผงเก่าแล้ว\n` +
+                `> กรุณาให้แอดมินกดส่งแผงใหม่ หรือแก้แผงล่าสุดจากหน้า Dashboard`,
             ephemeral: true
         });
     }
