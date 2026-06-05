@@ -1,8 +1,8 @@
 /*
 ================================================================================
   Dashboard Public v2 — Verification Callback JS
-  - ไม่โชว์ debug ลึกบน public callback
-  - แสดง requestId ให้ผู้ใช้เอาไปแจ้งแอดมินได้
+  - Public callback ไม่โชว์ debug/internal logs ให้ผู้ใช้ทั่วไป
+  - แสดง requestId เฉพาะตอน error เพื่อแจ้งแอดมินได้
   - ส่งข้อมูล browser/device summary ให้ backend ใช้บันทึก
 ================================================================================
 */
@@ -19,7 +19,7 @@
   const showDebug = false;
 
   const errorMap = {
-    access_denied: "คุณปฏิเสธการอนุญาต กรุณากดปุ่มยืนยันใหม่อีกครั้ง",
+    access_denied: "คุณปฏิเสธการอนุญาต กรุณากลับไปที่ Discord แล้วกดปุ่มยืนยันใหม่อีกครั้ง",
 
     missing_code_or_state: "ไม่พบรหัสยืนยันตัวตน กรุณากดปุ่มจาก Discord ใหม่อีกครั้ง",
     missing_oauth_code: "ไม่พบรหัส OAuth กรุณากดปุ่มยืนยันใหม่อีกครั้ง",
@@ -41,7 +41,7 @@
     member_not_found_after_oauth: "ระบบหาโปรไฟล์สมาชิกในเซิร์ฟเวอร์ไม่เจอ กรุณาเข้าดิสก่อนแล้วลองใหม่",
 
     new_account: "บัญชี Discord อายุน้อยเกินไป ไม่ผ่านเงื่อนไขของเซิร์ฟเวอร์",
-    network_risk_vpn_proxy_tor: "ตรวจพบการใช้ VPN, Proxy หรือ TOR กรุณาปิดก่อน",
+    network_risk_vpn_proxy_tor: "ตรวจพบการใช้ VPN, Proxy หรือ TOR กรุณาปิดก่อนแล้วลองใหม่",
     email_requirement_failed: "บัญชีนี้ไม่มี Email หรือ Email ยังไม่ผ่านเงื่อนไขของเซิร์ฟเวอร์",
     connections_requirement_failed: "บัญชีนี้ยังไม่ผ่านเงื่อนไข connections ของเซิร์ฟเวอร์",
     country_not_allowed: "ประเทศของคุณไม่ผ่านเงื่อนไขของเซิร์ฟเวอร์",
@@ -54,6 +54,8 @@
     internal_error: "ระบบมีปัญหาภายใน กรุณาลองใหม่อีกครั้ง",
     invalid_json_response: "ระบบตอบกลับไม่ถูกต้อง กรุณาลองใหม่"
   };
+
+  const stepOrder = ["discord", "account", "security", "role"];
 
   function $(id) {
     return document.getElementById(id);
@@ -68,9 +70,27 @@
     if (target) target.classList.add("active");
   }
 
-  function setStatus(text) {
+  function setStep(activeStep) {
+    const activeIndex = stepOrder.indexOf(activeStep);
+
+    document.querySelectorAll(".verify-step").forEach((el) => {
+      const index = stepOrder.indexOf(el.dataset.step);
+
+      el.classList.remove("active", "done");
+
+      if (index < activeIndex) {
+        el.classList.add("done");
+      } else if (index === activeIndex) {
+        el.classList.add("active");
+      }
+    });
+  }
+
+  function setStatus(text, step) {
     const el = $("statusText");
     if (el) el.textContent = text;
+
+    if (step) setStep(step);
   }
 
   function setText(id, text) {
@@ -97,6 +117,7 @@
     setText("err-msg", message || "ยืนยันตัวตนไม่สำเร็จ");
 
     const requestBox = $("request-id");
+
     if (requestBox) {
       requestBox.textContent = requestId ? `รหัสอ้างอิง: ${requestId}` : "";
       requestBox.style.display = requestId ? "block" : "none";
@@ -136,6 +157,7 @@
 
     if (data.roleName) {
       setText("roleName", data.roleName);
+
       const rolePill = $("rolePill");
       if (rolePill) rolePill.style.display = "inline-flex";
     }
@@ -165,7 +187,13 @@
     };
   }
 
+  async function wait(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   async function run() {
+    setStep("discord");
+
     if (error) {
       fail(
         errorMap[error] || decodeURIComponent(errorDescription || error),
@@ -183,11 +211,14 @@
     }
 
     try {
-      setStatus("กำลังรับผลลัพธ์จาก Discord...");
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      setStatus("กำลังรับข้อมูลจาก Discord", "discord");
+      await wait(380);
 
-      setStatus("กำลังตรวจสอบข้อมูลบัญชีและเงื่อนไข...");
-      await new Promise((resolve) => setTimeout(resolve, 260));
+      setStatus("กำลังตรวจสอบบัญชี Discord", "account");
+      await wait(320);
+
+      setStatus("กำลังตรวจสอบเงื่อนไขความปลอดภัย", "security");
+      await wait(320);
 
       const payload = {
         code,
@@ -204,7 +235,7 @@
         body: JSON.stringify(payload)
       });
 
-      setStatus("กำลังสรุปผลการยืนยัน...");
+      setStatus("กำลังเพิ่มยศให้คุณ", "role");
 
       const data = await res.json().catch(() => null);
 
@@ -222,6 +253,12 @@
         return;
       }
 
+      document.querySelectorAll(".verify-step").forEach((el) => {
+        el.classList.remove("active");
+        el.classList.add("done");
+      });
+
+      await wait(180);
       success(data);
     } catch (err) {
       fail(
