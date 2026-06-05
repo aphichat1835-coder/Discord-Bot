@@ -2,106 +2,126 @@
 <html lang="th">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
   <title>กำลังยืนยันตัวตน — Discord Verification</title>
   <link rel="stylesheet" href="/css/dashboard.css">
 </head>
 
-<body>
-  <main class="center-shell">
+<body class="callback-page">
+  <main class="callback-center">
     <section class="callback-shell">
-      <div class="callback-brand">
-        <div class="callback-logo">🛡️</div>
+      <div class="callback-brand callback-brand-clean">
         <h2>Discord Verification</h2>
         <div class="muted small">ระบบยืนยันตัวตนและเพิ่มยศอัตโนมัติ</div>
       </div>
 
-      <div class="card callback-card">
+      <div class="card callback-card callback-card-premium">
         <div id="s-loading" class="callback-state active">
-          <div class="loading-box" style="padding:18px 0 8px;">
-            <div class="spinner"></div>
-            <div>
-              <div style="font-weight:1000;color:var(--text);">กำลังยืนยันตัวตน...</div>
-              <div id="statusText" class="muted small mt-6">
-                กำลังตรวจสอบผลลัพธ์จาก Discord
-              </div>
+          <div class="verify-loader-wrap">
+            <div class="verify-loader">
+              <div class="verify-loader-ring"></div>
+              <div class="verify-loader-ring verify-loader-ring-2"></div>
+              <div class="verify-loader-core"></div>
             </div>
           </div>
 
-          <div class="alert alert-info mt-18">
-            กรุณารอสักครู่ อย่าปิดหน้านี้ระหว่างระบบกำลังตรวจสอบบัญชีและเพิ่มยศให้คุณ
+          <h1 class="callback-title loading-title">กำลังยืนยันตัวตน...</h1>
+
+          <p id="statusText" class="callback-subtitle">
+            กำลังรับข้อมูลจาก Discord
+          </p>
+
+          <div class="verify-steps" aria-label="verification progress">
+            <div class="verify-step active" data-step="discord">
+              <span class="step-dot"></span>
+              <span>กำลังรับข้อมูลจาก Discord</span>
+            </div>
+
+            <div class="verify-step" data-step="account">
+              <span class="step-dot"></span>
+              <span>กำลังตรวจสอบบัญชี Discord</span>
+            </div>
+
+            <div class="verify-step" data-step="security">
+              <span class="step-dot"></span>
+              <span>กำลังตรวจสอบเงื่อนไขความปลอดภัย</span>
+            </div>
+
+            <div class="verify-step" data-step="role">
+              <span class="step-dot"></span>
+              <span>กำลังเพิ่มยศให้คุณ</span>
+            </div>
+          </div>
+
+          <div class="callback-note callback-note-blue">
+            กรุณารอสักครู่ อย่าปิดหน้านี้ระหว่างระบบกำลังทำงาน
           </div>
         </div>
 
         <div id="s-success" class="callback-state">
-          <div class="result-ring ok">
+          <div class="result-ring ok compact">
             <div class="result-icon ok">✓</div>
           </div>
 
-          <h1 class="title-lg" style="color:var(--green-2);">
+          <h1 class="callback-title success-title">
             ยืนยันตัวตนสำเร็จ
           </h1>
 
-          <p id="ok-msg" class="muted mt-10">
+          <p id="ok-msg" class="callback-subtitle">
             ระบบเพิ่มยศให้เรียบร้อยแล้ว
           </p>
 
-          <div class="user-mini">
+          <div class="user-mini callback-user-card">
             <img id="avatar" class="user-mini-avatar" alt="avatar" style="display:none;">
+
             <div style="min-width:0;">
-              <div id="name" style="font-weight:1000;" class="truncate">Discord User</div>
+              <div id="name" class="callback-user-name truncate">Discord User</div>
               <div id="tag" class="muted small mono truncate">—</div>
+
               <div id="rolePill" class="badge badge-ok mt-8" style="display:none;">
                 ได้รับยศ: <span id="roleName">—</span>
               </div>
             </div>
           </div>
 
-          <div class="alert alert-success">
-            กลับไปที่ Discord ได้เลย ถ้ายศยังไม่ขึ้นทันที ให้รอสักครู่หรือรีเฟรช Discord
+          <div class="callback-note callback-note-success compact-note">
+            กลับไปที่ Discord ได้เลย ถ้ายศยังไม่ขึ้นให้รีเฟรช Discord
           </div>
 
-          <div class="modal-actions" style="justify-content:center;">
-            <a class="btn btn-primary" href="https://discord.com/channels/@me">
+          <div class="modal-actions callback-actions">
+            <a class="btn btn-primary callback-main-btn" href="https://discord.com/">
               เปิด Discord
             </a>
           </div>
         </div>
 
         <div id="s-error" class="callback-state">
-          <div class="result-ring err">
-            <div class="result-icon err">!</div>
+          <div class="error-mark">
+            <span>!</span>
           </div>
 
-          <h1 class="title-lg" style="color:var(--red-2);">
+          <h1 class="callback-title error-title">
             ยืนยันตัวตนไม่สำเร็จ
           </h1>
 
-          <p id="err-msg" class="muted mt-10">
+          <p id="err-msg" class="callback-subtitle">
             ระบบยืนยันตัวตนไม่สำเร็จ กรุณาลองใหม่อีกครั้ง
           </p>
 
-          <div id="request-id" class="alert alert-warn mt-18" style="display:none;"></div>
+          <div id="request-id" class="callback-note callback-note-warn mt-18" style="display:none;"></div>
 
-          <div id="err-detail" class="alert alert-danger mt-18" style="display:none;"></div>
+          <div id="err-detail" class="callback-note callback-note-danger mt-18" style="display:none;"></div>
 
-          <div class="alert alert-info mt-18">
-            วิธีแก้เบื้องต้น:
-            <br>1. กลับไปที่ Discord แล้วกดปุ่มยืนยันใหม่
-            <br>2. ตรวจว่าใช้บัญชี Discord ถูกบัญชี
-            <br>3. ถ้ายังไม่ได้ ให้แจ้งแอดมินเซิร์ฟเวอร์พร้อมรหัสอ้างอิงด้านบน
+          <div class="callback-note callback-note-blue error-help">
+            กลับไปที่ Discord แล้วกดปุ่มยืนยันใหม่อีกครั้ง ถ้ายังไม่ได้ให้แจ้งแอดมินเซิร์ฟเวอร์
           </div>
 
-          <div class="modal-actions" style="justify-content:center;">
-            <a class="btn btn-soft" href="https://discord.com/channels/@me">
+          <div class="modal-actions callback-actions">
+            <a class="btn btn-soft callback-main-btn" href="https://discord.com/">
               กลับไป Discord
             </a>
           </div>
         </div>
-      </div>
-
-      <div class="text-center muted xsmall mt-18">
-        หน้า callback นี้ไม่แสดง debug ภายในต่อผู้ใช้ทั่วไป รายละเอียดเชิงลึกให้ดูจาก Dashboard/Admin logs
       </div>
     </section>
   </main>
