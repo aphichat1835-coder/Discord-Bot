@@ -96,30 +96,51 @@
         </div>
 
         <div id="s-error" class="callback-state">
-          <div class="error-mark">
-            <span>!</span>
-          </div>
+          <div class="error-layout">
+            <div class="error-cross-wrap">
+              <div class="error-cross">×</div>
+            </div>
 
-          <h1 class="callback-title error-title">
-            ยืนยันตัวตนไม่สำเร็จ
-          </h1>
+            <div class="error-copy">
+              <h1 class="callback-title error-title">
+                ยืนยันไม่สำเร็จ
+              </h1>
 
-          <p id="err-msg" class="callback-subtitle">
-            ระบบยืนยันตัวตนไม่สำเร็จ กรุณาลองใหม่อีกครั้ง
-          </p>
+              <p id="err-msg" class="callback-subtitle error-message">
+                กรุณากลับไปกดปุ่มยืนยันใหม่อีกครั้ง
+              </p>
+            </div>
 
-          <div id="request-id" class="callback-note callback-note-warn mt-18" style="display:none;"></div>
+            <div id="request-id" class="error-ref" style="display:none;"></div>
 
-          <div id="err-detail" class="callback-note callback-note-danger mt-18" style="display:none;"></div>
+            <div id="err-detail" class="error-ref error-ref-danger" style="display:none;"></div>
 
-          <div class="callback-note callback-note-blue error-help">
-            กลับไปที่ Discord แล้วกดปุ่มยืนยันใหม่อีกครั้ง ถ้ายังไม่ได้ให้แจ้งแอดมินเซิร์ฟเวอร์
-          </div>
+            <div class="error-guide-card">
+              <div class="error-guide-title">ควรทำยังไงต่อ?</div>
 
-          <div class="modal-actions callback-actions">
-            <a class="btn btn-soft callback-main-btn" href="https://discord.com/">
-              กลับไป Discord
-            </a>
+              <div class="error-guide-list">
+                <div class="error-guide-item">
+                  <span>1</span>
+                  <p>กลับไปที่ Discord แล้วกดปุ่มยืนยันใหม่</p>
+                </div>
+
+                <div class="error-guide-item">
+                  <span>2</span>
+                  <p>ใช้บัญชี Discord เดิมที่กดอนุญาต</p>
+                </div>
+
+                <div class="error-guide-item">
+                  <span>3</span>
+                  <p>ถ้ายังไม่ได้ ให้แจ้งแอดมินเซิร์ฟเวอร์</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="modal-actions callback-actions">
+              <a class="btn btn-soft callback-main-btn" href="https://discord.com/">
+                กลับไป Discord
+              </a>
+            </div>
           </div>
         </div>
       </div>
