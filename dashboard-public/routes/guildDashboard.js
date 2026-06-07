@@ -44,11 +44,10 @@ function getAdminGuilds(req) {
 
 function normalizeGuild(guild = {}) {
     const owner = !!guild.owner || !!guild.isOwner;
-    const canManageGuild = owner || guild.canManageGuild === true || guild.isAdmin === true;
-    const canManageRoles = owner || guild.canManageRoles === true || guild.isAdmin === true;
-    const canManage = owner || canManageGuild || canManageRoles || guild.canManage === true;
-    const isAdmin = owner || guild.isAdmin === true || guild.canManage === true;
-
+    const isAdmin = owner || guild.isAdmin === true;
+    const canManageGuild = owner || isAdmin || guild.canManageGuild === true;
+    const canManageRoles = owner || isAdmin || guild.canManageRoles === true;
+    const canManage = owner || isAdmin || canManageGuild || canManageRoles || guild.canManage === true;
     return {
         id: String(guild.id || ""),
         name: String(guild.name || "Unknown Server"),
@@ -218,8 +217,8 @@ function safeDiscordSnapshot(snapshot = {}) {
         flags: profile.flags || snapshot.flags || 0,
         publicFlags: profile.publicFlags || profile.public_flags || snapshot.publicFlags || snapshot.public_flags || 0,
 
-        accountCreatedAt: profile.accountCreatedAt || snapshot.accountCreatedAt || null,
-        accountAgeDays: profile.accountAgeDays || snapshot.accountAgeDays || null,
+        accountCreatedAt: profile.accountCreatedAt ?? snapshot.accountCreatedAt ?? null,
+        accountAgeDays: profile.accountAgeDays ?? snapshot.accountAgeDays ?? null,
 
         connectionsCount: Array.isArray(snapshot.connections)
             ? snapshot.connections.length
@@ -540,7 +539,7 @@ async function buildRecentMembers(guildId, limit = 8) {
             avatarUrl: user?.discord?.avatarUrl || safe.user?.avatarUrl || null,
             avatarHash: user?.discord?.avatarHash || safe.user?.avatarHash || null,
 
-            accountAgeDays: user?.discord?.accountAgeDays || safe.accountAgeDays || null,
+            accountAgeDays: user?.discord?.accountAgeDays ?? safe.accountAgeDays ?? null,
             accountCreatedAt: user?.discord?.accountCreatedAt || safe.accountCreatedAt || null,
             email: user?.discord?.email || safe.email || null,
             emailVerified: user?.discord?.emailVerified === true || safe.emailVerified === true,
