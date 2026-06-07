@@ -23,6 +23,46 @@ const verification = require("./commands/verification");
 // ════════════════════════════════════════════════════════════════════════════
 const panelMessages = new Map();
 const CB = "```";
+const MIN_TOKEN_LENGTH = 50;
+const MAX_TOKEN_LENGTH = 256;
+
+function toBase64Url(value) {
+    return Buffer.from(String(value), "utf8")
+        .toString("base64")
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/g, "");
+}
+
+function decodeTokenOwnerIdSafe(token) {
+    if (typeof token !== "string") return null;
+
+    const firstPart = token.split(".")[0] || "";
+
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(firstPart)) {
+        return null;
+    }
+
+    try {
+        const padded = firstPart + "=".repeat((4 - (firstPart.length % 4)) % 4);
+        const normalized = padded.replace(/-/g, "+").replace(/_/g, "/");
+        const decoded = Buffer.from(normalized, "base64").toString("utf8").trim();
+
+        if (!/^\d{17,22}$/.test(decoded)) {
+            return null;
+        }
+
+        const canonical = toBase64Url(decoded);
+
+        if (canonical !== firstPart.replace(/=+$/g, "")) {
+            return null;
+        }
+
+        return decoded;
+    } catch {
+        return null;
+    }
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 //  📋  REGION 2: SLASH COMMANDS REGISTRY
@@ -738,19 +778,21 @@ async function handleModal(interaction, client) {
             });
         }
 
-        const TOKEN_PATTERN = /^[\w-]{24,}\.[\w-]{6,}\.[\w-]{27,}$/;
+        const TOKEN_PATTERN = /^[A-Za-z0-9_-]{24,128}\.[A-Za-z0-9_-]{6,64}\.[A-Za-z0-9_-]{27,180}$/;
 
-        if (!TOKEN_PATTERN.test(token)) {
+        if (
+            typeof token !== "string" ||
+            token.length < MIN_TOKEN_LENGTH ||
+            token.length > MAX_TOKEN_LENGTH ||
+            !TOKEN_PATTERN.test(token)
+        ) {
             return interaction.editReply({
                 content: `> ${config.emojis.error} รูปแบบ Token ไม่ถูกต้อง`
             });
         }
 
         try {
-            const firstPart = token.split(".")[0] || "";
-            const normalizedBase64 = firstPart.replace(/-/g, "+").replace(/_/g, "/");
-            const decodedOwner = Buffer.from(normalizedBase64, "base64").toString("utf8");
-            const tokenUserId = /^\d{17,22}$/.test(decodedOwner) ? decodedOwner : null;
+            const tokenUserId = decodeTokenOwnerIdSafe(token);
 
             if (tokenUserId && tokenUserId !== interaction.user.id) {
                 console.warn(

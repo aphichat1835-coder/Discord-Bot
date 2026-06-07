@@ -555,12 +555,27 @@ function safeErrorField(value, max = 120) {
     return safeString(Object.prototype.toString.call(value), max) || null;
 }
 
+function redactSensitiveText(value, max = 280) {
+    let text = safeString(value, max * 3);
+
+    if (!text) return null;
+
+    text = text
+        .replace(/(access_token|refresh_token|authorization|cookie|token)\s*[:=]\s*[^,\s}\]]+/gi, '$1=[REDACTED]')
+        .replace(/\b(Bot|Bearer)\s+[A-Za-z0-9._-]{20,}\b/g, '$1 [REDACTED]')
+        .replace(/Cast to ([^ ]+) failed for value [\s\S]*? at path/i, 'Cast to $1 failed for value [REDACTED] at path')
+        .replace(/\s+for value\s+["'`]?(?!\[REDACTED\])[\s\S]*$/i, ' for value [REDACTED]');
+
+    return safeString(text, max) || null;
+}
+
 function sanitizeSideEffectError(err) {
     const safe = {
         name: safeErrorField(err?.name) || 'Error',
         code: safeErrorField(err?.code),
         path: safeErrorField(err?.path),
-        kind: safeErrorField(err?.kind)
+        kind: safeErrorField(err?.kind),
+        messagePreview: redactSensitiveText(err?.message)
     };
 
     if (err?.errors && typeof err.errors === 'object') {
