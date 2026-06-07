@@ -38,7 +38,7 @@ function normalizeGuild(guild = {}) {
     const isAdmin = owner || guild.isAdmin === true;
     const canManageGuild = owner || isAdmin || guild.canManageGuild === true;
     const canManageRoles = owner || isAdmin || guild.canManageRoles === true;
-    const canManage = owner || isAdmin || canManageGuild || canManageRoles || guild.canManage === true;
+    const canManage = owner || isAdmin || canManageGuild || canManageRoles;
 
     return {
         ...guild,
