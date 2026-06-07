@@ -407,7 +407,8 @@ function safePlainObject(value) {
         const json = JSON.stringify(value);
         if (!json || Buffer.byteLength(json, 'utf8') > 10 * 1024) return {};
 
-        return JSON.parse(json);
+        const parsed = JSON.parse(json);
+        return Object.prototype.toString.call(parsed) === '[object Object]' ? parsed : {};
     } catch {
         return {};
     }
@@ -520,7 +521,7 @@ function buildDiscordSnapshot(profile, connections, memberInfo, stateObj, extra 
         accountCreatedAt: getAccountCreatedAt(profile.id),
         accountAgeDays: getAccountAgeDays(profile.id),
 
-        connectionsCount: (connections || []).length,
+        connectionsCount: Array.isArray(connections) ? connections.length : 0,
         connections: normalizeConnections(connections),
 
         guildsCount: 0,
