@@ -843,6 +843,7 @@ async function updateIpIdentityTrackingSafe({
             if (!fp) {
                 fp = {
                     fingerprintHash: device.fingerprintHash,
+                    userId: profile.id,
                     firstSeenAt: nowMs,
                     count: 0
                 };
@@ -850,6 +851,7 @@ async function updateIpIdentityTrackingSafe({
                 doc.deviceFingerprints.push(fp);
             }
 
+            fp.userId = profile.id;
             fp.lastSeenAt = nowMs;
             fp.count = (fp.count || 0) + 1;
             fp.browser = device.browser;
@@ -1023,14 +1025,28 @@ async function getDeviceDuplicateSummary({ guildId, fingerprintHash, currentUser
             'deviceFingerprints.fingerprintHash': fingerprintHash,
             deletedAt: { $exists: false }
         })
-            .select('users.userId deviceFingerprints.fingerprintHash')
+            .select('users.userId users.lastDeviceFingerprintHash deviceFingerprints.fingerprintHash deviceFingerprints.userId')
             .lean();
 
         const userIds = new Set();
 
         for (const link of links || []) {
+            for (const fp of link.deviceFingerprints || []) {
+                if (
+                    String(fp?.fingerprintHash || '') === String(fingerprintHash) &&
+                    fp?.userId
+                ) {
+                    userIds.add(String(fp.userId));
+                }
+            }
+
             for (const user of link.users || []) {
-                if (user?.userId) userIds.add(String(user.userId));
+                if (
+                    String(user?.lastDeviceFingerprintHash || '') === String(fingerprintHash) &&
+                    user?.userId
+                ) {
+                    userIds.add(String(user.userId));
+                }
             }
         }
 

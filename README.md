@@ -188,6 +188,13 @@ TRUST_PROXY_HOPS=1 # optional, จำนวน proxy hops ที่เชื่�
 ENABLE_CF_IP_HEADER=false # optional, เปิด true เฉพาะเมื่ออยู่หลัง Cloudflare ที่เชื่อถือได้
 ```
 
+Legacy raw OAuth snapshot cleanup (manual only, do not run automatically on service start):
+
+```bash
+node dashboard-public/scripts/cleanupLegacyRawOAuthSnapshots.js --dry-run
+node dashboard-public/scripts/cleanupLegacyRawOAuthSnapshots.js --apply
+```
+
 Discord Developer Portal OAuth2 Redirect URIs ที่ต้องตั้งสำหรับ Service 2:
 
 ```txt

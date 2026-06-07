@@ -95,16 +95,14 @@ function normalizeSocketIp(ip) {
 }
 
 function getRateLimitKey(req) {
-    const socketIp = normalizeSocketIp(
-        req.socket?.remoteAddress ||
-        req.connection?.remoteAddress ||
-        req.ip ||
-        'unknown'
-    );
+    const rawIp = TRUST_PROXY
+        ? (req.ip || req.socket?.remoteAddress || req.connection?.remoteAddress || 'unknown')
+        : (req.socket?.remoteAddress || req.connection?.remoteAddress || 'unknown');
+    const normalizedIp = normalizeSocketIp(rawIp);
 
     const ipKey = typeof ipKeyGenerator === 'function'
-        ? ipKeyGenerator(socketIp)
-        : socketIp;
+        ? ipKeyGenerator(normalizedIp)
+        : normalizedIp;
 
     const adminId =
         req.session?.adminUser?.id ||

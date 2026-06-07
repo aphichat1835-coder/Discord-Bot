@@ -437,6 +437,7 @@ node --check routes/api.js
 | `TRUST_PROXY` | Service 2 | Optional | Enable Express trust proxy only behind a trusted reverse proxy; default false | `false` |
 | `TRUST_PROXY_HOPS` | Service 2 | Optional | Number of trusted proxy hops when `TRUST_PROXY=true`, clamped 1-5 | `1` |
 | `ENABLE_CF_IP_HEADER` | Service 2 | Optional | Trust `cf-connecting-ip` only when the dashboard is actually behind Cloudflare; default false | `false` |
+| Legacy raw OAuth cleanup | Service 2 manual script | Optional | Run `node dashboard-public/scripts/cleanupLegacyRawOAuthSnapshots.js --dry-run` then `--apply` to unset old raw profile/member/guild fields | manual only |
 | `NODE_ENV` | Both | Recommended | Runtime mode | `production` |
 | `PORT` | Both | Optional | Render/local port | `3000` or `3001` |
 | `PORT_DASHBOARD` | Service 2 | Optional | fallback dashboard port | `3001` |
