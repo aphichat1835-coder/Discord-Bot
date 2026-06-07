@@ -431,6 +431,7 @@ function normalizeConnections(connections = []) {
     const list = Array.isArray(connections) ? connections : [];
 
     return list
+        .slice(0, 50)
         .map(connection => {
             if (!connection || typeof connection !== 'object' || Array.isArray(connection)) {
                 return null;
@@ -462,8 +463,7 @@ function normalizeConnections(connections = []) {
                 raw: compactConnectionRaw(connection)
             };
         })
-        .filter(Boolean)
-        .slice(0, 50);
+        .filter(Boolean);
 }
 
 function normalizeGuilds(guilds = []) {
