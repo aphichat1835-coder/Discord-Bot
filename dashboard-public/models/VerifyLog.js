@@ -60,6 +60,7 @@ const schema = new mongoose.Schema({
         mobile: Boolean,
 
         riskScore: Number,
+        riskFlags: [String],
 
         lookupProvider: String,
         lookupStatus: String,

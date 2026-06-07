@@ -546,14 +546,72 @@ function computeRisk(info = {}) {
     if (info.isTOR) risk += 55;
     if (info.hosting) risk += 25;
     if (info.lookupStatus === 'lookup_failed') risk += 10;
+    if (info.lookupStatus === 'ip_unknown') risk += 20;
 
     return Math.min(100, risk);
+}
+
+function makeUnknownIpInfo({ trustedIp, headerMeta }) {
+    return {
+        encryptedRawIp: null,
+        ipHash: null,
+
+        country: 'unknown',
+        countryCode: 'unknown',
+        region: 'unknown',
+        city: 'unknown',
+        zip: 'unknown',
+        lat: null,
+        lon: null,
+        timezone: 'unknown',
+
+        isp: 'unknown',
+        org: 'unknown',
+        as: 'unknown',
+        asname: 'unknown',
+        reverse: 'unknown',
+
+        isProxy: false,
+        isVPN: false,
+        isTOR: false,
+        hosting: false,
+        mobile: false,
+
+        riskScore: 20,
+        riskFlags: ['ip_unknown'],
+
+        lookupProvider: 'local',
+        lookupStatus: 'ip_unknown',
+        lookupMessage: 'Unable to determine trusted public client IP',
+        lookupRaw: compactLookupRaw({
+            provider: 'local',
+            status: 'ip_unknown',
+            message: 'Unable to determine trusted public client IP'
+        }),
+
+        ipSource: trustedIp.source || 'unknown',
+        headerIps: headerMeta.headerIps,
+        spoofSuspected: headerMeta.spoofSuspected,
+        spoofFlags: headerMeta.spoofFlags,
+        headerIpConflict: headerMeta.headerIpConflict,
+
+        proxyCheckProvider: null,
+        proxyCheckStatus: null,
+        proxyCheckRaw: null,
+
+        lookupAt: Date.now()
+    };
 }
 
 async function processIP(req) {
     const trustedIp = getTrustedRequestIp(req);
     const rawIp = trustedIp.ip;
     const headerMeta = detectSpoofedHeaders(req, rawIp);
+
+    if (!isValidIP(rawIp) || isPrivateIP(rawIp)) {
+        return makeUnknownIpInfo({ trustedIp, headerMeta });
+    }
+
     let lookup = {};
 
     try {
@@ -563,8 +621,8 @@ async function processIP(req) {
             provider: 'lookup_failed',
             raw: null,
             status: 'lookup_failed',
-            message: err.message,
-            query: rawIp,
+            message: safeSmallString(err?.name || 'IP lookup failed', 'IP lookup failed'),
+            query: null,
 
             country: 'unknown',
             countryCode: 'unknown',
@@ -622,6 +680,7 @@ async function processIP(req) {
         mobile: flags.mobile,
 
         riskScore,
+        riskFlags: [],
 
         lookupProvider: lookup.provider || 'unknown',
         lookupStatus: lookup.status || 'unknown',

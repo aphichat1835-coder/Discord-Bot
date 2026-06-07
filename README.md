@@ -183,6 +183,8 @@ DISCORD_CLIENT_SECRET
 SESSION_SECRET
 ENCRYPTION_KEY
 DASHBOARD_URL หรือ PUBLIC_DASHBOARD_URL
+TRUST_PROXY=false # optional, เปิด true เฉพาะเมื่ออยู่หลัง reverse proxy ที่เชื่อถือได้
+TRUST_PROXY_HOPS=1 # optional, จำนวน proxy hops ที่เชื่อถือเมื่อ TRUST_PROXY=true
 ENABLE_CF_IP_HEADER=false # optional, เปิด true เฉพาะเมื่ออยู่หลัง Cloudflare ที่เชื่อถือได้
 ```
 

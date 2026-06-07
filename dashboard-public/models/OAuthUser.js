@@ -28,7 +28,7 @@ const schema = new mongoose.Schema({
         accountCreatedAt: Number,
         accountAgeDays:   Number,
 
-        rawProfile:       mixed
+        profileSnapshot:  mixed
     },
 
     oauth: {
@@ -78,7 +78,7 @@ const schema = new mongoose.Schema({
         approximateMemberCount:   Number,
         approximatePresenceCount: Number,
 
-        raw:                      mixed
+        snapshot:                 mixed
     }],
 
     lastMember: {
@@ -92,7 +92,7 @@ const schema = new mongoose.Schema({
         avatarUrl:                  String,
         flags:                      Number,
         communicationDisabledUntil: String,
-        raw:                        mixed
+        snapshot:                   mixed
     },
 
     lastVerify: {

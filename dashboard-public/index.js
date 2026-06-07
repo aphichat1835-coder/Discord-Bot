@@ -32,7 +32,7 @@ if (!process.env.API_SECRET && !process.env.INTERNAL_API_SECRET) {
 const express    = require('express');
 const mongoose   = require('mongoose');
 const session    = require('express-session');
-const rateLimit  = require('express-rate-limit');
+const expressRateLimit = require('express-rate-limit');
 const MongoStore = require('connect-mongo');
 const path       = require('path');
 
@@ -42,10 +42,16 @@ const guildDashboardRoutes     = require('./routes/guildDashboard');
 const guildRoutes              = require('./routes/guild');
 const apiRoutes                = require('./routes/api');
 
+const rateLimit = expressRateLimit.rateLimit || expressRateLimit.default || expressRateLimit;
+const ipKeyGenerator = expressRateLimit.ipKeyGenerator;
+
 const app  = express();
 const PORT = process.env.PORT || process.env.PORT_DASHBOARD || 3001;
 
-app.set('trust proxy', 1);
+const TRUST_PROXY = String(process.env.TRUST_PROXY || '').toLowerCase() === 'true';
+const TRUST_PROXY_HOPS = Math.max(1, Math.min(5, Number(process.env.TRUST_PROXY_HOPS || 1) || 1));
+
+app.set('trust proxy', TRUST_PROXY ? TRUST_PROXY_HOPS : false);
 
 app.disable('x-powered-by');
 
@@ -76,6 +82,38 @@ app.use(session({
 }));
 
 
+function normalizeSocketIp(ip) {
+    if (!ip) return 'unknown';
+
+    let value = String(ip).trim();
+
+    if (value.startsWith('::ffff:')) value = value.slice(7);
+    if (value === '::1') value = '127.0.0.1';
+    if (value.includes('%')) value = value.split('%')[0];
+
+    return value || 'unknown';
+}
+
+function getRateLimitKey(req) {
+    const socketIp = normalizeSocketIp(
+        req.socket?.remoteAddress ||
+        req.connection?.remoteAddress ||
+        req.ip ||
+        'unknown'
+    );
+
+    const ipKey = typeof ipKeyGenerator === 'function'
+        ? ipKeyGenerator(socketIp)
+        : socketIp;
+
+    const adminId =
+        req.session?.adminUser?.id ||
+        req.session?.adminUser?.userId ||
+        '';
+
+    return adminId ? `${ipKey}:${adminId}` : ipKey;
+}
+
 function rateLimitHandler(_req, res) {
     return res.status(429).json({
         success: false,
@@ -89,6 +127,7 @@ const callbackLimiter = rateLimit({
     limit: 10,
     standardHeaders: true,
     legacyHeaders: false,
+    keyGenerator: getRateLimitKey,
     handler: rateLimitHandler
 });
 
@@ -97,6 +136,7 @@ const adminOauthLimiter = rateLimit({
     limit: 10,
     standardHeaders: true,
     legacyHeaders: false,
+    keyGenerator: getRateLimitKey,
     handler: rateLimitHandler
 });
 
@@ -105,6 +145,7 @@ const guildWriteLimiter = rateLimit({
     limit: 20,
     standardHeaders: true,
     legacyHeaders: false,
+    keyGenerator: getRateLimitKey,
     handler: rateLimitHandler
 });
 

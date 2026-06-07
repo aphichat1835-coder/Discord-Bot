@@ -107,6 +107,7 @@ schema.index({ guildId: 1, uniqueUsers: -1 });
 schema.index({ guildId: 1, maxRiskScore: -1 });
 schema.index({ 'users.userId': 1 });
 schema.index({ 'deviceFingerprints.fingerprintHash': 1 });
+schema.index({ guildId: 1, 'deviceFingerprints.fingerprintHash': 1 });
 
 module.exports =
     mongoose.models.IpIdentityLink ||
