@@ -38,7 +38,7 @@ function normalizeGuild(guild = {}) {
     const isAdmin = owner || guild.isAdmin === true;
     const canManageGuild = owner || isAdmin || guild.canManageGuild === true;
     const canManageRoles = owner || isAdmin || guild.canManageRoles === true;
-    const canManage = owner || isAdmin;
+    const canManage = owner || isAdmin || canManageGuild || canManageRoles || guild.canManage === true;
 
     return {
         ...guild,
@@ -64,6 +64,7 @@ function mergeGuildPermissions(a = {}, b = {}) {
     const isAdmin = owner || a.isAdmin === true || b.isAdmin === true;
     const canManageGuild = owner || isAdmin || a.canManageGuild === true || b.canManageGuild === true;
     const canManageRoles = owner || isAdmin || a.canManageRoles === true || b.canManageRoles === true;
+    const canManage = owner || isAdmin || canManageGuild || canManageRoles || a.canManage === true || b.canManage === true;
 
     return {
         ...a,
@@ -71,7 +72,7 @@ function mergeGuildPermissions(a = {}, b = {}) {
         owner,
         isOwner: owner,
         isAdmin,
-        canManage: owner || isAdmin,
+        canManage,
         canManageGuild,
         canManageRoles
     };
