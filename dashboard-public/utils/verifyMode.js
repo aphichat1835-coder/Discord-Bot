@@ -177,7 +177,10 @@ function normalizeVerificationConfig(config = {}) {
   }
 
   next.blockHosting = next.blockHosting === true;
-  next.antiAlt = normalizeAntiAltConfig(next.antiAlt || {});
+
+  if (Object.prototype.hasOwnProperty.call(next, "antiAlt")) {
+    next.antiAlt = normalizeAntiAltConfig(next.antiAlt || {});
+  }
 
   return next;
 }
