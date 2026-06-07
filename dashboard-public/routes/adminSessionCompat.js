@@ -35,6 +35,10 @@ function normalizeAdminUserId(adminUser) {
 
 function normalizeGuild(guild = {}) {
     const owner = !!guild.owner || !!guild.isOwner;
+    const canManageGuild = owner || guild.canManageGuild === true || guild.isAdmin === true;
+    const canManageRoles = owner || guild.canManageRoles === true || guild.isAdmin === true;
+    const canManage = owner || canManageGuild || canManageRoles || guild.canManage === true;
+    const isAdmin = owner || guild.isAdmin === true || guild.canManage === true;
 
     return {
         ...guild,
@@ -48,21 +52,10 @@ function normalizeGuild(guild = {}) {
 
         permissions: String(guild.permissions || '0'),
 
-        isAdmin: guild.isAdmin !== undefined
-            ? !!guild.isAdmin
-            : !!guild.canManage || owner,
-
-        canManage: guild.canManage !== undefined
-            ? !!guild.canManage
-            : !!guild.isAdmin || owner,
-
-        canManageGuild: guild.canManageGuild !== undefined
-            ? !!guild.canManageGuild
-            : !!guild.canManage || !!guild.isAdmin || owner,
-
-        canManageRoles: guild.canManageRoles !== undefined
-            ? !!guild.canManageRoles
-            : !!guild.canManage || !!guild.isAdmin || owner
+        isAdmin,
+        canManage,
+        canManageGuild,
+        canManageRoles
     };
 }
 

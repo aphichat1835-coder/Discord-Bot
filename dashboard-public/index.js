@@ -32,6 +32,7 @@ if (!process.env.API_SECRET && !process.env.INTERNAL_API_SECRET) {
 const express    = require('express');
 const mongoose   = require('mongoose');
 const session    = require('express-session');
+const rateLimit  = require('express-rate-limit');
 const MongoStore = require('connect-mongo');
 const path       = require('path');
 
@@ -54,8 +55,8 @@ app.use((req, res, next) => {
     next();
 });
 
-app.use(express.json({ limit: '1mb' }));
-app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+app.use(express.json({ limit: '128kb' }));
+app.use(express.urlencoded({ extended: true, limit: '128kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.use(session({
@@ -67,12 +68,55 @@ app.use(session({
         touchAfter: 24 * 3600
     }),
     cookie: {
-        maxAge:   7 * 24 * 60 * 60 * 1000,
+        maxAge:   24 * 60 * 60 * 1000,
         httpOnly: true,
         secure:   process.env.NODE_ENV === 'production',
         sameSite: 'lax'
     }
 }));
+
+
+function rateLimitHandler(_req, res) {
+    return res.status(429).json({
+        success: false,
+        code: 'rate_limited',
+        error: 'มีการยืนยันถี่เกินไป กรุณารอสักครู่แล้วลองใหม่'
+    });
+}
+
+const callbackLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    limit: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    handler: rateLimitHandler
+});
+
+const adminOauthLimiter = rateLimit({
+    windowMs: 5 * 60 * 1000,
+    limit: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    handler: rateLimitHandler
+});
+
+const guildWriteLimiter = rateLimit({
+    windowMs: 5 * 60 * 1000,
+    limit: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    handler: rateLimitHandler
+});
+
+app.post('/auth/callback', callbackLimiter);
+app.get(['/oauth/admin', '/auth/admin-callback'], adminOauthLimiter);
+app.use([
+    '/api/guild/:guildId/settings',
+    '/api/guild/:guildId/verify/validate',
+    '/api/guild/:guildId/verify/panel/send',
+    '/api/guild/:guildId/verify/panel/update',
+    '/api/guild/:guildId/verify/disable'
+], guildWriteLimiter);
 
 /*
   Route order matters:

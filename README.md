@@ -183,6 +183,7 @@ DISCORD_CLIENT_SECRET
 SESSION_SECRET
 ENCRYPTION_KEY
 DASHBOARD_URL หรือ PUBLIC_DASHBOARD_URL
+ENABLE_CF_IP_HEADER=false # optional, เปิด true เฉพาะเมื่ออยู่หลัง Cloudflare ที่เชื่อถือได้
 ```
 
 Discord Developer Portal OAuth2 Redirect URIs ที่ต้องตั้งสำหรับ Service 2:

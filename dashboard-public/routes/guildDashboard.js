@@ -43,22 +43,30 @@ function getAdminGuilds(req) {
 }
 
 function normalizeGuild(guild = {}) {
+    const owner = !!guild.owner || !!guild.isOwner;
+    const canManageGuild = owner || guild.canManageGuild === true || guild.isAdmin === true;
+    const canManageRoles = owner || guild.canManageRoles === true || guild.isAdmin === true;
+    const canManage = owner || canManageGuild || canManageRoles || guild.canManage === true;
+    const isAdmin = owner || guild.isAdmin === true || guild.canManage === true;
+
     return {
         id: String(guild.id || ""),
         name: String(guild.name || "Unknown Server"),
         icon: guild.icon || null,
-        owner: !!guild.owner,
+        owner,
         permissions: String(guild.permissions || "0"),
-        isAdmin: guild.isAdmin !== undefined ? !!guild.isAdmin : true,
-        isOwner: guild.isOwner !== undefined ? !!guild.isOwner : !!guild.owner,
-        canManage: guild.canManage !== undefined ? !!guild.canManage : true
+        isAdmin,
+        isOwner: owner,
+        canManage,
+        canManageGuild,
+        canManageRoles
     };
 }
 
 function getGuildFromSession(req, guildId) {
     return getAdminGuilds(req)
         .map(normalizeGuild)
-        .find(guild => guild.id === String(guildId));
+        .find(guild => guild.id === String(guildId) && (guild.canManage || guild.isAdmin || guild.isOwner || guild.owner));
 }
 
 function requireGuildAdmin(req, res, next) {

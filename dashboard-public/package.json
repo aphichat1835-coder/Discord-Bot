@@ -15,6 +15,7 @@
     "connect-mongo": "^5.1.0",
     "express": "^5.2.1",
     "express-session": "^1.18.1",
-    "mongoose": "^8.0.0"
+    "mongoose": "^8.0.0",
+    "express-rate-limit": "^7.4.1"
   }
 }

@@ -66,6 +66,12 @@ const schema = new mongoose.Schema({
         lookupMessage: String,
         lookupRaw: mixed,
 
+        ipSource: String,
+        headerIps: mixed,
+        spoofSuspected: Boolean,
+        spoofFlags: [String],
+        headerIpConflict: Boolean,
+
         proxyCheckProvider: String,
         proxyCheckStatus: String,
         proxyCheckRaw: mixed,

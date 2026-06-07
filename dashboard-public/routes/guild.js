@@ -23,7 +23,10 @@ const IPRevealRequest = require("../models/IPRevealRequest");
 const { decryptIP } = require("../utils/crypto");
 const {
   normalizeVerifyMode,
+  normalizeAction,
+  clampNumber,
   normalizePanel,
+  normalizeAntiAltConfig,
   normalizeVerificationConfig
 } = require("../utils/verifyMode");
 
@@ -71,24 +74,30 @@ function getSessionGuilds(req) {
 }
 
 function normalizeGuild(guild = {}) {
+  const owner = !!guild.owner || !!guild.isOwner;
+  const canManageGuild = owner || guild.canManageGuild === true || guild.isAdmin === true;
+  const canManageRoles = owner || guild.canManageRoles === true || guild.isAdmin === true;
+  const canManage = owner || canManageGuild || canManageRoles || guild.canManage === true;
+  const isAdmin = owner || guild.isAdmin === true || guild.canManage === true;
+
   return {
     id: String(guild.id || ""),
     name: String(guild.name || "Unknown Server"),
     icon: guild.icon || null,
-    owner: !!guild.owner,
+    owner,
     permissions: String(guild.permissions || "0"),
-    isAdmin: guild.isAdmin !== undefined ? !!guild.isAdmin : true,
-    isOwner: guild.isOwner !== undefined ? !!guild.isOwner : !!guild.owner,
-    canManage: guild.canManage !== undefined ? !!guild.canManage : true,
-    canManageGuild: guild.canManageGuild !== undefined ? !!guild.canManageGuild : !!guild.canManage || !!guild.isAdmin || !!guild.owner,
-    canManageRoles: guild.canManageRoles !== undefined ? !!guild.canManageRoles : !!guild.canManage || !!guild.isAdmin || !!guild.owner
+    isAdmin,
+    isOwner: owner,
+    canManage,
+    canManageGuild,
+    canManageRoles
   };
 }
 
 function getGuildFromSession(req, guildId) {
   return getSessionGuilds(req)
     .map(normalizeGuild)
-    .find(guild => guild.id === String(guildId));
+    .find(guild => guild.id === String(guildId) && (guild.canManage || guild.isAdmin || guild.isOwner || guild.owner));
 }
 
 function requireAdmin(req, res, next) {
@@ -235,6 +244,7 @@ function sanitizeVerification(input = {}) {
 
   if ("enabled" in input) out.enabled = !!input.enabled;
   if ("blockVPN" in input) out.blockVPN = !!input.blockVPN;
+  if ("blockHosting" in input) out.blockHosting = !!input.blockHosting;
   if ("requireEmail" in input) out.requireEmail = !!input.requireEmail;
   if ("requireEmailVerified" in input) out.requireEmailVerified = !!input.requireEmailVerified;
   if ("requireConnections" in input) out.requireConnections = !!input.requireConnections;
@@ -253,6 +263,21 @@ function sanitizeVerification(input = {}) {
 
   if ("allowedCountries" in input) out.allowedCountries = normalizeStringArray(input.allowedCountries);
   if ("blockedCountries" in input) out.blockedCountries = normalizeStringArray(input.blockedCountries);
+
+  if ("antiAlt" in input && input.antiAlt && typeof input.antiAlt === "object" && !Array.isArray(input.antiAlt)) {
+    const rawAntiAlt = input.antiAlt;
+    out.antiAlt = normalizeAntiAltConfig({
+      enabled: rawAntiAlt.enabled === true || rawAntiAlt.enabled === "true" || rawAntiAlt.enabled === "on",
+      ipDuplicateAction: normalizeAction(rawAntiAlt.ipDuplicateAction, "log_only"),
+      maxUsersPerIp: clampNumber(rawAntiAlt.maxUsersPerIp, 1, 20, 3),
+      deviceDuplicateAction: normalizeAction(rawAntiAlt.deviceDuplicateAction, "log_only"),
+      maxUsersPerDevice: clampNumber(rawAntiAlt.maxUsersPerDevice, 1, 20, 2),
+      previouslyBlockedIpAction: normalizeAction(rawAntiAlt.previouslyBlockedIpAction, "delay"),
+      spoofedHeaderAction: normalizeAction(rawAntiAlt.spoofedHeaderAction, "delay"),
+      unknownLookupAction: normalizeAction(rawAntiAlt.unknownLookupAction, "delay"),
+      delayMs: clampNumber(rawAntiAlt.delayMs, 0, 10000, 5000)
+    });
+  }
 
   if ("panel" in input && input.panel && typeof input.panel === "object") {
     const rawPanel = input.panel;
@@ -318,6 +343,11 @@ function mergeVerificationConfig(existing = {}, incoming = {}) {
     */
     panelRevision: current.panelRevision || clean.panelRevision || null,
     panelRevisionUpdatedAt: current.panelRevisionUpdatedAt || clean.panelRevisionUpdatedAt || null,
+
+    antiAlt: normalizeAntiAltConfig({
+      ...(current.antiAlt || {}),
+      ...(clean.antiAlt || {})
+    }),
 
     panel: normalizePanel({
       ...(current.panel || {}),

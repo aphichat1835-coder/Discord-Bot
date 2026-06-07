@@ -434,6 +434,7 @@ node --check routes/api.js
 | `DASHBOARD_URL` | Both/Service 2 | Important | Public dashboard URL | `https://your-service.onrender.com` |
 | `PUBLIC_DASHBOARD_URL` | Service 1/verify | Recommended | Public callback base URL | `https://your-dashboard.onrender.com` |
 | `VERIFY_STATE_SECRET` | Verify flow | Recommended | Stable signed-state secret | `change-me-verify-state-secret` |
+| `ENABLE_CF_IP_HEADER` | Service 2 | Optional | Trust `cf-connecting-ip` only when the dashboard is actually behind Cloudflare; default false | `false` |
 | `NODE_ENV` | Both | Recommended | Runtime mode | `production` |
 | `PORT` | Both | Optional | Render/local port | `3000` or `3001` |
 | `PORT_DASHBOARD` | Service 2 | Optional | fallback dashboard port | `3001` |

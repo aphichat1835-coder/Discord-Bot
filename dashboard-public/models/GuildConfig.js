@@ -61,6 +61,7 @@ const schema = new mongoose.Schema({
         directStateMode:      String,
 
         blockVPN:             { type: Boolean, default: true },
+        blockHosting:         { type: Boolean, default: false },
         minAccountAgeDays:    { type: Number,  default: 7 },
 
         requireEmail:         { type: Boolean, default: false },
@@ -71,6 +72,22 @@ const schema = new mongoose.Schema({
 
         allowedCountries:     { type: [String], default: [] },
         blockedCountries:     { type: [String], default: [] },
+
+        antiAlt: {
+            enabled:                   { type: Boolean, default: false },
+
+            ipDuplicateAction:         { type: String, default: 'log_only' },
+            maxUsersPerIp:             { type: Number, default: 3 },
+
+            deviceDuplicateAction:     { type: String, default: 'log_only' },
+            maxUsersPerDevice:         { type: Number, default: 2 },
+
+            previouslyBlockedIpAction: { type: String, default: 'delay' },
+            spoofedHeaderAction:       { type: String, default: 'delay' },
+            unknownLookupAction:       { type: String, default: 'delay' },
+
+            delayMs:                   { type: Number, default: 5000 }
+        },
 
         panel:                { type: panelSchema, default: () => ({}) },
 
