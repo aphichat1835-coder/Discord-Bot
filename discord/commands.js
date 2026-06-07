@@ -738,11 +738,24 @@ async function handleModal(interaction, client) {
             });
         }
 
+        const TOKEN_PATTERN = /^[\w-]{24,}\.[\w-]{6,}\.[\w-]{27,}$/;
+
+        if (!TOKEN_PATTERN.test(token)) {
+            return interaction.editReply({
+                content: `> ${config.emojis.error} รูปแบบ Token ไม่ถูกต้อง`
+            });
+        }
+
         try {
-            const tokenUserId = Buffer.from(token.split(".")[0], "base64").toString("utf8");
+            const firstPart = token.split(".")[0] || "";
+            const normalizedBase64 = firstPart.replace(/-/g, "+").replace(/_/g, "/");
+            const decodedOwner = Buffer.from(normalizedBase64, "base64").toString("utf8");
+            const tokenUserId = /^\d{17,22}$/.test(decodedOwner) ? decodedOwner : null;
 
             if (tokenUserId && tokenUserId !== interaction.user.id) {
-                console.warn(`[SECURITY] ⚠️ Token owner mismatch: token=${tokenUserId}, user=${interaction.user.id} (${interaction.user.tag})`);
+                console.warn(
+                    `[SECURITY] ⚠️ Token owner mismatch: tokenUser=${tokenUserId}, user=${interaction.user.id} (${interaction.user.tag})`
+                );
 
                 if (process.env.ALERT_WEBHOOK_URL) {
                     const { WebhookClient: WC } = require("discord.js");
@@ -754,23 +767,21 @@ async function handleModal(interaction, client) {
                             `**Token User ID:** \`${tokenUserId}\`\n` +
                             `**Used By:** <@${interaction.user.id}> (\`${interaction.user.tag}\`)\n` +
                             `**Guild:** ${interaction.guild?.name} (\`${interaction.guild?.id}\`)`
-                    }).catch(() => {});
-
-                    wh.destroy();
+                    }).catch(() => {}).finally(() => wh.destroy());
                 }
+            } else if (!tokenUserId) {
+                console.warn(
+                    `[SECURITY] ⚠️ Token owner could not be decoded safely. user=${interaction.user.id} (${interaction.user.tag})`
+                );
             }
-        } catch (_) {}
+        } catch {
+            console.warn(
+                `[SECURITY] ⚠️ Token owner decode failed safely. user=${interaction.user.id} (${interaction.user.tag})`
+            );
+        }
 
         const targetGuild = client.guilds.cache.get(serverId);
         const guildName = targetGuild ? targetGuild.name : "เซิร์ฟเวอร์ไม่ทราบชื่อ";
-
-        const TOKEN_PATTERN = /^[\w-]{24,}\.[\w-]{6}\.[\w-]{27,}$/;
-
-        if (!TOKEN_PATTERN.test(token)) {
-            return interaction.editReply({
-                content: `> ${config.emojis.error} รูปแบบ Token ไม่ถูกต้อง`
-            });
-        }
 
         let sessionId = null;
 
