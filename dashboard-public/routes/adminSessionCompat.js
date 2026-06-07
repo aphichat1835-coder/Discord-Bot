@@ -35,10 +35,10 @@ function normalizeAdminUserId(adminUser) {
 
 function normalizeGuild(guild = {}) {
     const owner = !!guild.owner || !!guild.isOwner;
-    const canManageGuild = owner || guild.canManageGuild === true || guild.isAdmin === true;
-    const canManageRoles = owner || guild.canManageRoles === true || guild.isAdmin === true;
-    const canManage = owner || canManageGuild || canManageRoles || guild.canManage === true;
-    const isAdmin = owner || guild.isAdmin === true || guild.canManage === true;
+    const isAdmin = owner || guild.isAdmin === true;
+    const canManageGuild = owner || isAdmin || guild.canManageGuild === true;
+    const canManageRoles = owner || isAdmin || guild.canManageRoles === true;
+    const canManage = owner || isAdmin || canManageGuild || canManageRoles || guild.canManage === true;
 
     return {
         ...guild,
