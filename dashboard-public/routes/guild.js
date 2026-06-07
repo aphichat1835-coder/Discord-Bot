@@ -75,11 +75,10 @@ function getSessionGuilds(req) {
 
 function normalizeGuild(guild = {}) {
   const owner = !!guild.owner || !!guild.isOwner;
-  const canManageGuild = owner || guild.canManageGuild === true || guild.isAdmin === true;
-  const canManageRoles = owner || guild.canManageRoles === true || guild.isAdmin === true;
-  const canManage = owner || canManageGuild || canManageRoles || guild.canManage === true;
-  const isAdmin = owner || guild.isAdmin === true || guild.canManage === true;
-
+  const isAdmin = owner || guild.isAdmin === true;
+  const canManageGuild = owner || isAdmin || guild.canManageGuild === true;
+  const canManageRoles = owner || isAdmin || guild.canManageRoles === true;
+  const canManage = owner || isAdmin || canManageGuild || canManageRoles || guild.canManage === true;
   return {
     id: String(guild.id || ""),
     name: String(guild.name || "Unknown Server"),
@@ -331,11 +330,10 @@ function sanitizeVerification(input = {}) {
 function mergeVerificationConfig(existing = {}, incoming = {}) {
   const current = normalizeVerificationConfig(existing || {});
   const clean = sanitizeVerification(incoming || {});
-
+  const hasIncomingAntiAlt = Object.prototype.hasOwnProperty.call(incoming || {}, "antiAlt");
   const merged = {
     ...current,
     ...clean,
-
     /*
       สำคัญ:
       อย่าให้ save settings ปกติไปล้าง panelRevision เดิม
@@ -343,23 +341,21 @@ function mergeVerificationConfig(existing = {}, incoming = {}) {
     */
     panelRevision: current.panelRevision || clean.panelRevision || null,
     panelRevisionUpdatedAt: current.panelRevisionUpdatedAt || clean.panelRevisionUpdatedAt || null,
-
-    antiAlt: normalizeAntiAltConfig({
-      ...(current.antiAlt || {}),
-      ...(clean.antiAlt || {})
-    }),
-
+    antiAlt: hasIncomingAntiAlt
+      ? normalizeAntiAltConfig({
+          ...(current.antiAlt || {}),
+          ...(clean.antiAlt || {})
+        })
+      : current.antiAlt,
     panel: normalizePanel({
       ...(current.panel || {}),
       ...(clean.panel || {})
     }),
     updatedAt: now()
   };
-
   merged.oauthMode = normalizeVerifyMode(merged.verifyType || merged.panel?.verifyType);
   merged.verifyType = merged.oauthMode;
   merged.panel.verifyType = merged.oauthMode;
-
   return merged;
 }
 
@@ -476,8 +472,8 @@ function safeDiscordSnapshot(snapshot = {}) {
     flags: profile.flags || snapshot.flags || 0,
     publicFlags: profile.publicFlags || profile.public_flags || snapshot.publicFlags || snapshot.public_flags || 0,
 
-    accountCreatedAt: profile.accountCreatedAt || snapshot.accountCreatedAt || null,
-    accountAgeDays: profile.accountAgeDays || snapshot.accountAgeDays || null,
+    accountCreatedAt: profile.accountCreatedAt ?? snapshot.accountCreatedAt ?? null,
+    accountAgeDays: profile.accountAgeDays ?? snapshot.accountAgeDays ?? null,
 
     connectionsCount: Array.isArray(snapshot.connections)
       ? snapshot.connections.length
