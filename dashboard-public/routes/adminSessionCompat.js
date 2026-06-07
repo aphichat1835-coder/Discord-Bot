@@ -38,7 +38,7 @@ function normalizeGuild(guild = {}) {
     const isAdmin = owner || guild.isAdmin === true;
     const canManageGuild = owner || isAdmin || guild.canManageGuild === true;
     const canManageRoles = owner || isAdmin || guild.canManageRoles === true;
-    const canManage = owner || isAdmin || canManageGuild || canManageRoles;
+    const canManage = owner || isAdmin;
 
     return {
         ...guild,
@@ -59,6 +59,24 @@ function normalizeGuild(guild = {}) {
     };
 }
 
+function mergeGuildPermissions(a = {}, b = {}) {
+    const owner = !!a.owner || !!a.isOwner || !!b.owner || !!b.isOwner;
+    const isAdmin = owner || a.isAdmin === true || b.isAdmin === true;
+    const canManageGuild = owner || isAdmin || a.canManageGuild === true || b.canManageGuild === true;
+    const canManageRoles = owner || isAdmin || a.canManageRoles === true || b.canManageRoles === true;
+
+    return {
+        ...a,
+        ...b,
+        owner,
+        isOwner: owner,
+        isAdmin,
+        canManage: owner || isAdmin,
+        canManageGuild,
+        canManageRoles
+    };
+}
+
 function dedupeGuilds(guilds = []) {
     const map = new Map();
 
@@ -73,17 +91,7 @@ function dedupeGuilds(guilds = []) {
             continue;
         }
 
-        map.set(guild.id, {
-            ...existing,
-            ...guild,
-
-            owner: existing.owner || guild.owner,
-            isOwner: existing.isOwner || guild.isOwner,
-            isAdmin: existing.isAdmin || guild.isAdmin,
-            canManage: existing.canManage || guild.canManage,
-            canManageGuild: existing.canManageGuild || guild.canManageGuild,
-            canManageRoles: existing.canManageRoles || guild.canManageRoles
-        });
+        map.set(guild.id, mergeGuildPermissions(existing, guild));
     }
 
     return Array.from(map.values());
