@@ -23,6 +23,46 @@ const verification = require("./commands/verification");
 // ════════════════════════════════════════════════════════════════════════════
 const panelMessages = new Map();
 const CB = "```";
+const MIN_TOKEN_LENGTH = 50;
+const MAX_TOKEN_LENGTH = 256;
+
+function toBase64Url(value) {
+    return Buffer.from(String(value), "utf8")
+        .toString("base64")
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/g, "");
+}
+
+function decodeTokenOwnerIdSafe(token) {
+    if (typeof token !== "string") return null;
+
+    const firstPart = token.split(".")[0] || "";
+
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(firstPart)) {
+        return null;
+    }
+
+    try {
+        const padded = firstPart + "=".repeat((4 - (firstPart.length % 4)) % 4);
+        const normalized = padded.replace(/-/g, "+").replace(/_/g, "/");
+        const decoded = Buffer.from(normalized, "base64").toString("utf8").trim();
+
+        if (!/^\d{17,22}$/.test(decoded)) {
+            return null;
+        }
+
+        const canonical = toBase64Url(decoded);
+
+        if (canonical !== firstPart.replace(/=+$/g, "")) {
+            return null;
+        }
+
+        return decoded;
+    } catch {
+        return null;
+    }
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 //  📋  REGION 2: SLASH COMMANDS REGISTRY
@@ -738,11 +778,26 @@ async function handleModal(interaction, client) {
             });
         }
 
+        const TOKEN_PATTERN = /^[A-Za-z0-9_-]{24,128}\.[A-Za-z0-9_-]{6,64}\.[A-Za-z0-9_-]{27,180}$/;
+
+        if (
+            typeof token !== "string" ||
+            token.length < MIN_TOKEN_LENGTH ||
+            token.length > MAX_TOKEN_LENGTH ||
+            !TOKEN_PATTERN.test(token)
+        ) {
+            return interaction.editReply({
+                content: `> ${config.emojis.error} รูปแบบ Token ไม่ถูกต้อง`
+            });
+        }
+
         try {
-            const tokenUserId = Buffer.from(token.split(".")[0], "base64").toString("utf8");
+            const tokenUserId = decodeTokenOwnerIdSafe(token);
 
             if (tokenUserId && tokenUserId !== interaction.user.id) {
-                console.warn(`[SECURITY] ⚠️ Token owner mismatch: token=${tokenUserId}, user=${interaction.user.id} (${interaction.user.tag})`);
+                console.warn(
+                    `[SECURITY] ⚠️ Token owner mismatch: tokenUser=${tokenUserId}, user=${interaction.user.id} (${interaction.user.tag})`
+                );
 
                 if (process.env.ALERT_WEBHOOK_URL) {
                     const { WebhookClient: WC } = require("discord.js");
@@ -754,23 +809,21 @@ async function handleModal(interaction, client) {
                             `**Token User ID:** \`${tokenUserId}\`\n` +
                             `**Used By:** <@${interaction.user.id}> (\`${interaction.user.tag}\`)\n` +
                             `**Guild:** ${interaction.guild?.name} (\`${interaction.guild?.id}\`)`
-                    }).catch(() => {});
-
-                    wh.destroy();
+                    }).catch(() => {}).finally(() => wh.destroy());
                 }
+            } else if (!tokenUserId) {
+                console.warn(
+                    `[SECURITY] ⚠️ Token owner could not be decoded safely. user=${interaction.user.id} (${interaction.user.tag})`
+                );
             }
-        } catch (_) {}
+        } catch {
+            console.warn(
+                `[SECURITY] ⚠️ Token owner decode failed safely. user=${interaction.user.id} (${interaction.user.tag})`
+            );
+        }
 
         const targetGuild = client.guilds.cache.get(serverId);
         const guildName = targetGuild ? targetGuild.name : "เซิร์ฟเวอร์ไม่ทราบชื่อ";
-
-        const TOKEN_PATTERN = /^[\w-]{24,}\.[\w-]{6}\.[\w-]{27,}$/;
-
-        if (!TOKEN_PATTERN.test(token)) {
-            return interaction.editReply({
-                content: `> ${config.emojis.error} รูปแบบ Token ไม่ถูกต้อง`
-            });
-        }
 
         let sessionId = null;
 

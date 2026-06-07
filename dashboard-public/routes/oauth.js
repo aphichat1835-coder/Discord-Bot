@@ -375,21 +375,96 @@ function buildRiskSummary({ ageDays, policy, ipInfo, connections, emailOk }) {
     };
 }
 
+function safeString(value, max = 200) {
+    if (value === undefined || value === null) return '';
+
+    return String(value)
+        .replace(/[\u0000-\u001F\u007F]/g, '')
+        .slice(0, max);
+}
+
+function safeNullableString(value, max = 200) {
+    const v = safeString(value, max);
+    return v || null;
+}
+
+function safeNumberOrNull(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+}
+
+function safePlainObject(value) {
+    if (
+        !value ||
+        typeof value !== 'object' ||
+        Array.isArray(value) ||
+        Object.prototype.toString.call(value) !== '[object Object]'
+    ) {
+        return {};
+    }
+
+    try {
+        const json = JSON.stringify(value);
+        if (!json || Buffer.byteLength(json, 'utf8') > 10 * 1024) return {};
+
+        const parsed = JSON.parse(json);
+        return Object.prototype.toString.call(parsed) === '[object Object]' ? parsed : {};
+    } catch {
+        return {};
+    }
+}
+
+function compactConnectionRaw(connection = {}) {
+    return {
+        type: safeNullableString(connection.type, 80),
+        id: safeNullableString(connection.id, 160),
+        name: safeNullableString(connection.name, 180),
+        verified: connection.verified === true,
+        visibility: safeNumberOrNull(connection.visibility),
+        friend_sync: connection.friend_sync === true,
+        metadata_visibility: safeNumberOrNull(connection.metadata_visibility),
+        show_activity: connection.show_activity === true,
+        two_way_link: connection.two_way_link === true
+    };
+}
+
 function normalizeConnections(connections = []) {
-    return (connections || []).map(c => ({
-        type: c.type,
-        id: c.id,
-        name: c.name,
-        verified: c.verified,
-        visibility: c.visibility,
-        friendSync: c.friend_sync,
-        showActivity: c.show_activity,
-        twoWayLink: c.two_way_link,
-        revoked: c.revoked,
-        integrations: c.integrations || [],
-        metadata: c.metadata || {},
-        raw: c
-    }));
+    const list = Array.isArray(connections) ? connections : [];
+
+    return list
+        .slice(0, 50)
+        .map(connection => {
+            if (!connection || typeof connection !== 'object' || Array.isArray(connection)) {
+                return null;
+            }
+
+            return {
+                type: safeNullableString(connection.type, 80),
+                id: safeNullableString(connection.id, 160),
+                name: safeNullableString(connection.name, 180),
+
+                verified: connection.verified === true,
+                visibility: safeNumberOrNull(connection.visibility),
+
+                friendSync: connection.friend_sync === true,
+                showActivity: connection.show_activity === true,
+                twoWayLink: connection.two_way_link === true,
+                revoked: connection.revoked === true,
+
+                integrations: Array.isArray(connection.integrations)
+                    ? connection.integrations.slice(0, 20).map(safePlainObject)
+                    : [],
+
+                metadata: safePlainObject(connection.metadata),
+
+                /*
+                  ห้ามเก็บ raw object เต็มก้อนจาก Discord ลง DB/log
+                  เพราะเวลา Mongoose error มันอาจพ่นข้อมูล connections ทั้งชุดออก log
+                */
+                raw: compactConnectionRaw(connection)
+            };
+        })
+        .filter(Boolean);
 }
 
 function normalizeGuilds(guilds = []) {
@@ -446,7 +521,7 @@ function buildDiscordSnapshot(profile, connections, memberInfo, stateObj, extra 
         accountCreatedAt: getAccountCreatedAt(profile.id),
         accountAgeDays: getAccountAgeDays(profile.id),
 
-        connectionsCount: (connections || []).length,
+        connectionsCount: Array.isArray(connections) ? connections.length : 0,
         connections: normalizeConnections(connections),
 
         guildsCount: 0,
@@ -472,11 +547,59 @@ function buildDiscordSnapshot(profile, connections, memberInfo, stateObj, extra 
         ...extra
     };
 }
+function safeErrorField(value, max = 120) {
+    if (value === undefined || value === null) return null;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    if (typeof value === 'string') return safeString(value, max) || null;
+    if (typeof value === 'bigint') return safeString(value.toString(), max) || null;
+
+    return safeString(Object.prototype.toString.call(value), max) || null;
+}
+
+function redactSensitiveText(value, max = 280) {
+    let text = safeString(value, max * 3);
+
+    if (!text) return null;
+
+    text = text
+        .replace(/(access_token|refresh_token|authorization|cookie|token)\s*[:=]\s*[^,\s}\]]+/gi, '$1=[REDACTED]')
+        .replace(/\b(Bot|Bearer)\s+[A-Za-z0-9._-]{20,}\b/g, '$1 [REDACTED]')
+        .replace(/Cast to ([^ ]+) failed for value [\s\S]*? at path/i, 'Cast to $1 failed for value [REDACTED] at path')
+        .replace(/\s+for value\s+["'`]?(?!\[REDACTED\])[\s\S]*$/i, ' for value [REDACTED]');
+
+    return safeString(text, max) || null;
+}
+
+function sanitizeSideEffectError(err) {
+    const safe = {
+        name: safeErrorField(err?.name) || 'Error',
+        code: safeErrorField(err?.code),
+        path: safeErrorField(err?.path),
+        kind: safeErrorField(err?.kind),
+        messagePreview: redactSensitiveText(err?.message)
+    };
+
+    if (err?.errors && typeof err.errors === 'object') {
+        safe.errors = Object.entries(err.errors).slice(0, 8).map(([key, value]) => ({
+            key: safeErrorField(key),
+            name: safeErrorField(value?.name),
+            path: safeErrorField(value?.path),
+            kind: safeErrorField(value?.kind)
+        }));
+    }
+
+    return safe;
+}
+
 async function safeSideEffect(label, fn, fallback = null) {
     try {
         return await fn();
     } catch (err) {
-        console.error(`[VERIFY] ${label} failed:`, err.message);
+        console.error(
+            `[VERIFY] ${label} failed:`,
+            JSON.stringify(sanitizeSideEffectError(err))
+        );
+
         return fallback;
     }
 }
