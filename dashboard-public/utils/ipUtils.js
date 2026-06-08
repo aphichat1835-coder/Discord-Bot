@@ -590,7 +590,14 @@ function makeUnknownIpInfo({ trustedIp, headerMeta }) {
         }),
 
         ipSource: trustedIp.source || 'unknown',
-        headerIps: headerMeta.headerIps,
+        headerIps: {
+            cfConnectingIp: headerMeta.headerIps.cfConnectingIp ? hmacValue(headerMeta.headerIps.cfConnectingIp, 'header_ip') : null,
+            trueClientIp: headerMeta.headerIps.trueClientIp ? hmacValue(headerMeta.headerIps.trueClientIp, 'header_ip') : null,
+            xRealIp: headerMeta.headerIps.xRealIp ? hmacValue(headerMeta.headerIps.xRealIp, 'header_ip') : null,
+            xClientIp: headerMeta.headerIps.xClientIp ? hmacValue(headerMeta.headerIps.xClientIp, 'header_ip') : null,
+            xForwardedForFirst: headerMeta.headerIps.xForwardedForFirst ? hmacValue(headerMeta.headerIps.xForwardedForFirst, 'header_ip') : null,
+            xForwardedForChainLength: headerMeta.headerIps.xForwardedForChainLength
+        },
         spoofSuspected: headerMeta.spoofSuspected,
         spoofFlags: headerMeta.spoofFlags,
         headerIpConflict: headerMeta.headerIpConflict,
@@ -688,7 +695,14 @@ async function processIP(req) {
         lookupRaw: compactLookupRaw(lookup),
 
         ipSource: trustedIp.source,
-        headerIps: headerMeta.headerIps,
+        headerIps: {
+            cfConnectingIp: headerMeta.headerIps.cfConnectingIp ? hmacValue(headerMeta.headerIps.cfConnectingIp, 'header_ip') : null,
+            trueClientIp: headerMeta.headerIps.trueClientIp ? hmacValue(headerMeta.headerIps.trueClientIp, 'header_ip') : null,
+            xRealIp: headerMeta.headerIps.xRealIp ? hmacValue(headerMeta.headerIps.xRealIp, 'header_ip') : null,
+            xClientIp: headerMeta.headerIps.xClientIp ? hmacValue(headerMeta.headerIps.xClientIp, 'header_ip') : null,
+            xForwardedForFirst: headerMeta.headerIps.xForwardedForFirst ? hmacValue(headerMeta.headerIps.xForwardedForFirst, 'header_ip') : null,
+            xForwardedForChainLength: headerMeta.headerIps.xForwardedForChainLength
+        },
         spoofSuspected: headerMeta.spoofSuspected,
         spoofFlags: headerMeta.spoofFlags,
         headerIpConflict: headerMeta.headerIpConflict,

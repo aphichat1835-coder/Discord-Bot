@@ -45,9 +45,9 @@ function getAdminGuilds(req) {
 function normalizeGuild(guild = {}) {
     const owner = !!guild.owner || !!guild.isOwner;
     const isAdmin = owner || guild.isAdmin === true;
-    const canManageGuild = owner || isAdmin;
-    const canManageRoles = owner || isAdmin;
-    const canManage = owner || isAdmin;
+    const canManageGuild = owner || guild.canManageGuild === true;
+    const canManageRoles = owner || guild.canManageRoles === true;
+    const canManage = owner || guild.canManage === true;
     return {
         id: String(guild.id || ""),
         name: String(guild.name || "Unknown Server"),
