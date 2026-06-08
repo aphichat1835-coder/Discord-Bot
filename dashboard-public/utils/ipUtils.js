@@ -14,26 +14,10 @@ function hmacValue(value, prefix = 'value') {
         .digest('hex');
 }
 
-const ENABLE_CF_IP_HEADER = String(process.env.ENABLE_CF_IP_HEADER || '').toLowerCase() === 'true';
-const IP_LOOKUP_TIMEOUT_MS = 3000;
-const IP_LOOKUP_CACHE_TTL_MS = 10 * 60 * 1000;
-const IP_LOOKUP_CACHE_MAX = 5000;
-const lookupCache = new Map();
-
 function firstHeaderValue(value) {
     if (!value) return null;
     if (Array.isArray(value)) return value[0] || null;
-    return String(value).split(',')[0].trim() || null;
-}
-
-function splitHeaderIps(value) {
-    if (!value) return [];
-    const raw = Array.isArray(value) ? value.join(',') : String(value);
-    return raw
-        .split(',')
-        .map(v => v.trim())
-        .filter(Boolean)
-        .slice(0, 20);
+    return String(value).split(',')[0].trim();
 }
 
 function normalizeIP(ip) {
@@ -45,149 +29,22 @@ function normalizeIP(ip) {
     if (value === '::1') value = '127.0.0.1';
     if (value.includes('%')) value = value.split('%')[0];
 
-    if (value.startsWith('[') && value.includes(']')) {
-        value = value.slice(1, value.indexOf(']'));
-    } else if (/^\d+\.\d+\.\d+\.\d+:\d+$/.test(value)) {
-        value = value.split(':')[0];
-    }
-
     return value || 'unknown';
 }
 
-function isValidIP(ip) {
-    return !!ip && ip !== 'unknown' && net.isIP(normalizeIP(ip)) !== 0;
-}
-
-function getRemoteAddress(req) {
-    return normalizeIP(
+function getRealIP(req) {
+    const ip =
+        firstHeaderValue(req.headers['cf-connecting-ip']) ||
+        firstHeaderValue(req.headers['true-client-ip']) ||
+        firstHeaderValue(req.headers['x-real-ip']) ||
+        firstHeaderValue(req.headers['x-client-ip']) ||
+        firstHeaderValue(req.headers['x-forwarded-for']) ||
         req.socket?.remoteAddress ||
         req.connection?.remoteAddress ||
         req.ip ||
-        'unknown'
-    );
-}
+        'unknown';
 
-function parseHeaderIp(value) {
-    const ip = normalizeIP(firstHeaderValue(value));
-    return ip && ip !== 'unknown' ? ip : null;
-}
-
-function getHeaderIps(req) {
-    const xForwardedForValues = splitHeaderIps(req.headers['x-forwarded-for']);
-    const xForwardedForFirst = normalizeIP(xForwardedForValues[0] || null);
-
-    return {
-        cfConnectingIp: parseHeaderIp(req.headers['cf-connecting-ip']),
-        trueClientIp: parseHeaderIp(req.headers['true-client-ip']),
-        xRealIp: parseHeaderIp(req.headers['x-real-ip']),
-        xClientIp: parseHeaderIp(req.headers['x-client-ip']),
-        xForwardedForFirst: xForwardedForFirst !== 'unknown' ? xForwardedForFirst : null,
-        xForwardedForChainLength: xForwardedForValues.length,
-        xForwardedForChain: xForwardedForValues.map(normalizeIP)
-    };
-}
-
-function getTrustedRequestIp(req) {
-    const reqIp = normalizeIP(req.ip);
-    const remoteAddress = getRemoteAddress(req);
-    const cfConnectingIp = parseHeaderIp(req.headers['cf-connecting-ip']);
-
-    if (ENABLE_CF_IP_HEADER && isValidIP(cfConnectingIp) && !isPrivateIP(cfConnectingIp)) {
-        return {
-            ip: cfConnectingIp,
-            source: 'cf-connecting-ip'
-        };
-    }
-
-    if (isValidIP(reqIp)) {
-        return {
-            ip: reqIp,
-            source: 'req.ip'
-        };
-    }
-
-    if (isValidIP(remoteAddress)) {
-        return {
-            ip: remoteAddress,
-            source: 'remoteAddress'
-        };
-    }
-
-    return {
-        ip: 'unknown',
-        source: 'unknown'
-    };
-}
-
-function detectSpoofedHeaders(req, trustedIp) {
-    const headerIps = getHeaderIps(req);
-    const spoofFlags = [];
-    const trusted = normalizeIP(trustedIp);
-    const comparableTrusted = trusted !== 'unknown' ? trusted : null;
-
-    if (headerIps.cfConnectingIp && !ENABLE_CF_IP_HEADER) {
-        spoofFlags.push('cf_header_without_trust');
-    }
-
-    if (headerIps.xForwardedForChainLength > 3) {
-        spoofFlags.push('xff_chain_too_long');
-    }
-
-    const namedHeaders = [
-        ['cf-connecting-ip', headerIps.cfConnectingIp],
-        ['true-client-ip', headerIps.trueClientIp],
-        ['x-real-ip', headerIps.xRealIp],
-        ['x-client-ip', headerIps.xClientIp],
-        ['x-forwarded-for', headerIps.xForwardedForFirst]
-    ];
-
-    for (const [name, ip] of namedHeaders) {
-        if (!ip) continue;
-        if (!isValidIP(ip)) spoofFlags.push(`${name}_invalid`);
-        if (isValidIP(ip) && isPrivateIP(ip) && comparableTrusted && !isPrivateIP(comparableTrusted)) {
-            spoofFlags.push(`${name}_private_ip`);
-        }
-    }
-
-    for (const ip of headerIps.xForwardedForChain || []) {
-        if (!isValidIP(ip)) spoofFlags.push('xff_chain_invalid_ip');
-        if (isValidIP(ip) && isPrivateIP(ip) && comparableTrusted && !isPrivateIP(comparableTrusted)) {
-            spoofFlags.push('xff_chain_private_ip');
-        }
-    }
-
-    for (const name of ['xRealIp', 'xClientIp']) {
-        const ip = headerIps[name];
-        if (ip && comparableTrusted && normalizeIP(ip) !== comparableTrusted) {
-            spoofFlags.push(`${name}_conflicts_with_trusted_ip`);
-        }
-    }
-
-    const publicHeaderIps = namedHeaders
-        .map(([, ip]) => normalizeIP(ip))
-        .filter(ip => isValidIP(ip) && !isPrivateIP(ip));
-    const uniquePublicHeaderIps = Array.from(new Set(publicHeaderIps));
-    const headerIpConflict = uniquePublicHeaderIps.length > 1 || uniquePublicHeaderIps.some(ip => comparableTrusted && ip !== comparableTrusted);
-
-    if (headerIpConflict) spoofFlags.push('header_ip_conflict');
-
-    return {
-        headerIps: {
-            cfConnectingIp: headerIps.cfConnectingIp,
-            trueClientIp: headerIps.trueClientIp,
-            xRealIp: headerIps.xRealIp,
-            xClientIp: headerIps.xClientIp,
-            xForwardedForFirst: headerIps.xForwardedForFirst,
-            xForwardedForChainLength: headerIps.xForwardedForChainLength
-        },
-        spoofSuspected: spoofFlags.length > 0,
-        spoofFlags: Array.from(new Set(spoofFlags)),
-        headerIpConflict
-    };
-}
-
-function getRealIP(req) {
-    return getTrustedRequestIp(req).ip;
+    return normalizeIP(ip);
 }
 
 function isPrivateIP(ip) {
@@ -360,21 +217,11 @@ async function lookupWithIpApi(ip) {
 
     const url = `http://ip-api.com/json/${encodeURIComponent(ip)}?fields=${encodeURIComponent(fields)}`;
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), IP_LOOKUP_TIMEOUT_MS);
-
-    let res;
-
-    try {
-        res = await fetch(url, {
-            signal: controller.signal,
-            headers: {
-                'User-Agent': 'Phomueangtai-Verify/1.1'
-            }
-        });
-    } finally {
-        clearTimeout(timeout);
-    }
+    const res = await fetch(url, {
+        headers: {
+            'User-Agent': 'Phomueangtai-Verify/1.1'
+        }
+    });
 
     if (!res.ok) throw new Error(`ip-api lookup failed: ${res.status}`);
 
@@ -415,59 +262,6 @@ async function lookupWithIpApi(ip) {
     };
 }
 
-function compactLookupRaw(lookup = {}) {
-    const message = lookup.message
-        ? String(lookup.message).replace(/[\u0000-\u001F\u007F]/g, '').slice(0, 200)
-        : null;
-
-    return {
-        provider: lookup.provider || 'unknown',
-        status: lookup.status || 'unknown',
-        countryCode: lookup.countryCode || 'unknown',
-        proxy: lookup.proxy === true,
-        hosting: lookup.hosting === true,
-        vpn: lookup.vpn === true,
-        tor: lookup.tor === true,
-        mobile: lookup.mobile === true,
-        message
-    };
-}
-
-function getCacheKey(ip) {
-    return hmacValue(normalizeIP(ip), 'ip_lookup_cache') || normalizeIP(ip);
-}
-
-function getCachedLookup(ip) {
-    const key = getCacheKey(ip);
-    const cached = lookupCache.get(key);
-
-    if (!cached) return null;
-
-    if (Date.now() - cached.cachedAt > IP_LOOKUP_CACHE_TTL_MS) {
-        lookupCache.delete(key);
-        return null;
-    }
-
-    return {
-        ...cached.value,
-        fromCache: true
-    };
-}
-
-function setCachedLookup(ip, value) {
-    const key = getCacheKey(ip);
-
-    if (lookupCache.size >= IP_LOOKUP_CACHE_MAX) {
-        const oldestKey = lookupCache.keys().next().value;
-        if (oldestKey) lookupCache.delete(oldestKey);
-    }
-
-    lookupCache.set(key, {
-        cachedAt: Date.now(),
-        value
-    });
-}
-
 async function lookupIP(ip) {
     if (isPrivateIP(ip)) {
         return {
@@ -501,12 +295,7 @@ async function lookupIP(ip) {
         };
     }
 
-    const cached = getCachedLookup(ip);
-    if (cached) return cached;
-
-    const lookup = await lookupWithIpApi(ip);
-    setCachedLookup(ip, lookup);
-    return lookup;
+    return lookupWithIpApi(ip);
 }
 
 function includesRiskKeyword(...values) {
@@ -546,79 +335,12 @@ function computeRisk(info = {}) {
     if (info.isTOR) risk += 55;
     if (info.hosting) risk += 25;
     if (info.lookupStatus === 'lookup_failed') risk += 10;
-    if (info.lookupStatus === 'ip_unknown') risk += 20;
 
     return Math.min(100, risk);
 }
 
-function makeUnknownIpInfo({ trustedIp, headerMeta }) {
-    return {
-        encryptedRawIp: null,
-        ipHash: null,
-
-        country: 'unknown',
-        countryCode: 'unknown',
-        region: 'unknown',
-        city: 'unknown',
-        zip: 'unknown',
-        lat: null,
-        lon: null,
-        timezone: 'unknown',
-
-        isp: 'unknown',
-        org: 'unknown',
-        as: 'unknown',
-        asname: 'unknown',
-        reverse: 'unknown',
-
-        isProxy: false,
-        isVPN: false,
-        isTOR: false,
-        hosting: false,
-        mobile: false,
-
-        riskScore: 20,
-        riskFlags: ['ip_unknown'],
-
-        lookupProvider: 'local',
-        lookupStatus: 'ip_unknown',
-        lookupMessage: 'Unable to determine trusted public client IP',
-        lookupRaw: compactLookupRaw({
-            provider: 'local',
-            status: 'ip_unknown',
-            message: 'Unable to determine trusted public client IP'
-        }),
-
-        ipSource: trustedIp.source || 'unknown',
-        headerIps: {
-            cfConnectingIp: headerMeta.headerIps.cfConnectingIp ? hmacValue(headerMeta.headerIps.cfConnectingIp, 'header_ip') : null,
-            trueClientIp: headerMeta.headerIps.trueClientIp ? hmacValue(headerMeta.headerIps.trueClientIp, 'header_ip') : null,
-            xRealIp: headerMeta.headerIps.xRealIp ? hmacValue(headerMeta.headerIps.xRealIp, 'header_ip') : null,
-            xClientIp: headerMeta.headerIps.xClientIp ? hmacValue(headerMeta.headerIps.xClientIp, 'header_ip') : null,
-            xForwardedForFirst: headerMeta.headerIps.xForwardedForFirst ? hmacValue(headerMeta.headerIps.xForwardedForFirst, 'header_ip') : null,
-            xForwardedForChainLength: headerMeta.headerIps.xForwardedForChainLength
-        },
-        spoofSuspected: headerMeta.spoofSuspected,
-        spoofFlags: headerMeta.spoofFlags,
-        headerIpConflict: headerMeta.headerIpConflict,
-
-        proxyCheckProvider: null,
-        proxyCheckStatus: null,
-        proxyCheckRaw: null,
-
-        lookupAt: Date.now()
-    };
-}
-
 async function processIP(req) {
-    const trustedIp = getTrustedRequestIp(req);
-    const rawIp = trustedIp.ip;
-    const headerMeta = detectSpoofedHeaders(req, rawIp);
-
-    if (!isValidIP(rawIp) || isPrivateIP(rawIp)) {
-        return makeUnknownIpInfo({ trustedIp, headerMeta });
-    }
-
+    const rawIp = getRealIP(req);
     let lookup = {};
 
     try {
@@ -628,8 +350,8 @@ async function processIP(req) {
             provider: 'lookup_failed',
             raw: null,
             status: 'lookup_failed',
-            message: safeSmallString(err?.name || 'IP lookup failed', 'IP lookup failed'),
-            query: null,
+            message: err.message,
+            query: rawIp,
 
             country: 'unknown',
             countryCode: 'unknown',
@@ -687,29 +409,15 @@ async function processIP(req) {
         mobile: flags.mobile,
 
         riskScore,
-        riskFlags: [],
 
         lookupProvider: lookup.provider || 'unknown',
         lookupStatus: lookup.status || 'unknown',
-        lookupMessage: lookup.message ? String(lookup.message).slice(0, 200) : null,
-        lookupRaw: compactLookupRaw(lookup),
-
-        ipSource: trustedIp.source,
-        headerIps: {
-            cfConnectingIp: headerMeta.headerIps.cfConnectingIp ? hmacValue(headerMeta.headerIps.cfConnectingIp, 'header_ip') : null,
-            trueClientIp: headerMeta.headerIps.trueClientIp ? hmacValue(headerMeta.headerIps.trueClientIp, 'header_ip') : null,
-            xRealIp: headerMeta.headerIps.xRealIp ? hmacValue(headerMeta.headerIps.xRealIp, 'header_ip') : null,
-            xClientIp: headerMeta.headerIps.xClientIp ? hmacValue(headerMeta.headerIps.xClientIp, 'header_ip') : null,
-            xForwardedForFirst: headerMeta.headerIps.xForwardedForFirst ? hmacValue(headerMeta.headerIps.xForwardedForFirst, 'header_ip') : null,
-            xForwardedForChainLength: headerMeta.headerIps.xForwardedForChainLength
-        },
-        spoofSuspected: headerMeta.spoofSuspected,
-        spoofFlags: headerMeta.spoofFlags,
-        headerIpConflict: headerMeta.headerIpConflict,
+        lookupMessage: lookup.message || null,
+        lookupRaw: lookup.raw || null,
 
         proxyCheckProvider: null,
         proxyCheckStatus: null,
-        proxyCheckRaw: null,
+
 
         lookupAt: Date.now()
     };
