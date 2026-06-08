@@ -1333,9 +1333,7 @@ router.get('/auth/admin-callback', async (req, res) => {
 
         const manageableGuilds = normalizedGuilds.filter(g =>
             g.isOwner ||
-            g.isAdmin ||
-            g.canManageGuild ||
-            g.canManageRoles
+            g.isAdmin
         );
 
         req.session.adminUser = {
@@ -1349,7 +1347,7 @@ router.get('/auth/admin-callback', async (req, res) => {
 
         req.session.adminGuilds = manageableGuilds.map(g => ({
             ...g,
-            canManage: true
+            canManage: g.isOwner === true || g.isAdmin === true
         }));
 
         return res.redirect('/guilds');
