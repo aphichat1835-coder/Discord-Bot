@@ -76,9 +76,9 @@ function getSessionGuilds(req) {
 function normalizeGuild(guild = {}) {
   const owner = !!guild.owner || !!guild.isOwner;
   const isAdmin = owner || guild.isAdmin === true;
-  const canManageGuild = owner || isAdmin || guild.canManageGuild === true;
-  const canManageRoles = owner || isAdmin || guild.canManageRoles === true;
-  const canManage = owner || isAdmin || canManageGuild || canManageRoles || guild.canManage === true;
+  const canManageGuild = owner || isAdmin;
+  const canManageRoles = owner || isAdmin;
+  const canManage = owner || isAdmin;
   return {
     id: String(guild.id || ""),
     name: String(guild.name || "Unknown Server"),
