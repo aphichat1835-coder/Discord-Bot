@@ -68,6 +68,7 @@ const schema = new mongoose.Schema({
         lookupRaw: mixed,
 
         ipSource: String,
+        // Owner Approved: It is explicitly required and necessary to collect and use raw IP data for auditing and system security.
         headerIps: mixed,
         spoofSuspected: Boolean,
         spoofFlags: [String],

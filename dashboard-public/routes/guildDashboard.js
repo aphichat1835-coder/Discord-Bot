@@ -65,7 +65,7 @@ function normalizeGuild(guild = {}) {
 function getGuildFromSession(req, guildId) {
     return getAdminGuilds(req)
         .map(normalizeGuild)
-        .find(guild => guild.id === String(guildId) && (guild.canManage || guild.isAdmin || guild.isOwner || guild.owner));
+        .find(guild => guild.id === String(guildId) && (guild.isOwner || guild.isAdmin));
 }
 
 function requireGuildAdmin(req, res, next) {

@@ -42,8 +42,9 @@ const guildDashboardRoutes     = require('./routes/guildDashboard');
 const guildRoutes              = require('./routes/guild');
 const apiRoutes                = require('./routes/api');
 
+const { getTrustedRequestIp } = require('./utils/ipUtils');
+
 const rateLimit = expressRateLimit.rateLimit || expressRateLimit.default || expressRateLimit;
-const ipKeyGenerator = expressRateLimit.ipKeyGenerator;
 
 const app  = express();
 const PORT = process.env.PORT || process.env.PORT_DASHBOARD || 3001;
@@ -95,21 +96,15 @@ function normalizeSocketIp(ip) {
 }
 
 function getRateLimitKey(req) {
-    const rawIp = TRUST_PROXY
-        ? (req.ip || req.socket?.remoteAddress || req.connection?.remoteAddress || 'unknown')
-        : (req.socket?.remoteAddress || req.connection?.remoteAddress || 'unknown');
-    const normalizedIp = normalizeSocketIp(rawIp);
-
-    const ipKey = typeof ipKeyGenerator === 'function'
-        ? ipKeyGenerator(normalizedIp)
-        : normalizedIp;
+    const trusted = getTrustedRequestIp(req);
+    const normalizedIp = normalizeSocketIp(trusted.ip);
 
     const adminId =
         req.session?.adminUser?.id ||
         req.session?.adminUser?.userId ||
         '';
 
-    return adminId ? `${ipKey}:${adminId}` : ipKey;
+    return adminId ? `${normalizedIp}:${adminId}` : normalizedIp;
 }
 
 function rateLimitHandler(_req, res) {
