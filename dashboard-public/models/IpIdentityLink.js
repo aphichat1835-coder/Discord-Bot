@@ -31,6 +31,7 @@ const userSchema = new mongoose.Schema({
 
 const deviceSchema = new mongoose.Schema({
     fingerprintHash: String,
+    userId: String,
     firstSeenAt: Number,
     lastSeenAt: Number,
     count: { type: Number, default: 0 },
@@ -107,6 +108,7 @@ schema.index({ guildId: 1, uniqueUsers: -1 });
 schema.index({ guildId: 1, maxRiskScore: -1 });
 schema.index({ 'users.userId': 1 });
 schema.index({ 'deviceFingerprints.fingerprintHash': 1 });
+schema.index({ guildId: 1, 'deviceFingerprints.fingerprintHash': 1 });
 
 module.exports =
     mongoose.models.IpIdentityLink ||

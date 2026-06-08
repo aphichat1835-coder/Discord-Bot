@@ -35,34 +35,40 @@ function normalizeAdminUserId(adminUser) {
 
 function normalizeGuild(guild = {}) {
     const owner = !!guild.owner || !!guild.isOwner;
-
+    const isAdmin = owner || guild.isAdmin === true;
+    const canManageGuild = owner || isAdmin;
+    const canManageRoles = owner || isAdmin;
+    const canManage = owner || isAdmin;
     return {
         ...guild,
-
         id: String(guild.id || ''),
         name: String(guild.name || 'Unknown Server'),
         icon: guild.icon || null,
-
         owner,
         isOwner: owner,
-
         permissions: String(guild.permissions || '0'),
+        isAdmin,
+        canManage,
+        canManageGuild,
+        canManageRoles
+    };
+}
 
-        isAdmin: guild.isAdmin !== undefined
-            ? !!guild.isAdmin
-            : !!guild.canManage || owner,
-
-        canManage: guild.canManage !== undefined
-            ? !!guild.canManage
-            : !!guild.isAdmin || owner,
-
-        canManageGuild: guild.canManageGuild !== undefined
-            ? !!guild.canManageGuild
-            : !!guild.canManage || !!guild.isAdmin || owner,
-
-        canManageRoles: guild.canManageRoles !== undefined
-            ? !!guild.canManageRoles
-            : !!guild.canManage || !!guild.isAdmin || owner
+function mergeGuildPermissions(a = {}, b = {}) {
+    const owner = !!a.owner || !!a.isOwner || !!b.owner || !!b.isOwner;
+    const isAdmin = owner || a.isAdmin === true || b.isAdmin === true;
+    const canManageGuild = owner || isAdmin;
+    const canManageRoles = owner || isAdmin;
+    const canManage = owner || isAdmin;
+    return {
+        ...a,
+        ...b,
+        owner,
+        isOwner: owner,
+        isAdmin,
+        canManage,
+        canManageGuild,
+        canManageRoles
     };
 }
 
@@ -80,17 +86,7 @@ function dedupeGuilds(guilds = []) {
             continue;
         }
 
-        map.set(guild.id, {
-            ...existing,
-            ...guild,
-
-            owner: existing.owner || guild.owner,
-            isOwner: existing.isOwner || guild.isOwner,
-            isAdmin: existing.isAdmin || guild.isAdmin,
-            canManage: existing.canManage || guild.canManage,
-            canManageGuild: existing.canManageGuild || guild.canManageGuild,
-            canManageRoles: existing.canManageRoles || guild.canManageRoles
-        });
+        map.set(guild.id, mergeGuildPermissions(existing, guild));
     }
 
     return Array.from(map.values());

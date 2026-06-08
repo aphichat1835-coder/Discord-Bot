@@ -23,7 +23,10 @@ const IPRevealRequest = require("../models/IPRevealRequest");
 const { decryptIP } = require("../utils/crypto");
 const {
   normalizeVerifyMode,
+  normalizeAction,
+  clampNumber,
   normalizePanel,
+  normalizeAntiAltConfig,
   normalizeVerificationConfig
 } = require("../utils/verifyMode");
 
@@ -71,24 +74,29 @@ function getSessionGuilds(req) {
 }
 
 function normalizeGuild(guild = {}) {
+  const owner = !!guild.owner || !!guild.isOwner;
+  const isAdmin = owner || guild.isAdmin === true;
+  const canManageGuild = owner || isAdmin;
+  const canManageRoles = owner || isAdmin;
+  const canManage = owner || isAdmin;
   return {
     id: String(guild.id || ""),
     name: String(guild.name || "Unknown Server"),
     icon: guild.icon || null,
-    owner: !!guild.owner,
+    owner,
     permissions: String(guild.permissions || "0"),
-    isAdmin: guild.isAdmin !== undefined ? !!guild.isAdmin : true,
-    isOwner: guild.isOwner !== undefined ? !!guild.isOwner : !!guild.owner,
-    canManage: guild.canManage !== undefined ? !!guild.canManage : true,
-    canManageGuild: guild.canManageGuild !== undefined ? !!guild.canManageGuild : !!guild.canManage || !!guild.isAdmin || !!guild.owner,
-    canManageRoles: guild.canManageRoles !== undefined ? !!guild.canManageRoles : !!guild.canManage || !!guild.isAdmin || !!guild.owner
+    isAdmin,
+    isOwner: owner,
+    canManage,
+    canManageGuild,
+    canManageRoles
   };
 }
 
 function getGuildFromSession(req, guildId) {
   return getSessionGuilds(req)
     .map(normalizeGuild)
-    .find(guild => guild.id === String(guildId));
+    .find(guild => guild.id === String(guildId) && (guild.isOwner || guild.isAdmin));
 }
 
 function requireAdmin(req, res, next) {
@@ -235,6 +243,7 @@ function sanitizeVerification(input = {}) {
 
   if ("enabled" in input) out.enabled = !!input.enabled;
   if ("blockVPN" in input) out.blockVPN = !!input.blockVPN;
+  if ("blockHosting" in input) out.blockHosting = !!input.blockHosting;
   if ("requireEmail" in input) out.requireEmail = !!input.requireEmail;
   if ("requireEmailVerified" in input) out.requireEmailVerified = !!input.requireEmailVerified;
   if ("requireConnections" in input) out.requireConnections = !!input.requireConnections;
@@ -253,6 +262,21 @@ function sanitizeVerification(input = {}) {
 
   if ("allowedCountries" in input) out.allowedCountries = normalizeStringArray(input.allowedCountries);
   if ("blockedCountries" in input) out.blockedCountries = normalizeStringArray(input.blockedCountries);
+
+  if ("antiAlt" in input && input.antiAlt && typeof input.antiAlt === "object" && !Array.isArray(input.antiAlt)) {
+    const rawAntiAlt = input.antiAlt;
+    out.antiAlt = normalizeAntiAltConfig({
+      enabled: rawAntiAlt.enabled === true || rawAntiAlt.enabled === "true" || rawAntiAlt.enabled === "on",
+      ipDuplicateAction: normalizeAction(rawAntiAlt.ipDuplicateAction, "log_only"),
+      maxUsersPerIp: clampNumber(rawAntiAlt.maxUsersPerIp, 1, 20, 3),
+      deviceDuplicateAction: normalizeAction(rawAntiAlt.deviceDuplicateAction, "log_only"),
+      maxUsersPerDevice: clampNumber(rawAntiAlt.maxUsersPerDevice, 1, 20, 2),
+      previouslyBlockedIpAction: normalizeAction(rawAntiAlt.previouslyBlockedIpAction, "delay"),
+      spoofedHeaderAction: normalizeAction(rawAntiAlt.spoofedHeaderAction, "delay"),
+      unknownLookupAction: normalizeAction(rawAntiAlt.unknownLookupAction, "delay"),
+      delayMs: clampNumber(rawAntiAlt.delayMs, 0, 10000, 5000)
+    });
+  }
 
   if ("panel" in input && input.panel && typeof input.panel === "object") {
     const rawPanel = input.panel;
@@ -306,11 +330,10 @@ function sanitizeVerification(input = {}) {
 function mergeVerificationConfig(existing = {}, incoming = {}) {
   const current = normalizeVerificationConfig(existing || {});
   const clean = sanitizeVerification(incoming || {});
-
+  const hasIncomingAntiAlt = Object.prototype.hasOwnProperty.call(incoming || {}, "antiAlt");
   const merged = {
     ...current,
     ...clean,
-
     /*
       สำคัญ:
       อย่าให้ save settings ปกติไปล้าง panelRevision เดิม
@@ -318,18 +341,21 @@ function mergeVerificationConfig(existing = {}, incoming = {}) {
     */
     panelRevision: current.panelRevision || clean.panelRevision || null,
     panelRevisionUpdatedAt: current.panelRevisionUpdatedAt || clean.panelRevisionUpdatedAt || null,
-
+    antiAlt: hasIncomingAntiAlt
+      ? normalizeAntiAltConfig({
+          ...(current.antiAlt || {}),
+          ...(clean.antiAlt || {})
+        })
+      : current.antiAlt,
     panel: normalizePanel({
       ...(current.panel || {}),
       ...(clean.panel || {})
     }),
     updatedAt: now()
   };
-
   merged.oauthMode = normalizeVerifyMode(merged.verifyType || merged.panel?.verifyType);
   merged.verifyType = merged.oauthMode;
   merged.panel.verifyType = merged.oauthMode;
-
   return merged;
 }
 
@@ -423,29 +449,31 @@ function safePolicySnapshot(snapshot = {}) {
 }
 
 function safeDiscordSnapshot(snapshot = {}) {
+  const profile = snapshot.profileSnapshot || snapshot;
+
   return {
-    userId: snapshot.userId || snapshot.id || null,
-    username: snapshot.username || "",
-    discriminator: snapshot.discriminator || null,
-    globalName: snapshot.globalName || snapshot.global_name || null,
-    displayTag: snapshot.displayTag || snapshot.tag || null,
+    userId: profile.userId || profile.id || snapshot.userId || snapshot.id || null,
+    username: profile.username || snapshot.username || "",
+    discriminator: profile.discriminator || snapshot.discriminator || null,
+    globalName: profile.globalName || profile.global_name || snapshot.globalName || snapshot.global_name || null,
+    displayTag: profile.displayTag || profile.tag || snapshot.displayTag || snapshot.tag || null,
 
-    avatarHash: snapshot.avatarHash || snapshot.avatar || null,
-    avatarUrl: snapshot.avatarUrl || null,
-    bannerHash: snapshot.bannerHash || snapshot.banner || null,
-    bannerUrl: snapshot.bannerUrl || null,
-    accentColor: snapshot.accentColor || snapshot.accent_color || null,
+    avatarHash: profile.avatarHash || profile.avatar || snapshot.avatarHash || snapshot.avatar || null,
+    avatarUrl: profile.avatarUrl || snapshot.avatarUrl || null,
+    bannerHash: profile.bannerHash || profile.banner || snapshot.bannerHash || snapshot.banner || null,
+    bannerUrl: profile.bannerUrl || snapshot.bannerUrl || null,
+    accentColor: profile.accentColor || profile.accent_color || snapshot.accentColor || snapshot.accent_color || null,
 
-    email: snapshot.email || null,
-    emailVerified: snapshot.emailVerified === true || snapshot.verified === true,
-    locale: snapshot.locale || "",
-    mfaEnabled: !!snapshot.mfaEnabled || !!snapshot.mfa_enabled,
-    premiumType: snapshot.premiumType || snapshot.premium_type || 0,
-    flags: snapshot.flags || 0,
-    publicFlags: snapshot.publicFlags || snapshot.public_flags || 0,
+    email: profile.email || snapshot.email || null,
+    emailVerified: profile.emailVerified === true || profile.verified === true || snapshot.emailVerified === true || snapshot.verified === true,
+    locale: profile.locale || snapshot.locale || "",
+    mfaEnabled: !!profile.mfaEnabled || !!profile.mfa_enabled || !!snapshot.mfaEnabled || !!snapshot.mfa_enabled,
+    premiumType: profile.premiumType || profile.premium_type || snapshot.premiumType || snapshot.premium_type || 0,
+    flags: profile.flags || snapshot.flags || 0,
+    publicFlags: profile.publicFlags || profile.public_flags || snapshot.publicFlags || snapshot.public_flags || 0,
 
-    accountCreatedAt: snapshot.accountCreatedAt || null,
-    accountAgeDays: snapshot.accountAgeDays || null,
+    accountCreatedAt: profile.accountCreatedAt ?? snapshot.accountCreatedAt ?? null,
+    accountAgeDays: profile.accountAgeDays ?? snapshot.accountAgeDays ?? null,
 
     connectionsCount: Array.isArray(snapshot.connections)
       ? snapshot.connections.length
@@ -467,12 +495,15 @@ function safeDiscordSnapshot(snapshot = {}) {
       : [],
 
     guilds: Array.isArray(snapshot.guilds)
-      ? snapshot.guilds.slice(0, 50).map(g => ({
-          id: g.id || "",
-          name: g.name || "",
-          owner: !!g.owner,
-          permissions: g.permissions || "0"
-        }))
+      ? snapshot.guilds.slice(0, 50).map(g => {
+          const guildSnapshot = g.snapshot || g;
+          return {
+            id: guildSnapshot.id || g.id || "",
+            name: guildSnapshot.name || g.name || "",
+            owner: guildSnapshot.owner === true || g.owner === true,
+            permissions: guildSnapshot.permissions || g.permissions || "0"
+          };
+        })
       : [],
 
     callbackStateMode: snapshot.callbackStateMode || snapshot.stateMode || null,
@@ -481,7 +512,7 @@ function safeDiscordSnapshot(snapshot = {}) {
 }
 
 function safeMemberSnapshot(snapshot = {}) {
-  const member = snapshot.member || snapshot;
+  const member = snapshot.member?.snapshot || snapshot.member || snapshot;
 
   return {
     nick: member.nick || snapshot.nick || null,

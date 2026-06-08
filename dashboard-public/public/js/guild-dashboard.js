@@ -277,6 +277,33 @@
     el.value = values.includes(String(next)) ? String(next) : fallback;
   }
 
+  function clampNumber(value, min, max, fallback) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(min, Math.min(max, Math.floor(n)));
+  }
+
+  function normalizePolicyAction(value, fallback = "log_only") {
+    const actions = ["off", "log_only", "delay", "block"];
+    return actions.includes(String(value || "")) ? String(value) : fallback;
+  }
+
+  function defaultAntiAltConfig(value = {}) {
+    const raw = value && typeof value === "object" ? value : {};
+
+    return {
+      enabled: raw.enabled === true,
+      ipDuplicateAction: normalizePolicyAction(raw.ipDuplicateAction, "log_only"),
+      maxUsersPerIp: clampNumber(raw.maxUsersPerIp, 1, 20, 3),
+      deviceDuplicateAction: normalizePolicyAction(raw.deviceDuplicateAction, "log_only"),
+      maxUsersPerDevice: clampNumber(raw.maxUsersPerDevice, 1, 20, 2),
+      previouslyBlockedIpAction: normalizePolicyAction(raw.previouslyBlockedIpAction, "delay"),
+      spoofedHeaderAction: normalizePolicyAction(raw.spoofedHeaderAction, "delay"),
+      unknownLookupAction: normalizePolicyAction(raw.unknownLookupAction, "delay"),
+      delayMs: clampNumber(raw.delayMs, 0, 10000, 5000)
+    };
+  }
+
   function showToast(message, type = "ok") {
     const el = $(SELECTORS.toast);
     if (!el) return;
@@ -442,7 +469,19 @@
     setSelect("p-verifyType", mode, "oauth");
     setChecked("p-showTimestamp", !!panel.showTimestamp);
 
+    const antiAlt = defaultAntiAltConfig(verification.antiAlt || {});
+
     setChecked("v-blockVPN", verification.blockVPN !== false);
+    setChecked("v-blockHosting", !!verification.blockHosting);
+    setChecked("v-antiAltEnabled", !!antiAlt.enabled);
+    setSelect("v-ipDuplicateAction", antiAlt.ipDuplicateAction, "log_only");
+    setInput("v-maxUsersPerIp", antiAlt.maxUsersPerIp);
+    setSelect("v-deviceDuplicateAction", antiAlt.deviceDuplicateAction, "log_only");
+    setInput("v-maxUsersPerDevice", antiAlt.maxUsersPerDevice);
+    setSelect("v-previouslyBlockedIpAction", antiAlt.previouslyBlockedIpAction, "delay");
+    setSelect("v-spoofedHeaderAction", antiAlt.spoofedHeaderAction, "delay");
+    setSelect("v-unknownLookupAction", antiAlt.unknownLookupAction, "delay");
+    setInput("v-securityDelayMs", antiAlt.delayMs);
     setChecked("v-requireEmail", !!verification.requireEmail);
     setChecked("v-requireEmailVerified", !!verification.requireEmailVerified);
     setChecked("v-requireConnections", !!verification.requireConnections);
@@ -674,6 +713,18 @@
       messageId: messageId || null,
 
       blockVPN: readBool("v-blockVPN"),
+      blockHosting: readBool("v-blockHosting"),
+      antiAlt: {
+        enabled: readBool("v-antiAltEnabled"),
+        ipDuplicateAction: normalizePolicyAction(readValue("v-ipDuplicateAction"), "log_only"),
+        maxUsersPerIp: clampNumber(readText("v-maxUsersPerIp"), 1, 20, 3),
+        deviceDuplicateAction: normalizePolicyAction(readValue("v-deviceDuplicateAction"), "log_only"),
+        maxUsersPerDevice: clampNumber(readText("v-maxUsersPerDevice"), 1, 20, 2),
+        previouslyBlockedIpAction: normalizePolicyAction(readValue("v-previouslyBlockedIpAction"), "delay"),
+        spoofedHeaderAction: normalizePolicyAction(readValue("v-spoofedHeaderAction"), "delay"),
+        unknownLookupAction: normalizePolicyAction(readValue("v-unknownLookupAction"), "delay"),
+        delayMs: clampNumber(readText("v-securityDelayMs"), 0, 10000, 5000)
+      },
       requireEmail: readBool("v-requireEmail"),
       requireEmailVerified: readBool("v-requireEmailVerified"),
       requireConnections: readBool("v-requireConnections"),

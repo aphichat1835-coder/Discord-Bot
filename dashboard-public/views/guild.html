@@ -656,6 +656,103 @@
           <div class="card card-pad">
             <div class="card-header">
               <div>
+                <h2>🛡️ Anti-Alt / IP Security</h2>
+                <div class="card-desc">
+                  ตั้งค่าการตรวจ IP ซ้ำ, device ซ้ำ, IP เคยโดนบล็อก, header spoof และ lookup failure ต่อเซิร์ฟเวอร์
+                </div>
+              </div>
+              <span class="badge badge-warn">Hardening</span>
+            </div>
+
+            <div class="toggle-row">
+              <div>
+                <div class="toggle-title">เปิดระบบ Anti-Alt</div>
+                <div class="toggle-sub">ถ้าปิด ระบบจะไม่ใช้กฎ IP ซ้ำ, Device ซ้ำ, IP เคยโดนบล็อก, Header น่าสงสัย และ Lookup failed ในหมวดนี้</div>
+              </div>
+              <label class="toggle">
+                <input id="v-antiAltEnabled" type="checkbox">
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="toggle-row">
+              <div>
+                <div class="toggle-title">Block Hosting / Datacenter</div>
+                <div class="toggle-sub">บล็อกเครือข่าย hosting/datacenter เมื่อ lookup ตรวจพบ</div>
+              </div>
+              <label class="toggle">
+                <input id="v-blockHosting" type="checkbox">
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="form-row form-row-2 mt-14">
+              <div>
+                <label for="v-ipDuplicateAction">IP เดียวกันหลายบัญชี</label>
+                <select id="v-ipDuplicateAction">
+                  <option value="off">off</option>
+                  <option value="log_only">log_only</option>
+                  <option value="delay">delay</option>
+                  <option value="block">block</option>
+                </select>
+              </div>
+              <div>
+                <label for="v-maxUsersPerIp">จำนวนบัญชีสูงสุดต่อ IP</label>
+                <input id="v-maxUsersPerIp" type="number" min="1" max="20" value="3">
+              </div>
+            </div>
+
+            <div class="form-row form-row-2 mt-14">
+              <div>
+                <label for="v-deviceDuplicateAction">Device เดียวกันหลายบัญชี</label>
+                <select id="v-deviceDuplicateAction">
+                  <option value="off">off</option>
+                  <option value="log_only">log_only</option>
+                  <option value="delay">delay</option>
+                  <option value="block">block</option>
+                </select>
+              </div>
+              <div>
+                <label for="v-maxUsersPerDevice">จำนวนบัญชีสูงสุดต่อ Device</label>
+                <input id="v-maxUsersPerDevice" type="number" min="1" max="20" value="2">
+              </div>
+            </div>
+
+            <label for="v-previouslyBlockedIpAction">IP ที่เคยมีประวัติ blocked</label>
+            <select id="v-previouslyBlockedIpAction">
+              <option value="off">off</option>
+              <option value="log_only">log_only</option>
+              <option value="delay">delay</option>
+              <option value="block">block</option>
+            </select>
+
+            <label for="v-spoofedHeaderAction">Header น่าสงสัย / อาจปลอม IP</label>
+            <select id="v-spoofedHeaderAction">
+              <option value="off">off</option>
+              <option value="log_only">log_only</option>
+              <option value="delay">delay</option>
+              <option value="block">block</option>
+            </select>
+
+            <label for="v-unknownLookupAction">IP lookup failed</label>
+            <select id="v-unknownLookupAction">
+              <option value="off">off</option>
+              <option value="log_only">log_only</option>
+              <option value="delay">delay</option>
+              <option value="block">block</option>
+            </select>
+
+            <label for="v-securityDelayMs">เวลาหน่วง (ms)</label>
+            <input id="v-securityDelayMs" type="number" min="0" max="10000" value="5000">
+
+            <div class="alert alert-warn mt-14">
+              การตั้งค่าเข้มเกินไปอาจทำให้ผู้ใช้ปกติยืนยันช้าหรือไม่ผ่าน โดยเฉพาะเครือข่ายโรงเรียน หอพัก ร้านเกม หรือเน็ตมือถือที่แชร์ IP
+            </div>
+          </div>
+
+          <div class="card card-pad">
+            <div class="card-header">
+              <div>
                 <h2>Policy Notes</h2>
                 <div class="card-desc">
                   อธิบายเงื่อนไขที่ระบบจะใช้ประเมินสมาชิกตอนยืนยันตัวตน

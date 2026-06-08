@@ -32,6 +32,7 @@ if (!process.env.API_SECRET && !process.env.INTERNAL_API_SECRET) {
 const express    = require('express');
 const mongoose   = require('mongoose');
 const session    = require('express-session');
+const expressRateLimit = require('express-rate-limit');
 const MongoStore = require('connect-mongo');
 const path       = require('path');
 
@@ -41,10 +42,16 @@ const guildDashboardRoutes     = require('./routes/guildDashboard');
 const guildRoutes              = require('./routes/guild');
 const apiRoutes                = require('./routes/api');
 
+const rateLimit = expressRateLimit.rateLimit || expressRateLimit.default || expressRateLimit;
+const { getTrustedRequestIp } = require('./utils/ipUtils');
+
 const app  = express();
 const PORT = process.env.PORT || process.env.PORT_DASHBOARD || 3001;
 
-app.set('trust proxy', 1);
+const TRUST_PROXY = String(process.env.TRUST_PROXY || '').toLowerCase() === 'true';
+const TRUST_PROXY_HOPS = Math.max(1, Math.min(5, Number(process.env.TRUST_PROXY_HOPS || 1) || 1));
+
+app.set('trust proxy', TRUST_PROXY ? TRUST_PROXY_HOPS : false);
 
 app.disable('x-powered-by');
 
@@ -54,8 +61,8 @@ app.use((req, res, next) => {
     next();
 });
 
-app.use(express.json({ limit: '1mb' }));
-app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+app.use(express.json({ limit: '128kb' }));
+app.use(express.urlencoded({ extended: true, limit: '128kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.use(session({
@@ -67,12 +74,88 @@ app.use(session({
         touchAfter: 24 * 3600
     }),
     cookie: {
-        maxAge:   7 * 24 * 60 * 60 * 1000,
+        maxAge:   24 * 60 * 60 * 1000,
         httpOnly: true,
         secure:   process.env.NODE_ENV === 'production',
         sameSite: 'lax'
     }
 }));
+
+
+function normalizeSocketIp(ip) {
+    if (!ip) return 'unknown';
+
+    let value = String(ip).trim();
+
+    if (value.startsWith('::ffff:')) value = value.slice(7);
+    if (value === '::1') value = '127.0.0.1';
+    if (value.includes('%')) value = value.split('%')[0];
+
+    if (value.startsWith('[') && value.includes(']')) {
+        value = value.slice(1, value.indexOf(']'));
+    } else if (/^\d+\.\d+\.\d+\.\d+:\d+$/.test(value)) {
+        value = value.split(':')[0];
+    }
+
+    return value || 'unknown';
+}
+
+function getRateLimitKey(req) {
+    const trusted = getTrustedRequestIp(req);
+    const ipKey = normalizeSocketIp(trusted.ip);
+
+    const adminId =
+        req.session?.adminUser?.id ||
+        req.session?.adminUser?.userId ||
+        '';
+
+    return adminId ? `${ipKey}:${adminId}` : ipKey;
+}
+
+function rateLimitHandler(_req, res) {
+    return res.status(429).json({
+        success: false,
+        code: 'rate_limited',
+        error: 'มีการยืนยันถี่เกินไป กรุณารอสักครู่แล้วลองใหม่'
+    });
+}
+
+const callbackLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    limit: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: getRateLimitKey,
+    handler: rateLimitHandler
+});
+
+const adminOauthLimiter = rateLimit({
+    windowMs: 5 * 60 * 1000,
+    limit: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: getRateLimitKey,
+    handler: rateLimitHandler
+});
+
+const guildWriteLimiter = rateLimit({
+    windowMs: 5 * 60 * 1000,
+    limit: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: getRateLimitKey,
+    handler: rateLimitHandler
+});
+
+app.post('/auth/callback', callbackLimiter);
+app.get(['/oauth/admin', '/auth/admin-callback'], adminOauthLimiter);
+app.use([
+    '/api/guild/:guildId/settings',
+    '/api/guild/:guildId/verify/validate',
+    '/api/guild/:guildId/verify/panel/send',
+    '/api/guild/:guildId/verify/panel/update',
+    '/api/guild/:guildId/verify/disable'
+], guildWriteLimiter);
 
 /*
   Route order matters:

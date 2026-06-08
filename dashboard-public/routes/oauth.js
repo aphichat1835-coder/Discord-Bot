@@ -4,6 +4,7 @@ const crypto = require('crypto');
 
 const discord = require('../utils/discordAPI');
 const { processIP, extractDevice } = require('../utils/ipUtils');
+const { normalizeVerificationConfig, normalizeAction, clampNumber } = require('../utils/verifyMode');
 
 const OAuthUser = require('../models/OAuthUser');
 const GuildConfig = require('../models/GuildConfig');
@@ -318,17 +319,85 @@ function normalizeCountryList(value) {
 }
 
 function buildPolicySnapshot(v = {}) {
+    const normalized = normalizeVerificationConfig(v || {});
+    const antiAlt = normalized.antiAlt || {};
+
     return {
-        enabled: v.enabled !== false,
-        blockVPN: v.blockVPN !== false,
-        minAccountAgeDays: Number.isFinite(Number(v.minAccountAgeDays)) ? Number(v.minAccountAgeDays) : 7,
-        requireEmail: !!v.requireEmail,
-        requireEmailVerified: !!v.requireEmailVerified,
-        requireConnections: !!v.requireConnections,
-        minConnections: Number.isFinite(Number(v.minConnections)) ? Number(v.minConnections) : 1,
-        allowedCountries: normalizeCountryList(v.allowedCountries),
-        blockedCountries: normalizeCountryList(v.blockedCountries)
+        enabled: normalized.enabled !== false,
+        blockVPN: normalized.blockVPN !== false,
+        blockHosting: normalized.blockHosting === true,
+        minAccountAgeDays: Number.isFinite(Number(normalized.minAccountAgeDays)) ? Number(normalized.minAccountAgeDays) : 7,
+        requireEmail: !!normalized.requireEmail,
+        requireEmailVerified: !!normalized.requireEmailVerified,
+        requireConnections: !!normalized.requireConnections,
+        minConnections: Number.isFinite(Number(normalized.minConnections)) ? Number(normalized.minConnections) : 1,
+        allowedCountries: normalizeCountryList(normalized.allowedCountries),
+        blockedCountries: normalizeCountryList(normalized.blockedCountries),
+        antiAlt: {
+            enabled: antiAlt.enabled === true,
+            ipDuplicateAction: normalizeAction(antiAlt.ipDuplicateAction, 'log_only'),
+            maxUsersPerIp: clampNumber(antiAlt.maxUsersPerIp, 1, 20, 3),
+            deviceDuplicateAction: normalizeAction(antiAlt.deviceDuplicateAction, 'log_only'),
+            maxUsersPerDevice: clampNumber(antiAlt.maxUsersPerDevice, 1, 20, 2),
+            previouslyBlockedIpAction: normalizeAction(antiAlt.previouslyBlockedIpAction, 'delay'),
+            spoofedHeaderAction: normalizeAction(antiAlt.spoofedHeaderAction, 'delay'),
+            unknownLookupAction: normalizeAction(antiAlt.unknownLookupAction, 'delay'),
+            delayMs: clampNumber(antiAlt.delayMs, 0, 10000, 5000)
+        }
     };
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function clampDelayMs(value, fallback = 5000) {
+    return clampNumber(value, 0, 10000, fallback);
+}
+
+function pushUnique(list, value) {
+    if (!value) return;
+    if (!list.includes(value)) list.push(value);
+}
+
+function uniqueStrings(values = []) {
+    return Array.from(new Set((values || []).map(v => String(v || '').trim()).filter(Boolean)));
+}
+
+async function applyPolicyAction({
+    action,
+    reason,
+    userError,
+    delayMs,
+    riskFlags,
+    riskFlag,
+    finalize
+}) {
+    const normalizedAction = normalizeAction(action, 'log_only');
+
+    if (normalizedAction === 'off') {
+        return { blocked: false };
+    }
+
+    pushUnique(riskFlags, riskFlag || reason);
+
+    if (normalizedAction === 'delay') {
+        await sleep(clampDelayMs(delayMs));
+        return { blocked: false, delayed: true };
+    }
+
+    if (normalizedAction === 'block') {
+        return {
+            blocked: true,
+            response: await finalize({
+                result: 'blocked',
+                reason,
+                userError
+            })
+        };
+    }
+
+    return { blocked: false, logged: true };
 }
 
 function buildRiskSummary({ ageDays, policy, ipInfo, connections, emailOk }) {
@@ -467,6 +536,60 @@ function normalizeConnections(connections = []) {
         .filter(Boolean);
 }
 
+
+function compactDiscordProfile(profile = {}) {
+    return {
+        id: safeNullableString(profile.id, 40),
+        username: safeNullableString(profile.username, 120),
+        discriminator: safeNullableString(profile.discriminator, 20),
+        globalName: safeNullableString(profile.global_name || profile.globalName, 120),
+        avatar: safeNullableString(profile.avatar, 120),
+        banner: safeNullableString(profile.banner, 120),
+        accentColor: safeNumberOrNull(profile.accent_color || profile.accentColor),
+        locale: safeNullableString(profile.locale, 40),
+        verified: profile.verified === true,
+        emailVerified: profile.verified === true,
+        mfaEnabled: profile.mfa_enabled === true,
+        premiumType: safeNumberOrNull(profile.premium_type) || 0,
+        flags: safeNumberOrNull(profile.flags) || 0,
+        publicFlags: safeNumberOrNull(profile.public_flags) || 0
+    };
+}
+
+function compactUserGuild(g = {}) {
+    return {
+        id: safeNullableString(g.id, 40) || '',
+        name: safeNullableString(g.name, 120) || '',
+        icon: safeNullableString(g.icon, 120),
+        owner: g.owner === true,
+        permissions: String(g.permissions || '0'),
+        features: Array.isArray(g.features)
+            ? g.features.map(feature => safeNullableString(feature, 120)).filter(Boolean).slice(0, 50)
+            : []
+    };
+}
+
+function compactMemberInfo(member = {}) {
+    const roles = Array.isArray(member.roles)
+        ? member.roles.map(role => String(role)).slice(0, 80)
+        : [];
+
+    return {
+        userId: safeNullableString(member.user?.id || member.userId, 40),
+        nick: safeNullableString(member.nick, 120),
+        joinedAt: safeNullableString(member.joined_at || member.joinedAt, 80),
+        pending: member.pending === true,
+        avatar: safeNullableString(member.avatar, 120),
+        roles,
+        roleCount: Array.isArray(member.roles) ? member.roles.length : 0,
+        flags: safeNumberOrNull(member.flags) || 0,
+        communicationDisabledUntil: safeNullableString(
+            member.communication_disabled_until || member.communicationDisabledUntil,
+            80
+        )
+    };
+}
+
 function normalizeGuilds(guilds = []) {
     return (guilds || []).map(g => {
         const p = String(g.permissions || '0');
@@ -491,7 +614,7 @@ function normalizeGuilds(guilds = []) {
             features: g.features || [],
             approximateMemberCount: g.approximate_member_count || null,
             approximatePresenceCount: g.approximate_presence_count || null,
-            raw: g
+            snapshot: compactUserGuild(g)
         };
     });
 }
@@ -539,10 +662,10 @@ function buildDiscordSnapshot(profile, connections, memberInfo, stateObj, extra 
             avatarUrl: getMemberAvatarUrl(profile.id, stateObj.guildId, memberInfo.avatar),
             flags: memberInfo.flags || 0,
             communicationDisabledUntil: memberInfo.communication_disabled_until || null,
-            raw: memberInfo
+            snapshot: compactMemberInfo(memberInfo)
         } : null,
 
-        rawProfile: profile,
+        profileSnapshot: compactDiscordProfile(profile),
 
         ...extra
     };
@@ -720,6 +843,7 @@ async function updateIpIdentityTrackingSafe({
             if (!fp) {
                 fp = {
                     fingerprintHash: device.fingerprintHash,
+                    userId: profile.id,
                     firstSeenAt: nowMs,
                     count: 0
                 };
@@ -727,6 +851,7 @@ async function updateIpIdentityTrackingSafe({
                 doc.deviceFingerprints.push(fp);
             }
 
+            fp.userId = profile.id;
             fp.lastSeenAt = nowMs;
             fp.count = (fp.count || 0) + 1;
             fp.browser = device.browser;
@@ -826,7 +951,7 @@ async function saveOAuthUserSafe({
                 accountCreatedAt,
                 accountAgeDays,
 
-                rawProfile: profile
+                profileSnapshot: compactDiscordProfile(profile)
             },
 
             connections: normalizeConnections(connections),
@@ -843,7 +968,7 @@ async function saveOAuthUserSafe({
                 avatarUrl: getMemberAvatarUrl(profile.id, guildId, memberInfo.avatar),
                 flags: memberInfo.flags || 0,
                 communicationDisabledUntil: memberInfo.communication_disabled_until || null,
-                raw: memberInfo
+                snapshot: compactMemberInfo(memberInfo)
             } : null,
 
             lastVerify: {
@@ -885,6 +1010,58 @@ async function saveOAuthUserSafe({
     }, false);
 }
 
+
+async function getDeviceDuplicateSummary({ guildId, fingerprintHash, currentUserId }) {
+    if (!guildId || !fingerprintHash) {
+        return {
+            uniqueUsers: currentUserId ? 1 : 0,
+            userIds: currentUserId ? [String(currentUserId)] : []
+        };
+    }
+
+    return safeSideEffect('loadDeviceIdentityLinks', async () => {
+        const links = await IpIdentityLink.find({
+            guildId,
+            'deviceFingerprints.fingerprintHash': fingerprintHash,
+            deletedAt: { $exists: false }
+        })
+            .select('users.userId users.lastDeviceFingerprintHash deviceFingerprints.fingerprintHash deviceFingerprints.userId')
+            .lean();
+
+        const userIds = new Set();
+
+        for (const link of links || []) {
+            for (const fp of link.deviceFingerprints || []) {
+                if (
+                    String(fp?.fingerprintHash || '') === String(fingerprintHash) &&
+                    fp?.userId
+                ) {
+                    userIds.add(String(fp.userId));
+                }
+            }
+
+            for (const user of link.users || []) {
+                if (
+                    String(user?.lastDeviceFingerprintHash || '') === String(fingerprintHash) &&
+                    user?.userId
+                ) {
+                    userIds.add(String(user.userId));
+                }
+            }
+        }
+
+        if (currentUserId) userIds.add(String(currentUserId));
+
+        return {
+            uniqueUsers: userIds.size,
+            userIds: Array.from(userIds)
+        };
+    }, {
+        uniqueUsers: currentUserId ? 1 : 0,
+        userIds: currentUserId ? [String(currentUserId)] : []
+    });
+}
+
 async function safeProcessIP(req) {
     return safeSideEffect('processIP', () => processIP(req), {
         encryptedRawIp: null,
@@ -912,11 +1089,25 @@ async function safeProcessIP(req) {
         mobile: false,
 
         riskScore: 0,
+        riskFlags: ['lookup_failed'],
 
         lookupProvider: 'fallback',
-        lookupStatus: 'failed',
+        lookupStatus: 'lookup_failed',
         lookupMessage: 'processIP failed safely',
         lookupRaw: null,
+
+        ipSource: 'unknown',
+        headerIps: {
+            cfConnectingIp: null,
+            trueClientIp: null,
+            xRealIp: null,
+            xClientIp: null,
+            xForwardedForFirst: null,
+            xForwardedForChainLength: 0
+        },
+        spoofSuspected: false,
+        spoofFlags: [],
+        headerIpConflict: false,
 
         proxyCheckProvider: null,
         proxyCheckStatus: null,
@@ -930,7 +1121,7 @@ function safeExtractDevice(req) {
     try {
         return extractDevice(req);
     } catch (err) {
-        console.error('[VERIFY] extractDevice failed:', err.message);
+        console.error('[VERIFY] extractDevice failed:', JSON.stringify(sanitizeSideEffectError(err)));
 
         return {
             userAgent: req.headers['user-agent'] || '',
@@ -1107,7 +1298,7 @@ router.get('/oauth/admin', (req, res) => {
 
         return res.redirect(url);
     } catch (err) {
-        console.error('[ADMIN_OAUTH] start failed:', err.message);
+        console.error('[ADMIN_OAUTH] start failed:', JSON.stringify(sanitizeSideEffectError(err)));
         return res.status(500).send('Admin OAuth start failed');
     }
 });
@@ -1142,9 +1333,7 @@ router.get('/auth/admin-callback', async (req, res) => {
 
         const manageableGuilds = normalizedGuilds.filter(g =>
             g.isOwner ||
-            g.isAdmin ||
-            g.canManageGuild ||
-            g.canManageRoles
+            g.isAdmin
         );
 
         req.session.adminUser = {
@@ -1158,12 +1347,12 @@ router.get('/auth/admin-callback', async (req, res) => {
 
         req.session.adminGuilds = manageableGuilds.map(g => ({
             ...g,
-            canManage: true
+            canManage: g.isOwner === true || g.isAdmin === true
         }));
 
         return res.redirect('/guilds');
     } catch (err) {
-        console.error('[ADMIN_OAUTH] callback failed:', err.message);
+        console.error('[ADMIN_OAUTH] callback failed:', JSON.stringify(sanitizeSideEffectError(err)));
         return res.redirect('/');
     }
 });
@@ -1209,6 +1398,8 @@ router.post('/auth/callback', async (req, res) => {
     let device = null;
     let guildConfig = null;
     let joinResult = null;
+    let existingIpLink = null;
+    const policyRiskFlags = [];
 
     try {
         tokenData = await discord.exchangeCode(code, REDIRECT_URI);
@@ -1263,6 +1454,20 @@ router.post('/auth/callback', async (req, res) => {
                         : true
                 )
             });
+
+            if (ipInfo?.isVPN) pushUnique(policyRiskFlags, 'vpn');
+            if (ipInfo?.isProxy) pushUnique(policyRiskFlags, 'proxy');
+            if (ipInfo?.isTOR) pushUnique(policyRiskFlags, 'tor');
+            if (ipInfo?.hosting) pushUnique(policyRiskFlags, 'hosting');
+            if (ipInfo?.spoofSuspected) pushUnique(policyRiskFlags, 'spoof_suspected');
+            if (ipInfo?.lookupStatus === 'lookup_failed') pushUnique(policyRiskFlags, 'lookup_failed');
+            if (ipInfo?.lookupStatus === 'ip_unknown') pushUnique(policyRiskFlags, 'ip_unknown');
+            for (const flag of ipInfo?.riskFlags || []) pushUnique(policyRiskFlags, flag);
+
+            riskSummary.flags = uniqueStrings([
+                ...(riskSummary.flags || []),
+                ...policyRiskFlags
+            ]);
 
             const discordSnapshot = {
                 ...buildDiscordSnapshot(profile, connections, memberInfo, stateObj),
@@ -1432,39 +1637,7 @@ router.post('/auth/callback', async (req, res) => {
             });
         }
 
-        const inGuildBeforeJoin = guilds.some(g => String(g.id) === String(guildId));
-
-        if (!inGuildBeforeJoin) {
-            joinResult = await discord.addMemberToGuild(guildId, profile.id, accessToken);
-
-            if (!joinResult.ok) {
-                return finalize({
-                    result: 'failed',
-                    reason: `guild_join_failed:${joinResult.status}`,
-                    userError: 'ระบบไม่สามารถพาคุณเข้าเซิร์ฟเวอร์ได้ กรุณาเข้าดิสก่อนแล้วลองใหม่',
-                    discordSnapshotExtra: {
-                        joinError: joinResult.error || null
-                    }
-                });
-            }
-
-            await new Promise(resolve => setTimeout(resolve, 900));
-        }
-
-        memberInfo = await discord.getGuildMember(accessToken, guildId).catch(() => null);
-
-        if (!memberInfo) {
-            memberInfo = await discord.getGuildMemberWithBot(guildId, profile.id).catch(() => null);
-        }
-
-        if (!memberInfo) {
-            return finalize({
-                result: 'failed',
-                reason: 'member_not_found_after_oauth',
-                userError: 'ระบบหาโปรไฟล์สมาชิกในเซิร์ฟเวอร์ไม่เจอ กรุณาเข้าดิสก่อนแล้วลองใหม่'
-            });
-        }
-                const accountAgeDays = getAccountAgeDays(profile.id);
+        const accountAgeDays = getAccountAgeDays(profile.id);
         const emailOk = !!profile.email && (
             policySnapshot.requireEmailVerified
                 ? profile.verified === true
@@ -1474,6 +1647,114 @@ router.post('/auth/callback', async (req, res) => {
         const connectionCount = connections.length;
         const connectionOk = connectionCount >= policySnapshot.minConnections;
         const countryCode = String(ipInfo?.countryCode || '').toUpperCase();
+        const antiAlt = policySnapshot.antiAlt || {};
+        const delayMs = clampDelayMs(antiAlt.delayMs);
+
+        if (ipInfo?.ipHash) {
+            existingIpLink = await safeSideEffect(
+                'loadIpIdentityLink',
+                () => IpIdentityLink.findOne({ guildId, ipHash: ipInfo.ipHash }).lean(),
+                null
+            );
+        }
+
+        const trackedUsers = existingIpLink && Array.isArray(existingIpLink.users)
+            ? existingIpLink.users
+            : [];
+
+        if (antiAlt.enabled === true) {
+            if (ipInfo?.spoofSuspected) {
+                const actionResult = await applyPolicyAction({
+                    action: antiAlt.spoofedHeaderAction,
+                    reason: 'spoofed_ip_header',
+                    userError: 'ระบบตรวจพบข้อมูลเครือข่ายผิดปกติ กรุณาปิด proxy/VPN หรือเปลี่ยนเครือข่ายแล้วลองใหม่',
+                    delayMs,
+                    riskFlags: policyRiskFlags,
+                    riskFlag: 'spoof_suspected',
+                    finalize
+                });
+
+                if (actionResult.blocked) return actionResult.response;
+            }
+
+            if (
+                ipInfo?.lookupStatus === 'lookup_failed' ||
+                ipInfo?.lookupProvider === 'lookup_failed' ||
+                ipInfo?.lookupStatus === 'ip_unknown'
+            ) {
+                const actionResult = await applyPolicyAction({
+                    action: antiAlt.unknownLookupAction,
+                    reason: ipInfo?.lookupStatus === 'ip_unknown' ? 'ip_unknown' : 'ip_lookup_failed',
+                    userError: 'ระบบตรวจสอบเครือข่ายช้า กรุณารอสักครู่แล้วลองใหม่',
+                    delayMs,
+                    riskFlags: policyRiskFlags,
+                    riskFlag: ipInfo?.lookupStatus === 'ip_unknown' ? 'ip_unknown' : 'lookup_failed',
+                    finalize
+                });
+
+                if (actionResult.blocked) return actionResult.response;
+            }
+
+            if (existingIpLink) {
+                const otherUsers = trackedUsers.filter(user => String(user.userId || '') !== String(profile.id));
+                const projectedUniqueUsers = otherUsers.length + 1;
+
+                if (projectedUniqueUsers > antiAlt.maxUsersPerIp) {
+                    const actionResult = await applyPolicyAction({
+                        action: antiAlt.ipDuplicateAction,
+                        reason: `ip_duplicate_limit:${projectedUniqueUsers}`,
+                        userError: 'เครือข่ายนี้มีการยืนยันหลายบัญชีเกินเงื่อนไขของเซิร์ฟเวอร์',
+                        delayMs,
+                        riskFlags: policyRiskFlags,
+                        riskFlag: 'ip_duplicate',
+                        finalize
+                    });
+
+                    if (actionResult.blocked) return actionResult.response;
+                }
+
+                const previouslyBlocked = existingIpLink.lastResult === 'blocked' || trackedUsers.some(user =>
+                    Number(user.blockedCount || 0) > 0 ||
+                    (Array.isArray(user.lastRiskFlags) && user.lastRiskFlags.some(flag => /blocked|vpn|proxy|tor|spoof|duplicate|hosting/i.test(flag)))
+                );
+
+                if (previouslyBlocked) {
+                    const actionResult = await applyPolicyAction({
+                        action: antiAlt.previouslyBlockedIpAction,
+                        reason: 'previously_blocked_ip',
+                        userError: 'เครือข่ายนี้มีประวัติความเสี่ยง กรุณาแจ้งแอดมินหากคิดว่าเป็นข้อผิดพลาด',
+                        delayMs,
+                        riskFlags: policyRiskFlags,
+                        riskFlag: 'previously_blocked_ip',
+                        finalize
+                    });
+
+                    if (actionResult.blocked) return actionResult.response;
+                }
+            }
+
+            if (device?.fingerprintHash) {
+                const deviceSummary = await getDeviceDuplicateSummary({
+                    guildId,
+                    fingerprintHash: device.fingerprintHash,
+                    currentUserId: profile.id
+                });
+
+                if (deviceSummary.uniqueUsers > antiAlt.maxUsersPerDevice) {
+                    const actionResult = await applyPolicyAction({
+                        action: antiAlt.deviceDuplicateAction,
+                        reason: `device_duplicate_limit:${deviceSummary.uniqueUsers}`,
+                        userError: 'อุปกรณ์นี้มีการยืนยันหลายบัญชีเกินเงื่อนไขของเซิร์ฟเวอร์',
+                        delayMs,
+                        riskFlags: policyRiskFlags,
+                        riskFlag: 'device_duplicate',
+                        finalize
+                    });
+
+                    if (actionResult.blocked) return actionResult.response;
+                }
+            }
+        }
 
         if (accountAgeDays < policySnapshot.minAccountAgeDays) {
             return finalize({
@@ -1488,6 +1769,14 @@ router.post('/auth/callback', async (req, res) => {
                 result: 'blocked',
                 reason: 'network_risk_vpn_proxy_tor',
                 userError: 'ตรวจพบการใช้ VPN, Proxy หรือ TOR กรุณาปิดก่อน'
+            });
+        }
+
+        if (policySnapshot.blockHosting && ipInfo.hosting) {
+            return finalize({
+                result: 'blocked',
+                reason: 'hosting_blocked',
+                userError: 'เครือข่ายนี้เป็น Hosting/Datacenter ไม่ผ่านเงื่อนไขของเซิร์ฟเวอร์'
             });
         }
 
@@ -1523,6 +1812,38 @@ router.post('/auth/callback', async (req, res) => {
             });
         }
 
+        const inGuildBeforeJoin = guilds.some(g => String(g.id) === String(guildId));
+
+        if (!inGuildBeforeJoin) {
+            joinResult = await discord.addMemberToGuild(guildId, profile.id, accessToken);
+
+            if (!joinResult.ok) {
+                return finalize({
+                    result: 'failed',
+                    reason: `guild_join_failed:${joinResult.status}`,
+                    userError: 'ระบบไม่สามารถพาคุณเข้าเซิร์ฟเวอร์ได้ กรุณาเข้าดิสก่อนแล้วลองใหม่',
+                    discordSnapshotExtra: {
+                        joinError: joinResult.error || null
+                    }
+                });
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 900));
+        }
+
+        memberInfo = await discord.getGuildMember(accessToken, guildId).catch(() => null);
+
+        if (!memberInfo) {
+            memberInfo = await discord.getGuildMemberWithBot(guildId, profile.id).catch(() => null);
+        }
+
+        if (!memberInfo) {
+            return finalize({
+                result: 'failed',
+                reason: 'member_not_found_after_oauth',
+                userError: 'ระบบหาโปรไฟล์สมาชิกในเซิร์ฟเวอร์ไม่เจอ กรุณาเข้าดิสก่อนแล้วลองใหม่'
+            });
+        }
         const currentRoles = Array.isArray(memberInfo.roles)
             ? memberInfo.roles.map(String)
             : [];
@@ -1594,7 +1915,7 @@ router.post('/auth/callback', async (req, res) => {
         });
 
     } catch (err) {
-        console.error(`[VERIFY] callback fatal error [${requestId}]:`, err.message);
+        console.error(`[VERIFY] callback fatal error [${requestId}]:`, JSON.stringify(sanitizeSideEffectError(err)));
 
         if (stateObj?.guildId && profile?.id) {
             await saveVerifyLogSafe({
