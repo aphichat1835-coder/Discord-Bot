@@ -705,6 +705,7 @@ headerMeta.headerIps,
 module.exports = {
     getRealIP,
     normalizeIP,
+    getTrustedRequestIp,
     extractDevice,
     processIP
 };
