@@ -173,11 +173,11 @@ function detectSpoofedHeaders(req, trustedIp) {
 
     return {
         headerIps: {
-            cfConnectingIp: headerIps.cfConnectingIp,
-            trueClientIp: headerIps.trueClientIp,
-            xRealIp: headerIps.xRealIp,
-            xClientIp: headerIps.xClientIp,
-            xForwardedForFirst: headerIps.xForwardedForFirst,
+            cfConnectingIp: firstHeaderValue(req.headers['cf-connecting-ip']) || null,
+            trueClientIp: firstHeaderValue(req.headers['true-client-ip']) || null,
+            xRealIp: firstHeaderValue(req.headers['x-real-ip']) || null,
+            xClientIp: firstHeaderValue(req.headers['x-client-ip']) || null,
+            xForwardedForFirst: firstHeaderValue(req.headers['x-forwarded-for']) || null,
             xForwardedForChainLength: headerIps.xForwardedForChainLength
         },
         spoofSuspected: spoofFlags.length > 0,
@@ -688,8 +688,7 @@ async function processIP(req) {
         lookupRaw: compactLookupRaw(lookup),
 
         ipSource: trustedIp.source,
-        headerIps:
-headerMeta.headerIps,
+        headerIps: headerMeta.headerIps,
         spoofSuspected: headerMeta.spoofSuspected,
         spoofFlags: headerMeta.spoofFlags,
         headerIpConflict: headerMeta.headerIpConflict,
