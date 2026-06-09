@@ -1,23 +1,20 @@
----
+# OBSOLETE
 
-## Owner Decisions / Architecture Notes
+This append helper has been superseded by the main documentation files.
 
-อ่านรายละเอียดเต็มใน `OWNER_DECISIONS.md`
-
-สรุปสั้น:
+Current source of truth:
 
 ```txt
-This project intentionally keeps discord.js v13 for now.
-This project intentionally keeps the current voice/session subsystem.
-This project intentionally keeps the current dashboard and verification architecture.
-This project intentionally uses one repository, two services, and shared MongoDB.
+README.md
+AGENTS.md
+CONTEXT.md
+TASK.md
+CHANGELOG.md
+CODEX_HANDOFF.md
+OWNER_DECISIONS.md
+OWNER_REVIEW_POLICY.md
+AI_FULL_PROJECT_MAP.md
+.agents/memory/phomueangtai-bot.md
 ```
 
-AI/coding agent ไม่ควรเสนอ migration, rewrite, removal หรือ architecture replacement ซ้ำ ๆ โดยยังไม่ได้อ่าน implementation จริง
-
-ถ้าจะเสนอการเปลี่ยนใหญ่ ต้องอ้างอิงจาก:
-
-- ไฟล์ที่ตรวจแล้ว
-- behavior ที่พบจริง
-- impact ที่ชัดเจน
-- minimal fix ที่ไม่ลบระบบเดิมโดยไม่จำเป็น
+Do not apply this file again.
