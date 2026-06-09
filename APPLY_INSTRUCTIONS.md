@@ -1,41 +1,37 @@
 # APPLY_INSTRUCTIONS.md
 
-GitHub write was blocked by the tool, so apply this bundle manually or ask Codex to apply it.
+This bundle has been applied. All target files have been updated as described below.
 
-## Files
+## Applied Changes
 
-1. Create new file:
+1. Created new file:
 
 ```txt
 OWNER_DECISIONS.md
 ```
 
-Use the included `OWNER_DECISIONS.md`.
-
-2. Append the included blocks:
+2. Appended owner decision blocks:
 
 ```txt
-README_APPEND_OWNER_DECISIONS.md        -> append to README.md
-CONTEXT_APPEND_OWNER_DECISIONS.md       -> append to CONTEXT.md
-AGENTS_APPEND_OWNER_DECISIONS.md        -> append to AGENTS.md
-TASK_APPEND_OWNER_DECISIONS.md          -> append to TASK.md
-CODEX_HANDOFF_APPEND_OWNER_DECISIONS.md -> append to CODEX_HANDOFF.md
-CHANGELOG_APPEND_OWNER_DECISIONS.md     -> append to CHANGELOG.md
+README_APPEND_OWNER_DECISIONS.md        -> appended to README.md
+CONTEXT_APPEND_OWNER_DECISIONS.md       -> appended to CONTEXT.md
+AGENTS_APPEND_OWNER_DECISIONS.md        -> appended to AGENTS.md
+TASK_APPEND_OWNER_DECISIONS.md          -> appended to TASK.md
+CODEX_HANDOFF_APPEND_OWNER_DECISIONS.md -> appended to (created) CODEX_HANDOFF.md
+CHANGELOG_APPEND_OWNER_DECISIONS.md     -> appended to CHANGELOG.md
 ```
 
-3. Replace or merge:
+3. Merged owner decisions summary into:
 
 ```txt
 .agents/memory/phomueangtai-bot.md
 ```
 
-with the included memory file.
-
-## Suggested commit message
+## Commit message used
 
 ```txt
 docs: add owner decision guidelines for AI agents
-```
+
 
 ## Validation
 
