@@ -144,10 +144,11 @@ discord/index/views.js
 dashboard-public/index.js
 dashboard-public/routes/oauth.js
 dashboard-public/routes/guild.js
+dashboard-public/routes/guildDashboard.js
 dashboard-public/routes/api.js
 dashboard-public/models/GuildConfig.js
 dashboard-public/models/OAuthUser.js
-dashboard-public/models/VerifyLog.js
+
 dashboard-public/models/IpIdentityLink.js
 dashboard-public/models/IPRevealRequest.js
 dashboard-public/utils/crypto.js
