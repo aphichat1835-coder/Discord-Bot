@@ -1,18 +1,46 @@
 # CHANGELOG
 
-บันทึกการเปลี่ยนแปลงสำคัญของโปรเจกต์ Phomueangtai Enterprise Discord System
+## [Unreleased] - Documentation Consolidation
+
+### Changed
+
+- Restored `CONTEXT.md` as the root project context file instead of a redirect-only stub.
+- Updated project wording to describe the repository as a Personal Multi-Tool Discord Bot, not verification-only.
+- Consolidated deep documentation into `docs/`.
+- Shortened and cleaned `README.md` for human-friendly project onboarding.
+- Reduced `AGENTS.md` to the root AI coding agent rulebook.
+- Reduced `TASK.md` to the current docs-only workflow note.
+- Merged architecture context into `docs/ARCHITECTURE.md`.
+- Merged Codex handoff and AI workflow guidance into `docs/AI_GUIDE.md`.
+- Merged owner decisions and owner review policy into `docs/OWNER_DECISIONS.md`.
+- Added `docs/SECURITY_PRIVACY.md`, `docs/DEPLOYMENT.md`, and `docs/VALIDATION.md`.
+- Archived/superseded obsolete append helper documentation in `docs/archive/OBSOLETE_DOCS.md`.
+- Retained obsolete append/apply helper files as redirect stubs for compatibility.
+
+### Notes
+
+- Docs-only change.
+- No runtime behavior changed.
+- No OAuth behavior, database schemas, command behavior, dashboard routes, voice/session lifecycle, Render deployment behavior, dependencies, or package manifests changed.
+
+บันทึกการเปลี่ยนแปลงสำคัญของโปรเจกต์ Phomueangtai Personal Multi-Tool Discord Bot
 
 ---
 
 ## [Unreleased] - Docs Consolidation / AI Handoff Upgrade
 
-### Added
+### Historical note
 
-- Added `AI_FULL_PROJECT_MAP.md` as the full subsystem map for AI coding agents.
-- Expanded `CODEX_HANDOFF.md` with full reading order, service map, subsystem map, review boundaries, critical files, and planning dry-run guidance.
-- Expanded `OWNER_REVIEW_POLICY.md` with owner-aware areas, review boundaries, issue reporting format, and do-not-re-suggest rules.
-- Refreshed `.agents/memory/phomueangtai-bot.md` with updated reading order and project reality.
-- Replaced `AGENTS.md` with a current AI rulebook that points to owner decisions, review policy, and the full project map.
+This earlier docs-upgrade section is retained for history. Its detailed project-map, handoff, and owner-review content has since been consolidated into the current source-of-truth docs:
+
+- `CONTEXT.md`
+- `docs/ARCHITECTURE.md`
+- `docs/AI_GUIDE.md`
+- `docs/OWNER_DECISIONS.md`
+- `docs/SECURITY_PRIVACY.md`
+- `docs/VALIDATION.md`
+
+Root legacy files such as `AI_FULL_PROJECT_MAP.md`, `CODEX_HANDOFF.md`, and `OWNER_REVIEW_POLICY.md` are now compatibility stubs that point to the current docs.
 
 ### Changed
 
@@ -20,18 +48,19 @@
 
 ```txt
 AGENTS.md
-OWNER_DECISIONS.md
-OWNER_REVIEW_POLICY.md
-AI_FULL_PROJECT_MAP.md
 CONTEXT.md
+docs/OWNER_DECISIONS.md
+docs/AI_GUIDE.md
+docs/ARCHITECTURE.md
 README.md
 TASK.md
-CODEX_HANDOFF.md
+docs/SECURITY_PRIVACY.md
+docs/VALIDATION.md
 package.json
 dashboard-public/package.json
 ```
 
-- Project documentation now states clearly that the project is not verification-only.
+- Project documentation now states clearly that the project is a Personal Multi-Tool Discord Bot, not verification-only.
 - Documentation now preserves current owner decisions:
 
 ```txt

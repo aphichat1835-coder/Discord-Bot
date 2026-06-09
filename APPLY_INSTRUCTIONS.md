@@ -1,46 +1,18 @@
 # APPLY_INSTRUCTIONS.md
 
-GitHub write was blocked by the tool, so apply this bundle manually or ask Codex to apply it.
+This obsolete manual apply instruction file has been superseded and is kept only as a redirect stub for compatibility.
 
-## Files
+The current docs source of truth is:
 
-1. Create new file:
+- `README.md`
+- `AGENTS.md`
+- `TASK.md`
+- `docs/ARCHITECTURE.md`
+- `docs/AI_GUIDE.md`
+- `docs/OWNER_DECISIONS.md`
+- `docs/SECURITY_PRIVACY.md`
+- `docs/DEPLOYMENT.md`
+- `docs/VALIDATION.md`
+- `docs/archive/OBSOLETE_DOCS.md`
 
-```txt
-OWNER_DECISIONS.md
-```
-
-Use the included `OWNER_DECISIONS.md`.
-
-2. Append the included blocks:
-
-```txt
-README_APPEND_OWNER_DECISIONS.md        -> append to README.md
-CONTEXT_APPEND_OWNER_DECISIONS.md       -> append to CONTEXT.md
-AGENTS_APPEND_OWNER_DECISIONS.md        -> append to AGENTS.md
-TASK_APPEND_OWNER_DECISIONS.md          -> append to TASK.md
-CODEX_HANDOFF_APPEND_OWNER_DECISIONS.md -> append to CODEX_HANDOFF.md
-CHANGELOG_APPEND_OWNER_DECISIONS.md     -> append to CHANGELOG.md
-```
-
-3. Replace or merge:
-
-```txt
-.agents/memory/phomueangtai-bot.md
-```
-
-with the included memory file.
-
-## Suggested commit message
-
-```txt
-docs: add owner decision guidelines for AI agents
-```
-
-## Validation
-
-```bash
-git diff -- README.md CONTEXT.md AGENTS.md TASK.md CODEX_HANDOFF.md CHANGELOG.md OWNER_DECISIONS.md .agents/memory/phomueangtai-bot.md
-```
-
-No runtime deploy is needed because this is docs-only.
+Do not re-apply the old append workflow from this file.

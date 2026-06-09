@@ -1,20 +1,12 @@
-# OBSOLETE
+# CONTEXT_APPEND_OWNER_DECISIONS.md
 
-This append helper has been superseded by the main documentation files.
+This obsolete append helper has been superseded and is kept only as a redirect stub for compatibility.
 
-Current source of truth:
+Use:
 
-```txt
-README.md
-AGENTS.md
-CONTEXT.md
-TASK.md
-CHANGELOG.md
-CODEX_HANDOFF.md
-OWNER_DECISIONS.md
-OWNER_REVIEW_POLICY.md
-AI_FULL_PROJECT_MAP.md
-.agents/memory/phomueangtai-bot.md
-```
+- `CONTEXT.md` (root project context file)
+- `docs/ARCHITECTURE.md`
+- `docs/OWNER_DECISIONS.md`
+- `docs/archive/OBSOLETE_DOCS.md`
 
-Do not apply this file again.
+Do not re-apply this helper file.
