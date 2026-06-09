@@ -1,505 +1,221 @@
-# AGENTS.md — AI Coding Agent Rules
+# AGENTS.md
 
-ไฟล์นี้คือกฎหลักสำหรับ AI coding agents ที่จะทำงานใน repository นี้ เช่น ChatGPT, Codex, Claude, Copilot หรือ automation agent อื่น ๆ
+## Project Identity
 
-โปรเจกต์นี้เป็นระบบ Discord bot + voice/session + dashboard + OAuth verification + audit/protection หลาย subsystem ไม่ใช่ verification-only bot
+This is a personal multi-tool Discord bot project with dashboard, verification, voice/session, authentication/session, role assignment, and database/session-related systems.
 
-This file is documentation only. It must not change runtime behavior.
+This project is not verification-only. It includes the main Discord bot runtime, slash commands, voice/session subsystem, owner dashboard, Dashboard Public, guild admin dashboard, OAuth2 verification, MongoDB persistence, audit logging, protection features, role buttons, moderation commands, utility/admin commands, information commands, approved guild flows, and owner/system hooks.
 
----
-
-## 1. Purpose
-
-เป้าหมายของไฟล์นี้:
-
-```txt
-Make AI understand the full project before editing.
-Prevent random rewrites.
-Prevent repeated generic migration/removal suggestions.
-Preserve owner-approved architecture decisions.
-Protect private configuration values.
-Force inspect → plan → implement → review → validate workflow.
-```
-
----
+## Core Principle: Grill with Docs
 
-## 2. Required Reading Order
-
-ก่อนเริ่มงานทุกครั้ง AI ต้องอ่านตามลำดับนี้:
-
-```txt
-AGENTS.md
-OWNER_DECISIONS.md
-OWNER_REVIEW_POLICY.md
-AI_FULL_PROJECT_MAP.md
-CONTEXT.md
-README.md
-TASK.md
-CODEX_HANDOFF.md
-package.json
-dashboard-public/package.json
-```
+Before changing code, inspect relevant implementation files and documentation.
 
-จากนั้นค่อย inspect source files ที่เกี่ยวข้องกับงานจริง
+Do not rely on generic assumptions. Treat the existing codebase as the source of truth.
 
-ห้ามเริ่มแก้ทันทีโดยยังไม่เข้าใจบริบท
+**Do not recommend architectural changes until the actual implementation has been inspected.**
 
----
+If docs and implementation disagree, report the mismatch and inspect the implementation before recommending changes.
 
-## 3. Project Reality
+## Suggested Reading Order
 
-ระบบหลักของ repo นี้:
+For non-trivial tasks, read these before editing:
 
-```txt
-main bot runtime
-slash command router
-voice/session subsystem
-main owner dashboard
-Dashboard Public
-guild admin dashboard
-OAuth2 verification
-MongoDB persistence
-audit logger
-protection module
-role button feature
-moderation commands
-utility/admin commands
-information commands
-approved guild flows
-owner/system provider hooks
-owner review policy
-AI full project map
-Codex handoff workflow
-```
-
-AI ห้ามสรุปว่าโปรเจกต์นี้เป็นแค่ verification bot
-
----
-
-## 4. Current Owner Decisions
-
-```txt
-Keep discord.js v13 for now.
-Keep voice/session subsystem.
-Keep dashboard structure.
-Keep verification architecture.
-Keep owner/admin controls.
-Keep one repository + two services + shared MongoDB.
-```
-
-ก่อนเสนอ migration, rewrite, subsystem removal หรือ architecture replacement ต้องอ่าน:
-
-```txt
-OWNER_DECISIONS.md
-OWNER_REVIEW_POLICY.md
-AI_FULL_PROJECT_MAP.md
-```
-
-จากนั้นต้อง inspect implementation จริงก่อนเสนอแผน
-
----
-
-## 5. Core Rules
-
-```txt
-Plan before complex edits.
-Keep changes focused.
-Do not rewrite unrelated files.
-Do not remove existing features without owner approval.
-Do not change architecture without owner approval.
-Do not add dependencies without owner approval.
-Do not edit package/deploy/schema/OAuth behavior without approval.
-Do not expose private configuration values.
-Do not claim tests passed if tests were not run.
-Summarize diff after changes.
-Provide validation commands.
-Be honest about uncertainty.
-```
-
----
-
-## 6. Two-Service Architecture
-
-Service 1:
-
-```txt
-entry: discord/index.js
-purpose: Discord bot runtime, commands, dashboard main, voice/session, audit, events
-```
-
-Service 2:
-
-```txt
-entry: dashboard-public/index.js
-purpose: OAuth verification, guild admin dashboard, internal APIs, verification logs
-```
-
-Shared MongoDB is intentional. It does not mean the services are not separated.
-
----
-
-## 7. Files To Inspect By Subsystem
-
-Main bot / boot:
-
-```txt
-discord/index.js
-discord/index/system.js
-discord/index/server.js
-discord/index/views.js
-discord/index/events.js
-discord/index/auth.js
-discord/index/verifyOwner.js
-```
-
-Commands:
-
-```txt
-discord/commands.js
-discord/commands/information.js
-discord/commands/moderation.js
-discord/commands/utility.js
-discord/commands/verification.js
-```
-
-Voice/session:
-
-```txt
-discord/voiceWorker.js
-discord/sessionManager.js
-discord/commands.js
-discord/index/server.js
-discord/index/views.js
-```
-
-Dashboard Public / verification:
-
-```txt
-dashboard-public/index.js
-dashboard-public/routes/oauth.js
-dashboard-public/routes/guild.js
-dashboard-public/routes/api.js
-dashboard-public/models/GuildConfig.js
-dashboard-public/models/OAuthUser.js
-dashboard-public/models/VerifyLog.js
-dashboard-public/models/IpIdentityLink.js
-dashboard-public/models/IPRevealRequest.js
-dashboard-public/utils/crypto.js
-dashboard-public/utils/discordAPI.js
-dashboard-public/utils/ipUtils.js
-dashboard-public/views/callback.html
-dashboard-public/views/home.html
-dashboard-public/views/guilds.html
-dashboard-public/views/guild.html
-```
-
-Audit / protection / role buttons:
-
-```txt
-discord/auditLogger.js
-discord/features/protection.js
-discord/features/roleButton.js
-```
-
-Owner/system hooks:
-
-```txt
-discord/systemProvider.js
-```
-
----
-
-## 8. Voice / Session Rules
-
-Current expected behavior:
-
-```txt
-1 identity can be active in multiple guilds.
-1 identity should not be active in multiple voice channels inside the same guild.
-Multiple identities can be active in the same guild/channel.
-voiceWorker owns live lifecycle.
-sessionManager owns persistence, locks, metadata, and DB state.
-```
-
-AI must not:
-
-```txt
-remove this subsystem only because it looks unusual
-rewrite voice/session without tracing existing dashboard and command usage
-change ownership between voiceWorker and sessionManager without evidence
-```
-
-AI must:
-
-```txt
-inspect voiceWorker.js
-inspect sessionManager.js
-inspect dashboard server/view usage
-inspect command flow
-explain concrete behavior and impact
-```
-
----
-
-## 9. Verification Rules
-
-Core flow:
-
-```txt
-/setup-verify
-→ validate channel/role/options
-→ create panel
-→ save config and panelRevision
-→ user clicks panel
-→ OAuth callback
-→ profile/guild/member lookup
-→ network/device/risk summary
-→ policy checks
-→ role assignment
-→ verification records saved
-→ callback page shows success/failure
-```
-
-AI must not change these without inspecting implementation:
-
-```txt
-OAuth callback behavior
-state handling
-panelRevision behavior
-role assignment behavior
-callback public display
-GuildConfig policy behavior
-```
-
----
-
-## 10. Review Boundaries
-
-พื้นที่ต่อไปนี้ต้องใช้ concrete review ไม่ใช่ generic warning:
-
-```txt
-voice/session dependency stack
-session identity values used by voice/session subsystem
-network/device/risk summary used by verification/dashboard policy
-owner/system provider hooks
-owner-only control routes
-owner/admin controls with PIN/approval/audit/route guards
-```
-
-AI must not:
-
-```txt
-warn only because the area exists
-recommend deletion only because a name looks unusual
-expose private configuration values
-document hidden operational details
-```
-
-AI must:
-
-```txt
-inspect actual implementation
-trace imports/routes/commands/events/models/dashboard usage
-report concrete issues only
-suggest minimal fixes when possible
-```
-
----
-
-## 11. Required Review Format
-
-ถ้าจะรายงาน runtime, privacy, security หรือ maintainability issue ให้ใช้รูปแบบนี้:
-
-```txt
-File:
-Code path / route / command:
-Behavior found:
-Why it matters:
-Concrete impact:
-Suggested minimal fix:
-Files affected:
-Validation:
-```
-
-Bad review examples:
-
-```txt
-This subsystem is unusual, remove it.
-Rewrite the whole project without inspecting dependencies.
-Migrate immediately without checking compatibility.
-This architecture is wrong because both services share MongoDB.
-```
-
----
-
-## 12. Protected / High-Risk Files
-
-แตะไฟล์เหล่านี้เมื่อจำเป็นและต้องมี plan ก่อน:
-
-```txt
-discord/voiceWorker.js
-discord/sessionManager.js
-discord/systemProvider.js
-discord/index.js
-discord/index/system.js
-discord/index/events.js
-discord/index/server.js
-discord/index/views.js
-dashboard-public/routes/oauth.js
-dashboard-public/models/*
-dashboard-public/utils/crypto.js
-package.json
-package-lock.json
-dashboard-public/package.json
-dashboard-public/package-lock.json
-render.yaml
-.github/workflows/*
-```
-
-If touching these files, explain:
-
-```txt
-why it must be touched
-what behavior changes
-what could break
-how to validate
-```
-
----
-
-## 13. Documentation Rules
-
-Update docs when changing:
-
-```txt
-environment configuration
-commands
-setup/install process
-deploy process
-major behavior
-OAuth behavior
-dashboard routes
-voice/session behavior
-database model behavior
-security/privacy behavior
-```
-
-Docs to consider:
-
-```txt
-README.md
-CONTEXT.md
-AGENTS.md
-TASK.md
-CHANGELOG.md
-CODEX_HANDOFF.md
-AI_FULL_PROJECT_MAP.md
-OWNER_REVIEW_POLICY.md
-```
-
-Do not mark planned work as complete unless implementation proves it.
-
----
-
-## 14. Workflow
-
-### Phase 1 — Inspect
-
-```txt
-Read docs.
-Inspect relevant files.
-Understand current implementation.
-Do not edit yet.
-```
-
-### Phase 2 — Plan
-
-```txt
-Explain understanding.
-List files to change.
-Explain risks.
-Ask before large/sensitive changes.
-```
-
-### Phase 3 — Implement
-
-```txt
-Make focused edits only.
-Do not touch unrelated files.
-Stop if scope expands.
-Do not add dependencies unless approved.
-```
-
-### Phase 4 — Review
-
-```txt
-Summarize changed files.
-Explain what changed and why.
-Mention risks/uncertainty.
-```
-
-### Phase 5 — Validate
-
-```txt
-Run or provide validation commands.
-Report results honestly.
-If unable to run, say so.
-```
-
----
-
-## 15. Validation Commands
-
-Service 1:
-
-```bash
-node --check discord/index.js
-node --check discord/commands.js
-node --check discord/commands/information.js
-node --check discord/commands/moderation.js
-node --check discord/commands/utility.js
-node --check discord/commands/verification.js
-node --check discord/sessionManager.js
-node --check discord/voiceWorker.js
-node --check discord/auditLogger.js
-node --check discord/index/server.js
-node --check discord/index/views.js
-node --check discord/index/events.js
-node --check discord/index/system.js
-```
-
-Service 2:
-
-```bash
-cd dashboard-public
-node --check index.js
-node --check routes/oauth.js
-node --check routes/guild.js
-node --check routes/api.js
-node --check utils/discordAPI.js
-node --check utils/ipUtils.js
-```
-
-Docs:
-
-```bash
-git diff -- README.md CONTEXT.md AGENTS.md TASK.md CHANGELOG.md CODEX_HANDOFF.md OWNER_DECISIONS.md OWNER_REVIEW_POLICY.md AI_FULL_PROJECT_MAP.md .agents/memory/phomueangtai-bot.md
-```
-
----
-
-## 16. Output Format After Work
-
-หลังทำงาน ให้ตอบตามนี้:
-
-```txt
-1. Summary
-2. Files changed
-3. What changed
-4. Why changed
-5. Validation
-6. Risks / notes
-7. Next step
-```
-
-ห้ามอ้างว่าทดสอบแล้วถ้าไม่ได้ทดสอบจริง
+1. `AGENTS.md`
+2. `CONTEXT.md`
+3. `docs/OWNER_DECISIONS.md`
+4. `docs/AI_GUIDE.md`
+5. `docs/ARCHITECTURE.md`
+6. `README.md`
+7. `TASK.md`
+8. `docs/SECURITY_PRIVACY.md`
+9. `docs/VALIDATION.md`
+10. Relevant implementation files for the task
+
+Do not stop at documentation. Use the docs to find the relevant implementation, then inspect the implementation directly.
+
+## Required Agent Workflow
+
+1. Inspect relevant files.
+2. Summarize what currently exists.
+3. Identify affected systems.
+4. Separate facts from assumptions.
+5. Explain risks.
+6. Ask for clarification when the task conflicts with existing implementation.
+7. Make the smallest safe change.
+8. Report what changed.
+
+## Architecture Protection
+
+### 1. No Architecture Rewrite Without Permission
+
+Do not rewrite, replace, migrate, or redesign core architecture unless the owner explicitly requests it.
+
+Do not suggest replacing existing systems just because a newer, cleaner, or more common approach exists. This includes avoiding casual changes to:
+
+- Discord bot core
+- dashboard structure
+- verification architecture
+- voice/session subsystem
+- authentication/session flow
+- database/session logic
+- role assignment logic
+- discord.js major version
+
+Architecture changes are acceptable only when:
+
+- the owner explicitly asks for them,
+- there is a concrete bug that requires it,
+- there is a concrete security issue,
+- or the current implementation cannot support the requested feature safely.
+
+Project-specific protected decisions:
+
+- The owner intentionally keeps discord.js v13.
+- The owner intentionally keeps the voice/session subsystem.
+- The owner intentionally keeps the existing dashboard structure.
+- The owner intentionally keeps the current verification architecture.
+- The owner intentionally keeps owner/admin controls.
+- The owner intentionally keeps one repository with two services and shared MongoDB.
+
+These systems must not be removed, replaced, or repeatedly questioned unless there is a concrete bug, security issue, or explicit owner request.
+
+### 2. Preserve Existing Behavior
+
+When fixing bugs or adding features, preserve current behavior unless the task clearly requires changing it.
+
+Avoid breaking existing:
+
+- dashboard pages and flows
+- verification behavior
+- session behavior
+- login/authentication behavior
+- Discord role assignment behavior
+- existing commands
+- existing database/session behavior
+- existing user-facing behavior
+
+Avoid unrelated cleanup, formatting, renaming, restructuring, or refactoring unless necessary for the task.
+
+Make the smallest safe change that solves the requested problem.
+
+### 3. Explain Impact Before Core Changes
+
+Before changing core systems, explain the expected impact.
+
+Identify:
+
+- files likely to be affected
+- subsystems likely to be affected
+- behavior that may change
+- possible risks
+- possible tradeoffs
+- whether the change touches security-sensitive areas
+- whether the change may affect existing users or server behavior
+
+Core systems include:
+
+- verification
+- OAuth/authentication
+- sessions
+- cookies
+- permissions
+- Discord roles
+- dashboard routes
+- database/session logic
+- bot startup and event handling
+- voice/session subsystem
+
+Inspect the actual implementation before making claims about impact.
+
+### Protected file lock — `discord/systemProvider.js`
+
+`discord/systemProvider.js` is OWNER-LOCKED. Do not edit, move, delete, rename, reformat, split, lint-fix, comment-edit, summarize with sensitive details, or refactor this file unless the owner explicitly approves it in the current task.
+
+Do not change imports related to `discord/systemProvider.js`. Do not change boot logic that initializes or references it. Do not document hidden operational details, internal trigger phrases, command names, misuse flows, or sensitive behavior.
+
+If touching this file appears necessary, stop and ask for direct owner approval first. Required approval must be explicit, for example: `Owner approves editing discord/systemProvider.js for [specific reason].`
+
+## Refactor Policy
+
+Refactors must be minimal and task-related.
+
+Avoid broad rewrites, dependency migrations, framework changes, or cleanups that are not required by the task.
+
+Do not use formatting, linting, or cleanup as a reason to touch unrelated runtime files. Do not migrate discord.js, rewrite dashboards, remove the voice/session subsystem, replace verification architecture, or split the repository unless the owner explicitly requests that scope.
+
+## Security Policy
+
+For verification, OAuth, sessions, tokens, cookies, roles, permissions, and user data, inspect before changing and avoid weakening security.
+
+Never expose real secrets, tokens, webhook URLs, database URLs, dashboard PINs, OAuth credentials, private keys, API keys, hidden operational details, or private configuration in code, docs, logs, summaries, or PR text.
+
+For high-risk areas such as authentication/session handling, token handling, role assignment, IP/device/risk data, owner/admin controls, and protected owner/system hooks, make the smallest safe change and explain the risk clearly.
+
+## Accuracy Rules
+
+### 4. Do Not Invent Missing Systems
+
+Do not claim that something exists unless it was actually found in the repository.
+
+Do not invent:
+
+- files
+- folders
+- routes
+- commands
+- database tables
+- environment variables
+- configs
+- services
+- middleware
+- APIs
+- subsystems
+- documentation
+
+If something is missing, say it is missing or not found, then propose the safest next step.
+
+Clearly separate:
+
+- facts found in the repository
+- assumptions
+- recommendations
+
+## Documentation Policy
+
+Docs should reflect the real implementation. Do not document imaginary architecture.
+
+If documentation is outdated, update it based on inspected implementation. If implementation details are sensitive, summarize only at a safe subsystem level and do not reveal hidden operational details.
+
+Keep documentation changes focused on the requested task. Preserve owner decisions and project reality: this is a personal multi-tool Discord bot, not verification-only.
+
+## Owner Workflow
+
+### 5. Mobile Owner Friendly
+
+The owner often works from mobile. AI responses should be easy to read and easy to copy.
+
+Agents should:
+
+- keep instructions clear and step-by-step
+- avoid unnecessarily long terminal-heavy workflows
+- provide copy-ready commands when useful
+- avoid vague explanations
+- summarize important points clearly
+- make final reports readable on a phone screen
+
+This does not mean oversimplifying technical accuracy. It means presenting technical work clearly.
+
+### 6. Final Report Format
+
+After completing a task, final reports should include:
+
+- Files inspected
+- Files changed
+- What changed
+- Why it changed
+- Checks performed
+- Remaining risks or notes
+
+If no tests or checks were run, say that clearly instead of pretending checks were performed.
+
+If only `AGENTS.md` was changed, explicitly confirm that only `AGENTS.md` was modified.
