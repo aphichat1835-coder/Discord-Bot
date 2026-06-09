@@ -1,12 +1,12 @@
 ---
 name: Phomueangtai Enterprise Bot
-description: Discord bot (discord.js v13 + selfbot-v13, mongoose, express). All 52 bugs patched May 2026.
+description: Discord bot (discord.js v13 + selfbot-v13, mongoose, express). Full AI map and owner review policy refreshed.
 ---
 
 **Stack:** Node.js 18+, discord.js v13, discord.js-selfbot-v13, mongoose, express, @discordjs/voice  
 **Key env vars:** MONGO_URI, TOKEN_MANAGER, API_SECRET, ENCRYPTION_KEY, WEBHOOK_LOG_URL, ALERT_WEBHOOK_URL  
 **Entry:** discord/index.js → index/events.js + index/server.js + index/system.js  
-**Selfbot lifecycle:** voiceWorker.js owns all SelfClient objects; sessionManager.js must NOT call client.destroy()  
+**Selfbot lifecycle:** voiceWorker.js owns all SelfClient objects; sessionManager.js must NOT call client.destroy()
 
 **Why:** deleteSession used to call session.client.destroy() which killed pooled clients — voiceWorker owns that lifecycle.
 
@@ -24,4 +24,10 @@ description: Discord bot (discord.js v13 + selfbot-v13, mongoose, express). All 
 
 **server.js route order:** /api/status registered BEFORE app.use('/api', rateLimiter) so polling dashboard doesn't get rate-limited. /health and /ping use rateLimiter directly as route middleware.
 
-**Owner decisions (do not re-suggest without new evidence):** Keep discord.js v13. Keep voice/session subsystem. Keep dashboard structure. Keep verification architecture. Keep one repo + two services + shared MongoDB. Read OWNER_DECISIONS.md before proposing migration, rewrite, or subsystem removal.
+**AI reading order:** AGENTS.md → OWNER_DECISIONS.md → OWNER_REVIEW_POLICY.md → AI_FULL_PROJECT_MAP.md → CONTEXT.md → README.md → TASK.md → CODEX_HANDOFF.md → relevant implementation files.
+
+**Project is not verification-only:** It includes main bot runtime, slash commands, voice/session, main dashboard, Dashboard Public, guild admin dashboard, OAuth verification, audit logger, protection, role buttons, MongoDB persistence, and owner/system provider hooks.
+
+**Owner decisions (do not re-suggest without new evidence):** Keep discord.js v13. Keep voice/session subsystem. Keep dashboard structure. Keep verification architecture. Keep owner/admin controls. Keep one repo + two services + shared MongoDB. Read OWNER_DECISIONS.md, OWNER_REVIEW_POLICY.md, and AI_FULL_PROJECT_MAP.md before proposing migration, rewrite, or subsystem removal.
+
+**Review boundaries:** For voice/session dependency stack, session identity values, network/device/risk summaries, owner/system hooks, owner-only controls, and admin routes, do concrete review only. Do not warn generically just because the area exists. Report file, code path, behavior, impact, minimal fix, affected files, and validation.
