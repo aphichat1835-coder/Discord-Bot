@@ -15,7 +15,7 @@ Preserve these decisions exactly:
 
 ## Why these decisions matter
 
-The project is a multi-subsystem Discord system. It includes the main bot runtime, slash commands, voice/session subsystem, main owner dashboard, Dashboard Public, guild admin dashboard, OAuth2 verification, MongoDB persistence, audit/protection, role buttons, moderation, utility/admin, information commands, approved guild flows, and owner/system provider hooks.
+The project is a Personal Multi-Tool Discord Bot. It includes the main bot runtime, slash commands, voice/session subsystem, main owner dashboard, Dashboard Public, guild admin dashboard, OAuth2 verification, MongoDB persistence, audit/protection, role buttons, moderation, utility/admin, information commands, approved guild flows, and owner/system provider hooks.
 
 Do not reduce the project to a verification-only bot when reviewing or planning changes.
 

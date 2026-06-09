@@ -4,7 +4,7 @@ This obsolete append helper has been superseded and is kept only as a redirect s
 
 Use:
 
-- `CONTEXT.md`
+- `CONTEXT.md` (root project context file)
 - `docs/ARCHITECTURE.md`
 - `docs/OWNER_DECISIONS.md`
 - `docs/archive/OBSOLETE_DOCS.md`

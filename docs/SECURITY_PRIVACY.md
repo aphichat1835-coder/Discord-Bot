@@ -1,6 +1,6 @@
 # Security and Privacy
 
-This document consolidates security and privacy guidance for the two-service Discord system.
+This document consolidates security and privacy guidance for the two-service personal multi-tool Discord bot.
 
 ## Never commit secrets
 

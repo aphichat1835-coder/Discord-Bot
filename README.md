@@ -1,6 +1,6 @@
-# Phomueangtai Enterprise Discord System
+# Phomueangtai Personal Multi-Tool Discord Bot
 
-Phomueangtai Enterprise Discord System is a two-service Discord project built around a main bot runtime, voice/session management, owner dashboards, public OAuth verification, guild administration, audit/protection features, and MongoDB-backed persistence.
+Phomueangtai Personal Multi-Tool Discord Bot is a two-service personal multi-tool Discord bot built around a main bot runtime, voice/session management, owner dashboards, public OAuth verification, guild administration, audit/protection features, and MongoDB-backed persistence.
 
 ## Important project reality
 
@@ -58,6 +58,7 @@ Required Dashboard Public configuration, OAuth redirect URIs, and Render notes a
 
 ## Documentation map
 
+- [Project context](CONTEXT.md) — root context file for the personal multi-tool bot.
 - [Architecture](docs/ARCHITECTURE.md) — full project architecture and subsystem map.
 - [AI guide](docs/AI_GUIDE.md) — required workflow and rules for AI coding agents.
 - [Owner decisions](docs/OWNER_DECISIONS.md) — owner-approved architecture decisions and review policy.

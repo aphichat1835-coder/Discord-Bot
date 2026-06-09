@@ -1,6 +1,6 @@
 # Architecture
 
-This document is the consolidated architecture map for the Phomueangtai Enterprise Discord System. It preserves the project reality that the repository is a multi-subsystem Discord platform, not a verification-only bot.
+This document is the consolidated architecture map for the Phomueangtai Personal Multi-Tool Discord Bot. It preserves the project reality that the repository is a Personal Multi-Tool Discord Bot, not a verification-only bot.
 
 ## Project identity
 

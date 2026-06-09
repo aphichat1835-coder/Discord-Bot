@@ -4,6 +4,8 @@
 
 ### Changed
 
+- Restored `CONTEXT.md` as the root project context file instead of a redirect-only stub.
+- Updated project wording to describe the repository as a Personal Multi-Tool Discord Bot, not verification-only.
 - Consolidated deep documentation into `docs/`.
 - Shortened and cleaned `README.md` for human-friendly project onboarding.
 - Reduced `AGENTS.md` to the root AI coding agent rulebook.
@@ -21,7 +23,7 @@
 - No runtime behavior changed.
 - No OAuth behavior, database schemas, command behavior, dashboard routes, voice/session lifecycle, Render deployment behavior, dependencies, or package manifests changed.
 
-บันทึกการเปลี่ยนแปลงสำคัญของโปรเจกต์ Phomueangtai Enterprise Discord System
+บันทึกการเปลี่ยนแปลงสำคัญของโปรเจกต์ Phomueangtai Personal Multi-Tool Discord Bot
 
 ---
 
@@ -41,18 +43,19 @@
 
 ```txt
 AGENTS.md
-OWNER_DECISIONS.md
-OWNER_REVIEW_POLICY.md
-AI_FULL_PROJECT_MAP.md
 CONTEXT.md
+docs/OWNER_DECISIONS.md
+docs/AI_GUIDE.md
+docs/ARCHITECTURE.md
 README.md
 TASK.md
-CODEX_HANDOFF.md
+docs/SECURITY_PRIVACY.md
+docs/VALIDATION.md
 package.json
 dashboard-public/package.json
 ```
 
-- Project documentation now states clearly that the project is not verification-only.
+- Project documentation now states clearly that the project is a Personal Multi-Tool Discord Bot, not verification-only.
 - Documentation now preserves current owner decisions:
 
 ```txt

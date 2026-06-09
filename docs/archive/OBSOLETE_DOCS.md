@@ -29,6 +29,7 @@ Their useful content is now represented by:
 Use these current documents instead of obsolete append helpers:
 
 - `README.md`
+- `CONTEXT.md`
 - `AGENTS.md`
 - `TASK.md`
 - `docs/ARCHITECTURE.md`

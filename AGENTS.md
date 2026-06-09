@@ -1,21 +1,22 @@
 # AGENTS.md — AI Coding Agent Rulebook
 
-This repository is a multi-subsystem Discord project, not a verification-only bot. Keep analysis and edits focused, evidence-based, and respectful of owner-approved architecture decisions.
+This repository is a Personal Multi-Tool Discord Bot, not a verification-only bot. Keep analysis and edits focused, evidence-based, and respectful of owner-approved architecture decisions.
 
 ## Required reading order
 
 Before editing, read:
 
 1. `AGENTS.md`
-2. `docs/OWNER_DECISIONS.md`
-3. `docs/AI_GUIDE.md`
-4. `docs/ARCHITECTURE.md`
-5. `README.md`
-6. `TASK.md`
-7. `docs/SECURITY_PRIVACY.md`
-8. `docs/VALIDATION.md`
-9. `package.json`
-10. `dashboard-public/package.json`
+2. `CONTEXT.md`
+3. `docs/OWNER_DECISIONS.md`
+4. `docs/AI_GUIDE.md`
+5. `docs/ARCHITECTURE.md`
+6. `README.md`
+7. `TASK.md`
+8. `docs/SECURITY_PRIVACY.md`
+9. `docs/VALIDATION.md`
+10. `package.json`
+11. `dashboard-public/package.json`
 
 Then inspect the implementation files relevant to the requested task.
 
