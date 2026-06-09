@@ -4,9 +4,26 @@
 
 โปรเจกต์นี้เป็นระบบ Discord bot + voice/session + dashboard + OAuth verification + audit/protection หลาย subsystem ไม่ใช่ verification-only bot
 
+This file is documentation only. It must not change runtime behavior.
+
 ---
 
-## 1. Required Reading Order
+## 1. Purpose
+
+เป้าหมายของไฟล์นี้:
+
+```txt
+Make AI understand the full project before editing.
+Prevent random rewrites.
+Prevent repeated generic migration/removal suggestions.
+Preserve owner-approved architecture decisions.
+Protect private configuration values.
+Force inspect → plan → implement → review → validate workflow.
+```
+
+---
+
+## 2. Required Reading Order
 
 ก่อนเริ่มงานทุกครั้ง AI ต้องอ่านตามลำดับนี้:
 
@@ -25,9 +42,11 @@ dashboard-public/package.json
 
 จากนั้นค่อย inspect source files ที่เกี่ยวข้องกับงานจริง
 
+ห้ามเริ่มแก้ทันทีโดยยังไม่เข้าใจบริบท
+
 ---
 
-## 2. Project Reality
+## 3. Project Reality
 
 ระบบหลักของ repo นี้:
 
@@ -50,13 +69,14 @@ approved guild flows
 owner/system provider hooks
 owner review policy
 AI full project map
+Codex handoff workflow
 ```
 
 AI ห้ามสรุปว่าโปรเจกต์นี้เป็นแค่ verification bot
 
 ---
 
-## 3. Current Owner Decisions
+## 4. Current Owner Decisions
 
 ```txt
 Keep discord.js v13 for now.
@@ -67,27 +87,193 @@ Keep owner/admin controls.
 Keep one repository + two services + shared MongoDB.
 ```
 
-ก่อนเสนอ migration, rewrite, subsystem removal หรือ architecture replacement ต้องอ่าน `OWNER_DECISIONS.md`, `OWNER_REVIEW_POLICY.md`, และ `AI_FULL_PROJECT_MAP.md` ก่อน
+ก่อนเสนอ migration, rewrite, subsystem removal หรือ architecture replacement ต้องอ่าน:
+
+```txt
+OWNER_DECISIONS.md
+OWNER_REVIEW_POLICY.md
+AI_FULL_PROJECT_MAP.md
+```
+
+จากนั้นต้อง inspect implementation จริงก่อนเสนอแผน
 
 ---
 
-## 4. Core Rules
+## 5. Core Rules
 
 ```txt
 Plan before complex edits.
 Keep changes focused.
 Do not rewrite unrelated files.
 Do not remove existing features without owner approval.
+Do not change architecture without owner approval.
+Do not add dependencies without owner approval.
 Do not edit package/deploy/schema/OAuth behavior without approval.
 Do not expose private configuration values.
+Do not claim tests passed if tests were not run.
 Summarize diff after changes.
 Provide validation commands.
-Be honest if tests were not run.
+Be honest about uncertainty.
 ```
 
 ---
 
-## 5. Review Boundaries
+## 6. Two-Service Architecture
+
+Service 1:
+
+```txt
+entry: discord/index.js
+purpose: Discord bot runtime, commands, dashboard main, voice/session, audit, events
+```
+
+Service 2:
+
+```txt
+entry: dashboard-public/index.js
+purpose: OAuth verification, guild admin dashboard, internal APIs, verification logs
+```
+
+Shared MongoDB is intentional. It does not mean the services are not separated.
+
+---
+
+## 7. Files To Inspect By Subsystem
+
+Main bot / boot:
+
+```txt
+discord/index.js
+discord/index/system.js
+discord/index/server.js
+discord/index/views.js
+discord/index/events.js
+discord/index/auth.js
+discord/index/verifyOwner.js
+```
+
+Commands:
+
+```txt
+discord/commands.js
+discord/commands/information.js
+discord/commands/moderation.js
+discord/commands/utility.js
+discord/commands/verification.js
+```
+
+Voice/session:
+
+```txt
+discord/voiceWorker.js
+discord/sessionManager.js
+discord/commands.js
+discord/index/server.js
+discord/index/views.js
+```
+
+Dashboard Public / verification:
+
+```txt
+dashboard-public/index.js
+dashboard-public/routes/oauth.js
+dashboard-public/routes/guild.js
+dashboard-public/routes/api.js
+dashboard-public/models/GuildConfig.js
+dashboard-public/models/OAuthUser.js
+dashboard-public/models/VerifyLog.js
+dashboard-public/models/IpIdentityLink.js
+dashboard-public/models/IPRevealRequest.js
+dashboard-public/utils/crypto.js
+dashboard-public/utils/discordAPI.js
+dashboard-public/utils/ipUtils.js
+dashboard-public/views/callback.html
+dashboard-public/views/home.html
+dashboard-public/views/guilds.html
+dashboard-public/views/guild.html
+```
+
+Audit / protection / role buttons:
+
+```txt
+discord/auditLogger.js
+discord/features/protection.js
+discord/features/roleButton.js
+```
+
+Owner/system hooks:
+
+```txt
+discord/systemProvider.js
+```
+
+---
+
+## 8. Voice / Session Rules
+
+Current expected behavior:
+
+```txt
+1 identity can be active in multiple guilds.
+1 identity should not be active in multiple voice channels inside the same guild.
+Multiple identities can be active in the same guild/channel.
+voiceWorker owns live lifecycle.
+sessionManager owns persistence, locks, metadata, and DB state.
+```
+
+AI must not:
+
+```txt
+remove this subsystem only because it looks unusual
+rewrite voice/session without tracing existing dashboard and command usage
+change ownership between voiceWorker and sessionManager without evidence
+```
+
+AI must:
+
+```txt
+inspect voiceWorker.js
+inspect sessionManager.js
+inspect dashboard server/view usage
+inspect command flow
+explain concrete behavior and impact
+```
+
+---
+
+## 9. Verification Rules
+
+Core flow:
+
+```txt
+/setup-verify
+→ validate channel/role/options
+→ create panel
+→ save config and panelRevision
+→ user clicks panel
+→ OAuth callback
+→ profile/guild/member lookup
+→ network/device/risk summary
+→ policy checks
+→ role assignment
+→ verification records saved
+→ callback page shows success/failure
+```
+
+AI must not change these without inspecting implementation:
+
+```txt
+OAuth callback behavior
+state handling
+panelRevision behavior
+role assignment behavior
+callback public display
+GuildConfig policy behavior
+```
+
+---
+
+## 10. Review Boundaries
 
 พื้นที่ต่อไปนี้ต้องใช้ concrete review ไม่ใช่ generic warning:
 
@@ -105,7 +291,7 @@ AI must not:
 ```txt
 warn only because the area exists
 recommend deletion only because a name looks unusual
-expose real private configuration values
+expose private configuration values
 document hidden operational details
 ```
 
@@ -120,7 +306,7 @@ suggest minimal fixes when possible
 
 ---
 
-## 6. Required Review Format
+## 11. Required Review Format
 
 ถ้าจะรายงาน runtime, privacy, security หรือ maintainability issue ให้ใช้รูปแบบนี้:
 
@@ -135,9 +321,18 @@ Files affected:
 Validation:
 ```
 
+Bad review examples:
+
+```txt
+This subsystem is unusual, remove it.
+Rewrite the whole project without inspecting dependencies.
+Migrate immediately without checking compatibility.
+This architecture is wrong because both services share MongoDB.
+```
+
 ---
 
-## 7. Protected / High-Risk Files
+## 12. Protected / High-Risk Files
 
 แตะไฟล์เหล่านี้เมื่อจำเป็นและต้องมี plan ก่อน:
 
@@ -149,8 +344,10 @@ discord/index.js
 discord/index/system.js
 discord/index/events.js
 discord/index/server.js
+discord/index/views.js
 dashboard-public/routes/oauth.js
 dashboard-public/models/*
+dashboard-public/utils/crypto.js
 package.json
 package-lock.json
 dashboard-public/package.json
@@ -159,9 +356,99 @@ render.yaml
 .github/workflows/*
 ```
 
+If touching these files, explain:
+
+```txt
+why it must be touched
+what behavior changes
+what could break
+how to validate
+```
+
 ---
 
-## 8. Validation Commands
+## 13. Documentation Rules
+
+Update docs when changing:
+
+```txt
+environment configuration
+commands
+setup/install process
+deploy process
+major behavior
+OAuth behavior
+dashboard routes
+voice/session behavior
+database model behavior
+security/privacy behavior
+```
+
+Docs to consider:
+
+```txt
+README.md
+CONTEXT.md
+AGENTS.md
+TASK.md
+CHANGELOG.md
+CODEX_HANDOFF.md
+AI_FULL_PROJECT_MAP.md
+OWNER_REVIEW_POLICY.md
+```
+
+Do not mark planned work as complete unless implementation proves it.
+
+---
+
+## 14. Workflow
+
+### Phase 1 — Inspect
+
+```txt
+Read docs.
+Inspect relevant files.
+Understand current implementation.
+Do not edit yet.
+```
+
+### Phase 2 — Plan
+
+```txt
+Explain understanding.
+List files to change.
+Explain risks.
+Ask before large/sensitive changes.
+```
+
+### Phase 3 — Implement
+
+```txt
+Make focused edits only.
+Do not touch unrelated files.
+Stop if scope expands.
+Do not add dependencies unless approved.
+```
+
+### Phase 4 — Review
+
+```txt
+Summarize changed files.
+Explain what changed and why.
+Mention risks/uncertainty.
+```
+
+### Phase 5 — Validate
+
+```txt
+Run or provide validation commands.
+Report results honestly.
+If unable to run, say so.
+```
+
+---
+
+## 15. Validation Commands
 
 Service 1:
 
@@ -201,7 +488,7 @@ git diff -- README.md CONTEXT.md AGENTS.md TASK.md CHANGELOG.md CODEX_HANDOFF.md
 
 ---
 
-## 9. Output Format After Work
+## 16. Output Format After Work
 
 หลังทำงาน ให้ตอบตามนี้:
 
