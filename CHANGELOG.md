@@ -1,5 +1,26 @@
 # CHANGELOG
 
+## [Unreleased] - Documentation Consolidation
+
+### Changed
+
+- Consolidated deep documentation into `docs/`.
+- Shortened and cleaned `README.md` for human-friendly project onboarding.
+- Reduced `AGENTS.md` to the root AI coding agent rulebook.
+- Reduced `TASK.md` to the current docs-only workflow note.
+- Merged architecture context into `docs/ARCHITECTURE.md`.
+- Merged Codex handoff and AI workflow guidance into `docs/AI_GUIDE.md`.
+- Merged owner decisions and owner review policy into `docs/OWNER_DECISIONS.md`.
+- Added `docs/SECURITY_PRIVACY.md`, `docs/DEPLOYMENT.md`, and `docs/VALIDATION.md`.
+- Archived/superseded obsolete append helper documentation in `docs/archive/OBSOLETE_DOCS.md`.
+- Retained obsolete append/apply helper files as redirect stubs for compatibility.
+
+### Notes
+
+- Docs-only change.
+- No runtime behavior changed.
+- No OAuth behavior, database schemas, command behavior, dashboard routes, voice/session lifecycle, Render deployment behavior, dependencies, or package manifests changed.
+
 บันทึกการเปลี่ยนแปลงสำคัญของโปรเจกต์ Phomueangtai Enterprise Discord System
 
 ---
