@@ -23,3 +23,5 @@ description: Discord bot (discord.js v13 + selfbot-v13, mongoose, express). All 
 **sayTracking Map:** Removed entirely (was dead code — never read, CRON cleanup also removed). sayUsageTracking in utility.js is separate and correctly cleaned up when empty.
 
 **server.js route order:** /api/status registered BEFORE app.use('/api', rateLimiter) so polling dashboard doesn't get rate-limited. /health and /ping use rateLimiter directly as route middleware.
+
+**Owner decisions (do not re-suggest without new evidence):** Keep discord.js v13. Keep voice/session subsystem. Keep dashboard structure. Keep verification architecture. Keep one repo + two services + shared MongoDB. Read OWNER_DECISIONS.md before proposing migration, rewrite, or subsystem removal.
