@@ -1,62 +1,88 @@
-# AGENTS.md — AI Coding Agent Rulebook
+# AGENTS.md
 
-This repository is a Personal Multi-Tool Discord Bot, not a verification-only bot. Keep analysis and edits focused, evidence-based, and respectful of owner-approved architecture decisions.
+## Project Identity
 
-## Required reading order
+This is a personal multi-tool Discord bot project with dashboard, verification, voice/session, authentication/session, and database-related systems.
 
-Before editing, read:
+This project is not verification-only. It includes the main Discord bot runtime, slash commands, voice/session subsystem, owner dashboard, Dashboard Public, guild admin dashboard, OAuth2 verification, MongoDB persistence, audit logging, protection features, role buttons, moderation commands, utility/admin commands, information commands, approved guild flows, and owner/system hooks.
 
-1. `AGENTS.md`
-2. `CONTEXT.md`
-3. `docs/OWNER_DECISIONS.md`
-4. `docs/AI_GUIDE.md`
-5. `docs/ARCHITECTURE.md`
-6. `README.md`
-7. `TASK.md`
-8. `docs/SECURITY_PRIVACY.md`
-9. `docs/VALIDATION.md`
-10. `package.json`
-11. `dashboard-public/package.json`
+## Core Principle: Grill with Docs
 
-Then inspect the implementation files relevant to the requested task.
+Before changing code, inspect relevant implementation files and documentation.
 
-## Non-negotiable owner decisions
+Do not rely on generic assumptions. Treat the existing codebase as the source of truth.
 
-Preserve these decisions unless the owner explicitly approves a change:
+**Do not recommend architectural changes until the actual implementation has been inspected.**
 
-- Keep discord.js v13 for now.
-- Keep voice/session subsystem.
-- Keep dashboard structure.
-- Keep verification architecture.
-- Keep owner/admin controls.
-- Keep one repository + two services + shared MongoDB.
+If docs and implementation disagree, report the mismatch and inspect the implementation before recommending changes.
 
-## Strict rules
+## Required Agent Workflow
 
-- Inspect implementation before recommending migration, rewrite, subsystem removal, or architecture replacement.
-- Plan before complex or sensitive edits.
-- Keep changes focused on the requested scope.
-- Do not rewrite unrelated files.
-- Do not expose secrets, tokens, private configuration, webhook URLs, database URLs, dashboard PINs, or hidden operational details.
-- Do not claim tests passed unless the exact tests/checks were run.
-- Do not add dependencies without owner approval.
-- Do not edit package files, deploy config, schemas, OAuth behavior, command behavior, dashboard routes, or voice/session lifecycle unless the task explicitly requires it.
+1. Inspect relevant files.
+2. Summarize what currently exists.
+3. Identify affected systems.
+4. Separate facts from assumptions.
+5. Explain risks.
+6. Ask for clarification when the task conflicts with existing implementation.
+7. Make the smallest safe change.
+8. Report what changed.
 
-## Protected file lock — `discord/systemProvider.js`
+## Protected Architecture
 
-`discord/systemProvider.js` is **OWNER-LOCKED**. Do not edit, move, delete, rename, reformat, split, lint-fix, comment-edit, summarize with sensitive details, or refactor this file unless the owner explicitly approves it in the current task.
+The following systems are owner-approved and protected from casual removal, replacement, repeated questioning, or broad rewrites:
 
-For documentation cleanup and normal maintenance:
+- The owner intentionally keeps discord.js v13.
+- The owner intentionally keeps the voice/session subsystem.
+- The owner intentionally keeps the existing dashboard structure.
+- The owner intentionally keeps the current verification architecture.
+- The owner intentionally keeps owner/admin controls.
+- The owner intentionally keeps one repository with two services and shared MongoDB.
 
-- Do not modify `discord/systemProvider.js`.
-- Do not change imports related to `discord/systemProvider.js`.
-- Do not change boot logic that initializes or references it.
-- Do not document hidden operational details, internal trigger phrases, command names, misuse flows, or sensitive behavior.
-- Do not propose removing it only because it looks unusual.
-- Do not include it in automatic formatting, lint fixes, refactor passes, or migration work.
+These systems must not be removed, replaced, or repeatedly questioned unless there is a concrete bug, security issue, or explicit owner request.
 
-If any change appears to require touching this file, stop immediately. Required approval must be direct and specific, for example: `Owner approves editing discord/systemProvider.js for [specific reason].` Without that approval, leave the file unchanged.
+Before proposing migration, rewrite, subsystem removal, dependency replacement, or architecture replacement, inspect the actual implementation and provide concrete evidence.
 
-## Current docs-only workflow
+### Protected file lock — `discord/systemProvider.js`
 
-For this documentation consolidation task, edit documentation only. Stop before runtime code edits. See `TASK.md` for the active task scope and `docs/VALIDATION.md` for validation commands.
+`discord/systemProvider.js` is OWNER-LOCKED. Do not edit, move, delete, rename, reformat, split, lint-fix, comment-edit, summarize with sensitive details, or refactor this file unless the owner explicitly approves it in the current task.
+
+Do not change imports related to `discord/systemProvider.js`. Do not change boot logic that initializes or references it. Do not document hidden operational details, internal trigger phrases, command names, misuse flows, or sensitive behavior.
+
+If touching this file appears necessary, stop and ask for direct owner approval first. Required approval must be explicit, for example: `Owner approves editing discord/systemProvider.js for [specific reason].`
+
+## Refactor Policy
+
+Refactors must be minimal and task-related.
+
+Avoid broad rewrites, dependency migrations, framework changes, or cleanups that are not required by the task.
+
+Do not use formatting, linting, or cleanup as a reason to touch unrelated runtime files. Do not migrate discord.js, rewrite dashboards, remove the voice/session subsystem, replace verification architecture, or split the repository unless the owner explicitly requests that scope.
+
+## Security Policy
+
+For verification, OAuth, sessions, tokens, cookies, roles, permissions, and user data, inspect before changing and avoid weakening security.
+
+Never expose real secrets, tokens, webhook URLs, database URLs, dashboard PINs, OAuth credentials, private keys, API keys, hidden operational details, or private configuration in code, docs, logs, summaries, or PR text.
+
+For high-risk areas such as authentication/session handling, token handling, role assignment, IP/device/risk data, owner/admin controls, and protected owner/system hooks, make the smallest safe change and explain the risk clearly.
+
+## Documentation Policy
+
+Docs should reflect the real implementation. Do not document imaginary architecture.
+
+If documentation is outdated, update it based on inspected implementation. If implementation details are sensitive, summarize only at a safe subsystem level and do not reveal hidden operational details.
+
+Keep documentation changes focused on the requested task. Preserve owner decisions and project reality: this is a personal multi-tool Discord bot, not verification-only.
+
+## Final Response Requirements
+
+Future AI agents should state:
+
+- files inspected,
+- facts found,
+- assumptions,
+- changes made,
+- checks run,
+- remaining risks.
+
+Do not claim tests or checks passed unless the exact command was actually run.
