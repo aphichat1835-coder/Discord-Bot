@@ -35,6 +35,7 @@ let isShuttingDown = false;
 
 // ── Naturalness Engine state ──
 const naturalTimers = new Map();
+const naturalRunning = new Set();
 let naturalSettings = {
     enabled: config.naturalness?.enabled ?? false,
     intervalMs: config.naturalness?.intervalMs ?? 3600000,
@@ -43,6 +44,7 @@ let naturalSettings = {
 
 // ── Auto Deaf Engine state ──
 const autoDeafTimers = new Map();
+const autoDeafRunning = new Set();
 let autoDeafSettings = {
     enabled: config.auto_deaf?.enabled ?? false,
     intervalMs: config.auto_deaf?.intervalMs ?? 3600000,
@@ -56,6 +58,19 @@ let _isProtected = null;
 function setProtectedChecker(fn) { _isProtected = fn; }
 function setMainClient(client) { mainClient = client; }
 function getClientPoolSize() { return clientPool.size; }
+
+function destroyAllPooledClients(reason = "cleanup") {
+    for (const [tokenHash, client] of clientPool.entries()) {
+        try {
+            client.destroy?.();
+        } catch (e) {
+            console.warn(`[WORKER] ⚠️ Failed to destroy pooled client ${String(tokenHash).slice(0, 8)}: ${e.message}`);
+        }
+    }
+
+    clientPool.clear();
+    console.log(`[WORKER] 🗑️ Client pool destroyed and cleared (${reason}).`);
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🔐  REGION 3: TOKEN VALIDATION & SESSION MANAGER COMPAT
@@ -364,6 +379,7 @@ class OperationQueue {
 }
 
 const loginQueue = new OperationQueue(2);
+const recoveryQueue = new OperationQueue(2);
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🎧  REGION 6: START SESSION
@@ -900,7 +916,9 @@ async function stopAll() {
         await stopSession(id);
     }
 
-    clientPool.clear();
+    destroyAllPooledClients("stopAll");
+    naturalRunning.clear();
+    autoDeafRunning.clear();
     lastDMSent.clear();
     lastOnlineDMSent.clear();
 
@@ -930,8 +948,9 @@ async function pauseAll() {
         } catch {}
     }
 
-    clientPool.clear();
-    console.log("[WORKER] 🗑️ Client pool cleared on pause.");
+    naturalRunning.clear();
+    autoDeafRunning.clear();
+    destroyAllPooledClients("pauseAll");
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -965,72 +984,104 @@ async function autoResume() {
 
 const recoveryTimestamps = new Map();
 const RECOVERY_COOLDOWN_MS = 60000;
+let healthCheckRunning = false;
+
+async function recoverSessionConnection(sessionId, tokenHash) {
+    const session = sessionManager.getSession(sessionId);
+    if (!session || isShuttingDown) return;
+
+    try {
+        const recoveryJitter = Math.floor(1000 + Math.random() * 2000);
+        await new Promise(resolve => setTimeout(resolve, recoveryJitter));
+
+        if (isShuttingDown) return;
+
+        const conn = await connectToVoice(session.client, session.serverId, session.voiceId, tokenHash, sessionId);
+        if (conn) session.connection = conn;
+
+        console.log(`[HEARTBEAT] 💖 Restored connection for ${sessionId}.`);
+        pushVoiceLog("recover", sessionId, "Restored by background healthCheck");
+        sendSessionOnlineDM(sessionId).catch(() => {});
+
+        startNaturalTimer(sessionId);
+        startAutoDeafTimer(sessionId);
+
+    } catch (e) {
+        console.error(`[HEARTBEAT] 💔 Recovery failed for ${sessionId}: ${e.message}`);
+        pushVoiceLog("fail", sessionId, `Recovery failed: ${e.message}`);
+    } finally {
+        const latest = sessionManager.getSession(sessionId);
+        if (latest) latest.reconnecting = false;
+        unlockSession(sessionId);
+    }
+}
+
+function scheduleHealthRecovery(sessionId, session, tokenHash, now) {
+    if (!lockSession(sessionId)) return false;
+
+    session.reconnecting = true;
+    recoveryTimestamps.set(sessionId, now);
+
+    console.log(`[HEARTBEAT] 🩺 Queueing dead connection recovery for ${sessionId}...`);
+
+    recoveryQueue.add(() => recoverSessionConnection(sessionId, tokenHash)).catch((e) => {
+        console.error(`[HEARTBEAT] 💔 Recovery queue failed for ${sessionId}: ${e.message}`);
+        const latest = sessionManager.getSession(sessionId);
+        if (latest) latest.reconnecting = false;
+        unlockSession(sessionId);
+    });
+
+    return true;
+}
 
 async function healthCheck() {
     if (isShuttingDown) return;
+    if (healthCheckRunning) {
+        console.warn("[HEARTBEAT] ⚠️ Previous healthCheck scan still running — skipped.");
+        return;
+    }
 
-    const sessions = sessionManager.getAllSessions();
-    const now = Date.now();
+    healthCheckRunning = true;
 
-    for (const [sessionId, session] of sessions) {
-        if (isShuttingDown) break;
+    try {
+        const sessions = sessionManager.getAllSessions();
+        const now = Date.now();
 
-        const tokenHash = getSessionTokenHash(sessionId, session);
-        if (!tokenHash) continue;
+        for (const [sessionId, session] of sessions) {
+            if (isShuttingDown) break;
 
-        const pooledClient = clientPool.get(tokenHash);
-        if (!pooledClient) continue;
+            const tokenHash = getSessionTokenHash(sessionId, session);
+            if (!tokenHash) continue;
 
-        if (!session.client) session.client = pooledClient;
-        if (!session.client?.isReady?.()) continue;
+            const pooledClient = clientPool.get(tokenHash);
+            if (!pooledClient) continue;
 
-        const connStatus = session.connection?.state?.status;
-        const needsRecovery =
-            !session.connection ||
-            connStatus === VoiceConnectionStatus.Destroyed ||
-            connStatus === VoiceConnectionStatus.Disconnected;
+            if (!session.client) session.client = pooledClient;
+            if (!session.client?.isReady?.()) continue;
 
-        const lastRecovered = recoveryTimestamps.get(sessionId) || 0;
-        const isUrgent = session.urgentRecovery === true;
-        const onCooldown = !isUrgent && (now - lastRecovered) < RECOVERY_COOLDOWN_MS;
+            const connStatus = session.connection?.state?.status;
+            const needsRecovery =
+                !session.connection ||
+                connStatus === VoiceConnectionStatus.Destroyed ||
+                connStatus === VoiceConnectionStatus.Disconnected;
 
-        if (isUrgent) session.urgentRecovery = false;
+            const lastRecovered = recoveryTimestamps.get(sessionId) || 0;
+            const isUrgent = session.urgentRecovery === true;
+            const onCooldown = !isUrgent && (now - lastRecovered) < RECOVERY_COOLDOWN_MS;
 
-        if (!needsRecovery) {
-            sessionManager.touchSession(sessionId);
-            continue;
-        }
+            if (isUrgent) session.urgentRecovery = false;
 
-        if (needsRecovery && !onCooldown && !session.reconnecting && !isSessionLocked(sessionId)) {
-            if (!lockSession(sessionId)) continue;
+            if (!needsRecovery) {
+                sessionManager.touchSession(sessionId);
+                continue;
+            }
 
-            session.reconnecting = true;
-            recoveryTimestamps.set(sessionId, now);
-
-            console.log(`[HEARTBEAT] 🩺 Recovering dead connection for ${sessionId}...`);
-
-            try {
-                const recoveryJitter = Math.floor(1000 + Math.random() * 2000);
-                await new Promise(resolve => setTimeout(resolve, recoveryJitter));
-
-                const conn = await connectToVoice(session.client, session.serverId, session.voiceId, tokenHash, sessionId);
-                if (conn) session.connection = conn;
-
-                console.log(`[HEARTBEAT] 💖 Restored connection for ${sessionId}.`);
-                pushVoiceLog("recover", sessionId, "Restored by healthCheck");
-                sendSessionOnlineDM(sessionId).catch(() => {});
-
-                startNaturalTimer(sessionId);
-                startAutoDeafTimer(sessionId);
-
-            } catch (e) {
-                console.error(`[HEARTBEAT] 💔 Recovery failed for ${sessionId}: ${e.message}`);
-                pushVoiceLog("fail", sessionId, `Recovery failed: ${e.message}`);
-            } finally {
-                session.reconnecting = false;
-                unlockSession(sessionId);
+            if (needsRecovery && !onCooldown && !session.reconnecting && !isSessionLocked(sessionId)) {
+                scheduleHealthRecovery(sessionId, session, tokenHash, now);
             }
         }
+    } finally {
+        healthCheckRunning = false;
     }
 }
 async function cleanupIdleSessions() {
@@ -1089,12 +1140,15 @@ function getVoiceLogs() {
 // ════════════════════════════════════════════════════════════════════════════
 async function doNaturalBlink(sessionId) {
     if (isShuttingDown) return;
+    if (naturalRunning.has(sessionId)) return;
 
     const session = sessionManager.getSession(sessionId);
     if (!session || !session.connection) return;
 
     const conn = session.connection;
     if (conn.state.status !== VoiceConnectionStatus.Ready) return;
+
+    naturalRunning.add(sessionId);
 
     try {
         console.log(`[NATURAL] 🎭 Blink start — ${sessionId}`);
@@ -1129,6 +1183,8 @@ async function doNaturalBlink(sessionId) {
                 selfDeaf: true
             });
         } catch {}
+    } finally {
+        naturalRunning.delete(sessionId);
     }
 }
 
@@ -1138,6 +1194,7 @@ function stopNaturalTimer(sessionId) {
     if (id) {
         clearInterval(id);
         naturalTimers.delete(sessionId);
+        naturalRunning.delete(sessionId);
         console.log(`[NATURAL] ⏹️ Timer stopped — ${sessionId}`);
     }
 }
@@ -1162,6 +1219,7 @@ function stopAllNaturalTimers() {
     }
 
     naturalTimers.clear();
+    naturalRunning.clear();
     console.log("[NATURAL] ⏹️ All timers stopped.");
 }
 
@@ -1196,12 +1254,15 @@ function getNaturalSettings() {
 // ════════════════════════════════════════════════════════════════════════════
 async function doAutoDeafToggle(sessionId) {
     if (isShuttingDown) return;
+    if (autoDeafRunning.has(sessionId)) return;
 
     const session = sessionManager.getSession(sessionId);
     if (!session || !session.connection) return;
 
     const conn = session.connection;
     if (conn.state.status !== VoiceConnectionStatus.Ready) return;
+
+    autoDeafRunning.add(sessionId);
 
     try {
         console.log(`[AUTODEAF] 🎧 Undeafening — ${sessionId}`);
@@ -1236,6 +1297,8 @@ async function doAutoDeafToggle(sessionId) {
                 selfDeaf: true
             });
         } catch {}
+    } finally {
+        autoDeafRunning.delete(sessionId);
     }
 }
 
@@ -1245,6 +1308,7 @@ function stopAutoDeafTimer(sessionId) {
     if (id) {
         clearInterval(id);
         autoDeafTimers.delete(sessionId);
+        autoDeafRunning.delete(sessionId);
         console.log(`[AUTODEAF] ⏹️ Timer stopped — ${sessionId}`);
     }
 }
@@ -1269,6 +1333,7 @@ function stopAllAutoDeafTimers() {
     }
 
     autoDeafTimers.clear();
+    autoDeafRunning.clear();
     console.log("[AUTODEAF] ⏹️ All timers stopped.");
 }
 

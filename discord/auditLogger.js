@@ -25,6 +25,10 @@ const memberStateCache = new Map(); // `${guildId}_${userId}` → { nickname, av
 
 // Rate-limit queue per guild (prevents Discord 429 on bulk events)
 const sendQueues = new Map(); // guildId → Promise
+const registeredClients = new WeakSet(); // prevent duplicate listener registration after reconnect-ready events
+const MEMBER_STATE_CACHE_MAX = 2000;
+const MEMBER_STATE_TTL_MS = 60 * 60 * 1000;
+let auditCleanupTimer = null;
 
 // ── Channel lookup ──
 async function getAuditChannel(guild, sessionManager, type) {
@@ -54,6 +58,9 @@ async function sendAuditLog(guild, sessionManager, type, embed) {
         if (ch) await ch.send({ embeds: [embed] }).catch(() => {});
     });
     sendQueues.set(gid, next);
+    next.finally(() => {
+        if (sendQueues.get(gid) === next) sendQueues.delete(gid);
+    }).catch(() => {});
     return next;
 }
 
@@ -87,19 +94,108 @@ function buildEmbed({ color, title, user, description, fields = [], footer, noTh
 
 // ── Member state cache helpers ──
 function cacheMember(member) {
-    memberStateCache.set(`${member.guild.id}_${member.id}`, {
+    const key = `${member.guild.id}_${member.id}`;
+
+    if (memberStateCache.has(key)) memberStateCache.delete(key);
+
+    memberStateCache.set(key, {
         nickname:   member.nickname,
-        avatarHash: member.avatar
+        avatarHash: member.avatar,
+        updatedAt:  Date.now()
     });
+
+    if (memberStateCache.size > MEMBER_STATE_CACHE_MAX) {
+        const oldestKey = memberStateCache.keys().next().value;
+        if (oldestKey) memberStateCache.delete(oldestKey);
+    }
 }
 function getCachedMember(guildId, userId) {
-    return memberStateCache.get(`${guildId}_${userId}`) || null;
+    const key = `${guildId}_${userId}`;
+    const cached = memberStateCache.get(key) || null;
+
+    if (!cached) return null;
+
+    memberStateCache.delete(key);
+    const refreshed = { ...cached, updatedAt: Date.now() };
+    memberStateCache.set(key, refreshed);
+
+    return refreshed;
+}
+
+
+function cleanupAuditCaches() {
+    const now = Date.now();
+
+    for (const [key, value] of memberStateCache.entries()) {
+        if (!value?.updatedAt || now - value.updatedAt > MEMBER_STATE_TTL_MS) {
+            memberStateCache.delete(key);
+        }
+    }
+
+    for (const [guildId, cached] of auditChannelCache.entries()) {
+        if (!cached?.expiry || now > cached.expiry + 60000) {
+            auditChannelCache.delete(guildId);
+        }
+    }
+}
+
+function startAuditCleanup() {
+    if (auditCleanupTimer) return;
+
+    auditCleanupTimer = setInterval(cleanupAuditCaches, 5 * 60 * 1000);
+    auditCleanupTimer.unref?.();
+}
+
+function getAuditStats() {
+    return {
+        auditChannelCache: auditChannelCache.size,
+        memberStateCache: memberStateCache.size,
+        sendQueues: sendQueues.size
+    };
 }
 
 // ── Truncate long strings ──
 function trunc(str, max = 1000) {
     if (!str) return "*ว่างเปล่า*";
     return str.length > max ? str.substring(0, max) + "..." : str;
+}
+
+
+// ── Partial-safe helpers for message/reaction audit events ──
+async function resolvePartial(value) {
+    if (value?.partial && typeof value.fetch === "function") {
+        return await value.fetch().catch(() => value);
+    }
+
+    return value;
+}
+
+function getMessageGuild(message) {
+    return message?.guild || message?.channel?.guild || null;
+}
+
+function getChannelId(message) {
+    return message?.channel?.id || message?.channelId || null;
+}
+
+function getChannelLabel(message) {
+    const channelId = getChannelId(message);
+    return channelId ? `<#${channelId}> (\`${channelId}\`)` : "ไม่ทราบห้อง";
+}
+
+function getUserFieldValue(user) {
+    return user?.id ? `<@${user.id}> (\`${user.id}\`)` : "ไม่ทราบผู้ใช้";
+}
+
+function getMessageLink(message, guild) {
+    if (message?.url) return message.url;
+
+    const channelId = getChannelId(message);
+    if (guild?.id && channelId && message?.id) {
+        return `https://discord.com/channels/${guild.id}/${channelId}/${message.id}`;
+    }
+
+    return null;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -113,61 +209,89 @@ function registerMessageEvents(client, sessionManager) {
 
     // ── ลบข้อความ ──
     client.on("messageDelete", async (message) => {
-        if (!message.guild) return;
-        if (!message.author || message.author.bot) return;
-        const bulkTs = recentBulkChannels.get(message.channel.id);
+        message = await resolvePartial(message);
+        const guild = getMessageGuild(message);
+        if (!guild) return;
+
+        const author = message.author || null;
+        if (author?.bot) return;
+
+        const channelId = getChannelId(message);
+        const bulkTs = channelId ? recentBulkChannels.get(channelId) : null;
         if (bulkTs && Date.now() - bulkTs < 3000) return;
 
         // ลองดึงว่าใครลบ (ถ้าไม่ใช่เจ้าของ)
         let deleter = null;
         try {
-            const entry = await fetchAuditEntry(message.guild, "MESSAGE_DELETE", message.author.id);
-            if (entry && entry.extra?.channel?.id === message.channel.id) {
-                deleter = entry.executor;
+            if (author?.id) {
+                const entry = await fetchAuditEntry(guild, "MESSAGE_DELETE", author.id);
+                if (entry && (!channelId || entry.extra?.channel?.id === channelId)) {
+                    deleter = entry.executor;
+                }
             }
         } catch {}
 
         const fields = [
-            { name: "👤 ผู้ส่ง",    value: `<@${message.author.id}> (\`${message.author.id}\`)`, inline: true },
-            { name: "📌 ห้อง",      value: `<#${message.channel.id}> (\`${message.channel.id}\`)`, inline: true },
-            { name: "🆔 Message ID", value: `\`${message.id}\``, inline: true },
+            { name: "👤 ผู้ส่ง",    value: getUserFieldValue(author), inline: true },
+            { name: "📌 ห้อง",      value: getChannelLabel(message), inline: true },
+            { name: "🆔 Message ID", value: message.id ? `\`${message.id}\`` : "ไม่ทราบ", inline: true },
         ];
+
         if (message.content) fields.push({ name: "📄 เนื้อหา", value: trunc(message.content, 800), inline: false });
-        if (message.attachments.size > 0) fields.push({ name: "📎 ไฟล์แนบ", value: `${message.attachments.size} ไฟล์`, inline: true });
-        if (deleter && deleter.id !== message.author.id) fields.push({ name: "🗑️ ลบโดย", value: `<@${deleter.id}> (\`${deleter.tag}\`)`, inline: true });
+        else fields.push({ name: "📄 เนื้อหา", value: "*ไม่มีข้อมูลในแคชหรือดึงไม่ได้*", inline: false });
+
+        if (message.attachments?.size > 0) fields.push({ name: "📎 ไฟล์แนบ", value: `${message.attachments.size} ไฟล์`, inline: true });
+        if (deleter && deleter.id !== author?.id) fields.push({ name: "🗑️ ลบโดย", value: `<@${deleter.id}> (\`${deleter.tag}\`)`, inline: true });
+
+        const footerTime = message.createdTimestamp
+            ? new Date(message.createdTimestamp).toLocaleString("th-TH")
+            : "ไม่ทราบเวลาเดิม";
 
         const embed = buildEmbed({
             color:       config.system.themeColors.error,
             title:       `${config.emojis.trash} ข้อความถูกลบ`,
-            user:        message.author,
+            user:        author,
             fields,
-            footer:      `ส่งเมื่อ ${new Date(message.createdTimestamp).toLocaleString("th-TH")}`
+            footer:      `ส่งเมื่อ ${footerTime}`
         });
 
-        await sendAuditLog(message.guild, sessionManager, "message", embed);
+        await sendAuditLog(guild, sessionManager, "message", embed);
     });
 
     // ── แก้ไขข้อความ ──
     client.on("messageUpdate", async (oldMsg, newMsg) => {
-        if (!newMsg.guild || !newMsg.author || newMsg.author.bot) return;
-        if (!newMsg.content) return;
-        if (oldMsg.content != null && oldMsg.content === newMsg.content) return;
+        oldMsg = await resolvePartial(oldMsg);
+        newMsg = await resolvePartial(newMsg);
+
+        const guild = getMessageGuild(newMsg) || getMessageGuild(oldMsg);
+        if (!guild) return;
+
+        const author = newMsg.author || oldMsg.author || null;
+        if (author?.bot) return;
+
+        const oldContent = oldMsg.content ?? null;
+        const newContent = newMsg.content ?? null;
+        if (oldContent != null && newContent != null && oldContent === newContent) return;
+
+        const link = getMessageLink(newMsg, guild);
+        const fields = [
+            { name: "👤 ผู้ส่ง",    value: getUserFieldValue(author), inline: true },
+            { name: "📌 ห้อง",      value: getChannelLabel(newMsg), inline: true },
+            { name: "🆔 Message ID", value: newMsg.id ? `\`${newMsg.id}\`` : "ไม่ทราบ", inline: true },
+            { name: "📄 ก่อน",      value: trunc(oldContent || "*ไม่มีข้อมูลเดิม*", 800), inline: false },
+            { name: "✏️ หลัง",      value: trunc(newContent || "*ไม่มีข้อมูลใหม่*", 800), inline: false }
+        ];
+
+        if (link) fields.push({ name: "🔗 ลิงก์", value: `[Jump to Message](${link})`, inline: true });
 
         const embed = buildEmbed({
             color:  config.system.themeColors.warning,
             title:  `${config.emojis.pencil} ข้อความถูกแก้ไข`,
-            user:   newMsg.author,
-            fields: [
-                { name: "👤 ผู้ส่ง",    value: `<@${newMsg.author.id}> (\`${newMsg.author.id}\`)`, inline: true },
-                { name: "📌 ห้อง",      value: `<#${newMsg.channel.id}>`, inline: true },
-                { name: "🆔 Message ID", value: `\`${newMsg.id}\``, inline: true },
-                { name: "📄 ก่อน",      value: trunc(oldMsg.content || "*ไม่มีข้อมูลเดิม*", 800), inline: false },
-                { name: "✏️ หลัง",      value: trunc(newMsg.content, 800), inline: false },
-                { name: "🔗 ลิงก์",     value: `[Jump to Message](${newMsg.url})`, inline: true }
-            ]
+            user:   author,
+            fields
         });
 
-        await sendAuditLog(newMsg.guild, sessionManager, "message", embed);
+        await sendAuditLog(guild, sessionManager, "message", embed);
     });
 
     // ── Bulk Delete ──
@@ -236,43 +360,55 @@ function registerMessageEvents(client, sessionManager) {
 
     // ── Reaction เพิ่ม ──
     client.on("messageReactionAdd", async (reaction, user) => {
-        if (!reaction.message.guild || user.bot) return;
-        const msg = reaction.message;
+        if (user?.bot) return;
+
+        reaction = await resolvePartial(reaction);
+        const msg = await resolvePartial(reaction.message);
+        const guild = getMessageGuild(msg);
+        if (!guild) return;
+
+        const link = getMessageLink(msg, guild);
+        const fields = [
+            { name: "👤 ผู้กด",      value: getUserFieldValue(user), inline: true },
+            { name: "📌 ห้อง",       value: getChannelLabel(msg), inline: true },
+            { name: "😀 Reaction",  value: `${reaction.emoji}`, inline: true },
+            { name: "🆔 Message ID", value: msg.id ? `\`${msg.id}\`` : "ไม่ทราบ", inline: true }
+        ];
+
+        if (link) fields.push({ name: "🔗 ลิงก์", value: `[Jump](${link})`, inline: true });
 
         const embed = buildEmbed({
             color:  config.system.themeColors.success,
             title:  "➕ Reaction เพิ่ม",
             user,
-            fields: [
-                { name: "👤 ผู้กด",     value: `<@${user.id}> (\`${user.id}\`)`, inline: true },
-                { name: "📌 ห้อง",      value: `<#${msg.channel.id}>`, inline: true },
-                { name: "😀 Reaction", value: `${reaction.emoji}`, inline: true },
-                { name: "🆔 Message ID", value: `\`${msg.id}\``, inline: true },
-                { name: "🔗 ลิงก์",     value: `[Jump](${msg.url})`, inline: true }
-            ]
+            fields
         });
 
-        await sendAuditLog(reaction.message.guild, sessionManager, "message", embed);
+        await sendAuditLog(guild, sessionManager, "message", embed);
     });
 
     // ── Reaction ลบ ──
     client.on("messageReactionRemove", async (reaction, user) => {
-        if (!reaction.message.guild || user.bot) return;
-        const msg = reaction.message;
+        if (user?.bot) return;
+
+        reaction = await resolvePartial(reaction);
+        const msg = await resolvePartial(reaction.message);
+        const guild = getMessageGuild(msg);
+        if (!guild) return;
 
         const embed = buildEmbed({
             color:  config.system.themeColors.warning,
             title:  "➖ Reaction ลบ",
             user,
             fields: [
-                { name: "👤 ผู้ลบ",    value: `<@${user.id}> (\`${user.id}\`)`, inline: true },
-                { name: "📌 ห้อง",     value: `<#${msg.channel.id}>`, inline: true },
+                { name: "👤 ผู้ลบ",     value: getUserFieldValue(user), inline: true },
+                { name: "📌 ห้อง",      value: getChannelLabel(msg), inline: true },
                 { name: "😀 Reaction", value: `${reaction.emoji}`, inline: true },
-                { name: "🆔 Message ID", value: `\`${msg.id}\``, inline: true }
+                { name: "🆔 Message ID", value: msg.id ? `\`${msg.id}\`` : "ไม่ทราบ", inline: true }
             ]
         });
 
-        await sendAuditLog(reaction.message.guild, sessionManager, "message", embed);
+        await sendAuditLog(guild, sessionManager, "message", embed);
     });
 }
 
@@ -917,6 +1053,15 @@ function registerSecurityEvents(client, sessionManager) {
 //  📤  REGION 7: REGISTER ALL + EXPORT
 // ════════════════════════════════════════════════════════════════════════════
 function register(client, sessionManager) {
+    startAuditCleanup();
+
+    if (registeredClients.has(client)) {
+        console.log("[AUDIT] ℹ️ Audit Logger already registered for this client — skipped duplicate listeners.");
+        return;
+    }
+
+    registeredClients.add(client);
+
     registerMessageEvents(client, sessionManager);
     registerMemberEvents(client, sessionManager);
     registerVoiceEvents(client, sessionManager);
@@ -928,5 +1073,6 @@ function register(client, sessionManager) {
 module.exports = {
     register,
     sendAuditLog,
+    getAuditStats,
     invalidateAuditCache: (guildId) => auditChannelCache.delete(guildId)
 };

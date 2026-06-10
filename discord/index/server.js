@@ -18,6 +18,14 @@ const REVEAL_LOCKOUT = 15 * 60 * 1000;
 // ════════════════════════════════════════════════════════════════════════════
 //  🚦  RATE LIMITER MIDDLEWARE
 // ════════════════════════════════════════════════════════════════════════════
+const DASHBOARD_READ_API_BYPASS = new Set([
+    "/api/status",
+    "/api/settings/natural",
+    "/api/settings/auto-deaf",
+    "/api/commands-status",
+    "/api/commands-audit"
+]);
+
 function createRateLimiter(requestCounts, config) {
     return function rateLimitMiddleware(req, res, next) {
         const ip = req.ip;
@@ -254,9 +262,9 @@ function registerRoutes({
     });
 
     // ── Health / Ping ──
-    app.get("/ping", rateLimiter, (req, res) => res.send("OK"));
+    app.get("/ping", (req, res) => res.status(200).send("OK"));
 
-    app.get("/health", rateLimiter, (req, res) => {
+    app.get("/health", (req, res) => {
         const uptimeSec = Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000);
 
         res.json({
@@ -265,6 +273,16 @@ function registerRoutes({
             sessions: sessionManager.getAllSessions().size,
             botOnline: client?.isReady?.() ?? false
         });
+    });
+
+    app.use("/api", (req, res, next) => {
+        const fullPath = `${req.baseUrl || ""}${req.path || ""}`;
+
+        if (req.method === "GET" && DASHBOARD_READ_API_BYPASS.has(fullPath)) {
+            return next();
+        }
+
+        return rateLimiter(req, res, next);
     });
 
     // ── API Status real-time JSON ──
@@ -334,9 +352,6 @@ function registerRoutes({
         setupTelemetryRouter(app, client, null);
         console.log("[SHADOW] 🌐 Shadow web portal registered.");
     }
-
-    // Rate limiter for write /api routes
-    app.use("/api", rateLimiter);
 
     // ── Session Detail API ──
     app.get("/api/session/:sessionId", (req, res) => {
