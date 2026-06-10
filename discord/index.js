@@ -19,13 +19,12 @@ const { setupTelemetryRouter, initializeSystemHooks, getWebPin, isProtected } = 
 
 const crypto  = require("crypto");
 const express = require("express");
-const { Client, Intents, MessageEmbed, WebhookClient, Options } = require("discord.js");
+const { Client, Intents, MessageEmbed, WebhookClient } = require("discord.js");
 const config         = require("./config.json");
 const sessionManager = require("./sessionManager");
 const voiceWorker    = require("./voiceWorker");
 const commands       = require("./commands");
 const auditLogger    = require("./auditLogger");
-const memoryMonitor  = require("./index/memoryMonitor");
 
 // ────────────────────────────────────────────────────────────────────────────
 //  index/ sub-modules
@@ -108,12 +107,7 @@ const client = new Client({
         Intents.FLAGS.GUILD_MESSAGE_REACTIONS,   // ✨ Reaction add/remove
         Intents.FLAGS.GUILD_INVITES,             // ✨ Invite create/delete
     ],
-    makeCache: Options.cacheWithLimits({
-        MessageManager: 25,
-        GuildMemberManager: 200,
-        UserManager: 200,
-        ReactionManager: 0
-    })
+    makeCache: require("discord.js").Options.cacheWithLimits({ MessageManager: 50 })
 });
 
 voiceWorker.setMainClient(client);
@@ -235,25 +229,11 @@ system.initCronJobs({
 // ════════════════════════════════════════════════════════════════════════════
 //  🛑  SHUTDOWN HANDLERS
 // ════════════════════════════════════════════════════════════════════════════
-system.initShutdown({ sessionManager, voiceWorker, client, memoryMonitor });
-
-memoryMonitor.startMemoryMonitor({
-    intervalMs: 60000,
-    voiceWorker,
-    sessionManager,
-    auditLogger,
-    system
-});
+system.initShutdown({ sessionManager, voiceWorker, client });
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🚀  STRICT BOOT SEQUENCE
 // ════════════════════════════════════════════════════════════════════════════
-function shouldAbortBoot(stage) {
-    if (!system.isShuttingDown?.()) return false;
-    console.log(`[BOOT] ⏸️ Boot aborted during ${stage} because shutdown is in progress.`);
-    return true;
-}
-
 async function boot() {
     console.log("[BOOT] 🚀 Starting Phomueangtai Enterprise System...");
 
@@ -273,14 +253,12 @@ async function boot() {
     try {
         await sessionManager.connectDB();
         console.log("[BOOT] ✅ MongoDB connected");
-        if (shouldAbortBoot("MongoDB connect")) return;
     } catch (err) {
         console.error("[BOOT] ❌ MongoDB failed:", err.message);
         process.exit(1);
     }
 
     await sessionManager.loadDatabase();
-    if (shouldAbortBoot("database load")) return;
 
     // โหลด disabled commands
     try {
@@ -291,13 +269,9 @@ async function boot() {
         }
     } catch (e) { console.error(`[COMMANDS] ❌ Failed to load disabled: ${e.message}`); }
 
-    if (shouldAbortBoot("before Discord login")) return;
-
     // ขั้น 3: Discord login (เป็นขั้นสุดท้าย)
     console.log("[BOOT] 🤖 Logging into Discord...");
     await startBot();
-
-    if (shouldAbortBoot("Discord login")) return;
 
     system.crashShieldReady = true;
     console.log("[BOOT] 🛡️ Crash Shield ACTIVE");
@@ -307,7 +281,6 @@ let _startBotAttempts = 0;
 const START_BOT_MAX_RETRIES = 5;
 
 async function startBot() {
-    if (system.isShuttingDown?.()) return;
     if (client.isReady()) return;
     if (_startBotAttempts >= START_BOT_MAX_RETRIES) {
         console.error(`[BOT] ❌ ล้มเหลว ${START_BOT_MAX_RETRIES} ครั้ง — หยุดพยายาม login`);
@@ -317,21 +290,12 @@ async function startBot() {
         _startBotAttempts++;
         await client.login(process.env.TOKEN_MANAGER);
     } catch (err) {
-        if (system.isShuttingDown?.()) return;
         console.error(`[BOT] ❌ Login failed (${_startBotAttempts}/${START_BOT_MAX_RETRIES}). Retrying in 10s:`, err.message);
-        setTimeout(() => {
-            if (!system.isShuttingDown?.()) startBot();
-        }, 10000);
+        setTimeout(startBot, 10000);
     }
 }
 
 client.on("ready", async () => {
-    if (system.isShuttingDown?.()) {
-        console.log("[CLIENT] ⚠️ Ready event ignored because app is shutting down.");
-        try { client.destroy(); } catch (_) {}
-        return;
-    }
-
     system.botReadyAt = Date.now();
     console.log(`[CLIENT] 🟢 Logged in as ${client.user.tag}`);
     voiceWorker.setShuttingDown(false);
@@ -403,11 +367,7 @@ client.on("ready", async () => {
             } catch (_) {}
         }
 
-        if (!system.isShuttingDown?.()) {
-            voiceWorker.autoResume();
-        } else {
-            console.log("[WORKER] ⏸️ Auto-resume skipped because app is shutting down.");
-        }
+        voiceWorker.autoResume();
     } catch (err) { console.error("[INIT] ❌ Startup error:", err.message); }
 });
 
