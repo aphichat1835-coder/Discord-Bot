@@ -68,8 +68,6 @@ const memberStateCache = new LruCache(MEMBER_STATE_CACHE_MAX); // `${guildId}_${
 // Rate-limit queue per guild (prevents Discord 429 on bulk events)
 const sendQueues = new Map(); // guildId → Promise
 const registeredClients = new WeakSet(); // prevent duplicate listener registration after reconnect-ready events
-const MEMBER_STATE_CACHE_MAX = 2000;
-const MEMBER_STATE_TTL_MS = 60 * 60 * 1000;
 let auditCleanupTimer = null;
 
 // ── Channel lookup ──

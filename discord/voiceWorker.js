@@ -68,6 +68,14 @@ function destroyAllPooledClients(reason = "cleanup") {
         }
     }
 
+    // Clear stale session.client references for paused sessions or destroyed clients
+    const sessions = sessionManager.getAllSessions();
+    for (const [sessionId, session] of sessions) {
+        if (session.paused === true || (session.client && clientPool.has(getSessionTokenHash(sessionId, session)))) {
+            session.client = null;
+        }
+    }
+
     clientPool.clear();
     console.log(`[WORKER] 🗑️ Client pool destroyed and cleared (${reason}).`);
 }

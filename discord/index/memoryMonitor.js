@@ -26,6 +26,7 @@ function startMemoryMonitor({
 
     criticalCount = 0;
     emergencyCleanupRunning = false;
+    lastHeapUsed = 0;
 
     memoryTimer = setInterval(async () => {
         try {
@@ -67,6 +68,12 @@ function startMemoryMonitor({
                 emergencyCleanupRunning = true;
                 console.error("[MEMORY] 🚨 Critical memory sustained. Pausing voice sessions before exit.");
 
+                // Force-exit timeout: ensure process exits even if cleanup hangs
+                const forceExitTimeout = setTimeout(() => {
+                    console.error("[MEMORY] 💀 Force-exit timeout reached. Exiting immediately.");
+                    process.exit(1);
+                }, 10000);
+
                 try {
                     system?.markAppShuttingDown?.();
                     voiceWorker?.setShuttingDown?.(true);
@@ -75,6 +82,7 @@ function startMemoryMonitor({
                 } catch (e) {
                     console.error(`[MEMORY] Emergency cleanup failed: ${e.message}`);
                 } finally {
+                    clearTimeout(forceExitTimeout);
                     process.exit(1);
                 }
             }
@@ -92,6 +100,7 @@ function stopMemoryMonitor() {
     clearInterval(memoryTimer);
     memoryTimer = null;
     criticalCount = 0;
+    lastHeapUsed = 0;
 }
 
 module.exports = {
