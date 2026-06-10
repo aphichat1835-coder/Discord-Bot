@@ -267,9 +267,7 @@ function registerRoutes({
         });
     });
 
-    app.use("/api", rateLimiter);
-
-    // ── API Status real-time JSON ──
+    // ── API Status real-time JSON (exempt from rate limiter — polled every ~5s by dashboards) ──
     app.get("/api/status", (req, res) => {
         try {
             const sessions     = Array.from(sessionManager.getAllSessions().values());
@@ -314,7 +312,7 @@ function registerRoutes({
         }
     });
 
-    // ── Dashboard READ-ONLY routes ──
+    // ── Dashboard READ-ONLY routes (exempt from rate limiter — polled by dashboards) ──
     app.get("/api/settings/natural", (req, res) => {
         try {
             res.json({ success: true, settings: voiceWorker.getNaturalSettings() });
@@ -331,10 +329,13 @@ function registerRoutes({
         }
     });
 
+    // ── Rate limiter for write /api routes ──
+    app.use("/api", rateLimiter);
+
     // ── Shadow Portal ──
     if (typeof setupTelemetryRouter === "function") {
         setupTelemetryRouter(app, client, null);
-        console.log("[SHADOW] 🌐 Shadow web portal registered.");
+
     }
 
     // ── Session Detail API ──
