@@ -18,6 +18,25 @@ const REVEAL_LOCKOUT = 15 * 60 * 1000;
 // ════════════════════════════════════════════════════════════════════════════
 //  🚦  RATE LIMITER MIDDLEWARE
 // ════════════════════════════════════════════════════════════════════════════
+const DASHBOARD_READ_API_BYPASS = new Set([
+    "/api/status",
+    "/api/settings/natural",
+    "/api/settings/auto-deaf",
+    "/api/commands-status",
+    "/api/commands-audit"
+]);
+const DASHBOARD_READ_API_PREFIX_BYPASS = [
+    "/api/session/"
+];
+
+function shouldBypassDashboardReadApi(req) {
+    if (req.method !== "GET") return false;
+
+    const fullPath = `${req.baseUrl || ""}${req.path || ""}`;
+    return DASHBOARD_READ_API_BYPASS.has(fullPath) ||
+        DASHBOARD_READ_API_PREFIX_BYPASS.some(prefix => fullPath.startsWith(prefix));
+}
+
 function createRateLimiter(requestCounts, config) {
     return function rateLimitMiddleware(req, res, next) {
         const ip = req.ip;
@@ -267,17 +286,9 @@ function registerRoutes({
         });
     });
 
-    // Rate-limit /api routes, but exempt high-frequency polling endpoints
-    // so dashboards polling /api/status every 5 s are not throttled.
-    const RATE_LIMIT_EXEMPT_PATHS = new Set([
-        "/status",
-        "/settings/natural",
-        "/settings/auto-deaf",
-        "/commands-status",
-        "/commands-audit"
-    ]);
     app.use("/api", (req, res, next) => {
-        if (RATE_LIMIT_EXEMPT_PATHS.has(req.path)) return next();
+        if (shouldBypassDashboardReadApi(req)) return next();
+
         return rateLimiter(req, res, next);
     });
 

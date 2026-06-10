@@ -109,11 +109,12 @@ const client = new Client({
         Intents.FLAGS.GUILD_INVITES,             // ✨ Invite create/delete
     ],
     makeCache: Options.cacheWithLimits({
-        MessageManager: 25,
+        MessageManager: 200,
         GuildMemberManager: 200,
         UserManager: 200,
         ReactionManager: 0
-    })
+    }),
+    partials: ["MESSAGE", "CHANNEL", "REACTION", "GUILD_MEMBER", "USER"]
 });
 
 voiceWorker.setMainClient(client);

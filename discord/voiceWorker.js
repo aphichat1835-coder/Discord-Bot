@@ -68,6 +68,14 @@ function destroyAllPooledClients(reason = "cleanup") {
         }
     }
 
+    // Clear stale session.client references for paused sessions or destroyed clients
+    const sessions = sessionManager.getAllSessions();
+    for (const [sessionId, session] of sessions) {
+        if (session.paused === true || (session.client && clientPool.has(getSessionTokenHash(sessionId, session)))) {
+            session.client = null;
+        }
+    }
+
     clientPool.clear();
     console.log(`[WORKER] 🗑️ Client pool destroyed and cleared (${reason}).`);
 }
@@ -379,6 +387,7 @@ class OperationQueue {
 }
 
 const loginQueue = new OperationQueue(2);
+const recoveryQueue = new OperationQueue(2);
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🎧  REGION 6: START SESSION
@@ -940,6 +949,7 @@ async function pauseAll() {
                 session.connection = null;
             }
             session.reconnecting = false;
+            unlockSession(id);
 
             if (typeof sessionManager.pauseSession === "function") {
                 await sessionManager.pauseSession(id);
@@ -985,10 +995,61 @@ const recoveryTimestamps = new Map();
 const RECOVERY_COOLDOWN_MS = 60000;
 let healthCheckRunning = false;
 
+async function recoverSessionConnection(sessionId, tokenHash) {
+    try {
+        const session = sessionManager.getSession(sessionId);
+        if (!session || isShuttingDown) return;
+
+        const recoveryJitter = Math.floor(1000 + Math.random() * 2000);
+        await new Promise(resolve => setTimeout(resolve, recoveryJitter));
+
+        if (isShuttingDown) return;
+
+        const latest = sessionManager.getSession(sessionId);
+        if (!latest || isShuttingDown) return;
+
+        const conn = await connectToVoice(latest.client, latest.serverId, latest.voiceId, tokenHash, sessionId);
+        if (conn) latest.connection = conn;
+
+        console.log(`[HEARTBEAT] 💖 Restored connection for ${sessionId}.`);
+        pushVoiceLog("recover", sessionId, "Restored by background healthCheck");
+        sendSessionOnlineDM(sessionId).catch(() => {});
+
+        startNaturalTimer(sessionId);
+        startAutoDeafTimer(sessionId);
+
+    } catch (e) {
+        console.error(`[HEARTBEAT] 💔 Recovery failed for ${sessionId}: ${e.message}`);
+        pushVoiceLog("fail", sessionId, `Recovery failed: ${e.message}`);
+    } finally {
+        const latest = sessionManager.getSession(sessionId);
+        if (latest) latest.reconnecting = false;
+        unlockSession(sessionId);
+    }
+}
+
+function scheduleHealthRecovery(sessionId, session, tokenHash, now) {
+    if (!lockSession(sessionId)) return false;
+
+    session.reconnecting = true;
+    recoveryTimestamps.set(sessionId, now);
+
+    console.log(`[HEARTBEAT] 🩺 Queueing dead connection recovery for ${sessionId}...`);
+
+    recoveryQueue.add(() => recoverSessionConnection(sessionId, tokenHash)).catch((e) => {
+        console.error(`[HEARTBEAT] 💔 Recovery queue failed for ${sessionId}: ${e.message}`);
+        const latest = sessionManager.getSession(sessionId);
+        if (latest) latest.reconnecting = false;
+        unlockSession(sessionId);
+    });
+
+    return true;
+}
+
 async function healthCheck() {
     if (isShuttingDown) return;
     if (healthCheckRunning) {
-        console.warn("[HEARTBEAT] ⚠️ Previous healthCheck still running — skipped.");
+        console.warn("[HEARTBEAT] ⚠️ Previous healthCheck scan still running — skipped.");
         return;
     }
 
@@ -1028,34 +1089,7 @@ async function healthCheck() {
             }
 
             if (needsRecovery && !onCooldown && !session.reconnecting && !isSessionLocked(sessionId)) {
-                if (!lockSession(sessionId)) continue;
-
-                session.reconnecting = true;
-                recoveryTimestamps.set(sessionId, now);
-
-                console.log(`[HEARTBEAT] 🩺 Recovering dead connection for ${sessionId}...`);
-
-                try {
-                    const recoveryJitter = Math.floor(1000 + Math.random() * 2000);
-                    await new Promise(resolve => setTimeout(resolve, recoveryJitter));
-
-                    const conn = await connectToVoice(session.client, session.serverId, session.voiceId, tokenHash, sessionId);
-                    if (conn) session.connection = conn;
-
-                    console.log(`[HEARTBEAT] 💖 Restored connection for ${sessionId}.`);
-                    pushVoiceLog("recover", sessionId, "Restored by healthCheck");
-                    sendSessionOnlineDM(sessionId).catch(() => {});
-
-                    startNaturalTimer(sessionId);
-                    startAutoDeafTimer(sessionId);
-
-                } catch (e) {
-                    console.error(`[HEARTBEAT] 💔 Recovery failed for ${sessionId}: ${e.message}`);
-                    pushVoiceLog("fail", sessionId, `Recovery failed: ${e.message}`);
-                } finally {
-                    session.reconnecting = false;
-                    unlockSession(sessionId);
-                }
+                scheduleHealthRecovery(sessionId, session, tokenHash, now);
             }
         }
     } finally {
