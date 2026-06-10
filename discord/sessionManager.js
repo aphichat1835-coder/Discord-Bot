@@ -154,7 +154,14 @@ const sessionSchema = new mongoose.Schema({
     accountAvatar: String,
 
     startedAt: { type: Number, default: Date.now },
-    lastActivity: { type: Number, default: Date.now }
+    lastActivity: { type: Number, default: Date.now },
+
+    // Voice lifecycle state. Legacy records without state are treated as active.
+    state: { type: String, default: "active" },
+    stoppedAt: Number,
+    stoppedReason: String,
+    stoppedBy: String,
+    lastStopError: String
 });
 const SessionModel = mongoose.model("Session", sessionSchema);
 
@@ -275,8 +282,26 @@ function getSafeSessionId(sessionId) {
     return String(sessionId || "").slice(0, 32);
 }
 
+function normalizeSessionState(session) {
+    return session?.state || "active";
+}
+
+function isSessionRunnable(session) {
+    return normalizeSessionState(session) === "active";
+}
+
+function isDuplicateBlockingSession(session) {
+    const state = normalizeSessionState(session);
+    if (state === "active" || state === "stopping" || state === "paused") return true;
+
+    // A failed manual stop may still mean the account is really in voice, so block restart.
+    if (state === "failed" && session?.stoppedReason === "stop_cleanup_failed") return true;
+
+    return false;
+}
+
 function isSameTokenGuildSession(session, tokenHash, serverId) {
-    if (!session) return false;
+    if (!session || !isDuplicateBlockingSession(session)) return false;
 
     if (session.tokenHash && session.tokenHash === tokenHash && String(session.serverId) === String(serverId)) {
         return true;
@@ -309,7 +334,7 @@ function countActiveSessionsByTokenHash(tokenHash) {
     let count = 0;
 
     for (const session of sessions.values()) {
-        if (!session) continue;
+        if (!session || !isSessionRunnable(session)) continue;
 
         if (session.tokenHash === tokenHash) {
             count++;
@@ -367,6 +392,12 @@ async function loadDatabase() {
                 startedAt: r.startedAt,
                 lastActivity: r.lastActivity,
 
+                state: r.state || "active",
+                stoppedAt: r.stoppedAt || null,
+                stoppedReason: r.stoppedReason || null,
+                stoppedBy: r.stoppedBy || null,
+                lastStopError: r.lastStopError || null,
+
                 connection: null,
                 reconnecting: false,
                 client: null,
@@ -421,7 +452,13 @@ async function saveDatabase() {
                             accountAvatar: session.accountAvatar,
 
                             startedAt: session.startedAt,
-                            lastActivity: session.lastActivity
+                            lastActivity: session.lastActivity,
+
+                            state: session.state || "active",
+                            stoppedAt: session.stoppedAt || null,
+                            stoppedReason: session.stoppedReason || null,
+                            stoppedBy: session.stoppedBy || null,
+                            lastStopError: session.lastStopError || null
                         }
                     },
                     upsert: true
@@ -495,7 +532,13 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
         accountAvatar: null,
 
         startedAt: now,
-        lastActivity: now
+        lastActivity: now,
+
+        state: "active",
+        stoppedAt: null,
+        stoppedReason: null,
+        stoppedBy: null,
+        lastStopError: null
     };
 
     sessions.set(sessionId, {
@@ -551,6 +594,11 @@ async function updateSessionMetadata(sessionId, metadata = {}) {
         "accountGlobalName",
         "accountTag",
         "accountAvatar",
+        "state",
+        "stoppedAt",
+        "stoppedReason",
+        "stoppedBy",
+        "lastStopError",
         "lastActivity"
     ];
 
@@ -579,6 +627,27 @@ async function updateSessionMetadata(sessionId, metadata = {}) {
     }
 
     return true;
+}
+
+async function markSessionFailed(sessionId, reason, errorMessage = null, stoppedBy = null) {
+    const safeError = errorMessage ? String(errorMessage).slice(0, 300) : null;
+    return updateSessionMetadata(sessionId, {
+        state: "failed",
+        stoppedAt: Date.now(),
+        stoppedReason: reason || "unknown",
+        stoppedBy: stoppedBy || null,
+        lastStopError: safeError
+    });
+}
+
+async function markSessionActive(sessionId) {
+    return updateSessionMetadata(sessionId, {
+        state: "active",
+        stoppedAt: null,
+        stoppedReason: null,
+        stoppedBy: null,
+        lastStopError: null
+    });
 }
 
 function getAllSessions() {
@@ -1222,10 +1291,18 @@ function getVoiceSessionSummary(session) {
 
         startedAt: session.startedAt,
         lastActivity: session.lastActivity,
+        state: session.state || "active",
+        stoppedAt: session.stoppedAt || null,
+        stoppedReason: session.stoppedReason || null,
+        stoppedBy: session.stoppedBy || null,
+        lastStopError: session.lastStopError || null,
         reconnecting: !!session.reconnecting,
         reconnectCount: session.reconnectCount || 0,
         tokenInvalid: !!session.tokenInvalid,
         hasConnection: !!session.connection,
+        clientReady: !!session.client?.isReady?.(),
+        staleSuspected: (session.state || "active") === "active" && !session.connection,
+        ghostSuspected: (session.state || "active") === "failed" && session.stoppedReason === "stop_cleanup_failed",
 
         /*
          * Do not expose token, encrypted token, tokenTail, or tokenHash here.
@@ -1318,6 +1395,10 @@ module.exports = {
     getVoiceSessionSummary,
     deleteSession,
     pauseSession,
+    markSessionFailed,
+    markSessionActive,
+    normalizeSessionState,
+    isSessionRunnable,
     clearAllSessions,
 
     // Voice identity helpers

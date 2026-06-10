@@ -177,10 +177,18 @@ function serializeVoiceSession(session) {
 
         startedAt: session.startedAt,
         lastActivity: session.lastActivity,
+        state: session.state || "active",
+        stoppedAt: session.stoppedAt || null,
+        stoppedReason: session.stoppedReason || null,
+        stoppedBy: session.stoppedBy || null,
+        lastStopError: session.lastStopError || null,
         reconnectCount: session.reconnectCount || 0,
         tokenInvalid: !!session.tokenInvalid,
         reconnecting: !!session.reconnecting,
         hasConnection: !!session.connection,
+        clientReady: !!session.client?.isReady?.(),
+        staleSuspected: (session.state || "active") === "active" && !session.connection,
+        ghostSuspected: (session.state || "active") === "failed" && session.stoppedReason === "stop_cleanup_failed",
         connectionStatus: session.connection?.state?.status || null
 
         /*
@@ -420,7 +428,7 @@ function registerRoutes({
     });
 
     // ── Stop Session ──
-    app.post("/api/stop-session", express.json(), async (req, res) => {
+    app.post("/api/stop-session", express.json({ limit: "8kb" }), async (req, res) => {
         try {
             if (!checkAuth(req, res)) return;
 
@@ -442,8 +450,14 @@ function registerRoutes({
                 });
             }
 
-            await voiceWorker.sendSessionStoppedDM(sessionId, "manual");
-            await voiceWorker.stopSession(sessionId);
+            const stopped = await voiceWorker.stopSession(sessionId, { stoppedBy: "dashboard", notifyOwner: true });
+
+            if (!stopped) {
+                return res.status(409).json({
+                    success: false,
+                    error: "หยุด session ไม่สำเร็จหรือถูกปฏิเสธ ระบบยังเก็บรายการไว้เพื่อตรวจสอบ"
+                });
+            }
 
             console.log(`[DASHBOARD] 🛑 Session ${sessionId} stopped via dashboard`);
             res.json({ success: true });

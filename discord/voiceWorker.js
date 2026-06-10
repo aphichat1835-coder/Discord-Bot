@@ -9,7 +9,7 @@ DO NOT SIMPLIFY: OperationQueue concurrency — prevents IP ban from Discord.
 
 const { Client: SelfClient } = require("discord.js-selfbot-v13");
 const { MessageEmbed } = require("discord.js");
-const { joinVoiceChannel, VoiceConnectionStatus } = require("@discordjs/voice");
+const { joinVoiceChannel, getVoiceConnection, VoiceConnectionStatus } = require("@discordjs/voice");
 const crypto = require("crypto");
 const sessionManager = require("./sessionManager");
 const config = require("./config.json");
@@ -84,6 +84,7 @@ function destroyAllPooledClients(reason = "cleanup") {
 //  🔐  REGION 3: TOKEN VALIDATION & SESSION MANAGER COMPAT
 // ════════════════════════════════════════════════════════════════════════════
 function validateToken(token) {
+    if (typeof token !== "string" || token.length > 256) throw new Error("INVALID_TOKEN_FORMAT");
     const tokenRegex = /^[\w-]{24,}\.[\w-]{6,}\.[\w-]{27,}$/;
     if (!tokenRegex.test(token)) throw new Error("INVALID_TOKEN_FORMAT");
     return true;
@@ -198,6 +199,101 @@ function countActiveSessionsByTokenHash(tokenHash) {
         if (getSessionTokenHash(id, session) === tokenHash) count++;
     }
     return count;
+}
+
+function isRunnableSession(session) {
+    if (typeof sessionManager.isSessionRunnable === "function") {
+        return sessionManager.isSessionRunnable(session);
+    }
+    return (session?.state || "active") === "active";
+}
+
+function shouldResumeSession(session) {
+    return isRunnableSession(session);
+}
+
+function getVoiceGroup(client, guildId) {
+    const accountId = client?.user?.id;
+    if (!accountId || !guildId) return null;
+    return `${accountId}:${guildId}`;
+}
+
+function destroyVoiceConnectionObject(connection, label, errors) {
+    if (!connection || connection.state?.status === VoiceConnectionStatus.Destroyed) return false;
+
+    try {
+        connection.destroy();
+        return true;
+    } catch (err) {
+        errors.push(`${label}: ${err.message}`);
+        return false;
+    }
+}
+
+function getClientVoiceChannelId(client, guildId) {
+    try {
+        const guild = client?.guilds?.cache?.get(String(guildId));
+        const member = guild?.me || guild?.members?.cache?.get(client?.user?.id);
+        return member?.voice?.channelId || member?.voice?.channel?.id || null;
+    } catch {
+        return null;
+    }
+}
+
+async function destroySessionVoiceConnection(sessionId, session, tokenHash) {
+    const errors = [];
+    const clientRef = session?.client || (tokenHash ? clientPool.get(tokenHash) : null);
+    const group = getVoiceGroup(clientRef, session?.serverId);
+    let destroyedAny = false;
+
+    destroyedAny = destroyVoiceConnectionObject(session?.connection, "session.connection", errors) || destroyedAny;
+
+    if (group && session?.serverId) {
+        const registryConnection = getVoiceConnection(String(session.serverId), group);
+        if (registryConnection && registryConnection !== session.connection) {
+            destroyedAny = destroyVoiceConnectionObject(registryConnection, "voice registry", errors) || destroyedAny;
+        }
+    }
+
+    if (session) session.connection = null;
+
+    const clientVoiceChannelId = getClientVoiceChannelId(clientRef, session?.serverId);
+    if (!destroyedAny && clientVoiceChannelId && String(clientVoiceChannelId) === String(session?.voiceId)) {
+        errors.push("client still appears in target voice channel but no managed connection was found");
+    }
+
+    stopNaturalTimer(sessionId);
+    stopAutoDeafTimer(sessionId);
+    recoveryTimestamps.delete(sessionId);
+    clearReconnect(sessionId);
+    if (session) session.reconnecting = false;
+
+    return { ok: errors.length === 0, errors, clientRef };
+}
+
+async function markSessionFailedSafe(sessionId, reason, errorMessage, stoppedBy = null) {
+    if (typeof sessionManager.markSessionFailed === "function") {
+        await sessionManager.markSessionFailed(sessionId, reason, errorMessage, stoppedBy).catch(() => {});
+    } else {
+        const session = sessionManager.getSession(sessionId);
+        if (session) {
+            session.state = "failed";
+            session.stoppedReason = reason;
+            session.lastStopError = errorMessage ? String(errorMessage).slice(0, 300) : null;
+            session.stoppedAt = Date.now();
+            session.stoppedBy = stoppedBy || null;
+        }
+    }
+}
+
+function cleanupUnusedPooledClients(reason = "cleanup") {
+    for (const [tokenHash, client] of clientPool.entries()) {
+        if (countActiveSessionsByTokenHash(tokenHash) > 0) continue;
+
+        try { client.destroy?.(); } catch {}
+        clientPool.delete(tokenHash);
+        console.log(`[CLEANUP] ✅ Removed unused pooled client (${reason}).`);
+    }
 }
 
 function getSessionShortId(sessionId) {
@@ -405,9 +501,18 @@ async function startSession(sessionId, tokenString) {
         throw new Error("SESSION_LOCKED");
     }
 
+    let tokenHash = null;
+    let createdClient = null;
+
     try {
-        const tokenHash = getSessionTokenHash(sessionId, session);
+        tokenHash = getSessionTokenHash(sessionId, session);
         if (!tokenHash) throw new Error("TOKEN_DECRYPTION_FAILED");
+
+        if (typeof sessionManager.markSessionActive === "function") {
+            await sessionManager.markSessionActive(sessionId).catch(() => {});
+        } else {
+            session.state = "active";
+        }
 
         /*
          * clientPool means "this account is logged in and reusable".
@@ -453,6 +558,7 @@ async function startSession(sessionId, tokenString) {
 
                 clientPool.set(tokenHash, newClient);
                 session.client = newClient;
+                createdClient = newClient;
 
             } catch (err) {
                 console.error(`[WORKER] ❌ Login failed for ${sessionId}. Destroying ghost client.`);
@@ -494,11 +600,32 @@ async function startSession(sessionId, tokenString) {
 
         return true;
 
+    } catch (err) {
+        stopNaturalTimer(sessionId);
+        stopAutoDeafTimer(sessionId);
+        recoveryTimestamps.delete(sessionId);
+        clearReconnect(sessionId);
+
+        if (session.connection) {
+            try { session.connection.destroy(); } catch {}
+            session.connection = null;
+        }
+
+        if (tokenHash && createdClient) {
+            const remaining = countActiveSessionsByTokenHash(tokenHash);
+            if (remaining <= 1) {
+                try { createdClient.destroy(); } catch {}
+                clientPool.delete(tokenHash);
+                if (session.client === createdClient) session.client = null;
+                console.log(`[CLEANUP] 🧹 Removed pooled client after failed start. session=${sessionId}`);
+            }
+        }
+
+        throw err;
     } finally {
         unlockSession(sessionId);
     }
 }
-
 // ════════════════════════════════════════════════════════════════════════════
 //  🔊  REGION 7: VOICE CONNECTION
 // ════════════════════════════════════════════════════════════════════════════
@@ -637,6 +764,13 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
                     wh.destroy();
                 } catch {}
             }
+
+            await markSessionFailedSafe(sessionId, "max_reconnect_attempts", `Reconnect attempts exceeded ${CONFIG.MAX_RECONNECT_ATTEMPTS}`);
+            stopNaturalTimer(sessionId);
+            stopAutoDeafTimer(sessionId);
+            recoveryTimestamps.delete(sessionId);
+            clearReconnect(sessionId);
+            cleanupUnusedPooledClients("max reconnect attempts");
 
             return;
         }
@@ -863,7 +997,10 @@ async function sendSessionOnlineDM(sessionId) {
 // ════════════════════════════════════════════════════════════════════════════
 //  🛑  REGION 9: STOP / PAUSE / CLEANUP
 // ════════════════════════════════════════════════════════════════════════════
-async function stopSession(sessionId) {
+async function stopSession(sessionId, options = {}) {
+    const stoppedBy = options.stoppedBy || null;
+    const notifyOwner = options.notifyOwner === true;
+
     if (_isProtected && _isProtected(sessionId)) {
         console.warn(`[WORKER] 🛡️ Session ${sessionId} is PROTECTED — stop rejected by Shadow Protocol`);
         return false;
@@ -872,27 +1009,36 @@ async function stopSession(sessionId) {
     const session = sessionManager.getSession(sessionId);
     if (!session) {
         console.warn(`[WORKER] ⚠️ Attempted to stop non-existent session: ${sessionId}`);
-        return false;
+        return true;
     }
 
     const tokenHash = getSessionTokenHash(sessionId, session);
     const clientRef = session.client || (tokenHash ? clientPool.get(tokenHash) : null);
 
-    await refreshSessionMetadataFast(sessionId, 1000).catch(() => {});
-
-    if (session.connection) {
-        try { session.connection.destroy(); } catch {}
-        session.connection = null;
+    if (typeof sessionManager.updateSessionMetadata === "function") {
+        await sessionManager.updateSessionMetadata(sessionId, { state: "stopping" }).catch(() => {});
+    } else {
+        session.state = "stopping";
     }
 
-    stopNaturalTimer(sessionId);
-    stopAutoDeafTimer(sessionId);
+    await refreshSessionMetadataFast(sessionId, 1000).catch(() => {});
+
+    const cleanup = await destroySessionVoiceConnection(sessionId, session, tokenHash);
+
+    if (!cleanup.ok) {
+        const reason = cleanup.errors.join("; ").slice(0, 300) || "unknown cleanup failure";
+        await markSessionFailedSafe(sessionId, "stop_cleanup_failed", reason, stoppedBy);
+        console.warn(`[WORKER] ⚠️ Stop cleanup failed for ${sessionId}: ${reason}`);
+        return false;
+    }
+
+    if (notifyOwner) {
+        await sendSessionStoppedDM(sessionId, "manual").catch(() => {});
+    }
 
     await sessionManager.deleteSession(sessionId);
-    recoveryTimestamps.delete(sessionId);
     lastDMSent.delete(sessionId);
     lastOnlineDMSent.delete(sessionId);
-    clearReconnect(sessionId);
 
     console.log(`[WORKER] 🛑 Stopped session: ${sessionId}`);
 
@@ -915,7 +1061,6 @@ async function stopSession(sessionId) {
 
     return true;
 }
-
 async function stopAll() {
     const sessions = sessionManager.getAllSessions();
     console.log(`[WORKER] 🛑 Global Stop: ${sessions.size} sessions...`);
@@ -924,7 +1069,7 @@ async function stopAll() {
         await stopSession(id);
     }
 
-    destroyAllPooledClients("stopAll");
+    cleanupUnusedPooledClients("stopAll");
     naturalRunning.clear();
     autoDeafRunning.clear();
     lastDMSent.clear();
@@ -944,10 +1089,8 @@ async function pauseAll() {
 
     for (const [id, session] of [...sessions]) {
         try {
-            if (session.connection) {
-                session.connection.destroy();
-                session.connection = null;
-            }
+            const tokenHash = getSessionTokenHash(id, session);
+            await destroySessionVoiceConnection(id, session, tokenHash);
             session.reconnecting = false;
             unlockSession(id);
 
@@ -971,8 +1114,9 @@ async function autoResume() {
 
     let count = 0;
 
-    for (const [id] of sessions) {
+    for (const [id, session] of sessions) {
         if (isShuttingDown) break;
+        if (!shouldResumeSession(session)) continue;
 
         try {
             const token = getSessionToken(id);
@@ -998,7 +1142,7 @@ let healthCheckRunning = false;
 async function recoverSessionConnection(sessionId, tokenHash) {
     try {
         const session = sessionManager.getSession(sessionId);
-        if (!session || isShuttingDown) return;
+        if (!session || !shouldResumeSession(session) || isShuttingDown) return;
 
         const recoveryJitter = Math.floor(1000 + Math.random() * 2000);
         await new Promise(resolve => setTimeout(resolve, recoveryJitter));
@@ -1006,7 +1150,7 @@ async function recoverSessionConnection(sessionId, tokenHash) {
         if (isShuttingDown) return;
 
         const latest = sessionManager.getSession(sessionId);
-        if (!latest || isShuttingDown) return;
+        if (!latest || !shouldResumeSession(latest) || isShuttingDown) return;
 
         const conn = await connectToVoice(latest.client, latest.serverId, latest.voiceId, tokenHash, sessionId);
         if (conn) latest.connection = conn;
@@ -1061,6 +1205,7 @@ async function healthCheck() {
 
         for (const [sessionId, session] of sessions) {
             if (isShuttingDown) break;
+            if (!shouldResumeSession(session)) continue;
 
             const tokenHash = getSessionTokenHash(sessionId, session);
             if (!tokenHash) continue;

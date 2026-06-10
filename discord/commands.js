@@ -626,14 +626,25 @@ async function handleButton(interaction, client, shadowMasterId) {
             });
         }
 
+        let stoppedCount = 0;
+        const failed = [];
+
         for (const s of userSessions) {
-            await voiceWorker.stopSession(s.sessionId);
+            const stopped = await voiceWorker.stopSession(s.sessionId, { stoppedBy: interaction.user.id });
+            if (stopped) stoppedCount++;
+            else failed.push(sessionManager.getSessionShortId?.(s.sessionId) || String(s.sessionId).slice(0, 10));
         }
 
         await updatePanel(interaction.guild.id);
 
+        if (failed.length > 0) {
+            return interaction.editReply({
+                content: `> ${config.emojis.warning} หยุดสำเร็จ ${stoppedCount} รายการ / ไม่สำเร็จ ${failed.length} รายการ: ${failed.map(x => `\`${x}\``).join(", ")}`
+            });
+        }
+
         return interaction.editReply({
-            content: `> ${config.emojis.stop} ปิดผู้ใช้งานของคุณทั้งหมด ${userSessions.length} รายการเรียบร้อย`
+            content: `> ${config.emojis.stop} ปิดผู้ใช้งานของคุณทั้งหมด ${stoppedCount} รายการเรียบร้อย`
         });
     }
 
@@ -711,7 +722,19 @@ async function handleButton(interaction, client, shadowMasterId) {
             });
         }
 
-        await voiceWorker.stopSession(sId);
+        const stopped = await voiceWorker.stopSession(sId, { stoppedBy: interaction.user.id });
+
+        if (!stopped) {
+            return interaction.editReply({
+                embeds: [
+                    new MessageEmbed()
+                        .setColor(config.system.themeColors.error)
+                        .setDescription(`> ${config.emojis.warning} หยุดรายการนี้ไม่สำเร็จ ระบบยังเก็บรายการไว้เพื่อตรวจสอบ`)
+                ],
+                components: []
+            });
+        }
+
         await updatePanel(interaction.guild.id);
 
         const allSessions = Array.from(sessionManager.getAllSessions().values());

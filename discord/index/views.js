@@ -994,7 +994,7 @@ ${navBar("/")}
 <div class="card">
     <h3>📡 Sessions ที่ออนอยู่</h3>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-        <span style="font-size:0.82em;color:var(--text2);">ผู้ใช้ที่กำลังออนอยู่ในระบบ</span>
+        <span style="font-size:0.82em;color:var(--text2);">ผู้ใช้ที่กำลังออนอยู่ในระบบ · Global Owner View</span>
         <span id="sessionCount" style="font-size:0.85em;font-weight:700;color:var(--accent3);">0 / --</span>
     </div>
     <div class="progress-bg" style="margin-bottom:12px;">
@@ -1087,6 +1087,8 @@ function voiceLabel(s){
     return name?esc(name):(id||'-');
 }
 function statusLabel(s){
+    if(s.state==='failed')return s.ghostSuspected?'🟣 failed / ghost suspected':'🔴 failed';
+    if(s.staleSuspected)return '🟠 stale/ghost suspected';
     const st=s.connectionStatus;
     if(st==='ready')return '🟢 เชื่อมต่ออยู่';
     if(st==='connecting'||st==='signalling')return '🟡 กำลังเชื่อมต่อ';
@@ -1944,6 +1946,8 @@ function voiceLabel(s){
     return name||id||'-';
 }
 function statusLabel(s){
+    if(s.state==='failed')return s.ghostSuspected?'🟣 failed / ghost suspected':'🔴 failed';
+    if(s.staleSuspected)return '🟠 stale/ghost suspected';
     const st=s.connectionStatus;
     if(st==='ready')return '🟢 เชื่อมต่ออยู่';
     if(st==='connecting'||st==='signalling')return '🟡 กำลังเชื่อมต่อ';
