@@ -17,17 +17,57 @@ const { MessageEmbed } = require("discord.js");
 //  🗺️  REGION 1: HELPERS — Cache, Queue, Embed Builder
 // ════════════════════════════════════════════════════════════════════════════
 
+/**
+ * Minimal LRU cache backed by a Map.
+ * Map preserves insertion order; promoting an entry on access (delete + re-insert)
+ * keeps the least-recently-used entry at the front for O(1) eviction.
+ */
+class LruCache {
+    constructor(maxSize) {
+        this.maxSize = maxSize;
+        this._map = new Map();
+    }
+
+    get size() { return this._map.size; }
+
+    get(key) {
+        if (!this._map.has(key)) return undefined;
+        // Promote to most-recently-used position
+        const value = this._map.get(key);
+        this._map.delete(key);
+        this._map.set(key, value);
+        return value;
+    }
+
+    set(key, value) {
+        if (this._map.has(key)) this._map.delete(key); // promote
+        this._map.set(key, value);
+        if (this._map.size > this.maxSize) {
+            // Evict least-recently-used (first entry)
+            this._map.delete(this._map.keys().next().value);
+        }
+    }
+
+    has(key) { return this._map.has(key); }
+
+    delete(key) { return this._map.delete(key); }
+
+    entries() { return this._map.entries(); }
+
+    keys() { return this._map.keys(); }
+}
+
 // Channel cache (5 min TTL)
 const auditChannelCache = new Map(); // guildId → { map, expiry }
 
-// Member state cache for before/after tracking
-const memberStateCache = new Map(); // `${guildId}_${userId}` → { nickname, avatarHash }
+// Member state cache for before/after tracking (LRU-evicted, TTL-cleaned)
+const MEMBER_STATE_CACHE_MAX = 2000;
+const MEMBER_STATE_TTL_MS = 60 * 60 * 1000;
+const memberStateCache = new LruCache(MEMBER_STATE_CACHE_MAX); // `${guildId}_${userId}` → { nickname, avatarHash, updatedAt }
 
 // Rate-limit queue per guild (prevents Discord 429 on bulk events)
 const sendQueues = new Map(); // guildId → Promise
 const registeredClients = new WeakSet(); // prevent duplicate listener registration after reconnect-ready events
-const MEMBER_STATE_CACHE_MAX = 2000;
-const MEMBER_STATE_TTL_MS = 60 * 60 * 1000;
 let auditCleanupTimer = null;
 
 // ── Channel lookup ──
@@ -95,24 +135,20 @@ function buildEmbed({ color, title, user, description, fields = [], footer, noTh
 // ── Member state cache helpers ──
 function cacheMember(member) {
     const key = `${member.guild.id}_${member.id}`;
-
     memberStateCache.set(key, {
         nickname:   member.nickname,
         avatarHash: member.avatar,
         updatedAt:  Date.now()
     });
-
-    if (memberStateCache.size > MEMBER_STATE_CACHE_MAX) {
-        const oldestKey = memberStateCache.keys().next().value;
-        if (oldestKey) memberStateCache.delete(oldestKey);
-    }
+    // LruCache.set automatically evicts the LRU entry when size exceeds MEMBER_STATE_CACHE_MAX
 }
 function getCachedMember(guildId, userId) {
-    return memberStateCache.get(`${guildId}_${userId}`) || null;
+    // LruCache.get promotes the entry to most-recently-used position
+    return memberStateCache.get(`${guildId}_${userId}`) ?? null;
 }
 
 
-function cleanupAuditCaches() {
+
     const now = Date.now();
 
     for (const [key, value] of memberStateCache.entries()) {
