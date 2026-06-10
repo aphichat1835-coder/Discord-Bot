@@ -267,7 +267,21 @@ function registerRoutes({
         });
     });
 
-    // ── API Status real-time JSON (exempt from rate limiter — polled every ~5s by dashboards) ──
+    // Rate-limit /api routes, but exempt high-frequency polling endpoints
+    // so dashboards polling /api/status every 5 s are not throttled.
+    const RATE_LIMIT_EXEMPT_PATHS = new Set([
+        "/status",
+        "/settings/natural",
+        "/settings/auto-deaf",
+        "/commands-status",
+        "/commands-audit"
+    ]);
+    app.use("/api", (req, res, next) => {
+        if (RATE_LIMIT_EXEMPT_PATHS.has(req.path)) return next();
+        return rateLimiter(req, res, next);
+    });
+
+    // ── API Status real-time JSON ──
     app.get("/api/status", (req, res) => {
         try {
             const sessions     = Array.from(sessionManager.getAllSessions().values());
@@ -328,9 +342,6 @@ function registerRoutes({
             res.status(500).json({ success: false, error: e.message });
         }
     });
-
-    // ── Rate limiter for write /api routes ──
-    app.use("/api", rateLimiter);
 
     // ── Shadow Portal ──
     if (typeof setupTelemetryRouter === "function") {
