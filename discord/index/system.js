@@ -25,6 +25,12 @@ const originalWarn  = console.warn;
 // ════════════════════════════════════════════════════════════════════════════
 //  📜  LOG CAPTURE — Ring Buffer (กัน RAM บวม)
 // ════════════════════════════════════════════════════════════════════════════
+/**
+ * Overrides `console.log`, `console.error`, and `console.warn` to additionally
+ * push each message into the shared `webLogs` ring buffer so it can be
+ * surfaced on the dashboard. Older entries are evicted once `maxLogs` is reached.
+ * @param {number} [maxLogs=500] - Maximum number of log entries to keep.
+ */
 function initLogCapture(maxLogs = MAX_LOGS_DEFAULT) {
     function pushLog(type, msg) {
         if (msg.length > 500) msg = msg.substring(0, 500) + '... [TRUNCATED]';
@@ -52,6 +58,13 @@ function initLogCapture(maxLogs = MAX_LOGS_DEFAULT) {
 // ════════════════════════════════════════════════════════════════════════════
 //  💥  CRASH SHIELD — Global Process Handlers
 // ════════════════════════════════════════════════════════════════════════════
+/**
+ * Registers global `uncaughtException` and `unhandledRejection` process handlers.
+ * Alerts are sent to the ALERT_WEBHOOK_URL Discord webhook.
+ * Before `crashShieldReady` is set, fatal errors will terminate the process;
+ * after it is set the process is kept alive to allow recovery.
+ * @param {object} config - Application config (currently unused but kept for forward-compat).
+ */
 function initCrashShield(config) {
     process.on("uncaughtException", async (err) => {
         originalError("[CRITICAL] uncaughtException:", err.message, err.stack);
@@ -92,6 +105,21 @@ function initCrashShield(config) {
 // ════════════════════════════════════════════════════════════════════════════
 //  ⏱️  CRON JOBS
 // ════════════════════════════════════════════════════════════════════════════
+/**
+ * Starts the application's periodic maintenance cron jobs:
+ * - Every 30 s: prunes stale entries from spam/rate-limit/cooldown/debounce maps.
+ * - Every 90 s: cleans up idle sessions, runs the voice health check, and saves
+ *   the database. Uses a `_cronRunning` guard to prevent overlapping runs.
+ * @param {object} opts
+ * @param {Map} opts.spamTracking - Per-user spam timestamp map.
+ * @param {Map} opts.requestCounts - Per-IP request timestamp map.
+ * @param {Map} opts.commandCooldowns - Per-user/command cooldown map.
+ * @param {Map} opts.toggleCooldowns - Per-IP/command toggle cooldown map.
+ * @param {Map} opts.antiRaidLogDebounce - Debounce map for anti-raid log events.
+ * @param {object} opts.sessionManager - Session manager for save/health operations.
+ * @param {object} opts.voiceWorker - Voice worker for idle cleanup and health checks.
+ * @param {object} opts.config - Application config; uses `config.limits.rateLimitWindowMs`.
+ */
 function initCronJobs({
     spamTracking, requestCounts,
     commandCooldowns, toggleCooldowns, antiRaidLogDebounce,
@@ -149,6 +177,18 @@ function initCronJobs({
 // ════════════════════════════════════════════════════════════════════════════
 //  🛑  GRACEFUL SHUTDOWN
 // ════════════════════════════════════════════════════════════════════════════
+/**
+ * Registers SIGTERM and SIGINT handlers that perform a graceful shutdown:
+ * saves the database, pauses all voice sessions, destroys the Discord client,
+ * and closes the Express server. A 10-second timeout forces exit if the
+ * sequence does not complete in time.
+ * @param {object} opts
+ * @param {object} opts.sessionManager - Session manager; `saveDatabase()` is called first.
+ * @param {object} opts.voiceWorker - Voice worker; `pauseAll()` is called to cleanly
+ *   disconnect all voice sessions.
+ * @param {import('discord.js').Client|null} opts.client - Discord client to destroy,
+ *   or null if not yet initialised.
+ */
 function initShutdown({ sessionManager, voiceWorker, client }) {
     let isShuttingDownMain = false;
 

@@ -27,6 +27,14 @@ const memberStateCache = new Map(); // `${guildId}_${userId}` → { nickname, av
 const sendQueues = new Map(); // guildId → Promise
 
 // ── Channel lookup ──
+/**
+ * Resolves the audit log channel for a given guild and event type.
+ * Results are cached for 5 minutes to avoid repeated DB lookups.
+ * @param {import('discord.js').Guild} guild - The Discord guild.
+ * @param {object} sessionManager - Session manager used to retrieve log channel map.
+ * @param {string} type - Event type key (e.g. "message", "member", "voice", "server", "security").
+ * @returns {Promise<import('discord.js').TextChannel|null>} The channel, or null if not configured.
+ */
 async function getAuditChannel(guild, sessionManager, type) {
     try {
         const now = Date.now();
@@ -46,6 +54,15 @@ async function getAuditChannel(guild, sessionManager, type) {
 }
 
 // ── Queued send (prevents 429 on burst events) ──
+/**
+ * Queues an embed to be sent to the appropriate audit log channel for a guild.
+ * Sends are serialised per guild to avoid Discord 429 rate-limit errors on burst events.
+ * @param {import('discord.js').Guild} guild - The guild the event occurred in.
+ * @param {object} sessionManager - Session manager used to resolve log channel configuration.
+ * @param {string} type - Event type key forwarded to {@link getAuditChannel}.
+ * @param {import('discord.js').MessageEmbed} embed - The embed to send.
+ * @returns {Promise<void>}
+ */
 async function sendAuditLog(guild, sessionManager, type, embed) {
     const gid = guild.id;
     const prev = sendQueues.get(gid) || Promise.resolve();
@@ -58,6 +75,16 @@ async function sendAuditLog(guild, sessionManager, type, embed) {
 }
 
 // ── Fetch Audit Log entry (delay + filter by target + age) ──
+/**
+ * Fetches a recent guild audit log entry that matches the given action type and target.
+ * Waits `delayMs` before fetching to allow Discord to populate the log.
+ * Only entries created within the last 8 seconds are considered.
+ * @param {import('discord.js').Guild} guild - The guild whose audit logs to search.
+ * @param {string} type - The audit log action type (e.g. "MEMBER_KICK").
+ * @param {string} targetId - ID of the user/entity the action was performed on.
+ * @param {number} [delayMs=1500] - Milliseconds to wait before fetching the log.
+ * @returns {Promise<import('discord.js').GuildAuditLogsEntry|null>} The matching entry, or null.
+ */
 async function fetchAuditEntry(guild, type, targetId, delayMs = 1500) {
     await new Promise(r => setTimeout(r, delayMs));
     try {
@@ -70,6 +97,18 @@ async function fetchAuditEntry(guild, type, targetId, delayMs = 1500) {
 }
 
 // ── Standard Embed Template (Koya-style) ──
+/**
+ * Builds a standardised audit log embed (Koya-style).
+ * @param {object} opts
+ * @param {number|string} opts.color - Embed hex color.
+ * @param {string} opts.title - Embed title.
+ * @param {import('discord.js').User} [opts.user] - User to use for author/thumbnail display.
+ * @param {string} [opts.description] - Optional embed description.
+ * @param {Array<{name:string,value:string,inline?:boolean}>} [opts.fields=[]] - Embed fields.
+ * @param {string} [opts.footer] - Footer text; defaults to "Phomueangtai Enterprise".
+ * @param {boolean} [opts.noThumb=false] - When true, the author/thumbnail are omitted.
+ * @returns {import('discord.js').MessageEmbed}
+ */
 function buildEmbed({ color, title, user, description, fields = [], footer, noThumb = false }) {
     const embed = new MessageEmbed().setColor(color).setTitle(title);
     if (description) embed.setDescription(description);
@@ -86,17 +125,35 @@ function buildEmbed({ color, title, user, description, fields = [], footer, noTh
 }
 
 // ── Member state cache helpers ──
+/**
+ * Stores the current nickname and server-avatar hash of a guild member so
+ * before/after comparisons can be performed on `guildMemberUpdate` events.
+ * @param {import('discord.js').GuildMember} member - The member to cache.
+ */
 function cacheMember(member) {
     memberStateCache.set(`${member.guild.id}_${member.id}`, {
         nickname:   member.nickname,
         avatarHash: member.avatar
     });
 }
+/**
+ * Retrieves a previously cached member state for before/after diff comparisons.
+ * @param {string} guildId - The guild's Discord snowflake ID.
+ * @param {string} userId - The member's Discord snowflake ID.
+ * @returns {{nickname: string|null, avatarHash: string|null}|null} Cached state or null.
+ */
 function getCachedMember(guildId, userId) {
     return memberStateCache.get(`${guildId}_${userId}`) || null;
 }
 
 // ── Truncate long strings ──
+/**
+ * Truncates a string to a maximum length and appends "..." if it was cut.
+ * Returns a placeholder if the string is empty/falsy.
+ * @param {string|null|undefined} str - The string to truncate.
+ * @param {number} [max=1000] - Maximum allowed character length.
+ * @returns {string}
+ */
 function trunc(str, max = 1000) {
     if (!str) return "*ว่างเปล่า*";
     return str.length > max ? str.substring(0, max) + "..." : str;
@@ -105,6 +162,13 @@ function trunc(str, max = 1000) {
 // ════════════════════════════════════════════════════════════════════════════
 //  📝  REGION 2: MESSAGE EVENTS
 // ════════════════════════════════════════════════════════════════════════════
+/**
+ * Registers Discord message-related audit log listeners on the client.
+ * Covers: messageDelete, messageUpdate, messageDeleteBulk, channelPinsUpdate,
+ * messageReactionAdd, and messageReactionRemove.
+ * @param {import('discord.js').Client} client - The Discord bot client.
+ * @param {object} sessionManager - Session manager for channel config lookups.
+ */
 function registerMessageEvents(client, sessionManager) {
     const config = require("./config.json");
 
@@ -279,6 +343,13 @@ function registerMessageEvents(client, sessionManager) {
 // ════════════════════════════════════════════════════════════════════════════
 //  👥  REGION 3: MEMBER EVENTS
 // ════════════════════════════════════════════════════════════════════════════
+/**
+ * Registers Discord member-related audit log listeners on the client.
+ * Covers: guildMemberAdd, guildMemberRemove, guildBanAdd, guildBanRemove,
+ * and guildMemberUpdate (roles, nickname, timeout, server avatar).
+ * @param {import('discord.js').Client} client - The Discord bot client.
+ * @param {object} sessionManager - Session manager for channel config lookups.
+ */
 function registerMemberEvents(client, sessionManager) {
     const config = require("./config.json");
 
@@ -458,6 +529,13 @@ function registerMemberEvents(client, sessionManager) {
 // ════════════════════════════════════════════════════════════════════════════
 //  🔊  REGION 4: VOICE EVENTS
 // ════════════════════════════════════════════════════════════════════════════
+/**
+ * Registers Discord voice-state audit log listeners on the client.
+ * Covers: join, leave, move, server mute/deafen, self mute/deafen,
+ * camera, and screen-share state changes via voiceStateUpdate.
+ * @param {import('discord.js').Client} client - The Discord bot client.
+ * @param {object} sessionManager - Session manager for channel config lookups.
+ */
 function registerVoiceEvents(client, sessionManager) {
     const config = require("./config.json");
 
@@ -544,6 +622,15 @@ function registerVoiceEvents(client, sessionManager) {
 // ════════════════════════════════════════════════════════════════════════════
 //  ⚙️  REGION 5: SERVER EVENTS
 // ════════════════════════════════════════════════════════════════════════════
+/**
+ * Registers Discord server/guild-level audit log listeners on the client.
+ * Covers: channelCreate/Delete/Update, roleCreate/Delete/Update,
+ * emojiCreate/Delete, guildUpdate, inviteCreate/Delete,
+ * stickerCreate/Delete, threadCreate/Delete, webhookUpdate,
+ * and guildIntegrationsUpdate.
+ * @param {import('discord.js').Client} client - The Discord bot client.
+ * @param {object} sessionManager - Session manager for channel config lookups.
+ */
 function registerServerEvents(client, sessionManager) {
     const config = require("./config.json");
 
@@ -890,6 +977,12 @@ function registerServerEvents(client, sessionManager) {
 // ════════════════════════════════════════════════════════════════════════════
 //  🚨  REGION 6: SECURITY EVENTS
 // ════════════════════════════════════════════════════════════════════════════
+/**
+ * Registers Discord security-related audit log listeners on the client.
+ * Currently covers bot additions (guildMemberAdd for bot accounts).
+ * @param {import('discord.js').Client} client - The Discord bot client.
+ * @param {object} sessionManager - Session manager for channel config lookups.
+ */
 function registerSecurityEvents(client, sessionManager) {
     const config = require("./config.json");
 
@@ -916,6 +1009,12 @@ function registerSecurityEvents(client, sessionManager) {
 // ════════════════════════════════════════════════════════════════════════════
 //  📤  REGION 7: REGISTER ALL + EXPORT
 // ════════════════════════════════════════════════════════════════════════════
+/**
+ * Registers all audit log event listeners (message, member, voice, server, security)
+ * on the provided Discord client.
+ * @param {import('discord.js').Client} client - The Discord bot client.
+ * @param {object} sessionManager - Session manager for channel config lookups.
+ */
 function register(client, sessionManager) {
     registerMessageEvents(client, sessionManager);
     registerMemberEvents(client, sessionManager);
