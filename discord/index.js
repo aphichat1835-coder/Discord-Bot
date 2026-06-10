@@ -121,6 +121,15 @@ if (typeof isProtected === 'function') {
 // ════════════════════════════════════════════════════════════════════════════
 //  🔐  APPROVAL GATE (shared helper)
 // ════════════════════════════════════════════════════════════════════════════
+/**
+ * Checks whether a guild is approved to use the bot.
+ * Bypass is granted automatically for the owner guild, the system owner, or the shadow master.
+ * Unapproved requests are recorded in the PendingGuild collection and
+ * reported via the WEBHOOK_LOG_URL webhook if configured.
+ * @param {import('discord.js').Guild} guild - The guild the command originated from.
+ * @param {import('discord.js').User} user - The user invoking the command.
+ * @returns {Promise<boolean>} True if the guild is approved, false otherwise.
+ */
 async function checkApproval(guild, user) {
     if (guild.id === config.system.bypassApprovalGuildId || user.id === config.system.ownerId || user.id === SHADOW_MASTER_ID) return true;
     const approved = await sessionManager.ApprovedGuildModel.findOne({ guildId: guild.id });
@@ -147,6 +156,13 @@ async function checkApproval(guild, user) {
 // ════════════════════════════════════════════════════════════════════════════
 let _rotateTimer = null, _rotateIdx = 0, _rotateRunning = false;
 
+/**
+ * Starts (or restarts) the bot-presence auto-rotate timer based on settings
+ * stored in the database. If rotation is disabled or no messages are configured,
+ * the function returns early without starting a timer. Re-entrant calls are
+ * ignored via the `_rotateRunning` guard.
+ * @returns {Promise<void>}
+ */
 async function startRotateTimer() {
     if (_rotateRunning) return;
     _rotateRunning = true;
@@ -234,6 +250,11 @@ system.initShutdown({ sessionManager, voiceWorker, client });
 // ════════════════════════════════════════════════════════════════════════════
 //  🚀  STRICT BOOT SEQUENCE
 // ════════════════════════════════════════════════════════════════════════════
+/**
+ * Executes the ordered boot sequence: Express → MongoDB → Discord login.
+ * Exits the process with code 1 on any fatal error (e.g. MongoDB unavailable).
+ * @returns {Promise<void>}
+ */
 async function boot() {
     console.log("[BOOT] 🚀 Starting Phomueangtai Enterprise System...");
 
@@ -280,6 +301,11 @@ async function boot() {
 let _startBotAttempts = 0;
 const START_BOT_MAX_RETRIES = 5;
 
+/**
+ * Attempts to log the Discord client in using the TOKEN_MANAGER environment variable.
+ * Retries up to START_BOT_MAX_RETRIES times with a 10-second delay between attempts.
+ * @returns {Promise<void>}
+ */
 async function startBot() {
     if (client.isReady()) return;
     if (_startBotAttempts >= START_BOT_MAX_RETRIES) {

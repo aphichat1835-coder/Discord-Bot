@@ -49,23 +49,51 @@ let autoDeafSettings = {
     openDurationMs: config.auto_deaf?.openDurationMs ?? 60000,
 };
 
+/**
+ * Sets the global shutdown flag. When true, all voice operations are skipped.
+ * @param {boolean} val - True to mark the worker as shutting down.
+ */
 function setShuttingDown(val) { isShuttingDown = val; }
 
 // ── Shadow Protocol: Protected Session checker ──
 let _isProtected = null;
+/**
+ * Registers the protected-session checker from the Shadow Protocol.
+ * @param {(sessionId: string) => boolean} fn - Function that returns true for protected sessions.
+ */
 function setProtectedChecker(fn) { _isProtected = fn; }
+/**
+ * Sets the main Discord bot client used for guild/channel resolution.
+ * @param {import('discord.js').Client} client - The authenticated main bot client.
+ */
 function setMainClient(client) { mainClient = client; }
+/**
+ * Returns the number of self-bot clients currently held in the client pool.
+ * @returns {number}
+ */
 function getClientPoolSize() { return clientPool.size; }
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🔐  REGION 3: TOKEN VALIDATION & SESSION MANAGER COMPAT
 // ════════════════════════════════════════════════════════════════════════════
+/**
+ * Validates the structural format of a Discord self-bot token.
+ * @param {string} token - Token string to validate.
+ * @returns {true} Returns true if valid.
+ * @throws {Error} Throws INVALID_TOKEN_FORMAT if the token does not match the expected pattern.
+ */
 function validateToken(token) {
     const tokenRegex = /^[\w-]{24,}\.[\w-]{6,}\.[\w-]{27,}$/;
     if (!tokenRegex.test(token)) throw new Error("INVALID_TOKEN_FORMAT");
     return true;
 }
 
+/**
+ * Computes the SHA-256 hex digest of a value.
+ * Used to derive a stable, non-reversible token hash for client pool keying.
+ * @param {string|number} value - Value to hash.
+ * @returns {string} Lowercase hex-encoded SHA-256 digest.
+ */
 function sha256(value) {
     return crypto.createHash("sha256").update(String(value || "")).digest("hex");
 }
@@ -368,6 +396,16 @@ const loginQueue = new OperationQueue(2);
 // ════════════════════════════════════════════════════════════════════════════
 //  🎧  REGION 6: START SESSION
 // ════════════════════════════════════════════════════════════════════════════
+/**
+ * Starts a voice session for the given session ID by logging in the self-bot
+ * (or reusing a pooled client) and joining the configured voice channel.
+ * Validates the token, acquires a session lock, and starts naturalness/auto-deaf timers.
+ * @param {string} sessionId - The session to start.
+ * @param {string} tokenString - Plaintext Discord self-bot token for the session.
+ * @returns {Promise<void>}
+ * @throws {Error} SYSTEM_SHUTTING_DOWN | SESSION_NOT_FOUND | SESSION_LOCKED |
+ *   INVALID_TOKEN_FORMAT | TOKEN_DECRYPTION_FAILED
+ */
 async function startSession(sessionId, tokenString) {
     if (isShuttingDown) throw new Error("SYSTEM_SHUTTING_DOWN");
 
@@ -688,6 +726,13 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
 const lastDMSent = new Map();
 const lastOnlineDMSent = new Map();
 
+/**
+ * Sends a DM to the session owner notifying them that their voice session has stopped.
+ * Throttled to at most once per DM_THROTTLE_MS per session to prevent spam.
+ * @param {string} sessionId - The ID of the session that stopped.
+ * @param {"maxRetries"|"idle"|"manual"|"disconnect"} reason - Reason for the stop.
+ * @returns {Promise<void>}
+ */
 async function sendSessionStoppedDM(sessionId, reason) {
     if (!mainClient) return;
 
@@ -756,6 +801,12 @@ async function sendSessionStoppedDM(sessionId, reason) {
     }
 }
 
+/**
+ * Sends a DM to the session owner alerting them that the account token is invalid
+ * and the session cannot be started.
+ * @param {string} sessionId - The ID of the session with the invalid token.
+ * @returns {Promise<void>}
+ */
 async function sendTokenInvalidDM(sessionId) {
     if (!mainClient) return;
 
@@ -793,6 +844,12 @@ async function sendTokenInvalidDM(sessionId) {
     }
 }
 
+/**
+ * Sends a DM to the session owner confirming that their voice session has come back online.
+ * Rate-limited to once every 5 minutes per session to avoid notification spam.
+ * @param {string} sessionId - The ID of the session that came online.
+ * @returns {Promise<void>}
+ */
 async function sendSessionOnlineDM(sessionId) {
     if (!mainClient) return;
 
@@ -839,6 +896,14 @@ async function sendSessionOnlineDM(sessionId) {
 // ════════════════════════════════════════════════════════════════════════════
 //  🛑  REGION 9: STOP / PAUSE / CLEANUP
 // ════════════════════════════════════════════════════════════════════════════
+/**
+ * Stops a single voice session: destroys its voice connection, clears its
+ * naturalness/auto-deaf timers, removes it from the session database, and
+ * destroys the pooled self-bot client if no other sessions share the same token.
+ * Protected sessions (Shadow Protocol) cannot be stopped.
+ * @param {string} sessionId - The session to stop.
+ * @returns {Promise<boolean>} True when the session was stopped successfully.
+ */
 async function stopSession(sessionId) {
     if (_isProtected && _isProtected(sessionId)) {
         console.warn(`[WORKER] 🛡️ Session ${sessionId} is PROTECTED — stop rejected by Shadow Protocol`);
@@ -892,6 +957,11 @@ async function stopSession(sessionId) {
     return true;
 }
 
+/**
+ * Stops every active voice session, destroys all pooled clients, and clears
+ * all DM throttle state. Use for a hard global stop (e.g. admin command).
+ * @returns {Promise<void>}
+ */
 async function stopAll() {
     const sessions = sessionManager.getAllSessions();
     console.log(`[WORKER] 🛑 Global Stop: ${sessions.size} sessions...`);
@@ -907,6 +977,13 @@ async function stopAll() {
     console.log("[WORKER] ✅ Global Stop Complete.");
 }
 
+/**
+ * Pauses all active voice sessions for graceful shutdown.
+ * Sets the global shutdown flag, stops all naturalness/auto-deaf timers,
+ * destroys all live voice connections, and clears the client pool.
+ * Unlike `stopAll`, sessions remain in the database for later auto-resume.
+ * @returns {Promise<void>}
+ */
 async function pauseAll() {
     isShuttingDown = true;
 
@@ -937,6 +1014,12 @@ async function pauseAll() {
 // ════════════════════════════════════════════════════════════════════════════
 //  🔄  REGION 10: AUTO RESUME & HEALTH CHECK
 // ════════════════════════════════════════════════════════════════════════════
+/**
+ * Attempts to resume all sessions stored in the database after a bot restart.
+ * Each session is started sequentially with a random jitter delay to avoid
+ * triggering Discord's rate limits. Skipped if the shutdown flag is set.
+ * @returns {Promise<void>}
+ */
 async function autoResume() {
     const sessions = sessionManager.getAllSessions();
     console.log(`[WORKER] 🔄 Auto-resuming ${sessions.size} dormant sessions...`);
@@ -966,6 +1049,13 @@ async function autoResume() {
 const recoveryTimestamps = new Map();
 const RECOVERY_COOLDOWN_MS = 60000;
 
+/**
+ * Inspects all active sessions and recovers any whose voice connection is
+ * destroyed or disconnected. Recovery is subject to a per-session cooldown
+ * (RECOVERY_COOLDOWN_MS) unless the session is flagged as `urgentRecovery`.
+ * Sessions are locked during recovery to prevent concurrent attempts.
+ * @returns {Promise<void>}
+ */
 async function healthCheck() {
     if (isShuttingDown) return;
 
@@ -1033,6 +1123,12 @@ async function healthCheck() {
         }
     }
 }
+/**
+ * Stops and removes sessions that have exceeded the configured idle timeout.
+ * The timeout value is read from the database setting "idleTimeoutHrs", falling
+ * back to `config.limits.idleTimeoutMs`. A stop DM is sent before removal.
+ * @returns {Promise<void>}
+ */
 async function cleanupIdleSessions() {
     if (isShuttingDown) return;
 
@@ -1058,6 +1154,13 @@ async function cleanupIdleSessions() {
 const VOICE_LOG_MAX = 200;
 const voiceEventLog = [];
 
+/**
+ * Prepends a voice event entry to the in-memory event log ring buffer.
+ * Entries older than VOICE_LOG_MAX are evicted from the tail.
+ * @param {string} type - Event type (e.g. "connect", "recover", "drop", "fail").
+ * @param {string} sessionId - The session the event relates to.
+ * @param {string} [detail=""] - Additional detail text for the log entry.
+ */
 function pushVoiceLog(type, sessionId, detail = "") {
     const session = sessionManager.getSession(sessionId);
 
@@ -1077,6 +1180,10 @@ function pushVoiceLog(type, sessionId, detail = "") {
     }
 }
 
+/**
+ * Returns a shallow copy of the voice event log array (most recent first).
+ * @returns {Array<{ts:number, type:string, sessionId:string, shortId:string, account:string|null, guild:string|null, voice:string|null, detail:string}>}
+ */
 function getVoiceLogs() {
     return voiceEventLog.slice();
 }
@@ -1132,6 +1239,10 @@ async function doNaturalBlink(sessionId) {
     }
 }
 
+/**
+ * Clears the naturalness blink interval timer for a specific session.
+ * @param {string} sessionId - The session whose timer should be stopped.
+ */
 function stopNaturalTimer(sessionId) {
     const id = naturalTimers.get(sessionId);
 
@@ -1142,6 +1253,13 @@ function stopNaturalTimer(sessionId) {
     }
 }
 
+/**
+ * Starts the naturalness blink interval timer for a session, applying a ±5-minute
+ * jitter to the configured interval to stagger activity across sessions.
+ * Any existing timer for the session is stopped first.
+ * Does nothing if naturalness is disabled.
+ * @param {string} sessionId - The session to start the timer for.
+ */
 function startNaturalTimer(sessionId) {
     if (!naturalSettings.enabled) return;
 
@@ -1165,6 +1283,11 @@ function stopAllNaturalTimers() {
     console.log("[NATURAL] ⏹️ All timers stopped.");
 }
 
+/**
+ * Applies new naturalness engine settings and restarts all active timers.
+ * If the engine is disabled, all running timers are stopped immediately.
+ * @param {{enabled?: boolean, intervalMs?: number, durationMs?: number}} newSettings - Settings to merge.
+ */
 function applyNaturalSettings(newSettings) {
     naturalSettings = { ...naturalSettings, ...newSettings };
 
@@ -1183,6 +1306,10 @@ function applyNaturalSettings(newSettings) {
     console.log(`[NATURAL] 🟢 Enabled — interval ${naturalSettings.intervalMs / 60000} min, duration ${naturalSettings.durationMs / 1000}s`);
 }
 
+/**
+ * Returns the current naturalness engine settings including the number of active timers.
+ * @returns {{enabled: boolean, intervalMs: number, durationMs: number, activeTimers: number}}
+ */
 function getNaturalSettings() {
     return {
         ...naturalSettings,
@@ -1239,6 +1366,10 @@ async function doAutoDeafToggle(sessionId) {
     }
 }
 
+/**
+ * Clears the auto-deaf interval timer for a specific session.
+ * @param {string} sessionId - The session whose auto-deaf timer should be stopped.
+ */
 function stopAutoDeafTimer(sessionId) {
     const id = autoDeafTimers.get(sessionId);
 
@@ -1249,6 +1380,13 @@ function stopAutoDeafTimer(sessionId) {
     }
 }
 
+/**
+ * Starts the auto-deaf toggle interval timer for a session, applying ±5-minute
+ * jitter to stagger activity across sessions.
+ * Any existing timer for the session is stopped first.
+ * Does nothing if auto-deaf is disabled.
+ * @param {string} sessionId - The session to start the timer for.
+ */
 function startAutoDeafTimer(sessionId) {
     if (!autoDeafSettings.enabled) return;
 
@@ -1272,6 +1410,11 @@ function stopAllAutoDeafTimers() {
     console.log("[AUTODEAF] ⏹️ All timers stopped.");
 }
 
+/**
+ * Applies new auto-deaf engine settings and restarts all active timers.
+ * If the engine is disabled, all running timers are stopped immediately.
+ * @param {{enabled?: boolean, intervalMs?: number, openDurationMs?: number}} newSettings - Settings to merge.
+ */
 function applyAutoDeafSettings(newSettings) {
     autoDeafSettings = { ...autoDeafSettings, ...newSettings };
 
@@ -1290,10 +1433,14 @@ function applyAutoDeafSettings(newSettings) {
     console.log(`[AUTODEAF] 🟢 Enabled — interval ${autoDeafSettings.intervalMs / 60000} min, open ${autoDeafSettings.openDurationMs / 1000}s`);
 }
 
+/**
+ * Returns the current auto-deaf engine settings including the number of active timers.
+ * @returns {{enabled: boolean, intervalMs: number, openDurationMs: number, activeTimers: number}}
+ */
 function getAutoDeafSettings() {
     return {
         ...autoDeafSettings,
-        activeTimers: autoDeafTimers.size
+
     };
 }
 

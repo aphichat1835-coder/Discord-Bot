@@ -18,6 +18,14 @@ const REVEAL_LOCKOUT = 15 * 60 * 1000;
 // ════════════════════════════════════════════════════════════════════════════
 //  🚦  RATE LIMITER MIDDLEWARE
 // ════════════════════════════════════════════════════════════════════════════
+/**
+ * Creates an IP-based sliding-window rate limiter Express middleware.
+ * Intrusion attempts are logged and reported via {@link logIntrusion}.
+ * @param {Map<string, number[]>} requestCounts - Shared map of IP → request timestamps.
+ * @param {object} config - Application config; uses `config.limits.rateLimitWindowMs` and
+ *   `config.limits.rateLimitRequests`.
+ * @returns {import('express').RequestHandler} Express middleware that enforces the rate limit.
+ */
 function createRateLimiter(requestCounts, config) {
     return function rateLimitMiddleware(req, res, next) {
         const ip = req.ip;
@@ -41,6 +49,13 @@ function createRateLimiter(requestCounts, config) {
 // ════════════════════════════════════════════════════════════════════════════
 //  🔐  AUTH HELPERS
 // ════════════════════════════════════════════════════════════════════════════
+/**
+ * Creates an API secret authentication helper.
+ * Uses timing-safe comparison to prevent timing attacks.
+ * @param {string} API_SECRET - The expected API secret value.
+ * @returns {(req: import('express').Request, res: import('express').Response) => boolean}
+ *   Middleware-style function that returns true if auth passes, or sends 401 and returns false.
+ */
 function makeCheckAuth(API_SECRET) {
     return function checkAuth(req, res) {
         const authHeader = req.headers.authorization || "";
@@ -63,6 +78,12 @@ function makeCheckAuth(API_SECRET) {
     };
 }
 
+/**
+ * Logs an unauthorized access attempt and optionally sends an alert to the
+ * ALERT_WEBHOOK_URL Discord webhook.
+ * @param {string} ip - The remote IP address that triggered the intrusion.
+ * @param {string} path - The request path that was accessed.
+ */
 function logIntrusion(ip, path) {
     console.error(`[SECURITY] 🚨 Unauthorized access on ${path} from IP: ${ip}`);
 
@@ -76,6 +97,13 @@ function logIntrusion(ip, path) {
     }
 }
 
+/**
+ * Creates a PIN verification helper for the token-reveal endpoint.
+ * Enforces a per-IP lockout after REVEAL_MAX failed attempts.
+ * @param {() => string|null} getWebPin - Function that returns the current web PIN.
+ * @returns {(req: import('express').Request, res: import('express').Response) => true|null}
+ *   Returns true if the PIN is correct, or sends an error response and returns null.
+ */
 function makeCheckRevealPin(getWebPin) {
     return function checkRevealPin(req, res) {
         const ip  = req.ip;
@@ -113,10 +141,22 @@ function makeCheckRevealPin(getWebPin) {
 // ════════════════════════════════════════════════════════════════════════════
 //  🧩  SAFE VOICE SESSION SERIALIZERS
 // ════════════════════════════════════════════════════════════════════════════
+/**
+ * Returns a short, safe display ID for a session by stripping the "vc_" prefix
+ * and taking the first 10 characters.
+ * @param {string} sessionId - The full session ID.
+ * @returns {string} Truncated session ID safe for display.
+ */
 function getSafeSessionShortId(sessionId) {
     return String(sessionId || "").replace(/^vc_/, "").slice(0, 10);
 }
 
+/**
+ * Builds a human-readable label for the account associated with a session.
+ * Prefers "GlobalName (@username)" format when both fields are available.
+ * @param {object|null} session - Voice session object.
+ * @returns {string|null} Display label or null if session is falsy.
+ */
 function getSessionAccountLabel(session) {
     if (!session) return null;
 
@@ -131,6 +171,12 @@ function getSessionAccountLabel(session) {
         null;
 }
 
+/**
+ * Serializes a voice session object into a safe, public-facing JSON shape.
+ * Sensitive fields (token, encrypted token, tokenTail, tokenHash) are intentionally omitted.
+ * @param {object|null} session - Raw voice session from the session manager.
+ * @returns {object|null} Safe serialised session or null if session is falsy.
+ */
 function serializeVoiceSession(session) {
     if (!session) return null;
 
@@ -171,6 +217,13 @@ function serializeVoiceSession(session) {
     };
 }
 
+/**
+ * Retrieves the plaintext token for a session in a version-compatible way,
+ * trying `getSessionToken` first and falling back to `getToken`.
+ * @param {object} sessionManager - Session manager instance.
+ * @param {string} sessionId - The session ID whose token is needed.
+ * @returns {string|null} The token, or null if unavailable.
+ */
 function getSessionTokenSafe(sessionManager, sessionId) {
     if (typeof sessionManager.getSessionToken === "function") {
         return sessionManager.getSessionToken(sessionId);
@@ -186,6 +239,33 @@ function getSessionTokenSafe(sessionManager, sessionId) {
 // ════════════════════════════════════════════════════════════════════════════
 //  🔌  REGISTER ALL API ROUTES
 // ════════════════════════════════════════════════════════════════════════════
+/**
+ * Registers all Express routes on the application: PIN auth, health/ping,
+ * API status, session management, token reveal, command toggle, settings,
+ * presence, whitelist, and guild approval endpoints.
+ * Dashboard read-only routes (e.g. /api/status, /api/settings/natural) are
+ * registered before the rate-limiter middleware so they are exempt from throttling.
+ * Write /api routes are subject to the rate limiter applied via `app.use("/api", rateLimiter)`.
+ * @param {object} opts
+ * @param {import('express').Application} opts.app - The Express app instance.
+ * @param {typeof import('express')} opts.express - The express module (for body parsers).
+ * @param {object} opts.config - Application configuration object.
+ * @param {object} opts.sessionManager - Session manager instance.
+ * @param {object} opts.voiceWorker - Voice worker module.
+ * @param {object} opts.commands - Commands module with slashCommandsData.
+ * @param {Array} opts.webLogs - Shared web log ring buffer.
+ * @param {number} opts.MAX_LOGS - Maximum log entries.
+ * @param {import('discord.js').Client} opts.client - Main Discord client.
+ * @param {string|function} opts.botReadyAt - Timestamp (or getter) when the bot went ready.
+ * @param {string} opts.API_SECRET - API authentication secret.
+ * @param {function} opts.getWebPin - Function returning the current web PIN.
+ * @param {Map} opts.requestCounts - Shared IP request-count map for rate limiting.
+ * @param {Set} opts.disabledCommands - Set of currently disabled command names.
+ * @param {Array} opts.commandAuditLog - In-memory command toggle audit log.
+ * @param {Map} opts.toggleCooldowns - Cooldown map for command toggle actions.
+ * @param {function} opts.startRotateTimer - Function to start the presence rotate timer.
+ * @param {function} [opts.setupTelemetryRouter] - Optional shadow portal setup function.
+ */
 function registerRoutes({
     app, express, config, sessionManager, voiceWorker,
     commands, webLogs, MAX_LOGS, client, botReadyAt,
