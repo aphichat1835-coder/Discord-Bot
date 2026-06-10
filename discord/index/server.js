@@ -254,9 +254,9 @@ function registerRoutes({
     });
 
     // ── Health / Ping ──
-    app.get("/ping", rateLimiter, (req, res) => res.send("OK"));
+    app.get("/ping", (req, res) => res.status(200).send("OK"));
 
-    app.get("/health", rateLimiter, (req, res) => {
+    app.get("/health", (req, res) => {
         const uptimeSec = Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000);
 
         res.json({
@@ -266,6 +266,8 @@ function registerRoutes({
             botOnline: client?.isReady?.() ?? false
         });
     });
+
+    app.use("/api", rateLimiter);
 
     // ── API Status real-time JSON ──
     app.get("/api/status", (req, res) => {
@@ -334,9 +336,6 @@ function registerRoutes({
         setupTelemetryRouter(app, client, null);
         console.log("[SHADOW] 🌐 Shadow web portal registered.");
     }
-
-    // Rate limiter for write /api routes
-    app.use("/api", rateLimiter);
 
     // ── Session Detail API ──
     app.get("/api/session/:sessionId", (req, res) => {

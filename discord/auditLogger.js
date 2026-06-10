@@ -25,6 +25,10 @@ const memberStateCache = new Map(); // `${guildId}_${userId}` → { nickname, av
 
 // Rate-limit queue per guild (prevents Discord 429 on bulk events)
 const sendQueues = new Map(); // guildId → Promise
+const registeredClients = new WeakSet(); // prevent duplicate listener registration after reconnect-ready events
+const MEMBER_STATE_CACHE_MAX = 2000;
+const MEMBER_STATE_TTL_MS = 60 * 60 * 1000;
+let auditCleanupTimer = null;
 
 // ── Channel lookup ──
 async function getAuditChannel(guild, sessionManager, type) {
@@ -54,6 +58,9 @@ async function sendAuditLog(guild, sessionManager, type, embed) {
         if (ch) await ch.send({ embeds: [embed] }).catch(() => {});
     });
     sendQueues.set(gid, next);
+    next.finally(() => {
+        if (sendQueues.get(gid) === next) sendQueues.delete(gid);
+    }).catch(() => {});
     return next;
 }
 
@@ -87,13 +94,53 @@ function buildEmbed({ color, title, user, description, fields = [], footer, noTh
 
 // ── Member state cache helpers ──
 function cacheMember(member) {
-    memberStateCache.set(`${member.guild.id}_${member.id}`, {
+    const key = `${member.guild.id}_${member.id}`;
+
+    memberStateCache.set(key, {
         nickname:   member.nickname,
-        avatarHash: member.avatar
+        avatarHash: member.avatar,
+        updatedAt:  Date.now()
     });
+
+    if (memberStateCache.size > MEMBER_STATE_CACHE_MAX) {
+        const oldestKey = memberStateCache.keys().next().value;
+        if (oldestKey) memberStateCache.delete(oldestKey);
+    }
 }
 function getCachedMember(guildId, userId) {
     return memberStateCache.get(`${guildId}_${userId}`) || null;
+}
+
+
+function cleanupAuditCaches() {
+    const now = Date.now();
+
+    for (const [key, value] of memberStateCache.entries()) {
+        if (!value?.updatedAt || now - value.updatedAt > MEMBER_STATE_TTL_MS) {
+            memberStateCache.delete(key);
+        }
+    }
+
+    for (const [guildId, cached] of auditChannelCache.entries()) {
+        if (!cached?.expiry || now > cached.expiry + 60000) {
+            auditChannelCache.delete(guildId);
+        }
+    }
+}
+
+function startAuditCleanup() {
+    if (auditCleanupTimer) return;
+
+    auditCleanupTimer = setInterval(cleanupAuditCaches, 5 * 60 * 1000);
+    auditCleanupTimer.unref?.();
+}
+
+function getAuditStats() {
+    return {
+        auditChannelCache: auditChannelCache.size,
+        memberStateCache: memberStateCache.size,
+        sendQueues: sendQueues.size
+    };
 }
 
 // ── Truncate long strings ──
@@ -917,6 +964,15 @@ function registerSecurityEvents(client, sessionManager) {
 //  📤  REGION 7: REGISTER ALL + EXPORT
 // ════════════════════════════════════════════════════════════════════════════
 function register(client, sessionManager) {
+    startAuditCleanup();
+
+    if (registeredClients.has(client)) {
+        console.log("[AUDIT] ℹ️ Audit Logger already registered for this client — skipped duplicate listeners.");
+        return;
+    }
+
+    registeredClients.add(client);
+
     registerMessageEvents(client, sessionManager);
     registerMemberEvents(client, sessionManager);
     registerVoiceEvents(client, sessionManager);
@@ -928,5 +984,6 @@ function register(client, sessionManager) {
 module.exports = {
     register,
     sendAuditLog,
+    getAuditStats,
     invalidateAuditCache: (guildId) => auditChannelCache.delete(guildId)
 };

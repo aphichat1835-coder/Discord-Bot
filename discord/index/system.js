@@ -17,6 +17,17 @@ const MAX_LOGS_DEFAULT = 500;
 
 let crashShieldReady = false;
 let botReadyAt = null;
+let isAppShuttingDown = global.__APP_SHUTTING_DOWN === true;
+
+
+function markAppShuttingDown() {
+    isAppShuttingDown = true;
+    global.__APP_SHUTTING_DOWN = true;
+}
+
+function isShuttingDown() {
+    return isAppShuttingDown || global.__APP_SHUTTING_DOWN === true;
+}
 
 const originalLog   = console.log;
 const originalError = console.error;
@@ -149,12 +160,41 @@ function initCronJobs({
 // ════════════════════════════════════════════════════════════════════════════
 //  🛑  GRACEFUL SHUTDOWN
 // ════════════════════════════════════════════════════════════════════════════
-function initShutdown({ sessionManager, voiceWorker, client }) {
+async function closeServer() {
+    if (!global.server) return;
+
+    await new Promise((resolve) => {
+        let resolved = false;
+        const done = () => {
+            if (resolved) return;
+            resolved = true;
+            resolve();
+        };
+
+        const fallback = setTimeout(done, 3000);
+        fallback.unref?.();
+
+        try {
+            global.server.close(() => {
+                clearTimeout(fallback);
+                console.log("[SHUTDOWN] ✅ Express closed");
+                done();
+            });
+        } catch (err) {
+            clearTimeout(fallback);
+            console.warn(`[SHUTDOWN] ⚠️ Express close skipped: ${err.message}`);
+            done();
+        }
+    });
+}
+
+function initShutdown({ sessionManager, voiceWorker, client, memoryMonitor }) {
     let isShuttingDownMain = false;
 
     async function shutdown(signal) {
         if (isShuttingDownMain) return;
         isShuttingDownMain = true;
+        markAppShuttingDown();
         console.log(`\n⛔ [SHUTDOWN] ${signal} — graceful shutdown starting...`);
         voiceWorker.setShuttingDown(true);
 
@@ -169,7 +209,8 @@ function initShutdown({ sessionManager, voiceWorker, client }) {
             await voiceWorker.pauseAll();
             console.log("[SHUTDOWN] ✅ Voice paused");
             if (client) { client.destroy(); console.log("[SHUTDOWN] ✅ Discord destroyed"); }
-            if (global.server) global.server.close(() => console.log("[SHUTDOWN] ✅ Express closed"));
+            if (memoryMonitor?.stopMemoryMonitor) memoryMonitor.stopMemoryMonitor();
+            await closeServer();
             clearTimeout(timeout);
             process.exit(0);
         } catch (err) {
@@ -189,6 +230,8 @@ module.exports = {
     set crashShieldReady(v) { crashShieldReady = v; },
     get botReadyAt() { return botReadyAt; },
     set botReadyAt(v) { botReadyAt = v; },
+    get shutdownRequested() { return isShuttingDown(); },
+    markAppShuttingDown, isShuttingDown,
     originalLog, originalError, originalWarn,
     initLogCapture, initCrashShield, initCronJobs, initShutdown
 };
