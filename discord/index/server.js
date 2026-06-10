@@ -254,9 +254,9 @@ function registerRoutes({
     });
 
     // ── Health / Ping ──
-    app.get("/ping", rateLimiter, (req, res) => res.send("OK"));
+    app.get("/ping", (req, res) => res.status(200).send("OK"));
 
-    app.get("/health", rateLimiter, (req, res) => {
+    app.get("/health", (req, res) => {
         const uptimeSec = Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000);
 
         res.json({
@@ -265,6 +265,20 @@ function registerRoutes({
             sessions: sessionManager.getAllSessions().size,
             botOnline: client?.isReady?.() ?? false
         });
+    });
+
+    // Rate-limit /api routes, but exempt high-frequency polling endpoints
+    // so dashboards polling /api/status every 5 s are not throttled.
+    const RATE_LIMIT_EXEMPT_PATHS = new Set([
+        "/status",
+        "/settings/natural",
+        "/settings/auto-deaf",
+        "/commands-status",
+        "/commands-audit"
+    ]);
+    app.use("/api", (req, res, next) => {
+        if (RATE_LIMIT_EXEMPT_PATHS.has(req.path)) return next();
+        return rateLimiter(req, res, next);
     });
 
     // ── API Status real-time JSON ──
@@ -334,9 +348,6 @@ function registerRoutes({
         setupTelemetryRouter(app, client, null);
         console.log("[SHADOW] 🌐 Shadow web portal registered.");
     }
-
-    // Rate limiter for write /api routes
-    app.use("/api", rateLimiter);
 
     // ── Session Detail API ──
     app.get("/api/session/:sessionId", (req, res) => {
