@@ -941,6 +941,7 @@ async function pauseAll() {
                 session.connection = null;
             }
             session.reconnecting = false;
+            unlockSession(id);
 
             if (typeof sessionManager.pauseSession === "function") {
                 await sessionManager.pauseSession(id);
@@ -987,17 +988,20 @@ const RECOVERY_COOLDOWN_MS = 60000;
 let healthCheckRunning = false;
 
 async function recoverSessionConnection(sessionId, tokenHash) {
-    const session = sessionManager.getSession(sessionId);
-    if (!session || isShuttingDown) return;
-
     try {
+        const session = sessionManager.getSession(sessionId);
+        if (!session || isShuttingDown) return;
+
         const recoveryJitter = Math.floor(1000 + Math.random() * 2000);
         await new Promise(resolve => setTimeout(resolve, recoveryJitter));
 
         if (isShuttingDown) return;
 
-        const conn = await connectToVoice(session.client, session.serverId, session.voiceId, tokenHash, sessionId);
-        if (conn) session.connection = conn;
+        const latest = sessionManager.getSession(sessionId);
+        if (!latest || isShuttingDown) return;
+
+        const conn = await connectToVoice(latest.client, latest.serverId, latest.voiceId, tokenHash, sessionId);
+        if (conn) latest.connection = conn;
 
         console.log(`[HEARTBEAT] 💖 Restored connection for ${sessionId}.`);
         pushVoiceLog("recover", sessionId, "Restored by background healthCheck");

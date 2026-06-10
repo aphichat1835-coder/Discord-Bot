@@ -25,6 +25,17 @@ const DASHBOARD_READ_API_BYPASS = new Set([
     "/api/commands-status",
     "/api/commands-audit"
 ]);
+const DASHBOARD_READ_API_PREFIX_BYPASS = [
+    "/api/session/"
+];
+
+function shouldBypassDashboardReadApi(req) {
+    if (req.method !== "GET") return false;
+
+    const fullPath = `${req.baseUrl || ""}${req.path || ""}`;
+    return DASHBOARD_READ_API_BYPASS.has(fullPath) ||
+        DASHBOARD_READ_API_PREFIX_BYPASS.some(prefix => fullPath.startsWith(prefix));
+}
 
 function createRateLimiter(requestCounts, config) {
     return function rateLimitMiddleware(req, res, next) {
@@ -276,11 +287,7 @@ function registerRoutes({
     });
 
     app.use("/api", (req, res, next) => {
-        const fullPath = `${req.baseUrl || ""}${req.path || ""}`;
-
-        if (req.method === "GET" && DASHBOARD_READ_API_BYPASS.has(fullPath)) {
-            return next();
-        }
+        if (shouldBypassDashboardReadApi(req)) return next();
 
         return rateLimiter(req, res, next);
     });
