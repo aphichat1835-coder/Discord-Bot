@@ -846,6 +846,8 @@ async function handleModal(interaction, client) {
         let sessionId = null;
 
         try {
+            await voiceWorker.repairFailedStopSessionForTokenGuild?.(token, serverId);
+
             sessionId = await sessionManager.createSession(
                 token,
                 serverId,

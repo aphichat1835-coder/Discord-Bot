@@ -450,7 +450,6 @@ function registerRoutes({
                 });
             }
 
-            await voiceWorker.sendSessionStoppedDM(sessionId, "manual");
             const stopped = await voiceWorker.stopSession(sessionId, { stoppedBy: "dashboard" });
 
             if (!stopped) {
@@ -459,6 +458,10 @@ function registerRoutes({
                     error: "ไม่สามารถหยุด session นี้ได้"
                 });
             }
+
+            await voiceWorker.sendSessionStoppedDM(sessionId, "manual").catch((dmErr) => {
+                console.warn(`[DASHBOARD] ⚠️ Session stopped but DM failed for ${sessionId}: ${dmErr.message}`);
+            });
 
             console.log(`[DASHBOARD] 🛑 Session ${sessionId} stopped via dashboard`);
             res.json({ success: true });
@@ -897,15 +900,15 @@ function registerRoutes({
 
             let failedStops = 0;
             for (const s of guildSessions) {
-                const stopped = await voiceWorker.stopSession(s.sessionId, { stoppedBy: "dashboard" }).catch(() => false);
+                const stopped = await voiceWorker.stopSession(s.sessionId, { stoppedBy: "dashboard" }).catch((stopErr) => {
+                    console.warn(`[DASHBOARD] ⚠️ Best-effort guild kick voice stop failed for session ${s.sessionId}: ${stopErr.message}`);
+                    return false;
+                });
                 if (!stopped) failedStops++;
             }
 
             if (failedStops > 0) {
-                return res.status(409).json({
-                    success: false,
-                    error: "ไม่สามารถหยุด voice sessions ทั้งหมดก่อนนำบอทออกได้"
-                });
+                console.warn(`[DASHBOARD] ⚠️ Continuing guild leave after ${failedStops} voice session stop failure(s) for guild ${guildId}`);
             }
 
             await guild.leave();
@@ -921,7 +924,11 @@ function registerRoutes({
                 } catch (_) {}
             }
 
-            res.json({ success: true });
+            res.json({
+                success: true,
+                voiceStopFailed: failedStops,
+                warning: failedStops > 0 ? "บอทถูกนำออกแล้ว แต่มี voice sessions บางรายการหยุดไม่สำเร็จ" : null
+            });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
         }

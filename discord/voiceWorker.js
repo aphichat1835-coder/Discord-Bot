@@ -1005,10 +1005,25 @@ function getSelfVoiceStateInfo(client, session) {
     };
 }
 
+async function waitForSelfVoiceExit(clientRef, session, timeoutMs = 1200) {
+    const started = Date.now();
+    let lastInfo = getSelfVoiceStateInfo(clientRef, session);
+
+    while (Date.now() - started < timeoutMs) {
+        if (!lastInfo.inTargetGuild) return lastInfo;
+        await new Promise(resolve => setTimeout(resolve, 150));
+        lastInfo = getSelfVoiceStateInfo(clientRef, session);
+    }
+
+    return lastInfo;
+}
+
 async function attemptSelfVoiceDisconnect(clientRef, session, sessionId, tokenHash, errors) {
-    const info = getSelfVoiceStateInfo(clientRef, session);
+    let info = getSelfVoiceStateInfo(clientRef, session);
     if (!info.inTargetGuild) return info;
 
+    const started = Date.now();
+    const budgetMs = 1500;
     const disconnectors = [
         { target: info.memberVoice, method: "disconnect", args: ["Voice session stopped"] },
         { target: info.voiceState, method: "disconnect", args: ["Voice session stopped"] },
@@ -1017,21 +1032,30 @@ async function attemptSelfVoiceDisconnect(clientRef, session, sessionId, tokenHa
     ].filter(item => item.target && typeof item.target[item.method] === "function");
 
     for (const item of disconnectors) {
+        info = getSelfVoiceStateInfo(clientRef, session);
+        if (!info.inTargetGuild) return info;
+        if (Date.now() - started >= budgetMs) break;
+
         try {
             await item.target[item.method](...item.args);
-            await new Promise(resolve => setTimeout(resolve, 750));
-            const after = getSelfVoiceStateInfo(clientRef, session);
+            const remainingMs = Math.max(150, budgetMs - (Date.now() - started));
+            const after = await waitForSelfVoiceExit(clientRef, session, Math.min(remainingMs, 750));
             if (!after.inTargetGuild) return after;
         } catch (err) {
             errors.push(`selfVoiceDisconnect:${sanitizeLifecycleError(err.message)}`);
         }
     }
 
+    info = getSelfVoiceStateInfo(clientRef, session);
+    if (!info.inTargetGuild) return info;
+
     const otherActive = countOtherActiveSessionsByTokenHash(tokenHash, sessionId);
     if (otherActive <= 0) {
         cleanupPooledClientIfUnused(tokenHash, clientRef, sessionId, "self-voice-fallback");
-        await new Promise(resolve => setTimeout(resolve, 500));
-        return { inspectable: true, inTargetGuild: false, inTargetChannel: false, channelId: null };
+        const afterDestroy = await waitForSelfVoiceExit(clientRef, session, 500);
+        return afterDestroy.inTargetGuild
+            ? afterDestroy
+            : { inspectable: true, inTargetGuild: false, inTargetChannel: false, channelId: null };
     }
 
     errors.push(`selfVoiceStillConnected:activeSessions=${otherActive}`);
@@ -1085,6 +1109,53 @@ async function cleanupSessionVoiceConnection(sessionId, session, tokenHash) {
         shouldDeleteRecord: ok,
         clientRef
     };
+}
+
+async function repairFailedStopSessionForTokenGuild(tokenString, serverId) {
+    const tokenHash = sha256(tokenString);
+    let repaired = 0;
+    let blocked = 0;
+
+    for (const [sessionId, session] of sessionManager.getAllSessions()) {
+        if (!session || String(session.serverId) !== String(serverId)) continue;
+        if (session.stoppedReason !== "stop_cleanup_failed") continue;
+        if (getSessionTokenHash(sessionId, session) !== tokenHash) continue;
+
+        const cleanup = await cleanupSessionVoiceConnection(sessionId, session, tokenHash);
+        clearReconnect(sessionId);
+        recoveryTimestamps.delete(sessionId);
+
+        if (!cleanup.ok || !cleanup.shouldDeleteRecord) {
+            blocked++;
+            await sessionManager.markSessionFailed?.(
+                sessionId,
+                "stop_cleanup_failed",
+                session.stoppedBy || null,
+                cleanup.safeError || cleanup.reason || "repair cleanup not verified"
+            );
+            continue;
+        }
+
+        const deleted = await sessionManager.deleteSession(sessionId);
+        if (deleted) {
+            repaired++;
+            cleanupPooledClientIfUnused(tokenHash, cleanup.clientRef || session.client, sessionId, "failed-stop-repair");
+        } else {
+            blocked++;
+            await sessionManager.markSessionFailed?.(
+                sessionId,
+                "stop_cleanup_failed",
+                session.stoppedBy || null,
+                "repair delete failed after verified cleanup"
+            );
+        }
+    }
+
+    if (repaired > 0) {
+        console.log(`[WORKER] 🧹 Repaired ${repaired} failed voice session record(s) before restart attempt.`);
+    }
+
+    return { repaired, blocked };
 }
 
 async function stopSession(sessionId, options = {}) {
@@ -1637,6 +1708,7 @@ module.exports = {
     getClientPoolSize,
 
     startSession,
+    repairFailedStopSessionForTokenGuild,
     stopSession,
     stopAll,
     pauseAll,

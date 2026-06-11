@@ -721,6 +721,24 @@ async function deleteSession(sessionId) {
     const session = sessions.get(sessionId);
     if (!session) return false;
 
+    if (!dbConnected) {
+        console.error(`[DATABASE] ❌ Cannot delete session ${sessionId}: database not connected`);
+        systemMetrics.increment("errors");
+        return false;
+    }
+
+    try {
+        const result = await SessionModel.deleteOne({ sessionId });
+        const deleted = result?.deletedCount ?? result?.n ?? 0;
+        if (deleted < 1) {
+            console.warn(`[DATABASE] ⚠️ Session ${sessionId} was already absent in database; clearing memory record`);
+        }
+    } catch (err) {
+        console.error(`[DATABASE] ❌ Failed to delete session ${sessionId}: ${err.message}`);
+        systemMetrics.increment("errors");
+        return false;
+    }
+
     if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
 
     if (session.connection) {
@@ -731,21 +749,6 @@ async function deleteSession(sessionId) {
     }
 
     session.reconnecting = false;
-
-    if (!dbConnected) {
-        console.error(`[DATABASE] ❌ Cannot delete session ${sessionId}: database not connected`);
-        systemMetrics.increment("errors");
-        return false;
-    }
-
-    try {
-        await SessionModel.deleteOne({ sessionId });
-    } catch (err) {
-        console.error(`[DATABASE] ❌ Failed to delete session ${sessionId}: ${err.message}`);
-        systemMetrics.increment("errors");
-        return false;
-    }
-
     sessions.delete(sessionId);
     reconnectTracking.delete(sessionId);
     sessionLocks.delete(sessionId);
