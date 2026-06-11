@@ -564,6 +564,18 @@ async function startSession(sessionId, tokenString) {
         if (!session.client) {
             const newClient = new SelfClient({ checkUpdate: false });
 
+            newClient.on("ready", () => {
+                console.log(`[WORKER] 🟢 Self-bot connected: ${newClient.user.tag}`);
+                try { newClient.user.setStatus("idle"); } catch {}
+            });
+
+            newClient.on("invalidated", async () => {
+                console.error(`[WORKER] 🚫 Token invalidated (WS) for session: ${sessionId}`);
+                const sess = sessionManager.getSession(sessionId);
+                if (sess) sess.tokenInvalid = true;
+                await sendTokenInvalidDM(sessionId).catch(() => {});
+            });
+
             try {
                 await waitForTokenLoginCooldown(tokenHash);
 
@@ -574,18 +586,6 @@ async function startSession(sessionId, tokenString) {
                     );
 
                     await Promise.race([loginPromise, timeoutPromise]);
-                });
-
-                newClient.on("ready", () => {
-                    console.log(`[WORKER] 🟢 Self-bot connected: ${newClient.user.tag}`);
-                    try { newClient.user.setStatus("idle"); } catch {}
-                });
-
-                newClient.on("invalidated", async () => {
-                    console.error(`[WORKER] 🚫 Token invalidated (WS) for session: ${sessionId}`);
-                    const sess = sessionManager.getSession(sessionId);
-                    if (sess) sess.tokenInvalid = true;
-                    await sendTokenInvalidDM(sessionId).catch(() => {});
                 });
 
                 setSessionClientInPool(sessionId, session, tokenHash, newClient);
@@ -683,9 +683,9 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
      * Destroying it causes cross-token collision.
      *
      * Correct behavior:
-     * - Only reuse/destroy this session's own connection.
+     * - Same token + same guild is blocked before this point.
+     * - Same token + different guild uses a separate session-owned SelfClient.
      * - Different tokens in same guild/channel must not affect each other.
-     * - Same token in different guilds reuses the client but owns separate session connections.
      */
     const existingConn = session.connection;
 
