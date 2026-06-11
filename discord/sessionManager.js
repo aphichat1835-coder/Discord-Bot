@@ -233,10 +233,14 @@ const BotSettingsModel = mongoose.model("BotSettings", botSettingsSchema);
 //  🌐  REGION 5: DATABASE CONNECTION
 // ════════════════════════════════════════════════════════════════════════════
 let dbConnected = false;
+const pendingSessionDeletes = new Set();
 
 mongoose.connection.on("connected", () => {
     console.log("[DATABASE] 🟢 MongoDB Connection Active.");
     dbConnected = true;
+    flushPendingSessionDeletes().catch((err) => {
+        console.error(`[DATABASE] ❌ Pending session delete flush failed: ${sanitizeLifecycleError(err.message)}`);
+    });
 });
 
 mongoose.connection.on("disconnected", () => {
@@ -263,6 +267,7 @@ async function connectDB() {
 
     dbConnected = true;
     console.log("[DATABASE] 🟢 MongoDB Connected with Pool(20) enabled.");
+    await flushPendingSessionDeletes();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -470,7 +475,6 @@ async function saveDatabase() {
 // ════════════════════════════════════════════════════════════════════════════
 async function createSession(token, serverId, voiceId, serverName, ownerId, ownerAvatar, ownerTag) {
     if (!dbConnected) {
-        systemMetrics.increment("errors");
         throw new Error("DATABASE_NOT_CONNECTED");
     }
 
@@ -508,7 +512,6 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
 
     const encryptedToken = encryptToken(token);
     if (!encryptedToken) {
-        systemMetrics.increment("errors");
         throw new Error("TOKEN_ENCRYPTION_FAILED");
     }
 
@@ -570,9 +573,8 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
         );
     } catch (e) {
         sessions.delete(sessionId);
-        console.error(`[DATABASE] ❌ Failed to persist session ${sessionId}: ${e.message}`);
-        systemMetrics.increment("errors");
-        throw e;
+        console.error(`[DATABASE] ❌ Failed to persist session ${sessionId}: ${sanitizeLifecycleError(e.message)}`);
+        throw new Error("SESSION_PERSIST_FAILED");
     }
 
     return sessionId;
@@ -640,6 +642,36 @@ function sanitizeLifecycleError(value) {
     return String(value || "UNKNOWN_ERROR")
         .replace(/[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{20,}/g, "[REDACTED_TOKEN]")
         .slice(0, 300);
+}
+
+function cleanupSessionMemory(sessionId, session) {
+    if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
+
+    if (session.connection) {
+        try {
+            session.connection.destroy();
+        } catch {}
+        session.connection = null;
+    }
+
+    session.reconnecting = false;
+    sessions.delete(sessionId);
+    reconnectTracking.delete(sessionId);
+    sessionLocks.delete(sessionId);
+}
+
+async function flushPendingSessionDeletes() {
+    if (!dbConnected || pendingSessionDeletes.size === 0) return;
+
+    const sessionIds = [...pendingSessionDeletes];
+    try {
+        await SessionModel.deleteMany({ sessionId: { $in: sessionIds } });
+        for (const sessionId of sessionIds) pendingSessionDeletes.delete(sessionId);
+        console.log(`[DATABASE] 🧹 Flushed ${sessionIds.length} pending session delete(s).`);
+    } catch (err) {
+        console.error(`[DATABASE] ❌ Failed to flush pending session deletes: ${sanitizeLifecycleError(err.message)}`);
+        systemMetrics.increment("errors");
+    }
 }
 
 async function markSessionFailed(sessionId, reason, stoppedBy = null, err = null) {
@@ -726,9 +758,12 @@ async function deleteSession(sessionId) {
     if (!session) return false;
 
     if (!dbConnected) {
-        console.error(`[DATABASE] ❌ Cannot delete session ${sessionId}: database not connected`);
+        console.warn(`[DATABASE] ⚠️ Queued session ${sessionId} delete until database reconnects`);
+        pendingSessionDeletes.add(sessionId);
+        cleanupSessionMemory(sessionId, session);
         systemMetrics.increment("errors");
-        return false;
+        console.log(`[SESSION] 🗑️ Session removed from memory: ${sessionId}`);
+        return true;
     }
 
     try {
@@ -738,24 +773,16 @@ async function deleteSession(sessionId) {
             console.warn(`[DATABASE] ⚠️ Session ${sessionId} was already absent in database; clearing memory record`);
         }
     } catch (err) {
-        console.error(`[DATABASE] ❌ Failed to delete session ${sessionId}: ${err.message}`);
+        console.error(`[DATABASE] ❌ Failed to delete session ${sessionId}; queued retry: ${sanitizeLifecycleError(err.message)}`);
+        pendingSessionDeletes.add(sessionId);
+        cleanupSessionMemory(sessionId, session);
         systemMetrics.increment("errors");
-        return false;
+        console.log(`[SESSION] 🗑️ Session removed from memory: ${sessionId}`);
+        return true;
     }
 
-    if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
-
-    if (session.connection) {
-        try {
-            session.connection.destroy();
-        } catch {}
-        session.connection = null;
-    }
-
-    session.reconnecting = false;
-    sessions.delete(sessionId);
-    reconnectTracking.delete(sessionId);
-    sessionLocks.delete(sessionId);
+    pendingSessionDeletes.delete(sessionId);
+    cleanupSessionMemory(sessionId, session);
 
     console.log(`[SESSION] 🗑️ Session removed: ${sessionId}`);
 

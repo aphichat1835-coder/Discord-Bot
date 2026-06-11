@@ -361,7 +361,7 @@ async function waitForTokenLoginCooldown(tokenHash) {
         const elapsed = Date.now() - Number(lastLoginAt || 0);
 
         if (elapsed < minDelayMs) {
-            const jitter = Math.floor(Math.random() * 1200);
+            const jitter = crypto.randomInt(0, 1200);
             await new Promise(resolve => setTimeout(resolve, minDelayMs - elapsed + jitter));
         }
 
@@ -587,8 +587,7 @@ async function startSession(sessionId, tokenString) {
             session.client = pooledClient;
             console.log(`[WORKER] ♻️ Reused session-owned client. session=${sessionId}`);
         } else if (pooledClient) {
-            deleteSessionClientFromPool(sessionId, session, tokenHash, pooledClient);
-            if (session.client === pooledClient) session.client = null;
+            destroySessionClient(sessionId, session, tokenHash, "stale-pooled-client", pooledClient);
             console.log(`[WORKER] 🔄 Stale session-owned client — will re-login. session=${sessionId}`);
         }
 
@@ -596,7 +595,7 @@ async function startSession(sessionId, tokenString) {
             destroySessionClient(sessionId, session, tokenHash, "stale-start-client", session.client);
         }
 
-        if (session.client && !pooledClient) {
+        if (session.client && !getSessionClientFromPool(sessionId, session, tokenHash)) {
             setSessionClientInPool(sessionId, session, tokenHash, session.client);
         }
 
@@ -1238,7 +1237,7 @@ async function repairFailedStopSessionForTokenGuild(tokenString, serverId) {
 
     for (const [sessionId, session] of sessionManager.getAllSessions()) {
         if (!session || String(session.serverId) !== String(serverId)) continue;
-        if (session.stoppedReason !== "stop_cleanup_failed") continue;
+        if (!["stop_cleanup_failed", "session_delete_failed"].includes(session.stoppedReason)) continue;
         if (getSessionTokenHash(sessionId, session) !== tokenHash) continue;
 
         const cleanup = await cleanupSessionVoiceConnection(sessionId, session, tokenHash);

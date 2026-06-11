@@ -923,8 +923,9 @@ function registerRoutes({
                 } catch (_) {}
             }
 
-            res.json({
-                success: true,
+            res.status(failedStops > 0 ? 207 : 200).json({
+                success: failedStops === 0,
+                partialSuccess: failedStops > 0,
                 voiceStopFailed: failedStops,
                 warning: failedStops > 0 ? "บอทถูกนำออกแล้ว แต่มี voice sessions บางรายการหยุดไม่สำเร็จ" : null
             });

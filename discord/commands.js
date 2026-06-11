@@ -917,11 +917,12 @@ async function handleModal(interaction, client) {
                 "SYSTEM_SHUTTING_DOWN": `> ${config.emojis.warning} ระบบกำลังปิดตัว โปรดรอสักครู่`,
                 "SESSION_LOCKED": `> ${config.emojis.warning} Session นี้กำลังประมวลผลอยู่ โปรดลองใหม่อีกครั้ง`,
                 "TOKEN_DECRYPTION_FAILED": `> ${config.emojis.error} ระบบอ่าน Token ไม่สำเร็จ โปรดลองเริ่มใหม่`,
-                "DATABASE_NOT_CONNECTED": `> ${config.emojis.error} ฐานข้อมูลยังไม่พร้อม โปรดลองใหม่อีกครั้ง`
+                "DATABASE_NOT_CONNECTED": `> ${config.emojis.error} ฐานข้อมูลยังไม่พร้อม โปรดลองใหม่อีกครั้ง`,
+                "SESSION_PERSIST_FAILED": `> ${config.emojis.error} ระบบบันทึก Session ไม่สำเร็จ โปรดลองใหม่อีกครั้ง`
             };
 
             return interaction.editReply({
-                content: errMap[err.message] ?? `> ${config.emojis.warning} เกิดข้อผิดพลาด: ${err.message}`
+                content: errMap[err.message] ?? `> ${config.emojis.warning} เกิดข้อผิดพลาดภายในระบบ โปรดลองใหม่อีกครั้ง`
             });
         }
     }
