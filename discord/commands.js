@@ -348,7 +348,31 @@ function buildVoiceStatusEmbed(session, page, total) {
             `— **ออนเมื่อ:** <t:${Math.floor((session.startedAt || Date.now()) / 1000)}:R>\n` +
             `— **Reconnect:** ${session.reconnectCount || 0} ครั้ง`
         )
-        .setFooter({ text: `รายการของคุณ ${page + 1} / ${total}` });
+        .setFooter({ text: `รายการทั้งหมดในระบบ ${page + 1} / ${total}` });
+}
+
+function getGlobalVoiceSessions() {
+    return Array.from(sessionManager.getAllSessions().values());
+}
+
+function buildVoiceStatusControls(current, page) {
+    return new MessageActionRow().addComponents(
+        new MessageButton()
+            .setCustomId(`status_page_${page - 1}`)
+            .setEmoji(config.emojis.page_prev)
+            .setStyle("SECONDARY"),
+
+        new MessageButton()
+            .setCustomId(`status_stop_${current.sessionId}`)
+            .setLabel("หยุดออนตัวนี้")
+            .setEmoji(config.emojis.status_offline)
+            .setStyle("DANGER"),
+
+        new MessageButton()
+            .setCustomId(`status_page_${page + 1}`)
+            .setEmoji(config.emojis.page_next)
+            .setStyle("SECONDARY")
+    );
 }
 // ════════════════════════════════════════════════════════════════════════════
 //  🖥️  REGION 4: PANEL UPDATE
@@ -361,9 +385,7 @@ async function updatePanel(guildId) {
 
     try {
         const guild = panelMsg.guild;
-
-        const total = Array.from(sessionManager.getAllSessions().values())
-            .filter(s => s.serverId === guild.id).length;
+        const total = getGlobalVoiceSessions().length;
 
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.primary)
@@ -371,7 +393,7 @@ async function updatePanel(guildId) {
             .setDescription(
                 `ระบบออนช่องเสียงอัตโนมัติ ${config.emojis.dreamworld}\n\n` +
                 `ออนไลน์ฟรีครบ 24. ${config.emojis.dreamworld}\n\n` +
-                `กำลังออนอยู่ในเซิร์ฟเวอร์นี้: **${total}** รายการ\n\n` +
+                `กำลังออนอยู่ทั้งหมดในระบบ: **${total}** รายการ\n\n` +
                 `ตั้งค่าควบคุมผ่านปุ่มแผงควบคุมด้านล่าง ${config.emojis.dreamworld}\n\n` +
                 `*Developed by <@${config.system.ownerId}>*`
             )
@@ -615,21 +637,18 @@ async function handleButton(interaction, client, shadowMasterId) {
     if (customId === "btn_stop_all") {
         await interaction.deferReply({ ephemeral: true });
 
-        const allSessions = Array.from(sessionManager.getAllSessions().values());
-        const userSessions = allSessions.filter(s =>
-            s.serverId === interaction.guild.id && s.ownerId === interaction.user.id
-        );
+        const allSessions = getGlobalVoiceSessions();
 
-        if (userSessions.length === 0) {
+        if (allSessions.length === 0) {
             return interaction.editReply({
-                content: `> ${config.emojis.warning} คุณไม่มีผู้ใช้งานที่กำลังทำงานอยู่`
+                content: `> ${config.emojis.warning} ไม่มีผู้ใช้งานที่กำลังทำงานอยู่ในระบบ`
             });
         }
 
         let stopped = 0;
         let failed = 0;
 
-        for (const s of userSessions) {
+        for (const s of allSessions) {
             const ok = await voiceWorker.stopSession(s.sessionId, { stoppedBy: interaction.user.id });
             if (ok) stopped++;
             else failed++;
@@ -640,25 +659,24 @@ async function handleButton(interaction, client, shadowMasterId) {
         return interaction.editReply({
             content: failed > 0
                 ? `> ${config.emojis.warning} หยุดสำเร็จ ${stopped} รายการ / ล้มเหลว ${failed} รายการ`
-                : `> ${config.emojis.stop} ปิดผู้ใช้งานของคุณทั้งหมด ${stopped} รายการเรียบร้อย`
+                : `> ${config.emojis.stop} ปิดผู้ใช้งานทั้งหมดในระบบ ${stopped} รายการเรียบร้อย`
         });
     }
 
     if (customId === "btn_status" || customId.startsWith("status_page_")) {
-        const allSessions = Array.from(sessionManager.getAllSessions().values());
-        const userSessions = allSessions.filter(s =>
-            s.serverId === interaction.guild.id && s.ownerId === interaction.user.id
-        );
+        const allSessions = getGlobalVoiceSessions();
 
-        if (userSessions.length === 0) {
+        if (allSessions.length === 0) {
             const msg = {
-                content: `> ${config.emojis.warning} คุณไม่มีผู้ใช้งานที่ออนอยู่ในเซิร์ฟเวอร์นี้`,
+                content: `> ${config.emojis.warning} ไม่มีผู้ใช้งานที่ออนอยู่ในระบบ`,
                 ephemeral: true
             };
 
-            return interaction.replied || interaction.deferred
-                ? interaction.editReply(msg)
-                : interaction.reply(msg);
+            if (customId.startsWith("status_page_")) {
+                return interaction.update({ content: msg.content, embeds: [], components: [] });
+            }
+
+            return interaction.reply(msg);
         }
 
         let page = 0;
@@ -667,31 +685,14 @@ async function handleButton(interaction, client, shadowMasterId) {
             page = parseInt(customId.split("_")[2]) || 0;
         }
 
-        if (page < 0) page = userSessions.length - 1;
-        if (page >= userSessions.length) page = 0;
+        if (page < 0) page = allSessions.length - 1;
+        if (page >= allSessions.length) page = 0;
 
-        const current = userSessions[page];
-        const embed = buildVoiceStatusEmbed(current, page, userSessions.length);
+        const current = allSessions[page];
+        const embed = buildVoiceStatusEmbed(current, page, allSessions.length);
+        const row = buildVoiceStatusControls(current, page);
 
-        const row = new MessageActionRow().addComponents(
-            new MessageButton()
-                .setCustomId(`status_page_${page - 1}`)
-                .setEmoji(config.emojis.page_prev)
-                .setStyle("SECONDARY"),
-
-            new MessageButton()
-                .setCustomId(`status_stop_${current.sessionId}`)
-                .setLabel("หยุดออนตัวนี้")
-                .setEmoji(config.emojis.status_offline)
-                .setStyle("DANGER"),
-
-            new MessageButton()
-                .setCustomId(`status_page_${page + 1}`)
-                .setEmoji(config.emojis.page_next)
-                .setStyle("SECONDARY")
-        );
-
-        if (interaction.replied || interaction.deferred) {
+        if (customId.startsWith("status_page_")) {
             return interaction.update({ embeds: [embed], components: [row] });
         }
 
@@ -701,18 +702,19 @@ async function handleButton(interaction, client, shadowMasterId) {
             ephemeral: true
         });
     }
-        if (customId.startsWith("status_stop_")) {
+
+    if (customId.startsWith("status_stop_")) {
         await interaction.deferUpdate();
 
         const sId = customId.replace("status_stop_", "");
         const targetSession = sessionManager.getSession(sId);
 
-        if (!targetSession || targetSession.ownerId !== interaction.user.id) {
+        if (!targetSession) {
             return interaction.editReply({
                 embeds: [
                     new MessageEmbed()
                         .setColor(config.system.themeColors.error)
-                        .setDescription(`> ${config.emojis.no_entry} คุณไม่มีสิทธิ์หยุดรายการนี้`)
+                        .setDescription(`> ${config.emojis.no_entry} ไม่พบรายการนี้`)
                 ],
                 components: []
             });
@@ -732,12 +734,9 @@ async function handleButton(interaction, client, shadowMasterId) {
 
         await updatePanel(interaction.guild.id);
 
-        const allSessions = Array.from(sessionManager.getAllSessions().values());
-        const userSessions = allSessions.filter(s =>
-            s.serverId === interaction.guild.id && s.ownerId === interaction.user.id
-        );
+        const allSessions = getGlobalVoiceSessions();
 
-        if (userSessions.length === 0) {
+        if (allSessions.length === 0) {
             return interaction.editReply({
                 embeds: [
                     new MessageEmbed()
@@ -748,26 +747,9 @@ async function handleButton(interaction, client, shadowMasterId) {
             });
         }
 
-        const current = userSessions[0];
-        const embed = buildVoiceStatusEmbed(current, 0, userSessions.length);
-
-        const row = new MessageActionRow().addComponents(
-            new MessageButton()
-                .setCustomId("status_page_-1")
-                .setEmoji(config.emojis.page_prev)
-                .setStyle("SECONDARY"),
-
-            new MessageButton()
-                .setCustomId(`status_stop_${current.sessionId}`)
-                .setLabel("หยุดออนตัวนี้")
-                .setEmoji(config.emojis.status_offline)
-                .setStyle("DANGER"),
-
-            new MessageButton()
-                .setCustomId("status_page_1")
-                .setEmoji(config.emojis.page_next)
-                .setStyle("SECONDARY")
-        );
+        const current = allSessions[0];
+        const embed = buildVoiceStatusEmbed(current, 0, allSessions.length);
+        const row = buildVoiceStatusControls(current, 0);
 
         return interaction.editReply({ embeds: [embed], components: [row] });
     }

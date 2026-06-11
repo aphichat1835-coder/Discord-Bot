@@ -1129,7 +1129,7 @@ async function waitForSelfVoiceExit(clientRef, session, timeoutMs = 1200) {
     let lastInfo = getSelfVoiceStateInfo(clientRef, session);
 
     while (Date.now() - started < timeoutMs) {
-        if (!lastInfo.inTargetGuild) return lastInfo;
+        if (!lastInfo.inTargetChannel) return lastInfo;
         await new Promise(resolve => setTimeout(resolve, 150));
         lastInfo = getSelfVoiceStateInfo(clientRef, session);
     }
@@ -1139,7 +1139,7 @@ async function waitForSelfVoiceExit(clientRef, session, timeoutMs = 1200) {
 
 async function attemptSelfVoiceDisconnect(clientRef, session, sessionId, tokenHash, errors) {
     let info = getSelfVoiceStateInfo(clientRef, session);
-    if (!info.inTargetGuild) return info;
+    if (!info.inTargetChannel) return info;
 
     const started = Date.now();
     const budgetMs = 1500;
@@ -1152,27 +1152,27 @@ async function attemptSelfVoiceDisconnect(clientRef, session, sessionId, tokenHa
 
     for (const item of disconnectors) {
         info = getSelfVoiceStateInfo(clientRef, session);
-        if (!info.inTargetGuild) return info;
+        if (!info.inTargetChannel) return info;
         if (Date.now() - started >= budgetMs) break;
 
         try {
             await item.target[item.method](...item.args);
             const remainingMs = Math.max(150, budgetMs - (Date.now() - started));
             const after = await waitForSelfVoiceExit(clientRef, session, Math.min(remainingMs, 750));
-            if (!after.inTargetGuild) return after;
+            if (!after.inTargetChannel) return after;
         } catch (err) {
             errors.push(`selfVoiceDisconnect:${sanitizeLifecycleError(err.message)}`);
         }
     }
 
     info = getSelfVoiceStateInfo(clientRef, session);
-    if (!info.inTargetGuild) return info;
+    if (!info.inTargetChannel) return info;
 
     const otherActive = countOtherActiveSessionsForClient(tokenHash, sessionId, session);
     if (otherActive <= 0) {
         cleanupSessionClientIfUnused(tokenHash, clientRef, sessionId, session, "self-voice-fallback");
         const afterDestroy = await waitForSelfVoiceExit(clientRef, session, 500);
-        return afterDestroy.inTargetGuild
+        return afterDestroy.inTargetChannel
             ? afterDestroy
             : { inspectable: true, inTargetGuild: false, inTargetChannel: false, channelId: null };
     }
@@ -1209,16 +1209,15 @@ async function cleanupSessionVoiceConnection(sessionId, session, tokenHash) {
     const registryAfter = group ? getVoiceConnection(session.serverId, group) : null;
     const registryAlive = !!registryAfter && registryAfter.state?.status !== VoiceConnectionStatus.Destroyed;
     const ownConnectionAlive = !!session.connection && session.connection.state?.status !== VoiceConnectionStatus.Destroyed;
-    const selfStillInVoice = !!selfVoiceInfo.inTargetGuild;
+    const selfStillInTargetVoice = !!selfVoiceInfo.inTargetChannel;
 
     if (registryAlive) errors.push("voiceRegistry:still_active");
     if (ownConnectionAlive) errors.push("session.connection:still_active");
-    if (selfStillInVoice) {
-        const scope = selfVoiceInfo.inTargetChannel ? "target_channel" : "target_guild";
-        errors.push(`selfVoiceStillConnected:${scope}`);
+    if (selfStillInTargetVoice) {
+        errors.push("selfVoiceStillConnected:target_channel");
     }
 
-    const ok = errors.length === 0 && !registryAlive && !ownConnectionAlive && !selfStillInVoice;
+    const ok = errors.length === 0 && !registryAlive && !ownConnectionAlive && !selfStillInTargetVoice;
 
     return {
         ok,
