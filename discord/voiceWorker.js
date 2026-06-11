@@ -304,6 +304,33 @@ function destroySessionClient(sessionId, session, tokenHash, reason = "cleanup",
     return true;
 }
 
+function countOtherActiveSessionsForClient(tokenHash, currentSessionId, currentSession) {
+    const currentKey = getClientPoolKey(tokenHash, currentSession);
+    if (!currentKey) return 0;
+
+    let count = 0;
+    for (const [id, session] of sessionManager.getAllSessions()) {
+        if (id === currentSessionId) continue;
+        if (!isSessionRunnable(session)) continue;
+        if (getSessionTokenHash(id, session) !== tokenHash) continue;
+        if (getClientPoolKey(tokenHash, session) === currentKey) count++;
+    }
+
+    return count;
+}
+
+function cleanupSessionClientIfUnused(tokenHash, clientRef, currentSessionId, currentSession, reason = "cleanup") {
+    if (!tokenHash || !clientRef) return false;
+
+    const remaining = countOtherActiveSessionsForClient(tokenHash, currentSessionId, currentSession);
+    if (remaining > 0) {
+        console.log(`[CLEANUP] ♻️ Keeping session-owned client for ${getSessionShortId(currentSessionId)}. Remaining active sessions: ${remaining}`);
+        return false;
+    }
+
+    return destroySessionClient(currentSessionId, currentSession, tokenHash, reason, clientRef);
+}
+
 function countActiveSessionsForAccountId(accountId) {
     if (!accountId) return 0;
 
@@ -640,7 +667,7 @@ async function startSession(sessionId, tokenString) {
         }
 
         if (tokenHash && session.client) {
-            destroySessionClient(sessionId, session, tokenHash, "start-failure", session.client);
+            cleanupSessionClientIfUnused(tokenHash, session.client, sessionId, session, "start-failure");
         }
 
         throw err;
@@ -797,7 +824,7 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
                 if (markResult?.ok !== true && markResult !== true) {
                     console.warn(`[WORKER] ⚠️ Max reconnect failed state was not persisted for ${sessionId}: ${markResult?.safeError || "UNKNOWN"}`);
                 }
-                destroySessionClient(sessionId, failedSession, failedTokenHash, "max-reconnect", failedClientRef);
+                cleanupSessionClientIfUnused(failedTokenHash, failedClientRef, sessionId, failedSession, "max-reconnect");
             }
 
             await sendSessionStoppedDM(sessionId, "maxRetries");
@@ -1130,11 +1157,17 @@ async function attemptSelfVoiceDisconnect(clientRef, session, sessionId, tokenHa
     info = getSelfVoiceStateInfo(clientRef, session);
     if (!info.inTargetGuild) return info;
 
-    destroySessionClient(sessionId, session, tokenHash, "self-voice-fallback", clientRef);
-    const afterDestroy = await waitForSelfVoiceExit(clientRef, session, 500);
-    return afterDestroy.inTargetGuild
-        ? afterDestroy
-        : { inspectable: true, inTargetGuild: false, inTargetChannel: false, channelId: null };
+    const otherActive = countOtherActiveSessionsForClient(tokenHash, sessionId, session);
+    if (otherActive <= 0) {
+        cleanupSessionClientIfUnused(tokenHash, clientRef, sessionId, session, "self-voice-fallback");
+        const afterDestroy = await waitForSelfVoiceExit(clientRef, session, 500);
+        return afterDestroy.inTargetGuild
+            ? afterDestroy
+            : { inspectable: true, inTargetGuild: false, inTargetChannel: false, channelId: null };
+    }
+
+    errors.push(`selfVoiceStillConnected:activeSessions=${otherActive}`);
+    return getSelfVoiceStateInfo(clientRef, session);
 }
 
 async function cleanupSessionVoiceConnection(sessionId, session, tokenHash) {
@@ -1214,7 +1247,7 @@ async function repairFailedStopSessionForTokenGuild(tokenString, serverId) {
         const deleted = await sessionManager.deleteSession(sessionId);
         if (deleted) {
             repaired++;
-            destroySessionClient(sessionId, session, tokenHash, "failed-stop-repair", cleanup.clientRef || session.client);
+            cleanupSessionClientIfUnused(tokenHash, cleanup.clientRef || session.client, sessionId, session, "failed-stop-repair");
         } else {
             blocked++;
             await sessionManager.markSessionFailed?.(
@@ -1292,7 +1325,7 @@ async function stopSession(sessionId, options = {}) {
     console.log(`[WORKER] 🛑 Stopped session: ${sessionId}`);
 
     if (tokenHash && clientRef) {
-        destroySessionClient(sessionId, session, tokenHash, "manual-stop", clientRef);
+        cleanupSessionClientIfUnused(tokenHash, clientRef, sessionId, session, "manual-stop");
     }
 
     return true;
