@@ -181,7 +181,15 @@ function serializeVoiceSession(session) {
         tokenInvalid: !!session.tokenInvalid,
         reconnecting: !!session.reconnecting,
         hasConnection: !!session.connection,
-        connectionStatus: session.connection?.state?.status || null
+        connectionStatus: session.connection?.state?.status || null,
+        state: session.state || "active",
+        stoppedAt: session.stoppedAt || null,
+        stoppedReason: session.stoppedReason || null,
+        stoppedBy: session.stoppedBy || null,
+        lastStopError: session.lastStopError || null,
+        clientReady: !!session.client?.isReady?.(),
+        staleSuspected: (session.state || "active") === "active" && !session.connection,
+        ghostSuspected: session.stoppedReason === "stop_cleanup_failed"
 
         /*
          * Security note:
@@ -420,7 +428,7 @@ function registerRoutes({
     });
 
     // ── Stop Session ──
-    app.post("/api/stop-session", express.json(), async (req, res) => {
+    app.post("/api/stop-session", express.json({ limit: "8kb" }), async (req, res) => {
         try {
             if (!checkAuth(req, res)) return;
 
@@ -442,8 +450,18 @@ function registerRoutes({
                 });
             }
 
-            await voiceWorker.sendSessionStoppedDM(sessionId, "manual");
-            await voiceWorker.stopSession(sessionId);
+            const stopped = await voiceWorker.stopSession(sessionId, { stoppedBy: "dashboard" });
+
+            if (!stopped) {
+                return res.status(409).json({
+                    success: false,
+                    error: "ไม่สามารถหยุด session นี้ได้"
+                });
+            }
+
+            await voiceWorker.sendSessionStoppedDM(sessionId, "manual").catch((dmErr) => {
+                console.warn(`[DASHBOARD] ⚠️ Session stopped but DM failed for ${sessionId}: ${dmErr.message}`);
+            });
 
             console.log(`[DASHBOARD] 🛑 Session ${sessionId} stopped via dashboard`);
             res.json({ success: true });
@@ -880,8 +898,17 @@ function registerRoutes({
             const guildSessions = Array.from(sessionManager.getAllSessions().values())
                 .filter(s => s.serverId === guildId);
 
+            let failedStops = 0;
             for (const s of guildSessions) {
-                await voiceWorker.stopSession(s.sessionId).catch(() => {});
+                const stopped = await voiceWorker.stopSession(s.sessionId, { stoppedBy: "dashboard" }).catch((stopErr) => {
+                    console.warn(`[DASHBOARD] ⚠️ Best-effort guild kick voice stop failed for session ${s.sessionId}: ${stopErr.message}`);
+                    return false;
+                });
+                if (!stopped) failedStops++;
+            }
+
+            if (failedStops > 0) {
+                console.warn(`[DASHBOARD] ⚠️ Continuing guild leave after ${failedStops} voice session stop failure(s) for guild ${guildId}`);
             }
 
             await guild.leave();
@@ -897,7 +924,11 @@ function registerRoutes({
                 } catch (_) {}
             }
 
-            res.json({ success: true });
+            res.json({
+                success: true,
+                voiceStopFailed: failedStops,
+                warning: failedStops > 0 ? "บอทถูกนำออกแล้ว แต่มี voice sessions บางรายการหยุดไม่สำเร็จ" : null
+            });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
         }
