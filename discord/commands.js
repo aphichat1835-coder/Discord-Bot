@@ -892,7 +892,15 @@ async function handleModal(interaction, client) {
 
         } catch (err) {
             if (sessionId) {
-                await sessionManager.deleteSession(sessionId).catch(() => {});
+                const removed = await sessionManager.deleteSession(sessionId).catch(() => false);
+                if (!removed) {
+                    await sessionManager.markSessionFailed?.(
+                        sessionId,
+                        "start_cleanup_failed",
+                        interaction.user.id,
+                        "session delete failed after start error"
+                    ).catch(() => {});
+                }
             }
 
             sessionManager.systemMetrics.increment("errors");
@@ -908,7 +916,8 @@ async function handleModal(interaction, client) {
                 "CHANNEL_NOT_FOUND": `> ${config.emojis.error} ไม่พบห้องเสียง หรือไม่มีสิทธิ์เข้าห้อง`,
                 "SYSTEM_SHUTTING_DOWN": `> ${config.emojis.warning} ระบบกำลังปิดตัว โปรดรอสักครู่`,
                 "SESSION_LOCKED": `> ${config.emojis.warning} Session นี้กำลังประมวลผลอยู่ โปรดลองใหม่อีกครั้ง`,
-                "TOKEN_DECRYPTION_FAILED": `> ${config.emojis.error} ระบบอ่าน Token ไม่สำเร็จ โปรดลองเริ่มใหม่`
+                "TOKEN_DECRYPTION_FAILED": `> ${config.emojis.error} ระบบอ่าน Token ไม่สำเร็จ โปรดลองเริ่มใหม่`,
+                "DATABASE_NOT_CONNECTED": `> ${config.emojis.error} ฐานข้อมูลยังไม่พร้อม โปรดลองใหม่อีกครั้ง`
             };
 
             return interaction.editReply({

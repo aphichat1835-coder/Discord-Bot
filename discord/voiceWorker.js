@@ -65,13 +65,20 @@ function isVoiceDebugEnabled() { return process.env.VOICE_DEBUG_MULTI_CLIENT ===
 function debugVoiceSession(event, sessionId, session, extra = {}) {
     if (!isVoiceDebugEnabled()) return;
 
+    const allowedExtra = {};
+    for (const key of ["hit", "strategy", "group", "selfVoice", "sameAccountSessions", "connectionStatus"]) {
+        if (Object.prototype.hasOwnProperty.call(extra, key)) {
+            allowedExtra[key] = extra[key];
+        }
+    }
+
     const safe = {
         session: getSessionShortId(sessionId),
         accountId: session?.accountId || session?.client?.user?.id || null,
         guildId: session?.serverId || null,
         channelId: session?.voiceId || null,
         pool: getClientPoolStrategyName(),
-        ...extra
+        ...allowedExtra
     };
 
     console.log(`[VOICE-DEBUG] ${event} ${JSON.stringify(safe)}`);
@@ -347,17 +354,22 @@ function countActiveSessionsForAccountId(accountId) {
 async function waitForTokenLoginCooldown(tokenHash) {
     if (!tokenHash) return;
 
-    const now = Date.now();
     const minDelayMs = 3500;
-    const lastLoginAt = tokenLoginCooldowns.get(tokenHash) || 0;
-    const elapsed = now - lastLoginAt;
+    const previous = tokenLoginCooldowns.get(tokenHash) || Promise.resolve(0);
 
-    if (elapsed < minDelayMs) {
-        const jitter = Math.floor(Math.random() * 1200);
-        await new Promise(resolve => setTimeout(resolve, minDelayMs - elapsed + jitter));
-    }
+    const next = previous.catch(() => 0).then(async (lastLoginAt) => {
+        const elapsed = Date.now() - Number(lastLoginAt || 0);
 
-    tokenLoginCooldowns.set(tokenHash, Date.now());
+        if (elapsed < minDelayMs) {
+            const jitter = Math.floor(Math.random() * 1200);
+            await new Promise(resolve => setTimeout(resolve, minDelayMs - elapsed + jitter));
+        }
+
+        return Date.now();
+    });
+
+    tokenLoginCooldowns.set(tokenHash, next);
+    await next;
 }
 
 
@@ -1308,11 +1320,19 @@ async function stopSession(sessionId, options = {}) {
         return false;
     }
 
+    if (options.notifyReason) {
+        await sendSessionStoppedDM(sessionId, options.notifyReason).catch(() => {});
+    }
+
+    if (tokenHash && clientRef) {
+        cleanupSessionClientIfUnused(tokenHash, clientRef, sessionId, session, "manual-stop");
+    }
+
     const deleted = await sessionManager.deleteSession(sessionId);
     if (!deleted) {
         const markResult = await sessionManager.markSessionFailed?.(
             sessionId,
-            "stop_cleanup_failed",
+            "session_delete_failed",
             options.stoppedBy || null,
             "session delete failed after voice cleanup"
         );
@@ -1323,10 +1343,6 @@ async function stopSession(sessionId, options = {}) {
     }
 
     console.log(`[WORKER] 🛑 Stopped session: ${sessionId}`);
-
-    if (tokenHash && clientRef) {
-        cleanupSessionClientIfUnused(tokenHash, clientRef, sessionId, session, "manual-stop");
-    }
 
     return true;
 }

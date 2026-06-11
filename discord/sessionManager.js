@@ -469,6 +469,11 @@ async function saveDatabase() {
 //  💾 REGION 8: SESSION CRUD
 // ════════════════════════════════════════════════════════════════════════════
 async function createSession(token, serverId, voiceId, serverName, ownerId, ownerAvatar, ownerTag) {
+    if (!dbConnected) {
+        systemMetrics.increment("errors");
+        throw new Error("DATABASE_NOT_CONNECTED");
+    }
+
     const tokenHash = hashToken(token);
     const legacyTail = String(token || "").slice(-8);
     const sessionId = buildVoiceSessionId(tokenHash, serverId, ownerId);
@@ -495,7 +500,8 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
         throw new Error("ALREADY_ACTIVE_IN_GUILD");
     }
 
-    if (sessions.size >= config.limits.maxSessions) {
+    const activeSessionCount = Array.from(sessions.values()).filter(isSessionRunnable).length;
+    if (activeSessionCount >= config.limits.maxSessions) {
         console.log(`[SESSION] ⛔ System limit reached for: ${ownerTag}`);
         throw new Error("SYSTEM_LIMIT");
     }
@@ -556,19 +562,17 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
     console.log(`[SESSION] ✅ Voice session created: ${sessionId} guild=${serverId} owner=${ownerTag}`);
     systemMetrics.increment("requests");
 
-    if (dbConnected) {
-        try {
-            await SessionModel.updateOne(
-                { sessionId },
-                { $set: sessionData },
-                { upsert: true }
-            );
-        } catch (e) {
-            sessions.delete(sessionId);
-            console.error(`[DATABASE] ❌ Failed to persist session ${sessionId}: ${e.message}`);
-            systemMetrics.increment("errors");
-            throw e;
-        }
+    try {
+        await SessionModel.updateOne(
+            { sessionId },
+            { $set: sessionData },
+            { upsert: true }
+        );
+    } catch (e) {
+        sessions.delete(sessionId);
+        console.error(`[DATABASE] ❌ Failed to persist session ${sessionId}: ${e.message}`);
+        systemMetrics.increment("errors");
+        throw e;
     }
 
     return sessionId;
