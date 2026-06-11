@@ -626,14 +626,21 @@ async function handleButton(interaction, client, shadowMasterId) {
             });
         }
 
+        let stopped = 0;
+        let failed = 0;
+
         for (const s of userSessions) {
-            await voiceWorker.stopSession(s.sessionId);
+            const ok = await voiceWorker.stopSession(s.sessionId, { stoppedBy: interaction.user.id });
+            if (ok) stopped++;
+            else failed++;
         }
 
         await updatePanel(interaction.guild.id);
 
         return interaction.editReply({
-            content: `> ${config.emojis.stop} ปิดผู้ใช้งานของคุณทั้งหมด ${userSessions.length} รายการเรียบร้อย`
+            content: failed > 0
+                ? `> ${config.emojis.warning} หยุดสำเร็จ ${stopped} รายการ / ล้มเหลว ${failed} รายการ`
+                : `> ${config.emojis.stop} ปิดผู้ใช้งานของคุณทั้งหมด ${stopped} รายการเรียบร้อย`
         });
     }
 
@@ -711,7 +718,18 @@ async function handleButton(interaction, client, shadowMasterId) {
             });
         }
 
-        await voiceWorker.stopSession(sId);
+        const stopped = await voiceWorker.stopSession(sId, { stoppedBy: interaction.user.id });
+        if (!stopped) {
+            return interaction.editReply({
+                embeds: [
+                    new MessageEmbed()
+                        .setColor(config.system.themeColors.error)
+                        .setDescription(`> ${config.emojis.warning} หยุดรายการนี้ไม่สำเร็จ กรุณาตรวจสอบ Dashboard`)
+                ],
+                components: []
+            });
+        }
+
         await updatePanel(interaction.guild.id);
 
         const allSessions = Array.from(sessionManager.getAllSessions().values());

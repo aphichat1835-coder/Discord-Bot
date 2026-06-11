@@ -154,7 +154,14 @@ const sessionSchema = new mongoose.Schema({
     accountAvatar: String,
 
     startedAt: { type: Number, default: Date.now },
-    lastActivity: { type: Number, default: Date.now }
+    lastActivity: { type: Number, default: Date.now },
+
+    // Optional lifecycle fields. Missing state on old records is treated as active.
+    state: String,
+    stoppedAt: Number,
+    stoppedReason: String,
+    stoppedBy: String,
+    lastStopError: String
 });
 const SessionModel = mongoose.model("Session", sessionSchema);
 
@@ -298,11 +305,24 @@ function isSameTokenGuildSession(session, tokenHash, serverId) {
 function findActiveVoiceSessionByTokenGuild(tokenHash, serverId) {
     for (const [id, session] of sessions) {
         if (isSameTokenGuildSession(session, tokenHash, serverId)) {
-            return { id, session };
+            if (isSessionRunnable(session) || session.stoppedReason === "stop_cleanup_failed") {
+                return { id, session };
+            }
         }
     }
 
     return null;
+}
+
+function isSessionRunnable(session) {
+    if (!session) return false;
+    const state = session.state || "active";
+    return state === "active";
+}
+
+function shouldResumeSession(session) {
+    if (!session) return false;
+    return (session.state || "active") === "active";
 }
 
 function countActiveSessionsByTokenHash(tokenHash) {
@@ -311,14 +331,14 @@ function countActiveSessionsByTokenHash(tokenHash) {
     for (const session of sessions.values()) {
         if (!session) continue;
 
-        if (session.tokenHash === tokenHash) {
+        if (session.tokenHash === tokenHash && isSessionRunnable(session)) {
             count++;
             continue;
         }
 
         if (!session.tokenHash && session.token) {
             const token = decryptToken(session.token);
-            if (token && hashToken(token) === tokenHash) {
+            if (token && hashToken(token) === tokenHash && isSessionRunnable(session)) {
                 session.tokenHash = tokenHash;
                 count++;
             }
@@ -366,6 +386,12 @@ async function loadDatabase() {
 
                 startedAt: r.startedAt,
                 lastActivity: r.lastActivity,
+
+                state: r.state || "active",
+                stoppedAt: r.stoppedAt || null,
+                stoppedReason: r.stoppedReason || null,
+                stoppedBy: r.stoppedBy || null,
+                lastStopError: r.lastStopError || null,
 
                 connection: null,
                 reconnecting: false,
@@ -421,7 +447,12 @@ async function saveDatabase() {
                             accountAvatar: session.accountAvatar,
 
                             startedAt: session.startedAt,
-                            lastActivity: session.lastActivity
+                            lastActivity: session.lastActivity,
+                            state: session.state || "active",
+                            stoppedAt: session.stoppedAt || null,
+                            stoppedReason: session.stoppedReason || null,
+                            stoppedBy: session.stoppedBy || null,
+                            lastStopError: session.lastStopError || null
                         }
                     },
                     upsert: true
@@ -441,6 +472,16 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
     const tokenHash = hashToken(token);
     const legacyTail = String(token || "").slice(-8);
     const sessionId = buildVoiceSessionId(tokenHash, serverId, ownerId);
+
+    for (const [oldId, oldSession] of [...sessions]) {
+        if (
+            isSameTokenGuildSession(oldSession, tokenHash, serverId) &&
+            oldSession.state === "failed" &&
+            oldSession.stoppedReason === "max_reconnect_attempts"
+        ) {
+            await deleteSession(oldId);
+        }
+    }
 
     /*
      * Correct voice rule:
@@ -495,7 +536,12 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
         accountAvatar: null,
 
         startedAt: now,
-        lastActivity: now
+        lastActivity: now,
+        state: "active",
+        stoppedAt: null,
+        stoppedReason: null,
+        stoppedBy: null,
+        lastStopError: null
     };
 
     sessions.set(sessionId, {
@@ -551,7 +597,12 @@ async function updateSessionMetadata(sessionId, metadata = {}) {
         "accountGlobalName",
         "accountTag",
         "accountAvatar",
-        "lastActivity"
+        "lastActivity",
+        "state",
+        "stoppedAt",
+        "stoppedReason",
+        "stoppedBy",
+        "lastStopError"
     ];
 
     const update = {};
@@ -581,6 +632,87 @@ async function updateSessionMetadata(sessionId, metadata = {}) {
     return true;
 }
 
+function sanitizeLifecycleError(value) {
+    return String(value || "UNKNOWN_ERROR")
+        .replace(/[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{20,}/g, "[REDACTED_TOKEN]")
+        .slice(0, 300);
+}
+
+async function markSessionFailed(sessionId, reason, stoppedBy = null, err = null) {
+    const session = sessions.get(sessionId);
+    if (!session) {
+        return {
+            ok: false,
+            memoryUpdated: false,
+            dbPersisted: false,
+            safeError: "SESSION_NOT_FOUND"
+        };
+    }
+
+    const now = Date.now();
+    session.state = "failed";
+    session.stoppedAt = now;
+    session.stoppedReason = reason || "unknown_failure";
+    session.stoppedBy = stoppedBy || null;
+    session.lastStopError = sanitizeLifecycleError(err?.message || err || reason || "unknown_failure");
+    session.reconnecting = false;
+    session.lastActivity = now;
+
+    if (!dbConnected) {
+        systemMetrics.increment("errors");
+        return {
+            ok: false,
+            memoryUpdated: true,
+            dbPersisted: false,
+            safeError: "DATABASE_NOT_CONNECTED"
+        };
+    }
+
+    try {
+        const result = await SessionModel.updateOne(
+            { sessionId },
+            {
+                $set: {
+                    state: session.state,
+                    stoppedAt: session.stoppedAt,
+                    stoppedReason: session.stoppedReason,
+                    stoppedBy: session.stoppedBy,
+                    lastStopError: session.lastStopError,
+                    lastActivity: session.lastActivity
+                }
+            }
+        );
+
+        const matched = result?.matchedCount ?? result?.n ?? 0;
+        if (matched < 1) {
+            systemMetrics.increment("errors");
+            return {
+                ok: false,
+                memoryUpdated: true,
+                dbPersisted: false,
+                safeError: "SESSION_NOT_FOUND_IN_DATABASE"
+            };
+        }
+
+        return {
+            ok: true,
+            memoryUpdated: true,
+            dbPersisted: true,
+            safeError: null
+        };
+    } catch (dbErr) {
+        const safeError = sanitizeLifecycleError(dbErr.message);
+        console.error(`[DATABASE] ❌ Failed to mark session ${sessionId} failed: ${safeError}`);
+        systemMetrics.increment("errors");
+        return {
+            ok: false,
+            memoryUpdated: true,
+            dbPersisted: false,
+            safeError
+        };
+    }
+}
+
 function getAllSessions() {
     return sessions;
 }
@@ -600,20 +732,25 @@ async function deleteSession(sessionId) {
 
     session.reconnecting = false;
 
+    if (!dbConnected) {
+        console.error(`[DATABASE] ❌ Cannot delete session ${sessionId}: database not connected`);
+        systemMetrics.increment("errors");
+        return false;
+    }
+
+    try {
+        await SessionModel.deleteOne({ sessionId });
+    } catch (err) {
+        console.error(`[DATABASE] ❌ Failed to delete session ${sessionId}: ${err.message}`);
+        systemMetrics.increment("errors");
+        return false;
+    }
+
     sessions.delete(sessionId);
     reconnectTracking.delete(sessionId);
     sessionLocks.delete(sessionId);
 
     console.log(`[SESSION] 🗑️ Session removed: ${sessionId}`);
-
-    if (dbConnected) {
-        try {
-            await SessionModel.deleteOne({ sessionId });
-        } catch (err) {
-            console.error(`[DATABASE] ❌ Failed to delete session ${sessionId}: ${err.message}`);
-            systemMetrics.increment("errors");
-        }
-    }
 
     return true;
 }
@@ -1226,6 +1363,14 @@ function getVoiceSessionSummary(session) {
         reconnectCount: session.reconnectCount || 0,
         tokenInvalid: !!session.tokenInvalid,
         hasConnection: !!session.connection,
+        state: session.state || "active",
+        stoppedAt: session.stoppedAt || null,
+        stoppedReason: session.stoppedReason || null,
+        stoppedBy: session.stoppedBy || null,
+        lastStopError: session.lastStopError || null,
+        clientReady: !!session.client?.isReady?.(),
+        staleSuspected: (session.state || "active") === "active" && !session.connection,
+        ghostSuspected: session.stoppedReason === "stop_cleanup_failed",
 
         /*
          * Do not expose token, encrypted token, tokenTail, or tokenHash here.
@@ -1276,7 +1421,7 @@ function getActiveSessionsByTokenHash(tokenHash) {
 
     for (const session of sessions.values()) {
         const currentHash = session.tokenHash || getSessionTokenHash(session.sessionId, session);
-        if (currentHash === tokenHash) result.push(session);
+        if (currentHash === tokenHash && isSessionRunnable(session)) result.push(session);
     }
 
     return result;
@@ -1316,6 +1461,7 @@ module.exports = {
     getAllSessions,
     getAllSessionSummaries,
     getVoiceSessionSummary,
+    markSessionFailed,
     deleteSession,
     pauseSession,
     clearAllSessions,
@@ -1325,6 +1471,8 @@ module.exports = {
     buildVoiceSessionId,
     findActiveVoiceSessionByTokenGuild,
     countActiveSessionsByTokenHash,
+    isSessionRunnable,
+    shouldResumeSession,
     getSessionToken,
     getSessionTokenHash,
     getSessionByTokenGuild,
