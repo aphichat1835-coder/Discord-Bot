@@ -1681,7 +1681,10 @@ async function kickGuild(guildId){
 
         const d=await r.json();
 
-        if(d.success){
+        if(d.partialSuccess){
+            showToast('⚠️ '+(d.warning||'เตะบอทออกแล้ว แต่มีบาง session หยุดไม่สำเร็จ'),'warn');
+            setTimeout(()=>location.reload(),1200);
+        }else if(d.success){
             showToast('✅ เตะบอทออกแล้ว','ok');
             setTimeout(()=>location.reload(),1000);
         }else{

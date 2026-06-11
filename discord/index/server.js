@@ -450,7 +450,10 @@ function registerRoutes({
                 });
             }
 
-            const stopped = await voiceWorker.stopSession(sessionId, { stoppedBy: "dashboard" });
+            const stopped = await voiceWorker.stopSession(sessionId, {
+                stoppedBy: "dashboard",
+                notifyReason: "manual"
+            });
 
             if (!stopped) {
                 return res.status(409).json({
@@ -458,10 +461,6 @@ function registerRoutes({
                     error: "ไม่สามารถหยุด session นี้ได้"
                 });
             }
-
-            await voiceWorker.sendSessionStoppedDM(sessionId, "manual").catch((dmErr) => {
-                console.warn(`[DASHBOARD] ⚠️ Session stopped but DM failed for ${sessionId}: ${dmErr.message}`);
-            });
 
             console.log(`[DASHBOARD] 🛑 Session ${sessionId} stopped via dashboard`);
             res.json({ success: true });
@@ -924,8 +923,9 @@ function registerRoutes({
                 } catch (_) {}
             }
 
-            res.json({
-                success: true,
+            res.status(failedStops > 0 ? 207 : 200).json({
+                success: failedStops === 0,
+                partialSuccess: failedStops > 0,
                 voiceStopFailed: failedStops,
                 warning: failedStops > 0 ? "บอทถูกนำออกแล้ว แต่มี voice sessions บางรายการหยุดไม่สำเร็จ" : null
             });
