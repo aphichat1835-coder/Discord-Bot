@@ -26,6 +26,10 @@ const {
     handleButton,
     handleModal
 } = require("./commands/panelInteractions");
+const {
+    requireMemberPermission,
+    safeReply
+} = require("./guards/commandGuards");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🗺️  REGION 1: STATE
@@ -162,12 +166,7 @@ async function handleInteraction(interaction, client, shadowMasterId) {
             }
 
             if (cmd === "panel") {
-                if (!interaction.member.permissions.has("ADMINISTRATOR")) {
-                    return interaction.reply({
-                        content: `> ${config.emojis.no_entry} ไม่มีสิทธิ์ผู้ดูแลระบบ`,
-                        ephemeral: true
-                    });
-                }
+                if (!await requireMemberPermission(interaction, "ADMINISTRATOR", `> ${config.emojis.no_entry} ไม่มีสิทธิ์ผู้ดูแลระบบ`)) return;
 
                 const msg = await interaction.reply({
                     embeds: [buildControlPanelEmbed()],
@@ -204,8 +203,7 @@ async function handleInteraction(interaction, client, shadowMasterId) {
             ephemeral: true
         };
 
-        if (interaction.deferred) return interaction.editReply(reply).catch(() => {});
-        if (!interaction.replied) return interaction.reply(reply).catch(() => {});
+        return safeReply(interaction, reply);
     }
 }
 

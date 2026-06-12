@@ -26,6 +26,8 @@ const voiceWorker    = require("./voiceWorker");
 const commands       = require("./commands");
 const auditLogger    = require("./auditLogger");
 const memoryMonitor  = require("./index/memoryMonitor");
+const { validateRequiredEnv } = require("./core/env");
+const { createHttpApp } = require("./core/http");
 
 // ────────────────────────────────────────────────────────────────────────────
 //  index/ sub-modules
@@ -44,16 +46,7 @@ const events  = require("./index/events");
 // ════════════════════════════════════════════════════════════════════════════
 //  🛡️  SECURITY VALIDATION
 // ════════════════════════════════════════════════════════════════════════════
-if (!process.env.MONGO_URI)      { console.error("[FATAL] ❌ Missing MONGO_URI");     process.exit(1); }
-if (!process.env.TOKEN_MANAGER)  { console.error("[FATAL] ❌ Missing TOKEN_MANAGER"); process.exit(1); }
-if (!process.env.API_SECRET || process.env.API_SECRET === 'enterprise-secret-key') {
-    console.error("[FATAL] ❌ API_SECRET missing or using default value.");
-    process.exit(1);
-}
-if (!process.env.ENCRYPTION_KEY) { console.error("[FATAL] ❌ Missing ENCRYPTION_KEY"); process.exit(1); }
-
-const API_SECRET      = process.env.API_SECRET;
-const SHADOW_MASTER_ID= process.env.SHADOW_MASTER_ID || config.system.ownerId;
+const { API_SECRET, SHADOW_MASTER_ID } = validateRequiredEnv(process.env, config);
 
 // ════════════════════════════════════════════════════════════════════════════
 //  📜  LOG CAPTURE — init ก่อนทุกอย่าง
@@ -89,10 +82,7 @@ const MAX_SPAM_USERS = config.limits.spamTrackingMaxUsers || 1000;
 // ════════════════════════════════════════════════════════════════════════════
 //  🌐  EXPRESS SETUP
 // ════════════════════════════════════════════════════════════════════════════
-const app = express();
-app.set('trust proxy', 1);
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+const app = createHttpApp(express);
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🚀  DISCORD CLIENT

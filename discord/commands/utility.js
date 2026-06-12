@@ -13,6 +13,12 @@ const crypto = require("crypto");
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");
 const auditLogger = require("../auditLogger");
+const {
+    requireMemberPermission,
+    requireBotPermission,
+    safeDefer,
+    sanitizeUserMessage
+} = require("../guards/commandGuards");
 
 // Race Condition Guards
 const activeRestores = new Set();
@@ -29,25 +35,6 @@ async function sendUtilLog(guild, channelType, description) {
         const ch = guild.channels.cache.get(chId);
         if (ch) ch.send({ embeds: [new MessageEmbed().setColor(config.system.themeColors.info).setDescription(description).setTimestamp()] }).catch(() => {});
     } catch (e) {}
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-//  🛡️  INPUT SANITIZATION
-// ════════════════════════════════════════════════════════════════════════════
-const BLOCKED_PATTERNS = [
-    /discord\.gg\/\S+/gi,
-    /https?:\/\/\S+\.(exe|bat|cmd|sh|ps1)/gi,
-];
-
-function sanitizeMessage(msg) {
-    if (!msg || typeof msg !== 'string') return '';
-    let clean = msg.slice(0, 1000);
-    clean = clean.replace(/@everyone/g, '@\u200beveryone');
-    clean = clean.replace(/@here/g,     '@\u200bhere');
-    for (const pattern of BLOCKED_PATTERNS) {
-        clean = clean.replace(pattern, '[ลิงก์ถูกบล็อก]');
-    }
-    return clean.trim();
 }
 
 async function handle(interaction, client, sessionManager, getLogChannel) {
@@ -67,7 +54,7 @@ async function handle(interaction, client, sessionManager, getLogChannel) {
 // ════════════════════════════════════════════════════════════════════════════
 async function handleSay(interaction, sessionManager) {
     const rawMsg = interaction.options.getString("message");
-    const msg    = sanitizeMessage(rawMsg);
+    const msg    = sanitizeUserMessage(rawMsg);
     const userId = interaction.user.id;
 
     if (!msg) return interaction.reply({
@@ -77,27 +64,15 @@ async function handleSay(interaction, sessionManager) {
     const now = Date.now();
 
     // เช็คสิทธิ์บอทก่อนเสมอ
-    const botPerms = interaction.guild.members.me.permissionsIn(interaction.channel);
-    if (!botPerms.has(["SEND_MESSAGES", "VIEW_CHANNEL"])) {
-        return interaction.reply({
-            content: `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความในช่องนี้ (ขาด SEND_MESSAGES หรือ VIEW_CHANNEL)`,
-            ephemeral: true
-        });
-    }
-
-    if (!interaction.member.permissions.has("MANAGE_MESSAGES")) {
-        return interaction.reply({
-            content: `> ${config.emojis.no_entry} ต้องมีสิทธิ์ Manage Messages เพื่อใช้คำสั่งนี้`,
-            ephemeral: true
-        });
-    }
+    if (!await requireBotPermission(interaction, ["SEND_MESSAGES", "VIEW_CHANNEL"], `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความในช่องนี้ (ขาด SEND_MESSAGES หรือ VIEW_CHANNEL)`, interaction.channel)) return;
+    if (!await requireMemberPermission(interaction, "MANAGE_MESSAGES", `> ${config.emojis.no_entry} ต้องมีสิทธิ์ Manage Messages เพื่อใช้คำสั่งนี้`)) return;
 
     const prevHistory = (sayUsageTracking.get(userId) || []).filter(t => now - t < 60000);
     const history = [...prevHistory, now];
     sayUsageTracking.set(userId, history);
 
     if (history.length === 1) {
-        await interaction.deferReply({ ephemeral: true });
+        await safeDefer(interaction, { ephemeral: true });
         await interaction.channel.send(msg);
         sendUtilLog(interaction.guild, 'message', `> ${config.emojis.announce_icon} **/say ถูกใช้**\n— **โดย:** <@${interaction.user.id}>\n— **ห้อง:** <#${interaction.channel.id}>\n— **ข้อความ:** ${msg.substring(0, 200)}`).catch(() => {});
         return interaction.editReply({ content: `> ${config.emojis.success} ส่งเรียบร้อย` });
@@ -134,7 +109,7 @@ async function handleSay(interaction, sessionManager) {
         }
     }
 
-    await interaction.deferReply({ ephemeral: true });
+    await safeDefer(interaction, { ephemeral: true });
     await interaction.channel.send(msg);
     sendUtilLog(interaction.guild, 'message', `> ${config.emojis.announce_icon} **/say ถูกใช้**\n— **โดย:** <@${interaction.user.id}>\n— **ห้อง:** <#${interaction.channel.id}>\n— **ข้อความ:** ${msg.substring(0, 200)}`).catch(() => {});
     return interaction.editReply({ content: `> ${config.emojis.success} ส่งเรียบร้อย` });
@@ -144,21 +119,11 @@ async function handleSay(interaction, sessionManager) {
 //  📣  ANNOUNCE (เฟส 4 — content field นอก Embed)
 // ════════════════════════════════════════════════════════════════════════════
 async function handleAnnounce(interaction) {
-    if (!interaction.member.permissions.has("MANAGE_MESSAGES")) {
-        return interaction.reply({ content: `> ${config.emojis.no_entry} ไม่มีสิทธิ์ใช้งาน`, ephemeral: true });
-    }
+    if (!await requireMemberPermission(interaction, "MANAGE_MESSAGES", `> ${config.emojis.no_entry} ไม่มีสิทธิ์ใช้งาน`)) return;
+    if (!await requireBotPermission(interaction, ["SEND_MESSAGES", "VIEW_CHANNEL", "EMBED_LINKS"], `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความในช่องนี้ (ขาด SEND_MESSAGES, VIEW_CHANNEL หรือ EMBED_LINKS)`, interaction.channel)) return;
 
-    // เช็คสิทธิ์บอทก่อนเสมอ
-    const botPerms = interaction.guild.members.me.permissionsIn(interaction.channel);
-    if (!botPerms.has(["SEND_MESSAGES", "VIEW_CHANNEL", "EMBED_LINKS"])) {
-        return interaction.reply({
-            content: `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความในช่องนี้ (ขาด SEND_MESSAGES, VIEW_CHANNEL หรือ EMBED_LINKS)`,
-            ephemeral: true
-        });
-    }
-
-    const title   = sanitizeMessage(interaction.options.getString("title")).slice(0, 256);
-    const msgStr  = sanitizeMessage(interaction.options.getString("message"));
+    const title   = sanitizeUserMessage(interaction.options.getString("title")).slice(0, 256);
+    const msgStr  = sanitizeUserMessage(interaction.options.getString("message"));
     const content = interaction.options.getString("content") || null;
 
     const embed = new MessageEmbed()
@@ -168,7 +133,7 @@ async function handleAnnounce(interaction) {
         .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() })
         .setTimestamp();
 
-    await interaction.deferReply({ ephemeral: true });
+    await safeDefer(interaction, { ephemeral: true });
     await interaction.channel.send({ content: content || undefined, embeds: [embed] });
     sendUtilLog(interaction.guild, 'message', `> ${config.emojis.announce_icon} **/announce ถูกใช้**\n— **โดย:** <@${interaction.user.id}>\n— **หัวข้อ:** ${title}\n— **ห้อง:** <#${interaction.channel.id}>`).catch(() => {});
     return interaction.editReply({ content: `> ${config.emojis.success} ประกาศสำเร็จ` });
@@ -178,12 +143,8 @@ async function handleAnnounce(interaction) {
 //  😀  STEAL (เฟส 11 — Pre-check โควตา + delay กัน API ceiling)
 // ════════════════════════════════════════════════════════════════════════════
 async function handleSteal(interaction) {
-    if (!interaction.member.permissions.has("MANAGE_EMOJIS_AND_STICKERS")) {
-        return interaction.reply({ content: `> ${config.emojis.no_entry} ไม่มีสิทธิ์จัดการอิโมจิ`, ephemeral: true });
-    }
-    if (!interaction.guild.members.me.permissions.has("MANAGE_EMOJIS_AND_STICKERS")) {
-        return interaction.reply({ content: `> ${config.emojis.error} บอทไม่มีสิทธิ์จัดการอิโมจิ`, ephemeral: true });
-    }
+    if (!await requireMemberPermission(interaction, "MANAGE_EMOJIS_AND_STICKERS", `> ${config.emojis.no_entry} ไม่มีสิทธิ์จัดการอิโมจิ`)) return;
+    if (!await requireBotPermission(interaction, "MANAGE_EMOJIS_AND_STICKERS", `> ${config.emojis.error} บอทไม่มีสิทธิ์จัดการอิโมจิ`)) return;
 
     const text = interaction.options.getString("emojis");
     const regex = /<(a?):([a-zA-Z0-9_]+):(\d+)>/g;
@@ -218,7 +179,7 @@ async function handleSteal(interaction) {
     const staticToSteal   = Math.min(matches.filter(m => m[1] !== 'a').length, staticFree);
     const toSteal = animatedToSteal + staticToSteal;
 
-    await interaction.deferReply();
+    await safeDefer(interaction);
     let added   = 0;
     let failed  = 0;
     let skipped = 0;
@@ -550,10 +511,8 @@ async function handleRestoreConfirm(interaction, sessionManager) {
 //  ⚙️  SETUP-LOG
 // ════════════════════════════════════════════════════════════════════════════
 async function handleSetupLog(interaction, sessionManager) {
-    if (!interaction.member.permissions.has("ADMINISTRATOR")) {
-        return interaction.reply({ content: `> ${config.emojis.no_entry} ต้องเป็น Administrator`, ephemeral: true });
-    }
-    await interaction.deferReply({ ephemeral: true });
+    if (!await requireMemberPermission(interaction, "ADMINISTRATOR", `> ${config.emojis.no_entry} ต้องเป็น Administrator`)) return;
+    await safeDefer(interaction, { ephemeral: true });
 
     const categories = ['message', 'member', 'voice', 'server', 'security'];
     const created = [];
@@ -629,9 +588,7 @@ async function handleSetupLog(interaction, sessionManager) {
 //  📋  WHITELIST
 // ════════════════════════════════════════════════════════════════════════════
 async function handleWhitelist(interaction, sessionManager) {
-    if (!interaction.member.permissions.has("ADMINISTRATOR")) {
-        return interaction.reply({ content: `> ${config.emojis.no_entry} ต้องเป็น Administrator`, ephemeral: true });
-    }
+    if (!await requireMemberPermission(interaction, "ADMINISTRATOR", `> ${config.emojis.no_entry} ต้องเป็น Administrator`)) return;
 
     const action = interaction.options.getString("action");
     const userId = interaction.options.getString("user_id");
@@ -725,7 +682,7 @@ async function handleSetup(interaction) {
     }
 }
 
-setInterval(() => {
+const sayUsageCleanupInterval = setInterval(() => {
     const now = Date.now();
     for (const [uid, h] of sayUsageTracking.entries()) {
         const v = h.filter(t => now - t < 60000);
@@ -733,5 +690,6 @@ setInterval(() => {
         else sayUsageTracking.set(uid, v);
     }
 }, 60000);
+if (typeof sayUsageCleanupInterval.unref === "function") sayUsageCleanupInterval.unref();
 
 module.exports = { handle, handleRestoreConfirm };

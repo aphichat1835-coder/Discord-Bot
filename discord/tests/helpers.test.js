@@ -23,6 +23,8 @@ const {
     createViewHelpers,
     escapeHtml
 } = require("../index/viewHelpers");
+const { BASE_CSS } = require("../index/viewStyles");
+const views = require("../index/views");
 const {
     decodeTokenOwnerIdSafe,
     toBase64Url
@@ -118,4 +120,10 @@ test("view helpers escape HTML and create a consistent shell", () => {
     assert.match(html, /<style>body\{color:red;\}<\/style>/);
     assert.match(html, /href="\/status" class="active"/);
     assert.match(html, /function showToast/);
+});
+
+test("view styles remain available through the split style module and views compatibility export", () => {
+    assert.equal(typeof BASE_CSS, "string");
+    assert.match(BASE_CSS, /:root/);
+    assert.equal(views.BASE_CSS, BASE_CSS);
 });

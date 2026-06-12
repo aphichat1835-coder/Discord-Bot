@@ -87,18 +87,22 @@ Important invariant: Express starts first, MongoDB connects second, Discord logi
 
 | File | Responsibility |
 | --- | --- |
-| `discord/index.js` | Service 1 composition, env validation, Express app, Discord client, route/event/cron/shutdown registration, boot sequence, ready handler |
+| `discord/index.js` | Service 1 composition, Discord client, route/event/cron/shutdown registration, boot sequence, ready handler |
+| `discord/core/env.js` | Service 1 required environment validation and boot-safe env derivation |
+| `discord/core/http.js` | Service 1 Express app creation, trust proxy, body limits, x-powered-by disable, and security headers |
 | `discord/index/system.js` | log capture, crash shield, cron cleanup/health/save loop, graceful shutdown |
-| `discord/index/server.js` | owner dashboard JSON/control APIs, auth helpers, rate limiting, settings/presence, token reveal controls, command toggles, whitelist, approved guild APIs |
+| `discord/index/server.js` | owner dashboard JSON/control APIs, settings/presence, token reveal controls, command toggles, whitelist, approved guild APIs |
+| `discord/index/dashboardState.js` | owner dashboard command status, command audit, runtime status, and safe JSON payload helpers |
 | `discord/index/sessionSerializer.js` | safe owner-dashboard voice session JSON serialization and token lookup compatibility helper |
 | `discord/index/views.js` | PIN-protected owner dashboard HTML pages, generated markup/styles/scripts, view route registration |
 | `discord/index/viewHelpers.js` | reusable server-side owner dashboard HTML helpers |
+| `discord/index/viewStyles.js` | shared owner dashboard CSS consumed by `views.js` shell rendering |
 | `discord/index/auth.js` | owner dashboard PIN gate, signed cookie helpers, PIN page HTML |
 | `discord/index/events.js` | message handling, interaction routing, guild create/delete hooks, anti-raid/spam/link entrypoint |
 | `discord/index/verifyOwner.js` | owner verification overview and raw IP reveal approval/rejection dashboard surface |
 | `discord/index/memoryMonitor.js` | Service 1 memory monitoring |
-| `discord/commands.js` | slash command registry/router, voice panel state, panel restore/update, button/modal routing |
-| `discord/commands/registry.js` | slash command definition list used by Service 1 registration and dashboard command status |
+| `discord/commands.js` | slash command router/export compatibility layer, voice panel state, panel restore/update, button/modal routing |
+| `discord/commands/registry.js` | slash command definition source used by Service 1 registration, `commands.js` exports, and dashboard command status |
 | `discord/commands/customIds.js` | voice/verification/restore custom ID constants and parsing helpers |
 | `discord/commands/panelViews.js` | voice panel embed, button row, status embed, status controls, and start modal builders |
 | `discord/commands/panelInteractions.js` | voice panel button and modal interaction behavior extracted from the router |
@@ -107,8 +111,11 @@ Important invariant: Express starts first, MongoDB connects second, Discord logi
 | `discord/commands/utility.js` | say, announce, emoji import, backup, restore, setup-log, whitelist, dashboard setup logic |
 | `discord/commands/verification.js` | `/setup-verify`, verification panel creation, dashboard-compatible config sync, verify button handling |
 | `discord/sessionManager.js` | MongoDB connection, encryption helpers, schemas/models, voice session persistence, reconnect locks, approvals, snapshots, panel state, log channel map, whitelist, settings, metrics |
-| `discord/sessions/tokenUtils.js` | pure token owner ID decoding helpers used by voice panel start validation |
+| `discord/sessions/tokenUtils.js` | pure token format validation, redaction, and owner ID decoding helpers used by voice panel start validation |
+| `discord/sessions/sessionErrors.js` | user-facing voice/session start error message map and fallback text |
 | `discord/sessions/voiceLabels.js` | voice session account/channel/status label helpers used by panel views/interactions |
+| `discord/guards/commandGuards.js` | slash command permission, hierarchy, safe reply/defer, message sanitization, and voice panel control guard helpers |
+| `discord/guards/dashboardGuards.js` | owner dashboard API rate limit, API secret auth, reveal PIN lockout, intrusion logging, and read-route bypass helpers |
 | `discord/voiceWorker.js` | live voice/session lifecycle, pooled clients, voice connections, metadata refresh, stop/pause/resume, health recovery, idle cleanup, notifications, natural/auto-deaf timers |
 | `discord/auditLogger.js` | audit log channel lookup, queue/cache helpers, embed helpers, message/member/voice/server/security event listeners |
 | `discord/features/protection.js` | protection config, anti-raid, anti-spam, link filtering, protection alert embeds |
@@ -310,7 +317,8 @@ POST /internal/ip-reveal/:requestId/reject
 
 ## Slash Commands
 
-Slash command registry lives in `discord/commands.js`.
+Slash command definitions live in `discord/commands/registry.js`.
+`discord/commands.js` is the router/export compatibility layer that re-exports those definitions while preserving command handling, panel restore/update, and button/modal routing.
 
 | Command | Area |
 | --- | --- |
@@ -578,11 +586,11 @@ These files mix multiple responsibilities today. This is a maintainability findi
 
 | File | Mixed responsibilities |
 | --- | --- |
-| `discord/index.js` | service composition, env validation, Express setup, Discord client setup, route/event registration, boot order, ready handler, protected subsystem reference |
+| `discord/index.js` | service composition, Discord client setup, route/event registration, boot order, ready handler, protected subsystem reference |
 | `discord/sessionManager.js` | encryption, schemas, DB connection, session CRUD, locks/reconnects, approvals, backups, panels, logs, whitelist, settings, metrics |
 | `discord/voiceWorker.js` | client pool, self-client lifecycle, voice connection lifecycle, health/recovery, stop/pause/resume, DMs, natural/auto-deaf timers |
-| `discord/commands.js` | command registry/router plus voice panel state, panel persistence, button flow, modal flow |
-| `discord/index/server.js` | auth/rate limit helpers, serializers, status/settings/session APIs, token reveal, command toggles, whitelist, approved guild actions |
+| `discord/commands.js` | command router/export compatibility plus voice panel state, panel persistence, button flow, modal flow |
+| `discord/index/server.js` | status/settings/session APIs, token reveal, command toggles, whitelist, approved guild actions |
 | `discord/index/views.js` | page HTML, CSS, JavaScript, route wiring, dashboard composition |
 | `discord/auditLogger.js` | queue/cache helpers, embed helpers, audit log lookup, many event listeners |
 | `dashboard-public/index.js` | env validation, Express/session/security setup, rate limits, route mounting, static routes, DB start |
@@ -618,14 +626,19 @@ Implemented low-risk extractions:
 - `discord/commands/customIds.js` for custom ID constants/helpers.
 - `discord/commands/panelViews.js` for voice panel embed/button builders.
 - `discord/commands/panelInteractions.js` for voice panel button/modal behavior without changing custom IDs.
+- `discord/core/env.js` for Service 1 required environment validation.
+- `discord/core/http.js` for Express app setup and security headers.
+- `discord/guards/commandGuards.js` for reusable command permission/reply/sanitization guards.
+- `discord/guards/dashboardGuards.js` for owner dashboard rate limit/auth/reveal PIN/intrusion helpers.
+- `discord/index/dashboardState.js` for owner dashboard status payload builders.
+- `discord/index/viewStyles.js` for shared owner dashboard CSS while keeping page and script logic in `views.js`.
+- `discord/sessions/sessionErrors.js` for voice/session start error messages.
 - `discord/sessions/tokenUtils.js` and `discord/sessions/voiceLabels.js` for pure helper logic.
 
 Deferred until there is a real need:
 
-- `discord/core/*`
-- `discord/guards/*`
-- `discord/index/dashboardState.js`
 - `discord/sessions/sessionRules.js`
-- `discord/sessions/sessionErrors.js`
+- `discord/core/safeLog.js`
+- optional `discord/index/viewPages.js` and `discord/index/viewScripts.js` split after UI smoke testing
 
 Do not split `dashboard-public/`, `voiceWorker.js`, `sessionManager.js`, or `auditLogger.js` further without a scoped follow-up task and validation plan.

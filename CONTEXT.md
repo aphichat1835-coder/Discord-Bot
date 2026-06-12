@@ -76,6 +76,7 @@ discord/index/system.js
 discord/index/events.js
 discord/index/server.js
 discord/index/views.js
+discord/index/viewStyles.js
 discord/index/auth.js
 discord/index/verifyOwner.js
 ```
@@ -88,6 +89,7 @@ Start with:
 
 ```txt
 discord/commands.js
+discord/commands/registry.js
 discord/commands/information.js
 discord/commands/moderation.js
 discord/commands/utility.js

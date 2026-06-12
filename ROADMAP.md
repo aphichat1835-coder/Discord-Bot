@@ -55,12 +55,19 @@ The first approved Service 1 helper extraction has been applied:
 
 - `discord/index/sessionSerializer.js`
 - `discord/index/viewHelpers.js`
+- `discord/index/viewStyles.js`
 - `discord/commands/registry.js`
 - `discord/commands/customIds.js`
 - `discord/commands/panelViews.js`
 - `discord/commands/panelInteractions.js`
 - `discord/sessions/tokenUtils.js`
 - `discord/sessions/voiceLabels.js`
+- `discord/sessions/sessionErrors.js`
+- `discord/guards/commandGuards.js`
+- `discord/guards/dashboardGuards.js`
+- `discord/core/env.js`
+- `discord/core/http.js`
+- `discord/index/dashboardState.js`
 
 The old public modules remain compatibility layers:
 
@@ -128,17 +135,13 @@ discord/
 
 Implementation rule: create and use only the files that have real code to hold. Do not create unused placeholder modules just to match the tree.
 
-The following approved names are intentionally deferred because no safe, necessary extraction was made for them in the first pass:
+The following approved names remain intentionally deferred because no safe, necessary extraction has been made for them yet:
 
 ```txt
-discord/core/env.js
-discord/core/http.js
 discord/core/safeLog.js
-discord/guards/commandGuards.js
-discord/guards/dashboardGuards.js
-discord/index/dashboardState.js
 discord/sessions/sessionRules.js
-discord/sessions/sessionErrors.js
+discord/index/viewPages.js
+discord/index/viewScripts.js
 ```
 
 ## Refactor Phases

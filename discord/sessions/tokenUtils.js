@@ -1,3 +1,7 @@
+const MIN_TOKEN_LENGTH = 50;
+const MAX_TOKEN_LENGTH = 256;
+const TOKEN_PATTERN = /^[A-Za-z0-9_-]{24,128}\.[A-Za-z0-9_-]{6,64}\.[A-Za-z0-9_-]{27,180}$/;
+
 function toBase64Url(value) {
     return Buffer.from(String(value), "utf8")
         .toString("base64")
@@ -36,7 +40,28 @@ function decodeTokenOwnerIdSafe(token) {
     }
 }
 
+function validateTokenFormat(token) {
+    return typeof token === "string" &&
+        token.length >= MIN_TOKEN_LENGTH &&
+        token.length <= MAX_TOKEN_LENGTH &&
+        TOKEN_PATTERN.test(token);
+}
+
+function redactToken(token) {
+    if (typeof token !== "string" || !token) return "[REDACTED_TOKEN]";
+
+    const clean = token.trim();
+    if (clean.length <= 12) return "[REDACTED_TOKEN]";
+
+    return `${clean.slice(0, 6)}...[REDACTED]...${clean.slice(-6)}`;
+}
+
 module.exports = {
+    MIN_TOKEN_LENGTH,
+    MAX_TOKEN_LENGTH,
+    TOKEN_PATTERN,
     toBase64Url,
-    decodeTokenOwnerIdSafe
+    decodeTokenOwnerIdSafe,
+    validateTokenFormat,
+    redactToken
 };

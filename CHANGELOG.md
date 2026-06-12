@@ -9,6 +9,9 @@
 - Added root `SECURITY.md` with secrets, OAuth, sessions, tokens, raw IP, logs, owner/admin, and protected-file guidance.
 - Added `.github/copilot-instructions.md` for short GitHub Copilot guidance.
 - Added low-risk Service 1 helper modules for command registry, custom IDs, voice panel views/interactions, token owner decoding, voice labels, owner-dashboard session serialization, and view helpers.
+- Added Service 1 helper modules for env validation, Express app setup, command guards, dashboard guards, dashboard state payloads, session error messages, and token validation/redaction.
+- Added `discord/index/viewStyles.js` to hold shared owner dashboard CSS while keeping route/page behavior in `views.js`.
+- Added focused Service 1 tests for token utilities, session errors, dashboard guards, command guards, and command registry contracts.
 
 ### Changed
 

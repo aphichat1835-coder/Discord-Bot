@@ -14,124 +14,19 @@ const {
     serializeVoiceSession,
     getSessionTokenSafe
 } = require("./sessionSerializer");
-
-const revealTokenAttempts = new Map();
-const REVEAL_MAX     = 5;
-const REVEAL_LOCKOUT = 15 * 60 * 1000;
-
-// ════════════════════════════════════════════════════════════════════════════
-//  🚦  RATE LIMITER MIDDLEWARE
-// ════════════════════════════════════════════════════════════════════════════
-const DASHBOARD_READ_API_BYPASS = new Set([
-    "/api/status",
-    "/api/settings/natural",
-    "/api/settings/auto-deaf",
-    "/api/commands-status",
-    "/api/commands-audit"
-]);
-const DASHBOARD_READ_API_PREFIX_BYPASS = [
-    "/api/session/"
-];
-
-function shouldBypassDashboardReadApi(req) {
-    if (req.method !== "GET") return false;
-
-    const fullPath = `${req.baseUrl || ""}${req.path || ""}`;
-    return DASHBOARD_READ_API_BYPASS.has(fullPath) ||
-        DASHBOARD_READ_API_PREFIX_BYPASS.some(prefix => fullPath.startsWith(prefix));
-}
-
-function createRateLimiter(requestCounts, config) {
-    return function rateLimitMiddleware(req, res, next) {
-        const ip = req.ip;
-        const now = Date.now();
-        const windowMs = config.limits.rateLimitWindowMs || 60000;
-        const maxReq   = config.limits.rateLimitRequests || 5;
-        const history  = (requestCounts.get(ip) || []).filter(t => now - t < windowMs);
-
-        history.push(now);
-        requestCounts.set(ip, history);
-
-        if (history.length > maxReq) {
-            logIntrusion(ip, req.path);
-            return res.status(429).json({ error: "Too Many Requests" });
-        }
-
-        next();
-    };
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-//  🔐  AUTH HELPERS
-// ════════════════════════════════════════════════════════════════════════════
-function makeCheckAuth(API_SECRET) {
-    return function checkAuth(req, res) {
-        const authHeader = req.headers.authorization || "";
-        const authBuf = Buffer.from(authHeader, "utf8");
-        const secBuf  = Buffer.from(API_SECRET, "utf8");
-
-        if (authBuf.length !== secBuf.length) {
-            logIntrusion(req.ip, req.path);
-            res.status(401).json({ success: false, error: "Unauthorized" });
-            return false;
-        }
-
-        if (!crypto.timingSafeEqual(authBuf, secBuf)) {
-            logIntrusion(req.ip, req.path);
-            res.status(401).json({ success: false, error: "Unauthorized" });
-            return false;
-        }
-
-        return true;
-    };
-}
-
-function logIntrusion(ip, path) {
-    console.error(`[SECURITY] 🚨 Unauthorized access on ${path} from IP: ${ip}`);
-
-    if (process.env.ALERT_WEBHOOK_URL) {
-        try {
-            const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
-            wh.send({ content: `🛑 **[INTRUSION]** \`${path}\` from \`${ip}\`` })
-                .catch(() => {})
-                .finally(() => wh.destroy());
-        } catch (_) {}
-    }
-}
-
-function makeCheckRevealPin(getWebPin) {
-    return function checkRevealPin(req, res) {
-        const ip  = req.ip;
-        const now = Date.now();
-        const rec = revealTokenAttempts.get(ip) || { count: 0, lockedUntil: 0 };
-
-        if (rec.lockedUntil > now) {
-            const mins = Math.ceil((rec.lockedUntil - now) / 60000);
-            res.status(429).json({ success: false, error: `ลองผิดเกินกำหนด ล็อค ${mins} นาที` });
-            return null;
-        }
-
-        const { pin } = req.body || {};
-        const webPin = (typeof getWebPin === "function") ? getWebPin() : null;
-
-        if (!webPin || pin !== webPin) {
-            rec.count = (rec.count || 0) + 1;
-
-            if (rec.count >= REVEAL_MAX) {
-                rec.lockedUntil = now + REVEAL_LOCKOUT;
-                rec.count = 0;
-            }
-
-            revealTokenAttempts.set(ip, rec);
-            logIntrusion(ip, req.path);
-            res.status(401).json({ success: false, error: "PIN ไม่ถูกต้อง" });
-            return null;
-        }
-
-        revealTokenAttempts.delete(ip);
-        return true;
-    };
-}
+const {
+    buildCommandStatusPayload,
+    buildCommandAuditPayload,
+    buildRuntimeStatusPayload
+} = require("./dashboardState");
+const {
+    shouldBypassDashboardReadApi,
+    createRateLimiter,
+    makeCheckAuth,
+    makeCheckRevealPin,
+    logIntrusion,
+    cleanupRevealAttempts
+} = require("../guards/dashboardGuards");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🔌  REGISTER ALL API ROUTES
@@ -226,43 +121,15 @@ function registerRoutes({
     // ── API Status real-time JSON ──
     app.get("/api/status", (req, res) => {
         try {
-            const sessions     = Array.from(sessionManager.getAllSessions().values());
-            const uptimeSec    = Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000);
-            const mem          = process.memoryUsage();
-            const voiceLogs    = voiceWorker.getVoiceLogs();
-            const voiceSummary = { connect: 0, recover: 0, drop: 0, disconnect: 0, fail: 0 };
-
-            voiceLogs.forEach(e => {
-                if (voiceSummary[e.type] !== undefined) voiceSummary[e.type]++;
-            });
-
-            const totalReq    = sessionManager.systemMetrics.requests;
-            const totalErr    = sessionManager.systemMetrics.errors;
-            const reconnects  = sessionManager.systemMetrics.reconnects;
-            const successRate = totalReq > 0
-                ? (((totalReq - totalErr) / totalReq) * 100).toFixed(1)
-                : "100.0";
-
-            const recentLogs = webLogs.slice(-60).reverse();
-            const readyAt = typeof botReadyAt === "function" ? botReadyAt() : botReadyAt;
-            const botOnlineSec = readyAt ? Math.floor((Date.now() - readyAt) / 1000) : null;
-
-            res.json({
-                botOnline: client?.isReady?.() ?? false,
-                botTag: client?.user?.tag ?? null,
-                uptimeSec,
-                botOnlineSec,
-                sessions: sessions.length,
-                maxSessions: config.limits.maxSessions,
-                sessionList: sessions.map(serializeVoiceSession),
-                clientPool: voiceWorker.getClientPoolSize(),
-                ramMB: (mem.heapUsed / 1024 / 1024).toFixed(1),
-                ramTotalMB: (mem.heapTotal / 1024 / 1024).toFixed(1),
-                reconnects,
-                successRate,
-                voiceSummary,
-                recentLogs
-            });
+            res.json(buildRuntimeStatusPayload({
+                sessionManager,
+                voiceWorker,
+                webLogs,
+                client,
+                config,
+                botReadyAt,
+                serializeVoiceSession
+            }));
         } catch (e) {
             res.status(500).json({ error: e.message });
         }
@@ -395,17 +262,7 @@ function registerRoutes({
     // ── Commands Status / Toggle / Audit ──
     app.get("/api/commands-status", (req, res) => {
         try {
-            const allCmds = (commands.slashCommandsData || []).map(cmd => ({
-                name: cmd.name,
-                description: cmd.description || "",
-                enabled: !disabledCommands.has(cmd.name)
-            }));
-
-            res.json({
-                success: true,
-                commands: allCmds,
-                disabledCount: disabledCommands.size
-            });
+            res.json(buildCommandStatusPayload(commands, disabledCommands));
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
         }
@@ -487,10 +344,7 @@ function registerRoutes({
     });
 
     app.get("/api/commands-audit", (req, res) => {
-        res.json({
-            success: true,
-            log: [...commandAuditLog].reverse()
-        });
+        res.json(buildCommandAuditPayload(commandAuditLog));
     });
 
     // ── Settings ──
@@ -857,15 +711,7 @@ function registerRoutes({
         }
     });
 
-    setInterval(() => {
-        const now = Date.now();
-
-        for (const [ip, rec] of revealTokenAttempts.entries()) {
-            if (rec.lockedUntil > 0 && rec.lockedUntil < now) {
-                revealTokenAttempts.delete(ip);
-            }
-        }
-    }, 5 * 60 * 1000);
+    setInterval(() => cleanupRevealAttempts(), 5 * 60 * 1000);
 }
 
 module.exports = {

@@ -10,6 +10,7 @@ const { MessageEmbed, WebhookClient } = require("discord.js");
 const roleButton  = require('../features/roleButton');
 const protection  = require('../features/protection');
 const { IDS, PREFIXES } = require("../commands/customIds");
+const { isVoicePanelControl } = require("../guards/commandGuards");
 
 function register({
     client, config, sessionManager, voiceWorker,
@@ -127,11 +128,7 @@ function register({
             const isProtectedCommand = interaction.isCommand()
                 && ["panel", "backup", "restore"].includes(interaction.commandName);
             const isProtectedButton = interaction.isButton()
-                && (
-                    [IDS.BTN_START, IDS.BTN_STATUS, IDS.BTN_STOP_ALL].includes(interaction.customId)
-                    || interaction.customId.startsWith(PREFIXES.STATUS_STOP)
-                    || interaction.customId.startsWith(PREFIXES.STATUS_PAGE)
-                );
+                && isVoicePanelControl(interaction.customId, IDS, PREFIXES);
 
             if (isProtectedCommand || isProtectedButton) {
                 const approved = await checkApproval(interaction.guild, interaction.user);

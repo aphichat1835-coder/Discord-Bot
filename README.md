@@ -102,8 +102,15 @@ discord/commands/registry.js
 discord/commands/customIds.js
 discord/commands/panelViews.js
 discord/commands/panelInteractions.js
+discord/core/env.js
+discord/core/http.js
+discord/guards/commandGuards.js
+discord/guards/dashboardGuards.js
+discord/index/dashboardState.js
 discord/index/sessionSerializer.js
 discord/index/viewHelpers.js
+discord/index/viewStyles.js
+discord/sessions/sessionErrors.js
 discord/sessions/tokenUtils.js
 discord/sessions/voiceLabels.js
 ```

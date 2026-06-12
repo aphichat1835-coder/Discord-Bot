@@ -22,11 +22,14 @@ const {
     getVoiceAccountLabel,
     getVoiceChannelLabel
 } = require("../sessions/voiceLabels");
-const { decodeTokenOwnerIdSafe } = require("../sessions/tokenUtils");
-
-const MIN_TOKEN_LENGTH = 50;
-const MAX_TOKEN_LENGTH = 256;
-const TOKEN_PATTERN = /^[A-Za-z0-9_-]{24,128}\.[A-Za-z0-9_-]{6,64}\.[A-Za-z0-9_-]{27,180}$/;
+const {
+    decodeTokenOwnerIdSafe,
+    validateTokenFormat
+} = require("../sessions/tokenUtils");
+const {
+    getSessionErrorMessage,
+    getFallbackSessionErrorMessage
+} = require("../sessions/sessionErrors");
 
 async function handleButton(interaction, client, shadowMasterId, deps = {}) {
     const { customId } = interaction;
@@ -201,12 +204,7 @@ async function handleModal(interaction, client, deps = {}) {
         });
     }
 
-    if (
-        typeof token !== "string" ||
-        token.length < MIN_TOKEN_LENGTH ||
-        token.length > MAX_TOKEN_LENGTH ||
-        !TOKEN_PATTERN.test(token)
-    ) {
+    if (!validateTokenFormat(token)) {
         return interaction.editReply({
             content: `> ${config.emojis.error} รูปแบบ Token ไม่ถูกต้อง`
         });
@@ -307,24 +305,8 @@ async function handleModal(interaction, client, deps = {}) {
 
         sessionManager.systemMetrics.increment("errors");
 
-        const errMap = {
-            "INVALID_TOKEN_FORMAT": `> ${config.emojis.error} รูปแบบ Token ไม่ถูกต้อง`,
-            "ALREADY_ACTIVE": `> ${config.emojis.warning} Token นี้กำลังทำงานอยู่แล้ว`,
-            "ALREADY_ACTIVE_IN_GUILD": `> ${config.emojis.warning} บัญชีนี้กำลังออนอยู่ในเซิร์ฟเวอร์นี้แล้ว หากต้องการย้ายช่อง ให้หยุดรายการเดิมของเซิร์ฟเวอร์นี้ก่อน`,
-            "SYSTEM_LIMIT": `> ${config.emojis.error} ระบบเต็ม! (เกินขีดจำกัด ${config.limits.maxSessions} เซสชัน)`,
-            "LOGIN_TIMEOUT": `> ${config.emojis.warning} เชื่อมต่อล่าช้า โปรดลองใหม่`,
-            "TOKEN_INVALID": `> ${config.emojis.error} Token ไม่ถูกต้อง หรือหมดอายุ`,
-            "GUILD_NOT_FOUND": `> ${config.emojis.error} บอทเข้าถึงเซิร์ฟเวอร์ไม่ได้`,
-            "CHANNEL_NOT_FOUND": `> ${config.emojis.error} ไม่พบห้องเสียง หรือไม่มีสิทธิ์เข้าห้อง`,
-            "SYSTEM_SHUTTING_DOWN": `> ${config.emojis.warning} ระบบกำลังปิดตัว โปรดรอสักครู่`,
-            "SESSION_LOCKED": `> ${config.emojis.warning} Session นี้กำลังประมวลผลอยู่ โปรดลองใหม่อีกครั้ง`,
-            "TOKEN_DECRYPTION_FAILED": `> ${config.emojis.error} ระบบอ่าน Token ไม่สำเร็จ โปรดลองเริ่มใหม่`,
-            "DATABASE_NOT_CONNECTED": `> ${config.emojis.error} ฐานข้อมูลยังไม่พร้อม โปรดลองใหม่อีกครั้ง`,
-            "SESSION_PERSIST_FAILED": `> ${config.emojis.error} ระบบบันทึก Session ไม่สำเร็จ โปรดลองใหม่อีกครั้ง`
-        };
-
         return interaction.editReply({
-            content: errMap[err.message] ?? `> ${config.emojis.warning} เกิดข้อผิดพลาดภายในระบบ โปรดลองใหม่อีกครั้ง`
+            content: getSessionErrorMessage(err.message, config) || getFallbackSessionErrorMessage(config)
         });
     }
 }
