@@ -1,52 +1,64 @@
 # Phomueangtai Personal Multi-Tool Discord Bot
 
-Phomueangtai Personal Multi-Tool Discord Bot is a two-service personal multi-tool Discord bot built around a main bot runtime, voice/session management, owner dashboards, public OAuth verification, guild administration, audit/protection features, and MongoDB-backed persistence.
+This repository contains a personal multi-tool Discord bot with two Node.js services and shared MongoDB persistence. It is not a verification-only bot.
 
-## Important project reality
+## What This Project Includes
 
-This repository is **not verification-only**. It includes:
+- Main Discord bot runtime using `discord.js` v13.
+- Slash commands for information, moderation, utility/admin work, backup/restore, audit log setup, dashboard setup, and verification panel setup.
+- Voice/session subsystem with persistent session state, token encryption, reconnect handling, health recovery, owner dashboard visibility, and session controls.
+- Main owner dashboard served by Service 1 for status, sessions, settings, command toggles, whitelist, approved guilds, logs, and owner controls.
+- Dashboard Public served by Service 2 for Discord OAuth2 verification, guild admin configuration, verification panels, logs, members, stats, risk summaries, and internal APIs.
+- MongoDB/Mongoose persistence shared by both services.
+- Audit logging, protection checks, role buttons, approved/pending guild flows, and protected owner/system hook integration.
 
-- Main Discord bot runtime
-- Slash command router
-- Voice/session subsystem
-- Main owner dashboard
-- Dashboard Public and guild admin dashboard
-- OAuth2 verification
-- MongoDB persistence
-- Audit logger
-- Protection module and role button feature
-- Moderation, utility/admin, and information commands
-- Approved guild flows
-- Owner/system provider hooks
+## Services
 
-## Two-service architecture
+### Service 1 - Main Discord Bot / Owner System
 
-### Service 1 — Main Discord Bot / Owner System
+```txt
+Entry: discord/index.js
+Root directory: repository root
+Start command: npm start
+Health routes: /ping, /health
+```
 
-- Entry: `discord/index.js`
-- Root directory: repository root
-- Start command: `npm start`
-- Purpose: Discord bot runtime, slash commands, voice/session lifecycle, main owner dashboard, audit/protection events, approved guild flow, and owner/admin controls.
+Primary responsibilities:
 
-### Service 2 — Dashboard Public / Verification Dashboard
+- Discord client login and bot lifecycle.
+- Slash command registry and interaction routing.
+- Voice/session lifecycle and panel controls.
+- Owner dashboard HTML and JSON/control APIs.
+- Audit logger, protection hooks, role buttons, guild approval flow, and protected owner/system hook initialization.
 
-- Entry: `dashboard-public/index.js`
-- Root directory: `dashboard-public/`
-- Start command: `npm start`
-- Purpose: Discord OAuth2 verification, guild admin dashboard, verification panel management, verification logs, risk summaries, and internal APIs used by the owner dashboard.
+### Service 2 - Dashboard Public / Verification Dashboard
 
-Both services intentionally share MongoDB. This is part of the current architecture and does not mean the services are incorrectly separated.
+```txt
+Entry: dashboard-public/index.js
+Root directory: dashboard-public/
+Start command: npm start
+Health routes: /ping, /health
+```
 
-## Quick start — Service 1
+Primary responsibilities:
+
+- Discord OAuth2 verification callback.
+- Admin OAuth login and guild selection.
+- Guild verification settings, panel send/update/disable, logs, members, stats, and risk views.
+- Internal owner-dashboard APIs for overview, members, stats, and owner-approved raw IP reveal workflow.
+
+Both services intentionally share MongoDB. This is an owner-approved architecture decision.
+
+## Quick Start
+
+Install and run Service 1:
 
 ```bash
 npm install
 npm start
 ```
 
-Required Service 1 configuration is documented in `.env.example` and `docs/DEPLOYMENT.md`.
-
-## Quick start — Service 2
+Install and run Service 2:
 
 ```bash
 cd dashboard-public
@@ -54,26 +66,40 @@ npm install
 npm start
 ```
 
-Required Dashboard Public configuration, OAuth redirect URIs, and Render notes are documented in `.env.example` and `docs/DEPLOYMENT.md`.
+Use `.env.example` as a placeholder reference only. Never commit real secrets.
 
-## Documentation map
+## Required Documentation
 
-- [Project context](CONTEXT.md) — root context file for the personal multi-tool bot.
-- [Architecture](docs/ARCHITECTURE.md) — full project architecture and subsystem map.
-- [AI guide](docs/AI_GUIDE.md) — required workflow and rules for AI coding agents.
-- [Owner decisions](docs/OWNER_DECISIONS.md) — owner-approved architecture decisions and review policy.
-- [Security and privacy](docs/SECURITY_PRIVACY.md) — secrets, tokens, OAuth data, IP/device/risk data, and production hardening guidance.
-- [Deployment](docs/DEPLOYMENT.md) — Node, Render, service layout, env vars, and OAuth redirect URI notes.
-- [Validation](docs/VALIDATION.md) — syntax checks, docs-only checks, tests, and manual review checklist.
+- [AGENTS.md](AGENTS.md) - AI/agent rules, protected boundaries, review workflow, and owner decisions.
+- [CONTEXT.md](CONTEXT.md) - quick project context, service map, subsystem map, and reading guide.
+- [ARCHITECTURE.md](ARCHITECTURE.md) - full implementation-backed architecture, route map, file map, data model map, validation, and hotspots.
+- [ROADMAP.md](ROADMAP.md) - approved minimal refactor direction and future work guardrails.
+- [SECURITY.md](SECURITY.md) - secrets, OAuth, sessions, tokens, raw IP, logs, and owner/admin security policy.
+- [CHANGELOG.md](CHANGELOG.md) - project documentation and structural change history.
+- [.github/copilot-instructions.md](.github/copilot-instructions.md) - short GitHub Copilot guidance.
 
-Compatibility stubs remain at the repository root for older AI/tool workflows that still reference previous documentation file names.
+## Safety Rules
 
-AI/Codex agents should start with `AGENTS.md`, then `CONTEXT.md`, then the deeper `docs/` files before inspecting implementation files.
-
-## Security reminder
-
-Never commit real tokens, Discord secrets, webhook URLs, MongoDB URLs, passwords, dashboard PINs, OAuth credentials, or private operational values. Use `.env.example` only as a placeholder template.
+- Do not migrate `discord.js` v13 without explicit owner approval.
+- Do not remove or redesign the voice/session subsystem, dashboard structure, verification architecture, owner/admin controls, or shared MongoDB layout without explicit owner approval.
+- Do not edit, move, rename, format, summarize hidden details from, or refactor `discord/systemProvider.js` unless the owner explicitly approves that exact action in the current task.
+- Treat OAuth, sessions, tokens, cookies, permissions, Discord roles, raw IP/device/risk data, and owner routes as high-risk areas.
 
 ## Validation
 
-See [docs/VALIDATION.md](docs/VALIDATION.md). Do not claim tests or checks passed unless the exact commands were actually run.
+Common checks:
+
+```bash
+node --check discord/index.js
+node --check discord/commands.js
+node --check discord/index/server.js
+node --check discord/index/views.js
+node --check discord/sessionManager.js
+node --check discord/voiceWorker.js
+node --check discord/auditLogger.js
+
+cd dashboard-public
+npm test
+```
+
+Run only checks that match the change. Report exact commands and results; do not claim a check passed unless it was actually run.

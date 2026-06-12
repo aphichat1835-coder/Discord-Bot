@@ -1,221 +1,174 @@
 # AGENTS.md
 
+This file is the rulebook for AI coding agents working in this repository.
+
 ## Project Identity
 
-This is a personal multi-tool Discord bot project with dashboard, verification, voice/session, authentication/session, role assignment, and database/session-related systems.
+This is the Phomueangtai Personal Multi-Tool Discord Bot. It is not verification-only.
 
-This project is not verification-only. It includes the main Discord bot runtime, slash commands, voice/session subsystem, owner dashboard, Dashboard Public, guild admin dashboard, OAuth2 verification, MongoDB persistence, audit logging, protection features, role buttons, moderation commands, utility/admin commands, information commands, approved guild flows, and owner/system hooks.
+The project includes:
 
-## Core Principle: Grill with Docs
+- Main Discord bot runtime.
+- Slash commands.
+- Voice/session subsystem.
+- Owner dashboard.
+- Dashboard Public and guild admin dashboard.
+- OAuth2 verification.
+- MongoDB persistence.
+- Audit logging.
+- Protection features.
+- Role buttons.
+- Moderation, utility/admin, and information commands.
+- Approved/pending guild flows.
+- Owner/admin controls.
+- Protected owner/system hooks.
 
-Before changing code, inspect relevant implementation files and documentation.
+## Source Of Truth
 
-Do not rely on generic assumptions. Treat the existing codebase as the source of truth.
+Before changing code, inspect the relevant implementation files and the current documentation. Do not rely on generic assumptions.
 
-**Do not recommend architectural changes until the actual implementation has been inspected.**
-
-If docs and implementation disagree, report the mismatch and inspect the implementation before recommending changes.
-
-## Suggested Reading Order
-
-For non-trivial tasks, read these before editing:
+Required reading order for non-trivial work:
 
 1. `AGENTS.md`
 2. `CONTEXT.md`
-3. `docs/OWNER_DECISIONS.md`
-4. `docs/AI_GUIDE.md`
-5. `docs/ARCHITECTURE.md`
+3. `ARCHITECTURE.md`
+4. `ROADMAP.md`
+5. `SECURITY.md`
 6. `README.md`
-7. `TASK.md`
-8. `docs/SECURITY_PRIVACY.md`
-9. `docs/VALIDATION.md`
-10. Relevant implementation files for the task
+7. `CHANGELOG.md`
+8. Relevant implementation files for the task
 
-Do not stop at documentation. Use the docs to find the relevant implementation, then inspect the implementation directly.
+If documentation and implementation disagree, report the mismatch and inspect the implementation before recommending or applying changes.
 
-## Required Agent Workflow
+## Required Workflow
 
 1. Inspect relevant files.
 2. Summarize what currently exists.
 3. Identify affected systems.
 4. Separate facts from assumptions.
-5. Explain risks.
-6. Ask for clarification when the task conflicts with existing implementation.
-7. Make the smallest safe change.
-8. Report what changed.
+5. Explain risks before core or security-sensitive changes.
+6. Ask for clarification when the request conflicts with current implementation or protected decisions.
+7. Make the smallest safe change that solves the approved task.
+8. Validate with exact commands where possible.
+9. Report files inspected, files changed, what changed, why, checks performed, and remaining risks.
 
-## Architecture Protection
+## Owner-Approved Architecture Decisions
 
-### 1. No Architecture Rewrite Without Permission
+Preserve these decisions unless the owner explicitly approves a specific change:
 
-Do not rewrite, replace, migrate, or redesign core architecture unless the owner explicitly requests it.
+- Keep `discord.js` v13 for now.
+- Keep the voice/session subsystem.
+- Keep the current dashboard structure.
+- Keep the current verification architecture.
+- Keep owner/admin controls.
+- Keep one repository with two services and shared MongoDB.
+- Keep `discord/systemProvider.js` protected.
 
-Do not suggest replacing existing systems just because a newer, cleaner, or more common approach exists. This includes avoiding casual changes to:
+Do not re-suggest these without new implementation evidence and explicit owner approval:
 
-- Discord bot core
-- dashboard structure
-- verification architecture
-- voice/session subsystem
-- authentication/session flow
-- database/session logic
-- role assignment logic
-- discord.js major version
+- Immediate migration to `discord.js` v14.
+- Rewriting the entire project.
+- Removing voice/session.
+- Removing dashboards.
+- Removing verification.
+- Removing owner/admin controls.
+- Splitting the repository immediately.
+- Replacing shared MongoDB only because both services use it.
 
-Architecture changes are acceptable only when:
+## Protected File Lock
 
-- the owner explicitly asks for them,
-- there is a concrete bug that requires it,
-- there is a concrete security issue,
-- or the current implementation cannot support the requested feature safely.
+`discord/systemProvider.js` is OWNER-LOCKED.
 
-Project-specific protected decisions:
+Do not edit, move, delete, rename, reformat, split, lint-fix, comment-edit, summarize hidden details from, refactor, or document sensitive behavior from this file unless the owner explicitly approves it in the current task.
 
-- The owner intentionally keeps discord.js v13.
-- The owner intentionally keeps the voice/session subsystem.
-- The owner intentionally keeps the existing dashboard structure.
-- The owner intentionally keeps the current verification architecture.
-- The owner intentionally keeps owner/admin controls.
-- The owner intentionally keeps one repository with two services and shared MongoDB.
+Do not change imports related to `discord/systemProvider.js`. Do not change boot logic that initializes or references it. Do not document hidden operational details, internal trigger phrases, command names, misuse flows, private procedures, or sensitive behavior.
 
-These systems must not be removed, replaced, or repeatedly questioned unless there is a concrete bug, security issue, or explicit owner request.
+If touching this file appears necessary, stop and ask for explicit approval using this form:
 
-### 2. Preserve Existing Behavior
+```txt
+Owner approves editing discord/systemProvider.js for [specific reason].
+```
 
-When fixing bugs or adding features, preserve current behavior unless the task clearly requires changing it.
-
-Avoid breaking existing:
-
-- dashboard pages and flows
-- verification behavior
-- session behavior
-- login/authentication behavior
-- Discord role assignment behavior
-- existing commands
-- existing database/session behavior
-- existing user-facing behavior
-
-Avoid unrelated cleanup, formatting, renaming, restructuring, or refactoring unless necessary for the task.
-
-Make the smallest safe change that solves the requested problem.
-
-### 3. Explain Impact Before Core Changes
-
-Before changing core systems, explain the expected impact.
-
-Identify:
-
-- files likely to be affected
-- subsystems likely to be affected
-- behavior that may change
-- possible risks
-- possible tradeoffs
-- whether the change touches security-sensitive areas
-- whether the change may affect existing users or server behavior
-
-Core systems include:
-
-- verification
-- OAuth/authentication
-- sessions
-- cookies
-- permissions
-- Discord roles
-- dashboard routes
-- database/session logic
-- bot startup and event handling
-- voice/session subsystem
-
-Inspect the actual implementation before making claims about impact.
-
-### Protected file lock — `discord/systemProvider.js`
-
-`discord/systemProvider.js` is OWNER-LOCKED. Do not edit, move, delete, rename, reformat, split, lint-fix, comment-edit, summarize with sensitive details, or refactor this file unless the owner explicitly approves it in the current task.
-
-Do not change imports related to `discord/systemProvider.js`. Do not change boot logic that initializes or references it. Do not document hidden operational details, internal trigger phrases, command names, misuse flows, or sensitive behavior.
-
-If touching this file appears necessary, stop and ask for direct owner approval first. Required approval must be explicit, for example: `Owner approves editing discord/systemProvider.js for [specific reason].`
+Without that approval, leave the file and its boot/import references unchanged.
 
 ## Refactor Policy
 
 Refactors must be minimal and task-related.
 
-Avoid broad rewrites, dependency migrations, framework changes, or cleanups that are not required by the task.
+- Preserve public routes, command names, custom IDs, response shapes, database schemas, OAuth behavior, dashboard behavior, and voice/session lifecycle unless the task explicitly approves changing them.
+- Prefer compatibility layers when splitting large files.
+- Do not add dependencies without explicit owner approval.
+- Do not run broad formatting or cleanup across unrelated runtime files.
+- Do not create unused architecture layers just to make the tree look cleaner.
+- For high-risk files, extract pure helpers first and validate behavior before moving side-effect code.
 
-Do not use formatting, linting, or cleanup as a reason to touch unrelated runtime files. Do not migrate discord.js, rewrite dashboards, remove the voice/session subsystem, replace verification architecture, or split the repository unless the owner explicitly requests that scope.
+High-risk areas include:
+
+- OAuth and verification callbacks.
+- Sessions, cookies, auth, PIN handling, and internal API secrets.
+- Token encryption/decryption and token reveal flows.
+- Raw IP, device, risk, and owner approval data.
+- Discord role assignment.
+- Owner dashboard controls.
+- Bot startup, event handling, shutdown, and voice/session lifecycle.
 
 ## Security Policy
 
-For verification, OAuth, sessions, tokens, cookies, roles, permissions, and user data, inspect before changing and avoid weakening security.
+Never expose real secrets, tokens, webhook URLs, MongoDB URLs, dashboard PINs, OAuth credentials, private keys, API keys, hidden operational details, or private configuration in code, docs, logs, summaries, or PR text.
 
-Never expose real secrets, tokens, webhook URLs, database URLs, dashboard PINs, OAuth credentials, private keys, API keys, hidden operational details, or private configuration in code, docs, logs, summaries, or PR text.
-
-For high-risk areas such as authentication/session handling, token handling, role assignment, IP/device/risk data, owner/admin controls, and protected owner/system hooks, make the smallest safe change and explain the risk clearly.
+Use `.env.example` only as a placeholder reference. Treat encrypted tokens, OAuth metadata, raw IP reveal records, device fingerprints, risk summaries, and owner/admin controls as sensitive.
 
 ## Accuracy Rules
 
-### 4. Do Not Invent Missing Systems
+Do not claim that a file, route, command, model, environment variable, middleware, service, or subsystem exists unless it was found in the repository.
 
-Do not claim that something exists unless it was actually found in the repository.
-
-Do not invent:
-
-- files
-- folders
-- routes
-- commands
-- database tables
-- environment variables
-- configs
-- services
-- middleware
-- APIs
-- subsystems
-- documentation
-
-If something is missing, say it is missing or not found, then propose the safest next step.
+When something is missing, say it is missing or not found and propose the smallest safe next step.
 
 Clearly separate:
 
-- facts found in the repository
-- assumptions
-- recommendations
+- Facts found in the repository.
+- Assumptions.
+- Recommendations.
 
 ## Documentation Policy
 
-Docs should reflect the real implementation. Do not document imaginary architecture.
+The active documentation set is:
 
-If documentation is outdated, update it based on inspected implementation. If implementation details are sensitive, summarize only at a safe subsystem level and do not reveal hidden operational details.
+- `README.md`
+- `AGENTS.md`
+- `.github/copilot-instructions.md`
+- `CONTEXT.md`
+- `ARCHITECTURE.md`
+- `CHANGELOG.md`
+- `ROADMAP.md`
+- `SECURITY.md`
 
-Keep documentation changes focused on the requested task. Preserve owner decisions and project reality: this is a personal multi-tool Discord bot, not verification-only.
+Documentation must reflect the real implementation. Do not document imaginary architecture. If implementation details are sensitive, summarize at subsystem level without exposing hidden operational details.
 
-## Owner Workflow
+## Review Output Format
 
-### 5. Mobile Owner Friendly
+When reporting runtime, privacy, security, or maintainability issues, use:
 
-The owner often works from mobile. AI responses should be easy to read and easy to copy.
+```txt
+File:
+Code path / route / command:
+Behavior found:
+Why it matters:
+Concrete impact:
+Suggested minimal fix:
+Files affected:
+Validation:
+```
 
-Agents should:
+## Final Report Format
 
-- keep instructions clear and step-by-step
-- avoid unnecessarily long terminal-heavy workflows
-- provide copy-ready commands when useful
-- avoid vague explanations
-- summarize important points clearly
-- make final reports readable on a phone screen
+After completing a task, include:
 
-This does not mean oversimplifying technical accuracy. It means presenting technical work clearly.
+- Files inspected.
+- Files changed.
+- What changed.
+- Why it changed.
+- Checks performed.
+- Remaining risks or notes.
 
-### 6. Final Report Format
-
-After completing a task, final reports should include:
-
-- Files inspected
-- Files changed
-- What changed
-- Why it changed
-- Checks performed
-- Remaining risks or notes
-
-If no tests or checks were run, say that clearly instead of pretending checks were performed.
-
-If only `AGENTS.md` was changed, explicitly confirm that only `AGENTS.md` was modified.
+If no tests or checks were run, say that clearly.
