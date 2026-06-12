@@ -9,6 +9,7 @@ DO NOT REMOVE: guildCreate/guildDelete handlers.
 const { MessageEmbed, WebhookClient } = require("discord.js");
 const roleButton  = require('../features/roleButton');
 const protection  = require('../features/protection');
+const { IDS, PREFIXES } = require("../commands/customIds");
 
 function register({
     client, config, sessionManager, voiceWorker,
@@ -127,9 +128,9 @@ function register({
                 && ["panel", "backup", "restore"].includes(interaction.commandName);
             const isProtectedButton = interaction.isButton()
                 && (
-                    ["btn_start", "btn_status", "btn_stop_all"].includes(interaction.customId)
-                    || interaction.customId.startsWith("status_stop_")
-                    || interaction.customId.startsWith("status_page_")
+                    [IDS.BTN_START, IDS.BTN_STATUS, IDS.BTN_STOP_ALL].includes(interaction.customId)
+                    || interaction.customId.startsWith(PREFIXES.STATUS_STOP)
+                    || interaction.customId.startsWith(PREFIXES.STATUS_PAGE)
                 );
 
             if (isProtectedCommand || isProtectedButton) {

@@ -90,16 +90,22 @@ Use `.env.example` as a placeholder reference only. Never commit real secrets.
 Common checks:
 
 ```bash
-node --check discord/index.js
-node --check discord/commands.js
-node --check discord/index/server.js
-node --check discord/index/views.js
-node --check discord/sessionManager.js
-node --check discord/voiceWorker.js
-node --check discord/auditLogger.js
-
-cd dashboard-public
+npm run check
+npm run check:dashboard
 npm test
+```
+
+`npm run check` covers the Service 1 entrypoints and extracted helper modules, including:
+
+```txt
+discord/commands/registry.js
+discord/commands/customIds.js
+discord/commands/panelViews.js
+discord/commands/panelInteractions.js
+discord/index/sessionSerializer.js
+discord/index/viewHelpers.js
+discord/sessions/tokenUtils.js
+discord/sessions/voiceLabels.js
 ```
 
 Run only checks that match the change. Report exact commands and results; do not claim a check passed unless it was actually run.

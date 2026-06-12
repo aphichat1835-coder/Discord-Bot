@@ -9,6 +9,8 @@ Before suggesting changes, use the current implementation as source of truth and
 - `ARCHITECTURE.md`
 - `ROADMAP.md`
 - `SECURITY.md`
+- `README.md`
+- `CHANGELOG.md`
 
 Rules:
 

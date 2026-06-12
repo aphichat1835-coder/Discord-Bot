@@ -19,8 +19,9 @@
 - Documented Service 1 and Service 2 route groups, command groups, model groups, file responsibilities, hotspots, deployment shape, validation commands, and protected boundaries from current implementation.
 - Kept `discord/commands.js`, `discord/index/server.js`, and `discord/index/views.js` as compatibility surfaces while moving pure/helper logic into focused modules.
 - Completed the root config/deployment audit for `.env.example`, `.gitignore`, `package.json`, `package-lock.json`, `render.yaml`, and `.replit`.
-- Pinned `@discordjs/voice` to the Node 18 compatible `0.18.x` line and added package scripts for root and Dashboard Public validation.
+- Set `@discordjs/voice` to `^0.18.0`, with `package-lock.json` currently resolving to Node 18 compatible `0.18.0`, and added package scripts for root and Dashboard Public validation.
 - Expanded `render.yaml` with non-secret environment variable placeholders for both Render services.
+- Addressed PR #36 review feedback by normalizing owner-dashboard voice session timestamps, improving token fallback compatibility, reusing voice status custom ID prefixes, expanding validation docs, and adding Service 1 helper tests.
 
 ### Notes
 

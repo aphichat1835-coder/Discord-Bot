@@ -1,6 +1,6 @@
 const { MessageEmbed, MessageActionRow, MessageButton, Modal, TextInputComponent } = require("discord.js");
 const config = require("../config.json");
-const { IDS } = require("./customIds");
+const { IDS, PREFIXES } = require("./customIds");
 const {
     getVoiceAccountLabel,
     getVoiceChannelLabel,
@@ -78,18 +78,18 @@ function buildVoiceStatusEmbed(session, page, total) {
 function buildVoiceStatusControls(current, page) {
     return new MessageActionRow().addComponents(
         new MessageButton()
-            .setCustomId(`status_page_${page - 1}`)
+            .setCustomId(`${PREFIXES.STATUS_PAGE}${page - 1}`)
             .setEmoji(config.emojis.page_prev)
             .setStyle("SECONDARY"),
 
         new MessageButton()
-            .setCustomId(`status_stop_${current.sessionId}`)
+            .setCustomId(`${PREFIXES.STATUS_STOP}${current.sessionId}`)
             .setLabel("หยุดออนตัวนี้")
             .setEmoji(config.emojis.status_offline)
             .setStyle("DANGER"),
 
         new MessageButton()
-            .setCustomId(`status_page_${page + 1}`)
+            .setCustomId(`${PREFIXES.STATUS_PAGE}${page + 1}`)
             .setEmoji(config.emojis.page_next)
             .setStyle("SECONDARY")
     );

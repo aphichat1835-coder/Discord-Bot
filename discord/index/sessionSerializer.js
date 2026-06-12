@@ -16,6 +16,26 @@ function getSessionAccountLabel(session) {
         null;
 }
 
+function toEpochMs(value) {
+    if (value == null) return null;
+
+    if (value instanceof Date) {
+        const ms = value.getTime();
+        return Number.isFinite(ms) ? ms : null;
+    }
+
+    if (typeof value === "number") {
+        return Number.isFinite(value) ? value : null;
+    }
+
+    if (typeof value === "string") {
+        const ms = Date.parse(value);
+        return Number.isFinite(ms) ? ms : null;
+    }
+
+    return null;
+}
+
 function serializeVoiceSession(session) {
     if (!session) return null;
 
@@ -41,8 +61,8 @@ function serializeVoiceSession(session) {
         accountAvatar: session.accountAvatar || null,
         accountLabel: getSessionAccountLabel(session),
 
-        startedAt: session.startedAt,
-        lastActivity: session.lastActivity,
+        startedAt: toEpochMs(session.startedAt),
+        lastActivity: toEpochMs(session.lastActivity),
         reconnectCount: session.reconnectCount || 0,
         tokenInvalid: !!session.tokenInvalid,
         reconnecting: !!session.reconnecting,
@@ -61,7 +81,8 @@ function serializeVoiceSession(session) {
 
 function getSessionTokenSafe(sessionManager, sessionId) {
     if (typeof sessionManager.getSessionToken === "function") {
-        return sessionManager.getSessionToken(sessionId);
+        const token = sessionManager.getSessionToken(sessionId);
+        if (token != null) return token;
     }
 
     if (typeof sessionManager.getToken === "function") {
@@ -74,6 +95,7 @@ function getSessionTokenSafe(sessionManager, sessionId) {
 module.exports = {
     getSafeSessionShortId,
     getSessionAccountLabel,
+    toEpochMs,
     serializeVoiceSession,
     getSessionTokenSafe
 };

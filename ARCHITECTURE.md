@@ -544,42 +544,18 @@ https://YOUR-DASHBOARD-PUBLIC-SERVICE.onrender.com/auth/admin-callback
 Service 1 syntax checks:
 
 ```bash
-node --check discord/index.js
-node --check discord/commands.js
-node --check discord/commands/information.js
-node --check discord/commands/moderation.js
-node --check discord/commands/utility.js
-node --check discord/commands/verification.js
-node --check discord/sessionManager.js
-node --check discord/voiceWorker.js
-node --check discord/auditLogger.js
-node --check discord/index/server.js
-node --check discord/index/views.js
-node --check discord/index/events.js
-node --check discord/index/system.js
+npm run check
 ```
 
 Service 2 syntax checks:
 
 ```bash
-cd dashboard-public
-node --check index.js
-node --check routes/oauth.js
-node --check routes/guild.js
-node --check routes/guildDashboard.js
-node --check routes/api.js
-node --check routes/adminSessionCompat.js
-node --check utils/discordAPI.js
-node --check utils/ipUtils.js
-node --check utils/panelBuilder.js
-node --check utils/verifyMode.js
-node --check utils/crypto.js
+npm run check:dashboard
 ```
 
-Dashboard Public tests:
+Service 1 helper tests plus Dashboard Public tests:
 
 ```bash
-cd dashboard-public
 npm test
 ```
 

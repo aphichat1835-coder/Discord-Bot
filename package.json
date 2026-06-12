@@ -7,9 +7,10 @@
   "scripts": {
     "start": "node discord/index.js",
     "dev": "node discord/index.js",
-    "check": "node --check discord/index.js && node --check discord/commands.js && node --check discord/sessionManager.js && node --check discord/voiceWorker.js && node --check discord/auditLogger.js && node --check discord/index/server.js && node --check discord/index/views.js && node --check discord/index/events.js && node --check discord/index/system.js",
+    "check": "node --check discord/index.js && node --check discord/commands.js && node --check discord/commands/registry.js && node --check discord/commands/customIds.js && node --check discord/commands/panelViews.js && node --check discord/commands/panelInteractions.js && node --check discord/sessionManager.js && node --check discord/voiceWorker.js && node --check discord/auditLogger.js && node --check discord/index/server.js && node --check discord/index/views.js && node --check discord/index/events.js && node --check discord/index/system.js && node --check discord/index/sessionSerializer.js && node --check discord/index/viewHelpers.js && node --check discord/sessions/tokenUtils.js && node --check discord/sessions/voiceLabels.js",
     "check:dashboard": "cd dashboard-public && node --check index.js && node --check routes/oauth.js && node --check routes/guild.js && node --check routes/guildDashboard.js && node --check routes/api.js && node --check routes/adminSessionCompat.js && node --check utils/discordAPI.js && node --check utils/ipUtils.js && node --check utils/panelBuilder.js && node --check utils/verifyMode.js && node --check utils/crypto.js",
-    "test": "npm --prefix dashboard-public test",
+    "test": "npm run test:discord && npm --prefix dashboard-public test",
+    "test:discord": "node --test discord/tests/*.test.js",
     "dashboard:start": "npm --prefix dashboard-public start",
     "dashboard:dev": "npm --prefix dashboard-public run dev"
   },
