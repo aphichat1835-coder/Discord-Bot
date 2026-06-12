@@ -67,7 +67,7 @@ TRUST_PROXY_HOPS
 ENABLE_CF_IP_HEADER
 ```
 
-Compatibility/fallback names may also appear in code, such as `TOKEN`, `BOT_TOKEN`, or `DISCORD_BOT_TOKEN`. Do not add new secret names without documenting them in `.env.example`, `ARCHITECTURE.md`, and this file.
+Compatibility/fallback names may also appear in code, such as `TOKEN`, `BOT_TOKEN`, or `DISCORD_BOT_TOKEN`. Do not add new secret names without documenting them in `.env.example`, the active architecture reference, and this file.
 
 ## Service 1 Security Notes
 

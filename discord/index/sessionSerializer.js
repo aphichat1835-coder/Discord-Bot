@@ -82,7 +82,7 @@ function serializeVoiceSession(session) {
 function getSessionTokenSafe(sessionManager, sessionId) {
     if (typeof sessionManager.getSessionToken === "function") {
         const token = sessionManager.getSessionToken(sessionId);
-        if (token != null) return token;
+        if (!Object.is(token, null) && !Object.is(token, undefined)) return token;
     }
 
     if (typeof sessionManager.getToken === "function") {
