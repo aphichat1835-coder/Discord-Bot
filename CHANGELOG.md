@@ -18,6 +18,9 @@
 - Consolidated old `docs/` architecture, file map, roadmap, owner decisions, AI guide, deployment, security/privacy, and validation content into the active root docs.
 - Documented Service 1 and Service 2 route groups, command groups, model groups, file responsibilities, hotspots, deployment shape, validation commands, and protected boundaries from current implementation.
 - Kept `discord/commands.js`, `discord/index/server.js`, and `discord/index/views.js` as compatibility surfaces while moving pure/helper logic into focused modules.
+- Completed the root config/deployment audit for `.env.example`, `.gitignore`, `package.json`, `package-lock.json`, `render.yaml`, and `.replit`.
+- Pinned `@discordjs/voice` to the Node 18 compatible `0.18.x` line and added package scripts for root and Dashboard Public validation.
+- Expanded `render.yaml` with non-secret environment variable placeholders for both Render services.
 
 ### Notes
 

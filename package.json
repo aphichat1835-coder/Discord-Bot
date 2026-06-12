@@ -1,24 +1,29 @@
 {
   "name": "phomueangtai-enterprise",
   "version": "4.0.1",
-  "description": "Enterprise Voice Management System for Discord",
+  "description": "Phomueangtai personal multi-tool Discord bot and owner dashboard",
   "private": true,
   "main": "discord/index.js",
   "scripts": {
     "start": "node discord/index.js",
-    "dev": "node discord/index.js"
+    "dev": "node discord/index.js",
+    "check": "node --check discord/index.js && node --check discord/commands.js && node --check discord/sessionManager.js && node --check discord/voiceWorker.js && node --check discord/auditLogger.js && node --check discord/index/server.js && node --check discord/index/views.js && node --check discord/index/events.js && node --check discord/index/system.js",
+    "check:dashboard": "cd dashboard-public && node --check index.js && node --check routes/oauth.js && node --check routes/guild.js && node --check routes/guildDashboard.js && node --check routes/api.js && node --check routes/adminSessionCompat.js && node --check utils/discordAPI.js && node --check utils/ipUtils.js && node --check utils/panelBuilder.js && node --check utils/verifyMode.js && node --check utils/crypto.js",
+    "test": "npm --prefix dashboard-public test",
+    "dashboard:start": "npm --prefix dashboard-public start",
+    "dashboard:dev": "npm --prefix dashboard-public run dev"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "@discordjs/voice": "^0.19.2",
+    "@discordjs/voice": "^0.18.0",
     "discord.js": "^13.17.1",
     "discord.js-selfbot-v13": "^3.7.1",
     "express": "^5.2.1",
     "libsodium-wrappers": "^0.8.4",
+    "mongoose": "^8.0.0",
     "opusscript": "^0.0.8",
-    "tweetnacl": "^1.0.3",
-    "mongoose": "^8.0.0"
+    "tweetnacl": "^1.0.3"
   }
 }

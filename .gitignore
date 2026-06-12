@@ -11,6 +11,7 @@
 !.env.example
 *.env
 *.local
+.envrc
 
 # -------------------------
 # Secret/key material
@@ -43,6 +44,7 @@ private/
 # -------------------------
 node_modules/
 dashboard-public/node_modules/
+.npmrc
 
 # -------------------------
 # Logs
@@ -59,6 +61,8 @@ pnpm-debug.log*
 # -------------------------
 tmp/
 temp/
+.tmp/
+.temp/
 .cache/
 .parcel-cache/
 .next/
@@ -78,6 +82,9 @@ out/
 # Database / local state / backups
 # -------------------------
 discord/database.json
+discord/*.sqlite
+discord/*.sqlite3
+discord/*.db
 *.json.tmp
 *.json.bak
 *.bak
@@ -107,6 +114,8 @@ Thumbs.db
 .vercel/
 .netlify/
 .render-local/
+.replit.nix
+.config/
 *.pid
 *.seed
 *.tgz
