@@ -8,7 +8,6 @@ DO NOT REMOVE: /api/reveal-token lockout logic.
 */
 
 const crypto = require("crypto");
-const { WebhookClient } = require("discord.js");
 const auth = require("./auth");
 const {
     serializeVoiceSession,
@@ -27,6 +26,19 @@ const {
     logIntrusion,
     cleanupRevealAttempts
 } = require("../guards/dashboardGuards");
+const { sendLogWebhook } = require("../core/webhooks");
+
+function safeRedirectPath(value) {
+    const raw = String(value || "/").trim();
+    if (!raw.startsWith("/") || raw.startsWith("//")) return "/";
+
+    try {
+        const parsed = new URL(raw, "http://dashboard.local");
+        return `${parsed.pathname}${parsed.search}${parsed.hash}` || "/";
+    } catch {
+        return "/";
+    }
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🔌  REGISTER ALL API ROUTES
@@ -40,7 +52,7 @@ function registerRoutes({
 }) {
     const checkAuth      = makeCheckAuth(API_SECRET);
     const checkRevealPin = makeCheckRevealPin(getWebPin);
-    const rateLimiter    = createRateLimiter(requestCounts, config);
+    const rateLimiter    = createRateLimiter(requestCounts, config, sessionManager);
 
     // ── PIN Authentication Routes ──
     app.get("/auth/pin", (req, res) => {
@@ -52,7 +64,7 @@ function registerRoutes({
         const { pin, next } = req.body || {};
         const correctPin = auth.PIN();
 
-        if (!correctPin) return res.redirect(next || "/");
+        if (!correctPin) return res.redirect(safeRedirectPath(next));
 
         const ip = req.ip;
 
@@ -87,7 +99,7 @@ function registerRoutes({
 
         const token    = auth.makeToken();
         const isProd   = process.env.NODE_ENV === "production";
-        const safePath = (next || "/").startsWith("/") ? next : "/";
+        const safePath = safeRedirectPath(next);
 
         res.setHeader("Set-Cookie", auth.setCookieHeader(token, isProd));
         res.redirect(safePath);
@@ -103,19 +115,27 @@ function registerRoutes({
 
     app.get("/health", (req, res) => {
         const uptimeSec = Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000);
+        const botOnline = client?.isReady?.() ?? false;
+        const dbStatus = sessionManager.getDatabaseStatus?.();
+        const dbConnected = dbStatus?.connected === true;
+        const ready = botOnline && dbConnected;
 
-        res.json({
-            status: "ok",
+        res.status(ready ? 200 : 503).json({
+            status: ready ? "ok" : "degraded",
             uptime: uptimeSec,
             sessions: sessionManager.getAllSessions().size,
-            botOnline: client?.isReady?.() ?? false
+            botOnline,
+            dbConnected
         });
     });
 
     app.use("/api", (req, res, next) => {
         if (shouldBypassDashboardReadApi(req)) return next();
 
-        return rateLimiter(req, res, next);
+        return rateLimiter(req, res, () => {
+            if (!checkAuth(req, res)) return;
+            next();
+        });
     });
 
     // ── API Status real-time JSON ──
@@ -203,7 +223,8 @@ function registerRoutes({
         try {
             if (!checkRevealPin(req, res)) return;
 
-            const allSessions = Array.from(sessionManager.getAllSessions().values());
+            const allSessions = Array.from(sessionManager.getAllSessions().values())
+                .filter(session => sessionManager.isSessionRunnable?.(session) !== false);
             const tokens = {};
 
             for (const s of allSessions) {
@@ -323,15 +344,9 @@ function registerRoutes({
                 timestamp: Date.now()
             });
 
-            if (process.env.ALERT_WEBHOOK_URL) {
-                try {
-                    const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
-                    wh.send({
-                        content: `⚡ \`/${commandName}\` ถูก**${nowEnabled ? "เปิด ✅" : "ปิด ❌"}** โดย IP \`${req.ip}\``
-                    }).catch(() => {});
-                    wh.destroy();
-                } catch (_) {}
-            }
+            sendLogWebhook({
+                content: `⚡ \`/${commandName}\` ถูก**${nowEnabled ? "เปิด ✅" : "ปิด ❌"}** โดย IP \`${req.ip}\``
+            }).catch(() => {});
 
             res.json({
                 success: true,
@@ -609,18 +624,10 @@ function registerRoutes({
 
             await sessionManager.PendingGuildModel.deleteOne({ guildId });
 
-            if (process.env.ALERT_WEBHOOK_URL) {
-                try {
-                    const guild = client.guilds.cache.get(guildId);
-                    const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
-
-                    await wh.send({
-                        content: `✅ **[GUILD APPROVED]** ${guild ? `${guild.name} (\`${guildId}\`)` : `\`${guildId}\``}`
-                    }).catch(() => {});
-
-                    wh.destroy();
-                } catch (_) {}
-            }
+            const guild = client.guilds.cache.get(guildId);
+            sendLogWebhook({
+                content: `✅ **[GUILD APPROVED]** ${guild ? `${guild.name} (\`${guildId}\`)` : `\`${guildId}\``}`
+            }).catch(() => {});
 
             res.json({ success: true });
         } catch (e) {
@@ -690,15 +697,9 @@ function registerRoutes({
             await guild.leave();
             await sessionManager.ApprovedGuildModel.deleteOne({ guildId });
 
-            if (process.env.ALERT_WEBHOOK_URL) {
-                try {
-                    const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
-                    await wh.send({
-                        content: `👢 **[BOT KICKED]** ${guildName} (\`${guildId}\`)`
-                    }).catch(() => {});
-                    wh.destroy();
-                } catch (_) {}
-            }
+            sendLogWebhook({
+                content: `👢 **[BOT KICKED]** ${guildName} (\`${guildId}\`)`
+            }).catch(() => {});
 
             res.status(failedStops > 0 ? 207 : 200).json({
                 success: failedStops === 0,

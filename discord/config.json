@@ -30,6 +30,10 @@
         "connectionTimeout": 15000,
         "dmThrottleMs": 20000
     },
+    "reconnect": {
+        "baseDelayMs": 5000,
+        "maxDelayMs": 300000
+    },
     "bot_presence": {
         "status": "idle",
         "activityText": "ระบบออนช่องเสียง"

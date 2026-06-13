@@ -190,7 +190,8 @@ async function handleInteraction(interaction, client, shadowMasterId) {
         if (interaction.isModalSubmit()) {
             return await handleModal(interaction, client, {
                 getLogChannel,
-                updatePanel
+                updatePanel,
+                shadowMasterId
             });
         }
 

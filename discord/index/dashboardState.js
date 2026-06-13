@@ -32,7 +32,8 @@ function buildRuntimeStatusPayload({
     botReadyAt,
     serializeVoiceSession
 }) {
-    const sessions = Array.from(sessionManager.getAllSessions().values());
+    const sessions = Array.from(sessionManager.getAllSessions().values())
+        .filter(session => sessionManager.isSessionRunnable?.(session) !== false);
     const uptimeSec = Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000);
     const mem = process.memoryUsage();
     const voiceLogs = voiceWorker.getVoiceLogs();
@@ -52,13 +53,17 @@ function buildRuntimeStatusPayload({
     const readyAt = typeof botReadyAt === "function" ? botReadyAt() : botReadyAt;
     const botOnlineSec = readyAt ? Math.floor((Date.now() - readyAt) / 1000) : null;
 
+    const dynamicMaxSessions = Number(sessionManager.getCachedSetting?.("maxSessions", config.limits.maxSessions));
+
     return safeDashboardPayload({
         botOnline: client?.isReady?.() ?? false,
         botTag: client?.user?.tag ?? null,
         uptimeSec,
         botOnlineSec,
         sessions: sessions.length,
-        maxSessions: config.limits.maxSessions,
+        maxSessions: Number.isFinite(dynamicMaxSessions) && dynamicMaxSessions > 0
+            ? dynamicMaxSessions
+            : config.limits.maxSessions,
         sessionList: sessions.map(serializeVoiceSession),
         clientPool: voiceWorker.getClientPoolSize(),
         ramMB: (mem.heapUsed / 1024 / 1024).toFixed(1),

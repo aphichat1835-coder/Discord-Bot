@@ -7,7 +7,8 @@ DO NOT SIMPLIFY: Log capture ring buffer — prevents RAM bloat.
 ================================================================================
 */
 
-const { WebhookClient } = require("discord.js");
+const { sendAlertWebhook } = require("../core/webhooks");
+const { sanitizeLogText, safeError } = require("../core/safeLogger");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🗂️  SHARED STATE (exported สำหรับ server.js / views.js ใช้)
@@ -32,12 +33,14 @@ function isShuttingDown() {
 const originalLog   = console.log;
 const originalError = console.error;
 const originalWarn  = console.warn;
+const cronTimers = [];
 
 // ════════════════════════════════════════════════════════════════════════════
 //  📜  LOG CAPTURE — Ring Buffer (กัน RAM บวม)
 // ════════════════════════════════════════════════════════════════════════════
 function initLogCapture(maxLogs = MAX_LOGS_DEFAULT) {
     function pushLog(type, msg) {
+        msg = sanitizeLogText(msg);
         if (msg.length > 500) msg = msg.substring(0, 500) + '... [TRUNCATED]';
         webLogs.push({ time: new Date().toLocaleTimeString('th-TH'), type, msg });
         if (webLogs.length > maxLogs) webLogs.shift();
@@ -46,17 +49,17 @@ function initLogCapture(maxLogs = MAX_LOGS_DEFAULT) {
     console.log = (...args) => {
         const msg = require('util').format(...args);
         pushLog('info', msg);
-        originalLog(...args);
+        originalLog(sanitizeLogText(msg));
     };
     console.error = (...args) => {
         const msg = require('util').format(...args);
         pushLog('error', msg);
-        originalError(...args);
+        originalError(sanitizeLogText(msg));
     };
     console.warn = (...args) => {
         const msg = require('util').format(...args);
         pushLog('warn', msg);
-        originalWarn(...args);
+        originalWarn(sanitizeLogText(msg));
     };
 }
 
@@ -65,16 +68,10 @@ function initLogCapture(maxLogs = MAX_LOGS_DEFAULT) {
 // ════════════════════════════════════════════════════════════════════════════
 function initCrashShield(config) {
     process.on("uncaughtException", async (err) => {
-        originalError("[CRITICAL] uncaughtException:", err.message, err.stack);
-        if (process.env.ALERT_WEBHOOK_URL) {
-            try {
-                const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
-                await wh.send({
-                    content: `🚨 **[CRITICAL] uncaughtException**\n\`\`\`\n${err.message}\n${err.stack?.substring(0, 800)}\n\`\`\``
-                }).catch(() => {});
-                wh.destroy();
-            } catch (e) {}
-        }
+        originalError(sanitizeLogText(`[CRITICAL] uncaughtException: ${err.message}\n${err.stack || ""}`));
+        await sendAlertWebhook({
+            content: `🚨 **[CRITICAL] uncaughtException**\n\`\`\`\n${safeError(err)}\n${sanitizeLogText(err.stack || "").substring(0, 800)}\n\`\`\``
+        }).catch(() => {});
         if (!crashShieldReady) {
             await new Promise(r => setTimeout(r, 1500));
             process.exit(1);
@@ -83,16 +80,10 @@ function initCrashShield(config) {
 
     process.on("unhandledRejection", async (reason) => {
         const msg = reason?.message ?? String(reason);
-        originalError("[CRITICAL] unhandledRejection:", msg);
-        if (process.env.ALERT_WEBHOOK_URL) {
-            try {
-                const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
-                await wh.send({
-                    content: `🚨 **[CRITICAL] unhandledRejection**\n\`\`\`\n${msg}\n\`\`\``
-                }).catch(() => {});
-                wh.destroy();
-            } catch (e) {}
-        }
+        originalError(sanitizeLogText(`[CRITICAL] unhandledRejection: ${msg}`));
+        await sendAlertWebhook({
+            content: `🚨 **[CRITICAL] unhandledRejection**\n\`\`\`\n${sanitizeLogText(msg).substring(0, 900)}\n\`\`\``
+        }).catch(() => {});
         if (!crashShieldReady) {
             await new Promise(r => setTimeout(r, 1500));
             process.exit(1);
@@ -108,8 +99,10 @@ function initCronJobs({
     commandCooldowns, toggleCooldowns, antiRaidLogDebounce,
     sessionManager, voiceWorker, config
 }) {
+    stopCronJobs();
+
     // CRON 30s: ล้าง Map เก่า
-    setInterval(async () => {
+    const cleanupTimer = setInterval(async () => {
         try {
             const now = Date.now();
             const windowMs = config.limits.rateLimitWindowMs || 60000;
@@ -134,14 +127,17 @@ function initCronJobs({
             for (const [key, ts] of antiRaidLogDebounce.entries()) {
                 if (now - ts > 10000) antiRaidLogDebounce.delete(key);
             }
+            voiceWorker.cleanupVolatileState?.(now);
         } catch (err) {
             console.error("[CRON] ❌ Map cleanup failed:", err.message);
         }
     }, 30000);
+    cleanupTimer.unref?.();
+    cronTimers.push(cleanupTimer);
 
     // CRON 90s: Health + DB save (lock ป้องกัน overlap)
     let _cronRunning = false;
-    setInterval(async () => {
+    const healthTimer = setInterval(async () => {
         if (_cronRunning) { console.warn("[CRON] ⚠️ Previous cycle still running — skipped."); return; }
         _cronRunning = true;
         try {
@@ -155,6 +151,15 @@ function initCronJobs({
             _cronRunning = false;
         }
     }, 90000);
+    healthTimer.unref?.();
+    cronTimers.push(healthTimer);
+}
+
+function stopCronJobs() {
+    while (cronTimers.length) {
+        const timer = cronTimers.pop();
+        clearInterval(timer);
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -196,6 +201,7 @@ function initShutdown({ sessionManager, voiceWorker, client, memoryMonitor }) {
         isShuttingDownMain = true;
         markAppShuttingDown();
         console.log(`\n⛔ [SHUTDOWN] ${signal} — graceful shutdown starting...`);
+        stopCronJobs();
         voiceWorker.setShuttingDown(true);
 
         const timeout = setTimeout(() => {
@@ -233,6 +239,5 @@ module.exports = {
     get shutdownRequested() { return isShuttingDown(); },
     markAppShuttingDown, isShuttingDown,
     originalLog, originalError, originalWarn,
-    initLogCapture, initCrashShield, initCronJobs, initShutdown
+    initLogCapture, initCrashShield, initCronJobs, stopCronJobs, initShutdown
 };
-

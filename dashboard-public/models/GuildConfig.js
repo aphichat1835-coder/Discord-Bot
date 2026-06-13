@@ -104,7 +104,22 @@ const schema = new mongoose.Schema({
         storeOAuthTokens:              { type: Boolean, default: false },
         storeRawIpEncrypted:           { type: Boolean, default: true },
         ipRevealRequiresOwnerApproval: { type: Boolean, default: true },
-        retentionMode:                 { type: String, default: 'until_admin_delete' }
+        retentionMode:                 { type: String, default: 'until_admin_delete' },
+
+        /*
+          Owner gate for guild-admin visibility of collected sensitive data.
+          Collection is unchanged; this only controls normal guild dashboard views.
+        */
+        sensitiveDataAccess: {
+            enabled:    { type: Boolean, default: false },
+            scope:      { type: [String], default: ['rawIp', 'email', 'connections', 'guilds'] },
+            approvedBy: String,
+            approvedAt: Number,
+            revokedBy:  String,
+            revokedAt:  Number,
+            ownerNote:  { type: String, default: '' },
+            updatedAt:  Number
+        }
     },
 
     setupBy:   String,

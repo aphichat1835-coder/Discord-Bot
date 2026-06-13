@@ -77,6 +77,7 @@ discord/index/events.js
 discord/index/server.js
 discord/index/views.js
 discord/index/viewStyles.js
+discord/core/webhooks.js
 discord/index/auth.js
 discord/index/verifyOwner.js
 ```

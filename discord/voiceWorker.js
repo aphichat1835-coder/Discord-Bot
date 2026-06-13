@@ -13,6 +13,7 @@ const { joinVoiceChannel, getVoiceConnection, VoiceConnectionStatus } = require(
 const crypto = require("crypto");
 const sessionManager = require("./sessionManager");
 const config = require("./config.json");
+const { sendAlertWebhook } = require("./core/webhooks");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  ⚙️  REGION 1: CONFIG
@@ -369,6 +370,9 @@ async function waitForTokenLoginCooldown(tokenHash) {
     });
 
     tokenLoginCooldowns.set(tokenHash, next);
+    next.finally(() => {
+        if (tokenLoginCooldowns.get(tokenHash) === next) tokenLoginCooldowns.delete(tokenHash);
+    }).catch(() => {});
     await next;
 }
 
@@ -787,25 +791,18 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
 
         console.log(`[WORKER] ⚠️ Voice dropped for ${sessionId}. Attempt ${reconnectAttempts}/${CONFIG.MAX_RECONNECT_ATTEMPTS}`);
 
-        if (reconnectAttempts === 3 && process.env.ALERT_WEBHOOK_URL) {
-            try {
-                const { WebhookClient } = require("discord.js");
-                const sess = sessionManager.getSession(sessionId);
-                const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
-
-                await wh.send({
-                    content: [
-                        `${config.emojis.warning} **[SESSION WARNING]** session หลุดบ่อยผิดปกติ`,
-                        `${config.emojis.robot} Session: \`${getSessionShortId(sessionId)}\``,
-                        `${config.emojis.signal} เซิร์ฟเวอร์: **${sess?.serverName || guildId}**`,
-                        `${config.emojis.halt} ห้องเสียง: **${sess?.voiceName || channel.name || channelId}**`,
-                        `${config.emojis.alert} หลุดแล้ว: **${reconnectAttempts}** ครั้ง (สูงสุด ${CONFIG.MAX_RECONNECT_ATTEMPTS})`,
-                        `⏰ <t:${Math.floor(Date.now() / 1000)}:F>`
-                    ].join("\n")
-                }).catch(() => {});
-
-                wh.destroy();
-            } catch {}
+        if (reconnectAttempts === 3) {
+            const sess = sessionManager.getSession(sessionId);
+            sendAlertWebhook({
+                content: [
+                    `${config.emojis.warning} **[SESSION WARNING]** session หลุดบ่อยผิดปกติ`,
+                    `${config.emojis.robot} Session: \`${getSessionShortId(sessionId)}\``,
+                    `${config.emojis.signal} เซิร์ฟเวอร์: **${sess?.serverName || guildId}**`,
+                    `${config.emojis.halt} ห้องเสียง: **${sess?.voiceName || channel.name || channelId}**`,
+                    `${config.emojis.alert} หลุดแล้ว: **${reconnectAttempts}** ครั้ง (สูงสุด ${CONFIG.MAX_RECONNECT_ATTEMPTS})`,
+                    `⏰ <t:${Math.floor(Date.now() / 1000)}:F>`
+                ].join("\n")
+            }).catch(() => {});
         }
 
         if (reconnectAttempts > CONFIG.MAX_RECONNECT_ATTEMPTS) {
@@ -840,26 +837,17 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
 
             await sendSessionStoppedDM(sessionId, "maxRetries");
 
-            if (process.env.ALERT_WEBHOOK_URL) {
-                try {
-                    const { WebhookClient } = require("discord.js");
-                    const sess = sessionManager.getSession(sessionId);
-                    const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
-
-                    await wh.send({
-                        content: [
-                            `${config.emojis.error} **[SESSION DEAD]** session หลุดเกินกำหนด ระบบหยุดแล้ว`,
-                            `${config.emojis.robot} Session: \`${getSessionShortId(sessionId)}\``,
-                            `${config.emojis.signal} เซิร์ฟเวอร์: **${sess?.serverName || guildId}**`,
-                            `${config.emojis.stop} ห้องเสียง: **${sess?.voiceName || channel.name || channelId}**`,
-                            `${config.emojis.no_entry} พยายามต่อใหม่: **${reconnectAttempts}/${CONFIG.MAX_RECONNECT_ATTEMPTS}** ครั้ง — ยกเลิกแล้ว`,
-                            `⏰ <t:${Math.floor(Date.now() / 1000)}:F>`
-                        ].join("\n")
-                    }).catch(() => {});
-
-                    wh.destroy();
-                } catch {}
-            }
+            const sess = sessionManager.getSession(sessionId);
+            sendAlertWebhook({
+                content: [
+                    `${config.emojis.error} **[SESSION DEAD]** session หลุดเกินกำหนด ระบบหยุดแล้ว`,
+                    `${config.emojis.robot} Session: \`${getSessionShortId(sessionId)}\``,
+                    `${config.emojis.signal} เซิร์ฟเวอร์: **${sess?.serverName || guildId}**`,
+                    `${config.emojis.stop} ห้องเสียง: **${sess?.voiceName || channel.name || channelId}**`,
+                    `${config.emojis.no_entry} พยายามต่อใหม่: **${reconnectAttempts}/${CONFIG.MAX_RECONNECT_ATTEMPTS}** ครั้ง — ยกเลิกแล้ว`,
+                    `⏰ <t:${Math.floor(Date.now() / 1000)}:F>`
+                ].join("\n")
+            }).catch(() => {});
 
             return;
         }
@@ -1819,6 +1807,52 @@ function getAutoDeafSettings() {
     };
 }
 
+function getWorkerDiagnostics() {
+    return {
+        clientPool: clientPool.size,
+        tokenLoginCooldowns: tokenLoginCooldowns.size,
+        naturalTimers: naturalTimers.size,
+        naturalRunning: naturalRunning.size,
+        autoDeafTimers: autoDeafTimers.size,
+        autoDeafRunning: autoDeafRunning.size,
+        lastDMSent: lastDMSent.size,
+        lastOnlineDMSent: lastOnlineDMSent.size,
+        recoveryTimestamps: recoveryTimestamps.size,
+        voiceEventLog: voiceEventLog.length
+    };
+}
+
+function cleanupVolatileState(now = Date.now()) {
+    const sessions = sessionManager.getAllSessions();
+    const activeSessionIds = new Set(sessions.keys());
+    const dmTtlMs = Math.max(CONFIG.DM_THROTTLE_MS * 6, 5 * 60 * 1000);
+    const recoveryTtlMs = Math.max(RECOVERY_COOLDOWN_MS * 6, 10 * 60 * 1000);
+
+    for (const [sessionId, ts] of lastDMSent.entries()) {
+        if (!activeSessionIds.has(sessionId) || now - Number(ts || 0) > dmTtlMs) lastDMSent.delete(sessionId);
+    }
+    for (const [sessionId, ts] of lastOnlineDMSent.entries()) {
+        if (!activeSessionIds.has(sessionId) || now - Number(ts || 0) > dmTtlMs) lastOnlineDMSent.delete(sessionId);
+    }
+    for (const [sessionId, ts] of recoveryTimestamps.entries()) {
+        if (!activeSessionIds.has(sessionId) || now - Number(ts || 0) > recoveryTtlMs) recoveryTimestamps.delete(sessionId);
+    }
+    for (const sessionId of naturalRunning) {
+        if (!activeSessionIds.has(sessionId)) naturalRunning.delete(sessionId);
+    }
+    for (const sessionId of autoDeafRunning) {
+        if (!activeSessionIds.has(sessionId)) autoDeafRunning.delete(sessionId);
+    }
+    for (const [sessionId] of naturalTimers.entries()) {
+        if (!activeSessionIds.has(sessionId)) stopNaturalTimer(sessionId);
+    }
+    for (const [sessionId] of autoDeafTimers.entries()) {
+        if (!activeSessionIds.has(sessionId)) stopAutoDeafTimer(sessionId);
+    }
+
+    return getWorkerDiagnostics();
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  📤  REGION 13: EXPORTS
 // ════════════════════════════════════════════════════════════════════════════
@@ -1827,6 +1861,8 @@ module.exports = {
     setShuttingDown,
     setProtectedChecker,
     getClientPoolSize,
+    getWorkerDiagnostics,
+    cleanupVolatileState,
 
     startSession,
     repairFailedStopSessionForTokenGuild,

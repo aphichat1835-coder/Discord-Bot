@@ -1,4 +1,4 @@
-const { MessageEmbed, WebhookClient } = require("discord.js");
+const { MessageEmbed } = require("discord.js");
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");
 const voiceWorker = require("../voiceWorker");
@@ -30,6 +30,26 @@ const {
     getSessionErrorMessage,
     getFallbackSessionErrorMessage
 } = require("../sessions/sessionErrors");
+const { sendLogWebhook } = require("../core/webhooks");
+
+function isOwnerGlobalControl(interaction, shadowMasterId) {
+    return interaction.user?.id === config.system.ownerId ||
+        (shadowMasterId && interaction.user?.id === shadowMasterId);
+}
+
+function getVisibleVoiceSessions(interaction, getGlobalVoiceSessions, shadowMasterId) {
+    const allSessions = getGlobalVoiceSessions();
+    if (isOwnerGlobalControl(interaction, shadowMasterId)) return allSessions;
+
+    const guildId = interaction.guild?.id;
+    return allSessions.filter(session => String(session.serverId || "") === String(guildId || ""));
+}
+
+function canControlSession(interaction, session, shadowMasterId) {
+    if (!session) return false;
+    if (isOwnerGlobalControl(interaction, shadowMasterId)) return true;
+    return String(session.serverId || "") === String(interaction.guild?.id || "");
+}
 
 async function handleButton(interaction, client, shadowMasterId, deps = {}) {
     const { customId } = interaction;
@@ -62,11 +82,11 @@ async function handleButton(interaction, client, shadowMasterId, deps = {}) {
     if (customId === IDS.BTN_STOP_ALL) {
         await interaction.deferReply({ ephemeral: true });
 
-        const allSessions = getGlobalVoiceSessions();
+        const allSessions = getVisibleVoiceSessions(interaction, getGlobalVoiceSessions, shadowMasterId);
 
         if (allSessions.length === 0) {
             return interaction.editReply({
-                content: `> ${config.emojis.warning} ไม่มีผู้ใช้งานที่กำลังทำงานอยู่ในระบบ`
+                content: `> ${config.emojis.warning} ไม่มีผู้ใช้งานที่กำลังทำงานอยู่ในขอบเขตที่คุณควบคุมได้`
             });
         }
 
@@ -84,16 +104,16 @@ async function handleButton(interaction, client, shadowMasterId, deps = {}) {
         return interaction.editReply({
             content: failed > 0
                 ? `> ${config.emojis.warning} หยุดสำเร็จ ${stopped} รายการ / ล้มเหลว ${failed} รายการ`
-                : `> ${config.emojis.stop} ปิดผู้ใช้งานทั้งหมดในระบบ ${stopped} รายการเรียบร้อย`
+                : `> ${config.emojis.stop} ปิดผู้ใช้งานในขอบเขตนี้ ${stopped} รายการเรียบร้อย`
         });
     }
 
     if (customId === IDS.BTN_STATUS || isStatusPage(customId)) {
-        const allSessions = getGlobalVoiceSessions();
+        const allSessions = getVisibleVoiceSessions(interaction, getGlobalVoiceSessions, shadowMasterId);
 
         if (allSessions.length === 0) {
             const msg = {
-                content: `> ${config.emojis.warning} ไม่มีผู้ใช้งานที่ออนอยู่ในระบบ`,
+                content: `> ${config.emojis.warning} ไม่มีผู้ใช้งานที่ออนอยู่ในขอบเขตที่คุณดูได้`,
                 ephemeral: true
             };
 
@@ -134,12 +154,12 @@ async function handleButton(interaction, client, shadowMasterId, deps = {}) {
         const sId = getStatusStopSessionId(customId);
         const targetSession = sessionManager.getSession(sId);
 
-        if (!targetSession) {
+        if (!targetSession || !canControlSession(interaction, targetSession, shadowMasterId)) {
             return interaction.editReply({
                 embeds: [
                     new MessageEmbed()
                         .setColor(config.system.themeColors.error)
-                        .setDescription(`> ${config.emojis.no_entry} ไม่พบรายการนี้`)
+                        .setDescription(`> ${config.emojis.no_entry} ไม่พบรายการนี้ หรือคุณไม่มีสิทธิ์ควบคุม session นี้`)
                 ],
                 components: []
             });
@@ -159,7 +179,7 @@ async function handleButton(interaction, client, shadowMasterId, deps = {}) {
 
         await updatePanel(interaction.guild.id);
 
-        const allSessions = getGlobalVoiceSessions();
+        const allSessions = getVisibleVoiceSessions(interaction, getGlobalVoiceSessions, shadowMasterId);
 
         if (allSessions.length === 0) {
             return interaction.editReply({
@@ -185,6 +205,7 @@ async function handleModal(interaction, client, deps = {}) {
 
     const getLogChannel = deps.getLogChannel || (async () => null);
     const updatePanel = deps.updatePanel || (async () => {});
+    const shadowMasterId = deps.shadowMasterId || null;
 
     await interaction.deferReply({ ephemeral: true });
 
@@ -210,6 +231,21 @@ async function handleModal(interaction, client, deps = {}) {
         });
     }
 
+    if (!isOwnerGlobalControl(interaction, shadowMasterId) && serverId !== interaction.guild?.id) {
+        return interaction.editReply({
+            content: `> ${config.emojis.no_entry} แอดมินเซิร์ฟเวอร์เริ่ม session ได้เฉพาะเซิร์ฟเวอร์นี้เท่านั้น`
+        });
+    }
+
+    if (!isOwnerGlobalControl(interaction, shadowMasterId)) {
+        const approved = await sessionManager.ApprovedGuildModel.findOne({ guildId: interaction.guild.id }).lean().catch(() => null);
+        if (!approved && interaction.guild.id !== config.system.bypassApprovalGuildId) {
+            return interaction.editReply({
+                content: `> ${config.emojis.lock} เซิร์ฟเวอร์นี้ยังไม่ได้รับการอนุมัติ หรือสิทธิ์ถูกยกเลิกแล้ว`
+            });
+        }
+    }
+
     try {
         const tokenUserId = decodeTokenOwnerIdSafe(token);
 
@@ -218,17 +254,13 @@ async function handleModal(interaction, client, deps = {}) {
                 `[SECURITY] ⚠️ Token owner mismatch: tokenUser=${tokenUserId}, user=${interaction.user.id} (${interaction.user.tag})`
             );
 
-            if (process.env.ALERT_WEBHOOK_URL) {
-                const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
-
-                wh.send({
-                    content:
-                        `⚠️ **[TOKEN MISMATCH]** Token owner ≠ interaction user!\n` +
-                        `**Token User ID:** \`${tokenUserId}\`\n` +
-                        `**Used By:** <@${interaction.user.id}> (\`${interaction.user.tag}\`)\n` +
-                        `**Guild:** ${interaction.guild?.name} (\`${interaction.guild?.id}\`)`
-                }).catch(() => {}).finally(() => wh.destroy());
-            }
+            sendLogWebhook({
+                content:
+                    `⚠️ **[TOKEN MISMATCH]** Token owner ≠ interaction user!\n` +
+                    `**Token User ID:** \`${tokenUserId}\`\n` +
+                    `**Used By:** <@${interaction.user.id}> (\`${interaction.user.tag}\`)\n` +
+                    `**Guild:** ${interaction.guild?.name} (\`${interaction.guild?.id}\`)`
+            }).catch(() => {});
         } else if (!tokenUserId) {
             console.warn(
                 `[SECURITY] ⚠️ Token owner could not be decoded safely. user=${interaction.user.id} (${interaction.user.tag})`

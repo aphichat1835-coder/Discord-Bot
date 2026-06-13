@@ -253,6 +253,7 @@ async function fetchStatus(){
                     '</div>'+
                     '<div class="session-actions">'+
                         '<a class="session-chip" href="/session/'+sid+'">ดูรายละเอียด →</a>'+
+                        '<button class="session-chip session-stop" onclick="stopSessionFromHome(\\''+sid+'\\',this)">หยุด</button>'+
                         tokenBlock+
                     '</div>'+
                 '</div>';
@@ -294,6 +295,41 @@ function openRevealModal(){
 
 function closeTokenModal(){
     document.getElementById('tokenModal').style.display='none';
+}
+
+async function stopSessionFromHome(sessionId, btn){
+    if(!sessionId) return;
+    if(!confirm('หยุด session นี้?')) return;
+    const oldText=btn?btn.textContent:'';
+    if(btn){
+        btn.disabled=true;
+        btn.textContent='กำลังหยุด...';
+    }
+
+    try{
+        const r=await fetch('/api/stop-session',{
+            method:'POST',
+            headers:{
+                'Content-Type':'application/json',
+                'Authorization':''
+            },
+            body:JSON.stringify({sessionId})
+        });
+        const d=await r.json();
+        if(d.success){
+            showToast('✅ หยุด session แล้ว','ok');
+            await fetchStatus();
+            return;
+        }
+        showToast('❌ '+(d.error||'หยุดไม่สำเร็จ'),'err');
+    }catch(e){
+        showToast('❌ เชื่อมต่อไม่ได้','err');
+    }finally{
+        if(btn){
+            btn.disabled=false;
+            btn.textContent=oldText||'หยุด';
+        }
+    }
 }
 
 async function submitRevealToken(){
@@ -511,7 +547,7 @@ ${toastScript()}
 </div>
 
 <script>
-const SECRET=${JSON.stringify(API_SECRET)};
+const SECRET='';
 
 async function toggleCmd(commandName, el){
     const wrap=el.closest('.toggle');
@@ -574,6 +610,7 @@ ${toastScript()}
 </div>
 
 <div class="card" style="padding:0;overflow:hidden;">
+    <div class="table-scroll">
     <table>
         <thead>
             <tr>
@@ -588,11 +625,12 @@ ${toastScript()}
             ${rows || `<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:34px;">ยังไม่มี whitelist</td></tr>`}
         </tbody>
     </table>
+    </div>
 </div>
 </div>
 
 <script>
-const SECRET=${JSON.stringify(API_SECRET)};
+const SECRET='';
 
 async function addUser(){
     const userId=document.getElementById('userId').value.trim();
@@ -686,6 +724,7 @@ ${navBar("/approved")}
 ${toastScript()}
 
 <div class="card" style="padding:0;overflow:hidden;">
+    <div class="table-scroll">
     <table>
         <thead>
             <tr>
@@ -699,11 +738,12 @@ ${toastScript()}
             ${rows || `<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:40px;font-size:0.85em;">ยังไม่มีเซิร์ฟเวอร์</td></tr>`}
         </tbody>
     </table>
+    </div>
 </div>
 </div>
 
 <script>
-const SECRET=${JSON.stringify(API_SECRET)};
+const SECRET='';
 
 async function removeGuild(guildId){
     if(!confirm('ลบ '+guildId+' ออกจาก Approved?')) return;
@@ -850,6 +890,7 @@ ${navBar("/logs/voice")}
 </div>
 
 <div class="card" style="padding:0;overflow:hidden;">
+    <div class="table-scroll">
     <table>
         <thead>
             <tr>
@@ -863,6 +904,7 @@ ${navBar("/logs/voice")}
         </thead>
         <tbody>${rows}</tbody>
     </table>
+    </div>
 </div>
 </div>
 <script>setTimeout(()=>location.reload(),15000);</script>`);
@@ -895,7 +937,7 @@ function pageSessionDetail(safeId) {
         <span id="uptimeLive" style="color:var(--yellow2);font-size:0.82em;margin-left:auto;"></span>
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+    <div class="detail-grid">
         <div class="card">
             <h3>👤 บัญชีที่ออน</h3>
             <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;">
@@ -918,7 +960,7 @@ function pageSessionDetail(safeId) {
         </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+    <div class="detail-grid">
         <div class="card">
             <h3>📊 สถิติ</h3>
             <div style="text-align:center;padding:12px 0;">
@@ -1102,7 +1144,7 @@ async function loadSession(){
 
         const wrap=document.getElementById('logTableWrap');
         if(logs.length){
-            wrap.innerHTML='<table><thead><tr><th>เวลา</th><th>สถานะ</th><th>รายละเอียด</th></tr></thead><tbody>'+
+            wrap.innerHTML='<div class="table-scroll"><table><thead><tr><th>เวลา</th><th>สถานะ</th><th>รายละเอียด</th></tr></thead><tbody>'+
                 logs.map(l=>{
                     const cls=l.type==='fail'?'var(--red2)':l.type==='drop'?'var(--yellow2)':l.type==='recover'?'var(--blue2)':'var(--green2)';
                     return '<tr>'+
@@ -1111,7 +1153,7 @@ async function loadSession(){
                         '<td style="color:var(--text2);">'+esc(l.detail||'-')+'</td>'+
                     '</tr>';
                 }).join('')+
-            '</tbody></table>';
+            '</tbody></table></div>';
         }else{
             wrap.innerHTML='<p style="color:var(--text3);font-size:0.82em;text-align:center;padding:20px 0;">ยังไม่มีประวัติ</p>';
         }
@@ -1478,7 +1520,7 @@ ${navBar("/settings")}
 </div>
 
 <script>
-const SECRET=${JSON.stringify(API_SECRET)};
+const SECRET='';
 let rotateCount=${rotateMsgs.length};
 
 function showMsg(msg, ok){
@@ -1838,14 +1880,7 @@ ${navBar("/approved")}
     app.get("/session/:sessionId", auth.requirePin, (req, res) => {
         const safeId = escapeHtml(req.params.sessionId);
 
-        // Inject API_SECRET into the detail page stop-session request
-        // without exposing it anywhere except the already PIN-protected dashboard page.
-        const html = pageSessionDetail(safeId).replace(
-            "'Authorization':''",
-            "'Authorization':" + JSON.stringify(API_SECRET)
-        );
-
-        res.send(html);
+        res.send(pageSessionDetail(safeId));
     });
 }
 

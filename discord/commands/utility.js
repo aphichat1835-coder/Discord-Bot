@@ -8,7 +8,7 @@ DO NOT REMOVE: /whitelist command — required for เฟส 3 /say system.
 ================================================================================
 */
 
-const { MessageEmbed, MessageActionRow, MessageButton, WebhookClient } = require("discord.js");
+const { MessageEmbed, MessageActionRow, MessageButton } = require("discord.js");
 const crypto = require("crypto");
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");
@@ -19,6 +19,7 @@ const {
     safeDefer,
     sanitizeUserMessage
 } = require("../guards/commandGuards");
+const { sendLogWebhook } = require("../core/webhooks");
 
 // Race Condition Guards
 const activeRestores = new Set();
@@ -83,18 +84,13 @@ async function handleSay(interaction, sessionManager) {
     if (!isAdmin) {
         const whitelisted = await sessionManager.isWhitelisted(userId);
         if (!whitelisted) {
-            if (process.env.WEBHOOK_LOG_URL) {
-                try {
-                    const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
-                    wh.send({
-                        content: `${config.emojis.alert} **[COMMAND ABUSE]** /say spam attempt\n` +
-                                 `**User:** <@${userId}> (\`${interaction.user.tag}\`)\n` +
-                                 `**Server:** ${interaction.guild.name} (\`${interaction.guild.id}\`)\n` +
-                                 `**Count:** ${history.length} ครั้งใน 60s\n` +
-                                 `**Message:** ${msg.substring(0, 200)}`
-                    }).catch(() => {}).finally(() => wh.destroy());
-                } catch (e) {}
-            }
+            sendLogWebhook({
+                content: `${config.emojis.alert} **[COMMAND ABUSE]** /say spam attempt\n` +
+                         `**User:** <@${userId}> (\`${interaction.user.tag}\`)\n` +
+                         `**Server:** ${interaction.guild.name} (\`${interaction.guild.id}\`)\n` +
+                         `**Count:** ${history.length} ครั้งใน 60s\n` +
+                         `**Message:** ${msg.substring(0, 200)}`
+            }).catch(() => {});
             return interaction.reply({
                 content: `> ${config.emojis.no_entry} คุณไม่มีสิทธิ์ใช้คำสั่งนี้บ่อยขนาดนี้ กรุณาติดต่อแอดมิน`,
                 ephemeral: true
@@ -227,6 +223,85 @@ async function handleSteal(interaction) {
 // ════════════════════════════════════════════════════════════════════════════
 //  💾  BACKUP
 // ════════════════════════════════════════════════════════════════════════════
+function serializeRoleForBackup(role) {
+    return {
+        id: role.id,
+        name: role.name,
+        color: role.color,
+        hexColor: role.hexColor,
+        permissions: role.permissions.bitfield.toString(),
+        hoist: !!role.hoist,
+        mentionable: !!role.mentionable,
+        position: role.position,
+        managed: !!role.managed,
+        createdTimestamp: role.createdTimestamp || null
+    };
+}
+
+function serializeChannelForBackup(channel) {
+    const out = {
+        id: channel.id,
+        name: channel.name,
+        type: channel.type,
+        parentId: channel.parentId,
+        position: channel.position,
+        rawPosition: channel.rawPosition,
+        permissionOverwrites: channel.permissionOverwrites.cache.map(o => ({
+            id: o.id,
+            type: o.type,
+            allow: o.allow.bitfield.toString(),
+            deny: o.deny.bitfield.toString()
+        }))
+    };
+
+    for (const key of [
+        "topic", "nsfw", "rateLimitPerUser", "bitrate", "userLimit",
+        "rtcRegion", "videoQualityMode", "defaultAutoArchiveDuration"
+    ]) {
+        if (channel[key] !== undefined) out[key] = channel[key];
+    }
+
+    return out;
+}
+
+function restoreBigInt(value) {
+    try { return BigInt(value || "0"); } catch { return BigInt(0); }
+}
+
+function findUniqueByName(collection, predicate) {
+    const found = collection.filter(predicate);
+    return found.size === 1 ? found.first() : null;
+}
+
+function roleCreatePayload(rData) {
+    return {
+        name: rData.name,
+        color: rData.color || rData.hexColor || undefined,
+        permissions: restoreBigInt(rData.permissions),
+        hoist: !!rData.hoist,
+        mentionable: !!rData.mentionable,
+        reason: "Enterprise Restore"
+    };
+}
+
+function channelCreatePayload(cData, parentId, permissionOverwrites) {
+    const payload = {
+        type: cData.type,
+        parent: parentId,
+        permissionOverwrites,
+        reason: "Enterprise Restore"
+    };
+
+    for (const key of [
+        "topic", "nsfw", "rateLimitPerUser", "bitrate", "userLimit",
+        "rtcRegion", "videoQualityMode", "defaultAutoArchiveDuration"
+    ]) {
+        if (cData[key] !== undefined && cData[key] !== null) payload[key] = cData[key];
+    }
+
+    return payload;
+}
+
 async function handleBackup(interaction) {
     if (interaction.user.id !== interaction.guild.ownerId &&
         interaction.user.id !== config.system.ownerId) {
@@ -257,18 +332,25 @@ async function handleBackup(interaction) {
         }
 
         const data = {
-            roles: interaction.guild.roles.cache.map(r => ({
-                id: r.id, name: r.name, color: r.color,
-                permissions: r.permissions.bitfield.toString()
-            })),
-            channels: interaction.guild.channels.cache.map(c => ({
-                id: c.id, name: c.name, type: c.type, parentId: c.parentId,
-                permissionOverwrites: c.permissionOverwrites.cache.map(o => ({
-                    id: o.id, type: o.type,
-                    allow: o.allow.bitfield.toString(),
-                    deny: o.deny.bitfield.toString()
-                }))
-            }))
+            schemaVersion: 2,
+            createdAt: Date.now(),
+            guild: {
+                id: interaction.guild.id,
+                name: interaction.guild.name,
+                ownerId: interaction.guild.ownerId,
+                icon: interaction.guild.icon || null
+            },
+            limitations: [
+                "restore_creates_missing_only",
+                "managed_roles_not_recreated",
+                "webhooks_invites_threads_messages_not_restored"
+            ],
+            roles: interaction.guild.roles.cache
+                .sort((a, b) => a.position - b.position)
+                .map(serializeRoleForBackup),
+            channels: interaction.guild.channels.cache
+                .sort((a, b) => (a.rawPosition || 0) - (b.rawPosition || 0))
+                .map(serializeChannelForBackup)
         };
 
         await sessionManager.SnapshotModel.findOneAndUpdate(
@@ -277,15 +359,9 @@ async function handleBackup(interaction) {
             { upsert: true }
         );
 
-        if (process.env.WEBHOOK_LOG_URL) {
-            try {
-                const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
-                await wh.send({
-                    content: `${config.emojis.backup_icon} **[BACKUP]** Guild: ${interaction.guild.name}\nBy: ${interaction.user.tag}\nRoles: ${data.roles.length} | Channels: ${data.channels.length}`
-                }).catch(() => {});
-                wh.destroy();
-            } catch (e) {}
-        }
+        await sendLogWebhook({
+            content: `${config.emojis.backup_icon} **[BACKUP]** Guild: ${interaction.guild.name}\nBy: ${interaction.user.tag}\nRoles: ${data.roles.length} | Channels: ${data.channels.length}`
+        }).catch(() => {});
 
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.success)
@@ -338,8 +414,9 @@ async function handleRestore(interaction) {
             `${config.emojis.folder} **ข้อมูล Backup:**\n` +
             `— บันทึกโดย: <@${backup.Backup_Owner_ID}>\n` +
             `— เวลา: <t:${Math.floor(backup.createdAt / 1000)}:F>\n` +
+            `— Schema: v${backup.data.schemaVersion || 1}\n` +
             `— ข้อมูล: ${backup.data.roles.length} ยศ, ${backup.data.channels.length} ห้อง\n\n` +
-            `*กระบวนการนี้จะสร้างสิ่งที่หายไปกลับมา*`
+            `*กระบวนการนี้จะสร้างสิ่งที่หายไปกลับมา และจะไม่กู้คืนข้อความ, thread, webhook หรือ invite*`
         );
 
     const row = new MessageActionRow().addComponents(
@@ -387,6 +464,11 @@ async function handleRestoreConfirm(interaction, sessionManager) {
             const roleIdMap  = new Map();
             let restoredRoles    = 0;
             let restoredChannels = 0;
+            let skippedRoles     = 0;
+            let skippedChannels  = 0;
+            let ambiguousRoles   = 0;
+            let ambiguousChannels = 0;
+            let restoreErrors    = 0;
             const startTime      = Date.now();
             const MAX_DUR        = 14 * 60 * 1000;
             let timeoutHit       = false;
@@ -396,23 +478,30 @@ async function handleRestoreConfirm(interaction, sessionManager) {
                     await new Promise(resolve => setImmediate(resolve));
 
                     if (Date.now() - startTime > MAX_DUR) { timeoutHit = true; break; }
-                    if (rData.name === config.roles.adminName || rData.name === config.roles.userName) continue;
+                    if (
+                        rData.managed ||
+                        rData.name === config.roles.adminName ||
+                        rData.name === config.roles.userName
+                    ) {
+                        skippedRoles++;
+                        continue;
+                    }
 
-                    let existingRole = guild.roles.cache.find(r => r.name === rData.name);
+                    let existingRole = findUniqueByName(guild.roles.cache, r => r.name === rData.name);
                     if (rData.name === "@everyone") existingRole = guild.roles.everyone;
+                    if (!existingRole && guild.roles.cache.filter(r => r.name === rData.name).size > 1) {
+                        ambiguousRoles++;
+                        continue;
+                    }
 
                     if (!existingRole) {
                         try {
-                            existingRole = await guild.roles.create({
-                                name: rData.name,
-                                color: rData.color,
-                                permissions: (() => { try { return BigInt(rData.permissions || '0'); } catch { return BigInt(0); } })(),
-                                reason: "Enterprise Restore"
-                            });
+                            existingRole = await guild.roles.create(roleCreatePayload(rData));
                             restoredRoles++;
                             await new Promise(r => setTimeout(r, 600));
                         } catch (e) {
                             console.error("[RESTORE] Role error:", e.message);
+                            restoreErrors++;
                         }
                     }
                     if (existingRole && rData.id) roleIdMap.set(rData.id, existingRole.id);
@@ -429,7 +518,9 @@ async function handleRestoreConfirm(interaction, sessionManager) {
                     for (const ow of cData.permissionOverwrites) {
                         let targetId = roleIdMap.get(ow.id);
                         if (ow.id === oldGuildId) targetId = guild.id;
-                        if (targetId) out.push({ id: targetId, allow: BigInt(ow.allow || "0"), deny: BigInt(ow.deny || "0") });
+                        if (!targetId && ow.type === "member" && guild.members.cache.has(ow.id)) targetId = ow.id;
+                        if (!targetId && ow.type === "role" && guild.roles.cache.has(ow.id)) targetId = ow.id;
+                        if (targetId) out.push({ id: targetId, allow: restoreBigInt(ow.allow), deny: restoreBigInt(ow.deny) });
                     }
                     return out;
                 }
@@ -440,20 +531,27 @@ async function handleRestoreConfirm(interaction, sessionManager) {
                     await new Promise(resolve => setImmediate(resolve));
                     if (Date.now() - startTime > MAX_DUR) { timeoutHit = true; break; }
 
-                    const exists = guild.channels.cache.find(c => c.name === cData.name && c.type === 'GUILD_CATEGORY');
+                    const matches = guild.channels.cache.filter(c => c.name === cData.name && c.type === 'GUILD_CATEGORY');
+                    const exists = matches.size === 1 ? matches.first() : null;
+                    if (!exists && matches.size > 1) {
+                        ambiguousChannels++;
+                        continue;
+                    }
                     if (exists) {
                         if (cData.id) categoryIdMap.set(cData.id, exists.id);
                     } else {
                         try {
                             const newCat = await guild.channels.create(cData.name, {
-                                type: 'GUILD_CATEGORY',
-                                permissionOverwrites: buildOverwrites(cData),
-                                reason: "Enterprise Restore"
+                                ...channelCreatePayload(cData, undefined, buildOverwrites(cData)),
+                                type: 'GUILD_CATEGORY'
                             });
                             if (cData.id) categoryIdMap.set(cData.id, newCat.id);
                             restoredChannels++;
                             await new Promise(r => setTimeout(r, 600));
-                        } catch (e) { console.error("[RESTORE] Category error:", e.message); }
+                        } catch (e) {
+                            console.error("[RESTORE] Category error:", e.message);
+                            restoreErrors++;
+                        }
                     }
                 }
 
@@ -464,28 +562,37 @@ async function handleRestoreConfirm(interaction, sessionManager) {
                         await new Promise(resolve => setImmediate(resolve));
                         if (Date.now() - startTime > MAX_DUR) { timeoutHit = true; break; }
 
-                        const exists = guild.channels.cache.find(c => c.name === cData.name && c.type === cData.type);
+                        const matches = guild.channels.cache.filter(c => c.name === cData.name && c.type === cData.type);
+                        const exists = matches.size === 1 ? matches.first() : null;
+                        if (!exists && matches.size > 1) {
+                            ambiguousChannels++;
+                            continue;
+                        }
                         if (!exists) {
                             try {
                                 if (validTypes.includes(cData.type)) {
                                     const parentId = cData.parentId ? (categoryIdMap.get(cData.parentId) || undefined) : undefined;
-                                    await guild.channels.create(cData.name, {
-                                        type: cData.type,
-                                        parent: parentId,
-                                        permissionOverwrites: buildOverwrites(cData),
-                                        reason: "Enterprise Restore"
-                                    });
+                                    await guild.channels.create(cData.name, channelCreatePayload(cData, parentId, buildOverwrites(cData)));
                                     restoredChannels++;
                                     await new Promise(r => setTimeout(r, 600));
+                                } else {
+                                    skippedChannels++;
                                 }
-                            } catch (e) { console.error("[RESTORE] Channel error:", e.message); }
+                            } catch (e) {
+                                console.error("[RESTORE] Channel error:", e.message);
+                                restoreErrors++;
+                            }
                         }
                     }
                 }
             }
 
             const timeMsg = timeoutHit ? `\n> ${config.emojis.warning} หยุดอัตโนมัติ: เกิน 14 นาที` : "";
-            const resultMsg = `> ${config.emojis.success} **กู้คืนสำเร็จ!**\n— ยศ: ${restoredRoles} ยศ\n— ห้อง: ${restoredChannels} ห้อง${timeMsg}`;
+            const detailMsg =
+                `\n— ข้าม: ${skippedRoles} ยศ, ${skippedChannels} ห้อง` +
+                `\n— ชื่อซ้ำ/ไม่แน่ชัด: ${ambiguousRoles} ยศ, ${ambiguousChannels} ห้อง` +
+                `\n— Error: ${restoreErrors}`;
+            const resultMsg = `> ${config.emojis.success} **กู้คืนสำเร็จ!**\n— สร้างยศใหม่: ${restoredRoles} ยศ\n— สร้างห้องใหม่: ${restoredChannels} ห้อง${detailMsg}${timeMsg}`;
             const sent = await interaction.followUp({ content: resultMsg, ephemeral: true }).catch(() => null);
             if (!sent) {
                 const dmSent = await interaction.user.send({ content: `${resultMsg}\n*(แจ้งทาง DM เพราะ interaction หมดอายุ)*` }).catch(() => null);

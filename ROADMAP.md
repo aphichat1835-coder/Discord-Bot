@@ -67,6 +67,7 @@ The first approved Service 1 helper extraction has been applied:
 - `discord/guards/dashboardGuards.js`
 - `discord/core/env.js`
 - `discord/core/http.js`
+- `discord/core/webhooks.js`
 - `discord/index/dashboardState.js`
 
 The old public modules remain compatibility layers:
@@ -94,6 +95,7 @@ discord/
 ├─ core/
 │  ├─ env.js
 │  ├─ http.js
+│  ├─ webhooks.js
 │  └─ safeLog.js
 │
 ├─ sessions/

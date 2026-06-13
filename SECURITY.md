@@ -48,6 +48,13 @@ RENDER_EXTERNAL_URL
 VOICE_DEBUG_MULTI_CLIENT
 ```
 
+Webhook routing:
+
+- `WEBHOOK_LOG_URL` is for routine operations, security, and audit-style notices.
+- `ALERT_WEBHOOK_URL` is for critical runtime alerts, crash shield messages, and severe voice/session failures.
+- Do not point both variables at the same Discord channel unless you intentionally want mixed traffic.
+- Service 1 warns at boot if both webhook variables point to the same target or if either target is missing.
+
 Service 2 variables:
 
 ```txt
@@ -133,6 +140,14 @@ Verification logs can include:
 - Policy snapshots and role assignment results.
 
 Treat all of this as sensitive. Normal guild admin views should prefer summaries, hashes, and redacted data. Raw IP access should go through owner approval.
+
+Guild admin access to collected sensitive verification details is gated per guild:
+
+- Raw IP, email, connection lists, and mutual guild lists are hidden by default.
+- The bot owner can approve a guild's sensitive data access from the owner verification dashboard.
+- The bot owner can revoke that access later.
+- This gate does not remove or redesign collection logic; it controls normal guild dashboard visibility.
+- Counts and risk summaries may remain visible so admins can operate moderation workflows without exposing raw sensitive values.
 
 ## Raw IP Reveal Workflow
 

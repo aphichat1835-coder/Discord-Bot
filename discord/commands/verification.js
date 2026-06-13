@@ -704,6 +704,28 @@ async function handleVerifyButton(interaction) {
             });
         }
 
+        const botMember = guild.members.me;
+        if (!botMember?.permissions?.has?.("MANAGE_ROLES")) {
+            return interaction.reply({
+                content: `> ${config.emojis.error} บอทไม่มีสิทธิ์ Manage Roles กรุณาให้ Admin ตรวจสอบ`,
+                ephemeral: true
+            });
+        }
+
+        if (role.managed) {
+            return interaction.reply({
+                content: `> ${config.emojis.error} ยศนี้เป็น managed role ไม่สามารถมอบให้อัตโนมัติได้`,
+                ephemeral: true
+            });
+        }
+
+        if (role.position >= botMember.roles.highest.position) {
+            return interaction.reply({
+                content: `> ${config.emojis.error} ยศนี้อยู่สูงกว่ายศบอท กรุณาให้ Admin ตั้งค่า role hierarchy ใหม่`,
+                ephemeral: true
+            });
+        }
+
         try {
             if (member.roles.cache.has(roleId)) {
                 return interaction.reply({

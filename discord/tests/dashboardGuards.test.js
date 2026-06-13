@@ -9,6 +9,7 @@ const {
     makeCheckRevealPin,
     cleanupRevealAttempts
 } = require("../guards/dashboardGuards");
+const dashboardAuth = require("../index/auth");
 
 function createRes() {
     return {
@@ -25,9 +26,9 @@ function createRes() {
     };
 }
 
-test("dashboard read API bypass matches safe GET routes only", () => {
-    assert.equal(shouldBypassDashboardReadApi({ method: "GET", baseUrl: "/api", path: "/status" }), true);
-    assert.equal(shouldBypassDashboardReadApi({ method: "GET", baseUrl: "/api", path: "/session/vc_1" }), true);
+test("dashboard read APIs do not bypass owner auth", () => {
+    assert.equal(shouldBypassDashboardReadApi({ method: "GET", baseUrl: "/api", path: "/status" }), false);
+    assert.equal(shouldBypassDashboardReadApi({ method: "GET", baseUrl: "/api", path: "/session/vc_1" }), false);
     assert.equal(shouldBypassDashboardReadApi({ method: "POST", baseUrl: "/api", path: "/status" }), false);
 });
 
@@ -54,14 +55,31 @@ test("rate limiter blocks after configured request count", () => {
 });
 
 test("checkAuth accepts exact secret and rejects mismatches", () => {
+    const oldPin = process.env.DASHBOARD_PIN;
+    const oldSecret = process.env.API_SECRET;
+    process.env.DASHBOARD_PIN = "1234";
+    process.env.API_SECRET = "cookie-secret";
+
     const checkAuth = makeCheckAuth("secret");
 
     const goodRes = createRes();
     const badRes = createRes();
+    const cookieRes = createRes();
+    const token = dashboardAuth.makeToken();
 
     assert.equal(checkAuth({ ip: "1.1.1.1", path: "/api", headers: { authorization: "secret" } }, goodRes), true);
     assert.equal(checkAuth({ ip: "1.1.1.1", path: "/api", headers: { authorization: "wrong" } }, badRes), false);
+    assert.equal(checkAuth({
+        ip: "1.1.1.1",
+        path: "/api",
+        headers: { cookie: `${dashboardAuth.COOKIE_NAME}=${encodeURIComponent(token)}` }
+    }, cookieRes), true);
     assert.equal(badRes.statusCode, 401);
+
+    if (oldPin === undefined) delete process.env.DASHBOARD_PIN;
+    else process.env.DASHBOARD_PIN = oldPin;
+    if (oldSecret === undefined) delete process.env.API_SECRET;
+    else process.env.API_SECRET = oldSecret;
 });
 
 test("reveal PIN guard locks after repeated failures and can clean expired attempts", () => {

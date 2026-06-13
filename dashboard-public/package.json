@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node index.js",
-    "check": "node --check index.js && node --check routes/oauth.js && node --check routes/guild.js && node --check routes/guildDashboard.js && node --check routes/api.js && node --check routes/adminSessionCompat.js && node --check utils/discordAPI.js && node --check utils/ipUtils.js && node --check utils/panelBuilder.js && node --check utils/verifyMode.js && node --check utils/crypto.js",
+    "check": "npm run check:all",
+    "check:all": "find . -path './node_modules' -prune -o -type f -name '*.js' -print0 | xargs -0 -n1 node --check",
     "test": "jest --testPathPattern=tests/"
   },
   "engines": {

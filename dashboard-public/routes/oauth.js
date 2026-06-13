@@ -1283,10 +1283,14 @@ router.get('/auth/logout', (req, res) => {
 
 router.get('/oauth/admin', (req, res) => {
     try {
+        const requestedGuildId = /^\d{17,22}$/.test(String(req.query.guild_id || ''))
+            ? String(req.query.guild_id)
+            : null;
         const state = encodeSignedState({
             type: 'admin-login',
             ts: Date.now(),
-            nonce: crypto.randomBytes(12).toString('base64url')
+            nonce: crypto.randomBytes(12).toString('base64url'),
+            guildId: requestedGuildId
         });
 
         const url = makeAuthorizeUrl({
@@ -1350,7 +1354,13 @@ router.get('/auth/admin-callback', async (req, res) => {
             canManage: g.isOwner === true || g.isAdmin === true
         }));
 
-        return res.redirect('/guilds');
+        const requestedGuildId = /^\d{17,22}$/.test(String(parsed.guildId || ''))
+            ? String(parsed.guildId)
+            : null;
+        const canOpenRequestedGuild = requestedGuildId &&
+            manageableGuilds.some(g => String(g.id) === requestedGuildId);
+
+        return res.redirect(canOpenRequestedGuild ? `/guild/${requestedGuildId}` : '/guilds');
     } catch (err) {
         console.error('[ADMIN_OAUTH] callback failed:', JSON.stringify(sanitizeSideEffectError(err)));
         return res.redirect('/');

@@ -44,6 +44,10 @@ body {
   line-height: 1.5;
 }
 
+button, a, input, select, textarea {
+  touch-action: manipulation;
+}
+
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg2); }
 ::-webkit-scrollbar-thumb { background: var(--accent); border-radius: 3px; }
@@ -404,6 +408,14 @@ tr:last-child td { border-bottom: none; }
 tbody tr { transition: background .12s; }
 tbody tr:hover td { background: rgba(124,58,237,.05); }
 
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.table-scroll table {
+  min-width: 620px;
+}
+
 .session-item {
   background: rgba(15,11,30,.7);
   border-left: 3px solid var(--accent);
@@ -412,6 +424,10 @@ tbody tr:hover td { background: rgba(124,58,237,.05); }
   margin-bottom: 9px;
   font-size: 0.82em;
   transition: all .15s;
+}
+.session-item:focus-within {
+  border-left-color: var(--accent2);
+  box-shadow: 0 0 0 2px rgba(168,85,247,.14);
 }
 .session-item:hover {
   border-left-color: var(--accent2);
@@ -472,10 +488,24 @@ tbody tr:hover td { background: rgba(124,58,237,.05); }
   padding: 4px 9px;
   font-size: 0.76em;
   text-decoration: none;
+  cursor: pointer;
 }
 .session-chip:hover {
   border-color: var(--accent2);
   color: #fff;
+}
+.session-stop {
+  background: rgba(127,29,29,.18);
+  border-color: rgba(248,113,113,.28);
+  color: var(--red2);
+}
+.session-stop:hover {
+  border-color: var(--red2);
+  color: #fff;
+}
+.session-chip:disabled {
+  opacity: .6;
+  cursor: wait;
 }
 .token-action {
   display: inline-flex;
@@ -555,6 +585,10 @@ tbody tr:hover td { background: rgba(124,58,237,.05); }
   display: flex;
   align-items: flex-start;
   gap: 8px;
+  min-width: 0;
+}
+.token-full-wrap span {
+  min-width: 0;
 }
 .copy-btn {
   background: var(--bg3);
@@ -829,6 +863,13 @@ tbody tr:hover td { background: rgba(124,58,237,.05); }
   color:#fff;
 }
 
+.detail-grid {
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:12px;
+  margin-bottom:14px;
+}
+
 .preview {
   background:var(--bg2);
   border-radius:12px;
@@ -888,6 +929,129 @@ tbody tr:hover td { background: rgba(124,58,237,.05); }
   margin-bottom:14px;
   display:none;
   font-size:0.86em;
+}
+
+@media(max-width:700px) {
+  body {
+    padding: 10px;
+    font-size: 14px;
+  }
+
+  .container,
+  .container-lg {
+    width: 100%;
+    max-width: none;
+  }
+
+  .card {
+    padding: 14px;
+    margin-bottom: 12px;
+  }
+
+  .page-title {
+    font-size: 1.25em;
+    line-height: 1.25;
+  }
+
+  .nav {
+    gap: 7px;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .nav a {
+    flex: 0 0 auto;
+    padding: 9px 12px;
+    min-height: 40px;
+  }
+
+  .status-bar {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    padding: 11px 12px;
+  }
+
+  .session-item {
+    padding: 13px;
+    border-left-width: 0;
+    border-top: 3px solid var(--accent);
+    font-size: 0.9em;
+    border-radius: 10px;
+  }
+
+  .session-head {
+    align-items: flex-start;
+    gap: 9px;
+  }
+
+  .session-avatar {
+    width: 38px;
+    height: 38px;
+  }
+
+  .session-account {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    line-height: 1.25;
+  }
+
+  .session-sub {
+    font-size: 0.82em;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+
+  .session-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .session-chip,
+  .token-action {
+    width: 100%;
+    min-height: 42px;
+    justify-content: center;
+    border-radius: 10px;
+    font-size: 0.86em;
+  }
+
+  .token-full-wrap {
+    width: 100%;
+    flex-direction: column;
+    font-size: 0.74em;
+  }
+
+  .copy-btn {
+    width: 100%;
+    min-height: 36px;
+  }
+
+  .voice-box {
+    min-width: calc(50% - 8px);
+  }
+
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  #btnStop {
+    width: 100% !important;
+    padding: 12px 14px !important;
+  }
+
+  th,
+  td {
+    white-space: normal;
+    min-width: 120px;
+  }
+
+  .table-scroll table {
+    min-width: 560px;
+  }
 }
 `;
 

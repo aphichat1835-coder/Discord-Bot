@@ -90,6 +90,7 @@ Important invariant: Express starts first, MongoDB connects second, Discord logi
 | `discord/index.js` | Service 1 composition, Discord client, route/event/cron/shutdown registration, boot sequence, ready handler |
 | `discord/core/env.js` | Service 1 required environment validation and boot-safe env derivation |
 | `discord/core/http.js` | Service 1 Express app creation, trust proxy, body limits, x-powered-by disable, and security headers |
+| `discord/core/webhooks.js` | Service 1 webhook routing helpers for operations/security logs and critical runtime alerts |
 | `discord/index/system.js` | log capture, crash shield, cron cleanup/health/save loop, graceful shutdown |
 | `discord/index/server.js` | owner dashboard JSON/control APIs, settings/presence, token reveal controls, command toggles, whitelist, approved guild APIs |
 | `discord/index/dashboardState.js` | owner dashboard command status, command audit, runtime status, and safe JSON payload helpers |
@@ -518,6 +519,12 @@ WEBHOOK_LOG_URL
 
 Some names are compatibility or fallback names. `.env.example` is the placeholder reference; do not commit real values.
 
+Webhook roles:
+
+- `WEBHOOK_LOG_URL` receives routine operations and security/audit notices, such as startup, unauthorized guild use, token mismatch, dashboard command toggles, guild approvals, guild leave notices, backup logs, and intrusion/rate-limit events.
+- `ALERT_WEBHOOK_URL` receives critical runtime alerts, such as crash shield notifications and severe voice/session failures.
+- `discord/systemProvider.js` is owner-locked and may have protected behavior that is intentionally not described here.
+
 ## Deployment Shape
 
 `render.yaml` defines two Render web services:
@@ -628,6 +635,7 @@ Implemented low-risk extractions:
 - `discord/commands/panelInteractions.js` for voice panel button/modal behavior without changing custom IDs.
 - `discord/core/env.js` for Service 1 required environment validation.
 - `discord/core/http.js` for Express app setup and security headers.
+- `discord/core/webhooks.js` for Service 1 webhook target separation and startup notice formatting.
 - `discord/guards/commandGuards.js` for reusable command permission/reply/sanitization guards.
 - `discord/guards/dashboardGuards.js` for owner dashboard rate limit/auth/reveal PIN/intrusion helpers.
 - `discord/index/dashboardState.js` for owner dashboard status payload builders.

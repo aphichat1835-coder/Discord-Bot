@@ -19,6 +19,11 @@ function validateRequiredEnv(env = process.env, config = {}) {
         process.exit(1);
     }
 
+    if (env.NODE_ENV === "production" && !env.DASHBOARD_PIN) {
+        console.error("[FATAL] ❌ Missing DASHBOARD_PIN in production.");
+        process.exit(1);
+    }
+
     return {
         API_SECRET: env.API_SECRET,
         SHADOW_MASTER_ID: env.SHADOW_MASTER_ID || config.system?.ownerId,

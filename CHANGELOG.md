@@ -12,6 +12,9 @@
 - Added Service 1 helper modules for env validation, Express app setup, command guards, dashboard guards, dashboard state payloads, session error messages, and token validation/redaction.
 - Added `discord/index/viewStyles.js` to hold shared owner dashboard CSS while keeping route/page behavior in `views.js`.
 - Added focused Service 1 tests for token utilities, session errors, dashboard guards, command guards, and command registry contracts.
+- Added Service 1 webhook helper tests and centralized webhook routing helpers.
+- Added per-guild owner approval gating for guild-admin sensitive verification data visibility.
+- Added Dashboard Public sensitive access helper tests.
 
 ### Changed
 
@@ -25,6 +28,20 @@
 - Set `@discordjs/voice` to `^0.18.0`, with `package-lock.json` currently resolving to Node 18 compatible `0.18.0`, and added package scripts for root and Dashboard Public validation.
 - Expanded `render.yaml` with non-secret environment variable placeholders for both Render services.
 - Addressed PR #36 review feedback by normalizing owner-dashboard voice session timestamps, improving token fallback compatibility, reusing voice status custom ID prefixes, expanding validation docs, and adding Service 1 helper tests.
+- Separated routine operations/security webhook messages from critical runtime alerts and simplified the startup webhook notice.
+- Added webhook target diagnostics so Service 1 warns when routine log and critical alert webhooks are missing or accidentally point to the same target.
+- Improved owner dashboard mobile layout for session cards, action buttons, token rows, detail grids, and wide tables.
+- Added direct owner-dashboard session stop actions from the active session cards and tightened mobile card/table behavior.
+- Hardened owner dashboard API auth so read APIs require the signed dashboard session or server-side secret.
+- Removed API secret injection from owner dashboard browser HTML.
+- Enforced production `DASHBOARD_PIN` configuration for Service 1.
+- Scoped guild-admin voice panel controls to the current guild while preserving owner global control.
+- Rechecked approved guild status on voice modal submit and revalidated direct-role hierarchy on button clicks.
+- Made owner dashboard settings for max sessions and rate limits affect runtime behavior.
+- Wired `/setup` guild dashboard links through signed admin OAuth state.
+- Added Dashboard Public lifecycle maintenance for expired reveal requests and retention modes.
+- Expanded member data deletion to cover guild-linked OAuth and IP identity data without deleting unrelated guild data.
+- Expanded JS syntax validation scripts to cover all applicable Service 1 and Dashboard Public JavaScript files.
 
 ### Notes
 

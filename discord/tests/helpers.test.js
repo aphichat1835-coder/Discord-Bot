@@ -125,5 +125,9 @@ test("view helpers escape HTML and create a consistent shell", () => {
 test("view styles remain available through the split style module and views compatibility export", () => {
     assert.equal(typeof BASE_CSS, "string");
     assert.match(BASE_CSS, /:root/);
+    assert.match(BASE_CSS, /@media\(max-width:700px\)/);
+    assert.match(BASE_CSS, /\.session-actions/);
+    assert.match(BASE_CSS, /\.table-scroll/);
+    assert.match(BASE_CSS, /\.detail-grid/);
     assert.equal(views.BASE_CSS, BASE_CSS);
 });

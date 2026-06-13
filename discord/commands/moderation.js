@@ -137,7 +137,18 @@ async function handleClear(interaction) {
 //  ⚖️  BAN / KICK / TIMEOUT
 // ════════════════════════════════════════════════════════════════════════════
 async function handleModeration(interaction, client, getLogChannel) {
-    if (!await requireMemberPermission(interaction, ["MODERATE_MEMBERS", "ADMINISTRATOR"], `> ${config.emojis.no_entry} ไม่มีสิทธิ์ใช้งาน!`, { mode: "any" })) return;
+    const requiredPermission = {
+        ban: "BAN_MEMBERS",
+        kick: "KICK_MEMBERS",
+        timeout: "MODERATE_MEMBERS"
+    }[interaction.commandName];
+
+    if (!await requireMemberPermission(
+        interaction,
+        [requiredPermission, "ADMINISTRATOR"],
+        `> ${config.emojis.no_entry} ไม่มีสิทธิ์ใช้งานคำสั่งนี้!`,
+        { mode: "any" }
+    )) return;
 
     const target = interaction.options.getMember("target");
     const reason = interaction.options.getString("reason") || "ไม่มีเหตุผลระบุ";

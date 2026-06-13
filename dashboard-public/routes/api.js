@@ -7,6 +7,10 @@ const OAuthUser = require('../models/OAuthUser');
 const IPRevealRequest = require('../models/IPRevealRequest');
 
 const { decryptIP } = require('../utils/crypto');
+const {
+    normalizeSensitiveAccess,
+    buildSensitiveAccessPatch
+} = require('../utils/sensitiveAccess');
 
 const INTERNAL_SECRET = process.env.INTERNAL_API_SECRET || process.env.API_SECRET || '';
 
@@ -77,7 +81,10 @@ function safeConfig(config) {
         guildId: raw.guildId,
         guildName: raw.guildName,
         verification: raw.verification || {},
-        security: raw.security || {},
+        security: {
+            ...(raw.security || {}),
+            sensitiveDataAccess: normalizeSensitiveAccess(raw.security || {})
+        },
         setupBy: raw.setupBy || null,
         createdAt: raw.createdAt || null,
         updatedAt: raw.updatedAt || null
@@ -154,6 +161,22 @@ function safeRevealRequest(request) {
     };
 }
 
+async function expireRevealRequests(now = Date.now()) {
+    await IPRevealRequest.updateMany(
+        {
+            status: 'pending',
+            expiresAt: { $lte: now }
+        },
+        {
+            $set: {
+                status: 'expired',
+                updatedAt: now,
+                ownerNote: 'expired automatically'
+            }
+        }
+    );
+}
+
 function emptyStats() {
     return {
         total: 0,
@@ -223,13 +246,16 @@ router.get('/internal/overview', async (req, res) => {
 
         const statsMap = Object.fromEntries(stats.map(s => [s._id, s]));
 
-        const result = configs.map(c => ({
-            guildId: c.guildId,
-            guildName: c.guildName || 'Unknown',
-            verification: c.verification || {},
-            security: c.security || {},
-            stats: statsMap[c.guildId] || emptyStats()
-        }));
+            const result = configs.map(c => ({
+                guildId: c.guildId,
+                guildName: c.guildName || 'Unknown',
+                verification: c.verification || {},
+                security: {
+                    ...(c.security || {}),
+                    sensitiveDataAccess: normalizeSensitiveAccess(c.security || {})
+                },
+                stats: statsMap[c.guildId] || emptyStats()
+            }));
 
         res.json({
             success: true,
@@ -341,7 +367,8 @@ router.get('/internal/guild/:guildId/members', async (req, res) => {
         const userIds = [...new Set(logs.map(l => l.userId).filter(Boolean))];
 
         const users = await OAuthUser.find({
-            'discord.userId': { $in: userIds }
+            'discord.userId': { $in: userIds },
+            deletedAt: { $exists: false }
         })
             .select('discord connections guilds lastVerify lastMember')
             .lean();
@@ -416,10 +443,87 @@ router.get('/internal/guild/:guildId/members', async (req, res) => {
     }
 });
 
+router.post('/internal/guild/:guildId/sensitive-access/approve', async (req, res) => {
+    if (!checkAuth(req, res)) return;
+
+    const { guildId } = req.params;
+    const { approvedBy, ownerNote, guildName } = req.body || {};
+
+    try {
+        const config = await GuildConfig.findOneAndUpdate(
+            { guildId },
+            {
+                $set: {
+                    guildId,
+                    ...(guildName ? { guildName: String(guildName).slice(0, 120) } : {}),
+                    ...buildSensitiveAccessPatch({
+                        enabled: true,
+                        actor: approvedBy || 'owner-dashboard',
+                        ownerNote
+                    })
+                }
+            },
+            { upsert: true, new: true, setDefaultsOnInsert: true }
+        ).lean();
+
+        res.json({
+            success: true,
+            guildId,
+            sensitiveDataAccess: normalizeSensitiveAccess(config.security || {})
+        });
+    } catch (err) {
+        res.status(500).json({
+            success: false,
+            error: err.message
+        });
+    }
+});
+
+router.post('/internal/guild/:guildId/sensitive-access/revoke', async (req, res) => {
+    if (!checkAuth(req, res)) return;
+
+    const { guildId } = req.params;
+    const { revokedBy, ownerNote } = req.body || {};
+
+    try {
+        const config = await GuildConfig.findOneAndUpdate(
+            { guildId },
+            {
+                $set: buildSensitiveAccessPatch({
+                    enabled: false,
+                    actor: revokedBy || 'owner-dashboard',
+                    ownerNote
+                })
+            },
+            { new: true }
+        ).lean();
+
+        if (!config) {
+            return res.status(404).json({
+                success: false,
+                error: 'ไม่พบ guild config'
+            });
+        }
+
+        res.json({
+            success: true,
+            guildId,
+            sensitiveDataAccess: normalizeSensitiveAccess(config.security || {})
+        });
+    } catch (err) {
+        res.status(500).json({
+            success: false,
+            error: err.message
+        });
+    }
+});
+
 router.get('/internal/ip-reveal/requests', async (req, res) => {
     if (!checkAuth(req, res)) return;
 
     try {
+        await expireRevealRequests();
+
         const requests = await IPRevealRequest.find({
             status: 'pending',
             expiresAt: { $gt: Date.now() }
@@ -454,6 +558,16 @@ router.post('/internal/ip-reveal/:requestId/approve', async (req, res) => {
             return res.status(404).json({
                 success: false,
                 error: 'ไม่พบคำขอ'
+            });
+        }
+
+        if (request.status !== 'pending' || Number(request.expiresAt || 0) <= Date.now()) {
+            request.status = request.status === 'pending' ? 'expired' : request.status;
+            request.updatedAt = Date.now();
+            await request.save();
+            return res.status(409).json({
+                success: false,
+                error: 'คำขอนี้หมดอายุหรือถูกดำเนินการแล้ว'
             });
         }
 

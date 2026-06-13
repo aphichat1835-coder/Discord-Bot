@@ -1,17 +1,11 @@
 const crypto = require("crypto");
-const { WebhookClient } = require("discord.js");
+const { sendLogWebhook } = require("../core/webhooks");
+const safeLogger = require("../core/safeLogger");
+const dashboardAuth = require("../index/auth");
 
-const DASHBOARD_READ_API_BYPASS = new Set([
-    "/api/status",
-    "/api/settings/natural",
-    "/api/settings/auto-deaf",
-    "/api/commands-status",
-    "/api/commands-audit"
-]);
+const DASHBOARD_READ_API_BYPASS = new Set([]);
 
-const DASHBOARD_READ_API_PREFIX_BYPASS = [
-    "/api/session/"
-];
+const DASHBOARD_READ_API_PREFIX_BYPASS = [];
 
 const revealTokenAttempts = new Map();
 const REVEAL_MAX = 5;
@@ -26,24 +20,20 @@ function shouldBypassDashboardReadApi(req) {
 }
 
 function logIntrusion(ip, path) {
-    console.error(`[SECURITY] 🚨 Unauthorized access on ${path} from IP: ${ip}`);
+    safeLogger.warn("dashboard_unauthorized_access", { path, ip });
 
-    if (process.env.ALERT_WEBHOOK_URL) {
-        try {
-            const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
-            wh.send({ content: `🛑 **[INTRUSION]** \`${path}\` from \`${ip}\`` })
-                .catch(() => {})
-                .finally(() => wh.destroy());
-        } catch (_) {}
-    }
+    sendLogWebhook({ content: `🛑 **[INTRUSION]** \`${path}\` from \`${ip}\`` }).catch(() => {});
 }
 
-function createRateLimiter(requestCounts, config) {
+function createRateLimiter(requestCounts, config, sessionManager = null) {
     return function rateLimitMiddleware(req, res, next) {
         const ip = req.ip;
         const now = Date.now();
         const windowMs = config.limits.rateLimitWindowMs || 60000;
-        const maxReq = config.limits.rateLimitRequests || 5;
+        const dynamicMaxReq = Number(sessionManager?.getCachedSetting?.("rateLimitRequests", config.limits.rateLimitRequests));
+        const maxReq = Number.isFinite(dynamicMaxReq) && dynamicMaxReq > 0
+            ? dynamicMaxReq
+            : config.limits.rateLimitRequests || 5;
         const history = (requestCounts.get(ip) || []).filter(t => now - t < windowMs);
 
         history.push(now);
@@ -60,6 +50,13 @@ function createRateLimiter(requestCounts, config) {
 
 function makeCheckAuth(API_SECRET) {
     return function checkAuth(req, res) {
+        if (!dashboardAuth.PIN()) return true;
+
+        const cookies = dashboardAuth.parseCookies(req);
+        if (dashboardAuth.verifyToken(cookies[dashboardAuth.COOKIE_NAME])) {
+            return true;
+        }
+
         const authHeader = req.headers.authorization || "";
         const authBuf = Buffer.from(authHeader, "utf8");
         const secBuf = Buffer.from(API_SECRET, "utf8");

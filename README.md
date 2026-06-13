@@ -104,6 +104,7 @@ discord/commands/panelViews.js
 discord/commands/panelInteractions.js
 discord/core/env.js
 discord/core/http.js
+discord/core/webhooks.js
 discord/guards/commandGuards.js
 discord/guards/dashboardGuards.js
 discord/index/dashboardState.js

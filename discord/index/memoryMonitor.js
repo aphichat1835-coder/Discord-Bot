@@ -44,17 +44,20 @@ function startMemoryMonitor({
             const clientPool = voiceWorker?.getClientPoolSize?.() ?? 0;
             const natural = voiceWorker?.getNaturalSettings?.();
             const autoDeaf = voiceWorker?.getAutoDeafSettings?.();
+            const workerDiagnostics = voiceWorker?.getWorkerDiagnostics?.();
             const auditStats = auditLogger?.getAuditStats?.();
 
             console.log(
                 `[MEMORY] heap=${heapUsed}/${heapTotal}MB rss=${rss}MB external=${external}MB diff=${diff}MB ` +
                 `sessions=${sessions} clientPool=${clientPool} ` +
                 `naturalTimers=${natural?.activeTimers ?? "-"} autoDeafTimers=${autoDeaf?.activeTimers ?? "-"} ` +
+                `worker=${workerDiagnostics ? JSON.stringify(workerDiagnostics) : "-"} ` +
                 `audit=${auditStats ? JSON.stringify(auditStats) : "-"}`
             );
 
             if (heapUsed > 180) {
                 console.warn(`[MEMORY] ⚠️ Heap high: ${heapUsed}MB`);
+                voiceWorker?.cleanupVolatileState?.();
             }
 
             if (heapUsed > 220) {
