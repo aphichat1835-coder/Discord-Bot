@@ -82,7 +82,7 @@ function safeConfig(config) {
         guildName: raw.guildName,
         verification: raw.verification || {},
         security: {
-            ...(raw.security || {}),
+            ...raw.security,
             sensitiveDataAccess: normalizeSensitiveAccess(raw.security || {})
         },
         setupBy: raw.setupBy || null,
@@ -251,7 +251,7 @@ router.get('/internal/overview', async (req, res) => {
                 guildName: c.guildName || 'Unknown',
                 verification: c.verification || {},
                 security: {
-                    ...(c.security || {}),
+                    ...c.security,
                     sensitiveDataAccess: normalizeSensitiveAccess(c.security || {})
                 },
                 stats: statsMap[c.guildId] || emptyStats()
