@@ -1,3 +1,57 @@
+const VALID_OPTION_TYPES = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+
+function assertSlashName(name, label, { allowUnderscore = false } = {}) {
+    const re = allowUnderscore ? /^[a-z0-9_-]{1,32}$/ : /^[a-z0-9-]{1,32}$/;
+    if (typeof name !== "string" || !re.test(name)) {
+        throw new Error(`${label} has invalid slash-command name`);
+    }
+}
+
+function assertDescription(description, label) {
+    if (typeof description !== "string" || description.length < 1 || description.length > 100) {
+        throw new Error(`${label} has invalid description`);
+    }
+}
+
+function validateOption(option, commandName, index) {
+    const label = `/${commandName} option[${index}]`;
+    if (!option || typeof option !== "object" || Array.isArray(option)) {
+        throw new Error(`${label} must be an object`);
+    }
+    if (!VALID_OPTION_TYPES.has(option.type)) {
+        throw new Error(`${label} has invalid type`);
+    }
+    assertSlashName(option.name, label, { allowUnderscore: true });
+    assertDescription(option.description, label);
+    if (option.required !== undefined && typeof option.required !== "boolean") {
+        throw new Error(`${label} has invalid required flag`);
+    }
+}
+
+function validateSlashCommandsData(commands) {
+    if (!Array.isArray(commands) || commands.length < 1) {
+        throw new Error("slash command registry is empty");
+    }
+
+    const seen = new Set();
+    for (const [index, command] of commands.entries()) {
+        const label = `slashCommandsData[${index}]`;
+        if (!command || typeof command !== "object" || Array.isArray(command)) {
+            throw new Error(`${label} must be an object`);
+        }
+        assertSlashName(command.name, label);
+        assertDescription(command.description, label);
+        if (seen.has(command.name)) throw new Error(`duplicate slash command: /${command.name}`);
+        seen.add(command.name);
+        if (command.options !== undefined) {
+            if (!Array.isArray(command.options)) throw new Error(`/${command.name} options must be an array`);
+            command.options.forEach((option, optionIndex) => validateOption(option, command.name, optionIndex));
+        }
+    }
+
+    return commands;
+}
+
 const slashCommandsData = [
     { name: "panel",      description: "เรียกแผงควบคุมระบบออนช่องเสียง" },
     { name: "help",       description: "แสดงคู่มือการใช้งานระบบ Enterprise" },
@@ -184,4 +238,6 @@ const slashCommandsData = [
     }
 ];
 
-module.exports = { slashCommandsData };
+validateSlashCommandsData(slashCommandsData);
+
+module.exports = { slashCommandsData, validateSlashCommandsData };

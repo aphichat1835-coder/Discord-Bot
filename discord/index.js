@@ -386,8 +386,9 @@ client.on("ready", async () => {
     }
 
     try {
-        await client.application.commands.set(commands.slashCommandsData);
-        console.log(`[COMMANDS] 📌 Registered ${commands.slashCommandsData.length} slash commands.`);
+        const slashPayload = commands.validateSlashCommandsData(commands.slashCommandsData);
+        await client.application.commands.set(slashPayload);
+        console.log(`[COMMANDS] 📌 Registered ${slashPayload.length} slash commands.`);
         await commands.restorePanels(client);
 
         if (typeof initializeSystemHooks === "function") {

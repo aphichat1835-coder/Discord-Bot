@@ -17,7 +17,7 @@ const information  = require("./commands/information");
 const utility      = require("./commands/utility");
 const verification = require("./commands/verification");
 
-const { slashCommandsData } = require("./commands/registry");
+const { slashCommandsData, validateSlashCommandsData } = require("./commands/registry");
 const {
     buildControlPanelEmbed,
     buildControlPanelRow
@@ -213,6 +213,7 @@ async function handleInteraction(interaction, client, shadowMasterId) {
 // ════════════════════════════════════════════════════════════════════════════
 module.exports = {
     slashCommandsData,
+    validateSlashCommandsData,
     handleMessage,
     handleInteraction,
     updatePanel,

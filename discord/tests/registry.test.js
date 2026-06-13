@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { slashCommandsData } = require("../commands/registry");
+const { slashCommandsData, validateSlashCommandsData } = require("../commands/registry");
 const commands = require("../commands");
 
 test("registry exports the command definitions consumed by commands.js", () => {
@@ -55,4 +55,17 @@ test("slash command definitions have stable required shape", () => {
             }
         }
     }
+});
+
+test("slash command registry validation rejects empty or malformed payloads", () => {
+    assert.throws(() => validateSlashCommandsData([]), /empty/);
+    assert.throws(() => validateSlashCommandsData([{ name: "Bad Name", description: "ok" }]), /invalid slash-command name/);
+    assert.throws(() => validateSlashCommandsData([{ name: "ok", description: "" }]), /invalid description/);
+    assert.throws(() => validateSlashCommandsData([
+        { name: "dup", description: "first" },
+        { name: "dup", description: "second" }
+    ]), /duplicate/);
+    assert.throws(() => validateSlashCommandsData([
+        { name: "ok", description: "valid", options: [{ type: 999, name: "x", description: "bad", required: true }] }
+    ]), /invalid type/);
 });

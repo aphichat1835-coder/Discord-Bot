@@ -5,8 +5,8 @@
   "private": true,
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "node index.js",
+    "start": "node -r ../discord/core/loadEnv index.js",
+    "dev": "node -r ../discord/core/loadEnv index.js",
     "check": "npm run check:all",
     "check:all": "find . -path './node_modules' -prune -o -type f -name '*.js' -print0 | xargs -0 -n1 node --check",
     "test": "jest --testPathPattern=tests/"

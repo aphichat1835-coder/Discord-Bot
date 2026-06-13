@@ -5,8 +5,8 @@
   "private": true,
   "main": "discord/index.js",
   "scripts": {
-    "start": "node discord/index.js",
-    "dev": "node discord/index.js",
+    "start": "node -r ./discord/core/loadEnv discord/index.js",
+    "dev": "node -r ./discord/core/loadEnv discord/index.js",
     "check": "npm run check:all && npm run check:dashboard:all",
     "check:all": "find discord -type f -name '*.js' ! -name 'systemProvider.js' -print0 | xargs -0 -n1 node --check",
     "check:dashboard": "npm run check:dashboard:all",
