@@ -912,7 +912,7 @@ ${navBar("/logs/voice")}
 // ════════════════════════════════════════════════════════════════════════════
 //  🖥️  SESSION DETAIL PAGE
 // ════════════════════════════════════════════════════════════════════════════
-function pageSessionDetail(safeId) {
+function pageSessionDetail() {
     return shell("Session Detail", `
 <div class="container">
 <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;">
@@ -1022,7 +1022,8 @@ function pageSessionDetail(safeId) {
 
 ${toastScript()}
 <script>
-const SESSION_ID=${JSON.stringify(safeId)};
+const rawSessionId=decodeURIComponent(location.pathname.split('/').pop()||'');
+const SESSION_ID=/^vc_[A-Za-z0-9_-]{1,80}$/.test(rawSessionId)?rawSessionId:'';
 let sessionData=null;
 let revealedToken=null;
 let revealExpiry=0;
@@ -1089,6 +1090,12 @@ function updateRevealTimer(){
     bar.textContent='🔓 กำลังแสดง Token เต็ม เหลือเวลา '+remain+' วิ';
 }
 async function loadSession(){
+    if(!SESSION_ID){
+        document.getElementById('notFound').style.display='block';
+        document.getElementById('pageContent').style.display='none';
+        return;
+    }
+
     try{
         const r=await fetch('/api/session/'+encodeURIComponent(SESSION_ID));
         const d=await r.json();
@@ -1878,12 +1885,7 @@ ${navBar("/approved")}
     });
 
     app.get("/session/:sessionId", auth.requirePin, (req, res) => {
-        const rawSessionId = String(req.params.sessionId || "");
-        const sessionId = /^vc_[A-Za-z0-9_-]{1,80}$/.test(rawSessionId)
-            ? rawSessionId
-            : "";
-
-        res.send(pageSessionDetail(sessionId));
+        res.send(pageSessionDetail());
     });
 }
 

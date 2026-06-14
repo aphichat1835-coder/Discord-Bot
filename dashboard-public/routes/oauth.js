@@ -1371,7 +1371,7 @@ router.get('/auth/admin-callback', async (req, res) => {
             manageableGuilds.some(g => String(g.id) === requestedGuildId);
         const redirectPath = adminGuildRedirectPath(requestedGuildId, canOpenRequestedGuild);
 
-        return res.redirect(redirectPath);
+        return res.status(303).set('Location', redirectPath).end();
     } catch (err) {
         console.error('[ADMIN_OAUTH] callback failed:', JSON.stringify(sanitizeSideEffectError(err)));
         return res.redirect('/');

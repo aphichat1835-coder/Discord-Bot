@@ -65,7 +65,7 @@ function registerRoutes({
         const correctPin = auth.PIN();
 
         const safeNextPath = safeRedirectPath(next);
-        if (!correctPin) return res.redirect(safeNextPath);
+        if (!correctPin) return res.status(303).set("Location", safeNextPath).end();
 
         const ip = req.ip;
 

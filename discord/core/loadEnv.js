@@ -25,7 +25,7 @@ function parseEnvLine(line) {
 function loadEnvFile(filePath, env = process.env, fsApi = fs) {
     if (!filePath) return 0;
 
-    const resolvedPath = path.resolve(filePath);
+    const resolvedPath = String(filePath);
     if (path.basename(resolvedPath) !== ".env") return 0;
     if (!fsApi.existsSync(resolvedPath)) return 0;
 

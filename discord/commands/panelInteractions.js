@@ -250,7 +250,7 @@ async function handleModal(interaction, client, deps = {}) {
             });
         }
 
-        const approved = await sessionManager.ApprovedGuildModel.findOne({ guildId: currentGuildId }).lean().catch(() => null);
+        const approved = await sessionManager.ApprovedGuildModel.exists({ guildId: currentGuildId }).catch(() => null);
         if (!approved && currentGuildId !== config.system.bypassApprovalGuildId) {
             return interaction.editReply({
                 content: `> ${config.emojis.lock} เซิร์ฟเวอร์นี้ยังไม่ได้รับการอนุมัติ หรือสิทธิ์ถูกยกเลิกแล้ว`
