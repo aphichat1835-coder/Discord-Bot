@@ -97,10 +97,10 @@ function initCrashShield(config) {
 function pruneTimestampListMap(map, now, ttlMs) {
     for (const [key, timestamps] of map.entries()) {
         const activeTimestamps = timestamps.filter(ts => now - ts < ttlMs);
-        if (!activeTimestamps.length) {
-            map.delete(key);
-        } else {
+        if (activeTimestamps.length) {
             map.set(key, activeTimestamps);
+        } else {
+            map.delete(key);
         }
     }
 }
