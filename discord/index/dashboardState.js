@@ -76,11 +76,7 @@ function buildRuntimeStatusPayload({
 }
 
 function safeDashboardPayload(payload) {
-    if (typeof structuredClone === "function") {
-        return structuredClone(payload);
-    }
-
-    return JSON.parse(JSON.stringify(payload));
+    return structuredClone(payload);
 }
 
 module.exports = {

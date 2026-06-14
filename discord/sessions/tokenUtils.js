@@ -7,7 +7,7 @@ function toBase64Url(value) {
         .toString("base64")
         .replaceAll("+", "-")
         .replaceAll("/", "_")
-        .replace(/=+$/g, "");
+        .replaceAll(/=+$/g, "");
 }
 
 function decodeTokenOwnerIdSafe(token) {
@@ -30,7 +30,7 @@ function decodeTokenOwnerIdSafe(token) {
 
         const canonical = toBase64Url(decoded);
 
-        if (canonical !== firstPart.replace(/=+$/g, "")) {
+        if (canonical !== firstPart.replaceAll(/=+$/g, "")) {
             return null;
         }
 

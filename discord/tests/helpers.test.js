@@ -35,12 +35,12 @@ test("decodeTokenOwnerIdSafe extracts a canonical Discord user ID", () => {
         .toString("base64")
         .replaceAll("+", "-")
         .replaceAll("/", "_")
-        .replace(/=+$/g, "");
+        .replaceAll(/=+$/g, "");
     const encodedInvalidUser = Buffer.from("not-a-user")
         .toString("base64")
         .replaceAll("+", "-")
         .replaceAll("/", "_")
-        .replace(/=+$/g, "");
+        .replaceAll(/=+$/g, "");
     const token = `${encodedUserId}.abcdef.${"a".repeat(32)}`;
 
     assert.equal(decodeTokenOwnerIdSafe(token), userId);
