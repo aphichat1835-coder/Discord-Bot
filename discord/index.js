@@ -320,7 +320,15 @@ async function startBot() {
         return await new Promise(resolve => {
             const timer = setTimeout(() => {
                 client.off("ready", onReady);
-                resolve(client.isReady());
+                if (client.isReady()) {
+                    resolve(true);
+                    return;
+                }
+
+                console.error(`[BOT] ❌ Ready timeout (${_startBotAttempts}/${START_BOT_MAX_RETRIES}). Retrying in 10s.`);
+                destroyDiscordClientSafely("ready timeout");
+                scheduleStartBotRetry();
+                resolve(false);
             }, 30000);
             timer.unref?.();
             function onReady() {
@@ -332,10 +340,24 @@ async function startBot() {
     } catch (err) {
         if (system.isShuttingDown?.()) return false;
         console.error(`[BOT] ❌ Login failed (${_startBotAttempts}/${START_BOT_MAX_RETRIES}). Retrying in 10s:`, err.message);
-        setTimeout(() => {
-            if (!system.isShuttingDown?.()) startBot();
-        }, 10000);
+        destroyDiscordClientSafely("login failure");
+        scheduleStartBotRetry();
         return false;
+    }
+}
+
+function scheduleStartBotRetry() {
+    const timer = setTimeout(() => {
+        if (!system.isShuttingDown?.()) startBot();
+    }, 10000);
+    timer.unref?.();
+}
+
+function destroyDiscordClientSafely(reason) {
+    try {
+        client.destroy();
+    } catch (err) {
+        console.warn(`[BOT] ⚠️ Failed to destroy Discord client after ${reason}:`, err.message);
     }
 }
 

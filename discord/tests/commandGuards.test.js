@@ -93,6 +93,15 @@ test("safeDefer does not defer already handled interactions", async () => {
     const replied = createInteraction({ replied: true });
     assert.equal(await safeDefer(replied), false);
     assert.equal(replied.calls.length, 0);
+
+    const failing = createInteraction({
+        deferReply() {
+            this.calls.push(["deferReply"]);
+            return Promise.reject(new Error("interaction expired"));
+        }
+    });
+    assert.equal(await safeDefer(failing), false);
+    assert.deepEqual(failing.calls[0], ["deferReply"]);
 });
 
 test("member and bot permission guards reply on missing permissions", async () => {

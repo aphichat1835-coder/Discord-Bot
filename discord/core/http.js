@@ -7,11 +7,13 @@ function applySecurityHeaders(req, res, next) {
 
 function createHttpApp(express, options = {}) {
     const app = express();
-    const trustProxy = options.trustProxy ?? 1;
     const jsonLimit = options.jsonLimit || "64kb";
     const urlencodedLimit = options.urlencodedLimit || "64kb";
 
-    app.set("trust proxy", trustProxy);
+    if (Object.prototype.hasOwnProperty.call(options, "trustProxy")) {
+        app.set("trust proxy", options.trustProxy);
+    }
+
     app.disable("x-powered-by");
     app.use(applySecurityHeaders);
     app.use(express.json({ limit: jsonLimit }));

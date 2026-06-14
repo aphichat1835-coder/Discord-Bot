@@ -244,38 +244,46 @@ async function runDataLifecycleMaintenance() {
         if (!days) continue;
 
         const cutoff = now - days * 24 * 60 * 60 * 1000;
-        await Promise.all([
-            VerifyLog.updateMany(
-                {
-                    guildId: config.guildId,
-                    deletedAt: { $exists: false },
-                    $or: [
-                        { verifiedAt: { $lt: cutoff } },
-                        { createdAt: { $lt: cutoff } }
-                    ]
-                },
-                {
-                    $set: {
-                        deletedAt: now,
-                        deletedBy: `retention:${config.security?.retentionMode || 'unknown'}`
+        try {
+            await Promise.all([
+                VerifyLog.updateMany(
+                    {
+                        guildId: config.guildId,
+                        deletedAt: { $exists: false },
+                        $or: [
+                            { verifiedAt: { $lt: cutoff } },
+                            { createdAt: { $lt: cutoff } }
+                        ]
+                    },
+                    {
+                        $set: {
+                            deletedAt: now,
+                            deletedBy: `retention:${config.security?.retentionMode || 'unknown'}`
+                        }
                     }
-                }
-            ),
-            IpIdentityLink.updateMany(
-                {
-                    guildId: config.guildId,
-                    deletedAt: { $exists: false },
-                    lastSeenAt: { $lt: cutoff }
-                },
-                {
-                    $set: {
-                        deletedAt: now,
-                        deletedBy: `retention:${config.security?.retentionMode || 'unknown'}`,
-                        updatedAt: now
+                ),
+                IpIdentityLink.updateMany(
+                    {
+                        guildId: config.guildId,
+                        deletedAt: { $exists: false },
+                        lastSeenAt: { $lt: cutoff }
+                    },
+                    {
+                        $set: {
+                            deletedAt: now,
+                            deletedBy: `retention:${config.security?.retentionMode || 'unknown'}`,
+                            updatedAt: now
+                        }
                     }
-                }
-            )
-        ]);
+                )
+            ]);
+        } catch (err) {
+            console.error('[RETENTION] guild maintenance failed:', {
+                guildId: config.guildId,
+                retentionMode: config.security?.retentionMode || 'unknown',
+                error: safeError(err)
+            });
+        }
     }
 }
 

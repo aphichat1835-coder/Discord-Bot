@@ -82,6 +82,21 @@ test("checkAuth accepts exact secret and rejects mismatches", () => {
     else process.env.API_SECRET = oldSecret;
 });
 
+test("checkAuth fails closed when API_SECRET is not configured", () => {
+    const oldPin = process.env.DASHBOARD_PIN;
+    process.env.DASHBOARD_PIN = "1234";
+
+    const checkAuth = makeCheckAuth("");
+    const res = createRes();
+
+    assert.equal(checkAuth({ ip: "1.1.1.1", path: "/api", headers: {} }, res), false);
+    assert.equal(res.statusCode, 500);
+    assert.equal(res.body.success, false);
+
+    if (oldPin === undefined) delete process.env.DASHBOARD_PIN;
+    else process.env.DASHBOARD_PIN = oldPin;
+});
+
 test("reveal PIN guard locks after repeated failures and can clean expired attempts", () => {
     revealTokenAttempts.clear();
 

@@ -36,6 +36,10 @@ function createRateLimiter(requestCounts, config, sessionManager = null) {
             : config.limits.rateLimitRequests || 5;
         const history = (requestCounts.get(ip) || []).filter(t => now - t < windowMs);
 
+        // Expired buckets are also pruned by discord/index/system.js; this keeps
+        // the write path from retaining an empty stale bucket before reusing it.
+        if (!history.length) requestCounts.delete(ip);
+
         history.push(now);
         requestCounts.set(ip, history);
 
@@ -49,8 +53,16 @@ function createRateLimiter(requestCounts, config, sessionManager = null) {
 }
 
 function makeCheckAuth(API_SECRET) {
+    const configuredSecret = typeof API_SECRET === "string" ? API_SECRET : "";
+
     return function checkAuth(req, res) {
         if (!dashboardAuth.PIN()) return true;
+
+        if (!configuredSecret) {
+            safeLogger.error("dashboard_api_secret_missing", { path: req.path });
+            res.status(500).json({ success: false, error: "Server auth is not configured" });
+            return false;
+        }
 
         const cookies = dashboardAuth.parseCookies(req);
         if (dashboardAuth.verifyToken(cookies[dashboardAuth.COOKIE_NAME])) {
@@ -59,7 +71,7 @@ function makeCheckAuth(API_SECRET) {
 
         const authHeader = req.headers.authorization || "";
         const authBuf = Buffer.from(authHeader, "utf8");
-        const secBuf = Buffer.from(API_SECRET, "utf8");
+        const secBuf = Buffer.from(configuredSecret, "utf8");
 
         if (authBuf.length !== secBuf.length) {
             logIntrusion(req.ip, req.path);

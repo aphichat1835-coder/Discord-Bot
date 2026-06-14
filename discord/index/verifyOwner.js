@@ -479,6 +479,16 @@ function esc(v){
   });
 }
 
+function escJsString(v){
+  return esc(String(v ?? '')
+    .replace(/\\/g,'\\\\')
+    .replace(/'/g,"\\'")
+    .replace(/\r/g,'\\r')
+    .replace(/\n/g,'\\n')
+    .replace(/\u2028/g,'\\u2028')
+    .replace(/\u2029/g,'\\u2029'));
+}
+
 function fmt(ts){
   return ts ? new Date(ts).toLocaleString('th-TH',{hour12:false}) : '—';
 }
@@ -599,11 +609,11 @@ function renderOverview(){
         '<span class="badge '+(accessOn?'enabled':'disabled')+'">'+(accessOn?'allowed':'blocked')+'</span>'+
         '<div class="small">'+esc(accessText)+'</div>'+
         '<div class="small">'+esc(access.ownerNote || '')+'</div>'+
-        '<button class="btn ok" onclick="approveSensitive(\\''+esc(g.guildId)+'\\',\\''+esc(g.guildName || '')+'\\')">Allow</button>'+
-        '<button class="btn bad" onclick="revokeSensitive(\\''+esc(g.guildId)+'\\')">Revoke</button>'+
+        '<button class="btn ok" onclick="approveSensitive(\\''+escJsString(g.guildId)+'\\',\\''+escJsString(g.guildName || '')+'\\')">Allow</button>'+
+        '<button class="btn bad" onclick="revokeSensitive(\\''+escJsString(g.guildId)+'\\')">Revoke</button>'+
       '</td>'+
       '<td>'+
-        '<button class="btn soft" onclick="loadGuildDetail(\\''+esc(g.guildId)+'\\')">Details</button>'+
+        '<button class="btn soft" onclick="loadGuildDetail(\\''+escJsString(g.guildId)+'\\')">Details</button>'+
         '<div class="detailbox" id="detail-'+esc(g.guildId)+'" style="display:none"></div>'+
       '</td>'+
     '</tr>';

@@ -22,8 +22,12 @@ async function safeReply(interaction, payload) {
 
 async function safeDefer(interaction, options = {}) {
     if (interaction.deferred || interaction.replied) return false;
-    await interaction.deferReply(options);
-    return true;
+    try {
+        await interaction.deferReply(options);
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 async function requireMemberPermission(interaction, permissions, content, options = {}) {

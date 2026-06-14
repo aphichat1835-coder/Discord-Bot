@@ -118,9 +118,10 @@ async function handleAnnounce(interaction) {
     if (!await requireMemberPermission(interaction, "MANAGE_MESSAGES", `> ${config.emojis.no_entry} ไม่มีสิทธิ์ใช้งาน`)) return;
     if (!await requireBotPermission(interaction, ["SEND_MESSAGES", "VIEW_CHANNEL", "EMBED_LINKS"], `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความในช่องนี้ (ขาด SEND_MESSAGES, VIEW_CHANNEL หรือ EMBED_LINKS)`, interaction.channel)) return;
 
-    const title   = sanitizeUserMessage(interaction.options.getString("title")).slice(0, 256);
-    const msgStr  = sanitizeUserMessage(interaction.options.getString("message"));
-    const content = interaction.options.getString("content") || null;
+    const title      = sanitizeUserMessage(interaction.options.getString("title")).slice(0, 256);
+    const msgStr     = sanitizeUserMessage(interaction.options.getString("message"));
+    const rawContent = interaction.options.getString("content");
+    const content    = rawContent ? sanitizeUserMessage(rawContent) : null;
 
     const embed = new MessageEmbed()
         .setColor(config.system.themeColors.primary)

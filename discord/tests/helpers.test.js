@@ -26,18 +26,27 @@ const {
 const { BASE_CSS } = require("../index/viewStyles");
 const views = require("../index/views");
 const {
-    decodeTokenOwnerIdSafe,
-    toBase64Url
+    decodeTokenOwnerIdSafe
 } = require("../sessions/tokenUtils");
 
 test("decodeTokenOwnerIdSafe extracts a canonical Discord user ID", () => {
     const userId = "123456789012345678";
-    const token = `${toBase64Url(userId)}.abcdef.${"a".repeat(32)}`;
+    const encodedUserId = Buffer.from(userId)
+        .toString("base64")
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/g, "");
+    const encodedInvalidUser = Buffer.from("not-a-user")
+        .toString("base64")
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/g, "");
+    const token = `${encodedUserId}.abcdef.${"a".repeat(32)}`;
 
     assert.equal(decodeTokenOwnerIdSafe(token), userId);
     assert.equal(decodeTokenOwnerIdSafe(null), null);
     assert.equal(decodeTokenOwnerIdSafe("not-a-token"), null);
-    assert.equal(decodeTokenOwnerIdSafe(`${toBase64Url("not-a-user")}.x.y`), null);
+    assert.equal(decodeTokenOwnerIdSafe(`${encodedInvalidUser}.x.y`), null);
 });
 
 test("custom ID helpers preserve the routing parser contract", () => {
