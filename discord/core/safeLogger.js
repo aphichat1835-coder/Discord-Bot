@@ -2,11 +2,11 @@ const net = require("node:net");
 
 const SECRET_KEYS = new Set([
     "token", "secret", "password", "webhook", "authorization",
-    "dashboard_pin", "pin", "api_secret", "internal_api_secret"
+    "dashboard_pin", "pin", "api_secret", "internal_api_secret", "encryption_key"
 ]);
 
 function isTokenChar(char) {
-    const code = char.charCodeAt(0);
+    const code = char.codePointAt(0);
     return (code >= 48 && code <= 57) ||
         (code >= 65 && code <= 90) ||
         (code >= 97 && code <= 122) ||
@@ -91,7 +91,7 @@ function redactMongoUris(value) {
 }
 
 function isIpChar(char) {
-    const code = char.charCodeAt(0);
+    const code = char.codePointAt(0);
     return (code >= 48 && code <= 57) ||
         (code >= 65 && code <= 70) ||
         (code >= 97 && code <= 102) ||
@@ -150,7 +150,7 @@ function readKeyName(value, start) {
     let end = start;
     while (end < value.length) {
         const char = value[end];
-        const code = char.charCodeAt(0);
+        const code = char.codePointAt(0);
         const valid = (code >= 48 && code <= 57) ||
             (code >= 65 && code <= 90) ||
             (code >= 97 && code <= 122) ||
@@ -162,38 +162,77 @@ function readKeyName(value, start) {
     return { key: value.slice(start, end).toLowerCase(), end };
 }
 
+function skipSpaces(value, start) {
+    let cursor = start;
+    while (value[cursor] === " ") cursor++;
+    return cursor;
+}
+
+function readSecretPrefix(value, keyEnd) {
+    let cursor = skipSpaces(value, keyEnd);
+    const separator = value[cursor];
+
+    if (separator !== ":" && separator !== "=") {
+        return null;
+    }
+
+    cursor = skipSpaces(value, cursor + 1);
+    const quote = value[cursor] === "\"" || value[cursor] === "'" ? value[cursor] : "";
+    return {
+        cursor: quote ? cursor + 1 : cursor,
+        quote,
+        separator
+    };
+}
+
+function readSecretValueEnd(value, start, quote) {
+    let valueEnd = start;
+
+    while (valueEnd < value.length) {
+        if (quote && value[valueEnd] === quote) break;
+        if (!quote && isBoundaryChar(value[valueEnd])) break;
+        valueEnd++;
+    }
+
+    return valueEnd;
+}
+
+function getNextSecretRedaction(value, index) {
+    const { key, end: keyEnd } = readKeyName(value, index);
+
+    if (!SECRET_KEYS.has(key)) {
+        return null;
+    }
+
+    const prefix = readSecretPrefix(value, keyEnd);
+    if (!prefix) {
+        return null;
+    }
+
+    const valueEnd = readSecretValueEnd(value, prefix.cursor, prefix.quote);
+    const nextIndex = prefix.quote && value[valueEnd] === prefix.quote ? valueEnd + 1 : valueEnd;
+
+    return {
+        nextIndex,
+        text: `${value.slice(index, keyEnd)}${prefix.separator}${prefix.quote}[REDACTED_SECRET]`
+    };
+}
+
 function redactSecretValues(value) {
     let output = "";
     let index = 0;
 
     while (index < value.length) {
-        const { key, end: keyEnd } = readKeyName(value, index);
-        if (!SECRET_KEYS.has(key)) {
+        const redaction = getNextSecretRedaction(value, index);
+
+        if (!redaction) {
             output += value[index];
             index++;
             continue;
         }
 
-        let cursor = keyEnd;
-        while (value[cursor] === " ") cursor++;
-        if (value[cursor] !== ":" && value[cursor] !== "=") {
-            output += value.slice(index, keyEnd);
-            index = keyEnd;
-            continue;
-        }
-
-        const separator = value[cursor++];
-        while (value[cursor] === " ") cursor++;
-        const quote = value[cursor] === "\"" || value[cursor] === "'" ? value[cursor++] : "";
-        let valueEnd = cursor;
-        while (valueEnd < value.length) {
-            if (quote && value[valueEnd] === quote) break;
-            if (!quote && isBoundaryChar(value[valueEnd])) break;
-            valueEnd++;
-        }
-
-        output += `${value.slice(index, keyEnd)}${separator}${quote}[REDACTED_SECRET]`;
-        index = quote && value[valueEnd] === quote ? valueEnd + 1 : valueEnd;
+        output += redaction.text;
+        index = redaction.nextIndex;
     }
 
     return output;

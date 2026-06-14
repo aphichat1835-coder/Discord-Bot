@@ -19,7 +19,7 @@ function parseEnvLine(line) {
         value = value.slice(1, -1);
     }
 
-    return [key, value.replaceAll("\\n", "\n")];
+    return [key, value.replaceAll(String.raw`\n`, "\n")];
 }
 
 function loadEnvFile(filePath, env = process.env, fsApi = fs) {
