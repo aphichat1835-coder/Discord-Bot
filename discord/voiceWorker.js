@@ -1822,33 +1822,44 @@ function getWorkerDiagnostics() {
     };
 }
 
+function deleteExpiredSessionEntries(map, activeSessionIds, now, ttlMs) {
+    for (const [sessionId, ts] of map.entries()) {
+        const isExpired = now - Number(ts || 0) > ttlMs;
+        if (!activeSessionIds.has(sessionId) || isExpired) {
+            map.delete(sessionId);
+        }
+    }
+}
+
+function deleteInactiveSessionIds(set, activeSessionIds) {
+    for (const sessionId of set) {
+        if (!activeSessionIds.has(sessionId)) {
+            set.delete(sessionId);
+        }
+    }
+}
+
+function stopInactiveSessionTimers(timerMap, activeSessionIds, stopTimer) {
+    for (const [sessionId] of timerMap.entries()) {
+        if (!activeSessionIds.has(sessionId)) {
+            stopTimer(sessionId);
+        }
+    }
+}
+
 function cleanupVolatileState(now = Date.now()) {
     const sessions = sessionManager.getAllSessions();
     const activeSessionIds = new Set(sessions.keys());
     const dmTtlMs = Math.max(CONFIG.DM_THROTTLE_MS * 6, 5 * 60 * 1000);
     const recoveryTtlMs = Math.max(RECOVERY_COOLDOWN_MS * 6, 10 * 60 * 1000);
 
-    for (const [sessionId, ts] of lastDMSent.entries()) {
-        if (!activeSessionIds.has(sessionId) || now - Number(ts || 0) > dmTtlMs) lastDMSent.delete(sessionId);
-    }
-    for (const [sessionId, ts] of lastOnlineDMSent.entries()) {
-        if (!activeSessionIds.has(sessionId) || now - Number(ts || 0) > dmTtlMs) lastOnlineDMSent.delete(sessionId);
-    }
-    for (const [sessionId, ts] of recoveryTimestamps.entries()) {
-        if (!activeSessionIds.has(sessionId) || now - Number(ts || 0) > recoveryTtlMs) recoveryTimestamps.delete(sessionId);
-    }
-    for (const sessionId of naturalRunning) {
-        if (!activeSessionIds.has(sessionId)) naturalRunning.delete(sessionId);
-    }
-    for (const sessionId of autoDeafRunning) {
-        if (!activeSessionIds.has(sessionId)) autoDeafRunning.delete(sessionId);
-    }
-    for (const [sessionId] of naturalTimers.entries()) {
-        if (!activeSessionIds.has(sessionId)) stopNaturalTimer(sessionId);
-    }
-    for (const [sessionId] of autoDeafTimers.entries()) {
-        if (!activeSessionIds.has(sessionId)) stopAutoDeafTimer(sessionId);
-    }
+    deleteExpiredSessionEntries(lastDMSent, activeSessionIds, now, dmTtlMs);
+    deleteExpiredSessionEntries(lastOnlineDMSent, activeSessionIds, now, dmTtlMs);
+    deleteExpiredSessionEntries(recoveryTimestamps, activeSessionIds, now, recoveryTtlMs);
+    deleteInactiveSessionIds(naturalRunning, activeSessionIds);
+    deleteInactiveSessionIds(autoDeafRunning, activeSessionIds);
+    stopInactiveSessionTimers(naturalTimers, activeSessionIds, stopNaturalTimer);
+    stopInactiveSessionTimers(autoDeafTimers, activeSessionIds, stopAutoDeafTimer);
 
     return getWorkerDiagnostics();
 }

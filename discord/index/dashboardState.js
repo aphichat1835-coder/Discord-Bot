@@ -64,7 +64,7 @@ function buildRuntimeStatusPayload({
         maxSessions: Number.isFinite(dynamicMaxSessions) && dynamicMaxSessions > 0
             ? dynamicMaxSessions
             : config.limits.maxSessions,
-        sessionList: sessions.map(serializeVoiceSession),
+        sessionList: sessions.map(session => serializeVoiceSession(session)),
         clientPool: voiceWorker.getClientPoolSize(),
         ramMB: (mem.heapUsed / 1024 / 1024).toFixed(1),
         ramTotalMB: (mem.heapTotal / 1024 / 1024).toFixed(1),
@@ -76,6 +76,10 @@ function buildRuntimeStatusPayload({
 }
 
 function safeDashboardPayload(payload) {
+    if (typeof structuredClone === "function") {
+        return structuredClone(payload);
+    }
+
     return JSON.parse(JSON.stringify(payload));
 }
 

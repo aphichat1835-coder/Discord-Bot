@@ -189,7 +189,7 @@ const slashCommandsData = [
             {
                 type: 3,
                 name: "description",
-                description: "คำอธิบายใน Embed ใช้ \\n เพื่อขึ้นบรรทัดใหม่ได้",
+                description: String.raw`คำอธิบายใน Embed ใช้ \n เพื่อขึ้นบรรทัดใหม่ได้`,
                 required: false
             },
             {

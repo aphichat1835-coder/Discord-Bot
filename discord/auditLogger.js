@@ -124,7 +124,7 @@ function safeEmbedText(value, max) {
 
 function normalizeEmbedFields(fields = []) {
     return fields
-        .filter(field => field && field.name !== undefined && field.value !== undefined)
+        .filter(field => field?.name !== undefined && field?.value !== undefined)
         .slice(0, 25)
         .map(field => ({
             ...field,

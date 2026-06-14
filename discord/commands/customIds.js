@@ -31,7 +31,7 @@ function isStatusPage(customId = "") {
 }
 
 function getStatusPage(customId = "") {
-    return parseInt(customId.split("_")[2], 10) || 0;
+    return Number.parseInt(customId.split("_")[2], 10) || 0;
 }
 
 function isStatusStop(customId = "") {

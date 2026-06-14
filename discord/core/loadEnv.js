@@ -1,4 +1,4 @@
-const fs = require("fs");
+const fs = require("node:fs");
 const path = require("path");
 
 function parseEnvLine(line) {
@@ -9,7 +9,7 @@ function parseEnvLine(line) {
     if (eq <= 0) return null;
 
     const key = trimmed.slice(0, eq).trim();
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) return null;
+    if (!/^[A-Za-z_]\w*$/.test(key)) return null;
 
     let value = trimmed.slice(eq + 1).trim();
     if (
@@ -19,7 +19,7 @@ function parseEnvLine(line) {
         value = value.slice(1, -1);
     }
 
-    return [key, value.replace(/\\n/g, "\n")];
+    return [key, value.replaceAll("\\n", "\n")];
 }
 
 function loadEnvFile(filePath, env = process.env, fsApi = fs) {

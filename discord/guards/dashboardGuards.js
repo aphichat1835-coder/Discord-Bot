@@ -1,4 +1,4 @@
-const crypto = require("crypto");
+const crypto = require("node:crypto");
 const { sendLogWebhook } = require("../core/webhooks");
 const safeLogger = require("../core/safeLogger");
 const dashboardAuth = require("../index/auth");

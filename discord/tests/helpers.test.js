@@ -33,13 +33,13 @@ test("decodeTokenOwnerIdSafe extracts a canonical Discord user ID", () => {
     const userId = "123456789012345678";
     const encodedUserId = Buffer.from(userId)
         .toString("base64")
-        .replace(/\+/g, "-")
-        .replace(/\//g, "_")
+        .replaceAll("+", "-")
+        .replaceAll("/", "_")
         .replace(/=+$/g, "");
     const encodedInvalidUser = Buffer.from("not-a-user")
         .toString("base64")
-        .replace(/\+/g, "-")
-        .replace(/\//g, "_")
+        .replaceAll("+", "-")
+        .replaceAll("/", "_")
         .replace(/=+$/g, "");
     const token = `${encodedUserId}.abcdef.${"a".repeat(32)}`;
 

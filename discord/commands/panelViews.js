@@ -55,6 +55,7 @@ function buildVoiceStatusEmbed(session, page, total) {
         session.accountAvatar ||
         session.ownerAvatar ||
         "https://cdn.discordapp.com/embed/avatars/0.png";
+    const userIdLabel = session.accountId ? `${CB}${session.accountId}${CB}` : "-";
 
     return new MessageEmbed()
         .setColor(config.system.themeColors.primary)
@@ -65,7 +66,7 @@ function buildVoiceStatusEmbed(session, page, total) {
         .setThumbnail(avatar)
         .setDescription(
             `— **บัญชีที่ออน:** ${CB}${accountLabel}${CB}\n` +
-            `— **User ID:** ${session.accountId ? `${CB}${session.accountId}${CB}` : "-"}\n` +
+            `— **User ID:** ${userIdLabel}\n` +
             `— **เซิร์ฟเวอร์:** ${CB}${session.serverName || session.serverId || "-"}${CB}\n` +
             `— **ช่องเสียง:** ${getVoiceChannelLabel(session)}\n` +
             `— **สถานะ:** ${getVoiceStatusLabel(session, config)}\n` +

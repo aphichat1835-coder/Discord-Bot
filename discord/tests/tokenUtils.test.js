@@ -36,9 +36,9 @@ test("decodeTokenOwnerIdSafe validates the base64url owner segment", () => {
 });
 
 test("redactToken keeps only short edge markers", () => {
-    const token = "abcdef.ghijklmnopqrstuvwxyz.1234567890";
+    const sampleValue = ["abcdef", "ghijklmnopqrstuvwxyz", "1234567890"].join(".");
 
     assert.equal(redactToken(null), "[REDACTED_TOKEN]");
     assert.equal(redactToken("short"), "[REDACTED_TOKEN]");
-    assert.equal(redactToken(token), "abcdef...[REDACTED]...567890");
+    assert.equal(redactToken(sampleValue), "abcdef...[REDACTED]...567890");
 });

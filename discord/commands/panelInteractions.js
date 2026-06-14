@@ -56,10 +56,149 @@ function canControlSession(interaction, session, shadowMasterId) {
     return String(session.serverId || "") === String(interaction.guild?.id || "");
 }
 
+function buildPanelErrorEmbed(content) {
+    return new MessageEmbed()
+        .setColor(config.system.themeColors.error)
+        .setDescription(content);
+}
+
+function buildPanelSuccessEmbed(content) {
+    return new MessageEmbed()
+        .setColor(config.system.themeColors.success)
+        .setDescription(content);
+}
+
+function getPanelDeps(deps = {}) {
+    return {
+        getGlobalVoiceSessions: deps.getGlobalVoiceSessions || (() => []),
+        updatePanel: deps.updatePanel || (async () => {})
+    };
+}
+
+function handleRestoreCancel(interaction) {
+    return interaction.update({
+        components: [],
+        embeds: [buildPanelErrorEmbed(`> ${config.emojis.stop} ยกเลิกการกู้คืน`)]
+    });
+}
+
+async function handleStopAllButton(interaction, shadowMasterId, panelDeps) {
+    await interaction.deferReply({ ephemeral: true });
+
+    const allSessions = getVisibleVoiceSessions(
+        interaction,
+        panelDeps.getGlobalVoiceSessions,
+        shadowMasterId
+    );
+
+    if (allSessions.length === 0) {
+        return interaction.editReply({
+            content: `> ${config.emojis.warning} ไม่มีผู้ใช้งานที่กำลังทำงานอยู่ในขอบเขตที่คุณควบคุมได้`
+        });
+    }
+
+    let stopped = 0;
+    let failed = 0;
+
+    for (const s of allSessions) {
+        const ok = await voiceWorker.stopSession(s.sessionId, { stoppedBy: interaction.user.id });
+        if (ok) stopped++;
+        else failed++;
+    }
+
+    await panelDeps.updatePanel(interaction.guild.id);
+
+    return interaction.editReply({
+        content: failed > 0
+            ? `> ${config.emojis.warning} หยุดสำเร็จ ${stopped} รายการ / ล้มเหลว ${failed} รายการ`
+            : `> ${config.emojis.stop} ปิดผู้ใช้งานในขอบเขตนี้ ${stopped} รายการเรียบร้อย`
+    });
+}
+
+function getStatusPageIndex(customId, sessionCount) {
+    let page = isStatusPage(customId) ? getStatusPage(customId) : 0;
+    if (page < 0) page = sessionCount - 1;
+    if (page >= sessionCount) page = 0;
+    return page;
+}
+
+async function handleStatusButton(interaction, customId, shadowMasterId, panelDeps) {
+    const allSessions = getVisibleVoiceSessions(
+        interaction,
+        panelDeps.getGlobalVoiceSessions,
+        shadowMasterId
+    );
+
+    if (allSessions.length === 0) {
+        const content = `> ${config.emojis.warning} ไม่มีผู้ใช้งานที่ออนอยู่ในขอบเขตที่คุณดูได้`;
+        if (isStatusPage(customId)) {
+            return interaction.update({ content, embeds: [], components: [] });
+        }
+        return interaction.reply({ content, ephemeral: true });
+    }
+
+    const page = getStatusPageIndex(customId, allSessions.length);
+    const current = allSessions[page];
+    const embed = buildVoiceStatusEmbed(current, page, allSessions.length);
+    const row = buildVoiceStatusControls(current, page);
+
+    if (isStatusPage(customId)) {
+        return interaction.update({ embeds: [embed], components: [row] });
+    }
+
+    return interaction.reply({
+        embeds: [embed],
+        components: [row],
+        ephemeral: true
+    });
+}
+
+async function handleStatusStopButton(interaction, customId, shadowMasterId, panelDeps) {
+    await interaction.deferUpdate();
+
+    const sId = getStatusStopSessionId(customId);
+    const targetSession = sessionManager.getSession(sId);
+
+    if (!targetSession || !canControlSession(interaction, targetSession, shadowMasterId)) {
+        return interaction.editReply({
+            embeds: [buildPanelErrorEmbed(`> ${config.emojis.no_entry} ไม่พบรายการนี้ หรือคุณไม่มีสิทธิ์ควบคุม session นี้`)],
+            components: []
+        });
+    }
+
+    const stopped = await voiceWorker.stopSession(sId, { stoppedBy: interaction.user.id });
+    if (!stopped) {
+        return interaction.editReply({
+            embeds: [buildPanelErrorEmbed(`> ${config.emojis.warning} หยุดรายการนี้ไม่สำเร็จ กรุณาตรวจสอบ Dashboard`)],
+            components: []
+        });
+    }
+
+    await panelDeps.updatePanel(interaction.guild.id);
+
+    const allSessions = getVisibleVoiceSessions(
+        interaction,
+        panelDeps.getGlobalVoiceSessions,
+        shadowMasterId
+    );
+
+    if (allSessions.length === 0) {
+        return interaction.editReply({
+            embeds: [buildPanelSuccessEmbed(`> ${config.emojis.success} ลบผู้ใช้งานสำเร็จ (ไม่มีรายการเหลือ)`)],
+            components: []
+        });
+    }
+
+    const current = allSessions[0];
+    const embed = buildVoiceStatusEmbed(current, 0, allSessions.length);
+    const row = buildVoiceStatusControls(current, 0);
+
+    return interaction.editReply({ embeds: [embed], components: [row] });
+}
+
 async function handleButton(interaction, client, shadowMasterId, deps = {}) {
     const { customId } = interaction;
-    const getGlobalVoiceSessions = deps.getGlobalVoiceSessions || (() => []);
-    const updatePanel = deps.updatePanel || (async () => {});
+    const panelDeps = getPanelDeps(deps);
 
     if (isVerifyButton(customId)) {
         return await verification.handleVerifyButton(interaction);
@@ -70,14 +209,7 @@ async function handleButton(interaction, client, shadowMasterId, deps = {}) {
     }
 
     if (customId === IDS.BTN_RESTORE_CANCEL) {
-        return interaction.update({
-            components: [],
-            embeds: [
-                new MessageEmbed()
-                    .setColor(config.system.themeColors.error)
-                    .setDescription(`> ${config.emojis.stop} ยกเลิกการกู้คืน`)
-            ]
-        });
+        return handleRestoreCancel(interaction);
     }
 
     if (customId === IDS.BTN_START) {
@@ -85,179 +217,71 @@ async function handleButton(interaction, client, shadowMasterId, deps = {}) {
     }
 
     if (customId === IDS.BTN_STOP_ALL) {
-        await interaction.deferReply({ ephemeral: true });
-
-        const allSessions = getVisibleVoiceSessions(interaction, getGlobalVoiceSessions, shadowMasterId);
-
-        if (allSessions.length === 0) {
-            return interaction.editReply({
-                content: `> ${config.emojis.warning} ไม่มีผู้ใช้งานที่กำลังทำงานอยู่ในขอบเขตที่คุณควบคุมได้`
-            });
-        }
-
-        let stopped = 0;
-        let failed = 0;
-
-        for (const s of allSessions) {
-            const ok = await voiceWorker.stopSession(s.sessionId, { stoppedBy: interaction.user.id });
-            if (ok) stopped++;
-            else failed++;
-        }
-
-        await updatePanel(interaction.guild.id);
-
-        return interaction.editReply({
-            content: failed > 0
-                ? `> ${config.emojis.warning} หยุดสำเร็จ ${stopped} รายการ / ล้มเหลว ${failed} รายการ`
-                : `> ${config.emojis.stop} ปิดผู้ใช้งานในขอบเขตนี้ ${stopped} รายการเรียบร้อย`
-        });
+        return handleStopAllButton(interaction, shadowMasterId, panelDeps);
     }
 
     if (customId === IDS.BTN_STATUS || isStatusPage(customId)) {
-        const allSessions = getVisibleVoiceSessions(interaction, getGlobalVoiceSessions, shadowMasterId);
-
-        if (allSessions.length === 0) {
-            const msg = {
-                content: `> ${config.emojis.warning} ไม่มีผู้ใช้งานที่ออนอยู่ในขอบเขตที่คุณดูได้`,
-                ephemeral: true
-            };
-
-            if (isStatusPage(customId)) {
-                return interaction.update({ content: msg.content, embeds: [], components: [] });
-            }
-
-            return interaction.reply(msg);
-        }
-
-        let page = 0;
-
-        if (isStatusPage(customId)) {
-            page = getStatusPage(customId);
-        }
-
-        if (page < 0) page = allSessions.length - 1;
-        if (page >= allSessions.length) page = 0;
-
-        const current = allSessions[page];
-        const embed = buildVoiceStatusEmbed(current, page, allSessions.length);
-        const row = buildVoiceStatusControls(current, page);
-
-        if (isStatusPage(customId)) {
-            return interaction.update({ embeds: [embed], components: [row] });
-        }
-
-        return interaction.reply({
-            embeds: [embed],
-            components: [row],
-            ephemeral: true
-        });
+        return handleStatusButton(interaction, customId, shadowMasterId, panelDeps);
     }
 
     if (isStatusStop(customId)) {
-        await interaction.deferUpdate();
-
-        const sId = getStatusStopSessionId(customId);
-        const targetSession = sessionManager.getSession(sId);
-
-        if (!targetSession || !canControlSession(interaction, targetSession, shadowMasterId)) {
-            return interaction.editReply({
-                embeds: [
-                    new MessageEmbed()
-                        .setColor(config.system.themeColors.error)
-                        .setDescription(`> ${config.emojis.no_entry} ไม่พบรายการนี้ หรือคุณไม่มีสิทธิ์ควบคุม session นี้`)
-                ],
-                components: []
-            });
-        }
-
-        const stopped = await voiceWorker.stopSession(sId, { stoppedBy: interaction.user.id });
-        if (!stopped) {
-            return interaction.editReply({
-                embeds: [
-                    new MessageEmbed()
-                        .setColor(config.system.themeColors.error)
-                        .setDescription(`> ${config.emojis.warning} หยุดรายการนี้ไม่สำเร็จ กรุณาตรวจสอบ Dashboard`)
-                ],
-                components: []
-            });
-        }
-
-        await updatePanel(interaction.guild.id);
-
-        const allSessions = getVisibleVoiceSessions(interaction, getGlobalVoiceSessions, shadowMasterId);
-
-        if (allSessions.length === 0) {
-            return interaction.editReply({
-                embeds: [
-                    new MessageEmbed()
-                        .setColor(config.system.themeColors.success)
-                        .setDescription(`> ${config.emojis.success} ลบผู้ใช้งานสำเร็จ (ไม่มีรายการเหลือ)`)
-                ],
-                components: []
-            });
-        }
-
-        const current = allSessions[0];
-        const embed = buildVoiceStatusEmbed(current, 0, allSessions.length);
-        const row = buildVoiceStatusControls(current, 0);
-
-        return interaction.editReply({ embeds: [embed], components: [row] });
+        return handleStatusStopButton(interaction, customId, shadowMasterId, panelDeps);
     }
 }
 
-async function handleModal(interaction, client, deps = {}) {
-    if (interaction.customId !== IDS.MODAL_START) return;
+function getModalDeps(deps = {}) {
+    return {
+        getLogChannel: deps.getLogChannel || (async () => null),
+        updatePanel: deps.updatePanel || (async () => {}),
+        shadowMasterId: deps.shadowMasterId || null
+    };
+}
 
-    const getLogChannel = deps.getLogChannel || (async () => null);
-    const updatePanel = deps.updatePanel || (async () => {});
-    const shadowMasterId = deps.shadowMasterId || null;
+function readStartModalFields(interaction) {
+    return {
+        token: interaction.fields.getTextInputValue(IDS.FIELD_TOKEN).trim(),
+        serverId: interaction.fields.getTextInputValue(IDS.FIELD_SERVER_ID).trim(),
+        voiceId: interaction.fields.getTextInputValue(IDS.FIELD_VOICE_ID).trim()
+    };
+}
 
-    await interaction.deferReply({ ephemeral: true });
-
-    const token = interaction.fields.getTextInputValue(IDS.FIELD_TOKEN).trim();
-    const serverId = interaction.fields.getTextInputValue(IDS.FIELD_SERVER_ID).trim();
-    const voiceId = interaction.fields.getTextInputValue(IDS.FIELD_VOICE_ID).trim();
-
+function validateStartFields({ token, serverId, voiceId }) {
     if (!/^\d{17,19}$/.test(serverId)) {
-        return interaction.editReply({
-            content: `> ${config.emojis.error} ไอดีเซิร์ฟเวอร์ไม่ถูกต้อง (ต้องเป็นตัวเลข 17-19 หลัก)`
-        });
+        return `> ${config.emojis.error} ไอดีเซิร์ฟเวอร์ไม่ถูกต้อง (ต้องเป็นตัวเลข 17-19 หลัก)`;
     }
 
     if (!/^\d{17,19}$/.test(voiceId)) {
-        return interaction.editReply({
-            content: `> ${config.emojis.error} ไอดีช่องเสียงไม่ถูกต้อง (ต้องเป็นตัวเลข 17-19 หลัก)`
-        });
+        return `> ${config.emojis.error} ไอดีช่องเสียงไม่ถูกต้อง (ต้องเป็นตัวเลข 17-19 หลัก)`;
     }
 
     if (!validateTokenFormat(token)) {
-        return interaction.editReply({
-            content: `> ${config.emojis.error} รูปแบบ Token ไม่ถูกต้อง`
-        });
+        return `> ${config.emojis.error} รูปแบบ Token ไม่ถูกต้อง`;
     }
 
-    if (!isOwnerGlobalControl(interaction, shadowMasterId) && serverId !== interaction.guild?.id) {
-        return interaction.editReply({
-            content: `> ${config.emojis.no_entry} แอดมินเซิร์ฟเวอร์เริ่ม session ได้เฉพาะเซิร์ฟเวอร์นี้เท่านั้น`
-        });
+    return null;
+}
+
+async function ensureStartAllowed(interaction, serverId, shadowMasterId) {
+    if (isOwnerGlobalControl(interaction, shadowMasterId)) return null;
+
+    if (serverId !== interaction.guild?.id) {
+        return `> ${config.emojis.no_entry} แอดมินเซิร์ฟเวอร์เริ่ม session ได้เฉพาะเซิร์ฟเวอร์นี้เท่านั้น`;
     }
 
-    if (!isOwnerGlobalControl(interaction, shadowMasterId)) {
-        const currentGuildId = normalizeDiscordId(interaction.guild?.id);
-        if (!currentGuildId) {
-            return interaction.editReply({
-                content: `> ${config.emojis.error} ไม่พบรหัสเซิร์ฟเวอร์ที่ถูกต้อง`
-            });
-        }
-
-        const approved = await sessionManager.ApprovedGuildModel.exists({ guildId: currentGuildId }).catch(() => null);
-        if (!approved && currentGuildId !== config.system.bypassApprovalGuildId) {
-            return interaction.editReply({
-                content: `> ${config.emojis.lock} เซิร์ฟเวอร์นี้ยังไม่ได้รับการอนุมัติ หรือสิทธิ์ถูกยกเลิกแล้ว`
-            });
-        }
+    const currentGuildId = normalizeDiscordId(interaction.guild?.id);
+    if (!currentGuildId) {
+        return `> ${config.emojis.error} ไม่พบรหัสเซิร์ฟเวอร์ที่ถูกต้อง`;
     }
 
+    const approved = await sessionManager.ApprovedGuildModel.exists({ guildId: currentGuildId }).catch(() => null);
+    if (!approved && currentGuildId !== config.system.bypassApprovalGuildId) {
+        return `> ${config.emojis.lock} เซิร์ฟเวอร์นี้ยังไม่ได้รับการอนุมัติ หรือสิทธิ์ถูกยกเลิกแล้ว`;
+    }
+
+    return null;
+}
+
+function reportTokenOwnerWarning(interaction, token) {
     try {
         const tokenUserId = decodeTokenOwnerIdSafe(token);
 
@@ -273,7 +297,10 @@ async function handleModal(interaction, client, deps = {}) {
                     `**Used By:** <@${interaction.user.id}> (\`${interaction.user.tag}\`)\n` +
                     `**Guild:** ${interaction.guild?.name} (\`${interaction.guild?.id}\`)`
             }).catch(() => {});
-        } else if (!tokenUserId) {
+            return;
+        }
+
+        if (!tokenUserId) {
             console.warn(
                 `[SECURITY] ⚠️ Token owner could not be decoded safely. user=${interaction.user.id} (${interaction.user.tag})`
             );
@@ -283,49 +310,94 @@ async function handleModal(interaction, client, deps = {}) {
             `[SECURITY] ⚠️ Token owner decode failed safely. user=${interaction.user.id} (${interaction.user.tag})`
         );
     }
+}
 
+async function logStartedSession(interaction, getLogChannel, startedSession, guildName) {
+    const logCh = await getLogChannel(interaction.guild);
+    if (!logCh) return;
+
+    const accountLabel = getVoiceAccountLabel(startedSession);
+    const voiceLabel = getVoiceChannelLabel(startedSession);
+
+    logCh.send({
+        embeds: [
+            new MessageEmbed()
+                .setColor(config.system.themeColors.success)
+                .setDescription(
+                    `> ${config.emojis.success} **เริ่มการทำงานผู้ใช้งานใหม่!**\n` +
+                    `— **โดย:** <@${interaction.user.id}>\n` +
+                    `— **บัญชีที่ออน:** \`${accountLabel}\`\n` +
+                    `— **เซิร์ฟเวอร์:** \`${startedSession?.serverName || guildName}\`\n` +
+                    `— **ช่องเสียง:** ${voiceLabel}`
+                )
+        ]
+    }).catch(() => {});
+}
+
+async function startVoiceSessionFromModal(interaction, client, fields, modalDeps) {
+    const { token, serverId, voiceId } = fields;
     const targetGuild = client.guilds.cache.get(serverId);
     const guildName = targetGuild ? targetGuild.name : "เซิร์ฟเวอร์ไม่ทราบชื่อ";
+
+    await voiceWorker.repairFailedStopSessionForTokenGuild?.(token, serverId);
+
+    const sessionId = await sessionManager.createSession(
+        token,
+        serverId,
+        voiceId,
+        guildName,
+        interaction.user.id,
+        interaction.user.displayAvatarURL({ dynamic: true }),
+        interaction.user.tag
+    );
+
+    await voiceWorker.startSession(sessionId, token);
+    await modalDeps.updatePanel(interaction.guild.id);
+
+    const startedSession = sessionManager.getSession(sessionId);
+    await logStartedSession(interaction, modalDeps.getLogChannel, startedSession, guildName);
+
+    return { sessionId, startedSession };
+}
+
+async function cleanupFailedStart(sessionId, interaction) {
+    if (!sessionId) return;
+
+    const removed = await sessionManager.deleteSession(sessionId).catch(() => false);
+    if (removed) return;
+
+    await sessionManager.markSessionFailed?.(
+        sessionId,
+        "start_cleanup_failed",
+        interaction.user.id,
+        "session delete failed after start error"
+    ).catch(() => {});
+}
+
+async function handleModal(interaction, client, deps = {}) {
+    if (interaction.customId !== IDS.MODAL_START) return;
+
+    const modalDeps = getModalDeps(deps);
+    await interaction.deferReply({ ephemeral: true });
+
+    const fields = readStartModalFields(interaction);
+    const validationError = validateStartFields(fields) ||
+        await ensureStartAllowed(interaction, fields.serverId, modalDeps.shadowMasterId);
+
+    if (validationError) {
+        return interaction.editReply({ content: validationError });
+    }
+
+    reportTokenOwnerWarning(interaction, fields.token);
 
     let sessionId = null;
 
     try {
-        await voiceWorker.repairFailedStopSessionForTokenGuild?.(token, serverId);
-
-        sessionId = await sessionManager.createSession(
-            token,
-            serverId,
-            voiceId,
-            guildName,
-            interaction.user.id,
-            interaction.user.displayAvatarURL({ dynamic: true }),
-            interaction.user.tag
-        );
-
-        await voiceWorker.startSession(sessionId, token);
-        await updatePanel(interaction.guild.id);
-
-        const startedSession = sessionManager.getSession(sessionId);
+        const result = await startVoiceSessionFromModal(interaction, client, fields, modalDeps);
+        sessionId = result.sessionId;
+        const { startedSession } = result;
         const accountLabel = getVoiceAccountLabel(startedSession);
         const voiceLabel = getVoiceChannelLabel(startedSession);
-
-        const logCh = await getLogChannel(interaction.guild);
-
-        if (logCh) {
-            logCh.send({
-                embeds: [
-                    new MessageEmbed()
-                        .setColor(config.system.themeColors.success)
-                        .setDescription(
-                            `> ${config.emojis.success} **เริ่มการทำงานผู้ใช้งานใหม่!**\n` +
-                            `— **โดย:** <@${interaction.user.id}>\n` +
-                            `— **บัญชีที่ออน:** \`${accountLabel}\`\n` +
-                            `— **เซิร์ฟเวอร์:** \`${startedSession?.serverName || guildName}\`\n` +
-                            `— **ช่องเสียง:** ${voiceLabel}`
-                        )
-                ]
-            }).catch(() => {});
-        }
 
         return interaction.editReply({
             content:
@@ -335,18 +407,7 @@ async function handleModal(interaction, client, deps = {}) {
         });
 
     } catch (err) {
-        if (sessionId) {
-            const removed = await sessionManager.deleteSession(sessionId).catch(() => false);
-            if (!removed) {
-                await sessionManager.markSessionFailed?.(
-                    sessionId,
-                    "start_cleanup_failed",
-                    interaction.user.id,
-                    "session delete failed after start error"
-                ).catch(() => {});
-            }
-        }
-
+        await cleanupFailedStart(sessionId, interaction);
         sessionManager.systemMetrics.increment("errors");
 
         return interaction.editReply({

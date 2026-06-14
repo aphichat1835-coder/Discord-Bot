@@ -10,6 +10,8 @@ const {
     cleanupRevealAttempts
 } = require("../guards/dashboardGuards");
 const dashboardAuth = require("../index/auth");
+const TEST_CLIENT_A = "test-client-a";
+const TEST_CLIENT_B = "test-client-b";
 
 function createRes() {
     return {
@@ -67,10 +69,10 @@ test("checkAuth accepts exact secret and rejects mismatches", () => {
     const cookieRes = createRes();
     const token = dashboardAuth.makeToken();
 
-    assert.equal(checkAuth({ ip: "1.1.1.1", path: "/api", headers: { authorization: "secret" } }, goodRes), true);
-    assert.equal(checkAuth({ ip: "1.1.1.1", path: "/api", headers: { authorization: "wrong" } }, badRes), false);
+    assert.equal(checkAuth({ ip: TEST_CLIENT_A, path: "/api", headers: { authorization: "secret" } }, goodRes), true);
+    assert.equal(checkAuth({ ip: TEST_CLIENT_A, path: "/api", headers: { authorization: "wrong" } }, badRes), false);
     assert.equal(checkAuth({
-        ip: "1.1.1.1",
+        ip: TEST_CLIENT_A,
         path: "/api",
         headers: { cookie: `${dashboardAuth.COOKIE_NAME}=${encodeURIComponent(token)}` }
     }, cookieRes), true);
@@ -89,7 +91,7 @@ test("checkAuth fails closed when API_SECRET is not configured", () => {
     const checkAuth = makeCheckAuth("");
     const res = createRes();
 
-    assert.equal(checkAuth({ ip: "1.1.1.1", path: "/api", headers: {} }, res), false);
+    assert.equal(checkAuth({ ip: TEST_CLIENT_A, path: "/api", headers: {} }, res), false);
     assert.equal(res.statusCode, 500);
     assert.equal(res.body.success, false);
 
@@ -101,7 +103,7 @@ test("reveal PIN guard locks after repeated failures and can clean expired attem
     revealTokenAttempts.clear();
 
     const checkPin = makeCheckRevealPin(() => "1234");
-    const req = { ip: "2.2.2.2", path: "/api/reveal-token", body: { pin: "bad" } };
+    const req = { ip: TEST_CLIENT_B, path: "/api/reveal-token", body: { pin: "bad" } };
 
     for (let i = 0; i < 5; i++) {
         checkPin(req, createRes());
@@ -111,11 +113,11 @@ test("reveal PIN guard locks after repeated failures and can clean expired attem
     assert.equal(checkPin(req, lockedRes), null);
     assert.equal(lockedRes.statusCode, 429);
 
-    const rec = revealTokenAttempts.get("2.2.2.2");
+    const rec = revealTokenAttempts.get(TEST_CLIENT_B);
     rec.lockedUntil = Date.now() - 1;
     cleanupRevealAttempts();
-    assert.equal(revealTokenAttempts.has("2.2.2.2"), false);
+    assert.equal(revealTokenAttempts.has(TEST_CLIENT_B), false);
 
     const goodRes = createRes();
-    assert.equal(checkPin({ ip: "2.2.2.2", path: "/api/reveal-token", body: { pin: "1234" } }, goodRes), true);
+    assert.equal(checkPin({ ip: TEST_CLIENT_B, path: "/api/reveal-token", body: { pin: "1234" } }, goodRes), true);
 });

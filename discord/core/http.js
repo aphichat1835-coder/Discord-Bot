@@ -10,7 +10,7 @@ function createHttpApp(express, options = {}) {
     const jsonLimit = options.jsonLimit || "64kb";
     const urlencodedLimit = options.urlencodedLimit || "64kb";
 
-    if (Object.prototype.hasOwnProperty.call(options, "trustProxy")) {
+    if (Object.hasOwn(options, "trustProxy")) {
         app.set("trust proxy", options.trustProxy);
     }
 

@@ -94,6 +94,49 @@ function initCrashShield(config) {
 // ════════════════════════════════════════════════════════════════════════════
 //  ⏱️  CRON JOBS
 // ════════════════════════════════════════════════════════════════════════════
+function pruneTimestampListMap(map, now, ttlMs) {
+    for (const [key, timestamps] of map.entries()) {
+        const activeTimestamps = timestamps.filter(ts => now - ts < ttlMs);
+        if (!activeTimestamps.length) {
+            map.delete(key);
+        } else {
+            map.set(key, activeTimestamps);
+        }
+    }
+}
+
+function pruneTimestampMap(map, now, ttlMs) {
+    for (const [key, ts] of map.entries()) {
+        if (now - ts > ttlMs) {
+            map.delete(key);
+        }
+    }
+}
+
+function pruneCommandCooldowns(commandCooldowns, now, ttlMs) {
+    for (const [uid, commands] of commandCooldowns.entries()) {
+        pruneTimestampMap(commands, now, ttlMs);
+        if (!commands.size) {
+            commandCooldowns.delete(uid);
+        }
+    }
+}
+
+function cleanupVolatileMaps({
+    spamTracking, requestCounts,
+    commandCooldowns, toggleCooldowns, antiRaidLogDebounce,
+    voiceWorker, config
+}, now) {
+    const windowMs = config.limits.rateLimitWindowMs || 60000;
+
+    pruneTimestampListMap(spamTracking, now, 60000);
+    pruneTimestampListMap(requestCounts, now, windowMs);
+    pruneCommandCooldowns(commandCooldowns, now, 30000);
+    pruneTimestampMap(toggleCooldowns, now, 5000);
+    pruneTimestampMap(antiRaidLogDebounce, now, 10000);
+    voiceWorker.cleanupVolatileState?.(now);
+}
+
 function initCronJobs({
     spamTracking, requestCounts,
     commandCooldowns, toggleCooldowns, antiRaidLogDebounce,
@@ -105,29 +148,11 @@ function initCronJobs({
     const cleanupTimer = setInterval(async () => {
         try {
             const now = Date.now();
-            const windowMs = config.limits.rateLimitWindowMs || 60000;
-
-            for (const [uid, ts] of spamTracking.entries()) {
-                const v = ts.filter(t => now - t < 60000);
-                if (!v.length) spamTracking.delete(uid); else spamTracking.set(uid, v);
-            }
-            for (const [ip, ts] of requestCounts.entries()) {
-                const v = ts.filter(t => now - t < windowMs);
-                if (!v.length) requestCounts.delete(ip); else requestCounts.set(ip, v);
-            }
-            for (const [uid, cmds] of commandCooldowns.entries()) {
-                for (const [cmd, ts] of cmds.entries()) {
-                    if (now - ts > 30000) cmds.delete(cmd);
-                }
-                if (!cmds.size) commandCooldowns.delete(uid);
-            }
-            for (const [key, ts] of toggleCooldowns.entries()) {
-                if (now - ts > 5000) toggleCooldowns.delete(key);
-            }
-            for (const [key, ts] of antiRaidLogDebounce.entries()) {
-                if (now - ts > 10000) antiRaidLogDebounce.delete(key);
-            }
-            voiceWorker.cleanupVolatileState?.(now);
+            cleanupVolatileMaps({
+                spamTracking, requestCounts,
+                commandCooldowns, toggleCooldowns, antiRaidLogDebounce,
+                voiceWorker, config
+            }, now);
         } catch (err) {
             console.error("[CRON] ❌ Map cleanup failed:", err.message);
         }

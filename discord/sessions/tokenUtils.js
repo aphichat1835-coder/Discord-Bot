@@ -5,8 +5,8 @@ const TOKEN_PATTERN = /^[A-Za-z0-9_-]{24,128}\.[A-Za-z0-9_-]{6,64}\.[A-Za-z0-9_-
 function toBase64Url(value) {
     return Buffer.from(String(value), "utf8")
         .toString("base64")
-        .replace(/\+/g, "-")
-        .replace(/\//g, "_")
+        .replaceAll("+", "-")
+        .replaceAll("/", "_")
         .replace(/=+$/g, "");
 }
 
@@ -21,7 +21,7 @@ function decodeTokenOwnerIdSafe(token) {
 
     try {
         const padded = firstPart + "=".repeat((4 - (firstPart.length % 4)) % 4);
-        const normalized = padded.replace(/-/g, "+").replace(/_/g, "/");
+        const normalized = padded.replaceAll("-", "+").replaceAll("_", "/");
         const decoded = Buffer.from(normalized, "base64").toString("utf8").trim();
 
         if (!/^\d{17,22}$/.test(decoded)) {
