@@ -23,6 +23,12 @@ const IPRevealRequest = require("../models/IPRevealRequest");
 
 const { decryptIP } = require("../utils/crypto");
 const { normalizeVerificationConfig } = require("../utils/verifyMode");
+const {
+    normalizeSensitiveAccess,
+    canViewSensitiveData,
+    redactSensitiveDiscordSnapshot,
+    redactSensitiveIpInfo
+} = require("../utils/sensitiveAccess");
 
 function requireAdmin(req, res, next) {
     if (!req.session?.adminUser) {
@@ -112,8 +118,8 @@ function decryptRawIp(ipInfo = {}) {
     }
 }
 
-function safeIpInfo(ipInfo = {}) {
-    const rawIp = decryptRawIp(ipInfo);
+function safeIpInfo(ipInfo = {}, canViewSensitive = false) {
+    const rawIp = canViewSensitive ? decryptRawIp(ipInfo) : null;
 
     return {
         rawIp: rawIp || null,
@@ -193,10 +199,10 @@ function safePolicySnapshot(snapshot = {}) {
     };
 }
 
-function safeDiscordSnapshot(snapshot = {}) {
+function safeDiscordSnapshot(snapshot = {}, canViewSensitive = false) {
     const profile = snapshot.profileSnapshot || snapshot;
 
-    return {
+    const discord = {
         userId: profile.userId || profile.id || snapshot.userId || snapshot.id || null,
         username: profile.username || snapshot.username || "",
         discriminator: profile.discriminator || snapshot.discriminator || null,
@@ -253,6 +259,8 @@ function safeDiscordSnapshot(snapshot = {}) {
 
         callbackStateMode: snapshot.callbackStateMode || snapshot.stateMode || null
     };
+
+    return redactSensitiveDiscordSnapshot(discord, canViewSensitive);
 }
 
 function safeMemberSnapshot(snapshot = {}) {
@@ -302,12 +310,13 @@ function safeRoleResult(result = {}) {
     };
 }
 
-function safeLog(log) {
+function safeLog(log, options = {}) {
     const obj = typeof log.toObject === "function" ? log.toObject() : log;
+    const canViewSensitive = options.canViewSensitive === true;
 
-    const ipInfo = safeIpInfo(obj.ipInfo || {});
+    const ipInfo = redactSensitiveIpInfo(safeIpInfo(obj.ipInfo || {}, canViewSensitive), canViewSensitive);
     const device = safeDevice(obj.device || {});
-    const discord = safeDiscordSnapshot(obj.discordSnapshot || {});
+    const discord = safeDiscordSnapshot(obj.discordSnapshot || {}, canViewSensitive);
     const member = safeMemberSnapshot(obj.memberSnapshot || discord.member || {});
     const tracking = safeTrackingSnapshot(obj.trackingSnapshot || {});
 
@@ -409,12 +418,16 @@ function safeLog(log) {
 
 function serializeConfig(doc) {
     const raw = doc?.toObject ? doc.toObject() : doc || {};
+    const security = raw.security || {};
 
     return {
         guildId: raw.guildId || "",
         guildName: raw.guildName || "",
         verification: normalizeVerificationConfig(raw.verification || {}),
-        security: raw.security || {},
+        security: {
+            ...security,
+            sensitiveDataAccess: normalizeSensitiveAccess(security)
+        },
         setupBy: raw.setupBy || null,
         createdAt: raw.createdAt || null,
         updatedAt: raw.updatedAt || null
@@ -503,7 +516,8 @@ async function buildRiskSummary(guildId) {
     };
 }
 
-async function buildRecentMembers(guildId, limit = 8) {
+async function buildRecentMembers(guildId, limit = 8, options = {}) {
+    const canViewSensitive = options.canViewSensitive === true;
     const logs = await VerifyLog.find({
         ...baseFilter(guildId),
         result: "success"
@@ -515,7 +529,8 @@ async function buildRecentMembers(guildId, limit = 8) {
     const userIds = [...new Set(logs.map(log => log.userId).filter(Boolean))];
 
     const users = await OAuthUser.find({
-        "discord.userId": { $in: userIds }
+        "discord.userId": { $in: userIds },
+        deletedAt: { $exists: false }
     })
         .select("discord connections guilds lastMember lastVerify")
         .lean();
@@ -525,8 +540,14 @@ async function buildRecentMembers(guildId, limit = 8) {
     );
 
     return logs.map(log => {
-        const safe = safeLog(log);
+        const safe = safeLog(log, { canViewSensitive });
         const user = userMap[log.userId];
+        const connectionsCount = Array.isArray(user?.connections)
+            ? user.connections.length
+            : safe.connectionsCount || 0;
+        const guildsCount = Array.isArray(user?.guilds)
+            ? user.guilds.length
+            : safe.guildsCount || 0;
 
         return {
             ...safe,
@@ -541,17 +562,15 @@ async function buildRecentMembers(guildId, limit = 8) {
 
             accountAgeDays: user?.discord?.accountAgeDays ?? safe.accountAgeDays ?? null,
             accountCreatedAt: user?.discord?.accountCreatedAt || safe.accountCreatedAt || null,
-            email: user?.discord?.email || safe.email || null,
+            email: canViewSensitive ? (user?.discord?.email || safe.email || null) : null,
             emailVerified: user?.discord?.emailVerified === true || safe.emailVerified === true,
             premiumType: user?.discord?.premiumType || safe.user?.premiumType || 0,
 
-            connections: Array.isArray(user?.connections)
-                ? user.connections.length
-                : safe.connectionsCount || 0,
+            connections: canViewSensitive ? connectionsCount : 0,
+            connectionsCount,
 
-            guilds: Array.isArray(user?.guilds)
-                ? user.guilds.length
-                : safe.guildsCount || 0,
+            guilds: canViewSensitive ? guildsCount : 0,
+            guildsCount,
 
             member: safe.memberSnapshot,
 
@@ -574,24 +593,26 @@ router.get("/api/guild/:guildId/overview", requireAdmin, requireGuildAdmin, asyn
     const { guildId } = req.params;
 
     try {
-        const [config, stats, riskSummary, recentLogs, recentMembers] = await Promise.all([
+        const [config, stats, riskSummary, recentLogs] = await Promise.all([
             GuildConfig.findOne({ guildId }).lean(),
             buildStats(guildId),
             buildRiskSummary(guildId),
             VerifyLog.find(baseFilter(guildId))
                 .sort({ verifiedAt: -1, createdAt: -1, _id: -1 })
                 .limit(8)
-                .lean(),
-            buildRecentMembers(guildId, 8)
+                .lean()
         ]);
+        const canViewSensitive = canViewSensitiveData(config);
+        const recentMembers = await buildRecentMembers(guildId, 8, { canViewSensitive });
 
         res.json({
             success: true,
             guild: req.adminGuild,
             config: config ? serializeConfig(config) : null,
+            sensitiveDataAccess: normalizeSensitiveAccess(config?.security || {}),
             stats,
             riskSummary,
-            recentLogs: recentLogs.map(safeLog),
+            recentLogs: recentLogs.map(log => safeLog(log, { canViewSensitive })),
             recentMembers
         });
     } catch (err) {

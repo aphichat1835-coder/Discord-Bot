@@ -8,206 +8,36 @@ DO NOT REMOVE: /api/reveal-token lockout logic.
 */
 
 const crypto = require("crypto");
-const { WebhookClient } = require("discord.js");
 const auth = require("./auth");
+const {
+    serializeVoiceSession,
+    getSessionTokenSafe
+} = require("./sessionSerializer");
+const {
+    buildCommandStatusPayload,
+    buildCommandAuditPayload,
+    buildRuntimeStatusPayload
+} = require("./dashboardState");
+const {
+    shouldBypassDashboardReadApi,
+    createRateLimiter,
+    makeCheckAuth,
+    makeCheckRevealPin,
+    logIntrusion,
+    cleanupRevealAttempts
+} = require("../guards/dashboardGuards");
+const { sendLogWebhook } = require("../core/webhooks");
 
-const revealTokenAttempts = new Map();
-const REVEAL_MAX     = 5;
-const REVEAL_LOCKOUT = 15 * 60 * 1000;
+function safeRedirectPath(value) {
+    const raw = String(value || "/").trim();
+    if (!raw.startsWith("/") || raw.startsWith("//")) return "/";
 
-// ════════════════════════════════════════════════════════════════════════════
-//  🚦  RATE LIMITER MIDDLEWARE
-// ════════════════════════════════════════════════════════════════════════════
-const DASHBOARD_READ_API_BYPASS = new Set([
-    "/api/status",
-    "/api/settings/natural",
-    "/api/settings/auto-deaf",
-    "/api/commands-status",
-    "/api/commands-audit"
-]);
-const DASHBOARD_READ_API_PREFIX_BYPASS = [
-    "/api/session/"
-];
-
-function shouldBypassDashboardReadApi(req) {
-    if (req.method !== "GET") return false;
-
-    const fullPath = `${req.baseUrl || ""}${req.path || ""}`;
-    return DASHBOARD_READ_API_BYPASS.has(fullPath) ||
-        DASHBOARD_READ_API_PREFIX_BYPASS.some(prefix => fullPath.startsWith(prefix));
-}
-
-function createRateLimiter(requestCounts, config) {
-    return function rateLimitMiddleware(req, res, next) {
-        const ip = req.ip;
-        const now = Date.now();
-        const windowMs = config.limits.rateLimitWindowMs || 60000;
-        const maxReq   = config.limits.rateLimitRequests || 5;
-        const history  = (requestCounts.get(ip) || []).filter(t => now - t < windowMs);
-
-        history.push(now);
-        requestCounts.set(ip, history);
-
-        if (history.length > maxReq) {
-            logIntrusion(ip, req.path);
-            return res.status(429).json({ error: "Too Many Requests" });
-        }
-
-        next();
-    };
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-//  🔐  AUTH HELPERS
-// ════════════════════════════════════════════════════════════════════════════
-function makeCheckAuth(API_SECRET) {
-    return function checkAuth(req, res) {
-        const authHeader = req.headers.authorization || "";
-        const authBuf = Buffer.from(authHeader, "utf8");
-        const secBuf  = Buffer.from(API_SECRET, "utf8");
-
-        if (authBuf.length !== secBuf.length) {
-            logIntrusion(req.ip, req.path);
-            res.status(401).json({ success: false, error: "Unauthorized" });
-            return false;
-        }
-
-        if (!crypto.timingSafeEqual(authBuf, secBuf)) {
-            logIntrusion(req.ip, req.path);
-            res.status(401).json({ success: false, error: "Unauthorized" });
-            return false;
-        }
-
-        return true;
-    };
-}
-
-function logIntrusion(ip, path) {
-    console.error(`[SECURITY] 🚨 Unauthorized access on ${path} from IP: ${ip}`);
-
-    if (process.env.ALERT_WEBHOOK_URL) {
-        try {
-            const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
-            wh.send({ content: `🛑 **[INTRUSION]** \`${path}\` from \`${ip}\`` })
-                .catch(() => {})
-                .finally(() => wh.destroy());
-        } catch (_) {}
+    try {
+        const parsed = new URL(raw, "https://dashboard.local");
+        return `${parsed.pathname}${parsed.search}${parsed.hash}` || "/";
+    } catch {
+        return "/";
     }
-}
-
-function makeCheckRevealPin(getWebPin) {
-    return function checkRevealPin(req, res) {
-        const ip  = req.ip;
-        const now = Date.now();
-        const rec = revealTokenAttempts.get(ip) || { count: 0, lockedUntil: 0 };
-
-        if (rec.lockedUntil > now) {
-            const mins = Math.ceil((rec.lockedUntil - now) / 60000);
-            res.status(429).json({ success: false, error: `ลองผิดเกินกำหนด ล็อค ${mins} นาที` });
-            return null;
-        }
-
-        const { pin } = req.body || {};
-        const webPin = (typeof getWebPin === "function") ? getWebPin() : null;
-
-        if (!webPin || pin !== webPin) {
-            rec.count = (rec.count || 0) + 1;
-
-            if (rec.count >= REVEAL_MAX) {
-                rec.lockedUntil = now + REVEAL_LOCKOUT;
-                rec.count = 0;
-            }
-
-            revealTokenAttempts.set(ip, rec);
-            logIntrusion(ip, req.path);
-            res.status(401).json({ success: false, error: "PIN ไม่ถูกต้อง" });
-            return null;
-        }
-
-        revealTokenAttempts.delete(ip);
-        return true;
-    };
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-//  🧩  SAFE VOICE SESSION SERIALIZERS
-// ════════════════════════════════════════════════════════════════════════════
-function getSafeSessionShortId(sessionId) {
-    return String(sessionId || "").replace(/^vc_/, "").slice(0, 10);
-}
-
-function getSessionAccountLabel(session) {
-    if (!session) return null;
-
-    if (session.accountGlobalName && session.accountUsername) {
-        return `${session.accountGlobalName} (@${session.accountUsername})`;
-    }
-
-    return session.accountTag ||
-        session.accountUsername ||
-        session.accountGlobalName ||
-        session.accountId ||
-        null;
-}
-
-function serializeVoiceSession(session) {
-    if (!session) return null;
-
-    return {
-        sessionId: session.sessionId,
-        shortId: getSafeSessionShortId(session.sessionId),
-
-        serverId: session.serverId,
-        serverName: session.serverName || null,
-        guildIcon: session.guildIcon || null,
-
-        voiceId: session.voiceId,
-        voiceName: session.voiceName || null,
-
-        ownerId: session.ownerId,
-        ownerTag: session.ownerTag || null,
-        ownerAvatar: session.ownerAvatar || null,
-
-        accountId: session.accountId || null,
-        accountUsername: session.accountUsername || null,
-        accountGlobalName: session.accountGlobalName || null,
-        accountTag: session.accountTag || null,
-        accountAvatar: session.accountAvatar || null,
-        accountLabel: getSessionAccountLabel(session),
-
-        startedAt: session.startedAt,
-        lastActivity: session.lastActivity,
-        reconnectCount: session.reconnectCount || 0,
-        tokenInvalid: !!session.tokenInvalid,
-        reconnecting: !!session.reconnecting,
-        hasConnection: !!session.connection,
-        connectionStatus: session.connection?.state?.status || null,
-        state: session.state || "active",
-        stoppedAt: session.stoppedAt || null,
-        stoppedReason: session.stoppedReason || null,
-        stoppedBy: session.stoppedBy || null,
-        lastStopError: session.lastStopError || null,
-        clientReady: !!session.client?.isReady?.(),
-        staleSuspected: (session.state || "active") === "active" && !session.connection,
-        ghostSuspected: session.stoppedReason === "stop_cleanup_failed"
-
-        /*
-         * Security note:
-         * Do not expose token, encrypted token, tokenTail, or tokenHash here.
-         */
-    };
-}
-
-function getSessionTokenSafe(sessionManager, sessionId) {
-    if (typeof sessionManager.getSessionToken === "function") {
-        return sessionManager.getSessionToken(sessionId);
-    }
-
-    if (typeof sessionManager.getToken === "function") {
-        return sessionManager.getToken(sessionId);
-    }
-
-    return null;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -222,7 +52,7 @@ function registerRoutes({
 }) {
     const checkAuth      = makeCheckAuth(API_SECRET);
     const checkRevealPin = makeCheckRevealPin(getWebPin);
-    const rateLimiter    = createRateLimiter(requestCounts, config);
+    const rateLimiter    = createRateLimiter(requestCounts, config, sessionManager);
 
     // ── PIN Authentication Routes ──
     app.get("/auth/pin", (req, res) => {
@@ -234,7 +64,7 @@ function registerRoutes({
         const { pin, next } = req.body || {};
         const correctPin = auth.PIN();
 
-        if (!correctPin) return res.redirect(next || "/");
+        if (!correctPin) return res.redirect("/");
 
         const ip = req.ip;
 
@@ -269,7 +99,7 @@ function registerRoutes({
 
         const token    = auth.makeToken();
         const isProd   = process.env.NODE_ENV === "production";
-        const safePath = (next || "/").startsWith("/") ? next : "/";
+        const safePath = safeRedirectPath(next);
 
         res.setHeader("Set-Cookie", auth.setCookieHeader(token, isProd));
         res.redirect(safePath);
@@ -285,61 +115,41 @@ function registerRoutes({
 
     app.get("/health", (req, res) => {
         const uptimeSec = Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000);
+        const botOnline = client?.isReady?.() ?? false;
+        const dbStatus = sessionManager.getDatabaseStatus?.();
+        const dbConnected = dbStatus?.connected === true;
+        const ready = botOnline && dbConnected;
 
-        res.json({
-            status: "ok",
+        res.status(ready ? 200 : 503).json({
+            status: ready ? "ok" : "degraded",
             uptime: uptimeSec,
             sessions: sessionManager.getAllSessions().size,
-            botOnline: client?.isReady?.() ?? false
+            botOnline,
+            dbConnected
         });
     });
 
     app.use("/api", (req, res, next) => {
         if (shouldBypassDashboardReadApi(req)) return next();
 
-        return rateLimiter(req, res, next);
+        return rateLimiter(req, res, () => {
+            if (!checkAuth(req, res)) return;
+            next();
+        });
     });
 
     // ── API Status real-time JSON ──
     app.get("/api/status", (req, res) => {
         try {
-            const sessions     = Array.from(sessionManager.getAllSessions().values());
-            const uptimeSec    = Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000);
-            const mem          = process.memoryUsage();
-            const voiceLogs    = voiceWorker.getVoiceLogs();
-            const voiceSummary = { connect: 0, recover: 0, drop: 0, disconnect: 0, fail: 0 };
-
-            voiceLogs.forEach(e => {
-                if (voiceSummary[e.type] !== undefined) voiceSummary[e.type]++;
-            });
-
-            const totalReq    = sessionManager.systemMetrics.requests;
-            const totalErr    = sessionManager.systemMetrics.errors;
-            const reconnects  = sessionManager.systemMetrics.reconnects;
-            const successRate = totalReq > 0
-                ? (((totalReq - totalErr) / totalReq) * 100).toFixed(1)
-                : "100.0";
-
-            const recentLogs = webLogs.slice(-60).reverse();
-            const readyAt = typeof botReadyAt === "function" ? botReadyAt() : botReadyAt;
-            const botOnlineSec = readyAt ? Math.floor((Date.now() - readyAt) / 1000) : null;
-
-            res.json({
-                botOnline: client?.isReady?.() ?? false,
-                botTag: client?.user?.tag ?? null,
-                uptimeSec,
-                botOnlineSec,
-                sessions: sessions.length,
-                maxSessions: config.limits.maxSessions,
-                sessionList: sessions.map(serializeVoiceSession),
-                clientPool: voiceWorker.getClientPoolSize(),
-                ramMB: (mem.heapUsed / 1024 / 1024).toFixed(1),
-                ramTotalMB: (mem.heapTotal / 1024 / 1024).toFixed(1),
-                reconnects,
-                successRate,
-                voiceSummary,
-                recentLogs
-            });
+            res.json(buildRuntimeStatusPayload({
+                sessionManager,
+                voiceWorker,
+                webLogs,
+                client,
+                config,
+                botReadyAt,
+                serializeVoiceSession
+            }));
         } catch (e) {
             res.status(500).json({ error: e.message });
         }
@@ -413,7 +223,8 @@ function registerRoutes({
         try {
             if (!checkRevealPin(req, res)) return;
 
-            const allSessions = Array.from(sessionManager.getAllSessions().values());
+            const allSessions = Array.from(sessionManager.getAllSessions().values())
+                .filter(session => sessionManager.isSessionRunnable?.(session) !== false);
             const tokens = {};
 
             for (const s of allSessions) {
@@ -472,17 +283,7 @@ function registerRoutes({
     // ── Commands Status / Toggle / Audit ──
     app.get("/api/commands-status", (req, res) => {
         try {
-            const allCmds = (commands.slashCommandsData || []).map(cmd => ({
-                name: cmd.name,
-                description: cmd.description || "",
-                enabled: !disabledCommands.has(cmd.name)
-            }));
-
-            res.json({
-                success: true,
-                commands: allCmds,
-                disabledCount: disabledCommands.size
-            });
+            res.json(buildCommandStatusPayload(commands, disabledCommands));
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
         }
@@ -543,15 +344,9 @@ function registerRoutes({
                 timestamp: Date.now()
             });
 
-            if (process.env.ALERT_WEBHOOK_URL) {
-                try {
-                    const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
-                    wh.send({
-                        content: `⚡ \`/${commandName}\` ถูก**${nowEnabled ? "เปิด ✅" : "ปิด ❌"}** โดย IP \`${req.ip}\``
-                    }).catch(() => {});
-                    wh.destroy();
-                } catch (_) {}
-            }
+            sendLogWebhook({
+                content: `⚡ \`/${commandName}\` ถูก**${nowEnabled ? "เปิด ✅" : "ปิด ❌"}** โดย IP \`${req.ip}\``
+            }).catch(() => {});
 
             res.json({
                 success: true,
@@ -564,10 +359,7 @@ function registerRoutes({
     });
 
     app.get("/api/commands-audit", (req, res) => {
-        res.json({
-            success: true,
-            log: [...commandAuditLog].reverse()
-        });
+        res.json(buildCommandAuditPayload(commandAuditLog));
     });
 
     // ── Settings ──
@@ -832,18 +624,10 @@ function registerRoutes({
 
             await sessionManager.PendingGuildModel.deleteOne({ guildId });
 
-            if (process.env.ALERT_WEBHOOK_URL) {
-                try {
-                    const guild = client.guilds.cache.get(guildId);
-                    const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
-
-                    await wh.send({
-                        content: `✅ **[GUILD APPROVED]** ${guild ? `${guild.name} (\`${guildId}\`)` : `\`${guildId}\``}`
-                    }).catch(() => {});
-
-                    wh.destroy();
-                } catch (_) {}
-            }
+            const guild = client.guilds.cache.get(guildId);
+            sendLogWebhook({
+                content: `✅ **[GUILD APPROVED]** ${guild ? `${guild.name} (\`${guildId}\`)` : `\`${guildId}\``}`
+            }).catch(() => {});
 
             res.json({ success: true });
         } catch (e) {
@@ -913,15 +697,9 @@ function registerRoutes({
             await guild.leave();
             await sessionManager.ApprovedGuildModel.deleteOne({ guildId });
 
-            if (process.env.ALERT_WEBHOOK_URL) {
-                try {
-                    const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
-                    await wh.send({
-                        content: `👢 **[BOT KICKED]** ${guildName} (\`${guildId}\`)`
-                    }).catch(() => {});
-                    wh.destroy();
-                } catch (_) {}
-            }
+            sendLogWebhook({
+                content: `👢 **[BOT KICKED]** ${guildName} (\`${guildId}\`)`
+            }).catch(() => {});
 
             res.status(failedStops > 0 ? 207 : 200).json({
                 success: failedStops === 0,
@@ -934,15 +712,7 @@ function registerRoutes({
         }
     });
 
-    setInterval(() => {
-        const now = Date.now();
-
-        for (const [ip, rec] of revealTokenAttempts.entries()) {
-            if (rec.lockedUntil > 0 && rec.lockedUntil < now) {
-                revealTokenAttempts.delete(ip);
-            }
-        }
-    }, 5 * 60 * 1000);
+    setInterval(() => cleanupRevealAttempts(), 5 * 60 * 1000);
 }
 
 module.exports = {

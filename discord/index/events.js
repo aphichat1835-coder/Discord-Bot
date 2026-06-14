@@ -6,9 +6,33 @@ DO NOT REMOVE: guildCreate/guildDelete handlers.
 ================================================================================
 */
 
-const { MessageEmbed, WebhookClient } = require("discord.js");
+const { MessageEmbed } = require("discord.js");
 const roleButton  = require('../features/roleButton');
 const protection  = require('../features/protection');
+const { IDS, PREFIXES } = require("../commands/customIds");
+const { isVoicePanelControl } = require("../guards/commandGuards");
+const { sendLogWebhook } = require("../core/webhooks");
+
+async function deleteRaidEvidenceSafely(message, maxMessages = 5) {
+    try {
+        const fetched = await message.channel.messages.fetch({ limit: Math.max(maxMessages, 1) }).catch(() => null);
+        const ownedMessages = fetched
+            ? fetched.filter(m =>
+                m.author?.id === message.author.id &&
+                !m.author?.bot &&
+                !m.webhookId
+            ).first(maxMessages)
+            : [message];
+
+        const targets = ownedMessages.length > 0 ? ownedMessages : [message];
+
+        for (const target of targets) {
+            await target.delete().catch(() => {});
+        }
+    } catch {
+        await message.delete().catch(() => {});
+    }
+}
 
 function register({
     client, config, sessionManager, voiceWorker,
@@ -32,7 +56,9 @@ function register({
             _antiRaidCache  = await sessionManager.getSetting('antiRaidEnabled', true);
             _antiRaidExpiry = now + 10000;
         }
-        const antiRaidEnabled = _antiRaidCache;
+        const globalAntiRaidEnabled = _antiRaidCache;
+        const pConf = await protection.getProtectionConfig(message.guild.id).catch(() => protection.DEFAULT_CONFIG);
+        const antiRaidEnabled = globalAntiRaidEnabled && pConf?.antiRaid?.enabled !== false;
 
         if (antiRaidEnabled && message.mentions.everyone) {
             const isAdmin = message.member.permissions.has("ADMINISTRATOR")
@@ -43,16 +69,16 @@ function register({
                 if (spamTracking.size >= MAX_SPAM_USERS) spamTracking.delete(spamTracking.keys().next().value);
 
                 const spamKey = `${message.guild.id}_${message.author.id}`;
-                const history = (spamTracking.get(spamKey) || []).filter(t => Date.now() - t < 60000);
+                const raidWindowMs = pConf?.antiRaid?.spamWindowMs || 60000;
+                const history = (spamTracking.get(spamKey) || []).filter(t => Date.now() - t < raidWindowMs);
                 history.push(Date.now());
                 spamTracking.set(spamKey, history);
 
-                const pConf  = await protection.getProtectionConfig(message.guild.id).catch(() => protection.DEFAULT_CONFIG);
                 const result = protection.checkAntiRaid(message.member, history, pConf);
 
                 if (result) {
                     try {
-                        await message.channel.bulkDelete(5).catch(() => {});
+                        await deleteRaidEvidenceSafely(message, 5);
                         if (result.action === 'timeout' && message.member.manageable) {
                             await message.member.timeout((result.minutes || 10) * 60000, result.reason);
                         } else if (result.action === 'ban' && message.guild.members.me.permissions.has('BAN_MEMBERS')) {
@@ -83,13 +109,13 @@ function register({
         }
 
         // ── Anti-Spam (ข้อความธรรมดา) ──
-        if (antiRaidEnabled) {
+        if (pConf?.antiSpam?.enabled) {
             const spamKey  = `spam_${message.guild.id}_${message.author.id}`;
-            const spamHist = (spamTracking.get(spamKey) || []).filter(t => Date.now() - t < 5000);
+            const spamWindowMs = pConf?.antiSpam?.windowMs || 5000;
+            const spamHist = (spamTracking.get(spamKey) || []).filter(t => Date.now() - t < spamWindowMs);
             spamHist.push(Date.now());
             spamTracking.set(spamKey, spamHist);
 
-            const pConf      = await protection.getProtectionConfig(message.guild.id).catch(() => protection.DEFAULT_CONFIG);
             const spamResult = protection.checkAntiSpam(message.member, spamHist, pConf);
             if (spamResult) {
                 try {
@@ -105,9 +131,11 @@ function register({
                 } catch (e) { console.error(`[ANTI-SPAM] ⚠️ ${e.message}`); }
             }
 
-            // ── Link Filter ──
-            const pConfLink  = pConf;
-            const linkResult = protection.checkLinkFilter(message, pConfLink);
+        }
+
+        // ── Link Filter ──
+        if (pConf?.linkFilter?.enabled) {
+            const linkResult = protection.checkLinkFilter(message, pConf);
             if (linkResult) {
                 message.delete().catch(() => {});
                 message.channel.send({
@@ -126,13 +154,11 @@ function register({
             const isProtectedCommand = interaction.isCommand()
                 && ["panel", "backup", "restore"].includes(interaction.commandName);
             const isProtectedButton = interaction.isButton()
-                && (
-                    ["btn_start", "btn_status", "btn_stop_all"].includes(interaction.customId)
-                    || interaction.customId.startsWith("status_stop_")
-                    || interaction.customId.startsWith("status_page_")
-                );
+                && isVoicePanelControl(interaction.customId, IDS, PREFIXES);
+            const isProtectedModal = interaction.isModalSubmit()
+                && interaction.customId === IDS.MODAL_START;
 
-            if (isProtectedCommand || isProtectedButton) {
+            if (isProtectedCommand || isProtectedButton || isProtectedModal) {
                 const approved = await checkApproval(interaction.guild, interaction.user);
                 if (!approved) {
                     const reply = {
@@ -206,28 +232,23 @@ function register({
     //  🤖  guildCreate
     // ════════════════════════════════════════════════════════════════════════
     client.on("guildCreate", async (guild) => {
-        if (process.env.ALERT_WEBHOOK_URL) {
-            try {
-                const wh = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
-                let inviteStr = "No Permission";
-                try {
-                    const channel = guild.channels.cache
-                        .filter(c => c.isText() && c.permissionsFor(guild.members.me).has("CREATE_INSTANT_INVITE"))
-                        .first();
-                    if (channel) {
-                        const inv = await channel.createInvite({ maxAge: 3600 });
-                        inviteStr = inv.url;
-                    }
-                } catch (e) {}
-                await wh.send({
-                    content: `🤖 **บอทถูกเชิญเข้าเซิร์ฟเวอร์ใหม่!**\n` +
-                             `**ชื่อ:** ${guild.name}\n` +
-                             `**คน:** ${guild.memberCount}\n` +
-                             `**ลิงก์:** ${inviteStr}`
-                }).catch(() => {});
-                wh.destroy();
-            } catch (e) {}
-        }
+        let inviteStr = "No Permission";
+        try {
+            const channel = guild.channels.cache
+                .filter(c => c.isText() && c.permissionsFor(guild.members.me).has("CREATE_INSTANT_INVITE"))
+                .first();
+            if (channel) {
+                const inv = await channel.createInvite({ maxAge: 3600 });
+                inviteStr = inv.url;
+            }
+        } catch (e) {}
+
+        sendLogWebhook({
+            content: `🤖 **บอทถูกเชิญเข้าเซิร์ฟเวอร์ใหม่!**\n` +
+                     `**ชื่อ:** ${guild.name}\n` +
+                     `**คน:** ${guild.memberCount}\n` +
+                     `**ลิงก์:** ${inviteStr}`
+        }).catch(() => {});
     });
 
     // ════════════════════════════════════════════════════════════════════════

@@ -1,6 +1,6 @@
 /*
  * PIN Gate สำหรับ Main Dashboard (Service 1)
- * ใช้ DASHBOARD_PIN env var — ถ้าไม่ตั้งค่า = ไม่มี gate
+ * ใช้ DASHBOARD_PIN env var — production ต้องตั้งค่าเสมอ
  * Cookie ลงนามด้วย HMAC-SHA256 / API_SECRET
  */
 const crypto = require('crypto');
@@ -9,6 +9,10 @@ const COOKIE_NAME = '__da';
 const MAX_AGE_MS  = 8 * 3600 * 1000; // 8 ชั่วโมง
 const SECRET      = () => process.env.API_SECRET || 'fallback';
 const PIN         = () => process.env.DASHBOARD_PIN;
+
+function isProduction() {
+    return process.env.NODE_ENV === 'production';
+}
 
 // ── Parse cookies from header ──
 function parseCookies(req) {
@@ -55,7 +59,12 @@ function setCookieHeader(token, isProduction) {
 
 // ── Middleware: ถ้าไม่มี cookie ถูกต้อง → redirect PIN page ──
 function requirePin(req, res, next) {
-    if (!PIN()) return next(); // ไม่ได้ตั้ง DASHBOARD_PIN = ไม่ต้องมี gate
+    if (!PIN()) {
+        if (isProduction()) {
+            return res.status(503).send('DASHBOARD_PIN is required in production.');
+        }
+        return next();
+    }
     const cookies = parseCookies(req);
     if (verifyToken(cookies[COOKIE_NAME])) return next();
     const next_path = encodeURIComponent(req.originalUrl || '/');

@@ -20,6 +20,7 @@ const config = require("./config.json");
 const sessions = new Map();
 const reconnectTracking = new Map();
 const sessionLocks = new Set();
+const settingsCache = new Map();
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🔐  REGION 2: ENCRYPTION (AES-256-GCM + CBC BACKWARD COMPAT)
@@ -504,8 +505,12 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
         throw new Error("ALREADY_ACTIVE_IN_GUILD");
     }
 
+    const configuredMaxSessions = Math.max(
+        1,
+        Number(await getSetting("maxSessions", config.limits.maxSessions)) || config.limits.maxSessions
+    );
     const activeSessionCount = Array.from(sessions.values()).filter(isSessionRunnable).length;
-    if (activeSessionCount >= config.limits.maxSessions) {
+    if (activeSessionCount >= configuredMaxSessions) {
         console.log(`[SESSION] ⛔ System limit reached for: ${ownerTag}`);
         throw new Error("SYSTEM_LIMIT");
     }
@@ -1292,6 +1297,7 @@ async function setSetting(key, value) {
             },
             { upsert: true }
         );
+        settingsCache.set(key, value);
 
         return true;
     } catch (err) {
@@ -1307,6 +1313,7 @@ async function getSetting(key, fallback = null) {
     try {
         const doc = await BotSettingsModel.findOne({ key });
         if (!doc) return fallback;
+        settingsCache.set(key, doc.value);
         return doc.value;
     } catch (err) {
         console.error(`[DATABASE] ❌ Failed to get setting ${key}: ${err.message}`);
@@ -1320,6 +1327,7 @@ async function deleteSetting(key) {
 
     try {
         await BotSettingsModel.deleteOne({ key });
+        settingsCache.delete(key);
         return true;
     } catch (err) {
         console.error(`[DATABASE] ❌ Failed to delete setting ${key}: ${err.message}`);
@@ -1337,6 +1345,7 @@ async function getAllSettings() {
 
         for (const doc of docs) {
             result[doc.key] = doc.value;
+            settingsCache.set(doc.key, doc.value);
         }
 
         return result;
@@ -1345,6 +1354,10 @@ async function getAllSettings() {
         systemMetrics.increment("errors");
         return {};
     }
+}
+
+function getCachedSetting(key, fallback = null) {
+    return settingsCache.has(key) ? settingsCache.get(key) : fallback;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1566,6 +1579,7 @@ module.exports = {
     // Settings
     setSetting,
     getSetting,
+    getCachedSetting,
     deleteSetting,
     getAllSettings,
 

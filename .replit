@@ -3,6 +3,7 @@
 # Production deployment uses Render settings and render.yaml instead.
 
 modules = ["nodejs-18"]
+entrypoint = "discord/index.js"
 run = "npm start"
 
 [agent]

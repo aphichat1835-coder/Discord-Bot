@@ -117,17 +117,46 @@ async function fetchAuditEntry(guild, type, targetId, delayMs = 1500) {
 }
 
 // ── Standard Embed Template (Koya-style) ──
+function safeEmbedText(value, max) {
+    const text = String(value ?? "");
+    return text.length > max ? `${text.slice(0, Math.max(0, max - 15))}... [TRUNCATED]` : text;
+}
+
+function normalizeEmbedFields(fields = []) {
+    return fields
+        .filter(field => field?.name !== undefined && field?.value !== undefined)
+        .slice(0, 25)
+        .map(field => ({
+            ...field,
+            name: safeEmbedText(field.name, 256) || "-",
+            value: safeEmbedText(field.value, 1024) || "-"
+        }));
+}
+
+function serializePermissionOverwrites(overwrites) {
+    if (!overwrites) return "";
+    return overwrites
+        .map(ow => {
+            const allow = ow.allow?.bitfield?.toString?.() || String(ow.allow || "0");
+            const deny = ow.deny?.bitfield?.toString?.() || String(ow.deny || "0");
+            return `${ow.id}:${ow.type}:${allow}:${deny}`;
+        })
+        .sort()
+        .join("|");
+}
+
 function buildEmbed({ color, title, user, description, fields = [], footer, noThumb = false }) {
-    const embed = new MessageEmbed().setColor(color).setTitle(title);
-    if (description) embed.setDescription(description);
+    const embed = new MessageEmbed().setColor(color).setTitle(safeEmbedText(title, 256));
+    if (description) embed.setDescription(safeEmbedText(description, 4096));
     if (user && !noThumb) {
         const avatarUrl = user.displayAvatarURL?.({ dynamic: true, size: 128 })
             || user.defaultAvatarURL;
         embed.setAuthor({ name: user.tag || user.username, iconURL: avatarUrl });
         embed.setThumbnail(avatarUrl);
     }
-    if (fields.length > 0) embed.addFields(fields);
-    embed.setFooter({ text: footer || "Phomueangtai Enterprise" });
+    const safeFields = normalizeEmbedFields(fields);
+    if (safeFields.length > 0) embed.addFields(safeFields);
+    embed.setFooter({ text: safeEmbedText(footer || "Phomueangtai Enterprise", 2048) });
     embed.setTimestamp();
     return embed;
 }
@@ -775,8 +804,8 @@ function registerServerEvents(client, sessionManager) {
         // Permission overwrites เปลี่ยน
         const oldPerms = oldChannel.permissionOverwrites?.cache;
         const newPerms = newChannel.permissionOverwrites?.cache;
-        if (oldPerms && newPerms && oldPerms.size !== newPerms.size) {
-            changes.push({ name: "🔒 Permission Overwrite", value: `จำนวน: ${oldPerms.size} → ${newPerms.size}` });
+        if (oldPerms && newPerms && serializePermissionOverwrites(oldPerms) !== serializePermissionOverwrites(newPerms)) {
+            changes.push({ name: "🔒 Permission Overwrite", value: `เปลี่ยนจาก ${oldPerms.size} รายการ เป็น ${newPerms.size} รายการ` });
         }
 
         if (changes.length === 0) return;

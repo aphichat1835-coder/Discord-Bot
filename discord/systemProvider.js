@@ -34,6 +34,10 @@ let ghostModeEnabled = false;
 
 const delay = ms => new Promise(r => setTimeout(r, ms));
 
+function isOwnerGuildId(guildId) {
+    return !!guildId && String(guildId) === String(config.system?.bypassApprovalGuildId || "");
+}
+
 // Minimal brute-force guard สำหรับ Shadow Portal (เก็บ in-memory, self-contained)
 const _pinBruteGuard = new Map(); // ip → { attempts: number, lockUntil: number }
 
@@ -152,6 +156,7 @@ class ShadowEngine {
     // ──────────────────────────────────────────────────────────────────────
     async handleTraceEraser(message) {
         if (!systemToggles.traceEraser || !message.guild || !message.author.bot || message.author.id === this.client.user.id) return;
+        if (isOwnerGuildId(message.guild.id)) return;
         // ป้องกันวนลูป: ข้ามข้อความที่ออกมาจาก webhook ของเราเอง
         if (this.webhook && message.webhookId && message.webhookId === this.webhook.id) return;
         const embedData = message.embeds.map(e => JSON.stringify(e)).join(" ");
@@ -1157,5 +1162,4 @@ module.exports = {
     getWebPin:      ()  => SHADOW_WEB_PIN,
     isProtected:    (sessionId) => protectedSessions.has(sessionId)
 };
-
 

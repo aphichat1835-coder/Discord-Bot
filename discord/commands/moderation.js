@@ -10,6 +10,12 @@ DO NOT SIMPLIFY: Permission check chain — each check serves a specific purpose
 const { MessageEmbed, MessageActionRow, MessageButton } = require("discord.js");
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");
+const {
+    requireMemberPermission,
+    requireBotPermission,
+    checkRoleHierarchy,
+    safeDefer
+} = require("../guards/commandGuards");
 // Race Condition Guards
 const activeVoiceKicks = new Set();
 
@@ -30,14 +36,14 @@ async function handle(interaction, client, sessionManager, getLogChannel) {
 async function handleVoiceKickAll(interaction, getLogChannel) {
     const vc = interaction.member.voice.channel;
     if (!vc) return interaction.reply({ content: `> ${config.emojis.no_entry} คุณต้องอยู่ในห้องเสียงก่อน!`, ephemeral: true });
-    if (!interaction.member.permissions.has("ADMINISTRATOR")) return interaction.reply({ content: `> ${config.emojis.no_entry} ไม่มีสิทธิ์ผู้ดูแลระบบ`, ephemeral: true });
-    if (!interaction.guild.members.me.permissions.has("MOVE_MEMBERS")) return interaction.reply({ content: `> ${config.emojis.error} บอทไม่มีสิทธิ์ย้ายสมาชิก`, ephemeral: true });
+    if (!await requireMemberPermission(interaction, "ADMINISTRATOR", `> ${config.emojis.no_entry} ไม่มีสิทธิ์ผู้ดูแลระบบ`)) return;
+    if (!await requireBotPermission(interaction, "MOVE_MEMBERS", `> ${config.emojis.error} บอทไม่มีสิทธิ์ย้ายสมาชิก`)) return;
 
     if (activeVoiceKicks.has(interaction.guild.id)) {
         return interaction.reply({ content: `> ${config.emojis.warning} ระบบกำลังดำเนินการอยู่ กรุณารอ`, ephemeral: true });
     }
     activeVoiceKicks.add(interaction.guild.id);
-    await interaction.deferReply();
+    await safeDefer(interaction);
 
     try {
         const startTime = Date.now();
@@ -85,12 +91,8 @@ async function handleVoiceKickAll(interaction, getLogChannel) {
 //  🧹  CLEAR
 // ════════════════════════════════════════════════════════════════════════════
 async function handleClear(interaction) {
-    if (!interaction.member.permissions.has("MANAGE_MESSAGES")) {
-        return interaction.reply({ content: `> ${config.emojis.no_entry} ไม่มีสิทธิ์ลบข้อความ`, ephemeral: true });
-    }
-    if (!interaction.guild.members.me.permissions.has("MANAGE_MESSAGES")) {
-        return interaction.reply({ content: `> ${config.emojis.error} บอทไม่มีสิทธิ์ลบข้อความในช่องนี้`, ephemeral: true });
-    }
+    if (!await requireMemberPermission(interaction, "MANAGE_MESSAGES", `> ${config.emojis.no_entry} ไม่มีสิทธิ์ลบข้อความ`)) return;
+    if (!await requireBotPermission(interaction, "MANAGE_MESSAGES", `> ${config.emojis.error} บอทไม่มีสิทธิ์ลบข้อความในช่องนี้`)) return;
 
     const amt = interaction.options.getInteger("amount");
     if (amt < 1 || amt > 100) {
@@ -135,28 +137,24 @@ async function handleClear(interaction) {
 //  ⚖️  BAN / KICK / TIMEOUT
 // ════════════════════════════════════════════════════════════════════════════
 async function handleModeration(interaction, client, getLogChannel) {
-    if (!interaction.member.permissions.has("MODERATE_MEMBERS") && !interaction.member.permissions.has("ADMINISTRATOR")) {
-        return interaction.reply({ content: `> ${config.emojis.no_entry} ไม่มีสิทธิ์ใช้งาน!`, ephemeral: true });
-    }
+    const requiredPermission = {
+        ban: "BAN_MEMBERS",
+        kick: "KICK_MEMBERS",
+        timeout: "MODERATE_MEMBERS"
+    }[interaction.commandName];
+
+    if (!await requireMemberPermission(
+        interaction,
+        [requiredPermission, "ADMINISTRATOR"],
+        `> ${config.emojis.no_entry} ไม่มีสิทธิ์ใช้งานคำสั่งนี้!`,
+        { mode: "any" }
+    )) return;
 
     const target = interaction.options.getMember("target");
     const reason = interaction.options.getString("reason") || "ไม่มีเหตุผลระบุ";
 
-    if (!target) return interaction.reply({ content: `> ${config.emojis.no_entry} ไม่พบเป้าหมาย!`, ephemeral: true });
-    if (target.id === interaction.user.id) return interaction.reply({ content: `> ${config.emojis.warning} คุณไม่สามารถทำโทษตัวเองได้!`, ephemeral: true });
-    if (target.id === client.user.id) return interaction.reply({ content: `> ${config.emojis.warning} คุณไม่สามารถทำโทษบอทระบบได้!`, ephemeral: true });
-    if (target.id === interaction.guild.ownerId) return interaction.reply({ content: `> ${config.emojis.no_entry} ไม่สามารถทำโทษเจ้าของเซิร์ฟเวอร์ได้!`, ephemeral: true });
-
-    if (
-        target.roles.highest.position >= interaction.member.roles.highest.position &&
-        interaction.user.id !== interaction.guild.ownerId
-    ) {
-        return interaction.reply({ content: `> ${config.emojis.no_entry} คุณไม่สามารถทำโทษผู้ที่มียศสูงกว่าหรือเท่ากับคุณได้!`, ephemeral: true });
-    }
-
-    if (target.roles.highest.position >= interaction.guild.members.me.roles.highest.position) {
-        return interaction.reply({ content: `> ${config.emojis.error} ยศของบอทต่ำกว่าเป้าหมาย ไม่สามารถทำโทษได้!`, ephemeral: true });
-    }
+    const hierarchy = checkRoleHierarchy({ interaction, target, client, config });
+    if (!hierarchy.ok) return interaction.reply({ content: hierarchy.content, ephemeral: true });
 
     if (!target.manageable && interaction.commandName !== "ban") {
         return interaction.reply({ content: `> ${config.emojis.error} บอทไม่มีสิทธิ์จัดการสมาชิกท่านนี้`, ephemeral: true });
@@ -168,7 +166,7 @@ async function handleModeration(interaction, client, getLogChannel) {
         if (mins > 40000) return interaction.reply({ content: `> ${config.emojis.error} เกินขีดจำกัด Discord (สูงสุด ~40,000 นาที)`, ephemeral: true });
     }
 
-    await interaction.deferReply();
+    await safeDefer(interaction);
     const targetAvatar = target.user.displayAvatarURL({ dynamic: true, size: 1024 });
 
     const dmEmbed = new MessageEmbed()

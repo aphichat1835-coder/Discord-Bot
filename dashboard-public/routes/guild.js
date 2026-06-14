@@ -19,6 +19,7 @@ const GuildConfig = require("../models/GuildConfig");
 const VerifyLog = require("../models/VerifyLog");
 const OAuthUser = require("../models/OAuthUser");
 const IPRevealRequest = require("../models/IPRevealRequest");
+const IpIdentityLink = require("../models/IpIdentityLink");
 
 const { decryptIP } = require("../utils/crypto");
 const {
@@ -37,6 +38,12 @@ const {
 } = require("../utils/panelBuilder");
 
 const discordAPI = require("../utils/discordAPI");
+const {
+  normalizeSensitiveAccess,
+  canViewSensitiveData,
+  redactSensitiveDiscordSnapshot,
+  redactSensitiveIpInfo
+} = require("../utils/sensitiveAccess");
 
 const SNOWFLAKE_RE = /^\d{17,22}$/;
 const OBJECT_ID_RE = /^[a-fA-F0-9]{24}$/;
@@ -372,8 +379,8 @@ function decryptRawIp(ipInfo = {}) {
   }
 }
 
-function safeIpInfo(ipInfo = {}) {
-  const rawIp = decryptRawIp(ipInfo);
+function safeIpInfo(ipInfo = {}, canViewSensitive = false) {
+  const rawIp = canViewSensitive ? decryptRawIp(ipInfo) : null;
 
   return {
     rawIp: rawIp || null,
@@ -448,10 +455,10 @@ function safePolicySnapshot(snapshot = {}) {
   };
 }
 
-function safeDiscordSnapshot(snapshot = {}) {
+function safeDiscordSnapshot(snapshot = {}, canViewSensitive = false) {
   const profile = snapshot.profileSnapshot || snapshot;
 
-  return {
+  const discord = {
     userId: profile.userId || profile.id || snapshot.userId || snapshot.id || null,
     username: profile.username || snapshot.username || "",
     discriminator: profile.discriminator || snapshot.discriminator || null,
@@ -509,6 +516,8 @@ function safeDiscordSnapshot(snapshot = {}) {
     callbackStateMode: snapshot.callbackStateMode || snapshot.stateMode || null,
     panelRevision: snapshot.panelRevision || null
   };
+
+  return redactSensitiveDiscordSnapshot(discord, canViewSensitive);
 }
 
 function safeMemberSnapshot(snapshot = {}) {
@@ -550,12 +559,16 @@ function safeTrackingSnapshot(snapshot = {}) {
 function serializeConfig(doc) {
   const raw = doc?.toObject ? doc.toObject() : doc || {};
   const verification = normalizeVerificationConfig(raw.verification || {});
+  const security = raw.security || {};
 
   return {
     guildId: raw.guildId || "",
     guildName: raw.guildName || "",
     verification,
-    security: raw.security || {},
+    security: {
+      ...security,
+      sensitiveDataAccess: normalizeSensitiveAccess(security)
+    },
     setupBy: raw.setupBy || null,
     createdAt: raw.createdAt || null,
     updatedAt: raw.updatedAt || null
@@ -577,12 +590,13 @@ function serializeGuildFromSession(guild = {}) {
   };
 }
 
-function serializeVerifyLog(log = {}) {
+function serializeVerifyLog(log = {}, options = {}) {
   const raw = log?.toObject ? log.toObject() : log;
+  const canViewSensitive = options.canViewSensitive === true;
 
-  const ipInfo = safeIpInfo(raw.ipInfo || {});
+  const ipInfo = redactSensitiveIpInfo(safeIpInfo(raw.ipInfo || {}, canViewSensitive), canViewSensitive);
   const device = safeDevice(raw.device || {});
-  const discord = safeDiscordSnapshot(raw.discordSnapshot || {});
+  const discord = safeDiscordSnapshot(raw.discordSnapshot || {}, canViewSensitive);
   const member = safeMemberSnapshot(raw.memberSnapshot || discord.member || {});
   const policy = safePolicySnapshot(raw.policySnapshot || {});
   const tracking = safeTrackingSnapshot(raw.trackingSnapshot || {});
@@ -741,38 +755,6 @@ function summarizeCounts(logs = []) {
     : 0;
 
   return summary;
-}
-
-function countBy(items, getter, limit = 10) {
-  const map = new Map();
-
-  for (const item of items) {
-    const key = getter(item) || "unknown";
-    map.set(key, (map.get(key) || 0) + 1);
-  }
-
-  return Array.from(map.entries())
-    .map(([label, count]) => ({ label, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, limit);
-}
-
-function buildRiskSummary(logs = []) {
-  const serialized = logs.map(serializeVerifyLog);
-
-  return {
-    countries: countBy(serialized, log => log.countryCode || log.country || "unknown", 12),
-    isps: countBy(serialized, log => log.isp || "unknown", 12),
-    devices: countBy(serialized, log => {
-      const browser = log.device?.browser || log.browser || "unknown";
-      const os = log.device?.os || log.os || "unknown";
-      return `${browser} / ${os}`;
-    }, 12),
-    reasons: countBy(serialized, log => log.reason || log.result || "unknown", 12),
-    recentRiskLogs: serialized
-      .filter(log => Number(log.riskScore || 0) >= 35 || log.result !== "success")
-      .slice(0, 20)
-  };
 }
 
 const crypto = require("crypto");
@@ -1425,7 +1407,8 @@ router.get("/api/guild/:guildId/logs", requireAdmin, requireGuildAdmin, async (r
 
     const filter = buildLogQuery(guildId, req.query);
 
-    const [total, logs] = await Promise.all([
+    const [config, total, logs] = await Promise.all([
+      GuildConfig.findOne({ guildId }).select("security").lean(),
       VerifyLog.countDocuments(filter),
       VerifyLog.find(filter)
         .sort({ verifiedAt: -1, createdAt: -1, _id: -1 })
@@ -1433,10 +1416,12 @@ router.get("/api/guild/:guildId/logs", requireAdmin, requireGuildAdmin, async (r
         .limit(limit)
         .lean()
     ]);
+    const canViewSensitive = canViewSensitiveData(config);
 
     res.json({
       success: true,
-      logs: logs.map(serializeVerifyLog),
+      sensitiveDataAccess: normalizeSensitiveAccess(config?.security || {}),
+      logs: logs.map(log => serializeVerifyLog(log, { canViewSensitive })),
       pagination: pagination(page, limit, total)
     });
   } catch (err) {
@@ -1452,7 +1437,8 @@ router.get("/api/guild/:guildId/members", requireAdmin, requireGuildAdmin, async
 
     const filter = buildLogQuery(guildId, req.query);
 
-    const [total, logs] = await Promise.all([
+    const [config, total, logs] = await Promise.all([
+      GuildConfig.findOne({ guildId }).select("security").lean(),
       VerifyLog.countDocuments(filter),
       VerifyLog.find(filter)
         .sort({ verifiedAt: -1, createdAt: -1, _id: -1 })
@@ -1460,10 +1446,12 @@ router.get("/api/guild/:guildId/members", requireAdmin, requireGuildAdmin, async
         .limit(limit)
         .lean()
     ]);
+    const canViewSensitive = canViewSensitiveData(config);
 
     res.json({
       success: true,
-      members: logs.map(serializeVerifyLog),
+      sensitiveDataAccess: normalizeSensitiveAccess(config?.security || {}),
+      members: logs.map(log => serializeVerifyLog(log, { canViewSensitive })),
       pagination: pagination(page, limit, total)
     });
   } catch (err) {
@@ -1486,24 +1474,6 @@ router.get("/api/guild/:guildId/stats", requireAdmin, requireGuildAdmin, async (
     });
   } catch (err) {
     return sendServerError(res, "stats", err, "โหลดสถิติไม่สำเร็จ");
-  }
-});
-
-router.get("/api/guild/:guildId/risk", requireAdmin, requireGuildAdmin, async (req, res) => {
-  try {
-    const { guildId } = req.params;
-
-    const logs = await VerifyLog.find(getBaseFilter(guildId))
-      .sort({ verifiedAt: -1, createdAt: -1, _id: -1 })
-      .limit(300)
-      .lean();
-
-    res.json({
-      success: true,
-      risk: buildRiskSummary(logs)
-    });
-  } catch (err) {
-    return sendServerError(res, "risk", err, "โหลด risk summary ไม่สำเร็จ");
   }
 });
 
@@ -1567,23 +1537,103 @@ router.delete("/api/guild/:guildId/member/:userId", requireAdmin, requireGuildAd
       });
     }
 
-    const result = await VerifyLog.updateMany(
-      {
-        guildId,
-        userId: targetUserId,
-        deletedAt: { $exists: false }
-      },
-      {
-        $set: {
-          deletedAt: now(),
-          deletedBy: adminId || "guild-admin"
+    const deletedAt = now();
+    const deletedBy = adminId || "guild-admin";
+
+    const [verifyLogs, oauthGuildData, oauthLastData, singleIpLinks, sharedIpLinks] = await Promise.all([
+      VerifyLog.updateMany(
+        {
+          guildId,
+          userId: targetUserId,
+          deletedAt: { $exists: false }
+        },
+        {
+          $set: {
+            deletedAt,
+            deletedBy
+          }
         }
-      }
-    );
+      ),
+      OAuthUser.updateOne(
+        {
+          "discord.userId": targetUserId,
+          deletedAt: { $exists: false }
+        },
+        {
+          $pull: {
+            guilds: { id: guildId }
+          },
+          $set: {
+            updatedAt: deletedAt
+          }
+        }
+      ),
+      OAuthUser.updateOne(
+        {
+          "discord.userId": targetUserId,
+          $or: [
+            { "lastVerify.guildId": guildId },
+            { "lastMember.guildId": guildId }
+          ],
+          deletedAt: { $exists: false }
+        },
+        {
+          $unset: {
+            lastVerify: "",
+            lastMember: ""
+          },
+          $set: {
+            updatedAt: deletedAt
+          }
+        }
+      ),
+      IpIdentityLink.updateMany(
+        {
+          guildId,
+          "users.userId": targetUserId,
+          uniqueUsers: { $lte: 1 },
+          deletedAt: { $exists: false }
+        },
+        {
+          $set: {
+            deletedAt,
+            deletedBy,
+            updatedAt: deletedAt
+          }
+        }
+      ),
+      IpIdentityLink.updateMany(
+        {
+          guildId,
+          "users.userId": targetUserId,
+          uniqueUsers: { $gt: 1 },
+          deletedAt: { $exists: false }
+        },
+        {
+          $pull: {
+            users: { userId: targetUserId },
+            roleSnapshots: { userId: targetUserId }
+          },
+          $inc: {
+            uniqueUsers: -1
+          },
+          $set: {
+            updatedAt: deletedAt
+          }
+        }
+      )
+    ]);
 
     res.json({
       success: true,
-      deletedCount: result.modifiedCount || 0
+      deletedCount: verifyLogs.modifiedCount || 0,
+      details: {
+        verifyLogs: verifyLogs.modifiedCount || 0,
+        oauthGuildsPulled: oauthGuildData.modifiedCount || 0,
+        oauthLastSnapshotsCleared: oauthLastData.modifiedCount || 0,
+        ipIdentityLinksDeleted: singleIpLinks.modifiedCount || 0,
+        ipIdentityLinksUpdated: sharedIpLinks.modifiedCount || 0
+      }
     });
   } catch (err) {
     return sendServerError(res, "delete-member-data", err, "ลบข้อมูลสมาชิกไม่สำเร็จ");

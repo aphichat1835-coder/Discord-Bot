@@ -1,1 +1,0 @@
-- [Phomueangtai Personal Multi-Tool Discord Bot](phomueangtai-bot.md) — Node.js 18+, discord.js v13+selfbot-v13, root context and docs consolidated.

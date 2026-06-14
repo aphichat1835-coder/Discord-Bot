@@ -1,18 +1,5 @@
 const net = require('net');
-const crypto = require('crypto');
-const { encryptIP } = require('./crypto');
-
-function hmacValue(value, prefix = 'value') {
-    if (value === undefined || value === null || value === '') return null;
-
-    const key = crypto.createHash('sha256')
-        .update(`${process.env.ENCRYPTION_KEY || 'missing'}:${process.env.API_SECRET || process.env.INTERNAL_API_SECRET || 'dashboard'}`)
-        .digest();
-
-    return crypto.createHmac('sha256', key)
-        .update(`${prefix}:${String(value).trim().toLowerCase()}`)
-        .digest('hex');
-}
+const { encryptIP, hmacValue } = require('./crypto');
 
 const ENABLE_CF_IP_HEADER = String(process.env.ENABLE_CF_IP_HEADER || '').toLowerCase() === 'true';
 const IP_LOOKUP_TIMEOUT_MS = 3000;

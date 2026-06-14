@@ -1283,10 +1283,14 @@ router.get('/auth/logout', (req, res) => {
 
 router.get('/oauth/admin', (req, res) => {
     try {
+        const requestedGuildId = /^\d{17,22}$/.test(String(req.query.guild_id || ''))
+            ? String(req.query.guild_id)
+            : null;
         const state = encodeSignedState({
             type: 'admin-login',
             ts: Date.now(),
-            nonce: crypto.randomBytes(12).toString('base64url')
+            nonce: crypto.randomBytes(12).toString('base64url'),
+            guildId: requestedGuildId
         });
 
         const url = makeAuthorizeUrl({

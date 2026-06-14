@@ -44,6 +44,11 @@ const apiRoutes                = require('./routes/api');
 
 const rateLimit = expressRateLimit.rateLimit || expressRateLimit.default || expressRateLimit;
 const { getTrustedRequestIp } = require('./utils/ipUtils');
+const GuildConfig = require('./models/GuildConfig');
+const VerifyLog = require('./models/VerifyLog');
+const IpIdentityLink = require('./models/IpIdentityLink');
+const IPRevealRequest = require('./models/IPRevealRequest');
+const { safeError } = require('./utils/safeLogger');
 
 const app  = express();
 const PORT = process.env.PORT || process.env.PORT_DASHBOARD || 3001;
@@ -154,7 +159,9 @@ app.use([
     '/api/guild/:guildId/verify/validate',
     '/api/guild/:guildId/verify/panel/send',
     '/api/guild/:guildId/verify/panel/update',
-    '/api/guild/:guildId/verify/disable'
+    '/api/guild/:guildId/verify/disable',
+    '/api/guild/:guildId/reveal-request',
+    '/api/guild/:guildId/member/:userId'
 ], guildWriteLimiter);
 
 /*
@@ -206,6 +213,80 @@ app.get('/health', (_req, res) => {
     });
 });
 
+function retentionDays(mode) {
+    const value = String(mode || '').toLowerCase();
+    if (['30d', 'rolling_30d', 'delete_after_30d'].includes(value)) return 30;
+    if (['90d', 'rolling_90d', 'delete_after_90d'].includes(value)) return 90;
+    if (['180d', 'rolling_180d', 'delete_after_180d'].includes(value)) return 180;
+    return null;
+}
+
+async function runDataLifecycleMaintenance() {
+    const now = Date.now();
+
+    await IPRevealRequest.updateMany(
+        { status: 'pending', expiresAt: { $lte: now } },
+        {
+            $set: {
+                status: 'expired',
+                updatedAt: now,
+                ownerNote: 'expired automatically'
+            }
+        }
+    );
+
+    const configs = await GuildConfig.find({})
+        .select('guildId security.retentionMode')
+        .lean();
+
+    for (const config of configs) {
+        const days = retentionDays(config.security?.retentionMode);
+        if (!days) continue;
+
+        const cutoff = now - days * 24 * 60 * 60 * 1000;
+        try {
+            await Promise.all([
+                VerifyLog.updateMany(
+                    {
+                        guildId: config.guildId,
+                        deletedAt: { $exists: false },
+                        $or: [
+                            { verifiedAt: { $lt: cutoff } },
+                            { createdAt: { $lt: cutoff } }
+                        ]
+                    },
+                    {
+                        $set: {
+                            deletedAt: now,
+                            deletedBy: `retention:${config.security?.retentionMode || 'unknown'}`
+                        }
+                    }
+                ),
+                IpIdentityLink.updateMany(
+                    {
+                        guildId: config.guildId,
+                        deletedAt: { $exists: false },
+                        lastSeenAt: { $lt: cutoff }
+                    },
+                    {
+                        $set: {
+                            deletedAt: now,
+                            deletedBy: `retention:${config.security?.retentionMode || 'unknown'}`,
+                            updatedAt: now
+                        }
+                    }
+                )
+            ]);
+        } catch (err) {
+            console.error('[RETENTION] guild maintenance failed:', {
+                guildId: config.guildId,
+                retentionMode: config.security?.retentionMode || 'unknown',
+                error: safeError(err)
+            });
+        }
+    }
+}
+
 mongoose.connect(process.env.MONGO_URI, { maxPoolSize: 5 })
     .then(() => {
         console.log('[DB] ✅ MongoDB connected');
@@ -213,8 +294,18 @@ mongoose.connect(process.env.MONGO_URI, { maxPoolSize: 5 })
         app.listen(PORT, '0.0.0.0', () => {
             console.log(`[DASHBOARD] 🌐 Public Dashboard → http://localhost:${PORT}`);
         });
+
+        runDataLifecycleMaintenance().catch(err => {
+            console.error('[RETENTION] maintenance failed:', safeError(err));
+        });
+        const retentionTimer = setInterval(() => {
+            runDataLifecycleMaintenance().catch(err => {
+                console.error('[RETENTION] maintenance failed:', safeError(err));
+            });
+        }, 60 * 60 * 1000);
+        retentionTimer.unref?.();
     })
     .catch(err => {
-        console.error('[DB] ❌ Failed:', err.message);
+        console.error('[DB] ❌ Failed:', safeError(err));
         process.exit(1);
     });

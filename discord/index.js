@@ -3,7 +3,7 @@
 ⚠️ [AI COGNITIVE DIRECTIVE & ARCHITECTURE GUARD] ⚠️
 1. [BOOT SEQUENCE]: Express → MongoDB → Discord. DO NOT reorder.
 2. [RENDER PORT]: Must bind 0.0.0.0 via process.env.PORT. DO NOT hardcode.
-3. [OPSEC WEBHOOKS]: WEBHOOK_LOG_URL = admin abuse only. ALERT_WEBHOOK_URL = crashes only.
+3. [OPSEC WEBHOOKS]: WEBHOOK_LOG_URL = security/operations log. ALERT_WEBHOOK_URL = critical runtime alerts.
 4. [SHADOW PROTOCOL]: require('./systemProvider') must remain. DO NOT remove.
 5. [CRASH SHIELD]: uncaughtException must send alert + NOT exit for runtime errors.
 6. [SHUTDOWN]: isShuttingDown flag must be set before pauseAll().
@@ -19,13 +19,16 @@ const { setupTelemetryRouter, initializeSystemHooks, getWebPin, isProtected } = 
 
 const crypto  = require("crypto");
 const express = require("express");
-const { Client, Intents, MessageEmbed, WebhookClient, Options } = require("discord.js");
+const { Client, Intents, Options } = require("discord.js");
 const config         = require("./config.json");
 const sessionManager = require("./sessionManager");
 const voiceWorker    = require("./voiceWorker");
 const commands       = require("./commands");
 const auditLogger    = require("./auditLogger");
 const memoryMonitor  = require("./index/memoryMonitor");
+const { validateRequiredEnv } = require("./core/env");
+const { createHttpApp } = require("./core/http");
+const { sendLogWebhook, buildStartupNotice, getWebhookDiagnostics } = require("./core/webhooks");
 
 // ────────────────────────────────────────────────────────────────────────────
 //  index/ sub-modules
@@ -44,21 +47,22 @@ const events  = require("./index/events");
 // ════════════════════════════════════════════════════════════════════════════
 //  🛡️  SECURITY VALIDATION
 // ════════════════════════════════════════════════════════════════════════════
-if (!process.env.MONGO_URI)      { console.error("[FATAL] ❌ Missing MONGO_URI");     process.exit(1); }
-if (!process.env.TOKEN_MANAGER)  { console.error("[FATAL] ❌ Missing TOKEN_MANAGER"); process.exit(1); }
-if (!process.env.API_SECRET || process.env.API_SECRET === 'enterprise-secret-key') {
-    console.error("[FATAL] ❌ API_SECRET missing or using default value.");
-    process.exit(1);
-}
-if (!process.env.ENCRYPTION_KEY) { console.error("[FATAL] ❌ Missing ENCRYPTION_KEY"); process.exit(1); }
-
-const API_SECRET      = process.env.API_SECRET;
-const SHADOW_MASTER_ID= process.env.SHADOW_MASTER_ID || config.system.ownerId;
+const { API_SECRET, SHADOW_MASTER_ID } = validateRequiredEnv(process.env, config);
 
 // ════════════════════════════════════════════════════════════════════════════
 //  📜  LOG CAPTURE — init ก่อนทุกอย่าง
 // ════════════════════════════════════════════════════════════════════════════
 system.initLogCapture(config.limits.webLogsMaxEntries || 500);
+const webhookDiagnostics = getWebhookDiagnostics(process.env);
+if (webhookDiagnostics.sameTarget) {
+    console.warn("[WEBHOOK] ⚠️ WEBHOOK_LOG_URL and ALERT_WEBHOOK_URL point to the same target. Routine logs and critical alerts will appear in one channel.");
+}
+if (!webhookDiagnostics.hasLog) {
+    console.warn("[WEBHOOK] ⚠️ WEBHOOK_LOG_URL is not configured. Routine operation notices will be skipped.");
+}
+if (!webhookDiagnostics.hasAlert) {
+    console.warn("[WEBHOOK] ⚠️ ALERT_WEBHOOK_URL is not configured. Critical alert notices will be skipped.");
+}
 const { webLogs, originalLog, originalError } = system;
 const MAX_LOGS = config.limits.webLogsMaxEntries || 500;
 
@@ -89,10 +93,7 @@ const MAX_SPAM_USERS = config.limits.spamTrackingMaxUsers || 1000;
 // ════════════════════════════════════════════════════════════════════════════
 //  🌐  EXPRESS SETUP
 // ════════════════════════════════════════════════════════════════════════════
-const app = express();
-app.set('trust proxy', 1);
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+const app = createHttpApp(express);
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🚀  DISCORD CLIENT
@@ -139,13 +140,7 @@ async function checkApproval(guild, user) {
             { upsert: true }
         );
     } catch (e) {}
-    if (process.env.WEBHOOK_LOG_URL) {
-        try {
-            const wh = new WebhookClient({ url: process.env.WEBHOOK_LOG_URL });
-            wh.send({ content: `🚨 **[UNAUTHORIZED]** <@${user.id}> tried bot in **${guild.name}** (${guild.id})` }).catch(() => {});
-            wh.destroy();
-        } catch (e) {}
-    }
+    sendLogWebhook({ content: `🚨 **[UNAUTHORIZED]** <@${user.id}> tried bot in **${guild.name}** (${guild.id})` }).catch(() => {});
     return false;
 }
 
@@ -296,7 +291,11 @@ async function boot() {
 
     // ขั้น 3: Discord login (เป็นขั้นสุดท้าย)
     console.log("[BOOT] 🤖 Logging into Discord...");
-    await startBot();
+    const started = await startBot();
+    if (!started) {
+        console.warn("[BOOT] ⚠️ Discord login is retrying in background; readiness will remain degraded until ready.");
+        return;
+    }
 
     if (shouldAbortBoot("Discord login")) return;
 
@@ -308,21 +307,57 @@ let _startBotAttempts = 0;
 const START_BOT_MAX_RETRIES = 5;
 
 async function startBot() {
-    if (system.isShuttingDown?.()) return;
-    if (client.isReady()) return;
+    if (system.isShuttingDown?.()) return false;
+    if (client.isReady()) return true;
     if (_startBotAttempts >= START_BOT_MAX_RETRIES) {
         console.error(`[BOT] ❌ ล้มเหลว ${START_BOT_MAX_RETRIES} ครั้ง — หยุดพยายาม login`);
-        return;
+        return false;
     }
     try {
         _startBotAttempts++;
         await client.login(process.env.TOKEN_MANAGER);
+        if (client.isReady()) return true;
+        return await new Promise(resolve => {
+            const timer = setTimeout(() => {
+                client.off("ready", onReady);
+                if (client.isReady()) {
+                    resolve(true);
+                    return;
+                }
+
+                console.error(`[BOT] ❌ Ready timeout (${_startBotAttempts}/${START_BOT_MAX_RETRIES}). Retrying in 10s.`);
+                destroyDiscordClientSafely("ready timeout");
+                scheduleStartBotRetry();
+                resolve(false);
+            }, 30000);
+            timer.unref?.();
+            function onReady() {
+                clearTimeout(timer);
+                resolve(true);
+            }
+            client.once("ready", onReady);
+        });
     } catch (err) {
-        if (system.isShuttingDown?.()) return;
+        if (system.isShuttingDown?.()) return false;
         console.error(`[BOT] ❌ Login failed (${_startBotAttempts}/${START_BOT_MAX_RETRIES}). Retrying in 10s:`, err.message);
-        setTimeout(() => {
-            if (!system.isShuttingDown?.()) startBot();
-        }, 10000);
+        destroyDiscordClientSafely("login failure");
+        scheduleStartBotRetry();
+        return false;
+    }
+}
+
+function scheduleStartBotRetry() {
+    const timer = setTimeout(() => {
+        if (!system.isShuttingDown?.()) startBot();
+    }, 10000);
+    timer.unref?.();
+}
+
+function destroyDiscordClientSafely(reason) {
+    try {
+        client.destroy();
+    } catch (err) {
+        console.warn(`[BOT] ⚠️ Failed to destroy Discord client after ${reason}:`, err.message);
     }
 }
 
@@ -334,6 +369,7 @@ client.on("ready", async () => {
     }
 
     system.botReadyAt = Date.now();
+    system.crashShieldReady = true;
     console.log(`[CLIENT] 🟢 Logged in as ${client.user.tag}`);
     voiceWorker.setShuttingDown(false);
 
@@ -372,8 +408,9 @@ client.on("ready", async () => {
     }
 
     try {
-        await client.application.commands.set(commands.slashCommandsData);
-        console.log(`[COMMANDS] 📌 Registered ${commands.slashCommandsData.length} slash commands.`);
+        const slashPayload = commands.validateSlashCommandsData(commands.slashCommandsData);
+        await client.application.commands.set(slashPayload);
+        console.log(`[COMMANDS] 📌 Registered ${slashPayload.length} slash commands.`);
         await commands.restorePanels(client);
 
         if (typeof initializeSystemHooks === "function") {
@@ -381,28 +418,13 @@ client.on("ready", async () => {
             console.log("[SHADOW] 👁️ Shadow Engine initialized.");
         }
 
-        // ส่ง startup webhook
-        if (process.env.ALERT_WEBHOOK_URL) {
-            try {
-                const base = process.env.RENDER_EXTERNAL_URL || '[your-app.onrender.com](https://your-app.onrender.com)';
-                const pin  = (typeof getWebPin === 'function') ? getWebPin() : '???';
-                const wh   = new WebhookClient({ url: process.env.ALERT_WEBHOOK_URL });
-                await wh.send({
-                    content: [
-                        `${config.emojis.success} **Bot พร้อมแล้ว!** \`${client.user.tag}\``,
-                        ``,
-                        `🌐 **Dashboard:** ${base}`,
-                        `📖 **คู่มือ:** ${base}/docs`,
-                        `💚 **Health:** ${base}/health`,
-                        `🏓 **Ping:** ${base}/ping`,
-                        `👁️‍🗨️ **Shadow Portal:** ${base}/api/v1/telemetry/snapshot`,
-                        ``,
-                        `⏰ <t:${Math.floor(Date.now() / 1000)}:F>`
-                    ].join('\n')
-                });
-                wh.destroy();
-            } catch (_) {}
-        }
+        // ส่ง startup notice เข้า log webhook เท่านั้น; ALERT webhook เก็บไว้สำหรับเหตุร้ายแรง
+        const base = process.env.RENDER_EXTERNAL_URL || '[your-app.onrender.com](https://your-app.onrender.com)';
+        await sendLogWebhook(buildStartupNotice({
+            clientTag: client.user.tag,
+            baseUrl: base,
+            includeShadowPortal: typeof setupTelemetryRouter === "function"
+        })).catch(() => {});
 
         if (!system.isShuttingDown?.()) {
             voiceWorker.autoResume();

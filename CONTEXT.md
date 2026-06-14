@@ -1,168 +1,234 @@
-# CONTEXT.md — Project Context
+# Project Context
 
-This is the root context file for the Phomueangtai Personal Multi-Tool Discord Bot.
+This is the quick context file for the Phomueangtai Personal Multi-Tool Discord Bot.
 
-The project is **not verification-only**. Verification is one subsystem inside a broader personal multi-tool Discord bot that also includes voice/session management, slash commands, owner dashboards, public dashboards, moderation tools, utility/admin tools, information commands, audit/protection features, role buttons, approved guild flows, and owner/system hooks.
-
-Use this file as the quick context entry point before reading the deeper docs in `docs/`.
-
-## Project identity
+## Identity
 
 ```txt
 Repository: aphichat1835-coder/Discord-Bot
-Project type: Personal Multi-Tool Discord Bot
 Runtime: Node.js 18+
-Main Discord library: discord.js v13
+Discord library: discord.js v13
 Database: MongoDB / Mongoose
 Web framework: Express
-Architecture: one repository + two services + shared MongoDB
+Architecture: one repository, two services, shared MongoDB
 ```
 
-## Non-negotiable owner decisions
+This project is not verification-only. Verification is one subsystem inside a broader personal multi-tool Discord bot.
 
-Preserve these decisions unless the owner explicitly approves a change:
+## Non-Negotiable Owner Decisions
 
-- Keep discord.js v13 for now.
-- Keep voice/session subsystem.
-- Keep dashboard structure.
-- Keep verification architecture.
+- Keep `discord.js` v13 for now.
+- Keep the voice/session subsystem.
+- Keep the current dashboard structure.
+- Keep the current verification architecture.
 - Keep owner/admin controls.
-- Keep one repository + two services + shared MongoDB.
+- Keep one repository with two services and shared MongoDB.
+- Keep `discord/systemProvider.js` owner-locked.
 
-## Service map
+## Service Map
 
-### Service 1 — Main Discord Bot / Owner System
+### Service 1 - Main Discord Bot / Owner System
 
 ```txt
 Entry: discord/index.js
-Root directory: repository root
+Root directory: .
 Start command: npm start
-Health check: /ping
+Health routes: /ping, /health
 ```
 
-Primary responsibilities:
+Responsibilities:
 
-- Discord bot runtime and login
-- slash command registry/router
-- moderation commands
-- utility/admin commands
-- information commands
-- voice/session subsystem
-- main owner dashboard
-- audit logger
-- protection module
-- role button feature
-- approved guild and pending guild flows
-- owner/admin controls
-- owner/system hooks
+- Discord bot runtime and login.
+- Slash command registration and routing.
+- Voice/session lifecycle, resume, health, and control panel.
+- Owner dashboard pages and JSON/control APIs.
+- Audit logging, protection hooks, role buttons, and guild approval flow.
+- Owner verification/IP reveal review surface.
+- Protected owner/system hook initialization at subsystem level.
 
-### Service 2 — Dashboard Public / Verification Dashboard
+### Service 2 - Dashboard Public / Verification Dashboard
 
 ```txt
 Entry: dashboard-public/index.js
 Root directory: dashboard-public/
 Start command: npm start
-Health check: /ping
+Health routes: /ping, /health
 ```
 
-Primary responsibilities:
+Responsibilities:
 
-- Discord OAuth2 verification
-- guild admin dashboard
-- verification panel management
-- verification logs
-- risk/device/network summaries
-- internal API used by the owner dashboard
+- Discord OAuth2 verification callback.
+- Admin OAuth login and guild selection.
+- Guild admin dashboard.
+- Verification panel management.
+- Verification logs, members, stats, risk summaries, and reveal requests.
+- Internal APIs consumed by Service 1 owner dashboard.
 
-Both services intentionally share MongoDB. This is an owner-approved architecture decision, not a defect by itself.
+## Subsystem Map
 
-## Main subsystem context
+### Main bot and boot
+
+Start with:
+
+```txt
+discord/index.js
+discord/index/system.js
+discord/index/events.js
+discord/index/server.js
+discord/index/views.js
+discord/index/viewStyles.js
+discord/core/webhooks.js
+discord/index/auth.js
+discord/index/verifyOwner.js
+```
+
+Important: boot order is Express first, MongoDB second, Discord login third. Do not reorder casually.
 
 ### Slash commands
 
-The bot includes a slash command router and multiple command groups. Do not treat verification commands as the only command surface.
+Start with:
 
-Important command areas:
+```txt
+discord/commands.js
+discord/commands/registry.js
+discord/commands/information.js
+discord/commands/moderation.js
+discord/commands/utility.js
+discord/commands/verification.js
+```
 
-- panel/session controls
-- help/stats/ping/server/user information
-- log setup
-- public dashboard setup link
-- message clear/say/announce utilities
-- emoji import
-- backup/restore helpers
-- voice channel administration
-- ban/kick/timeout moderation
-- whitelist management
-- verification panel setup
+Command areas:
 
-### Voice/session subsystem
+- `/panel`
+- `/help`
+- `/stats`
+- `/serverinfo`
+- `/userinfo`
+- `/ping`
+- `/clear`
+- `/ban`
+- `/kick`
+- `/timeout`
+- `/voicekickall`
+- `/say`
+- `/announce`
+- `/steal`
+- `/backup`
+- `/restore`
+- `/setup-log`
+- `/whitelist`
+- `/setup`
+- `/setup-verify`
 
-The voice/session subsystem is a large owner-approved part of the project. It includes persistent session state, encrypted sensitive token handling, session locks, metadata, reconnect/health behavior, and owner dashboard visibility/control.
+### Voice/session
 
-Do not remove, rewrite, or migrate this subsystem unless the owner explicitly approves that scope.
+Start with:
 
-### Dashboard systems
+```txt
+discord/sessionManager.js
+discord/voiceWorker.js
+discord/commands.js
+discord/index/server.js
+discord/index/views.js
+```
 
-The repository has two dashboard surfaces:
+Preserve:
 
-- Main owner dashboard in Service 1 for owner/admin controls, session visibility, settings, commands, whitelist, approved guilds, logs, and status.
-- Dashboard Public in Service 2 for OAuth verification, guild admin management, panel setup, logs, members, risk summaries, and internal data used by the owner dashboard.
+- Token encryption/decryption behavior.
+- Session identity and active-session rules.
+- One identity can run in multiple guilds.
+- One identity should not be active in multiple voice channels inside the same guild.
+- Multiple identities can be active in the same guild/channel.
+- `voiceWorker` owns live lifecycle.
+- `sessionManager` owns persistence, locks, metadata, and DB state.
 
-Do not rewrite dashboard structure or dashboard routes during docs-only work.
+### Owner dashboard
 
-### Verification/OAuth subsystem
+Start with:
 
-Verification is an important subsystem, but it is not the whole project. It includes Discord OAuth2 callback handling, signed state/panel freshness concepts, role assignment, guild admin settings, verification logs, and policy/risk summaries.
+```txt
+discord/index/server.js
+discord/index/views.js
+discord/index/auth.js
+discord/index/verifyOwner.js
+```
 
-Do not edit OAuth behavior, verification callback runtime logic, database schemas, or Discord role assignment behavior during docs-only work.
+Surfaces:
 
-### MongoDB persistence
+- PIN login/logout.
+- Home/status/session detail.
+- Settings and presence.
+- Natural/auto-deaf settings.
+- Command toggles and audit.
+- Whitelist management.
+- Approved guild management.
+- Logs and voice logs.
+- Token reveal controls.
+- Owner verification/IP reveal review.
 
-MongoDB is shared by both services. It stores session-related data, dashboard/verification data, settings, logs, guild config, user verification records, risk/device/network summaries, and related state.
+### Dashboard Public and verification
 
-Do not change schemas or persistence behavior during docs-only work.
+Start with:
 
-### Audit/protection/role button features
+```txt
+dashboard-public/index.js
+dashboard-public/routes/oauth.js
+dashboard-public/routes/guild.js
+dashboard-public/routes/guildDashboard.js
+dashboard-public/routes/api.js
+dashboard-public/routes/adminSessionCompat.js
+dashboard-public/models/
+dashboard-public/utils/
+dashboard-public/views/
+dashboard-public/public/
+```
 
-The bot includes audit logging, protection hooks, and role button features beyond verification. These features are part of the broader personal multi-tool bot design.
+Preserve:
 
-### Owner/system hooks
+- Signed callback state.
+- Panel revision freshness checks.
+- Command-created and dashboard-created panel compatibility.
+- Safe public callback responses.
+- Role assignment through configured bot identity.
+- Verification logs, risk summaries, and owner-approved raw IP reveal flow.
 
-The owner/system hooks subsystem exists and is protected/high-risk. Its implementation file is `discord/systemProvider.js`, which is OWNER-LOCKED.
+### Audit, protection, role buttons
 
-Do not edit, move, delete, rename, reformat, split, lint-fix, comment-edit, summarize with sensitive details, refactor, or document hidden operational details from `discord/systemProvider.js` unless the owner explicitly approves that exact action in the current task.
+Start with:
 
-## Documentation map
+```txt
+discord/auditLogger.js
+discord/features/protection.js
+discord/features/roleButton.js
+discord/index/events.js
+```
 
-Read these files for deeper detail:
+These cover message/member/voice/server/security audit logging, anti-raid/anti-spam/link checks, and role button interactions.
 
-- `README.md` — human entry point and quick start
-- `AGENTS.md` — root AI coding agent rulebook
-- `TASK.md` — current task/workflow note
-- `docs/ARCHITECTURE.md` — detailed architecture and subsystem map
-- `docs/AI_GUIDE.md` — AI workflow, review rules, stop conditions, validation guidance
-- `docs/OWNER_DECISIONS.md` — source of truth for owner decisions and review policy
-- `docs/SECURITY_PRIVACY.md` — security/privacy guidance
-- `docs/DEPLOYMENT.md` — deployment and environment notes
-- `docs/VALIDATION.md` — validation commands and manual review checklist
+## Active Documentation
 
-## Docs-only safety rules
+- `README.md` - project entry point.
+- `AGENTS.md` - AI/agent rules.
+- `.github/copilot-instructions.md` - short Copilot rules.
+- `CONTEXT.md` - this quick map.
+- `ARCHITECTURE.md` - full implementation-backed architecture and file map.
+- `ROADMAP.md` - approved minimal refactor and future work.
+- `SECURITY.md` - security/privacy policy.
+- `CHANGELOG.md` - change history.
 
-For documentation consolidation and cleanup:
+## High-Risk Areas
 
-- Do not edit runtime JavaScript files.
-- Do not edit package manifests or lockfiles.
-- Do not edit `render.yaml` unless the task explicitly approves deploy config changes.
-- Do not change OAuth behavior.
-- Do not change database schemas.
-- Do not change Discord command behavior.
-- Do not change dashboard routes.
-- Do not change session or voice/session lifecycle behavior.
-- Do not change token, encryption, IP reveal, verification callback, or bot boot logic.
-- Do not change `discord/systemProvider.js`, its imports, or initialization.
-- Do not expose secrets or hidden operational details.
+Treat these as security-sensitive or behavior-sensitive:
 
-## Validation pointer
+- OAuth callback and signed state.
+- Sessions, cookies, PIN auth, internal API auth.
+- Token storage, token reveal, encryption/decryption.
+- Raw IP reveal, device fingerprints, risk summaries.
+- Discord role assignment and bot permissions.
+- Owner dashboard controls and approved guild flows.
+- Bot boot, event registration, shutdown, and voice/session lifecycle.
+- `discord/systemProvider.js` and any boot/import reference to it.
 
-Use `docs/VALIDATION.md`. Do not claim tests or checks passed unless the exact command was actually run.
+## Validation Pointer
+
+Use the validation commands in `ARCHITECTURE.md` and `SECURITY.md`. Report exact commands and results honestly.

@@ -390,7 +390,7 @@ tbody tr:hover td{
   </div>
 
   <h1 class="title">🔐 Owner Verification Dashboard</h1>
-  <div class="sub">ดูภาพรวมระบบยืนยัน / Panel Revision / อนุมัติคำขอดู IP จริง — เฉพาะเจ้าของบอท</div>
+  <div class="sub">ดูภาพรวมระบบยืนยัน / Panel Revision / อนุมัติสิทธิ์ดูข้อมูลอ่อนไหว — เฉพาะเจ้าของบอท</div>
 
   <div class="grid">
     <div class="stat"><div class="val" id="sGuilds">—</div><div class="lbl">Guilds</div></div>
@@ -421,11 +421,12 @@ tbody tr:hover td{
               <th>Panel Revision</th>
               <th>Panel Target</th>
               <th>Stats</th>
+              <th>Sensitive Access</th>
               <th>Action</th>
             </tr>
           </thead>
           <tbody id="overviewBody">
-            <tr><td colspan="6" class="empty">กำลังโหลด...</td></tr>
+            <tr><td colspan="7" class="empty">กำลังโหลด...</td></tr>
           </tbody>
         </table>
       </div>
@@ -476,6 +477,16 @@ function esc(v){
       "'":'&#39;'
     }[m];
   });
+}
+
+function escJsString(v){
+  return esc(String(v ?? '')
+    .replace(/\\/g,'\\\\')
+    .replace(/'/g,"\\'")
+    .replace(/\r/g,'\\r')
+    .replace(/\n/g,'\\n')
+    .replace(/\u2028/g,'\\u2028')
+    .replace(/\u2029/g,'\\u2029'));
 }
 
 function fmt(ts){
@@ -552,7 +563,7 @@ function renderOverview(){
   const b=document.getElementById('overviewBody');
 
   if(!overviewRows.length){
-    b.innerHTML='<tr><td colspan="6" class="empty">ไม่พบข้อมูล guild จาก internal overview</td></tr>';
+    b.innerHTML='<tr><td colspan="7" class="empty">ไม่พบข้อมูล guild จาก internal overview</td></tr>';
     return;
   }
 
@@ -563,6 +574,11 @@ function renderOverview(){
     const enabled=v.enabled !== false;
     const rev=v.panelRevision || 'ยังไม่มี revision';
     const revClass=v.panelRevision ? 'info' : 'warn';
+    const access=(g.security && g.security.sensitiveDataAccess) || {};
+    const accessOn=access.enabled === true;
+    const accessText=accessOn
+      ? 'approved '+fmt(access.approvedAt)
+      : (access.revokedAt ? 'revoked '+fmt(access.revokedAt) : 'not approved');
 
     return '<tr>'+
       '<td>'+
@@ -590,7 +606,14 @@ function renderOverview(){
         '<span class="badge warn">Old Panel '+esc(s.panelRevisionMismatch || 0)+'</span>'+
       '</td>'+
       '<td>'+
-        '<button class="btn soft" onclick="loadGuildDetail(\\''+esc(g.guildId)+'\\')">Details</button>'+
+        '<span class="badge '+(accessOn?'enabled':'disabled')+'">'+(accessOn?'allowed':'blocked')+'</span>'+
+        '<div class="small">'+esc(accessText)+'</div>'+
+        '<div class="small">'+esc(access.ownerNote || '')+'</div>'+
+        '<button class="btn ok" onclick="approveSensitive(\\''+escJsString(g.guildId)+'\\',\\''+escJsString(g.guildName || '')+'\\')">Allow</button>'+
+        '<button class="btn bad" onclick="revokeSensitive(\\''+escJsString(g.guildId)+'\\')">Revoke</button>'+
+      '</td>'+
+      '<td>'+
+        '<button class="btn soft" onclick="loadGuildDetail(\\''+escJsString(g.guildId)+'\\')">Details</button>'+
         '<div class="detailbox" id="detail-'+esc(g.guildId)+'" style="display:none"></div>'+
       '</td>'+
     '</tr>';
@@ -701,6 +724,37 @@ async function loadGuildDetail(guildId){
   }
 }
 
+async function approveSensitive(guildId,guildName){
+  const note=prompt('เหตุผล/หมายเหตุการอนุญาตให้ guild admin เห็น raw IP, email, connections, mutual guilds','approved by owner dashboard');
+  if(note===null) return;
+
+  try{
+    await api('/api/verify-owner/guild/'+encodeURIComponent(guildId)+'/sensitive-access/approve',{
+      ownerNote:note,
+      guildName:guildName || ''
+    });
+    toast('อนุญาต sensitive data access แล้ว','ok');
+    await loadOverview();
+  }catch(e){
+    toast(e.message,'err');
+  }
+}
+
+async function revokeSensitive(guildId){
+  const note=prompt('เหตุผล/หมายเหตุการยกเลิกสิทธิ์','revoked by owner dashboard');
+  if(note===null) return;
+
+  try{
+    await api('/api/verify-owner/guild/'+encodeURIComponent(guildId)+'/sensitive-access/revoke',{
+      ownerNote:note
+    });
+    toast('ยกเลิก sensitive data access แล้ว','ok');
+    await loadOverview();
+  }catch(e){
+    toast(e.message,'err');
+  }
+}
+
 async function approve(id){
   const note=prompt('Owner note (optional)','approved by owner dashboard');
   if(note===null) return;
@@ -806,6 +860,53 @@ function registerVerifyOwnerRoutes({ app, express, API_SECRET }) {
             const data = await callDashboardInternal(
                 `/internal/guild/${encodeURIComponent(req.params.guildId)}/stats`,
                 {},
+                API_SECRET
+            );
+
+            res.json(data);
+        } catch (err) {
+            res.status(500).json({
+                success: false,
+                error: err.message
+            });
+        }
+    });
+
+    app.post('/api/verify-owner/guild/:guildId/sensitive-access/approve', auth.requirePin, express.json(), async (req, res) => {
+        try {
+            const data = await callDashboardInternal(
+                `/internal/guild/${encodeURIComponent(req.params.guildId)}/sensitive-access/approve`,
+                {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        approvedBy: 'owner-dashboard',
+                        ownerNote: req.body?.ownerNote || '',
+                        guildName: req.body?.guildName || ''
+                    })
+                },
+                API_SECRET
+            );
+
+            res.json(data);
+        } catch (err) {
+            res.status(500).json({
+                success: false,
+                error: err.message
+            });
+        }
+    });
+
+    app.post('/api/verify-owner/guild/:guildId/sensitive-access/revoke', auth.requirePin, express.json(), async (req, res) => {
+        try {
+            const data = await callDashboardInternal(
+                `/internal/guild/${encodeURIComponent(req.params.guildId)}/sensitive-access/revoke`,
+                {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        revokedBy: 'owner-dashboard',
+                        ownerNote: req.body?.ownerNote || ''
+                    })
+                },
                 API_SECRET
             );
 
