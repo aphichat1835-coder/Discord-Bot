@@ -2,12 +2,20 @@ const MIN_TOKEN_LENGTH = 50;
 const MAX_TOKEN_LENGTH = 256;
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{24,128}\.[A-Za-z0-9_-]{6,64}\.[A-Za-z0-9_-]{27,180}$/;
 
+function stripBase64Padding(value) {
+    let clean = String(value);
+    while (clean.endsWith("=")) {
+        clean = clean.slice(0, -1);
+    }
+    return clean;
+}
+
 function toBase64Url(value) {
     return Buffer.from(String(value), "utf8")
         .toString("base64")
         .replaceAll("+", "-")
         .replaceAll("/", "_")
-        .replaceAll(/=+$/g, "");
+        .replaceAll("=", "");
 }
 
 function decodeTokenOwnerIdSafe(token) {
@@ -30,7 +38,7 @@ function decodeTokenOwnerIdSafe(token) {
 
         const canonical = toBase64Url(decoded);
 
-        if (canonical !== firstPart.replaceAll(/=+$/g, "")) {
+        if (canonical !== stripBase64Padding(firstPart)) {
             return null;
         }
 

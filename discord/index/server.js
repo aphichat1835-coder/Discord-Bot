@@ -33,7 +33,7 @@ function safeRedirectPath(value) {
     if (!raw.startsWith("/") || raw.startsWith("//")) return "/";
 
     try {
-        const parsed = new URL(raw, "http://dashboard.local");
+        const parsed = new URL(raw, "https://dashboard.local");
         return `${parsed.pathname}${parsed.search}${parsed.hash}` || "/";
     } catch {
         return "/";

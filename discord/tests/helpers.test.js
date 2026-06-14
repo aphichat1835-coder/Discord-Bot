@@ -29,18 +29,24 @@ const {
     decodeTokenOwnerIdSafe
 } = require("../sessions/tokenUtils");
 
+function stripBase64Padding(value) {
+    let clean = String(value);
+    while (clean.endsWith("=")) {
+        clean = clean.slice(0, -1);
+    }
+    return clean;
+}
+
 test("decodeTokenOwnerIdSafe extracts a canonical Discord user ID", () => {
     const userId = "123456789012345678";
-    const encodedUserId = Buffer.from(userId)
+    const encodedUserId = stripBase64Padding(Buffer.from(userId)
         .toString("base64")
         .replaceAll("+", "-")
-        .replaceAll("/", "_")
-        .replaceAll(/=+$/g, "");
-    const encodedInvalidUser = Buffer.from("not-a-user")
+        .replaceAll("/", "_"));
+    const encodedInvalidUser = stripBase64Padding(Buffer.from("not-a-user")
         .toString("base64")
         .replaceAll("+", "-")
-        .replaceAll("/", "_")
-        .replaceAll(/=+$/g, "");
+        .replaceAll("/", "_"));
     const token = `${encodedUserId}.abcdef.${"a".repeat(32)}`;
 
     assert.equal(decodeTokenOwnerIdSafe(token), userId);

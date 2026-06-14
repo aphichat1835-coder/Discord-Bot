@@ -10,8 +10,16 @@ function getWebhookUrl(target, env = process.env) {
     return env[WEBHOOK_TARGETS[target] || target] || null;
 }
 
+function trimTrailingSlashes(value) {
+    let clean = String(value || "").trim();
+    while (clean.endsWith("/")) {
+        clean = clean.slice(0, -1);
+    }
+    return clean;
+}
+
 function normalizeWebhookUrlForCompare(url) {
-    return String(url || "").trim().replace(/\/+$/, "");
+    return trimTrailingSlashes(url);
 }
 
 function getWebhookDiagnostics(env = process.env) {
