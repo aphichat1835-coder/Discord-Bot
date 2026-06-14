@@ -37,6 +37,11 @@ function isOwnerGlobalControl(interaction, shadowMasterId) {
         (shadowMasterId && interaction.user?.id === shadowMasterId);
 }
 
+function normalizeDiscordId(value) {
+    const id = String(value || "").trim();
+    return /^\d{17,22}$/.test(id) ? id : null;
+}
+
 function getVisibleVoiceSessions(interaction, getGlobalVoiceSessions, shadowMasterId) {
     const allSessions = getGlobalVoiceSessions();
     if (isOwnerGlobalControl(interaction, shadowMasterId)) return allSessions;
@@ -238,8 +243,15 @@ async function handleModal(interaction, client, deps = {}) {
     }
 
     if (!isOwnerGlobalControl(interaction, shadowMasterId)) {
-        const approved = await sessionManager.ApprovedGuildModel.findOne({ guildId: interaction.guild.id }).lean().catch(() => null);
-        if (!approved && interaction.guild.id !== config.system.bypassApprovalGuildId) {
+        const currentGuildId = normalizeDiscordId(interaction.guild?.id);
+        if (!currentGuildId) {
+            return interaction.editReply({
+                content: `> ${config.emojis.error} ไม่พบรหัสเซิร์ฟเวอร์ที่ถูกต้อง`
+            });
+        }
+
+        const approved = await sessionManager.ApprovedGuildModel.findOne({ guildId: currentGuildId }).lean().catch(() => null);
+        if (!approved && currentGuildId !== config.system.bypassApprovalGuildId) {
             return interaction.editReply({
                 content: `> ${config.emojis.lock} เซิร์ฟเวอร์นี้ยังไม่ได้รับการอนุมัติ หรือสิทธิ์ถูกยกเลิกแล้ว`
             });

@@ -22,11 +22,15 @@ function parseEnvLine(line) {
     return [key, value.replace(/\\n/g, "\n")];
 }
 
-function loadEnvFile(filePath, env = process.env) {
-    if (!filePath || !fs.existsSync(filePath)) return 0;
+function loadEnvFile(filePath, env = process.env, fsApi = fs) {
+    if (!filePath) return 0;
+
+    const resolvedPath = path.resolve(filePath);
+    if (path.basename(resolvedPath) !== ".env") return 0;
+    if (!fsApi.existsSync(resolvedPath)) return 0;
 
     let loaded = 0;
-    const body = fs.readFileSync(filePath, "utf8");
+    const body = fsApi.readFileSync(resolvedPath, "utf8");
     for (const line of body.split(/\r?\n/)) {
         const pair = parseEnvLine(line);
         if (!pair) continue;

@@ -1878,9 +1878,12 @@ ${navBar("/approved")}
     });
 
     app.get("/session/:sessionId", auth.requirePin, (req, res) => {
-        const safeId = escapeHtml(req.params.sessionId);
+        const rawSessionId = String(req.params.sessionId || "");
+        const sessionId = /^vc_[A-Za-z0-9_-]{1,80}$/.test(rawSessionId)
+            ? rawSessionId
+            : "";
 
-        res.send(pageSessionDetail(safeId));
+        res.send(pageSessionDetail(sessionId));
     });
 }
 

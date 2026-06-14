@@ -25,6 +25,7 @@ const ADMIN_REDIRECT_URI = `${BASE_URL}/auth/admin-callback`;
 const VERIFY_SCOPE = 'identify email connections guilds guilds.members.read guilds.join';
 const ADMIN_SCOPE = 'identify guilds';
 const CALLBACK_STATE_MAX_AGE_MS = 10 * 60 * 1000;
+const DISCORD_ID_RE = /^\d{17,22}$/;
 
 const PERMISSIONS = {
     ADMINISTRATOR: 0x8n,
@@ -63,6 +64,17 @@ function safeEqual(a, b) {
     const bb = Buffer.from(String(b || ''), 'utf8');
 
     return aa.length === bb.length && crypto.timingSafeEqual(aa, bb);
+}
+
+function normalizeDiscordId(value) {
+    const id = String(value || '').trim();
+    return DISCORD_ID_RE.test(id) ? id : null;
+}
+
+function adminGuildRedirectPath(guildId, canOpenGuild) {
+    if (!canOpenGuild) return '/guilds';
+    const safeGuildId = normalizeDiscordId(guildId);
+    return safeGuildId ? `/guild/${safeGuildId}` : '/guilds';
 }
 
 function signEncodedPayload(encodedPayload) {
@@ -1354,13 +1366,12 @@ router.get('/auth/admin-callback', async (req, res) => {
             canManage: g.isOwner === true || g.isAdmin === true
         }));
 
-        const requestedGuildId = /^\d{17,22}$/.test(String(parsed.guildId || ''))
-            ? String(parsed.guildId)
-            : null;
+        const requestedGuildId = normalizeDiscordId(parsed.guildId);
         const canOpenRequestedGuild = requestedGuildId &&
             manageableGuilds.some(g => String(g.id) === requestedGuildId);
+        const redirectPath = adminGuildRedirectPath(requestedGuildId, canOpenRequestedGuild);
 
-        return res.redirect(canOpenRequestedGuild ? `/guild/${requestedGuildId}` : '/guilds');
+        return res.redirect(redirectPath);
     } catch (err) {
         console.error('[ADMIN_OAUTH] callback failed:', JSON.stringify(sanitizeSideEffectError(err)));
         return res.redirect('/');

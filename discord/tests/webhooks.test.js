@@ -103,7 +103,7 @@ test("startup notice only includes dashboard and optional shadow portal links", 
     const notice = buildStartupNotice({
         clientTag: "Bot#0001",
         baseUrl: "https://example.com",
-        timestamp: 1781260000000
+        timestamp: Date.UTC(2026, 5, 12, 9, 6, 40)
     });
 
     assert.match(notice.content, /Bot พร้อมแล้ว/);
