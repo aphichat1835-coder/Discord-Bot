@@ -19,7 +19,15 @@
 process.env.ENCRYPTION_KEY = 'test-key-for-unit-tests-only';
 process.env.API_SECRET = 'test-api-secret';
 
-const { normalizeIP, getTrustedRequestIp, getRealIP } = require('../utils/ipUtils');
+const {
+    normalizeIP,
+    getTrustedRequestIp,
+    getRealIP,
+    getIpLookupConfig,
+    lookupIP,
+    isPrivateIP,
+    processIP
+} = require('../utils/ipUtils');
 
 // ---------------------------------------------------------------------------
 // Helper to build a mock Express request
@@ -203,6 +211,109 @@ describe('getRealIP', () => {
     test('returns normalized IP (strips ::ffff:)', () => {
         const req = makeReq({ ip: '::ffff:8.8.4.4' });
         expect(getRealIP(req)).toBe('8.8.4.4');
+    });
+});
+
+describe('private and reserved IP detection', () => {
+    test.each([
+        '10.0.0.1',
+        '100.64.0.1',
+        '169.254.1.1',
+        '172.16.0.1',
+        '192.0.2.10',
+        '198.51.100.10',
+        '203.0.113.10',
+        '224.0.0.1',
+        '240.0.0.1',
+        '2001:db8::1',
+        'ff02::1'
+    ])('%s is treated as private/reserved', ip => {
+        expect(isPrivateIP(ip)).toBe(true);
+    });
+
+    test('public IP remains lookup eligible', () => {
+        expect(isPrivateIP('8.8.8.8')).toBe(false);
+    });
+});
+
+describe('processIP risk flags', () => {
+    const oldFetch = global.fetch;
+    const oldLookupEnabled = process.env.IP_LOOKUP_ENABLED;
+
+    afterEach(() => {
+        global.fetch = oldFetch;
+        if (oldLookupEnabled === undefined) delete process.env.IP_LOOKUP_ENABLED;
+        else process.env.IP_LOOKUP_ENABLED = oldLookupEnabled;
+    });
+
+    test('returns concrete risk flags from lookup and headers', async () => {
+        process.env.IP_LOOKUP_ENABLED = 'true';
+        global.fetch = jest.fn(async () => ({
+            ok: true,
+            json: async () => ({
+                status: 'success',
+                country: 'United States',
+                countryCode: 'US',
+                isp: 'Example VPN Hosting',
+                org: 'Example Hosting',
+                as: 'AS123 Example',
+                proxy: true,
+                hosting: true,
+                vpn: true,
+                tor: false,
+                query: '8.8.8.8'
+            })
+        }));
+
+        const info = await processIP(makeReq({
+            ip: '8.8.8.8',
+            headers: {
+                'x-real-ip': '1.1.1.1'
+            }
+        }));
+
+        expect(info.riskFlags).toEqual(expect.arrayContaining([
+            'vpn',
+            'proxy',
+            'hosting',
+            'spoofed_header',
+            'xRealIp_conflicts_with_trusted_ip'
+        ]));
+        expect(info.riskScore).toBeGreaterThan(0);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// External IP lookup config
+// ---------------------------------------------------------------------------
+describe('IP lookup config', () => {
+    const oldEnabled = process.env.IP_LOOKUP_ENABLED;
+    const oldBaseUrl = process.env.IP_LOOKUP_API_BASE_URL;
+
+    afterEach(() => {
+        if (oldEnabled === undefined) delete process.env.IP_LOOKUP_ENABLED;
+        else process.env.IP_LOOKUP_ENABLED = oldEnabled;
+
+        if (oldBaseUrl === undefined) delete process.env.IP_LOOKUP_API_BASE_URL;
+        else process.env.IP_LOOKUP_API_BASE_URL = oldBaseUrl;
+    });
+
+    test('uses HTTPS default lookup base URL', () => {
+        delete process.env.IP_LOOKUP_API_BASE_URL;
+        const config = getIpLookupConfig();
+
+        expect(config.enabled).toBe(true);
+        expect(config.baseUrl.startsWith('https://')).toBe(true);
+    });
+
+    test('can disable external IP lookup', async () => {
+        process.env.IP_LOOKUP_ENABLED = 'false';
+
+        const lookup = await lookupIP('9.9.9.9');
+
+        expect(lookup.provider).toBe('disabled');
+        expect(lookup.status).toBe('lookup_disabled');
+        expect(lookup.query).toBe('9.9.9.9');
     });
 });
 

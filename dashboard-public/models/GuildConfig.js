@@ -1,5 +1,12 @@
 const mongoose = require('mongoose');
 
+const sensitiveAccessLogSchema = new mongoose.Schema({
+    accessedBy: String,
+    accessedAt: Number,
+    scope:      { type: [String], default: [] },
+    route:      String
+}, { _id: false, minimize: false });
+
 const panelSchema = new mongoose.Schema({
     content:        { type: String, default: '' },
     title:          String,
@@ -115,8 +122,12 @@ const schema = new mongoose.Schema({
             scope:      { type: [String], default: ['rawIp', 'email', 'connections', 'guilds'] },
             approvedBy: String,
             approvedAt: Number,
+            expiresAt:  Number,
             revokedBy:  String,
             revokedAt:  Number,
+            accessedBy: String,
+            accessedAt: Number,
+            accessLog:  { type: [sensitiveAccessLogSchema], default: [] },
             ownerNote:  { type: String, default: '' },
             updatedAt:  Number
         }

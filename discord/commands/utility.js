@@ -122,6 +122,14 @@ async function handleAnnounce(interaction) {
     const msgStr     = sanitizeUserMessage(interaction.options.getString("message"));
     const rawContent = interaction.options.getString("content");
     const content    = rawContent ? sanitizeUserMessage(rawContent) : null;
+    const allowMentions = interaction.options.getBoolean("allow_mentions") === true;
+
+    if (allowMentions && !interaction.member.permissions.has("ADMINISTRATOR") && !interaction.member.permissions.has("MANAGE_GUILD")) {
+        return interaction.reply({
+            content: `> ${config.emojis.no_entry} การเปิด mention ต้องมี Administrator หรือ Manage Server`,
+            ephemeral: true
+        });
+    }
 
     const embed = new MessageEmbed()
         .setColor(config.system.themeColors.primary)
@@ -131,7 +139,13 @@ async function handleAnnounce(interaction) {
         .setTimestamp();
 
     await safeDefer(interaction, { ephemeral: true });
-    await interaction.channel.send({ content: content || undefined, embeds: [embed] });
+    await interaction.channel.send({
+        content: content || undefined,
+        embeds: [embed],
+        allowedMentions: allowMentions
+            ? { parse: ["users", "roles", "everyone"] }
+            : { parse: [], repliedUser: false }
+    });
     sendUtilLog(interaction.guild, 'message', `> ${config.emojis.announce_icon} **/announce ถูกใช้**\n— **โดย:** <@${interaction.user.id}>\n— **หัวข้อ:** ${title}\n— **ห้อง:** <#${interaction.channel.id}>`).catch(() => {});
     return interaction.editReply({ content: `> ${config.emojis.success} ประกาศสำเร็จ` });
 }

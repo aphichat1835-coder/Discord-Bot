@@ -10,6 +10,26 @@ const MAX_BUTTONS_PER_ROW = 5;
 const MAX_ROWS            = 5;
 const MAX_ROLES           = MAX_BUTTONS_PER_ROW * MAX_ROWS; // 25
 
+function getBotMember(guild) {
+    return guild?.members?.me || guild?.me || guild?.members?.cache?.get(guild?.client?.user?.id);
+}
+
+function validateRoleChange(guild, member, role) {
+    if (!guild) return { ok: false, reason: 'ไม่พบเซิร์ฟเวอร์' };
+    if (!member?.roles?.cache) return { ok: false, reason: 'ไม่พบสมาชิก' };
+    if (!role) return { ok: false, reason: 'ไม่พบยศนี้' };
+
+    const botMember = getBotMember(guild);
+    if (!botMember) return { ok: false, reason: 'ไม่พบข้อมูลบอทในเซิร์ฟเวอร์' };
+    if (!botMember.permissions?.has?.('MANAGE_ROLES')) return { ok: false, reason: 'บอทไม่มีสิทธิ์ Manage Roles' };
+    if (role.managed) return { ok: false, reason: 'ยศนี้เป็น managed role' };
+    if (botMember.roles?.highest && role.position >= botMember.roles.highest.position) {
+        return { ok: false, reason: 'ยศสูงกว่าหรือเท่ากับยศสูงสุดของบอท' };
+    }
+
+    return { ok: true };
+}
+
 /**
  * สร้าง role button panel (หลายยศในข้อความเดียว)
  * @param {Object} options
@@ -94,23 +114,40 @@ async function handleRoleInteraction(interaction) {
 
         const added   = [];
         const removed = [];
+        const skipped = [];
+        const failed  = [];
 
         for (const rid of allPanelRoleIds) {
             const role = guild.roles.cache.get(rid);
-            if (!role) continue;
+            const check = validateRoleChange(guild, member, role);
+            if (!check.ok) {
+                skipped.push(`${role?.name || rid}: ${check.reason}`);
+                continue;
+            }
+
             const has = member.roles.cache.has(rid);
             if (selectedRoleIds.includes(rid) && !has) {
-                await member.roles.add(rid).catch(() => {});
-                added.push(role.name);
+                try {
+                    await member.roles.add(rid);
+                    added.push(role.name);
+                } catch (err) {
+                    failed.push(`${role.name}: ${err.message}`);
+                }
             } else if (!selectedRoleIds.includes(rid) && has) {
-                await member.roles.remove(rid).catch(() => {});
-                removed.push(role.name);
+                try {
+                    await member.roles.remove(rid);
+                    removed.push(role.name);
+                } catch (err) {
+                    failed.push(`${role.name}: ${err.message}`);
+                }
             }
         }
 
         const lines = [];
         if (added.length)   lines.push(`✅ เพิ่ม: ${added.join(', ')}`);
         if (removed.length) lines.push(`❌ ลบ: ${removed.join(', ')}`);
+        if (skipped.length) lines.push(`⚠️ ข้าม: ${skipped.slice(0, 6).join(' | ')}`);
+        if (failed.length)  lines.push(`🚫 ไม่สำเร็จ: ${failed.slice(0, 6).join(' | ')}`);
         if (!lines.length)  lines.push('ไม่มีการเปลี่ยนแปลง');
 
         return interaction.editReply({ content: lines.join('\n') });
@@ -122,6 +159,11 @@ async function toggleRole(interaction, member, guild, roleId) {
     if (!role) {
         return interaction.reply({ content: `> ❌ ไม่พบยศนี้`, ephemeral: true });
     }
+    const check = validateRoleChange(guild, member, role);
+    if (!check.ok) {
+        return interaction.reply({ content: `> ❌ จัดการยศไม่ได้: ${check.reason}`, ephemeral: true });
+    }
+
     try {
         const hasRole = member.roles.cache.has(roleId);
         if (hasRole) {
@@ -146,4 +188,4 @@ async function toggleRole(interaction, member, guild, roleId) {
     }
 }
 
-module.exports = { buildRolePanel, handleRoleInteraction, toggleRole };
+module.exports = { buildRolePanel, handleRoleInteraction, toggleRole, validateRoleChange };

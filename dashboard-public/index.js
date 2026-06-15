@@ -29,6 +29,8 @@ if (!process.env.API_SECRET && !process.env.INTERNAL_API_SECRET) {
     console.warn('[WARN] API_SECRET/INTERNAL_API_SECRET not set; internal API should not be exposed publicly.');
 }
 
+const IS_PRODUCTION = String(process.env.NODE_ENV || '').trim() === 'production';
+
 const express    = require('express');
 const mongoose   = require('mongoose');
 const session    = require('express-session');
@@ -81,7 +83,7 @@ app.use(session({
     cookie: {
         maxAge:   24 * 60 * 60 * 1000,
         httpOnly: true,
-        secure:   process.env.NODE_ENV === 'production',
+        secure:   IS_PRODUCTION,
         sameSite: 'lax'
     }
 }));

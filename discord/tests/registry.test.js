@@ -57,6 +57,14 @@ test("slash command definitions have stable required shape", () => {
     }
 });
 
+test("announce exposes safe mention opt-in", () => {
+    const announce = slashCommandsData.find(command => command.name === "announce");
+    const allowMentions = announce.options.find(option => option.name === "allow_mentions");
+
+    assert.equal(allowMentions.type, 5);
+    assert.equal(allowMentions.required, false);
+});
+
 test("slash command registry validation rejects empty or malformed payloads", () => {
     assert.throws(() => validateSlashCommandsData([]), /empty/);
     assert.throws(() => validateSlashCommandsData([{ name: "Bad Name", description: "ok" }]), /invalid slash-command name/);

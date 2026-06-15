@@ -2,6 +2,7 @@ const {
     normalizeSensitiveAccess,
     canViewSensitiveData,
     buildSensitiveAccessPatch,
+    buildSensitiveAccessAuditUpdate,
     redactSensitiveDiscordSnapshot,
     redactSensitiveIpInfo
 } = require('../utils/sensitiveAccess');
@@ -25,6 +26,7 @@ describe('sensitive data access helpers', () => {
         expect(approve['security.sensitiveDataAccess.enabled']).toBe(true);
         expect(approve['security.sensitiveDataAccess.approvedBy']).toBe('owner');
         expect(approve['security.sensitiveDataAccess.ownerNote']).toBe('ok');
+        expect(approve['security.sensitiveDataAccess.expiresAt']).toBeGreaterThan(Date.now());
 
         const revoke = buildSensitiveAccessPatch({
             enabled: false,
@@ -35,6 +37,32 @@ describe('sensitive data access helpers', () => {
         expect(revoke['security.sensitiveDataAccess.enabled']).toBe(false);
         expect(revoke['security.sensitiveDataAccess.revokedBy']).toBe('owner');
         expect(revoke['security.sensitiveDataAccess.ownerNote']).toBe('stop');
+        expect(revoke['security.sensitiveDataAccess.expiresAt']).toBe(null);
+    });
+
+    test('expired access no longer grants sensitive visibility', () => {
+        const security = {
+            sensitiveDataAccess: {
+                enabled: true,
+                expiresAt: Date.now() - 1000
+            }
+        };
+
+        expect(normalizeSensitiveAccess(security).enabled).toBe(true);
+        expect(canViewSensitiveData({ security })).toBe(false);
+    });
+
+    test('builds capped audit update for sensitive access views', () => {
+        const update = buildSensitiveAccessAuditUpdate({
+            actor: 'admin-user',
+            route: '/api/guild/:guildId/logs',
+            scope: ['rawIp']
+        });
+
+        expect(update.$set['security.sensitiveDataAccess.accessedBy']).toBe('admin-user');
+        expect(update.$set['security.sensitiveDataAccess.accessedAt']).toBeGreaterThan(0);
+        expect(update.$push['security.sensitiveDataAccess.accessLog'].$slice).toBe(-50);
+        expect(update.$push['security.sensitiveDataAccess.accessLog'].$each[0].scope).toEqual(['rawIp']);
     });
 
     test('redacts raw sensitive values until owner grants access', () => {

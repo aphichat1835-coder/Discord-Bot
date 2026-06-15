@@ -157,6 +157,22 @@ function safeRevealRequest(request) {
         approvedAt: raw.approvedAt || null,
         rejectedBy: raw.rejectedBy || null,
         rejectedAt: raw.rejectedAt || null,
+        viewedBy: raw.viewedBy || null,
+        viewedAt: raw.viewedAt || null,
+        viewCount: Number(raw.viewCount || 0),
+        accessLog: Array.isArray(raw.accessLog)
+            ? raw.accessLog.slice(-25).map(item => ({
+                action: item?.action || '',
+                actor: item?.actor || null,
+                viewedBy: item?.viewedBy || null,
+                viewedAt: item?.viewedAt || null,
+                guildId: item?.guildId || raw.guildId,
+                targetUserId: item?.targetUserId || raw.targetUserId,
+                verifyLogId: item?.verifyLogId || null,
+                reason: item?.reason || raw.reason || '',
+                ownerNote: item?.ownerNote || raw.ownerNote || ''
+            }))
+            : [],
         updatedAt: raw.updatedAt || null
     };
 }
@@ -447,7 +463,7 @@ router.post('/internal/guild/:guildId/sensitive-access/approve', async (req, res
     if (!checkAuth(req, res)) return;
 
     const { guildId } = req.params;
-    const { approvedBy, ownerNote, guildName } = req.body || {};
+    const { approvedBy, ownerNote, guildName, scope, expiresAt } = req.body || {};
 
     try {
         const config = await GuildConfig.findOneAndUpdate(
@@ -459,7 +475,9 @@ router.post('/internal/guild/:guildId/sensitive-access/approve', async (req, res
                     ...buildSensitiveAccessPatch({
                         enabled: true,
                         actor: approvedBy || 'owner-dashboard',
-                        ownerNote
+                        ownerNote,
+                        scope,
+                        expiresAt
                     })
                 }
             },
@@ -552,19 +570,33 @@ router.post('/internal/ip-reveal/:requestId/approve', async (req, res) => {
     const { approvedBy, ownerNote } = req.body || {};
 
     try {
-        const request = await IPRevealRequest.findById(requestId);
+        const now = Date.now();
+        const actor = String(approvedBy || 'owner').slice(0, 80) || 'owner';
+        const safeNote = String(ownerNote || '').trim().slice(0, 500);
+        const requestForLookup = await IPRevealRequest.findById(requestId).lean();
 
-        if (!request) {
+        if (!requestForLookup) {
             return res.status(404).json({
                 success: false,
                 error: 'ไม่พบคำขอ'
             });
         }
 
-        if (request.status !== 'pending' || Number(request.expiresAt || 0) <= Date.now()) {
-            request.status = request.status === 'pending' ? 'expired' : request.status;
-            request.updatedAt = Date.now();
-            await request.save();
+        if (requestForLookup.status !== 'pending' || Number(requestForLookup.expiresAt || 0) <= now) {
+            await IPRevealRequest.updateOne(
+                {
+                    _id: requestId,
+                    status: 'pending',
+                    expiresAt: { $lte: now }
+                },
+                {
+                    $set: {
+                        status: 'expired',
+                        updatedAt: now,
+                        ownerNote: 'expired automatically'
+                    }
+                }
+            );
             return res.status(409).json({
                 success: false,
                 error: 'คำขอนี้หมดอายุหรือถูกดำเนินการแล้ว'
@@ -572,11 +604,11 @@ router.post('/internal/ip-reveal/:requestId/approve', async (req, res) => {
         }
 
         const log = await VerifyLog.findOne({
-            guildId: request.guildId,
-            userId: request.targetUserId,
-            ...(request.verifyLogId ? { _id: request.verifyLogId } : {}),
+            guildId: requestForLookup.guildId,
+            userId: requestForLookup.targetUserId,
+            ...(requestForLookup.verifyLogId ? { _id: requestForLookup.verifyLogId } : {}),
             deletedAt: { $exists: false }
-        }).sort({ verifiedAt: -1, createdAt: -1, _id: -1 });
+        }).sort({ verifiedAt: -1, createdAt: -1, _id: -1 }).lean();
 
         if (!log?.ipInfo?.encryptedRawIp) {
             return res.status(404).json({
@@ -586,21 +618,79 @@ router.post('/internal/ip-reveal/:requestId/approve', async (req, res) => {
         }
 
         const rawIp = decryptIP(log.ipInfo.encryptedRawIp);
+        const verifyLogId = String(requestForLookup.verifyLogId || log._id || '');
+        const accessEntry = {
+            action: 'approve_view_raw_ip',
+            actor,
+            viewedBy: actor,
+            viewedAt: now,
+            guildId: requestForLookup.guildId,
+            targetUserId: requestForLookup.targetUserId,
+            verifyLogId,
+            reason: requestForLookup.reason || '',
+            ownerNote: safeNote
+        };
 
-        request.status = 'approved';
-        request.approvedBy = approvedBy || 'owner';
-        request.approvedAt = Date.now();
-        request.ownerNote = ownerNote || '';
-        request.updatedAt = Date.now();
+        const request = await IPRevealRequest.findOneAndUpdate(
+            {
+                _id: requestId,
+                status: 'pending',
+                expiresAt: { $gt: now }
+            },
+            {
+                $set: {
+                    status: 'approved',
+                    approvedBy: actor,
+                    approvedAt: now,
+                    viewedBy: actor,
+                    viewedAt: now,
+                    ownerNote: safeNote,
+                    updatedAt: now
+                },
+                $inc: {
+                    viewCount: 1
+                },
+                $push: {
+                    accessLog: {
+                        $each: [accessEntry],
+                        $slice: -25
+                    }
+                }
+            },
+            { new: true }
+        ).lean();
 
-        await request.save();
+        if (!request) {
+            await IPRevealRequest.updateOne(
+                {
+                    _id: requestId,
+                    status: 'pending',
+                    expiresAt: { $lte: Date.now() }
+                },
+                {
+                    $set: {
+                        status: 'expired',
+                        updatedAt: Date.now(),
+                        ownerNote: 'expired automatically'
+                    }
+                }
+            );
+            return res.status(409).json({
+                success: false,
+                error: 'คำขอนี้หมดอายุหรือถูกดำเนินการแล้ว'
+            });
+        }
 
         res.json({
             success: true,
-            requestId: String(request._id),
+            requestId: String(request._id || requestId),
             guildId: request.guildId,
             targetUserId: request.targetUserId,
-            verifyLogId: request.verifyLogId || String(log._id || ''),
+            verifyLogId,
+            approvedBy: request.approvedBy,
+            approvedAt: request.approvedAt,
+            viewedBy: request.viewedBy,
+            viewedAt: request.viewedAt,
             rawIp,
             ipInfo: {
                 country: log.ipInfo.country,
@@ -629,24 +719,51 @@ router.post('/internal/ip-reveal/:requestId/reject', async (req, res) => {
     const { rejectedBy, ownerNote } = req.body || {};
 
     try {
-        const request = await IPRevealRequest.findByIdAndUpdate(
-            requestId,
+        const now = Date.now();
+        const request = await IPRevealRequest.findOneAndUpdate(
+            {
+                _id: requestId,
+                status: 'pending',
+                expiresAt: { $gt: now }
+            },
             {
                 $set: {
                     status: 'rejected',
-                    rejectedBy: rejectedBy || 'owner',
-                    rejectedAt: Date.now(),
-                    ownerNote: ownerNote || '',
-                    updatedAt: Date.now()
+                    rejectedBy: String(rejectedBy || 'owner').slice(0, 80) || 'owner',
+                    rejectedAt: now,
+                    ownerNote: String(ownerNote || '').trim().slice(0, 500),
+                    updatedAt: now
                 }
             },
             { new: true }
         );
 
         if (!request) {
-            return res.status(404).json({
+            const exists = await IPRevealRequest.exists({ _id: requestId });
+            if (!exists) {
+                return res.status(404).json({
+                    success: false,
+                    error: 'ไม่พบคำขอ'
+                });
+            }
+
+            await IPRevealRequest.updateOne(
+                {
+                    _id: requestId,
+                    status: 'pending',
+                    expiresAt: { $lte: now }
+                },
+                {
+                    $set: {
+                        status: 'expired',
+                        updatedAt: now,
+                        ownerNote: 'expired automatically'
+                    }
+                }
+            );
+            return res.status(409).json({
                 success: false,
-                error: 'ไม่พบคำขอ'
+                error: 'คำขอนี้หมดอายุหรือถูกดำเนินการแล้ว'
             });
         }
 

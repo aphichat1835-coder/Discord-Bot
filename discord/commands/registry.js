@@ -91,7 +91,8 @@ const slashCommandsData = [
         options: [
             { type: 3, name: "title",   description: "หัวข้อประกาศ", required: true },
             { type: 3, name: "message", description: "เนื้อหาประกาศ", required: true },
-            { type: 3, name: "content", description: "ข้อความดิบนอก Embed (เช่น @everyone)", required: false }
+            { type: 3, name: "content", description: "ข้อความดิบนอก Embed (เช่น @everyone)", required: false },
+            { type: 5, name: "allow_mentions", description: "อนุญาตให้ content ping users/roles/everyone (ต้องมีสิทธิ์สูง)", required: false }
         ]
     },
 

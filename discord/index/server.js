@@ -40,6 +40,18 @@ function safeRedirectPath(value) {
     }
 }
 
+function hashAuditIp(ip) {
+    const raw = String(ip || "unknown");
+    const secret = auth.getApiSecret() || "dashboard-audit";
+    const hash = crypto
+        .createHmac("sha256", secret)
+        .update(raw)
+        .digest("hex")
+        .slice(0, 12);
+
+    return `ip#${hash}`;
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  🔌  REGISTER ALL API ROUTES
 // ════════════════════════════════════════════════════════════════════════════
@@ -97,16 +109,20 @@ function registerRoutes({
 
         app._pinAttempts.delete(ip);
 
+        if (!auth.getApiSecret()) {
+            return res.status(503).send("API_SECRET is required for dashboard auth.");
+        }
+
         const token    = auth.makeToken();
-        const isProd   = process.env.NODE_ENV === "production";
+        const isProd   = auth.isProduction();
         const safePath = safeRedirectPath(next);
 
-        res.setHeader("Set-Cookie", auth.setCookieHeader(token, isProd));
+        res.setHeader("Set-Cookie", auth.setSessionCookieHeaders(token, isProd));
         res.redirect(safePath);
     });
 
     app.get("/auth/logout", (req, res) => {
-        res.setHeader("Set-Cookie", `${auth.COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly`);
+        res.setHeader("Set-Cookie", auth.clearSessionCookieHeaders(auth.isProduction()));
         res.redirect("/auth/pin");
     });
 
@@ -134,7 +150,7 @@ function registerRoutes({
 
         return rateLimiter(req, res, () => {
             if (!checkAuth(req, res)) return;
-            next();
+            return auth.requireCsrf(req, res, next);
         });
     });
 
@@ -311,7 +327,8 @@ function registerRoutes({
                 });
             }
 
-            const toggleKey   = `${req.ip}:${commandName}`;
+            const auditIp     = hashAuditIp(req.ip);
+            const toggleKey   = `${auditIp}:${commandName}`;
             const lastToggle  = toggleCooldowns.get(toggleKey) || 0;
             const sinceToggle = Date.now() - lastToggle;
 
@@ -340,12 +357,12 @@ function registerRoutes({
             commandAuditLog.push({
                 commandName,
                 action: nowEnabled ? "enabled" : "disabled",
-                ip: req.ip,
+                ip: auditIp,
                 timestamp: Date.now()
             });
 
             sendLogWebhook({
-                content: `⚡ \`/${commandName}\` ถูก**${nowEnabled ? "เปิด ✅" : "ปิด ❌"}** โดย IP \`${req.ip}\``
+                content: `⚡ \`/${commandName}\` ถูก**${nowEnabled ? "เปิด ✅" : "ปิด ❌"}** โดย \`${auditIp}\``
             }).catch(() => {});
 
             res.json({

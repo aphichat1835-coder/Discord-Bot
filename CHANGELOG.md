@@ -15,6 +15,10 @@
 - Added Service 1 webhook helper tests and centralized webhook routing helpers.
 - Added per-guild owner approval gating for guild-admin sensitive verification data visibility.
 - Added Dashboard Public sensitive access helper tests.
+- Added owner dashboard CSRF helpers/tests for signed-cookie POST APIs.
+- Added sensitive access expiry/access audit support and raw IP reveal view audit metadata.
+- Added risk flag coverage for IP lookup/proxy/VPN/TOR/hosting/spoof signals and broader private/reserved IP detection tests.
+- Added role button and direct-role hierarchy guard tests.
 
 ### Changed
 
@@ -42,6 +46,16 @@
 - Added Dashboard Public lifecycle maintenance for expired reveal requests and retention modes.
 - Expanded member data deletion to cover guild-linked OAuth and IP identity data without deleting unrelated guild data.
 - Expanded JS syntax validation scripts to cover all applicable Service 1 and Dashboard Public JavaScript files.
+- Pinned Render and package engine runtime to Node.js 20 LTS to avoid unsupported current Node releases during deploy.
+- Addressed PR #37 post-merge SonarCloud findings by removing duplicated Dashboard Public safe logger logic and keeping Dashboard Public on the shared Service 1 safe logger implementation.
+- Reworked shared log redaction to avoid hotspot-prone regular expressions while preserving webhook URL, MongoDB URI, Discord token, IP, email, and secret-key redaction coverage.
+- Cleared the latest SonarCloud quality gate issues, security hotspots, and new-code duplication findings after the webhook/dashboard/security cleanup work.
+- Removed owner dashboard auth fallback secrets, hardened production detection/cookie parsing/PIN attribute escaping, and redacted command-toggle IP logging.
+- Made raw IP reveal approval/rejection atomic for pending, unexpired requests and audited raw IP views.
+- Made Dashboard Public IP lookup configurable and disableable, with an HTTPS default provider base URL.
+- Hardened role button/select menu role assignment with Manage Roles, managed-role, and role hierarchy checks plus visible per-role failures.
+- Hardened anti-spam/anti-raid ban and link-filter deletion permission checks.
+- Added safe `/announce` mention opt-in with `allow_mentions=false` by default.
 
 ### Notes
 

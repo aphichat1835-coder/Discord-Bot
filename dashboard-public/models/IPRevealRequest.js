@@ -1,5 +1,17 @@
 const mongoose = require('mongoose');
 
+const revealAccessLogSchema = new mongoose.Schema({
+    action:       String,
+    actor:        String,
+    viewedBy:     String,
+    viewedAt:     Number,
+    guildId:      String,
+    targetUserId: String,
+    verifyLogId:  String,
+    reason:       String,
+    ownerNote:    String
+}, { _id: false, minimize: false });
+
 const schema = new mongoose.Schema({
     guildId: {
         type: String,
@@ -40,6 +52,10 @@ const schema = new mongoose.Schema({
 
     approvedAt: Number,
     rejectedAt: Number,
+    viewedBy:   String,
+    viewedAt:   Number,
+    viewCount:  { type: Number, default: 0 },
+    accessLog:  { type: [revealAccessLogSchema], default: [] },
 
     ownerNote: String,
 

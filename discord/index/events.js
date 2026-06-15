@@ -13,6 +13,39 @@ const { IDS, PREFIXES } = require("../commands/customIds");
 const { isVoicePanelControl } = require("../guards/commandGuards");
 const { sendLogWebhook } = require("../core/webhooks");
 
+function getGuildBotMember(guild) {
+    return guild?.members?.me || guild?.me || guild?.members?.cache?.get(guild?.client?.user?.id);
+}
+
+function canDeleteMessage(message) {
+    const botMember = getGuildBotMember(message.guild);
+    const perms = message.channel?.permissionsFor?.(botMember);
+    return message.deletable === true && perms?.has?.("MANAGE_MESSAGES");
+}
+
+async function deleteMessageWithLog(message, scope = "message-delete") {
+    if (!canDeleteMessage(message)) {
+        console.warn(`[PROTECTION] Cannot delete message for ${scope}: missing MANAGE_MESSAGES or message is not deletable`);
+        return false;
+    }
+
+    try {
+        await message.delete();
+        return true;
+    } catch (err) {
+        console.warn(`[PROTECTION] Failed to delete message for ${scope}: ${err.message}`);
+        return false;
+    }
+}
+
+function canBanMember(member) {
+    const botMember = getGuildBotMember(member?.guild);
+    return !!(
+        botMember?.permissions?.has?.("BAN_MEMBERS") &&
+        member?.bannable === true
+    );
+}
+
 async function deleteRaidEvidenceSafely(message, maxMessages = 5) {
     try {
         const fetched = await message.channel.messages.fetch({ limit: Math.max(maxMessages, 1) }).catch(() => null);
@@ -27,10 +60,10 @@ async function deleteRaidEvidenceSafely(message, maxMessages = 5) {
         const targets = ownedMessages.length > 0 ? ownedMessages : [message];
 
         for (const target of targets) {
-            await target.delete().catch(() => {});
+            await deleteMessageWithLog(target, "anti-raid");
         }
     } catch {
-        await message.delete().catch(() => {});
+        await deleteMessageWithLog(message, "anti-raid-fallback");
     }
 }
 
@@ -81,8 +114,10 @@ function register({
                         await deleteRaidEvidenceSafely(message, 5);
                         if (result.action === 'timeout' && message.member.manageable) {
                             await message.member.timeout((result.minutes || 10) * 60000, result.reason);
-                        } else if (result.action === 'ban' && message.guild.members.me.permissions.has('BAN_MEMBERS')) {
+                        } else if (result.action === 'ban' && canBanMember(message.member)) {
                             await message.member.ban({ reason: result.reason });
+                        } else if (result.action === 'ban') {
+                            console.warn(`[PROTECTION] Cannot ban anti-raid member ${message.author.id}: missing BAN_MEMBERS or member is not bannable`);
                         } else if (result.action === 'kick' && message.member.kickable) {
                             await message.member.kick(result.reason);
                         }
@@ -119,13 +154,15 @@ function register({
             const spamResult = protection.checkAntiSpam(message.member, spamHist, pConf);
             if (spamResult) {
                 try {
-                    await message.delete().catch(() => {});
+                    await deleteMessageWithLog(message, "anti-spam");
                     if (spamResult.action === 'timeout' && message.member.manageable) {
                         await message.member.timeout(spamResult.minutes * 60000, spamResult.reason);
                     } else if (spamResult.action === 'kick' && message.member.kickable) {
                         await message.member.kick(spamResult.reason);
-                    } else if (spamResult.action === 'ban') {
+                    } else if (spamResult.action === 'ban' && canBanMember(message.member)) {
                         await message.member.ban({ reason: spamResult.reason });
+                    } else if (spamResult.action === 'ban') {
+                        console.warn(`[ANTI-SPAM] Cannot ban member ${message.author.id}: missing BAN_MEMBERS or member is not bannable`);
                     }
                     spamTracking.delete(spamKey);
                 } catch (e) { console.error(`[ANTI-SPAM] ⚠️ ${e.message}`); }
@@ -137,7 +174,7 @@ function register({
         if (pConf?.linkFilter?.enabled) {
             const linkResult = protection.checkLinkFilter(message, pConf);
             if (linkResult) {
-                message.delete().catch(() => {});
+                await deleteMessageWithLog(message, "link-filter");
                 message.channel.send({
                     content: `> 🔗 <@${message.author.id}> ลิงก์ถูกบล็อกโดยระบบ`
                 }).then(m => setTimeout(() => m.delete().catch(() => {}), 5000)).catch(() => {});

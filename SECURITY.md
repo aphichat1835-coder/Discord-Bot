@@ -26,6 +26,7 @@ Shared/core variables:
 
 ```txt
 NODE_ENV
+NODE_VERSION
 MONGO_URI
 ENCRYPTION_KEY
 API_SECRET
@@ -72,6 +73,8 @@ STORE_OAUTH_TOKENS
 TRUST_PROXY
 TRUST_PROXY_HOPS
 ENABLE_CF_IP_HEADER
+IP_LOOKUP_ENABLED
+IP_LOOKUP_API_BASE_URL
 ```
 
 Compatibility/fallback names may also appear in code, such as `TOKEN`, `BOT_TOKEN`, or `DISCORD_BOT_TOKEN`. Do not add new secret names without documenting them in `.env.example`, the active architecture reference, and this file.
@@ -85,6 +88,8 @@ Compatibility/fallback names may also appear in code, such as `TOKEN`, `BOT_TOKE
 - Do not commit the PIN.
 - Do not weaken cookie, PIN, or auth behavior during dashboard changes.
 - Keep owner-only actions guarded and rate-limited.
+- Owner dashboard signed-cookie POST APIs use CSRF protection for browser cookie requests.
+- Server-side API-secret calls are still allowed for internal compatibility.
 
 ### API secret
 
@@ -145,9 +150,14 @@ Guild admin access to collected sensitive verification details is gated per guil
 
 - Raw IP, email, connection lists, and mutual guild lists are hidden by default.
 - The bot owner can approve a guild's sensitive data access from the owner verification dashboard.
+- Approved sensitive access is time-bound with `expiresAt`.
+- Access views record `accessedAt`, `accessedBy`, route, and scope metadata.
 - The bot owner can revoke that access later.
 - This gate does not remove or redesign collection logic; it controls normal guild dashboard visibility.
 - Counts and risk summaries may remain visible so admins can operate moderation workflows without exposing raw sensitive values.
+- External IP lookup can be disabled with `IP_LOOKUP_ENABLED=false`.
+- `IP_LOOKUP_API_BASE_URL` controls the lookup provider URL and defaults to an HTTPS endpoint.
+- Keep `ENABLE_CF_IP_HEADER=false` unless the app is reachable only through trusted Cloudflare forwarding; direct public traffic can spoof `cf-connecting-ip`.
 
 ## Raw IP Reveal Workflow
 
@@ -162,6 +172,7 @@ approved data access should be minimal, audited, and time-bound
 ```
 
 Do not bypass this flow. Do not expose raw IPs directly in normal public or guild admin responses.
+Approving a raw IP reveal must atomically claim a pending, unexpired request and log who approved and viewed the raw IP.
 
 ## Discord Role Assignment
 

@@ -26,6 +26,7 @@ const { normalizeVerificationConfig } = require("../utils/verifyMode");
 const {
     normalizeSensitiveAccess,
     canViewSensitiveData,
+    buildSensitiveAccessAuditUpdate,
     redactSensitiveDiscordSnapshot,
     redactSensitiveIpInfo
 } = require("../utils/sensitiveAccess");
@@ -46,6 +47,25 @@ function getAdminGuilds(req) {
     if (Array.isArray(req.session?.adminGuilds)) return req.session.adminGuilds;
     if (Array.isArray(req.session?.adminUser?.adminGuilds)) return req.session.adminUser.adminGuilds;
     return [];
+}
+
+function getAdminId(req) {
+    const user = req.session?.adminUser || {};
+    return user.id || user.userId || user.discordId || "guild-admin";
+}
+
+async function recordSensitiveAccess(guildId, req, route) {
+    try {
+        await GuildConfig.updateOne(
+            { guildId },
+            buildSensitiveAccessAuditUpdate({
+                actor: getAdminId(req),
+                route
+            })
+        );
+    } catch (err) {
+        console.warn("[GUILD-DASHBOARD] sensitive access audit failed:", err?.message || err);
+    }
 }
 
 function normalizeGuild(guild = {}) {
@@ -603,6 +623,9 @@ router.get("/api/guild/:guildId/overview", requireAdmin, requireGuildAdmin, asyn
                 .lean()
         ]);
         const canViewSensitive = canViewSensitiveData(config);
+        if (canViewSensitive) {
+            await recordSensitiveAccess(guildId, req, "/api/guild/:guildId/overview");
+        }
         const recentMembers = await buildRecentMembers(guildId, 8, { canViewSensitive });
 
         res.json({

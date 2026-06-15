@@ -29,6 +29,8 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: NODE_VERSION
+        value: "20.19.4"
       - key: MONGO_URI
         sync: false
       - key: TOKEN_MANAGER
@@ -76,6 +78,8 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: NODE_VERSION
+        value: "20.19.4"
       - key: MONGO_URI
         sync: false
       - key: TOKEN_MANAGER
