@@ -91,9 +91,52 @@ const auditStats = {
 };
 const warnThrottles = new Map();
 
+function isTokenChar(char) {
+    return !!char && (
+        (char >= "A" && char <= "Z") ||
+        (char >= "a" && char <= "z") ||
+        (char >= "0" && char <= "9") ||
+        char === "_" ||
+        char === "-"
+    );
+}
+
+function readTokenSegment(text, start) {
+    let end = start;
+    while (end < text.length && isTokenChar(text[end])) end++;
+    return {
+        value: text.slice(start, end),
+        end
+    };
+}
+
+function redactDiscordTokenLikeValues(input) {
+    const text = String(input || "");
+    let output = "";
+    let index = 0;
+
+    while (index < text.length) {
+        const first = readTokenSegment(text, index);
+        const secondStart = first.end + 1;
+        const second = text[first.end] === "." ? readTokenSegment(text, secondStart) : null;
+        const thirdStart = second ? second.end + 1 : -1;
+        const third = second && text[second.end] === "." ? readTokenSegment(text, thirdStart) : null;
+
+        if (first.value.length >= 24 && second?.value.length >= 6 && third?.value.length >= 20) {
+            output += "[REDACTED_TOKEN]";
+            index = third.end;
+            continue;
+        }
+
+        output += text[index];
+        index++;
+    }
+
+    return output;
+}
+
 function safeAuditError(err) {
-    return String(err?.message || err?.name || err || "unknown")
-        .replace(/[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{20,}/g, "[REDACTED_TOKEN]")
+    return redactDiscordTokenLikeValues(err?.message || err?.name || err || "unknown")
         .slice(0, 240);
 }
 

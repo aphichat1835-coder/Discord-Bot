@@ -28,6 +28,15 @@ function getIpLookupConfig() {
     };
 }
 
+function trimTrailingSlashes(value) {
+    const text = String(value || '');
+    let end = text.length;
+
+    while (end > 0 && text[end - 1] === '/') end--;
+
+    return text.slice(0, end);
+}
+
 function firstHeaderValue(value) {
     if (!value) return null;
     if (Array.isArray(value)) return value[0] || null;
@@ -416,7 +425,7 @@ async function lookupWithIpApi(ip) {
 
     const endpoint = config.baseUrl.includes('{ip}')
         ? config.baseUrl.replace('{ip}', encodeURIComponent(ip))
-        : `${config.baseUrl.replace(/\/+$/, '')}/${encodeURIComponent(ip)}`;
+        : `${trimTrailingSlashes(config.baseUrl)}/${encodeURIComponent(ip)}`;
     const url = new URL(endpoint);
     url.searchParams.set('fields', fields);
 
