@@ -8,7 +8,7 @@ This is the implementation-backed architecture reference for the Phomueangtai Pe
 
 ```txt
 Project type: Personal Multi-Tool Discord Bot
-Runtime: Node.js 20 LTS
+Runtime: Node.js 24
 Discord library: discord.js v13
 Database: MongoDB / Mongoose
 Web framework: Express

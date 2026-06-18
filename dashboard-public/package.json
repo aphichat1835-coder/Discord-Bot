@@ -12,7 +12,7 @@
     "test": "jest --testPathPattern=tests/"
   },
   "engines": {
-    "node": "20.x"
+    "node": "24.x"
   },
   "dependencies": {
     "connect-mongo": "^5.1.0",

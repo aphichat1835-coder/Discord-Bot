@@ -50,7 +50,7 @@
 - Added Dashboard Public lifecycle maintenance for expired reveal requests and retention modes.
 - Expanded member data deletion to cover guild-linked OAuth and IP identity data without deleting unrelated guild data.
 - Expanded JS syntax validation scripts to cover all applicable Service 1 and Dashboard Public JavaScript files.
-- Pinned Render and package engine runtime to Node.js 20 LTS to avoid unsupported current Node releases during deploy.
+- Pinned Render and package engine runtime to Node.js 24 to match the current project target.
 - Addressed PR #37 post-merge SonarCloud findings by removing duplicated Dashboard Public safe logger logic and keeping Dashboard Public on the shared Service 1 safe logger implementation.
 - Reworked shared log redaction to avoid hotspot-prone regular expressions while preserving webhook URL, MongoDB URI, Discord token, IP, email, and secret-key redaction coverage.
 - Cleared the latest SonarCloud quality gate issues, security hotspots, and new-code duplication findings after the webhook/dashboard/security cleanup work.

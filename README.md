@@ -1,6 +1,6 @@
 # Phomueangtai Personal Multi-Tool Discord Bot
 
-This repository contains a personal multi-tool Discord bot with two Node.js services and shared MongoDB persistence. It is not a verification-only bot. The supported deployment runtime is Node.js 20 LTS.
+This repository contains a personal multi-tool Discord bot with two Node.js services and shared MongoDB persistence. It is not a verification-only bot. The supported deployment runtime is Node.js 24.
 
 ## What This Project Includes
 
