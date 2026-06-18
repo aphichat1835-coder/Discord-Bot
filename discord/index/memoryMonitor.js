@@ -34,6 +34,92 @@ function getMemoryMonitorConfig() {
     };
 }
 
+function buildMemorySnapshot({ voiceWorker, sessionManager, auditLogger }) {
+    const mem = process.memoryUsage();
+    const heapUsed = mb(mem.heapUsed);
+    const heapTotal = mb(mem.heapTotal);
+    const rss = mb(mem.rss);
+    const external = mb(mem.external);
+    const diff = lastHeapUsed ? Math.round((heapUsed - lastHeapUsed) * 10) / 10 : 0;
+    const natural = voiceWorker?.getNaturalSettings?.();
+    const autoDeaf = voiceWorker?.getAutoDeafSettings?.();
+    const workerDiagnostics = voiceWorker?.getWorkerDiagnostics?.();
+    const auditStats = auditLogger?.getAuditStats?.();
+
+    lastHeapUsed = heapUsed;
+
+    return {
+        heapUsed,
+        heapTotal,
+        rss,
+        external,
+        diff,
+        sessions: sessionManager?.getAllSessions?.()?.size ?? 0,
+        clientPool: voiceWorker?.getClientPoolSize?.() ?? 0,
+        natural,
+        autoDeaf,
+        workerDiagnostics,
+        auditStats,
+        criticalCount,
+        config: getMemoryMonitorConfig(),
+        at: Date.now()
+    };
+}
+
+function logMemorySnapshot(snapshot) {
+    console.log(
+        `[MEMORY] heap=${snapshot.heapUsed}/${snapshot.heapTotal}MB rss=${snapshot.rss}MB ` +
+        `external=${snapshot.external}MB diff=${snapshot.diff}MB ` +
+        `sessions=${snapshot.sessions} clientPool=${snapshot.clientPool} ` +
+        `naturalTimers=${snapshot.natural?.activeTimers ?? "-"} ` +
+        `autoDeafTimers=${snapshot.autoDeaf?.activeTimers ?? "-"} ` +
+        `worker=${snapshot.workerDiagnostics ? JSON.stringify(snapshot.workerDiagnostics) : "-"} ` +
+        `audit=${snapshot.auditStats ? JSON.stringify(snapshot.auditStats) : "-"}`
+    );
+}
+
+function updateCriticalCount(heapUsed, monitorConfig) {
+    if (heapUsed > monitorConfig.criticalMb) {
+        criticalCount += 1;
+        console.error(`[MEMORY] 🚨 Heap critical: ${heapUsed}MB (${criticalCount}/${monitorConfig.criticalRounds})`);
+        return;
+    }
+
+    criticalCount = 0;
+}
+
+async function runEmergencyCleanup({ monitorConfig, voiceWorker, sessionManager, system }) {
+    emergencyCleanupRunning = true;
+    console.error(`[MEMORY] 🚨 Critical memory sustained. Mode=${monitorConfig.criticalMode}`);
+
+    const shouldExit = monitorConfig.criticalMode !== "cleanup_only";
+    const forceExitTimeout = setTimeout(() => {
+        if (shouldExit) {
+            console.error("[MEMORY] 💀 Force-exit timeout reached. Exiting immediately.");
+            process.exit(1);
+        }
+        console.error("[MEMORY] ⚠️ Cleanup-only timeout reached. Keeping process alive.");
+    }, 10000);
+
+    try {
+        if (shouldExit) system?.markAppShuttingDown?.();
+        voiceWorker?.setShuttingDown?.(true);
+        await voiceWorker?.pauseAll?.();
+        await sessionManager?.saveDatabase?.();
+    } catch (e) {
+        console.error(`[MEMORY] Emergency cleanup failed: ${e.message}`);
+    } finally {
+        clearTimeout(forceExitTimeout);
+        if (monitorConfig.criticalMode === "cleanup_only") {
+            emergencyCleanupRunning = false;
+            criticalCount = 0;
+            voiceWorker?.setShuttingDown?.(false);
+        } else {
+            process.exit(1);
+        }
+    }
+}
+
 function startMemoryMonitor({
     intervalMs = 60000,
     voiceWorker,
@@ -50,87 +136,23 @@ function startMemoryMonitor({
     memoryTimer = setInterval(async () => {
         try {
             if (system?.isShuttingDown?.()) return;
-            const monitorConfig = getMemoryMonitorConfig();
+            lastSnapshot = buildMemorySnapshot({ voiceWorker, sessionManager, auditLogger });
+            logMemorySnapshot(lastSnapshot);
 
-            const mem = process.memoryUsage();
-            const heapUsed = mb(mem.heapUsed);
-            const heapTotal = mb(mem.heapTotal);
-            const rss = mb(mem.rss);
-            const external = mb(mem.external);
-            const diff = lastHeapUsed ? Math.round((heapUsed - lastHeapUsed) * 10) / 10 : 0;
-            lastHeapUsed = heapUsed;
-
-            const sessions = sessionManager?.getAllSessions?.()?.size ?? 0;
-            const clientPool = voiceWorker?.getClientPoolSize?.() ?? 0;
-            const natural = voiceWorker?.getNaturalSettings?.();
-            const autoDeaf = voiceWorker?.getAutoDeafSettings?.();
-            const workerDiagnostics = voiceWorker?.getWorkerDiagnostics?.();
-            const auditStats = auditLogger?.getAuditStats?.();
-            lastSnapshot = {
-                heapUsed,
-                heapTotal,
-                rss,
-                external,
-                diff,
-                sessions,
-                clientPool,
-                workerDiagnostics,
-                auditStats,
-                criticalCount,
-                config: monitorConfig,
-                at: Date.now()
-            };
-
-            console.log(
-                `[MEMORY] heap=${heapUsed}/${heapTotal}MB rss=${rss}MB external=${external}MB diff=${diff}MB ` +
-                `sessions=${sessions} clientPool=${clientPool} ` +
-                `naturalTimers=${natural?.activeTimers ?? "-"} autoDeafTimers=${autoDeaf?.activeTimers ?? "-"} ` +
-                `worker=${workerDiagnostics ? JSON.stringify(workerDiagnostics) : "-"} ` +
-                `audit=${auditStats ? JSON.stringify(auditStats) : "-"}`
-            );
-
-            if (heapUsed > monitorConfig.warnMb) {
-                console.warn(`[MEMORY] ⚠️ Heap high: ${heapUsed}MB`);
+            if (lastSnapshot.heapUsed > lastSnapshot.config.warnMb) {
+                console.warn(`[MEMORY] ⚠️ Heap high: ${lastSnapshot.heapUsed}MB`);
                 voiceWorker?.cleanupVolatileState?.();
             }
 
-            if (heapUsed > monitorConfig.criticalMb) {
-                criticalCount += 1;
-                console.error(`[MEMORY] 🚨 Heap critical: ${heapUsed}MB (${criticalCount}/${monitorConfig.criticalRounds})`);
-            } else {
-                criticalCount = 0;
-            }
+            updateCriticalCount(lastSnapshot.heapUsed, lastSnapshot.config);
 
-            if (criticalCount >= monitorConfig.criticalRounds && !emergencyCleanupRunning) {
-                emergencyCleanupRunning = true;
-                console.error(`[MEMORY] 🚨 Critical memory sustained. Mode=${monitorConfig.criticalMode}`);
-
-                const shouldExit = monitorConfig.criticalMode !== "cleanup_only";
-                const forceExitTimeout = setTimeout(() => {
-                    if (shouldExit) {
-                        console.error("[MEMORY] 💀 Force-exit timeout reached. Exiting immediately.");
-                        process.exit(1);
-                    }
-                    console.error("[MEMORY] ⚠️ Cleanup-only timeout reached. Keeping process alive.");
-                }, 10000);
-
-                try {
-                    if (shouldExit) system?.markAppShuttingDown?.();
-                    voiceWorker?.setShuttingDown?.(true);
-                    await voiceWorker?.pauseAll?.();
-                    await sessionManager?.saveDatabase?.();
-                } catch (e) {
-                    console.error(`[MEMORY] Emergency cleanup failed: ${e.message}`);
-                } finally {
-                    clearTimeout(forceExitTimeout);
-                    if (monitorConfig.criticalMode === "cleanup_only") {
-                        emergencyCleanupRunning = false;
-                        criticalCount = 0;
-                        voiceWorker?.setShuttingDown?.(false);
-                    } else {
-                        process.exit(1);
-                    }
-                }
+            if (criticalCount >= lastSnapshot.config.criticalRounds && !emergencyCleanupRunning) {
+                await runEmergencyCleanup({
+                    monitorConfig: lastSnapshot.config,
+                    voiceWorker,
+                    sessionManager,
+                    system
+                });
             }
         } catch (e) {
             console.error(`[MEMORY] Monitor failed: ${e.message}`);

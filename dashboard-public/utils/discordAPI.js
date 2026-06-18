@@ -15,6 +15,7 @@
 const { encryptToken, decryptToken } = require("./crypto");
 
 const BASE = "https://discord.com/api/v10";
+const DISCORD_API_ORIGIN = new URL(BASE).origin;
 
 const PERMISSIONS = Object.freeze({
     VIEW_CHANNEL: 1n << 10n,
@@ -93,9 +94,21 @@ function parseRetryAfterMs(res) {
     return null;
 }
 
+function normalizeDiscordApiUrl(input) {
+    const url = input instanceof URL ? input : new URL(String(input || ""), BASE);
+
+    if (url.origin !== DISCORD_API_ORIGIN || !url.pathname.startsWith("/api/")) {
+        throw new Error("Blocked non-Discord API URL");
+    }
+
+    return url;
+}
+
 async function fetchWithRetry(url, options = {}) {
-    const attempts = Math.max(1, Number(options.retries || 3) || 3);
-    const timeoutMs = Math.max(1000, Number(options.timeoutMs || 10000) || 10000);
+    const { retries, timeoutMs: rawTimeoutMs, label, ...fetchOptions } = options;
+    const endpoint = normalizeDiscordApiUrl(url);
+    const attempts = Math.max(1, Number(retries || 3) || 3);
+    const timeoutMs = Math.max(1000, Number(rawTimeoutMs || 10000) || 10000);
     let lastError = null;
 
     for (let attempt = 1; attempt <= attempts; attempt++) {
@@ -103,9 +116,9 @@ async function fetchWithRetry(url, options = {}) {
         const timer = setTimeout(() => controller.abort(), timeoutMs);
 
         try {
-            const res = await fetch(url, {
-                ...options,
-                signal: options.signal || controller.signal
+            const res = await fetch(endpoint.href, {
+                ...fetchOptions,
+                signal: fetchOptions.signal || controller.signal
             });
 
             if ((res.status === 429 || res.status >= 500) && attempt < attempts) {

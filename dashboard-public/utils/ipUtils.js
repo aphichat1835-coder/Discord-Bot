@@ -8,6 +8,7 @@ const IP_LOOKUP_CACHE_MAX = 5000;
 const IP_LOOKUP_CIRCUIT_FAIL_THRESHOLD = Math.max(1, Number(process.env.IP_LOOKUP_CIRCUIT_FAIL_THRESHOLD || 10) || 10);
 const IP_LOOKUP_CIRCUIT_OPEN_MS = Math.max(10000, Number(process.env.IP_LOOKUP_CIRCUIT_OPEN_MS || 5 * 60 * 1000) || 5 * 60 * 1000);
 const DEVICE_FINGERPRINT_VERSION = 1;
+const IPV4_MASK_ALL = 2 ** 32 - 1;
 const DEFAULT_IP_LOOKUP_API_BASE_URL = 'https://ip-api.com/json';
 const lookupCache = new Map();
 const lookupCircuit = {
@@ -136,7 +137,7 @@ function isIpv4InCidr(ip, base, bits) {
     const value = ipv4ToInt(ip);
     const baseValue = ipv4ToInt(base);
     if (value === null || baseValue === null) return false;
-    const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
+    const mask = bits === 0 ? 0 : (IPV4_MASK_ALL << (32 - bits)) >>> 0;
     return (value & mask) === (baseValue & mask);
 }
 

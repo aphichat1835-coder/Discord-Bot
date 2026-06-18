@@ -359,6 +359,67 @@ function findExistingChannelForRestore(guild, cData, parentId) {
     };
 }
 
+function shouldSkipRestoreRole(roleData) {
+    return roleData.managed || roleData.name === config.roles.adminName || roleData.name === config.roles.userName;
+}
+
+function planRestoreRole(guild, roleData, roleIdMap, plan) {
+    if (shouldSkipRestoreRole(roleData)) {
+        plan.rolesSkipped++;
+        return;
+    }
+
+    let existingRole = findUniqueByName(guild.roles.cache, r => r.name === roleData.name);
+    if (roleData.name === "@everyone") existingRole = guild.roles.everyone;
+
+    if (!existingRole && guild.roles.cache.filter(r => r.name === roleData.name).size > 1) {
+        plan.rolesAmbiguous++;
+        return;
+    }
+
+    if (!existingRole) plan.rolesToCreate++;
+    if (existingRole && roleData.id) roleIdMap.set(roleData.id, existingRole.id);
+}
+
+function planRestoreCategory(guild, channelData, categoryIdMap, plan) {
+    const found = findExistingChannelForRestore(guild, channelData);
+
+    if (found.ambiguous) {
+        plan.channelsAmbiguous++;
+    } else if (found.exists) {
+        if (channelData.id) categoryIdMap.set(channelData.id, found.exists.id);
+    } else {
+        plan.channelsToCreate++;
+    }
+}
+
+function resolveRestoreOverwriteTarget(guild, overwrite, roleIdMap, oldGuildId) {
+    let targetId = roleIdMap.get(overwrite.id);
+    if (overwrite.id === oldGuildId) targetId = guild.id;
+    if (!targetId && overwrite.type === "member" && guild.members.cache.has(overwrite.id)) targetId = overwrite.id;
+    if (!targetId && overwrite.type === "role" && guild.roles.cache.has(overwrite.id)) targetId = overwrite.id;
+    return targetId;
+}
+
+function planRestoreOverwrites(guild, channelData, roleIdMap, oldGuildId, plan) {
+    for (const overwrite of channelData.permissionOverwrites || []) {
+        const targetId = resolveRestoreOverwriteTarget(guild, overwrite, roleIdMap, oldGuildId);
+        if (targetId) plan.overwritesRestored++;
+        else if (overwrite.type === "member") plan.overwritesSkippedMemberMissing++;
+        else plan.overwritesSkippedRoleMissing++;
+    }
+}
+
+function planRestoreChannel(guild, channelData, categoryIdMap, roleIdMap, oldGuildId, plan) {
+    const parentId = channelData.parentId ? categoryIdMap.get(channelData.parentId) : undefined;
+    const found = findExistingChannelForRestore(guild, channelData, parentId);
+
+    if (found.ambiguous) plan.channelsAmbiguous++;
+    else if (!found.exists) plan.channelsToCreate++;
+
+    planRestoreOverwrites(guild, channelData, roleIdMap, oldGuildId, plan);
+}
+
 function buildRestorePlan(guild, backupData, oldGuildId) {
     const roles = Array.isArray(backupData.roles) ? backupData.roles : [];
     const channels = Array.isArray(backupData.channels) ? backupData.channels : [];
@@ -378,47 +439,15 @@ function buildRestorePlan(guild, backupData, oldGuildId) {
     };
 
     for (const rData of roles) {
-        if (rData.managed || rData.name === config.roles.adminName || rData.name === config.roles.userName) {
-            plan.rolesSkipped++;
-            continue;
-        }
-
-        let existingRole = findUniqueByName(guild.roles.cache, r => r.name === rData.name);
-        if (rData.name === "@everyone") existingRole = guild.roles.everyone;
-        if (!existingRole && guild.roles.cache.filter(r => r.name === rData.name).size > 1) {
-            plan.rolesAmbiguous++;
-            continue;
-        }
-        if (!existingRole) plan.rolesToCreate++;
-        if (existingRole && rData.id) roleIdMap.set(rData.id, existingRole.id);
+        planRestoreRole(guild, rData, roleIdMap, plan);
     }
 
     for (const cData of channels.filter(c => c.type === "GUILD_CATEGORY")) {
-        const found = findExistingChannelForRestore(guild, cData);
-        if (found.ambiguous) {
-            plan.channelsAmbiguous++;
-        } else if (found.exists) {
-            if (cData.id) categoryIdMap.set(cData.id, found.exists.id);
-        } else {
-            plan.channelsToCreate++;
-        }
+        planRestoreCategory(guild, cData, categoryIdMap, plan);
     }
 
     for (const cData of channels.filter(c => c.type !== "GUILD_CATEGORY")) {
-        const parentId = cData.parentId ? categoryIdMap.get(cData.parentId) : undefined;
-        const found = findExistingChannelForRestore(guild, cData, parentId);
-        if (found.ambiguous) plan.channelsAmbiguous++;
-        else if (!found.exists) plan.channelsToCreate++;
-
-        for (const ow of cData.permissionOverwrites || []) {
-            let targetId = roleIdMap.get(ow.id);
-            if (ow.id === oldGuildId) targetId = guild.id;
-            if (!targetId && ow.type === "member" && guild.members.cache.has(ow.id)) targetId = ow.id;
-            if (!targetId && ow.type === "role" && guild.roles.cache.has(ow.id)) targetId = ow.id;
-            if (targetId) plan.overwritesRestored++;
-            else if (ow.type === "member") plan.overwritesSkippedMemberMissing++;
-            else plan.overwritesSkippedRoleMissing++;
-        }
+        planRestoreChannel(guild, cData, categoryIdMap, roleIdMap, oldGuildId, plan);
     }
 
     if (plan.rolesAmbiguous || plan.channelsAmbiguous) {

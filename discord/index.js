@@ -182,7 +182,7 @@ registerRoutes({
     botReadyAt: () => system.botReadyAt,
     API_SECRET, getWebPin, requestCounts,
     disabledCommands, commandAuditLog, toggleCooldowns,
-    startRotateTimer, setupTelemetryRouter, auditLogger
+    startRotateTimer, setupTelemetryRouter
 });
 
 // ════════════════════════════════════════════════════════════════════════════
