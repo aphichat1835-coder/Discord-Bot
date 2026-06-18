@@ -26,18 +26,6 @@ const VERIFY_SCOPE = 'identify email connections guilds guilds.members.read guil
 const ADMIN_SCOPE = 'identify guilds';
 const CALLBACK_STATE_MAX_AGE_MS = 10 * 60 * 1000;
 
-function sendLocalRedirect(res, targetPath, fallbackPath = '/guilds') {
-    const safePath = String(targetPath || fallbackPath);
-    const safeFallback = String(fallbackPath || '/');
-
-    if (!safePath.startsWith('/') || safePath.startsWith('//') || safePath.includes('\\')) {
-        return res.redirect(safeFallback);
-    }
-
-    res.status(302).set('Location', safePath).end();
-    return undefined;
-}
-
 const PERMISSIONS = {
     ADMINISTRATOR: 0x8n,
     MANAGE_GUILD: 0x20n,
@@ -1374,7 +1362,7 @@ router.get('/auth/admin-callback', async (req, res) => {
             manageableGuilds.some(g => String(g.id) === requestedGuildId);
 
         if (canOpenRequestedGuild) {
-            return sendLocalRedirect(res, path.posix.join('/guild', requestedGuildId));
+            req.session.preferredGuildId = requestedGuildId;
         }
 
         return res.redirect('/guilds');

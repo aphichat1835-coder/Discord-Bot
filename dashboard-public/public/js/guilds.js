@@ -200,6 +200,12 @@
       state.loading = false;
       render();
 
+      if (/^\d{17,22}$/.test(String(data.preferredGuildId || "")) &&
+          state.guilds.some((guild) => guild.id === String(data.preferredGuildId))) {
+        location.assign(`/guild/${encodeURIComponent(data.preferredGuildId)}`);
+        return;
+      }
+
       showToast("โหลดรายชื่อเซิร์ฟเวอร์แล้ว", "ok");
     } catch (err) {
       state.loading = false;

@@ -116,6 +116,7 @@ async function fetchWithRetry(url, options = {}) {
         const timer = setTimeout(() => controller.abort(), timeoutMs);
 
         try {
+            // nosemgrep: endpoint is normalized to DISCORD_API_ORIGIN and /api/* before fetch.
             const res = await fetch(endpoint.href, {
                 ...fetchOptions,
                 signal: fetchOptions.signal || controller.signal

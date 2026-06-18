@@ -1124,10 +1124,17 @@ router.get("/api/guilds", requireAdmin, (req, res) => {
   const guilds = getSessionGuilds(req)
     .map(normalizeGuild)
     .filter(guild => guild.canManage || guild.isAdmin || guild.isOwner || guild.owner);
+  const preferredGuildId = SNOWFLAKE_RE.test(String(req.session?.preferredGuildId || ""))
+    && guilds.some(guild => guild.id === String(req.session.preferredGuildId))
+    ? String(req.session.preferredGuildId)
+    : null;
+
+  if (req.session?.preferredGuildId) delete req.session.preferredGuildId;
 
   res.json({
     success: true,
-    guilds
+    guilds,
+    preferredGuildId
   });
 });
 /* =============================================================================

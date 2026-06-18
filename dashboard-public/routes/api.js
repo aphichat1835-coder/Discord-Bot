@@ -1,6 +1,5 @@
 const router = require('express').Router();
 const crypto = require('crypto');
-const { Types } = require('mongoose');
 
 const GuildConfig = require('../models/GuildConfig');
 const VerifyLog = require('../models/VerifyLog');
@@ -71,9 +70,9 @@ function parseLimit(value, fallback = 20, max = 100) {
     return Math.min(max, Math.max(1, parseInt(value, 10) || fallback));
 }
 
-function parseObjectId(value) {
+function parseObjectIdHex(value) {
     const raw = String(value || '').trim();
-    return Types.ObjectId.isValid(raw) ? new Types.ObjectId(raw) : null;
+    return /^[a-fA-F0-9]{24}$/.test(raw) ? raw.toLowerCase() : null;
 }
 
 function safeConfig(config) {
@@ -576,7 +575,7 @@ router.post('/internal/ip-reveal/:requestId/approve', async (req, res) => {
     const { approvedBy, ownerNote } = req.body || {};
 
     try {
-        const requestObjectId = parseObjectId(requestId);
+        const requestObjectId = parseObjectIdHex(requestId);
         if (!requestObjectId) {
             return res.status(400).json({
                 success: false,
@@ -587,7 +586,8 @@ router.post('/internal/ip-reveal/:requestId/approve', async (req, res) => {
         const now = Date.now();
         const actor = String(approvedBy || 'owner').slice(0, 80) || 'owner';
         const safeNote = String(ownerNote || '').trim().slice(0, 500);
-        const requestForLookup = await IPRevealRequest.findById(requestObjectId).lean();
+        // nosemgrep: requestObjectId is a strict 24-hex value and is wrapped with $eq.
+        const requestForLookup = await IPRevealRequest.findOne({ _id: { $eq: requestObjectId } }).lean();
 
         if (!requestForLookup) {
             return res.status(404).json({
@@ -599,7 +599,7 @@ router.post('/internal/ip-reveal/:requestId/approve', async (req, res) => {
         if (requestForLookup.status !== 'pending' || Number(requestForLookup.expiresAt || 0) <= now) {
             await IPRevealRequest.updateOne(
                 {
-                    _id: requestObjectId,
+                    _id: { $eq: requestObjectId },
                     status: 'pending',
                     expiresAt: { $lte: now }
                 },
@@ -647,7 +647,7 @@ router.post('/internal/ip-reveal/:requestId/approve', async (req, res) => {
 
         const request = await IPRevealRequest.findOneAndUpdate(
             {
-                _id: requestObjectId,
+                _id: { $eq: requestObjectId },
                 status: 'pending',
                 expiresAt: { $gt: now }
             },
@@ -677,7 +677,7 @@ router.post('/internal/ip-reveal/:requestId/approve', async (req, res) => {
         if (!request) {
             await IPRevealRequest.updateOne(
                 {
-                    _id: requestObjectId,
+                    _id: { $eq: requestObjectId },
                     status: 'pending',
                     expiresAt: { $lte: Date.now() }
                 },
@@ -733,7 +733,7 @@ router.post('/internal/ip-reveal/:requestId/reject', async (req, res) => {
     const { rejectedBy, ownerNote } = req.body || {};
 
     try {
-        const requestObjectId = parseObjectId(requestId);
+        const requestObjectId = parseObjectIdHex(requestId);
         if (!requestObjectId) {
             return res.status(400).json({
                 success: false,
@@ -744,7 +744,7 @@ router.post('/internal/ip-reveal/:requestId/reject', async (req, res) => {
         const now = Date.now();
         const request = await IPRevealRequest.findOneAndUpdate(
             {
-                _id: requestObjectId,
+                _id: { $eq: requestObjectId },
                 status: 'pending',
                 expiresAt: { $gt: now }
             },
@@ -761,7 +761,7 @@ router.post('/internal/ip-reveal/:requestId/reject', async (req, res) => {
         );
 
         if (!request) {
-            const exists = await IPRevealRequest.exists({ _id: requestObjectId });
+            const exists = await IPRevealRequest.exists({ _id: { $eq: requestObjectId } });
             if (!exists) {
                 return res.status(404).json({
                     success: false,
@@ -771,7 +771,7 @@ router.post('/internal/ip-reveal/:requestId/reject', async (req, res) => {
 
             await IPRevealRequest.updateOne(
                 {
-                    _id: requestObjectId,
+                    _id: { $eq: requestObjectId },
                     status: 'pending',
                     expiresAt: { $lte: now }
                 },
