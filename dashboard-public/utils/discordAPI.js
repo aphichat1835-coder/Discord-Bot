@@ -135,7 +135,7 @@ function makeHeaderLookup(headers = {}) {
 function requestDiscordApi(endpointPath, options = {}) {
     const body = normalizeRequestBody(options.body);
     const headers = {
-        ...(options.headers || {})
+        ...options.headers
     };
 
     if (body != null && headers["Content-Length"] == null && headers["content-length"] == null) {
