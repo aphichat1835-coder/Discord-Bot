@@ -12,6 +12,8 @@
 ================================================================================
 */
 
+const https = require("https");
+
 const { encryptToken, decryptToken } = require("./crypto");
 
 const BASE = "https://discord.com/api/v10";
@@ -109,6 +111,68 @@ function normalizeDiscordApiPath(input) {
     return value;
 }
 
+function normalizeRequestBody(body) {
+    if (body == null) return null;
+    if (typeof body === "string" || Buffer.isBuffer(body)) return body;
+    if (body instanceof URLSearchParams) return body.toString();
+    return String(body);
+}
+
+function makeHeaderLookup(headers = {}) {
+    const normalized = new Map();
+
+    for (const [key, value] of Object.entries(headers)) {
+        normalized.set(String(key).toLowerCase(), Array.isArray(value) ? value.join(", ") : value);
+    }
+
+    return {
+        get(name) {
+            return normalized.get(String(name || "").toLowerCase()) || null;
+        }
+    };
+}
+
+function requestDiscordApi(endpointPath, options = {}) {
+    const body = normalizeRequestBody(options.body);
+    const headers = {
+        ...(options.headers || {})
+    };
+
+    if (body != null && headers["Content-Length"] == null && headers["content-length"] == null) {
+        headers["Content-Length"] = Buffer.byteLength(body);
+    }
+
+    return new Promise((resolve, reject) => {
+        const req = https.request({
+            protocol: "https:",
+            hostname: "discord.com",
+            port: 443,
+            method: options.method || "GET",
+            path: `/api/v10${endpointPath}`,
+            headers,
+            signal: options.signal
+        }, res => {
+            const chunks = [];
+
+            res.on("data", chunk => chunks.push(chunk));
+            res.on("end", () => {
+                const textBody = Buffer.concat(chunks).toString("utf8");
+                resolve({
+                    ok: res.statusCode >= 200 && res.statusCode < 300,
+                    status: res.statusCode || 0,
+                    headers: makeHeaderLookup(res.headers),
+                    text: async () => textBody,
+                    json: async () => JSON.parse(textBody || "null")
+                });
+            });
+        });
+
+        req.on("error", reject);
+        if (body != null) req.write(body);
+        req.end();
+    });
+}
+
 async function fetchWithRetry(pathAndSearch, options = {}) {
     const { retries, timeoutMs: rawTimeoutMs, label, ...fetchOptions } = options;
     const endpointPath = normalizeDiscordApiPath(pathAndSearch);
@@ -121,7 +185,7 @@ async function fetchWithRetry(pathAndSearch, options = {}) {
         const timer = setTimeout(() => controller.abort(), timeoutMs);
 
         try {
-            const res = await fetch(`${BASE}${endpointPath}`, {
+            const res = await requestDiscordApi(endpointPath, {
                 ...fetchOptions,
                 signal: fetchOptions.signal || controller.signal
             });
