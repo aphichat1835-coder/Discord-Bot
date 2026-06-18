@@ -586,8 +586,7 @@ router.post('/internal/ip-reveal/:requestId/approve', async (req, res) => {
         const now = Date.now();
         const actor = String(approvedBy || 'owner').slice(0, 80) || 'owner';
         const safeNote = String(ownerNote || '').trim().slice(0, 500);
-        // nosemgrep: requestObjectId is a strict 24-hex value and is wrapped with $eq.
-        const requestForLookup = await IPRevealRequest.findOne({ _id: { $eq: requestObjectId } }).lean();
+        const [requestForLookup] = await IPRevealRequest.find({ _id: requestObjectId }).limit(1).lean();
 
         if (!requestForLookup) {
             return res.status(404).json({

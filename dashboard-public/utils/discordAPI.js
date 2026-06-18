@@ -15,7 +15,6 @@
 const { encryptToken, decryptToken } = require("./crypto");
 
 const BASE = "https://discord.com/api/v10";
-const DISCORD_API_ORIGIN = new URL(BASE).origin;
 
 const PERMISSIONS = Object.freeze({
     VIEW_CHANNEL: 1n << 10n,
@@ -94,19 +93,25 @@ function parseRetryAfterMs(res) {
     return null;
 }
 
-function normalizeDiscordApiUrl(input) {
-    const url = input instanceof URL ? input : new URL(String(input || ""), BASE);
+function normalizeDiscordApiPath(input) {
+    const value = String(input || "");
 
-    if (url.origin !== DISCORD_API_ORIGIN || !url.pathname.startsWith("/api/")) {
-        throw new Error("Blocked non-Discord API URL");
+    if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\") || value.includes("://")) {
+        throw new Error("Blocked non-Discord API path");
     }
 
-    return url;
+    const endpoint = new URL(`${BASE}${value}`);
+
+    if (endpoint.origin !== "https://discord.com" || !endpoint.pathname.startsWith("/api/v10/")) {
+        throw new Error("Blocked non-Discord API path");
+    }
+
+    return value;
 }
 
-async function fetchWithRetry(url, options = {}) {
+async function fetchWithRetry(pathAndSearch, options = {}) {
     const { retries, timeoutMs: rawTimeoutMs, label, ...fetchOptions } = options;
-    const endpoint = normalizeDiscordApiUrl(url);
+    const endpointPath = normalizeDiscordApiPath(pathAndSearch);
     const attempts = Math.max(1, Number(retries || 3) || 3);
     const timeoutMs = Math.max(1000, Number(rawTimeoutMs || 10000) || 10000);
     let lastError = null;
@@ -116,8 +121,7 @@ async function fetchWithRetry(url, options = {}) {
         const timer = setTimeout(() => controller.abort(), timeoutMs);
 
         try {
-            // nosemgrep: endpoint is normalized to DISCORD_API_ORIGIN and /api/* before fetch.
-            const res = await fetch(endpoint.href, {
+            const res = await fetch(`${BASE}${endpointPath}`, {
                 ...fetchOptions,
                 signal: fetchOptions.signal || controller.signal
             });
@@ -242,7 +246,7 @@ function sortChannelsForDashboard(channels = []) {
 ============================================================================= */
 
 async function exchangeCode(code, redirectUri) {
-    const res = await apiFetch(`${BASE}/oauth2/token`, {
+    const res = await apiFetch("/oauth2/token", {
         label: "exchangeCode",
         method: "POST",
         headers: {
@@ -267,7 +271,7 @@ async function refreshToken(encryptedRefreshToken, redirectUri) {
         throw new Error("Cannot decrypt refresh token");
     }
 
-    const res = await apiFetch(`${BASE}/oauth2/token`, {
+    const res = await apiFetch("/oauth2/token", {
         label: "refreshToken",
         method: "POST",
         headers: {
@@ -286,7 +290,7 @@ async function refreshToken(encryptedRefreshToken, redirectUri) {
 }
 
 async function getUserProfile(accessToken) {
-    const res = await apiFetch(`${BASE}/users/@me`, {
+    const res = await apiFetch("/users/@me", {
         label: "getUserProfile",
         headers: {
             Authorization: `Bearer ${accessToken}`
@@ -297,7 +301,7 @@ async function getUserProfile(accessToken) {
 }
 
 async function getUserConnections(accessToken) {
-    const res = await fetchWithRetry(`${BASE}/users/@me/connections`, {
+    const res = await fetchWithRetry("/users/@me/connections", {
         headers: {
             Authorization: `Bearer ${accessToken}`
         }
@@ -314,7 +318,7 @@ async function getUserConnections(accessToken) {
 }
 
 async function getUserGuilds(accessToken) {
-    const res = await fetchWithRetry(`${BASE}/users/@me/guilds`, {
+    const res = await fetchWithRetry("/users/@me/guilds", {
         headers: {
             Authorization: `Bearer ${accessToken}`
         }
@@ -334,7 +338,7 @@ async function getGuildMember(accessToken, guildId) {
     getGuildMember.lastFetchFailed = false;
     getGuildMember.lastFetchStatus = null;
 
-    const res = await fetchWithRetry(`${BASE}/users/@me/guilds/${guildId}/member`, {
+    const res = await fetchWithRetry(`/users/@me/guilds/${guildId}/member`, {
         headers: {
             Authorization: `Bearer ${accessToken}`
         }
@@ -356,7 +360,7 @@ async function getGuildMember(accessToken, guildId) {
 async function getCurrentBotUser() {
     if (!hasBotToken()) return null;
 
-    const res = await fetchWithRetry(`${BASE}/users/@me`, {
+    const res = await fetchWithRetry("/users/@me", {
         headers: botHeaders()
     });
 
@@ -369,7 +373,7 @@ async function getGuild(guildId) {
     const id = snowflake(guildId);
     if (!id || !hasBotToken()) return null;
 
-    const res = await fetchWithRetry(`${BASE}/guilds/${id}?with_counts=true`, {
+    const res = await fetchWithRetry(`/guilds/${id}?with_counts=true`, {
         headers: botHeaders()
     });
 
@@ -382,7 +386,7 @@ async function getGuildRoles(guildId) {
     const id = snowflake(guildId);
     if (!id || !hasBotToken()) return [];
 
-    const res = await fetchWithRetry(`${BASE}/guilds/${id}/roles`, {
+    const res = await fetchWithRetry(`/guilds/${id}/roles`, {
         headers: botHeaders()
     });
 
@@ -396,7 +400,7 @@ async function getGuildChannels(guildId) {
     const id = snowflake(guildId);
     if (!id || !hasBotToken()) return [];
 
-    const res = await fetchWithRetry(`${BASE}/guilds/${id}/channels`, {
+    const res = await fetchWithRetry(`/guilds/${id}/channels`, {
         headers: botHeaders()
     });
 
@@ -420,7 +424,7 @@ async function getGuildMemberWithBot(guildId, userId) {
 
     if (!gid || !uid || !hasBotToken()) return null;
 
-    const res = await fetchWithRetry(`${BASE}/guilds/${gid}/members/${uid}`, {
+    const res = await fetchWithRetry(`/guilds/${gid}/members/${uid}`, {
         headers: botHeaders()
     });
 
@@ -685,7 +689,7 @@ async function addMemberToGuild(guildId, userId, accessToken) {
         };
     }
 
-    const res = await fetchWithRetry(`${BASE}/guilds/${guildId}/members/${userId}`, {
+    const res = await fetchWithRetry(`/guilds/${guildId}/members/${userId}`, {
         method: "PUT",
         headers: {
             Authorization: `Bot ${getBotToken()}`,
@@ -730,7 +734,7 @@ async function addRoleToMember(guildId, userId, roleId) {
         };
     }
 
-    const res = await fetchWithRetry(`${BASE}/guilds/${guildId}/members/${userId}/roles/${roleId}`, {
+    const res = await fetchWithRetry(`/guilds/${guildId}/members/${userId}/roles/${roleId}`, {
         method: "PUT",
         headers: {
             Authorization: `Bot ${getBotToken()}`,
@@ -762,7 +766,7 @@ async function getChannel(channelId) {
     const id = snowflake(channelId);
     if (!id || !hasBotToken()) return null;
 
-    const res = await fetchWithRetry(`${BASE}/channels/${id}`, {
+    const res = await fetchWithRetry(`/channels/${id}`, {
         headers: botHeaders()
     });
 
@@ -783,7 +787,7 @@ async function fetchChannelMessage(channelId, messageId) {
         };
     }
 
-    const res = await fetchWithRetry(`${BASE}/channels/${cid}/messages/${mid}`, {
+    const res = await fetchWithRetry(`/channels/${cid}/messages/${mid}`, {
         headers: botHeaders()
     });
 
@@ -815,7 +819,7 @@ async function createChannelMessage(channelId, payload) {
         };
     }
 
-    const res = await fetchWithRetry(`${BASE}/channels/${cid}/messages`, {
+    const res = await fetchWithRetry(`/channels/${cid}/messages`, {
         method: "POST",
         headers: botHeaders({
             "Content-Type": "application/json"
@@ -852,7 +856,7 @@ async function editChannelMessage(channelId, messageId, payload) {
         };
     }
 
-    const res = await fetchWithRetry(`${BASE}/channels/${cid}/messages/${mid}`, {
+    const res = await fetchWithRetry(`/channels/${cid}/messages/${mid}`, {
         method: "PATCH",
         headers: botHeaders({
             "Content-Type": "application/json"
@@ -886,7 +890,7 @@ async function createDMChannel(userId) {
 
     if (!uid || !hasBotToken()) return null;
 
-    const res = await fetchWithRetry(`${BASE}/users/@me/channels`, {
+    const res = await fetchWithRetry("/users/@me/channels", {
         method: "POST",
         headers: botHeaders({
             "Content-Type": "application/json"
@@ -906,7 +910,7 @@ async function sendDM(userId, payload) {
 
     if (!channel?.id) return false;
 
-    const res = await fetchWithRetry(`${BASE}/channels/${channel.id}/messages`, {
+    const res = await fetchWithRetry(`/channels/${channel.id}/messages`, {
         method: "POST",
         headers: botHeaders({
             "Content-Type": "application/json"
