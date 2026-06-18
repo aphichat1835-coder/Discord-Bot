@@ -24,6 +24,15 @@ const CONFIG = {
     CONNECTION_TIMEOUT: config.voice_worker.connectionTimeout || 15000,
     DM_THROTTLE_MS: config.voice_worker.dmThrottleMs || 20000,
 };
+const LOGIN_QUEUE_MAX_SIZE = config.voice_worker.loginQueueMaxSize || 100;
+const RECOVERY_QUEUE_MAX_SIZE = config.voice_worker.recoveryQueueMaxSize || 200;
+const TOKEN_LOGIN_COOLDOWN_TTL_MS = 10 * 60 * 1000;
+const TOKEN_LOGIN_COOLDOWN_MAX_SIZE = 5000;
+const DM_THROTTLE_MAX_SIZE = config.voice_worker.dmThrottleMaxSize || 5000;
+const VOICE_LOG_MAX = Math.max(
+    20,
+    Math.min(2000, Number(process.env.VOICE_LOG_MAX || config.voice_worker.voiceLogMax || 200) || 200)
+);
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🗺️  REGION 2: STATE
@@ -355,8 +364,10 @@ function countActiveSessionsForAccountId(accountId) {
 async function waitForTokenLoginCooldown(tokenHash) {
     if (!tokenHash) return;
 
+    cleanupTokenLoginCooldowns();
+
     const minDelayMs = 3500;
-    const previous = tokenLoginCooldowns.get(tokenHash) || Promise.resolve(0);
+    const previous = tokenLoginCooldowns.get(tokenHash)?.promise || Promise.resolve(0);
 
     const next = previous.catch(() => 0).then(async (lastLoginAt) => {
         const elapsed = Date.now() - Number(lastLoginAt || 0);
@@ -369,11 +380,28 @@ async function waitForTokenLoginCooldown(tokenHash) {
         return Date.now();
     });
 
-    tokenLoginCooldowns.set(tokenHash, next);
+    tokenLoginCooldowns.set(tokenHash, {
+        promise: next,
+        updatedAt: Date.now()
+    });
     next.finally(() => {
-        if (tokenLoginCooldowns.get(tokenHash) === next) tokenLoginCooldowns.delete(tokenHash);
+        if (tokenLoginCooldowns.get(tokenHash)?.promise === next) tokenLoginCooldowns.delete(tokenHash);
     }).catch(() => {});
     await next;
+}
+
+function cleanupTokenLoginCooldowns(now = Date.now()) {
+    for (const [tokenHash, entry] of tokenLoginCooldowns.entries()) {
+        if (!entry?.updatedAt || now - entry.updatedAt > TOKEN_LOGIN_COOLDOWN_TTL_MS) {
+            tokenLoginCooldowns.delete(tokenHash);
+        }
+    }
+
+    while (tokenLoginCooldowns.size > TOKEN_LOGIN_COOLDOWN_MAX_SIZE) {
+        const oldest = tokenLoginCooldowns.keys().next().value;
+        if (!oldest) break;
+        tokenLoginCooldowns.delete(oldest);
+    }
 }
 
 
@@ -526,14 +554,33 @@ function buildVoiceFields(session, extra = {}) {
 //  🚦  REGION 5: OPERATION QUEUE
 // ════════════════════════════════════════════════════════════════════════════
 class OperationQueue {
-    constructor(concurrency = 3) {
+    constructor(concurrency = 3, maxQueueSize = 100, name = "operation") {
         this.queue = [];
         this.running = 0;
         this.concurrency = concurrency;
+        this.maxQueueSize = maxQueueSize;
+        this.name = name;
+        this.rejectedFull = 0;
+    }
+
+    get size() {
+        return this.queue.length;
+    }
+
+    get pending() {
+        return this.queue.length + this.running;
     }
 
     async add(fn) {
         return new Promise((resolve, reject) => {
+            if (this.queue.length >= this.maxQueueSize) {
+                this.rejectedFull++;
+                const err = new Error("OPERATION_QUEUE_FULL");
+                err.code = "OPERATION_QUEUE_FULL";
+                err.queueName = this.name;
+                reject(err);
+                return;
+            }
             this.queue.push({ fn, resolve, reject });
             this.process();
         });
@@ -556,8 +603,8 @@ class OperationQueue {
     }
 }
 
-const loginQueue = new OperationQueue(2);
-const recoveryQueue = new OperationQueue(2);
+const loginQueue = new OperationQueue(2, LOGIN_QUEUE_MAX_SIZE, "login");
+const recoveryQueue = new OperationQueue(2, RECOVERY_QUEUE_MAX_SIZE, "recovery");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🎧  REGION 6: START SESSION
@@ -635,6 +682,10 @@ async function startSession(sessionId, tokenString) {
             } catch (err) {
                 console.error(`[WORKER] ❌ Login failed for ${sessionId}. Destroying ghost client.`);
                 try { newClient.destroy(); } catch {}
+
+                if (err.code === "OPERATION_QUEUE_FULL") {
+                    throw new Error("VOICE_QUEUE_BUSY");
+                }
 
                 const isTokenErr =
                     err.message.includes("TOKEN_INVALID") ||
@@ -1377,7 +1428,9 @@ async function pauseAll() {
             if (typeof sessionManager.pauseSession === "function") {
                 await sessionManager.pauseSession(id);
             }
-        } catch {}
+        } catch (err) {
+            console.warn(`[WORKER] ⚠️ pauseAll failed for session=${id}: ${err.message}`);
+        }
     }
 
     naturalRunning.clear();
@@ -1390,31 +1443,42 @@ async function pauseAll() {
 // ════════════════════════════════════════════════════════════════════════════
 async function autoResume() {
     const sessions = sessionManager.getAllSessions();
-    console.log(`[WORKER] 🔄 Auto-resuming ${sessions.size} dormant sessions...`);
+    console.log(`[WORKER] 🔄 Auto-resume scan: ${sessions.size} stored sessions...`);
 
-    let count = 0;
+    let activeToResume = 0;
+    let resumed = 0;
+    let failed = 0;
+    let skipped = 0;
 
     for (const [id] of sessions) {
         if (isShuttingDown) break;
 
         try {
             const session = sessionManager.getSession(id);
-            if (!shouldResumeSession(session)) continue;
+            if (!shouldResumeSession(session)) {
+                skipped++;
+                continue;
+            }
+
+            activeToResume++;
 
             const token = getSessionToken(id);
             if (token) {
                 await startSession(id, token);
-                count++;
+                resumed++;
 
                 const warmUpJitter = Math.floor(2000 + Math.random() * 1500);
                 await new Promise(resolve => setTimeout(resolve, warmUpJitter));
+            } else {
+                skipped++;
             }
         } catch (err) {
+            failed++;
             console.error(`[WORKER] ❌ Failed to auto-resume ${id}: ${err.message}`);
         }
     }
 
-    console.log(`[WORKER] ✅ Recovered ${count}/${sessions.size} sessions.`);
+    console.log(`[WORKER] ✅ Auto-resume complete: active=${activeToResume} resumed=${resumed} failed=${failed} skipped=${skipped} total=${sessions.size}`);
 }
 
 const recoveryTimestamps = new Map();
@@ -1551,7 +1615,6 @@ async function cleanupIdleSessions() {
 // ════════════════════════════════════════════════════════════════════════════
 //  📊  REGION 11: VOICE EVENT LOG
 // ════════════════════════════════════════════════════════════════════════════
-const VOICE_LOG_MAX = 200;
 const voiceEventLog = [];
 
 function pushVoiceLog(type, sessionId, detail = "") {
@@ -1647,12 +1710,16 @@ function stopNaturalTimer(sessionId) {
 function startNaturalTimer(sessionId) {
     if (!naturalSettings.enabled) return;
 
+    const session = sessionManager.getSession(sessionId);
+    if (!isSessionRunnable(session)) return;
+
     stopNaturalTimer(sessionId);
 
     const jitter = Math.floor((Math.random() * 2 - 1) * 5 * 60 * 1000);
     const interval = Math.max(60000, naturalSettings.intervalMs + jitter);
 
     const id = setInterval(() => doNaturalBlink(sessionId), interval);
+    id.unref?.();
     naturalTimers.set(sessionId, id);
 
     console.log(`[NATURAL] ▶️ Timer started for ${sessionId} (every ${Math.round(interval / 60000)} min, duration ${naturalSettings.durationMs / 1000}s)`);
@@ -1678,7 +1745,7 @@ function applyNaturalSettings(newSettings) {
     }
 
     for (const [sessionId, session] of sessionManager.getAllSessions()) {
-        if (session.client?.isReady?.()) {
+        if (isSessionRunnable(session) && session.client?.isReady?.()) {
             startNaturalTimer(sessionId);
         }
     }
@@ -1761,12 +1828,16 @@ function stopAutoDeafTimer(sessionId) {
 function startAutoDeafTimer(sessionId) {
     if (!autoDeafSettings.enabled) return;
 
+    const session = sessionManager.getSession(sessionId);
+    if (!isSessionRunnable(session)) return;
+
     stopAutoDeafTimer(sessionId);
 
     const jitter = Math.floor((Math.random() * 2 - 1) * 5 * 60 * 1000);
     const interval = Math.max(60000, autoDeafSettings.intervalMs + jitter);
 
     const id = setInterval(() => doAutoDeafToggle(sessionId), interval);
+    id.unref?.();
     autoDeafTimers.set(sessionId, id);
 
     console.log(`[AUTODEAF] ▶️ Timer started for ${sessionId} (every ${Math.round(interval / 60000)} min, open ${autoDeafSettings.openDurationMs / 1000}s)`);
@@ -1792,7 +1863,7 @@ function applyAutoDeafSettings(newSettings) {
     }
 
     for (const [sessionId, session] of sessionManager.getAllSessions()) {
-        if (session.client?.isReady?.()) {
+        if (isSessionRunnable(session) && session.client?.isReady?.()) {
             startAutoDeafTimer(sessionId);
         }
     }
@@ -1808,6 +1879,8 @@ function getAutoDeafSettings() {
 }
 
 function getWorkerDiagnostics() {
+    cleanupTokenLoginCooldowns();
+
     return {
         clientPool: clientPool.size,
         tokenLoginCooldowns: tokenLoginCooldowns.size,
@@ -1815,6 +1888,14 @@ function getWorkerDiagnostics() {
         naturalRunning: naturalRunning.size,
         autoDeafTimers: autoDeafTimers.size,
         autoDeafRunning: autoDeafRunning.size,
+        loginQueue: loginQueue.size,
+        loginQueueRunning: loginQueue.running,
+        loginQueuePending: loginQueue.pending,
+        loginQueueRejectedFull: loginQueue.rejectedFull,
+        recoveryQueue: recoveryQueue.size,
+        recoveryQueueRunning: recoveryQueue.running,
+        recoveryQueuePending: recoveryQueue.pending,
+        recoveryQueueRejectedFull: recoveryQueue.rejectedFull,
         lastDMSent: lastDMSent.size,
         lastOnlineDMSent: lastOnlineDMSent.size,
         recoveryTimestamps: recoveryTimestamps.size,
@@ -1828,6 +1909,19 @@ function deleteExpiredSessionEntries(map, activeSessionIds, now, ttlMs) {
         if (!activeSessionIds.has(sessionId) || isExpired) {
             map.delete(sessionId);
         }
+    }
+}
+
+function trimMapToMaxSize(map, maxSize) {
+    if (!Number.isFinite(maxSize) || maxSize <= 0 || map.size <= maxSize) return;
+
+    const overflow = map.size - maxSize;
+    const oldest = [...map.entries()]
+        .sort((a, b) => Number(a[1] || 0) - Number(b[1] || 0))
+        .slice(0, overflow);
+
+    for (const [key] of oldest) {
+        map.delete(key);
     }
 }
 
@@ -1849,12 +1943,18 @@ function stopInactiveSessionTimers(timerMap, activeSessionIds, stopTimer) {
 
 function cleanupVolatileState(now = Date.now()) {
     const sessions = sessionManager.getAllSessions();
-    const activeSessionIds = new Set(sessions.keys());
+    const activeSessionIds = new Set(
+        [...sessions.entries()]
+            .filter(([, session]) => isSessionRunnable(session))
+            .map(([sessionId]) => sessionId)
+    );
     const dmTtlMs = Math.max(CONFIG.DM_THROTTLE_MS * 6, 5 * 60 * 1000);
     const recoveryTtlMs = Math.max(RECOVERY_COOLDOWN_MS * 6, 10 * 60 * 1000);
 
     deleteExpiredSessionEntries(lastDMSent, activeSessionIds, now, dmTtlMs);
     deleteExpiredSessionEntries(lastOnlineDMSent, activeSessionIds, now, dmTtlMs);
+    trimMapToMaxSize(lastDMSent, DM_THROTTLE_MAX_SIZE);
+    trimMapToMaxSize(lastOnlineDMSent, DM_THROTTLE_MAX_SIZE);
     deleteExpiredSessionEntries(recoveryTimestamps, activeSessionIds, now, recoveryTtlMs);
     deleteInactiveSessionIds(naturalRunning, activeSessionIds);
     deleteInactiveSessionIds(autoDeafRunning, activeSessionIds);

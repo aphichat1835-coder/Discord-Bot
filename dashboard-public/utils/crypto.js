@@ -13,8 +13,14 @@ function getKey() {
 }
 
 function getHashKey() {
+    const encryptionKey = process.env.ENCRYPTION_KEY;
+    if (!encryptionKey) throw new Error('[CRYPTO] Missing ENCRYPTION_KEY for hash key');
+
+    const authSecret = process.env.API_SECRET || process.env.INTERNAL_API_SECRET;
+    if (!authSecret) throw new Error('[CRYPTO] Missing API_SECRET/INTERNAL_API_SECRET for hash key');
+
     return crypto.createHash('sha256')
-        .update(`${process.env.ENCRYPTION_KEY || 'missing'}:${process.env.API_SECRET || process.env.INTERNAL_API_SECRET || 'dashboard'}`)
+        .update(`${encryptionKey}:${authSecret}`)
         .digest();
 }
 

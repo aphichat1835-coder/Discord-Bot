@@ -28,6 +28,7 @@ const auditLogger    = require("./auditLogger");
 const memoryMonitor  = require("./index/memoryMonitor");
 const { validateRequiredEnv } = require("./core/env");
 const { createHttpApp } = require("./core/http");
+const { isFeatureEnabled } = require("./core/featureFlags");
 const { sendLogWebhook, buildStartupNotice, getWebhookDiagnostics } = require("./core/webhooks");
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -177,11 +178,11 @@ async function startRotateTimer() {
 // ════════════════════════════════════════════════════════════════════════════
 registerRoutes({
     app, express, config, sessionManager, voiceWorker,
-    commands, webLogs, MAX_LOGS, client,
+    commands, webLogs, MAX_LOGS, client, auditLogger, memoryMonitor,
     botReadyAt: () => system.botReadyAt,
     API_SECRET, getWebPin, requestCounts,
     disabledCommands, commandAuditLog, toggleCooldowns,
-    startRotateTimer, setupTelemetryRouter
+    startRotateTimer, setupTelemetryRouter, auditLogger
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -231,15 +232,19 @@ system.initCronJobs({
 // ════════════════════════════════════════════════════════════════════════════
 //  🛑  SHUTDOWN HANDLERS
 // ════════════════════════════════════════════════════════════════════════════
-system.initShutdown({ sessionManager, voiceWorker, client, memoryMonitor });
+system.initShutdown({ sessionManager, voiceWorker, client, memoryMonitor, auditLogger });
 
-memoryMonitor.startMemoryMonitor({
-    intervalMs: 60000,
-    voiceWorker,
-    sessionManager,
-    auditLogger,
-    system
-});
+if (isFeatureEnabled("memoryMonitor")) {
+    memoryMonitor.startMemoryMonitor({
+        intervalMs: 60000,
+        voiceWorker,
+        sessionManager,
+        auditLogger,
+        system
+    });
+} else {
+    console.warn("[MEMORY] ⚠️ Memory monitor disabled by FEATURE_MEMORY_MONITOR=false.");
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🚀  STRICT BOOT SEQUENCE
@@ -400,11 +405,15 @@ client.on("ready", async () => {
 
     await startRotateTimer();
 
-    try {
-        auditLogger.register(client, sessionManager);
-        console.log("[AUDIT] ✅ Audit Logger registered.");
-    } catch (auditErr) {
-        console.error("[AUDIT] ❌ Failed to register Audit Logger:", auditErr.message);
+    if (isFeatureEnabled("audit")) {
+        try {
+            auditLogger.register(client, sessionManager);
+            console.log("[AUDIT] ✅ Audit Logger registered.");
+        } catch (auditErr) {
+            console.error("[AUDIT] ❌ Failed to register Audit Logger:", auditErr.message);
+        }
+    } else {
+        console.warn("[AUDIT] ⚠️ Audit Logger disabled by FEATURE_AUDIT=false.");
     }
 
     try {

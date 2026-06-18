@@ -110,7 +110,8 @@ const slashCommandsData = [
         name: "restore",
         description: "กู้คืนโครงสร้างเซิร์ฟเวอร์",
         options: [
-            { type: 3, name: "server_id", description: "ไอดีเซิร์ฟเวอร์ต้นทาง", required: true }
+            { type: 3, name: "server_id", description: "ไอดีเซิร์ฟเวอร์ต้นทาง", required: true },
+            { type: 5, name: "dry_run", description: "ดูแผนกู้คืนก่อน โดยยังไม่สร้างอะไร", required: false }
         ]
     },
 

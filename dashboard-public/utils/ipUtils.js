@@ -5,8 +5,16 @@ const ENABLE_CF_IP_HEADER = String(process.env.ENABLE_CF_IP_HEADER || '').toLowe
 const IP_LOOKUP_TIMEOUT_MS = 3000;
 const IP_LOOKUP_CACHE_TTL_MS = 10 * 60 * 1000;
 const IP_LOOKUP_CACHE_MAX = 5000;
+const IP_LOOKUP_CIRCUIT_FAIL_THRESHOLD = Math.max(1, Number(process.env.IP_LOOKUP_CIRCUIT_FAIL_THRESHOLD || 10) || 10);
+const IP_LOOKUP_CIRCUIT_OPEN_MS = Math.max(10000, Number(process.env.IP_LOOKUP_CIRCUIT_OPEN_MS || 5 * 60 * 1000) || 5 * 60 * 1000);
+const DEVICE_FINGERPRINT_VERSION = 1;
 const DEFAULT_IP_LOOKUP_API_BASE_URL = 'https://ip-api.com/json';
 const lookupCache = new Map();
+const lookupCircuit = {
+    failures: 0,
+    openUntil: 0,
+    lastError: null
+};
 
 function getIpLookupConfig() {
     const enabledRaw = String(process.env.IP_LOOKUP_ENABLED ?? 'true').trim().toLowerCase();
@@ -369,6 +377,7 @@ function extractDevice(req) {
         devicePixelRatio,
         touchPoints,
         referrer,
+        fingerprintVersion: DEVICE_FINGERPRINT_VERSION,
         fingerprintHash: hmacValue(fingerprintSource, 'fingerprint')
     };
 }
@@ -497,6 +506,36 @@ function makeLookupDisabledInfo(ip) {
     };
 }
 
+function makeLookupCircuitOpenInfo(ip) {
+    return {
+        ...makeLookupDisabledInfo(ip),
+        provider: 'circuit_breaker',
+        status: 'lookup_failed',
+        isp: 'lookup circuit open',
+        org: 'lookup circuit open',
+        message: 'External IP lookup temporarily paused after repeated failures'
+    };
+}
+
+function isLookupCircuitOpen(now = Date.now()) {
+    return lookupCircuit.openUntil > now;
+}
+
+function recordLookupSuccess() {
+    lookupCircuit.failures = 0;
+    lookupCircuit.openUntil = 0;
+    lookupCircuit.lastError = null;
+}
+
+function recordLookupFailure(err) {
+    lookupCircuit.failures += 1;
+    lookupCircuit.lastError = String(err?.message || err?.name || 'lookup_failed').slice(0, 200);
+
+    if (lookupCircuit.failures >= IP_LOOKUP_CIRCUIT_FAIL_THRESHOLD) {
+        lookupCircuit.openUntil = Date.now() + IP_LOOKUP_CIRCUIT_OPEN_MS;
+    }
+}
+
 function compactLookupRaw(lookup = {}) {
     const message = lookup.message
         ? String(lookup.message).replace(/[\u0000-\u001F\u007F]/g, '').slice(0, 200)
@@ -590,7 +629,19 @@ async function lookupIP(ip) {
         return makeLookupDisabledInfo(ip);
     }
 
-    const lookup = await lookupWithIpApi(ip);
+    if (isLookupCircuitOpen()) {
+        return makeLookupCircuitOpenInfo(ip);
+    }
+
+    let lookup;
+    try {
+        lookup = await lookupWithIpApi(ip);
+        recordLookupSuccess();
+    } catch (err) {
+        recordLookupFailure(err);
+        throw err;
+    }
+
     setCachedLookup(ip, lookup);
     return lookup;
 }

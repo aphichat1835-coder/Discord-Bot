@@ -14,6 +14,7 @@
 */
 
 const router = require("express").Router();
+const crypto = require("crypto");
 
 const GuildConfig = require("../models/GuildConfig");
 const VerifyLog = require("../models/VerifyLog");
@@ -452,6 +453,7 @@ function safeDevice(device = {}) {
     devicePixelRatio: device.devicePixelRatio ?? null,
     touchPoints: device.touchPoints ?? null,
     referrer: device.referrer || "",
+    fingerprintVersion: Number(device.fingerprintVersion || 0) || null,
     hasFingerprint: !!device.fingerprintHash
   };
 }
@@ -626,6 +628,7 @@ function serializeVerifyLog(log = {}, options = {}) {
     guildId: raw.guildId,
     userId,
     roleId: raw.roleId || null,
+    sensitiveRedacted: !canViewSensitive,
 
     result,
     reason: raw.reason || "",
@@ -771,8 +774,6 @@ function summarizeCounts(logs = []) {
 
   return summary;
 }
-
-const crypto = require("crypto");
 
 function makePanelRevision(prefix = "panel") {
   return `${prefix}_${Date.now().toString(36)}_${crypto.randomBytes(8).toString("hex")}`;

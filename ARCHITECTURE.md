@@ -150,6 +150,7 @@ GET  /auth/logout
 GET  /ping
 GET  /health
 GET  /api/status
+GET  /api/diagnostics
 GET  /api/settings/natural
 GET  /api/settings/auto-deaf
 GET  /api/session/:sessionId
@@ -266,7 +267,8 @@ GET /guild/:guildId           guild admin page
 GET /logout
 GET /auth/logout
 GET /ping
-GET /health
+GET /health                    readiness: database/config status
+GET /ready                     lightweight readiness boolean
 ```
 
 OAuth/admin routes from `dashboard-public/routes/oauth.js`:

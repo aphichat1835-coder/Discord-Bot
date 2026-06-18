@@ -3,6 +3,7 @@ const test = require("node:test");
 
 const { validateRequiredEnv } = require("../core/env");
 const { createHttpApp } = require("../core/http");
+const { getFeatureFlags, isFeatureEnabled } = require("../core/featureFlags");
 const service1Logger = require("../core/safeLogger");
 const service2Logger = require("../../dashboard-public/utils/safeLogger");
 
@@ -88,6 +89,21 @@ test("createHttpApp only trusts proxies when explicitly configured", () => {
     const second = createFakeExpress();
     createHttpApp(second.express, { trustProxy: 1 });
     assert.deepEqual(second.app.settings, [["trust proxy", 1]]);
+});
+
+test("feature flags default on and can be disabled by env", () => {
+    const oldAudit = process.env.FEATURE_AUDIT;
+    delete process.env.FEATURE_AUDIT;
+
+    try {
+        assert.equal(isFeatureEnabled("audit"), true);
+        process.env.FEATURE_AUDIT = "false";
+        assert.equal(isFeatureEnabled("audit"), false);
+        assert.equal(getFeatureFlags().audit, false);
+    } finally {
+        if (oldAudit === undefined) delete process.env.FEATURE_AUDIT;
+        else process.env.FEATURE_AUDIT = oldAudit;
+    }
 });
 
 test("safe loggers redact IPv6 and MongoDB connection strings", () => {

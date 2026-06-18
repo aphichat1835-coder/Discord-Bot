@@ -31,6 +31,7 @@ const userSchema = new mongoose.Schema({
 
 const deviceSchema = new mongoose.Schema({
     fingerprintHash: String,
+    fingerprintVersion: Number,
     userId: String,
     firstSeenAt: Number,
     lastSeenAt: Number,

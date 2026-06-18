@@ -65,6 +65,14 @@ test("announce exposes safe mention opt-in", () => {
     assert.equal(allowMentions.required, false);
 });
 
+test("restore exposes dry-run option", () => {
+    const restore = slashCommandsData.find(command => command.name === "restore");
+    const dryRun = restore.options.find(option => option.name === "dry_run");
+
+    assert.equal(dryRun.type, 5);
+    assert.equal(dryRun.required, false);
+});
+
 test("slash command registry validation rejects empty or malformed payloads", () => {
     assert.throws(() => validateSlashCommandsData([]), /empty/);
     assert.throws(() => validateSlashCommandsData([{ name: "Bad Name", description: "ok" }]), /invalid slash-command name/);

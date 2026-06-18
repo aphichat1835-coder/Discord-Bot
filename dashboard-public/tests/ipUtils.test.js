@@ -26,6 +26,7 @@ const {
     getIpLookupConfig,
     lookupIP,
     isPrivateIP,
+    extractDevice,
     processIP
 } = require('../utils/ipUtils');
 
@@ -314,6 +315,41 @@ describe('IP lookup config', () => {
         expect(lookup.provider).toBe('disabled');
         expect(lookup.status).toBe('lookup_disabled');
         expect(lookup.query).toBe('9.9.9.9');
+    });
+
+    test('opens circuit breaker after repeated provider failures', async () => {
+        process.env.IP_LOOKUP_ENABLED = 'true';
+        global.fetch = jest.fn(async () => {
+            throw new Error('provider down');
+        });
+
+        for (let i = 0; i < 10; i++) {
+            await expect(lookupIP(`8.8.4.${i}`)).rejects.toThrow('provider down');
+        }
+
+        const lookup = await lookupIP('1.0.0.1');
+        expect(lookup.provider).toBe('circuit_breaker');
+        expect(lookup.status).toBe('lookup_failed');
+    });
+});
+
+describe('device fingerprint metadata', () => {
+    test('includes a fingerprint version next to fingerprintHash', () => {
+        const device = extractDevice({
+            headers: {
+                'user-agent': 'Mozilla/5.0 Test',
+                'accept-language': 'th-TH'
+            },
+            body: {
+                platform: 'MacIntel',
+                timezone: 'Asia/Bangkok',
+                screenSize: '1440x900',
+                viewportSize: '1200x800'
+            }
+        });
+
+        expect(device.fingerprintVersion).toBe(1);
+        expect(device.fingerprintHash).toEqual(expect.any(String));
     });
 });
 

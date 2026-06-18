@@ -357,6 +357,9 @@ function countActiveSessionsByTokenHash(tokenHash) {
 // ════════════════════════════════════════════════════════════════════════════
 //  💾 REGION 7: SESSION LOAD / SAVE
 // ═══��════════════════════════════════════════════════════════════════════════
+const LOAD_RECOVERABLE_STOP_CLEANUP_MS = 24 * 60 * 60 * 1000;
+const STALE_STOPPED_SESSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
 async function loadDatabase() {
     if (!dbConnected) {
         console.error("[DATABASE] ⚠️ Cannot load sessions: DB not connected. Boot sequence will retry.");
@@ -364,7 +367,30 @@ async function loadDatabase() {
     }
 
     try {
-        const records = await SessionModel.find({});
+        const now = Date.now();
+        const recoverableCutoff = now - LOAD_RECOVERABLE_STOP_CLEANUP_MS;
+        const staleCutoff = now - STALE_STOPPED_SESSION_RETENTION_MS;
+
+        const cleanup = await SessionModel.deleteMany({
+            state: { $in: ["failed", "stopped"] },
+            stoppedAt: { $lte: staleCutoff },
+            stoppedReason: { $ne: "stop_cleanup_failed" }
+        }).catch(err => {
+            console.warn(`[DATABASE] ⚠️ stale stopped session cleanup skipped: ${err.message}`);
+            return null;
+        });
+
+        const records = await SessionModel.find({
+            $or: [
+                { state: "active" },
+                { state: { $exists: false } },
+                { state: null },
+                {
+                    stoppedReason: "stop_cleanup_failed",
+                    stoppedAt: { $gte: recoverableCutoff }
+                }
+            ]
+        });
 
         for (const r of records) {
             sessions.set(r.sessionId, {
@@ -407,7 +433,8 @@ async function loadDatabase() {
             });
         }
 
-        console.log(`[DATABASE] 📂 Loaded ${sessions.size} active sessions from MongoDB.`);
+        const deleted = cleanup?.deletedCount ? `, cleaned=${cleanup.deletedCount}` : "";
+        console.log(`[DATABASE] 📂 Loaded ${sessions.size} active/recoverable sessions from MongoDB${deleted}.`);
     } catch (err) {
         console.error(`[DATABASE] ❌ Failed to load sessions: ${err.message}`);
         throw err;
@@ -1478,7 +1505,7 @@ function getActiveSessionsByGuild(serverId) {
     const result = [];
 
     for (const session of sessions.values()) {
-        if (String(session.serverId) === String(serverId)) {
+        if (String(session.serverId) === String(serverId) && isSessionRunnable(session)) {
             result.push(session);
         }
     }

@@ -19,6 +19,10 @@
 - Added sensitive access expiry/access audit support and raw IP reveal view audit metadata.
 - Added risk flag coverage for IP lookup/proxy/VPN/TOR/hosting/spoof signals and broader private/reserved IP detection tests.
 - Added role button and direct-role hierarchy guard tests.
+- Added GitHub Actions CI for syntax checks, tests, and npm audit across Service 1 and Dashboard Public.
+- Added `docs/RUNBOOK.md` for RAM, voice session, IP reveal, restore, token rotation, and audit-log triage.
+- Added owner-only `/api/diagnostics` with safe readiness, session state, voice worker, audit, and memory-monitor diagnostics.
+- Added configurable memory monitor thresholds/mode, audit queue/circuit/content controls, IP lookup circuit breaker settings, and feature flag placeholders.
 
 ### Changed
 
@@ -56,6 +60,11 @@
 - Hardened role button/select menu role assignment with Manage Roles, managed-role, and role hierarchy checks plus visible per-role failures.
 - Hardened anti-spam/anti-raid ban and link-filter deletion permission checks.
 - Added safe `/announce` mention opt-in with `allow_mentions=false` by default.
+- Tightened voice/session runtime cleanup with bounded operation queues, cooldown cleanup, runnable-session filtering, unref timers, and dashboard diagnostics.
+- Made Dashboard Public `/health` report DB/config readiness and guarded retention maintenance from overlapping runs.
+- Hardened audit logging with queue depth limits, circuit breaker behavior, failure counters, cache shutdown cleanup, and optional message-content redaction.
+- Added restore dry-run planning, backup validation reports, parent/category-aware restore matching, role-position restore attempts, and permission-overwrite restore reporting.
+- Hardened protection config merging against prototype pollution and added audit logging for anti-spam/link-filter actions.
 
 ### Notes
 

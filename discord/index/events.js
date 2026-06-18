@@ -164,6 +164,14 @@ function register({
                     } else if (spamResult.action === 'ban') {
                         console.warn(`[ANTI-SPAM] Cannot ban member ${message.author.id}: missing BAN_MEMBERS or member is not bannable`);
                     }
+
+                    const alertEmbed = protection.buildProtectionAlert('spam', {
+                        'ผู้กระทำ': `<@${message.author.id}>`,
+                        'ห้อง': `<#${message.channel.id}>`,
+                        'จำนวนข้อความ': `${spamHist.length}`,
+                        'การดำเนินการ': spamResult.action.toUpperCase()
+                    });
+                    auditLogger.sendAuditLog(message.guild, sessionManager, 'security', alertEmbed).catch(() => {});
                     spamTracking.delete(spamKey);
                 } catch (e) { console.error(`[ANTI-SPAM] ⚠️ ${e.message}`); }
             }
@@ -174,7 +182,14 @@ function register({
         if (pConf?.linkFilter?.enabled) {
             const linkResult = protection.checkLinkFilter(message, pConf);
             if (linkResult) {
-                await deleteMessageWithLog(message, "link-filter");
+                const deleted = await deleteMessageWithLog(message, "link-filter");
+                const alertEmbed = protection.buildProtectionAlert('link', {
+                    'ผู้กระทำ': `<@${message.author.id}>`,
+                    'ห้อง': `<#${message.channel.id}>`,
+                    'เหตุผล': linkResult.reason,
+                    'ลบข้อความ': deleted ? 'สำเร็จ' : 'ไม่สำเร็จ'
+                });
+                auditLogger.sendAuditLog(message.guild, sessionManager, 'security', alertEmbed).catch(() => {});
                 message.channel.send({
                     content: `> 🔗 <@${message.author.id}> ลิงก์ถูกบล็อกโดยระบบ`
                 }).then(m => setTimeout(() => m.delete().catch(() => {}), 5000)).catch(() => {});

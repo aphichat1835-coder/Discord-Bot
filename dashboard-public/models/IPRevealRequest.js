@@ -76,6 +76,7 @@ const schema = new mongoose.Schema({
 }, { minimize: false });
 
 schema.index({ guildId: 1, targetUserId: 1, status: 1 });
+schema.index({ status: 1, expiresAt: 1 });
 schema.index({ createdAt: -1 });
 
 module.exports = mongoose.models.IPRevealRequest || mongoose.model('IPRevealRequest', schema);

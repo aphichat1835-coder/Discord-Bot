@@ -346,6 +346,7 @@ function safeLog(log, options = {}) {
         guildId: obj.guildId,
         userId: obj.userId || discord.userId || null,
         roleId: obj.roleId || null,
+        sensitiveRedacted: !canViewSensitive,
         requestId: obj.requestId || "",
 
         result: obj.result,

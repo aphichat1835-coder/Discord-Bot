@@ -54,6 +54,10 @@ const { safeError } = require('./utils/safeLogger');
 
 const app  = express();
 const PORT = process.env.PORT || process.env.PORT_DASHBOARD || 3001;
+let retentionTimer = null;
+let retentionMaintenanceInFlight = false;
+let lastRetentionMaintenanceAt = null;
+let lastRetentionMaintenanceError = null;
 
 const TRUST_PROXY = String(process.env.TRUST_PROXY || '').toLowerCase() === 'true';
 const TRUST_PROXY_HOPS = Math.max(1, Math.min(5, Number(process.env.TRUST_PROXY_HOPS || 1) || 1));
@@ -65,12 +69,26 @@ app.disable('x-powered-by');
 app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    res.setHeader(
+        'Content-Security-Policy',
+        "default-src 'self'; img-src 'self' https://cdn.discordapp.com https://cdn.discordapp.com data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    );
     next();
 });
 
 app.use(express.json({ limit: '128kb' }));
 app.use(express.urlencoded({ extended: true, limit: '128kb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+    etag: true,
+    maxAge: process.env.STATIC_CACHE_MAX_AGE || '10m',
+    setHeaders(res, filePath) {
+        if (filePath.endsWith('.html')) {
+            res.setHeader('Cache-Control', 'no-store');
+        }
+    }
+}));
 
 app.use(session({
     secret:            process.env.SESSION_SECRET,
@@ -80,6 +98,7 @@ app.use(session({
         mongoUrl: process.env.MONGO_URI,
         touchAfter: 24 * 3600
     }),
+    rolling: false,
     cookie: {
         maxAge:   24 * 60 * 60 * 1000,
         httpOnly: true,
@@ -207,10 +226,38 @@ app.get('/ping', (_req, res) => {
 });
 
 app.get('/health', (_req, res) => {
-    res.json({
-        status: 'ok',
+    const dbReady = mongoose.connection.readyState === 1;
+    const configReady = Boolean(
+        process.env.MONGO_URI &&
+        process.env.DISCORD_CLIENT_ID &&
+        process.env.DISCORD_CLIENT_SECRET &&
+        process.env.TOKEN_MANAGER &&
+        process.env.ENCRYPTION_KEY &&
+        process.env.SESSION_SECRET
+    );
+    const degraded = !dbReady || !configReady;
+
+    res.status(degraded ? 503 : 200).json({
+        status: degraded ? 'degraded' : 'ok',
+        ready: !degraded,
         service: 'dashboard-public',
+        checks: {
+            database: dbReady ? 'connected' : 'disconnected',
+            config: configReady ? 'ready' : 'missing_required'
+        },
+        retention: {
+            inFlight: retentionMaintenanceInFlight,
+            lastRunAt: lastRetentionMaintenanceAt,
+            lastError: lastRetentionMaintenanceError
+        },
         uptime: process.uptime(),
+        timestamp: Date.now()
+    });
+});
+
+app.get('/ready', (_req, res) => {
+    res.json({
+        ready: mongoose.connection.readyState === 1,
         timestamp: Date.now()
     });
 });
@@ -224,69 +271,91 @@ function retentionDays(mode) {
 }
 
 async function runDataLifecycleMaintenance() {
+    if (retentionMaintenanceInFlight) {
+        return { skipped: true, reason: 'maintenance_in_flight' };
+    }
+
+    retentionMaintenanceInFlight = true;
+    lastRetentionMaintenanceError = null;
     const now = Date.now();
 
-    await IPRevealRequest.updateMany(
-        { status: 'pending', expiresAt: { $lte: now } },
-        {
-            $set: {
-                status: 'expired',
-                updatedAt: now,
-                ownerNote: 'expired automatically'
+    try {
+        await IPRevealRequest.updateMany(
+            { status: 'pending', expiresAt: { $lte: now } },
+            {
+                $set: {
+                    status: 'expired',
+                    updatedAt: now,
+                    ownerNote: 'expired automatically'
+                }
+            }
+        );
+
+        const configs = await GuildConfig.find({})
+            .select('guildId security.retentionMode')
+            .lean();
+
+        for (const config of configs) {
+            const days = retentionDays(config.security?.retentionMode);
+            if (!days) continue;
+
+            const cutoff = now - days * 24 * 60 * 60 * 1000;
+            try {
+                await Promise.all([
+                    VerifyLog.updateMany(
+                        {
+                            guildId: config.guildId,
+                            deletedAt: { $exists: false },
+                            $or: [
+                                { verifiedAt: { $lt: cutoff } },
+                                { createdAt: { $lt: cutoff } }
+                            ]
+                        },
+                        {
+                            $set: {
+                                deletedAt: now,
+                                deletedBy: `retention:${config.security?.retentionMode || 'unknown'}`
+                            }
+                        }
+                    ),
+                    IpIdentityLink.updateMany(
+                        {
+                            guildId: config.guildId,
+                            deletedAt: { $exists: false },
+                            lastSeenAt: { $lt: cutoff }
+                        },
+                        {
+                            $set: {
+                                deletedAt: now,
+                                deletedBy: `retention:${config.security?.retentionMode || 'unknown'}`,
+                                updatedAt: now
+                            }
+                        }
+                    )
+                ]);
+            } catch (err) {
+                console.error('[RETENTION] guild maintenance failed:', {
+                    guildId: config.guildId,
+                    retentionMode: config.security?.retentionMode || 'unknown',
+                    error: safeError(err)
+                });
             }
         }
-    );
 
-    const configs = await GuildConfig.find({})
-        .select('guildId security.retentionMode')
-        .lean();
-
-    for (const config of configs) {
-        const days = retentionDays(config.security?.retentionMode);
-        if (!days) continue;
-
-        const cutoff = now - days * 24 * 60 * 60 * 1000;
-        try {
-            await Promise.all([
-                VerifyLog.updateMany(
-                    {
-                        guildId: config.guildId,
-                        deletedAt: { $exists: false },
-                        $or: [
-                            { verifiedAt: { $lt: cutoff } },
-                            { createdAt: { $lt: cutoff } }
-                        ]
-                    },
-                    {
-                        $set: {
-                            deletedAt: now,
-                            deletedBy: `retention:${config.security?.retentionMode || 'unknown'}`
-                        }
-                    }
-                ),
-                IpIdentityLink.updateMany(
-                    {
-                        guildId: config.guildId,
-                        deletedAt: { $exists: false },
-                        lastSeenAt: { $lt: cutoff }
-                    },
-                    {
-                        $set: {
-                            deletedAt: now,
-                            deletedBy: `retention:${config.security?.retentionMode || 'unknown'}`,
-                            updatedAt: now
-                        }
-                    }
-                )
-            ]);
-        } catch (err) {
-            console.error('[RETENTION] guild maintenance failed:', {
-                guildId: config.guildId,
-                retentionMode: config.security?.retentionMode || 'unknown',
-                error: safeError(err)
-            });
-        }
+        lastRetentionMaintenanceAt = Date.now();
+        return { skipped: false };
+    } catch (err) {
+        lastRetentionMaintenanceError = safeError(err);
+        throw err;
+    } finally {
+        retentionMaintenanceInFlight = false;
     }
+}
+
+function stopRetentionMaintenance() {
+    if (!retentionTimer) return;
+    clearInterval(retentionTimer);
+    retentionTimer = null;
 }
 
 mongoose.connect(process.env.MONGO_URI, { maxPoolSize: 5 })
@@ -300,7 +369,7 @@ mongoose.connect(process.env.MONGO_URI, { maxPoolSize: 5 })
         runDataLifecycleMaintenance().catch(err => {
             console.error('[RETENTION] maintenance failed:', safeError(err));
         });
-        const retentionTimer = setInterval(() => {
+        retentionTimer = setInterval(() => {
             runDataLifecycleMaintenance().catch(err => {
                 console.error('[RETENTION] maintenance failed:', safeError(err));
             });
@@ -311,3 +380,10 @@ mongoose.connect(process.env.MONGO_URI, { maxPoolSize: 5 })
         console.error('[DB] ❌ Failed:', safeError(err));
         process.exit(1);
     });
+
+for (const signal of ['SIGTERM', 'SIGINT']) {
+    process.once(signal, () => {
+        stopRetentionMaintenance();
+        mongoose.connection.close(false).finally(() => process.exit(0));
+    });
+}

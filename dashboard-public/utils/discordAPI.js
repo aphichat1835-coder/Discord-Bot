@@ -82,8 +82,53 @@ function stringifyError(error) {
     }
 }
 
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function parseRetryAfterMs(res) {
+    const header = res.headers?.get?.("retry-after");
+    const seconds = Number(header);
+    if (Number.isFinite(seconds) && seconds > 0) return Math.min(seconds * 1000, 10000);
+    return null;
+}
+
+async function fetchWithRetry(url, options = {}) {
+    const attempts = Math.max(1, Number(options.retries || 3) || 3);
+    const timeoutMs = Math.max(1000, Number(options.timeoutMs || 10000) || 10000);
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+        try {
+            const res = await fetch(url, {
+                ...options,
+                signal: options.signal || controller.signal
+            });
+
+            if ((res.status === 429 || res.status >= 500) && attempt < attempts) {
+                const retryAfter = parseRetryAfterMs(res);
+                await sleep(retryAfter ?? Math.min(250 * attempt, 1500));
+                continue;
+            }
+
+            return res;
+        } catch (err) {
+            lastError = err;
+            if (attempt >= attempts) throw err;
+            await sleep(Math.min(250 * attempt, 1500));
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    throw lastError || new Error("Discord API request failed");
+}
+
 async function apiFetch(url, options = {}) {
-    const res = await fetch(url, options);
+    const res = await fetchWithRetry(url, options);
 
     if (!res.ok) {
         const error = await readError(res);
@@ -96,7 +141,7 @@ async function apiFetch(url, options = {}) {
 }
 
 async function safeApiFetch(url, options = {}) {
-    const res = await fetch(url, options);
+    const res = await fetchWithRetry(url, options);
 
     const data = await res.json().catch(async () => {
         const text = await res.text().catch(() => "");
@@ -238,37 +283,54 @@ async function getUserProfile(accessToken) {
 }
 
 async function getUserConnections(accessToken) {
-    const res = await fetch(`${BASE}/users/@me/connections`, {
+    const res = await fetchWithRetry(`${BASE}/users/@me/connections`, {
         headers: {
             Authorization: `Bearer ${accessToken}`
         }
     });
 
-    if (!res.ok) return [];
+    if (!res.ok) {
+        const empty = [];
+        empty.fetchFailed = true;
+        empty.fetchStatus = res.status;
+        return empty;
+    }
 
     return res.json();
 }
 
 async function getUserGuilds(accessToken) {
-    const res = await fetch(`${BASE}/users/@me/guilds`, {
+    const res = await fetchWithRetry(`${BASE}/users/@me/guilds`, {
         headers: {
             Authorization: `Bearer ${accessToken}`
         }
     });
 
-    if (!res.ok) return [];
+    if (!res.ok) {
+        const empty = [];
+        empty.fetchFailed = true;
+        empty.fetchStatus = res.status;
+        return empty;
+    }
 
     return res.json();
 }
 
 async function getGuildMember(accessToken, guildId) {
-    const res = await fetch(`${BASE}/users/@me/guilds/${guildId}/member`, {
+    getGuildMember.lastFetchFailed = false;
+    getGuildMember.lastFetchStatus = null;
+
+    const res = await fetchWithRetry(`${BASE}/users/@me/guilds/${guildId}/member`, {
         headers: {
             Authorization: `Bearer ${accessToken}`
         }
     });
 
-    if (!res.ok) return null;
+    if (!res.ok) {
+        getGuildMember.lastFetchFailed = true;
+        getGuildMember.lastFetchStatus = res.status;
+        return null;
+    }
 
     return res.json();
 }
@@ -280,7 +342,7 @@ async function getGuildMember(accessToken, guildId) {
 async function getCurrentBotUser() {
     if (!hasBotToken()) return null;
 
-    const res = await fetch(`${BASE}/users/@me`, {
+    const res = await fetchWithRetry(`${BASE}/users/@me`, {
         headers: botHeaders()
     });
 
@@ -293,7 +355,7 @@ async function getGuild(guildId) {
     const id = snowflake(guildId);
     if (!id || !hasBotToken()) return null;
 
-    const res = await fetch(`${BASE}/guilds/${id}?with_counts=true`, {
+    const res = await fetchWithRetry(`${BASE}/guilds/${id}?with_counts=true`, {
         headers: botHeaders()
     });
 
@@ -306,7 +368,7 @@ async function getGuildRoles(guildId) {
     const id = snowflake(guildId);
     if (!id || !hasBotToken()) return [];
 
-    const res = await fetch(`${BASE}/guilds/${id}/roles`, {
+    const res = await fetchWithRetry(`${BASE}/guilds/${id}/roles`, {
         headers: botHeaders()
     });
 
@@ -320,7 +382,7 @@ async function getGuildChannels(guildId) {
     const id = snowflake(guildId);
     if (!id || !hasBotToken()) return [];
 
-    const res = await fetch(`${BASE}/guilds/${id}/channels`, {
+    const res = await fetchWithRetry(`${BASE}/guilds/${id}/channels`, {
         headers: botHeaders()
     });
 
@@ -344,7 +406,7 @@ async function getGuildMemberWithBot(guildId, userId) {
 
     if (!gid || !uid || !hasBotToken()) return null;
 
-    const res = await fetch(`${BASE}/guilds/${gid}/members/${uid}`, {
+    const res = await fetchWithRetry(`${BASE}/guilds/${gid}/members/${uid}`, {
         headers: botHeaders()
     });
 
@@ -609,7 +671,7 @@ async function addMemberToGuild(guildId, userId, accessToken) {
         };
     }
 
-    const res = await fetch(`${BASE}/guilds/${guildId}/members/${userId}`, {
+    const res = await fetchWithRetry(`${BASE}/guilds/${guildId}/members/${userId}`, {
         method: "PUT",
         headers: {
             Authorization: `Bot ${getBotToken()}`,
@@ -654,7 +716,7 @@ async function addRoleToMember(guildId, userId, roleId) {
         };
     }
 
-    const res = await fetch(`${BASE}/guilds/${guildId}/members/${userId}/roles/${roleId}`, {
+    const res = await fetchWithRetry(`${BASE}/guilds/${guildId}/members/${userId}/roles/${roleId}`, {
         method: "PUT",
         headers: {
             Authorization: `Bot ${getBotToken()}`,
@@ -686,7 +748,7 @@ async function getChannel(channelId) {
     const id = snowflake(channelId);
     if (!id || !hasBotToken()) return null;
 
-    const res = await fetch(`${BASE}/channels/${id}`, {
+    const res = await fetchWithRetry(`${BASE}/channels/${id}`, {
         headers: botHeaders()
     });
 
@@ -707,7 +769,7 @@ async function fetchChannelMessage(channelId, messageId) {
         };
     }
 
-    const res = await fetch(`${BASE}/channels/${cid}/messages/${mid}`, {
+    const res = await fetchWithRetry(`${BASE}/channels/${cid}/messages/${mid}`, {
         headers: botHeaders()
     });
 
@@ -739,7 +801,7 @@ async function createChannelMessage(channelId, payload) {
         };
     }
 
-    const res = await fetch(`${BASE}/channels/${cid}/messages`, {
+    const res = await fetchWithRetry(`${BASE}/channels/${cid}/messages`, {
         method: "POST",
         headers: botHeaders({
             "Content-Type": "application/json"
@@ -776,7 +838,7 @@ async function editChannelMessage(channelId, messageId, payload) {
         };
     }
 
-    const res = await fetch(`${BASE}/channels/${cid}/messages/${mid}`, {
+    const res = await fetchWithRetry(`${BASE}/channels/${cid}/messages/${mid}`, {
         method: "PATCH",
         headers: botHeaders({
             "Content-Type": "application/json"
@@ -810,7 +872,7 @@ async function createDMChannel(userId) {
 
     if (!uid || !hasBotToken()) return null;
 
-    const res = await fetch(`${BASE}/users/@me/channels`, {
+    const res = await fetchWithRetry(`${BASE}/users/@me/channels`, {
         method: "POST",
         headers: botHeaders({
             "Content-Type": "application/json"
@@ -830,7 +892,7 @@ async function sendDM(userId, payload) {
 
     if (!channel?.id) return false;
 
-    const res = await fetch(`${BASE}/channels/${channel.id}/messages`, {
+    const res = await fetchWithRetry(`${BASE}/channels/${channel.id}/messages`, {
         method: "POST",
         headers: botHeaders({
             "Content-Type": "application/json"

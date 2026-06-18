@@ -10,9 +10,28 @@ let memoryTimer = null;
 let lastHeapUsed = 0;
 let criticalCount = 0;
 let emergencyCleanupRunning = false;
+let lastSnapshot = null;
 
 function mb(bytes) {
     return Math.round((Number(bytes || 0) / 1024 / 1024) * 10) / 10;
+}
+
+function numberEnv(name, fallback, min = 0) {
+    const value = Number(process.env[name]);
+    if (!Number.isFinite(value)) return fallback;
+    return Math.max(min, value);
+}
+
+function getMemoryMonitorConfig() {
+    const criticalModeRaw = String(process.env.MEMORY_CRITICAL_MODE || "graceful_exit").trim().toLowerCase();
+    const criticalMode = criticalModeRaw === "cleanup_only" ? "cleanup_only" : "graceful_exit";
+
+    return {
+        warnMb: numberEnv("MEMORY_WARN_MB", 180, 1),
+        criticalMb: numberEnv("MEMORY_CRITICAL_MB", 220, 1),
+        criticalRounds: Math.max(1, Math.floor(numberEnv("MEMORY_CRITICAL_ROUNDS", 3, 1))),
+        criticalMode
+    };
 }
 
 function startMemoryMonitor({
@@ -31,6 +50,7 @@ function startMemoryMonitor({
     memoryTimer = setInterval(async () => {
         try {
             if (system?.isShuttingDown?.()) return;
+            const monitorConfig = getMemoryMonitorConfig();
 
             const mem = process.memoryUsage();
             const heapUsed = mb(mem.heapUsed);
@@ -46,6 +66,20 @@ function startMemoryMonitor({
             const autoDeaf = voiceWorker?.getAutoDeafSettings?.();
             const workerDiagnostics = voiceWorker?.getWorkerDiagnostics?.();
             const auditStats = auditLogger?.getAuditStats?.();
+            lastSnapshot = {
+                heapUsed,
+                heapTotal,
+                rss,
+                external,
+                diff,
+                sessions,
+                clientPool,
+                workerDiagnostics,
+                auditStats,
+                criticalCount,
+                config: monitorConfig,
+                at: Date.now()
+            };
 
             console.log(
                 `[MEMORY] heap=${heapUsed}/${heapTotal}MB rss=${rss}MB external=${external}MB diff=${diff}MB ` +
@@ -55,30 +89,33 @@ function startMemoryMonitor({
                 `audit=${auditStats ? JSON.stringify(auditStats) : "-"}`
             );
 
-            if (heapUsed > 180) {
+            if (heapUsed > monitorConfig.warnMb) {
                 console.warn(`[MEMORY] ⚠️ Heap high: ${heapUsed}MB`);
                 voiceWorker?.cleanupVolatileState?.();
             }
 
-            if (heapUsed > 220) {
+            if (heapUsed > monitorConfig.criticalMb) {
                 criticalCount += 1;
-                console.error(`[MEMORY] 🚨 Heap critical: ${heapUsed}MB (${criticalCount}/3)`);
+                console.error(`[MEMORY] 🚨 Heap critical: ${heapUsed}MB (${criticalCount}/${monitorConfig.criticalRounds})`);
             } else {
                 criticalCount = 0;
             }
 
-            if (criticalCount >= 3 && !emergencyCleanupRunning) {
+            if (criticalCount >= monitorConfig.criticalRounds && !emergencyCleanupRunning) {
                 emergencyCleanupRunning = true;
-                console.error("[MEMORY] 🚨 Critical memory sustained. Pausing voice sessions before exit.");
+                console.error(`[MEMORY] 🚨 Critical memory sustained. Mode=${monitorConfig.criticalMode}`);
 
-                // Force-exit timeout: ensure process exits even if cleanup hangs
+                const shouldExit = monitorConfig.criticalMode !== "cleanup_only";
                 const forceExitTimeout = setTimeout(() => {
-                    console.error("[MEMORY] 💀 Force-exit timeout reached. Exiting immediately.");
-                    process.exit(1);
+                    if (shouldExit) {
+                        console.error("[MEMORY] 💀 Force-exit timeout reached. Exiting immediately.");
+                        process.exit(1);
+                    }
+                    console.error("[MEMORY] ⚠️ Cleanup-only timeout reached. Keeping process alive.");
                 }, 10000);
 
                 try {
-                    system?.markAppShuttingDown?.();
+                    if (shouldExit) system?.markAppShuttingDown?.();
                     voiceWorker?.setShuttingDown?.(true);
                     await voiceWorker?.pauseAll?.();
                     await sessionManager?.saveDatabase?.();
@@ -86,7 +123,13 @@ function startMemoryMonitor({
                     console.error(`[MEMORY] Emergency cleanup failed: ${e.message}`);
                 } finally {
                     clearTimeout(forceExitTimeout);
-                    process.exit(1);
+                    if (monitorConfig.criticalMode === "cleanup_only") {
+                        emergencyCleanupRunning = false;
+                        criticalCount = 0;
+                        voiceWorker?.setShuttingDown?.(false);
+                    } else {
+                        process.exit(1);
+                    }
                 }
             }
         } catch (e) {
@@ -106,7 +149,18 @@ function stopMemoryMonitor() {
     lastHeapUsed = 0;
 }
 
+function getMemoryMonitorState() {
+    return {
+        running: !!memoryTimer,
+        criticalCount,
+        emergencyCleanupRunning,
+        lastSnapshot
+    };
+}
+
 module.exports = {
     startMemoryMonitor,
-    stopMemoryMonitor
+    stopMemoryMonitor,
+    getMemoryMonitorConfig,
+    getMemoryMonitorState
 };

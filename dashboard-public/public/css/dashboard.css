@@ -2002,6 +2002,23 @@ tbody tr:hover td {
   display: none !important;
 }
 
+.notice {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 0.88rem;
+}
+
+.notice-warn {
+  border-color: rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--text);
+}
+
+.mb-12 {
+  margin-bottom: 12px;
+}
+
 .nowrap {
   white-space: nowrap;
 }

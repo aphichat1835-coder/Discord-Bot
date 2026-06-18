@@ -78,6 +78,18 @@ ${navBar("/")}
 </div>
 
 <div class="card">
+    <h3>🧭 Voice Worker Diagnostics</h3>
+    <div class="mini-grid" style="grid-template-columns:repeat(auto-fit,minmax(120px,1fr));">
+        <div class="mini-stat"><span>Client Pool</span><b id="diagClientPool">0</b></div>
+        <div class="mini-stat"><span>Login Queue</span><b id="diagLoginQueue">0</b></div>
+        <div class="mini-stat"><span>Recovery Queue</span><b id="diagRecoveryQueue">0</b></div>
+        <div class="mini-stat"><span>Natural Timers</span><b id="diagNaturalTimers">0</b></div>
+        <div class="mini-stat"><span>Auto Deaf Timers</span><b id="diagAutoDeafTimers">0</b></div>
+        <div class="mini-stat"><span>Cooldowns</span><b id="diagCooldowns">0</b></div>
+    </div>
+</div>
+
+<div class="card">
     <h3>💻 Live Logs <span id="logCount" style="font-weight:normal;text-transform:none;letter-spacing:0;color:var(--text3);font-size:0.9em;"></span></h3>
     <div class="terminal" id="logTerminal" style="height:220px;"></div>
 </div>
@@ -209,6 +221,14 @@ async function fetchStatus(){
         document.getElementById('statReconnect').textContent=d.reconnects||0;
         document.getElementById('statSuccess').textContent=(d.successRate||'100.0')+'%';
 
+        const diag=d.workerDiagnostics||{};
+        document.getElementById('diagClientPool').textContent=diag.clientPool??d.clientPoolSize??d.clientPool??0;
+        document.getElementById('diagLoginQueue').textContent=(diag.loginQueue??d.loginQueue??0)+' / '+(diag.loginQueueRunning??0);
+        document.getElementById('diagRecoveryQueue').textContent=(diag.recoveryQueue??d.recoveryQueue??0)+' / '+(diag.recoveryQueueRunning??0);
+        document.getElementById('diagNaturalTimers').textContent=diag.naturalTimers??d.naturalTimers??0;
+        document.getElementById('diagAutoDeafTimers').textContent=diag.autoDeafTimers??d.autoDeafTimers??0;
+        document.getElementById('diagCooldowns').textContent=diag.tokenLoginCooldowns??0;
+
         const pct=d.maxSessions>0?Math.round((d.sessions/d.maxSessions)*100):0;
         document.getElementById('sessionCount').textContent=(d.sessions||0)+' / '+(d.maxSessions||0);
 
@@ -235,6 +255,13 @@ async function fetchStatus(){
                 const server=esc(s.serverName||s.serverId||'Unknown Server');
                 const owner=esc(s.ownerTag||s.ownerId||'-');
                 const revealed=revealState.expiry>Date.now()&&revealState.tokens[sid];
+                const badges=[];
+                if(s.state&&s.state!=='active') badges.push(s.state);
+                if(s.staleSuspected) badges.push('stale');
+                if(s.ghostSuspected) badges.push('ghost suspected');
+                const badgeHtml=badges.length
+                    ? '<div class="session-sub">'+badges.map(b=>'<span class="session-chip" style="display:inline-block;margin:2px 4px 2px 0;padding:4px 8px;color:var(--yellow2);">'+esc(b)+'</span>').join('')+'</div>'
+                    : '';
 
                 const tokenBlock=revealed
                     ? '<div class="token-full-wrap"><span style="flex:1;">'+esc(revealState.tokens[sid])+'</span><button class="copy-btn" onclick="navigator.clipboard.writeText(\\''+String(revealState.tokens[sid]).replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'")+'\\');this.textContent=\\'✅\\';setTimeout(()=>this.textContent=\\'📋\\',1500)">📋</button></div>'
@@ -248,6 +275,7 @@ async function fetchStatus(){
                             '<div class="session-sub">🖥️ '+server+'</div>'+
                             '<div class="session-sub">🎙️ '+voiceLabel(s)+'</div>'+
                             '<div class="session-sub">📌 '+statusLabel(s)+' · ⏱ '+ustr+(rc>0?' · 🔄 '+rc+' ครั้ง':'')+'</div>'+
+                            badgeHtml+
                             '<div class="session-sub">ผู้สั่งเริ่ม: '+owner+'</div>'+
                         '</div>'+
                     '</div>'+

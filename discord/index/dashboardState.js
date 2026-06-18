@@ -54,6 +54,7 @@ function buildRuntimeStatusPayload({
     const botOnlineSec = readyAt ? Math.floor((Date.now() - readyAt) / 1000) : null;
 
     const dynamicMaxSessions = Number(sessionManager.getCachedSetting?.("maxSessions", config.limits.maxSessions));
+    const workerDiagnostics = voiceWorker.getWorkerDiagnostics?.() || {};
 
     return safeDashboardPayload({
         botOnline: client?.isReady?.() ?? false,
@@ -66,6 +67,12 @@ function buildRuntimeStatusPayload({
             : config.limits.maxSessions,
         sessionList: sessions.map(session => serializeVoiceSession(session)),
         clientPool: voiceWorker.getClientPoolSize(),
+        clientPoolSize: workerDiagnostics.clientPool ?? voiceWorker.getClientPoolSize(),
+        naturalTimers: workerDiagnostics.naturalTimers ?? 0,
+        autoDeafTimers: workerDiagnostics.autoDeafTimers ?? 0,
+        recoveryQueue: workerDiagnostics.recoveryQueue ?? 0,
+        loginQueue: workerDiagnostics.loginQueue ?? 0,
+        workerDiagnostics,
         ramMB: (mem.heapUsed / 1024 / 1024).toFixed(1),
         ramTotalMB: (mem.heapTotal / 1024 / 1024).toFixed(1),
         reconnects,
