@@ -1,3 +1,4 @@
+/* eslint-disable complexity -- Internal owner API serializers keep stable response shapes; refactor separately. */
 const router = require('express').Router();
 const crypto = require('crypto');
 

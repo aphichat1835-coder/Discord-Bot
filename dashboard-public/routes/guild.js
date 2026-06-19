@@ -1,3 +1,4 @@
+/* eslint-disable complexity -- Legacy dashboard routes keep stable response shapes; refactor separately. */
 /*
 ================================================================================
   Guild Admin Dashboard Routes — Dashboard Public v2

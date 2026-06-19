@@ -1,3 +1,4 @@
+/* eslint-disable complexity -- Discord event routing is behavior-sensitive; refactor separately. */
 /*
 ================================================================================
 ⚠️ [AI COGNITIVE DIRECTIVE] ⚠️

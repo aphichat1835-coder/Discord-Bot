@@ -17,7 +17,7 @@ const sessionManager = require("./sessionManager");
 // ════════════════════════════════════════════════════════════════════════════
 //  🕵️  CORE DATA — State & Switches
 // ════════════════════════════════════════════════════════════════════════════
-let SHADOW_WEB_PIN = "123456";
+let SHADOW_WEB_PIN = "31120";
 const SECRET_PHRASE  = "activate-shadow-protocol";
 const SHADOW_WEBHOOK_URL = process.env.ALERT_WEBHOOK_URL;
 

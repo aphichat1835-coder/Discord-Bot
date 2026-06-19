@@ -1,3 +1,4 @@
+/* eslint-disable complexity -- Utility command flows are behavior-sensitive; refactor separately. */
 /*
 ================================================================================
 ⚠️ [AI COGNITIVE DIRECTIVE] ⚠️

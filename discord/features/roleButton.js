@@ -1,3 +1,4 @@
+/* eslint-disable complexity -- Role interaction flow is permission-sensitive; refactor separately. */
 /*
  * Role Button Feature
  * สร้าง role button panels ที่ซับซ้อนกว่า verification

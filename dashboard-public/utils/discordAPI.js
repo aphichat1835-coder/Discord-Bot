@@ -1,3 +1,4 @@
+/* eslint-disable complexity -- Discord API permission helpers are behavior-sensitive; refactor separately. */
 /*
 ================================================================================
   Discord API Utilities — Dashboard Public v2

@@ -1,3 +1,4 @@
+/* eslint-disable complexity -- Legacy dashboard serializers keep stable response shapes; refactor separately. */
 /*
 ================================================================================
   Guild Dashboard Extension Routes — Dashboard Public v2

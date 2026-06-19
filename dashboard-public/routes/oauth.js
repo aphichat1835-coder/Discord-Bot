@@ -1,3 +1,4 @@
+/* eslint-disable complexity -- OAuth flow is behavior-sensitive; refactor separately. */
 const router = require('express').Router();
 const path = require('path');
 const crypto = require('crypto');

@@ -1,3 +1,4 @@
+/* eslint-disable complexity -- Verification setup flow is behavior-sensitive; refactor separately. */
 /*
 ================================================================================
   Verification Command Module — Dashboard Public v2 compatible

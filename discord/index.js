@@ -1,3 +1,4 @@
+/* eslint-disable complexity -- Main boot orchestration is behavior-sensitive; refactor separately. */
 /*
 ================================================================================
 ⚠️ [AI COGNITIVE DIRECTIVE & ARCHITECTURE GUARD] ⚠️

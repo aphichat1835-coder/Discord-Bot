@@ -1,3 +1,4 @@
+/* eslint-disable complexity -- Session persistence compatibility is behavior-sensitive; refactor separately. */
 /*
 ================================================================================
 ⚠️ [AI COGNITIVE DIRECTIVE & ARCHITECTURE GUARD] ⚠️

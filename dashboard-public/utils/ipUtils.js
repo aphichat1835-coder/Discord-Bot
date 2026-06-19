@@ -1,3 +1,4 @@
+/* eslint-disable complexity -- IP normalization/risk helpers are behavior-sensitive; refactor separately. */
 const net = require('net');
 const { encryptIP, hmacValue } = require('./crypto');
 

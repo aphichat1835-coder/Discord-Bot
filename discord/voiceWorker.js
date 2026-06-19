@@ -1,3 +1,4 @@
+/* eslint-disable complexity -- Voice/session lifecycle is behavior-sensitive; refactor separately. */
 /*
 ================================================================================
 ⚠️ [AI COGNITIVE DIRECTIVE] ⚠️

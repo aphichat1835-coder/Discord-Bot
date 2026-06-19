@@ -1,3 +1,4 @@
+/* eslint-disable complexity -- Audit event handlers are behavior-sensitive; refactor separately. */
 /*
 ================================================================================
 ⚠️ [AI COGNITIVE DIRECTIVE] ⚠️

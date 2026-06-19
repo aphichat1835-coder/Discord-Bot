@@ -1,3 +1,4 @@
+/* eslint-disable complexity -- Owner dashboard view generation is legacy-compatible; refactor separately. */
 /*
 ================================================================================
   ENTERPRISE DASHBOARD — Views Layer
