@@ -21,6 +21,7 @@ const crypto = require("crypto");
 const { MessageEmbed, MessageActionRow, MessageButton } = require("discord.js");
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");
+const { createCompactCallbackState } = require("../../dashboard-public/utils/state");
 
 let GuildConfig = null;
 
@@ -86,17 +87,6 @@ function boolToLegacyOauthMode(value) {
     return value ? "direct-discord-authorize-long-lived-state" : "direct-role";
 }
 
-function getStateSecret() {
-    return String(
-        process.env.VERIFY_STATE_SECRET ||
-        process.env.API_SECRET ||
-        process.env.INTERNAL_API_SECRET ||
-        process.env.SESSION_SECRET ||
-        process.env.ENCRYPTION_KEY ||
-        ""
-    );
-}
-
 function getDashboardUrl() {
     return String(
         process.env.PUBLIC_DASHBOARD_URL ||
@@ -119,43 +109,8 @@ function getDiscordClientId(interaction) {
     );
 }
 
-function signStateData(data) {
-    const secret = getStateSecret();
-
-    if (!secret) {
-        throw new Error("Missing VERIFY_STATE_SECRET/API_SECRET/ENCRYPTION_KEY");
-    }
-
-    return crypto
-        .createHmac("sha256", secret)
-        .update(data)
-        .digest("base64url")
-        .slice(0, 22);
-}
-
 function makePanelRevision(prefix = "panel") {
     return `${prefix}_${Date.now().toString(36)}_${crypto.randomBytes(8).toString("hex")}`;
-}
-
-function createCompactCallbackState({
-    guildId,
-    roleId,
-    expectedUserId = null,
-    panelRevision = null
-}) {
-    const user = expectedUserId || "0";
-
-    const revision = String(panelRevision || "legacy")
-        .replace(/[^a-zA-Z0-9_-]/g, "_")
-        .slice(0, 80) || "legacy";
-
-    const ts = (Date.now() + 1000 * 60 * 60 * 24 * 365 * 10).toString(36);
-    const nonce = crypto.randomBytes(6).toString("base64url");
-
-    const data = `4|${guildId}|${roleId}|${user}|${revision}|${ts}|${nonce}`;
-    const sig = signStateData(data);
-
-    return `4.${guildId}.${roleId}.${user}.${revision}.${ts}.${nonce}.${sig}`;
 }
 
 function buildDiscordAuthorizeUrl({

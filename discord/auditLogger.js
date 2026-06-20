@@ -1323,5 +1323,13 @@ module.exports = {
     sendAuditLog,
     getAuditStats,
     stopAuditCleanup,
-    invalidateAuditCache: (guildId) => auditChannelCache.delete(guildId)
+    invalidateAuditCache: (guildId) => auditChannelCache.delete(guildId),
+    _test: {
+        buildEmbed,
+        cacheMember,
+        cleanupAuditCaches,
+        getCachedMember,
+        auditChannelCache,
+        memberStateCache
+    }
 };

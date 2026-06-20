@@ -8,8 +8,8 @@
   - Guild settings
   - Verification panel resources / validation / send / update / disable
   - Members / logs APIs with detailed verification data
-  - Raw IP exposure for guild admin dashboard when encrypted IP is available
-  - Existing reveal/delete behavior preserved
+  - Sensitive verification data visibility gated by owner approval
+  - Existing reveal/delete behavior preserved without bypassing owner approval
   - Panel Revision / Rotate State for long-lived OAuth panel state
 ================================================================================
 */
@@ -24,6 +24,14 @@ const IPRevealRequest = require("../models/IPRevealRequest");
 const IpIdentityLink = require("../models/IpIdentityLink");
 
 const { decryptIP } = require("../utils/crypto");
+const {
+  createCompactCallbackState,
+  getStateSecret
+} = require("../utils/state");
+const {
+  normalizeGuildPermissions,
+  canAccessGuildDashboard
+} = require("../utils/guildPermissions");
 const {
   normalizeVerifyMode,
   normalizeAction,
@@ -98,29 +106,25 @@ function getSessionGuilds(req) {
 }
 
 function normalizeGuild(guild = {}) {
-  const owner = !!guild.owner || !!guild.isOwner;
-  const isAdmin = owner || guild.isAdmin === true;
-  const canManageGuild = owner || isAdmin;
-  const canManageRoles = owner || isAdmin;
-  const canManage = owner || isAdmin;
+  const policy = normalizeGuildPermissions(guild);
   return {
     id: String(guild.id || ""),
     name: String(guild.name || "Unknown Server"),
     icon: guild.icon || null,
-    owner,
+    owner: policy.owner,
     permissions: String(guild.permissions || "0"),
-    isAdmin,
-    isOwner: owner,
-    canManage,
-    canManageGuild,
-    canManageRoles
+    isAdmin: policy.isAdmin,
+    isOwner: policy.isOwner,
+    canManage: policy.canManage,
+    canManageGuild: policy.canManageGuild,
+    canManageRoles: policy.canManageRoles
   };
 }
 
 function getGuildFromSession(req, guildId) {
   return getSessionGuilds(req)
     .map(normalizeGuild)
-    .find(guild => guild.id === String(guildId) && (guild.isOwner || guild.isAdmin));
+    .find(guild => guild.id === String(guildId) && canAccessGuildDashboard(guild));
 }
 
 function requireAdmin(req, res, next) {
@@ -778,55 +782,6 @@ function summarizeCounts(logs = []) {
 
 function makePanelRevision(prefix = "panel") {
   return `${prefix}_${Date.now().toString(36)}_${crypto.randomBytes(8).toString("hex")}`;
-}
-
-function getStateSecret() {
-  return String(
-    process.env.VERIFY_STATE_SECRET ||
-    process.env.API_SECRET ||
-    process.env.INTERNAL_API_SECRET ||
-    process.env.SESSION_SECRET ||
-    process.env.ENCRYPTION_KEY ||
-    ""
-  );
-}
-
-function requireStateSecret() {
-  const secret = getStateSecret();
-
-  if (!secret) {
-    throw new Error("Missing VERIFY_STATE_SECRET/API_SECRET/INTERNAL_API_SECRET/SESSION_SECRET/ENCRYPTION_KEY");
-  }
-
-  return secret;
-}
-
-function signStateData(data) {
-  return crypto
-    .createHmac("sha256", requireStateSecret())
-    .update(data)
-    .digest("base64url")
-    .slice(0, 22);
-}
-function createCompactCallbackState({
-  guildId,
-  roleId,
-  expectedUserId = null,
-  panelRevision = null
-}) {
-  const user = expectedUserId || "0";
-
-  const revision = String(panelRevision || "legacy")
-    .replace(/[^a-zA-Z0-9_-]/g, "_")
-    .slice(0, 80) || "legacy";
-
-  const ts = (Date.now() + 1000 * 60 * 60 * 24 * 365 * 10).toString(36);
-  const nonce = crypto.randomBytes(6).toString("base64url");
-
-  const data = `4|${guildId}|${roleId}|${user}|${revision}|${ts}|${nonce}`;
-  const sig = signStateData(data);
-
-  return `4.${guildId}.${roleId}.${user}.${revision}.${ts}.${nonce}.${sig}`;
 }
 
 function buildDiscordAuthorizeUrl(req, { guildId, roleId, panelRevision = null }) {

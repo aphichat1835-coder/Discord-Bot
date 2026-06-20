@@ -37,6 +37,7 @@ const session    = require('express-session');
 const expressRateLimit = require('express-rate-limit');
 const MongoStore = require('connect-mongo');
 const path       = require('path');
+const crypto     = require('crypto');
 
 const oauthRoutes              = require('./routes/oauth');
 const adminSessionCompatRoutes = require('./routes/adminSessionCompat');
@@ -58,9 +59,16 @@ let retentionTimer = null;
 let retentionMaintenanceInFlight = false;
 let lastRetentionMaintenanceAt = null;
 let lastRetentionMaintenanceError = null;
+let lastRetentionMaintenanceSummary = null;
 
 const TRUST_PROXY = String(process.env.TRUST_PROXY || '').toLowerCase() === 'true';
 const TRUST_PROXY_HOPS = Math.max(1, Math.min(5, Number(process.env.TRUST_PROXY_HOPS || 1) || 1));
+const INTERNAL_SECRET = process.env.INTERNAL_API_SECRET || process.env.API_SECRET || '';
+const SESSION_MAX_AGE_MS = Math.max(
+    5 * 60 * 1000,
+    Number(process.env.ADMIN_SESSION_MAX_AGE_MS || 24 * 60 * 60 * 1000) || 24 * 60 * 60 * 1000
+);
+const SESSION_ROLLING = String(process.env.ADMIN_SESSION_ROLLING || 'false').trim().toLowerCase() === 'true';
 
 app.set('trust proxy', TRUST_PROXY ? TRUST_PROXY_HOPS : false);
 
@@ -98,9 +106,9 @@ app.use(session({
         mongoUrl: process.env.MONGO_URI,
         touchAfter: 24 * 3600
     }),
-    rolling: false,
+    rolling: SESSION_ROLLING,
     cookie: {
-        maxAge:   24 * 60 * 60 * 1000,
+        maxAge:   SESSION_MAX_AGE_MS,
         httpOnly: true,
         secure:   IS_PRODUCTION,
         sameSite: 'lax'
@@ -245,10 +253,17 @@ app.get('/health', (_req, res) => {
             database: dbReady ? 'connected' : 'disconnected',
             config: configReady ? 'ready' : 'missing_required'
         },
+        sessionCookie: {
+            policy: SESSION_ROLLING ? 'rolling' : 'absolute',
+            maxAgeMs: SESSION_MAX_AGE_MS,
+            secure: IS_PRODUCTION,
+            revoke: 'logout destroys the current admin session; global revoke is intentionally not exposed'
+        },
         retention: {
             inFlight: retentionMaintenanceInFlight,
             lastRunAt: lastRetentionMaintenanceAt,
-            lastError: lastRetentionMaintenanceError
+            lastError: lastRetentionMaintenanceError,
+            lastSummary: lastRetentionMaintenanceSummary
         },
         uptime: process.uptime(),
         timestamp: Date.now()
@@ -270,7 +285,29 @@ function retentionDays(mode) {
     return null;
 }
 
-async function runDataLifecycleMaintenance() {
+function requireInternalSecret(req, res, next) {
+    if (!INTERNAL_SECRET) {
+        return res.status(503).json({
+            success: false,
+            error: 'Internal API secret is not configured'
+        });
+    }
+
+    const provided = String(req.headers['x-internal-secret'] || '');
+    const a = Buffer.from(provided, 'utf8');
+    const b = Buffer.from(INTERNAL_SECRET, 'utf8');
+
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+        return res.status(401).json({
+            success: false,
+            error: 'Unauthorized'
+        });
+    }
+
+    return next();
+}
+
+async function runDataLifecycleMaintenance(options = {}) {
     if (retentionMaintenanceInFlight) {
         return { skipped: true, reason: 'maintenance_in_flight' };
     }
@@ -278,62 +315,101 @@ async function runDataLifecycleMaintenance() {
     retentionMaintenanceInFlight = true;
     lastRetentionMaintenanceError = null;
     const now = Date.now();
+    const dryRun = options.dryRun === true;
+    const summary = {
+        dryRun,
+        skipped: false,
+        startedAt: now,
+        finishedAt: null,
+        expiredRevealRequests: 0,
+        guildsScanned: 0,
+        guildsWithRetention: 0,
+        verifyLogs: 0,
+        ipIdentityLinks: 0,
+        errors: []
+    };
 
     try {
-        await IPRevealRequest.updateMany(
-            { status: 'pending', expiresAt: { $lte: now } },
-            {
-                $set: {
-                    status: 'expired',
-                    updatedAt: now,
-                    ownerNote: 'expired automatically'
+        const expiredRevealFilter = { status: 'pending', expiresAt: { $lte: now } };
+        if (dryRun) {
+            summary.expiredRevealRequests = await IPRevealRequest.countDocuments(expiredRevealFilter);
+        } else {
+            const expired = await IPRevealRequest.updateMany(
+                expiredRevealFilter,
+                {
+                    $set: {
+                        status: 'expired',
+                        updatedAt: now,
+                        ownerNote: 'expired automatically'
+                    }
                 }
-            }
-        );
+            );
+            summary.expiredRevealRequests = expired.modifiedCount || 0;
+        }
 
         const configs = await GuildConfig.find({})
             .select('guildId security.retentionMode')
             .lean();
+        summary.guildsScanned = configs.length;
 
         for (const config of configs) {
             const days = retentionDays(config.security?.retentionMode);
             if (!days) continue;
+            summary.guildsWithRetention++;
 
             const cutoff = now - days * 24 * 60 * 60 * 1000;
+            const verifyLogFilter = {
+                guildId: config.guildId,
+                deletedAt: { $exists: false },
+                $or: [
+                    { verifiedAt: { $lt: cutoff } },
+                    { createdAt: { $lt: cutoff } }
+                ]
+            };
+            const ipIdentityFilter = {
+                guildId: config.guildId,
+                deletedAt: { $exists: false },
+                lastSeenAt: { $lt: cutoff }
+            };
             try {
-                await Promise.all([
-                    VerifyLog.updateMany(
-                        {
-                            guildId: config.guildId,
-                            deletedAt: { $exists: false },
-                            $or: [
-                                { verifiedAt: { $lt: cutoff } },
-                                { createdAt: { $lt: cutoff } }
-                            ]
-                        },
-                        {
-                            $set: {
-                                deletedAt: now,
-                                deletedBy: `retention:${config.security?.retentionMode || 'unknown'}`
+                if (dryRun) {
+                    const [verifyLogs, ipIdentityLinks] = await Promise.all([
+                        VerifyLog.countDocuments(verifyLogFilter),
+                        IpIdentityLink.countDocuments(ipIdentityFilter)
+                    ]);
+                    summary.verifyLogs += verifyLogs;
+                    summary.ipIdentityLinks += ipIdentityLinks;
+                } else {
+                    const [verifyLogs, ipIdentityLinks] = await Promise.all([
+                        VerifyLog.updateMany(
+                            verifyLogFilter,
+                            {
+                                $set: {
+                                    deletedAt: now,
+                                    deletedBy: `retention:${config.security?.retentionMode || 'unknown'}`
+                                }
                             }
-                        }
-                    ),
-                    IpIdentityLink.updateMany(
-                        {
-                            guildId: config.guildId,
-                            deletedAt: { $exists: false },
-                            lastSeenAt: { $lt: cutoff }
-                        },
-                        {
-                            $set: {
-                                deletedAt: now,
-                                deletedBy: `retention:${config.security?.retentionMode || 'unknown'}`,
-                                updatedAt: now
+                        ),
+                        IpIdentityLink.updateMany(
+                            ipIdentityFilter,
+                            {
+                                $set: {
+                                    deletedAt: now,
+                                    deletedBy: `retention:${config.security?.retentionMode || 'unknown'}`,
+                                    updatedAt: now
+                                }
                             }
-                        }
-                    )
-                ]);
+                        )
+                    ]);
+                    summary.verifyLogs += verifyLogs.modifiedCount || 0;
+                    summary.ipIdentityLinks += ipIdentityLinks.modifiedCount || 0;
+                }
             } catch (err) {
+                summary.errors.push({
+                    guildId: config.guildId,
+                    retentionMode: config.security?.retentionMode || 'unknown',
+                    error: safeError(err)
+                });
                 console.error('[RETENTION] guild maintenance failed:', {
                     guildId: config.guildId,
                     retentionMode: config.security?.retentionMode || 'unknown',
@@ -342,8 +418,12 @@ async function runDataLifecycleMaintenance() {
             }
         }
 
-        lastRetentionMaintenanceAt = Date.now();
-        return { skipped: false };
+        summary.finishedAt = Date.now();
+        if (!dryRun) {
+            lastRetentionMaintenanceAt = summary.finishedAt;
+            lastRetentionMaintenanceSummary = summary;
+        }
+        return summary;
     } catch (err) {
         lastRetentionMaintenanceError = safeError(err);
         throw err;
@@ -351,6 +431,18 @@ async function runDataLifecycleMaintenance() {
         retentionMaintenanceInFlight = false;
     }
 }
+
+app.get('/internal/retention/dry-run', requireInternalSecret, async (_req, res) => {
+    try {
+        const summary = await runDataLifecycleMaintenance({ dryRun: true });
+        return res.json({ success: true, summary });
+    } catch (err) {
+        return res.status(500).json({
+            success: false,
+            error: safeError(err)
+        });
+    }
+});
 
 function stopRetentionMaintenance() {
     if (!retentionTimer) return;

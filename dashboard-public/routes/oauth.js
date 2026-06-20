@@ -6,6 +6,12 @@ const crypto = require('crypto');
 const discord = require('../utils/discordAPI');
 const { processIP, extractDevice } = require('../utils/ipUtils');
 const { normalizeVerificationConfig, normalizeAction, clampNumber } = require('../utils/verifyMode');
+const {
+    encodeSignedState,
+    decodeSignedState,
+    decodeCallbackState
+} = require('../utils/state');
+const { normalizeGuildPermissions } = require('../utils/guildPermissions');
 
 const OAuthUser = require('../models/OAuthUser');
 const GuildConfig = require('../models/GuildConfig');
@@ -26,210 +32,9 @@ const ADMIN_REDIRECT_URI = `${BASE_URL}/auth/admin-callback`;
 const VERIFY_SCOPE = 'identify email connections guilds guilds.members.read guilds.join';
 const ADMIN_SCOPE = 'identify guilds';
 const CALLBACK_STATE_MAX_AGE_MS = 10 * 60 * 1000;
-
-const PERMISSIONS = {
-    ADMINISTRATOR: 0x8n,
-    MANAGE_GUILD: 0x20n,
-    BAN_MEMBERS: 0x4n,
-    KICK_MEMBERS: 0x2n,
-    MANAGE_CHANNELS: 0x10n,
-    MANAGE_ROLES: 0x10000000n,
-    MANAGE_MESSAGES: 0x2000n,
-    VIEW_AUDIT_LOG: 0x80n
-};
-
-function getStateSecret() {
-    return String(
-        process.env.VERIFY_STATE_SECRET ||
-        process.env.API_SECRET ||
-        process.env.INTERNAL_API_SECRET ||
-        process.env.SESSION_SECRET ||
-        process.env.ENCRYPTION_KEY ||
-        ''
-    );
-}
-
-function requireStateSecret() {
-    const secret = getStateSecret();
-
-    if (!secret) {
-        throw new Error('Missing VERIFY_STATE_SECRET/API_SECRET/INTERNAL_API_SECRET/SESSION_SECRET/ENCRYPTION_KEY');
-    }
-
-    return secret;
-}
-
-function safeEqual(a, b) {
-    const aa = Buffer.from(String(a || ''), 'utf8');
-    const bb = Buffer.from(String(b || ''), 'utf8');
-
-    return aa.length === bb.length && crypto.timingSafeEqual(aa, bb);
-}
-
-function signEncodedPayload(encodedPayload) {
-    return crypto
-        .createHmac('sha256', requireStateSecret())
-        .update(encodedPayload)
-        .digest('base64url');
-}
-
-function signCompactStateData(data) {
-    return crypto
-        .createHmac('sha256', requireStateSecret())
-        .update(data)
-        .digest('base64url')
-        .slice(0, 22);
-}
-
-function encodeSignedState(payload) {
-    const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
-    const sig = signEncodedPayload(encoded);
-
-    return `${encoded}.${sig}`;
-}
-
-function decodeSignedState(token) {
-    try {
-        const [encoded, sig] = String(token || '').split('.');
-
-        if (!encoded || !sig) return null;
-
-        const expected = signEncodedPayload(encoded);
-
-        if (!safeEqual(sig, expected)) return null;
-
-        return JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
-    } catch {
-        return null;
-    }
-}
-
-/*
-================================================================================
-  Compact state decoder
-
-  v4 ใหม่:
-  4.guildId.roleId.userId.panelRevision.ts.nonce.sig
-
-  v3 เก่า:
-  3.guildId.roleId.userId.ts.nonce.sig
-
-  หมายเหตุ:
-  - v4 จะถูกเช็ก panelRevision กับ DB ใน callback
-  - v3 ยังอ่านได้เพื่อ compatibility แต่ถ้า DB มี panelRevision ล่าสุดแล้ว จะโดนปัดตก
-================================================================================
-*/
-
-function decodeCompactCallbackStateV4(parts) {
-    if (parts.length !== 8) return null;
-
-    const [version, guildId, roleId, user, panelRevision, ts36, nonce, sig] = parts;
-
-    if (
-        version !== '4' ||
-        !guildId ||
-        !roleId ||
-        !user ||
-        !panelRevision ||
-        !ts36 ||
-        !nonce ||
-        !sig
-    ) {
-        return null;
-    }
-
-    const data = `${version}|${guildId}|${roleId}|${user}|${panelRevision}|${ts36}|${nonce}`;
-    const expected = signCompactStateData(data);
-
-    if (!safeEqual(sig, expected)) return null;
-
-    const ts = parseInt(ts36, 36);
-
-    if (!Number.isFinite(ts)) return null;
-
-    return {
-        v: 4,
-        type: 'verify-callback',
-        guildId,
-        roleId,
-        expectedUserId: user === '0' ? null : user,
-        panelRevision,
-        ts,
-        nonce,
-        mode: 'compact-direct-oauth-panel-revision'
-    };
-}
-
-function decodeCompactCallbackStateV3(parts) {
-    if (parts.length !== 7) return null;
-
-    const [version, guildId, roleId, user, ts36, nonce, sig] = parts;
-
-    if (version !== '3' || !guildId || !roleId || !user || !ts36 || !nonce || !sig) {
-        return null;
-    }
-
-    const data = `${version}|${guildId}|${roleId}|${user}|${ts36}|${nonce}`;
-    const expected = signCompactStateData(data);
-
-    if (!safeEqual(sig, expected)) return null;
-
-    const ts = parseInt(ts36, 36);
-
-    if (!Number.isFinite(ts)) return null;
-
-    return {
-        v: 3,
-        type: 'verify-callback',
-        guildId,
-        roleId,
-        expectedUserId: user === '0' ? null : user,
-        panelRevision: null,
-        ts,
-        nonce,
-        mode: 'compact-direct-oauth-long-lived'
-    };
-}
-
-function decodeCompactCallbackState(token) {
-    try {
-        const parts = String(token || '').split('.');
-
-        if (parts[0] === '4') {
-            return decodeCompactCallbackStateV4(parts);
-        }
-
-        if (parts[0] === '3') {
-            return decodeCompactCallbackStateV3(parts);
-        }
-
-        return null;
-    } catch {
-        return null;
-    }
-}
-
-function decodeCallbackState(state) {
-    const compact = decodeCompactCallbackState(state);
-
-    if (compact) return compact;
-
-    const parsed = decodeSignedState(state);
-
-    if (!parsed || parsed.type !== 'verify-callback') return null;
-    if (!parsed.guildId || !parsed.roleId || !parsed.ts) return null;
-
-    if (Date.now() - Number(parsed.ts) > CALLBACK_STATE_MAX_AGE_MS) {
-        return null;
-    }
-
-    return {
-        ...parsed,
-        expectedUserId: parsed.expectedUserId || parsed.userId || null,
-        panelRevision: parsed.panelRevision || null,
-        mode: 'legacy-json-oauth'
-    };
-}
+const IP_LINK_USERS_MAX = Math.max(20, Number(process.env.IP_LINK_USERS_MAX || 200) || 200);
+const IP_LINK_DEVICE_FINGERPRINTS_MAX = Math.max(10, Number(process.env.IP_LINK_DEVICE_FINGERPRINTS_MAX || 30) || 30);
+const IP_LINK_ROLE_SNAPSHOTS_MAX = Math.max(20, Number(process.env.IP_LINK_ROLE_SNAPSHOTS_MAX || 80) || 80);
 
 function getCdnExtension(hash) {
     return String(hash || '').startsWith('a_') ? 'gif' : 'png';
@@ -285,30 +90,6 @@ function displayTag(profile) {
     }
 
     return `@${profile.username}`;
-}
-
-function permissionBigInt(value) {
-    try {
-        return BigInt(String(value || '0'));
-    } catch {
-        return 0n;
-    }
-}
-
-function hasPerm(permissions, flag) {
-    const p = permissionBigInt(permissions);
-    return (p & flag) === flag;
-}
-
-function permissionFlags(permissions) {
-    const p = permissionBigInt(permissions);
-    const flags = [];
-
-    for (const [name, flag] of Object.entries(PERMISSIONS)) {
-        if ((p & flag) === flag) flags.push(name);
-    }
-
-    return flags;
 }
 
 function normalizeCountryList(value) {
@@ -595,6 +376,11 @@ function normalizeGuilds(guilds = []) {
     return (guilds || []).map(g => {
         const p = String(g.permissions || '0');
         const owner = !!g.owner;
+        const policy = normalizeGuildPermissions({
+            ...g,
+            owner,
+            permissions: p
+        });
 
         return {
             id: g.id,
@@ -605,12 +391,12 @@ function normalizeGuilds(guilds = []) {
             owner,
             permissions: p,
 
-            isOwner: owner,
-            isAdmin: owner || hasPerm(p, PERMISSIONS.ADMINISTRATOR),
-            canManageGuild: owner || hasPerm(p, PERMISSIONS.ADMINISTRATOR) || hasPerm(p, PERMISSIONS.MANAGE_GUILD),
-            canManageRoles: owner || hasPerm(p, PERMISSIONS.ADMINISTRATOR) || hasPerm(p, PERMISSIONS.MANAGE_ROLES),
-            canBanMembers: owner || hasPerm(p, PERMISSIONS.ADMINISTRATOR) || hasPerm(p, PERMISSIONS.BAN_MEMBERS),
-            permissionFlags: permissionFlags(p),
+            isOwner: policy.isOwner,
+            isAdmin: policy.isAdmin,
+            canManageGuild: policy.canManageGuild,
+            canManageRoles: policy.canManageRoles,
+            canBanMembers: policy.canBanMembers,
+            permissionFlags: policy.permissionFlags,
 
             features: g.features || [],
             approximateMemberCount: g.approximate_member_count || null,
@@ -864,10 +650,10 @@ async function updateIpIdentityTrackingSafe({
             fp.timezone = device.timezone;
             fp.screenSize = device.screenSize;
 
-            if (doc.deviceFingerprints.length > 30) {
+            if (doc.deviceFingerprints.length > IP_LINK_DEVICE_FINGERPRINTS_MAX) {
                 doc.deviceFingerprints = doc.deviceFingerprints
                     .sort((a, b) => (b.lastSeenAt || 0) - (a.lastSeenAt || 0))
-                    .slice(0, 30);
+                    .slice(0, IP_LINK_DEVICE_FINGERPRINTS_MAX);
             }
         }
 
@@ -879,8 +665,14 @@ async function updateIpIdentityTrackingSafe({
             at: nowMs
         });
 
-        if (doc.roleSnapshots.length > 80) {
-            doc.roleSnapshots = doc.roleSnapshots.slice(-80);
+        if (doc.roleSnapshots.length > IP_LINK_ROLE_SNAPSHOTS_MAX) {
+            doc.roleSnapshots = doc.roleSnapshots.slice(-IP_LINK_ROLE_SNAPSHOTS_MAX);
+        }
+
+        if (doc.users.length > IP_LINK_USERS_MAX) {
+            doc.users = doc.users
+                .sort((a, b) => (b.lastSeenAt || 0) - (a.lastSeenAt || 0))
+                .slice(0, IP_LINK_USERS_MAX);
         }
 
         doc.uniqueUsers = doc.users.length;

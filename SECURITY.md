@@ -158,6 +158,9 @@ Guild admin access to collected sensitive verification details is gated per guil
 - External IP lookup can be disabled with `IP_LOOKUP_ENABLED=false`.
 - `IP_LOOKUP_API_BASE_URL` controls the lookup provider URL and defaults to an HTTPS endpoint.
 - Keep `ENABLE_CF_IP_HEADER=false` unless the app is reachable only through trusted Cloudflare forwarding; direct public traffic can spoof `cf-connecting-ip`.
+- `cf-connecting-ip` is trusted only when both `ENABLE_CF_IP_HEADER=true` and `TRUST_PROXY=true` are configured.
+- IP lookup failures use a circuit breaker and cached lookups are periodically cleaned up.
+- IP risk records include both `riskFlags` and a source-oriented `riskBreakdown` so dashboard views can explain why a score increased.
 
 ## Raw IP Reveal Workflow
 
@@ -173,6 +176,25 @@ approved data access should be minimal, audited, and time-bound
 
 Do not bypass this flow. Do not expose raw IPs directly in normal public or guild admin responses.
 Approving a raw IP reveal must atomically claim a pending, unexpired request and log who approved and viewed the raw IP.
+
+## Dashboard Public Session Policy
+
+Dashboard Public admin sessions use an explicit cookie policy:
+
+- Default policy is absolute expiry, not rolling extension.
+- Default max age is 24 hours and can be changed with `ADMIN_SESSION_MAX_AGE_MS`.
+- Rolling extension can be enabled with `ADMIN_SESSION_ROLLING=true`.
+- Logout destroys the current admin session. A global revoke-all endpoint is intentionally not exposed.
+
+## Retention Policy
+
+Dashboard Public retention is guild-scoped:
+
+- `VerifyLog` and `IpIdentityLink` records are soft-deleted according to the guild retention mode.
+- Expired raw-IP reveal requests are marked expired automatically.
+- `OAuthUser` is account-level and can reference multiple guilds, so retention does not delete the whole account record for one guild's rolling window.
+- Guild-admin deletion flows remove that guild's OAuth guild link and clear guild-scoped last member/verify snapshots.
+- Internal retention dry-run reports what would be expired or soft-deleted without changing records.
 
 ## Discord Role Assignment
 

@@ -31,6 +31,11 @@ const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY
     : "default-key-change-me-32-chars!!";
 
 const LEGACY_KEY = "default-key-change-me-32-chars!!";
+const IS_PRODUCTION = String(process.env.NODE_ENV || "").trim() === "production";
+
+if (IS_PRODUCTION && ENCRYPTION_KEY === LEGACY_KEY) {
+    throw new Error("[SECURITY] ENCRYPTION_KEY is required in production for session encryption.");
+}
 
 function encryptToken(text) {
     if (!text) return null;

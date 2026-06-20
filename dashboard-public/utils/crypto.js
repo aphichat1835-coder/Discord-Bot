@@ -6,6 +6,13 @@
  */
 const crypto = require('crypto');
 
+function safeCryptoError(err) {
+    return String(err?.message || err?.name || err || 'unknown')
+        .replace(/[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{20,}/g, '[REDACTED_TOKEN]')
+        .replace(/mongodb(?:\+srv)?:\/\/[^\s]+/gi, '[REDACTED_MONGO_URI]')
+        .slice(0, 180);
+}
+
 function getKey() {
     const secret = process.env.ENCRYPTION_KEY;
     if (!secret) throw new Error('[CRYPTO] Missing ENCRYPTION_KEY');
@@ -61,7 +68,7 @@ function decryptData(payload) {
                 decipher.final()
             ]).toString('utf8');
         } catch (err) {
-            console.error('[CRYPTO] GCM decrypt failed:', err.message);
+            console.error('[CRYPTO] GCM decrypt failed:', safeCryptoError(err));
             return null;
         }
     }
@@ -80,7 +87,7 @@ function decryptData(payload) {
             decipher.final()
         ]).toString('utf8');
     } catch (err) {
-        console.error('[CRYPTO] CBC legacy decrypt failed:', err.message);
+        console.error('[CRYPTO] CBC legacy decrypt failed:', safeCryptoError(err));
         return null;
     }
 }

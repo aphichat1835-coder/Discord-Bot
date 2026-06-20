@@ -33,6 +33,14 @@ const TEXT_CHANNEL_TYPES = new Set([
     15  // GuildForum
 ]);
 
+function sanitizeDiscordApiErrorText(value, max = 500) {
+    return String(value || "")
+        .replace(/[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{20,}/g, "[REDACTED_TOKEN]")
+        .replace(/Bot\s+[A-Za-z0-9._-]+/gi, "Bot [REDACTED_TOKEN]")
+        .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [REDACTED_TOKEN]")
+        .slice(0, max);
+}
+
 function getClientId() {
     return process.env.DISCORD_CLIENT_ID;
 }
@@ -63,7 +71,7 @@ function botHeaders(extra = {}) {
 }
 
 async function readError(res) {
-    const text = await res.text().catch(() => "");
+    const text = sanitizeDiscordApiErrorText(await res.text().catch(() => ""));
 
     try {
         return JSON.parse(text);
@@ -76,12 +84,12 @@ async function readError(res) {
 
 function stringifyError(error) {
     if (!error) return "";
-    if (typeof error === "string") return error;
+    if (typeof error === "string") return sanitizeDiscordApiErrorText(error);
 
     try {
-        return JSON.stringify(error);
+        return sanitizeDiscordApiErrorText(JSON.stringify(error));
     } catch {
-        return String(error);
+        return sanitizeDiscordApiErrorText(error);
     }
 }
 

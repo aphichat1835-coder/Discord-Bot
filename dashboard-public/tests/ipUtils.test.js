@@ -280,6 +280,12 @@ describe('processIP risk flags', () => {
             'spoofed_header',
             'xRealIp_conflicts_with_trusted_ip'
         ]));
+        expect(info.riskBreakdown).toMatchObject({
+            vpn: 35,
+            proxy: 35,
+            hosting: 25,
+            spoofedHeader: 15
+        });
         expect(info.riskScore).toBeGreaterThan(0);
     });
 });
