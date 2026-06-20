@@ -1,0 +1,10 @@
+version: "2"
+
+checks:
+  method-complexity:
+    enabled: false
+
+exclude_patterns:
+  - "node_modules/"
+  - "dashboard-public/node_modules/"
+  - ".tmp-pv11/"

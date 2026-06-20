@@ -637,9 +637,13 @@
     const roles = Array.isArray(log.memberRoles) ? log.memberRoles : [];
 
     const rawIp = log.rawIp || log.ip || ipInfo.rawIp || ipInfo.ip || "—";
+    const sensitiveNotice = log.sensitiveRedacted
+      ? `<div class="notice notice-warn mb-12">ข้อมูล sensitive ถูกซ่อนอยู่ เพราะยังไม่ได้รับ owner approval หรือ approval หมดอายุ</div>`
+      : "";
 
     return `
       <div class="list-item sensitive">
+        ${sensitiveNotice}
         <div class="list-title">
           <span>${resultBadge(log.result)} ${h(user.globalName || log.globalName || user.username || log.username || log.userId || "Unknown")}</span>
           ${riskBadge(log.riskScore)}

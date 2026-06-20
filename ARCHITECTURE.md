@@ -1,6 +1,6 @@
 # Architecture
 
-Last verified against implementation: 2026-06-12.
+Last verified against implementation: 2026-06-14.
 
 This is the implementation-backed architecture reference for the Phomueangtai Personal Multi-Tool Discord Bot. It describes the current project reality and the approved minimal direction for organization. It does not approve broad rewrites, dependency migrations, behavior changes, schema changes, or protected-file edits.
 
@@ -8,7 +8,7 @@ This is the implementation-backed architecture reference for the Phomueangtai Pe
 
 ```txt
 Project type: Personal Multi-Tool Discord Bot
-Runtime: Node.js 18+
+Runtime: Node.js 24
 Discord library: discord.js v13
 Database: MongoDB / Mongoose
 Web framework: Express
@@ -150,6 +150,7 @@ GET  /auth/logout
 GET  /ping
 GET  /health
 GET  /api/status
+GET  /api/diagnostics
 GET  /api/settings/natural
 GET  /api/settings/auto-deaf
 GET  /api/session/:sessionId
@@ -178,6 +179,8 @@ GET  /verify
 GET  /verify-owner
 GET  /api/verify-owner/overview
 GET  /api/verify-owner/guild/:guildId/stats
+POST /api/verify-owner/guild/:guildId/sensitive-access/approve
+POST /api/verify-owner/guild/:guildId/sensitive-access/revoke
 GET  /api/verify-owner/ip-reveal/requests
 POST /api/verify-owner/ip-reveal/:requestId/approve
 POST /api/verify-owner/ip-reveal/:requestId/reject
@@ -237,16 +240,17 @@ static pages and health routes
 | `dashboard-public/routes/guild.js` | guild admin guards, guild config/resources/settings APIs, verification validation, panel send/update/disable, logs/members/stats/risk, reveal requests, member data soft delete |
 | `dashboard-public/routes/guildDashboard.js` | guild dashboard overview and risk extension APIs, serializers, aggregate builders |
 | `dashboard-public/routes/api.js` | internal owner-dashboard API: overview, stats, members, pending reveal requests, reveal approve/reject |
-| `dashboard-public/models/GuildConfig.js` | guild verification config, panel config, security policy, panel revision fields |
+| `dashboard-public/models/GuildConfig.js` | guild verification config, panel config, security policy, sensitive access expiry/audit fields, panel revision fields |
 | `dashboard-public/models/OAuthUser.js` | Discord profile snapshot, OAuth token metadata, connections, guilds, latest member/verify/IP summaries |
 | `dashboard-public/models/VerifyLog.js` | verification result log, policy and Discord/member snapshots, risk, IP/device info, role assignment result |
 | `dashboard-public/models/IpIdentityLink.js` | per-guild IP hash identity link, users, device fingerprints, role snapshots, risk summary |
-| `dashboard-public/models/IPRevealRequest.js` | owner-approval request model for sensitive raw IP reveal |
+| `dashboard-public/models/IPRevealRequest.js` | owner-approval request model for sensitive raw IP reveal, expiry, and raw-IP view audit metadata |
 | `dashboard-public/utils/discordAPI.js` | Discord OAuth/token API calls, bot API calls, role/channel validation, member join/role assignment, panel message send/edit, DM helpers |
-| `dashboard-public/utils/ipUtils.js` | request IP normalization, trusted IP selection, spoof header detection, device extraction, IP lookup/cache, risk computation, encrypted IP processing |
+| `dashboard-public/utils/ipUtils.js` | request IP normalization, trusted IP selection, spoof header detection, device extraction, configurable/disableable IP lookup/cache, risk computation, encrypted IP processing |
 | `dashboard-public/utils/crypto.js` | encryption/decryption and HMAC helpers for sensitive dashboard data |
 | `dashboard-public/utils/panelBuilder.js` | verification panel input normalization, embed/button payload building, validation summary |
 | `dashboard-public/utils/verifyMode.js` | verification mode normalization and compatibility helpers |
+| `dashboard-public/utils/safeLogger.js` | compatibility export for shared redaction helpers from `discord/core/safeLogger.js` |
 | `dashboard-public/views/*.html` | public home, guild list, guild admin dashboard, callback result, admin callback page |
 | `dashboard-public/public/js/*.js` | Dashboard Public browser behavior |
 | `dashboard-public/public/css/dashboard.css` | Dashboard Public visual system and page styles |
@@ -263,7 +267,8 @@ GET /guild/:guildId           guild admin page
 GET /logout
 GET /auth/logout
 GET /ping
-GET /health
+GET /health                    readiness: database/config status
+GET /ready                     lightweight readiness boolean
 ```
 
 OAuth/admin routes from `dashboard-public/routes/oauth.js`:
@@ -369,11 +374,11 @@ In-memory state includes active sessions, reconnect tracking, session locks, met
 
 | Model | Purpose |
 | --- | --- |
-| `GuildConfig` | guild verification settings, panel config, security policy, panel revision freshness |
+| `GuildConfig` | guild verification settings, panel config, security policy, sensitive access expiry/audit, panel revision freshness |
 | `OAuthUser` | Discord profile snapshot, OAuth metadata, connections, guild snapshots, latest verification/member/IP summaries |
 | `VerifyLog` | verification result, policy snapshot, Discord/member/guild snapshots, risk, IP/device info, role assignment result |
 | `IpIdentityLink` | per-guild IP hash identity tracking, users, device fingerprints, role snapshots, risk summary |
-| `IPRevealRequest` | guild admin request and owner approval/rejection state for sensitive raw IP reveal |
+| `IPRevealRequest` | guild admin request, expiry, owner approval/rejection state, and raw-IP view audit metadata |
 
 Do not rename collections, remove fields, change encryption fields, or alter retention behavior without a scoped migration and security review.
 
@@ -497,6 +502,8 @@ DISCORD_CLIENT_ID
 DISCORD_CLIENT_SECRET
 ENABLE_CF_IP_HEADER
 ENCRYPTION_KEY
+IP_LOOKUP_API_BASE_URL
+IP_LOOKUP_ENABLED
 INTERNAL_API_SECRET
 MONGO_URI
 NODE_ENV

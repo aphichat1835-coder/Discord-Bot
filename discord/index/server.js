@@ -27,6 +27,7 @@ const {
     cleanupRevealAttempts
 } = require("../guards/dashboardGuards");
 const { sendLogWebhook } = require("../core/webhooks");
+const { getFeatureFlags } = require("../core/featureFlags");
 
 function safeRedirectPath(value) {
     const raw = String(value || "/").trim();
@@ -40,12 +41,24 @@ function safeRedirectPath(value) {
     }
 }
 
+function hashAuditIp(ip) {
+    const raw = String(ip || "unknown");
+    const secret = auth.getApiSecret() || "dashboard-audit";
+    const hash = crypto
+        .createHmac("sha256", secret)
+        .update(raw)
+        .digest("hex")
+        .slice(0, 12);
+
+    return `ip#${hash}`;
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  🔌  REGISTER ALL API ROUTES
 // ════════════════════════════════════════════════════════════════════════════
 function registerRoutes({
     app, express, config, sessionManager, voiceWorker,
-    commands, webLogs, MAX_LOGS, client, botReadyAt,
+    commands, webLogs, MAX_LOGS, client, auditLogger, memoryMonitor, botReadyAt,
     API_SECRET, getWebPin, requestCounts,
     disabledCommands, commandAuditLog, toggleCooldowns,
     startRotateTimer, setupTelemetryRouter
@@ -53,6 +66,28 @@ function registerRoutes({
     const checkAuth      = makeCheckAuth(API_SECRET);
     const checkRevealPin = makeCheckRevealPin(getWebPin);
     const rateLimiter    = createRateLimiter(requestCounts, config, sessionManager);
+
+    function sessionCountsByState() {
+        const counts = {};
+        for (const session of sessionManager.getAllSessions().values()) {
+            const state = session?.state || "active";
+            counts[state] = (counts[state] || 0) + 1;
+        }
+        return counts;
+    }
+
+    function envReadiness() {
+        return {
+            NODE_ENV: process.env.NODE_ENV || "development",
+            PORT: !!process.env.PORT,
+            MONGO_URI: !!process.env.MONGO_URI,
+            API_SECRET: !!process.env.API_SECRET,
+            BOT_TOKEN: !!process.env.BOT_TOKEN,
+            DASHBOARD_PIN: !!process.env.DASHBOARD_PIN,
+            WEBHOOK_LOG_URL: !!process.env.WEBHOOK_LOG_URL,
+            ALERT_WEBHOOK_URL: !!process.env.ALERT_WEBHOOK_URL
+        };
+    }
 
     // ── PIN Authentication Routes ──
     app.get("/auth/pin", (req, res) => {
@@ -97,16 +132,20 @@ function registerRoutes({
 
         app._pinAttempts.delete(ip);
 
+        if (!auth.getApiSecret()) {
+            return res.status(503).send("API_SECRET is required for dashboard auth.");
+        }
+
         const token    = auth.makeToken();
-        const isProd   = process.env.NODE_ENV === "production";
+        const isProd   = auth.isProduction();
         const safePath = safeRedirectPath(next);
 
-        res.setHeader("Set-Cookie", auth.setCookieHeader(token, isProd));
+        res.setHeader("Set-Cookie", auth.setSessionCookieHeaders(token, isProd));
         res.redirect(safePath);
     });
 
     app.get("/auth/logout", (req, res) => {
-        res.setHeader("Set-Cookie", `${auth.COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly`);
+        res.setHeader("Set-Cookie", auth.clearSessionCookieHeaders(auth.isProduction()));
         res.redirect("/auth/pin");
     });
 
@@ -134,7 +173,7 @@ function registerRoutes({
 
         return rateLimiter(req, res, () => {
             if (!checkAuth(req, res)) return;
-            next();
+            return auth.requireCsrf(req, res, next);
         });
     });
 
@@ -152,6 +191,107 @@ function registerRoutes({
             }));
         } catch (e) {
             res.status(500).json({ error: e.message });
+        }
+    });
+
+    app.get("/api/diagnostics", (req, res) => {
+        try {
+            const dbStatus = sessionManager.getDatabaseStatus?.() || {};
+            const workerDiagnostics = voiceWorker.getWorkerDiagnostics?.() || {};
+            const auditStats = auditLogger?.getAuditStats?.() || {};
+            const memoryState = memoryMonitor?.getMemoryMonitorState?.() || {};
+
+            res.json({
+                success: true,
+                service: "owner-dashboard",
+                timestamp: Date.now(),
+                uptimeSec: Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000),
+                env: envReadiness(),
+                featureFlags: getFeatureFlags(),
+                database: {
+                    connected: dbStatus.connected === true,
+                    readyState: dbStatus.readyState ?? null,
+                    name: dbStatus.name || null
+                },
+                discord: {
+                    ready: client?.isReady?.() ?? false,
+                    tag: client?.user?.tag || null,
+                    guilds: client?.guilds?.cache?.size ?? 0
+                },
+                sessions: {
+                    total: sessionManager.getAllSessions().size,
+                    byState: sessionCountsByState()
+                },
+                voiceWorker: workerDiagnostics,
+                audit: auditStats,
+                memoryMonitor: memoryState,
+                requestCounters: {
+                    requestBuckets: requestCounts?.size || 0,
+                    toggleCooldowns: toggleCooldowns?.size || 0
+                }
+            });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    app.get("/api/diagnostics", (req, res) => {
+        try {
+            const sessions = Array.from(sessionManager.getAllSessions().values());
+            const sessionCounts = sessions.reduce((acc, session) => {
+                const state = session?.state || "active";
+                acc[state] = (acc[state] || 0) + 1;
+                return acc;
+            }, {});
+            const mem = process.memoryUsage();
+            const dbStatus = sessionManager.getDatabaseStatus?.() || {};
+            const readiness = {
+                apiSecret: !!auth.getApiSecret(),
+                webPin: !!getWebPin?.(),
+                mongoUri: !!process.env.MONGO_URI,
+                discordToken: !!process.env.DISCORD_TOKEN,
+                dashboardPublicUrl: !!(
+                    process.env.DASHBOARD_URL ||
+                    process.env.PUBLIC_DASHBOARD_URL ||
+                    process.env.PUBLIC_BASE_URL ||
+                    process.env.DASHBOARD_PUBLIC_URL
+                )
+            };
+
+            res.json({
+                success: true,
+                timestamp: Date.now(),
+                uptimeSec: Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000),
+                env: readiness,
+                database: dbStatus,
+                discord: {
+                    ready: client?.isReady?.() ?? false,
+                    userId: client?.user?.id || null,
+                    guilds: client?.guilds?.cache?.size ?? 0
+                },
+                sessions: {
+                    total: sessions.length,
+                    byState: sessionCounts,
+                    runnable: sessions.filter(session => sessionManager.isSessionRunnable?.(session) !== false).length
+                },
+                voiceWorker: voiceWorker.getWorkerDiagnostics?.() || {},
+                audit: auditLogger?.getAuditStats?.() || {},
+                retention: {
+                    localCronTimers: "managed_by_system_cron"
+                },
+                memory: {
+                    heapUsedMB: Number((mem.heapUsed / 1024 / 1024).toFixed(1)),
+                    heapTotalMB: Number((mem.heapTotal / 1024 / 1024).toFixed(1)),
+                    rssMB: Number((mem.rss / 1024 / 1024).toFixed(1))
+                },
+                metrics: {
+                    requests: sessionManager.systemMetrics.requests,
+                    errors: sessionManager.systemMetrics.errors,
+                    reconnects: sessionManager.systemMetrics.reconnects
+                }
+            });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
         }
     });
 
@@ -311,7 +451,8 @@ function registerRoutes({
                 });
             }
 
-            const toggleKey   = `${req.ip}:${commandName}`;
+            const auditIp     = hashAuditIp(req.ip);
+            const toggleKey   = `${auditIp}:${commandName}`;
             const lastToggle  = toggleCooldowns.get(toggleKey) || 0;
             const sinceToggle = Date.now() - lastToggle;
 
@@ -340,12 +481,12 @@ function registerRoutes({
             commandAuditLog.push({
                 commandName,
                 action: nowEnabled ? "enabled" : "disabled",
-                ip: req.ip,
+                ip: auditIp,
                 timestamp: Date.now()
             });
 
             sendLogWebhook({
-                content: `⚡ \`/${commandName}\` ถูก**${nowEnabled ? "เปิด ✅" : "ปิด ❌"}** โดย IP \`${req.ip}\``
+                content: `⚡ \`/${commandName}\` ถูก**${nowEnabled ? "เปิด ✅" : "ปิด ❌"}** โดย \`${auditIp}\``
             }).catch(() => {});
 
             res.json({

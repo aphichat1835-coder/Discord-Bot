@@ -6,12 +6,24 @@
 const crypto = require('crypto');
 
 const COOKIE_NAME = '__da';
+const CSRF_COOKIE_NAME = '__da_csrf';
 const MAX_AGE_MS  = 8 * 3600 * 1000; // 8 ชั่วโมง
-const SECRET      = () => process.env.API_SECRET || 'fallback';
 const PIN         = () => process.env.DASHBOARD_PIN;
 
+function getApiSecret() {
+    return String(process.env.API_SECRET || '').trim();
+}
+
+function requireApiSecret() {
+    const secret = getApiSecret();
+    if (!secret) {
+        throw new Error('API_SECRET is required for dashboard auth.');
+    }
+    return secret;
+}
+
 function isProduction() {
-    return process.env.NODE_ENV === 'production';
+    return String(process.env.NODE_ENV || '').trim() === 'production';
 }
 
 // ── Parse cookies from header ──
@@ -21,9 +33,13 @@ function parseCookies(req) {
     raw.split(';').forEach(c => {
         const idx = c.indexOf('=');
         if (idx < 0) return;
-        const k = c.slice(0, idx).trim();
-        const v = c.slice(idx + 1).trim();
-        result[k] = decodeURIComponent(v);
+        try {
+            const k = decodeURIComponent(c.slice(0, idx).trim());
+            const v = decodeURIComponent(c.slice(idx + 1).trim());
+            if (k) result[k] = v;
+        } catch {
+            // Ignore one malformed cookie instead of breaking the whole PIN gate.
+        }
     });
     return result;
 }
@@ -31,7 +47,7 @@ function parseCookies(req) {
 // ── Issue signed cookie value ──
 function makeToken() {
     const ts  = Date.now().toString();
-    const sig = crypto.createHmac('sha256', SECRET()).update(ts).digest('hex').slice(0, 40);
+    const sig = crypto.createHmac('sha256', requireApiSecret()).update(ts).digest('hex').slice(0, 40);
     return `${ts}.${sig}`;
 }
 
@@ -39,22 +55,85 @@ function makeToken() {
 function verifyToken(token) {
     if (!token || typeof token !== 'string') return false;
     try {
+        const secret = getApiSecret();
+        if (!secret) return false;
         const dot = token.lastIndexOf('.');
         if (dot < 0) return false;
         const ts  = token.slice(0, dot);
         const sig = token.slice(dot + 1);
-        if (Date.now() - parseInt(ts) > MAX_AGE_MS) return false;
-        const expected = crypto.createHmac('sha256', SECRET()).update(ts).digest('hex').slice(0, 40);
+        const issuedAt = parseInt(ts, 10);
+        if (!Number.isFinite(issuedAt) || Date.now() - issuedAt > MAX_AGE_MS || issuedAt > Date.now() + 60000) return false;
+        const expected = crypto.createHmac('sha256', secret).update(ts).digest('hex').slice(0, 40);
         if (sig.length !== expected.length) return false;
         return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
     } catch { return false; }
 }
 
+function makeCsrfToken(sessionToken) {
+    if (!verifyToken(sessionToken)) return '';
+    return crypto
+        .createHmac('sha256', requireApiSecret())
+        .update(`csrf:${sessionToken}`)
+        .digest('hex');
+}
+
+function verifyCsrfToken(sessionToken, csrfToken) {
+    if (!csrfToken || typeof csrfToken !== 'string') return false;
+    const expected = makeCsrfToken(sessionToken);
+    if (!expected || csrfToken.length !== expected.length) return false;
+    return crypto.timingSafeEqual(Buffer.from(csrfToken), Buffer.from(expected));
+}
+
 // ── Set-Cookie header helper ──
-function setCookieHeader(token, isProduction) {
+function setCookieHeader(token, prod = isProduction()) {
     const maxAge = Math.floor(MAX_AGE_MS / 1000);
-    const flags  = `Max-Age=${maxAge}; Path=/; HttpOnly; SameSite=Strict${isProduction ? '; Secure' : ''}`;
+    const flags  = `Max-Age=${maxAge}; Path=/; HttpOnly; SameSite=Strict${prod ? '; Secure' : ''}`;
     return `${COOKIE_NAME}=${encodeURIComponent(token)}; ${flags}`;
+}
+
+function setCsrfCookieHeader(token, prod = isProduction()) {
+    const maxAge = Math.floor(MAX_AGE_MS / 1000);
+    const csrfToken = makeCsrfToken(token);
+    const flags = `Max-Age=${maxAge}; Path=/; SameSite=Strict${prod ? '; Secure' : ''}`;
+    return `${CSRF_COOKIE_NAME}=${encodeURIComponent(csrfToken)}; ${flags}`;
+}
+
+function setSessionCookieHeaders(token, prod = isProduction()) {
+    return [
+        setCookieHeader(token, prod),
+        setCsrfCookieHeader(token, prod)
+    ];
+}
+
+function clearSessionCookieHeaders(prod = isProduction()) {
+    const secure = prod ? '; Secure' : '';
+    return [
+        `${COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly; SameSite=Strict${secure}`,
+        `${CSRF_COOKIE_NAME}=; Max-Age=0; Path=/; SameSite=Strict${secure}`
+    ];
+}
+
+function hasServerAuthHeader(req) {
+    return !!String(req.headers.authorization || req.headers['x-internal-secret'] || '').trim();
+}
+
+function requireCsrf(req, res, next) {
+    if (['GET', 'HEAD', 'OPTIONS'].includes(String(req.method || 'GET').toUpperCase())) return next();
+    if (!PIN()) return next();
+    if (hasServerAuthHeader(req)) return next();
+
+    const cookies = parseCookies(req);
+    const sessionToken = cookies[COOKIE_NAME];
+    const csrfToken = String(req.headers['x-csrf-token'] || '').trim();
+
+    if (!verifyCsrfToken(sessionToken, csrfToken)) {
+        return res.status(403).json({
+            success: false,
+            error: 'CSRF token is missing or invalid'
+        });
+    }
+
+    return next();
 }
 
 // ── Middleware: ถ้าไม่มี cookie ถูกต้อง → redirect PIN page ──
@@ -69,6 +148,15 @@ function requirePin(req, res, next) {
     if (verifyToken(cookies[COOKIE_NAME])) return next();
     const next_path = encodeURIComponent(req.originalUrl || '/');
     res.redirect(`/auth/pin?next=${next_path}`);
+}
+
+function escapeAttr(value = '') {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 // ── PIN entry page HTML ──
@@ -117,7 +205,7 @@ function pinPageHTML(error = false, next = '/') {
   <p class="sub">กรุณากรอกรหัสผ่านเพื่อเข้าถึง</p>
   ${error ? '<div class="err">❌ รหัสผ่านไม่ถูกต้อง กรุณาลองใหม่</div>' : ''}
   <form method="POST" action="/auth/pin">
-    <input type="hidden" name="next" value="${next.replace(/"/g,'&quot;')}">
+    <input type="hidden" name="next" value="${escapeAttr(next)}">
     <div class="pin-wrap">
       <input type="password" name="pin" placeholder="กรอกรหัสผ่าน..." autofocus autocomplete="current-password">
     </div>
@@ -129,4 +217,23 @@ function pinPageHTML(error = false, next = '/') {
 </html>`;
 }
 
-module.exports = { requirePin, makeToken, verifyToken, setCookieHeader, parseCookies, pinPageHTML, PIN, COOKIE_NAME };
+module.exports = {
+    requirePin,
+    requireCsrf,
+    makeToken,
+    verifyToken,
+    makeCsrfToken,
+    verifyCsrfToken,
+    setCookieHeader,
+    setCsrfCookieHeader,
+    setSessionCookieHeaders,
+    clearSessionCookieHeaders,
+    parseCookies,
+    pinPageHTML,
+    escapeAttr,
+    isProduction,
+    getApiSecret,
+    PIN,
+    COOKIE_NAME,
+    CSRF_COOKIE_NAME
+};

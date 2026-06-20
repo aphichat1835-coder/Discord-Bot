@@ -6,7 +6,7 @@ This is the quick context file for the Phomueangtai Personal Multi-Tool Discord 
 
 ```txt
 Repository: aphichat1835-coder/Discord-Bot
-Runtime: Node.js 18+
+Runtime: Node.js 24
 Discord library: discord.js v13
 Database: MongoDB / Mongoose
 Web framework: Express

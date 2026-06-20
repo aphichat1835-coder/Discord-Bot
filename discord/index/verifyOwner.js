@@ -516,6 +516,7 @@ async function api(path, body){
   if(body !== undefined){
     opt.method='POST';
     opt.headers['Content-Type']='application/json';
+    opt.headers['x-csrf-token']=readCookie('__da_csrf');
     opt.body=JSON.stringify(body);
   }
 
@@ -532,6 +533,28 @@ async function api(path, body){
   }
 
   return d;
+}
+
+function readCookie(name){
+  const parts=document.cookie ? document.cookie.split(';') : [];
+  for(const part of parts){
+    const idx=part.indexOf('=');
+    if(idx<0) continue;
+    let key='';
+    try{
+      key=decodeURIComponent(part.slice(0,idx).trim());
+    }catch(e){
+      continue;
+    }
+    if(key===name){
+      try{
+        return decodeURIComponent(part.slice(idx+1).trim());
+      }catch(e){
+        return '';
+      }
+    }
+  }
+  return '';
 }
 
 function showTab(name){
@@ -575,10 +598,14 @@ function renderOverview(){
     const rev=v.panelRevision || 'ยังไม่มี revision';
     const revClass=v.panelRevision ? 'info' : 'warn';
     const access=(g.security && g.security.sensitiveDataAccess) || {};
-    const accessOn=access.enabled === true;
+    const accessExpired=access.expiresAt && access.expiresAt <= Date.now();
+    const accessOn=access.enabled === true && !accessExpired;
     const accessText=accessOn
-      ? 'approved '+fmt(access.approvedAt)
-      : (access.revokedAt ? 'revoked '+fmt(access.revokedAt) : 'not approved');
+      ? 'approved '+fmt(access.approvedAt)+' / expires '+fmt(access.expiresAt)
+      : (accessExpired ? 'expired '+fmt(access.expiresAt) : (access.revokedAt ? 'revoked '+fmt(access.revokedAt) : 'not approved'));
+    const accessAudit=access.accessedAt
+      ? 'last access '+fmt(access.accessedAt)+' by '+(access.accessedBy || '—')
+      : '';
 
     return '<tr>'+
       '<td>'+
@@ -608,6 +635,7 @@ function renderOverview(){
       '<td>'+
         '<span class="badge '+(accessOn?'enabled':'disabled')+'">'+(accessOn?'allowed':'blocked')+'</span>'+
         '<div class="small">'+esc(accessText)+'</div>'+
+        '<div class="small">'+esc(accessAudit)+'</div>'+
         '<div class="small">'+esc(access.ownerNote || '')+'</div>'+
         '<button class="btn ok" onclick="approveSensitive(\\''+escJsString(g.guildId)+'\\',\\''+escJsString(g.guildName || '')+'\\')">Allow</button>'+
         '<button class="btn bad" onclick="revokeSensitive(\\''+escJsString(g.guildId)+'\\')">Revoke</button>'+
@@ -872,7 +900,7 @@ function registerVerifyOwnerRoutes({ app, express, API_SECRET }) {
         }
     });
 
-    app.post('/api/verify-owner/guild/:guildId/sensitive-access/approve', auth.requirePin, express.json(), async (req, res) => {
+    app.post('/api/verify-owner/guild/:guildId/sensitive-access/approve', auth.requirePin, auth.requireCsrf, express.json(), async (req, res) => {
         try {
             const data = await callDashboardInternal(
                 `/internal/guild/${encodeURIComponent(req.params.guildId)}/sensitive-access/approve`,
@@ -896,7 +924,7 @@ function registerVerifyOwnerRoutes({ app, express, API_SECRET }) {
         }
     });
 
-    app.post('/api/verify-owner/guild/:guildId/sensitive-access/revoke', auth.requirePin, express.json(), async (req, res) => {
+    app.post('/api/verify-owner/guild/:guildId/sensitive-access/revoke', auth.requirePin, auth.requireCsrf, express.json(), async (req, res) => {
         try {
             const data = await callDashboardInternal(
                 `/internal/guild/${encodeURIComponent(req.params.guildId)}/sensitive-access/revoke`,
@@ -932,7 +960,7 @@ function registerVerifyOwnerRoutes({ app, express, API_SECRET }) {
         }
     });
 
-    app.post('/api/verify-owner/ip-reveal/:requestId/approve', auth.requirePin, express.json(), async (req, res) => {
+    app.post('/api/verify-owner/ip-reveal/:requestId/approve', auth.requirePin, auth.requireCsrf, express.json(), async (req, res) => {
         try {
             const data = await callDashboardInternal(
                 `/internal/ip-reveal/${encodeURIComponent(req.params.requestId)}/approve`,
@@ -955,7 +983,7 @@ function registerVerifyOwnerRoutes({ app, express, API_SECRET }) {
         }
     });
 
-    app.post('/api/verify-owner/ip-reveal/:requestId/reject', auth.requirePin, express.json(), async (req, res) => {
+    app.post('/api/verify-owner/ip-reveal/:requestId/reject', auth.requirePin, auth.requireCsrf, express.json(), async (req, res) => {
         try {
             const data = await callDashboardInternal(
                 `/internal/ip-reveal/${encodeURIComponent(req.params.requestId)}/reject`,

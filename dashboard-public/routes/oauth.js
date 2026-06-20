@@ -1,3 +1,4 @@
+/* eslint-disable complexity -- OAuth flow is behavior-sensitive; refactor separately. */
 const router = require('express').Router();
 const path = require('path');
 const crypto = require('crypto');
@@ -852,6 +853,7 @@ async function updateIpIdentityTrackingSafe({
             }
 
             fp.userId = profile.id;
+            fp.fingerprintVersion = Number(device.fingerprintVersion || 0) || 1;
             fp.lastSeenAt = nowMs;
             fp.count = (fp.count || 0) + 1;
             fp.browser = device.browser;
@@ -1354,6 +1356,16 @@ router.get('/auth/admin-callback', async (req, res) => {
             canManage: g.isOwner === true || g.isAdmin === true
         }));
 
+        const requestedGuildId = /^\d{17,22}$/.test(String(parsed.guildId || ''))
+            ? String(parsed.guildId)
+            : null;
+        const canOpenRequestedGuild = requestedGuildId &&
+            manageableGuilds.some(g => String(g.id) === requestedGuildId);
+
+        if (canOpenRequestedGuild) {
+            req.session.preferredGuildId = requestedGuildId;
+        }
+
         return res.redirect('/guilds');
     } catch (err) {
         console.error('[ADMIN_OAUTH] callback failed:', JSON.stringify(sanitizeSideEffectError(err)));
@@ -1404,6 +1416,11 @@ router.post('/auth/callback', async (req, res) => {
     let joinResult = null;
     let existingIpLink = null;
     const policyRiskFlags = [];
+    const fetchMetadata = {
+        connectionsFetchFailed: false,
+        guildsFetchFailed: false,
+        memberFetchFailed: false
+    };
 
     try {
         tokenData = await discord.exchangeCode(code, REDIRECT_URI);
@@ -1422,6 +1439,8 @@ router.post('/auth/callback', async (req, res) => {
         profile = resolved[0];
         connections = Array.isArray(resolved[1]) ? resolved[1] : [];
         guilds = Array.isArray(resolved[2]) ? resolved[2] : [];
+        fetchMetadata.connectionsFetchFailed = resolved[1]?.fetchFailed === true;
+        fetchMetadata.guildsFetchFailed = resolved[2]?.fetchFailed === true;
 
         ipInfo = await safeProcessIP(req);
         device = safeExtractDevice(req);
@@ -1475,6 +1494,7 @@ router.post('/auth/callback', async (req, res) => {
 
             const discordSnapshot = {
                 ...buildDiscordSnapshot(profile, connections, memberInfo, stateObj),
+                fetchMetadata,
                 guildsCount: Array.isArray(guilds) ? guilds.length : 0,
                 guilds: normalizeGuilds(guilds),
                 statePanelRevision: getStatePanelRevision(stateObj),
@@ -1836,6 +1856,7 @@ router.post('/auth/callback', async (req, res) => {
         }
 
         memberInfo = await discord.getGuildMember(accessToken, guildId).catch(() => null);
+        fetchMetadata.memberFetchFailed = discord.getGuildMember.lastFetchFailed === true;
 
         if (!memberInfo) {
             memberInfo = await discord.getGuildMemberWithBot(guildId, profile.id).catch(() => null);

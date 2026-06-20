@@ -798,8 +798,8 @@
                   <span class="badge badge-warn">Raw IP</span>
                 </div>
                 <div class="list-meta">
-                  หน้าแอดมินเซิร์ฟนี้จะแสดงข้อมูลละเอียดรวมถึง raw IP ตาม requirement ของระบบส่วนตัว
-                  ห้ามเอาข้อมูลไปใช้นอกเหนือจากการดูแลเซิร์ฟเวอร์
+                  ข้อมูลละเอียดอย่าง raw IP/email/connections จะถูกซ่อนจนกว่าเจ้าของบอทจะอนุมัติ sensitive access
+                  และห้ามเอาข้อมูลไปใช้นอกเหนือจากการดูแลเซิร์ฟเวอร์
                 </div>
               </div>
             </div>
@@ -1112,8 +1112,8 @@
                   <span class="badge badge-warn">แสดงในหน้าแอดมิน</span>
                 </div>
                 <div class="list-meta">
-                  ระบบจะแสดง IP จริงในหน้า members/logs/detail ถ้า backend มีข้อมูลและถอดรหัสได้
-                  ตาม requirement ของบอทส่วนตัวและเซิร์ฟเพื่อน
+                  ระบบจะแสดง IP จริงเฉพาะเมื่อ backend มีข้อมูล, ถอดรหัสได้, และเจ้าของบอทอนุมัติ sensitive access แล้ว
+                  ถ้ายังไม่อนุมัติ Dashboard จะซ่อนข้อมูลไว้แทน
                 </div>
               </div>
 

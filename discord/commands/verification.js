@@ -1,3 +1,4 @@
+/* eslint-disable complexity -- Verification setup flow is behavior-sensitive; refactor separately. */
 /*
 ================================================================================
   Verification Command Module — Dashboard Public v2 compatible
@@ -50,6 +51,31 @@ function cleanText(value, fallback = "") {
 
 function normalizeNewlines(value) {
     return cleanText(value, "").replace(/\\n/g, "\n");
+}
+
+async function resolveGuildBotMember(guild, client) {
+    if (!guild) return null;
+    if (guild.members?.me) return guild.members.me;
+    if (guild.me) return guild.me;
+
+    const botId = client?.user?.id || guild.client?.user?.id;
+    if (!botId) return null;
+
+    return guild.members?.cache?.get(botId) ||
+        await guild.members?.fetch?.(botId).catch(() => null) ||
+        null;
+}
+
+function validateDirectRoleAssignment(botMember, role) {
+    if (!botMember) return { ok: false, reason: "ไม่พบข้อมูลบอทในเซิร์ฟเวอร์" };
+    if (!botMember.permissions?.has?.("MANAGE_ROLES")) return { ok: false, reason: "บอทไม่มีสิทธิ์ Manage Roles" };
+    if (!role) return { ok: false, reason: "ไม่พบยศนี้แล้ว กรุณาแจ้ง Admin ตั้งค่าใหม่" };
+    if (role.managed) return { ok: false, reason: "ยศนี้เป็น managed role ไม่สามารถมอบให้อัตโนมัติได้" };
+    if (botMember.roles?.highest && role.position >= botMember.roles.highest.position) {
+        return { ok: false, reason: "ยศนี้อยู่สูงกว่าหรือเท่ากับยศบอท กรุณาให้ Admin ตั้งค่า role hierarchy ใหม่" };
+    }
+
+    return { ok: true };
 }
 
 function boolToDashboardVerifyType(value) {
@@ -472,7 +498,7 @@ async function handleSetupVerify(interaction) {
         });
     }
 
-    const botMember = interaction.guild.me;
+    const botMember = await resolveGuildBotMember(interaction.guild, interaction.client);
     const sendPerms = channel.permissionsFor(botMember);
 
     if (!sendPerms?.has("SEND_MESSAGES") || !sendPerms?.has("EMBED_LINKS")) {
@@ -483,17 +509,10 @@ async function handleSetupVerify(interaction) {
         });
     }
 
-    if (role.managed) {
+    const roleCheck = validateDirectRoleAssignment(botMember, role);
+    if (!roleCheck.ok) {
         return interaction.editReply({
-            content: `> ${config.emojis.error} ยศนี้เป็น managed role ไม่สามารถให้ด้วยบอทได้`
-        });
-    }
-
-    if (botMember?.roles?.highest && role.position >= botMember.roles.highest.position) {
-        return interaction.editReply({
-            content:
-                `> ${config.emojis.error} ยศ <@&${role.id}> สูงกว่าหรือเท่ากับยศสูงสุดของบอท\n` +
-                `> ให้ลากยศบอทขึ้นเหนือยศที่จะให้ก่อน`
+            content: `> ${config.emojis.error} ${roleCheck.reason}`
         });
     }
 
@@ -704,24 +723,11 @@ async function handleVerifyButton(interaction) {
             });
         }
 
-        const botMember = guild.members.me;
-        if (!botMember?.permissions?.has?.("MANAGE_ROLES")) {
+        const botMember = await resolveGuildBotMember(guild, interaction.client);
+        const roleCheck = validateDirectRoleAssignment(botMember, role);
+        if (!roleCheck.ok) {
             return interaction.reply({
-                content: `> ${config.emojis.error} บอทไม่มีสิทธิ์ Manage Roles กรุณาให้ Admin ตรวจสอบ`,
-                ephemeral: true
-            });
-        }
-
-        if (role.managed) {
-            return interaction.reply({
-                content: `> ${config.emojis.error} ยศนี้เป็น managed role ไม่สามารถมอบให้อัตโนมัติได้`,
-                ephemeral: true
-            });
-        }
-
-        if (role.position >= botMember.roles.highest.position) {
-            return interaction.reply({
-                content: `> ${config.emojis.error} ยศนี้อยู่สูงกว่ายศบอท กรุณาให้ Admin ตั้งค่า role hierarchy ใหม่`,
+                content: `> ${config.emojis.error} ${roleCheck.reason}`,
                 ephemeral: true
             });
         }
@@ -767,5 +773,9 @@ async function handleVerifyButton(interaction) {
 
 module.exports = {
     handle,
-    handleVerifyButton
+    handleVerifyButton,
+    _test: {
+        resolveGuildBotMember,
+        validateDirectRoleAssignment
+    }
 };

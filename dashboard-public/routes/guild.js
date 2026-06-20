@@ -1,3 +1,4 @@
+/* eslint-disable complexity -- Legacy dashboard routes keep stable response shapes; refactor separately. */
 /*
 ================================================================================
   Guild Admin Dashboard Routes — Dashboard Public v2
@@ -14,6 +15,7 @@
 */
 
 const router = require("express").Router();
+const crypto = require("crypto");
 
 const GuildConfig = require("../models/GuildConfig");
 const VerifyLog = require("../models/VerifyLog");
@@ -41,6 +43,7 @@ const discordAPI = require("../utils/discordAPI");
 const {
   normalizeSensitiveAccess,
   canViewSensitiveData,
+  buildSensitiveAccessAuditUpdate,
   redactSensitiveDiscordSnapshot,
   redactSensitiveIpInfo
 } = require("../utils/sensitiveAccess");
@@ -72,6 +75,20 @@ function getAdminUser(req) {
 function getAdminId(req) {
   const user = getAdminUser(req);
   return user?.id || user?.userId || user?.discordId || null;
+}
+
+async function recordSensitiveAccess(guildId, req, route) {
+  try {
+    await GuildConfig.updateOne(
+      { guildId },
+      buildSensitiveAccessAuditUpdate({
+        actor: getAdminId(req) || "guild-admin",
+        route
+      })
+    );
+  } catch (err) {
+    safeConsoleError("sensitive-access-audit", err);
+  }
 }
 
 function getSessionGuilds(req) {
@@ -437,6 +454,7 @@ function safeDevice(device = {}) {
     devicePixelRatio: device.devicePixelRatio ?? null,
     touchPoints: device.touchPoints ?? null,
     referrer: device.referrer || "",
+    fingerprintVersion: Number(device.fingerprintVersion || 0) || null,
     hasFingerprint: !!device.fingerprintHash
   };
 }
@@ -611,6 +629,7 @@ function serializeVerifyLog(log = {}, options = {}) {
     guildId: raw.guildId,
     userId,
     roleId: raw.roleId || null,
+    sensitiveRedacted: !canViewSensitive,
 
     result,
     reason: raw.reason || "",
@@ -756,8 +775,6 @@ function summarizeCounts(logs = []) {
 
   return summary;
 }
-
-const crypto = require("crypto");
 
 function makePanelRevision(prefix = "panel") {
   return `${prefix}_${Date.now().toString(36)}_${crypto.randomBytes(8).toString("hex")}`;
@@ -1108,10 +1125,17 @@ router.get("/api/guilds", requireAdmin, (req, res) => {
   const guilds = getSessionGuilds(req)
     .map(normalizeGuild)
     .filter(guild => guild.canManage || guild.isAdmin || guild.isOwner || guild.owner);
+  const preferredGuildId = SNOWFLAKE_RE.test(String(req.session?.preferredGuildId || ""))
+    && guilds.some(guild => guild.id === String(req.session.preferredGuildId))
+    ? String(req.session.preferredGuildId)
+    : null;
+
+  if (req.session?.preferredGuildId) delete req.session.preferredGuildId;
 
   res.json({
     success: true,
-    guilds
+    guilds,
+    preferredGuildId
   });
 });
 /* =============================================================================
@@ -1417,6 +1441,9 @@ router.get("/api/guild/:guildId/logs", requireAdmin, requireGuildAdmin, async (r
         .lean()
     ]);
     const canViewSensitive = canViewSensitiveData(config);
+    if (canViewSensitive) {
+      await recordSensitiveAccess(guildId, req, "/api/guild/:guildId/logs");
+    }
 
     res.json({
       success: true,
@@ -1447,6 +1474,9 @@ router.get("/api/guild/:guildId/members", requireAdmin, requireGuildAdmin, async
         .lean()
     ]);
     const canViewSensitive = canViewSensitiveData(config);
+    if (canViewSensitive) {
+      await recordSensitiveAccess(guildId, req, "/api/guild/:guildId/members");
+    }
 
     res.json({
       success: true,

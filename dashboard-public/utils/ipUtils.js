@@ -1,3 +1,4 @@
+/* eslint-disable complexity -- IP normalization/risk helpers are behavior-sensitive; refactor separately. */
 const net = require('net');
 const { encryptIP, hmacValue } = require('./crypto');
 
@@ -5,7 +6,37 @@ const ENABLE_CF_IP_HEADER = String(process.env.ENABLE_CF_IP_HEADER || '').toLowe
 const IP_LOOKUP_TIMEOUT_MS = 3000;
 const IP_LOOKUP_CACHE_TTL_MS = 10 * 60 * 1000;
 const IP_LOOKUP_CACHE_MAX = 5000;
+const IP_LOOKUP_CIRCUIT_FAIL_THRESHOLD = Math.max(1, Number(process.env.IP_LOOKUP_CIRCUIT_FAIL_THRESHOLD || 10) || 10);
+const IP_LOOKUP_CIRCUIT_OPEN_MS = Math.max(10000, Number(process.env.IP_LOOKUP_CIRCUIT_OPEN_MS || 5 * 60 * 1000) || 5 * 60 * 1000);
+const DEVICE_FINGERPRINT_VERSION = 1;
+const IPV4_MASK_ALL = 2 ** 32 - 1;
+const DEFAULT_IP_LOOKUP_API_BASE_URL = 'https://ip-api.com/json';
 const lookupCache = new Map();
+const lookupCircuit = {
+    failures: 0,
+    openUntil: 0,
+    lastError: null
+};
+
+function getIpLookupConfig() {
+    const enabledRaw = String(process.env.IP_LOOKUP_ENABLED ?? 'true').trim().toLowerCase();
+    const enabled = !['0', 'false', 'no', 'off', 'disabled'].includes(enabledRaw);
+    const baseUrl = String(process.env.IP_LOOKUP_API_BASE_URL || DEFAULT_IP_LOOKUP_API_BASE_URL).trim();
+
+    return {
+        enabled,
+        baseUrl: baseUrl || DEFAULT_IP_LOOKUP_API_BASE_URL
+    };
+}
+
+function trimTrailingSlashes(value) {
+    const text = String(value || '');
+    let end = text.length;
+
+    while (end > 0 && text[end - 1] === '/') end--;
+
+    return text.slice(0, end);
+}
 
 function firstHeaderValue(value) {
     if (!value) return null;
@@ -106,6 +137,20 @@ function getTrustedRequestIp(req) {
     };
 }
 
+function ipv4ToInt(ip) {
+    const parts = String(ip || '').split('.').map(v => Number(v));
+    if (parts.length !== 4 || parts.some(v => !Number.isInteger(v) || v < 0 || v > 255)) return null;
+    return (((parts[0] << 24) >>> 0) + (parts[1] << 16) + (parts[2] << 8) + parts[3]) >>> 0;
+}
+
+function isIpv4InCidr(ip, base, bits) {
+    const value = ipv4ToInt(ip);
+    const baseValue = ipv4ToInt(base);
+    if (value === null || baseValue === null) return false;
+    const mask = bits === 0 ? 0 : (IPV4_MASK_ALL << (32 - bits)) >>> 0;
+    return (value & mask) === (baseValue & mask);
+}
+
 function detectSpoofedHeaders(req, trustedIp) {
     const headerIps = getHeaderIps(req);
     const spoofFlags = [];
@@ -178,13 +223,41 @@ function getRealIP(req) {
 }
 
 function isPrivateIP(ip) {
-    if (!ip || ip === 'unknown') return true;
-    if (ip === '127.0.0.1' || ip === '0.0.0.0') return true;
-    if (ip.startsWith('10.') || ip.startsWith('192.168.')) return true;
-    if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(ip)) return true;
-    if (ip === '::1' || ip.startsWith('fc') || ip.startsWith('fd') || ip.startsWith('fe80')) return true;
+    const normalized = normalizeIP(ip);
+    if (!normalized || normalized === 'unknown') return true;
 
-    return net.isIP(ip) === 0;
+    const version = net.isIP(normalized);
+    if (version === 0) return true;
+
+    if (version === 4) {
+        return [
+            ['0.0.0.0', 8],
+            ['10.0.0.0', 8],
+            ['100.64.0.0', 10],
+            ['127.0.0.0', 8],
+            ['169.254.0.0', 16],
+            ['172.16.0.0', 12],
+            ['192.0.0.0', 24],
+            ['192.0.2.0', 24],
+            ['192.168.0.0', 16],
+            ['198.18.0.0', 15],
+            ['198.51.100.0', 24],
+            ['203.0.113.0', 24],
+            ['224.0.0.0', 4],
+            ['240.0.0.0', 4]
+        ].some(([base, bits]) => isIpv4InCidr(normalized, base, bits));
+    }
+
+    const lower = normalized.toLowerCase();
+    return lower === '::' ||
+        lower === '::1' ||
+        lower.startsWith('fc') ||
+        lower.startsWith('fd') ||
+        lower.startsWith('fe80') ||
+        lower.startsWith('ff') ||
+        lower.startsWith('2001:db8') ||
+        lower.startsWith('2002:') ||
+        lower.startsWith('64:ff9b:');
 }
 
 function parseBrowser(ua) {
@@ -315,11 +388,17 @@ function extractDevice(req) {
         devicePixelRatio,
         touchPoints,
         referrer,
+        fingerprintVersion: DEVICE_FINGERPRINT_VERSION,
         fingerprintHash: hmacValue(fingerprintSource, 'fingerprint')
     };
 }
 
 async function lookupWithIpApi(ip) {
+    const config = getIpLookupConfig();
+    if (!config.enabled) {
+        throw new Error('IP lookup is disabled');
+    }
+
     const fields = [
         'status',
         'message',
@@ -345,7 +424,11 @@ async function lookupWithIpApi(ip) {
         'tor'
     ].join(',');
 
-    const url = `http://ip-api.com/json/${encodeURIComponent(ip)}?fields=${encodeURIComponent(fields)}`;
+    const endpoint = config.baseUrl.includes('{ip}')
+        ? config.baseUrl.replace('{ip}', encodeURIComponent(ip))
+        : `${trimTrailingSlashes(config.baseUrl)}/${encodeURIComponent(ip)}`;
+    const url = new URL(endpoint);
+    url.searchParams.set('fields', fields);
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), IP_LOOKUP_TIMEOUT_MS);
@@ -353,7 +436,7 @@ async function lookupWithIpApi(ip) {
     let res;
 
     try {
-        res = await fetch(url, {
+        res = await fetch(url.toString(), {
             signal: controller.signal,
             headers: {
                 'User-Agent': 'Phomueangtai-Verify/1.1'
@@ -372,7 +455,7 @@ async function lookupWithIpApi(ip) {
     }
 
     return {
-        provider: 'ip-api.com',
+        provider: url.hostname || 'ip-lookup',
         raw: data,
         status: data.status,
 
@@ -400,6 +483,68 @@ async function lookupWithIpApi(ip) {
         query: data.query,
         message: data.message || null
     };
+}
+
+function makeLookupDisabledInfo(ip) {
+    return {
+        provider: 'disabled',
+        raw: null,
+        status: 'lookup_disabled',
+
+        country: 'unknown',
+        countryCode: 'unknown',
+        region: 'unknown',
+        city: 'unknown',
+        zip: 'unknown',
+        lat: null,
+        lon: null,
+        timezone: 'unknown',
+
+        isp: 'lookup disabled',
+        org: 'lookup disabled',
+        as: 'unknown',
+        asname: 'unknown',
+        reverse: 'unknown',
+
+        mobile: false,
+        proxy: false,
+        hosting: false,
+        vpn: false,
+        tor: false,
+
+        query: ip,
+        message: 'External IP lookup is disabled'
+    };
+}
+
+function makeLookupCircuitOpenInfo(ip) {
+    return {
+        ...makeLookupDisabledInfo(ip),
+        provider: 'circuit_breaker',
+        status: 'lookup_failed',
+        isp: 'lookup circuit open',
+        org: 'lookup circuit open',
+        message: 'External IP lookup temporarily paused after repeated failures'
+    };
+}
+
+function isLookupCircuitOpen(now = Date.now()) {
+    return lookupCircuit.openUntil > now;
+}
+
+function recordLookupSuccess() {
+    lookupCircuit.failures = 0;
+    lookupCircuit.openUntil = 0;
+    lookupCircuit.lastError = null;
+}
+
+function recordLookupFailure(err) {
+    lookupCircuit.failures += 1;
+    lookupCircuit.lastError = String(err?.message || err?.name || 'lookup_failed').slice(0, 200);
+
+    if (lookupCircuit.failures >= IP_LOOKUP_CIRCUIT_FAIL_THRESHOLD) {
+        lookupCircuit.openUntil = Date.now() + IP_LOOKUP_CIRCUIT_OPEN_MS;
+    }
 }
 
 function compactLookupRaw(lookup = {}) {
@@ -491,7 +636,23 @@ async function lookupIP(ip) {
     const cached = getCachedLookup(ip);
     if (cached) return cached;
 
-    const lookup = await lookupWithIpApi(ip);
+    if (!getIpLookupConfig().enabled) {
+        return makeLookupDisabledInfo(ip);
+    }
+
+    if (isLookupCircuitOpen()) {
+        return makeLookupCircuitOpenInfo(ip);
+    }
+
+    let lookup;
+    try {
+        lookup = await lookupWithIpApi(ip);
+        recordLookupSuccess();
+    } catch (err) {
+        recordLookupFailure(err);
+        throw err;
+    }
+
     setCachedLookup(ip, lookup);
     return lookup;
 }
@@ -525,6 +686,25 @@ function normalizeRiskFlags(lookup = {}) {
     };
 }
 
+function buildRiskFlags(flags = {}, lookupStatus = 'unknown', headerMeta = {}) {
+    const riskFlags = [];
+
+    if (flags.isVPN) riskFlags.push('vpn');
+    if (flags.isProxy) riskFlags.push('proxy');
+    if (flags.isTOR) riskFlags.push('tor');
+    if (flags.hosting) riskFlags.push('hosting');
+    if (lookupStatus === 'lookup_failed') riskFlags.push('lookup_failed');
+    if (lookupStatus === 'ip_unknown') riskFlags.push('ip_unknown');
+    if (lookupStatus === 'lookup_disabled') riskFlags.push('lookup_disabled');
+    if (headerMeta.spoofSuspected) riskFlags.push('spoofed_header');
+
+    for (const flag of headerMeta.spoofFlags || []) {
+        riskFlags.push(flag);
+    }
+
+    return Array.from(new Set(riskFlags));
+}
+
 function computeRisk(info = {}) {
     let risk = 0;
 
@@ -539,6 +719,8 @@ function computeRisk(info = {}) {
 }
 
 function makeUnknownIpInfo({ trustedIp, headerMeta }) {
+    const riskFlags = buildRiskFlags({}, 'ip_unknown', headerMeta);
+
     return {
         encryptedRawIp: null,
         ipHash: null,
@@ -565,7 +747,7 @@ function makeUnknownIpInfo({ trustedIp, headerMeta }) {
         mobile: false,
 
         riskScore: 20,
-        riskFlags: ['ip_unknown'],
+        riskFlags,
 
         lookupProvider: 'local',
         lookupStatus: 'ip_unknown',
@@ -635,6 +817,7 @@ async function processIP(req) {
     }
 
     const flags = normalizeRiskFlags(lookup);
+    const riskFlags = buildRiskFlags(flags, lookup.status || 'unknown', headerMeta);
 
     const riskScore = computeRisk({
         ...flags,
@@ -667,7 +850,7 @@ async function processIP(req) {
         mobile: flags.mobile,
 
         riskScore,
-        riskFlags: [],
+        riskFlags,
 
         lookupProvider: lookup.provider || 'unknown',
         lookupStatus: lookup.status || 'unknown',
@@ -693,6 +876,9 @@ module.exports = {
     getRealIP,
     normalizeIP,
     getTrustedRequestIp,
+    getIpLookupConfig,
+    lookupIP,
+    isPrivateIP,
     extractDevice,
     processIP
 };

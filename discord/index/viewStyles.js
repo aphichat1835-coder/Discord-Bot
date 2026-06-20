@@ -165,6 +165,34 @@ button, a, input, select, textarea {
   text-transform: uppercase;
   letter-spacing: .6px;
 }
+.mini-grid {
+  display: grid;
+  gap: 8px;
+}
+.mini-stat {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(15,12,32,.48);
+  min-width: 0;
+}
+.mini-stat span {
+  display: block;
+  color: var(--text3);
+  font-size: .68em;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mini-stat b {
+  display: block;
+  color: var(--text);
+  font-size: 1.15em;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
 
 .status-bar {
   display: flex;

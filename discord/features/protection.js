@@ -109,8 +109,8 @@ function checkLinkFilter(message, protConfig) {
 
 // ── สร้าง embed แจ้งเตือน protection ──
 function buildProtectionAlert(type, data) {
-    const colors  = { raid: config.system.themeColors.error, spam: config.system.themeColors.warning };
-    const titles  = { raid: `${config.emojis.antiraid} Anti-Raid Triggered`, spam: '⚡ Anti-Spam Triggered' };
+    const colors  = { raid: config.system.themeColors.error, spam: config.system.themeColors.warning, link: config.system.themeColors.warning };
+    const titles  = { raid: `${config.emojis.antiraid} Anti-Raid Triggered`, spam: '⚡ Anti-Spam Triggered', link: '🔗 Link Filter Triggered' };
 
     return new MessageEmbed()
         .setColor(colors[type] || config.system.themeColors.error)
@@ -120,9 +120,15 @@ function buildProtectionAlert(type, data) {
 }
 
 // ── Deep merge helper ──
+const BLOCKED_MERGE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 function deepMerge(target, source) {
     const out = { ...target };
+    if (!source || typeof source !== 'object') return out;
+
     for (const key of Object.keys(source)) {
+        if (BLOCKED_MERGE_KEYS.has(key)) continue;
+
         if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
             out[key] = deepMerge(target[key] || {}, source[key]);
         } else {

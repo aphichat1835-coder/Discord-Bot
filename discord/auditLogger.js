@@ -1,3 +1,4 @@
+/* eslint-disable complexity -- Audit event handlers are behavior-sensitive; refactor separately. */
 /*
 ================================================================================
 ⚠️ [AI COGNITIVE DIRECTIVE] ⚠️
@@ -67,8 +68,86 @@ const memberStateCache = new LruCache(MEMBER_STATE_CACHE_MAX); // `${guildId}_${
 
 // Rate-limit queue per guild (prevents Discord 429 on bulk events)
 const sendQueues = new Map(); // guildId → Promise
+const sendQueueDepths = new Map(); // guildId → pending sends
+const auditCircuit = new Map(); // `${guildId}:${type}` → { failures, openUntil }
 const registeredClients = new WeakSet(); // prevent duplicate listener registration after reconnect-ready events
 let auditCleanupTimer = null;
+const AUDIT_MAX_QUEUE_PER_GUILD = Math.max(1, Number(process.env.AUDIT_MAX_QUEUE_PER_GUILD || 200) || 200);
+const AUDIT_CIRCUIT_FAILURES = Math.max(1, Number(process.env.AUDIT_CIRCUIT_FAILURES || 5) || 5);
+const AUDIT_CIRCUIT_OPEN_MS = Math.max(10000, Number(process.env.AUDIT_CIRCUIT_OPEN_MS || 60 * 1000) || 60 * 1000);
+const LOG_DELETED_MESSAGE_CONTENT = String(process.env.AUDIT_LOG_DELETED_MESSAGE_CONTENT ?? "true").toLowerCase() !== "false";
+const LOG_EDITED_MESSAGE_CONTENT = String(process.env.AUDIT_LOG_EDITED_MESSAGE_CONTENT ?? "true").toLowerCase() !== "false";
+const AUDIT_REDACT_LINKS = String(process.env.AUDIT_REDACT_LINKS || "").toLowerCase() === "true";
+const AUDIT_REDACT_MENTIONS = String(process.env.AUDIT_REDACT_MENTIONS || "").toLowerCase() === "true";
+const AUDIT_MAX_CONTENT_LENGTH = Math.max(80, Math.min(1800, Number(process.env.AUDIT_MAX_CONTENT_LENGTH || 800) || 800));
+const auditStats = {
+    auditSendFailed: 0,
+    auditDroppedQueueFull: 0,
+    auditDroppedCircuitOpen: 0,
+    auditChannelLookupFailed: 0,
+    auditFetchFailed: 0,
+    lastAuditSendError: null,
+    lastAuditChannelError: null,
+    lastAuditFetchError: null
+};
+const warnThrottles = new Map();
+
+function isTokenChar(char) {
+    return !!char && (
+        (char >= "A" && char <= "Z") ||
+        (char >= "a" && char <= "z") ||
+        (char >= "0" && char <= "9") ||
+        char === "_" ||
+        char === "-"
+    );
+}
+
+function readTokenSegment(text, start) {
+    let end = start;
+    while (end < text.length && isTokenChar(text[end])) end++;
+    return {
+        value: text.slice(start, end),
+        end
+    };
+}
+
+function redactDiscordTokenLikeValues(input) {
+    const text = String(input || "");
+    let output = "";
+    let index = 0;
+
+    while (index < text.length) {
+        const first = readTokenSegment(text, index);
+        const secondStart = first.end + 1;
+        const second = text[first.end] === "." ? readTokenSegment(text, secondStart) : null;
+        const thirdStart = second ? second.end + 1 : -1;
+        const third = second && text[second.end] === "." ? readTokenSegment(text, thirdStart) : null;
+
+        if (first.value.length >= 24 && second?.value.length >= 6 && third?.value.length >= 20) {
+            output += "[REDACTED_TOKEN]";
+            index = third.end;
+            continue;
+        }
+
+        output += text[index];
+        index++;
+    }
+
+    return output;
+}
+
+function safeAuditError(err) {
+    return redactDiscordTokenLikeValues(err?.message || err?.name || err || "unknown")
+        .slice(0, 240);
+}
+
+function warnRateLimited(key, message, err, intervalMs = 60000) {
+    const now = Date.now();
+    const last = warnThrottles.get(key) || 0;
+    if (now - last < intervalMs) return;
+    warnThrottles.set(key, now);
+    console.warn(`${message}: ${safeAuditError(err)}`);
+}
 
 // ── Channel lookup ──
 async function getAuditChannel(guild, sessionManager, type) {
@@ -85,6 +164,9 @@ async function getAuditChannel(guild, sessionManager, type) {
         if (!channelId) return null;
         return guild.channels.cache.get(channelId) || null;
     } catch (e) {
+        auditStats.auditChannelLookupFailed += 1;
+        auditStats.lastAuditChannelError = safeAuditError(e);
+        warnRateLimited(`audit-channel:${guild.id}:${type}`, `[AUDIT] ⚠️ Channel lookup failed guild=${guild.id} type=${type}`, e);
         return null;
     }
 }
@@ -92,13 +174,48 @@ async function getAuditChannel(guild, sessionManager, type) {
 // ── Queued send (prevents 429 on burst events) ──
 async function sendAuditLog(guild, sessionManager, type, embed) {
     const gid = guild.id;
+    const depth = sendQueueDepths.get(gid) || 0;
+    if (depth >= AUDIT_MAX_QUEUE_PER_GUILD) {
+        auditStats.auditDroppedQueueFull += 1;
+        return false;
+    }
+
+    const circuitKey = `${gid}:${type}`;
+    const circuit = auditCircuit.get(circuitKey);
+    if (circuit?.openUntil && circuit.openUntil > Date.now()) {
+        auditStats.auditDroppedCircuitOpen += 1;
+        return false;
+    }
+
+    sendQueueDepths.set(gid, depth + 1);
+
     const prev = sendQueues.get(gid) || Promise.resolve();
-    const next = prev.then(async () => {
+    const next = prev.catch(() => {}).then(async () => {
         const ch = await getAuditChannel(guild, sessionManager, type);
-        if (ch) await ch.send({ embeds: [embed] }).catch(() => {});
+        if (!ch) return false;
+
+        try {
+            await ch.send({ embeds: [embed] });
+            auditCircuit.delete(circuitKey);
+            return true;
+        } catch (err) {
+            auditStats.auditSendFailed += 1;
+            auditStats.lastAuditSendError = safeAuditError(err);
+            const current = auditCircuit.get(circuitKey) || { failures: 0, openUntil: 0 };
+            current.failures += 1;
+            if (current.failures >= AUDIT_CIRCUIT_FAILURES) {
+                current.openUntil = Date.now() + AUDIT_CIRCUIT_OPEN_MS;
+            }
+            auditCircuit.set(circuitKey, current);
+            warnRateLimited(circuitKey, `[AUDIT] ⚠️ Send failed guild=${gid} type=${type}`, err);
+            return false;
+        }
     });
     sendQueues.set(gid, next);
     next.finally(() => {
+        const currentDepth = Math.max(0, (sendQueueDepths.get(gid) || 1) - 1);
+        if (currentDepth > 0) sendQueueDepths.set(gid, currentDepth);
+        else sendQueueDepths.delete(gid);
         if (sendQueues.get(gid) === next) sendQueues.delete(gid);
     }).catch(() => {});
     return next;
@@ -113,7 +230,12 @@ async function fetchAuditEntry(guild, type, targetId, delayMs = 1500) {
             e.target?.id === targetId &&
             Date.now() - e.createdTimestamp < 8000
         ) || null;
-    } catch { return null; }
+    } catch (err) {
+        auditStats.auditFetchFailed += 1;
+        auditStats.lastAuditFetchError = safeAuditError(err);
+        warnRateLimited(`audit-fetch:${guild.id}:${type}`, `[AUDIT] ⚠️ fetchAuditLogs failed guild=${guild.id} type=${type}`, err);
+        return null;
+    }
 }
 
 // ── Standard Embed Template (Koya-style) ──
@@ -131,6 +253,33 @@ function normalizeEmbedFields(fields = []) {
             name: safeEmbedText(field.name, 256) || "-",
             value: safeEmbedText(field.value, 1024) || "-"
         }));
+}
+
+function getEmbedTextSize(embed) {
+    const data = typeof embed.toJSON === "function" ? embed.toJSON() : embed;
+    const fields = Array.isArray(data.fields) ? data.fields : [];
+    return String(data.title || "").length +
+        String(data.description || "").length +
+        String(data.footer?.text || "").length +
+        String(data.author?.name || "").length +
+        fields.reduce((sum, field) => sum + String(field.name || "").length + String(field.value || "").length, 0);
+}
+
+function fitEmbedTotalSize(embed, maxSize = 5900) {
+    let data = typeof embed.toJSON === "function" ? embed.toJSON() : {};
+    while (getEmbedTextSize(embed) > maxSize && Array.isArray(data.fields) && data.fields.length > 0) {
+        const fields = data.fields;
+        const last = fields[fields.length - 1];
+        if (String(last.value || "").length > 120) {
+            last.value = safeEmbedText(last.value, Math.max(80, String(last.value).length - 300));
+            embed.spliceFields(fields.length - 1, 1, last);
+        } else {
+            embed.spliceFields(fields.length - 1, 1);
+        }
+        data = embed.toJSON();
+    }
+
+    return embed;
 }
 
 function serializePermissionOverwrites(overwrites) {
@@ -158,7 +307,7 @@ function buildEmbed({ color, title, user, description, fields = [], footer, noTh
     if (safeFields.length > 0) embed.addFields(safeFields);
     embed.setFooter({ text: safeEmbedText(footer || "Phomueangtai Enterprise", 2048) });
     embed.setTimestamp();
-    return embed;
+    return fitEmbedTotalSize(embed);
 }
 
 // ── Member state cache helpers ──
@@ -215,11 +364,21 @@ function startAuditCleanup() {
     auditCleanupTimer.unref?.();
 }
 
+function stopAuditCleanup() {
+    if (!auditCleanupTimer) return;
+    clearInterval(auditCleanupTimer);
+    auditCleanupTimer = null;
+}
+
 function getAuditStats() {
     return {
         auditChannelCache: auditChannelCache.size,
         memberStateCache: memberStateCache.size,
-        sendQueues: sendQueues.size
+        sendQueues: sendQueues.size,
+        sendQueueDepths: Object.fromEntries(sendQueueDepths),
+        auditCircuitOpen: [...auditCircuit.values()].filter(item => item.openUntil > Date.now()).length,
+        cleanupTimerActive: !!auditCleanupTimer,
+        ...auditStats
     };
 }
 
@@ -227,6 +386,26 @@ function getAuditStats() {
 function trunc(str, max = 1000) {
     if (!str) return "*ว่างเปล่า*";
     return str.length > max ? str.substring(0, max) + "..." : str;
+}
+
+function redactAuditContent(value) {
+    let text = String(value ?? "");
+    if (AUDIT_REDACT_LINKS) {
+        text = text.replace(/https?:\/\/\S+/gi, "[REDACTED_URL]");
+    }
+    if (AUDIT_REDACT_MENTIONS) {
+        text = text
+            .replace(/<@!?\d+>/g, "[REDACTED_MENTION]")
+            .replace(/<@&\d+>/g, "[REDACTED_ROLE]")
+            .replace(/<#\d+>/g, "[REDACTED_CHANNEL]");
+    }
+    return text;
+}
+
+function formatAuditMessageContent(value, kind) {
+    const shouldLog = kind === "delete" ? LOG_DELETED_MESSAGE_CONTENT : LOG_EDITED_MESSAGE_CONTENT;
+    if (!shouldLog) return "*ซ่อนเนื้อหาตามการตั้งค่า audit*";
+    return trunc(redactAuditContent(value), AUDIT_MAX_CONTENT_LENGTH);
 }
 
 
@@ -306,7 +485,7 @@ function registerMessageEvents(client, sessionManager) {
             { name: "🆔 Message ID", value: message.id ? `\`${message.id}\`` : "ไม่ทราบ", inline: true },
         ];
 
-        if (message.content) fields.push({ name: "📄 เนื้อหา", value: trunc(message.content, 800), inline: false });
+        if (message.content) fields.push({ name: "📄 เนื้อหา", value: formatAuditMessageContent(message.content, "delete"), inline: false });
         else fields.push({ name: "📄 เนื้อหา", value: "*ไม่มีข้อมูลในแคชหรือดึงไม่ได้*", inline: false });
 
         if (message.attachments?.size > 0) fields.push({ name: "📎 ไฟล์แนบ", value: `${message.attachments.size} ไฟล์`, inline: true });
@@ -347,8 +526,8 @@ function registerMessageEvents(client, sessionManager) {
             { name: "👤 ผู้ส่ง",    value: getUserFieldValue(author), inline: true },
             { name: "📌 ห้อง",      value: getChannelLabel(newMsg), inline: true },
             { name: "🆔 Message ID", value: newMsg.id ? `\`${newMsg.id}\`` : "ไม่ทราบ", inline: true },
-            { name: "📄 ก่อน",      value: trunc(oldContent || "*ไม่มีข้อมูลเดิม*", 800), inline: false },
-            { name: "✏️ หลัง",      value: trunc(newContent || "*ไม่มีข้อมูลใหม่*", 800), inline: false }
+            { name: "📄 ก่อน",      value: formatAuditMessageContent(oldContent || "*ไม่มีข้อมูลเดิม*", "edit"), inline: false },
+            { name: "✏️ หลัง",      value: formatAuditMessageContent(newContent || "*ไม่มีข้อมูลใหม่*", "edit"), inline: false }
         ];
 
         if (link) fields.push({ name: "🔗 ลิงก์", value: `[Jump to Message](${link})`, inline: true });
@@ -1143,5 +1322,6 @@ module.exports = {
     register,
     sendAuditLog,
     getAuditStats,
+    stopAuditCleanup,
     invalidateAuditCache: (guildId) => auditChannelCache.delete(guildId)
 };

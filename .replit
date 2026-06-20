@@ -2,7 +2,7 @@
 # This file is only needed when opening/running the project in Replit.
 # Production deployment uses Render settings and render.yaml instead.
 
-modules = ["nodejs-18"]
+modules = ["nodejs-24"]
 entrypoint = "discord/index.js"
 run = "npm start"
 

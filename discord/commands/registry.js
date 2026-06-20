@@ -91,7 +91,8 @@ const slashCommandsData = [
         options: [
             { type: 3, name: "title",   description: "หัวข้อประกาศ", required: true },
             { type: 3, name: "message", description: "เนื้อหาประกาศ", required: true },
-            { type: 3, name: "content", description: "ข้อความดิบนอก Embed (เช่น @everyone)", required: false }
+            { type: 3, name: "content", description: "ข้อความดิบนอก Embed (เช่น @everyone)", required: false },
+            { type: 5, name: "allow_mentions", description: "อนุญาตให้ content ping users/roles/everyone (ต้องมีสิทธิ์สูง)", required: false }
         ]
     },
 
@@ -109,7 +110,8 @@ const slashCommandsData = [
         name: "restore",
         description: "กู้คืนโครงสร้างเซิร์ฟเวอร์",
         options: [
-            { type: 3, name: "server_id", description: "ไอดีเซิร์ฟเวอร์ต้นทาง", required: true }
+            { type: 3, name: "server_id", description: "ไอดีเซิร์ฟเวอร์ต้นทาง", required: true },
+            { type: 5, name: "dry_run", description: "ดูแผนกู้คืนก่อน โดยยังไม่สร้างอะไร", required: false }
         ]
     },
 
