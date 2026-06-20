@@ -3,6 +3,7 @@ const net = require('net');
 const { encryptIP, hmacValue } = require('./crypto');
 
 const ENABLE_CF_IP_HEADER = String(process.env.ENABLE_CF_IP_HEADER || '').toLowerCase() === 'true';
+const TRUST_PROXY_FOR_CF_HEADER = String(process.env.TRUST_PROXY || '').toLowerCase() === 'true';
 const IP_LOOKUP_TIMEOUT_MS = 3000;
 const IP_LOOKUP_CACHE_TTL_MS = 10 * 60 * 1000;
 const IP_LOOKUP_CACHE_MAX = 5000;
@@ -110,7 +111,7 @@ function getTrustedRequestIp(req) {
     const remoteAddress = getRemoteAddress(req);
     const cfConnectingIp = parseHeaderIp(req.headers['cf-connecting-ip']);
 
-    if (ENABLE_CF_IP_HEADER && isValidIP(cfConnectingIp) && !isPrivateIP(cfConnectingIp)) {
+    if (ENABLE_CF_IP_HEADER && TRUST_PROXY_FOR_CF_HEADER && isValidIP(cfConnectingIp) && !isPrivateIP(cfConnectingIp)) {
         return {
             ip: cfConnectingIp,
             source: 'cf-connecting-ip'
@@ -159,6 +160,10 @@ function detectSpoofedHeaders(req, trustedIp) {
 
     if (headerIps.cfConnectingIp && !ENABLE_CF_IP_HEADER) {
         spoofFlags.push('cf_header_without_trust');
+    }
+
+    if (headerIps.cfConnectingIp && ENABLE_CF_IP_HEADER && !TRUST_PROXY_FOR_CF_HEADER) {
+        spoofFlags.push('cf_header_requires_trust_proxy');
     }
 
     if (headerIps.xForwardedForChainLength > 3) {
@@ -600,6 +605,26 @@ function setCachedLookup(ip, value) {
     });
 }
 
+function cleanupLookupCache(now = Date.now()) {
+    for (const [key, cached] of lookupCache.entries()) {
+        if (!cached?.cachedAt || now - cached.cachedAt > IP_LOOKUP_CACHE_TTL_MS) {
+            lookupCache.delete(key);
+        }
+    }
+
+    while (lookupCache.size > IP_LOOKUP_CACHE_MAX) {
+        const oldestKey = lookupCache.keys().next().value;
+        if (!oldestKey) break;
+        lookupCache.delete(oldestKey);
+    }
+}
+
+const lookupCacheCleanupTimer = setInterval(
+    cleanupLookupCache,
+    Math.max(IP_LOOKUP_CACHE_TTL_MS, 60 * 1000)
+);
+lookupCacheCleanupTimer.unref?.();
+
 async function lookupIP(ip) {
     if (isPrivateIP(ip)) {
         return {
@@ -714,12 +739,30 @@ function computeRisk(info = {}) {
     if (info.hosting) risk += 25;
     if (info.lookupStatus === 'lookup_failed') risk += 10;
     if (info.lookupStatus === 'ip_unknown') risk += 20;
+    if (info.spoofSuspected) risk += 15;
 
     return Math.min(100, risk);
 }
 
+function buildRiskBreakdown(flags = {}, lookupStatus = 'unknown', headerMeta = {}) {
+    return {
+        vpn: flags.isVPN ? 35 : 0,
+        proxy: flags.isProxy ? 35 : 0,
+        tor: flags.isTOR ? 55 : 0,
+        hosting: flags.hosting ? 25 : 0,
+        lookup: lookupStatus === 'ip_unknown' ? 20 : (lookupStatus === 'lookup_failed' ? 10 : 0),
+        spoofedHeader: headerMeta.spoofSuspected ? 15 : 0,
+        headerFlags: headerMeta.spoofFlags || []
+    };
+}
+
 function makeUnknownIpInfo({ trustedIp, headerMeta }) {
     const riskFlags = buildRiskFlags({}, 'ip_unknown', headerMeta);
+    const riskBreakdown = buildRiskBreakdown({}, 'ip_unknown', headerMeta);
+    const riskScore = computeRisk({
+        lookupStatus: 'ip_unknown',
+        spoofSuspected: headerMeta.spoofSuspected
+    });
 
     return {
         encryptedRawIp: null,
@@ -746,8 +789,9 @@ function makeUnknownIpInfo({ trustedIp, headerMeta }) {
         hosting: false,
         mobile: false,
 
-        riskScore: 20,
+        riskScore,
         riskFlags,
+        riskBreakdown,
 
         lookupProvider: 'local',
         lookupStatus: 'ip_unknown',
@@ -818,10 +862,12 @@ async function processIP(req) {
 
     const flags = normalizeRiskFlags(lookup);
     const riskFlags = buildRiskFlags(flags, lookup.status || 'unknown', headerMeta);
+    const riskBreakdown = buildRiskBreakdown(flags, lookup.status || 'unknown', headerMeta);
 
     const riskScore = computeRisk({
         ...flags,
-        lookupStatus: lookup.status || 'unknown'
+        lookupStatus: lookup.status || 'unknown',
+        spoofSuspected: headerMeta.spoofSuspected
     });
 
     return {
@@ -851,6 +897,7 @@ async function processIP(req) {
 
         riskScore,
         riskFlags,
+        riskBreakdown,
 
         lookupProvider: lookup.provider || 'unknown',
         lookupStatus: lookup.status || 'unknown',
@@ -878,6 +925,7 @@ module.exports = {
     getTrustedRequestIp,
     getIpLookupConfig,
     lookupIP,
+    cleanupLookupCache,
     isPrivateIP,
     extractDevice,
     processIP

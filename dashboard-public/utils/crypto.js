@@ -5,6 +5,11 @@
  * - Raw IP/device lookup keys use HMAC-SHA256 hashes for safe matching.
  */
 const crypto = require('crypto');
+const { sanitizeLogText } = require('../../discord/core/safeLogger');
+
+function safeCryptoError(err) {
+    return sanitizeLogText(err?.message || err?.name || err || 'unknown').slice(0, 180);
+}
 
 function getKey() {
     const secret = process.env.ENCRYPTION_KEY;
@@ -61,7 +66,7 @@ function decryptData(payload) {
                 decipher.final()
             ]).toString('utf8');
         } catch (err) {
-            console.error('[CRYPTO] GCM decrypt failed:', err.message);
+            console.error('[CRYPTO] GCM decrypt failed:', safeCryptoError(err));
             return null;
         }
     }
@@ -80,7 +85,7 @@ function decryptData(payload) {
             decipher.final()
         ]).toString('utf8');
     } catch (err) {
-        console.error('[CRYPTO] CBC legacy decrypt failed:', err.message);
+        console.error('[CRYPTO] CBC legacy decrypt failed:', safeCryptoError(err));
         return null;
     }
 }

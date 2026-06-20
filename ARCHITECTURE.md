@@ -248,6 +248,8 @@ static pages and health routes
 | `dashboard-public/utils/discordAPI.js` | Discord OAuth/token API calls, bot API calls, role/channel validation, member join/role assignment, panel message send/edit, DM helpers |
 | `dashboard-public/utils/ipUtils.js` | request IP normalization, trusted IP selection, spoof header detection, device extraction, configurable/disableable IP lookup/cache, risk computation, encrypted IP processing |
 | `dashboard-public/utils/crypto.js` | encryption/decryption and HMAC helpers for sensitive dashboard data |
+| `dashboard-public/utils/state.js` | shared OAuth/admin/callback state signing, compact verification state creation, and state decoding |
+| `dashboard-public/utils/guildPermissions.js` | shared guild owner/admin/manage permission policy helpers for Dashboard Public |
 | `dashboard-public/utils/panelBuilder.js` | verification panel input normalization, embed/button payload building, validation summary |
 | `dashboard-public/utils/verifyMode.js` | verification mode normalization and compatibility helpers |
 | `dashboard-public/utils/safeLogger.js` | compatibility export for shared redaction helpers from `discord/core/safeLogger.js` |
@@ -269,6 +271,7 @@ GET /auth/logout
 GET /ping
 GET /health                    readiness: database/config status
 GET /ready                     lightweight readiness boolean
+GET /internal/retention/dry-run internal owner dry-run for retention maintenance
 ```
 
 OAuth/admin routes from `dashboard-public/routes/oauth.js`:

@@ -16,6 +16,7 @@
 const https = require("https");
 
 const { encryptToken, decryptToken } = require("./crypto");
+const { sanitizeLogText } = require("../../discord/core/safeLogger");
 
 const BASE = "https://discord.com/api/v10";
 
@@ -32,6 +33,10 @@ const TEXT_CHANNEL_TYPES = new Set([
     5,  // GuildAnnouncement
     15  // GuildForum
 ]);
+
+function sanitizeDiscordApiErrorText(value, max = 500) {
+    return sanitizeLogText(value || "").slice(0, max);
+}
 
 function getClientId() {
     return process.env.DISCORD_CLIENT_ID;
@@ -63,7 +68,7 @@ function botHeaders(extra = {}) {
 }
 
 async function readError(res) {
-    const text = await res.text().catch(() => "");
+    const text = sanitizeDiscordApiErrorText(await res.text().catch(() => ""));
 
     try {
         return JSON.parse(text);
@@ -76,12 +81,12 @@ async function readError(res) {
 
 function stringifyError(error) {
     if (!error) return "";
-    if (typeof error === "string") return error;
+    if (typeof error === "string") return sanitizeDiscordApiErrorText(error);
 
     try {
-        return JSON.stringify(error);
+        return sanitizeDiscordApiErrorText(JSON.stringify(error));
     } catch {
-        return String(error);
+        return sanitizeDiscordApiErrorText(error);
     }
 }
 

@@ -15,6 +15,7 @@ const crypto = require("crypto");
 const sessionManager = require("./sessionManager");
 const config = require("./config.json");
 const { sendAlertWebhook } = require("./core/webhooks");
+const { sanitizeLogText } = require("./core/safeLogger");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  ⚙️  REGION 1: CONFIG
@@ -124,9 +125,7 @@ function validateToken(token) {
 }
 
 function sanitizeLifecycleError(value) {
-    return String(value || "UNKNOWN_ERROR")
-        .replace(/[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{20,}/g, "[REDACTED_TOKEN]")
-        .slice(0, 300);
+    return sanitizeLogText(value || "UNKNOWN_ERROR").slice(0, 300);
 }
 
 function isSessionRunnable(session) {

@@ -78,6 +78,22 @@ function register({
 }) {
     let _antiRaidCache = null;
     let _antiRaidExpiry = 0;
+    const spamCleanupMs = Math.max(30000, Number(process.env.SPAM_TRACKING_CLEANUP_MS || 60000) || 60000);
+    const spamEntryTtlMs = Math.max(60000, Number(process.env.SPAM_TRACKING_ENTRY_TTL_MS || 5 * 60 * 1000) || 5 * 60 * 1000);
+
+    const spamCleanupTimer = setInterval(() => {
+        const cutoff = Date.now() - spamEntryTtlMs;
+        for (const [key, history] of spamTracking.entries()) {
+            const next = Array.isArray(history) ? history.filter(ts => Number(ts) >= cutoff) : [];
+            if (next.length) spamTracking.set(key, next);
+            else spamTracking.delete(key);
+        }
+
+        while (spamTracking.size > MAX_SPAM_USERS) {
+            spamTracking.delete(spamTracking.keys().next().value);
+        }
+    }, spamCleanupMs);
+    spamCleanupTimer.unref?.();
 
     // ════════════════════════════════════════════════════════════════════════
     //  💬  messageCreate — Anti-Raid

@@ -65,6 +65,13 @@
 - Hardened audit logging with queue depth limits, circuit breaker behavior, failure counters, cache shutdown cleanup, and optional message-content redaction.
 - Added restore dry-run planning, backup validation reports, parent/category-aware restore matching, role-position restore attempts, and permission-overwrite restore reporting.
 - Hardened protection config merging against prototype pollution and added audit logging for anti-spam/link-filter actions.
+- Centralized OAuth state signing/decoding in `dashboard-public/utils/state.js` and reused it from command-created panels, guild dashboard panels, and OAuth callbacks.
+- Added Dashboard Public guild permission policy helper so admin/manage capability normalization uses one shared policy.
+- Added retention maintenance summaries and an internal retention dry-run endpoint protected by `x-internal-secret`.
+- Documented and exposed Dashboard Public admin session cookie policy with configurable absolute/rolling expiry.
+- Added bounded IP identity link arrays, IP risk breakdowns, periodic IP lookup cache cleanup, and stricter Cloudflare header trust requirements.
+- Added audit logger queue/cache/embed tests and Dashboard Public state helper tests.
+- Hardened Dashboard Public crypto and Discord API error messages with length-limited redaction.
 
 ### Notes
 

@@ -36,6 +36,19 @@
    - `IP_LOOKUP_CIRCUIT_FAIL_THRESHOLD`
    - `IP_LOOKUP_CIRCUIT_OPEN_MS`
 4. ถ้าข้อมูล sensitive ถูกซ่อน ให้ดู owner approval state ก่อนสรุปว่าข้อมูลหาย
+5. `cf-connecting-ip` จะถูกเชื่อเฉพาะเมื่อเปิดทั้ง `ENABLE_CF_IP_HEADER=true` และ `TRUST_PROXY=true`
+
+## Dashboard Public session หรือ retention ผิดปกติ
+
+1. เช็ค Dashboard Public `/health`
+2. ดู `sessionCookie.policy`, `sessionCookie.maxAgeMs`, และ `retention.lastSummary`
+3. ค่าเริ่มต้นของ admin session คือ absolute expiry 24 ชั่วโมง:
+   - `ADMIN_SESSION_MAX_AGE_MS`
+   - `ADMIN_SESSION_ROLLING=false`
+4. ก่อน cleanup จริง สามารถเรียก internal dry-run:
+   - `GET /internal/retention/dry-run`
+   - ต้องส่ง `x-internal-secret`
+5. Retention จะ soft-delete เฉพาะข้อมูล guild-scoped เช่น verify log และ IP identity link; `OAuthUser` เป็น account-level จึงไม่ลบทั้งบัญชีเพราะ guild เดียวหมด retention
 
 ## Restore พังหรือเสี่ยง
 
