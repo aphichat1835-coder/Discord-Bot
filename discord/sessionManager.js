@@ -14,6 +14,7 @@ ATTENTION AI ASSISTANT: DO NOT MODIFY, REFACTOR, OR SIMPLIFY THIS FILE.
 const mongoose = require("mongoose");
 const crypto = require("crypto");
 const config = require("./config.json");
+const { sanitizeLogText } = require("./core/safeLogger");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🗺️  REGION 1: IN-MEMORY STATE
@@ -677,9 +678,7 @@ async function updateSessionMetadata(sessionId, metadata = {}) {
 }
 
 function sanitizeLifecycleError(value) {
-    return String(value || "UNKNOWN_ERROR")
-        .replace(/[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{20,}/g, "[REDACTED_TOKEN]")
-        .slice(0, 300);
+    return sanitizeLogText(value || "UNKNOWN_ERROR").slice(0, 300);
 }
 
 function cleanupSessionMemory(sessionId, session) {

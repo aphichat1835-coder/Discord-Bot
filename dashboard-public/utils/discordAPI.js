@@ -16,6 +16,7 @@
 const https = require("https");
 
 const { encryptToken, decryptToken } = require("./crypto");
+const { sanitizeLogText } = require("../../discord/core/safeLogger");
 
 const BASE = "https://discord.com/api/v10";
 
@@ -34,11 +35,7 @@ const TEXT_CHANNEL_TYPES = new Set([
 ]);
 
 function sanitizeDiscordApiErrorText(value, max = 500) {
-    return String(value || "")
-        .replace(/[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{20,}/g, "[REDACTED_TOKEN]")
-        .replace(/Bot\s+[A-Za-z0-9._-]+/gi, "Bot [REDACTED_TOKEN]")
-        .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [REDACTED_TOKEN]")
-        .slice(0, max);
+    return sanitizeLogText(value || "").slice(0, max);
 }
 
 function getClientId() {

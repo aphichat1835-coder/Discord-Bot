@@ -5,12 +5,10 @@
  * - Raw IP/device lookup keys use HMAC-SHA256 hashes for safe matching.
  */
 const crypto = require('crypto');
+const { sanitizeLogText } = require('../../discord/core/safeLogger');
 
 function safeCryptoError(err) {
-    return String(err?.message || err?.name || err || 'unknown')
-        .replace(/[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{20,}/g, '[REDACTED_TOKEN]')
-        .replace(/mongodb(?:\+srv)?:\/\/[^\s]+/gi, '[REDACTED_MONGO_URI]')
-        .slice(0, 180);
+    return sanitizeLogText(err?.message || err?.name || err || 'unknown').slice(0, 180);
 }
 
 function getKey() {
