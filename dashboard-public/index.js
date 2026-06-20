@@ -307,16 +307,8 @@ function requireInternalSecret(req, res, next) {
     return next();
 }
 
-async function runDataLifecycleMaintenance(options = {}) {
-    if (retentionMaintenanceInFlight) {
-        return { skipped: true, reason: 'maintenance_in_flight' };
-    }
-
-    retentionMaintenanceInFlight = true;
-    lastRetentionMaintenanceError = null;
-    const now = Date.now();
-    const dryRun = options.dryRun === true;
-    const summary = {
+function createRetentionSummary({ dryRun, now }) {
+    return {
         dryRun,
         skipped: false,
         startedAt: now,
@@ -328,94 +320,152 @@ async function runDataLifecycleMaintenance(options = {}) {
         ipIdentityLinks: 0,
         errors: []
     };
+}
+
+async function expirePendingRevealRequests({ now, dryRun }) {
+    const filter = { status: 'pending', expiresAt: { $lte: now } };
+
+    if (dryRun) return IPRevealRequest.countDocuments(filter);
+
+    const result = await IPRevealRequest.updateMany(
+        filter,
+        {
+            $set: {
+                status: 'expired',
+                updatedAt: now,
+                ownerNote: 'expired automatically'
+            }
+        }
+    );
+
+    return result.modifiedCount || 0;
+}
+
+function buildRetentionFilters(config, cutoff) {
+    return {
+        verifyLogFilter: {
+            guildId: config.guildId,
+            deletedAt: { $exists: false },
+            $or: [
+                { verifiedAt: { $lt: cutoff } },
+                { createdAt: { $lt: cutoff } }
+            ]
+        },
+        ipIdentityFilter: {
+            guildId: config.guildId,
+            deletedAt: { $exists: false },
+            lastSeenAt: { $lt: cutoff }
+        }
+    };
+}
+
+async function countRetentionTargets({ verifyLogFilter, ipIdentityFilter }) {
+    const [verifyLogs, ipIdentityLinks] = await Promise.all([
+        VerifyLog.countDocuments(verifyLogFilter),
+        IpIdentityLink.countDocuments(ipIdentityFilter)
+    ]);
+
+    return { verifyLogs, ipIdentityLinks };
+}
+
+async function softDeleteRetentionTargets({ verifyLogFilter, ipIdentityFilter, now, retentionMode }) {
+    const deletedBy = `retention:${retentionMode || 'unknown'}`;
+    const [verifyLogs, ipIdentityLinks] = await Promise.all([
+        VerifyLog.updateMany(
+            verifyLogFilter,
+            {
+                $set: {
+                    deletedAt: now,
+                    deletedBy
+                }
+            }
+        ),
+        IpIdentityLink.updateMany(
+            ipIdentityFilter,
+            {
+                $set: {
+                    deletedAt: now,
+                    deletedBy,
+                    updatedAt: now
+                }
+            }
+        )
+    ]);
+
+    return {
+        verifyLogs: verifyLogs.modifiedCount || 0,
+        ipIdentityLinks: ipIdentityLinks.modifiedCount || 0
+    };
+}
+
+function addRetentionCounts(summary, counts) {
+    summary.verifyLogs += counts.verifyLogs || 0;
+    summary.ipIdentityLinks += counts.ipIdentityLinks || 0;
+}
+
+function recordRetentionGuildError(summary, config, err) {
+    const retentionMode = config.security?.retentionMode || 'unknown';
+    const error = safeError(err);
+
+    summary.errors.push({
+        guildId: config.guildId,
+        retentionMode,
+        error
+    });
+
+    console.error('[RETENTION] guild maintenance failed:', {
+        guildId: config.guildId,
+        retentionMode,
+        error
+    });
+}
+
+async function processRetentionGuild(config, { now, dryRun, summary }) {
+    const days = retentionDays(config.security?.retentionMode);
+    if (!days) return;
+
+    summary.guildsWithRetention++;
+    const cutoff = now - days * 24 * 60 * 60 * 1000;
+    const filters = buildRetentionFilters(config, cutoff);
 
     try {
-        const expiredRevealFilter = { status: 'pending', expiresAt: { $lte: now } };
-        if (dryRun) {
-            summary.expiredRevealRequests = await IPRevealRequest.countDocuments(expiredRevealFilter);
-        } else {
-            const expired = await IPRevealRequest.updateMany(
-                expiredRevealFilter,
-                {
-                    $set: {
-                        status: 'expired',
-                        updatedAt: now,
-                        ownerNote: 'expired automatically'
-                    }
-                }
-            );
-            summary.expiredRevealRequests = expired.modifiedCount || 0;
-        }
+        const counts = dryRun
+            ? await countRetentionTargets(filters)
+            : await softDeleteRetentionTargets({
+                ...filters,
+                now,
+                retentionMode: config.security?.retentionMode
+            });
+        addRetentionCounts(summary, counts);
+    } catch (err) {
+        recordRetentionGuildError(summary, config, err);
+    }
+}
 
-        const configs = await GuildConfig.find({})
-            .select('guildId security.retentionMode')
-            .lean();
+async function loadRetentionConfigs() {
+    return GuildConfig.find({})
+        .select('guildId security.retentionMode')
+        .lean();
+}
+
+async function runDataLifecycleMaintenance(options = {}) {
+    if (retentionMaintenanceInFlight) {
+        return { skipped: true, reason: 'maintenance_in_flight' };
+    }
+
+    retentionMaintenanceInFlight = true;
+    lastRetentionMaintenanceError = null;
+    const now = Date.now();
+    const dryRun = options.dryRun === true;
+    const summary = createRetentionSummary({ dryRun, now });
+
+    try {
+        summary.expiredRevealRequests = await expirePendingRevealRequests({ now, dryRun });
+        const configs = await loadRetentionConfigs();
         summary.guildsScanned = configs.length;
 
         for (const config of configs) {
-            const days = retentionDays(config.security?.retentionMode);
-            if (!days) continue;
-            summary.guildsWithRetention++;
-
-            const cutoff = now - days * 24 * 60 * 60 * 1000;
-            const verifyLogFilter = {
-                guildId: config.guildId,
-                deletedAt: { $exists: false },
-                $or: [
-                    { verifiedAt: { $lt: cutoff } },
-                    { createdAt: { $lt: cutoff } }
-                ]
-            };
-            const ipIdentityFilter = {
-                guildId: config.guildId,
-                deletedAt: { $exists: false },
-                lastSeenAt: { $lt: cutoff }
-            };
-            try {
-                if (dryRun) {
-                    const [verifyLogs, ipIdentityLinks] = await Promise.all([
-                        VerifyLog.countDocuments(verifyLogFilter),
-                        IpIdentityLink.countDocuments(ipIdentityFilter)
-                    ]);
-                    summary.verifyLogs += verifyLogs;
-                    summary.ipIdentityLinks += ipIdentityLinks;
-                } else {
-                    const [verifyLogs, ipIdentityLinks] = await Promise.all([
-                        VerifyLog.updateMany(
-                            verifyLogFilter,
-                            {
-                                $set: {
-                                    deletedAt: now,
-                                    deletedBy: `retention:${config.security?.retentionMode || 'unknown'}`
-                                }
-                            }
-                        ),
-                        IpIdentityLink.updateMany(
-                            ipIdentityFilter,
-                            {
-                                $set: {
-                                    deletedAt: now,
-                                    deletedBy: `retention:${config.security?.retentionMode || 'unknown'}`,
-                                    updatedAt: now
-                                }
-                            }
-                        )
-                    ]);
-                    summary.verifyLogs += verifyLogs.modifiedCount || 0;
-                    summary.ipIdentityLinks += ipIdentityLinks.modifiedCount || 0;
-                }
-            } catch (err) {
-                summary.errors.push({
-                    guildId: config.guildId,
-                    retentionMode: config.security?.retentionMode || 'unknown',
-                    error: safeError(err)
-                });
-                console.error('[RETENTION] guild maintenance failed:', {
-                    guildId: config.guildId,
-                    retentionMode: config.security?.retentionMode || 'unknown',
-                    error: safeError(err)
-                });
-            }
+            await processRetentionGuild(config, { now, dryRun, summary });
         }
 
         summary.finishedAt = Date.now();
