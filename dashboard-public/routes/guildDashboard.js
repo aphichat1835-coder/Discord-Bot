@@ -19,7 +19,6 @@ const router = require("express").Router();
 
 const GuildConfig = require("../models/GuildConfig");
 const VerifyLog = require("../models/VerifyLog");
-const OAuthUser = require("../models/OAuthUser");
 const IPRevealRequest = require("../models/IPRevealRequest");
 
 const { decryptIP } = require("../utils/crypto");
@@ -31,6 +30,7 @@ const {
     redactSensitiveDiscordSnapshot,
     redactSensitiveIpInfo
 } = require("../utils/sensitiveAccess");
+const { makeOAuthUserSummaryMap } = require("../utils/oauthUserSummary");
 
 function requireAdmin(req, res, next) {
     if (!req.session?.adminUser) {
@@ -550,26 +550,13 @@ async function buildRecentMembers(guildId, limit = 8, options = {}) {
 
     const userIds = [...new Set(logs.map(log => log.userId).filter(Boolean))];
 
-    const users = await OAuthUser.find({
-        "discord.userId": { $in: userIds },
-        deletedAt: { $exists: false }
-    })
-        .select("discord connections guilds lastMember lastVerify")
-        .lean();
-
-    const userMap = Object.fromEntries(
-        users.map(user => [user.discord?.userId, user])
-    );
+    const userMap = await makeOAuthUserSummaryMap(userIds);
 
     return logs.map(log => {
         const safe = safeLog(log, { canViewSensitive });
         const user = userMap[log.userId];
-        const connectionsCount = Array.isArray(user?.connections)
-            ? user.connections.length
-            : safe.connectionsCount || 0;
-        const guildsCount = Array.isArray(user?.guilds)
-            ? user.guilds.length
-            : safe.guildsCount || 0;
+        const connectionsCount = Number(user?.connectionsCount ?? safe.connectionsCount ?? 0);
+        const guildsCount = Number(user?.guildsCount ?? safe.guildsCount ?? 0);
 
         return {
             ...safe,

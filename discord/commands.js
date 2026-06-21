@@ -40,6 +40,24 @@ function getPanelMessages() {
     return panelMessages;
 }
 
+function cleanupStalePanelMessages(client) {
+    for (const [guildId] of panelMessages.entries()) {
+        if (!client?.guilds?.cache?.has?.(guildId)) {
+            panelMessages.delete(guildId);
+        }
+    }
+}
+
+function getCommandRuntimeDiagnostics(client = null) {
+    if (client) cleanupStalePanelMessages(client);
+
+    return {
+        panelMessages: panelMessages.size,
+        moderation: moderation.getRuntimeDiagnostics?.() || {},
+        utility: utility.getRuntimeDiagnostics?.() || {}
+    };
+}
+
 async function cleanupGuild(guildId) {
     panelMessages.delete(guildId);
 
@@ -92,7 +110,7 @@ async function updatePanel(guildId) {
 
 async function restorePanels(client) {
     try {
-        const states = await sessionManager.PanelStateModel.find({});
+        const states = await sessionManager.getPanelStates();
 
         for (const state of states) {
             try {
@@ -219,5 +237,7 @@ module.exports = {
     updatePanel,
     restorePanels,
     cleanupGuild,
-    getPanelMessages
+    getPanelMessages,
+    cleanupStalePanelMessages,
+    getCommandRuntimeDiagnostics
 };

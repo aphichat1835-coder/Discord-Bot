@@ -72,6 +72,14 @@
 - Added bounded IP identity link arrays, IP risk breakdowns, periodic IP lookup cache cleanup, and stricter Cloudflare header trust requirements.
 - Added audit logger queue/cache/embed tests and Dashboard Public state helper tests.
 - Hardened Dashboard Public crypto and Discord API error messages with length-limited redaction.
+- Marked RAM stability and long-running voice sessions as production-critical in active documentation and the runbook.
+- Documented bounded cache/timer/queue/map expectations, memory diagnostics, and long-running voice session verification steps.
+- Added caps/diagnostics for owner PIN attempts, rate-limit buckets, command/traffic volatile maps, presence rotate message lists, and Dashboard Public OAuth snapshot arrays.
+- Added Dashboard Public Discord API body/response byte limits, API diagnostics, and compact capped admin guild session payloads.
+- Added bounded Service 1 Mongo read limits/diagnostics for session boot loading, approved guilds, pending guilds, whitelist entries, and bot settings.
+- Added Dashboard Public caps for Discord roles/channels/permission overwrites, internal overview guild scans, retention config scans, and device duplicate lookups.
+- Added a static memory guard check to catch regressions in bounded panel/approved-guild loading and Discord API response buffering.
+- Replaced Dashboard Public member-summary OAuth user reads with aggregate counts so large `connections` and `guilds` arrays are not loaded for dashboard list views.
 
 ### Notes
 

@@ -219,4 +219,10 @@ async function handleModeration(interaction, client, getLogChannel) {
     }
 }
 
-module.exports = { handle };
+function getRuntimeDiagnostics() {
+    return {
+        activeVoiceKicks: activeVoiceKicks.size
+    };
+}
+
+module.exports = { handle, getRuntimeDiagnostics };

@@ -1,19 +1,115 @@
 /*
 ================================================================================
 🧠 Lightweight Memory Monitor
-- Logs current memory pressure only; does not store historical samples.
+- Logs current memory pressure and keeps a small numeric trend buffer.
 - Designed for Render OOM diagnosis without changing runtime architecture.
 ================================================================================
 */
+
+const v8 = require("v8");
 
 let memoryTimer = null;
 let lastHeapUsed = 0;
 let criticalCount = 0;
 let emergencyCleanupRunning = false;
 let lastSnapshot = null;
+const memoryTrend = [];
 
 function mb(bytes) {
     return Math.round((Number(bytes || 0) / 1024 / 1024) * 10) / 10;
+}
+
+function getCacheSize(cacheLike) {
+    return Number(cacheLike?.cache?.size ?? cacheLike?.size ?? 0) || 0;
+}
+
+function getDiscordCacheStats(client) {
+    const stats = {
+        ready: !!client?.isReady?.(),
+        guilds: getCacheSize(client?.guilds),
+        channels: getCacheSize(client?.channels),
+        users: getCacheSize(client?.users),
+        guildMembers: 0,
+        guildChannels: 0,
+        voiceStates: 0,
+        roles: 0,
+        messages: 0
+    };
+
+    for (const guild of client?.guilds?.cache?.values?.() || []) {
+        stats.guildMembers += getCacheSize(guild.members);
+        stats.guildChannels += getCacheSize(guild.channels);
+        stats.voiceStates += getCacheSize(guild.voiceStates);
+        stats.roles += getCacheSize(guild.roles);
+    }
+
+    for (const channel of client?.channels?.cache?.values?.() || []) {
+        stats.messages += getCacheSize(channel?.messages);
+    }
+
+    return stats;
+}
+
+function getActiveHandleStats() {
+    const handles = typeof process._getActiveHandles === "function"
+        ? process._getActiveHandles()
+        : [];
+    const counts = {};
+
+    for (const handle of handles) {
+        const name = handle?.constructor?.name || "Unknown";
+        counts[name] = (counts[name] || 0) + 1;
+    }
+
+    return {
+        total: handles.length,
+        byType: counts
+    };
+}
+
+function getV8HeapStats() {
+    const stats = v8.getHeapStatistics();
+    const spaces = v8.getHeapSpaceStatistics();
+
+    return {
+        heapSizeLimit: mb(stats.heap_size_limit),
+        totalAvailableSize: mb(stats.total_available_size),
+        mallocedMemory: mb(stats.malloced_memory),
+        peakMallocedMemory: mb(stats.peak_malloced_memory),
+        externalMemory: mb(stats.external_memory),
+        spaces: Object.fromEntries(
+            spaces.map(space => [
+                space.space_name,
+                {
+                    used: mb(space.space_used_size),
+                    size: mb(space.space_size),
+                    available: mb(space.space_available_size),
+                    physical: mb(space.physical_space_size)
+                }
+            ])
+        )
+    };
+}
+
+function getEmitterListenerStats(emitter, allowList = []) {
+    if (!emitter || typeof emitter.eventNames !== "function" || typeof emitter.listenerCount !== "function") {
+        return { total: 0, byEvent: {} };
+    }
+
+    const byEvent = {};
+    let total = 0;
+    const allowed = new Set(allowList);
+
+    for (const event of emitter.eventNames()) {
+        const name = String(event);
+        const count = emitter.listenerCount(event);
+        total += count;
+        if (!allowed.size || allowed.has(name)) {
+            byEvent[name] = count;
+        }
+    }
+
+    return { total, byEvent };
 }
 
 function numberEnv(name, fallback, min = 0) {
@@ -30,11 +126,54 @@ function getMemoryMonitorConfig() {
         warnMb: numberEnv("MEMORY_WARN_MB", 180, 1),
         criticalMb: numberEnv("MEMORY_CRITICAL_MB", 220, 1),
         criticalRounds: Math.max(1, Math.floor(numberEnv("MEMORY_CRITICAL_ROUNDS", 3, 1))),
+        trendMax: Math.max(2, Math.floor(numberEnv("MEMORY_TREND_MAX", 24, 2))),
         criticalMode
     };
 }
 
-function buildMemorySnapshot({ voiceWorker, sessionManager, auditLogger }) {
+function getNestedNumber(value, path, fallback = 0) {
+    let current = value;
+    for (const key of path) {
+        current = current?.[key];
+    }
+
+    return Number(current || fallback) || fallback;
+}
+
+function compactTrendSample(snapshot) {
+    return {
+        at: snapshot.at,
+        heapUsed: snapshot.heapUsed,
+        heapTotal: snapshot.heapTotal,
+        rss: snapshot.rss,
+        external: snapshot.external,
+        diff: snapshot.diff,
+        sessions: snapshot.sessions,
+        clientPool: snapshot.clientPool,
+        selfClientMessages: getNestedNumber(snapshot, ["workerDiagnostics", "selfClientCaches", "messages"]),
+        selfClientUsers: getNestedNumber(snapshot, ["workerDiagnostics", "selfClientCaches", "users"]),
+        selfClientListeners: getNestedNumber(snapshot, ["workerDiagnostics", "selfClientListeners", "total"]),
+        discordMessages: getNestedNumber(snapshot, ["discordCaches", "messages"]),
+        discordUsers: getNestedNumber(snapshot, ["discordCaches", "users"]),
+        discordListeners: getNestedNumber(snapshot, ["discordListeners", "total"]),
+        activeHandles: getNestedNumber(snapshot, ["activeHandles", "total"]),
+        naturalTimers: snapshot.natural?.activeTimers ?? 0,
+        autoDeafTimers: snapshot.autoDeaf?.activeTimers ?? 0,
+        auditQueues: getNestedNumber(snapshot, ["auditStats", "sendQueues"]),
+        v8Available: getNestedNumber(snapshot, ["v8", "totalAvailableSize"]),
+        v8Malloced: getNestedNumber(snapshot, ["v8", "mallocedMemory"])
+    };
+}
+
+function recordMemoryTrend(snapshot) {
+    memoryTrend.push(compactTrendSample(snapshot));
+
+    while (memoryTrend.length > snapshot.config.trendMax) {
+        memoryTrend.shift();
+    }
+}
+
+function buildMemorySnapshot({ voiceWorker, sessionManager, auditLogger, client }) {
     const mem = process.memoryUsage();
     const heapUsed = mb(mem.heapUsed);
     const heapTotal = mb(mem.heapTotal);
@@ -45,6 +184,7 @@ function buildMemorySnapshot({ voiceWorker, sessionManager, auditLogger }) {
     const autoDeaf = voiceWorker?.getAutoDeafSettings?.();
     const workerDiagnostics = voiceWorker?.getWorkerDiagnostics?.();
     const auditStats = auditLogger?.getAuditStats?.();
+    const sessionDiagnostics = sessionManager?.getSessionDiagnostics?.();
 
     lastHeapUsed = heapUsed;
 
@@ -60,6 +200,20 @@ function buildMemorySnapshot({ voiceWorker, sessionManager, auditLogger }) {
         autoDeaf,
         workerDiagnostics,
         auditStats,
+        sessionDiagnostics,
+        discordCaches: getDiscordCacheStats(client),
+        discordListeners: getEmitterListenerStats(client, [
+            "ready",
+            "messageCreate",
+            "interactionCreate",
+            "guildCreate",
+            "guildDelete",
+            "voiceStateUpdate",
+            "guildMemberAdd",
+            "guildMemberRemove"
+        ]),
+        activeHandles: getActiveHandleStats(),
+        v8: getV8HeapStats(),
         criticalCount,
         config: getMemoryMonitorConfig(),
         at: Date.now()
@@ -74,7 +228,17 @@ function logMemorySnapshot(snapshot) {
         `naturalTimers=${snapshot.natural?.activeTimers ?? "-"} ` +
         `autoDeafTimers=${snapshot.autoDeaf?.activeTimers ?? "-"} ` +
         `worker=${snapshot.workerDiagnostics ? JSON.stringify(snapshot.workerDiagnostics) : "-"} ` +
-        `audit=${snapshot.auditStats ? JSON.stringify(snapshot.auditStats) : "-"}`
+        `audit=${snapshot.auditStats ? JSON.stringify(snapshot.auditStats) : "-"} ` +
+        `discord=${JSON.stringify(snapshot.discordCaches)} ` +
+        `session=${snapshot.sessionDiagnostics ? JSON.stringify(snapshot.sessionDiagnostics) : "-"} ` +
+        `listeners=${JSON.stringify(snapshot.discordListeners)} ` +
+        `handles=${JSON.stringify(snapshot.activeHandles)} ` +
+        `v8=${JSON.stringify({
+            heapSizeLimit: snapshot.v8.heapSizeLimit,
+            totalAvailableSize: snapshot.v8.totalAvailableSize,
+            mallocedMemory: snapshot.v8.mallocedMemory,
+            externalMemory: snapshot.v8.externalMemory
+        })}`
     );
 }
 
@@ -125,6 +289,7 @@ function startMemoryMonitor({
     voiceWorker,
     sessionManager,
     auditLogger,
+    client,
     system
 } = {}) {
     stopMemoryMonitor();
@@ -136,12 +301,13 @@ function startMemoryMonitor({
     memoryTimer = setInterval(async () => {
         try {
             if (system?.isShuttingDown?.()) return;
-            lastSnapshot = buildMemorySnapshot({ voiceWorker, sessionManager, auditLogger });
+            lastSnapshot = buildMemorySnapshot({ voiceWorker, sessionManager, auditLogger, client });
+            recordMemoryTrend(lastSnapshot);
             logMemorySnapshot(lastSnapshot);
 
             if (lastSnapshot.heapUsed > lastSnapshot.config.warnMb) {
                 console.warn(`[MEMORY] ⚠️ Heap high: ${lastSnapshot.heapUsed}MB`);
-                voiceWorker?.cleanupVolatileState?.();
+                voiceWorker?.cleanupVolatileState?.(Date.now(), { cleanupSelfClientCaches: true });
             }
 
             updateCriticalCount(lastSnapshot.heapUsed, lastSnapshot.config);
@@ -162,6 +328,14 @@ function startMemoryMonitor({
     memoryTimer.unref?.();
 }
 
+function captureMemorySnapshot(label, { voiceWorker, sessionManager, auditLogger, client } = {}) {
+    lastSnapshot = buildMemorySnapshot({ voiceWorker, sessionManager, auditLogger, client });
+    recordMemoryTrend(lastSnapshot);
+    console.log(`[MEMORY] Snapshot${label ? ` ${label}` : ""}`);
+    logMemorySnapshot(lastSnapshot);
+    return lastSnapshot;
+}
+
 function stopMemoryMonitor() {
     if (!memoryTimer) return;
 
@@ -176,12 +350,14 @@ function getMemoryMonitorState() {
         running: !!memoryTimer,
         criticalCount,
         emergencyCleanupRunning,
-        lastSnapshot
+        lastSnapshot,
+        trend: memoryTrend.slice()
     };
 }
 
 module.exports = {
     startMemoryMonitor,
+    captureMemorySnapshot,
     stopMemoryMonitor,
     getMemoryMonitorConfig,
     getMemoryMonitorState

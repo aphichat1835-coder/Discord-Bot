@@ -8,7 +8,7 @@ DO NOT SIMPLIFY: OperationQueue concurrency — prevents IP ban from Discord.
 ================================================================================
 */
 
-const { Client: SelfClient } = require("discord.js-selfbot-v13");
+const { Client: SelfClient, Options: SelfClientOptions } = require("discord.js-selfbot-v13");
 const { MessageEmbed } = require("discord.js");
 const { joinVoiceChannel, getVoiceConnection, VoiceConnectionStatus } = require("@discordjs/voice");
 const crypto = require("crypto");
@@ -34,6 +34,16 @@ const DM_THROTTLE_MAX_SIZE = config.voice_worker.dmThrottleMaxSize || 5000;
 const VOICE_LOG_MAX = Math.max(
     20,
     Math.min(2000, Number(process.env.VOICE_LOG_MAX || config.voice_worker.voiceLogMax || 200) || 200)
+);
+const SELF_CLIENT_CACHE_LIMITS = {
+    MessageManager: Math.max(0, Number(process.env.VOICE_SELF_MESSAGE_CACHE_MAX || 20) || 20),
+    GuildMemberManager: Math.max(10, Number(process.env.VOICE_SELF_MEMBER_CACHE_MAX || 100) || 100),
+    UserManager: Math.max(50, Number(process.env.VOICE_SELF_USER_CACHE_MAX || 500) || 500),
+    ReactionManager: 0
+};
+const SELF_CLIENT_CACHE_CLEANUP_TTL_MS = Math.max(
+    60 * 1000,
+    Number(process.env.VOICE_SELF_CACHE_CLEANUP_TTL_MS || 10 * 60 * 1000) || 10 * 60 * 1000
 );
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -74,6 +84,175 @@ function getClientPoolSize() { return clientPool.size; }
 function getClientPoolStrategyName() { return "tokenGuild"; }
 function isVoiceDebugEnabled() { return process.env.VOICE_DEBUG_MULTI_CLIENT === "true"; }
 
+function buildSelfClientOptions() {
+    return {
+        checkUpdate: false,
+        makeCache: SelfClientOptions.cacheWithLimits({
+            ...SelfClientOptions.defaultMakeCacheSettings,
+            ...SELF_CLIENT_CACHE_LIMITS
+        })
+    };
+}
+
+function getCacheSize(cacheLike) {
+    return Number(cacheLike?.cache?.size ?? cacheLike?.size ?? 0) || 0;
+}
+
+function addGuildCacheStats(total, guild) {
+    total.guildMembers += getCacheSize(guild.members);
+    total.guildChannels += getCacheSize(guild.channels);
+    total.voiceStates += getCacheSize(guild.voiceStates);
+    total.roles += getCacheSize(guild.roles);
+    total.emojis += getCacheSize(guild.emojis);
+    total.presences += getCacheSize(guild.presences);
+}
+
+function getClientCacheStats(client) {
+    const stats = {
+        ready: !!client?.isReady?.(),
+        guilds: getCacheSize(client?.guilds),
+        channels: getCacheSize(client?.channels),
+        users: getCacheSize(client?.users),
+        guildMembers: 0,
+        guildChannels: 0,
+        voiceStates: 0,
+        roles: 0,
+        emojis: 0,
+        presences: 0,
+        messages: 0
+    };
+
+    for (const guild of client?.guilds?.cache?.values?.() || []) {
+        addGuildCacheStats(stats, guild);
+    }
+
+    for (const channel of client?.channels?.cache?.values?.() || []) {
+        stats.messages += getCacheSize(channel?.messages);
+    }
+
+    return stats;
+}
+
+function sumCacheStats(items) {
+    return items.reduce((acc, item) => {
+        for (const [key, value] of Object.entries(item || {})) {
+            if (typeof value === "number") acc[key] = (acc[key] || 0) + value;
+        }
+        return acc;
+    }, {});
+}
+
+function getClientListenerStats(client) {
+    if (!client || typeof client.eventNames !== "function" || typeof client.listenerCount !== "function") {
+        return { total: 0, byEvent: {} };
+    }
+
+    const byEvent = {};
+    let total = 0;
+
+    for (const event of client.eventNames()) {
+        const name = String(event);
+        const count = client.listenerCount(event);
+        byEvent[name] = count;
+        total += count;
+    }
+
+    return { total, byEvent };
+}
+
+function sumListenerStats(items) {
+    return items.reduce((acc, item) => {
+        acc.total += Number(item?.total || 0);
+        for (const [event, count] of Object.entries(item?.byEvent || {})) {
+            acc.byEvent[event] = (acc.byEvent[event] || 0) + count;
+        }
+        return acc;
+    }, { total: 0, byEvent: {} });
+}
+
+function delay(ms, value = undefined) {
+    return new Promise(resolve => {
+        const timer = setTimeout(() => resolve(value), ms);
+        timer.unref?.();
+    });
+}
+
+async function withTimeoutValue(promise, timeoutMs, timeoutValue) {
+    let timer = null;
+    try {
+        return await Promise.race([
+            Promise.resolve(promise).finally(() => {
+                if (timer) clearTimeout(timer);
+            }),
+            new Promise(resolve => {
+                timer = setTimeout(() => resolve(timeoutValue), timeoutMs);
+                timer.unref?.();
+            })
+        ]);
+    } finally {
+        if (timer) clearTimeout(timer);
+    }
+}
+
+async function withTimeoutReject(promise, timeoutMs, message) {
+    let timer = null;
+    try {
+        return await Promise.race([
+            Promise.resolve(promise).finally(() => {
+                if (timer) clearTimeout(timer);
+            }),
+            new Promise((_, reject) => {
+                timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+                timer.unref?.();
+            })
+        ]);
+    } finally {
+        if (timer) clearTimeout(timer);
+    }
+}
+
+function clearManagerCache(manager) {
+    try {
+        manager?.cache?.clear?.();
+    } catch {}
+}
+
+function clearSelfClientReferences(client) {
+    if (!client) return;
+
+    for (const channel of client.channels?.cache?.values?.() || []) {
+        clearManagerCache(channel?.messages);
+    }
+
+    for (const guild of client.guilds?.cache?.values?.() || []) {
+        clearManagerCache(guild.members);
+        clearManagerCache(guild.channels);
+        clearManagerCache(guild.voiceStates);
+        clearManagerCache(guild.presences);
+        clearManagerCache(guild.roles);
+        clearManagerCache(guild.emojis);
+    }
+
+    clearManagerCache(client.guilds);
+    clearManagerCache(client.channels);
+    clearManagerCache(client.users);
+}
+
+function disposeSelfClient(client, reason = "cleanup") {
+    if (!client) return false;
+
+    try {
+        client.destroy?.();
+    } finally {
+        try { client.removeAllListeners?.(); } catch {}
+        try { clearSelfClientReferences(client); } catch (err) {
+            console.warn(`[WORKER] ⚠️ Failed to clear self client references during ${reason}: ${sanitizeLifecycleError(err.message)}`);
+        }
+    }
+
+    return true;
+}
+
 function debugVoiceSession(event, sessionId, session, extra = {}) {
     if (!isVoiceDebugEnabled()) return;
 
@@ -99,7 +278,7 @@ function debugVoiceSession(event, sessionId, session, extra = {}) {
 function destroyAllPooledClients(reason = "cleanup") {
     for (const [, client] of clientPool.entries()) {
         try {
-            client.destroy?.();
+            disposeSelfClient(client, reason);
         } catch (e) {
             console.warn(`[WORKER] ⚠️ Failed to destroy pooled client during ${reason}: ${sanitizeLifecycleError(e.message)}`);
         }
@@ -310,7 +489,7 @@ function destroySessionClient(sessionId, session, tokenHash, reason = "cleanup",
     if (!targetClient) return false;
 
     try {
-        targetClient.destroy?.();
+        disposeSelfClient(targetClient, reason);
     } catch (err) {
         console.warn(`[CLEANUP] ⚠️ Failed to destroy session client for ${getSessionShortId(sessionId)} (${reason}): ${sanitizeLifecycleError(err.message)}`);
     }
@@ -374,7 +553,7 @@ async function waitForTokenLoginCooldown(tokenHash) {
 
         if (elapsed < minDelayMs) {
             const jitter = crypto.randomInt(0, 1200);
-            await new Promise(resolve => setTimeout(resolve, minDelayMs - elapsed + jitter));
+            await delay(minDelayMs - elapsed + jitter);
         }
 
         return Date.now();
@@ -518,10 +697,11 @@ async function refreshSessionMetadataFast(sessionId, timeoutMs = 1500) {
     const session = sessionManager.getSession(sessionId);
     if (!session || !session.client?.isReady?.()) return false;
 
-    return Promise.race([
+    return withTimeoutValue(
         refreshSessionMetadata(sessionId, session.client),
-        new Promise(resolve => setTimeout(() => resolve(false), timeoutMs))
-    ]).catch(() => false);
+        timeoutMs,
+        false
+    ).catch(() => false);
 }
 
 function buildVoiceFields(session, extra = {}) {
@@ -651,7 +831,7 @@ async function startSession(sessionId, tokenString) {
         }
 
         if (!session.client) {
-            const newClient = new SelfClient({ checkUpdate: false });
+            const newClient = new SelfClient(buildSelfClientOptions());
 
             newClient.on("ready", () => {
                 console.log(`[WORKER] 🟢 Self-bot connected: ${newClient.user.tag}`);
@@ -669,19 +849,14 @@ async function startSession(sessionId, tokenString) {
                 await waitForTokenLoginCooldown(tokenHash);
 
                 await loginQueue.add(async () => {
-                    const loginPromise = newClient.login(tokenString);
-                    const timeoutPromise = new Promise((_, reject) =>
-                        setTimeout(() => reject(new Error("LOGIN_TIMEOUT")), CONFIG.LOGIN_TIMEOUT)
-                    );
-
-                    await Promise.race([loginPromise, timeoutPromise]);
+                    await withTimeoutReject(newClient.login(tokenString), CONFIG.LOGIN_TIMEOUT, "LOGIN_TIMEOUT");
                 });
 
                 setSessionClientInPool(sessionId, session, tokenHash, newClient);
 
             } catch (err) {
                 console.error(`[WORKER] ❌ Login failed for ${sessionId}. Destroying ghost client.`);
-                try { newClient.destroy(); } catch {}
+                try { disposeSelfClient(newClient, "login-failure"); } catch {}
 
                 if (err.code === "OPERATION_QUEUE_FULL") {
                     throw new Error("VOICE_QUEUE_BUSY");
@@ -705,7 +880,7 @@ async function startSession(sessionId, tokenString) {
 
         // Jitter delay กัน rate limit
         const jitterDelay = Math.floor(1500 + Math.random() * 2000);
-        await new Promise(resolve => setTimeout(resolve, jitterDelay));
+        await delay(jitterDelay);
 
         const conn = await connectToVoice(session.client, session.serverId, session.voiceId, tokenHash, sessionId);
         session.connection = conn;
@@ -929,10 +1104,7 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
                 connection.once(VoiceConnectionStatus.Connecting, onPassiveConnect);
             });
 
-            await Promise.race([
-                passivePromise,
-                new Promise((_, reject) => setTimeout(() => reject(new Error("TIMEOUT")), backoffMs))
-            ]);
+            await withTimeoutReject(passivePromise, backoffMs, "TIMEOUT");
 
             if (onPassiveSignal) connection.off(VoiceConnectionStatus.Signalling, onPassiveSignal);
             if (onPassiveConnect) connection.off(VoiceConnectionStatus.Connecting, onPassiveConnect);
@@ -962,7 +1134,8 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
             const sess = sessionManager.getSession(sessionId);
             if (sess) sess.urgentRecovery = true;
 
-            setTimeout(() => healthCheck(), 2000);
+            const recoveryTimer = setTimeout(() => healthCheck(), 2000);
+            recoveryTimer.unref?.();
         }
     });
 
@@ -1169,7 +1342,7 @@ async function waitForSelfVoiceExit(clientRef, session, timeoutMs = 1200) {
 
     while (Date.now() - started < timeoutMs) {
         if (!lastInfo.inTargetChannel) return lastInfo;
-        await new Promise(resolve => setTimeout(resolve, 150));
+        await delay(150);
         lastInfo = getSelfVoiceStateInfo(clientRef, session);
     }
 
@@ -1468,7 +1641,7 @@ async function autoResume() {
                 resumed++;
 
                 const warmUpJitter = Math.floor(2000 + Math.random() * 1500);
-                await new Promise(resolve => setTimeout(resolve, warmUpJitter));
+                await delay(warmUpJitter);
             } else {
                 skipped++;
             }
@@ -1491,7 +1664,7 @@ async function recoverSessionConnection(sessionId, tokenHash) {
         if (!session || isShuttingDown || !isSessionRunnable(session)) return;
 
         const recoveryJitter = Math.floor(1000 + Math.random() * 2000);
-        await new Promise(resolve => setTimeout(resolve, recoveryJitter));
+        await delay(recoveryJitter);
 
         if (isShuttingDown) return;
 
@@ -1667,7 +1840,7 @@ async function doNaturalBlink(sessionId) {
             selfDeaf: false
         });
 
-        await new Promise(resolve => setTimeout(resolve, naturalSettings.durationMs));
+        await delay(naturalSettings.durationMs);
 
         const stillAlive = sessionManager.getSession(sessionId);
         if (!stillAlive || !conn || conn.state.status === VoiceConnectionStatus.Destroyed) {
@@ -1785,7 +1958,7 @@ async function doAutoDeafToggle(sessionId) {
             selfDeaf: false
         });
 
-        await new Promise(resolve => setTimeout(resolve, autoDeafSettings.openDurationMs));
+        await delay(autoDeafSettings.openDurationMs);
 
         const stillAlive = sessionManager.getSession(sessionId);
         if (!stillAlive || !conn || conn.state.status === VoiceConnectionStatus.Destroyed) {
@@ -1878,11 +2051,82 @@ function getAutoDeafSettings() {
     };
 }
 
+function sweepCollection(collection, filter) {
+    if (!collection || typeof collection.sweep !== "function") return 0;
+    try {
+        return collection.sweep(filter);
+    } catch {
+        return 0;
+    }
+}
+
+function cleanupClientCaches(client, now = Date.now()) {
+    if (!client) return { messages: 0, reactions: 0, presences: 0, members: 0, users: 0 };
+
+    const removed = { messages: 0, reactions: 0, presences: 0, members: 0, users: 0 };
+    const messageCutoff = now - SELF_CLIENT_CACHE_CLEANUP_TTL_MS;
+    const selfUserId = client.user?.id || null;
+
+    for (const channel of client.channels?.cache?.values?.() || []) {
+        const messages = channel?.messages?.cache;
+        if (!messages) continue;
+
+        for (const message of messages.values?.() || []) {
+            removed.reactions += sweepCollection(message?.reactions?.cache, () => true);
+        }
+
+        removed.messages += sweepCollection(messages, message => {
+            const ts = message?.editedTimestamp || message?.createdTimestamp || 0;
+            return ts > 0 && ts < messageCutoff;
+        });
+    }
+
+    for (const guild of client.guilds?.cache?.values?.() || []) {
+        removed.presences += sweepCollection(guild.presences?.cache, (_presence, userId) => String(userId) !== String(selfUserId));
+
+        const voiceMemberIds = new Set();
+        for (const state of guild.voiceStates?.cache?.values?.() || []) {
+            if (state?.id) voiceMemberIds.add(String(state.id));
+        }
+
+        removed.members += sweepCollection(guild.members?.cache, member => {
+            const memberId = String(member?.id || "");
+            return memberId !== String(selfUserId) && !voiceMemberIds.has(memberId);
+        });
+    }
+
+    removed.users += sweepCollection(client.users?.cache, user => String(user?.id || "") !== String(selfUserId));
+
+    return removed;
+}
+
+function cleanupSelfClientCaches(now = Date.now()) {
+    const totals = { messages: 0, reactions: 0, presences: 0, members: 0, users: 0 };
+
+    for (const client of clientPool.values()) {
+        const removed = cleanupClientCaches(client, now);
+        for (const [key, value] of Object.entries(removed)) {
+            totals[key] += value;
+        }
+    }
+
+    return totals;
+}
+
 function getWorkerDiagnostics() {
     cleanupTokenLoginCooldowns();
+    const pooledClients = [...clientPool.values()];
+    const clientCacheStats = pooledClients.map(getClientCacheStats);
+    const clientListenerStats = pooledClients.map(getClientListenerStats);
 
     return {
         clientPool: clientPool.size,
+        clientPoolStrategy: getClientPoolStrategyName(),
+        selfClientCacheLimits: SELF_CLIENT_CACHE_LIMITS,
+        selfClientCaches: sumCacheStats(clientCacheStats),
+        selfClientCacheDetails: clientCacheStats,
+        selfClientListeners: sumListenerStats(clientListenerStats),
+        selfClientListenerDetails: clientListenerStats,
         tokenLoginCooldowns: tokenLoginCooldowns.size,
         naturalTimers: naturalTimers.size,
         naturalRunning: naturalRunning.size,
@@ -1941,7 +2185,7 @@ function stopInactiveSessionTimers(timerMap, activeSessionIds, stopTimer) {
     }
 }
 
-function cleanupVolatileState(now = Date.now()) {
+function cleanupVolatileState(now = Date.now(), options = {}) {
     const sessions = sessionManager.getAllSessions();
     const activeSessionIds = new Set(
         [...sessions.entries()]
@@ -1960,8 +2204,14 @@ function cleanupVolatileState(now = Date.now()) {
     deleteInactiveSessionIds(autoDeafRunning, activeSessionIds);
     stopInactiveSessionTimers(naturalTimers, activeSessionIds, stopNaturalTimer);
     stopInactiveSessionTimers(autoDeafTimers, activeSessionIds, stopAutoDeafTimer);
+    const selfClientCacheCleanup = options.cleanupSelfClientCaches
+        ? cleanupSelfClientCaches(now)
+        : null;
 
-    return getWorkerDiagnostics();
+    return {
+        ...getWorkerDiagnostics(),
+        selfClientCacheCleanup
+    };
 }
 
 // ════════════════════════════════════════════════════════════════════════════

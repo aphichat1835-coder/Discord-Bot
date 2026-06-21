@@ -111,6 +111,14 @@ Compatibility/fallback names may also appear in code, such as `TOKEN`, `BOT_TOKE
 - Token encryption/decryption behavior in `discord/sessionManager.js` is high-risk.
 - Do not change token lifecycle, hashing, encryption compatibility, session identity, or cleanup behavior without a scoped security review.
 
+### Memory stability for long-running voice
+
+- Long-running voice sessions are a production requirement.
+- Do not remove memory diagnostics, bounded cache limits, queue limits, timer cleanup, or log-buffer limits while changing voice/session behavior.
+- Do not "fix" RAM by exposing tokens, raw IP data, hidden owner/system details, or sensitive cache contents in logs.
+- Prefer safe counts and redacted diagnostics: session counts, client pool size, cache sizes, queue depths, timer counts, circuit states, and heap/RSS/external memory.
+- Treat unbounded Maps/Sets/arrays/timers in runtime code as production risks, especially in voice worker, audit logger, owner dashboard guards, PIN/rate-limit buckets, command cooldowns, rotate messages, and Dashboard Public OAuth/IP/session/retention paths.
+
 ## Service 2 Security Notes
 
 ### OAuth
@@ -248,6 +256,8 @@ Do not change imports or boot logic that initializes or references it.
 - Keep Render secrets in Render Dashboard, not in `render.yaml`.
 - Rotate secrets after accidental exposure.
 - Review logs before sharing.
+- Monitor Service 1 `/api/diagnostics` and Dashboard Public `/health` or `/internal/diagnostics` during long-running voice/session deployments.
+- Tune memory-related env vars before increasing architecture complexity: `MEMORY_WARN_MB`, `MEMORY_CRITICAL_MB`, `MEMORY_TREND_MAX`, `VOICE_LOG_MAX`, `DISCORD_MESSAGE_CACHE_MAX`, `VOICE_SELF_MESSAGE_CACHE_MAX`, `VOICE_SELF_MEMBER_CACHE_MAX`, `VOICE_SELF_USER_CACHE_MAX`, `RATE_LIMIT_MAX_BUCKETS`, `COMMAND_COOLDOWN_MAX_USERS`, `PIN_ATTEMPT_MAX_KEYS`, `ROTATE_MESSAGES_MAX`, `SESSION_LOAD_MAX`, `APPROVED_GUILDS_LOAD_MAX`, `PENDING_GUILDS_LOAD_MAX`, `WHITELIST_LOAD_MAX`, `BOT_SETTINGS_LOAD_MAX`, `PANEL_STATES_LOAD_MAX`, `OAUTH_CONNECTIONS_MAX`, `OAUTH_GUILDS_MAX`, `OAUTH_MEMBER_ROLES_MAX`, `OAUTH_USER_SUMMARY_MAX`, `ADMIN_GUILDS_SESSION_MAX`, `DISCORD_API_RESPONSE_MAX_BYTES`, `DISCORD_API_BODY_MAX_BYTES`, `DISCORD_API_ROLE_MAX`, `DISCORD_API_CHANNEL_MAX`, `DISCORD_API_PERMISSION_OVERWRITE_MAX`, `INTERNAL_OVERVIEW_GUILDS_MAX`, `RETENTION_CONFIG_SCAN_MAX`, `DEVICE_DUPLICATE_LOOKUP_MAX`, and Dashboard Public IP lookup cache limits.
 - Keep protected owner/system hooks minimally documented.
 
 ## Validation Commands

@@ -7,6 +7,7 @@ This repository contains a personal multi-tool Discord bot with two Node.js serv
 - Main Discord bot runtime using `discord.js` v13.
 - Slash commands for information, moderation, utility/admin work, backup/restore, audit log setup, dashboard setup, and verification panel setup.
 - Voice/session subsystem with persistent session state, token encryption, reconnect handling, health recovery, owner dashboard visibility, and session controls.
+- Production memory stability is a first-class requirement: voice sessions are expected to run long term, so caches, timers, queues, log buffers, and dashboard diagnostics must remain bounded.
 - Main owner dashboard served by Service 1 for status, sessions, settings, command toggles, whitelist, approved guilds, logs, and owner controls.
 - Dashboard Public served by Service 2 for Discord OAuth2 verification, guild admin configuration, verification panels, logs, members, stats, risk summaries, and internal APIs.
 - MongoDB/Mongoose persistence shared by both services.
@@ -84,6 +85,7 @@ Use `.env.example` as a placeholder reference only. Never commit real secrets.
 - Do not remove or redesign the voice/session subsystem, dashboard structure, verification architecture, owner/admin controls, or shared MongoDB layout without explicit owner approval.
 - Do not edit, move, rename, format, summarize hidden details from, or refactor `discord/systemProvider.js` unless the owner explicitly approves that exact action in the current task.
 - Treat OAuth, sessions, tokens, cookies, permissions, Discord roles, raw IP/device/risk data, and owner routes as high-risk areas.
+- Treat RAM growth as production-critical. Long-running voice/session changes must keep Discord/selfbot caches, timers, queues, maps, sets, and log buffers bounded and visible through diagnostics.
 
 ## Validation
 

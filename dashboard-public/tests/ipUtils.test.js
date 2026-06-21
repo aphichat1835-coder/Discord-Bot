@@ -24,6 +24,7 @@ const {
     getTrustedRequestIp,
     getRealIP,
     getIpLookupConfig,
+    getIpLookupDiagnostics,
     lookupIP,
     isPrivateIP,
     extractDevice,
@@ -212,6 +213,20 @@ describe('getRealIP', () => {
     test('returns normalized IP (strips ::ffff:)', () => {
         const req = makeReq({ ip: '::ffff:8.8.4.4' });
         expect(getRealIP(req)).toBe('8.8.4.4');
+    });
+});
+
+describe('IP lookup diagnostics', () => {
+    test('reports bounded cache and circuit state without sensitive IP values', () => {
+        const diag = getIpLookupDiagnostics();
+
+        expect(diag).toHaveProperty('cacheSize');
+        expect(diag).toHaveProperty('cacheMax');
+        expect(diag).toHaveProperty('cacheTtlMs');
+        expect(diag).toHaveProperty('circuitFailures');
+        expect(diag).toHaveProperty('circuitOpen');
+        expect(diag.cacheSize).toBeLessThanOrEqual(diag.cacheMax);
+        expect(JSON.stringify(diag)).not.toContain('8.8.8.8');
     });
 });
 

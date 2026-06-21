@@ -80,6 +80,16 @@ function register({
     let _antiRaidExpiry = 0;
     const spamCleanupMs = Math.max(30000, Number(process.env.SPAM_TRACKING_CLEANUP_MS || 60000) || 60000);
     const spamEntryTtlMs = Math.max(60000, Number(process.env.SPAM_TRACKING_ENTRY_TTL_MS || 5 * 60 * 1000) || 5 * 60 * 1000);
+    const commandCooldownMaxUsers = Math.max(100, Number(process.env.COMMAND_COOLDOWN_MAX_USERS || 5000) || 5000);
+    const antiRaidDebounceMaxKeys = Math.max(100, Number(process.env.ANTI_RAID_DEBOUNCE_MAX_KEYS || 5000) || 5000);
+
+    function trimMapToMaxSize(map, maxSize) {
+        while (map.size > maxSize) {
+            const oldestKey = map.keys().next().value;
+            if (!oldestKey) break;
+            map.delete(oldestKey);
+        }
+    }
 
     const spamCleanupTimer = setInterval(() => {
         const cutoff = Date.now() - spamEntryTtlMs;
@@ -149,6 +159,7 @@ function register({
                         const debounceKey = `${message.guild.id}_${message.author.id}`;
                         if (Date.now() - (antiRaidLogDebounce.get(debounceKey) || 0) > 5000) {
                             antiRaidLogDebounce.set(debounceKey, Date.now());
+                            trimMapToMaxSize(antiRaidLogDebounce, antiRaidDebounceMaxKeys);
                             auditLogger.sendAuditLog(message.guild, sessionManager, 'security', alertEmbed).catch(() => {});
                         }
                     } catch (e) {
@@ -167,6 +178,7 @@ function register({
             const spamHist = (spamTracking.get(spamKey) || []).filter(t => Date.now() - t < spamWindowMs);
             spamHist.push(Date.now());
             spamTracking.set(spamKey, spamHist);
+            trimMapToMaxSize(spamTracking, MAX_SPAM_USERS);
 
             const spamResult = protection.checkAntiSpam(message.member, spamHist, pConf);
             if (spamResult) {
@@ -257,6 +269,9 @@ function register({
             const cooldownMs = COMMAND_COOLDOWNS_MS[cmdName] ?? DEFAULT_COOLDOWN_MS;
             const now = Date.now();
 
+            if (!commandCooldowns.has(userId) && commandCooldowns.size >= commandCooldownMaxUsers) {
+                commandCooldowns.delete(commandCooldowns.keys().next().value);
+            }
             if (!commandCooldowns.has(userId)) commandCooldowns.set(userId, new Map());
             const userCmds = commandCooldowns.get(userId);
             const lastUsed = userCmds.get(cmdName) || 0;

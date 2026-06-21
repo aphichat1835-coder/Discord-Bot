@@ -28,6 +28,21 @@ const activeBackups  = new Set();
 
 // เฟส 3: /say usage tracking (2 ครั้งขึ้นไป → เช็ค whitelist)
 const sayUsageTracking = new Map();
+const SAY_USAGE_MAX_USERS = Math.max(100, Number(process.env.SAY_USAGE_MAX_USERS || 1000) || 1000);
+
+function trimSayUsageTracking(now = Date.now()) {
+    for (const [uid, h] of sayUsageTracking.entries()) {
+        const v = h.filter(t => now - t < 60000);
+        if (!v.length) sayUsageTracking.delete(uid);
+        else sayUsageTracking.set(uid, v);
+    }
+
+    while (sayUsageTracking.size > SAY_USAGE_MAX_USERS) {
+        const oldestKey = sayUsageTracking.keys().next().value;
+        if (!oldestKey) break;
+        sayUsageTracking.delete(oldestKey);
+    }
+}
 
 async function sendUtilLog(guild, channelType, description) {
     try {
@@ -72,6 +87,7 @@ async function handleSay(interaction, sessionManager) {
     const prevHistory = (sayUsageTracking.get(userId) || []).filter(t => now - t < 60000);
     const history = [...prevHistory, now];
     sayUsageTracking.set(userId, history);
+    if (sayUsageTracking.size > SAY_USAGE_MAX_USERS) trimSayUsageTracking(now);
 
     if (history.length === 1) {
         await safeDefer(interaction, { ephemeral: true });
@@ -978,13 +994,18 @@ async function handleSetup(interaction) {
 }
 
 const sayUsageCleanupInterval = setInterval(() => {
-    const now = Date.now();
-    for (const [uid, h] of sayUsageTracking.entries()) {
-        const v = h.filter(t => now - t < 60000);
-        if (!v.length) sayUsageTracking.delete(uid);
-        else sayUsageTracking.set(uid, v);
-    }
+    trimSayUsageTracking();
 }, 60000);
 if (typeof sayUsageCleanupInterval.unref === "function") sayUsageCleanupInterval.unref();
 
-module.exports = { handle, handleRestoreConfirm };
+function getRuntimeDiagnostics() {
+    trimSayUsageTracking();
+    return {
+        activeRestores: activeRestores.size,
+        activeBackups: activeBackups.size,
+        sayUsageTracking: sayUsageTracking.size,
+        sayUsageMaxUsers: SAY_USAGE_MAX_USERS
+    };
+}
+
+module.exports = { handle, handleRestoreConfirm, getRuntimeDiagnostics };

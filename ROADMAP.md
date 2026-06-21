@@ -12,6 +12,7 @@ This roadmap is the owner-approved planning reference. It does not grant permiss
 - Keep one repository, two services, and shared MongoDB.
 - Do not edit `discord/systemProvider.js` or its boot/import references without explicit current-task owner approval.
 - Treat OAuth, sessions, tokens, cookies, roles, permissions, IP/device/risk data, owner routes, and raw IP reveal as high-risk.
+- Treat RAM stability as production-critical. Voice/session work must support long-running sessions, keep caches/timers/queues/maps bounded, and preserve diagnostics before any broad architecture change is considered.
 
 ## Current Completed Work
 
@@ -75,6 +76,18 @@ The old public modules remain compatibility layers:
 - `discord/commands.js` still exports `slashCommandsData`, `handleMessage`, `handleInteraction`, `updatePanel`, `restorePanels`, `cleanupGuild`, and `getPanelMessages`.
 - `discord/index/server.js` still registers the same owner dashboard routes.
 - `discord/index/views.js` still registers the same owner dashboard pages.
+
+### Memory stability baseline
+
+The current stabilization direction is intentionally incremental:
+
+- Keep the existing voice/session architecture and `discord.js` v13.
+- Bound Discord.js and selfbot caches instead of removing voice/session behavior.
+- Keep natural/auto-deaf timers one-per-runnable-session and clean inactive timer state.
+- Keep audit queues/caches, dashboard rate-limit maps, reveal-attempt maps, IP lookup cache, and retention summaries bounded or TTL-cleaned.
+- Expose enough diagnostics to prove where heap growth is coming from before making larger changes.
+
+Any future work that touches voice/session, audit logging, dashboard routes, verification, or Discord client setup must preserve this memory baseline.
 
 ## Approved Minimal Service 1 Organization
 
@@ -251,6 +264,7 @@ Owner approves [specific architecture/refactor change] for [specific reason and 
 ## Near-Term Follow-Up Ideas
 
 - Add tests for Service 1 helper modules after extraction.
+- Add focused long-run memory smoke tests or scripted diagnostics capture for boot, auto-resume, steady-state voice, reconnect, and dashboard traffic.
 - Document exact owner-dashboard API response shapes with sample safe payloads.
 - Document Dashboard Public API response shapes with safe, redacted examples.
 - Review one responsibility hotspot at a time before moving side-effect code.

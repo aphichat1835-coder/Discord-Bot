@@ -1,4 +1,12 @@
 const router = require('express').Router();
+const ADMIN_GUILDS_SESSION_MAX = Math.max(
+    20,
+    Number(process.env.ADMIN_GUILDS_SESSION_MAX || 200) || 200
+);
+
+function safeString(value, max = 120) {
+    return String(value || '').replace(/[\u0000-\u001F\u007F]/g, '').slice(0, max);
+}
 
 /*
 ================================================================================
@@ -40,13 +48,12 @@ function normalizeGuild(guild = {}) {
     const canManageRoles = owner || isAdmin;
     const canManage = owner || isAdmin;
     return {
-        ...guild,
-        id: String(guild.id || ''),
-        name: String(guild.name || 'Unknown Server'),
-        icon: guild.icon || null,
+        id: safeString(guild.id, 40),
+        name: safeString(guild.name || 'Unknown Server', 120),
+        icon: guild.icon ? safeString(guild.icon, 120) : null,
         owner,
         isOwner: owner,
-        permissions: String(guild.permissions || '0'),
+        permissions: safeString(guild.permissions || '0', 40),
         isAdmin,
         canManage,
         canManageGuild,
@@ -75,7 +82,7 @@ function mergeGuildPermissions(a = {}, b = {}) {
 function dedupeGuilds(guilds = []) {
     const map = new Map();
 
-    for (const rawGuild of guilds) {
+    for (const rawGuild of guilds.slice(0, ADMIN_GUILDS_SESSION_MAX * 2)) {
         const guild = normalizeGuild(rawGuild);
         if (!guild.id) continue;
 
@@ -89,7 +96,7 @@ function dedupeGuilds(guilds = []) {
         map.set(guild.id, mergeGuildPermissions(existing, guild));
     }
 
-    return Array.from(map.values());
+    return Array.from(map.values()).slice(0, ADMIN_GUILDS_SESSION_MAX);
 }
 
 function normalizeAdminGuilds(req) {
@@ -123,3 +130,9 @@ router.use((req, _res, next) => {
 });
 
 module.exports = router;
+module.exports._internals = {
+    ADMIN_GUILDS_SESSION_MAX,
+    dedupeGuilds,
+    mergeGuildPermissions,
+    normalizeGuild
+};

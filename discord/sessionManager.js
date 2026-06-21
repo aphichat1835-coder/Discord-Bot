@@ -23,6 +23,33 @@ const sessions = new Map();
 const reconnectTracking = new Map();
 const sessionLocks = new Set();
 const settingsCache = new Map();
+function numberEnv(name, fallback, min = 1) {
+    const value = Number(process.env[name]);
+    if (!Number.isFinite(value)) return fallback;
+    return Math.max(min, value);
+}
+
+function boundedLimit(value, max, fallback = max) {
+    const parsed = Number(value);
+    const next = Number.isFinite(parsed) ? parsed : fallback;
+    return Math.min(max, Math.max(1, Math.floor(next)));
+}
+
+const SESSION_LOAD_MAX = numberEnv("SESSION_LOAD_MAX", 100, 1);
+const APPROVED_GUILDS_LOAD_MAX = numberEnv("APPROVED_GUILDS_LOAD_MAX", 1000, 1);
+const PENDING_GUILDS_LOAD_MAX = numberEnv("PENDING_GUILDS_LOAD_MAX", 500, 1);
+const WHITELIST_LOAD_MAX = numberEnv("WHITELIST_LOAD_MAX", 1000, 1);
+const BOT_SETTINGS_LOAD_MAX = numberEnv("BOT_SETTINGS_LOAD_MAX", 500, 1);
+const PANEL_STATES_LOAD_MAX = numberEnv("PANEL_STATES_LOAD_MAX", 500, 1);
+let lastLoadStats = {
+    loaded: 0,
+    cleaned: 0,
+    active: 0,
+    recoverable: 0,
+    at: null,
+    truncated: false,
+    max: SESSION_LOAD_MAX
+};
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🔐  REGION 2: ENCRYPTION (AES-256-GCM + CBC BACKWARD COMPAT)
@@ -242,6 +269,12 @@ const BotSettingsModel = mongoose.model("BotSettings", botSettingsSchema);
 // ════════════════════════════════════════════════════════════════════════════
 let dbConnected = false;
 const pendingSessionDeletes = new Set();
+const MONGO_POOL_CONFIG = {
+    maxPoolSize: 20,
+    minPoolSize: 2,
+    serverSelectionTimeoutMS: 5000,
+    socketTimeoutMS: 45000
+};
 
 mongoose.connection.on("connected", () => {
     console.log("[DATABASE] 🟢 MongoDB Connection Active.");
@@ -267,10 +300,10 @@ async function connectDB() {
     }
 
     await mongoose.connect(process.env.MONGO_URI, {
-        serverSelectionTimeoutMS: 5000,
-        socketTimeoutMS: 45000,
-        maxPoolSize: 20,
-        minPoolSize: 2
+        serverSelectionTimeoutMS: MONGO_POOL_CONFIG.serverSelectionTimeoutMS,
+        socketTimeoutMS: MONGO_POOL_CONFIG.socketTimeoutMS,
+        maxPoolSize: MONGO_POOL_CONFIG.maxPoolSize,
+        minPoolSize: MONGO_POOL_CONFIG.minPoolSize
     });
 
     dbConnected = true;
@@ -387,7 +420,7 @@ async function loadDatabase() {
             return null;
         });
 
-        const records = await SessionModel.find({
+        const sessionLoadFilter = {
             $or: [
                 { state: "active" },
                 { state: { $exists: false } },
@@ -397,9 +430,23 @@ async function loadDatabase() {
                     stoppedAt: { $gte: recoverableCutoff }
                 }
             ]
-        });
+        };
+        const [records, matchingCount] = await Promise.all([
+            SessionModel.find(sessionLoadFilter)
+                .sort({ lastActivity: -1, startedAt: -1, _id: -1 })
+                .limit(SESSION_LOAD_MAX)
+                .lean(),
+            SessionModel.countDocuments(sessionLoadFilter)
+        ]);
+
+        let activeLoaded = 0;
+        let recoverableLoaded = 0;
 
         for (const r of records) {
+            const state = r.state || "active";
+            if (state === "active") activeLoaded++;
+            else recoverableLoaded++;
+
             sessions.set(r.sessionId, {
                 sessionId: r.sessionId,
                 token: r.token,
@@ -426,7 +473,7 @@ async function loadDatabase() {
                 startedAt: r.startedAt,
                 lastActivity: r.lastActivity,
 
-                state: r.state || "active",
+                state,
                 stoppedAt: r.stoppedAt || null,
                 stoppedReason: r.stoppedReason || null,
                 stoppedBy: r.stoppedBy || null,
@@ -439,6 +486,17 @@ async function loadDatabase() {
                 tokenInvalid: false
             });
         }
+
+        lastLoadStats = {
+            loaded: records.length,
+            cleaned: cleanup?.deletedCount || 0,
+            active: activeLoaded,
+            recoverable: recoverableLoaded,
+            matching: matchingCount,
+            truncated: matchingCount > records.length,
+            max: SESSION_LOAD_MAX,
+            at: now
+        };
 
         const deleted = cleanup?.deletedCount ? `, cleaned=${cleanup.deletedCount}` : "";
         console.log(`[DATABASE] 📂 Loaded ${sessions.size} active/recoverable sessions from MongoDB${deleted}.`);
@@ -945,10 +1003,30 @@ async function getApprovedGuilds() {
     if (!dbConnected) return [];
 
     try {
-        const docs = await ApprovedGuildModel.find({});
+        const docs = await ApprovedGuildModel.find({})
+            .select("guildId")
+            .sort({ approvedAt: -1, _id: -1 })
+            .limit(APPROVED_GUILDS_LOAD_MAX)
+            .lean();
         return docs.map(d => d.guildId);
     } catch (err) {
         console.error(`[DATABASE] ❌ Failed to load approved guilds: ${err.message}`);
+        systemMetrics.increment("errors");
+        return [];
+    }
+}
+
+async function getApprovedGuildDocs(limit = APPROVED_GUILDS_LOAD_MAX) {
+    if (!dbConnected) return [];
+
+    try {
+        return await ApprovedGuildModel.find({})
+            .select("guildId approvedAt")
+            .sort({ approvedAt: -1, _id: -1 })
+            .limit(boundedLimit(limit, APPROVED_GUILDS_LOAD_MAX))
+            .lean();
+    } catch (err) {
+        console.error(`[DATABASE] ❌ Failed to load approved guild docs: ${err.message}`);
         systemMetrics.increment("errors");
         return [];
     }
@@ -1026,7 +1104,11 @@ async function getPendingGuilds() {
     if (!dbConnected) return [];
 
     try {
-        return await PendingGuildModel.find({}).sort({ requestedAt: -1 });
+        return await PendingGuildModel.find({})
+            .select("guildId guildName requestedBy requestedAt")
+            .sort({ requestedAt: -1, _id: -1 })
+            .limit(PENDING_GUILDS_LOAD_MAX)
+            .lean();
     } catch (err) {
         console.error(`[DATABASE] ❌ Failed to load pending guilds: ${err.message}`);
         systemMetrics.increment("errors");
@@ -1136,6 +1218,22 @@ async function getPanelState(guildId) {
         console.error(`[DATABASE] ❌ Failed to get panel state for ${guildId}: ${err.message}`);
         systemMetrics.increment("errors");
         return null;
+    }
+}
+
+async function getPanelStates(limit = PANEL_STATES_LOAD_MAX) {
+    if (!dbConnected) return [];
+
+    try {
+        return await PanelStateModel.find({})
+            .select("guildId channelId messageId updatedAt")
+            .sort({ updatedAt: -1, _id: -1 })
+            .limit(boundedLimit(limit, PANEL_STATES_LOAD_MAX))
+            .lean();
+    } catch (err) {
+        console.error(`[DATABASE] ❌ Failed to load panel states: ${err.message}`);
+        systemMetrics.increment("errors");
+        return [];
     }
 }
 
@@ -1299,7 +1397,11 @@ async function getWhitelist(scope = "say") {
     if (!dbConnected) return [];
 
     try {
-        return await WhitelistModel.find({ scope }).sort({ addedAt: -1 });
+        return await WhitelistModel.find({ scope })
+            .select("userId addedBy addedAt scope")
+            .sort({ addedAt: -1, _id: -1 })
+            .limit(WHITELIST_LOAD_MAX)
+            .lean();
     } catch (err) {
         console.error(`[DATABASE] ❌ Failed to load whitelist: ${err.message}`);
         systemMetrics.increment("errors");
@@ -1372,7 +1474,11 @@ async function getAllSettings() {
     if (!dbConnected) return {};
 
     try {
-        const docs = await BotSettingsModel.find({});
+        const docs = await BotSettingsModel.find({})
+            .select("key value updatedAt")
+            .sort({ updatedAt: -1, _id: -1 })
+            .limit(BOT_SETTINGS_LOAD_MAX)
+            .lean();
         const result = {};
 
         for (const doc of docs) {
@@ -1406,12 +1512,64 @@ function getSystemMetrics() {
     };
 }
 
+function getSessionDiagnostics() {
+    const byState = {};
+    let runnable = 0;
+    let withClient = 0;
+    let readyClients = 0;
+    let withConnection = 0;
+    let reconnecting = 0;
+
+    for (const session of sessions.values()) {
+        const state = session?.state || "active";
+        byState[state] = (byState[state] || 0) + 1;
+        if (isSessionRunnable(session)) runnable++;
+        if (session?.client) withClient++;
+        if (session?.client?.isReady?.()) readyClients++;
+        if (session?.connection) withConnection++;
+        if (session?.reconnecting) reconnecting++;
+    }
+
+    return {
+        total: sessions.size,
+        runnable,
+        byState,
+        withClient,
+        readyClients,
+        withConnection,
+        reconnecting,
+        lockedSessions: sessionLocks.size,
+        reconnectTracking: reconnectTracking.size,
+        pendingSessionDeletes: pendingSessionDeletes.size,
+        settingsCache: settingsCache.size,
+        limits: {
+            sessionLoadMax: SESSION_LOAD_MAX,
+            approvedGuildsLoadMax: APPROVED_GUILDS_LOAD_MAX,
+            pendingGuildsLoadMax: PENDING_GUILDS_LOAD_MAX,
+            whitelistLoadMax: WHITELIST_LOAD_MAX,
+            botSettingsLoadMax: BOT_SETTINGS_LOAD_MAX,
+            panelStatesLoadMax: PANEL_STATES_LOAD_MAX
+        },
+        lastLoad: lastLoadStats
+    };
+}
+
 function getDatabaseStatus() {
     return {
         connected: dbConnected,
         readyState: mongoose.connection.readyState,
         host: mongoose.connection.host || null,
-        name: mongoose.connection.name || null
+        name: mongoose.connection.name || null,
+        pool: MONGO_POOL_CONFIG,
+        models: mongoose.modelNames().length,
+        loadLimits: {
+            sessionLoadMax: SESSION_LOAD_MAX,
+            approvedGuildsLoadMax: APPROVED_GUILDS_LOAD_MAX,
+            pendingGuildsLoadMax: PENDING_GUILDS_LOAD_MAX,
+            whitelistLoadMax: WHITELIST_LOAD_MAX,
+            botSettingsLoadMax: BOT_SETTINGS_LOAD_MAX,
+            panelStatesLoadMax: PANEL_STATES_LOAD_MAX
+        }
     };
 }
 
@@ -1531,6 +1689,7 @@ module.exports = {
     loadDatabase,
     saveDatabase,
     getDatabaseStatus,
+    getSessionDiagnostics,
 
     // Session CRUD
     createSession,
@@ -1578,6 +1737,7 @@ module.exports = {
 
     // Guild approvals
     getApprovedGuilds,
+    getApprovedGuildDocs,
     isGuildApproved,
     approveGuild,
     removeApprovedGuild,
@@ -1593,6 +1753,7 @@ module.exports = {
     // Panel state
     savePanelState,
     getPanelState,
+    getPanelStates,
     deletePanelState,
 
     // Log channels

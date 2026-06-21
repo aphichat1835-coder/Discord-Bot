@@ -19,6 +19,27 @@ const { encryptToken, decryptToken } = require("./crypto");
 const { sanitizeLogText } = require("../../discord/core/safeLogger");
 
 const BASE = "https://discord.com/api/v10";
+const DISCORD_API_RESPONSE_MAX_BYTES = Math.max(
+    64 * 1024,
+    Number(process.env.DISCORD_API_RESPONSE_MAX_BYTES || 2 * 1024 * 1024) || 2 * 1024 * 1024
+);
+const DISCORD_API_BODY_MAX_BYTES = Math.max(
+    16 * 1024,
+    Number(process.env.DISCORD_API_BODY_MAX_BYTES || 512 * 1024) || 512 * 1024
+);
+const DISCORD_API_ROLE_MAX = Math.max(50, Number(process.env.DISCORD_API_ROLE_MAX || 500) || 500);
+const DISCORD_API_CHANNEL_MAX = Math.max(50, Number(process.env.DISCORD_API_CHANNEL_MAX || 500) || 500);
+const DISCORD_API_PERMISSION_OVERWRITE_MAX = Math.max(
+    20,
+    Number(process.env.DISCORD_API_PERMISSION_OVERWRITE_MAX || 100) || 100
+);
+const requestDiagnostics = {
+    total: 0,
+    inFlight: 0,
+    responseTooLarge: 0,
+    requestBodyTooLarge: 0,
+    lastError: null
+};
 
 const PERMISSIONS = Object.freeze({
     VIEW_CHANNEL: 1n << 10n,
@@ -91,7 +112,10 @@ function stringifyError(error) {
 }
 
 function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise(resolve => {
+        const timer = setTimeout(resolve, ms);
+        timer.unref?.();
+    });
 }
 
 function parseRetryAfterMs(res) {
@@ -124,6 +148,15 @@ function normalizeRequestBody(body) {
     return String(body);
 }
 
+function validateRequestBodySize(body) {
+    if (body == null) return;
+    const bytes = Buffer.byteLength(body);
+    if (bytes > DISCORD_API_BODY_MAX_BYTES) {
+        requestDiagnostics.requestBodyTooLarge += 1;
+        throw new Error(`Discord API request body too large: ${bytes} bytes`);
+    }
+}
+
 function makeHeaderLookup(headers = {}) {
     const normalized = new Map();
 
@@ -140,6 +173,7 @@ function makeHeaderLookup(headers = {}) {
 
 function requestDiscordApi(endpointPath, options = {}) {
     const body = normalizeRequestBody(options.body);
+    validateRequestBodySize(body);
     const headers = {
         ...options.headers
     };
@@ -148,7 +182,24 @@ function requestDiscordApi(endpointPath, options = {}) {
         headers["Content-Length"] = Buffer.byteLength(body);
     }
 
+    requestDiagnostics.total += 1;
+    requestDiagnostics.inFlight += 1;
+
     return new Promise((resolve, reject) => {
+        let settled = false;
+
+        function finish(fn, value) {
+            if (settled) return;
+            settled = true;
+            requestDiagnostics.inFlight = Math.max(0, requestDiagnostics.inFlight - 1);
+            fn(value);
+        }
+
+        function fail(err) {
+            requestDiagnostics.lastError = sanitizeDiscordApiErrorText(err?.message || err, 200);
+            finish(reject, err);
+        }
+
         const req = https.request({
             protocol: "https:",
             hostname: "discord.com",
@@ -159,11 +210,28 @@ function requestDiscordApi(endpointPath, options = {}) {
             signal: options.signal
         }, res => {
             const chunks = [];
+            let totalBytes = 0;
+            const contentLength = Number(res.headers["content-length"] || 0);
 
-            res.on("data", chunk => chunks.push(chunk));
+            if (Number.isFinite(contentLength) && contentLength > DISCORD_API_RESPONSE_MAX_BYTES) {
+                requestDiagnostics.responseTooLarge += 1;
+                res.resume();
+                fail(new Error(`Discord API response too large: ${contentLength} bytes`));
+                return;
+            }
+
+            res.on("data", chunk => {
+                totalBytes += chunk.length;
+                if (totalBytes > DISCORD_API_RESPONSE_MAX_BYTES) {
+                    requestDiagnostics.responseTooLarge += 1;
+                    req.destroy(new Error(`Discord API response too large: ${totalBytes} bytes`));
+                    return;
+                }
+                chunks.push(chunk);
+            });
             res.on("end", () => {
                 const textBody = Buffer.concat(chunks).toString("utf8");
-                resolve({
+                finish(resolve, {
                     ok: res.statusCode >= 200 && res.statusCode < 300,
                     status: res.statusCode || 0,
                     headers: makeHeaderLookup(res.headers),
@@ -173,7 +241,7 @@ function requestDiscordApi(endpointPath, options = {}) {
             });
         });
 
-        req.on("error", reject);
+        req.on("error", fail);
         if (body != null) req.write(body);
         req.end();
     });
@@ -189,6 +257,7 @@ async function fetchWithRetry(pathAndSearch, options = {}) {
     for (let attempt = 1; attempt <= attempts; attempt++) {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
+        timer.unref?.();
 
         try {
             const res = await requestDiscordApi(endpointPath, {
@@ -213,6 +282,21 @@ async function fetchWithRetry(pathAndSearch, options = {}) {
     }
 
     throw lastError || new Error("Discord API request failed");
+}
+
+function getDiscordApiDiagnostics() {
+    return {
+        total: requestDiagnostics.total,
+        inFlight: requestDiagnostics.inFlight,
+        responseTooLarge: requestDiagnostics.responseTooLarge,
+        requestBodyTooLarge: requestDiagnostics.requestBodyTooLarge,
+        responseMaxBytes: DISCORD_API_RESPONSE_MAX_BYTES,
+        bodyMaxBytes: DISCORD_API_BODY_MAX_BYTES,
+        roleMax: DISCORD_API_ROLE_MAX,
+        channelMax: DISCORD_API_CHANNEL_MAX,
+        permissionOverwriteMax: DISCORD_API_PERMISSION_OVERWRITE_MAX,
+        lastError: requestDiagnostics.lastError
+    };
 }
 
 async function apiFetch(url, options = {}) {
@@ -265,8 +349,8 @@ function hasPermission(permissionValue, flag) {
 
 function normalizeRole(role = {}) {
     return {
-        id: role.id,
-        name: role.name,
+        id: String(role.id || ""),
+        name: sanitizeDiscordApiErrorText(role.name || "Unknown Role", 120),
         color: role.color || 0,
         hoist: !!role.hoist,
         position: role.position || 0,
@@ -278,21 +362,28 @@ function normalizeRole(role = {}) {
 }
 
 function normalizeChannel(channel = {}) {
+    const overwrites = Array.isArray(channel.permission_overwrites)
+        ? channel.permission_overwrites
+        : Array.isArray(channel.permissionOverwrites)
+            ? channel.permissionOverwrites
+            : [];
+
     return {
-        id: channel.id,
+        id: String(channel.id || ""),
         guildId: channel.guild_id || channel.guildId || null,
-        name: channel.name,
+        name: sanitizeDiscordApiErrorText(channel.name || "unknown-channel", 120),
         type: channel.type,
         parentId: channel.parent_id || null,
         position: channel.position || 0,
-        permissionOverwrites: channel.permission_overwrites || channel.permissionOverwrites || [],
-        topic: channel.topic || null,
+        permissionOverwrites: overwrites.slice(0, DISCORD_API_PERMISSION_OVERWRITE_MAX),
+        topic: channel.topic ? sanitizeDiscordApiErrorText(channel.topic, 500) : null,
         nsfw: !!channel.nsfw
     };
 }
 
 function sortRolesForDashboard(roles = []) {
     return roles
+        .slice(0, DISCORD_API_ROLE_MAX)
         .map(normalizeRole)
         .filter(role => role.id)
         .sort((a, b) => {
@@ -303,6 +394,7 @@ function sortRolesForDashboard(roles = []) {
 
 function sortChannelsForDashboard(channels = []) {
     return channels
+        .slice(0, DISCORD_API_CHANNEL_MAX)
         .map(normalizeChannel)
         .filter(channel => channel.id && TEXT_CHANNEL_TYPES.has(channel.type))
         .sort((a, b) => {
@@ -1048,6 +1140,7 @@ module.exports = {
 
     readError,
     stringifyError,
+    getDiscordApiDiagnostics,
     apiFetch,
     safeApiFetch,
 

@@ -34,6 +34,10 @@ const originalLog   = console.log;
 const originalError = console.error;
 const originalWarn  = console.warn;
 const cronTimers = [];
+const REQUEST_COUNT_MAX_BUCKETS = Math.max(100, Number(process.env.RATE_LIMIT_MAX_BUCKETS || 5000) || 5000);
+const COMMAND_COOLDOWN_MAX_USERS = Math.max(100, Number(process.env.COMMAND_COOLDOWN_MAX_USERS || 5000) || 5000);
+const TOGGLE_COOLDOWN_MAX_KEYS = Math.max(100, Number(process.env.TOGGLE_COOLDOWN_MAX_KEYS || 1000) || 1000);
+const ANTI_RAID_DEBOUNCE_MAX_KEYS = Math.max(100, Number(process.env.ANTI_RAID_DEBOUNCE_MAX_KEYS || 5000) || 5000);
 
 // ════════════════════════════════════════════════════════════════════════════
 //  📜  LOG CAPTURE — Ring Buffer (กัน RAM บวม)
@@ -113,6 +117,16 @@ function pruneTimestampMap(map, now, ttlMs) {
     }
 }
 
+function trimMapToMaxSize(map, maxSize) {
+    if (!map || !Number.isFinite(maxSize) || maxSize <= 0 || map.size <= maxSize) return;
+
+    while (map.size > maxSize) {
+        const oldestKey = map.keys().next().value;
+        if (!oldestKey) break;
+        map.delete(oldestKey);
+    }
+}
+
 function pruneCommandCooldowns(commandCooldowns, now, ttlMs) {
     for (const [uid, commands] of commandCooldowns.entries()) {
         pruneTimestampMap(commands, now, ttlMs);
@@ -134,6 +148,11 @@ function cleanupVolatileMaps({
     pruneCommandCooldowns(commandCooldowns, now, 30000);
     pruneTimestampMap(toggleCooldowns, now, 5000);
     pruneTimestampMap(antiRaidLogDebounce, now, 10000);
+    trimMapToMaxSize(spamTracking, config.limits.spamTrackingMaxUsers || 1000);
+    trimMapToMaxSize(requestCounts, REQUEST_COUNT_MAX_BUCKETS);
+    trimMapToMaxSize(commandCooldowns, COMMAND_COOLDOWN_MAX_USERS);
+    trimMapToMaxSize(toggleCooldowns, TOGGLE_COOLDOWN_MAX_KEYS);
+    trimMapToMaxSize(antiRaidLogDebounce, ANTI_RAID_DEBOUNCE_MAX_KEYS);
     voiceWorker.cleanupVolatileState?.(now);
 }
 

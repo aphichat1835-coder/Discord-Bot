@@ -89,6 +89,33 @@ test("audit cache cleanup removes stale member and channel cache entries", () =>
     }
 });
 
+test("audit cleanup removes expired circuit and warning throttle state", () => {
+    const { logger, restore } = freshAuditLogger({
+        AUDIT_CIRCUIT_OPEN_MS: "10000",
+        AUDIT_WARN_THROTTLE_TTL_MS: "300000",
+        AUDIT_WARN_THROTTLE_MAX_SIZE: "100"
+    });
+
+    try {
+        const now = Date.now();
+        logger._test.auditCircuit.set("guild:security", {
+            failures: 5,
+            openUntil: now - 20000
+        });
+        logger._test.warnThrottles.set("warn-key", now - 600000);
+
+        logger._test.cleanupAuditCaches();
+
+        assert.equal(logger._test.auditCircuit.has("guild:security"), false);
+        assert.equal(logger._test.warnThrottles.has("warn-key"), false);
+        assert.equal(logger.getAuditStats().auditCircuit, 0);
+        assert.equal(logger.getAuditStats().warnThrottles, 0);
+    } finally {
+        logger.stopAuditCleanup();
+        restore();
+    }
+});
+
 test("audit embed builder truncates fields and total embed text", () => {
     const { logger, restore } = freshAuditLogger();
 

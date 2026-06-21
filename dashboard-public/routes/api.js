@@ -4,7 +4,6 @@ const crypto = require('crypto');
 
 const GuildConfig = require('../models/GuildConfig');
 const VerifyLog = require('../models/VerifyLog');
-const OAuthUser = require('../models/OAuthUser');
 const IPRevealRequest = require('../models/IPRevealRequest');
 
 const { decryptIP } = require('../utils/crypto');
@@ -12,8 +11,13 @@ const {
     normalizeSensitiveAccess,
     buildSensitiveAccessPatch
 } = require('../utils/sensitiveAccess');
+const { makeOAuthUserSummaryMap } = require('../utils/oauthUserSummary');
 
 const INTERNAL_SECRET = process.env.INTERNAL_API_SECRET || process.env.API_SECRET || '';
+const INTERNAL_OVERVIEW_GUILDS_MAX = Math.max(
+    50,
+    Number(process.env.INTERNAL_OVERVIEW_GUILDS_MAX || 500) || 500
+);
 
 function checkAuth(req, res) {
     const auth = String(req.headers['x-internal-secret'] || '');
@@ -227,6 +231,8 @@ router.get('/internal/overview', async (req, res) => {
 
         const configs = await GuildConfig.find(configFilter)
             .select('guildId guildName updatedAt verification security')
+            .sort({ updatedAt: -1, _id: -1 })
+            .limit(INTERNAL_OVERVIEW_GUILDS_MAX)
             .lean();
 
         const guildIds = configs.map(c => c.guildId);
@@ -283,6 +289,8 @@ router.get('/internal/overview', async (req, res) => {
             success: true,
             guilds: result,
             total: result.length,
+            truncated: result.length >= INTERNAL_OVERVIEW_GUILDS_MAX,
+            maxGuilds: INTERNAL_OVERVIEW_GUILDS_MAX,
             showAll
         });
 
@@ -387,17 +395,7 @@ router.get('/internal/guild/:guildId/members', async (req, res) => {
         ]);
 
         const userIds = [...new Set(logs.map(l => l.userId).filter(Boolean))];
-
-        const users = await OAuthUser.find({
-            'discord.userId': { $in: userIds },
-            deletedAt: { $exists: false }
-        })
-            .select('discord connections guilds lastVerify lastMember')
-            .lean();
-
-        const userMap = Object.fromEntries(
-            users.map(u => [u.discord?.userId, u])
-        );
+        const userMap = await makeOAuthUserSummaryMap(userIds);
 
         const members = logs.map(log => {
             const user = userMap[log.userId];
@@ -418,13 +416,9 @@ router.get('/internal/guild/:guildId/members', async (req, res) => {
                 emailVerified: user?.discord?.emailVerified === true || log.discordSnapshot?.emailVerified === true,
                 accountAgeDays: user?.discord?.accountAgeDays || log.discordSnapshot?.accountAgeDays || null,
 
-                connections: Array.isArray(user?.connections)
-                    ? user.connections.length
-                    : log.discordSnapshot?.connectionsCount || 0,
+                connections: Number(user?.connectionsCount ?? log.discordSnapshot?.connectionsCount ?? 0),
 
-                guilds: Array.isArray(user?.guilds)
-                    ? user.guilds.length
-                    : log.discordSnapshot?.guildsCount || 0,
+                guilds: Number(user?.guildsCount ?? log.discordSnapshot?.guildsCount ?? 0),
 
                 country: log.ipInfo?.country,
                 countryCode: log.ipInfo?.countryCode,

@@ -1897,7 +1897,7 @@ ${navBar("/approved")}
 </div>`));
         }
 
-        const approvedList = await sessionManager.ApprovedGuildModel.find({}).catch(() => []);
+        const approvedList = await sessionManager.getApprovedGuildDocs().catch(() => []);
         res.send(pageApproved(approvedList, client, API_SECRET));
     });
 
