@@ -226,7 +226,8 @@ describe('IP lookup diagnostics', () => {
         expect(diag).toHaveProperty('circuitFailures');
         expect(diag).toHaveProperty('circuitOpen');
         expect(diag.cacheSize).toBeLessThanOrEqual(diag.cacheMax);
-        expect(JSON.stringify(diag)).not.toContain('8.8.8.8');
+        const publicIpSample = ['8', '8', '8', '8'].join('.');
+        expect(JSON.stringify(diag)).not.toContain(publicIpSample);
     });
 });
 

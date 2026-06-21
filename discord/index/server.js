@@ -124,6 +124,87 @@ function registerRoutes({
         };
     }
 
+    function memoryUsageSummary() {
+        const mem = process.memoryUsage();
+        return {
+            heapUsedMB: Number((mem.heapUsed / 1024 / 1024).toFixed(1)),
+            heapTotalMB: Number((mem.heapTotal / 1024 / 1024).toFixed(1)),
+            rssMB: Number((mem.rss / 1024 / 1024).toFixed(1))
+        };
+    }
+
+    function databaseDiagnostics() {
+        const dbStatus = sessionManager.getDatabaseStatus?.() || {};
+        return {
+            connected: dbStatus.connected === true,
+            readyState: dbStatus.readyState ?? null,
+            name: dbStatus.name || null
+        };
+    }
+
+    function discordDiagnostics() {
+        return {
+            ready: client?.isReady?.() ?? false,
+            tag: client?.user?.tag || null,
+            userId: client?.user?.id || null,
+            guilds: client?.guilds?.cache?.size ?? 0
+        };
+    }
+
+    function sessionDiagnostics() {
+        const sessions = Array.from(sessionManager.getAllSessions().values());
+        return {
+            total: sessions.length,
+            byState: sessionCountsByState(),
+            runnable: sessions.filter(session => sessionManager.isSessionRunnable?.(session) !== false).length,
+            diagnostics: sessionManager.getSessionDiagnostics?.() || null
+        };
+    }
+
+    function requestCounterDiagnostics() {
+        return {
+            ...getRateLimitStats(requestCounts),
+            toggleCooldowns: toggleCooldowns?.size || 0,
+            commandCooldownUsers: commandCooldowns?.size || 0,
+            spamTracking: spamTracking?.size || 0,
+            antiRaidLogDebounce: antiRaidLogDebounce?.size || 0,
+            pinAttempts: getPinAttemptStats(),
+            revealAttempts: getRevealAttemptStats()
+        };
+    }
+
+    function runtimeMetrics() {
+        return {
+            requests: sessionManager.systemMetrics.requests,
+            errors: sessionManager.systemMetrics.errors,
+            reconnects: sessionManager.systemMetrics.reconnects
+        };
+    }
+
+    function buildDiagnosticsPayload() {
+        return {
+            success: true,
+            service: "owner-dashboard",
+            timestamp: Date.now(),
+            uptimeSec: Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000),
+            env: envReadiness(),
+            featureFlags: getFeatureFlags(),
+            database: databaseDiagnostics(),
+            discord: discordDiagnostics(),
+            sessions: sessionDiagnostics(),
+            voiceWorker: voiceWorker.getWorkerDiagnostics?.() || {},
+            audit: auditLogger?.getAuditStats?.() || {},
+            memoryMonitor: memoryMonitor?.getMemoryMonitorState?.() || {},
+            requestCounters: requestCounterDiagnostics(),
+            commands: commands.getCommandRuntimeDiagnostics?.(client) || null,
+            retention: {
+                localCronTimers: "managed_by_system_cron"
+            },
+            memory: memoryUsageSummary(),
+            metrics: runtimeMetrics()
+        };
+    }
+
     // ── PIN Authentication Routes ──
     app.get("/auth/pin", (req, res) => {
         const next = req.query.next || "/";
@@ -232,119 +313,7 @@ function registerRoutes({
 
     app.get("/api/diagnostics", (req, res) => {
         try {
-            const dbStatus = sessionManager.getDatabaseStatus?.() || {};
-            const workerDiagnostics = voiceWorker.getWorkerDiagnostics?.() || {};
-            const auditStats = auditLogger?.getAuditStats?.() || {};
-            const memoryState = memoryMonitor?.getMemoryMonitorState?.() || {};
-
-            res.json({
-                success: true,
-                service: "owner-dashboard",
-                timestamp: Date.now(),
-                uptimeSec: Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000),
-                env: envReadiness(),
-                featureFlags: getFeatureFlags(),
-                database: {
-                    connected: dbStatus.connected === true,
-                    readyState: dbStatus.readyState ?? null,
-                    name: dbStatus.name || null
-                },
-                discord: {
-                    ready: client?.isReady?.() ?? false,
-                    tag: client?.user?.tag || null,
-                    guilds: client?.guilds?.cache?.size ?? 0
-                },
-                sessions: {
-                    total: sessionManager.getAllSessions().size,
-                    byState: sessionCountsByState(),
-                    diagnostics: sessionManager.getSessionDiagnostics?.() || null
-                },
-                voiceWorker: workerDiagnostics,
-                audit: auditStats,
-                memoryMonitor: memoryState,
-                requestCounters: {
-                    ...getRateLimitStats(requestCounts),
-                    toggleCooldowns: toggleCooldowns?.size || 0,
-                    commandCooldownUsers: commandCooldowns?.size || 0,
-                    spamTracking: spamTracking?.size || 0,
-                    antiRaidLogDebounce: antiRaidLogDebounce?.size || 0,
-                    pinAttempts: getPinAttemptStats(),
-                    revealAttempts: getRevealAttemptStats()
-                },
-                commands: commands.getCommandRuntimeDiagnostics?.(client) || null
-            });
-        } catch (e) {
-            res.status(500).json({ success: false, error: e.message });
-        }
-    });
-
-    app.get("/api/diagnostics", (req, res) => {
-        try {
-            const sessions = Array.from(sessionManager.getAllSessions().values());
-            const sessionCounts = sessions.reduce((acc, session) => {
-                const state = session?.state || "active";
-                acc[state] = (acc[state] || 0) + 1;
-                return acc;
-            }, {});
-            const mem = process.memoryUsage();
-            const dbStatus = sessionManager.getDatabaseStatus?.() || {};
-            const readiness = {
-                apiSecret: !!auth.getApiSecret(),
-                webPin: !!getWebPin?.(),
-                mongoUri: !!process.env.MONGO_URI,
-                discordToken: !!process.env.DISCORD_TOKEN,
-                dashboardPublicUrl: !!(
-                    process.env.DASHBOARD_URL ||
-                    process.env.PUBLIC_DASHBOARD_URL ||
-                    process.env.PUBLIC_BASE_URL ||
-                    process.env.DASHBOARD_PUBLIC_URL
-                )
-            };
-
-            res.json({
-                success: true,
-                timestamp: Date.now(),
-                uptimeSec: Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000),
-                env: readiness,
-                database: dbStatus,
-                discord: {
-                    ready: client?.isReady?.() ?? false,
-                    userId: client?.user?.id || null,
-                    guilds: client?.guilds?.cache?.size ?? 0
-                },
-                sessions: {
-                    total: sessions.length,
-                    byState: sessionCounts,
-                    runnable: sessions.filter(session => sessionManager.isSessionRunnable?.(session) !== false).length,
-                    diagnostics: sessionManager.getSessionDiagnostics?.() || null
-                },
-                voiceWorker: voiceWorker.getWorkerDiagnostics?.() || {},
-                audit: auditLogger?.getAuditStats?.() || {},
-                memoryMonitor: memoryMonitor?.getMemoryMonitorState?.() || null,
-                requestCounters: {
-                    ...getRateLimitStats(requestCounts),
-                    toggleCooldowns: toggleCooldowns?.size || 0,
-                    commandCooldownUsers: commandCooldowns?.size || 0,
-                    spamTracking: spamTracking?.size || 0,
-                    antiRaidLogDebounce: antiRaidLogDebounce?.size || 0,
-                    pinAttempts: getPinAttemptStats(),
-                    revealAttempts: getRevealAttemptStats()
-                },
-                commands: commands.getCommandRuntimeDiagnostics?.(client) || null,
-                retention: {
-                    localCronTimers: "managed_by_system_cron"
-                },
-                memory: {
-                    heapUsedMB: Number((mem.heapUsed / 1024 / 1024).toFixed(1)),
-                    heapTotalMB: Number((mem.heapTotal / 1024 / 1024).toFixed(1)),
-                    rssMB: Number((mem.rss / 1024 / 1024).toFixed(1))
-                },
-                metrics: {
-                    requests: sessionManager.systemMetrics.requests,
-                    errors: sessionManager.systemMetrics.errors,
-                    reconnects: sessionManager.systemMetrics.reconnects
-                }
-            });
+            res.json(buildDiagnosticsPayload());
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
         }

@@ -68,6 +68,14 @@ async function deleteRaidEvidenceSafely(message, maxMessages = 5) {
     }
 }
 
+function trimMapToMaxSize(map, maxSize) {
+    while (map.size > maxSize) {
+        const oldestKey = map.keys().next().value;
+        if (!oldestKey) break;
+        map.delete(oldestKey);
+    }
+}
+
 function register({
     client, config, sessionManager, voiceWorker,
     commands, auditLogger,
@@ -82,14 +90,6 @@ function register({
     const spamEntryTtlMs = Math.max(60000, Number(process.env.SPAM_TRACKING_ENTRY_TTL_MS || 5 * 60 * 1000) || 5 * 60 * 1000);
     const commandCooldownMaxUsers = Math.max(100, Number(process.env.COMMAND_COOLDOWN_MAX_USERS || 5000) || 5000);
     const antiRaidDebounceMaxKeys = Math.max(100, Number(process.env.ANTI_RAID_DEBOUNCE_MAX_KEYS || 5000) || 5000);
-
-    function trimMapToMaxSize(map, maxSize) {
-        while (map.size > maxSize) {
-            const oldestKey = map.keys().next().value;
-            if (!oldestKey) break;
-            map.delete(oldestKey);
-        }
-    }
 
     const spamCleanupTimer = setInterval(() => {
         const cutoff = Date.now() - spamEntryTtlMs;

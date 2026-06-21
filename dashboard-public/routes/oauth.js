@@ -364,7 +364,7 @@ function compactUserGuild(g = {}) {
 
 function compactMemberInfo(member = {}) {
     const roles = Array.isArray(member.roles)
-        ? member.roles.map(role => String(role)).slice(0, OAUTH_MEMBER_ROLES_MAX)
+        ? member.roles.map(String).slice(0, OAUTH_MEMBER_ROLES_MAX)
         : [];
 
     return {

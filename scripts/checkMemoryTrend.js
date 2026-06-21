@@ -1,8 +1,6 @@
 #!/usr/bin/env node
 "use strict";
 
-const fs = require("node:fs");
-
 function numberEnv(name, fallback, min = 0) {
     const value = Number(process.env[name]);
     if (!Number.isFinite(value)) return fallback;
@@ -18,16 +16,29 @@ const LIMITS = {
 };
 
 function usage() {
-    console.error("Usage: node scripts/checkMemoryTrend.js <diagnostics.json>");
+    console.error("Usage: node scripts/checkMemoryTrend.js < diagnostics.json");
     console.error("Expected JSON shape: /api/diagnostics response with memoryMonitor.trend, or a direct { trend: [...] } object.");
 }
 
-function readJson(filePath) {
-    try {
-        return JSON.parse(fs.readFileSync(filePath, "utf8"));
-    } catch (err) {
-        throw new Error(`Failed to read JSON: ${err.message}`);
-    }
+function readJsonFromStdin() {
+    return new Promise((resolve, reject) => {
+        let input = "";
+
+        process.stdin.setEncoding("utf8");
+        process.stdin.on("data", chunk => {
+            input += chunk;
+        });
+        process.stdin.on("error", err => {
+            reject(new Error(`Failed to read JSON: ${err.message}`));
+        });
+        process.stdin.on("end", () => {
+            try {
+                resolve(JSON.parse(input));
+            } catch (err) {
+                reject(new Error(`Failed to read JSON: ${err.message}`));
+            }
+        });
+    });
 }
 
 function getTrend(input) {
@@ -92,14 +103,13 @@ function evaluateTrend(input) {
     return { summary, findings };
 }
 
-function main() {
-    const filePath = process.argv[2];
-    if (!filePath) {
+async function main() {
+    if (process.argv[2]) {
         usage();
         process.exit(2);
     }
 
-    const input = readJson(filePath);
+    const input = await readJsonFromStdin();
     const { summary, findings } = evaluateTrend(input);
 
     console.log(JSON.stringify(summary, null, 2));
@@ -116,12 +126,10 @@ function main() {
 }
 
 if (require.main === module) {
-    try {
-        main();
-    } catch (err) {
+    main().catch(err => {
         console.error(`[MEMORY-TREND] ${err.message}`);
         process.exit(1);
-    }
+    });
 }
 
 module.exports = {

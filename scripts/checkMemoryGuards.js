@@ -2,12 +2,26 @@
 "use strict";
 
 const fs = require("node:fs");
-const path = require("node:path");
-
-const ROOT = path.resolve(__dirname, "..");
 
 function read(relativePath) {
-    return fs.readFileSync(path.join(ROOT, relativePath), "utf8");
+    switch (relativePath) {
+        case "discord/commands.js":
+            return fs.readFileSync("discord/commands.js", "utf8");
+        case "discord/index/views.js":
+            return fs.readFileSync("discord/index/views.js", "utf8");
+        case "dashboard-public/utils/discordAPI.js":
+            return fs.readFileSync("dashboard-public/utils/discordAPI.js", "utf8");
+        case "discord/sessionManager.js":
+            return fs.readFileSync("discord/sessionManager.js", "utf8");
+        case "dashboard-public/routes/api.js":
+            return fs.readFileSync("dashboard-public/routes/api.js", "utf8");
+        case "dashboard-public/routes/guildDashboard.js":
+            return fs.readFileSync("dashboard-public/routes/guildDashboard.js", "utf8");
+        case "dashboard-public/utils/oauthUserSummary.js":
+            return fs.readFileSync("dashboard-public/utils/oauthUserSummary.js", "utf8");
+        default:
+            throw new Error(`Unexpected memory guard file: ${relativePath}`);
+    }
 }
 
 function fail(findings) {

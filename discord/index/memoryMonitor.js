@@ -6,7 +6,7 @@
 ================================================================================
 */
 
-const v8 = require("v8");
+const v8 = require("node:v8");
 
 let memoryTimer = null;
 let lastHeapUsed = 0;
@@ -131,13 +131,8 @@ function getMemoryMonitorConfig() {
     };
 }
 
-function getNestedNumber(value, path, fallback = 0) {
-    let current = value;
-    for (const key of path) {
-        current = current?.[key];
-    }
-
-    return Number(current || fallback) || fallback;
+function toSafeNumber(value, fallback = 0) {
+    return Number(value || fallback) || fallback;
 }
 
 function compactTrendSample(snapshot) {
@@ -150,18 +145,18 @@ function compactTrendSample(snapshot) {
         diff: snapshot.diff,
         sessions: snapshot.sessions,
         clientPool: snapshot.clientPool,
-        selfClientMessages: getNestedNumber(snapshot, ["workerDiagnostics", "selfClientCaches", "messages"]),
-        selfClientUsers: getNestedNumber(snapshot, ["workerDiagnostics", "selfClientCaches", "users"]),
-        selfClientListeners: getNestedNumber(snapshot, ["workerDiagnostics", "selfClientListeners", "total"]),
-        discordMessages: getNestedNumber(snapshot, ["discordCaches", "messages"]),
-        discordUsers: getNestedNumber(snapshot, ["discordCaches", "users"]),
-        discordListeners: getNestedNumber(snapshot, ["discordListeners", "total"]),
-        activeHandles: getNestedNumber(snapshot, ["activeHandles", "total"]),
+        selfClientMessages: toSafeNumber(snapshot.workerDiagnostics?.selfClientCaches?.messages),
+        selfClientUsers: toSafeNumber(snapshot.workerDiagnostics?.selfClientCaches?.users),
+        selfClientListeners: toSafeNumber(snapshot.workerDiagnostics?.selfClientListeners?.total),
+        discordMessages: toSafeNumber(snapshot.discordCaches?.messages),
+        discordUsers: toSafeNumber(snapshot.discordCaches?.users),
+        discordListeners: toSafeNumber(snapshot.discordListeners?.total),
+        activeHandles: toSafeNumber(snapshot.activeHandles?.total),
         naturalTimers: snapshot.natural?.activeTimers ?? 0,
         autoDeafTimers: snapshot.autoDeaf?.activeTimers ?? 0,
-        auditQueues: getNestedNumber(snapshot, ["auditStats", "sendQueues"]),
-        v8Available: getNestedNumber(snapshot, ["v8", "totalAvailableSize"]),
-        v8Malloced: getNestedNumber(snapshot, ["v8", "mallocedMemory"])
+        auditQueues: toSafeNumber(snapshot.auditStats?.sendQueues),
+        v8Available: toSafeNumber(snapshot.v8?.totalAvailableSize),
+        v8Malloced: toSafeNumber(snapshot.v8?.mallocedMemory)
     };
 }
 
@@ -331,7 +326,8 @@ function startMemoryMonitor({
 function captureMemorySnapshot(label, { voiceWorker, sessionManager, auditLogger, client } = {}) {
     lastSnapshot = buildMemorySnapshot({ voiceWorker, sessionManager, auditLogger, client });
     recordMemoryTrend(lastSnapshot);
-    console.log(`[MEMORY] Snapshot${label ? ` ${label}` : ""}`);
+    const labelText = label ? ` ${label}` : "";
+    console.log(`[MEMORY] Snapshot${labelText}`);
     logMemorySnapshot(lastSnapshot);
     return lastSnapshot;
 }

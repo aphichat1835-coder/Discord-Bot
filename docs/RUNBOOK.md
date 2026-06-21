@@ -104,7 +104,7 @@
 ถ้า export response จาก `/api/diagnostics` เป็นไฟล์ JSON แล้ว สามารถเช็ค trend แบบไม่เปิดเผย token หรือ raw IP ได้ด้วย:
 
 ```bash
-npm run check:memory-trend -- diagnostics.json
+npm run check:memory-trend < diagnostics.json
 ```
 
 ปรับ threshold ได้ผ่าน env เช่น `MEMORY_TREND_HEAP_GROWTH_MB`, `MEMORY_TREND_RSS_GROWTH_MB`, `MEMORY_TREND_LISTENER_GROWTH`, `MEMORY_TREND_HANDLE_GROWTH`, และ `MEMORY_TREND_CACHE_GROWTH`

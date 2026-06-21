@@ -362,11 +362,12 @@ function normalizeRole(role = {}) {
 }
 
 function normalizeChannel(channel = {}) {
-    const overwrites = Array.isArray(channel.permission_overwrites)
-        ? channel.permission_overwrites
-        : Array.isArray(channel.permissionOverwrites)
-            ? channel.permissionOverwrites
-            : [];
+    let overwrites = [];
+    if (Array.isArray(channel.permission_overwrites)) {
+        overwrites = channel.permission_overwrites;
+    } else if (Array.isArray(channel.permissionOverwrites)) {
+        overwrites = channel.permissionOverwrites;
+    }
 
     return {
         id: String(channel.id || ""),

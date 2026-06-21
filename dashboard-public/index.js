@@ -38,7 +38,7 @@ const expressRateLimit = require('express-rate-limit');
 const MongoStore = require('connect-mongo');
 const path       = require('path');
 const crypto     = require('crypto');
-const v8         = require('v8');
+const v8         = require('node:v8');
 
 const oauthRoutes              = require('./routes/oauth');
 const adminSessionCompatRoutes = require('./routes/adminSessionCompat');
