@@ -409,6 +409,31 @@ Responsibilities:
 - Owner dashboard status/detail/stop/reveal controls.
 - Voice control panel, status paging, stop controls, and start modal.
 - Natural activity and auto-deaf timers.
+- Long-running memory stability: voice sessions are expected to remain online for weeks/months, so selfbot clients, Discord.js caches, timers, queues, cooldown maps, voice logs, audit caches, and session state must be bounded and visible in diagnostics.
+
+### Memory Stability
+
+Memory stability is a production requirement, not a temporary debugging mode. The bot should prefer bounded caches and safe cleanup over broad rewrites.
+
+Current implementation-backed memory controls:
+
+- Service 1 memory monitor logs heap/RSS/external memory, V8 heap stats, active handles, listener counts, main Discord cache counts, session diagnostics, voice worker diagnostics, and audit diagnostics.
+- `discord/voiceWorker.js` owns selfbot client lifecycle and must keep selfbot message/member/user/reaction caches bounded.
+- Voice worker operation queues, voice event logs, DM/recovery cooldown maps, natural timers, and auto-deaf timers must stay capped or cleaned.
+- `discord/auditLogger.js` queues, channel/member caches, circuit breaker state, and warning throttles must stay capped or TTL-cleaned.
+- Owner dashboard rate-limit, PIN attempt, reveal-attempt, command cooldown, toggle cooldown, spam tracking, and anti-raid debounce maps must expire stale entries and stay capped.
+- Presence rotate message lists must be capped before saving and before starting the timer.
+- Dashboard Public memory/V8 stats, IP lookup cache, OAuth guild/connection/member-role snapshots, IP identity link arrays, and retention summaries must stay bounded and visible through health/internal diagnostics.
+
+When diagnosing Render OOM or long-running RAM growth, inspect:
+
+```txt
+Service 1: GET /api/diagnostics
+Dashboard Public: GET /health
+Dashboard Public internal: GET /internal/diagnostics with x-internal-secret
+```
+
+If memory grows while `sessions`, `clientPool`, timers, queues, audit caches, and IP lookup cache remain flat, collect the expanded memory snapshot before changing architecture.
 
 ### Verification / OAuth
 

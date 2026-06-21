@@ -18,6 +18,12 @@
 // Inline the pure functions under test (copied from the PR)
 // ---------------------------------------------------------------------------
 
+const ADMIN_GUILDS_SESSION_MAX = 200;
+
+function safeString(value, max = 120) {
+    return String(value || '').replace(/[\u0000-\u001F\u007F]/g, '').slice(0, max);
+}
+
 function normalizeGuild(guild = {}) {
     const owner = !!guild.owner || !!guild.isOwner;
     const isAdmin = owner || guild.isAdmin === true;
@@ -25,13 +31,12 @@ function normalizeGuild(guild = {}) {
     const canManageRoles = owner || isAdmin;
     const canManage = owner || isAdmin;
     return {
-        ...guild,
-        id: String(guild.id || ''),
-        name: String(guild.name || 'Unknown Server'),
-        icon: guild.icon || null,
+        id: safeString(guild.id, 40),
+        name: safeString(guild.name || 'Unknown Server', 120),
+        icon: guild.icon ? safeString(guild.icon, 120) : null,
         owner,
         isOwner: owner,
-        permissions: String(guild.permissions || '0'),
+        permissions: safeString(guild.permissions || '0', 40),
         isAdmin,
         canManage,
         canManageGuild,
@@ -60,7 +65,7 @@ function mergeGuildPermissions(a = {}, b = {}) {
 function dedupeGuilds(guilds = []) {
     const map = new Map();
 
-    for (const rawGuild of guilds) {
+    for (const rawGuild of guilds.slice(0, ADMIN_GUILDS_SESSION_MAX * 2)) {
         const guild = normalizeGuild(rawGuild);
         if (!guild.id) continue;
 
@@ -74,7 +79,7 @@ function dedupeGuilds(guilds = []) {
         map.set(guild.id, mergeGuildPermissions(existing, guild));
     }
 
-    return Array.from(map.values());
+    return Array.from(map.values()).slice(0, ADMIN_GUILDS_SESSION_MAX);
 }
 
 // ---------------------------------------------------------------------------
@@ -146,9 +151,9 @@ describe('normalizeGuild', () => {
         expect(result.icon).toBeNull();
     });
 
-    test('preserves extra fields via spread', () => {
+    test('drops extra fields so session payload stays compact', () => {
         const result = normalizeGuild({ id: '1', customField: 'hello' });
-        expect(result.customField).toBe('hello');
+        expect(result.customField).toBeUndefined();
     });
 
     test('permissions coerced to string', () => {
@@ -323,5 +328,16 @@ describe('dedupeGuilds', () => {
         const result = dedupeGuilds(guilds);
         expect(result[0].name).toBe('New Name');
         expect(result[0].icon).toBe('hash123');
+    });
+
+    test('caps normalized guilds to keep admin session payload bounded', () => {
+        const guilds = Array.from({ length: ADMIN_GUILDS_SESSION_MAX + 25 }, (_, idx) => ({
+            id: String(100000 + idx),
+            name: `Server ${idx}`,
+            snapshot: { large: 'not stored' }
+        }));
+        const result = dedupeGuilds(guilds);
+        expect(result).toHaveLength(ADMIN_GUILDS_SESSION_MAX);
+        expect(result[0].snapshot).toBeUndefined();
     });
 });

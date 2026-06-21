@@ -75,6 +75,8 @@ let auditCleanupTimer = null;
 const AUDIT_MAX_QUEUE_PER_GUILD = Math.max(1, Number(process.env.AUDIT_MAX_QUEUE_PER_GUILD || 200) || 200);
 const AUDIT_CIRCUIT_FAILURES = Math.max(1, Number(process.env.AUDIT_CIRCUIT_FAILURES || 5) || 5);
 const AUDIT_CIRCUIT_OPEN_MS = Math.max(10000, Number(process.env.AUDIT_CIRCUIT_OPEN_MS || 60 * 1000) || 60 * 1000);
+const AUDIT_WARN_THROTTLE_TTL_MS = Math.max(5 * 60 * 1000, Number(process.env.AUDIT_WARN_THROTTLE_TTL_MS || 30 * 60 * 1000) || 30 * 60 * 1000);
+const AUDIT_WARN_THROTTLE_MAX_SIZE = Math.max(100, Number(process.env.AUDIT_WARN_THROTTLE_MAX_SIZE || 2000) || 2000);
 const LOG_DELETED_MESSAGE_CONTENT = String(process.env.AUDIT_LOG_DELETED_MESSAGE_CONTENT ?? "true").toLowerCase() !== "false";
 const LOG_EDITED_MESSAGE_CONTENT = String(process.env.AUDIT_LOG_EDITED_MESSAGE_CONTENT ?? "true").toLowerCase() !== "false";
 const AUDIT_REDACT_LINKS = String(process.env.AUDIT_REDACT_LINKS || "").toLowerCase() === "true";
@@ -91,6 +93,13 @@ const auditStats = {
     lastAuditFetchError: null
 };
 const warnThrottles = new Map();
+
+function delay(ms) {
+    return new Promise(resolve => {
+        const timer = setTimeout(resolve, ms);
+        timer.unref?.();
+    });
+}
 
 function isTokenChar(char) {
     return !!char && (
@@ -223,7 +232,7 @@ async function sendAuditLog(guild, sessionManager, type, embed) {
 
 // ── Fetch Audit Log entry (delay + filter by target + age) ──
 async function fetchAuditEntry(guild, type, targetId, delayMs = 1500) {
-    await new Promise(r => setTimeout(r, delayMs));
+    await delay(delayMs);
     try {
         const logs = await guild.fetchAuditLogs({ type, limit: 5 });
         return logs.entries.find(e =>
@@ -355,6 +364,24 @@ function cleanupAuditCaches() {
             auditChannelCache.delete(guildId);
         }
     }
+
+    for (const [key, circuit] of auditCircuit.entries()) {
+        if (!circuit?.openUntil || circuit.openUntil + AUDIT_CIRCUIT_OPEN_MS < now) {
+            auditCircuit.delete(key);
+        }
+    }
+
+    for (const [key, lastWarnAt] of warnThrottles.entries()) {
+        if (!lastWarnAt || now - lastWarnAt > AUDIT_WARN_THROTTLE_TTL_MS) {
+            warnThrottles.delete(key);
+        }
+    }
+
+    while (warnThrottles.size > AUDIT_WARN_THROTTLE_MAX_SIZE) {
+        const oldestKey = warnThrottles.keys().next().value;
+        if (!oldestKey) break;
+        warnThrottles.delete(oldestKey);
+    }
 }
 
 function startAuditCleanup() {
@@ -376,7 +403,9 @@ function getAuditStats() {
         memberStateCache: memberStateCache.size,
         sendQueues: sendQueues.size,
         sendQueueDepths: Object.fromEntries(sendQueueDepths),
+        auditCircuit: auditCircuit.size,
         auditCircuitOpen: [...auditCircuit.values()].filter(item => item.openUntil > Date.now()).length,
+        warnThrottles: warnThrottles.size,
         cleanupTimerActive: !!auditCleanupTimer,
         ...auditStats
     };
@@ -547,7 +576,8 @@ function registerMessageEvents(client, sessionManager) {
         const first = messages.first();
         if (!first?.guild) return;
         recentBulkChannels.set(first.channel.id, Date.now());
-        setTimeout(() => recentBulkChannels.delete(first.channel.id), 3000);
+        const timer = setTimeout(() => recentBulkChannels.delete(first.channel.id), 3000);
+        timer.unref?.();
 
         // ดึงว่าใคร Clear
         let executor = null;
@@ -575,7 +605,7 @@ function registerMessageEvents(client, sessionManager) {
     // ── Pin/Unpin ──
     client.on("channelPinsUpdate", async (channel, time) => {
         if (!channel.guild) return;
-        await new Promise(r => setTimeout(r, 1500));
+        await delay(1500);
 
         let executor = null, action = "เปลี่ยนแปลง Pin";
         try {
@@ -1245,7 +1275,7 @@ function registerServerEvents(client, sessionManager) {
 
     // ── Integration เปลี่ยน ──
     client.on("guildIntegrationsUpdate", async (guild) => {
-        await new Promise(r => setTimeout(r, 1500));
+        await delay(1500);
         try {
             const logs = await guild.fetchAuditLogs({ limit: 3 });
             const entry = logs.entries.find(e =>
@@ -1330,6 +1360,8 @@ module.exports = {
         cleanupAuditCaches,
         getCachedMember,
         auditChannelCache,
-        memberStateCache
+        memberStateCache,
+        auditCircuit,
+        warnThrottles
     }
 };

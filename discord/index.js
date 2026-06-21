@@ -20,7 +20,7 @@ const { setupTelemetryRouter, initializeSystemHooks, getWebPin, isProtected } = 
 
 const crypto  = require("crypto");
 const express = require("express");
-const { Client, Intents, Options } = require("discord.js");
+const { Client, Intents, Options, LimitedCollection } = require("discord.js");
 const config         = require("./config.json");
 const sessionManager = require("./sessionManager");
 const voiceWorker    = require("./voiceWorker");
@@ -100,6 +100,11 @@ const app = createHttpApp(express);
 // ════════════════════════════════════════════════════════════════════════════
 //  🚀  DISCORD CLIENT
 // ════════════════════════════════════════════════════════════════════════════
+const MAIN_MESSAGE_CACHE_MAX = Math.max(20, Number(process.env.DISCORD_MESSAGE_CACHE_MAX || 75) || 75);
+const MAIN_MESSAGE_SWEEP_INTERVAL = Math.max(60, Number(process.env.DISCORD_MESSAGE_SWEEP_INTERVAL_SEC || 300) || 300);
+const MAIN_MESSAGE_SWEEP_LIFETIME = Math.max(60, Number(process.env.DISCORD_MESSAGE_SWEEP_LIFETIME_SEC || 900) || 900);
+const ROTATE_MESSAGES_MAX = Math.max(1, Number(process.env.ROTATE_MESSAGES_MAX || 20) || 20);
+
 const client = new Client({
     intents: [
         Intents.FLAGS.GUILDS,
@@ -112,11 +117,25 @@ const client = new Client({
         Intents.FLAGS.GUILD_INVITES,             // ✨ Invite create/delete
     ],
     makeCache: Options.cacheWithLimits({
-        MessageManager: 200,
+        MessageManager: {
+            maxSize: MAIN_MESSAGE_CACHE_MAX,
+            sweepInterval: MAIN_MESSAGE_SWEEP_INTERVAL,
+            sweepFilter: LimitedCollection.filterByLifetime({
+                lifetime: MAIN_MESSAGE_SWEEP_LIFETIME,
+                getComparisonTimestamp: message => message.editedTimestamp ?? message.createdTimestamp
+            })
+        },
         GuildMemberManager: 200,
         UserManager: 200,
         ReactionManager: 0
     }),
+    sweepers: {
+        ...Options.defaultSweeperSettings,
+        messages: {
+            interval: MAIN_MESSAGE_SWEEP_INTERVAL,
+            lifetime: MAIN_MESSAGE_SWEEP_LIFETIME
+        }
+    },
     partials: ["MESSAGE", "CHANNEL", "REACTION", "GUILD_MEMBER", "USER"]
 });
 
@@ -158,7 +177,7 @@ async function startRotateTimer() {
     try {
         const s = await sessionManager.getAllSettings();
         if (!s.rotateEnabled) return;
-        const msgs = Array.isArray(s.rotateMessages) ? s.rotateMessages.filter(Boolean) : [];
+        const msgs = Array.isArray(s.rotateMessages) ? s.rotateMessages.filter(Boolean).slice(0, ROTATE_MESSAGES_MAX) : [];
         if (!msgs.length) return;
         const intervalMs = Math.max(1, parseInt(s.rotateInterval) || 5) * 60 * 1000;
         const actType    = ['WATCHING','LISTENING','PLAYING','COMPETING'].includes(s.botActivityType) ? s.botActivityType : 'WATCHING';
@@ -169,6 +188,7 @@ async function startRotateTimer() {
             client.user.setPresence({ status, activities: [{ name: msgs[_rotateIdx % msgs.length], type: actType }] });
             _rotateIdx++;
         }, intervalMs);
+        _rotateTimer.unref?.();
         console.log(`[ROTATE] ✅ Started — ${msgs.length} ข้อความ ทุก ${s.rotateInterval||5} นาที`);
     } catch (e) { console.error(`[ROTATE] ❌ ${e.message}`); }
     finally { _rotateRunning = false; }
@@ -182,7 +202,7 @@ registerRoutes({
     commands, webLogs, MAX_LOGS, client, auditLogger, memoryMonitor,
     botReadyAt: () => system.botReadyAt,
     API_SECRET, getWebPin, requestCounts,
-    disabledCommands, commandAuditLog, toggleCooldowns,
+    disabledCommands, commandAuditLog, toggleCooldowns, commandCooldowns, spamTracking, antiRaidLogDebounce,
     startRotateTimer, setupTelemetryRouter
 });
 
@@ -241,6 +261,7 @@ if (isFeatureEnabled("memoryMonitor")) {
         voiceWorker,
         sessionManager,
         auditLogger,
+        client,
         system
     });
 } else {
@@ -437,7 +458,14 @@ client.on("ready", async () => {
         })).catch(() => {});
 
         if (!system.isShuttingDown?.()) {
-            voiceWorker.autoResume();
+            voiceWorker.autoResume()
+                .then(() => memoryMonitor.captureMemorySnapshot?.("after-auto-resume", {
+                    voiceWorker,
+                    sessionManager,
+                    auditLogger,
+                    client
+                }))
+                .catch(err => console.error("[WORKER] ❌ Auto-resume task failed:", err.message));
         } else {
             console.log("[WORKER] ⏸️ Auto-resume skipped because app is shutting down.");
         }

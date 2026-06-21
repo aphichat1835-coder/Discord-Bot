@@ -10,6 +10,9 @@ const DASHBOARD_READ_API_PREFIX_BYPASS = [];
 const revealTokenAttempts = new Map();
 const REVEAL_MAX = 5;
 const REVEAL_LOCKOUT = 15 * 60 * 1000;
+const REVEAL_ATTEMPT_TTL = 30 * 60 * 1000;
+const REVEAL_ATTEMPT_MAX_KEYS = 1000;
+const RATE_LIMIT_MAX_BUCKETS = Math.max(100, Number(process.env.RATE_LIMIT_MAX_BUCKETS || 5000) || 5000);
 
 function shouldBypassDashboardReadApi(req) {
     if (req.method !== "GET") return false;
@@ -42,6 +45,9 @@ function createRateLimiter(requestCounts, config, sessionManager = null) {
 
         history.push(now);
         requestCounts.set(ip, history);
+        if (requestCounts.size > RATE_LIMIT_MAX_BUCKETS) {
+            trimRateLimitBuckets(requestCounts, now, windowMs);
+        }
 
         if (history.length > maxReq) {
             logIntrusion(ip, req.path);
@@ -50,6 +56,23 @@ function createRateLimiter(requestCounts, config, sessionManager = null) {
 
         next();
     };
+}
+
+function trimRateLimitBuckets(requestCounts, now = Date.now(), windowMs = 60000) {
+    for (const [key, timestamps] of requestCounts.entries()) {
+        const active = Array.isArray(timestamps)
+            ? timestamps.filter(t => now - Number(t || 0) < windowMs)
+            : [];
+
+        if (active.length) requestCounts.set(key, active);
+        else requestCounts.delete(key);
+    }
+
+    while (requestCounts.size > RATE_LIMIT_MAX_BUCKETS) {
+        const oldestKey = requestCounts.keys().next().value;
+        if (!oldestKey) break;
+        requestCounts.delete(oldestKey);
+    }
 }
 
 function makeCheckAuth(API_SECRET) {
@@ -95,6 +118,11 @@ function makeCheckRevealPin(getWebPin) {
         const now = Date.now();
         const rec = revealTokenAttempts.get(ip) || { count: 0, lockedUntil: 0 };
 
+        if (rec.updatedAt && now - rec.updatedAt > REVEAL_ATTEMPT_TTL) {
+            rec.count = 0;
+            rec.lockedUntil = 0;
+        }
+
         if (rec.lockedUntil > now) {
             const mins = Math.ceil((rec.lockedUntil - now) / 60000);
             res.status(429).json({ success: false, error: `ลองผิดเกินกำหนด ล็อค ${mins} นาที` });
@@ -112,7 +140,9 @@ function makeCheckRevealPin(getWebPin) {
                 rec.count = 0;
             }
 
+            rec.updatedAt = now;
             revealTokenAttempts.set(ip, rec);
+            trimRevealAttempts(now);
             logIntrusion(ip, req.path);
             res.status(401).json({ success: false, error: "PIN ไม่ถูกต้อง" });
             return null;
@@ -123,12 +153,40 @@ function makeCheckRevealPin(getWebPin) {
     };
 }
 
-function cleanupRevealAttempts(now = Date.now()) {
+function trimRevealAttempts(now = Date.now()) {
     for (const [ip, rec] of revealTokenAttempts.entries()) {
-        if (rec.lockedUntil > 0 && rec.lockedUntil < now) {
+        const staleUnlocked = !rec.lockedUntil && (!rec.updatedAt || now - rec.updatedAt > REVEAL_ATTEMPT_TTL);
+        const expiredLock = rec.lockedUntil > 0 && rec.lockedUntil < now;
+        if (staleUnlocked || expiredLock) {
             revealTokenAttempts.delete(ip);
         }
     }
+
+    while (revealTokenAttempts.size > REVEAL_ATTEMPT_MAX_KEYS) {
+        const oldestKey = revealTokenAttempts.keys().next().value;
+        if (!oldestKey) break;
+        revealTokenAttempts.delete(oldestKey);
+    }
+}
+
+function cleanupRevealAttempts(now = Date.now()) {
+    trimRevealAttempts(now);
+}
+
+function getRevealAttemptStats() {
+    return {
+        tracked: revealTokenAttempts.size,
+        maxKeys: REVEAL_ATTEMPT_MAX_KEYS,
+        ttlMs: REVEAL_ATTEMPT_TTL,
+        lockoutMs: REVEAL_LOCKOUT
+    };
+}
+
+function getRateLimitStats(requestCounts) {
+    return {
+        buckets: requestCounts?.size || 0,
+        maxBuckets: RATE_LIMIT_MAX_BUCKETS
+    };
 }
 
 module.exports = {
@@ -140,5 +198,8 @@ module.exports = {
     makeCheckAuth,
     makeCheckRevealPin,
     logIntrusion,
-    cleanupRevealAttempts
+    cleanupRevealAttempts,
+    getRevealAttemptStats,
+    trimRateLimitBuckets,
+    getRateLimitStats
 };

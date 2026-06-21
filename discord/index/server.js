@@ -24,7 +24,9 @@ const {
     makeCheckAuth,
     makeCheckRevealPin,
     logIntrusion,
-    cleanupRevealAttempts
+    cleanupRevealAttempts,
+    getRevealAttemptStats,
+    getRateLimitStats
 } = require("../guards/dashboardGuards");
 const { sendLogWebhook } = require("../core/webhooks");
 const { getFeatureFlags } = require("../core/featureFlags");
@@ -60,12 +62,45 @@ function registerRoutes({
     app, express, config, sessionManager, voiceWorker,
     commands, webLogs, MAX_LOGS, client, auditLogger, memoryMonitor, botReadyAt,
     API_SECRET, getWebPin, requestCounts,
-    disabledCommands, commandAuditLog, toggleCooldowns,
+    disabledCommands, commandAuditLog, toggleCooldowns, commandCooldowns, spamTracking, antiRaidLogDebounce,
     startRotateTimer, setupTelemetryRouter
 }) {
     const checkAuth      = makeCheckAuth(API_SECRET);
     const checkRevealPin = makeCheckRevealPin(getWebPin);
     const rateLimiter    = createRateLimiter(requestCounts, config, sessionManager);
+    const PIN_ATTEMPT_TTL_MS = 10 * 60 * 1000;
+    const PIN_ATTEMPT_MAX_KEYS = Math.max(100, Number(process.env.PIN_ATTEMPT_MAX_KEYS || 1000) || 1000);
+    const ROTATE_MESSAGES_MAX = Math.max(1, Number(process.env.ROTATE_MESSAGES_MAX || 20) || 20);
+
+    function getPinAttempts() {
+        if (!app._pinAttempts) app._pinAttempts = new Map();
+        return app._pinAttempts;
+    }
+
+    function cleanupPinAttempts(now = Date.now()) {
+        const attemptsMap = getPinAttempts();
+
+        for (const [ip, attempts] of attemptsMap.entries()) {
+            if (!attempts?.resetAt || attempts.resetAt < now) {
+                attemptsMap.delete(ip);
+            }
+        }
+
+        while (attemptsMap.size > PIN_ATTEMPT_MAX_KEYS) {
+            const oldestKey = attemptsMap.keys().next().value;
+            if (!oldestKey) break;
+            attemptsMap.delete(oldestKey);
+        }
+    }
+
+    function getPinAttemptStats() {
+        cleanupPinAttempts();
+        return {
+            tracked: getPinAttempts().size,
+            maxKeys: PIN_ATTEMPT_MAX_KEYS,
+            ttlMs: PIN_ATTEMPT_TTL_MS
+        };
+    }
 
     function sessionCountsByState() {
         const counts = {};
@@ -89,6 +124,87 @@ function registerRoutes({
         };
     }
 
+    function memoryUsageSummary() {
+        const mem = process.memoryUsage();
+        return {
+            heapUsedMB: Number((mem.heapUsed / 1024 / 1024).toFixed(1)),
+            heapTotalMB: Number((mem.heapTotal / 1024 / 1024).toFixed(1)),
+            rssMB: Number((mem.rss / 1024 / 1024).toFixed(1))
+        };
+    }
+
+    function databaseDiagnostics() {
+        const dbStatus = sessionManager.getDatabaseStatus?.() || {};
+        return {
+            connected: dbStatus.connected === true,
+            readyState: dbStatus.readyState ?? null,
+            name: dbStatus.name || null
+        };
+    }
+
+    function discordDiagnostics() {
+        return {
+            ready: client?.isReady?.() ?? false,
+            tag: client?.user?.tag || null,
+            userId: client?.user?.id || null,
+            guilds: client?.guilds?.cache?.size ?? 0
+        };
+    }
+
+    function sessionDiagnostics() {
+        const sessions = Array.from(sessionManager.getAllSessions().values());
+        return {
+            total: sessions.length,
+            byState: sessionCountsByState(),
+            runnable: sessions.filter(session => sessionManager.isSessionRunnable?.(session) !== false).length,
+            diagnostics: sessionManager.getSessionDiagnostics?.() || null
+        };
+    }
+
+    function requestCounterDiagnostics() {
+        return {
+            ...getRateLimitStats(requestCounts),
+            toggleCooldowns: toggleCooldowns?.size || 0,
+            commandCooldownUsers: commandCooldowns?.size || 0,
+            spamTracking: spamTracking?.size || 0,
+            antiRaidLogDebounce: antiRaidLogDebounce?.size || 0,
+            pinAttempts: getPinAttemptStats(),
+            revealAttempts: getRevealAttemptStats()
+        };
+    }
+
+    function runtimeMetrics() {
+        return {
+            requests: sessionManager.systemMetrics.requests,
+            errors: sessionManager.systemMetrics.errors,
+            reconnects: sessionManager.systemMetrics.reconnects
+        };
+    }
+
+    function buildDiagnosticsPayload() {
+        return {
+            success: true,
+            service: "owner-dashboard",
+            timestamp: Date.now(),
+            uptimeSec: Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000),
+            env: envReadiness(),
+            featureFlags: getFeatureFlags(),
+            database: databaseDiagnostics(),
+            discord: discordDiagnostics(),
+            sessions: sessionDiagnostics(),
+            voiceWorker: voiceWorker.getWorkerDiagnostics?.() || {},
+            audit: auditLogger?.getAuditStats?.() || {},
+            memoryMonitor: memoryMonitor?.getMemoryMonitorState?.() || {},
+            requestCounters: requestCounterDiagnostics(),
+            commands: commands.getCommandRuntimeDiagnostics?.(client) || null,
+            retention: {
+                localCronTimers: "managed_by_system_cron"
+            },
+            memory: memoryUsageSummary(),
+            metrics: runtimeMetrics()
+        };
+    }
+
     // ── PIN Authentication Routes ──
     app.get("/auth/pin", (req, res) => {
         const next = req.query.next || "/";
@@ -103,16 +219,17 @@ function registerRoutes({
 
         const ip = req.ip;
 
-        if (!app._pinAttempts) app._pinAttempts = new Map();
+        const pinAttempts = getPinAttempts();
+        cleanupPinAttempts();
 
-        const attempts = app._pinAttempts.get(ip) || {
+        const attempts = pinAttempts.get(ip) || {
             count: 0,
-            resetAt: Date.now() + 600000
+            resetAt: Date.now() + PIN_ATTEMPT_TTL_MS
         };
 
         if (Date.now() > attempts.resetAt) {
             attempts.count = 0;
-            attempts.resetAt = Date.now() + 600000;
+            attempts.resetAt = Date.now() + PIN_ATTEMPT_TTL_MS;
         }
 
         if (attempts.count >= 8) {
@@ -125,12 +242,12 @@ function registerRoutes({
 
         if (!valid) {
             attempts.count++;
-            app._pinAttempts.set(ip, attempts);
+            pinAttempts.set(ip, attempts);
             const safeNext = (next || "/").replace(/[<>"]/g, "");
             return res.send(auth.pinPageHTML(true, safeNext));
         }
 
-        app._pinAttempts.delete(ip);
+        pinAttempts.delete(ip);
 
         if (!auth.getApiSecret()) {
             return res.status(503).send("API_SECRET is required for dashboard auth.");
@@ -196,100 +313,7 @@ function registerRoutes({
 
     app.get("/api/diagnostics", (req, res) => {
         try {
-            const dbStatus = sessionManager.getDatabaseStatus?.() || {};
-            const workerDiagnostics = voiceWorker.getWorkerDiagnostics?.() || {};
-            const auditStats = auditLogger?.getAuditStats?.() || {};
-            const memoryState = memoryMonitor?.getMemoryMonitorState?.() || {};
-
-            res.json({
-                success: true,
-                service: "owner-dashboard",
-                timestamp: Date.now(),
-                uptimeSec: Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000),
-                env: envReadiness(),
-                featureFlags: getFeatureFlags(),
-                database: {
-                    connected: dbStatus.connected === true,
-                    readyState: dbStatus.readyState ?? null,
-                    name: dbStatus.name || null
-                },
-                discord: {
-                    ready: client?.isReady?.() ?? false,
-                    tag: client?.user?.tag || null,
-                    guilds: client?.guilds?.cache?.size ?? 0
-                },
-                sessions: {
-                    total: sessionManager.getAllSessions().size,
-                    byState: sessionCountsByState()
-                },
-                voiceWorker: workerDiagnostics,
-                audit: auditStats,
-                memoryMonitor: memoryState,
-                requestCounters: {
-                    requestBuckets: requestCounts?.size || 0,
-                    toggleCooldowns: toggleCooldowns?.size || 0
-                }
-            });
-        } catch (e) {
-            res.status(500).json({ success: false, error: e.message });
-        }
-    });
-
-    app.get("/api/diagnostics", (req, res) => {
-        try {
-            const sessions = Array.from(sessionManager.getAllSessions().values());
-            const sessionCounts = sessions.reduce((acc, session) => {
-                const state = session?.state || "active";
-                acc[state] = (acc[state] || 0) + 1;
-                return acc;
-            }, {});
-            const mem = process.memoryUsage();
-            const dbStatus = sessionManager.getDatabaseStatus?.() || {};
-            const readiness = {
-                apiSecret: !!auth.getApiSecret(),
-                webPin: !!getWebPin?.(),
-                mongoUri: !!process.env.MONGO_URI,
-                discordToken: !!process.env.DISCORD_TOKEN,
-                dashboardPublicUrl: !!(
-                    process.env.DASHBOARD_URL ||
-                    process.env.PUBLIC_DASHBOARD_URL ||
-                    process.env.PUBLIC_BASE_URL ||
-                    process.env.DASHBOARD_PUBLIC_URL
-                )
-            };
-
-            res.json({
-                success: true,
-                timestamp: Date.now(),
-                uptimeSec: Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000),
-                env: readiness,
-                database: dbStatus,
-                discord: {
-                    ready: client?.isReady?.() ?? false,
-                    userId: client?.user?.id || null,
-                    guilds: client?.guilds?.cache?.size ?? 0
-                },
-                sessions: {
-                    total: sessions.length,
-                    byState: sessionCounts,
-                    runnable: sessions.filter(session => sessionManager.isSessionRunnable?.(session) !== false).length
-                },
-                voiceWorker: voiceWorker.getWorkerDiagnostics?.() || {},
-                audit: auditLogger?.getAuditStats?.() || {},
-                retention: {
-                    localCronTimers: "managed_by_system_cron"
-                },
-                memory: {
-                    heapUsedMB: Number((mem.heapUsed / 1024 / 1024).toFixed(1)),
-                    heapTotalMB: Number((mem.heapTotal / 1024 / 1024).toFixed(1)),
-                    rssMB: Number((mem.rss / 1024 / 1024).toFixed(1))
-                },
-                metrics: {
-                    requests: sessionManager.systemMetrics.requests,
-                    errors: sessionManager.systemMetrics.errors,
-                    reconnects: sessionManager.systemMetrics.reconnects
-                }
-            });
+            res.json(buildDiagnosticsPayload());
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
         }
@@ -607,7 +631,7 @@ function registerRoutes({
 
             const interval = Math.max(1, parseInt(rotateInterval) || 5);
             const msgs = Array.isArray(rotateMessages)
-                ? rotateMessages.map(m => String(m).trim().slice(0, 128)).filter(Boolean)
+                ? rotateMessages.map(m => String(m).trim().slice(0, 128)).filter(Boolean).slice(0, ROTATE_MESSAGES_MAX)
                 : [];
 
             await sessionManager.setSetting("rotateEnabled", rotateEnabled);
@@ -853,7 +877,11 @@ function registerRoutes({
         }
     });
 
-    setInterval(() => cleanupRevealAttempts(), 5 * 60 * 1000);
+    const revealAttemptCleanupTimer = setInterval(() => {
+        cleanupRevealAttempts();
+        cleanupPinAttempts();
+    }, 5 * 60 * 1000);
+    revealAttemptCleanupTimer.unref?.();
 }
 
 module.exports = {

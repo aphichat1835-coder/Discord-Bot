@@ -38,15 +38,18 @@ const expressRateLimit = require('express-rate-limit');
 const MongoStore = require('connect-mongo');
 const path       = require('path');
 const crypto     = require('crypto');
+const v8         = require('node:v8');
 
 const oauthRoutes              = require('./routes/oauth');
 const adminSessionCompatRoutes = require('./routes/adminSessionCompat');
 const guildDashboardRoutes     = require('./routes/guildDashboard');
 const guildRoutes              = require('./routes/guild');
 const apiRoutes                = require('./routes/api');
+const { getDiscordApiDiagnostics } = require('./utils/discordAPI');
+const { getOAuthUserSummaryDiagnostics } = require('./utils/oauthUserSummary');
 
 const rateLimit = expressRateLimit.rateLimit || expressRateLimit.default || expressRateLimit;
-const { getTrustedRequestIp } = require('./utils/ipUtils');
+const { getTrustedRequestIp, getIpLookupDiagnostics } = require('./utils/ipUtils');
 const GuildConfig = require('./models/GuildConfig');
 const VerifyLog = require('./models/VerifyLog');
 const IpIdentityLink = require('./models/IpIdentityLink');
@@ -69,6 +72,11 @@ const SESSION_MAX_AGE_MS = Math.max(
     Number(process.env.ADMIN_SESSION_MAX_AGE_MS || 24 * 60 * 60 * 1000) || 24 * 60 * 60 * 1000
 );
 const SESSION_ROLLING = String(process.env.ADMIN_SESSION_ROLLING || 'false').trim().toLowerCase() === 'true';
+const RETENTION_ERROR_MAX = Math.max(5, Number(process.env.RETENTION_ERROR_MAX || 50) || 50);
+const RETENTION_CONFIG_SCAN_MAX = Math.max(
+    50,
+    Number(process.env.RETENTION_CONFIG_SCAN_MAX || 1000) || 1000
+);
 
 app.set('trust proxy', TRUST_PROXY ? TRUST_PROXY_HOPS : false);
 
@@ -98,14 +106,16 @@ app.use(express.static(path.join(__dirname, 'public'), {
     }
 }));
 
+const sessionStore = MongoStore.create({
+    mongoUrl: process.env.MONGO_URI,
+    touchAfter: 24 * 3600
+});
+
 app.use(session({
     secret:            process.env.SESSION_SECRET,
     resave:            false,
     saveUninitialized: false,
-    store:             MongoStore.create({
-        mongoUrl: process.env.MONGO_URI,
-        touchAfter: 24 * 3600
-    }),
+    store:             sessionStore,
     rolling: SESSION_ROLLING,
     cookie: {
         maxAge:   SESSION_MAX_AGE_MS,
@@ -152,6 +162,34 @@ function rateLimitHandler(_req, res) {
         code: 'rate_limited',
         error: 'มีการยืนยันถี่เกินไป กรุณารอสักครู่แล้วลองใหม่'
     });
+}
+
+function mb(bytes) {
+    return Math.round((Number(bytes || 0) / 1024 / 1024) * 10) / 10;
+}
+
+function getMemoryDiagnostics() {
+    const mem = process.memoryUsage();
+    const heapStats = v8.getHeapStatistics();
+    return {
+        heapUsedMB: mb(mem.heapUsed),
+        heapTotalMB: mb(mem.heapTotal),
+        rssMB: mb(mem.rss),
+        externalMB: mb(mem.external),
+        arrayBuffersMB: mb(mem.arrayBuffers),
+        heapSizeLimitMB: mb(heapStats.heap_size_limit),
+        totalAvailableSizeMB: mb(heapStats.total_available_size),
+        mallocedMemoryMB: mb(heapStats.malloced_memory),
+        uptimeSec: Math.round(process.uptime())
+    };
+}
+
+function getRuntimeLimitDiagnostics() {
+    return {
+        retentionErrorMax: RETENTION_ERROR_MAX,
+        retentionConfigScanMax: RETENTION_CONFIG_SCAN_MAX,
+        oauthUserSummary: getOAuthUserSummaryDiagnostics()
+    };
 }
 
 const callbackLimiter = rateLimit({
@@ -265,6 +303,10 @@ app.get('/health', (_req, res) => {
             lastError: lastRetentionMaintenanceError,
             lastSummary: lastRetentionMaintenanceSummary
         },
+        memory: getMemoryDiagnostics(),
+        runtimeLimits: getRuntimeLimitDiagnostics(),
+        ipLookup: getIpLookupDiagnostics(),
+        discordApi: getDiscordApiDiagnostics(),
         uptime: process.uptime(),
         timestamp: Date.now()
     });
@@ -412,6 +454,9 @@ function recordRetentionGuildError(summary, config, err) {
         retentionMode,
         error
     });
+    if (summary.errors.length > RETENTION_ERROR_MAX) {
+        summary.errors.splice(0, summary.errors.length - RETENTION_ERROR_MAX);
+    }
 
     console.error('[RETENTION] guild maintenance failed:', {
         guildId: config.guildId,
@@ -445,6 +490,8 @@ async function processRetentionGuild(config, { now, dryRun, summary }) {
 async function loadRetentionConfigs() {
     return GuildConfig.find({})
         .select('guildId security.retentionMode')
+        .sort({ updatedAt: -1, _id: -1 })
+        .limit(RETENTION_CONFIG_SCAN_MAX)
         .lean();
 }
 
@@ -463,6 +510,8 @@ async function runDataLifecycleMaintenance(options = {}) {
         summary.expiredRevealRequests = await expirePendingRevealRequests({ now, dryRun });
         const configs = await loadRetentionConfigs();
         summary.guildsScanned = configs.length;
+        summary.truncated = configs.length >= RETENTION_CONFIG_SCAN_MAX;
+        summary.maxGuilds = RETENTION_CONFIG_SCAN_MAX;
 
         for (const config of configs) {
             await processRetentionGuild(config, { now, dryRun, summary });
@@ -492,6 +541,35 @@ app.get('/internal/retention/dry-run', requireInternalSecret, async (_req, res) 
             error: safeError(err)
         });
     }
+});
+
+app.get('/internal/diagnostics', requireInternalSecret, (_req, res) => {
+    res.json({
+        success: true,
+        service: 'dashboard-public',
+        timestamp: Date.now(),
+        memory: getMemoryDiagnostics(),
+        runtimeLimits: getRuntimeLimitDiagnostics(),
+        database: {
+            connected: mongoose.connection.readyState === 1,
+            readyState: mongoose.connection.readyState,
+            name: mongoose.connection.name || null
+        },
+        session: {
+            store: sessionStore?.constructor?.name || 'unknown',
+            rolling: SESSION_ROLLING,
+            maxAgeMs: SESSION_MAX_AGE_MS
+        },
+        discordApi: getDiscordApiDiagnostics(),
+        ipLookup: getIpLookupDiagnostics(),
+        retention: {
+            timerActive: !!retentionTimer,
+            inFlight: retentionMaintenanceInFlight,
+            lastRunAt: lastRetentionMaintenanceAt,
+            lastError: lastRetentionMaintenanceError,
+            lastSummary: lastRetentionMaintenanceSummary
+        }
+    });
 });
 
 function stopRetentionMaintenance() {

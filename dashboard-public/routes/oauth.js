@@ -32,9 +32,17 @@ const ADMIN_REDIRECT_URI = `${BASE_URL}/auth/admin-callback`;
 const VERIFY_SCOPE = 'identify email connections guilds guilds.members.read guilds.join';
 const ADMIN_SCOPE = 'identify guilds';
 const CALLBACK_STATE_MAX_AGE_MS = 10 * 60 * 1000;
+const OAUTH_CONNECTIONS_MAX = Math.max(10, Number(process.env.OAUTH_CONNECTIONS_MAX || 50) || 50);
+const OAUTH_GUILDS_MAX = Math.max(20, Number(process.env.OAUTH_GUILDS_MAX || 200) || 200);
+const OAUTH_MEMBER_ROLES_MAX = Math.max(20, Number(process.env.OAUTH_MEMBER_ROLES_MAX || 80) || 80);
+const ADMIN_GUILDS_SESSION_MAX = Math.max(20, Number(process.env.ADMIN_GUILDS_SESSION_MAX || 200) || 200);
 const IP_LINK_USERS_MAX = Math.max(20, Number(process.env.IP_LINK_USERS_MAX || 200) || 200);
 const IP_LINK_DEVICE_FINGERPRINTS_MAX = Math.max(10, Number(process.env.IP_LINK_DEVICE_FINGERPRINTS_MAX || 30) || 30);
 const IP_LINK_ROLE_SNAPSHOTS_MAX = Math.max(20, Number(process.env.IP_LINK_ROLE_SNAPSHOTS_MAX || 80) || 80);
+const DEVICE_DUPLICATE_LOOKUP_MAX = Math.max(
+    20,
+    Number(process.env.DEVICE_DUPLICATE_LOOKUP_MAX || 200) || 200
+);
 
 function getCdnExtension(hash) {
     return String(hash || '').startsWith('a_') ? 'gif' : 'png';
@@ -130,7 +138,10 @@ function buildPolicySnapshot(v = {}) {
 }
 
 function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise(resolve => {
+        const timer = setTimeout(resolve, ms);
+        timer.unref?.();
+    });
 }
 
 function clampDelayMs(value, fallback = 5000) {
@@ -283,7 +294,7 @@ function normalizeConnections(connections = []) {
     const list = Array.isArray(connections) ? connections : [];
 
     return list
-        .slice(0, 50)
+        .slice(0, OAUTH_CONNECTIONS_MAX)
         .map(connection => {
             if (!connection || typeof connection !== 'object' || Array.isArray(connection)) {
                 return null;
@@ -353,7 +364,7 @@ function compactUserGuild(g = {}) {
 
 function compactMemberInfo(member = {}) {
     const roles = Array.isArray(member.roles)
-        ? member.roles.map(role => String(role)).slice(0, 80)
+        ? member.roles.map(String).slice(0, OAUTH_MEMBER_ROLES_MAX)
         : [];
 
     return {
@@ -373,7 +384,7 @@ function compactMemberInfo(member = {}) {
 }
 
 function normalizeGuilds(guilds = []) {
-    return (guilds || []).map(g => {
+    return (Array.isArray(guilds) ? guilds : []).slice(0, OAUTH_GUILDS_MAX).map(g => {
         const p = String(g.permissions || '0');
         const owner = !!g.owner;
         const policy = normalizeGuildPermissions({
@@ -383,9 +394,9 @@ function normalizeGuilds(guilds = []) {
         });
 
         return {
-            id: g.id,
-            name: g.name,
-            icon: g.icon,
+            id: safeNullableString(g.id, 40),
+            name: safeNullableString(g.name, 120),
+            icon: safeNullableString(g.icon, 120),
             iconUrl: getGuildIconUrl(g),
 
             owner,
@@ -398,12 +409,29 @@ function normalizeGuilds(guilds = []) {
             canBanMembers: policy.canBanMembers,
             permissionFlags: policy.permissionFlags,
 
-            features: g.features || [],
+            features: Array.isArray(g.features)
+                ? g.features.map(feature => safeNullableString(feature, 120)).filter(Boolean).slice(0, 50)
+                : [],
             approximateMemberCount: g.approximate_member_count || null,
             approximatePresenceCount: g.approximate_presence_count || null,
             snapshot: compactUserGuild(g)
         };
     });
+}
+
+function compactAdminGuildForSession(guild = {}) {
+    return {
+        id: safeNullableString(guild.id, 40) || '',
+        name: safeNullableString(guild.name, 120) || 'Unknown Server',
+        icon: safeNullableString(guild.icon, 120),
+        owner: guild.owner === true,
+        isOwner: guild.isOwner === true,
+        permissions: safeNullableString(guild.permissions, 40) || '0',
+        isAdmin: guild.isAdmin === true,
+        canManage: guild.isOwner === true || guild.isAdmin === true,
+        canManageGuild: guild.canManageGuild === true,
+        canManageRoles: guild.canManageRoles === true
+    };
 }
 
 function buildDiscordSnapshot(profile, connections, memberInfo, stateObj, extra = {}) {
@@ -754,7 +782,7 @@ async function saveOAuthUserSafe({
             lastMember: memberInfo ? {
                 guildId,
                 nick: memberInfo.nick || null,
-                roles: memberInfo.roles || [],
+                roles: Array.isArray(memberInfo.roles) ? memberInfo.roles.map(String).slice(0, OAUTH_MEMBER_ROLES_MAX) : [],
                 roleCount: (memberInfo.roles || []).length,
                 joinedAt: memberInfo.joined_at || null,
                 pending: !!memberInfo.pending,
@@ -820,6 +848,8 @@ async function getDeviceDuplicateSummary({ guildId, fingerprintHash, currentUser
             deletedAt: { $exists: false }
         })
             .select('users.userId users.lastDeviceFingerprintHash deviceFingerprints.fingerprintHash deviceFingerprints.userId')
+            .sort({ updatedAt: -1, _id: -1 })
+            .limit(DEVICE_DUPLICATE_LOOKUP_MAX)
             .lean();
 
         const userIds = new Set();
@@ -1143,10 +1173,9 @@ router.get('/auth/admin-callback', async (req, res) => {
             loggedInAt: Date.now()
         };
 
-        req.session.adminGuilds = manageableGuilds.map(g => ({
-            ...g,
-            canManage: g.isOwner === true || g.isAdmin === true
-        }));
+        req.session.adminGuilds = manageableGuilds
+            .slice(0, ADMIN_GUILDS_SESSION_MAX)
+            .map(compactAdminGuildForSession);
 
         const requestedGuildId = /^\d{17,22}$/.test(String(parsed.guildId || ''))
             ? String(parsed.guildId)
@@ -1644,7 +1673,7 @@ router.post('/auth/callback', async (req, res) => {
                 });
             }
 
-            await new Promise(resolve => setTimeout(resolve, 900));
+            await sleep(900);
         }
 
         memberInfo = await discord.getGuildMember(accessToken, guildId).catch(() => null);

@@ -7,7 +7,10 @@ const {
     createRateLimiter,
     makeCheckAuth,
     makeCheckRevealPin,
-    cleanupRevealAttempts
+    cleanupRevealAttempts,
+    getRevealAttemptStats,
+    getRateLimitStats,
+    trimRateLimitBuckets
 } = require("../guards/dashboardGuards");
 const dashboardAuth = require("../index/auth");
 const TEST_CLIENT_A = "test-client-a";
@@ -54,6 +57,24 @@ test("rate limiter blocks after configured request count", () => {
     assert.equal(nextCalled, 1);
     assert.equal(second.statusCode, 429);
     assert.equal(second.body.error, "Too Many Requests");
+});
+
+test("rate limiter buckets expire stale entries and stay capped", () => {
+    const counts = new Map();
+    const staleAt = Date.now() - 120000;
+
+    counts.set("stale-client", [staleAt]);
+    trimRateLimitBuckets(counts, Date.now(), 60000);
+    assert.equal(counts.has("stale-client"), false);
+
+    const maxBuckets = getRateLimitStats(counts).maxBuckets;
+    for (let i = 0; i < maxBuckets + 5; i++) {
+        counts.set(`client-${i}`, [Date.now()]);
+    }
+
+    trimRateLimitBuckets(counts, Date.now(), 60000);
+    assert.ok(counts.size <= maxBuckets);
+    assert.equal(getRateLimitStats(counts).buckets, counts.size);
 });
 
 test("checkAuth accepts exact secret and rejects mismatches", () => {
@@ -120,4 +141,32 @@ test("reveal PIN guard locks after repeated failures and can clean expired attem
 
     const goodRes = createRes();
     assert.equal(checkPin({ ip: TEST_CLIENT_B, path: "/api/reveal-token", body: { pin: "1234" } }, goodRes), true);
+});
+
+test("reveal PIN attempts expire stale unlocked records and stay capped", () => {
+    revealTokenAttempts.clear();
+
+    const staleAt = Date.now() - 31 * 60 * 1000;
+    revealTokenAttempts.set("stale-ip", {
+        count: 1,
+        lockedUntil: 0,
+        updatedAt: staleAt
+    });
+
+    cleanupRevealAttempts();
+    assert.equal(revealTokenAttempts.has("stale-ip"), false);
+
+    for (let i = 0; i < 1005; i++) {
+        revealTokenAttempts.set(`ip-${i}`, {
+            count: 1,
+            lockedUntil: 0,
+            updatedAt: Date.now()
+        });
+    }
+
+    cleanupRevealAttempts();
+    assert.ok(revealTokenAttempts.size <= getRevealAttemptStats().maxKeys);
+    assert.equal(getRevealAttemptStats().tracked, revealTokenAttempts.size);
+
+    revealTokenAttempts.clear();
 });

@@ -5,8 +5,8 @@ const { encryptIP, hmacValue } = require('./crypto');
 const ENABLE_CF_IP_HEADER = String(process.env.ENABLE_CF_IP_HEADER || '').toLowerCase() === 'true';
 const TRUST_PROXY_FOR_CF_HEADER = String(process.env.TRUST_PROXY || '').toLowerCase() === 'true';
 const IP_LOOKUP_TIMEOUT_MS = 3000;
-const IP_LOOKUP_CACHE_TTL_MS = 10 * 60 * 1000;
-const IP_LOOKUP_CACHE_MAX = 5000;
+const IP_LOOKUP_CACHE_TTL_MS = Math.max(60 * 1000, Number(process.env.IP_LOOKUP_CACHE_TTL_MS || 10 * 60 * 1000) || 10 * 60 * 1000);
+const IP_LOOKUP_CACHE_MAX = Math.max(100, Number(process.env.IP_LOOKUP_CACHE_MAX || 5000) || 5000);
 const IP_LOOKUP_CIRCUIT_FAIL_THRESHOLD = Math.max(1, Number(process.env.IP_LOOKUP_CIRCUIT_FAIL_THRESHOLD || 10) || 10);
 const IP_LOOKUP_CIRCUIT_OPEN_MS = Math.max(10000, Number(process.env.IP_LOOKUP_CIRCUIT_OPEN_MS || 5 * 60 * 1000) || 5 * 60 * 1000);
 const DEVICE_FINGERPRINT_VERSION = 1;
@@ -437,6 +437,7 @@ async function lookupWithIpApi(ip) {
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), IP_LOOKUP_TIMEOUT_MS);
+    timeout.unref?.();
 
     let res;
 
@@ -617,6 +618,19 @@ function cleanupLookupCache(now = Date.now()) {
         if (!oldestKey) break;
         lookupCache.delete(oldestKey);
     }
+}
+
+function getIpLookupDiagnostics() {
+    cleanupLookupCache();
+    return {
+        cacheSize: lookupCache.size,
+        cacheMax: IP_LOOKUP_CACHE_MAX,
+        cacheTtlMs: IP_LOOKUP_CACHE_TTL_MS,
+        circuitFailures: lookupCircuit.failures,
+        circuitOpenUntil: lookupCircuit.openUntil,
+        circuitOpen: lookupCircuit.openUntil > Date.now(),
+        lastError: lookupCircuit.lastError
+    };
 }
 
 const lookupCacheCleanupTimer = setInterval(
@@ -926,6 +940,7 @@ module.exports = {
     getIpLookupConfig,
     lookupIP,
     cleanupLookupCache,
+    getIpLookupDiagnostics,
     isPrivateIP,
     extractDevice,
     processIP
