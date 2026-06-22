@@ -195,7 +195,8 @@ function buildLogEmbed(options = {}) {
     fields.push(...attachmentData.fields);
 
     if (Array.isArray(options.fields)) fields.push(...options.fields);
-    embed.addFields(normalizeFields(fields));
+    const normalized = normalizeFields(fields);
+    if (normalized.length > 0) embed.addFields(normalized);
 
     if (attachmentData.image && !options.image) embed.setImage(attachmentData.image);
     if (options.image) embed.setImage(options.image);
