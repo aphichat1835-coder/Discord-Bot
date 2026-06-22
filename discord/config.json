@@ -22,7 +22,8 @@
         "member": "log-สมาชิก",
         "voice": "log-ช่องเสียง",
         "server": "log-เซิร์ฟเวอร์",
-        "security": "log-ความปลอดภัย"
+        "security": "log-ความปลอดภัย",
+        "moderation": "log-การลงโทษ"
     },
     "voice_worker": {
         "maxReconnectAttempts": 7,
