@@ -9,6 +9,7 @@ const { safeAuditText, LOG_CHANNEL_TYPES } = require("./logCore");
 
 const DISCORD_FIELD_VALUE_LIMIT = 1024;
 const DISCORD_FIELD_NAME_LIMIT = 256;
+const DISCORD_EMBED_TEXT_BUDGET = 5900;
 const MAX_FIELDS = 25;
 const MAX_DESCRIPTION = 3900;
 const MAX_TITLE = 256;
@@ -48,7 +49,8 @@ function mentionChannel(channelId) {
 }
 
 function idLine(label, id) {
-    return `${label}: ${id ? `\`${safeAuditText(id, 64)}\`` : "ไม่ทราบ"}`;
+    const shown = id ? `\`${safeAuditText(id, 64)}\`` : "ไม่ทราบ";
+    return `${label}: ${shown}`;
 }
 
 function buildIdBlock(ids = {}) {
@@ -137,75 +139,116 @@ function getColor({ color, severity, category } = {}) {
     return config.system.themeColors.info;
 }
 
-function buildLogEmbed(options = {}) {
-    const embed = new MessageEmbed()
-        .setColor(getColor(options))
-        .setTitle(safeAuditText(options.title || "Audit Log", MAX_TITLE))
-        .setTimestamp(options.timestamp ? new Date(options.timestamp) : new Date());
+function textLength(value) {
+    return String(value || "").length;
+}
 
-    if (options.description) {
-        embed.setDescription(safeAuditText(options.description, MAX_DESCRIPTION));
+function fieldTextSize(item) {
+    return textLength(item.name) + textLength(item.value);
+}
+
+function baseEmbedTextSize(embed) {
+    const data = embed.toJSON();
+    return textLength(data.title) + textLength(data.description) + textLength(data.footer?.text) + textLength(data.author?.name);
+}
+
+function fitFieldsToBudget(embed, fields) {
+    const out = [];
+    let remaining = Math.max(0, DISCORD_EMBED_TEXT_BUDGET - baseEmbedTextSize(embed));
+
+    for (const item of fields) {
+        if (out.length >= MAX_FIELDS || remaining <= 0) break;
+        const name = safeAuditText(item.name, Math.min(DISCORD_FIELD_NAME_LIMIT, remaining));
+        remaining -= textLength(name);
+        if (remaining <= 0) break;
+        const maxValue = Math.min(DISCORD_FIELD_VALUE_LIMIT, remaining);
+        const value = safeAuditText(item.value, maxValue);
+        remaining -= textLength(value);
+        out.push({ name, value, inline: !!item.inline });
     }
 
+    return out;
+}
+
+function applyDescription(embed, options) {
+    if (options.description) embed.setDescription(safeAuditText(options.description, MAX_DESCRIPTION));
+}
+
+function applyAuthor(embed, options) {
     const authorUser = options.author || options.user || options.actor || null;
     if (authorUser?.displayAvatarURL) {
         embed.setAuthor({
             name: safeAuditText(options.authorName || authorUser.tag || authorUser.username || "Audit Event", 256),
             iconURL: authorUser.displayAvatarURL({ dynamic: true, size: 128 })
         });
-    } else if (options.authorName) {
-        embed.setAuthor({ name: safeAuditText(options.authorName, 256) });
+        return;
     }
+    if (options.authorName) embed.setAuthor({ name: safeAuditText(options.authorName, 256) });
+}
 
+function applyThumbnail(embed, options) {
     const thumbUser = options.thumbnailUser || options.targetUser || options.user || null;
     if (!options.noThumbnail && thumbUser?.displayAvatarURL) {
         embed.setThumbnail(thumbUser.displayAvatarURL({ dynamic: true, size: 256 }));
-    } else if (options.thumbnail) {
-        embed.setThumbnail(options.thumbnail);
+        return;
     }
+    if (options.thumbnail) embed.setThumbnail(options.thumbnail);
+}
 
+function collectContextFields(options) {
     const fields = [];
+    if (options.actor || options.actorId) fields.push(field("👮 ผู้ดำเนินการ", options.actor ? userDisplay(options.actor) : mentionUser(options.actorId), true));
+    if (options.target || options.targetId) fields.push(field("🎯 เป้าหมาย", options.target ? memberDisplay(options.target) : mentionUser(options.targetId), true));
+    if (options.channel || options.channelId) fields.push(field("📌 ห้อง", options.channel ? `${options.channel} (\`${options.channel.id}\`)` : mentionChannel(options.channelId), true));
+    return fields;
+}
 
-    if (options.actor || options.actorId) {
-        fields.push(field("👮 ผู้ดำเนินการ", options.actor ? userDisplay(options.actor) : mentionUser(options.actorId), true));
-    }
-    if (options.target || options.targetId) {
-        fields.push(field("🎯 เป้าหมาย", options.target ? memberDisplay(options.target) : mentionUser(options.targetId), true));
-    }
-    if (options.channel || options.channelId) {
-        fields.push(field("📌 ห้อง", options.channel ? `${options.channel} (\`${options.channel.id}\`)` : mentionChannel(options.channelId), true));
-    }
-
+function collectMetadataFields(options) {
+    const fields = [];
     if (options.reason) fields.push(field("📋 เหตุผล", options.reason, false));
-    if (options.before !== undefined || options.after !== undefined) {
-        fields.push(...beforeAfterFields(options.before, options.after));
-    }
-
+    if (options.before !== undefined || options.after !== undefined) fields.push(...beforeAfterFields(options.before, options.after));
     const idBlock = buildIdBlock(options.ids || {});
     if (idBlock) fields.push(field("🧾 IDs", idBlock, false));
-
     const link = options.jumpLink || jumpLink(options.guildId, options.channelId, options.messageId);
     if (link) fields.push(field("🔗 Jump", `[เปิดข้อความ](${link})`, true));
+    if (options.messageCreatedAt) fields.push(field("🕒 Message Date", formatDiscordTime(options.messageCreatedAt), true));
+    return fields;
+}
 
-    if (options.messageCreatedAt) {
-        fields.push(field("🕒 Message Date", formatDiscordTime(options.messageCreatedAt), true));
-    }
-
-    const attachmentData = attachmentFields(options.attachments);
-    fields.push(...attachmentData.fields);
-
+function collectAllFields(options, attachmentData) {
+    const fields = [...collectContextFields(options), ...collectMetadataFields(options), ...attachmentData.fields];
     if (Array.isArray(options.fields)) fields.push(...options.fields);
-    const normalized = normalizeFields(fields);
-    if (normalized.length > 0) embed.addFields(normalized);
+    return normalizeFields(fields);
+}
 
+function applyImages(embed, options, attachmentData) {
     if (attachmentData.image && !options.image) embed.setImage(attachmentData.image);
     if (options.image) embed.setImage(options.image);
+}
 
+function applyFooter(embed, options) {
     embed.setFooter({
         text: safeAuditText(options.footer || `${config.system?.name || "Phomueangtai"} Audit System`, 2048),
         iconURL: options.footerIcon || undefined
     });
+}
 
+function buildLogEmbed(options = {}) {
+    const embed = new MessageEmbed()
+        .setColor(getColor(options))
+        .setTitle(safeAuditText(options.title || "Audit Log", MAX_TITLE))
+        .setTimestamp(options.timestamp ? new Date(options.timestamp) : new Date());
+
+    applyDescription(embed, options);
+    applyAuthor(embed, options);
+    applyThumbnail(embed, options);
+    applyFooter(embed, options);
+
+    const attachmentData = attachmentFields(options.attachments);
+    const fields = fitFieldsToBudget(embed, collectAllFields(options, attachmentData));
+    if (fields.length > 0) embed.addFields(fields);
+
+    applyImages(embed, options, attachmentData);
     return embed;
 }
 
