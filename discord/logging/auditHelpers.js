@@ -81,7 +81,8 @@ async function fetchAuditEntry(guild, actionType, targetId, options = {}) {
     if (delayMs > 0) await wait(delayMs);
 
     try {
-        const logs = await guild.fetchAuditLogs({ type: actionType, limit });
+        const fetchOptions = actionType ? { type: actionType, limit } : { limit };
+        const logs = await guild.fetchAuditLogs(fetchOptions);
         const entries = Array.from(logs?.entries?.values?.() || []);
         const matched = entries.find(entry => {
             if (!isEntryFresh(entry, maxAgeMs)) return false;
