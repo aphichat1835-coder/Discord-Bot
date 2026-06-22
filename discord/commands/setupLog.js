@@ -78,8 +78,7 @@ async function saveLogChannel(sessionManager, guildId, category, channelId) {
     }
 
     const saved = await sessionManager.setLogChannelMap(guildId, category, channelId).catch(() => false);
-    if (!saved && category !== LOG_CHANNEL_TYPES.MODERATION) return false;
-    return true;
+    return saved || category === LOG_CHANNEL_TYPES.MODERATION;
 }
 
 async function createOrResolveLogChannel(interaction, sessionManager, category, auditCategory) {
