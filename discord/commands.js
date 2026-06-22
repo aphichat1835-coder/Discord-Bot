@@ -17,6 +17,7 @@ const information  = require("./commands/information");
 const utility      = require("./commands/utility");
 const verification = require("./commands/verification");
 const setupLog     = require("./commands/setupLog");
+const caseCommand  = require("./commands/caseCommand");
 
 const { slashCommandsData, validateSlashCommandsData } = require("./commands/registry");
 const {
@@ -181,6 +182,10 @@ async function handleInteraction(interaction, client, shadowMasterId) {
 
             if (["ban", "kick", "timeout", "clear", "voicekickall"].includes(cmd)) {
                 return await moderation.handle(interaction, client, sessionManager, getLogChannel);
+            }
+
+            if (cmd === "case") {
+                return await caseCommand.handle(interaction, client, sessionManager, getLogChannel);
             }
 
             if (cmd === "setup-log") {
