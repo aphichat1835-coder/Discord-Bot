@@ -4,6 +4,7 @@
  * Designed for discord.js v13 and the existing Phomueangtai bot architecture.
  */
 
+const config = require("../config.json");
 const { sanitizeLogText, safeError } = require("../core/safeLogger");
 
 const LOG_CHANNEL_TYPES = Object.freeze({
@@ -166,19 +167,45 @@ function buildLogEvent(input = {}) {
     };
 }
 
+function getConfiguredChannelName(category) {
+    return config.audit_channels?.[category] || null;
+}
+
+function findTextChannelByName(guild, channelName) {
+    if (!guild || !channelName) return null;
+    return guild.channels.cache.find(channel =>
+        channel?.name === channelName &&
+        (typeof channel.isText === "function" ? channel.isText() : channel.type === "GUILD_TEXT" || channel.type === "text")
+    ) || null;
+}
+
 async function getLogChannel(guild, sessionManager, category) {
     const normalized = normalizeCategory(category);
     if (!guild || !sessionManager || !normalized) return null;
 
     try {
         const map = await sessionManager.getLogChannelMap(guild.id);
-        const channelId = map?.[`${normalized}ChannelId`];
-        if (!channelId) return null;
-        return guild.channels.cache.get(channelId) || null;
+        let channelId = map?.[`${normalized}ChannelId`];
+
+        // Backward-compatible fallback until moderationChannelId is added to old guild maps.
+        if (!channelId && normalized === LOG_CHANNEL_TYPES.MODERATION) {
+            channelId = map?.memberChannelId || map?.securityChannelId || null;
+        }
+
+        if (channelId) {
+            const channel = guild.channels.cache.get(channelId);
+            if (channel) return channel;
+        }
+
+        const configuredName = getConfiguredChannelName(normalized);
+        const namedChannel = findTextChannelByName(guild, configuredName);
+        if (namedChannel) return namedChannel;
     } catch (err) {
         console.warn(`[LOG_CORE] Failed to resolve log channel: ${safeAuditError(err, 240)}`);
         return null;
     }
+
+    return null;
 }
 
 class GuildLogQueue {
@@ -258,6 +285,8 @@ module.exports = {
     resolveLogCategory,
     normalizeCategory,
     buildLogEvent,
+    getConfiguredChannelName,
+    findTextChannelByName,
     getLogChannel,
     routeAndSendLog
 };
