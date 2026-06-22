@@ -32,7 +32,7 @@ jobs:
         run: npm run check:all
 
       - name: Discord tests
-        run: npm test
+        run: npm run test:discord
 
       - name: Root audit
         run: npm audit --audit-level=high
