@@ -7,6 +7,7 @@
 const { MessageEmbed }  = require('discord.js');
 const config            = require('../config.json');
 const sessionManager    = require('../sessionManager');
+const protectionAudit   = require('../logging/protectionAudit');
 
 // ── Default protection config ──
 const DEFAULT_CONFIG = {
@@ -45,6 +46,19 @@ async function setProtectionConfig(guildId, patch) {
     return updated;
 }
 
+function buildProtectionResult({ action, minutes = null, reason, trigger, severity = 'danger', evidence = [], shouldCreateCase = true, metadata = {} }) {
+    return {
+        action,
+        minutes,
+        reason,
+        trigger,
+        severity,
+        evidence,
+        shouldCreateCase,
+        metadata
+    };
+}
+
 // ── เช็คว่าควร Action กับ member ไหม (Anti-Raid) ──
 function checkAntiRaid(member, spamHistory, protConfig) {
     const v       = protConfig?.antiRaid;
@@ -53,20 +67,37 @@ function checkAntiRaid(member, spamHistory, protConfig) {
     const recent  = (spamHistory || []).filter(t => Date.now() - t < v.spamWindowMs);
     if (recent.length < v.spamThreshold) return null;
 
+    const evidence = [
+        `Mention spam: ${recent.length}/${v.spamThreshold} ครั้ง`,
+        `Window: ${Math.round(v.spamWindowMs / 1000)}s`,
+        `User: ${member?.user?.tag || member?.id} (${member?.id})`
+    ];
+
     // ตรวจบัญชีใหม่
     if (v.blockNewAccounts) {
         const snowflake = BigInt(member.user.id);
         const ageDays   = Math.floor((Date.now() - Number((snowflake >> 22n) + 1420070400000n)) / 86400000);
         if (ageDays < v.newAccountDays) {
-            return { action: 'ban', reason: `Anti-Raid: บัญชีใหม่ spam @everyone (${ageDays} วัน)` };
+            return buildProtectionResult({
+                action: 'ban',
+                reason: `Anti-Raid: บัญชีใหม่ spam @everyone (${ageDays} วัน)`,
+                trigger: 'Anti-Raid New Account Mention Spam',
+                severity: 'critical',
+                evidence: [...evidence, `Account age: ${ageDays} days`],
+                metadata: { ageDays, windowMs: v.spamWindowMs, count: recent.length }
+            });
         }
     }
 
-    return {
+    return buildProtectionResult({
         action:  'timeout',
         minutes: v.timeoutMinutes,
-        reason:  `Anti-Raid: spam @everyone ${recent.length} ครั้ง/${Math.round(v.spamWindowMs/1000)}s`
-    };
+        reason:  `Anti-Raid: spam @everyone ${recent.length} ครั้ง/${Math.round(v.spamWindowMs/1000)}s`,
+        trigger: 'Anti-Raid Mention Spam',
+        severity: 'danger',
+        evidence,
+        metadata: { windowMs: v.spamWindowMs, count: recent.length }
+    });
 }
 
 // ── เช็ค Anti-Spam (ข้อความธรรมดา ไม่ใช่ @everyone) ──
@@ -76,11 +107,19 @@ function checkAntiSpam(member, msgHistory, protConfig) {
     const recent = (msgHistory || []).filter(t => Date.now() - t < v.windowMs);
     if (recent.length < v.maxMessages) return null;
     if (member.permissions.has('ADMINISTRATOR')) return null;
-    return {
+    return buildProtectionResult({
         action:  v.action || 'timeout',
         minutes: 5,
-        reason:  `Anti-Spam: ส่งข้อความ ${recent.length} ครั้ง ใน ${v.windowMs / 1000}s`
-    };
+        reason:  `Anti-Spam: ส่งข้อความ ${recent.length} ครั้ง ใน ${v.windowMs / 1000}s`,
+        trigger: 'Anti-Spam Message Flood',
+        severity: 'warning',
+        evidence: [
+            `Messages: ${recent.length}/${v.maxMessages}`,
+            `Window: ${Math.round(v.windowMs / 1000)}s`,
+            `User: ${member?.user?.tag || member?.id} (${member?.id})`
+        ],
+        metadata: { windowMs: v.windowMs, count: recent.length }
+    });
 }
 
 // ── เช็ค Link Filter ──
@@ -91,7 +130,13 @@ function checkLinkFilter(message, protConfig) {
     if (!v?.enabled) return null;
     const content = message.content || '';
     if (v.blockInvites && INVITE_REGEX.test(content)) {
-        return { shouldDelete: true, reason: 'Link Filter: Discord invite ถูกบล็อก' };
+        return {
+            shouldDelete: true,
+            reason: 'Link Filter: Discord invite ถูกบล็อก',
+            trigger: 'Link Filter Discord Invite',
+            severity: 'warning',
+            evidence: [`Channel: ${message.channel?.id}`, `User: ${message.author?.tag || message.author?.id}`]
+        };
     }
     const urlMatches = content.match(/https?:\/\/[^\s]+/gi) || [];
     const blocked = urlMatches.filter(url => {
@@ -102,21 +147,34 @@ function checkLinkFilter(message, protConfig) {
         } catch { return false; }
     });
     if (blocked.length > 0) {
-        return { shouldDelete: true, reason: 'Link Filter: domain ไม่ได้รับอนุญาต' };
+        return {
+            shouldDelete: true,
+            reason: 'Link Filter: domain ไม่ได้รับอนุญาต',
+            trigger: 'Link Filter Blocked Domain',
+            severity: 'warning',
+            evidence: blocked.slice(0, 5).map(url => `Blocked URL: ${url}`),
+            blocked
+        };
     }
     return null;
 }
 
 // ── สร้าง embed แจ้งเตือน protection ──
 function buildProtectionAlert(type, data) {
-    const colors  = { raid: config.system.themeColors.error, spam: config.system.themeColors.warning, link: config.system.themeColors.warning };
     const titles  = { raid: `${config.emojis.antiraid} Anti-Raid Triggered`, spam: '⚡ Anti-Spam Triggered', link: '🔗 Link Filter Triggered' };
+    const trigger = titles[type] || '🚨 Protection Alert';
 
-    return new MessageEmbed()
-        .setColor(colors[type] || config.system.themeColors.error)
-        .setTitle(titles[type] || '🚨 Protection Alert')
-        .setDescription(Object.entries(data).map(([k,v]) => `**${k}:** ${v}`).join('\n'))
-        .setTimestamp();
+    const event = protectionAudit.buildProtectionEvent({
+        trigger,
+        reason: data?.['เหตุผล'] || data?.reason || trigger,
+        severity: type === 'raid' ? 'danger' : 'warning',
+        evidence: Object.entries(data || {}).map(([k, v]) => `${k}: ${v}`),
+        action: data?.['การดำเนินการ'] || data?.action || 'log',
+        success: true
+    });
+
+    return protectionAudit.buildProtectionEmbed(event)
+        .setColor(type === 'raid' ? config.system.themeColors.error : config.system.themeColors.warning);
 }
 
 // ── Deep merge helper ──
@@ -145,5 +203,6 @@ module.exports = {
     checkAntiSpam,
     checkLinkFilter,
     buildProtectionAlert,
+    buildProtectionResult,
     DEFAULT_CONFIG
 };
