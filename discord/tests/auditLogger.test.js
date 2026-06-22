@@ -26,7 +26,7 @@ function freshAuditLogger(env = {}) {
 }
 
 test("audit send queue continues after a failed send", async () => {
-    const { logger, restore } = freshAuditLogger({ AUDIT_MAX_QUEUE_PER_GUILD: "5" });
+    const { logger, restore } = freshAuditLogger({ LOG_CORE_MAX_QUEUE_PER_GUILD: "5" });
     const sends = [];
     const channel = {
         async send(payload) {
@@ -47,7 +47,8 @@ test("audit send queue continues after a failed send", async () => {
         }
     };
     const embed = logger._test.buildEmbed({
-        color: "#5865F2",
+        category: "security",
+        severity: "info",
         title: "Security",
         description: "queue test"
     });
@@ -59,57 +60,31 @@ test("audit send queue continues after a failed send", async () => {
         assert.equal(first, false);
         assert.equal(second, true);
         assert.equal(sends.length, 2);
-        assert.equal(logger.getAuditStats().auditSendFailed, 1);
+        assert.equal(logger.getAuditStats().failed, 1);
     } finally {
         logger.stopAuditCleanup();
         restore();
     }
 });
 
-test("audit cache cleanup removes stale member and channel cache entries", () => {
+test("audit cleanup removes stale duplicate keys and expired message snapshots", () => {
     const { logger, restore } = freshAuditLogger();
 
     try {
-        logger._test.memberStateCache.set("guild_user", {
-            nickname: "old",
-            updatedAt: Date.now() - 2 * 60 * 60 * 1000
+        logger._test.recentEventKeys.set("stale", Date.now() - 11 * 60 * 1000);
+        const cache = logger._test.defaultMessageSnapshots;
+        cache.cache.set(cache.key("guild", "message"), {
+            messageId: "message",
+            guildId: "guild",
+            channelId: "channel",
+            content: "old",
+            cachedAt: Date.now() - cache.ttlMs - 1000
         });
-        logger._test.auditChannelCache.set("guild", {
-            map: { securityChannelId: "x" },
-            expiry: Date.now() - 120000
-        });
 
-        logger._test.cleanupAuditCaches();
+        logger._test.cleanupCaches();
 
-        assert.equal(logger._test.memberStateCache.has("guild_user"), false);
-        assert.equal(logger._test.auditChannelCache.has("guild"), false);
-    } finally {
-        logger.stopAuditCleanup();
-        restore();
-    }
-});
-
-test("audit cleanup removes expired circuit and warning throttle state", () => {
-    const { logger, restore } = freshAuditLogger({
-        AUDIT_CIRCUIT_OPEN_MS: "10000",
-        AUDIT_WARN_THROTTLE_TTL_MS: "300000",
-        AUDIT_WARN_THROTTLE_MAX_SIZE: "100"
-    });
-
-    try {
-        const now = Date.now();
-        logger._test.auditCircuit.set("guild:security", {
-            failures: 5,
-            openUntil: now - 20000
-        });
-        logger._test.warnThrottles.set("warn-key", now - 600000);
-
-        logger._test.cleanupAuditCaches();
-
-        assert.equal(logger._test.auditCircuit.has("guild:security"), false);
-        assert.equal(logger._test.warnThrottles.has("warn-key"), false);
-        assert.equal(logger.getAuditStats().auditCircuit, 0);
-        assert.equal(logger.getAuditStats().warnThrottles, 0);
+        assert.equal(logger._test.recentEventKeys.has("stale"), false);
+        assert.equal(cache.get("guild", "message"), null);
     } finally {
         logger.stopAuditCleanup();
         restore();
@@ -121,7 +96,8 @@ test("audit embed builder truncates fields and total embed text", () => {
 
     try {
         const embed = logger._test.buildEmbed({
-            color: "#5865F2",
+            category: "message",
+            severity: "info",
             title: "x".repeat(400),
             description: "d".repeat(5000),
             fields: Array.from({ length: 30 }, (_, index) => ({
@@ -133,6 +109,7 @@ test("audit embed builder truncates fields and total embed text", () => {
         const total = String(data.title || "").length +
             String(data.description || "").length +
             String(data.footer?.text || "").length +
+            String(data.author?.name || "").length +
             (data.fields || []).reduce((sum, field) =>
                 sum + String(field.name || "").length + String(field.value || "").length, 0);
 
