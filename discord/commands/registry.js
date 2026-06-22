@@ -146,46 +146,6 @@ const slashCommandsData = [
     },
 
     {
-        name: "case",
-        description: "ดูและแก้ไขบันทึก Case ของระบบ Moderation",
-        options: [
-            {
-                type: 1,
-                name: "view",
-                description: "ดูรายละเอียด Case ตามหมายเลข",
-                options: [
-                    { type: 4, name: "case_id", description: "หมายเลข Case", required: true }
-                ]
-            },
-            {
-                type: 1,
-                name: "reason",
-                description: "แก้เหตุผลของ Case",
-                options: [
-                    { type: 4, name: "case_id", description: "หมายเลข Case", required: true },
-                    { type: 3, name: "reason", description: "เหตุผลใหม่", required: true }
-                ]
-            },
-            {
-                type: 1,
-                name: "user",
-                description: "ดู Case ล่าสุดของสมาชิก",
-                options: [
-                    { type: 6, name: "target", description: "สมาชิก", required: true }
-                ]
-            },
-            {
-                type: 1,
-                name: "latest",
-                description: "ดู Case ล่าสุดของสมาชิกหรือของตัวเอง",
-                options: [
-                    { type: 6, name: "target", description: "สมาชิก", required: false }
-                ]
-            }
-        ]
-    },
-
-    {
         name: "whitelist",
         description: "จัดการ Whitelist /say (เฉพาะ Admin)",
         options: [
