@@ -44,6 +44,13 @@ function dangerousPermissionDiff(diff = {}) {
     };
 }
 
+function severityForScore(score) {
+    if (score >= 8) return "critical";
+    if (score >= 4) return "danger";
+    if (score > 0) return "warning";
+    return "info";
+}
+
 function scorePermissionChange(diff = {}) {
     const dangerous = dangerousPermissionDiff(diff);
     let score = dangerous.added.length * 3;
@@ -53,7 +60,7 @@ function scorePermissionChange(diff = {}) {
     if (dangerous.added.includes("MANAGE_WEBHOOKS")) score += 4;
     return {
         score,
-        severity: score >= 8 ? "critical" : score >= 4 ? "danger" : score > 0 ? "warning" : "info",
+        severity: severityForScore(score),
         dangerous
     };
 }
@@ -121,6 +128,7 @@ module.exports = {
     hasDangerousPermission,
     dangerousPermissionDiff,
     scorePermissionChange,
+    severityForScore,
     createThresholdTracker,
     buildRiskEvidence,
     shouldFlagHighRiskEvent
