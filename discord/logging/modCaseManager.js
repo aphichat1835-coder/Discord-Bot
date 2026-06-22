@@ -1,11 +1,13 @@
 /*
  * Moderation Case Manager
  * Creates and stores moderation cases for command actions and future protection actions.
- * Uses ModCaseModel when available; falls back to BotSettings storage for compatibility.
+ * Uses Mongo-backed ModCase store when DB is connected; falls back to BotSettings storage.
  */
 
+const mongoose = require("mongoose");
 const { safeAuditText, safeAuditError, LOG_TYPES } = require("./logCore");
 const { buildCaseEmbed } = require("./logFormat");
+const modCaseStore = require("./modCaseStore");
 
 function counterKey(guildId) {
     return `modcase_counter_${guildId}`;
@@ -17,6 +19,10 @@ function caseKey(guildId, caseNumber) {
 
 function userIndexKey(guildId, userId) {
     return `modcase_index_${guildId}_${userId}`;
+}
+
+function canUseMongoStore() {
+    return mongoose.connection?.readyState === 1;
 }
 
 function normalizeAction(action) {
@@ -31,7 +37,7 @@ function normalizeEvidence(evidence = []) {
         .map(item => safeAuditText(typeof item === "string" ? item : JSON.stringify(item), 300));
 }
 
-async function nextCaseNumber(sessionManager, guildId) {
+async function nextCaseNumberFallback(sessionManager, guildId) {
     if (!sessionManager?.getSetting || !sessionManager?.setSetting) {
         throw new Error("SESSION_MANAGER_SETTINGS_UNAVAILABLE");
     }
@@ -42,15 +48,15 @@ async function nextCaseNumber(sessionManager, guildId) {
     return next;
 }
 
-async function saveCaseWithModel(sessionManager, caseDoc) {
-    const Model = sessionManager?.ModCaseModel;
-    if (!Model) return false;
-    await Model.updateOne(
-        { guildId: caseDoc.guildId, caseNumber: caseDoc.caseNumber },
-        { $set: caseDoc },
-        { upsert: true }
-    );
-    return true;
+async function nextCaseNumber(sessionManager, guildId) {
+    if (canUseMongoStore()) {
+        try {
+            return await modCaseStore.nextCaseNumber(guildId);
+        } catch (err) {
+            console.warn(`[MODCASE] Mongo counter unavailable, fallback settings: ${safeAuditError(err, 240)}`);
+        }
+    }
+    return nextCaseNumberFallback(sessionManager, guildId);
 }
 
 async function saveCaseWithSettings(sessionManager, caseDoc) {
@@ -63,6 +69,18 @@ async function saveCaseWithSettings(sessionManager, caseDoc) {
     const next = [caseDoc.caseNumber, ...list.filter(n => n !== caseDoc.caseNumber)].slice(0, 50);
     await sessionManager.setSetting(indexKey, next);
     return true;
+}
+
+async function saveCase(sessionManager, caseDoc) {
+    if (canUseMongoStore()) {
+        try {
+            return await modCaseStore.saveCase(caseDoc);
+        } catch (err) {
+            console.warn(`[MODCASE] Mongo save failed, fallback settings: ${safeAuditError(err, 240)}`);
+        }
+    }
+    await saveCaseWithSettings(sessionManager, caseDoc);
+    return caseDoc;
 }
 
 async function createCase(sessionManager, input = {}) {
@@ -92,9 +110,7 @@ async function createCase(sessionManager, input = {}) {
     };
 
     try {
-        const savedByModel = await saveCaseWithModel(sessionManager, caseDoc);
-        if (!savedByModel) await saveCaseWithSettings(sessionManager, caseDoc);
-        return caseDoc;
+        return await saveCase(sessionManager, caseDoc);
     } catch (err) {
         throw new Error(`CASE_SAVE_FAILED: ${safeAuditError(err, 240)}`);
     }
@@ -102,9 +118,13 @@ async function createCase(sessionManager, input = {}) {
 
 async function getCase(sessionManager, guildId, caseNumber) {
     if (!guildId || !caseNumber) return null;
-    const Model = sessionManager?.ModCaseModel;
-    if (Model) {
-        return Model.findOne({ guildId: String(guildId), caseNumber: Number(caseNumber) }).lean().catch(() => null);
+    if (canUseMongoStore()) {
+        try {
+            const doc = await modCaseStore.getCase(guildId, caseNumber);
+            if (doc) return doc;
+        } catch (err) {
+            console.warn(`[MODCASE] Mongo get failed, fallback settings: ${safeAuditError(err, 240)}`);
+        }
     }
     return sessionManager?.getSetting?.(caseKey(guildId, caseNumber), null) || null;
 }
@@ -112,13 +132,14 @@ async function getCase(sessionManager, guildId, caseNumber) {
 async function listUserCases(sessionManager, guildId, userId, limit = 10) {
     if (!guildId || !userId) return [];
     const max = Math.max(1, Math.min(50, Number(limit) || 10));
-    const Model = sessionManager?.ModCaseModel;
-    if (Model) {
-        return Model.find({ guildId: String(guildId), userId: String(userId) })
-            .sort({ caseNumber: -1 })
-            .limit(max)
-            .lean()
-            .catch(() => []);
+
+    if (canUseMongoStore()) {
+        try {
+            const docs = await modCaseStore.listUserCases(guildId, userId, max);
+            if (docs.length) return docs;
+        } catch (err) {
+            console.warn(`[MODCASE] Mongo list failed, fallback settings: ${safeAuditError(err, 240)}`);
+        }
     }
 
     const numbers = await sessionManager?.getSetting?.(userIndexKey(guildId, userId), []) || [];
@@ -134,20 +155,24 @@ async function updateCaseReason(sessionManager, guildId, caseNumber, reason, ame
     const existing = await getCase(sessionManager, guildId, caseNumber);
     if (!existing) return null;
 
-    const updated = {
-        ...existing,
+    const patch = {
         reason: safeAuditText(reason || "ไม่มีเหตุผลระบุ", 500),
         amendedBy: amendedBy ? String(amendedBy) : null,
         amendedAt: Date.now(),
         updatedAt: Date.now()
     };
 
-    const Model = sessionManager?.ModCaseModel;
-    if (Model) {
-        await Model.updateOne({ guildId: String(guildId), caseNumber: Number(caseNumber) }, { $set: updated });
-    } else {
-        await sessionManager.setSetting(caseKey(guildId, caseNumber), updated);
+    if (canUseMongoStore()) {
+        try {
+            const updated = await modCaseStore.updateCase(guildId, caseNumber, patch);
+            if (updated) return updated;
+        } catch (err) {
+            console.warn(`[MODCASE] Mongo update failed, fallback settings: ${safeAuditError(err, 240)}`);
+        }
     }
+
+    const updated = { ...existing, ...patch };
+    await sessionManager.setSetting(caseKey(guildId, caseNumber), updated);
     return updated;
 }
 
@@ -190,6 +215,7 @@ module.exports = {
         caseKey,
         userIndexKey,
         normalizeEvidence,
-        normalizeAction
+        normalizeAction,
+        canUseMongoStore
     }
 };
