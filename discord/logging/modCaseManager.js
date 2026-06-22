@@ -37,6 +37,33 @@ function normalizeEvidence(evidence = []) {
         .map(item => safeAuditText(typeof item === "string" ? item : JSON.stringify(item), 300));
 }
 
+function normalizeDuration(input = {}) {
+    const durationMs = input.durationMs ? Math.max(0, Number(input.durationMs) || 0) : null;
+    const expiresAt = input.expiresAt || (durationMs ? Date.now() + durationMs : null);
+    return { durationMs, expiresAt };
+}
+
+function buildCaseDoc(input, caseNumber, createdAt = Date.now()) {
+    const { durationMs, expiresAt } = normalizeDuration(input);
+    return {
+        guildId: String(input.guildId),
+        caseNumber,
+        action: normalizeAction(input.action || input.type),
+        type: normalizeAction(input.type || input.action),
+        userId: input.userId ? String(input.userId) : null,
+        moderatorId: input.moderatorId ? String(input.moderatorId) : null,
+        reason: safeAuditText(input.reason || "ไม่มีเหตุผลระบุ", 500),
+        durationMs,
+        evidence: normalizeEvidence(input.evidence),
+        source: safeAuditText(input.source || "command", 80),
+        status: input.status || "active",
+        createdAt: input.createdAt || createdAt,
+        updatedAt: createdAt,
+        expiresAt,
+        metadata: input.metadata && typeof input.metadata === "object" ? input.metadata : {}
+    };
+}
+
 async function nextCaseNumberFallback(sessionManager, guildId) {
     if (!sessionManager?.getSetting || !sessionManager?.setSetting) {
         throw new Error("SESSION_MANAGER_SETTINGS_UNAVAILABLE");
@@ -85,29 +112,8 @@ async function saveCase(sessionManager, caseDoc) {
 
 async function createCase(sessionManager, input = {}) {
     if (!input.guildId) throw new Error("CASE_GUILD_ID_REQUIRED");
-
     const caseNumber = input.caseNumber || await nextCaseNumber(sessionManager, input.guildId);
-    const now = Date.now();
-    const durationMs = input.durationMs ? Math.max(0, Number(input.durationMs) || 0) : null;
-    const expiresAt = input.expiresAt || (durationMs ? now + durationMs : null);
-
-    const caseDoc = {
-        guildId: String(input.guildId),
-        caseNumber,
-        action: normalizeAction(input.action || input.type),
-        type: normalizeAction(input.type || input.action),
-        userId: input.userId ? String(input.userId) : null,
-        moderatorId: input.moderatorId ? String(input.moderatorId) : null,
-        reason: safeAuditText(input.reason || "ไม่มีเหตุผลระบุ", 500),
-        durationMs,
-        evidence: normalizeEvidence(input.evidence),
-        source: safeAuditText(input.source || "command", 80),
-        status: input.status || "active",
-        createdAt: input.createdAt || now,
-        updatedAt: now,
-        expiresAt,
-        metadata: input.metadata && typeof input.metadata === "object" ? input.metadata : {}
-    };
+    const caseDoc = buildCaseDoc(input, caseNumber);
 
     try {
         return await saveCase(sessionManager, caseDoc);
@@ -216,6 +222,8 @@ module.exports = {
         userIndexKey,
         normalizeEvidence,
         normalizeAction,
+        normalizeDuration,
+        buildCaseDoc,
         canUseMongoStore
     }
 };
