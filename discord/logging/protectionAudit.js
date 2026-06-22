@@ -143,9 +143,10 @@ async function createProtectionCase(sessionManager, event, options = {}) {
         }
     });
 
-    event.actionResult = Object.assign({}, event.actionResult, {
+    event.actionResult = {
+        ...event.actionResult,
         caseNumber: caseDoc.caseNumber
-    });
+    };
     event.caseNumber = caseDoc.caseNumber;
     return caseDoc;
 }
