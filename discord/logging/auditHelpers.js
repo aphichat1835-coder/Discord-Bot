@@ -44,6 +44,10 @@ function wait(ms) {
     return new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 }
 
+function compareText(a, b) {
+    return String(a).localeCompare(String(b));
+}
+
 function normalizeId(value) {
     return value == null ? null : String(value);
 }
@@ -103,8 +107,8 @@ async function fetchAuditEntry(guild, actionType, targetId, options = {}) {
 function permissionsToArray(permissions) {
     try {
         if (!permissions) return [];
-        if (Array.isArray(permissions)) return [...new Set(permissions.map(String))].sort();
-        if (typeof permissions.toArray === "function") return permissions.toArray().map(String).sort();
+        if (Array.isArray(permissions)) return [...new Set(permissions.map(String))].sort(compareText);
+        if (typeof permissions.toArray === "function") return permissions.toArray().map(String).sort(compareText);
         if (permissions.allow || permissions.deny) return [];
     } catch {}
     return [];
@@ -114,8 +118,8 @@ function diffPermissionArrays(before = [], after = []) {
     const oldSet = new Set(before.map(String));
     const newSet = new Set(after.map(String));
     return {
-        added: [...newSet].filter(p => !oldSet.has(p)).sort(),
-        removed: [...oldSet].filter(p => !newSet.has(p)).sort()
+        added: [...newSet].filter(p => !oldSet.has(p)).sort(compareText),
+        removed: [...oldSet].filter(p => !newSet.has(p)).sort(compareText)
     };
 }
 
@@ -130,8 +134,8 @@ function serializeOverwrite(overwrite) {
     return {
         id: String(overwrite.id),
         type: String(overwrite.type),
-        allow: permissionsToArray(overwrite.allow).sort(),
-        deny: permissionsToArray(overwrite.deny).sort()
+        allow: permissionsToArray(overwrite.allow).sort(compareText),
+        deny: permissionsToArray(overwrite.deny).sort(compareText)
     };
 }
 
