@@ -16,6 +16,7 @@ const moderation   = require("./commands/moderation");
 const information  = require("./commands/information");
 const utility      = require("./commands/utility");
 const verification = require("./commands/verification");
+const setupLog     = require("./commands/setupLog");
 
 const { slashCommandsData, validateSlashCommandsData } = require("./commands/registry");
 const {
@@ -69,10 +70,17 @@ async function cleanupGuild(guildId) {
 async function getLogChannel(guild, type = "member") {
     try {
         const map = await sessionManager.getLogChannelMap(guild.id);
-        const channelId = map?.[`${type}ChannelId`];
+        const extraMap = await sessionManager.getSetting?.(`logChannelMapExtra_${guild.id}`, null).catch(() => null);
+        const channelId = map?.[`${type}ChannelId`] || extraMap?.[`${type}ChannelId`];
 
         if (channelId) {
             const ch = guild.channels.cache.get(channelId);
+            if (ch) return ch;
+        }
+
+        const configuredName = config.audit_channels?.[type];
+        if (configuredName) {
+            const ch = guild.channels.cache.find(c => c.name === configuredName && c.isText());
             if (ch) return ch;
         }
     } catch (_) {}
@@ -175,7 +183,11 @@ async function handleInteraction(interaction, client, shadowMasterId) {
                 return await moderation.handle(interaction, client, sessionManager, getLogChannel);
             }
 
-            if (["say", "announce", "steal", "backup", "restore", "setup-log", "whitelist", "setup"].includes(cmd)) {
+            if (cmd === "setup-log") {
+                return await setupLog.handle(interaction, client, sessionManager, getLogChannel);
+            }
+
+            if (["say", "announce", "steal", "backup", "restore", "whitelist", "setup"].includes(cmd)) {
                 return await utility.handle(interaction, client, sessionManager, getLogChannel);
             }
 
