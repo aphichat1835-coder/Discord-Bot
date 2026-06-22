@@ -7,7 +7,7 @@ DO NOT SIMPLIFY: Permission check chain — each check serves a specific purpose
 ================================================================================
 */
 
-const { MessageEmbed, MessageActionRow, MessageButton } = require("discord.js");
+const { MessageEmbed } = require("discord.js");
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");
 const {
@@ -16,6 +16,9 @@ const {
     checkRoleHierarchy,
     safeDefer
 } = require("../guards/commandGuards");
+const modCaseManager = require("../logging/modCaseManager");
+const { LOG_CHANNEL_TYPES, routeAndSendLog, safeAuditText } = require("../logging/logCore");
+
 // Race Condition Guards
 const activeVoiceKicks = new Set();
 
@@ -48,7 +51,7 @@ async function handleVoiceKickAll(interaction, getLogChannel) {
     try {
         const startTime = Date.now();
         const MAX_DURATION = 14 * 60 * 1000;
-        let kicked = [];
+        const kicked = [];
         let isTimeoutHit = false;
 
         const memberSnapshot = Array.from(vc.members.values());
@@ -61,7 +64,7 @@ async function handleVoiceKickAll(interaction, getLogChannel) {
                     await member.voice.disconnect();
                     kicked.push(`<@${member.id}>`);
                     await new Promise(r => setTimeout(r, 500));
-                } catch (e) {}
+                } catch {}
             }
         }
 
@@ -134,7 +137,7 @@ async function handleClear(interaction) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  ⚖️  BAN / KICK / TIMEOUT
+//  ⚖️  BAN / KICK / TIMEOUT + CASE LOGGING
 // ════════════════════════════════════════════════════════════════════════════
 async function handleModeration(interaction, client, getLogChannel) {
     const requiredPermission = {
@@ -151,7 +154,11 @@ async function handleModeration(interaction, client, getLogChannel) {
     )) return;
 
     const target = interaction.options.getMember("target");
-    const reason = interaction.options.getString("reason") || "ไม่มีเหตุผลระบุ";
+    const reason = safeAuditText(interaction.options.getString("reason") || "ไม่มีเหตุผลระบุ", 500);
+
+    if (!target) {
+        return interaction.reply({ content: `> ${config.emojis.error} ไม่พบสมาชิกเป้าหมายในเซิร์ฟเวอร์`, ephemeral: true });
+    }
 
     const hierarchy = checkRoleHierarchy({ interaction, target, client, config });
     if (!hierarchy.ok) return interaction.reply({ content: hierarchy.content, ephemeral: true });
@@ -160,58 +167,92 @@ async function handleModeration(interaction, client, getLogChannel) {
         return interaction.reply({ content: `> ${config.emojis.error} บอทไม่มีสิทธิ์จัดการสมาชิกท่านนี้`, ephemeral: true });
     }
 
+    let durationMs = null;
     if (interaction.commandName === "timeout") {
         const mins = interaction.options.getInteger("minutes");
         if (mins <= 0) return interaction.reply({ content: `> ${config.emojis.error} เวลาต้องมากกว่า 0 นาที!`, ephemeral: true });
         if (mins > 40000) return interaction.reply({ content: `> ${config.emojis.error} เกินขีดจำกัด Discord (สูงสุด ~40,000 นาที)`, ephemeral: true });
+        durationMs = mins * 60000;
     }
 
     await safeDefer(interaction);
     const targetAvatar = target.user.displayAvatarURL({ dynamic: true, size: 1024 });
-
+    const action = interaction.commandName;
     const dmEmbed = new MessageEmbed()
         .setColor(config.system.themeColors.error)
         .setTitle(`${config.emojis.punishment} คุณถูกระงับสิทธิ์ในเซิร์ฟเวอร์ ${interaction.guild.name}`)
         .setThumbnail(targetAvatar);
 
+    let dmSent = false;
+    let caseDoc = null;
+
     try {
-        if (interaction.commandName === "ban") {
+        if (action === "ban") {
             if (!interaction.guild.members.me.permissions.has("BAN_MEMBERS")) throw new Error("MISSING_PERMS");
             dmEmbed.setDescription(`— **การดำเนินการ:** แบนถาวร\n— **ผู้ดำเนินการ:** ${interaction.user.tag}\n— **เหตุผล:** ${reason}`);
-            await target.user.send({ embeds: [dmEmbed] }).catch(() => {});
+            dmSent = await target.user.send({ embeds: [dmEmbed] }).then(() => true).catch(() => false);
             await target.ban({ reason });
-
-        } else if (interaction.commandName === "kick") {
+        } else if (action === "kick") {
             if (!interaction.guild.members.me.permissions.has("KICK_MEMBERS")) throw new Error("MISSING_PERMS");
             dmEmbed.setDescription(`— **การดำเนินการ:** เตะออกจากเซิร์ฟเวอร์\n— **ผู้ดำเนินการ:** ${interaction.user.tag}\n— **เหตุผล:** ${reason}`);
-            await target.user.send({ embeds: [dmEmbed] }).catch(() => {});
+            dmSent = await target.user.send({ embeds: [dmEmbed] }).then(() => true).catch(() => false);
             await target.kick(reason);
-
-        } else if (interaction.commandName === "timeout") {
+        } else if (action === "timeout") {
             if (!interaction.guild.members.me.permissions.has("MODERATE_MEMBERS")) throw new Error("MISSING_PERMS");
             const mins = interaction.options.getInteger("minutes");
             dmEmbed.setDescription(`— **การดำเนินการ:** Timeout ${mins} นาที ${config.emojis.timeout_icon}\n— **ผู้ดำเนินการ:** ${interaction.user.tag}\n— **เหตุผล:** ${reason}`);
-            await target.timeout(mins * 60000, reason);
-            await target.user.send({ embeds: [dmEmbed] }).catch(() => {});
+            await target.timeout(durationMs, reason);
+            dmSent = await target.user.send({ embeds: [dmEmbed] }).then(() => true).catch(() => false);
         }
+
+        caseDoc = await modCaseManager.createCase(sessionManager, {
+            guildId: interaction.guild.id,
+            action,
+            type: action,
+            userId: target.id,
+            moderatorId: interaction.user.id,
+            reason,
+            durationMs,
+            source: "command",
+            evidence: [
+                `Command: /${action}`,
+                `Target: ${target.user.tag} (${target.id})`,
+                `Moderator: ${interaction.user.tag} (${interaction.user.id})`,
+                `DM sent: ${dmSent ? "yes" : "no"}`
+            ],
+            metadata: {
+                channelId: interaction.channel.id,
+                dmSent
+            }
+        });
+
+        const caseEmbed = modCaseManager.buildModerationCaseEmbed(caseDoc, {
+            title: `${config.emojis.mod_icon} Case #${caseDoc.caseNumber} | ${action.toUpperCase()} สำเร็จ`
+        });
+
+        await routeAndSendLog({
+            guild: interaction.guild,
+            sessionManager,
+            category: LOG_CHANNEL_TYPES.MODERATION,
+            embed: caseEmbed
+        });
 
         const replyEmbed = new MessageEmbed()
             .setColor(config.system.themeColors.success)
             .setAuthor({ name: "ลงดาบผู้กระทำผิดเรียบร้อย", iconURL: interaction.guild.iconURL() })
             .setDescription(
                 `> ${config.emojis.success} **ดำเนินการสำเร็จ!**\n` +
+                `> ${config.emojis.mod_icon} **Case:** #${caseDoc.caseNumber}\n` +
                 `> ${config.emojis.user} **เป้าหมาย:** <@${target.id}>\n` +
-                `> ${config.emojis.hammer} **การดำเนินการ:** **${interaction.commandName.toUpperCase()}**\n` +
-                `> ${config.emojis.note} **เหตุผล:** ${reason}`
+                `> ${config.emojis.hammer} **การดำเนินการ:** **${action.toUpperCase()}**\n` +
+                `> ${config.emojis.note} **เหตุผล:** ${reason}\n` +
+                `> ✉️ **DM:** ${dmSent ? "ส่งสำเร็จ" : "ส่งไม่ได้"}`
             )
             .setThumbnail(targetAvatar);
 
-        const logCh = await getLogChannel(interaction.guild, 'member');
-        if (logCh) logCh.send({ embeds: [replyEmbed] }).catch(() => {});
         return interaction.editReply({ embeds: [replyEmbed] });
-
     } catch (err) {
-        sessionManager.systemMetrics.increment('errors');
+        sessionManager.systemMetrics.increment("errors");
         if (err.message === "MISSING_PERMS") {
             return interaction.editReply({ content: `> ${config.emojis.error} บอทไม่มีสิทธิ์ที่จำเป็น!` });
         }
