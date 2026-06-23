@@ -226,7 +226,7 @@ class GuildLogQueue {
         return false;
     }
 
-    async enqueue(guildId, task) {
+    enqueue(guildId, task) {
         if (!guildId || typeof task !== "function") return false;
         const depth = this.depths.get(guildId) || 0;
         if (depth >= this.maxDepth) return false;
