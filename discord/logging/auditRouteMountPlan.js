@@ -1,6 +1,7 @@
 function buildAuditRouteMountPlan() {
     return {
         serverModule: "discord/index/server.js",
+        patchDoc: "docs/AUDIT_SERVER_INTEGRATION_PATCH.md",
         importLine: "const { registerAuditWebBundle } = require(\"./auditWebBundle\");",
         mountAfter: "const rateLimiter = createRateLimiter(requestCounts, config, sessionManager);",
         mountCall: "registerAuditWebBundle({ app, express, sessionManager, client, auditLogger, checkAuth });",
