@@ -1,8 +1,15 @@
+const fs = require("node:fs");
+const path = require("node:path");
 const storage = require("./auditStorage");
 const deadLetter = require("./auditDeadLetter");
 const channelRepair = require("./auditChannelRepair");
-let scheduler = null;
-try { scheduler = require("./auditReconcilerScheduler"); } catch (_) {}
+
+function loadScheduler() {
+    const schedulerPath = path.join(__dirname, "auditReconcilerScheduler.js");
+    return fs.existsSync(schedulerPath) ? require("./auditReconcilerScheduler") : null;
+}
+
+const scheduler = loadScheduler();
 
 function permissionHealth(guild) {
     const me = guild?.members?.me || guild?.me || guild?.members?.cache?.get(guild?.client?.user?.id);
@@ -38,6 +45,7 @@ async function buildAuditHealth({ guild, sessionManager, auditLogger } = {}) {
 }
 
 module.exports = {
+    loadScheduler,
     permissionHealth,
     buildAuditHealth
 };
