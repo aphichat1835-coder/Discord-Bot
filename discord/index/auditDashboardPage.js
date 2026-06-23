@@ -32,6 +32,7 @@ body{margin:0;background:#11091f;color:#f6edff;font-family:system-ui,-apple-syst
 <button onclick="exportLogs('csv')">CSV</button>
 <button onclick="exportLogs('markdown')">Markdown</button>
 <button onclick="loadHealth()">Health</button>
+<button onclick="loadDeadLetters()">Failed Sends</button>
 </div>
 </div>
 <div class="card">
@@ -52,9 +53,11 @@ body{margin:0;background:#11091f;color:#f6edff;font-family:system-ui,-apple-syst
 function q(){const p=new URLSearchParams();for(const id of ['guildId','category','actionType','actorId','targetId']){const v=document.getElementById(id).value.trim();if(v)p.set(id,v)}return p}
 function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 function guild(){return document.getElementById('guildId').value.trim()}
-async function loadLogs(){const r=await fetch('/api/audit/logs?'+q().toString());const j=await r.json();document.getElementById('status').textContent=j.success?'โหลด '+j.records.length+' รายการ':j.error;document.getElementById('rows').innerHTML=(j.records||[]).map(x=>'<tr><td>'+esc(new Date(x.createdAt||0).toLocaleString())+'</td><td>'+esc(x.category)+'</td><td class="'+esc(x.severity)+'">'+esc(x.severity)+'</td><td>'+esc(x.actionType)+'</td><td>'+esc(x.actorId||'-')+'</td><td>'+esc(x.targetId||'-')+'</td><td>'+esc(x.summary||'-')+'</td></tr>').join('')}
+function renderRows(records){document.getElementById('rows').innerHTML=(records||[]).map(x=>'<tr><td>'+esc(new Date(x.createdAt||0).toLocaleString())+'</td><td>'+esc(x.category)+'</td><td class="'+esc(x.severity||'warning')+'">'+esc(x.severity||x.reason||'-')+'</td><td>'+esc(x.actionType||'-')+'</td><td>'+esc(x.actorId||'-')+'</td><td>'+esc(x.targetId||'-')+'</td><td>'+esc(x.summary||x.reason||'-')+'</td></tr>').join('')}
+async function loadLogs(){const r=await fetch('/api/audit/logs?'+q().toString());const j=await r.json();document.getElementById('status').textContent=j.success?'โหลด '+j.records.length+' รายการ':j.error;renderRows(j.records)}
 function exportLogs(fmt){const p=q();p.set('format',fmt);location.href='/api/audit/export?'+p.toString()}
 async function loadHealth(){const p=q();const r=await fetch('/api/audit/health?'+p.toString());const j=await r.json();document.getElementById('status').textContent=j.success?'health: '+JSON.stringify(j.health):j.error}
+async function loadDeadLetters(){const p=q();const r=await fetch('/api/audit/dead-letters?'+p.toString());const j=await r.json();document.getElementById('status').textContent=j.success?'failed sends '+j.records.length+' รายการ':j.error;renderRows(j.records)}
 async function loadSettings(){const p=new URLSearchParams();if(guild())p.set('guildId',guild());const r=await fetch('/api/audit/settings?'+p.toString());const j=await r.json();if(!j.success){document.getElementById('settingsStatus').textContent=j.error;return}const s=j.settings||{};document.getElementById('messageCreateEnabled').checked=!!s.messageCreateEnabled;document.getElementById('reconcilerEnabled').checked=!!s.reconcilerEnabled;document.getElementById('retentionDays').value=s.retentionDays??90;document.getElementById('reconcilerLimit').value=s.reconcilerLimit??10;document.getElementById('settingsStatus').textContent='loaded'}
 async function saveSettings(){const body={guildId:guild(),messageCreateEnabled:document.getElementById('messageCreateEnabled').checked,reconcilerEnabled:document.getElementById('reconcilerEnabled').checked,retentionDays:Number(document.getElementById('retentionDays').value||90),reconcilerLimit:Number(document.getElementById('reconcilerLimit').value||10)};const r=await fetch('/api/audit/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const j=await r.json();document.getElementById('settingsStatus').textContent=j.success?'saved':j.error}
 </script>
