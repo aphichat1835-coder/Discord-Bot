@@ -2,6 +2,7 @@ const { routeAndSendLog, safeAuditError } = require("./logCore");
 const { readEntryName, readActorId, readTargetId } = require("./auditGenericFormatter");
 const { renderAuditEntry } = require("./auditSpecificRenderers");
 const { categoryForAuditEvent, severityForAuditEvent } = require("./auditEventMap");
+const { defaultAuditDedup, auditEntryKey } = require("./auditDedup");
 const auditStorage = require("./auditStorage");
 
 const cursorKey = guildId => `audit_reconciler_cursor_${guildId}`;
@@ -52,7 +53,10 @@ function normalizeEntry(rawEntry) {
 
 async function processEntry({ guild, sessionManager, entry, seen }) {
     const id = entryId(entry);
-    if (!id || seen.has(id)) return false;
+    if (!id) return false;
+
+    const dedupKey = auditEntryKey(guild.id, id);
+    if (seen.has(id) || defaultAuditDedup.seen(dedupKey)) return false;
 
     const normalized = normalizeEntry(entry);
     const embed = renderAuditEntry(entry, {
@@ -66,7 +70,7 @@ async function processEntry({ guild, sessionManager, entry, seen }) {
         sessionManager,
         category: normalized.category,
         embed,
-        debounceKey: `audit-reconciler:${guild.id}:${id}`,
+        debounceKey: dedupKey,
         debounceMs: 60 * 1000
     });
 
