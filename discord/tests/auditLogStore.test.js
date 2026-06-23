@@ -16,6 +16,10 @@ test("audit log store builds filtered query", () => {
     });
 });
 
+test("audit log store exports delete helper", () => {
+    assert.equal(typeof auditLogStore.deleteOlderThan, "function");
+});
+
 test("audit storage normalizes records", () => {
     const record = auditStorage.normalizeAuditRecord({
         eventId: "event1",
