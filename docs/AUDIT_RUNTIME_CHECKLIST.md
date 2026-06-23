@@ -34,8 +34,9 @@ If `VIEW_AUDIT_LOG` is missing, gateway logs should still work, but executor fie
 6. Verify channel/role/invite/emoji/sticker/thread/webhook logs still work.
 7. Enable `AUDIT_RECONCILER_ENABLED=true` in a private test server only.
 8. Confirm reconciler does not spam duplicate logs.
-9. Confirm `/api/audit/logs`, `/api/audit/export`, and `/api/audit/health` after routes are registered.
+9. Confirm `/api/audit/logs`, `/api/audit/export`, `/api/audit/health`, `/api/audit/settings`, and `/api/audit/dead-letters` after routes are registered.
 10. Confirm audit records save to Mongo and fallback settings do not grow unexpectedly.
+11. Temporarily remove one configured log channel in a test server and confirm the failed send is visible in dead letters.
 
 ## Manual event checklist
 
@@ -56,6 +57,14 @@ If `VIEW_AUDIT_LOG` is missing, gateway logs should still work, but executor fie
 - Auto moderation actions
 - Onboarding/home settings
 - Voice channel status create/delete
+
+## Reliability checklist
+
+- Missing log channel creates a dead-letter record.
+- Send failure creates a dead-letter record.
+- Queue-full condition creates a dead-letter record.
+- Dead-letter page/API loads without exposing unrelated session data.
+- Export still works after filters are applied.
 
 ## Merge gate
 
