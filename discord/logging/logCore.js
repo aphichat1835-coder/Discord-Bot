@@ -262,6 +262,7 @@ async function saveLogFailure({ sessionManager, guild, category, reason, detail,
     return auditDeadLetter.saveDeadLetter(sessionManager, {
         guildId: guild?.id,
         category,
+        actionType: reason,
         reason,
         payload: {
             detail: safeAuditText(detail || reason, 300),
