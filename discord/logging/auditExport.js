@@ -17,8 +17,8 @@ const CSV_COLUMNS = Object.freeze([
 ]);
 
 function csvEscape(value) {
-    const text = safeAuditText(value ?? "", 1000).replace(/\r?\n/g, " ");
-    return `"${text.replace(/"/g, "\"\"")}"`;
+    const text = safeAuditText(value ?? "", 1000).replaceAll(/\r?\n/g, " ");
+    return `"${text.replaceAll("\"", "\"\"")}"`;
 }
 
 function recordsToCsv(records = []) {
