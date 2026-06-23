@@ -10,7 +10,7 @@ const DEFAULT_CHANNEL_NAMES = Object.freeze({
 });
 
 function expectedAuditChannels(overrides = {}) {
-    return { ...DEFAULT_CHANNEL_NAMES, ...(overrides || {}) };
+    return { ...DEFAULT_CHANNEL_NAMES, ...overrides };
 }
 
 function channelExists(guild, nameOrId) {
@@ -19,7 +19,7 @@ function channelExists(guild, nameOrId) {
 }
 
 function buildAuditChannelRepairPlan(guild, configured = {}) {
-    const expected = expectedAuditChannels(configured.names || {});
+    const expected = expectedAuditChannels(configured.names);
     const categories = Object.values(LOG_CHANNEL_TYPES);
     const missing = [];
     const present = [];
