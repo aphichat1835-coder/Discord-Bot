@@ -1,4 +1,6 @@
 const { safeAuditText, safeAuditError } = require("./logCore");
+let auditLogStore = null;
+try { auditLogStore = require("./auditLogStore"); } catch (_) {}
 
 function storageKey(guildId, eventId) {
     return `audit_event_${guildId}_${eventId}`;
@@ -32,36 +34,60 @@ function normalizeAuditRecord(input = {}) {
     };
 }
 
-async function saveAuditRecord(sessionManager, recordInput) {
+async function saveFallback(sessionManager, record) {
     if (!sessionManager?.setSetting || !sessionManager?.getSetting) return null;
+    await sessionManager.setSetting(storageKey(record.guildId, record.eventId), record);
+    const current = await sessionManager.getSetting(indexKey(record.guildId), []);
+    const list = Array.isArray(current) ? current : [];
+    const next = [record.eventId, ...list.filter(id => id !== record.eventId)].slice(0, 500);
+    await sessionManager.setSetting(indexKey(record.guildId), next);
+    return record;
+}
+
+async function saveAuditRecord(sessionManager, recordInput) {
     const record = normalizeAuditRecord(recordInput);
     try {
-        await sessionManager.setSetting(storageKey(record.guildId, record.eventId), record);
-        const current = await sessionManager.getSetting(indexKey(record.guildId), []);
-        const list = Array.isArray(current) ? current : [];
-        const next = [record.eventId, ...list.filter(id => id !== record.eventId)].slice(0, 500);
-        await sessionManager.setSetting(indexKey(record.guildId), next);
+        if (auditLogStore?.saveRecord) await auditLogStore.saveRecord(record);
+        await saveFallback(sessionManager, record).catch(() => null);
         return record;
     } catch (err) {
         console.warn(`[AUDIT_STORAGE] save failed: ${safeAuditError(err, 240)}`);
-        return null;
+        return saveFallback(sessionManager, record).catch(() => null);
     }
 }
 
 async function getAuditRecord(sessionManager, guildId, eventId) {
-    if (!sessionManager?.getSetting || !guildId || !eventId) return null;
+    if (!guildId || !eventId) return null;
+    try {
+        const fromStore = auditLogStore?.getRecord ? await auditLogStore.getRecord(guildId, eventId) : null;
+        if (fromStore) return fromStore;
+    } catch (err) {
+        console.warn(`[AUDIT_STORAGE] store get failed: ${safeAuditError(err, 240)}`);
+    }
+    if (!sessionManager?.getSetting) return null;
     return sessionManager.getSetting(storageKey(guildId, eventId), null);
 }
 
-async function listAuditRecords(sessionManager, guildId, limit = 50) {
+async function listFallback(sessionManager, guildId, limit = 50) {
     if (!sessionManager?.getSetting || !guildId) return [];
     const ids = await sessionManager.getSetting(indexKey(guildId), []);
     const out = [];
     for (const id of (Array.isArray(ids) ? ids : []).slice(0, Math.max(1, Math.min(200, Number(limit) || 50)))) {
-        const record = await getAuditRecord(sessionManager, guildId, id);
+        const record = await sessionManager.getSetting(storageKey(guildId, id), null);
         if (record) out.push(record);
     }
     return out;
+}
+
+async function listAuditRecords(sessionManager, guildId, limit = 50, filters = {}) {
+    if (!guildId) return [];
+    try {
+        const fromStore = auditLogStore?.listRecords ? await auditLogStore.listRecords(guildId, limit, filters) : [];
+        if (fromStore.length) return fromStore;
+    } catch (err) {
+        console.warn(`[AUDIT_STORAGE] store list failed: ${safeAuditError(err, 240)}`);
+    }
+    return listFallback(sessionManager, guildId, limit);
 }
 
 module.exports = {
@@ -70,5 +96,9 @@ module.exports = {
     normalizeAuditRecord,
     saveAuditRecord,
     getAuditRecord,
-    listAuditRecords
+    listAuditRecords,
+    _test: {
+        saveFallback,
+        listFallback
+    }
 };
