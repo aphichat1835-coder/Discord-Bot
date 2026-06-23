@@ -13,22 +13,9 @@ const sessionManager = require("../sessionManager");
 const {
     requireMemberPermission,
     requireBotPermission,
-    checkRoleHierarchy,
     safeDefer
 } = require("../guards/commandGuards");
-const modCaseManager = require("../logging/modCaseManager");
-const { LOG_CHANNEL_TYPES, routeAndSendLog } = require("../logging/logCore");
-const {
-    requiredModerationPermission,
-    readModerationInput,
-    parseTimeoutDuration,
-    buildModerationDmEmbed,
-    buildCaseInput,
-    buildModerationReplyEmbed,
-    moderationErrorReply
-} = require("./moderationHelpers");
-
-const VALIDATION_STOP = Symbol("VALIDATION_STOP");
+const { handleModerationCommand } = require("./moderationWorkflow");
 
 // Race Condition Guards
 const activeVoiceKicks = new Set();
@@ -41,7 +28,7 @@ async function handle(interaction, client, sessionManager, getLogChannel) {
 
     if (cmd === "voicekickall") return handleVoiceKickAll(interaction, getLogChannel);
     if (cmd === "clear")        return handleClear(interaction);
-    if (["ban", "kick", "timeout"].includes(cmd)) return handleModeration(interaction, client);
+    if (["ban", "kick", "timeout"].includes(cmd)) return handleModerationCommand(interaction, client);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -144,150 +131,6 @@ async function handleClear(interaction) {
             return interaction.reply({ content: `> ${config.emojis.warning} ข้อความบางรายการถูกลบไปแล้ว`, ephemeral: true });
         }
         return interaction.reply({ content: `> ${config.emojis.error} ล้มเหลว: ${e.message}`, ephemeral: true });
-    }
-}
-
-async function requireModerationPermission(interaction, action) {
-    const requiredPermission = requiredModerationPermission(action);
-    return requireMemberPermission(
-        interaction,
-        [requiredPermission, "ADMINISTRATOR"],
-        `> ${config.emojis.no_entry} ไม่มีสิทธิ์ใช้งานคำสั่งนี้!`,
-        { mode: "any" }
-    );
-}
-
-function rejectMissingTarget(interaction, target) {
-    if (target) return null;
-    return interaction.reply({ content: `> ${config.emojis.error} ไม่พบสมาชิกเป้าหมายในเซิร์ฟเวอร์`, ephemeral: true });
-}
-
-function rejectHierarchy(interaction, client, target) {
-    const hierarchy = checkRoleHierarchy({ interaction, target, client, config });
-    if (hierarchy.ok) return null;
-    return interaction.reply({ content: hierarchy.content, ephemeral: true });
-}
-
-function rejectUnmanageableTarget(interaction, target, action) {
-    if (target.manageable || action === "ban") return null;
-    return interaction.reply({ content: `> ${config.emojis.error} บอทไม่มีสิทธิ์จัดการสมาชิกท่านนี้`, ephemeral: true });
-}
-
-function rejectInvalidDuration(interaction, duration) {
-    if (duration.ok) return null;
-    return interaction.reply({ content: duration.content, ephemeral: true });
-}
-
-async function validateModerationRequest(interaction, client, input) {
-    if (!await requireModerationPermission(interaction, input.action)) return VALIDATION_STOP;
-    return rejectMissingTarget(interaction, input.target)
-        || rejectHierarchy(interaction, client, input.target)
-        || rejectUnmanageableTarget(interaction, input.target, input.action)
-        || rejectInvalidDuration(interaction, input.duration);
-}
-
-async function sendModerationDm(target, embed) {
-    return target.user.send({ embeds: [embed] }).then(() => true).catch(() => false);
-}
-
-function assertBotPermission(interaction, permission) {
-    if (!interaction.guild.members.me.permissions.has(permission)) throw new Error("MISSING_PERMS");
-}
-
-async function applyBan(interaction, target, reason, dmEmbed) {
-    assertBotPermission(interaction, "BAN_MEMBERS");
-    const dmSent = await sendModerationDm(target, dmEmbed);
-    await target.ban({ reason });
-    return dmSent;
-}
-
-async function applyKick(interaction, target, reason, dmEmbed) {
-    assertBotPermission(interaction, "KICK_MEMBERS");
-    const dmSent = await sendModerationDm(target, dmEmbed);
-    await target.kick(reason);
-    return dmSent;
-}
-
-async function applyTimeout(interaction, target, reason, duration, dmEmbed) {
-    assertBotPermission(interaction, "MODERATE_MEMBERS");
-    await target.timeout(duration.durationMs, reason);
-    return sendModerationDm(target, dmEmbed);
-}
-
-async function applyModerationAction(interaction, input) {
-    const dmEmbed = buildModerationDmEmbed(
-        interaction,
-        input.target,
-        input.action,
-        input.reason,
-        input.duration.minutes
-    );
-
-    if (input.action === "ban") return applyBan(interaction, input.target, input.reason, dmEmbed);
-    if (input.action === "kick") return applyKick(interaction, input.target, input.reason, dmEmbed);
-    if (input.action === "timeout") return applyTimeout(interaction, input.target, input.reason, input.duration, dmEmbed);
-    return false;
-}
-
-async function createModerationCase(interaction, input, dmSent) {
-    return modCaseManager.createCase(
-        sessionManager,
-        buildCaseInput(interaction, input.target, input.action, input.reason, input.duration.durationMs, dmSent)
-    );
-}
-
-async function sendModerationCaseLog(interaction, caseDoc, action) {
-    const caseEmbed = modCaseManager.buildModerationCaseEmbed(caseDoc, {
-        title: `${config.emojis.mod_icon} Case #${caseDoc.caseNumber} | ${action.toUpperCase()} สำเร็จ`
-    });
-
-    await routeAndSendLog({
-        guild: interaction.guild,
-        sessionManager,
-        category: LOG_CHANNEL_TYPES.MODERATION,
-        embed: caseEmbed
-    });
-}
-
-async function performModeration(interaction, input) {
-    const dmSent = await applyModerationAction(interaction, input);
-    const caseDoc = await createModerationCase(interaction, input, dmSent);
-    await sendModerationCaseLog(interaction, caseDoc, input.action);
-    return { dmSent, caseDoc };
-}
-
-function successReply(interaction, input, result) {
-    const replyEmbed = buildModerationReplyEmbed(
-        interaction,
-        input.target,
-        input.action,
-        input.reason,
-        result.dmSent,
-        result.caseDoc.caseNumber
-    );
-    return interaction.editReply({ embeds: [replyEmbed] });
-}
-
-function failureReply(interaction, err) {
-    sessionManager.systemMetrics.increment("errors");
-    return interaction.editReply({ content: moderationErrorReply(err) });
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-//  ⚖️  BAN / KICK / TIMEOUT + CASE LOGGING
-// ════════════════════════════════════════════════════════════════════════════
-async function handleModeration(interaction, client) {
-    const baseInput = readModerationInput(interaction);
-    const input = { ...baseInput, duration: parseTimeoutDuration(interaction, baseInput.action) };
-    const rejection = await validateModerationRequest(interaction, client, input);
-    if (rejection === VALIDATION_STOP) return;
-    if (rejection) return rejection;
-
-    await safeDefer(interaction);
-    try {
-        return successReply(interaction, input, await performModeration(interaction, input));
-    } catch (err) {
-        return failureReply(interaction, err);
     }
 }
 
