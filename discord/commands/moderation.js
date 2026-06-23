@@ -28,6 +28,8 @@ const {
     moderationErrorReply
 } = require("./moderationHelpers");
 
+const VALIDATION_STOP = Symbol("VALIDATION_STOP");
+
 // Race Condition Guards
 const activeVoiceKicks = new Set();
 
@@ -177,7 +179,7 @@ function rejectInvalidDuration(interaction, duration) {
 }
 
 async function validateModerationRequest(interaction, client, input) {
-    if (!await requireModerationPermission(interaction, input.action)) return null;
+    if (!await requireModerationPermission(interaction, input.action)) return VALIDATION_STOP;
     return rejectMissingTarget(interaction, input.target)
         || rejectHierarchy(interaction, client, input.target)
         || rejectUnmanageableTarget(interaction, input.target, input.action)
@@ -278,6 +280,7 @@ async function handleModeration(interaction, client) {
     const baseInput = readModerationInput(interaction);
     const input = { ...baseInput, duration: parseTimeoutDuration(interaction, baseInput.action) };
     const rejection = await validateModerationRequest(interaction, client, input);
+    if (rejection === VALIDATION_STOP) return;
     if (rejection) return rejection;
 
     await safeDefer(interaction);
