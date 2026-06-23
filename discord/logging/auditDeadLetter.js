@@ -1,4 +1,12 @@
-const { safeAuditText, safeAuditError } = require("./logCore");
+function safeText(value, max = 500) {
+    const text = String(value ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").trim();
+    if (!text) return "-";
+    return text.length <= max ? text : `${text.slice(0, Math.max(0, max - 16))}... [TRUNCATED]`;
+}
+
+function safeError(err, max = 240) {
+    return safeText(err?.message || err, max);
+}
 
 function deadLetterIndexKey(guildId) {
     return `audit_dead_letter_index_${guildId}`;
@@ -10,13 +18,13 @@ function deadLetterRecordKey(guildId, id) {
 
 function normalizeDeadLetter(input = {}) {
     const createdAt = Number(input.createdAt || Date.now());
-    const id = safeAuditText(input.id || `${createdAt}_${Math.random().toString(36).slice(2, 8)}`, 120);
+    const id = safeText(input.id || `${createdAt}_${Math.random().toString(36).slice(2, 8)}`, 120);
     return {
         id,
         guildId: String(input.guildId || "unknown"),
-        category: safeAuditText(input.category || "server", 40),
-        actionType: safeAuditText(input.actionType || input.type || "UNKNOWN", 120),
-        reason: safeAuditText(input.reason || "send_failed", 240),
+        category: safeText(input.category || "server", 40),
+        actionType: safeText(input.actionType || input.type || "UNKNOWN", 120),
+        reason: safeText(input.reason || "send_failed", 240),
         attempts: Math.max(0, Number(input.attempts || 0) || 0),
         payload: input.payload && typeof input.payload === "object" ? input.payload : {},
         createdAt,
@@ -35,7 +43,7 @@ async function saveDeadLetter(sessionManager, input = {}) {
         await sessionManager.setSetting(deadLetterIndexKey(record.guildId), next);
         return record;
     } catch (err) {
-        console.warn(`[AUDIT_DEAD_LETTER] save failed: ${safeAuditError(err, 240)}`);
+        console.warn(`[AUDIT_DEAD_LETTER] save failed: ${safeError(err, 240)}`);
         return null;
     }
 }
@@ -61,6 +69,8 @@ async function clearDeadLetter(sessionManager, guildId, id) {
 }
 
 module.exports = {
+    safeText,
+    safeError,
     deadLetterIndexKey,
     deadLetterRecordKey,
     normalizeDeadLetter,
