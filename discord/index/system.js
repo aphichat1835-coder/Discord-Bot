@@ -237,7 +237,7 @@ async function closeServer() {
     });
 }
 
-function initShutdown({ sessionManager, voiceWorker, client, memoryMonitor, auditLogger }) {
+function initShutdown({ sessionManager, voiceWorker, client, memoryMonitor, auditLogger, auditReconcilerScheduler }) {
     let isShuttingDownMain = false;
 
     async function shutdown(signal) {
@@ -247,6 +247,7 @@ function initShutdown({ sessionManager, voiceWorker, client, memoryMonitor, audi
         console.log(`\n⛔ [SHUTDOWN] ${signal} — graceful shutdown starting...`);
         stopCronJobs();
         auditLogger?.stopAuditCleanup?.();
+        auditReconcilerScheduler?.stop?.();
         voiceWorker.setShuttingDown(true);
 
         const timeout = setTimeout(() => {
