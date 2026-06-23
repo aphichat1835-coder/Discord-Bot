@@ -1,3 +1,5 @@
+const crypto = require("node:crypto");
+
 function safeText(value, max = 500) {
     const text = String(value ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").trim();
     if (!text) return "-";
@@ -16,9 +18,13 @@ function deadLetterRecordKey(guildId, id) {
     return `audit_dead_letter_${guildId}_${id}`;
 }
 
+function makeDeadLetterId(createdAt = Date.now()) {
+    return `${createdAt}_${crypto.randomUUID().slice(0, 8)}`;
+}
+
 function normalizeDeadLetter(input = {}) {
     const createdAt = Number(input.createdAt || Date.now());
-    const id = safeText(input.id || `${createdAt}_${Math.random().toString(36).slice(2, 8)}`, 120);
+    const id = safeText(input.id || makeDeadLetterId(createdAt), 120);
     return {
         id,
         guildId: String(input.guildId || "unknown"),
@@ -73,6 +79,7 @@ module.exports = {
     safeError,
     deadLetterIndexKey,
     deadLetterRecordKey,
+    makeDeadLetterId,
     normalizeDeadLetter,
     saveDeadLetter,
     listDeadLetters,
