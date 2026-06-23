@@ -42,6 +42,10 @@ async function loadFilteredRecords(sessionManager, guildId, query = {}, limit = 
     return filterRecords(records, filters);
 }
 
+async function loadDeadLetterRecords(sessionManager, guildId, query = {}) {
+    return auditDeadLetter.listDeadLetters(sessionManager, guildId, readLimit(query, 25, 100));
+}
+
 function registerAuditApiRoutes({ app, express, sessionManager, client, auditLogger, checkAuth }) {
     app.get("/api/audit/logs", async (req, res) => {
         if (!checkAuth(req, res)) return;
@@ -99,7 +103,7 @@ function registerAuditApiRoutes({ app, express, sessionManager, client, auditLog
         try {
             const guildId = readGuildId(req.query, client);
             if (!guildId) return res.status(400).json({ success: false, error: "guildId required" });
-            const records = await auditDeadLetter.listDeadLetters(sessionManager, guildId, readLimit(req.query, 25, 100));
+            const records = await loadDeadLetterRecords(sessionManager, guildId, req.query);
             res.json({ success: true, guildId, count: records.length, records });
         } catch (err) {
             res.status(500).json({ success: false, error: err.message });
@@ -138,5 +142,6 @@ module.exports = {
     readGuildId,
     readLimit,
     loadFilteredRecords,
+    loadDeadLetterRecords,
     registerAuditApiRoutes
 };
