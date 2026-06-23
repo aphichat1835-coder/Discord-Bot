@@ -1,5 +1,6 @@
 const { routeAndSendLog, safeAuditError } = require("./logCore");
-const { renderGenericAuditEntry, readEntryName, readActorId, readTargetId } = require("./auditGenericFormatter");
+const { readEntryName, readActorId, readTargetId } = require("./auditGenericFormatter");
+const { renderAuditEntry } = require("./auditSpecificRenderers");
 const { categoryForAuditEvent, severityForAuditEvent } = require("./auditEventMap");
 const auditStorage = require("./auditStorage");
 
@@ -54,7 +55,7 @@ async function processEntry({ guild, sessionManager, entry, seen }) {
     if (!id || seen.has(id)) return false;
 
     const normalized = normalizeEntry(entry);
-    const embed = renderGenericAuditEntry(entry, {
+    const embed = renderAuditEntry(entry, {
         category: normalized.category,
         severity: normalized.severity,
         footer: "Audit reconciler"
@@ -85,7 +86,7 @@ async function processEntry({ guild, sessionManager, entry, seen }) {
         summary: normalized.action,
         metadata: {
             sent,
-            generic: true
+            renderer: "specialized_or_generic"
         },
         createdAt: normalized.createdAt
     });
