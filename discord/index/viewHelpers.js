@@ -18,6 +18,7 @@ const NAV_LINKS = [
     ["/docs", "📖 คู่มือ"],
     ["/logs", "📜 Logs"],
     ["/logs/voice", "🔊 Voice"],
+    ["/audit-logs", "🧾 Audit"]
 ];
 
 function navBar(active = "") {
