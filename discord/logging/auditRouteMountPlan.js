@@ -8,6 +8,7 @@ function buildAuditRouteMountPlan() {
             "/api/audit/logs",
             "/api/audit/export",
             "/api/audit/health",
+            "/api/audit/dead-letters",
             "/api/audit/settings",
             "/audit-logs"
         ],
@@ -15,7 +16,8 @@ function buildAuditRouteMountPlan() {
             "Mount inside registerRoutes after checkAuth exists.",
             "Do not remove existing /api auth, rate limit, reveal token, or CSRF logic.",
             "The audit routes still call checkAuth directly, so they remain protected even before deeper UI integration.",
-            "Settings routes are log-only controls: message create logging, reconciler opt-in, retention, and category toggles."
+            "Settings routes are log-only controls: message create logging, reconciler opt-in, retention, and category toggles.",
+            "Dead-letter route lets the owner inspect failed log sends without losing failed audit evidence."
         ]
     };
 }
