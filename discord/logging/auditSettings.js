@@ -26,7 +26,7 @@ function normalizeBool(value, fallback = false) {
 }
 
 function normalizeAuditSettings(input = {}) {
-    const mergedCategories = { ...DEFAULT_AUDIT_SETTINGS.categories, ...(input.categories || {}) };
+    const mergedCategories = { ...DEFAULT_AUDIT_SETTINGS.categories, ...input.categories };
     const retentionDays = input.retentionDays === 0 || input.retentionDays === "forever"
         ? 0
         : Math.max(1, Number(input.retentionDays || DEFAULT_AUDIT_SETTINGS.retentionDays) || DEFAULT_AUDIT_SETTINGS.retentionDays);
@@ -50,7 +50,7 @@ async function getAuditSettings(sessionManager, guildId) {
 
 async function saveAuditSettings(sessionManager, guildId, patch = {}) {
     const current = await getAuditSettings(sessionManager, guildId);
-    const next = normalizeAuditSettings({ ...current, ...patch, categories: { ...current.categories, ...(patch.categories || {}) } });
+    const next = normalizeAuditSettings({ ...current, ...patch, categories: { ...current.categories, ...patch.categories } });
     await sessionManager?.setSetting?.(settingKey(guildId), next).catch(() => {});
     return next;
 }
