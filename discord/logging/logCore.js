@@ -6,6 +6,7 @@
 
 const config = require("../config.json");
 const { sanitizeLogText, safeError } = require("../core/safeLogger");
+const auditDeadLetter = require("./auditDeadLetter");
 
 const LOG_CHANNEL_TYPES = Object.freeze({
     MESSAGE: "message",
@@ -257,21 +258,45 @@ class GuildLogQueue {
 
 const defaultQueue = new GuildLogQueue();
 
+async function saveLogFailure({ sessionManager, guild, category, reason, detail, embed }) {
+    return auditDeadLetter.saveDeadLetter(sessionManager, {
+        guildId: guild?.id,
+        category,
+        reason,
+        payload: {
+            detail: safeAuditText(detail || reason, 300),
+            title: embed?.title || embed?.data?.title || null,
+            description: embed?.description || embed?.data?.description || null
+        }
+    }).catch(() => null);
+}
+
 async function routeAndSendLog({ guild, sessionManager, category, embed, content = null, debounceKey = null, debounceMs = 0 }) {
     if (!guild || !embed) return false;
     if (defaultQueue.isDebounced(debounceKey, debounceMs)) return false;
 
-    return defaultQueue.enqueue(guild.id, async () => {
+    const queued = defaultQueue.enqueue(guild.id, async () => {
         const channel = await getLogChannel(guild, sessionManager, category);
-        if (!channel) return false;
+        if (!channel) {
+            await saveLogFailure({ sessionManager, guild, category, reason: "missing_log_channel", detail: category, embed });
+            return false;
+        }
         try {
             await channel.send({ content: content || undefined, embeds: [embed] });
             return true;
         } catch (err) {
             console.warn(`[LOG_CORE] Failed to send log: ${safeAuditError(err, 240)}`);
+            await saveLogFailure({ sessionManager, guild, category, reason: "send_failed", detail: safeAuditError(err, 240), embed });
             return false;
         }
     });
+
+    if (!queued) {
+        await saveLogFailure({ sessionManager, guild, category, reason: "queue_full", detail: defaultQueue.stats().maxDepth, embed });
+        return false;
+    }
+
+    return queued;
 }
 
 module.exports = {
@@ -288,5 +313,6 @@ module.exports = {
     getConfiguredChannelName,
     findTextChannelByName,
     getLogChannel,
+    saveLogFailure,
     routeAndSendLog
 };
