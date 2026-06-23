@@ -9,5 +9,7 @@ test("audit route mount plan documents required routes", () => {
     assert.ok(plan.routes.includes("/api/audit/logs"));
     assert.ok(plan.routes.includes("/api/audit/export"));
     assert.ok(plan.routes.includes("/api/audit/health"));
+    assert.ok(plan.routes.includes("/api/audit/dead-letters"));
+    assert.ok(plan.routes.includes("/api/audit/settings"));
     assert.ok(plan.routes.includes("/audit-logs"));
 });
