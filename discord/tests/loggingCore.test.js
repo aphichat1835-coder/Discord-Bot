@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const logCore = require("../logging/logCore");
+const deadLetter = require("../logging/auditDeadLetter");
 const { buildLogEmbed, buildIdBlock } = require("../logging/logFormat");
 const { diffPermissionArrays, MessageSnapshotCache } = require("../logging/auditHelpers");
 const securityRules = require("../logging/securityRules");
@@ -78,4 +79,12 @@ test("event factory creates message event summaries", () => {
     assert.equal(event.type, logCore.LOG_TYPES.MESSAGE_DELETE);
     assert.equal(event.category, "message");
     assert.match(eventFactory.eventSummary(event), /MESSAGE_DELETE/);
+});
+
+test("dead-letter queue normalizes and keys failed logs", () => {
+    const record = deadLetter.normalizeDeadLetter({ guildId: "g1", category: "message", reason: "missing_log_channel" });
+    assert.equal(record.guildId, "g1");
+    assert.equal(record.category, "message");
+    assert.equal(record.reason, "missing_log_channel");
+    assert.equal(deadLetter.deadLetterIndexKey("g1"), "audit_dead_letter_index_g1");
 });
