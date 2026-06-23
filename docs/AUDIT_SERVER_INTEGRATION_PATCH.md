@@ -44,6 +44,7 @@ registerAuditWebBundle({ app, express, sessionManager, client, auditLogger, chec
 - Do not remove `auth.requireCsrf`.
 - Do not touch reveal-token routes while applying this patch.
 - Keep audit routes behind dashboard auth.
+- Keep `AUDIT_RECONCILER_ENABLED=false` while first mounting the web/API bundle.
 
 ## Verify after patch
 
@@ -52,4 +53,5 @@ registerAuditWebBundle({ app, express, sessionManager, client, auditLogger, chec
 3. `/audit-logs` redirects/blocks when unauthenticated.
 4. `/api/audit/logs` requires dashboard auth.
 5. `/api/audit/dead-letters` requires dashboard auth.
-6. Existing `/api/status`, `/api/session/:id`, and settings routes still work.
+6. `/api/audit/settings` reads current settings.
+7. Existing `/api/status`, `/api/session/:id`, and settings routes still work.
