@@ -13,7 +13,7 @@ function changeValue(entry, key, side = "new") {
     if (!found) return null;
     const legacyKey = side === "old" ? "old_value" : "new_value";
     const simpleKey = side === "old" ? "old" : "new";
-    return Object.prototype.hasOwnProperty.call(found, legacyKey) ? found[legacyKey] : found[simpleKey];
+    return Object.hasOwn(found, legacyKey) ? found[legacyKey] : found[simpleKey];
 }
 
 function changeLine(entry, label, key) {
@@ -200,22 +200,31 @@ function renderVoiceChannelStatus(entry) {
     ]);
 }
 
+const RENDERER_RULES = Object.freeze([
+    [eventName => eventName === "GUILD_UPDATE", renderGuildUpdate],
+    [eventName => eventName.startsWith("CHANNEL_") && !eventName.startsWith("CHANNEL_OVERWRITE_"), renderChannelAudit],
+    [eventName => eventName.startsWith("ROLE_"), renderRoleAudit],
+    [eventName => eventName.startsWith("CHANNEL_OVERWRITE_"), renderChannelOverwrite],
+    [eventName => eventName === "MEMBER_MOVE" || eventName === "MEMBER_DISCONNECT", renderMemberVoiceAudit],
+    [eventName => eventName === "MEMBER_PRUNE", renderMemberPrune],
+    [eventName => eventName.startsWith("WEBHOOK_"), renderWebhook],
+    [eventName => eventName.startsWith("INVITE_"), renderInvite],
+    [eventName => eventName.startsWith("AUTO_MODERATION_"), renderAutomation],
+    [eventName => eventName.startsWith("STAGE_") || eventName.startsWith("GUILD_SCHEDULED_EVENT_"), renderScheduledOrStage],
+    [eventName => eventName.startsWith("SOUNDBOARD_"), renderSoundboard],
+    [eventName => eventName.startsWith("ONBOARDING_") || eventName.startsWith("HOME_SETTINGS_"), renderOnboardingOrHome],
+    [eventName => eventName.startsWith("VOICE_CHANNEL_STATUS_"), renderVoiceChannelStatus]
+]);
+
+function rendererFor(eventName) {
+    const rule = RENDERER_RULES.find(([matches]) => matches(eventName));
+    return rule?.[1] || null;
+}
+
 function renderAuditEntry(entry = {}, options = {}) {
     const eventName = formatter.readEntryName(entry);
-    if (eventName === "GUILD_UPDATE") return renderGuildUpdate(entry, options);
-    if (eventName.startsWith("CHANNEL_") && !eventName.startsWith("CHANNEL_OVERWRITE_")) return renderChannelAudit(entry, options);
-    if (eventName.startsWith("ROLE_")) return renderRoleAudit(entry, options);
-    if (eventName.startsWith("CHANNEL_OVERWRITE_")) return renderChannelOverwrite(entry, options);
-    if (eventName === "MEMBER_MOVE" || eventName === "MEMBER_DISCONNECT") return renderMemberVoiceAudit(entry, options);
-    if (eventName === "MEMBER_PRUNE") return renderMemberPrune(entry, options);
-    if (eventName.startsWith("WEBHOOK_")) return renderWebhook(entry, options);
-    if (eventName.startsWith("INVITE_")) return renderInvite(entry, options);
-    if (eventName.startsWith("AUTO_MODERATION_")) return renderAutomation(entry, options);
-    if (eventName.startsWith("STAGE_") || eventName.startsWith("GUILD_SCHEDULED_EVENT_")) return renderScheduledOrStage(entry, options);
-    if (eventName.startsWith("SOUNDBOARD_")) return renderSoundboard(entry, options);
-    if (eventName.startsWith("ONBOARDING_") || eventName.startsWith("HOME_SETTINGS_")) return renderOnboardingOrHome(entry, options);
-    if (eventName.startsWith("VOICE_CHANNEL_STATUS_")) return renderVoiceChannelStatus(entry, options);
-    return formatter.renderGenericAuditEntry(entry, options);
+    const renderer = rendererFor(eventName);
+    return renderer ? renderer(entry) : formatter.renderGenericAuditEntry(entry, options);
 }
 
 module.exports = {
@@ -238,5 +247,7 @@ module.exports = {
     renderSoundboard,
     renderOnboardingOrHome,
     renderVoiceChannelStatus,
+    RENDERER_RULES,
+    rendererFor,
     renderAuditEntry
 };
