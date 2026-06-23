@@ -24,7 +24,7 @@ function normalizeMode(value) {
 
 function normalizeTrustedList(value) {
     if (!value) return [];
-    if (Array.isArray(value)) return value.map(item => String(item)).filter(Boolean);
+    if (Array.isArray(value)) return value.map(String).filter(Boolean);
     return String(value).split(",").map(item => item.trim()).filter(Boolean);
 }
 
@@ -39,7 +39,7 @@ function thresholdFor(actionType, settings = {}) {
     const action = String(actionType || "UNKNOWN").toUpperCase();
     return {
         ...(DEFAULT_THRESHOLDS[action] || { count: 1, windowMs: 60_000, severity: "warning" }),
-        ...(settings.thresholds?.[action] || {})
+        ...settings.thresholds?.[action]
     };
 }
 
