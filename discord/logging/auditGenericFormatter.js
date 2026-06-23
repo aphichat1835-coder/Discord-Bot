@@ -27,8 +27,8 @@ function readTargetId(entry = {}) {
 
 function formatChangeLine(change = {}) {
     const key = safeAuditText(change.key || "unknown", 80);
-    const before = Object.prototype.hasOwnProperty.call(change, "old_value") ? change.old_value : change.old;
-    const after = Object.prototype.hasOwnProperty.call(change, "new_value") ? change.new_value : change.new;
+    const before = Object.hasOwn(change, "old_value") ? change.old_value : change.old;
+    const after = Object.hasOwn(change, "new_value") ? change.new_value : change.new;
     return `• ${key}: ${stringifyValue(before, 90)} -> ${stringifyValue(after, 90)}`;
 }
 
