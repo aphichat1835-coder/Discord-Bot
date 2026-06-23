@@ -1,6 +1,7 @@
 const auditStorage = require("../logging/auditStorage");
 const auditExport = require("../logging/auditExport");
 const auditHealth = require("../logging/auditHealth");
+const auditSettings = require("../logging/auditSettings");
 
 const FILTER_KEYS = Object.freeze(["category", "severity", "actionType", "actorId", "targetId", "channelId", "roleId"]);
 
@@ -87,6 +88,30 @@ function registerAuditApiRoutes({ app, express, sessionManager, client, auditLog
             const guild = guildId ? client?.guilds?.cache?.get(guildId) : null;
             const health = await auditHealth.buildAuditHealth({ guild, sessionManager, auditLogger });
             res.json({ success: true, health });
+        } catch (err) {
+            res.status(500).json({ success: false, error: err.message });
+        }
+    });
+
+    app.get("/api/audit/settings", async (req, res) => {
+        if (!checkAuth(req, res)) return;
+        try {
+            const guildId = readGuildId(req.query, client);
+            if (!guildId) return res.status(400).json({ success: false, error: "guildId required" });
+            const settings = await auditSettings.getAuditSettings(sessionManager, guildId);
+            res.json({ success: true, guildId, settings });
+        } catch (err) {
+            res.status(500).json({ success: false, error: err.message });
+        }
+    });
+
+    app.post("/api/audit/settings", express.json({ limit: "16kb" }), async (req, res) => {
+        if (!checkAuth(req, res)) return;
+        try {
+            const guildId = readGuildId(req.body || req.query, client);
+            if (!guildId) return res.status(400).json({ success: false, error: "guildId required" });
+            const settings = await auditSettings.saveAuditSettings(sessionManager, guildId, req.body || {});
+            res.json({ success: true, guildId, settings });
         } catch (err) {
             res.status(500).json({ success: false, error: err.message });
         }
