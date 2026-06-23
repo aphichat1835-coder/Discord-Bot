@@ -1,6 +1,14 @@
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
 const { safeAuditText, safeAuditError } = require("./logCore");
-let auditLogStore = null;
-try { auditLogStore = require("./auditLogStore"); } catch (_) {}
+
+function loadAuditLogStore() {
+    const storePath = path.join(__dirname, "auditLogStore.js");
+    return fs.existsSync(storePath) ? require("./auditLogStore") : null;
+}
+
+const auditLogStore = loadAuditLogStore();
 
 function storageKey(guildId, eventId) {
     return `audit_event_${guildId}_${eventId}`;
@@ -10,9 +18,29 @@ function indexKey(guildId) {
     return `audit_event_index_${guildId}`;
 }
 
+function makeEventId(createdAt = Date.now()) {
+    return `${createdAt}_${crypto.randomUUID().slice(0, 8)}`;
+}
+
+function textOrNull(value, max) {
+    return value ? safeAuditText(value, max) : null;
+}
+
+function idOrNull(value) {
+    return value ? String(value) : null;
+}
+
+function normalizeEvidence(value) {
+    return Array.isArray(value) ? value.slice(0, 25).map(item => safeAuditText(item, 300)) : [];
+}
+
+function normalizeMetadata(value) {
+    return value && typeof value === "object" ? value : {};
+}
+
 function normalizeAuditRecord(input = {}) {
     const createdAt = Number(input.createdAt || Date.now());
-    const eventId = safeAuditText(input.eventId || input.id || `${createdAt}_${Math.random().toString(36).slice(2, 8)}`, 120);
+    const eventId = safeAuditText(input.eventId || input.id || makeEventId(createdAt), 120);
     return {
         eventId,
         guildId: String(input.guildId || "unknown"),
@@ -20,15 +48,15 @@ function normalizeAuditRecord(input = {}) {
         category: safeAuditText(input.category || "server", 40),
         severity: safeAuditText(input.severity || "info", 40),
         actionType: safeAuditText(input.actionType || input.type || "UNKNOWN", 120),
-        actorId: input.actorId ? String(input.actorId) : null,
-        targetId: input.targetId ? String(input.targetId) : null,
-        channelId: input.channelId ? String(input.channelId) : null,
-        messageId: input.messageId ? String(input.messageId) : null,
-        roleId: input.roleId ? String(input.roleId) : null,
-        reason: input.reason ? safeAuditText(input.reason, 500) : null,
-        summary: input.summary ? safeAuditText(input.summary, 1000) : null,
-        evidence: Array.isArray(input.evidence) ? input.evidence.slice(0, 25).map(item => safeAuditText(item, 300)) : [],
-        metadata: input.metadata && typeof input.metadata === "object" ? input.metadata : {},
+        actorId: idOrNull(input.actorId),
+        targetId: idOrNull(input.targetId),
+        channelId: idOrNull(input.channelId),
+        messageId: idOrNull(input.messageId),
+        roleId: idOrNull(input.roleId),
+        reason: textOrNull(input.reason, 500),
+        summary: textOrNull(input.summary, 1000),
+        evidence: normalizeEvidence(input.evidence),
+        metadata: normalizeMetadata(input.metadata),
         createdAt,
         storedAt: Date.now()
     };
@@ -93,12 +121,17 @@ async function listAuditRecords(sessionManager, guildId, limit = 50, filters = {
 module.exports = {
     storageKey,
     indexKey,
+    makeEventId,
     normalizeAuditRecord,
     saveAuditRecord,
     getAuditRecord,
     listAuditRecords,
     _test: {
         saveFallback,
-        listFallback
+        listFallback,
+        textOrNull,
+        idOrNull,
+        normalizeEvidence,
+        normalizeMetadata
     }
 };
