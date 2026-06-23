@@ -2,6 +2,7 @@ const auditStorage = require("../logging/auditStorage");
 const auditExport = require("../logging/auditExport");
 const auditHealth = require("../logging/auditHealth");
 const auditSettings = require("../logging/auditSettings");
+const auditDeadLetter = require("../logging/auditDeadLetter");
 
 const FILTER_KEYS = Object.freeze(["category", "severity", "actionType", "actorId", "targetId", "channelId", "roleId"]);
 
@@ -88,6 +89,18 @@ function registerAuditApiRoutes({ app, express, sessionManager, client, auditLog
             const guild = guildId ? client?.guilds?.cache?.get(guildId) : null;
             const health = await auditHealth.buildAuditHealth({ guild, sessionManager, auditLogger });
             res.json({ success: true, health });
+        } catch (err) {
+            res.status(500).json({ success: false, error: err.message });
+        }
+    });
+
+    app.get("/api/audit/dead-letters", async (req, res) => {
+        if (!checkAuth(req, res)) return;
+        try {
+            const guildId = readGuildId(req.query, client);
+            if (!guildId) return res.status(400).json({ success: false, error: "guildId required" });
+            const records = await auditDeadLetter.listDeadLetters(sessionManager, guildId, readLimit(req.query, 25, 100));
+            res.json({ success: true, guildId, count: records.length, records });
         } catch (err) {
             res.status(500).json({ success: false, error: err.message });
         }
