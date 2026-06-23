@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { filterRecords, readAuditFilters, readLimit } = require("../index/auditApiRoutes");
+const { filterRecords, readAuditFilters, readLimit, loadDeadLetterRecords } = require("../index/auditApiRoutes");
 const auditHealth = require("../logging/auditHealth");
 
 test("audit API filter narrows records", () => {
@@ -22,6 +22,17 @@ test("audit API helpers sanitize filters and limits", () => {
     });
     assert.equal(readLimit({ limit: 9999 }, 50, 500), 500);
     assert.equal(readLimit({ limit: "bad" }, 25, 500), 25);
+});
+
+test("audit dead-letter API helper reads records", async () => {
+    const data = {
+        audit_dead_letter_index_g1: ["a"],
+        audit_dead_letter_g1_a: { id: "a", guildId: "g1", reason: "send_failed" }
+    };
+    const sessionManager = { getSetting: async (key, fallback) => Object.prototype.hasOwnProperty.call(data, key) ? data[key] : fallback };
+    const records = await loadDeadLetterRecords(sessionManager, "g1", { limit: 10 });
+    assert.equal(records.length, 1);
+    assert.equal(records[0].reason, "send_failed");
 });
 
 test("audit health reports permission status", () => {
