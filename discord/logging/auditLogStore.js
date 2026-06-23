@@ -61,11 +61,17 @@ async function listRecords(guildId, limit = 50, filters = {}) {
         .lean();
 }
 
+async function deleteOlderThan(guildId, cutoffMs) {
+    if (!guildId || !cutoffMs) return { deletedCount: 0 };
+    return AuditLogEventModel.deleteMany({ guildId: String(guildId), createdAt: { $lt: Number(cutoffMs) } });
+}
+
 module.exports = {
     AuditLogEventModel,
     auditLogEventSchema,
     saveRecord,
     getRecord,
     listRecords,
+    deleteOlderThan,
     buildListQuery
 };
