@@ -9,6 +9,8 @@ function registerAuditWebBundle({ app, express, sessionManager, client, auditLog
         res.setHeader("Content-Type", "text/html; charset=utf-8");
         res.send(buildAuditDashboardPage());
     });
+
+    return true;
 }
 
 module.exports = {
