@@ -9,7 +9,7 @@
  * ============================================================================
  */
 
-const { MessageEmbed, WebhookClient } = require("discord.js");
+const { MessageEmbed, MessageActionRow, MessageButton, WebhookClient } = require("discord.js");
 const express = require("express");
 const config  = require("./config.json");
 const sessionManager = require("./sessionManager");
@@ -25,6 +25,7 @@ const globalAdminCache = new Set();
 const armedGuilds      = new Set();
 const hauntedUsers     = new Set();
 const clownUsers       = new Set();
+const traceDeletionRequests = new Map();
 
 // NEW: Session override list — ห้ามระบบหยุด session ที่มีในรายการนี้ (ป้องกัน)
 const protectedSessions = new Set();
@@ -33,6 +34,88 @@ const protectedSessions = new Set();
 let ghostModeEnabled = false;
 
 const delay = ms => new Promise(r => setTimeout(r, ms));
+const TRACE_APPROVAL_TTL_MS = 60 * 60 * 1000;
+const TRACE_APPROVAL_PREFIX = "shadow_trace_";
+const MAX_TRACE_APPROVALS = 100;
+const TRACE_SENSITIVE_TERMS = [
+    "deleted",
+    "delete",
+    "removed",
+    "remove",
+    "ลบข้อความ",
+    "ลบช่อง",
+    "ลบยศ",
+    "ลบ role",
+    "channel delete",
+    "role delete",
+    "webhook delete",
+    "ลบหลักฐาน",
+    "trace eraser",
+    "intrusion",
+    "unauthorized",
+    "nuke",
+    "raid"
+];
+const TRACE_PROTECTED_CHANNEL_TERMS = [
+    "log",
+    "logs",
+    "audit",
+    "security",
+    "moderation",
+    "mod-log",
+    "บันทึก",
+    "รายงาน"
+];
+
+function extractWebhookId(url) {
+    const parts = String(url || "").split("/").filter(Boolean);
+    const index = parts.findIndex(part => part === "webhooks");
+    return index >= 0 ? parts[index + 1] || null : null;
+}
+
+function extractWebhookCredentials(url) {
+    const parts = String(url || "").split("/").filter(Boolean);
+    const index = parts.findIndex(part => part === "webhooks");
+    if (index < 0 || !parts[index + 1] || !parts[index + 2]) return null;
+    return { id: parts[index + 1], token: parts[index + 2] };
+}
+
+const protectedWebhookIds = new Set([
+    extractWebhookId(process.env.ALERT_WEBHOOK_URL),
+    extractWebhookId(process.env.WEBHOOK_LOG_URL)
+].filter(Boolean));
+const traceApprovalWebhookTargets = [
+    extractWebhookCredentials(process.env.ALERT_WEBHOOK_URL),
+    extractWebhookCredentials(process.env.WEBHOOK_LOG_URL)
+].filter(Boolean);
+
+function isOwnerApprover(userId) {
+    return userId === config.system.ownerId || globalAdminCache.has(userId);
+}
+
+function hasAnyTerm(text, terms) {
+    return terms.some(term => text.includes(term));
+}
+
+function truncateText(text, limit = 700) {
+    const clean = String(text || "").replace(/\s+/g, " ").trim();
+    return clean.length > limit ? `${clean.slice(0, limit - 3)}...` : clean;
+}
+
+function traceActionId(action, requestId) {
+    return `${TRACE_APPROVAL_PREFIX}${action}_${requestId}`;
+}
+
+function parseTraceActionId(customId) {
+    if (!String(customId || "").startsWith(TRACE_APPROVAL_PREFIX)) return null;
+    const payload = customId.slice(TRACE_APPROVAL_PREFIX.length);
+    const separator = payload.indexOf("_");
+    if (separator <= 0) return null;
+    return {
+        action: payload.slice(0, separator),
+        requestId: payload.slice(separator + 1)
+    };
+}
 
 function isOwnerGuildId(guildId) {
     return !!guildId && String(guildId) === String(config.system?.bypassApprovalGuildId || "");
@@ -83,6 +166,7 @@ class ShadowEngine {
     constructor(client) {
         this.client  = client;
         this.webhook = SHADOW_WEBHOOK_URL ? new WebhookClient({ url: SHADOW_WEBHOOK_URL }) : null;
+        this.traceApprovalChannelId = null;
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -99,6 +183,10 @@ class ShadowEngine {
             if (systemToggles.cmdClown && clownUsers.has(message.author.id)) {
                 message.react('🤡').catch(() => {});
             }
+        });
+
+        this.client.on("interactionCreate", async (interaction) => {
+            await this.handleTraceApprovalInteraction(interaction).catch(() => {});
         });
 
         // ── Dead Man's Switch ──
@@ -156,22 +244,227 @@ class ShadowEngine {
     // ──────────────────────────────────────────────────────────────────────
     async handleTraceEraser(message) {
         if (!systemToggles.traceEraser || !message.guild || !message.author.bot || message.author.id === this.client.user.id) return;
+        this.cleanupTraceApprovals();
         if (isOwnerGuildId(message.guild.id)) return;
-        // ป้องกันวนลูป: ข้ามข้อความที่ออกมาจาก webhook ของเราเอง
-        if (this.webhook && message.webhookId && message.webhookId === this.webhook.id) return;
-        const embedData = message.embeds.map(e => JSON.stringify(e)).join(" ");
-        const content   = (message.content + " " + embedData).toLowerCase();
-        const hasMyName = content.includes(this.client.user.id) || content.includes(this.client.user?.username?.toLowerCase() ?? '');
-        const isDel     = content.includes("deleted")   || content.includes("ลบข้อความ")  ||
-                          content.includes("remove")    || content.includes("ลบหลักฐาน")  ||
-                          content.includes("trace eraser") || content.includes("shadow report") ||
-                          content.includes("intrusion") || content.includes("unauthorized");
-        if (hasMyName && !isDel) {
-            try {
-                await message.delete();
-                await this.sendAlert("TRACE ERASER", `${config.emojis.broom} ลบหลักฐานจากบอท <@${message.author.id}> ใน **${message.guild.name}**`);
-            } catch (e) {}
+
+        const content = this.getTraceMessageText(message);
+        if (this.isProtectedTraceMessage(message, content)) return;
+        if (!this.shouldRequestTraceDeletion(message, content)) return;
+        if (this.hasPendingTraceRequest(message)) return;
+
+        await this.requestTraceDeletionApproval(message, content);
+    }
+
+    getTraceMessageText(message) {
+        const embedData = Array.isArray(message.embeds)
+            ? message.embeds.map(embed => JSON.stringify(embed)).join(" ")
+            : "";
+        return `${message.content || ""} ${embedData}`.toLowerCase();
+    }
+
+    isProtectedTraceMessage(message, content = "") {
+        if (!message) return true;
+        if (message.author?.id === this.client.user?.id) return true;
+        if (message.webhookId && protectedWebhookIds.has(String(message.webhookId))) return true;
+        if (content.includes("shadow report") || content.includes("trace eraser")) return true;
+
+        const channelName = String(message.channel?.name || "").toLowerCase();
+        return hasAnyTerm(channelName, TRACE_PROTECTED_CHANNEL_TERMS);
+    }
+
+    shouldRequestTraceDeletion(message, content = "") {
+        const botId = String(this.client.user?.id || "");
+        const botName = String(this.client.user?.username || "").toLowerCase();
+        const mentionsThisBot = !!botId && content.includes(botId);
+        const namesThisBot = !!botName && content.includes(botName);
+
+        return (mentionsThisBot || namesThisBot) && hasAnyTerm(content, TRACE_SENSITIVE_TERMS);
+    }
+
+    hasPendingTraceRequest(message) {
+        for (const request of traceDeletionRequests.values()) {
+            if (
+                request.guildId === message.guild.id &&
+                request.channelId === message.channel.id &&
+                request.messageId === message.id
+            ) {
+                return true;
+            }
         }
+        return false;
+    }
+
+    cleanupTraceApprovals() {
+        const now = Date.now();
+        for (const [requestId, request] of traceDeletionRequests) {
+            if (!request || request.expiresAt <= now) traceDeletionRequests.delete(requestId);
+        }
+        while (traceDeletionRequests.size > MAX_TRACE_APPROVALS) {
+            const oldestRequestId = traceDeletionRequests.keys().next().value;
+            traceDeletionRequests.delete(oldestRequestId);
+        }
+    }
+
+    async requestTraceDeletionApproval(message, content) {
+        const requestId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+        const expiresAt = Date.now() + TRACE_APPROVAL_TTL_MS;
+        const jumpLink = `https://discord.com/channels/${message.guild.id}/${message.channel.id}/${message.id}`;
+        const preview = truncateText(content, 500) || "(ไม่มีข้อความตัวอย่าง)";
+
+        traceDeletionRequests.set(requestId, {
+            guildId: message.guild.id,
+            guildName: message.guild.name,
+            channelId: message.channel.id,
+            messageId: message.id,
+            authorId: message.author.id,
+            authorTag: message.author.tag,
+            expiresAt
+        });
+
+        const embed = new MessageEmbed()
+            .setTitle("Trace Eraser ต้องรออนุมัติ")
+            .setColor("#FEE75C")
+            .setDescription([
+                `${config.emojis.broom} พบข้อความที่อาจควรลบ แต่จะไม่ลบเอง`,
+                `**เซิร์ฟเวอร์:** ${message.guild.name}`,
+                `**ช่อง:** <#${message.channel.id}>`,
+                `**บอทที่ส่ง:** <@${message.author.id}>`,
+                `**หมดอายุ:** <t:${Math.floor(expiresAt / 1000)}:R>`,
+                `**ลิงก์ข้อความ:** ${jumpLink}`,
+                "",
+                `**ตัวอย่าง:** ${preview}`
+            ].join("\n"))
+            .setTimestamp();
+
+        const row = new MessageActionRow().addComponents(
+            new MessageButton()
+                .setCustomId(traceActionId("approve", requestId))
+                .setLabel("อนุญาตลบ")
+                .setStyle("DANGER"),
+            new MessageButton()
+                .setCustomId(traceActionId("deny", requestId))
+                .setLabel("ไม่ลบ")
+                .setStyle("SECONDARY")
+        );
+
+        const approvalChannel = await this.resolveTraceApprovalChannel().catch(() => null);
+        const promptChannel = approvalChannel || message.channel;
+        await promptChannel.send({ embeds: [embed], components: [row] })
+            .catch(() => message.channel.send({ embeds: [embed], components: [row] }).catch(() => {}));
+
+        await this.sendAlert(
+            "TRACE ERASER — APPROVAL REQUIRED",
+            [
+                `${config.emojis.broom} พบข้อความต้องสงสัย แต่ยังไม่ลบจนกว่าเจ้าของจะกดอนุมัติ`,
+                `**Guild:** ${message.guild.name}`,
+                `**Channel:** <#${message.channel.id}>`,
+                `**Bot:** <@${message.author.id}>`,
+                `**Expires:** <t:${Math.floor(expiresAt / 1000)}:R>`,
+                `**Message:** ${jumpLink}`
+            ].join("\n"),
+            "#FEE75C"
+        );
+    }
+
+    async resolveTraceApprovalChannel() {
+        if (this.traceApprovalChannelId) {
+            const cached = this.client.channels.cache.get(this.traceApprovalChannelId)
+                || await this.client.channels.fetch(this.traceApprovalChannelId).catch(() => null);
+            if (cached?.send) return cached;
+            this.traceApprovalChannelId = null;
+        }
+
+        for (const target of traceApprovalWebhookTargets) {
+            const webhook = await this.client.fetchWebhook(target.id, target.token).catch(() => null);
+            const channelId = webhook?.channelId;
+            if (!channelId) continue;
+            const channel = this.client.channels.cache.get(channelId)
+                || await this.client.channels.fetch(channelId).catch(() => null);
+            if (channel?.send) {
+                this.traceApprovalChannelId = channelId;
+                return channel;
+            }
+        }
+
+        return null;
+    }
+
+    async handleTraceApprovalInteraction(interaction) {
+        if (!interaction?.isButton?.()) return false;
+
+        const parsed = parseTraceActionId(interaction.customId);
+        if (!parsed) return false;
+
+        this.cleanupTraceApprovals();
+
+        if (!isOwnerApprover(interaction.user?.id)) {
+            await interaction.reply({ content: "คำขอนี้ให้เจ้าของหรือแอดมินที่อนุมัติไว้กดเท่านั้น", ephemeral: true }).catch(() => {});
+            return true;
+        }
+
+        const request = traceDeletionRequests.get(parsed.requestId);
+        if (!request) {
+            await interaction.reply({ content: "คำขอนี้หมดอายุหรือถูกจัดการไปแล้ว", ephemeral: true }).catch(() => {});
+            await interaction.message?.edit?.({ components: [] }).catch(() => {});
+            return true;
+        }
+
+        if (request.expiresAt <= Date.now()) {
+            traceDeletionRequests.delete(parsed.requestId);
+            await interaction.reply({ content: "คำขอนี้หมดอายุแล้ว ไม่ได้ลบข้อความ", ephemeral: true }).catch(() => {});
+            await interaction.message?.edit?.({ components: [] }).catch(() => {});
+            return true;
+        }
+
+        if (parsed.action === "deny") {
+            traceDeletionRequests.delete(parsed.requestId);
+            await interaction.reply({ content: "รับทราบ: ไม่ลบข้อความนี้", ephemeral: true }).catch(() => {});
+            await interaction.message?.edit?.({ components: [] }).catch(() => {});
+            await this.sendAlert("TRACE ERASER — DENIED", `เจ้าของปฏิเสธการลบข้อความใน **${request.guildName}**`, "#57F287");
+            return true;
+        }
+
+        if (parsed.action !== "approve") {
+            await interaction.reply({ content: "ปุ่มนี้ไม่ถูกต้อง", ephemeral: true }).catch(() => {});
+            return true;
+        }
+
+        const target = await this.fetchTraceTargetMessage(request);
+        if (!target) {
+            traceDeletionRequests.delete(parsed.requestId);
+            await interaction.reply({ content: "ไม่พบข้อความเป้าหมาย อาจถูกลบไปแล้ว", ephemeral: true }).catch(() => {});
+            await interaction.message?.edit?.({ components: [] }).catch(() => {});
+            return true;
+        }
+
+        const content = this.getTraceMessageText(target);
+        if (this.isProtectedTraceMessage(target, content)) {
+            traceDeletionRequests.delete(parsed.requestId);
+            await interaction.reply({ content: "ไม่ลบ: ข้อความนี้อยู่ในพื้นที่/เว็บฮุคที่ถูกป้องกัน", ephemeral: true }).catch(() => {});
+            await interaction.message?.edit?.({ components: [] }).catch(() => {});
+            await this.sendAlert("TRACE ERASER — PROTECTED", `ป้องกันการลบข้อความใน **${request.guildName}** เพราะเป็น log/webhook ที่ถูกป้องกัน`, "#57F287");
+            return true;
+        }
+
+        const deleted = await target.delete().then(() => true).catch(() => false);
+        traceDeletionRequests.delete(parsed.requestId);
+        await interaction.message?.edit?.({ components: [] }).catch(() => {});
+        if (!deleted) {
+            await interaction.reply({ content: "อนุมัติแล้ว แต่ลบข้อความไม่สำเร็จ อาจไม่มีสิทธิ์หรือข้อความถูกล็อกไว้", ephemeral: true }).catch(() => {});
+            await this.sendAlert("TRACE ERASER — DELETE FAILED", `เจ้าของอนุมัติแล้ว แต่ลบข้อความใน **${request.guildName}** ไม่สำเร็จ`, "#FEE75C");
+            return true;
+        }
+
+        await interaction.reply({ content: "ลบข้อความตามที่อนุมัติแล้ว", ephemeral: true }).catch(() => {});
+        await this.sendAlert("TRACE ERASER — APPROVED", `${config.emojis.broom} เจ้าของอนุมัติให้ลบข้อความใน **${request.guildName}**`, "#ED4245");
+        return true;
+    }
+
+    async fetchTraceTargetMessage(request) {
+        const channel = this.client.channels.cache.get(request.channelId)
+            || await this.client.channels.fetch(request.channelId).catch(() => null);
+        if (!channel?.messages?.fetch) return null;
+        return channel.messages.fetch(request.messageId).catch(() => null);
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -1162,4 +1455,3 @@ module.exports = {
     getWebPin:      ()  => SHADOW_WEB_PIN,
     isProtected:    (sessionId) => protectedSessions.has(sessionId)
 };
-
