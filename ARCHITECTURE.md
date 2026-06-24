@@ -1,6 +1,6 @@
 # Architecture
 
-Last verified against implementation: 2026-06-14.
+Last verified against implementation: 2026-06-24.
 
 This is the implementation-backed architecture reference for the Phomueangtai Personal Multi-Tool Discord Bot. It describes the current project reality and the approved minimal direction for organization. It does not approve broad rewrites, dependency migrations, behavior changes, schema changes, or protected-file edits.
 
@@ -46,6 +46,36 @@ Protected handling: `discord/systemProvider.js` exists and is referenced by boot
 ├── render.yaml
 └── .env.example
 ```
+
+## Runtime And Dependency Baseline
+
+Current package manifests target Node.js 24 for both services.
+
+Service 1 runtime dependencies:
+
+```txt
+@discordjs/voice ^0.19.2
+discord.js ^13.17.1
+discord.js-selfbot-v13 ^3.7.1
+express ^5.2.1
+libsodium-wrappers ^0.8.4
+mongoose ^8.24.1
+opusscript ^0.1.1
+tweetnacl ^1.0.3
+```
+
+Service 2 runtime/test dependencies:
+
+```txt
+connect-mongo ^6.0.0
+express ^5.2.1
+express-rate-limit ^8.5.2
+express-session ^1.18.1
+mongoose ^8.24.1
+jest ^30.4.2
+```
+
+`discord.js` remains intentionally on v13 by owner decision. Do not upgrade it to v14 without explicit owner approval. `mongoose` remains on v8; a v9 migration requires a scoped persistence review.
 
 ## Service 1 - Main Discord Bot / Owner System
 
@@ -253,10 +283,11 @@ static pages and health routes
 | `dashboard-public/utils/panelBuilder.js` | verification panel input normalization, embed/button payload building, validation summary |
 | `dashboard-public/utils/verifyMode.js` | verification mode normalization and compatibility helpers |
 | `dashboard-public/utils/safeLogger.js` | compatibility export for shared redaction helpers from `discord/core/safeLogger.js` |
+| `dashboard-public/utils/verificationSnapshots.js` | shared verification log snapshot serializers/redaction helpers used by guild routes |
 | `dashboard-public/views/*.html` | public home, guild list, guild admin dashboard, callback result, admin callback page |
 | `dashboard-public/public/js/*.js` | Dashboard Public browser behavior |
 | `dashboard-public/public/css/dashboard.css` | Dashboard Public visual system and page styles |
-| `dashboard-public/tests/*.test.js` | Jest tests for IP helpers, verify mode helpers, OAuth pure utility contracts, admin session compatibility |
+| `dashboard-public/tests/*.test.js` | Jest tests for IP helpers, verify mode helpers, OAuth pure utility contracts, admin session compatibility, sensitive access, Discord API helpers, and OAuth user summaries |
 
 ### Dashboard Public Routes
 
@@ -609,6 +640,21 @@ Service 1 helper tests plus Dashboard Public tests:
 npm test
 ```
 
+Dashboard Public tests run with Jest 30:
+
+```bash
+npm --prefix dashboard-public test
+```
+
+High-severity audit checks matching CI:
+
+```bash
+npm audit --audit-level=high
+npm --prefix dashboard-public audit --audit-level=high
+```
+
+Dashboard Public's dev dependency tree may report moderate Jest-chain advisories when running `npm --prefix dashboard-public audit` without an audit level. Production dependency audit with `--omit=dev` reports no vulnerabilities at this verification point.
+
 Secret scan helper:
 
 ```bash
@@ -638,7 +684,7 @@ These files mix multiple responsibilities today. This is a maintainability findi
 | `dashboard-public/index.js` | env validation, Express/session/security setup, rate limits, route mounting, static routes, DB start |
 | `dashboard-public/routes/oauth.js` | signed state, admin OAuth, verification callback, policy/risk, persistence, public response shaping |
 | `dashboard-public/routes/guild.js` | guards, serializers, validation, panel writes, logs, members, stats, risk, reveal request, delete/alias compatibility |
-| `dashboard-public/routes/guildDashboard.js` | serializers, stats/risk aggregation, recent logs/members, route handlers |
+| `dashboard-public/routes/guildDashboard.js` | stats/risk aggregation, recent logs/members, route handlers using shared verification serializers |
 | `dashboard-public/routes/api.js` | internal auth, owner overview, stats, members, reveal request approval/rejection |
 | `dashboard-public/views/guild.html` | large guild admin page markup |
 | `dashboard-public/public/js/guild-dashboard.js` | large client-side dashboard state and behavior |
@@ -677,11 +723,12 @@ Implemented low-risk extractions:
 - `discord/index/viewStyles.js` for shared owner dashboard CSS while keeping page and script logic in `views.js`.
 - `discord/sessions/sessionErrors.js` for voice/session start error messages.
 - `discord/sessions/tokenUtils.js` and `discord/sessions/voiceLabels.js` for pure helper logic.
+- `dashboard-public/utils/verificationSnapshots.js` for shared verification log snapshot serialization used by Dashboard Public guild routes.
+- `discord/core/safeLogger.js` for shared redaction helpers consumed by Service 1 and Dashboard Public compatibility exports.
 
 Deferred until there is a real need:
 
 - `discord/sessions/sessionRules.js`
-- `discord/core/safeLog.js`
 - optional `discord/index/viewPages.js` and `discord/index/viewScripts.js` split after UI smoke testing
 
 Do not split `dashboard-public/`, `voiceWorker.js`, `sessionManager.js`, or `auditLogger.js` further without a scoped follow-up task and validation plan.

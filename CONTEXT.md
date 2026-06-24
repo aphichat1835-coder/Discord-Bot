@@ -15,6 +15,12 @@ Architecture: one repository, two services, shared MongoDB
 
 This project is not verification-only. Verification is one subsystem inside a broader personal multi-tool Discord bot.
 
+Current dependency baseline:
+
+- Service 1 keeps `discord.js` v13 and uses `@discordjs/voice` 0.19.x, Mongoose 8.x, and Express 5.x.
+- Service 2 uses Express 5.x, Mongoose 8.x, `connect-mongo` 6.x, `express-rate-limit` 8.x, and Jest 30.
+- `discord.js` v14 and Mongoose v9 are not current project targets without scoped owner approval.
+
 ## Non-Negotiable Owner Decisions
 
 - Keep `discord.js` v13 for now.
@@ -179,6 +185,7 @@ dashboard-public/routes/api.js
 dashboard-public/routes/adminSessionCompat.js
 dashboard-public/models/
 dashboard-public/utils/
+dashboard-public/utils/verificationSnapshots.js
 dashboard-public/views/
 dashboard-public/public/
 ```
@@ -191,6 +198,7 @@ Preserve:
 - Safe public callback responses.
 - Role assignment through configured bot identity.
 - Verification logs, risk summaries, and owner-approved raw IP reveal flow.
+- Shared verification log serializers in `dashboard-public/utils/verificationSnapshots.js` keep guild route responses consistent while preserving sensitive-data redaction.
 
 ### Audit, protection, role buttons
 

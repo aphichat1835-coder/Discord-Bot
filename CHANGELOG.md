@@ -23,6 +23,7 @@
 - Added `docs/RUNBOOK.md` for RAM, voice session, IP reveal, restore, token rotation, and audit-log triage.
 - Added owner-only `/api/diagnostics` with safe readiness, session state, voice worker, audit, and memory-monitor diagnostics.
 - Added configurable memory monitor thresholds/mode, audit queue/circuit/content controls, IP lookup circuit breaker settings, and feature flag placeholders.
+- Added Dashboard Public shared verification snapshot serializers to remove duplicate guild log serialization while preserving sensitive-data redaction and existing response shapes.
 
 ### Changed
 
@@ -33,7 +34,8 @@
 - Documented Service 1 and Service 2 route groups, command groups, model groups, file responsibilities, hotspots, deployment shape, validation commands, and protected boundaries from current implementation.
 - Kept `discord/commands.js`, `discord/index/server.js`, and `discord/index/views.js` as compatibility surfaces while moving pure/helper logic into focused modules.
 - Completed the root config/deployment audit for `.env.example`, `.gitignore`, `package.json`, `package-lock.json`, `render.yaml`, and `.replit`.
-- Set `@discordjs/voice` to `^0.18.0`, with `package-lock.json` currently resolving to Node 18 compatible `0.18.0`, and added package scripts for root and Dashboard Public validation.
+- Upgraded current package baseline while preserving owner-approved major boundaries: `@discordjs/voice` to `^0.19.2`, `opusscript` to `^0.1.1`, Mongoose to `^8.24.1`, Dashboard Public `connect-mongo` to `^6.0.0`, `express-rate-limit` to `^8.5.2`, and Jest to `^30.4.2`.
+- Updated Dashboard Public Jest invocation to `--testPathPatterns` for Jest 30 compatibility.
 - Expanded `render.yaml` with non-secret environment variable placeholders for both Render services.
 - Addressed PR #36 review feedback by normalizing owner-dashboard voice session timestamps, improving token fallback compatibility, reusing voice status custom ID prefixes, expanding validation docs, and adding Service 1 helper tests.
 - Separated routine operations/security webhook messages from critical runtime alerts and simplified the startup webhook notice.
@@ -80,6 +82,8 @@
 - Added Dashboard Public caps for Discord roles/channels/permission overwrites, internal overview guild scans, retention config scans, and device duplicate lookups.
 - Added a static memory guard check to catch regressions in bounded panel/approved-guild loading and Discord API response buffering.
 - Replaced Dashboard Public member-summary OAuth user reads with aggregate counts so large `connections` and `guilds` arrays are not loaded for dashboard list views.
+- Mounted Audit dashboard/API runtime routes and audit reconciler lifecycle in the current Service 1 boot path with the reconciler remaining opt-in through settings/env.
+- Updated active documentation to reflect the current dependency baseline, Dashboard Public shared serializers, Jest 30, and CI audit policy.
 
 ### Notes
 

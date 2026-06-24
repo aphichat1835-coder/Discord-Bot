@@ -71,6 +71,10 @@ The first approved Service 1 helper extraction has been applied:
 - `discord/core/webhooks.js`
 - `discord/index/dashboardState.js`
 
+Dashboard Public also has a focused shared helper:
+
+- `dashboard-public/utils/verificationSnapshots.js` for shared verification log snapshot serialization, sensitive-data redaction, and duplicate serializer reduction in guild routes.
+
 The old public modules remain compatibility layers:
 
 - `discord/commands.js` still exports `slashCommandsData`, `handleMessage`, `handleInteraction`, `updatePanel`, `restorePanels`, `cleanupGuild`, and `getPanelMessages`.
@@ -82,6 +86,7 @@ The old public modules remain compatibility layers:
 The current stabilization direction is intentionally incremental:
 
 - Keep the existing voice/session architecture and `discord.js` v13.
+- Keep dependency upgrades conservative: `discord.js` stays v13 and Mongoose stays v8 unless the owner approves scoped major migrations.
 - Bound Discord.js and selfbot caches instead of removing voice/session behavior.
 - Keep natural/auto-deaf timers one-per-runnable-session and clean inactive timer state.
 - Keep audit queues/caches, dashboard rate-limit maps, reveal-attempt maps, IP lookup cache, and retention summaries bounded or TTL-cleaned.
@@ -109,7 +114,7 @@ discord/
 │  ├─ env.js
 │  ├─ http.js
 │  ├─ webhooks.js
-│  └─ safeLog.js
+│  └─ safeLogger.js
 │
 ├─ sessions/
 │  ├─ tokenUtils.js
@@ -153,7 +158,6 @@ Implementation rule: create and use only the files that have real code to hold. 
 The following approved names remain intentionally deferred because no safe, necessary extraction has been made for them yet:
 
 ```txt
-discord/core/safeLog.js
 discord/sessions/sessionRules.js
 discord/index/viewPages.js
 discord/index/viewScripts.js
@@ -191,6 +195,7 @@ Candidate work:
 - Add route response contract tests where feasible without live Discord or production secrets.
 - Add command registry sanity tests if the test harness supports Service 1 without logging into Discord.
 - Keep Dashboard Public Jest tests aligned with helper contracts.
+- Keep Dashboard Public Jest 30 CLI usage aligned with `--testPathPatterns`.
 
 ### Phase 3 - Route surface separation
 

@@ -1,8 +1,8 @@
 # Audit Runtime Test Plan
 
-This checklist is the final manual gate before merging PR #43.
+This checklist is the manual gate for Audit v4 runtime verification.
 
-The current PR is still logging/audit-first. Protection policy/state modules must remain audit-only/future foundation during this test pass.
+Audit runtime verification is still logging-first. Protection policy/state modules must remain audit-only/future foundation during this test pass.
 
 ## 0. Environment defaults
 
@@ -20,13 +20,11 @@ Do not enable `AUDIT_RECONCILER_ENABLED=true` until gateway logs and dashboard r
 
 ## 1. Server integration gate
 
-Apply `docs/AUDIT_SERVER_INTEGRATION_PATCH.md` as a small standalone commit.
-
 Verify before running:
 
 - `discord/index/server.js` still keeps `/api` auth/rate-limit/CSRF middleware.
 - `/api/reveal-token` and `/api/reveal-all-tokens` logic is unchanged.
-- Audit web routes are mounted after the `/api` middleware.
+- Audit web routes are mounted through `registerAuditWebBundle`.
 - `/audit-logs` is behind the same dashboard auth gate as the owner dashboard.
 
 Expected routes after mount:
@@ -40,8 +38,6 @@ Expected routes after mount:
 - `POST /api/audit/settings`
 
 ## 2. Scheduler integration gate
-
-Apply `docs/AUDIT_SCHEDULER_RUNTIME_PATCH.md` as a separate standalone commit.
 
 Expected default behavior:
 
@@ -143,7 +139,7 @@ Do not merge until all of these are true:
 - CI is green on the latest head commit.
 - CodeFactor/SonarCloud are refreshed and no new high-confidence runtime bug exists.
 - Server audit routes are mounted and manually tested.
-- Scheduler is either still unmounted or mounted with default disabled behavior verified.
+- Scheduler is mounted with default disabled behavior verified.
 - Dead-letter visibility is manually tested.
 - Protection modules remain audit-only and are not wired to auto punitive actions.
 

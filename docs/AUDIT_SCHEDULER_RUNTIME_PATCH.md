@@ -1,36 +1,24 @@
-# Audit Scheduler Runtime Patch
+# Audit Scheduler Runtime
 
 The scheduler helper now exists in `discord/logging/auditRuntimeLifecycle.js`.
 
-Apply this patch only after confirming `FEATURE_AUDIT=true` behavior is stable.
-The scheduler remains opt-in because `AUDIT_RECONCILER_ENABLED=false` is the default.
+The scheduler is wired from the Service 1 boot path and remains opt-in because `AUDIT_RECONCILER_ENABLED=false` is the default.
 
-## Import
+## Current wiring
 
-Add near the audit logger import in `discord/index.js`:
+`discord/index.js` imports:
 
 ```js
 const { startAuditRuntime } = require("./logging/auditRuntimeLifecycle");
 ```
 
-## Start point
-
-Inside the `client.on("ready")` audit block, immediately after:
-
-```js
-auditLogger.register(client, sessionManager);
-console.log("[AUDIT] ✅ Audit Logger registered.");
-```
-
-Add:
+Inside the `client.on("ready")` audit block, Service 1 calls:
 
 ```js
 startAuditRuntime({ client, sessionManager });
 ```
 
-## Shutdown point
-
-`discord/index/system.js` now accepts an optional `auditReconcilerScheduler` argument and calls `.stop()` during graceful shutdown. When editing `discord/index.js`, pass the scheduler or lifecycle object into `system.initShutdown` only after reviewing the boot file.
+`discord/index/system.js` accepts the audit reconciler scheduler and stops it during graceful shutdown.
 
 ## Runtime safety
 

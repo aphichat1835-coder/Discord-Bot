@@ -1,26 +1,16 @@
-# Audit Server Integration Patch
+# Audit Server Integration
 
-This patch is intentionally documented separately because `discord/index/server.js` contains sensitive legacy dashboard routes. Apply it only after reviewing that no auth, rate limit, CSRF, reveal-token, session, or Shadow Portal logic is removed.
+This integration is documented separately because `discord/index/server.js` contains sensitive legacy dashboard routes. Any future edits must preserve auth, rate limit, CSRF, reveal-token, session, and protected owner/system behavior.
 
-## Import
+## Current wiring
 
-Add near the other `discord/index` imports:
+`discord/index/server.js` imports:
 
 ```js
 const { registerAuditWebBundle } = require("./auditWebBundle");
 ```
 
-## Mount point
-
-Inside `registerRoutes`, after these lines exist:
-
-```js
-const checkAuth      = makeCheckAuth(API_SECRET);
-const checkRevealPin = makeCheckRevealPin(getWebPin);
-const rateLimiter    = createRateLimiter(requestCounts, config, sessionManager);
-```
-
-Add:
+Inside `registerRoutes`, Service 1 mounts:
 
 ```js
 registerAuditWebBundle({ app, express, sessionManager, client, auditLogger, checkAuth });
@@ -46,9 +36,9 @@ registerAuditWebBundle({ app, express, sessionManager, client, auditLogger, chec
 - Keep audit routes behind dashboard auth.
 - Keep `AUDIT_RECONCILER_ENABLED=false` while first mounting the web/API bundle.
 
-## Verify after patch
+## Verify after changes
 
-1. `npm test` in `discord/`.
+1. `npm test`.
 2. Dashboard opens normally.
 3. `/audit-logs` redirects/blocks when unauthenticated.
 4. `/api/audit/logs` requires dashboard auth.

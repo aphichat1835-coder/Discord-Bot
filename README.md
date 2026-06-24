@@ -13,6 +13,17 @@ This repository contains a personal multi-tool Discord bot with two Node.js serv
 - MongoDB/Mongoose persistence shared by both services.
 - Audit logging, protection checks, role buttons, approved/pending guild flows, and protected owner/system hook integration.
 
+## Runtime Baseline
+
+Both services target Node.js 24.
+
+Current major dependency decisions:
+
+- Keep `discord.js` v13 unless the owner explicitly approves a v14 migration.
+- Keep Mongoose on v8 unless a scoped persistence migration is approved.
+- Service 1 uses `@discordjs/voice` 0.19.x and `opusscript` 0.1.x.
+- Service 2 uses `connect-mongo` 6.x, `express-rate-limit` 8.x, and Jest 30.
+
 ## Services
 
 ### Service 1 - Main Discord Bot / Owner System
@@ -95,6 +106,8 @@ Common checks:
 npm run check
 npm run check:dashboard
 npm test
+npm audit --audit-level=high
+npm --prefix dashboard-public audit --audit-level=high
 ```
 
 `npm run check` covers the Service 1 entrypoints and extracted helper modules, including:
@@ -119,3 +132,11 @@ discord/sessions/voiceLabels.js
 ```
 
 Run only checks that match the change. Report exact commands and results; do not claim a check passed unless it was actually run.
+
+Dashboard Public production dependencies can also be checked with:
+
+```bash
+npm --prefix dashboard-public audit --omit=dev
+```
+
+Running Dashboard Public audit without an audit level may show moderate dev-only Jest-chain advisories. CI currently gates high severity and above.

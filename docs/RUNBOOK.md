@@ -140,3 +140,16 @@ npm run check:memory-trend < diagnostics.json
    - `auditDroppedCircuitOpen`
    - `lastAuditSendError`
 4. ถ้า channel หายหรือ permission ผิด ระบบจะพักส่งชั่วคราวด้วย circuit breaker เพื่อลด spam
+5. เปิด `/audit-logs` จาก owner dashboard เพื่อดู record ที่บันทึกไว้ใน audit storage
+6. ดู `/api/audit/dead-letters` เพื่อแยกเคส `missing_log_channel`, send failure, หรือ queue/circuit issue
+7. ถ้าต้องทดสอบ reconciler ให้เปิด `AUDIT_RECONCILER_ENABLED=true` เฉพาะ private test server ก่อน production
+
+## Dependency audit หลังอัปเกรด package
+
+1. เช็ค baseline production/high severity:
+   - `npm audit --audit-level=high`
+   - `npm --prefix dashboard-public audit --audit-level=high`
+   - `npm --prefix dashboard-public audit --omit=dev`
+2. ถ้า `npm --prefix dashboard-public audit` แบบไม่ใส่ level แจ้ง moderate จาก Jest chain ให้แยกก่อนว่าเป็น dev dependency หรือ production dependency
+3. อย่าใช้ `npm audit fix --force` อัตโนมัติ ถ้ามันเสนอ downgrade หรือ major migration ที่กระทบ test runner/runtime
+4. `discord.js` ยังอยู่ v13 ตาม owner decision และ Mongoose ยังอยู่ v8 เว้นแต่มีงาน migration แยกชัดเจน

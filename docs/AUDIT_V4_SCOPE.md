@@ -19,3 +19,11 @@ This document tracks the next audit logging upgrade. It is intentionally focused
 5. Dashboard search and export.
 6. Reliability hardening.
 7. Fixture tests and runtime checklist.
+
+## Current implementation status
+
+- Audit web/API routes are mounted through `discord/index/auditWebBundle.js`.
+- Audit runtime lifecycle is wired through `discord/logging/auditRuntimeLifecycle.js`.
+- Reconciler runtime remains opt-in through `AUDIT_RECONCILER_ENABLED`.
+- Gateway audit records save to persistent audit storage for dashboard/API reads when category settings allow storage.
+- Dead-letter visibility exists for missing channel and send-failure paths, but production confidence still depends on real Discord server testing.

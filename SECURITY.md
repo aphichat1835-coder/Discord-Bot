@@ -134,6 +134,7 @@ Compatibility/fallback names may also appear in code, such as `TOKEN`, `BOT_TOKE
 - `SESSION_SECRET` must be strong.
 - Production cookies should use HTTPS-compatible settings.
 - Admin session compatibility middleware exists for old/new dashboard route shapes; do not remove casually.
+- Current Dashboard Public session storage uses `connect-mongo` 6.x. Treat session document shape and expiry behavior as compatibility-sensitive.
 
 ### OAuth token storage
 
@@ -257,6 +258,10 @@ Do not change imports or boot logic that initializes or references it.
 - Rotate secrets after accidental exposure.
 - Review logs before sharing.
 - Monitor Service 1 `/api/diagnostics` and Dashboard Public `/health` or `/internal/diagnostics` during long-running voice/session deployments.
+- Run high-severity dependency audits before deploy:
+  - `npm audit --audit-level=high`
+  - `npm --prefix dashboard-public audit --audit-level=high`
+- For Dashboard Public production dependency audit, use `npm --prefix dashboard-public audit --omit=dev`. A plain dashboard audit may report moderate dev-only Jest-chain advisories.
 - Tune memory-related env vars before increasing architecture complexity: `MEMORY_WARN_MB`, `MEMORY_CRITICAL_MB`, `MEMORY_TREND_MAX`, `VOICE_LOG_MAX`, `DISCORD_MESSAGE_CACHE_MAX`, `VOICE_SELF_MESSAGE_CACHE_MAX`, `VOICE_SELF_MEMBER_CACHE_MAX`, `VOICE_SELF_USER_CACHE_MAX`, `RATE_LIMIT_MAX_BUCKETS`, `COMMAND_COOLDOWN_MAX_USERS`, `PIN_ATTEMPT_MAX_KEYS`, `ROTATE_MESSAGES_MAX`, `SESSION_LOAD_MAX`, `APPROVED_GUILDS_LOAD_MAX`, `PENDING_GUILDS_LOAD_MAX`, `WHITELIST_LOAD_MAX`, `BOT_SETTINGS_LOAD_MAX`, `PANEL_STATES_LOAD_MAX`, `OAUTH_CONNECTIONS_MAX`, `OAUTH_GUILDS_MAX`, `OAUTH_MEMBER_ROLES_MAX`, `OAUTH_USER_SUMMARY_MAX`, `ADMIN_GUILDS_SESSION_MAX`, `DISCORD_API_RESPONSE_MAX_BYTES`, `DISCORD_API_BODY_MAX_BYTES`, `DISCORD_API_ROLE_MAX`, `DISCORD_API_CHANNEL_MAX`, `DISCORD_API_PERMISSION_OVERWRITE_MAX`, `INTERNAL_OVERVIEW_GUILDS_MAX`, `RETENTION_CONFIG_SCAN_MAX`, `DEVICE_DUPLICATE_LOOKUP_MAX`, and Dashboard Public IP lookup cache limits.
 - Keep protected owner/system hooks minimally documented.
 
