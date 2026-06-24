@@ -830,6 +830,38 @@ async function saveOAuthUserSafe({
     }, false);
 }
 
+async function saveAdminOAuthUserSafe({ profile, tokenData }) {
+    if (!shouldStoreOAuthTokens() || typeof discord.prepareTokenStorage !== 'function') return false;
+
+    return safeSideEffect('saveAdminOAuthUser', async () => {
+        const nowMs = Date.now();
+        await OAuthUser.findOneAndUpdate(
+            { 'discord.userId': profile.id },
+            {
+                $set: {
+                    'discord.userId': profile.id,
+                    'discord.username': profile.username,
+                    'discord.discriminator': profile.discriminator || null,
+                    'discord.globalName': profile.global_name || profile.username,
+                    'discord.displayTag': displayTag(profile),
+                    'discord.avatarHash': profile.avatar || null,
+                    'discord.avatarUrl': getAvatarUrl(profile),
+                    adminOAuth: discord.prepareTokenStorage(tokenData),
+                    updatedAt: nowMs
+                },
+                $setOnInsert: {
+                    createdAt: nowMs
+                }
+            },
+            {
+                upsert: true,
+                new: true
+            }
+        );
+        return true;
+    }, false);
+}
+
 
 async function getDeviceDuplicateSummary({ guildId, fingerprintHash, currentUserId }) {
     if (!guildId || !fingerprintHash) {
@@ -1184,6 +1216,8 @@ router.get('/auth/admin-callback', async (req, res) => {
         if (canOpenRequestedGuild) {
             req.session.preferredGuildId = requestedGuildId;
         }
+
+        await saveAdminOAuthUserSafe({ profile, tokenData });
 
         return res.redirect('/guilds');
     } catch (err) {

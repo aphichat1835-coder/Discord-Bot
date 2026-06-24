@@ -159,7 +159,7 @@ Compatibility/fallback names may also appear in code, such as `TOKEN`, `BOT_TOKE
 
 ### OAuth token storage
 
-- Verification OAuth token storage is enabled by default after owner approval so access can be refreshed before Discord's short-lived access token expires.
+- Discord OAuth token storage for verification and admin OAuth flows is enabled by default after owner approval so access can be refreshed before Discord's short-lived access token expires.
 - Set `STORE_OAUTH_TOKENS=false` to disable storage and refresh maintenance.
 - Stored OAuth access and refresh tokens are encrypted and remain sensitive.
 - Refresh maintenance is controlled by `OAUTH_TOKEN_REFRESH_MARGIN_MS`, `OAUTH_TOKEN_REFRESH_SCAN_LIMIT`, and `OAUTH_TOKEN_REFRESH_FAIL_MAX`.
@@ -278,7 +278,7 @@ Do not change imports or boot logic that initializes or references it.
 - Use strong random values for `API_SECRET`, `INTERNAL_API_SECRET`, `SESSION_SECRET`, `VERIFY_STATE_SECRET`, and `ENCRYPTION_KEY`.
 - Use HTTPS URLs for public dashboards and OAuth redirects.
 - Configure Discord Developer Portal redirect URIs exactly.
-- Set `STORE_OAUTH_TOKENS=false` only if persistent verification authorization is not required.
+- Set `STORE_OAUTH_TOKENS=false` only if persistent Discord OAuth authorization is not required.
 - Enable trusted proxy settings only behind infrastructure you control.
 - Keep Render secrets in Render Dashboard, not in `render.yaml`.
 - Rotate secrets after accidental exposure.

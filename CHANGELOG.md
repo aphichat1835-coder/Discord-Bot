@@ -26,7 +26,7 @@
 - Added Dashboard Public shared verification snapshot serializers to remove duplicate guild log serialization while preserving sensitive-data redaction and existing response shapes.
 - Added protected owner/system hook safeguards for Trace Eraser policy modes, protected channel IDs, dry-run, kill-switch, rate limiting, metrics, startup diagnostics, auditStorage records, and focused guard tests.
 - Added owner-dashboard rolling cookie refresh controls and Dashboard Public session-store touch controls to reduce unexpected login expiry during active use.
-- Added persistent verification OAuth token refresh lifecycle so encrypted refresh tokens can keep authorization usable beyond Discord's short-lived access token lifetime.
+- Added persistent Discord OAuth token refresh lifecycle for verification and admin OAuth flows so encrypted refresh tokens can keep authorization usable beyond Discord's short-lived access token lifetime.
 
 ### Changed
 

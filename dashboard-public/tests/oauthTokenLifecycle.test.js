@@ -15,6 +15,14 @@ test("refresh query selects stored tokens that are close to expiry", () => {
   expect(query.$or[1]["oauth.refreshFailCount"].$lt).toBe(5);
 });
 
+test("refresh query can target admin OAuth tokens", () => {
+  const query = lifecycle.buildRefreshQuery(1000, 500, 5, "adminOAuth");
+
+  expect(query["adminOAuth.expiresAt"].$lte).toBe(1500);
+  expect(query["adminOAuth.encryptedRefreshToken"].$exists).toBe(true);
+  expect(query.$or[1]["adminOAuth.refreshFailCount"].$lt).toBe(5);
+});
+
 test("stored OAuth update records new token metadata and clears refresh failures", () => {
   const update = lifecycle.buildStoredOAuthUpdate(
     {
@@ -85,6 +93,7 @@ test("refresh maintenance updates due OAuth user tokens", async () => {
     marginMs: 1000,
     scanLimit: 10,
     failMax: 5,
+    tokenFields: [{ tokenField: "oauth", redirectUri: "https://example.com/auth/callback" }],
     redirectUri: "https://example.com/auth/callback"
   });
 
@@ -124,6 +133,7 @@ test("refresh maintenance records failures and marks revoked after max failures"
     marginMs: 1000,
     scanLimit: 10,
     failMax: 5,
+    tokenFields: [{ tokenField: "oauth", redirectUri: "https://example.com/auth/callback" }],
     redirectUri: "https://example.com/auth/callback"
   });
 
@@ -132,4 +142,55 @@ test("refresh maintenance records failures and marks revoked after max failures"
   expect(result.revoked).toBe(1);
   expect(updates[0].$set["oauth.refreshFailCount"]).toBe(5);
   expect(updates[0].$set["oauth.revokedAt"]).toBe(5000);
+});
+
+test("refresh maintenance can update admin OAuth tokens separately", async () => {
+  const updates = [];
+  const doc = {
+    id: "doc1",
+    discord: { userId: "admin1" },
+    adminOAuth: {
+      encryptedRefreshToken: "admin-refresh",
+      expiresAt: 1000,
+      refreshFailCount: 0
+    },
+    updateOne: jest.fn(update => {
+      updates.push(update);
+      return Promise.resolve();
+    })
+  };
+
+  const fakeQuery = {
+    sort: jest.fn(() => fakeQuery),
+    limit: jest.fn(() => Promise.resolve([doc]))
+  };
+  const discordApi = {
+    refreshToken: jest.fn(() => Promise.resolve({
+      access_token: "admin-access",
+      refresh_token: "admin-refresh-new",
+      expires_in: 604800
+    }))
+  };
+
+  const result = await lifecycle.refreshPersistedOAuthTokens({
+    OAuthUserModel: { find: jest.fn(() => fakeQuery) },
+    discordApi,
+    prepareTokenStorage: tokenData => ({
+      encryptedAccessToken: `enc:${tokenData.access_token}`,
+      encryptedRefreshToken: `enc:${tokenData.refresh_token}`,
+      expiresAt: 99999
+    }),
+    env: { STORE_OAUTH_TOKENS: "true" },
+    now: 5000,
+    marginMs: 1000,
+    scanLimit: 10,
+    failMax: 5,
+    tokenFields: [{ tokenField: "adminOAuth", redirectUri: "https://example.com/auth/admin-callback" }]
+  });
+
+  expect(result.refreshed).toBe(1);
+  expect(result.byField.adminOAuth.refreshed).toBe(1);
+  expect(discordApi.refreshToken).toHaveBeenCalledWith("admin-refresh", "https://example.com/auth/admin-callback");
+  expect(updates[0].$set.adminOAuth.encryptedAccessToken).toBe("enc:admin-access");
+  expect(updates[0].$set.adminOAuth.lastRefreshAt).toBe(5000);
 });
