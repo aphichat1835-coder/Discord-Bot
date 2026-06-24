@@ -30,6 +30,7 @@ const {
 } = require("../guards/dashboardGuards");
 const { sendLogWebhook } = require("../core/webhooks");
 const { getFeatureFlags } = require("../core/featureFlags");
+const { registerAuditWebBundle } = require("./auditWebBundle");
 
 function safeRedirectPath(value) {
     const raw = String(value || "/").trim();
@@ -294,6 +295,17 @@ function registerRoutes({
         });
     });
 
+    registerAuditWebBundle({
+        app,
+        express,
+        sessionManager,
+        client,
+        auditLogger,
+        checkAuth
+    });
+
+    console.log("[AUDIT] 🧾 Audit dashboard routes registered at /audit-logs");
+
     // ── API Status real-time JSON ──
     app.get("/api/status", (req, res) => {
         try {
@@ -526,8 +538,7 @@ function registerRoutes({
     app.get("/api/commands-audit", (req, res) => {
         res.json(buildCommandAuditPayload(commandAuditLog));
     });
-
-    // ── Settings ──
+        // ── Settings ──
     app.post("/api/settings", express.json(), async (req, res) => {
         if (!checkAuth(req, res)) return;
 
@@ -747,7 +758,8 @@ function registerRoutes({
         }
     });
 
-    app.post("/api/whitelist/remove", express.json(), async (req, res) => {
+    app.post("/api/whitelis
+             t/remove", express.json(), async (req, res) => {
         if (!checkAuth(req, res)) return;
 
         try {
@@ -766,7 +778,6 @@ function registerRoutes({
             res.status(500).json({ success: false, error: e.message });
         }
     });
-
     // ── Approved Guilds ──
     app.post("/api/approve", express.json(), async (req, res) => {
         if (!checkAuth(req, res)) return;
@@ -859,7 +870,7 @@ function registerRoutes({
                 console.warn(`[DASHBOARD] ⚠️ Continuing guild leave after ${failedStops} voice session stop failure(s) for guild ${guildId}`);
             }
 
-            await guild.leave();
+                    await guild.leave();
             await sessionManager.ApprovedGuildModel.deleteOne({ guildId });
 
             sendLogWebhook({
