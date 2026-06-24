@@ -85,7 +85,7 @@ function buildModerationReplyEmbed(interaction, target, action, reason, dmSent, 
 
 function moderationErrorReply(err) {
     if (err.message === "MISSING_PERMS") return `> ${config.emojis.error} บอทไม่มีสิทธิ์ที่จำเป็น!`;
-    return `> ${config.emojis.error} ไม่สามารถดำเนินการได้: ${err.message}`;
+    return `> ${config.emojis.error} ไม่สามารถดำเนินการได้ โปรดลองอีกครั้งหรือติดต่อผู้ดูแลระบบ`;
 }
 
 module.exports = {

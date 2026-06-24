@@ -34,6 +34,10 @@ async function saveCursor(sessionManager, guildId, lastEntryId) {
     }).catch(() => {});
 }
 
+async function getCursor(sessionManager, guildId) {
+    return await sessionManager?.getSetting?.(cursorKey(guildId), null).catch(() => null);
+}
+
 function normalizeEntry(rawEntry) {
     const action = readEntryName(rawEntry);
     return {
@@ -102,11 +106,34 @@ async function processEntry({ guild, sessionManager, entry, seen }) {
 async function runAuditReconcile(guild, sessionManager, options = {}) {
     if (!guild?.fetchAuditLogs || !sessionManager) return { ok: false, reason: "missing_dependencies", processed: 0 };
     const limit = Math.max(1, Math.min(50, Number(options.limit || 10) || 10));
+    const maxPages = Math.max(1, Math.min(20, Number(options.maxPages || 5) || 5));
     const seen = await getSeen(sessionManager, guild.id);
+    const cursor = await getCursor(sessionManager, guild.id);
 
     try {
-        const logs = await guild.fetchAuditLogs({ limit });
-        const entries = Array.from(logs?.entries?.values?.() || []).reverse();
+        const entries = [];
+        let before = null;
+        let reachedCursor = false;
+
+        for (let pageIndex = 0; pageIndex < maxPages && !reachedCursor; pageIndex += 1) {
+            const logs = await guild.fetchAuditLogs(before ? { limit, before } : { limit });
+            const page = Array.from(logs?.entries?.values?.() || []);
+            if (page.length === 0) break;
+
+            for (const entry of page) {
+                const id = entryId(entry);
+                if (cursor?.lastEntryId && id === cursor.lastEntryId) {
+                    reachedCursor = true;
+                    break;
+                }
+                entries.push(entry);
+            }
+
+            before = page[page.length - 1]?.id || null;
+            if (!before || !cursor?.lastEntryId) break;
+        }
+
+        entries.reverse();
         let processed = 0;
         let lastEntryId = null;
 
@@ -118,7 +145,7 @@ async function runAuditReconcile(guild, sessionManager, options = {}) {
 
         await saveSeen(sessionManager, guild.id, seen);
         await saveCursor(sessionManager, guild.id, lastEntryId);
-        return { ok: true, processed, scanned: entries.length, lastEntryId };
+        return { ok: true, processed, scanned: entries.length, lastEntryId, reachedCursor };
     } catch (err) {
         console.warn(`[AUDIT_RECONCILER] failed: ${safeAuditError(err, 240)}`);
         return { ok: false, reason: safeAuditError(err, 240), processed: 0 };

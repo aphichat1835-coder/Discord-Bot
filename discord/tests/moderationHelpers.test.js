@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const helpers = require("../commands/moderationHelpers");
+const config = require("../config.json");
 
 test("moderation helpers map required permissions", () => {
     assert.equal(helpers.requiredModerationPermission("ban"), "BAN_MEMBERS");
@@ -33,4 +34,15 @@ test("moderation helpers build case input", () => {
     assert.equal(input.guildId, "guild1");
     assert.equal(input.userId, "target1");
     assert.equal(input.metadata.dmSent, true);
+});
+
+test("moderation helpers avoid exposing raw exception messages", () => {
+    assert.equal(
+        helpers.moderationErrorReply(new Error("database password leaked")),
+        `> ${config.emojis.error} ไม่สามารถดำเนินการได้ โปรดลองอีกครั้งหรือติดต่อผู้ดูแลระบบ`
+    );
+    assert.equal(
+        helpers.moderationErrorReply(new Error("MISSING_PERMS")),
+        `> ${config.emojis.error} บอทไม่มีสิทธิ์ที่จำเป็น!`
+    );
 });

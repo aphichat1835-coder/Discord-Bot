@@ -41,7 +41,7 @@ function recordsToJson(records = []) {
 function recordsToMarkdown(records = []) {
     const rows = ["| Time | Action | Actor | Target | Summary |", "|---|---|---|---|---|"];
     for (const record of records) {
-        rows.push(`| ${safeAuditText(record.createdAt || "-", 80)} | ${safeAuditText(record.actionType || "-", 80)} | ${safeAuditText(record.actorId || "-", 80)} | ${safeAuditText(record.targetId || "-", 80)} | ${safeAuditText(record.summary || "-", 180)} |`);
+        rows.push(`| ${safeAuditText(record?.createdAt || "-", 80)} | ${safeAuditText(record?.actionType || "-", 80)} | ${safeAuditText(record?.actorId || "-", 80)} | ${safeAuditText(record?.targetId || "-", 80)} | ${safeAuditText(record?.summary || "-", 180)} |`);
     }
     return rows.join("\n");
 }

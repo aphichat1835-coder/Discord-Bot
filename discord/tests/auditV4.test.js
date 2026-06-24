@@ -65,3 +65,35 @@ test("audit reconciler normalizes entries", () => {
     assert.equal(normalized.actorId, "actor1");
     assert.equal(normalized.targetId, "target1");
 });
+
+test("audit reconciler pages backward until the saved cursor", async () => {
+    const settings = new Map([
+        [reconciler.cursorKey("guild1"), { lastEntryId: "old" }]
+    ]);
+    const sessionManager = {
+        async getSetting(key, fallback) { return settings.has(key) ? settings.get(key) : fallback; },
+        async setSetting(key, value) { settings.set(key, value); return true; }
+    };
+    const pages = [
+        [{ id: "newest", action: "ROLE_UPDATE", createdTimestamp: 300 }, { id: "middle", action: "ROLE_UPDATE", createdTimestamp: 200 }],
+        [{ id: "older", action: "ROLE_UPDATE", createdTimestamp: 150 }, { id: "old", action: "ROLE_UPDATE", createdTimestamp: 100 }]
+    ];
+    const calls = [];
+    const guild = {
+        id: "guild1",
+        channels: { cache: { get: () => null, find: () => null } },
+        async fetchAuditLogs(options) {
+            calls.push(options);
+            const page = pages.shift() || [];
+            return { entries: { values: () => page.values() } };
+        }
+    };
+
+    const result = await reconciler.runAuditReconcile(guild, sessionManager, { limit: 2, maxPages: 3 });
+
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1].before, "middle");
+    assert.equal(result.scanned, 3);
+    assert.equal(result.lastEntryId, "newest");
+    assert.equal(settings.get(reconciler.cursorKey("guild1")).lastEntryId, "newest");
+});

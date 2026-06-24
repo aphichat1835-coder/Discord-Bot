@@ -147,7 +147,7 @@ function safeLog(log, options = {}) {
         _id: String(obj._id || obj.id || ""),
         requestId: obj.requestId || "",
 
-        result: obj.result,
+        result: common.result,
         joinResult,
         roleAssignResult,
         roleAssignmentResult: obj.roleAssignResult?.ok === true
@@ -386,5 +386,9 @@ router.get("/api/guild/:guildId/risk", requireAdmin, requireGuildAdmin, async (r
         return safeServerError(res, err, "โหลดข้อมูลความเสี่ยงไม่สำเร็จ");
     }
 });
+
+router._test = {
+    safeLog
+};
 
 module.exports = router;

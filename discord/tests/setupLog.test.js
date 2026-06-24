@@ -25,3 +25,17 @@ test("setup-log finds existing named log channel", () => {
     };
     assert.equal(setupLog._test.findExistingLogChannel(guild, "moderation"), channel);
 });
+
+test("setup-log reports moderation save success only when a backing save works", async () => {
+    const failedSession = {
+        async setSetting() { throw new Error("settings failed"); },
+        async setLogChannelMap() { throw new Error("map failed"); }
+    };
+    assert.equal(await setupLog._test.saveLogChannel(failedSession, "guild1", "moderation", "channel1"), false);
+
+    const fallbackSession = {
+        async setSetting() { return true; },
+        async setLogChannelMap() { return false; }
+    };
+    assert.equal(await setupLog._test.saveLogChannel(fallbackSession, "guild1", "moderation", "channel1"), true);
+});

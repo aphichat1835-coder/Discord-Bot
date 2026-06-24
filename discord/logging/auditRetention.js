@@ -1,5 +1,6 @@
 const auditLogStore = require("./auditLogStore");
 const { safeAuditError } = require("./logCore");
+const auditSettings = require("./auditSettings");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_RETENTION_DAYS = Math.max(1, Number(process.env.AUDIT_RETENTION_DAYS || 90) || 90);
@@ -38,8 +39,9 @@ async function cleanupClientAuditLogs(client, sessionManager, options = {}) {
     const guilds = Array.from(client?.guilds?.cache?.values?.() || []);
     const results = [];
     for (const guild of guilds) {
-        const settingKey = `audit_retention_days_${guild.id}`;
-        const setting = await sessionManager?.getSetting?.(settingKey, options.retentionDays ?? DEFAULT_RETENTION_DAYS).catch(() => options.retentionDays ?? DEFAULT_RETENTION_DAYS);
+        const setting = await auditSettings.getAuditSettings(sessionManager, guild.id)
+            .then(saved => saved.retentionDays)
+            .catch(() => options.retentionDays ?? DEFAULT_RETENTION_DAYS);
         results.push(await cleanupGuildAuditLogs(guild.id, setting));
     }
     return results;

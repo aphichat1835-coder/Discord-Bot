@@ -360,6 +360,7 @@ function mergeVerificationConfig(existing = {}, incoming = {}) {
   const current = normalizeVerificationConfig(existing || {});
   const clean = sanitizeVerification(incoming || {});
   const hasIncomingAntiAlt = Object.prototype.hasOwnProperty.call(incoming || {}, "antiAlt");
+  const hasIncomingPanel = Object.prototype.hasOwnProperty.call(incoming || {}, "panel");
   const currentAntiAlt = current.antiAlt ?? {};
   const cleanAntiAlt = clean.antiAlt ?? {};
   const currentPanel = current.panel ?? {};
@@ -380,10 +381,12 @@ function mergeVerificationConfig(existing = {}, incoming = {}) {
           ...cleanAntiAlt
         })
       : current.antiAlt,
-    panel: normalizePanel({
-      ...currentPanel,
-      ...cleanPanel
-    }),
+    panel: normalizePanel(hasIncomingPanel
+      ? {
+          ...currentPanel,
+          ...cleanPanel
+        }
+      : currentPanel),
     updatedAt: now()
   };
   merged.oauthMode = normalizeVerifyMode(merged.verifyType || merged.panel?.verifyType);
@@ -1388,5 +1391,9 @@ router.get("/api/guild/:guildId", requireAdmin, requireGuildAdmin, async (req, r
     return sendServerError(res, "get-guild", err, "โหลดการตั้งค่าเซิร์ฟเวอร์ไม่สำเร็จ");
   }
 });
+
+router._test = {
+  mergeVerificationConfig
+};
 
 module.exports = router;

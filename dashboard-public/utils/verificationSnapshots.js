@@ -33,14 +33,14 @@ function safeIpInfo(ipInfo = {}, canViewSensitive = false) {
     isp: ipInfo.isp || "unknown",
     org: ipInfo.org || "",
     as: ipInfo.as || "",
-    asn: ipInfo.as || "",
+    asn: ipInfo.asn || ipInfo.as || "",
     asname: ipInfo.asname || "",
     reverse: ipInfo.reverse || "",
     isVPN: !!ipInfo.isVPN,
     isProxy: !!ipInfo.isProxy,
     isTOR: !!ipInfo.isTOR,
-    isHosting: !!ipInfo.hosting,
-    hosting: !!ipInfo.hosting,
+    isHosting: !!(ipInfo.isHosting ?? ipInfo.hosting),
+    hosting: !!(ipInfo.hosting ?? ipInfo.isHosting),
     mobile: !!ipInfo.mobile,
     riskScore: Number(ipInfo.riskScore || 0),
     lookupProvider: ipInfo.lookupProvider || "",
@@ -186,7 +186,9 @@ function buildVerifyLogParts(rawLog = {}, canViewSensitive = false) {
   const ipInfo = redactSensitiveIpInfo(safeIpInfo(raw.ipInfo || {}, canViewSensitive), canViewSensitive);
   const device = safeDevice(raw.device || {});
   const discord = safeDiscordSnapshot(raw.discordSnapshot || {}, canViewSensitive);
-  const member = safeMemberSnapshot(raw.memberSnapshot || discord.member || {});
+  const member = safeMemberSnapshot(
+    raw.memberSnapshot || raw.discordSnapshot?.memberSnapshot || raw.discordSnapshot?.member || {}
+  );
   const policy = safePolicySnapshot(raw.policySnapshot || {});
   const tracking = safeTrackingSnapshot(raw.trackingSnapshot || {});
 
@@ -195,7 +197,7 @@ function buildVerifyLogParts(rawLog = {}, canViewSensitive = false) {
 
 function buildVerifyLogCommon(parts = {}, options = {}) {
   const { raw = {}, ipInfo = {}, device = {}, discord = {}, member = {}, policy = {}, tracking = {} } = parts;
-  const result = raw.result || options.defaultResult || "failed";
+  const result = raw.result ?? options.defaultResult ?? "failed";
 
   return {
     id: raw._id ? String(raw._id) : raw.id || null,

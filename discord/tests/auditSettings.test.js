@@ -18,6 +18,10 @@ test("audit settings normalizes booleans and limits", () => {
     assert.equal(normalized.categories.message, false);
 });
 
+test("audit settings treats string zero retention as forever", () => {
+    assert.equal(settings.normalizeAuditSettings({ retentionDays: "0" }).retentionDays, 0);
+});
+
 test("audit settings key and category helper", () => {
     assert.equal(settings.settingKey("guild1"), "audit_settings_guild1");
     assert.equal(settings.categoryEnabled({ categories: { server: false } }, "server"), false);

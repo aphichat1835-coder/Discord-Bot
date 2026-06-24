@@ -27,7 +27,7 @@ function normalizeBool(value, fallback = false) {
 
 function normalizeAuditSettings(input = {}) {
     const mergedCategories = { ...DEFAULT_AUDIT_SETTINGS.categories, ...input.categories };
-    const retentionDays = input.retentionDays === 0 || input.retentionDays === "forever"
+    const retentionDays = input.retentionDays === 0 || input.retentionDays === "0" || input.retentionDays === "forever"
         ? 0
         : Math.max(1, Number(input.retentionDays || DEFAULT_AUDIT_SETTINGS.retentionDays) || DEFAULT_AUDIT_SETTINGS.retentionDays);
 

@@ -15,3 +15,23 @@ test("audit retention computes cutoff", () => {
     assert.equal(retention.cutoffForRetention(0, now), null);
     assert.equal(retention.cutoffForRetention(1, now), now - retention.DAY_MS);
 });
+
+test("audit retention cleanup reads shared audit settings", async () => {
+    const settings = new Map([
+        ["audit_settings_guild1", { retentionDays: "0" }]
+    ]);
+    const sessionManager = {
+        async getSetting(key, fallback) { return settings.has(key) ? settings.get(key) : fallback; }
+    };
+    const client = {
+        guilds: {
+            cache: new Map([["guild1", { id: "guild1" }]])
+        }
+    };
+
+    const results = await retention.cleanupClientAuditLogs(client, sessionManager, { retentionDays: 1 });
+
+    assert.equal(results.length, 1);
+    assert.equal(results[0].skipped, true);
+    assert.equal(results[0].reason, "forever");
+});

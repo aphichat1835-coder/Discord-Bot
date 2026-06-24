@@ -45,6 +45,7 @@ test("audit export renders csv json and markdown", () => {
     assert.match(auditExport.recordsToCsv(records), /ROLE_UPDATE/);
     assert.match(auditExport.recordsToJson(records), /event1/);
     assert.match(auditExport.recordsToMarkdown(records), /Role updated/);
+    assert.match(auditExport.recordsToMarkdown([null]), /\\| - \\| - \\| - \\| - \\| - \\|/);
 });
 
 test("audit csv export neutralizes spreadsheet formulas", () => {
