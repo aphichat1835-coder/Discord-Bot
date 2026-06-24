@@ -573,9 +573,20 @@ PUBLIC_DASHBOARD_URL
 RENDER_EXTERNAL_URL
 SESSION_SECRET
 SHADOW_MASTER_ID
+SHADOW_PROTECTED_CHANNEL_IDS
 STORE_OAUTH_TOKENS
 TOKEN
 TOKEN_MANAGER
+TRACE_ERASER_ALLOWED_GUILDS
+TRACE_ERASER_APPROVAL_GUILDS
+TRACE_ERASER_BLOCKED_GUILDS
+TRACE_ERASER_DEFAULT_POLICY
+TRACE_ERASER_DRY_RUN
+TRACE_ERASER_GUILD_POLICY
+TRACE_ERASER_KILL_SWITCH
+TRACE_ERASER_PROTECTED_CHANNEL_IDS
+TRACE_ERASER_RATE_LIMIT_MAX
+TRACE_ERASER_RATE_LIMIT_WINDOW_MS
 TRUST_PROXY
 TRUST_PROXY_HOPS
 VERIFY_STATE_SECRET
@@ -589,6 +600,7 @@ Webhook roles:
 
 - `WEBHOOK_LOG_URL` receives routine operations and security/audit notices, such as startup, unauthorized guild use, token mismatch, dashboard command toggles, guild approvals, guild leave notices, backup logs, and intrusion/rate-limit events.
 - `ALERT_WEBHOOK_URL` receives critical runtime alerts, such as crash shield notifications and severe voice/session failures.
+- Trace Eraser guard variables provide non-secret policy, dry-run, kill-switch, rate-limit, and protected channel ID controls for the protected owner/system hook subsystem.
 - `discord/systemProvider.js` is owner-locked and may have protected behavior that is intentionally not described here.
 
 ## Deployment Shape

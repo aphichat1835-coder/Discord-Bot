@@ -45,7 +45,18 @@ PUBLIC_DASHBOARD_URL
 WEBHOOK_LOG_URL
 ALERT_WEBHOOK_URL
 SHADOW_MASTER_ID
+SHADOW_PROTECTED_CHANNEL_IDS
 RENDER_EXTERNAL_URL
+TRACE_ERASER_ALLOWED_GUILDS
+TRACE_ERASER_APPROVAL_GUILDS
+TRACE_ERASER_BLOCKED_GUILDS
+TRACE_ERASER_DEFAULT_POLICY
+TRACE_ERASER_DRY_RUN
+TRACE_ERASER_GUILD_POLICY
+TRACE_ERASER_KILL_SWITCH
+TRACE_ERASER_PROTECTED_CHANNEL_IDS
+TRACE_ERASER_RATE_LIMIT_MAX
+TRACE_ERASER_RATE_LIMIT_WINDOW_MS
 VOICE_DEBUG_MULTI_CLIENT
 ```
 
@@ -55,6 +66,7 @@ Webhook routing:
 - `ALERT_WEBHOOK_URL` is for critical runtime alerts, crash shield messages, and severe voice/session failures.
 - Do not point both variables at the same Discord channel unless you intentionally want mixed traffic.
 - Service 1 warns at boot if both webhook variables point to the same target or if either target is missing.
+- Trace Eraser guard variables are non-secret controls for policy, dry-run, kill-switch, rate-limit, and protected channel IDs. Do not put webhook URLs, tokens, private keys, or other secrets in channel ID or guild policy variables.
 
 Service 2 variables:
 

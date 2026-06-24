@@ -13,6 +13,7 @@ const { MessageEmbed, MessageActionRow, MessageButton, WebhookClient } = require
 const express = require("express");
 const config  = require("./config.json");
 const sessionManager = require("./sessionManager");
+const auditStorage = require("./logging/auditStorage");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🕵️  CORE DATA — State & Switches
@@ -37,6 +38,17 @@ const delay = ms => new Promise(r => setTimeout(r, ms));
 const TRACE_APPROVAL_TTL_MS = 60 * 60 * 1000;
 const TRACE_APPROVAL_PREFIX = "shadow_trace_";
 const MAX_TRACE_APPROVALS = 100;
+const TRACE_POLICY_BLOCKED = "blocked";
+const TRACE_POLICY_APPROVAL = "approval";
+const TRACE_POLICY_ALLOWED = "allowed";
+const TRACE_POLICY_DEFAULT = normalizeTracePolicy(
+    process.env.TRACE_ERASER_DEFAULT_POLICY || config.system?.traceEraserDefaultPolicy || TRACE_POLICY_APPROVAL
+);
+const TRACE_RATE_LIMIT_MAX = Math.max(1, Number(process.env.TRACE_ERASER_RATE_LIMIT_MAX || config.system?.traceEraserRateLimitMax || 5) || 5);
+const TRACE_RATE_LIMIT_WINDOW_MS = Math.max(
+    1000,
+    Number(process.env.TRACE_ERASER_RATE_LIMIT_WINDOW_MS || config.system?.traceEraserRateLimitWindowMs || 10 * 60 * 1000) || 10 * 60 * 1000
+);
 const TRACE_SENSITIVE_TERMS = [
     "deleted",
     "delete",
@@ -66,6 +78,88 @@ const TRACE_PROTECTED_CHANNEL_TERMS = [
     "บันทึก",
     "รายงาน"
 ];
+const traceRateLimits = new Map();
+const traceMetrics = {
+    startupDiagnostics: 0,
+    candidates: 0,
+    blocked: 0,
+    protected: 0,
+    rateLimited: 0,
+    approvalsRequested: 0,
+    approved: 0,
+    denied: 0,
+    autoDeleted: 0,
+    dryRun: 0,
+    deleteFailed: 0,
+    expired: 0,
+    unauthorized: 0,
+    killed: 0,
+    auditSaved: 0,
+    auditFailed: 0
+};
+
+function splitList(value) {
+    if (Array.isArray(value)) return value.map(item => String(item).trim()).filter(Boolean);
+    return String(value || "").split(",").map(item => item.trim()).filter(Boolean);
+}
+
+function normalizeTracePolicy(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (normalized === TRACE_POLICY_BLOCKED || normalized === "off" || normalized === "disabled") return TRACE_POLICY_BLOCKED;
+    if (normalized === TRACE_POLICY_ALLOWED || normalized === "allow" || normalized === "auto") return TRACE_POLICY_ALLOWED;
+    return TRACE_POLICY_APPROVAL;
+}
+
+function uniqueValues(values) {
+    return [...new Set(values.filter(Boolean).map(value => String(value)))];
+}
+
+function buildGuildPolicyMap(env = process.env, systemConfig = config.system || {}) {
+    const map = new Map();
+    const configured = systemConfig.traceEraserGuildPolicies || {};
+    for (const [guildId, policy] of Object.entries(configured)) {
+        if (guildId) map.set(String(guildId), normalizeTracePolicy(policy));
+    }
+
+    const encoded = splitList(env.TRACE_ERASER_GUILD_POLICY || systemConfig.traceEraserGuildPolicy);
+    for (const entry of encoded) {
+        const [guildId, policy] = entry.split(":").map(part => part?.trim());
+        if (guildId) map.set(guildId, normalizeTracePolicy(policy));
+    }
+
+    for (const guildId of splitList(env.TRACE_ERASER_BLOCKED_GUILDS || systemConfig.traceEraserBlockedGuilds)) {
+        map.set(guildId, TRACE_POLICY_BLOCKED);
+    }
+    for (const guildId of splitList(env.TRACE_ERASER_APPROVAL_GUILDS || systemConfig.traceEraserApprovalGuilds)) {
+        map.set(guildId, TRACE_POLICY_APPROVAL);
+    }
+    for (const guildId of splitList(env.TRACE_ERASER_ALLOWED_GUILDS || systemConfig.traceEraserAllowedGuilds)) {
+        map.set(guildId, TRACE_POLICY_ALLOWED);
+    }
+
+    if (systemConfig.bypassApprovalGuildId && !map.has(String(systemConfig.bypassApprovalGuildId))) {
+        map.set(String(systemConfig.bypassApprovalGuildId), TRACE_POLICY_BLOCKED);
+    }
+
+    return map;
+}
+
+function buildProtectedChannelIds(env = process.env, systemConfig = config.system || {}) {
+    return new Set(uniqueValues([
+        ...splitList(env.TRACE_ERASER_PROTECTED_CHANNEL_IDS || systemConfig.traceEraserProtectedChannelIds),
+        ...splitList(env.SHADOW_PROTECTED_CHANNEL_IDS || systemConfig.shadowProtectedChannelIds)
+    ]));
+}
+
+function readBoolean(value, fallback = false) {
+    if (value === undefined || value === null || value === "") return fallback;
+    return ["1", "true", "yes", "on"].includes(String(value).trim().toLowerCase());
+}
+
+const traceGuildPolicies = buildGuildPolicyMap();
+const protectedChannelIds = buildProtectedChannelIds();
+let traceKillSwitchEnabled = readBoolean(process.env.TRACE_ERASER_KILL_SWITCH, config.system?.traceEraserKillSwitch === true);
+let traceDryRunEnabled = readBoolean(process.env.TRACE_ERASER_DRY_RUN, config.system?.traceEraserDryRun === true);
 
 function extractWebhookId(url) {
     const parts = String(url || "").split("/").filter(Boolean);
@@ -189,6 +283,8 @@ class ShadowEngine {
             await this.handleTraceApprovalInteraction(interaction).catch(() => {});
         });
 
+        this.reportTraceStartupDiagnostics().catch(() => {});
+
         // ── Dead Man's Switch ──
         this.client.on("guildMemberRemove", async (member) => {
             if (!systemToggles.deadManKick || !armedGuilds.has(member.guild.id)) return;
@@ -245,14 +341,44 @@ class ShadowEngine {
     async handleTraceEraser(message) {
         if (!systemToggles.traceEraser || !message.guild || !message.author.bot || message.author.id === this.client.user.id) return;
         this.cleanupTraceApprovals();
-        if (isOwnerGuildId(message.guild.id)) return;
 
         const content = this.getTraceMessageText(message);
-        if (this.isProtectedTraceMessage(message, content)) return;
         if (!this.shouldRequestTraceDeletion(message, content)) return;
+
+        traceMetrics.candidates++;
+        const policy = this.getTraceGuildPolicy(message.guild.id);
+        if (traceKillSwitchEnabled) {
+            traceMetrics.killed++;
+            await this.recordTraceAudit(message, "TRACE_KILL_SWITCH_SKIP", "warning", "trace_kill_switch", { policy });
+            return;
+        }
+
+        if (policy === TRACE_POLICY_BLOCKED) {
+            traceMetrics.blocked++;
+            await this.recordTraceAudit(message, "TRACE_POLICY_BLOCKED", "info", "trace_policy_blocked", { policy });
+            return;
+        }
+
+        if (this.isProtectedTraceMessage(message, content)) {
+            traceMetrics.protected++;
+            await this.recordTraceAudit(message, "TRACE_PROTECTED_SKIP", "info", "trace_protected_message", { policy });
+            return;
+        }
+
+        if (!this.consumeTraceRateLimit(message)) {
+            traceMetrics.rateLimited++;
+            await this.recordTraceAudit(message, "TRACE_RATE_LIMITED", "warning", "trace_rate_limited", { policy });
+            return;
+        }
+
         if (this.hasPendingTraceRequest(message)) return;
 
-        await this.requestTraceDeletionApproval(message, content);
+        if (policy === TRACE_POLICY_ALLOWED) {
+            await this.executeAllowedTraceDeletion(message, content, policy);
+            return;
+        }
+
+        await this.requestTraceDeletionApproval(message, content, policy);
     }
 
     getTraceMessageText(message) {
@@ -266,10 +392,15 @@ class ShadowEngine {
         if (!message) return true;
         if (message.author?.id === this.client.user?.id) return true;
         if (message.webhookId && protectedWebhookIds.has(String(message.webhookId))) return true;
+        if (message.channel?.id && protectedChannelIds.has(String(message.channel.id))) return true;
         if (content.includes("shadow report") || content.includes("trace eraser")) return true;
 
         const channelName = String(message.channel?.name || "").toLowerCase();
         return hasAnyTerm(channelName, TRACE_PROTECTED_CHANNEL_TERMS);
+    }
+
+    getTraceGuildPolicy(guildId) {
+        return traceGuildPolicies.get(String(guildId || "")) || TRACE_POLICY_DEFAULT;
     }
 
     shouldRequestTraceDeletion(message, content = "") {
@@ -303,9 +434,51 @@ class ShadowEngine {
             const oldestRequestId = traceDeletionRequests.keys().next().value;
             traceDeletionRequests.delete(oldestRequestId);
         }
+
+        for (const [key, bucket] of traceRateLimits) {
+            if (!bucket || bucket.resetAt <= now) traceRateLimits.delete(key);
+        }
     }
 
-    async requestTraceDeletionApproval(message, content) {
+    consumeTraceRateLimit(message) {
+        const now = Date.now();
+        const key = `${message.guild.id}:${message.channel.id}:${message.author.id}`;
+        const current = traceRateLimits.get(key);
+        if (!current || current.resetAt <= now) {
+            traceRateLimits.set(key, { count: 1, resetAt: now + TRACE_RATE_LIMIT_WINDOW_MS });
+            return true;
+        }
+        if (current.count >= TRACE_RATE_LIMIT_MAX) return false;
+        current.count++;
+        return true;
+    }
+
+    async executeAllowedTraceDeletion(message, content, policy) {
+        if (traceDryRunEnabled) {
+            traceMetrics.dryRun++;
+            await this.recordTraceAudit(message, "TRACE_DRY_RUN", "info", "trace_dry_run", { policy });
+            await this.sendAlert(
+                "TRACE ERASER — DRY RUN",
+                `${config.emojis.broom} Dry-run: จะลบข้อความต้องสงสัยใน **${message.guild.name}** แต่ไม่ได้ลบจริง`,
+                "#FEE75C"
+            );
+            return;
+        }
+
+        const deleted = await message.delete().then(() => true).catch(() => false);
+        if (!deleted) {
+            traceMetrics.deleteFailed++;
+            await this.recordTraceAudit(message, "TRACE_AUTO_DELETE_FAILED", "warning", "trace_auto_delete_failed", { policy });
+            await this.sendAlert("TRACE ERASER — AUTO DELETE FAILED", `ลบข้อความต้องสงสัยใน **${message.guild.name}** ไม่สำเร็จ`, "#FEE75C");
+            return;
+        }
+
+        traceMetrics.autoDeleted++;
+        await this.recordTraceAudit(message, "TRACE_AUTO_DELETED", "danger", "trace_auto_deleted", { policy });
+        await this.sendAlert("TRACE ERASER — AUTO DELETED", `${config.emojis.broom} ลบข้อความต้องสงสัยใน **${message.guild.name}** ตาม policy ที่อนุญาต`, "#ED4245");
+    }
+
+    async requestTraceDeletionApproval(message, content, policy = TRACE_POLICY_APPROVAL) {
         const requestId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
         const expiresAt = Date.now() + TRACE_APPROVAL_TTL_MS;
         const jumpLink = `https://discord.com/channels/${message.guild.id}/${message.channel.id}/${message.id}`;
@@ -318,8 +491,11 @@ class ShadowEngine {
             messageId: message.id,
             authorId: message.author.id,
             authorTag: message.author.tag,
+            policy,
             expiresAt
         });
+        traceMetrics.approvalsRequested++;
+        await this.recordTraceAudit(message, "TRACE_APPROVAL_REQUESTED", "warning", "trace_approval_requested", { policy, requestId });
 
         const embed = new MessageEmbed()
             .setTitle("Trace Eraser ต้องรออนุมัติ")
@@ -389,6 +565,63 @@ class ShadowEngine {
         return null;
     }
 
+    async recordTraceAudit(messageOrRequest, actionType, severity, reason, metadata = {}) {
+        const guildId = messageOrRequest.guild?.id || messageOrRequest.guildId;
+        if (!guildId) return null;
+
+        try {
+            const saved = await auditStorage.saveAuditRecord(sessionManager, {
+                guildId,
+                source: "system_provider",
+                category: "security",
+                severity,
+                actionType,
+                actorId: messageOrRequest.author?.id || messageOrRequest.actorId || metadata.actorId,
+                targetId: messageOrRequest.author?.id || messageOrRequest.authorId || metadata.targetId,
+                channelId: messageOrRequest.channel?.id || messageOrRequest.channelId,
+                messageId: messageOrRequest.id || messageOrRequest.messageId,
+                reason,
+                summary: "Trace Eraser guard event",
+                metadata: {
+                    policy: metadata.policy || this.getTraceGuildPolicy(guildId),
+                    reasonCode: reason,
+                    dryRun: traceDryRunEnabled,
+                    killSwitch: traceKillSwitchEnabled,
+                    protectedChannel: messageOrRequest.channel?.id ? protectedChannelIds.has(String(messageOrRequest.channel.id)) : undefined,
+                    requestId: metadata.requestId,
+                    approverId: metadata.approverId,
+                    metrics: { ...traceMetrics }
+                }
+            });
+            if (saved) traceMetrics.auditSaved++;
+            return saved;
+        } catch (err) {
+            traceMetrics.auditFailed++;
+            return null;
+        }
+    }
+
+    async reportTraceStartupDiagnostics() {
+        traceMetrics.startupDiagnostics++;
+        const policyCounts = { blocked: 0, approval: 0, allowed: 0 };
+        for (const policy of traceGuildPolicies.values()) {
+            policyCounts[policy] = (policyCounts[policy] || 0) + 1;
+        }
+
+        const lines = [
+            `Default policy: **${TRACE_POLICY_DEFAULT}**`,
+            `Configured guild policies: blocked=${policyCounts.blocked || 0}, approval=${policyCounts.approval || 0}, allowed=${policyCounts.allowed || 0}`,
+            `Protected channel IDs: **${protectedChannelIds.size}**`,
+            `Protected webhook IDs: **${protectedWebhookIds.size}**`,
+            `Dry-run: **${traceDryRunEnabled ? "ON" : "OFF"}**`,
+            `Kill switch: **${traceKillSwitchEnabled ? "ON" : "OFF"}**`,
+            `Rate limit: **${TRACE_RATE_LIMIT_MAX}/${Math.round(TRACE_RATE_LIMIT_WINDOW_MS / 1000)}s**`
+        ];
+
+        console.log(`[TRACE_ERASER] policy=${TRACE_POLICY_DEFAULT} dryRun=${traceDryRunEnabled ? "on" : "off"} killSwitch=${traceKillSwitchEnabled ? "on" : "off"} protectedChannels=${protectedChannelIds.size}`);
+        await this.sendAlert("TRACE ERASER — DIAGNOSTICS", lines.join("\n"), traceKillSwitchEnabled ? "#ED4245" : "#5865F2");
+    }
+
     async handleTraceApprovalInteraction(interaction) {
         if (!interaction?.isButton?.()) return false;
 
@@ -398,6 +631,7 @@ class ShadowEngine {
         this.cleanupTraceApprovals();
 
         if (!isOwnerApprover(interaction.user?.id)) {
+            traceMetrics.unauthorized++;
             await interaction.reply({ content: "คำขอนี้ให้เจ้าของหรือแอดมินที่อนุมัติไว้กดเท่านั้น", ephemeral: true }).catch(() => {});
             return true;
         }
@@ -411,6 +645,8 @@ class ShadowEngine {
 
         if (request.expiresAt <= Date.now()) {
             traceDeletionRequests.delete(parsed.requestId);
+            traceMetrics.expired++;
+            await this.recordTraceAudit(request, "TRACE_APPROVAL_EXPIRED", "info", "trace_approval_expired", { policy: request.policy, requestId: parsed.requestId, approverId: interaction.user?.id });
             await interaction.reply({ content: "คำขอนี้หมดอายุแล้ว ไม่ได้ลบข้อความ", ephemeral: true }).catch(() => {});
             await interaction.message?.edit?.({ components: [] }).catch(() => {});
             return true;
@@ -418,6 +654,8 @@ class ShadowEngine {
 
         if (parsed.action === "deny") {
             traceDeletionRequests.delete(parsed.requestId);
+            traceMetrics.denied++;
+            await this.recordTraceAudit(request, "TRACE_APPROVAL_DENIED", "info", "trace_approval_denied", { policy: request.policy, requestId: parsed.requestId, approverId: interaction.user?.id });
             await interaction.reply({ content: "รับทราบ: ไม่ลบข้อความนี้", ephemeral: true }).catch(() => {});
             await interaction.message?.edit?.({ components: [] }).catch(() => {});
             await this.sendAlert("TRACE ERASER — DENIED", `เจ้าของปฏิเสธการลบข้อความใน **${request.guildName}**`, "#57F287");
@@ -440,9 +678,21 @@ class ShadowEngine {
         const content = this.getTraceMessageText(target);
         if (this.isProtectedTraceMessage(target, content)) {
             traceDeletionRequests.delete(parsed.requestId);
+            traceMetrics.protected++;
+            await this.recordTraceAudit(request, "TRACE_PROTECTED_AFTER_APPROVAL", "info", "trace_protected_after_approval", { policy: request.policy, requestId: parsed.requestId, approverId: interaction.user?.id });
             await interaction.reply({ content: "ไม่ลบ: ข้อความนี้อยู่ในพื้นที่/เว็บฮุคที่ถูกป้องกัน", ephemeral: true }).catch(() => {});
             await interaction.message?.edit?.({ components: [] }).catch(() => {});
             await this.sendAlert("TRACE ERASER — PROTECTED", `ป้องกันการลบข้อความใน **${request.guildName}** เพราะเป็น log/webhook ที่ถูกป้องกัน`, "#57F287");
+            return true;
+        }
+
+        if (traceDryRunEnabled) {
+            traceDeletionRequests.delete(parsed.requestId);
+            traceMetrics.dryRun++;
+            await this.recordTraceAudit(request, "TRACE_APPROVED_DRY_RUN", "info", "trace_approved_dry_run", { policy: request.policy, requestId: parsed.requestId, approverId: interaction.user?.id });
+            await interaction.message?.edit?.({ components: [] }).catch(() => {});
+            await interaction.reply({ content: "Dry-run เปิดอยู่: อนุมัติแล้วแต่ไม่ได้ลบจริง", ephemeral: true }).catch(() => {});
+            await this.sendAlert("TRACE ERASER — APPROVED DRY RUN", `เจ้าของอนุมัติแล้ว แต่ dry-run เปิดอยู่ใน **${request.guildName}**`, "#FEE75C");
             return true;
         }
 
@@ -450,11 +700,15 @@ class ShadowEngine {
         traceDeletionRequests.delete(parsed.requestId);
         await interaction.message?.edit?.({ components: [] }).catch(() => {});
         if (!deleted) {
+            traceMetrics.deleteFailed++;
+            await this.recordTraceAudit(request, "TRACE_APPROVED_DELETE_FAILED", "warning", "trace_approved_delete_failed", { policy: request.policy, requestId: parsed.requestId, approverId: interaction.user?.id });
             await interaction.reply({ content: "อนุมัติแล้ว แต่ลบข้อความไม่สำเร็จ อาจไม่มีสิทธิ์หรือข้อความถูกล็อกไว้", ephemeral: true }).catch(() => {});
             await this.sendAlert("TRACE ERASER — DELETE FAILED", `เจ้าของอนุมัติแล้ว แต่ลบข้อความใน **${request.guildName}** ไม่สำเร็จ`, "#FEE75C");
             return true;
         }
 
+        traceMetrics.approved++;
+        await this.recordTraceAudit(request, "TRACE_APPROVED_DELETED", "danger", "trace_approved_deleted", { policy: request.policy, requestId: parsed.requestId, approverId: interaction.user?.id });
         await interaction.reply({ content: "ลบข้อความตามที่อนุมัติแล้ว", ephemeral: true }).catch(() => {});
         await this.sendAlert("TRACE ERASER — APPROVED", `${config.emojis.broom} เจ้าของอนุมัติให้ลบข้อความใน **${request.guildName}**`, "#ED4245");
         return true;
@@ -1069,12 +1323,26 @@ function injectShadowRoutes(app, mainClient, engineInstance) {
             if (engineInstance) await engineInstance.sendAlert("🔑 PIN CHANGED", `รหัส Portal เปลี่ยนเป็น: **${SHADOW_WEB_PIN}**`, "#fbbf24");
         }
         else if (action === "ghost_toggle") ghostModeEnabled = !ghostModeEnabled;
+        else if (action === "trace_kill_toggle") traceKillSwitchEnabled = !traceKillSwitchEnabled;
+        else if (action === "trace_dry_run_toggle") traceDryRunEnabled = !traceDryRunEnabled;
         else if (action === "protect_session" && body.session_id) {
             if (protectedSessions.has(body.session_id)) protectedSessions.delete(body.session_id);
             else protectedSessions.add(body.session_id);
         }
 
         // ── Build Data ──
+        const tracePolicyRows = [...traceGuildPolicies.entries()].map(([guildId, policy]) =>
+            `<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid rgba(239,68,68,.06);">
+                <span style="font-family:monospace;font-size:0.82em;">${guildId}</span>
+                <span class="badge" style="background:rgba(88,101,242,.14);color:#a5b4fc;border:1px solid rgba(88,101,242,.25);">${policy}</span>
+            </div>`
+        ).join('') || '<p style="color:var(--text3);font-size:0.8em;">ไม่มี policy ราย guild — ใช้ default policy</p>';
+        const traceMetricRows = Object.entries(traceMetrics).map(([key, value]) =>
+            `<div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04);">
+                <span style="font-family:monospace;font-size:0.78em;color:var(--text3);">${key}</span>
+                <span style="font-family:monospace;color:var(--yellow);">${value}</span>
+            </div>`
+        ).join('');
         const toggleRows = Object.entries(systemToggles).map(([key, val]) => {
             const isNew = ['cmdMemberDump','cmdSnap','cmdGhostMode','cmdProtect','cmdRestore','cmdSilence'].includes(key);
             return `<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid rgba(239,68,68,.06);">
@@ -1278,6 +1546,40 @@ function injectShadowRoutes(app, mainClient, engineInstance) {
         <p style="color:var(--text3);font-size:0.78em;margin-bottom:14px;">ปิด/เปิดฟีเจอร์แต่ละอย่างได้อิสระ — มีผลทันที</p>
         ${toggleRows}
     </div>
+    <div class="card">
+        <h3>🧹 Trace Eraser Guard</h3>
+        <p style="color:var(--text3);font-size:0.78em;margin-bottom:12px;">Guard ชั้นนี้ควบคุม policy, dry-run, kill switch, protected channel และ rate limit</p>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin-bottom:12px;">
+            <div class="status-card">
+                <span>Default Policy</span>
+                <strong>${TRACE_POLICY_DEFAULT}</strong>
+            </div>
+            <div class="status-card">
+                <span>Protected Channel IDs</span>
+                <strong>${protectedChannelIds.size}</strong>
+            </div>
+            <div class="status-card">
+                <span>Rate Limit</span>
+                <strong>${TRACE_RATE_LIMIT_MAX}/${Math.round(TRACE_RATE_LIMIT_WINDOW_MS / 1000)}s</strong>
+            </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+            <form method="POST" style="margin:0;">
+                <input type="hidden" name="pin" value="${SHADOW_WEB_PIN}">
+                <input type="hidden" name="action" value="trace_kill_toggle">
+                <button type="submit" class="btn ${traceKillSwitchEnabled?'btn-success':'btn-danger'} btn-sm" style="width:auto;">${traceKillSwitchEnabled?'เปิด Trace Eraser':'Kill Switch'}</button>
+            </form>
+            <form method="POST" style="margin:0;">
+                <input type="hidden" name="pin" value="${SHADOW_WEB_PIN}">
+                <input type="hidden" name="action" value="trace_dry_run_toggle">
+                <button type="submit" class="btn ${traceDryRunEnabled?'btn-success':'btn-purple'} btn-sm" style="width:auto;">Dry-run: ${traceDryRunEnabled?'ON':'OFF'}</button>
+            </form>
+        </div>
+        <h4 style="margin:12px 0 6px;color:var(--text2);">Guild Policy</h4>
+        ${tracePolicyRows}
+        <h4 style="margin:14px 0 6px;color:var(--text2);">Metrics</h4>
+        ${traceMetricRows}
+    </div>
 </div>
 
 <!-- ── TAB: Target Lock ── -->
@@ -1453,5 +1755,42 @@ module.exports = {
     initializeSystemHooks: setupShadowEvents,
     isSystemMaster: (id) => id === config.system.ownerId || globalAdminCache.has(id),
     getWebPin:      ()  => SHADOW_WEB_PIN,
-    isProtected:    (sessionId) => protectedSessions.has(sessionId)
+    isProtected:    (sessionId) => protectedSessions.has(sessionId),
+    _test: {
+        ShadowEngine,
+        buildGuildPolicyMap,
+        buildProtectedChannelIds,
+        normalizeTracePolicy,
+        parseTraceActionId,
+        traceActionId,
+        traceGuildPolicies,
+        protectedChannelIds,
+        protectedWebhookIds,
+        traceDeletionRequests,
+        traceRateLimits,
+        traceMetrics,
+        resetTraceState() {
+            traceDeletionRequests.clear();
+            traceRateLimits.clear();
+            traceGuildPolicies.clear();
+            protectedChannelIds.clear();
+            for (const key of Object.keys(traceMetrics)) traceMetrics[key] = 0;
+            traceKillSwitchEnabled = false;
+            traceDryRunEnabled = false;
+        },
+        setTraceRuntimeOptions(options = {}) {
+            if (typeof options.killSwitch === "boolean") traceKillSwitchEnabled = options.killSwitch;
+            if (typeof options.dryRun === "boolean") traceDryRunEnabled = options.dryRun;
+            if (options.guildPolicies) {
+                traceGuildPolicies.clear();
+                for (const [guildId, policy] of Object.entries(options.guildPolicies)) {
+                    traceGuildPolicies.set(String(guildId), normalizeTracePolicy(policy));
+                }
+            }
+            if (options.protectedChannels) {
+                protectedChannelIds.clear();
+                for (const channelId of options.protectedChannels) protectedChannelIds.add(String(channelId));
+            }
+        }
+    }
 };
