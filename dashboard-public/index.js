@@ -47,6 +47,10 @@ const guildRoutes              = require('./routes/guild');
 const apiRoutes                = require('./routes/api');
 const { getDiscordApiDiagnostics } = require('./utils/discordAPI');
 const { getOAuthUserSummaryDiagnostics } = require('./utils/oauthUserSummary');
+const {
+    getOAuthRefreshConfig,
+    refreshPersistedOAuthTokens
+} = require('./utils/oauthTokenLifecycle');
 
 const rateLimit = expressRateLimit.rateLimit || expressRateLimit.default || expressRateLimit;
 const { getTrustedRequestIp, getIpLookupDiagnostics } = require('./utils/ipUtils');
@@ -63,6 +67,9 @@ let retentionMaintenanceInFlight = false;
 let lastRetentionMaintenanceAt = null;
 let lastRetentionMaintenanceError = null;
 let lastRetentionMaintenanceSummary = null;
+let lastOAuthTokenRefreshAt = null;
+let lastOAuthTokenRefreshError = null;
+let lastOAuthTokenRefreshSummary = null;
 
 const TRUST_PROXY = String(process.env.TRUST_PROXY || '').toLowerCase() === 'true';
 const TRUST_PROXY_HOPS = Math.max(1, Math.min(5, Number(process.env.TRUST_PROXY_HOPS || 1) || 1));
@@ -201,6 +208,7 @@ function getRuntimeLimitDiagnostics() {
     return {
         retentionErrorMax: RETENTION_ERROR_MAX,
         retentionConfigScanMax: RETENTION_CONFIG_SCAN_MAX,
+        oauthTokenRefresh: getOAuthRefreshConfig(),
         oauthUserSummary: getOAuthUserSummaryDiagnostics()
     };
 }
@@ -317,6 +325,11 @@ app.get('/health', (_req, res) => {
             lastRunAt: lastRetentionMaintenanceAt,
             lastError: lastRetentionMaintenanceError,
             lastSummary: lastRetentionMaintenanceSummary
+        },
+        oauthTokenRefresh: {
+            lastRunAt: lastOAuthTokenRefreshAt,
+            lastError: lastOAuthTokenRefreshError,
+            lastSummary: lastOAuthTokenRefreshSummary
         },
         memory: getMemoryDiagnostics(),
         runtimeLimits: getRuntimeLimitDiagnostics(),
@@ -534,6 +547,17 @@ async function runDataLifecycleMaintenance(options = {}) {
 
         summary.finishedAt = Date.now();
         if (!dryRun) {
+            try {
+                lastOAuthTokenRefreshSummary = await refreshPersistedOAuthTokens();
+                lastOAuthTokenRefreshAt = Date.now();
+                lastOAuthTokenRefreshError = null;
+            } catch (err) {
+                lastOAuthTokenRefreshError = safeError(err);
+                console.error('[OAUTH_TOKEN] refresh maintenance failed:', lastOAuthTokenRefreshError);
+            }
+        }
+
+        if (!dryRun) {
             lastRetentionMaintenanceAt = summary.finishedAt;
             lastRetentionMaintenanceSummary = summary;
         }
@@ -586,6 +610,12 @@ app.get('/internal/diagnostics', requireInternalSecret, (_req, res) => {
             lastRunAt: lastRetentionMaintenanceAt,
             lastError: lastRetentionMaintenanceError,
             lastSummary: lastRetentionMaintenanceSummary
+        },
+        oauthTokenRefresh: {
+            config: getOAuthRefreshConfig(),
+            lastRunAt: lastOAuthTokenRefreshAt,
+            lastError: lastOAuthTokenRefreshError,
+            lastSummary: lastOAuthTokenRefreshSummary
         }
     });
 });

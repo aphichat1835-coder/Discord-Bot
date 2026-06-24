@@ -83,6 +83,9 @@ ADMIN_SESSION_COOKIE_SECURE
 ADMIN_SESSION_MAX_AGE_MS
 ADMIN_SESSION_ROLLING
 ADMIN_SESSION_TOUCH_AFTER_SEC
+OAUTH_TOKEN_REFRESH_FAIL_MAX
+OAUTH_TOKEN_REFRESH_MARGIN_MS
+OAUTH_TOKEN_REFRESH_SCAN_LIMIT
 PUBLIC_BASE_URL
 DASHBOARD_PUBLIC_URL
 DASHBOARD_URL
@@ -156,9 +159,10 @@ Compatibility/fallback names may also appear in code, such as `TOKEN`, `BOT_TOKE
 
 ### OAuth token storage
 
-- Default policy should avoid storing OAuth tokens unless explicitly required.
-- Keep `STORE_OAUTH_TOKENS=false` unless the owner approves storage.
-- If token storage is enabled, encrypted token fields remain sensitive.
+- Verification OAuth token storage is enabled by default after owner approval so access can be refreshed before Discord's short-lived access token expires.
+- Set `STORE_OAUTH_TOKENS=false` to disable storage and refresh maintenance.
+- Stored OAuth access and refresh tokens are encrypted and remain sensitive.
+- Refresh maintenance is controlled by `OAUTH_TOKEN_REFRESH_MARGIN_MS`, `OAUTH_TOKEN_REFRESH_SCAN_LIMIT`, and `OAUTH_TOKEN_REFRESH_FAIL_MAX`.
 
 ## IP, Device, And Risk Data
 
@@ -274,7 +278,7 @@ Do not change imports or boot logic that initializes or references it.
 - Use strong random values for `API_SECRET`, `INTERNAL_API_SECRET`, `SESSION_SECRET`, `VERIFY_STATE_SECRET`, and `ENCRYPTION_KEY`.
 - Use HTTPS URLs for public dashboards and OAuth redirects.
 - Configure Discord Developer Portal redirect URIs exactly.
-- Set `STORE_OAUTH_TOKENS=false` unless storage is required and approved.
+- Set `STORE_OAUTH_TOKENS=false` only if persistent verification authorization is not required.
 - Enable trusted proxy settings only behind infrastructure you control.
 - Keep Render secrets in Render Dashboard, not in `render.yaml`.
 - Rotate secrets after accidental exposure.

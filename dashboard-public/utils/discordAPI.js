@@ -434,19 +434,21 @@ async function refreshToken(encryptedRefreshToken, redirectUri) {
         throw new Error("Cannot decrypt refresh token");
     }
 
+    const body = {
+        client_id: getClientId(),
+        client_secret: getClientSecret(),
+        grant_type: "refresh_token",
+        refresh_token: refreshTokenValue
+    };
+    if (redirectUri) body.redirect_uri = redirectUri;
+
     const res = await apiFetch("/oauth2/token", {
         label: "refreshToken",
         method: "POST",
         headers: {
             "Content-Type": "application/x-www-form-urlencoded"
         },
-        body: new URLSearchParams({
-            client_id: getClientId(),
-            client_secret: getClientSecret(),
-            grant_type: "refresh_token",
-            refresh_token: refreshTokenValue,
-            redirect_uri: redirectUri
-        })
+        body: new URLSearchParams(body)
     });
 
     return res.json();

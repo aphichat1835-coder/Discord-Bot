@@ -26,6 +26,7 @@
 - Added Dashboard Public shared verification snapshot serializers to remove duplicate guild log serialization while preserving sensitive-data redaction and existing response shapes.
 - Added protected owner/system hook safeguards for Trace Eraser policy modes, protected channel IDs, dry-run, kill-switch, rate limiting, metrics, startup diagnostics, auditStorage records, and focused guard tests.
 - Added owner-dashboard rolling cookie refresh controls and Dashboard Public session-store touch controls to reduce unexpected login expiry during active use.
+- Added persistent verification OAuth token refresh lifecycle so encrypted refresh tokens can keep authorization usable beyond Discord's short-lived access token lifetime.
 
 ### Changed
 
@@ -88,6 +89,7 @@
 - Updated active documentation to reflect the current dependency baseline, Dashboard Public shared serializers, Jest 30, and CI audit policy.
 - Updated `.env.example`, `SECURITY.md`, and `ARCHITECTURE.md` with non-secret Trace Eraser guard controls while keeping hidden owner/system operational details out of public documentation.
 - Updated session documentation and placeholders for owner dashboard and Dashboard Public rolling session controls.
+- Updated OAuth token storage documentation and placeholders to reflect persistent encrypted token storage with refresh maintenance.
 
 ### Notes
 

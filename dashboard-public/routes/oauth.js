@@ -12,6 +12,7 @@ const {
     decodeCallbackState
 } = require('../utils/state');
 const { normalizeGuildPermissions } = require('../utils/guildPermissions');
+const { shouldStoreOAuthTokens } = require('../utils/oauthTokenLifecycle');
 
 const OAuthUser = require('../models/OAuthUser');
 const GuildConfig = require('../models/GuildConfig');
@@ -726,9 +727,6 @@ async function updateIpIdentityTrackingSafe({
     }, null);
 }
 
-function shouldStoreOAuthTokens() {
-    return String(process.env.STORE_OAUTH_TOKENS || '').toLowerCase() === 'true';
-}
 async function saveOAuthUserSafe({
     profile,
     tokenData,
@@ -807,8 +805,8 @@ async function saveOAuthUserSafe({
         };
 
         /*
-          ค่า default ไม่เก็บ OAuth token ลง DB
-          ถ้าต้องการเก็บจริงให้ตั้ง STORE_OAUTH_TOKENS=true เอง
+          ค่า default เก็บ OAuth token แบบเข้ารหัสเพื่อ refresh สิทธิ์ต่อเนื่อง
+          ถ้าต้องการปิดให้ตั้ง STORE_OAUTH_TOKENS=false
         */
         if (shouldStoreOAuthTokens() && typeof discord.prepareTokenStorage === 'function') {
             updateSet.oauth = discord.prepareTokenStorage(tokenData);

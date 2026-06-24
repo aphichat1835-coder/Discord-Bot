@@ -39,6 +39,7 @@ const schema = new mongoose.Schema({
         tokenType:            String,
         lastRefreshAt:        Number,
         refreshFailCount:     { type: Number, default: 0 },
+        lastRefreshError:     String,
         revokedAt:            Number,
         rawTokenMeta:          mixed
     },

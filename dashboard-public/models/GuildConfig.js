@@ -104,11 +104,10 @@ const schema = new mongoose.Schema({
 
     security: {
         /*
-          default เป็น false จะปลอดภัยกว่า:
-          OAuth access token ใช้ตอน callback พอ
-          ถ้าจะเก็บ token จริงค่อยเปิด STORE_OAUTH_TOKENS=true
+          default เก็บ token แบบเข้ารหัสเพื่อให้ refresh authorization ต่อเนื่อง
+          ถ้าจะปิดให้ตั้ง STORE_OAUTH_TOKENS=false
         */
-        storeOAuthTokens:              { type: Boolean, default: false },
+        storeOAuthTokens:              { type: Boolean, default: true },
         storeRawIpEncrypted:           { type: Boolean, default: true },
         ipRevealRequiresOwnerApproval: { type: Boolean, default: true },
         retentionMode:                 { type: String, default: 'until_admin_delete' },
