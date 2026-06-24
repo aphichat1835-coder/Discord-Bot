@@ -55,6 +55,44 @@ function normalizeEntry(rawEntry) {
     };
 }
 
+function appendPageEntriesUntilCursor(entries, page, cursor) {
+    let reachedCursor = false;
+
+    for (const entry of page) {
+        const id = entryId(entry);
+        if (cursor?.lastEntryId && id === cursor.lastEntryId) {
+            reachedCursor = true;
+            break;
+        }
+        entries.push(entry);
+    }
+
+    return {
+        reachedCursor,
+        before: page[page.length - 1]?.id || null
+    };
+}
+
+async function fetchAuditEntriesUntilCursor(guild, { limit, maxPages, cursor }) {
+    const entries = [];
+    let before = null;
+    let reachedCursor = false;
+
+    for (let pageIndex = 0; pageIndex < maxPages && !reachedCursor; pageIndex += 1) {
+        const logs = await guild.fetchAuditLogs(before ? { limit, before } : { limit });
+        const page = Array.from(logs?.entries?.values?.() || []);
+        if (page.length === 0) break;
+
+        const pageResult = appendPageEntriesUntilCursor(entries, page, cursor);
+        reachedCursor = pageResult.reachedCursor;
+        before = pageResult.before;
+        if (!before || !cursor?.lastEntryId) break;
+    }
+
+    entries.reverse();
+    return { entries, reachedCursor };
+}
+
 async function processEntry({ guild, sessionManager, entry, seen }) {
     const id = entryId(entry);
     if (!id) return false;
@@ -103,6 +141,19 @@ async function processEntry({ guild, sessionManager, entry, seen }) {
     return sent;
 }
 
+async function processReconciledEntries({ guild, sessionManager, entries, seen }) {
+    let processed = 0;
+    let lastEntryId = null;
+
+    for (const entry of entries) {
+        const id = entryId(entry);
+        if (id) lastEntryId = id;
+        if (await processEntry({ guild, sessionManager, entry, seen })) processed += 1;
+    }
+
+    return { processed, lastEntryId };
+}
+
 async function runAuditReconcile(guild, sessionManager, options = {}) {
     if (!guild?.fetchAuditLogs || !sessionManager) return { ok: false, reason: "missing_dependencies", processed: 0 };
     const limit = Math.max(1, Math.min(50, Number(options.limit || 10) || 10));
@@ -111,37 +162,8 @@ async function runAuditReconcile(guild, sessionManager, options = {}) {
     const cursor = await getCursor(sessionManager, guild.id);
 
     try {
-        const entries = [];
-        let before = null;
-        let reachedCursor = false;
-
-        for (let pageIndex = 0; pageIndex < maxPages && !reachedCursor; pageIndex += 1) {
-            const logs = await guild.fetchAuditLogs(before ? { limit, before } : { limit });
-            const page = Array.from(logs?.entries?.values?.() || []);
-            if (page.length === 0) break;
-
-            for (const entry of page) {
-                const id = entryId(entry);
-                if (cursor?.lastEntryId && id === cursor.lastEntryId) {
-                    reachedCursor = true;
-                    break;
-                }
-                entries.push(entry);
-            }
-
-            before = page[page.length - 1]?.id || null;
-            if (!before || !cursor?.lastEntryId) break;
-        }
-
-        entries.reverse();
-        let processed = 0;
-        let lastEntryId = null;
-
-        for (const entry of entries) {
-            const id = entryId(entry);
-            if (id) lastEntryId = id;
-            if (await processEntry({ guild, sessionManager, entry, seen })) processed += 1;
-        }
+        const { entries, reachedCursor } = await fetchAuditEntriesUntilCursor(guild, { limit, maxPages, cursor });
+        const { processed, lastEntryId } = await processReconciledEntries({ guild, sessionManager, entries, seen });
 
         await saveSeen(sessionManager, guild.id, seen);
         await saveCursor(sessionManager, guild.id, lastEntryId);
@@ -157,6 +179,9 @@ module.exports = {
     seenKey,
     entryCreatedAt,
     normalizeEntry,
+    appendPageEntriesUntilCursor,
+    fetchAuditEntriesUntilCursor,
+    processReconciledEntries,
     processEntry,
     runAuditReconcile
 };

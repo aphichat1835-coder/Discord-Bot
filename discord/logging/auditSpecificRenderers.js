@@ -47,7 +47,7 @@ function renderWithFields(entry, title, category, fields, options = {}) {
         severity: options.severity || severityForAuditEvent(eventName),
         title: options.title || title,
         reason: entry.reason || options.reason || null,
-        ids: { ...baseIds(entry), ...(options.ids || {}) },
+        ids: { ...baseIds(entry), ...options.ids },
         fields: [
             field("Entry ID", entry.id || "Unknown", true),
             field("Actor", formatter.readActorId(entry) || "Unknown", true),

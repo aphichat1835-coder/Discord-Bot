@@ -2399,7 +2399,7 @@ pre.json-block {
     font-size: 0.82rem;
   }
 
-  .modal {
+  .modal-backdrop .modal {
     padding: 16px;
   }
 

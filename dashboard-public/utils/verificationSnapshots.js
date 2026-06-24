@@ -16,12 +16,8 @@ function decryptRawIp(ipInfo = {}) {
   }
 }
 
-function safeIpInfo(ipInfo = {}, canViewSensitive = false) {
-  const rawIp = canViewSensitive ? decryptRawIp(ipInfo) : null;
-
+function safeIpLocation(ipInfo = {}) {
   return {
-    rawIp: rawIp || null,
-    ip: rawIp || null,
     country: ipInfo.country || "unknown",
     countryCode: ipInfo.countryCode || "unknown",
     region: ipInfo.region || "",
@@ -29,20 +25,35 @@ function safeIpInfo(ipInfo = {}, canViewSensitive = false) {
     zip: ipInfo.zip || "",
     lat: ipInfo.lat ?? null,
     lon: ipInfo.lon ?? null,
-    timezone: ipInfo.timezone || "",
+    timezone: ipInfo.timezone || ""
+  };
+}
+
+function safeIpNetwork(ipInfo = {}) {
+  return {
     isp: ipInfo.isp || "unknown",
     org: ipInfo.org || "",
     as: ipInfo.as || "",
     asn: ipInfo.asn || ipInfo.as || "",
     asname: ipInfo.asname || "",
-    reverse: ipInfo.reverse || "",
+    reverse: ipInfo.reverse || ""
+  };
+}
+
+function safeIpFlags(ipInfo = {}) {
+  return {
     isVPN: !!ipInfo.isVPN,
     isProxy: !!ipInfo.isProxy,
     isTOR: !!ipInfo.isTOR,
     isHosting: !!(ipInfo.isHosting ?? ipInfo.hosting),
     hosting: !!(ipInfo.hosting ?? ipInfo.isHosting),
     mobile: !!ipInfo.mobile,
-    riskScore: Number(ipInfo.riskScore || 0),
+    riskScore: Number(ipInfo.riskScore || 0)
+  };
+}
+
+function safeIpLookup(ipInfo = {}) {
+  return {
     lookupProvider: ipInfo.lookupProvider || "",
     lookupStatus: ipInfo.lookupStatus || "",
     lookupMessage: ipInfo.lookupMessage || "",
@@ -52,7 +63,20 @@ function safeIpInfo(ipInfo = {}, canViewSensitive = false) {
   };
 }
 
-function safeDevice(device = {}) {
+function safeIpInfo(ipInfo = {}, canViewSensitive = false) {
+  const rawIp = canViewSensitive ? decryptRawIp(ipInfo) : null;
+
+  return {
+    rawIp: rawIp || null,
+    ip: rawIp || null,
+    ...safeIpLocation(ipInfo),
+    ...safeIpNetwork(ipInfo),
+    ...safeIpFlags(ipInfo),
+    ...safeIpLookup(ipInfo)
+  };
+}
+
+function safeDeviceIdentity(device = {}) {
   return {
     userAgent: device.userAgent || "",
     browser: device.browser || "unknown",
@@ -60,7 +84,12 @@ function safeDevice(device = {}) {
     language: device.language || "",
     languages: Array.isArray(device.languages) ? device.languages.slice(0, 12) : [],
     timezone: device.timezone || "",
-    platform: device.platform || "",
+    platform: device.platform || ""
+  };
+}
+
+function safeDeviceDisplay(device = {}) {
+  return {
     deviceType: device.deviceType || "unknown",
     screenSize: device.screenSize || "",
     viewportSize: device.viewportSize || "",
@@ -70,6 +99,13 @@ function safeDevice(device = {}) {
     referrer: device.referrer || "",
     fingerprintVersion: Number(device.fingerprintVersion || 0) || null,
     hasFingerprint: !!device.fingerprintHash
+  };
+}
+
+function safeDevice(device = {}) {
+  return {
+    ...safeDeviceIdentity(device),
+    ...safeDeviceDisplay(device)
   };
 }
 
@@ -87,20 +123,28 @@ function safePolicySnapshot(snapshot = {}) {
   };
 }
 
-function safeDiscordSnapshot(snapshot = {}, canViewSensitive = false) {
-  const profile = snapshot.profileSnapshot || snapshot;
-
-  const discord = {
+function safeDiscordIdentity(profile = {}, snapshot = {}) {
+  return {
     userId: profile.userId || profile.id || snapshot.userId || snapshot.id || null,
     username: profile.username || snapshot.username || "",
     discriminator: profile.discriminator || snapshot.discriminator || null,
     globalName: profile.globalName || profile.global_name || snapshot.globalName || snapshot.global_name || null,
-    displayTag: profile.displayTag || profile.tag || snapshot.displayTag || snapshot.tag || null,
+    displayTag: profile.displayTag || profile.tag || snapshot.displayTag || snapshot.tag || null
+  };
+}
+
+function safeDiscordVisuals(profile = {}, snapshot = {}) {
+  return {
     avatarHash: profile.avatarHash || profile.avatar || snapshot.avatarHash || snapshot.avatar || null,
     avatarUrl: profile.avatarUrl || snapshot.avatarUrl || null,
     bannerHash: profile.bannerHash || profile.banner || snapshot.bannerHash || snapshot.banner || null,
     bannerUrl: profile.bannerUrl || snapshot.bannerUrl || null,
-    accentColor: profile.accentColor || profile.accent_color || snapshot.accentColor || snapshot.accent_color || null,
+    accentColor: profile.accentColor || profile.accent_color || snapshot.accentColor || snapshot.accent_color || null
+  };
+}
+
+function safeDiscordSecurity(profile = {}, snapshot = {}) {
+  return {
     email: profile.email || snapshot.email || null,
     emailVerified: profile.emailVerified === true || profile.verified === true || snapshot.emailVerified === true || snapshot.verified === true,
     locale: profile.locale || snapshot.locale || "",
@@ -109,32 +153,62 @@ function safeDiscordSnapshot(snapshot = {}, canViewSensitive = false) {
     flags: profile.flags || snapshot.flags || 0,
     publicFlags: profile.publicFlags || profile.public_flags || snapshot.publicFlags || snapshot.public_flags || 0,
     accountCreatedAt: profile.accountCreatedAt ?? snapshot.accountCreatedAt ?? null,
-    accountAgeDays: profile.accountAgeDays ?? snapshot.accountAgeDays ?? null,
+    accountAgeDays: profile.accountAgeDays ?? snapshot.accountAgeDays ?? null
+  };
+}
+
+function safeDiscordConnections(snapshot = {}) {
+  return Array.isArray(snapshot.connections)
+    ? snapshot.connections.slice(0, 50).map(c => ({
+        type: c.type || "",
+        id: c.id || "",
+        name: c.name || "",
+        verified: c.verified,
+        visibility: c.visibility,
+        revoked: c.revoked
+      }))
+    : [];
+}
+
+function safeDiscordGuilds(snapshot = {}) {
+  if (!Array.isArray(snapshot.guilds)) return [];
+
+  return snapshot.guilds.slice(0, 50).map(g => {
+    const guildSnapshot = g.snapshot || g;
+    return {
+      id: guildSnapshot.id || g.id || "",
+      name: guildSnapshot.name || g.name || "",
+      owner: guildSnapshot.owner === true || g.owner === true,
+      permissions: guildSnapshot.permissions || g.permissions || "0"
+    };
+  });
+}
+
+function safeDiscordCounts(snapshot = {}) {
+  return {
     connectionsCount: Array.isArray(snapshot.connections) ? snapshot.connections.length : Number(snapshot.connectionsCount || 0),
     guildsCount: Array.isArray(snapshot.guilds) ? snapshot.guilds.length : Number(snapshot.guildsCount || 0),
-    connections: Array.isArray(snapshot.connections)
-      ? snapshot.connections.slice(0, 50).map(c => ({
-          type: c.type || "",
-          id: c.id || "",
-          name: c.name || "",
-          verified: c.verified,
-          visibility: c.visibility,
-          revoked: c.revoked
-        }))
-      : [],
-    guilds: Array.isArray(snapshot.guilds)
-      ? snapshot.guilds.slice(0, 50).map(g => {
-          const guildSnapshot = g.snapshot || g;
-          return {
-            id: guildSnapshot.id || g.id || "",
-            name: guildSnapshot.name || g.name || "",
-            owner: guildSnapshot.owner === true || g.owner === true,
-            permissions: guildSnapshot.permissions || g.permissions || "0"
-          };
-        })
-      : [],
+    connections: safeDiscordConnections(snapshot),
+    guilds: safeDiscordGuilds(snapshot)
+  };
+}
+
+function safeDiscordPanel(snapshot = {}) {
+  return {
     callbackStateMode: snapshot.callbackStateMode || snapshot.stateMode || null,
     panelRevision: snapshot.panelRevision || null
+  };
+}
+
+function safeDiscordSnapshot(snapshot = {}, canViewSensitive = false) {
+  const profile = snapshot.profileSnapshot || snapshot;
+
+  const discord = {
+    ...safeDiscordIdentity(profile, snapshot),
+    ...safeDiscordVisuals(profile, snapshot),
+    ...safeDiscordSecurity(profile, snapshot),
+    ...safeDiscordCounts(snapshot),
+    ...safeDiscordPanel(snapshot)
   };
 
   return redactSensitiveDiscordSnapshot(discord, canViewSensitive);
@@ -260,9 +334,22 @@ function buildVerifyLogCommon(parts = {}, options = {}) {
 
 module.exports = {
   decryptRawIp,
+  safeIpLocation,
+  safeIpNetwork,
+  safeIpFlags,
+  safeIpLookup,
   safeIpInfo,
+  safeDeviceIdentity,
+  safeDeviceDisplay,
   safeDevice,
   safePolicySnapshot,
+  safeDiscordIdentity,
+  safeDiscordVisuals,
+  safeDiscordSecurity,
+  safeDiscordConnections,
+  safeDiscordGuilds,
+  safeDiscordCounts,
+  safeDiscordPanel,
   safeDiscordSnapshot,
   safeMemberSnapshot,
   safeTrackingSnapshot,
