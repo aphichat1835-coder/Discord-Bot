@@ -1,0 +1,270 @@
+const { decryptIP } = require("./crypto");
+const {
+  redactSensitiveDiscordSnapshot,
+  redactSensitiveIpInfo
+} = require("./sensitiveAccess");
+
+function decryptRawIp(ipInfo = {}) {
+  if (ipInfo.rawIp) return ipInfo.rawIp;
+  if (ipInfo.ip) return ipInfo.ip;
+  if (!ipInfo.encryptedRawIp) return null;
+
+  try {
+    return decryptIP(ipInfo.encryptedRawIp);
+  } catch {
+    return null;
+  }
+}
+
+function safeIpInfo(ipInfo = {}, canViewSensitive = false) {
+  const rawIp = canViewSensitive ? decryptRawIp(ipInfo) : null;
+
+  return {
+    rawIp: rawIp || null,
+    ip: rawIp || null,
+    country: ipInfo.country || "unknown",
+    countryCode: ipInfo.countryCode || "unknown",
+    region: ipInfo.region || "",
+    city: ipInfo.city || "unknown",
+    zip: ipInfo.zip || "",
+    lat: ipInfo.lat ?? null,
+    lon: ipInfo.lon ?? null,
+    timezone: ipInfo.timezone || "",
+    isp: ipInfo.isp || "unknown",
+    org: ipInfo.org || "",
+    as: ipInfo.as || "",
+    asn: ipInfo.as || "",
+    asname: ipInfo.asname || "",
+    reverse: ipInfo.reverse || "",
+    isVPN: !!ipInfo.isVPN,
+    isProxy: !!ipInfo.isProxy,
+    isTOR: !!ipInfo.isTOR,
+    isHosting: !!ipInfo.hosting,
+    hosting: !!ipInfo.hosting,
+    mobile: !!ipInfo.mobile,
+    riskScore: Number(ipInfo.riskScore || 0),
+    lookupProvider: ipInfo.lookupProvider || "",
+    lookupStatus: ipInfo.lookupStatus || "",
+    lookupMessage: ipInfo.lookupMessage || "",
+    proxyCheckProvider: ipInfo.proxyCheckProvider || "",
+    proxyCheckStatus: ipInfo.proxyCheckStatus || "",
+    lookupAt: ipInfo.lookupAt || null
+  };
+}
+
+function safeDevice(device = {}) {
+  return {
+    userAgent: device.userAgent || "",
+    browser: device.browser || "unknown",
+    os: device.os || "unknown",
+    language: device.language || "",
+    languages: Array.isArray(device.languages) ? device.languages.slice(0, 12) : [],
+    timezone: device.timezone || "",
+    platform: device.platform || "",
+    deviceType: device.deviceType || "unknown",
+    screenSize: device.screenSize || "",
+    viewportSize: device.viewportSize || "",
+    colorDepth: device.colorDepth ?? null,
+    devicePixelRatio: device.devicePixelRatio ?? null,
+    touchPoints: device.touchPoints ?? null,
+    referrer: device.referrer || "",
+    fingerprintVersion: Number(device.fingerprintVersion || 0) || null,
+    hasFingerprint: !!device.fingerprintHash
+  };
+}
+
+function safePolicySnapshot(snapshot = {}) {
+  return {
+    enabled: snapshot.enabled,
+    blockVPN: snapshot.blockVPN,
+    minAccountAgeDays: snapshot.minAccountAgeDays,
+    requireEmail: snapshot.requireEmail,
+    requireEmailVerified: snapshot.requireEmailVerified,
+    requireConnections: snapshot.requireConnections,
+    minConnections: snapshot.minConnections,
+    allowedCountries: Array.isArray(snapshot.allowedCountries) ? snapshot.allowedCountries.slice(0, 80) : [],
+    blockedCountries: Array.isArray(snapshot.blockedCountries) ? snapshot.blockedCountries.slice(0, 80) : []
+  };
+}
+
+function safeDiscordSnapshot(snapshot = {}, canViewSensitive = false) {
+  const profile = snapshot.profileSnapshot || snapshot;
+
+  const discord = {
+    userId: profile.userId || profile.id || snapshot.userId || snapshot.id || null,
+    username: profile.username || snapshot.username || "",
+    discriminator: profile.discriminator || snapshot.discriminator || null,
+    globalName: profile.globalName || profile.global_name || snapshot.globalName || snapshot.global_name || null,
+    displayTag: profile.displayTag || profile.tag || snapshot.displayTag || snapshot.tag || null,
+    avatarHash: profile.avatarHash || profile.avatar || snapshot.avatarHash || snapshot.avatar || null,
+    avatarUrl: profile.avatarUrl || snapshot.avatarUrl || null,
+    bannerHash: profile.bannerHash || profile.banner || snapshot.bannerHash || snapshot.banner || null,
+    bannerUrl: profile.bannerUrl || snapshot.bannerUrl || null,
+    accentColor: profile.accentColor || profile.accent_color || snapshot.accentColor || snapshot.accent_color || null,
+    email: profile.email || snapshot.email || null,
+    emailVerified: profile.emailVerified === true || profile.verified === true || snapshot.emailVerified === true || snapshot.verified === true,
+    locale: profile.locale || snapshot.locale || "",
+    mfaEnabled: !!profile.mfaEnabled || !!profile.mfa_enabled || !!snapshot.mfaEnabled || !!snapshot.mfa_enabled,
+    premiumType: profile.premiumType || profile.premium_type || snapshot.premiumType || snapshot.premium_type || 0,
+    flags: profile.flags || snapshot.flags || 0,
+    publicFlags: profile.publicFlags || profile.public_flags || snapshot.publicFlags || snapshot.public_flags || 0,
+    accountCreatedAt: profile.accountCreatedAt ?? snapshot.accountCreatedAt ?? null,
+    accountAgeDays: profile.accountAgeDays ?? snapshot.accountAgeDays ?? null,
+    connectionsCount: Array.isArray(snapshot.connections) ? snapshot.connections.length : Number(snapshot.connectionsCount || 0),
+    guildsCount: Array.isArray(snapshot.guilds) ? snapshot.guilds.length : Number(snapshot.guildsCount || 0),
+    connections: Array.isArray(snapshot.connections)
+      ? snapshot.connections.slice(0, 50).map(c => ({
+          type: c.type || "",
+          id: c.id || "",
+          name: c.name || "",
+          verified: c.verified,
+          visibility: c.visibility,
+          revoked: c.revoked
+        }))
+      : [],
+    guilds: Array.isArray(snapshot.guilds)
+      ? snapshot.guilds.slice(0, 50).map(g => {
+          const guildSnapshot = g.snapshot || g;
+          return {
+            id: guildSnapshot.id || g.id || "",
+            name: guildSnapshot.name || g.name || "",
+            owner: guildSnapshot.owner === true || g.owner === true,
+            permissions: guildSnapshot.permissions || g.permissions || "0"
+          };
+        })
+      : [],
+    callbackStateMode: snapshot.callbackStateMode || snapshot.stateMode || null,
+    panelRevision: snapshot.panelRevision || null
+  };
+
+  return redactSensitiveDiscordSnapshot(discord, canViewSensitive);
+}
+
+function safeMemberSnapshot(snapshot = {}) {
+  const member = snapshot.member?.snapshot || snapshot.member || snapshot;
+
+  return {
+    nick: member.nick || snapshot.nick || null,
+    nickname: member.nick || snapshot.nickname || null,
+    joinedAt: member.joinedAt || member.joined_at || snapshot.joinedAt || null,
+    pending: member.pending === true || snapshot.pending === true,
+    timedOut: !!member.communicationDisabledUntil || !!member.communication_disabled_until,
+    communicationDisabledUntil: member.communicationDisabledUntil || member.communication_disabled_until || null,
+    avatar: member.avatar || null,
+    avatarUrl: member.avatarUrl || null,
+    flags: member.flags || 0,
+    roleCount: Array.isArray(member.roles) ? member.roles.length : Number(member.roleCount || snapshot.roleCount || 0),
+    roles: Array.isArray(member.roles) ? member.roles.slice(0, 80) : []
+  };
+}
+
+function safeTrackingSnapshot(snapshot = {}) {
+  return {
+    ipHash: snapshot.ipHash || null,
+    firstSeenAt: snapshot.firstSeenAt || null,
+    lastSeenAt: snapshot.lastSeenAt || null,
+    totalVerifications: snapshot.totalVerifications || 0,
+    uniqueUsers: snapshot.uniqueUsers || 0,
+    maxRiskScore: snapshot.maxRiskScore || 0,
+    lastRiskScore: snapshot.lastRiskScore || 0
+  };
+}
+
+function safeRoleResult(result = {}) {
+  return {
+    ok: result.ok === true,
+    skipped: result.skipped === true,
+    reason: result.reason || "",
+    status: result.status || "",
+    message: result.message || "",
+    error: result.error || null
+  };
+}
+
+function buildVerifyLogParts(rawLog = {}, canViewSensitive = false) {
+  const raw = rawLog?.toObject ? rawLog.toObject() : rawLog;
+  const ipInfo = redactSensitiveIpInfo(safeIpInfo(raw.ipInfo || {}, canViewSensitive), canViewSensitive);
+  const device = safeDevice(raw.device || {});
+  const discord = safeDiscordSnapshot(raw.discordSnapshot || {}, canViewSensitive);
+  const member = safeMemberSnapshot(raw.memberSnapshot || discord.member || {});
+  const policy = safePolicySnapshot(raw.policySnapshot || {});
+  const tracking = safeTrackingSnapshot(raw.trackingSnapshot || {});
+
+  return { raw, ipInfo, device, discord, member, policy, tracking };
+}
+
+function buildVerifyLogCommon(parts = {}, options = {}) {
+  const { raw = {}, ipInfo = {}, device = {}, discord = {}, member = {}, policy = {}, tracking = {} } = parts;
+  const result = raw.result || options.defaultResult || "failed";
+
+  return {
+    id: raw._id ? String(raw._id) : raw.id || null,
+    _id: raw._id ? String(raw._id) : raw.id || null,
+    guildId: raw.guildId,
+    userId: raw.userId || discord.userId || null,
+    roleId: raw.roleId || null,
+    sensitiveRedacted: options.canViewSensitive !== true,
+    result,
+    reason: raw.reason || "",
+    riskScore: Number(raw.riskScore || ipInfo.riskScore || 0),
+    riskFlags: Array.isArray(raw.riskFlags) ? raw.riskFlags : [],
+    oauthScope: raw.oauthScope || "",
+    stateMode: raw.stateMode || "",
+    user: discord,
+    discordSnapshot: discord,
+    memberSnapshot: member,
+    policySnapshot: policy,
+    trackingSnapshot: tracking,
+    username: discord.username,
+    globalName: discord.globalName,
+    tag: discord.displayTag,
+    email: discord.email,
+    emailVerified: discord.emailVerified,
+    locale: discord.locale,
+    flags: discord.flags,
+    publicFlags: discord.publicFlags,
+    accountAgeDays: discord.accountAgeDays,
+    accountCreatedAt: discord.accountCreatedAt,
+    connectionsCount: discord.connectionsCount,
+    guildsCount: discord.guildsCount,
+    connections: discord.connections,
+    guilds: discord.guilds,
+    memberNick: member.nick,
+    nickname: member.nickname,
+    joinedAt: member.joinedAt,
+    memberRoles: member.roles,
+    ipInfo,
+    rawIp: ipInfo.rawIp,
+    ip: ipInfo.rawIp,
+    countryCode: ipInfo.countryCode,
+    country: ipInfo.country,
+    city: ipInfo.city,
+    isp: ipInfo.isp,
+    asn: ipInfo.asn,
+    isVPN: ipInfo.isVPN,
+    isProxy: ipInfo.isProxy,
+    isTOR: ipInfo.isTOR,
+    isHosting: ipInfo.isHosting,
+    device,
+    browser: device.browser,
+    os: device.os,
+    platform: device.platform,
+    timezone: device.timezone,
+    language: device.language,
+    screenSize: device.screenSize,
+    viewportSize: device.viewportSize
+  };
+}
+
+module.exports = {
+  decryptRawIp,
+  safeIpInfo,
+  safeDevice,
+  safePolicySnapshot,
+  safeDiscordSnapshot,
+  safeMemberSnapshot,
+  safeTrackingSnapshot,
+  safeRoleResult,
+  buildVerifyLogParts,
+  buildVerifyLogCommon
+};
