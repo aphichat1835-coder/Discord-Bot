@@ -26,6 +26,7 @@ const sessionManager = require("./sessionManager");
 const voiceWorker    = require("./voiceWorker");
 const commands       = require("./commands");
 const auditLogger    = require("./auditLogger");
+const { startAuditRuntime, auditReconcilerScheduler } = require("./logging/auditRuntimeLifecycle");
 const memoryMonitor  = require("./index/memoryMonitor");
 const { validateRequiredEnv } = require("./core/env");
 const { createHttpApp } = require("./core/http");
@@ -253,7 +254,14 @@ system.initCronJobs({
 // ════════════════════════════════════════════════════════════════════════════
 //  🛑  SHUTDOWN HANDLERS
 // ════════════════════════════════════════════════════════════════════════════
-system.initShutdown({ sessionManager, voiceWorker, client, memoryMonitor, auditLogger });
+system.initShutdown({
+    sessionManager,
+    voiceWorker,
+    client,
+    memoryMonitor,
+    auditLogger,
+    auditReconcilerScheduler
+});
 
 if (isFeatureEnabled("memoryMonitor")) {
     memoryMonitor.startMemoryMonitor({
@@ -431,6 +439,7 @@ client.on("ready", async () => {
         try {
             auditLogger.register(client, sessionManager);
             console.log("[AUDIT] ✅ Audit Logger registered.");
+            startAuditRuntime({ client, sessionManager });
         } catch (auditErr) {
             console.error("[AUDIT] ❌ Failed to register Audit Logger:", auditErr.message);
         }
