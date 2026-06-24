@@ -41,13 +41,14 @@ function renderWithFields(entry, title, category, fields, options = {}) {
     const eventName = formatter.readEntryName(entry);
     const cleanedFields = fields.filter(Boolean);
     const extraFields = Array.isArray(options.fields) ? options.fields : [];
+    const ids = options.ids ? { ...baseIds(entry), ...options.ids } : baseIds(entry);
     return buildLogEmbed({
         ...options,
         category: options.category || category,
         severity: options.severity || severityForAuditEvent(eventName),
         title: options.title || title,
         reason: entry.reason || options.reason || null,
-        ids: { ...baseIds(entry), ...options.ids },
+        ids,
         fields: [
             field("Entry ID", entry.id || "Unknown", true),
             field("Actor", formatter.readActorId(entry) || "Unknown", true),

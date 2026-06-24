@@ -926,7 +926,7 @@ tbody tr:hover td {
   color: var(--text);
   font-weight: 850;
   text-align: right;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .kv-val-left {
@@ -1176,13 +1176,13 @@ tbody tr:hover td {
   color: #fff;
   font-weight: 950;
   margin-bottom: 7px;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .embed-preview-desc {
   color: #dbdee1;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
   font-size: 0.88rem;
 }
 
@@ -1796,7 +1796,7 @@ tbody tr:hover td {
   font-size: 0.82rem;
   line-height: 1.45;
   font-weight: 800;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .error-ref-danger {
@@ -2027,7 +2027,6 @@ tbody tr:hover td {
 }
 
 .break {
-  word-break: break-word;
   overflow-wrap: anywhere;
 }
 
@@ -2260,7 +2259,6 @@ tbody tr:hover td {
   min-width: 0;
   color: var(--text);
   font-weight: 800;
-  word-break: break-word;
   overflow-wrap: anywhere;
 }
 
@@ -2279,7 +2277,7 @@ pre.json-block {
   font-size: 0.74rem;
   line-height: 1.55;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .inline-code,

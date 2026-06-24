@@ -159,7 +159,7 @@ function fieldValue(fields = [], names = []) {
 function readDigits(text, start) {
     let out = "";
     for (let index = start; index < text.length; index++) {
-        const codePoint = text.charCodeAt(index);
+        const codePoint = text.codePointAt(index);
         if (codePoint < 48 || codePoint > 57) break;
         out += text[index];
     }
@@ -213,7 +213,7 @@ function actionTypeFromTitle(category, title) {
     let normalized = "";
     let lastWasSeparator = true;
     for (const char of safeAuditText(title || "audit_log", 120)) {
-        const codePoint = char.charCodeAt(0);
+        const codePoint = char.codePointAt(0);
         const isAlpha = (codePoint >= 65 && codePoint <= 90) || (codePoint >= 97 && codePoint <= 122);
         const isDigit = codePoint >= 48 && codePoint <= 57;
         if (isAlpha || isDigit) {

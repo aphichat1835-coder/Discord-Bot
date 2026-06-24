@@ -256,11 +256,17 @@ function getPublicBaseUrl(req) {
     process.env.RENDER_EXTERNAL_URL ||
     "";
 
-  if (envUrl) return String(envUrl).replace(/\/+$/, "");
+  if (envUrl) return trimTrailingSlashes(envUrl);
 
   const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
   const host = req.headers["x-forwarded-host"] || req.headers.host;
-  return `${proto}://${host}`.replace(/\/+$/, "");
+  return trimTrailingSlashes(`${proto}://${host}`);
+}
+
+function trimTrailingSlashes(value) {
+  let text = String(value || "");
+  while (text.endsWith("/")) text = text.slice(0, -1);
+  return text;
 }
 
 function makeRequestId(prefix = "req") {
@@ -359,8 +365,8 @@ function sanitizeVerification(input = {}) {
 function mergeVerificationConfig(existing = {}, incoming = {}) {
   const current = normalizeVerificationConfig(existing || {});
   const clean = sanitizeVerification(incoming || {});
-  const hasIncomingAntiAlt = Object.prototype.hasOwnProperty.call(incoming || {}, "antiAlt");
-  const hasIncomingPanel = Object.prototype.hasOwnProperty.call(incoming || {}, "panel");
+  const hasIncomingAntiAlt = Object.hasOwn(incoming || {}, "antiAlt");
+  const hasIncomingPanel = Object.hasOwn(incoming || {}, "panel");
   const currentAntiAlt = current.antiAlt ?? {};
   const cleanAntiAlt = clean.antiAlt ?? {};
   const currentPanel = current.panel ?? {};
