@@ -658,7 +658,7 @@
       User ID: <span class="mono">${h(log.userId || user.id || "—")}</span><br>
       Username: ${h(user.username || log.username || "—")}<br>
       Global name: ${h(user.globalName || log.globalName || "—")}<br>
-      Email: ${h(user.email || log.email || "—")} · Verified: ${h(boolText(user.verified || log.emailVerified))}<br>
+      Email: ${h(user.email || log.email || "—")} · Verified: ${h(boolText(user.verified ?? log.emailVerified))}<br>
       Locale: ${h(user.locale || log.locale || "—")} · Flags: ${h(user.flags ?? log.flags ?? "—")}<br><br>
     `;
   }
@@ -682,10 +682,10 @@
       · City: ${h(ipInfo.city || log.city || "—")}<br>
       ISP: ${h(ipInfo.isp || log.isp || "—")}
       · ASN: ${h(ipInfo.asn || log.asn || "—")}<br>
-      VPN: ${h(boolText(ipInfo.isVPN || log.isVPN))}
-      · Proxy: ${h(boolText(ipInfo.isProxy || log.isProxy))}
-      · TOR: ${h(boolText(ipInfo.isTOR || log.isTOR))}
-      · Hosting: ${h(boolText(ipInfo.isHosting || log.isHosting))}<br><br>
+      VPN: ${h(boolText(ipInfo.isVPN ?? log.isVPN))}
+      · Proxy: ${h(boolText(ipInfo.isProxy ?? log.isProxy))}
+      · TOR: ${h(boolText(ipInfo.isTOR ?? log.isTOR))}
+      · Hosting: ${h(boolText(ipInfo.isHosting ?? log.isHosting))}<br><br>
     `;
   }
 

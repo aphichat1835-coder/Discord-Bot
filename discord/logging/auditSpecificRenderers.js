@@ -40,24 +40,27 @@ function baseIds(entry) {
 function renderWithFields(entry, title, category, fields, options = {}) {
     const eventName = formatter.readEntryName(entry);
     const cleanedFields = fields.filter(Boolean);
+    const extraFields = Array.isArray(options.fields) ? options.fields : [];
     return buildLogEmbed({
-        category,
+        ...options,
+        category: options.category || category,
         severity: options.severity || severityForAuditEvent(eventName),
-        title,
-        reason: entry.reason || null,
-        ids: baseIds(entry),
+        title: options.title || title,
+        reason: entry.reason || options.reason || null,
+        ids: { ...baseIds(entry), ...(options.ids || {}) },
         fields: [
             field("Entry ID", entry.id || "Unknown", true),
             field("Actor", formatter.readActorId(entry) || "Unknown", true),
             field("Target", formatter.readTargetId(entry) || "Unknown", true),
             ...cleanedFields,
-            field("Changes", formatter.formatChangeBlock(entry.changes), false)
+            field("Changes", formatter.formatChangeBlock(entry.changes), false),
+            ...extraFields
         ],
         footer: options.footer || "Specialized audit coverage"
     });
 }
 
-function renderGuildUpdate(entry) {
+function renderGuildUpdate(entry, options = {}) {
     return renderWithFields(entry, "Guild Settings Updated", LOG_CHANNEL_TYPES.SERVER, [
         changeLine(entry, "Name", "name"),
         changeLine(entry, "Owner", "owner_id"),
@@ -70,10 +73,10 @@ function renderGuildUpdate(entry) {
         changeLine(entry, "Public Updates Channel", "public_updates_channel_id"),
         changeLine(entry, "Vanity URL", "vanity_url_code"),
         changeLine(entry, "Locale", "preferred_locale")
-    ], { severity: "warning" });
+    ], { ...options, severity: options.severity || "warning" });
 }
 
-function renderChannelAudit(entry) {
+function renderChannelAudit(entry, options = {}) {
     return renderWithFields(entry, `Channel: ${formatter.readEntryName(entry)}`, LOG_CHANNEL_TYPES.SERVER, [
         compactField("Channel", option(entry, "channel_id") || formatter.readTargetId(entry), true),
         changeLine(entry, "Name", "name"),
@@ -85,10 +88,10 @@ function renderChannelAudit(entry) {
         changeLine(entry, "Parent", "parent_id"),
         changeLine(entry, "Default Archive", "default_auto_archive_duration"),
         changeLine(entry, "Forum Tags", "available_tags")
-    ]);
+    ], options);
 }
 
-function renderRoleAudit(entry) {
+function renderRoleAudit(entry, options = {}) {
     return renderWithFields(entry, `Role: ${formatter.readEntryName(entry)}`, LOG_CHANNEL_TYPES.SERVER, [
         compactField("Role", option(entry, "role_id") || formatter.readTargetId(entry), true),
         changeLine(entry, "Name", "name"),
@@ -99,54 +102,54 @@ function renderRoleAudit(entry) {
         changeLine(entry, "Position", "position"),
         changeLine(entry, "Icon", "icon"),
         changeLine(entry, "Unicode Emoji", "unicode_emoji")
-    ]);
+    ], options);
 }
 
-function renderChannelOverwrite(entry) {
+function renderChannelOverwrite(entry, options = {}) {
     return renderWithFields(entry, `Channel Permission: ${formatter.readEntryName(entry)}`, LOG_CHANNEL_TYPES.SERVER, [
         compactField("Channel", option(entry, "channel_id"), true),
         compactField("Overwrite Target", option(entry, "id") || formatter.readTargetId(entry), true),
         compactField("Overwrite Type", option(entry, "type"), true),
         changeLine(entry, "Allow", "allow"),
         changeLine(entry, "Deny", "deny")
-    ]);
+    ], options);
 }
 
-function renderMemberVoiceAudit(entry) {
+function renderMemberVoiceAudit(entry, options = {}) {
     return renderWithFields(entry, `Voice Moderation: ${formatter.readEntryName(entry)}`, LOG_CHANNEL_TYPES.VOICE, [
         compactField("Channel", option(entry, "channel_id"), true),
         compactField("Count", option(entry, "count"), true)
-    ], { severity: "warning" });
+    ], { ...options, severity: options.severity || "warning" });
 }
 
-function renderMemberPrune(entry) {
+function renderMemberPrune(entry, options = {}) {
     return renderWithFields(entry, "Member Prune", LOG_CHANNEL_TYPES.MODERATION, [
         compactField("Days", option(entry, "delete_member_days"), true),
         compactField("Removed", option(entry, "members_removed") || option(entry, "count"), true)
-    ], { severity: "danger" });
+    ], { ...options, severity: options.severity || "danger" });
 }
 
-function renderWebhook(entry) {
+function renderWebhook(entry, options = {}) {
     return renderWithFields(entry, `Webhook: ${formatter.readEntryName(entry)}`, LOG_CHANNEL_TYPES.SECURITY, [
         compactField("Channel", option(entry, "channel_id"), true),
         compactField("Webhook", formatter.readTargetId(entry), true),
         changeLine(entry, "Name", "name"),
         changeLine(entry, "Avatar", "avatar"),
         changeLine(entry, "Application", "application_id")
-    ]);
+    ], options);
 }
 
-function renderInvite(entry) {
+function renderInvite(entry, options = {}) {
     return renderWithFields(entry, `Invite: ${formatter.readEntryName(entry)}`, LOG_CHANNEL_TYPES.SERVER, [
         compactField("Code", formatter.readTargetId(entry) || option(entry, "code"), true),
         compactField("Channel", option(entry, "channel_id"), true),
         changeLine(entry, "Max Uses", "max_uses"),
         changeLine(entry, "Max Age", "max_age"),
         changeLine(entry, "Temporary", "temporary")
-    ]);
+    ], options);
 }
 
-function renderAutomation(entry) {
+function renderAutomation(entry, options = {}) {
     return renderWithFields(entry, `Auto Moderation: ${formatter.readEntryName(entry)}`, LOG_CHANNEL_TYPES.SECURITY, [
         compactField("Rule", option(entry, "rule_name") || formatter.readTargetId(entry), true),
         compactField("Channel", option(entry, "channel_id"), true),
@@ -155,10 +158,10 @@ function renderAutomation(entry) {
         changeLine(entry, "Exempt Roles", "exempt_roles"),
         changeLine(entry, "Exempt Channels", "exempt_channels"),
         changeLine(entry, "Enabled", "enabled")
-    ], { severity: "warning" });
+    ], { ...options, severity: options.severity || "warning" });
 }
 
-function renderScheduledOrStage(entry) {
+function renderScheduledOrStage(entry, options = {}) {
     return renderWithFields(entry, formatter.readEntryName(entry), LOG_CHANNEL_TYPES.SERVER, [
         compactField("Channel", option(entry, "channel_id"), true),
         compactField("Entity", formatter.readTargetId(entry), true),
@@ -169,20 +172,20 @@ function renderScheduledOrStage(entry) {
         changeLine(entry, "Start", "scheduled_start_time"),
         changeLine(entry, "End", "scheduled_end_time"),
         changeLine(entry, "Location", "entity_metadata")
-    ]);
+    ], options);
 }
 
-function renderSoundboard(entry) {
+function renderSoundboard(entry, options = {}) {
     return renderWithFields(entry, `Soundboard: ${formatter.readEntryName(entry)}`, LOG_CHANNEL_TYPES.SERVER, [
         compactField("Sound", formatter.readTargetId(entry), true),
         changeLine(entry, "Name", "name"),
         changeLine(entry, "Emoji", "emoji_name"),
         changeLine(entry, "Volume", "volume"),
         changeLine(entry, "Available", "available")
-    ]);
+    ], options);
 }
 
-function renderOnboardingOrHome(entry) {
+function renderOnboardingOrHome(entry, options = {}) {
     return renderWithFields(entry, formatter.readEntryName(entry), LOG_CHANNEL_TYPES.SERVER, [
         compactField("Entity", formatter.readTargetId(entry), true),
         changeLine(entry, "Enabled", "enabled"),
@@ -190,14 +193,14 @@ function renderOnboardingOrHome(entry) {
         changeLine(entry, "Options", "options"),
         changeLine(entry, "Default Channel IDs", "default_channel_ids"),
         changeLine(entry, "Resource Channels", "resource_channels")
-    ]);
+    ], options);
 }
 
-function renderVoiceChannelStatus(entry) {
+function renderVoiceChannelStatus(entry, options = {}) {
     return renderWithFields(entry, `Voice Status: ${formatter.readEntryName(entry)}`, LOG_CHANNEL_TYPES.VOICE, [
         compactField("Channel", option(entry, "channel_id") || formatter.readTargetId(entry), true),
         changeLine(entry, "Status", "status")
-    ]);
+    ], options);
 }
 
 const RENDERER_RULES = Object.freeze([
@@ -224,7 +227,7 @@ function rendererFor(eventName) {
 function renderAuditEntry(entry = {}, options = {}) {
     const eventName = formatter.readEntryName(entry);
     const renderer = rendererFor(eventName);
-    return renderer ? renderer(entry) : formatter.renderGenericAuditEntry(entry, options);
+    return renderer ? renderer(entry, options) : formatter.renderGenericAuditEntry(entry, options);
 }
 
 module.exports = {

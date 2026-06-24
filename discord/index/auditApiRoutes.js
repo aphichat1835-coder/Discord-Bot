@@ -71,7 +71,11 @@ async function applyAuditRuntimeSettings({ client, sessionManager, settings }) {
     return { stopped: false, reason: "other_guilds_still_enabled" };
 }
 
-function registerAuditApiRoutes({ app, express, sessionManager, client, auditLogger, checkAuth }) {
+function csrfMiddleware(requireCsrf) {
+    return typeof requireCsrf === "function" ? requireCsrf : (_req, _res, next) => next();
+}
+
+function registerAuditApiRoutes({ app, express, sessionManager, client, auditLogger, checkAuth, requireCsrf }) {
     app.get("/api/audit/logs", async (req, res) => {
         if (!checkAuth(req, res)) return;
         try {
@@ -147,7 +151,7 @@ function registerAuditApiRoutes({ app, express, sessionManager, client, auditLog
         }
     });
 
-    app.post("/api/audit/settings", express.json({ limit: "16kb" }), async (req, res) => {
+    app.post("/api/audit/settings", csrfMiddleware(requireCsrf), express.json({ limit: "16kb" }), async (req, res) => {
         if (!checkAuth(req, res)) return;
         try {
             const guildId = readGuildId(req.body || req.query, client);

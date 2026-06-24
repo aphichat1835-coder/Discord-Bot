@@ -301,7 +301,8 @@ function registerRoutes({
         sessionManager,
         client,
         auditLogger,
-        checkAuth
+        checkAuth,
+        requireCsrf: auth.requireCsrf
     });
 
     console.log("[AUDIT] 🧾 Audit dashboard routes registered at /audit-logs");

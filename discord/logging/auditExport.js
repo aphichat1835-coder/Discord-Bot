@@ -17,8 +17,13 @@ const CSV_COLUMNS = Object.freeze([
 ]);
 
 function csvEscape(value) {
-    const text = safeAuditText(value ?? "", 1000).replaceAll(/\r?\n/g, " ");
+    const text = sanitizeCsvFormula(safeAuditText(value ?? "", 1000).replaceAll(/\r?\n/g, " "));
     return `"${text.replaceAll("\"", "\"\"")}"`;
+}
+
+function sanitizeCsvFormula(value) {
+    const text = String(value ?? "");
+    return /^\s*[=+\-@]/.test(text) ? `'${text}` : text;
 }
 
 function recordsToCsv(records = []) {
@@ -44,6 +49,7 @@ function recordsToMarkdown(records = []) {
 module.exports = {
     CSV_COLUMNS,
     csvEscape,
+    sanitizeCsvFormula,
     recordsToCsv,
     recordsToJson,
     recordsToMarkdown

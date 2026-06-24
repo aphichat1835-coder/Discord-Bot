@@ -4,7 +4,7 @@ function buildAuditRouteMountPlan() {
         patchDoc: "docs/AUDIT_SERVER_INTEGRATION_PATCH.md",
         importLine: "const { registerAuditWebBundle } = require(\"./auditWebBundle\");",
         mountAfter: "const rateLimiter = createRateLimiter(requestCounts, config, sessionManager);",
-        mountCall: "registerAuditWebBundle({ app, express, sessionManager, client, auditLogger, checkAuth });",
+        mountCall: "registerAuditWebBundle({ app, express, sessionManager, client, auditLogger, checkAuth, requireCsrf: auth.requireCsrf });",
         routes: [
             "/api/audit/logs",
             "/api/audit/export",
@@ -16,7 +16,7 @@ function buildAuditRouteMountPlan() {
         notes: [
             "Mount inside registerRoutes after checkAuth exists.",
             "Do not remove existing /api auth, rate limit, reveal token, or CSRF logic.",
-            "The audit routes still call checkAuth directly, so they remain protected even before deeper UI integration.",
+            "The audit routes still call checkAuth directly, and POST settings also receives the dashboard CSRF guard.",
             "Settings routes are log-only controls: message create logging, reconciler opt-in, retention, and category toggles.",
             "Dead-letter route lets the owner inspect failed log sends without losing failed audit evidence."
         ]

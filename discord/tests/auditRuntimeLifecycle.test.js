@@ -11,12 +11,16 @@ test("audit runtime lifecycle exposes scheduler controls", () => {
 
 test("audit runtime lifecycle stays inactive by default", () => {
     const logs = [];
-    const result = lifecycle.startAuditRuntime({
-        client: { guilds: { cache: new Map() } },
-        sessionManager: {},
-        logger: { log: message => logs.push(message) }
-    });
-    assert.equal(result.started, false);
-    assert.equal(result.reason, "disabled");
-    assert.ok(logs.some(message => message.includes("inactive")));
+    try {
+        const result = lifecycle.startAuditRuntime({
+            client: { guilds: { cache: new Map() } },
+            sessionManager: {},
+            logger: { log: message => logs.push(message) }
+        });
+        assert.equal(result.started, false);
+        assert.equal(result.reason, "disabled");
+        assert.ok(logs.some(message => message.includes("inactive")));
+    } finally {
+        lifecycle.stopAuditRuntime();
+    }
 });

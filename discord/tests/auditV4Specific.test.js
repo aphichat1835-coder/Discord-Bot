@@ -46,3 +46,29 @@ test("audit export renders csv json and markdown", () => {
     assert.match(auditExport.recordsToJson(records), /event1/);
     assert.match(auditExport.recordsToMarkdown(records), /Role updated/);
 });
+
+test("audit csv export neutralizes spreadsheet formulas", () => {
+    const csv = auditExport.recordsToCsv([{
+        eventId: "event2",
+        reason: "=IMPORTXML(\"https://example.test\")",
+        summary: "+cmd"
+    }]);
+    assert.match(csv, /"'=IMPORTXML/);
+    assert.match(csv, /"'\+cmd"/);
+});
+
+test("specific audit renderer forwards caller options", () => {
+    const embed = specific.renderAuditEntry({
+        id: "entry-role",
+        action: "ROLE_UPDATE",
+        user_id: "actor1",
+        target_id: "role1",
+        changes: [{ key: "name", old: "old", new: "new" }]
+    }, {
+        footer: "Audit reconciler",
+        fields: [{ name: "Source", value: "scheduler", inline: true }]
+    });
+    const json = embed.toJSON();
+    assert.equal(json.footer.text, "Audit reconciler");
+    assert.ok(json.fields.some(item => item.name === "Source" && item.value === "scheduler"));
+});

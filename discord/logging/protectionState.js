@@ -12,6 +12,7 @@ class ProtectionWindowState {
         const key = this.key(guildId, actorId, actionType);
         const list = (this.events.get(key) || []).filter(ts => now - ts <= windowMs);
         list.push(now);
+        this.events.delete(key);
         this.events.set(key, list);
         this.trim(now);
         return { key, count: list.length, timestamps: list.slice() };
@@ -19,9 +20,7 @@ class ProtectionWindowState {
 
     count({ guildId, actorId, actionType, now = Date.now(), windowMs = 60_000 }) {
         const key = this.key(guildId, actorId, actionType);
-        const list = (this.events.get(key) || []).filter(ts => now - ts <= windowMs);
-        this.events.set(key, list);
-        return list.length;
+        return (this.events.get(key) || []).reduce((total, ts) => total + (now - ts <= windowMs ? 1 : 0), 0);
     }
 
     trim(now = Date.now()) {

@@ -51,18 +51,41 @@ test("audit settings can start and stop reconciler runtime", async () => {
     const client = { guilds: { cache: new Map() } };
     const sessionManager = { getSetting: async (_key, fallback) => fallback };
 
-    const started = await applyAuditRuntimeSettings({
-        client,
-        sessionManager,
-        settings: { reconcilerEnabled: true, reconcilerIntervalMs: 60000, reconcilerLimit: 1 }
-    });
-    assert.equal(started.started, true);
+    try {
+        const started = await applyAuditRuntimeSettings({
+            client,
+            sessionManager,
+            settings: { reconcilerEnabled: true, reconcilerIntervalMs: 60000, reconcilerLimit: 1 }
+        });
+        assert.equal(started.started, true);
 
-    const stopped = await applyAuditRuntimeSettings({
-        client,
-        sessionManager,
-        settings: { reconcilerEnabled: false }
-    });
-    assert.equal(stopped.stopped, true);
-    scheduler.stop();
+        const stopped = await applyAuditRuntimeSettings({
+            client,
+            sessionManager,
+            settings: { reconcilerEnabled: false }
+        });
+        assert.equal(stopped.stopped, true);
+    } finally {
+        scheduler.stop();
+    }
+});
+
+test("audit reconciler scheduler reads guild settings once per disabled guild cycle", async () => {
+    let reads = 0;
+    const client = { guilds: { cache: new Map([["g1", { id: "g1" }]]) } };
+    const sessionManager = {
+        getSetting: async (_key, fallback) => {
+            reads += 1;
+            return { ...fallback, reconcilerEnabled: false };
+        }
+    };
+
+    try {
+        const result = await scheduler.runOnce(client, sessionManager);
+        assert.equal(result.ok, true);
+        assert.equal(result.results[0].reason, "reconciler_disabled");
+        assert.equal(reads, 1);
+    } finally {
+        scheduler.stop();
+    }
 });

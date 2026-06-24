@@ -23,7 +23,7 @@ async function guildSchedulerSettings(sessionManager, guildId) {
 
 async function guildReconcilerEnabled(sessionManager, guildId, options = {}) {
     if (options.forceAll === true || isEnabled()) return true;
-    const settings = await guildSchedulerSettings(sessionManager, guildId);
+    const settings = options.settings || await guildSchedulerSettings(sessionManager, guildId);
     return settings.reconcilerEnabled === true;
 }
 
@@ -35,7 +35,7 @@ async function runOnce(client, sessionManager, options = {}) {
     try {
         for (const guild of guildList(client)) {
             const settings = await guildSchedulerSettings(sessionManager, guild.id);
-            if (!await guildReconcilerEnabled(sessionManager, guild.id, options)) {
+            if (!await guildReconcilerEnabled(sessionManager, guild.id, { ...options, settings })) {
                 results.push({ guildId: guild.id, ok: true, skipped: true, reason: "reconciler_disabled" });
                 continue;
             }
@@ -68,7 +68,9 @@ function start(client, sessionManager, options = {}) {
     }, intervalMs);
     timer.unref?.();
 
-    runOnce(client, sessionManager, options).catch(() => {});
+    runOnce(client, sessionManager, options).catch(err => {
+        console.warn(`[AUDIT_RECONCILER_SCHEDULER] initial run failed: ${safeAuditError(err, 240)}`);
+    });
     return { started: true, intervalMs };
 }
 

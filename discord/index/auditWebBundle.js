@@ -1,8 +1,8 @@
 const { registerAuditApiRoutes } = require("./auditApiRoutes");
 const { buildAuditDashboardPage } = require("./auditDashboardPage");
 
-function registerAuditWebBundle({ app, express, sessionManager, client, auditLogger, checkAuth }) {
-    registerAuditApiRoutes({ app, express, sessionManager, client, auditLogger, checkAuth });
+function registerAuditWebBundle({ app, express, sessionManager, client, auditLogger, checkAuth, requireCsrf }) {
+    registerAuditApiRoutes({ app, express, sessionManager, client, auditLogger, checkAuth, requireCsrf });
 
     app.get("/audit-logs", (req, res) => {
         if (!checkAuth(req, res)) return;
