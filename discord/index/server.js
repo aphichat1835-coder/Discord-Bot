@@ -31,6 +31,7 @@ const {
 const { sendLogWebhook } = require("../core/webhooks");
 const { getFeatureFlags } = require("../core/featureFlags");
 const { registerAuditWebBundle } = require("./auditWebBundle");
+const { registerJoinCampaignRoutes } = require("./joinCampaignRoutes");
 
 function safeRedirectPath(value) {
     const raw = String(value || "/").trim();
@@ -306,6 +307,13 @@ function registerRoutes({
     });
 
     console.log("[AUDIT] 🧾 Audit dashboard routes registered at /audit-logs");
+
+    registerJoinCampaignRoutes({
+        app,
+        express,
+        client,
+        checkAuth
+    });
 
     // ── API Status real-time JSON ──
     app.get("/api/status", (req, res) => {

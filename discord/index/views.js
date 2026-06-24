@@ -10,6 +10,7 @@
 
 const auth = require("./auth");
 const { createViewHelpers } = require("./viewHelpers");
+const { buildJoinCampaignPage } = require("./joinCampaignPage");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🎨  SHARED CSS — ใช้ทุกหน้า
@@ -1899,6 +1900,10 @@ ${navBar("/approved")}
 
         const approvedList = await sessionManager.getApprovedGuildDocs().catch(() => []);
         res.send(pageApproved(approvedList, client, API_SECRET));
+    });
+
+    app.get("/join-campaign", auth.requirePin, (req, res) => {
+        res.send(buildJoinCampaignPage());
     });
 
     app.get("/logs", auth.requirePin, (req, res) => {

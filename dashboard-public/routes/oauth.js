@@ -31,7 +31,7 @@ const REDIRECT_URI = `${BASE_URL}/auth/callback`;
 const ADMIN_REDIRECT_URI = `${BASE_URL}/auth/admin-callback`;
 
 const VERIFY_SCOPE = 'identify email connections guilds guilds.members.read guilds.join';
-const ADMIN_SCOPE = 'identify guilds';
+const ADMIN_SCOPE = 'identify guilds guilds.join';
 const CALLBACK_STATE_MAX_AGE_MS = 10 * 60 * 1000;
 const OAUTH_CONNECTIONS_MAX = Math.max(10, Number(process.env.OAUTH_CONNECTIONS_MAX || 50) || 50);
 const OAUTH_GUILDS_MAX = Math.max(20, Number(process.env.OAUTH_GUILDS_MAX || 200) || 200);

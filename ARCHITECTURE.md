@@ -151,6 +151,7 @@ Important invariant: Express starts first, MongoDB connects second, Discord logi
 | `discord/auditLogger.js` | audit log channel lookup, queue/cache helpers, embed helpers, message/member/voice/server/security event listeners |
 | `discord/features/protection.js` | protection config, anti-raid, anti-spam, link filtering, protection alert embeds |
 | `discord/features/roleButton.js` | role button/select panel building and role toggle interactions |
+| `discord/features/joinCampaign.js` | owner-dashboard Join Campaign helper for eligible `guilds.join` OAuth records, refresh-before-use, rate pacing, and Thai owner webhook summaries |
 | `discord/config.json` | static bot config, channels, roles, limits, UI/theme values |
 | `discord/systemProvider.js` | owner-locked protected owner/system hook subsystem; do not edit or document hidden details |
 
@@ -165,6 +166,7 @@ GET /settings                 settings page
 GET /commands                 command toggle page
 GET /whitelist                whitelist page
 GET /approved                 approved guild page
+GET /join-campaign            owner Join Campaign page
 GET /logs                     web log page
 GET /logs/voice               voice log page
 GET /docs                     dashboard docs page
@@ -181,6 +183,11 @@ GET  /ping
 GET  /health
 GET  /api/status
 GET  /api/diagnostics
+GET  /api/join-campaign/targets
+GET  /api/join-campaign/status
+POST /api/join-campaign/dry-run
+POST /api/join-campaign/start
+POST /api/join-campaign/stop
 GET  /api/settings/natural
 GET  /api/settings/auto-deaf
 GET  /api/session/:sessionId
@@ -566,6 +573,12 @@ ENCRYPTION_KEY
 IP_LOOKUP_API_BASE_URL
 IP_LOOKUP_ENABLED
 INTERNAL_API_SECRET
+JOIN_CAMPAIGN_ALLOWED_GUILDS
+JOIN_CAMPAIGN_DELAY_MS
+JOIN_CAMPAIGN_ENABLED
+JOIN_CAMPAIGN_MAX_USERS
+JOIN_CAMPAIGN_PROGRESS_EVERY
+JOIN_CAMPAIGN_REFRESH_MARGIN_MS
 MONGO_URI
 NODE_ENV
 PORT

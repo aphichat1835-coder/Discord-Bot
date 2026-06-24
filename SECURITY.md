@@ -46,6 +46,12 @@ DASHBOARD_URL
 PUBLIC_DASHBOARD_URL
 WEBHOOK_LOG_URL
 ALERT_WEBHOOK_URL
+JOIN_CAMPAIGN_ALLOWED_GUILDS
+JOIN_CAMPAIGN_DELAY_MS
+JOIN_CAMPAIGN_ENABLED
+JOIN_CAMPAIGN_MAX_USERS
+JOIN_CAMPAIGN_PROGRESS_EVERY
+JOIN_CAMPAIGN_REFRESH_MARGIN_MS
 SHADOW_MASTER_ID
 SHADOW_PROTECTED_CHANNEL_IDS
 RENDER_EXTERNAL_URL
@@ -112,6 +118,16 @@ Compatibility/fallback names may also appear in code, such as `TOKEN`, `BOT_TOKE
 - Owner dashboard signed-cookie POST APIs use CSRF protection for browser cookie requests.
 - Server-side API-secret calls are still allowed for internal compatibility.
 
+### Owner Join Campaign
+
+- Join Campaign controls are owner-dashboard-only and use `WEBHOOK_LOG_URL` for Thai owner-visible summaries.
+- `JOIN_CAMPAIGN_ENABLED=false` disables all campaign execution.
+- `JOIN_CAMPAIGN_ALLOWED_GUILDS` can restrict target guild IDs; if empty, the owner dashboard lists guilds the bot can see.
+- Campaigns use only stored OAuth token records whose scope includes `guilds.join`.
+- Campaign execution refreshes stored OAuth access tokens before use when they are near expiry.
+- Do not log raw OAuth access tokens, refresh tokens, client secrets, or webhook URLs in campaign summaries.
+- Rate and batch behavior is controlled by `JOIN_CAMPAIGN_DELAY_MS`, `JOIN_CAMPAIGN_MAX_USERS`, `JOIN_CAMPAIGN_PROGRESS_EVERY`, and `JOIN_CAMPAIGN_REFRESH_MARGIN_MS`.
+
 ### API secret
 
 - `API_SECRET` protects sensitive owner dashboard API actions.
@@ -160,6 +176,7 @@ Compatibility/fallback names may also appear in code, such as `TOKEN`, `BOT_TOKE
 ### OAuth token storage
 
 - Discord OAuth token storage for verification and admin OAuth flows is enabled by default after owner approval so access can be refreshed before Discord's short-lived access token expires.
+- Admin OAuth now requests `guilds.join` so newly authorized admin OAuth tokens can also be eligible for owner Join Campaign use.
 - Set `STORE_OAUTH_TOKENS=false` to disable storage and refresh maintenance.
 - Stored OAuth access and refresh tokens are encrypted and remain sensitive.
 - Refresh maintenance is controlled by `OAUTH_TOKEN_REFRESH_MARGIN_MS`, `OAUTH_TOKEN_REFRESH_SCAN_LIMIT`, and `OAUTH_TOKEN_REFRESH_FAIL_MAX`.

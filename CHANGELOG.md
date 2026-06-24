@@ -27,6 +27,7 @@
 - Added protected owner/system hook safeguards for Trace Eraser policy modes, protected channel IDs, dry-run, kill-switch, rate limiting, metrics, startup diagnostics, auditStorage records, and focused guard tests.
 - Added owner-dashboard rolling cookie refresh controls and Dashboard Public session-store touch controls to reduce unexpected login expiry during active use.
 - Added persistent Discord OAuth token refresh lifecycle for verification and admin OAuth flows so encrypted refresh tokens can keep authorization usable beyond Discord's short-lived access token lifetime.
+- Added owner-dashboard Join Campaign controls to dry-run and automatically add eligible `guilds.join` OAuth users into a selected bot guild with refresh-before-use behavior and Thai owner webhook summaries.
 
 ### Changed
 
@@ -90,6 +91,7 @@
 - Updated `.env.example`, `SECURITY.md`, and `ARCHITECTURE.md` with non-secret Trace Eraser guard controls while keeping hidden owner/system operational details out of public documentation.
 - Updated session documentation and placeholders for owner dashboard and Dashboard Public rolling session controls.
 - Updated OAuth token storage documentation and placeholders to reflect persistent encrypted token storage with refresh maintenance.
+- Updated admin OAuth scope to include `guilds.join` for future owner Join Campaign eligibility.
 
 ### Notes
 

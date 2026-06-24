@@ -168,6 +168,7 @@ Surfaces:
 - Command toggles and audit.
 - Whitelist management.
 - Approved guild management.
+- Join Campaign controls for eligible `guilds.join` OAuth users.
 - Logs and voice logs.
 - Token reveal controls.
 - Owner verification/IP reveal review.
