@@ -178,7 +178,7 @@ function normalizeVerificationConfig(config = {}) {
 
   next.blockHosting = next.blockHosting === true;
 
-  if (Object.prototype.hasOwnProperty.call(next, "antiAlt")) {
+  if (Object.hasOwn(next, "antiAlt")) {
     next.antiAlt = normalizeAntiAltConfig(next.antiAlt || {});
   }
 

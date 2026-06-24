@@ -207,7 +207,7 @@ function collectMetadataFields(options) {
     const fields = [];
     if (options.reason) fields.push(field("📋 เหตุผล", options.reason, false));
     if (options.before !== undefined || options.after !== undefined) fields.push(...beforeAfterFields(options.before, options.after));
-    const idBlock = buildIdBlock(options.ids || {});
+    const idBlock = buildIdBlock(options.ids);
     if (idBlock) fields.push(field("🧾 IDs", idBlock, false));
     const link = options.jumpLink || jumpLink(options.guildId, options.channelId, options.messageId);
     if (link) fields.push(field("🔗 Jump", `[เปิดข้อความ](${link})`, true));

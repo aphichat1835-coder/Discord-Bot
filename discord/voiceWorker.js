@@ -258,7 +258,7 @@ function debugVoiceSession(event, sessionId, session, extra = {}) {
 
     const allowedExtra = {};
     for (const key of ["hit", "strategy", "group", "selfVoice", "sameAccountSessions", "connectionStatus"]) {
-        if (Object.prototype.hasOwnProperty.call(extra, key)) {
+        if (Object.hasOwn(extra, key)) {
             allowedExtra[key] = extra[key];
         }
     }

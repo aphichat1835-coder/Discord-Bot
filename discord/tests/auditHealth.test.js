@@ -9,7 +9,7 @@ test("audit health includes delivery and channel repair state", async () => {
         audit_dead_letter_index_g1: ["d1"],
         audit_dead_letter_g1_d1: { id: "d1", reason: "send_failed" }
     };
-    const sessionManager = { getSetting: async (key, fallback) => Object.prototype.hasOwnProperty.call(data, key) ? data[key] : fallback };
+    const sessionManager = { getSetting: async (key, fallback) => Object.hasOwn(data, key) ? data[key] : fallback };
     const guild = {
         id: "g1",
         members: { me: { permissions: { has: permission => permission === "VIEW_AUDIT_LOG" } } },

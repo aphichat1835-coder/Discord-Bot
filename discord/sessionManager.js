@@ -711,7 +711,7 @@ async function updateSessionMetadata(sessionId, metadata = {}) {
     const update = {};
 
     for (const key of allowedKeys) {
-        if (Object.prototype.hasOwnProperty.call(metadata, key)) {
+        if (Object.hasOwn(metadata, key)) {
             session[key] = metadata[key] ?? null;
             update[key] = session[key];
         }

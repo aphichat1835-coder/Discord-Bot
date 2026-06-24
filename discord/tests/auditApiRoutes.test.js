@@ -30,7 +30,7 @@ test("audit dead-letter API helper reads records", async () => {
         audit_dead_letter_index_g1: ["a"],
         audit_dead_letter_g1_a: { id: "a", guildId: "g1", reason: "send_failed" }
     };
-    const sessionManager = { getSetting: async (key, fallback) => Object.prototype.hasOwnProperty.call(data, key) ? data[key] : fallback };
+    const sessionManager = { getSetting: async (key, fallback) => Object.hasOwn(data, key) ? data[key] : fallback };
     const records = await loadDeadLetterRecords(sessionManager, "g1", { limit: 10 });
     assert.equal(records.length, 1);
     assert.equal(records[0].reason, "send_failed");

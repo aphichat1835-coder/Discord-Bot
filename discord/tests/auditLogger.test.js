@@ -136,7 +136,7 @@ test("audit send stores gateway records for audit API reads", async () => {
             return { securityChannelId: "security-channel" };
         },
         async getSetting(key, fallback) {
-            return Object.prototype.hasOwnProperty.call(data, key) ? data[key] : fallback;
+            return Object.hasOwn(data, key) ? data[key] : fallback;
         },
         async setSetting(key, value) {
             data[key] = value;
@@ -187,7 +187,7 @@ test("audit settings disabled category prevents gateway send and storage", async
             return { securityChannelId: "security-channel" };
         },
         async getSetting(key, fallback) {
-            return Object.prototype.hasOwnProperty.call(data, key) ? data[key] : fallback;
+            return Object.hasOwn(data, key) ? data[key] : fallback;
         },
         async setSetting(key, value) {
             data[key] = value;
