@@ -3,6 +3,7 @@ const auditExport = require("../logging/auditExport");
 const auditHealth = require("../logging/auditHealth");
 const auditSettings = require("../logging/auditSettings");
 const auditDeadLetter = require("../logging/auditDeadLetter");
+const auditReconcilerScheduler = require("../logging/auditReconcilerScheduler");
 
 const FILTER_KEYS = Object.freeze(["category", "severity", "actionType", "actorId", "targetId", "channelId", "roleId"]);
 
@@ -44,6 +45,30 @@ async function loadFilteredRecords(sessionManager, guildId, query = {}, limit = 
 
 async function loadDeadLetterRecords(sessionManager, guildId, query = {}) {
     return auditDeadLetter.listDeadLetters(sessionManager, guildId, readLimit(query, 25, 100));
+}
+
+async function anyGuildReconcilerEnabled(client, sessionManager) {
+    for (const guild of Array.from(client?.guilds?.cache?.values?.() || [])) {
+        const settings = await auditSettings.getAuditSettings(sessionManager, guild.id).catch(() => null);
+        if (settings?.reconcilerEnabled === true) return true;
+    }
+    return false;
+}
+
+async function applyAuditRuntimeSettings({ client, sessionManager, settings }) {
+    if (settings.reconcilerEnabled) {
+        return auditReconcilerScheduler.start(client, sessionManager, {
+            enabled: true,
+            intervalMs: settings.reconcilerIntervalMs,
+            limit: settings.reconcilerLimit
+        });
+    }
+
+    if (!await anyGuildReconcilerEnabled(client, sessionManager)) {
+        return { stopped: auditReconcilerScheduler.stop(), reason: "no_guild_reconciler_enabled" };
+    }
+
+    return { stopped: false, reason: "other_guilds_still_enabled" };
 }
 
 function registerAuditApiRoutes({ app, express, sessionManager, client, auditLogger, checkAuth }) {
@@ -128,7 +153,8 @@ function registerAuditApiRoutes({ app, express, sessionManager, client, auditLog
             const guildId = readGuildId(req.body || req.query, client);
             if (!guildId) return res.status(400).json({ success: false, error: "guildId required" });
             const settings = await auditSettings.saveAuditSettings(sessionManager, guildId, req.body || {});
-            res.json({ success: true, guildId, settings });
+            const runtime = await applyAuditRuntimeSettings({ client, sessionManager, settings });
+            res.json({ success: true, guildId, settings, runtime });
         } catch (err) {
             res.status(500).json({ success: false, error: err.message });
         }
@@ -143,5 +169,7 @@ module.exports = {
     readLimit,
     loadFilteredRecords,
     loadDeadLetterRecords,
+    anyGuildReconcilerEnabled,
+    applyAuditRuntimeSettings,
     registerAuditApiRoutes
 };

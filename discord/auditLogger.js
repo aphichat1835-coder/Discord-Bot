@@ -13,6 +13,8 @@ Advanced Audit Logger v3
 const config = require("./config.json");
 const { LOG_CHANNEL_TYPES, safeAuditText, routeAndSendLog } = require("./logging/logCore");
 const { buildLogEmbed, field, formatDiscordTime, jumpLink } = require("./logging/logFormat");
+const auditSettings = require("./logging/auditSettings");
+const auditStorage = require("./logging/auditStorage");
 const {
     fetchAuditEntry,
     defaultMessageSnapshots,
@@ -28,6 +30,9 @@ const registeredClients = new WeakSet();
 const auditStats = {
     sent: 0,
     failed: 0,
+    saved: 0,
+    saveFailed: 0,
+    skippedBySettings: 0,
     snapshots: 0,
     skippedBots: 0,
     duplicateSkipped: 0,
@@ -141,8 +146,106 @@ function getAuditStats() {
     };
 }
 
+function embedJson(embed) {
+    return typeof embed?.toJSON === "function" ? embed.toJSON() : (embed?.data || embed || {});
+}
+
+function fieldValue(fields = [], names = []) {
+    const wanted = new Set(names.map(name => String(name).toLowerCase()));
+    const found = fields.find(item => wanted.has(String(item?.name || "").toLowerCase()));
+    return found?.value || null;
+}
+
+function readIdFromText(value, label) {
+    const text = String(value || "");
+    const labelled = new RegExp(`${label}:\\s*\`?([0-9]{12,25}|#[0-9]+)\`?`, "i").exec(text);
+    if (labelled) return labelled[1].replace(/^#/, "");
+    const mention = /<[@#&]!?([0-9]{12,25})>/.exec(text);
+    if (mention) return mention[1];
+    const codeId = /`([0-9]{12,25})`/.exec(text);
+    return codeId?.[1] || null;
+}
+
+function extractRecordIds(fields = []) {
+    const idBlock = fieldValue(fields, ["🧾 IDs"]);
+    return {
+        actorId: readIdFromText(idBlock, "Actor ID") || readIdFromText(fieldValue(fields, ["👮 ผู้ดำเนินการ", "Executor ID"]), "Executor ID"),
+        targetId: readIdFromText(idBlock, "Target ID") || readIdFromText(fieldValue(fields, ["🎯 เป้าหมาย", "👤 สมาชิก", "👤 ผู้ใช้", "👤 ผู้ส่ง", "👤 ผู้ถูก Ban", "🤖 บอท"]), "User ID"),
+        channelId: readIdFromText(idBlock, "Channel ID") || readIdFromText(fieldValue(fields, ["📌 ห้อง", "🔊 ห้อง", "🔇 ห้องเดิม", "📤 จากห้อง", "📥 ไปห้อง"]), "Channel ID"),
+        messageId: readIdFromText(idBlock, "Message ID"),
+        roleId: readIdFromText(idBlock, "Role ID")
+    };
+}
+
+function actionTypeFromTitle(category, title) {
+    const normalized = safeAuditText(title || "audit_log", 120)
+        .replace(/[^\p{L}\p{N}]+/gu, "_")
+        .replace(/^_+|_+$/g, "")
+        .toUpperCase();
+    return normalized || `${String(category || "audit").toUpperCase()}_LOG`;
+}
+
+function buildStorageRecord(guild, category, embed, options = {}) {
+    const data = embedJson(embed);
+    const fields = Array.isArray(data.fields) ? data.fields : [];
+    const ids = extractRecordIds(fields);
+    const title = data.title || options.title || "Audit Log";
+    const description = data.description || "";
+
+    return {
+        guildId: guild?.id,
+        source: options.source || "gateway",
+        category,
+        severity: options.severity || "info",
+        actionType: options.actionType || actionTypeFromTitle(category, title),
+        actorId: options.actorId || ids.actorId,
+        targetId: options.targetId || ids.targetId,
+        channelId: options.channelId || ids.channelId,
+        messageId: options.messageId || ids.messageId,
+        roleId: options.roleId || ids.roleId,
+        reason: options.reason || null,
+        summary: [title, description].filter(Boolean).join("\n").slice(0, 1000),
+        evidence: fields.slice(0, 25).map(item => `${item.name}: ${item.value}`),
+        metadata: {
+            embedTitle: title,
+            embedFooter: data.footer?.text || null
+        },
+        createdAt: Date.now()
+    };
+}
+
+async function saveGatewayAuditRecord(guild, sessionManager, category, embed, options = {}) {
+    const record = buildStorageRecord(guild, category, embed, options);
+    if (!record.guildId) return null;
+    const saved = await auditStorage.saveAuditRecord(sessionManager, record);
+    if (saved) auditStats.saved += 1;
+    else auditStats.saveFailed += 1;
+    return saved;
+}
+
+async function categoryAllowed(sessionManager, guildId, category) {
+    const settings = await auditSettings.getAuditSettings(sessionManager, guildId).catch(() => null);
+    return auditSettings.categoryEnabled(settings || {}, category);
+}
+
+async function shouldLogMessageCreate(sessionManager, guildId) {
+    if (LOG_MESSAGE_CREATE) return true;
+    const settings = await auditSettings.getAuditSettings(sessionManager, guildId).catch(() => null);
+    return settings?.messageCreateEnabled === true;
+}
+
 async function sendAuditLog(guild, sessionManager, type, embed, options = {}) {
     try {
+        if (!await categoryAllowed(sessionManager, guild?.id, type)) {
+            auditStats.skippedBySettings += 1;
+            return false;
+        }
+
+        await saveGatewayAuditRecord(guild, sessionManager, type, embed, options).catch(err => {
+            auditStats.saveFailed += 1;
+            auditStats.lastError = safeAuditText(err?.message || err, 300);
+        });
+
         const ok = await routeAndSendLog({
             guild,
             sessionManager,
@@ -247,7 +350,7 @@ function registerMessageEvents(client, sessionManager) {
     client.on("messageCreate", async (message) => {
         if (!message.guild || isBot(message.author)) return;
         snapshot(message);
-        if (!LOG_MESSAGE_CREATE) return;
+        if (!await shouldLogMessageCreate(sessionManager, message.guild.id)) return;
         if (shouldSkipDuplicate(`msg-create:${message.guild.id}:${message.id}`)) return;
         const data = messageData(message);
         const embed = buildLogEmbed({
@@ -815,6 +918,7 @@ module.exports = {
     invalidateAuditCache: () => {},
     _test: {
         buildEmbed,
+        buildStorageRecord,
         cleanupCaches,
         defaultMessageSnapshots,
         recentEventKeys

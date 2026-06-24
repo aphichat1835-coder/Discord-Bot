@@ -1,6 +1,7 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const mongoose = require("mongoose");
 const { safeAuditText, safeAuditError } = require("./logCore");
 
 function loadAuditLogStore() {
@@ -9,6 +10,10 @@ function loadAuditLogStore() {
 }
 
 const auditLogStore = loadAuditLogStore();
+
+function canUseMongoStore() {
+    return mongoose.connection?.readyState === 1;
+}
 
 function storageKey(guildId, eventId) {
     return `audit_event_${guildId}_${eventId}`;
@@ -75,9 +80,13 @@ async function saveFallback(sessionManager, record) {
 async function saveAuditRecord(sessionManager, recordInput) {
     const record = normalizeAuditRecord(recordInput);
     try {
-        if (auditLogStore?.saveRecord) await auditLogStore.saveRecord(record);
-        await saveFallback(sessionManager, record).catch(() => null);
-        return record;
+        let savedToStore = false;
+        if (canUseMongoStore() && auditLogStore?.saveRecord) {
+            await auditLogStore.saveRecord(record);
+            savedToStore = true;
+        }
+        const fallbackRecord = await saveFallback(sessionManager, record).catch(() => null);
+        return fallbackRecord || (savedToStore ? record : null);
     } catch (err) {
         console.warn(`[AUDIT_STORAGE] save failed: ${safeAuditError(err, 240)}`);
         return saveFallback(sessionManager, record).catch(() => null);
@@ -87,7 +96,7 @@ async function saveAuditRecord(sessionManager, recordInput) {
 async function getAuditRecord(sessionManager, guildId, eventId) {
     if (!guildId || !eventId) return null;
     try {
-        const fromStore = auditLogStore?.getRecord ? await auditLogStore.getRecord(guildId, eventId) : null;
+        const fromStore = canUseMongoStore() && auditLogStore?.getRecord ? await auditLogStore.getRecord(guildId, eventId) : null;
         if (fromStore) return fromStore;
     } catch (err) {
         console.warn(`[AUDIT_STORAGE] store get failed: ${safeAuditError(err, 240)}`);
@@ -110,7 +119,7 @@ async function listFallback(sessionManager, guildId, limit = 50) {
 async function listAuditRecords(sessionManager, guildId, limit = 50, filters = {}) {
     if (!guildId) return [];
     try {
-        const fromStore = auditLogStore?.listRecords ? await auditLogStore.listRecords(guildId, limit, filters) : [];
+        const fromStore = canUseMongoStore() && auditLogStore?.listRecords ? await auditLogStore.listRecords(guildId, limit, filters) : [];
         if (fromStore.length) return fromStore;
     } catch (err) {
         console.warn(`[AUDIT_STORAGE] store list failed: ${safeAuditError(err, 240)}`);
@@ -123,6 +132,7 @@ module.exports = {
     indexKey,
     makeEventId,
     normalizeAuditRecord,
+    canUseMongoStore,
     saveAuditRecord,
     getAuditRecord,
     listAuditRecords,

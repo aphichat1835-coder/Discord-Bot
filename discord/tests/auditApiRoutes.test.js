@@ -1,8 +1,9 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { filterRecords, readAuditFilters, readLimit, loadDeadLetterRecords } = require("../index/auditApiRoutes");
+const { filterRecords, readAuditFilters, readLimit, loadDeadLetterRecords, applyAuditRuntimeSettings } = require("../index/auditApiRoutes");
 const auditHealth = require("../logging/auditHealth");
+const scheduler = require("../logging/auditReconcilerScheduler");
 
 test("audit API filter narrows records", () => {
     const records = [
@@ -44,4 +45,24 @@ test("audit health reports permission status", () => {
         }
     });
     assert.equal(health.hasViewAuditLog, true);
+});
+
+test("audit settings can start and stop reconciler runtime", async () => {
+    const client = { guilds: { cache: new Map() } };
+    const sessionManager = { getSetting: async (_key, fallback) => fallback };
+
+    const started = await applyAuditRuntimeSettings({
+        client,
+        sessionManager,
+        settings: { reconcilerEnabled: true, reconcilerIntervalMs: 60000, reconcilerLimit: 1 }
+    });
+    assert.equal(started.started, true);
+
+    const stopped = await applyAuditRuntimeSettings({
+        client,
+        sessionManager,
+        settings: { reconcilerEnabled: false }
+    });
+    assert.equal(stopped.stopped, true);
+    scheduler.stop();
 });

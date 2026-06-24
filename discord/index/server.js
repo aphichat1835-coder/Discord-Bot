@@ -758,8 +758,7 @@ function registerRoutes({
         }
     });
 
-    app.post("/api/whitelis
-             t/remove", express.json(), async (req, res) => {
+    app.post("/api/whitelist/remove", express.json(), async (req, res) => {
         if (!checkAuth(req, res)) return;
 
         try {
