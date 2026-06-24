@@ -88,8 +88,6 @@ const ACTION_HANDLERS = Object.freeze({
 });
 
 async function applyModerationAction(interaction, input) {
-    const handler = ACTION_HANDLERS[input.action];
-    if (!handler) return false;
     const dmEmbed = buildModerationDmEmbed(
         interaction,
         input.target,
@@ -97,7 +95,11 @@ async function applyModerationAction(interaction, input) {
         input.reason,
         input.duration.minutes
     );
-    return handler(interaction, input, dmEmbed);
+
+    if (input.action === "ban") return applyBan(interaction, input, dmEmbed);
+    if (input.action === "kick") return applyKick(interaction, input, dmEmbed);
+    if (input.action === "timeout") return applyTimeout(interaction, input, dmEmbed);
+    return false;
 }
 
 async function createModerationCase(interaction, input, dmSent) {

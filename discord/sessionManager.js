@@ -575,7 +575,7 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
     const legacyTail = String(token || "").slice(-8);
     const sessionId = buildVoiceSessionId(tokenHash, serverId, ownerId);
 
-    for (const [oldId, oldSession] of [...sessions]) {
+    for (const [oldId, oldSession] of sessions) {
         if (
             isSameTokenGuildSession(oldSession, tokenHash, serverId) &&
             oldSession.state === "failed" &&

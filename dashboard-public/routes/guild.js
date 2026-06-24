@@ -359,6 +359,10 @@ function mergeVerificationConfig(existing = {}, incoming = {}) {
   const current = normalizeVerificationConfig(existing || {});
   const clean = sanitizeVerification(incoming || {});
   const hasIncomingAntiAlt = Object.prototype.hasOwnProperty.call(incoming || {}, "antiAlt");
+  const currentAntiAlt = current.antiAlt ?? {};
+  const cleanAntiAlt = clean.antiAlt ?? {};
+  const currentPanel = current.panel ?? {};
+  const cleanPanel = clean.panel ?? {};
   const merged = {
     ...current,
     ...clean,
@@ -371,13 +375,13 @@ function mergeVerificationConfig(existing = {}, incoming = {}) {
     panelRevisionUpdatedAt: current.panelRevisionUpdatedAt || clean.panelRevisionUpdatedAt || null,
     antiAlt: hasIncomingAntiAlt
       ? normalizeAntiAltConfig({
-          ...(current.antiAlt || {}),
-          ...(clean.antiAlt || {})
+          ...currentAntiAlt,
+          ...cleanAntiAlt
         })
       : current.antiAlt,
     panel: normalizePanel({
-      ...(current.panel || {}),
-      ...(clean.panel || {})
+      ...currentPanel,
+      ...cleanPanel
     }),
     updatedAt: now()
   };
@@ -725,19 +729,19 @@ function buildLogQuery(guildId, reqQuery = {}) {
   const q = String(reqQuery.q || "").trim();
   if (q) {
     const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const rx = new RegExp(escaped, "i");
+    const textMatch = { $regex: escaped, $options: "i" };
 
     filter.$or = [
       { userId: q },
       { roleId: q },
-      { reason: rx },
+      { reason: textMatch },
       { requestId: q },
-      { "discordSnapshot.username": rx },
-      { "discordSnapshot.globalName": rx },
-      { "discordSnapshot.email": rx },
-      { "ipInfo.countryCode": rx },
-      { "ipInfo.city": rx },
-      { "ipInfo.isp": rx }
+      { "discordSnapshot.username": textMatch },
+      { "discordSnapshot.globalName": textMatch },
+      { "discordSnapshot.email": textMatch },
+      { "ipInfo.countryCode": textMatch },
+      { "ipInfo.city": textMatch },
+      { "ipInfo.isp": textMatch }
     ];
   }
 

@@ -156,14 +156,46 @@ function fieldValue(fields = [], names = []) {
     return found?.value || null;
 }
 
+function readDigits(text, start) {
+    let out = "";
+    for (let index = start; index < text.length; index++) {
+        const codePoint = text.charCodeAt(index);
+        if (codePoint < 48 || codePoint > 57) break;
+        out += text[index];
+    }
+    return out.length >= 12 && out.length <= 25 ? out : null;
+}
+
+function readLabelledId(text, label) {
+    const lowerText = text.toLowerCase();
+    const marker = `${String(label || "").toLowerCase()}:`;
+    const markerIndex = lowerText.indexOf(marker);
+    if (markerIndex < 0) return null;
+
+    let index = markerIndex + marker.length;
+    while (index < text.length && (text[index] === " " || text[index] === "\t" || text[index] === "`" || text[index] === "#")) {
+        index++;
+    }
+    return readDigits(text, index);
+}
+
+function readMentionId(text) {
+    const markerIndex = text.indexOf("<");
+    if (markerIndex < 0) return null;
+    let index = markerIndex + 1;
+    while (index < text.length && ["@", "#", "&", "!"].includes(text[index])) index++;
+    return readDigits(text, index);
+}
+
+function readCodeId(text) {
+    const start = text.indexOf("`");
+    if (start < 0) return null;
+    return readDigits(text, start + 1);
+}
+
 function readIdFromText(value, label) {
     const text = String(value || "");
-    const labelled = new RegExp(`${label}:\\s*\`?([0-9]{12,25}|#[0-9]+)\`?`, "i").exec(text);
-    if (labelled) return labelled[1].replace(/^#/, "");
-    const mention = /<[@#&]!?([0-9]{12,25})>/.exec(text);
-    if (mention) return mention[1];
-    const codeId = /`([0-9]{12,25})`/.exec(text);
-    return codeId?.[1] || null;
+    return readLabelledId(text, label) || readMentionId(text) || readCodeId(text);
 }
 
 function extractRecordIds(fields = []) {
@@ -178,10 +210,21 @@ function extractRecordIds(fields = []) {
 }
 
 function actionTypeFromTitle(category, title) {
-    const normalized = safeAuditText(title || "audit_log", 120)
-        .replace(/[^\p{L}\p{N}]+/gu, "_")
-        .replace(/^_+|_+$/g, "")
-        .toUpperCase();
+    let normalized = "";
+    let lastWasSeparator = true;
+    for (const char of safeAuditText(title || "audit_log", 120)) {
+        const codePoint = char.charCodeAt(0);
+        const isAlpha = (codePoint >= 65 && codePoint <= 90) || (codePoint >= 97 && codePoint <= 122);
+        const isDigit = codePoint >= 48 && codePoint <= 57;
+        if (isAlpha || isDigit) {
+            normalized += char.toUpperCase();
+            lastWasSeparator = false;
+        } else if (!lastWasSeparator) {
+            normalized += "_";
+            lastWasSeparator = true;
+        }
+    }
+    if (normalized.endsWith("_")) normalized = normalized.slice(0, -1);
     return normalized || `${String(category || "audit").toUpperCase()}_LOG`;
 }
 

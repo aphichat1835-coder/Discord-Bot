@@ -1,15 +1,11 @@
 const crypto = require("node:crypto");
-const fs = require("node:fs");
-const path = require("node:path");
 const mongoose = require("mongoose");
 const { safeAuditText, safeAuditError } = require("./logCore");
+const auditLogStore = require("./auditLogStore");
 
 function loadAuditLogStore() {
-    const storePath = path.join(__dirname, "auditLogStore.js");
-    return fs.existsSync(storePath) ? require("./auditLogStore") : null;
+    return auditLogStore;
 }
-
-const auditLogStore = loadAuditLogStore();
 
 function canUseMongoStore() {
     return mongoose.connection?.readyState === 1;

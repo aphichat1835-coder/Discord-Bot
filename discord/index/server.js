@@ -478,7 +478,7 @@ function registerRoutes({
                 });
             }
 
-            const exists = (commands.slashCommandsData || []).find(c => c.name === commandName);
+            const exists = (commands.slashCommandsData || []).some(c => c.name === commandName);
 
             if (!exists) {
                 return res.status(404).json({

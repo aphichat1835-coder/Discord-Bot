@@ -1563,7 +1563,7 @@ async function stopAll() {
 
     let stopped = 0;
     let failed = 0;
-    for (const id of [...sessions.keys()]) {
+    for (const id of sessions.keys()) {
         const ok = await stopSession(id);
         if (ok) stopped++;
         else failed++;
@@ -1589,7 +1589,7 @@ async function pauseAll() {
     stopAllNaturalTimers();
     stopAllAutoDeafTimers();
 
-    for (const [id, session] of [...sessions]) {
+    for (const [id, session] of sessions) {
         try {
             if (session.connection) {
                 session.connection.destroy();
@@ -2187,11 +2187,10 @@ function stopInactiveSessionTimers(timerMap, activeSessionIds, stopTimer) {
 
 function cleanupVolatileState(now = Date.now(), options = {}) {
     const sessions = sessionManager.getAllSessions();
-    const activeSessionIds = new Set(
-        [...sessions.entries()]
-            .filter(([, session]) => isSessionRunnable(session))
-            .map(([sessionId]) => sessionId)
-    );
+    const activeSessionIds = new Set();
+    for (const [sessionId, session] of sessions) {
+        if (isSessionRunnable(session)) activeSessionIds.add(sessionId);
+    }
     const dmTtlMs = Math.max(CONFIG.DM_THROTTLE_MS * 6, 5 * 60 * 1000);
     const recoveryTtlMs = Math.max(RECOVERY_COOLDOWN_MS * 6, 10 * 60 * 1000);
 

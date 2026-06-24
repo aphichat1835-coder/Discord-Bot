@@ -1101,6 +1101,8 @@ tbody tr:hover td {
 
 .modal {
   width: min(520px, 100%);
+  max-height: min(88vh, 820px);
+  overflow: auto;
   border-radius: 26px;
   background: linear-gradient(180deg, rgba(16, 24, 39, 0.98), rgba(11, 16, 32, 0.98));
   border: 1px solid var(--line-strong);
@@ -1161,6 +1163,7 @@ tbody tr:hover td {
 /* Preview */
 
 .embed-preview {
+  overflow: hidden;
   border-radius: 18px;
   background: #2b2d31;
   border-left: 5px solid var(--discord);
@@ -2202,11 +2205,6 @@ tbody tr:hover td {
   }
 }
 
-.modal {
-  max-height: min(88vh, 820px);
-  overflow: auto;
-}
-
 .modal-wide {
   width: min(920px, 100%);
 }
@@ -2367,10 +2365,6 @@ pre.json-block {
 .status-dot.err {
   background: var(--red);
   box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.12);
-}
-
-.embed-preview {
-  overflow: hidden;
 }
 
 .embed-preview a {

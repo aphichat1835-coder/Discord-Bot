@@ -333,12 +333,13 @@
   }
 
   async function api(path, options = {}) {
+    const headers = options.headers ?? {};
     const res = await fetch(path, {
       ...options,
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
-        ...(options.headers || {})
+        ...headers
       }
     });
 
