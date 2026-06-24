@@ -71,7 +71,19 @@ const SESSION_MAX_AGE_MS = Math.max(
     5 * 60 * 1000,
     Number(process.env.ADMIN_SESSION_MAX_AGE_MS || 24 * 60 * 60 * 1000) || 24 * 60 * 60 * 1000
 );
-const SESSION_ROLLING = String(process.env.ADMIN_SESSION_ROLLING || 'false').trim().toLowerCase() === 'true';
+const SESSION_ROLLING = String(process.env.ADMIN_SESSION_ROLLING || 'true').trim().toLowerCase() !== 'false';
+const SESSION_TOUCH_AFTER_SEC = Math.max(
+    60,
+    Math.min(
+        Math.floor(SESSION_MAX_AGE_MS / 1000),
+        Number(process.env.ADMIN_SESSION_TOUCH_AFTER_SEC || Math.min(3600, Math.max(60, Math.floor(SESSION_MAX_AGE_MS / 4000)))) || 900
+    )
+);
+const SESSION_COOKIE_SECURE = (() => {
+    const value = String(process.env.ADMIN_SESSION_COOKIE_SECURE || (IS_PRODUCTION ? 'auto' : 'false')).trim().toLowerCase();
+    if (value === 'auto') return 'auto';
+    return ['1', 'true', 'yes', 'on'].includes(value);
+})();
 const RETENTION_ERROR_MAX = Math.max(5, Number(process.env.RETENTION_ERROR_MAX || 50) || 50);
 const RETENTION_CONFIG_SCAN_MAX = Math.max(
     50,
@@ -108,7 +120,7 @@ app.use(express.static(path.join(__dirname, 'public'), {
 
 const sessionStore = MongoStore.create({
     mongoUrl: process.env.MONGO_URI,
-    touchAfter: 24 * 3600
+    touchAfter: SESSION_TOUCH_AFTER_SEC
 });
 
 app.use(session({
@@ -117,10 +129,11 @@ app.use(session({
     saveUninitialized: false,
     store:             sessionStore,
     rolling: SESSION_ROLLING,
+    proxy: TRUST_PROXY || SESSION_COOKIE_SECURE === 'auto',
     cookie: {
         maxAge:   SESSION_MAX_AGE_MS,
         httpOnly: true,
-        secure:   IS_PRODUCTION,
+        secure:   SESSION_COOKIE_SECURE,
         sameSite: 'lax'
     }
 }));
@@ -294,7 +307,9 @@ app.get('/health', (_req, res) => {
         sessionCookie: {
             policy: SESSION_ROLLING ? 'rolling' : 'absolute',
             maxAgeMs: SESSION_MAX_AGE_MS,
-            secure: IS_PRODUCTION,
+            touchAfterSec: SESSION_TOUCH_AFTER_SEC,
+            secure: SESSION_COOKIE_SECURE,
+            proxy: TRUST_PROXY || SESSION_COOKIE_SECURE === 'auto',
             revoke: 'logout destroys the current admin session; global revoke is intentionally not exposed'
         },
         retention: {
@@ -558,7 +573,10 @@ app.get('/internal/diagnostics', requireInternalSecret, (_req, res) => {
         session: {
             store: sessionStore?.constructor?.name || 'unknown',
             rolling: SESSION_ROLLING,
-            maxAgeMs: SESSION_MAX_AGE_MS
+            maxAgeMs: SESSION_MAX_AGE_MS,
+            touchAfterSec: SESSION_TOUCH_AFTER_SEC,
+            secure: SESSION_COOKIE_SECURE,
+            proxy: TRUST_PROXY || SESSION_COOKIE_SECURE === 'auto'
         },
         discordApi: getDiscordApiDiagnostics(),
         ipLookup: getIpLookupDiagnostics(),

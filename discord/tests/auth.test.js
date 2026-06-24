@@ -61,3 +61,42 @@ test("csrf token is bound to a valid dashboard session token", () => {
 
     restoreEnv("API_SECRET", oldSecret);
 });
+
+test("dashboard auth session duration is configurable and bounded", () => {
+    const oldMaxAge = process.env.DASHBOARD_SESSION_MAX_AGE_MS;
+    const oldRefresh = process.env.DASHBOARD_SESSION_REFRESH_AFTER_MS;
+
+    process.env.DASHBOARD_SESSION_MAX_AGE_MS = String(2 * 60 * 60 * 1000);
+    process.env.DASHBOARD_SESSION_REFRESH_AFTER_MS = String(10 * 60 * 1000);
+
+    assert.equal(auth.getSessionMaxAgeMs(), 2 * 60 * 60 * 1000);
+    assert.equal(auth.getSessionRefreshAfterMs(), 10 * 60 * 1000);
+
+    process.env.DASHBOARD_SESSION_MAX_AGE_MS = "1";
+    assert.equal(auth.getSessionMaxAgeMs(), 5 * 60 * 1000);
+
+    restoreEnv("DASHBOARD_SESSION_MAX_AGE_MS", oldMaxAge);
+    restoreEnv("DASHBOARD_SESSION_REFRESH_AFTER_MS", oldRefresh);
+});
+
+test("dashboard auth can identify sessions that need rolling refresh", () => {
+    const oldSecret = process.env.API_SECRET;
+    const oldMaxAge = process.env.DASHBOARD_SESSION_MAX_AGE_MS;
+    const oldRefresh = process.env.DASHBOARD_SESSION_REFRESH_AFTER_MS;
+    process.env.API_SECRET = "refresh-test-secret";
+    process.env.DASHBOARD_SESSION_MAX_AGE_MS = String(60 * 60 * 1000);
+    process.env.DASHBOARD_SESSION_REFRESH_AFTER_MS = String(5 * 60 * 1000);
+
+    const issuedAt = String(Date.now() - 10 * 60 * 1000);
+    const sig = require("node:crypto")
+        .createHmac("sha256", process.env.API_SECRET)
+        .update(issuedAt)
+        .digest("hex")
+        .slice(0, 40);
+
+    assert.equal(auth.shouldRefreshToken(`${issuedAt}.${sig}`), true);
+
+    restoreEnv("API_SECRET", oldSecret);
+    restoreEnv("DASHBOARD_SESSION_MAX_AGE_MS", oldMaxAge);
+    restoreEnv("DASHBOARD_SESSION_REFRESH_AFTER_MS", oldRefresh);
+});

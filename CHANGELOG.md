@@ -25,6 +25,7 @@
 - Added configurable memory monitor thresholds/mode, audit queue/circuit/content controls, IP lookup circuit breaker settings, and feature flag placeholders.
 - Added Dashboard Public shared verification snapshot serializers to remove duplicate guild log serialization while preserving sensitive-data redaction and existing response shapes.
 - Added protected owner/system hook safeguards for Trace Eraser policy modes, protected channel IDs, dry-run, kill-switch, rate limiting, metrics, startup diagnostics, auditStorage records, and focused guard tests.
+- Added owner-dashboard rolling cookie refresh controls and Dashboard Public session-store touch controls to reduce unexpected login expiry during active use.
 
 ### Changed
 
@@ -86,6 +87,7 @@
 - Mounted Audit dashboard/API runtime routes and audit reconciler lifecycle in the current Service 1 boot path with the reconciler remaining opt-in through settings/env.
 - Updated active documentation to reflect the current dependency baseline, Dashboard Public shared serializers, Jest 30, and CI audit policy.
 - Updated `.env.example`, `SECURITY.md`, and `ARCHITECTURE.md` with non-secret Trace Eraser guard controls while keeping hidden owner/system operational details out of public documentation.
+- Updated session documentation and placeholders for owner dashboard and Dashboard Public rolling session controls.
 
 ### Notes
 

@@ -40,6 +40,8 @@ Service 1 variables:
 TOKEN_MANAGER
 PORT
 DASHBOARD_PIN
+DASHBOARD_SESSION_MAX_AGE_MS
+DASHBOARD_SESSION_REFRESH_AFTER_MS
 DASHBOARD_URL
 PUBLIC_DASHBOARD_URL
 WEBHOOK_LOG_URL
@@ -77,6 +79,10 @@ DISCORD_CLIENT_ID
 DISCORD_CLIENT_SECRET
 TOKEN_MANAGER
 SESSION_SECRET
+ADMIN_SESSION_COOKIE_SECURE
+ADMIN_SESSION_MAX_AGE_MS
+ADMIN_SESSION_ROLLING
+ADMIN_SESSION_TOUCH_AFTER_SEC
 PUBLIC_BASE_URL
 DASHBOARD_PUBLIC_URL
 DASHBOARD_URL
@@ -202,10 +208,14 @@ Approving a raw IP reveal must atomically claim a pending, unexpired request and
 
 Dashboard Public admin sessions use an explicit cookie policy:
 
-- Default policy is absolute expiry, not rolling extension.
+- Default policy is rolling extension so active guild admins are not logged out during normal use.
 - Default max age is 24 hours and can be changed with `ADMIN_SESSION_MAX_AGE_MS`.
-- Rolling extension can be enabled with `ADMIN_SESSION_ROLLING=true`.
+- Rolling extension can be disabled with `ADMIN_SESSION_ROLLING=false`.
+- MongoDB session touch frequency can be changed with `ADMIN_SESSION_TOUCH_AFTER_SEC`.
+- HTTPS cookie behavior can be changed with `ADMIN_SESSION_COOKIE_SECURE`, which defaults to `auto` in production.
 - Logout destroys the current admin session. A global revoke-all endpoint is intentionally not exposed.
+
+Service 1 owner dashboard signed-cookie sessions default to 24 hours and refresh while active. Use `DASHBOARD_SESSION_MAX_AGE_MS` and `DASHBOARD_SESSION_REFRESH_AFTER_MS` to tune that behavior.
 
 ## Retention Policy
 
