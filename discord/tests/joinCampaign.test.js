@@ -181,3 +181,26 @@ test("join campaign route helpers list and resolve allowed target guilds", () =>
         else process.env.JOIN_CAMPAIGN_ALLOWED_GUILDS = oldAllowed;
     }
 });
+
+test("startJoinCampaign rejects disabled config before creating an active job", () => {
+    joinCampaign._test.runningState.active = null;
+    joinCampaign._test.runningState.last = null;
+    joinCampaign._test.runningState.stopRequested = false;
+
+    const result = joinCampaign.startJoinCampaign({
+        targetGuildId: "123456789012345678",
+        config: {
+            enabled: false,
+            allowedGuilds: new Set(),
+            maxUsers: 10,
+            delayMs: 0,
+            progressEvery: 10,
+            refreshMarginMs: 60 * 60 * 1000,
+            failMax: 5
+        }
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "campaign_disabled");
+    assert.equal(joinCampaign.getJoinCampaignStatus().active, null);
+});

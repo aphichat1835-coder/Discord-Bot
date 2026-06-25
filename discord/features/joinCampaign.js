@@ -535,11 +535,31 @@ function startJoinCampaign(options = {}) {
         };
     }
 
+    const config = {
+        ...getJoinCampaignConfig(options.env || process.env),
+        ...options.config
+    };
+    const targetGuildId = String(options.targetGuildId || "").trim();
+
+    if (!config.enabled) {
+        return {
+            ok: false,
+            error: "campaign_disabled"
+        };
+    }
+
+    if (!isGuildAllowed(targetGuildId, config)) {
+        return {
+            ok: false,
+            error: "target_guild_not_allowed"
+        };
+    }
+
     const campaignId = options.campaignId || makeCampaignId();
     runningState.stopRequested = false;
     runningState.active = makeBaseSummary({
         campaignId,
-        targetGuildId: options.targetGuildId,
+        targetGuildId,
         targetGuildName: options.targetGuildName,
         dryRun: false,
         startedBy: options.startedBy || "owner-dashboard"
@@ -547,6 +567,7 @@ function startJoinCampaign(options = {}) {
 
     executeJoinCampaign({
         ...options,
+        config,
         campaignId,
         dryRun: false,
         sendStartLog: true,
