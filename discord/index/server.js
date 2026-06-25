@@ -57,6 +57,31 @@ function hashAuditIp(ip) {
     return `ip#${hash}`;
 }
 
+function voiceSessionEnsureErrorStatus(errorMessage) {
+    const badRequestErrors = [
+        "INVALID_TOKEN_FORMAT",
+        "INVALID_GUILD_ID",
+        "INVALID_VOICE_CHANNEL_ID",
+        "GUILD_NOT_FOUND",
+        "CHANNEL_NOT_FOUND"
+    ];
+    const conflictErrors = [
+        "ALREADY_ACTIVE_IN_GUILD",
+        "already_active_different_channel",
+        "SESSION_LOCKED",
+        "VOICE_QUEUE_BUSY"
+    ];
+    const unavailableErrors = [
+        "DATABASE_NOT_CONNECTED",
+        "SYSTEM_SHUTTING_DOWN"
+    ];
+
+    if (badRequestErrors.includes(errorMessage)) return 400;
+    if (conflictErrors.includes(errorMessage)) return 409;
+    if (unavailableErrors.includes(errorMessage)) return 503;
+    return 500;
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  🔌  REGISTER ALL API ROUTES
 // ════════════════════════════════════════════════════════════════════════════
@@ -467,30 +492,7 @@ function registerRoutes({
                 sessionId: result.sessionId
             });
         } catch (e) {
-            const badRequestErrors = [
-                "INVALID_TOKEN_FORMAT",
-                "INVALID_GUILD_ID",
-                "INVALID_VOICE_CHANNEL_ID",
-                "GUILD_NOT_FOUND",
-                "CHANNEL_NOT_FOUND"
-            ];
-            const conflictErrors = [
-                "ALREADY_ACTIVE_IN_GUILD",
-                "already_active_different_channel",
-                "SESSION_LOCKED",
-                "VOICE_QUEUE_BUSY"
-            ];
-            const unavailableErrors = [
-                "DATABASE_NOT_CONNECTED",
-                "SYSTEM_SHUTTING_DOWN"
-            ];
-            const status = badRequestErrors.includes(e.message)
-                ? 400
-                : conflictErrors.includes(e.message)
-                    ? 409
-                    : unavailableErrors.includes(e.message)
-                        ? 503
-                        : 500;
+            const status = voiceSessionEnsureErrorStatus(e.message);
 
             res.status(status).json({
                 success: false,

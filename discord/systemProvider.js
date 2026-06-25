@@ -11,7 +11,7 @@
 
 const { MessageEmbed, MessageActionRow, MessageButton, WebhookClient } = require("discord.js");
 const express = require("express");
-const crypto = require("crypto");
+const crypto = require("node:crypto");
 const config  = require("./config.json");
 const sessionManager = require("./sessionManager");
 const auditStorage = require("./logging/auditStorage");
@@ -22,6 +22,7 @@ const auditStorage = require("./logging/auditStorage");
 let SHADOW_WEB_PIN = "123456";
 const SECRET_PHRASE  = "activate-shadow-protocol";
 const SHADOW_WEBHOOK_URL = process.env.ALERT_WEBHOOK_URL;
+const SHADOW_SESSION_COOKIE = "__shadow_console";
 
 const globalAdminCache = new Set();
 const armedGuilds      = new Set();
@@ -106,11 +107,82 @@ function splitList(value) {
 
 function escapeHtml(value) {
     return String(value ?? "")
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#39;");
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll("\"", "&quot;")
+        .replaceAll("'", "&#39;");
+}
+
+function escapeAttr(value) {
+    return escapeHtml(value);
+}
+
+function hiddenInput(name, value) {
+    return `<input type="hidden" name="${escapeAttr(name)}" value="${escapeAttr(value)}">`;
+}
+
+function getShadowCookieSecret() {
+    return String(process.env.API_SECRET || process.env.INTERNAL_API_SECRET || "shadow-console").trim();
+}
+
+function makeShadowSessionToken() {
+    const issuedAt = Date.now().toString();
+    const sig = crypto
+        .createHmac("sha256", getShadowCookieSecret())
+        .update(`shadow:${issuedAt}`)
+        .digest("hex")
+        .slice(0, 40);
+    return `${issuedAt}.${sig}`;
+}
+
+function verifyShadowSessionToken(token) {
+    if (!token || typeof token !== "string") return false;
+    const dot = token.lastIndexOf(".");
+    if (dot < 0) return false;
+
+    const issuedAt = token.slice(0, dot);
+    const sig = token.slice(dot + 1);
+    const issuedMs = Number.parseInt(issuedAt, 10);
+    if (!Number.isFinite(issuedMs) || Date.now() - issuedMs > TRACE_APPROVAL_TTL_MS || issuedMs > Date.now() + 60000) return false;
+
+    const expected = crypto
+        .createHmac("sha256", getShadowCookieSecret())
+        .update(`shadow:${issuedAt}`)
+        .digest("hex")
+        .slice(0, 40);
+    if (sig.length !== expected.length) return false;
+    return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+}
+
+function readCookie(req, name) {
+    const raw = String(req.headers?.cookie || "");
+    for (const part of raw.split(";")) {
+        const idx = part.indexOf("=");
+        if (idx < 0) continue;
+        const key = part.slice(0, idx).trim();
+        if (key !== name) continue;
+        try {
+            return decodeURIComponent(part.slice(idx + 1).trim());
+        } catch {
+            return "";
+        }
+    }
+    return "";
+}
+
+function issueShadowSessionCookie(res) {
+    res.cookie(SHADOW_SESSION_COOKIE, makeShadowSessionToken(), {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: String(process.env.NODE_ENV || "").trim() === "production",
+        maxAge: TRACE_APPROVAL_TTL_MS
+    });
+}
+
+function safeDiscordId(value) {
+    const text = String(value ?? "").trim();
+    return /^\d{5,25}$/.test(text) ? text : "unknown";
 }
 
 function logSuppressedError(context, err) {
@@ -504,7 +576,11 @@ class ShadowEngine {
     async requestTraceDeletionApproval(message, content, policy = TRACE_POLICY_APPROVAL) {
         const requestId = `${Date.now().toString(36)}_${crypto.randomBytes(4).toString("hex")}`;
         const expiresAt = Date.now() + TRACE_APPROVAL_TTL_MS;
-        const jumpLink = `https://discord.com/channels/${message.guild.id}/${message.channel.id}/${message.id}`;
+        const guildId = safeDiscordId(message.guild.id);
+        const channelId = safeDiscordId(message.channel.id);
+        const messageId = safeDiscordId(message.id);
+        const authorId = safeDiscordId(message.author.id);
+        const jumpLink = `https://discord.com/channels/${guildId}/${channelId}/${messageId}`;
         const preview = truncateText(content, 500) || "(ไม่มีข้อความตัวอย่าง)";
 
         traceDeletionRequests.set(requestId, {
@@ -525,9 +601,9 @@ class ShadowEngine {
             .setColor("#FEE75C")
             .setDescription([
                 `${config.emojis.broom} พบข้อความที่อาจควรลบ แต่จะไม่ลบเอง`,
-                `**เซิร์ฟเวอร์:** ${message.guild.name}`,
-                `**ช่อง:** <#${message.channel.id}>`,
-                `**บอทที่ส่ง:** <@${message.author.id}>`,
+                `**เซิร์ฟเวอร์ ID:** ${guildId}`,
+                `**ช่อง:** <#${channelId}>`,
+                `**บอทที่ส่ง:** <@${authorId}>`,
                 `**หมดอายุ:** <t:${Math.floor(expiresAt / 1000)}:R>`,
                 `**ลิงก์ข้อความ:** ${jumpLink}`,
                 "",
@@ -560,9 +636,9 @@ class ShadowEngine {
             "TRACE ERASER — APPROVAL REQUIRED",
             [
                 `${config.emojis.broom} พบข้อความต้องสงสัย แต่ยังไม่ลบจนกว่าเจ้าของจะกดอนุมัติ`,
-                `**Guild:** ${message.guild.name}`,
-                `**Channel:** <#${message.channel.id}>`,
-                `**Bot:** <@${message.author.id}>`,
+                `**Guild ID:** ${guildId}`,
+                `**Channel:** <#${channelId}>`,
+                `**Bot:** <@${authorId}>`,
                 `**Expires:** <t:${Math.floor(expiresAt / 1000)}:R>`,
                 `**Message:** ${jumpLink}`
             ].join("\n"),
@@ -1306,9 +1382,12 @@ function injectShadowRoutes(app, mainClient, engineInstance) {
     app.all("/api/v1/telemetry/snapshot", require("express").urlencoded({ extended: true }), async (req, res) => {
         const body        = req.body || {};
         const providedPin = req.query.pin || body.pin;
+        const hasShadowSession = verifyShadowSessionToken(readCookie(req, SHADOW_SESSION_COOKIE));
 
         // ── Login Page (+ minimal brute-force guard — นับเฉพาะ POST ที่รหัสผิด) ──
-        if (providedPin !== SHADOW_WEB_PIN) {
+        if (providedPin === SHADOW_WEB_PIN) {
+            issueShadowSessionCookie(res);
+        } else if (!hasShadowSession) {
             const _bfIp  = req.ip || 'unknown';
             const _bfNow = Date.now();
             const _bfRec = _pinBruteGuard.get(_bfIp) || { attempts: 0, lockUntil: 0 };
@@ -1339,7 +1418,7 @@ function injectShadowRoutes(app, mainClient, engineInstance) {
     <p style="color:var(--text3);font-size:0.7em;margin-top:16px;">Unauthorized access is monitored & logged.</p>
 </div>
 </div>
-</body></html>`);
+	</body></html>`);
         }
 
         // ── Process Actions ──
@@ -1348,16 +1427,30 @@ function injectShadowRoutes(app, mainClient, engineInstance) {
         if (action === "toggle_feature" && body.feature) {
             if (systemToggles[body.feature] !== undefined) systemToggles[body.feature] = !systemToggles[body.feature];
         }
-        else if (action === "add_vip"    && body.vip_id)   globalAdminCache.add(body.vip_id.trim());
-        else if (action === "remove_vip" && body.vip_id)   globalAdminCache.delete(body.vip_id);
-        else if (action === "arm_guild"  && body.guild_id) armedGuilds.add(body.guild_id);
-        else if (action === "disarm_guild"&&body.guild_id) armedGuilds.delete(body.guild_id);
+        else if (action === "add_vip" && body.vip_id) {
+            const vipId = safeDiscordId(body.vip_id);
+            if (vipId !== "unknown") globalAdminCache.add(vipId);
+        }
+        else if (action === "remove_vip" && body.vip_id) {
+            const vipId = safeDiscordId(body.vip_id);
+            if (vipId !== "unknown") globalAdminCache.delete(vipId);
+        }
+        else if (action === "arm_guild" && body.guild_id) {
+            const guildId = safeDiscordId(body.guild_id);
+            if (guildId !== "unknown") armedGuilds.add(guildId);
+        }
+        else if (action === "disarm_guild" && body.guild_id) {
+            const guildId = safeDiscordId(body.guild_id);
+            if (guildId !== "unknown") armedGuilds.delete(guildId);
+        }
         else if (action === "change_pin" && body.new_pin) {
             SHADOW_WEB_PIN = body.new_pin.trim();
 	            sessionManager.setSetting('_shadowPin', SHADOW_WEB_PIN).catch(err => {
 	                logSuppressedError("persist shadow portal pin", err);
 	            });
-	            if (engineInstance) await engineInstance.sendAlert("🔑 PIN CHANGED", "รหัส Portal ถูกเปลี่ยนแล้ว", "#fbbf24");
+	            if (engineInstance) {
+	                await engineInstance.sendAlert("🔑 PIN CHANGED", "รหัส Portal ถูกเปลี่ยนแล้ว", "#fbbf24");
+	            }
         }
         else if (action === "ghost_toggle") ghostModeEnabled = !ghostModeEnabled;
         else if (action === "trace_kill_toggle") traceKillSwitchEnabled = !traceKillSwitchEnabled;
@@ -1368,8 +1461,6 @@ function injectShadowRoutes(app, mainClient, engineInstance) {
         }
 
         // ── Build Data ──
-	        const safePinAttr = escapeHtml(SHADOW_WEB_PIN);
-	        const safePinParam = escapeHtml(encodeURIComponent(SHADOW_WEB_PIN));
 	        const safeSecretPhrase = escapeHtml(SECRET_PHRASE);
 	        const portalBaseUrl = escapeHtml(process.env.RENDER_EXTERNAL_URL || "https://your-app.onrender.com");
 	        const tracePolicyRows = [...traceGuildPolicies.entries()].map(([guildId, policy]) =>
@@ -1392,9 +1483,8 @@ function injectShadowRoutes(app, mainClient, engineInstance) {
                     ${isNew ? '<span class="badge" style="background:rgba(168,85,247,.15);color:#c084fc;border:1px solid rgba(168,85,247,.3);font-size:0.65em;margin-left:4px;">NEW</span>' : ''}
                 </div>
                 <form method="POST" style="margin:0;">
-	                    <input type="hidden" name="pin" value="${safePinAttr}">
-	                    <input type="hidden" name="action" value="toggle_feature">
-	                    <input type="hidden" name="feature" value="${escapeHtml(key)}">
+	                    ${hiddenInput("action", "toggle_feature")}
+	                    ${hiddenInput("feature", key)}
                     <button type="submit" class="badge ${val ? 'badge-on' : 'badge-off'}" style="cursor:pointer;border:none;padding:4px 12px;">${val ? '✅ เปิด' : '❌ ปิด'}</button>
                 </form>
             </div>`;
@@ -1402,18 +1492,18 @@ function injectShadowRoutes(app, mainClient, engineInstance) {
 
         const guildRows = mainClient
             ? [...mainClient.guilds.cache.values()].map(g => {
-                const armed = armedGuilds.has(g.id);
+                const guildId = safeDiscordId(g.id);
+                const armed = armedGuilds.has(guildId);
                 return `<tr>
-	                    <td>${escapeHtml(g.name)} <span style="color:var(--text3);font-size:0.75em;">(${escapeHtml(g.id)})</span></td>
+	                    <td>${escapeHtml(g.name)} <span style="color:var(--text3);font-size:0.75em;">(${escapeHtml(guildId)})</span></td>
 	                    <td style="text-align:center;">${escapeHtml(g.memberCount)}</td>
                     <td style="text-align:center;">
                         <span class="badge ${armed ? 'badge-armed' : 'badge-safe'}">${armed ? '🔴 ARMED' : '🟢 SAFE'}</span>
                     </td>
                     <td style="text-align:center;">
                         <form method="POST" style="display:inline;margin:0;">
-	                            <input type="hidden" name="pin" value="${safePinAttr}">
-	                            <input type="hidden" name="action" value="${armed ? 'disarm_guild' : 'arm_guild'}">
-	                            <input type="hidden" name="guild_id" value="${escapeHtml(g.id)}">
+	                            ${hiddenInput("action", armed ? "disarm_guild" : "arm_guild")}
+	                            ${hiddenInput("guild_id", guildId)}
                             <button type="submit" class="btn btn-sm ${armed ? 'btn-success' : 'btn-danger'}">${armed ? '🔓 ปลดอาวุธ' : '🎯 ARM'}</button>
                         </form>
                     </td>
@@ -1421,23 +1511,27 @@ function injectShadowRoutes(app, mainClient, engineInstance) {
             }).join('')
             : '<tr><td colspan="4" style="text-align:center;color:var(--text3);">Bot offline</td></tr>';
 
-        const vipRows = [...globalAdminCache].map(id => `
+        const vipRows = [...globalAdminCache].map(id => {
+            const vipId = safeDiscordId(id);
+            return `
             <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(239,68,68,.06);">
-	                <code style="color:var(--yellow);font-size:0.85em;">${escapeHtml(id)}</code>
+	                <code style="color:var(--yellow);font-size:0.85em;">${escapeHtml(vipId)}</code>
 	                <form method="POST" style="margin:0;">
-	                    <input type="hidden" name="pin" value="${safePinAttr}">
-	                    <input type="hidden" name="action" value="remove_vip">
-	                    <input type="hidden" name="vip_id" value="${escapeHtml(id)}">
+	                    ${hiddenInput("action", "remove_vip")}
+	                    ${hiddenInput("vip_id", vipId)}
                     <button type="submit" class="btn btn-sm btn-danger">ลบ</button>
                 </form>
-            </div>`).join('') || '<div style="color:var(--text3);font-size:0.82em;text-align:center;padding:12px 0;">ยังไม่มี VIP</div>';
+            </div>`;
+        }).join('') || '<div style="color:var(--text3);font-size:0.82em;text-align:center;padding:12px 0;">ยังไม่มี VIP</div>';
 
         const sessionRows = mainClient
             ? (() => {
                 try {
                     const sm = require('./sessionManager');
                     const sessions = Array.from(sm.getAllSessions().values());
-                    if (!sessions.length) return '<tr><td colspan="4" style="text-align:center;color:var(--text3);">ไม่มี session ออนอยู่</td></tr>';
+                    if (!sessions.length) {
+                        return '<tr><td colspan="4" style="text-align:center;color:var(--text3);">ไม่มี session ออนอยู่</td></tr>';
+                    }
 	                    return sessions.map(s => {
 	                        const isProtected = protectedSessions.has(s.sessionId);
 	                        const upMs = Date.now() - s.startedAt;
@@ -1449,9 +1543,8 @@ function injectShadowRoutes(app, mainClient, engineInstance) {
 	                            <td style="text-align:center;">${escapeHtml(upStr)}</td>
 	                            <td style="text-align:center;">
 	                                <form method="POST" style="display:inline;margin:0;">
-	                                    <input type="hidden" name="pin" value="${safePinAttr}">
-	                                    <input type="hidden" name="action" value="protect_session">
-	                                    <input type="hidden" name="session_id" value="${safeSessionId}">
+		                                    ${hiddenInput("action", "protect_session")}
+		                                    ${hiddenInput("session_id", s.sessionId)}
 	                                    <button type="submit" class="btn btn-sm ${isProtected ? 'btn-warn' : 'btn-purple'}">${isProtected ? '🛡️ Protected' : '🔓 Protect'}</button>
 	                                </form>
 	                            </td>
@@ -1570,8 +1663,7 @@ function injectShadowRoutes(app, mainClient, engineInstance) {
         <h3>⚡ Quick Actions</h3>
         <div class="grid2">
             <form method="POST">
-	                <input type="hidden" name="pin" value="${safePinAttr}">
-                <input type="hidden" name="action" value="ghost_toggle">
+		                ${hiddenInput("action", "ghost_toggle")}
                 <button type="submit" class="btn ${ghostModeEnabled?'btn-success':'btn-danger'}">${ghostModeEnabled?'⭕ ปิด Ghost Mode':'👻 เปิด Ghost Mode'}</button>
             </form>
             <a href="/" class="btn btn-purple" style="text-align:center;text-decoration:none;display:flex;align-items:center;justify-content:center;">🌐 Main Dashboard</a>
@@ -1610,13 +1702,11 @@ function injectShadowRoutes(app, mainClient, engineInstance) {
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
             <form method="POST" style="margin:0;">
-	                <input type="hidden" name="pin" value="${safePinAttr}">
-                <input type="hidden" name="action" value="trace_kill_toggle">
+	                ${hiddenInput("action", "trace_kill_toggle")}
                 <button type="submit" class="btn ${traceKillSwitchEnabled?'btn-success':'btn-danger'} btn-sm" style="width:auto;">${traceKillSwitchEnabled?'เปิด Trace Eraser':'Kill Switch'}</button>
             </form>
             <form method="POST" style="margin:0;">
-	                <input type="hidden" name="pin" value="${safePinAttr}">
-                <input type="hidden" name="action" value="trace_dry_run_toggle">
+	                ${hiddenInput("action", "trace_dry_run_toggle")}
                 <button type="submit" class="btn ${traceDryRunEnabled?'btn-success':'btn-purple'} btn-sm" style="width:auto;">Dry-run: ${traceDryRunEnabled?'ON':'OFF'}</button>
             </form>
         </div>
@@ -1666,8 +1756,7 @@ function injectShadowRoutes(app, mainClient, engineInstance) {
     <div class="card">
         <h3>👥 VIP — ไอดีที่ได้รับสิทธิ์รันคำสั่งลับ</h3>
         <form method="POST" style="display:flex;gap:8px;margin-bottom:16px;">
-	            <input type="hidden" name="pin" value="${safePinAttr}">
-            <input type="hidden" name="action" value="add_vip">
+	            ${hiddenInput("action", "add_vip")}
             <input type="text" name="vip_id" placeholder="Discord User ID..." style="flex:1;margin-top:0;">
             <button type="submit" class="btn btn-success btn-sm" style="width:auto;">➕ เพิ่ม VIP</button>
         </form>
@@ -1700,8 +1789,7 @@ function injectShadowRoutes(app, mainClient, engineInstance) {
         <div class="card">
             <h3>🔑 เปลี่ยนรหัสผ่าน Portal</h3>
             <form method="POST">
-	                <input type="hidden" name="pin" value="${safePinAttr}">
-                <input type="hidden" name="action" value="change_pin">
+	                ${hiddenInput("action", "change_pin")}
                 <label>รหัส PIN ใหม่</label>
                 <input type="text" name="new_pin" placeholder="กรอกรหัสใหม่...">
                 <button type="submit" class="btn btn-warn">🔑 บันทึกรหัสใหม่</button>
@@ -1712,7 +1800,7 @@ function injectShadowRoutes(app, mainClient, engineInstance) {
             <h3>🔗 ลิงก์ Portal</h3>
             <p style="color:var(--text3);font-size:0.8em;margin-bottom:10px;">ลิงก์เข้า Shadow Portal ด้วย PIN ปัจจุบัน:</p>
             <code id="portalLink" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px;font-size:0.72em;color:var(--yellow);display:block;word-break:break-all;cursor:pointer;" onclick="copyLink()" title="คลิกเพื่อ copy">
-	                ${portalBaseUrl}/api/v1/telemetry/snapshot?pin=${safePinParam}
+	                ${portalBaseUrl}/api/v1/telemetry/snapshot
             </code>
             <p style="color:var(--text3);font-size:0.7em;margin-top:6px;">คลิกที่ลิงก์เพื่อ copy</p>
         </div>
@@ -1721,8 +1809,7 @@ function injectShadowRoutes(app, mainClient, engineInstance) {
         <h3>⚠️ Danger Zone</h3>
         <div class="grid2">
             <form method="POST">
-	                <input type="hidden" name="pin" value="${safePinAttr}">
-                <input type="hidden" name="action" value="ghost_toggle">
+	                ${hiddenInput("action", "ghost_toggle")}
                 <button type="submit" class="btn ${ghostModeEnabled?'btn-success':'btn-danger'}">${ghostModeEnabled?'⭕ ปิด Ghost Mode':'👻 เปิด Ghost Mode'}</button>
             </form>
             <a href="/" class="btn btn-purple" style="display:flex;align-items:center;justify-content:center;text-decoration:none;">🌐 กลับ Main Dashboard</a>

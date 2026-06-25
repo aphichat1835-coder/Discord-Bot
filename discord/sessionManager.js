@@ -593,7 +593,7 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
      */
     const existingSameGuild = findActiveVoiceSessionByTokenGuild(tokenHash, serverId);
     if (existingSameGuild) {
-        console.log(`[SESSION] ⚠️ Blocked duplicate token/guild voice session: ${getSafeSessionId(existingSameGuild.id)}`);
+        console.log(`[SESSION] ⚠️ Blocked duplicate token/guild voice session: ${sanitizeLogText(getSafeSessionId(existingSameGuild.id))}`);
         throw new Error("ALREADY_ACTIVE_IN_GUILD");
     }
 
@@ -603,7 +603,7 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
     );
     const activeSessionCount = Array.from(sessions.values()).filter(isSessionRunnable).length;
     if (activeSessionCount >= configuredMaxSessions) {
-        console.log(`[SESSION] ⛔ System limit reached for: ${ownerTag}`);
+        console.log(`[SESSION] ⛔ System limit reached for owner=${sanitizeLogText(ownerId || "unknown")}`);
         throw new Error("SYSTEM_LIMIT");
     }
 
@@ -659,7 +659,7 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
         tokenInvalid: false
     });
 
-    console.log(`[SESSION] ✅ Voice session created: ${sessionId} guild=${serverId} owner=${ownerTag}`);
+    console.log(`[SESSION] ✅ Voice session created: ${sanitizeLogText(getSafeSessionId(sessionId))} guild=${sanitizeLogText(serverId)} owner=${sanitizeLogText(ownerId || "unknown")}`);
     systemMetrics.increment("requests");
 
     try {

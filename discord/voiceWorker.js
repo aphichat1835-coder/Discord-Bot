@@ -890,12 +890,12 @@ function normalizeVoiceTarget(input = {}) {
 
 async function resolveVoiceTarget(guildId, channelId) {
     const guild = mainClient?.guilds?.cache?.get(guildId) ||
-        await mainClient?.guilds?.fetch?.(guildId).catch(() => null);
+        await mainClient?.guilds?.fetch?.(guildId)?.catch(() => null);
 
     if (!guild) throw new Error("GUILD_NOT_FOUND");
 
     const channel = guild.channels?.cache?.get(channelId) ||
-        await guild.channels?.fetch?.(channelId).catch(() => null);
+        await guild.channels?.fetch?.(channelId)?.catch(() => null);
 
     if (!channel || !channel.isVoice?.()) throw new Error("CHANNEL_NOT_FOUND");
 

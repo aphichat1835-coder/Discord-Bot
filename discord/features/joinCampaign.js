@@ -1,4 +1,4 @@
-const crypto = require("crypto");
+const crypto = require("node:crypto");
 const OAuthUser = require("../../dashboard-public/models/OAuthUser");
 const discordApi = require("../../dashboard-public/utils/discordAPI");
 const { decryptToken } = require("../../dashboard-public/utils/crypto");

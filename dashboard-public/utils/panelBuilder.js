@@ -102,7 +102,10 @@ function normalizePanelInput(panel = {}) {
 }
 
 function buildOAuthUrl({ baseUrl, state }) {
-  const cleanBase = String(baseUrl || "").replace(/\/+$/, "");
+  let cleanBase = String(baseUrl || "");
+  while (cleanBase.endsWith("/")) {
+    cleanBase = cleanBase.slice(0, -1);
+  }
   const cleanState = String(state || "").trim();
 
   if (!cleanBase || !cleanState) {
