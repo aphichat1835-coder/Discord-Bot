@@ -180,7 +180,7 @@ async function startRotateTimer() {
         if (!s.rotateEnabled) return;
         const msgs = Array.isArray(s.rotateMessages) ? s.rotateMessages.filter(Boolean).slice(0, ROTATE_MESSAGES_MAX) : [];
         if (!msgs.length) return;
-        const intervalMs = Math.max(1, parseInt(s.rotateInterval) || 5) * 60 * 1000;
+        const intervalMs = Math.max(1, Number.parseInt(s.rotateInterval, 10) || 5) * 60 * 1000;
         const actType    = ['WATCHING','LISTENING','PLAYING','COMPETING'].includes(s.botActivityType) ? s.botActivityType : 'WATCHING';
         const status     = ['online','idle','dnd','invisible'].includes(s.botStatus) ? s.botStatus : 'idle';
         _rotateIdx = 0;

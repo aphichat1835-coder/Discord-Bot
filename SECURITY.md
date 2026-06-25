@@ -152,6 +152,7 @@ Compatibility/fallback names may also appear in code, such as `TOKEN`, `BOT_TOKE
 
 - Long-running voice sessions are a production requirement.
 - Do not remove memory diagnostics, bounded cache limits, queue limits, timer cleanup, or log-buffer limits while changing voice/session behavior.
+- Voice lean mode should stay enabled in production unless a scoped incident requires disabling it. It keeps only target-session metadata/cache needed for the current voice run and removes unrelated selfbot guild/channel/message/member/role/emoji cache pressure.
 - Do not "fix" RAM by exposing tokens, raw IP data, hidden owner/system details, or sensitive cache contents in logs.
 - Prefer safe counts and redacted diagnostics: session counts, client pool size, cache sizes, queue depths, timer counts, circuit states, and heap/RSS/external memory.
 - Treat unbounded Maps/Sets/arrays/timers in runtime code as production risks, especially in voice worker, audit logger, owner dashboard guards, PIN/rate-limit buckets, command cooldowns, rotate messages, and Dashboard Public OAuth/IP/session/retention paths.

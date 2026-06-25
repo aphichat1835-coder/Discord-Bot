@@ -447,7 +447,9 @@ Responsibilities:
 - Owner dashboard status/detail/stop/reveal controls.
 - Voice control panel, status paging, stop controls, and start modal.
 - Natural activity and auto-deaf timers.
+- Voice starts should flow through the central `voiceWorker.ensureVoiceSession()` path so panel/API/recovery behavior stays idempotent: existing ready sessions are reused, dead sessions are resumed, and new records are cleaned up if startup fails.
 - Long-running memory stability: voice sessions are expected to remain online for weeks/months, so selfbot clients, Discord.js caches, timers, queues, cooldown maps, voice logs, audit caches, and session state must be bounded and visible in diagnostics.
+- Selfbot voice clients use target-only lean cache mode by default: session metadata is snapshotted for dashboard/reconnect visibility, while unrelated guild/channel/member/message/role/emoji caches are cleared after join and during periodic cleanup.
 
 ### Memory Stability
 

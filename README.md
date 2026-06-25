@@ -8,6 +8,7 @@ This repository contains a personal multi-tool Discord bot with two Node.js serv
 - Slash commands for information, moderation, utility/admin work, backup/restore, audit log setup, dashboard setup, and verification panel setup.
 - Voice/session subsystem with persistent session state, token encryption, reconnect handling, health recovery, owner dashboard visibility, and session controls.
 - Production memory stability is a first-class requirement: voice sessions are expected to run long term, so caches, timers, queues, log buffers, and dashboard diagnostics must remain bounded.
+- Voice sessions run with a target-only lean cache mode by default so a token used for one voice session does not keep unnecessary guild/channel/message/role/emoji caches from unrelated servers.
 - Main owner dashboard served by Service 1 for status, sessions, settings, command toggles, whitelist, approved guilds, Join Campaign controls, logs, and owner controls.
 - Dashboard Public served by Service 2 for Discord OAuth2 verification, guild admin configuration, verification panels, logs, members, stats, risk summaries, and internal APIs.
 - MongoDB/Mongoose persistence shared by both services.

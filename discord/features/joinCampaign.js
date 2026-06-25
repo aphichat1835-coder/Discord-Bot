@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const OAuthUser = require("../../dashboard-public/models/OAuthUser");
 const discordApi = require("../../dashboard-public/utils/discordAPI");
 const { decryptToken } = require("../../dashboard-public/utils/crypto");
@@ -150,7 +151,7 @@ function summarizeJoinCandidates(docs = []) {
 }
 
 function makeCampaignId(now = Date.now()) {
-    return `join_${now.toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    return `join_${now.toString(36)}_${crypto.randomBytes(4).toString("hex")}`;
 }
 
 function makeBaseSummary({ campaignId, targetGuildId, targetGuildName, dryRun = false, startedBy = "owner-dashboard", startedAt = Date.now() }) {
@@ -394,12 +395,20 @@ function sleep(ms) {
     });
 }
 
+function getJoinCampaignTitle(phase = "progress") {
+    if (phase === "start") return "เริ่มงานดึงสมาชิกเข้าเซิร์ฟเวอร์";
+    if (phase === "finish") return "งานดึงสมาชิกเข้าเซิร์ฟเวอร์เสร็จแล้ว";
+    return "อัปเดตงานดึงสมาชิกเข้าเซิร์ฟเวอร์";
+}
+
+function formatCampaignErrorLine(item = {}) {
+    const userId = item.userId || "-";
+    const detail = item.detail ? ` (${item.detail})` : "";
+    return `- \`${userId}\` : ${item.reason}${detail}`;
+}
+
 function formatThaiJoinCampaignLog(summary, phase = "progress") {
-    const title = phase === "start"
-        ? "เริ่มงานดึงสมาชิกเข้าเซิร์ฟเวอร์"
-        : phase === "finish"
-            ? "งานดึงสมาชิกเข้าเซิร์ฟเวอร์เสร็จแล้ว"
-            : "อัปเดตงานดึงสมาชิกเข้าเซิร์ฟเวอร์";
+    const title = getJoinCampaignTitle(phase);
     const targetName = summary.targetGuildName
         ? `${summary.targetGuildName} (${summary.targetGuildId})`
         : summary.targetGuildId;
@@ -426,7 +435,7 @@ function formatThaiJoinCampaignLog(summary, phase = "progress") {
     if (summary.errors.length) {
         lines.push("", "ตัวอย่างรายการที่ไม่สำเร็จ:");
         for (const item of summary.errors.slice(0, 5)) {
-            lines.push(`- \`${item.userId || "-"}\` : ${item.reason}${item.detail ? ` (${item.detail})` : ""}`);
+            lines.push(formatCampaignErrorLine(item));
         }
     }
 
@@ -437,7 +446,7 @@ async function sendCampaignWebhook(summary, phase, sendWebhook = sendLogWebhook)
     await sendWebhook(formatThaiJoinCampaignLog(summary, phase)).catch(() => {});
 }
 
-async function executeJoinCampaign(options = {}) {
+function buildExecutionContext(options = {}) {
     const env = options.env || process.env;
     const config = {
         ...getJoinCampaignConfig(env),
@@ -445,47 +454,50 @@ async function executeJoinCampaign(options = {}) {
     };
     const targetGuildId = String(options.targetGuildId || "").trim();
 
+    return {
+        env,
+        config,
+        targetGuildId,
+        model: options.OAuthUserModel || OAuthUser,
+        discord: options.discordApi || discordApi,
+        now: Number(options.now || Date.now())
+    };
+}
+
+function assertCampaignCanRun(targetGuildId, config) {
     if (!config.enabled) {
         throw new Error("JOIN_CAMPAIGN_ENABLED is disabled");
     }
     if (!isGuildAllowed(targetGuildId, config)) {
         throw new Error("Target guild is not allowed");
     }
+}
 
-    const model = options.OAuthUserModel || OAuthUser;
-    const discord = options.discordApi || discordApi;
-    const now = Number(options.now || Date.now());
-    const docs = options.candidateDocs || await loadCandidateDocs({
-        model,
-        limit: config.maxUsers
-    });
-    const candidateSummary = summarizeJoinCandidates(docs);
+function createExecutionSummary(options, context, docs) {
     const summary = makeBaseSummary({
-        campaignId: options.campaignId || makeCampaignId(now),
-        targetGuildId,
+        campaignId: options.campaignId || makeCampaignId(context.now),
+        targetGuildId: context.targetGuildId,
         targetGuildName: options.targetGuildName || null,
         dryRun: options.dryRun === true,
         startedBy: options.startedBy || "owner-dashboard",
-        startedAt: now
+        startedAt: context.now
     });
 
-    Object.assign(summary, candidateSummary);
+    Object.assign(summary, summarizeJoinCandidates(docs));
+    return summary;
+}
+
+async function completeDryRun(summary, options, now) {
+    summary.status = "dry_run_complete";
+    summary.finishedAt = now;
     options.onSummary?.(summary);
-
-    if (options.sendStartLog) {
-        await sendCampaignWebhook(summary, "start", options.sendWebhook || sendLogWebhook);
+    if (options.sendFinishLog) {
+        await sendCampaignWebhook(summary, "finish", options.sendWebhook || sendLogWebhook);
     }
+    return summary;
+}
 
-    if (summary.dryRun) {
-        summary.status = "dry_run_complete";
-        summary.finishedAt = now;
-        options.onSummary?.(summary);
-        if (options.sendFinishLog) {
-            await sendCampaignWebhook(summary, "finish", options.sendWebhook || sendLogWebhook);
-        }
-        return summary;
-    }
-
+async function processCampaignDocs(docs, summary, context, options) {
     const seenUsers = new Set();
     let processed = 0;
 
@@ -500,21 +512,23 @@ async function executeJoinCampaign(options = {}) {
             doc,
             seenUsers,
             summary,
-            targetGuildId,
-            model,
-            discord,
-            env,
-            config,
+            targetGuildId: context.targetGuildId,
+            model: context.model,
+            discord: context.discord,
+            env: context.env,
+            config: context.config,
             options
         });
 
         if (!processedOne) continue;
 
         processed++;
-        await maybeReportCampaignProgress(summary, processed, config, options);
-        await waitBetweenJoinAttempts(config, options);
+        await maybeReportCampaignProgress(summary, processed, context.config, options);
+        await waitBetweenJoinAttempts(context.config, options);
     }
+}
 
+async function finishCampaignSummary(summary, options) {
     if (summary.status === "running") summary.status = "finished";
     summary.finishedAt = Date.now();
     options.onSummary?.(summary);
@@ -524,6 +538,30 @@ async function executeJoinCampaign(options = {}) {
     }
 
     return summary;
+}
+
+async function executeJoinCampaign(options = {}) {
+    const context = buildExecutionContext(options);
+    assertCampaignCanRun(context.targetGuildId, context.config);
+
+    const docs = options.candidateDocs || await loadCandidateDocs({
+        model: context.model,
+        limit: context.config.maxUsers
+    });
+    const summary = createExecutionSummary(options, context, docs);
+    options.onSummary?.(summary);
+
+    if (options.sendStartLog) {
+        await sendCampaignWebhook(summary, "start", options.sendWebhook || sendLogWebhook);
+    }
+
+    if (summary.dryRun) {
+        return completeDryRun(summary, options, context.now);
+    }
+
+    await processCampaignDocs(docs, summary, context, options);
+
+    return finishCampaignSummary(summary, options);
 }
 
 function startJoinCampaign(options = {}) {
@@ -599,7 +637,7 @@ function startJoinCampaign(options = {}) {
 }
 
 function stopJoinCampaign() {
-    if (!runningState.active || runningState.active.status !== "running") {
+    if (runningState.active?.status !== "running") {
         return { ok: false, error: "no_campaign_running" };
     }
 

@@ -220,11 +220,11 @@ function cleanUrl(value) {
 }
 
 function parsePage(value) {
-  return Math.max(0, parseInt(value, 10) || 0);
+  return Math.max(0, Number.parseInt(value, 10) || 0);
 }
 
 function parseLimit(value, fallback = 25, max = 100) {
-  return Math.min(max, Math.max(1, parseInt(value, 10) || fallback));
+  return Math.min(max, Math.max(1, Number.parseInt(value, 10) || fallback));
 }
 
 function getBaseFilter(guildId) {
@@ -270,7 +270,7 @@ function trimTrailingSlashes(value) {
 }
 
 function makeRequestId(prefix = "req") {
-  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+  return `${prefix}_${Date.now().toString(36)}_${crypto.randomBytes(4).toString("hex")}`;
 }
 
 function sanitizeVerification(input = {}) {
@@ -284,11 +284,11 @@ function sanitizeVerification(input = {}) {
   if ("requireConnections" in input) out.requireConnections = !!input.requireConnections;
 
   if ("minAccountAgeDays" in input) {
-    out.minAccountAgeDays = Math.max(0, Math.min(3650, parseInt(input.minAccountAgeDays, 10) || 0));
+    out.minAccountAgeDays = Math.max(0, Math.min(3650, Number.parseInt(input.minAccountAgeDays, 10) || 0));
   }
 
   if ("minConnections" in input) {
-    out.minConnections = Math.max(1, Math.min(20, parseInt(input.minConnections, 10) || 1));
+    out.minConnections = Math.max(1, Math.min(20, Number.parseInt(input.minConnections, 10) || 1));
   }
 
   if ("roleId" in input) out.roleId = cleanOptionalSnowflake(input.roleId);

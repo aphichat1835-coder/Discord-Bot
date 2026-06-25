@@ -48,11 +48,11 @@ function parseEmbedColor(value) {
   const raw = String(value || "").trim();
 
   if (/^#[0-9a-fA-F]{6}$/.test(raw)) {
-    return parseInt(raw.slice(1), 16);
+    return Number.parseInt(raw.slice(1), 16);
   }
 
   if (/^[0-9a-fA-F]{6}$/.test(raw)) {
-    return parseInt(raw, 16);
+    return Number.parseInt(raw, 16);
   }
 
   if (/^\d+$/.test(raw)) {

@@ -1590,9 +1590,9 @@ function updatePresencePreview(){
 }
 
 async function saveSettings(){
-    const maxSessions=parseInt(document.getElementById('maxSessions').value)||1;
-    const rateLimitRequests=parseInt(document.getElementById('rateLimitRequests').value)||5;
-    const idleTimeoutHrs=parseInt(document.getElementById('idleTimeoutHrs').value)||24;
+    const maxSessions=Number.parseInt(document.getElementById('maxSessions').value,10)||1;
+    const rateLimitRequests=Number.parseInt(document.getElementById('rateLimitRequests').value,10)||5;
+    const idleTimeoutHrs=Number.parseInt(document.getElementById('idleTimeoutHrs').value,10)||24;
     const antiRaidEnabled=document.getElementById('antiRaidEnabled').value==='true';
 
     try{
@@ -1663,7 +1663,7 @@ function removeRotate(idx){
 
 async function saveRotate(){
     const rotateEnabled=document.getElementById('rotateEnabled').value==='true';
-    const rotateInterval=parseInt(document.getElementById('rotateInterval').value)||5;
+    const rotateInterval=Number.parseInt(document.getElementById('rotateInterval').value,10)||5;
     const msgs=[...document.querySelectorAll('.ri input')]
         .map(i=>i.value.trim())
         .filter(Boolean);
@@ -1731,8 +1731,8 @@ async function loadNatural(){
 
 async function saveNatural(){
     const enabled=document.getElementById('naturalEnabled').value==='true';
-    const intervalMs=parseInt(document.getElementById('naturalInterval').value)||3600000;
-    const durationMs=parseInt(document.getElementById('naturalDuration').value)||30000;
+    const intervalMs=Number.parseInt(document.getElementById('naturalInterval').value,10)||3600000;
+    const durationMs=Number.parseInt(document.getElementById('naturalDuration').value,10)||30000;
     const msgEl=document.getElementById('natMsg');
 
     msgEl.style.display='block';
@@ -1803,8 +1803,8 @@ async function loadAutoDeaf(){
 
 async function saveAutoDeaf(){
     const enabled=document.getElementById('autoDeafEnabled').value==='true';
-    const intervalMs=parseInt(document.getElementById('autoDeafInterval').value)||3600000;
-    const openDurationMs=parseInt(document.getElementById('autoDeafOpenDuration').value)||60000;
+    const intervalMs=Number.parseInt(document.getElementById('autoDeafInterval').value,10)||3600000;
+    const openDurationMs=Number.parseInt(document.getElementById('autoDeafOpenDuration').value,10)||60000;
     const msgEl=document.getElementById('adMsg');
 
     msgEl.style.display='block';

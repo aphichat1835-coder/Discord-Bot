@@ -68,11 +68,11 @@ function baseFilter(guildId) {
 }
 
 function parsePage(value) {
-    return Math.max(0, parseInt(value, 10) || 0);
+    return Math.max(0, Number.parseInt(value, 10) || 0);
 }
 
 function parseLimit(value, fallback = 20, max = 100) {
-    return Math.min(max, Math.max(1, parseInt(value, 10) || fallback));
+    return Math.min(max, Math.max(1, Number.parseInt(value, 10) || fallback));
 }
 
 function parseObjectIdHex(value) {

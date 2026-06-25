@@ -88,6 +88,7 @@ The current stabilization direction is intentionally incremental:
 - Keep the existing voice/session architecture and `discord.js` v13.
 - Keep dependency upgrades conservative: `discord.js` stays v13 and Mongoose stays v8 unless the owner approves scoped major migrations.
 - Bound Discord.js and selfbot caches instead of removing voice/session behavior.
+- Keep selfbot voice clients in target-only lean cache mode by default: snapshot only the account/guild/channel data needed for the current voice session, then clear unrelated guild/channel/member/message/role/emoji caches.
 - Keep natural/auto-deaf timers one-per-runnable-session and clean inactive timer state.
 - Keep audit queues/caches, dashboard rate-limit maps, reveal-attempt maps, IP lookup cache, and retention summaries bounded or TTL-cleaned.
 - Expose enough diagnostics to prove where heap growth is coming from before making larger changes.

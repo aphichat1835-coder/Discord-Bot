@@ -86,11 +86,12 @@ const SESSION_TOUCH_AFTER_SEC = Math.max(
         Number(process.env.ADMIN_SESSION_TOUCH_AFTER_SEC || Math.min(3600, Math.max(60, Math.floor(SESSION_MAX_AGE_MS / 4000)))) || 900
     )
 );
-const SESSION_COOKIE_SECURE = (() => {
-    const value = String(process.env.ADMIN_SESSION_COOKIE_SECURE || (IS_PRODUCTION ? 'auto' : 'false')).trim().toLowerCase();
-    if (value === 'auto') return 'auto';
-    return ['1', 'true', 'yes', 'on'].includes(value);
-})();
+const SESSION_COOKIE_SECURE_VALUE = String(
+    process.env.ADMIN_SESSION_COOKIE_SECURE || (IS_PRODUCTION ? 'auto' : 'false')
+).trim().toLowerCase();
+const SESSION_COOKIE_SECURE = SESSION_COOKIE_SECURE_VALUE === 'auto'
+    ? 'auto'
+    : ['1', 'true', 'yes', 'on'].includes(SESSION_COOKIE_SECURE_VALUE);
 const RETENTION_ERROR_MAX = Math.max(5, Number(process.env.RETENTION_ERROR_MAX || 50) || 50);
 const RETENTION_CONFIG_SCAN_MAX = Math.max(
     50,

@@ -423,6 +423,82 @@ function registerRoutes({
         }
     });
 
+    // ── Start / Ensure Voice Session ──
+    app.post("/api/voice-session/ensure", express.json({ limit: "16kb" }), async (req, res) => {
+        try {
+            if (!checkAuth(req, res)) return;
+
+            const {
+                token,
+                guildId,
+                serverId,
+                channelId,
+                voiceId,
+                ownerId,
+                ownerTag,
+                ownerAvatar
+            } = req.body || {};
+
+            const result = await voiceWorker.ensureVoiceSession({
+                token,
+                guildId: guildId || serverId,
+                channelId: channelId || voiceId,
+                ownerId: ownerId || "dashboard",
+                ownerTag: ownerTag || "Owner Dashboard",
+                ownerAvatar: ownerAvatar || null,
+                reason: "dashboard_api"
+            });
+
+            if (result.ok === false) {
+                return res.status(409).json({
+                    success: false,
+                    action: result.action,
+                    sessionId: result.sessionId,
+                    requested: result.requested,
+                    existing: result.existing,
+                    error: result.action
+                });
+            }
+
+            res.json({
+                success: true,
+                action: result.action,
+                reused: result.reused === true,
+                sessionId: result.sessionId
+            });
+        } catch (e) {
+            const badRequestErrors = [
+                "INVALID_TOKEN_FORMAT",
+                "INVALID_GUILD_ID",
+                "INVALID_VOICE_CHANNEL_ID",
+                "GUILD_NOT_FOUND",
+                "CHANNEL_NOT_FOUND"
+            ];
+            const conflictErrors = [
+                "ALREADY_ACTIVE_IN_GUILD",
+                "already_active_different_channel",
+                "SESSION_LOCKED",
+                "VOICE_QUEUE_BUSY"
+            ];
+            const unavailableErrors = [
+                "DATABASE_NOT_CONNECTED",
+                "SYSTEM_SHUTTING_DOWN"
+            ];
+            const status = badRequestErrors.includes(e.message)
+                ? 400
+                : conflictErrors.includes(e.message)
+                    ? 409
+                    : unavailableErrors.includes(e.message)
+                        ? 503
+                        : 500;
+
+            res.status(status).json({
+                success: false,
+                error: e.message
+            });
+        }
+    });
+
     // ── Stop Session ──
     app.post("/api/stop-session", express.json({ limit: "8kb" }), async (req, res) => {
         try {
@@ -649,7 +725,7 @@ function registerRoutes({
                 });
             }
 
-            const interval = Math.max(1, parseInt(rotateInterval) || 5);
+            const interval = Math.max(1, Number.parseInt(rotateInterval, 10) || 5);
             const msgs = Array.isArray(rotateMessages)
                 ? rotateMessages.map(m => String(m).trim().slice(0, 128)).filter(Boolean).slice(0, ROTATE_MESSAGES_MAX)
                 : [];
@@ -684,8 +760,8 @@ function registerRoutes({
                 });
             }
 
-            const safeInterval = Math.max(60000, parseInt(intervalMs) || 3600000);
-            const safeDuration = Math.min(120000, Math.max(5000, parseInt(durationMs) || 30000));
+            const safeInterval = Math.max(60000, Number.parseInt(intervalMs, 10) || 3600000);
+            const safeDuration = Math.min(120000, Math.max(5000, Number.parseInt(durationMs, 10) || 30000));
 
             await sessionManager.setSetting("naturalEnabled", enabled);
             await sessionManager.setSetting("naturalIntervalMs", safeInterval);
@@ -724,8 +800,8 @@ function registerRoutes({
                 });
             }
 
-            const safeInterval = Math.max(60000, parseInt(intervalMs) || 3600000);
-            const safeOpenDuration = Math.min(600000, Math.max(5000, parseInt(openDurationMs) || 60000));
+            const safeInterval = Math.max(60000, Number.parseInt(intervalMs, 10) || 3600000);
+            const safeOpenDuration = Math.min(600000, Math.max(5000, Number.parseInt(openDurationMs, 10) || 60000));
 
             await sessionManager.setSetting("autoDeafEnabled", enabled);
             await sessionManager.setSetting("autoDeafIntervalMs", safeInterval);

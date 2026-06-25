@@ -115,7 +115,7 @@ function decodeCompactCallbackStateV4(parts) {
 
     if (!safeEqual(sig, expected)) return null;
 
-    const ts = parseInt(ts36, 36);
+    const ts = Number.parseInt(ts36, 36);
 
     if (!Number.isFinite(ts)) return null;
 
@@ -146,7 +146,7 @@ function decodeCompactCallbackStateV3(parts) {
 
     if (!safeEqual(sig, expected)) return null;
 
-    const ts = parseInt(ts36, 36);
+    const ts = Number.parseInt(ts36, 36);
 
     if (!Number.isFinite(ts)) return null;
 

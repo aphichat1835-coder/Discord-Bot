@@ -85,7 +85,7 @@ function verifyToken(token) {
         if (dot < 0) return false;
         const ts  = token.slice(0, dot);
         const sig = token.slice(dot + 1);
-        const issuedAt = parseInt(ts, 10);
+        const issuedAt = Number.parseInt(ts, 10);
         if (!Number.isFinite(issuedAt) || Date.now() - issuedAt > getSessionMaxAgeMs() || issuedAt > Date.now() + 60000) return false;
         const expected = crypto.createHmac('sha256', secret).update(ts).digest('hex').slice(0, 40);
         if (sig.length !== expected.length) return false;
@@ -96,7 +96,7 @@ function verifyToken(token) {
 function getTokenIssuedAt(token) {
     if (!verifyToken(token)) return 0;
     const dot = token.lastIndexOf('.');
-    return parseInt(token.slice(0, dot), 10) || 0;
+    return Number.parseInt(token.slice(0, dot), 10) || 0;
 }
 
 function shouldRefreshToken(token) {

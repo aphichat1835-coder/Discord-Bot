@@ -791,8 +791,8 @@
       requireEmail: readBool("v-requireEmail"),
       requireEmailVerified: readBool("v-requireEmailVerified"),
       requireConnections: readBool("v-requireConnections"),
-      minAccountAgeDays: Math.max(0, Math.min(3650, parseInt(readText("v-minAge"), 10) || 0)),
-      minConnections: Math.max(1, Math.min(20, parseInt(readText("v-minConnections"), 10) || 1)),
+      minAccountAgeDays: Math.max(0, Math.min(3650, Number.parseInt(readText("v-minAge"), 10) || 0)),
+      minConnections: Math.max(1, Math.min(20, Number.parseInt(readText("v-minConnections"), 10) || 1)),
       allowedCountries: readText("v-allowedCountries"),
       blockedCountries: readText("v-blockedCountries"),
 

@@ -35,6 +35,15 @@ const VOICE_LOG_MAX = Math.max(
     20,
     Math.min(2000, Number(process.env.VOICE_LOG_MAX || config.voice_worker.voiceLogMax || 200) || 200)
 );
+
+function randomInt(min, max) {
+    return crypto.randomInt(min, max);
+}
+
+function randomJitter(rangeMs) {
+    return randomInt(-rangeMs, rangeMs + 1);
+}
+
 const SELF_CLIENT_CACHE_LIMITS = {
     MessageManager: Math.max(0, Number(process.env.VOICE_SELF_MESSAGE_CACHE_MAX || 20) || 20),
     GuildMemberManager: Math.max(10, Number(process.env.VOICE_SELF_MEMBER_CACHE_MAX || 100) || 100),
@@ -45,6 +54,13 @@ const SELF_CLIENT_CACHE_CLEANUP_TTL_MS = Math.max(
     60 * 1000,
     Number(process.env.VOICE_SELF_CACHE_CLEANUP_TTL_MS || 10 * 60 * 1000) || 10 * 60 * 1000
 );
+const VOICE_LEAN_MODE = String(process.env.VOICE_LEAN_MODE ?? "true").trim().toLowerCase() !== "false";
+const VOICE_LEAN_KEEP_TARGET_GUILD = String(process.env.VOICE_LEAN_KEEP_TARGET_GUILD ?? "true").trim().toLowerCase() !== "false";
+const VOICE_LEAN_CLEANUP_INTERVAL_MS = Math.max(
+    30 * 1000,
+    Number(process.env.VOICE_LEAN_CLEANUP_INTERVAL_MS || 60 * 1000) || 60 * 1000
+);
+const VOICE_LEAN_LOG = String(process.env.VOICE_LEAN_LOG || "false").trim().toLowerCase() === "true";
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🗺️  REGION 2: STATE
@@ -52,6 +68,7 @@ const SELF_CLIENT_CACHE_CLEANUP_TTL_MS = Math.max(
 const clientPool = new Map();
 const tokenLoginCooldowns = new Map();
 let mainClient = null;
+let lastLeanCleanup = null;
 
 // เฟส 18+8: Global shutdown flag — Voice Worker เช็คก่อน reconnect ทุกครั้ง
 let isShuttingDown = false;
@@ -217,6 +234,28 @@ function clearManagerCache(manager) {
     } catch {}
 }
 
+function cacheDelete(cacheLike, key) {
+    if (!cacheLike || !key) return false;
+    try {
+        if (typeof cacheLike.delete === "function") return cacheLike.delete(key);
+        if (cacheLike.cache && typeof cacheLike.cache.delete === "function") return cacheLike.cache.delete(key);
+    } catch {}
+    return false;
+}
+
+function pruneCacheToIds(cacheLike, keepIds = new Set()) {
+    const cache = cacheLike?.cache || cacheLike;
+    if (!cache || typeof cache.entries !== "function") return 0;
+
+    let removed = 0;
+    for (const [id] of cache.entries()) {
+        if (!keepIds.has(String(id))) {
+            if (cacheDelete(cache, id)) removed++;
+        }
+    }
+    return removed;
+}
+
 function clearSelfClientReferences(client) {
     if (!client) return;
 
@@ -236,6 +275,182 @@ function clearSelfClientReferences(client) {
     clearManagerCache(client.guilds);
     clearManagerCache(client.channels);
     clearManagerCache(client.users);
+}
+
+function getVoiceLeanConfig() {
+    return {
+        enabled: VOICE_LEAN_MODE,
+        keepTargetGuild: VOICE_LEAN_KEEP_TARGET_GUILD,
+        cleanupIntervalMs: VOICE_LEAN_CLEANUP_INTERVAL_MS,
+        log: VOICE_LEAN_LOG
+    };
+}
+
+function clearGuildRuntimeCache(guild, { targetChannelId = null, selfUserId = null, keepTargetGuild = true } = {}) {
+    if (!guild) return { channelsRemoved: 0, membersRemoved: 0, voiceStatesRemoved: 0 };
+
+    const keepChannelIds = keepTargetGuild && targetChannelId ? new Set([String(targetChannelId)]) : new Set();
+    const keepMemberIds = keepTargetGuild && selfUserId ? new Set([String(selfUserId)]) : new Set();
+
+    const channelsRemoved = keepTargetGuild
+        ? pruneCacheToIds(guild.channels?.cache, keepChannelIds)
+        : getCacheSize(guild.channels);
+    if (!keepTargetGuild) clearManagerCache(guild.channels);
+
+    const membersRemoved = keepTargetGuild
+        ? pruneCacheToIds(guild.members?.cache, keepMemberIds)
+        : getCacheSize(guild.members);
+    if (!keepTargetGuild) clearManagerCache(guild.members);
+
+    const voiceStatesRemoved = keepTargetGuild
+        ? pruneCacheToIds(guild.voiceStates?.cache, keepMemberIds)
+        : getCacheSize(guild.voiceStates);
+    if (!keepTargetGuild) clearManagerCache(guild.voiceStates);
+
+    clearManagerCache(guild.roles);
+    clearManagerCache(guild.emojis);
+    clearManagerCache(guild.presences);
+
+    return { channelsRemoved, membersRemoved, voiceStatesRemoved };
+}
+
+function cleanupLeanClientCache(client, session, reason = "scheduled") {
+    if (!VOICE_LEAN_MODE || !client || !session) return null;
+
+    const before = getClientCacheStats(client);
+    const selfUserId = client.user?.id || session.accountId || null;
+    const targetGuildId = String(session.serverId || "");
+    const targetChannelId = String(session.voiceId || "");
+    let guildsRemoved = 0;
+    let channelsRemoved = 0;
+    let membersRemoved = 0;
+    let voiceStatesRemoved = 0;
+
+    for (const channel of client.channels?.cache?.values?.() || []) {
+        clearManagerCache(channel?.messages);
+    }
+
+    const keepGlobalChannelIds = targetChannelId ? new Set([targetChannelId]) : new Set();
+    channelsRemoved += pruneCacheToIds(client.channels?.cache, keepGlobalChannelIds);
+
+    for (const [guildId, guild] of client.guilds?.cache?.entries?.() || []) {
+        const isTargetGuild = String(guildId) === targetGuildId;
+        if (!isTargetGuild && VOICE_LEAN_KEEP_TARGET_GUILD) {
+            guildsRemoved += cacheDelete(client.guilds?.cache, guildId) ? 1 : 0;
+            clearGuildRuntimeCache(guild, { keepTargetGuild: false });
+            continue;
+        }
+
+        const removed = clearGuildRuntimeCache(guild, {
+            targetChannelId,
+            selfUserId,
+            keepTargetGuild: isTargetGuild && VOICE_LEAN_KEEP_TARGET_GUILD
+        });
+        channelsRemoved += removed.channelsRemoved;
+        membersRemoved += removed.membersRemoved;
+        voiceStatesRemoved += removed.voiceStatesRemoved;
+    }
+
+    const keepUserIds = selfUserId ? new Set([String(selfUserId)]) : new Set();
+    pruneCacheToIds(client.users?.cache, keepUserIds);
+
+    const after = getClientCacheStats(client);
+    const summary = {
+        at: Date.now(),
+        reason,
+        sessionId: session.sessionId || null,
+        shortId: getSessionShortId(session.sessionId),
+        targetGuildId,
+        targetChannelId,
+        guildsRemoved,
+        channelsRemoved,
+        membersRemoved,
+        voiceStatesRemoved,
+        before,
+        after
+    };
+    lastLeanCleanup = summary;
+
+    if (VOICE_LEAN_LOG) {
+        console.log(`[WORKER] 🧼 Voice lean cleanup ${reason}: ${JSON.stringify({
+            session: summary.shortId,
+            guilds: `${before.guilds}->${after.guilds}`,
+            channels: `${before.channels}->${after.channels}`,
+            members: `${before.guildMembers}->${after.guildMembers}`,
+            voiceStates: `${before.voiceStates}->${after.voiceStates}`,
+            messages: `${before.messages}->${after.messages}`
+        })}`);
+    }
+
+    return summary;
+}
+
+function cleanupLeanSessionClient(sessionId, reason = "scheduled") {
+    const session = sessionManager.getSession(sessionId);
+    if (!session) return null;
+    return cleanupLeanClientCache(session.client, session, reason);
+}
+
+function cleanupLeanActiveSessions(now = Date.now(), force = false) {
+    if (!VOICE_LEAN_MODE) return null;
+    if (!force && lastLeanCleanup?.at && now - lastLeanCleanup.at < VOICE_LEAN_CLEANUP_INTERVAL_MS) {
+        return {
+            skipped: true,
+            reason: "interval",
+            nextRunInMs: VOICE_LEAN_CLEANUP_INTERVAL_MS - (now - lastLeanCleanup.at),
+            lastRunAt: lastLeanCleanup.at
+        };
+    }
+
+    const seenClients = new Set();
+    let cleaned = 0;
+    let skipped = 0;
+    const summaries = [];
+
+    for (const [sessionId, session] of sessionManager.getAllSessions()) {
+        if (!isSessionRunnable(session)) {
+            skipped++;
+            continue;
+        }
+
+        const tokenHash = getSessionTokenHash(sessionId, session);
+        const clientRef = session.client || getSessionClientFromPool(sessionId, session, tokenHash);
+        if (!clientRef || seenClients.has(clientRef)) {
+            skipped++;
+            continue;
+        }
+
+        seenClients.add(clientRef);
+        const summary = cleanupLeanClientCache(clientRef, session, "scheduled");
+        if (summary) {
+            cleaned++;
+            summaries.push({
+                sessionId: summary.sessionId,
+                shortId: summary.shortId,
+                before: {
+                    guilds: summary.before.guilds,
+                    channels: summary.before.channels,
+                    guildMembers: summary.before.guildMembers,
+                    voiceStates: summary.before.voiceStates,
+                    messages: summary.before.messages
+                },
+                after: {
+                    guilds: summary.after.guilds,
+                    channels: summary.after.channels,
+                    guildMembers: summary.after.guildMembers,
+                    voiceStates: summary.after.voiceStates,
+                    messages: summary.after.messages
+                }
+            });
+        }
+    }
+
+    return {
+        skipped: false,
+        cleaned,
+        skippedSessions: skipped,
+        summaries
+    };
 }
 
 function disposeSelfClient(client, reason = "cleanup") {
@@ -657,6 +872,165 @@ function getConnectionStatusText(session) {
     return `⚪ ${status}`;
 }
 
+function isVoiceConnectionUsable(connection, channelId = null) {
+    if (!connection || connection.state?.status !== VoiceConnectionStatus.Ready) return false;
+    if (!channelId) return true;
+    return String(connection.joinConfig?.channelId || "") === String(channelId);
+}
+
+function normalizeVoiceTarget(input = {}) {
+    const guildId = String(input.guildId || input.serverId || "").trim();
+    const channelId = String(input.channelId || input.voiceId || "").trim();
+
+    if (!/^\d{17,22}$/.test(guildId)) throw new Error("INVALID_GUILD_ID");
+    if (!/^\d{17,22}$/.test(channelId)) throw new Error("INVALID_VOICE_CHANNEL_ID");
+
+    return { guildId, channelId };
+}
+
+async function resolveVoiceTarget(guildId, channelId) {
+    const guild = mainClient?.guilds?.cache?.get(guildId) ||
+        await mainClient?.guilds?.fetch?.(guildId).catch(() => null);
+
+    if (!guild) throw new Error("GUILD_NOT_FOUND");
+
+    const channel = guild.channels?.cache?.get(channelId) ||
+        await guild.channels?.fetch?.(channelId).catch(() => null);
+
+    if (!channel || !channel.isVoice?.()) throw new Error("CHANNEL_NOT_FOUND");
+
+    return { guild, channel };
+}
+
+async function startExistingSession({ sessionId, token, channelId, reason }) {
+    const session = sessionManager.getSession(sessionId);
+    if (!session) throw new Error("SESSION_NOT_FOUND");
+
+    if (isVoiceConnectionUsable(session.connection, channelId)) {
+        sessionManager.touchSession(sessionId);
+        cleanupLeanSessionClient(sessionId, `ensure-${reason || "already-active"}`);
+        return { action: "already_active", sessionId, session };
+    }
+
+    await startSession(sessionId, token);
+    return {
+        action: session.connection ? "resumed" : "started",
+        sessionId,
+        session: sessionManager.getSession(sessionId)
+    };
+}
+
+async function cleanupFailedEnsureSession(sessionId, ownerId, reason) {
+    if (!sessionId) return;
+
+    const removed = await sessionManager.deleteSession(sessionId).catch(() => false);
+    if (removed) return;
+
+    await sessionManager.markSessionFailed?.(
+        sessionId,
+        "start_cleanup_failed",
+        ownerId || null,
+        `ensure voice session failed during ${reason || "unknown"}`
+    ).catch(() => {});
+}
+
+async function ensureVoiceSession(input = {}) {
+    if (isShuttingDown) throw new Error("SYSTEM_SHUTTING_DOWN");
+
+    const token = String(input.token || "").trim();
+    validateToken(token);
+
+    const { guildId, channelId } = normalizeVoiceTarget(input);
+    const target = await resolveVoiceTarget(guildId, channelId);
+    const guildName = input.guildName || target.guild.name || "เซิร์ฟเวอร์ไม่ทราบชื่อ";
+    const reason = input.reason || "ensure";
+    const tokenHash = sessionManager.hashToken
+        ? sessionManager.hashToken(token)
+        : sha256(token);
+
+    await repairFailedStopSessionForTokenGuild?.(token, guildId);
+
+    const existing = sessionManager.findActiveVoiceSessionByTokenGuild?.(tokenHash, guildId);
+    if (existing?.session) {
+        const existingSession = existing.session;
+        const sameChannel = String(existingSession.voiceId || "") === String(channelId);
+
+        if (!sameChannel) {
+            return {
+                ok: false,
+                action: "already_active_different_channel",
+                sessionId: existing.id || existingSession.sessionId,
+                session: existingSession,
+                requested: { guildId, channelId },
+                existing: {
+                    guildId: existingSession.serverId,
+                    channelId: existingSession.voiceId
+                }
+            };
+        }
+
+        const result = await startExistingSession({
+            sessionId: existing.id || existingSession.sessionId,
+            token,
+            channelId,
+            reason
+        });
+
+        return {
+            ok: true,
+            reused: true,
+            ...result
+        };
+    }
+
+    let sessionId = null;
+    try {
+        sessionId = await sessionManager.createSession(
+            token,
+            guildId,
+            channelId,
+            guildName,
+            input.ownerId || null,
+            input.ownerAvatar || null,
+            input.ownerTag || null
+        );
+
+        await startSession(sessionId, token);
+
+        return {
+            ok: true,
+            reused: false,
+            action: "created",
+            sessionId,
+            session: sessionManager.getSession(sessionId)
+        };
+    } catch (err) {
+        if (!sessionId && err.message === "ALREADY_ACTIVE_IN_GUILD") {
+            const racedExisting = sessionManager.findActiveVoiceSessionByTokenGuild?.(tokenHash, guildId);
+            if (racedExisting?.session && String(racedExisting.session.voiceId || "") === String(channelId)) {
+                const result = await startExistingSession({
+                    sessionId: racedExisting.id || racedExisting.session.sessionId,
+                    token,
+                    channelId,
+                    reason
+                });
+
+                return {
+                    ok: true,
+                    reused: true,
+                    raced: true,
+                    ...result
+                };
+            }
+        }
+
+        if (sessionId) {
+            await cleanupFailedEnsureSession(sessionId, input.ownerId, reason);
+        }
+        throw err;
+    }
+}
+
 async function refreshSessionMetadata(sessionId, client, guild = null, channel = null) {
     const session = sessionManager.getSession(sessionId);
     if (!session || !client) return false;
@@ -879,7 +1253,7 @@ async function startSession(sessionId, tokenString) {
         }
 
         // Jitter delay กัน rate limit
-        const jitterDelay = Math.floor(1500 + Math.random() * 2000);
+        const jitterDelay = randomInt(1500, 3500);
         await delay(jitterDelay);
 
         const conn = await connectToVoice(session.client, session.serverId, session.voiceId, tokenHash, sessionId);
@@ -889,6 +1263,7 @@ async function startSession(sessionId, tokenString) {
         pushVoiceLog("connect", sessionId, "Voice connected");
 
         await refreshSessionMetadataFast(sessionId, 1800).catch(() => {});
+        cleanupLeanSessionClient(sessionId, "post-connect");
 
         // เริ่ม naturalness timer ถ้าเปิดใช้งานอยู่
         startNaturalTimer(sessionId);
@@ -997,7 +1372,9 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
 
     connection.on(VoiceConnectionStatus.Ready, () => {
         sessionManager.touchSession(sessionId);
-        refreshSessionMetadataFast(sessionId, 1200).catch(() => {});
+        refreshSessionMetadataFast(sessionId, 1200)
+            .finally(() => cleanupLeanSessionClient(sessionId, "voice-ready"))
+            .catch(() => {});
         console.log(`[WORKER] 💚 Voice Ready for ${sessionId}`);
     });
 
@@ -1640,7 +2017,7 @@ async function autoResume() {
                 await startSession(id, token);
                 resumed++;
 
-                const warmUpJitter = Math.floor(2000 + Math.random() * 1500);
+                const warmUpJitter = randomInt(2000, 3500);
                 await delay(warmUpJitter);
             } else {
                 skipped++;
@@ -1663,7 +2040,7 @@ async function recoverSessionConnection(sessionId, tokenHash) {
         const session = sessionManager.getSession(sessionId);
         if (!session || isShuttingDown || !isSessionRunnable(session)) return;
 
-        const recoveryJitter = Math.floor(1000 + Math.random() * 2000);
+        const recoveryJitter = randomInt(1000, 3000);
         await delay(recoveryJitter);
 
         if (isShuttingDown) return;
@@ -1768,7 +2145,7 @@ async function cleanupIdleSessions() {
 
     const now = Date.now();
     const savedHrs = await sessionManager.getSetting("idleTimeoutHrs", null).catch(() => null);
-    const maxIdle = savedHrs ? (parseInt(savedHrs, 10) * 3600000) : config.limits.idleTimeoutMs;
+    const maxIdle = savedHrs ? (Number.parseInt(savedHrs, 10) * 3600000) : config.limits.idleTimeoutMs;
     const sessions = sessionManager.getAllSessions();
 
     for (const [id, session] of sessions) {
@@ -1888,7 +2265,7 @@ function startNaturalTimer(sessionId) {
 
     stopNaturalTimer(sessionId);
 
-    const jitter = Math.floor((Math.random() * 2 - 1) * 5 * 60 * 1000);
+    const jitter = randomJitter(5 * 60 * 1000);
     const interval = Math.max(60000, naturalSettings.intervalMs + jitter);
 
     const id = setInterval(() => doNaturalBlink(sessionId), interval);
@@ -2006,7 +2383,7 @@ function startAutoDeafTimer(sessionId) {
 
     stopAutoDeafTimer(sessionId);
 
-    const jitter = Math.floor((Math.random() * 2 - 1) * 5 * 60 * 1000);
+    const jitter = randomJitter(5 * 60 * 1000);
     const interval = Math.max(60000, autoDeafSettings.intervalMs + jitter);
 
     const id = setInterval(() => doAutoDeafToggle(sessionId), interval);
@@ -2143,7 +2520,9 @@ function getWorkerDiagnostics() {
         lastDMSent: lastDMSent.size,
         lastOnlineDMSent: lastOnlineDMSent.size,
         recoveryTimestamps: recoveryTimestamps.size,
-        voiceEventLog: voiceEventLog.length
+        voiceEventLog: voiceEventLog.length,
+        voiceLean: getVoiceLeanConfig(),
+        lastLeanCleanup
     };
 }
 
@@ -2206,10 +2585,14 @@ function cleanupVolatileState(now = Date.now(), options = {}) {
     const selfClientCacheCleanup = options.cleanupSelfClientCaches
         ? cleanupSelfClientCaches(now)
         : null;
+    const leanCleanup = VOICE_LEAN_MODE
+        ? cleanupLeanActiveSessions(now, options.forceLeanCleanup === true)
+        : null;
 
     return {
         ...getWorkerDiagnostics(),
-        selfClientCacheCleanup
+        selfClientCacheCleanup,
+        leanCleanup
     };
 }
 
@@ -2223,6 +2606,7 @@ module.exports = {
     getClientPoolSize,
     getWorkerDiagnostics,
     cleanupVolatileState,
+    ensureVoiceSession,
 
     startSession,
     repairFailedStopSessionForTokenGuild,
@@ -2247,5 +2631,12 @@ module.exports = {
     applyAutoDeafSettings,
     startAutoDeafTimer,
     stopAutoDeafTimer,
-    getAutoDeafSettings
+    getAutoDeafSettings,
+
+    _test: {
+        cleanupLeanClientCache,
+        cleanupLeanActiveSessions,
+        getClientCacheStats,
+        getVoiceLeanConfig
+    }
 };
