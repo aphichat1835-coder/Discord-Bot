@@ -1,9 +1,12 @@
 const auditReconcilerScheduler = require("./auditReconcilerScheduler");
 
 function startAuditRuntime({ client, sessionManager, logger = console } = {}) {
-    const result = auditReconcilerScheduler.start(client, sessionManager);
+    const result = auditReconcilerScheduler.start(client, sessionManager, {
+        allowSettingsDriven: true
+    });
     if (result.started) {
-        logger.log?.(`[AUDIT] 🔁 Audit reconciler scheduler started every ${result.intervalMs}ms.`);
+        const mode = result.mode ? ` (${result.mode})` : "";
+        logger.log?.(`[AUDIT] 🔁 Audit reconciler scheduler started every ${result.intervalMs}ms${mode}.`);
     } else {
         logger.log?.(`[AUDIT] 🔁 Audit reconciler scheduler inactive: ${result.reason}`);
     }
