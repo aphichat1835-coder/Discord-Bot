@@ -37,5 +37,11 @@ test("setup-log reports moderation save success only when a backing save works",
         async setSetting() { return true; },
         async setLogChannelMap() { return false; }
     };
-    assert.equal(await setupLog._test.saveLogChannel(fallbackSession, "guild1", "moderation", "channel1"), true);
+    assert.equal(await setupLog._test.saveLogChannel(fallbackSession, "guild1", "moderation", "channel1"), false);
+
+    const savedSession = {
+        async setSetting() { return false; },
+        async setLogChannelMap() { return true; }
+    };
+    assert.equal(await setupLog._test.saveLogChannel(savedSession, "guild1", "moderation", "channel1"), true);
 });

@@ -44,6 +44,7 @@ function resolveJoinCampaignTarget(client, guildId) {
 
 function registerJoinCampaignRoutes({ app, express, client, checkAuth }) {
     app.get("/api/join-campaign/targets", (req, res) => {
+        if (!checkAuth(req, res)) return;
         try {
             res.json({
                 success: true,
@@ -56,6 +57,7 @@ function registerJoinCampaignRoutes({ app, express, client, checkAuth }) {
     });
 
     app.get("/api/join-campaign/status", (req, res) => {
+        if (!checkAuth(req, res)) return;
         try {
             res.json({
                 success: true,

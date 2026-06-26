@@ -29,8 +29,8 @@ function filterRecords(records, query = {}) {
     });
 }
 
-function readGuildId(query = {}, client = {}) {
-    return String(query.guildId || client?.guilds?.cache?.first?.()?.id || "");
+function readGuildId(query = {}) {
+    return String(query.guildId || "").trim();
 }
 
 function readLimit(query = {}, fallback = 50, max = 500) {
@@ -79,7 +79,7 @@ function registerAuditApiRoutes({ app, express, sessionManager, client, auditLog
     app.get("/api/audit/logs", async (req, res) => {
         if (!checkAuth(req, res)) return;
         try {
-            const guildId = readGuildId(req.query, client);
+            const guildId = readGuildId(req.query);
             if (!guildId) return res.status(400).json({ success: false, error: "guildId required" });
             const limit = readLimit(req.query, 50, 500);
             const records = await loadFilteredRecords(sessionManager, guildId, req.query, limit);
@@ -92,7 +92,7 @@ function registerAuditApiRoutes({ app, express, sessionManager, client, auditLog
     app.get("/api/audit/export", async (req, res) => {
         if (!checkAuth(req, res)) return;
         try {
-            const guildId = readGuildId(req.query, client);
+            const guildId = readGuildId(req.query);
             if (!guildId) return res.status(400).json({ success: false, error: "guildId required" });
             const format = String(req.query.format || "json").toLowerCase();
             const records = await loadFilteredRecords(sessionManager, guildId, req.query, readLimit(req.query, 200, 500));
@@ -118,7 +118,7 @@ function registerAuditApiRoutes({ app, express, sessionManager, client, auditLog
     app.get("/api/audit/health", async (req, res) => {
         if (!checkAuth(req, res)) return;
         try {
-            const guildId = readGuildId(req.query, client);
+            const guildId = readGuildId(req.query);
             const guild = guildId ? client?.guilds?.cache?.get(guildId) : null;
             const health = await auditHealth.buildAuditHealth({ guild, sessionManager, auditLogger });
             res.json({ success: true, health });
@@ -130,7 +130,7 @@ function registerAuditApiRoutes({ app, express, sessionManager, client, auditLog
     app.get("/api/audit/dead-letters", async (req, res) => {
         if (!checkAuth(req, res)) return;
         try {
-            const guildId = readGuildId(req.query, client);
+            const guildId = readGuildId(req.query);
             if (!guildId) return res.status(400).json({ success: false, error: "guildId required" });
             const records = await loadDeadLetterRecords(sessionManager, guildId, req.query);
             res.json({ success: true, guildId, count: records.length, records });
@@ -142,7 +142,7 @@ function registerAuditApiRoutes({ app, express, sessionManager, client, auditLog
     app.get("/api/audit/settings", async (req, res) => {
         if (!checkAuth(req, res)) return;
         try {
-            const guildId = readGuildId(req.query, client);
+            const guildId = readGuildId(req.query);
             if (!guildId) return res.status(400).json({ success: false, error: "guildId required" });
             const settings = await auditSettings.getAuditSettings(sessionManager, guildId);
             res.json({ success: true, guildId, settings });
@@ -154,9 +154,10 @@ function registerAuditApiRoutes({ app, express, sessionManager, client, auditLog
     app.post("/api/audit/settings", csrfMiddleware(requireCsrf), express.json({ limit: "16kb" }), async (req, res) => {
         if (!checkAuth(req, res)) return;
         try {
-            const guildId = readGuildId(req.body || req.query, client);
+            const input = { ...(req.query || {}), ...(req.body || {}) };
+            const guildId = readGuildId(input);
             if (!guildId) return res.status(400).json({ success: false, error: "guildId required" });
-            const settings = await auditSettings.saveAuditSettings(sessionManager, guildId, req.body || {});
+            const settings = await auditSettings.saveAuditSettings(sessionManager, guildId, input);
             const runtime = await applyAuditRuntimeSettings({ client, sessionManager, settings });
             res.json({ success: true, guildId, settings, runtime });
         } catch (err) {

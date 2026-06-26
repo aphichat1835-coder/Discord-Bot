@@ -48,4 +48,6 @@ test("protection window refreshes active keys before eviction", () => {
     state.record({ guildId: "g", actorId: "new", actionType: "ROLE_DELETE", now: 4000 });
 
     assert.equal(state.count({ guildId: "g", actorId: "hot", actionType: "ROLE_DELETE", now: 4000, windowMs: 10_000 }), 2);
+    assert.equal(state.count({ guildId: "g", actorId: "cold-0", actionType: "ROLE_DELETE", now: 4000, windowMs: 10_000 }), 0);
+    assert.equal(state.stats().keys, 100);
 });

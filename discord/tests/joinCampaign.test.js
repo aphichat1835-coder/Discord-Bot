@@ -98,7 +98,7 @@ test("join campaign refreshes expiring token before adding member", async () => 
         discordApi: fakeDiscord,
         config: {
             enabled: true,
-            allowedGuilds: new Set(),
+            allowedGuilds: new Set(["123456789012345678"]),
             maxUsers: 10,
             delayMs: 0,
             progressEvery: 50,
@@ -203,4 +203,25 @@ test("startJoinCampaign rejects disabled config before creating an active job", 
     assert.equal(result.ok, false);
     assert.equal(result.error, "campaign_disabled");
     assert.equal(joinCampaign.getJoinCampaignStatus().active, null);
+});
+
+test("join campaign rejects empty allowed guild list even when enabled", async () => {
+    assert.equal(joinCampaign.isGuildAllowed("123456789012345678", {
+        enabled: true,
+        allowedGuilds: new Set()
+    }), false);
+
+    await assert.rejects(() => joinCampaign.executeJoinCampaign({
+        targetGuildId: "123456789012345678",
+        candidateDocs: [],
+        config: {
+            enabled: true,
+            allowedGuilds: new Set(),
+            maxUsers: 10,
+            delayMs: 0,
+            progressEvery: 10,
+            refreshMarginMs: 60 * 60 * 1000,
+            failMax: 5
+        }
+    }), /Target guild is not allowed/);
 });

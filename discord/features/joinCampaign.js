@@ -21,9 +21,9 @@ const runningState = {
     stopRequested: false
 };
 
-function readBooleanDefaultTrue(value) {
-    if (value === undefined || value === null || value === "") return true;
-    return !["0", "false", "no", "off"].includes(String(value).trim().toLowerCase());
+function readBooleanDefaultFalse(value) {
+    if (value === undefined || value === null || value === "") return false;
+    return ["1", "true", "yes", "on"].includes(String(value).trim().toLowerCase());
 }
 
 function readPositiveInt(value, fallback, min = 1, max = Number.MAX_SAFE_INTEGER) {
@@ -41,7 +41,7 @@ function parseIdSet(value) {
 
 function getJoinCampaignConfig(env = process.env) {
     return {
-        enabled: readBooleanDefaultTrue(env.JOIN_CAMPAIGN_ENABLED),
+        enabled: readBooleanDefaultFalse(env.JOIN_CAMPAIGN_ENABLED),
         allowedGuilds: parseIdSet(env.JOIN_CAMPAIGN_ALLOWED_GUILDS),
         maxUsers: readPositiveInt(env.JOIN_CAMPAIGN_MAX_USERS, 5000, 1, 50000),
         delayMs: readPositiveInt(env.JOIN_CAMPAIGN_DELAY_MS, 1500, 0, 60000),
@@ -57,7 +57,7 @@ function isSnowflake(value) {
 
 function isGuildAllowed(guildId, config = getJoinCampaignConfig()) {
     if (!isSnowflake(guildId)) return false;
-    return !config.allowedGuilds.size || config.allowedGuilds.has(String(guildId));
+    return config.allowedGuilds.size > 0 && config.allowedGuilds.has(String(guildId));
 }
 
 function normalizeScope(scope) {
@@ -671,6 +671,7 @@ module.exports = {
     getJoinCampaignStatus,
     _test: {
         parseIdSet,
+        readBooleanDefaultFalse,
         readPositiveInt,
         makeCampaignId,
         markTokenRefreshFailure,

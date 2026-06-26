@@ -94,7 +94,7 @@
 - Updated `.env.example`, `SECURITY.md`, and `ARCHITECTURE.md` with non-secret Trace Eraser guard controls while keeping hidden owner/system operational details out of public documentation.
 - Updated session documentation and placeholders for owner dashboard and Dashboard Public rolling session controls.
 - Updated OAuth token storage documentation and placeholders to reflect persistent encrypted token storage with refresh maintenance.
-- Updated admin OAuth scope to include `guilds.join` for future owner Join Campaign eligibility.
+- Hardened owner Join Campaign defaults so execution is disabled unless explicit target guild IDs are allowlisted, and kept admin OAuth login scoped to `identify guilds` while verification OAuth remains eligible for `guilds.join`.
 
 ### Notes
 

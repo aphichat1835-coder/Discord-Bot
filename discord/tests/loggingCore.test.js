@@ -3,6 +3,7 @@ const test = require("node:test");
 
 const logCore = require("../logging/logCore");
 const deadLetter = require("../logging/auditDeadLetter");
+const retention = require("../logging/auditRetention");
 const { buildLogEmbed, buildIdBlock } = require("../logging/logFormat");
 const { diffPermissionArrays, MessageSnapshotCache } = require("../logging/auditHelpers");
 const securityRules = require("../logging/securityRules");
@@ -18,6 +19,12 @@ test("safeAuditText redacts sensitive values and truncates", () => {
     const text = logCore.safeAuditText("password=abc123 token:abcdefghijklmnopqrstuvwx.abcdef.abcdefghijklmnopqrst secret=hidden", 80);
     assert.match(text, /REDACTED/);
     assert.ok(text.length <= 80);
+    assert.equal(logCore.safeAuditText("abcdef", 5).length, 5);
+});
+
+test("audit retention rounds fractional days up instead of forever", () => {
+    assert.equal(retention.normalizeRetentionDays(0.5), 1);
+    assert.equal(retention.normalizeRetentionDays("0"), 0);
 });
 
 test("buildLogEmbed includes IDs and clamps fields", () => {

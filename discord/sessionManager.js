@@ -243,6 +243,7 @@ const logChannelMapSchema = new mongoose.Schema({
     voiceChannelId: String,
     serverChannelId: String,
     securityChannelId: String,
+    moderationChannelId: String,
     updatedAt: { type: Number, default: Date.now }
 });
 const LogChannelMapModel = mongoose.model("LogChannelMap", logChannelMapSchema);
@@ -575,7 +576,7 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
     const legacyTail = String(token || "").slice(-8);
     const sessionId = buildVoiceSessionId(tokenHash, serverId, ownerId);
 
-    for (const [oldId, oldSession] of sessions) {
+    for (const [oldId, oldSession] of Array.from(sessions)) {
         if (
             isSameTokenGuildSession(oldSession, tokenHash, serverId) &&
             oldSession.state === "failed" &&
@@ -1267,6 +1268,7 @@ async function saveLogChannelMap(guildId, map = {}) {
                     voiceChannelId: map.voiceChannelId || null,
                     serverChannelId: map.serverChannelId || null,
                     securityChannelId: map.securityChannelId || null,
+                    moderationChannelId: map.moderationChannelId || null,
                     updatedAt: Date.now()
                 }
             },
@@ -1287,7 +1289,8 @@ async function setLogChannelMap(guildId, category, channelId) {
         member: "memberChannelId",
         voice: "voiceChannelId",
         server: "serverChannelId",
-        security: "securityChannelId"
+        security: "securityChannelId",
+        moderation: "moderationChannelId"
     };
     const key = keyMap[category];
     if (!key) return false;

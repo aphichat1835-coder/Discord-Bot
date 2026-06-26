@@ -25,6 +25,36 @@ test("mergeVerificationConfig preserves existing panel on unrelated settings sav
   expect(merged.antiAlt.enabled).toBe(true);
 });
 
+test("mergeVerificationConfig keeps direct mode when saving only antiAlt patch", () => {
+  const merged = guildRoute._test.mergeVerificationConfig(
+    {
+      verifyType: "direct",
+      oauthMode: "direct",
+      blockHosting: true,
+      panel: {
+        verifyType: "direct",
+        title: "Direct verify"
+      },
+      antiAlt: {
+        enabled: false,
+        maxUsersPerIp: 9
+      }
+    },
+    {
+      antiAlt: {
+        enabled: true
+      }
+    }
+  );
+
+  expect(merged.verifyType).toBe("direct");
+  expect(merged.oauthMode).toBe("direct");
+  expect(merged.panel.verifyType).toBe("direct");
+  expect(merged.blockHosting).toBe(true);
+  expect(merged.antiAlt.enabled).toBe(true);
+  expect(merged.antiAlt.maxUsersPerIp).toBe(9);
+});
+
 test("guild dashboard safeLog preserves normalized empty result fallback", () => {
   const log = guildDashboardRoute._test.safeLog({ _id: "log1" });
 

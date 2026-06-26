@@ -8,6 +8,26 @@ const mongoose = require("mongoose");
 const { safeAuditText, safeAuditError, LOG_TYPES } = require("./logCore");
 const { buildCaseEmbed } = require("./logFormat");
 const modCaseStore = require("./modCaseStore");
+const fallbackLocks = new Map();
+
+async function withFallbackLock(key, fn) {
+    const lockKey = String(key || "global");
+    const previous = fallbackLocks.get(lockKey) || Promise.resolve();
+    let release;
+    const current = new Promise(resolve => {
+        release = resolve;
+    });
+    const lock = previous.catch(() => {}).then(() => current);
+    fallbackLocks.set(lockKey, lock);
+
+    try {
+        await previous.catch(() => {});
+        return await fn();
+    } finally {
+        release();
+        if (fallbackLocks.get(lockKey) === lock) fallbackLocks.delete(lockKey);
+    }
+}
 
 function counterKey(guildId) {
     return `modcase_counter_${guildId}`;
@@ -68,11 +88,13 @@ async function nextCaseNumberFallback(sessionManager, guildId) {
     if (!sessionManager?.getSetting || !sessionManager?.setSetting) {
         throw new Error("SESSION_MANAGER_SETTINGS_UNAVAILABLE");
     }
-    const key = counterKey(guildId);
-    const current = Number(await sessionManager.getSetting(key, 0)) || 0;
-    const next = current + 1;
-    await sessionManager.setSetting(key, next);
-    return next;
+    return withFallbackLock(`counter:${guildId}`, async () => {
+        const key = counterKey(guildId);
+        const current = Number(await sessionManager.getSetting(key, 0)) || 0;
+        const next = current + 1;
+        await sessionManager.setSetting(key, next);
+        return next;
+    });
 }
 
 async function nextCaseNumber(sessionManager, guildId) {
@@ -88,14 +110,16 @@ async function nextCaseNumber(sessionManager, guildId) {
 
 async function saveCaseWithSettings(sessionManager, caseDoc) {
     if (!sessionManager?.setSetting || !sessionManager?.getSetting) return false;
-    await sessionManager.setSetting(caseKey(caseDoc.guildId, caseDoc.caseNumber), caseDoc);
+    return withFallbackLock(`user:${caseDoc.guildId}:${caseDoc.userId || "unknown"}`, async () => {
+        await sessionManager.setSetting(caseKey(caseDoc.guildId, caseDoc.caseNumber), caseDoc);
 
-    const indexKey = userIndexKey(caseDoc.guildId, caseDoc.userId || "unknown");
-    const current = await sessionManager.getSetting(indexKey, []);
-    const list = Array.isArray(current) ? current : [];
-    const next = [caseDoc.caseNumber, ...list.filter(n => n !== caseDoc.caseNumber)].slice(0, 50);
-    await sessionManager.setSetting(indexKey, next);
-    return true;
+        const indexKey = userIndexKey(caseDoc.guildId, caseDoc.userId || "unknown");
+        const current = await sessionManager.getSetting(indexKey, []);
+        const list = Array.isArray(current) ? current : [];
+        const next = [caseDoc.caseNumber, ...list.filter(n => n !== caseDoc.caseNumber)].slice(0, 50);
+        await sessionManager.setSetting(indexKey, next);
+        return true;
+    });
 }
 
 async function saveCase(sessionManager, caseDoc) {
@@ -224,6 +248,8 @@ module.exports = {
         normalizeAction,
         normalizeDuration,
         buildCaseDoc,
-        canUseMongoStore
+        canUseMongoStore,
+        nextCaseNumberFallback,
+        withFallbackLock
     }
 };

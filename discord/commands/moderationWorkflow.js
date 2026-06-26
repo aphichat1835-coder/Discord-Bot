@@ -114,7 +114,7 @@ async function sendModerationCaseLog(interaction, caseDoc, action) {
         title: `${config.emojis.mod_icon} Case #${caseDoc.caseNumber} | ${action.toUpperCase()} สำเร็จ`
     });
 
-    await routeAndSendLog({
+    return routeAndSendLog({
         guild: interaction.guild,
         sessionManager,
         category: LOG_CHANNEL_TYPES.MODERATION,
@@ -125,8 +125,11 @@ async function sendModerationCaseLog(interaction, caseDoc, action) {
 async function performModeration(interaction, input) {
     const dmSent = await applyModerationAction(interaction, input);
     const caseDoc = await createModerationCase(interaction, input, dmSent);
-    await sendModerationCaseLog(interaction, caseDoc, input.action);
-    return { dmSent, caseDoc };
+    const logSent = await sendModerationCaseLog(interaction, caseDoc, input.action).catch(err => {
+        console.warn(`[MODERATION] Log delivery failed after successful ${input.action}: ${err.message}`);
+        return false;
+    });
+    return { dmSent, caseDoc, logSent };
 }
 
 function successReply(interaction, input, result) {

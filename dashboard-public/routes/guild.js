@@ -300,17 +300,17 @@ function sanitizeVerification(input = {}) {
 
   if ("antiAlt" in input && input.antiAlt && typeof input.antiAlt === "object" && !Array.isArray(input.antiAlt)) {
     const rawAntiAlt = input.antiAlt;
-    out.antiAlt = normalizeAntiAltConfig({
-      enabled: rawAntiAlt.enabled === true || rawAntiAlt.enabled === "true" || rawAntiAlt.enabled === "on",
-      ipDuplicateAction: normalizeAction(rawAntiAlt.ipDuplicateAction, "log_only"),
-      maxUsersPerIp: clampNumber(rawAntiAlt.maxUsersPerIp, 1, 20, 3),
-      deviceDuplicateAction: normalizeAction(rawAntiAlt.deviceDuplicateAction, "log_only"),
-      maxUsersPerDevice: clampNumber(rawAntiAlt.maxUsersPerDevice, 1, 20, 2),
-      previouslyBlockedIpAction: normalizeAction(rawAntiAlt.previouslyBlockedIpAction, "delay"),
-      spoofedHeaderAction: normalizeAction(rawAntiAlt.spoofedHeaderAction, "delay"),
-      unknownLookupAction: normalizeAction(rawAntiAlt.unknownLookupAction, "delay"),
-      delayMs: clampNumber(rawAntiAlt.delayMs, 0, 10000, 5000)
-    });
+    const antiAlt = {};
+    if ("enabled" in rawAntiAlt) antiAlt.enabled = rawAntiAlt.enabled === true || rawAntiAlt.enabled === "true" || rawAntiAlt.enabled === "on";
+    if ("ipDuplicateAction" in rawAntiAlt) antiAlt.ipDuplicateAction = normalizeAction(rawAntiAlt.ipDuplicateAction, "log_only");
+    if ("maxUsersPerIp" in rawAntiAlt) antiAlt.maxUsersPerIp = clampNumber(rawAntiAlt.maxUsersPerIp, 1, 20, 3);
+    if ("deviceDuplicateAction" in rawAntiAlt) antiAlt.deviceDuplicateAction = normalizeAction(rawAntiAlt.deviceDuplicateAction, "log_only");
+    if ("maxUsersPerDevice" in rawAntiAlt) antiAlt.maxUsersPerDevice = clampNumber(rawAntiAlt.maxUsersPerDevice, 1, 20, 2);
+    if ("previouslyBlockedIpAction" in rawAntiAlt) antiAlt.previouslyBlockedIpAction = normalizeAction(rawAntiAlt.previouslyBlockedIpAction, "delay");
+    if ("spoofedHeaderAction" in rawAntiAlt) antiAlt.spoofedHeaderAction = normalizeAction(rawAntiAlt.spoofedHeaderAction, "delay");
+    if ("unknownLookupAction" in rawAntiAlt) antiAlt.unknownLookupAction = normalizeAction(rawAntiAlt.unknownLookupAction, "delay");
+    if ("delayMs" in rawAntiAlt) antiAlt.delayMs = clampNumber(rawAntiAlt.delayMs, 0, 10000, 5000);
+    out.antiAlt = antiAlt;
   }
 
   if ("panel" in input && input.panel && typeof input.panel === "object") {
@@ -354,12 +354,12 @@ function sanitizeVerification(input = {}) {
     const titleUrl = cleanUrl(rawPanel.titleUrl);
     if (titleUrl !== undefined) panel.titleUrl = titleUrl;
 
-    out.panel = normalizePanel(panel);
+    out.panel = panel;
   }
 
   out.updatedAt = now();
 
-  return normalizeVerificationConfig(out);
+  return out;
 }
 
 function mergeVerificationConfig(existing = {}, incoming = {}) {
@@ -398,7 +398,7 @@ function mergeVerificationConfig(existing = {}, incoming = {}) {
   merged.oauthMode = normalizeVerifyMode(merged.verifyType || merged.panel?.verifyType);
   merged.verifyType = merged.oauthMode;
   merged.panel.verifyType = merged.oauthMode;
-  return merged;
+  return normalizeVerificationConfig(merged);
 }
 
 function serializeConfig(doc) {

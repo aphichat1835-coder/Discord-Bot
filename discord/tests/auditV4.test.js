@@ -51,6 +51,55 @@ test("audit storage saves and lists records with settings fallback", async () =>
     assert.equal(listed[0].actionType, "ROLE_UPDATE");
 });
 
+test("audit storage fallback serializes concurrent index updates and filters fallback list", async () => {
+    const settings = new Map();
+    const sessionManager = {
+        async setSetting(key, value) {
+            await new Promise(resolve => setTimeout(resolve, 1));
+            settings.set(key, value);
+            return true;
+        },
+        async getSetting(key, fallback) {
+            await new Promise(resolve => setTimeout(resolve, 1));
+            return settings.has(key) ? settings.get(key) : fallback;
+        }
+    };
+
+    await Promise.all([
+        storage.saveAuditRecord(sessionManager, { eventId: "event-a", guildId: "guild1", category: "server", actionType: "ROLE_UPDATE" }),
+        storage.saveAuditRecord(sessionManager, { eventId: "event-b", guildId: "guild1", category: "security", actionType: "WEBHOOK_DELETE" })
+    ]);
+
+    const all = await storage.listAuditRecords(sessionManager, "guild1", 5);
+    assert.equal(all.length, 2);
+
+    const security = await storage.listAuditRecords(sessionManager, "guild1", 5, { category: "security" });
+    assert.deepEqual(security.map(record => record.eventId), ["event-b"]);
+});
+
+test("audit dead-letter fallback serializes concurrent index updates", async () => {
+    const settings = new Map();
+    const sessionManager = {
+        async setSetting(key, value) {
+            await new Promise(resolve => setTimeout(resolve, 1));
+            settings.set(key, value);
+            return true;
+        },
+        async getSetting(key, fallback) {
+            await new Promise(resolve => setTimeout(resolve, 1));
+            return settings.has(key) ? settings.get(key) : fallback;
+        }
+    };
+
+    await Promise.all([
+        require("../logging/auditDeadLetter").saveDeadLetter(sessionManager, { id: "dl-a", guildId: "guild1" }),
+        require("../logging/auditDeadLetter").saveDeadLetter(sessionManager, { id: "dl-b", guildId: "guild1" })
+    ]);
+
+    const listed = await require("../logging/auditDeadLetter").listDeadLetters(sessionManager, "guild1", 5);
+    assert.equal(listed.length, 2);
+});
+
 test("audit reconciler normalizes entries", () => {
     const normalized = reconciler.normalizeEntry({
         id: "entry1",

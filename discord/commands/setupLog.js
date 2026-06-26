@@ -69,17 +69,16 @@ async function getOrCreateAuditCategory(guild) {
 }
 
 async function saveLogChannel(sessionManager, guildId, category, channelId) {
-    let extraSaved = false;
     if (category === LOG_CHANNEL_TYPES.MODERATION) {
         // Compatibility: sessionManager schema may not have moderationChannelId yet.
-        extraSaved = await sessionManager.setSetting(`logChannelMapExtra_${guildId}`, {
+        await sessionManager.setSetting(`logChannelMapExtra_${guildId}`, {
             moderationChannelId: channelId,
             updatedAt: Date.now()
         }).catch(() => false);
     }
 
     const saved = await sessionManager.setLogChannelMap(guildId, category, channelId).catch(() => false);
-    return Boolean(saved || extraSaved);
+    return Boolean(saved);
 }
 
 async function createOrResolveLogChannel(interaction, sessionManager, category, auditCategory) {

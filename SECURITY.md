@@ -187,8 +187,8 @@ Compatibility/fallback names may also appear in code, such as `TOKEN`, `BOT_TOKE
 ### Owner Join Campaign
 
 - Join Campaign controls are owner-dashboard-only and use `WEBHOOK_LOG_URL` for Thai owner-visible summaries.
-- `JOIN_CAMPAIGN_ENABLED=false` disables all campaign execution.
-- `JOIN_CAMPAIGN_ALLOWED_GUILDS` can restrict target guild IDs; if empty, the owner dashboard lists guilds the bot can see.
+- `JOIN_CAMPAIGN_ENABLED=false` disables all campaign execution and is the safe default.
+- `JOIN_CAMPAIGN_ALLOWED_GUILDS` must explicitly list target guild IDs before a campaign can run; an empty allowlist blocks target resolution even when the feature is enabled.
 - Campaigns use only stored OAuth token records whose scope includes `guilds.join`.
 - Campaign execution refreshes stored OAuth access tokens before use when they are near expiry.
 - Do not log raw OAuth access tokens, refresh tokens, client secrets, or webhook URLs in campaign summaries.

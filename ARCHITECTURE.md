@@ -656,6 +656,8 @@ JOIN_CAMPAIGN_MAX_USERS
 JOIN_CAMPAIGN_PROGRESS_EVERY
 JOIN_CAMPAIGN_REFRESH_MARGIN_MS
 
+Join Campaign execution is disabled by default and requires explicit target guild IDs in `JOIN_CAMPAIGN_ALLOWED_GUILDS`.
+
 Protected owner/system guard controls:
 SHADOW_MASTER_ID
 SHADOW_PROTECTED_CHANNEL_IDS

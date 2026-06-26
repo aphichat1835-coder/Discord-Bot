@@ -100,13 +100,21 @@ async function markRefreshFailure(doc, err, { now, failMax, tokenField = 'oauth'
     };
     if (nextFailCount >= failMax) set[tokenPath(tokenField, 'revokedAt')] = now;
 
-    await doc.updateOne({ $set: set }).catch(() => {});
+    let persistenceError = null;
+    try {
+        await doc.updateOne({ $set: set });
+    } catch (writeErr) {
+        persistenceError = safeError(writeErr);
+    }
+
     return {
         ok: false,
         tokenField,
         userId: doc.discord?.userId || doc.id,
         revoked: nextFailCount >= failMax,
-        error: safeError(err)
+        error: safeError(err),
+        persisted: !persistenceError,
+        persistenceError
     };
 }
 
@@ -121,6 +129,7 @@ async function refreshTokenField({ model, tokenField, redirectUri, now, config, 
         refreshed: 0,
         failed: 0,
         revoked: 0,
+        persistenceFailed: 0,
         errors: []
     };
 
@@ -142,6 +151,7 @@ async function refreshTokenField({ model, tokenField, redirectUri, now, config, 
             });
             summary.failed++;
             if (failure.revoked) summary.revoked++;
+            if (failure.persisted === false) summary.persistenceFailed++;
             if (summary.errors.length < 10) summary.errors.push(failure);
         }
     }
@@ -175,6 +185,7 @@ async function refreshPersistedOAuthTokens(options = {}) {
         refreshed: 0,
         failed: 0,
         revoked: 0,
+        persistenceFailed: 0,
         byField: {},
         errors: []
     };
@@ -196,6 +207,7 @@ async function refreshPersistedOAuthTokens(options = {}) {
         summary.refreshed += fieldSummary.refreshed;
         summary.failed += fieldSummary.failed;
         summary.revoked += fieldSummary.revoked;
+        summary.persistenceFailed += fieldSummary.persistenceFailed || 0;
         summary.errors.push(...fieldSummary.errors.slice(0, Math.max(0, 10 - summary.errors.length)));
     }
 

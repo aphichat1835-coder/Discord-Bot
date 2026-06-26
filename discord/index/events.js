@@ -119,6 +119,26 @@ async function executeProtectionAction({ member, result, message, deleteMessage 
     return output;
 }
 
+function protectionActionMode(config = {}) {
+    return String(config.actionMode || config.mode || process.env.PROTECTION_ACTION_MODE || "audit_only").toLowerCase();
+}
+
+function canEnforceProtection(config = {}) {
+    return protectionActionMode(config) === "action" || protectionActionMode(config) === "enforce";
+}
+
+function buildAuditOnlyProtectionResult(result = {}) {
+    return {
+        action: result.action || (result.shouldDelete ? "delete_message" : "log"),
+        attempted: false,
+        success: true,
+        reason: result.reason || "audit-only protection mode",
+        error: null,
+        timeoutMs: result.minutes ? result.minutes * 60000 : null,
+        deletedMessages: 0
+    };
+}
+
 async function sendProtectionResult({ guild, sessionManager, result, member, message, actionResult, debounceKey = null, debounceMs = 0 }) {
     const event = protectionAudit.buildProtectionEvent({
         guildId: guild.id,
@@ -205,12 +225,14 @@ function register({
                 if (result) {
                     const debounceKey = `${message.guild.id}_${message.author.id}`;
                     try {
-                        const actionResult = await executeProtectionAction({
-                            member: message.member,
-                            result,
-                            message,
-                            deleteMessage: true
-                        });
+                        const actionResult = canEnforceProtection(pConf)
+                            ? await executeProtectionAction({
+                                member: message.member,
+                                result,
+                                message,
+                                deleteMessage: true
+                            })
+                            : buildAuditOnlyProtectionResult(result);
 
                         if (Date.now() - (antiRaidLogDebounce.get(debounceKey) || 0) > 5000) {
                             antiRaidLogDebounce.set(debounceKey, Date.now());
@@ -247,8 +269,10 @@ function register({
             const spamResult = protection.checkAntiSpam(message.member, spamHist, pConf);
             if (spamResult) {
                 try {
-                    const deleted = await deleteMessageWithLog(message, "anti-spam");
-                    const actionResult = await executeProtectionAction({ member: message.member, result: spamResult });
+                    const deleted = canEnforceProtection(pConf) ? await deleteMessageWithLog(message, "anti-spam") : false;
+                    const actionResult = canEnforceProtection(pConf)
+                        ? await executeProtectionAction({ member: message.member, result: spamResult })
+                        : buildAuditOnlyProtectionResult(spamResult);
                     actionResult.deletedMessages = deleted ? 1 : 0;
 
                     await sendProtectionResult({
@@ -271,14 +295,16 @@ function register({
         if (pConf?.linkFilter?.enabled) {
             const linkResult = protection.checkLinkFilter(message, pConf);
             if (linkResult) {
-                const deleted = await deleteMessageWithLog(message, "link-filter");
-                const actionResult = {
-                    action: "delete_message",
-                    attempted: true,
-                    success: deleted,
-                    reason: linkResult.reason,
-                    error: deleted ? null : "message delete failed"
-                };
+                const deleted = canEnforceProtection(pConf) ? await deleteMessageWithLog(message, "link-filter") : false;
+                const actionResult = canEnforceProtection(pConf)
+                    ? {
+                        action: "delete_message",
+                        attempted: true,
+                        success: deleted,
+                        reason: linkResult.reason,
+                        error: deleted ? null : "message delete failed"
+                    }
+                    : buildAuditOnlyProtectionResult({ ...linkResult, action: "delete_message" });
 
                 await sendProtectionResult({
                     guild: message.guild,
@@ -291,9 +317,11 @@ function register({
                     debounceMs: 3000
                 });
 
-                message.channel.send({
-                    content: `> 🔗 <@${message.author.id}> ลิงก์ถูกบล็อกโดยระบบ`
-                }).then(m => setTimeout(() => m.delete().catch(() => {}), 5000)).catch(() => {});
+                if (canEnforceProtection(pConf)) {
+                    message.channel.send({
+                        content: `> 🔗 <@${message.author.id}> ลิงก์ถูกบล็อกโดยระบบ`
+                    }).then(m => setTimeout(() => m.delete().catch(() => {}), 5000)).catch(() => {});
+                }
             }
         }
 

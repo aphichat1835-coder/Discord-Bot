@@ -247,7 +247,11 @@ function initShutdown({ sessionManager, voiceWorker, client, memoryMonitor, audi
         console.log(`\n⛔ [SHUTDOWN] ${signal} — graceful shutdown starting...`);
         stopCronJobs();
         auditLogger?.stopAuditCleanup?.();
-        auditReconcilerScheduler?.stop?.();
+        try {
+            auditReconcilerScheduler?.stop?.();
+        } catch (err) {
+            console.warn(`[SHUTDOWN] ⚠️ Audit reconciler stop skipped: ${err.message}`);
+        }
         voiceWorker.setShuttingDown(true);
 
         const timeout = setTimeout(() => {

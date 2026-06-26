@@ -95,10 +95,12 @@ async function fetchAuditEntriesUntilCursor(guild, { limit, maxPages, cursor }) 
 
 async function processEntry({ guild, sessionManager, entry, seen }) {
     const id = entryId(entry);
-    if (!id) return false;
+    if (!id) return { processed: false, written: false, sent: false, id: null };
 
     const dedupKey = auditEntryKey(guild.id, id);
-    if (seen.has(id) || defaultAuditDedup.seen(dedupKey)) return false;
+    if (seen.has(id) || defaultAuditDedup.has(dedupKey)) {
+        return { processed: false, written: false, sent: false, id };
+    }
 
     const normalized = normalizeEntry(entry);
     const embed = renderAuditEntry(entry, {
@@ -116,7 +118,7 @@ async function processEntry({ guild, sessionManager, entry, seen }) {
         debounceMs: 60 * 1000
     });
 
-    await auditStorage.saveAuditRecord(sessionManager, {
+    const saved = await auditStorage.saveAuditRecord(sessionManager, {
         eventId: id,
         guildId: guild.id,
         source: "audit_reconciler",
@@ -137,8 +139,13 @@ async function processEntry({ guild, sessionManager, entry, seen }) {
         createdAt: normalized.createdAt
     });
 
+    if (!saved) {
+        return { processed: false, written: false, sent, id };
+    }
+
+    defaultAuditDedup.remember(dedupKey);
     seen.add(id);
-    return sent;
+    return { processed: true, written: true, sent, id };
 }
 
 async function processReconciledEntries({ guild, sessionManager, entries, seen }) {
@@ -146,9 +153,9 @@ async function processReconciledEntries({ guild, sessionManager, entries, seen }
     let lastEntryId = null;
 
     for (const entry of entries) {
-        const id = entryId(entry);
-        if (id) lastEntryId = id;
-        if (await processEntry({ guild, sessionManager, entry, seen })) processed += 1;
+        const result = await processEntry({ guild, sessionManager, entry, seen });
+        if (result.written && result.id) lastEntryId = result.id;
+        if (result.processed) processed += 1;
     }
 
     return { processed, lastEntryId };

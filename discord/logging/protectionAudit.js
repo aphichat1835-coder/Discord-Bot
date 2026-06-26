@@ -124,7 +124,8 @@ function buildProtectionEmbed(event = {}) {
 async function createProtectionCase(sessionManager, event, options = {}) {
     const action = options.action || event.actionResult?.action;
     const shouldCreate = options.force === true || ["ban", "kick", "timeout", "quarantine", "mute", "warn"].includes(String(action || "").toLowerCase());
-    if (!shouldCreate || !sessionManager || !event.guildId || !event.userId) return null;
+    const actionSucceeded = event.actionResult?.attempted === true && event.actionResult?.success === true;
+    if (!shouldCreate || !actionSucceeded || !sessionManager || !event.guildId || !event.userId) return null;
 
     const caseDoc = await modCaseManager.createCase(sessionManager, {
         guildId: event.guildId,

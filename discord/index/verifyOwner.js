@@ -28,9 +28,9 @@ async function callDashboardInternal(path, options = {}, API_SECRET) {
     const res = await fetch(`${base}${path}`, {
         ...options,
         headers: {
+            ...headers,
             'Content-Type': 'application/json',
-            'x-internal-secret': internalSecret,
-            ...headers
+            'x-internal-secret': internalSecret
         }
     });
 

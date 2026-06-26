@@ -149,6 +149,7 @@ npm run check:memory-trend < diagnostics.json
 
 1. เช็ค baseline production/high severity:
    - `npm audit --audit-level=high`
+   - `npm audit --omit=dev`
    - `npm --prefix dashboard-public audit --audit-level=high`
    - `npm --prefix dashboard-public audit --omit=dev`
 2. ถ้า `npm --prefix dashboard-public audit` แบบไม่ใส่ level แจ้ง moderate จาก Jest chain ให้แยกก่อนว่าเป็น dev dependency หรือ production dependency

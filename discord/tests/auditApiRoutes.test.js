@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { filterRecords, readAuditFilters, readLimit, loadDeadLetterRecords, applyAuditRuntimeSettings } = require("../index/auditApiRoutes");
+const { filterRecords, readAuditFilters, readGuildId, readLimit, loadDeadLetterRecords, applyAuditRuntimeSettings } = require("../index/auditApiRoutes");
 const auditHealth = require("../logging/auditHealth");
 const scheduler = require("../logging/auditReconcilerScheduler");
 
@@ -23,6 +23,8 @@ test("audit API helpers sanitize filters and limits", () => {
     });
     assert.equal(readLimit({ limit: 9999 }, 50, 500), 500);
     assert.equal(readLimit({ limit: "bad" }, 25, 500), 25);
+    assert.equal(readGuildId({ guildId: "g1" }), "g1");
+    assert.equal(readGuildId({}, { guilds: { cache: { first: () => ({ id: "fallback" }) } } }), "");
 });
 
 test("audit dead-letter API helper reads records", async () => {

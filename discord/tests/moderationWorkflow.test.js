@@ -14,9 +14,18 @@ test("moderation workflow reads full timeout input", () => {
     const interaction = {
         commandName: "timeout",
         options: {
-            getMember: () => ({ id: "target1" }),
-            getString: () => "reason",
-            getInteger: () => 10
+            getMember: key => {
+                assert.equal(key, "target");
+                return { id: "target1" };
+            },
+            getString: key => {
+                assert.equal(key, "reason");
+                return "reason";
+            },
+            getInteger: key => {
+                assert.equal(key, "minutes");
+                return 10;
+            }
         }
     };
     const input = workflow.readFullModerationInput(interaction);

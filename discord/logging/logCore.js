@@ -128,9 +128,12 @@ const DEFAULT_MAX_TEXT = 1000;
 const DEFAULT_MAX_QUEUE_PER_GUILD = Math.max(1, Number(process.env.LOG_CORE_MAX_QUEUE_PER_GUILD || 250) || 250);
 
 function safeAuditText(value, max = DEFAULT_MAX_TEXT) {
+    const limit = Math.max(1, Number(max) || DEFAULT_MAX_TEXT);
     const clean = sanitizeLogText(String(value ?? ""));
-    if (clean.length <= max) return clean || "-";
-    return `${clean.slice(0, Math.max(0, max - 16))}... [TRUNCATED]`;
+    if (clean.length <= limit) return clean || "-";
+    const suffix = "... [TRUNCATED]";
+    if (limit <= suffix.length) return suffix.slice(0, limit);
+    return `${clean.slice(0, Math.max(0, limit - suffix.length))}${suffix}`;
 }
 
 function safeAuditError(err, max = 500) {
@@ -174,10 +177,23 @@ function getConfiguredChannelName(category) {
 
 function findTextChannelByName(guild, channelName) {
     if (!guild || !channelName) return null;
-    return guild.channels.cache.find(channel =>
+    const channels = typeof guild.channels.cache.find === "function"
+        ? guild.channels.cache
+        : Array.from(guild.channels.cache?.values?.() || []);
+    const find = typeof channels.find === "function"
+        ? channels.find.bind(channels)
+        : predicate => Array.from(channels || []).find(predicate);
+    return find(channel =>
         channel?.name === channelName &&
-        (typeof channel.isText === "function" ? channel.isText() : channel.type === "GUILD_TEXT" || channel.type === "text")
+        isSendCapableTextChannel(channel)
     ) || null;
+}
+
+function isSendCapableTextChannel(channel) {
+    if (!channel || typeof channel.send !== "function") return false;
+    if (typeof channel.isText === "function") return channel.isText();
+    if (channel.type === undefined || channel.type === null) return true;
+    return channel.type === "GUILD_TEXT" || channel.type === "text";
 }
 
 async function getLogChannel(guild, sessionManager, category) {
@@ -195,7 +211,7 @@ async function getLogChannel(guild, sessionManager, category) {
 
         if (channelId) {
             const channel = guild.channels.cache.get(channelId);
-            if (channel) return channel;
+            if (isSendCapableTextChannel(channel)) return channel;
         }
 
         const configuredName = getConfiguredChannelName(normalized);
@@ -313,6 +329,7 @@ module.exports = {
     buildLogEvent,
     getConfiguredChannelName,
     findTextChannelByName,
+    isSendCapableTextChannel,
     getLogChannel,
     saveLogFailure,
     routeAndSendLog

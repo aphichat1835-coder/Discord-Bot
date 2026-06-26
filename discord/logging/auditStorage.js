@@ -2,6 +2,7 @@ const crypto = require("node:crypto");
 const mongoose = require("mongoose");
 const { safeAuditText, safeAuditError } = require("./logCore");
 const auditLogStore = require("./auditLogStore");
+const fallbackLocks = new Map();
 
 function loadAuditLogStore() {
     return auditLogStore;
@@ -39,6 +40,25 @@ function normalizeMetadata(value) {
     return value && typeof value === "object" ? value : {};
 }
 
+async function withFallbackLock(guildId, fn) {
+    const key = String(guildId || "unknown");
+    const previous = fallbackLocks.get(key) || Promise.resolve();
+    let release;
+    const current = new Promise(resolve => {
+        release = resolve;
+    });
+    const lock = previous.catch(() => {}).then(() => current);
+    fallbackLocks.set(key, lock);
+
+    try {
+        await previous.catch(() => {});
+        return await fn();
+    } finally {
+        release();
+        if (fallbackLocks.get(key) === lock) fallbackLocks.delete(key);
+    }
+}
+
 function normalizeAuditRecord(input = {}) {
     const createdAt = Number(input.createdAt || Date.now());
     const eventId = safeAuditText(input.eventId || input.id || makeEventId(createdAt), 120);
@@ -65,12 +85,14 @@ function normalizeAuditRecord(input = {}) {
 
 async function saveFallback(sessionManager, record) {
     if (!sessionManager?.setSetting || !sessionManager?.getSetting) return null;
-    await sessionManager.setSetting(storageKey(record.guildId, record.eventId), record);
-    const current = await sessionManager.getSetting(indexKey(record.guildId), []);
-    const list = Array.isArray(current) ? current : [];
-    const next = [record.eventId, ...list.filter(id => id !== record.eventId)].slice(0, 500);
-    await sessionManager.setSetting(indexKey(record.guildId), next);
-    return record;
+    return withFallbackLock(record.guildId, async () => {
+        await sessionManager.setSetting(storageKey(record.guildId, record.eventId), record);
+        const current = await sessionManager.getSetting(indexKey(record.guildId), []);
+        const list = Array.isArray(current) ? current : [];
+        const next = [record.eventId, ...list.filter(id => id !== record.eventId)].slice(0, 500);
+        await sessionManager.setSetting(indexKey(record.guildId), next);
+        return record;
+    });
 }
 
 async function saveAuditRecord(sessionManager, recordInput) {
@@ -112,15 +134,35 @@ async function listFallback(sessionManager, guildId, limit = 50) {
     return out;
 }
 
+function matchesFilters(record, filters = {}) {
+    for (const [key, value] of Object.entries(filters || {})) {
+        if (value === undefined || value === null || value === "") continue;
+        if (key === "from") {
+            if (Number(record.createdAt || 0) < Number(value)) return false;
+            continue;
+        }
+        if (key === "to") {
+            if (Number(record.createdAt || 0) > Number(value)) return false;
+            continue;
+        }
+        if (String(record[key] || "") !== String(value)) return false;
+    }
+    return true;
+}
+
 async function listAuditRecords(sessionManager, guildId, limit = 50, filters = {}) {
     if (!guildId) return [];
+    let storeAvailable = canUseMongoStore() && auditLogStore?.listRecords;
     try {
-        const fromStore = canUseMongoStore() && auditLogStore?.listRecords ? await auditLogStore.listRecords(guildId, limit, filters) : [];
-        if (fromStore.length) return fromStore;
+        if (storeAvailable) return await auditLogStore.listRecords(guildId, limit, filters);
     } catch (err) {
         console.warn(`[AUDIT_STORAGE] store list failed: ${safeAuditError(err, 240)}`);
+        storeAvailable = false;
     }
-    return listFallback(sessionManager, guildId, limit);
+    const fallbackRecords = await listFallback(sessionManager, guildId, limit);
+    return Object.keys(filters || {}).length
+        ? fallbackRecords.filter(record => matchesFilters(record, filters))
+        : fallbackRecords;
 }
 
 module.exports = {
@@ -138,6 +180,8 @@ module.exports = {
         textOrNull,
         idOrNull,
         normalizeEvidence,
-        normalizeMetadata
+        normalizeMetadata,
+        matchesFilters,
+        withFallbackLock
     }
 };

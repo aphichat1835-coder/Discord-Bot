@@ -11,6 +11,7 @@ const protectionAudit   = require('../logging/protectionAudit');
 
 // ── Default protection config ──
 const DEFAULT_CONFIG = {
+    actionMode: 'audit_only',
     antiRaid: {
         enabled:          true,
         spamThreshold:    5,       // ครั้งภายใน windowMs
@@ -35,7 +36,7 @@ const DEFAULT_CONFIG = {
 // ── โหลด config จาก DB ──
 async function getProtectionConfig(guildId) {
     const saved = await sessionManager.getSetting(`protection_${guildId}`, null);
-    return saved ? { ...DEFAULT_CONFIG, ...saved } : { ...DEFAULT_CONFIG };
+    return saved ? deepMerge(DEFAULT_CONFIG, saved) : deepMerge(DEFAULT_CONFIG, {});
 }
 
 // ── บันทึก config ──

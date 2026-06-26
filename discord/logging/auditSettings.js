@@ -44,14 +44,17 @@ function normalizeAuditSettings(input = {}) {
 }
 
 async function getAuditSettings(sessionManager, guildId) {
-    const saved = await sessionManager?.getSetting?.(settingKey(guildId), {}).catch(() => ({}));
+    if (!sessionManager?.getSetting) return normalizeAuditSettings({});
+    const saved = await sessionManager.getSetting(settingKey(guildId), {}).catch(() => ({}));
     return normalizeAuditSettings(saved || {});
 }
 
 async function saveAuditSettings(sessionManager, guildId, patch = {}) {
     const current = await getAuditSettings(sessionManager, guildId);
     const next = normalizeAuditSettings({ ...current, ...patch, categories: { ...current.categories, ...patch.categories } });
-    await sessionManager?.setSetting?.(settingKey(guildId), next).catch(() => {});
+    if (sessionManager?.setSetting) {
+        await sessionManager.setSetting(settingKey(guildId), next).catch(() => {});
+    }
     return next;
 }
 

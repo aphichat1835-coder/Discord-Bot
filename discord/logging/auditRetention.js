@@ -9,7 +9,8 @@ function normalizeRetentionDays(value, fallback = DEFAULT_RETENTION_DAYS) {
     if (value === "forever" || value === 0 || value === "0") return 0;
     const days = Number(value);
     if (!Number.isFinite(days) || days < 0) return fallback;
-    return Math.floor(days);
+    if (days === 0) return 0;
+    return Math.max(1, Math.ceil(days));
 }
 
 function cutoffForRetention(days, now = Date.now()) {

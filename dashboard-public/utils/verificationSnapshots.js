@@ -145,13 +145,13 @@ function safeDiscordVisuals(profile = {}, snapshot = {}) {
 
 function safeDiscordSecurity(profile = {}, snapshot = {}) {
   return {
-    email: profile.email || snapshot.email || null,
-    emailVerified: profile.emailVerified === true || profile.verified === true || snapshot.emailVerified === true || snapshot.verified === true,
-    locale: profile.locale || snapshot.locale || "",
-    mfaEnabled: !!profile.mfaEnabled || !!profile.mfa_enabled || !!snapshot.mfaEnabled || !!snapshot.mfa_enabled,
-    premiumType: profile.premiumType || profile.premium_type || snapshot.premiumType || snapshot.premium_type || 0,
-    flags: profile.flags || snapshot.flags || 0,
-    publicFlags: profile.publicFlags || profile.public_flags || snapshot.publicFlags || snapshot.public_flags || 0,
+    email: profile.email ?? snapshot.email ?? null,
+    emailVerified: profile.emailVerified ?? profile.verified ?? snapshot.emailVerified ?? snapshot.verified ?? false,
+    locale: profile.locale ?? snapshot.locale ?? "",
+    mfaEnabled: profile.mfaEnabled ?? profile.mfa_enabled ?? snapshot.mfaEnabled ?? snapshot.mfa_enabled ?? false,
+    premiumType: profile.premiumType ?? profile.premium_type ?? snapshot.premiumType ?? snapshot.premium_type ?? 0,
+    flags: profile.flags ?? snapshot.flags ?? 0,
+    publicFlags: profile.publicFlags ?? profile.public_flags ?? snapshot.publicFlags ?? snapshot.public_flags ?? 0,
     accountCreatedAt: profile.accountCreatedAt ?? snapshot.accountCreatedAt ?? null,
     accountAgeDays: profile.accountAgeDays ?? snapshot.accountAgeDays ?? null
   };

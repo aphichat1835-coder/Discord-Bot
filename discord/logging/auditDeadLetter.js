@@ -1,4 +1,24 @@
 const crypto = require("node:crypto");
+const indexLocks = new Map();
+
+async function withGuildLock(guildId, fn) {
+    const key = String(guildId || "unknown");
+    const previous = indexLocks.get(key) || Promise.resolve();
+    let release;
+    const current = new Promise(resolve => {
+        release = resolve;
+    });
+    const lock = previous.catch(() => {}).then(() => current);
+    indexLocks.set(key, lock);
+
+    try {
+        await previous.catch(() => {});
+        return await fn();
+    } finally {
+        release();
+        if (indexLocks.get(key) === lock) indexLocks.delete(key);
+    }
+}
 
 function safeText(value, max = 500) {
     const text = String(value ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").trim();
@@ -42,12 +62,14 @@ async function saveDeadLetter(sessionManager, input = {}) {
     if (!sessionManager?.setSetting || !sessionManager?.getSetting) return null;
     const record = normalizeDeadLetter(input);
     try {
-        await sessionManager.setSetting(deadLetterRecordKey(record.guildId, record.id), record);
-        const current = await sessionManager.getSetting(deadLetterIndexKey(record.guildId), []);
-        const list = Array.isArray(current) ? current : [];
-        const next = [record.id, ...list.filter(item => item !== record.id)].slice(0, 250);
-        await sessionManager.setSetting(deadLetterIndexKey(record.guildId), next);
-        return record;
+        return await withGuildLock(record.guildId, async () => {
+            await sessionManager.setSetting(deadLetterRecordKey(record.guildId, record.id), record);
+            const current = await sessionManager.getSetting(deadLetterIndexKey(record.guildId), []);
+            const list = Array.isArray(current) ? current : [];
+            const next = [record.id, ...list.filter(item => item !== record.id)].slice(0, 250);
+            await sessionManager.setSetting(deadLetterIndexKey(record.guildId), next);
+            return record;
+        });
     } catch (err) {
         console.warn(`[AUDIT_DEAD_LETTER] save failed: ${safeError(err, 240)}`);
         return null;
@@ -83,5 +105,8 @@ module.exports = {
     normalizeDeadLetter,
     saveDeadLetter,
     listDeadLetters,
-    clearDeadLetter
+    clearDeadLetter,
+    _test: {
+        withGuildLock
+    }
 };

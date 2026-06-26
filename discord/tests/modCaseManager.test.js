@@ -40,6 +40,18 @@ test("createCase assigns increasing case numbers", async () => {
     assert.equal(first.evidence[0], "message spam");
 });
 
+test("createCase fallback serializes concurrent counters and user indexes", async () => {
+    const sessionManager = createFakeSessionManager();
+    const [first, second] = await Promise.all([
+        modCaseManager.createCase(sessionManager, { guildId: "g1", action: "ban", userId: "u1" }),
+        modCaseManager.createCase(sessionManager, { guildId: "g1", action: "kick", userId: "u1" })
+    ]);
+
+    assert.deepEqual([first.caseNumber, second.caseNumber].sort((a, b) => a - b), [1, 2]);
+    const list = await modCaseManager.listUserCases(sessionManager, "g1", "u1", 5);
+    assert.equal(list.length, 2);
+});
+
 test("getCase and listUserCases work with settings fallback", async () => {
     const sessionManager = createFakeSessionManager();
     const created = await modCaseManager.createCase(sessionManager, {

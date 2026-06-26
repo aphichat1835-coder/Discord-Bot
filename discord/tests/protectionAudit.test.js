@@ -53,3 +53,27 @@ test("createActionResult records failed action details", () => {
     assert.match(formatted, /BAN/);
     assert.match(formatted, /role hierarchy/);
 });
+
+test("createProtectionCase skips failed or skipped punitive actions", async () => {
+    const sessionManager = {
+        async getSetting(_key, fallback) { return fallback; },
+        async setSetting() { throw new Error("case should not be saved"); }
+    };
+    const failedEvent = protectionAudit.buildProtectionEvent({
+        guildId: "g1",
+        userId: "u1",
+        action: "ban",
+        attempted: true,
+        success: false
+    });
+    const skippedEvent = protectionAudit.buildProtectionEvent({
+        guildId: "g1",
+        userId: "u1",
+        action: "ban",
+        attempted: false,
+        success: true
+    });
+
+    assert.equal(await protectionAudit.createProtectionCase(sessionManager, failedEvent), null);
+    assert.equal(await protectionAudit.createProtectionCase(sessionManager, skippedEvent), null);
+});

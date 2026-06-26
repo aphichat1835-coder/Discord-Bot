@@ -52,8 +52,13 @@ function normalizeId(value) {
     return value == null ? null : String(value);
 }
 
-function auditCacheKey(guildId, actionType, targetId) {
-    return `${guildId}:${actionType || "ANY"}:${targetId || "ANY"}`;
+function auditCacheKey(guildId, actionType, targetId, channelId) {
+    return [
+        guildId || "unknown",
+        actionType || "ANY",
+        targetId || "NO_TARGET",
+        channelId || "NO_CHANNEL"
+    ].join(":");
 }
 
 function entryTargetId(entry) {
@@ -77,7 +82,7 @@ async function fetchAuditEntry(guild, actionType, targetId, options = {}) {
     const limit = Math.max(1, Math.min(10, Number(options.limit || 6) || 6));
     const channelId = normalizeId(options.channelId);
     const normalizedTargetId = normalizeId(targetId);
-    const cacheKey = auditCacheKey(guild.id, actionType, normalizedTargetId || channelId);
+    const cacheKey = auditCacheKey(guild.id, actionType, normalizedTargetId, channelId);
 
     const cached = auditCache.get(cacheKey);
     if (cached && Date.now() - cached.cachedAt <= maxAgeMs) return cached.entry;
@@ -95,11 +100,10 @@ async function fetchAuditEntry(guild, actionType, targetId, options = {}) {
             return targetMatches && channelMatches;
         }) || null;
 
-        auditCache.set(cacheKey, { entry: matched, cachedAt: Date.now() });
+        if (matched) auditCache.set(cacheKey, { entry: matched, cachedAt: Date.now() });
         return matched;
     } catch (err) {
         console.warn(`[AUDIT_HELPER] fetchAuditEntry failed: ${safeAuditError(err, 240)}`);
-        auditCache.set(cacheKey, { entry: null, cachedAt: Date.now() });
         return null;
     }
 }

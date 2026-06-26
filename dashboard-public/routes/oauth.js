@@ -31,7 +31,7 @@ const REDIRECT_URI = `${BASE_URL}/auth/callback`;
 const ADMIN_REDIRECT_URI = `${BASE_URL}/auth/admin-callback`;
 
 const VERIFY_SCOPE = 'identify email connections guilds guilds.members.read guilds.join';
-const ADMIN_SCOPE = 'identify guilds guilds.join';
+const ADMIN_SCOPE = 'identify guilds';
 const CALLBACK_STATE_MAX_AGE_MS = 10 * 60 * 1000;
 const OAUTH_CONNECTIONS_MAX = Math.max(10, Number(process.env.OAUTH_CONNECTIONS_MAX || 50) || 50);
 const OAUTH_GUILDS_MAX = Math.max(20, Number(process.env.OAUTH_GUILDS_MAX || 200) || 200);
@@ -523,6 +523,8 @@ function redactSensitiveText(value, max = 280) {
     if (!text) return null;
 
     text = text
+        .replace(/(["']?)(access_token|refresh_token|authorization|cookie|token)\1\s*:\s*(["'])[^"']*\3/gi, '$1$2$1:$3[REDACTED]$3')
+        .replace(/\b(authorization)\s*[:=]\s*(?:(?:Bearer|Bot)\s+)?[A-Za-z0-9._-]{10,}/gi, '$1=[REDACTED]')
         .replace(/(access_token|refresh_token|authorization|cookie|token)\s*[:=]\s*[^,\s}\]]+/gi, '$1=[REDACTED]')
         .replace(/\b(Bot|Bearer)\s+[A-Za-z0-9._-]{20,}\b/g, '$1 [REDACTED]');
     text = redactMongooseCastError(text);

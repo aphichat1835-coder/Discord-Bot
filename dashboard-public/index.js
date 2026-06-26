@@ -214,6 +214,28 @@ function getRuntimeLimitDiagnostics() {
     };
 }
 
+function summarizeOAuthRefreshHealth(summary) {
+    if (!summary) return null;
+    return {
+        skipped: summary.skipped === true,
+        reason: summary.reason || null,
+        scanned: Number(summary.scanned || 0),
+        refreshed: Number(summary.refreshed || 0),
+        failed: Number(summary.failed || 0),
+        revoked: Number(summary.revoked || 0),
+        persistenceFailed: Number(summary.persistenceFailed || 0),
+        errorCount: Array.isArray(summary.errors) ? summary.errors.length : 0,
+        byField: Object.fromEntries(Object.entries(summary.byField || {}).map(([field, item]) => [field, {
+            scanned: Number(item?.scanned || 0),
+            refreshed: Number(item?.refreshed || 0),
+            failed: Number(item?.failed || 0),
+            revoked: Number(item?.revoked || 0),
+            persistenceFailed: Number(item?.persistenceFailed || 0),
+            errorCount: Array.isArray(item?.errors) ? item.errors.length : 0
+        }]))
+    };
+}
+
 const callbackLimiter = rateLimit({
     windowMs: 60 * 1000,
     limit: 10,
@@ -330,7 +352,7 @@ app.get('/health', (_req, res) => {
         oauthTokenRefresh: {
             lastRunAt: lastOAuthTokenRefreshAt,
             lastError: lastOAuthTokenRefreshError,
-            lastSummary: lastOAuthTokenRefreshSummary
+            lastSummary: summarizeOAuthRefreshHealth(lastOAuthTokenRefreshSummary)
         },
         memory: getMemoryDiagnostics(),
         runtimeLimits: getRuntimeLimitDiagnostics(),
@@ -616,7 +638,7 @@ app.get('/internal/diagnostics', requireInternalSecret, (_req, res) => {
             config: getOAuthRefreshConfig(),
             lastRunAt: lastOAuthTokenRefreshAt,
             lastError: lastOAuthTokenRefreshError,
-            lastSummary: lastOAuthTokenRefreshSummary
+            lastSummary: summarizeOAuthRefreshHealth(lastOAuthTokenRefreshSummary)
         }
     });
 });
