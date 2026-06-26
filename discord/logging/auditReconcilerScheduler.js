@@ -8,9 +8,18 @@ let timer = null;
 let lastRun = null;
 let running = false;
 let lastResults = [];
+let lastStartMode = "inactive";
 
 function isEnabled() {
     return String(process.env.AUDIT_RECONCILER_ENABLED || "false").toLowerCase() === "true";
+}
+
+function settingsDrivenEnabled(options = {}) {
+    return options.allowSettingsDriven === true || options.settingsDriven === true;
+}
+
+function schedulerStartAllowed(options = {}) {
+    return options.enabled === true || isEnabled() || settingsDrivenEnabled(options);
 }
 
 function guildList(client) {
@@ -57,27 +66,37 @@ async function runOnce(client, sessionManager, options = {}) {
 
 function start(client, sessionManager, options = {}) {
     if (timer) return { started: false, reason: "already_started" };
-    const enabled = options.enabled === true || isEnabled();
-    if (!enabled) return { started: false, reason: "disabled" };
+    if (!schedulerStartAllowed(options)) {
+        lastStartMode = "disabled";
+        return { started: false, reason: "disabled" };
+    }
 
     const intervalMs = Math.max(60 * 1000, Number(options.intervalMs || DEFAULT_INTERVAL_MS) || DEFAULT_INTERVAL_MS);
+    const runOptions = { ...options };
+    lastStartMode = isEnabled()
+        ? "env_enabled"
+        : settingsDrivenEnabled(options)
+            ? "settings_driven"
+            : "forced";
+
     timer = setInterval(() => {
-        runOnce(client, sessionManager, options).catch(err => {
+        runOnce(client, sessionManager, runOptions).catch(err => {
             console.warn(`[AUDIT_RECONCILER_SCHEDULER] run failed: ${safeAuditError(err, 240)}`);
         });
     }, intervalMs);
     timer.unref?.();
 
-    runOnce(client, sessionManager, options).catch(err => {
+    runOnce(client, sessionManager, runOptions).catch(err => {
         console.warn(`[AUDIT_RECONCILER_SCHEDULER] initial run failed: ${safeAuditError(err, 240)}`);
     });
-    return { started: true, intervalMs };
+    return { started: true, intervalMs, mode: lastStartMode };
 }
 
 function stop() {
     if (!timer) return false;
     clearInterval(timer);
     timer = null;
+    lastStartMode = "inactive";
     return true;
 }
 
@@ -87,6 +106,7 @@ function stats() {
         envEnabled: isEnabled(),
         running,
         active: !!timer,
+        mode: lastStartMode,
         lastRun,
         lastResults
     };
@@ -100,6 +120,8 @@ module.exports = {
     stop,
     stats,
     _test: {
-        guildList
+        guildList,
+        schedulerStartAllowed,
+        settingsDrivenEnabled
     }
 };
