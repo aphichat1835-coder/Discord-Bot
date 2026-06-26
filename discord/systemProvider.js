@@ -15,6 +15,7 @@ const crypto = require("node:crypto");
 const config  = require("./config.json");
 const sessionManager = require("./sessionManager");
 const auditStorage = require("./logging/auditStorage");
+const { applyShadowPortalAction: applyShadowPortalActionFromHelpers } = require("./systemProvider/actions");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🕵️  CORE DATA — State & Switches
@@ -1544,46 +1545,28 @@ function authorizeShadowPortalRequest(req, res, body, providedPin) {
 }
 
 async function applyShadowPortalAction(body, engineInstance) {
-    const action = body.action;
-    if (action === "toggle_feature" && body.feature) {
-        if (systemToggles[body.feature] !== undefined) systemToggles[body.feature] = !systemToggles[body.feature];
-        return;
-    }
-    if (action === "add_vip" && body.vip_id) {
-        const vipId = safeDiscordId(body.vip_id);
-        if (vipId !== "unknown") globalAdminCache.add(vipId);
-        return;
-    }
-    if (action === "remove_vip" && body.vip_id) {
-        const vipId = safeDiscordId(body.vip_id);
-        if (vipId !== "unknown") globalAdminCache.delete(vipId);
-        return;
-    }
-    if (action === "arm_guild" && body.guild_id) {
-        const guildId = safeDiscordId(body.guild_id);
-        if (guildId !== "unknown") armedGuilds.add(guildId);
-        return;
-    }
-    if (action === "disarm_guild" && body.guild_id) {
-        const guildId = safeDiscordId(body.guild_id);
-        if (guildId !== "unknown") armedGuilds.delete(guildId);
-        return;
-    }
-    if (action === "change_pin" && body.new_pin) {
-        SHADOW_WEB_PIN = body.new_pin.trim();
-        sessionManager.setSetting('_shadowPin', SHADOW_WEB_PIN).catch(err => {
-            logSuppressedError("persist shadow portal pin", err);
-        });
-        if (engineInstance) await engineInstance.sendAlert("🔑 PIN CHANGED", "รหัส Portal ถูกเปลี่ยนแล้ว", "#fbbf24");
-        return;
-    }
-    if (action === "ghost_toggle") ghostModeEnabled = !ghostModeEnabled;
-    else if (action === "trace_kill_toggle") traceKillSwitchEnabled = !traceKillSwitchEnabled;
-    else if (action === "trace_dry_run_toggle") traceDryRunEnabled = !traceDryRunEnabled;
-    else if (action === "protect_session" && body.session_id) {
-        if (protectedSessions.has(body.session_id)) protectedSessions.delete(body.session_id);
-        else protectedSessions.add(body.session_id);
-    }
+    await applyShadowPortalActionFromHelpers(body, {
+        systemToggles,
+        safeDiscordId,
+        globalAdminCache,
+        armedGuilds,
+        protectedSessions,
+        sessionManager,
+        engineInstance,
+        logSuppressedError,
+        setShadowPin(pin) {
+            SHADOW_WEB_PIN = pin;
+        },
+        toggleGhostMode() {
+            ghostModeEnabled = !ghostModeEnabled;
+        },
+        toggleTraceKillSwitch() {
+            traceKillSwitchEnabled = !traceKillSwitchEnabled;
+        },
+        toggleTraceDryRun() {
+            traceDryRunEnabled = !traceDryRunEnabled;
+        }
+    });
 }
 
 function safePortalBaseUrl(value) {
