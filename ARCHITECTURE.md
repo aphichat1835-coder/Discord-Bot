@@ -1,6 +1,6 @@
 # Architecture
 
-Last verified against implementation: 2026-06-24.
+Last verified against implementation: 2026-06-26.
 
 This is the implementation-backed architecture reference for the Phomueangtai Personal Multi-Tool Discord Bot. It describes the current project reality and the approved minimal direction for organization. It does not approve broad rewrites, dependency migrations, behavior changes, schema changes, or protected-file edits.
 
@@ -21,7 +21,7 @@ The project includes bot runtime, slash commands, voice/session management, owne
 
 Current architecture was derived from these sources:
 
-- Root docs and config: `AGENTS.md`, `CONTEXT.md`, `README.md`, `CHANGELOG.md`, `.env.example`, `package.json`, `dashboard-public/package.json`, `render.yaml`.
+- Root docs and config: `AGENTS.md`, `CONTEXT.md`, `README.md`, `CHANGELOG.md`, `ROADMAP.md`, `SECURITY.md`, `.github/copilot-instructions.md`, `.env.example`, `package.json`, `dashboard-public/package.json`, `render.yaml`.
 - Service 1: `discord/index.js`, `discord/index/system.js`, `discord/index/server.js`, `discord/index/views.js`, `discord/index/events.js`, `discord/index/auth.js`, `discord/index/verifyOwner.js`, `discord/commands.js`, `discord/commands/*.js`, `discord/sessionManager.js`, `discord/voiceWorker.js`, `discord/auditLogger.js`, `discord/features/*.js`.
 - Service 2: `dashboard-public/index.js`, `dashboard-public/routes/*.js`, `dashboard-public/models/*.js`, `dashboard-public/utils/*.js`, `dashboard-public/views/*.html`, `dashboard-public/public/js/*.js`, `dashboard-public/public/css/dashboard.css`, `dashboard-public/tests/*.test.js`.
 
@@ -123,6 +123,11 @@ Important invariant: Express starts first, MongoDB connects second, Discord logi
 | `discord/core/webhooks.js` | Service 1 webhook routing helpers for operations/security logs and critical runtime alerts |
 | `discord/index/system.js` | log capture, crash shield, cron cleanup/health/save loop, graceful shutdown |
 | `discord/index/server.js` | owner dashboard JSON/control APIs, settings/presence, token reveal controls, command toggles, whitelist, approved guild APIs |
+| `discord/index/auditWebBundle.js` | owner-authenticated audit dashboard and audit API bundle registration |
+| `discord/index/auditApiRoutes.js` | `/api/audit/*` log search, export, health, settings, and dead-letter routes |
+| `discord/index/auditDashboardPage.js` | owner audit dashboard page HTML |
+| `discord/index/joinCampaignRoutes.js` | owner Join Campaign target/status/dry-run/start/stop APIs |
+| `discord/index/joinCampaignPage.js` | owner Join Campaign page HTML |
 | `discord/index/dashboardState.js` | owner dashboard command status, command audit, runtime status, and safe JSON payload helpers |
 | `discord/index/sessionSerializer.js` | safe owner-dashboard voice session JSON serialization and token lookup compatibility helper |
 | `discord/index/views.js` | PIN-protected owner dashboard HTML pages, generated markup/styles/scripts, view route registration |
@@ -149,6 +154,7 @@ Important invariant: Express starts first, MongoDB connects second, Discord logi
 | `discord/guards/dashboardGuards.js` | owner dashboard API rate limit, API secret auth, reveal PIN lockout, intrusion logging, and read-route bypass helpers |
 | `discord/voiceWorker.js` | live voice/session lifecycle, pooled clients, voice connections, metadata refresh, stop/pause/resume, health recovery, idle cleanup, notifications, natural/auto-deaf timers |
 | `discord/auditLogger.js` | audit log channel lookup, queue/cache helpers, embed helpers, message/member/voice/server/security event listeners |
+| `discord/logging/*.js` | audit storage, export, settings, dead letters, reconciler runtime, retention, formatting, and route mount helpers |
 | `discord/features/protection.js` | protection config, anti-raid, anti-spam, link filtering, protection alert embeds |
 | `discord/features/roleButton.js` | role button/select panel building and role toggle interactions |
 | `discord/features/joinCampaign.js` | owner-dashboard Join Campaign helper for eligible `guilds.join` OAuth records, refresh-before-use, rate pacing, and Thai owner webhook summaries |
@@ -191,6 +197,7 @@ POST /api/join-campaign/stop
 GET  /api/settings/natural
 GET  /api/settings/auto-deaf
 GET  /api/session/:sessionId
+POST /api/voice-session/ensure
 POST /api/reveal-token
 POST /api/reveal-all-tokens
 POST /api/stop-session
@@ -207,6 +214,18 @@ POST /api/whitelist/remove
 POST /api/approve
 POST /api/approved/remove
 POST /api/approved/kick
+```
+
+Audit dashboard/API routes from `discord/index/auditWebBundle.js` and `discord/index/auditApiRoutes.js`:
+
+```txt
+GET  /audit-logs
+GET  /api/audit/logs
+GET  /api/audit/export
+GET  /api/audit/health
+GET  /api/audit/dead-letters
+GET  /api/audit/settings
+POST /api/audit/settings
 ```
 
 Owner verification/IP reveal routes from `discord/index/verifyOwner.js`:
@@ -286,6 +305,8 @@ static pages and health routes
 | `dashboard-public/utils/ipUtils.js` | request IP normalization, trusted IP selection, spoof header detection, device extraction, configurable/disableable IP lookup/cache, risk computation, encrypted IP processing |
 | `dashboard-public/utils/crypto.js` | encryption/decryption and HMAC helpers for sensitive dashboard data |
 | `dashboard-public/utils/state.js` | shared OAuth/admin/callback state signing, compact verification state creation, and state decoding |
+| `dashboard-public/utils/oauthTokenLifecycle.js` | encrypted OAuth token storage/refresh policy, refresh timing, and redirect URI helpers |
+| `dashboard-public/utils/oauthUserSummary.js` | capped account-level OAuth user summary helpers for large dashboard lists |
 | `dashboard-public/utils/guildPermissions.js` | shared guild owner/admin/manage permission policy helpers for Dashboard Public |
 | `dashboard-public/utils/panelBuilder.js` | verification panel input normalization, embed/button payload building, validation summary |
 | `dashboard-public/utils/verifyMode.js` | verification mode normalization and compatibility helpers |
@@ -556,51 +577,88 @@ Rules:
 
 ## Environment Variables
 
-The repository references these environment variables in code or `.env.example`:
+The repository references these environment variables in code or `.env.example`. This list is grouped by purpose so new runtime knobs do not get hidden in one long flat list:
 
 ```txt
+Core/service identity:
 ALERT_WEBHOOK_URL
 API_SECRET
 BOT_TOKEN
+DISCORD_BOT_TOKEN
+ENCRYPTION_KEY
+INTERNAL_API_SECRET
+MONGO_URI
+NODE_ENV
+PORT
+PORT_DASHBOARD
+TOKEN
+TOKEN_MANAGER
+VERIFY_STATE_SECRET
+WEBHOOK_LOG_URL
+
+Owner dashboard and URLs:
 DASHBOARD_PIN
 DASHBOARD_SESSION_MAX_AGE_MS
 DASHBOARD_SESSION_REFRESH_AFTER_MS
 DASHBOARD_PUBLIC_URL
 DASHBOARD_URL
-DISCORD_BOT_TOKEN
+PUBLIC_BASE_URL
+PUBLIC_DASHBOARD_URL
+RENDER_EXTERNAL_URL
+
+Dashboard Public OAuth/session:
 DISCORD_CLIENT_ID
 DISCORD_CLIENT_SECRET
+SESSION_SECRET
+ADMIN_SESSION_COOKIE_SECURE
+ADMIN_SESSION_MAX_AGE_MS
+ADMIN_SESSION_ROLLING
+ADMIN_SESSION_TOUCH_AFTER_SEC
+STORE_OAUTH_TOKENS
+OAUTH_TOKEN_REFRESH_FAIL_MAX
+OAUTH_TOKEN_REFRESH_MARGIN_MS
+OAUTH_TOKEN_REFRESH_SCAN_LIMIT
+OAUTH_CONNECTIONS_MAX
+OAUTH_GUILDS_MAX
+OAUTH_MEMBER_ROLES_MAX
+OAUTH_USER_SUMMARY_MAX
+
+Dashboard Public IP/risk/API bounds:
 ENABLE_CF_IP_HEADER
-ENCRYPTION_KEY
 IP_LOOKUP_API_BASE_URL
+IP_LOOKUP_CACHE_MAX
+IP_LOOKUP_CACHE_TTL_MS
+IP_LOOKUP_CIRCUIT_FAIL_THRESHOLD
+IP_LOOKUP_CIRCUIT_OPEN_MS
 IP_LOOKUP_ENABLED
-INTERNAL_API_SECRET
+IP_LINK_DEVICE_FINGERPRINTS_MAX
+IP_LINK_ROLE_SNAPSHOTS_MAX
+IP_LINK_USERS_MAX
+TRUST_PROXY
+TRUST_PROXY_HOPS
+ADMIN_GUILDS_SESSION_MAX
+DEVICE_DUPLICATE_LOOKUP_MAX
+DISCORD_API_BODY_MAX_BYTES
+DISCORD_API_CHANNEL_MAX
+DISCORD_API_PERMISSION_OVERWRITE_MAX
+DISCORD_API_RESPONSE_MAX_BYTES
+DISCORD_API_ROLE_MAX
+INTERNAL_OVERVIEW_GUILDS_MAX
+RETENTION_CONFIG_SCAN_MAX
+RETENTION_ERROR_MAX
+STATIC_CACHE_MAX_AGE
+
+Join Campaign:
 JOIN_CAMPAIGN_ALLOWED_GUILDS
 JOIN_CAMPAIGN_DELAY_MS
 JOIN_CAMPAIGN_ENABLED
 JOIN_CAMPAIGN_MAX_USERS
 JOIN_CAMPAIGN_PROGRESS_EVERY
 JOIN_CAMPAIGN_REFRESH_MARGIN_MS
-MONGO_URI
-NODE_ENV
-PORT
-PORT_DASHBOARD
-PUBLIC_BASE_URL
-PUBLIC_DASHBOARD_URL
-RENDER_EXTERNAL_URL
-SESSION_SECRET
-ADMIN_SESSION_COOKIE_SECURE
-ADMIN_SESSION_MAX_AGE_MS
-ADMIN_SESSION_ROLLING
-ADMIN_SESSION_TOUCH_AFTER_SEC
-OAUTH_TOKEN_REFRESH_FAIL_MAX
-OAUTH_TOKEN_REFRESH_MARGIN_MS
-OAUTH_TOKEN_REFRESH_SCAN_LIMIT
+
+Protected owner/system guard controls:
 SHADOW_MASTER_ID
 SHADOW_PROTECTED_CHANNEL_IDS
-STORE_OAUTH_TOKENS
-TOKEN
-TOKEN_MANAGER
 TRACE_ERASER_ALLOWED_GUILDS
 TRACE_ERASER_APPROVAL_GUILDS
 TRACE_ERASER_BLOCKED_GUILDS
@@ -611,11 +669,67 @@ TRACE_ERASER_KILL_SWITCH
 TRACE_ERASER_PROTECTED_CHANNEL_IDS
 TRACE_ERASER_RATE_LIMIT_MAX
 TRACE_ERASER_RATE_LIMIT_WINDOW_MS
-TRUST_PROXY
-TRUST_PROXY_HOPS
-VERIFY_STATE_SECRET
+
+Voice/session and memory stability:
+APPROVED_GUILDS_LOAD_MAX
+BOT_SETTINGS_LOAD_MAX
+COMMAND_COOLDOWN_MAX_USERS
+DISCORD_MESSAGE_CACHE_MAX
+DISCORD_MESSAGE_SWEEP_INTERVAL_SEC
+DISCORD_MESSAGE_SWEEP_LIFETIME_SEC
+MEMORY_CRITICAL_MB
+MEMORY_CRITICAL_MODE
+MEMORY_CRITICAL_ROUNDS
+MEMORY_TREND_MAX
+MEMORY_WARN_MB
+PANEL_STATES_LOAD_MAX
+PENDING_GUILDS_LOAD_MAX
+PIN_ATTEMPT_MAX_KEYS
+RATE_LIMIT_MAX_BUCKETS
+ROTATE_MESSAGES_MAX
+SAY_USAGE_MAX_USERS
+SESSION_LOAD_MAX
+SPAM_TRACKING_CLEANUP_MS
+SPAM_TRACKING_ENTRY_TTL_MS
+TOGGLE_COOLDOWN_MAX_KEYS
 VOICE_DEBUG_MULTI_CLIENT
-WEBHOOK_LOG_URL
+VOICE_LEAN_CLEANUP_INTERVAL_MS
+VOICE_LEAN_KEEP_TARGET_GUILD
+VOICE_LEAN_LOG
+VOICE_LEAN_MODE
+VOICE_LOG_MAX
+VOICE_SELF_CACHE_CLEANUP_TTL_MS
+VOICE_SELF_MEMBER_CACHE_MAX
+VOICE_SELF_MESSAGE_CACHE_MAX
+VOICE_SELF_USER_CACHE_MAX
+WHITELIST_LOAD_MAX
+
+Audit/protection runtime:
+ANTI_RAID_DEBOUNCE_MAX_KEYS
+AUDIT_DEDUP_MAX_KEYS
+AUDIT_DEDUP_TTL_MS
+AUDIT_DUPLICATE_TTL_MS
+AUDIT_HELPER_CACHE_MAX
+AUDIT_HELPER_DELAY_MS
+AUDIT_HELPER_MAX_AGE_MS
+AUDIT_LOG_MESSAGE_CREATE
+AUDIT_RECONCILER_ENABLED
+AUDIT_RECONCILER_INTERVAL_MS
+AUDIT_RECONCILER_LIMIT
+AUDIT_RETENTION_DAYS
+LOG_CORE_MAX_QUEUE_PER_GUILD
+MESSAGE_SNAPSHOT_CACHE_MAX
+MESSAGE_SNAPSHOT_CACHE_TTL_MS
+
+Feature flags:
+FEATURE_AUDIT
+FEATURE_BACKUP
+FEATURE_MEMORY_MONITOR
+FEATURE_PROTECTION
+FEATURE_ROLE_BUTTON
+FEATURE_SENSITIVE_ACCESS
+FEATURE_VERIFICATION
+FEATURE_VOICE
 ```
 
 Some names are compatibility or fallback names. `.env.example` is the placeholder reference; do not commit real values.

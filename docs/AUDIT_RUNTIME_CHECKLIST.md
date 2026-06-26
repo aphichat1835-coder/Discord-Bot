@@ -75,4 +75,4 @@ Do not merge until:
 - Runtime test server passes gateway log checks.
 - Audit reconciler is tested with opt-in mode.
 - Dashboard/API routes are registered safely and remain owner-auth protected.
-- CodeFactor exclusion is removed only after real moderation refactor.
+- Static-analysis suppressions or exclusions are reviewed only with implementation evidence and a scoped refactor plan.

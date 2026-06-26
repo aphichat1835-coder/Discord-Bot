@@ -30,7 +30,7 @@ services:
       - key: NODE_ENV
         value: production
       - key: NODE_VERSION
-        value: "20.19.4"
+        value: "24"
       - key: MONGO_URI
         sync: false
       - key: TOKEN_MANAGER
@@ -79,7 +79,7 @@ services:
       - key: NODE_ENV
         value: production
       - key: NODE_VERSION
-        value: "20.19.4"
+        value: "24"
       - key: MONGO_URI
         sync: false
       - key: TOKEN_MANAGER
@@ -107,7 +107,7 @@ services:
       - key: DASHBOARD_URL
         sync: false
       - key: STORE_OAUTH_TOKENS
-        value: "false"
+        value: "true"
       - key: TRUST_PROXY
         value: "true"
       - key: TRUST_PROXY_HOPS

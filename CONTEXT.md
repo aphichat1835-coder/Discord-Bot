@@ -48,6 +48,7 @@ Responsibilities:
 - Slash command registration and routing.
 - Voice/session lifecycle, resume, health, and control panel.
 - Owner dashboard pages and JSON/control APIs.
+- Owner Audit dashboard/API bundle at `/audit-logs` and `/api/audit/*`.
 - Audit logging, protection hooks, role buttons, and guild approval flow.
 - Owner verification/IP reveal review surface.
 - Protected owner/system hook initialization at subsystem level.
@@ -81,6 +82,11 @@ discord/index.js
 discord/index/system.js
 discord/index/events.js
 discord/index/server.js
+discord/index/auditWebBundle.js
+discord/index/auditApiRoutes.js
+discord/index/auditDashboardPage.js
+discord/index/joinCampaignRoutes.js
+discord/index/joinCampaignPage.js
 discord/index/views.js
 discord/index/viewStyles.js
 discord/core/webhooks.js
@@ -147,6 +153,7 @@ Preserve:
 - Multiple identities can be active in the same guild/channel.
 - `voiceWorker` owns live lifecycle.
 - `sessionManager` owns persistence, locks, metadata, and DB state.
+- Dashboard/API starts should flow through the central `voiceWorker.ensureVoiceSession()` path instead of creating duplicate join logic.
 
 ### Owner dashboard
 
@@ -154,6 +161,8 @@ Start with:
 
 ```txt
 discord/index/server.js
+discord/index/auditWebBundle.js
+discord/index/joinCampaignRoutes.js
 discord/index/views.js
 discord/index/auth.js
 discord/index/verifyOwner.js
@@ -169,6 +178,7 @@ Surfaces:
 - Whitelist management.
 - Approved guild management.
 - Join Campaign controls for eligible `guilds.join` OAuth users.
+- Audit search/export/health/settings/dead-letter dashboard.
 - Logs and voice logs.
 - Token reveal controls.
 - Owner verification/IP reveal review.
@@ -207,6 +217,7 @@ Start with:
 
 ```txt
 discord/auditLogger.js
+discord/logging/
 discord/features/protection.js
 discord/features/roleButton.js
 discord/index/events.js
@@ -224,6 +235,7 @@ These cover message/member/voice/server/security audit logging, anti-raid/anti-s
 - `ROADMAP.md` - approved minimal refactor and future work.
 - `SECURITY.md` - security/privacy policy.
 - `CHANGELOG.md` - change history.
+- `docs/RUNBOOK.md` and focused `docs/AUDIT_*` files - operational/audit runbooks, not architecture source of truth.
 
 ## High-Risk Areas
 

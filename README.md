@@ -90,6 +90,8 @@ Use `.env.example` as a placeholder reference only. Never commit real secrets.
 - [SECURITY.md](SECURITY.md) - secrets, OAuth, sessions, tokens, raw IP, logs, and owner/admin security policy.
 - [CHANGELOG.md](CHANGELOG.md) - project documentation and structural change history.
 - [.github/copilot-instructions.md](.github/copilot-instructions.md) - short GitHub Copilot guidance.
+- [docs/RUNBOOK.md](docs/RUNBOOK.md) - operational triage for RAM, voice sessions, IP reveal, retention, restore, token rotation, audit logs, and dependency audit.
+- [docs/AUDIT_RUNTIME_TEST_PLAN.md](docs/AUDIT_RUNTIME_TEST_PLAN.md) and related `docs/AUDIT_*` files - focused Audit v4 runtime/manual verification references.
 
 ## Safety Rules
 
@@ -111,25 +113,13 @@ npm audit --audit-level=high
 npm --prefix dashboard-public audit --audit-level=high
 ```
 
-`npm run check` covers the Service 1 entrypoints and extracted helper modules, including:
+`npm run check` runs the full project syntax/static guard chain:
 
 ```txt
-discord/commands/registry.js
-discord/commands/customIds.js
-discord/commands/panelViews.js
-discord/commands/panelInteractions.js
-discord/core/env.js
-discord/core/http.js
-discord/core/webhooks.js
-discord/guards/commandGuards.js
-discord/guards/dashboardGuards.js
-discord/index/dashboardState.js
-discord/index/sessionSerializer.js
-discord/index/viewHelpers.js
-discord/index/viewStyles.js
-discord/sessions/sessionErrors.js
-discord/sessions/tokenUtils.js
-discord/sessions/voiceLabels.js
+Service 1 JavaScript syntax, excluding the owner-locked protected file
+Dashboard Public JavaScript syntax
+scripts/*.js syntax
+static memory guard checks
 ```
 
 Run only checks that match the change. Report exact commands and results; do not claim a check passed unless it was actually run.

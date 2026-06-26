@@ -76,9 +76,10 @@
 
 1. เช็ค Dashboard Public `/health`
 2. ดู `memory`, `ipLookup`, `sessionCookie.policy`, `sessionCookie.maxAgeMs`, และ `retention.lastSummary`
-3. ค่าเริ่มต้นของ admin session คือ absolute expiry 24 ชั่วโมง:
+3. ค่าเริ่มต้นของ admin session คือ rolling expiry 24 ชั่วโมง:
    - `ADMIN_SESSION_MAX_AGE_MS`
-   - `ADMIN_SESSION_ROLLING=false`
+   - `ADMIN_SESSION_ROLLING=true`
+   - ถ้าต้องการให้หมดอายุแบบ absolute ให้ตั้ง `ADMIN_SESSION_ROLLING=false`
 4. สำหรับ diagnostics ภายใน ใช้:
    - `GET /internal/diagnostics`
    - ต้องส่ง `x-internal-secret`

@@ -31,7 +31,7 @@ ROADMAP.md
 SECURITY.md
 ```
 
-Old scattered docs, stubs, append helpers, and duplicate `docs/` content should stay removed once their important content is merged into the active set.
+The active root documentation set remains the source of truth. The remaining `docs/` files are focused operational/audit runbooks and test plans; keep them only when they match the current implementation and do not duplicate protected or sensitive owner/system details.
 
 ### Architecture baseline
 

@@ -13,7 +13,7 @@ const { registerAuditWebBundle } = require("./auditWebBundle");
 Inside `registerRoutes`, Service 1 mounts:
 
 ```js
-registerAuditWebBundle({ app, express, sessionManager, client, auditLogger, checkAuth });
+registerAuditWebBundle({ app, express, sessionManager, client, auditLogger, checkAuth, requireCsrf });
 ```
 
 ## Routes this enables
@@ -24,7 +24,7 @@ registerAuditWebBundle({ app, express, sessionManager, client, auditLogger, chec
 - `GET /api/audit/health`
 - `GET /api/audit/dead-letters`
 - `GET /api/audit/settings`
-- `POST /api/audit/settings`
+- `POST /api/audit/settings` with dashboard CSRF protection
 
 ## Safety notes
 

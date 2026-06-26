@@ -31,6 +31,9 @@
 
 ### Changed
 
+- Refreshed active documentation against the current implementation on 2026-06-26, including owner audit routes, Join Campaign routes, central voice-session ensure API, bounded runtime environment variables, Dashboard Public rolling-session defaults, and remaining focused `docs/` runbooks.
+- Updated `render.yaml` deployment defaults to match the Node.js 24 project baseline and enabled OAuth token storage by default for refresh-capable authorization flows.
+- Hardened protected owner/system HTML rendering and reduced internal method complexity without splitting the owner-locked file or documenting sensitive behavior.
 - Rebuilt `README.md` as a human-friendly entry point for the full personal multi-tool bot.
 - Rebuilt `AGENTS.md` as the active AI/agent rulebook with the new root documentation set.
 - Rebuilt `CONTEXT.md` as the quick project/service/subsystem map.
