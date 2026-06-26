@@ -182,7 +182,7 @@ function findTextChannelByName(guild, channelName) {
         : Array.from(guild.channels.cache?.values?.() || []);
     const find = typeof channels.find === "function"
         ? channels.find.bind(channels)
-        : predicate => Array.from(channels || []).find(predicate);
+        : predicate => Array.from(channels || []).find(channel => predicate(channel));
     return find(channel =>
         channel?.name === channelName &&
         isSendCapableTextChannel(channel)

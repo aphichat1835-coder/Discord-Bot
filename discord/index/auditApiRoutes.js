@@ -154,7 +154,7 @@ function registerAuditApiRoutes({ app, express, sessionManager, client, auditLog
     app.post("/api/audit/settings", csrfMiddleware(requireCsrf), express.json({ limit: "16kb" }), async (req, res) => {
         if (!checkAuth(req, res)) return;
         try {
-            const input = { ...(req.query || {}), ...(req.body || {}) };
+            const input = { ...req.query, ...req.body };
             const guildId = readGuildId(input);
             if (!guildId) return res.status(400).json({ success: false, error: "guildId required" });
             const settings = await auditSettings.saveAuditSettings(sessionManager, guildId, input);

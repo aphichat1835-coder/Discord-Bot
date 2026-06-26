@@ -897,7 +897,7 @@ async function resolveVoiceTarget(guildId, channelId) {
     const channel = guild.channels?.cache?.get(channelId) ||
         await guild.channels?.fetch?.(channelId)?.catch(() => null);
 
-    if (!channel || !channel.isVoice?.()) throw new Error("CHANNEL_NOT_FOUND");
+    if (!channel?.isVoice?.()) throw new Error("CHANNEL_NOT_FOUND");
 
     return { guild, channel };
 }

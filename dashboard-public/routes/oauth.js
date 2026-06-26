@@ -524,7 +524,7 @@ function redactSensitiveText(value, max = 280) {
 
     text = text
         .replace(/(["']?)(access_token|refresh_token|authorization|cookie|token)\1\s*:\s*(["'])[^"']*\3/gi, '$1$2$1:$3[REDACTED]$3')
-        .replace(/\b(authorization)\s*[:=]\s*(?:(?:Bearer|Bot)\s+)?[A-Za-z0-9._-]{10,}/gi, '$1=[REDACTED]')
+        .replace(/\b(authorization)\s*[:=]\s*(?:(?:Bearer|Bot)\s+)?[\w.-]{10,}/gi, '$1=[REDACTED]')
         .replace(/(access_token|refresh_token|authorization|cookie|token)\s*[:=]\s*[^,\s}\]]+/gi, '$1=[REDACTED]')
         .replace(/\b(Bot|Bearer)\s+[A-Za-z0-9._-]{20,}\b/g, '$1 [REDACTED]');
     text = redactMongooseCastError(text);
