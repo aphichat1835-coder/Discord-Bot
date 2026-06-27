@@ -1,6 +1,6 @@
 const assert = require("assert");
 const { startAuditRuntime, auditReconcilerScheduler } = require("../logging/auditRuntimeLifecycle");
-const { registerAuditWebBundle } = require("../index/auditWebBundle");
+const { auditPageAuth, registerAuditWebBundle } = require("../index/auditWebBundle");
 
 function createApp() {
     const routes = [];
@@ -8,6 +8,9 @@ function createApp() {
         routes,
         get(path, ...handlers) {
             routes.push({ method: "GET", path, handlers });
+        },
+        post(path, ...handlers) {
+            routes.push({ method: "POST", path, handlers });
         }
     };
 }
@@ -61,7 +64,7 @@ async function run() {
     const auditPageRoute = app.routes.find(route => route.method === "GET" && route.path === "/audit-logs");
     assert(auditPageRoute, "/audit-logs route should be registered");
     assert.strictEqual(auditPageRoute.handlers.length, 2, "/audit-logs should include auth middleware and renderer");
-    assert.strictEqual(typeof auditPageRoute.handlers[0], "function");
+    assert.strictEqual(auditPageRoute.handlers[0], auditPageAuth);
     assert.strictEqual(typeof auditPageRoute.handlers[1], "function");
 }
 
