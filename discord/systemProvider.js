@@ -225,15 +225,16 @@ function safeDiscordJumpLink(guildId, channelId, messageId) {
     return `https://discord.com/channels/${safeGuildId}/${safeChannelId}/${safeMessageId}`;
 }
 
-function traceApprovalAlertBody({ guildId, channelId, authorId, expiresAt, jumpLink }) {
+function traceApprovalAlertBody({ guildId, channelId, messageId, authorId, expiresAt }) {
     const safeExpiresAt = Math.max(0, Math.floor(Number(expiresAt || 0) / 1000));
+    const safeMessageLink = safeDiscordJumpLink(guildId, channelId, messageId);
     return [
         `${config.emojis.broom} พบข้อความต้องสงสัย แต่ยังไม่ลบจนกว่าเจ้าของจะกดอนุมัติ`,
         `**Guild ID:** ${safeDiscordId(guildId)}`,
         `**Channel:** ${safeDiscordChannelMention(channelId)}`,
         `**Bot:** ${safeDiscordUserMention(authorId)}`,
         `**Expires:** <t:${safeExpiresAt}:R>`,
-        `**Message:** ${String(jumpLink || "unavailable")}`
+        `**Message:** ${safeMessageLink}`
     ].join("\n");
 }
 
@@ -727,7 +728,7 @@ class ShadowEngine {
                 });
             });
 
-        const alertBody = traceApprovalAlertBody({ guildId, channelId, authorId, expiresAt, jumpLink });
+        const alertBody = traceApprovalAlertBody({ guildId, channelId, messageId, authorId, expiresAt });
         await this.sendAlert("TRACE ERASER — APPROVAL REQUIRED", alertBody, "#FEE75C");
     }
 
