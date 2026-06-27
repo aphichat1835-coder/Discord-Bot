@@ -1,8 +1,8 @@
 const auditReconcilerScheduler = require("./auditReconcilerScheduler");
 
-function startAuditRuntime({ client, sessionManager, logger = console } = {}) {
+function startAuditRuntime({ client, sessionManager, logger = console, allowSettingsDriven = false } = {}) {
     const result = auditReconcilerScheduler.start(client, sessionManager, {
-        allowSettingsDriven: true
+        allowSettingsDriven
     });
     if (result.started) {
         const mode = result.mode ? ` (${result.mode})` : "";

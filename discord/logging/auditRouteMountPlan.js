@@ -1,29 +1,21 @@
-const auditReconcilerScheduler = require("./auditReconcilerScheduler");
+const AUDIT_ROUTES = Object.freeze([
+    "/audit-logs",
+    "/api/audit/logs",
+    "/api/audit/export",
+    "/api/audit/health",
+    "/api/audit/dead-letters",
+    "/api/audit/settings"
+]);
 
-function startAuditRuntime({ client, sessionManager, logger = console } = {}) {
-    const result = auditReconcilerScheduler.start(client, sessionManager, {
-        allowSettingsDriven: true
-    });
-    if (result.started) {
-        const mode = result.mode ? ` (${result.mode})` : "";
-        logger.log?.(`[AUDIT] 🔁 Audit reconciler scheduler started every ${result.intervalMs}ms${mode}.`);
-    } else {
-        logger.log?.(`[AUDIT] 🔁 Audit reconciler scheduler inactive: ${result.reason}`);
-    }
-    return result;
-}
-
-function stopAuditRuntime() {
-    return auditReconcilerScheduler.stop();
-}
-
-function auditRuntimeStats() {
-    return auditReconcilerScheduler.stats();
+function buildAuditRouteMountPlan() {
+    return {
+        serverModule: "discord/index/server.js",
+        patchDoc: "docs/AUDIT_SERVER_INTEGRATION_PATCH.md",
+        routes: [...AUDIT_ROUTES]
+    };
 }
 
 module.exports = {
-    startAuditRuntime,
-    stopAuditRuntime,
-    auditRuntimeStats,
-    auditReconcilerScheduler
+    AUDIT_ROUTES,
+    buildAuditRouteMountPlan
 };
