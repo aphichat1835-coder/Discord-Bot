@@ -1,28 +1,21 @@
+const AUDIT_ROUTES = Object.freeze([
+    "/audit-logs",
+    "/api/audit/logs",
+    "/api/audit/export",
+    "/api/audit/health",
+    "/api/audit/dead-letters",
+    "/api/audit/settings"
+]);
+
 function buildAuditRouteMountPlan() {
     return {
         serverModule: "discord/index/server.js",
         patchDoc: "docs/AUDIT_SERVER_INTEGRATION_PATCH.md",
-        importLine: "const { registerAuditWebBundle } = require(\"./auditWebBundle\");",
-        mountAfter: "const rateLimiter = createRateLimiter(requestCounts, config, sessionManager);",
-        mountCall: "registerAuditWebBundle({ app, express, sessionManager, client, auditLogger, checkAuth, requireCsrf: auth.requireCsrf });",
-        routes: [
-            "/api/audit/logs",
-            "/api/audit/export",
-            "/api/audit/health",
-            "/api/audit/dead-letters",
-            "/api/audit/settings",
-            "/audit-logs"
-        ],
-        notes: [
-            "Mount inside registerRoutes after checkAuth exists.",
-            "Do not remove existing /api auth, rate limit, reveal token, or CSRF logic.",
-            "The audit routes still call checkAuth directly, and POST settings also receives the dashboard CSRF guard.",
-            "Settings routes are log-only controls: message create logging, reconciler opt-in, retention, and category toggles.",
-            "Dead-letter route lets the owner inspect failed log sends without losing failed audit evidence."
-        ]
+        routes: [...AUDIT_ROUTES]
     };
 }
 
 module.exports = {
+    AUDIT_ROUTES,
     buildAuditRouteMountPlan
 };
