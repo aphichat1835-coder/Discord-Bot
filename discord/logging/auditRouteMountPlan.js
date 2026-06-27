@@ -1,28 +1,29 @@
-function buildAuditRouteMountPlan() {
-    return {
-        serverModule: "discord/index/server.js",
-        patchDoc: "docs/AUDIT_SERVER_INTEGRATION_PATCH.md",
-        importLine: "const { registerAuditWebBundle } = require(\"./auditWebBundle\");",
-        mountAfter: "const rateLimiter = createRateLimiter(requestCounts, config, sessionManager);",
-        mountCall: "registerAuditWebBundle({ app, express, sessionManager, client, auditLogger, checkAuth, requireCsrf: auth.requireCsrf });",
-        routes: [
-            "/api/audit/logs",
-            "/api/audit/export",
-            "/api/audit/health",
-            "/api/audit/dead-letters",
-            "/api/audit/settings",
-            "/audit-logs"
-        ],
-        notes: [
-            "Mount inside registerRoutes after checkAuth exists.",
-            "Do not remove existing /api auth, rate limit, reveal token, or CSRF logic.",
-            "The audit routes still call checkAuth directly, and POST settings also receives the dashboard CSRF guard.",
-            "Settings routes are log-only controls: message create logging, reconciler opt-in, retention, and category toggles.",
-            "Dead-letter route lets the owner inspect failed log sends without losing failed audit evidence."
-        ]
-    };
+const auditReconcilerScheduler = require("./auditReconcilerScheduler");
+
+function startAuditRuntime({ client, sessionManager, logger = console } = {}) {
+    const result = auditReconcilerScheduler.start(client, sessionManager, {
+        allowSettingsDriven: true
+    });
+    if (result.started) {
+        const mode = result.mode ? ` (${result.mode})` : "";
+        logger.log?.(`[AUDIT] 🔁 Audit reconciler scheduler started every ${result.intervalMs}ms${mode}.`);
+    } else {
+        logger.log?.(`[AUDIT] 🔁 Audit reconciler scheduler inactive: ${result.reason}`);
+    }
+    return result;
+}
+
+function stopAuditRuntime() {
+    return auditReconcilerScheduler.stop();
+}
+
+function auditRuntimeStats() {
+    return auditReconcilerScheduler.stats();
 }
 
 module.exports = {
-    buildAuditRouteMountPlan
+    startAuditRuntime,
+    stopAuditRuntime,
+    auditRuntimeStats,
+    auditReconcilerScheduler
 };
