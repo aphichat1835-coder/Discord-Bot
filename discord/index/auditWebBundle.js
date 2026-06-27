@@ -3,10 +3,10 @@ const { registerAuditApiRoutes } = require("./auditApiRoutes");
 const { buildAuditDashboardPage } = require("./auditDashboardPage");
 
 function auditPageAuth(req, res, next) {
-    if (typeof auth.requirePin === "function") {
-        return auth.requirePin(req, res, next);
+    if (typeof auth.requirePin !== "function") {
+        return res.status(503).send("Dashboard authentication is unavailable.");
     }
-    return next();
+    return auth.requirePin(req, res, next);
 }
 
 function registerAuditWebBundle({ app, express, sessionManager, client, auditLogger, checkAuth, requireCsrf }) {
