@@ -1,13 +1,5 @@
 const crypto = require("node:crypto");
-
-function escapeHtml(value) {
-    return String(value ?? "")
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll("\"", "&quot;")
-        .replaceAll("'", "&#39;");
-}
+const { escapeHtml, safeStyleContent } = require("./htmlUtils");
 
 function readCookie(req, name) {
     const raw = String(req.headers?.cookie || "");
@@ -34,7 +26,7 @@ function renderShadowLoginPage(showInvalidPin, shadowCss = "") {
     return `<!DOCTYPE html><html lang="th"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>🔐 Shadow Portal</title>
-<style>${shadowCss}</style>
+<style>${safeStyleContent(shadowCss)}</style>
 </head><body>
 <div class="login-wrap">
 <div class="login-box">
@@ -90,6 +82,10 @@ function issueShadowSessionCookie(res, { cookieName, ttlMs, getCookieSecret }) {
     });
 }
 
+function bruteKey(req) {
+    return req.ip || "unknown";
+}
+
 function createShadowPortalAuth({
     cookieName,
     ttlMs,
@@ -98,10 +94,6 @@ function createShadowPortalAuth({
     shadowCss = ""
 } = {}) {
     const bruteGuard = new Map();
-
-    function bruteKey(req) {
-        return req.ip || "unknown";
-    }
 
     function trackFailedPin(req, body) {
         if (!body.pin) return;
@@ -121,7 +113,8 @@ function createShadowPortalAuth({
         return Math.ceil((rec.lockUntil - Date.now()) / 60000);
     }
 
-    function authorize(req, res, body = {}, providedPin) {
+    function authorize(req, res, body, providedPin) {
+        const requestBody = body || {};
         const options = { cookieName, ttlMs, getCookieSecret };
         if (providedPin === getPin()) {
             issueShadowSessionCookie(res, options);
@@ -135,8 +128,8 @@ function createShadowPortalAuth({
             return false;
         }
 
-        trackFailedPin(req, body);
-        res.send(renderShadowLoginPage(Boolean(body.pin), shadowCss));
+        trackFailedPin(req, requestBody);
+        res.send(renderShadowLoginPage(Boolean(requestBody.pin), shadowCss));
         return false;
     }
 

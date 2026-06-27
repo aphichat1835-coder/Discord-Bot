@@ -1,19 +1,4 @@
-function escapeHtml(value) {
-    return String(value ?? "")
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll("\"", "&quot;")
-        .replaceAll("'", "&#39;");
-}
-
-function escapeAttr(value) {
-    return escapeHtml(value);
-}
-
-function hiddenInput(name, value) {
-    return `<input type="hidden" name="${escapeAttr(name)}" value="${escapeAttr(value)}">`;
-}
+const { escapeHtml, hiddenInput, safeStyleContent } = require("./htmlUtils");
 
 function renderShadowDashboardPage(viewData = {}, state = {}) {
     const {
@@ -46,7 +31,7 @@ function renderShadowDashboardPage(viewData = {}, state = {}) {
     return `<!DOCTYPE html><html lang="th"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>👁️‍🗨️ Shadow Master Console</title>
-<style>${SHADOW_CSS}</style>
+<style>${safeStyleContent(SHADOW_CSS)}</style>
 </head><body>
 <div class="container">
 
