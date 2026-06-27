@@ -65,38 +65,63 @@ async function handleProtectSession(body, context) {
     return true;
 }
 
-const ACTION_HANDLERS = Object.freeze({
-    toggle_feature: handleToggleFeature,
-    add_vip: handleAddVip,
-    remove_vip: handleRemoveVip,
-    arm_guild: handleArmGuild,
-    disarm_guild: handleDisarmGuild,
-    change_pin: handleChangePin,
-    ghost_toggle: async (_body, context) => {
-        context.toggleGhostMode();
-        return true;
-    },
-    trace_kill_toggle: async (_body, context) => {
-        context.toggleTraceKillSwitch();
-        return true;
-    },
-    trace_dry_run_toggle: async (_body, context) => {
-        context.toggleTraceDryRun();
-        return true;
-    },
-    protect_session: handleProtectSession
-});
+async function handleGhostToggle(_body, context) {
+    context.toggleGhostMode();
+    return true;
+}
+
+async function handleTraceKillToggle(_body, context) {
+    context.toggleTraceKillSwitch();
+    return true;
+}
+
+async function handleTraceDryRunToggle(_body, context) {
+    context.toggleTraceDryRun();
+    return true;
+}
 
 async function applyShadowPortalAction(body = {}, context = {}) {
-    const handler = ACTION_HANDLERS[normalizeAction(body)];
-    if (!handler) return false;
-    return handler(body, context);
+    switch (normalizeAction(body)) {
+        case "toggle_feature":
+            return handleToggleFeature(body, context);
+        case "add_vip":
+            return handleAddVip(body, context);
+        case "remove_vip":
+            return handleRemoveVip(body, context);
+        case "arm_guild":
+            return handleArmGuild(body, context);
+        case "disarm_guild":
+            return handleDisarmGuild(body, context);
+        case "change_pin":
+            return handleChangePin(body, context);
+        case "ghost_toggle":
+            return handleGhostToggle(body, context);
+        case "trace_kill_toggle":
+            return handleTraceKillToggle(body, context);
+        case "trace_dry_run_toggle":
+            return handleTraceDryRunToggle(body, context);
+        case "protect_session":
+            return handleProtectSession(body, context);
+        default:
+            return false;
+    }
 }
 
 module.exports = {
-    ACTION_HANDLERS,
     applyShadowPortalAction,
     normalizeAction,
     safeIdFromBody,
-    toggleSetMembership
+    toggleSetMembership,
+    _test: {
+        handleAddVip,
+        handleArmGuild,
+        handleChangePin,
+        handleDisarmGuild,
+        handleGhostToggle,
+        handleProtectSession,
+        handleRemoveVip,
+        handleToggleFeature,
+        handleTraceDryRunToggle,
+        handleTraceKillToggle
+    }
 };
