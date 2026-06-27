@@ -270,7 +270,7 @@ function registerRoutes({
         if (!valid) {
             attempts.count++;
             pinAttempts.set(ip, attempts);
-            const safeNext = (next || "/").replace(/[<>"]/g, "");
+            const safeNext = (next || "/").replace(/[<>\"]/g, "");
             return res.send(auth.pinPageHTML(true, safeNext));
         }
 
@@ -382,54 +382,67 @@ function registerRoutes({
         }
     });
 
-    // ── Shadow Portal ──
-    if (typeof setupTelemetryRouter === "function") {
-        setupTelemetryRouter(app, client, null);
-        console.log("[SHADOW] 🌐 Shadow web portal registered.");
-    }
+    app.get("/api/logs", (req, res) => {
+        res.json(webLogs.slice(-MAX_LOGS).reverse());
+    });
 
-    // ── Session Detail API ──
-    app.get("/api/session/:sessionId", (req, res) => {
+    app.get("/api/voice-logs", (req, res) => {
         try {
-            const sid = req.params.sessionId;
-            const session = sessionManager.getSession(sid);
-
-            if (!session) return res.json({ found: false });
-
-            const allLogs = voiceWorker.getVoiceLogs();
-            const sessionLogs = allLogs.filter(l => l.sessionId === sid).slice(0, 40);
-
-            res.json({
-                found: true,
-                session: serializeVoiceSession(session),
-                voiceLogs: sessionLogs
-            });
+            res.json(voiceWorker.getVoiceLogs().slice(-300).reverse());
         } catch (e) {
-            res.status(500).json({ found: false, error: e.message });
+            res.status(500).json({ success: false, error: e.message });
         }
     });
 
-    // ── Reveal Token APIs ──
-    app.post("/api/reveal-token", express.json(), (req, res) => {
+    app.get("/api/sessions", (req, res) => {
+        try {
+            const sessions = Array.from(sessionManager.getAllSessions().values()).map(serializeVoiceSession);
+            res.json({ success: true, sessions });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    app.get("/api/session/:id", (req, res) => {
+        try {
+            const session = sessionManager.getSession(req.params.id);
+            if (!session) return res.status(404).json({ success: false, error: "Session not found" });
+            res.json({ success: true, session: serializeVoiceSession(session) });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    app.get("/api/pending-guilds", async (_req, res) => {
+        try {
+            const pending = await sessionManager.getPendingGuilds();
+            res.json({ success: true, pending });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    app.get("/api/approved-guilds", async (_req, res) => {
+        try {
+            const approved = await sessionManager.getApprovedGuildDocs?.();
+            res.json({ success: true, approved: approved || [] });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    app.get("/api/reveal-token/:sessionId", (req, res) => {
         try {
             if (!checkRevealPin(req, res)) return;
-
-            const { sessionId } = req.body || {};
-            const token = getSessionTokenSafe(sessionManager, sessionId);
-
-            if (!token) {
-                return res.status(404).json({
-                    success: false,
-                    error: "ไม่พบ session นี้"
-                });
-            }
-
+            const token = getSessionTokenSafe(sessionManager, req.params.sessionId);
+            if (!token) return res.status(404).json({ success: false, error: "token not found" });
             res.json({ success: true, token });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
         }
     });
-        app.post("/api/reveal-all-tokens", express.json(), (req, res) => {
+
+    app.post("/api/reveal-all-tokens", express.json(), (req, res) => {
         try {
             if (!checkRevealPin(req, res)) return;
 
@@ -625,7 +638,8 @@ function registerRoutes({
     app.get("/api/commands-audit", (req, res) => {
         res.json(buildCommandAuditPayload(commandAuditLog));
     });
-        // ── Settings ──
+
+    // ── Settings ──
     app.post("/api/settings", express.json(), async (req, res) => {
         if (!checkAuth(req, res)) return;
 
@@ -864,6 +878,7 @@ function registerRoutes({
             res.status(500).json({ success: false, error: e.message });
         }
     });
+
     // ── Approved Guilds ──
     app.post("/api/approve", express.json(), async (req, res) => {
         if (!checkAuth(req, res)) return;
@@ -956,7 +971,7 @@ function registerRoutes({
                 console.warn(`[DASHBOARD] ⚠️ Continuing guild leave after ${failedStops} voice session stop failure(s) for guild ${guildId}`);
             }
 
-                    await guild.leave();
+            await guild.leave();
             await sessionManager.ApprovedGuildModel.deleteOne({ guildId });
 
             sendLogWebhook({
