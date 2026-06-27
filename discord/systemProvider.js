@@ -235,14 +235,16 @@ function traceApprovalAlertBody({ guildId, channelId, messageId, authorId, expir
     const safeAuthorMention = safeDiscordText(safeDiscordUserMention(authorId));
     const safeExpiresAt = safeDiscordText(String(Math.max(0, Math.floor(Number(expiresAt || 0) / 1000))));
     const safeMessageLink = safeDiscordText(safeDiscordJumpLink(guildId, channelId, messageId));
-    return [
-        `${config.emojis.broom} พบข้อความต้องสงสัย แต่ยังไม่ลบจนกว่าเจ้าของจะกดอนุมัติ`,
-        `**Guild ID:** ${safeGuildId}`,
-        `**Channel:** ${safeChannelMention}`,
-        `**Bot:** ${safeAuthorMention}`,
-        `**Expires:** <t:${safeExpiresAt}:R>`,
-        `**Message:** ${safeMessageLink}`
-    ].join("\n");
+    const safeBroom = safeDiscordText(config.emojis?.broom || "🧹");
+
+    const lines = [];
+    lines.push(safeBroom + " พบข้อความต้องสงสัย แต่ยังไม่ลบจนกว่าเจ้าของจะกดอนุมัติ");
+    lines.push("**Guild ID:** " + safeGuildId);
+    lines.push("**Channel:** " + safeChannelMention);
+    lines.push("**Bot:** " + safeAuthorMention);
+    lines.push("**Expires:** <t:" + safeExpiresAt + ":R>");
+    lines.push("**Message:** " + safeMessageLink);
+    return lines.join("\n");
 }
 
 function htmlTag(tag, attrs = {}, children = []) {
