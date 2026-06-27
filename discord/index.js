@@ -439,7 +439,7 @@ client.on("ready", async () => {
         try {
             auditLogger.register(client, sessionManager);
             console.log("[AUDIT] ✅ Audit Logger registered.");
-            startAuditRuntime({ client, sessionManager });
+            startAuditRuntime({ client, sessionManager, allowSettingsDriven: true });
         } catch (auditErr) {
             console.error("[AUDIT] ❌ Failed to register Audit Logger:", auditErr.message);
         }
