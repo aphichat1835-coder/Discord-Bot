@@ -1,14 +1,10 @@
+const auth = require("./auth");
 const { registerAuditApiRoutes } = require("./auditApiRoutes");
 const { buildAuditDashboardPage } = require("./auditDashboardPage");
 
 function auditPageAuth(req, res, next) {
-    try {
-        const auth = require("./auth");
-        if (typeof auth.requirePin === "function") {
-            return auth.requirePin(req, res, next);
-        }
-    } catch {
-        // Fall through to the normal page render in tests or stripped-down runtimes.
+    if (typeof auth.requirePin === "function") {
+        return auth.requirePin(req, res, next);
     }
     return next();
 }
