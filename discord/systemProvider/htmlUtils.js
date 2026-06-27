@@ -24,7 +24,7 @@ function htmlTag(tag, attrs = {}, children = []) {
 }
 
 function safeStyleContent(value) {
-    return String(value ?? "").replaceAll("</style", "<\\/style");
+    return String(value ?? "").replace(/<\/style/gi, String.raw`<\/style`);
 }
 
 module.exports = {

@@ -225,14 +225,21 @@ function safeDiscordJumpLink(guildId, channelId, messageId) {
     return `https://discord.com/channels/${safeGuildId}/${safeChannelId}/${safeMessageId}`;
 }
 
+function safeDiscordText(value) {
+    return escapeHtml(String(value ?? ""));
+}
+
 function traceApprovalAlertBody({ guildId, channelId, messageId, authorId, expiresAt }) {
-    const safeExpiresAt = Math.max(0, Math.floor(Number(expiresAt || 0) / 1000));
-    const safeMessageLink = safeDiscordJumpLink(guildId, channelId, messageId);
+    const safeGuildId = safeDiscordText(safeDiscordId(guildId));
+    const safeChannelMention = safeDiscordText(safeDiscordChannelMention(channelId));
+    const safeAuthorMention = safeDiscordText(safeDiscordUserMention(authorId));
+    const safeExpiresAt = safeDiscordText(String(Math.max(0, Math.floor(Number(expiresAt || 0) / 1000))));
+    const safeMessageLink = safeDiscordText(safeDiscordJumpLink(guildId, channelId, messageId));
     return [
         `${config.emojis.broom} พบข้อความต้องสงสัย แต่ยังไม่ลบจนกว่าเจ้าของจะกดอนุมัติ`,
-        `**Guild ID:** ${safeDiscordId(guildId)}`,
-        `**Channel:** ${safeDiscordChannelMention(channelId)}`,
-        `**Bot:** ${safeDiscordUserMention(authorId)}`,
+        `**Guild ID:** ${safeGuildId}`,
+        `**Channel:** ${safeChannelMention}`,
+        `**Bot:** ${safeAuthorMention}`,
         `**Expires:** <t:${safeExpiresAt}:R>`,
         `**Message:** ${safeMessageLink}`
     ].join("\n");
