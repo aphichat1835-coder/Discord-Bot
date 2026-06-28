@@ -74,7 +74,10 @@ function startAutoDeafTimer(sessionId) {
     if (!st.autoDeafSettings.enabled) return;
 
     const session = sessionManager.getSession(sessionId);
-    if (!isSessionRunnable(session)) return;
+    if (!session || !isSessionRunnable(session)) {
+        stopAutoDeafTimer(sessionId);
+        return;
+    }
 
     stopAutoDeafTimer(sessionId);
 

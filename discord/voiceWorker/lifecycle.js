@@ -596,7 +596,7 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
             const sess = sessionManager.getSession(sessionId);
             if (sess) sess.urgentRecovery = true;
 
-            const recoveryTimer = setTimeout(() => healthCheck(), 2000);
+            const recoveryTimer = setTimeout(() => healthCheck().catch(() => {}), 2000);
             recoveryTimer.unref?.();
         }
     }
@@ -709,7 +709,9 @@ async function ensureVoiceSession(input = {}) {
 //  🛑  REGION 9: STOP / PAUSE / CLEANUP
 // ════════════════════════════════════════════════════════════════════════════
 async function repairFailedStopSessionForTokenGuild(tokenString, serverId) {
-    const tokenHash = sha256(tokenString);
+    const tokenHash = sessionManager.hashToken
+        ? sessionManager.hashToken(tokenString)
+        : sha256(tokenString);
     let repaired = 0;
     let blocked = 0;
 
@@ -1036,7 +1038,10 @@ async function cleanupIdleSessions() {
 
     const now = Date.now();
     const savedHrs = await sessionManager.getSetting("idleTimeoutHrs", null).catch(() => null);
-    const maxIdle = savedHrs ? (Number.parseInt(savedHrs, 10) * 3600000) : config.limits.idleTimeoutMs;
+    const parsedHrs = Number.parseInt(savedHrs, 10);
+    const maxIdle = (savedHrs && parsedHrs > 0)
+        ? parsedHrs * 3600000
+        : config.limits.idleTimeoutMs;
     const sessions = sessionManager.getAllSessions();
 
     for (const [id, session] of sessions) {

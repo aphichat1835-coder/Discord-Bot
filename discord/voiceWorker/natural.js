@@ -76,7 +76,10 @@ function startNaturalTimer(sessionId) {
     if (!st.naturalSettings.enabled) return;
 
     const session = sessionManager.getSession(sessionId);
-    if (!isSessionRunnable(session)) return;
+    if (!session || !isSessionRunnable(session)) {
+        stopNaturalTimer(sessionId);
+        return;
+    }
 
     stopNaturalTimer(sessionId);
 

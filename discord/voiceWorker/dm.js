@@ -85,6 +85,10 @@ async function sendSessionStoppedDM(sessionId, reason) {
 async function sendTokenInvalidDM(sessionId) {
     if (!st.mainClient) return;
 
+    const lastSent = lastDMSent.get(sessionId) || 0;
+    if (Date.now() - lastSent < CONFIG.DM_THROTTLE_MS) return;
+    lastDMSent.set(sessionId, Date.now());
+
     const session = sessionManager.getSession(sessionId);
     if (!session?.ownerId) return;
 

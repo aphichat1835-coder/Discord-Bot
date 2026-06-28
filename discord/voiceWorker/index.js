@@ -147,8 +147,12 @@ function stopInactiveSessionTimers(timerMap, activeSessionIds, stopTimer) {
 function cleanupVolatileState(now = Date.now(), options = {}) {
     const sessions = sessionManager.getAllSessions();
     const activeSessionIds = new Set();
+    const recoverableSessionIds = new Set();
     for (const [sessionId, session] of sessions) {
         if (isSessionRunnable(session)) activeSessionIds.add(sessionId);
+        if (["stop_cleanup_failed", "session_delete_failed"].includes(session?.stoppedReason)) {
+            recoverableSessionIds.add(sessionId);
+        }
     }
 
     const dmTtlMs = Math.max(CONFIG.DM_THROTTLE_MS * 6, 5 * 60 * 1000);
@@ -158,7 +162,8 @@ function cleanupVolatileState(now = Date.now(), options = {}) {
     deleteExpiredSessionEntries(lastOnlineDMSent, activeSessionIds, now, dmTtlMs);
     trimMapToMaxSize(lastDMSent, DM_THROTTLE_MAX_SIZE);
     trimMapToMaxSize(lastOnlineDMSent, DM_THROTTLE_MAX_SIZE);
-    deleteExpiredSessionEntries(recoveryTimestamps, activeSessionIds, now, recoveryTtlMs);
+    const recoveryPreserveIds = new Set([...activeSessionIds, ...recoverableSessionIds]);
+    deleteExpiredSessionEntries(recoveryTimestamps, recoveryPreserveIds, now, recoveryTtlMs);
     deleteInactiveSessionIds(naturalRunning, activeSessionIds);
     deleteInactiveSessionIds(autoDeafRunning, activeSessionIds);
     stopInactiveSessionTimers(naturalTimers, activeSessionIds, stopNaturalTimer);

@@ -391,7 +391,7 @@ Do not change imports or boot logic that initializes or references any file in t
 Protected file validation:
 
 ```bash
-git diff --name-only | grep -E '^discord/systemProvider(\\.js|/.+)$' && exit 1 || true
+git diff --name-only | grep -E '^discord/systemProvider(\.js|/.+)$' && exit 1 || true
 git status --short -- discord/systemProvider.js discord/systemProvider/
 ```
 

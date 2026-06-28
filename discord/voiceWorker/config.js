@@ -14,20 +14,21 @@ const config = require("../config.json");
 // ════════════════════════════════════════════════════════════════════════════
 //  ⚙️  REGION 1: CONFIG
 // ════════════════════════════════════════════════════════════════════════════
+const voiceWorkerConfig = config.voice_worker ?? {};
 const CONFIG = {
-    MAX_RECONNECT_ATTEMPTS: config.voice_worker.maxReconnectAttempts || 7,
-    LOGIN_TIMEOUT: config.voice_worker.loginTimeout || 35000,
-    CONNECTION_TIMEOUT: config.voice_worker.connectionTimeout || 15000,
-    DM_THROTTLE_MS: config.voice_worker.dmThrottleMs || 20000,
+    MAX_RECONNECT_ATTEMPTS: voiceWorkerConfig.maxReconnectAttempts || 7,
+    LOGIN_TIMEOUT: voiceWorkerConfig.loginTimeout || 35000,
+    CONNECTION_TIMEOUT: voiceWorkerConfig.connectionTimeout || 15000,
+    DM_THROTTLE_MS: voiceWorkerConfig.dmThrottleMs || 20000,
 };
-const LOGIN_QUEUE_MAX_SIZE = config.voice_worker.loginQueueMaxSize || 100;
-const RECOVERY_QUEUE_MAX_SIZE = config.voice_worker.recoveryQueueMaxSize || 200;
+const LOGIN_QUEUE_MAX_SIZE = voiceWorkerConfig.loginQueueMaxSize || 100;
+const RECOVERY_QUEUE_MAX_SIZE = voiceWorkerConfig.recoveryQueueMaxSize || 200;
 const TOKEN_LOGIN_COOLDOWN_TTL_MS = 10 * 60 * 1000;
 const TOKEN_LOGIN_COOLDOWN_MAX_SIZE = 5000;
-const DM_THROTTLE_MAX_SIZE = config.voice_worker.dmThrottleMaxSize || 5000;
+const DM_THROTTLE_MAX_SIZE = voiceWorkerConfig.dmThrottleMaxSize || 5000;
 const VOICE_LOG_MAX = Math.max(
     20,
-    Math.min(2000, Number(process.env.VOICE_LOG_MAX || config.voice_worker.voiceLogMax || 200) || 200)
+    Math.min(2000, Number(process.env.VOICE_LOG_MAX || voiceWorkerConfig.voiceLogMax || 200) || 200)
 );
 
 const SELF_CLIENT_CACHE_LIMITS = {

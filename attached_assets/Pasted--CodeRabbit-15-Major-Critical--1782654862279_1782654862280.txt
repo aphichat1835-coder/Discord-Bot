@@ -1,0 +1,25 @@
+บอท CodeRabbit ได้ฝากคอมเมนต์ให้แก้ไขทั้งหมด 15 จุด โดยมีจุดสำคัญระดับ Major และ Critical ดังนี้ครับ:
+🛠️ ฝั่ง Discord & Voice Worker (Logic & Stability)
+• discord/voiceWorker/lifecycle.js (ระดับ Major/Critical):
+• ฟังก์ชัน repairFailedStopSessionForTokenGuild: มีการ Hardcode การใช้ sha256(tokenString) ซึ่งบอทแนะนำให้เปลี่ยนไปใช้ sessionManager.hashToken(tokenString) เพื่อให้ตรงกับตอนสร้าง Session ไม่งั้นระบบจะไม่สามารถจับคู่กู้คืนเซสชันที่พังได้
+• ฟังก์ชัน cleanupIdleSessions: ตัวแปร maxIdle มีความเสี่ยงที่จะเกิด NaN หากค่าชั่วโมงที่ดึงมาไม่ใช่ตัวเลข หรือถ้าเป็น "0" จะทำให้เซสชันถูกล้างทิ้งทันที บอทแนะนำให้เขียนตรวจสอบให้มั่นใจว่าเป็นตัวเลขจำนวนเต็มบวกที่ถูกต้องก่อน
+• ฟังก์ชัน handlePassiveReconnect: มีการเรียก healthCheck() ที่เป็น Async ครอบด้วย setTimeout โดยไม่มี .catch() รองรับ ซึ่งอาจทำให้เกิด Unhandled Promise Rejection ได้ แนะนำให้ใส่คอยดักจับ Error
+• discord/voiceWorker/autoDeaf.js & natural.js (ระดับ Minor):
+• ในฟังก์ชัน startAutoDeafTimer() และ startNaturalTimer() มีการเช็ก isSessionRunnable(session) ก่อนที่จะตรวจสอบว่ามี Object เซสชันอยู่จริงหรือไม่ (หากเซสชันไม่มีอยู่จริงอาจทำให้เกิดการสร้าง Timer กำพร้าค้างในระบบ) แนะนำให้ดักจับเพิ่มเช็ก if (!session) แล้ว return ออกไปก่อน
+• discord/voiceWorker/config.js (ระดับ Minor):
+• โค้ดมีการดึงค่าจาก config.voice_worker ทันทีตั้งแต่โหลดโมดูล หากไม่มีการตั้งค่าส่วนนี้จะทำให้บอทโค้ดพังตอนเริ่มทำงาน บอทแนะนำให้ใส่ Fallback ป้องกันไว้
+• discord/voiceWorker/dm.js (ระดับ Minor):
+• บอทแจ้งว่าฟังก์ชัน sendTokenInvalidDM จะส่งข้อความเตือนทุกครั้งที่เกิดข้อผิดพลาด ซึ่งอาจทำให้เกิดการสแปมเจ้าของบอทและโดน Discord จำกัดเรทได้ แนะนำให้ทำระบบ Throttle (จำกัดความถี่ในการส่งต่อ Session ID)
+• discord/voiceWorker/index.js (ระดับ Minor):
+• ฟังก์ชัน cleanupVolatileState ดึงลบ recoveryTimestamps เร็วเกินไปสำหรับเซสชันที่ยังสามารถกู้คืนได้ (แต่ยังไม่พร้อมทำงาน) บอทแนะนำให้ปรับ Logic ให้ยังคงบันทึกเซสชันพวกสถานะ stop_cleanup_failed เอาไว้ก่อน
+🛡️ ฝั่ง Dashboard & ความปลอดภัย (Security & Data Integrity)
+• dashboard-public/utils/crypto.js (ระดับ Major):
+• การเปลี่ยนวิธีแปลงคีย์ (Key Derivation) ในฟังก์ชัน getKey() จะทำให้ข้อมูลเก่าที่เคยเข้ารหัสไว้แล้ว (เช่น ข้อมูล IP, OAuth metadata) ไม่สามารถถอดรหัสได้และจะคืนค่ากลับมาเป็น null บอทแนะนำให้เพิ่มระบบ Legacy-read Fallback เพื่อลองถอดรหัสด้วยคีย์รูปแบบเก่าก่อน หากรูปแบบใหม่ถอดรหัสไม่สำเร็จ
+• discord/index/server.js (ระดับ Minor):
+• การปรับปรุง Endpoint /health มีการลบฟิลด์ JSON เก่าออก ซึ่งอาจส่งผลให้สคริปต์หรือระบบตรวจเช็กภายนอก (Probes) ที่เคยอ่านค่าฟิลด์เดิมพังได้ บอทแนะนำให้คงฟิลด์เก่าไว้ควบคู่กับค่าใหม่ไปก่อนหนึ่งรอบเพื่อความ Backward Compatible
+🧪 ฝั่งการทดสอบและเอกสาร (Tests & Docs)
+• discord/tests/voiceSessionRegression.test.js (ระดับ Major):
+• ตัว Regression Test ดึงเอาโค้ดจำลอง (Contract Copies) มาเขียนซ้ำไว้ในไฟล์ทดสอบเอง แทนที่จะอัปเดตไปดึง _test helpers จากไฟล์จริงอย่าง panelInteractions.js ทำให้ถ้าโค้ดจริงทำงานผิดพลาด ตัวเทสนี้ก็จะไม่สามารถตรวจจับได้ บอทจึงสั่งให้เปลี่ยนไป Import ฟังก์ชันจริงมาทดสอบ
+• ตัวทดสอบ Digit-range ของ validateStartFields ยอมรับทั้งช่วง 17,19 และ 17,22 ซึ่งกว้างเกินไปจนไม่สามารถตรวจจับการหลุดขอบเขตสัญญาได้ บอทแนะนำให้เจาะจงตรวจสอบค่าขอบเขต (Boundary) ไปเลย
+• SECURITY.md (ระดับ Minor):
+• โค้ดที่ใช้ตรวจจับการแก้ไขไฟล์ discord/systemProvider ในระบบความปลอดภัย ใช้ Pattern ใน Grep ผิดพลาด (ใช้ \\.js) ทำให้มันข้ามการตรวจเช็กไฟล์หลักอย่าง discord/systemProvider.js บอทแนะนำให้แก้เป็น \.js เพื่อให้ระบบป้องกันทำงานได้สมบูรณ์

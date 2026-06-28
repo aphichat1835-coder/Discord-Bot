@@ -473,7 +473,9 @@ function registerRoutes({
 
         res.status(ready ? 200 : 503).json({
             status: ready ? "ok" : "degraded",
-            ready
+            ready,
+            bot: botOnline,
+            db: dbConnected
         });
     });
 
