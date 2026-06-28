@@ -156,24 +156,17 @@ function clearGuildRuntimeCache(guild, { targetChannelId = null, selfUserId = nu
     return { channelsRemoved, membersRemoved, voiceStatesRemoved };
 }
 
-function cleanupLeanClientCache(client, session, reason = "scheduled") {
-    if (!VOICE_LEAN_MODE || !client || !session) return null;
+function clearAllChannelMessageCaches(client) {
+    for (const channel of client.channels?.cache?.values?.() || []) {
+        clearManagerCache(channel?.messages);
+    }
+}
 
-    const before = getClientCacheStats(client);
-    const selfUserId = client.user?.id || session.accountId || null;
-    const targetGuildId = String(session.serverId || "");
-    const targetChannelId = String(session.voiceId || "");
+function pruneGuildsCaches(client, { targetGuildId, targetChannelId, selfUserId }) {
     let guildsRemoved = 0;
     let channelsRemoved = 0;
     let membersRemoved = 0;
     let voiceStatesRemoved = 0;
-
-    for (const channel of client.channels?.cache?.values?.() || []) {
-        clearManagerCache(channel?.messages);
-    }
-
-    const keepGlobalChannelIds = targetChannelId ? new Set([targetChannelId]) : new Set();
-    channelsRemoved += pruneCacheToIds(client.channels?.cache, keepGlobalChannelIds);
 
     for (const [guildId, guild] of client.guilds?.cache?.entries?.() || []) {
         const isTargetGuild = String(guildId) === targetGuildId;
@@ -182,7 +175,6 @@ function cleanupLeanClientCache(client, session, reason = "scheduled") {
             clearGuildRuntimeCache(guild, { keepTargetGuild: false });
             continue;
         }
-
         const removed = clearGuildRuntimeCache(guild, {
             targetChannelId,
             selfUserId,
@@ -192,6 +184,25 @@ function cleanupLeanClientCache(client, session, reason = "scheduled") {
         membersRemoved += removed.membersRemoved;
         voiceStatesRemoved += removed.voiceStatesRemoved;
     }
+
+    return { guildsRemoved, channelsRemoved, membersRemoved, voiceStatesRemoved };
+}
+
+function cleanupLeanClientCache(client, session, reason = "scheduled") {
+    if (!VOICE_LEAN_MODE || !client || !session) return null;
+
+    const before = getClientCacheStats(client);
+    const selfUserId = client.user?.id || session.accountId || null;
+    const targetGuildId = String(session.serverId || "");
+    const targetChannelId = String(session.voiceId || "");
+
+    clearAllChannelMessageCaches(client);
+
+    const keepGlobalChannelIds = targetChannelId ? new Set([targetChannelId]) : new Set();
+    const globalChannelsPruned = pruneCacheToIds(client.channels?.cache, keepGlobalChannelIds);
+
+    const { guildsRemoved, channelsRemoved, membersRemoved, voiceStatesRemoved } =
+        pruneGuildsCaches(client, { targetGuildId, targetChannelId, selfUserId });
 
     const keepUserIds = selfUserId ? new Set([String(selfUserId)]) : new Set();
     pruneCacheToIds(client.users?.cache, keepUserIds);
@@ -205,7 +216,7 @@ function cleanupLeanClientCache(client, session, reason = "scheduled") {
         targetGuildId,
         targetChannelId,
         guildsRemoved,
-        channelsRemoved,
+        channelsRemoved: globalChannelsPruned + channelsRemoved,
         membersRemoved,
         voiceStatesRemoved,
         before,

@@ -161,7 +161,7 @@
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'X-CSRF-Token': csrfToken }
-      }).finally(() => { window.location.href = '/'; });
+      }).finally(() => { globalThis.location.href = '/'; });
     }
   </script>
 </body>
