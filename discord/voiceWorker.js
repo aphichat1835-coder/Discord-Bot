@@ -888,19 +888,6 @@ function normalizeVoiceTarget(input = {}) {
     return { guildId, channelId };
 }
 
-async function resolveVoiceTarget(guildId, channelId) {
-    const guild = mainClient?.guilds?.cache?.get(guildId) ||
-        await mainClient?.guilds?.fetch?.(guildId)?.catch(() => null);
-
-    if (!guild) throw new Error("GUILD_NOT_FOUND");
-
-    const channel = guild.channels?.cache?.get(channelId) ||
-        await guild.channels?.fetch?.(channelId)?.catch(() => null);
-
-    if (!channel?.isVoice?.()) throw new Error("CHANNEL_NOT_FOUND");
-
-    return { guild, channel };
-}
 
 async function startExistingSession({ sessionId, token, channelId, reason }) {
     const session = sessionManager.getSession(sessionId);
@@ -941,8 +928,7 @@ async function ensureVoiceSession(input = {}) {
     validateToken(token);
 
     const { guildId, channelId } = normalizeVoiceTarget(input);
-    const target = await resolveVoiceTarget(guildId, channelId);
-    const guildName = input.guildName || target.guild.name || "เซิร์ฟเวอร์ไม่ทราบชื่อ";
+    const guildName = input.guildName || "เซิร์ฟเวอร์ไม่ทราบชื่อ";
     const reason = input.reason || "ensure";
     const tokenHash = sessionManager.hashToken
         ? sessionManager.hashToken(token)
