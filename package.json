@@ -27,6 +27,7 @@
     "discord.js": "^13.17.1",
     "discord.js-selfbot-v13": "^3.7.1",
     "express": "^5.2.1",
+    "jest": "^30.4.2",
     "libsodium-wrappers": "^0.8.4",
     "mongoose": "^8.24.1",
     "opusscript": "^0.1.1",
