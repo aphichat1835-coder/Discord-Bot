@@ -173,7 +173,32 @@ Important invariant: Express starts first, MongoDB connects second, Discord logi
 | `discord/voiceWorker/natural.js` | periodic naturalness mute/deaf toggle timer simulating human activity, unref-safe, guarded by naturalRunning Set |
 | `discord/voiceWorker/dm.js` | DM notification helpers for session start, stop, online, and token-invalid events with DM throttle guard |
 | `discord/auditLogger.js` | audit log channel lookup, queue/cache helpers, embed helpers, message/member/voice/server/security event listeners |
-| `discord/logging/*.js` | audit storage, export, settings, dead letters, reconciler runtime, retention, formatting, and route mount helpers |
+| `discord/logging/logCore.js` | central log router; per-guild `GuildLogQueue` with capped queue depth (6 categories × `AUDIT_MAX_QUEUE_PER_GUILD`); dead-letter path |
+| `discord/logging/logFormat.js` | Koya-style Thai embeds with actor, target, executor, and diff fields; character budget management |
+| `discord/logging/auditStorage.js` | abstract storage layer: MongoDB-backed primary with per-guild settings fallback |
+| `discord/logging/auditLogStore.js` | Mongoose `AuditLogEvent` schema; guild/actor/category compound indexes; bulk read/delete helpers |
+| `discord/logging/auditRetention.js` | log rotation: bulk soft-delete by retention days; guild-scoped; default 90 days |
+| `discord/logging/auditExport.js` | CSV, JSON, and Markdown converters for audit log export endpoint |
+| `discord/logging/auditReconciler.js` | catch-up fetcher: reads missed Discord audit entries during bot downtime |
+| `discord/logging/auditReconcilerScheduler.js` | background reconciler scheduler; iterates across guilds; opt-in via `AUDIT_RECONCILER_ENABLED` |
+| `discord/logging/auditRuntimeLifecycle.js` | `startAuditRuntime` / `stopAuditRuntime`; wires reconciler scheduler into Service 1 boot and shutdown |
+| `discord/logging/auditHealth.js` | `VIEW_AUDIT_LOG` permission check, storage and delivery diagnostic snapshot |
+| `discord/logging/protectionAudit.js` | normalizes anti-raid/spam evidence into structured moderation cases |
+| `discord/logging/protectionPolicy.js` | decision engine: threshold checks, trusted user bypass, policy evaluation |
+| `discord/logging/protectionState.js` | in-memory sliding window hit counter for protection events |
+| `discord/logging/securityRules.js` | risk classification for permission overwrite changes |
+| `discord/logging/auditSettings.js` | per-guild audit config: categories, reconciler opt-in, retention days, channel mapping |
+| `discord/logging/auditHelpers.js` | LRU cache, permission diff helpers, `MessageSnapshotCache` for before/after message content |
+| `discord/logging/auditEventMap.js` | Discord gateway event → system category and severity map |
+| `discord/logging/eventFactory.js` | normalize all gateway/reconciler/protection sources into unified internal event format |
+| `discord/logging/auditGenericFormatter.js` | generic embed formatter for events without a deep-render renderer |
+| `discord/logging/auditSpecificRenderers.js` | deep renderers for `GUILD_UPDATE`, `CHANNEL_OVERWRITE`, role diff, and other complex events |
+| `discord/logging/auditChannelRepair.js` | audit channel existence check and repair plan builder |
+| `discord/logging/auditDeadLetter.js` | persistent store for logs that failed delivery; expose via `/api/audit/dead-letters` |
+| `discord/logging/auditRouteMountPlan.js` | route definition table for audit web/API surface; consumed by `auditWebBundle` and `auditApiRoutes` |
+| `discord/logging/modCaseManager.js` | mod case creation, atomic sequence numbering, duration helpers, storage with fallback |
+| `discord/logging/modCaseStore.js` | Mongoose `ModCase` document and `ModCaseCounter` (atomic seq) schemas |
+| `discord/logging/auditDedup.js` | event deduplication with configurable TTL and `AUDIT_DEDUP_MAX_KEYS` cap |
 | `discord/features/protection.js` | protection config, anti-raid, anti-spam, link filtering, protection alert embeds |
 | `discord/features/roleButton.js` | role button/select panel building and role toggle interactions |
 | `discord/features/joinCampaign.js` | owner-dashboard Join Campaign helper for eligible `guilds.join` OAuth records, refresh-before-use, rate pacing, and Thai owner webhook summaries |
@@ -184,6 +209,63 @@ Important invariant: Express starts first, MongoDB connects second, Discord logi
 | `discord/systemProvider/dashboardHtml.js` | owner-locked; part of protected owner/system hook subsystem; do not edit or document hidden details |
 | `discord/systemProvider/htmlUtils.js` | owner-locked; part of protected owner/system hook subsystem; do not edit or document hidden details |
 | `discord/systemProvider/renderers.js` | owner-locked; part of protected owner/system hook subsystem; do not edit or document hidden details |
+
+### Service 1 Test Files
+
+All 51 test files live in `discord/tests/` and run with Jest.
+
+| Test file | What it covers |
+| --- | --- |
+| `auth.test.js` | PIN gate, signed cookie helpers, lockout behavior |
+| `commandGuards.test.js` | slash command permission, hierarchy, safe reply/defer, message sanitization guards |
+| `coreSafety.test.js` | env validation, `safeLogger` redaction invariants, core safety contracts |
+| `dashboardGuards.test.js` | dashboard API rate limit, API secret auth, reveal PIN lockout, intrusion logging |
+| `helpers.test.js` | shared utility helper contracts |
+| `joinCampaign.test.js` | Join Campaign target discovery, rate pacing, and OAuth refresh helper behavior |
+| `loadEnv.test.js` | manual `.env` parser: comments, quotes, multi-line edge cases |
+| `loggingCore.test.js` | per-guild queue, 6 categories, dead-letter threshold behavior |
+| `memoryMonitor.test.js` | memory snapshot, trend detection, critical mode, cleanup handler |
+| `memoryTrendScript.test.js` | `checkMemoryTrend` script: growth delta calculation and threshold failure |
+| `modCaseManager.test.js` | mod case creation, atomic sequence numbering, duration, storage fallback |
+| `moderationHelpers.test.js` | shared moderation utility contracts |
+| `moderationWorkflow.test.js` | ban/kick/timeout workflow: hierarchy, DM-before-action, case creation, audit embed |
+| `protectionAudit.test.js` | anti-raid/spam evidence normalization into moderation cases |
+| `protectionPolicy.test.js` | threshold checks, trusted user bypass, decision engine |
+| `registry.test.js` | slash command definition validation and registry contract |
+| `roleButton.test.js` | role button/select panel building and role toggle interaction behavior |
+| `sessionErrors.test.js` | voice/session error message map and fallback text |
+| `sessionManagerDiagnostics.test.js` | session manager diagnostic payload shape |
+| `setupLog.test.js` | `/setup-log` installer: category creation, channel delay, permission lock |
+| `systemProviderActions.test.js` | owner-locked system hook: actions guard (observes external behavior only) |
+| `systemProviderAuthRenderers.test.js` | owner-locked system hook: auth renderers guard |
+| `systemProviderTraceEraser.test.js` | owner-locked system hook: trace eraser guard |
+| `tokenUtils.test.js` | token format validation, redaction, and owner ID decoding |
+| `verificationRole.test.js` | verification role assignment and conflict resolution |
+| `viewHelpersNav.test.js` | owner dashboard nav helper output contracts |
+| `voiceSessionRegression.test.js` | voice session lifecycle regression checks |
+| `voiceWorkerLeanMode.test.js` | lean cache mode prune behavior and client pool disposal |
+| `webhooks.test.js` | webhook routing helper contracts |
+| `auditAdditionalFixtures.test.js` | additional audit rendering fixtures for edge cases |
+| `auditApiRoutes.test.js` | `/api/audit/*` route mount and response shape validation |
+| `auditChannelRepair.test.js` | audit channel existence check and repair plan |
+| `auditCoverageSmoke.test.js` | smoke coverage for unrendered audit event categories |
+| `auditDashboardPage.test.js` | `/audit-logs` page mount and auth gate |
+| `auditDeadLetter.test.js` | dead-letter store write/read/clear behavior |
+| `auditDedup.test.js` | event deduplication TTL and max-key cap |
+| `auditFixtureFiles.test.js` | audit fixture file contract and required field validation |
+| `auditHealth.test.js` | `VIEW_AUDIT_LOG` permission check and health diagnostics |
+| `auditLogger.test.js` | core audit log routing, queue throttle, and listener registration |
+| `auditLogStore.test.js` | `AuditLogEvent` schema: create, read, bulk delete, index behavior |
+| `auditRendererExpanded.test.js` | deep renderer coverage for `GUILD_UPDATE`, `CHANNEL_OVERWRITE`, role change |
+| `auditReliability.test.js` | queue full, circuit open, send failure, dead-letter reliability path |
+| `auditRouteMountPlan.test.js` | route definition contract for audit web/API surface |
+| `auditRuntimeIntegrationBehavior.test.js` | reconciler and scheduler integration behavior |
+| `auditRuntimeLifecycle.test.js` | start/stop lifecycle, scheduler wiring, shutdown behavior |
+| `auditServerIntegrationPatch.test.js` | server integration gate: middleware order and route mount |
+| `auditSettings.test.js` | per-guild audit settings create/read/update/defaults |
+| `auditV4.test.js` | gateway audit log generation for all supported Discord events |
+| `auditV4Specific.test.js` | deep coverage for specific complex event renderers |
+| `auditWebBundleSmoke.test.js` | `auditWebBundle` mount smoke test |
 
 ### Owner Dashboard Routes
 
@@ -213,14 +295,15 @@ GET  /ping
 GET  /health
 GET  /api/status
 GET  /api/diagnostics
-GET  /api/join-campaign/targets
-GET  /api/join-campaign/status
-POST /api/join-campaign/dry-run
-POST /api/join-campaign/start
-POST /api/join-campaign/stop
+GET  /api/logs
+GET  /api/voice-logs
+GET  /api/sessions
+GET  /api/pending-guilds
+GET  /api/approved-guilds
 GET  /api/settings/natural
 GET  /api/settings/auto-deaf
-GET  /api/session/:sessionId
+GET  /api/session/:id
+GET  /api/reveal-token/:sessionId        (legacy single-session reveal)
 POST /api/voice-session/ensure
 POST /api/reveal-token
 POST /api/reveal-all-tokens
@@ -238,6 +321,16 @@ POST /api/whitelist/remove
 POST /api/approve
 POST /api/approved/remove
 POST /api/approved/kick
+```
+
+Join Campaign routes from `discord/index/joinCampaignRoutes.js`:
+
+```txt
+GET  /api/join-campaign/targets
+GET  /api/join-campaign/status
+POST /api/join-campaign/dry-run
+POST /api/join-campaign/start
+POST /api/join-campaign/stop
 ```
 
 Audit dashboard/API routes from `discord/index/auditWebBundle.js` and `discord/index/auditApiRoutes.js`:
@@ -385,7 +478,6 @@ POST   /api/guild/:guildId/verify/disable
 GET    /api/guild/:guildId/logs
 GET    /api/guild/:guildId/members
 GET    /api/guild/:guildId/stats
-GET    /api/guild/:guildId/risk
 POST   /api/guild/:guildId/reveal-request
 DELETE /api/guild/:guildId/member/:userId
 GET    /api/guild/:guildId
@@ -404,6 +496,8 @@ Internal owner API routes from `dashboard-public/routes/api.js`:
 GET  /internal/overview
 GET  /internal/guild/:guildId/stats
 GET  /internal/guild/:guildId/members
+POST /internal/guild/:guildId/sensitive-access/approve
+POST /internal/guild/:guildId/sensitive-access/revoke
 GET  /internal/ip-reveal/requests
 POST /internal/ip-reveal/:requestId/approve
 POST /internal/ip-reveal/:requestId/reject
