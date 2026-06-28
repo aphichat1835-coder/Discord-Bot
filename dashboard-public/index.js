@@ -146,7 +146,6 @@ app.use(session({
     }
 }));
 
-
 function normalizeSocketIp(ip) {
     if (!ip) return 'unknown';
 
@@ -296,11 +295,6 @@ app.get('/', (req, res) => {
 app.get('/guilds', (req, res) => {
     if (!req.session?.adminUser) return res.redirect('/');
     res.sendFile(path.join(__dirname, 'views/guilds.html'));
-});
-
-app.get('/guild/:guildId', (req, res) => {
-    if (!req.session?.adminUser) return res.redirect('/');
-    res.sendFile(path.join(__dirname, 'views/guild.html'));
 });
 
 app.get('/logout', (req, res) => {
