@@ -466,7 +466,6 @@ function registerRoutes({
     app.get("/ping", (req, res) => res.status(200).send("OK"));
 
     app.get("/health", (req, res) => {
-        const uptimeSec = Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000);
         const botOnline = client?.isReady?.() ?? false;
         const dbStatus = sessionManager.getDatabaseStatus?.();
         const dbConnected = dbStatus?.connected === true;
@@ -474,10 +473,7 @@ function registerRoutes({
 
         res.status(ready ? 200 : 503).json({
             status: ready ? "ok" : "degraded",
-            uptime: uptimeSec,
-            sessions: sessionManager.getAllSessions().size,
-            botOnline,
-            dbConnected
+            ready
         });
     });
 

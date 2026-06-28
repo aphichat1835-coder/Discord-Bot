@@ -59,6 +59,7 @@ const VerifyLog = require('./models/VerifyLog');
 const IpIdentityLink = require('./models/IpIdentityLink');
 const IPRevealRequest = require('./models/IPRevealRequest');
 const { safeError } = require('./utils/safeLogger');
+const { setCsrfCookie } = require('./utils/csrf');
 
 const app  = express();
 const PORT = process.env.PORT || process.env.PORT_DASHBOARD || 3001;
@@ -145,6 +146,11 @@ app.use(session({
         sameSite: 'lax'
     }
 }));
+
+app.use((req, res, next) => {
+    setCsrfCookie(req, res);
+    next();
+});
 
 function normalizeSocketIp(ip) {
     if (!ip) return 'unknown';
@@ -323,37 +329,7 @@ app.get('/health', (_req, res) => {
 
     res.status(degraded ? 503 : 200).json({
         status: degraded ? 'degraded' : 'ok',
-        ready: !degraded,
-        service: 'dashboard-public',
-        checks: {
-            database: dbReady ? 'connected' : 'disconnected',
-            config: configReady ? 'ready' : 'missing_required'
-        },
-        sessionCookie: {
-            policy: SESSION_ROLLING ? 'rolling' : 'absolute',
-            maxAgeMs: SESSION_MAX_AGE_MS,
-            touchAfterSec: SESSION_TOUCH_AFTER_SEC,
-            secure: SESSION_COOKIE_SECURE,
-            proxy: TRUST_PROXY || SESSION_COOKIE_SECURE === 'auto',
-            revoke: 'logout destroys the current admin session; global revoke is intentionally not exposed'
-        },
-        retention: {
-            inFlight: retentionMaintenanceInFlight,
-            lastRunAt: lastRetentionMaintenanceAt,
-            lastError: lastRetentionMaintenanceError,
-            lastSummary: lastRetentionMaintenanceSummary
-        },
-        oauthTokenRefresh: {
-            lastRunAt: lastOAuthTokenRefreshAt,
-            lastError: lastOAuthTokenRefreshError,
-            lastSummary: summarizeOAuthRefreshHealth(lastOAuthTokenRefreshSummary)
-        },
-        memory: getMemoryDiagnostics(),
-        runtimeLimits: getRuntimeLimitDiagnostics(),
-        ipLookup: getIpLookupDiagnostics(),
-        discordApi: getDiscordApiDiagnostics(),
-        uptime: process.uptime(),
-        timestamp: Date.now()
+        ready: !degraded
     });
 });
 
