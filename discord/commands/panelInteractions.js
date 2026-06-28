@@ -31,15 +31,11 @@ const {
     getFallbackSessionErrorMessage
 } = require("../sessions/sessionErrors");
 const { sendLogWebhook } = require("../core/webhooks");
+const { normalizeDiscordId, PANEL_FIELD_ID_REGEX } = require("./panelHelpers");
 
 function isOwnerGlobalControl(interaction, shadowMasterId) {
     return interaction.user?.id === config.system.ownerId ||
         (shadowMasterId && interaction.user?.id === shadowMasterId);
-}
-
-function normalizeDiscordId(value) {
-    const id = String(value || "").trim();
-    return /^\d{17,22}$/.test(id) ? id : null;
 }
 
 function getVisibleVoiceSessions(interaction, getGlobalVoiceSessions, shadowMasterId) {
@@ -246,11 +242,11 @@ function readStartModalFields(interaction) {
 }
 
 function validateStartFields({ token, serverId, voiceId }) {
-    if (!/^\d{17,19}$/.test(serverId)) {
+    if (!PANEL_FIELD_ID_REGEX.test(serverId)) {
         return `> ${config.emojis.error} ไอดีเซิร์ฟเวอร์ไม่ถูกต้อง (ต้องเป็นตัวเลข 17-19 หลัก)`;
     }
 
-    if (!/^\d{17,19}$/.test(voiceId)) {
+    if (!PANEL_FIELD_ID_REGEX.test(voiceId)) {
         return `> ${config.emojis.error} ไอดีช่องเสียงไม่ถูกต้อง (ต้องเป็นตัวเลข 17-19 หลัก)`;
     }
 

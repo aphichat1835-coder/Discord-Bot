@@ -19,8 +19,15 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CONTRACT COPIES (inlined from source — ถ้า source เปลี่ยนแล้วไม่ match
-// ทำให้รู้ได้ทันทีว่า regression test ต้องอัปเดตด้วย)
+// REAL MODULE IMPORTS — ดึงจาก source จริง ไม่ inline
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Source: discord/commands/panelHelpers.js (pure, no Discord/DB runtime deps)
+const { normalizeDiscordId, PANEL_FIELD_ID_REGEX: PANEL_ID_REGEX } = require("../commands/panelHelpers");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONTRACT COPIES — เฉพาะฟังก์ชันที่ยังต้อง inline เพราะพึ่ง Discord/DB runtime
+// (source-code contract tests ใน section 9 จะตรวจว่า source ไม่ drift)
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Source: discord/voiceWorker/display.js :: normalizeVoiceTarget
@@ -31,15 +38,6 @@ function normalizeVoiceTarget(input = {}) {
     if (!/^\d{17,22}$/.test(channelId)) throw new Error("INVALID_VOICE_CHANNEL_ID");
     return { guildId, channelId };
 }
-
-// Source: discord/commands/panelInteractions.js :: normalizeDiscordId
-function normalizeDiscordId(value) {
-    const id = String(value || "").trim();
-    return /^\d{17,22}$/.test(id) ? id : null;
-}
-
-// Source: discord/commands/panelInteractions.js :: validateStartFields (regex only)
-const PANEL_ID_REGEX = /^\d{17,19}$/;
 
 // Source: discord/commands/panelInteractions.js :: isOwnerGlobalControl
 // หมายเหตุ: ใช้ config.system.ownerId (ไม่ใช่ application.owner)
@@ -369,23 +367,29 @@ test("source contract: worker normalizeVoiceTarget regex is 17,22", () => {
     );
 });
 
-test("source contract: panel validateStartFields uses 17-19 regex (known scope limit)", () => {
-    const src = fs.readFileSync(path.join(__dirname, "../commands/panelInteractions.js"), "utf8"); // nosemgrep
-    // ตรวจว่า validateStartFields ยังคงมี 17,19 (ถ้าเปลี่ยนเป็น 17,22 ให้อัปเดต test นี้)
-    const validateBlock = src.slice(
-        src.indexOf("function validateStartFields"),
-        src.indexOf("\n}", src.indexOf("function validateStartFields")) + 2
+test("source contract: panel validateStartFields uses PANEL_FIELD_ID_REGEX (known scope limit)", () => {
+    const panelSrc = fs.readFileSync(path.join(__dirname, "../commands/panelInteractions.js"), "utf8"); // nosemgrep
+    const helperSrc = fs.readFileSync(path.join(__dirname, "../commands/panelHelpers.js"), "utf8"); // nosemgrep
+    // ตรวจว่า validateStartFields ใช้ PANEL_FIELD_ID_REGEX (ไม่ inline regex เอง)
+    const validateBlock = panelSrc.slice(
+        panelSrc.indexOf("function validateStartFields"),
+        panelSrc.indexOf("\n}", panelSrc.indexOf("function validateStartFields")) + 2
     );
     assert.ok(
-        validateBlock.includes("17,19") || validateBlock.includes("17,22"),
-        "validateStartFields must have explicit digit-range check for serverId/voiceId"
+        validateBlock.includes("PANEL_FIELD_ID_REGEX"),
+        "validateStartFields must delegate to PANEL_FIELD_ID_REGEX from panelHelpers"
+    );
+    // ตรวจว่า panelHelpers กำหนด PANEL_FIELD_ID_REGEX ด้วย 17,19 เจาะจง
+    assert.ok(
+        helperSrc.includes("17,19"),
+        "panelHelpers.PANEL_FIELD_ID_REGEX must use exactly 17-19 digit-range"
     );
 });
 
 test("source contract: panel normalizeDiscordId uses 17-22 regex (consistent with worker)", () => {
-    const src = fs.readFileSync(path.join(__dirname, "../commands/panelInteractions.js"), "utf8"); // nosemgrep
+    const src = fs.readFileSync(path.join(__dirname, "../commands/panelHelpers.js"), "utf8"); // nosemgrep
     assert.ok(
-        src.includes("/^\\d{17,22}$/.test(id)"),
-        "normalizeDiscordId must use 17-22 regex matching worker"
+        src.includes("/^\\d{17,22}$/.test(id)") || src.includes("\\d{17,22}"),
+        "normalizeDiscordId in panelHelpers must use 17-22 regex matching worker"
     );
 });

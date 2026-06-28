@@ -244,6 +244,8 @@ function cleanupLeanActiveSessions(now = Date.now(), force = false) {
         };
     }
 
+    st.lastLeanCleanup = { at: now };
+
     const seenClients = new Set();
     let cleaned = 0;
     let skipped = 0;
