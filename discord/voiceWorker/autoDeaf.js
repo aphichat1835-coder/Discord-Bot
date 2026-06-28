@@ -3,6 +3,7 @@ const sessionManager = require("../sessionManager");
 const { st, autoDeafTimers, autoDeafRunning } = require("./state");
 const { delay, randomJitter } = require("./config");
 const { isSessionRunnable } = require("./session");
+const { sanitizeLogText } = require("../core/safeLogger");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🔇  REGION 12.5: AUTO DEAF ENGINE
@@ -13,7 +14,7 @@ async function doAutoDeafToggle(sessionId) {
     if (autoDeafRunning.has(sessionId)) return;
 
     const session = sessionManager.getSession(sessionId);
-    if (!session || !session.connection) return;
+    if (!session?.connection) return;
 
     const conn = session.connection;
     if (conn.state.status !== VoiceConnectionStatus.Ready) return;
@@ -65,7 +66,7 @@ function stopAutoDeafTimer(sessionId) {
         clearInterval(id);
         autoDeafTimers.delete(sessionId);
         autoDeafRunning.delete(sessionId);
-        console.log(`[AUTODEAF] ⏹️ Timer stopped — ${String(sessionId).slice(0, 36)}`);
+        console.log(`[AUTODEAF] ⏹️ Timer stopped — ${sanitizeLogText(sessionId)}`);
     }
 }
 

@@ -33,7 +33,7 @@ function requireCsrf(req, res, next) {
 
     const expected = makeCsrfToken(sessionId);
 
-    if (!expected || provided.length !== expected.length) {
+    if (provided.length !== expected?.length) {
         return res.status(403).json({ success: false, error: 'CSRF token is invalid', code: 'csrf_invalid' });
     }
 

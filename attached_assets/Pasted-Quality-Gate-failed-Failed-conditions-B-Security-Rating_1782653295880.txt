@@ -1,0 +1,99 @@
+Quality Gate failed
+
+Failed conditions
+ B Security Rating on New Code (required ≥ A)
+
+See analysis details on SonarQube Cloud
+
+ Catch issues before they fail your Quality Gate with our IDE extension  SonarQube for IDE
+
+ANNOTATIONS
+
+ Check warning on line 16 in discord/voiceWorker/autoDeaf.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Prefer using an optional chain expression instead, as it's more concise and easier to read.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpEfcE5PvQOCQmw&open=AZ8OKfpEfcE5PvQOCQmw&pullRequest=49
+ Check warning on line 68 in discord/voiceWorker/autoDeaf.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Change this code to not log user-controlled data.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpEfcE5PvQOCQmx&open=AZ8OKfpEfcE5PvQOCQmx&pullRequest=49
+ Check warning on line 530 in discord/voiceWorker/lifecycle.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Refactor the code to avoid using this boolean literal.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OYkjcIHStKnsFp4kN&open=AZ8OYkjcIHStKnsFp4kN&pullRequest=49
+ Check warning on line 36 in dashboard-public/utils/csrf.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Prefer using an optional chain expression instead, as it's more concise and easier to read.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfl2fcE5PvQOCQmv&open=AZ8OKfl2fcE5PvQOCQmv&pullRequest=49
+ Check warning on line 530 in discord/voiceWorker/lifecycle.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Refactor the code to avoid using this boolean literal.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OYkjcIHStKnsFp4kM&open=AZ8OYkjcIHStKnsFp4kM&pullRequest=49
+ Check warning on line 815 in discord/voiceWorker/lifecycle.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Refactor the code to avoid using this boolean literal.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OYkjcIHStKnsFp4kR&open=AZ8OYkjcIHStKnsFp4kR&pullRequest=49
+ Check warning on line 790 in discord/voiceWorker/lifecycle.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Refactor the code to avoid using this boolean literal.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OYkjcIHStKnsFp4kP&open=AZ8OYkjcIHStKnsFp4kP&pullRequest=49
+ Check warning on line 70 in discord/voiceWorker/natural.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Change this code to not log user-controlled data.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpxfcE5PvQOCQnK&open=AZ8OKfpxfcE5PvQOCQnK&pullRequest=49
+ Check warning on line 815 in discord/voiceWorker/lifecycle.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Refactor the code to avoid using this boolean literal.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OYkjcIHStKnsFp4kQ&open=AZ8OYkjcIHStKnsFp4kQ&pullRequest=49
+ Check failure on line 258 in discord/voiceWorker/lifecycle.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Refactor this function to reduce its Cognitive Complexity from 17 to the 15 allowed.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OYkjcIHStKnsFp4kL&open=AZ8OYkjcIHStKnsFp4kL&pullRequest=49
+ Check warning on line 790 in discord/voiceWorker/lifecycle.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Refactor the code to avoid using this boolean literal.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OYkjcIHStKnsFp4kO&open=AZ8OYkjcIHStKnsFp4kO&pullRequest=49

@@ -3,6 +3,7 @@ const sessionManager = require("../sessionManager");
 const { st, naturalTimers, naturalRunning } = require("./state");
 const { delay, randomJitter } = require("./config");
 const { isSessionRunnable } = require("./session");
+const { sanitizeLogText } = require("../core/safeLogger");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🎭  REGION 12: NATURALNESS ENGINE
@@ -67,7 +68,7 @@ function stopNaturalTimer(sessionId) {
         clearInterval(id);
         naturalTimers.delete(sessionId);
         naturalRunning.delete(sessionId);
-        console.log(`[NATURAL] ⏹️ Timer stopped — ${String(sessionId).slice(0, 36)}`);
+        console.log(`[NATURAL] ⏹️ Timer stopped — ${sanitizeLogText(sessionId)}`);
     }
 }
 

@@ -255,6 +255,44 @@ async function cleanupFailedEnsureSession(sessionId, ownerId, reason) {
 // ════════════════════════════════════════════════════════════════════════════
 //  🎧  REGION 6: START SESSION
 // ════════════════════════════════════════════════════════════════════════════
+function setupClientEventHandlers(newClient, sessionId) {
+    newClient.on("ready", () => {
+        console.log(`[WORKER] 🟢 Self-bot connected: ${newClient.user.tag}`);
+        try { newClient.user.setStatus("idle"); } catch {}
+    });
+    newClient.on("invalidated", async () => {
+        console.error(`[WORKER] 🚫 Token invalidated (WS) for session: ${sessionId}`);
+        const sess = sessionManager.getSession(sessionId);
+        if (sess) sess.tokenInvalid = true;
+        await sendTokenInvalidDM(sessionId).catch(() => {});
+    });
+}
+
+async function performClientLogin(newClient, sessionId, session, tokenHash, tokenString) {
+    try {
+        await waitForTokenLoginCooldown(tokenHash);
+        await loginQueue.add(async () => {
+            await withTimeoutReject(newClient.login(tokenString), CONFIG.LOGIN_TIMEOUT, "LOGIN_TIMEOUT");
+        });
+        setSessionClientInPool(sessionId, session, tokenHash, newClient);
+    } catch (err) {
+        console.error(`[WORKER] ❌ Login failed for ${sessionId}. Destroying ghost client.`);
+        try { disposeSelfClient(newClient, "login-failure"); } catch {}
+        if (err.code === "OPERATION_QUEUE_FULL") throw new Error("VOICE_QUEUE_BUSY");
+        const isTokenErr =
+            err.message.includes("TOKEN_INVALID") ||
+            err.message.includes("Incorrect login") ||
+            err.message.includes("401");
+        if (isTokenErr) {
+            const sess = sessionManager.getSession(sessionId);
+            if (sess) sess.tokenInvalid = true;
+            sendTokenInvalidDM(sessionId).catch(() => {});
+            throw new Error("TOKEN_INVALID");
+        }
+        throw err;
+    }
+}
+
 async function resolveOrLoginSessionClient(sessionId, session, tokenHash, tokenString) {
     const pooledClient = getSessionClientFromPool(sessionId, session, tokenHash);
 
@@ -277,45 +315,8 @@ async function resolveOrLoginSessionClient(sessionId, session, tokenHash, tokenS
     if (session.client) return;
 
     const newClient = new SelfClient(buildSelfClientOptions());
-
-    newClient.on("ready", () => {
-        console.log(`[WORKER] 🟢 Self-bot connected: ${newClient.user.tag}`);
-        try { newClient.user.setStatus("idle"); } catch {}
-    });
-
-    newClient.on("invalidated", async () => {
-        console.error(`[WORKER] 🚫 Token invalidated (WS) for session: ${sessionId}`);
-        const sess = sessionManager.getSession(sessionId);
-        if (sess) sess.tokenInvalid = true;
-        await sendTokenInvalidDM(sessionId).catch(() => {});
-    });
-
-    try {
-        await waitForTokenLoginCooldown(tokenHash);
-        await loginQueue.add(async () => {
-            await withTimeoutReject(newClient.login(tokenString), CONFIG.LOGIN_TIMEOUT, "LOGIN_TIMEOUT");
-        });
-        setSessionClientInPool(sessionId, session, tokenHash, newClient);
-    } catch (err) {
-        console.error(`[WORKER] ❌ Login failed for ${sessionId}. Destroying ghost client.`);
-        try { disposeSelfClient(newClient, "login-failure"); } catch {}
-
-        if (err.code === "OPERATION_QUEUE_FULL") throw new Error("VOICE_QUEUE_BUSY");
-
-        const isTokenErr =
-            err.message.includes("TOKEN_INVALID") ||
-            err.message.includes("Incorrect login") ||
-            err.message.includes("401");
-
-        if (isTokenErr) {
-            const sess = sessionManager.getSession(sessionId);
-            if (sess) sess.tokenInvalid = true;
-            sendTokenInvalidDM(sessionId).catch(() => {});
-            throw new Error("TOKEN_INVALID");
-        }
-
-        throw err;
-    }
+    setupClientEventHandlers(newClient, sessionId);
+    await performClientLogin(newClient, sessionId, session, tokenHash, tokenString);
 }
 
 async function startSession(sessionId, tokenString) {
@@ -527,7 +528,7 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
                 null,
                 `max reconnect attempts reached (${CONFIG.MAX_RECONNECT_ATTEMPTS})`
             );
-            if (markResult?.ok != true && markResult != true) {
+            if (!(markResult?.ok ?? markResult)) {
                 console.warn(`[WORKER] ⚠️ Max reconnect failed state was not persisted for ${sanitizeLogText(sessionId)}: ${markResult?.safeError || "UNKNOWN"}`);
             }
             cleanupSessionClientIfUnused(failedTokenHash, failedClientRef, sessionId, failedSession, "max-reconnect");
@@ -787,7 +788,7 @@ async function stopSession(sessionId, options = {}) {
             options.stoppedBy || null,
             cleanup.safeError || cleanup.reason
         );
-        const markOk = markResult?.ok == true || markResult == true;
+        const markOk = markResult?.ok ?? markResult;
         if (markOk) {
             console.warn(`[WORKER] ⚠️ Stop cleanup failed for ${sanitizeLogText(sessionId)}: ${cleanup.safeError || cleanup.reason}`);
         } else {
@@ -812,7 +813,7 @@ async function stopSession(sessionId, options = {}) {
             options.stoppedBy || null,
             "session delete failed after voice cleanup"
         );
-        if (markResult?.ok != true && markResult != true) {
+        if (!(markResult?.ok ?? markResult)) {
             console.warn(`[WORKER] ⚠️ Session delete failed and failed state was not persisted for ${sanitizeLogText(sessionId)}: ${markResult?.safeError || "UNKNOWN"}`);
         }
         return false;

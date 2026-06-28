@@ -383,7 +383,7 @@ test("source contract: panel validateStartFields uses 17-19 regex (known scope l
 });
 
 test("source contract: panel normalizeDiscordId uses 17-22 regex (consistent with worker)", () => {
-    const src = fs.readFileSync(path.join(__dirname, "../commands/panelInteractions.js"), "utf8");
+    const src = fs.readFileSync(path.join(__dirname, "../commands/panelInteractions.js"), "utf8"); // nosemgrep
     assert.ok(
         src.includes("/^\\d{17,22}$/.test(id)"),
         "normalizeDiscordId must use 17-22 regex matching worker"
