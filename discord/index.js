@@ -463,7 +463,7 @@ client.on("ready", async () => {
         }
 
         // ส่ง startup notice เข้า log webhook เท่านั้น; ALERT webhook เก็บไว้สำหรับเหตุร้ายแรง
-        const base = process.env.RENDER_EXTERNAL_URL || '[your-app.onrender.com](https://your-app.onrender.com)';
+        const base = process.env.RENDER_EXTERNAL_URL || process.env.DASHBOARD_URL || '[your-app.onrender.com](https://your-app.onrender.com)';
         await sendLogWebhook(buildStartupNotice({
             clientTag: client.user.tag,
             baseUrl: base,
