@@ -333,7 +333,7 @@ function register({
     client.on("interactionCreate", async (interaction) => {
         if (interaction.guild && !interaction.isAutocomplete()) {
             const isProtectedCommand = interaction.isCommand()
-                && ["panel", "backup", "restore"].includes(interaction.commandName);
+                && ["voiceonline", "backup", "restore"].includes(interaction.commandName);
             const isProtectedButton = interaction.isButton()
                 && isVoicePanelControl(interaction.customId, IDS, PREFIXES);
             const isProtectedModal = interaction.isModalSubmit()
