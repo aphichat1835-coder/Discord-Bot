@@ -179,6 +179,10 @@ test("panel validateStartFields regex: rejects non-numeric ID", () => {
     assert.ok(!PANEL_ID_REGEX.test("abc1234567890123"), "non-numeric should fail panel validation");
 });
 
+test("panel validateStartFields regex: rejects 20-digit ID (above panel upper bound of 19)", () => {
+    assert.ok(!PANEL_ID_REGEX.test("12345678901234567890"), "20-digit should fail panel validation (panel upper bound is 19, unlike worker which allows 22)");
+});
+
 // ════════════════════════════════════════════════════════════════════════════
 //  4. OWNER MODE vs GUILD ADMIN MODE — isOwnerGlobalControl
 // ════════════════════════════════════════════════════════════════════════════
@@ -379,10 +383,10 @@ test("source contract: panel validateStartFields uses PANEL_FIELD_ID_REGEX (know
         validateBlock.includes("PANEL_FIELD_ID_REGEX"),
         "validateStartFields must delegate to PANEL_FIELD_ID_REGEX from panelHelpers"
     );
-    // ตรวจว่า panelHelpers กำหนด PANEL_FIELD_ID_REGEX ด้วย 17,19 เจาะจง
+    // ตรวจว่า panelHelpers กำหนด PANEL_FIELD_ID_REGEX ด้วย pattern \d{17,19} เจาะจง (ไม่ใช่แค่ตัวเลข)
     assert.ok(
-        helperSrc.includes("17,19"),
-        "panelHelpers.PANEL_FIELD_ID_REGEX must use exactly 17-19 digit-range"
+        helperSrc.includes("\\d{17,19}"),
+        "panelHelpers.PANEL_FIELD_ID_REGEX must contain \\d{17,19} digit-range pattern"
     );
 });
 

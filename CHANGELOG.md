@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased] - CI And Security Fixes 2026-06-28
+
+### Changed
+
+- Fixed `npm ci` failure: added `@emnapi/core` and `@emnapi/runtime` npm overrides pinned to `1.10.0` to prevent version drift between Replit package firewall and public registry causing "Missing from lock file" errors. Regenerated `package-lock.json`.
+- Fixed logout redirect security issue in `dashboard-public/views/guilds.html`: replaced `.finally()` with `.then(res => { if (res.ok) redirect })` and `.catch()` so redirect to `/` only happens when the server confirms logout success. Previously, `.finally()` redirected even on CSRF rejection, giving a false impression of session termination.
+- Tightened source contract test in `discord/tests/voiceSessionRegression.test.js`: changed `src.includes("17,19")` to `src.includes("\\d{17,19}")` to check for the actual regex pattern instead of any occurrence of the substring (which could match comments). Added explicit 20-digit boundary test for `PANEL_FIELD_ID_REGEX` to document that the panel field limit is 19 digits (unlike the worker which allows up to 22).
+- All 42 regression tests pass after changes.
+
 ## [Unreleased] - Dependency Classification Fix 2026-06-28
 
 ### Changed

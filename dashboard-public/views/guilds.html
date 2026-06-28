@@ -161,7 +161,15 @@
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'X-CSRF-Token': csrfToken }
-      }).finally(() => { globalThis.location.href = '/'; });
+      }).then(res => {
+        if (res.ok) {
+          globalThis.location.href = '/';
+        } else {
+          console.error('[logout] server rejected logout, status:', res.status);
+        }
+      }).catch(err => {
+        console.error('[logout] network error:', String(err));
+      });
     }
   </script>
 </body>
