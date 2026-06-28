@@ -111,7 +111,7 @@ ROADMAP.md
 SECURITY.md
 ```
 
-- `discord/systemProvider.js` remains owner-locked and must not be edited or summarized with hidden details.
+- `discord/systemProvider.js` and all files inside `discord/systemProvider/` (`actions.js`, `auth.js`, `dashboardHtml.js`, `htmlUtils.js`, `renderers.js`) remain owner-locked and must not be edited or summarized with hidden details.
 - Broad rewrites, dashboard replacements, verification rewrites, `discord.js` migration, repository split, shared MongoDB replacement, and voice/session redesign remain out of scope without explicit owner approval.
 - Command names/options, custom IDs, owner dashboard route paths, and normal session serializer safety policy are intended to remain unchanged.
 

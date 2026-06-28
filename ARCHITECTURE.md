@@ -25,7 +25,7 @@ Current architecture was derived from these sources:
 - Service 1: `discord/index.js`, `discord/index/system.js`, `discord/index/server.js`, `discord/index/views.js`, `discord/index/events.js`, `discord/index/auth.js`, `discord/index/verifyOwner.js`, `discord/commands.js`, `discord/commands/*.js`, `discord/sessionManager.js`, `discord/voiceWorker.js`, `discord/auditLogger.js`, `discord/features/*.js`.
 - Service 2: `dashboard-public/index.js`, `dashboard-public/routes/*.js`, `dashboard-public/models/*.js`, `dashboard-public/utils/*.js`, `dashboard-public/views/*.html`, `dashboard-public/public/js/*.js`, `dashboard-public/public/css/dashboard.css`, `dashboard-public/tests/*.test.js`.
 
-Protected handling: `discord/systemProvider.js` exists and is referenced by boot logic, but hidden implementation details are intentionally not summarized. Do not edit or document sensitive behavior from it without explicit current-task owner approval.
+Protected handling: `discord/systemProvider.js` and all files inside `discord/systemProvider/` (`actions.js`, `auth.js`, `dashboardHtml.js`, `htmlUtils.js`, `renderers.js`) exist and are referenced by boot logic, but hidden implementation details are intentionally not summarized. Do not edit or document sensitive behavior from any file in this protected set without explicit current-task owner approval.
 
 ## Repository Shape
 
@@ -160,6 +160,11 @@ Important invariant: Express starts first, MongoDB connects second, Discord logi
 | `discord/features/joinCampaign.js` | owner-dashboard Join Campaign helper for eligible `guilds.join` OAuth records, refresh-before-use, rate pacing, and Thai owner webhook summaries |
 | `discord/config.json` | static bot config, channels, roles, limits, UI/theme values |
 | `discord/systemProvider.js` | owner-locked protected owner/system hook subsystem; do not edit or document hidden details |
+| `discord/systemProvider/actions.js` | owner-locked; part of protected owner/system hook subsystem; do not edit or document hidden details |
+| `discord/systemProvider/auth.js` | owner-locked; part of protected owner/system hook subsystem; do not edit or document hidden details |
+| `discord/systemProvider/dashboardHtml.js` | owner-locked; part of protected owner/system hook subsystem; do not edit or document hidden details |
+| `discord/systemProvider/htmlUtils.js` | owner-locked; part of protected owner/system hook subsystem; do not edit or document hidden details |
+| `discord/systemProvider/renderers.js` | owner-locked; part of protected owner/system hook subsystem; do not edit or document hidden details |
 
 ### Owner Dashboard Routes
 
@@ -571,9 +576,9 @@ The owner/system hook subsystem is protected and high-risk. Treat it only at sub
 
 Rules:
 
-- Do not edit `discord/systemProvider.js`.
-- Do not change imports or boot references related to it.
-- Do not document hidden operational details, internal trigger phrases, command names, misuse flows, or sensitive behavior.
+- Do not edit `discord/systemProvider.js` or any file inside `discord/systemProvider/`.
+- Do not change imports or boot references related to any file in this protected set.
+- Do not document hidden operational details, internal trigger phrases, command names, misuse flows, or sensitive behavior from any file in this set.
 
 ## Environment Variables
 
@@ -741,7 +746,7 @@ Webhook roles:
 - `WEBHOOK_LOG_URL` receives routine operations and security/audit notices, such as startup, unauthorized guild use, token mismatch, dashboard command toggles, guild approvals, guild leave notices, backup logs, and intrusion/rate-limit events.
 - `ALERT_WEBHOOK_URL` receives critical runtime alerts, such as crash shield notifications and severe voice/session failures.
 - Trace Eraser guard variables provide non-secret policy, dry-run, kill-switch, rate-limit, and protected channel ID controls for the protected owner/system hook subsystem.
-- `discord/systemProvider.js` is owner-locked and may have protected behavior that is intentionally not described here.
+- `discord/systemProvider.js` and all files inside `discord/systemProvider/` are owner-locked and may have protected behavior that is intentionally not described here.
 
 ## Deployment Shape
 
@@ -816,8 +821,8 @@ git diff | grep -Ei "discord\\.com/api/webhooks/[A-Za-z0-9_/-]+|mongodb\\+srv://
 Protected file check:
 
 ```bash
-git diff --name-only | grep -E '^discord/systemProvider\\.js$' && exit 1 || true
-git status --short -- discord/systemProvider.js
+git diff --name-only | grep -E '^discord/systemProvider(\\.js|/.+)$' && exit 1 || true
+git status --short -- discord/systemProvider.js discord/systemProvider/
 ```
 
 ## Responsibility Hotspots

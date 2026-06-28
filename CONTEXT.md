@@ -29,7 +29,7 @@ Current dependency baseline:
 - Keep the current verification architecture.
 - Keep owner/admin controls.
 - Keep one repository with two services and shared MongoDB.
-- Keep `discord/systemProvider.js` owner-locked.
+- Keep `discord/systemProvider.js` and all files inside `discord/systemProvider/` owner-locked.
 
 ## Service Map
 

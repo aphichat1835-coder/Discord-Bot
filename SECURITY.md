@@ -350,11 +350,22 @@ Do not log:
 
 ## Protected Owner/System Hooks
 
-`discord/systemProvider.js` is OWNER-LOCKED.
+`discord/systemProvider.js` and all files inside `discord/systemProvider/` are OWNER-LOCKED.
 
-Do not edit, move, delete, rename, reformat, lint-fix, split, comment-edit, refactor, or document hidden operational details from this file unless the owner explicitly approves that exact action in the current task.
+The protected set currently includes:
 
-Do not change imports or boot logic that initializes or references it.
+```txt
+discord/systemProvider.js
+discord/systemProvider/actions.js
+discord/systemProvider/auth.js
+discord/systemProvider/dashboardHtml.js
+discord/systemProvider/htmlUtils.js
+discord/systemProvider/renderers.js
+```
+
+Do not edit, move, delete, rename, reformat, lint-fix, split, comment-edit, refactor, or document hidden operational details from any file in this protected set unless the owner explicitly approves that exact action in the current task.
+
+Do not change imports or boot logic that initializes or references any file in this protected set.
 
 ## Production Hardening Checklist
 
@@ -380,8 +391,8 @@ Do not change imports or boot logic that initializes or references it.
 Protected file validation:
 
 ```bash
-git diff --name-only | grep -E '^discord/systemProvider\\.js$' && exit 1 || true
-git status --short -- discord/systemProvider.js
+git diff --name-only | grep -E '^discord/systemProvider(\\.js|/.+)$' && exit 1 || true
+git status --short -- discord/systemProvider.js discord/systemProvider/
 ```
 
 Concrete secret scan:
