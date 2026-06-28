@@ -10,7 +10,7 @@ DO NOT REMOVE: /whitelist command — required for เฟส 3 /say system.
 */
 
 const { MessageEmbed, MessageActionRow, MessageButton } = require("discord.js");
-const crypto = require("crypto");
+const crypto = require("node:crypto");
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");
 const auditLogger = require("../auditLogger");

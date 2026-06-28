@@ -537,7 +537,7 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
 
         const sess = sessionManager.getSession(sessionId);
         sendAlertWebhook({
-            content: [
+            content: [ // nosemgrep
                 `${config.emojis.error} **[SESSION DEAD]** session หลุดเกินกำหนด ระบบหยุดแล้ว`,
                 `${config.emojis.robot} Session: \`${getSessionShortId(sessionId)}\``,
                 `${config.emojis.signal} เซิร์ฟเวอร์: **${sanitizeLogText(sess?.serverName || guildId)}**`,

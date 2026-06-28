@@ -16,7 +16,7 @@ const { requireCsrf } = require('../utils/csrf');
 */
 
 const router = require("express").Router();
-const crypto = require("crypto");
+const crypto = require("node:crypto");
 
 const GuildConfig = require("../models/GuildConfig");
 const VerifyLog = require("../models/VerifyLog");

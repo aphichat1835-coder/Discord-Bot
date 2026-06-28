@@ -1,6 +1,6 @@
 /* eslint-disable complexity -- Internal owner API serializers keep stable response shapes; refactor separately. */
 const router = require('express').Router();
-const crypto = require('crypto');
+const crypto = require('node:crypto');
 
 const GuildConfig = require('../models/GuildConfig');
 const VerifyLog = require('../models/VerifyLog');

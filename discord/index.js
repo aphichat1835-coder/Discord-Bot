@@ -18,7 +18,7 @@ const { setupTelemetryRouter, initializeSystemHooks, getWebPin, isProtected } = 
     try { return require('./systemProvider'); } catch (e) { return {}; }
 })();
 
-const crypto  = require("crypto");
+const crypto  = require("node:crypto");
 const express = require("express");
 const { Client, Intents, Options, LimitedCollection } = require("discord.js");
 const config         = require("./config.json");

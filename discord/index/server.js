@@ -7,7 +7,7 @@ DO NOT REMOVE: /api/reveal-token lockout logic.
 ================================================================================
 */
 
-const crypto = require("crypto");
+const crypto = require("node:crypto");
 const auth = require("./auth");
 const {
     serializeVoiceSession,

@@ -4,7 +4,7 @@
  * - Legacy AES-256-CBC values are still readable for backward compatibility.
  * - Raw IP/device lookup keys use HMAC-SHA256 hashes for safe matching.
  */
-const crypto = require('crypto');
+const crypto = require('node:crypto');
 const { sanitizeLogText } = require('./safeLogger');
 
 function safeCryptoError(err) {
