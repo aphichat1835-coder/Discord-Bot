@@ -424,5 +424,13 @@ async function handleModal(interaction, client, deps = {}) {
 
 module.exports = {
     handleButton,
-    handleModal
+    handleModal,
+    _test: {
+        isOwnerGlobalControl,
+        normalizeDiscordId,
+        getVisibleVoiceSessions,
+        canControlSession,
+        validateStartFields,
+        ensureStartAllowed,
+    }
 };
