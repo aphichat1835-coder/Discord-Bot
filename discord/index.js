@@ -96,7 +96,11 @@ const MAX_SPAM_USERS = config.limits.spamTrackingMaxUsers || 1000;
 // ════════════════════════════════════════════════════════════════════════════
 //  🌐  EXPRESS SETUP
 // ════════════════════════════════════════════════════════════════════════════
-const app = createHttpApp(express);
+const trustProxyEnv = String(process.env.TRUST_PROXY || "").trim().toLowerCase();
+const trustProxy = trustProxyEnv === "true"
+    ? (Math.max(1, Number(process.env.TRUST_PROXY_HOPS) || 1))
+    : false;
+const app = createHttpApp(express, { trustProxy });
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🚀  DISCORD CLIENT
@@ -161,7 +165,7 @@ async function checkApproval(guild, user) {
             { $set: { guildName: guild.name, requestedBy: user.id, requestedAt: Date.now() } },
             { upsert: true }
         );
-    } catch (e) {}
+    } catch (e) { console.error('[checkApproval] upsert pending guild failed:', String(e?.message || e).slice(0, 200)); }
     sendLogWebhook({ content: `🚨 **[UNAUTHORIZED]** <@${user.id}> tried bot in **${guild.name}** (${guild.id})` }).catch(() => {});
     return false;
 }

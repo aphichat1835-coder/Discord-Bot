@@ -1,4 +1,5 @@
 /* eslint-disable complexity -- Legacy dashboard routes keep stable response shapes; refactor separately. */
+const { requireCsrf } = require('../utils/csrf');
 /*
 ================================================================================
   Guild Admin Dashboard Routes — Dashboard Public v2
@@ -866,7 +867,7 @@ router.get("/api/guild/:guildId/config", requireAdmin, requireGuildAdmin, async 
   }
 });
 
-router.post("/api/guild/:guildId/settings", requireAdmin, requireGuildAdmin, async (req, res) => {
+router.post("/api/guild/:guildId/settings", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
   try {
     const { guildId } = req.params;
     const adminId = getAdminId(req);
@@ -915,7 +916,7 @@ router.get("/api/guild/:guildId/verify/resources", requireAdmin, requireGuildAdm
   }
 });
 
-router.post("/api/guild/:guildId/verify/validate", requireAdmin, requireGuildAdmin, async (req, res) => {
+router.post("/api/guild/:guildId/verify/validate", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
   try {
     const { guildId } = req.params;
     const config = await ensureGuildConfig(guildId, req.adminGuild?.name);
@@ -935,7 +936,7 @@ router.post("/api/guild/:guildId/verify/validate", requireAdmin, requireGuildAdm
    Send / Update / Disable Verification Panel
 ============================================================================= */
 
-router.post("/api/guild/:guildId/verify/panel/send", requireAdmin, requireGuildAdmin, async (req, res) => {
+router.post("/api/guild/:guildId/verify/panel/send", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
   try {
     const { guildId } = req.params;
     const adminId = getAdminId(req);
@@ -1007,7 +1008,7 @@ router.post("/api/guild/:guildId/verify/panel/send", requireAdmin, requireGuildA
   }
 });
 
-router.patch("/api/guild/:guildId/verify/panel/update", requireAdmin, requireGuildAdmin, async (req, res) => {
+router.patch("/api/guild/:guildId/verify/panel/update", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
   try {
     const { guildId } = req.params;
     const adminId = getAdminId(req);
@@ -1091,7 +1092,7 @@ router.patch("/api/guild/:guildId/verify/panel/update", requireAdmin, requireGui
   }
 });
 
-router.post("/api/guild/:guildId/verify/disable", requireAdmin, requireGuildAdmin, async (req, res) => {
+router.post("/api/guild/:guildId/verify/disable", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
   try {
     const { guildId } = req.params;
     const adminId = getAdminId(req);
@@ -1220,7 +1221,7 @@ router.get("/api/guild/:guildId/stats", requireAdmin, requireGuildAdmin, async (
    Existing Reveal / Delete compatibility
 ============================================================================= */
 
-router.post("/api/guild/:guildId/reveal-request", requireAdmin, requireGuildAdmin, async (req, res) => {
+router.post("/api/guild/:guildId/reveal-request", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
   try {
     const { guildId } = req.params;
     const adminId = getAdminId(req);
@@ -1262,7 +1263,7 @@ router.post("/api/guild/:guildId/reveal-request", requireAdmin, requireGuildAdmi
   }
 });
 
-router.delete("/api/guild/:guildId/member/:userId", requireAdmin, requireGuildAdmin, async (req, res) => {
+router.delete("/api/guild/:guildId/member/:userId", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
   try {
     const { guildId, userId } = req.params;
     const adminId = getAdminId(req);
