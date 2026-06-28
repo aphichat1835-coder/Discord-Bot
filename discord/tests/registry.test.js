@@ -17,7 +17,7 @@ test("slash command names are unique and include supported command groups", () =
     assert.equal(unique.size, names.length);
 
     for (const expected of [
-        "voiceonline",
+        "voice-online",
         "help",
         "stats",
         "clear",
