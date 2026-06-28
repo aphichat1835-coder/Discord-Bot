@@ -367,8 +367,7 @@ function registerRoutes({
             dbConnected
         });
     });
-
-    app.use("/api", (req, res, next) => {
+        app.use("/api", (req, res, next) => {
         if (shouldBypassDashboardReadApi(req)) return next();
 
         return rateLimiter(req, res, () => {
@@ -511,7 +510,8 @@ function registerRoutes({
             res.status(500).json({ success: false, error: e.message });
         }
     });
-        // ── Start / Ensure Voice Session ──
+
+    // ── Start / Ensure Voice Session ──
     app.post("/api/voice-session/ensure", express.json({ limit: "16kb" }), async (req, res) => {
         try {
             if (!checkAuth(req, res)) return;
@@ -847,7 +847,8 @@ function registerRoutes({
             res.status(500).json({ success: false, error: e.message });
         }
     });
-        // ── Auto Deaf Settings ──
+
+    // ── Auto Deaf Settings ──
     app.post("/api/settings/auto-deaf", express.json(), async (req, res) => {
         if (!checkAuth(req, res)) return;
 
@@ -988,7 +989,7 @@ function registerRoutes({
             res.status(500).json({ success: false, error: e.message });
         }
     });
-        app.post("/api/approved/remove", express.json(), async (req, res) => {
+        app.post("/api/approved/kick", express.json(), async (req, res) => {
         if (!checkAuth(req, res)) return;
 
         try {
@@ -1001,17 +1002,92 @@ function registerRoutes({
                 });
             }
 
-            const removedApproval = await removeApprovedGuildRecord(guildId);
+            const guild = client.guilds.cache.get(guildId);
 
-            if (!removedApproval) {
-                return res.status(503).json({
+            if (!guild) {
+                const removedApproval = await removeApprovedGuildRecord(guildId);
+
+                return res.status(removedApproval ? 404 : 207).json({
                     success: false,
-                    error: "Failed to remove approved guild record"
+                    partialSuccess: !removedApproval,
+                    error: "บอทไม่ได้อยู่ใน guild นี้",
+                    approvalRemoved: removedApproval,
+                    warning: removedApproval
+                        ? null
+                        : "บอทไม่ได้อยู่ใน guild นี้แล้ว แต่ลบ approved guild record ไม่สำเร็จ"
                 });
             }
 
-            res.json({ success: true });
+            const guildName = guild.name;
+            const guildSessions = Array.from(sessionManager.getAllSessions().values())
+                .filter(s => s.serverId === guildId);
+
+            let failedStops = 0;
+
+            for (const s of guildSessions) {
+                const stopped = await voiceWorker.stopSession(s.sessionId, {
+                    stoppedBy: "dashboard"
+                }).catch((stopErr) => {
+                    console.warn(
+                        `[DASHBOARD] ⚠️ Best-effort guild kick voice stop failed for session ${s.sessionId}: ${stopErr.message}`
+                    );
+                    return false;
+                });
+
+                if (!stopped) failedStops++;
+            }
+
+            if (failedStops > 0) {
+                console.warn(
+                    `[DASHBOARD] ⚠️ Continuing guild leave after ${failedStops} voice session stop failure(s) for guild ${guildId}`
+                );
+            }
+
+            await guild.leave();
+
+            const removedApproval = await removeApprovedGuildRecord(guildId);
+
+            sendLogWebhook({
+                content: `👢 **[BOT KICKED]** ${guildName} (\`${guildId}\`)`
+            }).catch(() => {});
+
+            const partialSuccess = failedStops > 0 || !removedApproval;
+
+            res.status(partialSuccess ? 207 : 200).json({
+                success: !partialSuccess,
+                partialSuccess,
+                voiceStopFailed: failedStops,
+                approvalRemoved: removedApproval,
+                warning: partialSuccess
+                    ? [
+                        failedStops > 0
+                            ? "บอทถูกนำออกแล้ว แต่มี voice sessions บางรายการหยุดไม่สำเร็จ"
+                            : null,
+                        !removedApproval
+                            ? "บอทถูกนำออกแล้ว แต่ลบ approved guild record ไม่สำเร็จ"
+                            : null
+                    ].filter(Boolean).join(" | ")
+                    : null
+            });
         } catch (e) {
-            res.status(500).json({ success: false, error: e.message });
+            res.status(500).json({
+                success: false,
+                error: e.message
+            });
         }
     });
+
+    const revealAttemptCleanupTimer = setInterval(() => {
+        cleanupRevealAttempts();
+        cleanupPinAttempts();
+    }, 5 * 60 * 1000);
+
+    revealAttemptCleanupTimer.unref?.();
+}
+
+module.exports = {
+    registerRoutes,
+    logIntrusion,
+    makeCheckAuth,
+    makeCheckRevealPin
+};
