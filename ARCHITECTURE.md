@@ -437,6 +437,24 @@ static pages and health routes
 | `dashboard-public/tests/*.test.js` | Jest tests for IP helpers, verify mode helpers, OAuth pure utility contracts, admin session compatibility, sensitive access, Discord API helpers, and OAuth user summaries |
 | `dashboard-public/scripts/cleanupLegacyRawOAuthSnapshots.js` | MongoDB migration script: renames legacy raw OAuth snapshot fields to the current schema shape; supports dry-run mode and uses atomic updateMany |
 
+### Service 2 Test Files
+
+All 11 test files live in `dashboard-public/tests/` and run with Jest.
+
+| Test file | What it covers |
+| --- | --- |
+| `adminSessionCompat.test.js` | admin session compatibility middleware: old/new session shape normalization |
+| `discordAPI.test.js` | Discord OAuth/bot API call helpers: token exchange, role/channel validation, member join |
+| `guildRoutesPure.test.js` | pure guild route helper contracts: config normalization, validation rules |
+| `ipUtils.test.js` | IP normalization, trusted IP selection, spoof detection, device extraction, risk computation |
+| `oauthPureUtils.test.js` | pure OAuth utility contracts: state signing, token shape, redirect URI helpers |
+| `oauthTokenLifecycle.test.js` | OAuth token storage/refresh policy, refresh timing, expiry behavior |
+| `oauthUserSummary.test.js` | capped OAuth user summary helpers for large guild member lists |
+| `sensitiveAccess.test.js` | sensitive data access helpers: normalize, canView, buildPatch, redact Discord/IP snapshots |
+| `state.test.js` | shared OAuth/admin/callback state signing and compact verification state creation |
+| `verificationSnapshots.test.js` | verification log snapshot serializers and sensitive-data redaction behavior |
+| `verifyMode.test.js` | verification mode normalization and compatibility helper contracts |
+
 ### Dashboard Public Routes
 
 Static pages and health routes from `dashboard-public/index.js`:
