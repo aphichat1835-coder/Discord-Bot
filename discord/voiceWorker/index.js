@@ -37,7 +37,7 @@ const {
     cleanupLeanClientCache,
     cleanupSelfClientCaches,
 } = require("./cacheUtils");
-const { voiceEventLog, getVoiceLogs, pushVoiceLog } = require("./eventLog");
+const { voiceEventLog, getVoiceLogs } = require("./eventLog");
 const { sendSessionStoppedDM, sendTokenInvalidDM, sendSessionOnlineDM } = require("./dm");
 const {
     startNaturalTimer,

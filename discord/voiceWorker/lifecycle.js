@@ -48,8 +48,8 @@ const {
     cleanupSessionClientIfUnused,
     countActiveSessionsForAccountId,
     waitForTokenLoginCooldown,
-    getClientPoolKey,
     debugVoiceSession,
+    disposeSelfClient,
 } = require("./session");
 const {
     buildSelfClientOptions,
@@ -321,7 +321,7 @@ async function startSession(sessionId, tokenString) {
 
             } catch (err) {
                 console.error(`[WORKER] ❌ Login failed for ${sessionId}. Destroying ghost client.`);
-                try { newClient.destroy(); } catch {}
+                try { disposeSelfClient(newClient, "login-failure"); } catch {}
 
                 if (err.code === "OPERATION_QUEUE_FULL") {
                     throw new Error("VOICE_QUEUE_BUSY");
