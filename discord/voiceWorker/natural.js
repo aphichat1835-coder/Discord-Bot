@@ -24,7 +24,7 @@ async function doNaturalBlink(sessionId) {
     naturalRunning.add(sessionId);
 
     try {
-        console.log(`[NATURAL] 🎭 Blink start — ${sessionId}`);
+        console.log(`[NATURAL] 🎭 Blink start — ${sanitizeLogText(sessionId)}`);
 
         conn.rejoin({
             channelId: session.voiceId,
@@ -36,7 +36,7 @@ async function doNaturalBlink(sessionId) {
 
         const stillAlive = sessionManager.getSession(sessionId);
         if (!stillAlive || !conn || conn.state.status === VoiceConnectionStatus.Destroyed) {
-            console.log(`[NATURAL] ⚠️ Session gone during blink — ${sessionId}`);
+            console.log(`[NATURAL] ⚠️ Session gone during blink — ${sanitizeLogText(sessionId)}`);
             return;
         }
 
@@ -46,9 +46,9 @@ async function doNaturalBlink(sessionId) {
             selfDeaf: true
         });
 
-        console.log(`[NATURAL] ✅ Blink done — ${sessionId}`);
+        console.log(`[NATURAL] ✅ Blink done — ${sanitizeLogText(sessionId)}`);
     } catch (e) {
-        console.warn(`[NATURAL] ⚠️ Blink error for ${sessionId}: ${e.message}`);
+        console.warn(`[NATURAL] ⚠️ Blink error for ${sanitizeLogText(sessionId)}: ${e.message}`);
         try {
             conn.rejoin({
                 channelId: session.voiceId,
@@ -87,7 +87,7 @@ function startNaturalTimer(sessionId) {
     id.unref?.();
     naturalTimers.set(sessionId, id);
 
-    console.log(`[NATURAL] ▶️ Timer started for ${sessionId} (every ${Math.round(interval / 60000)} min, duration ${st.naturalSettings.durationMs / 1000}s)`);
+    console.log(`[NATURAL] ▶️ Timer started for ${sanitizeLogText(sessionId)} (every ${Math.round(interval / 60000)} min, duration ${st.naturalSettings.durationMs / 1000}s)`);
 }
 
 function stopAllNaturalTimers() {

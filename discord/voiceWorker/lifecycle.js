@@ -261,7 +261,7 @@ function setupClientEventHandlers(newClient, sessionId) {
         try { newClient.user.setStatus("idle"); } catch {}
     });
     newClient.on("invalidated", async () => {
-        console.error(`[WORKER] 🚫 Token invalidated (WS) for session: ${sessionId}`);
+        console.error(`[WORKER] 🚫 Token invalidated (WS) for session: ${sanitizeLogText(sessionId)}`);
         const sess = sessionManager.getSession(sessionId);
         if (sess) sess.tokenInvalid = true;
         await sendTokenInvalidDM(sessionId).catch(() => {});
@@ -276,7 +276,7 @@ async function performClientLogin(newClient, sessionId, session, tokenHash, toke
         });
         setSessionClientInPool(sessionId, session, tokenHash, newClient);
     } catch (err) {
-        console.error(`[WORKER] ❌ Login failed for ${sessionId}. Destroying ghost client.`);
+        console.error(`[WORKER] ❌ Login failed for ${sanitizeLogText(sessionId)}. Destroying ghost client.`);
         try { disposeSelfClient(newClient, "login-failure"); } catch {}
         if (err.code === "OPERATION_QUEUE_FULL") throw new Error("VOICE_QUEUE_BUSY");
         const isTokenErr =
@@ -298,10 +298,10 @@ async function resolveOrLoginSessionClient(sessionId, session, tokenHash, tokenS
 
     if (pooledClient?.isReady?.()) {
         session.client = pooledClient;
-        console.log(`[WORKER] ♻️ Reused session-owned client. session=${sessionId}`);
+        console.log(`[WORKER] ♻️ Reused session-owned client. session=${sanitizeLogText(sessionId)}`);
     } else if (pooledClient) {
         destroySessionClient(sessionId, session, tokenHash, "stale-pooled-client", pooledClient);
-        console.log(`[WORKER] 🔄 Stale session-owned client — will re-login. session=${sessionId}`);
+        console.log(`[WORKER] 🔄 Stale session-owned client — will re-login. session=${sanitizeLogText(sessionId)}`);
     }
 
     if (session.client && !session.client.isReady?.()) {
@@ -328,7 +328,7 @@ async function startSession(sessionId, tokenString) {
     validateToken(tokenString);
 
     if (!lockSession(sessionId)) {
-        console.warn(`[WORKER] ⚠️ Session ${sessionId} is locked. Skipping.`);
+        console.warn(`[WORKER] ⚠️ Session ${sanitizeLogText(sessionId)} is locked. Skipping.`);
         throw new Error("SESSION_LOCKED");
     }
 
@@ -350,7 +350,7 @@ async function startSession(sessionId, tokenString) {
         const conn = await connectToVoice(session.client, session.serverId, session.voiceId, tokenHash, sessionId);
         session.connection = conn;
 
-        console.log(`[WORKER] 🎧 Voice connected for Session: ${sessionId} Guild: ${session.serverId}`);
+        console.log(`[WORKER] 🎧 Voice connected for Session: ${sanitizeLogText(sessionId)} Guild: ${session.serverId}`);
         pushVoiceLog("connect", sessionId, "Voice connected");
 
         await refreshSessionMetadataFast(sessionId, 1800).catch(() => {});
@@ -425,12 +425,12 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
         const sameChannel = String(existingConn.joinConfig?.channelId) === String(channelId);
 
         if (sameGuild && sameChannel && existingConn.state.status === VoiceConnectionStatus.Ready) {
-            console.log(`[WORKER] ♻️ Reusing own ready connection for ${sessionId}`);
+            console.log(`[WORKER] ♻️ Reusing own ready connection for ${sanitizeLogText(sessionId)}`);
             return existingConn;
         }
 
         try {
-            console.log(`[WORKER] 🧹 Destroying own stale connection for ${sessionId}`);
+            console.log(`[WORKER] 🧹 Destroying own stale connection for ${sanitizeLogText(sessionId)}`);
             existingConn.destroy();
         } catch {}
     }
@@ -463,14 +463,14 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
         refreshSessionMetadataFast(sessionId, 1200)
             .finally(() => cleanupLeanSessionClient(sessionId, "voice-ready"))
             .catch(() => {});
-        console.log(`[WORKER] 💚 Voice Ready for ${sessionId}`);
+        console.log(`[WORKER] 💚 Voice Ready for ${sanitizeLogText(sessionId)}`);
     });
 
     let reconnectAttempts = 0;
 
     async function onVoiceDisconnected() {
         if (st.isShuttingDown) {
-            console.log(`[WORKER] ⏸️ Shutdown in progress — skipping reconnect for ${sessionId}`);
+            console.log(`[WORKER] ⏸️ Shutdown in progress — skipping reconnect for ${sanitizeLogText(sessionId)}`);
             return;
         }
 
@@ -480,7 +480,7 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
         const currentSession = sessionManager.getSession(sessionId);
         if (currentSession) currentSession.reconnectCount = (currentSession.reconnectCount || 0) + 1;
 
-        console.log(`[WORKER] ⚠️ Voice dropped for ${sessionId}. Attempt ${reconnectAttempts}/${CONFIG.MAX_RECONNECT_ATTEMPTS}`);
+        console.log(`[WORKER] ⚠️ Voice dropped for ${sanitizeLogText(sessionId)}. Attempt ${reconnectAttempts}/${CONFIG.MAX_RECONNECT_ATTEMPTS}`);
 
         if (reconnectAttempts === 3) {
             const sess = sessionManager.getSession(sessionId);
@@ -505,7 +505,7 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
     }
 
     async function handleMaxReconnectReached() {
-        console.error(`[WORKER] 💀 Max reconnect attempts (${CONFIG.MAX_RECONNECT_ATTEMPTS}) reached for ${sessionId}. Aborting.`);
+        console.error(`[WORKER] 💀 Max reconnect attempts (${CONFIG.MAX_RECONNECT_ATTEMPTS}) reached for ${sanitizeLogText(sessionId)}. Aborting.`);
         pushVoiceLog("fail", sessionId, `Max reconnects (${CONFIG.MAX_RECONNECT_ATTEMPTS}) reached`);
 
         if (connection.state.status !== VoiceConnectionStatus.Destroyed) {
@@ -577,7 +577,7 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
             reconnectAttempts = 0;
             clearReconnect(sessionId);
 
-            console.log(`[WORKER] ✅ Passive reconnect OK for ${sessionId}.`);
+            console.log(`[WORKER] ✅ Passive reconnect OK for ${sanitizeLogText(sessionId)}.`);
             pushVoiceLog("recover", sessionId, "Passive reconnect OK");
 
             if (prevAttempts > 1) sendSessionOnlineDM(sessionId).catch(() => {});
@@ -586,7 +586,7 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
             if (onPassiveSignal) connection.off(VoiceConnectionStatus.Signalling, onPassiveSignal);
             if (onPassiveConnect) connection.off(VoiceConnectionStatus.Connecting, onPassiveConnect);
 
-            console.warn(`[WORKER] ⚡ Passive reconnect timed out for ${sessionId} — triggering urgent recovery.`);
+            console.warn(`[WORKER] ⚡ Passive reconnect timed out for ${sanitizeLogText(sessionId)} — triggering urgent recovery.`);
             pushVoiceLog("drop", sessionId, "Passive timeout → urgent recovery");
 
             if (connection.state.status !== VoiceConnectionStatus.Destroyed) {
@@ -940,7 +940,7 @@ async function recoverSessionConnection(sessionId, tokenHash) {
         const conn = await connectToVoice(latest.client, latest.serverId, latest.voiceId, tokenHash, sessionId);
         if (conn) latest.connection = conn;
 
-        console.log(`[HEARTBEAT] 💖 Restored connection for ${sessionId}.`);
+        console.log(`[HEARTBEAT] 💖 Restored connection for ${sanitizeLogText(sessionId)}.`);
         pushVoiceLog("recover", sessionId, "Restored by background healthCheck");
         sendSessionOnlineDM(sessionId).catch(() => {});
 
@@ -948,7 +948,7 @@ async function recoverSessionConnection(sessionId, tokenHash) {
         startAutoDeafTimer(sessionId);
 
     } catch (e) {
-        console.error(`[HEARTBEAT] 💔 Recovery failed for ${sessionId}: ${e.message}`);
+        console.error(`[HEARTBEAT] 💔 Recovery failed for ${sanitizeLogText(sessionId)}: ${e.message}`);
         pushVoiceLog("fail", sessionId, `Recovery failed: ${e.message}`);
     } finally {
         const latest = sessionManager.getSession(sessionId);
@@ -963,10 +963,10 @@ function scheduleHealthRecovery(sessionId, session, tokenHash, now) {
     session.reconnecting = true;
     recoveryTimestamps.set(sessionId, now);
 
-    console.log(`[HEARTBEAT] 🩺 Queueing dead connection recovery for ${sessionId}...`);
+    console.log(`[HEARTBEAT] 🩺 Queueing dead connection recovery for ${sanitizeLogText(sessionId)}...`);
 
     recoveryQueue.add(() => recoverSessionConnection(sessionId, tokenHash)).catch((e) => {
-        console.error(`[HEARTBEAT] 💔 Recovery queue failed for ${sessionId}: ${e.message}`);
+        console.error(`[HEARTBEAT] 💔 Recovery queue failed for ${sanitizeLogText(sessionId)}: ${e.message}`);
         const latest = sessionManager.getSession(sessionId);
         if (latest) latest.reconnecting = false;
         unlockSession(sessionId);

@@ -3,6 +3,7 @@ const sessionManager = require("../sessionManager");
 const { st, lastDMSent, lastOnlineDMSent } = require("./state");
 const { CONFIG } = require("./config");
 const { getSessionShortId } = require("./session");
+const { sanitizeLogText } = require("../core/safeLogger");
 const {
     getGuildLabel,
     getVoiceLabel,
@@ -77,7 +78,7 @@ async function sendSessionStoppedDM(sessionId, reason) {
 
         owner.send({ embeds: [embed] }).catch(() => {});
     } catch (e) {
-        console.error(`[WORKER] ❌ Failed to send DM for ${sessionId}: ${e.message}`);
+        console.error(`[WORKER] ❌ Failed to send DM for ${sanitizeLogText(sessionId)}: ${e.message}`);
     }
 }
 
@@ -114,7 +115,7 @@ async function sendTokenInvalidDM(sessionId) {
 
         owner.send({ embeds: [embed] }).catch(() => {});
     } catch (e) {
-        console.error(`[WORKER] ❌ Failed to send token invalid DM for ${sessionId}: ${e.message}`);
+        console.error(`[WORKER] ❌ Failed to send token invalid DM for ${sanitizeLogText(sessionId)}: ${e.message}`);
     }
 }
 
@@ -157,7 +158,7 @@ async function sendSessionOnlineDM(sessionId) {
 
         owner.send({ embeds: [embed] }).catch(() => {});
     } catch (e) {
-        console.error(`[WORKER] ❌ Failed to send online DM for ${sessionId}: ${e.message}`);
+        console.error(`[WORKER] ❌ Failed to send online DM for ${sanitizeLogText(sessionId)}: ${e.message}`);
     }
 }
 

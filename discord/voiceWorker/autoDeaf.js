@@ -22,7 +22,7 @@ async function doAutoDeafToggle(sessionId) {
     autoDeafRunning.add(sessionId);
 
     try {
-        console.log(`[AUTODEAF] 🎧 Undeafening — ${sessionId}`);
+        console.log(`[AUTODEAF] 🎧 Undeafening — ${sanitizeLogText(sessionId)}`);
 
         conn.rejoin({
             channelId: session.voiceId,
@@ -34,7 +34,7 @@ async function doAutoDeafToggle(sessionId) {
 
         const stillAlive = sessionManager.getSession(sessionId);
         if (!stillAlive || !conn || conn.state.status === VoiceConnectionStatus.Destroyed) {
-            console.log(`[AUTODEAF] ⚠️ Session gone during undeaf — ${sessionId}`);
+            console.log(`[AUTODEAF] ⚠️ Session gone during undeaf — ${sanitizeLogText(sessionId)}`);
             return;
         }
 
@@ -44,9 +44,9 @@ async function doAutoDeafToggle(sessionId) {
             selfDeaf: true
         });
 
-        console.log(`[AUTODEAF] ✅ Redeafened — ${sessionId}`);
+        console.log(`[AUTODEAF] ✅ Redeafened — ${sanitizeLogText(sessionId)}`);
     } catch (e) {
-        console.warn(`[AUTODEAF] ⚠️ Error for ${sessionId}: ${e.message}`);
+        console.warn(`[AUTODEAF] ⚠️ Error for ${sanitizeLogText(sessionId)}: ${e.message}`);
         try {
             conn.rejoin({
                 channelId: session.voiceId,
@@ -85,7 +85,7 @@ function startAutoDeafTimer(sessionId) {
     id.unref?.();
     autoDeafTimers.set(sessionId, id);
 
-    console.log(`[AUTODEAF] ▶️ Timer started for ${sessionId} (every ${Math.round(interval / 60000)} min, open ${st.autoDeafSettings.openDurationMs / 1000}s)`);
+    console.log(`[AUTODEAF] ▶️ Timer started for ${sanitizeLogText(sessionId)} (every ${Math.round(interval / 60000)} min, open ${st.autoDeafSettings.openDurationMs / 1000}s)`);
 }
 
 function stopAllAutoDeafTimers() {
