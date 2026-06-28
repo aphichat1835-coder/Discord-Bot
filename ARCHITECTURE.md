@@ -412,7 +412,7 @@ static pages and health routes
 | `dashboard-public/routes/adminSessionCompat.js` | compatibility middleware for admin user/guild session shapes |
 | `dashboard-public/routes/guild.js` | guild admin guards, guild config/resources/settings APIs, verification validation, panel send/update/disable, logs/members/stats/risk, reveal requests, member data soft delete |
 | `dashboard-public/routes/guildDashboard.js` | guild dashboard overview and risk extension APIs, serializers, aggregate builders |
-| `dashboard-public/routes/api.js` | internal owner-dashboard API: overview, stats, members, pending reveal requests, reveal approve/reject |
+| `dashboard-public/routes/api.js` | internal owner-dashboard API: overview, stats, members, sensitive-access approve/revoke, pending reveal requests, reveal approve/reject |
 | `dashboard-public/models/GuildConfig.js` | guild verification config, panel config, security policy, sensitive access expiry/audit fields, panel revision fields |
 | `dashboard-public/models/OAuthUser.js` | Discord profile snapshot, OAuth token metadata, connections, guilds, latest member/verify/IP summaries |
 | `dashboard-public/models/VerifyLog.js` | verification result log, policy and Discord/member snapshots, risk, IP/device info, role assignment result |
@@ -429,6 +429,7 @@ static pages and health routes
 | `dashboard-public/utils/verifyMode.js` | verification mode normalization and compatibility helpers |
 | `dashboard-public/utils/safeLogger.js` | compatibility export for shared redaction helpers from `discord/core/safeLogger.js` |
 | `dashboard-public/utils/csrf.js` | CSRF token generation and validation using HMAC-SHA256 with timing-safe comparison and SameSite cookie helpers |
+| `dashboard-public/utils/sensitiveAccess.js` | sensitive data access policy helpers: `normalizeSensitiveAccess`, `canViewSensitiveData`, `buildSensitiveAccessPatch`, `buildSensitiveAccessAuditUpdate`, `redactSensitiveDiscordSnapshot`, `redactSensitiveIpInfo` |
 | `dashboard-public/utils/verificationSnapshots.js` | shared verification log snapshot serializers/redaction helpers used by guild routes |
 | `dashboard-public/views/*.html` | public home, guild list, guild admin dashboard, callback result, admin callback page |
 | `dashboard-public/public/js/*.js` | Dashboard Public browser behavior |

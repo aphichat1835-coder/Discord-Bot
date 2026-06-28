@@ -157,6 +157,8 @@ discord/voiceWorker.js
 discord/voiceWorker/lifecycle.js
 discord/voiceWorker/session.js
 discord/voiceWorker/state.js
+discord/voiceWorker/queue.js
+discord/voiceWorker/cacheUtils.js
 discord/commands.js
 discord/index/server.js
 discord/index/views.js
