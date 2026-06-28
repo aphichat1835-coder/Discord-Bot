@@ -99,39 +99,43 @@ function normalizeVoiceTarget(input = {}) {
     return { guildId, channelId };
 }
 
-async function refreshSessionMetadata(sessionId, client, guild = null, channel = null) {
-    const session = sessionManager.getSession(sessionId);
-    if (!session || !client) return false;
-
+async function resolveGuildAndChannel(client, session, guild, channel) {
     let resolvedGuild = guild;
     let resolvedChannel = channel;
-
     try {
         if (!resolvedGuild) {
             resolvedGuild = client.guilds.cache.get(session.serverId) ||
                 await client.guilds.fetch(session.serverId).catch(() => null);
         }
-
         if (resolvedGuild && !resolvedChannel) {
             resolvedChannel = resolvedGuild.channels.cache.get(session.voiceId) ||
                 await resolvedGuild.channels.fetch(session.voiceId).catch(() => null);
         }
     } catch {}
+    return { resolvedGuild, resolvedChannel };
+}
 
+function buildSessionMetadata(client, session, resolvedGuild, resolvedChannel) {
     const user = client.user || null;
-    const metadata = {
+    return {
         accountId: user?.id || session.accountId || null,
         accountUsername: user?.username || session.accountUsername || null,
         accountGlobalName: user?.globalName || session.accountGlobalName || null,
         accountTag: user?.tag || user?.username || session.accountTag || null,
         accountAvatar: safeAvatarURL(user) || session.accountAvatar || null,
-
         serverName: resolvedGuild?.name || session.serverName || null,
         guildIcon: safeGuildIconURL(resolvedGuild) || session.guildIcon || null,
         voiceName: resolvedChannel?.name || session.voiceName || null,
         lastActivity: Date.now()
     };
+}
 
+async function refreshSessionMetadata(sessionId, client, guild = null, channel = null) {
+    const session = sessionManager.getSession(sessionId);
+    if (!session || !client) return false;
+
+    const { resolvedGuild, resolvedChannel } = await resolveGuildAndChannel(client, session, guild, channel);
+    const metadata = buildSessionMetadata(client, session, resolvedGuild, resolvedChannel);
     return updateSessionMetadata(sessionId, metadata);
 }
 

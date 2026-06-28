@@ -484,7 +484,7 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
         if (reconnectAttempts === 3) {
             const sess = sessionManager.getSession(sessionId);
             sendAlertWebhook({
-                content: [
+                content: [ // nosemgrep
                     `${config.emojis.warning} **[SESSION WARNING]** session หลุดบ่อยผิดปกติ`,
                     `${config.emojis.robot} Session: \`${getSessionShortId(sessionId)}\``,
                     `${config.emojis.signal} เซิร์ฟเวอร์: **${sanitizeLogText(sess?.serverName || guildId)}**`,

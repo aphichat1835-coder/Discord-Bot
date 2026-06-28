@@ -289,8 +289,7 @@ test("ensureStartAllowed: guild admin in same guild proceeds to next check", () 
 //  8. REGRESSION: ensureVoiceSession ต้องไม่พึ่ง mainClient.guilds
 // ════════════════════════════════════════════════════════════════════════════
 function readLifecycleSrc() {
-    // codacy-disable-next-line
-    return fs.readFileSync(path.join(__dirname, "../voiceWorker/lifecycle.js"), "utf8");
+    return fs.readFileSync(path.join(__dirname, "../voiceWorker/lifecycle.js"), "utf8"); // nosemgrep
 }
 
 function extractFunctionBody(src, fnName) {
@@ -359,8 +358,7 @@ test("regression: pauseAll sets st.isShuttingDown (not bare variable)", () => {
 //     (document the known mismatch ไม่ให้หลุดไป)
 // ════════════════════════════════════════════════════════════════════════════
 test("source contract: worker normalizeVoiceTarget regex is 17,22", () => {
-    // codacy-disable-next-line
-    const src = fs.readFileSync(path.join(__dirname, "../voiceWorker/display.js"), "utf8");
+    const src = fs.readFileSync(path.join(__dirname, "../voiceWorker/display.js"), "utf8"); // nosemgrep
     assert.ok(
         src.includes("/^\\d{17,22}$/.test(guildId)"),
         "display.js normalizeVoiceTarget must use 17-22 regex for guildId"
@@ -372,8 +370,7 @@ test("source contract: worker normalizeVoiceTarget regex is 17,22", () => {
 });
 
 test("source contract: panel validateStartFields uses 17-19 regex (known scope limit)", () => {
-    // codacy-disable-next-line
-    const src = fs.readFileSync(path.join(__dirname, "../commands/panelInteractions.js"), "utf8");
+    const src = fs.readFileSync(path.join(__dirname, "../commands/panelInteractions.js"), "utf8"); // nosemgrep
     // ตรวจว่า validateStartFields ยังคงมี 17,19 (ถ้าเปลี่ยนเป็น 17,22 ให้อัปเดต test นี้)
     const validateBlock = src.slice(
         src.indexOf("function validateStartFields"),
