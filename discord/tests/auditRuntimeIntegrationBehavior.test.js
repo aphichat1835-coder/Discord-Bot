@@ -1,4 +1,5 @@
 const assert = require("assert");
+const { describe, test } = require("node:test");
 const { startAuditRuntime, auditReconcilerScheduler } = require("../logging/auditRuntimeLifecycle");
 const { auditPageAuth, registerAuditWebBundle } = require("../index/auditWebBundle");
 
