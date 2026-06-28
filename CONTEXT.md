@@ -79,18 +79,27 @@ Start with:
 
 ```txt
 discord/index.js
+discord/core/env.js
+discord/core/http.js
+discord/core/webhooks.js
+discord/core/safeLogger.js
+discord/core/featureFlags.js
+discord/core/loadEnv.js
 discord/index/system.js
 discord/index/events.js
 discord/index/server.js
+discord/index/auth.js
+discord/index/views.js
+discord/index/viewStyles.js
+discord/index/viewHelpers.js
+discord/index/dashboardState.js
+discord/index/sessionSerializer.js
+discord/index/memoryMonitor.js
 discord/index/auditWebBundle.js
 discord/index/auditApiRoutes.js
 discord/index/auditDashboardPage.js
 discord/index/joinCampaignRoutes.js
 discord/index/joinCampaignPage.js
-discord/index/views.js
-discord/index/viewStyles.js
-discord/core/webhooks.js
-discord/index/auth.js
 discord/index/verifyOwner.js
 ```
 
@@ -103,10 +112,16 @@ Start with:
 ```txt
 discord/commands.js
 discord/commands/registry.js
+discord/commands/customIds.js
+discord/commands/panelViews.js
+discord/commands/panelInteractions.js
 discord/commands/information.js
 discord/commands/moderation.js
+discord/commands/moderationWorkflow.js
+discord/commands/moderationHelpers.js
 discord/commands/utility.js
 discord/commands/verification.js
+discord/commands/setupLog.js
 ```
 
 Command areas:
@@ -139,6 +154,9 @@ Start with:
 ```txt
 discord/sessionManager.js
 discord/voiceWorker.js
+discord/voiceWorker/lifecycle.js
+discord/voiceWorker/session.js
+discord/voiceWorker/state.js
 discord/commands.js
 discord/index/server.js
 discord/index/views.js

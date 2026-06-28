@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased] - Documentation Sync 2026-06-28
+
+### Changed
+
+- Synced all root documentation files against the current codebase on 2026-06-28.
+- Added missing Service 1 files to `ARCHITECTURE.md`: `discord/core/safeLogger.js`, `discord/core/featureFlags.js`, `discord/core/loadEnv.js`, `discord/commands/moderationWorkflow.js`, `discord/commands/moderationHelpers.js`, `discord/commands/setupLog.js`.
+- Expanded `discord/voiceWorker.js` entry in `ARCHITECTURE.md` file table to list all voiceWorker sub-modules individually: `config.js`, `state.js`, `queue.js`, `session.js`, `lifecycle.js`, `display.js`, `cacheUtils.js`, `eventLog.js`, `autoDeaf.js`, `natural.js`, `dm.js`.
+- Added missing Service 2 file to `ARCHITECTURE.md`: `dashboard-public/utils/csrf.js`.
+- Added `scripts/` and `docs/` directories to `ARCHITECTURE.md` repository shape.
+- Added eight missing audit logger env vars to `ARCHITECTURE.md` and `SECURITY.md`: `AUDIT_MAX_QUEUE_PER_GUILD`, `AUDIT_CIRCUIT_FAILURES`, `AUDIT_CIRCUIT_OPEN_MS`, `AUDIT_LOG_DELETED_MESSAGE_CONTENT`, `AUDIT_LOG_EDITED_MESSAGE_CONTENT`, `AUDIT_REDACT_LINKS`, `AUDIT_REDACT_MENTIONS`, `AUDIT_MAX_CONTENT_LENGTH`.
+- Corrected `discord/commands/moderation.js` responsibility description: `/ban`, `/kick`, `/timeout` are implemented in `moderationWorkflow.js`, not `moderation.js`.
+- Added extracted helper modules `discord/core/featureFlags.js`, `discord/core/loadEnv.js`, `discord/commands/moderationWorkflow.js`, `discord/commands/moderationHelpers.js`, `discord/commands/setupLog.js`, and `dashboard-public/utils/csrf.js` to the Approved Minimal Organization section in `ARCHITECTURE.md`.
+- Updated `CONTEXT.md` slash-command, voice/session, and main-bot subsystem maps to list all current files.
+- Updated `ARCHITECTURE.md` last-verified date to 2026-06-28.
+
 ## [Unreleased] - Documentation Consolidation And Minimal Organization Plan
 
 ### Added

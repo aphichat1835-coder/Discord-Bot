@@ -1,6 +1,6 @@
 # Architecture
 
-Last verified against implementation: 2026-06-26.
+Last verified against implementation: 2026-06-28.
 
 This is the implementation-backed architecture reference for the Phomueangtai Personal Multi-Tool Discord Bot. It describes the current project reality and the approved minimal direction for organization. It does not approve broad rewrites, dependency migrations, behavior changes, schema changes, or protected-file edits.
 
@@ -22,7 +22,7 @@ The project includes bot runtime, slash commands, voice/session management, owne
 Current architecture was derived from these sources:
 
 - Root docs and config: `AGENTS.md`, `CONTEXT.md`, `README.md`, `CHANGELOG.md`, `ROADMAP.md`, `SECURITY.md`, `.github/copilot-instructions.md`, `.env.example`, `package.json`, `dashboard-public/package.json`, `render.yaml`.
-- Service 1: `discord/index.js`, `discord/index/system.js`, `discord/index/server.js`, `discord/index/views.js`, `discord/index/events.js`, `discord/index/auth.js`, `discord/index/verifyOwner.js`, `discord/commands.js`, `discord/commands/*.js`, `discord/sessionManager.js`, `discord/voiceWorker.js`, `discord/auditLogger.js`, `discord/features/*.js`.
+- Service 1: `discord/index.js`, `discord/index/system.js`, `discord/index/server.js`, `discord/index/views.js`, `discord/index/events.js`, `discord/index/auth.js`, `discord/index/verifyOwner.js`, `discord/commands.js`, `discord/commands/*.js`, `discord/sessionManager.js`, `discord/voiceWorker.js`, `discord/voiceWorker/*.js`, `discord/auditLogger.js`, `discord/logging/*.js`, `discord/core/*.js`, `discord/guards/*.js`, `discord/sessions/*.js`, `discord/features/*.js`.
 - Service 2: `dashboard-public/index.js`, `dashboard-public/routes/*.js`, `dashboard-public/models/*.js`, `dashboard-public/utils/*.js`, `dashboard-public/views/*.html`, `dashboard-public/public/js/*.js`, `dashboard-public/public/css/dashboard.css`, `dashboard-public/tests/*.test.js`.
 
 Protected handling: `discord/systemProvider.js` and all files inside `discord/systemProvider/` (`actions.js`, `auth.js`, `dashboardHtml.js`, `htmlUtils.js`, `renderers.js`) exist and are referenced by boot logic, but hidden implementation details are intentionally not summarized. Do not edit or document sensitive behavior from any file in this protected set without explicit current-task owner approval.
@@ -33,7 +33,9 @@ Protected handling: `discord/systemProvider.js` and all files inside `discord/sy
 .
 ├── discord/                 # Service 1: bot runtime and owner system
 ├── dashboard-public/        # Service 2: public/guild verification dashboard
-├── .github/                 # GitHub Copilot instructions
+├── scripts/                 # maintenance and diagnostic scripts
+├── docs/                    # operational runbooks
+├── .github/                 # GitHub Actions CI and Copilot instructions
 ├── README.md
 ├── AGENTS.md
 ├── CONTEXT.md
@@ -121,6 +123,9 @@ Important invariant: Express starts first, MongoDB connects second, Discord logi
 | `discord/core/env.js` | Service 1 required environment validation and boot-safe env derivation |
 | `discord/core/http.js` | Service 1 Express app creation, trust proxy, body limits, x-powered-by disable, and security headers |
 | `discord/core/webhooks.js` | Service 1 webhook routing helpers for operations/security logs and critical runtime alerts |
+| `discord/core/safeLogger.js` | shared log redaction helpers; strips tokens, webhook URLs, MongoDB URIs, IPs, emails, and secret keys from all log output |
+| `discord/core/featureFlags.js` | feature flag toggle evaluation, default flag definitions, and env-override mapping for voice/audit/protection subsystems |
+| `discord/core/loadEnv.js` | manual `.env` file parser with comment and quote handling for local development outside Render |
 | `discord/index/system.js` | log capture, crash shield, cron cleanup/health/save loop, graceful shutdown |
 | `discord/index/server.js` | owner dashboard JSON/control APIs, settings/presence, token reveal controls, command toggles, whitelist, approved guild APIs |
 | `discord/index/auditWebBundle.js` | owner-authenticated audit dashboard and audit API bundle registration |
@@ -143,8 +148,11 @@ Important invariant: Express starts first, MongoDB connects second, Discord logi
 | `discord/commands/panelViews.js` | voice panel embed, button row, status embed, status controls, and start modal builders |
 | `discord/commands/panelInteractions.js` | voice panel button and modal interaction behavior extracted from the router |
 | `discord/commands/information.js` | help, stats, server info, user info, ping command logic |
-| `discord/commands/moderation.js` | clear, ban, kick, timeout, voicekickall command logic |
-| `discord/commands/utility.js` | say, announce, emoji import, backup, restore, setup-log, whitelist, dashboard setup logic |
+| `discord/commands/moderation.js` | clear and voicekickall command logic |
+| `discord/commands/moderationWorkflow.js` | ban, kick, timeout command workflow: hierarchy validation, DM before action, case creation, and audit embed |
+| `discord/commands/moderationHelpers.js` | shared moderation utilities: case input builder, localized action label, and success reply embed |
+| `discord/commands/setupLog.js` | `/setup-log` installer: audit log category and channel creation with permission locking and 900 ms channel delay |
+| `discord/commands/utility.js` | say, announce, emoji import, backup, restore, whitelist, dashboard setup logic |
 | `discord/commands/verification.js` | `/setup-verify`, verification panel creation, dashboard-compatible config sync, verify button handling |
 | `discord/sessionManager.js` | MongoDB connection, encryption helpers, schemas/models, voice session persistence, reconnect locks, approvals, snapshots, panel state, log channel map, whitelist, settings, metrics |
 | `discord/sessions/tokenUtils.js` | pure token format validation, redaction, and owner ID decoding helpers used by voice panel start validation |
@@ -152,7 +160,18 @@ Important invariant: Express starts first, MongoDB connects second, Discord logi
 | `discord/sessions/voiceLabels.js` | voice session account/channel/status label helpers used by panel views/interactions |
 | `discord/guards/commandGuards.js` | slash command permission, hierarchy, safe reply/defer, message sanitization, and voice panel control guard helpers |
 | `discord/guards/dashboardGuards.js` | owner dashboard API rate limit, API secret auth, reveal PIN lockout, intrusion logging, and read-route bypass helpers |
-| `discord/voiceWorker.js` | live voice/session lifecycle, pooled clients, voice connections, metadata refresh, stop/pause/resume, health recovery, idle cleanup, notifications, natural/auto-deaf timers |
+| `discord/voiceWorker.js` | root facade: re-exports ensureVoiceSession, stopSession, stopAll, pauseAll, autoResume, healthCheck, cleanupIdleSessions, and getWorkerDiagnostics from the voiceWorker sub-directory |
+| `discord/voiceWorker/config.js` | voiceWorker constants: timeouts, retry counts, backoff config, and shared helpers (delay, randomJitter, withTimeoutReject) |
+| `discord/voiceWorker/state.js` | shared runtime state maps: clientPool, tokenLoginCooldowns, naturalTimers, autoDeafTimers, DM/recovery timestamps, and global flags |
+| `discord/voiceWorker/queue.js` | OperationQueue class with concurrency/size limits; global loginQueue (concurrency 2) and recoveryQueue (concurrency 2) |
+| `discord/voiceWorker/session.js` | client pool key strategy, client reuse across sessions, token login cooldown (3.5 s + jitter), and safe selfbot client disposal |
+| `discord/voiceWorker/lifecycle.js` | voice session start, connect, reconnect, stop, stopAll, health check, idle cleanup, passive recovery, and backoff logic |
+| `discord/voiceWorker/display.js` | session metadata labels, Thai-language connection status text, uptime string, metadata refresh, and voice embed field builders |
+| `discord/voiceWorker/cacheUtils.js` | lean cache mode: prune selfbot caches to target-only, clearGuildRuntimeCache, and periodic cache sweeper for messages/reactions/presences |
+| `discord/voiceWorker/eventLog.js` | in-memory circular buffer for voice session event logs; pushVoiceLog, getVoiceLogs |
+| `discord/voiceWorker/autoDeaf.js` | periodic auto-deaf toggle timer for selfbot voice connections, unref-safe, guarded by autoDeafRunning Set |
+| `discord/voiceWorker/natural.js` | periodic naturalness mute/deaf toggle timer simulating human activity, unref-safe, guarded by naturalRunning Set |
+| `discord/voiceWorker/dm.js` | DM notification helpers for session start, stop, online, and token-invalid events with DM throttle guard |
 | `discord/auditLogger.js` | audit log channel lookup, queue/cache helpers, embed helpers, message/member/voice/server/security event listeners |
 | `discord/logging/*.js` | audit storage, export, settings, dead letters, reconciler runtime, retention, formatting, and route mount helpers |
 | `discord/features/protection.js` | protection config, anti-raid, anti-spam, link filtering, protection alert embeds |
@@ -316,11 +335,13 @@ static pages and health routes
 | `dashboard-public/utils/panelBuilder.js` | verification panel input normalization, embed/button payload building, validation summary |
 | `dashboard-public/utils/verifyMode.js` | verification mode normalization and compatibility helpers |
 | `dashboard-public/utils/safeLogger.js` | compatibility export for shared redaction helpers from `discord/core/safeLogger.js` |
+| `dashboard-public/utils/csrf.js` | CSRF token generation and validation using HMAC-SHA256 with timing-safe comparison and SameSite cookie helpers |
 | `dashboard-public/utils/verificationSnapshots.js` | shared verification log snapshot serializers/redaction helpers used by guild routes |
 | `dashboard-public/views/*.html` | public home, guild list, guild admin dashboard, callback result, admin callback page |
 | `dashboard-public/public/js/*.js` | Dashboard Public browser behavior |
 | `dashboard-public/public/css/dashboard.css` | Dashboard Public visual system and page styles |
 | `dashboard-public/tests/*.test.js` | Jest tests for IP helpers, verify mode helpers, OAuth pure utility contracts, admin session compatibility, sensitive access, Discord API helpers, and OAuth user summaries |
+| `dashboard-public/scripts/cleanupLegacyRawOAuthSnapshots.js` | MongoDB migration script: renames legacy raw OAuth snapshot fields to the current schema shape; supports dry-run mode and uses atomic updateMany |
 
 ### Dashboard Public Routes
 
@@ -458,6 +479,11 @@ Main files:
 ```txt
 discord/sessionManager.js
 discord/voiceWorker.js
+discord/voiceWorker/lifecycle.js
+discord/voiceWorker/session.js
+discord/voiceWorker/state.js
+discord/voiceWorker/queue.js
+discord/voiceWorker/cacheUtils.js
 discord/commands.js
 discord/index/server.js
 discord/index/views.js
@@ -713,6 +739,10 @@ WHITELIST_LOAD_MAX
 
 Audit/protection runtime:
 ANTI_RAID_DEBOUNCE_MAX_KEYS
+AUDIT_MAX_QUEUE_PER_GUILD
+LOG_CORE_MAX_QUEUE_PER_GUILD
+AUDIT_CIRCUIT_FAILURES
+AUDIT_CIRCUIT_OPEN_MS
 AUDIT_DEDUP_MAX_KEYS
 AUDIT_DEDUP_TTL_MS
 AUDIT_DUPLICATE_TTL_MS
@@ -720,11 +750,15 @@ AUDIT_HELPER_CACHE_MAX
 AUDIT_HELPER_DELAY_MS
 AUDIT_HELPER_MAX_AGE_MS
 AUDIT_LOG_MESSAGE_CREATE
+AUDIT_LOG_DELETED_MESSAGE_CONTENT
+AUDIT_LOG_EDITED_MESSAGE_CONTENT
+AUDIT_REDACT_LINKS
+AUDIT_REDACT_MENTIONS
+AUDIT_MAX_CONTENT_LENGTH
 AUDIT_RECONCILER_ENABLED
 AUDIT_RECONCILER_INTERVAL_MS
 AUDIT_RECONCILER_LIMIT
 AUDIT_RETENTION_DAYS
-LOG_CORE_MAX_QUEUE_PER_GUILD
 MESSAGE_SNAPSHOT_CACHE_MAX
 MESSAGE_SNAPSHOT_CACHE_TTL_MS
 
@@ -747,6 +781,21 @@ Webhook roles:
 - `ALERT_WEBHOOK_URL` receives critical runtime alerts, such as crash shield notifications and severe voice/session failures.
 - Trace Eraser guard variables provide non-secret policy, dry-run, kill-switch, rate-limit, and protected channel ID controls for the protected owner/system hook subsystem.
 - `discord/systemProvider.js` and all files inside `discord/systemProvider/` are owner-locked and may have protected behavior that is intentionally not described here.
+
+## Scripts And Maintenance
+
+Service 1 maintenance and diagnostic scripts live in `scripts/`:
+
+| Script | Purpose |
+| --- | --- |
+| `scripts/checkMemoryGuards.js` | static analysis: scans code for unbounded `Model.find({})` calls and missing Discord API byte-limit caps; fails CI-style if violations are found |
+| `scripts/checkMemoryTrend.js` | diagnostic: reads a JSON stream of memory metrics, calculates heap/RSS/listener growth deltas, and fails if growth exceeds configured thresholds (default 40 MB heap) |
+
+Dashboard Public migration scripts live in `dashboard-public/scripts/`:
+
+| Script | Purpose |
+| --- | --- |
+| `dashboard-public/scripts/cleanupLegacyRawOAuthSnapshots.js` | one-time MongoDB migration: renames legacy raw OAuth snapshot fields to the current schema shape; supports dry-run mode and uses atomic `updateMany` |
 
 ## Deployment Shape
 
@@ -833,7 +882,7 @@ These files mix multiple responsibilities today. This is a maintainability findi
 | --- | --- |
 | `discord/index.js` | service composition, Discord client setup, route/event registration, boot order, ready handler, protected subsystem reference |
 | `discord/sessionManager.js` | encryption, schemas, DB connection, session CRUD, locks/reconnects, approvals, backups, panels, logs, whitelist, settings, metrics |
-| `discord/voiceWorker.js` | client pool, self-client lifecycle, voice connection lifecycle, health/recovery, stop/pause/resume, DMs, natural/auto-deaf timers |
+| `discord/voiceWorker.js` + `discord/voiceWorker/` | root facade plus sub-modules: client pool, self-client lifecycle, voice connection lifecycle, health/recovery, stop/pause/resume, DMs, natural/auto-deaf timers, lean cache sweeper, concurrency queues |
 | `discord/commands.js` | command router/export compatibility plus voice panel state, panel persistence, button flow, modal flow |
 | `discord/index/server.js` | status/settings/session APIs, token reveal, command toggles, whitelist, approved guild actions |
 | `discord/index/views.js` | page HTML, CSS, JavaScript, route wiring, dashboard composition |
@@ -882,10 +931,17 @@ Implemented low-risk extractions:
 - `discord/sessions/tokenUtils.js` and `discord/sessions/voiceLabels.js` for pure helper logic.
 - `dashboard-public/utils/verificationSnapshots.js` for shared verification log snapshot serialization used by Dashboard Public guild routes.
 - `discord/core/safeLogger.js` for shared redaction helpers consumed by Service 1 and Dashboard Public compatibility exports.
+- `discord/core/featureFlags.js` for feature flag toggle evaluation and env-override mapping.
+- `discord/core/loadEnv.js` for manual `.env` file parsing in local development.
+- `discord/commands/moderationWorkflow.js` for ban/kick/timeout workflow: hierarchy validation, pre-action DM, case creation, and audit embed.
+- `discord/commands/moderationHelpers.js` for shared moderation utilities: case input builder, localized action label, success embed.
+- `discord/commands/setupLog.js` for audit log channel and category setup with rate-limited channel creation.
+- `dashboard-public/utils/csrf.js` for Dashboard Public CSRF token generation, validation, and SameSite cookie helpers.
+- `discord/voiceWorker/` sub-modules (config, state, queue, session, lifecycle, display, cacheUtils, eventLog, autoDeaf, natural, dm) extracted from the original monolithic voiceWorker; `discord/voiceWorker.js` remains the public facade.
 
 Deferred until there is a real need:
 
 - `discord/sessions/sessionRules.js`
 - optional `discord/index/viewPages.js` and `discord/index/viewScripts.js` split after UI smoke testing
 
-Do not split `dashboard-public/`, `voiceWorker.js`, `sessionManager.js`, or `auditLogger.js` further without a scoped follow-up task and validation plan.
+Do not split `dashboard-public/`, `sessionManager.js`, or `auditLogger.js` further without a scoped follow-up task and validation plan. The `discord/voiceWorker/` sub-module split is already implemented; do not extract further without owner approval.
