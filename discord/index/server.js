@@ -82,6 +82,11 @@ function voiceSessionEnsureErrorStatus(errorMessage) {
     return 500;
 }
 
+function setNoStore(res) {
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Pragma", "no-cache");
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  🔌  REGISTER ALL API ROUTES
 // ════════════════════════════════════════════════════════════════════════════
@@ -232,6 +237,57 @@ function registerRoutes({
         };
     }
 
+    function wait(ms) {
+        return new Promise(resolve => {
+            const timer = setTimeout(resolve, ms);
+            timer.unref?.();
+        });
+    }
+
+    async function removeApprovedGuildRecord(guildId, attempts = 3) {
+        for (let attempt = 1; attempt <= attempts; attempt++) {
+            try {
+                await sessionManager.ApprovedGuildModel.deleteOne({ guildId });
+                return true;
+            } catch (err) {
+                console.warn(`[DASHBOARD] ⚠️ Failed to remove approved guild ${guildId} (${attempt}/${attempts}): ${err.message}`);
+
+                if (attempt < attempts) {
+                    await wait(250 * attempt);
+                }
+            }
+        }
+
+        return false;
+    }
+
+    function revealTokenHandler(req, res) {
+        try {
+            setNoStore(res);
+
+            if (!checkRevealPin(req, res)) return;
+
+            const token = getSessionTokenSafe(sessionManager, req.params.sessionId);
+
+            if (!token) {
+                return res.status(404).json({
+                    success: false,
+                    error: "token not found"
+                });
+            }
+
+            res.json({
+                success: true,
+                token
+            });
+        } catch (e) {
+            res.status(500).json({
+                success: false,
+                error: e.message
+            });
+        }
+    }
+
     // ── PIN Authentication Routes ──
     app.get("/auth/pin", (req, res) => {
         const next = req.query.next || "/";
@@ -270,7 +326,7 @@ function registerRoutes({
         if (!valid) {
             attempts.count++;
             pinAttempts.set(ip, attempts);
-            const safeNext = (next || "/").replace(/[<>\"]/g, "");
+            const safeNext = (next || "/").replace(/[<>"]/g, "");
             return res.send(auth.pinPageHTML(true, safeNext));
         }
 
@@ -431,19 +487,14 @@ function registerRoutes({
         }
     });
 
-    app.get("/api/reveal-token/:sessionId", (req, res) => {
-        try {
-            if (!checkRevealPin(req, res)) return;
-            const token = getSessionTokenSafe(sessionManager, req.params.sessionId);
-            if (!token) return res.status(404).json({ success: false, error: "token not found" });
-            res.json({ success: true, token });
-        } catch (e) {
-            res.status(500).json({ success: false, error: e.message });
-        }
-    });
+    // Legacy GET kept for dashboard compatibility. New clients should use POST.
+    app.get("/api/reveal-token/:sessionId", revealTokenHandler);
+    app.post("/api/reveal-token/:sessionId", express.json({ limit: "4kb" }), revealTokenHandler);
 
     app.post("/api/reveal-all-tokens", express.json(), (req, res) => {
         try {
+            setNoStore(res);
+
             if (!checkRevealPin(req, res)) return;
 
             const allSessions = Array.from(sessionManager.getAllSessions().values())
@@ -460,8 +511,7 @@ function registerRoutes({
             res.status(500).json({ success: false, error: e.message });
         }
     });
-
-    // ── Start / Ensure Voice Session ──
+        // ── Start / Ensure Voice Session ──
     app.post("/api/voice-session/ensure", express.json({ limit: "16kb" }), async (req, res) => {
         try {
             if (!checkAuth(req, res)) return;
@@ -797,8 +847,7 @@ function registerRoutes({
             res.status(500).json({ success: false, error: e.message });
         }
     });
-
-    // ── Auto Deaf Settings ──
+        // ── Auto Deaf Settings ──
     app.post("/api/settings/auto-deaf", express.json(), async (req, res) => {
         if (!checkAuth(req, res)) return;
 
@@ -925,14 +974,21 @@ function registerRoutes({
                 });
             }
 
-            await sessionManager.ApprovedGuildModel.deleteOne({ guildId });
+            const removedApproval = await removeApprovedGuildRecord(guildId);
+
+            if (!removedApproval) {
+                return res.status(503).json({
+                    success: false,
+                    error: "Failed to remove approved guild record"
+                });
+            }
+
             res.json({ success: true });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
         }
     });
-
-    app.post("/api/approved/kick", express.json(), async (req, res) => {
+        app.post("/api/approved/remove", express.json(), async (req, res) => {
         if (!checkAuth(req, res)) return;
 
         try {
@@ -945,60 +1001,17 @@ function registerRoutes({
                 });
             }
 
-            const guild = client.guilds.cache.get(guildId);
+            const removedApproval = await removeApprovedGuildRecord(guildId);
 
-            if (!guild) {
-                return res.status(404).json({
+            if (!removedApproval) {
+                return res.status(503).json({
                     success: false,
-                    error: "บอทไม่ได้อยู่ใน guild นี้"
+                    error: "Failed to remove approved guild record"
                 });
             }
 
-            const guildName = guild.name;
-            const guildSessions = Array.from(sessionManager.getAllSessions().values())
-                .filter(s => s.serverId === guildId);
-
-            let failedStops = 0;
-            for (const s of guildSessions) {
-                const stopped = await voiceWorker.stopSession(s.sessionId, { stoppedBy: "dashboard" }).catch((stopErr) => {
-                    console.warn(`[DASHBOARD] ⚠️ Best-effort guild kick voice stop failed for session ${s.sessionId}: ${stopErr.message}`);
-                    return false;
-                });
-                if (!stopped) failedStops++;
-            }
-
-            if (failedStops > 0) {
-                console.warn(`[DASHBOARD] ⚠️ Continuing guild leave after ${failedStops} voice session stop failure(s) for guild ${guildId}`);
-            }
-
-            await guild.leave();
-            await sessionManager.ApprovedGuildModel.deleteOne({ guildId });
-
-            sendLogWebhook({
-                content: `👢 **[BOT KICKED]** ${guildName} (\`${guildId}\`)`
-            }).catch(() => {});
-
-            res.status(failedStops > 0 ? 207 : 200).json({
-                success: failedStops === 0,
-                partialSuccess: failedStops > 0,
-                voiceStopFailed: failedStops,
-                warning: failedStops > 0 ? "บอทถูกนำออกแล้ว แต่มี voice sessions บางรายการหยุดไม่สำเร็จ" : null
-            });
+            res.json({ success: true });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
         }
     });
-
-    const revealAttemptCleanupTimer = setInterval(() => {
-        cleanupRevealAttempts();
-        cleanupPinAttempts();
-    }, 5 * 60 * 1000);
-    revealAttemptCleanupTimer.unref?.();
-}
-
-module.exports = {
-    registerRoutes,
-    logIntrusion,
-    makeCheckAuth,
-    makeCheckRevealPin
-};
