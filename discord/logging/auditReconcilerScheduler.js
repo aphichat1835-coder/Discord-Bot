@@ -64,6 +64,12 @@ async function runOnce(client, sessionManager, options = {}) {
     }
 }
 
+function resolveStartMode(options = {}) {
+    if (isEnabled()) return "env_enabled";
+    if (settingsDrivenEnabled(options)) return "settings_driven";
+    return "forced";
+}
+
 function start(client, sessionManager, options = {}) {
     if (timer) return { started: false, reason: "already_started" };
     if (!schedulerStartAllowed(options)) {
@@ -73,11 +79,7 @@ function start(client, sessionManager, options = {}) {
 
     const intervalMs = Math.max(60 * 1000, Number(options.intervalMs || DEFAULT_INTERVAL_MS) || DEFAULT_INTERVAL_MS);
     const runOptions = { ...options };
-    lastStartMode = isEnabled()
-        ? "env_enabled"
-        : settingsDrivenEnabled(options)
-            ? "settings_driven"
-            : "forced";
+    lastStartMode = resolveStartMode(options);
 
     timer = setInterval(() => {
         runOnce(client, sessionManager, runOptions).catch(err => {
@@ -122,6 +124,7 @@ module.exports = {
     _test: {
         guildList,
         schedulerStartAllowed,
-        settingsDrivenEnabled
+        settingsDrivenEnabled,
+        resolveStartMode
     }
 };
