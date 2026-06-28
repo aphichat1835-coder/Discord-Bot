@@ -36,6 +36,13 @@ function buildRuntimeStatusPayload({
         .filter(session => sessionManager.isSessionRunnable?.(session) !== false);
     const uptimeSec = Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000);
     const mem = process.memoryUsage();
+    const voiceLogs = voiceWorker.getVoiceLogs();
+    const voiceSummary = { connect: 0, recover: 0, drop: 0, disconnect: 0, fail: 0 };
+
+    voiceLogs.forEach(e => {
+        if (voiceSummary[e.type] !== undefined) voiceSummary[e.type]++;
+    });
+
     const totalReq = sessionManager.systemMetrics.requests;
     const totalErr = sessionManager.systemMetrics.errors;
     const reconnects = sessionManager.systemMetrics.reconnects;
@@ -70,6 +77,7 @@ function buildRuntimeStatusPayload({
         ramTotalMB: (mem.heapTotal / 1024 / 1024).toFixed(1),
         reconnects,
         successRate,
+        voiceSummary,
         recentLogs: webLogs.slice(-60).reverse()
     });
 }

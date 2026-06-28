@@ -26,6 +26,10 @@ const RECOVERY_QUEUE_MAX_SIZE = voiceWorkerConfig.recoveryQueueMaxSize ?? 200;
 const TOKEN_LOGIN_COOLDOWN_TTL_MS = 10 * 60 * 1000;
 const TOKEN_LOGIN_COOLDOWN_MAX_SIZE = 5000;
 const DM_THROTTLE_MAX_SIZE = voiceWorkerConfig.dmThrottleMaxSize ?? 5000;
+const VOICE_LOG_MAX = Math.max(
+    20,
+    Math.min(2000, Number(process.env.VOICE_LOG_MAX || voiceWorkerConfig.voiceLogMax || 200) || 200)
+);
 
 const SELF_CLIENT_CACHE_LIMITS = {
     MessageManager: Math.max(0, Number(process.env.VOICE_SELF_MESSAGE_CACHE_MAX || 20) || 20),
@@ -103,6 +107,7 @@ module.exports = {
     TOKEN_LOGIN_COOLDOWN_TTL_MS,
     TOKEN_LOGIN_COOLDOWN_MAX_SIZE,
     DM_THROTTLE_MAX_SIZE,
+    VOICE_LOG_MAX,
     SELF_CLIENT_CACHE_LIMITS,
     SELF_CLIENT_CACHE_CLEANUP_TTL_MS,
     VOICE_LEAN_MODE,

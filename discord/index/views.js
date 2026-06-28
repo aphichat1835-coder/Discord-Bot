@@ -4,7 +4,7 @@
   ENTERPRISE DASHBOARD — Views Layer
   ธีม: Dark Purple Glassmorphism
   หน้าทั้งหมด: /, /status, /settings, /commands, /whitelist, /approved,
-               /logs, /session/:id, /docs
+               /logs, /logs/voice, /session/:id, /docs
 ================================================================================
 */
 
@@ -855,6 +855,91 @@ setTimeout(()=>location.reload(),10000);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+//  🔊  หน้า VOICE LOG
+// ════════════════════════════════════════════════════════════════════════════
+function pageVoiceLogs(logs) {
+    const colorMap = {
+        connect:"var(--green2)",
+        recover:"var(--blue2)",
+        drop:"var(--yellow2)",
+        disconnect:"var(--orange)",
+        fail:"var(--red2)"
+    };
+
+    const iconMap = {
+        connect:"🟢",
+        recover:"💖",
+        drop:"⚡",
+        disconnect:"⚠️",
+        fail:"💔"
+    };
+
+    const labelMap = {
+        connect:"เชื่อมต่อ",
+        recover:"กู้คืน",
+        drop:"หลุด (ด่วน)",
+        disconnect:"หลุด",
+        fail:"ล้มเหลว"
+    };
+
+    const summary = {
+        connect:0,
+        recover:0,
+        drop:0,
+        disconnect:0,
+        fail:0
+    };
+
+    (logs || []).forEach(e => {
+        if (summary[e.type] !== undefined) summary[e.type]++;
+    });
+
+    const rows = !logs || logs.length === 0
+        ? `<tr><td colspan="6" style="text-align:center;padding:28px;color:var(--text3);">ยังไม่มี Event — บอทยังไม่ได้เชื่อมต่อ Voice</td></tr>`
+        : logs.map(e => `<tr>
+            <td style="color:var(--text3);white-space:nowrap;font-size:0.8em;">${new Date(e.ts || Date.now()).toLocaleTimeString("th-TH",{hour12:false})}</td>
+            <td style="color:${colorMap[e.type] || "var(--text2)"};font-weight:700;">${iconMap[e.type] || "❓"} ${labelMap[e.type] || escapeHtml(e.type || "-")}</td>
+            <td style="color:var(--text2);font-size:0.8em;">${escapeHtml(e.account || "-")}</td>
+            <td style="color:var(--text2);font-size:0.8em;">${escapeHtml(e.guild || "-")}</td>
+            <td style="color:var(--text2);font-size:0.8em;">${escapeHtml(e.voice || "-")}</td>
+            <td style="color:var(--text3);font-size:0.8em;">${escapeHtml(e.detail || "-")}</td>
+        </tr>`).join("");
+
+    return shell("Voice Log", `
+<div class="container-lg">
+<h1 class="page-title">🔊 Voice Connection Log</h1>
+<p class="page-sub">อัปเดตทุก 15 วิ — เก็บ ${(logs || []).length}/200 events ล่าสุด</p>
+${navBar("/logs/voice")}
+
+<div class="voice-row" style="margin-bottom:18px;">
+    <div class="voice-box"><div class="vval" style="color:var(--green2);">${summary.connect}</div><div class="vlbl">🟢 เชื่อมต่อ</div></div>
+    <div class="voice-box"><div class="vval" style="color:var(--blue2);">${summary.recover}</div><div class="vlbl">💖 กู้คืน</div></div>
+    <div class="voice-box"><div class="vval" style="color:var(--yellow2);">${summary.drop}</div><div class="vlbl">⚡ หลุด (ด่วน)</div></div>
+    <div class="voice-box"><div class="vval" style="color:var(--orange);">${summary.disconnect}</div><div class="vlbl">⚠️ หลุด</div></div>
+    <div class="voice-box"><div class="vval" style="color:var(--red2);">${summary.fail}</div><div class="vlbl">💔 ล้มเหลว</div></div>
+</div>
+
+<div class="card" style="padding:0;overflow:hidden;">
+    <div class="table-scroll">
+    <table>
+        <thead>
+            <tr>
+                <th>เวลา</th>
+                <th>สถานะ</th>
+                <th>บัญชี</th>
+                <th>เซิร์ฟเวอร์</th>
+                <th>ช่องเสียง</th>
+                <th>รายละเอียด</th>
+            </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+    </table>
+    </div>
+</div>
+</div>
+<script>setTimeout(()=>location.reload(),15000);</script>`);
+}
+// ════════════════════════════════════════════════════════════════════════════
 //  🖥️  SESSION DETAIL PAGE
 // ════════════════════════════════════════════════════════════════════════════
 function pageSessionDetail() {
@@ -1091,6 +1176,24 @@ async function loadSession(){
 
         updateUptime();
 
+        const logs=d.voiceLogs||[];
+        document.getElementById('logCount').textContent='('+logs.length+' รายการ)';
+
+        const wrap=document.getElementById('logTableWrap');
+        if(logs.length){
+            wrap.innerHTML='<div class="table-scroll"><table><thead><tr><th>เวลา</th><th>สถานะ</th><th>รายละเอียด</th></tr></thead><tbody>'+
+                logs.map(l=>{
+                    const cls=l.type==='fail'?'var(--red2)':l.type==='drop'?'var(--yellow2)':l.type==='recover'?'var(--blue2)':'var(--green2)';
+                    return '<tr>'+
+                        '<td style="color:var(--text3);white-space:nowrap;">'+new Date(l.ts||Date.now()).toLocaleTimeString('th-TH',{hour12:false})+'</td>'+
+                        '<td style="font-weight:700;color:'+cls+';">'+esc(l.type||'-')+'</td>'+
+                        '<td style="color:var(--text2);">'+esc(l.detail||'-')+'</td>'+
+                    '</tr>';
+                }).join('')+
+            '</tbody></table></div>';
+        }else{
+            wrap.innerHTML='<p style="color:var(--text3);font-size:0.82em;text-align:center;padding:20px 0;">ยังไม่มีประวัติ</p>';
+        }
     }catch(e){
         showToast('❌ โหลด session ไม่ได้: '+e.message,'err');
     }
@@ -1212,6 +1315,7 @@ function pageDocs() {
                 ["⚡ /commands", "เปิด/ปิด slash commands แบบ realtime"],
                 ["📋 /whitelist", "จัดการ whitelist สำหรับคำสั่งเฉพาะ"],
                 ["✅ /approved", "จัดการเซิร์ฟเวอร์ที่อนุมัติ"],
+                ["🔊 /logs/voice", "ประวัติ voice event"],
                 ["🖥️ /session/:id", "ดูรายละเอียด session, ดู Token แบบ PIN protected, สั่งหยุดได้"]
             ]
         },
@@ -1804,6 +1908,10 @@ ${navBar("/approved")}
 
     app.get("/logs", auth.requirePin, (req, res) => {
         res.send(pageLogs(webLogs, MAX_LOGS));
+    });
+
+    app.get("/logs/voice", auth.requirePin, (req, res) => {
+        res.send(pageVoiceLogs(voiceWorker.getVoiceLogs()));
     });
 
     app.get("/docs", auth.requirePin, (req, res) => {
