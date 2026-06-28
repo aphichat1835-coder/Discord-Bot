@@ -10,7 +10,7 @@ This roadmap is the owner-approved planning reference. It does not grant permiss
 - Keep the current verification architecture.
 - Keep owner/admin controls.
 - Keep one repository, two services, and shared MongoDB.
-- Do not edit `discord/systemProvider.js` or its boot/import references without explicit current-task owner approval.
+- Do not edit `discord/systemProvider.js` or any file inside `discord/systemProvider/` or their boot/import references without explicit current-task owner approval.
 - Treat OAuth, sessions, tokens, cookies, roles, permissions, IP/device/risk data, owner routes, and raw IP reveal as high-risk.
 - Treat RAM stability as production-critical. Voice/session work must support long-running sessions, keep caches/timers/queues/maps bounded, and preserve diagnostics before any broad architecture change is considered.
 
@@ -110,6 +110,12 @@ discord/
 ├─ voiceWorker.js
 ├─ auditLogger.js
 ├─ systemProvider.js
+├─ systemProvider/
+│  ├─ actions.js
+│  ├─ auth.js
+│  ├─ dashboardHtml.js
+│  ├─ htmlUtils.js
+│  └─ renderers.js
 │
 ├─ core/
 │  ├─ env.js
