@@ -65,7 +65,7 @@ function stopAutoDeafTimer(sessionId) {
         clearInterval(id);
         autoDeafTimers.delete(sessionId);
         autoDeafRunning.delete(sessionId);
-        console.log(`[AUTODEAF] ⏹️ Timer stopped — ${sessionId}`);
+        console.log(`[AUTODEAF] ⏹️ Timer stopped — ${String(sessionId).slice(0, 36)}`);
     }
 }
 

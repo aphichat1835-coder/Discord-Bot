@@ -21,7 +21,7 @@ async function sendSessionStoppedDM(sessionId, reason) {
     lastDMSent.set(sessionId, Date.now());
 
     const session = sessionManager.getSession(sessionId);
-    if (!session || !session.ownerId) return;
+    if (!session?.ownerId) return;
 
     try {
         await refreshSessionMetadataFast(sessionId, 1200).catch(() => {});
@@ -85,7 +85,7 @@ async function sendTokenInvalidDM(sessionId) {
     if (!st.mainClient) return;
 
     const session = sessionManager.getSession(sessionId);
-    if (!session || !session.ownerId) return;
+    if (!session?.ownerId) return;
 
     try {
         const owner = await st.mainClient.users.fetch(session.ownerId).catch(() => null);
@@ -126,7 +126,7 @@ async function sendSessionOnlineDM(sessionId) {
     lastOnlineDMSent.set(sessionId, Date.now());
 
     const session = sessionManager.getSession(sessionId);
-    if (!session || !session.ownerId) return;
+    if (!session?.ownerId) return;
 
     try {
         await refreshSessionMetadataFast(sessionId, 1200).catch(() => {});

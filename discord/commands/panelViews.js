@@ -9,8 +9,7 @@ const {
 
 const CB = "```";
 
-function buildControlPanelEmbed(total = null) {
-    void total;
+function buildControlPanelEmbed(_total = null) {
     return new MessageEmbed()
         .setColor(config.system.themeColors.primary)
         .setTitle(`${config.emojis.universe} : Phomueangtai ระบบออนช่องเสียง`)

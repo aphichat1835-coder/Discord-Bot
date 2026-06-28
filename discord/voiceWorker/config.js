@@ -8,7 +8,7 @@ DO NOT SIMPLIFY: OperationQueue concurrency — prevents IP ban from Discord.
 ================================================================================
 */
 
-const crypto = require("crypto");
+const crypto = require("node:crypto");
 const config = require("../config.json");
 
 // ════════════════════════════════════════════════════════════════════════════

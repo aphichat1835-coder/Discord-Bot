@@ -15,7 +15,7 @@ async function doNaturalBlink(sessionId) {
     if (naturalRunning.has(sessionId)) return;
 
     const session = sessionManager.getSession(sessionId);
-    if (!session || !session.connection) return;
+    if (!session?.connection) return;
 
     const conn = session.connection;
     if (conn.state.status !== VoiceConnectionStatus.Ready) return;
@@ -67,7 +67,7 @@ function stopNaturalTimer(sessionId) {
         clearInterval(id);
         naturalTimers.delete(sessionId);
         naturalRunning.delete(sessionId);
-        console.log(`[NATURAL] ⏹️ Timer stopped — ${sessionId}`);
+        console.log(`[NATURAL] ⏹️ Timer stopped — ${String(sessionId).slice(0, 36)}`);
     }
 }
 

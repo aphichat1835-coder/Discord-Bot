@@ -59,11 +59,13 @@ function getVoiceLabel(session) {
     return "ไม่ทราบช่องเสียง";
 }
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
 function getUptimeString(session) {
     if (!session?.startedAt) return "ไม่ทราบ";
     const uptimeMs = Date.now() - session.startedAt;
-    const days = Math.floor(uptimeMs / 86400000);
-    const hours = Math.floor((uptimeMs % 86400000) / 3600000);
+    const days = Math.floor(uptimeMs / MS_PER_DAY);
+    const hours = Math.floor((uptimeMs % MS_PER_DAY) / 3600000);
     const minutes = Math.floor((uptimeMs % 3600000) / 60000);
 
     if (days > 0) return `${days} วัน ${hours} ชั่วโมง ${minutes} นาที`;
@@ -135,7 +137,7 @@ async function refreshSessionMetadata(sessionId, client, guild = null, channel =
 
 async function refreshSessionMetadataFast(sessionId, timeoutMs = 1500) {
     const session = sessionManager.getSession(sessionId);
-    if (!session || !session.client?.isReady?.()) return false;
+    if (!session?.client?.isReady?.()) return false;
 
     return withTimeoutValue(
         refreshSessionMetadata(sessionId, session.client),
