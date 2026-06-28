@@ -339,25 +339,30 @@ async function startVoiceSessionFromModal(interaction, client, fields, modalDeps
     const targetGuild = client.guilds.cache.get(serverId);
     const guildName = targetGuild ? targetGuild.name : "เซิร์ฟเวอร์ไม่ทราบชื่อ";
 
-    await voiceWorker.repairFailedStopSessionForTokenGuild?.(token, serverId);
-
-    const sessionId = await sessionManager.createSession(
+    const result = await voiceWorker.ensureVoiceSession({
         token,
-        serverId,
-        voiceId,
+        guildId: serverId,
+        channelId: voiceId,
         guildName,
-        interaction.user.id,
-        interaction.user.displayAvatarURL({ dynamic: true }),
-        interaction.user.tag
-    );
+        ownerId: interaction.user.id,
+        ownerAvatar: interaction.user.displayAvatarURL({ dynamic: true }),
+        ownerTag: interaction.user.tag,
+        reason: "panel_modal"
+    });
 
-    await voiceWorker.startSession(sessionId, token);
+    if (result.ok === false) {
+        const err = new Error(result.action || "VOICE_SESSION_NOT_STARTED");
+        err.result = result;
+        throw err;
+    }
+
     await modalDeps.updatePanel(interaction.guild.id);
 
-    const startedSession = sessionManager.getSession(sessionId);
+    const sessionId = result.sessionId;
+    const startedSession = result.session || sessionManager.getSession(sessionId);
     await logStartedSession(interaction, modalDeps.getLogChannel, startedSession, guildName);
 
-    return { sessionId, startedSession };
+    return { sessionId, startedSession, action: result.action, reused: result.reused };
 }
 
 async function cleanupFailedStart(sessionId, interaction) {
@@ -398,10 +403,11 @@ async function handleModal(interaction, client, deps = {}) {
         const { startedSession } = result;
         const accountLabel = getVoiceAccountLabel(startedSession);
         const voiceLabel = getVoiceChannelLabel(startedSession);
+        const actionText = result.reused ? "พบ session เดิมและเชื่อมต่อให้แล้ว" : "เริ่ม session ใหม่แล้ว";
 
         return interaction.editReply({
             content:
-                `> ${config.emojis.success} เริ่มระบบสำเร็จ! ผู้ใช้งานเข้าห้องเสียงเรียบร้อย\n` +
+                `> ${config.emojis.success} เริ่มระบบสำเร็จ! ${actionText}\n` +
                 `> บัญชีที่ออน: **${accountLabel}**\n` +
                 `> ช่องเสียง: ${voiceLabel}`
         });

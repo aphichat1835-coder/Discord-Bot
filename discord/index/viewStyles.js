@@ -497,7 +497,7 @@ tbody tr:hover td { background: rgba(124,58,237,.05); }
   color: var(--text3);
   font-size: 0.78em;
   margin-top: 2px;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 .session-actions {
   display: flex;

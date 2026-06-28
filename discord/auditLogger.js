@@ -1,1351 +1,956 @@
-/* eslint-disable complexity -- Audit event handlers are behavior-sensitive; refactor separately. */
+/* eslint-disable complexity -- Audit event handlers are intentionally explicit per Discord event. */
 /*
 ================================================================================
-⚠️ [AI COGNITIVE DIRECTIVE] ⚠️
-DO NOT MODIFY: Event listener structure — each listener maps to a specific
-audit log channel from LogChannelMapModel.
-DO NOT REMOVE: Any event listener — each one serves เฟส 25 requirements.
-OVERHAUL v2.0: Added fetchAuditEntry, buildEmbed template, member state cache,
-rate-limit queue, and 20+ new events (nickname, timeout, ban/unban, kick,
-reaction, pin, invite, sticker, role color, channel perms, guild update,
-thread, integration, camera, screen share, self mute/deafen)
+Advanced Audit Logger v3
+- Koya-style readable logs
+- detailed IDs / before-after / evidence
+- queue + debounce via logCore
+- message snapshot cache via auditHelpers
+- moderation/protection-ready records
 ================================================================================
 */
 
-const { MessageEmbed } = require("discord.js");
+const config = require("./config.json");
+const { LOG_CHANNEL_TYPES, safeAuditText, routeAndSendLog } = require("./logging/logCore");
+const { buildLogEmbed, field, formatDiscordTime, jumpLink } = require("./logging/logFormat");
+const auditSettings = require("./logging/auditSettings");
+const auditStorage = require("./logging/auditStorage");
+const {
+    fetchAuditEntry,
+    defaultMessageSnapshots,
+    diffRolePermissions,
+    diffPermissionOverwrites,
+    formatPermissionList,
+    formatOverwriteDiff
+} = require("./logging/auditHelpers");
+const securityRules = require("./logging/securityRules");
+const modCaseManager = require("./logging/modCaseManager");
 
-// ════════════════════════════════════════════════════════════════════════════
-//  🗺️  REGION 1: HELPERS — Cache, Queue, Embed Builder
-// ════════════════════════════════════════════════════════════════════════════
-
-/**
- * Minimal LRU cache backed by a Map.
- * Map preserves insertion order; promoting an entry on access (delete + re-insert)
- * keeps the least-recently-used entry at the front for O(1) eviction.
- */
-class LruCache {
-    constructor(maxSize) {
-        this.maxSize = maxSize;
-        this._map = new Map();
-    }
-
-    get size() { return this._map.size; }
-
-    get(key) {
-        if (!this._map.has(key)) return undefined;
-        // Promote to most-recently-used position
-        const value = this._map.get(key);
-        this._map.delete(key);
-        this._map.set(key, value);
-        return value;
-    }
-
-    set(key, value) {
-        if (this._map.has(key)) this._map.delete(key); // promote
-        this._map.set(key, value);
-        if (this._map.size > this.maxSize) {
-            // Evict least-recently-used (first entry)
-            this._map.delete(this._map.keys().next().value);
-        }
-    }
-
-    has(key) { return this._map.has(key); }
-
-    delete(key) { return this._map.delete(key); }
-
-    entries() { return this._map.entries(); }
-
-    keys() { return this._map.keys(); }
-}
-
-// Channel cache (5 min TTL)
-const auditChannelCache = new Map(); // guildId → { map, expiry }
-
-// Member state cache for before/after tracking (LRU-evicted, TTL-cleaned)
-const MEMBER_STATE_CACHE_MAX = 2000;
-const MEMBER_STATE_TTL_MS = 60 * 60 * 1000;
-const memberStateCache = new LruCache(MEMBER_STATE_CACHE_MAX); // `${guildId}_${userId}` → { nickname, avatarHash, updatedAt }
-
-// Rate-limit queue per guild (prevents Discord 429 on bulk events)
-const sendQueues = new Map(); // guildId → Promise
-const sendQueueDepths = new Map(); // guildId → pending sends
-const auditCircuit = new Map(); // `${guildId}:${type}` → { failures, openUntil }
-const registeredClients = new WeakSet(); // prevent duplicate listener registration after reconnect-ready events
-let auditCleanupTimer = null;
-const AUDIT_MAX_QUEUE_PER_GUILD = Math.max(1, Number(process.env.AUDIT_MAX_QUEUE_PER_GUILD || 200) || 200);
-const AUDIT_CIRCUIT_FAILURES = Math.max(1, Number(process.env.AUDIT_CIRCUIT_FAILURES || 5) || 5);
-const AUDIT_CIRCUIT_OPEN_MS = Math.max(10000, Number(process.env.AUDIT_CIRCUIT_OPEN_MS || 60 * 1000) || 60 * 1000);
-const AUDIT_WARN_THROTTLE_TTL_MS = Math.max(5 * 60 * 1000, Number(process.env.AUDIT_WARN_THROTTLE_TTL_MS || 30 * 60 * 1000) || 30 * 60 * 1000);
-const AUDIT_WARN_THROTTLE_MAX_SIZE = Math.max(100, Number(process.env.AUDIT_WARN_THROTTLE_MAX_SIZE || 2000) || 2000);
-const LOG_DELETED_MESSAGE_CONTENT = String(process.env.AUDIT_LOG_DELETED_MESSAGE_CONTENT ?? "true").toLowerCase() !== "false";
-const LOG_EDITED_MESSAGE_CONTENT = String(process.env.AUDIT_LOG_EDITED_MESSAGE_CONTENT ?? "true").toLowerCase() !== "false";
-const AUDIT_REDACT_LINKS = String(process.env.AUDIT_REDACT_LINKS || "").toLowerCase() === "true";
-const AUDIT_REDACT_MENTIONS = String(process.env.AUDIT_REDACT_MENTIONS || "").toLowerCase() === "true";
-const AUDIT_MAX_CONTENT_LENGTH = Math.max(80, Math.min(1800, Number(process.env.AUDIT_MAX_CONTENT_LENGTH || 800) || 800));
+const registeredClients = new WeakSet();
 const auditStats = {
-    auditSendFailed: 0,
-    auditDroppedQueueFull: 0,
-    auditDroppedCircuitOpen: 0,
-    auditChannelLookupFailed: 0,
-    auditFetchFailed: 0,
-    lastAuditSendError: null,
-    lastAuditChannelError: null,
-    lastAuditFetchError: null
+    sent: 0,
+    failed: 0,
+    saved: 0,
+    saveFailed: 0,
+    skippedBySettings: 0,
+    snapshots: 0,
+    skippedBots: 0,
+    duplicateSkipped: 0,
+    lastError: null
 };
-const warnThrottles = new Map();
+const recentEventKeys = new Map();
+let cleanupTimer = null;
 
-function delay(ms) {
-    return new Promise(resolve => {
-        const timer = setTimeout(resolve, ms);
-        timer.unref?.();
-    });
+const LOG_MESSAGE_CREATE = String(process.env.AUDIT_LOG_MESSAGE_CREATE || "false").toLowerCase() === "true";
+const DUPLICATE_TTL_MS = Math.max(1000, Number(process.env.AUDIT_DUPLICATE_TTL_MS || 2500) || 2500);
+
+function now() { return Date.now(); }
+function isBot(user) { return !!user?.bot; }
+
+function tag(user) {
+    if (!user) return "ไม่ทราบ";
+    return user.tag || user.username || user.globalName || user.id || "Unknown";
 }
 
-function isTokenChar(char) {
-    return !!char && (
-        (char >= "A" && char <= "Z") ||
-        (char >= "a" && char <= "z") ||
-        (char >= "0" && char <= "9") ||
-        char === "_" ||
-        char === "-"
-    );
+function userMention(id) { return id ? `<@${id}>` : "ไม่ทราบ"; }
+function roleMention(id) { return id ? `<@&${id}>` : "ไม่ทราบ"; }
+function channelMention(id) { return id ? `<#${id}>` : "ไม่ทราบ"; }
+function boolText(value) { return value ? "ใช่" : "ไม่ใช่"; }
+function noneText(value) { return value === null || value === undefined || value === "" ? "None" : safeAuditText(value, 240); }
+function code(value, max = 100) { return `\`${safeAuditText(value ?? "-", max)}\``; }
+
+function idFields(ids = {}) {
+    const out = [];
+    if (ids.userId) out.push(field("User ID", code(ids.userId), true));
+    if (ids.executorId) out.push(field("Executor ID", code(ids.executorId), true));
+    if (ids.channelId) out.push(field("Channel ID", code(ids.channelId), true));
+    if (ids.messageId) out.push(field("Message ID", code(ids.messageId), true));
+    if (ids.roleId) out.push(field("Role ID", code(ids.roleId), true));
+    return out;
 }
 
-function readTokenSegment(text, start) {
-    let end = start;
-    while (end < text.length && isTokenChar(text[end])) end++;
-    return {
-        value: text.slice(start, end),
-        end
-    };
+function executorFields(entry) {
+    if (!entry?.executor) return [field("👮 ผู้ดำเนินการ", "Unknown / audit log ไม่พบ", true)];
+    return [
+        field("👮 ผู้ดำเนินการ", `${userMention(entry.executor.id)} (${code(tag(entry.executor), 90)})`, true),
+        field("Executor ID", code(entry.executor.id), true)
+    ];
 }
 
-function redactDiscordTokenLikeValues(input) {
-    const text = String(input || "");
-    let output = "";
-    let index = 0;
+function channelLabel(channel) {
+    if (!channel) return "ไม่ทราบ";
+    return `${channelMention(channel.id)} (${code(channel.id)})`;
+}
 
-    while (index < text.length) {
-        const first = readTokenSegment(text, index);
-        const secondStart = first.end + 1;
-        const second = text[first.end] === "." ? readTokenSegment(text, secondStart) : null;
-        const thirdStart = second ? second.end + 1 : -1;
-        const third = second && text[second.end] === "." ? readTokenSegment(text, thirdStart) : null;
+function userLabel(user) {
+    if (!user) return "ไม่ทราบ";
+    return `${userMention(user.id)} (${code(tag(user), 90)})`;
+}
 
-        if (first.value.length >= 24 && second?.value.length >= 6 && third?.value.length >= 20) {
-            output += "[REDACTED_TOKEN]";
-            index = third.end;
-            continue;
-        }
+function memberLabel(member) { return userLabel(member?.user || member); }
 
-        output += text[index];
-        index++;
+function pinActionTitle(action) {
+    if (action === "MESSAGE_UNPIN") return "📌 Unpin ข้อความ";
+    if (action === "MESSAGE_PIN") return "📌 Pin ข้อความ";
+    return "📌 Pin/Unpin เปลี่ยนแปลง";
+}
+
+function roleSeverity(severity) {
+    if (severity === "critical") return "critical";
+    if (severity === "danger") return "danger";
+    return "warning";
+}
+
+function integrationPresentation(action) {
+    if (action === "INTEGRATION_CREATE") return { severity: "success", title: "🔌 Integration เพิ่ม" };
+    if (action === "INTEGRATION_DELETE") return { severity: "danger", title: "🔌 Integration ลบ" };
+    return { severity: "warning", title: "🔌 Integration เปลี่ยนแปลง" };
+}
+
+function shouldSkipDuplicate(key, ttlMs = DUPLICATE_TTL_MS) {
+    const t = recentEventKeys.get(key) || 0;
+    if (now() - t < ttlMs) {
+        auditStats.duplicateSkipped += 1;
+        return true;
     }
-
-    return output;
+    recentEventKeys.set(key, now());
+    return false;
 }
 
-function safeAuditError(err) {
-    return redactDiscordTokenLikeValues(err?.message || err?.name || err || "unknown")
-        .slice(0, 240);
-}
-
-function warnRateLimited(key, message, err, intervalMs = 60000) {
-    const now = Date.now();
-    const last = warnThrottles.get(key) || 0;
-    if (now - last < intervalMs) return;
-    warnThrottles.set(key, now);
-    console.warn(`${message}: ${safeAuditError(err)}`);
-}
-
-// ── Channel lookup ──
-async function getAuditChannel(guild, sessionManager, type) {
-    try {
-        const now = Date.now();
-        let cached = auditChannelCache.get(guild.id);
-        if (!cached || now > cached.expiry) {
-            const map = await sessionManager.getLogChannelMap(guild.id);
-            cached = { map, expiry: now + 300000 };
-            auditChannelCache.set(guild.id, cached);
-        }
-        if (!cached.map) return null;
-        const channelId = cached.map[`${type}ChannelId`];
-        if (!channelId) return null;
-        return guild.channels.cache.get(channelId) || null;
-    } catch (e) {
-        auditStats.auditChannelLookupFailed += 1;
-        auditStats.lastAuditChannelError = safeAuditError(e);
-        warnRateLimited(`audit-channel:${guild.id}:${type}`, `[AUDIT] ⚠️ Channel lookup failed guild=${guild.id} type=${type}`, e);
-        return null;
+function cleanupCaches() {
+    const cutoff = now() - 10 * 60 * 1000;
+    for (const [key, ts] of recentEventKeys.entries()) {
+        if (ts < cutoff) recentEventKeys.delete(key);
     }
-}
-
-// ── Queued send (prevents 429 on burst events) ──
-async function sendAuditLog(guild, sessionManager, type, embed) {
-    const gid = guild.id;
-    const depth = sendQueueDepths.get(gid) || 0;
-    if (depth >= AUDIT_MAX_QUEUE_PER_GUILD) {
-        auditStats.auditDroppedQueueFull += 1;
-        return false;
-    }
-
-    const circuitKey = `${gid}:${type}`;
-    const circuit = auditCircuit.get(circuitKey);
-    if (circuit?.openUntil && circuit.openUntil > Date.now()) {
-        auditStats.auditDroppedCircuitOpen += 1;
-        return false;
-    }
-
-    sendQueueDepths.set(gid, depth + 1);
-
-    const prev = sendQueues.get(gid) || Promise.resolve();
-    const next = prev.catch(() => {}).then(async () => {
-        const ch = await getAuditChannel(guild, sessionManager, type);
-        if (!ch) return false;
-
-        try {
-            await ch.send({ embeds: [embed] });
-            auditCircuit.delete(circuitKey);
-            return true;
-        } catch (err) {
-            auditStats.auditSendFailed += 1;
-            auditStats.lastAuditSendError = safeAuditError(err);
-            const current = auditCircuit.get(circuitKey) || { failures: 0, openUntil: 0 };
-            current.failures += 1;
-            if (current.failures >= AUDIT_CIRCUIT_FAILURES) {
-                current.openUntil = Date.now() + AUDIT_CIRCUIT_OPEN_MS;
-            }
-            auditCircuit.set(circuitKey, current);
-            warnRateLimited(circuitKey, `[AUDIT] ⚠️ Send failed guild=${gid} type=${type}`, err);
-            return false;
-        }
-    });
-    sendQueues.set(gid, next);
-    next.finally(() => {
-        const currentDepth = Math.max(0, (sendQueueDepths.get(gid) || 1) - 1);
-        if (currentDepth > 0) sendQueueDepths.set(gid, currentDepth);
-        else sendQueueDepths.delete(gid);
-        if (sendQueues.get(gid) === next) sendQueues.delete(gid);
-    }).catch(() => {});
-    return next;
-}
-
-// ── Fetch Audit Log entry (delay + filter by target + age) ──
-async function fetchAuditEntry(guild, type, targetId, delayMs = 1500) {
-    await delay(delayMs);
-    try {
-        const logs = await guild.fetchAuditLogs({ type, limit: 5 });
-        return logs.entries.find(e =>
-            e.target?.id === targetId &&
-            Date.now() - e.createdTimestamp < 8000
-        ) || null;
-    } catch (err) {
-        auditStats.auditFetchFailed += 1;
-        auditStats.lastAuditFetchError = safeAuditError(err);
-        warnRateLimited(`audit-fetch:${guild.id}:${type}`, `[AUDIT] ⚠️ fetchAuditLogs failed guild=${guild.id} type=${type}`, err);
-        return null;
-    }
-}
-
-// ── Standard Embed Template (Koya-style) ──
-function safeEmbedText(value, max) {
-    const text = String(value ?? "");
-    return text.length > max ? `${text.slice(0, Math.max(0, max - 15))}... [TRUNCATED]` : text;
-}
-
-function normalizeEmbedFields(fields = []) {
-    return fields
-        .filter(field => field?.name !== undefined && field?.value !== undefined)
-        .slice(0, 25)
-        .map(field => ({
-            ...field,
-            name: safeEmbedText(field.name, 256) || "-",
-            value: safeEmbedText(field.value, 1024) || "-"
-        }));
-}
-
-function getEmbedTextSize(embed) {
-    const data = typeof embed.toJSON === "function" ? embed.toJSON() : embed;
-    const fields = Array.isArray(data.fields) ? data.fields : [];
-    return String(data.title || "").length +
-        String(data.description || "").length +
-        String(data.footer?.text || "").length +
-        String(data.author?.name || "").length +
-        fields.reduce((sum, field) => sum + String(field.name || "").length + String(field.value || "").length, 0);
-}
-
-function fitEmbedTotalSize(embed, maxSize = 5900) {
-    let data = typeof embed.toJSON === "function" ? embed.toJSON() : {};
-    while (getEmbedTextSize(embed) > maxSize && Array.isArray(data.fields) && data.fields.length > 0) {
-        const fields = data.fields;
-        const last = fields[fields.length - 1];
-        if (String(last.value || "").length > 120) {
-            last.value = safeEmbedText(last.value, Math.max(80, String(last.value).length - 300));
-            embed.spliceFields(fields.length - 1, 1, last);
-        } else {
-            embed.spliceFields(fields.length - 1, 1);
-        }
-        data = embed.toJSON();
-    }
-
-    return embed;
-}
-
-function serializePermissionOverwrites(overwrites) {
-    if (!overwrites) return "";
-    return overwrites
-        .map(ow => {
-            const allow = ow.allow?.bitfield?.toString?.() || String(ow.allow || "0");
-            const deny = ow.deny?.bitfield?.toString?.() || String(ow.deny || "0");
-            return `${ow.id}:${ow.type}:${allow}:${deny}`;
-        })
-        .sort()
-        .join("|");
-}
-
-function buildEmbed({ color, title, user, description, fields = [], footer, noThumb = false }) {
-    const embed = new MessageEmbed().setColor(color).setTitle(safeEmbedText(title, 256));
-    if (description) embed.setDescription(safeEmbedText(description, 4096));
-    if (user && !noThumb) {
-        const avatarUrl = user.displayAvatarURL?.({ dynamic: true, size: 128 })
-            || user.defaultAvatarURL;
-        embed.setAuthor({ name: user.tag || user.username, iconURL: avatarUrl });
-        embed.setThumbnail(avatarUrl);
-    }
-    const safeFields = normalizeEmbedFields(fields);
-    if (safeFields.length > 0) embed.addFields(safeFields);
-    embed.setFooter({ text: safeEmbedText(footer || "Phomueangtai Enterprise", 2048) });
-    embed.setTimestamp();
-    return fitEmbedTotalSize(embed);
-}
-
-// ── Member state cache helpers ──
-function cacheMember(member) {
-    const key = `${member.guild.id}_${member.id}`;
-
-    if (memberStateCache.has(key)) memberStateCache.delete(key);
-
-    memberStateCache.set(key, {
-        nickname:   member.nickname,
-        avatarHash: member.avatar,
-        updatedAt:  Date.now()
-    });
-
-    if (memberStateCache.size > MEMBER_STATE_CACHE_MAX) {
-        const oldestKey = memberStateCache.keys().next().value;
-        if (oldestKey) memberStateCache.delete(oldestKey);
-    }
-}
-function getCachedMember(guildId, userId) {
-    const key = `${guildId}_${userId}`;
-    const cached = memberStateCache.get(key) || null;
-
-    if (!cached) return null;
-
-    memberStateCache.delete(key);
-    const refreshed = { ...cached, updatedAt: Date.now() };
-    memberStateCache.set(key, refreshed);
-
-    return refreshed;
-}
-
-
-function cleanupAuditCaches() {
-    const now = Date.now();
-
-    for (const [key, value] of memberStateCache.entries()) {
-        if (!value?.updatedAt || now - value.updatedAt > MEMBER_STATE_TTL_MS) {
-            memberStateCache.delete(key);
-        }
-    }
-
-    for (const [guildId, cached] of auditChannelCache.entries()) {
-        if (!cached?.expiry || now > cached.expiry + 60000) {
-            auditChannelCache.delete(guildId);
-        }
-    }
-
-    for (const [key, circuit] of auditCircuit.entries()) {
-        if (!circuit?.openUntil || circuit.openUntil + AUDIT_CIRCUIT_OPEN_MS < now) {
-            auditCircuit.delete(key);
-        }
-    }
-
-    for (const [key, lastWarnAt] of warnThrottles.entries()) {
-        if (!lastWarnAt || now - lastWarnAt > AUDIT_WARN_THROTTLE_TTL_MS) {
-            warnThrottles.delete(key);
-        }
-    }
-
-    while (warnThrottles.size > AUDIT_WARN_THROTTLE_MAX_SIZE) {
-        const oldestKey = warnThrottles.keys().next().value;
-        if (!oldestKey) break;
-        warnThrottles.delete(oldestKey);
-    }
+    defaultMessageSnapshots.cleanup();
 }
 
 function startAuditCleanup() {
-    if (auditCleanupTimer) return;
-
-    auditCleanupTimer = setInterval(cleanupAuditCaches, 5 * 60 * 1000);
-    auditCleanupTimer.unref?.();
+    if (cleanupTimer) return;
+    cleanupTimer = setInterval(cleanupCaches, 5 * 60 * 1000);
+    cleanupTimer.unref?.();
 }
 
 function stopAuditCleanup() {
-    if (!auditCleanupTimer) return;
-    clearInterval(auditCleanupTimer);
-    auditCleanupTimer = null;
+    if (!cleanupTimer) return;
+    clearInterval(cleanupTimer);
+    cleanupTimer = null;
 }
 
 function getAuditStats() {
     return {
-        auditChannelCache: auditChannelCache.size,
-        memberStateCache: memberStateCache.size,
-        sendQueues: sendQueues.size,
-        sendQueueDepths: Object.fromEntries(sendQueueDepths),
-        auditCircuit: auditCircuit.size,
-        auditCircuitOpen: [...auditCircuit.values()].filter(item => item.openUntil > Date.now()).length,
-        warnThrottles: warnThrottles.size,
-        cleanupTimerActive: !!auditCleanupTimer,
-        ...auditStats
+        ...auditStats,
+        duplicateKeys: recentEventKeys.size,
+        messageSnapshots: defaultMessageSnapshots.stats(),
+        cleanupTimerActive: !!cleanupTimer
     };
 }
 
-// ── Truncate long strings ──
-function trunc(str, max = 1000) {
-    if (!str) return "*ว่างเปล่า*";
-    return str.length > max ? str.substring(0, max) + "..." : str;
+function embedJson(embed) {
+    return typeof embed?.toJSON === "function" ? embed.toJSON() : (embed?.data || embed || {});
 }
 
-function redactAuditContent(value) {
-    let text = String(value ?? "");
-    if (AUDIT_REDACT_LINKS) {
-        text = text.replace(/https?:\/\/\S+/gi, "[REDACTED_URL]");
+function fieldValue(fields = [], names = []) {
+    const wanted = new Set(names.map(name => String(name).toLowerCase()));
+    const found = fields.find(item => wanted.has(String(item?.name || "").toLowerCase()));
+    return found?.value || null;
+}
+
+function readDigits(text, start) {
+    let out = "";
+    for (let index = start; index < text.length; index++) {
+        const codePoint = text.codePointAt(index);
+        if (codePoint < 48 || codePoint > 57) break;
+        out += text[index];
     }
-    if (AUDIT_REDACT_MENTIONS) {
-        text = text
-            .replace(/<@!?\d+>/g, "[REDACTED_MENTION]")
-            .replace(/<@&\d+>/g, "[REDACTED_ROLE]")
-            .replace(/<#\d+>/g, "[REDACTED_CHANNEL]");
+    return out.length >= 12 && out.length <= 25 ? out : null;
+}
+
+function readLabelledId(text, label) {
+    const lowerText = text.toLowerCase();
+    const marker = `${String(label || "").toLowerCase()}:`;
+    const markerIndex = lowerText.indexOf(marker);
+    if (markerIndex < 0) return null;
+
+    let index = markerIndex + marker.length;
+    while (index < text.length && (text[index] === " " || text[index] === "\t" || text[index] === "`" || text[index] === "#")) {
+        index++;
     }
-    return text;
+    return readDigits(text, index);
 }
 
-function formatAuditMessageContent(value, kind) {
-    const shouldLog = kind === "delete" ? LOG_DELETED_MESSAGE_CONTENT : LOG_EDITED_MESSAGE_CONTENT;
-    if (!shouldLog) return "*ซ่อนเนื้อหาตามการตั้งค่า audit*";
-    return trunc(redactAuditContent(value), AUDIT_MAX_CONTENT_LENGTH);
+function readMentionId(text) {
+    const markerIndex = text.indexOf("<");
+    if (markerIndex < 0) return null;
+    let index = markerIndex + 1;
+    while (index < text.length && ["@", "#", "&", "!"].includes(text[index])) index++;
+    return readDigits(text, index);
 }
 
+function readCodeId(text) {
+    const start = text.indexOf("`");
+    if (start < 0) return null;
+    return readDigits(text, start + 1);
+}
 
-// ── Partial-safe helpers for message/reaction audit events ──
+function readIdFromText(value, label) {
+    const text = String(value || "");
+    return readLabelledId(text, label) || readMentionId(text) || readCodeId(text);
+}
+
+function extractRecordIds(fields = []) {
+    const idBlock = fieldValue(fields, ["🧾 IDs"]);
+    return {
+        actorId: readIdFromText(idBlock, "Actor ID") || readIdFromText(fieldValue(fields, ["👮 ผู้ดำเนินการ", "Executor ID"]), "Executor ID"),
+        targetId: readIdFromText(idBlock, "Target ID") || readIdFromText(fieldValue(fields, ["🎯 เป้าหมาย", "👤 สมาชิก", "👤 ผู้ใช้", "👤 ผู้ส่ง", "👤 ผู้ถูก Ban", "🤖 บอท"]), "User ID"),
+        channelId: readIdFromText(idBlock, "Channel ID") || readIdFromText(fieldValue(fields, ["📌 ห้อง", "🔊 ห้อง", "🔇 ห้องเดิม", "📤 จากห้อง", "📥 ไปห้อง"]), "Channel ID"),
+        messageId: readIdFromText(idBlock, "Message ID"),
+        roleId: readIdFromText(idBlock, "Role ID")
+    };
+}
+
+function actionTypeFromTitle(category, title) {
+    let normalized = "";
+    let lastWasSeparator = true;
+    for (const char of safeAuditText(title || "audit_log", 120)) {
+        const codePoint = char.codePointAt(0);
+        const isAlpha = (codePoint >= 65 && codePoint <= 90) || (codePoint >= 97 && codePoint <= 122);
+        const isDigit = codePoint >= 48 && codePoint <= 57;
+        if (isAlpha || isDigit) {
+            normalized += char.toUpperCase();
+            lastWasSeparator = false;
+        } else if (!lastWasSeparator) {
+            normalized += "_";
+            lastWasSeparator = true;
+        }
+    }
+    if (normalized.endsWith("_")) normalized = normalized.slice(0, -1);
+    return normalized || `${String(category || "audit").toUpperCase()}_LOG`;
+}
+
+function buildStorageRecord(guild, category, embed, options = {}) {
+    const data = embedJson(embed);
+    const fields = Array.isArray(data.fields) ? data.fields : [];
+    const ids = extractRecordIds(fields);
+    const title = data.title || options.title || "Audit Log";
+    const description = data.description || "";
+
+    return {
+        guildId: guild?.id,
+        source: options.source || "gateway",
+        category,
+        severity: options.severity || "info",
+        actionType: options.actionType || actionTypeFromTitle(category, title),
+        actorId: options.actorId || ids.actorId,
+        targetId: options.targetId || ids.targetId,
+        channelId: options.channelId || ids.channelId,
+        messageId: options.messageId || ids.messageId,
+        roleId: options.roleId || ids.roleId,
+        reason: options.reason || null,
+        summary: [title, description].filter(Boolean).join("\n").slice(0, 1000),
+        evidence: fields.slice(0, 25).map(item => `${item.name}: ${item.value}`),
+        metadata: {
+            embedTitle: title,
+            embedFooter: data.footer?.text || null
+        },
+        createdAt: Date.now()
+    };
+}
+
+async function saveGatewayAuditRecord(guild, sessionManager, category, embed, options = {}) {
+    const record = buildStorageRecord(guild, category, embed, options);
+    if (!record.guildId) return null;
+    const saved = await auditStorage.saveAuditRecord(sessionManager, record);
+    if (saved) auditStats.saved += 1;
+    else auditStats.saveFailed += 1;
+    return saved;
+}
+
+async function categoryAllowed(sessionManager, guildId, category) {
+    const settings = await auditSettings.getAuditSettings(sessionManager, guildId).catch(() => null);
+    return auditSettings.categoryEnabled(settings || {}, category);
+}
+
+async function shouldLogMessageCreate(sessionManager, guildId) {
+    if (LOG_MESSAGE_CREATE) return true;
+    const settings = await auditSettings.getAuditSettings(sessionManager, guildId).catch(() => null);
+    return settings?.messageCreateEnabled === true;
+}
+
+async function sendAuditLog(guild, sessionManager, type, embed, options = {}) {
+    try {
+        if (!await categoryAllowed(sessionManager, guild?.id, type)) {
+            auditStats.skippedBySettings += 1;
+            return false;
+        }
+
+        await saveGatewayAuditRecord(guild, sessionManager, type, embed, options).catch(err => {
+            auditStats.saveFailed += 1;
+            auditStats.lastError = safeAuditText(err?.message || err, 300);
+        });
+
+        const ok = await routeAndSendLog({
+            guild,
+            sessionManager,
+            category: type,
+            embed,
+            debounceKey: options.debounceKey,
+            debounceMs: options.debounceMs || 0
+        });
+        if (ok) auditStats.sent += 1;
+        else auditStats.failed += 1;
+        return ok;
+    } catch (err) {
+        auditStats.failed += 1;
+        auditStats.lastError = safeAuditText(err?.message || err, 300);
+        return false;
+    }
+}
+
+function buildEmbed(options) { return buildLogEmbed(options); }
+
 async function resolvePartial(value) {
-    if (value?.partial && typeof value.fetch === "function") {
-        return await value.fetch().catch(() => value);
-    }
-
+    if (value?.partial && typeof value.fetch === "function") return value.fetch().catch(() => value);
     return value;
 }
 
-function getMessageGuild(message) {
-    return message?.guild || message?.channel?.guild || null;
+function snapshot(message) {
+    const data = defaultMessageSnapshots.snapshot(message);
+    if (data) auditStats.snapshots += 1;
+    return data;
 }
 
-function getChannelId(message) {
-    return message?.channel?.id || message?.channelId || null;
+function messageData(message) {
+    const guildId = message?.guild?.id || message?.channel?.guild?.id || null;
+    const cached = guildId && message?.id ? defaultMessageSnapshots.get(guildId, message.id) : null;
+    const currentAttachments = Array.from(message?.attachments?.values?.() || []).map(a => ({
+        id: a.id,
+        name: a.name || a.filename || "attachment",
+        url: a.url,
+        proxyURL: a.proxyURL,
+        size: a.size,
+        contentType: a.contentType
+    }));
+    return {
+        guildId,
+        messageId: message?.id || cached?.messageId || null,
+        channelId: message?.channel?.id || message?.channelId || cached?.channelId || null,
+        authorId: message?.author?.id || cached?.authorId || null,
+        authorTag: message?.author?.tag || cached?.authorTag || "Unknown",
+        content: message?.content || cached?.content || "",
+        attachments: currentAttachments.length ? currentAttachments : (cached?.attachments || []),
+        createdAt: message?.createdTimestamp || cached?.createdAt || null,
+        editedAt: message?.editedTimestamp || cached?.editedAt || null,
+        cached
+    };
 }
 
-function getChannelLabel(message) {
-    const channelId = getChannelId(message);
-    return channelId ? `<#${channelId}> (\`${channelId}\`)` : "ไม่ทราบห้อง";
+function attachmentFieldsFor(list = []) {
+    if (!list.length) return [];
+    const totalSize = list.reduce((sum, item) => sum + (Number(item.size) || 0), 0);
+    const lines = list.slice(0, 10).map((item, index) => {
+        const label = item.name || `attachment-${index + 1}`;
+        return item.url ? `• [${safeAuditText(label, 80)}](${item.url})` : `• ${safeAuditText(label, 80)}`;
+    });
+    if (list.length > 10) lines.push(`... และอีก ${list.length - 10} ไฟล์`);
+    return [
+        field("📎 ไฟล์แนบ", lines.join("\n"), false),
+        field("Attachment Count", code(list.length), true),
+        field("Attachment Size", totalSize ? code(`${Math.round(totalSize / 1024)} KB`) : "Unknown", true)
+    ];
 }
 
-function getUserFieldValue(user) {
-    return user?.id ? `<@${user.id}> (\`${user.id}\`)` : "ไม่ทราบผู้ใช้";
+function imagePreview(list = []) {
+    const image = list.find(item => /\.(png|jpe?g|gif|webp)(\?|$)/i.test(String(item.url || item.proxyURL || "")));
+    return image?.url || image?.proxyURL || null;
 }
 
-function getMessageLink(message, guild) {
-    if (message?.url) return message.url;
+function messageLink(guildId, channelId, messageId) { return jumpLink(guildId, channelId, messageId); }
 
-    const channelId = getChannelId(message);
-    if (guild?.id && channelId && message?.id) {
-        return `https://discord.com/channels/${guild.id}/${channelId}/${message.id}`;
-    }
-
-    return null;
+function contentValue(value, empty = "*ว่างเปล่า / ไม่มีข้อมูลในแคช*") {
+    if (!value) return empty;
+    return safeAuditText(value, 1000);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-//  📝  REGION 2: MESSAGE EVENTS
-// ════════════════════════════════════════════════════════════════════════════
+async function maybeCreateModerationRecord(input = {}) {
+    const { sessionManager, guild, action, user, executor, reason, evidence = [], metadata = {} } = input;
+    if (!guild?.id || !user?.id) return null;
+    if (executor?.id === guild.client?.user?.id) return null;
+    return modCaseManager.createCase(sessionManager, {
+        guildId: guild.id,
+        action,
+        type: action,
+        userId: user.id,
+        moderatorId: executor?.id || null,
+        reason: reason || "Audit log action",
+        evidence,
+        source: "discord_audit_log",
+        metadata
+    }).catch(() => null);
+}
+
 function registerMessageEvents(client, sessionManager) {
-    const config = require("./config.json");
-
-    // กัน messageDelete ซ้ำหลัง bulk
-    const recentBulkChannels = new Map();
-
-    // ── ลบข้อความ ──
-    client.on("messageDelete", async (message) => {
-        message = await resolvePartial(message);
-        const guild = getMessageGuild(message);
-        if (!guild) return;
-
-        const author = message.author || null;
-        if (author?.bot) return;
-
-        const channelId = getChannelId(message);
-        const bulkTs = channelId ? recentBulkChannels.get(channelId) : null;
-        if (bulkTs && Date.now() - bulkTs < 3000) return;
-
-        // ลองดึงว่าใครลบ (ถ้าไม่ใช่เจ้าของ)
-        let deleter = null;
-        try {
-            if (author?.id) {
-                const entry = await fetchAuditEntry(guild, "MESSAGE_DELETE", author.id);
-                if (entry && (!channelId || entry.extra?.channel?.id === channelId)) {
-                    deleter = entry.executor;
-                }
-            }
-        } catch {}
-
-        const fields = [
-            { name: "👤 ผู้ส่ง",    value: getUserFieldValue(author), inline: true },
-            { name: "📌 ห้อง",      value: getChannelLabel(message), inline: true },
-            { name: "🆔 Message ID", value: message.id ? `\`${message.id}\`` : "ไม่ทราบ", inline: true },
-        ];
-
-        if (message.content) fields.push({ name: "📄 เนื้อหา", value: formatAuditMessageContent(message.content, "delete"), inline: false });
-        else fields.push({ name: "📄 เนื้อหา", value: "*ไม่มีข้อมูลในแคชหรือดึงไม่ได้*", inline: false });
-
-        if (message.attachments?.size > 0) fields.push({ name: "📎 ไฟล์แนบ", value: `${message.attachments.size} ไฟล์`, inline: true });
-        if (deleter && deleter.id !== author?.id) fields.push({ name: "🗑️ ลบโดย", value: `<@${deleter.id}> (\`${deleter.tag}\`)`, inline: true });
-
-        const footerTime = message.createdTimestamp
-            ? new Date(message.createdTimestamp).toLocaleString("th-TH")
-            : "ไม่ทราบเวลาเดิม";
-
-        const embed = buildEmbed({
-            color:       config.system.themeColors.error,
-            title:       `${config.emojis.trash} ข้อความถูกลบ`,
-            user:        author,
-            fields,
-            footer:      `ส่งเมื่อ ${footerTime}`
+    client.on("messageCreate", async (message) => {
+        if (!message.guild || isBot(message.author)) return;
+        snapshot(message);
+        if (!await shouldLogMessageCreate(sessionManager, message.guild.id)) return;
+        if (shouldSkipDuplicate(`msg-create:${message.guild.id}:${message.id}`)) return;
+        const data = messageData(message);
+        const embed = buildLogEmbed({
+            category: LOG_CHANNEL_TYPES.MESSAGE,
+            severity: "info",
+            title: "💬 ข้อความถูกส่ง",
+            author: message.author,
+            thumbnailUser: message.author,
+            description: contentValue(data.content),
+            guildId: data.guildId,
+            channelId: data.channelId,
+            messageId: data.messageId,
+            attachments: data.attachments,
+            image: imagePreview(data.attachments),
+            fields: [
+                field("👤 ผู้ส่ง", userLabel(message.author), true),
+                field("📌 ห้อง", channelLabel(message.channel), true),
+                ...idFields({ userId: data.authorId, channelId: data.channelId, messageId: data.messageId })
+            ]
         });
-
-        await sendAuditLog(guild, sessionManager, "message", embed);
+        await sendAuditLog(message.guild, sessionManager, LOG_CHANNEL_TYPES.MESSAGE, embed);
     });
 
-    // ── แก้ไขข้อความ ──
     client.on("messageUpdate", async (oldMsg, newMsg) => {
         oldMsg = await resolvePartial(oldMsg);
         newMsg = await resolvePartial(newMsg);
-
-        const guild = getMessageGuild(newMsg) || getMessageGuild(oldMsg);
+        const guild = newMsg?.guild || oldMsg?.guild || newMsg?.channel?.guild || oldMsg?.channel?.guild;
         if (!guild) return;
-
-        const author = newMsg.author || oldMsg.author || null;
-        if (author?.bot) return;
-
-        const oldContent = oldMsg.content ?? null;
-        const newContent = newMsg.content ?? null;
-        if (oldContent != null && newContent != null && oldContent === newContent) return;
-
-        const link = getMessageLink(newMsg, guild);
-        const fields = [
-            { name: "👤 ผู้ส่ง",    value: getUserFieldValue(author), inline: true },
-            { name: "📌 ห้อง",      value: getChannelLabel(newMsg), inline: true },
-            { name: "🆔 Message ID", value: newMsg.id ? `\`${newMsg.id}\`` : "ไม่ทราบ", inline: true },
-            { name: "📄 ก่อน",      value: formatAuditMessageContent(oldContent || "*ไม่มีข้อมูลเดิม*", "edit"), inline: false },
-            { name: "✏️ หลัง",      value: formatAuditMessageContent(newContent || "*ไม่มีข้อมูลใหม่*", "edit"), inline: false }
-        ];
-
-        if (link) fields.push({ name: "🔗 ลิงก์", value: `[Jump to Message](${link})`, inline: true });
-
-        const embed = buildEmbed({
-            color:  config.system.themeColors.warning,
-            title:  `${config.emojis.pencil} ข้อความถูกแก้ไข`,
-            user:   author,
-            fields
+        const author = newMsg.author || oldMsg.author;
+        if (isBot(author)) return;
+        const before = messageData(oldMsg);
+        const after = messageData(newMsg);
+        if ((before.content || "") === (after.content || "") && before.attachments.length === after.attachments.length) return;
+        snapshot(newMsg);
+        const link = messageLink(after.guildId, after.channelId, after.messageId);
+        const embed = buildLogEmbed({
+            category: LOG_CHANNEL_TYPES.MESSAGE,
+            severity: "warning",
+            title: `${config.emojis.pencil} ข้อความถูกแก้ไข`,
+            author,
+            thumbnailUser: author,
+            guildId: after.guildId,
+            channelId: after.channelId,
+            messageId: after.messageId,
+            jumpLink: link,
+            messageCreatedAt: after.createdAt,
+            fields: [
+                field("👤 ผู้ส่ง", userLabel(author), true),
+                field("📌 ห้อง", channelMention(after.channelId), true),
+                field("📄 ก่อน", contentValue(before.content, "*ไม่มีข้อมูลเดิม*"), false),
+                field("✏️ หลัง", contentValue(after.content, "*ไม่มีข้อมูลใหม่*"), false),
+                ...attachmentFieldsFor(after.attachments),
+                ...idFields({ userId: after.authorId, channelId: after.channelId, messageId: after.messageId })
+            ]
         });
-
-        await sendAuditLog(guild, sessionManager, "message", embed);
+        await sendAuditLog(guild, sessionManager, LOG_CHANNEL_TYPES.MESSAGE, embed);
     });
 
-    // ── Bulk Delete ──
+    const recentBulkChannels = new Map();
+
+    client.on("messageDelete", async (message) => {
+        message = await resolvePartial(message);
+        const guild = message?.guild || message?.channel?.guild;
+        if (!guild) return;
+        const data = messageData(message);
+        if (isBot(message.author)) return;
+        const bulkTs = data.channelId ? recentBulkChannels.get(data.channelId) : null;
+        if (bulkTs && now() - bulkTs < 3000) return;
+        if (shouldSkipDuplicate(`msg-delete:${guild.id}:${data.messageId}`)) return;
+
+        let entry = null;
+        if (data.authorId) entry = await fetchAuditEntry(guild, "MESSAGE_DELETE", data.authorId, { channelId: data.channelId });
+        const deleter = entry?.executor || null;
+        const link = messageLink(data.guildId, data.channelId, data.messageId);
+        const embed = buildLogEmbed({
+            category: LOG_CHANNEL_TYPES.MESSAGE,
+            severity: "danger",
+            title: `${config.emojis.trash} ข้อความถูกลบ`,
+            author: message.author || null,
+            thumbnailUser: message.author || null,
+            guildId: data.guildId,
+            channelId: data.channelId,
+            messageId: data.messageId,
+            jumpLink: link,
+            messageCreatedAt: data.createdAt,
+            attachments: data.attachments,
+            image: imagePreview(data.attachments),
+            fields: [
+                field("👤 ผู้ส่ง", data.authorId ? `${userMention(data.authorId)} (${code(data.authorTag, 90)})` : "Unknown", true),
+                field("📌 ห้อง", channelMention(data.channelId), true),
+                ...(deleter ? [field("🗑️ ลบโดย", `${userMention(deleter.id)} (${code(tag(deleter), 90)})`, true)] : [field("🗑️ ลบโดย", "Unknown / เจ้าของลบเอง / audit log ไม่พบ", true)]),
+                field("📄 เนื้อหา", contentValue(data.content), false),
+                ...attachmentFieldsFor(data.attachments),
+                ...idFields({ userId: data.authorId, executorId: deleter?.id, channelId: data.channelId, messageId: data.messageId })
+            ],
+            footer: data.cached ? "Message snapshot cache used" : "Live/partial message data"
+        });
+        await sendAuditLog(guild, sessionManager, LOG_CHANNEL_TYPES.MESSAGE, embed);
+    });
+
     client.on("messageDeleteBulk", async (messages) => {
         const first = messages.first();
-        if (!first?.guild) return;
-        recentBulkChannels.set(first.channel.id, Date.now());
-        const timer = setTimeout(() => recentBulkChannels.delete(first.channel.id), 3000);
-        timer.unref?.();
-
-        // ดึงว่าใคร Clear
-        let executor = null;
-        try {
-            const entry = await fetchAuditEntry(first.guild, "MESSAGE_BULK_DELETE", first.channel.id, 1000);
-            if (entry) executor = entry.executor;
-        } catch {}
-
-        const fields = [
-            { name: "📌 ห้อง",   value: `<#${first.channel.id}> (\`${first.channel.id}\`)`, inline: true },
-            { name: "🔢 จำนวน", value: `${messages.size} ข้อความ`, inline: true },
-        ];
-        if (executor) fields.push({ name: "🗑️ ลบโดย", value: `<@${executor.id}> (\`${executor.tag}\`)`, inline: true });
-
-        const embed = buildEmbed({
-            color:   config.system.themeColors.error,
-            title:   `${config.emojis.broom} ลบข้อความหมู่ (Bulk Delete)`,
-            fields,
-            noThumb: true
-        });
-
-        await sendAuditLog(first.guild, sessionManager, "message", embed);
-    });
-
-    // ── Pin/Unpin ──
-    client.on("channelPinsUpdate", async (channel, time) => {
-        if (!channel.guild) return;
-        await delay(1500);
-
-        let executor = null, action = "เปลี่ยนแปลง Pin";
-        try {
-            const logs = await channel.guild.fetchAuditLogs({ limit: 3 });
-            const entry = logs.entries.find(e =>
-                (e.action === "MESSAGE_PIN" || e.action === "MESSAGE_UNPIN") &&
-                e.extra?.channel?.id === channel.id &&
-                Date.now() - e.createdTimestamp < 8000
-            );
-            if (entry) {
-                executor = entry.executor;
-                action   = entry.action === "MESSAGE_PIN" ? "📌 Pin ข้อความ" : "📌 Unpin ข้อความ";
-            }
-        } catch {}
-
-        const fields = [
-            { name: "📌 ห้อง", value: `<#${channel.id}>`, inline: true },
-        ];
-        if (executor) fields.push({ name: "👤 โดย", value: `<@${executor.id}>`, inline: true });
-
-        const embed = buildEmbed({
-            color:   config.system.themeColors.info,
-            title:   action,
-            fields,
-            noThumb: true
-        });
-
-        await sendAuditLog(channel.guild, sessionManager, "message", embed);
-    });
-
-    // ── Reaction เพิ่ม ──
-    client.on("messageReactionAdd", async (reaction, user) => {
-        if (user?.bot) return;
-
-        reaction = await resolvePartial(reaction);
-        const msg = await resolvePartial(reaction.message);
-        const guild = getMessageGuild(msg);
+        const guild = first?.guild || first?.channel?.guild;
         if (!guild) return;
-
-        const link = getMessageLink(msg, guild);
-        const fields = [
-            { name: "👤 ผู้กด",      value: getUserFieldValue(user), inline: true },
-            { name: "📌 ห้อง",       value: getChannelLabel(msg), inline: true },
-            { name: "😀 Reaction",  value: `${reaction.emoji}`, inline: true },
-            { name: "🆔 Message ID", value: msg.id ? `\`${msg.id}\`` : "ไม่ทราบ", inline: true }
-        ];
-
-        if (link) fields.push({ name: "🔗 ลิงก์", value: `[Jump](${link})`, inline: true });
-
-        const embed = buildEmbed({
-            color:  config.system.themeColors.success,
-            title:  "➕ Reaction เพิ่ม",
-            user,
-            fields
+        recentBulkChannels.set(first.channel.id, now());
+        setTimeout(() => recentBulkChannels.delete(first.channel.id), 3000).unref?.();
+        const entry = await fetchAuditEntry(guild, "MESSAGE_BULK_DELETE", first.channel.id, { channelId: first.channel.id, delayMs: 1000 });
+        const samples = messages.first(8).map(msg => {
+            const data = messageData(msg);
+            return `• ${code(data.messageId)} by ${data.authorId ? userMention(data.authorId) : "Unknown"}: ${safeAuditText(data.content || "[no cached content]", 120)}`;
         });
-
-        await sendAuditLog(guild, sessionManager, "message", embed);
-    });
-
-    // ── Reaction ลบ ──
-    client.on("messageReactionRemove", async (reaction, user) => {
-        if (user?.bot) return;
-
-        reaction = await resolvePartial(reaction);
-        const msg = await resolvePartial(reaction.message);
-        const guild = getMessageGuild(msg);
-        if (!guild) return;
-
-        const embed = buildEmbed({
-            color:  config.system.themeColors.warning,
-            title:  "➖ Reaction ลบ",
-            user,
+        const embed = buildLogEmbed({
+            category: LOG_CHANNEL_TYPES.MESSAGE,
+            severity: "danger",
+            title: `${config.emojis.broom} ลบข้อความหมู่`,
+            noThumbnail: true,
+            guildId: guild.id,
+            channelId: first.channel.id,
             fields: [
-                { name: "👤 ผู้ลบ",     value: getUserFieldValue(user), inline: true },
-                { name: "📌 ห้อง",      value: getChannelLabel(msg), inline: true },
-                { name: "😀 Reaction", value: `${reaction.emoji}`, inline: true },
-                { name: "🆔 Message ID", value: msg.id ? `\`${msg.id}\`` : "ไม่ทราบ", inline: true }
+                field("📌 ห้อง", channelLabel(first.channel), true),
+                field("🔢 จำนวน", code(messages.size), true),
+                ...executorFields(entry),
+                field("🧩 ตัวอย่างหลักฐาน", samples.join("\n") || "ไม่มีข้อมูลในแคช", false),
+                field("Channel ID", code(first.channel.id), true)
             ]
         });
-
-        await sendAuditLog(guild, sessionManager, "message", embed);
+        await sendAuditLog(guild, sessionManager, LOG_CHANNEL_TYPES.MESSAGE, embed);
     });
+
+    client.on("channelPinsUpdate", async (channel) => {
+        if (!channel.guild) return;
+        const entry = await fetchAuditEntry(channel.guild, null, channel.id, { channelId: channel.id, delayMs: 1200 }).catch(() => null);
+        const embed = buildLogEmbed({
+            category: LOG_CHANNEL_TYPES.MESSAGE,
+            severity: "info",
+            title: pinActionTitle(entry?.action),
+            noThumbnail: true,
+            channelId: channel.id,
+            fields: [field("📌 ห้อง", channelLabel(channel), true), ...executorFields(entry)]
+        });
+        await sendAuditLog(channel.guild, sessionManager, LOG_CHANNEL_TYPES.MESSAGE, embed);
+    });
+
+    async function reactionLog(type, reaction, user) {
+        if (isBot(user)) return;
+        reaction = await resolvePartial(reaction);
+        const msg = await resolvePartial(reaction.message);
+        const guild = msg?.guild || msg?.channel?.guild;
+        if (!guild) return;
+        const data = messageData(msg);
+        const embed = buildLogEmbed({
+            category: LOG_CHANNEL_TYPES.MESSAGE,
+            severity: type === "add" ? "success" : "warning",
+            title: type === "add" ? "➕ Reaction เพิ่ม" : "➖ Reaction ลบ",
+            author: user,
+            thumbnailUser: user,
+            guildId: data.guildId,
+            channelId: data.channelId,
+            messageId: data.messageId,
+            jumpLink: messageLink(data.guildId, data.channelId, data.messageId),
+            fields: [
+                field(type === "add" ? "👤 ผู้กด" : "👤 ผู้ลบ", userLabel(user), true),
+                field("😀 Reaction", safeAuditText(String(reaction.emoji), 80), true),
+                field("📌 ห้อง", channelMention(data.channelId), true),
+                ...idFields({ userId: user.id, channelId: data.channelId, messageId: data.messageId })
+            ]
+        });
+        await sendAuditLog(guild, sessionManager, LOG_CHANNEL_TYPES.MESSAGE, embed);
+    }
+
+    client.on("messageReactionAdd", (reaction, user) => reactionLog("add", reaction, user));
+    client.on("messageReactionRemove", (reaction, user) => reactionLog("remove", reaction, user));
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-//  👥  REGION 3: MEMBER EVENTS
-// ════════════════════════════════════════════════════════════════════════════
 function registerMemberEvents(client, sessionManager) {
-    const config = require("./config.json");
-
-    // ── สมาชิกเข้า ──
     client.on("guildMemberAdd", async (member) => {
-        if (member.user.bot) return; // handled by security
-        const ageDays = Math.floor((Date.now() - member.user.createdTimestamp) / 86400000);
-        const isNew   = ageDays < config.risk_thresholds.newAccountAgeDays;
-
-        const embed = buildEmbed({
-            color:  isNew ? config.system.themeColors.error : config.system.themeColors.success,
-            title:  `${config.emojis.success} สมาชิกใหม่เข้าร่วม`,
-            user:   member.user,
+        if (member.user.bot) return;
+        const ageDays = Math.floor((now() - member.user.createdTimestamp) / 86400000);
+        const risk = ageDays < config.risk_thresholds.newAccountAgeDays;
+        const embed = buildLogEmbed({
+            category: LOG_CHANNEL_TYPES.MEMBER,
+            severity: risk ? "danger" : "success",
+            title: `${config.emojis.success} สมาชิกใหม่เข้าร่วม`,
+            author: member.user,
+            thumbnailUser: member.user,
+            target: member,
             fields: [
-                { name: "👤 ผู้ใช้",       value: `<@${member.id}> (\`${member.id}\`)`, inline: true },
-                { name: "🏷️ Tag",           value: `\`${member.user.tag}\``, inline: true },
-                { name: "🎂 สร้างบัญชีเมื่อ", value: `<t:${Math.floor(member.user.createdTimestamp / 1000)}:R>`, inline: true },
-                ...(isNew ? [{ name: `${config.emojis.warning} ⚠️ บัญชีใหม่มาก`, value: `${ageDays} วัน — HIGH RISK`, inline: true }] : [])
+                field("👤 ผู้ใช้", memberLabel(member), true),
+                field("🏷️ Tag", code(tag(member.user), 90), true),
+                field("🎂 สร้างบัญชี", formatDiscordTime(member.user.createdTimestamp, "R"), true),
+                field("📆 วันที่สร้าง", formatDiscordTime(member.user.createdTimestamp, "F"), false),
+                field("📊 อายุบัญชี", `${ageDays} วัน${risk ? " — HIGH RISK" : ""}`, true),
+                ...idFields({ userId: member.id })
             ]
         });
-
-        cacheMember(member);
-        await sendAuditLog(member.guild, sessionManager, "member", embed);
+        await sendAuditLog(member.guild, sessionManager, LOG_CHANNEL_TYPES.MEMBER, embed);
     });
 
-    // ── สมาชิกออก / ถูก Kick ──
     client.on("guildMemberRemove", async (member) => {
         if (member.user.bot) return;
-
-        // ลองดู Audit Log ว่าถูก Kick ไหม
-        let kicker = null;
-        try {
-            const entry = await fetchAuditEntry(member.guild, "MEMBER_KICK", member.id);
-            if (entry) kicker = entry.executor;
-        } catch {}
-
-        const joinedTs = member.joinedTimestamp
-            ? `<t:${Math.floor(member.joinedTimestamp / 1000)}:R>`
-            : "ไม่ทราบ";
-
-        const fields = [
-            { name: "👤 ผู้ใช้",      value: `<@${member.id}> (\`${member.id}\`)`, inline: true },
-            { name: "🏷️ Tag",          value: `\`${member.user.tag}\``, inline: true },
-            { name: "📅 เข้าร่วมเมื่อ", value: joinedTs, inline: true }
-        ];
-        if (kicker) {
-            fields.push({ name: "👢 ถูก Kick โดย", value: `<@${kicker.id}> (\`${kicker.tag}\`)`, inline: true });
-        }
-
-        const embed = buildEmbed({
-            color:  kicker ? config.system.themeColors.error : config.system.themeColors.warning,
-            title:  kicker ? `${config.emojis.error} สมาชิกถูก Kick` : `${config.emojis.wave} สมาชิกออกจากเซิร์ฟเวอร์`,
-            user:   member.user,
-            fields
+        const entry = await fetchAuditEntry(member.guild, "MEMBER_KICK", member.id);
+        const kicked = !!entry;
+        const caseDoc = kicked ? await maybeCreateModerationRecord({
+            sessionManager,
+            guild: member.guild,
+            action: "kick",
+            user: member.user,
+            executor: entry.executor,
+            reason: entry.reason || "Manual kick detected from audit log",
+            evidence: ["Manual kick detected", `Target: ${tag(member.user)} (${member.id})`],
+            metadata: { sourceEvent: "guildMemberRemove" }
+        }) : null;
+        const embed = buildLogEmbed({
+            category: kicked ? LOG_CHANNEL_TYPES.MODERATION : LOG_CHANNEL_TYPES.MEMBER,
+            severity: kicked ? "danger" : "warning",
+            title: kicked ? `${config.emojis.error} สมาชิกถูก Kick` : `${config.emojis.wave} สมาชิกออกจากเซิร์ฟเวอร์`,
+            author: member.user,
+            thumbnailUser: member.user,
+            target: member,
+            reason: entry?.reason || null,
+            fields: [
+                field("👤 สมาชิก", memberLabel(member), true),
+                field("📅 เข้าร่วมเมื่อ", member.joinedTimestamp ? formatDiscordTime(member.joinedTimestamp, "R") : "Unknown", true),
+                ...executorFields(entry),
+                ...(caseDoc ? [field("Log Record", code(`#${caseDoc.caseNumber}`), true)] : []),
+                ...idFields({ userId: member.id, executorId: entry?.executor?.id })
+            ]
         });
-
-        await sendAuditLog(member.guild, sessionManager, "member", embed);
+        await sendAuditLog(member.guild, sessionManager, kicked ? LOG_CHANNEL_TYPES.MODERATION : LOG_CHANNEL_TYPES.MEMBER, embed);
     });
 
-    // ── Ban ──
     client.on("guildBanAdd", async (ban) => {
         const entry = await fetchAuditEntry(ban.guild, "MEMBER_BAN_ADD", ban.user.id);
-
-        const embed = buildEmbed({
-            color:  config.system.themeColors.error,
-            title:  `🔨 สมาชิกถูก Ban`,
-            user:   ban.user,
+        const caseDoc = await maybeCreateModerationRecord({
+            sessionManager,
+            guild: ban.guild,
+            action: "ban",
+            user: ban.user,
+            executor: entry?.executor,
+            reason: ban.reason || entry?.reason || "Manual ban detected from audit log",
+            evidence: ["Manual ban detected", `Target: ${tag(ban.user)} (${ban.user.id})`],
+            metadata: { sourceEvent: "guildBanAdd" }
+        });
+        const embed = buildLogEmbed({
+            category: LOG_CHANNEL_TYPES.MODERATION,
+            severity: "danger",
+            title: "🔨 สมาชิกถูก Ban",
+            author: ban.user,
+            thumbnailUser: ban.user,
+            targetId: ban.user.id,
+            reason: ban.reason || entry?.reason || "ไม่ระบุ",
             fields: [
-                { name: "👤 ผู้ถูก Ban",  value: `<@${ban.user.id}> (\`${ban.user.id}\`)`, inline: true },
-                { name: "🏷️ Tag",         value: `\`${ban.user.tag}\``, inline: true },
-                { name: "📋 เหตุผล",      value: ban.reason || "ไม่ระบุ", inline: true },
-                ...(entry ? [{ name: "🔨 Ban โดย", value: `<@${entry.executor.id}> (\`${entry.executor.tag}\`)`, inline: true }] : [])
+                field("👤 ผู้ถูก Ban", userLabel(ban.user), true),
+                ...executorFields(entry),
+                ...(caseDoc ? [field("Log Record", code(`#${caseDoc.caseNumber}`), true)] : []),
+                ...idFields({ userId: ban.user.id, executorId: entry?.executor?.id })
             ]
         });
-
-        await sendAuditLog(ban.guild, sessionManager, "member", embed);
+        await sendAuditLog(ban.guild, sessionManager, LOG_CHANNEL_TYPES.MODERATION, embed);
     });
 
-    // ── Unban ──
     client.on("guildBanRemove", async (ban) => {
         const entry = await fetchAuditEntry(ban.guild, "MEMBER_BAN_REMOVE", ban.user.id);
-
-        const embed = buildEmbed({
-            color:  config.system.themeColors.success,
-            title:  `✅ Ban ถูกยกเลิก (Unban)`,
-            user:   ban.user,
-            fields: [
-                { name: "👤 ผู้ถูก Unban", value: `<@${ban.user.id}> (\`${ban.user.id}\`)`, inline: true },
-                { name: "🏷️ Tag",           value: `\`${ban.user.tag}\``, inline: true },
-                ...(entry ? [{ name: "✅ Unban โดย", value: `<@${entry.executor.id}> (\`${entry.executor.tag}\`)`, inline: true }] : [])
-            ]
+        const embed = buildLogEmbed({
+            category: LOG_CHANNEL_TYPES.MODERATION,
+            severity: "success",
+            title: "✅ Ban ถูกยกเลิก",
+            author: ban.user,
+            thumbnailUser: ban.user,
+            targetId: ban.user.id,
+            fields: [field("👤 ผู้ถูก Unban", userLabel(ban.user), true), ...executorFields(entry), ...idFields({ userId: ban.user.id, executorId: entry?.executor?.id })]
         });
-
-        await sendAuditLog(ban.guild, sessionManager, "member", embed);
+        await sendAuditLog(ban.guild, sessionManager, LOG_CHANNEL_TYPES.MODERATION, embed);
     });
 
-    // ── Member Update (Role / Nickname / Timeout / Avatar) ──
     client.on("guildMemberUpdate", async (oldMember, newMember) => {
-        const addedRoles   = newMember.roles.cache.filter(r => !oldMember.roles.cache.has(r.id));
+        if (newMember.user.bot) return;
+        const addedRoles = newMember.roles.cache.filter(r => !oldMember.roles.cache.has(r.id));
         const removedRoles = oldMember.roles.cache.filter(r => !newMember.roles.cache.has(r.id));
-        const nickChanged  = oldMember.nickname !== newMember.nickname;
-        const oldTimeout   = oldMember.communicationDisabledUntilTimestamp;
-        const newTimeout   = newMember.communicationDisabledUntilTimestamp;
+        const nickChanged = oldMember.nickname !== newMember.nickname;
+        const oldTimeout = oldMember.communicationDisabledUntilTimestamp;
+        const newTimeout = newMember.communicationDisabledUntilTimestamp;
         const timeoutChanged = oldTimeout !== newTimeout;
-        const avatarChanged  = oldMember.avatar !== newMember.avatar;
+        const avatarChanged = oldMember.avatar !== newMember.avatar;
 
-        // ── ยศเปลี่ยน ──
-        if (addedRoles.size > 0 || removedRoles.size > 0) {
+        if (addedRoles.size || removedRoles.size) {
             const entry = await fetchAuditEntry(newMember.guild, "MEMBER_ROLE_UPDATE", newMember.id);
-            const fields = [
-                { name: "👤 สมาชิก", value: `<@${newMember.id}> (\`${newMember.id}\`)`, inline: true },
-                ...(entry ? [{ name: "👮 โดย", value: `<@${entry.executor.id}>`, inline: true }] : []),
-                ...(addedRoles.size > 0 ? [{ name: "✅ เพิ่มยศ", value: addedRoles.map(r => r.toString()).join(", "), inline: false }] : []),
-                ...(removedRoles.size > 0 ? [{ name: "❌ ลบยศ", value: removedRoles.map(r => r.toString()).join(", "), inline: false }] : [])
-            ];
-
-            const embed = buildEmbed({
-                color:  config.system.themeColors.info,
-                title:  `${config.emojis.role_icon} ยศสมาชิกเปลี่ยน`,
-                user:   newMember.user,
-                fields
+            const embed = buildLogEmbed({
+                category: LOG_CHANNEL_TYPES.MEMBER,
+                severity: "info",
+                title: `${config.emojis.role_icon} ยศสมาชิกเปลี่ยน`,
+                author: newMember.user,
+                thumbnailUser: newMember.user,
+                fields: [
+                    field("👤 สมาชิก", memberLabel(newMember), true),
+                    ...executorFields(entry),
+                    ...(addedRoles.size ? [field("✅ เพิ่มยศ", addedRoles.map(r => `${roleMention(r.id)} (${code(r.id)})`).join("\n"), false)] : []),
+                    ...(removedRoles.size ? [field("❌ ลบยศ", removedRoles.map(r => `${roleMention(r.id)} (${code(r.id)})`).join("\n"), false)] : []),
+                    ...idFields({ userId: newMember.id, executorId: entry?.executor?.id })
+                ]
             });
-            await sendAuditLog(newMember.guild, sessionManager, "member", embed);
+            await sendAuditLog(newMember.guild, sessionManager, LOG_CHANNEL_TYPES.MEMBER, embed);
         }
 
-        // ── Nickname เปลี่ยน ──
         if (nickChanged) {
             const entry = await fetchAuditEntry(newMember.guild, "MEMBER_UPDATE", newMember.id);
-            const embed = buildEmbed({
-                color:  config.system.themeColors.warning,
-                title:  "✏️ Nickname เปลี่ยน",
-                user:   newMember.user,
+            const embed = buildLogEmbed({
+                category: LOG_CHANNEL_TYPES.MEMBER,
+                severity: "warning",
+                title: "✏️ Nickname เปลี่ยน",
+                author: newMember.user,
+                thumbnailUser: newMember.user,
                 fields: [
-                    { name: "👤 สมาชิก", value: `<@${newMember.id}> (\`${newMember.id}\`)`, inline: true },
-                    ...(entry ? [{ name: "👮 โดย", value: `<@${entry.executor.id}>`, inline: true }] : []),
-                    { name: "📛 ก่อน",  value: `\`${oldMember.nickname || "*ไม่มี*"}\``, inline: false },
-                    { name: "📛 หลัง",  value: `\`${newMember.nickname || "*ไม่มี*"}\``, inline: false }
+                    field("👤 สมาชิก", memberLabel(newMember), true),
+                    ...executorFields(entry),
+                    field("📛 ก่อน", code(noneText(oldMember.nickname), 250), false),
+                    field("📛 หลัง", code(noneText(newMember.nickname), 250), false),
+                    ...idFields({ userId: newMember.id, executorId: entry?.executor?.id })
                 ]
             });
-            await sendAuditLog(newMember.guild, sessionManager, "member", embed);
+            await sendAuditLog(newMember.guild, sessionManager, LOG_CHANNEL_TYPES.MEMBER, embed);
         }
 
-        // ── Timeout เปลี่ยน ──
         if (timeoutChanged) {
-            const isAdded = newTimeout && newTimeout > Date.now();
-            const embed = buildEmbed({
-                color:  isAdded ? config.system.themeColors.error : config.system.themeColors.success,
-                title:  isAdded ? `⏱️ Timeout เพิ่ม` : `⏱️ Timeout หมดอายุ/ถูกยกเลิก`,
-                user:   newMember.user,
+            const isAdded = !!newTimeout && newTimeout > now();
+            const entry = await fetchAuditEntry(newMember.guild, "MEMBER_UPDATE", newMember.id);
+            const caseDoc = isAdded ? await maybeCreateModerationRecord({
+                sessionManager,
+                guild: newMember.guild,
+                action: "timeout",
+                user: newMember.user,
+                executor: entry?.executor,
+                reason: entry?.reason || "Manual timeout detected from audit log",
+                evidence: [`Timeout until: ${newTimeout}`],
+                metadata: { sourceEvent: "guildMemberUpdate", timeoutUntil: newTimeout }
+            }) : null;
+            const embed = buildLogEmbed({
+                category: isAdded ? LOG_CHANNEL_TYPES.MODERATION : LOG_CHANNEL_TYPES.MEMBER,
+                severity: isAdded ? "danger" : "success",
+                title: isAdded ? "⏱️ Timeout เพิ่ม" : "⏱️ Timeout หมดอายุ/ถูกยกเลิก",
+                author: newMember.user,
+                thumbnailUser: newMember.user,
+                reason: entry?.reason || null,
                 fields: [
-                    { name: "👤 สมาชิก",     value: `<@${newMember.id}> (\`${newMember.id}\`)`, inline: true },
-                    ...(isAdded ? [{ name: "⏰ หมดอายุ", value: `<t:${Math.floor(newTimeout / 1000)}:R>`, inline: true }] : [])
+                    field("👤 สมาชิก", memberLabel(newMember), true),
+                    ...(isAdded ? [field("⏰ หมดอายุ", formatDiscordTime(newTimeout, "R"), true)] : [field("ก่อนหน้า", oldTimeout ? formatDiscordTime(oldTimeout, "R") : "Unknown", true)]),
+                    ...executorFields(entry),
+                    ...(caseDoc ? [field("Log Record", code(`#${caseDoc.caseNumber}`), true)] : []),
+                    ...idFields({ userId: newMember.id, executorId: entry?.executor?.id })
                 ]
             });
-            await sendAuditLog(newMember.guild, sessionManager, "member", embed);
+            await sendAuditLog(newMember.guild, sessionManager, isAdded ? LOG_CHANNEL_TYPES.MODERATION : LOG_CHANNEL_TYPES.MEMBER, embed);
         }
 
-        // ── Avatar เปลี่ยน (Server Avatar) ──
-        if (avatarChanged && newMember.avatar) {
-            const embed = buildEmbed({
-                color:  config.system.themeColors.info,
-                title:  "🖼️ Server Avatar เปลี่ยน",
-                user:   newMember.user,
-                fields: [
-                    { name: "👤 สมาชิก", value: `<@${newMember.id}> (\`${newMember.id}\`)`, inline: true }
-                ]
+        if (avatarChanged) {
+            const embed = buildLogEmbed({
+                category: LOG_CHANNEL_TYPES.MEMBER,
+                severity: "info",
+                title: "🖼️ Server Avatar เปลี่ยน",
+                author: newMember.user,
+                thumbnailUser: newMember.user,
+                image: newMember.displayAvatarURL({ dynamic: true, size: 512 }),
+                fields: [field("👤 สมาชิก", memberLabel(newMember), true), ...idFields({ userId: newMember.id })]
             });
-            embed.setImage(newMember.displayAvatarURL({ dynamic: true, size: 256 }));
-            await sendAuditLog(newMember.guild, sessionManager, "member", embed);
+            await sendAuditLog(newMember.guild, sessionManager, LOG_CHANNEL_TYPES.MEMBER, embed);
         }
-
-        // อัปเดต cache
-        cacheMember(newMember);
     });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-//  🔊  REGION 4: VOICE EVENTS
-// ════════════════════════════════════════════════════════════════════════════
 function registerVoiceEvents(client, sessionManager) {
-    const config = require("./config.json");
-
     client.on("voiceStateUpdate", async (oldState, newState) => {
         const member = newState.member || oldState.member;
-        if (!member || member.user.bot) return;
-
+        if (!member || isBot(member.user)) return;
         const user = member.user;
+        const guild = newState.guild || oldState.guild;
 
-        // ── เข้าห้อง ──
         if (!oldState.channelId && newState.channelId) {
-            const embed = buildEmbed({
-                color:  config.system.themeColors.success,
-                title:  `${config.emojis.voice_ch} เข้าห้องเสียง`,
-                user,
-                fields: [
-                    { name: "👤 ผู้ใช้",   value: `<@${member.id}> (\`${member.id}\`)`, inline: true },
-                    { name: "🔊 ห้อง",    value: `<#${newState.channelId}> (\`${newState.channelId}\`)`, inline: true }
-                ]
-            });
-            return sendAuditLog(newState.guild, sessionManager, "voice", embed);
+            const embed = buildLogEmbed({ category: LOG_CHANNEL_TYPES.VOICE, severity: "success", title: `${config.emojis.voice_ch} เข้าห้องเสียง`, author: user, thumbnailUser: user, fields: [field("👤 ผู้ใช้", memberLabel(member), true), field("🔊 ห้อง", channelMention(newState.channelId), true), ...idFields({ userId: member.id, channelId: newState.channelId })] });
+            return sendAuditLog(guild, sessionManager, LOG_CHANNEL_TYPES.VOICE, embed);
         }
 
-        // ── ออกห้อง ──
         if (oldState.channelId && !newState.channelId) {
-            const embed = buildEmbed({
-                color:  config.system.themeColors.error,
-                title:  `${config.emojis.voice_leave} ออกจากห้องเสียง`,
-                user,
-                fields: [
-                    { name: "👤 ผู้ใช้",   value: `<@${member.id}> (\`${member.id}\`)`, inline: true },
-                    { name: "🔇 ห้องเดิม", value: `<#${oldState.channelId}> (\`${oldState.channelId}\`)`, inline: true }
-                ]
-            });
-            return sendAuditLog(oldState.guild, sessionManager, "voice", embed);
+            const embed = buildLogEmbed({ category: LOG_CHANNEL_TYPES.VOICE, severity: "danger", title: `${config.emojis.voice_leave} ออกจากห้องเสียง`, author: user, thumbnailUser: user, fields: [field("👤 ผู้ใช้", memberLabel(member), true), field("🔇 ห้องเดิม", channelMention(oldState.channelId), true), ...idFields({ userId: member.id, channelId: oldState.channelId })] });
+            return sendAuditLog(guild, sessionManager, LOG_CHANNEL_TYPES.VOICE, embed);
         }
 
-        // ── ย้ายห้อง ──
         if (oldState.channelId && newState.channelId && oldState.channelId !== newState.channelId) {
-            const embed = buildEmbed({
-                color:  config.system.themeColors.info,
-                title:  `${config.emojis.voice_move} ย้ายห้องเสียง`,
-                user,
-                fields: [
-                    { name: "👤 ผู้ใช้",    value: `<@${member.id}> (\`${member.id}\`)`, inline: true },
-                    { name: "📤 จากห้อง",   value: `<#${oldState.channelId}> (\`${oldState.channelId}\`)`, inline: true },
-                    { name: "📥 ไปห้อง",   value: `<#${newState.channelId}> (\`${newState.channelId}\`)`, inline: true }
-                ]
-            });
-            return sendAuditLog(newState.guild, sessionManager, "voice", embed);
+            const embed = buildLogEmbed({ category: LOG_CHANNEL_TYPES.VOICE, severity: "info", title: `${config.emojis.voice_move} ย้ายห้องเสียง`, author: user, thumbnailUser: user, fields: [field("👤 ผู้ใช้", memberLabel(member), true), field("📤 จากห้อง", channelMention(oldState.channelId), true), field("📥 ไปห้อง", channelMention(newState.channelId), true), ...idFields({ userId: member.id, channelId: newState.channelId })] });
+            return sendAuditLog(guild, sessionManager, LOG_CHANNEL_TYPES.VOICE, embed);
         }
 
-        // ── รวม micro-state changes (mute/deaf/cam/stream) ──
         const changes = [];
-
-        if (!oldState.serverMute && newState.serverMute)    changes.push({ emoji: "🔇", text: "ถูก Server Mute",       color: config.system.themeColors.error });
-        if (oldState.serverMute  && !newState.serverMute)   changes.push({ emoji: "🔊", text: "ยกเลิก Server Mute",    color: config.system.themeColors.success });
-        if (!oldState.serverDeaf && newState.serverDeaf)    changes.push({ emoji: "🔕", text: "ถูก Server Deafen",      color: config.system.themeColors.error });
-        if (oldState.serverDeaf  && !newState.serverDeaf)   changes.push({ emoji: "🔔", text: "ยกเลิก Server Deafen",  color: config.system.themeColors.success });
-        if (!oldState.selfMute   && newState.selfMute)      changes.push({ emoji: "🎤", text: "Self Mute เปิด",         color: config.system.themeColors.warning });
-        if (oldState.selfMute    && !newState.selfMute)     changes.push({ emoji: "🎤", text: "Self Mute ปิด",          color: config.system.themeColors.success });
-        if (!oldState.selfDeaf   && newState.selfDeaf)      changes.push({ emoji: "🎧", text: "Self Deafen เปิด",       color: config.system.themeColors.warning });
-        if (oldState.selfDeaf    && !newState.selfDeaf)     changes.push({ emoji: "🎧", text: "Self Deafen ปิด",        color: config.system.themeColors.success });
-        if (!oldState.selfVideo  && newState.selfVideo)     changes.push({ emoji: "📷", text: "เปิดกล้อง (Camera)",     color: config.system.themeColors.info });
-        if (oldState.selfVideo   && !newState.selfVideo)    changes.push({ emoji: "📷", text: "ปิดกล้อง (Camera)",      color: config.system.themeColors.warning });
-        if (!oldState.streaming  && newState.streaming)     changes.push({ emoji: "🖥️", text: "เริ่ม Screen Share",      color: config.system.themeColors.info });
-        if (oldState.streaming   && !newState.streaming)    changes.push({ emoji: "🖥️", text: "หยุด Screen Share",       color: config.system.themeColors.warning });
+        if (oldState.serverMute !== newState.serverMute) changes.push({ title: newState.serverMute ? "🔇 ถูก Server Mute" : "🔊 ยกเลิก Server Mute", severity: newState.serverMute ? "danger" : "success" });
+        if (oldState.serverDeaf !== newState.serverDeaf) changes.push({ title: newState.serverDeaf ? "🔕 ถูก Server Deafen" : "🔔 ยกเลิก Server Deafen", severity: newState.serverDeaf ? "danger" : "success" });
+        if (oldState.selfMute !== newState.selfMute) changes.push({ title: newState.selfMute ? "🎤 Self Mute เปิด" : "🎤 Self Mute ปิด", severity: newState.selfMute ? "warning" : "success" });
+        if (oldState.selfDeaf !== newState.selfDeaf) changes.push({ title: newState.selfDeaf ? "🎧 Self Deafen เปิด" : "🎧 Self Deafen ปิด", severity: newState.selfDeaf ? "warning" : "success" });
+        if (oldState.selfVideo !== newState.selfVideo) changes.push({ title: newState.selfVideo ? "📷 เปิดกล้อง" : "📷 ปิดกล้อง", severity: newState.selfVideo ? "info" : "warning" });
+        if (oldState.streaming !== newState.streaming) changes.push({ title: newState.streaming ? "🖥️ เริ่ม Screen Share" : "🖥️ หยุด Screen Share", severity: newState.streaming ? "info" : "warning" });
 
         for (const ch of changes) {
-            const embed = buildEmbed({
-                color:  ch.color,
-                title:  `${ch.emoji} ${ch.text}`,
-                user,
-                fields: [
-                    { name: "👤 ผู้ใช้", value: `<@${member.id}> (\`${member.id}\`)`, inline: true },
-                    { name: "🔊 ห้อง",  value: newState.channelId ? `<#${newState.channelId}>` : "ไม่ได้อยู่ในห้อง", inline: true }
-                ]
-            });
-            await sendAuditLog(newState.guild, sessionManager, "voice", embed);
+            const embed = buildLogEmbed({ category: LOG_CHANNEL_TYPES.VOICE, severity: ch.severity, title: ch.title, author: user, thumbnailUser: user, fields: [field("👤 ผู้ใช้", memberLabel(member), true), field("🔊 ห้อง", newState.channelId ? channelMention(newState.channelId) : "ไม่ได้อยู่ในห้อง", true), ...idFields({ userId: member.id, channelId: newState.channelId || oldState.channelId })] });
+            await sendAuditLog(guild, sessionManager, LOG_CHANNEL_TYPES.VOICE, embed);
         }
     });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-//  ⚙️  REGION 5: SERVER EVENTS
-// ════════════════════════════════════════════════════════════════════════════
-function registerServerEvents(client, sessionManager) {
-    const config = require("./config.json");
+function channelTypeName(channel) { return channel?.type || "unknown"; }
+function baseChannelFields(channel) { return [field("📌 ชื่อ", code(channel?.name, 120), true), field("📂 ประเภท", code(channelTypeName(channel), 60), true), field("🆔 Channel ID", code(channel?.id), true)]; }
 
-    // ── ห้องถูกสร้าง ──
+function registerServerEvents(client, sessionManager) {
     client.on("channelCreate", async (channel) => {
         if (!channel.guild) return;
         const entry = await fetchAuditEntry(channel.guild, "CHANNEL_CREATE", channel.id);
-
-        const embed = buildEmbed({
-            color:   config.system.themeColors.success,
-            title:   `${config.emojis.plus} ห้องใหม่ถูกสร้าง`,
-            noThumb: true,
-            fields: [
-                { name: "📌 ชื่อ",        value: `\`${channel.name}\``, inline: true },
-                { name: "📂 ประเภท",       value: `\`${channel.type}\``, inline: true },
-                { name: "🆔 Channel ID",   value: `\`${channel.id}\``, inline: true },
-                ...(entry ? [{ name: "👤 สร้างโดย", value: `<@${entry.executor.id}>`, inline: true }] : [])
-            ]
-        });
-        await sendAuditLog(channel.guild, sessionManager, "server", embed);
+        const embed = buildLogEmbed({ category: LOG_CHANNEL_TYPES.SERVER, severity: "success", title: `${config.emojis.plus} ห้องใหม่ถูกสร้าง`, noThumbnail: true, fields: [...baseChannelFields(channel), field("Parent", channel.parentId ? channelMention(channel.parentId) : "None", true), ...executorFields(entry)] });
+        await sendAuditLog(channel.guild, sessionManager, LOG_CHANNEL_TYPES.SERVER, embed);
     });
 
-    // ── ห้องถูกลบ ──
     client.on("channelDelete", async (channel) => {
         if (!channel.guild) return;
         const entry = await fetchAuditEntry(channel.guild, "CHANNEL_DELETE", channel.id);
-
-        const embed = buildEmbed({
-            color:   config.system.themeColors.error,
-            title:   `${config.emojis.trash} ห้องถูกลบ`,
-            noThumb: true,
-            fields: [
-                { name: "📌 ชื่อ",       value: `\`${channel.name}\``, inline: true },
-                { name: "📂 ประเภท",      value: `\`${channel.type}\``, inline: true },
-                { name: "🆔 Channel ID",  value: `\`${channel.id}\``, inline: true },
-                ...(entry ? [{ name: "👤 ลบโดย", value: `<@${entry.executor.id}>`, inline: true }] : [])
-            ]
-        });
-        await sendAuditLog(channel.guild, sessionManager, "server", embed);
+        const embed = buildLogEmbed({ category: LOG_CHANNEL_TYPES.SERVER, severity: "danger", title: `${config.emojis.trash} ห้องถูกลบ`, noThumbnail: true, fields: [...baseChannelFields(channel), field("Parent", channel.parentId ? channelMention(channel.parentId) : "None", true), ...executorFields(entry)] });
+        await sendAuditLog(channel.guild, sessionManager, LOG_CHANNEL_TYPES.SERVER, embed);
     });
 
-    // ── ห้องถูกแก้ไข (Permission / ชื่อ) ──
     client.on("channelUpdate", async (oldChannel, newChannel) => {
         if (!newChannel.guild) return;
-
         const changes = [];
-
-        // ชื่อเปลี่ยน
-        if (oldChannel.name !== newChannel.name) {
-            changes.push({ name: "📛 ชื่อ", value: `\`${oldChannel.name}\` → \`${newChannel.name}\`` });
-        }
-
-        // Permission overwrites เปลี่ยน
-        const oldPerms = oldChannel.permissionOverwrites?.cache;
-        const newPerms = newChannel.permissionOverwrites?.cache;
-        if (oldPerms && newPerms && serializePermissionOverwrites(oldPerms) !== serializePermissionOverwrites(newPerms)) {
-            changes.push({ name: "🔒 Permission Overwrite", value: `เปลี่ยนจาก ${oldPerms.size} รายการ เป็น ${newPerms.size} รายการ` });
-        }
-
-        if (changes.length === 0) return;
-
+        if (oldChannel.name !== newChannel.name) changes.push(field("📛 ชื่อ", `${code(oldChannel.name, 120)} → ${code(newChannel.name, 120)}`, false));
+        if (oldChannel.topic !== newChannel.topic) changes.push(field("📝 Topic", `${code(noneText(oldChannel.topic), 300)} → ${code(noneText(newChannel.topic), 300)}`, false));
+        if (oldChannel.rateLimitPerUser !== newChannel.rateLimitPerUser) changes.push(field("🐢 Slowmode", `${code(oldChannel.rateLimitPerUser || 0)} → ${code(newChannel.rateLimitPerUser || 0)}`, true));
+        if (oldChannel.parentId !== newChannel.parentId) changes.push(field("📂 Category", `${oldChannel.parentId ? channelMention(oldChannel.parentId) : "None"} → ${newChannel.parentId ? channelMention(newChannel.parentId) : "None"}`, false));
+        const overwriteDiff = diffPermissionOverwrites(oldChannel.permissionOverwrites?.cache, newChannel.permissionOverwrites?.cache);
+        if (overwriteDiff.length) changes.push(field("🔒 Permission Overwrite", formatOverwriteDiff(overwriteDiff).join("\n\n"), false));
+        if (!changes.length) return;
         const entry = await fetchAuditEntry(newChannel.guild, "CHANNEL_UPDATE", newChannel.id);
-        const embed = buildEmbed({
-            color:   config.system.themeColors.warning,
-            title:   `⚙️ ห้องถูกแก้ไข`,
-            noThumb: true,
-            fields: [
-                { name: "📌 ห้อง",     value: `<#${newChannel.id}> (\`${newChannel.id}\`)`, inline: true },
-                ...(entry ? [{ name: "👤 แก้ไขโดย", value: `<@${entry.executor.id}>`, inline: true }] : []),
-                ...changes.map(c => ({ name: c.name, value: c.value, inline: false }))
-            ]
-        });
-        await sendAuditLog(newChannel.guild, sessionManager, "server", embed);
+        const embed = buildLogEmbed({ category: LOG_CHANNEL_TYPES.SERVER, severity: overwriteDiff.length ? "warning" : "info", title: "⚙️ ห้องถูกแก้ไข", noThumbnail: true, fields: [field("📌 ห้อง", channelLabel(newChannel), true), ...executorFields(entry), ...changes, ...idFields({ channelId: newChannel.id, executorId: entry?.executor?.id })] });
+        await sendAuditLog(newChannel.guild, sessionManager, LOG_CHANNEL_TYPES.SERVER, embed);
     });
 
-    // ── ยศถูกสร้าง ──
     client.on("roleCreate", async (role) => {
         const entry = await fetchAuditEntry(role.guild, "ROLE_CREATE", role.id);
-        const embed = buildEmbed({
-            color:   config.system.themeColors.success,
-            title:   `${config.emojis.role_icon} ยศใหม่ถูกสร้าง`,
-            noThumb: true,
-            fields: [
-                { name: "🎭 ชื่อ",    value: `\`${role.name}\``, inline: true },
-                { name: "🎨 สี",      value: role.hexColor !== "#000000" ? `\`${role.hexColor}\`` : "ไม่มีสี", inline: true },
-                { name: "🆔 Role ID", value: `\`${role.id}\``, inline: true },
-                ...(entry ? [{ name: "👤 สร้างโดย", value: `<@${entry.executor.id}>`, inline: true }] : [])
-            ]
-        });
-        await sendAuditLog(role.guild, sessionManager, "server", embed);
+        const embed = buildLogEmbed({ category: LOG_CHANNEL_TYPES.SERVER, severity: "success", title: `${config.emojis.role_icon} ยศใหม่ถูกสร้าง`, noThumbnail: true, fields: [field("🎭 ชื่อ", code(role.name, 120), true), field("🎨 สี", code(role.hexColor), true), field("Hoist", boolText(role.hoist), true), field("Mentionable", boolText(role.mentionable), true), field("Permissions", formatPermissionList(role.permissions.toArray(), 15), false), ...executorFields(entry), ...idFields({ roleId: role.id, executorId: entry?.executor?.id })] });
+        await sendAuditLog(role.guild, sessionManager, LOG_CHANNEL_TYPES.SERVER, embed);
     });
 
-    // ── ยศถูกลบ ──
     client.on("roleDelete", async (role) => {
         const entry = await fetchAuditEntry(role.guild, "ROLE_DELETE", role.id);
-        const embed = buildEmbed({
-            color:   config.system.themeColors.error,
-            title:   `${config.emojis.trash} ยศถูกลบ`,
-            noThumb: true,
-            fields: [
-                { name: "🎭 ชื่อ",    value: `\`${role.name}\``, inline: true },
-                { name: "🎨 สีเดิม",  value: role.hexColor !== "#000000" ? `\`${role.hexColor}\`` : "ไม่มีสี", inline: true },
-                { name: "🆔 Role ID", value: `\`${role.id}\``, inline: true },
-                ...(entry ? [{ name: "👤 ลบโดย", value: `<@${entry.executor.id}>`, inline: true }] : [])
-            ]
-        });
-        await sendAuditLog(role.guild, sessionManager, "server", embed);
+        const embed = buildLogEmbed({ category: LOG_CHANNEL_TYPES.SERVER, severity: "danger", title: `${config.emojis.trash} ยศถูกลบ`, noThumbnail: true, fields: [field("🎭 ชื่อ", code(role.name, 120), true), field("🎨 สีเดิม", code(role.hexColor), true), field("Permissions", formatPermissionList(role.permissions.toArray(), 15), false), ...executorFields(entry), ...idFields({ roleId: role.id, executorId: entry?.executor?.id })] });
+        await sendAuditLog(role.guild, sessionManager, LOG_CHANNEL_TYPES.SERVER, embed);
     });
 
-    // ── ยศถูกแก้ไข (Color / Perms / Hoist / Mentionable) ──
     client.on("roleUpdate", async (oldRole, newRole) => {
         const changes = [];
-
-        if (oldRole.name !== newRole.name)
-            changes.push({ name: "📛 ชื่อ", value: `\`${oldRole.name}\` → \`${newRole.name}\`` });
-
-        if (oldRole.color !== newRole.color)
-            changes.push({ name: "🎨 สี", value: `\`${oldRole.hexColor}\` → \`${newRole.hexColor}\`` });
-
-        if (oldRole.hoist !== newRole.hoist)
-            changes.push({ name: "📌 แสดงแยก (Hoist)", value: `\`${oldRole.hoist}\` → \`${newRole.hoist}\`` });
-
-        if (oldRole.mentionable !== newRole.mentionable)
-            changes.push({ name: "🔔 Mention ได้", value: `\`${oldRole.mentionable}\` → \`${newRole.mentionable}\`` });
-
-        // Permission bits
-        const oldBit = oldRole.permissions.bitfield;
-        const newBit = newRole.permissions.bitfield;
-        if (oldBit !== newBit) {
-            const added   = newRole.permissions.toArray().filter(p => !oldRole.permissions.has(p));
-            const removed = oldRole.permissions.toArray().filter(p => !newRole.permissions.has(p));
-            // รวม permission เพิ่ม/ลด ถ้าไม่เกิน 10 รายการ
-            if (added.length > 0)   changes.push({ name: "✅ Permission เพิ่ม", value: added.slice(0, 10).map(p => `\`${p}\``).join(", ") });
-            if (removed.length > 0) changes.push({ name: "❌ Permission ลด",   value: removed.slice(0, 10).map(p => `\`${p}\``).join(", ") });
-        }
-
-        if (changes.length === 0) return;
-
+        if (oldRole.name !== newRole.name) changes.push(field("📛 ชื่อ", `${code(oldRole.name, 120)} → ${code(newRole.name, 120)}`, false));
+        if (oldRole.color !== newRole.color) changes.push(field("🎨 สี", `${code(oldRole.hexColor)} → ${code(newRole.hexColor)}`, true));
+        if (oldRole.hoist !== newRole.hoist) changes.push(field("📌 Hoist", `${code(oldRole.hoist)} → ${code(newRole.hoist)}`, true));
+        if (oldRole.mentionable !== newRole.mentionable) changes.push(field("🔔 Mentionable", `${code(oldRole.mentionable)} → ${code(newRole.mentionable)}`, true));
+        const permDiff = diffRolePermissions(oldRole, newRole);
+        const risk = securityRules.scorePermissionChange(permDiff);
+        if (permDiff.added.length) changes.push(field("✅ Permission เพิ่ม", formatPermissionList(permDiff.added, 15), false));
+        if (permDiff.removed.length) changes.push(field("❌ Permission ลบ", formatPermissionList(permDiff.removed, 15), false));
+        if (risk.dangerous.added.length) changes.push(field("🚨 Dangerous Permission", risk.dangerous.added.map(p => code(p)).join(", "), false));
+        if (!changes.length) return;
         const entry = await fetchAuditEntry(newRole.guild, "ROLE_UPDATE", newRole.id);
-        const embed = buildEmbed({
-            color:   config.system.themeColors.warning,
-            title:   `${config.emojis.role_icon} ยศถูกแก้ไข`,
-            noThumb: true,
-            fields: [
-                { name: "🎭 ยศ",     value: `\`${newRole.name}\` (\`${newRole.id}\`)`, inline: true },
-                ...(entry ? [{ name: "👤 แก้ไขโดย", value: `<@${entry.executor.id}>`, inline: true }] : []),
-                ...changes.map(c => ({ name: c.name, value: c.value, inline: false }))
-            ]
-        });
-        await sendAuditLog(newRole.guild, sessionManager, "server", embed);
+        const embed = buildLogEmbed({ category: LOG_CHANNEL_TYPES.SERVER, severity: roleSeverity(risk.severity), title: `${config.emojis.role_icon} ยศถูกแก้ไข`, noThumbnail: true, fields: [field("🎭 ยศ", `${roleMention(newRole.id)} (${code(newRole.id)})`, true), ...executorFields(entry), ...changes] });
+        await sendAuditLog(newRole.guild, sessionManager, LOG_CHANNEL_TYPES.SERVER, embed);
     });
 
-    // ── อิโมจิเพิ่ม ──
-    client.on("emojiCreate", async (emoji) => {
-        const entry = await fetchAuditEntry(emoji.guild, "EMOJI_CREATE", emoji.id);
-        const embed = buildEmbed({
-            color:   config.system.themeColors.success,
-            title:   `${config.emojis.emoji_icon} อิโมจิใหม่ถูกเพิ่ม`,
-            noThumb: true,
-            fields: [
-                { name: "😀 ชื่อ",    value: `\`${emoji.name}\``, inline: true },
-                { name: "🆔 Emoji ID", value: `\`${emoji.id}\``, inline: true },
-                ...(entry ? [{ name: "👤 เพิ่มโดย", value: `<@${entry.executor.id}>`, inline: true }] : [])
-            ]
-        });
-        if (emoji.url) embed.setThumbnail(emoji.url);
-        await sendAuditLog(emoji.guild, sessionManager, "server", embed);
-    });
-
-    // ── อิโมจิถูกลบ ──
-    client.on("emojiDelete", async (emoji) => {
-        const entry = await fetchAuditEntry(emoji.guild, "EMOJI_DELETE", emoji.id);
-        const embed = buildEmbed({
-            color:   config.system.themeColors.error,
-            title:   `${config.emojis.trash} อิโมจิถูกลบ`,
-            noThumb: true,
-            fields: [
-                { name: "😀 ชื่อ",    value: `\`${emoji.name}\``, inline: true },
-                { name: "🆔 Emoji ID", value: `\`${emoji.id}\``, inline: true },
-                ...(entry ? [{ name: "👤 ลบโดย", value: `<@${entry.executor.id}>`, inline: true }] : [])
-            ]
-        });
-        await sendAuditLog(emoji.guild, sessionManager, "server", embed);
-    });
-
-    // ── เซิร์ฟเวอร์อัปเดต (ชื่อ / Icon / Banner) ──
     client.on("guildUpdate", async (oldGuild, newGuild) => {
         const changes = [];
-        if (oldGuild.name !== newGuild.name)
-            changes.push({ name: "🏷️ ชื่อเซิร์ฟ", value: `\`${oldGuild.name}\` → \`${newGuild.name}\`` });
-        if (oldGuild.icon !== newGuild.icon)
-            changes.push({ name: "🖼️ Icon", value: "เปลี่ยนแล้ว" });
-        if (oldGuild.banner !== newGuild.banner)
-            changes.push({ name: "🎨 Banner", value: "เปลี่ยนแล้ว" });
-        if (oldGuild.description !== newGuild.description)
-            changes.push({ name: "📄 คำอธิบาย", value: `${oldGuild.description || "*ว่าง*"} → ${newGuild.description || "*ว่าง*"}` });
-        if (changes.length === 0) return;
-
+        if (oldGuild.name !== newGuild.name) changes.push(field("📛 ชื่อเซิร์ฟเวอร์", `${code(oldGuild.name, 160)} → ${code(newGuild.name, 160)}`, false));
+        if (oldGuild.icon !== newGuild.icon) changes.push(field("🖼️ Icon", "เปลี่ยนแปลง", true));
+        if (oldGuild.banner !== newGuild.banner) changes.push(field("🏳️ Banner", "เปลี่ยนแปลง", true));
+        if (oldGuild.verificationLevel !== newGuild.verificationLevel) changes.push(field("🛡️ Verification Level", `${code(oldGuild.verificationLevel)} → ${code(newGuild.verificationLevel)}`, true));
+        if (oldGuild.afkChannelId !== newGuild.afkChannelId) changes.push(field("💤 AFK Channel", `${oldGuild.afkChannelId ? channelMention(oldGuild.afkChannelId) : "None"} → ${newGuild.afkChannelId ? channelMention(newGuild.afkChannelId) : "None"}`, false));
+        if (!changes.length) return;
         const entry = await fetchAuditEntry(newGuild, "GUILD_UPDATE", newGuild.id);
-        const embed = buildEmbed({
-            color:   config.system.themeColors.warning,
-            title:   "⚙️ เซิร์ฟเวอร์ถูกแก้ไข",
-            noThumb: true,
-            fields: [
-                ...(entry ? [{ name: "👤 แก้ไขโดย", value: `<@${entry.executor.id}>`, inline: true }] : []),
-                ...changes.map(c => ({ name: c.name, value: c.value, inline: false }))
-            ]
-        });
-        if (newGuild.iconURL()) embed.setThumbnail(newGuild.iconURL({ dynamic: true }));
-        await sendAuditLog(newGuild, sessionManager, "server", embed);
+        const embed = buildLogEmbed({ category: LOG_CHANNEL_TYPES.SERVER, severity: "warning", title: "⚙️ เซิร์ฟเวอร์ถูกแก้ไข", thumbnail: newGuild.iconURL?.({ dynamic: true, size: 256 }) || null, fields: [...executorFields(entry), ...changes, field("Guild ID", code(newGuild.id), true)] });
+        await sendAuditLog(newGuild, sessionManager, LOG_CHANNEL_TYPES.SERVER, embed);
     });
 
-    // ── Invite สร้าง ──
+    client.on("emojiCreate", async (emoji) => sendSimpleAssetLog(emoji.guild, sessionManager, "😀 Emoji ใหม่ถูกเพิ่ม", "success", emoji.name, emoji.id, emoji.url));
+    client.on("emojiDelete", async (emoji) => sendSimpleAssetLog(emoji.guild, sessionManager, "😀 Emoji ถูกลบ", "danger", emoji.name, emoji.id, emoji.url));
+    client.on("emojiUpdate", async (oldEmoji, newEmoji) => sendSimpleUpdateLog(newEmoji.guild, sessionManager, "😀 Emoji ถูกแก้ไข", oldEmoji.name, newEmoji.name, newEmoji.id));
+    client.on("stickerCreate", async (sticker) => sendSimpleAssetLog(sticker.guild, sessionManager, "🪄 Sticker ใหม่ถูกเพิ่ม", "success", sticker.name, sticker.id, sticker.url));
+    client.on("stickerDelete", async (sticker) => sendSimpleAssetLog(sticker.guild, sessionManager, "🪄 Sticker ถูกลบ", "danger", sticker.name, sticker.id, sticker.url));
+    client.on("stickerUpdate", async (oldSticker, newSticker) => sendSimpleUpdateLog(newSticker.guild, sessionManager, "🪄 Sticker ถูกแก้ไข", oldSticker.name, newSticker.name, newSticker.id));
+
     client.on("inviteCreate", async (invite) => {
-        const embed = buildEmbed({
-            color:   config.system.themeColors.success,
-            title:   "🔗 Invite ถูกสร้าง",
-            noThumb: true,
-            fields: [
-                { name: "🔗 Code",     value: `\`${invite.code}\``, inline: true },
-                { name: "📌 ห้อง",    value: `<#${invite.channel.id}>`, inline: true },
-                { name: "👤 สร้างโดย", value: invite.inviter ? `<@${invite.inviter.id}>` : "ไม่ทราบ", inline: true },
-                { name: "⏰ หมดอายุ", value: invite.expiresAt ? `<t:${Math.floor(invite.expiresAt / 1000)}:R>` : "ไม่หมดอายุ", inline: true },
-                { name: "🔢 ใช้ได้", value: invite.maxUses ? `${invite.maxUses} ครั้ง` : "ไม่จำกัด", inline: true }
-            ]
-        });
-        await sendAuditLog(invite.guild, sessionManager, "server", embed);
+        const embed = buildLogEmbed({ category: LOG_CHANNEL_TYPES.SERVER, severity: "success", title: "🔗 Invite ถูกสร้าง", noThumbnail: true, fields: [field("🔗 Code", code(invite.code), true), field("📌 ห้อง", invite.channel?.id ? channelMention(invite.channel.id) : "Unknown", true), field("👤 สร้างโดย", invite.inviter ? userLabel(invite.inviter) : "Unknown", true), field("⏰ หมดอายุ", invite.expiresTimestamp ? formatDiscordTime(invite.expiresTimestamp, "R") : "ไม่หมดอายุ", true), field("🔢 ใช้ได้", invite.maxUses ? code(invite.maxUses) : "ไม่จำกัด", true)] });
+        await sendAuditLog(invite.guild, sessionManager, LOG_CHANNEL_TYPES.SERVER, embed);
     });
 
-    // ── Invite ลบ ──
     client.on("inviteDelete", async (invite) => {
-        const embed = buildEmbed({
-            color:   config.system.themeColors.error,
-            title:   "🔗 Invite ถูกลบ",
-            noThumb: true,
-            fields: [
-                { name: "🔗 Code",  value: `\`${invite.code}\``, inline: true },
-                { name: "📌 ห้อง", value: `<#${invite.channel.id}>`, inline: true }
-            ]
-        });
-        await sendAuditLog(invite.guild, sessionManager, "server", embed);
+        const embed = buildLogEmbed({ category: LOG_CHANNEL_TYPES.SERVER, severity: "danger", title: "🔗 Invite ถูกลบ", noThumbnail: true, fields: [field("🔗 Code", code(invite.code), true), field("📌 ห้อง", invite.channel?.id ? channelMention(invite.channel.id) : "Unknown", true)] });
+        await sendAuditLog(invite.guild, sessionManager, LOG_CHANNEL_TYPES.SERVER, embed);
     });
 
-    // ── Sticker เพิ่ม ──
-    client.on("stickerCreate", async (sticker) => {
-        const embed = buildEmbed({
-            color:   config.system.themeColors.success,
-            title:   "🪄 Sticker ใหม่ถูกเพิ่ม",
-            noThumb: true,
-            fields: [
-                { name: "🪄 ชื่อ",       value: `\`${sticker.name}\``, inline: true },
-                { name: "🆔 Sticker ID", value: `\`${sticker.id}\``, inline: true }
-            ]
-        });
-        await sendAuditLog(sticker.guild, sessionManager, "server", embed);
-    });
+    client.on("threadCreate", async (thread) => sendThreadLog(thread.guild, sessionManager, "🧵 Thread ถูกสร้าง", "success", thread));
+    client.on("threadDelete", async (thread) => sendThreadLog(thread.guild, sessionManager, "🧵 Thread ถูกลบ", "danger", thread));
+    client.on("threadUpdate", async (oldThread, newThread) => sendSimpleUpdateLog(newThread.guild, sessionManager, "🧵 Thread ถูกแก้ไข", oldThread.name, newThread.name, newThread.id));
 
-    // ── Sticker ลบ ──
-    client.on("stickerDelete", async (sticker) => {
-        const embed = buildEmbed({
-            color:   config.system.themeColors.error,
-            title:   "🪄 Sticker ถูกลบ",
-            noThumb: true,
-            fields: [
-                { name: "🪄 ชื่อ",       value: `\`${sticker.name}\``, inline: true },
-                { name: "🆔 Sticker ID", value: `\`${sticker.id}\``, inline: true }
-            ]
-        });
-        await sendAuditLog(sticker.guild, sessionManager, "server", embed);
-    });
-
-    // ── Thread สร้าง ──
-    client.on("threadCreate", async (thread) => {
-        const embed = buildEmbed({
-            color:   config.system.themeColors.success,
-            title:   "🧵 Thread ถูกสร้าง",
-            noThumb: true,
-            fields: [
-                { name: "🧵 ชื่อ",       value: `\`${thread.name}\``, inline: true },
-                { name: "📌 ห้องหลัก",   value: thread.parentId ? `<#${thread.parentId}>` : "ไม่ทราบ", inline: true },
-                { name: "🆔 Thread ID",  value: `\`${thread.id}\``, inline: true }
-            ]
-        });
-        await sendAuditLog(thread.guild, sessionManager, "server", embed);
-    });
-
-    // ── Thread ลบ ──
-    client.on("threadDelete", async (thread) => {
-        const embed = buildEmbed({
-            color:   config.system.themeColors.error,
-            title:   "🧵 Thread ถูกลบ",
-            noThumb: true,
-            fields: [
-                { name: "🧵 ชื่อ",       value: `\`${thread.name}\``, inline: true },
-                { name: "📌 ห้องหลัก",   value: thread.parentId ? `<#${thread.parentId}>` : "ไม่ทราบ", inline: true },
-                { name: "🆔 Thread ID",  value: `\`${thread.id}\``, inline: true }
-            ]
-        });
-        await sendAuditLog(thread.guild, sessionManager, "server", embed);
-    });
-
-    // ── Webhook เปลี่ยน (Security risk) ──
     client.on("webhookUpdate", async (channel) => {
-        const embed = buildEmbed({
-            color:   config.system.themeColors.error,
-            title:   `${config.emojis.alert} Webhook ในห้องเปลี่ยนแปลง`,
-            noThumb: true,
-            fields: [
-                { name: "📌 ห้อง", value: `<#${channel.id}> (\`${channel.id}\`)`, inline: true },
-                { name: "⚠️ คำเตือน", value: "มีการสร้าง/แก้ไข/ลบ Webhook — ตรวจสอบทันที!", inline: false }
-            ]
-        });
-        await sendAuditLog(channel.guild, sessionManager, "security", embed);
+        const entry = await fetchAuditEntry(channel.guild, null, channel.id, { channelId: channel.id, delayMs: 1200 }).catch(() => null);
+        const embed = buildLogEmbed({ category: LOG_CHANNEL_TYPES.SECURITY, severity: "danger", title: `${config.emojis.alert} Webhook ในห้องเปลี่ยนแปลง`, noThumbnail: true, fields: [field("📌 ห้อง", channelLabel(channel), true), ...executorFields(entry), field("⚠️ คำเตือน", "มีการสร้าง/แก้ไข/ลบ Webhook — ตรวจสอบทันที", false)] });
+        await sendAuditLog(channel.guild, sessionManager, LOG_CHANNEL_TYPES.SECURITY, embed);
     });
 
-    // ── Integration เปลี่ยน ──
     client.on("guildIntegrationsUpdate", async (guild) => {
-        await delay(1500);
-        try {
-            const logs = await guild.fetchAuditLogs({ limit: 3 });
-            const entry = logs.entries.find(e =>
-                (e.action === "INTEGRATION_CREATE" || e.action === "INTEGRATION_DELETE" || e.action === "INTEGRATION_UPDATE") &&
-                Date.now() - e.createdTimestamp < 8000
-            );
-            if (!entry) return;
-
-            const isAdd = entry.action === "INTEGRATION_CREATE";
-            const isDel = entry.action === "INTEGRATION_DELETE";
-
-            const embed = buildEmbed({
-                color:   isAdd ? config.system.themeColors.success : isDel ? config.system.themeColors.error : config.system.themeColors.warning,
-                title:   isAdd ? "🔌 Integration เพิ่ม" : isDel ? "🔌 Integration ลบ" : "🔌 Integration แก้ไข",
-                noThumb: true,
-                fields: [
-                    { name: "👤 โดย", value: `<@${entry.executor.id}>`, inline: true },
-                    { name: "📌 ชื่อ", value: entry.target?.name || "ไม่ทราบ", inline: true }
-                ]
-            });
-            await sendAuditLog(guild, sessionManager, "security", embed);
-        } catch {}
+        const entry = await fetchAuditEntry(guild, null, guild.id, { delayMs: 1200 }).catch(() => null);
+        const presentation = integrationPresentation(entry?.action);
+        const embed = buildLogEmbed({ category: LOG_CHANNEL_TYPES.SECURITY, severity: presentation.severity, title: presentation.title, noThumbnail: true, fields: [...executorFields(entry), field("📌 Target", entry?.target?.name || "Unknown", true), field("Guild ID", code(guild.id), true)] });
+        await sendAuditLog(guild, sessionManager, LOG_CHANNEL_TYPES.SECURITY, embed);
     });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-//  🚨  REGION 6: SECURITY EVENTS
-// ════════════════════════════════════════════════════════════════════════════
+async function sendSimpleAssetLog(guild, sessionManager, title, severity, name, id, image) {
+    if (!guild) return;
+    const embed = buildLogEmbed({ category: LOG_CHANNEL_TYPES.SERVER, severity, title, noThumbnail: true, image, fields: [field("ชื่อ", code(name, 120), true), field("ID", code(id), true)] });
+    await sendAuditLog(guild, sessionManager, LOG_CHANNEL_TYPES.SERVER, embed);
+}
+
+async function sendSimpleUpdateLog(guild, sessionManager, title, oldName, newName, id) {
+    if (!guild || oldName === newName) return;
+    const embed = buildLogEmbed({ category: LOG_CHANNEL_TYPES.SERVER, severity: "warning", title, noThumbnail: true, fields: [field("ก่อน", code(oldName, 120), true), field("หลัง", code(newName, 120), true), field("ID", code(id), true)] });
+    await sendAuditLog(guild, sessionManager, LOG_CHANNEL_TYPES.SERVER, embed);
+}
+
+async function sendThreadLog(guild, sessionManager, title, severity, thread) {
+    if (!guild) return;
+    const embed = buildLogEmbed({ category: LOG_CHANNEL_TYPES.SERVER, severity, title, noThumbnail: true, fields: [field("🧵 ชื่อ", code(thread.name, 120), true), field("📌 ห้องหลัก", thread.parentId ? channelMention(thread.parentId) : "Unknown", true), field("Thread ID", code(thread.id), true)] });
+    await sendAuditLog(guild, sessionManager, LOG_CHANNEL_TYPES.SERVER, embed);
+}
+
 function registerSecurityEvents(client, sessionManager) {
-    const config = require("./config.json");
-
-    // ── บอทถูกเชิญเข้า ──
     client.on("guildMemberAdd", async (member) => {
-        if (!member.user.bot) return;
-        if (member.user.id === client.user?.id) return;
-
+        if (!member.user.bot || member.user.id === client.user?.id) return;
         const entry = await fetchAuditEntry(member.guild, "BOT_ADD", member.id);
-        const embed = buildEmbed({
-            color:  config.system.themeColors.error,
-            title:  `${config.emojis.robot} บอทใหม่ถูกเชิญเข้าเซิร์ฟเวอร์`,
-            user:   member.user,
-            fields: [
-                { name: "🤖 บอท",           value: `<@${member.id}> (\`${member.id}\`)`, inline: true },
-                { name: "✅ Verified",       value: member.user.flags?.has("VERIFIED_BOT") ? "✅ ใช่" : "❌ ไม่ได้ยืนยัน — ระวัง!", inline: true },
-                ...(entry ? [{ name: "👤 เชิญโดย", value: `<@${entry.executor.id}> (\`${entry.executor.tag}\`)`, inline: true }] : [])
-            ]
-        });
-        await sendAuditLog(member.guild, sessionManager, "security", embed);
+        const verified = member.user.flags?.has?.("VERIFIED_BOT") || false;
+        const embed = buildLogEmbed({ category: LOG_CHANNEL_TYPES.SECURITY, severity: verified ? "warning" : "critical", title: `${config.emojis.robot} บอทใหม่ถูกเชิญเข้าเซิร์ฟเวอร์`, author: member.user, thumbnailUser: member.user, fields: [field("🤖 บอท", memberLabel(member), true), field("✅ Verified", verified ? "✅ ใช่" : "❌ ไม่ได้ยืนยัน — ตรวจสอบทันที", true), ...executorFields(entry), ...idFields({ userId: member.id, executorId: entry?.executor?.id })] });
+        await sendAuditLog(member.guild, sessionManager, LOG_CHANNEL_TYPES.SECURITY, embed);
     });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-//  📤  REGION 7: REGISTER ALL + EXPORT
-// ════════════════════════════════════════════════════════════════════════════
 function register(client, sessionManager) {
     startAuditCleanup();
-
     if (registeredClients.has(client)) {
         console.log("[AUDIT] ℹ️ Audit Logger already registered for this client — skipped duplicate listeners.");
         return;
     }
-
     registeredClients.add(client);
-
     registerMessageEvents(client, sessionManager);
     registerMemberEvents(client, sessionManager);
     registerVoiceEvents(client, sessionManager);
     registerServerEvents(client, sessionManager);
     registerSecurityEvents(client, sessionManager);
-    console.log("[AUDIT] ✅ Audit Logger v2.0 registered — 35+ events active.");
+    console.log("[AUDIT] ✅ Audit Logger v3 registered — detailed Koya-style events active.");
 }
 
 module.exports = {
@@ -1353,15 +958,12 @@ module.exports = {
     sendAuditLog,
     getAuditStats,
     stopAuditCleanup,
-    invalidateAuditCache: (guildId) => auditChannelCache.delete(guildId),
+    invalidateAuditCache: () => {},
     _test: {
         buildEmbed,
-        cacheMember,
-        cleanupAuditCaches,
-        getCachedMember,
-        auditChannelCache,
-        memberStateCache,
-        auditCircuit,
-        warnThrottles
+        buildStorageRecord,
+        cleanupCaches,
+        defaultMessageSnapshots,
+        recentEventKeys
     }
 };

@@ -39,6 +39,20 @@ const schema = new mongoose.Schema({
         tokenType:            String,
         lastRefreshAt:        Number,
         refreshFailCount:     { type: Number, default: 0 },
+        lastRefreshError:     String,
+        revokedAt:            Number,
+        rawTokenMeta:          mixed
+    },
+
+    adminOAuth: {
+        encryptedAccessToken:  String,
+        encryptedRefreshToken: String,
+        expiresAt:            Number,
+        scope:                String,
+        tokenType:            String,
+        lastRefreshAt:        Number,
+        refreshFailCount:     { type: Number, default: 0 },
+        lastRefreshError:     String,
         revokedAt:            Number,
         rawTokenMeta:          mixed
     },

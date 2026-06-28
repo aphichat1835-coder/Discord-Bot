@@ -48,11 +48,11 @@ function parseEmbedColor(value) {
   const raw = String(value || "").trim();
 
   if (/^#[0-9a-fA-F]{6}$/.test(raw)) {
-    return parseInt(raw.slice(1), 16);
+    return Number.parseInt(raw.slice(1), 16);
   }
 
   if (/^[0-9a-fA-F]{6}$/.test(raw)) {
-    return parseInt(raw, 16);
+    return Number.parseInt(raw, 16);
   }
 
   if (/^\d+$/.test(raw)) {
@@ -102,7 +102,10 @@ function normalizePanelInput(panel = {}) {
 }
 
 function buildOAuthUrl({ baseUrl, state }) {
-  const cleanBase = String(baseUrl || "").replace(/\/+$/, "");
+  let cleanBase = String(baseUrl || "");
+  while (cleanBase.endsWith("/")) {
+    cleanBase = cleanBase.slice(0, -1);
+  }
   const cleanState = String(state || "").trim();
 
   if (!cleanBase || !cleanState) {

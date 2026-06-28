@@ -7,9 +7,9 @@ DO NOT REMOVE: guildCreate/guildDelete handlers.
 ================================================================================
 */
 
-const { MessageEmbed } = require("discord.js");
 const roleButton  = require('../features/roleButton');
 const protection  = require('../features/protection');
+const protectionAudit = require('../logging/protectionAudit');
 const { IDS, PREFIXES } = require("../commands/customIds");
 const { isVoicePanelControl } = require("../guards/commandGuards");
 const { sendLogWebhook } = require("../core/webhooks");
@@ -48,6 +48,7 @@ function canBanMember(member) {
 }
 
 async function deleteRaidEvidenceSafely(message, maxMessages = 5) {
+    let deletedCount = 0;
     try {
         const fetched = await message.channel.messages.fetch({ limit: Math.max(maxMessages, 1) }).catch(() => null);
         const ownedMessages = fetched
@@ -61,11 +62,12 @@ async function deleteRaidEvidenceSafely(message, maxMessages = 5) {
         const targets = ownedMessages.length > 0 ? ownedMessages : [message];
 
         for (const target of targets) {
-            await deleteMessageWithLog(target, "anti-raid");
+            if (await deleteMessageWithLog(target, "anti-raid")) deletedCount++;
         }
     } catch {
-        await deleteMessageWithLog(message, "anti-raid-fallback");
+        if (await deleteMessageWithLog(message, "anti-raid-fallback")) deletedCount++;
     }
+    return deletedCount;
 }
 
 function trimMapToMaxSize(map, maxSize) {
@@ -74,6 +76,90 @@ function trimMapToMaxSize(map, maxSize) {
         if (!oldestKey) break;
         map.delete(oldestKey);
     }
+}
+
+async function executeProtectionAction({ member, result, message, deleteMessage = false }) {
+    const action = result?.action || "log";
+    const output = {
+        action,
+        attempted: action !== "log",
+        success: false,
+        reason: result?.reason || null,
+        error: null,
+        timeoutMs: result?.minutes ? result.minutes * 60000 : null,
+        deletedMessages: 0
+    };
+
+    try {
+        if (deleteMessage && message) {
+            output.deletedMessages = await deleteRaidEvidenceSafely(message, 5);
+        }
+
+        if (action === "timeout") {
+            if (!member.manageable) throw new Error("member is not manageable");
+            await member.timeout((result.minutes || 10) * 60000, result.reason);
+            output.success = true;
+        } else if (action === "ban") {
+            if (!canBanMember(member)) throw new Error("missing BAN_MEMBERS or member is not bannable");
+            await member.ban({ reason: result.reason });
+            output.success = true;
+        } else if (action === "kick") {
+            if (!member.kickable) throw new Error("member is not kickable");
+            await member.kick(result.reason);
+            output.success = true;
+        } else {
+            output.attempted = false;
+            output.success = true;
+        }
+    } catch (err) {
+        output.error = err.message;
+        console.warn(`[PROTECTION] Action ${action} failed for ${member?.id}: ${err.message}`);
+    }
+
+    return output;
+}
+
+function protectionActionMode(config = {}) {
+    return String(config.actionMode || config.mode || process.env.PROTECTION_ACTION_MODE || "audit_only").toLowerCase();
+}
+
+function canEnforceProtection(config = {}) {
+    return protectionActionMode(config) === "action" || protectionActionMode(config) === "enforce";
+}
+
+function buildAuditOnlyProtectionResult(result = {}) {
+    return {
+        action: result.action || (result.shouldDelete ? "delete_message" : "log"),
+        attempted: false,
+        success: true,
+        reason: result.reason || "audit-only protection mode",
+        error: null,
+        timeoutMs: result.minutes ? result.minutes * 60000 : null,
+        deletedMessages: 0
+    };
+}
+
+async function sendProtectionResult({ guild, sessionManager, result, member, message, actionResult, debounceKey = null, debounceMs = 0 }) {
+    const event = protectionAudit.buildProtectionEvent({
+        guildId: guild.id,
+        userId: member?.id || message?.author?.id,
+        channelId: message?.channel?.id || null,
+        trigger: result?.trigger || "Protection Triggered",
+        reason: result?.reason || "ระบบป้องกันตรวจพบพฤติกรรมเสี่ยง",
+        severity: result?.severity || "danger",
+        evidence: result?.evidence || [],
+        actionResult,
+        metadata: result?.metadata || {}
+    });
+
+    await protectionAudit.sendProtectionAudit({
+        guild,
+        sessionManager,
+        event,
+        createCase: result?.shouldCreateCase !== false,
+        debounceKey,
+        debounceMs
+    }).catch(() => {});
 }
 
 function register({
@@ -106,7 +192,7 @@ function register({
     spamCleanupTimer.unref?.();
 
     // ════════════════════════════════════════════════════════════════════════
-    //  💬  messageCreate — Anti-Raid
+    //  💬  messageCreate — Protection checks
     // ════════════════════════════════════════════════════════════════════════
     client.on("messageCreate", async (message) => {
         if (message.author.bot || !message.guild) return;
@@ -137,30 +223,30 @@ function register({
                 const result = protection.checkAntiRaid(message.member, history, pConf);
 
                 if (result) {
+                    const debounceKey = `${message.guild.id}_${message.author.id}`;
                     try {
-                        await deleteRaidEvidenceSafely(message, 5);
-                        if (result.action === 'timeout' && message.member.manageable) {
-                            await message.member.timeout((result.minutes || 10) * 60000, result.reason);
-                        } else if (result.action === 'ban' && canBanMember(message.member)) {
-                            await message.member.ban({ reason: result.reason });
-                        } else if (result.action === 'ban') {
-                            console.warn(`[PROTECTION] Cannot ban anti-raid member ${message.author.id}: missing BAN_MEMBERS or member is not bannable`);
-                        } else if (result.action === 'kick' && message.member.kickable) {
-                            await message.member.kick(result.reason);
-                        }
+                        const actionResult = canEnforceProtection(pConf)
+                            ? await executeProtectionAction({
+                                member: message.member,
+                                result,
+                                message,
+                                deleteMessage: true
+                            })
+                            : buildAuditOnlyProtectionResult(result);
 
-                        const alertEmbed = protection.buildProtectionAlert('raid', {
-                            'ผู้กระทำ': `<@${message.author.id}>`,
-                            'ห้อง':     `<#${message.channel.id}>`,
-                            'ครั้งที่':  `${history.length}`,
-                            'การดำเนินการ': result.action.toUpperCase()
-                        });
-
-                        const debounceKey = `${message.guild.id}_${message.author.id}`;
                         if (Date.now() - (antiRaidLogDebounce.get(debounceKey) || 0) > 5000) {
                             antiRaidLogDebounce.set(debounceKey, Date.now());
                             trimMapToMaxSize(antiRaidLogDebounce, antiRaidDebounceMaxKeys);
-                            auditLogger.sendAuditLog(message.guild, sessionManager, 'security', alertEmbed).catch(() => {});
+                            await sendProtectionResult({
+                                guild: message.guild,
+                                sessionManager,
+                                result,
+                                member: message.member,
+                                message,
+                                actionResult,
+                                debounceKey,
+                                debounceMs: 5000
+                            });
                         }
                     } catch (e) {
                         console.error(`[PROTECTION] ⚠️ ${e.message}`);
@@ -183,24 +269,22 @@ function register({
             const spamResult = protection.checkAntiSpam(message.member, spamHist, pConf);
             if (spamResult) {
                 try {
-                    await deleteMessageWithLog(message, "anti-spam");
-                    if (spamResult.action === 'timeout' && message.member.manageable) {
-                        await message.member.timeout(spamResult.minutes * 60000, spamResult.reason);
-                    } else if (spamResult.action === 'kick' && message.member.kickable) {
-                        await message.member.kick(spamResult.reason);
-                    } else if (spamResult.action === 'ban' && canBanMember(message.member)) {
-                        await message.member.ban({ reason: spamResult.reason });
-                    } else if (spamResult.action === 'ban') {
-                        console.warn(`[ANTI-SPAM] Cannot ban member ${message.author.id}: missing BAN_MEMBERS or member is not bannable`);
-                    }
+                    const deleted = canEnforceProtection(pConf) ? await deleteMessageWithLog(message, "anti-spam") : false;
+                    const actionResult = canEnforceProtection(pConf)
+                        ? await executeProtectionAction({ member: message.member, result: spamResult })
+                        : buildAuditOnlyProtectionResult(spamResult);
+                    actionResult.deletedMessages = deleted ? 1 : 0;
 
-                    const alertEmbed = protection.buildProtectionAlert('spam', {
-                        'ผู้กระทำ': `<@${message.author.id}>`,
-                        'ห้อง': `<#${message.channel.id}>`,
-                        'จำนวนข้อความ': `${spamHist.length}`,
-                        'การดำเนินการ': spamResult.action.toUpperCase()
+                    await sendProtectionResult({
+                        guild: message.guild,
+                        sessionManager,
+                        result: spamResult,
+                        member: message.member,
+                        message,
+                        actionResult,
+                        debounceKey: `spam:${message.guild.id}:${message.author.id}`,
+                        debounceMs: 3000
                     });
-                    auditLogger.sendAuditLog(message.guild, sessionManager, 'security', alertEmbed).catch(() => {});
                     spamTracking.delete(spamKey);
                 } catch (e) { console.error(`[ANTI-SPAM] ⚠️ ${e.message}`); }
             }
@@ -211,17 +295,33 @@ function register({
         if (pConf?.linkFilter?.enabled) {
             const linkResult = protection.checkLinkFilter(message, pConf);
             if (linkResult) {
-                const deleted = await deleteMessageWithLog(message, "link-filter");
-                const alertEmbed = protection.buildProtectionAlert('link', {
-                    'ผู้กระทำ': `<@${message.author.id}>`,
-                    'ห้อง': `<#${message.channel.id}>`,
-                    'เหตุผล': linkResult.reason,
-                    'ลบข้อความ': deleted ? 'สำเร็จ' : 'ไม่สำเร็จ'
+                const deleted = canEnforceProtection(pConf) ? await deleteMessageWithLog(message, "link-filter") : false;
+                const actionResult = canEnforceProtection(pConf)
+                    ? {
+                        action: "delete_message",
+                        attempted: true,
+                        success: deleted,
+                        reason: linkResult.reason,
+                        error: deleted ? null : "message delete failed"
+                    }
+                    : buildAuditOnlyProtectionResult({ ...linkResult, action: "delete_message" });
+
+                await sendProtectionResult({
+                    guild: message.guild,
+                    sessionManager,
+                    result: { ...linkResult, action: "delete_message", shouldCreateCase: false },
+                    member: message.member,
+                    message,
+                    actionResult,
+                    debounceKey: `link:${message.guild.id}:${message.author.id}`,
+                    debounceMs: 3000
                 });
-                auditLogger.sendAuditLog(message.guild, sessionManager, 'security', alertEmbed).catch(() => {});
-                message.channel.send({
-                    content: `> 🔗 <@${message.author.id}> ลิงก์ถูกบล็อกโดยระบบ`
-                }).then(m => setTimeout(() => m.delete().catch(() => {}), 5000)).catch(() => {});
+
+                if (canEnforceProtection(pConf)) {
+                    message.channel.send({
+                        content: `> 🔗 <@${message.author.id}> ลิงก์ถูกบล็อกโดยระบบ`
+                    }).then(m => setTimeout(() => m.delete().catch(() => {}), 5000)).catch(() => {});
+                }
             }
         }
 
@@ -325,7 +425,7 @@ function register({
                 const inv = await channel.createInvite({ maxAge: 3600 });
                 inviteStr = inv.url;
             }
-        } catch (e) {}
+        } catch {}
 
         sendLogWebhook({
             content: `🤖 **บอทถูกเชิญเข้าเซิร์ฟเวอร์ใหม่!**\n` +

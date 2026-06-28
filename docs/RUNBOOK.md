@@ -76,9 +76,10 @@
 
 1. เช็ค Dashboard Public `/health`
 2. ดู `memory`, `ipLookup`, `sessionCookie.policy`, `sessionCookie.maxAgeMs`, และ `retention.lastSummary`
-3. ค่าเริ่มต้นของ admin session คือ absolute expiry 24 ชั่วโมง:
+3. ค่าเริ่มต้นของ admin session คือ rolling expiry 24 ชั่วโมง:
    - `ADMIN_SESSION_MAX_AGE_MS`
-   - `ADMIN_SESSION_ROLLING=false`
+   - `ADMIN_SESSION_ROLLING=true`
+   - ถ้าต้องการให้หมดอายุแบบ absolute ให้ตั้ง `ADMIN_SESSION_ROLLING=false`
 4. สำหรับ diagnostics ภายใน ใช้:
    - `GET /internal/diagnostics`
    - ต้องส่ง `x-internal-secret`
@@ -140,3 +141,17 @@ npm run check:memory-trend < diagnostics.json
    - `auditDroppedCircuitOpen`
    - `lastAuditSendError`
 4. ถ้า channel หายหรือ permission ผิด ระบบจะพักส่งชั่วคราวด้วย circuit breaker เพื่อลด spam
+5. เปิด `/audit-logs` จาก owner dashboard เพื่อดู record ที่บันทึกไว้ใน audit storage
+6. ดู `/api/audit/dead-letters` เพื่อแยกเคส `missing_log_channel`, send failure, หรือ queue/circuit issue
+7. ถ้าต้องทดสอบ reconciler ให้เปิด `AUDIT_RECONCILER_ENABLED=true` เฉพาะ private test server ก่อน production
+
+## Dependency audit หลังอัปเกรด package
+
+1. เช็ค baseline production/high severity:
+   - `npm audit --audit-level=high`
+   - `npm audit --omit=dev`
+   - `npm --prefix dashboard-public audit --audit-level=high`
+   - `npm --prefix dashboard-public audit --omit=dev`
+2. ถ้า `npm --prefix dashboard-public audit` แบบไม่ใส่ level แจ้ง moderate จาก Jest chain ให้แยกก่อนว่าเป็น dev dependency หรือ production dependency
+3. อย่าใช้ `npm audit fix --force` อัตโนมัติ ถ้ามันเสนอ downgrade หรือ major migration ที่กระทบ test runner/runtime
+4. `discord.js` ยังอยู่ v13 ตาม owner decision และ Mongoose ยังอยู่ v8 เว้นแต่มีงาน migration แยกชัดเจน

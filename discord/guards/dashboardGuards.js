@@ -75,6 +75,10 @@ function trimRateLimitBuckets(requestCounts, now = Date.now(), windowMs = 60000)
     }
 }
 
+function readAuthorizationSecret(req) {
+    return String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+}
+
 function makeCheckAuth(API_SECRET) {
     const configuredSecret = typeof API_SECRET === "string" ? API_SECRET : "";
 
@@ -92,7 +96,7 @@ function makeCheckAuth(API_SECRET) {
             return true;
         }
 
-        const authHeader = req.headers.authorization || "";
+        const authHeader = readAuthorizationSecret(req);
         const authBuf = Buffer.from(authHeader, "utf8");
         const secBuf = Buffer.from(configuredSecret, "utf8");
 
@@ -195,6 +199,7 @@ module.exports = {
     revealTokenAttempts,
     shouldBypassDashboardReadApi,
     createRateLimiter,
+    readAuthorizationSecret,
     makeCheckAuth,
     makeCheckRevealPin,
     logIntrusion,

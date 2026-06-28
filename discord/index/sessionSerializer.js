@@ -36,31 +36,44 @@ function toEpochMs(value) {
     return null;
 }
 
-function serializeVoiceSession(session) {
-    if (!session) return null;
-
+function serializeGuildSessionFields(session) {
     return {
         sessionId: session.sessionId,
         shortId: getSafeSessionShortId(session.sessionId),
-
         serverId: session.serverId,
         serverName: session.serverName || null,
-        guildIcon: session.guildIcon || null,
+        guildIcon: session.guildIcon || null
+    };
+}
 
+function serializeVoiceChannelFields(session) {
+    return {
         voiceId: session.voiceId,
-        voiceName: session.voiceName || null,
+        voiceName: session.voiceName || null
+    };
+}
 
+function serializeOwnerFields(session) {
+    return {
         ownerId: session.ownerId,
         ownerTag: session.ownerTag || null,
-        ownerAvatar: session.ownerAvatar || null,
+        ownerAvatar: session.ownerAvatar || null
+    };
+}
 
+function serializeAccountFields(session) {
+    return {
         accountId: session.accountId || null,
         accountUsername: session.accountUsername || null,
         accountGlobalName: session.accountGlobalName || null,
         accountTag: session.accountTag || null,
         accountAvatar: session.accountAvatar || null,
-        accountLabel: getSessionAccountLabel(session),
+        accountLabel: getSessionAccountLabel(session)
+    };
+}
 
+function serializeRuntimeFields(session) {
+    return {
         startedAt: toEpochMs(session.startedAt),
         lastActivity: toEpochMs(session.lastActivity),
         reconnectCount: session.reconnectCount || 0,
@@ -76,6 +89,18 @@ function serializeVoiceSession(session) {
         clientReady: !!session.client?.isReady?.(),
         staleSuspected: (session.state || "active") === "active" && !session.connection,
         ghostSuspected: session.stoppedReason === "stop_cleanup_failed"
+    };
+}
+
+function serializeVoiceSession(session) {
+    if (!session) return null;
+
+    return {
+        ...serializeGuildSessionFields(session),
+        ...serializeVoiceChannelFields(session),
+        ...serializeOwnerFields(session),
+        ...serializeAccountFields(session),
+        ...serializeRuntimeFields(session)
     };
 }
 
@@ -96,6 +121,11 @@ module.exports = {
     getSafeSessionShortId,
     getSessionAccountLabel,
     toEpochMs,
+    serializeGuildSessionFields,
+    serializeVoiceChannelFields,
+    serializeOwnerFields,
+    serializeAccountFields,
+    serializeRuntimeFields,
     serializeVoiceSession,
     getSessionTokenSafe
 };

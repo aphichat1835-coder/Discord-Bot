@@ -15,6 +15,7 @@ function getDashboardUrl() {
 async function callDashboardInternal(path, options = {}, API_SECRET) {
     const base = getDashboardUrl();
     const internalSecret = getInternalSecret(API_SECRET);
+    const headers = options.headers ?? {};
 
     if (!base) {
         throw new Error('PUBLIC_DASHBOARD_URL/DASHBOARD_URL is not configured on Service 1');
@@ -27,9 +28,9 @@ async function callDashboardInternal(path, options = {}, API_SECRET) {
     const res = await fetch(`${base}${path}`, {
         ...options,
         headers: {
+            ...headers,
             'Content-Type': 'application/json',
-            'x-internal-secret': internalSecret,
-            ...(options.headers || {})
+            'x-internal-secret': internalSecret
         }
     });
 

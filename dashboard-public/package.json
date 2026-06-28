@@ -9,20 +9,20 @@
     "dev": "node -r ../discord/core/loadEnv index.js",
     "check": "npm run check:all",
     "check:all": "find . -path './node_modules' -prune -o -type f -name '*.js' -print0 | xargs -0 -n1 node --check",
-    "test": "jest --testPathPattern=tests/"
+    "test": "jest --testPathPatterns=tests/ --passWithNoTests"
   },
   "engines": {
     "node": "24.x"
   },
   "dependencies": {
-    "connect-mongo": "^5.1.0",
+    "connect-mongo": "^6.0.0",
     "express": "^5.2.1",
-    "express-rate-limit": "^7.4.1",
+    "express-rate-limit": "^8.5.2",
     "express-session": "^1.18.1",
-    "mongoose": "^8.0.0"
+    "mongoose": "^8.24.1"
   },
   "devDependencies": {
-    "jest": "^29.7.0"
+    "jest": "^30.4.2"
   },
   "jest": {
     "testEnvironment": "node",

@@ -47,6 +47,10 @@ const guildRoutes              = require('./routes/guild');
 const apiRoutes                = require('./routes/api');
 const { getDiscordApiDiagnostics } = require('./utils/discordAPI');
 const { getOAuthUserSummaryDiagnostics } = require('./utils/oauthUserSummary');
+const {
+    getOAuthRefreshConfig,
+    refreshPersistedOAuthTokens
+} = require('./utils/oauthTokenLifecycle');
 
 const rateLimit = expressRateLimit.rateLimit || expressRateLimit.default || expressRateLimit;
 const { getTrustedRequestIp, getIpLookupDiagnostics } = require('./utils/ipUtils');
@@ -63,6 +67,9 @@ let retentionMaintenanceInFlight = false;
 let lastRetentionMaintenanceAt = null;
 let lastRetentionMaintenanceError = null;
 let lastRetentionMaintenanceSummary = null;
+let lastOAuthTokenRefreshAt = null;
+let lastOAuthTokenRefreshError = null;
+let lastOAuthTokenRefreshSummary = null;
 
 const TRUST_PROXY = String(process.env.TRUST_PROXY || '').toLowerCase() === 'true';
 const TRUST_PROXY_HOPS = Math.max(1, Math.min(5, Number(process.env.TRUST_PROXY_HOPS || 1) || 1));
@@ -71,7 +78,20 @@ const SESSION_MAX_AGE_MS = Math.max(
     5 * 60 * 1000,
     Number(process.env.ADMIN_SESSION_MAX_AGE_MS || 24 * 60 * 60 * 1000) || 24 * 60 * 60 * 1000
 );
-const SESSION_ROLLING = String(process.env.ADMIN_SESSION_ROLLING || 'false').trim().toLowerCase() === 'true';
+const SESSION_ROLLING = String(process.env.ADMIN_SESSION_ROLLING || 'true').trim().toLowerCase() !== 'false';
+const SESSION_TOUCH_AFTER_SEC = Math.max(
+    60,
+    Math.min(
+        Math.floor(SESSION_MAX_AGE_MS / 1000),
+        Number(process.env.ADMIN_SESSION_TOUCH_AFTER_SEC || Math.min(3600, Math.max(60, Math.floor(SESSION_MAX_AGE_MS / 4000)))) || 900
+    )
+);
+const SESSION_COOKIE_SECURE_VALUE = String(
+    process.env.ADMIN_SESSION_COOKIE_SECURE || (IS_PRODUCTION ? 'auto' : 'false')
+).trim().toLowerCase();
+const SESSION_COOKIE_SECURE = SESSION_COOKIE_SECURE_VALUE === 'auto'
+    ? 'auto'
+    : ['1', 'true', 'yes', 'on'].includes(SESSION_COOKIE_SECURE_VALUE);
 const RETENTION_ERROR_MAX = Math.max(5, Number(process.env.RETENTION_ERROR_MAX || 50) || 50);
 const RETENTION_CONFIG_SCAN_MAX = Math.max(
     50,
@@ -108,7 +128,7 @@ app.use(express.static(path.join(__dirname, 'public'), {
 
 const sessionStore = MongoStore.create({
     mongoUrl: process.env.MONGO_URI,
-    touchAfter: 24 * 3600
+    touchAfter: SESSION_TOUCH_AFTER_SEC
 });
 
 app.use(session({
@@ -117,14 +137,14 @@ app.use(session({
     saveUninitialized: false,
     store:             sessionStore,
     rolling: SESSION_ROLLING,
+    proxy: TRUST_PROXY || SESSION_COOKIE_SECURE === 'auto',
     cookie: {
         maxAge:   SESSION_MAX_AGE_MS,
         httpOnly: true,
-        secure:   IS_PRODUCTION,
+        secure:   SESSION_COOKIE_SECURE,
         sameSite: 'lax'
     }
 }));
-
 
 function normalizeSocketIp(ip) {
     if (!ip) return 'unknown';
@@ -188,7 +208,30 @@ function getRuntimeLimitDiagnostics() {
     return {
         retentionErrorMax: RETENTION_ERROR_MAX,
         retentionConfigScanMax: RETENTION_CONFIG_SCAN_MAX,
+        oauthTokenRefresh: getOAuthRefreshConfig(),
         oauthUserSummary: getOAuthUserSummaryDiagnostics()
+    };
+}
+
+function summarizeOAuthRefreshHealth(summary) {
+    if (!summary) return null;
+    return {
+        skipped: summary.skipped === true,
+        reason: summary.reason || null,
+        scanned: Number(summary.scanned || 0),
+        refreshed: Number(summary.refreshed || 0),
+        failed: Number(summary.failed || 0),
+        revoked: Number(summary.revoked || 0),
+        persistenceFailed: Number(summary.persistenceFailed || 0),
+        errorCount: Array.isArray(summary.errors) ? summary.errors.length : 0,
+        byField: Object.fromEntries(Object.entries(summary.byField || {}).map(([field, item]) => [field, {
+            scanned: Number(item?.scanned || 0),
+            refreshed: Number(item?.refreshed || 0),
+            failed: Number(item?.failed || 0),
+            revoked: Number(item?.revoked || 0),
+            persistenceFailed: Number(item?.persistenceFailed || 0),
+            errorCount: Array.isArray(item?.errors) ? item.errors.length : 0
+        }]))
     };
 }
 
@@ -254,11 +297,6 @@ app.get('/guilds', (req, res) => {
     res.sendFile(path.join(__dirname, 'views/guilds.html'));
 });
 
-app.get('/guild/:guildId', (req, res) => {
-    if (!req.session?.adminUser) return res.redirect('/');
-    res.sendFile(path.join(__dirname, 'views/guild.html'));
-});
-
 app.get('/logout', (req, res) => {
     req.session.destroy(() => res.redirect('/'));
 });
@@ -294,7 +332,9 @@ app.get('/health', (_req, res) => {
         sessionCookie: {
             policy: SESSION_ROLLING ? 'rolling' : 'absolute',
             maxAgeMs: SESSION_MAX_AGE_MS,
-            secure: IS_PRODUCTION,
+            touchAfterSec: SESSION_TOUCH_AFTER_SEC,
+            secure: SESSION_COOKIE_SECURE,
+            proxy: TRUST_PROXY || SESSION_COOKIE_SECURE === 'auto',
             revoke: 'logout destroys the current admin session; global revoke is intentionally not exposed'
         },
         retention: {
@@ -302,6 +342,11 @@ app.get('/health', (_req, res) => {
             lastRunAt: lastRetentionMaintenanceAt,
             lastError: lastRetentionMaintenanceError,
             lastSummary: lastRetentionMaintenanceSummary
+        },
+        oauthTokenRefresh: {
+            lastRunAt: lastOAuthTokenRefreshAt,
+            lastError: lastOAuthTokenRefreshError,
+            lastSummary: summarizeOAuthRefreshHealth(lastOAuthTokenRefreshSummary)
         },
         memory: getMemoryDiagnostics(),
         runtimeLimits: getRuntimeLimitDiagnostics(),
@@ -519,6 +564,17 @@ async function runDataLifecycleMaintenance(options = {}) {
 
         summary.finishedAt = Date.now();
         if (!dryRun) {
+            try {
+                lastOAuthTokenRefreshSummary = await refreshPersistedOAuthTokens();
+                lastOAuthTokenRefreshAt = Date.now();
+                lastOAuthTokenRefreshError = null;
+            } catch (err) {
+                lastOAuthTokenRefreshError = safeError(err);
+                console.error('[OAUTH_TOKEN] refresh maintenance failed:', lastOAuthTokenRefreshError);
+            }
+        }
+
+        if (!dryRun) {
             lastRetentionMaintenanceAt = summary.finishedAt;
             lastRetentionMaintenanceSummary = summary;
         }
@@ -558,7 +614,10 @@ app.get('/internal/diagnostics', requireInternalSecret, (_req, res) => {
         session: {
             store: sessionStore?.constructor?.name || 'unknown',
             rolling: SESSION_ROLLING,
-            maxAgeMs: SESSION_MAX_AGE_MS
+            maxAgeMs: SESSION_MAX_AGE_MS,
+            touchAfterSec: SESSION_TOUCH_AFTER_SEC,
+            secure: SESSION_COOKIE_SECURE,
+            proxy: TRUST_PROXY || SESSION_COOKIE_SECURE === 'auto'
         },
         discordApi: getDiscordApiDiagnostics(),
         ipLookup: getIpLookupDiagnostics(),
@@ -568,6 +627,12 @@ app.get('/internal/diagnostics', requireInternalSecret, (_req, res) => {
             lastRunAt: lastRetentionMaintenanceAt,
             lastError: lastRetentionMaintenanceError,
             lastSummary: lastRetentionMaintenanceSummary
+        },
+        oauthTokenRefresh: {
+            config: getOAuthRefreshConfig(),
+            lastRunAt: lastOAuthTokenRefreshAt,
+            lastError: lastOAuthTokenRefreshError,
+            lastSummary: summarizeOAuthRefreshHealth(lastOAuthTokenRefreshSummary)
         }
     });
 });

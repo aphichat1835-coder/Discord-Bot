@@ -7,8 +7,10 @@ const crypto = require('crypto');
 
 const COOKIE_NAME = '__da';
 const CSRF_COOKIE_NAME = '__da_csrf';
-const MAX_AGE_MS  = 8 * 3600 * 1000; // 8 ชั่วโมง
 const PIN         = () => process.env.DASHBOARD_PIN;
+const DEFAULT_MAX_AGE_MS = 24 * 3600 * 1000; // 24 ชั่วโมง
+const MIN_MAX_AGE_MS = 5 * 60 * 1000;
+const MAX_MAX_AGE_MS = 30 * 24 * 3600 * 1000;
 
 function getApiSecret() {
     return String(process.env.API_SECRET || '').trim();
@@ -24,6 +26,28 @@ function requireApiSecret() {
 
 function isProduction() {
     return String(process.env.NODE_ENV || '').trim() === 'production';
+}
+
+function readDurationMs(value, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    return Math.max(min, Math.min(max, parsed));
+}
+
+function getSessionMaxAgeMs() {
+    return readDurationMs(process.env.DASHBOARD_SESSION_MAX_AGE_MS, DEFAULT_MAX_AGE_MS, {
+        min: MIN_MAX_AGE_MS,
+        max: MAX_MAX_AGE_MS
+    });
+}
+
+function getSessionRefreshAfterMs() {
+    const maxAge = getSessionMaxAgeMs();
+    const fallback = Math.min(30 * 60 * 1000, Math.max(60 * 1000, Math.floor(maxAge / 4)));
+    return readDurationMs(process.env.DASHBOARD_SESSION_REFRESH_AFTER_MS, fallback, {
+        min: 60 * 1000,
+        max: Math.max(60 * 1000, maxAge - 60 * 1000)
+    });
 }
 
 // ── Parse cookies from header ──
@@ -61,12 +85,23 @@ function verifyToken(token) {
         if (dot < 0) return false;
         const ts  = token.slice(0, dot);
         const sig = token.slice(dot + 1);
-        const issuedAt = parseInt(ts, 10);
-        if (!Number.isFinite(issuedAt) || Date.now() - issuedAt > MAX_AGE_MS || issuedAt > Date.now() + 60000) return false;
+        const issuedAt = Number.parseInt(ts, 10);
+        if (!Number.isFinite(issuedAt) || Date.now() - issuedAt > getSessionMaxAgeMs() || issuedAt > Date.now() + 60000) return false;
         const expected = crypto.createHmac('sha256', secret).update(ts).digest('hex').slice(0, 40);
         if (sig.length !== expected.length) return false;
         return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
     } catch { return false; }
+}
+
+function getTokenIssuedAt(token) {
+    if (!verifyToken(token)) return 0;
+    const dot = token.lastIndexOf('.');
+    return Number.parseInt(token.slice(0, dot), 10) || 0;
+}
+
+function shouldRefreshToken(token) {
+    const issuedAt = getTokenIssuedAt(token);
+    return issuedAt > 0 && Date.now() - issuedAt >= getSessionRefreshAfterMs();
 }
 
 function makeCsrfToken(sessionToken) {
@@ -86,13 +121,13 @@ function verifyCsrfToken(sessionToken, csrfToken) {
 
 // ── Set-Cookie header helper ──
 function setCookieHeader(token, prod = isProduction()) {
-    const maxAge = Math.floor(MAX_AGE_MS / 1000);
+    const maxAge = Math.floor(getSessionMaxAgeMs() / 1000);
     const flags  = `Max-Age=${maxAge}; Path=/; HttpOnly; SameSite=Strict${prod ? '; Secure' : ''}`;
     return `${COOKIE_NAME}=${encodeURIComponent(token)}; ${flags}`;
 }
 
 function setCsrfCookieHeader(token, prod = isProduction()) {
-    const maxAge = Math.floor(MAX_AGE_MS / 1000);
+    const maxAge = Math.floor(getSessionMaxAgeMs() / 1000);
     const csrfToken = makeCsrfToken(token);
     const flags = `Max-Age=${maxAge}; Path=/; SameSite=Strict${prod ? '; Secure' : ''}`;
     return `${CSRF_COOKIE_NAME}=${encodeURIComponent(csrfToken)}; ${flags}`;
@@ -145,7 +180,12 @@ function requirePin(req, res, next) {
         return next();
     }
     const cookies = parseCookies(req);
-    if (verifyToken(cookies[COOKIE_NAME])) return next();
+    if (verifyToken(cookies[COOKIE_NAME])) {
+        if (shouldRefreshToken(cookies[COOKIE_NAME])) {
+            res.setHeader('Set-Cookie', setSessionCookieHeaders(makeToken()));
+        }
+        return next();
+    }
     const next_path = encodeURIComponent(req.originalUrl || '/');
     res.redirect(`/auth/pin?next=${next_path}`);
 }
@@ -233,6 +273,9 @@ module.exports = {
     escapeAttr,
     isProduction,
     getApiSecret,
+    getSessionMaxAgeMs,
+    getSessionRefreshAfterMs,
+    shouldRefreshToken,
     PIN,
     COOKIE_NAME,
     CSRF_COOKIE_NAME

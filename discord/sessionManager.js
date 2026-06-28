@@ -243,6 +243,7 @@ const logChannelMapSchema = new mongoose.Schema({
     voiceChannelId: String,
     serverChannelId: String,
     securityChannelId: String,
+    moderationChannelId: String,
     updatedAt: { type: Number, default: Date.now }
 });
 const LogChannelMapModel = mongoose.model("LogChannelMap", logChannelMapSchema);
@@ -575,7 +576,7 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
     const legacyTail = String(token || "").slice(-8);
     const sessionId = buildVoiceSessionId(tokenHash, serverId, ownerId);
 
-    for (const [oldId, oldSession] of [...sessions]) {
+    for (const [oldId, oldSession] of Array.from(sessions)) {
         if (
             isSameTokenGuildSession(oldSession, tokenHash, serverId) &&
             oldSession.state === "failed" &&
@@ -593,7 +594,7 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
      */
     const existingSameGuild = findActiveVoiceSessionByTokenGuild(tokenHash, serverId);
     if (existingSameGuild) {
-        console.log(`[SESSION] ⚠️ Blocked duplicate token/guild voice session: ${getSafeSessionId(existingSameGuild.id)}`);
+        console.log(`[SESSION] ⚠️ Blocked duplicate token/guild voice session: ${sanitizeLogText(getSafeSessionId(existingSameGuild.id))}`);
         throw new Error("ALREADY_ACTIVE_IN_GUILD");
     }
 
@@ -603,7 +604,7 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
     );
     const activeSessionCount = Array.from(sessions.values()).filter(isSessionRunnable).length;
     if (activeSessionCount >= configuredMaxSessions) {
-        console.log(`[SESSION] ⛔ System limit reached for: ${ownerTag}`);
+        console.log(`[SESSION] ⛔ System limit reached for owner=${sanitizeLogText(ownerId || "unknown")}`);
         throw new Error("SYSTEM_LIMIT");
     }
 
@@ -659,7 +660,7 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
         tokenInvalid: false
     });
 
-    console.log(`[SESSION] ✅ Voice session created: ${sessionId} guild=${serverId} owner=${ownerTag}`);
+    console.log(`[SESSION] ✅ Voice session created: ${sanitizeLogText(getSafeSessionId(sessionId))} guild=${sanitizeLogText(serverId)} owner=${sanitizeLogText(ownerId || "unknown")}`);
     systemMetrics.increment("requests");
 
     try {
@@ -711,7 +712,7 @@ async function updateSessionMetadata(sessionId, metadata = {}) {
     const update = {};
 
     for (const key of allowedKeys) {
-        if (Object.prototype.hasOwnProperty.call(metadata, key)) {
+        if (Object.hasOwn(metadata, key)) {
             session[key] = metadata[key] ?? null;
             update[key] = session[key];
         }
@@ -1267,6 +1268,7 @@ async function saveLogChannelMap(guildId, map = {}) {
                     voiceChannelId: map.voiceChannelId || null,
                     serverChannelId: map.serverChannelId || null,
                     securityChannelId: map.securityChannelId || null,
+                    moderationChannelId: map.moderationChannelId || null,
                     updatedAt: Date.now()
                 }
             },
@@ -1287,7 +1289,8 @@ async function setLogChannelMap(guildId, category, channelId) {
         member: "memberChannelId",
         voice: "voiceChannelId",
         server: "serverChannelId",
-        security: "securityChannelId"
+        security: "securityChannelId",
+        moderation: "moderationChannelId"
     };
     const key = keyMap[category];
     if (!key) return false;

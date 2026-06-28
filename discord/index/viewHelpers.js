@@ -15,9 +15,11 @@ const NAV_LINKS = [
     ["/commands", "⚡ คำสั่ง"],
     ["/whitelist", "📋 Whitelist"],
     ["/approved", "✅ Approved"],
+    ["/join-campaign", "📥 Join"],
     ["/docs", "📖 คู่มือ"],
     ["/logs", "📜 Logs"],
     ["/logs/voice", "🔊 Voice"],
+    ["/audit-logs", "🧾 Audit"]
 ];
 
 function navBar(active = "") {

@@ -7,15 +7,16 @@ DO NOT SIMPLIFY: Permission check chain — each check serves a specific purpose
 ================================================================================
 */
 
-const { MessageEmbed, MessageActionRow, MessageButton } = require("discord.js");
+const { MessageEmbed } = require("discord.js");
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");
 const {
     requireMemberPermission,
     requireBotPermission,
-    checkRoleHierarchy,
     safeDefer
 } = require("../guards/commandGuards");
+const { handleModerationCommand } = require("./moderationWorkflow");
+
 // Race Condition Guards
 const activeVoiceKicks = new Set();
 
@@ -27,7 +28,7 @@ async function handle(interaction, client, sessionManager, getLogChannel) {
 
     if (cmd === "voicekickall") return handleVoiceKickAll(interaction, getLogChannel);
     if (cmd === "clear")        return handleClear(interaction);
-    if (["ban", "kick", "timeout"].includes(cmd)) return handleModeration(interaction, client, getLogChannel);
+    if (["ban", "kick", "timeout"].includes(cmd)) return handleModerationCommand(interaction, client);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -48,7 +49,7 @@ async function handleVoiceKickAll(interaction, getLogChannel) {
     try {
         const startTime = Date.now();
         const MAX_DURATION = 14 * 60 * 1000;
-        let kicked = [];
+        const kicked = [];
         let isTimeoutHit = false;
 
         const memberSnapshot = Array.from(vc.members.values());
@@ -61,7 +62,7 @@ async function handleVoiceKickAll(interaction, getLogChannel) {
                     await member.voice.disconnect();
                     kicked.push(`<@${member.id}>`);
                     await new Promise(r => setTimeout(r, 500));
-                } catch (e) {}
+                } catch {}
             }
         }
 
@@ -130,92 +131,6 @@ async function handleClear(interaction) {
             return interaction.reply({ content: `> ${config.emojis.warning} ข้อความบางรายการถูกลบไปแล้ว`, ephemeral: true });
         }
         return interaction.reply({ content: `> ${config.emojis.error} ล้มเหลว: ${e.message}`, ephemeral: true });
-    }
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-//  ⚖️  BAN / KICK / TIMEOUT
-// ════════════════════════════════════════════════════════════════════════════
-async function handleModeration(interaction, client, getLogChannel) {
-    const requiredPermission = {
-        ban: "BAN_MEMBERS",
-        kick: "KICK_MEMBERS",
-        timeout: "MODERATE_MEMBERS"
-    }[interaction.commandName];
-
-    if (!await requireMemberPermission(
-        interaction,
-        [requiredPermission, "ADMINISTRATOR"],
-        `> ${config.emojis.no_entry} ไม่มีสิทธิ์ใช้งานคำสั่งนี้!`,
-        { mode: "any" }
-    )) return;
-
-    const target = interaction.options.getMember("target");
-    const reason = interaction.options.getString("reason") || "ไม่มีเหตุผลระบุ";
-
-    const hierarchy = checkRoleHierarchy({ interaction, target, client, config });
-    if (!hierarchy.ok) return interaction.reply({ content: hierarchy.content, ephemeral: true });
-
-    if (!target.manageable && interaction.commandName !== "ban") {
-        return interaction.reply({ content: `> ${config.emojis.error} บอทไม่มีสิทธิ์จัดการสมาชิกท่านนี้`, ephemeral: true });
-    }
-
-    if (interaction.commandName === "timeout") {
-        const mins = interaction.options.getInteger("minutes");
-        if (mins <= 0) return interaction.reply({ content: `> ${config.emojis.error} เวลาต้องมากกว่า 0 นาที!`, ephemeral: true });
-        if (mins > 40000) return interaction.reply({ content: `> ${config.emojis.error} เกินขีดจำกัด Discord (สูงสุด ~40,000 นาที)`, ephemeral: true });
-    }
-
-    await safeDefer(interaction);
-    const targetAvatar = target.user.displayAvatarURL({ dynamic: true, size: 1024 });
-
-    const dmEmbed = new MessageEmbed()
-        .setColor(config.system.themeColors.error)
-        .setTitle(`${config.emojis.punishment} คุณถูกระงับสิทธิ์ในเซิร์ฟเวอร์ ${interaction.guild.name}`)
-        .setThumbnail(targetAvatar);
-
-    try {
-        if (interaction.commandName === "ban") {
-            if (!interaction.guild.members.me.permissions.has("BAN_MEMBERS")) throw new Error("MISSING_PERMS");
-            dmEmbed.setDescription(`— **การดำเนินการ:** แบนถาวร\n— **ผู้ดำเนินการ:** ${interaction.user.tag}\n— **เหตุผล:** ${reason}`);
-            await target.user.send({ embeds: [dmEmbed] }).catch(() => {});
-            await target.ban({ reason });
-
-        } else if (interaction.commandName === "kick") {
-            if (!interaction.guild.members.me.permissions.has("KICK_MEMBERS")) throw new Error("MISSING_PERMS");
-            dmEmbed.setDescription(`— **การดำเนินการ:** เตะออกจากเซิร์ฟเวอร์\n— **ผู้ดำเนินการ:** ${interaction.user.tag}\n— **เหตุผล:** ${reason}`);
-            await target.user.send({ embeds: [dmEmbed] }).catch(() => {});
-            await target.kick(reason);
-
-        } else if (interaction.commandName === "timeout") {
-            if (!interaction.guild.members.me.permissions.has("MODERATE_MEMBERS")) throw new Error("MISSING_PERMS");
-            const mins = interaction.options.getInteger("minutes");
-            dmEmbed.setDescription(`— **การดำเนินการ:** Timeout ${mins} นาที ${config.emojis.timeout_icon}\n— **ผู้ดำเนินการ:** ${interaction.user.tag}\n— **เหตุผล:** ${reason}`);
-            await target.timeout(mins * 60000, reason);
-            await target.user.send({ embeds: [dmEmbed] }).catch(() => {});
-        }
-
-        const replyEmbed = new MessageEmbed()
-            .setColor(config.system.themeColors.success)
-            .setAuthor({ name: "ลงดาบผู้กระทำผิดเรียบร้อย", iconURL: interaction.guild.iconURL() })
-            .setDescription(
-                `> ${config.emojis.success} **ดำเนินการสำเร็จ!**\n` +
-                `> ${config.emojis.user} **เป้าหมาย:** <@${target.id}>\n` +
-                `> ${config.emojis.hammer} **การดำเนินการ:** **${interaction.commandName.toUpperCase()}**\n` +
-                `> ${config.emojis.note} **เหตุผล:** ${reason}`
-            )
-            .setThumbnail(targetAvatar);
-
-        const logCh = await getLogChannel(interaction.guild, 'member');
-        if (logCh) logCh.send({ embeds: [replyEmbed] }).catch(() => {});
-        return interaction.editReply({ embeds: [replyEmbed] });
-
-    } catch (err) {
-        sessionManager.systemMetrics.increment('errors');
-        if (err.message === "MISSING_PERMS") {
-            return interaction.editReply({ content: `> ${config.emojis.error} บอทไม่มีสิทธิ์ที่จำเป็น!` });
-        }
-        return interaction.editReply({ content: `> ${config.emojis.error} ไม่สามารถดำเนินการได้: ${err.message}` });
     }
 }
 

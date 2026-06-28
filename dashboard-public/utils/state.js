@@ -115,7 +115,7 @@ function decodeCompactCallbackStateV4(parts) {
 
     if (!safeEqual(sig, expected)) return null;
 
-    const ts = parseInt(ts36, 36);
+    const ts = Number.parseInt(ts36, 36);
 
     if (!Number.isFinite(ts)) return null;
 
@@ -146,7 +146,7 @@ function decodeCompactCallbackStateV3(parts) {
 
     if (!safeEqual(sig, expected)) return null;
 
-    const ts = parseInt(ts36, 36);
+    const ts = Number.parseInt(ts36, 36);
 
     if (!Number.isFinite(ts)) return null;
 
@@ -176,10 +176,24 @@ function decodeCompactCallbackState(token) {
     }
 }
 
+function isCompactCallbackStateExpired(compact) {
+    const expiresAt = Number(compact?.ts);
+
+    if (!Number.isFinite(expiresAt)) return true;
+
+    return Date.now() > expiresAt;
+}
+
 function decodeCallbackState(state, options = {}) {
     const compact = decodeCompactCallbackState(state);
 
-    if (compact) return compact;
+    if (compact) {
+        if ((compact.v === 4 || compact.v === 3) && isCompactCallbackStateExpired(compact)) {
+            return null;
+        }
+
+        return compact;
+    }
 
     const parsed = decodeSignedState(state);
 
@@ -207,5 +221,6 @@ module.exports = {
     decodeSignedState,
     createCompactCallbackState,
     decodeCompactCallbackState,
+    isCompactCallbackStateExpired,
     decodeCallbackState
 };

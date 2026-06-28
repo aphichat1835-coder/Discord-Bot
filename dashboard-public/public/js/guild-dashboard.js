@@ -333,12 +333,13 @@
   }
 
   async function api(path, options = {}) {
+    const headers = options.headers ?? {};
     const res = await fetch(path, {
       ...options,
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
-        ...(options.headers || {})
+        ...headers
       }
     });
 
@@ -440,23 +441,23 @@
     }
   }
 
-  function fillConfig(config) {
-    state.currentConfig = config || {};
-    const verification = state.currentConfig.verification || {};
-    const panel = verification.panel || {};
-
-    const mode = normalizeVerifyMode(
+  function getPanelMode(verification = {}, panel = {}) {
+    return normalizeVerifyMode(
       panel.verifyType ||
       verification.oauthMode ||
       verification.verifyType ||
       "oauth"
     );
+  }
 
+  function fillVerificationCore(verification = {}) {
     setChecked("v-enabled", verification.enabled !== false);
     setInput("v-roleId", verification.roleId || "");
     setInput("v-channelId", verification.channelId || "");
     setInput("v-messageId", verification.messageId || "");
+  }
 
+  function fillPanelConfig(panel = {}, mode = "oauth") {
     setInput("p-content", panel.content || "");
     setInput("p-title", panel.title || "");
     setInput("p-description", panel.description || "");
@@ -468,11 +469,11 @@
     setInput("p-buttonText", panel.buttonText || panel.buttonLabel || "✅ ยืนยันตัวตน ✅");
     setSelect("p-verifyType", mode, "oauth");
     setChecked("p-showTimestamp", !!panel.showTimestamp);
+  }
 
-    const antiAlt = defaultAntiAltConfig(verification.antiAlt || {});
+  function fillAntiAltConfig(antiAltConfig = {}) {
+    const antiAlt = defaultAntiAltConfig(antiAltConfig);
 
-    setChecked("v-blockVPN", verification.blockVPN !== false);
-    setChecked("v-blockHosting", !!verification.blockHosting);
     setChecked("v-antiAltEnabled", !!antiAlt.enabled);
     setSelect("v-ipDuplicateAction", antiAlt.ipDuplicateAction, "log_only");
     setInput("v-maxUsersPerIp", antiAlt.maxUsersPerIp);
@@ -482,6 +483,11 @@
     setSelect("v-spoofedHeaderAction", antiAlt.spoofedHeaderAction, "delay");
     setSelect("v-unknownLookupAction", antiAlt.unknownLookupAction, "delay");
     setInput("v-securityDelayMs", antiAlt.delayMs);
+  }
+
+  function fillVerificationPolicy(verification = {}) {
+    setChecked("v-blockVPN", verification.blockVPN !== false);
+    setChecked("v-blockHosting", !!verification.blockHosting);
     setChecked("v-requireEmail", !!verification.requireEmail);
     setChecked("v-requireEmailVerified", !!verification.requireEmailVerified);
     setChecked("v-requireConnections", !!verification.requireConnections);
@@ -489,6 +495,18 @@
     setInput("v-minConnections", verification.minConnections ?? 1);
     setInput("v-allowedCountries", Array.isArray(verification.allowedCountries) ? verification.allowedCountries.join(",") : "");
     setInput("v-blockedCountries", Array.isArray(verification.blockedCountries) ? verification.blockedCountries.join(",") : "");
+  }
+
+  function fillConfig(config) {
+    state.currentConfig = config || {};
+    const verification = state.currentConfig.verification || {};
+    const panel = verification.panel || {};
+    const mode = getPanelMode(verification, panel);
+
+    fillVerificationCore(verification);
+    fillPanelConfig(panel, mode);
+    fillAntiAltConfig(verification.antiAlt || {});
+    fillVerificationPolicy(verification);
 
     updateOverviewConfig();
     renderEmbedPreview();
@@ -628,6 +646,90 @@
     `;
   }
 
+  function renderSensitiveNotice(log = {}) {
+    if (!log.sensitiveRedacted) return "";
+
+    return `<div class="notice notice-warn mb-12">ข้อมูล sensitive ถูกซ่อนอยู่ เพราะยังไม่ได้รับ owner approval หรือ approval หมดอายุ</div>`;
+  }
+
+  function renderDiscordDetail(log = {}, user = {}) {
+    return `
+      <b>บัญชี Discord</b><br>
+      User ID: <span class="mono">${h(log.userId || user.id || "—")}</span><br>
+      Username: ${h(user.username || log.username || "—")}<br>
+      Global name: ${h(user.globalName || log.globalName || "—")}<br>
+      Email: ${h(user.email || log.email || "—")} · Verified: ${h(boolText(user.verified ?? log.emailVerified))}<br>
+      Locale: ${h(user.locale || log.locale || "—")} · Flags: ${h(user.flags ?? log.flags ?? "—")}<br><br>
+    `;
+  }
+
+  function renderMemberDetail(log = {}, roles = []) {
+    return `
+      <b>สมาชิกในเซิร์ฟเวอร์</b><br>
+      Nickname: ${h(log.memberNick || log.nickname || "—")}<br>
+      Joined at: ${h(fmtTime(log.joinedAt))}<br>
+      Roles: ${roles.length ? roles.map(h).join(", ") : "—"}<br><br>
+    `;
+  }
+
+  function renderNetworkDetail(log = {}, ipInfo = {}) {
+    const rawIp = log.rawIp || log.ip || ipInfo.rawIp || ipInfo.ip || "—";
+
+    return `
+      <b>Network / IP</b><br>
+      Raw IP: <span class="mono">${h(rawIp)}</span><br>
+      Country: ${h(ipInfo.country || ipInfo.countryCode || log.countryCode || "—")}
+      · City: ${h(ipInfo.city || log.city || "—")}<br>
+      ISP: ${h(ipInfo.isp || log.isp || "—")}
+      · ASN: ${h(ipInfo.asn || log.asn || "—")}<br>
+      VPN: ${h(boolText(ipInfo.isVPN ?? log.isVPN))}
+      · Proxy: ${h(boolText(ipInfo.isProxy ?? log.isProxy))}
+      · TOR: ${h(boolText(ipInfo.isTOR ?? log.isTOR))}
+      · Hosting: ${h(boolText(ipInfo.isHosting ?? log.isHosting))}<br><br>
+    `;
+  }
+
+  function renderDeviceDetail(log = {}, device = {}) {
+    return `
+      <b>Device / Browser</b><br>
+      Browser: ${h(device.browser || log.browser || "—")}
+      · OS: ${h(device.os || log.os || "—")}
+      · Platform: ${h(device.platform || log.platform || "—")}<br>
+      Timezone: ${h(device.timezone || log.timezone || "—")}
+      · Language: ${h(device.language || log.language || "—")}<br>
+      Screen: ${h(device.screenSize || log.screenSize || "—")}
+      · Viewport: ${h(device.viewportSize || log.viewportSize || "—")}<br><br>
+    `;
+  }
+
+  function renderConnectionDetail(log = {}, connections = [], guilds = []) {
+    const connectionList = connections.length
+      ? `Connections list: ${connections.map((c) => h(c.type || c.name || "unknown")).join(", ")}<br>`
+      : "";
+    const guildList = guilds.length
+      ? `Guild sample: ${guilds.slice(0, 12).map((g) => h(g.name || g.id || "unknown")).join(", ")}<br>`
+      : "";
+
+    return `
+      <b>Connections / Guilds</b><br>
+      Connections: ${h(log.connectionsCount ?? connections.length ?? 0)}
+      · Guilds: ${h(log.guildsCount ?? guilds.length ?? 0)}<br>
+      ${connectionList}
+      ${guildList}
+    `;
+  }
+
+  function renderVerificationResultDetail(log = {}) {
+    return `
+      <br><b>ผลการยืนยัน</b><br>
+      Reason: ${h(log.reason || "—")}<br>
+      Policy: ${h(log.policyResult || log.policy || "—")}<br>
+      Role result: ${h(log.roleResult || log.roleAssignmentResult || "—")}<br>
+      Request ID: <span class="mono">${h(log.requestId || "—")}</span><br>
+      Time: ${h(fmtTime(log.verifiedAt || log.createdAt))}
+    `;
+  }
+
   function renderDetailedVerifyLog(log = {}) {
     const user = log.user || {};
     const ipInfo = log.ipInfo || {};
@@ -636,64 +738,21 @@
     const guilds = Array.isArray(log.guilds) ? log.guilds : [];
     const roles = Array.isArray(log.memberRoles) ? log.memberRoles : [];
 
-    const rawIp = log.rawIp || log.ip || ipInfo.rawIp || ipInfo.ip || "—";
-    const sensitiveNotice = log.sensitiveRedacted
-      ? `<div class="notice notice-warn mb-12">ข้อมูล sensitive ถูกซ่อนอยู่ เพราะยังไม่ได้รับ owner approval หรือ approval หมดอายุ</div>`
-      : "";
-
     return `
       <div class="list-item sensitive">
-        ${sensitiveNotice}
+        ${renderSensitiveNotice(log)}
         <div class="list-title">
           <span>${resultBadge(log.result)} ${h(user.globalName || log.globalName || user.username || log.username || log.userId || "Unknown")}</span>
           ${riskBadge(log.riskScore)}
         </div>
 
         <div class="list-meta">
-          <b>บัญชี Discord</b><br>
-          User ID: <span class="mono">${h(log.userId || user.id || "—")}</span><br>
-          Username: ${h(user.username || log.username || "—")}<br>
-          Global name: ${h(user.globalName || log.globalName || "—")}<br>
-          Email: ${h(user.email || log.email || "—")} · Verified: ${h(boolText(user.verified || log.emailVerified))}<br>
-          Locale: ${h(user.locale || log.locale || "—")} · Flags: ${h(user.flags ?? log.flags ?? "—")}<br><br>
-
-          <b>สมาชิกในเซิร์ฟเวอร์</b><br>
-          Nickname: ${h(log.memberNick || log.nickname || "—")}<br>
-          Joined at: ${h(fmtTime(log.joinedAt))}<br>
-          Roles: ${roles.length ? roles.map(h).join(", ") : "—"}<br><br>
-
-          <b>Network / IP</b><br>
-          Raw IP: <span class="mono">${h(rawIp)}</span><br>
-          Country: ${h(ipInfo.country || ipInfo.countryCode || log.countryCode || "—")}
-          · City: ${h(ipInfo.city || log.city || "—")}<br>
-          ISP: ${h(ipInfo.isp || log.isp || "—")}
-          · ASN: ${h(ipInfo.asn || log.asn || "—")}<br>
-          VPN: ${h(boolText(ipInfo.isVPN || log.isVPN))}
-          · Proxy: ${h(boolText(ipInfo.isProxy || log.isProxy))}
-          · TOR: ${h(boolText(ipInfo.isTOR || log.isTOR))}
-          · Hosting: ${h(boolText(ipInfo.isHosting || log.isHosting))}<br><br>
-
-          <b>Device / Browser</b><br>
-          Browser: ${h(device.browser || log.browser || "—")}
-          · OS: ${h(device.os || log.os || "—")}
-          · Platform: ${h(device.platform || log.platform || "—")}<br>
-          Timezone: ${h(device.timezone || log.timezone || "—")}
-          · Language: ${h(device.language || log.language || "—")}<br>
-          Screen: ${h(device.screenSize || log.screenSize || "—")}
-          · Viewport: ${h(device.viewportSize || log.viewportSize || "—")}<br><br>
-
-          <b>Connections / Guilds</b><br>
-          Connections: ${h(log.connectionsCount ?? connections.length ?? 0)}
-          · Guilds: ${h(log.guildsCount ?? guilds.length ?? 0)}<br>
-          ${connections.length ? `Connections list: ${connections.map((c) => h(c.type || c.name || "unknown")).join(", ")}<br>` : ""}
-          ${guilds.length ? `Guild sample: ${guilds.slice(0, 12).map((g) => h(g.name || g.id || "unknown")).join(", ")}<br>` : ""}
-
-          <br><b>ผลการยืนยัน</b><br>
-          Reason: ${h(log.reason || "—")}<br>
-          Policy: ${h(log.policyResult || log.policy || "—")}<br>
-          Role result: ${h(log.roleResult || log.roleAssignmentResult || "—")}<br>
-          Request ID: <span class="mono">${h(log.requestId || "—")}</span><br>
-          Time: ${h(fmtTime(log.verifiedAt || log.createdAt))}
+          ${renderDiscordDetail(log, user)}
+          ${renderMemberDetail(log, roles)}
+          ${renderNetworkDetail(log, ipInfo)}
+          ${renderDeviceDetail(log, device)}
+          ${renderConnectionDetail(log, connections, guilds)}
+          ${renderVerificationResultDetail(log)}
         </div>
       </div>
     `;
@@ -732,8 +791,8 @@
       requireEmail: readBool("v-requireEmail"),
       requireEmailVerified: readBool("v-requireEmailVerified"),
       requireConnections: readBool("v-requireConnections"),
-      minAccountAgeDays: Math.max(0, Math.min(3650, parseInt(readText("v-minAge"), 10) || 0)),
-      minConnections: Math.max(1, Math.min(20, parseInt(readText("v-minConnections"), 10) || 1)),
+      minAccountAgeDays: Math.max(0, Math.min(3650, Number.parseInt(readText("v-minAge"), 10) || 0)),
+      minConnections: Math.max(1, Math.min(20, Number.parseInt(readText("v-minConnections"), 10) || 1)),
       allowedCountries: readText("v-allowedCountries"),
       blockedCountries: readText("v-blockedCountries"),
 

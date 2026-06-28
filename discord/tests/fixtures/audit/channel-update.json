@@ -1,0 +1,13 @@
+{
+  "id": "audit_channel_update_1",
+  "action": "CHANNEL_UPDATE",
+  "user_id": "111111111111111111",
+  "target_id": "555555555555555555",
+  "options": { "channel_id": "555555555555555555" },
+  "changes": [
+    { "key": "name", "old_value": "general", "new_value": "chat" },
+    { "key": "topic", "old_value": "old topic", "new_value": "new topic" },
+    { "key": "rate_limit_per_user", "old_value": 0, "new_value": 5 }
+  ],
+  "createdTimestamp": 1710000002000
+}

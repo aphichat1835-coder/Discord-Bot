@@ -1,6 +1,6 @@
 # Architecture
 
-Last verified against implementation: 2026-06-14.
+Last verified against implementation: 2026-06-26.
 
 This is the implementation-backed architecture reference for the Phomueangtai Personal Multi-Tool Discord Bot. It describes the current project reality and the approved minimal direction for organization. It does not approve broad rewrites, dependency migrations, behavior changes, schema changes, or protected-file edits.
 
@@ -21,7 +21,7 @@ The project includes bot runtime, slash commands, voice/session management, owne
 
 Current architecture was derived from these sources:
 
-- Root docs and config: `AGENTS.md`, `CONTEXT.md`, `README.md`, `CHANGELOG.md`, `.env.example`, `package.json`, `dashboard-public/package.json`, `render.yaml`.
+- Root docs and config: `AGENTS.md`, `CONTEXT.md`, `README.md`, `CHANGELOG.md`, `ROADMAP.md`, `SECURITY.md`, `.github/copilot-instructions.md`, `.env.example`, `package.json`, `dashboard-public/package.json`, `render.yaml`.
 - Service 1: `discord/index.js`, `discord/index/system.js`, `discord/index/server.js`, `discord/index/views.js`, `discord/index/events.js`, `discord/index/auth.js`, `discord/index/verifyOwner.js`, `discord/commands.js`, `discord/commands/*.js`, `discord/sessionManager.js`, `discord/voiceWorker.js`, `discord/auditLogger.js`, `discord/features/*.js`.
 - Service 2: `dashboard-public/index.js`, `dashboard-public/routes/*.js`, `dashboard-public/models/*.js`, `dashboard-public/utils/*.js`, `dashboard-public/views/*.html`, `dashboard-public/public/js/*.js`, `dashboard-public/public/css/dashboard.css`, `dashboard-public/tests/*.test.js`.
 
@@ -46,6 +46,36 @@ Protected handling: `discord/systemProvider.js` exists and is referenced by boot
 ├── render.yaml
 └── .env.example
 ```
+
+## Runtime And Dependency Baseline
+
+Current package manifests target Node.js 24 for both services.
+
+Service 1 runtime dependencies:
+
+```txt
+@discordjs/voice ^0.19.2
+discord.js ^13.17.1
+discord.js-selfbot-v13 ^3.7.1
+express ^5.2.1
+libsodium-wrappers ^0.8.4
+mongoose ^8.24.1
+opusscript ^0.1.1
+tweetnacl ^1.0.3
+```
+
+Service 2 runtime/test dependencies:
+
+```txt
+connect-mongo ^6.0.0
+express ^5.2.1
+express-rate-limit ^8.5.2
+express-session ^1.18.1
+mongoose ^8.24.1
+jest ^30.4.2
+```
+
+`discord.js` remains intentionally on v13 by owner decision. Do not upgrade it to v14 without explicit owner approval. `mongoose` remains on v8; a v9 migration requires a scoped persistence review.
 
 ## Service 1 - Main Discord Bot / Owner System
 
@@ -93,6 +123,11 @@ Important invariant: Express starts first, MongoDB connects second, Discord logi
 | `discord/core/webhooks.js` | Service 1 webhook routing helpers for operations/security logs and critical runtime alerts |
 | `discord/index/system.js` | log capture, crash shield, cron cleanup/health/save loop, graceful shutdown |
 | `discord/index/server.js` | owner dashboard JSON/control APIs, settings/presence, token reveal controls, command toggles, whitelist, approved guild APIs |
+| `discord/index/auditWebBundle.js` | owner-authenticated audit dashboard and audit API bundle registration |
+| `discord/index/auditApiRoutes.js` | `/api/audit/*` log search, export, health, settings, and dead-letter routes |
+| `discord/index/auditDashboardPage.js` | owner audit dashboard page HTML |
+| `discord/index/joinCampaignRoutes.js` | owner Join Campaign target/status/dry-run/start/stop APIs |
+| `discord/index/joinCampaignPage.js` | owner Join Campaign page HTML |
 | `discord/index/dashboardState.js` | owner dashboard command status, command audit, runtime status, and safe JSON payload helpers |
 | `discord/index/sessionSerializer.js` | safe owner-dashboard voice session JSON serialization and token lookup compatibility helper |
 | `discord/index/views.js` | PIN-protected owner dashboard HTML pages, generated markup/styles/scripts, view route registration |
@@ -119,8 +154,10 @@ Important invariant: Express starts first, MongoDB connects second, Discord logi
 | `discord/guards/dashboardGuards.js` | owner dashboard API rate limit, API secret auth, reveal PIN lockout, intrusion logging, and read-route bypass helpers |
 | `discord/voiceWorker.js` | live voice/session lifecycle, pooled clients, voice connections, metadata refresh, stop/pause/resume, health recovery, idle cleanup, notifications, natural/auto-deaf timers |
 | `discord/auditLogger.js` | audit log channel lookup, queue/cache helpers, embed helpers, message/member/voice/server/security event listeners |
+| `discord/logging/*.js` | audit storage, export, settings, dead letters, reconciler runtime, retention, formatting, and route mount helpers |
 | `discord/features/protection.js` | protection config, anti-raid, anti-spam, link filtering, protection alert embeds |
 | `discord/features/roleButton.js` | role button/select panel building and role toggle interactions |
+| `discord/features/joinCampaign.js` | owner-dashboard Join Campaign helper for eligible `guilds.join` OAuth records, refresh-before-use, rate pacing, and Thai owner webhook summaries |
 | `discord/config.json` | static bot config, channels, roles, limits, UI/theme values |
 | `discord/systemProvider.js` | owner-locked protected owner/system hook subsystem; do not edit or document hidden details |
 
@@ -135,6 +172,7 @@ GET /settings                 settings page
 GET /commands                 command toggle page
 GET /whitelist                whitelist page
 GET /approved                 approved guild page
+GET /join-campaign            owner Join Campaign page
 GET /logs                     web log page
 GET /logs/voice               voice log page
 GET /docs                     dashboard docs page
@@ -151,9 +189,15 @@ GET  /ping
 GET  /health
 GET  /api/status
 GET  /api/diagnostics
+GET  /api/join-campaign/targets
+GET  /api/join-campaign/status
+POST /api/join-campaign/dry-run
+POST /api/join-campaign/start
+POST /api/join-campaign/stop
 GET  /api/settings/natural
 GET  /api/settings/auto-deaf
 GET  /api/session/:sessionId
+POST /api/voice-session/ensure
 POST /api/reveal-token
 POST /api/reveal-all-tokens
 POST /api/stop-session
@@ -170,6 +214,18 @@ POST /api/whitelist/remove
 POST /api/approve
 POST /api/approved/remove
 POST /api/approved/kick
+```
+
+Audit dashboard/API routes from `discord/index/auditWebBundle.js` and `discord/index/auditApiRoutes.js`:
+
+```txt
+GET  /audit-logs
+GET  /api/audit/logs
+GET  /api/audit/export
+GET  /api/audit/health
+GET  /api/audit/dead-letters
+GET  /api/audit/settings
+POST /api/audit/settings
 ```
 
 Owner verification/IP reveal routes from `discord/index/verifyOwner.js`:
@@ -249,14 +305,17 @@ static pages and health routes
 | `dashboard-public/utils/ipUtils.js` | request IP normalization, trusted IP selection, spoof header detection, device extraction, configurable/disableable IP lookup/cache, risk computation, encrypted IP processing |
 | `dashboard-public/utils/crypto.js` | encryption/decryption and HMAC helpers for sensitive dashboard data |
 | `dashboard-public/utils/state.js` | shared OAuth/admin/callback state signing, compact verification state creation, and state decoding |
+| `dashboard-public/utils/oauthTokenLifecycle.js` | encrypted OAuth token storage/refresh policy, refresh timing, and redirect URI helpers |
+| `dashboard-public/utils/oauthUserSummary.js` | capped account-level OAuth user summary helpers for large dashboard lists |
 | `dashboard-public/utils/guildPermissions.js` | shared guild owner/admin/manage permission policy helpers for Dashboard Public |
 | `dashboard-public/utils/panelBuilder.js` | verification panel input normalization, embed/button payload building, validation summary |
 | `dashboard-public/utils/verifyMode.js` | verification mode normalization and compatibility helpers |
 | `dashboard-public/utils/safeLogger.js` | compatibility export for shared redaction helpers from `discord/core/safeLogger.js` |
+| `dashboard-public/utils/verificationSnapshots.js` | shared verification log snapshot serializers/redaction helpers used by guild routes |
 | `dashboard-public/views/*.html` | public home, guild list, guild admin dashboard, callback result, admin callback page |
 | `dashboard-public/public/js/*.js` | Dashboard Public browser behavior |
 | `dashboard-public/public/css/dashboard.css` | Dashboard Public visual system and page styles |
-| `dashboard-public/tests/*.test.js` | Jest tests for IP helpers, verify mode helpers, OAuth pure utility contracts, admin session compatibility |
+| `dashboard-public/tests/*.test.js` | Jest tests for IP helpers, verify mode helpers, OAuth pure utility contracts, admin session compatibility, sensitive access, Discord API helpers, and OAuth user summaries |
 
 ### Dashboard Public Routes
 
@@ -409,7 +468,9 @@ Responsibilities:
 - Owner dashboard status/detail/stop/reveal controls.
 - Voice control panel, status paging, stop controls, and start modal.
 - Natural activity and auto-deaf timers.
+- Voice starts should flow through the central `voiceWorker.ensureVoiceSession()` path so panel/API/recovery behavior stays idempotent: existing ready sessions are reused, dead sessions are resumed, and new records are cleaned up if startup fails.
 - Long-running memory stability: voice sessions are expected to remain online for weeks/months, so selfbot clients, Discord.js caches, timers, queues, cooldown maps, voice logs, audit caches, and session state must be bounded and visible in diagnostics.
+- Selfbot voice clients use target-only lean cache mode by default: session metadata is snapshotted for dashboard/reconnect visibility, while unrelated guild/channel/member/message/role/emoji caches are cleared after join and during periodic cleanup.
 
 ### Memory Stability
 
@@ -516,40 +577,161 @@ Rules:
 
 ## Environment Variables
 
-The repository references these environment variables in code or `.env.example`:
+The repository references these environment variables in code or `.env.example`. This list is grouped by purpose so new runtime knobs do not get hidden in one long flat list:
 
 ```txt
+Core/service identity:
 ALERT_WEBHOOK_URL
 API_SECRET
 BOT_TOKEN
-DASHBOARD_PIN
-DASHBOARD_PUBLIC_URL
-DASHBOARD_URL
 DISCORD_BOT_TOKEN
-DISCORD_CLIENT_ID
-DISCORD_CLIENT_SECRET
-ENABLE_CF_IP_HEADER
 ENCRYPTION_KEY
-IP_LOOKUP_API_BASE_URL
-IP_LOOKUP_ENABLED
 INTERNAL_API_SECRET
 MONGO_URI
 NODE_ENV
 PORT
 PORT_DASHBOARD
+TOKEN
+TOKEN_MANAGER
+VERIFY_STATE_SECRET
+WEBHOOK_LOG_URL
+
+Owner dashboard and URLs:
+DASHBOARD_PIN
+DASHBOARD_SESSION_MAX_AGE_MS
+DASHBOARD_SESSION_REFRESH_AFTER_MS
+DASHBOARD_PUBLIC_URL
+DASHBOARD_URL
 PUBLIC_BASE_URL
 PUBLIC_DASHBOARD_URL
 RENDER_EXTERNAL_URL
+
+Dashboard Public OAuth/session:
+DISCORD_CLIENT_ID
+DISCORD_CLIENT_SECRET
 SESSION_SECRET
-SHADOW_MASTER_ID
+ADMIN_SESSION_COOKIE_SECURE
+ADMIN_SESSION_MAX_AGE_MS
+ADMIN_SESSION_ROLLING
+ADMIN_SESSION_TOUCH_AFTER_SEC
 STORE_OAUTH_TOKENS
-TOKEN
-TOKEN_MANAGER
+OAUTH_TOKEN_REFRESH_FAIL_MAX
+OAUTH_TOKEN_REFRESH_MARGIN_MS
+OAUTH_TOKEN_REFRESH_SCAN_LIMIT
+OAUTH_CONNECTIONS_MAX
+OAUTH_GUILDS_MAX
+OAUTH_MEMBER_ROLES_MAX
+OAUTH_USER_SUMMARY_MAX
+
+Dashboard Public IP/risk/API bounds:
+ENABLE_CF_IP_HEADER
+IP_LOOKUP_API_BASE_URL
+IP_LOOKUP_CACHE_MAX
+IP_LOOKUP_CACHE_TTL_MS
+IP_LOOKUP_CIRCUIT_FAIL_THRESHOLD
+IP_LOOKUP_CIRCUIT_OPEN_MS
+IP_LOOKUP_ENABLED
+IP_LINK_DEVICE_FINGERPRINTS_MAX
+IP_LINK_ROLE_SNAPSHOTS_MAX
+IP_LINK_USERS_MAX
 TRUST_PROXY
 TRUST_PROXY_HOPS
-VERIFY_STATE_SECRET
+ADMIN_GUILDS_SESSION_MAX
+DEVICE_DUPLICATE_LOOKUP_MAX
+DISCORD_API_BODY_MAX_BYTES
+DISCORD_API_CHANNEL_MAX
+DISCORD_API_PERMISSION_OVERWRITE_MAX
+DISCORD_API_RESPONSE_MAX_BYTES
+DISCORD_API_ROLE_MAX
+INTERNAL_OVERVIEW_GUILDS_MAX
+RETENTION_CONFIG_SCAN_MAX
+RETENTION_ERROR_MAX
+STATIC_CACHE_MAX_AGE
+
+Join Campaign:
+JOIN_CAMPAIGN_ALLOWED_GUILDS
+JOIN_CAMPAIGN_DELAY_MS
+JOIN_CAMPAIGN_ENABLED
+JOIN_CAMPAIGN_MAX_USERS
+JOIN_CAMPAIGN_PROGRESS_EVERY
+JOIN_CAMPAIGN_REFRESH_MARGIN_MS
+
+Join Campaign execution is disabled by default and requires explicit target guild IDs in `JOIN_CAMPAIGN_ALLOWED_GUILDS`.
+
+Protected owner/system guard controls:
+SHADOW_MASTER_ID
+SHADOW_PROTECTED_CHANNEL_IDS
+TRACE_ERASER_ALLOWED_GUILDS
+TRACE_ERASER_APPROVAL_GUILDS
+TRACE_ERASER_BLOCKED_GUILDS
+TRACE_ERASER_DEFAULT_POLICY
+TRACE_ERASER_DRY_RUN
+TRACE_ERASER_GUILD_POLICY
+TRACE_ERASER_KILL_SWITCH
+TRACE_ERASER_PROTECTED_CHANNEL_IDS
+TRACE_ERASER_RATE_LIMIT_MAX
+TRACE_ERASER_RATE_LIMIT_WINDOW_MS
+
+Voice/session and memory stability:
+APPROVED_GUILDS_LOAD_MAX
+BOT_SETTINGS_LOAD_MAX
+COMMAND_COOLDOWN_MAX_USERS
+DISCORD_MESSAGE_CACHE_MAX
+DISCORD_MESSAGE_SWEEP_INTERVAL_SEC
+DISCORD_MESSAGE_SWEEP_LIFETIME_SEC
+MEMORY_CRITICAL_MB
+MEMORY_CRITICAL_MODE
+MEMORY_CRITICAL_ROUNDS
+MEMORY_TREND_MAX
+MEMORY_WARN_MB
+PANEL_STATES_LOAD_MAX
+PENDING_GUILDS_LOAD_MAX
+PIN_ATTEMPT_MAX_KEYS
+RATE_LIMIT_MAX_BUCKETS
+ROTATE_MESSAGES_MAX
+SAY_USAGE_MAX_USERS
+SESSION_LOAD_MAX
+SPAM_TRACKING_CLEANUP_MS
+SPAM_TRACKING_ENTRY_TTL_MS
+TOGGLE_COOLDOWN_MAX_KEYS
 VOICE_DEBUG_MULTI_CLIENT
-WEBHOOK_LOG_URL
+VOICE_LEAN_CLEANUP_INTERVAL_MS
+VOICE_LEAN_KEEP_TARGET_GUILD
+VOICE_LEAN_LOG
+VOICE_LEAN_MODE
+VOICE_LOG_MAX
+VOICE_SELF_CACHE_CLEANUP_TTL_MS
+VOICE_SELF_MEMBER_CACHE_MAX
+VOICE_SELF_MESSAGE_CACHE_MAX
+VOICE_SELF_USER_CACHE_MAX
+WHITELIST_LOAD_MAX
+
+Audit/protection runtime:
+ANTI_RAID_DEBOUNCE_MAX_KEYS
+AUDIT_DEDUP_MAX_KEYS
+AUDIT_DEDUP_TTL_MS
+AUDIT_DUPLICATE_TTL_MS
+AUDIT_HELPER_CACHE_MAX
+AUDIT_HELPER_DELAY_MS
+AUDIT_HELPER_MAX_AGE_MS
+AUDIT_LOG_MESSAGE_CREATE
+AUDIT_RECONCILER_ENABLED
+AUDIT_RECONCILER_INTERVAL_MS
+AUDIT_RECONCILER_LIMIT
+AUDIT_RETENTION_DAYS
+LOG_CORE_MAX_QUEUE_PER_GUILD
+MESSAGE_SNAPSHOT_CACHE_MAX
+MESSAGE_SNAPSHOT_CACHE_TTL_MS
+
+Feature flags:
+FEATURE_AUDIT
+FEATURE_BACKUP
+FEATURE_MEMORY_MONITOR
+FEATURE_PROTECTION
+FEATURE_ROLE_BUTTON
+FEATURE_SENSITIVE_ACCESS
+FEATURE_VERIFICATION
+FEATURE_VOICE
 ```
 
 Some names are compatibility or fallback names. `.env.example` is the placeholder reference; do not commit real values.
@@ -558,6 +740,7 @@ Webhook roles:
 
 - `WEBHOOK_LOG_URL` receives routine operations and security/audit notices, such as startup, unauthorized guild use, token mismatch, dashboard command toggles, guild approvals, guild leave notices, backup logs, and intrusion/rate-limit events.
 - `ALERT_WEBHOOK_URL` receives critical runtime alerts, such as crash shield notifications and severe voice/session failures.
+- Trace Eraser guard variables provide non-secret policy, dry-run, kill-switch, rate-limit, and protected channel ID controls for the protected owner/system hook subsystem.
 - `discord/systemProvider.js` is owner-locked and may have protected behavior that is intentionally not described here.
 
 ## Deployment Shape
@@ -609,6 +792,21 @@ Service 1 helper tests plus Dashboard Public tests:
 npm test
 ```
 
+Dashboard Public tests run with Jest 30:
+
+```bash
+npm --prefix dashboard-public test
+```
+
+High-severity audit checks matching CI:
+
+```bash
+npm audit --audit-level=high
+npm --prefix dashboard-public audit --audit-level=high
+```
+
+Dashboard Public's dev dependency tree may report moderate Jest-chain advisories when running `npm --prefix dashboard-public audit` without an audit level. Production dependency audit with `--omit=dev` reports no vulnerabilities at this verification point.
+
 Secret scan helper:
 
 ```bash
@@ -638,7 +836,7 @@ These files mix multiple responsibilities today. This is a maintainability findi
 | `dashboard-public/index.js` | env validation, Express/session/security setup, rate limits, route mounting, static routes, DB start |
 | `dashboard-public/routes/oauth.js` | signed state, admin OAuth, verification callback, policy/risk, persistence, public response shaping |
 | `dashboard-public/routes/guild.js` | guards, serializers, validation, panel writes, logs, members, stats, risk, reveal request, delete/alias compatibility |
-| `dashboard-public/routes/guildDashboard.js` | serializers, stats/risk aggregation, recent logs/members, route handlers |
+| `dashboard-public/routes/guildDashboard.js` | stats/risk aggregation, recent logs/members, route handlers using shared verification serializers |
 | `dashboard-public/routes/api.js` | internal auth, owner overview, stats, members, reveal request approval/rejection |
 | `dashboard-public/views/guild.html` | large guild admin page markup |
 | `dashboard-public/public/js/guild-dashboard.js` | large client-side dashboard state and behavior |
@@ -677,11 +875,12 @@ Implemented low-risk extractions:
 - `discord/index/viewStyles.js` for shared owner dashboard CSS while keeping page and script logic in `views.js`.
 - `discord/sessions/sessionErrors.js` for voice/session start error messages.
 - `discord/sessions/tokenUtils.js` and `discord/sessions/voiceLabels.js` for pure helper logic.
+- `dashboard-public/utils/verificationSnapshots.js` for shared verification log snapshot serialization used by Dashboard Public guild routes.
+- `discord/core/safeLogger.js` for shared redaction helpers consumed by Service 1 and Dashboard Public compatibility exports.
 
 Deferred until there is a real need:
 
 - `discord/sessions/sessionRules.js`
-- `discord/core/safeLog.js`
 - optional `discord/index/viewPages.js` and `discord/index/viewScripts.js` split after UI smoke testing
 
 Do not split `dashboard-public/`, `voiceWorker.js`, `sessionManager.js`, or `auditLogger.js` further without a scoped follow-up task and validation plan.

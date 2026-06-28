@@ -26,6 +26,7 @@ const sessionManager = require("./sessionManager");
 const voiceWorker    = require("./voiceWorker");
 const commands       = require("./commands");
 const auditLogger    = require("./auditLogger");
+const { startAuditRuntime, auditReconcilerScheduler } = require("./logging/auditRuntimeLifecycle");
 const memoryMonitor  = require("./index/memoryMonitor");
 const { validateRequiredEnv } = require("./core/env");
 const { createHttpApp } = require("./core/http");
@@ -179,7 +180,7 @@ async function startRotateTimer() {
         if (!s.rotateEnabled) return;
         const msgs = Array.isArray(s.rotateMessages) ? s.rotateMessages.filter(Boolean).slice(0, ROTATE_MESSAGES_MAX) : [];
         if (!msgs.length) return;
-        const intervalMs = Math.max(1, parseInt(s.rotateInterval) || 5) * 60 * 1000;
+        const intervalMs = Math.max(1, Number.parseInt(s.rotateInterval, 10) || 5) * 60 * 1000;
         const actType    = ['WATCHING','LISTENING','PLAYING','COMPETING'].includes(s.botActivityType) ? s.botActivityType : 'WATCHING';
         const status     = ['online','idle','dnd','invisible'].includes(s.botStatus) ? s.botStatus : 'idle';
         _rotateIdx = 0;
@@ -253,7 +254,14 @@ system.initCronJobs({
 // ════════════════════════════════════════════════════════════════════════════
 //  🛑  SHUTDOWN HANDLERS
 // ════════════════════════════════════════════════════════════════════════════
-system.initShutdown({ sessionManager, voiceWorker, client, memoryMonitor, auditLogger });
+system.initShutdown({
+    sessionManager,
+    voiceWorker,
+    client,
+    memoryMonitor,
+    auditLogger,
+    auditReconcilerScheduler
+});
 
 if (isFeatureEnabled("memoryMonitor")) {
     memoryMonitor.startMemoryMonitor({
@@ -431,6 +439,7 @@ client.on("ready", async () => {
         try {
             auditLogger.register(client, sessionManager);
             console.log("[AUDIT] ✅ Audit Logger registered.");
+            startAuditRuntime({ client, sessionManager, allowSettingsDriven: true });
         } catch (auditErr) {
             console.error("[AUDIT] ❌ Failed to register Audit Logger:", auditErr.message);
         }

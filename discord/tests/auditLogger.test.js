@@ -26,7 +26,7 @@ function freshAuditLogger(env = {}) {
 }
 
 test("audit send queue continues after a failed send", async () => {
-    const { logger, restore } = freshAuditLogger({ AUDIT_MAX_QUEUE_PER_GUILD: "5" });
+    const { logger, restore } = freshAuditLogger({ LOG_CORE_MAX_QUEUE_PER_GUILD: "5" });
     const sends = [];
     const channel = {
         async send(payload) {
@@ -47,7 +47,8 @@ test("audit send queue continues after a failed send", async () => {
         }
     };
     const embed = logger._test.buildEmbed({
-        color: "#5865F2",
+        category: "security",
+        severity: "info",
         title: "Security",
         description: "queue test"
     });
@@ -59,57 +60,31 @@ test("audit send queue continues after a failed send", async () => {
         assert.equal(first, false);
         assert.equal(second, true);
         assert.equal(sends.length, 2);
-        assert.equal(logger.getAuditStats().auditSendFailed, 1);
+        assert.equal(logger.getAuditStats().failed, 1);
     } finally {
         logger.stopAuditCleanup();
         restore();
     }
 });
 
-test("audit cache cleanup removes stale member and channel cache entries", () => {
+test("audit cleanup removes stale duplicate keys and expired message snapshots", () => {
     const { logger, restore } = freshAuditLogger();
 
     try {
-        logger._test.memberStateCache.set("guild_user", {
-            nickname: "old",
-            updatedAt: Date.now() - 2 * 60 * 60 * 1000
+        logger._test.recentEventKeys.set("stale", Date.now() - 11 * 60 * 1000);
+        const cache = logger._test.defaultMessageSnapshots;
+        cache.cache.set(cache.key("guild", "message"), {
+            messageId: "message",
+            guildId: "guild",
+            channelId: "channel",
+            content: "old",
+            cachedAt: Date.now() - cache.ttlMs - 1000
         });
-        logger._test.auditChannelCache.set("guild", {
-            map: { securityChannelId: "x" },
-            expiry: Date.now() - 120000
-        });
 
-        logger._test.cleanupAuditCaches();
+        logger._test.cleanupCaches();
 
-        assert.equal(logger._test.memberStateCache.has("guild_user"), false);
-        assert.equal(logger._test.auditChannelCache.has("guild"), false);
-    } finally {
-        logger.stopAuditCleanup();
-        restore();
-    }
-});
-
-test("audit cleanup removes expired circuit and warning throttle state", () => {
-    const { logger, restore } = freshAuditLogger({
-        AUDIT_CIRCUIT_OPEN_MS: "10000",
-        AUDIT_WARN_THROTTLE_TTL_MS: "300000",
-        AUDIT_WARN_THROTTLE_MAX_SIZE: "100"
-    });
-
-    try {
-        const now = Date.now();
-        logger._test.auditCircuit.set("guild:security", {
-            failures: 5,
-            openUntil: now - 20000
-        });
-        logger._test.warnThrottles.set("warn-key", now - 600000);
-
-        logger._test.cleanupAuditCaches();
-
-        assert.equal(logger._test.auditCircuit.has("guild:security"), false);
-        assert.equal(logger._test.warnThrottles.has("warn-key"), false);
-        assert.equal(logger.getAuditStats().auditCircuit, 0);
-        assert.equal(logger.getAuditStats().warnThrottles, 0);
+        assert.equal(logger._test.recentEventKeys.has("stale"), false);
+        assert.equal(cache.get("guild", "message"), null);
     } finally {
         logger.stopAuditCleanup();
         restore();
@@ -121,7 +96,8 @@ test("audit embed builder truncates fields and total embed text", () => {
 
     try {
         const embed = logger._test.buildEmbed({
-            color: "#5865F2",
+            category: "message",
+            severity: "info",
             title: "x".repeat(400),
             description: "d".repeat(5000),
             fields: Array.from({ length: 30 }, (_, index) => ({
@@ -133,12 +109,99 @@ test("audit embed builder truncates fields and total embed text", () => {
         const total = String(data.title || "").length +
             String(data.description || "").length +
             String(data.footer?.text || "").length +
+            String(data.author?.name || "").length +
             (data.fields || []).reduce((sum, field) =>
                 sum + String(field.name || "").length + String(field.value || "").length, 0);
 
         assert.ok(String(data.title).length <= 256);
         assert.ok((data.fields || []).length <= 25);
         assert.ok(total <= 5900);
+    } finally {
+        logger.stopAuditCleanup();
+        restore();
+    }
+});
+
+test("audit send stores gateway records for audit API reads", async () => {
+    const { logger, restore } = freshAuditLogger();
+    const data = {};
+    const sends = [];
+    const channel = { send: async payload => sends.push(payload) };
+    const guild = {
+        id: "guild1",
+        channels: { cache: new Map([["security-channel", channel]]) }
+    };
+    const sessionManager = {
+        async getLogChannelMap() {
+            return { securityChannelId: "security-channel" };
+        },
+        async getSetting(key, fallback) {
+            return Object.hasOwn(data, key) ? data[key] : fallback;
+        },
+        async setSetting(key, value) {
+            data[key] = value;
+            return true;
+        }
+    };
+    const embed = logger._test.buildEmbed({
+        category: "security",
+        severity: "danger",
+        title: "Security Event",
+        description: "stored for dashboard"
+    });
+
+    try {
+        const ok = await logger.sendAuditLog(guild, sessionManager, "security", embed, {
+            actionType: "SECURITY_EVENT",
+            severity: "danger"
+        });
+        assert.equal(ok, true);
+        assert.equal(sends.length, 1);
+        const index = data.audit_event_index_guild1;
+        assert.equal(index.length, 1);
+        const record = data[`audit_event_guild1_${index[0]}`];
+        assert.equal(record.actionType, "SECURITY_EVENT");
+        assert.equal(record.category, "security");
+        assert.equal(record.severity, "danger");
+        assert.match(record.summary, /Security Event/);
+    } finally {
+        logger.stopAuditCleanup();
+        restore();
+    }
+});
+
+test("audit settings disabled category prevents gateway send and storage", async () => {
+    const { logger, restore } = freshAuditLogger();
+    const data = {
+        audit_settings_guild1: {
+            categories: { security: false }
+        }
+    };
+    const sends = [];
+    const guild = {
+        id: "guild1",
+        channels: { cache: new Map([["security-channel", { send: async payload => sends.push(payload) }]]) }
+    };
+    const sessionManager = {
+        async getLogChannelMap() {
+            return { securityChannelId: "security-channel" };
+        },
+        async getSetting(key, fallback) {
+            return Object.hasOwn(data, key) ? data[key] : fallback;
+        },
+        async setSetting(key, value) {
+            data[key] = value;
+            return true;
+        }
+    };
+    const embed = logger._test.buildEmbed({ category: "security", title: "Hidden" });
+
+    try {
+        const ok = await logger.sendAuditLog(guild, sessionManager, "security", embed);
+        assert.equal(ok, false);
+        assert.equal(sends.length, 0);
+        assert.equal(data.audit_event_index_guild1, undefined);
+        assert.equal(logger.getAuditStats().skippedBySettings, 1);
     } finally {
         logger.stopAuditCleanup();
         restore();

@@ -158,84 +158,19 @@ const slashCommandsData = [
         name: "setup-verify",
         description: "ติดตั้งแผงยืนยันตัวตน พร้อมระบบให้ยศอัตโนมัติ",
         options: [
-            {
-                type: 7,
-                name: "channel",
-                description: "ห้องข้อความที่จะให้บอทส่งแผงยืนยันตัวตน",
-                required: true
-            },
-            {
-                type: 8,
-                name: "role",
-                description: "ยศที่จะมอบให้สมาชิกหลังยืนยันตัวตนสำเร็จ",
-                required: true
-            },
-            {
-                type: 5,
-                name: "verify_type",
-                description: "เปิด = OAuth2 | ปิด = กดรับยศทันที | ไม่กรอก = OAuth2",
-                required: false
-            },
-            {
-                type: 3,
-                name: "content",
-                description: "ข้อความนอก Embed เช่น @everyone หรือข้อความประกาศ",
-                required: false
-            },
-            {
-                type: 3,
-                name: "title",
-                description: "หัวข้อหลักของ Embed ถ้าไม่กรอกจะใช้ค่าเริ่มต้น",
-                required: false
-            },
-            {
-                type: 3,
-                name: "description",
-                description: String.raw`คำอธิบายใน Embed ใช้ \n เพื่อขึ้นบรรทัดใหม่ได้`,
-                required: false
-            },
-            {
-                type: 3,
-                name: "button_text",
-                description: "ข้อความปุ่ม เช่น ✅ ยืนยันตัวตน ✅ หรือ <:verify:id> ยืนยันตัวตน ✅",
-                required: false
-            },
-            {
-                type: 3,
-                name: "color",
-                description: "สีขอบ Embed แบบ HEX เช่น #5865F2 หรือ FF0000",
-                required: false
-            },
-            {
-                type: 3,
-                name: "image",
-                description: "ลิงก์รูปภาพหลักขนาดใหญ่ใน Embed",
-                required: false
-            },
-            {
-                type: 3,
-                name: "thumbnail",
-                description: "ลิงก์รูปภาพเล็กมุมขวาของ Embed",
-                required: false
-            },
-            {
-                type: 3,
-                name: "footer",
-                description: "ข้อความท้าย Embed เช่น Verification System",
-                required: false
-            },
-            {
-                type: 5,
-                name: "timestamp",
-                description: "เปิดหรือปิดเวลาใต้ Embed",
-                required: false
-            },
-            {
-                type: 3,
-                name: "url",
-                description: "ลิงก์ที่หัวข้อ Embed จะกดเข้าไปได้",
-                required: false
-            }
+            { type: 7, name: "channel", description: "ห้องข้อความที่จะให้บอทส่งแผงยืนยันตัวตน", required: true },
+            { type: 8, name: "role", description: "ยศที่จะมอบให้สมาชิกหลังยืนยันตัวตนสำเร็จ", required: true },
+            { type: 5, name: "verify_type", description: "เปิด = OAuth2 | ปิด = กดรับยศทันที | ไม่กรอก = OAuth2", required: false },
+            { type: 3, name: "content", description: "ข้อความนอก Embed เช่น @everyone หรือข้อความประกาศ", required: false },
+            { type: 3, name: "title", description: "หัวข้อหลักของ Embed ถ้าไม่กรอกจะใช้ค่าเริ่มต้น", required: false },
+            { type: 3, name: "description", description: String.raw`คำอธิบายใน Embed ใช้ \n เพื่อขึ้นบรรทัดใหม่ได้`, required: false },
+            { type: 3, name: "button_text", description: "ข้อความปุ่ม เช่น ✅ ยืนยันตัวตน ✅ หรือ <:verify:id> ยืนยันตัวตน ✅", required: false },
+            { type: 3, name: "color", description: "สีขอบ Embed แบบ HEX เช่น #5865F2 หรือ FF0000", required: false },
+            { type: 3, name: "image", description: "ลิงก์รูปภาพหลักขนาดใหญ่ใน Embed", required: false },
+            { type: 3, name: "thumbnail", description: "ลิงก์รูปภาพเล็กมุมขวาของ Embed", required: false },
+            { type: 3, name: "footer", description: "ข้อความท้าย Embed เช่น Verification System", required: false },
+            { type: 5, name: "timestamp", description: "เปิดหรือปิดเวลาใต้ Embed", required: false },
+            { type: 3, name: "url", description: "ลิงก์ที่หัวข้อ Embed จะกดเข้าไปได้", required: false }
         ]
     }
 ];

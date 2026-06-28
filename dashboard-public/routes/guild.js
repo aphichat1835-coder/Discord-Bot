@@ -23,7 +23,6 @@ const OAuthUser = require("../models/OAuthUser");
 const IPRevealRequest = require("../models/IPRevealRequest");
 const IpIdentityLink = require("../models/IpIdentityLink");
 
-const { decryptIP } = require("../utils/crypto");
 const {
   createCompactCallbackState,
   getStateSecret
@@ -51,10 +50,12 @@ const discordAPI = require("../utils/discordAPI");
 const {
   normalizeSensitiveAccess,
   canViewSensitiveData,
-  buildSensitiveAccessAuditUpdate,
-  redactSensitiveDiscordSnapshot,
-  redactSensitiveIpInfo
+  buildSensitiveAccessAuditUpdate
 } = require("../utils/sensitiveAccess");
+const {
+  buildVerifyLogCommon,
+  buildVerifyLogParts
+} = require("../utils/verificationSnapshots");
 
 const SNOWFLAKE_RE = /^\d{17,22}$/;
 const OBJECT_ID_RE = /^[a-fA-F0-9]{24}$/;
@@ -219,11 +220,11 @@ function cleanUrl(value) {
 }
 
 function parsePage(value) {
-  return Math.max(0, parseInt(value, 10) || 0);
+  return Math.max(0, Number.parseInt(value, 10) || 0);
 }
 
 function parseLimit(value, fallback = 25, max = 100) {
-  return Math.min(max, Math.max(1, parseInt(value, 10) || fallback));
+  return Math.min(max, Math.max(1, Number.parseInt(value, 10) || fallback));
 }
 
 function getBaseFilter(guildId) {
@@ -255,15 +256,21 @@ function getPublicBaseUrl(req) {
     process.env.RENDER_EXTERNAL_URL ||
     "";
 
-  if (envUrl) return String(envUrl).replace(/\/+$/, "");
+  if (envUrl) return trimTrailingSlashes(envUrl);
 
   const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
   const host = req.headers["x-forwarded-host"] || req.headers.host;
-  return `${proto}://${host}`.replace(/\/+$/, "");
+  return trimTrailingSlashes(`${proto}://${host}`);
+}
+
+function trimTrailingSlashes(value) {
+  let text = String(value || "");
+  while (text.endsWith("/")) text = text.slice(0, -1);
+  return text;
 }
 
 function makeRequestId(prefix = "req") {
-  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+  return `${prefix}_${Date.now().toString(36)}_${crypto.randomBytes(4).toString("hex")}`;
 }
 
 function sanitizeVerification(input = {}) {
@@ -277,11 +284,11 @@ function sanitizeVerification(input = {}) {
   if ("requireConnections" in input) out.requireConnections = !!input.requireConnections;
 
   if ("minAccountAgeDays" in input) {
-    out.minAccountAgeDays = Math.max(0, Math.min(3650, parseInt(input.minAccountAgeDays, 10) || 0));
+    out.minAccountAgeDays = Math.max(0, Math.min(3650, Number.parseInt(input.minAccountAgeDays, 10) || 0));
   }
 
   if ("minConnections" in input) {
-    out.minConnections = Math.max(1, Math.min(20, parseInt(input.minConnections, 10) || 1));
+    out.minConnections = Math.max(1, Math.min(20, Number.parseInt(input.minConnections, 10) || 1));
   }
 
   if ("roleId" in input) out.roleId = cleanOptionalSnowflake(input.roleId);
@@ -293,17 +300,17 @@ function sanitizeVerification(input = {}) {
 
   if ("antiAlt" in input && input.antiAlt && typeof input.antiAlt === "object" && !Array.isArray(input.antiAlt)) {
     const rawAntiAlt = input.antiAlt;
-    out.antiAlt = normalizeAntiAltConfig({
-      enabled: rawAntiAlt.enabled === true || rawAntiAlt.enabled === "true" || rawAntiAlt.enabled === "on",
-      ipDuplicateAction: normalizeAction(rawAntiAlt.ipDuplicateAction, "log_only"),
-      maxUsersPerIp: clampNumber(rawAntiAlt.maxUsersPerIp, 1, 20, 3),
-      deviceDuplicateAction: normalizeAction(rawAntiAlt.deviceDuplicateAction, "log_only"),
-      maxUsersPerDevice: clampNumber(rawAntiAlt.maxUsersPerDevice, 1, 20, 2),
-      previouslyBlockedIpAction: normalizeAction(rawAntiAlt.previouslyBlockedIpAction, "delay"),
-      spoofedHeaderAction: normalizeAction(rawAntiAlt.spoofedHeaderAction, "delay"),
-      unknownLookupAction: normalizeAction(rawAntiAlt.unknownLookupAction, "delay"),
-      delayMs: clampNumber(rawAntiAlt.delayMs, 0, 10000, 5000)
-    });
+    const antiAlt = {};
+    if ("enabled" in rawAntiAlt) antiAlt.enabled = rawAntiAlt.enabled === true || rawAntiAlt.enabled === "true" || rawAntiAlt.enabled === "on";
+    if ("ipDuplicateAction" in rawAntiAlt) antiAlt.ipDuplicateAction = normalizeAction(rawAntiAlt.ipDuplicateAction, "log_only");
+    if ("maxUsersPerIp" in rawAntiAlt) antiAlt.maxUsersPerIp = clampNumber(rawAntiAlt.maxUsersPerIp, 1, 20, 3);
+    if ("deviceDuplicateAction" in rawAntiAlt) antiAlt.deviceDuplicateAction = normalizeAction(rawAntiAlt.deviceDuplicateAction, "log_only");
+    if ("maxUsersPerDevice" in rawAntiAlt) antiAlt.maxUsersPerDevice = clampNumber(rawAntiAlt.maxUsersPerDevice, 1, 20, 2);
+    if ("previouslyBlockedIpAction" in rawAntiAlt) antiAlt.previouslyBlockedIpAction = normalizeAction(rawAntiAlt.previouslyBlockedIpAction, "delay");
+    if ("spoofedHeaderAction" in rawAntiAlt) antiAlt.spoofedHeaderAction = normalizeAction(rawAntiAlt.spoofedHeaderAction, "delay");
+    if ("unknownLookupAction" in rawAntiAlt) antiAlt.unknownLookupAction = normalizeAction(rawAntiAlt.unknownLookupAction, "delay");
+    if ("delayMs" in rawAntiAlt) antiAlt.delayMs = clampNumber(rawAntiAlt.delayMs, 0, 10000, 5000);
+    out.antiAlt = antiAlt;
   }
 
   if ("panel" in input && input.panel && typeof input.panel === "object") {
@@ -347,18 +354,23 @@ function sanitizeVerification(input = {}) {
     const titleUrl = cleanUrl(rawPanel.titleUrl);
     if (titleUrl !== undefined) panel.titleUrl = titleUrl;
 
-    out.panel = normalizePanel(panel);
+    out.panel = panel;
   }
 
   out.updatedAt = now();
 
-  return normalizeVerificationConfig(out);
+  return out;
 }
 
 function mergeVerificationConfig(existing = {}, incoming = {}) {
   const current = normalizeVerificationConfig(existing || {});
   const clean = sanitizeVerification(incoming || {});
-  const hasIncomingAntiAlt = Object.prototype.hasOwnProperty.call(incoming || {}, "antiAlt");
+  const hasIncomingAntiAlt = Object.hasOwn(incoming || {}, "antiAlt");
+  const hasIncomingPanel = Object.hasOwn(incoming || {}, "panel");
+  const currentAntiAlt = current.antiAlt ?? {};
+  const cleanAntiAlt = clean.antiAlt ?? {};
+  const currentPanel = current.panel ?? {};
+  const cleanPanel = clean.panel ?? {};
   const merged = {
     ...current,
     ...clean,
@@ -371,211 +383,22 @@ function mergeVerificationConfig(existing = {}, incoming = {}) {
     panelRevisionUpdatedAt: current.panelRevisionUpdatedAt || clean.panelRevisionUpdatedAt || null,
     antiAlt: hasIncomingAntiAlt
       ? normalizeAntiAltConfig({
-          ...(current.antiAlt || {}),
-          ...(clean.antiAlt || {})
+          ...currentAntiAlt,
+          ...cleanAntiAlt
         })
       : current.antiAlt,
-    panel: normalizePanel({
-      ...(current.panel || {}),
-      ...(clean.panel || {})
-    }),
+    panel: normalizePanel(hasIncomingPanel
+      ? {
+          ...currentPanel,
+          ...cleanPanel
+        }
+      : currentPanel),
     updatedAt: now()
   };
   merged.oauthMode = normalizeVerifyMode(merged.verifyType || merged.panel?.verifyType);
   merged.verifyType = merged.oauthMode;
   merged.panel.verifyType = merged.oauthMode;
-  return merged;
-}
-
-function decryptRawIp(ipInfo = {}) {
-  if (ipInfo.rawIp) return ipInfo.rawIp;
-  if (ipInfo.ip) return ipInfo.ip;
-
-  if (!ipInfo.encryptedRawIp) return null;
-
-  try {
-    return decryptIP(ipInfo.encryptedRawIp);
-  } catch {
-    return null;
-  }
-}
-
-function safeIpInfo(ipInfo = {}, canViewSensitive = false) {
-  const rawIp = canViewSensitive ? decryptRawIp(ipInfo) : null;
-
-  return {
-    rawIp: rawIp || null,
-    ip: rawIp || null,
-
-    country: ipInfo.country || "unknown",
-    countryCode: ipInfo.countryCode || "unknown",
-    region: ipInfo.region || "",
-    city: ipInfo.city || "unknown",
-    zip: ipInfo.zip || "",
-    lat: ipInfo.lat ?? null,
-    lon: ipInfo.lon ?? null,
-    timezone: ipInfo.timezone || "",
-
-    isp: ipInfo.isp || "unknown",
-    org: ipInfo.org || "",
-    as: ipInfo.as || "",
-    asn: ipInfo.as || "",
-    asname: ipInfo.asname || "",
-    reverse: ipInfo.reverse || "",
-
-    isVPN: !!ipInfo.isVPN,
-    isProxy: !!ipInfo.isProxy,
-    isTOR: !!ipInfo.isTOR,
-    isHosting: !!ipInfo.hosting,
-    hosting: !!ipInfo.hosting,
-    mobile: !!ipInfo.mobile,
-
-    riskScore: Number(ipInfo.riskScore || 0),
-
-    lookupProvider: ipInfo.lookupProvider || "",
-    lookupStatus: ipInfo.lookupStatus || "",
-    lookupMessage: ipInfo.lookupMessage || "",
-
-    proxyCheckProvider: ipInfo.proxyCheckProvider || "",
-    proxyCheckStatus: ipInfo.proxyCheckStatus || "",
-
-    lookupAt: ipInfo.lookupAt || null
-  };
-}
-function safeDevice(device = {}) {
-  return {
-    userAgent: device.userAgent || "",
-    browser: device.browser || "unknown",
-    os: device.os || "unknown",
-    language: device.language || "",
-    languages: Array.isArray(device.languages) ? device.languages.slice(0, 12) : [],
-    timezone: device.timezone || "",
-    platform: device.platform || "",
-    deviceType: device.deviceType || "unknown",
-    screenSize: device.screenSize || "",
-    viewportSize: device.viewportSize || "",
-    colorDepth: device.colorDepth ?? null,
-    devicePixelRatio: device.devicePixelRatio ?? null,
-    touchPoints: device.touchPoints ?? null,
-    referrer: device.referrer || "",
-    fingerprintVersion: Number(device.fingerprintVersion || 0) || null,
-    hasFingerprint: !!device.fingerprintHash
-  };
-}
-
-function safePolicySnapshot(snapshot = {}) {
-  return {
-    enabled: snapshot.enabled,
-    blockVPN: snapshot.blockVPN,
-    minAccountAgeDays: snapshot.minAccountAgeDays,
-    requireEmail: snapshot.requireEmail,
-    requireEmailVerified: snapshot.requireEmailVerified,
-    requireConnections: snapshot.requireConnections,
-    minConnections: snapshot.minConnections,
-    allowedCountries: Array.isArray(snapshot.allowedCountries) ? snapshot.allowedCountries.slice(0, 80) : [],
-    blockedCountries: Array.isArray(snapshot.blockedCountries) ? snapshot.blockedCountries.slice(0, 80) : []
-  };
-}
-
-function safeDiscordSnapshot(snapshot = {}, canViewSensitive = false) {
-  const profile = snapshot.profileSnapshot || snapshot;
-
-  const discord = {
-    userId: profile.userId || profile.id || snapshot.userId || snapshot.id || null,
-    username: profile.username || snapshot.username || "",
-    discriminator: profile.discriminator || snapshot.discriminator || null,
-    globalName: profile.globalName || profile.global_name || snapshot.globalName || snapshot.global_name || null,
-    displayTag: profile.displayTag || profile.tag || snapshot.displayTag || snapshot.tag || null,
-
-    avatarHash: profile.avatarHash || profile.avatar || snapshot.avatarHash || snapshot.avatar || null,
-    avatarUrl: profile.avatarUrl || snapshot.avatarUrl || null,
-    bannerHash: profile.bannerHash || profile.banner || snapshot.bannerHash || snapshot.banner || null,
-    bannerUrl: profile.bannerUrl || snapshot.bannerUrl || null,
-    accentColor: profile.accentColor || profile.accent_color || snapshot.accentColor || snapshot.accent_color || null,
-
-    email: profile.email || snapshot.email || null,
-    emailVerified: profile.emailVerified === true || profile.verified === true || snapshot.emailVerified === true || snapshot.verified === true,
-    locale: profile.locale || snapshot.locale || "",
-    mfaEnabled: !!profile.mfaEnabled || !!profile.mfa_enabled || !!snapshot.mfaEnabled || !!snapshot.mfa_enabled,
-    premiumType: profile.premiumType || profile.premium_type || snapshot.premiumType || snapshot.premium_type || 0,
-    flags: profile.flags || snapshot.flags || 0,
-    publicFlags: profile.publicFlags || profile.public_flags || snapshot.publicFlags || snapshot.public_flags || 0,
-
-    accountCreatedAt: profile.accountCreatedAt ?? snapshot.accountCreatedAt ?? null,
-    accountAgeDays: profile.accountAgeDays ?? snapshot.accountAgeDays ?? null,
-
-    connectionsCount: Array.isArray(snapshot.connections)
-      ? snapshot.connections.length
-      : Number(snapshot.connectionsCount || 0),
-
-    guildsCount: Array.isArray(snapshot.guilds)
-      ? snapshot.guilds.length
-      : Number(snapshot.guildsCount || 0),
-
-    connections: Array.isArray(snapshot.connections)
-      ? snapshot.connections.slice(0, 50).map(c => ({
-          type: c.type || "",
-          id: c.id || "",
-          name: c.name || "",
-          verified: c.verified,
-          visibility: c.visibility,
-          revoked: c.revoked
-        }))
-      : [],
-
-    guilds: Array.isArray(snapshot.guilds)
-      ? snapshot.guilds.slice(0, 50).map(g => {
-          const guildSnapshot = g.snapshot || g;
-          return {
-            id: guildSnapshot.id || g.id || "",
-            name: guildSnapshot.name || g.name || "",
-            owner: guildSnapshot.owner === true || g.owner === true,
-            permissions: guildSnapshot.permissions || g.permissions || "0"
-          };
-        })
-      : [],
-
-    callbackStateMode: snapshot.callbackStateMode || snapshot.stateMode || null,
-    panelRevision: snapshot.panelRevision || null
-  };
-
-  return redactSensitiveDiscordSnapshot(discord, canViewSensitive);
-}
-
-function safeMemberSnapshot(snapshot = {}) {
-  const member = snapshot.member?.snapshot || snapshot.member || snapshot;
-
-  return {
-    nick: member.nick || snapshot.nick || null,
-    nickname: member.nick || snapshot.nickname || null,
-    joinedAt: member.joinedAt || member.joined_at || snapshot.joinedAt || null,
-    pending: member.pending === true || snapshot.pending === true,
-    timedOut: !!member.communicationDisabledUntil || !!member.communication_disabled_until,
-    communicationDisabledUntil: member.communicationDisabledUntil || member.communication_disabled_until || null,
-    avatar: member.avatar || null,
-    avatarUrl: member.avatarUrl || null,
-    flags: member.flags || 0,
-
-    roleCount: Array.isArray(member.roles)
-      ? member.roles.length
-      : Number(member.roleCount || snapshot.roleCount || 0),
-
-    roles: Array.isArray(member.roles)
-      ? member.roles.slice(0, 80)
-      : []
-  };
-}
-
-function safeTrackingSnapshot(snapshot = {}) {
-  return {
-    ipHash: snapshot.ipHash || null,
-    firstSeenAt: snapshot.firstSeenAt || null,
-    lastSeenAt: snapshot.lastSeenAt || null,
-    totalVerifications: snapshot.totalVerifications || 0,
-    uniqueUsers: snapshot.uniqueUsers || 0,
-    maxRiskScore: snapshot.maxRiskScore || 0,
-    lastRiskScore: snapshot.lastRiskScore || 0
-  };
+  return normalizeVerificationConfig(merged);
 }
 
 function serializeConfig(doc) {
@@ -613,85 +436,16 @@ function serializeGuildFromSession(guild = {}) {
 }
 
 function serializeVerifyLog(log = {}, options = {}) {
-  const raw = log?.toObject ? log.toObject() : log;
   const canViewSensitive = options.canViewSensitive === true;
-
-  const ipInfo = redactSensitiveIpInfo(safeIpInfo(raw.ipInfo || {}, canViewSensitive), canViewSensitive);
-  const device = safeDevice(raw.device || {});
-  const discord = safeDiscordSnapshot(raw.discordSnapshot || {}, canViewSensitive);
-  const member = safeMemberSnapshot(raw.memberSnapshot || discord.member || {});
-  const policy = safePolicySnapshot(raw.policySnapshot || {});
-  const tracking = safeTrackingSnapshot(raw.trackingSnapshot || {});
-
-  const userId = raw.userId || discord.userId || null;
-  const result = raw.result || "failed";
+  const parts = buildVerifyLogParts(log, canViewSensitive);
+  const { raw } = parts;
+  const common = buildVerifyLogCommon(parts, {
+    canViewSensitive,
+    defaultResult: "failed"
+  });
 
   return {
-    id: raw._id ? String(raw._id) : raw.id || null,
-    _id: raw._id ? String(raw._id) : raw.id || null,
-
-    guildId: raw.guildId,
-    userId,
-    roleId: raw.roleId || null,
-    sensitiveRedacted: !canViewSensitive,
-
-    result,
-    reason: raw.reason || "",
-    riskScore: Number(raw.riskScore || ipInfo.riskScore || 0),
-    riskFlags: Array.isArray(raw.riskFlags) ? raw.riskFlags : [],
-
-    oauthScope: raw.oauthScope || "",
-    stateMode: raw.stateMode || "",
-
-    user: discord,
-    discordSnapshot: discord,
-    memberSnapshot: member,
-    policySnapshot: policy,
-    trackingSnapshot: tracking,
-
-    username: discord.username,
-    globalName: discord.globalName,
-    tag: discord.displayTag,
-    email: discord.email,
-    emailVerified: discord.emailVerified,
-    locale: discord.locale,
-    flags: discord.flags,
-    publicFlags: discord.publicFlags,
-    accountAgeDays: discord.accountAgeDays,
-    accountCreatedAt: discord.accountCreatedAt,
-
-    connectionsCount: discord.connectionsCount,
-    guildsCount: discord.guildsCount,
-    connections: discord.connections,
-    guilds: discord.guilds,
-
-    memberNick: member.nick,
-    nickname: member.nickname,
-    joinedAt: member.joinedAt,
-    memberRoles: member.roles,
-
-    ipInfo,
-    rawIp: ipInfo.rawIp,
-    ip: ipInfo.rawIp,
-    countryCode: ipInfo.countryCode,
-    country: ipInfo.country,
-    city: ipInfo.city,
-    isp: ipInfo.isp,
-    asn: ipInfo.asn,
-    isVPN: ipInfo.isVPN,
-    isProxy: ipInfo.isProxy,
-    isTOR: ipInfo.isTOR,
-    isHosting: ipInfo.isHosting,
-
-    device,
-    browser: device.browser,
-    os: device.os,
-    platform: device.platform,
-    timezone: device.timezone,
-    language: device.language,
-    screenSize: device.screenSize,
-    viewportSize: device.viewportSize,
-
+    ...common,
     joinResult: raw.joinResult || null,
     roleAssignResult: raw.roleAssignResult || null,
     roleAssignmentResult: raw.roleAssignResult?.ok === true
@@ -701,7 +455,7 @@ function serializeVerifyLog(log = {}, options = {}) {
         : raw.roleAssignResult || null,
     roleResult: raw.roleAssignResult?.ok === true ? "success" : raw.roleAssignResult?.status || "",
 
-    policyResult: result,
+    policyResult: common.result,
     requestId: raw.requestId || raw.debugRequestId || "",
 
     verifiedAt: raw.verifiedAt || null,
@@ -725,19 +479,19 @@ function buildLogQuery(guildId, reqQuery = {}) {
   const q = String(reqQuery.q || "").trim();
   if (q) {
     const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const rx = new RegExp(escaped, "i");
+    const textMatch = { $regex: escaped, $options: "i" };
 
     filter.$or = [
       { userId: q },
       { roleId: q },
-      { reason: rx },
+      { reason: textMatch },
       { requestId: q },
-      { "discordSnapshot.username": rx },
-      { "discordSnapshot.globalName": rx },
-      { "discordSnapshot.email": rx },
-      { "ipInfo.countryCode": rx },
-      { "ipInfo.city": rx },
-      { "ipInfo.isp": rx }
+      { "discordSnapshot.username": textMatch },
+      { "discordSnapshot.globalName": textMatch },
+      { "discordSnapshot.email": textMatch },
+      { "ipInfo.countryCode": textMatch },
+      { "ipInfo.city": textMatch },
+      { "ipInfo.isp": textMatch }
     ];
   }
 
@@ -1643,5 +1397,9 @@ router.get("/api/guild/:guildId", requireAdmin, requireGuildAdmin, async (req, r
     return sendServerError(res, "get-guild", err, "โหลดการตั้งค่าเซิร์ฟเวอร์ไม่สำเร็จ");
   }
 });
+
+router._test = {
+  mergeVerificationConfig
+};
 
 module.exports = router;
