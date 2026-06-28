@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased] - Dependency Classification Fix 2026-06-28
+
+### Changed
+
+- Moved `jest` from `dependencies` to `devDependencies` in root `package.json`. Service 1 uses Node's built-in `node --test` runner; jest is only a test tool for Service 2 (dashboard-public), which manages it in its own `package.json`. This prevents jest and its transitive chain (including `inflight`) from appearing in production dependency scans.
+- Regenerated `package-lock.json` via `npm install` to sync missing transitive entries (`@emnapi/core`, `@emnapi/runtime`) and resolve `npm ci` failures in CI.
+
 ## [Unreleased] - cacheUtils Complex Method Refactor 2026-06-28
 
 ### Changed
