@@ -553,13 +553,7 @@ function registerRoutes({
         res.json(webLogs.slice(-MAX_LOGS).reverse());
     });
 
-    app.get("/api/voice-logs", (req, res) => {
-        try {
-            res.json(voiceWorker.getVoiceLogs().slice(-300).reverse());
-        } catch (e) {
-            res.status(500).json({ success: false, error: e.message });
-        }
-    });
+
 
     app.get("/api/sessions", (req, res) => {
         try {

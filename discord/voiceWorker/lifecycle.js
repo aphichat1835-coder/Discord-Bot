@@ -69,7 +69,7 @@ const { sendSessionStoppedDM, sendTokenInvalidDM, sendSessionOnlineDM } = requir
 const { startNaturalTimer, stopNaturalTimer, stopAllNaturalTimers } = require("./natural");
 const { startAutoDeafTimer, stopAutoDeafTimer, stopAllAutoDeafTimers } = require("./autoDeaf");
 const { loginQueue, recoveryQueue } = require("./queue");
-const { pushVoiceLog } = require("./eventLog");
+
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🛑  REGION 9 (helpers): Connection cleanup utilities
@@ -351,7 +351,6 @@ async function startSession(sessionId, tokenString) {
         session.connection = conn;
 
         console.log(`[WORKER] 🎧 Voice connected for Session: ${sanitizeLogText(sessionId)} Guild: ${session.serverId}`);
-        pushVoiceLog("connect", sessionId, "Voice connected");
 
         await refreshSessionMetadataFast(sessionId, 1800).catch(() => {});
         cleanupLeanSessionClient(sessionId, "post-connect");
@@ -506,7 +505,6 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
 
     async function handleMaxReconnectReached() {
         console.error(`[WORKER] 💀 Max reconnect attempts (${CONFIG.MAX_RECONNECT_ATTEMPTS}) reached for ${sanitizeLogText(sessionId)}. Aborting.`);
-        pushVoiceLog("fail", sessionId, `Max reconnects (${CONFIG.MAX_RECONNECT_ATTEMPTS}) reached`);
 
         if (connection.state.status !== VoiceConnectionStatus.Destroyed) {
             try { connection.destroy(); } catch {}
@@ -578,7 +576,6 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
             clearReconnect(sessionId);
 
             console.log(`[WORKER] ✅ Passive reconnect OK for ${sanitizeLogText(sessionId)}.`);
-            pushVoiceLog("recover", sessionId, "Passive reconnect OK");
 
             if (prevAttempts > 1) sendSessionOnlineDM(sessionId).catch(() => {});
 
@@ -587,7 +584,6 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
             if (onPassiveConnect) connection.off(VoiceConnectionStatus.Connecting, onPassiveConnect);
 
             console.warn(`[WORKER] ⚡ Passive reconnect timed out for ${sanitizeLogText(sessionId)} — triggering urgent recovery.`);
-            pushVoiceLog("drop", sessionId, "Passive timeout → urgent recovery");
 
             if (connection.state.status !== VoiceConnectionStatus.Destroyed) {
                 try { connection.destroy(); } catch {}
@@ -943,7 +939,6 @@ async function recoverSessionConnection(sessionId, tokenHash) {
         if (conn) latest.connection = conn;
 
         console.log(`[HEARTBEAT] 💖 Restored connection for ${sanitizeLogText(sessionId)}.`);
-        pushVoiceLog("recover", sessionId, "Restored by background healthCheck");
         sendSessionOnlineDM(sessionId).catch(() => {});
 
         startNaturalTimer(sessionId);
@@ -951,7 +946,6 @@ async function recoverSessionConnection(sessionId, tokenHash) {
 
     } catch (e) {
         console.error(`[HEARTBEAT] 💔 Recovery failed for ${sanitizeLogText(sessionId)}: ${e.message}`);
-        pushVoiceLog("fail", sessionId, `Recovery failed: ${e.message}`);
     } finally {
         const latest = sessionManager.getSession(sessionId);
         if (latest) latest.reconnecting = false;

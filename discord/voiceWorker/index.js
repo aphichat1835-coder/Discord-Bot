@@ -37,7 +37,7 @@ const {
     cleanupLeanClientCache,
     cleanupSelfClientCaches,
 } = require("./cacheUtils");
-const { voiceEventLog, getVoiceLogs } = require("./eventLog");
+
 const { sendSessionStoppedDM, sendTokenInvalidDM, sendSessionOnlineDM } = require("./dm");
 const {
     startNaturalTimer,
@@ -99,7 +99,6 @@ function getWorkerDiagnostics() {
         lastDMSent: lastDMSent.size,
         lastOnlineDMSent: lastOnlineDMSent.size,
         recoveryTimestamps: recoveryTimestamps.size,
-        voiceEventLog: voiceEventLog.length,
         voiceLean: getVoiceLeanConfig(),
         lastLeanCleanup: st.lastLeanCleanup
     };
@@ -205,7 +204,6 @@ module.exports = {
     healthCheck,
     cleanupIdleSessions,
 
-    getVoiceLogs,
     sendSessionStoppedDM,
     sendTokenInvalidDM,
     sendSessionOnlineDM,
