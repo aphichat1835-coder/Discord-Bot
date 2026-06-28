@@ -87,6 +87,144 @@ function setNoStore(res) {
     res.setHeader("Pragma", "no-cache");
 }
 
+function wait(ms) {
+    return new Promise(resolve => {
+        const timer = setTimeout(resolve, ms);
+        timer.unref?.();
+    });
+}
+
+async function removeApprovedGuildRecord(sessionManager, guildId, attempts = 3) {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+        try {
+            await sessionManager.ApprovedGuildModel.deleteOne({ guildId });
+            return true;
+        } catch {
+            console.warn(`[DASHBOARD] ⚠️ Approved guild cleanup failed (${attempt}/${attempts})`);
+
+            if (attempt < attempts) {
+                await wait(250 * attempt);
+            }
+        }
+    }
+
+    return false;
+}
+
+async function stopGuildVoiceSessions(sessionManager, voiceWorker, guildId) {
+    const guildSessions = Array.from(sessionManager.getAllSessions().values())
+        .filter(session => session.serverId === guildId);
+
+    let failedStops = 0;
+
+    for (const session of guildSessions) {
+        const stopped = await voiceWorker.stopSession(session.sessionId, {
+            stoppedBy: "dashboard"
+        }).catch(() => {
+            console.warn("[DASHBOARD] ⚠️ Best-effort guild kick voice stop failed");
+            return false;
+        });
+
+        if (!stopped) failedStops++;
+    }
+
+    if (failedStops > 0) {
+        console.warn(`[DASHBOARD] ⚠️ Continuing guild leave after ${failedStops} voice session stop failure(s)`);
+    }
+
+    return failedStops;
+}
+
+function buildApprovedKickWarning(failedStops, approvalCleanupFailed) {
+    return [
+        failedStops > 0
+            ? "บอทถูกนำออกแล้ว แต่มี voice sessions บางรายการหยุดไม่สำเร็จ"
+            : null,
+        approvalCleanupFailed
+            ? "บอทถูกนำออกแล้ว แต่ลบ approved guild record ไม่สำเร็จ"
+            : null
+    ].filter(Boolean).join(" | ") || null;
+}
+
+async function sendGuildNotFoundKickResponse({
+    res,
+    sessionManager,
+    guildId
+}) {
+    const removedApproval = await removeApprovedGuildRecord(sessionManager, guildId);
+    const approvalCleanupFailed = removedApproval === false;
+
+    return res.status(removedApproval ? 404 : 207).json({
+        success: false,
+        partialSuccess: approvalCleanupFailed,
+        error: "บอทไม่ได้อยู่ใน guild นี้",
+        approvalRemoved: removedApproval,
+        warning: approvalCleanupFailed
+            ? "บอทไม่ได้อยู่ใน guild นี้แล้ว แต่ลบ approved guild record ไม่สำเร็จ"
+            : null
+    });
+}
+
+async function handleApprovedGuildKick({
+    req,
+    res,
+    checkAuth,
+    client,
+    sessionManager,
+    voiceWorker
+}) {
+    if (!checkAuth(req, res)) return;
+
+    try {
+        const { guildId } = req.body;
+
+        if (!guildId || typeof guildId !== "string") {
+            return res.status(400).json({
+                success: false,
+                error: "Invalid guildId"
+            });
+        }
+
+        const guild = client.guilds.cache.get(guildId);
+
+        if (!guild) {
+            return sendGuildNotFoundKickResponse({
+                res,
+                sessionManager,
+                guildId
+            });
+        }
+
+        const guildName = guild.name;
+        const failedStops = await stopGuildVoiceSessions(sessionManager, voiceWorker, guildId);
+
+        await guild.leave();
+
+        const removedApproval = await removeApprovedGuildRecord(sessionManager, guildId);
+        const approvalCleanupFailed = removedApproval === false;
+        const partialSuccess = failedStops > 0 || approvalCleanupFailed;
+
+        sendLogWebhook({
+            content: `👢 **[BOT KICKED]** ${guildName} (\`${guildId}\`)`
+        }).catch(() => {});
+
+        return res.status(partialSuccess ? 207 : 200).json({
+            success: !partialSuccess,
+            partialSuccess,
+            voiceStopFailed: failedStops,
+            approvalRemoved: removedApproval,
+            warning: partialSuccess
+                ? buildApprovedKickWarning(failedStops, approvalCleanupFailed)
+                : null
+        });
+    } catch (e) {
+        return res.status(500).json({
+            success: false,
+            error: e.message
+        });
+    }
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  🔌  REGISTER ALL API ROUTES
 // ════════════════════════════════════════════════════════════════════════════
@@ -212,8 +350,7 @@ function registerRoutes({
             reconnects: sessionManager.systemMetrics.reconnects
         };
     }
-
-    function buildDiagnosticsPayload() {
+        function buildDiagnosticsPayload() {
         return {
             success: true,
             service: "owner-dashboard",
@@ -235,30 +372,6 @@ function registerRoutes({
             memory: memoryUsageSummary(),
             metrics: runtimeMetrics()
         };
-    }
-
-    function wait(ms) {
-        return new Promise(resolve => {
-            const timer = setTimeout(resolve, ms);
-            timer.unref?.();
-        });
-    }
-
-    async function removeApprovedGuildRecord(guildId, attempts = 3) {
-        for (let attempt = 1; attempt <= attempts; attempt++) {
-            try {
-                await sessionManager.ApprovedGuildModel.deleteOne({ guildId });
-                return true;
-            } catch (err) {
-                console.warn(`[DASHBOARD] ⚠️ Failed to remove approved guild ${guildId} (${attempt}/${attempts}): ${err.message}`);
-
-                if (attempt < attempts) {
-                    await wait(250 * attempt);
-                }
-            }
-        }
-
-        return false;
     }
 
     function revealTokenHandler(req, res) {
@@ -367,7 +480,8 @@ function registerRoutes({
             dbConnected
         });
     });
-        app.use("/api", (req, res, next) => {
+
+    app.use("/api", (req, res, next) => {
         if (shouldBypassDashboardReadApi(req)) return next();
 
         return rateLimiter(req, res, () => {
@@ -599,14 +713,13 @@ function registerRoutes({
                 });
             }
 
-            console.log(`[DASHBOARD] 🛑 Session ${sessionId} stopped via dashboard`);
+            console.log("[DASHBOARD] 🛑 Session stopped via dashboard");
             res.json({ success: true });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
         }
     });
-
-    // ── Commands Status / Toggle / Audit ──
+        // ── Commands Status / Toggle / Audit ──
     app.get("/api/commands-status", (req, res) => {
         try {
             res.json(buildCommandStatusPayload(commands, disabledCommands));
@@ -643,10 +756,10 @@ function registerRoutes({
             const sinceToggle = Date.now() - lastToggle;
 
             if (sinceToggle < 5000) {
-                const wait = ((5000 - sinceToggle) / 1000).toFixed(1);
+                const waitSec = ((5000 - sinceToggle) / 1000).toFixed(1);
                 return res.status(429).json({
                     success: false,
-                    error: `กรุณารอ ${wait}s`
+                    error: `กรุณารอ ${waitSec}s`
                 });
             }
 
@@ -928,8 +1041,7 @@ function registerRoutes({
             res.status(500).json({ success: false, error: e.message });
         }
     });
-
-    // ── Approved Guilds ──
+        // ── Approved Guilds ──
     app.post("/api/approve", express.json(), async (req, res) => {
         if (!checkAuth(req, res)) return;
 
@@ -975,7 +1087,7 @@ function registerRoutes({
                 });
             }
 
-            const removedApproval = await removeApprovedGuildRecord(guildId);
+            const removedApproval = await removeApprovedGuildRecord(sessionManager, guildId);
 
             if (!removedApproval) {
                 return res.status(503).json({
@@ -989,93 +1101,15 @@ function registerRoutes({
             res.status(500).json({ success: false, error: e.message });
         }
     });
-        app.post("/api/approved/kick", express.json(), async (req, res) => {
-        if (!checkAuth(req, res)) return;
 
-        try {
-            const { guildId } = req.body;
-
-            if (!guildId || typeof guildId !== "string") {
-                return res.status(400).json({
-                    success: false,
-                    error: "Invalid guildId"
-                });
-            }
-
-            const guild = client.guilds.cache.get(guildId);
-
-            if (!guild) {
-                const removedApproval = await removeApprovedGuildRecord(guildId);
-
-                return res.status(removedApproval ? 404 : 207).json({
-                    success: false,
-                    partialSuccess: !removedApproval,
-                    error: "บอทไม่ได้อยู่ใน guild นี้",
-                    approvalRemoved: removedApproval,
-                    warning: removedApproval
-                        ? null
-                        : "บอทไม่ได้อยู่ใน guild นี้แล้ว แต่ลบ approved guild record ไม่สำเร็จ"
-                });
-            }
-
-            const guildName = guild.name;
-            const guildSessions = Array.from(sessionManager.getAllSessions().values())
-                .filter(s => s.serverId === guildId);
-
-            let failedStops = 0;
-
-            for (const s of guildSessions) {
-                const stopped = await voiceWorker.stopSession(s.sessionId, {
-                    stoppedBy: "dashboard"
-                }).catch((stopErr) => {
-                    console.warn(
-                        `[DASHBOARD] ⚠️ Best-effort guild kick voice stop failed for session ${s.sessionId}: ${stopErr.message}`
-                    );
-                    return false;
-                });
-
-                if (!stopped) failedStops++;
-            }
-
-            if (failedStops > 0) {
-                console.warn(
-                    `[DASHBOARD] ⚠️ Continuing guild leave after ${failedStops} voice session stop failure(s) for guild ${guildId}`
-                );
-            }
-
-            await guild.leave();
-
-            const removedApproval = await removeApprovedGuildRecord(guildId);
-
-            sendLogWebhook({
-                content: `👢 **[BOT KICKED]** ${guildName} (\`${guildId}\`)`
-            }).catch(() => {});
-
-            const partialSuccess = failedStops > 0 || !removedApproval;
-
-            res.status(partialSuccess ? 207 : 200).json({
-                success: !partialSuccess,
-                partialSuccess,
-                voiceStopFailed: failedStops,
-                approvalRemoved: removedApproval,
-                warning: partialSuccess
-                    ? [
-                        failedStops > 0
-                            ? "บอทถูกนำออกแล้ว แต่มี voice sessions บางรายการหยุดไม่สำเร็จ"
-                            : null,
-                        !removedApproval
-                            ? "บอทถูกนำออกแล้ว แต่ลบ approved guild record ไม่สำเร็จ"
-                            : null
-                    ].filter(Boolean).join(" | ")
-                    : null
-            });
-        } catch (e) {
-            res.status(500).json({
-                success: false,
-                error: e.message
-            });
-        }
-    });
+    app.post("/api/approved/kick", express.json(), (req, res) => handleApprovedGuildKick({
+        req,
+        res,
+        checkAuth,
+        client,
+        sessionManager,
+        voiceWorker
+    }));
 
     const revealAttemptCleanupTimer = setInterval(() => {
         cleanupRevealAttempts();
