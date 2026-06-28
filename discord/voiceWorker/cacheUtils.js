@@ -188,14 +188,7 @@ function pruneGuildsCaches(client, { targetGuildId, targetChannelId, selfUserId 
     return { guildsRemoved, channelsRemoved, membersRemoved, voiceStatesRemoved };
 }
 
-function cleanupLeanClientCache(client, session, reason = "scheduled") {
-    if (!VOICE_LEAN_MODE || !client || !session) return null;
-
-    const before = getClientCacheStats(client);
-    const selfUserId = client.user?.id || session.accountId || null;
-    const targetGuildId = String(session.serverId || "");
-    const targetChannelId = String(session.voiceId || "");
-
+function pruneLeanCaches(client, { targetGuildId, targetChannelId, selfUserId }) {
     clearAllChannelMessageCaches(client);
 
     const keepGlobalChannelIds = targetChannelId ? new Set([targetChannelId]) : new Set();
@@ -207,33 +200,56 @@ function cleanupLeanClientCache(client, session, reason = "scheduled") {
     const keepUserIds = selfUserId ? new Set([String(selfUserId)]) : new Set();
     pruneCacheToIds(client.users?.cache, keepUserIds);
 
-    const after = getClientCacheStats(client);
-    const summary = {
+    return {
+        guildsRemoved,
+        channelsRemoved: globalChannelsPruned + channelsRemoved,
+        membersRemoved,
+        voiceStatesRemoved
+    };
+}
+
+function buildLeanSummary(reason, session, targetGuildId, targetChannelId, counts, before, after) {
+    return {
         at: Date.now(),
         reason,
         sessionId: session.sessionId || null,
         shortId: getSessionShortId(session.sessionId),
         targetGuildId,
         targetChannelId,
-        guildsRemoved,
-        channelsRemoved: globalChannelsPruned + channelsRemoved,
-        membersRemoved,
-        voiceStatesRemoved,
+        guildsRemoved: counts.guildsRemoved,
+        channelsRemoved: counts.channelsRemoved,
+        membersRemoved: counts.membersRemoved,
+        voiceStatesRemoved: counts.voiceStatesRemoved,
         before,
         after
     };
-    st.lastLeanCleanup = summary;
+}
 
-    if (VOICE_LEAN_LOG) {
-        console.log(`[WORKER] 🧼 Voice lean cleanup ${reason}: ${JSON.stringify({
-            session: summary.shortId,
-            guilds: `${before.guilds}->${after.guilds}`,
-            channels: `${before.channels}->${after.channels}`,
-            members: `${before.guildMembers}->${after.guildMembers}`,
-            voiceStates: `${before.voiceStates}->${after.voiceStates}`,
-            messages: `${before.messages}->${after.messages}`
-        })}`);
-    }
+function logLeanCleanup(summary, before, after) {
+    if (!VOICE_LEAN_LOG) return;
+    console.log(`[WORKER] 🧼 Voice lean cleanup ${summary.reason}: ${JSON.stringify({
+        session: summary.shortId,
+        guilds: `${before.guilds}->${after.guilds}`,
+        channels: `${before.channels}->${after.channels}`,
+        members: `${before.guildMembers}->${after.guildMembers}`,
+        voiceStates: `${before.voiceStates}->${after.voiceStates}`,
+        messages: `${before.messages}->${after.messages}`
+    })}`);
+}
+
+function cleanupLeanClientCache(client, session, reason = "scheduled") {
+    if (!VOICE_LEAN_MODE || !client || !session) return null;
+
+    const before = getClientCacheStats(client);
+    const selfUserId = client.user?.id || session.accountId || null;
+    const targetGuildId = String(session.serverId || "");
+    const targetChannelId = String(session.voiceId || "");
+
+    const counts = pruneLeanCaches(client, { targetGuildId, targetChannelId, selfUserId });
+    const after = getClientCacheStats(client);
+    const summary = buildLeanSummary(reason, session, targetGuildId, targetChannelId, counts, before, after);
+    st.lastLeanCleanup = summary;
+    logLeanCleanup(summary, before, after);
 
     return summary;
 }

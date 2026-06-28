@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased] - cacheUtils Complex Method Refactor 2026-06-28
+
+### Changed
+
+- Refactored `cleanupLeanClientCache` in `discord/voiceWorker/cacheUtils.js` to reduce cyclomatic complexity: extracted `pruneLeanCaches`, `buildLeanSummary`, and `logLeanCleanup` as private helpers. Behavior and return shape are unchanged. No new exports added.
+
 ## [Unreleased] - Documentation Sync 2026-06-28
 
 ### Changed
