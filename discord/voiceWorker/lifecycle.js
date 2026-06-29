@@ -790,7 +790,7 @@ async function stopSession(sessionId, options = {}) {
         if (markOk) {
             console.warn(`[WORKER] ⚠️ Stop cleanup failed for ${sanitizeLogText(sessionId)}: ${cleanup.safeError || cleanup.reason}`);
         } else {
-            console.warn(`[WORKER] ⚠️ Stop cleanup failed and failed state was not persisted for ${sanitizeLogText(sessionId)}: ${markResult?.safeError || "UNKNOWN"}`);
+            console.warn(`[WORKER] ⚠️ Stop cleanup failed and failed state was not persisted for ${sanitizeLogText(sessionId)}: ${sanitizeLogText(markResult?.safeError || "UNKNOWN")}`);
         }
         return false;
     }
@@ -812,7 +812,7 @@ async function stopSession(sessionId, options = {}) {
             "session delete failed after voice cleanup"
         );
         if (!(markResult?.ok ?? markResult)) {
-            console.warn(`[WORKER] ⚠️ Session delete failed and failed state was not persisted for ${sanitizeLogText(sessionId)}: ${markResult?.safeError || "UNKNOWN"}`);
+            console.warn(`[WORKER] ⚠️ Session delete failed and failed state was not persisted for ${sanitizeLogText(sessionId)}: ${sanitizeLogText(markResult?.safeError || "UNKNOWN")}`);
         }
         return false;
     }
