@@ -20,7 +20,7 @@
     "dashboard:dev": "npm --prefix dashboard-public run dev"
   },
   "engines": {
-    "node": ">=22.12.0 <25"
+    "node": "24.x"
   },
   "dependencies": {
     "@discordjs/voice": "^0.19.2",
