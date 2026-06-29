@@ -28,7 +28,7 @@ jobs:
         run: npm install --package-lock-only --omit=optional --ignore-scripts --no-audit --no-fund
 
       - name: Install root dependencies
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: npm ci --omit=optional --ignore-scripts --no-audit --no-fund
 
       - name: Sync dashboard lockfile
         run: npm --prefix dashboard-public install --package-lock-only --omit=optional --ignore-scripts --no-audit --no-fund
