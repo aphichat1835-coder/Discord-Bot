@@ -62,9 +62,10 @@ run: npm ci --no-audit --no-fund
 
 **Dashboard verify ที่ถูกต้อง:**
 ```yml
-run: cd dashboard-public && node -e "require('jest-circus/build/runner.js'); require('jest-resolve'); console.log('dashboard jest ok')"
+run: cd dashboard-public && node -e "require.resolve('jest-circus/runner'); require('jest-resolve'); console.log('dashboard jest ok')"
 ```
 > อย่าใช้ `npm exec -- node` เพราะ npm จะพยายาม install `node` เป็น package
+> อย่าใช้ deep path `jest-circus/build/runner.js` เพราะเสี่ยงพังเมื่อ Jest เปลี่ยน build structure — ใช้ `jest-circus/runner` แทน
 
 ---
 
@@ -75,8 +76,8 @@ run: cd dashboard-public && node -e "require('jest-circus/build/runner.js'); req
 | `syntax-discord` | `npm run check:all` |
 | `syntax-dashboard` | `npm run check:dashboard:all` |
 | `memory-guards` | `npm run check:memory-guards` |
-| `test-discord` | `npm run test:discord` |
-| `test-voice` | `npm run test:voice` |
+| `test-discord` | `find discord/tests -name '*.test.js' ! -name 'voiceWorker*.test.js' -print0 \| xargs -0 -r node --test` |
+| `test-voice` | `node --test discord/tests/voiceWorker*.test.js` |
 
 ใช้ผ่านสกิล **validation**: `startValidationRun({ commandIds: ["syntax-discord", "test-discord"] })`
 
