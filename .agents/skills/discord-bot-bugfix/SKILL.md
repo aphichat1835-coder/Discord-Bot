@@ -104,6 +104,21 @@ jest@30
 
 ---
 
+## Runtime Issues (Render / dashboard-public)
+
+| ปัญหา | สาเหตุ | วิธีแก้ |
+|-------|--------|---------|
+| `MongoStore.create is not a function` | connect-mongo CJS/ESM export ไม่ตรง | ใช้ `const MongoStore = require('connect-mongo').default \|\| require('connect-mongo')` + guard `process.exit(1)` |
+| `saveOAuthUser CastError connections.0` | Schema เก่า `[String]` ยังอยู่บน Render | ตรวจด้วย `[DIAG] OAuthUser connections schema:` ใน startup log — ต้องขึ้น `object-array` |
+| Dashboard URL fallback localhost | env ไม่ครบ | ตั้ง `DASHBOARD_URL`, `PUBLIC_DASHBOARD_URL`, `PUBLIC_BASE_URL`, `DASHBOARD_PUBLIC_URL` บน Render |
+| `[FATAL] Missing MONGO_URI` | env ไม่ครบ | ตั้ง `MONGO_URI` บน Render service ที่ถูกตัว |
+
+### Discord OAuth Redirect URI ที่ต้องตั้งใน Developer Portal
+```
+https://dashboard-public-e3y6.onrender.com/auth/callback
+https://dashboard-public-e3y6.onrender.com/auth/admin-callback
+```
+
 ## จุดเปราะบางในโปรเจกต์
 
 | ไฟล์ | ปัญหา | วิธีแก้ |
