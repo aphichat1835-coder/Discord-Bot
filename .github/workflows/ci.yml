@@ -33,7 +33,7 @@ jobs:
         run: npm --prefix dashboard-public ci --no-audit --no-fund
 
       - name: Verify dashboard test runner
-        run: npm --prefix dashboard-public exec -- node -e "require('jest-circus/build/runner.js'); require('jest-resolve'); console.log('dashboard jest ok')"
+        run: cd dashboard-public && node -e "require('jest-circus/build/runner.js'); require('jest-resolve'); console.log('dashboard jest ok')"
 
       - name: Syntax check (Discord)
         run: npm run check:all
