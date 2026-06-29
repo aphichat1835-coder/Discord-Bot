@@ -57,7 +57,7 @@ jobs:
         run: npm --prefix dashboard-public test
 
       - name: Root audit
-        run: npm audit --omit=optional --audit-level=high
+        run: npm audit --audit-level=high
 
       - name: Dashboard audit
-        run: npm --prefix dashboard-public audit --omit=optional --audit-level=high
+        run: npm --prefix dashboard-public audit --audit-level=high

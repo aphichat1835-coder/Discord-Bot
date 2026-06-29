@@ -50,14 +50,20 @@ git push https://$GITHUB_PERSONAL_ACCESS_TOKEN@github.com/aphichat1835-coder/Dis
 
 ## กฎ CI ของโปรเจกต์นี้
 
-**ห้ามใช้ flags เหล่านี้** กับ `npm ci` ใน `.github/workflows/ci.yml`:
-- `--omit=optional` — ทำให้ native binding หาย (`@snazzah/davey-linux-x64-gnu`, `@unrs/resolver-binding-linux-x64-gnu`)
+**ห้ามใช้ flags เหล่านี้** กับ `npm ci` หรือ `npm audit` ใน `.github/workflows/ci.yml`:
+- `--omit=optional` — ทำให้ native binding หาย (`@snazzah/davey-linux-x64-gnu`, `@unrs/resolver-binding-linux-x64-gnu`) และทำให้ audit resolve dependency แปลก ๆ
 - `--ignore-scripts` — ขัดขวาง postinstall scripts ที่จำเป็น
 - `--omit=peer` — ทำให้ Jest 30 พัง
 
-**ใช้แค่นี้:**
+**install ใช้แค่นี้:**
 ```yml
 run: npm ci --no-audit --no-fund
+```
+
+**audit ใช้แค่นี้:**
+```yml
+run: npm audit --audit-level=high
+run: npm --prefix dashboard-public audit --audit-level=high
 ```
 
 **Dashboard verify ที่ถูกต้อง:**
