@@ -35,7 +35,12 @@ const express    = require('express');
 const mongoose   = require('mongoose');
 const session    = require('express-session');
 const expressRateLimit = require('express-rate-limit');
-const MongoStore = require('connect-mongo');
+const MongoStoreImport = require('connect-mongo');
+const MongoStore = MongoStoreImport.default || MongoStoreImport;
+if (!MongoStore || typeof MongoStore.create !== 'function') {
+    console.error('[FATAL] connect-mongo MongoStore.create is not available — check connect-mongo version');
+    process.exit(1);
+}
 const path       = require('path');
 const crypto     = require('node:crypto');
 const v8         = require('node:v8');
@@ -60,6 +65,14 @@ const IpIdentityLink = require('./models/IpIdentityLink');
 const IPRevealRequest = require('./models/IPRevealRequest');
 const { safeError } = require('./utils/safeLogger');
 const { setCsrfCookie } = require('./utils/csrf');
+const OAuthUser = require('./models/OAuthUser');
+
+// Startup diagnostic — ตรวจ connections schema ว่า Render ใช้โค้ดล่าสุดจริง
+{
+    const connPath = OAuthUser.schema.path('connections');
+    const schemaType = connPath?.caster?.schema ? 'object-array' : String(connPath);
+    console.log('[DIAG] OAuthUser connections schema:', schemaType);
+}
 
 const app  = express();
 const PORT = process.env.PORT || process.env.PORT_DASHBOARD || 3001;
