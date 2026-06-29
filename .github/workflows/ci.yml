@@ -50,6 +50,9 @@ jobs:
       - name: Discord tests
         run: npm run test:discord
 
+      - name: Voice tests
+        run: npm run test:voice
+
       - name: Root audit
         run: npm audit --omit=optional --audit-level=high
 
