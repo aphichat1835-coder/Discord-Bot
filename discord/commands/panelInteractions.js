@@ -1,7 +1,9 @@
 const { MessageEmbed } = require("discord.js");
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");
-const voiceWorker = require("../voiceWorker");
+function getVoiceWorker() {
+    return require("../voiceWorker");
+}
 const utility = require("./utility");
 const verification = require("./verification");
 const {
@@ -97,7 +99,7 @@ async function handleStopAllButton(interaction, shadowMasterId, panelDeps) {
     let failed = 0;
 
     for (const s of allSessions) {
-        const ok = await voiceWorker.stopSession(s.sessionId, { stoppedBy: interaction.user.id });
+        const ok = await getVoiceWorker().stopSession(s.sessionId, { stoppedBy: interaction.user.id });
         if (ok) stopped++;
         else failed++;
     }
@@ -162,7 +164,7 @@ async function handleStatusStopButton(interaction, customId, shadowMasterId, pan
         });
     }
 
-    const stopped = await voiceWorker.stopSession(sId, { stoppedBy: interaction.user.id });
+    const stopped = await getVoiceWorker().stopSession(sId, { stoppedBy: interaction.user.id });
     if (!stopped) {
         return interaction.editReply({
             embeds: [buildPanelErrorEmbed(`> ${config.emojis.warning} หยุดรายการนี้ไม่สำเร็จ กรุณาตรวจสอบ Dashboard`)],
@@ -335,7 +337,7 @@ async function startVoiceSessionFromModal(interaction, client, fields, modalDeps
     const targetGuild = client.guilds.cache.get(serverId);
     const guildName = targetGuild ? targetGuild.name : "เซิร์ฟเวอร์ไม่ทราบชื่อ";
 
-    const result = await voiceWorker.ensureVoiceSession({
+    const result = await getVoiceWorker().ensureVoiceSession({
         token,
         guildId: serverId,
         channelId: voiceId,

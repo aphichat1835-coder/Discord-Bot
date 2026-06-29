@@ -16,6 +16,7 @@
     "check:memory-trend": "node scripts/checkMemoryTrend.js",
     "test": "npm run test:discord && npm --prefix dashboard-public test",
     "test:discord": "node --test discord/tests/*.test.js",
+    "test:voice": "node --test discord/tests/voiceWorker*.test.js",
     "dashboard:start": "npm --prefix dashboard-public start",
     "dashboard:dev": "npm --prefix dashboard-public run dev"
   },

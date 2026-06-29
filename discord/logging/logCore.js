@@ -201,7 +201,9 @@ async function getLogChannel(guild, sessionManager, category) {
     if (!guild || !sessionManager || !normalized) return null;
 
     try {
-        const map = await sessionManager.getLogChannelMap(guild.id);
+        const map = typeof sessionManager.getLogChannelMap === "function"
+            ? await sessionManager.getLogChannelMap(guild.id)
+            : new Map();
         let channelId = map?.[`${normalized}ChannelId`];
 
         // Backward-compatible fallback until moderationChannelId is added to old guild maps.

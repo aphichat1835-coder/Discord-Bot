@@ -24,7 +24,10 @@ jobs:
           npm --version
 
       - name: Install root dependencies
-        run: npm ci --omit=optional --ignore-scripts --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
+
+      - name: Verify Discord voice dependency
+        run: node -e "require('@discordjs/voice'); console.log('discord voice ok')"
 
       - name: Sync dashboard lockfile
         run: npm --prefix dashboard-public install --package-lock-only --omit=optional --omit=peer --ignore-scripts --no-audit --no-fund
