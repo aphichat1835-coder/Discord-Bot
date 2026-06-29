@@ -1,0 +1,164 @@
+วิเคราะห์ใหม่รวมทั้งหมดแล้ว: ตอนนี้มี 2 root cause หลัก + 3 งาน refactor/cleanup ที่ควรสั่งทีเดียว
+
+สรุปสั้นสุด
+Root cause 1:
+Discord voice เคยพัง เพราะ root CI ตัด optional dependency ออก
+แก้แล้วบางส่วน
+
+Root cause 2:
+Dashboard tests พังใหม่ เพราะ dashboard CI ยังตัด optional dependency ออก
+ยังต้องแก้
+
+งานเสริม:
+test:discord ยังรัน voice test ซ้ำ
+voiceWorkerLeanMode.test.js กับ voiceWorkerQueue.test.js ซ้ำกันเป๊ะ
+CI มี Sync dashboard lockfile ซึ่งไม่ควรทำใน CI
+1. Error ใหม่คืออะไร
+
+Log ใหม่:
+
+Dashboard tests
+npm --prefix dashboard-public test
+
+Validation Error:
+Module .../dashboard-public/node_modules/jest-circus/build/runner.js in the testRunner option was not found.
+
+นี่คือ ฝั่ง dashboard-public/Jest ไม่ใช่ Discord voice แล้ว
+
+ในไฟล์จริง:
+
+- name: Install dashboard dependencies
+  run: npm --prefix dashboard-public ci --omit=optional --omit=peer --ignore-scripts --no-audit --no-fund
+
+ปัญหาอยู่ตรงนี้:
+
+--omit=optional
+--ignore-scripts
+
+เพราะ dashboard-public ใช้:
+
+"jest": "^30.4.2"
+
+และใน lockfile มี dependency:
+
+jest-resolve
+└─ unrs-resolver
+   └─ optional native binding
+      └─ @unrs/resolver-binding-linux-x64-gnu
+
+CI เป็น Ubuntu Linux x64 แต่คุณสั่งไม่ให้ติดตั้ง optional dependency ทำให้ resolver/native binding บางส่วนหาย แล้ว Jest resolve jest-circus/build/runner.js เพี้ยนจนขึ้นว่าไม่พบ runner
+
+Jest 30 ใช้ jest-circus เป็น default runner และมีการพึ่งพา resolver รุ่นใหม่อย่าง unrs-resolver; npm เองระบุว่า --omit=optional จะทำให้ optional dependencies ไม่ถูกติดตั้งลง disk แม้จะยังอยู่ใน lockfile.
+
+2. จุดที่แก้แล้วถูก
+
+ใน zip ล่าสุด:
+
+✅ root npm ci เอา --omit=optional ออกแล้ว
+✅ เพิ่ม Verify Discord voice dependency แล้ว
+✅ panelInteractions.js เปลี่ยนเป็น lazy require voiceWorker แล้ว
+✅ discord/logging/logCore.js มี fallback getLogChannelMap แล้ว
+
+ตรงนี้ถือว่าดี
+
+3. จุดที่ยังผิด / ต้องแก้ต่อ
+3.1 Dashboard install ยังผิด
+
+ตอนนี้:
+
+- name: Sync dashboard lockfile
+  run: npm --prefix dashboard-public install --package-lock-only --omit=optional --omit=peer --ignore-scripts --no-audit --no-fund
+
+- name: Install dashboard dependencies
+  run: npm --prefix dashboard-public ci --omit=optional --omit=peer --ignore-scripts --no-audit --no-fund
+
+ควรแก้เป็น:
+
+- name: Install dashboard dependencies
+  run: npm --prefix dashboard-public ci --no-audit --no-fund
+
+และ ลบ Sync dashboard lockfile ออก
+
+เหตุผล: CI ไม่ควรแก้ lockfile เองระหว่าง test เพราะจะทำให้ CI ไม่ได้ทดสอบ lockfile ที่ commit จริง และยังใช้ flags ที่ทำให้ dependency หายด้วย
+
+3.2 เพิ่ม verify ฝั่ง dashboard
+
+เพิ่มหลัง install dashboard:
+
+- name: Verify dashboard test runner
+  run: npm --prefix dashboard-public exec -- node -e "require('jest-circus/build/runner.js'); require('jest-resolve'); console.log('dashboard jest ok')"
+
+อันนี้จะจับ error ได้ก่อนถึงขั้น test
+
+3.3 test:discord ยังรัน voice tests ซ้ำ
+
+ตอนนี้ใน package.json:
+
+"test:discord": "node --test discord/tests/*.test.js",
+"test:voice": "node --test discord/tests/voiceWorker*.test.js"
+
+ปัญหา:
+
+test:discord รันทุก .test.js
+รวม voiceWorker*.test.js ไปแล้ว
+จากนั้น CI รัน test:voice ซ้ำอีก
+
+ให้แก้เป็น:
+
+"test:discord": "find discord/tests -name '*.test.js' ! -name 'voiceWorker*.test.js' -print0 | xargs -0 node --test",
+"test:voice": "node --test discord/tests/voiceWorker*.test.js"
+3.4 มี test ซ้ำ 100%
+
+ไฟล์นี้ซ้ำกันเป๊ะ:
+
+discord/tests/voiceWorkerLeanMode.test.js
+discord/tests/voiceWorkerQueue.test.js
+
+ขนาดเท่ากัน และ hash เหมือนกัน
+
+ให้เลือกอย่างใดอย่างหนึ่ง:
+
+ทางเลือก A: ลบ voiceWorkerQueue.test.js
+ทางเลือก B: เขียน voiceWorkerQueue.test.js ใหม่ให้ทดสอบ queue จริง
+
+แนะนำ B ถ้าโปรเจกต์มี queue logic จริง
+
+4. CI ที่แนะนำใหม่ทั้งไฟล์เฉพาะส่วนสำคัญ
+- name: Install root dependencies
+  run: npm ci --no-audit --no-fund
+
+- name: Verify Discord runtime dependencies
+  run: node -e "require('discord.js'); require('@discordjs/voice'); console.log('discord runtime ok')"
+
+- name: Install dashboard dependencies
+  run: npm --prefix dashboard-public ci --no-audit --no-fund
+
+- name: Verify dashboard test runner
+  run: npm --prefix dashboard-public exec -- node -e "require('jest-circus/build/runner.js'); require('jest-resolve'); console.log('dashboard jest ok')"
+
+- name: Syntax check (Discord)
+  run: npm run check:all
+
+- name: Syntax check (Dashboard)
+  run: npm run check:dashboard:all
+
+- name: Syntax check (Scripts)
+  run: npm run check:scripts
+
+- name: Memory guards check
+  run: npm run check:memory-guards
+
+- name: Discord tests
+  run: npm run test:discord
+
+- name: Voice tests
+  run: npm run test:voice
+
+- name: Dashboard tests
+  run: npm --prefix dashboard-public test
+
+- name: Root audit
+  run: npm audit --omit=optional --audit-level=high
+
+- name: Dashboard audit
+  run: npm --prefix dashboard-public audit --omit=optional --audit-level=high
