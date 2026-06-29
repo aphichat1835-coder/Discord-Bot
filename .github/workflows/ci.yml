@@ -31,13 +31,13 @@ jobs:
         run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
 
       - name: Install root dependencies
-        run: npm ci
+        run: npm install --ignore-scripts --no-audit --no-fund
 
       - name: Sync dashboard lockfile
         run: npm --prefix dashboard-public install --package-lock-only --ignore-scripts --no-audit --no-fund
 
       - name: Install dashboard dependencies
-        run: npm --prefix dashboard-public ci
+        run: npm --prefix dashboard-public install --ignore-scripts --no-audit --no-fund
 
       - name: Syntax check
         run: npm run check:all
