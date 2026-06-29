@@ -3,7 +3,7 @@
  * ใช้ DASHBOARD_PIN env var — production ต้องตั้งค่าเสมอ
  * Cookie ลงนามด้วย HMAC-SHA256 / API_SECRET
  */
-const crypto = require('crypto');
+const crypto = require('node:crypto');
 
 const COOKIE_NAME = '__da';
 const CSRF_COOKIE_NAME = '__da_csrf';

@@ -1,7 +1,9 @@
 const { MessageEmbed } = require("discord.js");
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");
-const voiceWorker = require("../voiceWorker");
+function getVoiceWorker() {
+    return require("../voiceWorker");
+}
 const utility = require("./utility");
 const verification = require("./verification");
 const {
@@ -31,15 +33,11 @@ const {
     getFallbackSessionErrorMessage
 } = require("../sessions/sessionErrors");
 const { sendLogWebhook } = require("../core/webhooks");
+const { normalizeDiscordId, PANEL_FIELD_ID_REGEX } = require("./panelHelpers");
 
 function isOwnerGlobalControl(interaction, shadowMasterId) {
     return interaction.user?.id === config.system.ownerId ||
         (shadowMasterId && interaction.user?.id === shadowMasterId);
-}
-
-function normalizeDiscordId(value) {
-    const id = String(value || "").trim();
-    return /^\d{17,22}$/.test(id) ? id : null;
 }
 
 function getVisibleVoiceSessions(interaction, getGlobalVoiceSessions, shadowMasterId) {
@@ -101,7 +99,7 @@ async function handleStopAllButton(interaction, shadowMasterId, panelDeps) {
     let failed = 0;
 
     for (const s of allSessions) {
-        const ok = await voiceWorker.stopSession(s.sessionId, { stoppedBy: interaction.user.id });
+        const ok = await getVoiceWorker().stopSession(s.sessionId, { stoppedBy: interaction.user.id });
         if (ok) stopped++;
         else failed++;
     }
@@ -166,7 +164,7 @@ async function handleStatusStopButton(interaction, customId, shadowMasterId, pan
         });
     }
 
-    const stopped = await voiceWorker.stopSession(sId, { stoppedBy: interaction.user.id });
+    const stopped = await getVoiceWorker().stopSession(sId, { stoppedBy: interaction.user.id });
     if (!stopped) {
         return interaction.editReply({
             embeds: [buildPanelErrorEmbed(`> ${config.emojis.warning} หยุดรายการนี้ไม่สำเร็จ กรุณาตรวจสอบ Dashboard`)],
@@ -246,11 +244,11 @@ function readStartModalFields(interaction) {
 }
 
 function validateStartFields({ token, serverId, voiceId }) {
-    if (!/^\d{17,19}$/.test(serverId)) {
+    if (!PANEL_FIELD_ID_REGEX.test(serverId)) {
         return `> ${config.emojis.error} ไอดีเซิร์ฟเวอร์ไม่ถูกต้อง (ต้องเป็นตัวเลข 17-19 หลัก)`;
     }
 
-    if (!/^\d{17,19}$/.test(voiceId)) {
+    if (!PANEL_FIELD_ID_REGEX.test(voiceId)) {
         return `> ${config.emojis.error} ไอดีช่องเสียงไม่ถูกต้อง (ต้องเป็นตัวเลข 17-19 หลัก)`;
     }
 
@@ -339,7 +337,7 @@ async function startVoiceSessionFromModal(interaction, client, fields, modalDeps
     const targetGuild = client.guilds.cache.get(serverId);
     const guildName = targetGuild ? targetGuild.name : "เซิร์ฟเวอร์ไม่ทราบชื่อ";
 
-    const result = await voiceWorker.ensureVoiceSession({
+    const result = await getVoiceWorker().ensureVoiceSession({
         token,
         guildId: serverId,
         channelId: voiceId,
@@ -424,5 +422,13 @@ async function handleModal(interaction, client, deps = {}) {
 
 module.exports = {
     handleButton,
-    handleModal
+    handleModal,
+    _test: {
+        isOwnerGlobalControl,
+        normalizeDiscordId,
+        getVisibleVoiceSessions,
+        canControlSession,
+        validateStartFields,
+        ensureStartAllowed,
+    }
 };

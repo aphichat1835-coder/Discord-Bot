@@ -1,0 +1,172 @@
+2026-06-24T09:27:01.053384177Z ==> Deploying...
+2026-06-24T09:27:01.180574885Z ==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
+2026-06-24T09:27:12.527906224Z ==> Running 'npm start'
+2026-06-24T09:27:13.536368941Z 
+2026-06-24T09:27:13.536394912Z > phomueangtai-verify-dashboard@1.0.0 start
+2026-06-24T09:27:13.536400552Z > node -r ../discord/core/loadEnv index.js
+2026-06-24T09:27:13.536403413Z 
+2026-06-24T09:27:13.827242427Z [FATAL] Missing MONGO_URI
+2026-06-24T09:27:15.041577006Z ==> Exited with status 1
+2026-06-24T09:27:15.043464217Z ==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys
+2026-06-24T09:27:19.555172897Z ==> Running 'npm start'
+2026-06-24T09:27:20.462049394Z 
+2026-06-24T09:27:20.462073904Z > phomueangtai-verify-dashboard@1.0.0 start
+2026-06-24T09:27:20.462079144Z > node -r ../discord/core/loadEnv index.js
+2026-06-24T09:27:20.462081795Z 
+2026-06-24T09:27:20.751632335Z [FATAL] Missing MONGO_URI
+2026-06-24T09:42:07.357245915Z ==> Port scan timeout reached, no open ports detected. Bind your service to at least one port. If you don't need to receive traffic on any port, create a background worker instead.
+2026-06-24T09:42:07.549535523Z ==> Docs on specifying a port: https://render.com/docs/web-services#port-binding
+2026-06-24T09:44:45.556335738Z ==> Deploying...
+2026-06-24T09:44:45.676994871Z ==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
+2026-06-24T09:44:54.339544149Z ==> Running 'npm start'
+2026-06-24T09:44:55.333642923Z 
+2026-06-24T09:44:55.333674044Z > phomueangtai-verify-dashboard@1.0.0 start
+2026-06-24T09:44:55.333681414Z > node -r ../discord/core/loadEnv index.js
+2026-06-24T09:44:55.333685414Z 
+2026-06-24T09:44:55.538517579Z [WARN] DASHBOARD_URL/PUBLIC_DASHBOARD_URL/PUBLIC_BASE_URL/DASHBOARD_PUBLIC_URL not set; OAuth redirect may use localhost fallback.
+2026-06-24T09:45:00.789297553Z [DB] ✅ MongoDB connected
+2026-06-24T09:45:00.793431505Z [DASHBOARD] 🌐 Public Dashboard → http://localhost:10000
+2026-06-24T09:45:06.719384573Z ==> 
+2026-06-24T09:45:06.72093747Z ==> ///////////////////////////////////////////////////////////
+2026-06-24T09:45:06.722371376Z ==> 
+2026-06-24T09:45:06.723877942Z ==> Available at your primary URL https://dashboard-public-e3y6.onrender.com
+2026-06-24T09:45:06.725379279Z ==> 
+2026-06-24T09:45:06.726837514Z ==> ///////////////////////////////////////////////////////////
+2026-06-24T09:45:55.938397985Z ==> Deploying...
+2026-06-24T09:45:56.046483411Z ==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
+2026-06-24T09:46:05.356843269Z ==> Running 'npm start'
+2026-06-24T09:46:06.27097999Z 
+2026-06-24T09:46:06.271009582Z > phomueangtai-verify-dashboard@1.0.0 start
+2026-06-24T09:46:06.271016582Z > node -r ../discord/core/loadEnv index.js
+2026-06-24T09:46:06.271021463Z 
+2026-06-24T09:46:06.563496986Z [WARN] DASHBOARD_URL/PUBLIC_DASHBOARD_URL/PUBLIC_BASE_URL/DASHBOARD_PUBLIC_URL not set; OAuth redirect may use localhost fallback.
+2026-06-24T09:46:12.510620613Z [DB] ✅ MongoDB connected
+2026-06-24T09:46:12.515807228Z [DASHBOARD] 🌐 Public Dashboard → http://localhost:10000
+2026-06-24T09:46:17.243588772Z ==> Your service is live 🎉
+2026-06-24T09:46:17.351540687Z ==> 
+2026-06-24T09:46:17.353291928Z ==> ///////////////////////////////////////////////////////////
+2026-06-24T09:46:17.355174557Z ==> 
+2026-06-24T09:46:17.35681131Z ==> Available at your primary URL https://dashboard-public-e3y6.onrender.com
+2026-06-24T09:46:17.358474795Z ==> 
+2026-06-24T09:46:17.36014563Z ==> ///////////////////////////////////////////////////////////
+2026-06-24T09:48:57.065293021Z ==> Deploying...
+2026-06-24T09:48:57.17123108Z ==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
+2026-06-24T09:49:04.821556003Z ==> Running 'npm start'
+2026-06-24T09:49:06.13910543Z 
+2026-06-24T09:49:06.139133611Z > phomueangtai-verify-dashboard@1.0.0 start
+2026-06-24T09:49:06.139139331Z > node -r ../discord/core/loadEnv index.js
+2026-06-24T09:49:06.139142001Z 
+2026-06-24T09:49:06.421585502Z [WARN] DASHBOARD_URL/PUBLIC_DASHBOARD_URL/PUBLIC_BASE_URL/DASHBOARD_PUBLIC_URL not set; OAuth redirect may use localhost fallback.
+2026-06-24T09:49:11.691364764Z [DB] ✅ MongoDB connected
+2026-06-24T09:49:11.695725685Z [DASHBOARD] 🌐 Public Dashboard → http://localhost:10000
+2026-06-24T09:49:18.33037539Z ==> Your service is live 🎉
+2026-06-24T09:49:18.698597544Z ==> 
+2026-06-24T09:49:18.700392445Z ==> ///////////////////////////////////////////////////////////
+2026-06-24T09:49:18.701898062Z ==> 
+2026-06-24T09:49:18.703434779Z ==> Available at your primary URL https://dashboard-public-e3y6.onrender.com
+2026-06-24T09:49:18.704982436Z ==> 
+2026-06-24T09:49:18.706430051Z ==> ///////////////////////////////////////////////////////////
+2026-06-24T09:53:44.595767951Z ==> Deploying...
+2026-06-24T09:53:44.717782099Z ==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
+2026-06-24T09:53:54.380414979Z ==> Running 'npm start'
+2026-06-24T09:53:55.191981629Z 
+2026-06-24T09:53:55.192016921Z > phomueangtai-verify-dashboard@1.0.0 start
+2026-06-24T09:53:55.192028761Z > node -r ../discord/core/loadEnv index.js
+2026-06-24T09:53:55.192030992Z 
+2026-06-24T09:53:55.491118931Z [WARN] DASHBOARD_URL/PUBLIC_DASHBOARD_URL/PUBLIC_BASE_URL/DASHBOARD_PUBLIC_URL not set; OAuth redirect may use localhost fallback.
+2026-06-24T09:54:00.868792024Z [DB] ✅ MongoDB connected
+2026-06-24T09:54:00.873207588Z [DASHBOARD] 🌐 Public Dashboard → http://localhost:10000
+2026-06-24T09:54:05.554185323Z ==> Your service is live 🎉
+2026-06-24T09:54:05.674895631Z ==> 
+2026-06-24T09:54:05.676343106Z ==> ///////////////////////////////////////////////////////////
+2026-06-24T09:54:05.677910914Z ==> 
+2026-06-24T09:54:05.679835197Z ==> Available at your primary URL https://dashboard-public-e3y6.onrender.com
+2026-06-24T09:54:05.681238162Z ==> 
+2026-06-24T09:54:05.682716448Z ==> ///////////////////////////////////////////////////////////
+2026-06-24T09:59:03.535966498Z ==> Detected service running on port 10000
+2026-06-24T09:59:03.686072703Z ==> Docs on specifying a port: https://render.com/docs/web-services#port-binding
+2026-06-24T09:59:23.917081541Z ==> Deploying...
+2026-06-24T09:59:24.019628852Z ==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
+2026-06-24T09:59:33.300739636Z ==> Running 'npm start'
+2026-06-24T09:59:34.301943259Z 
+2026-06-24T09:59:34.30197515Z > phomueangtai-verify-dashboard@1.0.0 start
+2026-06-24T09:59:34.30198229Z > node -r ../discord/core/loadEnv index.js
+2026-06-24T09:59:34.30198595Z 
+2026-06-24T09:59:40.129011133Z [DB] ✅ MongoDB connected
+2026-06-24T09:59:40.133632082Z [DASHBOARD] 🌐 Public Dashboard → http://localhost:10000
+2026-06-24T09:59:45.081638947Z ==> Your service is live 🎉
+2026-06-24T09:59:45.194114361Z ==> 
+2026-06-24T09:59:45.196198082Z ==> ///////////////////////////////////////////////////////////
+2026-06-24T09:59:45.197646223Z ==> 
+2026-06-24T09:59:45.199296397Z ==> Available at your primary URL https://dashboard-public-e3y6.onrender.com
+2026-06-24T09:59:45.200792971Z ==> 
+2026-06-24T09:59:45.202184819Z ==> ///////////////////////////////////////////////////////////
+2026-06-24T10:04:44.329870418Z ==> Detected service running on port 10000
+2026-06-24T10:04:44.485498898Z ==> Docs on specifying a port: https://render.com/docs/web-services#port-binding
+2026-06-24T10:20:53.294996354Z [VERIFY] saveOAuthUser failed: {"name":"CastError","code":null,"path":"connections.0","kind":"[string]","messagePreview":"Cast to [string] failed for value [REDACTED]"}
+2026-06-24T10:21:06.595319393Z [VERIFY] saveOAuthUser failed: {"name":"CastError","code":null,"path":"connections.0","kind":"[string]","messagePreview":"Cast to [string] failed for value [REDACTED]"}
+2026-06-24T11:42:56.132446643Z ==> Running 'npm start'
+2026-06-24T11:42:57.839470668Z 
+2026-06-24T11:42:57.83950058Z > phomueangtai-verify-dashboard@1.0.0 start
+2026-06-24T11:42:57.839508871Z > node -r ../discord/core/loadEnv index.js
+2026-06-24T11:42:57.839512421Z 
+2026-06-24T11:43:04.044884921Z [DB] ✅ MongoDB connected
+2026-06-24T11:43:04.049685926Z [DASHBOARD] 🌐 Public Dashboard → http://localhost:10000
+2026-06-25T02:23:32.243345317Z ==> Running 'npm start'
+2026-06-25T02:23:33.85700364Z 
+2026-06-25T02:23:33.857061012Z > phomueangtai-verify-dashboard@1.0.0 start
+2026-06-25T02:23:33.857072902Z > node -r ../discord/core/loadEnv index.js
+2026-06-25T02:23:33.857079062Z 
+2026-06-25T02:23:39.962436296Z [DB] ✅ MongoDB connected
+2026-06-25T02:23:39.967159481Z [DASHBOARD] 🌐 Public Dashboard → http://localhost:10000
+2026-06-25T02:23:49.738428549Z [VERIFY] saveOAuthUser failed: {"name":"CastError","code":null,"path":"connections.0","kind":"[string]","messagePreview":"Cast to [string] failed for value [REDACTED]"}
+2026-06-25T14:09:09.397207808Z ==> Running 'npm start'
+2026-06-25T14:09:10.506945152Z 
+2026-06-25T14:09:10.506966073Z > phomueangtai-verify-dashboard@1.0.0 start
+2026-06-25T14:09:10.506971933Z > node -r ../discord/core/loadEnv index.js
+2026-06-25T14:09:10.506974553Z 
+2026-06-25T14:09:16.3434174Z [DB] ✅ MongoDB connected
+2026-06-25T14:09:16.348621675Z [DASHBOARD] 🌐 Public Dashboard → http://localhost:10000
+2026-06-25T14:18:21.189281982Z [VERIFY] saveOAuthUser failed: {"name":"CastError","code":null,"path":"connections.0","kind":"[string]","messagePreview":"Cast to [string] failed for value [REDACTED]"}
+2026-06-26T13:41:53.59818278Z [VERIFY] saveOAuthUser failed: {"name":"CastError","code":null,"path":"connections.0","kind":"[string]","messagePreview":"Cast to [string] failed for value [REDACTED]"}
+2026-06-27T07:52:14.091237094Z [VERIFY] saveOAuthUser failed: {"name":"CastError","code":null,"path":"connections.0","kind":"[string]","messagePreview":"Cast to [string] failed for value [REDACTED]"}
+2026-06-27T07:52:21.695995504Z [VERIFY] saveOAuthUser failed: {"name":"CastError","code":null,"path":"connections.0","kind":"[string]","messagePreview":"Cast to [string] failed for value [REDACTED]"}
+2026-06-28T04:30:38.811338775Z ==> Deploying...
+2026-06-28T04:30:38.909019285Z ==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
+2026-06-28T04:30:48.493903424Z > phomueangtai-verify-dashboard@1.0.0 start
+2026-06-28T04:30:48.493912934Z > node -r ../discord/core/loadEnv index.js
+2026-06-28T04:30:48.493917285Z 
+2026-06-28T04:30:52.299247963Z /opt/render/project/src/dashboard-public/index.js:129
+2026-06-28T04:30:52.299279014Z const sessionStore = MongoStore.create({
+2026-06-28T04:30:52.299284434Z                                 ^
+2026-06-28T04:30:52.299288984Z 
+2026-06-28T04:30:52.299294044Z TypeError: MongoStore.create is not a function
+2026-06-28T04:30:52.299299394Z     at Object.<anonymous> (/opt/render/project/src/dashboard-public/index.js:129:33)
+2026-06-28T04:30:52.299334505Z     at Module._compile (node:internal/modules/cjs/loader:1871:14)
+2026-06-28T04:30:52.299342215Z     at Object..js (node:internal/modules/cjs/loader:2002:10)
+2026-06-28T04:30:52.299346965Z     at Module.load (node:internal/modules/cjs/loader:1594:32)
+2026-06-28T04:30:52.299352096Z     at Module._load (node:internal/modules/cjs/loader:1396:12)
+2026-06-28T04:30:52.299355836Z     at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+2026-06-28T04:30:52.299359046Z     at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+2026-06-28T04:30:52.299362126Z     at node:internal/main/run_main_module:33:47
+2026-06-28T04:30:52.299365166Z 
+2026-06-28T04:30:52.299368356Z Node.js v24.18.0
+2026-06-28T04:30:54.345611668Z ==> Exited with status 1
+2026-06-28T04:30:54.347508788Z ==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys
+2026-06-28T04:30:58.107928018Z ==> Running 'npm start'
+2026-06-28T04:30:59.009072809Z 
+2026-06-28T04:30:59.00910195Z > phomueangtai-verify-dashboard@1.0.0 start
+2026-06-28T04:30:59.00911265Z > node -r ../discord/core/loadEnv index.js
+2026-06-28T04:30:59.0091161Z 
+2026-06-28T04:31:05.919289369Z ==> Running 'npm start'
+2026-06-28T04:31:06.825878467Z 
+2026-06-28T04:31:06.825905769Z > phomueangtai-verify-dashboard@1.0.0 start
+2026-06-28T04:31:06.825911099Z > node -r ../discord/core/loadEnv index.js
+2026-06-28T04:31:06.825913939Z 
+2026-06-28T04:31:12.22941952Z [DB] ✅ MongoDB connected
+2026-06-28T04:31:12.233418282Z [DASHBOARD] 🌐 Public Dashboard → http://localhost:10000
+2026-06-28T04:45:42.386945825Z ==> Port scan timeout reached, no open ports detected. Bind your service to at least one port. If you don't need to receive traffic on any port, create a background worker instead.
+2026-06-28T04:45:42.536078758Z ==> Docs on specifying a port: https://render.com/docs/web-services#port-binding
+2026-06-28T04:48:54.623813069Z [VERIFY] saveOAuthUser failed: {"name":"CastError","code":null,"path":"connections.0","kind":"[string]","messagePreview":"Cast to [string] failed for value [REDACTED]"}
+2026-06-28T09:04:46.719176055Z [VERIFY] saveOAuthUser failed: {"name":"CastError","code":null,"path":"connections.0","kind":"[string]","messagePreview":"Cast to [string] failed for value [REDACTED]"}
+2026-06-28T09:10:55.320316901Z [VERIFY] saveOAuthUser failed: {"name":"CastError","code":null,"path":"connections.0","kind":"[string]","messagePreview":"Cast to [string] failed for value [REDACTED]"}

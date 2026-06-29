@@ -1,0 +1,483 @@
+un npm run test:discord
+  npm run test:discord
+  shell: /usr/bin/bash -e {0}
+
+> phomueangtai-enterprise@4.0.1 test:discord
+> node --test discord/tests/*.test.js
+
+✔ additional audit fixtures render (12.18728ms)
+✔ audit API filter narrows records (1.032539ms)
+✔ audit API helpers sanitize filters and limits (0.185566ms)
+✔ audit dead-letter API helper reads records (0.202802ms)
+✔ audit health reports permission status (0.115412ms)
+✔ audit settings can start and stop reconciler runtime (0.488558ms)
+✔ audit reconciler scheduler reads guild settings once per disabled guild cycle (0.430521ms)
+✔ audit channel repair plan reports missing channels (0.749827ms)
+✔ audit channel repair expected names can be overridden (0.132948ms)
+✔ audit coverage smoke fixtures render (15.73102ms)
+✔ audit dashboard escapes page title (0.473686ms)
+✔ audit dashboard includes CSRF header support for settings POST (0.193458ms)
+✔ audit dead letter normalizes failed log records (0.990265ms)
+✔ audit dead letter keys are stable (0.142602ms)
+✔ audit dedup cache detects repeated keys (0.546484ms)
+✔ audit dedup key helpers are stable (0.151105ms)
+✔ audit fixture files render (11.852691ms)
+✔ audit health includes delivery and channel repair state (1.117445ms)
+✔ audit log store builds filtered query (0.844959ms)
+✔ audit log store exports delete helper (0.09399ms)
+✔ audit storage normalizes records (3.75189ms)
+[LOG_CORE] Failed to send log: temporary send failure
+✔ audit send queue continues after a failed send (253.332234ms)
+✔ audit cleanup removes stale duplicate keys and expired message snapshots (0.490781ms)
+✔ audit embed builder truncates fields and total embed text (292.430772ms)
+✔ audit send stores gateway records for audit API reads (1.411743ms)
+✔ audit settings disabled category prevents gateway send and storage (0.600055ms)
+✔ audit dead letter normalizes records (0.994432ms)
+✔ audit channel repair detects missing channels (0.339947ms)
+✔ expanded audit renderers cover guild channel role (11.080731ms)
+✔ expanded audit renderers cover soundboard onboarding home voice status (4.27566ms)
+✔ changeValue reads old and new change variants (0.169472ms)
+✔ audit retention normalizes days (0.693183ms)
+✔ audit retention computes cutoff (0.122152ms)
+✔ audit retention cleanup reads shared audit settings (0.434217ms)
+✔ audit route mount plan documents required routes (0.542388ms)
+▶ audit runtime integration behavior
+  ✔ starts audit runtime with settings-driven scheduler options (0.685963ms)
+  ✔ registers audit logs dashboard route behind audit page auth (0.299716ms)
+✔ audit runtime integration behavior (1.67139ms)
+✔ audit runtime lifecycle exposes scheduler controls (0.475538ms)
+✔ audit runtime lifecycle stays inactive by default (0.28162ms)
+✔ audit server integration patch documents safe mount (0.477171ms)
+✔ audit settings normalizes booleans and limits (0.693763ms)
+✔ audit settings treats string zero retention as forever (0.139848ms)
+✔ audit settings key and category helper (0.247669ms)
+✔ audit event map resolves categories and severities (0.742716ms)
+✔ generic audit formatter renders options and changes safely (6.942033ms)
+✔ audit storage saves and lists records with settings fallback (0.663058ms)
+✔ audit storage fallback serializes concurrent index updates and filters fallback list (19.616999ms)
+[LOG_CORE] Failed to resolve log channel: sessionManager.getLogChannelMap is not a function
+[LOG_CORE] Failed to resolve log channel: sessionManager.getLogChannelMap is not a function
+[LOG_CORE] Failed to resolve log channel: sessionManager.getLogChannelMap is not a function
+✔ audit dead-letter fallback serializes concurrent index updates (10.181691ms)
+✔ audit reconciler normalizes entries (0.27524ms)
+✔ audit reconciler pages backward until the saved cursor (5.218145ms)
+✔ specific audit renderer handles channel overwrite events (5.892529ms)
+✔ specific audit renderer handles member voice moderation events (0.636989ms)
+✔ audit export renders csv json and markdown (0.917317ms)
+✔ audit csv export neutralizes spreadsheet formulas (0.303392ms)
+✔ specific audit renderer forwards caller options (0.524993ms)
+✔ audit web bundle exports registration function (0.478453ms)
+✔ audit web bundle reports successful registration (0.265055ms)
+✔ dashboard auth has no fallback secret (1.006169ms)
+✔ production check trims NODE_ENV (0.148411ms)
+✔ parseCookies skips malformed cookie encoding without throwing (0.667234ms)
+✔ pin page escapes hidden next attribute (0.257273ms)
+✔ csrf token is bound to a valid dashboard session token (0.796276ms)
+✔ dashboard auth session duration is configurable and bounded (0.16096ms)
+✔ dashboard auth can identify sessions that need rolling refresh (0.251395ms)
+✔ hasPermission supports all and any matching modes (0.828064ms)
+✔ safeReply chooses reply, followUp, or editReply from interaction state (0.26226ms)
+✔ safeDefer does not defer already handled interactions (0.709217ms)
+✔ member and bot permission guards reply on missing permissions (0.251035ms)
+✔ checkRoleHierarchy rejects protected targets and allows lower targets (0.255381ms)
+✔ sanitizeUserMessage neutralizes mentions and blocks risky links (0.331494ms)
+✔ voice panel control matcher uses shared custom IDs and prefixes (0.172617ms)
+✔ validateRequiredEnv trims required values and rejects whitespace-only secrets (1.023565ms)
+✔ createHttpApp only trusts proxies when explicitly configured (0.802916ms)
+✔ feature flags default on and can be disabled by env (0.342229ms)
+✔ safe loggers redact IPv6 and MongoDB connection strings (5.041761ms)
+[WARN] dashboard_unauthorized_access {"path":"/write","ip":"[REDACTED_IP]"}
+[WARN] dashboard_unauthorized_access {"path":"/api","ip":"test-client-a"}
+Error:  dashboard_api_secret_missing {"path":"/api"}
+[WARN] dashboard_unauthorized_access {"path":"/api/reveal-token","ip":"test-client-b"}
+[WARN] dashboard_unauthorized_access {"path":"/api/reveal-token","ip":"test-client-b"}
+[WARN] dashboard_unauthorized_access {"path":"/api/reveal-token","ip":"test-client-b"}
+[WARN] dashboard_unauthorized_access {"path":"/api/reveal-token","ip":"test-client-b"}
+[WARN] dashboard_unauthorized_access {"path":"/api/reveal-token","ip":"test-client-b"}
+✔ dashboard read APIs do not bypass owner auth (2.322109ms)
+✔ rate limiter blocks after configured request count (5.304223ms)
+✔ rate limiter buckets expire stale entries and stay capped (4.592282ms)
+✔ checkAuth accepts exact secret and rejects mismatches (1.491642ms)
+✔ checkAuth fails closed when API_SECRET is not configured (0.366776ms)
+✔ reveal PIN guard locks after repeated failures and can clean expired attempts (1.01961ms)
+✔ reveal PIN attempts expire stale unlocked records and stay capped (1.065828ms)
+✔ decodeTokenOwnerIdSafe extracts a canonical Discord user ID (0.947232ms)
+✔ custom ID helpers preserve the routing parser contract (0.184185ms)
+✔ buildVoiceStatusControls uses shared custom ID prefixes (1.211295ms)
+✔ serializeVoiceSession redacts tokens and serializes timestamps as epoch milliseconds (0.391634ms)
+✔ session serializer helpers handle labels, timestamps, and token fallback (0.18775ms)
+✔ view helpers escape HTML and create a consistent shell (0.311494ms)
+✔ view styles remain available through the split style module and views compatibility export (0.138677ms)
+✔ join campaign candidate summary uses only tokens with guilds.join (0.96629ms)
+✔ join campaign refreshes expiring token before adding member (2.009353ms)
+✔ Thai join campaign log summarizes counts without raw tokens (0.231324ms)
+✔ join campaign route helpers list and resolve allowed target guilds (0.39579ms)
+✔ startJoinCampaign rejects disabled config before creating an active job (0.353326ms)
+✔ join campaign rejects empty allowed guild list even when enabled (0.508238ms)
+✔ parseEnvLine handles comments, quotes, and invalid keys (0.880722ms)
+✔ loadEnvFile loads missing values without overriding existing env (0.177474ms)
+✔ logCore maps moderation and protection event categories (0.884518ms)
+✔ safeAuditText redacts sensitive values and truncates (4.651952ms)
+✔ audit retention rounds fractional days up instead of forever (0.169412ms)
+✔ buildLogEmbed includes IDs and clamps fields (2.801494ms)
+✔ buildIdBlock returns compact ID block (0.17496ms)
+✔ permission diff detects added and removed permissions (0.749847ms)
+✔ message snapshot cache stores attachments safely (0.371324ms)
+✔ security rules score dangerous permission changes (0.297112ms)
+✔ event factory creates message event summaries (0.637089ms)
+✔ dead-letter queue normalizes and keys failed logs (0.760774ms)
+✔ memory monitor trend stays bounded and compact (3.021743ms)
+✔ memory trend checker accepts stable diagnostics (0.829917ms)
+✔ memory trend checker rejects unstable diagnostics (0.166518ms)
+✔ createCase assigns increasing case numbers (6.326827ms)
+✔ createCase fallback serializes concurrent counters and user indexes (1.384202ms)
+✔ getCase and listUserCases work with settings fallback (0.448979ms)
+✔ updateCaseReason amends existing case (1.179638ms)
+✔ moderation helpers map required permissions (0.631ms)
+✔ moderation helpers parse timeout duration (0.178516ms)
+✔ moderation helpers build case input (0.162252ms)
+✔ moderation helpers avoid exposing raw exception messages (0.106609ms)
+✔ moderation workflow exposes action handlers (0.655807ms)
+✔ moderation workflow reads full timeout input (4.331213ms)
+✔ moderation workflow validates missing target reply (0.1543ms)
+✔ buildProtectionEvent normalizes evidence and action result (4.044887ms)
+✔ buildProtectionEmbed includes evidence and action result fields (2.464432ms)
+✔ createActionResult records failed action details (0.262732ms)
+✔ createProtectionCase skips failed or skipped punitive actions (0.281709ms)
+✔ protection policy defaults to audit only (0.862996ms)
+✔ protection policy respects trusted actors (0.153759ms)
+✔ protection window state counts events in window (0.303543ms)
+✔ protection window count does not mutate stored timestamps (0.185396ms)
+✔ protection window refreshes active keys before eviction (2.870808ms)
+/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js:500
+    throw new Error(
+    ^
+
+Error: Cannot find native binding. npm has a bug related to optional dependencies (https://github.com/npm/cli/issues/4828). Please try `npm i` again after removing both package-lock.json and node_modules directory.
+    at Object.<anonymous> (/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js:500:11)
+    at Module._compile (node:internal/modules/cjs/loader:1854:14)
+    at Object..js (node:internal/modules/cjs/loader:1985:10)
+    at Module.load (node:internal/modules/cjs/loader:1577:32)
+    at Module._load (node:internal/modules/cjs/loader:1379:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1600:12)
+    at require (node:internal/modules/helpers:153:16)
+    at Object.<anonymous> (/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@discordjs/voice/dist/index.js:262:28)
+    at Module._compile (node:internal/modules/cjs/loader:1854:14) {
+  [cause]: [
+    Error: Cannot find module './davey.linux-x64-gnu.node'
+    Require stack:
+    - /home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js
+        at Module._resolveFilename (node:internal/modules/cjs/loader:1500:15)
+        at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+        at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+        at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1116:12)
+        at Module._load (node:internal/modules/cjs/loader:1285:25)
+        at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+        at Module.require (node:internal/modules/cjs/loader:1600:12)
+        at require (node:internal/modules/helpers:153:16)
+        at requireNative (/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js:268:18)
+        at Object.<anonymous> (/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js:477:17) {
+      code: 'MODULE_NOT_FOUND',
+      requireStack: [
+        '/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js'
+      ]
+    },
+    Error: Cannot find module '@snazzah/davey-linux-x64-gnu'
+    Require stack:
+    - /home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js
+        at Module._resolveFilename (node:internal/modules/cjs/loader:1500:15)
+        at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+        at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+        at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1116:12)
+        at Module._load (node:internal/modules/cjs/loader:1285:25)
+        at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+        at Module.require (node:internal/modules/cjs/loader:1600:12)
+        at require (node:internal/modules/helpers:153:16)
+        at requireNative (/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js:273:27)
+        at Object.<anonymous> (/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js:477:17) {
+      code: 'MODULE_NOT_FOUND',
+      requireStack: [
+        '/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js'
+      ]
+    }
+  ]
+}
+
+Node.js v24.17.0
+✖ discord/tests/registry.test.js (573.113237ms)
+✔ role button validation accepts manageable roles (0.744629ms)
+✔ role button validation rejects missing bot permission (0.226067ms)
+✔ role button validation rejects managed and too-high roles (0.199697ms)
+✔ session error map returns known user-facing messages (0.794464ms)
+✔ unknown session errors fall back cleanly (0.187149ms)
+✔ session manager diagnostics expose bounded load limits (1.179026ms)
+✔ setup-log category list includes moderation (0.593404ms)
+✔ setup-log detects text channels by v13 isText (0.145367ms)
+✔ setup-log finds existing named log channel (0.118727ms)
+✔ setup-log reports moderation save success only when a backing save works (0.252586ms)
+✔ system provider action helper toggles simple state (0.808875ms)
+✔ system provider action helper manages id-backed sets and pin updates (0.918549ms)
+✔ shadow portal auth accepts the configured PIN and issues a session cookie (1.395159ms)
+✔ shadow portal auth accepts a valid cookie session without a PIN (0.286126ms)
+✔ shadow portal auth locks repeated invalid PIN attempts (0.485062ms)
+✔ shadow portal renderers escape dynamic guild, metric, and dashboard values (1.466775ms)
+✔ trace eraser policy and protected channel config parsers normalize inputs (1.163484ms)
+✔ approval policy creates an expiring request instead of deleting immediately (1.680344ms)
+✔ protected channel id blocks trace eraser action (0.19499ms)
+✔ allowed policy auto-deletes unless dry-run is enabled (0.360507ms)
+✔ owner approval button deletes the pending target message (0.793673ms)
+✔ token constants describe the accepted token envelope (0.768625ms)
+✔ validateTokenFormat accepts shaped tokens and rejects unsafe input (0.148792ms)
+✔ decodeTokenOwnerIdSafe validates the base64url owner segment (0.492894ms)
+✔ redactToken keeps only short edge markers (0.142092ms)
+✔ direct-role assignment helper accepts manageable roles (0.655777ms)
+✔ direct-role assignment helper rejects missing Manage Roles (0.180199ms)
+✔ direct-role assignment helper rejects managed and higher roles (0.145156ms)
+✔ dashboard nav includes audit logs link (0.693363ms)
+✔ worker normalizeVoiceTarget: accepts 17-digit ID (minimum) (1.057726ms)
+✔ worker normalizeVoiceTarget: accepts 19-digit ID (common snowflake) (0.122142ms)
+✔ worker normalizeVoiceTarget: accepts 22-digit ID (upper boundary) (0.096624ms)
+✔ worker normalizeVoiceTarget: rejects 16-digit ID (too short) (0.891148ms)
+✔ worker normalizeVoiceTarget: rejects 23-digit ID (too long) (0.150795ms)
+✔ worker normalizeVoiceTarget: rejects non-numeric guildId (0.100349ms)
+✔ worker normalizeVoiceTarget: rejects invalid channelId (0.10746ms)
+✔ worker normalizeVoiceTarget: accepts serverId/voiceId aliases (0.251495ms)
+✔ panel normalizeDiscordId: accepts 17-digit ID (0.159808ms)
+✔ panel normalizeDiscordId: accepts 22-digit ID (0.24795ms)
+✔ panel normalizeDiscordId: rejects 16-digit ID (0.123404ms)
+✔ panel normalizeDiscordId: rejects 23-digit ID (0.177314ms)
+✔ panel normalizeDiscordId: rejects letters (0.215782ms)
+✔ panel validateStartFields regex: accepts 17-digit ID (0.109133ms)
+✔ panel validateStartFields regex: accepts 19-digit ID (0.048011ms)
+✔ panel validateStartFields regex: rejects 16-digit ID (0.02663ms)
+✔ panel validateStartFields regex: rejects non-numeric ID (0.018528ms)
+✔ panel validateStartFields regex: rejects 20-digit ID (above panel upper bound of 19) (0.022002ms)
+✔ isOwnerGlobalControl: config ownerId has global control (0.056094ms)
+✔ isOwnerGlobalControl: shadowMaster has global control (0.024377ms)
+✔ isOwnerGlobalControl: regular guild admin does NOT have global control (0.048502ms)
+✔ isOwnerGlobalControl: null shadowMasterId does not grant control (0.027982ms)
+✔ getVisibleVoiceSessions: owner (shadowMaster) sees ALL sessions (0.055803ms)
+✔ getVisibleVoiceSessions: config owner sees ALL sessions (0.026159ms)
+✔ getVisibleVoiceSessions: guild-A admin sees only guild-A sessions (0.038807ms)
+✔ getVisibleVoiceSessions: guild-B admin sees only guild-B sessions (0.027381ms)
+✔ getVisibleVoiceSessions: admin with no matching guild sees zero sessions (0.043044ms)
+✔ canControlSession: owner can control session in any guild (0.066329ms)
+✔ canControlSession: guild admin can control same-guild session (0.032138ms)
+✔ canControlSession: guild admin CANNOT control different-guild session (0.020821ms)
+✔ canControlSession: returns false for null session (0.019189ms)
+✔ ensureStartAllowed: owner can start session in any guild (0.031376ms)
+✔ ensureStartAllowed: guild admin blocked from starting session in another guild (0.058577ms)
+✔ ensureStartAllowed: guild admin in same guild proceeds to next check (0.063725ms)
+✔ regression: ensureVoiceSession does not reference mainClient.guilds (0.163975ms)
+✔ regression: ensureVoiceSession does not call resolveVoiceTarget (0.140739ms)
+✔ regression: connectToVoice resolves guild via self-client param, not mainClient (0.216503ms)
+✔ regression: healthCheck uses st.isShuttingDown (not bare variable) (0.132828ms)
+✔ regression: pauseAll sets st.isShuttingDown (not bare variable) (0.158066ms)
+✔ source contract: worker normalizeVoiceTarget regex is 17,22 (0.123284ms)
+✔ source contract: panel validateStartFields uses PANEL_FIELD_ID_REGEX (known scope limit) (0.181741ms)
+✔ source contract: panel normalizeDiscordId uses 17-22 regex (consistent with worker) (0.10699ms)
+/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js:500
+    throw new Error(
+    ^
+
+Error: Cannot find native binding. npm has a bug related to optional dependencies (https://github.com/npm/cli/issues/4828). Please try `npm i` again after removing both package-lock.json and node_modules directory.
+    at Object.<anonymous> (/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js:500:11)
+    at Module._compile (node:internal/modules/cjs/loader:1854:14)
+    at Object..js (node:internal/modules/cjs/loader:1985:10)
+    at Module.load (node:internal/modules/cjs/loader:1577:32)
+    at Module._load (node:internal/modules/cjs/loader:1379:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1600:12)
+    at require (node:internal/modules/helpers:153:16)
+    at Object.<anonymous> (/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@discordjs/voice/dist/index.js:262:28)
+    at Module._compile (node:internal/modules/cjs/loader:1854:14) {
+  [cause]: [
+    Error: Cannot find module './davey.linux-x64-gnu.node'
+    Require stack:
+    - /home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js
+        at Module._resolveFilename (node:internal/modules/cjs/loader:1500:15)
+        at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+        at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+        at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1116:12)
+        at Module._load (node:internal/modules/cjs/loader:1285:25)
+        at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+        at Module.require (node:internal/modules/cjs/loader:1600:12)
+        at require (node:internal/modules/helpers:153:16)
+        at requireNative (/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js:268:18)
+        at Object.<anonymous> (/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js:477:17) {
+      code: 'MODULE_NOT_FOUND',
+      requireStack: [
+        '/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js'
+      ]
+    },
+    Error: Cannot find module '@snazzah/davey-linux-x64-gnu'
+    Require stack:
+    - /home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js
+        at Module._resolveFilename (node:internal/modules/cjs/loader:1500:15)
+        at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+        at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+        at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1116:12)
+        at Module._load (node:internal/modules/cjs/loader:1285:25)
+        at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+        at Module.require (node:internal/modules/cjs/loader:1600:12)
+        at require (node:internal/modules/helpers:153:16)
+        at requireNative (/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js:273:27)
+        at Object.<anonymous> (/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js:477:17) {
+      code: 'MODULE_NOT_FOUND',
+      requireStack: [
+        '/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js'
+      ]
+    }
+  ]
+}
+
+Node.js v24.17.0
+✖ discord/tests/voiceWorkerDisplay.test.js (54.351933ms)
+/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js:500
+    throw new Error(
+    ^
+
+Error: Cannot find native binding. npm has a bug related to optional dependencies (https://github.com/npm/cli/issues/4828). Please try `npm i` again after removing both package-lock.json and node_modules directory.
+    at Object.<anonymous> (/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js:500:11)
+    at Module._compile (node:internal/modules/cjs/loader:1854:14)
+    at Object..js (node:internal/modules/cjs/loader:1985:10)
+    at Module.load (node:internal/modules/cjs/loader:1577:32)
+    at Module._load (node:internal/modules/cjs/loader:1379:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1600:12)
+    at require (node:internal/modules/helpers:153:16)
+    at Object.<anonymous> (/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@discordjs/voice/dist/index.js:262:28)
+    at Module._compile (node:internal/modules/cjs/loader:1854:14) {
+  [cause]: [
+    Error: Cannot find module './davey.linux-x64-gnu.node'
+    Require stack:
+    - /home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js
+        at Module._resolveFilename (node:internal/modules/cjs/loader:1500:15)
+        at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+        at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+        at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1116:12)
+        at Module._load (node:internal/modules/cjs/loader:1285:25)
+        at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+        at Module.require (node:internal/modules/cjs/loader:1600:12)
+        at require (node:internal/modules/helpers:153:16)
+        at requireNative (/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js:268:18)
+        at Object.<anonymous> (/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js:477:17) {
+      code: 'MODULE_NOT_FOUND',
+      requireStack: [
+        '/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js'
+      ]
+    },
+    Error: Cannot find module '@snazzah/davey-linux-x64-gnu'
+    Require stack:
+    - /home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js
+        at Module._resolveFilename (node:internal/modules/cjs/loader:1500:15)
+        at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+        at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+        at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1116:12)
+        at Module._load (node:internal/modules/cjs/loader:1285:25)
+        at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+        at Module.require (node:internal/modules/cjs/loader:1600:12)
+        at require (node:internal/modules/helpers:153:16)
+        at requireNative (/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js:273:27)
+        at Object.<anonymous> (/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js:477:17) {
+      code: 'MODULE_NOT_FOUND',
+      requireStack: [
+        '/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js'
+      ]
+    }
+  ]
+}
+
+Node.js v24.17.0
+✖ discord/tests/voiceWorkerLeanMode.test.js (56.206267ms)
+/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js:500
+    throw new Error(
+    ^
+
+Error: Cannot find native binding. npm has a bug related to optional dependencies (https://github.com/npm/cli/issues/4828). Please try `npm i` again after removing both package-lock.json and node_modules directory.
+    at Object.<anonymous> (/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js:500:11)
+    at Module._compile (node:internal/modules/cjs/loader:1854:14)
+    at Object..js (node:internal/modules/cjs/loader:1985:10)
+    at Module.load (node:internal/modules/cjs/loader:1577:32)
+    at Module._load (node:internal/modules/cjs/loader:1379:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1600:12)
+    at require (node:internal/modules/helpers:153:16)
+    at Object.<anonymous> (/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@discordjs/voice/dist/index.js:262:28)
+    at Module._compile (node:internal/modules/cjs/loader:1854:14) {
+  [cause]: [
+    Error: Cannot find module './davey.linux-x64-gnu.node'
+    Require stack:
+    - /home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js
+        at Module._resolveFilename (node:internal/modules/cjs/loader:1500:15)
+        at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+        at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+        at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1116:12)
+        at Module._load (node:internal/modules/cjs/loader:1285:25)
+        at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+        at Module.require (node:internal/modules/cjs/loader:1600:12)
+        at require (node:internal/modules/helpers:153:16)
+        at requireNative (/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js:268:18)
+        at Object.<anonymous> (/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js:477:17) {
+      code: 'MODULE_NOT_FOUND',
+      requireStack: [
+        '/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js'
+      ]
+    },
+    Error: Cannot find module '@snazzah/davey-linux-x64-gnu'
+    Require stack:
+    - /home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js
+        at Module._resolveFilename (node:internal/modules/cjs/loader:1500:15)
+        at wrapResolveFilename (node:internal/modules/cjs/loader:1071:27)
+        at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1095:10)
+        at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1116:12)
+        at Module._load (node:internal/modules/cjs/loader:1285:25)
+        at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+        at Module.require (node:internal/modules/cjs/loader:1600:12)
+        at require (node:internal/modules/helpers:153:16)
+        at requireNative (/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js:273:27)
+        at Object.<anonymous> (/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js:477:17) {
+      code: 'MODULE_NOT_FOUND',
+      requireStack: [
+        '/home/runner/work/Discord-Bot/Discord-Bot/node_modules/@snazzah/davey/index.js'
+      ]
+    }
+  ]
+}
+
+Node.js v24.17.0
+✖ discord/tests/voiceWorkerQueue.test.js (45.887052ms)
+✔ webhook target names map to separate environment variables (0.521407ms)
+✔ webhook diagnostics detect missing and duplicated targets (0.528717ms)
+✔ webhook payloads normalize strings and objects (3.135412ms)
+✔ sendWebhook sends to the requested target and destroys the client (0.279456ms)
+✔ sendWebhook returns false when missing URL or send fails (0.218596ms)
+✔ startup notice only includes dashboard and optional shadow portal links (0.203593ms)
+ℹ tests 211
+ℹ suites 1
+ℹ pass 207
+ℹ fail 4
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3090.364989
+
+✖ failing tests:
+
+test at discord/tests/registry.test.js:1:1
+✖ discord/tests/registry.test.js (573.113237ms)
+  'test failed'
+
+test at discord/tests/voiceWorkerDisplay.test.js:1:1
+✖ discord/tests/voiceWorkerDisplay.test.js (54.351933ms)
+  'test failed'
+
+test at discord/tests/voiceWorkerLeanMode.test.js:1:1
+✖ discord/tests/voiceWorkerLeanMode.test.js (56.206267ms)
+  'test failed'
+
+test at discord/tests/voiceWorkerQueue.test.js:1:1
+✖ discord/tests/voiceWorkerQueue.test.js (45.887052ms)
+  'test failed'
+Error: Process completed with exit code 1.

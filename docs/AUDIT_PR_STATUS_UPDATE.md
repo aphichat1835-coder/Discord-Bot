@@ -19,8 +19,17 @@
 
 ## Remaining runtime checks
 
-- Runtime test gateway logs in a private test server.
-- Runtime test audit API/dashboard routes on the deployed dashboard.
-- Runtime test audit settings POST with CSRF.
-- Runtime test dead-letter behavior by removing a configured log channel in a test server.
-- Keep any future enforcement behavior disabled until tested separately.
+These checks are still required on a live Discord server before treating Audit v4 as fully production-verified:
+
+- Runtime test gateway logs (message edit/delete, member join/leave, voice state changes) in a private test server.
+- Runtime test audit API/dashboard routes on the deployed dashboard (`/audit-logs`, `/api/audit/logs`, `/api/audit/export`, `/api/audit/health`, `/api/audit/dead-letters`, `/api/audit/settings`).
+- Runtime test audit settings POST with CSRF token.
+- Runtime test dead-letter behavior by removing a configured log channel in a test server, then verifying the entry appears in `/api/audit/dead-letters`.
+- Runtime test reconciler with `AUDIT_RECONCILER_ENABLED=true` on a private test server to confirm no duplicate log spam.
+- Keep protection enforcement behavior (`audit_only` vs active punishment) scoped to explicit owner configuration until tested per guild.
+
+## Completed implementation (as of 2026-06-28)
+
+- All implementation phases described in `docs/AUDIT_V4_SCOPE.md` are complete.
+- Per-guild queue limits, circuit breaker, content redaction controls, dead-letter store, export (CSV/JSON/MD), retention, reconciler, and protection audit are all implemented and unit-tested.
+- See `docs/AUDIT_RUNTIME_CHECKLIST.md` for the full runtime test order.

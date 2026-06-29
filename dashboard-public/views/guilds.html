@@ -19,7 +19,7 @@
           </div>
         </div>
 
-        <a class="btn btn-soft btn-sm" href="/auth/logout">ออกจากระบบ</a>
+        <button class="btn btn-soft btn-sm" type="button" onclick="doLogout()">ออกจากระบบ</button>
       </div>
     </div>
 
@@ -47,9 +47,9 @@
               🔄 โหลดใหม่
             </button>
 
-            <a class="btn btn-soft" href="/auth/logout">
+            <button class="btn btn-soft" type="button" onclick="doLogout()">
               ออกจากระบบ
-            </a>
+            </button>
           </div>
         </div>
 
@@ -154,5 +154,23 @@
   </div>
 
   <script src="/js/guilds.js"></script>
+  <script>
+    function doLogout() {
+      const csrfToken = document.cookie.split('; ').find(r => r.startsWith('csrf_pub='))?.split('=')[1] || '';
+      fetch('/auth/logout', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'X-CSRF-Token': csrfToken }
+      }).then(res => {
+        if (res.ok) {
+          globalThis.location.href = '/';
+        } else {
+          console.error('[logout] server rejected logout, status:', res.status);
+        }
+      }).catch(err => {
+        console.error('[logout] network error:', String(err));
+      });
+    }
+  </script>
 </body>
 </html>

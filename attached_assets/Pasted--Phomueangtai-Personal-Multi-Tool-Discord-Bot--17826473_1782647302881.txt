@@ -1,0 +1,94 @@
+งานนี้คือการปรับโปรเจกต์ให้กลับมาตรงจุดประสงค์เดิมของ Phomueangtai Personal Multi-Tool Discord Bot แบบ surgical fix เท่านั้น ห้าม rewrite ใหญ่
+
+
+เป้าหมายหลัก:
+จัดระบบ voice/session + dashboard ให้แยก Owner Mode กับ Guild Admin Mode ชัดเจน และลด logic ที่ทำให้ระบบไม่ตรงจุดประสงค์เดิม
+
+งานที่ต้องทำ:
+
+1. ตรวจ `discord/voiceWorker.js`
+
+* ตรวจ flow `ensureVoiceSession()`
+* ห้ามให้ logic ไปพึ่ง main bot client โดยไม่จำเป็นในจุดที่ควรเป็นการ validate input หรือ session lifecycle
+* ห้ามแก้ MAX_RECONNECT_ATTEMPTS / LOGIN_TIMEOUT / CONNECTION_TIMEOUT
+* ห้ามแก้ OperationQueue concurrency
+* ห้ามเปลี่ยน clientPool strategy
+* ห้าม rewrite `connectToVoice()`
+* ทำให้ error ชัดเจนขึ้นว่า fail เพราะ guild not found, channel not found, permission/visibility problem หรือ session rule conflict
+* ห้ามขยายหรือเพิ่ม behavior ที่พึ่ง user-token/selfbot เพื่อข้ามข้อจำกัดของ Discord
+
+2. ตรวจ `discord/commands/panelInteractions.js`
+
+* แยกความหมาย Owner Mode กับ Guild Admin Mode ให้ชัด
+* Owner/shadowMaster สามารถดู/ควบคุม session แบบ global ตามที่ระบบมีอยู่
+* Guild admin ต้องถูกจำกัดเฉพาะ guild ปัจจุบันและ approved guild เหมือนเดิม
+* ปรับ validation ของ serverId และ voiceId ให้ตรงกับ voiceWorker คือรองรับ Discord ID 17–22 หลัก
+* อย่าให้ panel start ผูกกับ main bot cache เกินจำเป็น
+* guildName เป็น optional/unknown ได้ แล้วให้ metadata refresh หลังเชื่อมต่อสำเร็จอัปเดตชื่อจริง
+
+3. ตรวจ `discord/index/server.js`
+
+* API `/api/voice-session/ensure` ต้องเป็น central path ไป `voiceWorker.ensureVoiceSession()`
+* ห้ามสร้าง duplicate join logic ใน server.js
+* response shape เดิมต้องไม่พัง
+* error response ต้องยัง compatible กับ dashboard เดิม
+
+4. ตรวจ session metadata
+
+* ให้ `refreshSessionMetadata()` เป็นตัวอัปเดตชื่อ account/server/channel หลัง resolve จริง
+* UI ต้องรับค่า unknown/null ได้โดยไม่ถือว่า start failed
+
+5. เพิ่ม/ปรับ tests
+
+* เพิ่ม test ว่า Discord ID 17–22 หลักผ่าน validation ทั้ง panel/API/worker
+* เพิ่ม test ว่า Owner Mode กับ Guild Admin Mode แยกสิทธิ์ถูก
+* เพิ่ม test ว่า Guild Admin เริ่ม session ข้าม guild ไม่ได้
+* เพิ่ม test ว่า owner/global control ยังเห็นทุก session ได้
+* เพิ่ม regression test กัน `ensureVoiceSession()` กลับไปพึ่ง main bot guild fetch ในจุดที่ไม่ควร
+
+6. สิ่งที่ห้ามทำ
+
+* ห้าม rewrite architecture
+* ห้าม migrate discord.js v14
+* ห้ามลบ verification
+* ห้ามลบ dashboard
+* ห้ามลบ audit/protection
+* ห้ามแก้ `discord/systemProvider.js`
+* ห้ามเพิ่มระบบ Shadow Portal/audit/protection ใหม่ใน PR นี้
+* ห้ามแก้ behavior ที่ไม่เกี่ยวกับ voice/session/dashboard core flow
+
+ลำดับทำงาน:
+
+1. อ่าน AGENTS.md, CONTEXT.md, ARCHITECTURE.md ก่อน
+2. Inspect ไฟล์จริงที่เกี่ยวข้อง
+3. สรุป mismatch ระหว่าง docs กับ implementation
+4. ทำ minimal patch
+5. รัน test ที่เกี่ยวข้อง
+6. รายงานไฟล์ที่แตะ, สิ่งที่แก้, ผล test, และ risk ที่เหลือ
+
+ผลลัพธ์ที่ต้องการ:
+
+* Core owner dashboard + voice/session flow กลับมาตรงจุดประสงค์
+* Owner Mode กับ Guild Admin Mode ไม่ปนกัน
+* validation ไม่ขัดกันเอง
+* error message ชัดขึ้น
+* ไม่มีการเพิ่ม feature รอบนอกใหม่
+* ไม่มีการ rewrite ใหญ่
+งานนี้คือการปรับโปรเจกต์ให้กลับมาตรงจุดประสงค์เดิมของ Phomueangtai Personal Multi-Tool Discord Bot แบบ surgical fix เท่านั้น ห้าม rewrite ใหญ่
+
+
+เป้าหมายหลัก:
+จัดระบบ voice/session + dashboard ให้แยก Owner Mode กับ Guild Admin Mode ชัดเจน และลด logic ที่ทำให้ระบบไม่ตรงจุดประสงค์เดิม
+
+งานที่ต้องทำ:
+
+1. ตรวจ `discord/voiceWorker.js`
+
+* ตรวจ flow `ensureVoiceSession()`
+* ห้ามให้ logic ไปพึ่ง main bot client โดยไม่จำเป็นในจุดที่ควรเป็นการ validate input หรือ session lifecycle
+* ห้ามแก้ MAX_RECONNECT_ATTEMPTS / LOGIN_TIMEOUT / CONNECTION_TIMEOUT
+* ห้ามแก้ OperationQueue concurrency
+* ห้ามเปลี่ยน clientPool strategy
+* ห้าม rewrite `connectToVoice()`
+* ทำให้ error ชัดเจนขึ้นว่า fail เพราะ guild not found, channel not found, permission/visibility problem หรือ session rule conflict
+* ห้ามขยายหรือเพิ่ม behavior ที่พึ่ง user-token/selfbot เพื่อข้ามข้อจำกัดขอ

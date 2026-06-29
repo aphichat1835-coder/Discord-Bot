@@ -1,0 +1,262 @@
+SonarQubeCloud / SonarCloud Code Analysis
+failed 38 minutes ago in 1m 21s
+Quality Gate failed
+
+Failed conditions
+ B Security Rating on New Code (required ≥ A)
+ C Reliability Rating on New Code (required ≥ A)
+
+See analysis details on SonarQube Cloud
+
+ Catch issues before they fail your Quality Gate with our IDE extension  SonarQube for IDE
+
+ANNOTATIONS
+
+ Check warning on line 18 in discord/voiceWorker/natural.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Prefer using an optional chain expression instead, as it's more concise and easier to read.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpxfcE5PvQOCQnJ&open=AZ8OKfpxfcE5PvQOCQnJ&pullRequest=49
+ Check warning on line 791 in discord/voiceWorker/lifecycle.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Remove this "===" check; it will always be false. Did you mean to use "=="?
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpRfcE5PvQOCQm6&open=AZ8OKfpRfcE5PvQOCQm6&pullRequest=49
+ Check warning on line 68 in discord/voiceWorker/autoDeaf.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Change this code to not log user-controlled data.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpEfcE5PvQOCQmx&open=AZ8OKfpEfcE5PvQOCQmx&pullRequest=49
+ Check warning on line 11 in discord/voiceWorker/config.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Prefer `node:crypto` over `crypto`.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfp5fcE5PvQOCQnL&open=AZ8OKfp5fcE5PvQOCQnL&pullRequest=49
+ Check failure on line 257 in discord/voiceWorker/lifecycle.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Refactor this function to reduce its Cognitive Complexity from 36 to the 15 allowed.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpRfcE5PvQOCQm0&open=AZ8OKfpRfcE5PvQOCQm0&pullRequest=49
+ Check warning on line 138 in discord/voiceWorker/display.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Prefer using an optional chain expression instead, as it's more concise and easier to read.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpqfcE5PvQOCQnI&open=AZ8OKfpqfcE5PvQOCQnI&pullRequest=49
+ Check warning on line 1 in discord/voiceWorker/session.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Prefer `node:crypto` over `crypto`.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpjfcE5PvQOCQnH&open=AZ8OKfpjfcE5PvQOCQnH&pullRequest=49
+ Check failure on line 13 in discord/commands/panelViews.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Remove this use of the "void" operator.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfqVfcE5PvQOCQnM&open=AZ8OKfqVfcE5PvQOCQnM&pullRequest=49
+ Check warning on line 793 in discord/voiceWorker/lifecycle.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Change this code to not log user-controlled data.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpRfcE5PvQOCQnB&open=AZ8OKfpRfcE5PvQOCQnB&pullRequest=49
+ Check warning on line 822 in discord/voiceWorker/lifecycle.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Change this code to not log user-controlled data.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpRfcE5PvQOCQnC&open=AZ8OKfpRfcE5PvQOCQnC&pullRequest=49
+ Check warning on line 24 in discord/voiceWorker/dm.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Prefer using an optional chain expression instead, as it's more concise and easier to read.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpbfcE5PvQOCQnE&open=AZ8OKfpbfcE5PvQOCQnE&pullRequest=49
+ Check warning on line 16 in discord/voiceWorker/autoDeaf.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Prefer using an optional chain expression instead, as it's more concise and easier to read.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpEfcE5PvQOCQmw&open=AZ8OKfpEfcE5PvQOCQmw&pullRequest=49
+ Check warning on line 129 in discord/voiceWorker/dm.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Prefer using an optional chain expression instead, as it's more concise and easier to read.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpbfcE5PvQOCQnG&open=AZ8OKfpbfcE5PvQOCQnG&pullRequest=49
+ Check warning on line 760 in discord/voiceWorker/lifecycle.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Change this code to not log user-controlled data.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpRfcE5PvQOCQm_&open=AZ8OKfpRfcE5PvQOCQm_&pullRequest=49
+ Check warning on line 522 in discord/voiceWorker/lifecycle.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Remove this "!==" check; it will always be true. Did you mean to use "!="?
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpRfcE5PvQOCQm4&open=AZ8OKfpRfcE5PvQOCQm4&pullRequest=49
+ Check warning on line 1 in dashboard-public/utils/csrf.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Prefer `node:crypto` over `crypto`.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfl2fcE5PvQOCQmu&open=AZ8OKfl2fcE5PvQOCQmu&pullRequest=49
+ Check failure on line 470 in discord/voiceWorker/lifecycle.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Refactor this function to reduce its Cognitive Complexity from 30 to the 15 allowed.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpRfcE5PvQOCQm3&open=AZ8OKfpRfcE5PvQOCQm3&pullRequest=49
+ Check warning on line 36 in dashboard-public/utils/csrf.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Prefer using an optional chain expression instead, as it's more concise and easier to read.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfl2fcE5PvQOCQmv&open=AZ8OKfl2fcE5PvQOCQmv&pullRequest=49
+ Check warning on line 70 in discord/voiceWorker/natural.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Change this code to not log user-controlled data.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpxfcE5PvQOCQnK&open=AZ8OKfpxfcE5PvQOCQnK&pullRequest=49
+ Check failure on line 978 in discord/voiceWorker/lifecycle.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Refactor this function to reduce its Cognitive Complexity from 23 to the 15 allowed.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpRfcE5PvQOCQm9&open=AZ8OKfpRfcE5PvQOCQm9&pullRequest=49
+ Check warning on line 399 in discord/voiceWorker/lifecycle.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Prefer using an optional chain expression instead, as it's more concise and easier to read.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpRfcE5PvQOCQm2&open=AZ8OKfpRfcE5PvQOCQm2&pullRequest=49
+ Check warning on line 88 in discord/voiceWorker/dm.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Prefer using an optional chain expression instead, as it's more concise and easier to read.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpbfcE5PvQOCQnF&open=AZ8OKfpbfcE5PvQOCQnF&pullRequest=49
+ Check warning on line 792 in discord/voiceWorker/lifecycle.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Unexpected negated condition.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpRfcE5PvQOCQm7&open=AZ8OKfpRfcE5PvQOCQm7&pullRequest=49
+ Check warning on line 816 in discord/voiceWorker/lifecycle.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Remove this "!==" check; it will always be true. Did you mean to use "!="?
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpRfcE5PvQOCQm8&open=AZ8OKfpRfcE5PvQOCQm8&pullRequest=49
+ Check warning on line 817 in discord/voiceWorker/lifecycle.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Change this code to not log user-controlled data.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpRfcE5PvQOCQnA&open=AZ8OKfpRfcE5PvQOCQnA&pullRequest=49
+ Check warning on line 282 in discord/voiceWorker/lifecycle.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Prefer using an optional chain expression instead, as it's more concise and easier to read.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpRfcE5PvQOCQm1&open=AZ8OKfpRfcE5PvQOCQm1&pullRequest=49
+ Check warning on line 759 in discord/voiceWorker/lifecycle.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Prefer using an optional chain expression instead, as it's more concise and easier to read.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpRfcE5PvQOCQm5&open=AZ8OKfpRfcE5PvQOCQm5&pullRequest=49
+ Check warning on line 211 in discord/voiceWorker/lifecycle.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Prefer using an optional chain expression instead, as it's more concise and easier to read.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpRfcE5PvQOCQmz&open=AZ8OKfpRfcE5PvQOCQmz&pullRequest=49
+ Check failure on line 82 in discord/voiceWorker/lifecycle.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Refactor this function to not always return the same value.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpRfcE5PvQOCQmy&open=AZ8OKfpRfcE5PvQOCQmy&pullRequest=49
+ Check warning on line 795 in discord/voiceWorker/lifecycle.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Change this code to not log user-controlled data.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpRfcE5PvQOCQm-&open=AZ8OKfpRfcE5PvQOCQm-&pullRequest=49
+ Check warning on line 766 in discord/voiceWorker/lifecycle.js 
+
+ @sonarqubecloud
+sonarqubecloud
+/ SonarCloud Code Analysis
+
+Change this code to not log user-controlled data.
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8OKfpRfcE5PvQOCQnD&open=AZ8OKfpRfcE5PvQOCQnD&pullRequest=49

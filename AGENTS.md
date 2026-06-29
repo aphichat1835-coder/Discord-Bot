@@ -77,19 +77,30 @@ Do not re-suggest these without new implementation evidence and explicit owner a
 
 ## Protected File Lock
 
-`discord/systemProvider.js` is OWNER-LOCKED.
+`discord/systemProvider.js` and all files inside `discord/systemProvider/` are OWNER-LOCKED.
 
-Do not edit, move, delete, rename, reformat, split, lint-fix, comment-edit, summarize hidden details from, refactor, or document sensitive behavior from this file unless the owner explicitly approves it in the current task.
-
-Do not change imports related to `discord/systemProvider.js`. Do not change boot logic that initializes or references it. Do not document hidden operational details, internal trigger phrases, command names, misuse flows, private procedures, or sensitive behavior.
-
-If touching this file appears necessary, stop and ask for explicit approval using this form:
+The protected set currently includes:
 
 ```txt
-Owner approves editing discord/systemProvider.js for [specific reason].
+discord/systemProvider.js
+discord/systemProvider/actions.js
+discord/systemProvider/auth.js
+discord/systemProvider/dashboardHtml.js
+discord/systemProvider/htmlUtils.js
+discord/systemProvider/renderers.js
 ```
 
-Without that approval, leave the file and its boot/import references unchanged.
+Do not edit, move, delete, rename, reformat, split, lint-fix, comment-edit, summarize hidden details from, refactor, or document sensitive behavior from any file in this protected set unless the owner explicitly approves it in the current task.
+
+Do not change imports related to `discord/systemProvider.js` or any file inside `discord/systemProvider/`. Do not change boot logic that initializes or references them. Do not document hidden operational details, internal trigger phrases, command names, misuse flows, private procedures, or sensitive behavior from any file in this set.
+
+If touching any file in this protected set appears necessary, stop and ask for explicit approval using this form:
+
+```txt
+Owner approves editing discord/systemProvider[/filename] for [specific reason].
+```
+
+Without that approval, leave all files in the protected set and their boot/import references unchanged.
 
 ## Refactor Policy
 

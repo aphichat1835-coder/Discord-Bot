@@ -4,8 +4,8 @@
  * - Legacy AES-256-CBC values are still readable for backward compatibility.
  * - Raw IP/device lookup keys use HMAC-SHA256 hashes for safe matching.
  */
-const crypto = require('crypto');
-const { sanitizeLogText } = require('../../discord/core/safeLogger');
+const crypto = require('node:crypto');
+const { sanitizeLogText } = require('./safeLogger');
 
 function safeCryptoError(err) {
     return sanitizeLogText(err?.message || err?.name || err || 'unknown').slice(0, 180);
@@ -14,7 +14,8 @@ function safeCryptoError(err) {
 function getKey() {
     const secret = process.env.ENCRYPTION_KEY;
     if (!secret) throw new Error('[CRYPTO] Missing ENCRYPTION_KEY');
-    return crypto.createHash('sha256').update(String(secret)).digest(); // 32 bytes
+    // Matches Service 1 key derivation: base64(sha256(key)).slice(0,32) as ASCII bytes
+    return Buffer.from(crypto.createHash('sha256').update(String(secret)).digest('base64').substring(0, 32));
 }
 
 function getHashKey() {

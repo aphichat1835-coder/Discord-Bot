@@ -1,0 +1,261 @@
+1. Codacy: panelBuilder.test.js
+
+
+
+ไฟล์:
+
+
+
+dashboard-public/tests/panelBuilder.test.js
+
+
+
+Codacy แจ้งที่เลขพวกนี้:
+
+
+
+16777215
+
+16711680
+
+
+
+จริง ๆ เลขนี้คือสี Discord embed:
+
+
+
+16777215 = 0xffffff = สีขาว
+
+16711680 = 0xff0000 = สีแดง
+
+
+
+โค้ดไม่ได้พัง แต่ static analyzer ไม่ชอบการใช้ magic number / numeric literal ตรง ๆ
+
+
+
+จุดที่เจอจริง
+
+expect(parseEmbedColor('#ffffff')).toBe(16777215);
+
+expect(parseEmbedColor('ff0000')).toBe(16711680);
+
+expect(parseEmbedColor('#FFFFFF')).toBe(16777215);
+
+expect(parseEmbedColor('#ffffff')).toBe(16777215);
+
+expect(parseEmbedColor('16777215')).toBe(16777215);
+
+expect(embed.color).toBe(16777215);
+
+expect(payload.embeds[0].color).toBe(16711680);
+
+แนวทางแก้ที่ดีที่สุด
+
+
+
+เพิ่ม constant ด้านบนไฟล์หลัง import:
+
+
+
+const WHITE_EMBED_COLOR = 0xffffff;
+
+const RED_EMBED_COLOR = 0xff0000;
+
+const DEFAULT_EMBED_COLOR = 0x5865f2;
+
+
+
+แล้วเปลี่ยน:
+
+
+
+const DEFAULT_COLOR = 5793266;
+
+
+
+เป็น:
+
+
+
+const DEFAULT_COLOR = DEFAULT_EMBED_COLOR;
+
+
+
+และเปลี่ยนทุกจุด:
+
+
+
+16777215
+
+
+
+เป็น:
+
+
+
+WHITE_EMBED_COLOR
+
+
+
+เปลี่ยนทุกจุด:
+
+
+
+16711680
+
+
+
+เป็น:
+
+
+
+RED_EMBED_COLOR
+
+
+
+ตัวอย่างหลังแก้:
+
+
+
+expect(parseEmbedColor('#ffffff')).toBe(WHITE_EMBED_COLOR);
+
+expect(parseEmbedColor('ff0000')).toBe(RED_EMBED_COLOR);
+
+expect(parseEmbedColor('#FFFFFF')).toBe(WHITE_EMBED_COLOR);
+
+expect(parseEmbedColor('16777215')).toBe(WHITE_EMBED_COLOR);
+
+expect(embed.color).toBe(WHITE_EMBED_COLOR);
+
+expect(payload.embeds[0].color).toBe(RED_EMBED_COLOR);
+
+2. SonarCloud: csrf.test.js
+
+
+
+ไฟล์:
+
+
+
+dashboard-public/tests/csrf.test.js
+
+
+
+Sonar แจ้งว่า assertion ยัง generic เกินไป
+
+
+
+ตอนนี้มี:
+
+
+
+expect(headers.length).toBe(0);
+
+expect(headers.length).toBe(0);
+
+expect(headers.length).toBe(1);
+
+
+
+ให้เปลี่ยนเป็น matcher ที่ตรงกว่า:
+
+
+
+expect(headers).toHaveLength(0);
+
+expect(headers).toHaveLength(0);
+
+expect(headers).toHaveLength(1);
+
+จุดที่ต้องแก้
+
+line 47
+
+line 53
+
+line 62
+
+
+
+สรุป
+
+แก้ Codacy/Sonar รอบนี้:
+
+
+
+1. dashboard-public/tests/panelBuilder.test.js
+
+
+
+เพิ่ม constants หลัง require:
+
+
+
+const WHITE_EMBED_COLOR = 0xffffff;
+
+const RED_EMBED_COLOR = 0xff0000;
+
+const DEFAULT_EMBED_COLOR = 0x5865f2;
+
+
+
+แล้วแทนที่:
+
+16777215 -> WHITE_EMBED_COLOR
+
+16711680 -> RED_EMBED_COLOR
+
+5793266  -> DEFAULT_EMBED_COLOR
+
+
+
+2. dashboard-public/tests/csrf.test.js
+
+
+
+เปลี่ยน:
+
+expect(headers.length).toBe(0);
+
+
+
+เป็น:
+
+expect(headers).toHaveLength(0);
+
+
+
+และ:
+
+expect(headers.length).toBe(1);
+
+
+
+เป็น:
+
+expect(headers).toHaveLength(1);
+
+ข้อเสนอแนะเพิ่ม
+
+
+
+ควรทำไฟล์ constants กลางสำหรับสีด้วย ถ้าในโปรเจกต์ใช้ค่าสีหลายที่ เช่น:
+
+
+
+// dashboard-public/utils/embedColors.js
+
+'use strict';
+
+
+
+module.exports = Object.freeze({
+
+  WHITE: 0xffffff,
+
+  RED: 0xff0000,
+
+  DEFAULT_BLURPLE: 0x5865f2,
+
+});

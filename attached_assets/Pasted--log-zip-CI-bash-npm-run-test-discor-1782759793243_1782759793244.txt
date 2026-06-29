@@ -1,0 +1,257 @@
+วิเคราะห์ลึกสุดจาก log + zip แล้ว สาเหตุหลักชัดมาก:
+
+## ภาพรวม
+
+CI รัน:
+
+```bash
+npm run test:discord
+```
+
+แล้วจบที่:
+
+```txt
+tests 211
+pass 207
+fail 4
+exit code 1
+```
+
+ไฟล์ที่ fail:
+
+```txt
+discord/tests/registry.test.js
+discord/tests/voiceWorkerDisplay.test.js
+discord/tests/voiceWorkerLeanMode.test.js
+discord/tests/voiceWorkerQueue.test.js
+```
+
+## Root cause จริง
+
+ตัวพังคือ dependency native ของ `@discordjs/voice` หาย:
+
+```txt
+Error: Cannot find native binding
+Cannot find module '@snazzah/davey-linux-x64-gnu'
+```
+
+ใน `package-lock.json` มี dependency chain แบบนี้:
+
+```txt
+@discordjs/voice@0.19.2
+└─ @snazzah/davey@0.1.12
+   └─ optionalDependencies
+      └─ @snazzah/davey-linux-x64-gnu
+```
+
+แต่ใน `.github/workflows/ci.yml` คุณติดตั้งแบบนี้:
+
+```yml
+run: npm ci --omit=optional --ignore-scripts --no-audit --no-fund
+```
+
+ปัญหาคือ `@snazzah/davey-linux-x64-gnu` เป็น **optional dependency** แต่ runtime ต้องใช้จริงบน Linux x64
+
+สรุปง่าย ๆ:
+
+```txt
+CI ตั้งใจ omit optional
+↓
+native binding ของ davey ไม่ถูกลง
+↓
+@discordjs/voice require @snazzah/davey
+↓
+davey หาไฟล์ native ไม่เจอ
+↓
+ทุก test ที่ import voice พัง
+```
+
+## ทำไม `registry.test.js` ถึงพังด้วย
+
+อันนี้สำคัญมาก เพราะชื่อ test ดูเหมือนไม่เกี่ยวกับ voice แต่จริง ๆ chain มันเกี่ยว:
+
+```js
+// discord/tests/registry.test.js
+const commands = require("../commands");
+```
+
+จากนั้น `discord/commands.js` โหลด command handlers รวม ๆ แล้วไปแตะ:
+
+```js
+const voiceWorker = require("../voiceWorker");
+```
+
+ใน:
+
+```txt
+discord/commands/panelInteractions.js
+```
+
+แล้ว `voiceWorker` โหลด:
+
+```txt
+discord/voiceWorker/index.js
+```
+
+ซึ่ง require:
+
+```js
+require("./natural")
+require("./autoDeaf")
+require("./lifecycle")
+require("./display")
+```
+
+แต่ไฟล์พวกนี้มี:
+
+```js
+const { VoiceConnectionStatus } = require("@discordjs/voice");
+```
+
+พอถึงจุดนี้ `@discordjs/voice` โหลด `@snazzah/davey` แล้วตาย
+
+ดังนั้น `registry.test.js` ไม่ได้ fail เพราะ registry logic ผิด แต่ fail เพราะ **import side effect หนักเกินไป**
+
+## จุดที่ควรแก้ทันที
+
+แก้ `.github/workflows/ci.yml`
+
+จาก:
+
+```yml
+- name: Install root dependencies
+  run: npm ci --omit=optional --ignore-scripts --no-audit --no-fund
+```
+
+เป็น:
+
+```yml
+- name: Install root dependencies
+  run: npm ci --no-audit --no-fund
+```
+
+หรือถ้ายังอยาก block scripts:
+
+```yml
+- name: Install root dependencies
+  run: npm ci --ignore-scripts --no-audit --no-fund
+```
+
+แต่ผมแนะนำอันแรก เพราะโปรเจกต์มี native dependency แล้ว การปิด optional + scripts พร้อมกันเสี่ยงพังซ้ำ
+
+## แก้แบบปลอดภัยกว่า
+
+เพิ่ม check หลัง install:
+
+```yml
+- name: Verify voice native dependency
+  run: |
+    node -e "require('@discordjs/voice'); console.log('voice ok')"
+```
+
+ถ้า dependency หาย จะ fail ตั้งแต่ install phase ไม่ต้องรอ test ไปแตกกลางทาง
+
+## แก้เชิงโครงสร้างที่ควรทำ
+
+ตอนนี้ `commands` import `panelInteractions` แล้ว `panelInteractions` import `voiceWorker` ตั้งแต่ top-level:
+
+```js
+const voiceWorker = require("../voiceWorker");
+```
+
+ควรเปลี่ยนเป็น lazy require:
+
+```js
+function getVoiceWorker() {
+    return require("../voiceWorker");
+}
+```
+
+แล้วในจุดใช้งาน:
+
+```js
+const voiceWorker = getVoiceWorker();
+await voiceWorker.stopSession(...)
+```
+
+ผลดี:
+
+```txt
+registry.test.js จะไม่ลาก voiceWorker มาโหลดโดยไม่จำเป็น
+test เบาขึ้น
+dependency native พังจะกระทบเฉพาะ voice tests
+ลด side effect ตอน import
+```
+
+## อีกจุดที่น่ากังวล
+
+log มีอันนี้:
+
+```txt
+[LOG_CORE] Failed to resolve log channel: sessionManager.getLogChannelMap is not a function
+```
+
+อันนี้ยังไม่ใช่ตัวทำ CI fail แต่เป็นกลิ่นโค้ดว่า mock/sessionManager ใน test ไม่ครบ contract
+
+ควรทำอย่างใดอย่างหนึ่ง:
+
+เพิ่ม method fallback ใน production code:
+
+```js
+const map = typeof sessionManager.getLogChannelMap === "function"
+    ? sessionManager.getLogChannelMap()
+    : new Map();
+```
+
+หรือแก้ test mock ให้มี:
+
+```js
+getLogChannelMap: () => new Map()
+```
+
+## ข้อเสนอแนะลึก ๆ
+
+โปรเจกต์นี้ควรแยก test เป็น 2 กลุ่ม:
+
+```json
+{
+  "scripts": {
+    "test:discord": "node --test discord/tests/*.test.js",
+    "test:voice": "node --test discord/tests/voice*.test.js",
+    "test:unit": "node --test \"discord/tests/*.test.js\" --test-skip-pattern voice"
+  }
+}
+```
+
+และใน CI:
+
+```yml
+- name: Unit tests
+  run: npm run test:unit
+
+- name: Voice tests
+  run: npm run test:voice
+```
+
+เพราะ voice layer มี native dependency และ runtime complexity สูงกว่า unit test ธรรมดา
+
+## Priority การแก้
+
+1. แก้ `npm ci --omit=optional` ออกทันที
+2. เพิ่ม verify `require('@discordjs/voice')`
+3. ทำ lazy require `voiceWorker` ใน `panelInteractions.js`
+4. แก้ mock/fallback ของ `sessionManager.getLogChannelMap`
+5. แยก voice tests ออกจาก unit tests
+6. อย่าให้ registry/import test โหลด runtime หนัก ๆ โดยไม่จำเป็น
+
+## สรุปสุดท้าย
+
+CI ไม่ได้พังเพราะ test logic หลักผิด แต่พังเพราะ install dependency แบบ “ตัด optional dependency” ทั้งที่ `@discordjs/voice` ต้องใช้ native optional package จริงบน Linux
+
+แก้หลักคือ:
+
+```yml
+run: npm ci --no-audit --no-fund
+```
+
+แล้วค่อย refactor import side effect เพื่อให้ test แข็งแรงขึ้น.

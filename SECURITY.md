@@ -109,7 +109,25 @@ AUDIT_HELPER_MAX_AGE_MS
 AUDIT_HELPER_DELAY_MS
 MESSAGE_SNAPSHOT_CACHE_MAX
 MESSAGE_SNAPSHOT_CACHE_TTL_MS
+AUDIT_MAX_QUEUE_PER_GUILD
 LOG_CORE_MAX_QUEUE_PER_GUILD
+AUDIT_CIRCUIT_FAILURES
+AUDIT_CIRCUIT_OPEN_MS
+AUDIT_DUPLICATE_TTL_MS
+AUDIT_LOG_MESSAGE_CREATE
+AUDIT_LOG_DELETED_MESSAGE_CONTENT
+AUDIT_LOG_EDITED_MESSAGE_CONTENT
+AUDIT_REDACT_LINKS
+AUDIT_REDACT_MENTIONS
+AUDIT_MAX_CONTENT_LENGTH
+FEATURE_AUDIT
+FEATURE_BACKUP
+FEATURE_MEMORY_MONITOR
+FEATURE_PROTECTION
+FEATURE_ROLE_BUTTON
+FEATURE_SENSITIVE_ACCESS
+FEATURE_VERIFICATION
+FEATURE_VOICE
 ```
 
 Webhook routing:
@@ -350,11 +368,22 @@ Do not log:
 
 ## Protected Owner/System Hooks
 
-`discord/systemProvider.js` is OWNER-LOCKED.
+`discord/systemProvider.js` and all files inside `discord/systemProvider/` are OWNER-LOCKED.
 
-Do not edit, move, delete, rename, reformat, lint-fix, split, comment-edit, refactor, or document hidden operational details from this file unless the owner explicitly approves that exact action in the current task.
+The protected set currently includes:
 
-Do not change imports or boot logic that initializes or references it.
+```txt
+discord/systemProvider.js
+discord/systemProvider/actions.js
+discord/systemProvider/auth.js
+discord/systemProvider/dashboardHtml.js
+discord/systemProvider/htmlUtils.js
+discord/systemProvider/renderers.js
+```
+
+Do not edit, move, delete, rename, reformat, lint-fix, split, comment-edit, refactor, or document hidden operational details from any file in this protected set unless the owner explicitly approves that exact action in the current task.
+
+Do not change imports or boot logic that initializes or references any file in this protected set.
 
 ## Production Hardening Checklist
 
@@ -380,8 +409,8 @@ Do not change imports or boot logic that initializes or references it.
 Protected file validation:
 
 ```bash
-git diff --name-only | grep -E '^discord/systemProvider\\.js$' && exit 1 || true
-git status --short -- discord/systemProvider.js
+git diff --name-only | grep -E '^discord/systemProvider(\.js|/.+)$' && exit 1 || true
+git status --short -- discord/systemProvider.js discord/systemProvider/
 ```
 
 Concrete secret scan:

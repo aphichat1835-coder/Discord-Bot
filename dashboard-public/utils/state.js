@@ -1,4 +1,4 @@
-const crypto = require("crypto");
+const crypto = require("node:crypto");
 
 const DEFAULT_CALLBACK_STATE_MAX_AGE_MS = 10 * 60 * 1000;
 
@@ -79,7 +79,7 @@ function createCompactCallbackState({
     roleId,
     expectedUserId = null,
     panelRevision = null,
-    expiresAt = Date.now() + 1000 * 60 * 60 * 24 * 365 * 10
+    expiresAt = Date.now() + 1000 * 60 * 60 * 24
 }) {
     const user = expectedUserId || "0";
     const revision = normalizePanelRevision(panelRevision);

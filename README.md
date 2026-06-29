@@ -97,7 +97,7 @@ Use `.env.example` as a placeholder reference only. Never commit real secrets.
 
 - Do not migrate `discord.js` v13 without explicit owner approval.
 - Do not remove or redesign the voice/session subsystem, dashboard structure, verification architecture, owner/admin controls, or shared MongoDB layout without explicit owner approval.
-- Do not edit, move, rename, format, summarize hidden details from, or refactor `discord/systemProvider.js` unless the owner explicitly approves that exact action in the current task.
+- Do not edit, move, rename, format, summarize hidden details from, or refactor `discord/systemProvider.js` or any file inside `discord/systemProvider/` (`actions.js`, `auth.js`, `dashboardHtml.js`, `htmlUtils.js`, `renderers.js`) unless the owner explicitly approves that exact action in the current task.
 - Treat OAuth, sessions, tokens, cookies, permissions, Discord roles, raw IP/device/risk data, and owner routes as high-risk areas.
 - Treat RAM growth as production-critical. Long-running voice/session changes must keep Discord/selfbot caches, timers, queues, maps, sets, and log buffers bounded and visible through diagnostics.
 

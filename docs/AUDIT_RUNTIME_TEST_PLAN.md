@@ -13,7 +13,7 @@ FEATURE_AUDIT=true
 AUDIT_RECONCILER_ENABLED=false
 AUDIT_RECONCILER_LIMIT=10
 AUDIT_RECONCILER_INTERVAL_MS=300000
-LOG_MESSAGE_CREATE=false
+AUDIT_LOG_MESSAGE_CREATE=false
 ```
 
 Do not enable `AUDIT_RECONCILER_ENABLED=true` until gateway logs and dashboard routes are confirmed stable.

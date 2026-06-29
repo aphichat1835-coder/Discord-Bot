@@ -16,7 +16,7 @@
 const https = require("https");
 
 const { encryptToken, decryptToken } = require("./crypto");
-const { sanitizeLogText } = require("../../discord/core/safeLogger");
+const { sanitizeLogText } = require("./safeLogger");
 
 const BASE = "https://discord.com/api/v10";
 const DISCORD_API_RESPONSE_MAX_BYTES = Math.max(

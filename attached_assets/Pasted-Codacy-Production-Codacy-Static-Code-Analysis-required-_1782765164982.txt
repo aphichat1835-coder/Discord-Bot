@@ -1,0 +1,154 @@
+Codacy Production / Codacy Static Code Analysis
+
+required action 2 minutes ago in 0s
+
+6 new issues (0 max.) of at least severity.
+
+Annotations
+
+ Check warning on line 87 in dashboard-public/tests/panelBuilder.test.js 
+
+
+
+@codacy-production
+
+codacy-production
+
+/ Codacy Static Code Analysis
+
+dashboard-public/tests/panelBuilder.test.js#L87
+
+
+
+The numeric literal '16777215' will have at different value at runtime.
+
+ Check warning on line 92 in dashboard-public/tests/panelBuilder.test.js 
+
+
+
+@codacy-production
+
+codacy-production
+
+/ Codacy Static Code Analysis
+
+dashboard-public/tests/panelBuilder.test.js#L92
+
+
+
+The numeric literal '16711680' will have at different value at runtime.
+
+ Check warning on line 112 in dashboard-public/tests/panelBuilder.test.js 
+
+
+
+@codacy-production
+
+codacy-production
+
+/ Codacy Static Code Analysis
+
+dashboard-public/tests/panelBuilder.test.js#L112
+
+
+
+The numeric literal '16777215' will have at different value at runtime.
+
+ Check warning on line 122 in dashboard-public/tests/panelBuilder.test.js 
+
+
+
+@codacy-production
+
+codacy-production
+
+/ Codacy Static Code Analysis
+
+dashboard-public/tests/panelBuilder.test.js#L122
+
+
+
+The numeric literal '16777215' will have at different value at runtime.
+
+ Check warning on line 237 in dashboard-public/tests/panelBuilder.test.js 
+
+
+
+@codacy-production
+
+codacy-production
+
+/ Codacy Static Code Analysis
+
+dashboard-public/tests/panelBuilder.test.js#L237
+
+
+
+The numeric literal '16777215' will have at different value at runtime.
+
+ Check warning on line 340 in dashboard-public/tests/panelBuilder.test.js 
+
+
+
+@codacy-production
+
+codacy-production
+
+/ Codacy Static Code Analysis
+
+dashboard-public/tests/panelBuilder.test.js#L340
+
+
+
+The numeric literal '16711680' will have at different value at runtime.
+
+Annotations
+
+ Check warning on line 62 in dashboard-public/tests/csrf.test.js 
+
+
+
+@sonarqubecloud
+
+sonarqubecloud
+
+/ SonarCloud Code Analysis
+
+Prefer a more specific assertion instead of this generic one, e.g. "expect(headers).toHaveLength(1)".
+
+
+
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8VD85RKP2lmX6Yl6hs&open=AZ8VD85RKP2lmX6Yl6hs&pullRequest=49
+
+ Check warning on line 53 in dashboard-public/tests/csrf.test.js 
+
+
+
+@sonarqubecloud
+
+sonarqubecloud
+
+/ SonarCloud Code Analysis
+
+Prefer a more specific assertion instead of this generic one, e.g. "expect(headers).toHaveLength(0)".
+
+
+
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8VD85RKP2lmX6Yl6hr&open=AZ8VD85RKP2lmX6Yl6hr&pullRequest=49
+
+ Check warning on line 47 in dashboard-public/tests/csrf.test.js 
+
+
+
+@sonarqubecloud
+
+sonarqubecloud
+
+/ SonarCloud Code Analysis
+
+Prefer a more specific assertion instead of this generic one, e.g. "expect(headers).toHaveLength(0)".
+
+
+
+See more on https://sonarcloud.io/project/issues?id=aphichat1835-coder_Discord-Bot&issues=AZ8VD85RKP2lmX6Yl6hq&open=AZ8VD85RKP2lmX6Yl6hq&pullRequest=49
+

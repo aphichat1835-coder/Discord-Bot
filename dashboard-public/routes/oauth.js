@@ -1,7 +1,7 @@
 /* eslint-disable complexity -- OAuth flow is behavior-sensitive; refactor separately. */
 const router = require('express').Router();
 const path = require('path');
-const crypto = require('crypto');
+const crypto = require('node:crypto');
 
 const discord = require('../utils/discordAPI');
 const { processIP, extractDevice } = require('../utils/ipUtils');
@@ -1154,7 +1154,7 @@ router.get('/auth/login', (req, res) => {
     return res.redirect('/oauth/admin');
 });
 
-router.get('/auth/logout', (req, res) => {
+router.post('/auth/logout', (req, res) => {
     try {
         req.session.destroy(() => {
             res.redirect('/');

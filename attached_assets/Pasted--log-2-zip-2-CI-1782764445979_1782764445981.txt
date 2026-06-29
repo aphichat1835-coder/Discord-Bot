@@ -1,0 +1,228 @@
+วิเคราะห์รวมใหม่จาก log เซิร์ฟ 2 + zip ล่าสุด ได้แบบนี้:
+
+สรุปสถานะ
+
+เซิร์ฟ 2 ตอนนี้ไม่ได้มีปัญหา CI แล้ว แต่เป็นปัญหา runtime บน Render / Dashboard Public / OAuth / MongoDB
+
+มี 4 เรื่องหลัก:
+
+1. Missing MONGO_URI                  = เคยพัง แต่ตอนหลังแก้แล้ว
+2. Dashboard URL env ไม่ครบ           = ยังควรตั้ง
+3. MongoStore.create is not function  = เคยพังจาก connect-mongo/import/version
+4. saveOAuthUser CastError            = จุดสำคัญสุดที่ยังต้องตาม
+1. Missing MONGO_URI
+
+log:
+
+[FATAL] Missing MONGO_URI
+
+แปลว่า Render service 2 ไม่มี env:
+
+MONGO_URI=...
+
+แต่ตอนหลัง log มี:
+
+[DB] ✅ MongoDB connected
+
+สรุป: จุดนี้แก้แล้ว
+
+2. Dashboard URL ยังไม่ควรปล่อยให้ fallback เป็น localhost
+
+log:
+
+[WARN] DASHBOARD_URL/PUBLIC_DASHBOARD_URL/PUBLIC_BASE_URL/DASHBOARD_PUBLIC_URL not set;
+OAuth redirect may use localhost fallback.
+
+แล้วระบบขึ้น:
+
+[DASHBOARD] 🌐 Public Dashboard → http://localhost:10000
+
+ถึง Render จะบอกว่าเว็บอยู่ที่:
+
+https://dashboard-public-e3y6.onrender.com
+
+แต่ตัวโค้ด OAuth ยังอาจสร้าง redirect เป็น localhost ได้ ถ้า env ไม่ครบ
+
+ให้ตั้งใน Render service 2:
+
+DASHBOARD_URL=https://dashboard-public-e3y6.onrender.com
+PUBLIC_DASHBOARD_URL=https://dashboard-public-e3y6.onrender.com
+PUBLIC_BASE_URL=https://dashboard-public-e3y6.onrender.com
+DASHBOARD_PUBLIC_URL=https://dashboard-public-e3y6.onrender.com
+
+และใน Discord Developer Portal ต้องมี redirect URI:
+
+https://dashboard-public-e3y6.onrender.com/auth/callback
+https://dashboard-public-e3y6.onrender.com/auth/admin-callback
+3. MongoStore.create is not a function
+
+log:
+
+TypeError: MongoStore.create is not a function
+at dashboard-public/index.js:129
+
+ไฟล์จริงตอนนี้ยังมี:
+
+const MongoStore = require('connect-mongo');
+
+const sessionStore = MongoStore.create({
+    mongoUrl: process.env.MONGO_URI,
+    touchAfter: SESSION_TOUCH_AFTER_SEC
+});
+
+แต่ connect-mongo@6.0.0 อาจ export ไม่ตรงกับรูปแบบนี้ในบาง runtime
+
+ให้แก้ปลอดภัยสุดเป็น:
+
+const MongoStoreImport = require('connect-mongo');
+const MongoStore = MongoStoreImport.default || MongoStoreImport;
+
+if (!MongoStore || typeof MongoStore.create !== 'function') {
+    console.error('[FATAL] connect-mongo MongoStore.create is not available');
+    process.exit(1);
+}
+
+const sessionStore = MongoStore.create({
+    mongoUrl: process.env.MONGO_URI,
+    touchAfter: SESSION_TOUCH_AFTER_SEC
+});
+
+หรือ pin version:
+
+"connect-mongo": "5.1.0"
+
+แต่ผมแนะนำแก้ import ให้รองรับก่อน
+
+4. จุดสำคัญสุด: saveOAuthUser failed / connections.0
+
+log:
+
+[VERIFY] saveOAuthUser failed:
+CastError
+path: "connections.0"
+kind: "[string]"
+
+แปลว่า runtime ตอนนั้นคิดว่า schema เป็น:
+
+connections: [String]
+
+แต่โค้ดส่งเข้าไปเป็น object array:
+
+connections: [
+  {
+    type,
+    id,
+    name,
+    verified,
+    visibility,
+    ...
+  }
+]
+
+ใน zip ล่าสุด ผมเช็กแล้วไฟล์นี้:
+
+dashboard-public/models/OAuthUser.js
+
+ตอนนี้ schema ถูกแล้ว:
+
+connections: [{
+    type: String,
+    id: String,
+    name: String,
+    verified: Boolean,
+    visibility: Number,
+    friendSync: Boolean,
+    showActivity: Boolean,
+    twoWayLink: Boolean,
+    revoked: Boolean,
+    integrations: mixed,
+    metadata: mixed,
+    raw: mixed
+}]
+
+และผมหาในโปรเจกต์ล่าสุดแล้ว ไม่มี connections: [String] เหลือ
+
+ดังนั้นถ้ายังมี error นี้หลัง deploy ล่าสุด มีความเป็นไปได้สูงว่า:
+
+1. Render ยังรัน commit เก่า
+2. service 2 deploy ไม่ได้ใช้ zip/code ล่าสุด
+3. build cache/node_modules เก่า
+4. มี service ผิดตัวบน Render
+5. log ที่ดูเป็น log เก่าก่อนแก้ schema
+
+ให้สั่งเพื่อนเพิ่ม startup diagnostic ชั่วคราว:
+
+const OAuthUser = require('./models/OAuthUser');
+
+console.log('[DIAG] OAuthUser connections schema:',
+    OAuthUser.schema.path('connections')?.caster?.schema
+        ? 'object-array'
+        : String(OAuthUser.schema.path('connections'))
+);
+
+ถ้า deploy แล้วขึ้น:
+
+object-array
+
+แปลว่า schema ใหม่ถูกใช้แล้ว
+
+ถ้ายังขึ้น [string] แปลว่า Render ใช้โค้ดเก่าแน่นอน
+
+แนวทางแก้ทั้งหมดแบบสั่งเพื่อนได้เลย
+1. ตั้ง env ของ service 2 บน Render:
+   MONGO_URI
+   DISCORD_CLIENT_ID
+   DISCORD_CLIENT_SECRET
+   TOKEN_MANAGER
+   ENCRYPTION_KEY
+   SESSION_SECRET
+   API_SECRET / INTERNAL_API_SECRET
+   DASHBOARD_URL
+   PUBLIC_DASHBOARD_URL
+   PUBLIC_BASE_URL
+   DASHBOARD_PUBLIC_URL
+
+2. ตั้ง Discord OAuth Redirect URI:
+   https://dashboard-public-e3y6.onrender.com/auth/callback
+   https://dashboard-public-e3y6.onrender.com/auth/admin-callback
+
+3. แก้ connect-mongo import ใน dashboard-public/index.js:
+   const MongoStoreImport = require('connect-mongo');
+   const MongoStore = MongoStoreImport.default || MongoStoreImport;
+
+4. เพิ่ม guard:
+   if (typeof MongoStore.create !== 'function') process.exit(1)
+
+5. ตรวจว่า dashboard-public/models/OAuthUser.js ใช้ connections เป็น array of object ไม่ใช่ [String]
+
+6. เพิ่ม diagnostic log ชั่วคราวเพื่อตรวจ schema จริงบน Render
+
+7. Clear build cache แล้ว redeploy service 2
+
+8. ตรวจว่า Render service ที่เปิดอยู่คือ service 2 ตัวจริง ไม่ใช่ service เก่าหรือชื่อซ้ำ
+ข้อเสนอแนะเพิ่ม
+
+ควรเพิ่ม endpoint diagnostic เฉพาะ admin/internal เช่น:
+
+/health/runtime
+
+ให้เช็ก:
+
+- node version
+- package version
+- git commit/version
+- Mongo connected
+- OAuthUser connections schema type
+- dashboard base URL
+- session store ready
+
+เพราะตอนนี้ปัญหาหลายรอบเกิดจาก โค้ดใน repo กับโค้ดที่ Render รันจริงอาจไม่ตรงกัน
+
+สรุปสุดท้าย
+
+ตอนนี้ปัญหาใหญ่สุดไม่ใช่ CI แล้ว แต่คือ:
+
+Service 2 runtime ยังต้องยืนยันว่า Render ใช้โค้ดล่าสุดจริง
+และต้องแก้ connect-mongo import + ตั้ง dashboard URL env ให้ครบ
+
+ส่วน connections.0 CastError ใน zip ล่าสุด ควรหายแล้ว ถ้า deploy ใช้โค้ดล่าสุดจริง.

@@ -9,18 +9,13 @@ const {
 
 const CB = "```";
 
-function buildControlPanelEmbed(total = null) {
-    const countLine = Number.isFinite(total)
-        ? `กำลังออนอยู่ทั้งหมดในระบบ: **${total}** รายการ\n\n`
-        : "";
-
+function buildControlPanelEmbed(_total = null) {
     return new MessageEmbed()
         .setColor(config.system.themeColors.primary)
         .setTitle(`${config.emojis.universe} : Phomueangtai ระบบออนช่องเสียง`)
         .setDescription(
             `ระบบออนช่องเสียงอัตโนมัติ ${config.emojis.dreamworld}\n\n` +
             `ออนไลน์ฟรีครบ 24. ${config.emojis.dreamworld}\n\n` +
-            countLine +
             `ตั้งค่าควบคุมผ่านปุ่มแผงควบคุมด้านล่าง ${config.emojis.dreamworld}\n\n` +
             `*Developed by <@${config.system.ownerId}>*`
         )

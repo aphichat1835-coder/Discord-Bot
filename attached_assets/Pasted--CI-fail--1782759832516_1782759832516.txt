@@ -1,0 +1,144 @@
+ยัง **ไม่ใช่ทั้งหมด** ครับ — ตัวที่ทำให้ CI fail ตอนนี้มีตัวหลักตัวเดียว แต่มีงานต่อที่ควรทำอีกหลายจุด
+
+## 1. ตัวที่ต้องแก้ด่วนที่สุด
+
+ใน `.github/workflows/ci.yml`
+
+ตอนนี้:
+
+```yml
+run: npm ci --omit=optional --ignore-scripts --no-audit --no-fund
+```
+
+ควรแก้เป็น:
+
+```yml
+run: npm ci --no-audit --no-fund
+```
+
+เพราะ `@discordjs/voice` ต้องใช้ optional native dependency:
+
+```txt
+@snazzah/davey-linux-x64-gnu
+```
+
+ถ้าไม่แก้จุดนี้ test จะ fail ต่อแน่นอน
+
+---
+
+## 2. ควรเพิ่ม check กันพังซ้ำ
+
+เพิ่มใน CI หลัง install:
+
+```yml
+- name: Verify Discord voice dependency
+  run: node -e "require('@discordjs/voice'); console.log('discord voice ok')"
+```
+
+เพื่อให้รู้ทันทีว่า native dependency หาย ไม่ต้องรอ test แตก
+
+---
+
+## 3. ควรแก้ import side effect
+
+ตอนนี้ไฟล์นี้:
+
+```txt
+discord/commands/panelInteractions.js
+```
+
+มี:
+
+```js
+const voiceWorker = require("../voiceWorker");
+```
+
+ปัญหาคือแค่ test registry ก็ลาก `voiceWorker` มาโหลด แล้วลาก `@discordjs/voice` มาด้วย
+
+ควรเปลี่ยนเป็น lazy require:
+
+```js
+function getVoiceWorker() {
+    return require("../voiceWorker");
+}
+```
+
+แล้วตรงจุดใช้งานค่อยเรียก:
+
+```js
+const voiceWorker = getVoiceWorker();
+```
+
+อันนี้ไม่จำเป็นต่อการทำให้ CI ผ่านทันที แต่ควรทำมาก เพราะช่วยลดการพังแบบลูกโซ่
+
+---
+
+## 4. มี warning/log ที่ควรเก็บงานต่อ
+
+ใน log มี:
+
+```txt
+[LOG_CORE] Failed to resolve log channel: sessionManager.getLogChannelMap is not a function
+```
+
+ยังไม่ใช่ตัวทำ test fail แต่ควรแก้ เพราะ mock หรือ dependency contract ไม่ครบ
+
+แก้แบบปลอดภัย:
+
+```js
+const map = typeof sessionManager.getLogChannelMap === "function"
+    ? await sessionManager.getLogChannelMap(guild.id)
+    : new Map();
+```
+
+หรือเพิ่มใน mock test:
+
+```js
+getLogChannelMap: async () => new Map()
+```
+
+---
+
+## 5. ควรแยก voice tests ออก
+
+ตอนนี้:
+
+```json
+"test:discord": "node --test discord/tests/*.test.js"
+```
+
+ควรเพิ่ม:
+
+```json
+"test:voice": "node --test discord/tests/voiceWorker*.test.js",
+"test:discord": "node --test discord/tests/*.test.js"
+```
+
+หรือแยกใน CI เป็น step ชัด ๆ:
+
+```yml
+- name: Discord tests
+  run: npm run test:discord
+
+- name: Voice tests
+  run: npm run test:voice
+```
+
+เพื่อ debug ง่ายขึ้น
+
+---
+
+## สรุป
+
+มี 5 งานที่ควรทำ:
+
+```txt
+[ต้องทำ] แก้ npm ci ไม่ให้ omit optional
+[ควรทำ] เพิ่ม verify require('@discordjs/voice')
+[ควรทำ] lazy require voiceWorker
+[ควรทำ] แก้ getLogChannelMap fallback/mock
+[เสนอแนะ] แยก voice tests ออกจาก test ปกติ
+```
+
+ตัวที่ทำให้ fail จริงตอนนี้คือข้อ 1
+ข้อ 2-5 คือกันพังซ้ำและทำให้โปรเจกต์แข็งแรงขึ้นครับ

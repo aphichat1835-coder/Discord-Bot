@@ -10,7 +10,7 @@ This roadmap is the owner-approved planning reference. It does not grant permiss
 - Keep the current verification architecture.
 - Keep owner/admin controls.
 - Keep one repository, two services, and shared MongoDB.
-- Do not edit `discord/systemProvider.js` or its boot/import references without explicit current-task owner approval.
+- Do not edit `discord/systemProvider.js` or any file inside `discord/systemProvider/` or their boot/import references without explicit current-task owner approval.
 - Treat OAuth, sessions, tokens, cookies, roles, permissions, IP/device/risk data, owner routes, and raw IP reveal as high-risk.
 - Treat RAM stability as production-critical. Voice/session work must support long-running sessions, keep caches/timers/queues/maps bounded, and preserve diagnostics before any broad architecture change is considered.
 
@@ -71,9 +71,19 @@ The first approved Service 1 helper extraction has been applied:
 - `discord/core/webhooks.js`
 - `discord/index/dashboardState.js`
 
-Dashboard Public also has a focused shared helper:
+Dashboard Public also has focused shared helpers:
 
 - `dashboard-public/utils/verificationSnapshots.js` for shared verification log snapshot serialization, sensitive-data redaction, and duplicate serializer reduction in guild routes.
+- `dashboard-public/utils/csrf.js` for CSRF token generation, validation, and SameSite cookie helpers.
+
+Additional Service 1 helpers now implemented:
+
+- `discord/core/featureFlags.js` for feature flag toggle evaluation and env-override mapping.
+- `discord/core/loadEnv.js` for manual `.env` file parsing in local development.
+- `discord/commands/moderationWorkflow.js` for ban/kick/timeout workflow logic separated from the command entry point.
+- `discord/commands/moderationHelpers.js` for shared moderation utilities: case input builder, localized action label, success embed.
+- `discord/commands/setupLog.js` for audit log channel and category setup.
+- `discord/voiceWorker/` sub-module directory (config, state, queue, session, lifecycle, display, cacheUtils, eventLog, autoDeaf, natural, dm) with `discord/voiceWorker.js` remaining as the public facade.
 
 The old public modules remain compatibility layers:
 
@@ -110,16 +120,24 @@ discord/
 ├─ voiceWorker.js
 ├─ auditLogger.js
 ├─ systemProvider.js
+├─ systemProvider/
+│  ├─ actions.js
+│  ├─ auth.js
+│  ├─ dashboardHtml.js
+│  ├─ htmlUtils.js
+│  └─ renderers.js
 │
 ├─ core/
 │  ├─ env.js
 │  ├─ http.js
 │  ├─ webhooks.js
-│  └─ safeLogger.js
+│  ├─ safeLogger.js
+│  ├─ featureFlags.js
+│  └─ loadEnv.js
 │
 ├─ sessions/
 │  ├─ tokenUtils.js
-│  ├─ sessionRules.js
+│  ├─ sessionRules.js          (deferred)
 │  ├─ sessionErrors.js
 │  └─ voiceLabels.js
 │
@@ -130,6 +148,8 @@ discord/
 ├─ index/
 │  ├─ server.js
 │  ├─ views.js
+│  ├─ viewHelpers.js
+│  ├─ viewStyles.js
 │  ├─ auth.js
 │  ├─ events.js
 │  ├─ system.js
@@ -137,21 +157,45 @@ discord/
 │  ├─ verifyOwner.js
 │  ├─ sessionSerializer.js
 │  ├─ dashboardState.js
-│  └─ viewHelpers.js
+│  ├─ auditWebBundle.js
+│  ├─ auditApiRoutes.js
+│  ├─ auditDashboardPage.js
+│  ├─ joinCampaignRoutes.js
+│  └─ joinCampaignPage.js
 │
 ├─ commands/
 │  ├─ information.js
 │  ├─ moderation.js
+│  ├─ moderationWorkflow.js
+│  ├─ moderationHelpers.js
 │  ├─ utility.js
 │  ├─ verification.js
+│  ├─ setupLog.js
 │  ├─ registry.js
 │  ├─ panelViews.js
 │  ├─ panelInteractions.js
 │  └─ customIds.js
 │
+├─ voiceWorker/
+│  ├─ config.js
+│  ├─ state.js
+│  ├─ queue.js
+│  ├─ session.js
+│  ├─ lifecycle.js
+│  ├─ display.js
+│  ├─ cacheUtils.js
+│  ├─ eventLog.js
+│  ├─ autoDeaf.js
+│  ├─ natural.js
+│  └─ dm.js
+│
+├─ logging/
+│  └─ *.js
+│
 └─ features/
    ├─ protection.js
-   └─ roleButton.js
+   ├─ roleButton.js
+   └─ joinCampaign.js
 ```
 
 Implementation rule: create and use only the files that have real code to hold. Do not create unused placeholder modules just to match the tree.
@@ -159,9 +203,9 @@ Implementation rule: create and use only the files that have real code to hold. 
 The following approved names remain intentionally deferred because no safe, necessary extraction has been made for them yet:
 
 ```txt
-discord/sessions/sessionRules.js
-discord/index/viewPages.js
-discord/index/viewScripts.js
+discord/sessions/sessionRules.js      (deferred)
+discord/index/viewPages.js            (deferred)
+discord/index/viewScripts.js          (deferred)
 ```
 
 ## Refactor Phases
