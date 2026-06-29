@@ -1,5 +1,22 @@
 # Changelog
 
+## [Unreleased] - CI Fix And Test Coverage Expansion 2026-06-29
+
+### Changed
+
+- Upgraded Node.js runtime to 24.13.0 and regenerated both `package-lock.json` (497 packages, lockfileVersion 3) and `dashboard-public/package-lock.json` (420 packages, lockfileVersion 3) using npm 11 under Node 24.
+- Fixed `.github/workflows/ci.yml`: removed `--omit=optional` from the `npm ci` install steps so `@snazzah/davey-linux-x64-gnu` (optional native binary required by `@discordjs/voice`) installs correctly in CI; `--omit=optional` is retained only on the lockfile-sync check and audit steps where optional packages must not affect results.
+- Added three missing CI steps: `check:dashboard:all` (Dashboard Public JavaScript syntax), `check:scripts` (scripts/ syntax), and `check:memory-guards` (static memory guard checks).
+- Updated `ARCHITECTURE.md` last-verified date to 2026-06-29, corrected Service 1 test runner from "Jest" to "Node.js built-in test runner (`node --test`)", updated Service 1 test file count from 51 to 53, and updated Service 2 test file count from 11 to 14.
+
+### Added
+
+- `discord/tests/voiceWorkerQueue.test.js` (9 tests): `OperationQueue` concurrency limits, size-cap rejection, serial execution ordering, and error recovery with queue drain.
+- `discord/tests/voiceWorkerDisplay.test.js` (39 tests): `normalizeVoiceTarget`, `getUptimeString`, `isVoiceConnectionUsable`, `buildVoiceFields`, and Thai-language connection status label helpers.
+- `dashboard-public/tests/csrf.test.js` (17 tests): CSRF token generation, SameSite cookie helpers, and middleware behavior for missing/wrong/correct tokens.
+- `dashboard-public/tests/guildPermissions.test.js` (26 tests): PERMISSIONS flag constants, `hasPerm`, `normalizeGuildPermissions`, `canAccess`, and `canEdit` policy helpers.
+- `dashboard-public/tests/panelBuilder.test.js` (34 tests): `sanitize`, `parseEmbedColor`, `normalizePanelInput`, `buildOAuthUrl`, `buildEmbed`, and `buildPanelPayload`.
+
 ## [Unreleased] - CI And Security Fixes 2026-06-28
 
 ### Changed
