@@ -14,8 +14,8 @@
     "check:scripts": "find scripts -type f -name '*.js' -print0 | xargs -0 -n1 node --check",
     "check:memory-guards": "node scripts/checkMemoryGuards.js",
     "check:memory-trend": "node scripts/checkMemoryTrend.js",
-    "test": "npm run test:discord && npm --prefix dashboard-public test",
-    "test:discord": "find discord/tests -name '*.test.js' ! -name 'voiceWorker*.test.js' -print0 | xargs -0 node --test",
+    "test": "npm run test:discord && npm run test:voice && npm --prefix dashboard-public test",
+    "test:discord": "find discord/tests -name '*.test.js' ! -name 'voiceWorker*.test.js' -print0 | xargs -0 -r node --test",
     "test:voice": "node --test discord/tests/voiceWorker*.test.js",
     "dashboard:start": "npm --prefix dashboard-public start",
     "dashboard:dev": "npm --prefix dashboard-public run dev"
