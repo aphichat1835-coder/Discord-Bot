@@ -22,8 +22,14 @@ jobs:
             package-lock.json
             dashboard-public/package-lock.json
 
+      - name: Sync root lockfile
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+
       - name: Install root dependencies
         run: npm ci
+
+      - name: Sync dashboard lockfile
+        run: npm --prefix dashboard-public install --package-lock-only --ignore-scripts --no-audit --no-fund
 
       - name: Install dashboard dependencies
         run: npm --prefix dashboard-public ci
