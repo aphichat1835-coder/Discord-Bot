@@ -15,7 +15,7 @@
     "check:memory-guards": "node scripts/checkMemoryGuards.js",
     "check:memory-trend": "node scripts/checkMemoryTrend.js",
     "test": "npm run test:discord && npm --prefix dashboard-public test",
-    "test:discord": "node --test discord/tests/*.test.js",
+    "test:discord": "find discord/tests -name '*.test.js' ! -name 'voiceWorker*.test.js' -print0 | xargs -0 node --test",
     "test:voice": "node --test discord/tests/voiceWorker*.test.js",
     "dashboard:start": "npm --prefix dashboard-public start",
     "dashboard:dev": "npm --prefix dashboard-public run dev"

@@ -26,14 +26,14 @@ jobs:
       - name: Install root dependencies
         run: npm ci --no-audit --no-fund
 
-      - name: Verify Discord voice dependency
-        run: node -e "require('@discordjs/voice'); console.log('discord voice ok')"
-
-      - name: Sync dashboard lockfile
-        run: npm --prefix dashboard-public install --package-lock-only --omit=optional --omit=peer --ignore-scripts --no-audit --no-fund
+      - name: Verify Discord runtime dependencies
+        run: node -e "require('discord.js'); require('@discordjs/voice'); console.log('discord runtime ok')"
 
       - name: Install dashboard dependencies
-        run: npm --prefix dashboard-public ci --omit=optional --omit=peer --ignore-scripts --no-audit --no-fund
+        run: npm --prefix dashboard-public ci --no-audit --no-fund
+
+      - name: Verify dashboard test runner
+        run: npm --prefix dashboard-public exec -- node -e "require('jest-circus/build/runner.js'); require('jest-resolve'); console.log('dashboard jest ok')"
 
       - name: Syntax check (Discord)
         run: npm run check:all
@@ -53,11 +53,11 @@ jobs:
       - name: Voice tests
         run: npm run test:voice
 
-      - name: Root audit
-        run: npm audit --omit=optional --audit-level=high
-
       - name: Dashboard tests
         run: npm --prefix dashboard-public test
+
+      - name: Root audit
+        run: npm audit --omit=optional --audit-level=high
 
       - name: Dashboard audit
         run: npm --prefix dashboard-public audit --omit=optional --audit-level=high
