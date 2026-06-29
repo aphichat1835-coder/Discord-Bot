@@ -22,6 +22,11 @@ jobs:
             package-lock.json
             dashboard-public/package-lock.json
 
+      - name: Pin npm
+        run: |
+          npm install -g npm@10.9.2
+          npm --version
+
       - name: Sync root lockfile
         run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
 
