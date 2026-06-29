@@ -1,0 +1,227 @@
+ปัญหาปัจจุบันคือ:
+
+
+
+dashboard-public/package.json
+
+กับ
+
+dashboard-public/package-lock.json
+
+
+
+ยังไม่ sync กัน
+
+
+
+CI เลยพังที่:
+
+
+
+npm --prefix dashboard-public ci --no-audit --no-fund
+
+
+
+error นี้ยืนยันตรงกับไฟล์จริง:
+
+
+
+Missing: @emnapi/core@1.11.1
+
+Missing: @emnapi/runtime@1.11.1
+
+Invalid: @emnapi/wasi-threads@1.2.1 does not satisfy @emnapi/wasi-threads@1.2.2
+
+Missing: @emnapi/core@1.10.0
+
+Missing: @emnapi/runtime@1.10.0
+
+Missing: @emnapi/wasi-threads@1.2.1
+
+แปลแบบตรง ๆ
+
+
+
+npm ci ไม่เหมือน npm install
+
+
+
+npm ci จะพูดว่า:
+
+
+
+package-lock ต้องตรงกับ package.json เป๊ะ ๆ ไม่งั้นไม่ติดตั้ง
+
+
+
+ตอนนี้ lockfile ฝั่งเซิร์ฟ 2 / dashboard-public ขาด dependency ย่อยของ Jest/native resolver คือกลุ่ม:
+
+
+
+@emnapi/core
+
+@emnapi/runtime
+
+@emnapi/wasi-threads
+
+
+
+ตัวนี้โยงมาจากฝั่ง Jest 30 / resolver / wasm runtime ไม่ใช่โค้ด dashboard โดยตรง
+
+
+
+เซิร์ฟ 1 กับเซิร์ฟ 2
+
+เซิร์ฟ 1
+
+root project
+
+package.json
+
+package-lock.json
+
+npm ci
+
+
+
+สถานะ: ดูโอเคแล้ว
+
+
+
+เซิร์ฟ 2
+
+dashboard-public
+
+dashboard-public/package.json
+
+dashboard-public/package-lock.json
+
+npm --prefix dashboard-public ci
+
+
+
+สถานะ: ยังไม่โอเค เพราะ lockfile ไม่ sync
+
+
+
+วิธีแก้ที่ถูกที่สุด
+
+
+
+ให้เพื่อนรันที่ root repo:
+
+
+
+cd dashboard-public
+
+npm install --package-lock-only
+
+
+
+จากนั้น commit:
+
+
+
+dashboard-public/package-lock.json
+
+
+
+แล้ว push ใหม่
+
+
+
+ถ้ามี dashboard-public/package.json เปลี่ยนด้วย ก็ commit ด้วย
+
+
+
+ห้ามแก้แบบนี้
+
+
+
+อย่าแก้ CI จาก:
+
+
+
+npm ci
+
+
+
+เป็น:
+
+
+
+npm install
+
+
+
+เพราะ CI ควรใช้ npm ci เพื่อบังคับ lockfile ให้ตรงและ build ซ้ำได้เหมือนเดิมทุกครั้ง
+
+
+
+สิ่งที่เช็กแล้วผ่าน
+
+✅ CI install flags ถูกแล้ว
+
+✅ ไม่ omit optional แล้ว
+
+✅ ไม่ ignore scripts แล้ว
+
+✅ Discord voice verify ยังถูก
+
+✅ Dashboard Jest verify ยังถูก
+
+✅ test:discord/test:voice แยกถูก
+
+✅ Codacy/Sonar จุดเก่าแก้แล้ว
+
+✅ csrf.test.js ใช้ toHaveLength แล้ว
+
+✅ panelBuilder.test.js ใช้ color constants แล้ว
+
+ข้อเสนอแนะเพิ่ม
+
+
+
+หลังรัน lockfile ใหม่ ให้ใช้คำสั่งนี้เช็กก่อน push:
+
+
+
+npm --prefix dashboard-public ci --no-audit --no-fund
+
+npm --prefix dashboard-public test
+
+
+
+แล้วค่อยรันรวม:
+
+
+
+npm ci --no-audit --no-fund
+
+npm test
+
+สรุป
+
+ปัญหาอยู่ที่เซิร์ฟ 2/dashboard-public lockfile ไม่ sync
+
+
+
+ให้รัน:
+
+cd dashboard-public
+
+npm install --package-lock-only
+
+
+
+commit:
+
+dashboard-public/package-lock.json
+
+
+
+แล้ว push ใหม่
+
+
+
+หลังแก้จุดนี้ ค่อยดู CI รอบถัดไปครับ.
