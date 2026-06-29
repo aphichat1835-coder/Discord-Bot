@@ -1,0 +1,148 @@
+ใช่ ผมดูไฟล์จริงจาก zip ล่าสุดแล้ว
+
+## สรุปปัญหาปัจจุบัน
+
+**ยังติดที่เซิร์ฟ 2 / `dashboard-public` เท่านั้น**
+
+ตัวที่พัง:
+
+```bash
+npm --prefix dashboard-public ci --no-audit --no-fund
+```
+
+สาเหตุคือ:
+
+```txt
+dashboard-public/package-lock.json ไม่ sync กับ dashboard-public/package.json
+```
+
+และ lockfile ขาด dependency นี้:
+
+```txt
+@emnapi/core@1.11.1
+@emnapi/runtime@1.11.1
+```
+
+## วิเคราะห์ลึก
+
+ใน `dashboard-public/package-lock.json` มีตัวนี้:
+
+```txt
+@napi-rs/wasm-runtime@1.1.5
+```
+
+ซึ่งต้องการ peer dependencies:
+
+```txt
+@emnapi/core: ^1.7.1
+@emnapi/runtime: ^1.7.1
+```
+
+แต่ lockfile ไม่มี entry top-level:
+
+```txt
+node_modules/@emnapi/core
+node_modules/@emnapi/runtime
+```
+
+เลยทำให้ `npm ci` หยุดทันที
+
+นอกจากนี้ใน lockfile ยังมี URL แปลกจาก Replit:
+
+```txt
+http://package-firewall.replit.local/...
+```
+
+อันนี้ไม่ควรอยู่ใน lockfile ที่จะไปรันบน GitHub Actions/Render เพราะ environment ข้างนอกเข้า URL ภายใน Replit ไม่ได้
+
+## เซิร์ฟ 1 / เซิร์ฟ 2
+
+### เซิร์ฟ 1: root bot
+
+สถานะ: **โอเค**
+
+```txt
+package.json
+package-lock.json
+npm ci
+Discord voice verify
+test:discord
+test:voice
+```
+
+ยังไม่เห็นปัญหาใหม่
+
+### เซิร์ฟ 2: dashboard-public
+
+สถานะ: **ยังไม่โอเค**
+
+```txt
+dashboard-public/package-lock.json ต้อง regenerate ใหม่
+```
+
+## วิธีแก้ที่ถูกที่สุด
+
+ให้เพื่อนทำในเครื่องที่ใช้ **Node 24**:
+
+```bash
+cd dashboard-public
+rm -rf node_modules package-lock.json
+npm install --package-lock-only --no-audit --no-fund
+npm ci --no-audit --no-fund
+npm test
+```
+
+จากนั้น commit:
+
+```txt
+dashboard-public/package-lock.json
+```
+
+ถ้า `package.json` เปลี่ยนด้วยก็ commit ด้วย:
+
+```txt
+dashboard-public/package.json
+```
+
+## อย่าทำแบบนี้
+
+อย่าแก้ CI เป็น:
+
+```bash
+npm install
+```
+
+แทน `npm ci`
+
+เพราะ `npm ci` ถูกแล้ว มันกำลังบอกว่า lockfile ไม่สะอาด
+
+## เช็กก่อน push
+
+ให้รันจาก root repo:
+
+```bash
+npm ci --no-audit --no-fund
+npm --prefix dashboard-public ci --no-audit --no-fund
+npm test
+```
+
+## ข้อเสนอแนะเพิ่ม
+
+ควรเพิ่ม `.npmrc` ที่ root และ `dashboard-public` เพื่อบังคับ registry ปกติ:
+
+```ini
+registry=https://registry.npmjs.org/
+package-lock=true
+```
+
+แล้ว regenerate lockfile ใหม่ จะช่วยกันไม่ให้ URL แบบ `package-firewall.replit.local` หลุดเข้า lockfile อีก
+
+## สรุปสุดท้าย
+
+```txt
+เซิร์ฟ 1: ผ่านทางโครงสร้างแล้ว
+เซิร์ฟ 2: ยังไม่ผ่าน เพราะ package-lock.json เสีย/ไม่ sync
+ต้อง regenerate dashboard-public/package-lock.json ใหม่ด้วย Node 24 แล้ว commit
+```
+
+รอบนี้ไม่ใช่โค้ดพัง แต่เป็น **lockfile ฝั่ง dashboard-public ไม่สมบูรณ์**.
