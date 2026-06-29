@@ -25,7 +25,9 @@
     "jest": "^30.4.2"
   },
   "overrides": {
-    "js-yaml": "^4.2.0"
+    "js-yaml": "^4.2.0",
+    "@emnapi/core": "1.10.0",
+    "@emnapi/runtime": "1.10.0"
   },
   "jest": {
     "testEnvironment": "node",
