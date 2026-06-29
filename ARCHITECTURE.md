@@ -1,6 +1,6 @@
 # Architecture
 
-Last verified against implementation: 2026-06-28.
+Last verified against implementation: 2026-06-29.
 
 This is the implementation-backed architecture reference for the Phomueangtai Personal Multi-Tool Discord Bot. It describes the current project reality and the approved minimal direction for organization. It does not approve broad rewrites, dependency migrations, behavior changes, schema changes, or protected-file edits.
 
@@ -212,7 +212,7 @@ Important invariant: Express starts first, MongoDB connects second, Discord logi
 
 ### Service 1 Test Files
 
-All 51 test files live in `discord/tests/` and run with Jest.
+All 53 test files live in `discord/tests/` and run with the Node.js built-in test runner (`node --test`).
 
 | Test file | What it covers |
 | --- | --- |
@@ -266,6 +266,8 @@ All 51 test files live in `discord/tests/` and run with Jest.
 | `auditV4.test.js` | gateway audit log generation for all supported Discord events |
 | `auditV4Specific.test.js` | deep coverage for specific complex event renderers |
 | `auditWebBundleSmoke.test.js` | `auditWebBundle` mount smoke test |
+| `voiceWorkerQueue.test.js` | `OperationQueue` concurrency, size limits, error recovery, and queue-full rejection |
+| `voiceWorkerDisplay.test.js` | display metadata labels, Thai connection status text, uptime string, usability check, and voice embed field builders |
 
 ### Owner Dashboard Routes
 
@@ -439,7 +441,7 @@ static pages and health routes
 
 ### Service 2 Test Files
 
-All 11 test files live in `dashboard-public/tests/` and run with Jest.
+All 14 test files live in `dashboard-public/tests/` and run with Jest.
 
 | Test file | What it covers |
 | --- | --- |
@@ -454,6 +456,9 @@ All 11 test files live in `dashboard-public/tests/` and run with Jest.
 | `state.test.js` | shared OAuth/admin/callback state signing and compact verification state creation |
 | `verificationSnapshots.test.js` | verification log snapshot serializers and sensitive-data redaction behavior |
 | `verifyMode.test.js` | verification mode normalization and compatibility helper contracts |
+| `csrf.test.js` | CSRF token generation, cookie helpers, and middleware: missing/wrong/correct token paths |
+| `guildPermissions.test.js` | PERMISSIONS flags, hasPerm, normalizeGuildPermissions, canAccess, and canEdit policy helpers |
+| `panelBuilder.test.js` | sanitize, parseEmbedColor, normalizePanelInput, buildOAuthUrl, buildEmbed, and buildPanelPayload |
 
 ### Dashboard Public Routes
 
