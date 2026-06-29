@@ -28,16 +28,16 @@ jobs:
           npm --version
 
       - name: Sync root lockfile
-        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+        run: npm install --package-lock-only --omit=optional --ignore-scripts --no-audit --no-fund
 
       - name: Install root dependencies
-        run: npm install --ignore-scripts --no-audit --no-fund
+        run: npm install --omit=optional --ignore-scripts --no-audit --no-fund
 
       - name: Sync dashboard lockfile
-        run: npm --prefix dashboard-public install --package-lock-only --ignore-scripts --no-audit --no-fund
+        run: npm --prefix dashboard-public install --package-lock-only --omit=optional --ignore-scripts --no-audit --no-fund
 
       - name: Install dashboard dependencies
-        run: npm --prefix dashboard-public install --ignore-scripts --no-audit --no-fund
+        run: npm --prefix dashboard-public install --omit=optional --ignore-scripts --no-audit --no-fund
 
       - name: Syntax check
         run: npm run check:all
@@ -46,10 +46,10 @@ jobs:
         run: npm run test:discord
 
       - name: Root audit
-        run: npm audit --audit-level=high
+        run: npm audit --omit=optional --audit-level=high
 
       - name: Dashboard tests
         run: npm --prefix dashboard-public test
 
       - name: Dashboard audit
-        run: npm --prefix dashboard-public audit --audit-level=high
+        run: npm --prefix dashboard-public audit --omit=optional --audit-level=high
