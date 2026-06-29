@@ -22,19 +22,12 @@ jobs:
         run: |
           node --version
           npm --version
-          npm cache clean --force
-
-      - name: Sync root lockfile
-        run: npm install --package-lock-only --omit=optional --ignore-scripts --no-audit --no-fund
 
       - name: Install root dependencies
         run: npm ci --omit=optional --ignore-scripts --no-audit --no-fund
 
-      - name: Sync dashboard lockfile
-        run: npm --prefix dashboard-public install --package-lock-only --omit=optional --ignore-scripts --no-audit --no-fund
-
       - name: Install dashboard dependencies
-        run: npm --prefix dashboard-public ci --ignore-scripts --no-audit --no-fund
+        run: npm --prefix dashboard-public ci --omit=optional --ignore-scripts --no-audit --no-fund
 
       - name: Syntax check (Discord)
         run: npm run check:all
