@@ -25,7 +25,10 @@
     "jest": "^30.4.2"
   },
   "overrides": {
-    "js-yaml": "^4.2.0"
+    "js-yaml": "^4.2.0",
+    "@emnapi/core": "1.11.1",
+    "@emnapi/runtime": "1.11.1",
+    "@emnapi/wasi-threads": "1.2.2"
   },
   "jest": {
     "testEnvironment": "node",
