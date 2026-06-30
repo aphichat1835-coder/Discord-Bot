@@ -22,3 +22,4 @@ Rules:
 - Prefer small helper extraction and compatibility layers over broad refactors.
 - Never expose real tokens, webhook URLs, MongoDB URLs, OAuth secrets, dashboard PINs, raw IP values, or hidden operational details.
 - Add or update documentation when adding routes, commands, models, env vars, or behavior that changes the architecture map.
+
