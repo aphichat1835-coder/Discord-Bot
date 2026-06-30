@@ -58,7 +58,6 @@ function decryptWithCandidateKeys(parts, algorithm, ivEncoding, keys) {
     for (const key of keys) {
         try {
             const iv = Buffer.from(parts[0], ivEncoding);
-            const ciphertext = Buffer.from(parts.slice(1).join(':'), algorithm === 'aes-256-gcm' ? 'base64url' : 'hex');
 
             if (algorithm === 'aes-256-gcm') {
                 const tag = Buffer.from(parts[1], 'base64url');
@@ -67,6 +66,7 @@ function decryptWithCandidateKeys(parts, algorithm, ivEncoding, keys) {
                 decipher.setAuthTag(tag);
                 return Buffer.concat([decipher.update(ct), decipher.final()]).toString('utf8');
             } else {
+                const ciphertext = Buffer.from(parts.slice(1).join(':'), 'hex');
                 const decipher = crypto.createDecipheriv(algorithm, key, iv);
                 return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
             }
