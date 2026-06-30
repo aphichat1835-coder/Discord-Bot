@@ -4,8 +4,8 @@
  * - Legacy AES-256-CBC values are still readable for backward compatibility.
  * - Raw IP/device lookup keys use HMAC-SHA256 hashes for safe matching.
  */
-const crypto = require('crypto');
-const { sanitizeLogText } = require('../../discord/core/safeLogger');
+const crypto = require('node:crypto');
+const { sanitizeLogText } = require('./safeLogger');
 
 function safeCryptoError(err) {
     return sanitizeLogText(err?.message || err?.name || err || 'unknown').slice(0, 180);
@@ -14,7 +14,15 @@ function safeCryptoError(err) {
 function getKey() {
     const secret = process.env.ENCRYPTION_KEY;
     if (!secret) throw new Error('[CRYPTO] Missing ENCRYPTION_KEY');
-    return crypto.createHash('sha256').update(String(secret)).digest(); // 32 bytes
+    // Matches Service 1 key derivation: base64(sha256(key)).slice(0,32) as ASCII bytes
+    return Buffer.from(crypto.createHash('sha256').update(String(secret)).digest('base64').substring(0, 32));
+}
+
+function getLegacyKey() {
+    const secret = process.env.ENCRYPTION_KEY;
+    if (!secret) throw new Error('[CRYPTO] Missing ENCRYPTION_KEY');
+    // Legacy raw SHA-256 key (pre-Service 1 alignment)
+    return crypto.createHash('sha256').update(String(secret)).digest();
 }
 
 function getHashKey() {
@@ -46,6 +54,29 @@ function encryptData(value) {
     return `v2:gcm:${iv.toString('base64url')}:${tag.toString('base64url')}:${ciphertext.toString('base64url')}`;
 }
 
+function decryptWithCandidateKeys(parts, algorithm, ivEncoding, keys) {
+    for (const key of keys) {
+        try {
+            const iv = Buffer.from(parts[0], ivEncoding);
+
+            if (algorithm === 'aes-256-gcm') {
+                const tag = Buffer.from(parts[1], 'base64url');
+                const ct = Buffer.from(parts.slice(2).join(':'), 'base64url');
+                const decipher = crypto.createDecipheriv(algorithm, key, iv);
+                decipher.setAuthTag(tag);
+                return Buffer.concat([decipher.update(ct), decipher.final()]).toString('utf8');
+            } else {
+                const ciphertext = Buffer.from(parts.slice(1).join(':'), 'hex');
+                const decipher = crypto.createDecipheriv(algorithm, key, iv);
+                return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
+            }
+        } catch {
+            continue;
+        }
+    }
+    return null;
+}
+
 function decryptData(payload) {
     if (!payload || typeof payload !== 'string') return null;
 
@@ -66,7 +97,18 @@ function decryptData(payload) {
                 decipher.final()
             ]).toString('utf8');
         } catch (err) {
-            console.error('[CRYPTO] GCM decrypt failed:', safeCryptoError(err));
+            console.error('[CRYPTO] GCM decrypt failed, trying legacy key:', safeCryptoError(err));
+            try {
+                const parts = payload.split(':');
+                const offset = parts[0] === 'v2' ? 2 : 1;
+                const result = decryptWithCandidateKeys(
+                    parts.slice(offset),
+                    'aes-256-gcm',
+                    'base64url',
+                    [getLegacyKey()]
+                );
+                if (result) return result;
+            } catch {}
             return null;
         }
     }
@@ -85,7 +127,12 @@ function decryptData(payload) {
             decipher.final()
         ]).toString('utf8');
     } catch (err) {
-        console.error('[CRYPTO] CBC legacy decrypt failed:', safeCryptoError(err));
+        console.error('[CRYPTO] CBC decrypt failed, trying legacy key:', safeCryptoError(err));
+        const parts = payload.split(':');
+        if (parts.length < 2) return null;
+        const result = decryptWithCandidateKeys(parts, 'aes-256-cbc', 'hex', [getLegacyKey()]);
+        if (result) return result;
+        console.error('[CRYPTO] CBC legacy decrypt also failed');
         return null;
     }
 }

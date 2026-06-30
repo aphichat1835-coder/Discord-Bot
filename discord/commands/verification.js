@@ -17,7 +17,7 @@
 ================================================================================
 */
 
-const crypto = require("crypto");
+const crypto = require("node:crypto");
 const { MessageEmbed, MessageActionRow, MessageButton } = require("discord.js");
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");

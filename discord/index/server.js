@@ -7,7 +7,7 @@ DO NOT REMOVE: /api/reveal-token lockout logic.
 ================================================================================
 */
 
-const crypto = require("crypto");
+const crypto = require("node:crypto");
 const auth = require("./auth");
 const {
     serializeVoiceSession,
@@ -466,7 +466,6 @@ function registerRoutes({
     app.get("/ping", (req, res) => res.status(200).send("OK"));
 
     app.get("/health", (req, res) => {
-        const uptimeSec = Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000);
         const botOnline = client?.isReady?.() ?? false;
         const dbStatus = sessionManager.getDatabaseStatus?.();
         const dbConnected = dbStatus?.connected === true;
@@ -474,10 +473,13 @@ function registerRoutes({
 
         res.status(ready ? 200 : 503).json({
             status: ready ? "ok" : "degraded",
-            uptime: uptimeSec,
-            sessions: sessionManager.getAllSessions().size,
+            ready,
+            uptime: Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000),
+            sessions: Array.from(sessionManager.getAllSessions().values()).length,
             botOnline,
-            dbConnected
+            bot: botOnline,
+            dbConnected,
+            db: dbConnected
         });
     });
 

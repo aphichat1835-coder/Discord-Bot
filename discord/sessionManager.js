@@ -12,7 +12,7 @@ ATTENTION AI ASSISTANT: DO NOT MODIFY, REFACTOR, OR SIMPLIFY THIS FILE.
 */
 
 const mongoose = require("mongoose");
-const crypto = require("crypto");
+const crypto = require("node:crypto");
 const config = require("./config.json");
 const { sanitizeLogText } = require("./core/safeLogger");
 

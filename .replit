@@ -1,4 +1,4 @@
-modules = ["nodejs-20", "web"]
+modules = ["web", "nodejs-24"]
 entrypoint = "discord/index.js"
 run = "npm start"
 
@@ -8,3 +8,101 @@ stack = "BEST_EFFORT_FALLBACK"
 
 [nix]
 channel = "stable-25_05"
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "syntax-discord"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "syntax-dashboard"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "memory-guards"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "test-discord"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "test-voice"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "test-dashboard"
+
+[[workflows.workflow]]
+name = "test-dashboard"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm --prefix dashboard-public test"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "syntax-discord"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run check:all"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "syntax-dashboard"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run check:dashboard:all"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "memory-guards"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run check:memory-guards"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "test-discord"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "find discord/tests -name '*.test.js' ! -name 'voice*.test.js' -print0 | xargs -0 node --test"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "test-voice"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "node --test discord/tests/voice*.test.js"
+
+[workflows.workflow.metadata]
+isValidation = true

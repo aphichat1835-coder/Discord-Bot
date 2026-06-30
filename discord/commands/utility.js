@@ -10,7 +10,7 @@ DO NOT REMOVE: /whitelist command — required for เฟส 3 /say system.
 */
 
 const { MessageEmbed, MessageActionRow, MessageButton } = require("discord.js");
-const crypto = require("crypto");
+const crypto = require("node:crypto");
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");
 const auditLogger = require("../auditLogger");
@@ -58,7 +58,7 @@ async function handle(interaction, client, sessionManager, getLogChannel) {
     const cmd = interaction.commandName;
     if (cmd === "say")        return handleSay(interaction, sessionManager);
     if (cmd === "announce")   return handleAnnounce(interaction);
-    if (cmd === "steal")      return handleSteal(interaction);
+    if (cmd === "copy-emojis") return handleSteal(interaction);
     if (cmd === "backup")     return handleBackup(interaction);
     if (cmd === "restore")    return handleRestore(interaction);
     if (cmd === "setup-log")  return handleSetupLog(interaction, sessionManager);

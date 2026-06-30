@@ -1,5 +1,59 @@
 # Changelog
 
+## [Unreleased] - CI Fix And Test Coverage Expansion 2026-06-29
+
+### Changed
+
+- Upgraded Node.js runtime to 24.13.0 and regenerated both `package-lock.json` (497 packages, lockfileVersion 3) and `dashboard-public/package-lock.json` (420 packages, lockfileVersion 3) using npm 11 under Node 24.
+- Fixed `.github/workflows/ci.yml`: removed `--omit=optional` from the `npm ci` install steps so `@snazzah/davey-linux-x64-gnu` (optional native binary required by `@discordjs/voice`) installs correctly in CI; `--omit=optional` is retained only on the lockfile-sync check and audit steps where optional packages must not affect results.
+- Added three missing CI steps: `check:dashboard:all` (Dashboard Public JavaScript syntax), `check:scripts` (scripts/ syntax), and `check:memory-guards` (static memory guard checks).
+- Updated `ARCHITECTURE.md` last-verified date to 2026-06-29, corrected Service 1 test runner from "Jest" to "Node.js built-in test runner (`node --test`)", updated Service 1 test file count from 51 to 53, and updated Service 2 test file count from 11 to 14.
+
+### Added
+
+- `discord/tests/voiceWorkerQueue.test.js` (9 tests): `OperationQueue` concurrency limits, size-cap rejection, serial execution ordering, and error recovery with queue drain.
+- `discord/tests/voiceWorkerDisplay.test.js` (39 tests): `normalizeVoiceTarget`, `getUptimeString`, `isVoiceConnectionUsable`, `buildVoiceFields`, and Thai-language connection status label helpers.
+- `dashboard-public/tests/csrf.test.js` (17 tests): CSRF token generation, SameSite cookie helpers, and middleware behavior for missing/wrong/correct tokens.
+- `dashboard-public/tests/guildPermissions.test.js` (26 tests): PERMISSIONS flag constants, `hasPerm`, `normalizeGuildPermissions`, `canAccess`, and `canEdit` policy helpers.
+- `dashboard-public/tests/panelBuilder.test.js` (34 tests): `sanitize`, `parseEmbedColor`, `normalizePanelInput`, `buildOAuthUrl`, `buildEmbed`, and `buildPanelPayload`.
+
+## [Unreleased] - CI And Security Fixes 2026-06-28
+
+### Changed
+
+- Fixed `npm ci` failure: added `@emnapi/core` and `@emnapi/runtime` npm overrides pinned to `1.10.0` to prevent version drift between Replit package firewall and public registry causing "Missing from lock file" errors. Regenerated `package-lock.json`.
+- Fixed logout redirect security issue in `dashboard-public/views/guilds.html`: replaced `.finally()` with `.then(res => { if (res.ok) redirect })` and `.catch()` so redirect to `/` only happens when the server confirms logout success. Previously, `.finally()` redirected even on CSRF rejection, giving a false impression of session termination.
+- Tightened source contract test in `discord/tests/voiceSessionRegression.test.js`: changed `src.includes("17,19")` to `src.includes("\\d{17,19}")` to check for the actual regex pattern instead of any occurrence of the substring (which could match comments). Added explicit 20-digit boundary test for `PANEL_FIELD_ID_REGEX` to document that the panel field limit is 19 digits (unlike the worker which allows up to 22).
+- All 42 regression tests pass after changes.
+
+## [Unreleased] - Dependency Classification Fix 2026-06-28
+
+### Changed
+
+- Moved `jest` from `dependencies` to `devDependencies` in root `package.json`. Service 1 uses Node's built-in `node --test` runner; jest is only a test tool for Service 2 (dashboard-public), which manages it in its own `package.json`. This prevents jest and its transitive chain (including `inflight`) from appearing in production dependency scans.
+- Regenerated `package-lock.json` via `npm install` to sync missing transitive entries (`@emnapi/core`, `@emnapi/runtime`) and resolve `npm ci` failures in CI.
+
+## [Unreleased] - cacheUtils Complex Method Refactor 2026-06-28
+
+### Changed
+
+- Refactored `cleanupLeanClientCache` in `discord/voiceWorker/cacheUtils.js` to reduce cyclomatic complexity: extracted `pruneLeanCaches`, `buildLeanSummary`, and `logLeanCleanup` as private helpers. Behavior and return shape are unchanged. No new exports added.
+
+## [Unreleased] - Documentation Sync 2026-06-28
+
+### Changed
+
+- Synced all root documentation files against the current codebase on 2026-06-28.
+- Added missing Service 1 files to `ARCHITECTURE.md`: `discord/core/safeLogger.js`, `discord/core/featureFlags.js`, `discord/core/loadEnv.js`, `discord/commands/moderationWorkflow.js`, `discord/commands/moderationHelpers.js`, `discord/commands/setupLog.js`.
+- Expanded `discord/voiceWorker.js` entry in `ARCHITECTURE.md` file table to list all voiceWorker sub-modules individually: `config.js`, `state.js`, `queue.js`, `session.js`, `lifecycle.js`, `display.js`, `cacheUtils.js`, `eventLog.js`, `autoDeaf.js`, `natural.js`, `dm.js`.
+- Added missing Service 2 file to `ARCHITECTURE.md`: `dashboard-public/utils/csrf.js`.
+- Added `scripts/` and `docs/` directories to `ARCHITECTURE.md` repository shape.
+- Added eight missing audit logger env vars to `ARCHITECTURE.md` and `SECURITY.md`: `AUDIT_MAX_QUEUE_PER_GUILD`, `AUDIT_CIRCUIT_FAILURES`, `AUDIT_CIRCUIT_OPEN_MS`, `AUDIT_LOG_DELETED_MESSAGE_CONTENT`, `AUDIT_LOG_EDITED_MESSAGE_CONTENT`, `AUDIT_REDACT_LINKS`, `AUDIT_REDACT_MENTIONS`, `AUDIT_MAX_CONTENT_LENGTH`.
+- Corrected `discord/commands/moderation.js` responsibility description: `/ban`, `/kick`, `/timeout` are implemented in `moderationWorkflow.js`, not `moderation.js`.
+- Added extracted helper modules `discord/core/featureFlags.js`, `discord/core/loadEnv.js`, `discord/commands/moderationWorkflow.js`, `discord/commands/moderationHelpers.js`, `discord/commands/setupLog.js`, and `dashboard-public/utils/csrf.js` to the Approved Minimal Organization section in `ARCHITECTURE.md`.
+- Updated `CONTEXT.md` slash-command, voice/session, and main-bot subsystem maps to list all current files.
+- Updated `ARCHITECTURE.md` last-verified date to 2026-06-28.
+
 ## [Unreleased] - Documentation Consolidation And Minimal Organization Plan
 
 ### Added
@@ -111,7 +165,7 @@ ROADMAP.md
 SECURITY.md
 ```
 
-- `discord/systemProvider.js` remains owner-locked and must not be edited or summarized with hidden details.
+- `discord/systemProvider.js` and all files inside `discord/systemProvider/` (`actions.js`, `auth.js`, `dashboardHtml.js`, `htmlUtils.js`, `renderers.js`) remain owner-locked and must not be edited or summarized with hidden details.
 - Broad rewrites, dashboard replacements, verification rewrites, `discord.js` migration, repository split, shared MongoDB replacement, and voice/session redesign remain out of scope without explicit owner approval.
 - Command names/options, custom IDs, owner dashboard route paths, and normal session serializer safety policy are intended to remain unchanged.
 

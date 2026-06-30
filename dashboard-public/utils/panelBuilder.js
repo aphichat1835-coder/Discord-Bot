@@ -154,19 +154,22 @@ function buildEmbed(panel) {
     color: parseEmbedColor(panel.color)
   };
 
-  if (panel.titleUrl) {
-    embed.url = panel.titleUrl;
+  const cleanTitleUrl = sanitizeUrl(panel.titleUrl);
+  if (cleanTitleUrl) {
+    embed.url = cleanTitleUrl;
   }
 
-  if (panel.imageUrl) {
+  const cleanImageUrl = sanitizeUrl(panel.imageUrl);
+  if (cleanImageUrl) {
     embed.image = {
-      url: panel.imageUrl
+      url: cleanImageUrl
     };
   }
 
-  if (panel.thumbnailUrl) {
+  const cleanThumbnailUrl = sanitizeUrl(panel.thumbnailUrl);
+  if (cleanThumbnailUrl) {
     embed.thumbnail = {
-      url: panel.thumbnailUrl
+      url: cleanThumbnailUrl
     };
   }
 
