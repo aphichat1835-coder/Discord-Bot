@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Discord Verification Dashboard</title>
+  <link rel="stylesheet" href="/css/dashboard.css">
+</head>
+
+<body>
+  <main class="page-shell">
+    <section class="hero-shell">
+      <div class="container">
+        <div class="hero-grid">
+          <div class="card hero-card card-hover">
+            <div class="kicker">🛡️ Discord + Security Dashboard</div>
+
+            <h1 class="title-xl gradient-text mt-18">
+              จัดการระบบยืนยันตัวตน Discord แบบครบในหน้าเดียว
+            </h1>
+
+            <p class="hero-desc">
+              Dashboard สำหรับแอดมินเซิร์ฟเวอร์ ใช้ตั้งค่าแผงยืนยันตัวตน OAuth2,
+              ตรวจสอบข้อมูลสมาชิกที่ยืนยันแล้ว, ดูสรุปความเสี่ยง และจัดการแผงยืนยันเดิมใน Discord
+              โดยไม่ต้องลบแผงเก่าทิ้ง
+            </p>
+
+            <div class="hero-actions">
+              <a class="btn btn-primary" href="/auth/login">
+                🚀 เข้าสู่ระบบด้วย Discord
+              </a>
+
+              <a class="btn btn-soft" href="#features">
+                ดูความสามารถ
+              </a>
+            </div>
+
+            <div class="alert alert-info mt-18">
+              ต้องเป็น Owner หรือมีสิทธิ์ Administrator / Manage Guild ในเซิร์ฟเวอร์นั้น
+              จึงจะเห็นและจัดการ Dashboard ของเซิร์ฟเวอร์ได้
+            </div>
+          </div>
+
+          <div class="card card-pad">
+            <div class="card-header">
+              <div>
+                <h2>ภาพรวมระบบ</h2>
+                <div class="card-desc">
+                  โครงสร้างใหม่ของ Dashboard Public v2
+                </div>
+              </div>
+              <span class="badge badge-cyan">v2</span>
+            </div>
+
+            <div class="grid">
+              <div class="list-item">
+                <div class="list-title">
+                  <span>🔐 Verification Panel</span>
+                  <span class="badge badge-ok">พร้อมตั้งค่า</span>
+                </div>
+                <div class="list-meta">
+                  ตั้งค่า title, description, button_text, สี, รูป, GIF, footer และโหมด OAuth/direct-role
+                </div>
+              </div>
+
+              <div class="list-item">
+                <div class="list-title">
+                  <span>🧩 Edit Existing Panel</span>
+                  <span class="badge badge-info">ไม่ส่งซ้ำ</span>
+                </div>
+                <div class="list-meta">
+                  ถ้ามี messageId เดิม ระบบจะแก้ข้อความเดิมใน Discord แทนการลบหรือส่งใหม่
+                </div>
+              </div>
+
+              <div class="list-item">
+                <div class="list-title">
+                  <span>📊 Guild Dashboard</span>
+                  <span class="badge badge-cyan">ละเอียด</span>
+                </div>
+                <div class="list-meta">
+                  ดูสถานะระบบ, policy, สมาชิกที่ยืนยันแล้ว, risk summary และข้อมูลที่ระบบเก็บได้
+                </div>
+              </div>
+
+              <div class="list-item">
+                <div class="list-title">
+                  <span>🛡️ Security Checks</span>
+                  <span class="badge badge-warn">validate ก่อนส่ง</span>
+                </div>
+                <div class="list-meta">
+                  ตรวจ role hierarchy, managed role, bot permission, channel permission และ env ที่จำเป็น
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <section id="features" class="mt-22">
+          <div class="card card-pad">
+            <div class="card-header">
+              <div>
+                <h2>ฟีเจอร์หลัก</h2>
+                <div class="card-desc">
+                  สิ่งที่ Dashboard Public v2 จะทำให้ใช้งานง่ายขึ้น
+                </div>
+              </div>
+            </div>
+
+            <div class="feature-grid">
+              <div class="feature-card">
+                <div class="feature-icon">🎛️</div>
+                <div class="feature-title">ตั้งค่าผ่านเว็บ</div>
+                <div class="feature-desc">
+                  ตั้งค่า verification panel ผ่านเว็บได้ ไม่ต้องพิมพ์คำสั่งยาว ๆ ทุกครั้ง
+                </div>
+              </div>
+
+              <div class="feature-card">
+                <div class="feature-icon">🖼️</div>
+                <div class="feature-title">Preview ก่อนส่ง</div>
+                <div class="feature-desc">
+                  เห็นตัวอย่าง embed และปุ่มก่อนกดส่งหรือแก้แผงเดิมใน Discord
+                </div>
+              </div>
+
+              <div class="feature-card">
+                <div class="feature-icon">✏️</div>
+                <div class="feature-title">แก้แผงเดิม</div>
+                <div class="feature-desc">
+                  เปลี่ยนข้อความ สี รูป GIF และปุ่ม โดย edit message เดิม ไม่สร้างขยะในห้อง
+                </div>
+              </div>
+
+              <div class="feature-card">
+                <div class="feature-icon">🧠</div>
+                <div class="feature-title">ข้อมูลละเอียดเป็นหมวด</div>
+                <div class="feature-desc">
+                  แสดงข้อมูลบัญชี, สมาชิก, อุปกรณ์, network, policy result และผลการให้ยศแบบอ่านง่าย
+                </div>
+              </div>
+
+              <div class="feature-card">
+                <div class="feature-icon">🧪</div>
+                <div class="feature-title">Validate ก่อนใช้งาน</div>
+                <div class="feature-desc">
+                  ตรวจว่าบอทมีสิทธิ์ครบไหม ยศสูงพอไหม และ role/channel ใช้ได้จริงหรือไม่
+                </div>
+              </div>
+
+              <div class="feature-card">
+                <div class="feature-icon">📱</div>
+                <div class="feature-title">รองรับมือถือ</div>
+                <div class="feature-desc">
+                  layout ใหม่มี sidebar และ responsive สำหรับเปิดจากมือถือได้ดีขึ้น
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="mt-22">
+          <div class="grid grid-3">
+            <div class="stat-card">
+              <div class="num" style="color:var(--discord);">OAuth2</div>
+              <div class="label">Verification Mode</div>
+              <div class="sub">เหมาะกับการตรวจบัญชีและเพิ่มยศอัตโนมัติ</div>
+            </div>
+
+            <div class="stat-card">
+              <div class="num" style="color:var(--cyan);">Edit</div>
+              <div class="label">Existing Panel</div>
+              <div class="sub">อัปเดตแผงเดิมจากหน้าเว็บได้ทันที</div>
+            </div>
+
+            <div class="stat-card">
+              <div class="num" style="color:var(--green-2);">Admin</div>
+              <div class="label">Guild Access</div>
+              <div class="sub">เฉพาะคนมีสิทธิ์จัดการเซิร์ฟเวอร์</div>
+            </div>
+          </div>
+        </section>
+
+        <footer class="mt-22 text-center muted small">
+          © <span id="year"></span> Discord Verification Dashboard · Public Guild Admin Panel
+        </footer>
+      </div>
+    </section>
+  </main>
+
+  <script src="/js/home.js"></script>
+</body>
+</html>

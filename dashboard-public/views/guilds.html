@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>เลือกเซิร์ฟเวอร์ — Discord Verification Dashboard</title>
+  <link rel="stylesheet" href="/css/dashboard.css">
+</head>
+
+<body>
+  <div class="page-shell">
+    <div class="mobile-bar">
+      <div class="mobile-bar-inner">
+        <div class="flex items-center gap-10">
+          <div class="brand-icon" style="width:38px;height:38px;border-radius:14px;">🛡️</div>
+          <div>
+            <div style="font-weight:1000;">Guild Dashboard</div>
+            <div class="xsmall muted">เลือกเซิร์ฟเวอร์ที่ต้องการจัดการ</div>
+          </div>
+        </div>
+
+        <button class="btn btn-soft btn-sm" type="button" onclick="doLogout()">ออกจากระบบ</button>
+      </div>
+    </div>
+
+    <main class="container-lg page-pad">
+      <section class="card card-pad">
+        <div class="topbar">
+          <div>
+            <div class="breadcrumb">
+              <a href="/">หน้าแรก</a>
+              <span>/</span>
+              <span>เลือกเซิร์ฟเวอร์</span>
+            </div>
+
+            <h1 class="title-lg gradient-text">
+              เลือกเซิร์ฟเวอร์ที่จะจัดการ
+            </h1>
+
+            <p class="card-desc">
+              ระบบจะแสดงเฉพาะเซิร์ฟเวอร์ที่คุณมีสิทธิ์จัดการ เช่น Owner, Administrator หรือสิทธิ์ที่เกี่ยวข้องกับการจัดการเซิร์ฟเวอร์
+            </p>
+          </div>
+
+          <div class="topbar-actions">
+            <button class="btn btn-soft" id="refresh-guilds" type="button">
+              🔄 โหลดใหม่
+            </button>
+
+            <button class="btn btn-soft" type="button" onclick="doLogout()">
+              ออกจากระบบ
+            </button>
+          </div>
+        </div>
+
+        <div class="grid grid-4 mt-18">
+          <div class="stat-card">
+            <div class="num" id="guild-count" style="color:var(--cyan);">กำลังโหลด</div>
+            <div class="label">เซิร์ฟเวอร์ที่จัดการได้</div>
+            <div class="sub">กรองจากสิทธิ์ของบัญชี Discord</div>
+          </div>
+
+          <div class="stat-card">
+            <div class="num" style="color:var(--discord);">OAuth2</div>
+            <div class="label">Login Method</div>
+            <div class="sub">ใช้ข้อมูล guilds จาก Discord</div>
+          </div>
+
+          <div class="stat-card">
+            <div class="num" style="color:var(--green-2);">Admin</div>
+            <div class="label">Permission</div>
+            <div class="sub">ต้องมีสิทธิ์จัดการเซิร์ฟเวอร์</div>
+          </div>
+
+          <div class="stat-card">
+            <div class="num" style="color:var(--yellow-2);">Secure</div>
+            <div class="label">Access Guard</div>
+            <div class="sub">กันการเปิด dashboard ข้าม guild</div>
+          </div>
+        </div>
+
+        <div class="form-row form-row-2 mt-22">
+          <div>
+            <label for="guild-search">ค้นหาเซิร์ฟเวอร์</label>
+            <input id="guild-search" type="search" placeholder="พิมพ์ชื่อเซิร์ฟเวอร์หรือ Guild ID...">
+            <div class="field-hint">
+              ใช้ค้นหาเร็วเวลาอยู่หลายเซิร์ฟเวอร์
+            </div>
+          </div>
+
+          <div>
+            <label>สถานะ</label>
+            <div class="alert alert-info">
+              แสดงเฉพาะเซิร์ฟเวอร์ที่คุณมีสิทธิ์เข้า Dashboard ได้เท่านั้น
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="mt-18">
+        <div id="guild-grid" class="guild-grid">
+          <div class="loading-box card card-pad" style="grid-column:1/-1;">
+            <div class="spinner"></div>
+            <div>กำลังโหลดรายชื่อเซิร์ฟเวอร์...</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="mt-22">
+        <div class="card card-pad">
+          <div class="card-header">
+            <div>
+              <h2>ไม่เจอเซิร์ฟเวอร์?</h2>
+              <div class="card-desc">
+                สาเหตุที่พบบ่อยและวิธีตรวจสอบ
+              </div>
+            </div>
+            <span class="badge badge-warn">Help</span>
+          </div>
+
+          <div class="grid grid-3">
+            <div class="list-item">
+              <div class="list-title">
+                <span>1. บัญชีไม่มีสิทธิ์</span>
+              </div>
+              <div class="list-meta">
+                ต้องเป็น Owner หรือมีสิทธิ์ Administrator / Manage Guild ในเซิร์ฟเวอร์นั้น
+              </div>
+            </div>
+
+            <div class="list-item">
+              <div class="list-title">
+                <span>2. OAuth scope ไม่ครบ</span>
+              </div>
+              <div class="list-meta">
+                กดออกจากระบบแล้ว login ใหม่ เพื่อให้ระบบขอสิทธิ์ guilds อีกครั้ง
+              </div>
+            </div>
+
+            <div class="list-item">
+              <div class="list-title">
+                <span>3. Discord ยังไม่ sync</span>
+              </div>
+              <div class="list-meta">
+                ลองกดโหลดใหม่ หรือรอสักครู่ถ้าเพิ่งได้สิทธิ์แอดมินในเซิร์ฟเวอร์
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div class="toast" id="toast"></div>
+  </div>
+
+  <script src="/js/guilds.js"></script>
+  <script>
+    function doLogout() {
+      const csrfToken = document.cookie.split('; ').find(r => r.startsWith('csrf_pub='))?.split('=')[1] || '';
+      fetch('/auth/logout', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'X-CSRF-Token': csrfToken }
+      }).then(res => {
+        if (res.ok) {
+          globalThis.location.href = '/';
+        } else {
+          console.error('[logout] server rejected logout, status:', res.status);
+        }
+      }).catch(err => {
+        console.error('[logout] network error:', String(err));
+      });
+    }
+  </script>
+</body>
+</html>
