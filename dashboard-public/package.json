@@ -1,0 +1,33 @@
+{
+  "name": "phomueangtai-verify-dashboard",
+  "version": "1.0.0",
+  "description": "Public Discord OAuth2 verification dashboard for guild administrators",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "node -r ../discord/core/loadEnv index.js",
+    "dev": "node -r ../discord/core/loadEnv index.js",
+    "check": "npm run check:all",
+    "check:all": "find . -path './node_modules' -prune -o -type f -name '*.js' -print0 | xargs -0 -n1 node --check",
+    "test": "jest --testPathPatterns=tests/ --passWithNoTests"
+  },
+  "engines": {
+    "node": "24.x"
+  },
+  "dependencies": {
+    "connect-mongo": "^6.0.0",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.5.2",
+    "express-session": "^1.18.1",
+    "mongoose": "^8.24.1"
+  },
+  "devDependencies": {
+    "jest": "^30.4.2"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ]
+  }
+}
