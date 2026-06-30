@@ -37,6 +37,21 @@ args = "test-discord"
 task = "workflow.run"
 args = "test-voice"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "test-dashboard"
+
+[[workflows.workflow]]
+name = "test-dashboard"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm --prefix dashboard-public test"
+
+[workflows.workflow.metadata]
+isValidation = true
+
 [[workflows.workflow]]
 name = "syntax-discord"
 author = "agent"
@@ -76,7 +91,7 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "find discord/tests -name '*.test.js' ! -name 'voiceWorker*.test.js' -print0 | xargs -0 node --test"
+args = "find discord/tests -name '*.test.js' ! -name 'voice*.test.js' -print0 | xargs -0 node --test"
 
 [workflows.workflow.metadata]
 isValidation = true
@@ -87,7 +102,7 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "node --test discord/tests/voiceWorker*.test.js"
+args = "node --test discord/tests/voice*.test.js"
 
 [workflows.workflow.metadata]
 isValidation = true

@@ -29,14 +29,22 @@ describe("makeCsrfToken", () => {
     });
 
     it("returns empty string when no secret env is set", () => {
-        const saved = process.env.SESSION_SECRET;
-        delete process.env.SESSION_SECRET;
-        delete process.env.API_SECRET;
-        delete process.env.ENCRYPTION_KEY;
-
-        expect(makeCsrfToken("some-session")).toBe("");
-
-        process.env.SESSION_SECRET = saved;
+        const saved = {
+            SESSION_SECRET: process.env.SESSION_SECRET,
+            API_SECRET: process.env.API_SECRET,
+            ENCRYPTION_KEY: process.env.ENCRYPTION_KEY
+        };
+        try {
+            delete process.env.SESSION_SECRET;
+            delete process.env.API_SECRET;
+            delete process.env.ENCRYPTION_KEY;
+            expect(makeCsrfToken("some-session")).toBe("");
+        } finally {
+            for (const [key, value] of Object.entries(saved)) {
+                if (value === undefined) delete process.env[key];
+                else process.env[key] = value;
+            }
+        }
     });
 });
 
@@ -68,11 +76,15 @@ describe("setCsrfCookie", () => {
 
     it("does not set Secure flag outside production", () => {
         const orig = process.env.NODE_ENV;
-        delete process.env.NODE_ENV;
-        const headers = [];
-        setCsrfCookie({ session: { id: "sess-dev" } }, { append: (k, v) => headers.push({ k, v }) });
-        expect(headers[0].v).not.toContain("; Secure");
-        process.env.NODE_ENV = orig;
+        try {
+            delete process.env.NODE_ENV;
+            const headers = [];
+            setCsrfCookie({ session: { id: "sess-dev" } }, { append: (k, v) => headers.push({ k, v }) });
+            expect(headers[0].v).not.toContain("; Secure");
+        } finally {
+            if (orig === undefined) delete process.env.NODE_ENV;
+            else process.env.NODE_ENV = orig;
+        }
     });
 });
 

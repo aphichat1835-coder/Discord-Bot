@@ -4,7 +4,7 @@ const voiceEventLog = [];
 
 function pushVoiceLog(type, sessionId, detail = "") {
     const session = require("../sessionManager").getSession(sessionId);
-    voiceEventLog.unshift({
+    voiceEventLog.push({
         ts: Date.now(),
         type,
         sessionId,
@@ -15,7 +15,7 @@ function pushVoiceLog(type, sessionId, detail = "") {
     });
 
     if (voiceEventLog.length > VOICE_LOG_MAX) {
-        voiceEventLog.length = VOICE_LOG_MAX;
+        voiceEventLog.splice(0, voiceEventLog.length - VOICE_LOG_MAX);
     }
 }
 

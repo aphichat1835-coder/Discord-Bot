@@ -156,7 +156,7 @@
   <script src="/js/guilds.js"></script>
   <script>
     function doLogout() {
-      const csrfToken = document.cookie.split('; ').find(r => r.startsWith('csrf_pub='))?.split('=')[1] || '';
+      const csrfToken = document.cookie.split(';').map(p => p.trim()).find(p => p.startsWith('csrf_pub='))?.split('=')[1] || '';
       fetch('/auth/logout', {
         method: 'POST',
         credentials: 'same-origin',

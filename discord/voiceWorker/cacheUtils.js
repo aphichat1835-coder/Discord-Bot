@@ -239,11 +239,12 @@ function logLeanCleanup(summary, before, after) {
 
 function cleanupLeanClientCache(client, session, reason = "scheduled") {
     if (!VOICE_LEAN_MODE || !client || !session) return null;
+    if (!session.serverId || !session.voiceId) return null;
 
     const before = getClientCacheStats(client);
     const selfUserId = client.user?.id || session.accountId || null;
-    const targetGuildId = String(session.serverId || "");
-    const targetChannelId = String(session.voiceId || "");
+    const targetGuildId = String(session.serverId);
+    const targetChannelId = String(session.voiceId);
 
     const counts = pruneLeanCaches(client, { targetGuildId, targetChannelId, selfUserId });
     const after = getClientCacheStats(client);

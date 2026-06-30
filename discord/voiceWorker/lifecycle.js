@@ -174,12 +174,12 @@ async function cleanupSessionVoiceConnection(sessionId, session, tokenHash) {
     const clientRef = session.client || getSessionClientFromPool(sessionId, session, tokenHash);
     const group = getVoiceGroup(clientRef, session.serverId, session);
 
+    const ownConnection = session.connection;
+
     try {
-        if (session.connection) destroyConnectionObject(session.connection);
+        if (ownConnection) destroyConnectionObject(ownConnection);
     } catch (err) {
         errors.push(`session.connection:${sanitizeLifecycleError(err.message)}`);
-    } finally {
-        session.connection = null;
     }
 
     try {
@@ -196,7 +196,8 @@ async function cleanupSessionVoiceConnection(sessionId, session, tokenHash) {
 
     const registryAfter = group ? getVoiceConnection(session.serverId, group) : null;
     const registryAlive = !!registryAfter && registryAfter.state?.status !== VoiceConnectionStatus.Destroyed;
-    const ownConnectionAlive = !!session.connection && session.connection.state?.status !== VoiceConnectionStatus.Destroyed;
+    const ownConnectionAlive = !!ownConnection && ownConnection.state?.status !== VoiceConnectionStatus.Destroyed;
+    session.connection = ownConnectionAlive ? ownConnection : null;
     const selfStillInTargetVoice = !!selfVoiceInfo.inTargetChannel;
 
     if (registryAlive) errors.push("voiceRegistry:still_active");
@@ -264,6 +265,8 @@ function setupClientEventHandlers(newClient, sessionId) {
         console.error(`[WORKER] 🚫 Token invalidated (WS) for session: ${sanitizeLogText(sessionId)}`);
         const sess = sessionManager.getSession(sessionId);
         if (sess) sess.tokenInvalid = true;
+        stopNaturalTimer(sessionId);
+        stopAutoDeafTimer(sessionId);
         await sendTokenInvalidDM(sessionId).catch(() => {});
     });
 }

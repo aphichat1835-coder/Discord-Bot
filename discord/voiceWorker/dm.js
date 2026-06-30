@@ -19,7 +19,6 @@ async function sendSessionStoppedDM(sessionId, reason) {
 
     const lastSent = lastDMSent.get(sessionId) || 0;
     if (Date.now() - lastSent < CONFIG.DM_THROTTLE_MS) return;
-    lastDMSent.set(sessionId, Date.now());
 
     const session = sessionManager.getSession(sessionId);
     if (!session?.ownerId) return;
@@ -76,7 +75,8 @@ async function sendSessionStoppedDM(sessionId, reason) {
             embed.setThumbnail(session.accountAvatar);
         }
 
-        owner.send({ embeds: [embed] }).catch(() => {});
+        await owner.send({ embeds: [embed] });
+        lastDMSent.set(sessionId, Date.now());
     } catch (e) {
         console.error(`[WORKER] ❌ Failed to send DM for ${sanitizeLogText(sessionId)}: ${e.message}`);
     }
@@ -87,7 +87,6 @@ async function sendTokenInvalidDM(sessionId) {
 
     const lastSent = lastDMSent.get(sessionId) || 0;
     if (Date.now() - lastSent < CONFIG.DM_THROTTLE_MS) return;
-    lastDMSent.set(sessionId, Date.now());
 
     const session = sessionManager.getSession(sessionId);
     if (!session?.ownerId) return;
@@ -117,7 +116,8 @@ async function sendTokenInvalidDM(sessionId) {
                 iconURL: st.mainClient.user?.displayAvatarURL()
             });
 
-        owner.send({ embeds: [embed] }).catch(() => {});
+        await owner.send({ embeds: [embed] });
+        lastDMSent.set(sessionId, Date.now());
     } catch (e) {
         console.error(`[WORKER] ❌ Failed to send token invalid DM for ${sanitizeLogText(sessionId)}: ${e.message}`);
     }
@@ -128,7 +128,6 @@ async function sendSessionOnlineDM(sessionId) {
 
     const lastSent = lastOnlineDMSent.get(sessionId) || 0;
     if (Date.now() - lastSent < 300000) return;
-    lastOnlineDMSent.set(sessionId, Date.now());
 
     const session = sessionManager.getSession(sessionId);
     if (!session?.ownerId) return;
@@ -160,7 +159,8 @@ async function sendSessionOnlineDM(sessionId) {
             embed.setThumbnail(session.accountAvatar);
         }
 
-        owner.send({ embeds: [embed] }).catch(() => {});
+        await owner.send({ embeds: [embed] });
+        lastOnlineDMSent.set(sessionId, Date.now());
     } catch (e) {
         console.error(`[WORKER] ❌ Failed to send online DM for ${sanitizeLogText(sessionId)}: ${e.message}`);
     }

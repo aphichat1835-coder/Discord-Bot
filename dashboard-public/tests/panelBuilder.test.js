@@ -242,7 +242,7 @@ describe('buildEmbed', () => {
 
   test('includes url when titleUrl is set', () => {
     const embed = buildEmbed({ ...basePanel, titleUrl: 'https://example.com' });
-    expect(embed.url).toBe('https://example.com');
+    expect(embed.url).toBe('https://example.com/');
   });
 
   test('includes image when imageUrl is set', () => {

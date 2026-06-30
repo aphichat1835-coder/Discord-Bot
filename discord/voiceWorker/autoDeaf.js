@@ -32,14 +32,15 @@ async function doAutoDeafToggle(sessionId) {
 
         await delay(st.autoDeafSettings.openDurationMs);
 
-        const stillAlive = sessionManager.getSession(sessionId);
-        if (!stillAlive || !conn || conn.state.status === VoiceConnectionStatus.Destroyed) {
+        const currentSession = sessionManager.getSession(sessionId);
+        const currentConn = currentSession?.connection;
+        if (!currentSession || !currentConn || currentConn.state.status !== VoiceConnectionStatus.Ready) {
             console.log(`[AUTODEAF] ⚠️ Session gone during undeaf — ${sanitizeLogText(sessionId)}`);
             return;
         }
 
-        conn.rejoin({
-            channelId: session.voiceId,
+        currentConn.rejoin({
+            channelId: currentSession.voiceId,
             selfMute: true,
             selfDeaf: true
         });
@@ -48,8 +49,11 @@ async function doAutoDeafToggle(sessionId) {
     } catch (e) {
         console.warn(`[AUTODEAF] ⚠️ Error for ${sanitizeLogText(sessionId)}: ${e.message}`);
         try {
-            conn.rejoin({
-                channelId: session.voiceId,
+            const currentSession = sessionManager.getSession(sessionId);
+            const currentConn = currentSession?.connection;
+            if (!currentSession || !currentConn) return;
+            currentConn.rejoin({
+                channelId: currentSession.voiceId,
                 selfMute: true,
                 selfDeaf: true
             });

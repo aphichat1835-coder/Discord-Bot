@@ -67,7 +67,6 @@ function stopNaturalTimer(sessionId) {
     if (id) {
         clearInterval(id);
         naturalTimers.delete(sessionId);
-        naturalRunning.delete(sessionId);
         console.log(`[NATURAL] ⏹️ Timer stopped — ${sanitizeLogText(sessionId)}`);
     }
 }
@@ -99,7 +98,6 @@ function stopAllNaturalTimers() {
     }
 
     naturalTimers.clear();
-    naturalRunning.clear();
     console.log("[NATURAL] ⏹️ All timers stopped.");
 }
 

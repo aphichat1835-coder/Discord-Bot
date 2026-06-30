@@ -123,13 +123,17 @@ async function updateSessionMetadata(sessionId, metadata = {}) {
     const session = sessionManager.getSession(sessionId);
     if (!session) return false;
 
-    for (const [key, value] of Object.entries(metadata)) {
+    const nextMetadata = {
+        ...metadata,
+        lastActivity: Date.now()
+    };
+
+    for (const [key, value] of Object.entries(nextMetadata)) {
         session[key] = value ?? null;
     }
-    session.lastActivity = Date.now();
 
     if (typeof sessionManager.updateSessionMetadata === "function") {
-        return sessionManager.updateSessionMetadata(sessionId, metadata);
+        return sessionManager.updateSessionMetadata(sessionId, nextMetadata);
     }
 
     return true;
@@ -143,6 +147,7 @@ function countActiveSessionsByTokenHash(tokenHash) {
     let count = 0;
     const sessions = sessionManager.getAllSessions();
     for (const [id, session] of sessions) {
+        if (!isSessionRunnable(session)) continue;
         if (getSessionTokenHash(id, session) === tokenHash) count++;
     }
     return count;

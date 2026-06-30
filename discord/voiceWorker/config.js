@@ -31,8 +31,10 @@ const VOICE_LOG_MAX = Math.max(
     Math.min(2000, Number(process.env.VOICE_LOG_MAX || voiceWorkerConfig.voiceLogMax || 200) || 200)
 );
 
+const parsedMessageCacheMax = Number(process.env.VOICE_SELF_MESSAGE_CACHE_MAX);
+
 const SELF_CLIENT_CACHE_LIMITS = {
-    MessageManager: Math.max(0, Number(process.env.VOICE_SELF_MESSAGE_CACHE_MAX || 20) || 20),
+    MessageManager: Math.max(0, Number.isFinite(parsedMessageCacheMax) ? parsedMessageCacheMax : 20),
     GuildMemberManager: Math.max(10, Number(process.env.VOICE_SELF_MEMBER_CACHE_MAX || 100) || 100),
     UserManager: Math.max(50, Number(process.env.VOICE_SELF_USER_CACHE_MAX || 500) || 500),
     ReactionManager: 0

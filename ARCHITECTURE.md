@@ -307,7 +307,7 @@ GET  /api/settings/auto-deaf
 GET  /api/session/:id
 GET  /api/reveal-token/:sessionId        (legacy single-session reveal)
 POST /api/voice-session/ensure
-POST /api/reveal-token
+POST /api/reveal-token/:sessionId
 POST /api/reveal-all-tokens
 POST /api/stop-session
 GET  /api/commands-status
