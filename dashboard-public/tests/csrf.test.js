@@ -44,13 +44,13 @@ describe("setCsrfCookie", () => {
     it("does nothing when session has no id", () => {
         const headers = [];
         setCsrfCookie({ session: {} }, { append: (k, v) => headers.push({ k, v }) });
-        expect(headers.length).toBe(0);
+        expect(headers).toHaveLength(0);
     });
 
     it("does nothing when session is absent", () => {
         const headers = [];
         setCsrfCookie({}, { append: (k, v) => headers.push({ k, v }) });
-        expect(headers.length).toBe(0);
+        expect(headers).toHaveLength(0);
     });
 
     it("appends Set-Cookie header with SameSite=Strict when session id exists", () => {
@@ -59,7 +59,7 @@ describe("setCsrfCookie", () => {
             { session: { id: "sess-test-001" } },
             { append: (k, v) => headers.push({ k, v }) }
         );
-        expect(headers.length).toBe(1);
+        expect(headers).toHaveLength(1);
         expect(headers[0].k).toBe("Set-Cookie");
         expect(headers[0].v).toContain(`${CSRF_COOKIE}=`);
         expect(headers[0].v).toContain("SameSite=Strict");
