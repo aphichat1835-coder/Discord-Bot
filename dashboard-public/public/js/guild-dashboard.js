@@ -332,8 +332,15 @@
     btn.textContent = btn.dataset.oldText || btn.textContent;
   }
 
+  function getCsrfToken() {
+    const match = document.cookie.split('; ').find((c) => c.startsWith('csrf_pub='));
+    return match ? match.split('=')[1] : '';
+  }
+
   async function api(path, options = {}) {
     const headers = options.headers ?? {};
+    const csrf = getCsrfToken();
+    if (csrf) headers['X-CSRF-Token'] = csrf;
     const res = await fetch(path, {
       ...options,
       headers: {
