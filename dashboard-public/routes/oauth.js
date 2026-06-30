@@ -1158,10 +1158,10 @@ router.get('/auth/login', (req, res) => {
 router.post('/auth/logout', requireCsrf, (req, res) => {
     try {
         req.session.destroy(() => {
-            res.redirect('/');
+            res.json({ ok: true });
         });
     } catch {
-        res.redirect('/');
+        res.json({ ok: true });
     }
 });
 
