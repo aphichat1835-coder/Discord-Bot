@@ -20,6 +20,10 @@ const {
   buildValidationSummary,
 } = require('../utils/panelBuilder');
 
+const WHITE_EMBED_COLOR   = 0xffffff; // 16777215
+const RED_EMBED_COLOR     = 0xff0000; // 16711680
+const DEFAULT_EMBED_COLOR = 0x5865f2; // 5793266
+
 // ---------------------------------------------------------------------------
 // sanitizeText
 // ---------------------------------------------------------------------------
@@ -79,17 +83,14 @@ describe('sanitizeUrl', () => {
 // parseEmbedColor
 // ---------------------------------------------------------------------------
 describe('parseEmbedColor', () => {
-  // Default color: 0x5865F2 = 5793266
-  const DEFAULT_COLOR = 5793266;
+  const DEFAULT_COLOR = DEFAULT_EMBED_COLOR;
 
   test('parses #rrggbb hex string', () => {
-    // 0xffffff = 16777215
-    expect(parseEmbedColor('#ffffff')).toBe(16777215);
+    expect(parseEmbedColor('#ffffff')).toBe(WHITE_EMBED_COLOR);
   });
 
   test('parses rrggbb hex string without hash', () => {
-    // 0xff0000 = 16711680
-    expect(parseEmbedColor('ff0000')).toBe(16711680);
+    expect(parseEmbedColor('ff0000')).toBe(RED_EMBED_COLOR);
   });
 
   test('parses decimal string', () => {
@@ -103,14 +104,13 @@ describe('parseEmbedColor', () => {
   });
 
   test('returns default for out-of-range decimal', () => {
-    // > 0xffffff (16777215)
     expect(parseEmbedColor('16777216')).toBe(DEFAULT_COLOR);
     expect(parseEmbedColor('-1')).toBe(DEFAULT_COLOR);
   });
 
   test('parses case-insensitive hex', () => {
-    expect(parseEmbedColor('#FFFFFF')).toBe(16777215);
-    expect(parseEmbedColor('#ffffff')).toBe(16777215);
+    expect(parseEmbedColor('#FFFFFF')).toBe(WHITE_EMBED_COLOR);
+    expect(parseEmbedColor('#ffffff')).toBe(WHITE_EMBED_COLOR);
   });
 
   test('parses zero as black', () => {
@@ -118,8 +118,7 @@ describe('parseEmbedColor', () => {
   });
 
   test('parses max valid decimal', () => {
-    // 16777215 = 0xffffff
-    expect(parseEmbedColor('16777215')).toBe(16777215);
+    expect(parseEmbedColor('16777215')).toBe(WHITE_EMBED_COLOR);
   });
 });
 
@@ -232,9 +231,8 @@ describe('buildEmbed', () => {
   });
 
   test('converts color hex string to integer', () => {
-    // #ffffff = 16777215
     const embed = buildEmbed({ ...basePanel, color: '#ffffff' });
-    expect(embed.color).toBe(16777215);
+    expect(embed.color).toBe(WHITE_EMBED_COLOR);
   });
 
   test('omits url when titleUrl is empty', () => {
@@ -335,9 +333,8 @@ describe('buildPanelPayload', () => {
   });
 
   test('embed color for red panel is correct decimal', () => {
-    // #ff0000 = 16711680
     const payload = buildPanelPayload({ panel: { color: '#ff0000' } });
-    expect(payload.embeds[0].color).toBe(16711680);
+    expect(payload.embeds[0].color).toBe(RED_EMBED_COLOR);
   });
 });
 
