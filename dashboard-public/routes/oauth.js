@@ -6,6 +6,7 @@ const crypto = require('node:crypto');
 const discord = require('../utils/discordAPI');
 const { processIP, extractDevice } = require('../utils/ipUtils');
 const { normalizeVerificationConfig, normalizeAction, clampNumber } = require('../utils/verifyMode');
+const { requireCsrf } = require('../utils/csrf');
 const {
     encodeSignedState,
     decodeSignedState,
@@ -1154,7 +1155,7 @@ router.get('/auth/login', (req, res) => {
     return res.redirect('/oauth/admin');
 });
 
-router.post('/auth/logout', (req, res) => {
+router.post('/auth/logout', requireCsrf, (req, res) => {
     try {
         req.session.destroy(() => {
             res.redirect('/');
