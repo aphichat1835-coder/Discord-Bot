@@ -11,6 +11,8 @@ const { sanitizeLogText } = require("../core/safeLogger");
 //  หมายเหตุ: ไม่มี scheduled leave/rejoin ออกจากห้องเอง
 //  ใช้เฉพาะ conn.rejoin เพื่อเปลี่ยน mute/deaf state เท่านั้น
 // ════════════════════════════════════════════════════════════════════════════
+const ONE_DAY_MS = 24 * 60 * 60 * 1000; // 86400000 ms — เขียนแบบนี้แทนตัวเลขดิบ เพื่อเลี่ยง Codacy no-loss-of-precision false positive
+
 async function doNaturalBlink(sessionId) {
     if (st.isShuttingDown) return;
     if (naturalRunning.has(sessionId)) return;
@@ -108,7 +110,7 @@ function applyNaturalSettings(newSettings) {
     if (validated.intervalMs !== undefined) {
         const raw = Number(validated.intervalMs);
         validated.intervalMs = Number.isFinite(raw) && raw > 0
-            ? Math.max(60000, Math.min(86400000, raw))
+            ? Math.max(60000, Math.min(ONE_DAY_MS, raw))
             : 3600000;
     }
 
