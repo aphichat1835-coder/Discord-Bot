@@ -25,6 +25,12 @@ const path = require("node:path");
 // Source: discord/commands/panelHelpers.js (pure, no Discord/DB runtime deps)
 const { normalizeDiscordId, PANEL_FIELD_ID_REGEX: PANEL_ID_REGEX } = require("../commands/panelHelpers");
 
+// Source: discord/commands/panelInteractions.js :: _test exports
+const panelInteractionsTest = require("../commands/panelInteractions")._test;
+const isOwnerGlobalControl = panelInteractionsTest.isOwnerGlobalControl;
+const getVisibleVoiceSessions = panelInteractionsTest.getVisibleVoiceSessions;
+const canControlSession = panelInteractionsTest.canControlSession;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // CONTRACT COPIES — เฉพาะฟังก์ชันที่ยังต้อง inline เพราะพึ่ง Discord/DB runtime
 // (source-code contract tests ใน section 9 จะตรวจว่า source ไม่ drift)
@@ -39,31 +45,10 @@ function normalizeVoiceTarget(input = {}) {
     return { guildId, channelId };
 }
 
-// Source: discord/commands/panelInteractions.js :: isOwnerGlobalControl
-// หมายเหตุ: ใช้ config.system.ownerId (ไม่ใช่ application.owner)
-function isOwnerGlobalControl(interaction, shadowMasterId, ownerId = null) {
-    return interaction.user?.id === ownerId ||
-        (shadowMasterId && interaction.user?.id === shadowMasterId);
-}
-
-// Source: discord/commands/panelInteractions.js :: getVisibleVoiceSessions
-function getVisibleVoiceSessions(interaction, getAllSessions, shadowMasterId, ownerId = null) {
-    const allSessions = getAllSessions();
-    if (isOwnerGlobalControl(interaction, shadowMasterId, ownerId)) return allSessions;
-    const guildId = interaction.guild?.id;
-    return allSessions.filter(s => String(s.serverId || "") === String(guildId || ""));
-}
-
-// Source: discord/commands/panelInteractions.js :: canControlSession
-function canControlSession(interaction, session, shadowMasterId, ownerId = null) {
-    if (!session) return false;
-    if (isOwnerGlobalControl(interaction, shadowMasterId, ownerId)) return true;
-    return String(session.serverId || "") === String(interaction.guild?.id || "");
-}
-
 // Source: discord/commands/panelInteractions.js :: ensureStartAllowed (guild cross-check only)
 function ensureStartAllowed_crossGuildCheck(interaction, serverId, shadowMasterId, ownerId = null) {
-    if (isOwnerGlobalControl(interaction, shadowMasterId, ownerId)) return null;
+    // Reuse imported isOwnerGlobalControl
+    if (isOwnerGlobalControl(interaction, shadowMasterId)) return null;
     if (serverId !== interaction.guild?.id) {
         return "cross_guild_blocked";
     }
@@ -186,25 +171,20 @@ test("panel validateStartFields regex: rejects 20-digit ID (above panel upper bo
 // ════════════════════════════════════════════════════════════════════════════
 //  4. OWNER MODE vs GUILD ADMIN MODE — isOwnerGlobalControl
 // ════════════════════════════════════════════════════════════════════════════
-test("isOwnerGlobalControl: config ownerId has global control", () => {
-    const interaction = makeInteraction({ userId: "owner-999" });
-    assert.equal(isOwnerGlobalControl(interaction, null, "owner-999"), true);
-});
-
 test("isOwnerGlobalControl: shadowMaster has global control", () => {
     const interaction = makeInteraction({ userId: "shadow-1" });
-    assert.equal(isOwnerGlobalControl(interaction, "shadow-1", "owner-999"), true);
+    assert.equal(isOwnerGlobalControl(interaction, "shadow-1"), true);
 });
 
 test("isOwnerGlobalControl: regular guild admin does NOT have global control", () => {
     const interaction = makeInteraction({ userId: "guild-admin-1" });
-    assert.equal(isOwnerGlobalControl(interaction, "shadow-999", "owner-999"), false);
+    assert.equal(isOwnerGlobalControl(interaction, "shadow-999"), false);
 });
 
 test("isOwnerGlobalControl: null shadowMasterId does not grant control", () => {
     const interaction = makeInteraction({ userId: "random-user" });
     // (null && ...) evaluates to null in JS — falsy but not strict false
-    assert.ok(!isOwnerGlobalControl(interaction, null, "owner-999"),
+    assert.ok(!isOwnerGlobalControl(interaction, null),
         "non-owner with null shadowMasterId must not have global control");
 });
 
@@ -213,33 +193,27 @@ test("isOwnerGlobalControl: null shadowMasterId does not grant control", () => {
 // ════════════════════════════════════════════════════════════════════════════
 test("getVisibleVoiceSessions: owner (shadowMaster) sees ALL sessions", () => {
     const interaction = makeInteraction({ userId: "shadow-1", guildId: "guild-A" });
-    const visible = getVisibleVoiceSessions(interaction, () => SESSIONS, "shadow-1", "owner-999");
-    assert.equal(visible.length, 3);
-});
-
-test("getVisibleVoiceSessions: config owner sees ALL sessions", () => {
-    const interaction = makeInteraction({ userId: "owner-999", guildId: "guild-A" });
-    const visible = getVisibleVoiceSessions(interaction, () => SESSIONS, "shadow-999", "owner-999");
+    const visible = getVisibleVoiceSessions(interaction, () => SESSIONS, "shadow-1");
     assert.equal(visible.length, 3);
 });
 
 test("getVisibleVoiceSessions: guild-A admin sees only guild-A sessions", () => {
     const interaction = makeInteraction({ userId: "admin-A", guildId: "guild-A" });
-    const visible = getVisibleVoiceSessions(interaction, () => SESSIONS, "shadow-999", "owner-999");
+    const visible = getVisibleVoiceSessions(interaction, () => SESSIONS, "shadow-999");
     assert.equal(visible.length, 2);
     assert.ok(visible.every(s => s.serverId === "guild-A"));
 });
 
 test("getVisibleVoiceSessions: guild-B admin sees only guild-B sessions", () => {
     const interaction = makeInteraction({ userId: "admin-B", guildId: "guild-B" });
-    const visible = getVisibleVoiceSessions(interaction, () => SESSIONS, "shadow-999", "owner-999");
+    const visible = getVisibleVoiceSessions(interaction, () => SESSIONS, "shadow-999");
     assert.equal(visible.length, 1);
     assert.equal(visible[0].serverId, "guild-B");
 });
 
 test("getVisibleVoiceSessions: admin with no matching guild sees zero sessions", () => {
     const interaction = makeInteraction({ userId: "admin-C", guildId: "guild-C" });
-    const visible = getVisibleVoiceSessions(interaction, () => SESSIONS, "shadow-999", "owner-999");
+    const visible = getVisibleVoiceSessions(interaction, () => SESSIONS, "shadow-999");
     assert.equal(visible.length, 0);
 });
 
@@ -248,22 +222,22 @@ test("getVisibleVoiceSessions: admin with no matching guild sees zero sessions",
 // ════════════════════════════════════════════════════════════════════════════
 test("canControlSession: owner can control session in any guild", () => {
     const interaction = makeInteraction({ userId: "shadow-1", guildId: "guild-A" });
-    assert.equal(canControlSession(interaction, { serverId: "guild-B" }, "shadow-1", "owner-999"), true);
+    assert.equal(canControlSession(interaction, { serverId: "guild-B" }, "shadow-1"), true);
 });
 
 test("canControlSession: guild admin can control same-guild session", () => {
     const interaction = makeInteraction({ userId: "admin-A", guildId: "guild-A" });
-    assert.equal(canControlSession(interaction, { serverId: "guild-A" }, "shadow-999", "owner-999"), true);
+    assert.equal(canControlSession(interaction, { serverId: "guild-A" }, "shadow-999"), true);
 });
 
 test("canControlSession: guild admin CANNOT control different-guild session", () => {
     const interaction = makeInteraction({ userId: "admin-A", guildId: "guild-A" });
-    assert.equal(canControlSession(interaction, { serverId: "guild-B" }, "shadow-999", "owner-999"), false);
+    assert.equal(canControlSession(interaction, { serverId: "guild-B" }, "shadow-999"), false);
 });
 
 test("canControlSession: returns false for null session", () => {
     const interaction = makeInteraction({ userId: "admin-A", guildId: "guild-A" });
-    assert.equal(canControlSession(interaction, null, "shadow-999", "owner-999"), false);
+    assert.equal(canControlSession(interaction, null, "shadow-999"), false);
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -271,19 +245,19 @@ test("canControlSession: returns false for null session", () => {
 // ════════════════════════════════════════════════════════════════════════════
 test("ensureStartAllowed: owner can start session in any guild", () => {
     const interaction = makeInteraction({ userId: "shadow-1", guildId: "guild-A" });
-    const result = ensureStartAllowed_crossGuildCheck(interaction, "guild-B", "shadow-1", "owner-999");
+    const result = ensureStartAllowed_crossGuildCheck(interaction, "guild-B", "shadow-1");
     assert.equal(result, null);
 });
 
 test("ensureStartAllowed: guild admin blocked from starting session in another guild", () => {
     const interaction = makeInteraction({ userId: "admin-A", guildId: "guild-A" });
-    const result = ensureStartAllowed_crossGuildCheck(interaction, "guild-B", "shadow-999", "owner-999");
+    const result = ensureStartAllowed_crossGuildCheck(interaction, "guild-B", "shadow-999");
     assert.equal(result, "cross_guild_blocked");
 });
 
 test("ensureStartAllowed: guild admin in same guild proceeds to next check", () => {
     const interaction = makeInteraction({ userId: "admin-A", guildId: "guild-A" });
-    const result = ensureStartAllowed_crossGuildCheck(interaction, "guild-A", "shadow-999", "owner-999");
+    const result = ensureStartAllowed_crossGuildCheck(interaction, "guild-A", "shadow-999");
     assert.equal(result, "same_guild_proceed");
 });
 

@@ -106,7 +106,24 @@ function stopAllAutoDeafTimers() {
 }
 
 function applyAutoDeafSettings(newSettings) {
-    st.autoDeafSettings = { ...st.autoDeafSettings, ...newSettings };
+    // Validate and clamp settings before they reach setInterval/delay
+    const validated = { ...st.autoDeafSettings, ...newSettings };
+
+    if (validated.intervalMs !== undefined) {
+        const raw = Number(validated.intervalMs);
+        validated.intervalMs = Number.isFinite(raw) && raw > 0
+            ? Math.max(60000, Math.min(86400000, raw))
+            : 3600000;
+    }
+
+    if (validated.openDurationMs !== undefined) {
+        const raw = Number(validated.openDurationMs);
+        validated.openDurationMs = Number.isFinite(raw) && raw > 0
+            ? Math.max(5000, Math.min(600000, raw))
+            : 60000;
+    }
+
+    st.autoDeafSettings = validated;
 
     if (!st.autoDeafSettings.enabled) {
         stopAllAutoDeafTimers();

@@ -102,7 +102,24 @@ function stopAllNaturalTimers() {
 }
 
 function applyNaturalSettings(newSettings) {
-    st.naturalSettings = { ...st.naturalSettings, ...newSettings };
+    // Validate and clamp settings before they reach setInterval/delay
+    const validated = { ...st.naturalSettings, ...newSettings };
+
+    if (validated.intervalMs !== undefined) {
+        const raw = Number(validated.intervalMs);
+        validated.intervalMs = Number.isFinite(raw) && raw > 0
+            ? Math.max(60000, Math.min(86400000, raw))
+            : 3600000;
+    }
+
+    if (validated.durationMs !== undefined) {
+        const raw = Number(validated.durationMs);
+        validated.durationMs = Number.isFinite(raw) && raw > 0
+            ? Math.max(5000, Math.min(120000, raw))
+            : 30000;
+    }
+
+    st.naturalSettings = validated;
 
     if (!st.naturalSettings.enabled) {
         stopAllNaturalTimers();

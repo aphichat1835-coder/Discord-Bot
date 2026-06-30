@@ -343,6 +343,7 @@ app.get('/health', (_req, res) => {
     res.status(degraded ? 503 : 200).json({
         status: degraded ? 'degraded' : 'ok',
         db: dbReady ? 'connected' : 'disconnected',
+        dbConnected: dbReady,
         config: configReady,
         uptime: process.uptime(),
         timestamp: Date.now(),

@@ -474,7 +474,11 @@ function registerRoutes({
         res.status(ready ? 200 : 503).json({
             status: ready ? "ok" : "degraded",
             ready,
+            uptime: Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000),
+            sessions: Array.from(sessionManager.getAllSessions().values()).length,
+            botOnline,
             bot: botOnline,
+            dbConnected,
             db: dbConnected
         });
     });

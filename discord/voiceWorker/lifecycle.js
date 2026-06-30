@@ -169,6 +169,27 @@ async function attemptSelfVoiceDisconnect(clientRef, session, sessionId, tokenHa
     return getSelfVoiceStateInfo(clientRef, session);
 }
 
+function verifyCleanupState(registryAfter, ownConnection, selfVoiceInfo, errors, clientRef) {
+    const registryAlive = !!registryAfter && registryAfter.state?.status !== VoiceConnectionStatus.Destroyed;
+    const ownConnectionAlive = !!ownConnection && ownConnection.state?.status !== VoiceConnectionStatus.Destroyed;
+    const selfStillInTargetVoice = !!selfVoiceInfo.inTargetChannel;
+
+    if (registryAlive) errors.push("voiceRegistry:still_active");
+    if (ownConnectionAlive) errors.push("session.connection:still_active");
+    if (selfStillInTargetVoice) {
+        errors.push("selfVoiceStillConnected:target_channel");
+    }
+
+    const ok = errors.length === 0 && !registryAlive && !ownConnectionAlive && !selfStillInTargetVoice;
+
+    return {
+        ok,
+        verified: ok && (selfVoiceInfo.inspectable || !clientRef?.isReady?.()),
+        reason: ok ? "cleanup_verified" : "cleanup_not_confirmed",
+        safeError: errors.join("; ") || null
+    };
+}
+
 async function cleanupSessionVoiceConnection(sessionId, session, tokenHash) {
     const errors = [];
     const clientRef = session.client || getSessionClientFromPool(sessionId, session, tokenHash);
@@ -195,25 +216,14 @@ async function cleanupSessionVoiceConnection(sessionId, session, tokenHash) {
     }
 
     const registryAfter = group ? getVoiceConnection(session.serverId, group) : null;
-    const registryAlive = !!registryAfter && registryAfter.state?.status !== VoiceConnectionStatus.Destroyed;
     const ownConnectionAlive = !!ownConnection && ownConnection.state?.status !== VoiceConnectionStatus.Destroyed;
     session.connection = ownConnectionAlive ? ownConnection : null;
-    const selfStillInTargetVoice = !!selfVoiceInfo.inTargetChannel;
 
-    if (registryAlive) errors.push("voiceRegistry:still_active");
-    if (ownConnectionAlive) errors.push("session.connection:still_active");
-    if (selfStillInTargetVoice) {
-        errors.push("selfVoiceStillConnected:target_channel");
-    }
-
-    const ok = errors.length === 0 && !registryAlive && !ownConnectionAlive && !selfStillInTargetVoice;
+    const verification = verifyCleanupState(registryAfter, ownConnection, selfVoiceInfo, errors, clientRef);
 
     return {
-        ok,
-        verified: ok && (selfVoiceInfo.inspectable || !clientRef?.isReady?.()),
-        reason: ok ? "cleanup_verified" : "cleanup_not_confirmed",
-        safeError: errors.join("; ") || null,
-        shouldDeleteRecord: ok,
+        ...verification,
+        shouldDeleteRecord: verification.ok,
         clientRef
     };
 }
@@ -553,26 +563,20 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
     async function handlePassiveReconnect() {
         const backoffMs = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 10000);
 
-        let onPassiveSignal;
-        let onPassiveConnect;
+        let onPassiveReady;
         let passiveResolved = false;
 
         try {
             const passivePromise = new Promise(resolve => {
-                onPassiveSignal = () => {
+                onPassiveReady = () => {
                     if (!passiveResolved) { passiveResolved = true; resolve(); }
                 };
-                onPassiveConnect = () => {
-                    if (!passiveResolved) { passiveResolved = true; resolve(); }
-                };
-                connection.once(VoiceConnectionStatus.Signalling, onPassiveSignal);
-                connection.once(VoiceConnectionStatus.Connecting, onPassiveConnect);
+                connection.once(VoiceConnectionStatus.Ready, onPassiveReady);
             });
 
             await withTimeoutReject(passivePromise, backoffMs, "TIMEOUT");
 
-            if (onPassiveSignal) connection.off(VoiceConnectionStatus.Signalling, onPassiveSignal);
-            if (onPassiveConnect) connection.off(VoiceConnectionStatus.Connecting, onPassiveConnect);
+            if (onPassiveReady) connection.off(VoiceConnectionStatus.Ready, onPassiveReady);
 
             const prevAttempts = reconnectAttempts;
             reconnectAttempts = 0;
@@ -583,8 +587,7 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
             if (prevAttempts > 1) sendSessionOnlineDM(sessionId).catch(() => {});
 
         } catch {
-            if (onPassiveSignal) connection.off(VoiceConnectionStatus.Signalling, onPassiveSignal);
-            if (onPassiveConnect) connection.off(VoiceConnectionStatus.Connecting, onPassiveConnect);
+            if (onPassiveReady) connection.off(VoiceConnectionStatus.Ready, onPassiveReady);
 
             console.warn(`[WORKER] ⚡ Passive reconnect timed out for ${sanitizeLogText(sessionId)} — triggering urgent recovery.`);
 
@@ -768,61 +771,70 @@ async function stopSession(sessionId, options = {}) {
         return true;
     }
 
-    const tokenHash = getSessionTokenHash(sessionId, session);
-    const clientRef = session.client || getSessionClientFromPool(sessionId, session, tokenHash);
-
-    await refreshSessionMetadataFast(sessionId, 1000).catch(() => {});
-
-    stopNaturalTimer(sessionId);
-    stopAutoDeafTimer(sessionId);
-
-    const cleanup = await cleanupSessionVoiceConnection(sessionId, session, tokenHash);
-    recoveryTimestamps.delete(sessionId);
-    lastDMSent.delete(sessionId);
-    lastOnlineDMSent.delete(sessionId);
-    clearReconnect(sessionId);
-
-    if (!cleanup.ok || !cleanup.shouldDeleteRecord) {
-        const markResult = await sessionManager.markSessionFailed?.(
-            sessionId,
-            "stop_cleanup_failed",
-            options.stoppedBy || null,
-            cleanup.safeError || cleanup.reason
-        );
-        const markOk = markResult?.ok ?? markResult;
-        if (markOk) {
-            console.warn(`[WORKER] ⚠️ Stop cleanup failed for ${sanitizeLogText(sessionId)}: ${cleanup.safeError || cleanup.reason}`);
-        } else {
-            console.warn(`[WORKER] ⚠️ Stop cleanup failed and failed state was not persisted for ${sanitizeLogText(sessionId)}: ${sanitizeLogText(markResult?.safeError || "UNKNOWN")}`);
-        }
+    if (!lockSession(sessionId)) {
+        console.warn(`[WORKER] ⚠️ Session ${sanitizeLogText(sessionId)} is locked during stop — skipping`);
         return false;
     }
 
-    if (options.notifyReason) {
-        await sendSessionStoppedDM(sessionId, options.notifyReason).catch(() => {});
-    }
+    try {
+        const tokenHash = getSessionTokenHash(sessionId, session);
+        const clientRef = session.client || getSessionClientFromPool(sessionId, session, tokenHash);
 
-    if (tokenHash && clientRef) {
-        cleanupSessionClientIfUnused(tokenHash, clientRef, sessionId, session, "manual-stop");
-    }
+        await refreshSessionMetadataFast(sessionId, 1000).catch(() => {});
 
-    const deleted = await sessionManager.deleteSession(sessionId);
-    if (!deleted) {
-        const markResult = await sessionManager.markSessionFailed?.(
-            sessionId,
-            "session_delete_failed",
-            options.stoppedBy || null,
-            "session delete failed after voice cleanup"
-        );
-        if (!(markResult?.ok ?? markResult)) {
-            console.warn(`[WORKER] ⚠️ Session delete failed and failed state was not persisted for ${sanitizeLogText(sessionId)}: ${sanitizeLogText(markResult?.safeError || "UNKNOWN")}`);
+        stopNaturalTimer(sessionId);
+        stopAutoDeafTimer(sessionId);
+
+        const cleanup = await cleanupSessionVoiceConnection(sessionId, session, tokenHash);
+        recoveryTimestamps.delete(sessionId);
+        lastDMSent.delete(sessionId);
+        lastOnlineDMSent.delete(sessionId);
+        clearReconnect(sessionId);
+
+        if (!cleanup.ok || !cleanup.shouldDeleteRecord) {
+            const markResult = await sessionManager.markSessionFailed?.(
+                sessionId,
+                "stop_cleanup_failed",
+                options.stoppedBy || null,
+                cleanup.safeError || cleanup.reason
+            );
+            const markOk = markResult?.ok ?? markResult;
+            if (markOk) {
+                console.warn(`[WORKER] ⚠️ Stop cleanup failed for ${sanitizeLogText(sessionId)}: ${cleanup.safeError || cleanup.reason}`);
+            } else {
+                console.warn(`[WORKER] ⚠️ Stop cleanup failed and failed state was not persisted for ${sanitizeLogText(sessionId)}: ${sanitizeLogText(markResult?.safeError || "UNKNOWN")}`);
+            }
+            return false;
         }
-        return false;
+
+        if (options.notifyReason) {
+            await sendSessionStoppedDM(sessionId, options.notifyReason).catch(() => {});
+        }
+
+        if (tokenHash && clientRef) {
+            cleanupSessionClientIfUnused(tokenHash, clientRef, sessionId, session, "manual-stop");
+        }
+
+        const deleted = await sessionManager.deleteSession(sessionId);
+        if (!deleted) {
+            const markResult = await sessionManager.markSessionFailed?.(
+                sessionId,
+                "session_delete_failed",
+                options.stoppedBy || null,
+                "session delete failed after voice cleanup"
+            );
+            if (!(markResult?.ok ?? markResult)) {
+                console.warn(`[WORKER] ⚠️ Session delete failed and failed state was not persisted for ${sanitizeLogText(sessionId)}: ${sanitizeLogText(markResult?.safeError || "UNKNOWN")}`);
+            }
+            return false;
+        }
+
+        console.log(`[WORKER] 🛑 Stopped session: ${sanitizeLogText(sessionId)}`);
+
+        return true;
+    } finally {
+        unlockSession(sessionId);
     }
-
-    console.log(`[WORKER] 🛑 Stopped session: ${sanitizeLogText(sessionId)}`);
-
-    return true;
 }
 
 async function stopAll() {
