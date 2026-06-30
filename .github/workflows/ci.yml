@@ -17,28 +17,47 @@ jobs:
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            dashboard-public/package-lock.json
+
+      - name: Show tool versions
+        run: |
+          node --version
+          npm --version
 
       - name: Install root dependencies
-        run: npm ci
+        run: npm ci --no-audit --no-fund
+
+      - name: Verify Discord runtime dependencies
+        run: node -e "require('discord.js'); require('@discordjs/voice'); console.log('discord runtime ok')"
 
       - name: Install dashboard dependencies
-        run: npm --prefix dashboard-public ci
+        run: npm --prefix dashboard-public ci --no-audit --no-fund
 
-      - name: Syntax check
+      - name: Verify dashboard test runner
+        run: cd dashboard-public && node -e "require.resolve('jest-circus/runner'); require('jest-resolve'); console.log('dashboard jest ok')"
+
+      - name: Syntax check (Discord)
         run: npm run check:all
+
+      - name: Syntax check (Dashboard)
+        run: npm run check:dashboard:all
+
+      - name: Syntax check (Scripts)
+        run: npm run check:scripts
+
+      - name: Memory guards check
+        run: npm run check:memory-guards
 
       - name: Discord tests
         run: npm run test:discord
 
-      - name: Root audit
-        run: npm audit --audit-level=high
+      - name: Voice tests
+        run: npm run test:voice
 
       - name: Dashboard tests
         run: npm --prefix dashboard-public test
+
+      - name: Root audit
+        run: npm audit --audit-level=high
 
       - name: Dashboard audit
         run: npm --prefix dashboard-public audit --audit-level=high
