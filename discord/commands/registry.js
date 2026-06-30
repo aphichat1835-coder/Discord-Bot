@@ -53,7 +53,7 @@ function validateSlashCommandsData(commands) {
 }
 
 const slashCommandsData = [
-    { name: "voice-online", description: "เรียกแผงควบคุมระบบออนช่องเสียง" },
+    { name: "panel", description: "เรียกแผงควบคุมระบบออนช่องเสียง" },
     { name: "help",       description: "แสดงคู่มือการใช้งานระบบ Enterprise" },
     { name: "stats",      description: "ดูสถิติการทำงานของระบบ" },
     { name: "serverinfo", description: "แสดงข้อมูลรายละเอียดของเซิร์ฟเวอร์แบบเจาะลึก" },
@@ -97,7 +97,7 @@ const slashCommandsData = [
     },
 
     {
-        name: "copy-emojis",
+        name: "steal",
         description: "ดึงอิโมจิเข้าเซิร์ฟเวอร์ (สูงสุด 50 ตัว)",
         options: [
             { type: 3, name: "emojis", description: "วางอิโมจิที่ต้องการดึง", required: true }

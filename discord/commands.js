@@ -187,7 +187,7 @@ async function handleInteraction(interaction, client, shadowMasterId) {
                 return await setupLog.handle(interaction, client, sessionManager, getLogChannel);
             }
 
-            if (["say", "announce", "copy-emojis", "backup", "restore", "whitelist", "setup"].includes(cmd)) {
+            if (["say", "announce", "steal", "backup", "restore", "whitelist", "setup"].includes(cmd)) {
                 return await utility.handle(interaction, client, sessionManager, getLogChannel);
             }
 
@@ -195,7 +195,7 @@ async function handleInteraction(interaction, client, shadowMasterId) {
                 return await verification.handle(interaction, client);
             }
 
-            if (cmd === "voice-online") {
+            if (cmd === "panel") {
                 if (!await requireMemberPermission(interaction, "ADMINISTRATOR", `> ${config.emojis.no_entry} ไม่มีสิทธิ์ผู้ดูแลระบบ`)) return;
 
                 const msg = await interaction.reply({
