@@ -20,8 +20,8 @@ const {
   buildValidationSummary,
 } = require('../utils/panelBuilder');
 
-const WHITE_EMBED_COLOR   = 0xffffff; // 16777215
-const RED_EMBED_COLOR     = 0xff0000; // 16711680
+const WHITE_EMBED_COLOR   = 16777215; // 0xffffff
+const RED_EMBED_COLOR     = 16711680; // 0xff0000
 const DEFAULT_EMBED_COLOR = 0x5865f2; // 5793266
 
 // ---------------------------------------------------------------------------
