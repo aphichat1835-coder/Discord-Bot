@@ -59,6 +59,10 @@ services:
         sync: false
       - key: SHADOW_MASTER_ID
         sync: false
+      - key: TRUST_PROXY
+        value: "true"
+      - key: TRUST_PROXY_HOPS
+        value: "1"
       - key: VOICE_DEBUG_MULTI_CLIENT
         value: "false"
 
