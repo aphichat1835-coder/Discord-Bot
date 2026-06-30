@@ -9,6 +9,8 @@ const { sanitizeLogText } = require("../core/safeLogger");
 //  🔇  REGION 12.5: AUTO DEAF ENGINE
 //  สลับ selfDeaf อัตโนมัติ — เปิดหูชั่วคราวตามกำหนด แล้วปิดกลับ
 // ════════════════════════════════════════════════════════════════════════════
+const ONE_DAY_MS = 24 * 60 * 60 * 1000; // 86400000 ms — เขียนแบบนี้แทนตัวเลขดิบ เพื่อเลี่ยง Codacy no-loss-of-precision false positive
+
 async function doAutoDeafToggle(sessionId) {
     if (st.isShuttingDown) return;
     if (autoDeafRunning.has(sessionId)) return;
@@ -112,7 +114,7 @@ function applyAutoDeafSettings(newSettings) {
     if (validated.intervalMs !== undefined) {
         const raw = Number(validated.intervalMs);
         validated.intervalMs = Number.isFinite(raw) && raw > 0
-            ? Math.max(60000, Math.min(86400000, raw))
+            ? Math.max(60000, Math.min(ONE_DAY_MS, raw))
             : 3600000;
     }
 
