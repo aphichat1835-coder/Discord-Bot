@@ -1,0 +1,11 @@
+{
+  "id": "audit_voice_status_create_1",
+  "action": "VOICE_CHANNEL_STATUS_CREATE",
+  "user_id": "111111111111111111",
+  "target_id": "777777777777777777",
+  "options": { "channel_id": "777777777777777777" },
+  "changes": [
+    { "key": "status", "old_value": null, "new_value": "Live now" }
+  ],
+  "createdTimestamp": 1710000005000
+}

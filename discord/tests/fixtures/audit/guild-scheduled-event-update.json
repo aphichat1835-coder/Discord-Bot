@@ -1,0 +1,13 @@
+{
+  "id": "audit_scheduled_event_update_1",
+  "action": "GUILD_SCHEDULED_EVENT_UPDATE",
+  "user_id": "111111111111111111",
+  "target_id": "888888888888888888",
+  "options": { "channel_id": "999999999999999999" },
+  "changes": [
+    { "key": "name", "old_value": "Old Event", "new_value": "New Event" },
+    { "key": "status", "old_value": 1, "new_value": 2 },
+    { "key": "scheduled_start_time", "old_value": "2026-01-01T00:00:00.000Z", "new_value": "2026-01-02T00:00:00.000Z" }
+  ],
+  "createdTimestamp": 1710000006000
+}
