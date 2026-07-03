@@ -1,6 +1,6 @@
 # Architecture
 
-Last verified against implementation: 2026-06-29.
+Last verified against implementation: 2026-07-03.
 
 This is the implementation-backed architecture reference for the Phomueangtai Personal Multi-Tool Discord Bot. It describes the current project reality and the approved minimal direction for organization. It does not approve broad rewrites, dependency migrations, behavior changes, schema changes, or protected-file edits.
 
@@ -441,16 +441,19 @@ static pages and health routes
 
 ### Service 2 Test Files
 
-All 14 test files live in `dashboard-public/tests/` and run with Jest.
+All 17 test files live in `dashboard-public/tests/` and run with Jest.
 
 | Test file | What it covers |
 | --- | --- |
 | `adminSessionCompat.test.js` | admin session compatibility middleware: old/new session shape normalization |
+| `crypto.test.js` | current and historical Dashboard Public GCM/CBC encryption compatibility |
 | `discordAPI.test.js` | Discord OAuth/bot API call helpers: token exchange, role/channel validation, member join |
 | `guildRoutesPure.test.js` | pure guild route helper contracts: config normalization, validation rules |
 | `ipUtils.test.js` | IP normalization, trusted IP selection, spoof detection, device extraction, risk computation |
 | `oauthPureUtils.test.js` | pure OAuth utility contracts: state signing, token shape, redirect URI helpers |
+| `oauthSourceContracts.test.js` | OAuth callback integration wiring, guild join helper, and one-time code handling |
 | `oauthTokenLifecycle.test.js` | OAuth token storage/refresh policy, refresh timing, expiry behavior |
+| `oauthUserModel.test.js` | OAuthUser connection document-array schema and legacy string compatibility |
 | `oauthUserSummary.test.js` | capped OAuth user summary helpers for large guild member lists |
 | `sensitiveAccess.test.js` | sensitive data access helpers: normalize, canView, buildPatch, redact Discord/IP snapshots |
 | `state.test.js` | shared OAuth/admin/callback state signing and compact verification state creation |

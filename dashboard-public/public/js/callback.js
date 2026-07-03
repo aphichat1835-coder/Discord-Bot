@@ -24,6 +24,7 @@
     missing_code_or_state: "ไม่พบรหัสยืนยันตัวตน กรุณากดปุ่มจาก Discord ใหม่อีกครั้ง",
     missing_oauth_code: "ไม่พบรหัส OAuth กรุณากดปุ่มยืนยันใหม่อีกครั้ง",
     invalid_callback_state: "ลิงก์ยืนยันไม่ถูกต้อง กรุณากดปุ่มใหม่อีกครั้ง",
+    oauth_code_expired_or_used: "ลิงก์ยืนยันถูกใช้ไปแล้วหรือหมดอายุ กรุณากดปุ่มยืนยันใหม่ใน Discord",
 
     expired_or_invalid: "ลิงก์ยืนยันหมดอายุหรือไม่ถูกต้อง กรุณากดปุ่มใหม่อีกครั้ง",
     invalid_or_expired_link: "ลิงก์ยืนยันไม่ถูกต้อง กรุณากดปุ่มใหม่อีกครั้ง",
@@ -200,6 +201,12 @@
 
   async function run() {
     setStep("discord");
+
+    // OAuth authorization codes are one-time credentials. Remove them from the
+    // address bar after capture so a manual refresh cannot submit the same code.
+    if ((code || error) && globalThis.history?.replaceState) {
+      globalThis.history.replaceState(null, "", globalThis.location.pathname);
+    }
 
     if (error) {
       fail(

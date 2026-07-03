@@ -31,7 +31,12 @@ const memoryMonitor  = require("./index/memoryMonitor");
 const { validateRequiredEnv } = require("./core/env");
 const { createHttpApp } = require("./core/http");
 const { isFeatureEnabled } = require("./core/featureFlags");
-const { sendLogWebhook, buildStartupNotice, getWebhookDiagnostics } = require("./core/webhooks");
+const {
+    sendLogWebhook,
+    buildStartupNotice,
+    getWebhookDiagnostics,
+    getOwnerDashboardBaseUrl
+} = require("./core/webhooks");
 
 // ────────────────────────────────────────────────────────────────────────────
 //  index/ sub-modules
@@ -463,7 +468,7 @@ client.on("ready", async () => {
         }
 
         // ส่ง startup notice เข้า log webhook เท่านั้น; ALERT webhook เก็บไว้สำหรับเหตุร้ายแรง
-        const base = process.env.DASHBOARD_URL || process.env.RENDER_EXTERNAL_URL || '[your-app.onrender.com](https://your-app.onrender.com)';
+        const base = getOwnerDashboardBaseUrl();
         await sendLogWebhook(buildStartupNotice({
             clientTag: client.user.tag,
             baseUrl: base,
