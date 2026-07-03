@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const {
+    DEFAULT_OWNER_DASHBOARD_URL,
     getWebhookUrl,
     getOwnerDashboardBaseUrl,
     getWebhookDiagnostics,
@@ -50,6 +51,9 @@ test("startup dashboard URL prefers the main owner service", () => {
     assert.equal(getOwnerDashboardBaseUrl({
         DASHBOARD_URL: "https://dashboard-public.example/"
     }), "https://dashboard-public.example");
+
+    assert.equal(getOwnerDashboardBaseUrl({}), DEFAULT_OWNER_DASHBOARD_URL);
+    assert.equal(DEFAULT_OWNER_DASHBOARD_URL, "https://your-app.onrender.com");
 });
 
 test("webhook payloads normalize strings and objects", () => {

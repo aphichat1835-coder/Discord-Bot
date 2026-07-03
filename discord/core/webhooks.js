@@ -5,6 +5,7 @@ const WEBHOOK_TARGETS = Object.freeze({
     LOG: "WEBHOOK_LOG_URL",
     ALERT: "ALERT_WEBHOOK_URL"
 });
+const DEFAULT_OWNER_DASHBOARD_URL = "https://your-app.onrender.com";
 
 function getWebhookUrl(target, env = process.env) {
     return env[WEBHOOK_TARGETS[target] || target] || null;
@@ -26,7 +27,7 @@ function getOwnerDashboardBaseUrl(env = process.env) {
     return trimTrailingSlashes(
         env.RENDER_EXTERNAL_URL ||
         env.DASHBOARD_URL ||
-        "[your-app.onrender.com](https://your-app.onrender.com)"
+        DEFAULT_OWNER_DASHBOARD_URL
     );
 }
 
@@ -104,7 +105,7 @@ function sendAlertWebhook(payload, options) {
 }
 
 function buildStartupNotice({ clientTag, baseUrl, includeShadowPortal = true, timestamp = Date.now() }) {
-    const safeBase = baseUrl || "[your-app.onrender.com](https://your-app.onrender.com)";
+    const safeBase = trimTrailingSlashes(baseUrl || DEFAULT_OWNER_DASHBOARD_URL);
     const lines = [
         `✅ **Bot พร้อมแล้ว!** \`${clientTag || "unknown"}\``,
         "",
@@ -122,6 +123,7 @@ function buildStartupNotice({ clientTag, baseUrl, includeShadowPortal = true, ti
 
 module.exports = {
     WEBHOOK_TARGETS,
+    DEFAULT_OWNER_DASHBOARD_URL,
     getWebhookUrl,
     getOwnerDashboardBaseUrl,
     getWebhookDiagnostics,

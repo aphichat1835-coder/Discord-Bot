@@ -29,6 +29,38 @@ function encryptCbc(plain, key) {
     return `${iv.toString('hex')}:${ciphertext.toString('hex')}`;
 }
 
+function decryptCbcCandidate(payload, key) {
+    try {
+        const [ivHex, ciphertextHex] = payload.split(':');
+        const decipher = crypto.createDecipheriv(
+            'aes-256-cbc',
+            key,
+            Buffer.from(ivHex, 'hex')
+        );
+        return Buffer.concat([
+            decipher.update(Buffer.from(ciphertextHex, 'hex')),
+            decipher.final()
+        ]).toString('utf8');
+    } catch {
+        return null;
+    }
+}
+
+function findWrongKeyPaddingSuccess(plain, actualKey, wrongKey) {
+    for (let attempt = 0; attempt < 20000; attempt++) {
+        const payload = encryptCbc(plain, actualKey);
+        const wrongPlaintext = decryptCbcCandidate(payload, wrongKey);
+
+        if (
+            wrongPlaintext !== null &&
+            !cryptoUtils._test.isOAuthTokenPlaintext(wrongPlaintext)
+        ) {
+            return payload;
+        }
+    }
+    return null;
+}
+
 describe('Dashboard Public crypto compatibility', () => {
     let secret;
     const oldEncryptionKey = process.env.ENCRYPTION_KEY;
@@ -74,6 +106,27 @@ describe('Dashboard Public crypto compatibility', () => {
         const rawEncrypted = encryptCbc('raw-cbc', rawLegacyKey(secret));
         expect(cryptoUtils.decryptData(serviceEncrypted)).toBe('service-cbc');
         expect(cryptoUtils.decryptData(rawEncrypted)).toBe('raw-cbc');
+    });
+
+    test('continues past a wrong CBC key that only passes padding validation', () => {
+        const token = 'legacy-refresh-token-value-12345';
+        const encrypted = findWrongKeyPaddingSuccess(
+            token,
+            rawLegacyKey(secret),
+            serviceKey(secret)
+        );
+
+        expect(encrypted).not.toBeNull();
+        expect(cryptoUtils.decryptToken(encrypted)).toBe(token);
+    });
+
+    test('applies payload-specific validation for IP and JSON values', () => {
+        const encryptedIp = encryptCbc('203.0.113.10', rawLegacyKey(secret));
+        const encryptedJson = encryptCbc('{"ok":true}', rawLegacyKey(secret));
+
+        expect(cryptoUtils.decryptIP(encryptedIp)).toBe('203.0.113.10');
+        expect(cryptoUtils.safeJsonDecrypt(encryptedJson)).toEqual({ ok: true });
+        expect(cryptoUtils.decryptIP(encryptedJson)).toBeNull();
     });
 
     test('returns null for malformed or unauthenticated values', () => {

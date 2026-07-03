@@ -5,7 +5,11 @@
  * - Raw IP/device lookup keys use HMAC-SHA256 hashes for safe matching.
  */
 const crypto = require('node:crypto');
+const net = require('node:net');
+const { TextDecoder } = require('node:util');
 const { sanitizeLogText } = require('./safeLogger');
+
+const strictUtf8Decoder = new TextDecoder('utf-8', { fatal: true });
 
 function safeCryptoError(err) {
     return sanitizeLogText(err?.message || err?.name || err || 'unknown').slice(0, 180);
@@ -109,6 +113,47 @@ function parseGcmPayload(payload) {
     };
 }
 
+function decodePlaintext(buffer) {
+    try {
+        return strictUtf8Decoder.decode(buffer);
+    } catch {
+        return null;
+    }
+}
+
+function isPlausiblePlaintext(value) {
+    if (typeof value !== 'string' || value.length === 0) return false;
+
+    for (let i = 0; i < value.length; i++) {
+        const code = value.charCodeAt(i);
+        const allowedWhitespace = code === 9 || code === 10 || code === 13;
+        if ((code < 32 && !allowedWhitespace) || code === 127) return false;
+    }
+
+    return true;
+}
+
+function isOAuthTokenPlaintext(value) {
+    return isPlausiblePlaintext(value) &&
+        value.length >= 8 &&
+        value.length <= 4096 &&
+        !/\s/.test(value);
+}
+
+function isIpPlaintext(value) {
+    return typeof value === 'string' && net.isIP(value.trim()) !== 0;
+}
+
+function isJsonPlaintext(value) {
+    if (!isPlausiblePlaintext(value)) return false;
+    try {
+        JSON.parse(value);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 function decryptGcm(payload) {
     const { iv, tag, ciphertext } = parseGcmPayload(payload);
     let lastError = null;
@@ -122,10 +167,13 @@ function decryptGcm(payload) {
                 { authTagLength: 16 }
             );
             decipher.setAuthTag(tag);
-            return Buffer.concat([
+            const plaintext = Buffer.concat([
                 decipher.update(ciphertext),
                 decipher.final()
-            ]).toString('utf8');
+            ]);
+            const decoded = decodePlaintext(plaintext);
+            if (decoded !== null) return decoded;
+            lastError = new Error('GCM plaintext is not valid UTF-8');
         } catch (err) {
             lastError = err;
         }
@@ -134,7 +182,7 @@ function decryptGcm(payload) {
     throw lastError || new Error('No compatible GCM key');
 }
 
-function decryptLegacyCbc(payload) {
+function decryptLegacyCbc(payload, validatePlaintext = isPlausiblePlaintext) {
     const parts = payload.split(':');
     if (parts.length < 2) throw new Error('Malformed CBC encrypted payload');
 
@@ -145,10 +193,16 @@ function decryptLegacyCbc(payload) {
     for (const key of getCompatibleKeys()) {
         try {
             const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
-            return Buffer.concat([
+            const plaintext = Buffer.concat([
                 decipher.update(ciphertext),
                 decipher.final()
-            ]).toString('utf8');
+            ]);
+            const decoded = decodePlaintext(plaintext);
+
+            if (decoded !== null && validatePlaintext(decoded)) {
+                return decoded;
+            }
+            lastError = new Error('CBC plaintext validation failed');
         } catch (err) {
             lastError = err;
         }
@@ -157,12 +211,16 @@ function decryptLegacyCbc(payload) {
     throw lastError || new Error('No compatible CBC key');
 }
 
-function decryptData(payload) {
+function decryptData(payload, validatePlaintext = isPlausiblePlaintext) {
     if (!payload || typeof payload !== 'string') return null;
 
     if (payload.startsWith('v2:gcm:') || payload.startsWith('gcm:')) {
         try {
-            return decryptGcm(payload);
+            const plaintext = decryptGcm(payload);
+            if (!validatePlaintext(plaintext)) {
+                throw new Error('GCM plaintext validation failed');
+            }
+            return plaintext;
         } catch (err) {
             reportDecryptFailure('gcm', err);
             return null;
@@ -170,11 +228,19 @@ function decryptData(payload) {
     }
 
     try {
-        return decryptLegacyCbc(payload);
+        return decryptLegacyCbc(payload, validatePlaintext);
     } catch (err) {
         reportDecryptFailure('cbc', err);
         return null;
     }
+}
+
+function decryptToken(payload) {
+    return decryptData(payload, isOAuthTokenPlaintext);
+}
+
+function decryptIP(payload) {
+    return decryptData(payload, isIpPlaintext);
 }
 
 function hmacValue(value, prefix = 'value') {
@@ -187,7 +253,7 @@ function hmacValue(value, prefix = 'value') {
 }
 
 function safeJsonDecrypt(payload, fallback = null) {
-    const raw = decryptData(payload);
+    const raw = decryptData(payload, isJsonPlaintext);
     if (!raw) return fallback;
 
     try {
@@ -207,11 +273,19 @@ module.exports = {
     decrypt: decryptData,
 
     encryptToken: encryptData,
-    decryptToken: decryptData,
+    decryptToken,
 
     encryptIP: encryptData,
-    decryptIP: decryptData,
+    decryptIP,
 
     hashIP: (ip) => hmacValue(ip, 'ip'),
-    hashFingerprint: (fp) => hmacValue(fp, 'fingerprint')
+    hashFingerprint: (fp) => hmacValue(fp, 'fingerprint'),
+
+    _test: {
+        decodePlaintext,
+        isPlausiblePlaintext,
+        isOAuthTokenPlaintext,
+        isIpPlaintext,
+        isJsonPlaintext
+    }
 };

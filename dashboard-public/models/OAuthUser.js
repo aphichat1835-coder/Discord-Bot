@@ -1,9 +1,10 @@
 const mongoose = require('mongoose');
 
 const mixed = mongoose.Schema.Types.Mixed;
+const CONNECTION_TYPE_MAX_LENGTH = 80;
 
 const connectionSchema = new mongoose.Schema({
-    type:         String,
+    type:         { type: String, maxlength: CONNECTION_TYPE_MAX_LENGTH },
     id:           String,
     name:         String,
     verified:     Boolean,
@@ -23,7 +24,7 @@ function normalizeStoredConnections(value) {
     return value
         .map(item => {
             if (typeof item === 'string') {
-                const type = item.trim().slice(0, 80);
+                const type = item.trim().slice(0, CONNECTION_TYPE_MAX_LENGTH);
                 return type ? { type } : null;
             }
 

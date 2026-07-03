@@ -43,4 +43,15 @@ describe('OAuthUser connections schema', () => {
         expect(hydrated.connections[0].type).toBe('steam');
         expect(hydrated.validateSync()).toBeUndefined();
     });
+
+    test('uses the documented connection type limit for legacy strings', () => {
+        const longType = 'x'.repeat(120);
+        const doc = new OAuthUser({
+            discord: { userId: '123456789012345681' },
+            connections: [longType]
+        });
+
+        expect(doc.connections[0].type).toHaveLength(80);
+        expect(doc.validateSync()).toBeUndefined();
+    });
 });
