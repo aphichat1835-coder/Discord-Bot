@@ -115,7 +115,8 @@ class DiscordApiError extends Error {
     constructor(label, status, details = null) {
         const safeLabel = sanitizeDiscordApiErrorText(label || "Discord API", 80);
         const safeDetails = stringifyError(details);
-        super(`${safeLabel} failed: ${status}${safeDetails ? ` ${safeDetails}` : ""}`.trim());
+        const detailSuffix = safeDetails ? ` ${safeDetails}` : "";
+        super(`${safeLabel} failed: ${status}${detailSuffix}`.trim());
         this.name = "DiscordApiError";
         this.status = Number(status) || 0;
         this.providerCode = typeof details?.error === "string"

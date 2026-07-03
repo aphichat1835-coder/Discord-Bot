@@ -16,7 +16,7 @@ function rawLegacyKey(secret) {
 
 function encryptGcm(plain, key, { prefix, encoding }) {
     const iv = crypto.randomBytes(12);
-    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv, { authTagLength: 16 });
     const ciphertext = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
     const tag = cipher.getAuthTag();
     return `${prefix}:${iv.toString(encoding)}:${tag.toString(encoding)}:${ciphertext.toString(encoding)}`;
@@ -30,13 +30,14 @@ function encryptCbc(plain, key) {
 }
 
 describe('Dashboard Public crypto compatibility', () => {
-    const secret = 'test-encryption-key-without-production-value';
+    let secret;
     const oldEncryptionKey = process.env.ENCRYPTION_KEY;
     const oldApiSecret = process.env.API_SECRET;
 
     beforeAll(() => {
+        secret = crypto.randomBytes(32).toString('hex');
         process.env.ENCRYPTION_KEY = secret;
-        process.env.API_SECRET = 'test-api-secret';
+        process.env.API_SECRET = crypto.randomBytes(32).toString('hex');
     });
 
     afterAll(() => {

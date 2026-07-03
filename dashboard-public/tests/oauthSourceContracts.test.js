@@ -1,17 +1,10 @@
 'use strict';
 
 const fs = require('node:fs');
-const path = require('node:path');
 
 describe('OAuth callback integration contracts', () => {
-    const routeSource = fs.readFileSync(
-        path.join(__dirname, '../routes/oauth.js'),
-        'utf8'
-    );
-    const callbackSource = fs.readFileSync(
-        path.join(__dirname, '../public/js/callback.js'),
-        'utf8'
-    );
+    const routeSource = fs.readFileSync('routes/oauth.js', 'utf8');
+    const callbackSource = fs.readFileSync('public/js/callback.js', 'utf8');
 
     test('calls the implemented guild-member join helper', () => {
         expect(routeSource).toContain('discord.addMemberToGuild(');

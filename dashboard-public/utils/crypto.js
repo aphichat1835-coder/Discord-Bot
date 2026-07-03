@@ -48,7 +48,7 @@ function encryptData(value) {
 
     const plain = typeof value === 'string' ? value : JSON.stringify(value);
     const iv = crypto.randomBytes(12);
-    const cipher = crypto.createCipheriv('aes-256-gcm', getKey(), iv);
+    const cipher = crypto.createCipheriv('aes-256-gcm', getKey(), iv, { authTagLength: 16 });
 
     const ciphertext = Buffer.concat([
         cipher.update(plain, 'utf8'),
@@ -115,7 +115,12 @@ function decryptGcm(payload) {
 
     for (const key of getCompatibleKeys()) {
         try {
-            const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+            const decipher = crypto.createDecipheriv(
+                'aes-256-gcm',
+                key,
+                iv,
+                { authTagLength: 16 }
+            );
             decipher.setAuthTag(tag);
             return Buffer.concat([
                 decipher.update(ciphertext),
