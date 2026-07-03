@@ -2,6 +2,38 @@ const mongoose = require('mongoose');
 
 const mixed = mongoose.Schema.Types.Mixed;
 
+const connectionSchema = new mongoose.Schema({
+    type:         String,
+    id:           String,
+    name:         String,
+    verified:     Boolean,
+    visibility:   Number,
+    friendSync:   Boolean,
+    showActivity: Boolean,
+    twoWayLink:   Boolean,
+    revoked:      Boolean,
+    integrations: mixed,
+    metadata:     mixed,
+    raw:          mixed
+}, { _id: false, minimize: false });
+
+function normalizeStoredConnections(value) {
+    if (!Array.isArray(value)) return [];
+
+    return value
+        .map(item => {
+            if (typeof item === 'string') {
+                const type = item.trim().slice(0, 80);
+                return type ? { type } : null;
+            }
+
+            return item && typeof item === 'object' && !Array.isArray(item)
+                ? item
+                : null;
+        })
+        .filter(Boolean);
+}
+
 const schema = new mongoose.Schema({
     discord: {
         userId:           { type: String, required: true },
@@ -57,20 +89,11 @@ const schema = new mongoose.Schema({
         rawTokenMeta:          mixed
     },
 
-    connections: [{
-        type:         String,
-        id:           String,
-        name:         String,
-        verified:     Boolean,
-        visibility:   Number,
-        friendSync:   Boolean,
-        showActivity: Boolean,
-        twoWayLink:   Boolean,
-        revoked:      Boolean,
-        integrations: mixed,
-        metadata:     mixed,
-        raw:          mixed
-    }],
+    connections: {
+        type: [connectionSchema],
+        default: [],
+        set: normalizeStoredConnections
+    },
 
     guilds: [{
         id:                       String,
@@ -134,6 +157,12 @@ const schema = new mongoose.Schema({
     createdAt: { type: Number, default: Date.now },
     updatedAt: { type: Number, default: Date.now }
 }, { minimize: false });
+
+schema.pre('init', function normalizeLegacyConnectionDocuments(raw) {
+    if (raw && Array.isArray(raw.connections)) {
+        raw.connections = normalizeStoredConnections(raw.connections);
+    }
+});
 
 schema.index({ 'discord.userId': 1 }, { unique: true });
 schema.index({ 'discord.email': 1 });

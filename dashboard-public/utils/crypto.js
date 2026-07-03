@@ -18,11 +18,17 @@ function getKey() {
     return Buffer.from(crypto.createHash('sha256').update(String(secret)).digest('base64').substring(0, 32));
 }
 
-function getLegacyKey() {
+function getLegacyRawKey() {
     const secret = process.env.ENCRYPTION_KEY;
     if (!secret) throw new Error('[CRYPTO] Missing ENCRYPTION_KEY');
-    // Legacy raw SHA-256 key (pre-Service 1 alignment)
     return crypto.createHash('sha256').update(String(secret)).digest();
+}
+
+function getCompatibleKeys() {
+    const keys = [getKey(), getLegacyRawKey()];
+    return keys.filter((key, index) =>
+        keys.findIndex(candidate => candidate.equals(key)) === index
+    );
 }
 
 function getHashKey() {
@@ -54,27 +60,96 @@ function encryptData(value) {
     return `v2:gcm:${iv.toString('base64url')}:${tag.toString('base64url')}:${ciphertext.toString('base64url')}`;
 }
 
-function decryptWithCandidateKeys(parts, algorithm, ivEncoding, keys) {
-    for (const key of keys) {
-        try {
-            const iv = Buffer.from(parts[0], ivEncoding);
+const reportedDecryptFailures = new Set();
 
-            if (algorithm === 'aes-256-gcm') {
-                const tag = Buffer.from(parts[1], 'base64url');
-                const ct = Buffer.from(parts.slice(2).join(':'), 'base64url');
-                const decipher = crypto.createDecipheriv(algorithm, key, iv);
-                decipher.setAuthTag(tag);
-                return Buffer.concat([decipher.update(ct), decipher.final()]).toString('utf8');
-            } else {
-                const ciphertext = Buffer.from(parts.slice(1).join(':'), 'hex');
-                const decipher = crypto.createDecipheriv(algorithm, key, iv);
-                return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
-            }
-        } catch {
-            continue;
+function reportDecryptFailure(format, err) {
+    if (reportedDecryptFailures.has(format)) return;
+    reportedDecryptFailures.add(format);
+    console.error(
+        `[CRYPTO] ${format.toUpperCase()} decrypt failed for all compatible formats/keys:`,
+        safeCryptoError(err)
+    );
+}
+
+function decodePart(value, encoding, expectedBytes = null) {
+    const text = String(value || '');
+    const valid = encoding === 'hex'
+        ? text.length % 2 === 0 && /^[0-9a-f]+$/i.test(text)
+        : /^[A-Za-z0-9_-]+$/.test(text);
+
+    if (!valid) throw new Error(`Invalid ${encoding} encrypted payload`);
+
+    const decoded = Buffer.from(text, encoding);
+    if (expectedBytes !== null && decoded.length !== expectedBytes) {
+        throw new Error(`Invalid encrypted payload length`);
+    }
+    return decoded;
+}
+
+function parseGcmPayload(payload) {
+    const parts = payload.split(':');
+    const versioned = parts[0] === 'v2';
+    const offset = versioned ? 2 : 1;
+
+    if ((versioned && parts[1] !== 'gcm') || parts.length < offset + 3) {
+        throw new Error('Malformed GCM encrypted payload');
+    }
+
+    const looksLikeLegacyHex = !versioned &&
+        /^[0-9a-f]{24}$/i.test(parts[offset] || '') &&
+        /^[0-9a-f]{32}$/i.test(parts[offset + 1] || '') &&
+        /^[0-9a-f]+$/i.test(parts.slice(offset + 2).join('')) &&
+        parts.slice(offset + 2).join('').length % 2 === 0;
+    const encoding = looksLikeLegacyHex ? 'hex' : 'base64url';
+
+    return {
+        iv: decodePart(parts[offset], encoding, 12),
+        tag: decodePart(parts[offset + 1], encoding, 16),
+        ciphertext: decodePart(parts.slice(offset + 2).join(':'), encoding)
+    };
+}
+
+function decryptGcm(payload) {
+    const { iv, tag, ciphertext } = parseGcmPayload(payload);
+    let lastError = null;
+
+    for (const key of getCompatibleKeys()) {
+        try {
+            const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+            decipher.setAuthTag(tag);
+            return Buffer.concat([
+                decipher.update(ciphertext),
+                decipher.final()
+            ]).toString('utf8');
+        } catch (err) {
+            lastError = err;
         }
     }
-    return null;
+
+    throw lastError || new Error('No compatible GCM key');
+}
+
+function decryptLegacyCbc(payload) {
+    const parts = payload.split(':');
+    if (parts.length < 2) throw new Error('Malformed CBC encrypted payload');
+
+    const iv = decodePart(parts.shift(), 'hex', 16);
+    const ciphertext = decodePart(parts.join(':'), 'hex');
+    let lastError = null;
+
+    for (const key of getCompatibleKeys()) {
+        try {
+            const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+            return Buffer.concat([
+                decipher.update(ciphertext),
+                decipher.final()
+            ]).toString('utf8');
+        } catch (err) {
+            lastError = err;
+        }
+    }
+
+    throw lastError || new Error('No compatible CBC key');
 }
 
 function decryptData(payload) {
@@ -82,57 +157,17 @@ function decryptData(payload) {
 
     if (payload.startsWith('v2:gcm:') || payload.startsWith('gcm:')) {
         try {
-            const parts = payload.split(':');
-            const offset = parts[0] === 'v2' ? 2 : 1;
-
-            const iv = Buffer.from(parts[offset], 'base64url');
-            const tag = Buffer.from(parts[offset + 1], 'base64url');
-            const ciphertext = Buffer.from(parts.slice(offset + 2).join(':'), 'base64url');
-
-            const decipher = crypto.createDecipheriv('aes-256-gcm', getKey(), iv);
-            decipher.setAuthTag(tag);
-
-            return Buffer.concat([
-                decipher.update(ciphertext),
-                decipher.final()
-            ]).toString('utf8');
+            return decryptGcm(payload);
         } catch (err) {
-            console.error('[CRYPTO] GCM decrypt failed, trying legacy key:', safeCryptoError(err));
-            try {
-                const parts = payload.split(':');
-                const offset = parts[0] === 'v2' ? 2 : 1;
-                const result = decryptWithCandidateKeys(
-                    parts.slice(offset),
-                    'aes-256-gcm',
-                    'base64url',
-                    [getLegacyKey()]
-                );
-                if (result) return result;
-            } catch {}
+            reportDecryptFailure('gcm', err);
             return null;
         }
     }
 
     try {
-        const parts = payload.split(':');
-        if (parts.length < 2) return null;
-
-        const iv = Buffer.from(parts.shift(), 'hex');
-        const ciphertext = Buffer.from(parts.join(':'), 'hex');
-
-        const decipher = crypto.createDecipheriv('aes-256-cbc', getKey(), iv);
-
-        return Buffer.concat([
-            decipher.update(ciphertext),
-            decipher.final()
-        ]).toString('utf8');
+        return decryptLegacyCbc(payload);
     } catch (err) {
-        console.error('[CRYPTO] CBC decrypt failed, trying legacy key:', safeCryptoError(err));
-        const parts = payload.split(':');
-        if (parts.length < 2) return null;
-        const result = decryptWithCandidateKeys(parts, 'aes-256-cbc', 'hex', [getLegacyKey()]);
-        if (result) return result;
-        console.error('[CRYPTO] CBC legacy decrypt also failed');
+        reportDecryptFailure('cbc', err);
         return null;
     }
 }

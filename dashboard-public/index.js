@@ -70,7 +70,12 @@ const OAuthUser = require('./models/OAuthUser');
 // Startup diagnostic — ตรวจ connections schema ว่า Render ใช้โค้ดล่าสุดจริง
 {
     const connPath = OAuthUser.schema.path('connections');
-    const schemaType = connPath?.caster?.schema ? 'object-array' : String(connPath);
+    const isObjectArray = !!(
+        connPath?.schema ||
+        connPath?.caster?.schema ||
+        connPath?.$embeddedSchemaType?.schema
+    );
+    const schemaType = isObjectArray ? 'object-array' : String(connPath);
     console.log('[DIAG] OAuthUser connections schema:', schemaType);
 }
 

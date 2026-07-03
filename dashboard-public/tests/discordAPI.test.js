@@ -3,6 +3,23 @@
 const discordAPI = require('../utils/discordAPI');
 
 describe('Discord API memory guards', () => {
+    test('exports compatible guild-member join names', () => {
+        expect(discordAPI.addMemberToGuild).toEqual(expect.any(Function));
+        expect(discordAPI.addGuildMember).toBe(discordAPI.addMemberToGuild);
+    });
+
+    test('classifies Discord invalid_grant errors without parsing raw logs', () => {
+        const err = new discordAPI.DiscordApiError('exchangeCode', 400, {
+            error: 'invalid_grant',
+            error_description: 'Invalid code'
+        });
+
+        expect(err.status).toBe(400);
+        expect(err.providerCode).toBe('invalid_grant');
+        expect(discordAPI.isOAuthInvalidGrantError(err)).toBe(true);
+        expect(discordAPI.isOAuthInvalidGrantError(new Error('network failed'))).toBe(false);
+    });
+
     test('reports bounded request/response diagnostics', () => {
         const diag = discordAPI.getDiscordApiDiagnostics();
 

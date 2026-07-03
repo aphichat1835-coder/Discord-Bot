@@ -1271,6 +1271,13 @@ router.get('/auth/admin-callback', async (req, res) => {
 
         return res.redirect('/guilds');
     } catch (err) {
+        if (discord.isOAuthInvalidGrantError(err)) {
+            if (req.session) delete req.session.adminOAuthNonce;
+            await saveSession(req).catch(() => {});
+            console.warn('[ADMIN_OAUTH] authorization code expired or was already used');
+            return res.redirect('/');
+        }
+
         console.error('[ADMIN_OAUTH] callback failed:', JSON.stringify(sanitizeSideEffectError(err)));
         return res.redirect('/');
     }
@@ -1760,11 +1767,26 @@ router.post('/auth/callback', async (req, res) => {
             });
         }
 
-        joinResult = await safeSideEffect(
-            'addGuildMember',
-            () => discord.addGuildMember(guildId, profile.id, accessToken),
-            { ok: false, skipped: true, error: 'join_failed_safely' }
-        );
+        joinResult = memberInfo
+            ? { ok: true, status: 204, alreadyMember: true }
+            : await safeSideEffect(
+                'addMemberToGuild',
+                () => discord.addMemberToGuild(guildId, profile.id, accessToken),
+                { ok: false, skipped: true, error: 'join_failed_safely' }
+            );
+
+        if (!joinResult?.ok) {
+            return finalize({
+                result: 'failed',
+                reason: 'guild_join_failed',
+                userError: 'ระบบไม่สามารถพาคุณเข้าเซิร์ฟเวอร์ได้ กรุณาเข้าดิสก่อนแล้วลองใหม่',
+                roleAssignResult: {
+                    ok: false,
+                    skipped: true,
+                    error: 'guild_join_failed'
+                }
+            });
+        }
 
         const roleAssignResult = await safeSideEffect(
             'addRoleToMember',
@@ -1788,6 +1810,17 @@ router.post('/auth/callback', async (req, res) => {
             roleAssignResult
         });
     } catch (err) {
+        if (discord.isOAuthInvalidGrantError(err)) {
+            console.warn(`[VERIFY] OAuth code expired or already used (${requestId})`);
+            return jsonFail(
+                res,
+                'ลิงก์ยืนยันถูกใช้ไปแล้วหรือหมดอายุ กรุณากดปุ่มยืนยันใหม่ใน Discord',
+                'oauth_code_expired_or_used',
+                200,
+                requestId
+            );
+        }
+
         console.error('[VERIFY] callback failed:', JSON.stringify(sanitizeSideEffectError(err)));
 
         return jsonFail(

@@ -111,6 +111,24 @@ function stringifyError(error) {
     }
 }
 
+class DiscordApiError extends Error {
+    constructor(label, status, details = null) {
+        const safeLabel = sanitizeDiscordApiErrorText(label || "Discord API", 80);
+        const safeDetails = stringifyError(details);
+        super(`${safeLabel} failed: ${status}${safeDetails ? ` ${safeDetails}` : ""}`.trim());
+        this.name = "DiscordApiError";
+        this.status = Number(status) || 0;
+        this.providerCode = typeof details?.error === "string"
+            ? sanitizeDiscordApiErrorText(details.error, 80)
+            : null;
+    }
+}
+
+function isOAuthInvalidGrantError(err) {
+    return err?.providerCode === "invalid_grant" ||
+        (Number(err?.status) === 400 && String(err?.message || "").includes("invalid_grant"));
+}
+
 function sleep(ms) {
     return new Promise(resolve => {
         const timer = setTimeout(resolve, ms);
@@ -304,9 +322,7 @@ async function apiFetch(url, options = {}) {
 
     if (!res.ok) {
         const error = await readError(res);
-        throw new Error(
-            `${options.label || "Discord API"} failed: ${res.status} ${stringifyError(error)}`.trim()
-        );
+        throw new DiscordApiError(options.label || "Discord API", res.status, error);
     }
 
     return res;
@@ -1143,6 +1159,8 @@ module.exports = {
 
     readError,
     stringifyError,
+    DiscordApiError,
+    isOAuthInvalidGrantError,
     getDiscordApiDiagnostics,
     apiFetch,
     safeApiFetch,
@@ -1176,6 +1194,8 @@ module.exports = {
     validateBotCanUseChannel,
 
     addMemberToGuild,
+    // Compatibility alias for older callback code. New code should use addMemberToGuild.
+    addGuildMember: addMemberToGuild,
     addRoleToMember,
 
     getChannel,
