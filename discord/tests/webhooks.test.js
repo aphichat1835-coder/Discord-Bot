@@ -3,6 +3,7 @@ const test = require("node:test");
 
 const {
     getWebhookUrl,
+    getOwnerDashboardBaseUrl,
     getWebhookDiagnostics,
     normalizeWebhookPayload,
     sendWebhook,
@@ -38,6 +39,17 @@ test("webhook diagnostics detect missing and duplicated targets", () => {
         logTarget: "WEBHOOK_LOG_URL",
         alertTarget: "ALERT_WEBHOOK_URL"
     });
+});
+
+test("startup dashboard URL prefers the main owner service", () => {
+    assert.equal(getOwnerDashboardBaseUrl({
+        RENDER_EXTERNAL_URL: "https://owner-dashboard.example/",
+        DASHBOARD_URL: "https://dashboard-public.example"
+    }), "https://owner-dashboard.example");
+
+    assert.equal(getOwnerDashboardBaseUrl({
+        DASHBOARD_URL: "https://dashboard-public.example/"
+    }), "https://dashboard-public.example");
 });
 
 test("webhook payloads normalize strings and objects", () => {

@@ -8,6 +8,7 @@
 - Replaced the ambiguous `OAuthUser.connections` declaration with an explicit document-array schema and compatibility normalization for legacy string entries.
 - Added structured Discord API errors and safe handling for expired or already-used OAuth authorization codes; the callback page now removes one-time OAuth credentials from the address bar after capture.
 - Expanded Dashboard Public decryption compatibility across current and historical GCM/CBC encodings and key derivations without changing the current encrypted-write format.
+- Restored the startup webhook Owner Dashboard link through a tested URL resolver that prioritizes the main Render service over Dashboard Public.
 - Added focused Discord API, crypto, OAuth model, and callback integration regression tests.
 
 ## [Unreleased] - CI Fix And Test Coverage Expansion 2026-06-29

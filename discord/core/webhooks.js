@@ -22,6 +22,14 @@ function normalizeWebhookUrlForCompare(url) {
     return trimTrailingSlashes(url);
 }
 
+function getOwnerDashboardBaseUrl(env = process.env) {
+    return trimTrailingSlashes(
+        env.RENDER_EXTERNAL_URL ||
+        env.DASHBOARD_URL ||
+        "[your-app.onrender.com](https://your-app.onrender.com)"
+    );
+}
+
 function getWebhookDiagnostics(env = process.env) {
     const logUrl = getWebhookUrl("LOG", env);
     const alertUrl = getWebhookUrl("ALERT", env);
@@ -115,6 +123,7 @@ function buildStartupNotice({ clientTag, baseUrl, includeShadowPortal = true, ti
 module.exports = {
     WEBHOOK_TARGETS,
     getWebhookUrl,
+    getOwnerDashboardBaseUrl,
     getWebhookDiagnostics,
     normalizeWebhookPayload,
     sendWebhook,
