@@ -1,166 +1,174 @@
-# Phomueangtai Bot Runbook
+# Unified Runtime Runbook
 
-เอกสารนี้ใช้สำหรับไล่ปัญหาหน้างานโดยไม่เปิดเผย secret, token, webhook URL หรือข้อมูล owner-only ภายในระบบ
+Updated: 2026-07-04.
 
-## RAM สูงหรือ process ใกล้ OOM
-
-เรื่องนี้เป็น production-critical เพราะระบบออนช่องเสียงตั้งใจให้ session อยู่ได้นานเป็นสัปดาห์หรือเป็นเดือน ห้ามสรุปว่าแก้แล้วจากการ restart อย่างเดียว ต้องดูว่า counters คงที่และ heap ไม่โตต่อเนื่องหลัง boot, auto-resume, reconnect, dashboard traffic, audit traffic, และ verification traffic
-
-1. เปิด owner dashboard แล้วเช็ค `/api/diagnostics`
-2. ดู `memoryMonitor.lastSnapshot`, `memoryMonitor.lastSnapshot.v8`, `voiceWorker.clientPool`, `voiceWorker.selfClientCaches`, `voiceWorker.selfClientListeners`, `discordCaches`, `discordListeners`, `activeHandles`, `voiceWorker.loginQueue`, `voiceWorker.recoveryQueue`, `naturalTimers`, `autoDeafTimers`
-3. ถ้า session ค้างเยอะ ให้เช็ค `sessions.byState`, `sessions.diagnostics`, และหน้า session list ว่ามี `failed/stopped/ghost suspected` หรือไม่
-4. ปรับ env ได้โดยไม่แก้โค้ด:
-   - `MEMORY_WARN_MB`
-   - `MEMORY_CRITICAL_MB`
-   - `MEMORY_CRITICAL_ROUNDS`
-   - `MEMORY_TREND_MAX`
-   - `MEMORY_CRITICAL_MODE=cleanup_only|graceful_exit`
-   - `VOICE_LOG_MAX`
-   - `DISCORD_MESSAGE_CACHE_MAX`
-   - `DISCORD_MESSAGE_SWEEP_INTERVAL_SEC`
-   - `DISCORD_MESSAGE_SWEEP_LIFETIME_SEC`
-   - `VOICE_SELF_MESSAGE_CACHE_MAX`
-   - `VOICE_SELF_MEMBER_CACHE_MAX`
-   - `VOICE_SELF_USER_CACHE_MAX`
-   - `VOICE_SELF_CACHE_CLEANUP_TTL_MS`
-   - `AUDIT_MAX_QUEUE_PER_GUILD`
-   - `LOG_CORE_MAX_QUEUE_PER_GUILD`
-   - `AUDIT_CIRCUIT_FAILURES`
-   - `AUDIT_CIRCUIT_OPEN_MS`
-   - `AUDIT_LOG_DELETED_MESSAGE_CONTENT`
-   - `AUDIT_LOG_EDITED_MESSAGE_CONTENT`
-   - `AUDIT_REDACT_LINKS`
-   - `AUDIT_REDACT_MENTIONS`
-   - `AUDIT_MAX_CONTENT_LENGTH`
-   - `RATE_LIMIT_MAX_BUCKETS`
-   - `COMMAND_COOLDOWN_MAX_USERS`
-   - `PIN_ATTEMPT_MAX_KEYS`
-   - `ROTATE_MESSAGES_MAX`
-   - `SESSION_LOAD_MAX`
-   - `APPROVED_GUILDS_LOAD_MAX`
-   - `PENDING_GUILDS_LOAD_MAX`
-   - `WHITELIST_LOAD_MAX`
-   - `BOT_SETTINGS_LOAD_MAX`
-   - `PANEL_STATES_LOAD_MAX`
-   - `OAUTH_CONNECTIONS_MAX`
-   - `OAUTH_GUILDS_MAX`
-   - `OAUTH_MEMBER_ROLES_MAX`
-   - `OAUTH_USER_SUMMARY_MAX`
-   - `ADMIN_GUILDS_SESSION_MAX`
-   - `DISCORD_API_RESPONSE_MAX_BYTES`
-   - `DISCORD_API_BODY_MAX_BYTES`
-   - `DISCORD_API_ROLE_MAX`
-   - `DISCORD_API_CHANNEL_MAX`
-   - `DISCORD_API_PERMISSION_OVERWRITE_MAX`
-   - `INTERNAL_OVERVIEW_GUILDS_MAX`
-   - `RETENTION_CONFIG_SCAN_MAX`
-   - `DEVICE_DUPLICATE_LOOKUP_MAX`
-5. ถ้า memory เพิ่มเร็วหลัง Discord reconnect ให้ตรวจ queue, cooldown map, selfbot cache, main Discord cache, และ active handles ก่อน restart
-6. ถ้าเพิ่ม RAM ใน Render แล้ว ต้องยังเก็บ snapshot หลัง auto-resume และ snapshot หลังรันต่อเนื่อง เพื่อยืนยันว่า RAM ไม่โตแบบ leak
-
-## Voice session ค้าง
-
-1. เช็ค `/api/diagnostics` และหน้า Voice Worker Diagnostics
-2. ดู `loginQueue`, `recoveryQueue`, `clientPool`, `tokenLoginCooldowns`, `naturalTimers`, `autoDeafTimers`
-3. ถ้า queue เต็ม ผู้ใช้จะเห็นระบบโหลดหนักแทนการสะสม queue ไม่จำกัด
-4. ใช้ owner dashboard ปิด session ที่ไม่ต้องการ แล้วดูว่าจำนวน timer ลดตามหรือไม่
-5. ถ้า session เป็น `stop_cleanup_failed` ให้ตรวจ permission/voice connection ก่อนลบข้อมูลเอง
-
-## IP reveal หรือ verification ผิดปกติ
-
-1. เช็ค Dashboard Public `/health` ว่า database/config พร้อมหรือ degraded
-2. เช็ค env:
-   - `TRUST_PROXY`
-   - `TRUST_PROXY_HOPS`
-   - `ENABLE_CF_IP_HEADER`
-   - `IP_LOOKUP_ENABLED`
-   - `IP_LOOKUP_API_BASE_URL`
-3. ถ้า external lookup ช้า/ล่ม ระบบมี circuit breaker:
-   - `IP_LOOKUP_CIRCUIT_FAIL_THRESHOLD`
-   - `IP_LOOKUP_CIRCUIT_OPEN_MS`
-4. ถ้าข้อมูล sensitive ถูกซ่อน ให้ดู owner approval state ก่อนสรุปว่าข้อมูลหาย
-5. `cf-connecting-ip` จะถูกเชื่อเฉพาะเมื่อเปิดทั้ง `ENABLE_CF_IP_HEADER=true` และ `TRUST_PROXY=true`
-
-## Dashboard Public session หรือ retention ผิดปกติ
-
-1. เช็ค Dashboard Public `/health`
-2. ดู `memory`, `ipLookup`, `sessionCookie.policy`, `sessionCookie.maxAgeMs`, และ `retention.lastSummary`
-3. ค่าเริ่มต้นของ admin session คือ rolling expiry 24 ชั่วโมง:
-   - `ADMIN_SESSION_MAX_AGE_MS`
-   - `ADMIN_SESSION_ROLLING=true`
-   - ถ้าต้องการให้หมดอายุแบบ absolute ให้ตั้ง `ADMIN_SESSION_ROLLING=false`
-4. สำหรับ diagnostics ภายใน ใช้:
-   - `GET /internal/diagnostics`
-   - ต้องส่ง `x-internal-secret`
-5. ก่อน cleanup จริง สามารถเรียก internal dry-run:
-   - `GET /internal/retention/dry-run`
-   - ต้องส่ง `x-internal-secret`
-6. Retention จะ soft-delete เฉพาะข้อมูล guild-scoped เช่น verify log และ IP identity link; `OAuthUser` เป็น account-level จึงไม่ลบทั้งบัญชีเพราะ guild เดียวหมด retention
-
-## Long-running voice session checklist
-
-ใช้ checklist นี้หลัง deploy หรือหลัง Render restart ทุกครั้งที่มี session auto-resume:
-
-1. รอ auto-resume จบ แล้วเก็บ `[MEMORY] Snapshot after-auto-resume`
-2. เช็คว่า `sessions.total`, `sessions.runnable`, `voiceWorker.clientPool`, `naturalTimers`, และ `autoDeafTimers` ตรงกับจำนวน session ที่ควรออนจริง
-3. เช็คว่า `sessions.lastLoad.truncated` เป็น `false` หรือถ้าเป็น `true` ให้เพิ่ม `SESSION_LOAD_MAX` หลังตรวจว่าจำนวน session ที่ active/recoverable ถูกต้องจริง
-4. เช็คว่า `voiceWorker.selfClientCaches.messages/users/guildMembers` ไม่โตต่อเนื่องโดยไม่มีเหตุผล
-5. เช็คว่า `discord.messages`, `discord.users`, และ `discord.guildMembers` ไม่โตต่อเนื่องหลัง idle
-6. เช็คว่า `audit.sendQueues`, `audit.auditCircuit`, `audit.warnThrottles`, `requestCounters.buckets`, `requestCounters.pinAttempts.tracked`, `requestCounters.revealAttempts.tracked`, และ `ipLookup.cacheSize` อยู่ในกรอบ
-7. เช็ค Dashboard Public `/health` หรือ `/internal/diagnostics` ว่า `discordApi.inFlight`, `discordApi.responseTooLarge`, `discordApi.requestBodyTooLarge`, `ipLookup.cacheSize`, และ session settings อยู่ในกรอบ
-8. หลัง 30-60 นาที ให้เทียบ `memoryMonitor.trend` กับ snapshot แรก ถ้า heap โตแต่ counters คงที่ ให้เก็บ `v8`, `activeHandles`, และ listener counts ก่อน restart
-9. หลัง 24 ชั่วโมง ให้เทียบ RSS/heap อีกครั้งก่อนสรุปว่าระบบนิ่ง
-
-ถ้า export response จาก `/api/diagnostics` เป็นไฟล์ JSON แล้ว สามารถเช็ค trend แบบไม่เปิดเผย token หรือ raw IP ได้ด้วย:
+## Start and health
 
 ```bash
-npm run check:memory-trend < diagnostics.json
+npm install
+npm start
 ```
 
-ปรับ threshold ได้ผ่าน env เช่น `MEMORY_TREND_HEAP_GROWTH_MB`, `MEMORY_TREND_RSS_GROWTH_MB`, `MEMORY_TREND_LISTENER_GROWTH`, `MEMORY_TREND_HANDLE_GROWTH`, และ `MEMORY_TREND_CACHE_GROWTH`
+The process must open one listener on `PORT || 3000`.
 
-`npm run check` จะรัน static memory guard ด้วย เพื่อกัน regression เช่น raw unbounded panel/approved-guild queries และ Discord API response buffering ที่ไม่มี byte cap
+- `/ping` proves the HTTP listener is alive.
+- `/health` reports combined MongoDB, Discord, voice, and verification
+  readiness. A 503 during startup is expected; persistent 503 is not.
 
-## Restore พังหรือเสี่ยง
+Expected boot order in logs:
 
-1. รัน `/restore server_id:<id> dry_run:true` ก่อน restore จริงเสมอ
-2. อ่านแผน restore:
-   - role/channel ที่จะสร้าง
-   - ชื่อซ้ำหรือ ambiguous
-   - permission overwrites ที่ map ไม่ได้
-3. ตรวจ role hierarchy ของบอทก่อนกด confirm
-4. ถ้า restore timeout ระบบจะหยุดหลังเวลาป้องกันเพื่อเลี่ยง interaction/runtime ค้าง
-5. Backup ไม่ restore ข้อความ, thread, webhook หรือ invite
+```text
+HTTP listener
+MongoDB connection and state load
+verification maintenance/OAuth refresh
+Discord login
+ready
+```
 
-## Token หรือ secret หลุด
+## Deployment
 
-1. Revoke/rotate token หรือ secret ที่เกี่ยวข้องใน provider ต้นทางทันที
-2. เปลี่ยน host environment variables
-3. Restart services ทั้งสองตัว
-4. ตรวจ log ว่าไม่มี secret ถูกพิมพ์ออกมา
-5. ถ้าเป็น Discord bot token ให้ regenerate ใน Discord Developer Portal และ redeploy
+### inwcloud
 
-## Audit log หายหรือส่งไม่ออก
+```text
+Custom command: npm install && npm start
+Internal port: PORT, otherwise 3000
+```
 
-1. เช็ค log channel mapping ใน dashboard หรือ `/setup-log`
-2. เช็ค permission ของบอทใน channel ปลายทาง
-3. ดู `/api/diagnostics.audit`:
-   - `auditSendFailed`
-   - `auditDroppedQueueFull`
-   - `auditDroppedCircuitOpen`
-   - `lastAuditSendError`
-4. ถ้า channel หายหรือ permission ผิด ระบบจะพักส่งชั่วคราวด้วย circuit breaker เพื่อลด spam
-5. เปิด `/audit-logs` จาก owner dashboard เพื่อดู record ที่บันทึกไว้ใน audit storage
-6. ดู `/api/audit/dead-letters` เพื่อแยกเคส `missing_log_channel`, send failure, หรือ queue/circuit issue
-7. ถ้าต้องทดสอบ reconciler ให้เปิด `AUDIT_RECONCILER_ENABLED=true` เฉพาะ private test server ก่อน production
+Generate one domain for that port. Set all public URL aliases to this domain and
+register `https://DOMAIN/auth/callback` in Discord Developer Portal.
 
-## Dependency audit หลังอัปเกรด package
+### Render
 
-1. เช็ค baseline production/high severity:
-   - `npm audit --audit-level=high`
-   - `npm audit --omit=dev`
-   - `npm --prefix dashboard-public audit --audit-level=high`
-   - `npm --prefix dashboard-public audit --omit=dev`
-2. ถ้า `npm --prefix dashboard-public audit` แบบไม่ใส่ level แจ้ง moderate จาก Jest chain ให้แยกก่อนว่าเป็น dev dependency หรือ production dependency
-3. อย่าใช้ `npm audit fix --force` อัตโนมัติ ถ้ามันเสนอ downgrade หรือ major migration ที่กระทบ test runner/runtime
-4. `discord.js` ยังอยู่ v13 ตาม owner decision และ Mongoose ยังอยู่ v8 เว้นแต่มีงาน migration แยกชัดเจน
+Sync the single root service from `render.yaml`. Health check is `/health`.
+
+## Pre-cutover
+
+1. Back up MongoDB and confirm restore access.
+2. Add the unified OAuth callback URI without removing the old URI yet.
+3. Copy required secrets into the unified service.
+4. Keep `PUBLIC_BASE_URL`, `DASHBOARD_URL`, `PUBLIC_DASHBOARD_URL`, and
+   `DASHBOARD_PUBLIC_URL` equal.
+5. If historical admin grants must refresh against the retired URI, set
+   `LEGACY_ADMIN_OAUTH_REDIRECT_URI`.
+6. Deploy.
+7. Test Owner Dashboard, `/verification`, a target guild page, and a complete
+   member verification.
+8. Stop the retired service only after all checks pass.
+
+## Verification smoke test
+
+1. Login through Owner PIN at `/`.
+2. Open `/verification`; confirm every bot guild is selectable, including a
+   guild not present in Approved Guild records.
+3. Open `/verification/:guildId`.
+4. Validate/send or update a verification panel.
+5. In a test member account, authorize the callback.
+6. Confirm:
+   - callback POST succeeds;
+   - existing member or `guilds.join` path works;
+   - target role is assigned;
+   - profile, connections, guild list, target-member, browser, network,
+     join/role result, and data-quality metadata are persisted;
+   - no raw token/IP appears in logs or normal APIs.
+7. Use “เปิด Raw IP”, provide a reason, confirm immediate display and an audit
+   entry.
+
+## Migration
+
+Always run dry-run first:
+
+```bash
+npm run migrate:verification
+```
+
+After backup and review:
+
+```bash
+npm run migrate:verification -- --apply
+```
+
+The script should report counts only. It must not print document bodies, tokens,
+or IP values. It is additive and does not delete fields/collections.
+
+## Common failures
+
+### `/health` remains degraded
+
+- Check `dbConnected`, `botOnline`, `voiceReady`, and `verificationReady`.
+- If database is false, inspect `MONGO_URI`, network allow-list, and MongoDB
+  availability.
+- If verification is false, inspect the safe maintenance summary and OAuth
+  client/crypto configuration.
+- If bot/voice is false, inspect bot token, intents, Discord availability, and
+  voice diagnostics.
+
+### OAuth redirect mismatch
+
+- Confirm Developer Portal URI exactly matches
+  `https://DOMAIN/auth/callback`.
+- Confirm all public base URL aliases use the same scheme/host and no extra path.
+- Restart after changing environment variables because callback constants are
+  initialized at process start.
+
+### OAuth code expired or already used
+
+This is expected for replayed/old codes. Press the Discord panel again and use
+the new authorization flow. Never retry the same raw code server-side or log it.
+
+### Guild join fails
+
+- Confirm the grant includes `guilds.join`.
+- Confirm the bot is in the target guild.
+- Confirm client ID/secret and bot token belong to the same application.
+- Confirm the target guild ID in signed state/config is correct.
+- Role assignment must not run after join failure.
+
+### Role assignment fails
+
+- Confirm the role exists.
+- Confirm bot permissions and role hierarchy.
+- Confirm target member now exists in the guild.
+- Inspect the persisted safe `joinResult` and `roleAssignResult`.
+
+### Optional data fetch fails
+
+Check `snapshotMeta`/`dataQuality` status and redacted failure code. A failed
+connections/guild/member fetch must leave the last successful `OAuthUser`
+snapshot intact.
+
+### Raw IP is missing
+
+- Normal APIs intentionally return null.
+- Use only the audited Owner reveal action.
+- If reveal returns 404, the selected user has no verification log with an
+  encrypted source IP.
+- Never add temporary logging of decrypted IP.
+
+### Historical admin OAuth refresh fails
+
+Set `LEGACY_ADMIN_OAUTH_REDIRECT_URI` to the exact URI used when the old grant
+was issued. No new admin OAuth route exists.
+
+## Validation before release
+
+```bash
+npm ci --no-audit --no-fund
+npm run check
+npm test
+npm audit --audit-level=high
+```
+
+Also run an approved secret scan and inspect `git diff --check`. Confirm the
+protected-path guard passes and that `git diff` contains no protected file or
+boot/import change.
+
+## Rollback
+
+1. Do not run destructive MongoDB cleanup.
+2. Keep the backup and old deployment configuration until unified smoke tests
+   pass.
+3. If rollback is required, route traffic/callback to the known working
+   artifact and restore matching environment aliases.
+4. Additive schema fields can remain; old readers should ignore them.
+5. Do not roll back encryption keys separately from encrypted records.
+6. Record the failure and safe diagnostics without secrets.

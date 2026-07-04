@@ -15,6 +15,7 @@ const NAV_LINKS = [
     ["/commands", "⚡ คำสั่ง"],
     ["/whitelist", "📋 Whitelist"],
     ["/approved", "✅ Approved"],
+    ["/verification", "🛡️ Verification"],
     ["/join-campaign", "📥 Join"],
     ["/docs", "📖 คู่มือ"],
     ["/logs", "📜 Logs"],

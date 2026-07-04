@@ -1,12 +1,12 @@
 const crypto = require("node:crypto");
-const OAuthUser = require("../../dashboard-public/models/OAuthUser");
-const discordApi = require("../../dashboard-public/utils/discordAPI");
-const { decryptToken } = require("../../dashboard-public/utils/crypto");
+const OAuthUser = require("../verification/models/OAuthUser");
+const discordApi = require("../verification/utils/discordAPI");
+const { decryptToken } = require("../verification/utils/crypto");
 const {
     buildStoredOAuthUpdate,
     getVerificationRedirectUri,
     getAdminRedirectUri
-} = require("../../dashboard-public/utils/oauthTokenLifecycle");
+} = require("../verification/utils/oauthTokenLifecycle");
 const { sendLogWebhook } = require("../core/webhooks");
 const { safeError } = require("../core/safeLogger");
 

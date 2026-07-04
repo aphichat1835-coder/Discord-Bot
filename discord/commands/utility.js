@@ -948,7 +948,13 @@ async function handleWhitelist(interaction, sessionManager) {
 //  ⚙️  SETUP
 // ════════════════════════════════════════════════════════════════════════════
 async function handleSetup(interaction) {
-    const dashUrl = process.env.DASHBOARD_URL;
+    const dashUrl = String(
+        process.env.PUBLIC_BASE_URL ||
+        process.env.DASHBOARD_URL ||
+        process.env.PUBLIC_DASHBOARD_URL ||
+        process.env.DASHBOARD_PUBLIC_URL ||
+        ""
+    ).replace(/\/+$/, "");
 
     if (!dashUrl) {
         return interaction.reply({
@@ -957,19 +963,18 @@ async function handleSetup(interaction) {
         });
     }
 
-    const isAdmin = interaction.member.permissions.has("ADMINISTRATOR") || interaction.user.id === interaction.guild.ownerId;
-    if (!isAdmin) {
+    if (interaction.user.id !== config.system.ownerId) {
         return interaction.reply({
-            content: `> ${config.emojis.no_entry} ต้องมีสิทธิ์ Administrator เพื่อตั้งค่าบอท`,
+            content: `> ${config.emojis.no_entry} Dashboard จัดการได้เฉพาะเจ้าของบอท`,
             ephemeral: true
         });
     }
 
-    const loginUrl = `${dashUrl}/oauth/admin?guild_id=${interaction.guild.id}`;
+    const loginUrl = `${dashUrl}/verification/${interaction.guild.id}`;
 
     const embed = new MessageEmbed()
         .setColor(config.system.themeColors.info)
-        .setTitle(`${config.emojis.settings_icon} ตั้งค่าบอทในเซิร์ฟเวอร์ของคุณ`)
+        .setTitle(`${config.emojis.settings_icon} Owner Verification Dashboard`)
         .setDescription(
             `กดลิงก์ด้านล่างเพื่อเข้าสู่ระบบและตั้งค่าบอทในเซิร์ฟเวอร์ **${interaction.guild.name}**\n\n` +
             `> **[🔗 เข้าสู่ Dashboard](${loginUrl})**\n\n` +
@@ -977,9 +982,9 @@ async function handleSetup(interaction) {
             `— ✅ ระบบยืนยันตัวตน\n` +
             `— 📊 ดูสถิติสมาชิก\n` +
             `— 🔒 ตั้งค่าความปลอดภัย\n\n` +
-            `*ลิงก์นี้ใช้ได้เฉพาะคุณเท่านั้น*`
+            `*หน้าเว็บยังต้องผ่าน Owner PIN*`
         )
-        .setFooter({ text: 'ลิงก์หมดอายุเมื่อ session หมด' })
+        .setFooter({ text: 'Unified Owner Dashboard' })
         .setTimestamp();
 
     try {

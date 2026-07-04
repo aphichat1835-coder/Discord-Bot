@@ -23,7 +23,7 @@ args = "syntax-discord"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "syntax-dashboard"
+args = "syntax-scripts"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
@@ -39,15 +39,15 @@ args = "test-voice"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "test-dashboard"
+args = "test-verification"
 
 [[workflows.workflow]]
-name = "test-dashboard"
+name = "test-verification"
 author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "npm --prefix dashboard-public test"
+args = "npm run test:verification"
 
 [workflows.workflow.metadata]
 isValidation = true
@@ -64,12 +64,12 @@ args = "npm run check:all"
 isValidation = true
 
 [[workflows.workflow]]
-name = "syntax-dashboard"
+name = "syntax-scripts"
 author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "npm run check:dashboard:all"
+args = "npm run check:scripts"
 
 [workflows.workflow.metadata]
 isValidation = true

@@ -9,16 +9,16 @@ function read(relativePath) {
             return fs.readFileSync("discord/commands.js", "utf8");
         case "discord/index/views.js":
             return fs.readFileSync("discord/index/views.js", "utf8");
-        case "dashboard-public/utils/discordAPI.js":
-            return fs.readFileSync("dashboard-public/utils/discordAPI.js", "utf8");
+        case "discord/verification/utils/discordAPI.js":
+            return fs.readFileSync("discord/verification/utils/discordAPI.js", "utf8");
         case "discord/sessionManager.js":
             return fs.readFileSync("discord/sessionManager.js", "utf8");
-        case "dashboard-public/routes/api.js":
-            return fs.readFileSync("dashboard-public/routes/api.js", "utf8");
-        case "dashboard-public/routes/guildDashboard.js":
-            return fs.readFileSync("dashboard-public/routes/guildDashboard.js", "utf8");
-        case "dashboard-public/utils/oauthUserSummary.js":
-            return fs.readFileSync("dashboard-public/utils/oauthUserSummary.js", "utf8");
+        case "discord/verification/ownerService.js":
+            return fs.readFileSync("discord/verification/ownerService.js", "utf8");
+        case "discord/verification/routes/guildDashboard.js":
+            return fs.readFileSync("discord/verification/routes/guildDashboard.js", "utf8");
+        case "discord/verification/utils/oauthUserSummary.js":
+            return fs.readFileSync("discord/verification/utils/oauthUserSummary.js", "utf8");
         default:
             throw new Error(`Unexpected memory guard file: ${relativePath}`);
     }
@@ -60,14 +60,14 @@ assertNotContains(
 
 assertContains(
     findings,
-    "dashboard-public/utils/discordAPI.js",
+    "discord/verification/utils/discordAPI.js",
     /DISCORD_API_RESPONSE_MAX_BYTES/,
     "Discord API helper must keep a response byte limit"
 );
 
 assertContains(
     findings,
-    "dashboard-public/utils/discordAPI.js",
+    "discord/verification/utils/discordAPI.js",
     /totalBytes\s*>\s*DISCORD_API_RESPONSE_MAX_BYTES/,
     "Discord API helper must reject oversized responses before Buffer.concat"
 );
@@ -87,8 +87,8 @@ assertContains(
 );
 
 for (const routeFile of [
-    "dashboard-public/routes/api.js",
-    "dashboard-public/routes/guildDashboard.js"
+    "discord/verification/ownerService.js",
+    "discord/verification/routes/guildDashboard.js"
 ]) {
     assertNotContains(
         findings,
@@ -100,7 +100,7 @@ for (const routeFile of [
 
 assertContains(
     findings,
-    "dashboard-public/utils/oauthUserSummary.js",
+    "discord/verification/utils/oauthUserSummary.js",
     /\$size:\s*\{\s*\$ifNull:\s*\['\$connections'/,
     "OAuth user summary loader must count connections without returning the array"
 );

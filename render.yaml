@@ -1,6 +1,6 @@
 # Render Blueprint for Phomueangtai Enterprise Discord System
 #
-# This blueprint defines the two Render Web Services used by this project.
+# This blueprint defines the single Render Web Service used by this project.
 # It intentionally does NOT store secret environment values in the repo.
 # Add all required environment variables manually in Render Dashboard using .env.example as the reference.
 #
@@ -13,7 +13,7 @@ previews:
   generation: manual
 
 services:
-  # Service 1: Main Discord Bot / Owner Dashboard
+  # Bot + voice/session + Owner Dashboard + public OAuth verification callback
   - type: web
     runtime: node
     name: discord-bot-4hjp
@@ -23,7 +23,7 @@ services:
     rootDir: .
     buildCommand: npm install
     startCommand: npm start
-    healthCheckPath: /ping
+    healthCheckPath: /health
     autoDeployTrigger: off
     maxShutdownDelaySeconds: 60
     envVars:
@@ -34,6 +34,10 @@ services:
       - key: MONGO_URI
         sync: false
       - key: TOKEN_MANAGER
+        sync: false
+      - key: DISCORD_CLIENT_ID
+        sync: false
+      - key: DISCORD_CLIENT_SECRET
         sync: false
       - key: API_SECRET
         sync: false
@@ -65,56 +69,7 @@ services:
         value: "1"
       - key: VOICE_DEBUG_MULTI_CLIENT
         value: "false"
-
-  # Service 2: Dashboard Public / OAuth2 Verification Dashboard
-  - type: web
-    runtime: node
-    name: discordbot-dashboard-public
-    region: singapore
-    plan: free
-    branch: main
-    rootDir: dashboard-public
-    buildCommand: npm install
-    startCommand: npm start
-    healthCheckPath: /ping
-    autoDeployTrigger: off
-    maxShutdownDelaySeconds: 60
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: NODE_VERSION
-        value: "24"
-      - key: MONGO_URI
-        sync: false
-      - key: TOKEN_MANAGER
-        sync: false
-      - key: DISCORD_CLIENT_ID
-        sync: false
-      - key: DISCORD_CLIENT_SECRET
-        sync: false
-      - key: ENCRYPTION_KEY
-        sync: false
-      - key: SESSION_SECRET
-        sync: false
-      - key: API_SECRET
-        sync: false
-      - key: INTERNAL_API_SECRET
-        sync: false
-      - key: VERIFY_STATE_SECRET
-        sync: false
-      - key: PUBLIC_BASE_URL
-        sync: false
-      - key: DASHBOARD_PUBLIC_URL
-        sync: false
-      - key: PUBLIC_DASHBOARD_URL
-        sync: false
-      - key: DASHBOARD_URL
-        sync: false
       - key: STORE_OAUTH_TOKENS
         value: "true"
-      - key: TRUST_PROXY
-        value: "true"
-      - key: TRUST_PROXY_HOPS
-        value: "1"
       - key: ENABLE_CF_IP_HEADER
         value: "false"

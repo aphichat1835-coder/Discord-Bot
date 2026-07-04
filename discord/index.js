@@ -31,6 +31,8 @@ const memoryMonitor  = require("./index/memoryMonitor");
 const { validateRequiredEnv } = require("./core/env");
 const { createHttpApp } = require("./core/http");
 const { isFeatureEnabled } = require("./core/featureFlags");
+const { registerVerificationRuntime } = require("./verification/runtime");
+const verificationLifecycle = require("./verification/lifecycle");
 const {
     sendLogWebhook,
     buildStartupNotice,
@@ -231,12 +233,20 @@ registerViewRoutes({
 if (typeof registerVerifyOwnerRoutes === "function") {
     try {
         registerVerifyOwnerRoutes({ app, express, API_SECRET });
-        console.log("[VERIFY-OWNER] 🔐 Owner IP reveal approval dashboard registered at /verify-owner");
+        console.log("[VERIFY-OWNER] 🔐 Audited owner verification APIs registered");
     } catch (err) {
         console.error("[VERIFY-OWNER] ❌ Failed to register:", err.message);
     }
 } else {
     console.warn("[VERIFY-OWNER] ⚠️ /verify-owner not registered because discord/index/verifyOwner.js is missing or invalid.");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  ✅  UNIFIED VERIFICATION RUNTIME (public callback + owner-only management)
+// ════════════════════════════════════════════════════════════════════════════
+if (isFeatureEnabled("verification")) {
+    registerVerificationRuntime({ app, express, client, sessionManager });
+    console.log("[VERIFICATION] ✅ Unified routes registered on the main HTTP server");
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -269,7 +279,8 @@ system.initShutdown({
     client,
     memoryMonitor,
     auditLogger,
-    auditReconcilerScheduler
+    auditReconcilerScheduler,
+    verificationRuntime: verificationLifecycle
 });
 
 if (isFeatureEnabled("memoryMonitor")) {
@@ -321,6 +332,16 @@ async function boot() {
 
     await sessionManager.loadDatabase();
     if (shouldAbortBoot("database load")) return;
+
+    if (isFeatureEnabled("verification")) {
+        try {
+            await verificationLifecycle.startVerificationRuntime();
+            console.log("[VERIFICATION] ✅ Maintenance and OAuth refresh lifecycle started");
+        } catch (err) {
+            console.error("[VERIFICATION] ❌ Runtime startup failed:", err.message);
+            process.exit(1);
+        }
+    }
 
     // โหลด disabled commands
     try {

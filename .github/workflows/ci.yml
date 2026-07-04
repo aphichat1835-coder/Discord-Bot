@@ -12,6 +12,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
@@ -29,17 +31,16 @@ jobs:
       - name: Verify Discord runtime dependencies
         run: node -e "require('discord.js'); require('@discordjs/voice'); console.log('discord runtime ok')"
 
-      - name: Install dashboard dependencies
-        run: npm --prefix dashboard-public ci --no-audit --no-fund
+      - name: Verify unified verification test runner
+        run: node -e "require.resolve('jest-circus/runner'); require('jest-resolve'); console.log('verification jest ok')"
 
-      - name: Verify dashboard test runner
-        run: cd dashboard-public && node -e "require.resolve('jest-circus/runner'); require('jest-resolve'); console.log('dashboard jest ok')"
+      - name: Protected path guard
+        env:
+          PROTECTED_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: npm run check:protected
 
       - name: Syntax check (Discord)
         run: npm run check:all
-
-      - name: Syntax check (Dashboard)
-        run: npm run check:dashboard:all
 
       - name: Syntax check (Scripts)
         run: npm run check:scripts
@@ -53,11 +54,8 @@ jobs:
       - name: Voice tests
         run: npm run test:voice
 
-      - name: Dashboard tests
-        run: npm --prefix dashboard-public test
+      - name: Verification tests
+        run: npm run test:verification
 
       - name: Root audit
         run: npm audit --audit-level=high
-
-      - name: Dashboard audit
-        run: npm --prefix dashboard-public audit --audit-level=high

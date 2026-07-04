@@ -58,7 +58,7 @@ const slashCommandsData = [
     { name: "stats",      description: "ดูสถิติการทำงานของระบบ" },
     { name: "serverinfo", description: "แสดงข้อมูลรายละเอียดของเซิร์ฟเวอร์แบบเจาะลึก" },
     { name: "setup-log",  description: "ติดตั้งระบบ Audit Log (ยศ/หมวดหมู่/ห้อง Log)" },
-    { name: "setup",      description: "รับลิงก์ Dashboard เพื่อตั้งค่าบอทในเซิร์ฟเวอร์ของคุณ" },
+    { name: "setup",      description: "รับลิงก์ Owner Dashboard สำหรับตั้งค่าบอท" },
     { name: "ping",       description: "ตรวจสอบ Latency และสถานะระบบ" },
 
     {

@@ -7,18 +7,17 @@
   "scripts": {
     "start": "node -r ./discord/core/loadEnv discord/index.js",
     "dev": "node -r ./discord/core/loadEnv discord/index.js",
-    "check": "npm run check:all && npm run check:dashboard:all && npm run check:scripts && npm run check:memory-guards",
-    "check:all": "find discord -type f -name '*.js' ! -name 'systemProvider.js' -print0 | xargs -0 -n1 node --check",
-    "check:dashboard": "npm run check:dashboard:all",
-    "check:dashboard:all": "cd dashboard-public && find . -path './node_modules' -prune -o -type f -name '*.js' -print0 | xargs -0 -n1 node --check",
+    "check": "npm run check:protected && npm run check:all && npm run check:scripts && npm run check:memory-guards",
+    "check:protected": "node scripts/checkProtectedPaths.js",
+    "check:all": "find discord -path 'discord/systemProvider' -prune -o -type f -name '*.js' ! -path 'discord/systemProvider.js' -print0 | xargs -0 -n1 node --check",
     "check:scripts": "find scripts -type f -name '*.js' -print0 | xargs -0 -n1 node --check",
     "check:memory-guards": "node scripts/checkMemoryGuards.js",
     "check:memory-trend": "node scripts/checkMemoryTrend.js",
-    "test": "npm run test:discord && npm run test:voice && npm --prefix dashboard-public test",
+    "migrate:verification": "node -r ./discord/core/loadEnv scripts/migrateVerificationSnapshots.js",
+    "test": "npm run test:discord && npm run test:voice && npm run test:verification",
     "test:discord": "find discord/tests -name '*.test.js' ! -name 'voice*.test.js' -print0 | xargs -0 -r node --test",
     "test:voice": "node --test discord/tests/voice*.test.js",
-    "dashboard:start": "npm --prefix dashboard-public start",
-    "dashboard:dev": "npm --prefix dashboard-public run dev"
+    "test:verification": "jest --runInBand --testPathPatterns=verification-tests/"
   },
   "engines": {
     "node": "24.x"
@@ -28,9 +27,19 @@
     "discord.js": "^13.17.1",
     "discord.js-selfbot-v13": "^3.7.1",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.5.2",
     "libsodium-wrappers": "^0.8.4",
     "mongoose": "^8.24.1",
     "opusscript": "^0.1.1",
     "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "jest": "^30.4.2"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "<rootDir>/verification-tests/**/*.test.js"
+    ]
   }
 }

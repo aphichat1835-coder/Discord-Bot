@@ -12,7 +12,7 @@ The project includes:
 - Slash commands.
 - Voice/session subsystem.
 - Owner dashboard.
-- Dashboard Public and guild admin dashboard.
+- Owner-only verification dashboard integrated into the main web runtime.
 - OAuth2 verification.
 - MongoDB persistence.
 - Audit logging.
@@ -58,10 +58,10 @@ Preserve these decisions unless the owner explicitly approves a specific change:
 
 - Keep `discord.js` v13 for now.
 - Keep the voice/session subsystem.
-- Keep the current dashboard structure.
-- Keep the current verification architecture.
+- Keep the Owner Dashboard and integrated verification dashboard structure.
+- Keep verification in the single main runtime unless the owner approves another change.
 - Keep owner/admin controls.
-- Keep one repository with two services and shared MongoDB.
+- Keep one repository, one Node process, one public HTTP port, and one shared Mongoose connection.
 - Keep `discord/systemProvider.js` protected.
 
 Do not re-suggest these without new implementation evidence and explicit owner approval:
@@ -72,12 +72,13 @@ Do not re-suggest these without new implementation evidence and explicit owner a
 - Removing dashboards.
 - Removing verification.
 - Removing owner/admin controls.
-- Splitting the repository immediately.
-- Replacing shared MongoDB only because both services use it.
+- Splitting the repository or verification runtime.
+- Adding a second MongoDB connection for verification.
 
 ## Protected File Lock
 
 `discord/systemProvider.js` and all files inside `discord/systemProvider/` are OWNER-LOCKED.
+The lock applies to the root file and the entire directory recursively, including future files added below that directory.
 
 The protected set currently includes:
 
@@ -101,6 +102,13 @@ Owner approves editing discord/systemProvider[/filename] for [specific reason].
 ```
 
 Without that approval, leave all files in the protected set and their boot/import references unchanged.
+
+Repository enforcement:
+
+- `.github/CODEOWNERS` requests owner review for both protected paths.
+- `npm run check:protected` rejects protected-path changes in the current working tree or CI comparison range.
+- `npm run check:all` excludes the protected root file and directory from broad syntax scanning.
+- These checks are defense in depth and do not replace explicit current-task owner approval.
 
 ## Refactor Policy
 

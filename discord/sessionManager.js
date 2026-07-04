@@ -312,6 +312,11 @@ async function connectDB() {
     await flushPendingSessionDeletes();
 }
 
+async function disconnectDB() {
+    if (mongoose.connection.readyState === 0) return;
+    await mongoose.disconnect();
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  🔑 REGION 6: VOICE SESSION IDENTITY HELPERS
 // ════════════════════════════════════════════════════════════════════════════
@@ -1689,6 +1694,7 @@ function getSessionShortId(sessionId) {
 module.exports = {
     // DB
     connectDB,
+    disconnectDB,
     loadDatabase,
     saveDatabase,
     getDatabaseStatus,

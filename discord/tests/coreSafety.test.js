@@ -5,7 +5,7 @@ const { validateRequiredEnv } = require("../core/env");
 const { createHttpApp } = require("../core/http");
 const { getFeatureFlags, isFeatureEnabled } = require("../core/featureFlags");
 const service1Logger = require("../core/safeLogger");
-const service2Logger = require("../../dashboard-public/utils/safeLogger");
+const service2Logger = require("../verification/utils/safeLogger");
 
 function createFakeExpress() {
     const app = {

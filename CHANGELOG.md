@@ -1,5 +1,41 @@
 # Changelog
 
+## [Unreleased] - Unified Bot And Verification Runtime 2026-07-04
+
+### Changed
+
+- Moved the active OAuth verification models, routes, utilities, views, and
+  assets into `discord/verification/` and mounted them in the main Express app.
+- Changed deployment to one Node process, one `npm start`, one Mongoose runtime
+  connection, and one public port for bot, voice/session, Owner Dashboard, and
+  verification.
+- Made `/verification` and `/verification/:guildId` Owner-PIN-only management
+  pages for every guild in the bot cache; kept `/auth/callback` public and
+  rate-limited.
+- Replaced Owner cross-service HTTP calls with in-process model/service calls.
+- Removed the standalone Dashboard Public server/package, admin OAuth
+  login/session routes, guild-admin permission/session middleware,
+  `connect-mongo`, and the second Render service.
+- Preserved the existing verification collections, encryption compatibility,
+  signed state, panel revisions, `guilds.join`, Join Campaign, retention, join,
+  and role-assignment behavior.
+- Historical encrypted `adminOAuth` fields remain refreshable, including an
+  optional legacy redirect override; no route creates new admin grants.
+- Removed arbitrary persistence caps for returned connections, guilds,
+  connection integrations, browser languages, and target-member roles after
+  payload byte limits pass.
+- Added additive category-level data-quality metadata and failure-preserving
+  writes so optional fetch failures do not clear successful snapshots.
+- Restricted raw IP to a PIN + CSRF + reason + audit Owner action; normal
+  list/detail APIs never decrypt or expose it.
+- Added a dry-run/apply additive snapshot migration that never selects,
+  decrypts, prints, or deletes token/raw-IP data.
+- Consolidated root verification tests, CI, Render configuration, environment
+  documentation, and operational documentation around the unified runtime.
+- Added `.github/CODEOWNERS` and `scripts/checkProtectedPaths.js` coverage for both `discord/systemProvider.js` and the full `discord/systemProvider/` directory.
+- Added the protected-path guard to local validation and CI, and excluded the protected directory from broad syntax scanning.
+- Documented the five memory-trend diagnostic threshold variables already consumed by `scripts/checkMemoryTrend.js`.
+
 ## [Unreleased] - Dashboard Public OAuth Runtime Fixes 2026-07-03
 
 ### Fixed
@@ -159,7 +195,7 @@
 - Updated `.env.example`, `SECURITY.md`, and `ARCHITECTURE.md` with non-secret Trace Eraser guard controls while keeping hidden owner/system operational details out of public documentation.
 - Updated session documentation and placeholders for owner dashboard and Dashboard Public rolling session controls.
 - Updated OAuth token storage documentation and placeholders to reflect persistent encrypted token storage with refresh maintenance.
-- Hardened owner Join Campaign defaults so execution is disabled unless explicit target guild IDs are allowlisted, and kept admin OAuth login scoped to `identify guilds` while verification OAuth remains eligible for `guilds.join`.
+- Hardened owner Join Campaign defaults so execution is disabled unless explicit target guild IDs are allowlisted. Admin OAuth originally remained scoped to `identify guilds`; the later OAuth scope update above adds `guilds.join`.
 
 ### Notes
 

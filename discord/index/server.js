@@ -32,6 +32,7 @@ const { sendLogWebhook } = require("../core/webhooks");
 const { getFeatureFlags } = require("../core/featureFlags");
 const { registerAuditWebBundle } = require("./auditWebBundle");
 const { registerJoinCampaignRoutes } = require("./joinCampaignRoutes");
+const { getVerificationDiagnostics } = require("../verification/lifecycle");
 
 function safeRedirectPath(value) {
     const raw = String(value || "/").trim();
@@ -469,7 +470,13 @@ function registerRoutes({
         const botOnline = client?.isReady?.() ?? false;
         const dbStatus = sessionManager.getDatabaseStatus?.();
         const dbConnected = dbStatus?.connected === true;
-        const ready = botOnline && dbConnected;
+        const verification = getVerificationDiagnostics();
+        const verificationRequired = getFeatureFlags().verification !== false;
+        const verificationReady = !verificationRequired || verification.ready === true;
+        const voiceRequired = getFeatureFlags().voice !== false;
+        const voice = voiceWorker.getWorkerDiagnostics?.() || null;
+        const voiceReady = !voiceRequired || (botOnline && dbConnected && !!voice);
+        const ready = botOnline && dbConnected && verificationReady && voiceReady;
 
         res.status(ready ? 200 : 503).json({
             status: ready ? "ok" : "degraded",
@@ -479,7 +486,11 @@ function registerRoutes({
             botOnline,
             bot: botOnline,
             dbConnected,
-            db: dbConnected
+            db: dbConnected,
+            voiceReady,
+            voice,
+            verificationReady,
+            verification
         });
     });
 

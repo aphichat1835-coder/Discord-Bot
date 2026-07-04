@@ -1,7 +1,7 @@
 /* eslint-disable complexity -- Verification setup flow is behavior-sensitive; refactor separately. */
 /*
 ================================================================================
-  Verification Command Module — Dashboard Public v2 compatible
+  Verification Command Module — unified runtime compatible
 
   verify_type:
   - false = กดปุ่มได้ยศเลยแบบเดิม
@@ -21,12 +21,12 @@ const crypto = require("node:crypto");
 const { MessageEmbed, MessageActionRow, MessageButton } = require("discord.js");
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");
-const { createCompactCallbackState } = require("../../dashboard-public/utils/state");
+const { createCompactCallbackState } = require("../verification/utils/state");
 
 let GuildConfig = null;
 
 try {
-    GuildConfig = require("../../dashboard-public/models/GuildConfig");
+    GuildConfig = require("../verification/models/GuildConfig");
 } catch (err) {
     console.warn("[VERIFY] GuildConfig model unavailable:", err.message);
 }

@@ -1,133 +1,139 @@
 # Phomueangtai Personal Multi-Tool Discord Bot
 
-This repository contains a personal multi-tool Discord bot with two Node.js services and shared MongoDB persistence. It is not a verification-only bot. The supported deployment runtime is Node.js 24.
+Personal Discord bot with slash commands, voice/session automation, audit logging,
+protection features, role buttons, Owner Dashboard, and OAuth2 verification.
 
-## What This Project Includes
+## Runtime shape
 
-- Main Discord bot runtime using `discord.js` v13.
-- Slash commands for information, moderation, utility/admin work, backup/restore, audit log setup, dashboard setup, and verification panel setup.
-- Voice/session subsystem with persistent session state, token encryption, reconnect handling, health recovery, owner dashboard visibility, and session controls.
-- Production memory stability is a first-class requirement: voice sessions are expected to run long term, so caches, timers, queues, log buffers, and dashboard diagnostics must remain bounded.
-- Voice sessions run with a target-only lean cache mode by default so a token used for one voice session does not keep unnecessary guild/channel/message/role/emoji caches from unrelated servers.
-- Main owner dashboard served by Service 1 for status, sessions, settings, command toggles, whitelist, approved guilds, Join Campaign controls, logs, and owner controls.
-- Dashboard Public served by Service 2 for Discord OAuth2 verification, guild admin configuration, verification panels, logs, members, stats, risk summaries, and internal APIs.
-- MongoDB/Mongoose persistence shared by both services.
-- Audit logging, protection checks, role buttons, approved/pending guild flows, and protected owner/system hook integration.
+The repository deploys as one Node.js 24 process:
 
-## Runtime Baseline
-
-Both services target Node.js 24.
-
-Current major dependency decisions:
-
-- Keep `discord.js` v13 unless the owner explicitly approves a v14 migration.
-- Keep Mongoose on v8 unless a scoped persistence migration is approved.
-- Service 1 uses `@discordjs/voice` 0.19.x and `opusscript` 0.1.x.
-- Service 2 uses `connect-mongo` 6.x, `express-rate-limit` 8.x, and Jest 30.
-
-## Services
-
-### Service 1 - Main Discord Bot / Owner System
-
-```txt
-Entry: discord/index.js
-Root directory: repository root
-Start command: npm start
-Health routes: /ping, /health
+```text
+npm start
+  ├─ Express / Owner Dashboard
+  ├─ public OAuth callback
+  ├─ MongoDB persistence and verification maintenance
+  ├─ Discord bot
+  └─ voice/session subsystem
 ```
 
-Primary responsibilities:
+Only `process.env.PORT || 3000` is opened. Verification reuses the Mongoose
+connection owned by `discord/sessionManager.js`; it does not call
+`mongoose.connect()` during normal runtime.
 
-- Discord client login and bot lifecycle.
-- Slash command registry and interaction routing.
-- Voice/session lifecycle and panel controls.
-- Owner dashboard HTML and JSON/control APIs.
-- Audit logger, protection hooks, role buttons, guild approval flow, and protected owner/system hook initialization.
+Boot order is HTTP → MongoDB → verification maintenance/token refresh → Discord
+login. Shutdown stops verification maintenance, voice/session work, Discord, the
+database connection, and the HTTP server.
 
-### Service 2 - Dashboard Public / Verification Dashboard
+## Web routes
 
-```txt
-Entry: dashboard-public/index.js
-Root directory: dashboard-public/
-Start command: npm start
-Health routes: /ping, /health
-```
+| Route | Access | Purpose |
+| --- | --- | --- |
+| `GET /` | Owner PIN | Main Owner Dashboard |
+| `GET /verification` | Owner PIN | Select any guild currently cached by the bot |
+| `GET /verification/:guildId` | Owner PIN | Verification config, panels, members, logs, stats, risk, and sensitive review |
+| `GET /auth/callback` | Public | OAuth callback page |
+| `POST /auth/callback` | Public, rate-limited | Exchange a one-time OAuth code and run verification |
+| `/api/guilds` | Owner PIN | Bot guild list |
+| `/api/guild/:guildId/*` | Owner PIN; CSRF on writes | Verification management APIs |
+| `POST /api/verify-owner/guild/:guildId/user/:userId/reveal-ip` | Owner PIN + CSRF + reason | Audited raw-IP reveal |
+| `GET /ping` | Public | Liveness |
+| `GET /health` | Public | MongoDB, Discord, voice, and verification readiness |
 
-Primary responsibilities:
+There is no guild-admin OAuth login and no standalone `dashboard-public`
+service. Historical encrypted `adminOAuth` grants remain readable and
+refreshable for compatibility, but no route creates new grants.
 
-- Discord OAuth2 verification callback.
-- Admin OAuth login and guild selection.
-- Guild verification settings, panel send/update/disable, logs, members, stats, and risk views.
-- Internal owner-dashboard APIs for overview, members, stats, and owner-approved raw IP reveal workflow.
+## Verification data contract
 
-Both services intentionally share MongoDB. This is an owner-approved architecture decision.
+Verification data lives under `discord/verification/` and keeps the existing
+MongoDB model/collection names and encryption format.
 
-## Quick Start
+- Discord profile: ID, username/global name/discriminator/display tag,
+  avatar/banner, accent color, locale, MFA/email state, raw flags, decoded badge
+  labels, and snowflake-derived account creation/age.
+- Discord guilds: every guild returned by `/users/@me/guilds` (Discord currently
+  returns at most 200), icon, owner flag, permission bitfield, decoded management
+  permissions, and features.
+- Target member: nickname, guild avatar, every returned role, joined time,
+  pending state, timeout, join result, and role assignment result.
+- Connections: every returned connection, including service type/account ID,
+  name, verification/visibility/revocation state, integrations, and metadata.
+- Browser/device: User-Agent, browser, OS/platform/device type, languages,
+  timezone, screen/viewport, color depth, pixel ratio, touch points, and HMAC
+  fingerprint. Fingerprint source material is not persisted.
+- Network: trusted-proxy source IP, HMAC hash, encrypted raw IP, location,
+  ISP/org/ASN, VPN/proxy/TOR/hosting/mobile signals, provider/status, and
+  spoof/header-conflict signals. The system records the source IP visible to the
+  trusted proxy; it does not claim to bypass a VPN.
+- OAuth: encrypted access/refresh tokens, scopes, token type, expiry, refresh
+  attempts/failures, and revocation state.
+- Data quality: snapshot version, source, attempt/fetch timestamps, status,
+  returned/stored counts, truncation flag, and redacted failure reason.
 
-Install and run Service 1:
+Failed optional Discord lookups do not replace the last successful OAuth user
+snapshot with an empty array. Normal APIs never return raw OAuth tokens or raw
+IP. Raw IP can only be revealed through the audited Owner action.
+
+`premiumType` remains for schema compatibility only and must not be presented as
+a reliable Nitro conclusion.
+
+## Setup
 
 ```bash
 npm install
+cp .env.example .env
 npm start
 ```
 
-Install and run Service 2:
+Required production values include `MONGO_URI`, `TOKEN_MANAGER`,
+`DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `ENCRYPTION_KEY`, `API_SECRET`,
+`VERIFY_STATE_SECRET`, `DASHBOARD_PIN`, and one public HTTPS base URL. Keep
+`PUBLIC_BASE_URL`, `DASHBOARD_URL`, `PUBLIC_DASHBOARD_URL`, and
+`DASHBOARD_PUBLIC_URL` equal while legacy aliases remain supported.
+
+Discord Developer Portal redirect URI:
+
+```text
+https://YOUR-DOMAIN/auth/callback
+```
+
+For inwcloud:
+
+```text
+Custom command: npm install && npm start
+Internal port:   PORT (or 3000)
+```
+
+`render.yaml` describes one root Web Service with `npm start` and `/health`.
+
+## Migration
+
+Back up MongoDB first. The additive migration derives display tags, asset URLs,
+badge labels, and snapshot metadata without decrypting/printing tokens or raw
+IPs and without deleting fields or collections.
 
 ```bash
-cd dashboard-public
-npm install
-npm start
+npm run migrate:verification
+npm run migrate:verification -- --apply
 ```
 
-Use `.env.example` as a placeholder reference only. Never commit real secrets.
-
-## Required Documentation
-
-- [AGENTS.md](AGENTS.md) - AI/agent rules, protected boundaries, review workflow, and owner decisions.
-- [CONTEXT.md](CONTEXT.md) - quick project context, service map, subsystem map, and reading guide.
-- [ARCHITECTURE.md](ARCHITECTURE.md) - full implementation-backed architecture, route map, file map, data model map, validation, and hotspots.
-- [ROADMAP.md](ROADMAP.md) - approved minimal refactor direction and future work guardrails.
-- [SECURITY.md](SECURITY.md) - secrets, OAuth, sessions, tokens, raw IP, logs, and owner/admin security policy.
-- [CHANGELOG.md](CHANGELOG.md) - project documentation and structural change history.
-- [.github/copilot-instructions.md](.github/copilot-instructions.md) - short GitHub Copilot guidance.
-- [docs/RUNBOOK.md](docs/RUNBOOK.md) - operational triage for RAM, voice sessions, IP reveal, retention, restore, token rotation, audit logs, and dependency audit.
-- [docs/AUDIT_RUNTIME_TEST_PLAN.md](docs/AUDIT_RUNTIME_TEST_PLAN.md) and related `docs/AUDIT_*` files - focused Audit v4 runtime/manual verification references.
-
-## Safety Rules
-
-- Do not migrate `discord.js` v13 without explicit owner approval.
-- Do not remove or redesign the voice/session subsystem, dashboard structure, verification architecture, owner/admin controls, or shared MongoDB layout without explicit owner approval.
-- Do not edit, move, rename, format, summarize hidden details from, or refactor `discord/systemProvider.js` or any file inside `discord/systemProvider/` (`actions.js`, `auth.js`, `dashboardHtml.js`, `htmlUtils.js`, `renderers.js`) unless the owner explicitly approves that exact action in the current task.
-- Treat OAuth, sessions, tokens, cookies, permissions, Discord roles, raw IP/device/risk data, and owner routes as high-risk areas.
-- Treat RAM growth as production-critical. Long-running voice/session changes must keep Discord/selfbot caches, timers, queues, maps, sets, and log buffers bounded and visible through diagnostics.
+The first command is dry-run mode.
 
 ## Validation
 
-Common checks:
-
 ```bash
 npm run check
-npm run check:dashboard
 npm test
 npm audit --audit-level=high
-npm --prefix dashboard-public audit --audit-level=high
 ```
 
-`npm run check` runs the full project syntax/static guard chain:
-
-```txt
-Service 1 JavaScript syntax, excluding the owner-locked protected file
-Dashboard Public JavaScript syntax
-scripts/*.js syntax
-static memory guard checks
-```
-
-Run only checks that match the change. Report exact commands and results; do not claim a check passed unless it was actually run.
-
-Dashboard Public production dependencies can also be checked with:
+Individual suites:
 
 ```bash
-npm --prefix dashboard-public audit --omit=dev
+npm run test:discord
+npm run test:voice
+npm run test:verification
 ```
 
-Running Dashboard Public audit without an audit level may show moderate dev-only Jest-chain advisories. CI currently gates high severity and above.
+`discord/systemProvider.js` and every file under `discord/systemProvider/` are
+owner-locked. See `AGENTS.md` before any change.
