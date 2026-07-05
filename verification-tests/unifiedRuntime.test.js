@@ -43,6 +43,24 @@ describe("single-process verification runtime contract", () => {
         expect(smoke).toContain("isOwnerReachable");
     });
 
+    test("docs describe production OAuth runtime requirements consistently", () => {
+        const envExample = read(".env.example");
+        const security = read("SECURITY.md");
+
+        expect(envExample).toContain("Required in production for signed verification state.");
+        for (const name of [
+            "DASHBOARD_PIN",
+            "API_SECRET",
+            "VERIFY_STATE_SECRET",
+            "ENCRYPTION_KEY",
+            "DISCORD_CLIENT_ID",
+            "DISCORD_CLIENT_SECRET"
+        ]) {
+            expect(security).toContain(name);
+        }
+        expect(security).toContain("public HTTPS base URL");
+    });
+
     test("normal runtime has one listener and verification does not reconnect Mongoose", () => {
         const index = read("discord/index.js");
         const verificationSources = [

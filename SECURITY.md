@@ -50,7 +50,10 @@ VPN, proxy, or TOR.
 The main dashboard and all verification management pages use the signed Owner
 PIN cookie in `discord/index/auth.js`.
 
-- Production requires `DASHBOARD_PIN` and `API_SECRET`.
+- Production requires `DASHBOARD_PIN`, `API_SECRET`, `VERIFY_STATE_SECRET`,
+  `ENCRYPTION_KEY`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, and one
+  public HTTPS base URL alias (`PUBLIC_BASE_URL`, `DASHBOARD_URL`,
+  `PUBLIC_DASHBOARD_URL`, or `DASHBOARD_PUBLIC_URL`).
 - Session cookies are HTTP-only, SameSite Strict, and Secure in production.
 - A separate readable SameSite CSRF cookie is HMAC-bound to the signed session.
 - Non-read management routes require the `X-CSRF-Token` header.
