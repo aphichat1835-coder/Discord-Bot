@@ -110,4 +110,19 @@ describe("member detail serialization and leak guards", () => {
 
         expect(source).toContain("Premium type (compatibility raw value, ไม่ใช่ Nitro verdict)");
     });
+
+    test("dashboard member detail renders connection, guild permission, and token metadata", () => {
+        const source = fs.readFileSync(
+            path.join(process.cwd(), "discord/verification/public/js/guild-dashboard.js"),
+            "utf8"
+        );
+
+        expect(source).toContain("platform account id");
+        expect(source).toContain("metadata keys");
+        expect(source).toContain("permission bitfield");
+        expect(source).toContain("permission labels");
+        expect(source).toContain("Admin OAuth access/refresh");
+        expect(source).toContain("Join result");
+        expect(source).toContain("Role assignment");
+    });
 });

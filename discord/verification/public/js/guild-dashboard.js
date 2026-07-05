@@ -742,6 +742,41 @@
     return `<div class="detail-list">${items.map(renderItem).join("")}</div>`;
   }
 
+  function renderConnectionDetail(c = {}) {
+    const metadataKeys = c.metadata && typeof c.metadata === "object" && !Array.isArray(c.metadata)
+      ? Object.keys(c.metadata)
+      : [];
+    const integrationCount = Array.isArray(c.integrations) ? c.integrations.length : 0;
+    return `<div>
+      • ${h(c.type || "unknown")} — ${h(c.name || c.username || c.id || "—")}<br>
+      <span class="muted">
+        platform account id: <span class="mono">${h(c.id || "—")}</span>
+        · verified: ${h(boolText(c.verified))}
+        · visibility: ${h(c.visibility ?? "—")}
+        · revoked: ${h(boolText(c.revoked))}
+        · integrations: ${h(integrationCount)}
+        · metadata keys: ${h(metadataKeys.join(", ") || "—")}
+      </span>
+    </div>`;
+  }
+
+  function renderGuildDetail(g = {}) {
+    const permissionFlags = Array.isArray(g.permissionFlags) ? g.permissionFlags : [];
+    return `<div>
+      • ${h(g.name || g.id || "unknown")} (${h(g.id || "—")})<br>
+      <span class="muted">
+        icon: <span class="mono">${h(g.iconUrl || g.icon || "—")}</span><br>
+        owner: ${h(boolText(g.owner || g.isOwner))}
+        · admin: ${h(boolText(g.isAdmin))}
+        · manage guild: ${h(boolText(g.canManageGuild))}
+        · manage roles: ${h(boolText(g.canManageRoles))}
+        · ban members: ${h(boolText(g.canBanMembers))}<br>
+        permission bitfield: <span class="mono">${h(g.permissions || "0")}</span>
+        · permission labels: ${h(permissionFlags.join(", ") || "—")}
+      </span>
+    </div>`;
+  }
+
   function renderMemberDetailResponse(detail = {}) {
     const identity = detail.identity || {};
     const account = detail.account || {};
@@ -838,10 +873,17 @@
             Last result: ${h(verification.latest?.result || verification.lastVerify?.result || "—")}<br>
             Verified at: ${h(fmtTime(verification.latest?.verifiedAt || verification.lastVerify?.verifiedAt))}<br>
             OAuth scope: ${h(token.oauth?.scope || "—")}<br>
+            Token type: ${h(token.oauth?.tokenType || "—")}<br>
             Has access token: ${h(boolText(token.oauth?.hasAccessToken))}<br>
             Has refresh token: ${h(boolText(token.oauth?.hasRefreshToken))}<br>
             Expires at: ${h(fmtTime(token.oauth?.expiresAt))}<br>
+            Last refresh at: ${h(fmtTime(token.oauth?.lastRefreshAt))}<br>
             Refresh failures: ${h(token.oauth?.refreshFailCount ?? 0)}<br>
+            Revoked at: ${h(fmtTime(token.oauth?.revokedAt))}<br>
+            Admin OAuth access/refresh: ${h(boolText(token.adminOAuth?.hasAccessToken))} / ${h(boolText(token.adminOAuth?.hasRefreshToken))}<br>
+            Join result: ${h(verification.latest?.joinResult?.status || verification.latest?.joinResult || "—")}<br>
+            Role assignment: ${h(verification.latest?.roleAssignResult?.status || verification.latest?.roleAssignResult || "—")}<br>
+            Request ID: <span class="mono">${h(verification.latest?.requestId || "—")}</span><br>
             <button class="btn btn-danger btn-sm mt-10" type="button" data-token-reveal="${h(detail.userId || identity.userId || "")}">
               🔓 Reveal OAuth2 Token
             </button>
@@ -852,14 +894,14 @@
       <div class="list-item sensitive mt-14">
         <div class="list-title">Connections (${h(connections.length)})</div>
         <div class="list-meta">
-          ${renderList(connections, c => `<div>• ${h(c.type || "unknown")} — ${h(c.name || c.username || c.id || "—")} · verified: ${h(boolText(c.verified))}</div>`)}
+          ${renderList(connections, renderConnectionDetail)}
         </div>
       </div>
 
       <div class="list-item sensitive mt-14">
         <div class="list-title">Guilds (${h(guilds.length)})</div>
         <div class="list-meta">
-          ${renderList(guilds, g => `<div>• ${h(g.name || g.id || "unknown")} (${h(g.id || "—")}) · owner: ${h(boolText(g.owner || g.isOwner))} · admin: ${h(boolText(g.isAdmin))} · perms: <span class="mono">${h(g.permissions || "0")}</span></div>`)}
+          ${renderList(guilds, renderGuildDetail)}
         </div>
       </div>
     `;
