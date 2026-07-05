@@ -779,7 +779,7 @@
             Email verified: ${h(boolText(account.emailVerified ?? identity.emailVerified))}<br>
             Locale: ${h(account.locale || identity.locale || "—")}<br>
             MFA: ${h(boolText(account.mfaEnabled ?? identity.mfaEnabled))}<br>
-            Premium type: ${h(account.premiumType ?? identity.premiumType ?? "—")}<br>
+            Premium type (compatibility raw value, ไม่ใช่ Nitro verdict): ${h(account.premiumType ?? identity.premiumType ?? "—")}<br>
             Flags: ${h(account.flags ?? identity.flags ?? "—")} / Public: ${h(account.publicFlags ?? identity.publicFlags ?? "—")}<br>
             Created: ${h(fmtTime(account.accountCreatedAt || identity.accountCreatedAt))}<br>
             Age: ${h(account.accountAgeDays ?? identity.accountAgeDays ?? "—")} วัน

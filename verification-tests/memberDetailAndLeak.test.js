@@ -1,5 +1,7 @@
 "use strict";
 
+const fs = require("node:fs");
+const path = require("node:path");
 const { serializeMemberDetail } = require("../discord/verification/serializers/memberDetailSerializer");
 const verifiedMemberService = require("../discord/verification/services/verifiedMemberService");
 const snapshotBudget = require("../discord/verification/services/snapshotBudget");
@@ -98,5 +100,14 @@ describe("member detail serialization and leak guards", () => {
             truncated: true,
             failureReason: "payload_too_large"
         });
+    });
+
+    test("dashboard labels premiumType as compatibility data instead of a Nitro verdict", () => {
+        const source = fs.readFileSync(
+            path.join(process.cwd(), "discord/verification/public/js/guild-dashboard.js"),
+            "utf8"
+        );
+
+        expect(source).toContain("Premium type (compatibility raw value, ไม่ใช่ Nitro verdict)");
     });
 });
