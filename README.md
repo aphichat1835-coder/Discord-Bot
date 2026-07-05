@@ -110,6 +110,12 @@ Internal port:   PORT (or 3000)
 `render.yaml` describes one root Web Service with `npm start` and `/ping`
 as the host liveness check. Use `/health` for deeper readiness diagnostics.
 
+After deploy, run the single-port smoke helper from a trusted machine:
+
+```bash
+npm run smoke:unified -- https://YOUR-DOMAIN
+```
+
 ## Migration
 
 Back up MongoDB first. The additive migration derives display tags, asset URLs,

@@ -39,7 +39,9 @@ register `https://DOMAIN/auth/callback` in Discord Developer Portal.
 
 ### Render
 
-Sync the single root service from `render.yaml`. Health check is `/health`.
+Sync the single root service from `render.yaml`. Host liveness health check is
+`/ping`; use `/health` for deeper readiness diagnostics after the service is
+running.
 
 ## Pre-cutover
 
@@ -51,9 +53,15 @@ Sync the single root service from `render.yaml`. Health check is `/health`.
 5. If historical admin grants must refresh against the retired URI, set
    `LEGACY_ADMIN_OAUTH_REDIRECT_URI`.
 6. Deploy.
-7. Test Owner Dashboard, `/verification`, a target guild page, and a complete
+7. Run the single-port smoke helper:
+
+   ```bash
+   npm run smoke:unified -- https://DOMAIN
+   ```
+
+8. Test Owner Dashboard, `/verification`, a target guild page, and a complete
    member verification.
-8. Stop the retired service only after all checks pass.
+9. Stop the retired service only after all checks pass.
 
 ## Verification smoke test
 

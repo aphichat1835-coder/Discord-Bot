@@ -15,6 +15,7 @@ describe("single-process verification runtime contract", () => {
         const pkg = require("../package.json");
         const lock = read("package-lock.json");
         expect(pkg.scripts.start).toBe("node -r ./discord/core/loadEnv discord/index.js");
+        expect(pkg.scripts["smoke:unified"]).toBe("node scripts/smokeUnifiedRuntime.js");
         expect(pkg.dependencies).not.toHaveProperty("connect-mongo");
         expect(pkg.dependencies).not.toHaveProperty("express-session");
         expect(lock).not.toContain("connect-mongo");
@@ -31,6 +32,15 @@ describe("single-process verification runtime contract", () => {
         expect(render).toContain("startCommand: npm start");
         expect(render).toContain("healthCheckPath: /ping");
         expect(render).not.toContain("rootDir: dashboard-public");
+    });
+
+    test("single-port smoke helper checks public liveness and owner boundary", () => {
+        const smoke = read("scripts/smokeUnifiedRuntime.js");
+        expect(smoke).toContain('request(baseUrl, "/ping")');
+        expect(smoke).toContain('request(baseUrl, "/health")');
+        expect(smoke).toContain('request(baseUrl, "/auth/callback")');
+        expect(smoke).toContain('"/verification"');
+        expect(smoke).toContain("isOwnerReachable");
     });
 
     test("normal runtime has one listener and verification does not reconnect Mongoose", () => {
