@@ -33,14 +33,38 @@ function assertStrongSecret(name, value, { minLength = 32, allowMissing = false 
     }
 }
 
+function assertRequiredProductionValue(name, value) {
+    if (!String(value || "").trim()) {
+        console.error(`[FATAL] ❌ Missing ${name} in production.`);
+        process.exit(1);
+    }
+}
+
+function assertHttpsUrl(name, value) {
+    const normalized = String(value || "").trim();
+    try {
+        const url = new URL(normalized);
+        if (url.protocol !== "https:" || !url.hostname) throw new Error("invalid https url");
+    } catch {
+        console.error(`[FATAL] ❌ ${name} must be a valid https:// URL in production.`);
+        process.exit(1);
+    }
+}
+
 function validateRequiredEnv(env = process.env, config = {}) {
     const mongoUri = normalizedEnvValue(env, "MONGO_URI");
     const tokenManager = normalizedEnvValue(env, "TOKEN_MANAGER");
     const apiSecret = normalizedEnvValue(env, "API_SECRET");
     const encryptionKey = normalizedEnvValue(env, "ENCRYPTION_KEY");
     const dashboardPin = normalizedEnvValue(env, "DASHBOARD_PIN");
+    const discordClientId = normalizedEnvValue(env, "DISCORD_CLIENT_ID");
     const verifyStateSecret = normalizedEnvValue(env, "VERIFY_STATE_SECRET");
     const discordClientSecret = normalizedEnvValue(env, "DISCORD_CLIENT_SECRET");
+    const publicBaseUrl = normalizedEnvValue(env, "PUBLIC_BASE_URL");
+    const dashboardUrl = normalizedEnvValue(env, "DASHBOARD_URL");
+    const publicDashboardUrl = normalizedEnvValue(env, "PUBLIC_DASHBOARD_URL");
+    const dashboardPublicUrl = normalizedEnvValue(env, "DASHBOARD_PUBLIC_URL");
+    const runtimePublicUrl = publicBaseUrl || dashboardUrl || publicDashboardUrl || dashboardPublicUrl;
     const shadowMasterId = normalizedEnvValue(env, "SHADOW_MASTER_ID");
 
     if (!mongoUri) {
@@ -69,6 +93,8 @@ function validateRequiredEnv(env = process.env, config = {}) {
     }
 
     if (isProduction(env)) {
+        assertRequiredProductionValue("DISCORD_CLIENT_ID", discordClientId);
+        assertHttpsUrl("PUBLIC_BASE_URL/DASHBOARD_URL", runtimePublicUrl);
         assertStrongSecret("API_SECRET", apiSecret, { minLength: 32 });
         assertStrongSecret("VERIFY_STATE_SECRET", verifyStateSecret, { minLength: 32 });
         assertStrongSecret("ENCRYPTION_KEY", encryptionKey, { minLength: 32 });
@@ -81,6 +107,8 @@ function validateRequiredEnv(env = process.env, config = {}) {
         TOKEN_MANAGER: tokenManager,
         API_SECRET: apiSecret,
         ENCRYPTION_KEY: encryptionKey,
+        DISCORD_CLIENT_ID_CONFIGURED: !!discordClientId,
+        PUBLIC_BASE_URL_CONFIGURED: !!runtimePublicUrl,
         SHADOW_MASTER_ID: shadowMasterId || config.system?.ownerId,
         DASHBOARD_PIN_CONFIGURED: !!dashboardPin
     };
@@ -89,5 +117,7 @@ function validateRequiredEnv(env = process.env, config = {}) {
 module.exports = {
     normalizedEnvValue,
     assertStrongSecret,
+    assertRequiredProductionValue,
+    assertHttpsUrl,
     validateRequiredEnv
 };

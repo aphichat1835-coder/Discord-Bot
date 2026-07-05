@@ -87,6 +87,8 @@ test("validateRequiredEnv rejects weak production secrets", () => {
             () => validateRequiredEnv({
                 MONGO_URI: "mongodb://localhost/test",
                 TOKEN_MANAGER: "token",
+                DISCORD_CLIENT_ID: "client-id",
+                PUBLIC_BASE_URL: "https://example.test",
                 API_SECRET: "short",
                 ENCRYPTION_KEY: "weak",
                 VERIFY_STATE_SECRET: "short",
@@ -97,6 +99,45 @@ test("validateRequiredEnv rejects weak production secrets", () => {
             /process\.exit:1/
         );
     });
+});
+
+test("validateRequiredEnv requires OAuth client id and https public URL in production", () => {
+    const strong = {
+        MONGO_URI: "mongodb://localhost/test",
+        TOKEN_MANAGER: "token",
+        API_SECRET: "a".repeat(32),
+        ENCRYPTION_KEY: "b".repeat(32),
+        VERIFY_STATE_SECRET: "c".repeat(32),
+        DISCORD_CLIENT_SECRET: "d".repeat(24),
+        DASHBOARD_PIN: "123456",
+        NODE_ENV: "production"
+    };
+
+    withExitStub(() => {
+        assert.throws(
+            () => validateRequiredEnv({
+                ...strong,
+                PUBLIC_BASE_URL: "https://example.test"
+            }),
+            /process\.exit:1/
+        );
+        assert.throws(
+            () => validateRequiredEnv({
+                ...strong,
+                DISCORD_CLIENT_ID: "client-id",
+                PUBLIC_BASE_URL: "http://example.test"
+            }),
+            /process\.exit:1/
+        );
+    });
+
+    const ok = validateRequiredEnv({
+        ...strong,
+        DISCORD_CLIENT_ID: "client-id",
+        PUBLIC_BASE_URL: "https://example.test"
+    });
+    assert.equal(ok.DISCORD_CLIENT_ID_CONFIGURED, true);
+    assert.equal(ok.PUBLIC_BASE_URL_CONFIGURED, true);
 });
 
 test("createHttpApp only trusts proxies when explicitly configured", () => {
