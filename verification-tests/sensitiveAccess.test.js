@@ -56,12 +56,14 @@ describe('sensitive data access helpers', () => {
         const update = buildSensitiveAccessAuditUpdate({
             actor: 'admin-user',
             route: '/api/guild/:guildId/logs',
-            scope: ['rawIp']
+            scope: ['rawIp'],
+            now: 12345
         });
 
         expect(update.$set['security.sensitiveDataAccess.accessedBy']).toBe('admin-user');
-        expect(update.$set['security.sensitiveDataAccess.accessedAt']).toBeGreaterThan(0);
+        expect(update.$set['security.sensitiveDataAccess.accessedAt']).toBe(12345);
         expect(update.$push['security.sensitiveDataAccess.accessLog'].$slice).toBe(-50);
+        expect(update.$push['security.sensitiveDataAccess.accessLog'].$each[0].accessedAt).toBe(12345);
         expect(update.$push['security.sensitiveDataAccess.accessLog'].$each[0].scope).toEqual(['rawIp']);
     });
 

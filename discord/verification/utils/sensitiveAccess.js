@@ -106,8 +106,7 @@ function buildSensitiveAccessPatch({
     };
 }
 
-function buildSensitiveAccessAuditUpdate({ actor = 'owner-dashboard', scope, route = '' } = {}) {
-    const now = Date.now();
+function buildSensitiveAccessAuditUpdate({ actor = 'owner-dashboard', scope, route = '', now = Date.now() } = {}) {
     const safeActor = safeActorName(actor);
     const safeScope = normalizeScope(scope);
     const safeRoute = String(route || '').slice(0, 120);
