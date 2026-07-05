@@ -13,9 +13,14 @@ function read(file) {
 describe("single-process verification runtime contract", () => {
     test("root package has one start command and no nested dashboard service", () => {
         const pkg = require("../package.json");
+        const lock = read("package-lock.json");
         expect(pkg.scripts.start).toBe("node -r ./discord/core/loadEnv discord/index.js");
         expect(pkg.dependencies).not.toHaveProperty("connect-mongo");
         expect(pkg.dependencies).not.toHaveProperty("express-session");
+        expect(lock).not.toContain("connect-mongo");
+        expect(lock).not.toContain("express-session");
+        expect(lock).not.toContain("dashboard-public");
+        expect(fs.existsSync(path.join(process.cwd(), "dashboard-public"))).toBe(false);
         expect(fs.existsSync(path.join(process.cwd(), "dashboard-public", "package.json"))).toBe(false);
     });
 
