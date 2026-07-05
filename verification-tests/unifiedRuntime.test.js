@@ -51,6 +51,7 @@ describe("single-process verification runtime contract", () => {
     test("mounts public callback and owner-only management routes", () => {
         const runtime = read("discord/verification/runtime.js");
         const guild = read("discord/verification/routes/guild.js");
+        const verifyOwner = read("discord/index/verifyOwner.js");
         expect(runtime).toContain('app.post("/auth/callback"');
         expect(runtime).toContain('app.get("/verification", ownerAuth.requirePin');
         expect(runtime).toContain('app.get("/guilds", ownerAuth.requirePin');
@@ -59,6 +60,12 @@ describe("single-process verification runtime contract", () => {
         expect(guild).toContain('router.get("/api/guild/:guildId/member/:userId/detail", requireAdmin, requireGuildAdmin');
         expect(guild).toContain('router.post("/api/guild/:guildId/member/:userId/reveal-token", requireAdmin, requireGuildAdmin, requireCsrf');
         expect(guild).toContain('router.get("/api/guild/:guildId/preflight", requireAdmin, requireGuildAdmin');
+        const rawIpRouteIndex = verifyOwner.indexOf('"/api/verify-owner/guild/:guildId/user/:userId/reveal-ip"');
+        expect(rawIpRouteIndex).toBeGreaterThan(-1);
+        const rawIpRoute = verifyOwner.slice(rawIpRouteIndex, rawIpRouteIndex + 260);
+        expect(rawIpRoute).toContain("auth.requirePin");
+        expect(rawIpRoute).toContain("auth.requireCsrf");
+        expect(rawIpRoute).toContain("express.json()");
         expect(guild).toContain("requireCsrf");
         expect(runtime).not.toContain("/oauth/admin");
         expect(runtime).not.toContain("/auth/admin-callback");
