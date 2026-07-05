@@ -1,4 +1,6 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const test = require("node:test");
 
 const joinCampaign = require("../features/joinCampaign");
@@ -6,6 +8,10 @@ const {
     listJoinCampaignTargets,
     resolveJoinCampaignTarget
 } = require("../index/joinCampaignRoutes");
+
+function readRepoFile(relativePath) {
+    return fs.readFileSync(path.join(__dirname, "..", "..", relativePath), "utf8");
+}
 
 test("join campaign candidate summary uses only tokens with guilds.join", () => {
     const docs = [
@@ -227,4 +233,19 @@ test("join campaign allows every bot guild when allowlist is empty", async () =>
     });
     assert.equal(summary.status, "finished");
     assert.equal(summary.scannedRecords, 0);
+});
+
+test("join campaign has no Sync Roles UI or route surface", () => {
+    const runtimeSurface = [
+        "discord/index/joinCampaignPage.js",
+        "discord/index/joinCampaignRoutes.js",
+        "discord/features/joinCampaign.js",
+        "discord/verification/views/guild.html",
+        "discord/verification/public/js/guild-dashboard.js",
+        "discord/verification/routes/guild.js"
+    ].map(readRepoFile).join("\n");
+
+    assert.equal(/sync-roles/i.test(runtimeSurface), false);
+    assert.equal(/syncRoles/.test(runtimeSurface), false);
+    assert.equal(/Sync Roles/.test(runtimeSurface), false);
 });
