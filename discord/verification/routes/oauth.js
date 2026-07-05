@@ -11,6 +11,7 @@ const {
 } = require('../utils/state');
 const { normalizeGuildPermissions } = require('../utils/guildPermissions');
 const { shouldStoreOAuthTokens } = require('../utils/oauthTokenLifecycle');
+const snapshotBudget = require('../services/snapshotBudget');
 
 const OAuthUser = require('../models/OAuthUser');
 const GuildConfig = require('../models/GuildConfig');
@@ -260,7 +261,8 @@ function safeString(value) {
         .replace(/[\u0000-\u001F\u007F]/g, '');
 }
 
-function safeNullableString(value) {
+function safeNullableString(value, maxLen = 0) {
+    void maxLen;
     const v = safeString(value);
     return v || null;
 }
@@ -903,6 +905,24 @@ async function saveOAuthUserSafe({
                 communicationDisabledUntil: memberInfo.communication_disabled_until || null,
                 snapshot: compactMemberInfo(memberInfo)
             };
+        }
+
+        try {
+            snapshotBudget.assertSnapshotBudget(updateSet, { label: "oauth_user_update" });
+        } catch (budgetErr) {
+            updateSet.snapshotMeta = {
+                ...(updateSet.snapshotMeta || {}),
+                budget: snapshotBudget.failureMeta(budgetErr, "discord_oauth")
+            };
+            delete updateSet.connections;
+            delete updateSet.guilds;
+            delete updateSet.lastMember;
+            if (updateSet.discord?.profileSnapshot) {
+                updateSet.discord = {
+                    ...updateSet.discord,
+                    profileSnapshot: null
+                };
+            }
         }
 
         /*

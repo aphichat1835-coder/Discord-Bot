@@ -98,12 +98,17 @@ safe last error, and revocation time.
 
 Raw tokens must never appear in:
 
-- Owner list/detail APIs
+- Owner list APIs or normal member-detail APIs
 - logs or webhooks
 - exports
 - tests/fixtures
 - migrations
 - docs or pull-request text
+
+The Owner-only per-user OAuth token reveal action is the only exception. It
+requires a valid Owner session, CSRF token, non-empty reason, rate-limit/cooldown
+checks, and an audit entry. The response is for the immediate Owner view only
+and must not be stored in browser persistence or included in lists/exports/logs.
 
 Historical `adminOAuth` fields remain refresh-compatible. No route creates a new
 admin grant. Configure `LEGACY_ADMIN_OAUTH_REDIRECT_URI` when old tokens require

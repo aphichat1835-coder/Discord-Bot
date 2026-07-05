@@ -73,6 +73,12 @@ function registerVerificationRuntime({ app, express, client, sessionManager }) {
     app.use(oauthRoutes);
 
     const attachOwner = ownerContext(client);
+    app.get("/guilds", ownerAuth.requirePin, (_req, res) => {
+        res.redirect(302, "/verification");
+    });
+    app.get("/guild/:guildId", ownerAuth.requirePin, (req, res) => {
+        res.redirect(302, `/verification/${encodeURIComponent(req.params.guildId)}`);
+    });
     app.get("/verification", ownerAuth.requirePin, attachOwner, (_req, res) => {
         res.send(verificationHomePage());
     });

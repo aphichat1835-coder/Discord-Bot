@@ -24,7 +24,7 @@ describe("single-process verification runtime contract", () => {
         expect((render.match(/^\s*-\s+type:\s+web\s*$/gm) || [])).toHaveLength(1);
         expect(render).toContain("rootDir: .");
         expect(render).toContain("startCommand: npm start");
-        expect(render).toContain("healthCheckPath: /health");
+        expect(render).toContain("healthCheckPath: /ping");
         expect(render).not.toContain("rootDir: dashboard-public");
     });
 
@@ -48,7 +48,12 @@ describe("single-process verification runtime contract", () => {
         const guild = read("discord/verification/routes/guild.js");
         expect(runtime).toContain('app.post("/auth/callback"');
         expect(runtime).toContain('app.get("/verification", ownerAuth.requirePin');
+        expect(runtime).toContain('app.get("/guilds", ownerAuth.requirePin');
+        expect(runtime).toContain('app.get("/guild/:guildId", ownerAuth.requirePin');
         expect(guild).toContain('router.get("/verification/:guildId"');
+        expect(guild).toContain('router.get("/api/guild/:guildId/member/:userId/detail", requireAdmin, requireGuildAdmin');
+        expect(guild).toContain('router.post("/api/guild/:guildId/member/:userId/reveal-token", requireAdmin, requireGuildAdmin, requireCsrf');
+        expect(guild).toContain('router.get("/api/guild/:guildId/preflight", requireAdmin, requireGuildAdmin');
         expect(guild).toContain("requireCsrf");
         expect(runtime).not.toContain("/oauth/admin");
         expect(runtime).not.toContain("/auth/admin-callback");
@@ -72,6 +77,8 @@ describe("single-process verification runtime contract", () => {
         expect(server).toContain("botOnline");
         expect(server).toContain("voiceReady");
         expect(server).toContain("verificationReady");
+        expect(server).toContain('app.get("/ready"');
+        expect(server).toContain('res.redirect(307, "/health")');
     });
 
     test("graceful shutdown stops verification and closes HTTP and MongoDB", () => {

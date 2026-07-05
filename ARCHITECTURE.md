@@ -113,6 +113,9 @@ owner-locked. Their implementation details are intentionally not documented.
 | `GET /api/guilds` | Owner PIN |
 | `GET /api/guild/:guildId/*` | Owner PIN |
 | write routes under `/api/guild/:guildId/*` | Owner PIN + CSRF |
+| `GET /api/guild/:guildId/member/:userId/detail` | Owner PIN |
+| `POST /api/guild/:guildId/member/:userId/reveal-token` | Owner PIN + CSRF + reason + audit |
+| `GET /api/guild/:guildId/preflight` | Owner PIN |
 | `POST /api/verify-owner/.../reveal-ip` | Owner PIN + CSRF + reason + audit |
 | `GET /api/verification/diagnostics` | Owner PIN |
 | `POST /api/verification/retention/dry-run` | Owner PIN + CSRF |
@@ -247,6 +250,17 @@ reason, and time. The UI does not cache or place raw IP into list APIs.
 Email, connection, and guild details are Owner-only. The former external
 guild-admin reveal-request workflow is removed.
 
+The only application route that returns raw OAuth access/refresh tokens is the
+per-user Owner reveal action:
+
+```text
+POST /api/guild/:guildId/member/:userId/reveal-token
+```
+
+It requires Owner PIN, CSRF, a non-empty reason, cooldown/rate-limit checks, and
+an audit event. Normal list, detail, export, log, and migration paths do not
+decrypt or serialize raw tokens.
+
 ## 8. Maintenance and migration
 
 `discord/verification/lifecycle.js` runs after MongoDB is ready and periodically:
@@ -284,7 +298,7 @@ Redirect URI: https://DOMAIN/auth/callback
 ```text
 buildCommand: npm install
 startCommand: npm start
-healthCheckPath: /health
+healthCheckPath: /ping
 ```
 
 Production cutover order:

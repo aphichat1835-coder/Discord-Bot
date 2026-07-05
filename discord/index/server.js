@@ -465,6 +465,7 @@ function registerRoutes({
 
     // ── Health / Ping ──
     app.get("/ping", (req, res) => res.status(200).send("OK"));
+    app.get("/ready", (req, res) => res.redirect(307, "/health"));
 
     app.get("/health", (req, res) => {
         const botOnline = client?.isReady?.() ?? false;

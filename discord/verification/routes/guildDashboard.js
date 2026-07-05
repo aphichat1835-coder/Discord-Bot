@@ -26,6 +26,7 @@ const {
     buildSensitiveAccessAuditUpdate
 } = require("../utils/sensitiveAccess");
 const { makeOAuthUserSummaryMap } = require("../utils/oauthUserSummary");
+const verifiedMemberService = require("../services/verifiedMemberService");
 const {
     buildVerifyLogCommon,
     buildVerifyLogParts,
@@ -280,6 +281,14 @@ async function buildRiskSummary(guildId) {
 
 async function buildRecentMembers(guildId, limit = 8, options = {}) {
     const canViewSensitive = options.canViewSensitive === true;
+    const legacyResult = await verifiedMemberService.listVerifiedMembers(guildId, {
+        page: 0,
+        limit,
+        includeLegacy: true,
+        canViewSensitive
+    });
+    if (legacyResult.members.length) return legacyResult.members;
+
     const logs = await VerifyLog.find({
         ...baseFilter(guildId),
         result: "success"

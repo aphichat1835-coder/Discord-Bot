@@ -205,13 +205,13 @@ test("startJoinCampaign rejects disabled config before creating an active job", 
     assert.equal(joinCampaign.getJoinCampaignStatus().active, null);
 });
 
-test("join campaign rejects empty allowed guild list even when enabled", async () => {
+test("join campaign allows every bot guild when allowlist is empty", async () => {
     assert.equal(joinCampaign.isGuildAllowed("123456789012345678", {
         enabled: true,
         allowedGuilds: new Set()
-    }), false);
+    }), true);
 
-    await assert.rejects(() => joinCampaign.executeJoinCampaign({
+    const summary = await joinCampaign.executeJoinCampaign({
         targetGuildId: "123456789012345678",
         candidateDocs: [],
         config: {
@@ -222,6 +222,9 @@ test("join campaign rejects empty allowed guild list even when enabled", async (
             progressEvery: 10,
             refreshMarginMs: 60 * 60 * 1000,
             failMax: 5
-        }
-    }), /Target guild is not allowed/);
+        },
+        sendWebhook: async () => true
+    });
+    assert.equal(summary.status, "finished");
+    assert.equal(summary.scannedRecords, 0);
 });

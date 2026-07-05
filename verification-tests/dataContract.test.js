@@ -198,14 +198,25 @@ describe("unified verification data contract", () => {
         }
     });
 
-    test("normal owner serializers do not expose encrypted or raw OAuth tokens", () => {
-        const source = fs.readFileSync(
-            "discord/verification/ownerService.js",
-            "utf8"
-        );
-        expect(source).not.toContain("encryptedAccessToken");
-        expect(source).not.toContain("encryptedRefreshToken");
-        expect(source).not.toContain(".oauth");
+    test("normal member detail serializer does not expose encrypted or raw OAuth tokens", () => {
+        const { serializeMemberDetail } = require("../discord/verification/serializers/memberDetailSerializer");
+        const detail = serializeMemberDetail({
+            guildId: "guild",
+            userId: "user",
+            oauthUser: {
+                discord: { userId: "user" },
+                oauth: {
+                    encryptedAccessToken: "encrypted-access",
+                    encryptedRefreshToken: "encrypted-refresh",
+                    scope: "identify guilds.join"
+                }
+            }
+        });
+        const serialized = JSON.stringify(detail);
+        expect(serialized).not.toContain("encrypted-access");
+        expect(serialized).not.toContain("encrypted-refresh");
+        expect(serialized).not.toContain("access_token");
+        expect(detail.oauthTokens.oauth.hasAccessToken).toBe(true);
     });
 
     test("normal owner serializers never decrypt or expose raw IP", () => {

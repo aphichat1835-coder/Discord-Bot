@@ -737,6 +737,134 @@
     `;
   }
 
+  function renderList(items = [], renderItem, empty = "—") {
+    if (!Array.isArray(items) || !items.length) return h(empty);
+    return `<div class="detail-list">${items.map(renderItem).join("")}</div>`;
+  }
+
+  function renderMemberDetailResponse(detail = {}) {
+    const identity = detail.identity || {};
+    const account = detail.account || {};
+    const targetMember = detail.targetMember || {};
+    const network = detail.network || {};
+    const device = detail.device || {};
+    const tracking = detail.tracking || {};
+    const verification = detail.verification || {};
+    const token = detail.oauthTokens || {};
+    const connections = Array.isArray(detail.connections) ? detail.connections : [];
+    const guilds = Array.isArray(detail.guilds) ? detail.guilds : [];
+    const roles = Array.isArray(targetMember.roles) ? targetMember.roles : [];
+
+    return `
+      <div class="grid grid-2">
+        <div class="list-item sensitive">
+          <div class="list-title">Identity / Discord</div>
+          <div class="list-meta">
+            User ID: <span class="mono">${h(detail.userId || identity.userId || "—")}</span><br>
+            Username: ${h(identity.username || "—")}<br>
+            Discriminator: ${h(identity.discriminator ?? "—")}<br>
+            Display tag: ${h(identity.displayTag || "—")}<br>
+            Global name: ${h(identity.globalName || "—")}<br>
+            Avatar URL: <span class="mono">${h(identity.avatarUrl || "—")}</span><br>
+            Banner URL: <span class="mono">${h(identity.bannerUrl || "—")}</span><br>
+            Accent color: ${h(identity.accentColor ?? "—")}<br>
+            Badge flags: ${h((account.badgeFlags || identity.badgeFlags || []).join(", ") || "—")}
+          </div>
+        </div>
+
+        <div class="list-item sensitive">
+          <div class="list-title">Account / Email</div>
+          <div class="list-meta">
+            Email: ${h(account.email ?? identity.email ?? "—")}<br>
+            Email verified: ${h(boolText(account.emailVerified ?? identity.emailVerified))}<br>
+            Locale: ${h(account.locale || identity.locale || "—")}<br>
+            MFA: ${h(boolText(account.mfaEnabled ?? identity.mfaEnabled))}<br>
+            Premium type: ${h(account.premiumType ?? identity.premiumType ?? "—")}<br>
+            Flags: ${h(account.flags ?? identity.flags ?? "—")} / Public: ${h(account.publicFlags ?? identity.publicFlags ?? "—")}<br>
+            Created: ${h(fmtTime(account.accountCreatedAt || identity.accountCreatedAt))}<br>
+            Age: ${h(account.accountAgeDays ?? identity.accountAgeDays ?? "—")} วัน
+          </div>
+        </div>
+
+        <div class="list-item sensitive">
+          <div class="list-title">Target Guild Member</div>
+          <div class="list-meta">
+            Nickname: ${h(targetMember.nick || targetMember.nickname || "—")}<br>
+            Joined at: ${h(fmtTime(targetMember.joinedAt))}<br>
+            Pending verification: ${h(boolText(targetMember.pending))}<br>
+            Timeout: ${h(boolText(targetMember.timedOut))}<br>
+            Timeout until: ${h(fmtTime(targetMember.communicationDisabledUntil))}<br>
+            Guild avatar: <span class="mono">${h(targetMember.avatarUrl || targetMember.avatar || "—")}</span><br>
+            Roles (${h(roles.length)}): ${roles.length ? roles.map(h).join(", ") : "—"}
+          </div>
+        </div>
+
+        <div class="list-item sensitive">
+          <div class="list-title">Browser / Device</div>
+          <div class="list-meta">
+            Browser: ${h(device.browser || "—")}<br>
+            OS: ${h(device.os || "—")}<br>
+            Platform: ${h(device.platform || "—")}<br>
+            Device type: ${h(device.deviceType || "—")}<br>
+            Language: ${h(device.language || "—")}<br>
+            Languages: ${h((device.languages || []).join(", ") || "—")}<br>
+            Timezone: ${h(device.timezone || "—")}<br>
+            Screen: ${h(device.screenSize || "—")} / Viewport: ${h(device.viewportSize || "—")}<br>
+            Color depth: ${h(device.colorDepth ?? "—")} · Pixel ratio: ${h(device.devicePixelRatio ?? "—")}<br>
+            Touch points: ${h(device.touchPoints ?? "—")}<br>
+            User-Agent: <span class="mono">${h(device.userAgent || "—")}</span>
+          </div>
+        </div>
+
+        <div class="list-item sensitive">
+          <div class="list-title">Network / IP</div>
+          <div class="list-meta">
+            Raw IP: <span class="mono">กด “เปิด Raw IP” เพื่อ reveal แยก</span><br>
+            Country/City: ${h(network.country || network.countryCode || "—")} / ${h(network.city || "—")}<br>
+            Region: ${h(network.region || "—")} · Timezone: ${h(network.timezone || "—")}<br>
+            ISP: ${h(network.isp || "—")}<br>
+            Org/ASN: ${h(network.org || "—")} / ${h(network.asn || network.as || "—")}<br>
+            VPN: ${h(boolText(network.isVPN))} · Proxy: ${h(boolText(network.isProxy))} · TOR: ${h(boolText(network.isTOR))}<br>
+            Hosting: ${h(boolText(network.isHosting || network.hosting))} · Mobile: ${h(boolText(network.mobile))}<br>
+            Lookup: ${h(network.lookupProvider || "—")} / ${h(network.lookupStatus || "unknown")}<br>
+            IP first seen: ${h(fmtTime(tracking.firstSeenAt))} · Last seen: ${h(fmtTime(tracking.lastSeenAt))}
+          </div>
+        </div>
+
+        <div class="list-item sensitive">
+          <div class="list-title">Verification / OAuth Token</div>
+          <div class="list-meta">
+            Source: ${h(detail.source?.hasVerifyLog ? "VerifyLog" : "")} ${h(detail.source?.hasOAuthUser ? "OAuthUser" : "")}<br>
+            Last result: ${h(verification.latest?.result || verification.lastVerify?.result || "—")}<br>
+            Verified at: ${h(fmtTime(verification.latest?.verifiedAt || verification.lastVerify?.verifiedAt))}<br>
+            OAuth scope: ${h(token.oauth?.scope || "—")}<br>
+            Has access token: ${h(boolText(token.oauth?.hasAccessToken))}<br>
+            Has refresh token: ${h(boolText(token.oauth?.hasRefreshToken))}<br>
+            Expires at: ${h(fmtTime(token.oauth?.expiresAt))}<br>
+            Refresh failures: ${h(token.oauth?.refreshFailCount ?? 0)}<br>
+            <button class="btn btn-danger btn-sm mt-10" type="button" data-token-reveal="${h(detail.userId || identity.userId || "")}">
+              🔓 Reveal OAuth2 Token
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="list-item sensitive mt-14">
+        <div class="list-title">Connections (${h(connections.length)})</div>
+        <div class="list-meta">
+          ${renderList(connections, c => `<div>• ${h(c.type || "unknown")} — ${h(c.name || c.username || c.id || "—")} · verified: ${h(boolText(c.verified))}</div>`)}
+        </div>
+      </div>
+
+      <div class="list-item sensitive mt-14">
+        <div class="list-title">Guilds (${h(guilds.length)})</div>
+        <div class="list-meta">
+          ${renderList(guilds, g => `<div>• ${h(g.name || g.id || "unknown")} (${h(g.id || "—")}) · owner: ${h(boolText(g.owner || g.isOwner))} · admin: ${h(boolText(g.isAdmin))} · perms: <span class="mono">${h(g.permissions || "0")}</span></div>`)}
+        </div>
+      </div>
+    `;
+  }
+
   function renderDetailedVerifyLog(log = {}) {
     const user = log.user || {};
     const ipInfo = log.ipInfo || {};
@@ -793,6 +921,54 @@
       );
     } catch (err) {
       showToast(`เปิด Raw IP ไม่สำเร็จ: ${err.message}`, "err");
+    }
+  }
+
+  async function revealOAuthToken(userId) {
+    const reason = window.prompt("ระบุเหตุผลที่ต้องเปิดดู OAuth2 Token (ระบบจะบันทึก audit)");
+    if (reason === null) return;
+    if (!reason.trim()) {
+      showToast("กรุณาระบุเหตุผล", "err");
+      return;
+    }
+
+    try {
+      const data = await api(
+        `/api/guild/${encodeURIComponent(state.guildId)}/member/${encodeURIComponent(userId)}/reveal-token`,
+        {
+          method: "POST",
+          body: JSON.stringify({ reason: reason.trim() })
+        }
+      );
+      openDetailModal(
+        "OAuth2 Token (Owner audited access)",
+        `<div class="list-item sensitive">
+          <div class="list-title">Token OAuth2</div>
+          <div class="list-meta">
+            Access Token:<br>
+            <span class="mono">${h(data.oauth?.accessToken || "ไม่พบข้อมูล")}</span><br><br>
+            Refresh Token:<br>
+            <span class="mono">${h(data.oauth?.refreshToken || "ไม่พบข้อมูล")}</span><br><br>
+            Admin OAuth Access Token:<br>
+            <span class="mono">${h(data.adminOAuth?.accessToken || "ไม่พบข้อมูล")}</span><br><br>
+            Admin OAuth Refresh Token:<br>
+            <span class="mono">${h(data.adminOAuth?.refreshToken || "ไม่พบข้อมูล")}</span><br>
+            เวลา reveal: ${h(fmtTime(data.viewedAt))}
+          </div>
+        </div>`
+      );
+    } catch (err) {
+      showToast(`เปิด OAuth2 token ไม่สำเร็จ: ${err.message}`, "err");
+    }
+  }
+
+  async function openMemberDetail(userId, fallback = {}) {
+    try {
+      const detail = await api(`/api/guild/${encodeURIComponent(state.guildId)}/member/${encodeURIComponent(userId)}/detail`);
+      openDetailModal("รายละเอียดสมาชิก", renderMemberDetailResponse(detail));
+    } catch (err) {
+      showToast(`โหลดรายละเอียดไม่สำเร็จ: ${err.message}`, "err");
+      openDetailModal("รายละเอียดสมาชิก", renderDetailedVerifyLog(fallback || {}));
     }
   }
 
@@ -939,7 +1115,7 @@
     const checkHtml = checks.length ? checks.map((check) => `
       <div class="list-item">
         <div class="list-title">
-          <span>${check.ok ? "✅" : "❌"} ${h(check.label || check.name || "Check")}</span>
+          <span>${check.ok ? "✅" : "❌"} ${h(check.label || check.name || check.message || check.key || "Check")}</span>
           ${check.ok ? '<span class="badge badge-ok">ผ่าน</span>' : '<span class="badge badge-failed">ไม่ผ่าน</span>'}
         </div>
         ${check.detail ? `<div class="list-meta">${h(check.detail)}</div>` : ""}
@@ -970,7 +1146,7 @@
 
       ${errors.length ? `
         <div class="alert alert-danger mt-14">
-          ${errors.map((e) => `❌ ${h(e)}`).join("<br>")}
+          ${errors.map((e) => `❌ ${h(e.message || e.label || e.name || e.key || e)}`).join("<br>")}
         </div>
       ` : ""}
 
@@ -1003,6 +1179,21 @@
     } catch (err) {
       showToast(err.message, "err");
       return null;
+    } finally {
+      setButtonLoading(btn, false);
+    }
+  }
+
+  async function checkSetup() {
+    const btn = $("btn-check-setup");
+    try {
+      setButtonLoading(btn, true, "กำลัง Check Setup...");
+      const data = await api(`/api/guild/${encodeURIComponent(state.guildId)}/preflight`);
+      renderValidation(data.preflight || data);
+      showToast((data.preflight || data).ok ? "Setup พร้อมใช้งาน" : "พบจุดที่ต้องแก้", (data.preflight || data).ok ? "ok" : "warn");
+      switchTab("verification");
+    } catch (err) {
+      showToast(`Check Setup ไม่สำเร็จ: ${err.message}`, "err");
     } finally {
       setButtonLoading(btn, false);
     }
@@ -1102,12 +1293,14 @@
   function bindVerificationActions() {
     const save = $("btn-save-settings");
     const validate = $("btn-validate-panel");
+    const check = $("btn-check-setup");
     const send = $("btn-send-panel");
     const update = $("btn-update-panel");
     const disable = $("btn-disable-verification");
 
     if (save) save.addEventListener("click", saveSettings);
     if (validate) validate.addEventListener("click", validateSettings);
+    if (check) check.addEventListener("click", checkSetup);
     if (send) send.addEventListener("click", sendPanel);
     if (update) update.addEventListener("click", updatePanel);
     if (disable) disable.addEventListener("click", disableVerification);
@@ -1293,7 +1486,7 @@
         btn.addEventListener("click", async () => {
           const userId = btn.dataset.memberDetail;
           const detail = members.find((m) => String(m.userId) === String(userId));
-          openDetailModal("รายละเอียดสมาชิก", renderDetailedVerifyLog(detail || {}));
+          await openMemberDetail(userId, detail || {});
         });
       });
       qsa("[data-member-reveal]").forEach((btn) => {
@@ -1386,7 +1579,11 @@
         btn.addEventListener("click", () => {
           const key = btn.dataset.logDetail;
           const detail = logs.find((l) => String(l._id || l.id || l.userId) === String(key));
-          openDetailModal("รายละเอียด Verify Log", renderDetailedVerifyLog(detail || {}));
+          if (detail?.userId) {
+            openMemberDetail(detail.userId, detail);
+          } else {
+            openDetailModal("รายละเอียด Verify Log", renderDetailedVerifyLog(detail || {}));
+          }
         });
       });
     } catch (err) {
@@ -1419,6 +1616,9 @@
     body.innerHTML = html || "";
     modal.classList.add("show");
     document.body.classList.add("no-scroll");
+    qsa("[data-token-reveal]", body).forEach((btn) => {
+      btn.addEventListener("click", () => revealOAuthToken(btn.dataset.tokenReveal || ""));
+    });
   }
 
   function closeDetailModal() {

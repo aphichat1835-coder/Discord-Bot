@@ -55,6 +55,9 @@ const {
   buildVerifyLogCommon,
   buildVerifyLogParts
 } = require("../utils/verificationSnapshots");
+const verifiedMemberService = require("../services/verifiedMemberService");
+const verificationOwnerService = require("../ownerService");
+const { runGuildPreflight } = require("../services/guildPreflightService");
 
 const SNOWFLAKE_RE = /^\d{17,22}$/;
 const OBJECT_ID_RE = /^[a-fA-F0-9]{24}$/;
@@ -907,6 +910,21 @@ router.get("/api/guild/:guildId/verify/resources", requireAdmin, requireGuildAdm
   }
 });
 
+router.get("/api/guild/:guildId/preflight", requireAdmin, requireGuildAdmin, async (req, res) => {
+  try {
+    const { guildId } = req.params;
+    const config = await GuildConfig.findOne({ guildId }).lean();
+    const preflight = await runGuildPreflight({
+      guildId,
+      config: config || {},
+      guild: req.adminGuild || null
+    });
+    res.json({ success: true, preflight });
+  } catch (err) {
+    return sendServerError(res, "verify.preflight", err, "ตรวจสอบความพร้อมไม่สำเร็จ");
+  }
+});
+
 router.post("/api/guild/:guildId/verify/validate", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
   try {
     const { guildId } = req.params;
@@ -1161,18 +1179,16 @@ router.get("/api/guild/:guildId/members", requireAdmin, requireGuildAdmin, async
     const { guildId } = req.params;
     const page = parsePage(req.query.page);
     const limit = parseLimit(req.query.limit, 25, 100);
-    const skip = page * limit;
-
-    const filter = buildLogQuery(guildId, req.query);
-
-    const [config, total, logs] = await Promise.all([
+    const q = String(req.query.q || "").trim();
+    const [config, result] = await Promise.all([
       GuildConfig.findOne({ guildId }).select("security").lean(),
-      VerifyLog.countDocuments(filter),
-      VerifyLog.find(filter)
-        .sort({ verifiedAt: -1, createdAt: -1, _id: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean()
+      verifiedMemberService.listVerifiedMembers(guildId, {
+        page,
+        limit,
+        q,
+        includeLegacy: true,
+        canViewSensitive: req.verificationOwner === true
+      })
     ]);
     const canViewSensitive = req.verificationOwner === true;
     if (canViewSensitive) {
@@ -1182,11 +1198,52 @@ router.get("/api/guild/:guildId/members", requireAdmin, requireGuildAdmin, async
     res.json({
       success: true,
       sensitiveDataAccess: normalizeSensitiveAccess(config?.security || {}),
-      members: logs.map(log => serializeVerifyLog(log, { canViewSensitive })),
-      pagination: pagination(page, limit, total)
+      members: result.members,
+      pagination: pagination(page, limit, result.total)
     });
   } catch (err) {
     return sendServerError(res, "members", err, "โหลด members ไม่สำเร็จ");
+  }
+});
+
+router.get("/api/guild/:guildId/member/:userId/detail", requireAdmin, requireGuildAdmin, async (req, res) => {
+  try {
+    const { guildId, userId } = req.params;
+    res.json(await verificationOwnerService.getMemberDetail(guildId, userId, {
+      canViewSensitive: req.verificationOwner === true
+    }));
+  } catch (err) {
+    if (err?.code === "member_not_found") {
+      return res.status(404).json({
+        success: false,
+        code: "member_not_found",
+        error: "ไม่พบรายละเอียดสมาชิก"
+      });
+    }
+    return sendServerError(res, "member.detail", err, "โหลดรายละเอียดสมาชิกไม่สำเร็จ");
+  }
+});
+
+router.post("/api/guild/:guildId/member/:userId/reveal-token", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
+  try {
+    const { guildId, userId } = req.params;
+    res.json(await verificationOwnerService.revealOAuthTokens({
+      guildId,
+      userId,
+      reason: req.body?.reason,
+      actor: getAdminId(req) || "owner-dashboard"
+    }));
+  } catch (err) {
+    const status = ["reason_required", "reason_too_long"].includes(err?.code)
+      ? 400
+      : ["rate_limited", "cooldown"].includes(err?.code)
+        ? 429
+        : err?.code === "member_not_found" ? 404 : 500;
+    res.status(status).json({
+      success: false,
+      code: err?.code || "token_reveal_failed",
+      error: err?.message || "เปิด OAuth token ไม่สำเร็จ"
+    });
   }
 });
 

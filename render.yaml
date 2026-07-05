@@ -23,7 +23,7 @@ services:
     rootDir: .
     buildCommand: npm install
     startCommand: npm start
-    healthCheckPath: /health
+    healthCheckPath: /ping
     autoDeployTrigger: off
     maxShutdownDelaySeconds: 60
     envVars:

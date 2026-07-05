@@ -35,6 +35,9 @@
 - Added `.github/CODEOWNERS` and `scripts/checkProtectedPaths.js` coverage for both `discord/systemProvider.js` and the full `discord/systemProvider/` directory.
 - Added the protected-path guard to local validation and CI, and excluded the protected directory from broad syntax scanning.
 - Documented the five memory-trend diagnostic threshold variables already consumed by `scripts/checkMemoryTrend.js`.
+- Added Owner-only per-user member detail and audited OAuth2 token reveal, plus read-only legacy verified-member listing from `OAuthUser.lastVerify`.
+- Updated Join Campaign defaults so Owner can target any guild currently cached by the bot unless `JOIN_CAMPAIGN_ALLOWED_GUILDS` restricts it; this joins authorized users only and does not sync roles.
+- Switched Render liveness to `/ping`, added `/ready`, `/guilds`, and `/guild/:guildId` compatibility aliases, and added production secret strength checks.
 
 ## [Unreleased] - Dashboard Public OAuth Runtime Fixes 2026-07-03
 

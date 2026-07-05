@@ -6,12 +6,41 @@ function normalizedEnvValue(env, key) {
     return trimmed;
 }
 
+const WEAK_SECRET_VALUES = new Set([
+    "1234",
+    "0000",
+    "admin",
+    "password",
+    "changeme",
+    "secret",
+    "enterprise-secret-key"
+]);
+
+function isProduction(env = process.env) {
+    return String(env.NODE_ENV || "").trim().toLowerCase() === "production";
+}
+
+function assertStrongSecret(name, value, { minLength = 32, allowMissing = false } = {}) {
+    const normalized = String(value || "").trim();
+    if (!normalized) {
+        if (allowMissing) return;
+        console.error(`[FATAL] ❌ Missing ${name}`);
+        process.exit(1);
+    }
+    if (normalized.length < minLength || WEAK_SECRET_VALUES.has(normalized.toLowerCase())) {
+        console.error(`[FATAL] ❌ ${name} is too weak for production.`);
+        process.exit(1);
+    }
+}
+
 function validateRequiredEnv(env = process.env, config = {}) {
     const mongoUri = normalizedEnvValue(env, "MONGO_URI");
     const tokenManager = normalizedEnvValue(env, "TOKEN_MANAGER");
     const apiSecret = normalizedEnvValue(env, "API_SECRET");
     const encryptionKey = normalizedEnvValue(env, "ENCRYPTION_KEY");
     const dashboardPin = normalizedEnvValue(env, "DASHBOARD_PIN");
+    const verifyStateSecret = normalizedEnvValue(env, "VERIFY_STATE_SECRET");
+    const discordClientSecret = normalizedEnvValue(env, "DISCORD_CLIENT_SECRET");
     const shadowMasterId = normalizedEnvValue(env, "SHADOW_MASTER_ID");
 
     if (!mongoUri) {
@@ -34,9 +63,17 @@ function validateRequiredEnv(env = process.env, config = {}) {
         process.exit(1);
     }
 
-    if (env.NODE_ENV === "production" && !dashboardPin) {
+    if (isProduction(env) && !dashboardPin) {
         console.error("[FATAL] ❌ Missing DASHBOARD_PIN in production.");
         process.exit(1);
+    }
+
+    if (isProduction(env)) {
+        assertStrongSecret("API_SECRET", apiSecret, { minLength: 32 });
+        assertStrongSecret("VERIFY_STATE_SECRET", verifyStateSecret, { minLength: 32 });
+        assertStrongSecret("ENCRYPTION_KEY", encryptionKey, { minLength: 32 });
+        assertStrongSecret("DISCORD_CLIENT_SECRET", discordClientSecret, { minLength: 16 });
+        assertStrongSecret("DASHBOARD_PIN", dashboardPin, { minLength: 6 });
     }
 
     return {
@@ -51,5 +88,6 @@ function validateRequiredEnv(env = process.env, config = {}) {
 
 module.exports = {
     normalizedEnvValue,
+    assertStrongSecret,
     validateRequiredEnv
 };

@@ -6,6 +6,8 @@ const verificationOwnerService = require("../verification/ownerService");
 function sendError(res, err) {
     const status = ["reason_required", "reason_too_long"].includes(err?.code)
         ? 400
+        : ["rate_limited", "cooldown"].includes(err?.code)
+            ? 429
         : err?.code === "ip_not_found"
             ? 404
             : 500;

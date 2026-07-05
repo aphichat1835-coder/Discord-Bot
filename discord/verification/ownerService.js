@@ -2,8 +2,11 @@
 
 const GuildConfig = require("./models/GuildConfig");
 const VerifyLog = require("./models/VerifyLog");
-const { decryptIP } = require("./utils/crypto");
-const { makeOAuthUserSummaryMap } = require("./utils/oauthUserSummary");
+const OAuthUser = require("./models/OAuthUser");
+const { decryptIP, decryptToken } = require("./utils/crypto");
+const sensitiveAudit = require("./services/sensitiveAuditService");
+const { serializeMemberDetail } = require("./serializers/memberDetailSerializer");
+const verifiedMemberService = require("./services/verifiedMemberService");
 
 const OVERVIEW_MAX = Math.max(
     50,
@@ -139,71 +142,30 @@ async function getGuildStats(guildId) {
 async function getGuildMembers(guildId, { page = 0, limit = 20 } = {}) {
     const safePage = Math.max(0, Number.parseInt(page, 10) || 0);
     const safeLimit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 20));
-    const filter = { ...baseFilter(guildId), result: "success" };
-    const [total, logs] = await Promise.all([
-        VerifyLog.countDocuments(filter),
-        VerifyLog.find(filter)
-            .sort({ verifiedAt: -1, createdAt: -1, _id: -1 })
-            .skip(safePage * safeLimit)
-            .limit(safeLimit)
-            .lean()
-    ]);
-    const userIds = [...new Set(logs.map(log => log.userId).filter(Boolean))];
-    const userMap = await makeOAuthUserSummaryMap(userIds);
-    const members = logs.map(log => {
-        const user = userMap[log.userId] || {};
-        return {
-            logId: String(log._id || ""),
-            requestId: log.requestId || "",
-            userId: log.userId,
-            roleId: log.roleId || null,
-            username: user.discord?.username || log.discordSnapshot?.username || "Unknown",
-            globalName: user.discord?.globalName || log.discordSnapshot?.globalName || null,
-            tag: user.discord?.displayTag || log.discordSnapshot?.displayTag || null,
-            avatarUrl: user.discord?.avatarUrl || log.discordSnapshot?.avatarUrl || null,
-            email: user.discord?.email || log.discordSnapshot?.email || null,
-            emailVerified: user.discord?.emailVerified === true || log.discordSnapshot?.emailVerified === true,
-            accountAgeDays: user.discord?.accountAgeDays || log.discordSnapshot?.accountAgeDays || null,
-            badgeFlags: user.discord?.badgeFlags || [],
-            connections: Number(user.connectionsCount || 0),
-            guilds: Number(user.guildsCount || 0),
-            member: log.memberSnapshot || log.discordSnapshot?.member || null,
-            country: log.ipInfo?.country || null,
-            countryCode: log.ipInfo?.countryCode || null,
-            city: log.ipInfo?.city || null,
-            isp: log.ipInfo?.isp || null,
-            isVPN: !!log.ipInfo?.isVPN,
-            isProxy: !!log.ipInfo?.isProxy,
-            isTOR: !!log.ipInfo?.isTOR,
-            hosting: !!log.ipInfo?.hosting,
-            riskScore: Number(log.riskScore || log.ipInfo?.riskScore || 0),
-            riskFlags: Array.isArray(log.riskFlags) ? log.riskFlags : [],
-            device: log.device || null,
-            verifiedAt: log.verifiedAt || log.createdAt || null
-        };
+    const result = await verifiedMemberService.listVerifiedMembers(guildId, {
+        page: safePage,
+        limit: safeLimit,
+        includeLegacy: true,
+        canViewSensitive: true
     });
+    const members = result.members.map(member => ({
+        ...member,
+        connections: Number(member.connectionsCount || 0),
+        guilds: Number(member.guildsCount || 0)
+    }));
     return {
         success: true,
         members,
         page: safePage,
         limit: safeLimit,
-        total,
-        hasMore: (safePage + 1) * safeLimit < total
+        total: result.total,
+        hasMore: result.hasMore
     };
 }
 
 async function revealRawIp({ guildId, userId, reason, actor = "owner-dashboard" }) {
-    const safeReason = String(reason || "").trim();
-    if (!safeReason) {
-        const error = new Error("reason is required");
-        error.code = "reason_required";
-        throw error;
-    }
-    if (safeReason.length > 500) {
-        const error = new Error("reason must be 500 characters or fewer");
-        error.code = "reason_too_long";
-        throw error;
-    }
+    const safeReason = sensitiveAudit.safeReason(reason);
+    sensitiveAudit.checkRevealLimit({ actor, guildId, userId, action: "raw_ip" });
 
     const log = await VerifyLog.findOne({
         ...baseFilter(guildId),
@@ -227,15 +189,24 @@ async function revealRawIp({ guildId, userId, reason, actor = "owner-dashboard" 
         { _id: log._id },
         {
             $push: {
-                sensitiveAccessLog: {
+                sensitiveAccessLog: sensitiveAudit.auditVerifyLogEntry({
                     action: "owner_reveal_raw_ip",
                     actor,
                     reason: safeReason,
                     viewedAt: now
-                }
+                })
             }
         }
     );
+    await GuildConfig.updateOne(
+        { guildId },
+        sensitiveAudit.auditGuildConfigUpdate({
+            actor,
+            route: "/api/verify-owner/guild/:guildId/user/:userId/reveal-ip",
+            scope: ["rawIp"],
+            now
+        })
+    ).catch(() => {});
 
     return {
         success: true,
@@ -257,11 +228,113 @@ async function revealRawIp({ guildId, userId, reason, actor = "owner-dashboard" 
     };
 }
 
+async function getMemberDetail(guildId, userId, { canViewSensitive = true } = {}) {
+    const [oauthUser, latestLog] = await Promise.all([
+        OAuthUser.findOne({ "discord.userId": userId })
+            .select({
+                discord: 1,
+                connections: 1,
+                guilds: 1,
+                lastMember: 1,
+                lastVerify: 1,
+                lastIpTracking: 1,
+                snapshotMeta: 1,
+                oauth: 1,
+                adminOAuth: 1,
+                createdAt: 1,
+                updatedAt: 1
+            })
+            .lean(),
+        VerifyLog.findOne({ ...baseFilter(guildId), userId })
+            .sort({ verifiedAt: -1, createdAt: -1, _id: -1 })
+            .lean()
+    ]);
+
+    if (!oauthUser && !latestLog) {
+        const error = new Error("member detail not found");
+        error.code = "member_not_found";
+        throw error;
+    }
+
+    return serializeMemberDetail({
+        guildId,
+        userId,
+        oauthUser,
+        latestLog,
+        canViewSensitive
+    });
+}
+
+function revealTokenState(token = {}) {
+    return {
+        accessToken: token.encryptedAccessToken ? decryptToken(token.encryptedAccessToken) : null,
+        refreshToken: token.encryptedRefreshToken ? decryptToken(token.encryptedRefreshToken) : null,
+        scope: token.scope || "",
+        tokenType: token.tokenType || "",
+        expiresAt: token.expiresAt || null,
+        lastRefreshAt: token.lastRefreshAt || null,
+        refreshFailCount: Number(token.refreshFailCount || 0),
+        revokedAt: token.revokedAt || null
+    };
+}
+
+async function revealOAuthTokens({ guildId, userId, reason, actor = "owner-dashboard" }) {
+    const safeReason = sensitiveAudit.safeReason(reason);
+    sensitiveAudit.checkRevealLimit({ actor, guildId, userId, action: "raw_token" });
+
+    const user = await OAuthUser.findOne({ "discord.userId": userId })
+        .select("discord.userId oauth adminOAuth")
+        .lean();
+
+    if (!user?.discord?.userId) {
+        const error = new Error("OAuth user not found");
+        error.code = "member_not_found";
+        throw error;
+    }
+
+    const now = Date.now();
+    await GuildConfig.updateOne(
+        { guildId },
+        sensitiveAudit.auditGuildConfigUpdate({
+            actor,
+            route: "/api/guild/:guildId/member/:userId/reveal-token",
+            scope: ["oauthTokens"],
+            now
+        })
+    ).catch(() => {});
+
+    await VerifyLog.findOneAndUpdate(
+        { ...baseFilter(guildId), userId },
+        {
+            $push: {
+                sensitiveAccessLog: sensitiveAudit.auditVerifyLogEntry({
+                    action: "owner_reveal_oauth_token",
+                    actor,
+                    reason: safeReason,
+                    viewedAt: now
+                })
+            }
+        },
+        { sort: { verifiedAt: -1, createdAt: -1, _id: -1 } }
+    ).catch(() => {});
+
+    return {
+        success: true,
+        guildId,
+        userId,
+        viewedAt: now,
+        oauth: revealTokenState(user.oauth || {}),
+        adminOAuth: revealTokenState(user.adminOAuth || {})
+    };
+}
+
 module.exports = {
     getOverview,
     getGuildStats,
     getGuildMembers,
     revealRawIp,
+    getMemberDetail,
+    revealOAuthTokens,
     emptyStats,
     safeRecent
 };

@@ -10,14 +10,15 @@ const {
 function buildJoinCampaignPage() {
     return shell("ดึงสมาชิกเข้าเซิร์ฟเวอร์", `
 <div class="container">
-<h1 class="page-title">📥 Join Campaign</h1>
-<p class="page-sub">ดึงผู้ใช้ที่เคยอนุญาต OAuth scope <code>guilds.join</code> เข้าเซิร์ฟเวอร์เป้าหมาย</p>
+<h1 class="page-title">📥 Join Authorized Users</h1>
+<p class="page-sub">ดึงผู้ใช้ที่เคยอนุญาต OAuth scope <code>guilds.join</code> เข้าเซิร์ฟเวอร์เป้าหมายที่บอทอยู่</p>
 ${navBar("/join-campaign")}
 
 <div class="card">
     <h3>🎯 เลือกเซิร์ฟเวอร์เป้าหมาย</h3>
     <p style="color:var(--text3);font-size:0.86em;margin-bottom:14px;">
-        ระบบจะใช้เฉพาะ token ที่มีสิทธิ์ <code>guilds.join</code> และจะ refresh token ก่อนใช้เมื่อใกล้หมดอายุ
+        ระบบจะใช้เฉพาะ token ที่มีสิทธิ์ <code>guilds.join</code>, refresh token ก่อนใช้เมื่อจำเป็น,
+        และจะไม่ sync/add role อัตโนมัติ
     </p>
     <select id="targetGuild" style="margin-bottom:12px;"></select>
     <div style="display:flex;gap:10px;flex-wrap:wrap;">
@@ -120,7 +121,7 @@ async function loadTargets(){
         return;
     }
     if(!data.targets || !data.targets.length){
-        select.innerHTML='<option value="">ไม่พบเซิร์ฟเวอร์ที่อนุญาต</option>';
+        select.innerHTML='<option value="">ไม่พบเซิร์ฟเวอร์ที่บอทอยู่หรืออนุญาต</option>';
         return;
     }
     select.innerHTML=data.targets.map(g=>'<option value="'+esc(g.id)+'">'+esc(g.name)+' ('+esc(g.id)+')</option>').join('');

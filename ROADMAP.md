@@ -79,7 +79,8 @@ These are not approved by this roadmap:
 - rewrite of voice/session
 - splitting the repository or verification runtime again
 - new guild-admin dashboard/login
-- exposing raw OAuth tokens or bulk raw-IP export
+- exposing raw OAuth tokens outside the audited per-user Owner reveal action or
+  adding bulk raw-IP export
 - changing protected owner/system hooks
 
 Each requires separate implementation evidence, owner approval, compatibility

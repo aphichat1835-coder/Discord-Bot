@@ -14,6 +14,16 @@ function git(args) {
     }).trim();
 }
 
+function isGitRepository() {
+    if (!fs.existsSync(".git")) return false;
+
+    try {
+        return git(["rev-parse", "--is-inside-work-tree"]) === "true";
+    } catch {
+        return false;
+    }
+}
+
 function splitLines(value) {
     return String(value || "")
         .split(/\r?\n/)
@@ -45,6 +55,11 @@ function isUsableBaseSha(value) {
 }
 
 function getChangedPaths() {
+    if (!isGitRepository()) {
+        console.warn("[PROTECTED-PATHS] .git not found or unusable; skipping protected-path diff guard.");
+        return [];
+    }
+
     const configuredBase = String(process.env.PROTECTED_BASE_SHA || "").trim();
     const baseSha = configuredBase || readEventBaseSha();
 

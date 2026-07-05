@@ -57,7 +57,7 @@ test("validateRequiredEnv trims required values and rejects whitespace-only secr
         ENCRYPTION_KEY: " key ",
         DASHBOARD_PIN: " 1234 ",
         SHADOW_MASTER_ID: " owner ",
-        NODE_ENV: "production"
+        NODE_ENV: "development"
     };
 
     const result = validateRequiredEnv(env, { system: { ownerId: "fallback-owner" } });
@@ -75,6 +75,24 @@ test("validateRequiredEnv trims required values and rejects whitespace-only secr
                 TOKEN_MANAGER: "token",
                 API_SECRET: "secret",
                 ENCRYPTION_KEY: "key"
+            }),
+            /process\.exit:1/
+        );
+    });
+});
+
+test("validateRequiredEnv rejects weak production secrets", () => {
+    withExitStub(() => {
+        assert.throws(
+            () => validateRequiredEnv({
+                MONGO_URI: "mongodb://localhost/test",
+                TOKEN_MANAGER: "token",
+                API_SECRET: "short",
+                ENCRYPTION_KEY: "weak",
+                VERIFY_STATE_SECRET: "short",
+                DISCORD_CLIENT_SECRET: "client",
+                DASHBOARD_PIN: "1234",
+                NODE_ENV: "production"
             }),
             /process\.exit:1/
         );

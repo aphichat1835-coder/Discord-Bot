@@ -2,7 +2,8 @@ const DEFAULT_SCOPE = Object.freeze([
     'rawIp',
     'email',
     'connections',
-    'guilds'
+    'guilds',
+    'oauthTokens'
 ]);
 const DEFAULT_ACCESS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const ACCESS_LOG_LIMIT = 50;

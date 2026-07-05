@@ -96,9 +96,9 @@ compatible.
 - Access/refresh tokens are encrypted with the existing compatible format.
 - Raw IP is encrypted; an HMAC hash is used for correlation.
 - Fingerprint source material is never persisted; only its HMAC is stored.
-- Normal list/detail APIs never return raw tokens or raw IP.
-- Raw-IP reveal requires Owner PIN, CSRF, a non-empty reason, and appends an
-  audit event to the verification log.
+- Normal list/export APIs never return raw tokens or raw IP.
+- Raw-IP and raw OAuth-token reveal require Owner PIN, CSRF, a non-empty
+  reason, cooldown/rate-limit checks, and append an audit event.
 - Failure messages saved in data-quality metadata are redacted status codes.
 - Logs, tests, migrations, docs, and exports must not print secrets, tokens, or
   raw IP.

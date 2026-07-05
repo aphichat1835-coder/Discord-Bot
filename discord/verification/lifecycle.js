@@ -23,11 +23,17 @@ const MAINTENANCE_INTERVAL_MS = 60 * 60 * 1000;
 let maintenanceTimer = null;
 let maintenanceInFlight = false;
 let lastRunAt = null;
+let lastStartedAt = null;
+let lastFinishedAt = null;
+let lastSuccessAt = null;
+let lastDurationMs = null;
 let lastError = null;
 let lastSummary = null;
 let lastOAuthRefreshAt = null;
 let lastOAuthRefreshError = null;
 let lastOAuthRefreshSummary = null;
+let runCount = 0;
+let failCount = 0;
 
 function retentionDays(mode) {
     const value = String(mode || "").toLowerCase();
@@ -134,6 +140,7 @@ async function runVerificationMaintenance(options = {}) {
     maintenanceInFlight = true;
     lastError = null;
     const now = Date.now();
+    lastStartedAt = now;
     const dryRun = options.dryRun === true;
     const summary = createSummary(dryRun, now);
 
@@ -163,13 +170,21 @@ async function runVerificationMaintenance(options = {}) {
         }
 
         summary.finishedAt = Date.now();
+        summary.durationMs = summary.finishedAt - summary.startedAt;
+        lastFinishedAt = summary.finishedAt;
+        lastDurationMs = summary.durationMs;
         if (!dryRun) {
             lastRunAt = summary.finishedAt;
+            lastSuccessAt = summary.finishedAt;
             lastSummary = summary;
+            runCount++;
         }
         return summary;
     } catch (err) {
         lastError = safeError(err);
+        lastFinishedAt = Date.now();
+        lastDurationMs = lastFinishedAt - now;
+        if (!dryRun) failCount++;
         throw err;
     } finally {
         maintenanceInFlight = false;
@@ -201,6 +216,12 @@ function getVerificationDiagnostics() {
         timerActive: !!maintenanceTimer,
         inFlight: maintenanceInFlight,
         lastRunAt,
+        lastStartedAt,
+        lastFinishedAt,
+        lastSuccessAt,
+        lastDurationMs,
+        runCount,
+        failCount,
         lastError,
         lastSummary,
         oauthTokenRefresh: {
