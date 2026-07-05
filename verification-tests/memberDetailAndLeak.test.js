@@ -21,6 +21,10 @@ describe("member detail serialization and leak guards", () => {
                 oauth: {
                     encryptedAccessToken: "encrypted-access",
                     encryptedRefreshToken: "encrypted-refresh",
+                    accessToken: "raw-access-token",
+                    refreshToken: "raw-refresh-token",
+                    access_token: "raw-access-token-snake",
+                    refresh_token: "raw-refresh-token-snake",
                     scope: "identify guilds.join"
                 },
                 connections: [{ type: "github", name: "octo", verified: true }],
@@ -49,6 +53,10 @@ describe("member detail serialization and leak guards", () => {
         const serialized = JSON.stringify(detail);
         expect(serialized).not.toContain("encrypted-access");
         expect(serialized).not.toContain("encrypted-refresh");
+        expect(serialized).not.toContain("raw-access-token");
+        expect(serialized).not.toContain("raw-refresh-token");
+        expect(serialized).not.toContain("access_token");
+        expect(serialized).not.toContain("refresh_token");
         expect(serialized).not.toContain("encrypted-ip");
         expect(serialized).not.toContain("203.0.113.10");
     });
