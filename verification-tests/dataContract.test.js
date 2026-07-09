@@ -136,8 +136,9 @@ describe("unified verification data contract", () => {
         );
         expect(source).toContain("if (!fetchMetadata.connectionsFetchFailed)");
         expect(source).toContain("if (!fetchMetadata.guildsFetchFailed)");
-        expect(source).toContain("previousMeta.connections?.fetchedAt");
-        expect(source).toContain("previousMeta.guilds?.fetchedAt");
+        expect(source).toContain("function snapshotMetaForList");
+        expect(source).toContain("failed ? (previous.fetchedAt || null) : nowMs");
+        expect(source).toContain("failed ? (previous.storedCount ?? null) : storedList.length");
     });
 
     test("failed optional fetches update quality only and do not write empty snapshots", async () => {

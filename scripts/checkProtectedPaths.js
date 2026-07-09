@@ -6,9 +6,24 @@ const { execFileSync } = require("node:child_process");
 
 const PROTECTED_PATH_PATTERN = /^discord\/systemProvider(?:\.js|\/)/;
 const ZERO_SHA_PATTERN = /^0+$/;
+const GIT_BIN_CANDIDATES = Object.freeze([
+    "/usr/bin/git",
+    "/usr/local/bin/git",
+    "/bin/git"
+]);
+
+function resolveGitBin() {
+    for (const candidate of GIT_BIN_CANDIDATES) {
+        if (fs.existsSync(candidate)) return candidate;
+    }
+    return "";
+}
+
+const GIT_BIN = resolveGitBin();
 
 function git(args) {
-    return execFileSync("git", args, {
+    if (!GIT_BIN) throw new Error("git binary not found");
+    return execFileSync(GIT_BIN, args, {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"]
     }).trim();
@@ -31,18 +46,6 @@ function splitLines(value) {
         .filter(Boolean);
 }
 
-function readEventBaseSha() {
-    const eventPath = process.env.GITHUB_EVENT_PATH;
-    if (!eventPath || !fs.existsSync(eventPath)) return "";
-
-    try {
-        const event = JSON.parse(fs.readFileSync(eventPath, "utf8"));
-        return String(event.pull_request?.base?.sha || event.before || "").trim();
-    } catch {
-        return "";
-    }
-}
-
 function isUsableBaseSha(value) {
     if (!value || ZERO_SHA_PATTERN.test(value)) return false;
 
@@ -60,8 +63,7 @@ function getChangedPaths() {
         return [];
     }
 
-    const configuredBase = String(process.env.PROTECTED_BASE_SHA || "").trim();
-    const baseSha = configuredBase || readEventBaseSha();
+    const baseSha = String(process.env.PROTECTED_BASE_SHA || "").trim();
 
     if (isUsableBaseSha(baseSha)) {
         return splitLines(git(["diff", "--name-only", `${baseSha}...HEAD`]));

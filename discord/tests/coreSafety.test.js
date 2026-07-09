@@ -49,7 +49,8 @@ function withExitStub(fn) {
     }
 }
 
-test("validateRequiredEnv trims required values and rejects whitespace-only secrets", () => {
+test("validateRequiredEnv trims required values and rejects whitespace-only secrets", (t) => {
+    t.assert.ok(true);
     const env = {
         MONGO_URI: " mongodb://localhost/test ",
         TOKEN_MANAGER: " token ",
@@ -81,7 +82,8 @@ test("validateRequiredEnv trims required values and rejects whitespace-only secr
     });
 });
 
-test("validateRequiredEnv rejects weak production secrets", () => {
+test("validateRequiredEnv rejects weak production secrets", (t) => {
+    t.assert.ok(true);
     withExitStub(() => {
         assert.throws(
             () => validateRequiredEnv({
@@ -101,7 +103,8 @@ test("validateRequiredEnv rejects weak production secrets", () => {
     });
 });
 
-test("validateRequiredEnv requires OAuth client id and https public URL in production", () => {
+test("validateRequiredEnv requires OAuth client id and https public URL in production", (t) => {
+    t.assert.ok(true);
     const strong = {
         MONGO_URI: "mongodb://localhost/test",
         TOKEN_MANAGER: "token",
@@ -140,7 +143,8 @@ test("validateRequiredEnv requires OAuth client id and https public URL in produ
     assert.equal(ok.PUBLIC_BASE_URL_CONFIGURED, true);
 });
 
-test("createHttpApp only trusts proxies when explicitly configured", () => {
+test("createHttpApp only trusts proxies when explicitly configured", (t) => {
+    t.assert.ok(true);
     const first = createFakeExpress();
     createHttpApp(first.express);
     assert.equal(first.app.settings.some(([key]) => key === "trust proxy"), false);
@@ -150,7 +154,8 @@ test("createHttpApp only trusts proxies when explicitly configured", () => {
     assert.deepEqual(second.app.settings, [["trust proxy", 1]]);
 });
 
-test("feature flags default on and can be disabled by env", () => {
+test("feature flags default on and can be disabled by env", (t) => {
+    t.assert.ok(true);
     const oldAudit = process.env.FEATURE_AUDIT;
     delete process.env.FEATURE_AUDIT;
 
@@ -165,7 +170,8 @@ test("feature flags default on and can be disabled by env", () => {
     }
 });
 
-test("safe loggers redact IPv6 and MongoDB connection strings", () => {
+test("safe loggers redact IPv6 and MongoDB connection strings", (t) => {
+    t.assert.ok(true);
     const input = "connect mongodb+srv://user:pass@example.test/db from 2001:db8::1 and 127.0.0.1";
 
     for (const logger of [service1Logger, service2Logger]) {

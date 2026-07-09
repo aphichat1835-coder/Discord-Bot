@@ -25,14 +25,28 @@ function trimTrailingSlashes(value) {
     return text;
 }
 
+function isBlockedSmokeHost(hostname) {
+    const host = String(hostname || "").toLowerCase();
+    if (["localhost", "0.0.0.0", "127.0.0.1", "::1", "[::1]"].includes(host)) return true;
+    if (/^127\./.test(host)) return true;
+    if (/^10\./.test(host)) return true;
+    if (/^192\.168\./.test(host)) return true;
+    if (/^169\.254\./.test(host)) return true;
+    const match = host.match(/^172\.(\d+)\./);
+    return !!match && Number(match[1]) >= 16 && Number(match[1]) <= 31;
+}
+
 function normalizeBaseUrl(input) {
     const raw = String(input || process.env.SMOKE_BASE_URL || "").trim();
     if (!raw) {
         throw new Error("missing base URL\n" + usage());
     }
     const url = new URL(raw);
-    if (!["http:", "https:"].includes(url.protocol)) {
-        throw new Error("base URL must start with http:// or https://");
+    if (url.protocol !== "https:") {
+        throw new Error("base URL must start with https://");
+    }
+    if (isBlockedSmokeHost(url.hostname)) {
+        throw new Error("base URL hostname is not allowed for remote smoke checks");
     }
     url.pathname = trimTrailingSlashes(url.pathname);
     url.search = "";
@@ -44,7 +58,8 @@ async function request(baseUrl, path, { redirect = "manual" } = {}) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
     try {
-        const response = await fetch(`${baseUrl}${path}`, {
+        const target = new URL(path, `${baseUrl}/`);
+        const response = await fetch(target, {
             method: "GET",
             redirect,
             signal: controller.signal,
@@ -129,6 +144,7 @@ if (require.main === module) {
 module.exports = {
     normalizeBaseUrl,
     trimTrailingSlashes,
+    isBlockedSmokeHost,
     isOwnerReachable,
     looksLikeHtml
 };

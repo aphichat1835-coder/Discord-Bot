@@ -19,6 +19,7 @@ const RETENTION_ERROR_MAX = Math.max(
     Number(process.env.RETENTION_ERROR_MAX || 50) || 50
 );
 const MAINTENANCE_INTERVAL_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 let maintenanceTimer = null;
 let maintenanceInFlight = false;
@@ -109,7 +110,7 @@ async function processGuildRetention(config, { now, dryRun, summary }) {
     if (!days) return;
 
     summary.guildsWithRetention++;
-    const filters = retentionFilters(config.guildId, now - days * 86400000);
+    const filters = retentionFilters(config.guildId, now - days * DAY_MS);
 
     try {
         if (dryRun) {

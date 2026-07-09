@@ -15,9 +15,21 @@ function sendError(res, err) {
     });
 }
 
-function querySuffix(req) {
-    const index = String(req.originalUrl || "").indexOf("?");
-    return index >= 0 ? req.originalUrl.slice(index) : "";
+function safeQuerySuffix(req, allowedKeys = []) {
+    const params = new URLSearchParams();
+    for (const key of allowedKeys) {
+        const value = req.query?.[key];
+        if (typeof value === "string" && value.length <= 120) {
+            params.set(key, value);
+        }
+    }
+    const query = params.toString();
+    return query ? `?${query}` : "";
+}
+
+function safeGuildId(value) {
+    const text = String(value || "").trim();
+    return /^\d{17,22}$/.test(text) ? text : "";
 }
 
 function registerVerifyOwnerRoutes({ app, express }) {
@@ -25,14 +37,18 @@ function registerVerifyOwnerRoutes({ app, express }) {
     app.get("/verify-owner", (_req, res) => res.redirect(302, "/verification"));
 
     app.get("/api/verify-owner/overview", auth.requirePin, (req, res) => {
-        res.redirect(302, `/api/guilds${querySuffix(req)}`);
+        res.redirect(302, `/api/guilds${safeQuerySuffix(req, ["enabled"])}`);
     });
 
     app.get(
         "/api/verify-owner/guild/:guildId/stats",
         auth.requirePin,
         (req, res) => {
-            res.redirect(302, `/api/guild/${encodeURIComponent(req.params.guildId)}/stats${querySuffix(req)}`);
+            const guildId = safeGuildId(req.params.guildId);
+            const target = guildId
+                ? `/api/guild/${guildId}/stats${safeQuerySuffix(req, ["page", "limit", "result", "risk", "q"])}`
+                : "/api/guilds";
+            res.redirect(302, target);
         }
     );
 
@@ -40,7 +56,11 @@ function registerVerifyOwnerRoutes({ app, express }) {
         "/api/verify-owner/guild/:guildId/members",
         auth.requirePin,
         (req, res) => {
-            res.redirect(302, `/api/guild/${encodeURIComponent(req.params.guildId)}/members${querySuffix(req)}`);
+            const guildId = safeGuildId(req.params.guildId);
+            const target = guildId
+                ? `/api/guild/${guildId}/members${safeQuerySuffix(req, ["page", "limit", "result", "risk", "q"])}`
+                : "/api/guilds";
+            res.redirect(302, target);
         }
     );
 

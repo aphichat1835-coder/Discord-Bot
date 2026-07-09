@@ -4,6 +4,10 @@ const VerifyLog = require("../models/VerifyLog");
 const OAuthUser = require("../models/OAuthUser");
 const { buildVerifyLogCommon, buildVerifyLogParts } = require("../utils/verificationSnapshots");
 
+function escapeRegex(value) {
+    return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+}
+
 function successLogFilter(guildId, query = {}) {
     const filter = {
         guildId,
@@ -11,7 +15,7 @@ function successLogFilter(guildId, query = {}) {
         deletedAt: { $exists: false }
     };
     if (query.q) {
-        const escaped = String(query.q).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const escaped = escapeRegex(query.q);
         const text = { $regex: escaped, $options: "i" };
         filter.$or = [
             { userId: String(query.q) },
@@ -37,10 +41,61 @@ function fromLog(log = {}, canViewSensitive = false) {
     };
 }
 
+function legacySensitiveFields(discord = {}, connections = [], guilds = [], canViewSensitive = false) {
+    if (!canViewSensitive) {
+        return {
+            email: null,
+            emailVerified: null,
+            accountAgeDays: null,
+            accountCreatedAt: null,
+            badgeFlags: [],
+            connections: [],
+            guilds: []
+        };
+    }
+
+    return {
+        email: discord.email || null,
+        emailVerified: discord.emailVerified === true,
+        accountAgeDays: discord.accountAgeDays || null,
+        accountCreatedAt: discord.accountCreatedAt || null,
+        badgeFlags: Array.isArray(discord.badgeFlags) ? discord.badgeFlags : [],
+        connections,
+        guilds
+    };
+}
+
+function legacyCounts(user = {}, connections = [], guilds = []) {
+    return {
+        connectionsCount: Number(user.connectionsCount ?? connections.length ?? 0),
+        guildsCount: Number(user.guildsCount ?? guilds.length ?? 0)
+    };
+}
+
+function legacyMemberFields(user = {}) {
+    const member = user.lastMember || null;
+    return {
+        member,
+        memberSnapshot: member,
+        memberRoles: Array.isArray(member?.roles) ? member.roles : [],
+        joinedAt: member?.joinedAt || null
+    };
+}
+
+function legacyVerificationFields(user = {}) {
+    return {
+        riskScore: Number(user.lastVerify?.riskScore || 0),
+        riskFlags: Array.isArray(user.lastVerify?.riskFlags) ? user.lastVerify.riskFlags : [],
+        verifiedAt: user.lastVerify?.verifiedAt || user.updatedAt || null,
+        createdAt: user.createdAt || null
+    };
+}
+
 function fromOAuthUser(user = {}, canViewSensitive = false) {
     const discord = user.discord || {};
     const connections = Array.isArray(user.connections) ? user.connections : [];
     const guilds = Array.isArray(user.guilds) ? user.guilds : [];
+    const sensitive = legacySensitiveFields(discord, connections, guilds, canViewSensitive);
     return {
         logId: null,
         guildId: user.lastVerify?.guildId || null,
@@ -54,23 +109,16 @@ function fromOAuthUser(user = {}, canViewSensitive = false) {
         globalName: discord.globalName || null,
         tag: discord.displayTag || null,
         avatarUrl: discord.avatarUrl || null,
-        email: canViewSensitive ? (discord.email || null) : null,
-        emailVerified: canViewSensitive ? discord.emailVerified === true : null,
-        accountAgeDays: canViewSensitive ? (discord.accountAgeDays || null) : null,
-        accountCreatedAt: canViewSensitive ? (discord.accountCreatedAt || null) : null,
-        badgeFlags: canViewSensitive && Array.isArray(discord.badgeFlags) ? discord.badgeFlags : [],
-        connectionsCount: Number(user.connectionsCount ?? connections.length ?? 0),
-        guildsCount: Number(user.guildsCount ?? guilds.length ?? 0),
-        connections: canViewSensitive ? connections : [],
-        guilds: canViewSensitive ? guilds : [],
-        member: user.lastMember || null,
-        memberSnapshot: user.lastMember || null,
-        memberRoles: Array.isArray(user.lastMember?.roles) ? user.lastMember.roles : [],
-        joinedAt: user.lastMember?.joinedAt || null,
-        riskScore: Number(user.lastVerify?.riskScore || 0),
-        riskFlags: Array.isArray(user.lastVerify?.riskFlags) ? user.lastVerify.riskFlags : [],
-        verifiedAt: user.lastVerify?.verifiedAt || user.updatedAt || null,
-        createdAt: user.createdAt || null,
+        email: sensitive.email,
+        emailVerified: sensitive.emailVerified,
+        accountAgeDays: sensitive.accountAgeDays,
+        accountCreatedAt: sensitive.accountCreatedAt,
+        badgeFlags: sensitive.badgeFlags,
+        ...legacyCounts(user, connections, guilds),
+        connections: sensitive.connections,
+        guilds: sensitive.guilds,
+        ...legacyMemberFields(user),
+        ...legacyVerificationFields(user),
         sensitiveRedacted: canViewSensitive !== true,
         canSyncRole: false,
         reason: "legacy_oauth_user_last_verify"
@@ -103,15 +151,17 @@ function legacyVerifiedAggregation(guildId) {
     ];
 }
 
+function chooseSensitiveArray(primaryValue, fallbackValue, canViewSensitive = false) {
+    if (!canViewSensitive) return [];
+    if (Array.isArray(primaryValue) && primaryValue.length) return primaryValue;
+    return Array.isArray(fallbackValue) ? fallbackValue : [];
+}
+
 function mergeMembers(primary, fallback, canViewSensitive = false) {
     if (!primary) return fallback;
     if (!fallback) return primary;
-    const mergedConnections = canViewSensitive
-        ? (primary.connections?.length ? primary.connections : fallback.connections)
-        : [];
-    const mergedGuilds = canViewSensitive
-        ? (primary.guilds?.length ? primary.guilds : fallback.guilds)
-        : [];
+    const mergedConnections = chooseSensitiveArray(primary.connections, fallback.connections, canViewSensitive);
+    const mergedGuilds = chooseSensitiveArray(primary.guilds, fallback.guilds, canViewSensitive);
     return {
         ...fallback,
         ...primary,
@@ -177,6 +227,12 @@ module.exports = {
         fromLog,
         fromOAuthUser,
         mergeMembers,
-        legacyVerifiedAggregation
+        legacyVerifiedAggregation,
+        escapeRegex,
+        legacySensitiveFields,
+        legacyCounts,
+        legacyMemberFields,
+        legacyVerificationFields,
+        chooseSensitiveArray
     }
 };

@@ -220,6 +220,28 @@
     return '<span class="badge badge-failed">failed</span>';
   }
 
+  function badgeElement(label, className) {
+    const span = document.createElement("span");
+    span.className = `badge ${className}`;
+    span.textContent = String(label ?? "");
+    return span;
+  }
+
+  function resultBadgeElement(result) {
+    const raw = String(result || "failed").toLowerCase();
+    if (raw === "success" || raw === "ok") return badgeElement("success", "badge-ok");
+    if (raw === "blocked") return badgeElement("blocked", "badge-blocked");
+    if (raw === "pending") return badgeElement("pending", "badge-warn");
+    return badgeElement("failed", "badge-failed");
+  }
+
+  function riskBadgeElement(score) {
+    const n = Number(score || 0);
+    if (n >= 70) return badgeElement(n, "badge-danger");
+    if (n >= 35) return badgeElement(n, "badge-warn");
+    return badgeElement(n, "badge-ok");
+  }
+
   function statusBadge(value, onLabel = "Enabled", offLabel = "Disabled") {
     return value
       ? `<span class="badge badge-ok">${h(onLabel)}</span>`
@@ -1465,46 +1487,128 @@
     return params.toString();
   }
 
-  function renderMemberRow(member = {}) {
-    const ip = member.rawIp || member.ip || member.ipInfo?.ip || "—";
-    const location = [
+  function appendText(parent, text, className = "") {
+    const node = document.createElement("div");
+    if (className) node.className = className;
+    node.textContent = String(text ?? "");
+    parent.appendChild(node);
+    return node;
+  }
+
+  function memberTableMessage(message, className = "empty") {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    const box = document.createElement("div");
+    td.colSpan = 8;
+    box.className = className;
+    box.textContent = message;
+    td.appendChild(box);
+    tr.appendChild(td);
+    return tr;
+  }
+
+  function memberTableLoadingRow() {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    const box = document.createElement("div");
+    const spinner = document.createElement("div");
+    const label = document.createElement("div");
+    td.colSpan = 8;
+    box.className = "loading-box";
+    spinner.className = "spinner";
+    label.textContent = "กำลังโหลดสมาชิก...";
+    box.append(spinner, label);
+    td.appendChild(box);
+    tr.appendChild(td);
+    return tr;
+  }
+
+  function memberLocationText(member = {}) {
+    return [
       member.countryCode || member.ipInfo?.countryCode,
       member.city || member.ipInfo?.city,
       member.isp || member.ipInfo?.isp
     ].filter(Boolean).join(" / ") || "—";
+  }
 
-    return `
-      <tr>
-        <td>
-          <div style="font-weight:950;">${h(member.globalName || member.username || member.userId || "Unknown")}</div>
-          <div class="mono muted-2 small">${h(member.userId || "—")}</div>
-          <div class="muted small">${h(member.email || "—")}</div>
-        </td>
-        <td>${resultBadge(member.result || "success")}</td>
-        <td>${riskBadge(member.riskScore)}</td>
-        <td>
-          <div class="mono">${h(ip)}</div>
-          <div class="muted small">${h(location)}</div>
-        </td>
-        <td>
-          <div>${h(member.device?.browser || member.browser || "—")}</div>
-          <div class="muted small">${h(member.device?.os || member.os || "—")}</div>
-        </td>
-        <td>
-          <div>${h(member.connectionsCount ?? member.connections ?? 0)} connections</div>
-          <div class="muted small">${h(member.guildsCount ?? member.guilds ?? 0)} guilds</div>
-        </td>
-        <td>${h(fmtTime(member.verifiedAt || member.createdAt))}</td>
-        <td>
-          <button class="btn btn-soft btn-sm" type="button" data-member-detail="${h(member.userId || "")}">
-            รายละเอียด
-          </button>
-          <button class="btn btn-soft btn-sm" type="button" data-member-reveal="${h(member.userId || "")}">
-            เปิด Raw IP
-          </button>
-        </td>
-      </tr>
-    `;
+  function memberIdentityCell(member = {}) {
+    const identity = document.createElement("td");
+    appendText(identity, member.globalName || member.username || member.userId || "Unknown").style.fontWeight = "950";
+    appendText(identity, member.userId || "—", "mono muted-2 small");
+    appendText(identity, member.email || "—", "muted small");
+    return identity;
+  }
+
+  function memberResultCell(member = {}) {
+    const result = document.createElement("td");
+    result.appendChild(resultBadgeElement(member.result || "success"));
+    return result;
+  }
+
+  function memberRiskCell(member = {}) {
+    const risk = document.createElement("td");
+    risk.appendChild(riskBadgeElement(member.riskScore));
+    return risk;
+  }
+
+  function memberNetworkCell(member = {}) {
+    const ip = member.rawIp || member.ip || member.ipInfo?.ip || "—";
+    const network = document.createElement("td");
+    appendText(network, ip, "mono");
+    appendText(network, memberLocationText(member), "muted small");
+    return network;
+  }
+
+  function memberDeviceCell(member = {}) {
+    const device = document.createElement("td");
+    appendText(device, member.device?.browser || member.browser || "—");
+    appendText(device, member.device?.os || member.os || "—", "muted small");
+    return device;
+  }
+
+  function memberCountsCell(member = {}) {
+    const counts = document.createElement("td");
+    appendText(counts, `${member.connectionsCount ?? member.connections ?? 0} connections`);
+    appendText(counts, `${member.guildsCount ?? member.guilds ?? 0} guilds`, "muted small");
+    return counts;
+  }
+
+  function memberTimeCell(member = {}) {
+    const time = document.createElement("td");
+    time.textContent = fmtTime(member.verifiedAt || member.createdAt);
+    return time;
+  }
+
+  function memberActionsCell(member = {}) {
+    const actions = document.createElement("td");
+    const detail = document.createElement("button");
+    detail.className = "btn btn-soft btn-sm";
+    detail.type = "button";
+    detail.dataset.memberDetail = String(member.userId || "");
+    detail.textContent = "รายละเอียด";
+    const reveal = document.createElement("button");
+    reveal.className = "btn btn-soft btn-sm";
+    reveal.type = "button";
+    reveal.dataset.memberReveal = String(member.userId || "");
+    reveal.textContent = "เปิด Raw IP";
+    actions.append(detail, reveal);
+    return actions;
+  }
+
+  function renderMemberRow(member = {}) {
+    const tr = document.createElement("tr");
+
+    tr.append(
+      memberIdentityCell(member),
+      memberResultCell(member),
+      memberRiskCell(member),
+      memberNetworkCell(member),
+      memberDeviceCell(member),
+      memberCountsCell(member),
+      memberTimeCell(member),
+      memberActionsCell(member)
+    );
+    return tr;
   }
 
   function bindMemberTableActions(members = []) {
@@ -1525,13 +1629,7 @@
     if (!body) return;
 
     state.membersPage = Math.max(0, page);
-    body.innerHTML = `
-      <tr>
-        <td colspan="8">
-          <div class="loading-box"><div class="spinner"></div><div>กำลังโหลดสมาชิก...</div></div>
-        </td>
-      </tr>
-    `;
+    body.replaceChildren(memberTableLoadingRow());
 
     try {
       const data = await api(`/api/guild/${encodeURIComponent(state.guildId)}/members?${buildMembersQuery(state.membersPage)}`);
@@ -1542,18 +1640,14 @@
       }
 
       if (!members.length) {
-        body.innerHTML = `
-          <tr><td colspan="8"><div class="empty">ไม่พบข้อมูลสมาชิก</div></td></tr>
-        `;
+        body.replaceChildren(memberTableMessage("ไม่พบข้อมูลสมาชิก"));
         return;
       }
 
-      body.innerHTML = members.map(renderMemberRow).join("");
+      body.replaceChildren(...members.map(renderMemberRow));
       bindMemberTableActions(members);
     } catch (err) {
-      body.innerHTML = `
-        <tr><td colspan="8"><div class="alert alert-danger">โหลดสมาชิกไม่สำเร็จ: ${h(err.message)}</div></td></tr>
-      `;
+      body.replaceChildren(memberTableMessage(`โหลดสมาชิกไม่สำเร็จ: ${err.message}`, "alert alert-danger"));
     }
   }
 

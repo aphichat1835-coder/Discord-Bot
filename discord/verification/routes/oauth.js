@@ -35,6 +35,7 @@ const DEVICE_DUPLICATE_LOOKUP_MAX = Math.max(
     20,
     Number(process.env.DEVICE_DUPLICATE_LOOKUP_MAX || 200) || 200
 );
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function getCdnExtension(hash) {
     return String(hash || '').startsWith('a_') ? 'gif' : 'png';
@@ -77,7 +78,7 @@ function getAccountAgeDays(userId) {
 
     if (!createdAt) return 0;
 
-    return Math.floor((Date.now() - createdAt) / 86400000);
+    return Math.floor((Date.now() - createdAt) / DAY_MS);
 }
 
 function getAvatarUrl(profile) {
@@ -273,6 +274,14 @@ function safeNumberOrNull(value) {
     return Number.isFinite(n) ? n : null;
 }
 
+function safeSnowflakeStrict(value, label = "discord_id") {
+    const text = String(value || "").trim();
+    if (/^\d{17,22}$/.test(text)) return text;
+    const err = new Error(`invalid ${label}`);
+    err.code = "invalid_snowflake";
+    throw err;
+}
+
 function safePlainObject(value) {
     if (
         !value ||
@@ -442,6 +451,158 @@ function normalizeGuilds(guilds = []) {
             snapshot: compactUserGuild(g)
         };
     });
+}
+
+function buildOAuthDiscordUpdate(profile, profileUserId, accountCreatedAt, accountAgeDays) {
+    return {
+        userId: profileUserId,
+        username: profile.username,
+        discriminator: profile.discriminator || null,
+        globalName: profile.global_name ?? profile.globalName ?? null,
+        displayTag: displayTag(profile),
+
+        avatarHash: profile.avatar || null,
+        avatarUrl: getAvatarUrl(profile),
+        bannerHash: profile.banner || null,
+        bannerUrl: getBannerUrl(profile),
+        accentColor: profile.accent_color ?? null,
+
+        email: profile.email || null,
+        emailVerified: profile.verified || false,
+        locale: profile.locale || null,
+        mfaEnabled: !!profile.mfa_enabled,
+        premiumType: profile.premium_type ?? null,
+
+        flags: profile.flags || 0,
+        publicFlags: profile.public_flags || 0,
+        badgeFlags: decodeUserBadgeFlags(profile),
+
+        accountCreatedAt,
+        accountAgeDays,
+
+        profileSnapshot: compactDiscordProfile(profile)
+    };
+}
+
+function snapshotMetaForList(previousMeta, key, fetchMetadata, sourceList, storedList, nowMs) {
+    const previous = objectOrEmpty(previousMeta[key]);
+    const failedKey = `${key}FetchFailed`;
+    const statusKey = `${key}FetchStatus`;
+    const reasonKey = `${key}FailureReason`;
+    const failed = fetchMetadata[failedKey] === true;
+
+    return {
+        ...previous,
+        status: failed ? "failed" : "success",
+        fetchedAt: failed ? (previous.fetchedAt || null) : nowMs,
+        attemptedAt: nowMs,
+        returnedCount: Array.isArray(sourceList) ? sourceList.length : 0,
+        storedCount: failed ? (previous.storedCount ?? null) : storedList.length,
+        truncated: false,
+        failureReason: failed
+            ? (fetchMetadata[reasonKey] || `discord_http_${fetchMetadata[statusKey] || "unknown"}`)
+            : null,
+        source: "discord_oauth"
+    };
+}
+
+function snapshotMetaForMember(previousMeta, fetchMetadata, memberInfo, nowMs) {
+    const previous = objectOrEmpty(previousMeta.member);
+    const attempted = fetchMetadata.memberFetchAttempted === true;
+
+    return {
+        ...previous,
+        status: memberFetchQualityStatus(fetchMetadata, memberInfo),
+        fetchedAt: memberInfo ? nowMs : (previous.fetchedAt || null),
+        attemptedAt: attempted ? nowMs : (previous.attemptedAt || null),
+        returnedCount: memberInfo ? 1 : 0,
+        storedCount: memberInfo ? 1 : (previous.storedCount ?? null),
+        truncated: false,
+        failureReason: attempted && !memberInfo
+            ? (fetchMetadata.memberFailureReason || `discord_http_${fetchMetadata.memberFetchStatus || "unknown"}`)
+            : null,
+        source: fetchMetadata.memberFetchSource || "discord_oauth"
+    };
+}
+
+function buildSnapshotMetaUpdate(previousMeta, fetchMetadata, snapshots, memberInfo, nowMs) {
+    return {
+        ...previousMeta,
+        version: 2,
+        updatedAt: nowMs,
+        profile: {
+            status: "success",
+            fetchedAt: nowMs,
+            source: "discord_oauth"
+        },
+        connections: snapshotMetaForList(
+            previousMeta,
+            "connections",
+            fetchMetadata,
+            snapshots.connectionsSource,
+            snapshots.connectionsStored,
+            nowMs
+        ),
+        guilds: snapshotMetaForList(
+            previousMeta,
+            "guilds",
+            fetchMetadata,
+            snapshots.guildsSource,
+            snapshots.guildsStored,
+            nowMs
+        ),
+        member: snapshotMetaForMember(previousMeta, fetchMetadata, memberInfo, nowMs)
+    };
+}
+
+function buildLastMemberUpdate({ guildId, profileUserId, memberInfo }) {
+    if (!memberInfo) return null;
+
+    return {
+        guildId,
+        nick: memberInfo.nick || null,
+        roles: Array.isArray(memberInfo.roles) ? memberInfo.roles.map(String) : [],
+        roleCount: (memberInfo.roles || []).length,
+        joinedAt: memberInfo.joined_at || null,
+        pending: !!memberInfo.pending,
+        avatar: memberInfo.avatar || null,
+        avatarUrl: getMemberAvatarUrl(profileUserId, guildId, memberInfo.avatar),
+        flags: memberInfo.flags || 0,
+        communicationDisabledUntil: memberInfo.communication_disabled_until || null,
+        snapshot: compactMemberInfo(memberInfo)
+    };
+}
+
+function applySnapshotBudgetGuard(updateSet) {
+    try {
+        snapshotBudget.assertSnapshotBudget(updateSet, { label: "oauth_user_update" });
+        return;
+    } catch (budgetErr) {
+        const snapshotMeta = objectOrEmpty(updateSet.snapshotMeta);
+        updateSet.snapshotMeta = {
+            ...snapshotMeta,
+            budget: snapshotBudget.failureMeta(budgetErr, "discord_oauth")
+        };
+        delete updateSet.connections;
+        delete updateSet.guilds;
+        delete updateSet.lastMember;
+        if (updateSet.discord?.profileSnapshot) {
+            updateSet.discord = {
+                ...updateSet.discord,
+                profileSnapshot: null
+            };
+        }
+    }
+}
+
+function applyOAuthTokenStorage(updateSet, tokenData) {
+    /*
+      ค่า default เก็บ OAuth token แบบเข้ารหัสเพื่อ refresh สิทธิ์ต่อเนื่อง
+      ถ้าต้องการปิดให้ตั้ง STORE_OAUTH_TOKENS=false
+    */
+    if (shouldStoreOAuthTokens() && typeof discord.prepareTokenStorage === 'function') {
+        updateSet.oauth = discord.prepareTokenStorage(tokenData);
+    }
 }
 
 function buildDiscordSnapshot(profile, connections, memberInfo, stateObj, extra = {}) {
@@ -800,48 +961,18 @@ async function saveOAuthUserSafe({
 }) {
     return safeSideEffect('saveOAuthUser', async () => {
         const nowMs = Date.now();
-        const profileUserId = String(profile.id || "");
+        const profileUserId = safeSnowflakeStrict(profile.id, "discord_user_id");
         const accountCreatedAt = getAccountCreatedAt(profileUserId);
         const accountAgeDays = getAccountAgeDays(profileUserId);
         const existing = await OAuthUser.findOne({ 'discord.userId': profileUserId })
             .select('snapshotMeta')
             .lean();
         const previousMeta = existing?.snapshotMeta || {};
-        const previousConnectionsMeta = objectOrEmpty(previousMeta.connections);
-        const previousGuildsMeta = objectOrEmpty(previousMeta.guilds);
-        const previousMemberMeta = objectOrEmpty(previousMeta.member);
         const connectionSnapshot = normalizeConnections(connections);
         const guildSnapshot = normalizeGuilds(guilds);
 
         const updateSet = {
-            discord: {
-                userId: profileUserId,
-                username: profile.username,
-                discriminator: profile.discriminator || null,
-                globalName: profile.global_name ?? profile.globalName ?? null,
-                displayTag: displayTag(profile),
-
-                avatarHash: profile.avatar || null,
-                avatarUrl: getAvatarUrl(profile),
-                bannerHash: profile.banner || null,
-                bannerUrl: getBannerUrl(profile),
-                accentColor: profile.accent_color ?? null,
-
-                email: profile.email || null,
-                emailVerified: profile.verified || false,
-                locale: profile.locale || null,
-                mfaEnabled: !!profile.mfa_enabled,
-                premiumType: profile.premium_type ?? null,
-
-                flags: profile.flags || 0,
-                publicFlags: profile.public_flags || 0,
-                badgeFlags: decodeUserBadgeFlags(profile),
-
-                accountCreatedAt,
-                accountAgeDays,
-
-                profileSnapshot: compactDiscordProfile(profile)
-            },
+            discord: buildOAuthDiscordUpdate(profile, profileUserId, accountCreatedAt, accountAgeDays),
 
             lastVerify: {
                 guildId,
@@ -853,68 +984,18 @@ async function saveOAuthUserSafe({
             },
 
             lastIpTracking: trackingSnapshot || null,
-            snapshotMeta: {
-                ...previousMeta,
-                version: 2,
-                updatedAt: nowMs,
-                profile: {
-                    status: "success",
-                    fetchedAt: nowMs,
-                    source: "discord_oauth"
+            snapshotMeta: buildSnapshotMetaUpdate(
+                previousMeta,
+                fetchMetadata,
+                {
+                    connectionsSource: connections,
+                    connectionsStored: connectionSnapshot,
+                    guildsSource: guilds,
+                    guildsStored: guildSnapshot
                 },
-                connections: {
-                    ...previousConnectionsMeta,
-                    status: fetchMetadata.connectionsFetchFailed ? "failed" : "success",
-                    fetchedAt: fetchMetadata.connectionsFetchFailed
-                        ? (previousMeta.connections?.fetchedAt || null)
-                        : nowMs,
-                    attemptedAt: nowMs,
-                    returnedCount: Array.isArray(connections) ? connections.length : 0,
-                    storedCount: fetchMetadata.connectionsFetchFailed
-                        ? (previousMeta.connections?.storedCount ?? null)
-                        : connectionSnapshot.length,
-                    truncated: false,
-                    failureReason: fetchMetadata.connectionsFetchFailed
-                        ? (fetchMetadata.connectionsFailureReason ||
-                            `discord_http_${fetchMetadata.connectionsFetchStatus || "unknown"}`)
-                        : null,
-                    source: "discord_oauth"
-                },
-                guilds: {
-                    ...previousGuildsMeta,
-                    status: fetchMetadata.guildsFetchFailed ? "failed" : "success",
-                    fetchedAt: fetchMetadata.guildsFetchFailed
-                        ? (previousMeta.guilds?.fetchedAt || null)
-                        : nowMs,
-                    attemptedAt: nowMs,
-                    returnedCount: Array.isArray(guilds) ? guilds.length : 0,
-                    storedCount: fetchMetadata.guildsFetchFailed
-                        ? (previousMeta.guilds?.storedCount ?? null)
-                        : guildSnapshot.length,
-                    truncated: false,
-                    failureReason: fetchMetadata.guildsFetchFailed
-                        ? (fetchMetadata.guildsFailureReason ||
-                            `discord_http_${fetchMetadata.guildsFetchStatus || "unknown"}`)
-                        : null,
-                    source: "discord_oauth"
-                },
-                member: {
-                    ...previousMemberMeta,
-                    status: memberFetchQualityStatus(fetchMetadata, memberInfo),
-                    fetchedAt: memberInfo ? nowMs : (previousMeta.member?.fetchedAt || null),
-                    attemptedAt: fetchMetadata.memberFetchAttempted
-                        ? nowMs
-                        : (previousMeta.member?.attemptedAt || null),
-                    returnedCount: memberInfo ? 1 : 0,
-                    storedCount: memberInfo ? 1 : (previousMeta.member?.storedCount ?? null),
-                    truncated: false,
-                    failureReason: fetchMetadata.memberFetchAttempted && !memberInfo
-                        ? (fetchMetadata.memberFailureReason ||
-                            `discord_http_${fetchMetadata.memberFetchStatus || "unknown"}`)
-                        : null,
-                    source: fetchMetadata.memberFetchSource || "discord_oauth"
-                }
-            },
+                memberInfo,
+                nowMs
+            ),
             updatedAt: nowMs
         };
 
@@ -924,48 +1005,11 @@ async function saveOAuthUserSafe({
         if (!fetchMetadata.guildsFetchFailed) {
             updateSet.guilds = guildSnapshot;
         }
-        if (memberInfo) {
-            updateSet.lastMember = {
-                guildId,
-                nick: memberInfo.nick || null,
-                roles: Array.isArray(memberInfo.roles) ? memberInfo.roles.map(String) : [],
-                roleCount: (memberInfo.roles || []).length,
-                joinedAt: memberInfo.joined_at || null,
-                pending: !!memberInfo.pending,
-                avatar: memberInfo.avatar || null,
-                avatarUrl: getMemberAvatarUrl(profileUserId, guildId, memberInfo.avatar),
-                flags: memberInfo.flags || 0,
-                communicationDisabledUntil: memberInfo.communication_disabled_until || null,
-                snapshot: compactMemberInfo(memberInfo)
-            };
-        }
+        const lastMember = buildLastMemberUpdate({ guildId, profileUserId, memberInfo });
+        if (lastMember) updateSet.lastMember = lastMember;
 
-        try {
-            snapshotBudget.assertSnapshotBudget(updateSet, { label: "oauth_user_update" });
-        } catch (budgetErr) {
-            const snapshotMeta = objectOrEmpty(updateSet.snapshotMeta);
-            updateSet.snapshotMeta = {
-                ...snapshotMeta,
-                budget: snapshotBudget.failureMeta(budgetErr, "discord_oauth")
-            };
-            delete updateSet.connections;
-            delete updateSet.guilds;
-            delete updateSet.lastMember;
-            if (updateSet.discord?.profileSnapshot) {
-                updateSet.discord = {
-                    ...updateSet.discord,
-                    profileSnapshot: null
-                };
-            }
-        }
-
-        /*
-          ค่า default เก็บ OAuth token แบบเข้ารหัสเพื่อ refresh สิทธิ์ต่อเนื่อง
-          ถ้าต้องการปิดให้ตั้ง STORE_OAUTH_TOKENS=false
-        */
-        if (shouldStoreOAuthTokens() && typeof discord.prepareTokenStorage === 'function') {
-            updateSet.oauth = discord.prepareTokenStorage(tokenData);
-        }
+        applySnapshotBudgetGuard(updateSet);
+        applyOAuthTokenStorage(updateSet, tokenData);
 
         await OAuthUser.findOneAndUpdate(
             { 'discord.userId': profileUserId },
@@ -1908,6 +1952,7 @@ module.exports._test = {
     compactDiscordProfile,
     safeString,
     safeNullableString,
+    safeSnowflakeStrict,
     memberFetchQualityStatus,
     saveOAuthUserSafe,
     saveVerifyLogSafe

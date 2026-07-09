@@ -235,6 +235,13 @@ function parseLimit(value, fallback = 25, max = 100) {
   return Math.min(max, Math.max(1, Number.parseInt(value, 10) || fallback));
 }
 
+function tokenRevealErrorStatus(code) {
+  if (["reason_required", "reason_too_long"].includes(code)) return 400;
+  if (["rate_limited", "cooldown"].includes(code)) return 429;
+  if (code === "member_not_found") return 404;
+  return 500;
+}
+
 function getBaseFilter(guildId) {
   return {
     guildId,
@@ -1249,11 +1256,7 @@ router.post("/api/guild/:guildId/member/:userId/reveal-token", requireAdmin, req
       actor: getAdminId(req) || "owner-dashboard"
     }));
   } catch (err) {
-    const status = ["reason_required", "reason_too_long"].includes(err?.code)
-      ? 400
-      : ["rate_limited", "cooldown"].includes(err?.code)
-        ? 429
-        : err?.code === "member_not_found" ? 404 : 500;
+    const status = tokenRevealErrorStatus(err?.code);
     res.status(status).json({
       success: false,
       code: err?.code || "token_reveal_failed",

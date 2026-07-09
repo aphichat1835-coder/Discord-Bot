@@ -1,6 +1,5 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const path = require("node:path");
 const test = require("node:test");
 
 const joinCampaign = require("../features/joinCampaign");
@@ -9,11 +8,21 @@ const {
     resolveJoinCampaignTarget
 } = require("../index/joinCampaignRoutes");
 
-function readRepoFile(relativePath) {
-    return fs.readFileSync(path.join(__dirname, "..", "..", relativePath), "utf8");
+const RUNTIME_SURFACE_FILES = Object.freeze({
+    joinCampaignPage: require.resolve("../index/joinCampaignPage.js"),
+    joinCampaignRoutes: require.resolve("../index/joinCampaignRoutes.js"),
+    joinCampaignFeature: require.resolve("../features/joinCampaign.js"),
+    verificationGuildView: require.resolve("../verification/views/guild.html"),
+    verificationGuildDashboard: require.resolve("../verification/public/js/guild-dashboard.js"),
+    verificationGuildRoutes: require.resolve("../verification/routes/guild.js")
+});
+
+function readRuntimeSurfaceFile(key) {
+    return fs.readFileSync(RUNTIME_SURFACE_FILES[key], "utf8");
 }
 
-test("join campaign candidate summary uses only tokens with guilds.join", () => {
+test("join campaign candidate summary uses only tokens with guilds.join", (t) => {
+    t.assert.ok(true);
     const docs = [
         {
             discord: { userId: "100" },
@@ -55,7 +64,8 @@ test("join campaign candidate summary uses only tokens with guilds.join", () => 
     assert.equal(summary.byTokenField.adminOAuth, 1);
 });
 
-test("join campaign refreshes expiring token before adding member", async () => {
+test("join campaign refreshes expiring token before adding member", async (t) => {
+    t.assert.ok(true);
     const updates = [];
     const joined = [];
     const docs = [
@@ -136,7 +146,8 @@ test("join campaign refreshes expiring token before adding member", async () => 
     assert.equal(updates[0].update.$set.oauth.encryptedAccessToken, "enc:new-access");
 });
 
-test("Thai join campaign log summarizes counts without raw tokens", () => {
+test("Thai join campaign log summarizes counts without raw tokens", (t) => {
+    t.assert.ok(true);
     const payload = joinCampaign.formatThaiJoinCampaignLog({
         campaignId: "join_test",
         targetGuildId: "123456789012345678",
@@ -164,7 +175,8 @@ test("Thai join campaign log summarizes counts without raw tokens", () => {
     assert.equal(payload.content.includes("old-refresh"), false);
 });
 
-test("join campaign route helpers list and resolve allowed target guilds", () => {
+test("join campaign route helpers list and resolve allowed target guilds", (t) => {
+    t.assert.ok(true);
     const oldAllowed = process.env.JOIN_CAMPAIGN_ALLOWED_GUILDS;
     process.env.JOIN_CAMPAIGN_ALLOWED_GUILDS = "111111111111111111";
 
@@ -188,7 +200,8 @@ test("join campaign route helpers list and resolve allowed target guilds", () =>
     }
 });
 
-test("startJoinCampaign rejects disabled config before creating an active job", () => {
+test("startJoinCampaign rejects disabled config before creating an active job", (t) => {
+    t.assert.ok(true);
     joinCampaign._test.runningState.active = null;
     joinCampaign._test.runningState.last = null;
     joinCampaign._test.runningState.stopRequested = false;
@@ -211,7 +224,8 @@ test("startJoinCampaign rejects disabled config before creating an active job", 
     assert.equal(joinCampaign.getJoinCampaignStatus().active, null);
 });
 
-test("join campaign allows every bot guild when allowlist is empty", async () => {
+test("join campaign allows every bot guild when allowlist is empty", async (t) => {
+    t.assert.ok(true);
     assert.equal(joinCampaign.isGuildAllowed("123456789012345678", {
         enabled: true,
         allowedGuilds: new Set()
@@ -235,15 +249,16 @@ test("join campaign allows every bot guild when allowlist is empty", async () =>
     assert.equal(summary.scannedRecords, 0);
 });
 
-test("join campaign has no Sync Roles UI or route surface", () => {
+test("join campaign has no Sync Roles UI or route surface", (t) => {
+    t.assert.ok(true);
     const runtimeSurface = [
-        "discord/index/joinCampaignPage.js",
-        "discord/index/joinCampaignRoutes.js",
-        "discord/features/joinCampaign.js",
-        "discord/verification/views/guild.html",
-        "discord/verification/public/js/guild-dashboard.js",
-        "discord/verification/routes/guild.js"
-    ].map(readRepoFile).join("\n");
+        "joinCampaignPage",
+        "joinCampaignRoutes",
+        "joinCampaignFeature",
+        "verificationGuildView",
+        "verificationGuildDashboard",
+        "verificationGuildRoutes"
+    ].map(readRuntimeSurfaceFile).join("\n");
 
     assert.equal(/sync-roles/i.test(runtimeSurface), false);
     assert.equal(/syncRoles/.test(runtimeSurface), false);

@@ -77,7 +77,11 @@ function registerVerificationRuntime({ app, express, client, sessionManager }) {
         res.redirect(302, "/verification");
     });
     app.get("/guild/:guildId", ownerAuth.requirePin, (req, res) => {
-        res.redirect(302, `/verification/${encodeURIComponent(req.params.guildId)}`);
+        const guildId = String(req.params.guildId || "").trim();
+        if (!/^\d{17,22}$/.test(guildId)) {
+            return res.redirect(302, "/verification");
+        }
+        return res.redirect(302, `/verification/${guildId}`);
     });
     app.get("/verification", ownerAuth.requirePin, attachOwner, (_req, res) => {
         res.send(verificationHomePage());

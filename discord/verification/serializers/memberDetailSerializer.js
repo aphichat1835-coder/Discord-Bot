@@ -46,13 +46,8 @@ function latestLogSummary(log = {}, canViewSensitive = false) {
     };
 }
 
-function serializeMemberDetail({ guildId, userId, oauthUser = null, latestLog = null, canViewSensitive = false } = {}) {
-    const oauth = oauthUser?.toObject ? oauthUser.toObject() : oauthUser || {};
-    const log = latestLog?.toObject ? latestLog.toObject() : latestLog || null;
-    const oauthDiscord = oauthUserDiscord(oauth, canViewSensitive);
-    const logSummary = latestLogSummary(log, canViewSensitive);
-    const logDiscord = log ? safeDiscordSnapshot(log.discordSnapshot || {}, canViewSensitive) : {};
-    const identity = {
+function buildIdentity({ oauth, log, userId, oauthDiscord, logDiscord }) {
+    return {
         ...logDiscord,
         ...oauthDiscord,
         userId: oauth.discord?.userId || log?.userId || userId || null,
@@ -61,32 +56,69 @@ function serializeMemberDetail({ guildId, userId, oauthUser = null, latestLog = 
         globalName: oauth.discord?.globalName || logDiscord.globalName || null,
         displayTag: oauth.discord?.displayTag || logDiscord.displayTag || null
     };
-    const trackingSnapshot = safeTrackingSnapshot(log?.trackingSnapshot || {});
-    const lastIpTracking = oauth.lastIpTracking || {};
+}
+
+function buildAccount(identity = {}) {
+    return {
+        email: identity.email ?? null,
+        emailVerified: identity.emailVerified === true,
+        locale: identity.locale || "",
+        mfaEnabled: identity.mfaEnabled === true,
+        premiumType: identity.premiumType ?? 0,
+        flags: identity.flags ?? 0,
+        publicFlags: identity.publicFlags ?? 0,
+        badgeFlags: Array.isArray(identity.badgeFlags) ? identity.badgeFlags : [],
+        accountCreatedAt: identity.accountCreatedAt ?? null,
+        accountAgeDays: identity.accountAgeDays ?? null
+    };
+}
+
+function buildSource(oauth = {}, log = null) {
+    return {
+        hasOAuthUser: !!oauth.discord?.userId,
+        hasVerifyLog: !!log,
+        latestLogId: log?._id ? String(log._id) : null
+    };
+}
+
+function buildTracking(log = null, oauth = {}) {
+    return {
+        ...safeTrackingSnapshot(log?.trackingSnapshot || {}),
+        ...(oauth.lastIpTracking || {})
+    };
+}
+
+function buildVerification(oauth = {}, logSummary = null) {
+    return {
+        latest: logSummary,
+        lastVerify: oauth.lastVerify || null,
+        snapshotMeta: oauth.snapshotMeta || null
+    };
+}
+
+function buildOAuthTokenStatuses(oauth = {}) {
+    return {
+        oauth: tokenStatus(oauth.oauth || {}),
+        adminOAuth: tokenStatus(oauth.adminOAuth || {})
+    };
+}
+
+function serializeMemberDetail({ guildId, userId, oauthUser = null, latestLog = null, canViewSensitive = false } = {}) {
+    const oauth = oauthUser?.toObject ? oauthUser.toObject() : oauthUser || {};
+    const log = latestLog?.toObject ? latestLog.toObject() : latestLog || null;
+    const oauthDiscord = oauthUserDiscord(oauth, canViewSensitive);
+    const logSummary = latestLogSummary(log, canViewSensitive);
+    const logDiscord = log ? safeDiscordSnapshot(log.discordSnapshot || {}, canViewSensitive) : {};
+    const identity = buildIdentity({ oauth, log, userId, oauthDiscord, logDiscord });
 
     return {
         success: true,
         guildId,
         userId: identity.userId,
         sensitiveRedacted: canViewSensitive !== true,
-        source: {
-            hasOAuthUser: !!oauth.discord?.userId,
-            hasVerifyLog: !!log,
-            latestLogId: log?._id ? String(log._id) : null
-        },
+        source: buildSource(oauth, log),
         identity,
-        account: {
-            email: identity.email ?? null,
-            emailVerified: identity.emailVerified === true,
-            locale: identity.locale || "",
-            mfaEnabled: identity.mfaEnabled === true,
-            premiumType: identity.premiumType ?? 0,
-            flags: identity.flags ?? 0,
-            publicFlags: identity.publicFlags ?? 0,
-            badgeFlags: Array.isArray(identity.badgeFlags) ? identity.badgeFlags : [],
-            accountCreatedAt: identity.accountCreatedAt ?? null,
-            accountAgeDays: identity.accountAgeDays ?? null
-        },
+        account: buildAccount(identity),
         guilds: Array.isArray(oauthDiscord.guilds) ? oauthDiscord.guilds : [],
         connections: Array.isArray(oauthDiscord.connections) ? oauthDiscord.connections : [],
         targetMember: log
@@ -94,23 +126,21 @@ function serializeMemberDetail({ guildId, userId, oauthUser = null, latestLog = 
             : safeMemberSnapshot(oauth.lastMember || {}),
         device: log ? safeDevice(log.device || {}) : {},
         network: log ? safeIpInfo(log.ipInfo || {}) : {},
-        tracking: {
-            ...trackingSnapshot,
-            ...lastIpTracking
-        },
-        verification: {
-            latest: logSummary,
-            lastVerify: oauth.lastVerify || null,
-            snapshotMeta: oauth.snapshotMeta || null
-        },
-        oauthTokens: {
-            oauth: tokenStatus(oauth.oauth || {}),
-            adminOAuth: tokenStatus(oauth.adminOAuth || {})
-        }
+        tracking: buildTracking(log, oauth),
+        verification: buildVerification(oauth, logSummary),
+        oauthTokens: buildOAuthTokenStatuses(oauth)
     };
 }
 
 module.exports = {
     serializeMemberDetail,
-    tokenStatus
+    tokenStatus,
+    _test: {
+        buildIdentity,
+        buildAccount,
+        buildSource,
+        buildTracking,
+        buildVerification,
+        buildOAuthTokenStatuses
+    }
 };
