@@ -338,8 +338,7 @@ async function boot() {
             await verificationLifecycle.startVerificationRuntime();
             console.log("[VERIFICATION] ✅ Maintenance and OAuth refresh lifecycle started");
         } catch (err) {
-            console.error("[VERIFICATION] ❌ Runtime startup failed:", err.message);
-            process.exit(1);
+            console.error("[VERIFICATION] ⚠️ Runtime startup failed; continuing in degraded mode:", err.message);
         }
     }
 

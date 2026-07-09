@@ -99,8 +99,14 @@ async function recordSensitiveAccess(guildId, req, route) {
         route
       })
     );
+    return { ok: true, status: "recorded" };
   } catch (err) {
     safeConsoleError("sensitive-access-audit", err);
+    return {
+      ok: false,
+      status: "failed",
+      error: err?.message ? String(err.message).slice(0, 160) : "audit_write_failed"
+    };
   }
 }
 
@@ -1209,9 +1215,18 @@ router.get("/api/guild/:guildId/members", requireAdmin, requireGuildAdmin, async
 router.get("/api/guild/:guildId/member/:userId/detail", requireAdmin, requireGuildAdmin, async (req, res) => {
   try {
     const { guildId, userId } = req.params;
-    res.json(await verificationOwnerService.getMemberDetail(guildId, userId, {
-      canViewSensitive: req.verificationOwner === true
-    }));
+    const canViewSensitive = req.verificationOwner === true;
+    const audit = canViewSensitive
+      ? await recordSensitiveAccess(guildId, req, "/api/guild/:guildId/member/:userId/detail")
+      : { ok: false, status: "not_required" };
+    const detail = await verificationOwnerService.getMemberDetail(guildId, userId, {
+      canViewSensitive
+    });
+    res.json({
+      ...detail,
+      sensitiveAccessAudit: audit,
+      auditStatus: audit.status
+    });
   } catch (err) {
     if (err?.code === "member_not_found") {
       return res.status(404).json({

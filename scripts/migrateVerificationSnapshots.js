@@ -12,20 +12,20 @@ const BATCH_SIZE = Math.max(
 );
 
 const BADGES = Object.freeze([
-    [1 << 0, "STAFF"],
-    [1 << 1, "PARTNER"],
-    [1 << 2, "HYPESQUAD"],
-    [1 << 3, "BUG_HUNTER_LEVEL_1"],
-    [1 << 6, "HYPESQUAD_BRAVERY"],
-    [1 << 7, "HYPESQUAD_BRILLIANCE"],
-    [1 << 8, "HYPESQUAD_BALANCE"],
-    [1 << 9, "PREMIUM_EARLY_SUPPORTER"],
-    [1 << 10, "TEAM_PSEUDO_USER"],
-    [1 << 14, "BUG_HUNTER_LEVEL_2"],
-    [1 << 16, "VERIFIED_BOT"],
-    [1 << 17, "VERIFIED_DEVELOPER"],
-    [1 << 18, "CERTIFIED_MODERATOR"],
-    [1 << 19, "BOT_HTTP_INTERACTIONS"]
+    [2 ** 0, "STAFF"],
+    [2 ** 1, "PARTNER"],
+    [2 ** 2, "HYPESQUAD"],
+    [2 ** 3, "BUG_HUNTER_LEVEL_1"],
+    [2 ** 6, "HYPESQUAD_BRAVERY"],
+    [2 ** 7, "HYPESQUAD_BRILLIANCE"],
+    [2 ** 8, "HYPESQUAD_BALANCE"],
+    [2 ** 9, "PREMIUM_EARLY_SUPPORTER"],
+    [2 ** 10, "TEAM_PSEUDO_USER"],
+    [2 ** 14, "BUG_HUNTER_LEVEL_2"],
+    [2 ** 16, "VERIFIED_BOT"],
+    [2 ** 17, "VERIFIED_DEVELOPER"],
+    [2 ** 18, "CERTIFIED_MODERATOR"],
+    [2 ** 19, "BOT_HTTP_INTERACTIONS"]
 ]);
 
 function badgeFlags(discord = {}) {
@@ -141,7 +141,14 @@ async function run() {
     if (!mongoUri) throw new Error("MONGO_URI is required");
 
     await mongoose.connect(mongoUri, { maxPoolSize: 2 });
-    const cursor = OAuthUser.find({})
+    const cursor = OAuthUser.find({
+        $or: [
+            { "snapshotMeta.version": { $ne: 2 } },
+            { "discord.displayTag": { $exists: false } },
+            { "discord.avatarUrl": { $exists: false } },
+            { "discord.badgeFlags": { $exists: false } }
+        ]
+    })
         .select("discord connections guilds snapshotMeta")
         .lean()
         .cursor();

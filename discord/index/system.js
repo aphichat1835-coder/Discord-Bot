@@ -261,7 +261,7 @@ function initShutdown({
             console.warn(`[SHUTDOWN] ⚠️ Audit reconciler stop skipped: ${err.message}`);
         }
         try {
-            verificationRuntime?.stopVerificationRuntime?.();
+            await verificationRuntime?.stopVerificationRuntime?.();
         } catch (err) {
             console.warn(`[SHUTDOWN] ⚠️ Verification runtime stop skipped: ${err.message}`);
         }

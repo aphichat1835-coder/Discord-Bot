@@ -131,6 +131,13 @@ function safeDiscordVisuals(profile = {}, snapshot = {}) {
 }
 
 function safeDiscordSecurity(profile = {}, snapshot = {}) {
+  let badgeFlags = [];
+  if (Array.isArray(profile.badgeFlags)) {
+    badgeFlags = profile.badgeFlags;
+  } else if (Array.isArray(snapshot.badgeFlags)) {
+    badgeFlags = snapshot.badgeFlags;
+  }
+
   return {
     email: profile.email ?? snapshot.email ?? null,
     emailVerified: profile.emailVerified ?? profile.verified ?? snapshot.emailVerified ?? snapshot.verified ?? false,
@@ -139,11 +146,7 @@ function safeDiscordSecurity(profile = {}, snapshot = {}) {
     premiumType: profile.premiumType ?? profile.premium_type ?? snapshot.premiumType ?? snapshot.premium_type ?? 0,
     flags: profile.flags ?? snapshot.flags ?? 0,
     publicFlags: profile.publicFlags ?? profile.public_flags ?? snapshot.publicFlags ?? snapshot.public_flags ?? 0,
-    badgeFlags: Array.isArray(profile.badgeFlags)
-      ? profile.badgeFlags
-      : Array.isArray(snapshot.badgeFlags)
-        ? snapshot.badgeFlags
-        : [],
+    badgeFlags,
     accountCreatedAt: profile.accountCreatedAt ?? snapshot.accountCreatedAt ?? null,
     accountAgeDays: profile.accountAgeDays ?? snapshot.accountAgeDays ?? null
   };

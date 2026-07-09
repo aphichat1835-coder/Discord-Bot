@@ -37,7 +37,7 @@ function fromLog(log = {}, canViewSensitive = false) {
     };
 }
 
-function fromOAuthUser(user = {}) {
+function fromOAuthUser(user = {}, canViewSensitive = false) {
     const discord = user.discord || {};
     const connections = Array.isArray(user.connections) ? user.connections : [];
     const guilds = Array.isArray(user.guilds) ? user.guilds : [];
@@ -54,15 +54,15 @@ function fromOAuthUser(user = {}) {
         globalName: discord.globalName || null,
         tag: discord.displayTag || null,
         avatarUrl: discord.avatarUrl || null,
-        email: discord.email || null,
-        emailVerified: discord.emailVerified === true,
-        accountAgeDays: discord.accountAgeDays || null,
-        accountCreatedAt: discord.accountCreatedAt || null,
-        badgeFlags: Array.isArray(discord.badgeFlags) ? discord.badgeFlags : [],
+        email: canViewSensitive ? (discord.email || null) : null,
+        emailVerified: canViewSensitive ? discord.emailVerified === true : null,
+        accountAgeDays: canViewSensitive ? (discord.accountAgeDays || null) : null,
+        accountCreatedAt: canViewSensitive ? (discord.accountCreatedAt || null) : null,
+        badgeFlags: canViewSensitive && Array.isArray(discord.badgeFlags) ? discord.badgeFlags : [],
         connectionsCount: Number(user.connectionsCount ?? connections.length ?? 0),
         guildsCount: Number(user.guildsCount ?? guilds.length ?? 0),
-        connections,
-        guilds,
+        connections: canViewSensitive ? connections : [],
+        guilds: canViewSensitive ? guilds : [],
         member: user.lastMember || null,
         memberSnapshot: user.lastMember || null,
         memberRoles: Array.isArray(user.lastMember?.roles) ? user.lastMember.roles : [],
@@ -71,7 +71,7 @@ function fromOAuthUser(user = {}) {
         riskFlags: Array.isArray(user.lastVerify?.riskFlags) ? user.lastVerify.riskFlags : [],
         verifiedAt: user.lastVerify?.verifiedAt || user.updatedAt || null,
         createdAt: user.createdAt || null,
-        sensitiveRedacted: true,
+        sensitiveRedacted: canViewSensitive !== true,
         canSyncRole: false,
         reason: "legacy_oauth_user_last_verify"
     };
@@ -87,7 +87,6 @@ function legacyVerifiedAggregation(guildId) {
             }
         },
         { $sort: { "lastVerify.verifiedAt": -1, updatedAt: -1, _id: -1 } },
-        { $limit: 1000 },
         {
             $project: {
                 discord: 1,
@@ -104,9 +103,15 @@ function legacyVerifiedAggregation(guildId) {
     ];
 }
 
-function mergeMembers(primary, fallback) {
+function mergeMembers(primary, fallback, canViewSensitive = false) {
     if (!primary) return fallback;
     if (!fallback) return primary;
+    const mergedConnections = canViewSensitive
+        ? (primary.connections?.length ? primary.connections : fallback.connections)
+        : [];
+    const mergedGuilds = canViewSensitive
+        ? (primary.guilds?.length ? primary.guilds : fallback.guilds)
+        : [];
     return {
         ...fallback,
         ...primary,
@@ -115,8 +120,11 @@ function mergeMembers(primary, fallback) {
         status: primary.status || fallback.status || "verified",
         connectionsCount: primary.connectionsCount ?? fallback.connectionsCount,
         guildsCount: primary.guildsCount ?? fallback.guildsCount,
-        connections: primary.connections?.length ? primary.connections : fallback.connections,
-        guilds: primary.guilds?.length ? primary.guilds : fallback.guilds
+        connections: mergedConnections,
+        guilds: mergedGuilds,
+        email: canViewSensitive ? (primary.email ?? fallback.email ?? null) : null,
+        badgeFlags: canViewSensitive ? (primary.badgeFlags || fallback.badgeFlags || []) : [],
+        sensitiveRedacted: canViewSensitive !== true
     };
 }
 
@@ -125,7 +133,7 @@ async function listVerifiedMembers(guildId, { page = 0, limit = 25, q = "", incl
     const safeLimit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 25));
     const logFilter = successLogFilter(guildId, { q });
     const [logs, legacyUsers] = await Promise.all([
-        VerifyLog.find(logFilter).sort({ verifiedAt: -1, createdAt: -1, _id: -1 }).limit(1000).lean(),
+        VerifyLog.find(logFilter).sort({ verifiedAt: -1, createdAt: -1, _id: -1 }).lean(),
         includeLegacy
             ? OAuthUser.aggregate(legacyVerifiedAggregation(guildId))
             : []
@@ -133,13 +141,13 @@ async function listVerifiedMembers(guildId, { page = 0, limit = 25, q = "", incl
 
     const map = new Map();
     for (const user of legacyUsers) {
-        const member = fromOAuthUser(user);
+        const member = fromOAuthUser(user, canViewSensitive);
         if (member.userId) map.set(member.userId, member);
     }
     for (const log of logs) {
         const member = fromLog(log, canViewSensitive);
         if (!member.userId) continue;
-        map.set(member.userId, mergeMembers(member, map.get(member.userId)));
+        map.set(member.userId, mergeMembers(member, map.get(member.userId), canViewSensitive));
     }
     let members = [...map.values()].sort((a, b) => Number(b.verifiedAt || 0) - Number(a.verifiedAt || 0));
     if (q) {

@@ -114,9 +114,9 @@ owner-locked. Their implementation details are intentionally not documented.
 | `GET /api/guild/:guildId/*` | Owner PIN |
 | write routes under `/api/guild/:guildId/*` | Owner PIN + CSRF |
 | `GET /api/guild/:guildId/member/:userId/detail` | Owner PIN |
-| `POST /api/guild/:guildId/member/:userId/reveal-token` | Owner PIN + CSRF + reason + audit |
+| `POST /api/guild/:guildId/member/:userId/reveal-token` | Owner PIN + CSRF + reason + audit attempt/status |
 | `GET /api/guild/:guildId/preflight` | Owner PIN |
-| `POST /api/verify-owner/.../reveal-ip` | Owner PIN + CSRF + reason + audit |
+| `POST /api/verify-owner/.../reveal-ip` | Owner PIN + CSRF + reason + audit attempt/status |
 | `GET /api/verification/diagnostics` | Owner PIN |
 | `POST /api/verification/retention/dry-run` | Owner PIN + CSRF |
 
@@ -244,8 +244,10 @@ POST /api/verify-owner/guild/:guildId/user/:userId/reveal-ip
 ```
 
 It requires Owner PIN, CSRF, and a non-empty reason. The service decrypts the
-latest encrypted IP only for the response and appends an audit entry with actor,
-reason, and time. The UI does not cache or place raw IP into list APIs.
+latest encrypted IP only for the response and attempts to append an audit entry
+with actor, reason, and time. If the audit write fails, the Owner response
+includes audit failure status. The UI does not cache or place raw IP into list
+APIs.
 
 Email, connection, and guild details are Owner-only. The former external
 guild-admin reveal-request workflow is removed.
@@ -258,7 +260,8 @@ POST /api/guild/:guildId/member/:userId/reveal-token
 ```
 
 It requires Owner PIN, CSRF, a non-empty reason, cooldown/rate-limit checks, and
-an audit event. Normal list, detail, export, log, and migration paths do not
+an audit attempt. If the audit write fails, the Owner response includes audit
+failure status. Normal list, detail, export, log, and migration paths do not
 decrypt or serialize raw tokens.
 
 ## 8. Maintenance and migration

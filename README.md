@@ -36,8 +36,8 @@ database connection, and the HTTP server.
 | `/api/guilds` | Owner PIN | Bot guild list |
 | `/api/guild/:guildId/*` | Owner PIN; CSRF on writes | Verification management APIs |
 | `GET /api/guild/:guildId/member/:userId/detail` | Owner PIN | Full per-user verification detail grouped by category |
-| `POST /api/guild/:guildId/member/:userId/reveal-token` | Owner PIN + CSRF + reason | Audited raw OAuth2 token reveal |
-| `POST /api/verify-owner/guild/:guildId/user/:userId/reveal-ip` | Owner PIN + CSRF + reason | Audited raw-IP reveal |
+| `POST /api/guild/:guildId/member/:userId/reveal-token` | Owner PIN + CSRF + reason | Raw OAuth2 token reveal with audit status |
+| `POST /api/verify-owner/guild/:guildId/user/:userId/reveal-ip` | Owner PIN + CSRF + reason | Raw-IP reveal with audit status |
 | `GET /ping` | Public | Liveness |
 | `GET /health` | Public | MongoDB, Discord, voice, and verification readiness |
 
@@ -75,7 +75,7 @@ MongoDB model/collection names and encryption format.
 Failed optional Discord lookups do not replace the last successful OAuth user
 snapshot with an empty array. Normal list/export APIs never return raw OAuth
 tokens or raw IP. Raw OAuth2 tokens and raw IP can only be revealed through
-audited Owner per-user actions.
+Owner per-user actions that attempt audit writes and report audit status.
 
 `premiumType` remains for schema compatibility only and must not be presented as
 a reliable Nitro conclusion.

@@ -109,9 +109,11 @@ Raw tokens must never appear in:
 - docs or pull-request text
 
 The Owner-only per-user OAuth token reveal action is the only exception. It
-requires a valid Owner session, CSRF token, non-empty reason, rate-limit/cooldown
-checks, and an audit entry. The response is for the immediate Owner view only
-and must not be stored in browser persistence or included in lists/exports/logs.
+requires a valid Owner session, CSRF token, non-empty reason, and
+rate-limit/cooldown checks. It attempts to write an audit event and returns an
+explicit audit status so a failed audit write is visible to the Owner. The
+response is for the immediate Owner view only and must not be stored in browser
+persistence or included in lists/exports/logs.
 
 Historical `adminOAuth` fields remain refresh-compatible. No route creates a new
 admin grant. Configure `LEGACY_ADMIN_OAUTH_REDIRECT_URI` when old tokens require
@@ -129,7 +131,8 @@ Raw-IP reveal is a separate action requiring:
 2. CSRF token;
 3. guild and user identifiers;
 4. non-empty reason;
-5. an appended audit event with actor and timestamp.
+5. an audit attempt with actor and timestamp, with failure surfaced in the
+   response if the audit write fails.
 
 The response is intended for the immediate Owner view only. Do not add raw IP to
 lists, exports, client storage, logs, query strings, or webhook messages.

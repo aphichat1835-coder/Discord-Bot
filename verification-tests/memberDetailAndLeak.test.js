@@ -87,7 +87,7 @@ describe("member detail serialization and leak guards", () => {
 
     test("legacy verified member serializer marks OAuthUser-only records as read-only legacy", () => {
         const member = verifiedMemberService._test.fromOAuthUser({
-            discord: { userId: "user", username: "legacy" },
+            discord: { userId: "user", username: "legacy", email: "legacy@example.test" },
             lastVerify: { guildId: "guild", result: "success", verifiedAt: 1000 },
             connections: [{ type: "steam" }],
             guilds: [{ id: "guild" }]
@@ -98,6 +98,21 @@ describe("member detail serialization and leak guards", () => {
         expect(member.canSyncRole).toBe(false);
         expect(member.connectionsCount).toBe(1);
         expect(member.guildsCount).toBe(1);
+        expect(member.email).toBeNull();
+        expect(member.connections).toEqual([]);
+        expect(member.guilds).toEqual([]);
+    });
+
+    test("legacy verified member serializer can include sensitive fields for detail-only owner views", () => {
+        const member = verifiedMemberService._test.fromOAuthUser({
+            discord: { userId: "user", username: "legacy", email: "legacy@example.test" },
+            connections: [{ type: "steam" }],
+            guilds: [{ id: "guild" }]
+        }, true);
+
+        expect(member.email).toBe("legacy@example.test");
+        expect(member.connections).toHaveLength(1);
+        expect(member.guilds).toHaveLength(1);
     });
 
     test("snapshot budget reports payload too large without mutating caller data", () => {

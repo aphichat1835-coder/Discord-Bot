@@ -34,6 +34,19 @@ let lastOAuthRefreshError = null;
 let lastOAuthRefreshSummary = null;
 let runCount = 0;
 let failCount = 0;
+let maintenanceWaiters = [];
+
+function resolveMaintenanceWaiters() {
+    if (maintenanceInFlight) return;
+    const waiters = maintenanceWaiters;
+    maintenanceWaiters = [];
+    for (const resolve of waiters) resolve();
+}
+
+function waitForMaintenanceIdle() {
+    if (!maintenanceInFlight) return Promise.resolve();
+    return new Promise(resolve => maintenanceWaiters.push(resolve));
+}
 
 function retentionDays(mode) {
     const value = String(mode || "").toLowerCase();
@@ -138,10 +151,12 @@ async function runVerificationMaintenance(options = {}) {
     }
 
     maintenanceInFlight = true;
-    lastError = null;
     const now = Date.now();
-    lastStartedAt = now;
     const dryRun = options.dryRun === true;
+    if (!dryRun) {
+        lastError = null;
+        lastStartedAt = now;
+    }
     const summary = createSummary(dryRun, now);
 
     try {
@@ -171,9 +186,9 @@ async function runVerificationMaintenance(options = {}) {
 
         summary.finishedAt = Date.now();
         summary.durationMs = summary.finishedAt - summary.startedAt;
-        lastFinishedAt = summary.finishedAt;
-        lastDurationMs = summary.durationMs;
         if (!dryRun) {
+            lastFinishedAt = summary.finishedAt;
+            lastDurationMs = summary.durationMs;
             lastRunAt = summary.finishedAt;
             lastSuccessAt = summary.finishedAt;
             lastSummary = summary;
@@ -181,13 +196,16 @@ async function runVerificationMaintenance(options = {}) {
         }
         return summary;
     } catch (err) {
-        lastError = safeError(err);
-        lastFinishedAt = Date.now();
-        lastDurationMs = lastFinishedAt - now;
-        if (!dryRun) failCount++;
+        if (!dryRun) {
+            lastError = safeError(err);
+            lastFinishedAt = Date.now();
+            lastDurationMs = lastFinishedAt - now;
+            failCount++;
+        }
         throw err;
     } finally {
         maintenanceInFlight = false;
+        resolveMaintenanceWaiters();
     }
 }
 
@@ -205,9 +223,10 @@ async function startVerificationRuntime() {
     return getVerificationDiagnostics();
 }
 
-function stopVerificationRuntime() {
+async function stopVerificationRuntime() {
     if (maintenanceTimer) clearInterval(maintenanceTimer);
     maintenanceTimer = null;
+    await waitForMaintenanceIdle();
 }
 
 function getVerificationDiagnostics() {
@@ -238,6 +257,7 @@ module.exports = {
     stopVerificationRuntime,
     runVerificationMaintenance,
     getVerificationDiagnostics,
+    waitForMaintenanceIdle,
     retentionDays,
     retentionFilters
 };

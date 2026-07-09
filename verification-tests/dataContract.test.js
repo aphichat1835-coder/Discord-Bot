@@ -16,7 +16,10 @@ const {
     normalizeGuilds,
     compactMemberInfo,
     compactDiscordProfile,
-    saveOAuthUserSafe
+    saveOAuthUserSafe,
+    saveVerifyLogSafe,
+    safeNullableString,
+    memberFetchQualityStatus
 } = oauthRoute._test;
 
 describe("unified verification data contract", () => {
@@ -102,6 +105,18 @@ describe("unified verification data contract", () => {
             accentColor: 0,
             premiumType: 0
         });
+    });
+
+    test("safe nullable strings enforce caller-provided length limits", () => {
+        expect(safeNullableString("abcdef", 3)).toBe("abc");
+        expect(safeNullableString("a\u0000b\u007Fc", 10)).toBe("abc");
+        expect(safeNullableString("", 3)).toBeNull();
+    });
+
+    test("member fetch data quality status is per-attempt and explicit", () => {
+        expect(memberFetchQualityStatus({ memberFetchAttempted: false }, null)).toBe("not_attempted");
+        expect(memberFetchQualityStatus({ memberFetchAttempted: true }, { roles: [] })).toBe("success");
+        expect(memberFetchQualityStatus({ memberFetchAttempted: true }, null)).toBe("failed");
     });
 
     test("schemas retain encrypted tokens, encrypted IP, and additive quality fields", () => {
@@ -195,6 +210,34 @@ describe("unified verification data contract", () => {
             jest.restoreAllMocks();
             if (previousStore === undefined) delete process.env.STORE_OAUTH_TOKENS;
             else process.env.STORE_OAUTH_TOKENS = previousStore;
+        }
+    });
+
+    test("VerifyLog write path applies snapshot budget before create", async () => {
+        const create = jest.spyOn(VerifyLog, "create").mockResolvedValue({});
+        try {
+            await saveVerifyLogSafe({
+                guildId: "guild",
+                userId: "user",
+                result: "success",
+                discordSnapshot: {
+                    userId: "user",
+                    username: "test",
+                    connections: [{ metadata: { value: "x".repeat(13 * 1024 * 1024) } }],
+                    guilds: [{ name: "guild" }]
+                },
+                dataQuality: {}
+            });
+            expect(create).toHaveBeenCalledTimes(1);
+            const saved = create.mock.calls[0][0];
+            expect(saved.discordSnapshot.connections).toEqual([]);
+            expect(saved.discordSnapshot.guilds).toEqual([]);
+            expect(saved.dataQuality.budget).toMatchObject({
+                status: "failed",
+                truncated: true
+            });
+        } finally {
+            jest.restoreAllMocks();
         }
     });
 

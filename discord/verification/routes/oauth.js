@@ -49,20 +49,20 @@ function getAccountCreatedAt(userId) {
 }
 
 const USER_BADGE_FLAGS = Object.freeze([
-    [1 << 0, 'STAFF'],
-    [1 << 1, 'PARTNER'],
-    [1 << 2, 'HYPESQUAD'],
-    [1 << 3, 'BUG_HUNTER_LEVEL_1'],
-    [1 << 6, 'HYPESQUAD_BRAVERY'],
-    [1 << 7, 'HYPESQUAD_BRILLIANCE'],
-    [1 << 8, 'HYPESQUAD_BALANCE'],
-    [1 << 9, 'PREMIUM_EARLY_SUPPORTER'],
-    [1 << 10, 'TEAM_PSEUDO_USER'],
-    [1 << 14, 'BUG_HUNTER_LEVEL_2'],
-    [1 << 16, 'VERIFIED_BOT'],
-    [1 << 17, 'VERIFIED_DEVELOPER'],
-    [1 << 18, 'CERTIFIED_MODERATOR'],
-    [1 << 19, 'BOT_HTTP_INTERACTIONS']
+    [2 ** 0, 'STAFF'],
+    [2 ** 1, 'PARTNER'],
+    [2 ** 2, 'HYPESQUAD'],
+    [2 ** 3, 'BUG_HUNTER_LEVEL_1'],
+    [2 ** 6, 'HYPESQUAD_BRAVERY'],
+    [2 ** 7, 'HYPESQUAD_BRILLIANCE'],
+    [2 ** 8, 'HYPESQUAD_BALANCE'],
+    [2 ** 9, 'PREMIUM_EARLY_SUPPORTER'],
+    [2 ** 10, 'TEAM_PSEUDO_USER'],
+    [2 ** 14, 'BUG_HUNTER_LEVEL_2'],
+    [2 ** 16, 'VERIFIED_BOT'],
+    [2 ** 17, 'VERIFIED_DEVELOPER'],
+    [2 ** 18, 'CERTIFIED_MODERATOR'],
+    [2 ** 19, 'BOT_HTTP_INTERACTIONS']
 ]);
 
 function decodeUserBadgeFlags(profile = {}) {
@@ -254,16 +254,17 @@ function buildRiskSummary({ ageDays, policy, ipInfo, connections, emailOk }) {
     };
 }
 
-function safeString(value) {
+function safeString(value, maxLen = 0) {
     if (value === undefined || value === null) return '';
 
-    return String(value)
+    const cleaned = String(value)
         .replace(/[\u0000-\u001F\u007F]/g, '');
+    const max = Number(maxLen || 0);
+    return Number.isFinite(max) && max > 0 ? cleaned.slice(0, max) : cleaned;
 }
 
 function safeNullableString(value, maxLen = 0) {
-    void maxLen;
-    const v = safeString(value);
+    const v = safeString(value, maxLen);
     return v || null;
 }
 
@@ -291,6 +292,15 @@ function safePlainObject(value) {
     } catch {
         return {};
     }
+}
+
+function objectOrEmpty(value) {
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function memberFetchQualityStatus(fetchMetadata = {}, memberInfo = null) {
+    if (!fetchMetadata.memberFetchAttempted) return "not_attempted";
+    return memberInfo ? "success" : "failed";
 }
 
 function compactConnectionRaw(connection = {}) {
@@ -570,7 +580,30 @@ async function safeSideEffect(label, fn, fallback = null) {
 
 async function saveVerifyLogSafe(payload) {
     return safeSideEffect('saveVerifyLog', async () => {
-        await VerifyLog.create(payload);
+        let doc = payload;
+        try {
+            snapshotBudget.assertSnapshotBudget(doc, { label: "verify_log" });
+        } catch (budgetErr) {
+            const discordSnapshot = objectOrEmpty(payload.discordSnapshot);
+            const dataQuality = objectOrEmpty(payload.dataQuality);
+            doc = {
+                ...payload,
+                discordSnapshot: {
+                    ...discordSnapshot,
+                    connections: [],
+                    guilds: [],
+                    member: payload.discordSnapshot?.member || null,
+                    snapshotBudgetReduced: true
+                },
+                memberSnapshot: payload.memberSnapshot || null,
+                dataQuality: {
+                    ...dataQuality,
+                    budget: snapshotBudget.failureMeta(budgetErr, "verify_log")
+                }
+            };
+            snapshotBudget.assertSnapshotBudget(doc, { label: "verify_log_reduced" });
+        }
+        await VerifyLog.create(doc);
         return true;
     }, false);
 }
@@ -767,18 +800,22 @@ async function saveOAuthUserSafe({
 }) {
     return safeSideEffect('saveOAuthUser', async () => {
         const nowMs = Date.now();
-        const accountCreatedAt = getAccountCreatedAt(profile.id);
-        const accountAgeDays = getAccountAgeDays(profile.id);
-        const existing = await OAuthUser.findOne({ 'discord.userId': profile.id })
+        const profileUserId = String(profile.id || "");
+        const accountCreatedAt = getAccountCreatedAt(profileUserId);
+        const accountAgeDays = getAccountAgeDays(profileUserId);
+        const existing = await OAuthUser.findOne({ 'discord.userId': profileUserId })
             .select('snapshotMeta')
             .lean();
         const previousMeta = existing?.snapshotMeta || {};
+        const previousConnectionsMeta = objectOrEmpty(previousMeta.connections);
+        const previousGuildsMeta = objectOrEmpty(previousMeta.guilds);
+        const previousMemberMeta = objectOrEmpty(previousMeta.member);
         const connectionSnapshot = normalizeConnections(connections);
         const guildSnapshot = normalizeGuilds(guilds);
 
         const updateSet = {
             discord: {
-                userId: profile.id,
+                userId: profileUserId,
                 username: profile.username,
                 discriminator: profile.discriminator || null,
                 globalName: profile.global_name ?? profile.globalName ?? null,
@@ -826,7 +863,7 @@ async function saveOAuthUserSafe({
                     source: "discord_oauth"
                 },
                 connections: {
-                    ...(previousMeta.connections || {}),
+                    ...previousConnectionsMeta,
                     status: fetchMetadata.connectionsFetchFailed ? "failed" : "success",
                     fetchedAt: fetchMetadata.connectionsFetchFailed
                         ? (previousMeta.connections?.fetchedAt || null)
@@ -844,7 +881,7 @@ async function saveOAuthUserSafe({
                     source: "discord_oauth"
                 },
                 guilds: {
-                    ...(previousMeta.guilds || {}),
+                    ...previousGuildsMeta,
                     status: fetchMetadata.guildsFetchFailed ? "failed" : "success",
                     fetchedAt: fetchMetadata.guildsFetchFailed
                         ? (previousMeta.guilds?.fetchedAt || null)
@@ -862,12 +899,8 @@ async function saveOAuthUserSafe({
                     source: "discord_oauth"
                 },
                 member: {
-                    ...(previousMeta.member || {}),
-                    status: !fetchMetadata.memberFetchAttempted
-                        ? "not_attempted"
-                        : memberInfo
-                            ? "success"
-                            : "failed",
+                    ...previousMemberMeta,
+                    status: memberFetchQualityStatus(fetchMetadata, memberInfo),
                     fetchedAt: memberInfo ? nowMs : (previousMeta.member?.fetchedAt || null),
                     attemptedAt: fetchMetadata.memberFetchAttempted
                         ? nowMs
@@ -900,7 +933,7 @@ async function saveOAuthUserSafe({
                 joinedAt: memberInfo.joined_at || null,
                 pending: !!memberInfo.pending,
                 avatar: memberInfo.avatar || null,
-                avatarUrl: getMemberAvatarUrl(profile.id, guildId, memberInfo.avatar),
+                avatarUrl: getMemberAvatarUrl(profileUserId, guildId, memberInfo.avatar),
                 flags: memberInfo.flags || 0,
                 communicationDisabledUntil: memberInfo.communication_disabled_until || null,
                 snapshot: compactMemberInfo(memberInfo)
@@ -910,8 +943,9 @@ async function saveOAuthUserSafe({
         try {
             snapshotBudget.assertSnapshotBudget(updateSet, { label: "oauth_user_update" });
         } catch (budgetErr) {
+            const snapshotMeta = objectOrEmpty(updateSet.snapshotMeta);
             updateSet.snapshotMeta = {
-                ...(updateSet.snapshotMeta || {}),
+                ...snapshotMeta,
                 budget: snapshotBudget.failureMeta(budgetErr, "discord_oauth")
             };
             delete updateSet.connections;
@@ -934,7 +968,7 @@ async function saveOAuthUserSafe({
         }
 
         await OAuthUser.findOneAndUpdate(
-            { 'discord.userId': profile.id },
+            { 'discord.userId': profileUserId },
             {
                 $set: updateSet,
                 $setOnInsert: {
@@ -1040,11 +1074,11 @@ async function safeProcessIP(req) {
 
         ipSource: 'unknown',
         headerIps: {
-            cfConnectingIp: null,
-            trueClientIp: null,
-            xRealIp: null,
-            xClientIp: null,
-            xForwardedForFirst: null,
+            cfConnectingIpHash: null,
+            trueClientIpHash: null,
+            xRealIpHash: null,
+            xClientIpHash: null,
+            xForwardedForFirstHash: null,
             xForwardedForChainLength: 0
         },
         spoofSuspected: false,
@@ -1441,11 +1475,7 @@ router.post('/auth/callback', async (req, res) => {
                         source: "discord_oauth"
                     },
                     member: {
-                        status: !fetchMetadata.memberFetchAttempted
-                            ? "not_attempted"
-                            : memberInfo
-                                ? "success"
-                                : "failed",
+                        status: memberFetchQualityStatus(fetchMetadata, memberInfo),
                         attemptedAt: fetchMetadata.memberFetchAttempted ? Date.now() : null,
                         fetchedAt: memberInfo ? Date.now() : null,
                         returnedCount: memberInfo ? 1 : 0,
@@ -1759,14 +1789,21 @@ router.post('/auth/callback', async (req, res) => {
 
         fetchMetadata.memberFetchAttempted = true;
         fetchMetadata.memberFetchSource = "discord_oauth";
-        memberInfo = await safeSideEffect(
+        const memberLookup = await safeSideEffect(
             'getGuildMember',
-            () => discord.getGuildMember(accessToken, guildId),
-            null
+            () => typeof discord.getGuildMemberResult === "function"
+                ? discord.getGuildMemberResult(accessToken, guildId)
+                : discord.getGuildMember(accessToken, guildId).then(member => ({
+                    member,
+                    status: member ? 200 : null,
+                    failureReason: member ? null : "discord_member_fetch_failed"
+                })),
+            { member: null, status: null, failureReason: "discord_member_fetch_failed_safely" }
         );
+        memberInfo = memberLookup?.member || null;
         fetchMetadata.memberFetchFailed = !memberInfo;
-        fetchMetadata.memberFetchStatus = discord.getGuildMember.lastFetchStatus || null;
-        fetchMetadata.memberFailureReason = discord.getGuildMember.lastFailureReason || null;
+        fetchMetadata.memberFetchStatus = memberLookup?.status || null;
+        fetchMetadata.memberFailureReason = memberLookup?.failureReason || null;
 
         const memberRoles = memberInfo?.roles || [];
         const alreadyHasRole = memberRoles.map(String).includes(String(configuredRoleId));
@@ -1869,5 +1906,9 @@ module.exports._test = {
     normalizeGuilds,
     compactMemberInfo,
     compactDiscordProfile,
-    saveOAuthUserSafe
+    safeString,
+    safeNullableString,
+    memberFetchQualityStatus,
+    saveOAuthUserSafe,
+    saveVerifyLogSafe
 };

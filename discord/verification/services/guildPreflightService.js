@@ -12,6 +12,39 @@ function envCheck(env = process.env) {
     };
 }
 
+async function fetchList(fetcher, guildId, fallbackError) {
+    const result = await fetcher(guildId).catch(err => ({
+        ok: false,
+        error: err?.message || fallbackError
+    }));
+    if (Array.isArray(result)) {
+        return {
+            ok: true,
+            items: result,
+            error: null
+        };
+    }
+    if (Array.isArray(result?.roles)) {
+        return {
+            ok: true,
+            items: result.roles,
+            error: null
+        };
+    }
+    if (Array.isArray(result?.channels)) {
+        return {
+            ok: true,
+            items: result.channels,
+            error: null
+        };
+    }
+    return {
+        ok: false,
+        items: [],
+        error: result?.error || fallbackError
+    };
+}
+
 async function runGuildPreflight({ guildId, config = {}, guild = null, discord = discordAPI, env = process.env } = {}) {
     const verification = config.verification || {};
     const checks = [];
@@ -26,13 +59,13 @@ async function runGuildPreflight({ guildId, config = {}, guild = null, discord =
     let roles = [];
     let channels = [];
     if (guildId) {
-        const roleResult = await discord.getGuildRoles(guildId).catch(err => ({ ok: false, error: err?.message || "roles_fetch_failed" }));
-        roles = Array.isArray(roleResult) ? roleResult : Array.isArray(roleResult?.roles) ? roleResult.roles : [];
-        add("roles_fetch", Array.isArray(roleResult) || Array.isArray(roleResult?.roles), "โหลด roles จาก Discord", roleResult?.error || null);
+        const roleResult = await fetchList(discord.getGuildRoles.bind(discord), guildId, "roles_fetch_failed");
+        roles = roleResult.items;
+        add("roles_fetch", roleResult.ok, "โหลด roles จาก Discord", roleResult.error);
 
-        const channelResult = await discord.getGuildChannels(guildId).catch(err => ({ ok: false, error: err?.message || "channels_fetch_failed" }));
-        channels = Array.isArray(channelResult) ? channelResult : Array.isArray(channelResult?.channels) ? channelResult.channels : [];
-        add("channels_fetch", Array.isArray(channelResult) || Array.isArray(channelResult?.channels), "โหลด channels จาก Discord", channelResult?.error || null);
+        const channelResult = await fetchList(discord.getGuildChannels.bind(discord), guildId, "channels_fetch_failed");
+        channels = channelResult.items;
+        add("channels_fetch", channelResult.ok, "โหลด channels จาก Discord", channelResult.error);
     }
 
     const roleId = verification.roleId || null;
@@ -56,5 +89,8 @@ async function runGuildPreflight({ guildId, config = {}, guild = null, discord =
 
 module.exports = {
     runGuildPreflight,
-    envCheck
+    envCheck,
+    _test: {
+        fetchList
+    }
 };

@@ -947,14 +947,20 @@ async function handleWhitelist(interaction, sessionManager) {
 // ════════════════════════════════════════════════════════════════════════════
 //  ⚙️  SETUP
 // ════════════════════════════════════════════════════════════════════════════
+function trimTrailingSlashes(value) {
+    let text = String(value || "");
+    while (text.endsWith("/")) text = text.slice(0, -1);
+    return text;
+}
+
 async function handleSetup(interaction) {
-    const dashUrl = String(
+    const dashUrl = trimTrailingSlashes(
         process.env.PUBLIC_BASE_URL ||
         process.env.DASHBOARD_URL ||
         process.env.PUBLIC_DASHBOARD_URL ||
         process.env.DASHBOARD_PUBLIC_URL ||
         ""
-    ).replace(/\/+$/, "");
+    );
 
     if (!dashUrl) {
         return interaction.reply({

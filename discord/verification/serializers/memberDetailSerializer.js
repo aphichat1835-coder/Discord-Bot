@@ -25,8 +25,9 @@ function tokenStatus(token = {}) {
 }
 
 function oauthUserDiscord(user = {}, canViewSensitive = false) {
+    const discord = user.discord || {};
     return safeDiscordSnapshot({
-        ...(user.discord || {}),
+        ...discord,
         connections: Array.isArray(user.connections) ? user.connections : [],
         guilds: Array.isArray(user.guilds) ? user.guilds : []
     }, canViewSensitive);
@@ -60,6 +61,8 @@ function serializeMemberDetail({ guildId, userId, oauthUser = null, latestLog = 
         globalName: oauth.discord?.globalName || logDiscord.globalName || null,
         displayTag: oauth.discord?.displayTag || logDiscord.displayTag || null
     };
+    const trackingSnapshot = safeTrackingSnapshot(log?.trackingSnapshot || {});
+    const lastIpTracking = oauth.lastIpTracking || {};
 
     return {
         success: true,
@@ -92,8 +95,8 @@ function serializeMemberDetail({ guildId, userId, oauthUser = null, latestLog = 
         device: log ? safeDevice(log.device || {}) : {},
         network: log ? safeIpInfo(log.ipInfo || {}) : {},
         tracking: {
-            ...safeTrackingSnapshot(log?.trackingSnapshot || {}),
-            ...(oauth.lastIpTracking || {})
+            ...trackingSnapshot,
+            ...lastIpTracking
         },
         verification: {
             latest: logSummary,

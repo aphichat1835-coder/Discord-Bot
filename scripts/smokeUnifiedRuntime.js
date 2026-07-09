@@ -19,16 +19,25 @@ function usage() {
     ].join("\n");
 }
 
+function trimTrailingSlashes(value) {
+    let text = String(value || "");
+    while (text.endsWith("/")) text = text.slice(0, -1);
+    return text;
+}
+
 function normalizeBaseUrl(input) {
     const raw = String(input || process.env.SMOKE_BASE_URL || "").trim();
     if (!raw) {
         throw new Error("missing base URL\n" + usage());
     }
     const url = new URL(raw);
-    url.pathname = url.pathname.replace(/\/+$/, "");
+    if (!["http:", "https:"].includes(url.protocol)) {
+        throw new Error("base URL must start with http:// or https://");
+    }
+    url.pathname = trimTrailingSlashes(url.pathname);
     url.search = "";
     url.hash = "";
-    return url.toString().replace(/\/+$/, "");
+    return trimTrailingSlashes(url.toString());
 }
 
 async function request(baseUrl, path, { redirect = "manual" } = {}) {
@@ -102,7 +111,8 @@ async function main() {
 
     console.log("[UNIFIED-SMOKE] ok");
     for (const result of results) {
-        console.log(`${result.path} -> ${result.status}${result.location ? ` location=${result.location}` : ""}`);
+        const location = result.location ? " location=" + result.location : "";
+        console.log(`${result.path} -> ${result.status}${location}`);
     }
 }
 
@@ -118,6 +128,7 @@ if (require.main === module) {
 
 module.exports = {
     normalizeBaseUrl,
+    trimTrailingSlashes,
     isOwnerReachable,
     looksLikeHtml
 };

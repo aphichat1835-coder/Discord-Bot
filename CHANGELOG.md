@@ -38,6 +38,10 @@
 - Added Owner-only per-user member detail and audited OAuth2 token reveal, plus read-only legacy verified-member listing from `OAuthUser.lastVerify`.
 - Updated Join Campaign defaults so Owner can target any guild currently cached by the bot unless `JOIN_CAMPAIGN_ALLOWED_GUILDS` restricts it; this joins authorized users only and does not sync roles.
 - Switched Render liveness to `/ping`, added `/ready`, `/guilds`, and `/guild/:guildId` compatibility aliases, and added production secret strength checks.
+- Hardened verification review findings: degraded verification startup, dry-run
+  diagnostics isolation, graceful verification shutdown drain, redacted member
+  list fallbacks, per-request member fetch metadata, VerifyLog snapshot budget
+  guard, explicit reveal audit status, and legacy verify-owner API redirects.
 
 ## [Unreleased] - Dashboard Public OAuth Runtime Fixes 2026-07-03
 

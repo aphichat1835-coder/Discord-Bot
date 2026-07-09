@@ -525,11 +525,7 @@ async function getUserGuilds(accessToken) {
     return getOptionalUserArray("/users/@me/guilds", accessToken);
 }
 
-async function getGuildMember(accessToken, guildId) {
-    getGuildMember.lastFetchFailed = false;
-    getGuildMember.lastFetchStatus = null;
-    getGuildMember.lastFailureReason = null;
-
+async function getGuildMemberResult(accessToken, guildId) {
     try {
         const res = await fetchWithRetry(`/users/@me/guilds/${guildId}/member`, {
             headers: {
@@ -537,25 +533,37 @@ async function getGuildMember(accessToken, guildId) {
             }
         });
         if (!res.ok) {
-            getGuildMember.lastFetchFailed = true;
-            getGuildMember.lastFetchStatus = res.status;
-            getGuildMember.lastFailureReason = `discord_http_${res.status || "unknown"}`;
-            return null;
+            return {
+                member: null,
+                status: res.status,
+                failureReason: `discord_http_${res.status || "unknown"}`
+            };
         }
         const data = await res.json();
         if (!data || typeof data !== "object" || Array.isArray(data)) {
-            getGuildMember.lastFetchFailed = true;
-            getGuildMember.lastFetchStatus = res.status;
-            getGuildMember.lastFailureReason = "discord_invalid_payload";
-            return null;
+            return {
+                member: null,
+                status: res.status,
+                failureReason: "discord_invalid_payload"
+            };
         }
-        return data;
+        return {
+            member: data,
+            status: res.status,
+            failureReason: null
+        };
     } catch (err) {
-        getGuildMember.lastFetchFailed = true;
-        getGuildMember.lastFetchStatus = Number(err?.status) || null;
-        getGuildMember.lastFailureReason = optionalFetchFailureReason(err);
-        return null;
+        return {
+            member: null,
+            status: Number(err?.status) || null,
+            failureReason: optionalFetchFailureReason(err)
+        };
     }
+}
+
+async function getGuildMember(accessToken, guildId) {
+    const result = await getGuildMemberResult(accessToken, guildId);
+    return result.member;
 }
 
 /* =============================================================================
@@ -1204,6 +1212,7 @@ module.exports = {
     getUserConnections,
     getUserGuilds,
     getGuildMember,
+    getGuildMemberResult,
     optionalFetchFailure,
     optionalFetchFailureReason,
 

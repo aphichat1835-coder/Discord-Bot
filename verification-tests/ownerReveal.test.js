@@ -73,6 +73,7 @@ describe("audited Owner raw-IP reveal", () => {
         });
 
         expect(result.rawIp).toBe("203.0.113.25");
+        expect(result.auditStatus).toBe("recorded");
         expect(update).toHaveBeenCalledWith(
             { _id: "log-id" },
             {
@@ -85,6 +86,14 @@ describe("audited Owner raw-IP reveal", () => {
                     })
                 }
             }
+        );
+        expect(GuildConfig.updateOne).toHaveBeenCalledWith(
+            { guildId: "guild" },
+            expect.objectContaining({
+                $push: expect.objectContaining({
+                    "security.sensitiveDataAccess.accessLog": expect.any(Object)
+                })
+            })
         );
     });
 
@@ -113,6 +122,7 @@ describe("audited Owner raw-IP reveal", () => {
 
         expect(result.oauth.accessToken).toBe("access-token-value");
         expect(result.oauth.refreshToken).toBe("refresh-token-value");
+        expect(result.auditStatus).toBe("recorded");
         expect(GuildConfig.updateOne).toHaveBeenCalledWith(
             { guildId: "guild" },
             expect.objectContaining({
@@ -133,5 +143,34 @@ describe("audited Owner raw-IP reveal", () => {
             }),
             expect.objectContaining({ sort: expect.any(Object) })
         );
+    });
+
+    test("still reveals OAuth tokens with failed audit status when audit writes fail open by owner decision", async () => {
+        jest.spyOn(OAuthUser, "findOne").mockReturnValue({
+            select: jest.fn().mockReturnThis(),
+            lean: jest.fn().mockResolvedValue({
+                discord: { userId: "user" },
+                oauth: {
+                    encryptedAccessToken: cryptoUtils.encryptToken("access-token-value"),
+                    encryptedRefreshToken: cryptoUtils.encryptToken("refresh-token-value")
+                }
+            })
+        });
+        jest.spyOn(GuildConfig, "updateOne").mockRejectedValue(new Error("audit db down"));
+        jest.spyOn(VerifyLog, "findOneAndUpdate").mockRejectedValue(new Error("audit db down"));
+
+        const result = await ownerService.revealOAuthTokens({
+            guildId: "guild",
+            userId: "user",
+            reason: "owner review",
+            actor: "owner-dashboard"
+        });
+
+        expect(result.oauth.accessToken).toBe("access-token-value");
+        expect(result.oauth.refreshToken).toBe("refresh-token-value");
+        expect(result.auditStatus).toBe("failed");
+        expect(result.audit.failOpen).toBe(true);
+        expect(JSON.stringify(result.audit)).not.toContain("access-token-value");
+        expect(JSON.stringify(result.audit)).not.toContain("refresh-token-value");
     });
 });

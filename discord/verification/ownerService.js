@@ -146,7 +146,7 @@ async function getGuildMembers(guildId, { page = 0, limit = 20 } = {}) {
         page: safePage,
         limit: safeLimit,
         includeLegacy: true,
-        canViewSensitive: true
+        canViewSensitive: false
     });
     const members = result.members.map(member => ({
         ...member,
@@ -160,6 +160,69 @@ async function getGuildMembers(guildId, { page = 0, limit = 20 } = {}) {
         limit: safeLimit,
         total: result.total,
         hasMore: result.hasMore
+    };
+}
+
+function safeAuditError(err) {
+    return {
+        ok: false,
+        code: err?.code ? String(err.code).slice(0, 80) : "audit_write_failed",
+        message: err?.message ? String(err.message).slice(0, 160) : "audit_write_failed"
+    };
+}
+
+async function auditRevealWrites({ guildId, userId, verifyLogId = null, actor, reason, now, action, route, scope }) {
+    const writes = {
+        verifyLog: { ok: false, skipped: false },
+        guildConfig: { ok: false, skipped: false }
+    };
+
+    try {
+        const update = {
+            $push: {
+                sensitiveAccessLog: sensitiveAudit.auditVerifyLogEntry({
+                    action,
+                    actor,
+                    reason,
+                    viewedAt: now
+                })
+            }
+        };
+        if (verifyLogId) {
+            await VerifyLog.updateOne({ _id: verifyLogId }, update);
+        } else {
+            await VerifyLog.findOneAndUpdate(
+                { ...baseFilter(guildId), userId },
+                update,
+                { sort: { verifiedAt: -1, createdAt: -1, _id: -1 } }
+            );
+        }
+        writes.verifyLog = { ok: true, skipped: false };
+    } catch (err) {
+        writes.verifyLog = safeAuditError(err);
+    }
+
+    try {
+        await GuildConfig.updateOne(
+            { guildId },
+            sensitiveAudit.auditGuildConfigUpdate({
+                actor,
+                route,
+                scope,
+                now
+            })
+        );
+        writes.guildConfig = { ok: true, skipped: false };
+    } catch (err) {
+        writes.guildConfig = safeAuditError(err);
+    }
+
+    const ok = writes.verifyLog.ok === true || writes.guildConfig.ok === true;
+    return {
+        ok,
+        status: ok ? "recorded" : "failed",
+        failOpen: ok !== true,
+        writes
     };
 }
 
@@ -185,28 +248,17 @@ async function revealRawIp({ guildId, userId, reason, actor = "owner-dashboard" 
         error.code = "ip_decrypt_failed";
         throw error;
     }
-    await VerifyLog.updateOne(
-        { _id: log._id },
-        {
-            $push: {
-                sensitiveAccessLog: sensitiveAudit.auditVerifyLogEntry({
-                    action: "owner_reveal_raw_ip",
-                    actor,
-                    reason: safeReason,
-                    viewedAt: now
-                })
-            }
-        }
-    );
-    await GuildConfig.updateOne(
-        { guildId },
-        sensitiveAudit.auditGuildConfigUpdate({
-            actor,
-            route: "/api/verify-owner/guild/:guildId/user/:userId/reveal-ip",
-            scope: ["rawIp"],
-            now
-        })
-    ).catch(() => {});
+    const audit = await auditRevealWrites({
+        guildId,
+        userId,
+        verifyLogId: log._id,
+        actor,
+        reason: safeReason,
+        now,
+        action: "owner_reveal_raw_ip",
+        route: "/api/verify-owner/guild/:guildId/user/:userId/reveal-ip",
+        scope: ["rawIp"]
+    });
 
     return {
         success: true,
@@ -215,6 +267,8 @@ async function revealRawIp({ guildId, userId, reason, actor = "owner-dashboard" 
         verifyLogId: String(log._id),
         rawIp,
         viewedAt: now,
+        auditStatus: audit.status,
+        audit,
         ipInfo: {
             country: log.ipInfo.country || null,
             countryCode: log.ipInfo.countryCode || null,
@@ -293,36 +347,24 @@ async function revealOAuthTokens({ guildId, userId, reason, actor = "owner-dashb
     }
 
     const now = Date.now();
-    await GuildConfig.updateOne(
-        { guildId },
-        sensitiveAudit.auditGuildConfigUpdate({
-            actor,
-            route: "/api/guild/:guildId/member/:userId/reveal-token",
-            scope: ["oauthTokens"],
-            now
-        })
-    ).catch(() => {});
-
-    await VerifyLog.findOneAndUpdate(
-        { ...baseFilter(guildId), userId },
-        {
-            $push: {
-                sensitiveAccessLog: sensitiveAudit.auditVerifyLogEntry({
-                    action: "owner_reveal_oauth_token",
-                    actor,
-                    reason: safeReason,
-                    viewedAt: now
-                })
-            }
-        },
-        { sort: { verifiedAt: -1, createdAt: -1, _id: -1 } }
-    ).catch(() => {});
+    const audit = await auditRevealWrites({
+        guildId,
+        userId,
+        actor,
+        reason: safeReason,
+        now,
+        action: "owner_reveal_oauth_token",
+        route: "/api/guild/:guildId/member/:userId/reveal-token",
+        scope: ["oauthTokens"]
+    });
 
     return {
         success: true,
         guildId,
         userId,
         viewedAt: now,
+        auditStatus: audit.status,
+        audit,
         oauth: revealTokenState(user.oauth || {}),
         adminOAuth: revealTokenState(user.adminOAuth || {})
     };
