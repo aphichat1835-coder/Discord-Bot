@@ -134,6 +134,10 @@ describe("verification additive migration", () => {
             guilds: {
                 version: "migration-v1", returnedCount: 3, storedCount: 3,
                 chunkCount: 1, complete: true, source: "migration"
+            },
+            member: {
+                version: "migration-v1", returnedCount: 2, storedCount: 1,
+                chunkCount: 1, complete: true, source: "migration"
             }
         });
         const summary = await migrateCursor({
@@ -158,10 +162,12 @@ describe("verification additive migration", () => {
             guilds: expect.any(Array)
         }));
         expect(summary.snapshotCategoriesComplete).toBe(3);
-        expect(summary.snapshotCategoriesFailed).toBe(0);
+        expect(summary.snapshotCategoriesFailed).toBe(1);
         const patch = writes[0].updateOne.update.$set;
         expect(patch.snapshotRefs.connections).toMatchObject({ complete: true, storedCount: 2 });
         expect(patch.snapshotMeta.guilds).toMatchObject({ complete: true, returnedCount: 3, storedCount: 3 });
+        expect(patch.snapshotRefs.member).toBeUndefined();
+        expect(patch.snapshotMeta.member).toMatchObject({ status: "failed", complete: false });
         expect(writes[0].updateOne.update).not.toHaveProperty("$unset");
     });
 });

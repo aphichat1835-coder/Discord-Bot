@@ -80,6 +80,15 @@ function failedMeta(kind, version, returnedCount, err, now) {
     };
 }
 
+function logSnapshotFailure(kind, err) {
+    const details = {
+        kind: String(kind || "snapshot").slice(0, 40),
+        code: String(err?.code || "snapshot_write_failed").slice(0, 80),
+        name: String(err?.name || "Error").slice(0, 80)
+    };
+    console.error("[SNAPSHOT] write failed:", JSON.stringify(details));
+}
+
 async function storeArraySnapshot(Model, {
     kind,
     userId,
@@ -121,8 +130,10 @@ async function storeArraySnapshot(Model, {
             chunkCount: chunks.length,
             failureReason: complete ? null : "snapshot_finalize_incomplete"
         };
+        if (!complete) logSnapshotFailure(kind, { code: meta.failureReason });
         return successfulRef(kind, version, meta);
     } catch (err) {
+        logSnapshotFailure(kind, err);
         return failedMeta(kind, version, itemList.length, err, now);
     }
 }
@@ -190,6 +201,7 @@ async function storeMemberSnapshot({ userId, guildId, version, member, now = Dat
             { $set: { complete: true, updatedAt: now } }
         );
         const complete = Number(finalized?.matchedCount || 0) === 1;
+        if (!complete) logSnapshotFailure("member", { code: "snapshot_finalize_incomplete" });
         return {
             kind: "member",
             version,
@@ -208,6 +220,7 @@ async function storeMemberSnapshot({ userId, guildId, version, member, now = Dat
             roleChunkCount: roleRef.chunkCount
         };
     } catch (err) {
+        logSnapshotFailure("member", err);
         return { ...failedMeta("member", version, 1, err, now), guildId };
     }
 }
@@ -243,6 +256,7 @@ async function storeProfileSnapshot({ userId, version, profile, now = Date.now()
             { $set: { complete: true, updatedAt: now } }
         );
         const complete = Number(finalized?.matchedCount || 0) === 1;
+        if (!complete) logSnapshotFailure("profile", { code: "snapshot_finalize_incomplete" });
         return {
             kind: "profile",
             version,
@@ -256,6 +270,7 @@ async function storeProfileSnapshot({ userId, version, profile, now = Date.now()
             capturedAt: now
         };
     } catch (err) {
+        logSnapshotFailure("profile", err);
         return failedMeta("profile", version, 1, err, now);
     }
 }

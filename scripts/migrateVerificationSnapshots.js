@@ -55,11 +55,15 @@ function bannerUrl(discord = {}) {
     return `https://cdn.discordapp.com/banners/${discord.userId}/${discord.bannerHash}.${ext}?size=512`;
 }
 
+function isCompleteRef(ref) {
+    return ref?.complete === true && ref.returnedCount === ref.storedCount;
+}
+
 function completeRefs(previousRefs = {}, stored = {}) {
     const refs = { ...previousRefs };
     for (const kind of ["profile", "connections", "guilds", "member"]) {
         const ref = stored?.[kind];
-        if (ref?.complete === true && ref.returnedCount === ref.storedCount) refs[kind] = ref;
+        if (isCompleteRef(ref)) refs[kind] = ref;
     }
     return refs;
 }
@@ -103,13 +107,14 @@ function roleCountMeta(ref) {
 }
 
 function storedSnapshotMeta(previous, ref, now) {
+    const complete = isCompleteRef(ref);
     return {
         ...previous,
-        status: ref.complete ? "success" : "failed",
+        status: complete ? "success" : "failed",
         returnedCount: ref.returnedCount,
         storedCount: ref.storedCount,
         chunkCount: ref.chunkCount,
-        complete: ref.complete === true && ref.returnedCount === ref.storedCount,
+        complete,
         ...roleCountMeta(ref),
         snapshotVersion: ref.version,
         failureReason: ref.failureReason || null,
@@ -167,9 +172,13 @@ async function writeLegacySnapshots(doc, snapshotWriter, timestamp) {
 function countSnapshotResults(summary, storedSnapshots) {
     if (!storedSnapshots) return;
     for (const kind of ["profile", "connections", "guilds", "member"]) {
-        if (!storedSnapshots[kind]) continue;
-        if (storedSnapshots[kind].complete) summary.snapshotCategoriesComplete++;
-        else summary.snapshotCategoriesFailed++;
+        const ref = storedSnapshots[kind];
+        if (!ref) continue;
+        if (isCompleteRef(ref)) {
+            summary.snapshotCategoriesComplete++;
+        } else {
+            summary.snapshotCategoriesFailed++;
+        }
     }
 }
 

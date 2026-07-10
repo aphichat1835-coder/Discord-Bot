@@ -1,10 +1,49 @@
 #!/usr/bin/env node
 "use strict";
 
+const dns = require("node:dns").promises;
+const { BlockList, isIP } = require("node:net");
+
 const DEFAULT_TIMEOUT_MS = Math.max(
     1000,
     Number(process.env.SMOKE_TIMEOUT_MS || 8000) || 8000
 );
+const RESERVED_IPV4 = new BlockList();
+const RESERVED_IPV6 = new BlockList();
+
+[
+    ["0.0.0.0", 8],
+    ["10.0.0.0", 8],
+    ["100.64.0.0", 10],
+    ["127.0.0.0", 8],
+    ["169.254.0.0", 16],
+    ["172.16.0.0", 12],
+    ["192.0.0.0", 24],
+    ["192.0.2.0", 24],
+    ["192.88.99.0", 24],
+    ["192.168.0.0", 16],
+    ["198.18.0.0", 15],
+    ["198.51.100.0", 24],
+    ["203.0.113.0", 24],
+    ["224.0.0.0", 4],
+    ["240.0.0.0", 4]
+].forEach(([address, prefix]) => RESERVED_IPV4.addSubnet(address, prefix, "ipv4"));
+
+[
+    ["::", 128],
+    ["::1", 128],
+    ["::ffff:0:0", 96],
+    ["64:ff9b:1::", 48],
+    ["100::", 64],
+    ["2001::", 23],
+    ["2001:2::", 48],
+    ["2001:db8::", 32],
+    ["2002::", 16],
+    ["fc00::", 7],
+    ["fe80::", 10],
+    ["fec0::", 10],
+    ["ff00::", 8]
+].forEach(([address, prefix]) => RESERVED_IPV6.addSubnet(address, prefix, "ipv6"));
 
 function usage() {
     return [
@@ -35,15 +74,37 @@ function trimTrailingSlashes(value) {
     return text;
 }
 
+function stripHostBrackets(value) {
+    const host = String(value || "").toLowerCase();
+    return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+}
+
 function isBlockedSmokeHost(hostname) {
-    const host = String(hostname || "").toLowerCase();
-    if (["localhost", "0.0.0.0", "127.0.0.1", "::1", "[::1]"].includes(host)) return true;
-    if (host.startsWith("127.")) return true;
-    if (host.startsWith("10.")) return true;
-    if (host.startsWith("192.168.")) return true;
-    if (host.startsWith("169.254.")) return true;
-    const match = /^172\.(\d+)\./.exec(host);
-    return !!match && Number(match[1]) >= 16 && Number(match[1]) <= 31;
+    const host = stripHostBrackets(hostname);
+    if (host === "localhost" || host.endsWith(".localhost")) return true;
+    const family = isIP(host);
+    if (family === 4) return RESERVED_IPV4.check(host, "ipv4");
+    if (family === 6) return RESERVED_IPV6.check(host, "ipv6");
+    return false;
+}
+
+async function assertSafeResolvedHost(hostname, lookup = dns.lookup) {
+    const host = stripHostBrackets(hostname);
+    if (isBlockedSmokeHost(host)) throw new Error("smoke hostname resolves to a reserved address");
+    if (isIP(host)) return [{ address: host, family: isIP(host) }];
+    let records;
+    try {
+        records = await lookup(host, { all: true, verbatim: true });
+    } catch {
+        throw new Error("smoke hostname DNS resolution failed");
+    }
+    if (!Array.isArray(records) || records.length === 0) {
+        throw new Error("smoke hostname DNS resolution returned no addresses");
+    }
+    if (records.some(record => isBlockedSmokeHost(record?.address))) {
+        throw new Error("smoke hostname resolves to a reserved address");
+    }
+    return records;
 }
 
 function normalizeBaseUrl(input) {
@@ -73,6 +134,7 @@ async function request(baseUrl, path, { redirect = "manual" } = {}) {
     const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
     try {
         const target = new URL(path, `${baseUrl}/`);
+        await assertSafeResolvedHost(target.hostname);
         // nosemgrep -- HTTPS and the exact host allowlist are validated by normalizeBaseUrl.
         const response = await fetch(target, {
             method: "GET",
@@ -118,6 +180,7 @@ function looksLikeHtml(result) {
 
 async function main() {
     const baseUrl = normalizeBaseUrl(process.argv[2]);
+    await assertSafeResolvedHost(new URL(baseUrl).hostname);
     const results = [];
 
     const ping = await request(baseUrl, "/ping");
@@ -159,6 +222,7 @@ if (require.main === module) {
 module.exports = {
     allowedSmokeHosts,
     normalizeBaseUrl,
+    assertSafeResolvedHost,
     trimTrailingSlashes,
     isBlockedSmokeHost,
     isOwnerReachable,

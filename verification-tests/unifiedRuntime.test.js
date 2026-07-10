@@ -5,7 +5,11 @@ const {
     ownerGuilds,
     serveLegacyGuildPage,
 } = require("../discord/verification/runtime");
-const { normalizeBaseUrl } = require("../scripts/smokeUnifiedRuntime");
+const {
+    normalizeBaseUrl,
+    assertSafeResolvedHost,
+    isBlockedSmokeHost
+} = require("../scripts/smokeUnifiedRuntime");
 
 function readPackageLock() {
     return fs.readFileSync("package-lock.json", "utf8");
@@ -106,6 +110,26 @@ describe("single-process verification runtime contract", () => {
             if (previous === undefined) delete process.env.SMOKE_ALLOWED_HOSTS;
             else process.env.SMOKE_ALLOWED_HOSTS = previous;
         }
+    });
+
+    test("single-port smoke helper rejects reserved literal and resolved addresses", async () => {
+        expect(isBlockedSmokeHost("100.64.0.1")).toBe(true);
+        expect(isBlockedSmokeHost("198.18.0.1")).toBe(true);
+        expect(isBlockedSmokeHost("fc00::1")).toBe(true);
+        expect(isBlockedSmokeHost("2001:db8::1")).toBe(true);
+
+        await expect(assertSafeResolvedHost("public.example.test", async () => [
+            { address: "127.0.0.1", family: 4 }
+        ])).rejects.toThrow(/reserved address/);
+        await expect(assertSafeResolvedHost("public.example.test", async () => [
+            { address: "203.0.113.10", family: 4 }
+        ])).rejects.toThrow(/reserved address/);
+        await expect(assertSafeResolvedHost("public.example.test", async () => [
+            { address: "8.8.8.8", family: 4 }
+        ])).resolves.toHaveLength(1);
+        await expect(assertSafeResolvedHost("public.example.test", async () => {
+            throw new Error("dns unavailable");
+        })).rejects.toThrow(/DNS resolution failed/);
     });
 
     test("legacy guild alias serves the requested manageable guild page", () => {

@@ -3,7 +3,7 @@
 const mongoose = require("mongoose");
 
 const schema = new mongoose.Schema({
-    userId: { type: String, required: true, index: true },
+    userId: { type: String, required: true },
     guildId: { type: String, required: true, index: true },
     snapshotVersion: { type: String, required: true, index: true },
     snapshot: { type: mongoose.Schema.Types.Mixed, required: true },

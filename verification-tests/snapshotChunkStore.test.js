@@ -62,8 +62,9 @@ describe("OAuth snapshot chunk persistence", () => {
     });
 
     test("does not report a partially written chunk set as complete", async () => {
+        const errorLog = jest.spyOn(console, "error").mockImplementation(() => {});
         const Model = {
-            bulkWrite: jest.fn().mockRejectedValue(Object.assign(new Error("write failed"), {
+            bulkWrite: jest.fn().mockRejectedValue(Object.assign(new Error("sensitive database detail"), {
                 code: "chunk_write_failed"
             })),
             updateMany: jest.fn()
@@ -85,6 +86,20 @@ describe("OAuth snapshot chunk persistence", () => {
             failureReason: "chunk_write_failed"
         });
         expect(Model.updateMany).not.toHaveBeenCalled();
+        expect(errorLog).toHaveBeenCalledWith(
+            "[SNAPSHOT] write failed:",
+            expect.stringContaining('"code":"chunk_write_failed"')
+        );
+        expect(errorLog.mock.calls.flat().join(" ")).not.toContain("sensitive database detail");
+    });
+
+    test("snapshot models avoid redundant standalone userId indexes", () => {
+        for (const Model of Object.values(snapshotStore._models)) {
+            const standaloneUserId = Model.schema.indexes().some(([keys]) =>
+                Object.keys(keys).length === 1 && keys.userId === 1
+            );
+            expect(standaloneUserId).toBe(false);
+        }
     });
 
     test("loads every ordered chunk and rejects incomplete counts", async () => {
