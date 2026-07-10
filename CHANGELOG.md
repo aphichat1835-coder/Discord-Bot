@@ -64,6 +64,8 @@
 - Restored the Shadow web hook mount on the shared Express application using
   its established external registration contract, without modifying the
   owner-locked provider implementation.
+- Clamped verification snapshot budgets at both safe bounds and restored the
+  20-entry cap for attacker-controlled `x-forwarded-for` chains.
 
 ## [Unreleased] - Dashboard Public OAuth Runtime Fixes 2026-07-03
 

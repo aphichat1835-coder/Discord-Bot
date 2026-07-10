@@ -154,6 +154,16 @@ describe("member detail serialization and leak guards", () => {
         );
     });
 
+    test("snapshot budget caps an unsafe oversized configured limit", () => {
+        const warning = jest.spyOn(process, "emitWarning").mockImplementation(() => {});
+        expect(snapshotBudget.resolveDefaultMaxBytes(snapshotBudget.FALLBACK_MAX_BYTES * 10))
+            .toBe(snapshotBudget.FALLBACK_MAX_BYTES);
+        expect(warning).toHaveBeenCalledWith(
+            expect.stringContaining("exceeds the safe maximum"),
+            expect.objectContaining({ code: "VERIFICATION_SNAPSHOT_MAX_BYTES_CAPPED" })
+        );
+    });
+
     test("dashboard labels premiumType as compatibility data instead of a Nitro verdict", () => {
         const source = fs.readFileSync("discord/verification/public/js/guild-dashboard.js", "utf8");
 

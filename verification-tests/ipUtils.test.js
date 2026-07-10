@@ -28,8 +28,17 @@ const {
     lookupIP,
     isPrivateIP,
     extractDevice,
-    processIP
+    processIP,
+    _test
 } = require('../discord/verification/utils/ipUtils');
+
+test('x-forwarded-for parsing is capped before normalization', () => {
+    const values = Array.from({ length: 50 }, (_, index) => `203.0.113.${index + 1}`);
+    const parsed = _test.splitHeaderIps(values.join(','));
+
+    expect(parsed).toHaveLength(_test.X_FORWARDED_FOR_MAX_ENTRIES);
+    expect(parsed).toEqual(values.slice(0, _test.X_FORWARDED_FOR_MAX_ENTRIES));
+});
 
 // ---------------------------------------------------------------------------
 // Helper to build a mock Express request

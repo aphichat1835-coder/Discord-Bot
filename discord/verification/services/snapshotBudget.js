@@ -13,6 +13,13 @@ function resolveDefaultMaxBytes(raw = process.env.VERIFICATION_SNAPSHOT_MAX_BYTE
         );
         return MIN_MAX_BYTES;
     }
+    if (parsed > FALLBACK_MAX_BYTES) {
+        process.emitWarning(
+            `VERIFICATION_SNAPSHOT_MAX_BYTES=${parsed} exceeds the safe maximum; using ${FALLBACK_MAX_BYTES}`,
+            { code: "VERIFICATION_SNAPSHOT_MAX_BYTES_CAPPED" }
+        );
+        return FALLBACK_MAX_BYTES;
+    }
     return parsed;
 }
 

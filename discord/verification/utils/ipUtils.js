@@ -14,6 +14,7 @@ const IP_LOOKUP_RESPONSE_MAX_BYTES = Math.max(
     Number(process.env.IP_LOOKUP_RESPONSE_MAX_BYTES || 256 * 1024) || 256 * 1024
 );
 const DEVICE_FINGERPRINT_VERSION = 1;
+const X_FORWARDED_FOR_MAX_ENTRIES = 20;
 const IPV4_MASK_ALL = 2 ** 32 - 1;
 const DEFAULT_IP_LOOKUP_API_BASE_URL = 'https://ip-api.com/json';
 const lookupCache = new Map();
@@ -55,7 +56,8 @@ function splitHeaderIps(value) {
     return raw
         .split(',')
         .map(v => v.trim())
-        .filter(Boolean);
+        .filter(Boolean)
+        .slice(0, X_FORWARDED_FOR_MAX_ENTRIES);
 }
 
 function normalizeIP(ip) {
@@ -1004,5 +1006,9 @@ module.exports = {
     isPrivateIP,
     extractDevice,
     processIP,
-    compactLookupRaw
+    compactLookupRaw,
+    _test: {
+        splitHeaderIps,
+        X_FORWARDED_FOR_MAX_ENTRIES
+    }
 };
