@@ -1481,36 +1481,51 @@
     if (disable) disable.addEventListener("click", disableVerification);
   }
 
+  function renderResourceButtons(container, items, { emptyText, prefix, datasetKey }) {
+    container.replaceChildren();
+    if (!items.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = emptyText;
+      container.appendChild(empty);
+      return;
+    }
+    const buttons = items.map((item) => {
+      const button = document.createElement("button");
+      const id = String(item?.id || "");
+      const label = String(item?.name || "unknown");
+      const idLabel = document.createElement("span");
+      button.className = "btn btn-soft btn-sm";
+      button.type = "button";
+      button.dataset[datasetKey] = id;
+      idLabel.className = "mono muted-2";
+      idLabel.textContent = id;
+      button.append(document.createTextNode(`${prefix}${label} `), idLabel);
+      return button;
+    });
+    container.append(...buttons);
+  }
+
   function renderResources(resources = {}) {
     const rolesBox = $("role-options");
     const channelsBox = $("channel-options");
 
     if (rolesBox) {
       const roles = Array.isArray(resources.roles) ? resources.roles : [];
-
-      if (!roles.length) {
-        rolesBox.innerHTML = '<div class="empty">โหลดรายการยศไม่ได้ หรือยังไม่มีข้อมูล</div>';
-      } else {
-        rolesBox.innerHTML = roles.map((role) => `
-          <button class="btn btn-soft btn-sm" type="button" data-pick-role="${h(role.id)}">
-            ${h(role.name)} <span class="mono muted-2">${h(role.id)}</span>
-          </button>
-        `).join("");
-      }
+      renderResourceButtons(rolesBox, roles, {
+        emptyText: "โหลดรายการยศไม่ได้ หรือยังไม่มีข้อมูล",
+        prefix: "",
+        datasetKey: "pickRole"
+      });
     }
 
     if (channelsBox) {
       const channels = Array.isArray(resources.channels) ? resources.channels : [];
-
-      if (!channels.length) {
-        channelsBox.innerHTML = '<div class="empty">โหลดรายการห้องไม่ได้ หรือยังไม่มีข้อมูล</div>';
-      } else {
-        channelsBox.innerHTML = channels.map((channel) => `
-          <button class="btn btn-soft btn-sm" type="button" data-pick-channel="${h(channel.id)}">
-            # ${h(channel.name)} <span class="mono muted-2">${h(channel.id)}</span>
-          </button>
-        `).join("");
-      }
+      renderResourceButtons(channelsBox, channels, {
+        emptyText: "โหลดรายการห้องไม่ได้ หรือยังไม่มีข้อมูล",
+        prefix: "# ",
+        datasetKey: "pickChannel"
+      });
     }
 
     qsa("[data-pick-role]").forEach((btn) => {

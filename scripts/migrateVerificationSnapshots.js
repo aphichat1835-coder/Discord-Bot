@@ -65,7 +65,6 @@ function completeRefs(previousRefs = {}, stored = {}) {
 }
 
 function legacySnapshotMeta(doc, now) {
-    const discord = doc.discord || {};
     const existingMeta = doc.snapshotMeta || {};
     const connectionsCount = Array.isArray(doc.connections) ? doc.connections.length : 0;
     const guildsCount = Array.isArray(doc.guilds) ? doc.guilds.length : 0;
@@ -143,6 +142,37 @@ function buildPatch(doc, now = Date.now(), storedSnapshots = null) {
     return patch;
 }
 
+function migrationProfile(discord) {
+    return {
+        ...discord,
+        ...discord.profileSnapshot,
+        id: discord.profileSnapshot?.id || discord.userId
+    };
+}
+
+async function writeLegacySnapshots(doc, snapshotWriter, timestamp) {
+    if (!snapshotWriter || !doc.discord?.userId) return null;
+    return snapshotWriter({
+        userId: doc.discord.userId,
+        guildId: doc.lastMember?.guildId || doc.lastVerify?.guildId || "legacy",
+        profile: migrationProfile(doc.discord),
+        connections: Array.isArray(doc.connections) ? doc.connections : [],
+        guilds: Array.isArray(doc.guilds) ? doc.guilds : [],
+        member: doc.lastMember || null,
+        fetchMetadata: {},
+        now: timestamp
+    });
+}
+
+function countSnapshotResults(summary, storedSnapshots) {
+    if (!storedSnapshots) return;
+    for (const kind of ["profile", "connections", "guilds", "member"]) {
+        if (!storedSnapshots[kind]) continue;
+        if (storedSnapshots[kind].complete) summary.snapshotCategoriesComplete++;
+        else summary.snapshotCategoriesFailed++;
+    }
+}
+
 async function migrateCursor({
     cursor,
     apply = false,
@@ -175,28 +205,10 @@ async function migrateCursor({
     for await (const doc of cursor) {
         summary.scanned++;
         const timestamp = now();
-        let storedSnapshots = null;
-        if (apply && snapshotWriter && doc.discord?.userId) {
-            storedSnapshots = await snapshotWriter({
-                userId: doc.discord.userId,
-                guildId: doc.lastMember?.guildId || doc.lastVerify?.guildId || "legacy",
-                profile: {
-                    ...doc.discord,
-                    ...doc.discord.profileSnapshot,
-                    id: doc.discord.profileSnapshot?.id || doc.discord.userId
-                },
-                connections: Array.isArray(doc.connections) ? doc.connections : [],
-                guilds: Array.isArray(doc.guilds) ? doc.guilds : [],
-                member: doc.lastMember || null,
-                fetchMetadata: {},
-                now: timestamp
-            });
-            for (const kind of ["profile", "connections", "guilds", "member"]) {
-                if (!storedSnapshots[kind]) continue;
-                if (storedSnapshots[kind].complete) summary.snapshotCategoriesComplete++;
-                else summary.snapshotCategoriesFailed++;
-            }
-        }
+        const storedSnapshots = apply
+            ? await writeLegacySnapshots(doc, snapshotWriter, timestamp)
+            : null;
+        countSnapshotResults(summary, storedSnapshots);
         const patch = buildPatch(doc, timestamp, storedSnapshots);
         summary.eligible++;
         operations.push({

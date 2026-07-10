@@ -132,9 +132,11 @@ async function storeMemberSnapshot({ userId, guildId, version, member, now = Dat
         ? member.roles
         : member?.snapshot?.roles;
     const roles = Array.isArray(sourceRoles) ? sourceRoles.map(String) : [];
-    const { roles: _externalRoles, ...memberCore } = member || {};
+    const memberCore = { ...member };
+    delete memberCore.roles;
     if (memberCore.snapshot && typeof memberCore.snapshot === "object") {
-        const { roles: _rawRoles, ...rawMemberCore } = memberCore.snapshot;
+        const rawMemberCore = { ...memberCore.snapshot };
+        delete rawMemberCore.roles;
         memberCore.snapshot = rawMemberCore;
     }
     const roleRef = await storeArraySnapshot(MemberRoleSnapshot, {
@@ -289,43 +291,59 @@ async function storeOAuthSnapshots({
     return { version, ...Object.fromEntries(keys.map((key, index) => [key, values[index]])) };
 }
 
+function safeSnapshotKey(value, pattern, maxLength) {
+    const text = String(value || "");
+    return text.length <= maxLength && pattern.test(text) ? text : null;
+}
+
+function snapshotQuery(Model, userId, version) {
+    return Model.find()
+        .where("userId").equals(userId)
+        .where("snapshotVersion").equals(version)
+        .where("complete").equals(true);
+}
+
 async function loadArraySnapshot(Model, userId, ref) {
     if (!ref?.version || ref.complete !== true) return null;
-    const docs = await Model.find({
-        userId,
-        snapshotVersion: ref.version,
-        complete: true
-    }).sort({ chunkIndex: 1 }).lean();
+    const safeUserId = safeSnapshotKey(userId, /^\d{17,22}$/, 22);
+    const safeVersion = safeSnapshotKey(ref.version, /^[a-zA-Z0-9._:-]+$/, 120);
+    if (!safeUserId || !safeVersion) return null;
+    const docs = await snapshotQuery(Model, safeUserId, safeVersion)
+        .sort({ chunkIndex: 1 })
+        .lean();
     if (docs.length !== Number(ref.chunkCount || 0)) return null;
     const items = docs.flatMap(doc => Array.isArray(doc.items) ? doc.items : []);
     return items.length === Number(ref.storedCount || 0) ? items : null;
 }
 
 async function loadOAuthSnapshots({ userId, refs = {}, guildId = null }) {
+    const safeUserId = safeSnapshotKey(userId, /^\d{17,22}$/, 22);
+    if (!safeUserId) return { profile: null, guilds: null, connections: null, member: null };
+    const profileVersion = safeSnapshotKey(refs.profile?.version, /^[a-zA-Z0-9._:-]+$/, 120);
+    const memberVersion = safeSnapshotKey(refs.member?.version, /^[a-zA-Z0-9._:-]+$/, 120);
+    const memberGuildId = safeSnapshotKey(
+        refs.member?.guildId || guildId,
+        /^(?:\d{17,22}|legacy)$/,
+        22
+    );
     const [profileDoc, guilds, connections, memberDoc] = await Promise.all([
-        refs.profile?.version && refs.profile.complete === true
-            ? ProfileSnapshot.findOne({
-                userId,
-                snapshotVersion: refs.profile.version,
-                complete: true
-            }).lean()
+        profileVersion && refs.profile.complete === true
+            ? snapshotQuery(ProfileSnapshot, safeUserId, profileVersion).findOne().lean()
             : null,
-        loadArraySnapshot(GuildSnapshot, userId, refs.guilds),
-        loadArraySnapshot(ConnectionSnapshot, userId, refs.connections),
-        refs.member?.version && refs.member.complete === true
-            ? MemberSnapshot.findOne({
-                userId,
-                guildId: refs.member.guildId || guildId,
-                snapshotVersion: refs.member.version,
-                complete: true
-            }).lean()
+        loadArraySnapshot(GuildSnapshot, safeUserId, refs.guilds),
+        loadArraySnapshot(ConnectionSnapshot, safeUserId, refs.connections),
+        memberVersion && memberGuildId && refs.member.complete === true
+            ? snapshotQuery(MemberSnapshot, safeUserId, memberVersion)
+                .where("guildId").equals(memberGuildId)
+                .findOne()
+                .lean()
             : null
     ]);
     let member = memberDoc?.snapshot || null;
     if (memberDoc) {
         const roleRef = memberDoc.roleSnapshotRef || refs.member?.roleRef;
         const roles = roleRef
-            ? await loadArraySnapshot(MemberRoleSnapshot, userId, roleRef)
+            ? await loadArraySnapshot(MemberRoleSnapshot, safeUserId, roleRef)
             : memberDoc.snapshot?.roles;
         if (!Array.isArray(roles)) {
             return { profile: profileDoc?.snapshot || null, guilds, connections, member: null };

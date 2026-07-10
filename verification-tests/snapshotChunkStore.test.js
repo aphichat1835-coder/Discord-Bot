@@ -90,6 +90,8 @@ describe("OAuth snapshot chunk persistence", () => {
     test("loads every ordered chunk and rejects incomplete counts", async () => {
         const Model = {
             find: jest.fn(() => ({
+                where: jest.fn().mockReturnThis(),
+                equals: jest.fn().mockReturnThis(),
                 sort: jest.fn().mockReturnThis(),
                 lean: jest.fn().mockResolvedValue([
                     { chunkIndex: 0, items: [{ id: "1" }, { id: "2" }] },
@@ -97,7 +99,7 @@ describe("OAuth snapshot chunk persistence", () => {
                 ])
             }))
         };
-        const items = await snapshotStore.loadArraySnapshot(Model, "user", {
+        const items = await snapshotStore.loadArraySnapshot(Model, "12345678901234567", {
             version: "version-1",
             chunkCount: 2,
             storedCount: 3,
@@ -190,23 +192,26 @@ describe("OAuth snapshot chunk persistence", () => {
     });
 
     test("reassembles every member role chunk when loading Member Detail data", async () => {
-        function findManyResult(docs) {
+        function findResult(value) {
             return {
+                where: jest.fn().mockReturnThis(),
+                equals: jest.fn().mockReturnThis(),
                 sort: jest.fn().mockReturnThis(),
-                lean: jest.fn().mockResolvedValue(docs)
+                findOne: jest.fn().mockReturnThis(),
+                lean: jest.fn().mockResolvedValue(value)
             };
         }
         jest.spyOn(snapshotStore._models.GuildSnapshot, "find")
-            .mockReturnValue(findManyResult([{ items: [], chunkIndex: 0 }]));
+            .mockReturnValue(findResult([{ items: [], chunkIndex: 0 }]));
         jest.spyOn(snapshotStore._models.ConnectionSnapshot, "find")
-            .mockReturnValue(findManyResult([{ items: [], chunkIndex: 0 }]));
+            .mockReturnValue(findResult([{ items: [], chunkIndex: 0 }]));
         jest.spyOn(snapshotStore._models.MemberRoleSnapshot, "find")
-            .mockReturnValue(findManyResult([
+            .mockReturnValue(findResult([
                 { items: ["1", "2"], chunkIndex: 0 },
                 { items: ["3"], chunkIndex: 1 }
             ]));
-        jest.spyOn(snapshotStore._models.MemberSnapshot, "findOne").mockReturnValue({
-            lean: jest.fn().mockResolvedValue({
+        jest.spyOn(snapshotStore._models.MemberSnapshot, "find").mockReturnValue(
+            findResult({
                 snapshot: { guildId: "987654321098765432", nick: "member" },
                 roleSnapshotRef: {
                     version: "v1",
@@ -215,7 +220,7 @@ describe("OAuth snapshot chunk persistence", () => {
                     complete: true
                 }
             })
-        });
+        );
 
         const loaded = await snapshotStore.loadOAuthSnapshots({
             userId: "123456789012345678",

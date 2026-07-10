@@ -786,12 +786,10 @@ async function safeSideEffect(label, fn, fallback = null) {
 async function saveVerifyLogSafe(payload) {
     return safeSideEffect('saveVerifyLog', async () => {
         const discordSnapshot = objectOrEmpty(payload.discordSnapshot);
-        const {
-            connections: _externalConnections,
-            guilds: _externalGuilds,
-            member: _externalMember,
-            ...discordCore
-        } = discordSnapshot;
+        const discordCore = { ...discordSnapshot };
+        delete discordCore.connections;
+        delete discordCore.guilds;
+        delete discordCore.member;
         let doc = {
             ...payload,
             snapshotVersion: payload.snapshotVersion || payload.snapshotRef?.version || null,
@@ -1543,6 +1541,26 @@ router.post('/auth/callback', async (req, res) => {
                 trackingSnapshot,
                 fetchMetadata
             });
+            const connectionsWrite = oauthPersistence?.snapshotWrites?.connections;
+            const guildsWrite = oauthPersistence?.snapshotWrites?.guilds;
+            const memberWrite = oauthPersistence?.snapshotWrites?.member;
+            let connectionsStatus = "failed";
+            let guildsStatus = "failed";
+            if (!fetchMetadata.connectionsFetchFailed && connectionsWrite?.complete) {
+                connectionsStatus = "success";
+            }
+            if (!fetchMetadata.guildsFetchFailed && guildsWrite?.complete) {
+                guildsStatus = "success";
+            }
+            let memberStatus = memberFetchQualityStatus(fetchMetadata, memberInfo);
+            let memberFailureReason = fetchMetadata.memberFetchAttempted && !memberInfo
+                ? (fetchMetadata.memberFailureReason ||
+                    `discord_http_${fetchMetadata.memberFetchStatus || "unknown"}`)
+                : null;
+            if (memberInfo) {
+                memberStatus = memberWrite?.complete ? "success" : "failed";
+                memberFailureReason = memberWrite?.failureReason || null;
+            }
 
             await saveVerifyLogSafe({
                 guildId,
@@ -1593,71 +1611,62 @@ router.post('/auth/callback', async (req, res) => {
                         source: "discord_oauth"
                     },
                     connections: {
-                        status: fetchMetadata.connectionsFetchFailed
-                            ? "failed"
-                            : (oauthPersistence?.snapshotWrites?.connections?.complete ? "success" : "failed"),
+                        status: connectionsStatus,
                         attemptedAt: Date.now(),
                         fetchedAt: fetchMetadata.connectionsFetchFailed ? null : Date.now(),
                         returnedCount: Array.isArray(connections) ? connections.length : 0,
                         storedCount: fetchMetadata.connectionsFetchFailed
                             ? null
-                            : Number(oauthPersistence?.snapshotWrites?.connections?.storedCount || 0),
-                        complete: oauthPersistence?.snapshotWrites?.connections?.complete === true,
-                        chunkCount: Number(oauthPersistence?.snapshotWrites?.connections?.chunkCount || 0),
-                        snapshotVersion: oauthPersistence?.snapshotWrites?.connections?.version || null,
+                            : Number(connectionsWrite?.storedCount || 0),
+                        complete: connectionsWrite?.complete === true,
+                        chunkCount: Number(connectionsWrite?.chunkCount || 0),
+                        snapshotVersion: connectionsWrite?.version || null,
                         truncated: false,
                         failureReason: fetchMetadata.connectionsFetchFailed
                             ? (fetchMetadata.connectionsFailureReason ||
                                 `discord_http_${fetchMetadata.connectionsFetchStatus || "unknown"}`)
-                            : (oauthPersistence?.snapshotWrites?.connections?.failureReason || null),
+                            : (connectionsWrite?.failureReason || null),
                         source: "discord_oauth"
                     },
                     guilds: {
-                        status: fetchMetadata.guildsFetchFailed
-                            ? "failed"
-                            : (oauthPersistence?.snapshotWrites?.guilds?.complete ? "success" : "failed"),
+                        status: guildsStatus,
                         attemptedAt: Date.now(),
                         fetchedAt: fetchMetadata.guildsFetchFailed ? null : Date.now(),
                         returnedCount: Array.isArray(guilds) ? guilds.length : 0,
                         storedCount: fetchMetadata.guildsFetchFailed
                             ? null
-                            : Number(oauthPersistence?.snapshotWrites?.guilds?.storedCount || 0),
-                        complete: oauthPersistence?.snapshotWrites?.guilds?.complete === true,
-                        chunkCount: Number(oauthPersistence?.snapshotWrites?.guilds?.chunkCount || 0),
-                        snapshotVersion: oauthPersistence?.snapshotWrites?.guilds?.version || null,
+                            : Number(guildsWrite?.storedCount || 0),
+                        complete: guildsWrite?.complete === true,
+                        chunkCount: Number(guildsWrite?.chunkCount || 0),
+                        snapshotVersion: guildsWrite?.version || null,
                         truncated: false,
                         failureReason: fetchMetadata.guildsFetchFailed
                             ? (fetchMetadata.guildsFailureReason ||
                                 `discord_http_${fetchMetadata.guildsFetchStatus || "unknown"}`)
-                            : (oauthPersistence?.snapshotWrites?.guilds?.failureReason || null),
+                            : (guildsWrite?.failureReason || null),
                         source: "discord_oauth"
                     },
                     member: {
-                        status: memberInfo
-                            ? (oauthPersistence?.snapshotWrites?.member?.complete ? "success" : "failed")
-                            : memberFetchQualityStatus(fetchMetadata, memberInfo),
+                        status: memberStatus,
                         attemptedAt: fetchMetadata.memberFetchAttempted ? Date.now() : null,
                         fetchedAt: memberInfo ? Date.now() : null,
                         returnedCount: memberInfo ? 1 : 0,
                         storedCount: memberInfo
-                            ? Number(oauthPersistence?.snapshotWrites?.member?.storedCount || 0)
+                            ? Number(memberWrite?.storedCount || 0)
                             : null,
-                        complete: oauthPersistence?.snapshotWrites?.member?.complete === true,
+                        complete: memberWrite?.complete === true,
                         roleReturnedCount: Number(
-                            oauthPersistence?.snapshotWrites?.member?.roleReturnedCount || 0
+                            memberWrite?.roleReturnedCount || 0
                         ),
                         roleStoredCount: Number(
-                            oauthPersistence?.snapshotWrites?.member?.roleStoredCount || 0
+                            memberWrite?.roleStoredCount || 0
                         ),
                         roleChunkCount: Number(
-                            oauthPersistence?.snapshotWrites?.member?.roleChunkCount || 0
+                            memberWrite?.roleChunkCount || 0
                         ),
-                        snapshotVersion: oauthPersistence?.snapshotWrites?.member?.version || null,
+                        snapshotVersion: memberWrite?.version || null,
                         truncated: false,
-                        failureReason: fetchMetadata.memberFetchAttempted && !memberInfo
-                            ? (fetchMetadata.memberFailureReason ||
-                                `discord_http_${fetchMetadata.memberFetchStatus || "unknown"}`)
-                            : (memberInfo ? (oauthPersistence?.snapshotWrites?.member?.failureReason || null) : null),
+                        failureReason: memberFailureReason,
                         source: fetchMetadata.memberFetchSource || "discord_oauth"
                     },
                     device: {

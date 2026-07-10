@@ -162,7 +162,9 @@ function legacyVerifiedAggregation(guildId, scanLimit = MEMBER_SCAN_MAX) {
 }
 
 function listSafeMember(member = {}) {
-    const { connections: _connections, guilds: _guilds, ...summary } = member;
+    const summary = { ...member };
+    delete summary.connections;
+    delete summary.guilds;
     return {
         ...summary,
         detailsAvailable: true,
