@@ -386,6 +386,23 @@ function mergeVerificationConfig(existing = {}, incoming = {}) {
   const cleanAntiAlt = clean.antiAlt ?? {};
   const currentPanel = current.panel ?? {};
   const cleanPanel = clean.panel ?? {};
+  let mergedAntiAlt = current.antiAlt;
+  let mergedPanel = currentPanel;
+
+  if (hasIncomingAntiAlt) {
+    mergedAntiAlt = normalizeAntiAltConfig({
+      ...currentAntiAlt,
+      ...cleanAntiAlt
+    });
+  }
+
+  if (hasIncomingPanel) {
+    mergedPanel = {
+      ...currentPanel,
+      ...cleanPanel
+    };
+  }
+
   const merged = {
     ...current,
     ...clean,
@@ -396,18 +413,8 @@ function mergeVerificationConfig(existing = {}, incoming = {}) {
     */
     panelRevision: current.panelRevision || clean.panelRevision || null,
     panelRevisionUpdatedAt: current.panelRevisionUpdatedAt || clean.panelRevisionUpdatedAt || null,
-    antiAlt: hasIncomingAntiAlt
-      ? normalizeAntiAltConfig({
-          ...currentAntiAlt,
-          ...cleanAntiAlt
-        })
-      : current.antiAlt,
-    panel: normalizePanel(hasIncomingPanel
-      ? {
-          ...currentPanel,
-          ...cleanPanel
-        }
-      : currentPanel),
+    antiAlt: mergedAntiAlt,
+    panel: normalizePanel(mergedPanel),
     updatedAt: now()
   };
   merged.oauthMode = normalizeVerifyMode(merged.verifyType || merged.panel?.verifyType);

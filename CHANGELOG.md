@@ -42,6 +42,9 @@
   diagnostics isolation, graceful verification shutdown drain, redacted member
   list fallbacks, per-request member fetch metadata, VerifyLog snapshot budget
   guard, explicit reveal audit status, and legacy verify-owner API redirects.
+- Removed API/user-controlled `innerHTML` sinks from verification log rows and
+  Owner detail/reveal modals by rendering DOM nodes with `textContent`, and
+  simplified verification config merging to avoid nested conditional expressions.
 
 ## [Unreleased] - Dashboard Public OAuth Runtime Fixes 2026-07-03
 

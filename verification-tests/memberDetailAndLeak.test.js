@@ -143,4 +143,21 @@ describe("member detail serialization and leak guards", () => {
         expect(source).toContain("Join result");
         expect(source).toContain("Role assignment");
     });
+
+    test("dashboard log table and detail modal avoid HTML injection sinks", () => {
+        const source = fs.readFileSync(GUILD_DASHBOARD_SOURCE, "utf8");
+        const loadLogsSource = source.slice(
+            source.indexOf("async function loadLogs"),
+            source.indexOf("async function loadRisk")
+        );
+        const modalSource = source.slice(
+            source.indexOf("function openDetailModal"),
+            source.indexOf("function closeDetailModal")
+        );
+
+        expect(loadLogsSource).not.toContain("innerHTML");
+        expect(loadLogsSource).toContain("replaceChildren");
+        expect(modalSource).not.toContain("innerHTML");
+        expect(modalSource).toContain("replaceChildren");
+    });
 });

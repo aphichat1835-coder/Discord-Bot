@@ -646,7 +646,7 @@
       return;
     }
 
-    box.innerHTML = recent.map((log) => renderDetailedVerifyLog(log)).join("");
+    box.replaceChildren(...recent.map(buildDetailedVerifyLogElement));
   }
 
   function renderCompactVerifyLog(log = {}) {
@@ -675,297 +675,220 @@
     `;
   }
 
-  function renderSensitiveNotice(log = {}) {
-    if (!log.sensitiveRedacted) return "";
-
-    return `<div class="notice notice-warn mb-12">ข้อมูล sensitive ถูกซ่อนอยู่ เพราะยังไม่ได้รับ owner approval หรือ approval หมดอายุ</div>`;
+  function appendDetailRow(parent, label, value, valueClass = "") {
+    const row = document.createElement("div");
+    const labelNode = document.createElement("span");
+    const valueNode = document.createElement("span");
+    labelNode.textContent = `${label}: `;
+    valueNode.textContent = String(value ?? "—");
+    if (valueClass) valueNode.className = valueClass;
+    row.append(labelNode, valueNode);
+    parent.appendChild(row);
+    return row;
   }
 
-  function renderDiscordDetail(log = {}, user = {}) {
-    return `
-      <b>บัญชี Discord</b><br>
-      User ID: <span class="mono">${h(log.userId || user.id || "—")}</span><br>
-      Username: ${h(user.username || log.username || "—")}<br>
-      Global name: ${h(user.globalName || log.globalName || "—")}<br>
-      Email: ${h(user.email || log.email || "—")} · Verified: ${h(boolText(user.verified ?? log.emailVerified))}<br>
-      Locale: ${h(user.locale || log.locale || "—")} · Flags: ${h(user.flags ?? log.flags ?? "—")}<br><br>
-    `;
+  function detailCardElement(title, rows = [], extraNode = null) {
+    const card = document.createElement("div");
+    const heading = document.createElement("div");
+    const meta = document.createElement("div");
+    card.className = "list-item sensitive";
+    heading.className = "list-title";
+    heading.textContent = title;
+    meta.className = "list-meta";
+    rows.forEach(([label, value, valueClass]) => appendDetailRow(meta, label, value, valueClass));
+    if (extraNode) meta.appendChild(extraNode);
+    card.append(heading, meta);
+    return card;
   }
 
-  function renderMemberDetail(log = {}, roles = []) {
-    return `
-      <b>สมาชิกในเซิร์ฟเวอร์</b><br>
-      Nickname: ${h(log.memberNick || log.nickname || "—")}<br>
-      Joined at: ${h(fmtTime(log.joinedAt))}<br>
-      Roles: ${roles.length ? roles.map(h).join(", ") : "—"}<br><br>
-    `;
-  }
-
-  function renderNetworkDetail(log = {}, ipInfo = {}) {
-    return `
-      <b>Network / IP</b><br>
-      Raw IP: <span class="mono">ซ่อนอยู่ — ใช้ปุ่ม “เปิด Raw IP” พร้อมระบุเหตุผล</span><br>
-      Country: ${h(ipInfo.country || ipInfo.countryCode || log.countryCode || "—")}
-      · City: ${h(ipInfo.city || log.city || "—")}<br>
-      ISP: ${h(ipInfo.isp || log.isp || "—")}
-      · ASN: ${h(ipInfo.asn || log.asn || "—")}<br>
-      Lookup: ${h(ipInfo.lookupProvider || "—")}
-      · Status: ${h(ipInfo.lookupStatus || "unknown")}<br>
-      VPN: ${h(boolText(ipInfo.isVPN ?? log.isVPN))}
-      · Proxy: ${h(boolText(ipInfo.isProxy ?? log.isProxy))}
-      · TOR: ${h(boolText(ipInfo.isTOR ?? log.isTOR))}
-      · Hosting: ${h(boolText(ipInfo.isHosting ?? log.isHosting))}<br><br>
-    `;
-  }
-
-  function renderDeviceDetail(log = {}, device = {}) {
-    return `
-      <b>Device / Browser</b><br>
-      Browser: ${h(device.browser || log.browser || "—")}
-      · OS: ${h(device.os || log.os || "—")}
-      · Platform: ${h(device.platform || log.platform || "—")}<br>
-      Timezone: ${h(device.timezone || log.timezone || "—")}
-      · Language: ${h(device.language || log.language || "—")}<br>
-      Screen: ${h(device.screenSize || log.screenSize || "—")}
-      · Viewport: ${h(device.viewportSize || log.viewportSize || "—")}<br><br>
-    `;
-  }
-
-  function renderConnectionGuildSummary(log = {}, connections = [], guilds = []) {
-    const connectionList = connections.length
-      ? `Connections list: ${connections.map((c) => h(c.type || c.name || "unknown")).join(", ")}<br>`
-      : "";
-    const guildList = guilds.length
-      ? `Guild sample: ${guilds.slice(0, 12).map((g) => h(g.name || g.id || "unknown")).join(", ")}<br>`
-      : "";
-
-    return `
-      <b>Connections / Guilds</b><br>
-      Connections: ${h(log.connectionsCount ?? connections.length ?? 0)}
-      · Guilds: ${h(log.guildsCount ?? guilds.length ?? 0)}<br>
-      ${connectionList}
-      ${guildList}
-    `;
-  }
-
-  function renderVerificationResultDetail(log = {}) {
-    return `
-      <br><b>ผลการยืนยัน</b><br>
-      Reason: ${h(log.reason || "—")}<br>
-      Policy: ${h(log.policyResult || log.policy || "—")}<br>
-      Role result: ${h(log.roleResult || log.roleAssignmentResult || "—")}<br>
-      Request ID: <span class="mono">${h(log.requestId || "—")}</span><br>
-      Time: ${h(fmtTime(log.verifiedAt || log.createdAt))}
-    `;
-  }
-
-  function renderList(items = [], renderItem, empty = "—") {
-    if (!Array.isArray(items) || !items.length) return h(empty);
-    return `<div class="detail-list">${items.map(renderItem).join("")}</div>`;
-  }
-
-  function renderConnectionItem(c = {}) {
-    const metadataKeys = c.metadata && typeof c.metadata === "object" && !Array.isArray(c.metadata)
-      ? Object.keys(c.metadata)
-      : [];
-    const integrationCount = Array.isArray(c.integrations) ? c.integrations.length : 0;
-    return `<div>
-      • ${h(c.type || "unknown")} — ${h(c.name || c.username || c.id || "—")}<br>
-      <span class="muted">
-        platform account id: <span class="mono">${h(c.id || "—")}</span>
-        · verified: ${h(boolText(c.verified))}
-        · visibility: ${h(c.visibility ?? "—")}
-        · revoked: ${h(boolText(c.revoked))}
-        · integrations: ${h(integrationCount)}
-        · metadata keys: ${h(metadataKeys.join(", ") || "—")}
-      </span>
-    </div>`;
-  }
-
-  function renderGuildDetail(g = {}) {
-    const permissionFlags = Array.isArray(g.permissionFlags) ? g.permissionFlags : [];
-    return `<div>
-      • ${h(g.name || g.id || "unknown")} (${h(g.id || "—")})<br>
-      <span class="muted">
-        icon: <span class="mono">${h(g.iconUrl || g.icon || "—")}</span><br>
-        owner: ${h(boolText(g.owner || g.isOwner))}
-        · admin: ${h(boolText(g.isAdmin))}
-        · manage guild: ${h(boolText(g.canManageGuild))}
-        · manage roles: ${h(boolText(g.canManageRoles))}
-        · ban members: ${h(boolText(g.canBanMembers))}<br>
-        permission bitfield: <span class="mono">${h(g.permissions || "0")}</span>
-        · permission labels: ${h(permissionFlags.join(", ") || "—")}
-      </span>
-    </div>`;
-  }
-
-  function renderDetailCard(title, body) {
-    return `<div class="list-item sensitive">
-      <div class="list-title">${h(title)}</div>
-      <div class="list-meta">${body}</div>
-    </div>`;
-  }
-
-  function renderIdentityCard(detail = {}) {
-    const identity = detail.identity || {};
-    const account = detail.account || {};
-    return renderDetailCard("Identity / Discord", `
-      User ID: <span class="mono">${h(detail.userId || identity.userId || "—")}</span><br>
-      Username: ${h(identity.username || "—")}<br>
-      Discriminator: ${h(identity.discriminator ?? "—")}<br>
-      Display tag: ${h(identity.displayTag || "—")}<br>
-      Global name: ${h(identity.globalName || "—")}<br>
-      Avatar URL: <span class="mono">${h(identity.avatarUrl || "—")}</span><br>
-      Banner URL: <span class="mono">${h(identity.bannerUrl || "—")}</span><br>
-      Accent color: ${h(identity.accentColor ?? "—")}<br>
-      Badge flags: ${h((account.badgeFlags || identity.badgeFlags || []).join(", ") || "—")}
-    `);
-  }
-
-  function renderAccountCard(detail = {}) {
-    const identity = detail.identity || {};
-    const account = detail.account || {};
-    return renderDetailCard("Account / Email", `
-      Email: ${h(account.email ?? identity.email ?? "—")}<br>
-      Email verified: ${h(boolText(account.emailVerified ?? identity.emailVerified))}<br>
-      Locale: ${h(account.locale || identity.locale || "—")}<br>
-      MFA: ${h(boolText(account.mfaEnabled ?? identity.mfaEnabled))}<br>
-      Premium type (compatibility raw value, ไม่ใช่ Nitro verdict): ${h(account.premiumType ?? identity.premiumType ?? "—")}<br>
-      Flags: ${h(account.flags ?? identity.flags ?? "—")} / Public: ${h(account.publicFlags ?? identity.publicFlags ?? "—")}<br>
-      Created: ${h(fmtTime(account.accountCreatedAt || identity.accountCreatedAt))}<br>
-      Age: ${h(account.accountAgeDays ?? identity.accountAgeDays ?? "—")} วัน
-    `);
-  }
-
-  function renderTargetMemberCard(detail = {}) {
-    const targetMember = detail.targetMember || {};
-    const roles = Array.isArray(targetMember.roles) ? targetMember.roles : [];
-    return renderDetailCard("Target Guild Member", `
-      Nickname: ${h(targetMember.nick || targetMember.nickname || "—")}<br>
-      Joined at: ${h(fmtTime(targetMember.joinedAt))}<br>
-      Pending verification: ${h(boolText(targetMember.pending))}<br>
-      Timeout: ${h(boolText(targetMember.timedOut))}<br>
-      Timeout until: ${h(fmtTime(targetMember.communicationDisabledUntil))}<br>
-      Guild avatar: <span class="mono">${h(targetMember.avatarUrl || targetMember.avatar || "—")}</span><br>
-      Roles (${h(roles.length)}): ${roles.length ? roles.map(h).join(", ") : "—"}
-    `);
-  }
-
-  function renderDeviceCard(detail = {}) {
-    const device = detail.device || {};
-    return renderDetailCard("Browser / Device", `
-      Browser: ${h(device.browser || "—")}<br>
-      OS: ${h(device.os || "—")}<br>
-      Platform: ${h(device.platform || "—")}<br>
-      Device type: ${h(device.deviceType || "—")}<br>
-      Language: ${h(device.language || "—")}<br>
-      Languages: ${h((device.languages || []).join(", ") || "—")}<br>
-      Timezone: ${h(device.timezone || "—")}<br>
-      Screen: ${h(device.screenSize || "—")} / Viewport: ${h(device.viewportSize || "—")}<br>
-      Color depth: ${h(device.colorDepth ?? "—")} · Pixel ratio: ${h(device.devicePixelRatio ?? "—")}<br>
-      Touch points: ${h(device.touchPoints ?? "—")}<br>
-      User-Agent: <span class="mono">${h(device.userAgent || "—")}</span>
-    `);
-  }
-
-  function renderNetworkCard(detail = {}) {
-    const network = detail.network || {};
-    const tracking = detail.tracking || {};
-    return renderDetailCard("Network / IP", `
-      Raw IP: <span class="mono">กด “เปิด Raw IP” เพื่อ reveal แยก</span><br>
-      Country/City: ${h(network.country || network.countryCode || "—")} / ${h(network.city || "—")}<br>
-      Region: ${h(network.region || "—")} · Timezone: ${h(network.timezone || "—")}<br>
-      ISP: ${h(network.isp || "—")}<br>
-      Org/ASN: ${h(network.org || "—")} / ${h(network.asn || network.as || "—")}<br>
-      VPN: ${h(boolText(network.isVPN))} · Proxy: ${h(boolText(network.isProxy))} · TOR: ${h(boolText(network.isTOR))}<br>
-      Hosting: ${h(boolText(network.isHosting || network.hosting))} · Mobile: ${h(boolText(network.mobile))}<br>
-      Lookup: ${h(network.lookupProvider || "—")} / ${h(network.lookupStatus || "unknown")}<br>
-      IP first seen: ${h(fmtTime(tracking.firstSeenAt))} · Last seen: ${h(fmtTime(tracking.lastSeenAt))}
-    `);
-  }
-
-  function renderVerificationCard(detail = {}) {
+  function buildVerificationCardElement(detail = {}) {
     const identity = detail.identity || {};
     const verification = detail.verification || {};
     const token = detail.oauthTokens || {};
-    return renderDetailCard("Verification / OAuth Token", `
-      Source: ${h(detail.source?.hasVerifyLog ? "VerifyLog" : "")} ${h(detail.source?.hasOAuthUser ? "OAuthUser" : "")}<br>
-      Last result: ${h(verification.latest?.result || verification.lastVerify?.result || "—")}<br>
-      Verified at: ${h(fmtTime(verification.latest?.verifiedAt || verification.lastVerify?.verifiedAt))}<br>
-      OAuth scope: ${h(token.oauth?.scope || "—")}<br>
-      Token type: ${h(token.oauth?.tokenType || "—")}<br>
-      Has access token: ${h(boolText(token.oauth?.hasAccessToken))}<br>
-      Has refresh token: ${h(boolText(token.oauth?.hasRefreshToken))}<br>
-      Expires at: ${h(fmtTime(token.oauth?.expiresAt))}<br>
-      Last refresh at: ${h(fmtTime(token.oauth?.lastRefreshAt))}<br>
-      Refresh failures: ${h(token.oauth?.refreshFailCount ?? 0)}<br>
-      Revoked at: ${h(fmtTime(token.oauth?.revokedAt))}<br>
-      Admin OAuth access/refresh: ${h(boolText(token.adminOAuth?.hasAccessToken))} / ${h(boolText(token.adminOAuth?.hasRefreshToken))}<br>
-      Join result: ${h(verification.latest?.joinResult?.status || verification.latest?.joinResult || "—")}<br>
-      Role assignment: ${h(verification.latest?.roleAssignResult?.status || verification.latest?.roleAssignResult || "—")}<br>
-      Request ID: <span class="mono">${h(verification.latest?.requestId || "—")}</span><br>
-      <button class="btn btn-danger btn-sm mt-10" type="button" data-token-reveal="${h(detail.userId || identity.userId || "")}">
-        🔓 Reveal OAuth2 Token
-      </button>
-    `);
+    const reveal = document.createElement("button");
+    reveal.className = "btn btn-danger btn-sm mt-10";
+    reveal.type = "button";
+    reveal.dataset.tokenReveal = String(detail.userId || identity.userId || "");
+    reveal.textContent = "🔓 Reveal OAuth2 Token";
+    return detailCardElement("Verification / OAuth Token", [
+      ["Source", [detail.source?.hasVerifyLog ? "VerifyLog" : "", detail.source?.hasOAuthUser ? "OAuthUser" : ""].filter(Boolean).join(" ") || "—"],
+      ["Last result", verification.latest?.result || verification.lastVerify?.result || "—"],
+      ["Verified at", fmtTime(verification.latest?.verifiedAt || verification.lastVerify?.verifiedAt)],
+      ["OAuth scope", token.oauth?.scope || "—"],
+      ["Token type", token.oauth?.tokenType || "—"],
+      ["Has access token", boolText(token.oauth?.hasAccessToken)],
+      ["Has refresh token", boolText(token.oauth?.hasRefreshToken)],
+      ["Expires at", fmtTime(token.oauth?.expiresAt)],
+      ["Last refresh at", fmtTime(token.oauth?.lastRefreshAt)],
+      ["Refresh failures", token.oauth?.refreshFailCount ?? 0],
+      ["Revoked at", fmtTime(token.oauth?.revokedAt)],
+      ["Admin OAuth access/refresh", `${boolText(token.adminOAuth?.hasAccessToken)} / ${boolText(token.adminOAuth?.hasRefreshToken)}`],
+      ["Join result", verification.latest?.joinResult?.status || verification.latest?.joinResult || "—"],
+      ["Role assignment", verification.latest?.roleAssignResult?.status || verification.latest?.roleAssignResult || "—"],
+      ["Request ID", verification.latest?.requestId || "—", "mono"]
+    ], reveal);
   }
 
-  function renderMemberDetailResponse(detail = {}) {
+  function connectionDetailElement(connection = {}) {
+    const item = document.createElement("div");
+    const metadataKeys = connection.metadata && typeof connection.metadata === "object" && !Array.isArray(connection.metadata)
+      ? Object.keys(connection.metadata)
+      : [];
+    const integrationCount = Array.isArray(connection.integrations) ? connection.integrations.length : 0;
+    item.textContent = `• ${connection.type || "unknown"} — ${connection.name || connection.username || connection.id || "—"} | platform account id: ${connection.id || "—"} · verified: ${boolText(connection.verified)} · visibility: ${connection.visibility ?? "—"} · revoked: ${boolText(connection.revoked)} · integrations: ${integrationCount} · metadata keys: ${metadataKeys.join(", ") || "—"}`;
+    return item;
+  }
+
+  function guildDetailElement(guild = {}) {
+    const item = document.createElement("div");
+    const permissionFlags = Array.isArray(guild.permissionFlags) ? guild.permissionFlags : [];
+    item.textContent = `• ${guild.name || guild.id || "unknown"} (${guild.id || "—"}) | icon: ${guild.iconUrl || guild.icon || "—"} · owner: ${boolText(guild.owner || guild.isOwner)} · admin: ${boolText(guild.isAdmin)} · manage guild: ${boolText(guild.canManageGuild)} · manage roles: ${boolText(guild.canManageRoles)} · ban members: ${boolText(guild.canBanMembers)} · permission bitfield: ${guild.permissions || "0"} · permission labels: ${permissionFlags.join(", ") || "—"}`;
+    return item;
+  }
+
+  function detailListCardElement(title, items, itemBuilder) {
+    const list = document.createElement("div");
+    list.className = "detail-list";
+    if (!items.length) {
+      list.textContent = "—";
+    } else {
+      list.append(...items.map(itemBuilder));
+    }
+    const card = detailCardElement(`${title} (${items.length})`, [], list);
+    card.classList.add("mt-14");
+    return card;
+  }
+
+  function buildMemberDetailElement(detail = {}) {
+    const identity = detail.identity || {};
+    const account = detail.account || {};
+    const targetMember = detail.targetMember || {};
+    const device = detail.device || {};
+    const network = detail.network || {};
+    const tracking = detail.tracking || {};
+    const roles = Array.isArray(targetMember.roles) ? targetMember.roles : [];
     const connections = Array.isArray(detail.connections) ? detail.connections : [];
     const guilds = Array.isArray(detail.guilds) ? detail.guilds : [];
-
-    return `
-      <div class="grid grid-2">
-        ${renderIdentityCard(detail)}
-        ${renderAccountCard(detail)}
-        ${renderTargetMemberCard(detail)}
-        ${renderDeviceCard(detail)}
-        ${renderNetworkCard(detail)}
-        ${renderVerificationCard(detail)}
-      </div>
-
-      <div class="list-item sensitive mt-14">
-        <div class="list-title">Connections (${h(connections.length)})</div>
-        <div class="list-meta">
-          ${renderList(connections, renderConnectionItem)}
-        </div>
-      </div>
-
-      <div class="list-item sensitive mt-14">
-        <div class="list-title">Guilds (${h(guilds.length)})</div>
-        <div class="list-meta">
-          ${renderList(guilds, renderGuildDetail)}
-        </div>
-      </div>
-    `;
+    const root = document.createDocumentFragment();
+    const grid = document.createElement("div");
+    grid.className = "grid grid-2";
+    grid.append(
+      detailCardElement("Identity / Discord", [
+        ["User ID", detail.userId || identity.userId || "—", "mono"],
+        ["Username", identity.username || "—"],
+        ["Discriminator", identity.discriminator ?? "—"],
+        ["Display tag", identity.displayTag || "—"],
+        ["Global name", identity.globalName || "—"],
+        ["Avatar URL", identity.avatarUrl || "—", "mono"],
+        ["Banner URL", identity.bannerUrl || "—", "mono"],
+        ["Accent color", identity.accentColor ?? "—"],
+        ["Badge flags", (account.badgeFlags || identity.badgeFlags || []).join(", ") || "—"]
+      ]),
+      detailCardElement("Account / Email", [
+        ["Email", account.email ?? identity.email ?? "—"],
+        ["Email verified", boolText(account.emailVerified ?? identity.emailVerified)],
+        ["Locale", account.locale || identity.locale || "—"],
+        ["MFA", boolText(account.mfaEnabled ?? identity.mfaEnabled)],
+        ["Premium type (compatibility raw value, ไม่ใช่ Nitro verdict)", account.premiumType ?? identity.premiumType ?? "—"],
+        ["Flags / Public", `${account.flags ?? identity.flags ?? "—"} / ${account.publicFlags ?? identity.publicFlags ?? "—"}`],
+        ["Created", fmtTime(account.accountCreatedAt || identity.accountCreatedAt)],
+        ["Age", `${account.accountAgeDays ?? identity.accountAgeDays ?? "—"} วัน`]
+      ]),
+      detailCardElement("Target Guild Member", [
+        ["Nickname", targetMember.nick || targetMember.nickname || "—"],
+        ["Joined at", fmtTime(targetMember.joinedAt)],
+        ["Pending verification", boolText(targetMember.pending)],
+        ["Timeout", boolText(targetMember.timedOut)],
+        ["Timeout until", fmtTime(targetMember.communicationDisabledUntil)],
+        ["Guild avatar", targetMember.avatarUrl || targetMember.avatar || "—", "mono"],
+        [`Roles (${roles.length})`, roles.join(", ") || "—"]
+      ]),
+      detailCardElement("Browser / Device", [
+        ["Browser", device.browser || "—"],
+        ["OS", device.os || "—"],
+        ["Platform", device.platform || "—"],
+        ["Device type", device.deviceType || "—"],
+        ["Language", device.language || "—"],
+        ["Languages", (device.languages || []).join(", ") || "—"],
+        ["Timezone", device.timezone || "—"],
+        ["Screen / Viewport", `${device.screenSize || "—"} / ${device.viewportSize || "—"}`],
+        ["Color depth / Pixel ratio", `${device.colorDepth ?? "—"} / ${device.devicePixelRatio ?? "—"}`],
+        ["Touch points", device.touchPoints ?? "—"],
+        ["User-Agent", device.userAgent || "—", "mono"]
+      ]),
+      detailCardElement("Network / IP", [
+        ["Raw IP", "กด “เปิด Raw IP” เพื่อ reveal แยก", "mono"],
+        ["Country/City", `${network.country || network.countryCode || "—"} / ${network.city || "—"}`],
+        ["Region / Timezone", `${network.region || "—"} / ${network.timezone || "—"}`],
+        ["ISP", network.isp || "—"],
+        ["Org/ASN", `${network.org || "—"} / ${network.asn || network.as || "—"}`],
+        ["VPN / Proxy / TOR", `${boolText(network.isVPN)} / ${boolText(network.isProxy)} / ${boolText(network.isTOR)}`],
+        ["Hosting / Mobile", `${boolText(network.isHosting || network.hosting)} / ${boolText(network.mobile)}`],
+        ["Lookup", `${network.lookupProvider || "—"} / ${network.lookupStatus || "unknown"}`],
+        ["IP first seen / Last seen", `${fmtTime(tracking.firstSeenAt)} / ${fmtTime(tracking.lastSeenAt)}`]
+      ]),
+      buildVerificationCardElement(detail)
+    );
+    root.append(
+      grid,
+      detailListCardElement("Connections", connections, connectionDetailElement),
+      detailListCardElement("Guilds", guilds, guildDetailElement)
+    );
+    return root;
   }
 
-  function renderDetailedVerifyLog(log = {}) {
+  function buildDetailedVerifyLogElement(log = {}) {
     const user = log.user || {};
     const ipInfo = log.ipInfo || {};
     const device = log.device || {};
     const connections = Array.isArray(log.connections) ? log.connections : [];
     const guilds = Array.isArray(log.guilds) ? log.guilds : [];
     const roles = Array.isArray(log.memberRoles) ? log.memberRoles : [];
-
-    return `
-      <div class="list-item sensitive">
-        ${renderSensitiveNotice(log)}
-        <div class="list-title">
-          <span>${resultBadge(log.result)} ${h(user.globalName || log.globalName || user.username || log.username || log.userId || "Unknown")}</span>
-          ${riskBadge(log.riskScore)}
-        </div>
-
-        <div class="list-meta">
-          ${renderDiscordDetail(log, user)}
-          ${renderMemberDetail(log, roles)}
-          ${renderNetworkDetail(log, ipInfo)}
-          ${renderDeviceDetail(log, device)}
-          ${renderConnectionGuildSummary(log, connections, guilds)}
-          ${renderVerificationResultDetail(log)}
-        </div>
-      </div>
-    `;
+    const card = document.createElement("div");
+    const title = document.createElement("div");
+    const identity = document.createElement("span");
+    const meta = document.createElement("div");
+    card.className = "list-item sensitive";
+    title.className = "list-title";
+    meta.className = "list-meta";
+    if (log.sensitiveRedacted) {
+      const notice = document.createElement("div");
+      notice.className = "notice notice-warn mb-12";
+      notice.textContent = "ข้อมูล sensitive ถูกซ่อนอยู่ เพราะยังไม่ได้รับ owner approval หรือ approval หมดอายุ";
+      card.appendChild(notice);
+    }
+    identity.append(
+      resultBadgeElement(log.result),
+      document.createTextNode(` ${user.globalName || log.globalName || user.username || log.username || log.userId || "Unknown"}`)
+    );
+    title.append(identity, riskBadgeElement(log.riskScore));
+    [
+      ["User ID", log.userId || user.id || "—", "mono"],
+      ["Username", user.username || log.username || "—"],
+      ["Global name", user.globalName || log.globalName || "—"],
+      ["Email", `${user.email || log.email || "—"} · Verified: ${boolText(user.verified ?? log.emailVerified)}`],
+      ["Locale / Flags", `${user.locale || log.locale || "—"} / ${user.flags ?? log.flags ?? "—"}`],
+      ["Nickname", log.memberNick || log.nickname || "—"],
+      ["Joined at", fmtTime(log.joinedAt)],
+      ["Roles", roles.join(", ") || "—"],
+      ["Raw IP", "ซ่อนอยู่ — ใช้ปุ่ม “เปิด Raw IP” พร้อมระบุเหตุผล", "mono"],
+      ["Country / City", `${ipInfo.country || ipInfo.countryCode || log.countryCode || "—"} / ${ipInfo.city || log.city || "—"}`],
+      ["ISP / ASN", `${ipInfo.isp || log.isp || "—"} / ${ipInfo.asn || log.asn || "—"}`],
+      ["Lookup", `${ipInfo.lookupProvider || "—"} / ${ipInfo.lookupStatus || "unknown"}`],
+      ["VPN / Proxy / TOR / Hosting", `${boolText(ipInfo.isVPN ?? log.isVPN)} / ${boolText(ipInfo.isProxy ?? log.isProxy)} / ${boolText(ipInfo.isTOR ?? log.isTOR)} / ${boolText(ipInfo.isHosting ?? log.isHosting)}`],
+      ["Browser / OS / Platform", `${device.browser || log.browser || "—"} / ${device.os || log.os || "—"} / ${device.platform || log.platform || "—"}`],
+      ["Timezone / Language", `${device.timezone || log.timezone || "—"} / ${device.language || log.language || "—"}`],
+      ["Screen / Viewport", `${device.screenSize || log.screenSize || "—"} / ${device.viewportSize || log.viewportSize || "—"}`],
+      ["Connections", `${log.connectionsCount ?? connections.length} (${connections.map((c) => c.type || c.name || "unknown").join(", ") || "—"})`],
+      ["Guilds", `${log.guildsCount ?? guilds.length} (${guilds.slice(0, 12).map((g) => g.name || g.id || "unknown").join(", ") || "—"})`],
+      ["Reason", log.reason || "—"],
+      ["Policy", log.policyResult || log.policy || "—"],
+      ["Role result", log.roleResult || log.roleAssignmentResult || "—"],
+      ["Request ID", log.requestId || "—", "mono"],
+      ["Time", fmtTime(log.verifiedAt || log.createdAt)]
+    ].forEach(([label, value, valueClass]) => appendDetailRow(meta, label, value, valueClass));
+    card.append(title, meta);
+    return card;
   }
 
   async function revealRawIp(userId) {
@@ -986,13 +909,10 @@
       );
       openDetailModal(
         "Raw IP (Owner audited access)",
-        `<div class="list-item sensitive">
-          <div class="list-title">Raw IP</div>
-          <div class="list-meta">
-            <span class="mono">${h(data.rawIp || "ไม่พบข้อมูล")}</span><br>
-            เหตุผลถูกบันทึกแล้ว · เวลา ${h(fmtTime(data.viewedAt))}
-          </div>
-        </div>`
+        detailCardElement("Raw IP", [
+          ["Raw IP", data.rawIp || "ไม่พบข้อมูล", "mono"],
+          ["Audit", `เหตุผลถูกบันทึกแล้ว · เวลา ${fmtTime(data.viewedAt)}`]
+        ])
       );
     } catch (err) {
       showToast(`เปิด Raw IP ไม่สำเร็จ: ${err.message}`, "err");
@@ -1017,20 +937,13 @@
       );
       openDetailModal(
         "OAuth2 Token (Owner audited access)",
-        `<div class="list-item sensitive">
-          <div class="list-title">Token OAuth2</div>
-          <div class="list-meta">
-            Access Token:<br>
-            <span class="mono">${h(data.oauth?.accessToken || "ไม่พบข้อมูล")}</span><br><br>
-            Refresh Token:<br>
-            <span class="mono">${h(data.oauth?.refreshToken || "ไม่พบข้อมูล")}</span><br><br>
-            Admin OAuth Access Token:<br>
-            <span class="mono">${h(data.adminOAuth?.accessToken || "ไม่พบข้อมูล")}</span><br><br>
-            Admin OAuth Refresh Token:<br>
-            <span class="mono">${h(data.adminOAuth?.refreshToken || "ไม่พบข้อมูล")}</span><br>
-            เวลา reveal: ${h(fmtTime(data.viewedAt))}
-          </div>
-        </div>`
+        detailCardElement("Token OAuth2", [
+          ["Access Token", data.oauth?.accessToken || "ไม่พบข้อมูล", "mono"],
+          ["Refresh Token", data.oauth?.refreshToken || "ไม่พบข้อมูล", "mono"],
+          ["Admin OAuth Access Token", data.adminOAuth?.accessToken || "ไม่พบข้อมูล", "mono"],
+          ["Admin OAuth Refresh Token", data.adminOAuth?.refreshToken || "ไม่พบข้อมูล", "mono"],
+          ["เวลา reveal", fmtTime(data.viewedAt)]
+        ])
       );
     } catch (err) {
       showToast(`เปิด OAuth2 token ไม่สำเร็จ: ${err.message}`, "err");
@@ -1040,10 +953,10 @@
   async function openMemberDetail(userId, fallback = {}) {
     try {
       const detail = await api(`/api/guild/${encodeURIComponent(state.guildId)}/member/${encodeURIComponent(userId)}/detail`);
-      openDetailModal("รายละเอียดสมาชิก", renderMemberDetailResponse(detail));
+      openDetailModal("รายละเอียดสมาชิก", buildMemberDetailElement(detail));
     } catch (err) {
       showToast(`โหลดรายละเอียดไม่สำเร็จ: ${err.message}`, "err");
-      openDetailModal("รายละเอียดสมาชิก", renderDetailedVerifyLog(fallback || {}));
+      openDetailModal("รายละเอียดสมาชิก", buildDetailedVerifyLogElement(fallback || {}));
     }
   }
 
@@ -1667,18 +1580,97 @@
     return params.toString();
   }
 
+  function logTableLoadingRow() {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    const box = document.createElement("div");
+    const spinner = document.createElement("div");
+    const label = document.createElement("div");
+    td.colSpan = 8;
+    box.className = "loading-box";
+    spinner.className = "spinner";
+    label.textContent = "กำลังโหลด logs...";
+    box.append(spinner, label);
+    td.appendChild(box);
+    tr.appendChild(td);
+    return tr;
+  }
+
+  function logIdentityCell(log = {}) {
+    const user = log.user || {};
+    const cell = document.createElement("td");
+    const name = user.globalName || log.globalName || user.username || log.username || log.userId || "Unknown";
+    appendText(cell, name).style.fontWeight = "950";
+    appendText(cell, log.userId || user.id || "—", "mono muted-2 small");
+    return cell;
+  }
+
+  function logNetworkCell(log = {}) {
+    const cell = document.createElement("td");
+    const ip = log.rawIp || log.ip || log.ipInfo?.ip || "—";
+    const location = `${log.ipInfo?.countryCode || log.countryCode || "—"} / ${log.ipInfo?.city || log.city || "—"}`;
+    appendText(cell, ip, "mono");
+    appendText(cell, location, "muted small");
+    return cell;
+  }
+
+  function textTableCell(value, className = "") {
+    const cell = document.createElement("td");
+    if (className) cell.className = className;
+    cell.textContent = String(value ?? "—");
+    return cell;
+  }
+
+  function logActionsCell(log = {}) {
+    const cell = document.createElement("td");
+    const button = document.createElement("button");
+    button.className = "btn btn-soft btn-sm";
+    button.type = "button";
+    button.dataset.logDetail = String(log._id || log.id || log.userId || "");
+    button.textContent = "รายละเอียด";
+    cell.appendChild(button);
+    return cell;
+  }
+
+  function renderLogRow(log = {}) {
+    const row = document.createElement("tr");
+    const result = document.createElement("td");
+    const risk = document.createElement("td");
+    result.appendChild(resultBadgeElement(log.result));
+    risk.appendChild(riskBadgeElement(log.riskScore));
+    row.append(
+      logIdentityCell(log),
+      result,
+      risk,
+      logNetworkCell(log),
+      textTableCell(log.reason || "—"),
+      textTableCell(log.roleResult || log.roleAssignmentResult || "—"),
+      textTableCell(fmtTime(log.verifiedAt || log.createdAt)),
+      logActionsCell(log)
+    );
+    return row;
+  }
+
+  function bindLogTableActions(logs = []) {
+    qsa("[data-log-detail]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const key = btn.dataset.logDetail;
+        const detail = logs.find((log) => String(log._id || log.id || log.userId) === String(key));
+        if (detail?.userId) {
+          openMemberDetail(detail.userId, detail);
+        } else {
+          openDetailModal("รายละเอียด Verify Log", buildDetailedVerifyLogElement(detail || {}));
+        }
+      });
+    });
+  }
+
   async function loadLogs(page = 0) {
     const body = $(SELECTORS.logsBody);
     if (!body) return;
 
     state.logsPage = Math.max(0, page);
-    body.innerHTML = `
-      <tr>
-        <td colspan="8">
-          <div class="loading-box"><div class="spinner"></div><div>กำลังโหลด logs...</div></div>
-        </td>
-      </tr>
-    `;
+    body.replaceChildren(logTableLoadingRow());
 
     try {
       const data = await api(`/api/guild/${encodeURIComponent(state.guildId)}/logs?${buildLogsQuery(state.logsPage)}`);
@@ -1689,59 +1681,14 @@
       }
 
       if (!logs.length) {
-        body.innerHTML = `
-          <tr><td colspan="8"><div class="empty">ยังไม่มี logs</div></td></tr>
-        `;
+        body.replaceChildren(memberTableMessage("ยังไม่มี logs"));
         return;
       }
 
-      body.innerHTML = logs.map((log) => {
-        const ip = log.rawIp || log.ip || log.ipInfo?.ip || "—";
-        const user = log.user || {};
-        const name = user.globalName || log.globalName || user.username || log.username || log.userId || "Unknown";
-
-        return `
-          <tr>
-            <td>
-              <div style="font-weight:950;">${h(name)}</div>
-              <div class="mono muted-2 small">${h(log.userId || user.id || "—")}</div>
-            </td>
-            <td>${resultBadge(log.result)}</td>
-            <td>${riskBadge(log.riskScore)}</td>
-            <td>
-              <div class="mono">${h(ip)}</div>
-              <div class="muted small">
-                ${h(log.ipInfo?.countryCode || log.countryCode || "—")}
-                / ${h(log.ipInfo?.city || log.city || "—")}
-              </div>
-            </td>
-            <td>${h(log.reason || "—")}</td>
-            <td>${h(log.roleResult || log.roleAssignmentResult || "—")}</td>
-            <td>${h(fmtTime(log.verifiedAt || log.createdAt))}</td>
-            <td>
-              <button class="btn btn-soft btn-sm" type="button" data-log-detail="${h(log._id || log.id || log.userId || "")}">
-                รายละเอียด
-              </button>
-            </td>
-          </tr>
-        `;
-      }).join("");
-
-      qsa("[data-log-detail]").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          const key = btn.dataset.logDetail;
-          const detail = logs.find((l) => String(l._id || l.id || l.userId) === String(key));
-          if (detail?.userId) {
-            openMemberDetail(detail.userId, detail);
-          } else {
-            openDetailModal("รายละเอียด Verify Log", renderDetailedVerifyLog(detail || {}));
-          }
-        });
-      });
+      body.replaceChildren(...logs.map(renderLogRow));
+      bindLogTableActions(logs);
     } catch (err) {
-      body.innerHTML = `
-        <tr><td colspan="8"><div class="alert alert-danger">โหลด logs ไม่สำเร็จ: ${h(err.message)}</div></td></tr>
-      `;
+      body.replaceChildren(memberTableMessage(`โหลด logs ไม่สำเร็จ: ${err.message}`, "alert alert-danger"));
     }
   }
 
@@ -1757,7 +1704,7 @@
     }
   }
 
-  function openDetailModal(title, html) {
+  function openDetailModal(title, content) {
     const modal = $("detail-modal");
     const titleEl = $("detail-modal-title");
     const body = $("detail-modal-body");
@@ -1765,7 +1712,11 @@
     if (!modal || !body) return;
 
     if (titleEl) titleEl.textContent = title || "รายละเอียด";
-    body.innerHTML = html || "";
+    if (content instanceof Node) {
+      body.replaceChildren(content);
+    } else {
+      body.replaceChildren(document.createTextNode(String(content || "")));
+    }
     modal.classList.add("show");
     document.body.classList.add("no-scroll");
     qsa("[data-token-reveal]", body).forEach((btn) => {
