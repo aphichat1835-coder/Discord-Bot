@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const {
     ownerGuilds,
+    serveLegacyGuildPage,
 } = require("../discord/verification/runtime");
 const { normalizeBaseUrl } = require("../scripts/smokeUnifiedRuntime");
 
@@ -105,6 +106,37 @@ describe("single-process verification runtime contract", () => {
             if (previous === undefined) delete process.env.SMOKE_ALLOWED_HOSTS;
             else process.env.SMOKE_ALLOWED_HOSTS = previous;
         }
+    });
+
+    test("legacy guild alias serves the requested manageable guild page", () => {
+        const guildId = "123456789012345678";
+        const res = {
+            sendFile: jest.fn(value => value),
+            redirect: jest.fn()
+        };
+
+        serveLegacyGuildPage({
+            params: { guildId },
+            verificationGuilds: [{ id: guildId }]
+        }, res);
+
+        expect(res.sendFile).toHaveBeenCalledWith(expect.stringMatching(/verification\/views\/guild\.html$/));
+        expect(res.redirect).not.toHaveBeenCalled();
+    });
+
+    test("legacy guild alias rejects invalid or unmanaged guild ids", () => {
+        const res = {
+            sendFile: jest.fn(),
+            redirect: jest.fn()
+        };
+
+        serveLegacyGuildPage({
+            params: { guildId: "not-a-snowflake" },
+            verificationGuilds: []
+        }, res);
+
+        expect(res.redirect).toHaveBeenCalledWith(302, "/verification");
+        expect(res.sendFile).not.toHaveBeenCalled();
     });
 
     test("docs describe production OAuth runtime requirements consistently", () => {

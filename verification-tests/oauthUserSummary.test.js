@@ -48,7 +48,10 @@ describe('OAuth user summary loader', () => {
         expect(pipeline[1].$project.guildsCount).toHaveProperty('$size');
         expect(pipeline[1].$project['discord.displayTag']).toBe(1);
         expect(pipeline[1].$project['discord.avatarUrl']).toBe(1);
+        expect(pipeline[1].$project['discord.bannerHash']).toBe(1);
         expect(pipeline[1].$project['discord.bannerUrl']).toBe(1);
+        expect(pipeline[1].$project['discord.accentColor']).toBe(1);
+        expect(pipeline[1].$project['discord.badgeFlags']).toBe(1);
         expect(pipeline[1].$project['discord.accountCreatedAt']).toBe(1);
         expect(pipeline[1].$project.lastMember).toMatchObject({
             guildId: '$lastMember.guildId',

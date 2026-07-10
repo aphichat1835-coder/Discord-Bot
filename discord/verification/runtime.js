@@ -40,6 +40,15 @@ function ownerContext(client) {
     };
 }
 
+function serveLegacyGuildPage(req, res) {
+    const guildId = String(req.params?.guildId || "");
+    const guilds = Array.isArray(req.verificationGuilds) ? req.verificationGuilds : [];
+    const canManage = /^\d{17,22}$/.test(guildId) &&
+        guilds.some(guild => String(guild.id) === guildId);
+    if (!canManage) return res.redirect(302, "/verification");
+    return res.sendFile(path.join(__dirname, "views", "guild.html"));
+}
+
 function registerVerificationRuntime({ app, express, client, sessionManager }) {
     const publicRoot = path.join(__dirname, "public");
     const callbackLimiter = rateLimit({
@@ -77,11 +86,7 @@ function registerVerificationRuntime({ app, express, client, sessionManager }) {
         res.redirect(302, "/verification");
     });
     app.get("/guild/:guildId", ownerAuth.requirePin, attachOwner, (req, res) => {
-        const guildId = String(req.params.guildId || "");
-        const canManage = /^\d{17,22}$/.test(guildId) &&
-            req.verificationGuilds.some(guild => String(guild.id) === guildId);
-        if (!canManage) return res.redirect(302, "/verification");
-        return res.sendFile(path.join(__dirname, "views", "guild.html"));
+        return serveLegacyGuildPage(req, res);
     });
     app.get("/verification", ownerAuth.requirePin, attachOwner, (_req, res) => {
         res.send(verificationHomePage());
@@ -110,5 +115,6 @@ function registerVerificationRuntime({ app, express, client, sessionManager }) {
 module.exports = {
     registerVerificationRuntime,
     ownerGuilds,
-    ownerContext
+    ownerContext,
+    serveLegacyGuildPage
 };
