@@ -88,10 +88,13 @@ function registerVerifyOwnerRoutes({ app, express }) {
         auth.requireCsrf,
         express.json(),
         async (req, res) => {
+            const guildId = safeGuildId(req.params.guildId);
+            const userId = safeGuildId(req.params.userId);
+            if (!guildId || !userId) return sendInvalidGuildId(res);
             try {
                 res.json(await verificationOwnerService.revealRawIp({
-                    guildId: String(req.params.guildId),
-                    userId: String(req.params.userId),
+                    guildId,
+                    userId,
                     reason: req.body?.reason,
                     actor: "owner-dashboard"
                 }));

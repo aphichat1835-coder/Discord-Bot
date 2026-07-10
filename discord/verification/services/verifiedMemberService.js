@@ -4,6 +4,11 @@ const VerifyLog = require("../models/VerifyLog");
 const OAuthUser = require("../models/OAuthUser");
 const { buildVerifyLogCommon, buildVerifyLogParts } = require("../utils/verificationSnapshots");
 
+const MEMBER_SCAN_MAX = Math.max(
+    100,
+    Number(process.env.VERIFIED_MEMBER_SCAN_MAX || 5000) || 5000
+);
+
 function escapeRegex(value) {
     return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
@@ -125,7 +130,7 @@ function fromOAuthUser(user = {}, canViewSensitive = false) {
     };
 }
 
-function legacyVerifiedAggregation(guildId) {
+function legacyVerifiedAggregation(guildId, scanLimit = MEMBER_SCAN_MAX) {
     return [
         {
             $match: {
@@ -135,6 +140,7 @@ function legacyVerifiedAggregation(guildId) {
             }
         },
         { $sort: { "lastVerify.verifiedAt": -1, updatedAt: -1, _id: -1 } },
+        { $limit: scanLimit },
         {
             $project: {
                 discord: 1,
@@ -149,6 +155,15 @@ function legacyVerifiedAggregation(guildId) {
             }
         }
     ];
+}
+
+function listSafeMember(member = {}) {
+    return {
+        ...member,
+        connections: [],
+        guilds: [],
+        sensitiveRedacted: true
+    };
 }
 
 function chooseSensitiveArray(primaryValue, fallbackValue, canViewSensitive = false) {
@@ -181,11 +196,16 @@ function mergeMembers(primary, fallback, canViewSensitive = false) {
 async function listVerifiedMembers(guildId, { page = 0, limit = 25, q = "", includeLegacy = true, canViewSensitive = false } = {}) {
     const safePage = Math.max(0, Number.parseInt(page, 10) || 0);
     const safeLimit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 25));
+    const requestedWindow = (safePage + 1) * safeLimit;
+    const scanLimit = Math.min(MEMBER_SCAN_MAX, Math.max(safeLimit * 3, requestedWindow * 3));
     const logFilter = successLogFilter(guildId, { q });
     const [logs, legacyUsers] = await Promise.all([
-        VerifyLog.find(logFilter).sort({ verifiedAt: -1, createdAt: -1, _id: -1 }).lean(),
+        VerifyLog.find(logFilter)
+            .sort({ verifiedAt: -1, createdAt: -1, _id: -1 })
+            .limit(scanLimit)
+            .lean(),
         includeLegacy
-            ? OAuthUser.aggregate(legacyVerifiedAggregation(guildId))
+            ? OAuthUser.aggregate(legacyVerifiedAggregation(guildId, scanLimit))
             : []
     ]);
 
@@ -210,14 +230,20 @@ async function listVerifiedMembers(guildId, { page = 0, limit = 25, q = "", incl
             item.tag
         ].some(value => String(value || "").toLowerCase().includes(needle)));
     }
+    const truncated = logs.length >= scanLimit || legacyUsers.length >= scanLimit;
     const total = members.length;
-    members = members.slice(safePage * safeLimit, safePage * safeLimit + safeLimit);
+    members = members
+        .slice(safePage * safeLimit, safePage * safeLimit + safeLimit)
+        .map(listSafeMember);
     return {
         members,
         total,
+        totalApproximate: truncated,
+        truncated,
+        scanLimit,
         page: safePage,
         limit: safeLimit,
-        hasMore: (safePage + 1) * safeLimit < total
+        hasMore: (safePage + 1) * safeLimit < total || truncated
     };
 }
 
@@ -233,6 +259,7 @@ module.exports = {
         legacyCounts,
         legacyMemberFields,
         legacyVerificationFields,
-        chooseSensitiveArray
+        chooseSensitiveArray,
+        listSafeMember
     }
 };

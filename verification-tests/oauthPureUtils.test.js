@@ -91,7 +91,7 @@ async function applyPolicyAction({
 function safeNullableString(value, maxLen) {
     if (value === undefined || value === null) return null;
     const s = String(value);
-    return s || null;
+    return s.slice(0, maxLen) || null;
 }
 
 // --- safeNumberOrNull ---
@@ -478,16 +478,16 @@ describe('compactDiscordProfile', () => {
         expect(result.accentColor).toBe(16711680);
     });
 
-    test('does not silently truncate returned id values', () => {
+    test('bounds invalid oversized profile id values before persistence', () => {
         const longId = '1'.repeat(50);
         const result = compactDiscordProfile({ id: longId });
-        expect(result.id).toBe(longId);
+        expect(result.id).toBe(longId.slice(0, 40));
     });
 
-    test('does not silently truncate returned username values', () => {
+    test('bounds invalid oversized username values before persistence', () => {
         const longName = 'a'.repeat(200);
         const result = compactDiscordProfile({ username: longName });
-        expect(result.username).toBe(longName);
+        expect(result.username).toBe(longName.slice(0, 120));
     });
 
     test('handles empty object', () => {

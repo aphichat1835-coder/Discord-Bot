@@ -245,8 +245,12 @@ if (typeof registerVerifyOwnerRoutes === "function") {
 //  ✅  UNIFIED VERIFICATION RUNTIME (public callback + owner-only management)
 // ════════════════════════════════════════════════════════════════════════════
 if (isFeatureEnabled("verification")) {
-    registerVerificationRuntime({ app, express, client, sessionManager });
-    console.log("[VERIFICATION] ✅ Unified routes registered on the main HTTP server");
+    try {
+        registerVerificationRuntime({ app, express, client, sessionManager });
+        console.log("[VERIFICATION] ✅ Unified routes registered on the main HTTP server");
+    } catch (err) {
+        console.error("[VERIFICATION] ❌ Failed to register unified routes:", err.message);
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════

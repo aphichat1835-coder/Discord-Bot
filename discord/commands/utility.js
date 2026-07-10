@@ -964,7 +964,7 @@ async function handleSetup(interaction) {
 
     if (!dashUrl) {
         return interaction.reply({
-            content: `> ${config.emojis.warning} ยังไม่ได้ตั้งค่า DASHBOARD_URL กรุณาติดต่อ <@${config.system.ownerId}>`,
+            content: `> ${config.emojis.warning} ยังไม่ได้ตั้งค่า PUBLIC_BASE_URL กรุณาติดต่อ <@${config.system.ownerId}>`,
             ephemeral: true
         });
     }

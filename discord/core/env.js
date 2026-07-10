@@ -87,11 +87,6 @@ function validateRequiredEnv(env = process.env, config = {}) {
         process.exit(1);
     }
 
-    if (isProduction(env) && !dashboardPin) {
-        console.error("[FATAL] ❌ Missing DASHBOARD_PIN in production.");
-        process.exit(1);
-    }
-
     if (isProduction(env)) {
         assertRequiredProductionValue("DISCORD_CLIENT_ID", discordClientId);
         assertHttpsUrl("PUBLIC_BASE_URL/DASHBOARD_URL", runtimePublicUrl);

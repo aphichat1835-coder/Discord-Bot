@@ -295,7 +295,7 @@ describe("unified verification data contract", () => {
         expect(member.roles).toHaveLength(125);
     });
 
-    test("keeps the complete browser language list accepted by the callback body limit", () => {
+    test("bounds the untrusted browser language list", () => {
         const previousEncryptionKey = process.env.ENCRYPTION_KEY;
         const previousApiSecret = process.env.API_SECRET;
         process.env.ENCRYPTION_KEY = "device-contract-test-key-at-least-32-bytes";
@@ -307,7 +307,7 @@ describe("unified verification data contract", () => {
                 body: { languages },
                 socket: {}
             });
-            expect(device.languages).toEqual(languages);
+            expect(device.languages).toEqual(languages.slice(0, 8));
         } finally {
             if (previousEncryptionKey === undefined) delete process.env.ENCRYPTION_KEY;
             else process.env.ENCRYPTION_KEY = previousEncryptionKey;

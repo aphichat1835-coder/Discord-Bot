@@ -299,7 +299,7 @@ function parseOS(ua, platform) {
         if (/win/i.test(rawPlatform)) return 'Windows';
         if (/mac/i.test(rawPlatform)) return 'macOS';
         if (/linux/i.test(rawPlatform)) return 'Linux';
-        return rawPlatform;
+        return rawPlatform.slice(0, 64);
     }
 
     if (/Android/i.test(ua)) return 'Android';
@@ -324,12 +324,16 @@ function parseDeviceType(ua, body = {}) {
 
 function safeString(value, fallback = '') {
     if (value === undefined || value === null) return fallback;
-    return String(value);
+    return String(value).replace(/[\u0000-\u001F\u007F]/g, '');
 }
 
 function safeSmallString(value, fallback = '') {
     if (value === undefined || value === null) return fallback;
-    return String(value);
+    return safeString(value, fallback).slice(0, 64);
+}
+
+function safeBoundedString(value, maxLength, fallback = '') {
+    return safeString(value, fallback).slice(0, maxLength);
 }
 
 function safeNumber(value, fallback = null) {
@@ -340,6 +344,7 @@ function safeNumber(value, fallback = null) {
 function safeLanguages(value, fallbackLanguage = '') {
     if (Array.isArray(value)) {
         return value
+            .slice(0, 8)
             .map(v => safeSmallString(v, ''))
             .filter(Boolean);
     }
@@ -350,7 +355,7 @@ function safeLanguages(value, fallbackLanguage = '') {
 }
 
 function extractDevice(req) {
-    const ua = req.headers['user-agent'] || '';
+    const ua = safeBoundedString(req.headers['user-agent'] || '', 2048);
     const body = req.body || {};
 
     const browser = parseBrowser(ua);
@@ -374,7 +379,11 @@ function extractDevice(req) {
     const colorDepth = safeNumber(body.colorDepth, null);
     const devicePixelRatio = safeNumber(body.devicePixelRatio, null);
     const touchPoints = safeNumber(body.touchPoints, 0);
-    const referrer = safeString(body.referrer || '', '');
+    const referrer = safeBoundedString(body.referrer || '', 2048);
+    const languagesReportedCount = Math.max(
+        languages.length,
+        Math.min(1000, Math.max(0, Number(body.languagesReportedCount) || languages.length))
+    );
 
     const fingerprintSource = [
         ua,
@@ -398,6 +407,8 @@ function extractDevice(req) {
         os,
         language,
         languages,
+        languagesReportedCount,
+        languagesTruncated: body.languagesTruncated === true || languagesReportedCount > languages.length,
         timezone,
         platform,
         deviceType,
@@ -597,6 +608,11 @@ function compactLookupRaw(lookup = {}, rawIp = null) {
         ? sanitizeLookupProviderValue(String(lookup.message), rawIp).slice(0, 200)
         : null;
 
+    const sanitizedResponse = sanitizeLookupProviderValue(lookup.raw, rawIp);
+    const responseBytes = sanitizedResponse === undefined
+        ? 0
+        : Buffer.byteLength(JSON.stringify(sanitizedResponse), "utf8");
+
     return {
         provider: lookup.provider || 'unknown',
         status: lookup.status || 'unknown',
@@ -607,7 +623,9 @@ function compactLookupRaw(lookup = {}, rawIp = null) {
         tor: lookup.tor === true,
         mobile: lookup.mobile === true,
         message,
-        response: sanitizeLookupProviderValue(lookup.raw, rawIp)
+        response: responseBytes <= IP_LOOKUP_RESPONSE_MAX_BYTES ? sanitizedResponse : null,
+        responseBytes,
+        responseTruncated: responseBytes > IP_LOOKUP_RESPONSE_MAX_BYTES
     };
 }
 

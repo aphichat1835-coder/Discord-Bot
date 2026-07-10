@@ -50,7 +50,6 @@ function withExitStub(fn) {
 }
 
 test("validateRequiredEnv trims required values and rejects whitespace-only secrets", (t) => {
-    t.assert.ok(true);
     const env = {
         MONGO_URI: " mongodb://localhost/test ",
         TOKEN_MANAGER: " token ",
@@ -63,7 +62,7 @@ test("validateRequiredEnv trims required values and rejects whitespace-only secr
 
     const result = validateRequiredEnv(env, { system: { ownerId: "fallback-owner" } });
 
-    assert.equal(env.MONGO_URI, "mongodb://localhost/test");
+    t.assert.equal(env.MONGO_URI, "mongodb://localhost/test");
     assert.equal(env.TOKEN_MANAGER, "token");
     assert.equal(result.API_SECRET, "secret");
     assert.equal(result.SHADOW_MASTER_ID, "owner");
@@ -83,9 +82,8 @@ test("validateRequiredEnv trims required values and rejects whitespace-only secr
 });
 
 test("validateRequiredEnv rejects weak production secrets", (t) => {
-    t.assert.ok(true);
     withExitStub(() => {
-        assert.throws(
+        t.assert.throws(
             () => validateRequiredEnv({
                 MONGO_URI: "mongodb://localhost/test",
                 TOKEN_MANAGER: "token",
@@ -104,7 +102,6 @@ test("validateRequiredEnv rejects weak production secrets", (t) => {
 });
 
 test("validateRequiredEnv requires OAuth client id and https public URL in production", (t) => {
-    t.assert.ok(true);
     const strong = {
         MONGO_URI: "mongodb://localhost/test",
         TOKEN_MANAGER: "token",
@@ -117,7 +114,7 @@ test("validateRequiredEnv requires OAuth client id and https public URL in produ
     };
 
     withExitStub(() => {
-        assert.throws(
+        t.assert.throws(
             () => validateRequiredEnv({
                 ...strong,
                 PUBLIC_BASE_URL: "https://example.test"
@@ -144,10 +141,9 @@ test("validateRequiredEnv requires OAuth client id and https public URL in produ
 });
 
 test("createHttpApp only trusts proxies when explicitly configured", (t) => {
-    t.assert.ok(true);
     const first = createFakeExpress();
     createHttpApp(first.express);
-    assert.equal(first.app.settings.some(([key]) => key === "trust proxy"), false);
+    t.assert.equal(first.app.settings.some(([key]) => key === "trust proxy"), false);
 
     const second = createFakeExpress();
     createHttpApp(second.express, { trustProxy: 1 });
@@ -155,12 +151,11 @@ test("createHttpApp only trusts proxies when explicitly configured", (t) => {
 });
 
 test("feature flags default on and can be disabled by env", (t) => {
-    t.assert.ok(true);
     const oldAudit = process.env.FEATURE_AUDIT;
     delete process.env.FEATURE_AUDIT;
 
     try {
-        assert.equal(isFeatureEnabled("audit"), true);
+        t.assert.equal(isFeatureEnabled("audit"), true);
         process.env.FEATURE_AUDIT = "false";
         assert.equal(isFeatureEnabled("audit"), false);
         assert.equal(getFeatureFlags().audit, false);
@@ -171,12 +166,11 @@ test("feature flags default on and can be disabled by env", (t) => {
 });
 
 test("safe loggers redact IPv6 and MongoDB connection strings", (t) => {
-    t.assert.ok(true);
     const input = "connect mongodb+srv://user:pass@example.test/db from 2001:db8::1 and 127.0.0.1";
 
     for (const logger of [service1Logger, service2Logger]) {
         const output = logger.sanitizeLogText(input);
-        assert.equal(output.includes("mongodb+srv://"), false);
+        t.assert.equal(output.includes("mongodb+srv://"), false);
         assert.equal(output.includes("2001:db8::1"), false);
         assert.equal(output.includes("127.0.0.1"), false);
         assert.match(output, /\[REDACTED_MONGODB_URI\]/);

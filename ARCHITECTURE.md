@@ -337,6 +337,7 @@ npm run check:protected
 npm run check:all
 npm run check:scripts
 npm run check:memory-guards
+npm run check:memory-trend
 npm run test:discord
 npm run test:voice
 npm run test:verification

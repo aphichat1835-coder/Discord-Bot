@@ -252,6 +252,11 @@ function initShutdown({
         if (isShuttingDownMain) return;
         isShuttingDownMain = true;
         markAppShuttingDown();
+        const timeout = setTimeout(() => {
+            console.error("[SHUTDOWN] ⏱️ Timeout — forcing exit");
+            process.exit(1);
+        }, 10000);
+        timeout.unref?.();
         console.log(`\n⛔ [SHUTDOWN] ${signal} — graceful shutdown starting...`);
         stopCronJobs();
         auditLogger?.stopAuditCleanup?.();
@@ -266,11 +271,6 @@ function initShutdown({
             console.warn(`[SHUTDOWN] ⚠️ Verification runtime stop skipped: ${err.message}`);
         }
         voiceWorker.setShuttingDown(true);
-
-        const timeout = setTimeout(() => {
-            console.error("[SHUTDOWN] ⏱️ Timeout — forcing exit");
-            process.exit(1);
-        }, 10000);
 
         try {
             await sessionManager.saveDatabase();

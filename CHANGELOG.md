@@ -21,9 +21,9 @@
   and role-assignment behavior.
 - Historical encrypted `adminOAuth` fields remain refreshable, including an
   optional legacy redirect override; no route creates new admin grants.
-- Removed arbitrary persistence caps for returned connections, guilds,
-  connection integrations, browser languages, and target-member roles after
-  payload byte limits pass.
+- Removed arbitrary persistence caps for Discord-returned connections, guilds,
+  connection integrations, and target-member roles after payload byte limits
+  pass; bounded browser-controlled strings and language lists before storage.
 - Added additive category-level data-quality metadata and failure-preserving
   writes so optional fetch failures do not clear successful snapshots.
 - Restricted raw IP to a PIN + CSRF + reason + audit Owner action; normal
@@ -54,6 +54,13 @@
   administrator-only smoke CLI whose validated URL sink is a false positive.
 - Replaced the remaining tainted embed-preview and risk-error HTML assignments
   with DOM construction, text-only rendering, and HTTP(S)-only preview URLs.
+- Made raw-IP and OAuth-token reveal fail closed unless at least one bounded
+  audit record is actually persisted; bounded reveal limiter state and
+  per-log sensitive-access history.
+- Added cursor-based retention scans, bounded verified-member scans with
+  truncation metadata, minimal VerifyLog fallbacks for oversized snapshots,
+  reduced-update budget rechecks, bounded device/IP-provider payloads, and
+  startup/shutdown lifecycle guards.
 
 ## [Unreleased] - Dashboard Public OAuth Runtime Fixes 2026-07-03
 

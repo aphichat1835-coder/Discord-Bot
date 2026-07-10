@@ -36,6 +36,7 @@ let lastOAuthRefreshSummary = null;
 let runCount = 0;
 let failCount = 0;
 let maintenanceWaiters = [];
+let retentionCursor = null;
 
 function resolveMaintenanceWaiters() {
     if (maintenanceInFlight) return;
@@ -66,10 +67,39 @@ function createSummary(dryRun, now) {
         expiredRevealRequests: 0,
         guildsScanned: 0,
         guildsWithRetention: 0,
+        retentionCursorWrapped: false,
         verifyLogs: 0,
         ipIdentityLinks: 0,
         errors: []
     };
+}
+
+async function loadRetentionConfigs(dryRun, summary) {
+    const filter = !dryRun && retentionCursor
+        ? { _id: { $gt: retentionCursor } }
+        : {};
+    let configs = await GuildConfig.find(filter)
+        .select("guildId security.retentionMode")
+        .sort({ _id: 1 })
+        .limit(RETENTION_CONFIG_SCAN_MAX)
+        .lean();
+
+    if (!dryRun && retentionCursor && configs.length === 0) {
+        retentionCursor = null;
+        summary.retentionCursorWrapped = true;
+        configs = await GuildConfig.find({})
+            .select("guildId security.retentionMode")
+            .sort({ _id: 1 })
+            .limit(RETENTION_CONFIG_SCAN_MAX)
+            .lean();
+    }
+
+    if (!dryRun) {
+        retentionCursor = configs.length >= RETENTION_CONFIG_SCAN_MAX
+            ? configs.at(-1)?._id || null
+            : null;
+    }
+    return configs;
 }
 
 async function expirePendingRevealRequests(now, dryRun) {
@@ -162,11 +192,7 @@ async function runVerificationMaintenance(options = {}) {
 
     try {
         summary.expiredRevealRequests = await expirePendingRevealRequests(now, dryRun);
-        const configs = await GuildConfig.find({})
-            .select("guildId security.retentionMode")
-            .sort({ updatedAt: -1, _id: -1 })
-            .limit(RETENTION_CONFIG_SCAN_MAX)
-            .lean();
+        const configs = await loadRetentionConfigs(dryRun, summary);
         summary.guildsScanned = configs.length;
         summary.truncated = configs.length >= RETENTION_CONFIG_SCAN_MAX;
         summary.maxGuilds = RETENTION_CONFIG_SCAN_MAX;
@@ -244,6 +270,7 @@ function getVerificationDiagnostics() {
         failCount,
         lastError,
         lastSummary,
+        retentionCursor: retentionCursor ? String(retentionCursor) : null,
         oauthTokenRefresh: {
             config: getOAuthRefreshConfig(),
             lastRunAt: lastOAuthRefreshAt,

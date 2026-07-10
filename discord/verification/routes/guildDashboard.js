@@ -287,7 +287,22 @@ async function buildRecentMembers(guildId, limit = 8, options = {}) {
         includeLegacy: true,
         canViewSensitive
     });
-    if (legacyResult.members.length) return legacyResult.members;
+    if (legacyResult.members.length) {
+        return legacyResult.members.map(member => ({
+            ...member,
+            connections: canViewSensitive ? Number(member.connectionsCount || 0) : 0,
+            guilds: canViewSensitive ? Number(member.guildsCount || 0) : 0,
+            member: member.memberSnapshot || member.member || null,
+            country: member.country || member.ipInfo?.country || null,
+            countryCode: member.countryCode || member.ipInfo?.countryCode || null,
+            city: member.city || member.ipInfo?.city || null,
+            isp: member.isp || member.ipInfo?.isp || null,
+            isVPN: !!(member.isVPN || member.isProxy || member.isTOR),
+            riskScore: Number(member.riskScore || 0),
+            riskFlags: Array.isArray(member.riskFlags) ? member.riskFlags : [],
+            verifiedAt: member.verifiedAt || member.createdAt || null
+        }));
+    }
 
     const logs = await VerifyLog.find({
         ...baseFilter(guildId),

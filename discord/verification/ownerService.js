@@ -12,6 +12,10 @@ const OVERVIEW_MAX = Math.max(
     50,
     Number(process.env.INTERNAL_OVERVIEW_GUILDS_MAX || 500) || 500
 );
+const SENSITIVE_ACCESS_LOG_MAX = Math.max(
+    10,
+    Number(process.env.SENSITIVE_ACCESS_LOG_MAX || 100) || 100
+);
 
 function baseFilter(guildId) {
     return { guildId, deletedAt: { $exists: false } };
@@ -160,6 +164,9 @@ async function getGuildMembers(guildId, { page = 0, limit = 20, q = "" } = {}) {
         page: safePage,
         limit: safeLimit,
         total: result.total,
+        totalApproximate: result.totalApproximate === true,
+        truncated: result.truncated === true,
+        scanLimit: result.scanLimit,
         hasMore: result.hasMore
     };
 }
@@ -172,6 +179,18 @@ function safeAuditError(err) {
     };
 }
 
+function assertAuditRecorded(result, label) {
+    const recorded = result && (
+        result.modifiedCount > 0 ||
+        result.matchedCount > 0 ||
+        result._id
+    );
+    if (recorded) return;
+    const error = new Error(`${label} audit target not found`);
+    error.code = "audit_target_not_found";
+    throw error;
+}
+
 async function auditRevealWrites({ guildId, userId, verifyLogId = null, actor, reason, now, action, route, scope }) {
     const writes = {
         verifyLog: { ok: false, skipped: false },
@@ -181,22 +200,27 @@ async function auditRevealWrites({ guildId, userId, verifyLogId = null, actor, r
     try {
         const update = {
             $push: {
-                sensitiveAccessLog: sensitiveAudit.auditVerifyLogEntry({
-                    action,
-                    actor,
-                    reason,
-                    viewedAt: now
-                })
+                sensitiveAccessLog: {
+                    $each: [sensitiveAudit.auditVerifyLogEntry({
+                        action,
+                        actor,
+                        reason,
+                        viewedAt: now
+                    })],
+                    $slice: -SENSITIVE_ACCESS_LOG_MAX
+                }
             }
         };
         if (verifyLogId) {
-            await VerifyLog.updateOne({ _id: verifyLogId }, update);
+            const result = await VerifyLog.updateOne({ _id: verifyLogId }, update);
+            assertAuditRecorded(result, "verify_log");
         } else {
-            await VerifyLog.findOneAndUpdate(
+            const result = await VerifyLog.findOneAndUpdate(
                 { ...baseFilter(guildId), userId },
                 update,
                 { sort: { verifiedAt: -1, createdAt: -1, _id: -1 } }
             );
+            assertAuditRecorded(result, "verify_log");
         }
         writes.verifyLog = { ok: true, skipped: false };
     } catch (err) {
@@ -204,7 +228,7 @@ async function auditRevealWrites({ guildId, userId, verifyLogId = null, actor, r
     }
 
     try {
-        await GuildConfig.updateOne(
+        const result = await GuildConfig.updateOne(
             { guildId },
             sensitiveAudit.auditGuildConfigUpdate({
                 actor,
@@ -213,6 +237,7 @@ async function auditRevealWrites({ guildId, userId, verifyLogId = null, actor, r
                 now
             })
         );
+        assertAuditRecorded(result, "guild_config");
         writes.guildConfig = { ok: true, skipped: false };
     } catch (err) {
         writes.guildConfig = safeAuditError(err);
@@ -260,6 +285,11 @@ async function revealRawIp({ guildId, userId, reason, actor = "owner-dashboard" 
         route: "/api/verify-owner/guild/:guildId/user/:userId/reveal-ip",
         scope: ["rawIp"]
     });
+    if (!audit.ok) {
+        const error = new Error("audit write failed; reveal blocked");
+        error.code = "audit_write_failed";
+        throw error;
+    }
 
     return {
         success: true,
@@ -283,7 +313,7 @@ async function revealRawIp({ guildId, userId, reason, actor = "owner-dashboard" 
     };
 }
 
-async function getMemberDetail(guildId, userId, { canViewSensitive = true } = {}) {
+async function getMemberDetail(guildId, userId, { canViewSensitive = false } = {}) {
     const [oauthUser, latestLog] = await Promise.all([
         OAuthUser.findOne({ "discord.userId": userId })
             .select({
@@ -358,6 +388,11 @@ async function revealOAuthTokens({ guildId, userId, reason, actor = "owner-dashb
         route: "/api/guild/:guildId/member/:userId/reveal-token",
         scope: ["oauthTokens"]
     });
+    if (!audit.ok) {
+        const error = new Error("audit write failed; reveal blocked");
+        error.code = "audit_write_failed";
+        throw error;
+    }
 
     return {
         success: true,

@@ -59,11 +59,12 @@ async function runGuildPreflight({ guildId, config = {}, guild = null, discord =
     let roles = [];
     let channels = [];
     if (guildId) {
-        const roleResult = await fetchList(discord.getGuildRoles.bind(discord), guildId, "roles_fetch_failed");
+        const [roleResult, channelResult] = await Promise.all([
+            fetchList(discord.getGuildRoles.bind(discord), guildId, "roles_fetch_failed"),
+            fetchList(discord.getGuildChannels.bind(discord), guildId, "channels_fetch_failed")
+        ]);
         roles = roleResult.items;
         add("roles_fetch", roleResult.ok, "โหลด roles จาก Discord", roleResult.error);
-
-        const channelResult = await fetchList(discord.getGuildChannels.bind(discord), guildId, "channels_fetch_failed");
         channels = channelResult.items;
         add("channels_fetch", channelResult.ok, "โหลด channels จาก Discord", channelResult.error);
     }

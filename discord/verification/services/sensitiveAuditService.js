@@ -5,6 +5,7 @@ const { buildSensitiveAccessAuditUpdate } = require("../utils/sensitiveAccess");
 const WINDOW_MS = Math.max(30_000, Number(process.env.SENSITIVE_REVEAL_WINDOW_MS || 5 * 60_000) || 5 * 60_000);
 const MAX_EVENTS = Math.max(1, Number(process.env.SENSITIVE_REVEAL_MAX || 10) || 10);
 const USER_COOLDOWN_MS = Math.max(0, Number(process.env.SENSITIVE_REVEAL_USER_COOLDOWN_MS || 45_000) || 45_000);
+const MAX_BUCKET_KEYS = Math.max(100, Number(process.env.SENSITIVE_REVEAL_BUCKET_MAX || 10_000) || 10_000);
 const buckets = new Map();
 
 function nowMs() {
@@ -30,7 +31,20 @@ function keyFor({ actor = "owner-dashboard", guildId = "", userId = "", action =
     return [action, actor, guildId, userId].map(v => String(v || "")).join(":");
 }
 
+function sweepBuckets(now = nowMs()) {
+    for (const [key, timestamps] of buckets) {
+        const active = timestamps.filter(ts => now - ts < WINDOW_MS);
+        if (active.length) buckets.set(key, active);
+        else buckets.delete(key);
+    }
+    while (buckets.size > MAX_BUCKET_KEYS) {
+        buckets.delete(buckets.keys().next().value);
+    }
+    return buckets.size;
+}
+
 function checkRevealLimit(input = {}, now = nowMs()) {
+    if (buckets.size >= MAX_BUCKET_KEYS) sweepBuckets(now);
     const key = keyFor(input);
     const globalKey = keyFor({ ...input, userId: "*" });
     for (const currentKey of [key, globalKey]) {
@@ -78,6 +92,8 @@ module.exports = {
     auditVerifyLogEntry,
     _test: {
         buckets,
-        keyFor
+        keyFor,
+        sweepBuckets,
+        MAX_BUCKET_KEYS
     }
 };

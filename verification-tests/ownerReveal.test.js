@@ -79,10 +79,13 @@ describe("audited Owner raw-IP reveal", () => {
             {
                 $push: {
                     sensitiveAccessLog: expect.objectContaining({
-                        action: "owner_reveal_raw_ip",
-                        actor: "owner-dashboard",
-                        reason: "investigate duplicate account",
-                        viewedAt: expect.any(Number)
+                        $each: [expect.objectContaining({
+                            action: "owner_reveal_raw_ip",
+                            actor: "owner-dashboard",
+                            reason: "investigate duplicate account",
+                            viewedAt: expect.any(Number)
+                        })],
+                        $slice: expect.any(Number)
                     })
                 }
             }
@@ -136,8 +139,11 @@ describe("audited Owner raw-IP reveal", () => {
             expect.objectContaining({
                 $push: {
                     sensitiveAccessLog: expect.objectContaining({
-                        action: "owner_reveal_oauth_token",
-                        reason: "owner review"
+                        $each: [expect.objectContaining({
+                            action: "owner_reveal_oauth_token",
+                            reason: "owner review"
+                        })],
+                        $slice: expect.any(Number)
                     })
                 }
             }),
@@ -145,7 +151,7 @@ describe("audited Owner raw-IP reveal", () => {
         );
     });
 
-    test("still reveals OAuth tokens with failed audit status when audit writes fail open by owner decision", async () => {
+    test("blocks OAuth token reveal when every audit write fails", async () => {
         jest.spyOn(OAuthUser, "findOne").mockReturnValue({
             select: jest.fn().mockReturnThis(),
             lean: jest.fn().mockResolvedValue({
@@ -159,18 +165,58 @@ describe("audited Owner raw-IP reveal", () => {
         jest.spyOn(GuildConfig, "updateOne").mockRejectedValue(new Error("audit db down"));
         jest.spyOn(VerifyLog, "findOneAndUpdate").mockRejectedValue(new Error("audit db down"));
 
-        const result = await ownerService.revealOAuthTokens({
+        await expect(ownerService.revealOAuthTokens({
             guildId: "guild",
             userId: "user",
             reason: "owner review",
             actor: "owner-dashboard"
-        });
+        })).rejects.toMatchObject({ code: "audit_write_failed" });
+    });
 
-        expect(result.oauth.accessToken).toBe("access-token-value");
-        expect(result.oauth.refreshToken).toBe("refresh-token-value");
-        expect(result.auditStatus).toBe("failed");
-        expect(result.audit.failOpen).toBe(true);
-        expect(JSON.stringify(result.audit)).not.toContain("access-token-value");
-        expect(JSON.stringify(result.audit)).not.toContain("refresh-token-value");
+    test("blocks raw IP reveal when every audit write fails", async () => {
+        jest.spyOn(VerifyLog, "findOne").mockReturnValue({
+            sort: jest.fn().mockResolvedValue({
+                _id: "log-id",
+                ipInfo: { encryptedRawIp: cryptoUtils.encryptIP("203.0.113.25") }
+            })
+        });
+        jest.spyOn(GuildConfig, "updateOne").mockRejectedValue(new Error("audit db down"));
+        jest.spyOn(VerifyLog, "updateOne").mockRejectedValue(new Error("audit db down"));
+
+        await expect(ownerService.revealRawIp({
+            guildId: "guild",
+            userId: "user",
+            reason: "owner review",
+            actor: "owner-dashboard"
+        })).rejects.toMatchObject({ code: "audit_write_failed" });
+    });
+
+    test("blocks token reveal when audit updates match no records", async () => {
+        jest.spyOn(OAuthUser, "findOne").mockReturnValue({
+            select: jest.fn().mockReturnThis(),
+            lean: jest.fn().mockResolvedValue({
+                discord: { userId: "user" },
+                oauth: { encryptedAccessToken: cryptoUtils.encryptToken("access-token-value") }
+            })
+        });
+        jest.spyOn(GuildConfig, "updateOne").mockResolvedValue({ matchedCount: 0, modifiedCount: 0 });
+        jest.spyOn(VerifyLog, "findOneAndUpdate").mockResolvedValue(null);
+
+        await expect(ownerService.revealOAuthTokens({
+            guildId: "guild",
+            userId: "user",
+            reason: "owner review"
+        })).rejects.toMatchObject({ code: "audit_write_failed" });
+    });
+
+    test("sensitive reveal limiter evicts expired buckets", () => {
+        sensitiveAudit._test.buckets.set("expired", [1]);
+        sensitiveAudit._test.buckets.set("active", [Date.now()]);
+
+        const remaining = sensitiveAudit._test.sweepBuckets(Date.now());
+
+        expect(remaining).toBe(1);
+        expect(sensitiveAudit._test.buckets.has("expired")).toBe(false);
+        expect(sensitiveAudit._test.buckets.has("active")).toBe(true);
     });
 });

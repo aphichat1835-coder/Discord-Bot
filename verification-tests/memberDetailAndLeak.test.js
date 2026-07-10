@@ -114,6 +114,27 @@ describe("member detail serialization and leak guards", () => {
         expect(member.guilds).toHaveLength(1);
     });
 
+    test("list serializer never returns full legacy guild or connection snapshots", () => {
+        const member = verifiedMemberService._test.listSafeMember({
+            userId: "123",
+            connectionsCount: 2,
+            guildsCount: 3,
+            connections: [{ type: "github", name: "private" }],
+            guilds: [{ id: "456", name: "private" }]
+        });
+
+        expect(member.connections).toEqual([]);
+        expect(member.guilds).toEqual([]);
+        expect(member.connectionsCount).toBe(2);
+        expect(member.guildsCount).toBe(3);
+        expect(member.sensitiveRedacted).toBe(true);
+    });
+
+    test("legacy aggregation applies a bounded scan before projection", () => {
+        const pipeline = verifiedMemberService._test.legacyVerifiedAggregation("123", 250);
+        expect(pipeline).toContainEqual({ $limit: 250 });
+    });
+
     test("snapshot budget reports payload too large without mutating caller data", () => {
         const payload = { data: "x".repeat(128) };
         expect(() => snapshotBudget.assertSnapshotBudget(payload, { maxBytes: 20 })).toThrow(/payload too large/);
@@ -122,6 +143,15 @@ describe("member detail serialization and leak guards", () => {
             truncated: true,
             failureReason: "payload_too_large"
         });
+    });
+
+    test("snapshot budget makes a too-small configured limit explicit", () => {
+        const warning = jest.spyOn(process, "emitWarning").mockImplementation(() => {});
+        expect(snapshotBudget.resolveDefaultMaxBytes(1024)).toBe(snapshotBudget.MIN_MAX_BYTES);
+        expect(warning).toHaveBeenCalledWith(
+            expect.stringContaining("below the safe minimum"),
+            expect.objectContaining({ code: "VERIFICATION_SNAPSHOT_MAX_BYTES_FLOORED" })
+        );
     });
 
     test("dashboard labels premiumType as compatibility data instead of a Nitro verdict", () => {

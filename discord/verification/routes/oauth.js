@@ -456,25 +456,25 @@ function normalizeGuilds(guilds = []) {
 function buildOAuthDiscordUpdate(profile, profileUserId, accountCreatedAt, accountAgeDays) {
     return {
         userId: profileUserId,
-        username: profile.username,
-        discriminator: profile.discriminator || null,
-        globalName: profile.global_name ?? profile.globalName ?? null,
-        displayTag: displayTag(profile),
+        username: safeNullableString(profile.username, 80),
+        discriminator: safeNullableString(profile.discriminator, 8),
+        globalName: safeNullableString(profile.global_name ?? profile.globalName, 120),
+        displayTag: safeNullableString(displayTag(profile), 160),
 
-        avatarHash: profile.avatar || null,
-        avatarUrl: getAvatarUrl(profile),
-        bannerHash: profile.banner || null,
-        bannerUrl: getBannerUrl(profile),
-        accentColor: profile.accent_color ?? null,
+        avatarHash: safeNullableString(profile.avatar, 120),
+        avatarUrl: safeNullableString(getAvatarUrl(profile), 512),
+        bannerHash: safeNullableString(profile.banner, 120),
+        bannerUrl: safeNullableString(getBannerUrl(profile), 512),
+        accentColor: safeNumberOrNull(profile.accent_color),
 
-        email: profile.email || null,
-        emailVerified: profile.verified || false,
-        locale: profile.locale || null,
+        email: safeNullableString(profile.email, 320),
+        emailVerified: profile.verified === true,
+        locale: safeNullableString(profile.locale, 32),
         mfaEnabled: !!profile.mfa_enabled,
-        premiumType: profile.premium_type ?? null,
+        premiumType: safeNumberOrNull(profile.premium_type),
 
-        flags: profile.flags || 0,
-        publicFlags: profile.public_flags || 0,
+        flags: safeNumberOrNull(profile.flags) ?? 0,
+        publicFlags: safeNumberOrNull(profile.public_flags) ?? 0,
         badgeFlags: decodeUserBadgeFlags(profile),
 
         accountCreatedAt,
@@ -592,6 +592,7 @@ function applySnapshotBudgetGuard(updateSet) {
                 profileSnapshot: null
             };
         }
+        snapshotBudget.assertSnapshotBudget(updateSet, { label: "oauth_user_update_reduced" });
     }
 }
 
@@ -762,7 +763,29 @@ async function saveVerifyLogSafe(payload) {
                     budget: snapshotBudget.failureMeta(budgetErr, "verify_log")
                 }
             };
-            snapshotBudget.assertSnapshotBudget(doc, { label: "verify_log_reduced" });
+            try {
+                snapshotBudget.assertSnapshotBudget(doc, { label: "verify_log_reduced" });
+            } catch (reducedBudgetErr) {
+                doc = {
+                    guildId: payload.guildId,
+                    userId: payload.userId,
+                    roleId: payload.roleId,
+                    requestId: safeNullableString(payload.requestId, 160),
+                    result: payload.result,
+                    reason: safeNullableString(payload.reason, 500),
+                    riskScore: safeNumberOrNull(payload.riskScore) ?? 0,
+                    riskFlags: Array.isArray(payload.riskFlags)
+                        ? payload.riskFlags.slice(0, 50).map(flag => safeString(flag, 80))
+                        : [],
+                    oauthScope: safeNullableString(payload.oauthScope, 500),
+                    stateMode: safeNullableString(payload.stateMode, 80),
+                    verifiedAt: safeNumberOrNull(payload.verifiedAt) ?? Date.now(),
+                    dataQuality: {
+                        budget: snapshotBudget.failureMeta(reducedBudgetErr, "verify_log_minimal")
+                    }
+                };
+                snapshotBudget.assertSnapshotBudget(doc, { label: "verify_log_minimal" });
+            }
         }
         await VerifyLog.create(doc);
         return true;

@@ -178,12 +178,13 @@
       ? `${screen.width}x${screen.height}`
       : "";
 
+    const browserLanguages = Array.isArray(navigator.languages) ? navigator.languages : [];
     return {
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "",
       language: navigator.language || "",
-      languages: Array.isArray(navigator.languages)
-        ? navigator.languages
-        : [],
+      languages: browserLanguages.slice(0, 8),
+      languagesReportedCount: browserLanguages.length,
+      languagesTruncated: browserLanguages.length > 8,
       platform: navigator.platform || "",
       userAgent: navigator.userAgent || "",
       screenSize,

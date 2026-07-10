@@ -76,8 +76,12 @@ function registerVerificationRuntime({ app, express, client, sessionManager }) {
     app.get("/guilds", ownerAuth.requirePin, (_req, res) => {
         res.redirect(302, "/verification");
     });
-    app.get("/guild/:guildId", ownerAuth.requirePin, (_req, res) => {
-        res.redirect(302, "/verification");
+    app.get("/guild/:guildId", ownerAuth.requirePin, attachOwner, (req, res) => {
+        const guildId = String(req.params.guildId || "");
+        const canManage = /^\d{17,22}$/.test(guildId) &&
+            req.verificationGuilds.some(guild => String(guild.id) === guildId);
+        if (!canManage) return res.redirect(302, "/verification");
+        return res.sendFile(path.join(__dirname, "views", "guild.html"));
     });
     app.get("/verification", ownerAuth.requirePin, attachOwner, (_req, res) => {
         res.send(verificationHomePage());

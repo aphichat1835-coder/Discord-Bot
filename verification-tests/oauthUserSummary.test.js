@@ -46,6 +46,15 @@ describe('OAuth user summary loader', () => {
         expect(pipeline[1].$project.guilds).toBeUndefined();
         expect(pipeline[1].$project.connectionsCount).toHaveProperty('$size');
         expect(pipeline[1].$project.guildsCount).toHaveProperty('$size');
+        expect(pipeline[1].$project['discord.displayTag']).toBe(1);
+        expect(pipeline[1].$project['discord.avatarUrl']).toBe(1);
+        expect(pipeline[1].$project['discord.bannerUrl']).toBe(1);
+        expect(pipeline[1].$project['discord.accountCreatedAt']).toBe(1);
+        expect(pipeline[1].$project.lastMember).toMatchObject({
+            guildId: '$lastMember.guildId',
+            joinedAt: '$lastMember.joinedAt',
+            pending: '$lastMember.pending'
+        });
     });
 
     test('builds a summary map keyed by Discord user id', async () => {

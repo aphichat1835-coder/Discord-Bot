@@ -9,7 +9,6 @@ const {
 } = require("../index/joinCampaignRoutes");
 
 test("join campaign candidate summary uses only tokens with guilds.join", (t) => {
-    t.assert.ok(true);
     const docs = [
         {
             discord: { userId: "100" },
@@ -43,7 +42,7 @@ test("join campaign candidate summary uses only tokens with guilds.join", (t) =>
 
     const summary = joinCampaign.summarizeJoinCandidates(docs);
 
-    assert.equal(summary.scannedRecords, 4);
+    t.assert.equal(summary.scannedRecords, 4);
     assert.equal(summary.uniqueUsers, 3);
     assert.equal(summary.usableUsers, 2);
     assert.equal(summary.missingScope, 1);
@@ -52,7 +51,6 @@ test("join campaign candidate summary uses only tokens with guilds.join", (t) =>
 });
 
 test("join campaign refreshes expiring token before adding member", async (t) => {
-    t.assert.ok(true);
     const updates = [];
     const joined = [];
     const docs = [
@@ -120,7 +118,7 @@ test("join campaign refreshes expiring token before adding member", async (t) =>
         sleep: async () => {}
     });
 
-    assert.equal(summary.joined, 1);
+    t.assert.equal(summary.joined, 1);
     assert.equal(summary.refreshed, 1);
     assert.equal(summary.failed, 0);
     assert.equal(joined.length, 1);
@@ -134,7 +132,6 @@ test("join campaign refreshes expiring token before adding member", async (t) =>
 });
 
 test("Thai join campaign log summarizes counts without raw tokens", (t) => {
-    t.assert.ok(true);
     const payload = joinCampaign.formatThaiJoinCampaignLog({
         campaignId: "join_test",
         targetGuildId: "123456789012345678",
@@ -156,14 +153,13 @@ test("Thai join campaign log summarizes counts without raw tokens", (t) => {
         errors: [{ userId: "100", reason: "discord_error", detail: "no token value here" }]
     }, "finish");
 
-    assert.match(payload.content, /งานดึงสมาชิกเข้าเซิร์ฟเวอร์เสร็จแล้ว/);
+    t.assert.match(payload.content, /งานดึงสมาชิกเข้าเซิร์ฟเวอร์เสร็จแล้ว/);
     assert.match(payload.content, /ดึงเข้าสำเร็จ: 5/);
     assert.equal(payload.content.includes("new-access"), false);
     assert.equal(payload.content.includes("old-refresh"), false);
 });
 
 test("join campaign route helpers list and resolve allowed target guilds", (t) => {
-    t.assert.ok(true);
     const oldAllowed = process.env.JOIN_CAMPAIGN_ALLOWED_GUILDS;
     process.env.JOIN_CAMPAIGN_ALLOWED_GUILDS = "111111111111111111";
 
@@ -175,7 +171,7 @@ test("join campaign route helpers list and resolve allowed target guilds", (t) =
         const client = { guilds: { cache } };
 
         const targets = listJoinCampaignTargets(client);
-        assert.equal(targets.length, 1);
+        t.assert.equal(targets.length, 1);
         assert.equal(targets[0].id, "111111111111111111");
 
         assert.equal(resolveJoinCampaignTarget(client, "111111111111111111").ok, true);
@@ -188,7 +184,6 @@ test("join campaign route helpers list and resolve allowed target guilds", (t) =
 });
 
 test("startJoinCampaign rejects disabled config before creating an active job", (t) => {
-    t.assert.ok(true);
     joinCampaign._test.runningState.active = null;
     joinCampaign._test.runningState.last = null;
     joinCampaign._test.runningState.stopRequested = false;
@@ -206,14 +201,13 @@ test("startJoinCampaign rejects disabled config before creating an active job", 
         }
     });
 
-    assert.equal(result.ok, false);
+    t.assert.equal(result.ok, false);
     assert.equal(result.error, "campaign_disabled");
     assert.equal(joinCampaign.getJoinCampaignStatus().active, null);
 });
 
 test("join campaign allows every bot guild when allowlist is empty", async (t) => {
-    t.assert.ok(true);
-    assert.equal(joinCampaign.isGuildAllowed("123456789012345678", {
+    t.assert.equal(joinCampaign.isGuildAllowed("123456789012345678", {
         enabled: true,
         allowedGuilds: new Set()
     }), true);
@@ -237,7 +231,6 @@ test("join campaign allows every bot guild when allowlist is empty", async (t) =
 });
 
 test("join campaign has no Sync Roles UI or route surface", (t) => {
-    t.assert.ok(true);
     const runtimeSurface = [
         fs.readFileSync("discord/index/joinCampaignPage.js", "utf8"),
         fs.readFileSync("discord/index/joinCampaignRoutes.js", "utf8"),
@@ -247,7 +240,7 @@ test("join campaign has no Sync Roles UI or route surface", (t) => {
         fs.readFileSync("discord/verification/routes/guild.js", "utf8")
     ].join("\n");
 
-    assert.equal(/sync-roles/i.test(runtimeSurface), false);
+    t.assert.equal(/sync-roles/i.test(runtimeSurface), false);
     assert.equal(/syncRoles/.test(runtimeSurface), false);
     assert.equal(/Sync Roles/.test(runtimeSurface), false);
 });
