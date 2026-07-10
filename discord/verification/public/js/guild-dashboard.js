@@ -1127,13 +1127,8 @@
     return wrapper;
   }
 
-  function renderEmbedPreview() {
-    const box = $("embed-preview");
-    const btnBox = $("button-preview");
-
-    if (!box || !btnBox) return;
-
-    const panel = {
+  function readEmbedPreviewPanel() {
+    return {
       content: readText("p-content"),
       title: readText("p-title") || "🔐 ยืนยันตัวตนเพื่อเข้าดิส",
       description: readText("p-description") || "กดปุ่มด้านล่างเพื่อยืนยันตัวตนผ่าน Discord OAuth2",
@@ -1145,60 +1140,82 @@
       buttonText: readText("p-buttonText") || "✅ ยืนยันตัวตน ✅",
       showTimestamp: readBool("p-showTimestamp")
     };
+  }
 
-    const color = /^#[0-9A-Fa-f]{6}$/.test(panel.color) ? panel.color : "#5865F2";
+  function previewContentElement(contentText) {
+    if (!contentText) return null;
+    const content = document.createElement("div");
+    content.className = "alert alert-info mb-0";
+    content.style.marginBottom = "12px";
+    content.textContent = contentText;
+    return content;
+  }
 
-    box.style.borderLeftColor = color;
-    const nodes = [];
-    if (panel.content) {
-      const content = document.createElement("div");
-      content.className = "alert alert-info mb-0";
-      content.style.marginBottom = "12px";
-      content.textContent = panel.content;
-      nodes.push(content);
-    }
-
+  function previewTitleElement(panel = {}) {
     const title = document.createElement("div");
-    title.className = "embed-preview-title";
     const titleUrl = safeHttpUrl(panel.titleUrl);
-    if (titleUrl) {
-      const link = document.createElement("a");
-      link.href = titleUrl;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      link.textContent = panel.title;
-      title.appendChild(link);
-    } else {
+    title.className = "embed-preview-title";
+    if (!titleUrl) {
       title.textContent = panel.title;
+      return title;
     }
-    nodes.push(title);
+    const link = document.createElement("a");
+    link.href = titleUrl;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = panel.title;
+    title.appendChild(link);
+    return title;
+  }
 
+  function previewDescriptionElement(descriptionText) {
     const description = document.createElement("div");
     description.className = "embed-preview-desc";
-    description.textContent = panel.description;
-    nodes.push(description);
+    description.textContent = descriptionText;
+    return description;
+  }
 
-    const thumbnail = previewImageElement("embed-preview-thumb", panel.thumbnailUrl);
-    const image = previewImageElement("embed-preview-img", panel.imageUrl);
-    if (thumbnail) nodes.push(thumbnail);
-    if (image) nodes.push(image);
+  function previewFooterElement(panel = {}) {
+    if (!panel.footerText && !panel.showTimestamp) return null;
+    const footer = document.createElement("div");
+    const timestamp = panel.showTimestamp ? ` · ${new Date().toLocaleString("th-TH")}` : "";
+    footer.className = "embed-preview-footer";
+    footer.textContent = `${panel.footerText || "Discord Verification System"}${timestamp}`;
+    return footer;
+  }
 
-    if (panel.footerText || panel.showTimestamp) {
-      const footer = document.createElement("div");
-      footer.className = "embed-preview-footer";
-      const timestamp = panel.showTimestamp ? ` · ${new Date().toLocaleString("th-TH")}` : "";
-      footer.textContent = `${panel.footerText || "Discord Verification System"}${timestamp}`;
-      nodes.push(footer);
-    }
-    box.replaceChildren(...nodes);
+  function buildEmbedPreviewNodes(panel = {}) {
+    return [
+      previewContentElement(panel.content),
+      previewTitleElement(panel),
+      previewDescriptionElement(panel.description),
+      previewImageElement("embed-preview-thumb", panel.thumbnailUrl),
+      previewImageElement("embed-preview-img", panel.imageUrl),
+      previewFooterElement(panel)
+    ].filter(Boolean);
+  }
 
+  function renderPreviewButton(buttonBox, panel = {}) {
     const button = document.createElement("div");
     const hint = document.createElement("div");
     button.className = "button-preview";
     button.textContent = panel.buttonText;
     hint.className = "field-hint";
     hint.textContent = `ปุ่มจริงใน Discord จะถูกสร้างตามโหมด ${verifyModeLabel(readValue("p-verifyType"))}`;
-    btnBox.replaceChildren(button, hint);
+    buttonBox.replaceChildren(button, hint);
+  }
+
+  function renderEmbedPreview() {
+    const box = $("embed-preview");
+    const btnBox = $("button-preview");
+
+    if (!box || !btnBox) return;
+
+    const panel = readEmbedPreviewPanel();
+    const color = /^#[0-9A-Fa-f]{6}$/.test(panel.color) ? panel.color : "#5865F2";
+    box.style.borderLeftColor = color;
+    box.replaceChildren(...buildEmbedPreviewNodes(panel));
+    renderPreviewButton(btnBox, panel);
   }
 
   function bindPreviewInputs() {
