@@ -152,10 +152,22 @@ describe("member detail serialization and leak guards", () => {
             source.indexOf("function openDetailModal"),
             source.indexOf("function closeDetailModal")
         );
+        const previewSource = source.slice(
+            source.indexOf("function renderEmbedPreview"),
+            source.indexOf("function bindPreviewInputs")
+        );
+        const riskSource = source.slice(
+            source.indexOf("async function loadRisk"),
+            source.indexOf("function openDetailModal")
+        );
 
         expect(loadLogsSource).not.toContain("innerHTML");
         expect(loadLogsSource).toContain("replaceChildren");
         expect(modalSource).not.toContain("innerHTML");
         expect(modalSource).toContain("replaceChildren");
+        expect(previewSource).not.toContain("innerHTML");
+        expect(previewSource).toContain("replaceChildren");
+        expect(riskSource).not.toContain("innerHTML");
+        expect(riskSource).toContain("replaceChildren");
     });
 });

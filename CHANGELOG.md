@@ -52,6 +52,8 @@
 - Split Owner member/log DOM builders into focused card, row, header, notice,
   and metadata helpers, and documented a scoped Codacy exclusion for the
   administrator-only smoke CLI whose validated URL sink is a false positive.
+- Replaced the remaining tainted embed-preview and risk-error HTML assignments
+  with DOM construction, text-only rendering, and HTTP(S)-only preview URLs.
 
 ## [Unreleased] - Dashboard Public OAuth Runtime Fixes 2026-07-03
 

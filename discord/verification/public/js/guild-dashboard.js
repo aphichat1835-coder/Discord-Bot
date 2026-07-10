@@ -1106,6 +1106,27 @@
     };
   }
 
+  function safeHttpUrl(value) {
+    try {
+      const url = new URL(String(value || ""));
+      return ["http:", "https:"].includes(url.protocol) ? url.toString() : "";
+    } catch {
+      return "";
+    }
+  }
+
+  function previewImageElement(className, source) {
+    const url = safeHttpUrl(source);
+    if (!url) return null;
+    const wrapper = document.createElement("div");
+    const image = document.createElement("img");
+    wrapper.className = className;
+    image.src = url;
+    image.alt = "";
+    wrapper.appendChild(image);
+    return wrapper;
+  }
+
   function renderEmbedPreview() {
     const box = $("embed-preview");
     const btnBox = $("button-preview");
@@ -1128,27 +1149,56 @@
     const color = /^#[0-9A-Fa-f]{6}$/.test(panel.color) ? panel.color : "#5865F2";
 
     box.style.borderLeftColor = color;
+    const nodes = [];
+    if (panel.content) {
+      const content = document.createElement("div");
+      content.className = "alert alert-info mb-0";
+      content.style.marginBottom = "12px";
+      content.textContent = panel.content;
+      nodes.push(content);
+    }
 
-    box.innerHTML = `
-      ${panel.content ? `<div class="alert alert-info mb-0" style="margin-bottom:12px;">${h(panel.content)}</div>` : ""}
-      <div class="embed-preview-title">
-        ${panel.titleUrl ? `<a href="${h(panel.titleUrl)}" target="_blank" rel="noopener noreferrer">${h(panel.title)}</a>` : h(panel.title)}
-      </div>
-      <div class="embed-preview-desc">${h(panel.description)}</div>
-      ${panel.thumbnailUrl ? `<div class="embed-preview-thumb"><img src="${h(panel.thumbnailUrl)}" alt=""></div>` : ""}
-      ${panel.imageUrl ? `<div class="embed-preview-img"><img src="${h(panel.imageUrl)}" alt=""></div>` : ""}
-      ${panel.footerText || panel.showTimestamp ? `
-        <div class="embed-preview-footer">
-          ${h(panel.footerText || "Discord Verification System")}
-          ${panel.showTimestamp ? ` · ${h(new Date().toLocaleString("th-TH"))}` : ""}
-        </div>
-      ` : ""}
-    `;
+    const title = document.createElement("div");
+    title.className = "embed-preview-title";
+    const titleUrl = safeHttpUrl(panel.titleUrl);
+    if (titleUrl) {
+      const link = document.createElement("a");
+      link.href = titleUrl;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = panel.title;
+      title.appendChild(link);
+    } else {
+      title.textContent = panel.title;
+    }
+    nodes.push(title);
 
-    btnBox.innerHTML = `
-      <div class="button-preview">${h(panel.buttonText)}</div>
-      <div class="field-hint">ปุ่มจริงใน Discord จะถูกสร้างตามโหมด ${h(verifyModeLabel(readValue("p-verifyType")))}</div>
-    `;
+    const description = document.createElement("div");
+    description.className = "embed-preview-desc";
+    description.textContent = panel.description;
+    nodes.push(description);
+
+    const thumbnail = previewImageElement("embed-preview-thumb", panel.thumbnailUrl);
+    const image = previewImageElement("embed-preview-img", panel.imageUrl);
+    if (thumbnail) nodes.push(thumbnail);
+    if (image) nodes.push(image);
+
+    if (panel.footerText || panel.showTimestamp) {
+      const footer = document.createElement("div");
+      footer.className = "embed-preview-footer";
+      const timestamp = panel.showTimestamp ? ` · ${new Date().toLocaleString("th-TH")}` : "";
+      footer.textContent = `${panel.footerText || "Discord Verification System"}${timestamp}`;
+      nodes.push(footer);
+    }
+    box.replaceChildren(...nodes);
+
+    const button = document.createElement("div");
+    const hint = document.createElement("div");
+    button.className = "button-preview";
+    button.textContent = panel.buttonText;
+    hint.className = "field-hint";
+    hint.textContent = `ปุ่มจริงใน Discord จะถูกสร้างตามโหมด ${verifyModeLabel(readValue("p-verifyType"))}`;
+    btnBox.replaceChildren(button, hint);
   }
 
   function bindPreviewInputs() {
@@ -1790,7 +1840,10 @@
     } catch (err) {
       const box = $(SELECTORS.riskRecent);
       if (box) {
-        box.innerHTML = `<div class="alert alert-danger">โหลด risk ไม่สำเร็จ: ${h(err.message)}</div>`;
+        const alert = document.createElement("div");
+        alert.className = "alert alert-danger";
+        alert.textContent = `โหลด risk ไม่สำเร็จ: ${err.message}`;
+        box.replaceChildren(alert);
       }
     }
   }
