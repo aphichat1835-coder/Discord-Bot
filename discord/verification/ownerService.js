@@ -353,6 +353,7 @@ async function getMemberDetail(guildId, userId, { canViewSensitive = false } = {
         hydratedOAuthUser = {
             ...oauthUser,
             snapshotRefs,
+            profileSnapshotRaw: chunks.profile || oauthUser?.profileSnapshotRaw,
             connections: Array.isArray(chunks.connections) ? chunks.connections : oauthUser?.connections,
             guilds: Array.isArray(chunks.guilds) ? chunks.guilds : oauthUser?.guilds,
             lastMember: chunks.member || oauthUser?.lastMember

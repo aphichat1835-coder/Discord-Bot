@@ -150,6 +150,8 @@ guilds, or target-member snapshot. Data-quality metadata distinguishes success,
 failure, and not-attempted states and stores redacted failure codes.
 
 Large guild and connection arrays are stored in versioned chunk collections.
+Target-member roles use a separate versioned role-chunk collection, and full
+provider snapshots redact token-shaped keys before persistence.
 Chunks remain unreadable as a complete snapshot until every write is finalized;
 `complete` requires `returnedCount === storedCount`. VerifyLog stores the core
 audit event and snapshot references rather than duplicating oversized arrays.

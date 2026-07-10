@@ -4,6 +4,8 @@ const crypto = require("node:crypto");
 const GuildSnapshot = require("../models/OAuthUserGuildSnapshot");
 const ConnectionSnapshot = require("../models/OAuthUserConnectionSnapshot");
 const MemberSnapshot = require("../models/OAuthMemberSnapshot");
+const MemberRoleSnapshot = require("../models/OAuthMemberRoleSnapshot");
+const ProfileSnapshot = require("../models/OAuthUserProfileSnapshot");
 const { jsonBytes, MAX_MAX_BYTES } = require("./snapshotBudget");
 
 const CHUNK_MAX_BYTES = Math.min(
@@ -78,19 +80,26 @@ function failedMeta(kind, version, returnedCount, err, now) {
     };
 }
 
-async function storeArraySnapshot(Model, { kind, userId, version, items, now = Date.now() }) {
-    const source = Array.isArray(items) ? items : [];
+async function storeArraySnapshot(Model, {
+    kind,
+    userId,
+    version,
+    items,
+    source = "discord_oauth",
+    now = Date.now()
+}) {
+    const itemList = Array.isArray(items) ? items : [];
     try {
-        const chunks = chunkItems(source);
+        const chunks = chunkItems(itemList);
         const common = {
             userId,
             snapshotVersion: version,
-            returnedCount: source.length,
-            storedCount: source.length,
+            returnedCount: itemList.length,
+            storedCount: itemList.length,
             complete: false,
             fetchStatus: "success",
             failureReason: null,
-            source: "discord_oauth",
+            source,
             capturedAt: now,
             updatedAt: now
         };
@@ -114,14 +123,40 @@ async function storeArraySnapshot(Model, { kind, userId, version, items, now = D
         };
         return successfulRef(kind, version, meta);
     } catch (err) {
-        return failedMeta(kind, version, source.length, err, now);
+        return failedMeta(kind, version, itemList.length, err, now);
     }
 }
 
 async function storeMemberSnapshot({ userId, guildId, version, member, now = Date.now() }) {
-    const roleCount = Array.isArray(member?.roles) ? member.roles.length : 0;
+    const sourceRoles = Array.isArray(member?.roles)
+        ? member.roles
+        : member?.snapshot?.roles;
+    const roles = Array.isArray(sourceRoles) ? sourceRoles.map(String) : [];
+    const { roles: _externalRoles, ...memberCore } = member || {};
+    if (memberCore.snapshot && typeof memberCore.snapshot === "object") {
+        const { roles: _rawRoles, ...rawMemberCore } = memberCore.snapshot;
+        memberCore.snapshot = rawMemberCore;
+    }
+    const roleRef = await storeArraySnapshot(MemberRoleSnapshot, {
+        kind: "memberRoles",
+        userId,
+        version,
+        items: roles,
+        source: "discord_bot_api",
+        now
+    });
+    const roleCount = roles.length;
+    if (!roleRef.complete || roleRef.returnedCount !== roleRef.storedCount) {
+        return {
+            ...failedMeta("member", version, 1, {
+                code: roleRef.failureReason || "member_roles_incomplete"
+            }, now),
+            guildId,
+            roleRef
+        };
+    }
     try {
-        if (jsonBytes(member) > MAX_MAX_BYTES) {
+        if (jsonBytes(memberCore) > MAX_MAX_BYTES) {
             const error = new Error("member snapshot exceeds per-document maximum");
             error.code = "snapshot_item_too_large";
             throw error;
@@ -133,7 +168,8 @@ async function storeMemberSnapshot({ userId, guildId, version, member, now = Dat
                     userId,
                     guildId,
                     snapshotVersion: version,
-                    snapshot: member,
+                    snapshot: memberCore,
+                    roleSnapshotRef: roleRef,
                     roleCount,
                     returnedCount: 1,
                     storedCount: 1,
@@ -163,16 +199,80 @@ async function storeMemberSnapshot({ userId, guildId, version, member, now = Dat
             fetchStatus: complete ? "success" : "failed",
             failureReason: complete ? null : "snapshot_finalize_incomplete",
             source: "discord_bot_api",
-            capturedAt: now
+            capturedAt: now,
+            roleRef,
+            roleReturnedCount: roleRef.returnedCount,
+            roleStoredCount: roleRef.storedCount,
+            roleChunkCount: roleRef.chunkCount
         };
     } catch (err) {
         return { ...failedMeta("member", version, 1, err, now), guildId };
     }
 }
 
-async function storeOAuthSnapshots({ userId, guildId, guilds, connections, member, fetchMetadata = {}, now = Date.now() }) {
+async function storeProfileSnapshot({ userId, version, profile, now = Date.now() }) {
+    try {
+        if (jsonBytes(profile) > MAX_MAX_BYTES) {
+            const error = new Error("profile snapshot exceeds per-document maximum");
+            error.code = "snapshot_item_too_large";
+            throw error;
+        }
+        await ProfileSnapshot.findOneAndUpdate(
+            { userId, snapshotVersion: version },
+            {
+                $set: {
+                    userId,
+                    snapshotVersion: version,
+                    snapshot: profile,
+                    returnedCount: 1,
+                    storedCount: 1,
+                    complete: false,
+                    fetchStatus: "success",
+                    failureReason: null,
+                    source: "discord_oauth",
+                    capturedAt: now,
+                    updatedAt: now
+                }
+            },
+            { upsert: true, new: true }
+        );
+        const finalized = await ProfileSnapshot.updateOne(
+            { userId, snapshotVersion: version },
+            { $set: { complete: true, updatedAt: now } }
+        );
+        const complete = Number(finalized?.matchedCount || 0) === 1;
+        return {
+            kind: "profile",
+            version,
+            returnedCount: 1,
+            storedCount: complete ? 1 : 0,
+            chunkCount: 1,
+            complete,
+            fetchStatus: complete ? "success" : "failed",
+            failureReason: complete ? null : "snapshot_finalize_incomplete",
+            source: "discord_oauth",
+            capturedAt: now
+        };
+    } catch (err) {
+        return failedMeta("profile", version, 1, err, now);
+    }
+}
+
+async function storeOAuthSnapshots({
+    userId,
+    guildId,
+    profile,
+    guilds,
+    connections,
+    member,
+    fetchMetadata = {},
+    now = Date.now()
+}) {
     const version = createSnapshotVersion(now);
     const tasks = {};
+    if (profile) {
+        tasks.profile = storeProfileSnapshot({ userId, version, profile, now });
+    }
     if (!fetchMetadata.guildsFetchFailed) {
         tasks.guilds = storeArraySnapshot(GuildSnapshot, { kind: "guilds", userId, version, items: guilds, now });
     }
@@ -202,7 +302,14 @@ async function loadArraySnapshot(Model, userId, ref) {
 }
 
 async function loadOAuthSnapshots({ userId, refs = {}, guildId = null }) {
-    const [guilds, connections, memberDoc] = await Promise.all([
+    const [profileDoc, guilds, connections, memberDoc] = await Promise.all([
+        refs.profile?.version && refs.profile.complete === true
+            ? ProfileSnapshot.findOne({
+                userId,
+                snapshotVersion: refs.profile.version,
+                complete: true
+            }).lean()
+            : null,
         loadArraySnapshot(GuildSnapshot, userId, refs.guilds),
         loadArraySnapshot(ConnectionSnapshot, userId, refs.connections),
         refs.member?.version && refs.member.complete === true
@@ -214,10 +321,29 @@ async function loadOAuthSnapshots({ userId, refs = {}, guildId = null }) {
             }).lean()
             : null
     ]);
+    let member = memberDoc?.snapshot || null;
+    if (memberDoc) {
+        const roleRef = memberDoc.roleSnapshotRef || refs.member?.roleRef;
+        const roles = roleRef
+            ? await loadArraySnapshot(MemberRoleSnapshot, userId, roleRef)
+            : memberDoc.snapshot?.roles;
+        if (!Array.isArray(roles)) {
+            return { profile: profileDoc?.snapshot || null, guilds, connections, member: null };
+        }
+        member = {
+            ...member,
+            roles,
+            roleCount: roles.length,
+            snapshot: member.snapshot && typeof member.snapshot === "object"
+                ? { ...member.snapshot, roles }
+                : member.snapshot
+        };
+    }
     return {
+        profile: profileDoc?.snapshot || null,
         guilds,
         connections,
-        member: memberDoc?.snapshot || null
+        member
     };
 }
 
@@ -227,9 +353,16 @@ module.exports = {
     createSnapshotVersion,
     chunkItems,
     storeArraySnapshot,
+    storeProfileSnapshot,
     storeMemberSnapshot,
     storeOAuthSnapshots,
     loadArraySnapshot,
     loadOAuthSnapshots,
-    _models: { GuildSnapshot, ConnectionSnapshot, MemberSnapshot }
+    _models: {
+        GuildSnapshot,
+        ConnectionSnapshot,
+        MemberSnapshot,
+        MemberRoleSnapshot,
+        ProfileSnapshot
+    }
 };

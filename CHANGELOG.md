@@ -70,6 +70,10 @@
   collections for guilds and connections plus a target-member snapshot. Member
   Detail now hydrates every finalized chunk, while VerifyLog stores core audit
   fields and snapshot references without discarding returned Discord data.
+- Raised the bounded Discord response ingestion ceiling to 12 MB, added
+  sanitized forward-compatible profile/provider snapshots, split target-member
+  roles into ordered chunks, and extended the additive migration to backfill
+  legacy embedded snapshots without deleting their source fields.
 
 ## [Unreleased] - Dashboard Public OAuth Runtime Fixes 2026-07-03
 

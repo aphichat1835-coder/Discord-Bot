@@ -110,6 +110,7 @@ describe("OAuth snapshot chunk persistence", () => {
     test("stores all returned guilds, connections, and member roles with complete counts", async () => {
         const guildOps = [];
         const connectionOps = [];
+        const roleOps = [];
         jest.spyOn(snapshotStore._models.GuildSnapshot, "bulkWrite")
             .mockImplementation(async operations => {
                 guildOps.push(...operations);
@@ -124,8 +125,17 @@ describe("OAuth snapshot chunk persistence", () => {
             });
         jest.spyOn(snapshotStore._models.ConnectionSnapshot, "updateMany")
             .mockImplementation(async () => ({ matchedCount: connectionOps.length }));
+        jest.spyOn(snapshotStore._models.MemberRoleSnapshot, "bulkWrite")
+            .mockImplementation(async operations => {
+                roleOps.push(...operations);
+                return { acknowledged: true };
+            });
+        jest.spyOn(snapshotStore._models.MemberRoleSnapshot, "updateMany")
+            .mockImplementation(async () => ({ matchedCount: roleOps.length }));
         jest.spyOn(snapshotStore._models.MemberSnapshot, "findOneAndUpdate").mockResolvedValue({});
         jest.spyOn(snapshotStore._models.MemberSnapshot, "updateOne").mockResolvedValue({ matchedCount: 1 });
+        jest.spyOn(snapshotStore._models.ProfileSnapshot, "findOneAndUpdate").mockResolvedValue({});
+        jest.spyOn(snapshotStore._models.ProfileSnapshot, "updateOne").mockResolvedValue({ matchedCount: 1 });
 
         const guilds = Array.from({ length: 200 }, (_, index) => ({
             id: String(index), name: `guild-${index}`, permissions: "8"
@@ -137,27 +147,88 @@ describe("OAuth snapshot chunk persistence", () => {
         const result = await snapshotStore.storeOAuthSnapshots({
             userId: "123456789012345678",
             guildId: "987654321098765432",
+            profile: { id: "123456789012345678", futureField: "preserved" },
             guilds,
             connections,
-            member: { guildId: "987654321098765432", roles },
+            member: {
+                guildId: "987654321098765432",
+                roles,
+                snapshot: { nick: "member", roles, futureMemberField: "preserved" }
+            },
             now: 1000
         });
 
         expect(result.guilds).toMatchObject({ returnedCount: 200, storedCount: 200, complete: true });
         expect(result.connections).toMatchObject({ returnedCount: 75, storedCount: 75, complete: true });
+        expect(result.profile).toMatchObject({ returnedCount: 1, storedCount: 1, complete: true });
         expect(result.member).toMatchObject({ returnedCount: 1, storedCount: 1, complete: true });
+        expect(result.member).toMatchObject({
+            roleReturnedCount: 125,
+            roleStoredCount: 125,
+            roleChunkCount: roleOps.length
+        });
         expect(guildOps.flatMap(op => op.updateOne.update.$set.items)).toEqual(guilds);
         expect(connectionOps.flatMap(op => op.updateOne.update.$set.items)).toEqual(connections);
-        expect(snapshotStore._models.MemberSnapshot.findOneAndUpdate)
-            .toHaveBeenCalledWith(
-                expect.any(Object),
-                expect.objectContaining({
-                    $set: expect.objectContaining({
-                        snapshot: expect.objectContaining({ roles })
-                    })
-                }),
-                expect.any(Object)
-            );
+        expect(roleOps.flatMap(op => op.updateOne.update.$set.items)).toEqual(roles);
+        expect(snapshotStore._models.MemberSnapshot.findOneAndUpdate).toHaveBeenCalledWith(
+            expect.any(Object),
+            expect.objectContaining({
+                $set: expect.objectContaining({
+                    snapshot: expect.objectContaining({
+                        snapshot: expect.objectContaining({
+                            futureMemberField: "preserved"
+                        })
+                    }),
+                    roleSnapshotRef: expect.objectContaining({ complete: true, storedCount: 125 })
+                })
+            }),
+            expect.any(Object)
+        );
+        const storedMember = snapshotStore._models.MemberSnapshot.findOneAndUpdate.mock.calls[0][1].$set.snapshot;
+        expect(storedMember).not.toHaveProperty("roles");
+        expect(storedMember.snapshot).not.toHaveProperty("roles");
+    });
+
+    test("reassembles every member role chunk when loading Member Detail data", async () => {
+        function findManyResult(docs) {
+            return {
+                sort: jest.fn().mockReturnThis(),
+                lean: jest.fn().mockResolvedValue(docs)
+            };
+        }
+        jest.spyOn(snapshotStore._models.GuildSnapshot, "find")
+            .mockReturnValue(findManyResult([{ items: [], chunkIndex: 0 }]));
+        jest.spyOn(snapshotStore._models.ConnectionSnapshot, "find")
+            .mockReturnValue(findManyResult([{ items: [], chunkIndex: 0 }]));
+        jest.spyOn(snapshotStore._models.MemberRoleSnapshot, "find")
+            .mockReturnValue(findManyResult([
+                { items: ["1", "2"], chunkIndex: 0 },
+                { items: ["3"], chunkIndex: 1 }
+            ]));
+        jest.spyOn(snapshotStore._models.MemberSnapshot, "findOne").mockReturnValue({
+            lean: jest.fn().mockResolvedValue({
+                snapshot: { guildId: "987654321098765432", nick: "member" },
+                roleSnapshotRef: {
+                    version: "v1",
+                    chunkCount: 2,
+                    storedCount: 3,
+                    complete: true
+                }
+            })
+        });
+
+        const loaded = await snapshotStore.loadOAuthSnapshots({
+            userId: "123456789012345678",
+            guildId: "987654321098765432",
+            refs: {
+                guilds: { version: "v1", chunkCount: 1, storedCount: 0, complete: true },
+                connections: { version: "v1", chunkCount: 1, storedCount: 0, complete: true },
+                member: { version: "v1", guildId: "987654321098765432", complete: true }
+            }
+        });
+
+        expect(loaded.member.roles).toEqual(["1", "2", "3"]);
+        expect(loaded.member.roleCount).toBe(3);
     });
 
     test("Member Detail hydrates guilds, connections, and all roles from snapshot collections", async () => {
@@ -177,6 +248,7 @@ describe("OAuth snapshot chunk persistence", () => {
             memberSnapshot: { roles: ["legacy-log-role"] }
         }));
         jest.spyOn(snapshotStore, "loadOAuthSnapshots").mockResolvedValue({
+            profile: { id: "123456789012345678", futureField: "preserved" },
             guilds: Array.from({ length: 200 }, (_, index) => ({ id: String(index), name: `guild-${index}` })),
             connections: Array.from({ length: 75 }, (_, index) => ({ type: "service", id: String(index) })),
             member: { guildId: "987654321098765432", roles, roleCount: roles.length }
@@ -191,6 +263,7 @@ describe("OAuth snapshot chunk persistence", () => {
         expect(detail.guilds).toHaveLength(200);
         expect(detail.connections).toHaveLength(75);
         expect(detail.targetMember.roles).toHaveLength(125);
+        expect(detail.rawSnapshots.profile.futureField).toBe("preserved");
     });
 
     test("member list pagination returns the next page without overlapping users", async () => {

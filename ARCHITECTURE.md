@@ -173,9 +173,11 @@ The active verification models are:
 | --- | --- |
 | `GuildConfig` | verification config, panel revision, policy, retention settings |
 | `OAuthUser` | account/profile core, encrypted token state, latest verification summary, and complete snapshot references |
+| `OAuthUserProfileSnapshot` | versioned full sanitized Discord profile payload for forward-compatible fields |
 | `OAuthUserGuildSnapshot` | versioned ordered chunks containing every guild returned by Discord |
 | `OAuthUserConnectionSnapshot` | versioned ordered chunks containing every connection returned by Discord |
-| `OAuthMemberSnapshot` | versioned target-guild member snapshot including every returned role |
+| `OAuthMemberSnapshot` | versioned target-guild member core and role-chunk reference |
+| `OAuthMemberRoleSnapshot` | versioned ordered chunks containing every returned target-member role |
 | `VerifyLog` | immutable-per-attempt core result, snapshot references, policy/device/network state, join/role result, and quality metadata |
 | `IpIdentityLink` | per-guild hashed-IP correlation summary and first/last seen state |
 | `IPRevealRequest` | historical collection compatibility and expiry maintenance only; no new external guild-admin requests |

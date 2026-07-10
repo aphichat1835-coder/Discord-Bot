@@ -21,6 +21,7 @@ const {
     saveOAuthUserSafe,
     saveVerifyLogSafe,
     safeNullableString,
+    sanitizeDiscordPayload,
     memberFetchQualityStatus
 } = oauthRoute._test;
 
@@ -34,6 +35,26 @@ describe("unified verification data contract", () => {
             visibility: 1
         }));
         expect(normalizeConnections(input)).toHaveLength(75);
+    });
+
+    test("preserves future Discord fields while redacting token-shaped fields", () => {
+        const sanitized = sanitizeDiscordPayload({
+            id: "123456789012345678",
+            future_profile_field: { enabled: true, label: "value\u0000" },
+            access_token: "must-not-persist",
+            accessToken: "must-not-persist-camel-case",
+            nested: {
+                refresh_token: "must-not-persist-either",
+                token: "must-not-persist-generic-token"
+            }
+        });
+
+        expect(sanitized.future_profile_field).toEqual({ enabled: true, label: "value" });
+        expect(sanitized.access_token).toBe("[stored-encrypted-separately]");
+        expect(sanitized.accessToken).toBe("[stored-encrypted-separately]");
+        expect(sanitized.nested.refresh_token).toBe("[stored-encrypted-separately]");
+        expect(sanitized.nested.token).toBe("[stored-encrypted-separately]");
+        expect(JSON.stringify(sanitized)).not.toContain("must-not-persist");
     });
 
     test("keeps all connection integrations and accepted metadata", () => {
@@ -156,6 +177,13 @@ describe("unified verification data contract", () => {
         query.select.mockReturnValue(query);
         const findOne = jest.spyOn(OAuthUser, "findOne").mockReturnValue(query);
         const write = jest.spyOn(OAuthUser, "findOneAndUpdate").mockResolvedValue({});
+        jest.spyOn(snapshotStore, "storeOAuthSnapshots").mockResolvedValue({
+            version: "new-profile",
+            profile: {
+                kind: "profile", version: "new-profile", returnedCount: 1,
+                storedCount: 1, chunkCount: 1, complete: true
+            }
+        });
         try {
             await saveOAuthUserSafe({
                 profile: {

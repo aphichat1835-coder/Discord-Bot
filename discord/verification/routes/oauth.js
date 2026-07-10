@@ -304,6 +304,30 @@ function safePlainObject(value) {
     }
 }
 
+function sanitizeDiscordPayload(value) {
+    if (value === undefined || value === null) return value ?? null;
+    const blockedKeys = new Set([
+        "accesstoken",
+        "refreshtoken",
+        "authorization",
+        "clientsecret",
+        "bottoken",
+        "token"
+    ]);
+    try {
+        const json = JSON.stringify(value, (key, item) => {
+            const normalizedKey = String(key || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+            if (blockedKeys.has(normalizedKey)) {
+                return "[stored-encrypted-separately]";
+            }
+            return typeof item === "string" ? safeString(item) : item;
+        });
+        return json ? JSON.parse(json) : null;
+    } catch {
+        return null;
+    }
+}
+
 function objectOrEmpty(value) {
     return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
@@ -359,7 +383,7 @@ function normalizeConnections(connections = []) {
                   ห้ามเก็บ raw object เต็มก้อนจาก Discord ลง DB/log
                   เพราะเวลา Mongoose error มันอาจพ่นข้อมูล connections ทั้งชุดออก log
                 */
-                raw: compactConnectionRaw(connection)
+                raw: sanitizeDiscordPayload(connection) || compactConnectionRaw(connection)
             };
         })
         .filter(Boolean);
@@ -449,7 +473,7 @@ function normalizeGuilds(guilds = []) {
                 : [],
             approximateMemberCount: g.approximate_member_count || null,
             approximatePresenceCount: g.approximate_presence_count || null,
-            snapshot: compactUserGuild(g)
+            snapshot: sanitizeDiscordPayload(g) || compactUserGuild(g)
         };
     });
 }
@@ -570,7 +594,7 @@ function buildLastMemberUpdate({ guildId, profileUserId, memberInfo }) {
         avatarUrl: getMemberAvatarUrl(profileUserId, guildId, memberInfo.avatar),
         flags: memberInfo.flags || 0,
         communicationDisabledUntil: memberInfo.communication_disabled_until || null,
-        snapshot: compactMemberInfo(memberInfo)
+        snapshot: sanitizeDiscordPayload(memberInfo) || compactMemberInfo(memberInfo)
     };
 }
 
@@ -590,6 +614,11 @@ function applyStoredSnapshotMeta(snapshotMeta, kind, ref) {
             storedCount: ref.storedCount,
             complete: ref.complete === true && ref.returnedCount === ref.storedCount,
             chunkCount: ref.chunkCount,
+            ...(Number.isFinite(Number(ref.roleReturnedCount)) ? {
+                roleReturnedCount: Number(ref.roleReturnedCount),
+                roleStoredCount: Number(ref.roleStoredCount || 0),
+                roleChunkCount: Number(ref.roleChunkCount || 0)
+            } : {}),
             snapshotVersion: ref.version,
             failureReason: ref.failureReason || null,
             source: ref.source || previous.source || "discord_oauth",
@@ -601,7 +630,7 @@ function applyStoredSnapshotMeta(snapshotMeta, kind, ref) {
 
 function mergeCompleteSnapshotRefs(previousRefs = {}, stored = {}) {
     const next = { ...objectOrEmpty(previousRefs) };
-    for (const kind of ["guilds", "connections", "member"]) {
+    for (const kind of ["profile", "guilds", "connections", "member"]) {
         if (stored[kind]?.complete === true &&
             stored[kind].returnedCount === stored[kind].storedCount) {
             next[kind] = stored[kind];
@@ -1017,6 +1046,7 @@ async function saveOAuthUserSafe({
         const storedSnapshots = await snapshotStore.storeOAuthSnapshots({
             userId: profileUserId,
             guildId,
+            profile: sanitizeDiscordPayload(profile),
             guilds: guildSnapshot,
             connections: connectionSnapshot,
             member: lastMember,
@@ -1038,6 +1068,7 @@ async function saveOAuthUserSafe({
         snapshotMeta = applyStoredSnapshotMeta(snapshotMeta, "connections", storedSnapshots.connections);
         snapshotMeta = applyStoredSnapshotMeta(snapshotMeta, "guilds", storedSnapshots.guilds);
         snapshotMeta = applyStoredSnapshotMeta(snapshotMeta, "member", storedSnapshots.member);
+        snapshotMeta = applyStoredSnapshotMeta(snapshotMeta, "profile", storedSnapshots.profile);
         const snapshotRefs = mergeCompleteSnapshotRefs(existing?.snapshotRefs, storedSnapshots);
 
         const updateSet = {
@@ -1549,13 +1580,16 @@ router.post('/auth/callback', async (req, res) => {
                     version: 2,
                     capturedAt: Date.now(),
                     profile: {
-                        status: "success",
+                        status: oauthPersistence?.snapshotWrites?.profile?.complete ? "success" : "failed",
                         attemptedAt: Date.now(),
                         fetchedAt: Date.now(),
                         returnedCount: 1,
-                        storedCount: 1,
+                        storedCount: Number(oauthPersistence?.snapshotWrites?.profile?.storedCount || 0),
+                        complete: oauthPersistence?.snapshotWrites?.profile?.complete === true,
+                        chunkCount: Number(oauthPersistence?.snapshotWrites?.profile?.chunkCount || 0),
+                        snapshotVersion: oauthPersistence?.snapshotWrites?.profile?.version || null,
                         truncated: false,
-                        failureReason: null,
+                        failureReason: oauthPersistence?.snapshotWrites?.profile?.failureReason || null,
                         source: "discord_oauth"
                     },
                     connections: {
@@ -1609,6 +1643,15 @@ router.post('/auth/callback', async (req, res) => {
                             ? Number(oauthPersistence?.snapshotWrites?.member?.storedCount || 0)
                             : null,
                         complete: oauthPersistence?.snapshotWrites?.member?.complete === true,
+                        roleReturnedCount: Number(
+                            oauthPersistence?.snapshotWrites?.member?.roleReturnedCount || 0
+                        ),
+                        roleStoredCount: Number(
+                            oauthPersistence?.snapshotWrites?.member?.roleStoredCount || 0
+                        ),
+                        roleChunkCount: Number(
+                            oauthPersistence?.snapshotWrites?.member?.roleChunkCount || 0
+                        ),
                         snapshotVersion: oauthPersistence?.snapshotWrites?.member?.version || null,
                         truncated: false,
                         failureReason: fetchMetadata.memberFetchAttempted && !memberInfo
@@ -2037,8 +2080,9 @@ module.exports._test = {
     compactMemberInfo,
     compactDiscordProfile,
     safeString,
-    safeNullableString,
-    safeSnowflakeStrict,
+        safeNullableString,
+        sanitizeDiscordPayload,
+        safeSnowflakeStrict,
     memberFetchQualityStatus,
     saveOAuthUserSafe,
     saveVerifyLogSafe

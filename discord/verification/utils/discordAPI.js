@@ -19,9 +19,14 @@ const { encryptToken, decryptToken } = require("./crypto");
 const { sanitizeLogText } = require("./safeLogger");
 
 const BASE = "https://discord.com/api/v10";
-const DISCORD_API_RESPONSE_MAX_BYTES = Math.max(
-    64 * 1024,
-    Number(process.env.DISCORD_API_RESPONSE_MAX_BYTES || 2 * 1024 * 1024) || 2 * 1024 * 1024
+const MAX_DISCORD_API_RESPONSE_BYTES = 12 * 1024 * 1024;
+const DISCORD_API_RESPONSE_MAX_BYTES = Math.min(
+    MAX_DISCORD_API_RESPONSE_BYTES,
+    Math.max(
+        64 * 1024,
+        Number(process.env.DISCORD_API_RESPONSE_MAX_BYTES || MAX_DISCORD_API_RESPONSE_BYTES) ||
+            MAX_DISCORD_API_RESPONSE_BYTES
+    )
 );
 const DISCORD_API_BODY_MAX_BYTES = Math.max(
     16 * 1024,

@@ -114,6 +114,14 @@ function resolveTargetMember(oauth = {}, log = null) {
     return oauth.lastMember || {};
 }
 
+function buildRawSnapshots(oauth = {}, targetMember = {}, canViewSensitive = false) {
+    if (!canViewSensitive) return null;
+    return {
+        profile: oauth.profileSnapshotRaw || oauth.discord?.profileSnapshot || null,
+        member: targetMember.snapshot || null
+    };
+}
+
 function serializeMemberDetail({ guildId, userId, oauthUser = null, latestLog = null, canViewSensitive = false } = {}) {
     const oauth = oauthUser?.toObject ? oauthUser.toObject() : oauthUser || {};
     const log = latestLog?.toObject ? latestLog.toObject() : latestLog || null;
@@ -138,7 +146,8 @@ function serializeMemberDetail({ guildId, userId, oauthUser = null, latestLog = 
         network: log ? safeIpInfo(log.ipInfo || {}) : {},
         tracking: buildTracking(log, oauth),
         verification: buildVerification(oauth, logSummary),
-        oauthTokens: buildOAuthTokenStatuses(oauth)
+        oauthTokens: buildOAuthTokenStatuses(oauth),
+        rawSnapshots: buildRawSnapshots(oauth, targetMember, canViewSensitive)
     };
 }
 
@@ -152,6 +161,7 @@ module.exports = {
         buildTracking,
         buildVerification,
         buildOAuthTokenStatuses,
-        resolveTargetMember
+        resolveTargetMember,
+        buildRawSnapshots
     }
 };

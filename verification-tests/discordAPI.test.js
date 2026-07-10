@@ -47,6 +47,7 @@ describe('Discord API memory guards', () => {
         expect(diag).toHaveProperty('channelMax');
         expect(diag).toHaveProperty('permissionOverwriteMax');
         expect(diag.responseMaxBytes).toBeGreaterThan(0);
+        expect(diag.responseMaxBytes).toBe(12 * 1024 * 1024);
         expect(diag.bodyMaxBytes).toBeGreaterThan(0);
         expect(diag.roleMax).toBeGreaterThan(0);
         expect(diag.channelMax).toBeGreaterThan(0);

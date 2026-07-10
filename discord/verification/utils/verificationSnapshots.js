@@ -162,7 +162,8 @@ function safeDiscordConnections(snapshot = {}) {
         visibility: c.visibility,
         revoked: c.revoked,
         integrations: Array.isArray(c.integrations) ? c.integrations : [],
-        metadata: c.metadata && typeof c.metadata === "object" ? c.metadata : {}
+        metadata: c.metadata && typeof c.metadata === "object" ? c.metadata : {},
+        raw: c.raw && typeof c.raw === "object" ? c.raw : null
       }))
     : [];
 }
@@ -184,7 +185,8 @@ function safeDiscordGuilds(snapshot = {}) {
       isAdmin: g.isAdmin === true,
       canManageGuild: g.canManageGuild === true,
       canManageRoles: g.canManageRoles === true,
-      canBanMembers: g.canBanMembers === true
+      canBanMembers: g.canBanMembers === true,
+      raw: guildSnapshot
     };
   });
 }

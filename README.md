@@ -79,7 +79,9 @@ tokens or raw IP. Raw OAuth2 tokens and raw IP can only be revealed through
 Owner per-user actions that attempt audit writes and report audit status.
 
 Guilds and connections are stored as ordered versioned chunks, while the target
-member has a versioned snapshot containing every returned role. Chunking and
+member has a versioned core snapshot plus ordered role chunks. The sanitized
+full Discord profile and per-item raw guild/connection payloads preserve future
+provider fields while token-shaped keys remain excluded. Chunking and
 list pagination do not discard data. A snapshot is complete only when
 `returnedCount === storedCount` and its `complete` flag is true; Member Detail
 loads every finalized chunk and retains legacy embedded-snapshot compatibility.

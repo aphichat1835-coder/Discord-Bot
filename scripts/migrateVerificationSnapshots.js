@@ -3,6 +3,7 @@
 
 const mongoose = require("mongoose");
 const OAuthUser = require("../discord/verification/models/OAuthUser");
+const snapshotStore = require("../discord/verification/services/oauthSnapshotStore");
 
 const APPLY = process.argv.includes("--apply");
 const DRY_RUN = process.argv.includes("--dry-run");
@@ -54,13 +55,22 @@ function bannerUrl(discord = {}) {
     return `https://cdn.discordapp.com/banners/${discord.userId}/${discord.bannerHash}.${ext}?size=512`;
 }
 
-function buildPatch(doc, now = Date.now()) {
+function completeRefs(previousRefs = {}, stored = {}) {
+    const refs = { ...(previousRefs || {}) };
+    for (const kind of ["profile", "connections", "guilds", "member"]) {
+        const ref = stored?.[kind];
+        if (ref?.complete === true && ref.returnedCount === ref.storedCount) refs[kind] = ref;
+    }
+    return refs;
+}
+
+function buildPatch(doc, now = Date.now(), storedSnapshots = null) {
     const discord = doc.discord || {};
     const existingMeta = doc.snapshotMeta || {};
     const connectionsCount = Array.isArray(doc.connections) ? doc.connections.length : 0;
     const guildsCount = Array.isArray(doc.guilds) ? doc.guilds.length : 0;
 
-    return {
+    const patch = {
         "discord.displayTag": discord.displayTag || displayTag(discord),
         "discord.avatarUrl": discord.avatarUrl || avatarUrl(discord),
         "discord.bannerUrl": discord.bannerUrl || bannerUrl(discord),
@@ -89,6 +99,31 @@ function buildPatch(doc, now = Date.now()) {
             }
         }
     };
+    if (storedSnapshots) {
+        patch.snapshotRefs = completeRefs(doc.snapshotRefs, storedSnapshots);
+        for (const kind of ["profile", "connections", "guilds", "member"]) {
+            const ref = storedSnapshots[kind];
+            if (!ref) continue;
+            patch.snapshotMeta[kind] = {
+                ...(patch.snapshotMeta[kind] || {}),
+                status: ref.complete ? "success" : "failed",
+                returnedCount: ref.returnedCount,
+                storedCount: ref.storedCount,
+                chunkCount: ref.chunkCount,
+                complete: ref.complete === true && ref.returnedCount === ref.storedCount,
+                ...(Number.isFinite(Number(ref.roleReturnedCount)) ? {
+                    roleReturnedCount: Number(ref.roleReturnedCount),
+                    roleStoredCount: Number(ref.roleStoredCount || 0),
+                    roleChunkCount: Number(ref.roleChunkCount || 0)
+                } : {}),
+                snapshotVersion: ref.version,
+                failureReason: ref.failureReason || null,
+                source: ref.source || "migration",
+                migratedAt: now
+            };
+        }
+    }
+    return patch;
 }
 
 async function migrateCursor({
@@ -96,6 +131,7 @@ async function migrateCursor({
     apply = false,
     batchSize = BATCH_SIZE,
     bulkWrite = (operations, options) => OAuthUser.bulkWrite(operations, options),
+    snapshotWriter = null,
     now = Date.now
 }) {
     const summary = {
@@ -103,7 +139,9 @@ async function migrateCursor({
         scanned: 0,
         eligible: 0,
         updated: 0,
-        batches: 0
+        batches: 0,
+        snapshotCategoriesComplete: 0,
+        snapshotCategoriesFailed: 0
     };
     let operations = [];
 
@@ -119,7 +157,30 @@ async function migrateCursor({
 
     for await (const doc of cursor) {
         summary.scanned++;
-        const patch = buildPatch(doc, now());
+        const timestamp = now();
+        let storedSnapshots = null;
+        if (apply && snapshotWriter && doc.discord?.userId) {
+            storedSnapshots = await snapshotWriter({
+                userId: doc.discord.userId,
+                guildId: doc.lastMember?.guildId || doc.lastVerify?.guildId || "legacy",
+                profile: {
+                    ...doc.discord,
+                    ...(doc.discord.profileSnapshot || {}),
+                    id: doc.discord.profileSnapshot?.id || doc.discord.userId
+                },
+                connections: Array.isArray(doc.connections) ? doc.connections : [],
+                guilds: Array.isArray(doc.guilds) ? doc.guilds : [],
+                member: doc.lastMember || null,
+                fetchMetadata: {},
+                now: timestamp
+            });
+            for (const kind of ["profile", "connections", "guilds", "member"]) {
+                if (!storedSnapshots[kind]) continue;
+                if (storedSnapshots[kind].complete) summary.snapshotCategoriesComplete++;
+                else summary.snapshotCategoriesFailed++;
+            }
+        }
+        const patch = buildPatch(doc, timestamp, storedSnapshots);
         summary.eligible++;
         operations.push({
             updateOne: {
@@ -146,13 +207,33 @@ async function run() {
             { "snapshotMeta.version": { $ne: 2 } },
             { "discord.displayTag": { $exists: false } },
             { "discord.avatarUrl": { $exists: false } },
-            { "discord.badgeFlags": { $exists: false } }
+            { "discord.badgeFlags": { $exists: false } },
+            { snapshotRefs: { $exists: false } },
+            { "snapshotRefs.profile": { $exists: false } },
+            { "snapshotRefs.connections": { $exists: false } },
+            { "snapshotRefs.guilds": { $exists: false } },
+            {
+                $and: [
+                    { lastMember: { $ne: null } },
+                    { "snapshotRefs.member": { $exists: false } }
+                ]
+            },
+            {
+                $and: [
+                    { lastMember: { $ne: null } },
+                    { "snapshotRefs.member.roleRef": { $exists: false } }
+                ]
+            }
         ]
     })
-        .select("discord connections guilds snapshotMeta")
+        .select("discord connections guilds lastMember lastVerify snapshotMeta snapshotRefs")
         .lean()
         .cursor();
-    const summary = await migrateCursor({ cursor, apply: APPLY });
+    const summary = await migrateCursor({
+        cursor,
+        apply: APPLY,
+        snapshotWriter: snapshotStore.storeOAuthSnapshots
+    });
 
     console.log("[VERIFICATION-MIGRATION]", JSON.stringify(summary));
 }
@@ -174,5 +255,6 @@ module.exports = {
     badgeFlags,
     displayTag,
     avatarUrl,
-    bannerUrl
+    bannerUrl,
+    completeRefs
 };

@@ -71,7 +71,9 @@ describe("verification additive migration", () => {
             scanned: 1,
             eligible: 1,
             updated: 0,
-            batches: 1
+            batches: 1,
+            snapshotCategoriesComplete: 0,
+            snapshotCategoriesFailed: 0
         });
         expect(bulkWrite).not.toHaveBeenCalled();
     });
@@ -115,5 +117,51 @@ describe("verification additive migration", () => {
         expect(readable.discord.displayTag).toBe("legacy#1234");
         expect(readable.snapshotMeta.version).toBe(2);
         expect(JSON.stringify(writes)).not.toMatch(/encryptedAccessToken|encryptedRefreshToken|rawIp/i);
+    });
+
+    test("apply mode backfills complete chunk references without removing embedded data", async () => {
+        const writes = [];
+        const snapshotWriter = jest.fn().mockResolvedValue({
+            version: "migration-v1",
+            profile: {
+                version: "migration-v1", returnedCount: 1, storedCount: 1,
+                chunkCount: 1, complete: true, source: "migration"
+            },
+            connections: {
+                version: "migration-v1", returnedCount: 2, storedCount: 2,
+                chunkCount: 1, complete: true, source: "migration"
+            },
+            guilds: {
+                version: "migration-v1", returnedCount: 3, storedCount: 3,
+                chunkCount: 1, complete: true, source: "migration"
+            }
+        });
+        const summary = await migrateCursor({
+            cursor: [{
+                _id: "legacy-1",
+                discord: { userId: "12345678901234567", username: "legacy" },
+                connections: [{ id: "1" }, { id: "2" }],
+                guilds: [{ id: "1" }, { id: "2" }, { id: "3" }]
+            }],
+            apply: true,
+            batchSize: 1,
+            snapshotWriter,
+            bulkWrite: async operations => {
+                writes.push(...operations);
+                return { modifiedCount: operations.length };
+            },
+            now: () => 300
+        });
+
+        expect(snapshotWriter).toHaveBeenCalledWith(expect.objectContaining({
+            connections: expect.any(Array),
+            guilds: expect.any(Array)
+        }));
+        expect(summary.snapshotCategoriesComplete).toBe(3);
+        expect(summary.snapshotCategoriesFailed).toBe(0);
+        const patch = writes[0].updateOne.update.$set;
+        expect(patch.snapshotRefs.connections).toMatchObject({ complete: true, storedCount: 2 });
+        expect(patch.snapshotMeta.guilds).toMatchObject({ complete: true, returnedCount: 3, storedCount: 3 });
+        expect(writes[0].updateOne.update).not.toHaveProperty("$unset");
     });
 });

@@ -736,6 +736,7 @@
       : [];
     const integrationCount = Array.isArray(connection.integrations) ? connection.integrations.length : 0;
     item.textContent = `• ${connection.type || "unknown"} — ${connection.name || connection.username || connection.id || "—"} | platform account id: ${connection.id || "—"} · verified: ${boolText(connection.verified)} · visibility: ${connection.visibility ?? "—"} · revoked: ${boolText(connection.revoked)} · integrations: ${integrationCount} · metadata keys: ${metadataKeys.join(", ") || "—"}`;
+    if (connection.raw) item.append(rawSnapshotDetailsElement("ข้อมูล Connection ทั้งหมด", connection.raw));
     return item;
   }
 
@@ -743,7 +744,35 @@
     const item = document.createElement("div");
     const permissionFlags = Array.isArray(guild.permissionFlags) ? guild.permissionFlags : [];
     item.textContent = `• ${guild.name || guild.id || "unknown"} (${guild.id || "—"}) | icon: ${guild.iconUrl || guild.icon || "—"} · owner: ${boolText(guild.owner || guild.isOwner)} · admin: ${boolText(guild.isAdmin)} · manage guild: ${boolText(guild.canManageGuild)} · manage roles: ${boolText(guild.canManageRoles)} · ban members: ${boolText(guild.canBanMembers)} · permission bitfield: ${guild.permissions || "0"} · permission labels: ${permissionFlags.join(", ") || "—"}`;
+    if (guild.raw) item.append(rawSnapshotDetailsElement("ข้อมูล Guild ทั้งหมด", guild.raw));
     return item;
+  }
+
+  function rawSnapshotDetailsElement(label, value) {
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    const pre = document.createElement("pre");
+    summary.textContent = label;
+    pre.className = "mono raw-snapshot";
+    try {
+      pre.textContent = JSON.stringify(value, null, 2);
+    } catch (_err) {
+      pre.textContent = "ไม่สามารถแสดง snapshot นี้ได้";
+    }
+    details.append(summary, pre);
+    return details;
+  }
+
+  function buildRawSnapshotCards(detail = {}) {
+    const raw = detail.rawSnapshots || {};
+    return [
+      ["Discord Profile Raw Snapshot", raw.profile],
+      ["Target Member Raw Snapshot", raw.member]
+    ].filter(([, value]) => value).map(([title, value]) => {
+      const card = detailCardElement(title, [], rawSnapshotDetailsElement("เปิดดูข้อมูลทั้งหมด", value));
+      card.classList.add("mt-14");
+      return card;
+    });
   }
 
   function detailListCardElement(title, items, itemBuilder) {
@@ -878,7 +907,7 @@
       buildNetworkDetailCard(detail),
       buildVerificationCardElement(detail)
     );
-    root.append(grid, ...buildMemberListCards(detail));
+    root.append(grid, ...buildMemberListCards(detail), ...buildRawSnapshotCards(detail));
     return root;
   }
 
@@ -942,7 +971,7 @@
     const connections = Array.isArray(log.connections) ? log.connections : [];
     const guilds = Array.isArray(log.guilds) ? log.guilds : [];
     const connectionNames = connections.map((item) => firstTruthy(item.type, item.name, "unknown")).join(", ") || "—";
-    const guildNames = guilds.slice(0, 12).map((item) => firstTruthy(item.name, item.id, "unknown")).join(", ") || "—";
+    const guildNames = guilds.map((item) => firstTruthy(item.name, item.id, "unknown")).join(", ") || "—";
     return [
       ["Connections", `${firstDefined(log.connectionsCount, connections.length)} (${connectionNames})`],
       ["Guilds", `${firstDefined(log.guildsCount, guilds.length)} (${guildNames})`]
@@ -1462,7 +1491,7 @@
       if (!roles.length) {
         rolesBox.innerHTML = '<div class="empty">โหลดรายการยศไม่ได้ หรือยังไม่มีข้อมูล</div>';
       } else {
-        rolesBox.innerHTML = roles.slice(0, 80).map((role) => `
+        rolesBox.innerHTML = roles.map((role) => `
           <button class="btn btn-soft btn-sm" type="button" data-pick-role="${h(role.id)}">
             ${h(role.name)} <span class="mono muted-2">${h(role.id)}</span>
           </button>
@@ -1476,7 +1505,7 @@
       if (!channels.length) {
         channelsBox.innerHTML = '<div class="empty">โหลดรายการห้องไม่ได้ หรือยังไม่มีข้อมูล</div>';
       } else {
-        channelsBox.innerHTML = channels.slice(0, 80).map((channel) => `
+        channelsBox.innerHTML = channels.map((channel) => `
           <button class="btn btn-soft btn-sm" type="button" data-pick-channel="${h(channel.id)}">
             # ${h(channel.name)} <span class="mono muted-2">${h(channel.id)}</span>
           </button>
