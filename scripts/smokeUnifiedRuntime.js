@@ -101,7 +101,7 @@ async function assertSafeResolvedHost(hostname, lookup = dns.lookup) {
     if (!Array.isArray(records) || records.length === 0) {
         throw new Error("smoke hostname DNS resolution returned no addresses");
     }
-    if (records.some(record => isBlockedSmokeHost(record?.address))) {
+    if (records.some(record => !isIP(String(record?.address || "")) || isBlockedSmokeHost(record.address))) {
         throw new Error("smoke hostname resolves to a reserved address");
     }
     return records;
