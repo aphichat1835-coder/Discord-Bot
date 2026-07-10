@@ -85,6 +85,11 @@ provider fields while token-shaped keys remain excluded. Chunking and
 list pagination do not discard data. A snapshot is complete only when
 `returnedCount === storedCount` and its `complete` flag is true; Member Detail
 loads every finalized chunk and retains legacy embedded-snapshot compatibility.
+Successful snapshots referenced by `OAuthUser` or any historical `VerifyLog`
+are retained permanently. Hourly maintenance removes only incomplete or fully
+unreferenced snapshot garbage after a configurable grace period, in bounded
+batches; this permanent-history mode intentionally allows database usage to
+grow with verification history.
 
 `premiumType` remains for schema compatibility only and must not be presented as
 a reliable Nitro conclusion.

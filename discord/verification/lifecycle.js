@@ -6,6 +6,10 @@ const IpIdentityLink = require("./models/IpIdentityLink");
 const VerifyLog = require("./models/VerifyLog");
 const { safeError } = require("./utils/safeLogger");
 const {
+    cleanupSnapshotGarbage,
+    getSnapshotCleanupConfig
+} = require("./services/snapshotCleanup");
+const {
     getOAuthRefreshConfig,
     refreshPersistedOAuthTokens
 } = require("./utils/oauthTokenLifecycle");
@@ -70,8 +74,23 @@ function createSummary(dryRun, now) {
         retentionCursorWrapped: false,
         verifyLogs: 0,
         ipIdentityLinks: 0,
+        snapshotCleanup: null,
         errors: []
     };
+}
+
+async function runSnapshotCleanup(dryRun, summary) {
+    try {
+        summary.snapshotCleanup = await cleanupSnapshotGarbage({ dryRun });
+    } catch (err) {
+        summary.snapshotCleanup = {
+            mode: "permanent_history",
+            dryRun,
+            failed: true,
+            error: safeError(err)
+        };
+        summary.errors.push({ subsystem: "snapshot_cleanup", error: safeError(err) });
+    }
 }
 
 async function loadRetentionConfigs(dryRun, summary) {
@@ -192,6 +211,7 @@ async function runVerificationMaintenance(options = {}) {
 
     try {
         summary.expiredRevealRequests = await expirePendingRevealRequests(now, dryRun);
+        await runSnapshotCleanup(dryRun, summary);
         const configs = await loadRetentionConfigs(dryRun, summary);
         summary.guildsScanned = configs.length;
         summary.truncated = configs.length >= RETENTION_CONFIG_SCAN_MAX;
@@ -271,6 +291,10 @@ function getVerificationDiagnostics() {
         lastError,
         lastSummary,
         retentionCursor: retentionCursor ? String(retentionCursor) : null,
+        snapshotCleanup: {
+            config: getSnapshotCleanupConfig(),
+            lastSummary: lastSummary?.snapshotCleanup || null
+        },
         oauthTokenRefresh: {
             config: getOAuthRefreshConfig(),
             lastRunAt: lastOAuthRefreshAt,

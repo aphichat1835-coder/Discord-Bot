@@ -182,6 +182,11 @@ The active verification models are:
 | `IpIdentityLink` | per-guild hashed-IP correlation summary and first/last seen state |
 | `IPRevealRequest` | historical collection compatibility and expiry maintenance only; no new external guild-admin requests |
 
+Snapshot maintenance uses permanent-history semantics. Every version referenced
+by the current `OAuthUser.snapshotRefs` or by any `VerifyLog` (including a
+soft-deleted historical log) is preserved. Only incomplete and unreferenced
+versions older than the cleanup grace period are eligible for bounded deletion.
+
 Model names, collection behavior, and current/historical token/IP encryption
 read compatibility are preserved.
 

@@ -4,7 +4,7 @@ const mixed = mongoose.Schema.Types.Mixed;
 
 const schema = new mongoose.Schema({
     guildId: { type: String, required: true, index: true },
-    userId:  { type: String, required: true, index: true },
+    userId:  { type: String, required: true },
     roleId:  String,
 
     requestId: String,
@@ -112,6 +112,7 @@ const schema = new mongoose.Schema({
 }, { minimize: false });
 
 schema.index({ guildId: 1, userId: 1 });
+schema.index({ userId: 1, snapshotVersion: 1 });
 schema.index({ guildId: 1, verifiedAt: -1 });
 schema.index({ guildId: 1, result: 1, verifiedAt: -1 });
 schema.index({ 'ipInfo.ipHash': 1 });

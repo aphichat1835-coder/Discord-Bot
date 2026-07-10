@@ -74,6 +74,9 @@
   sanitized forward-compatible profile/provider snapshots, split target-member
   roles into ordered chunks, and extended the additive migration to backfill
   legacy embedded snapshots without deleting their source fields.
+- Added bounded permanent-history snapshot garbage maintenance: referenced
+  versions are kept forever, while stale incomplete and fully unreferenced
+  versions are removed only after a grace period and fail-closed reference scan.
 
 ## [Unreleased] - Dashboard Public OAuth Runtime Fixes 2026-07-03
 

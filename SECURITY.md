@@ -155,6 +155,10 @@ provider snapshots redact token-shaped keys before persistence.
 Chunks remain unreadable as a complete snapshot until every write is finalized;
 `complete` requires `returnedCount === storedCount`. VerifyLog stores the core
 audit event and snapshot references rather than duplicating oversized arrays.
+Referenced snapshot history is permanent. Maintenance fails closed if reference
+lookups fail and deletes only incomplete or unreferenced versions older than the
+configured grace period; it never prunes a version referenced by OAuthUser or
+VerifyLog, including soft-deleted logs.
 
 Do not infer values that Discord did not return:
 
