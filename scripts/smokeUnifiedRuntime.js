@@ -38,11 +38,11 @@ function trimTrailingSlashes(value) {
 function isBlockedSmokeHost(hostname) {
     const host = String(hostname || "").toLowerCase();
     if (["localhost", "0.0.0.0", "127.0.0.1", "::1", "[::1]"].includes(host)) return true;
-    if (/^127\./.test(host)) return true;
-    if (/^10\./.test(host)) return true;
-    if (/^192\.168\./.test(host)) return true;
-    if (/^169\.254\./.test(host)) return true;
-    const match = host.match(/^172\.(\d+)\./);
+    if (host.startsWith("127.")) return true;
+    if (host.startsWith("10.")) return true;
+    if (host.startsWith("192.168.")) return true;
+    if (host.startsWith("169.254.")) return true;
+    const match = /^172\.(\d+)\./.exec(host);
     return !!match && Number(match[1]) >= 16 && Number(match[1]) <= 31;
 }
 

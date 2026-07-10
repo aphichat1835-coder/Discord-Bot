@@ -41,7 +41,7 @@ function createResponse() {
     };
 }
 
-test("verify-owner compatibility APIs call owner services directly", async (t) => {
+test("verify-owner compatibility APIs call owner services directly", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     t.assert.ok(true);
     const routes = createRouteHarness();
     const originals = {
@@ -94,7 +94,7 @@ test("verify-owner compatibility APIs call owner services directly", async (t) =
     }
 });
 
-test("verify-owner compatibility APIs reject invalid guild IDs before service access", async (t) => {
+test("verify-owner compatibility APIs reject invalid guild IDs before service access", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     t.assert.ok(true);
     const routes = createRouteHarness();
     const response = createResponse();

@@ -8,7 +8,7 @@ const {
     resolveJoinCampaignTarget
 } = require("../index/joinCampaignRoutes");
 
-test("join campaign candidate summary uses only tokens with guilds.join", (t) => {
+test("join campaign candidate summary uses only tokens with guilds.join", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     const docs = [
         {
             discord: { userId: "100" },
@@ -50,7 +50,7 @@ test("join campaign candidate summary uses only tokens with guilds.join", (t) =>
     assert.equal(summary.byTokenField.adminOAuth, 1);
 });
 
-test("join campaign refreshes expiring token before adding member", async (t) => {
+test("join campaign refreshes expiring token before adding member", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     const updates = [];
     const joined = [];
     const docs = [
@@ -131,7 +131,7 @@ test("join campaign refreshes expiring token before adding member", async (t) =>
     assert.equal(updates[0].update.$set.oauth.encryptedAccessToken, "enc:new-access");
 });
 
-test("Thai join campaign log summarizes counts without raw tokens", (t) => {
+test("Thai join campaign log summarizes counts without raw tokens", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     const payload = joinCampaign.formatThaiJoinCampaignLog({
         campaignId: "join_test",
         targetGuildId: "123456789012345678",
@@ -159,7 +159,7 @@ test("Thai join campaign log summarizes counts without raw tokens", (t) => {
     assert.equal(payload.content.includes("old-refresh"), false);
 });
 
-test("join campaign route helpers list and resolve allowed target guilds", (t) => {
+test("join campaign route helpers list and resolve allowed target guilds", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     const oldAllowed = process.env.JOIN_CAMPAIGN_ALLOWED_GUILDS;
     process.env.JOIN_CAMPAIGN_ALLOWED_GUILDS = "111111111111111111";
 
@@ -183,7 +183,7 @@ test("join campaign route helpers list and resolve allowed target guilds", (t) =
     }
 });
 
-test("startJoinCampaign rejects disabled config before creating an active job", (t) => {
+test("startJoinCampaign rejects disabled config before creating an active job", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     joinCampaign._test.runningState.active = null;
     joinCampaign._test.runningState.last = null;
     joinCampaign._test.runningState.stopRequested = false;
@@ -206,7 +206,7 @@ test("startJoinCampaign rejects disabled config before creating an active job", 
     assert.equal(joinCampaign.getJoinCampaignStatus().active, null);
 });
 
-test("join campaign allows every bot guild when allowlist is empty", async (t) => {
+test("join campaign allows every bot guild when allowlist is empty", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     t.assert.equal(joinCampaign.isGuildAllowed("123456789012345678", {
         enabled: true,
         allowedGuilds: new Set()
@@ -230,7 +230,7 @@ test("join campaign allows every bot guild when allowlist is empty", async (t) =
     assert.equal(summary.scannedRecords, 0);
 });
 
-test("join campaign has no Sync Roles UI or route surface", (t) => {
+test("join campaign has no Sync Roles UI or route surface", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     const runtimeSurface = [
         fs.readFileSync("discord/index/joinCampaignPage.js", "utf8"),
         fs.readFileSync("discord/index/joinCampaignRoutes.js", "utf8"),

@@ -50,7 +50,7 @@ function withExitStub(fn) {
     }
 }
 
-test("validateRequiredEnv trims required values and rejects whitespace-only secrets", (t) => {
+test("validateRequiredEnv trims required values and rejects whitespace-only secrets", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     const env = {
         MONGO_URI: " mongodb://localhost/test ",
         TOKEN_MANAGER: " token ",
@@ -82,7 +82,7 @@ test("validateRequiredEnv trims required values and rejects whitespace-only secr
     });
 });
 
-test("validateRequiredEnv rejects weak production secrets", (t) => {
+test("validateRequiredEnv rejects weak production secrets", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     withExitStub(() => {
         t.assert.throws(
             () => validateRequiredEnv({
@@ -102,7 +102,7 @@ test("validateRequiredEnv rejects weak production secrets", (t) => {
     });
 });
 
-test("validateRequiredEnv requires OAuth client id and https public URL in production", (t) => {
+test("validateRequiredEnv requires OAuth client id and https public URL in production", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     const strong = {
         MONGO_URI: "mongodb://localhost/test",
         TOKEN_MANAGER: "token",
@@ -141,7 +141,7 @@ test("validateRequiredEnv requires OAuth client id and https public URL in produ
     assert.equal(ok.PUBLIC_BASE_URL_CONFIGURED, true);
 });
 
-test("createHttpApp only trusts proxies when explicitly configured", (t) => {
+test("createHttpApp only trusts proxies when explicitly configured", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     const first = createFakeExpress();
     createHttpApp(first.express);
     t.assert.equal(first.app.settings.some(([key]) => key === "trust proxy"), false);
@@ -151,7 +151,7 @@ test("createHttpApp only trusts proxies when explicitly configured", (t) => {
     assert.deepEqual(second.app.settings, [["trust proxy", 1]]);
 });
 
-test("feature flags default on and can be disabled by env", (t) => {
+test("feature flags default on and can be disabled by env", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     const oldAudit = process.env.FEATURE_AUDIT;
     delete process.env.FEATURE_AUDIT;
 
@@ -166,7 +166,7 @@ test("feature flags default on and can be disabled by env", (t) => {
     }
 });
 
-test("safe loggers redact IPv6 and MongoDB connection strings", (t) => {
+test("safe loggers redact IPv6 and MongoDB connection strings", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     const input = "connect mongodb+srv://user:pass@example.test/db from 2001:db8::1 and 127.0.0.1";
 
     for (const logger of [service1Logger, service2Logger]) {
@@ -179,7 +179,7 @@ test("safe loggers redact IPv6 and MongoDB connection strings", (t) => {
     }
 });
 
-test("Shadow web portal mounts on the shared Express app", (t) => {
+test("Shadow web portal mounts on the shared Express app", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     const app = { marker: "shared-app" };
     const client = { marker: "shared-client" };
     const setupTelemetryRouter = t.mock.fn((receivedApp, receivedClient, options) => {
@@ -194,7 +194,7 @@ test("Shadow web portal mounts on the shared Express app", (t) => {
     assert.equal(setupTelemetryRouter.mock.callCount(), 1);
 });
 
-test("missing Shadow web hook leaves the shared runtime available", (t) => {
+test("missing Shadow web hook leaves the shared runtime available", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     t.assert.deepEqual(
         registerShadowPortal({ setupTelemetryRouter: null, app: {}, client: {} }),
         { registered: false, reason: "hook_unavailable" }
