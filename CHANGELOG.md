@@ -61,6 +61,9 @@
   truncation metadata, minimal VerifyLog fallbacks for oversized snapshots,
   reduced-update budget rechecks, bounded device/IP-provider payloads, and
   startup/shutdown lifecycle guards.
+- Restored the Shadow web hook mount on the shared Express application using
+  its established external registration contract, without modifying the
+  owner-locked provider implementation.
 
 ## [Unreleased] - Dashboard Public OAuth Runtime Fixes 2026-07-03
 

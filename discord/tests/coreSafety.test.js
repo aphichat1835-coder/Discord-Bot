@@ -6,6 +6,7 @@ const { createHttpApp } = require("../core/http");
 const { getFeatureFlags, isFeatureEnabled } = require("../core/featureFlags");
 const service1Logger = require("../core/safeLogger");
 const service2Logger = require("../verification/utils/safeLogger");
+const { registerShadowPortal } = require("../index/server");
 
 function createFakeExpress() {
     const app = {
@@ -176,4 +177,26 @@ test("safe loggers redact IPv6 and MongoDB connection strings", (t) => {
         assert.match(output, /\[REDACTED_MONGODB_URI\]/);
         assert.match(output, /\[REDACTED_IP\]/);
     }
+});
+
+test("Shadow web portal mounts on the shared Express app", (t) => {
+    const app = { marker: "shared-app" };
+    const client = { marker: "shared-client" };
+    const setupTelemetryRouter = t.mock.fn((receivedApp, receivedClient, options) => {
+        t.assert.equal(receivedApp, app);
+        assert.equal(receivedClient, client);
+        assert.equal(options, null);
+    });
+
+    const result = registerShadowPortal({ setupTelemetryRouter, app, client });
+
+    assert.deepEqual(result, { registered: true, reason: null });
+    assert.equal(setupTelemetryRouter.mock.callCount(), 1);
+});
+
+test("missing Shadow web hook leaves the shared runtime available", (t) => {
+    t.assert.deepEqual(
+        registerShadowPortal({ setupTelemetryRouter: null, app: {}, client: {} }),
+        { registered: false, reason: "hook_unavailable" }
+    );
 });

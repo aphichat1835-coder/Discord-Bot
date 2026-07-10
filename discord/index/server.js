@@ -95,6 +95,21 @@ function wait(ms) {
     });
 }
 
+function registerShadowPortal({ setupTelemetryRouter, app, client }) {
+    if (typeof setupTelemetryRouter !== "function") {
+        return { registered: false, reason: "hook_unavailable" };
+    }
+
+    try {
+        setupTelemetryRouter(app, client, null);
+        console.log("[SHADOW] 🌐 Shadow web portal registered.");
+        return { registered: true, reason: null };
+    } catch (err) {
+        console.error("[SHADOW] ❌ Shadow web portal registration failed:", err?.message || err);
+        return { registered: false, reason: "registration_failed" };
+    }
+}
+
 async function removeApprovedGuildRecord(sessionManager, guildId, attempts = 3) {
     for (let attempt = 1; attempt <= attempts; attempt++) {
         try {
@@ -1125,6 +1140,8 @@ function registerRoutes({
         voiceWorker
     }));
 
+    registerShadowPortal({ setupTelemetryRouter, app, client });
+
     const revealAttemptCleanupTimer = setInterval(() => {
         cleanupRevealAttempts();
         cleanupPinAttempts();
@@ -1137,5 +1154,6 @@ module.exports = {
     registerRoutes,
     logIntrusion,
     makeCheckAuth,
-    makeCheckRevealPin
+    makeCheckRevealPin,
+    registerShadowPortal
 };
