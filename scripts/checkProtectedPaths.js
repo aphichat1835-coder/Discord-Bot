@@ -6,16 +6,10 @@ const { execFileSync } = require("node:child_process");
 
 const PROTECTED_PATH_PATTERN = /^discord\/systemProvider(?:\.js|\/)/;
 const ZERO_SHA_PATTERN = /^0+$/;
-const GIT_BIN_CANDIDATES = Object.freeze([
-    "/usr/bin/git",
-    "/usr/local/bin/git",
-    "/bin/git"
-]);
-
 function resolveGitBin() {
-    for (const candidate of GIT_BIN_CANDIDATES) {
-        if (fs.existsSync(candidate)) return candidate;
-    }
+    if (fs.existsSync("/usr/bin/git")) return "/usr/bin/git";
+    if (fs.existsSync("/usr/local/bin/git")) return "/usr/local/bin/git";
+    if (fs.existsSync("/bin/git")) return "/bin/git";
     return "";
 }
 

@@ -56,7 +56,7 @@ running.
 7. Run the single-port smoke helper:
 
    ```bash
-   npm run smoke:unified -- https://DOMAIN
+   SMOKE_ALLOWED_HOSTS=DOMAIN npm run smoke:unified -- https://DOMAIN
    ```
 
 8. Test Owner Dashboard, `/verification`, a target guild page, and a complete

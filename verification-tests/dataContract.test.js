@@ -144,17 +144,22 @@ describe("unified verification data contract", () => {
     test("failed optional fetches update quality only and do not write empty snapshots", async () => {
         const previousStore = process.env.STORE_OAUTH_TOKENS;
         process.env.STORE_OAUTH_TOKENS = "false";
-        const findOne = jest.spyOn(OAuthUser, "findOne").mockReturnValue({
-            select: jest.fn().mockReturnValue({
-                lean: jest.fn().mockResolvedValue({
+        const query = {
+            where: jest.fn(),
+            equals: jest.fn(),
+            select: jest.fn(),
+            lean: jest.fn().mockResolvedValue({
                     snapshotMeta: {
                         connections: { fetchedAt: 10, storedCount: 4 },
                         guilds: { fetchedAt: 20, storedCount: 8 },
                         member: { fetchedAt: 30, storedCount: 1 }
                     }
-                })
             })
-        });
+        };
+        query.where.mockReturnValue(query);
+        query.equals.mockReturnValue(query);
+        query.select.mockReturnValue(query);
+        const findOne = jest.spyOn(OAuthUser, "findOne").mockReturnValue(query);
         const write = jest.spyOn(OAuthUser, "findOneAndUpdate").mockResolvedValue({});
         try {
             await saveOAuthUserSafe({

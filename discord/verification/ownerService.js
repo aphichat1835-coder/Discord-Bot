@@ -139,12 +139,13 @@ async function getGuildStats(guildId) {
     };
 }
 
-async function getGuildMembers(guildId, { page = 0, limit = 20 } = {}) {
+async function getGuildMembers(guildId, { page = 0, limit = 20, q = "" } = {}) {
     const safePage = Math.max(0, Number.parseInt(page, 10) || 0);
     const safeLimit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 20));
     const result = await verifiedMemberService.listVerifiedMembers(guildId, {
         page: safePage,
         limit: safeLimit,
+        q: String(q || "").trim().slice(0, 120),
         includeLegacy: true,
         canViewSensitive: false
     });

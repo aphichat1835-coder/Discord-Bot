@@ -243,11 +243,13 @@ task approval required by `AGENTS.md`.
 4. Set all public URL aliases to the same HTTPS origin.
 5. Set trusted-proxy values to the actual host.
 6. Deploy one artifact and one command (`npm start`).
-7. Verify `/ping`, degraded/ready `/health`, Owner PIN, CSRF, and callback rate
+7. Set `SMOKE_ALLOWED_HOSTS` to the exact deployed hostname before running the
+   unified smoke helper; do not use wildcards.
+8. Verify `/ping`, degraded/ready `/health`, Owner PIN, CSRF, and callback rate
    limiting.
-8. Verify normal APIs contain no raw token/IP.
-9. Run one audited IP reveal and confirm an audit record without server logging.
-10. Stop the retired service only after smoke tests pass.
+9. Verify normal APIs contain no raw token/IP.
+10. Run one audited IP reveal and confirm an audit record without server logging.
+11. Stop the retired service only after smoke tests pass.
 
 ## Incident response
 

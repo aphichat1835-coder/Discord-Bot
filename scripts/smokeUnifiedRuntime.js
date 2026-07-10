@@ -9,6 +9,7 @@ const DEFAULT_TIMEOUT_MS = Math.max(
 function usage() {
     return [
         "Usage: node scripts/smokeUnifiedRuntime.js <https://domain>",
+        "Requires: SMOKE_ALLOWED_HOSTS=domain.example[,other.example]",
         "",
         "Checks the unified single-port runtime after deploy without requiring secrets.",
         "Expected:",
@@ -17,6 +18,15 @@ function usage() {
         "- /auth/callback serves the public callback page",
         "- / and /verification are reachable and may redirect to Owner PIN"
     ].join("\n");
+}
+
+function allowedSmokeHosts() {
+    return new Set(
+        String(process.env.SMOKE_ALLOWED_HOSTS || "")
+            .split(",")
+            .map(value => value.trim().toLowerCase())
+            .filter(Boolean)
+    );
 }
 
 function trimTrailingSlashes(value) {
@@ -47,6 +57,10 @@ function normalizeBaseUrl(input) {
     }
     if (isBlockedSmokeHost(url.hostname)) {
         throw new Error("base URL hostname is not allowed for remote smoke checks");
+    }
+    const hostname = url.hostname.toLowerCase();
+    if (!allowedSmokeHosts().has(hostname)) {
+        throw new Error("smoke hostname is not allowlisted in SMOKE_ALLOWED_HOSTS");
     }
     url.pathname = trimTrailingSlashes(url.pathname);
     url.search = "";
@@ -142,6 +156,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+    allowedSmokeHosts,
     normalizeBaseUrl,
     trimTrailingSlashes,
     isBlockedSmokeHost,

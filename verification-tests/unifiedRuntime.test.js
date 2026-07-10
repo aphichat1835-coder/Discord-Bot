@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const {
     ownerGuilds,
 } = require("../discord/verification/runtime");
+const { normalizeBaseUrl } = require("../scripts/smokeUnifiedRuntime");
 
 function readPackageLock() {
     return fs.readFileSync("package-lock.json", "utf8");
@@ -94,6 +95,18 @@ describe("single-process verification runtime contract", () => {
         expect(smoke).toContain("isOwnerReachable");
     });
 
+    test("single-port smoke helper requires an exact allowlisted hostname", () => {
+        const previous = process.env.SMOKE_ALLOWED_HOSTS;
+        process.env.SMOKE_ALLOWED_HOSTS = "bot.example.test,second.example.test";
+        try {
+            expect(normalizeBaseUrl("https://bot.example.test/path")).toBe("https://bot.example.test/path");
+            expect(() => normalizeBaseUrl("https://not-bot.example.test")).toThrow(/not allowlisted/);
+        } finally {
+            if (previous === undefined) delete process.env.SMOKE_ALLOWED_HOSTS;
+            else process.env.SMOKE_ALLOWED_HOSTS = previous;
+        }
+    });
+
     test("docs describe production OAuth runtime requirements consistently", () => {
         const envExample = readEnvExample();
         const security = readSecurityDoc();
@@ -135,6 +148,7 @@ describe("single-process verification runtime contract", () => {
         expect(runtime).toContain('app.get("/verification", ownerAuth.requirePin');
         expect(runtime).toContain('app.get("/guilds", ownerAuth.requirePin');
         expect(runtime).toContain('app.get("/guild/:guildId", ownerAuth.requirePin');
+        expect(runtime).toContain('res.redirect(302, "/verification")');
         expect(guild).toContain('router.get("/verification/:guildId"');
         expect(guild).toContain('router.get("/api/guild/:guildId/member/:userId/detail", requireAdmin, requireGuildAdmin');
         expect(guild).toContain('router.post("/api/guild/:guildId/member/:userId/reveal-token", requireAdmin, requireGuildAdmin, requireCsrf');
@@ -148,6 +162,10 @@ describe("single-process verification runtime contract", () => {
         expect(guild).toContain("requireCsrf");
         expect(runtime).not.toContain("/oauth/admin");
         expect(runtime).not.toContain("/auth/admin-callback");
+        expect(verifyOwner).toContain("verificationOwnerService.getOverview");
+        expect(verifyOwner).toContain("verificationOwnerService.getGuildStats");
+        expect(verifyOwner).toContain("verificationOwnerService.getGuildMembers");
+        expect(verifyOwner).not.toContain("safeQuerySuffix");
     });
 
     test("Owner management sees every guild cached by the bot", () => {

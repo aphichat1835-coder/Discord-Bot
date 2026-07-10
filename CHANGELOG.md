@@ -45,6 +45,10 @@
 - Removed API/user-controlled `innerHTML` sinks from verification log rows and
   Owner detail/reveal modals by rendering DOM nodes with `textContent`, and
   simplified verification config merging to avoid nested conditional expressions.
+- Replaced tainted compatibility redirects with direct Owner service responses,
+  made the legacy guild alias redirect fixed, clarified Mongo equality lookup,
+  removed dynamic test/tool paths, and restricted the deploy smoke CLI to exact
+  hostnames in `SMOKE_ALLOWED_HOSTS`.
 
 ## [Unreleased] - Dashboard Public OAuth Runtime Fixes 2026-07-03
 

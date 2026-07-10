@@ -113,8 +113,11 @@ as the host liveness check. Use `/health` for deeper readiness diagnostics.
 After deploy, run the single-port smoke helper from a trusted machine:
 
 ```bash
-npm run smoke:unified -- https://YOUR-DOMAIN
+SMOKE_ALLOWED_HOSTS=YOUR-DOMAIN npm run smoke:unified -- https://YOUR-DOMAIN
 ```
+
+`SMOKE_ALLOWED_HOSTS` accepts comma-separated exact hostnames. It is required
+so the CLI smoke checker cannot be pointed at an arbitrary network target.
 
 ## Migration
 

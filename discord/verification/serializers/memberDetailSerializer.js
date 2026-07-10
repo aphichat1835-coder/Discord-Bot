@@ -82,10 +82,11 @@ function buildSource(oauth = {}, log = null) {
 }
 
 function buildTracking(log = null, oauth = {}) {
-    return {
-        ...safeTrackingSnapshot(log?.trackingSnapshot || {}),
-        ...(oauth.lastIpTracking || {})
-    };
+    return Object.assign(
+        {},
+        safeTrackingSnapshot(log?.trackingSnapshot ?? {}),
+        oauth.lastIpTracking
+    );
 }
 
 function buildVerification(oauth = {}, logSummary = null) {

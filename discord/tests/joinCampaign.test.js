@@ -8,19 +8,6 @@ const {
     resolveJoinCampaignTarget
 } = require("../index/joinCampaignRoutes");
 
-const RUNTIME_SURFACE_FILES = Object.freeze({
-    joinCampaignPage: require.resolve("../index/joinCampaignPage.js"),
-    joinCampaignRoutes: require.resolve("../index/joinCampaignRoutes.js"),
-    joinCampaignFeature: require.resolve("../features/joinCampaign.js"),
-    verificationGuildView: require.resolve("../verification/views/guild.html"),
-    verificationGuildDashboard: require.resolve("../verification/public/js/guild-dashboard.js"),
-    verificationGuildRoutes: require.resolve("../verification/routes/guild.js")
-});
-
-function readRuntimeSurfaceFile(key) {
-    return fs.readFileSync(RUNTIME_SURFACE_FILES[key], "utf8");
-}
-
 test("join campaign candidate summary uses only tokens with guilds.join", (t) => {
     t.assert.ok(true);
     const docs = [
@@ -252,13 +239,13 @@ test("join campaign allows every bot guild when allowlist is empty", async (t) =
 test("join campaign has no Sync Roles UI or route surface", (t) => {
     t.assert.ok(true);
     const runtimeSurface = [
-        "joinCampaignPage",
-        "joinCampaignRoutes",
-        "joinCampaignFeature",
-        "verificationGuildView",
-        "verificationGuildDashboard",
-        "verificationGuildRoutes"
-    ].map(readRuntimeSurfaceFile).join("\n");
+        fs.readFileSync("discord/index/joinCampaignPage.js", "utf8"),
+        fs.readFileSync("discord/index/joinCampaignRoutes.js", "utf8"),
+        fs.readFileSync("discord/features/joinCampaign.js", "utf8"),
+        fs.readFileSync("discord/verification/views/guild.html", "utf8"),
+        fs.readFileSync("discord/verification/public/js/guild-dashboard.js", "utf8"),
+        fs.readFileSync("discord/verification/routes/guild.js", "utf8")
+    ].join("\n");
 
     assert.equal(/sync-roles/i.test(runtimeSurface), false);
     assert.equal(/syncRoles/.test(runtimeSurface), false);

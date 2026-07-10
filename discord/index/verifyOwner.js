@@ -15,52 +15,70 @@ function sendError(res, err) {
     });
 }
 
-function safeQuerySuffix(req, allowedKeys = []) {
-    const params = new URLSearchParams();
-    for (const key of allowedKeys) {
-        const value = req.query?.[key];
-        if (typeof value === "string" && value.length <= 120) {
-            params.set(key, value);
-        }
-    }
-    const query = params.toString();
-    return query ? `?${query}` : "";
-}
-
 function safeGuildId(value) {
     const text = String(value || "").trim();
     return /^\d{17,22}$/.test(text) ? text : "";
+}
+
+function sendInvalidGuildId(res) {
+    return res.status(400).json({
+        success: false,
+        code: "invalid_guild_id",
+        error: "guildId ไม่ถูกต้อง"
+    });
+}
+
+function safeOverviewEnabled(value) {
+    return String(value || "").toLowerCase() === "all" ? "all" : "enabled";
+}
+
+function safeListOptions(query = {}) {
+    return {
+        page: Math.max(0, Number.parseInt(query.page, 10) || 0),
+        limit: Math.min(100, Math.max(1, Number.parseInt(query.limit, 10) || 20)),
+        q: typeof query.q === "string" ? query.q.trim().slice(0, 120) : ""
+    };
 }
 
 function registerVerifyOwnerRoutes({ app, express }) {
     app.get("/verify", (_req, res) => res.redirect(302, "/verification"));
     app.get("/verify-owner", (_req, res) => res.redirect(302, "/verification"));
 
-    app.get("/api/verify-owner/overview", auth.requirePin, (req, res) => {
-        res.redirect(302, `/api/guilds${safeQuerySuffix(req, ["enabled"])}`);
+    app.get("/api/verify-owner/overview", auth.requirePin, async (req, res) => {
+        try {
+            const enabled = safeOverviewEnabled(req.query?.enabled);
+            return res.json(await verificationOwnerService.getOverview({ enabled }));
+        } catch (err) {
+            return sendError(res, err);
+        }
     });
 
     app.get(
         "/api/verify-owner/guild/:guildId/stats",
         auth.requirePin,
-        (req, res) => {
+        async (req, res) => {
             const guildId = safeGuildId(req.params.guildId);
-            const target = guildId
-                ? `/api/guild/${guildId}/stats${safeQuerySuffix(req, ["page", "limit", "result", "risk", "q"])}`
-                : "/api/guilds";
-            res.redirect(302, target);
+            if (!guildId) return sendInvalidGuildId(res);
+            try {
+                return res.json(await verificationOwnerService.getGuildStats(guildId));
+            } catch (err) {
+                return sendError(res, err);
+            }
         }
     );
 
     app.get(
         "/api/verify-owner/guild/:guildId/members",
         auth.requirePin,
-        (req, res) => {
+        async (req, res) => {
             const guildId = safeGuildId(req.params.guildId);
-            const target = guildId
-                ? `/api/guild/${guildId}/members${safeQuerySuffix(req, ["page", "limit", "result", "risk", "q"])}`
-                : "/api/guilds";
-            res.redirect(302, target);
+            if (!guildId) return sendInvalidGuildId(res);
+            try {
+                const options = safeListOptions(req.query);
+                return res.json(await verificationOwnerService.getGuildMembers(guildId, options));
+            } catch (err) {
+                return sendError(res, err);
+            }
         }
     );
 

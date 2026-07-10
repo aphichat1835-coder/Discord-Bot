@@ -5,8 +5,6 @@ const { serializeMemberDetail } = require("../discord/verification/serializers/m
 const verifiedMemberService = require("../discord/verification/services/verifiedMemberService");
 const snapshotBudget = require("../discord/verification/services/snapshotBudget");
 
-const GUILD_DASHBOARD_SOURCE = require.resolve("../discord/verification/public/js/guild-dashboard.js");
-
 describe("member detail serialization and leak guards", () => {
     test("normal member detail exposes rich metadata but not raw or encrypted secrets", () => {
         const detail = serializeMemberDetail({
@@ -127,13 +125,13 @@ describe("member detail serialization and leak guards", () => {
     });
 
     test("dashboard labels premiumType as compatibility data instead of a Nitro verdict", () => {
-        const source = fs.readFileSync(GUILD_DASHBOARD_SOURCE, "utf8");
+        const source = fs.readFileSync("discord/verification/public/js/guild-dashboard.js", "utf8");
 
         expect(source).toContain("Premium type (compatibility raw value, ไม่ใช่ Nitro verdict)");
     });
 
     test("dashboard member detail renders connection, guild permission, and token metadata", () => {
-        const source = fs.readFileSync(GUILD_DASHBOARD_SOURCE, "utf8");
+        const source = fs.readFileSync("discord/verification/public/js/guild-dashboard.js", "utf8");
 
         expect(source).toContain("platform account id");
         expect(source).toContain("metadata keys");
@@ -145,7 +143,7 @@ describe("member detail serialization and leak guards", () => {
     });
 
     test("dashboard log table and detail modal avoid HTML injection sinks", () => {
-        const source = fs.readFileSync(GUILD_DASHBOARD_SOURCE, "utf8");
+        const source = fs.readFileSync("discord/verification/public/js/guild-dashboard.js", "utf8");
         const loadLogsSource = source.slice(
             source.indexOf("async function loadLogs"),
             source.indexOf("async function loadRisk")

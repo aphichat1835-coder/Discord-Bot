@@ -964,7 +964,9 @@ async function saveOAuthUserSafe({
         const profileUserId = safeSnowflakeStrict(profile.id, "discord_user_id");
         const accountCreatedAt = getAccountCreatedAt(profileUserId);
         const accountAgeDays = getAccountAgeDays(profileUserId);
-        const existing = await OAuthUser.findOne({ 'discord.userId': profileUserId })
+        const existing = await OAuthUser.findOne()
+            .where("discord.userId")
+            .equals(profileUserId)
             .select('snapshotMeta')
             .lean();
         const previousMeta = existing?.snapshotMeta || {};
