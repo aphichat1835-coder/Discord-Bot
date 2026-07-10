@@ -70,12 +70,19 @@ MongoDB model/collection names and encryption format.
 - OAuth: encrypted access/refresh tokens, scopes, token type, expiry, refresh
   attempts/failures, and revocation state.
 - Data quality: snapshot version, source, attempt/fetch timestamps, status,
-  returned/stored counts, truncation flag, and redacted failure reason.
+  returned/stored counts, chunk count, completion state, truncation flag, and
+  redacted failure reason.
 
 Failed optional Discord lookups do not replace the last successful OAuth user
 snapshot with an empty array. Normal list/export APIs never return raw OAuth
 tokens or raw IP. Raw OAuth2 tokens and raw IP can only be revealed through
 Owner per-user actions that attempt audit writes and report audit status.
+
+Guilds and connections are stored as ordered versioned chunks, while the target
+member has a versioned snapshot containing every returned role. Chunking and
+list pagination do not discard data. A snapshot is complete only when
+`returnedCount === storedCount` and its `complete` flag is true; Member Detail
+loads every finalized chunk and retains legacy embedded-snapshot compatibility.
 
 `premiumType` remains for schema compatibility only and must not be presented as
 a reliable Nitro conclusion.

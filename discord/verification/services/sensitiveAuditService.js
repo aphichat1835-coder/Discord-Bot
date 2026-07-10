@@ -43,6 +43,9 @@ function sweepBuckets(now = nowMs()) {
     return buckets.size;
 }
 
+const sweepTimer = setInterval(() => sweepBuckets(), Math.min(WINDOW_MS, 60_000));
+sweepTimer.unref?.();
+
 function checkRevealLimit(input = {}, now = nowMs()) {
     if (buckets.size >= MAX_BUCKET_KEYS) sweepBuckets(now);
     const key = keyFor(input);
@@ -94,6 +97,7 @@ module.exports = {
         buckets,
         keyFor,
         sweepBuckets,
-        MAX_BUCKET_KEYS
+        MAX_BUCKET_KEYS,
+        sweepTimer
     }
 };

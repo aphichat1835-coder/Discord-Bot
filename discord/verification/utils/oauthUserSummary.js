@@ -43,6 +43,8 @@ async function loadOAuthUserSummaries(userIds = []) {
                 'discord.accountAgeDays': 1,
                 'discord.accountCreatedAt': 1,
                 'discord.premiumType': 1,
+                snapshotRefs: 1,
+                snapshotMeta: 1,
                 lastVerify: 1,
                 lastMember: {
                     guildId: '$lastMember.guildId',
@@ -55,8 +57,12 @@ async function loadOAuthUserSummaries(userIds = []) {
                     flags: '$lastMember.flags',
                     communicationDisabledUntil: '$lastMember.communicationDisabledUntil'
                 },
-                connectionsCount: { $size: { $ifNull: ['$connections', []] } },
-                guildsCount: { $size: { $ifNull: ['$guilds', []] } }
+                connectionsCount: {
+                    $ifNull: ['$snapshotMeta.connections.storedCount', { $size: { $ifNull: ['$connections', []] } }]
+                },
+                guildsCount: {
+                    $ifNull: ['$snapshotMeta.guilds.storedCount', { $size: { $ifNull: ['$guilds', []] } }]
+                }
             }
         }
     ]);

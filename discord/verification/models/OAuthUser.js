@@ -152,6 +152,7 @@ const schema = new mongoose.Schema({
     },
 
     snapshotMeta: mixed,
+    snapshotRefs: mixed,
 
     deletedAt: Number,
     deletedBy: String,

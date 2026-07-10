@@ -44,8 +44,10 @@ describe('OAuth user summary loader', () => {
         expect(pipeline[0].$match['discord.userId'].$in).toHaveLength(OAUTH_USER_SUMMARY_MAX);
         expect(pipeline[1].$project.connections).toBeUndefined();
         expect(pipeline[1].$project.guilds).toBeUndefined();
-        expect(pipeline[1].$project.connectionsCount).toHaveProperty('$size');
-        expect(pipeline[1].$project.guildsCount).toHaveProperty('$size');
+        expect(pipeline[1].$project.connectionsCount.$ifNull[0]).toBe('$snapshotMeta.connections.storedCount');
+        expect(pipeline[1].$project.guildsCount.$ifNull[0]).toBe('$snapshotMeta.guilds.storedCount');
+        expect(pipeline[1].$project.connectionsCount.$ifNull[1]).toHaveProperty('$size');
+        expect(pipeline[1].$project.guildsCount.$ifNull[1]).toHaveProperty('$size');
         expect(pipeline[1].$project['discord.displayTag']).toBe(1);
         expect(pipeline[1].$project['discord.avatarUrl']).toBe(1);
         expect(pipeline[1].$project['discord.bannerHash']).toBe(1);

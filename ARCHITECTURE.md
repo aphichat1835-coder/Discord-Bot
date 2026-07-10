@@ -155,8 +155,9 @@ On callback:
 7. Join the target guild with `guilds.join` when needed.
 8. Assign the configured role.
 9. Re-fetch the target member with the bot token after role assignment.
-10. Persist account snapshot, verification log, IP/device correlation summary,
-    join result, role result, and data-quality metadata.
+10. Persist the account core, encrypted token state, versioned guild/connection/
+    target-member chunks, verification log references, IP/device correlation
+    summary, join result, role result, and data-quality metadata.
 
 The code never claims target-member detail for every user guild. Full member
 detail applies only to the verification target guild.
@@ -171,8 +172,11 @@ The active verification models are:
 | Model | Purpose |
 | --- | --- |
 | `GuildConfig` | verification config, panel revision, policy, retention settings |
-| `OAuthUser` | last successful account/profile/connections/guild/member snapshots and encrypted token state |
-| `VerifyLog` | immutable-per-attempt verification result, policy/member/device/network snapshot, join/role result, quality metadata |
+| `OAuthUser` | account/profile core, encrypted token state, latest verification summary, and complete snapshot references |
+| `OAuthUserGuildSnapshot` | versioned ordered chunks containing every guild returned by Discord |
+| `OAuthUserConnectionSnapshot` | versioned ordered chunks containing every connection returned by Discord |
+| `OAuthMemberSnapshot` | versioned target-guild member snapshot including every returned role |
+| `VerifyLog` | immutable-per-attempt core result, snapshot references, policy/device/network state, join/role result, and quality metadata |
 | `IpIdentityLink` | per-guild hashed-IP correlation summary and first/last seen state |
 | `IPRevealRequest` | historical collection compatibility and expiry maintenance only; no new external guild-admin requests |
 
@@ -195,8 +199,13 @@ read compatibility are preserved.
 - guild ID/name/icon, owner flag, permission bitfield and decoded permission flags
 - owner/admin/manage-guild/manage-roles/ban-members booleans
 - all returned connections, integrations, and safe metadata
-- no arbitrary connection, guild, target-member-role, or browser-language cap
-- Discord response and request-body byte limits remain the protection boundary
+- no arbitrary connection, guild, or target-member-role truncation
+- browser-controlled language lists are defensively bounded to eight entries
+- large Discord arrays are split into ordered versioned chunks; pagination and
+  chunking are storage boundaries, not truncation
+- a category is complete only when `returnedCount === storedCount`, every chunk
+  finalized successfully, and `complete` is true
+- each document remains below the 12 MB application budget
 
 ### Browser/device/network
 
@@ -225,14 +234,15 @@ grants. No route issues a new admin grant.
 
 If connections, guilds, or member lookup fails:
 
-- the previous successful `OAuthUser` array/member snapshot is not replaced;
+- the previous complete `OAuthUser.snapshotRefs` entry is not replaced;
 - latest attempt status and a redacted failure code are updated;
 - a `VerifyLog` records what happened during the current attempt;
 - unavailable values are represented as null/unknown rather than invented.
 
 Data-quality metadata contains version, source, attempt/fetch timestamp,
-success/failed/not-attempted state, returned/stored counts, truncation flag, and
-failure reason.
+success/failed/not-attempted state, returned/stored counts, chunk count,
+completion state, truncation flag, and failure reason. Member Detail resolves
+all finalized chunks and falls back to legacy embedded arrays for older data.
 
 ## 7. Sensitive data access
 

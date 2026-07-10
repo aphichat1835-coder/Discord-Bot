@@ -123,10 +123,11 @@ describe("member detail serialization and leak guards", () => {
             guilds: [{ id: "456", name: "private" }]
         });
 
-        expect(member.connections).toEqual([]);
-        expect(member.guilds).toEqual([]);
+        expect(member.connections).toBeUndefined();
+        expect(member.guilds).toBeUndefined();
         expect(member.connectionsCount).toBe(2);
         expect(member.guildsCount).toBe(3);
+        expect(member.detailsAvailable).toBe(true);
         expect(member.sensitiveRedacted).toBe(true);
     });
 
@@ -156,12 +157,23 @@ describe("member detail serialization and leak guards", () => {
 
     test("snapshot budget caps an unsafe oversized configured limit", () => {
         const warning = jest.spyOn(process, "emitWarning").mockImplementation(() => {});
-        expect(snapshotBudget.resolveDefaultMaxBytes(snapshotBudget.FALLBACK_MAX_BYTES * 10))
-            .toBe(snapshotBudget.FALLBACK_MAX_BYTES);
+        expect(snapshotBudget.resolveDefaultMaxBytes(snapshotBudget.MAX_MAX_BYTES * 10))
+            .toBe(snapshotBudget.MAX_MAX_BYTES);
         expect(warning).toHaveBeenCalledWith(
             expect.stringContaining("exceeds the safe maximum"),
             expect.objectContaining({ code: "VERIFICATION_SNAPSHOT_MAX_BYTES_CAPPED" })
         );
+    });
+
+    test("snapshot budget preserves configured values inside the safe range", () => {
+        const configured = 2 * 1024 * 1024;
+        expect(snapshotBudget.resolveDefaultMaxBytes(configured)).toBe(configured);
+    });
+
+    test("snapshot budget defaults invalid or missing values to 12 MB", () => {
+        expect(snapshotBudget.resolveDefaultMaxBytes(undefined)).toBe(snapshotBudget.MAX_MAX_BYTES);
+        expect(snapshotBudget.resolveDefaultMaxBytes("not-a-number")).toBe(snapshotBudget.MAX_MAX_BYTES);
+        expect(snapshotBudget.resolveDefaultMaxBytes(0)).toBe(snapshotBudget.MAX_MAX_BYTES);
     });
 
     test("dashboard labels premiumType as compatibility data instead of a Nitro verdict", () => {

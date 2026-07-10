@@ -66,6 +66,10 @@
   owner-locked provider implementation.
 - Clamped verification snapshot budgets at both safe bounds and restored the
   20-entry cap for attacker-controlled `x-forwarded-for` chains.
+- Replaced oversized OAuth array fallbacks with additive versioned chunk
+  collections for guilds and connections plus a target-member snapshot. Member
+  Detail now hydrates every finalized chunk, while VerifyLog stores core audit
+  fields and snapshot references without discarding returned Discord data.
 
 ## [Unreleased] - Dashboard Public OAuth Runtime Fixes 2026-07-03
 

@@ -1,11 +1,11 @@
 "use strict";
 
 const MIN_MAX_BYTES = 128 * 1024;
-const FALLBACK_MAX_BYTES = 12 * 1024 * 1024;
+const MAX_MAX_BYTES = 12 * 1024 * 1024;
 
 function resolveDefaultMaxBytes(raw = process.env.VERIFICATION_SNAPSHOT_MAX_BYTES) {
     const parsed = Number(raw);
-    if (!Number.isFinite(parsed) || parsed <= 0) return FALLBACK_MAX_BYTES;
+    if (!Number.isFinite(parsed) || parsed <= 0) return MAX_MAX_BYTES;
     if (parsed < MIN_MAX_BYTES) {
         process.emitWarning(
             `VERIFICATION_SNAPSHOT_MAX_BYTES=${parsed} is below the safe minimum; using ${MIN_MAX_BYTES}`,
@@ -13,12 +13,12 @@ function resolveDefaultMaxBytes(raw = process.env.VERIFICATION_SNAPSHOT_MAX_BYTE
         );
         return MIN_MAX_BYTES;
     }
-    if (parsed > FALLBACK_MAX_BYTES) {
+    if (parsed > MAX_MAX_BYTES) {
         process.emitWarning(
-            `VERIFICATION_SNAPSHOT_MAX_BYTES=${parsed} exceeds the safe maximum; using ${FALLBACK_MAX_BYTES}`,
+            `VERIFICATION_SNAPSHOT_MAX_BYTES=${parsed} exceeds the safe maximum; using ${MAX_MAX_BYTES}`,
             { code: "VERIFICATION_SNAPSHOT_MAX_BYTES_CAPPED" }
         );
-        return FALLBACK_MAX_BYTES;
+        return MAX_MAX_BYTES;
     }
     return parsed;
 }
@@ -65,7 +65,7 @@ function failureMeta(err, source = "snapshot_budget") {
 module.exports = {
     DEFAULT_MAX_BYTES,
     MIN_MAX_BYTES,
-    FALLBACK_MAX_BYTES,
+    MAX_MAX_BYTES,
     resolveDefaultMaxBytes,
     jsonBytes,
     assertSnapshotBudget,

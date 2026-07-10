@@ -35,6 +35,8 @@ const schema = new mongoose.Schema({
     },
 
     dataQuality: mixed,
+    snapshotRef: mixed,
+    snapshotVersion: String,
     sensitiveAccessLog: [mixed],
 
     ipInfo: {

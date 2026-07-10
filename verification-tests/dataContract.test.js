@@ -4,10 +4,12 @@ const fs = require("node:fs");
 const oauthRoute = require("../discord/verification/routes/oauth");
 const OAuthUser = require("../discord/verification/models/OAuthUser");
 const VerifyLog = require("../discord/verification/models/VerifyLog");
+const snapshotStore = require("../discord/verification/services/oauthSnapshotStore");
 const snapshots = require("../discord/verification/utils/verificationSnapshots");
 const {
     extractDevice,
-    compactLookupRaw
+    compactLookupRaw,
+    _test: ipUtilsTest
 } = require("../discord/verification/utils/ipUtils");
 
 const {
@@ -129,18 +131,6 @@ describe("unified verification data contract", () => {
         expect(VerifyLog.schema.path("sensitiveAccessLog")).toBeDefined();
     });
 
-    test("failed optional fetches preserve prior snapshots", () => {
-        const source = fs.readFileSync(
-            "discord/verification/routes/oauth.js",
-            "utf8"
-        );
-        expect(source).toContain("if (!fetchMetadata.connectionsFetchFailed)");
-        expect(source).toContain("if (!fetchMetadata.guildsFetchFailed)");
-        expect(source).toContain("function snapshotMetaForList");
-        expect(source).toContain("failed ? (previous.fetchedAt || null) : nowMs");
-        expect(source).toContain("failed ? (previous.storedCount ?? null) : storedList.length");
-    });
-
     test("failed optional fetches update quality only and do not write empty snapshots", async () => {
         const previousStore = process.env.STORE_OAUTH_TOKENS;
         process.env.STORE_OAUTH_TOKENS = "false";
@@ -149,6 +139,11 @@ describe("unified verification data contract", () => {
             equals: jest.fn(),
             select: jest.fn(),
             lean: jest.fn().mockResolvedValue({
+                    snapshotRefs: {
+                        connections: { version: "old-connections", complete: true },
+                        guilds: { version: "old-guilds", complete: true },
+                        member: { version: "old-member", complete: true }
+                    },
                     snapshotMeta: {
                         connections: { fetchedAt: 10, storedCount: 4 },
                         guilds: { fetchedAt: 20, storedCount: 8 },
@@ -194,6 +189,11 @@ describe("unified verification data contract", () => {
             expect(Object.hasOwn(set, "connections")).toBe(false);
             expect(Object.hasOwn(set, "guilds")).toBe(false);
             expect(Object.hasOwn(set, "lastMember")).toBe(false);
+            expect(set.snapshotRefs).toMatchObject({
+                connections: { version: "old-connections", complete: true },
+                guilds: { version: "old-guilds", complete: true },
+                member: { version: "old-member", complete: true }
+            });
             expect(set.snapshotMeta.connections).toMatchObject({
                 status: "failed",
                 fetchedAt: 10,
@@ -219,13 +219,71 @@ describe("unified verification data contract", () => {
         }
     });
 
-    test("VerifyLog write path applies snapshot budget before create", async () => {
+    test("completed chunk references survive an OAuthUser core write failure", async () => {
+        const previousStore = process.env.STORE_OAUTH_TOKENS;
+        process.env.STORE_OAUTH_TOKENS = "false";
+        const query = {
+            where: jest.fn().mockReturnThis(),
+            equals: jest.fn().mockReturnThis(),
+            select: jest.fn().mockReturnThis(),
+            lean: jest.fn().mockResolvedValue({ snapshotMeta: {}, snapshotRefs: {} })
+        };
+        jest.spyOn(OAuthUser, "findOne").mockReturnValue(query);
+        jest.spyOn(OAuthUser, "findOneAndUpdate").mockRejectedValue(new Error("core write failed"));
+        jest.spyOn(snapshotStore, "storeOAuthSnapshots").mockResolvedValue({
+            version: "v-complete",
+            guilds: {
+                kind: "guilds", version: "v-complete", returnedCount: 1,
+                storedCount: 1, chunkCount: 1, complete: true
+            },
+            connections: {
+                kind: "connections", version: "v-complete", returnedCount: 1,
+                storedCount: 1, chunkCount: 1, complete: true
+            }
+        });
+        const errorLog = jest.spyOn(console, "error").mockImplementation(() => {});
+
+        try {
+            const result = await saveOAuthUserSafe({
+                profile: { id: "12345678901234567", username: "test", discriminator: "0" },
+                tokenData: {},
+                connections: [{ type: "github", id: "1" }],
+                guilds: [{ id: "76543210987654321", name: "Guild", permissions: "8" }],
+                memberInfo: null,
+                guildId: "76543210987654321",
+                roleId: "76543210987654322",
+                result: "success",
+                riskScore: 0,
+                riskFlags: [],
+                trackingSnapshot: null,
+                fetchMetadata: {}
+            });
+
+            expect(result.saved).toBe(false);
+            expect(result.snapshotVersion).toBe("v-complete");
+            expect(result.snapshotRefs.guilds.complete).toBe(true);
+            expect(result.snapshotRefs.connections.complete).toBe(true);
+            expect(errorLog).toHaveBeenCalled();
+        } finally {
+            jest.restoreAllMocks();
+            if (previousStore === undefined) delete process.env.STORE_OAUTH_TOKENS;
+            else process.env.STORE_OAUTH_TOKENS = previousStore;
+        }
+    });
+
+    test("VerifyLog stores core audit fields and chunk references instead of large arrays", async () => {
         const create = jest.spyOn(VerifyLog, "create").mockResolvedValue({});
         try {
             await saveVerifyLogSafe({
                 guildId: "guild",
                 userId: "user",
                 result: "success",
+                snapshotVersion: "version-1",
+                snapshotRef: {
+                    version: "version-1",
+                    connections: { version: "version-1", storedCount: 1, complete: true },
+                    guilds: { version: "version-1", storedCount: 1, complete: true }
+                },
                 discordSnapshot: {
                     userId: "user",
                     username: "test",
@@ -236,12 +294,12 @@ describe("unified verification data contract", () => {
             });
             expect(create).toHaveBeenCalledTimes(1);
             const saved = create.mock.calls[0][0];
-            expect(saved.discordSnapshot.connections).toEqual([]);
-            expect(saved.discordSnapshot.guilds).toEqual([]);
-            expect(saved.dataQuality.budget).toMatchObject({
-                status: "failed",
-                truncated: true
-            });
+            expect(saved.discordSnapshot.connections).toBeUndefined();
+            expect(saved.discordSnapshot.guilds).toBeUndefined();
+            expect(saved.discordSnapshot.connectionsCount).toBe(1);
+            expect(saved.discordSnapshot.guildsCount).toBe(1);
+            expect(saved.snapshotVersion).toBe("version-1");
+            expect(saved.snapshotRef.connections.complete).toBe(true);
         } finally {
             jest.restoreAllMocks();
         }
@@ -316,20 +374,6 @@ describe("unified verification data contract", () => {
         }
     });
 
-    test("records category timestamps, counts, and redacted failure codes", () => {
-        const source = fs.readFileSync(
-            "discord/verification/routes/oauth.js",
-            "utf8"
-        );
-        expect(source).toContain("attemptedAt:");
-        expect(source).toContain("fetchedAt:");
-        expect(source).toContain("returnedCount:");
-        expect(source).toContain("storedCount:");
-        expect(source).toContain("failureReason:");
-        expect(source).toContain("discord_http_");
-        expect(source).toContain("ip_lookup_");
-    });
-
     test("retains provider payload fields while redacting duplicate plaintext IP", () => {
         const raw = compactLookupRaw({
             provider: "provider.example",
@@ -356,14 +400,33 @@ describe("unified verification data contract", () => {
         expect(JSON.stringify(raw)).not.toContain("203.0.113.25");
     });
 
-    test("source/header IP values are never persisted as plaintext", () => {
-        const source = fs.readFileSync(
-            "discord/verification/utils/ipUtils.js",
-            "utf8"
-        );
-        expect(source).toContain("storedHeaderIpMetadata");
-        expect(source).toContain("encryptIP(trustedIp.ip)");
-        expect(source).toContain("hmacValue(trustedIp.ip, 'ip')");
-        expect(source).not.toContain("headerIps: headerMeta.headerIps");
+    test("source/header IP metadata stores hashes instead of plaintext", () => {
+        const previousEncryptionKey = process.env.ENCRYPTION_KEY;
+        const previousApiSecret = process.env.API_SECRET;
+        process.env.ENCRYPTION_KEY = "header-hash-test-key-at-least-32-bytes";
+        process.env.API_SECRET = "header-hash-test-api-secret";
+        try {
+            const stored = ipUtilsTest.storedHeaderIpMetadata({
+                cfConnectingIp: "203.0.113.25",
+                trueClientIp: "198.51.100.8",
+                xRealIp: "192.0.2.4",
+                xClientIp: null,
+                xForwardedForFirst: "203.0.113.90",
+                xForwardedForChainLength: 2
+            });
+
+            expect(stored.cfConnectingIpHash).toEqual(expect.any(String));
+            expect(stored.trueClientIpHash).toEqual(expect.any(String));
+            expect(stored.xRealIpHash).toEqual(expect.any(String));
+            expect(stored.xForwardedForFirstHash).toEqual(expect.any(String));
+            expect(stored.xForwardedForChainLength).toBe(2);
+            expect(JSON.stringify(stored)).not.toContain("203.0.113.25");
+            expect(JSON.stringify(stored)).not.toContain("198.51.100.8");
+        } finally {
+            if (previousEncryptionKey === undefined) delete process.env.ENCRYPTION_KEY;
+            else process.env.ENCRYPTION_KEY = previousEncryptionKey;
+            if (previousApiSecret === undefined) delete process.env.API_SECRET;
+            else process.env.API_SECRET = previousApiSecret;
+        }
     });
 });

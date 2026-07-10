@@ -1009,6 +1009,7 @@ module.exports = {
     compactLookupRaw,
     _test: {
         splitHeaderIps,
-        X_FORWARDED_FOR_MAX_ENTRIES
+        X_FORWARDED_FOR_MAX_ENTRIES,
+        storedHeaderIpMetadata
     }
 };

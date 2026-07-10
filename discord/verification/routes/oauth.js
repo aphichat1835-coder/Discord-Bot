@@ -12,6 +12,7 @@ const {
 const { normalizeGuildPermissions } = require('../utils/guildPermissions');
 const { shouldStoreOAuthTokens } = require('../utils/oauthTokenLifecycle');
 const snapshotBudget = require('../services/snapshotBudget');
+const snapshotStore = require('../services/oauthSnapshotStore');
 
 const OAuthUser = require('../models/OAuthUser');
 const GuildConfig = require('../models/GuildConfig');
@@ -574,26 +575,39 @@ function buildLastMemberUpdate({ guildId, profileUserId, memberInfo }) {
 }
 
 function applySnapshotBudgetGuard(updateSet) {
-    try {
-        snapshotBudget.assertSnapshotBudget(updateSet, { label: "oauth_user_update" });
-        return;
-    } catch (budgetErr) {
-        const snapshotMeta = objectOrEmpty(updateSet.snapshotMeta);
-        updateSet.snapshotMeta = {
-            ...snapshotMeta,
-            budget: snapshotBudget.failureMeta(budgetErr, "discord_oauth")
-        };
-        delete updateSet.connections;
-        delete updateSet.guilds;
-        delete updateSet.lastMember;
-        if (updateSet.discord?.profileSnapshot) {
-            updateSet.discord = {
-                ...updateSet.discord,
-                profileSnapshot: null
-            };
+    return snapshotBudget.assertSnapshotBudget(updateSet, { label: "oauth_user_update" });
+}
+
+function applyStoredSnapshotMeta(snapshotMeta, kind, ref) {
+    if (!ref) return snapshotMeta;
+    const previous = objectOrEmpty(snapshotMeta[kind]);
+    return {
+        ...snapshotMeta,
+        [kind]: {
+            ...previous,
+            status: ref.complete ? "success" : "failed",
+            returnedCount: ref.returnedCount,
+            storedCount: ref.storedCount,
+            complete: ref.complete === true && ref.returnedCount === ref.storedCount,
+            chunkCount: ref.chunkCount,
+            snapshotVersion: ref.version,
+            failureReason: ref.failureReason || null,
+            source: ref.source || previous.source || "discord_oauth",
+            fetchedAt: ref.capturedAt || previous.fetchedAt || null,
+            updatedAt: ref.capturedAt || Date.now()
         }
-        snapshotBudget.assertSnapshotBudget(updateSet, { label: "oauth_user_update_reduced" });
+    };
+}
+
+function mergeCompleteSnapshotRefs(previousRefs = {}, stored = {}) {
+    const next = { ...objectOrEmpty(previousRefs) };
+    for (const kind of ["guilds", "connections", "member"]) {
+        if (stored[kind]?.complete === true &&
+            stored[kind].returnedCount === stored[kind].storedCount) {
+            next[kind] = stored[kind];
+        }
     }
+    return next;
 }
 
 function applyOAuthTokenStorage(updateSet, tokenData) {
@@ -742,50 +756,54 @@ async function safeSideEffect(label, fn, fallback = null) {
 
 async function saveVerifyLogSafe(payload) {
     return safeSideEffect('saveVerifyLog', async () => {
-        let doc = payload;
+        const discordSnapshot = objectOrEmpty(payload.discordSnapshot);
+        const {
+            connections: _externalConnections,
+            guilds: _externalGuilds,
+            member: _externalMember,
+            ...discordCore
+        } = discordSnapshot;
+        let doc = {
+            ...payload,
+            snapshotVersion: payload.snapshotVersion || payload.snapshotRef?.version || null,
+            snapshotRef: payload.snapshotRef || null,
+            discordSnapshot: {
+                ...discordCore,
+                connectionsCount: Array.isArray(discordSnapshot.connections)
+                    ? discordSnapshot.connections.length
+                    : Number(discordSnapshot.connectionsCount || 0),
+                guildsCount: Array.isArray(discordSnapshot.guilds)
+                    ? discordSnapshot.guilds.length
+                    : Number(discordSnapshot.guildsCount || 0),
+                snapshotRef: payload.snapshotRef || null
+            }
+        };
         try {
             snapshotBudget.assertSnapshotBudget(doc, { label: "verify_log" });
         } catch (budgetErr) {
-            const discordSnapshot = objectOrEmpty(payload.discordSnapshot);
             const dataQuality = objectOrEmpty(payload.dataQuality);
             doc = {
-                ...payload,
-                discordSnapshot: {
-                    ...discordSnapshot,
-                    connections: [],
-                    guilds: [],
-                    member: payload.discordSnapshot?.member || null,
-                    snapshotBudgetReduced: true
-                },
-                memberSnapshot: payload.memberSnapshot || null,
+                guildId: payload.guildId,
+                userId: payload.userId,
+                roleId: payload.roleId,
+                requestId: safeNullableString(payload.requestId, 160),
+                result: payload.result,
+                reason: safeNullableString(payload.reason, 500),
+                riskScore: safeNumberOrNull(payload.riskScore) ?? 0,
+                riskFlags: Array.isArray(payload.riskFlags)
+                    ? payload.riskFlags.map(flag => safeString(flag, 80))
+                    : [],
+                oauthScope: safeNullableString(payload.oauthScope, 500),
+                stateMode: safeNullableString(payload.stateMode, 80),
+                verifiedAt: safeNumberOrNull(payload.verifiedAt) ?? Date.now(),
+                snapshotVersion: payload.snapshotVersion || payload.snapshotRef?.version || null,
+                snapshotRef: payload.snapshotRef || null,
                 dataQuality: {
                     ...dataQuality,
-                    budget: snapshotBudget.failureMeta(budgetErr, "verify_log")
+                    budget: snapshotBudget.failureMeta(budgetErr, "verify_log_core")
                 }
             };
-            try {
-                snapshotBudget.assertSnapshotBudget(doc, { label: "verify_log_reduced" });
-            } catch (reducedBudgetErr) {
-                doc = {
-                    guildId: payload.guildId,
-                    userId: payload.userId,
-                    roleId: payload.roleId,
-                    requestId: safeNullableString(payload.requestId, 160),
-                    result: payload.result,
-                    reason: safeNullableString(payload.reason, 500),
-                    riskScore: safeNumberOrNull(payload.riskScore) ?? 0,
-                    riskFlags: Array.isArray(payload.riskFlags)
-                        ? payload.riskFlags.slice(0, 50).map(flag => safeString(flag, 80))
-                        : [],
-                    oauthScope: safeNullableString(payload.oauthScope, 500),
-                    stateMode: safeNullableString(payload.stateMode, 80),
-                    verifiedAt: safeNumberOrNull(payload.verifiedAt) ?? Date.now(),
-                    dataQuality: {
-                        budget: snapshotBudget.failureMeta(reducedBudgetErr, "verify_log_minimal")
-                    }
-                };
-                snapshotBudget.assertSnapshotBudget(doc, { label: "verify_log_minimal" });
-            }
+            snapshotBudget.assertSnapshotBudget(doc, { label: "verify_log_minimal" });
         }
         await VerifyLog.create(doc);
         return true;
@@ -990,11 +1008,37 @@ async function saveOAuthUserSafe({
         const existing = await OAuthUser.findOne()
             .where("discord.userId")
             .equals(profileUserId)
-            .select('snapshotMeta')
+            .select('snapshotMeta snapshotRefs')
             .lean();
         const previousMeta = existing?.snapshotMeta || {};
         const connectionSnapshot = normalizeConnections(connections);
         const guildSnapshot = normalizeGuilds(guilds);
+        const lastMember = buildLastMemberUpdate({ guildId, profileUserId, memberInfo });
+        const storedSnapshots = await snapshotStore.storeOAuthSnapshots({
+            userId: profileUserId,
+            guildId,
+            guilds: guildSnapshot,
+            connections: connectionSnapshot,
+            member: lastMember,
+            fetchMetadata,
+            now: nowMs
+        });
+        let snapshotMeta = buildSnapshotMetaUpdate(
+            previousMeta,
+            fetchMetadata,
+            {
+                connectionsSource: connections,
+                connectionsStored: connectionSnapshot,
+                guildsSource: guilds,
+                guildsStored: guildSnapshot
+            },
+            memberInfo,
+            nowMs
+        );
+        snapshotMeta = applyStoredSnapshotMeta(snapshotMeta, "connections", storedSnapshots.connections);
+        snapshotMeta = applyStoredSnapshotMeta(snapshotMeta, "guilds", storedSnapshots.guilds);
+        snapshotMeta = applyStoredSnapshotMeta(snapshotMeta, "member", storedSnapshots.member);
+        const snapshotRefs = mergeCompleteSnapshotRefs(existing?.snapshotRefs, storedSnapshots);
 
         const updateSet = {
             discord: buildOAuthDiscordUpdate(profile, profileUserId, accountCreatedAt, accountAgeDays),
@@ -1009,49 +1053,44 @@ async function saveOAuthUserSafe({
             },
 
             lastIpTracking: trackingSnapshot || null,
-            snapshotMeta: buildSnapshotMetaUpdate(
-                previousMeta,
-                fetchMetadata,
-                {
-                    connectionsSource: connections,
-                    connectionsStored: connectionSnapshot,
-                    guildsSource: guilds,
-                    guildsStored: guildSnapshot
-                },
-                memberInfo,
-                nowMs
-            ),
+            snapshotMeta,
+            snapshotRefs,
             updatedAt: nowMs
         };
 
-        if (!fetchMetadata.connectionsFetchFailed) {
-            updateSet.connections = connectionSnapshot;
-        }
-        if (!fetchMetadata.guildsFetchFailed) {
-            updateSet.guilds = guildSnapshot;
-        }
-        const lastMember = buildLastMemberUpdate({ guildId, profileUserId, memberInfo });
-        if (lastMember) updateSet.lastMember = lastMember;
-
-        applySnapshotBudgetGuard(updateSet);
         applyOAuthTokenStorage(updateSet, tokenData);
-
-        await OAuthUser.findOneAndUpdate(
-            { 'discord.userId': profileUserId },
-            {
-                $set: updateSet,
-                $setOnInsert: {
-                    createdAt: nowMs
+        try {
+            applySnapshotBudgetGuard(updateSet);
+            await OAuthUser.findOneAndUpdate(
+                { 'discord.userId': profileUserId },
+                {
+                    $set: updateSet,
+                    $setOnInsert: {
+                        createdAt: nowMs
+                    }
+                },
+                {
+                    upsert: true,
+                    new: true
                 }
-            },
-            {
-                upsert: true,
-                new: true
-            }
-        );
+            );
+        } catch (err) {
+            console.error("[VERIFY] saveOAuthUser core failed:", JSON.stringify(sanitizeSideEffectError(err)));
+            return {
+                saved: false,
+                snapshotVersion: storedSnapshots.version,
+                snapshotRefs,
+                snapshotWrites: storedSnapshots
+            };
+        }
 
-        return true;
-    }, false);
+        return {
+            saved: true,
+            snapshotVersion: storedSnapshots.version,
+            snapshotRefs,
+            snapshotWrites: storedSnapshots
+        };
+    }, { saved: false, snapshotVersion: null, snapshotRefs: null, snapshotWrites: null });
 }
 
 async function getDeviceDuplicateSummary({ guildId, fingerprintHash, currentUserId }) {
@@ -1459,7 +1498,7 @@ router.post('/auth/callback', async (req, res) => {
                 riskSummary
             });
 
-            await saveOAuthUserSafe({
+            const oauthPersistence = await saveOAuthUserSafe({
                 profile,
                 tokenData,
                 connections,
@@ -1486,6 +1525,8 @@ router.post('/auth/callback', async (req, res) => {
                 riskFlags: riskSummary.flags,
                 oauthScope: tokenData.scope || '',
                 stateMode: stateObj.mode || null,
+                snapshotVersion: oauthPersistence?.snapshotVersion || null,
+                snapshotRef: oauthPersistence?.snapshotRefs || null,
 
                 policySnapshot,
                 discordSnapshot,
@@ -1518,42 +1559,62 @@ router.post('/auth/callback', async (req, res) => {
                         source: "discord_oauth"
                     },
                     connections: {
-                        status: fetchMetadata.connectionsFetchFailed ? "failed" : "success",
+                        status: fetchMetadata.connectionsFetchFailed
+                            ? "failed"
+                            : (oauthPersistence?.snapshotWrites?.connections?.complete ? "success" : "failed"),
                         attemptedAt: Date.now(),
                         fetchedAt: fetchMetadata.connectionsFetchFailed ? null : Date.now(),
                         returnedCount: Array.isArray(connections) ? connections.length : 0,
-                        storedCount: fetchMetadata.connectionsFetchFailed ? null : normalizeConnections(connections).length,
+                        storedCount: fetchMetadata.connectionsFetchFailed
+                            ? null
+                            : Number(oauthPersistence?.snapshotWrites?.connections?.storedCount || 0),
+                        complete: oauthPersistence?.snapshotWrites?.connections?.complete === true,
+                        chunkCount: Number(oauthPersistence?.snapshotWrites?.connections?.chunkCount || 0),
+                        snapshotVersion: oauthPersistence?.snapshotWrites?.connections?.version || null,
                         truncated: false,
                         failureReason: fetchMetadata.connectionsFetchFailed
                             ? (fetchMetadata.connectionsFailureReason ||
                                 `discord_http_${fetchMetadata.connectionsFetchStatus || "unknown"}`)
-                            : null,
+                            : (oauthPersistence?.snapshotWrites?.connections?.failureReason || null),
                         source: "discord_oauth"
                     },
                     guilds: {
-                        status: fetchMetadata.guildsFetchFailed ? "failed" : "success",
+                        status: fetchMetadata.guildsFetchFailed
+                            ? "failed"
+                            : (oauthPersistence?.snapshotWrites?.guilds?.complete ? "success" : "failed"),
                         attemptedAt: Date.now(),
                         fetchedAt: fetchMetadata.guildsFetchFailed ? null : Date.now(),
                         returnedCount: Array.isArray(guilds) ? guilds.length : 0,
-                        storedCount: fetchMetadata.guildsFetchFailed ? null : normalizeGuilds(guilds).length,
+                        storedCount: fetchMetadata.guildsFetchFailed
+                            ? null
+                            : Number(oauthPersistence?.snapshotWrites?.guilds?.storedCount || 0),
+                        complete: oauthPersistence?.snapshotWrites?.guilds?.complete === true,
+                        chunkCount: Number(oauthPersistence?.snapshotWrites?.guilds?.chunkCount || 0),
+                        snapshotVersion: oauthPersistence?.snapshotWrites?.guilds?.version || null,
                         truncated: false,
                         failureReason: fetchMetadata.guildsFetchFailed
                             ? (fetchMetadata.guildsFailureReason ||
                                 `discord_http_${fetchMetadata.guildsFetchStatus || "unknown"}`)
-                            : null,
+                            : (oauthPersistence?.snapshotWrites?.guilds?.failureReason || null),
                         source: "discord_oauth"
                     },
                     member: {
-                        status: memberFetchQualityStatus(fetchMetadata, memberInfo),
+                        status: memberInfo
+                            ? (oauthPersistence?.snapshotWrites?.member?.complete ? "success" : "failed")
+                            : memberFetchQualityStatus(fetchMetadata, memberInfo),
                         attemptedAt: fetchMetadata.memberFetchAttempted ? Date.now() : null,
                         fetchedAt: memberInfo ? Date.now() : null,
                         returnedCount: memberInfo ? 1 : 0,
-                        storedCount: memberInfo ? 1 : null,
+                        storedCount: memberInfo
+                            ? Number(oauthPersistence?.snapshotWrites?.member?.storedCount || 0)
+                            : null,
+                        complete: oauthPersistence?.snapshotWrites?.member?.complete === true,
+                        snapshotVersion: oauthPersistence?.snapshotWrites?.member?.version || null,
                         truncated: false,
                         failureReason: fetchMetadata.memberFetchAttempted && !memberInfo
                             ? (fetchMetadata.memberFailureReason ||
                                 `discord_http_${fetchMetadata.memberFetchStatus || "unknown"}`)
-                            : null,
+                            : (memberInfo ? (oauthPersistence?.snapshotWrites?.member?.failureReason || null) : null),
                         source: fetchMetadata.memberFetchSource || "discord_oauth"
                     },
                     device: {

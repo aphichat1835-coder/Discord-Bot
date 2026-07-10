@@ -144,6 +144,11 @@ Check `snapshotMeta`/`dataQuality` status and redacted failure code. A failed
 connections/guild/member fetch must leave the last successful `OAuthUser`
 snapshot intact.
 
+For chunked snapshots, confirm `complete: true`, verify
+`returnedCount === storedCount`, and check `chunkCount`. Pagination in the Owner
+Dashboard changes only the displayed page; Member Detail reads all finalized
+chunks and does not treat pagination as truncation.
+
 ### Raw IP is missing
 
 - Normal APIs intentionally return null.

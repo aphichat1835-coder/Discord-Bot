@@ -1,7 +1,4 @@
 ---
-# This administrator-only deployment smoke CLI accepts a URL by design and
-# validates HTTPS, private hosts, and an exact SMOKE_ALLOWED_HOSTS allowlist.
-# Codacy's taint rule does not recognize that boundary, so exclude this one
-# non-production endpoint file while keeping runtime routes under analysis.
-exclude_paths:
-  - "scripts/smokeUnifiedRuntime.js"
+# Keep every file under analysis. The validated smoke HTTP sink carries a
+# line-level false-positive suppression instead of excluding the whole script.
+exclude_paths: []

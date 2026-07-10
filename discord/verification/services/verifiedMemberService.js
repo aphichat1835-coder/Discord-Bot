@@ -150,18 +150,22 @@ function legacyVerifiedAggregation(guildId, scanLimit = MEMBER_SCAN_MAX) {
                 snapshotMeta: 1,
                 createdAt: 1,
                 updatedAt: 1,
-                connectionsCount: { $size: { $ifNull: ["$connections", []] } },
-                guildsCount: { $size: { $ifNull: ["$guilds", []] } }
+                connectionsCount: {
+                    $ifNull: ["$snapshotMeta.connections.storedCount", { $size: { $ifNull: ["$connections", []] } }]
+                },
+                guildsCount: {
+                    $ifNull: ["$snapshotMeta.guilds.storedCount", { $size: { $ifNull: ["$guilds", []] } }]
+                }
             }
         }
     ];
 }
 
 function listSafeMember(member = {}) {
+    const { connections: _connections, guilds: _guilds, ...summary } = member;
     return {
-        ...member,
-        connections: [],
-        guilds: [],
+        ...summary,
+        detailsAvailable: true,
         sensitiveRedacted: true
     };
 }

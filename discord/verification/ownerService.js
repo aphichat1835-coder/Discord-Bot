@@ -7,6 +7,7 @@ const { decryptIP, decryptToken } = require("./utils/crypto");
 const sensitiveAudit = require("./services/sensitiveAuditService");
 const { serializeMemberDetail } = require("./serializers/memberDetailSerializer");
 const verifiedMemberService = require("./services/verifiedMemberService");
+const snapshotStore = require("./services/oauthSnapshotStore");
 
 const OVERVIEW_MAX = Math.max(
     50,
@@ -153,11 +154,7 @@ async function getGuildMembers(guildId, { page = 0, limit = 20, q = "" } = {}) {
         includeLegacy: true,
         canViewSensitive: false
     });
-    const members = result.members.map(member => ({
-        ...member,
-        connections: Number(member.connectionsCount || 0),
-        guilds: Number(member.guildsCount || 0)
-    }));
+    const members = result.members.map(member => ({ ...member, detailsAvailable: true }));
     return {
         success: true,
         members,
@@ -324,6 +321,7 @@ async function getMemberDetail(guildId, userId, { canViewSensitive = false } = {
                 lastVerify: 1,
                 lastIpTracking: 1,
                 snapshotMeta: 1,
+                snapshotRefs: 1,
                 oauth: 1,
                 adminOAuth: 1,
                 createdAt: 1,
@@ -341,10 +339,30 @@ async function getMemberDetail(guildId, userId, { canViewSensitive = false } = {
         throw error;
     }
 
+    let hydratedOAuthUser = oauthUser;
+    const snapshotRefs = {
+        ...((oauthUser?.snapshotRefs && typeof oauthUser.snapshotRefs === "object") ? oauthUser.snapshotRefs : {}),
+        ...((latestLog?.snapshotRef && typeof latestLog.snapshotRef === "object") ? latestLog.snapshotRef : {})
+    };
+    if (Object.keys(snapshotRefs).length) {
+        const chunks = await snapshotStore.loadOAuthSnapshots({
+            userId: oauthUser?.discord?.userId || latestLog?.userId || userId,
+            refs: snapshotRefs,
+            guildId
+        });
+        hydratedOAuthUser = {
+            ...(oauthUser || {}),
+            snapshotRefs,
+            connections: Array.isArray(chunks.connections) ? chunks.connections : oauthUser?.connections,
+            guilds: Array.isArray(chunks.guilds) ? chunks.guilds : oauthUser?.guilds,
+            lastMember: chunks.member || oauthUser?.lastMember
+        };
+    }
+
     return serializeMemberDetail({
         guildId,
         userId,
-        oauthUser,
+        oauthUser: hydratedOAuthUser,
         latestLog,
         canViewSensitive
     });

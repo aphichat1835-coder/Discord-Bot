@@ -149,6 +149,11 @@ Optional Discord fetch failure must not erase the last successful connections,
 guilds, or target-member snapshot. Data-quality metadata distinguishes success,
 failure, and not-attempted states and stores redacted failure codes.
 
+Large guild and connection arrays are stored in versioned chunk collections.
+Chunks remain unreadable as a complete snapshot until every write is finalized;
+`complete` requires `returnedCount === storedCount`. VerifyLog stores the core
+audit event and snapshot references rather than duplicating oversized arrays.
+
 Do not infer values that Discord did not return:
 
 - unknown/unavailable remains null or unknown;

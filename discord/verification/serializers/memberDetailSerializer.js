@@ -111,6 +111,12 @@ function serializeMemberDetail({ guildId, userId, oauthUser = null, latestLog = 
     const logSummary = latestLogSummary(log, canViewSensitive);
     const logDiscord = log ? safeDiscordSnapshot(log.discordSnapshot || {}, canViewSensitive) : {};
     const identity = buildIdentity({ oauth, log, userId, oauthDiscord, logDiscord });
+    const chunkMember = oauth.snapshotRefs?.member?.complete === true
+        ? oauth.lastMember
+        : null;
+    const targetMember = chunkMember || (log
+        ? (log.memberSnapshot || log.discordSnapshot?.member || {})
+        : (oauth.lastMember || {}));
 
     return {
         success: true,
@@ -122,9 +128,7 @@ function serializeMemberDetail({ guildId, userId, oauthUser = null, latestLog = 
         account: buildAccount(identity),
         guilds: Array.isArray(oauthDiscord.guilds) ? oauthDiscord.guilds : [],
         connections: Array.isArray(oauthDiscord.connections) ? oauthDiscord.connections : [],
-        targetMember: log
-            ? safeMemberSnapshot(log.memberSnapshot || log.discordSnapshot?.member || {})
-            : safeMemberSnapshot(oauth.lastMember || {}),
+        targetMember: safeMemberSnapshot(targetMember),
         device: log ? safeDevice(log.device || {}) : {},
         network: log ? safeIpInfo(log.ipInfo || {}) : {},
         tracking: buildTracking(log, oauth),

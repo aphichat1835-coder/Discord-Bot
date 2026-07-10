@@ -73,6 +73,7 @@ async function request(baseUrl, path, { redirect = "manual" } = {}) {
     const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
     try {
         const target = new URL(path, `${baseUrl}/`);
+        // nosemgrep -- HTTPS and the exact host allowlist are validated by normalizeBaseUrl.
         const response = await fetch(target, {
             method: "GET",
             redirect,
