@@ -104,6 +104,16 @@ function buildOAuthTokenStatuses(oauth = {}) {
     };
 }
 
+function resolveTargetMember(oauth = {}, log = null) {
+    if (oauth.snapshotRefs?.member?.complete === true && oauth.lastMember) {
+        return oauth.lastMember;
+    }
+    if (log) {
+        return log.memberSnapshot || log.discordSnapshot?.member || {};
+    }
+    return oauth.lastMember || {};
+}
+
 function serializeMemberDetail({ guildId, userId, oauthUser = null, latestLog = null, canViewSensitive = false } = {}) {
     const oauth = oauthUser?.toObject ? oauthUser.toObject() : oauthUser || {};
     const log = latestLog?.toObject ? latestLog.toObject() : latestLog || null;
@@ -111,12 +121,7 @@ function serializeMemberDetail({ guildId, userId, oauthUser = null, latestLog = 
     const logSummary = latestLogSummary(log, canViewSensitive);
     const logDiscord = log ? safeDiscordSnapshot(log.discordSnapshot || {}, canViewSensitive) : {};
     const identity = buildIdentity({ oauth, log, userId, oauthDiscord, logDiscord });
-    const chunkMember = oauth.snapshotRefs?.member?.complete === true
-        ? oauth.lastMember
-        : null;
-    const targetMember = chunkMember || (log
-        ? (log.memberSnapshot || log.discordSnapshot?.member || {})
-        : (oauth.lastMember || {}));
+    const targetMember = resolveTargetMember(oauth, log);
 
     return {
         success: true,
@@ -146,6 +151,7 @@ module.exports = {
         buildSource,
         buildTracking,
         buildVerification,
-        buildOAuthTokenStatuses
+        buildOAuthTokenStatuses,
+        resolveTargetMember
     }
 };
