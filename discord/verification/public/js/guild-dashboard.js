@@ -759,135 +759,226 @@
     return card;
   }
 
-  function buildMemberDetailElement(detail = {}) {
+  function firstTruthyValue(...values) {
+    return values.find(Boolean);
+  }
+
+  function firstTruthy(...values) {
+    return firstTruthyValue(...values) || "—";
+  }
+
+  function firstDefinedValue(...values) {
+    return values.find((item) => item !== null && item !== undefined);
+  }
+
+  function firstDefined(...values) {
+    return firstDefinedValue(...values) ?? "—";
+  }
+
+  function firstArray(...values) {
+    return values.find(Array.isArray) || [];
+  }
+
+  function buildIdentityDetailCard(detail = {}) {
     const identity = detail.identity || {};
     const account = detail.account || {};
-    const targetMember = detail.targetMember || {};
+    return detailCardElement("Identity / Discord", [
+      ["User ID", firstTruthy(detail.userId, identity.userId), "mono"],
+      ["Username", firstTruthy(identity.username)],
+      ["Discriminator", firstDefined(identity.discriminator)],
+      ["Display tag", firstTruthy(identity.displayTag)],
+      ["Global name", firstTruthy(identity.globalName)],
+      ["Avatar URL", firstTruthy(identity.avatarUrl), "mono"],
+      ["Banner URL", firstTruthy(identity.bannerUrl), "mono"],
+      ["Accent color", firstDefined(identity.accentColor)],
+      ["Badge flags", firstArray(account.badgeFlags, identity.badgeFlags).join(", ") || "—"]
+    ]);
+  }
+
+  function buildAccountDetailCard(detail = {}) {
+    const identity = detail.identity || {};
+    const account = detail.account || {};
+    return detailCardElement("Account / Email", [
+      ["Email", firstDefined(account.email, identity.email)],
+      ["Email verified", boolText(firstDefinedValue(account.emailVerified, identity.emailVerified))],
+      ["Locale", firstTruthy(account.locale, identity.locale)],
+      ["MFA", boolText(firstDefinedValue(account.mfaEnabled, identity.mfaEnabled))],
+      ["Premium type (compatibility raw value, ไม่ใช่ Nitro verdict)", firstDefined(account.premiumType, identity.premiumType)],
+      ["Flags / Public", `${firstDefined(account.flags, identity.flags)} / ${firstDefined(account.publicFlags, identity.publicFlags)}`],
+      ["Created", fmtTime(firstTruthyValue(account.accountCreatedAt, identity.accountCreatedAt))],
+      ["Age", `${firstDefined(account.accountAgeDays, identity.accountAgeDays)} วัน`]
+    ]);
+  }
+
+  function buildTargetMemberDetailCard(detail = {}) {
+    const member = detail.targetMember || {};
+    const roles = Array.isArray(member.roles) ? member.roles : [];
+    return detailCardElement("Target Guild Member", [
+      ["Nickname", firstTruthy(member.nick, member.nickname)],
+      ["Joined at", fmtTime(member.joinedAt)],
+      ["Pending verification", boolText(member.pending)],
+      ["Timeout", boolText(member.timedOut)],
+      ["Timeout until", fmtTime(member.communicationDisabledUntil)],
+      ["Guild avatar", firstTruthy(member.avatarUrl, member.avatar), "mono"],
+      [`Roles (${roles.length})`, roles.join(", ") || "—"]
+    ]);
+  }
+
+  function buildDeviceDetailCard(detail = {}) {
     const device = detail.device || {};
+    return detailCardElement("Browser / Device", [
+      ["Browser", firstTruthy(device.browser)],
+      ["OS", firstTruthy(device.os)],
+      ["Platform", firstTruthy(device.platform)],
+      ["Device type", firstTruthy(device.deviceType)],
+      ["Language", firstTruthy(device.language)],
+      ["Languages", firstArray(device.languages).join(", ") || "—"],
+      ["Timezone", firstTruthy(device.timezone)],
+      ["Screen / Viewport", `${firstTruthy(device.screenSize)} / ${firstTruthy(device.viewportSize)}`],
+      ["Color depth / Pixel ratio", `${firstDefined(device.colorDepth)} / ${firstDefined(device.devicePixelRatio)}`],
+      ["Touch points", firstDefined(device.touchPoints)],
+      ["User-Agent", firstTruthy(device.userAgent), "mono"]
+    ]);
+  }
+
+  function buildNetworkDetailCard(detail = {}) {
     const network = detail.network || {};
     const tracking = detail.tracking || {};
-    const roles = Array.isArray(targetMember.roles) ? targetMember.roles : [];
+    return detailCardElement("Network / IP", [
+      ["Raw IP", "กด “เปิด Raw IP” เพื่อ reveal แยก", "mono"],
+      ["Country/City", `${firstTruthy(network.country, network.countryCode)} / ${firstTruthy(network.city)}`],
+      ["Region / Timezone", `${firstTruthy(network.region)} / ${firstTruthy(network.timezone)}`],
+      ["ISP", firstTruthy(network.isp)],
+      ["Org/ASN", `${firstTruthy(network.org)} / ${firstTruthy(network.asn, network.as)}`],
+      ["VPN / Proxy / TOR", `${boolText(network.isVPN)} / ${boolText(network.isProxy)} / ${boolText(network.isTOR)}`],
+      ["Hosting / Mobile", `${boolText(firstTruthyValue(network.isHosting, network.hosting))} / ${boolText(network.mobile)}`],
+      ["Lookup", `${firstTruthy(network.lookupProvider)} / ${firstTruthy(network.lookupStatus, "unknown")}`],
+      ["IP first seen / Last seen", `${fmtTime(tracking.firstSeenAt)} / ${fmtTime(tracking.lastSeenAt)}`]
+    ]);
+  }
+
+  function buildMemberListCards(detail = {}) {
     const connections = Array.isArray(detail.connections) ? detail.connections : [];
     const guilds = Array.isArray(detail.guilds) ? detail.guilds : [];
+    return [
+      detailListCardElement("Connections", connections, connectionDetailElement),
+      detailListCardElement("Guilds", guilds, guildDetailElement)
+    ];
+  }
+
+  function buildMemberDetailElement(detail = {}) {
     const root = document.createDocumentFragment();
     const grid = document.createElement("div");
     grid.className = "grid grid-2";
     grid.append(
-      detailCardElement("Identity / Discord", [
-        ["User ID", detail.userId || identity.userId || "—", "mono"],
-        ["Username", identity.username || "—"],
-        ["Discriminator", identity.discriminator ?? "—"],
-        ["Display tag", identity.displayTag || "—"],
-        ["Global name", identity.globalName || "—"],
-        ["Avatar URL", identity.avatarUrl || "—", "mono"],
-        ["Banner URL", identity.bannerUrl || "—", "mono"],
-        ["Accent color", identity.accentColor ?? "—"],
-        ["Badge flags", (account.badgeFlags || identity.badgeFlags || []).join(", ") || "—"]
-      ]),
-      detailCardElement("Account / Email", [
-        ["Email", account.email ?? identity.email ?? "—"],
-        ["Email verified", boolText(account.emailVerified ?? identity.emailVerified)],
-        ["Locale", account.locale || identity.locale || "—"],
-        ["MFA", boolText(account.mfaEnabled ?? identity.mfaEnabled)],
-        ["Premium type (compatibility raw value, ไม่ใช่ Nitro verdict)", account.premiumType ?? identity.premiumType ?? "—"],
-        ["Flags / Public", `${account.flags ?? identity.flags ?? "—"} / ${account.publicFlags ?? identity.publicFlags ?? "—"}`],
-        ["Created", fmtTime(account.accountCreatedAt || identity.accountCreatedAt)],
-        ["Age", `${account.accountAgeDays ?? identity.accountAgeDays ?? "—"} วัน`]
-      ]),
-      detailCardElement("Target Guild Member", [
-        ["Nickname", targetMember.nick || targetMember.nickname || "—"],
-        ["Joined at", fmtTime(targetMember.joinedAt)],
-        ["Pending verification", boolText(targetMember.pending)],
-        ["Timeout", boolText(targetMember.timedOut)],
-        ["Timeout until", fmtTime(targetMember.communicationDisabledUntil)],
-        ["Guild avatar", targetMember.avatarUrl || targetMember.avatar || "—", "mono"],
-        [`Roles (${roles.length})`, roles.join(", ") || "—"]
-      ]),
-      detailCardElement("Browser / Device", [
-        ["Browser", device.browser || "—"],
-        ["OS", device.os || "—"],
-        ["Platform", device.platform || "—"],
-        ["Device type", device.deviceType || "—"],
-        ["Language", device.language || "—"],
-        ["Languages", (device.languages || []).join(", ") || "—"],
-        ["Timezone", device.timezone || "—"],
-        ["Screen / Viewport", `${device.screenSize || "—"} / ${device.viewportSize || "—"}`],
-        ["Color depth / Pixel ratio", `${device.colorDepth ?? "—"} / ${device.devicePixelRatio ?? "—"}`],
-        ["Touch points", device.touchPoints ?? "—"],
-        ["User-Agent", device.userAgent || "—", "mono"]
-      ]),
-      detailCardElement("Network / IP", [
-        ["Raw IP", "กด “เปิด Raw IP” เพื่อ reveal แยก", "mono"],
-        ["Country/City", `${network.country || network.countryCode || "—"} / ${network.city || "—"}`],
-        ["Region / Timezone", `${network.region || "—"} / ${network.timezone || "—"}`],
-        ["ISP", network.isp || "—"],
-        ["Org/ASN", `${network.org || "—"} / ${network.asn || network.as || "—"}`],
-        ["VPN / Proxy / TOR", `${boolText(network.isVPN)} / ${boolText(network.isProxy)} / ${boolText(network.isTOR)}`],
-        ["Hosting / Mobile", `${boolText(network.isHosting || network.hosting)} / ${boolText(network.mobile)}`],
-        ["Lookup", `${network.lookupProvider || "—"} / ${network.lookupStatus || "unknown"}`],
-        ["IP first seen / Last seen", `${fmtTime(tracking.firstSeenAt)} / ${fmtTime(tracking.lastSeenAt)}`]
-      ]),
+      buildIdentityDetailCard(detail),
+      buildAccountDetailCard(detail),
+      buildTargetMemberDetailCard(detail),
+      buildDeviceDetailCard(detail),
+      buildNetworkDetailCard(detail),
       buildVerificationCardElement(detail)
     );
-    root.append(
-      grid,
-      detailListCardElement("Connections", connections, connectionDetailElement),
-      detailListCardElement("Guilds", guilds, guildDetailElement)
-    );
+    root.append(grid, ...buildMemberListCards(detail));
     return root;
   }
 
-  function buildDetailedVerifyLogElement(log = {}) {
+  function buildVerifyLogSensitiveNotice(log = {}) {
+    if (!log.sensitiveRedacted) return null;
+    const notice = document.createElement("div");
+    notice.className = "notice notice-warn mb-12";
+    notice.textContent = "ข้อมูล sensitive ถูกซ่อนอยู่ เพราะยังไม่ได้รับ owner approval หรือ approval หมดอายุ";
+    return notice;
+  }
+
+  function buildVerifyLogHeader(log = {}) {
     const user = log.user || {};
-    const ipInfo = log.ipInfo || {};
-    const device = log.device || {};
-    const connections = Array.isArray(log.connections) ? log.connections : [];
-    const guilds = Array.isArray(log.guilds) ? log.guilds : [];
-    const roles = Array.isArray(log.memberRoles) ? log.memberRoles : [];
-    const card = document.createElement("div");
     const title = document.createElement("div");
     const identity = document.createElement("span");
-    const meta = document.createElement("div");
-    card.className = "list-item sensitive";
     title.className = "list-title";
-    meta.className = "list-meta";
-    if (log.sensitiveRedacted) {
-      const notice = document.createElement("div");
-      notice.className = "notice notice-warn mb-12";
-      notice.textContent = "ข้อมูล sensitive ถูกซ่อนอยู่ เพราะยังไม่ได้รับ owner approval หรือ approval หมดอายุ";
-      card.appendChild(notice);
-    }
     identity.append(
       resultBadgeElement(log.result),
-      document.createTextNode(` ${user.globalName || log.globalName || user.username || log.username || log.userId || "Unknown"}`)
+      document.createTextNode(` ${firstTruthy(user.globalName, log.globalName, user.username, log.username, log.userId, "Unknown")}`)
     );
     title.append(identity, riskBadgeElement(log.riskScore));
-    [
-      ["User ID", log.userId || user.id || "—", "mono"],
-      ["Username", user.username || log.username || "—"],
-      ["Global name", user.globalName || log.globalName || "—"],
-      ["Email", `${user.email || log.email || "—"} · Verified: ${boolText(user.verified ?? log.emailVerified)}`],
-      ["Locale / Flags", `${user.locale || log.locale || "—"} / ${user.flags ?? log.flags ?? "—"}`],
-      ["Nickname", log.memberNick || log.nickname || "—"],
+    return title;
+  }
+
+  function verifyLogIdentityRows(log = {}) {
+    const user = log.user || {};
+    const roles = Array.isArray(log.memberRoles) ? log.memberRoles : [];
+    return [
+      ["User ID", firstTruthy(log.userId, user.id), "mono"],
+      ["Username", firstTruthy(user.username, log.username)],
+      ["Global name", firstTruthy(user.globalName, log.globalName)],
+      ["Email", `${firstTruthy(user.email, log.email)} · Verified: ${boolText(firstDefinedValue(user.verified, log.emailVerified))}`],
+      ["Locale / Flags", `${firstTruthy(user.locale, log.locale)} / ${firstDefined(user.flags, log.flags)}`],
+      ["Nickname", firstTruthy(log.memberNick, log.nickname)],
       ["Joined at", fmtTime(log.joinedAt)],
-      ["Roles", roles.join(", ") || "—"],
+      ["Roles", roles.join(", ") || "—"]
+    ];
+  }
+
+  function verifyLogNetworkRows(log = {}) {
+    const ip = log.ipInfo || {};
+    return [
       ["Raw IP", "ซ่อนอยู่ — ใช้ปุ่ม “เปิด Raw IP” พร้อมระบุเหตุผล", "mono"],
-      ["Country / City", `${ipInfo.country || ipInfo.countryCode || log.countryCode || "—"} / ${ipInfo.city || log.city || "—"}`],
-      ["ISP / ASN", `${ipInfo.isp || log.isp || "—"} / ${ipInfo.asn || log.asn || "—"}`],
-      ["Lookup", `${ipInfo.lookupProvider || "—"} / ${ipInfo.lookupStatus || "unknown"}`],
-      ["VPN / Proxy / TOR / Hosting", `${boolText(ipInfo.isVPN ?? log.isVPN)} / ${boolText(ipInfo.isProxy ?? log.isProxy)} / ${boolText(ipInfo.isTOR ?? log.isTOR)} / ${boolText(ipInfo.isHosting ?? log.isHosting)}`],
-      ["Browser / OS / Platform", `${device.browser || log.browser || "—"} / ${device.os || log.os || "—"} / ${device.platform || log.platform || "—"}`],
-      ["Timezone / Language", `${device.timezone || log.timezone || "—"} / ${device.language || log.language || "—"}`],
-      ["Screen / Viewport", `${device.screenSize || log.screenSize || "—"} / ${device.viewportSize || log.viewportSize || "—"}`],
-      ["Connections", `${log.connectionsCount ?? connections.length} (${connections.map((c) => c.type || c.name || "unknown").join(", ") || "—"})`],
-      ["Guilds", `${log.guildsCount ?? guilds.length} (${guilds.slice(0, 12).map((g) => g.name || g.id || "unknown").join(", ") || "—"})`],
-      ["Reason", log.reason || "—"],
-      ["Policy", log.policyResult || log.policy || "—"],
-      ["Role result", log.roleResult || log.roleAssignmentResult || "—"],
-      ["Request ID", log.requestId || "—", "mono"],
+      ["Country / City", `${firstTruthy(ip.country, ip.countryCode, log.countryCode)} / ${firstTruthy(ip.city, log.city)}`],
+      ["ISP / ASN", `${firstTruthy(ip.isp, log.isp)} / ${firstTruthy(ip.asn, log.asn)}`],
+      ["Lookup", `${firstTruthy(ip.lookupProvider)} / ${firstTruthy(ip.lookupStatus, "unknown")}`],
+      ["VPN / Proxy / TOR / Hosting", `${boolText(firstDefinedValue(ip.isVPN, log.isVPN))} / ${boolText(firstDefinedValue(ip.isProxy, log.isProxy))} / ${boolText(firstDefinedValue(ip.isTOR, log.isTOR))} / ${boolText(firstDefinedValue(ip.isHosting, log.isHosting))}`]
+    ];
+  }
+
+  function verifyLogDeviceRows(log = {}) {
+    const device = log.device || {};
+    return [
+      ["Browser / OS / Platform", `${firstTruthy(device.browser, log.browser)} / ${firstTruthy(device.os, log.os)} / ${firstTruthy(device.platform, log.platform)}`],
+      ["Timezone / Language", `${firstTruthy(device.timezone, log.timezone)} / ${firstTruthy(device.language, log.language)}`],
+      ["Screen / Viewport", `${firstTruthy(device.screenSize, log.screenSize)} / ${firstTruthy(device.viewportSize, log.viewportSize)}`]
+    ];
+  }
+
+  function verifyLogSnapshotRows(log = {}) {
+    const connections = Array.isArray(log.connections) ? log.connections : [];
+    const guilds = Array.isArray(log.guilds) ? log.guilds : [];
+    const connectionNames = connections.map((item) => firstTruthy(item.type, item.name, "unknown")).join(", ") || "—";
+    const guildNames = guilds.slice(0, 12).map((item) => firstTruthy(item.name, item.id, "unknown")).join(", ") || "—";
+    return [
+      ["Connections", `${firstDefined(log.connectionsCount, connections.length)} (${connectionNames})`],
+      ["Guilds", `${firstDefined(log.guildsCount, guilds.length)} (${guildNames})`]
+    ];
+  }
+
+  function verifyLogResultRows(log = {}) {
+    return [
+      ["Reason", firstTruthy(log.reason)],
+      ["Policy", firstTruthy(log.policyResult, log.policy)],
+      ["Role result", firstTruthy(log.roleResult, log.roleAssignmentResult)],
+      ["Request ID", firstTruthy(log.requestId), "mono"],
       ["Time", fmtTime(log.verifiedAt || log.createdAt)]
-    ].forEach(([label, value, valueClass]) => appendDetailRow(meta, label, value, valueClass));
-    card.append(title, meta);
+    ];
+  }
+
+  function buildVerifyLogMeta(log = {}) {
+    const meta = document.createElement("div");
+    meta.className = "list-meta";
+    const rows = [
+      ...verifyLogIdentityRows(log),
+      ...verifyLogNetworkRows(log),
+      ...verifyLogDeviceRows(log),
+      ...verifyLogSnapshotRows(log),
+      ...verifyLogResultRows(log)
+    ];
+    rows.forEach(([label, value, valueClass]) => appendDetailRow(meta, label, value, valueClass));
+    return meta;
+  }
+
+  function buildDetailedVerifyLogElement(log = {}) {
+    const card = document.createElement("div");
+    card.className = "list-item sensitive";
+    const notice = buildVerifyLogSensitiveNotice(log);
+    if (notice) card.appendChild(notice);
+    card.append(buildVerifyLogHeader(log), buildVerifyLogMeta(log));
     return card;
   }
 

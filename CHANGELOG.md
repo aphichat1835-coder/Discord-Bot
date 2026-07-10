@@ -49,6 +49,9 @@
   made the legacy guild alias redirect fixed, clarified Mongo equality lookup,
   removed dynamic test/tool paths, and restricted the deploy smoke CLI to exact
   hostnames in `SMOKE_ALLOWED_HOSTS`.
+- Split Owner member/log DOM builders into focused card, row, header, notice,
+  and metadata helpers, and documented a scoped Codacy exclusion for the
+  administrator-only smoke CLI whose validated URL sink is a false positive.
 
 ## [Unreleased] - Dashboard Public OAuth Runtime Fixes 2026-07-03
 

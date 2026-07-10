@@ -251,6 +251,11 @@ task approval required by `AGENTS.md`.
 10. Run one audited IP reveal and confirm an audit record without server logging.
 11. Stop the retired service only after smoke tests pass.
 
+The administrator-only smoke CLI is excluded from Codacy static analysis in
+`.codacy.yml` because its validated, exact-allowlist URL remains a deliberate
+network sink that Codacy reports as tainted. Runtime HTTP and OAuth files remain
+included in analysis, and smoke URL validation is covered by repository tests.
+
 ## Incident response
 
 If a token, raw IP, PIN, database URI, or signing secret may have leaked:
