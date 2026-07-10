@@ -56,7 +56,7 @@ function bannerUrl(discord = {}) {
 }
 
 function completeRefs(previousRefs = {}, stored = {}) {
-    const refs = { ...(previousRefs || {}) };
+    const refs = { ...previousRefs };
     for (const kind of ["profile", "connections", "guilds", "member"]) {
         const ref = stored?.[kind];
         if (ref?.complete === true && ref.returnedCount === ref.storedCount) refs[kind] = ref;
@@ -64,65 +64,82 @@ function completeRefs(previousRefs = {}, stored = {}) {
     return refs;
 }
 
-function buildPatch(doc, now = Date.now(), storedSnapshots = null) {
+function legacySnapshotMeta(doc, now) {
     const discord = doc.discord || {};
     const existingMeta = doc.snapshotMeta || {};
     const connectionsCount = Array.isArray(doc.connections) ? doc.connections.length : 0;
     const guildsCount = Array.isArray(doc.guilds) ? doc.guilds.length : 0;
+    return {
+        ...existingMeta,
+        version: 2,
+        migratedAt: existingMeta.migratedAt || now,
+        profile: existingMeta.profile || {
+            status: "legacy",
+            source: "discord_oauth"
+        },
+        connections: existingMeta.connections || {
+            status: "legacy",
+            returnedCount: connectionsCount,
+            storedCount: connectionsCount,
+            truncated: false,
+            source: "discord_oauth"
+        },
+        guilds: existingMeta.guilds || {
+            status: "legacy",
+            returnedCount: guildsCount,
+            storedCount: guildsCount,
+            truncated: false,
+            source: "discord_oauth"
+        }
+    };
+}
+
+function roleCountMeta(ref) {
+    if (!Number.isFinite(Number(ref.roleReturnedCount))) return {};
+    return {
+        roleReturnedCount: Number(ref.roleReturnedCount),
+        roleStoredCount: Number(ref.roleStoredCount || 0),
+        roleChunkCount: Number(ref.roleChunkCount || 0)
+    };
+}
+
+function storedSnapshotMeta(previous, ref, now) {
+    return {
+        ...previous,
+        status: ref.complete ? "success" : "failed",
+        returnedCount: ref.returnedCount,
+        storedCount: ref.storedCount,
+        chunkCount: ref.chunkCount,
+        complete: ref.complete === true && ref.returnedCount === ref.storedCount,
+        ...roleCountMeta(ref),
+        snapshotVersion: ref.version,
+        failureReason: ref.failureReason || null,
+        source: ref.source || "migration",
+        migratedAt: now
+    };
+}
+
+function applyStoredSnapshots(patch, doc, storedSnapshots, now) {
+    if (!storedSnapshots) return;
+    patch.snapshotRefs = completeRefs(doc.snapshotRefs, storedSnapshots);
+    for (const kind of ["profile", "connections", "guilds", "member"]) {
+        const ref = storedSnapshots[kind];
+        if (!ref) continue;
+        patch.snapshotMeta[kind] = storedSnapshotMeta(patch.snapshotMeta[kind], ref, now);
+    }
+}
+
+function buildPatch(doc, now = Date.now(), storedSnapshots = null) {
+    const discord = doc.discord || {};
 
     const patch = {
         "discord.displayTag": discord.displayTag || displayTag(discord),
         "discord.avatarUrl": discord.avatarUrl || avatarUrl(discord),
         "discord.bannerUrl": discord.bannerUrl || bannerUrl(discord),
         "discord.badgeFlags": badgeFlags(discord),
-        snapshotMeta: {
-            ...existingMeta,
-            version: 2,
-            migratedAt: existingMeta.migratedAt || now,
-            profile: existingMeta.profile || {
-                status: "legacy",
-                source: "discord_oauth"
-            },
-            connections: existingMeta.connections || {
-                status: "legacy",
-                returnedCount: connectionsCount,
-                storedCount: connectionsCount,
-                truncated: false,
-                source: "discord_oauth"
-            },
-            guilds: existingMeta.guilds || {
-                status: "legacy",
-                returnedCount: guildsCount,
-                storedCount: guildsCount,
-                truncated: false,
-                source: "discord_oauth"
-            }
-        }
+        snapshotMeta: legacySnapshotMeta(doc, now)
     };
-    if (storedSnapshots) {
-        patch.snapshotRefs = completeRefs(doc.snapshotRefs, storedSnapshots);
-        for (const kind of ["profile", "connections", "guilds", "member"]) {
-            const ref = storedSnapshots[kind];
-            if (!ref) continue;
-            patch.snapshotMeta[kind] = {
-                ...(patch.snapshotMeta[kind] || {}),
-                status: ref.complete ? "success" : "failed",
-                returnedCount: ref.returnedCount,
-                storedCount: ref.storedCount,
-                chunkCount: ref.chunkCount,
-                complete: ref.complete === true && ref.returnedCount === ref.storedCount,
-                ...(Number.isFinite(Number(ref.roleReturnedCount)) ? {
-                    roleReturnedCount: Number(ref.roleReturnedCount),
-                    roleStoredCount: Number(ref.roleStoredCount || 0),
-                    roleChunkCount: Number(ref.roleChunkCount || 0)
-                } : {}),
-                snapshotVersion: ref.version,
-                failureReason: ref.failureReason || null,
-                source: ref.source || "migration",
-                migratedAt: now
-            };
-        }
-    }
+    applyStoredSnapshots(patch, doc, storedSnapshots, now);
     return patch;
 }
 
@@ -165,7 +182,7 @@ async function migrateCursor({
                 guildId: doc.lastMember?.guildId || doc.lastVerify?.guildId || "legacy",
                 profile: {
                     ...doc.discord,
-                    ...(doc.discord.profileSnapshot || {}),
+                    ...doc.discord.profileSnapshot,
                     id: doc.discord.profileSnapshot?.id || doc.discord.userId
                 },
                 connections: Array.isArray(doc.connections) ? doc.connections : [],
