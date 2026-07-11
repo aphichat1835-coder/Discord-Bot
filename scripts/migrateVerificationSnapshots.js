@@ -4,6 +4,7 @@
 const mongoose = require("mongoose");
 const OAuthUser = require("../discord/verification/models/OAuthUser");
 const snapshotStore = require("../discord/verification/services/oauthSnapshotStore");
+const { archiveSourceDocument } = require("../discord/verification/services/migrationArchive");
 
 const APPLY = process.argv.includes("--apply");
 const DRY_RUN = process.argv.includes("--dry-run");
@@ -267,7 +268,8 @@ async function run() {
     const summary = await migrateCursor({
         cursor,
         apply: APPLY,
-        snapshotWriter: snapshotStore.storeOAuthSnapshots
+        snapshotWriter: snapshotStore.storeOAuthSnapshots,
+        beforeMigrate: APPLY ? doc => archiveSourceDocument(doc._id, { migrationVersion: 2 }) : null
     });
 
     console.log("[VERIFICATION-MIGRATION]", JSON.stringify(summary));

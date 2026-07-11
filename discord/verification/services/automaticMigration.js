@@ -2,9 +2,10 @@
 
 const crypto = require("node:crypto");
 const OAuthUser = require("../models/OAuthUser");
-const MigrationArchive = require("../models/VerificationMigrationArchive");
 const MigrationState = require("../models/VerificationMigrationState");
 const snapshotStore = require("./oauthSnapshotStore");
+const { archiveSourceDocument, contentHash } = require("./migrationArchive");
+const MigrationArchive = require("../models/VerificationMigrationArchive");
 const migration = require("../../../scripts/migrateVerificationSnapshots");
 const { safeError } = require("../utils/safeLogger");
 
@@ -25,34 +26,6 @@ function config(env = process.env) {
         scanMax: Math.max(1, Math.min(1000, Number(env.AUTO_VERIFICATION_MIGRATION_SCAN_MAX || DEFAULT_SCAN_MAX) || DEFAULT_SCAN_MAX)),
         batchSize: Math.max(10, Math.min(500, Number(env.VERIFICATION_MIGRATION_BATCH_SIZE || 100) || 100))
     };
-}
-
-function contentHash(document) {
-    return crypto.createHash("sha256").update(JSON.stringify(document)).digest("hex");
-}
-
-async function archiveSourceDocument(sourceId, options = {}) {
-    const OAuthUserModel = options.OAuthUserModel || OAuthUser;
-    const ArchiveModel = options.ArchiveModel || MigrationArchive;
-    const source = await OAuthUserModel.findById(sourceId).lean();
-    if (!source) {
-        const error = new Error("migration source document disappeared before backup");
-        error.code = "migration_source_missing";
-        throw error;
-    }
-    const hash = contentHash(source);
-    const result = await ArchiveModel.updateOne({
-        migrationVersion: TARGET_VERSION,
-        sourceCollection: OAuthUserModel.collection?.name || "oauthusers",
-        sourceId: String(source._id)
-    }, {
-        $setOnInsert: {
-            contentHash: hash,
-            payload: source,
-            backedUpAt: Date.now()
-        }
-    }, { upsert: true });
-    return { hash, created: Number(result?.upsertedCount || 0) > 0 };
 }
 
 async function acquireLock(StateModel, now, owner) {
@@ -133,7 +106,11 @@ async function runAutomaticMigration(options = {}) {
             snapshotWriter: options.snapshotWriter || snapshotStore.storeOAuthSnapshots,
             beforeMigrate: async doc => {
                 await renewLock(StateModel, owner);
-                const archived = await archiveSourceDocument(doc._id, { OAuthUserModel, ArchiveModel });
+                const archived = await archiveSourceDocument(doc._id, {
+                    OAuthUserModel,
+                    ArchiveModel,
+                    migrationVersion: TARGET_VERSION
+                });
                 if (archived.created) backup.created++;
                 else backup.reused++;
             }
@@ -171,7 +148,6 @@ async function runAutomaticMigration(options = {}) {
 
 module.exports = {
     runAutomaticMigration,
-    archiveSourceDocument,
     contentHash,
     config,
     _test: { acquireLock, renewLock, migrationCursor, TARGET_VERSION, STATE_ID }

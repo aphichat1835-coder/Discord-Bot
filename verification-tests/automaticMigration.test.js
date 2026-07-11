@@ -2,10 +2,10 @@
 
 const {
     runAutomaticMigration,
-    archiveSourceDocument,
     contentHash,
     config
 } = require("../discord/verification/services/automaticMigration");
+const { archiveSourceDocument } = require("../discord/verification/services/migrationArchive");
 const { restoreCursor } = require("../scripts/restoreVerificationMigration");
 
 function queryCursor(cursor = {}) {

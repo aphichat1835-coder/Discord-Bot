@@ -140,8 +140,8 @@ so the CLI smoke checker cannot be pointed at an arbitrary network target.
 After MongoDB connects, the runtime detects legacy OAuth records, archives each
 original document once per migration version, and applies the additive
 migration in bounded batches. Remaining records resume during hourly
-maintenance. Tokens and raw IP remain encrypted. Manual commands remain
-available:
+maintenance. Tokens and raw IP remain encrypted. Manual apply uses the same
+deduplicated archive rule. Manual commands remain available:
 
 ```bash
 npm run migrate:verification
