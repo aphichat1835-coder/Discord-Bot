@@ -701,16 +701,20 @@
     return card;
   }
 
-  function buildVerificationCardElement(detail = {}) {
+  function verificationSummaryRows(detail = {}) {
     const verification = detail.verification || {};
-    const token = detail.oauthTokens || {};
-    const sensitive = detail.sensitive || {};
-    const revealedOAuth = sensitive.oauth || {};
-    const revealedAdminOAuth = sensitive.adminOAuth || {};
-    return detailCardElement("Verification / OAuth Token", [
-      ["Source", [detail.source?.hasVerifyLog ? "VerifyLog" : "", detail.source?.hasOAuthUser ? "OAuthUser" : ""].filter(Boolean).join(" ") || "—"],
+    const sources = [];
+    if (detail.source?.hasVerifyLog) sources.push("VerifyLog");
+    if (detail.source?.hasOAuthUser) sources.push("OAuthUser");
+    return [
+      ["Source", sources.join(" ") || "—"],
       ["Last result", verification.latest?.result || verification.lastVerify?.result || "—"],
-      ["Verified at", fmtTime(verification.latest?.verifiedAt || verification.lastVerify?.verifiedAt)],
+      ["Verified at", fmtTime(verification.latest?.verifiedAt || verification.lastVerify?.verifiedAt)]
+    ];
+  }
+
+  function oauthStatusRows(token = {}) {
+    return [
       ["OAuth scope", token.oauth?.scope || "—"],
       ["Token type", token.oauth?.tokenType || "—"],
       ["Has access token", boolText(token.oauth?.hasAccessToken)],
@@ -719,14 +723,38 @@
       ["Last refresh at", fmtTime(token.oauth?.lastRefreshAt)],
       ["Refresh failures", token.oauth?.refreshFailCount ?? 0],
       ["Revoked at", fmtTime(token.oauth?.revokedAt)],
-      ["Admin OAuth access/refresh", `${boolText(token.adminOAuth?.hasAccessToken)} / ${boolText(token.adminOAuth?.hasRefreshToken)}`],
-      ["Access Token", revealedOAuth.accessToken || "ไม่มีข้อมูล", "mono secret-value"],
-      ["Refresh Token", revealedOAuth.refreshToken || "ไม่มีข้อมูล", "mono secret-value"],
-      ["Admin OAuth Access Token", revealedAdminOAuth.accessToken || "ไม่มีข้อมูล", "mono secret-value"],
-      ["Admin OAuth Refresh Token", revealedAdminOAuth.refreshToken || "ไม่มีข้อมูล", "mono secret-value"],
+      ["Admin OAuth access/refresh", `${boolText(token.adminOAuth?.hasAccessToken)} / ${boolText(token.adminOAuth?.hasRefreshToken)}`]
+    ];
+  }
+
+  function revealedTokenRows(sensitive = {}) {
+    const oauth = sensitive.oauth || {};
+    const adminOAuth = sensitive.adminOAuth || {};
+    return [
+      ["Access Token", oauth.accessToken || "ไม่มีข้อมูล", "mono secret-value"],
+      ["Refresh Token", oauth.refreshToken || "ไม่มีข้อมูล", "mono secret-value"],
+      ["Admin OAuth Access Token", adminOAuth.accessToken || "ไม่มีข้อมูล", "mono secret-value"],
+      ["Admin OAuth Refresh Token", adminOAuth.refreshToken || "ไม่มีข้อมูล", "mono secret-value"]
+    ];
+  }
+
+  function verificationResultRows(detail = {}) {
+    const verification = detail.verification || {};
+    return [
       ["Join result", verification.latest?.joinResult?.status || verification.latest?.joinResult || "—"],
       ["Role assignment", verification.latest?.roleAssignResult?.status || verification.latest?.roleAssignResult || "—"],
       ["Request ID", verification.latest?.requestId || "—", "mono"]
+    ];
+  }
+
+  function buildVerificationCardElement(detail = {}) {
+    const token = detail.oauthTokens || {};
+    const sensitive = detail.sensitive || {};
+    return detailCardElement("Verification / OAuth Token", [
+      ...verificationSummaryRows(detail),
+      ...oauthStatusRows(token),
+      ...revealedTokenRows(sensitive),
+      ...verificationResultRows(detail)
     ]);
   }
 
