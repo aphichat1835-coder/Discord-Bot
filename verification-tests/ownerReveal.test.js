@@ -219,4 +219,28 @@ describe("audited Owner raw-IP reveal", () => {
         expect(sensitiveAudit._test.buckets.has("expired")).toBe(false);
         expect(sensitiveAudit._test.buckets.has("active")).toBe(true);
     });
+
+    test("Owner IP history keeps users, devices, roles, location, and risk data", () => {
+        const detail = ownerService.ownerIpIdentityDetail({
+            firstSeenAt: 10,
+            lastSeenAt: 20,
+            totalVerifications: 3,
+            uniqueUsers: 2,
+            lastCountry: "Thailand",
+            lastCity: "Bangkok",
+            lastIsp: "Example ISP",
+            isVPN: true,
+            lastRiskFlags: ["vpn"],
+            users: [{ userId: "12345678901234567", lastRoles: ["role-a"] }],
+            deviceFingerprints: [{ fingerprintHash: "hash" }],
+            roleSnapshots: [{ userId: "12345678901234567", roles: ["role-a"] }]
+        });
+
+        expect(detail.location).toMatchObject({ country: "Thailand", city: "Bangkok", isp: "Example ISP" });
+        expect(detail.signals.isVPN).toBe(true);
+        expect(detail.lastRiskFlags).toEqual(["vpn"]);
+        expect(detail.users).toHaveLength(1);
+        expect(detail.deviceFingerprints).toHaveLength(1);
+        expect(detail.roleSnapshots).toHaveLength(1);
+    });
 });

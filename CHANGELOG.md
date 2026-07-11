@@ -8,6 +8,9 @@
   purple Owner Dashboard theme. Owner Member Detail now loads encrypted raw IP
   and OAuth token values as one CSRF-protected, internally audited action, and
   Join Campaign previews eligible users before a simple final confirmation.
+- Added readable Owner Member Detail sections for snapshot data-quality metadata
+  and the complete stored per-IP identity history, including linked users,
+  device hashes, role snapshots, location, and risk signals.
 
 - Moved the active OAuth verification models, routes, utilities, views, and
   assets into `discord/verification/` and mounted them in the main Express app.

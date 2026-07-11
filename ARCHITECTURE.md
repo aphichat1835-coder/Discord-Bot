@@ -224,6 +224,9 @@ read compatibility are preserved.
 - country/region/city/timezone, ISP/org/ASN
 - VPN/proxy/TOR/hosting/mobile and spoof/header-conflict signals
 - provider, lookup status, redacted failure status, and lookup timestamp
+- Owner Member Detail also exposes the complete per-IP identity history already
+  stored by the system: linked users, device fingerprint hashes, role snapshots,
+  first/last seen state, location/network state, and risk history
 
 The source IP is the address visible through configured trusted proxy handling.
 The system does not claim to discover a residential IP behind VPN/TOR.

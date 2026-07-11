@@ -924,6 +924,40 @@
     ];
   }
 
+  function buildIpIdentityHistoryCard(detail = {}) {
+    const history = detail.sensitive?.ipIdentity;
+    if (!history) return null;
+    const location = history.location || {};
+    const signals = history.signals || {};
+    const raw = rawSnapshotDetailsElement("เปิดดู Users / Devices / Role snapshots ทั้งหมด", history);
+    const card = detailCardElement("IP Identity / History", [
+      ["First seen / Last seen", `${fmtTime(history.firstSeenAt)} / ${fmtTime(history.lastSeenAt)}`],
+      ["Verification count / Users", `${history.totalVerifications ?? 0} / ${history.uniqueUsers ?? 0}`],
+      ["Users on this IP", Array.isArray(history.users) ? history.users.length : 0],
+      ["Device fingerprints", Array.isArray(history.deviceFingerprints) ? history.deviceFingerprints.length : 0],
+      ["Role snapshots", Array.isArray(history.roleSnapshots) ? history.roleSnapshots.length : 0],
+      ["Last result / Role", `${history.lastResult || "—"} / ${history.lastRoleId || "—"}`],
+      ["Risk max / latest", `${history.maxRiskScore ?? 0} / ${history.lastRiskScore ?? 0}`],
+      ["Risk flags", Array.isArray(history.lastRiskFlags) ? history.lastRiskFlags.join(", ") || "—" : "—"],
+      ["Country / City / ISP", `${location.country || location.countryCode || "—"} / ${location.city || "—"} / ${location.isp || "—"}`],
+      ["VPN / Proxy / TOR / Hosting / Mobile", `${boolText(signals.isVPN)} / ${boolText(signals.isProxy)} / ${boolText(signals.isTOR)} / ${boolText(signals.hosting)} / ${boolText(signals.mobile)}`]
+    ], raw);
+    card.classList.add("mt-14");
+    return card;
+  }
+
+  function buildDataQualityCard(detail = {}) {
+    const metadata = detail.verification?.snapshotMeta;
+    if (!metadata) return null;
+    const card = detailCardElement("Snapshot / Data Quality", [], rawSnapshotDetailsElement("เปิดดูสถานะการเก็บข้อมูลทุกหมวด", metadata));
+    card.classList.add("mt-14");
+    return card;
+  }
+
+  function existingDetailCards(...cards) {
+    return cards.filter(Boolean);
+  }
+
   function buildMemberDetailElement(detail = {}) {
     const root = document.createDocumentFragment();
     const grid = document.createElement("div");
@@ -936,7 +970,12 @@
       buildNetworkDetailCard(detail),
       buildVerificationCardElement(detail)
     );
-    root.append(grid, ...buildMemberListCards(detail), ...buildRawSnapshotCards(detail));
+    root.append(
+      grid,
+      ...buildMemberListCards(detail),
+      ...existingDetailCards(buildIpIdentityHistoryCard(detail), buildDataQualityCard(detail)),
+      ...buildRawSnapshotCards(detail)
+    );
     return root;
   }
 

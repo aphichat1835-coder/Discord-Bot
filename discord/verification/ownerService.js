@@ -383,6 +383,44 @@ function revealTokenState(token = {}) {
     };
 }
 
+function ownerIpIdentityDetail(link = null) {
+    if (!link) return null;
+    return {
+        firstSeenAt: link.firstSeenAt || null,
+        lastSeenAt: link.lastSeenAt || null,
+        totalVerifications: Number(link.totalVerifications || 0),
+        uniqueUsers: Number(link.uniqueUsers || 0),
+        lastResult: link.lastResult || null,
+        lastRoleId: link.lastRoleId || null,
+        maxRiskScore: Number(link.maxRiskScore || 0),
+        lastRiskScore: Number(link.lastRiskScore || 0),
+        lastRiskFlags: Array.isArray(link.lastRiskFlags) ? link.lastRiskFlags : [],
+        location: {
+            country: link.lastCountry || null,
+            countryCode: link.lastCountryCode || null,
+            region: link.lastRegion || null,
+            city: link.lastCity || null,
+            timezone: link.lastTimezone || null,
+            isp: link.lastIsp || null,
+            org: link.lastOrg || null,
+            as: link.lastAs || null,
+            asname: link.lastAsname || null
+        },
+        signals: {
+            isVPN: link.isVPN === true,
+            isProxy: link.isProxy === true,
+            isTOR: link.isTOR === true,
+            hosting: link.hosting === true,
+            mobile: link.mobile === true
+        },
+        users: Array.isArray(link.users) ? link.users : [],
+        deviceFingerprints: Array.isArray(link.deviceFingerprints) ? link.deviceFingerprints : [],
+        roleSnapshots: Array.isArray(link.roleSnapshots) ? link.roleSnapshots : [],
+        lastIpInfo: link.lastIpInfo || null,
+        lastDevice: link.lastDevice || null
+    };
+}
+
 async function revealOAuthTokens({ guildId, userId, reason, actor = "owner-dashboard" }) {
     const safeReason = sensitiveAudit.safeReason(reason);
     sensitiveAudit.checkRevealLimit({ actor, guildId, userId, action: "raw_token" });
@@ -465,7 +503,8 @@ async function getOwnerFullMemberDetail({ guildId, userId, actor = "owner-dashbo
         sensitive: {
             rawIp: decryptIP(log?.ipInfo?.encryptedRawIp || identityLink?.encryptedRawIp || ""),
             oauth: revealTokenState(user?.oauth || {}),
-            adminOAuth: revealTokenState(user?.adminOAuth || {})
+            adminOAuth: revealTokenState(user?.adminOAuth || {}),
+            ipIdentity: ownerIpIdentityDetail(identityLink)
         },
         sensitiveAccessAudit: { status: audit.status, viewedAt: now }
     };
@@ -479,6 +518,7 @@ module.exports = {
     getMemberDetail,
     revealOAuthTokens,
     getOwnerFullMemberDetail,
+    ownerIpIdentityDetail,
     emptyStats,
     safeRecent
 };
