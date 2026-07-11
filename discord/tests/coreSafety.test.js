@@ -130,6 +130,15 @@ test("validateRequiredEnv requires OAuth client id and https public URL in produ
             }),
             /process\.exit:1/
         );
+        assert.throws(
+            () => validateRequiredEnv({
+                ...strong,
+                DISCORD_CLIENT_ID: "client-id",
+                PUBLIC_BASE_URL: "https://one.example",
+                PUBLIC_DASHBOARD_URL: "https://two.example"
+            }),
+            /process\.exit:1/
+        );
     });
 
     const ok = validateRequiredEnv({

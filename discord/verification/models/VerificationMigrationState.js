@@ -12,6 +12,8 @@ const schema = new mongoose.Schema({
     lastFinishedAt: Number,
     lastSuccessAt: Number,
     lastError: String,
+    cursorSourceId: String,
+    cursorWrappedAt: Number,
     lastSummary: mongoose.Schema.Types.Mixed,
     updatedAt: { type: Number, default: Date.now }
 }, { minimize: false });

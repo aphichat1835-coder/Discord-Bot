@@ -36,7 +36,9 @@ function emptyStats() {
         highRisk: 0,
         lookupFailed: 0,
         panelRevisionMismatch: 0,
-        lastAt: null
+        lastAt: null,
+        pendingReveal: 0,
+        successRate: 0
     };
 }
 
@@ -137,10 +139,15 @@ async function getGuildStats(guildId) {
             .limit(10)
             .lean()
     ]);
+    const stats = counts[0] || emptyStats();
+    stats.successRate = stats.total > 0
+        ? Math.round((Number(stats.success || 0) / Number(stats.total)) * 100)
+        : 0;
+    stats.pendingReveal = Number(stats.pendingReveal || 0);
     return {
         success: true,
         config,
-        stats: counts[0] || emptyStats(),
+        stats,
         recent: recent.map(safeRecent)
     };
 }

@@ -17,6 +17,7 @@ const { requireCsrf } = require('../../index/auth');
 
 const router = require("express").Router();
 const crypto = require("node:crypto");
+const { resolvePublicBaseUrl } = require("../../core/publicUrl");
 
 const GuildConfig = require("../models/GuildConfig");
 const VerifyLog = require("../models/VerifyLog");
@@ -263,13 +264,7 @@ function pagination(page, limit, total) {
 }
 
 function getPublicBaseUrl(req) {
-  const envUrl =
-    process.env.PUBLIC_BASE_URL ||
-    process.env.DASHBOARD_PUBLIC_URL ||
-    process.env.PUBLIC_DASHBOARD_URL ||
-    process.env.DASHBOARD_URL ||
-    process.env.RENDER_EXTERNAL_URL ||
-    "";
+  const envUrl = resolvePublicBaseUrl(process.env, process.env.RENDER_EXTERNAL_URL || "");
 
   if (envUrl) return trimTrailingSlashes(envUrl);
 
@@ -518,42 +513,6 @@ function buildLogQuery(guildId, reqQuery = {}) {
   }
 
   return filter;
-}
-
-function summarizeCounts(logs = []) {
-  const summary = {
-    total: logs.length,
-    success: 0,
-    failed: 0,
-    blocked: 0,
-    highRisk: 0,
-    vpn: 0,
-    proxy: 0,
-    tor: 0,
-    hosting: 0,
-    pendingReveal: 0,
-    successRate: 0
-  };
-
-  for (const log of logs) {
-    const safe = serializeVerifyLog(log);
-
-    if (safe.result === "success") summary.success++;
-    if (safe.result === "failed") summary.failed++;
-    if (safe.result === "blocked") summary.blocked++;
-    if (Number(safe.riskScore || 0) >= 70) summary.highRisk++;
-
-    if (safe.ipInfo?.isVPN) summary.vpn++;
-    if (safe.ipInfo?.isProxy) summary.proxy++;
-    if (safe.ipInfo?.isTOR) summary.tor++;
-    if (safe.ipInfo?.isHosting) summary.hosting++;
-  }
-
-  summary.successRate = summary.total > 0
-    ? Math.round((summary.success / summary.total) * 100)
-    : 0;
-
-  return summary;
 }
 
 function makePanelRevision(prefix = "panel") {
@@ -1219,7 +1178,14 @@ router.get("/api/guild/:guildId/members", requireAdmin, requireGuildAdmin, async
       success: true,
       sensitiveDataAccess: normalizeSensitiveAccess(config?.security || {}),
       members: result.members,
-      pagination: pagination(page, limit, result.total)
+      pagination: {
+        ...pagination(page, limit, result.total),
+        hasMore: result.hasMore,
+        nextPage: result.hasMore ? page + 1 : null,
+        totalApproximate: result.totalApproximate,
+        truncated: result.truncated,
+        scanLimit: result.scanLimit
+      }
     });
   } catch (err) {
     return sendServerError(res, "members", err, "โหลด members ไม่สำเร็จ");
@@ -1302,16 +1268,8 @@ router.post("/api/guild/:guildId/member/:userId/reveal-token", requireAdmin, req
 router.get("/api/guild/:guildId/stats", requireAdmin, requireGuildAdmin, async (req, res) => {
   try {
     const { guildId } = req.params;
-
-    const logs = await VerifyLog.find(getBaseFilter(guildId))
-      .sort({ verifiedAt: -1, createdAt: -1, _id: -1 })
-      .limit(500)
-      .lean();
-
-    res.json({
-      success: true,
-      stats: summarizeCounts(logs)
-    });
+    const result = await verificationOwnerService.getGuildStats(guildId);
+    res.json({ success: true, stats: result.stats });
   } catch (err) {
     return sendServerError(res, "stats", err, "โหลดสถิติไม่สำเร็จ");
   }

@@ -80,7 +80,8 @@ describe("verification additive migration", () => {
             updated: 0,
             batches: 1,
             snapshotCategoriesComplete: 0,
-            snapshotCategoriesFailed: 0
+            snapshotCategoriesFailed: 0,
+            lastScannedId: "legacy-1"
         });
         expect(bulkWrite).not.toHaveBeenCalled();
     });

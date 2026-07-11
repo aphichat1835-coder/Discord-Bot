@@ -1,6 +1,7 @@
 const OAuthUser = require('../models/OAuthUser');
 const discord = require('./discordAPI');
 const { safeError } = require('./safeLogger');
+const { resolvePublicBaseUrl } = require('../../core/publicUrl');
 
 const DEFAULT_REFRESH_MARGIN_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_REFRESH_SCAN_LIMIT = 100;
@@ -16,13 +17,7 @@ function shouldStoreOAuthTokens(env = process.env) {
 }
 
 function getPublicBaseUrl(env = process.env) {
-    return (
-        env.PUBLIC_DASHBOARD_URL ||
-        env.DASHBOARD_URL ||
-        env.PUBLIC_BASE_URL ||
-        env.DASHBOARD_PUBLIC_URL ||
-        'http://localhost:3000'
-    ).replace(/\/$/, '');
+    return resolvePublicBaseUrl(env, 'http://localhost:3000');
 }
 
 function getVerificationRedirectUri(env = process.env) {

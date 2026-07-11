@@ -1,6 +1,6 @@
 # Architecture
 
-Last implementation verification: 2026-07-04.
+Last implementation verification: 2026-07-11.
 
 ## 1. System shape
 
@@ -196,7 +196,8 @@ Model names, collection behavior, and current/historical token/IP encryption
 read compatibility are preserved.
 
 Automatic migration runs after the shared MongoDB connection is ready and on
-hourly verification maintenance. It processes a bounded batch, archives each
+hourly verification maintenance. It processes a bounded batch with a persistent
+source cursor so repeatedly failing records cannot starve later records, archives each
 source exactly once per migration version before writing, and skips records
 that already have an archive. Backup failure stops migration while leaving the
 original untouched. This same-database archive supports migration rollback; it
@@ -222,6 +223,8 @@ does not protect against loss of the entire MongoDB database.
 - browser-controlled language lists are defensively bounded to eight entries
 - large Discord arrays are split into ordered versioned chunks; pagination and
   chunking are storage boundaries, not truncation
+- the verified-member list is unioned and deduplicated in MongoDB before
+  pagination, so older users remain reachable without an in-memory scan ceiling
 - a category is complete only when `returnedCount === storedCount`, every chunk
   finalized successfully, and `complete` is true
 - each document remains below the 12 MB application budget

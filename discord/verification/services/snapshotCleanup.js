@@ -143,22 +143,37 @@ function orphanFilter(candidates) {
     };
 }
 
-async function applyModelCleanup(Model, { cutoff, orphanCandidates, dryRun }) {
+async function applyModelCleanup(Model, { cutoff, orphanCandidates, dryRun, batchLimit = CLEANUP_SCAN_MAX }) {
     const incompleteFilter = staleSnapshotFilter(cutoff, false);
     const orphanedFilter = orphanCandidates.length ? orphanFilter(orphanCandidates) : null;
+    const safeBatchLimit = Math.max(1, Number(batchLimit || CLEANUP_SCAN_MAX));
+    const incompleteDocs = await Model.find(incompleteFilter)
+        .select("_id")
+        .sort({ _id: 1 })
+        .limit(safeBatchLimit)
+        .lean();
+    const incompleteIds = incompleteDocs.map(doc => doc?._id).filter(Boolean);
     if (dryRun) {
-        const [incomplete, orphaned] = await Promise.all([
+        const [incompleteTotal, orphaned] = await Promise.all([
             Model.countDocuments(incompleteFilter),
             orphanedFilter ? Model.countDocuments(orphanedFilter) : 0
         ]);
-        return { incomplete, orphaned };
+        return {
+            incomplete: incompleteTotal,
+            incompleteBatchSize: incompleteIds.length,
+            incompleteRemaining: Math.max(0, incompleteTotal - incompleteIds.length),
+            orphaned
+        };
     }
-    const incompleteResult = await Model.deleteMany(incompleteFilter);
+    const incompleteResult = incompleteIds.length
+        ? await Model.deleteMany({ _id: { $in: incompleteIds } })
+        : { deletedCount: 0 };
     const orphanedResult = orphanedFilter
         ? await Model.deleteMany(orphanedFilter)
         : { deletedCount: 0 };
     return {
         incomplete: Number(incompleteResult?.deletedCount || 0),
+        incompleteBatchSize: incompleteIds.length,
         orphaned: Number(orphanedResult?.deletedCount || 0)
     };
 }
@@ -189,11 +204,19 @@ async function cleanupSnapshotGarbage(options = {}) {
         referencedVersionsKept: candidates.length - orphanCandidates.length,
         orphanVersions: orphanCandidates.length,
         incompleteDocuments: 0,
+        incompleteBatchCapacity: scanMax,
         orphanDocuments: 0,
         byModel: {}
     };
-    for (const [name, Model] of Object.entries(models)) {
-        const result = await applyModelCleanup(Model, { cutoff, orphanCandidates, dryRun });
+    const modelEntries = Object.entries(models);
+    const incompleteBatchLimit = Math.max(1, Math.floor(scanMax / Math.max(1, modelEntries.length)));
+    for (const [name, Model] of modelEntries) {
+        const result = await applyModelCleanup(Model, {
+            cutoff,
+            orphanCandidates,
+            dryRun,
+            batchLimit: incompleteBatchLimit
+        });
         summary.byModel[name] = result;
         summary.incompleteDocuments += result.incomplete;
         summary.orphanDocuments += result.orphaned;

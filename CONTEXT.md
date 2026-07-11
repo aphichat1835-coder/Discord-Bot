@@ -1,6 +1,6 @@
 # Project Context
 
-Last verified against the implementation: 2026-07-04.
+Last verified against the implementation: 2026-07-11.
 
 ## Identity
 

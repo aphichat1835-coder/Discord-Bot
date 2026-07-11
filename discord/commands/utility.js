@@ -21,6 +21,7 @@ const {
     sanitizeUserMessage
 } = require("../guards/commandGuards");
 const { sendLogWebhook } = require("../core/webhooks");
+const { resolvePublicBaseUrl } = require("../core/publicUrl");
 
 // Race Condition Guards
 const activeRestores = new Set();
@@ -947,12 +948,6 @@ async function handleWhitelist(interaction, sessionManager) {
 // ════════════════════════════════════════════════════════════════════════════
 //  ⚙️  SETUP
 // ════════════════════════════════════════════════════════════════════════════
-function trimTrailingSlashes(value) {
-    let text = String(value || "");
-    while (text.endsWith("/")) text = text.slice(0, -1);
-    return text;
-}
-
 async function handleSetup(interaction) {
     if (interaction.user.id !== config.system.ownerId) {
         return interaction.reply({
@@ -961,13 +956,7 @@ async function handleSetup(interaction) {
         });
     }
 
-    const dashUrl = trimTrailingSlashes(
-        process.env.PUBLIC_BASE_URL ||
-        process.env.DASHBOARD_URL ||
-        process.env.PUBLIC_DASHBOARD_URL ||
-        process.env.DASHBOARD_PUBLIC_URL ||
-        ""
-    );
+    const dashUrl = resolvePublicBaseUrl(process.env);
 
     if (!dashUrl) {
         return interaction.reply({

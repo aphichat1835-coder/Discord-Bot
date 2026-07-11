@@ -4,6 +4,12 @@
 
 ### Changed
 
+- Removed the verified-member 5,000-record visibility ceiling with database-side
+  union/deduplicated pagination, bounded incomplete-snapshot deletion batches,
+  persisted automatic-migration cursor progress, centralized public URL alias
+  resolution with production mismatch rejection, and full-dataset risk/stats
+  aggregation.
+
 - Made the Render service probe combined readiness through `/health` and
   replaced retired sensitive-approval wording in the Owner verification UI
   with the actual one-click, audited Member Detail behavior.

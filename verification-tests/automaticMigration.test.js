@@ -3,7 +3,8 @@
 const {
     runAutomaticMigration,
     contentHash,
-    config
+    config,
+    _test
 } = require("../discord/verification/services/automaticMigration");
 const { archiveSourceDocument } = require("../discord/verification/services/migrationArchive");
 const { restoreCursor } = require("../scripts/restoreVerificationMigration");
@@ -113,6 +114,42 @@ describe("automatic verification migration backup", () => {
             expect.any(Object),
             expect.objectContaining({ $set: expect.objectContaining({ status: "failed" }) })
         );
+    });
+
+    test("persistent migration cursor wraps instead of starving earlier failed records", async () => {
+        const source = { _id: "user-1", discord: { userId: "123" } };
+        const OAuthUserModel = sourceModel(source, [2, 1]);
+        const StateModel = stateModel();
+        StateModel.findOneAndUpdate.mockResolvedValue({
+            _id: "state",
+            cursorSourceId: "stale-last-id"
+        });
+        const migrateCursor = jest.fn()
+            .mockResolvedValueOnce({ scanned: 0, eligible: 0, updated: 0, batches: 0, lastScannedId: null })
+            .mockResolvedValueOnce({ scanned: 1, eligible: 1, updated: 1, batches: 1, lastScannedId: "user-1" });
+
+        const result = await runAutomaticMigration({
+            OAuthUserModel,
+            ArchiveModel: { updateOne: jest.fn() },
+            StateModel,
+            migrateCursor,
+            settings: { enabled: true, scanMax: 10, batchSize: 10 }
+        });
+
+        expect(migrateCursor).toHaveBeenCalledTimes(2);
+        expect(result).toMatchObject({ cursorWrapped: true, nextCursor: "user-1", remaining: 1 });
+        expect(StateModel.updateOne).toHaveBeenCalledWith(
+            expect.any(Object),
+            expect.objectContaining({ $set: expect.objectContaining({ cursorSourceId: "user-1" }) })
+        );
+    });
+
+    test("migration cursor applies a strict after-id filter", () => {
+        const find = jest.fn(() => queryCursor({}));
+        _test.migrationCursor({ find }, { $or: [{ legacy: true }] }, 50, "cursor-id");
+        expect(find).toHaveBeenCalledWith({
+            $and: [{ $or: [{ legacy: true }] }, { _id: { $gt: "cursor-id" } }]
+        });
     });
 
     test("restore is dry-run by default and replaces archived sources only on apply", async () => {

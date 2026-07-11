@@ -55,8 +55,11 @@ async function acquireLock(StateModel, now, owner) {
     }
 }
 
-function migrationCursor(OAuthUserModel, filter, scanMax) {
-    return OAuthUserModel.find(filter)
+function migrationCursor(OAuthUserModel, filter, scanMax, afterId = null) {
+    const cursorFilter = afterId
+        ? { $and: [filter, { _id: { $gt: afterId } }] }
+        : filter;
+    return OAuthUserModel.find(cursorFilter)
         .select("discord connections guilds lastMember lastVerify snapshotMeta snapshotRefs updatedAt")
         .sort({ _id: 1 })
         .limit(scanMax)
@@ -98,8 +101,8 @@ async function runAutomaticMigration(options = {}) {
     const backup = { created: 0, reused: 0 };
     try {
         const migrateCursor = options.migrateCursor || migration.migrateCursor;
-        const summary = await migrateCursor({
-            cursor: migrationCursor(OAuthUserModel, filter, settings.scanMax),
+        const migrateBatch = afterId => migrateCursor({
+            cursor: migrationCursor(OAuthUserModel, filter, settings.scanMax, afterId),
             apply: true,
             batchSize: settings.batchSize,
             bulkWrite: (operations, writeOptions) => OAuthUserModel.bulkWrite(operations, writeOptions),
@@ -115,9 +118,26 @@ async function runAutomaticMigration(options = {}) {
                 else backup.reused++;
             }
         });
+        const previousCursor = lock.cursorSourceId || null;
+        let summary = await migrateBatch(previousCursor);
+        let cursorWrapped = false;
+        if (previousCursor && Number(summary.scanned || 0) === 0) {
+            summary = await migrateBatch(null);
+            cursorWrapped = true;
+        }
         const remaining = await OAuthUserModel.countDocuments(filter);
         const finishedAt = Date.now();
-        const result = { ...summary, backup, eligible, remaining, complete: remaining === 0, ...settings };
+        const nextCursor = remaining === 0 ? null : (summary.lastScannedId || null);
+        const result = {
+            ...summary,
+            backup,
+            eligible,
+            remaining,
+            complete: remaining === 0,
+            cursorWrapped,
+            nextCursor,
+            ...settings
+        };
         await StateModel.updateOne({ _id: STATE_ID, lockOwner: owner }, {
             $set: {
                 status: result.complete ? "complete" : "pending",
@@ -126,6 +146,8 @@ async function runAutomaticMigration(options = {}) {
                 lastFinishedAt: finishedAt,
                 lastSuccessAt: finishedAt,
                 lastSummary: result,
+                cursorSourceId: nextCursor,
+                ...(cursorWrapped ? { cursorWrappedAt: finishedAt } : {}),
                 updatedAt: finishedAt
             }
         });

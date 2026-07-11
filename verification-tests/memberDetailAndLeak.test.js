@@ -131,9 +131,19 @@ describe("member detail serialization and leak guards", () => {
         expect(member.sensitiveRedacted).toBe(true);
     });
 
-    test("legacy aggregation applies a bounded scan before projection", () => {
-        const pipeline = verifiedMemberService._test.legacyVerifiedAggregation("123", 250);
-        expect(pipeline).toContainEqual({ $limit: 250 });
+    test("member aggregation paginates after database-side union and deduplication", () => {
+        const pipeline = verifiedMemberService._test.verifiedMemberAggregation("123", {
+            page: 2,
+            limit: 25,
+            includeLegacy: true
+        });
+        expect(pipeline.some(stage => stage.$unionWith)).toBe(true);
+        expect(pipeline.at(-1)).toEqual(expect.objectContaining({
+            $facet: expect.objectContaining({
+                rows: [{ $skip: 50 }, { $limit: 25 }]
+            })
+        }));
+        expect(pipeline.slice(0, -1).some(stage => stage.$limit)).toBe(false);
     });
 
     test("empty capped member pages never advertise another page", () => {

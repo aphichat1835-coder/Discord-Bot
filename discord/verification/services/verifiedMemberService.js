@@ -4,11 +4,6 @@ const VerifyLog = require("../models/VerifyLog");
 const OAuthUser = require("../models/OAuthUser");
 const { buildVerifyLogCommon, buildVerifyLogParts } = require("../utils/verificationSnapshots");
 
-const MEMBER_SCAN_MAX = Math.max(
-    100,
-    Number(process.env.VERIFIED_MEMBER_SCAN_MAX || 5000) || 5000
-);
-
 function escapeRegex(value) {
     return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
@@ -130,37 +125,6 @@ function fromOAuthUser(user = {}, canViewSensitive = false) {
     };
 }
 
-function legacyVerifiedAggregation(guildId, scanLimit = MEMBER_SCAN_MAX) {
-    return [
-        {
-            $match: {
-                "lastVerify.guildId": guildId,
-                "lastVerify.result": "success",
-                $or: [{ deletedAt: { $exists: false } }, { deletedAt: null }]
-            }
-        },
-        { $sort: { "lastVerify.verifiedAt": -1, updatedAt: -1, _id: -1 } },
-        { $limit: scanLimit },
-        {
-            $project: {
-                discord: 1,
-                lastMember: 1,
-                lastVerify: 1,
-                lastIpTracking: 1,
-                snapshotMeta: 1,
-                createdAt: 1,
-                updatedAt: 1,
-                connectionsCount: {
-                    $ifNull: ["$snapshotMeta.connections.storedCount", { $size: { $ifNull: ["$connections", []] } }]
-                },
-                guildsCount: {
-                    $ifNull: ["$snapshotMeta.guilds.storedCount", { $size: { $ifNull: ["$guilds", []] } }]
-                }
-            }
-        }
-    ];
-}
-
 function listSafeMember(member = {}) {
     const summary = { ...member };
     delete summary.connections;
@@ -203,62 +167,197 @@ function hasMoreMembers(pageLength, limit, withinKnownTotal, truncated) {
     return pageLength === limit && (withinKnownTotal || truncated);
 }
 
+function latestLogMemberStages(guildId) {
+    return [
+        { $match: successLogFilter(guildId) },
+        {
+            $project: {
+                guildId: 1,
+                userId: 1,
+                roleId: 1,
+                result: 1,
+                reason: 1,
+                riskScore: 1,
+                riskFlags: 1,
+                oauthScope: 1,
+                stateMode: 1,
+                ipInfo: 1,
+                device: 1,
+                trackingSnapshot: 1,
+                policySnapshot: 1,
+                verifiedAt: 1,
+                createdAt: 1,
+                discordSnapshot: {
+                    $mergeObjects: [
+                        { $ifNull: ["$discordSnapshot", {}] },
+                        { connections: [], guilds: [], member: null, memberSnapshot: null }
+                    ]
+                },
+                memberSnapshot: {
+                    $mergeObjects: [
+                        { $ifNull: ["$memberSnapshot", { $ifNull: ["$discordSnapshot.member", {}] }] },
+                        { roles: [] }
+                    ]
+                }
+            }
+        },
+        { $sort: { verifiedAt: -1, createdAt: -1, _id: -1 } },
+        {
+            $group: {
+                _id: "$userId",
+                log: { $first: "$$ROOT" },
+                verifiedAt: { $first: { $ifNull: ["$verifiedAt", "$createdAt"] } }
+            }
+        },
+        {
+            $project: {
+                _id: 0,
+                userId: "$_id",
+                log: 1,
+                oauth: { $literal: null },
+                verifiedAt: 1
+            }
+        }
+    ];
+}
+
+function legacyMemberUnionStage(guildId) {
+    return {
+        $unionWith: {
+            coll: OAuthUser.collection.name,
+            pipeline: [
+                    {
+                        $match: {
+                            "lastVerify.guildId": guildId,
+                            "lastVerify.result": "success",
+                            $or: [{ deletedAt: { $exists: false } }, { deletedAt: null }]
+                        }
+                    },
+                    {
+                        $project: {
+                            _id: 0,
+                            userId: "$discord.userId",
+                            oauth: {
+                                discord: "$discord",
+                                lastMember: "$lastMember",
+                                lastVerify: "$lastVerify",
+                                lastIpTracking: "$lastIpTracking",
+                                snapshotMeta: "$snapshotMeta",
+                                createdAt: "$createdAt",
+                                updatedAt: "$updatedAt",
+                                connectionsCount: {
+                                    $ifNull: [
+                                        "$snapshotMeta.connections.storedCount",
+                                        { $size: { $ifNull: ["$connections", []] } }
+                                    ]
+                                },
+                                guildsCount: {
+                                    $ifNull: [
+                                        "$snapshotMeta.guilds.storedCount",
+                                        { $size: { $ifNull: ["$guilds", []] } }
+                                    ]
+                                }
+                            },
+                            log: { $literal: null },
+                            verifiedAt: { $ifNull: ["$lastVerify.verifiedAt", "$updatedAt"] }
+                        }
+                    }
+            ]
+        }
+    };
+}
+
+function deduplicatedMemberStages() {
+    return [
+        {
+            $group: {
+                _id: "$userId",
+                verifiedAt: { $max: "$verifiedAt" },
+                logs: { $push: "$log" },
+                oauthUsers: { $push: "$oauth" }
+            }
+        },
+        {
+            $project: {
+                _id: 0,
+                userId: "$_id",
+                verifiedAt: 1,
+                log: {
+                    $arrayElemAt: [{ $filter: { input: "$logs", as: "item", cond: { $ne: ["$$item", null] } } }, 0]
+                },
+                oauth: {
+                    $arrayElemAt: [{ $filter: { input: "$oauthUsers", as: "item", cond: { $ne: ["$$item", null] } } }, 0]
+                }
+            }
+        }
+    ];
+}
+
+function memberSearchStage(q) {
+    if (!q) return null;
+    const text = { $regex: escapeRegex(q), $options: "i" };
+    return {
+        $match: {
+            $or: [
+                { userId: String(q) },
+                { "oauth.discord.username": text },
+                { "oauth.discord.globalName": text },
+                { "oauth.discord.displayTag": text },
+                { "oauth.discord.email": text },
+                { "log.discordSnapshot.username": text },
+                { "log.discordSnapshot.globalName": text },
+                { "log.discordSnapshot.email": text }
+            ]
+        }
+    };
+}
+
+function verifiedMemberAggregation(guildId, { page, limit, q = "", includeLegacy = true } = {}) {
+    const skip = page * limit;
+    const pipeline = latestLogMemberStages(guildId);
+    if (includeLegacy) pipeline.push(legacyMemberUnionStage(guildId));
+    pipeline.push(...deduplicatedMemberStages());
+    const searchStage = memberSearchStage(q);
+    if (searchStage) pipeline.push(searchStage);
+    pipeline.push(
+        { $sort: { verifiedAt: -1, userId: 1 } },
+        {
+            $facet: {
+                metadata: [{ $count: "total" }],
+                rows: [{ $skip: skip }, { $limit: limit }]
+            }
+        }
+    );
+    return pipeline;
+}
+
 async function listVerifiedMembers(guildId, { page = 0, limit = 25, q = "", includeLegacy = true, canViewSensitive = false } = {}) {
     const safePage = Math.max(0, Number.parseInt(page, 10) || 0);
     const safeLimit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 25));
-    const requestedWindow = (safePage + 1) * safeLimit;
-    const scanLimit = Math.min(MEMBER_SCAN_MAX, Math.max(safeLimit * 3, requestedWindow * 3));
-    const logFilter = successLogFilter(guildId, { q });
-    const [logs, legacyUsers] = await Promise.all([
-        VerifyLog.find(logFilter)
-            .sort({ verifiedAt: -1, createdAt: -1, _id: -1 })
-            .limit(scanLimit)
-            .lean(),
+    const safeQuery = String(q || "").trim().slice(0, 120);
+    const aggregate = VerifyLog.aggregate(verifiedMemberAggregation(guildId, {
+        page: safePage,
+        limit: safeLimit,
+        q: safeQuery,
         includeLegacy
-            ? OAuthUser.aggregate(legacyVerifiedAggregation(guildId, scanLimit))
-            : []
-    ]);
-
-    const map = new Map();
-    for (const user of legacyUsers) {
-        const member = fromOAuthUser(user, canViewSensitive);
-        if (member.userId) map.set(member.userId, member);
-    }
-    for (const log of logs) {
-        const member = fromLog(log, canViewSensitive);
-        if (!member.userId) continue;
-        map.set(member.userId, mergeMembers(member, map.get(member.userId), canViewSensitive));
-    }
-    let members = [...map.values()].sort((a, b) => Number(b.verifiedAt || 0) - Number(a.verifiedAt || 0));
-    if (q) {
-        const needle = String(q).toLowerCase();
-        members = members.filter(item => [
-            item.userId,
-            item.username,
-            item.globalName,
-            item.email,
-            item.tag
-        ].some(value => String(value || "").toLowerCase().includes(needle)));
-    }
-    const truncated = logs.length >= scanLimit || legacyUsers.length >= scanLimit;
-    const total = members.length;
-    const pageMembers = members
-        .slice(safePage * safeLimit, safePage * safeLimit + safeLimit)
-        .map(listSafeMember);
+    })).allowDiskUse(true);
+    const [result = {}] = await aggregate;
+    const rows = Array.isArray(result.rows) ? result.rows : [];
+    const total = Number(result.metadata?.[0]?.total || 0);
+    const pageMembers = rows.map(row => {
+        const primary = row.log ? fromLog(row.log, canViewSensitive) : null;
+        const fallback = row.oauth ? fromOAuthUser(row.oauth, canViewSensitive) : null;
+        return listSafeMember(mergeMembers(primary, fallback, canViewSensitive));
+    });
     return {
         members: pageMembers,
         total,
-        totalApproximate: truncated,
-        truncated,
-        scanLimit,
+        totalApproximate: false,
+        truncated: false,
+        scanLimit: null,
         page: safePage,
         limit: safeLimit,
-        hasMore: hasMoreMembers(
-            pageMembers.length,
-            safeLimit,
-            (safePage + 1) * safeLimit < total,
-            truncated
-        )
+        hasMore: (safePage + 1) * safeLimit < total
     };
 }
 
@@ -268,7 +367,6 @@ module.exports = {
         fromLog,
         fromOAuthUser,
         mergeMembers,
-        legacyVerifiedAggregation,
         escapeRegex,
         legacySensitiveFields,
         legacyCounts,
@@ -276,6 +374,7 @@ module.exports = {
         legacyVerificationFields,
         chooseSensitiveArray,
         listSafeMember,
-        hasMoreMembers
+        hasMoreMembers,
+        verifiedMemberAggregation
     }
 };

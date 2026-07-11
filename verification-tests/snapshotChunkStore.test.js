@@ -295,11 +295,22 @@ describe("OAuth snapshot chunk persistence", () => {
             verifiedAt: 10_000 - index,
             discordSnapshot: { userId: `user-${index}`, username: `member-${index}` }
         }));
-        jest.spyOn(VerifyLog, "find").mockImplementation(() => ({
-            sort: jest.fn().mockReturnThis(),
-            limit: jest.fn().mockReturnThis(),
-            lean: jest.fn().mockResolvedValue(logs)
-        }));
+        jest.spyOn(VerifyLog, "aggregate").mockImplementation(pipeline => {
+            const facet = pipeline.find(stage => stage.$facet)?.$facet;
+            const skip = facet?.rows?.find(stage => stage.$skip !== undefined)?.$skip || 0;
+            const limit = facet?.rows?.find(stage => stage.$limit !== undefined)?.$limit || 5;
+            return {
+                allowDiskUse: jest.fn().mockResolvedValue([{
+                    metadata: [{ total: logs.length }],
+                    rows: logs.slice(skip, skip + limit).map(log => ({
+                        userId: log.userId,
+                        verifiedAt: log.verifiedAt,
+                        log,
+                        oauth: null
+                    }))
+                }])
+            };
+        });
 
         const first = await verifiedMemberService.listVerifiedMembers(
             "987654321098765432",

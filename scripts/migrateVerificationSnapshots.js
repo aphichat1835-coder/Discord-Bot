@@ -228,7 +228,8 @@ async function migrateCursor({
         updated: 0,
         batches: 0,
         snapshotCategoriesComplete: 0,
-        snapshotCategoriesFailed: 0
+        snapshotCategoriesFailed: 0,
+        lastScannedId: null
     };
     let operations = [];
 
@@ -244,6 +245,7 @@ async function migrateCursor({
 
     for await (const doc of cursor) {
         summary.scanned++;
+        summary.lastScannedId = doc?._id ? String(doc._id) : summary.lastScannedId;
         const timestamp = now();
         if (beforeMigrate) await beforeMigrate(doc, summary);
         const storedSnapshots = apply

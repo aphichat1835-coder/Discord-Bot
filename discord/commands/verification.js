@@ -22,6 +22,7 @@ const { MessageEmbed, MessageActionRow, MessageButton } = require("discord.js");
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");
 const { createCompactCallbackState } = require("../verification/utils/state");
+const { resolvePublicBaseUrl } = require("../core/publicUrl");
 
 let GuildConfig = null;
 
@@ -88,14 +89,7 @@ function boolToLegacyOauthMode(value) {
 }
 
 function getDashboardUrl() {
-    return String(
-        process.env.PUBLIC_DASHBOARD_URL ||
-        process.env.DASHBOARD_URL ||
-        process.env.PUBLIC_BASE_URL ||
-        process.env.DASHBOARD_PUBLIC_URL ||
-        process.env.RENDER_EXTERNAL_URL ||
-        ""
-    ).replace(/\/$/, "");
+    return resolvePublicBaseUrl(process.env, process.env.RENDER_EXTERNAL_URL || "");
 }
 
 function getDiscordClientId(interaction) {

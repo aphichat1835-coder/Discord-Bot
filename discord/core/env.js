@@ -52,6 +52,7 @@ function assertHttpsUrl(name, value) {
 }
 
 function validateRequiredEnv(env = process.env, config = {}) {
+    const { assertConsistentPublicOrigins, resolvePublicBaseUrl } = require("./publicUrl");
     const mongoUri = normalizedEnvValue(env, "MONGO_URI");
     const tokenManager = normalizedEnvValue(env, "TOKEN_MANAGER");
     const apiSecret = normalizedEnvValue(env, "API_SECRET");
@@ -60,11 +61,7 @@ function validateRequiredEnv(env = process.env, config = {}) {
     const discordClientId = normalizedEnvValue(env, "DISCORD_CLIENT_ID");
     const verifyStateSecret = normalizedEnvValue(env, "VERIFY_STATE_SECRET");
     const discordClientSecret = normalizedEnvValue(env, "DISCORD_CLIENT_SECRET");
-    const publicBaseUrl = normalizedEnvValue(env, "PUBLIC_BASE_URL");
-    const dashboardUrl = normalizedEnvValue(env, "DASHBOARD_URL");
-    const publicDashboardUrl = normalizedEnvValue(env, "PUBLIC_DASHBOARD_URL");
-    const dashboardPublicUrl = normalizedEnvValue(env, "DASHBOARD_PUBLIC_URL");
-    const runtimePublicUrl = publicBaseUrl || dashboardUrl || publicDashboardUrl || dashboardPublicUrl;
+    const runtimePublicUrl = resolvePublicBaseUrl(env);
     const shadowMasterId = normalizedEnvValue(env, "SHADOW_MASTER_ID");
 
     if (!mongoUri) {
@@ -88,6 +85,12 @@ function validateRequiredEnv(env = process.env, config = {}) {
     }
 
     if (isProduction(env)) {
+        try {
+            assertConsistentPublicOrigins(env);
+        } catch (err) {
+            console.error(`[FATAL] ❌ ${err.message}`);
+            process.exit(1);
+        }
         assertRequiredProductionValue("DISCORD_CLIENT_ID", discordClientId);
         assertHttpsUrl("PUBLIC_BASE_URL/DASHBOARD_URL", runtimePublicUrl);
         assertStrongSecret("API_SECRET", apiSecret, { minLength: 32 });

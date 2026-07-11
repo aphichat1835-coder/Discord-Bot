@@ -13,19 +13,14 @@ const { normalizeGuildPermissions } = require('../utils/guildPermissions');
 const { shouldStoreOAuthTokens } = require('../utils/oauthTokenLifecycle');
 const snapshotBudget = require('../services/snapshotBudget');
 const snapshotStore = require('../services/oauthSnapshotStore');
+const { resolvePublicBaseUrl } = require('../../core/publicUrl');
 
 const OAuthUser = require('../models/OAuthUser');
 const GuildConfig = require('../models/GuildConfig');
 const VerifyLog = require('../models/VerifyLog');
 const IpIdentityLink = require('../models/IpIdentityLink');
 
-const BASE_URL = (
-    process.env.PUBLIC_DASHBOARD_URL ||
-    process.env.DASHBOARD_URL ||
-    process.env.PUBLIC_BASE_URL ||
-    process.env.DASHBOARD_PUBLIC_URL ||
-    'http://localhost:3000'
-).replace(/\/$/, '');
+const BASE_URL = resolvePublicBaseUrl(process.env, 'http://localhost:3000');
 
 const REDIRECT_URI = `${BASE_URL}/auth/callback`;
 const VERIFY_SCOPE = 'identify email connections guilds guilds.members.read guilds.join';

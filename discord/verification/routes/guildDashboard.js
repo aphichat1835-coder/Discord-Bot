@@ -244,40 +244,47 @@ async function buildStats(guildId) {
     };
 }
 
-function countBy(items, getter, limit = 12) {
-    const map = new Map();
-
-    for (const item of items) {
-        const key = getter(item) || "unknown";
-        map.set(key, (map.get(key) || 0) + 1);
-    }
-
-    return Array.from(map.entries())
-        .map(([label, count]) => ({ label, count }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, limit);
+async function topDistribution(guildId, labelExpression, limit = 12) {
+    return VerifyLog.aggregate([
+        { $match: baseFilter(guildId) },
+        { $project: { label: labelExpression } },
+        { $group: { _id: { $ifNull: ["$label", "unknown"] }, count: { $sum: 1 } } },
+        { $sort: { count: -1, _id: 1 } },
+        { $limit: limit },
+        { $project: { _id: 0, label: "$_id", count: 1 } }
+    ]);
 }
 
 async function buildRiskSummary(guildId) {
-    const logs = await VerifyLog.find(baseFilter(guildId))
+    const [countries, isps, devices, reasons, recentLogs] = await Promise.all([
+        topDistribution(guildId, {
+            $ifNull: ["$ipInfo.countryCode", { $ifNull: ["$ipInfo.country", "unknown"] }]
+        }),
+        topDistribution(guildId, { $ifNull: ["$ipInfo.isp", "unknown"] }),
+        topDistribution(guildId, {
+            $concat: [
+                { $ifNull: ["$device.browser", "unknown"] },
+                " / ",
+                { $ifNull: ["$device.os", "unknown"] }
+            ]
+        }),
+        topDistribution(guildId, { $ifNull: ["$reason", { $ifNull: ["$result", "unknown"] }] }),
+        VerifyLog.find({
+            ...baseFilter(guildId),
+            $or: [{ riskScore: { $gte: 35 } }, { result: { $ne: "success" } }]
+        })
         .sort({ verifiedAt: -1, createdAt: -1, _id: -1 })
-        .limit(300)
-        .lean();
-
-    const safeLogs = logs.map(safeLog);
+        .limit(20)
+        .lean()
+    ]);
 
     return {
-        countries: countBy(safeLogs, log => log.countryCode || log.country || "unknown", 12),
-        isps: countBy(safeLogs, log => log.isp || "unknown", 12),
-        devices: countBy(safeLogs, log => {
-            const browser = log.device?.browser || log.browser || "unknown";
-            const os = log.device?.os || log.os || "unknown";
-            return `${browser} / ${os}`;
-        }, 12),
-        reasons: countBy(safeLogs, log => log.reason || log.result || "unknown", 12),
-        recentRiskLogs: safeLogs
-            .filter(log => Number(log.riskScore || 0) >= 35 || log.result !== "success")
-            .slice(0, 20)
+        countries,
+        isps,
+        devices,
+        reasons,
+        recentRiskLogs: recentLogs.map(safeLog),
+        sampled: false
     };
 }
 
@@ -415,7 +422,9 @@ router.get("/api/guild/:guildId/risk", requireAdmin, requireGuildAdmin, async (r
 router._test = {
     safeLog,
     recordSensitiveAccess,
-    safeServerError
+    safeServerError,
+    topDistribution,
+    buildRiskSummary
 };
 
 module.exports = router;

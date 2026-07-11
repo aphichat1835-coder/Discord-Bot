@@ -6,23 +6,32 @@ const {
 } = require("../discord/verification/services/snapshotCleanup");
 
 function queryResult(value, rejected = null) {
-    return {
+    let resultLimit = null;
+    const query = {
         where: jest.fn().mockReturnThis(),
         gt: jest.fn().mockReturnThis(),
         in: jest.fn().mockReturnThis(),
         or: jest.fn().mockReturnThis(),
         select: jest.fn().mockReturnThis(),
         sort: jest.fn().mockReturnThis(),
-        limit: jest.fn().mockReturnThis(),
+        limit: jest.fn(limit => {
+            resultLimit = limit;
+            return query;
+        }),
         lean: rejected
             ? jest.fn().mockRejectedValue(rejected)
-            : jest.fn().mockResolvedValue(value)
+            : jest.fn(async () => resultLimit === null ? value : value.slice(0, resultLimit))
     };
+    return query;
 }
 
 function snapshotModel(candidates = []) {
+    const documents = candidates.map((candidate, index) => ({
+        _id: candidate._id || `snapshot-${index + 1}`,
+        ...candidate
+    }));
     return {
-        find: jest.fn(() => queryResult(candidates)),
+        find: jest.fn(() => queryResult(documents)),
         countDocuments: jest.fn().mockResolvedValue(0),
         deleteMany: jest.fn().mockResolvedValue({ deletedCount: 0 })
     };
@@ -133,5 +142,27 @@ describe("permanent-history snapshot garbage cleanup", () => {
                 roleRef: { version: "roles-version" }
             }
         })]).toEqual(["member-version", "roles-version"]);
+    });
+
+    test("incomplete snapshot deletion is bounded by the per-model batch", async () => {
+        const Model = snapshotModel(Array.from({ length: 5 }, (_, index) => ({
+            _id: `incomplete-${index}`,
+            userId: "12345678901234567",
+            snapshotVersion: `version-${index}`
+        })));
+        Model.deleteMany.mockResolvedValue({ deletedCount: 2 });
+
+        const summary = await cleanupSnapshotGarbage({
+            now: 2 * 60 * 60 * 1000,
+            graceHours: 1,
+            scanMax: 2,
+            models: { profile: Model },
+            OAuthUserModel: referenceModel([]),
+            VerifyLogModel: referenceModel([])
+        });
+
+        const incompleteDelete = Model.deleteMany.mock.calls[0][0];
+        expect(incompleteDelete).toEqual({ _id: { $in: ["incomplete-0", "incomplete-1"] } });
+        expect(summary.byModel.profile.incompleteBatchSize).toBe(2);
     });
 });

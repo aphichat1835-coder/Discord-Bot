@@ -1,6 +1,7 @@
 "use strict";
 
 const GuildConfig = require("../discord/verification/models/GuildConfig");
+const VerifyLog = require("../discord/verification/models/VerifyLog");
 const guildDashboardRoutes = require("../discord/verification/routes/guildDashboard");
 const guildRoutes = require("../discord/verification/routes/guild");
 
@@ -29,5 +30,23 @@ describe("sensitive Owner route auditing", () => {
         );
         expect(status).toHaveBeenCalledWith(503);
         expect(json).toHaveBeenCalledWith(expect.objectContaining({ success: false }));
+    });
+
+    test("risk distributions aggregate the complete guild dataset before top-N limiting", async () => {
+        const aggregate = jest.spyOn(VerifyLog, "aggregate").mockResolvedValue([
+            { label: "TH", count: 10 }
+        ]);
+        await expect(guildDashboardRoutes._test.topDistribution(
+            "12345678901234567",
+            { $ifNull: ["$ipInfo.countryCode", "unknown"] }
+        )).resolves.toEqual([{ label: "TH", count: 10 }]);
+
+        const pipeline = aggregate.mock.calls[0][0];
+        expect(pipeline[0]).toEqual({
+            $match: { guildId: "12345678901234567", deletedAt: { $exists: false } }
+        });
+        expect(pipeline.findIndex(stage => stage.$group)).toBeLessThan(
+            pipeline.findIndex(stage => stage.$limit)
+        );
     });
 });
