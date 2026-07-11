@@ -11,6 +11,10 @@
 - Added readable Owner Member Detail sections for snapshot data-quality metadata
   and the complete stored per-IP identity history, including linked users,
   device hashes, role snapshots, location, and risk signals.
+- Added an inline OAuth readiness note to each Owner Member Detail card so the
+  Owner can immediately see missing scopes, absent or undecryptable tokens,
+  expiry, refresh failures, and revocation without adding another dashboard tab;
+  complete users remain unlabelled so only actionable gaps draw attention.
 
 - Moved the active OAuth verification models, routes, utilities, views, and
   assets into `discord/verification/` and mounted them in the main Express app.

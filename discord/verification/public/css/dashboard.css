@@ -2055,6 +2055,11 @@ tbody tr:hover td {
   color: var(--text);
 }
 
+.notice ul {
+  margin: 7px 0 0 18px;
+  padding: 0;
+}
+
 .mb-12 {
   margin-bottom: 12px;
 }

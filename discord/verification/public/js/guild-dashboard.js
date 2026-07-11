@@ -747,6 +747,60 @@
     ];
   }
 
+  function missingOAuthScopeIssues(oauth = {}) {
+    const granted = new Set(String(oauth.scope || "").split(/\s+/).filter(Boolean));
+    const required = ["identify", "email", "connections", "guilds", "guilds.members.read", "guilds.join"];
+    return required
+      .filter(scope => !granted.has(scope))
+      .map(scope => `ขาด scope: ${scope}`);
+  }
+
+  function oauthCredentialIssues(oauth = {}, revealed = {}) {
+    const issues = [];
+    if (!oauth.hasAccessToken) issues.push("ไม่มี Access Token");
+    if (!oauth.hasRefreshToken) issues.push("ไม่มี Refresh Token — Token หมดแล้วต้อง OAuth ใหม่");
+    if (oauth.hasAccessToken && !revealed.accessToken) issues.push("ถอด Access Token ที่เก็บไว้ไม่สำเร็จ");
+    if (oauth.hasRefreshToken && !revealed.refreshToken) issues.push("ถอด Refresh Token ที่เก็บไว้ไม่สำเร็จ");
+    return issues;
+  }
+
+  function oauthLifecycleIssues(oauth = {}, now = Date.now()) {
+    const issues = [];
+    if (oauth.revokedAt) issues.push("Token ถูก revoke หรือ refresh ไม่สำเร็จเกินกำหนด — ควร OAuth ใหม่");
+    if (Number(oauth.refreshFailCount || 0) > 0) issues.push(`Refresh ล้มเหลว ${oauth.refreshFailCount} ครั้ง`);
+    if (oauth.expiresAt && Number(oauth.expiresAt) <= now) {
+      issues.push(oauth.hasRefreshToken ? "Access Token หมดอายุ — ระบบจะใช้ Refresh Token ต่ออายุ" : "Access Token หมดอายุและต่ออายุไม่ได้");
+    }
+    return issues;
+  }
+
+  function oauthReadinessIssues(detail = {}) {
+    const oauth = detail.oauthTokens?.oauth || {};
+    const revealed = detail.sensitive?.oauth || {};
+    return [
+      ...missingOAuthScopeIssues(oauth),
+      ...oauthCredentialIssues(oauth, revealed),
+      ...oauthLifecycleIssues(oauth)
+    ];
+  }
+
+  function oauthReadinessNotice(detail = {}) {
+    const issues = oauthReadinessIssues(detail);
+    if (!issues.length) return null;
+    const notice = document.createElement("div");
+    notice.className = "notice notice-warn mt-10";
+    const title = document.createElement("strong");
+    const list = document.createElement("ul");
+    title.textContent = "⚠️ คนนี้ยังขาดหรือควรตรวจสอบ";
+    issues.forEach(issue => {
+      const item = document.createElement("li");
+      item.textContent = issue;
+      list.appendChild(item);
+    });
+    notice.append(title, list);
+    return notice;
+  }
+
   function buildVerificationCardElement(detail = {}) {
     const token = detail.oauthTokens || {};
     const sensitive = detail.sensitive || {};
@@ -755,7 +809,7 @@
       ...oauthStatusRows(token),
       ...revealedTokenRows(sensitive),
       ...verificationResultRows(detail)
-    ]);
+    ], oauthReadinessNotice(detail));
   }
 
   function connectionDetailElement(connection = {}) {
