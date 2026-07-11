@@ -340,7 +340,7 @@ Redirect URI: https://DOMAIN/auth/callback
 ```text
 buildCommand: npm install
 startCommand: npm start
-healthCheckPath: /ping
+healthCheckPath: /health
 ```
 
 Production cutover order:

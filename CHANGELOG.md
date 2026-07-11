@@ -4,6 +4,10 @@
 
 ### Changed
 
+- Made the Render service probe combined readiness through `/health` and
+  replaced retired sensitive-approval wording in the Owner verification UI
+  with the actual one-click, audited Member Detail behavior.
+
 - Hardened the unified verification runtime after full review: migration writes
   now use optimistic concurrency, sensitive reads fail closed when audit writes
   fail, reveal responses are non-cacheable, OAuth raw snapshots redact

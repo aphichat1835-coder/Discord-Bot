@@ -97,7 +97,7 @@ describe("single-process verification runtime contract", () => {
         expect((render.match(/^\s*-\s+type:\s+web\s*$/gm) || [])).toHaveLength(1);
         expect(render).toContain("rootDir: .");
         expect(render).toContain("startCommand: npm start");
-        expect(render).toContain("healthCheckPath: /ping");
+        expect(render).toContain("healthCheckPath: /health");
         expect(render).not.toContain("rootDir: dashboard-public");
     });
 
@@ -108,6 +108,14 @@ describe("single-process verification runtime contract", () => {
         expect(smoke).toContain('request(baseUrl, "/auth/callback")');
         expect(smoke).toContain('"/verification"');
         expect(smoke).toContain("isOwnerReachable");
+    });
+
+    test("Owner verification copy does not describe the retired sensitive approval flow", () => {
+        const guildView = fs.readFileSync("discord/verification/views/guild.html", "utf8");
+        const guildScript = fs.readFileSync("discord/verification/public/js/guild-dashboard.js", "utf8");
+        expect(`${guildView}\n${guildScript}`).not.toMatch(/owner approval|อนุมัติ sensitive|approval หมดอายุ/i);
+        expect(guildView).toContain("Member Detail");
+        expect(guildView).toContain("บันทึก audit");
     });
 
     test("single-port smoke helper requires an exact allowlisted hostname", () => {

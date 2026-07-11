@@ -1056,7 +1056,7 @@
     if (!log.sensitiveRedacted) return null;
     const notice = document.createElement("div");
     notice.className = "notice notice-warn mb-12";
-    notice.textContent = "ข้อมูล sensitive ถูกซ่อนอยู่ เพราะยังไม่ได้รับ owner approval หรือ approval หมดอายุ";
+    notice.textContent = "รายการ log นี้แสดงข้อมูลสรุป หากต้องการข้อมูลเต็มให้เปิด Member Detail ของผู้ใช้คนนั้น";
     return notice;
   }
 

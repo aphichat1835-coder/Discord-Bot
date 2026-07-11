@@ -810,8 +810,8 @@
                   <span class="badge badge-warn">Raw IP</span>
                 </div>
                 <div class="list-meta">
-                  ข้อมูลละเอียดอย่าง raw IP/email/connections จะถูกซ่อนจนกว่าเจ้าของบอทจะอนุมัติ sensitive access
-                  และห้ามเอาข้อมูลไปใช้นอกเหนือจากการดูแลเซิร์ฟเวอร์
+                  รายการทั่วไปจะแสดงข้อมูลสรุปเพื่อให้อ่านเร็ว ส่วนเจ้าของบอทกดดู Member Detail
+                  เพื่อเปิดข้อมูลเต็มที่ระบบเก็บและถอดรหัสได้ พร้อมบันทึก audit ภายในทุกครั้ง
                 </div>
               </div>
             </div>
@@ -1124,8 +1124,8 @@
                   <span class="badge badge-warn">แสดงในหน้าแอดมิน</span>
                 </div>
                 <div class="list-meta">
-                  ระบบจะแสดง IP จริงเฉพาะเมื่อ backend มีข้อมูล, ถอดรหัสได้, และเจ้าของบอทอนุมัติ sensitive access แล้ว
-                  ถ้ายังไม่อนุมัติ Dashboard จะซ่อนข้อมูลไว้แทน
+                  ระบบจะแสดง IP จริงใน Member Detail เมื่อ backend มีข้อมูลและถอดรหัสได้
+                  โดยคำขอเป็น Owner-only, ใช้ CSRF และต้องบันทึก audit สำเร็จก่อนส่งข้อมูลกลับ
                 </div>
               </div>
 
