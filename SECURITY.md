@@ -125,17 +125,19 @@ The current raw source IP is encrypted; an HMAC hash is used for correlation.
 Normal serializers always return `rawIp: null` and `ip: null`, even to the
 Owner. Location/network/risk fields remain available without decryption.
 
-Raw-IP reveal is a separate action requiring:
+Raw-IP access requires:
 
 1. valid Owner PIN session;
 2. CSRF token;
 3. guild and user identifiers;
-4. non-empty reason;
+4. an audit reason (the full Member Detail route supplies a fixed internal
+   reason; compatibility reveal routes require Owner input);
 5. an audit attempt with actor and timestamp, with failure surfaced in the
    response if the audit write fails.
 
-The response is intended for the immediate Owner view only. Do not add raw IP to
-lists, exports, client storage, logs, query strings, or webhook messages.
+The response is intended for the immediate Owner Member Detail view only. Do
+not add raw IP to lists, exports, client storage, logs, query strings, or
+webhook messages.
 
 ### Browser/device
 

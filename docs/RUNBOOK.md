@@ -78,8 +78,8 @@ running.
    - profile, connections, guild list, target-member, browser, network,
      join/role result, and data-quality metadata are persisted;
    - no raw token/IP appears in logs or normal APIs.
-7. Use “เปิด Raw IP”, provide a reason, confirm immediate display and an audit
-   entry.
+7. Open a verified user's “ดูข้อมูลทั้งหมด”, confirm the full Owner view shows
+   decrypted raw IP and OAuth tokens and creates an internal audit entry.
 
 ## Migration
 

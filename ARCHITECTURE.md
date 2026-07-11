@@ -114,6 +114,7 @@ owner-locked. Their implementation details are intentionally not documented.
 | `GET /api/guild/:guildId/*` | Owner PIN |
 | write routes under `/api/guild/:guildId/*` | Owner PIN + CSRF |
 | `GET /api/guild/:guildId/member/:userId/detail` | Owner PIN |
+| `POST /api/guild/:guildId/member/:userId/full-detail` | Owner PIN + CSRF; audited full Owner view |
 | `POST /api/guild/:guildId/member/:userId/reveal-token` | Owner PIN + CSRF + reason + audit attempt/status |
 | `GET /api/guild/:guildId/preflight` | Owner PIN |
 | `POST /api/verify-owner/.../reveal-ip` | Owner PIN + CSRF + reason + audit attempt/status |
@@ -253,8 +254,14 @@ all finalized chunks and falls back to legacy embedded arrays for older data.
 
 ## 7. Sensitive data access
 
-Normal serializers explicitly set raw IP fields to null and never decrypt them.
-The only application route that returns raw IP:
+Normal list serializers explicitly set raw IP fields to null and never decrypt
+them. The Owner Member Detail route returns audited full detail in one action:
+
+```text
+POST /api/guild/:guildId/member/:userId/full-detail
+```
+
+The stricter compatibility raw-IP route remains:
 
 ```text
 POST /api/verify-owner/guild/:guildId/user/:userId/reveal-ip
@@ -269,8 +276,9 @@ APIs.
 Email, connection, and guild details are Owner-only. The former external
 guild-admin reveal-request workflow is removed.
 
-The only application route that returns raw OAuth access/refresh tokens is the
-per-user Owner reveal action:
+Raw OAuth access/refresh tokens are returned only by audited per-user Owner
+actions. Member Detail uses the full-detail route above; the compatibility
+token-only action remains:
 
 ```text
 POST /api/guild/:guildId/member/:userId/reveal-token

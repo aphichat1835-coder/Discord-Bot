@@ -4,6 +4,11 @@
 
 ### Changed
 
+- Aligned the integrated verification management pages with the established
+  purple Owner Dashboard theme. Owner Member Detail now loads encrypted raw IP
+  and OAuth token values as one CSRF-protected, internally audited action, and
+  Join Campaign previews eligible users before a simple final confirmation.
+
 - Moved the active OAuth verification models, routes, utilities, views, and
   assets into `discord/verification/` and mounted them in the main Express app.
 - Changed deployment to one Node process, one `npm start`, one Mongoose runtime

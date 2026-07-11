@@ -1253,6 +1253,32 @@ router.get("/api/guild/:guildId/member/:userId/detail", requireAdmin, requireGui
   }
 });
 
+router.post("/api/guild/:guildId/member/:userId/full-detail", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
+  try {
+    const { guildId, userId } = req.params;
+    const targetUserId = cleanSnowflake(userId);
+    if (!targetUserId) {
+      return res.status(400).json({ success: false, code: "invalid_user_id", error: "User ID ไม่ถูกต้อง" });
+    }
+    res.set("Cache-Control", "no-store");
+    res.json(await verificationOwnerService.getOwnerFullMemberDetail({
+      guildId,
+      userId: targetUserId,
+      actor: getAdminId(req) || "owner-dashboard"
+    }));
+  } catch (err) {
+    if (err?.code === "member_not_found") {
+      return res.status(404).json({ success: false, code: err.code, error: "ไม่พบรายละเอียดสมาชิก" });
+    }
+    const status = err?.code === "audit_write_failed" ? 503 : 500;
+    return res.status(status).json({
+      success: false,
+      code: err?.code || "full_detail_failed",
+      error: err?.message || "โหลดรายละเอียดสมาชิกแบบเต็มไม่สำเร็จ"
+    });
+  }
+});
+
 router.post("/api/guild/:guildId/member/:userId/reveal-token", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
   try {
     const { guildId, userId } = req.params;

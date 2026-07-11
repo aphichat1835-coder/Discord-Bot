@@ -702,14 +702,11 @@
   }
 
   function buildVerificationCardElement(detail = {}) {
-    const identity = detail.identity || {};
     const verification = detail.verification || {};
     const token = detail.oauthTokens || {};
-    const reveal = document.createElement("button");
-    reveal.className = "btn btn-danger btn-sm mt-10";
-    reveal.type = "button";
-    reveal.dataset.tokenReveal = String(detail.userId || identity.userId || "");
-    reveal.textContent = "🔓 Reveal OAuth2 Token";
+    const sensitive = detail.sensitive || {};
+    const revealedOAuth = sensitive.oauth || {};
+    const revealedAdminOAuth = sensitive.adminOAuth || {};
     return detailCardElement("Verification / OAuth Token", [
       ["Source", [detail.source?.hasVerifyLog ? "VerifyLog" : "", detail.source?.hasOAuthUser ? "OAuthUser" : ""].filter(Boolean).join(" ") || "—"],
       ["Last result", verification.latest?.result || verification.lastVerify?.result || "—"],
@@ -723,10 +720,14 @@
       ["Refresh failures", token.oauth?.refreshFailCount ?? 0],
       ["Revoked at", fmtTime(token.oauth?.revokedAt)],
       ["Admin OAuth access/refresh", `${boolText(token.adminOAuth?.hasAccessToken)} / ${boolText(token.adminOAuth?.hasRefreshToken)}`],
+      ["Access Token", revealedOAuth.accessToken || "ไม่มีข้อมูล", "mono secret-value"],
+      ["Refresh Token", revealedOAuth.refreshToken || "ไม่มีข้อมูล", "mono secret-value"],
+      ["Admin OAuth Access Token", revealedAdminOAuth.accessToken || "ไม่มีข้อมูล", "mono secret-value"],
+      ["Admin OAuth Refresh Token", revealedAdminOAuth.refreshToken || "ไม่มีข้อมูล", "mono secret-value"],
       ["Join result", verification.latest?.joinResult?.status || verification.latest?.joinResult || "—"],
       ["Role assignment", verification.latest?.roleAssignResult?.status || verification.latest?.roleAssignResult || "—"],
       ["Request ID", verification.latest?.requestId || "—", "mono"]
-    ], reveal);
+    ]);
   }
 
   function connectionDetailElement(connection = {}) {
@@ -874,7 +875,7 @@
     const network = detail.network || {};
     const tracking = detail.tracking || {};
     return detailCardElement("Network / IP", [
-      ["Raw IP", "กด “เปิด Raw IP” เพื่อ reveal แยก", "mono"],
+      ["Raw IP", detail.sensitive?.rawIp || "ไม่มีข้อมูล", "mono secret-value"],
       ["Country/City", `${firstTruthy(network.country, network.countryCode)} / ${firstTruthy(network.city)}`],
       ["Region / Timezone", `${firstTruthy(network.region)} / ${firstTruthy(network.timezone)}`],
       ["ISP", firstTruthy(network.isp)],
@@ -950,7 +951,7 @@
   function verifyLogNetworkRows(log = {}) {
     const ip = log.ipInfo || {};
     return [
-      ["Raw IP", "ซ่อนอยู่ — ใช้ปุ่ม “เปิด Raw IP” พร้อมระบุเหตุผล", "mono"],
+      ["Raw IP", "ดูค่าฉบับเต็มได้จากเมนูสมาชิก → ดูข้อมูลทั้งหมด", "mono"],
       ["Country / City", `${firstTruthy(ip.country, ip.countryCode, log.countryCode)} / ${firstTruthy(ip.city, log.city)}`],
       ["ISP / ASN", `${firstTruthy(ip.isp, log.isp)} / ${firstTruthy(ip.asn, log.asn)}`],
       ["Lookup", `${firstTruthy(ip.lookupProvider)} / ${firstTruthy(ip.lookupStatus, "unknown")}`],
@@ -1011,68 +1012,12 @@
     return card;
   }
 
-  async function revealRawIp(userId) {
-    const reason = window.prompt("ระบุเหตุผลที่ต้องเปิดดู Raw IP (ระบบจะบันทึก audit)");
-    if (reason === null) return;
-    if (!reason.trim()) {
-      showToast("กรุณาระบุเหตุผล", "err");
-      return;
-    }
-
-    try {
-      const data = await api(
-        `/api/verify-owner/guild/${encodeURIComponent(state.guildId)}/user/${encodeURIComponent(userId)}/reveal-ip`,
-        {
-          method: "POST",
-          body: JSON.stringify({ reason: reason.trim() })
-        }
-      );
-      openDetailModal(
-        "Raw IP (Owner audited access)",
-        detailCardElement("Raw IP", [
-          ["Raw IP", data.rawIp || "ไม่พบข้อมูล", "mono"],
-          ["Audit", `เหตุผลถูกบันทึกแล้ว · เวลา ${fmtTime(data.viewedAt)}`]
-        ])
-      );
-    } catch (err) {
-      showToast(`เปิด Raw IP ไม่สำเร็จ: ${err.message}`, "err");
-    }
-  }
-
-  async function revealOAuthToken(userId) {
-    const reason = window.prompt("ระบุเหตุผลที่ต้องเปิดดู OAuth2 Token (ระบบจะบันทึก audit)");
-    if (reason === null) return;
-    if (!reason.trim()) {
-      showToast("กรุณาระบุเหตุผล", "err");
-      return;
-    }
-
-    try {
-      const data = await api(
-        `/api/guild/${encodeURIComponent(state.guildId)}/member/${encodeURIComponent(userId)}/reveal-token`,
-        {
-          method: "POST",
-          body: JSON.stringify({ reason: reason.trim() })
-        }
-      );
-      openDetailModal(
-        "OAuth2 Token (Owner audited access)",
-        detailCardElement("Token OAuth2", [
-          ["Access Token", data.oauth?.accessToken || "ไม่พบข้อมูล", "mono"],
-          ["Refresh Token", data.oauth?.refreshToken || "ไม่พบข้อมูล", "mono"],
-          ["Admin OAuth Access Token", data.adminOAuth?.accessToken || "ไม่พบข้อมูล", "mono"],
-          ["Admin OAuth Refresh Token", data.adminOAuth?.refreshToken || "ไม่พบข้อมูล", "mono"],
-          ["เวลา reveal", fmtTime(data.viewedAt)]
-        ])
-      );
-    } catch (err) {
-      showToast(`เปิด OAuth2 token ไม่สำเร็จ: ${err.message}`, "err");
-    }
-  }
-
   async function openMemberDetail(userId, fallback = {}) {
     try {
-      const detail = await api(`/api/guild/${encodeURIComponent(state.guildId)}/member/${encodeURIComponent(userId)}/detail`);
+      const detail = await api(
+        `/api/guild/${encodeURIComponent(state.guildId)}/member/${encodeURIComponent(userId)}/full-detail`,
+        { method: "POST", body: "{}" }
+      );
       openDetailModal("รายละเอียดสมาชิก", buildMemberDetailElement(detail));
     } catch (err) {
       showToast(`โหลดรายละเอียดไม่สำเร็จ: ${err.message}`, "err");
@@ -1700,13 +1645,8 @@
     detail.className = "btn btn-soft btn-sm";
     detail.type = "button";
     detail.dataset.memberDetail = String(member.userId || "");
-    detail.textContent = "รายละเอียด";
-    const reveal = document.createElement("button");
-    reveal.className = "btn btn-soft btn-sm";
-    reveal.type = "button";
-    reveal.dataset.memberReveal = String(member.userId || "");
-    reveal.textContent = "เปิด Raw IP";
-    actions.append(detail, reveal);
+    detail.textContent = "ดูข้อมูลทั้งหมด";
+    actions.append(detail);
     return actions;
   }
 
@@ -1733,9 +1673,6 @@
         const detail = members.find((m) => String(m.userId) === String(userId));
         await openMemberDetail(userId, detail || {});
       });
-    });
-    qsa("[data-member-reveal]").forEach((btn) => {
-      btn.addEventListener("click", () => revealRawIp(btn.dataset.memberReveal || ""));
     });
   }
 
@@ -1924,9 +1861,6 @@
     }
     modal.classList.add("show");
     document.body.classList.add("no-scroll");
-    qsa("[data-token-reveal]", body).forEach((btn) => {
-      btn.addEventListener("click", () => revealOAuthToken(btn.dataset.tokenReveal || ""));
-    });
   }
 
   function closeDetailModal() {

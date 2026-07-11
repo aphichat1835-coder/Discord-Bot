@@ -76,7 +76,9 @@ MongoDB model/collection names and encryption format.
 Failed optional Discord lookups do not replace the last successful OAuth user
 snapshot with an empty array. Normal list/export APIs never return raw OAuth
 tokens or raw IP. Raw OAuth2 tokens and raw IP can only be revealed through
-Owner per-user actions that attempt audit writes and report audit status.
+Owner per-user actions that attempt audit writes and report audit status. The
+Owner Member Detail page performs that audited reveal in one click and displays
+the complete decrypted values; list and export APIs remain redacted.
 
 Guilds and connections are stored as ordered versioned chunks, while the target
 member has a versioned core snapshot plus ordered role chunks. The sanitized

@@ -3,6 +3,7 @@
 const GuildConfig = require("./models/GuildConfig");
 const VerifyLog = require("./models/VerifyLog");
 const OAuthUser = require("./models/OAuthUser");
+const IpIdentityLink = require("./models/IpIdentityLink");
 const { decryptIP, decryptToken } = require("./utils/crypto");
 const sensitiveAudit = require("./services/sensitiveAuditService");
 const { serializeMemberDetail } = require("./serializers/memberDetailSerializer");
@@ -425,6 +426,51 @@ async function revealOAuthTokens({ guildId, userId, reason, actor = "owner-dashb
     };
 }
 
+async function getOwnerFullMemberDetail({ guildId, userId, actor = "owner-dashboard" }) {
+    const [detail, user, log, identityLink] = await Promise.all([
+        getMemberDetail(guildId, userId, { canViewSensitive: true }),
+        OAuthUser.findOne({ "discord.userId": userId })
+            .select("discord.userId oauth adminOAuth")
+            .lean(),
+        VerifyLog.findOne({
+            ...baseFilter(guildId),
+            userId,
+            "ipInfo.encryptedRawIp": { $exists: true, $ne: "" }
+        }).sort({ verifiedAt: -1, createdAt: -1, _id: -1 }),
+        IpIdentityLink.findOne({
+            ...baseFilter(guildId),
+            "users.userId": userId,
+            encryptedRawIp: { $exists: true, $ne: "" }
+        }).sort({ lastSeenAt: -1, updatedAt: -1, _id: -1 }).lean()
+    ]);
+    const now = Date.now();
+    const audit = await auditRevealWrites({
+        guildId,
+        userId,
+        verifyLogId: log?._id,
+        actor,
+        reason: "owner_member_detail",
+        now,
+        action: "owner_view_full_member_detail",
+        route: "/api/guild/:guildId/member/:userId/full-detail",
+        scope: ["rawIp", "oauthTokens"]
+    });
+    if (!audit.ok) {
+        const error = new Error("audit write failed; full detail blocked");
+        error.code = "audit_write_failed";
+        throw error;
+    }
+    return {
+        ...detail,
+        sensitive: {
+            rawIp: decryptIP(log?.ipInfo?.encryptedRawIp || identityLink?.encryptedRawIp || ""),
+            oauth: revealTokenState(user?.oauth || {}),
+            adminOAuth: revealTokenState(user?.adminOAuth || {})
+        },
+        sensitiveAccessAudit: { status: audit.status, viewedAt: now }
+    };
+}
+
 module.exports = {
     getOverview,
     getGuildStats,
@@ -432,6 +478,7 @@ module.exports = {
     revealRawIp,
     getMemberDetail,
     revealOAuthTokens,
+    getOwnerFullMemberDetail,
     emptyStats,
     safeRecent
 };

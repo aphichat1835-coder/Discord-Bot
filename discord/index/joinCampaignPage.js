@@ -151,6 +151,23 @@ async function startCampaign(){
     const guildId=selectedGuildId();
     if(!guildId) return showToast('กรุณาเลือกเซิร์ฟเวอร์','err');
     try{
+        showToast('กำลังตรวจคนที่ดึงได้...');
+        const preview=await api('/api/join-campaign/dry-run',{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({guildId})
+        });
+        renderSummary(preview.summary);
+        const select=document.getElementById('targetGuild');
+        const guildName=select.options[select.selectedIndex]?.textContent || guildId;
+        const usable=preview.summary?.usableUsers || 0;
+        const confirmed=window.confirm(
+            'ยืนยันดึงผู้ใช้เข้าเซิร์ฟเวอร์นี้?\n\n'+
+            guildName+'\n'+
+            'ผู้ใช้ที่พร้อมดึง: '+usable+' คน\n\n'+
+            'กด OK เพื่อเริ่มดึงทันที'
+        );
+        if(!confirmed) return showToast('ยกเลิกแล้ว');
         const data=await api('/api/join-campaign/start',{
             method:'POST',
             headers:{'Content-Type':'application/json'},

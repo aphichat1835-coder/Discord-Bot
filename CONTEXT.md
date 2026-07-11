@@ -97,8 +97,10 @@ compatible.
 - Raw IP is encrypted; an HMAC hash is used for correlation.
 - Fingerprint source material is never persisted; only its HMAC is stored.
 - Normal list/export APIs never return raw tokens or raw IP.
-- Raw-IP and raw OAuth-token reveal require Owner PIN, CSRF, a non-empty
-  reason, cooldown/rate-limit checks, and append an audit event.
+- Member Detail is Owner-only and uses a CSRF-protected POST to decrypt and
+  display the complete raw IP and OAuth tokens in one action while appending an
+  internal audit event. Compatibility reveal routes retain their stricter
+  reason and rate-limit contract.
 - Failure messages saved in data-quality metadata are redacted status codes.
 - Logs, tests, migrations, docs, and exports must not print secrets, tokens, or
   raw IP.
