@@ -78,6 +78,65 @@ async function renewLock(StateModel, owner) {
     throw error;
 }
 
+function createBatchRunner({ options, settings, OAuthUserModel, ArchiveModel, filter, StateModel, owner, backup }) {
+    const migrateCursor = options.migrateCursor || migration.migrateCursor;
+    return afterId => migrateCursor({
+        cursor: migrationCursor(OAuthUserModel, filter, settings.scanMax, afterId),
+        apply: true,
+        batchSize: settings.batchSize,
+        bulkWrite: (operations, writeOptions) => OAuthUserModel.bulkWrite(operations, writeOptions),
+        snapshotWriter: options.snapshotWriter || snapshotStore.storeOAuthSnapshots,
+        beforeMigrate: async doc => {
+            await renewLock(StateModel, owner);
+            const archived = await archiveSourceDocument(doc._id, {
+                OAuthUserModel,
+                ArchiveModel,
+                migrationVersion: TARGET_VERSION
+            });
+            if (archived.created) backup.created++;
+            else backup.reused++;
+        }
+    });
+}
+
+async function runCursorCycle(migrateBatch, previousCursor) {
+    const first = await migrateBatch(previousCursor);
+    if (!previousCursor || Number(first.scanned || 0) > 0) {
+        return { summary: first, cursorWrapped: false };
+    }
+    return { summary: await migrateBatch(null), cursorWrapped: true };
+}
+
+async function saveMigrationSuccess(StateModel, owner, result, finishedAt) {
+    await StateModel.updateOne({ _id: STATE_ID, lockOwner: owner }, {
+        $set: {
+            status: result.complete ? "complete" : "pending",
+            lockOwner: null,
+            lockUntil: null,
+            lastFinishedAt: finishedAt,
+            lastSuccessAt: finishedAt,
+            lastSummary: result,
+            cursorSourceId: result.nextCursor,
+            ...(result.cursorWrapped ? { cursorWrappedAt: finishedAt } : {}),
+            updatedAt: finishedAt
+        }
+    });
+}
+
+async function saveMigrationFailure(StateModel, owner, err) {
+    const finishedAt = Date.now();
+    await StateModel.updateOne({ _id: STATE_ID, lockOwner: owner }, {
+        $set: {
+            status: "failed",
+            lockOwner: null,
+            lockUntil: null,
+            lastFinishedAt: finishedAt,
+            lastError: safeError(err),
+            updatedAt: finishedAt
+        }
+    }).catch(() => {});
+}
+
 async function runAutomaticMigration(options = {}) {
     const env = options.env || process.env;
     const settings = { ...config(env), ...options.settings };
@@ -100,31 +159,11 @@ async function runAutomaticMigration(options = {}) {
 
     const backup = { created: 0, reused: 0 };
     try {
-        const migrateCursor = options.migrateCursor || migration.migrateCursor;
-        const migrateBatch = afterId => migrateCursor({
-            cursor: migrationCursor(OAuthUserModel, filter, settings.scanMax, afterId),
-            apply: true,
-            batchSize: settings.batchSize,
-            bulkWrite: (operations, writeOptions) => OAuthUserModel.bulkWrite(operations, writeOptions),
-            snapshotWriter: options.snapshotWriter || snapshotStore.storeOAuthSnapshots,
-            beforeMigrate: async doc => {
-                await renewLock(StateModel, owner);
-                const archived = await archiveSourceDocument(doc._id, {
-                    OAuthUserModel,
-                    ArchiveModel,
-                    migrationVersion: TARGET_VERSION
-                });
-                if (archived.created) backup.created++;
-                else backup.reused++;
-            }
+        const migrateBatch = createBatchRunner({
+            options, settings, OAuthUserModel, ArchiveModel, filter, StateModel, owner, backup
         });
         const previousCursor = lock.cursorSourceId || null;
-        let summary = await migrateBatch(previousCursor);
-        let cursorWrapped = false;
-        if (previousCursor && Number(summary.scanned || 0) === 0) {
-            summary = await migrateBatch(null);
-            cursorWrapped = true;
-        }
+        const { summary, cursorWrapped } = await runCursorCycle(migrateBatch, previousCursor);
         const remaining = await OAuthUserModel.countDocuments(filter);
         const finishedAt = Date.now();
         const nextCursor = remaining === 0 ? null : (summary.lastScannedId || null);
@@ -138,32 +177,10 @@ async function runAutomaticMigration(options = {}) {
             nextCursor,
             ...settings
         };
-        await StateModel.updateOne({ _id: STATE_ID, lockOwner: owner }, {
-            $set: {
-                status: result.complete ? "complete" : "pending",
-                lockOwner: null,
-                lockUntil: null,
-                lastFinishedAt: finishedAt,
-                lastSuccessAt: finishedAt,
-                lastSummary: result,
-                cursorSourceId: nextCursor,
-                ...(cursorWrapped ? { cursorWrappedAt: finishedAt } : {}),
-                updatedAt: finishedAt
-            }
-        });
+        await saveMigrationSuccess(StateModel, owner, result, finishedAt);
         return result;
     } catch (err) {
-        const finishedAt = Date.now();
-        await StateModel.updateOne({ _id: STATE_ID, lockOwner: owner }, {
-            $set: {
-                status: "failed",
-                lockOwner: null,
-                lockUntil: null,
-                lastFinishedAt: finishedAt,
-                lastError: safeError(err),
-                updatedAt: finishedAt
-            }
-        }).catch(() => {});
+        await saveMigrationFailure(StateModel, owner, err);
         throw err;
     }
 }
@@ -172,5 +189,15 @@ module.exports = {
     runAutomaticMigration,
     contentHash,
     config,
-    _test: { acquireLock, renewLock, migrationCursor, TARGET_VERSION, STATE_ID }
+    _test: {
+        acquireLock,
+        renewLock,
+        migrationCursor,
+        createBatchRunner,
+        runCursorCycle,
+        saveMigrationSuccess,
+        saveMigrationFailure,
+        TARGET_VERSION,
+        STATE_ID
+    }
 };
