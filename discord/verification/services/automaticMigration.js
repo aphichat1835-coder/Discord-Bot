@@ -57,7 +57,7 @@ async function acquireLock(StateModel, now, owner) {
 
 function migrationCursor(OAuthUserModel, filter, scanMax) {
     return OAuthUserModel.find(filter)
-        .select("discord connections guilds lastMember lastVerify snapshotMeta snapshotRefs")
+        .select("discord connections guilds lastMember lastVerify snapshotMeta snapshotRefs updatedAt")
         .sort({ _id: 1 })
         .limit(scanMax)
         .lean()

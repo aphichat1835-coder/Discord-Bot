@@ -260,6 +260,51 @@ describe('private and reserved IP detection', () => {
     test('public IP remains lookup eligible', () => {
         expect(isPrivateIP('8.8.8.8')).toBe(false);
     });
+
+    test.each(['127.0.0.1', '10.0.0.1', '192.168.1.10'])(
+        '%s is not persisted as a client identity', ip => {
+            const info = _test.makeUnknownIpInfo({
+                trustedIp: { ip, source: 'req.ip' },
+                headerMeta: { headerIps: [], spoofFlags: [], spoofSuspected: false, headerIpConflict: false }
+            });
+            expect(info.encryptedRawIp).toBeNull();
+            expect(info.ipHash).toBeNull();
+        }
+    );
+});
+
+describe('bounded IP lookup response reader', () => {
+    test('rejects non-finite configured byte limits', () => {
+        expect(_test.resolveResponseMaxBytes(Infinity)).toBe(256 * 1024);
+        expect(_test.resolveResponseMaxBytes('not-a-number')).toBe(256 * 1024);
+    });
+
+    test('aborts an oversized chunked response before buffering the remainder', async () => {
+        const abort = jest.fn();
+        const cancel = jest.fn().mockResolvedValue(undefined);
+        const releaseLock = jest.fn();
+        const reads = [
+            { done: false, value: Buffer.alloc(10) },
+            { done: false, value: Buffer.alloc(10) }
+        ];
+        const response = {
+            body: { getReader: () => ({ read: jest.fn(() => Promise.resolve(reads.shift())), cancel, releaseLock }) }
+        };
+        await expect(_test.readLimitedResponseText(response, 15, { abort }))
+            .rejects.toThrow('exceeded configured byte limit');
+        expect(abort).toHaveBeenCalled();
+        expect(cancel).toHaveBeenCalled();
+        expect(releaseLock).toHaveBeenCalled();
+    });
+
+    test('propagates a slow or aborted stream failure and releases the reader', async () => {
+        const releaseLock = jest.fn();
+        const response = {
+            body: { getReader: () => ({ read: jest.fn().mockRejectedValue(new Error('aborted')), releaseLock }) }
+        };
+        await expect(_test.readLimitedResponseText(response, 1024)).rejects.toThrow('aborted');
+        expect(releaseLock).toHaveBeenCalled();
+    });
 });
 
 describe('processIP risk flags', () => {

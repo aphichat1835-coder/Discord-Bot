@@ -74,8 +74,8 @@ async function runGuildPreflight({ guildId, config = {}, guild = null, discord =
     add("verification_enabled", verification.enabled !== false, "ระบบ verification เปิดใช้งาน");
     add("role_configured", !!roleId, "ตั้งค่า role เป้าหมายแล้ว");
     add("channel_configured", !!channelId, "ตั้งค่า channel แผงยืนยันแล้ว");
-    if (roleId && roles.length) add("role_exists", roles.some(role => String(role.id) === String(roleId)), "พบ role เป้าหมายใน guild");
-    if (channelId && channels.length) add("channel_exists", channels.some(channel => String(channel.id) === String(channelId)), "พบ channel เป้าหมายใน guild");
+    if (roleId) add("role_exists", roles.some(role => String(role.id) === String(roleId)), "พบ role เป้าหมายใน guild");
+    if (channelId) add("channel_exists", channels.some(channel => String(channel.id) === String(channelId)), "พบ channel เป้าหมายใน guild");
 
     const ok = checks.every(check => check.ok);
     return {

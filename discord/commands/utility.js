@@ -954,6 +954,13 @@ function trimTrailingSlashes(value) {
 }
 
 async function handleSetup(interaction) {
+    if (interaction.user.id !== config.system.ownerId) {
+        return interaction.reply({
+            content: `> ${config.emojis.no_entry} Dashboard จัดการได้เฉพาะเจ้าของบอท`,
+            ephemeral: true
+        });
+    }
+
     const dashUrl = trimTrailingSlashes(
         process.env.PUBLIC_BASE_URL ||
         process.env.DASHBOARD_URL ||
@@ -965,13 +972,6 @@ async function handleSetup(interaction) {
     if (!dashUrl) {
         return interaction.reply({
             content: `> ${config.emojis.warning} ยังไม่ได้ตั้งค่า PUBLIC_BASE_URL กรุณาติดต่อ <@${config.system.ownerId}>`,
-            ephemeral: true
-        });
-    }
-
-    if (interaction.user.id !== config.system.ownerId) {
-        return interaction.reply({
-            content: `> ${config.emojis.no_entry} Dashboard จัดการได้เฉพาะเจ้าของบอท`,
             ephemeral: true
         });
     }

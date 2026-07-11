@@ -219,6 +219,7 @@ describe("single-process verification runtime contract", () => {
         expect(guild).toContain('router.get("/api/guild/:guildId/member/:userId/detail", requireAdmin, requireGuildAdmin');
         expect(guild).toContain('router.post("/api/guild/:guildId/member/:userId/full-detail", requireAdmin, requireGuildAdmin, requireCsrf');
         expect(guild).toContain('router.post("/api/guild/:guildId/member/:userId/reveal-token", requireAdmin, requireGuildAdmin, requireCsrf');
+        expect(guild).toContain('res.set("Cache-Control", "no-store")');
         expect(guild).toContain('router.get("/api/guild/:guildId/preflight", requireAdmin, requireGuildAdmin');
         const rawIpRouteIndex = verifyOwner.indexOf('"/api/verify-owner/guild/:guildId/user/:userId/reveal-ip"');
         expect(rawIpRouteIndex).toBeGreaterThan(-1);

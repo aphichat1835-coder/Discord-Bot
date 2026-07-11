@@ -3,6 +3,26 @@
 const { runGuildPreflight } = require("../discord/verification/services/guildPreflightService");
 
 describe("verification guild preflight", () => {
+    test("configured role and channel fail existence checks when Discord returns empty lists", async () => {
+        const preflight = await runGuildPreflight({
+            guildId: "123",
+            guild: { id: "123", name: "Guild" },
+            config: { verification: { enabled: true, roleId: "456", channelId: "789" } },
+            env: {
+                DISCORD_CLIENT_ID: "client", DISCORD_CLIENT_SECRET: "secret",
+                PUBLIC_BASE_URL: "https://example.test", VERIFY_STATE_SECRET: "state",
+                ENCRYPTION_KEY: "encryption"
+            },
+            discord: {
+                getGuildRoles: jest.fn().mockResolvedValue([]),
+                getGuildChannels: jest.fn().mockResolvedValue([])
+            }
+        });
+        expect(preflight.ok).toBe(false);
+        expect(preflight.checks.find(check => check.key === "role_exists")?.ok).toBe(false);
+        expect(preflight.checks.find(check => check.key === "channel_exists")?.ok).toBe(false);
+    });
+
     test("reports Discord fetch failures instead of treating empty arrays as success", async () => {
         const preflight = await runGuildPreflight({
             guildId: "123",

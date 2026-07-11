@@ -199,6 +199,10 @@ function mergeMembers(primary, fallback, canViewSensitive = false) {
     };
 }
 
+function hasMoreMembers(pageLength, limit, withinKnownTotal, truncated) {
+    return pageLength === limit && (withinKnownTotal || truncated);
+}
+
 async function listVerifiedMembers(guildId, { page = 0, limit = 25, q = "", includeLegacy = true, canViewSensitive = false } = {}) {
     const safePage = Math.max(0, Number.parseInt(page, 10) || 0);
     const safeLimit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 25));
@@ -238,18 +242,23 @@ async function listVerifiedMembers(guildId, { page = 0, limit = 25, q = "", incl
     }
     const truncated = logs.length >= scanLimit || legacyUsers.length >= scanLimit;
     const total = members.length;
-    members = members
+    const pageMembers = members
         .slice(safePage * safeLimit, safePage * safeLimit + safeLimit)
         .map(listSafeMember);
     return {
-        members,
+        members: pageMembers,
         total,
         totalApproximate: truncated,
         truncated,
         scanLimit,
         page: safePage,
         limit: safeLimit,
-        hasMore: (safePage + 1) * safeLimit < total || truncated
+        hasMore: hasMoreMembers(
+            pageMembers.length,
+            safeLimit,
+            (safePage + 1) * safeLimit < total,
+            truncated
+        )
     };
 }
 
@@ -266,6 +275,7 @@ module.exports = {
         legacyMemberFields,
         legacyVerificationFields,
         chooseSensitiveArray,
-        listSafeMember
+        listSafeMember,
+        hasMoreMembers
     }
 };

@@ -4,6 +4,13 @@
 
 ### Changed
 
+- Hardened the unified verification runtime after full review: migration writes
+  now use optimistic concurrency, sensitive reads fail closed when audit writes
+  fail, reveal responses are non-cacheable, OAuth raw snapshots redact
+  token-shaped fields, private IPs are not persisted, IP lookup bodies are
+  streamed within a byte limit, lifecycle startup is concurrency-safe, and
+  preflight/member pagination metadata remains accurate at edge cases.
+
 - Added automatic bounded legacy verification migration on the shared MongoDB
   connection. Each eligible OAuthUser is archived once per migration version
   before modification, duplicate archives are skipped, failures leave the
@@ -255,7 +262,7 @@
 - Updated `.env.example`, `SECURITY.md`, and `ARCHITECTURE.md` with non-secret Trace Eraser guard controls while keeping hidden owner/system operational details out of public documentation.
 - Updated session documentation and placeholders for owner dashboard and Dashboard Public rolling session controls.
 - Updated OAuth token storage documentation and placeholders to reflect persistent encrypted token storage with refresh maintenance.
-- Hardened owner Join Campaign defaults so execution is disabled unless explicit target guild IDs are allowlisted. Admin OAuth originally remained scoped to `identify guilds`; the later OAuth scope update above adds `guilds.join`.
+- Historical behavior: Join Campaign execution originally required an explicit target-guild allowlist. Current behavior is documented above: an empty `JOIN_CAMPAIGN_ALLOWED_GUILDS` permits any guild currently cached by the bot, under Owner-only controls. Admin OAuth originally remained scoped to `identify guilds`; the later OAuth scope update above adds `guilds.join`.
 
 ### Notes
 

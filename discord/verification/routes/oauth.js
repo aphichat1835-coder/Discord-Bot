@@ -317,7 +317,11 @@ function sanitizeDiscordPayload(value) {
     try {
         const json = JSON.stringify(value, (key, item) => {
             const normalizedKey = String(key || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-            if (blockedKeys.has(normalizedKey)) {
+            const tokenShaped = normalizedKey.endsWith("token") ||
+                normalizedKey.endsWith("secret") ||
+                normalizedKey.endsWith("credential") ||
+                normalizedKey.endsWith("apikey");
+            if (blockedKeys.has(normalizedKey) || tokenShaped) {
                 return "[stored-encrypted-separately]";
             }
             return typeof item === "string" ? safeString(item) : item;
@@ -335,6 +339,16 @@ function objectOrEmpty(value) {
 function memberFetchQualityStatus(fetchMetadata = {}, memberInfo = null) {
     if (!fetchMetadata.memberFetchAttempted) return "not_attempted";
     return memberInfo ? "success" : "failed";
+}
+
+function recordPostRoleMemberFetch(fetchMetadata = {}, refreshedMember = null) {
+    fetchMetadata.memberFetchSource = "discord_bot_api";
+    fetchMetadata.memberFetchStatus = refreshedMember ? 200 : null;
+    fetchMetadata.memberFetchFailed = !refreshedMember;
+    fetchMetadata.memberFailureReason = refreshedMember
+        ? null
+        : "discord_bot_member_refresh_failed";
+    return refreshedMember;
 }
 
 function compactConnectionRaw(connection = {}) {
@@ -2043,13 +2057,7 @@ router.post('/auth/callback', async (req, res) => {
             () => discord.getGuildMemberWithBot(guildId, profile.id),
             null
         );
-        if (refreshedMember) {
-            memberInfo = refreshedMember;
-            fetchMetadata.memberFetchFailed = false;
-            fetchMetadata.memberFetchStatus = 200;
-            fetchMetadata.memberFailureReason = null;
-            fetchMetadata.memberFetchSource = "discord_bot_api";
-        }
+        memberInfo = recordPostRoleMemberFetch(fetchMetadata, refreshedMember) || memberInfo;
 
         return finalize({
             result: 'success',
@@ -2093,6 +2101,7 @@ module.exports._test = {
         sanitizeDiscordPayload,
         safeSnowflakeStrict,
     memberFetchQualityStatus,
+    recordPostRoleMemberFetch,
     saveOAuthUserSafe,
     saveVerifyLogSafe
 };

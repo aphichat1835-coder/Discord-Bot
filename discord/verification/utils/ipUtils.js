@@ -9,10 +9,13 @@ const IP_LOOKUP_CACHE_TTL_MS = Math.max(60 * 1000, Number(process.env.IP_LOOKUP_
 const IP_LOOKUP_CACHE_MAX = Math.max(100, Number(process.env.IP_LOOKUP_CACHE_MAX || 5000) || 5000);
 const IP_LOOKUP_CIRCUIT_FAIL_THRESHOLD = Math.max(1, Number(process.env.IP_LOOKUP_CIRCUIT_FAIL_THRESHOLD || 10) || 10);
 const IP_LOOKUP_CIRCUIT_OPEN_MS = Math.max(10000, Number(process.env.IP_LOOKUP_CIRCUIT_OPEN_MS || 5 * 60 * 1000) || 5 * 60 * 1000);
-const IP_LOOKUP_RESPONSE_MAX_BYTES = Math.max(
-    16 * 1024,
-    Number(process.env.IP_LOOKUP_RESPONSE_MAX_BYTES || 256 * 1024) || 256 * 1024
-);
+const DEFAULT_IP_LOOKUP_RESPONSE_MAX_BYTES = 256 * 1024;
+function resolveResponseMaxBytes(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_IP_LOOKUP_RESPONSE_MAX_BYTES;
+    return Math.max(16 * 1024, Math.floor(parsed));
+}
+const IP_LOOKUP_RESPONSE_MAX_BYTES = resolveResponseMaxBytes(process.env.IP_LOOKUP_RESPONSE_MAX_BYTES);
 const DEVICE_FINGERPRINT_VERSION = 1;
 const X_FORWARDED_FOR_MAX_ENTRIES = 20;
 const IPV4_MASK_ALL = 2 ** 32 - 1;
@@ -466,60 +469,63 @@ async function lookupWithIpApi(ip) {
     const timeout = setTimeout(() => controller.abort(), IP_LOOKUP_TIMEOUT_MS);
     timeout.unref?.();
 
-    let res;
-
     try {
-        res = await fetch(url.toString(), {
+        const res = await fetch(url.toString(), {
             signal: controller.signal,
             headers: {
                 'User-Agent': 'Phomueangtai-Verify/1.1'
             }
         });
+        if (!res.ok) throw new Error(`ip-api lookup failed: ${res.status}`);
+        const data = JSON.parse(await readLimitedResponseText(res, IP_LOOKUP_RESPONSE_MAX_BYTES, controller));
+        if (data.status === 'fail') throw new Error(data.message || 'ip-api lookup failed');
+        return normalizeIpApiResponse(data, url.hostname);
     } finally {
         clearTimeout(timeout);
     }
+}
 
-    if (!res.ok) throw new Error(`ip-api lookup failed: ${res.status}`);
-
-    const responseText = await res.text();
-    if (Buffer.byteLength(responseText, "utf8") > IP_LOOKUP_RESPONSE_MAX_BYTES) {
-        throw new Error("IP lookup response exceeded configured byte limit");
-    }
-    const data = JSON.parse(responseText);
-
-    if (data.status === 'fail') {
-        throw new Error(data.message || 'ip-api lookup failed');
-    }
-
+function normalizeIpApiResponse(data = {}, hostname = '') {
     return {
-        provider: url.hostname || 'ip-lookup',
-        raw: data,
-        status: data.status,
-
-        country: data.country,
-        countryCode: data.countryCode,
-        region: data.regionName || data.region,
-        city: data.city,
-        zip: data.zip,
-        lat: data.lat,
-        lon: data.lon,
-        timezone: data.timezone,
-
-        isp: data.isp,
-        org: data.org,
-        as: data.as,
-        asname: data.asname,
-        reverse: data.reverse,
-
-        mobile: data.mobile === true,
-        proxy: data.proxy === true,
-        hosting: data.hosting === true,
-        vpn: data.vpn === true,
-        tor: data.tor === true,
-
-        query: data.query,
-        message: data.message || null
+        provider: hostname || 'ip-lookup', raw: data, status: data.status,
+        country: data.country, countryCode: data.countryCode,
+        region: data.regionName || data.region, city: data.city, zip: data.zip,
+        lat: data.lat, lon: data.lon, timezone: data.timezone,
+        isp: data.isp, org: data.org, as: data.as, asname: data.asname, reverse: data.reverse,
+        mobile: data.mobile === true, proxy: data.proxy === true,
+        hosting: data.hosting === true, vpn: data.vpn === true, tor: data.tor === true,
+        query: data.query, message: data.message || null
     };
+}
+
+async function readLimitedResponseText(response, maxBytes, controller = null) {
+    if (!Number.isFinite(maxBytes) || maxBytes <= 0) throw new Error('IP lookup response byte limit is invalid');
+    if (!response.body?.getReader) {
+        const text = await response.text();
+        if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
+        controller?.abort();
+        throw new Error('IP lookup response exceeded configured byte limit');
+    }
+    const reader = response.body.getReader();
+    const chunks = [];
+    let total = 0;
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const chunk = Buffer.from(value);
+            total += chunk.length;
+            if (total > maxBytes) {
+                controller?.abort();
+                await reader.cancel().catch(() => {});
+                throw new Error('IP lookup response exceeded configured byte limit');
+            }
+            chunks.push(chunk);
+        }
+        return Buffer.concat(chunks, total).toString('utf8');
+    } finally {
+        reader.releaseLock?.();
+    }
 }
 
 function makeLookupDisabledInfo(ip) {
@@ -831,7 +837,7 @@ function buildRiskBreakdown(flags = {}, lookupStatus = 'unknown', headerMeta = {
 }
 
 function makeUnknownIpInfo({ trustedIp, headerMeta }) {
-    const hasSourceIp = isValidIP(trustedIp.ip);
+    const hasSourceIp = isValidIP(trustedIp.ip) && !isPrivateIP(trustedIp.ip);
     const riskFlags = buildRiskFlags({}, 'ip_unknown', headerMeta);
     const riskBreakdown = buildRiskBreakdown({}, 'ip_unknown', headerMeta);
     const riskScore = computeRisk({
@@ -1010,6 +1016,9 @@ module.exports = {
     _test: {
         splitHeaderIps,
         X_FORWARDED_FOR_MAX_ENTRIES,
-        storedHeaderIpMetadata
+        storedHeaderIpMetadata,
+        resolveResponseMaxBytes,
+        readLimitedResponseText,
+        makeUnknownIpInfo
     }
 };

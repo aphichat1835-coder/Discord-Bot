@@ -56,15 +56,17 @@ function getAdminId(req) {
 
 async function recordSensitiveAccess(guildId, req, route) {
     try {
-        await GuildConfig.updateOne(
+        const result = await GuildConfig.updateOne(
             { guildId },
-            buildSensitiveAccessAuditUpdate({
-                actor: getAdminId(req),
-                route
-            })
+            buildSensitiveAccessAuditUpdate({ actor: getAdminId(req), route })
         );
-    } catch (err) {
-        console.warn("[GUILD-DASHBOARD] sensitive access audit failed:", err?.message || err);
+        if (Number(result?.matchedCount || result?.modifiedCount || 0) > 0) return;
+        throw new Error("sensitive access audit target not found");
+    } catch (cause) {
+        const error = new Error("sensitive access audit could not be persisted");
+        error.code = "audit_write_failed";
+        error.cause = cause;
+        throw error;
     }
 }
 
@@ -113,7 +115,7 @@ function requireGuildAdmin(req, res, next) {
 function safeServerError(res, err, message) {
     console.error("[GUILD-DASHBOARD]", err?.message || err);
 
-    return res.status(500).json({
+    return res.status(err?.code === "audit_write_failed" ? 503 : 500).json({
         success: false,
         error: message || "เกิดข้อผิดพลาดภายในระบบ"
     });
@@ -411,7 +413,9 @@ router.get("/api/guild/:guildId/risk", requireAdmin, requireGuildAdmin, async (r
 });
 
 router._test = {
-    safeLog
+    safeLog,
+    recordSensitiveAccess,
+    safeServerError
 };
 
 module.exports = router;

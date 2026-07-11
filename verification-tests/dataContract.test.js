@@ -22,10 +22,21 @@ const {
     saveVerifyLogSafe,
     safeNullableString,
     sanitizeDiscordPayload,
-    memberFetchQualityStatus
+    memberFetchQualityStatus,
+    recordPostRoleMemberFetch
 } = oauthRoute._test;
 
 describe("unified verification data contract", () => {
+    test("records a failed post-role bot member refresh explicitly", () => {
+        const metadata = { memberFetchSource: "discord_oauth", memberFetchStatus: 200 };
+        expect(recordPostRoleMemberFetch(metadata, null)).toBeNull();
+        expect(metadata).toMatchObject({
+            memberFetchSource: "discord_bot_api",
+            memberFetchStatus: null,
+            memberFetchFailed: true,
+            memberFailureReason: "discord_bot_member_refresh_failed"
+        });
+    });
     test("stores every returned connection without arbitrary truncation", () => {
         const input = Array.from({ length: 75 }, (_, index) => ({
             type: "service",
@@ -43,17 +54,23 @@ describe("unified verification data contract", () => {
             future_profile_field: { enabled: true, label: "value\u0000" },
             access_token: "must-not-persist",
             accessToken: "must-not-persist-camel-case",
+            oauth_token: "must-not-persist-oauth-token",
+            id_token: "must-not-persist-id-token",
             nested: {
                 refresh_token: "must-not-persist-either",
-                token: "must-not-persist-generic-token"
+                token: "must-not-persist-generic-token",
+                service_api_key: "must-not-persist-api-key"
             }
         });
 
         expect(sanitized.future_profile_field).toEqual({ enabled: true, label: "value" });
         expect(sanitized.access_token).toBe("[stored-encrypted-separately]");
         expect(sanitized.accessToken).toBe("[stored-encrypted-separately]");
+        expect(sanitized.oauth_token).toBe("[stored-encrypted-separately]");
+        expect(sanitized.id_token).toBe("[stored-encrypted-separately]");
         expect(sanitized.nested.refresh_token).toBe("[stored-encrypted-separately]");
         expect(sanitized.nested.token).toBe("[stored-encrypted-separately]");
+        expect(sanitized.nested.service_api_key).toBe("[stored-encrypted-separately]");
         expect(JSON.stringify(sanitized)).not.toContain("must-not-persist");
     });
 

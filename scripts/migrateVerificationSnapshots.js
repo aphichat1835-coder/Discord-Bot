@@ -159,11 +159,22 @@ function buildPatch(doc, now = Date.now(), storedSnapshots = null) {
         "discord.displayTag": discord.displayTag || displayTag(discord),
         "discord.avatarUrl": discord.avatarUrl || avatarUrl(discord),
         "discord.bannerUrl": discord.bannerUrl || bannerUrl(discord),
-        "discord.badgeFlags": badgeFlags(discord),
-        snapshotMeta: legacySnapshotMeta(doc, now)
+        "discord.badgeFlags": Array.isArray(discord.badgeFlags)
+            ? discord.badgeFlags
+            : badgeFlags(discord),
+        snapshotMeta: legacySnapshotMeta(doc, now),
+        updatedAt: now
     };
     applyStoredSnapshots(patch, doc, storedSnapshots, now);
     return patch;
+}
+
+function optimisticSourceFilter(doc = {}) {
+    const filter = { _id: doc._id };
+    filter.updatedAt = Object.hasOwn(doc, "updatedAt")
+        ? doc.updatedAt
+        : { $exists: false };
+    return filter;
 }
 
 function migrationProfile(discord) {
@@ -243,7 +254,7 @@ async function migrateCursor({
         summary.eligible++;
         operations.push({
             updateOne: {
-                filter: { _id: doc._id },
+                filter: optimisticSourceFilter(doc),
                 update: { $set: patch }
             }
         });
@@ -262,7 +273,7 @@ async function run() {
 
     await mongoose.connect(mongoUri, { maxPoolSize: 2 });
     const cursor = OAuthUser.find(migrationFilter())
-        .select("discord connections guilds lastMember lastVerify snapshotMeta snapshotRefs")
+        .select("discord connections guilds lastMember lastVerify snapshotMeta snapshotRefs updatedAt")
         .lean()
         .cursor();
     const summary = await migrateCursor({
@@ -294,5 +305,6 @@ module.exports = {
     avatarUrl,
     bannerUrl,
     completeRefs,
-    migrationFilter
+    migrationFilter,
+    optimisticSourceFilter
 };

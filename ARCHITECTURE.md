@@ -98,6 +98,7 @@ owner-locked. Their implementation details are intentionally not documented.
 | Method/path | Behavior |
 | --- | --- |
 | `GET /ping` | liveness, always simple 200 while listener is running |
+| `GET /ready` | compatibility readiness endpoint; responds with a 307 redirect to `/health` |
 | `GET /health` | combined runtime readiness and diagnostics |
 | `GET /auth/callback` | serves OAuth callback UI |
 | `POST /auth/callback` | rate-limited verification execution |

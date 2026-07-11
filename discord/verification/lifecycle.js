@@ -30,6 +30,8 @@ const MAINTENANCE_INTERVAL_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 let maintenanceTimer = null;
+let maintenanceClearInterval = clearInterval;
+let runtimeStartPromise = null;
 let maintenanceInFlight = false;
 let lastRunAt = null;
 let lastStartedAt = null;
@@ -284,23 +286,35 @@ async function runVerificationMaintenance(options = {}) {
     }
 }
 
-async function startVerificationRuntime() {
+async function startVerificationRuntime(options = {}) {
     if (maintenanceTimer) return getVerificationDiagnostics();
-
-    await runVerificationMaintenance();
-    maintenanceTimer = setInterval(() => {
-        runVerificationMaintenance().catch(err => {
-            lastError = safeError(err);
-            console.error("[VERIFICATION] maintenance failed:", lastError);
-        });
-    }, MAINTENANCE_INTERVAL_MS);
-    maintenanceTimer.unref?.();
-    return getVerificationDiagnostics();
+    if (runtimeStartPromise) return runtimeStartPromise;
+    const maintenanceRunner = options.maintenanceRunner || runVerificationMaintenance;
+    const createInterval = options.setIntervalFn || setInterval;
+    maintenanceClearInterval = options.clearIntervalFn || clearInterval;
+    runtimeStartPromise = (async () => {
+        await maintenanceRunner();
+        if (!maintenanceTimer) {
+            maintenanceTimer = createInterval(() => {
+                maintenanceRunner().catch(err => {
+                    lastError = safeError(err);
+                    console.error("[VERIFICATION] maintenance failed:", lastError);
+                });
+            }, MAINTENANCE_INTERVAL_MS);
+            maintenanceTimer.unref?.();
+        }
+        return getVerificationDiagnostics();
+    })().finally(() => {
+        runtimeStartPromise = null;
+    });
+    return runtimeStartPromise;
 }
 
 async function stopVerificationRuntime() {
-    if (maintenanceTimer) clearInterval(maintenanceTimer);
+    if (runtimeStartPromise) await runtimeStartPromise.catch(() => {});
+    if (maintenanceTimer) maintenanceClearInterval(maintenanceTimer);
     maintenanceTimer = null;
+    maintenanceClearInterval = clearInterval;
     await waitForMaintenanceIdle();
 }
 

@@ -107,6 +107,7 @@ body.owner-dashboard-theme {
   --discord: #7c3aed;
   --discord-2: #6d28d9;
   --purple: #a855f7;
+
   background:
     radial-gradient(circle at 8% 0%, rgba(124, 58, 237, 0.22), transparent 34%),
     radial-gradient(circle at 92% 12%, rgba(168, 85, 247, 0.13), transparent 28%),

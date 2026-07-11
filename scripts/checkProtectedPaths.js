@@ -63,6 +63,10 @@ function getChangedPaths() {
         return splitLines(git(["diff", "--name-only", `${baseSha}...HEAD`]));
     }
 
+    if (String(process.env.CI || "").trim().toLowerCase() === "true") {
+        throw new Error("PROTECTED_BASE_SHA is missing or is not a usable commit in CI");
+    }
+
     const paths = new Set([
         ...splitLines(git(["diff", "--name-only", "HEAD"])),
         ...splitLines(git(["diff", "--cached", "--name-only"])),

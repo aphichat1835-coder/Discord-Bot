@@ -136,6 +136,11 @@ describe("member detail serialization and leak guards", () => {
         expect(pipeline).toContainEqual({ $limit: 250 });
     });
 
+    test("empty capped member pages never advertise another page", () => {
+        expect(verifiedMemberService._test.hasMoreMembers(0, 25, false, true)).toBe(false);
+        expect(verifiedMemberService._test.hasMoreMembers(25, 25, false, true)).toBe(true);
+    });
+
     test("snapshot budget reports payload too large without mutating caller data", () => {
         const payload = { data: "x".repeat(128) };
         expect(() => snapshotBudget.assertSnapshotBudget(payload, { maxBytes: 20 })).toThrow(/payload too large/);

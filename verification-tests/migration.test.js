@@ -46,6 +46,13 @@ describe("verification additive migration", () => {
         expect(JSON.stringify(patch)).not.toMatch(/token|rawIp|encryptedRawIp/i);
     });
 
+    test("preserves stored badge labels when raw flag fields are unavailable", () => {
+        const patch = buildPatch({
+            discord: { username: "legacy", badgeFlags: ["STAFF", "HYPESQUAD"] }
+        }, 1234);
+        expect(patch["discord.badgeFlags"]).toEqual(["STAFF", "HYPESQUAD"]);
+    });
+
     test("derived helpers preserve modern discriminator semantics", () => {
         expect(displayTag({ username: "modern", discriminator: "0" })).toBe("modern");
         expect(displayTag({ username: "legacy", discriminator: "1234" })).toBe("legacy#1234");
@@ -102,6 +109,10 @@ describe("verification additive migration", () => {
         });
         expect(summary.updated).toBe(1);
         const patch = writes[0].updateOne.update.$set;
+        expect(writes[0].updateOne.filter).toEqual({
+            _id: "legacy-1",
+            updatedAt: { $exists: false }
+        });
         const OAuthUser = require("../discord/verification/models/OAuthUser");
         const readable = new OAuthUser({
             discord: {
@@ -117,6 +128,21 @@ describe("verification additive migration", () => {
         expect(readable.discord.displayTag).toBe("legacy#1234");
         expect(readable.snapshotMeta.version).toBe(2);
         expect(JSON.stringify(writes)).not.toMatch(/encryptedAccessToken|encryptedRefreshToken|rawIp/i);
+    });
+
+    test("uses updatedAt as an optimistic concurrency guard", async () => {
+        const writes = [];
+        await migrateCursor({
+            cursor: [{ _id: "legacy-1", updatedAt: 456, discord: { username: "legacy" } }],
+            apply: true,
+            bulkWrite: async operations => {
+                writes.push(...operations);
+                return { modifiedCount: 0 };
+            },
+            now: () => 500
+        });
+        expect(writes[0].updateOne.filter).toEqual({ _id: "legacy-1", updatedAt: 456 });
+        expect(writes[0].updateOne.update.$set.updatedAt).toBe(500);
     });
 
     test("apply mode backfills complete chunk references without removing embedded data", async () => {

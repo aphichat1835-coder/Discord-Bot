@@ -73,7 +73,7 @@ function safeConsoleError(scope, err) {
 function sendServerError(res, scope, err, fallback = "เกิดข้อผิดพลาดภายในระบบ") {
   safeConsoleError(scope, err);
 
-  return res.status(500).json({
+  return res.status(err?.code === "audit_write_failed" ? 503 : 500).json({
     success: false,
     error: fallback
   });
@@ -92,21 +92,21 @@ function getAdminId(req) {
 
 async function recordSensitiveAccess(guildId, req, route) {
   try {
-    await GuildConfig.updateOne(
+    const result = await GuildConfig.updateOne(
       { guildId },
       buildSensitiveAccessAuditUpdate({
         actor: getAdminId(req) || "owner-dashboard",
         route
       })
     );
-    return { ok: true, status: "recorded" };
+    if (Number(result?.matchedCount || result?.modifiedCount || 0) > 0) {
+      return { ok: true, status: "recorded" };
+    }
+    throw Object.assign(new Error("sensitive access audit target not found"), { code: "audit_write_failed" });
   } catch (err) {
     safeConsoleError("sensitive-access-audit", err);
-    return {
-      ok: false,
-      status: "failed",
-      error: err?.message ? String(err.message).slice(0, 160) : "audit_write_failed"
-    };
+    if (!err.code) err.code = "audit_write_failed";
+    throw err;
   }
 }
 
@@ -1282,6 +1282,7 @@ router.post("/api/guild/:guildId/member/:userId/full-detail", requireAdmin, requ
 router.post("/api/guild/:guildId/member/:userId/reveal-token", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
   try {
     const { guildId, userId } = req.params;
+    res.set("Cache-Control", "no-store");
     res.json(await verificationOwnerService.revealOAuthTokens({
       guildId,
       userId,
@@ -1453,7 +1454,8 @@ router.get("/api/guild/:guildId", requireAdmin, requireGuildAdmin, async (req, r
 });
 
 router._test = {
-  mergeVerificationConfig
+  mergeVerificationConfig,
+  recordSensitiveAccess
 };
 
 module.exports = router;
