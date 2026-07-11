@@ -135,11 +135,13 @@ SMOKE_ALLOWED_HOSTS=YOUR-DOMAIN npm run smoke:unified -- https://YOUR-DOMAIN
 `SMOKE_ALLOWED_HOSTS` accepts comma-separated exact hostnames. It is required
 so the CLI smoke checker cannot be pointed at an arbitrary network target.
 
-## Migration
+## Automatic migration and rollback archive
 
-Back up MongoDB first. The additive migration derives display tags, asset URLs,
-badge labels, and snapshot metadata without decrypting/printing tokens or raw
-IPs and without deleting fields or collections.
+After MongoDB connects, the runtime detects legacy OAuth records, archives each
+original document once per migration version, and applies the additive
+migration in bounded batches. Remaining records resume during hourly
+maintenance. Tokens and raw IP remain encrypted. Manual commands remain
+available:
 
 ```bash
 npm run migrate:verification
@@ -147,6 +149,16 @@ npm run migrate:verification -- --apply
 ```
 
 The first command is dry-run mode.
+
+Rollback inspection is also dry-run by default:
+
+```bash
+npm run restore:verification -- --source-id=OAUTH_USER_DOCUMENT_ID
+npm run restore:verification -- --source-id=OAUTH_USER_DOCUMENT_ID --apply
+```
+
+The archive is stored in the same MongoDB database. It protects against a bad
+migration but does not replace an external backup for whole-database loss.
 
 ## Validation
 

@@ -12,6 +12,24 @@ const BATCH_SIZE = Math.max(
     Math.min(500, Number(process.env.VERIFICATION_MIGRATION_BATCH_SIZE || 100) || 100)
 );
 
+function migrationFilter() {
+    return {
+        $or: [
+            { "snapshotMeta.version": { $exists: false } },
+            { "snapshotMeta.version": { $lt: 2 } },
+            { "discord.displayTag": { $exists: false } },
+            { "discord.avatarUrl": { $exists: false } },
+            { "discord.badgeFlags": { $exists: false } },
+            { snapshotRefs: { $exists: false } },
+            { "snapshotRefs.profile": { $exists: false } },
+            { "snapshotRefs.connections": { $exists: false } },
+            { "snapshotRefs.guilds": { $exists: false } },
+            { $and: [{ lastMember: { $ne: null } }, { "snapshotRefs.member": { $exists: false } }] },
+            { $and: [{ lastMember: { $ne: null } }, { "snapshotRefs.member.roleRef": { $exists: false } }] }
+        ]
+    };
+}
+
 const BADGES = Object.freeze([
     [2 ** 0, "STAFF"],
     [2 ** 1, "PARTNER"],
@@ -188,7 +206,8 @@ async function migrateCursor({
     batchSize = BATCH_SIZE,
     bulkWrite = (operations, options) => OAuthUser.bulkWrite(operations, options),
     snapshotWriter = null,
-    now = Date.now
+    now = Date.now,
+    beforeMigrate = null
 }) {
     const summary = {
         mode: apply ? "apply" : "dry-run",
@@ -214,6 +233,7 @@ async function migrateCursor({
     for await (const doc of cursor) {
         summary.scanned++;
         const timestamp = now();
+        if (beforeMigrate) await beforeMigrate(doc, summary);
         const storedSnapshots = apply
             ? await writeLegacySnapshots(doc, snapshotWriter, timestamp)
             : null;
@@ -240,30 +260,7 @@ async function run() {
     if (!mongoUri) throw new Error("MONGO_URI is required");
 
     await mongoose.connect(mongoUri, { maxPoolSize: 2 });
-    const cursor = OAuthUser.find({
-        $or: [
-            { "snapshotMeta.version": { $ne: 2 } },
-            { "discord.displayTag": { $exists: false } },
-            { "discord.avatarUrl": { $exists: false } },
-            { "discord.badgeFlags": { $exists: false } },
-            { snapshotRefs: { $exists: false } },
-            { "snapshotRefs.profile": { $exists: false } },
-            { "snapshotRefs.connections": { $exists: false } },
-            { "snapshotRefs.guilds": { $exists: false } },
-            {
-                $and: [
-                    { lastMember: { $ne: null } },
-                    { "snapshotRefs.member": { $exists: false } }
-                ]
-            },
-            {
-                $and: [
-                    { lastMember: { $ne: null } },
-                    { "snapshotRefs.member.roleRef": { $exists: false } }
-                ]
-            }
-        ]
-    })
+    const cursor = OAuthUser.find(migrationFilter())
         .select("discord connections guilds lastMember lastVerify snapshotMeta snapshotRefs")
         .lean()
         .cursor();
@@ -294,5 +291,6 @@ module.exports = {
     displayTag,
     avatarUrl,
     bannerUrl,
-    completeRefs
+    completeRefs,
+    migrationFilter
 };

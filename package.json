@@ -15,6 +15,7 @@
     "check:memory-trend": "node scripts/checkMemoryTrend.js",
     "smoke:unified": "node scripts/smokeUnifiedRuntime.js",
     "migrate:verification": "node -r ./discord/core/loadEnv scripts/migrateVerificationSnapshots.js",
+    "restore:verification": "node -r ./discord/core/loadEnv scripts/restoreVerificationMigration.js",
     "test": "npm run test:discord && npm run test:voice && npm run test:verification",
     "test:discord": "find discord/tests -name '*.test.js' ! -name 'voice*.test.js' -print0 | xargs -0 -r node --test",
     "test:voice": "node --test discord/tests/voice*.test.js",

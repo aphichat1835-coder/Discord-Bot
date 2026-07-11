@@ -13,6 +13,10 @@ const {
     getOAuthRefreshConfig,
     refreshPersistedOAuthTokens
 } = require("./utils/oauthTokenLifecycle");
+const {
+    runAutomaticMigration,
+    config: getAutomaticMigrationConfig
+} = require("./services/automaticMigration");
 
 const RETENTION_CONFIG_SCAN_MAX = Math.max(
     50,
@@ -41,6 +45,9 @@ let runCount = 0;
 let failCount = 0;
 let maintenanceWaiters = [];
 let retentionCursor = null;
+let lastAutomaticMigrationAt = null;
+let lastAutomaticMigrationError = null;
+let lastAutomaticMigrationSummary = null;
 
 function resolveMaintenanceWaiters() {
     if (maintenanceInFlight) return;
@@ -75,8 +82,28 @@ function createSummary(dryRun, now) {
         verifyLogs: 0,
         ipIdentityLinks: 0,
         snapshotCleanup: null,
+        automaticMigration: null,
         errors: []
     };
+}
+
+async function runAutomaticMigrationSafe(dryRun, summary) {
+    try {
+        summary.automaticMigration = await runAutomaticMigration({ dryRun });
+        if (!dryRun) {
+            lastAutomaticMigrationAt = Date.now();
+            lastAutomaticMigrationSummary = summary.automaticMigration;
+            lastAutomaticMigrationError = null;
+        }
+    } catch (err) {
+        const error = safeError(err);
+        summary.automaticMigration = { failed: true, error };
+        summary.errors.push({ subsystem: "automatic_migration", error });
+        if (!dryRun) {
+            lastAutomaticMigrationAt = Date.now();
+            lastAutomaticMigrationError = error;
+        }
+    }
 }
 
 async function runSnapshotCleanup(dryRun, summary) {
@@ -211,6 +238,7 @@ async function runVerificationMaintenance(options = {}) {
 
     try {
         summary.expiredRevealRequests = await expirePendingRevealRequests(now, dryRun);
+        await runAutomaticMigrationSafe(dryRun, summary);
         await runSnapshotCleanup(dryRun, summary);
         const configs = await loadRetentionConfigs(dryRun, summary);
         summary.guildsScanned = configs.length;
@@ -294,6 +322,12 @@ function getVerificationDiagnostics() {
         snapshotCleanup: {
             config: getSnapshotCleanupConfig(),
             lastSummary: lastSummary?.snapshotCleanup || null
+        },
+        automaticMigration: {
+            config: getAutomaticMigrationConfig(),
+            lastRunAt: lastAutomaticMigrationAt,
+            lastError: lastAutomaticMigrationError,
+            lastSummary: lastAutomaticMigrationSummary
         },
         oauthTokenRefresh: {
             config: getOAuthRefreshConfig(),

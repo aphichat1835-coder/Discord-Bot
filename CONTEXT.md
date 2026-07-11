@@ -42,7 +42,7 @@ create Express app and register routes
   → listen on PORT
   → connect MongoDB
   → load persisted bot/session state
-  → run verification retention and OAuth token refresh
+  → archive/migrate legacy verification records, then run retention and OAuth token refresh
   → login Discord client
   → resume normal bot/voice work
 ```

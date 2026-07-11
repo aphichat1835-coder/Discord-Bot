@@ -162,6 +162,15 @@ lookups fail and deletes only incomplete or unreferenced versions older than the
 configured grace period; it never prunes a version referenced by OAuthUser or
 VerifyLog, including soft-deleted logs.
 
+### Automatic migration archive
+
+Before automatic legacy migration changes an OAuthUser, the runtime stores the
+complete encrypted source document in a same-database rollback archive. One
+archive exists per source and migration version, so restarts do not create
+duplicates. Archive failure aborts migration before the source write. Archive
+documents must never be exposed through normal APIs, logs, or exports. External
+provider backup is still required to survive loss of the entire database.
+
 Do not infer values that Discord did not return:
 
 - unknown/unavailable remains null or unknown;

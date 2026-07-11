@@ -4,6 +4,12 @@
 
 ### Changed
 
+- Added automatic bounded legacy verification migration on the shared MongoDB
+  connection. Each eligible OAuthUser is archived once per migration version
+  before modification, duplicate archives are skipped, failures leave the
+  source untouched, hourly maintenance resumes remaining records, diagnostics
+  report progress, and a dry-run-first restore CLI supports rollback.
+
 - Aligned the integrated verification management pages with the established
   purple Owner Dashboard theme. Owner Member Detail now loads encrypted raw IP
   and OAuth token values as one CSRF-protected, internally audited action, and

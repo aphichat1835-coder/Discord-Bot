@@ -83,13 +83,15 @@ running.
 
 ## Migration
 
-Always run dry-run first:
+Migration runs automatically in bounded batches after MongoDB connects and
+continues during hourly maintenance. Check
+`/api/verification/diagnostics` under `automaticMigration`. Manual dry-run is:
 
 ```bash
 npm run migrate:verification
 ```
 
-After backup and review:
+Manual apply remains available for maintenance:
 
 ```bash
 npm run migrate:verification -- --apply
@@ -97,6 +99,17 @@ npm run migrate:verification -- --apply
 
 The script should report counts only. It must not print document bodies, tokens,
 or IP values. It is additive and does not delete fields/collections.
+
+Inspect or restore an automatically archived original document:
+
+```bash
+npm run restore:verification -- --source-id=OAUTH_USER_DOCUMENT_ID
+npm run restore:verification -- --source-id=OAUTH_USER_DOCUMENT_ID --apply
+```
+
+The first restore command changes nothing. This archive is in the same MongoDB
+database and is intended for migration rollback, not whole-database disaster
+recovery.
 
 ## Common failures
 

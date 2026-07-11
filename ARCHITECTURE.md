@@ -41,7 +41,8 @@ Authoritative orchestration is `discord/index.js`.
 3. Listen on `process.env.PORT || 3000`.
 4. Connect MongoDB through `discord/sessionManager.js`.
 5. Load persisted bot/session state.
-6. Start verification retention and encrypted OAuth refresh maintenance.
+6. Archive and migrate a bounded batch of legacy verification records, then
+   start retention and encrypted OAuth refresh maintenance.
 7. Login the Discord client.
 8. Start normal event, audit, voice/session, and scheduled work.
 
@@ -182,6 +183,8 @@ The active verification models are:
 | `VerifyLog` | immutable-per-attempt core result, snapshot references, policy/device/network state, join/role result, and quality metadata |
 | `IpIdentityLink` | per-guild hashed-IP correlation summary and first/last seen state |
 | `IPRevealRequest` | historical collection compatibility and expiry maintenance only; no new external guild-admin requests |
+| `VerificationMigrationArchive` | deduplicated original OAuthUser documents retained for migration rollback |
+| `VerificationMigrationState` | automatic migration lock, progress, result, and failure diagnostics |
 
 Snapshot maintenance uses permanent-history semantics. Every version referenced
 by the current `OAuthUser.snapshotRefs` or by any `VerifyLog` (including a
@@ -190,6 +193,13 @@ versions older than the cleanup grace period are eligible for bounded deletion.
 
 Model names, collection behavior, and current/historical token/IP encryption
 read compatibility are preserved.
+
+Automatic migration runs after the shared MongoDB connection is ready and on
+hourly verification maintenance. It processes a bounded batch, archives each
+source exactly once per migration version before writing, and skips records
+that already have an archive. Backup failure stops migration while leaving the
+original untouched. This same-database archive supports migration rollback; it
+does not protect against loss of the entire MongoDB database.
 
 ### Discord account snapshot
 
