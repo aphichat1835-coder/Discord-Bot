@@ -383,8 +383,31 @@ function revealTokenState(token = {}) {
     };
 }
 
-function ownerIpIdentityDetail(link = null) {
-    if (!link) return null;
+function ownerIpLocation(link = {}) {
+    return {
+        country: link.lastCountry || null,
+        countryCode: link.lastCountryCode || null,
+        region: link.lastRegion || null,
+        city: link.lastCity || null,
+        timezone: link.lastTimezone || null,
+        isp: link.lastIsp || null,
+        org: link.lastOrg || null,
+        as: link.lastAs || null,
+        asname: link.lastAsname || null
+    };
+}
+
+function ownerIpSignals(link = {}) {
+    return {
+        isVPN: link.isVPN === true,
+        isProxy: link.isProxy === true,
+        isTOR: link.isTOR === true,
+        hosting: link.hosting === true,
+        mobile: link.mobile === true
+    };
+}
+
+function ownerIpSummary(link = {}) {
     return {
         firstSeenAt: link.firstSeenAt || null,
         lastSeenAt: link.lastSeenAt || null,
@@ -394,30 +417,21 @@ function ownerIpIdentityDetail(link = null) {
         lastRoleId: link.lastRoleId || null,
         maxRiskScore: Number(link.maxRiskScore || 0),
         lastRiskScore: Number(link.lastRiskScore || 0),
-        lastRiskFlags: Array.isArray(link.lastRiskFlags) ? link.lastRiskFlags : [],
-        location: {
-            country: link.lastCountry || null,
-            countryCode: link.lastCountryCode || null,
-            region: link.lastRegion || null,
-            city: link.lastCity || null,
-            timezone: link.lastTimezone || null,
-            isp: link.lastIsp || null,
-            org: link.lastOrg || null,
-            as: link.lastAs || null,
-            asname: link.lastAsname || null
-        },
-        signals: {
-            isVPN: link.isVPN === true,
-            isProxy: link.isProxy === true,
-            isTOR: link.isTOR === true,
-            hosting: link.hosting === true,
-            mobile: link.mobile === true
-        },
-        users: Array.isArray(link.users) ? link.users : [],
-        deviceFingerprints: Array.isArray(link.deviceFingerprints) ? link.deviceFingerprints : [],
-        roleSnapshots: Array.isArray(link.roleSnapshots) ? link.roleSnapshots : [],
         lastIpInfo: link.lastIpInfo || null,
         lastDevice: link.lastDevice || null
+    };
+}
+
+function ownerIpIdentityDetail(link = null) {
+    if (!link) return null;
+    return {
+        ...ownerIpSummary(link),
+        location: ownerIpLocation(link),
+        signals: ownerIpSignals(link),
+        lastRiskFlags: Array.isArray(link.lastRiskFlags) ? link.lastRiskFlags : [],
+        users: Array.isArray(link.users) ? link.users : [],
+        deviceFingerprints: Array.isArray(link.deviceFingerprints) ? link.deviceFingerprints : [],
+        roleSnapshots: Array.isArray(link.roleSnapshots) ? link.roleSnapshots : []
     };
 }
 

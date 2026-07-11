@@ -924,24 +924,43 @@
     ];
   }
 
-  function buildIpIdentityHistoryCard(detail = {}) {
-    const history = detail.sensitive?.ipIdentity;
-    if (!history) return null;
-    const location = history.location || {};
-    const signals = history.signals || {};
-    const raw = rawSnapshotDetailsElement("เปิดดู Users / Devices / Role snapshots ทั้งหมด", history);
-    const card = detailCardElement("IP Identity / History", [
+  function ipHistorySummaryRows(history = {}) {
+    return [
       ["First seen / Last seen", `${fmtTime(history.firstSeenAt)} / ${fmtTime(history.lastSeenAt)}`],
       ["Verification count / Users", `${history.totalVerifications ?? 0} / ${history.uniqueUsers ?? 0}`],
       ["Users on this IP", Array.isArray(history.users) ? history.users.length : 0],
       ["Device fingerprints", Array.isArray(history.deviceFingerprints) ? history.deviceFingerprints.length : 0],
       ["Role snapshots", Array.isArray(history.roleSnapshots) ? history.roleSnapshots.length : 0],
-      ["Last result / Role", `${history.lastResult || "—"} / ${history.lastRoleId || "—"}`],
+      ["Last result / Role", `${history.lastResult || "—"} / ${history.lastRoleId || "—"}`]
+    ];
+  }
+
+  function ipHistoryRiskRows(history = {}) {
+    return [
       ["Risk max / latest", `${history.maxRiskScore ?? 0} / ${history.lastRiskScore ?? 0}`],
-      ["Risk flags", Array.isArray(history.lastRiskFlags) ? history.lastRiskFlags.join(", ") || "—" : "—"],
+      ["Risk flags", Array.isArray(history.lastRiskFlags) ? history.lastRiskFlags.join(", ") || "—" : "—"]
+    ];
+  }
+
+  function ipHistoryNetworkRows(history = {}) {
+    const location = history.location || {};
+    const signals = history.signals || {};
+    return [
       ["Country / City / ISP", `${location.country || location.countryCode || "—"} / ${location.city || "—"} / ${location.isp || "—"}`],
       ["VPN / Proxy / TOR / Hosting / Mobile", `${boolText(signals.isVPN)} / ${boolText(signals.isProxy)} / ${boolText(signals.isTOR)} / ${boolText(signals.hosting)} / ${boolText(signals.mobile)}`]
-    ], raw);
+    ];
+  }
+
+  function buildIpIdentityHistoryCard(detail = {}) {
+    const history = detail.sensitive?.ipIdentity;
+    if (!history) return null;
+    const rows = [
+      ...ipHistorySummaryRows(history),
+      ...ipHistoryRiskRows(history),
+      ...ipHistoryNetworkRows(history)
+    ];
+    const raw = rawSnapshotDetailsElement("เปิดดู Users / Devices / Role snapshots ทั้งหมด", history);
+    const card = detailCardElement("IP Identity / History", rows, raw);
     card.classList.add("mt-14");
     return card;
   }
