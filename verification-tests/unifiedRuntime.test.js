@@ -68,6 +68,16 @@ function readVerifyOwnerRoutes() {
 }
 
 describe("single-process verification runtime contract", () => {
+    test("scopes the Owner theme away from the public verification callback", () => {
+        const ownerGuildPage = fs.readFileSync("discord/verification/views/guild.html", "utf8");
+        const ownerHomePage = fs.readFileSync("discord/verification/page.js", "utf8");
+        const memberCallback = fs.readFileSync("discord/verification/views/callback.html", "utf8");
+        expect(ownerGuildPage).toContain('body class="owner-dashboard-theme"');
+        expect(ownerHomePage).toContain('body class="owner-dashboard-theme"');
+        expect(memberCallback).toContain('body class="callback-page"');
+        expect(memberCallback).not.toContain("owner-dashboard-theme");
+    });
+
     test("root package has one start command and no nested dashboard service", () => {
         const pkg = require("../package.json");
         const lock = readPackageLock();

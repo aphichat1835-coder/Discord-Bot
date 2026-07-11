@@ -9,7 +9,7 @@ function verificationHomePage() {
   <title>Owner Verification</title>
   <link rel="stylesheet" href="/verification-assets/css/dashboard.css">
 </head>
-<body>
+<body class="owner-dashboard-theme">
   <main class="page-shell">
     <section class="hero-card">
       <div>

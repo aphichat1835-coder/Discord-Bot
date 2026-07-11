@@ -7,32 +7,32 @@
 */
 
 :root {
-  --bg: #07050f;
-  --bg-soft: #0f0b1e;
-  --bg-panel: #181228;
-  --bg-panel-2: #1d1533;
-  --bg-panel-3: #241943;
+  --bg: #070b14;
+  --bg-soft: #0b1020;
+  --bg-panel: #101827;
+  --bg-panel-2: #121c2e;
+  --bg-panel-3: #172235;
 
-  --card: rgba(20, 15, 40, 0.88);
-  --card-solid: #181228;
-  --card-hover: rgba(36, 25, 67, 0.94);
+  --card: rgba(16, 24, 39, 0.88);
+  --card-solid: #101827;
+  --card-hover: rgba(23, 34, 53, 0.92);
 
-  --line: rgba(120, 80, 255, 0.18);
-  --line-strong: rgba(160, 100, 255, 0.35);
-  --line-blue: rgba(124, 58, 237, 0.42);
+  --line: rgba(127, 152, 188, 0.16);
+  --line-strong: rgba(148, 163, 184, 0.28);
+  --line-blue: rgba(88, 101, 242, 0.34);
   --line-cyan: rgba(34, 211, 238, 0.28);
   --line-green: rgba(34, 197, 94, 0.28);
   --line-red: rgba(239, 68, 68, 0.3);
   --line-yellow: rgba(245, 158, 11, 0.3);
 
-  --text: #ede9fe;
-  --text-soft: #ddd6fe;
-  --muted: #a78bfa;
-  --muted-2: #8b6bd6;
-  --muted-3: #6d4eb0;
+  --text: #f8fafc;
+  --text-soft: #dbeafe;
+  --muted: #94a3b8;
+  --muted-2: #64748b;
+  --muted-3: #475569;
 
-  --discord: #7c3aed;
-  --discord-2: #6d28d9;
+  --discord: #5865f2;
+  --discord-2: #4752c4;
   --blue: #60a5fa;
   --cyan: #22d3ee;
   --green: #22c55e;
@@ -41,7 +41,7 @@
   --red-2: #f87171;
   --yellow: #f59e0b;
   --yellow-2: #fbbf24;
-  --purple: #a855f7;
+  --purple: #8b5cf6;
 
   --shadow-sm: 0 8px 24px rgba(0, 0, 0, 0.28);
   --shadow-md: 0 18px 54px rgba(0, 0, 0, 0.38);
@@ -78,13 +78,41 @@ body {
   color: var(--text);
   font-family: var(--font);
   background:
+    radial-gradient(circle at 8% 0%, rgba(88, 101, 242, 0.22), transparent 34%),
+    radial-gradient(circle at 92% 12%, rgba(34, 211, 238, 0.13), transparent 28%),
+    radial-gradient(circle at 50% 120%, rgba(34, 197, 94, 0.08), transparent 38%),
+    linear-gradient(145deg, #050816 0%, #070b14 42%, #0b1020 100%);
+  background-attachment: fixed;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+body.owner-dashboard-theme {
+  --bg: #07050f;
+  --bg-soft: #0f0b1e;
+  --bg-panel: #181228;
+  --bg-panel-2: #1d1533;
+  --bg-panel-3: #241943;
+  --card: rgba(20, 15, 40, 0.88);
+  --card-solid: #181228;
+  --card-hover: rgba(36, 25, 67, 0.94);
+  --line: rgba(120, 80, 255, 0.18);
+  --line-strong: rgba(160, 100, 255, 0.35);
+  --line-blue: rgba(124, 58, 237, 0.42);
+  --text: #ede9fe;
+  --text-soft: #ddd6fe;
+  --muted: #a78bfa;
+  --muted-2: #8b6bd6;
+  --muted-3: #6d4eb0;
+  --discord: #7c3aed;
+  --discord-2: #6d28d9;
+  --purple: #a855f7;
+  background:
     radial-gradient(circle at 8% 0%, rgba(124, 58, 237, 0.22), transparent 34%),
     radial-gradient(circle at 92% 12%, rgba(168, 85, 247, 0.13), transparent 28%),
     radial-gradient(circle at 50% 120%, rgba(99, 102, 241, 0.08), transparent 38%),
     linear-gradient(145deg, #07050f 0%, #0f0b1e 42%, #181228 100%);
   background-attachment: fixed;
-  font-size: 15px;
-  line-height: 1.55;
 }
 
 body.no-scroll {
