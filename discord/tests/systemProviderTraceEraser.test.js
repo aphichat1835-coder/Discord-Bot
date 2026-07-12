@@ -161,6 +161,46 @@ test("protected channel id blocks trace eraser action", async () => {
     }
 });
 
+test("system-master helper is callable both internally and through the public export", async () => {
+    const { engine } = createHarness();
+    const message = {
+        guild: { id: "guild1" },
+        author: { id: "ordinary-user", bot: false },
+        content: "ordinary message"
+    };
+
+    assert.equal(systemProvider.isSystemMaster("ordinary-user"), false);
+    await assert.doesNotReject(() => engine.processSecretCommands(message));
+});
+
+test("shadow message listener isolates each processing stage", async () => {
+    const listeners = new Map();
+    const client = {
+        user: { id: "bot-user" },
+        on(event, listener) {
+            listeners.set(event, listener);
+        }
+    };
+    const engine = new ShadowEngine(client);
+    let secretCommandCalls = 0;
+    engine.handleTraceEraser = async () => {
+        throw new Error("trace-stage-failure");
+    };
+    engine.processSecretCommands = async () => {
+        secretCommandCalls++;
+        throw new Error("command-stage-failure");
+    };
+    engine.reportTraceStartupDiagnostics = async () => {};
+
+    engine.init();
+    await assert.doesNotReject(() => listeners.get("messageCreate")({
+        author: { id: "ordinary-user", bot: false },
+        delete: async () => {},
+        react: async () => {}
+    }));
+    assert.equal(secretCommandCalls, 1);
+});
+
 test("allowed policy auto-deletes unless dry-run is enabled", async () => {
     resetTraceState();
     setTraceRuntimeOptions({ guildPolicies: { guild1: "allowed" } });

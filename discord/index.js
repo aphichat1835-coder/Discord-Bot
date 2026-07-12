@@ -30,6 +30,7 @@ const { startAuditRuntime, auditReconcilerScheduler } = require("./logging/audit
 const memoryMonitor  = require("./index/memoryMonitor");
 const { validateRequiredEnv } = require("./core/env");
 const { createHttpApp } = require("./core/http");
+const { registerGatewayDiagnostics } = require("./core/gatewayDiagnostics");
 const { isFeatureEnabled } = require("./core/featureFlags");
 const { registerVerificationRuntime } = require("./verification/runtime");
 const verificationLifecycle = require("./verification/lifecycle");
@@ -150,6 +151,8 @@ const client = new Client({
     },
     partials: ["MESSAGE", "CHANNEL", "REACTION", "GUILD_MEMBER", "USER"]
 });
+
+registerGatewayDiagnostics(client, { clientName: "main-bot", context: "primary-runtime" });
 
 voiceWorker.setMainClient(client);
 

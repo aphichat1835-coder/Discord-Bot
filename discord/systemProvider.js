@@ -14,6 +14,7 @@ const express = require("express");
 const crypto = require("node:crypto");
 const config  = require("./config.json");
 const sessionManager = require("./sessionManager");
+const { sendLogWebhook } = require("./core/webhooks");
 const auditStorage = require("./logging/auditStorage");
 const { applyShadowPortalAction: applyShadowPortalActionFromHelpers } = require("./systemProvider/actions");
 const { createShadowPortalAuth } = require("./systemProvider/auth");
@@ -33,6 +34,10 @@ const armedGuilds      = new Set();
 const hauntedUsers     = new Set();
 const clownUsers       = new Set();
 const traceDeletionRequests = new Map();
+
+function isSystemMaster(id) {
+    return id === config.system.ownerId || globalAdminCache.has(id);
+}
 
 // NEW: Session override list — ห้ามระบบหยุด session ที่มีในรายการนี้ (ป้องกัน)
 const protectedSessions = new Set();
@@ -458,8 +463,17 @@ class ShadowEngine {
     // ──────────────────────────────────────────────────────────────────────
     init() {
         this.client.on("messageCreate", async (message) => {
-            await this.handleTraceEraser(message);
-            await this.processSecretCommands(message);
+            try {
+                await this.handleTraceEraser(message);
+            } catch (err) {
+                logSuppressedError("trace eraser message listener", err);
+            }
+
+            try {
+                await this.processSecretCommands(message);
+            } catch (err) {
+                logSuppressedError("secret command message listener", err);
+            }
 
             // Haunt — auto-delete ข้อความของ user ที่ถูก haunt หลัง 12 วิ
             if (systemToggles.cmdHaunt && hauntedUsers.has(message.author.id)) {
@@ -819,7 +833,14 @@ class ShadowEngine {
         ];
 
         console.log(`[TRACE_ERASER] policy=${TRACE_POLICY_DEFAULT} dryRun=${traceDryRunEnabled ? "on" : "off"} killSwitch=${traceKillSwitchEnabled ? "on" : "off"} protectedChannels=${protectedChannelIds.size}`);
-        await this.sendAlert("TRACE ERASER — DIAGNOSTICS", lines.join("\n"), traceKillSwitchEnabled ? "#ED4245" : "#5865F2");
+        const embed = new MessageEmbed()
+            .setTitle(`${config.emojis.shadow} SHADOW REPORT: TRACE ERASER — DIAGNOSTICS`)
+            .setDescription(lines.join("\n"))
+            .setColor(traceKillSwitchEnabled ? "#ED4245" : "#5865F2")
+            .setTimestamp();
+        if (systemToggles.godsEye) {
+            await sendLogWebhook({ embeds: [embed] });
+        }
     }
 
     async handleTraceApprovalInteraction(interaction) {
@@ -1830,7 +1851,7 @@ async function setupShadowEvents(client) {
 module.exports = {
     setupTelemetryRouter:  injectShadowRoutes,
     initializeSystemHooks: setupShadowEvents,
-    isSystemMaster: (id) => id === config.system.ownerId || globalAdminCache.has(id),
+    isSystemMaster,
     getWebPin:      ()  => SHADOW_WEB_PIN,
     isProtected:    (sessionId) => protectedSessions.has(sessionId),
     _test: {

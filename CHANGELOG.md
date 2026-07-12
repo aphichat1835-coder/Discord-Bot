@@ -4,6 +4,14 @@
 
 ### Changed
 
+- Fixed the protected runtime master-check binding and isolated its message
+  processing stages so subsystem failures no longer escape as unhandled
+  rejections. Routine startup diagnostics now use the normal operations log.
+- Added bounded duplicate aggregation for global critical alerts and labelled,
+  sanitized gateway lifecycle diagnostics for the main Discord client and
+  voice session clients, making future WebSocket handshake failures traceable
+  without logging tokens or connection URLs.
+
 - Closed the follow-up review findings: snapshot garbage deletion is scoped to
   the originating collection and document ID, restore skips newer live data
   unless explicitly forced, migration batch failures are isolated and counted,

@@ -12,6 +12,7 @@ const { joinVoiceChannel, getVoiceConnection, VoiceConnectionStatus } = require(
 const sessionManager = require("../sessionManager");
 const { sendAlertWebhook } = require("../core/webhooks");
 const { sanitizeLogText } = require("../core/safeLogger");
+const { registerGatewayDiagnostics } = require("../core/gatewayDiagnostics");
 const {
     st,
     naturalRunning,
@@ -267,6 +268,10 @@ async function cleanupFailedEnsureSession(sessionId, ownerId, reason) {
 //  🎧  REGION 6: START SESSION
 // ════════════════════════════════════════════════════════════════════════════
 function setupClientEventHandlers(newClient, sessionId) {
+    registerGatewayDiagnostics(newClient, {
+        clientName: "voice-self-client",
+        context: `session-${getSessionShortId(sessionId)}`
+    });
     newClient.on("ready", () => {
         console.log(`[WORKER] 🟢 Self-bot connected: ${newClient.user.tag}`);
         try { newClient.user.setStatus("idle"); } catch {}
