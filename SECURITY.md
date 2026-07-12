@@ -124,6 +124,8 @@ the retired origin during refresh.
 The current raw source IP is encrypted; an HMAC hash is used for correlation.
 Normal serializers always return `rawIp: null` and `ip: null`, even to the
 Owner. Location/network/risk fields remain available without decryption.
+Paginated IP-history APIs return canonical user/device/role metadata only and
+never return encrypted or decrypted raw IP or OAuth tokens.
 
 Raw-IP access requires:
 
@@ -233,6 +235,9 @@ separate where possible.
   item cap after payload acceptance.
 - Volatile voice, audit, IP lookup, rate-limit, command, and session structures
   remain bounded.
+- Persistent per-IP users, device aggregates, and role events use paginated
+  collections rather than truncating history arrays; request processing and UI
+  reads remain batch-limited without imposing a total-history ceiling.
 
 Validation:
 

@@ -33,6 +33,8 @@ require a new explicit owner decision.
 - Added combined `/health` readiness.
 - Added full returned guild/connection/target-role persistence and
   failure-preserving snapshot updates.
+- Replaced Join Campaign's total-user ceiling and embedded per-IP history caps
+  with cursor batches and paginated canonical history collections.
 - Added additive snapshot/data-quality fields and dry-run/apply migration.
 - Added audited Owner raw-IP reveal while keeping normal APIs redacted.
 - Consolidated CI and tests under the root package.

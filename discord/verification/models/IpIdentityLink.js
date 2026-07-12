@@ -96,6 +96,9 @@ const schema = new mongoose.Schema({
     lastIpInfo: mixed,
     lastDevice: mixed,
 
+    historyMigrationVersion: Number,
+    historyMigratedAt: Number,
+
     deletedAt: Number,
     deletedBy: String,
 

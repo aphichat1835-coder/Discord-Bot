@@ -230,6 +230,53 @@ test("join campaign allows every bot guild when allowlist is empty", async (t) =
     assert.equal(summary.scannedRecords, 0);
 });
 
+test("join campaign follows database cursor batches until every OAuth user is scanned", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
+    const calls = [];
+    const batches = [
+        [
+            { _id: "1", discord: { userId: "100" }, oauth: { encryptedRefreshToken: "a", scope: "guilds.join" } },
+            { _id: "2", discord: { userId: "200" }, oauth: { encryptedRefreshToken: "b", scope: "guilds.join" } }
+        ],
+        [{ _id: "3", discord: { userId: "300" }, oauth: { encryptedRefreshToken: "c", scope: "identify" } }]
+    ];
+    const model = {
+        find(filter) {
+            calls.push(filter);
+            const docs = batches.shift() || [];
+            const query = {
+                select: () => query,
+                sort: () => query,
+                limit: () => query,
+                lean: async () => docs
+            };
+            return query;
+        }
+    };
+    const summary = await joinCampaign.executeJoinCampaign({
+        targetGuildId: "123456789012345678",
+        OAuthUserModel: model,
+        dryRun: true,
+        config: {
+            enabled: true,
+            allowedGuilds: new Set(),
+            batchSize: 2,
+            delayMs: 0,
+            progressEvery: 10,
+            refreshMarginMs: 60 * 60 * 1000,
+            failMax: 5
+        },
+        sendWebhook: async () => true
+    });
+
+    t.assert.equal(summary.scannedRecords, 3);
+    assert.equal(summary.uniqueUsers, 3);
+    assert.equal(summary.usableUsers, 2);
+    assert.equal(summary.missingScope, 1);
+    assert.equal(summary.batches, 2);
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls[1].$and.at(-1), { _id: { $gt: "2" } });
+});
+
 test("join campaign has no Sync Roles UI or route surface", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     const runtimeSurface = [
         fs.readFileSync("discord/index/joinCampaignPage.js", "utf8"),

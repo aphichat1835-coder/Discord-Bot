@@ -70,7 +70,8 @@ function registerVerificationRuntime({ app, express, client, sessionManager }) {
 
     app.post("/auth/callback", callbackLimiter, (req, res, next) => {
         const db = sessionManager.getDatabaseStatus?.();
-        if (db?.connected !== true) {
+        const verification = getVerificationDiagnostics();
+        if (db?.connected !== true || verification.ready !== true) {
             return res.status(503).json({
                 success: false,
                 code: "verification_not_ready",

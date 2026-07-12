@@ -67,7 +67,7 @@ verification components are ready.
 | Verification runtime | `discord/verification/runtime.js`, `discord/verification/lifecycle.js` |
 | Verification routes | `discord/verification/routes/` |
 | Verification persistence | `discord/verification/models/` |
-| Per-IP identity correlation | `discord/verification/models/IpIdentityLink.js` |
+| Per-IP identity correlation | `discord/verification/models/IpIdentityLink.js`, `IpIdentity*History.js` |
 | OAuth/IP/device/crypto helpers | `discord/verification/utils/` |
 | Verification UI | `discord/verification/views/`, `discord/verification/public/` |
 | Verification tests | `verification-tests/` |
@@ -96,8 +96,9 @@ compatible.
 
 - Access/refresh tokens are encrypted with the existing compatible format.
 - Raw IP is encrypted; an HMAC hash is used for correlation.
-- `IpIdentityLink` stores the encrypted raw IP and bounded per-guild
-  correlation summaries; normal APIs never expose its encrypted field.
+- `IpIdentityLink` stores the encrypted raw IP and per-guild correlation
+  summary. Canonical user/device/role history uses separate paginated documents
+  without an overall item cap; normal APIs never expose the encrypted field.
 - Fingerprint source material is never persisted; only its HMAC is stored.
 - Normal list/export APIs never return raw tokens or raw IP.
 - Member Detail is Owner-only and uses a CSRF-protected POST to decrypt and

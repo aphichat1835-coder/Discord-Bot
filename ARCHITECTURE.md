@@ -116,6 +116,7 @@ owner-locked. Their implementation details are intentionally not documented.
 | `GET /api/guild/:guildId/*` | Owner PIN |
 | write routes under `/api/guild/:guildId/*` | Owner PIN + CSRF |
 | `GET /api/guild/:guildId/member/:userId/detail` | Owner PIN |
+| `GET /api/guild/:guildId/member/:userId/ip-history` | Owner PIN; paginated canonical IP history |
 | `POST /api/guild/:guildId/member/:userId/full-detail` | Owner PIN + CSRF; audited full Owner view |
 | `POST /api/guild/:guildId/member/:userId/reveal-token` | Owner PIN + CSRF + reason + audit attempt/status |
 | `GET /api/guild/:guildId/preflight` | Owner PIN |
@@ -183,6 +184,9 @@ The active verification models are:
 | `OAuthMemberRoleSnapshot` | versioned ordered chunks containing every returned target-member role |
 | `VerifyLog` | immutable-per-attempt core result, snapshot references, policy/device/network state, join/role result, and quality metadata |
 | `IpIdentityLink` | per-guild hashed-IP correlation summary and first/last seen state |
+| `IpIdentityUserHistory` | canonical per-IP user identity aggregate without an overall item cap |
+| `IpIdentityDeviceHistory` | canonical per-IP/per-user device aggregate without an overall item cap |
+| `IpIdentityRoleHistory` | immutable per-verification role history events loaded with pagination |
 | `IPRevealRequest` | historical collection compatibility and expiry maintenance only; no new external guild-admin requests |
 | `VerificationMigrationArchive` | deduplicated original OAuthUser documents retained for migration rollback |
 | `VerificationMigrationState` | automatic migration lock, progress, result, and failure diagnostics |
@@ -194,6 +198,10 @@ versions older than the cleanup grace period are eligible for bounded deletion.
 
 Model names, collection behavior, and current/historical token/IP encryption
 read compatibility are preserved.
+
+Join Campaign scans OAuth users in stable `_id` cursor batches until the query
+is exhausted or the Owner stops the job. Its batch-size setting bounds memory;
+it is not a ceiling on the number of users processed.
 
 Automatic migration runs after the shared MongoDB connection is ready and on
 hourly verification maintenance. It processes a bounded batch with a persistent

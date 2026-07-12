@@ -1245,6 +1245,32 @@ router.post("/api/guild/:guildId/member/:userId/full-detail", requireAdmin, requ
   }
 });
 
+router.get("/api/guild/:guildId/member/:userId/ip-history", requireAdmin, requireGuildAdmin, async (req, res) => {
+  try {
+    const { guildId, userId } = req.params;
+    const targetUserId = cleanSnowflake(userId);
+    if (!targetUserId) {
+      return res.status(400).json({ success: false, code: "invalid_user_id", error: "User ID ไม่ถูกต้อง" });
+    }
+    res.set("Cache-Control", "no-store");
+    res.json(await verificationOwnerService.getOwnerIpHistoryPage({
+      guildId,
+      userId: targetUserId,
+      kind: String(req.query?.kind || "users"),
+      page: parsePage(req.query?.page),
+      limit: parseLimit(req.query?.limit, 100)
+    }));
+  } catch (err) {
+    const status = ["invalid_history_kind"].includes(err?.code) ? 400 :
+      err?.code === "ip_history_not_found" ? 404 : 500;
+    return res.status(status).json({
+      success: false,
+      code: err?.code || "ip_history_failed",
+      error: err?.message || "โหลดประวัติ IP ไม่สำเร็จ"
+    });
+  }
+});
+
 router.post("/api/guild/:guildId/member/:userId/reveal-token", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
   try {
     const { guildId, userId } = req.params;

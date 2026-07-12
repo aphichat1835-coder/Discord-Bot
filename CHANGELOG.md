@@ -4,6 +4,11 @@
 
 ### Changed
 
+- Replaced the final total-count ceilings with cursor/pagination storage:
+  Join Campaign now scans every eligible OAuthUser in stable bounded batches,
+  and per-IP users, devices, and role events use canonical unbounded history
+  collections with additive legacy-array migration and Owner UI pagination.
+
 - Closed the latest unified-runtime review findings: unconfigured-guild
   overview no longer fails on a missing audit target, oversized verification
   attempts retain an absolute-minimum audit record, voice/readiness reports

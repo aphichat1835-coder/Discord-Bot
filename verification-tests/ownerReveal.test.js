@@ -6,6 +6,7 @@ const GuildConfig = require("../discord/verification/models/GuildConfig");
 const cryptoUtils = require("../discord/verification/utils/crypto");
 const ownerService = require("../discord/verification/ownerService");
 const sensitiveAudit = require("../discord/verification/services/sensitiveAuditService");
+const ipIdentityHistory = require("../discord/verification/services/ipIdentityHistoryService");
 
 describe("audited Owner raw-IP reveal", () => {
     const previousKey = process.env.ENCRYPTION_KEY;
@@ -242,5 +243,30 @@ describe("audited Owner raw-IP reveal", () => {
         expect(detail.users).toHaveLength(1);
         expect(detail.deviceFingerprints).toHaveLength(1);
         expect(detail.roleSnapshots).toHaveLength(1);
+    });
+
+    test("Owner can paginate every canonical IP-history category", async () => {
+        jest.spyOn(ipIdentityHistory, "findLinkForUser").mockResolvedValue({ ipHash: "hash" });
+        jest.spyOn(ipIdentityHistory, "loadHistoryPage").mockResolvedValue({
+            kind: "roles",
+            items: [{ eventId: "event" }],
+            page: 2,
+            limit: 100,
+            total: 501,
+            hasMore: true
+        });
+
+        await expect(ownerService.getOwnerIpHistoryPage({
+            guildId: "guild",
+            userId: "user",
+            kind: "roles",
+            page: 2,
+            limit: 100
+        })).resolves.toMatchObject({
+            success: true,
+            total: 501,
+            hasMore: true,
+            items: [{ eventId: "event" }]
+        });
     });
 });

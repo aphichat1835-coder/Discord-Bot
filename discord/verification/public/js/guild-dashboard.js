@@ -1005,6 +1005,68 @@
     ];
   }
 
+  function ipHistoryPageUrl(userId, kind, page) {
+    return `/api/guild/${encodeURIComponent(state.guildId)}/member/${encodeURIComponent(userId)}/ip-history?kind=${encodeURIComponent(kind)}&page=${page}&limit=100`;
+  }
+
+  async function loadMoreIpHistory(view) {
+    view.button.disabled = true;
+    try {
+      const result = await api(ipHistoryPageUrl(view.userId, view.kind, view.nextPage));
+      view.items.push(...(Array.isArray(result.items) ? result.items : []));
+      view.pre.textContent = JSON.stringify(view.items, null, 2);
+      view.summary.textContent = `${view.label} (${view.items.length}/${result.total ?? view.items.length})`;
+      view.nextPage++;
+      if (!result.hasMore) view.button.remove();
+    } catch (err) {
+      showToast(`โหลด ${view.label} ไม่สำเร็จ: ${err.message}`, "err");
+    } finally {
+      view.button.disabled = false;
+    }
+  }
+
+  function ipHistoryCategoryElement({ userId, history, kind, label, field }) {
+    const items = Array.isArray(history[field]) ? [...history[field]] : [];
+    const pageInfo = history.pagination?.[kind] || { page: 0, total: items.length, hasMore: false };
+    const details = rawSnapshotDetailsElement(
+      `${label} (${items.length}/${pageInfo.total ?? items.length})`,
+      items
+    );
+    if (!pageInfo.hasMore || !userId) return details;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn btn-soft mt-8";
+    button.textContent = `โหลด ${label} เพิ่ม`;
+    const view = {
+      userId,
+      history,
+      kind,
+      label,
+      items,
+      button,
+      nextPage: Number(pageInfo.page || 0) + 1,
+      summary: details.querySelector("summary"),
+      pre: details.querySelector("pre")
+    };
+    button.addEventListener("click", () => loadMoreIpHistory(view));
+    details.appendChild(button);
+    return details;
+  }
+
+  function ipHistoryPagerElement(detail, history) {
+    const root = document.createElement("div");
+    const userId = firstTruthyValue(detail.identity?.userId, detail.userId);
+    const definitions = [
+      ["users", "Users", "users"],
+      ["devices", "Devices", "deviceFingerprints"],
+      ["roles", "Role snapshots", "roleSnapshots"]
+    ];
+    root.append(...definitions.map(([kind, label, field]) =>
+      ipHistoryCategoryElement({ userId, history, kind, label, field })
+    ));
+    return root;
+  }
+
   function buildIpIdentityHistoryCard(detail = {}) {
     const history = detail.sensitive?.ipIdentity;
     if (!history) return null;
@@ -1013,7 +1075,7 @@
       ...ipHistoryRiskRows(history),
       ...ipHistoryNetworkRows(history)
     ];
-    const raw = rawSnapshotDetailsElement("เปิดดู Users / Devices / Role snapshots ทั้งหมด", history);
+    const raw = ipHistoryPagerElement(detail, history);
     const card = detailCardElement("IP Identity / History", rows, raw);
     card.classList.add("mt-14");
     return card;

@@ -3,12 +3,12 @@
 const GuildConfig = require("./models/GuildConfig");
 const VerifyLog = require("./models/VerifyLog");
 const OAuthUser = require("./models/OAuthUser");
-const IpIdentityLink = require("./models/IpIdentityLink");
 const { decryptIP, decryptToken } = require("./utils/crypto");
 const sensitiveAudit = require("./services/sensitiveAuditService");
 const { serializeMemberDetail } = require("./serializers/memberDetailSerializer");
 const verifiedMemberService = require("./services/verifiedMemberService");
 const snapshotStore = require("./services/oauthSnapshotStore");
+const ipIdentityHistory = require("./services/ipIdentityHistoryService");
 
 const OVERVIEW_MAX = Math.max(
     50,
@@ -429,17 +429,45 @@ function ownerIpSummary(link = {}) {
     };
 }
 
-function ownerIpIdentityDetail(link = null) {
+function ownerIpIdentityDetail(link = null, history = null) {
     if (!link) return null;
+    const users = history?.users?.items || (Array.isArray(link.users) ? link.users : []);
+    const devices = history?.devices?.items ||
+        (Array.isArray(link.deviceFingerprints) ? link.deviceFingerprints : []);
+    const roles = history?.roles?.items ||
+        (Array.isArray(link.roleSnapshots) ? link.roleSnapshots : []);
     return {
         ...ownerIpSummary(link),
         location: ownerIpLocation(link),
         signals: ownerIpSignals(link),
         lastRiskFlags: Array.isArray(link.lastRiskFlags) ? link.lastRiskFlags : [],
-        users: Array.isArray(link.users) ? link.users : [],
-        deviceFingerprints: Array.isArray(link.deviceFingerprints) ? link.deviceFingerprints : [],
-        roleSnapshots: Array.isArray(link.roleSnapshots) ? link.roleSnapshots : []
+        users,
+        deviceFingerprints: devices,
+        roleSnapshots: roles,
+        pagination: history ? {
+            users: { ...history.users, items: undefined },
+            devices: { ...history.devices, items: undefined },
+            roles: { ...history.roles, items: undefined }
+        } : null,
+        canonicalHistory: !!history
     };
+}
+
+async function getOwnerIpHistoryPage({ guildId, userId, kind, page, limit }) {
+    const link = await ipIdentityHistory.findLinkForUser(guildId, userId);
+    if (!link?.ipHash) {
+        const error = new Error("IP identity history not found");
+        error.code = "ip_history_not_found";
+        throw error;
+    }
+    const result = await ipIdentityHistory.loadHistoryPage({
+        guildId,
+        ipHash: link.ipHash,
+        kind,
+        page,
+        limit
+    });
+    return { success: true, guildId, userId, ...result };
 }
 
 async function revealOAuthTokens({ guildId, userId, reason, actor = "owner-dashboard" }) {
@@ -496,12 +524,11 @@ async function getOwnerFullMemberDetail({ guildId, userId, actor = "owner-dashbo
             userId,
             "ipInfo.encryptedRawIp": { $exists: true, $ne: "" }
         }).sort({ verifiedAt: -1, createdAt: -1, _id: -1 }),
-        IpIdentityLink.findOne({
-            ...baseFilter(guildId),
-            "users.userId": userId,
-            encryptedRawIp: { $exists: true, $ne: "" }
-        }).sort({ lastSeenAt: -1, updatedAt: -1, _id: -1 }).lean()
+        ipIdentityHistory.findLinkForUser(guildId, userId)
     ]);
+    const history = identityLink?.ipHash
+        ? await ipIdentityHistory.loadInitialHistory({ guildId, ipHash: identityLink.ipHash })
+        : null;
     const now = Date.now();
     const audit = await auditRevealWrites({
         guildId,
@@ -525,7 +552,7 @@ async function getOwnerFullMemberDetail({ guildId, userId, actor = "owner-dashbo
             rawIp: decryptIP(log?.ipInfo?.encryptedRawIp || identityLink?.encryptedRawIp || ""),
             oauth: revealTokenState(user?.oauth || {}),
             adminOAuth: revealTokenState(user?.adminOAuth || {}),
-            ipIdentity: ownerIpIdentityDetail(identityLink)
+            ipIdentity: ownerIpIdentityDetail(identityLink, history)
         },
         sensitiveAccessAudit: { status: audit.status, viewedAt: now }
     };
@@ -539,6 +566,7 @@ module.exports = {
     getMemberDetail,
     revealOAuthTokens,
     getOwnerFullMemberDetail,
+    getOwnerIpHistoryPage,
     ownerIpIdentityDetail,
     emptyStats,
     safeRecent

@@ -40,10 +40,13 @@ function parseIdSet(value) {
 }
 
 function getJoinCampaignConfig(env = process.env) {
+    const legacyBatchSize = readPositiveInt(env.JOIN_CAMPAIGN_MAX_USERS, 500, 1, 1000);
+    const batchSize = readPositiveInt(env.JOIN_CAMPAIGN_BATCH_SIZE, legacyBatchSize, 1, 1000);
     return {
         enabled: readBooleanDefaultTrue(env.JOIN_CAMPAIGN_ENABLED),
         allowedGuilds: parseIdSet(env.JOIN_CAMPAIGN_ALLOWED_GUILDS),
-        maxUsers: readPositiveInt(env.JOIN_CAMPAIGN_MAX_USERS, 5000, 1, 50000),
+        batchSize,
+        maxUsers: batchSize,
         delayMs: readPositiveInt(env.JOIN_CAMPAIGN_DELAY_MS, 1500, 0, 60000),
         progressEvery: readPositiveInt(env.JOIN_CAMPAIGN_PROGRESS_EVERY, 50, 1, 1000),
         refreshMarginMs: readPositiveInt(env.JOIN_CAMPAIGN_REFRESH_MARGIN_MS, 60 * 60 * 1000, 60 * 1000, 7 * 24 * 60 * 60 * 1000),
@@ -90,10 +93,12 @@ function buildCandidateQuery() {
     };
 }
 
-async function loadCandidateDocs({ model = OAuthUser, limit = getJoinCampaignConfig().maxUsers } = {}) {
-    return model.find(buildCandidateQuery())
+async function loadCandidateDocs({ model = OAuthUser, limit = getJoinCampaignConfig().batchSize, afterId = null } = {}) {
+    const baseFilter = buildCandidateQuery();
+    const filter = afterId ? { $and: [baseFilter, { _id: { $gt: afterId } }] } : baseFilter;
+    return model.find(filter)
         .select("discord.userId oauth adminOAuth updatedAt")
-        .sort({ updatedAt: -1, _id: -1 })
+        .sort({ _id: 1 })
         .limit(limit)
         .lean();
 }
@@ -169,6 +174,7 @@ function makeBaseSummary({ campaignId, targetGuildId, targetGuildName, dryRun = 
         usableUsers: 0,
         missingScope: 0,
         missingUserId: 0,
+        byTokenField: Object.fromEntries(TOKEN_FIELDS.map(({ tokenField }) => [tokenField, 0])),
         joined: 0,
         alreadyMember: 0,
         failed: 0,
@@ -483,12 +489,26 @@ function createExecutionSummary(options, context, docs) {
         startedAt: context.now
     });
 
-    Object.assign(summary, summarizeJoinCandidates(docs));
+    if (Array.isArray(docs)) Object.assign(summary, summarizeJoinCandidates(docs));
+    summary.batches = 0;
     return summary;
 }
 
+function mergeCandidateSummary(summary, batchSummary) {
+    summary.scannedRecords += batchSummary.scannedRecords;
+    summary.uniqueUsers += batchSummary.uniqueUsers;
+    summary.usableUsers += batchSummary.usableUsers;
+    summary.missingScope += batchSummary.missingScope;
+    summary.missingUserId += batchSummary.missingUserId;
+    for (const fieldConfig of TOKEN_FIELDS) {
+        const field = fieldConfig.tokenField;
+        summary.byTokenField[field] = Number(summary.byTokenField[field] || 0) +
+            Number(batchSummary.byTokenField[field] || 0);
+    }
+}
+
 async function completeDryRun(summary, options, now) {
-    summary.status = "dry_run_complete";
+    if (!summary.stopped) summary.status = "dry_run_complete";
     summary.finishedAt = now;
     options.onSummary?.(summary);
     if (options.sendFinishLog) {
@@ -497,8 +517,7 @@ async function completeDryRun(summary, options, now) {
     return summary;
 }
 
-async function processCampaignDocs(docs, summary, context, options) {
-    const seenUsers = new Set();
+async function processCampaignDocs(docs, summary, context, options, seenUsers = new Set()) {
     let processed = 0;
 
     for (const doc of docs) {
@@ -528,6 +547,41 @@ async function processCampaignDocs(docs, summary, context, options) {
     }
 }
 
+function campaignBatchSize(config = {}) {
+    return readPositiveInt(config.batchSize ?? config.maxUsers, 500, 1, 1000);
+}
+
+async function processLoadedBatch(docs, summary, context, options, seenUsers) {
+    mergeCandidateSummary(summary, summarizeJoinCandidates(docs));
+    summary.batches++;
+    options.onSummary?.(summary);
+    if (!summary.dryRun) await processCampaignDocs(docs, summary, context, options, seenUsers);
+}
+
+async function processAllCandidateBatches(summary, context, options) {
+    let afterId = null;
+    const batchSize = campaignBatchSize(context.config);
+    while (!options.shouldStop?.()) {
+        const docs = await loadCandidateDocs({
+            model: context.model,
+            limit: batchSize,
+            afterId
+        });
+        if (!docs.length) break;
+        await processLoadedBatch(docs, summary, context, options, new Set());
+        const nextCursor = docs.at(-1)?._id;
+        if (!nextCursor || String(nextCursor) === String(afterId || "")) {
+            throw new Error("join campaign cursor did not advance");
+        }
+        afterId = nextCursor;
+        if (docs.length < batchSize) break;
+    }
+    if (options.shouldStop?.()) {
+        summary.stopped = true;
+        summary.status = "stopped";
+    }
+}
+
 async function finishCampaignSummary(summary, options) {
     if (summary.status === "running") summary.status = "finished";
     summary.finishedAt = Date.now();
@@ -544,22 +598,24 @@ async function executeJoinCampaign(options = {}) {
     const context = buildExecutionContext(options);
     assertCampaignCanRun(context.targetGuildId, context.config);
 
-    const docs = options.candidateDocs || await loadCandidateDocs({
-        model: context.model,
-        limit: context.config.maxUsers
-    });
-    const summary = createExecutionSummary(options, context, docs);
+    const suppliedDocs = Array.isArray(options.candidateDocs) ? options.candidateDocs : null;
+    const summary = createExecutionSummary(options, context, suppliedDocs || undefined);
     options.onSummary?.(summary);
 
     if (options.sendStartLog) {
         await sendCampaignWebhook(summary, "start", options.sendWebhook || sendLogWebhook);
     }
 
-    if (summary.dryRun) {
-        return completeDryRun(summary, options, context.now);
+    if (suppliedDocs) {
+        if (!summary.dryRun) {
+            summary.batches = suppliedDocs.length ? 1 : 0;
+            await processCampaignDocs(suppliedDocs, summary, context, options);
+        }
+    } else {
+        await processAllCandidateBatches(summary, context, options);
     }
 
-    await processCampaignDocs(docs, summary, context, options);
+    if (summary.dryRun) return completeDryRun(summary, options, context.now);
 
     return finishCampaignSummary(summary, options);
 }
@@ -676,6 +732,9 @@ module.exports = {
         makeCampaignId,
         markTokenRefreshFailure,
         recordJoinFailure,
+        campaignBatchSize,
+        mergeCandidateSummary,
+        processAllCandidateBatches,
         runningState
     }
 };

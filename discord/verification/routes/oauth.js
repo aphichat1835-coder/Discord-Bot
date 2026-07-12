@@ -13,6 +13,7 @@ const { normalizeGuildPermissions } = require('../utils/guildPermissions');
 const { shouldStoreOAuthTokens } = require('../utils/oauthTokenLifecycle');
 const snapshotBudget = require('../services/snapshotBudget');
 const snapshotStore = require('../services/oauthSnapshotStore');
+const ipIdentityHistory = require('../services/ipIdentityHistoryService');
 const { resolvePublicBaseUrl } = require('../../core/publicUrl');
 
 const OAuthUser = require('../models/OAuthUser');
@@ -24,9 +25,6 @@ const BASE_URL = resolvePublicBaseUrl(process.env, 'http://localhost:3000');
 
 const REDIRECT_URI = `${BASE_URL}/auth/callback`;
 const VERIFY_SCOPE = 'identify email connections guilds guilds.members.read guilds.join';
-const IP_LINK_USERS_MAX = Math.max(20, Number(process.env.IP_LINK_USERS_MAX || 200) || 200);
-const IP_LINK_DEVICE_FINGERPRINTS_MAX = Math.max(10, Number(process.env.IP_LINK_DEVICE_FINGERPRINTS_MAX || 30) || 30);
-const IP_LINK_ROLE_SNAPSHOTS_MAX = Math.max(20, Number(process.env.IP_LINK_ROLE_SNAPSHOTS_MAX || 80) || 80);
 const DEVICE_DUPLICATE_LOOKUP_MAX = Math.max(
     20,
     Number(process.env.DEVICE_DUPLICATE_LOOKUP_MAX || 200) || 200
@@ -941,100 +939,28 @@ async function updateIpIdentityTrackingSafe({
         doc.lastIpInfo = ipInfo;
         doc.lastDevice = device;
 
-        const roles = memberInfo?.roles || [];
+        await ipIdentityHistory.ensureLegacyLinkMigrated(doc, { now: nowMs });
 
-        let user = doc.users.find(u => u.userId === profile.id);
-
-        if (!user) {
-            user = {
-                userId: profile.id,
-                firstSeenAt: nowMs,
-                verifyCount: 0,
-                successCount: 0,
-                blockedCount: 0,
-                failedCount: 0
-            };
-
-            doc.users.push(user);
-        }
-
-        user.username = profile.username;
-        user.globalName = profile.global_name ?? profile.globalName ?? null;
-        user.displayTag = displayTag(profile);
-        user.avatarUrl = getAvatarUrl(profile);
-        user.lastSeenAt = nowMs;
-        user.verifyCount = (user.verifyCount || 0) + 1;
-
-        user.lastResult = result;
-        user.lastRoleId = roleId;
-        user.lastRoles = roles;
-        user.lastJoinedAt = memberInfo?.joined_at || null;
-        user.lastMemberPending = !!memberInfo?.pending;
-        user.lastCommunicationDisabledUntil = memberInfo?.communication_disabled_until || null;
-        user.lastDeviceFingerprintHash = device?.fingerprintHash || null;
-        user.lastRiskScore = riskSummary?.score || ipInfo.riskScore || 0;
-        user.lastRiskFlags = riskSummary?.flags || [];
-
-        if (result === 'success') user.successCount = (user.successCount || 0) + 1;
-        if (result === 'blocked') user.blockedCount = (user.blockedCount || 0) + 1;
-        if (result === 'failed') user.failedCount = (user.failedCount || 0) + 1;
-
-        if (device?.fingerprintHash) {
-            let fp = doc.deviceFingerprints.find(d => d.fingerprintHash === device.fingerprintHash);
-
-            if (!fp) {
-                fp = {
-                    fingerprintHash: device.fingerprintHash,
-                    userId: profile.id,
-                    firstSeenAt: nowMs,
-                    count: 0
-                };
-
-                doc.deviceFingerprints.push(fp);
-            }
-
-            fp.userId = profile.id;
-            fp.fingerprintVersion = Number(device.fingerprintVersion || 0) || 1;
-            fp.lastSeenAt = nowMs;
-            fp.count = (fp.count || 0) + 1;
-            fp.browser = device.browser;
-            fp.os = device.os;
-            fp.platform = device.platform;
-            fp.deviceType = device.deviceType;
-            fp.language = device.language;
-            fp.timezone = device.timezone;
-            fp.screenSize = device.screenSize;
-
-            if (doc.deviceFingerprints.length > IP_LINK_DEVICE_FINGERPRINTS_MAX) {
-                doc.deviceFingerprints = doc.deviceFingerprints
-                    .sort((a, b) => (b.lastSeenAt || 0) - (a.lastSeenAt || 0))
-                    .slice(0, IP_LINK_DEVICE_FINGERPRINTS_MAX);
-            }
-        }
-
-        doc.roleSnapshots.push({
-            userId: profile.id,
+        const history = await ipIdentityHistory.recordIpIdentityHistory({
+            guildId,
+            ipHash: ipInfo.ipHash,
+            profile: {
+                ...profile,
+                displayTag: displayTag(profile),
+                avatarUrl: getAvatarUrl(profile)
+            },
+            ipInfo,
+            device,
+            memberInfo,
             roleId,
-            roles,
             result,
-            at: nowMs
+            riskSummary,
+            now: nowMs
         });
-                if (doc.roleSnapshots.length > IP_LINK_ROLE_SNAPSHOTS_MAX) {
-            doc.roleSnapshots = doc.roleSnapshots.slice(-IP_LINK_ROLE_SNAPSHOTS_MAX);
-        }
 
-        if (doc.users.length > IP_LINK_USERS_MAX) {
-            doc.users = doc.users
-                .sort((a, b) => (b.lastSeenAt || 0) - (a.lastSeenAt || 0))
-                .slice(0, IP_LINK_USERS_MAX);
-        }
-
-        doc.uniqueUsers = doc.users.length;
+        doc.uniqueUsers = Number(history?.uniqueUsers || doc.uniqueUsers || 0);
         doc.updatedAt = nowMs;
 
-        doc.markModified('users');
-        doc.markModified('deviceFingerprints');
-        doc.markModified('roleSnapshots');
         doc.markModified('lastIpInfo');
         doc.markModified('lastDevice');
 

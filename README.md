@@ -36,6 +36,7 @@ database connection, and the HTTP server.
 | `/api/guilds` | Owner PIN | Bot guild list |
 | `/api/guild/:guildId/*` | Owner PIN; CSRF on writes | Verification management APIs |
 | `GET /api/guild/:guildId/member/:userId/detail` | Owner PIN | Full per-user verification detail grouped by category |
+| `GET /api/guild/:guildId/member/:userId/ip-history` | Owner PIN | Paginated canonical users/devices/role history for the member's IP |
 | `POST /api/guild/:guildId/member/:userId/reveal-token` | Owner PIN + CSRF + reason | Raw OAuth2 token reveal with audit status |
 | `POST /api/verify-owner/guild/:guildId/user/:userId/reveal-ip` | Owner PIN + CSRF + reason | Raw-IP reveal with audit status |
 | `GET /ping` | Public | Liveness |
@@ -93,10 +94,12 @@ unreferenced snapshot garbage after a configurable grace period, in bounded
 batches; this permanent-history mode intentionally allows database usage to
 grow with verification history.
 
-Per-IP history is maintained in `IpIdentityLink` as a bounded, per-guild
-correlation record. The raw address remains encrypted at rest and is decrypted
-only by the audited Owner per-user action; list and export responses use hashes
-and summaries instead.
+Per-IP summary state remains in `IpIdentityLink`, while users, devices, and role
+events are stored in paginated canonical history collections without an overall
+item ceiling. Legacy embedded arrays are migrated additively and retained for
+rollback. The raw address remains encrypted at rest and is decrypted only by
+the audited Owner per-user action; list and export responses use hashes and
+summaries instead.
 
 `premiumType` remains for schema compatibility only and must not be presented as
 a reliable Nitro conclusion.
