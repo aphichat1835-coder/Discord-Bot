@@ -143,6 +143,12 @@ function historyModel(kind, models) {
     return null;
 }
 
+function strictSnowflake(value, code) {
+    const text = String(value || "").trim();
+    if (/^\d{17,22}$/.test(text)) return text;
+    throw Object.assign(new Error(code), { code });
+}
+
 async function loadHistoryPage({ guildId, ipHash, kind, page = 0, limit = DEFAULT_PAGE_LIMIT }, options = {}) {
     const models = defaultModels(options);
     const Model = historyModel(kind, models);
@@ -177,22 +183,27 @@ async function loadInitialHistory({ guildId, ipHash }, options = {}) {
 
 async function findLinkForUser(guildId, userId, options = {}) {
     const models = defaultModels(options);
-    const userHistory = await models.UserHistory.findOne({ guildId, userId })
+    const safeGuildId = strictSnowflake(guildId, "invalid_guild_id");
+    const safeUserId = strictSnowflake(userId, "invalid_user_id");
+    const userHistory = await models.UserHistory.findOne()
+        .where("guildId").equals(safeGuildId)
+        .where("userId").equals(safeUserId)
         .sort({ lastSeenAt: -1, _id: -1 })
         .lean();
     if (userHistory?.ipHash) {
-        const link = await models.IpIdentityLink.findOne({
-            guildId,
-            ipHash: userHistory.ipHash,
-            deletedAt: { $exists: false }
-        }).lean();
+        const link = await models.IpIdentityLink.findOne()
+            .where("guildId").equals(safeGuildId)
+            .where("ipHash").equals(String(userHistory.ipHash))
+            .where("deletedAt").exists(false)
+            .lean();
         if (link) return link;
     }
-    return models.IpIdentityLink.findOne({
-        guildId,
-        "users.userId": userId,
-        deletedAt: { $exists: false }
-    }).sort({ lastSeenAt: -1, updatedAt: -1, _id: -1 }).lean();
+    return models.IpIdentityLink.findOne()
+        .where("guildId").equals(safeGuildId)
+        .where("users.userId").equals(safeUserId)
+        .where("deletedAt").exists(false)
+        .sort({ lastSeenAt: -1, updatedAt: -1, _id: -1 })
+        .lean();
 }
 
 function legacyEventId(link, role, index) {
@@ -283,5 +294,5 @@ module.exports = {
     findLinkForUser,
     migrateLegacyHistory,
     ensureLegacyLinkMigrated,
-    _test: { resultCounter, safePage, safeLimit, legacyEventId, migrateLegacyLink }
+    _test: { resultCounter, safePage, safeLimit, strictSnowflake, legacyEventId, migrateLegacyLink }
 };

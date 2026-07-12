@@ -13,6 +13,13 @@ function queryResult(value) {
 }
 
 describe("unbounded IP identity history", () => {
+    test("rejects non-snowflake history lookup identifiers before database access", () => {
+        expect(() => history._test.strictSnowflake("$gt", "invalid_user_id"))
+            .toThrow("invalid_user_id");
+        expect(history._test.strictSnowflake("12345678901234567", "invalid_user_id"))
+            .toBe("12345678901234567");
+    });
+
     test("writes user/device aggregates and one immutable role event without embedded caps", async () => {
         const UserHistoryModel = {
             updateOne: jest.fn().mockResolvedValue({ upsertedCount: 1 }),
