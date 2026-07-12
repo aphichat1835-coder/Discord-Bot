@@ -55,10 +55,10 @@ const roleSnapshotSchema = new mongoose.Schema({
 }, { _id: false, minimize: false });
 
 const schema = new mongoose.Schema({
-    guildId: { type: String, required: true, index: true },
+    guildId: { type: String, required: true },
     guildName: String,
 
-    ipHash: { type: String, required: true, index: true },
+    ipHash: { type: String, required: true },
     encryptedRawIp: String,
 
     firstSeenAt: Number,

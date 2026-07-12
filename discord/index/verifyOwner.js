@@ -28,6 +28,14 @@ function sendInvalidGuildId(res) {
     });
 }
 
+function sendInvalidUserId(res) {
+    return res.status(400).json({
+        success: false,
+        code: "invalid_user_id",
+        error: "userId ไม่ถูกต้อง"
+    });
+}
+
 function safeOverviewEnabled(value) {
     return String(value || "").toLowerCase() === "all" ? "all" : "enabled";
 }
@@ -90,7 +98,8 @@ function registerVerifyOwnerRoutes({ app, express }) {
         async (req, res) => {
             const guildId = safeGuildId(req.params.guildId);
             const userId = safeGuildId(req.params.userId);
-            if (!guildId || !userId) return sendInvalidGuildId(res);
+            if (!guildId) return sendInvalidGuildId(res);
+            if (!userId) return sendInvalidUserId(res);
             try {
                 res.json(await verificationOwnerService.revealRawIp({
                     guildId,

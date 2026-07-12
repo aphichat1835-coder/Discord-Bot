@@ -114,6 +114,15 @@ describe("member detail serialization and leak guards", () => {
         expect(member.guilds).toHaveLength(1);
     });
 
+    test("member merge keeps fallback badges when the primary list is empty", () => {
+        const merged = verifiedMemberService._test.mergeMembers(
+            { userId: "user", badgeFlags: [] },
+            { userId: "user", badgeFlags: ["HYPESQUAD"] },
+            true
+        );
+        expect(merged.badgeFlags).toEqual(["HYPESQUAD"]);
+    });
+
     test("list serializer never returns full legacy guild or connection snapshots", () => {
         const member = verifiedMemberService._test.listSafeMember({
             userId: "123",
@@ -211,6 +220,15 @@ describe("member detail serialization and leak guards", () => {
 
     test("dashboard log table and detail modal avoid HTML injection sinks", () => {
         const source = fs.readFileSync("discord/verification/public/js/guild-dashboard.js", "utf8");
+        const markers = [
+            "async function loadLogs",
+            "async function loadRisk",
+            "function openDetailModal",
+            "function closeDetailModal",
+            "function renderEmbedPreview",
+            "function bindPreviewInputs"
+        ];
+        for (const marker of markers) expect(source.indexOf(marker)).toBeGreaterThan(-1);
         const loadLogsSource = source.slice(
             source.indexOf("async function loadLogs"),
             source.indexOf("async function loadRisk")

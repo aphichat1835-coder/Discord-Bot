@@ -70,6 +70,10 @@ async function recordSensitiveAccess(guildId, req, route) {
     }
 }
 
+function shouldAuditOverview(canViewSensitive, config) {
+    return canViewSensitive === true && !!config;
+}
+
 function normalizeGuild(guild = {}) {
     const owner = !!guild.owner || !!guild.isOwner;
     const isAdmin = owner || guild.isAdmin === true;
@@ -385,7 +389,7 @@ router.get("/api/guild/:guildId/overview", requireAdmin, requireGuildAdmin, asyn
                 .lean()
         ]);
         const canViewSensitive = req.verificationOwner === true;
-        if (canViewSensitive) {
+        if (shouldAuditOverview(canViewSensitive, config)) {
             await recordSensitiveAccess(guildId, req, "/api/guild/:guildId/overview");
         }
         const recentMembers = await buildRecentMembers(guildId, 8, { canViewSensitive });
@@ -422,6 +426,7 @@ router.get("/api/guild/:guildId/risk", requireAdmin, requireGuildAdmin, async (r
 router._test = {
     safeLog,
     recordSensitiveAccess,
+    shouldAuditOverview,
     safeServerError,
     topDistribution,
     buildRiskSummary

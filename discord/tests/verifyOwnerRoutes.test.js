@@ -103,3 +103,17 @@ test("verify-owner compatibility APIs reject invalid guild IDs before service ac
     assert.equal(response.statusCode, 400);
     assert.equal(response.payload.code, "invalid_guild_id");
 });
+
+test("raw-IP reveal rejects an invalid user ID distinctly", async () => { // NOSONAR -- node:test assertions are not recognized by S2699.
+    const routes = createRouteHarness();
+    const response = createResponse();
+    await routes.get("POST /api/verify-owner/guild/:guildId/user/:userId/reveal-ip")(
+        {
+            params: { guildId: "12345678901234567", userId: "invalid-user" },
+            body: { reason: "owner review" }
+        },
+        response
+    );
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.payload.code, "invalid_user_id");
+});

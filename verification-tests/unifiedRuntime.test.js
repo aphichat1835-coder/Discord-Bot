@@ -263,7 +263,9 @@ describe("single-process verification runtime contract", () => {
         expect(server).toContain("voiceReady");
         expect(server).toContain("verificationReady");
         expect(server).toContain('app.get("/ready"');
-        expect(server).toContain('res.redirect(307, "/health")');
+        expect(server).toContain('app.get("/health", sendReadiness)');
+        expect(server).toContain("voice?.ready === true");
+        expect(server).not.toContain('res.redirect(307, "/health")');
     });
 
     test("graceful shutdown stops verification and closes HTTP and MongoDB", () => {

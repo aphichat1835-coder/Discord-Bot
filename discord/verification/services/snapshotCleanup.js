@@ -9,13 +9,18 @@ const MemberRoleSnapshot = require("../models/OAuthMemberRoleSnapshot");
 const ProfileSnapshot = require("../models/OAuthUserProfileSnapshot");
 
 const HOUR_MS = 60 * 60 * 1000;
-const CLEANUP_GRACE_HOURS = Math.max(
-    1,
-    Number(process.env.OAUTH_SNAPSHOT_CLEANUP_GRACE_HOURS || 24) || 24
+function boundedNumber(value, fallback, min, max = Number.POSITIVE_INFINITY) {
+    if (value === undefined || value === null || value === "") return fallback;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(min, Math.min(max, parsed));
+}
+
+const CLEANUP_GRACE_HOURS = boundedNumber(
+    process.env.OAUTH_SNAPSHOT_CLEANUP_GRACE_HOURS, 24, 1
 );
-const CLEANUP_SCAN_MAX = Math.max(
-    10,
-    Math.min(1000, Number(process.env.OAUTH_SNAPSHOT_CLEANUP_SCAN_MAX || 200) || 200)
+const CLEANUP_SCAN_MAX = boundedNumber(
+    process.env.OAUTH_SNAPSHOT_CLEANUP_SCAN_MAX, 200, 10, 1000
 );
 const DEFAULT_MODELS = Object.freeze({
     profile: ProfileSnapshot,
@@ -179,9 +184,9 @@ async function applyModelCleanup(Model, { cutoff, orphanCandidates, dryRun, batc
 }
 
 async function cleanupSnapshotGarbage(options = {}) {
-    const now = Number(options.now || Date.now());
-    const graceHours = Math.max(1, Number(options.graceHours || CLEANUP_GRACE_HOURS));
-    const scanMax = Math.max(1, Number(options.scanMax || CLEANUP_SCAN_MAX));
+    const now = boundedNumber(options.now, Date.now(), 0);
+    const graceHours = boundedNumber(options.graceHours, CLEANUP_GRACE_HOURS, 1);
+    const scanMax = boundedNumber(options.scanMax, CLEANUP_SCAN_MAX, 10, 1000);
     const dryRun = options.dryRun === true;
     const models = options.models || DEFAULT_MODELS;
     const references = {
@@ -233,6 +238,7 @@ module.exports = {
     }),
     _test: {
         snapshotKey,
+        boundedNumber,
         staleSnapshotFilter,
         referencedVersions,
         orphanFilter,

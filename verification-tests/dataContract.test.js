@@ -350,6 +350,41 @@ describe("unified verification data contract", () => {
         }
     });
 
+    test("VerifyLog persists an absolute-minimum audit when both budget checks fail", async () => {
+        const create = jest.spyOn(VerifyLog, "create").mockResolvedValue({});
+        const budgetCheck = jest.spyOn(
+            require("../discord/verification/services/snapshotBudget"),
+            "assertSnapshotBudget"
+        ).mockImplementation(() => {
+            const error = new Error("payload too large");
+            error.code = "payload_too_large";
+            error.bytes = 20 * 1024 * 1024;
+            error.maxBytes = 12 * 1024 * 1024;
+            throw error;
+        });
+        try {
+            const saved = await saveVerifyLogSafe({
+                guildId: "12345678901234567",
+                userId: "22345678901234567",
+                roleId: "32345678901234567",
+                result: "success",
+                reason: "x".repeat(1024),
+                dataQuality: { oversized: "x".repeat(1024) }
+            });
+            expect(saved).toBe(true);
+            expect(budgetCheck).toHaveBeenCalledTimes(2);
+            expect(create).toHaveBeenCalledTimes(1);
+            expect(create.mock.calls[0][0]).toMatchObject({
+                result: "success",
+                reason: "verify_log_payload_too_large",
+                dataQuality: { budget: { failureReason: "payload_too_large" } }
+            });
+            expect(create.mock.calls[0][0].snapshotRef).toBeUndefined();
+        } finally {
+            jest.restoreAllMocks();
+        }
+    });
+
     test("normal member detail serializer does not expose encrypted or raw OAuth tokens", () => {
         const { serializeMemberDetail } = require("../discord/verification/serializers/memberDetailSerializer");
         const detail = serializeMemberDetail({
@@ -443,6 +478,16 @@ describe("unified verification data contract", () => {
             }
         });
         expect(JSON.stringify(raw)).not.toContain("203.0.113.25");
+    });
+
+    test("sanitizes and bounds provider messages through one shared helper", () => {
+        const rawIp = "203.0.113.25";
+        const message = `${rawIp}\u0000-${"x".repeat(300)}`;
+        const sanitized = ipUtilsTest.sanitizedLookupMessage(message, rawIp);
+        expect(sanitized).toHaveLength(200);
+        expect(sanitized).toContain("[redacted-ip]");
+        expect(sanitized).not.toContain(rawIp);
+        expect(sanitized).not.toContain("\u0000");
     });
 
     test("source/header IP metadata stores hashes instead of plaintext", () => {

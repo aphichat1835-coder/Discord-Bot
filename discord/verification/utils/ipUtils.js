@@ -611,10 +611,13 @@ function sanitizeLookupProviderValue(value, rawIp) {
     return json ? JSON.parse(json) : null;
 }
 
+function sanitizedLookupMessage(message, rawIp, maxLength = 200) {
+    if (!message) return null;
+    return sanitizeLookupProviderValue(String(message), rawIp).slice(0, maxLength);
+}
+
 function compactLookupRaw(lookup = {}, rawIp = null) {
-    const message = lookup.message
-        ? sanitizeLookupProviderValue(String(lookup.message), rawIp).slice(0, 200)
-        : null;
+    const message = sanitizedLookupMessage(lookup.message, rawIp);
 
     const sanitizedResponse = sanitizeLookupProviderValue(lookup.raw, rawIp);
     const responseBytes = sanitizedResponse === undefined
@@ -982,9 +985,7 @@ async function processIP(req) {
 
         lookupProvider: lookup.provider || 'unknown',
         lookupStatus: lookup.status || 'unknown',
-        lookupMessage: lookup.message
-            ? sanitizeLookupProviderValue(String(lookup.message), rawIp).slice(0, 200)
-            : null,
+        lookupMessage: sanitizedLookupMessage(lookup.message, rawIp),
         lookupRaw: compactLookupRaw(lookup, rawIp),
 
         ipSource: trustedIp.source,
@@ -1017,6 +1018,7 @@ module.exports = {
         splitHeaderIps,
         X_FORWARDED_FOR_MAX_ENTRIES,
         storedHeaderIpMetadata,
+        sanitizedLookupMessage,
         resolveResponseMaxBytes,
         readLimitedResponseText,
         makeUnknownIpInfo

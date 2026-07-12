@@ -480,9 +480,7 @@ function registerRoutes({
 
     // ── Health / Ping ──
     app.get("/ping", (req, res) => res.status(200).send("OK"));
-    app.get("/ready", (req, res) => res.redirect(307, "/health"));
-
-    app.get("/health", (req, res) => {
+    const sendReadiness = (req, res) => {
         const botOnline = client?.isReady?.() ?? false;
         const dbStatus = sessionManager.getDatabaseStatus?.();
         const dbConnected = dbStatus?.connected === true;
@@ -491,7 +489,9 @@ function registerRoutes({
         const verificationReady = !verificationRequired || verification.ready === true;
         const voiceRequired = getFeatureFlags().voice !== false;
         const voice = voiceWorker.getWorkerDiagnostics?.() || null;
-        const voiceReady = !voiceRequired || (botOnline && dbConnected && !!voice);
+        const voiceReady = !voiceRequired || (
+            botOnline && dbConnected && voice?.ready === true
+        );
         const ready = botOnline && dbConnected && verificationReady && voiceReady;
 
         res.status(ready ? 200 : 503).json({
@@ -508,7 +508,9 @@ function registerRoutes({
             verificationReady,
             verification
         });
-    });
+    };
+    app.get("/ready", sendReadiness);
+    app.get("/health", sendReadiness);
 
     app.use("/api", (req, res, next) => {
         if (shouldBypassDashboardReadApi(req)) return next();

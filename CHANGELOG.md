@@ -4,6 +4,14 @@
 
 ### Changed
 
+- Closed the latest unified-runtime review findings: unconfigured-guild
+  overview no longer fails on a missing audit target, oversized verification
+  attempts retain an absolute-minimum audit record, voice/readiness reports
+  real initialization and shutdown state, cleanup options use safe explicit
+  floors, legacy badge fallback remains intact, provider messages share one
+  bounded redactor, and redundant per-field IP correlation indexes were removed
+  from the schema definition.
+
 - Removed the verified-member 5,000-record visibility ceiling with database-side
   union/deduplicated pagination, bounded incomplete-snapshot deletion batches,
   persisted automatic-migration cursor progress, centralized public URL alias

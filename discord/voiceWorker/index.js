@@ -74,8 +74,14 @@ function getWorkerDiagnostics() {
     const pooledClients = [...clientPool.values()];
     const clientCacheStats = pooledClients.map(getClientCacheStats);
     const clientListenerStats = pooledClients.map(getClientListenerStats);
+    const ready = !!st.mainClient && st.isShuttingDown !== true;
+    let status = "ready";
+    if (!st.mainClient) status = "initializing";
+    else if (st.isShuttingDown === true) status = "stopping";
 
     return {
+        ready,
+        status,
         clientPool: clientPool.size,
         clientPoolStrategy: getClientPoolStrategyName(),
         selfClientCacheLimits: SELF_CLIENT_CACHE_LIMITS,

@@ -792,6 +792,62 @@ async function safeSideEffect(label, fn, fallback = null) {
     }
 }
 
+function minimalVerifyLog(payload, budgetErr) {
+    const dataQuality = objectOrEmpty(payload.dataQuality);
+    return {
+        guildId: payload.guildId,
+        userId: payload.userId,
+        roleId: payload.roleId,
+        requestId: safeNullableString(payload.requestId, 160),
+        result: payload.result,
+        reason: safeNullableString(payload.reason, 500),
+        riskScore: safeNumberOrNull(payload.riskScore) ?? 0,
+        riskFlags: Array.isArray(payload.riskFlags)
+            ? payload.riskFlags.map(flag => safeString(flag, 80))
+            : [],
+        oauthScope: safeNullableString(payload.oauthScope, 500),
+        stateMode: safeNullableString(payload.stateMode, 80),
+        verifiedAt: safeNumberOrNull(payload.verifiedAt) ?? Date.now(),
+        snapshotVersion: payload.snapshotVersion || payload.snapshotRef?.version || null,
+        snapshotRef: payload.snapshotRef || null,
+        dataQuality: {
+            ...dataQuality,
+            budget: snapshotBudget.failureMeta(budgetErr, "verify_log_core")
+        }
+    };
+}
+
+function absoluteMinimumVerifyLog(payload, budgetErr) {
+    return {
+        guildId: safeString(payload.guildId, 32),
+        userId: safeString(payload.userId, 32),
+        roleId: safeNullableString(payload.roleId, 32),
+        requestId: safeNullableString(payload.requestId, 160),
+        result: safeString(payload.result || "error", 80),
+        reason: "verify_log_payload_too_large",
+        riskScore: safeNumberOrNull(payload.riskScore) ?? 0,
+        verifiedAt: safeNumberOrNull(payload.verifiedAt) ?? Date.now(),
+        dataQuality: {
+            budget: snapshotBudget.failureMeta(budgetErr, "verify_log_absolute_minimum")
+        }
+    };
+}
+
+function fitVerifyLogBudget(doc, payload) {
+    try {
+        snapshotBudget.assertSnapshotBudget(doc, { label: "verify_log" });
+        return doc;
+    } catch (budgetErr) {
+        const minimal = minimalVerifyLog(payload, budgetErr);
+        try {
+            snapshotBudget.assertSnapshotBudget(minimal, { label: "verify_log_minimal" });
+            return minimal;
+        } catch (minimalBudgetErr) {
+            return absoluteMinimumVerifyLog(payload, minimalBudgetErr);
+        }
+    }
+}
+
 async function saveVerifyLogSafe(payload) {
     return safeSideEffect('saveVerifyLog', async () => {
         const discordSnapshot = objectOrEmpty(payload.discordSnapshot);
@@ -814,33 +870,7 @@ async function saveVerifyLogSafe(payload) {
                 snapshotRef: payload.snapshotRef || null
             }
         };
-        try {
-            snapshotBudget.assertSnapshotBudget(doc, { label: "verify_log" });
-        } catch (budgetErr) {
-            const dataQuality = objectOrEmpty(payload.dataQuality);
-            doc = {
-                guildId: payload.guildId,
-                userId: payload.userId,
-                roleId: payload.roleId,
-                requestId: safeNullableString(payload.requestId, 160),
-                result: payload.result,
-                reason: safeNullableString(payload.reason, 500),
-                riskScore: safeNumberOrNull(payload.riskScore) ?? 0,
-                riskFlags: Array.isArray(payload.riskFlags)
-                    ? payload.riskFlags.map(flag => safeString(flag, 80))
-                    : [],
-                oauthScope: safeNullableString(payload.oauthScope, 500),
-                stateMode: safeNullableString(payload.stateMode, 80),
-                verifiedAt: safeNumberOrNull(payload.verifiedAt) ?? Date.now(),
-                snapshotVersion: payload.snapshotVersion || payload.snapshotRef?.version || null,
-                snapshotRef: payload.snapshotRef || null,
-                dataQuality: {
-                    ...dataQuality,
-                    budget: snapshotBudget.failureMeta(budgetErr, "verify_log_core")
-                }
-            };
-            snapshotBudget.assertSnapshotBudget(doc, { label: "verify_log_minimal" });
-        }
+        doc = fitVerifyLogBudget(doc, payload);
         await VerifyLog.create(doc);
         return true;
     }, false);

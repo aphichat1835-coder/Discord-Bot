@@ -142,6 +142,11 @@ function chooseSensitiveArray(primaryValue, fallbackValue, canViewSensitive = fa
     return Array.isArray(fallbackValue) ? fallbackValue : [];
 }
 
+function chooseArray(primaryValue, fallbackValue) {
+    if (Array.isArray(primaryValue) && primaryValue.length) return primaryValue;
+    return Array.isArray(fallbackValue) ? fallbackValue : [];
+}
+
 function mergeMembers(primary, fallback, canViewSensitive = false) {
     if (!primary) return fallback;
     if (!fallback) return primary;
@@ -158,7 +163,7 @@ function mergeMembers(primary, fallback, canViewSensitive = false) {
         connections: mergedConnections,
         guilds: mergedGuilds,
         email: canViewSensitive ? (primary.email ?? fallback.email ?? null) : null,
-        badgeFlags: canViewSensitive ? (primary.badgeFlags || fallback.badgeFlags || []) : [],
+        badgeFlags: canViewSensitive ? chooseArray(primary.badgeFlags, fallback.badgeFlags) : [],
         sensitiveRedacted: canViewSensitive !== true
     };
 }
@@ -367,6 +372,7 @@ module.exports = {
         fromLog,
         fromOAuthUser,
         mergeMembers,
+        chooseArray,
         escapeRegex,
         legacySensitiveFields,
         legacyCounts,

@@ -241,7 +241,10 @@ npm run check:protected
 npm run check:all
 npm run check:scripts
 npm run check:memory-guards
-npm test
+npm run check:memory-trend < diagnostics.json
+npm run test:discord
+npm run test:voice
+npm run test:verification
 npm audit --audit-level=high
 ```
 

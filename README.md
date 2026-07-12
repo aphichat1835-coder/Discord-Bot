@@ -93,6 +93,11 @@ unreferenced snapshot garbage after a configurable grace period, in bounded
 batches; this permanent-history mode intentionally allows database usage to
 grow with verification history.
 
+Per-IP history is maintained in `IpIdentityLink` as a bounded, per-guild
+correlation record. The raw address remains encrypted at rest and is decrypted
+only by the audited Owner per-user action; list and export responses use hashes
+and summaries instead.
+
 `premiumType` remains for schema compatibility only and must not be presented as
 a reliable Nitro conclusion.
 

@@ -32,6 +32,12 @@ describe("sensitive Owner route auditing", () => {
         expect(json).toHaveBeenCalledWith(expect.objectContaining({ success: false }));
     });
 
+    test("overview audits configured guilds but remains available before config exists", () => {
+        expect(guildDashboardRoutes._test.shouldAuditOverview(true, null)).toBe(false);
+        expect(guildDashboardRoutes._test.shouldAuditOverview(true, { guildId: "123" })).toBe(true);
+        expect(guildDashboardRoutes._test.shouldAuditOverview(false, { guildId: "123" })).toBe(false);
+    });
+
     test("risk distributions aggregate the complete guild dataset before top-N limiting", async () => {
         const aggregate = jest.spyOn(VerifyLog, "aggregate").mockResolvedValue([
             { label: "TH", count: 10 }

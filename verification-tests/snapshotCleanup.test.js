@@ -145,7 +145,7 @@ describe("permanent-history snapshot garbage cleanup", () => {
     });
 
     test("incomplete snapshot deletion is bounded by the per-model batch", async () => {
-        const Model = snapshotModel(Array.from({ length: 5 }, (_, index) => ({
+        const Model = snapshotModel(Array.from({ length: 12 }, (_, index) => ({
             _id: `incomplete-${index}`,
             userId: "12345678901234567",
             snapshotVersion: `version-${index}`
@@ -155,14 +155,21 @@ describe("permanent-history snapshot garbage cleanup", () => {
         const summary = await cleanupSnapshotGarbage({
             now: 2 * 60 * 60 * 1000,
             graceHours: 1,
-            scanMax: 2,
+            scanMax: 0,
             models: { profile: Model },
             OAuthUserModel: referenceModel([]),
             VerifyLogModel: referenceModel([])
         });
 
         const incompleteDelete = Model.deleteMany.mock.calls[0][0];
-        expect(incompleteDelete).toEqual({ _id: { $in: ["incomplete-0", "incomplete-1"] } });
-        expect(summary.byModel.profile.incompleteBatchSize).toBe(2);
+        expect(incompleteDelete._id.$in).toHaveLength(10);
+        expect(summary.scanMax).toBe(10);
+        expect(summary.byModel.profile.incompleteBatchSize).toBe(10);
+    });
+
+    test("explicit zero cleanup values use safe floors instead of defaults", () => {
+        expect(_test.boundedNumber(0, 24, 1)).toBe(1);
+        expect(_test.boundedNumber(0, 200, 10, 1000)).toBe(10);
+        expect(_test.boundedNumber("invalid", 200, 10, 1000)).toBe(200);
     });
 });
