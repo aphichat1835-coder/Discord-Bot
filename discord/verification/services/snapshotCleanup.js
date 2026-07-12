@@ -60,29 +60,40 @@ async function findCandidateDocs(Model, filter, cursor, limit) {
         .lean();
 }
 
+async function candidateDocsForModel(Model, cutoff, cursor, limit) {
+    const filter = staleSnapshotFilter(cutoff, true);
+    const docs = await findCandidateDocs(Model, filter, cursor, limit);
+    if (docs.length || !cursor) return docs;
+    return findCandidateDocs(Model, filter, null, limit);
+}
+
+function collectModelCandidates(candidates, name, docs) {
+    for (const doc of docs) {
+        if (!validCandidate(doc) || !doc?._id) continue;
+        candidates.set(`${name}\u0000${String(doc._id)}`, {
+            model: name,
+            id: doc._id,
+            userId: String(doc.userId),
+            version: String(doc.snapshotVersion)
+        });
+    }
+}
+
+function updateScanCursor(name, docs, limit) {
+    const nextCursor = docs.length >= limit ? docs.at(-1)?._id : null;
+    if (nextCursor) scanCursors.set(name, nextCursor);
+    else scanCursors.delete(name);
+}
+
 async function scanCandidates(models, cutoff, scanMax) {
     const candidates = new Map();
     const entries = Object.entries(models);
     const perModelLimit = Math.max(1, Math.floor(scanMax / Math.max(1, entries.length)));
     for (const [name, Model] of entries) {
-        const filter = staleSnapshotFilter(cutoff, true);
         const cursor = scanCursors.get(name) || null;
-        let docs = await findCandidateDocs(Model, filter, cursor, perModelLimit);
-        if (!docs.length && cursor) docs = await findCandidateDocs(Model, filter, null, perModelLimit);
-        for (const doc of docs) {
-            if (!validCandidate(doc)) continue;
-            const id = doc?._id;
-            if (!id) continue;
-            candidates.set(`${name}\u0000${String(id)}`, {
-                model: name,
-                id,
-                userId: String(doc.userId),
-                version: String(doc.snapshotVersion)
-            });
-        }
-        const nextCursor = docs.length >= perModelLimit ? docs.at(-1)?._id : null;
-        if (nextCursor) scanCursors.set(name, nextCursor);
-        else scanCursors.delete(name);
+        const docs = await candidateDocsForModel(Model, cutoff, cursor, perModelLimit);
+        collectModelCandidates(candidates, name, docs);
+        updateScanCursor(name, docs, perModelLimit);
     }
     return [...candidates.values()];
 }
