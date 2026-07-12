@@ -75,8 +75,7 @@ describe("permanent-history snapshot garbage cleanup", () => {
             orphanDocuments: 3
         });
         const orphanDelete = Model.deleteMany.mock.calls[1][0];
-        expect(JSON.stringify(orphanDelete)).toContain("orphan-version");
-        expect(JSON.stringify(orphanDelete)).not.toContain("kept-version");
+        expect(orphanDelete).toEqual({ complete: true, _id: { $in: ["snapshot-2"] } });
     });
 
     test("keeps versions referenced by historical VerifyLog documents", async () => {
@@ -157,6 +156,32 @@ describe("permanent-history snapshot garbage cleanup", () => {
 
         expect(Model.deleteMany).toHaveBeenCalledTimes(1);
         expect(JSON.stringify(Model.deleteMany.mock.calls[0][0])).not.toContain("newly-referenced");
+    });
+
+    test("deletes orphan snapshots only from their originating model and id", async () => {
+        const ProfileModel = snapshotModel([{
+            _id: "stale-profile",
+            userId: "12345678901234567",
+            snapshotVersion: "shared-version"
+        }]);
+        const GuildModel = snapshotModel([]);
+        ProfileModel.deleteMany
+            .mockResolvedValueOnce({ deletedCount: 0 })
+            .mockResolvedValueOnce({ deletedCount: 1 });
+
+        await cleanupSnapshotGarbage({
+            now: 2 * 60 * 60 * 1000,
+            graceHours: 1,
+            models: { profile: ProfileModel, guilds: GuildModel },
+            OAuthUserModel: referenceModel([]),
+            VerifyLogModel: referenceModel([])
+        });
+
+        expect(ProfileModel.deleteMany).toHaveBeenLastCalledWith({
+            complete: true,
+            _id: { $in: ["stale-profile"] }
+        });
+        expect(GuildModel.deleteMany).not.toHaveBeenCalled();
     });
 
     test("reference traversal includes nested member-role versions", () => {

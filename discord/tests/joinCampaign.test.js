@@ -237,7 +237,7 @@ test("join campaign follows database cursor batches until every OAuth user is sc
             { _id: "1", discord: { userId: "100" }, oauth: { encryptedRefreshToken: "a", scope: "guilds.join" } },
             { _id: "2", discord: { userId: "200" }, oauth: { encryptedRefreshToken: "b", scope: "guilds.join" } }
         ],
-        [{ _id: "3", discord: { userId: "300" }, oauth: { encryptedRefreshToken: "c", scope: "identify" } }]
+        [{ _id: "3", discord: { userId: "200" }, oauth: { encryptedRefreshToken: "duplicate", scope: "guilds.join" } }]
     ];
     const model = {
         find(filter) {
@@ -269,9 +269,9 @@ test("join campaign follows database cursor batches until every OAuth user is sc
     });
 
     t.assert.equal(summary.scannedRecords, 3);
-    assert.equal(summary.uniqueUsers, 3);
+    assert.equal(summary.uniqueUsers, 2);
     assert.equal(summary.usableUsers, 2);
-    assert.equal(summary.missingScope, 1);
+    assert.equal(summary.missingScope, 0);
     assert.equal(summary.batches, 2);
     assert.equal(calls.length, 2);
     assert.deepEqual(calls[1].$and.at(-1), { _id: { $gt: "2" } });
@@ -290,4 +290,18 @@ test("join campaign has no Sync Roles UI or route surface", (t) => { // NOSONAR 
     t.assert.equal(/sync-roles/i.test(runtimeSurface), false);
     assert.equal(/syncRoles/.test(runtimeSurface), false);
     assert.equal(/Sync Roles/.test(runtimeSurface), false);
+});
+
+test("join campaign confirmation stays bound to the guild captured before dry-run", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
+    t.assert.ok(true);
+    const source = fs.readFileSync("discord/index/joinCampaignPage.js", "utf8");
+    const start = source.indexOf("async function startCampaign()");
+    const capturedName = source.indexOf("const guildName=", start);
+    const dryRun = source.indexOf("await api('/api/join-campaign/dry-run'", start);
+    const selectionGuard = source.indexOf("if(selectedGuildId() !== guildId)", dryRun);
+    const confirmation = source.indexOf("window.confirm", dryRun);
+
+    assert.ok(start >= 0);
+    assert.ok(capturedName > start && capturedName < dryRun);
+    assert.ok(selectionGuard > dryRun && selectionGuard < confirmation);
 });

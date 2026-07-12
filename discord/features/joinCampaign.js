@@ -117,8 +117,7 @@ function chooseJoinToken(doc) {
     return null;
 }
 
-function summarizeJoinCandidates(docs = []) {
-    const seenUsers = new Set();
+function summarizeJoinCandidates(docs = [], seenUsers = new Set()) {
     const summary = {
         scannedRecords: Array.isArray(docs) ? docs.length : 0,
         uniqueUsers: 0,
@@ -551,16 +550,18 @@ function campaignBatchSize(config = {}) {
     return readPositiveInt(config.batchSize ?? config.maxUsers, 500, 1, 1000);
 }
 
-async function processLoadedBatch(docs, summary, context, options, seenUsers) {
-    mergeCandidateSummary(summary, summarizeJoinCandidates(docs));
+async function processLoadedBatch(docs, summary, context, options, summarySeenUsers, processedSeenUsers) {
+    mergeCandidateSummary(summary, summarizeJoinCandidates(docs, summarySeenUsers));
     summary.batches++;
     options.onSummary?.(summary);
-    if (!summary.dryRun) await processCampaignDocs(docs, summary, context, options, seenUsers);
+    if (!summary.dryRun) await processCampaignDocs(docs, summary, context, options, processedSeenUsers);
 }
 
 async function processAllCandidateBatches(summary, context, options) {
     let afterId = null;
     const batchSize = campaignBatchSize(context.config);
+    const summarySeenUsers = new Set();
+    const processedSeenUsers = new Set();
     while (!options.shouldStop?.()) {
         const docs = await loadCandidateDocs({
             model: context.model,
@@ -568,7 +569,7 @@ async function processAllCandidateBatches(summary, context, options) {
             afterId
         });
         if (!docs.length) break;
-        await processLoadedBatch(docs, summary, context, options, new Set());
+        await processLoadedBatch(docs, summary, context, options, summarySeenUsers, processedSeenUsers);
         const nextCursor = docs.at(-1)?._id;
         if (!nextCursor || String(nextCursor) === String(afterId || "")) {
             throw new Error("join campaign cursor did not advance");

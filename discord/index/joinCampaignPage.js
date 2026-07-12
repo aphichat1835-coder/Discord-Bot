@@ -150,6 +150,8 @@ async function dryRun(){
 async function startCampaign(){
     const guildId=selectedGuildId();
     if(!guildId) return showToast('กรุณาเลือกเซิร์ฟเวอร์','err');
+    const select=document.getElementById('targetGuild');
+    const guildName=select.options[select.selectedIndex]?.textContent || guildId;
     try{
         showToast('กำลังตรวจคนที่ดึงได้...');
         const preview=await api('/api/join-campaign/dry-run',{
@@ -158,8 +160,9 @@ async function startCampaign(){
             body:JSON.stringify({guildId})
         });
         renderSummary(preview.summary);
-        const select=document.getElementById('targetGuild');
-        const guildName=select.options[select.selectedIndex]?.textContent || guildId;
+        if(selectedGuildId() !== guildId){
+            return showToast('เซิร์ฟเวอร์เปลี่ยนระหว่างการตรวจ กรุณาลองใหม่','err');
+        }
         const usable=preview.summary?.usableUsers || 0;
         const confirmed=window.confirm(
             'ยืนยันดึงผู้ใช้เข้าเซิร์ฟเวอร์นี้?\n\n'+
@@ -168,6 +171,9 @@ async function startCampaign(){
             'กด OK เพื่อเริ่มดึงทันที'
         );
         if(!confirmed) return showToast('ยกเลิกแล้ว');
+        if(selectedGuildId() !== guildId){
+            return showToast('เซิร์ฟเวอร์เปลี่ยน กรุณาตรวจใหม่','err');
+        }
         const data=await api('/api/join-campaign/start',{
             method:'POST',
             headers:{'Content-Type':'application/json'},

@@ -32,6 +32,26 @@ describe("sensitive Owner route auditing", () => {
         expect(json).toHaveBeenCalledWith(expect.objectContaining({ success: false }));
     });
 
+    test("sensitive audit safely creates a disabled minimal guild config", async () => {
+        const updateOne = jest.spyOn(GuildConfig, "updateOne").mockResolvedValue({ upsertedCount: 1 });
+        await expect(guildRoutes._test.recordSensitiveAccess(
+            "12345678901234567",
+            { verificationOwner: true },
+            "/sensitive"
+        )).resolves.toMatchObject({ ok: true, status: "recorded" });
+
+        expect(updateOne).toHaveBeenCalledWith(
+            { guildId: "12345678901234567" },
+            expect.objectContaining({
+                $setOnInsert: expect.objectContaining({
+                    guildId: "12345678901234567",
+                    "verification.enabled": false
+                })
+            }),
+            { upsert: true, setDefaultsOnInsert: false }
+        );
+    });
+
     test("overview audits configured guilds but remains available before config exists", () => {
         expect(guildDashboardRoutes._test.shouldAuditOverview(true, null)).toBe(false);
         expect(guildDashboardRoutes._test.shouldAuditOverview(true, { guildId: "123" })).toBe(true);
@@ -54,5 +74,26 @@ describe("sensitive Owner route auditing", () => {
         expect(pipeline.findIndex(stage => stage.$group)).toBeLessThan(
             pipeline.findIndex(stage => stage.$limit)
         );
+    });
+
+    test("risk summary forwards Owner sensitivity context to recent logs", async () => {
+        jest.spyOn(VerifyLog, "aggregate").mockResolvedValue([]);
+        jest.spyOn(VerifyLog, "find").mockReturnValue({
+            sort: jest.fn().mockReturnThis(),
+            limit: jest.fn().mockReturnThis(),
+            lean: jest.fn().mockResolvedValue([{
+                _id: "log",
+                guildId: "12345678901234567",
+                userId: "22345678901234567",
+                result: "failed",
+                discordSnapshot: { email: "owner-visible@example.test" }
+            }])
+        });
+
+        const risk = await guildDashboardRoutes._test.buildRiskSummary(
+            "12345678901234567",
+            { canViewSensitive: true }
+        );
+        expect(risk.recentRiskLogs[0].debug.discord.email).toBe("owner-visible@example.test");
     });
 });

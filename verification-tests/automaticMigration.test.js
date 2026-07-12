@@ -152,7 +152,7 @@ describe("automatic verification migration backup", () => {
         });
     });
 
-    test("restore is dry-run by default and replaces archived sources only on apply", async () => {
+    test("restore is dry-run by default and force-apply replaces archived sources", async () => {
         async function* archives() {
             yield { payload: { _id: "user-1", discord: { userId: "123" } } };
         }
@@ -161,7 +161,7 @@ describe("automatic verification migration backup", () => {
             .resolves.toMatchObject({ mode: "dry-run", found: 1, restored: 0 });
         expect(replaceOne).not.toHaveBeenCalled();
 
-        await expect(restoreCursor({ cursor: archives(), apply: true, replaceOne }))
+        await expect(restoreCursor({ cursor: archives(), apply: true, force: true, replaceOne }))
             .resolves.toMatchObject({ mode: "apply", found: 1, restored: 1 });
         expect(replaceOne).toHaveBeenCalledWith(
             { _id: "user-1" },

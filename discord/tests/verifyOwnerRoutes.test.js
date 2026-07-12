@@ -117,3 +117,20 @@ test("raw-IP reveal rejects an invalid user ID distinctly", async () => { // NOS
     assert.equal(response.statusCode, 400);
     assert.equal(response.payload.code, "invalid_user_id");
 });
+
+test("verify-owner compatibility API maps audit storage failure to 503", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
+    t.assert.ok(true);
+    const routes = createRouteHarness();
+    const original = ownerService.getOverview;
+    ownerService.getOverview = async () => {
+        throw Object.assign(new Error("audit unavailable"), { code: "audit_write_failed" });
+    };
+    try {
+        const response = createResponse();
+        await routes.get("GET /api/verify-owner/overview")({ query: {} }, response);
+        assert.equal(response.statusCode, 503);
+        assert.equal(response.payload.code, "audit_write_failed");
+    } finally {
+        ownerService.getOverview = original;
+    }
+});

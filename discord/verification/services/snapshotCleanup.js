@@ -71,7 +71,11 @@ async function scanCandidates(models, cutoff, scanMax) {
         if (!docs.length && cursor) docs = await findCandidateDocs(Model, filter, null, perModelLimit);
         for (const doc of docs) {
             if (!validCandidate(doc)) continue;
-            candidates.set(snapshotKey(doc.userId, doc.snapshotVersion), {
+            const id = doc?._id;
+            if (!id) continue;
+            candidates.set(`${name}\u0000${String(id)}`, {
+                model: name,
+                id,
                 userId: String(doc.userId),
                 version: String(doc.snapshotVersion)
             });
@@ -134,18 +138,10 @@ async function loadReferenceKeys(candidates, { OAuthUserModel, VerifyLogModel })
 }
 
 function orphanFilter(candidates) {
-    const byUser = new Map();
-    for (const candidate of candidates) {
-        const versions = byUser.get(candidate.userId) || [];
-        versions.push(candidate.version);
-        byUser.set(candidate.userId, versions);
-    }
+    const ids = candidates.map(candidate => candidate.id).filter(Boolean);
     return {
         complete: true,
-        $or: [...byUser].map(([userId, versions]) => ({
-            userId,
-            snapshotVersion: { $in: versions }
-        }))
+        _id: { $in: ids }
     };
 }
 
@@ -217,10 +213,11 @@ async function performSnapshotCleanup(options = {}) {
     const modelEntries = Object.entries(models);
     const incompleteBatchLimit = Math.max(1, Math.floor(scanMax / Math.max(1, modelEntries.length)));
     for (const [name, Model] of modelEntries) {
+        const modelCandidates = orphanCandidates.filter(candidate => candidate.model === name);
         const currentReferences = dryRun
             ? referenced
-            : await loadReferenceKeys(orphanCandidates, references);
-        const currentlyOrphaned = orphanCandidates.filter(candidate =>
+            : await loadReferenceKeys(modelCandidates, references);
+        const currentlyOrphaned = modelCandidates.filter(candidate =>
             !currentReferences.has(snapshotKey(candidate.userId, candidate.version))
         );
         const result = await applyModelCleanup(Model, {

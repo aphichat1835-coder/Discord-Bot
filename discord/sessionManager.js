@@ -320,8 +320,11 @@ async function disconnectDB() {
     try {
         await flushPendingSessionDeletes();
     } finally {
-        await mongoose.disconnect();
-        dbConnected = false;
+        try {
+            await mongoose.disconnect();
+        } finally {
+            dbConnected = false;
+        }
     }
 }
 

@@ -239,7 +239,8 @@ async function topDistribution(guildId, labelExpression, limit = 12) {
     ]);
 }
 
-async function buildRiskSummary(guildId) {
+async function buildRiskSummary(guildId, options = {}) {
+    const canViewSensitive = options.canViewSensitive === true;
     const [countries, isps, devices, reasons, recentLogs] = await Promise.all([
         topDistribution(guildId, {
             $ifNull: ["$ipInfo.countryCode", { $ifNull: ["$ipInfo.country", "unknown"] }]
@@ -267,7 +268,7 @@ async function buildRiskSummary(guildId) {
         isps,
         devices,
         reasons,
-        recentRiskLogs: recentLogs.map(safeLog),
+        recentRiskLogs: recentLogs.map(log => safeLog(log, { canViewSensitive })),
         sampled: false
     };
 }
@@ -362,7 +363,7 @@ router.get("/api/guild/:guildId/overview", requireAdmin, requireGuildAdmin, asyn
         const [config, stats, riskSummary, recentLogs] = await Promise.all([
             GuildConfig.findOne({ guildId }).lean(),
             buildStats(guildId),
-            buildRiskSummary(guildId),
+            buildRiskSummary(guildId, { canViewSensitive: req.verificationOwner === true }),
             VerifyLog.find(baseFilter(guildId))
                 .sort({ verifiedAt: -1, createdAt: -1, _id: -1 })
                 .limit(8)
@@ -396,7 +397,7 @@ router.get("/api/guild/:guildId/risk", requireAdmin, requireGuildAdmin, async (r
         res.json({
             success: true,
             guild: req.adminGuild,
-            risk: await buildRiskSummary(guildId)
+            risk: await buildRiskSummary(guildId, { canViewSensitive: req.verificationOwner === true })
         });
     } catch (err) {
         return safeServerError(res, err, "โหลดข้อมูลความเสี่ยงไม่สำเร็จ");

@@ -60,3 +60,7 @@ test("guild dashboard safeLog preserves normalized empty result fallback", () =>
 
   expect(log.result).toBe("");
 });
+
+test("token reveal maps failed audit persistence to service unavailable", () => {
+  expect(guildRoute._test.tokenRevealErrorStatus("audit_write_failed")).toBe(503);
+});

@@ -79,6 +79,8 @@ describe("verification additive migration", () => {
             eligible: 1,
             updated: 0,
             batches: 1,
+            batchErrors: 0,
+            failedOperations: 0,
             snapshotCategoriesComplete: 0,
             snapshotCategoriesFailed: 0,
             lastScannedId: "legacy-1"
@@ -144,6 +146,35 @@ describe("verification additive migration", () => {
         });
         expect(writes[0].updateOne.filter).toEqual({ _id: "legacy-1", updatedAt: 456 });
         expect(writes[0].updateOne.update.$set.updatedAt).toBe(500);
+    });
+
+    test("continues after a rejected bulk batch and reports the failure safely", async () => {
+        const errorLog = jest.spyOn(console, "error").mockImplementation(() => {});
+        const bulkWrite = jest.fn()
+            .mockRejectedValueOnce(Object.assign(new Error("database details must stay hidden"), {
+                code: "batch_failed"
+            }))
+            .mockResolvedValueOnce({ modifiedCount: 1 });
+        const summary = await migrateCursor({
+            cursor: [
+                { _id: "legacy-1", discord: { username: "one" } },
+                { _id: "legacy-2", discord: { username: "two" } }
+            ],
+            apply: true,
+            batchSize: 1,
+            bulkWrite,
+            now: () => 500
+        });
+
+        expect(summary).toMatchObject({
+            scanned: 2,
+            batches: 2,
+            batchErrors: 1,
+            failedOperations: 1,
+            updated: 1
+        });
+        expect(bulkWrite).toHaveBeenCalledTimes(2);
+        expect(errorLog.mock.calls.flat().join(" ")).not.toContain("database details must stay hidden");
     });
 
     test("apply mode backfills complete chunk references without removing embedded data", async () => {

@@ -239,6 +239,8 @@ async function migrateCursor({
         eligible: 0,
         updated: 0,
         batches: 0,
+        batchErrors: 0,
+        failedOperations: 0,
         snapshotCategoriesComplete: 0,
         snapshotCategoriesFailed: 0,
         lastScannedId: null
@@ -247,12 +249,24 @@ async function migrateCursor({
 
     async function flush() {
         if (!operations.length) return;
+        const batch = operations;
+        operations = [];
         summary.batches++;
         if (apply) {
-            const result = await bulkWrite(operations, { ordered: false });
-            summary.updated += result?.modifiedCount || 0;
+            try {
+                const result = await bulkWrite(batch, { ordered: false });
+                summary.updated += result?.modifiedCount || 0;
+            } catch (err) {
+                summary.updated += Number(err?.result?.modifiedCount || err?.result?.nModified || 0);
+                summary.batchErrors++;
+                summary.failedOperations += batch.length;
+                console.error("[VERIFICATION-MIGRATION] batch write failed:", JSON.stringify({
+                    code: String(err?.code || "migration_batch_write_failed").slice(0, 80),
+                    name: String(err?.name || "Error").slice(0, 80),
+                    operations: batch.length
+                }));
+            }
         }
-        operations = [];
     }
 
     for await (const doc of cursor) {

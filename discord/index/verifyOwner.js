@@ -16,6 +16,7 @@ function sendError(res, err) {
     if (["reason_required", "reason_too_long"].includes(err?.code)) status = 400;
     else if (["rate_limited", "cooldown"].includes(err?.code)) status = 429;
     else if (err?.code === "ip_not_found") status = 404;
+    else if (err?.code === "audit_write_failed") status = 503;
     const code = publicCodes.has(err?.code) ? err.code : "verification_owner_error";
     res.status(status).json({
         success: false,

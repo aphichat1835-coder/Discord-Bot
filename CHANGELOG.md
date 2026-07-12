@@ -4,6 +4,12 @@
 
 ### Changed
 
+- Closed the follow-up review findings: snapshot garbage deletion is scoped to
+  the originating collection and document ID, restore skips newer live data
+  unless explicitly forced, migration batch failures are isolated and counted,
+  Join Campaign confirmation/deduplication stay bound across cursor batches,
+  and Owner audit/status/redaction paths now report consistent results.
+
 - Hardened the unified runtime review surface: public readiness now returns
   booleans instead of internal diagnostics; sensitive Owner routes use safe
   errors, audit/rate controls, and IP-history auditing; OAuth integration and

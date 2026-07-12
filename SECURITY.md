@@ -172,6 +172,8 @@ archive exists per source and migration version, so restarts do not create
 duplicates. Archive failure aborts migration before the source write. Archive
 documents must never be exposed through normal APIs, logs, or exports. External
 provider backup is still required to survive loss of the entire database.
+Restore skips a live OAuthUser whose update timestamp is newer than its archive.
+Overwriting newer live state requires the explicit operator-only `--force` flag.
 
 Do not infer values that Discord did not return:
 

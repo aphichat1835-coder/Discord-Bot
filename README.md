@@ -163,6 +163,8 @@ Rollback inspection is also dry-run by default:
 ```bash
 npm run restore:verification -- --source-id=OAUTH_USER_DOCUMENT_ID
 npm run restore:verification -- --source-id=OAUTH_USER_DOCUMENT_ID --apply
+# Only when intentionally replacing newer live state:
+npm run restore:verification -- --source-id=OAUTH_USER_DOCUMENT_ID --apply --force
 ```
 
 The archive is stored in the same MongoDB database. It protects against a bad

@@ -16,14 +16,21 @@ function getAdminId(req) {
 
 async function recordSensitiveAccess(guildId, req, route) {
     try {
+        const update = buildSensitiveAccessAuditUpdate({
+            actor: getAdminId(req) || "owner-dashboard",
+            route
+        });
+        update.$setOnInsert = {
+            guildId,
+            "verification.enabled": false,
+            createdAt: Date.now()
+        };
         const result = await GuildConfig.updateOne(
             { guildId },
-            buildSensitiveAccessAuditUpdate({
-                actor: getAdminId(req) || "owner-dashboard",
-                route
-            })
+            update,
+            { upsert: true, setDefaultsOnInsert: false }
         );
-        if (Number(result?.matchedCount || result?.modifiedCount || 0) > 0) {
+        if (Number(result?.matchedCount || result?.modifiedCount || result?.upsertedCount || 0) > 0) {
             return { ok: true, status: "recorded" };
         }
         throw Object.assign(new Error("sensitive access audit target not found"), {

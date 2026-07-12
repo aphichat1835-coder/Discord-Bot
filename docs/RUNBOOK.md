@@ -105,6 +105,8 @@ Inspect or restore an automatically archived original document:
 ```bash
 npm run restore:verification -- --source-id=OAUTH_USER_DOCUMENT_ID
 npm run restore:verification -- --source-id=OAUTH_USER_DOCUMENT_ID --apply
+# Only after confirming that newer live OAuth data may be overwritten:
+npm run restore:verification -- --source-id=OAUTH_USER_DOCUMENT_ID --apply --force
 ```
 
 The first restore command changes nothing. This archive is in the same MongoDB

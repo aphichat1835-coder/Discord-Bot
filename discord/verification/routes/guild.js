@@ -209,6 +209,7 @@ function tokenRevealErrorStatus(code) {
   if (["reason_required", "reason_too_long"].includes(code)) return 400;
   if (["rate_limited", "cooldown"].includes(code)) return 429;
   if (code === "member_not_found") return 404;
+  if (code === "audit_write_failed") return 503;
   return 500;
 }
 
@@ -1171,11 +1172,15 @@ router.get("/api/guild/:guildId/members", requireAdmin, requireGuildAdmin, async
 router.get("/api/guild/:guildId/member/:userId/detail", requireAdmin, requireGuildAdmin, async (req, res) => {
   try {
     const { guildId, userId } = req.params;
+    const targetUserId = cleanSnowflake(userId);
+    if (!targetUserId) {
+      return res.status(400).json({ success: false, code: "invalid_user_id", error: "User ID ไม่ถูกต้อง" });
+    }
     const canViewSensitive = req.verificationOwner === true;
     const audit = canViewSensitive
       ? await recordSensitiveAccess(guildId, req, "/api/guild/:guildId/member/:userId/detail")
       : { ok: false, status: "not_required" };
-    const detail = await verificationOwnerService.getMemberDetail(guildId, userId, {
+    const detail = await verificationOwnerService.getMemberDetail(guildId, targetUserId, {
       canViewSensitive
     });
     res.json({
@@ -1415,7 +1420,8 @@ router.get("/api/guild/:guildId", requireAdmin, requireGuildAdmin, async (req, r
 
 router._test = {
   mergeVerificationConfig,
-  recordSensitiveAccess
+  recordSensitiveAccess,
+  tokenRevealErrorStatus
 };
 
 module.exports = router;

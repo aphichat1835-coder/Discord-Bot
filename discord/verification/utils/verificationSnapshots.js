@@ -300,7 +300,7 @@ function buildVerifyLogCommon(parts = {}, options = {}) {
     guildId: raw.guildId,
     userId: raw.userId || discord.userId || null,
     roleId: raw.roleId || null,
-    sensitiveRedacted: options.canViewSensitive !== true,
+    sensitiveRedacted: options.canViewSensitive !== true || ipInfo.rawIp == null,
     result,
     reason: raw.reason || "",
     riskScore: Number(raw.riskScore || ipInfo.riskScore || 0),
