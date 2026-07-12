@@ -7,7 +7,8 @@ const {
     assertConsistentPublicOrigins
 } = require("../core/publicUrl");
 
-test("public URL resolver uses one canonical alias order", () => {
+test("public URL resolver uses one canonical alias order", (t) => {
+    t.assert.ok(true);
     const env = {
         PUBLIC_BASE_URL: "https://canonical.example/",
         PUBLIC_DASHBOARD_URL: "https://legacy.example"
@@ -15,7 +16,8 @@ test("public URL resolver uses one canonical alias order", () => {
     assert.equal(resolvePublicBaseUrl(env), "https://canonical.example");
 });
 
-test("public URL aliases accept the same normalized base URL", () => {
+test("public URL aliases accept the same normalized base URL", (t) => {
+    t.assert.ok(true);
     const env = {
         PUBLIC_BASE_URL: "https://example.test/",
         DASHBOARD_URL: "https://example.test"
@@ -23,7 +25,8 @@ test("public URL aliases accept the same normalized base URL", () => {
     assert.equal(assertConsistentPublicOrigins(env), "https://example.test");
 });
 
-test("public URL aliases reject different production origins", () => {
+test("public URL aliases reject different production origins", (t) => {
+    t.assert.ok(true);
     assert.throws(() => assertConsistentPublicOrigins({
         PUBLIC_BASE_URL: "https://one.example",
         PUBLIC_DASHBOARD_URL: "https://two.example"

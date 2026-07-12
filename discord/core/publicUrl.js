@@ -8,7 +8,9 @@ const PUBLIC_URL_KEYS = Object.freeze([
 ]);
 
 function trimTrailingSlashes(value) {
-    return String(value || "").trim().replace(/\/+$/, "");
+    let result = String(value || "").trim();
+    while (result.endsWith("/")) result = result.slice(0, -1);
+    return result;
 }
 
 function configuredPublicUrls(env = process.env) {

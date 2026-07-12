@@ -335,6 +335,12 @@ function memberFetchQualityStatus(fetchMetadata = {}, memberInfo = null) {
     return memberInfo ? "success" : "failed";
 }
 
+function memberStoredCount(previous, memberInfo, failed) {
+    if (failed) return previous.storedCount ?? null;
+    if (memberInfo) return 1;
+    return previous.storedCount ?? null;
+}
+
 function recordPostRoleMemberFetch(fetchMetadata = {}, refreshedMember = null) {
     fetchMetadata.memberFetchSource = "discord_bot_api";
     fetchMetadata.memberFetchStatus = refreshedMember ? 200 : null;
@@ -552,7 +558,7 @@ function snapshotMetaForMember(previousMeta, fetchMetadata, memberInfo, nowMs) {
         fetchedAt: memberInfo && !failed ? nowMs : (previous.fetchedAt || null),
         attemptedAt: attempted ? nowMs : (previous.attemptedAt || null),
         returnedCount: memberInfo ? 1 : 0,
-        storedCount: failed ? (previous.storedCount ?? null) : (memberInfo ? 1 : (previous.storedCount ?? null)),
+        storedCount: memberStoredCount(previous, memberInfo, failed),
         truncated: false,
         failureReason: failed || (attempted && !memberInfo)
             ? (fetchMetadata.memberFailureReason || `discord_http_${fetchMetadata.memberFetchStatus || "unknown"}`)

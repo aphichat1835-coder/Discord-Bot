@@ -80,14 +80,19 @@ async function upsertDeviceHistory(input, models) {
     }, { upsert: true });
 }
 
+function historyRoles(input) {
+    if (Array.isArray(input.memberInfo?.roles)) return input.memberInfo.roles.map(String);
+    if (Array.isArray(input.roles)) return input.roles.map(String);
+    return [];
+}
+
 function roleEventId(input) {
     return `history:${crypto.createHash("sha256").update(JSON.stringify({
         guildId: input.guildId,
         ipHash: input.ipHash,
         userId: String(input.profile?.id || input.userId || ""),
         roleId: input.roleId || null,
-        roles: Array.isArray(input.memberInfo?.roles) ? input.memberInfo.roles.map(String) :
-            (Array.isArray(input.roles) ? input.roles.map(String) : []),
+        roles: historyRoles(input),
         result: input.result || null,
         at: Number(input.now || input.at || 0)
     })).digest("hex")}`;
