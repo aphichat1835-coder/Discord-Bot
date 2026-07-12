@@ -313,8 +313,16 @@ async function connectDB() {
 }
 
 async function disconnectDB() {
-    if (mongoose.connection.readyState === 0) return;
-    await mongoose.disconnect();
+    if (mongoose.connection.readyState === 0) {
+        dbConnected = false;
+        return;
+    }
+    try {
+        await flushPendingSessionDeletes();
+    } finally {
+        await mongoose.disconnect();
+        dbConnected = false;
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════

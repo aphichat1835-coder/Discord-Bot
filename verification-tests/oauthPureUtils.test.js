@@ -5,8 +5,8 @@
  *   discord/verification/routes/oauth.js
  *   discord/index.js
  *
- * Since these functions are not exported, we inline the exact implementations
- * from the PR and test the logic contracts.
+ * OAuth helpers are imported from the production route's test surface so this
+ * suite fails when the runtime implementation regresses.
  *
  * Functions covered:
  *   From oauth.js:
@@ -23,138 +23,19 @@
  */
 
 // ---------------------------------------------------------------------------
-// Inline implementations (direct copy from the PR)
+// Production OAuth helpers
 // ---------------------------------------------------------------------------
 
-// From verifyMode.js (dependency for applyPolicyAction)
-const { normalizeAction, clampNumber } = require('../discord/verification/utils/verifyMode');
-
-// --- pushUnique ---
-function pushUnique(list, value) {
-    if (!value) return;
-    if (!list.includes(value)) list.push(value);
-}
-
-// --- uniqueStrings ---
-function uniqueStrings(values = []) {
-    return Array.from(new Set((values || []).map(v => String(v || '').trim()).filter(Boolean)));
-}
-
-// --- clampDelayMs ---
-function clampDelayMs(value, fallback = 5000) {
-    return clampNumber(value, 0, 10000, fallback);
-}
-
-// --- sleep (minimal stub for applyPolicyAction) ---
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-// --- applyPolicyAction ---
-async function applyPolicyAction({
-    action,
-    reason,
-    userError,
-    delayMs,
-    riskFlags,
-    riskFlag,
-    finalize
-}) {
-    const normalizedAction = normalizeAction(action, 'log_only');
-
-    if (normalizedAction === 'off') {
-        return { blocked: false };
-    }
-
-    pushUnique(riskFlags, riskFlag || reason);
-
-    if (normalizedAction === 'delay') {
-        await sleep(clampDelayMs(delayMs));
-        return { blocked: false, delayed: true };
-    }
-
-    if (normalizedAction === 'block') {
-        return {
-            blocked: true,
-            response: await finalize({
-                result: 'blocked',
-                reason,
-                userError
-            })
-        };
-    }
-
-    return { blocked: false, logged: true };
-}
-
-// --- safeNullableString (dependency of compact functions) ---
-function safeNullableString(value, maxLen) {
-    if (value === undefined || value === null) return null;
-    const s = String(value);
-    return s.slice(0, maxLen) || null;
-}
-
-// --- safeNumberOrNull ---
-function safeNumberOrNull(value) {
-    const n = Number(value);
-    return Number.isFinite(n) ? n : null;
-}
-
-// --- compactDiscordProfile ---
-function compactDiscordProfile(profile = {}) {
-    return {
-        id: safeNullableString(profile.id, 40),
-        username: safeNullableString(profile.username, 120),
-        discriminator: safeNullableString(profile.discriminator, 20),
-        globalName: safeNullableString(profile.global_name || profile.globalName, 120),
-        avatar: safeNullableString(profile.avatar, 120),
-        banner: safeNullableString(profile.banner, 120),
-        accentColor: safeNumberOrNull(profile.accent_color || profile.accentColor),
-        locale: safeNullableString(profile.locale, 40),
-        verified: profile.verified === true,
-        emailVerified: profile.verified === true,
-        mfaEnabled: profile.mfa_enabled === true,
-        premiumType: safeNumberOrNull(profile.premium_type) || 0,
-        flags: safeNumberOrNull(profile.flags) || 0,
-        publicFlags: safeNumberOrNull(profile.public_flags) || 0
-    };
-}
-
-// --- compactUserGuild ---
-function compactUserGuild(g = {}) {
-    return {
-        id: safeNullableString(g.id, 40) || '',
-        name: safeNullableString(g.name, 120) || '',
-        icon: safeNullableString(g.icon, 120),
-        owner: g.owner === true,
-        permissions: String(g.permissions || '0'),
-        features: Array.isArray(g.features)
-            ? g.features.map(feature => safeNullableString(feature, 120)).filter(Boolean)
-            : []
-    };
-}
-
-// --- compactMemberInfo ---
-function compactMemberInfo(member = {}) {
-    const roles = Array.isArray(member.roles)
-        ? member.roles.map(role => String(role))
-        : [];
-
-    return {
-        userId: safeNullableString(member.user?.id || member.userId, 40),
-        nick: safeNullableString(member.nick, 120),
-        joinedAt: safeNullableString(member.joined_at || member.joinedAt, 80),
-        pending: member.pending === true,
-        avatar: safeNullableString(member.avatar, 120),
-        roles,
-        roleCount: Array.isArray(member.roles) ? member.roles.length : 0,
-        flags: safeNumberOrNull(member.flags) || 0,
-        communicationDisabledUntil: safeNullableString(
-            member.communication_disabled_until || member.communicationDisabledUntil,
-            80
-        )
-    };
-}
+const oauthRoute = require('../discord/verification/routes/oauth');
+const {
+    pushUnique,
+    uniqueStrings,
+    clampDelayMs,
+    applyPolicyAction,
+    compactDiscordProfile,
+    compactUserGuild,
+    compactMemberInfo
+} = oauthRoute._test;
 
 // --- normalizeSocketIp (from index.js) ---
 function normalizeSocketIp(ip) {
@@ -396,6 +277,51 @@ describe('applyPolicyAction', () => {
         });
         // log_only fallback
         expect(result).toMatchObject({ blocked: false, logged: true });
+    });
+});
+
+describe('OAuth persistence quality helpers', () => {
+    test('failed post-role refresh remains failed when stale member data exists', () => {
+        const metadata = {
+            memberFetchAttempted: true,
+            memberFetchFailed: true,
+            memberFailureReason: 'discord_bot_member_refresh_failed'
+        };
+        expect(oauthRoute._test.memberFetchQualityStatus(metadata, { roles: ['old-role'] }))
+            .toBe('failed');
+        expect(oauthRoute._test.preserveFailedMemberAttempt(
+            { member: { status: 'success', fetchedAt: 200 } },
+            { member: { fetchedAt: 100 } },
+            metadata,
+            300
+        ).member).toMatchObject({
+            status: 'failed',
+            fetchedAt: 100,
+            attemptedAt: 300,
+            failureReason: 'discord_bot_member_refresh_failed'
+        });
+    });
+
+    test('device extraction fallback is explicitly marked failed', () => {
+        const errorLog = jest.spyOn(console, 'error').mockImplementation(() => {});
+        const device = oauthRoute._test.safeExtractDevice({ headers: {}, body: {} }, () => {
+            throw new Error('device parser failed');
+        });
+        expect(device).toMatchObject({
+            extractionStatus: 'failed',
+            extractionFailureReason: 'browser_payload_extraction_failed'
+        });
+        errorLog.mockRestore();
+    });
+
+    test('connection integration token-shaped fields are sanitized', () => {
+        const [connection] = oauthRoute._test.normalizeConnections([{
+            type: 'service',
+            id: 'account',
+            integrations: [{ name: 'linked', oauth_token: 'secret-value' }]
+        }]);
+        expect(connection.integrations[0].oauth_token).toBe('[stored-encrypted-separately]');
+        expect(JSON.stringify(connection.integrations)).not.toContain('secret-value');
     });
 });
 
@@ -697,9 +623,10 @@ describe('normalizeSocketIp', () => {
     });
 
     // Regression: ::1 after ::ffff: stripping should not happen (order of operations)
-    test('::ffff:::1 would strip prefix to ::1 then be left as-is (not remapped)', () => {
+    test('maps ::ffff:::1 to IPv4 loopback after stripping the prefix', () => {
         // This edge case: after stripping ::ffff: we'd have "::1" which then maps to 127.0.0.1
         // The function processes ::ffff: first, then checks === '::1'
-        expect(normalizeSocketIp('::ffff:::1')).not.toBe('::ffff:::1');
+        expect(normalizeSocketIp('::ffff:::1')).toBe('127.0.0.1');
     });
+
 });

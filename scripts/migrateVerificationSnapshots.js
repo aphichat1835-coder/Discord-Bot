@@ -177,12 +177,24 @@ function optimisticSourceFilter(doc = {}) {
     return filter;
 }
 
-function migrationProfile(discord) {
-    return {
+function sanitizeMigrationProfile(value) {
+    const blocked = new Set(["token", "accesstoken", "refreshtoken", "encryptedaccesstoken",
+        "encryptedrefreshtoken", "authorization", "clientsecret", "credential", "rawip", "encryptedrawip"]);
+    const json = JSON.stringify(value, (key, item) => {
+        const normalized = String(key || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        const sensitive = blocked.has(normalized) || normalized.endsWith("token") ||
+            normalized.endsWith("secret") || normalized.endsWith("credential") || normalized.endsWith("apikey");
+        return sensitive ? undefined : item;
+    });
+    return json ? JSON.parse(json) : {};
+}
+
+function migrationProfile(discord = {}) {
+    return sanitizeMigrationProfile({
         ...discord,
         ...discord.profileSnapshot,
         id: discord.profileSnapshot?.id || discord.userId
-    };
+    });
 }
 
 async function writeLegacySnapshots(doc, snapshotWriter, timestamp) {
@@ -308,5 +320,6 @@ module.exports = {
     bannerUrl,
     completeRefs,
     migrationFilter,
-    optimisticSourceFilter
+    optimisticSourceFilter,
+    migrationProfile
 };

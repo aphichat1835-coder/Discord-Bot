@@ -22,9 +22,9 @@ const VerifyLog = require("../models/VerifyLog");
 
 const { normalizeVerificationConfig } = require("../utils/verifyMode");
 const {
-    normalizeSensitiveAccess,
-    buildSensitiveAccessAuditUpdate
+    normalizeSensitiveAccess
 } = require("../utils/sensitiveAccess");
+const { getAdminId, recordSensitiveAccess } = require("../utils/ownerRouteAccess");
 const { makeOAuthUserSummaryMap } = require("../utils/oauthUserSummary");
 const verifiedMemberService = require("../services/verifiedMemberService");
 const {
@@ -48,26 +48,6 @@ function requireAdmin(req, res, next) {
 
 function getAdminGuilds(req) {
     return Array.isArray(req.verificationGuilds) ? req.verificationGuilds : [];
-}
-
-function getAdminId(req) {
-    return req.verificationOwner === true ? "owner-dashboard" : "unauthorized";
-}
-
-async function recordSensitiveAccess(guildId, req, route) {
-    try {
-        const result = await GuildConfig.updateOne(
-            { guildId },
-            buildSensitiveAccessAuditUpdate({ actor: getAdminId(req), route })
-        );
-        if (Number(result?.matchedCount || result?.modifiedCount || 0) > 0) return;
-        throw new Error("sensitive access audit target not found");
-    } catch (cause) {
-        const error = new Error("sensitive access audit could not be persisted");
-        error.code = "audit_write_failed";
-        error.cause = cause;
-        throw error;
-    }
 }
 
 function shouldAuditOverview(canViewSensitive, config) {

@@ -170,7 +170,13 @@ describe("verification additive migration", () => {
         const summary = await migrateCursor({
             cursor: [{
                 _id: "legacy-1",
-                discord: { userId: "12345678901234567", username: "legacy" },
+                discord: {
+                    userId: "12345678901234567",
+                    username: "legacy",
+                    encryptedAccessToken: "encrypted-access",
+                    encryptedRefreshToken: "encrypted-refresh",
+                    rawIp: "encrypted-ip"
+                },
                 connections: [{ id: "1" }, { id: "2" }],
                 guilds: [{ id: "1" }, { id: "2" }, { id: "3" }]
             }],
@@ -186,7 +192,12 @@ describe("verification additive migration", () => {
 
         expect(snapshotWriter).toHaveBeenCalledWith(expect.objectContaining({
             connections: expect.any(Array),
-            guilds: expect.any(Array)
+            guilds: expect.any(Array),
+            profile: expect.not.objectContaining({
+                encryptedAccessToken: expect.anything(),
+                encryptedRefreshToken: expect.anything(),
+                rawIp: expect.anything()
+            })
         }));
         expect(summary.snapshotCategoriesComplete).toBe(3);
         expect(summary.snapshotCategoriesFailed).toBe(1);

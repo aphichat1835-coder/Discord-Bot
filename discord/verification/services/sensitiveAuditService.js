@@ -4,7 +4,14 @@ const { buildSensitiveAccessAuditUpdate } = require("../utils/sensitiveAccess");
 
 const WINDOW_MS = Math.max(30_000, Number(process.env.SENSITIVE_REVEAL_WINDOW_MS || 5 * 60_000) || 5 * 60_000);
 const MAX_EVENTS = Math.max(1, Number(process.env.SENSITIVE_REVEAL_MAX || 10) || 10);
-const USER_COOLDOWN_MS = Math.max(0, Number(process.env.SENSITIVE_REVEAL_USER_COOLDOWN_MS || 45_000) || 45_000);
+const rawUserCooldown = process.env.SENSITIVE_REVEAL_USER_COOLDOWN_MS;
+const configuredUserCooldown = rawUserCooldown === undefined || rawUserCooldown === ""
+    ? Number.NaN
+    : Number(rawUserCooldown);
+const USER_COOLDOWN_MS = Math.max(
+    0,
+    Number.isFinite(configuredUserCooldown) ? configuredUserCooldown : 45_000
+);
 const MAX_BUCKET_KEYS = Math.max(100, Number(process.env.SENSITIVE_REVEAL_BUCKET_MAX || 10_000) || 10_000);
 const buckets = new Map();
 

@@ -40,8 +40,9 @@ async function restoreCursor({ cursor, apply = false, replaceOne = (filter, payl
 async function run() {
     const mongoUri = String(process.env.MONGO_URI || "").trim();
     if (!mongoUri) throw new Error("MONGO_URI is required");
+    const filter = restoreFilter();
     await mongoose.connect(mongoUri, { maxPoolSize: 2 });
-    const cursor = MigrationArchive.find(restoreFilter())
+    const cursor = MigrationArchive.find(filter)
         .select("sourceId payload backedUpAt")
         .sort({ backedUpAt: 1, _id: 1 })
         .lean()

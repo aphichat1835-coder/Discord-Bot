@@ -131,9 +131,9 @@ function normalizePanel(panel = {}) {
   const next = { ...panel };
 
   next.verifyType = normalizeVerifyMode(
-    next.verifyType ||
-    next.oauthMode ||
-    next.mode ||
+    next.verifyType ??
+    next.oauthMode ??
+    next.mode ??
     "oauth"
   );
 
@@ -164,8 +164,8 @@ function normalizeVerificationConfig(config = {}) {
   next.panel = normalizePanel(next.panel || {});
 
   next.verifyType = normalizeVerifyMode(
-    next.verifyType ||
-    next.oauthMode ||
+    next.verifyType ??
+    next.oauthMode ??
     next.panel.verifyType
   );
 

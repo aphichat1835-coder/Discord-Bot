@@ -135,6 +135,30 @@ describe("permanent-history snapshot garbage cleanup", () => {
         expect(Model.deleteMany).not.toHaveBeenCalled();
     });
 
+    test("rechecks references immediately before deleting orphan candidates", async () => {
+        const Model = snapshotModel([
+            { userId: "12345678901234567", snapshotVersion: "newly-referenced" }
+        ]);
+        let reads = 0;
+        const OAuthUserModel = {
+            find: jest.fn(() => queryResult(reads++ === 0 ? [] : [{
+                discord: { userId: "12345678901234567" },
+                snapshotRefs: { profile: { version: "newly-referenced" } }
+            }]))
+        };
+
+        await cleanupSnapshotGarbage({
+            now: 2 * 60 * 60 * 1000,
+            graceHours: 1,
+            models: { profile: Model },
+            OAuthUserModel,
+            VerifyLogModel: referenceModel([])
+        });
+
+        expect(Model.deleteMany).toHaveBeenCalledTimes(1);
+        expect(JSON.stringify(Model.deleteMany.mock.calls[0][0])).not.toContain("newly-referenced");
+    });
+
     test("reference traversal includes nested member-role versions", () => {
         expect([..._test.referencedVersions({
             member: {

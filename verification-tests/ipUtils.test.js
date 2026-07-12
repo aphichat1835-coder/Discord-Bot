@@ -168,7 +168,7 @@ describe('getTrustedRequestIp', () => {
             expect(result.ip).toBe('8.8.8.8');
         });
 
-        test('private req.ip falls back to remoteAddress', () => {
+        test('private req.ip is still selected over remoteAddress (isValidIP only)', () => {
             // 192.168.x.x is private – not a valid public IP
             const req = makeReq({ ip: '192.168.1.1', socketIp: '8.8.8.8' });
             const result = getTrustedRequestIp(req);
@@ -179,7 +179,7 @@ describe('getTrustedRequestIp', () => {
             expect(result.source).toBe('req.ip');
         });
 
-        test('returns unknown source when only localhost socket available', () => {
+        test('uses localhost socket remoteAddress when it is the only source', () => {
             const req = makeReq({ socketIp: '127.0.0.1' });
             const result = getTrustedRequestIp(req);
             // 127.0.0.1 is valid for isValidIP (net.isIP returns 4) but is private

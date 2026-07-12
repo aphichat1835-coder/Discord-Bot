@@ -91,8 +91,8 @@ function normalizePanelInput(panel = {}) {
   next.buttonLabel = buttonText;
 
   next.verifyType = normalizeVerifyMode(
-    next.verifyType ||
-    next.mode ||
+    next.verifyType ??
+    next.mode ??
     next.oauthMode
   );
 

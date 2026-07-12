@@ -1,12 +1,13 @@
 "use strict";
 
 const discordAPI = require("../utils/discordAPI");
+const { configuredPublicUrls } = require("../../core/publicUrl");
 
 function envCheck(env = process.env) {
     return {
         oauthClientId: !!env.DISCORD_CLIENT_ID,
         oauthClientSecret: !!env.DISCORD_CLIENT_SECRET,
-        publicBaseUrl: !!(env.PUBLIC_BASE_URL || env.DASHBOARD_URL || env.PUBLIC_DASHBOARD_URL || env.DASHBOARD_PUBLIC_URL),
+        publicBaseUrl: configuredPublicUrls(env).length > 0,
         verifyStateSecret: !!env.VERIFY_STATE_SECRET,
         encryptionKey: !!env.ENCRYPTION_KEY
     };

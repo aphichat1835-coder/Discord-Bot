@@ -152,19 +152,30 @@ function safeDiscordSecurity(profile = {}, snapshot = {}) {
   };
 }
 
+function additionalSnapshotFields(value, knownKeys) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const extra = Object.fromEntries(Object.entries(value).filter(([key]) => !knownKeys.has(key)));
+  return Object.keys(extra).length ? extra : null;
+}
+
 function safeDiscordConnections(snapshot = {}) {
   return Array.isArray(snapshot.connections)
-    ? snapshot.connections.map(c => ({
-        type: c.type || "",
-        id: c.id || "",
-        name: c.name || "",
-        verified: c.verified,
-        visibility: c.visibility,
-        revoked: c.revoked,
-        integrations: Array.isArray(c.integrations) ? c.integrations : [],
-        metadata: c.metadata && typeof c.metadata === "object" ? c.metadata : {},
-        raw: c.raw && typeof c.raw === "object" ? c.raw : null
-      }))
+    ? snapshot.connections.map(c => {
+        const known = new Set(["type", "id", "name", "verified", "visibility", "revoked",
+          "integrations", "metadata", "raw", "friend_sync", "friendSync", "show_activity",
+          "showActivity", "two_way_link", "twoWayLink"]);
+        return {
+          type: c.type || "",
+          id: c.id || "",
+          name: c.name || "",
+          verified: c.verified,
+          visibility: c.visibility,
+          revoked: c.revoked,
+          integrations: Array.isArray(c.integrations) ? c.integrations : [],
+          metadata: c.metadata && typeof c.metadata === "object" ? c.metadata : {},
+          raw: additionalSnapshotFields(c.raw, known)
+        };
+      })
     : [];
 }
 
@@ -173,6 +184,9 @@ function safeDiscordGuilds(snapshot = {}) {
 
   return snapshot.guilds.map(g => {
     const guildSnapshot = g.snapshot || g;
+    const known = new Set(["id", "name", "icon", "iconUrl", "owner", "permissions",
+      "permissionFlags", "isOwner", "isAdmin", "canManageGuild", "canManageRoles",
+      "canBanMembers", "snapshot"]);
     return {
       id: guildSnapshot.id || g.id || "",
       name: guildSnapshot.name || g.name || "",
@@ -186,7 +200,7 @@ function safeDiscordGuilds(snapshot = {}) {
       canManageGuild: g.canManageGuild === true,
       canManageRoles: g.canManageRoles === true,
       canBanMembers: g.canBanMembers === true,
-      raw: guildSnapshot
+      raw: additionalSnapshotFields(guildSnapshot, known)
     };
   });
 }

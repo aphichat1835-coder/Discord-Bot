@@ -4,6 +4,14 @@
 
 ### Changed
 
+- Hardened the unified runtime review surface: public readiness now returns
+  booleans instead of internal diagnostics; sensitive Owner routes use safe
+  errors, audit/rate controls, and IP-history auditing; OAuth integration and
+  migration snapshots remove token-shaped fields; failed device/member fetches
+  remain failed in data-quality metadata; history replay counters, role-event
+  idempotency, snapshot finalization, cleanup races, and shutdown persistence
+  now have explicit safeguards and regression coverage.
+
 - Replaced the final total-count ceilings with cursor/pagination storage:
   Join Campaign now scans every eligible OAuthUser in stable bounded batches,
   and per-IP users, devices, and role events use canonical unbounded history

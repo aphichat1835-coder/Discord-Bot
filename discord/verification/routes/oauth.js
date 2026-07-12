@@ -331,6 +331,7 @@ function objectOrEmpty(value) {
 
 function memberFetchQualityStatus(fetchMetadata = {}, memberInfo = null) {
     if (!fetchMetadata.memberFetchAttempted) return "not_attempted";
+    if (fetchMetadata.memberFetchFailed === true) return "failed";
     return memberInfo ? "success" : "failed";
 }
 
@@ -381,7 +382,9 @@ function normalizeConnections(connections = []) {
                 revoked: connection.revoked === true,
 
                 integrations: Array.isArray(connection.integrations)
-                    ? connection.integrations.map(safePlainObject)
+                    ? connection.integrations.map(integration =>
+                        sanitizeDiscordPayload(safePlainObject(integration)) || {}
+                    )
                     : [],
 
                 metadata: safePlainObject(connection.metadata),
@@ -541,16 +544,17 @@ function snapshotMetaForList(previousMeta, key, fetchMetadata, sourceList, store
 function snapshotMetaForMember(previousMeta, fetchMetadata, memberInfo, nowMs) {
     const previous = objectOrEmpty(previousMeta.member);
     const attempted = fetchMetadata.memberFetchAttempted === true;
+    const failed = fetchMetadata.memberFetchFailed === true;
 
     return {
         ...previous,
         status: memberFetchQualityStatus(fetchMetadata, memberInfo),
-        fetchedAt: memberInfo ? nowMs : (previous.fetchedAt || null),
+        fetchedAt: memberInfo && !failed ? nowMs : (previous.fetchedAt || null),
         attemptedAt: attempted ? nowMs : (previous.attemptedAt || null),
         returnedCount: memberInfo ? 1 : 0,
-        storedCount: memberInfo ? 1 : (previous.storedCount ?? null),
+        storedCount: failed ? (previous.storedCount ?? null) : (memberInfo ? 1 : (previous.storedCount ?? null)),
         truncated: false,
-        failureReason: attempted && !memberInfo
+        failureReason: failed || (attempted && !memberInfo)
             ? (fetchMetadata.memberFailureReason || `discord_http_${fetchMetadata.memberFetchStatus || "unknown"}`)
             : null,
         source: fetchMetadata.memberFetchSource || "discord_oauth"
@@ -631,6 +635,22 @@ function applyStoredSnapshotMeta(snapshotMeta, kind, ref) {
             source: ref.source || previous.source || "discord_oauth",
             fetchedAt: ref.capturedAt || previous.fetchedAt || null,
             updatedAt: ref.capturedAt || Date.now()
+        }
+    };
+}
+
+function preserveFailedMemberAttempt(snapshotMeta, previousMeta, fetchMetadata, nowMs) {
+    if (fetchMetadata.memberFetchFailed !== true) return snapshotMeta;
+    const previous = objectOrEmpty(previousMeta.member);
+    return {
+        ...snapshotMeta,
+        member: {
+            ...objectOrEmpty(snapshotMeta.member),
+            status: "failed",
+            fetchedAt: previous.fetchedAt || null,
+            attemptedAt: nowMs,
+            failureReason: fetchMetadata.memberFailureReason ||
+                `discord_http_${fetchMetadata.memberFetchStatus || "unknown"}`
         }
     };
 }
@@ -1036,6 +1056,7 @@ async function saveOAuthUserSafe({
         snapshotMeta = applyStoredSnapshotMeta(snapshotMeta, "guilds", storedSnapshots.guilds);
         snapshotMeta = applyStoredSnapshotMeta(snapshotMeta, "member", storedSnapshots.member);
         snapshotMeta = applyStoredSnapshotMeta(snapshotMeta, "profile", storedSnapshots.profile);
+        snapshotMeta = preserveFailedMemberAttempt(snapshotMeta, previousMeta, fetchMetadata, nowMs);
         const snapshotRefs = mergeCompleteSnapshotRefs(existing?.snapshotRefs, storedSnapshots);
 
         const updateSet = {
@@ -1199,9 +1220,9 @@ async function safeProcessIP(req) {
     });
 }
 
-function safeExtractDevice(req) {
+function safeExtractDevice(req, extractor = extractDevice) {
     try {
-        return extractDevice(req);
+        return { ...extractor(req), extractionStatus: "success", extractionFailureReason: null };
     } catch (err) {
         console.error('[VERIFY] extractDevice failed:', JSON.stringify(sanitizeSideEffectError(err)));
 
@@ -1220,7 +1241,9 @@ function safeExtractDevice(req) {
             devicePixelRatio: req.body?.devicePixelRatio || null,
             touchPoints: req.body?.touchPoints || null,
             referrer: req.body?.referrer || '',
-            fingerprintHash: null
+            fingerprintHash: null,
+            extractionStatus: "failed",
+            extractionFailureReason: "browser_payload_extraction_failed"
         };
     }
 }
@@ -1526,7 +1549,7 @@ router.post('/auth/callback', async (req, res) => {
                 ? (fetchMetadata.memberFailureReason ||
                     `discord_http_${fetchMetadata.memberFetchStatus || "unknown"}`)
                 : null;
-            if (memberInfo) {
+            if (memberInfo && fetchMetadata.memberFetchFailed !== true) {
                 memberStatus = memberWrite?.complete ? "success" : "failed";
                 memberFailureReason = memberWrite?.failureReason || null;
             }
@@ -1639,13 +1662,13 @@ router.post('/auth/callback', async (req, res) => {
                         source: fetchMetadata.memberFetchSource || "discord_oauth"
                     },
                     device: {
-                        status: device ? "success" : "failed",
+                        status: device?.extractionStatus === "failed" ? "failed" : "success",
                         attemptedAt: Date.now(),
-                        fetchedAt: device ? Date.now() : null,
-                        returnedCount: device ? 1 : 0,
-                        storedCount: device ? 1 : 0,
+                        fetchedAt: device?.extractionStatus === "failed" ? null : Date.now(),
+                        returnedCount: device?.extractionStatus === "failed" ? 0 : 1,
+                        storedCount: device?.extractionStatus === "failed" ? 0 : 1,
                         truncated: false,
-                        failureReason: device ? null : "browser_payload_unavailable",
+                        failureReason: device?.extractionFailureReason || null,
                         source: "browser"
                     },
                     network: {
@@ -2051,12 +2074,19 @@ module.exports._test = {
     normalizeGuilds,
     compactMemberInfo,
     compactDiscordProfile,
+    compactUserGuild,
+    applyPolicyAction,
+    pushUnique,
+    uniqueStrings,
+    clampDelayMs,
     safeString,
         safeNullableString,
         sanitizeDiscordPayload,
         safeSnowflakeStrict,
     memberFetchQualityStatus,
     recordPostRoleMemberFetch,
+    preserveFailedMemberAttempt,
+    safeExtractDevice,
     saveOAuthUserSafe,
     saveVerifyLogSafe
 };

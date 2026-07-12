@@ -95,18 +95,21 @@ function roleEventId(input) {
 
 async function createRoleHistory(input, models) {
     const { guildId, ipHash, profile, memberInfo, roleId, result, now } = input;
-    return models.RoleHistory.create({
-        eventId: roleEventId(input),
-        guildId,
-        ipHash,
-        userId: String(profile.id),
-        roleId: roleId || null,
-        roles: Array.isArray(memberInfo?.roles) ? memberInfo.roles.map(String) : [],
-        result,
-        at: now,
-        source: "oauth_verification",
-        createdAt: now
-    });
+    const eventId = roleEventId(input);
+    return models.RoleHistory.updateOne({ eventId }, {
+        $setOnInsert: {
+            eventId,
+            guildId,
+            ipHash,
+            userId: String(profile.id),
+            roleId: roleId || null,
+            roles: Array.isArray(memberInfo?.roles) ? memberInfo.roles.map(String) : [],
+            result,
+            at: now,
+            source: "oauth_verification",
+            createdAt: now
+        }
+    }, { upsert: true });
 }
 
 function defaultModels(options = {}) {
@@ -310,30 +313,36 @@ async function backfillVerifyLog(log, models, now) {
             ipHash: input.ipHash,
             encryptedRawIp: input.ipInfo.encryptedRawIp || null,
             firstSeenAt: input.now,
-            totalVerifications: 0,
             uniqueUsers: 0,
             users: [],
             deviceFingerprints: [],
             roleSnapshots: [],
             createdAt: now
         },
+        $inc: { totalVerifications: 1 },
+        $min: { firstSeenAt: input.now },
         $max: { lastSeenAt: input.now },
         $set: { updatedAt: now }
     }, { upsert: true });
+    const recoveredUser = userFields(input);
+    delete recoveredUser.firstSeenAt;
+    delete recoveredUser.lastSeenAt;
     await models.UserHistory.updateOne({
         guildId: input.guildId,
         ipHash: input.ipHash,
         userId: input.profile.id
-    }, { $setOnInsert: {
-        ...userFields(input),
-        guildId: input.guildId,
-        ipHash: input.ipHash,
-        userId: input.profile.id,
-        firstSeenAt: input.now,
-        verifyCount: 1,
-        ...resultCounter(input.result),
-        createdAt: now
-    } }, { upsert: true });
+    }, {
+        $set: recoveredUser,
+        $setOnInsert: {
+            guildId: input.guildId,
+            ipHash: input.ipHash,
+            userId: input.profile.id,
+            createdAt: now
+        },
+        $min: { firstSeenAt: input.now },
+        $max: { lastSeenAt: input.now },
+        $inc: { verifyCount: 1, ...resultCounter(input.result) }
+    }, { upsert: true });
     if (input.device?.fingerprintHash) {
         const filter = {
             guildId: input.guildId,
@@ -341,22 +350,23 @@ async function backfillVerifyLog(log, models, now) {
             fingerprintHash: String(input.device.fingerprintHash),
             userId: input.profile.id
         };
-        await models.DeviceHistory.updateOne(filter, { $setOnInsert: {
-            ...filter,
-            fingerprintVersion: Number(input.device.fingerprintVersion || 0) || 1,
-            firstSeenAt: input.now,
-            lastSeenAt: input.now,
-            count: 1,
-            browser: input.device.browser || null,
-            os: input.device.os || null,
-            platform: input.device.platform || null,
-            deviceType: input.device.deviceType || null,
-            language: input.device.language || null,
-            timezone: input.device.timezone || null,
-            screenSize: input.device.screenSize || null,
-            createdAt: now,
-            updatedAt: now
-        } }, { upsert: true });
+        await models.DeviceHistory.updateOne(filter, {
+            $set: {
+                fingerprintVersion: Number(input.device.fingerprintVersion || 0) || 1,
+                browser: input.device.browser || null,
+                os: input.device.os || null,
+                platform: input.device.platform || null,
+                deviceType: input.device.deviceType || null,
+                language: input.device.language || null,
+                timezone: input.device.timezone || null,
+                screenSize: input.device.screenSize || null,
+                updatedAt: now
+            },
+            $setOnInsert: { ...filter, createdAt: now },
+            $min: { firstSeenAt: input.now },
+            $max: { lastSeenAt: input.now },
+            $inc: { count: 1 }
+        }, { upsert: true });
     }
     await models.RoleHistory.updateOne({ eventId: roleEventId(input) }, {
         $setOnInsert: {

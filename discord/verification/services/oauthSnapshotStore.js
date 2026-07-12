@@ -127,6 +127,7 @@ async function storeArraySnapshot(Model, {
         const meta = {
             ...common,
             complete,
+            storedCount: complete ? common.storedCount : 0,
             chunkCount: chunks.length,
             failureReason: complete ? null : "snapshot_finalize_incomplete"
         };

@@ -49,7 +49,8 @@ create Express app and register routes
 
 The HTTP server starts first so `/ping` can answer while readiness is degraded.
 `/health` returns 200 only when required MongoDB, Discord, voice, and
-verification components are ready.
+verification components are ready. Its public response exposes readiness
+booleans only; detailed diagnostics remain behind Owner authentication.
 
 ## Main implementation map
 
@@ -101,10 +102,10 @@ compatible.
   without an overall item cap; normal APIs never expose the encrypted field.
 - Fingerprint source material is never persisted; only its HMAC is stored.
 - Normal list/export APIs never return raw tokens or raw IP.
-- Member Detail is Owner-only and uses a CSRF-protected POST to decrypt and
-  display the complete raw IP and OAuth tokens in one action while appending an
-  internal audit event. Compatibility reveal routes retain their stricter
-  reason and rate-limit contract.
+- Member Detail is Owner-only and uses a CSRF-protected, rate-limited POST to
+  decrypt and display the complete raw IP and OAuth tokens in one action while
+  appending an internal audit event. Compatibility reveal routes retain their
+  stricter Owner-supplied reason contract.
 - Failure messages saved in data-quality metadata are redacted status codes.
 - Logs, tests, migrations, docs, and exports must not print secrets, tokens, or
   raw IP.

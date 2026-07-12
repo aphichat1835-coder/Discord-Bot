@@ -381,6 +381,13 @@ describe('normalizeVerificationConfig – blockHosting and antiAlt (PR additions
         expect(result.blockHosting).toBe(true);
     });
 
+    test('preserves explicit false legacy mode values as direct mode', () => {
+        expect(normalizeVerificationConfig({ verifyType: false }).verifyType)
+            .toBe(VERIFY_MODES.DIRECT);
+        expect(normalizeVerificationConfig({ oauthMode: false }).verifyType)
+            .toBe(VERIFY_MODES.DIRECT);
+    });
+
     // Regression: blockHosting = false must not be converted to true
     test('blockHosting = false stays false', () => {
         expect(normalizeVerificationConfig({ blockHosting: false }).blockHosting).toBe(false);

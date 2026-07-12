@@ -255,6 +255,8 @@ describe("audited Owner raw-IP reveal", () => {
             total: 501,
             hasMore: true
         });
+        jest.spyOn(GuildConfig, "updateOne").mockResolvedValue({ modifiedCount: 1 });
+        jest.spyOn(VerifyLog, "findOneAndUpdate").mockResolvedValue({ _id: "log-id" });
 
         await expect(ownerService.getOwnerIpHistoryPage({
             guildId: "guild",
@@ -268,5 +270,7 @@ describe("audited Owner raw-IP reveal", () => {
             hasMore: true,
             items: [{ eventId: "event" }]
         });
+        expect(GuildConfig.updateOne).toHaveBeenCalled();
+        expect(VerifyLog.findOneAndUpdate).toHaveBeenCalled();
     });
 });

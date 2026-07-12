@@ -7,8 +7,9 @@
   "scripts": {
     "start": "node -r ./discord/core/loadEnv discord/index.js",
     "dev": "node -r ./discord/core/loadEnv discord/index.js",
-    "check": "npm run check:protected && npm run check:all && npm run check:scripts && npm run check:memory-guards",
+    "check": "npm run check:protected && npm run check:protected-syntax && npm run check:all && npm run check:scripts && npm run check:memory-guards",
     "check:protected": "node scripts/checkProtectedPaths.js",
+    "check:protected-syntax": "node --check discord/systemProvider.js && find discord/systemProvider -type f -name '*.js' -print0 | xargs -0 -n1 node --check",
     "check:all": "find discord -path 'discord/systemProvider' -prune -o -type f -name '*.js' ! -path 'discord/systemProvider.js' -print0 | xargs -0 -n1 node --check",
     "check:scripts": "find scripts -type f -name '*.js' -print0 | xargs -0 -n1 node --check",
     "check:memory-guards": "node scripts/checkMemoryGuards.js",

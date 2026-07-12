@@ -93,6 +93,29 @@ describe("OAuth snapshot chunk persistence", () => {
         expect(errorLog.mock.calls.flat().join(" ")).not.toContain("sensitive database detail");
     });
 
+    test("reports zero stored items when chunk finalization is incomplete", async () => {
+        const errorLog = jest.spyOn(console, "error").mockImplementation(() => {});
+        const Model = {
+            bulkWrite: jest.fn().mockResolvedValue({ acknowledged: true }),
+            updateMany: jest.fn().mockResolvedValue({ matchedCount: 0 })
+        };
+        const ref = await snapshotStore.storeArraySnapshot(Model, {
+            kind: "guilds",
+            userId: "123456789012345678",
+            version: "version-finalize-failed",
+            items: [{ id: "1" }, { id: "2" }],
+            now: 1000
+        });
+
+        expect(ref).toMatchObject({
+            returnedCount: 2,
+            storedCount: 0,
+            complete: false,
+            failureReason: "snapshot_finalize_incomplete"
+        });
+        expect(errorLog).toHaveBeenCalled();
+    });
+
     test("snapshot models avoid redundant standalone userId indexes", () => {
         for (const Model of Object.values(snapshotStore._models)) {
             const standaloneUserId = Model.schema.indexes().some(([keys]) =>

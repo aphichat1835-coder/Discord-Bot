@@ -49,9 +49,9 @@ const {
 
 const discordAPI = require("../utils/discordAPI");
 const {
-  normalizeSensitiveAccess,
-  buildSensitiveAccessAuditUpdate
+  normalizeSensitiveAccess
 } = require("../utils/sensitiveAccess");
+const { getAdminUser, getAdminId, recordSensitiveAccess } = require("../utils/ownerRouteAccess");
 const {
   buildVerifyLogCommon,
   buildVerifyLogParts
@@ -78,37 +78,6 @@ function sendServerError(res, scope, err, fallback = "เกิดข้อผ�
     success: false,
     error: fallback
   });
-}
-
-function getAdminUser(req) {
-  return req.verificationOwner === true
-    ? { id: "owner-dashboard", username: "Owner" }
-    : null;
-}
-
-function getAdminId(req) {
-  const user = getAdminUser(req);
-  return user?.id || user?.userId || user?.discordId || null;
-}
-
-async function recordSensitiveAccess(guildId, req, route) {
-  try {
-    const result = await GuildConfig.updateOne(
-      { guildId },
-      buildSensitiveAccessAuditUpdate({
-        actor: getAdminId(req) || "owner-dashboard",
-        route
-      })
-    );
-    if (Number(result?.matchedCount || result?.modifiedCount || 0) > 0) {
-      return { ok: true, status: "recorded" };
-    }
-    throw Object.assign(new Error("sensitive access audit target not found"), { code: "audit_write_failed" });
-  } catch (err) {
-    safeConsoleError("sensitive-access-audit", err);
-    if (!err.code) err.code = "audit_write_failed";
-    throw err;
-  }
 }
 
 function getSessionGuilds(req) {
@@ -240,6 +209,13 @@ function tokenRevealErrorStatus(code) {
   if (["reason_required", "reason_too_long"].includes(code)) return 400;
   if (["rate_limited", "cooldown"].includes(code)) return 429;
   if (code === "member_not_found") return 404;
+  return 500;
+}
+
+function ipHistoryErrorStatus(code) {
+  if (code === "invalid_history_kind") return 400;
+  if (code === "ip_history_not_found") return 404;
+  if (code === "audit_write_failed") return 503;
   return 500;
 }
 
@@ -1240,7 +1216,7 @@ router.post("/api/guild/:guildId/member/:userId/full-detail", requireAdmin, requ
     return res.status(status).json({
       success: false,
       code: err?.code || "full_detail_failed",
-      error: err?.message || "โหลดรายละเอียดสมาชิกแบบเต็มไม่สำเร็จ"
+      error: "โหลดรายละเอียดสมาชิกแบบเต็มไม่สำเร็จ"
     });
   }
 });
@@ -1258,15 +1234,15 @@ router.get("/api/guild/:guildId/member/:userId/ip-history", requireAdmin, requir
       userId: targetUserId,
       kind: String(req.query?.kind || "users"),
       page: parsePage(req.query?.page),
-      limit: parseLimit(req.query?.limit, 100)
+      limit: parseLimit(req.query?.limit, 100),
+      actor: getAdminId(req) || "owner-dashboard"
     }));
   } catch (err) {
-    const status = ["invalid_history_kind"].includes(err?.code) ? 400 :
-      err?.code === "ip_history_not_found" ? 404 : 500;
+    const status = ipHistoryErrorStatus(err?.code);
     return res.status(status).json({
       success: false,
       code: err?.code || "ip_history_failed",
-      error: err?.message || "โหลดประวัติ IP ไม่สำเร็จ"
+      error: "โหลดประวัติ IP ไม่สำเร็จ"
     });
   }
 });
@@ -1286,7 +1262,7 @@ router.post("/api/guild/:guildId/member/:userId/reveal-token", requireAdmin, req
     res.status(status).json({
       success: false,
       code: err?.code || "token_reveal_failed",
-      error: err?.message || "เปิด OAuth token ไม่สำเร็จ"
+      error: "เปิด OAuth token ไม่สำเร็จ"
     });
   }
 });

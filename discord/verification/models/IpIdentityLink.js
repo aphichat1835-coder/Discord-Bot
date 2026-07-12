@@ -110,6 +110,7 @@ schema.index({ guildId: 1, ipHash: 1 }, { unique: true });
 schema.index({ guildId: 1, lastSeenAt: -1 });
 schema.index({ guildId: 1, uniqueUsers: -1 });
 schema.index({ guildId: 1, maxRiskScore: -1 });
+schema.index({ historyMigrationVersion: 1, _id: 1 });
 schema.index({ 'users.userId': 1 });
 schema.index({ 'deviceFingerprints.fingerprintHash': 1 });
 schema.index({ guildId: 1, 'deviceFingerprints.fingerprintHash': 1 });

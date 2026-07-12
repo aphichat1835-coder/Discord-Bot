@@ -4,14 +4,23 @@ const auth = require("./auth");
 const verificationOwnerService = require("../verification/ownerService");
 
 function sendError(res, err) {
+    const publicCodes = new Set([
+        "reason_required",
+        "reason_too_long",
+        "rate_limited",
+        "cooldown",
+        "ip_not_found",
+        "audit_write_failed"
+    ]);
     let status = 500;
     if (["reason_required", "reason_too_long"].includes(err?.code)) status = 400;
     else if (["rate_limited", "cooldown"].includes(err?.code)) status = 429;
     else if (err?.code === "ip_not_found") status = 404;
+    const code = publicCodes.has(err?.code) ? err.code : "verification_owner_error";
     res.status(status).json({
         success: false,
-        code: err?.code || "verification_owner_error",
-        error: err?.message || "verification_owner_error"
+        code,
+        error: code === "verification_owner_error" ? code : (err?.message || code)
     });
 }
 

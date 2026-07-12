@@ -9,6 +9,7 @@ const ZERO_SHA_PATTERN = /^0+$/;
 function resolveGitBin() {
     if (fs.existsSync("/usr/bin/git")) return "/usr/bin/git";
     if (fs.existsSync("/usr/local/bin/git")) return "/usr/local/bin/git";
+    if (fs.existsSync("/opt/homebrew/bin/git")) return "/opt/homebrew/bin/git";
     if (fs.existsSync("/bin/git")) return "/bin/git";
     return "";
 }

@@ -453,7 +453,7 @@ function ownerIpIdentityDetail(link = null, history = null) {
     };
 }
 
-async function getOwnerIpHistoryPage({ guildId, userId, kind, page, limit }) {
+async function getOwnerIpHistoryPage({ guildId, userId, kind, page, limit, actor = "owner-dashboard" }) {
     const link = await ipIdentityHistory.findLinkForUser(guildId, userId);
     if (!link?.ipHash) {
         const error = new Error("IP identity history not found");
@@ -467,7 +467,23 @@ async function getOwnerIpHistoryPage({ guildId, userId, kind, page, limit }) {
         page,
         limit
     });
-    return { success: true, guildId, userId, ...result };
+    const now = Date.now();
+    const audit = await auditRevealWrites({
+        guildId,
+        userId,
+        actor,
+        reason: "owner_ip_history",
+        now,
+        action: "owner_view_ip_history",
+        route: "/api/guild/:guildId/member/:userId/ip-history",
+        scope: ["ipIdentity"]
+    });
+    if (!audit.ok) {
+        const error = new Error("audit write failed; IP history blocked");
+        error.code = "audit_write_failed";
+        throw error;
+    }
+    return { success: true, guildId, userId, auditStatus: audit.status, ...result };
 }
 
 async function revealOAuthTokens({ guildId, userId, reason, actor = "owner-dashboard" }) {
@@ -514,6 +530,7 @@ async function revealOAuthTokens({ guildId, userId, reason, actor = "owner-dashb
 }
 
 async function getOwnerFullMemberDetail({ guildId, userId, actor = "owner-dashboard" }) {
+    sensitiveAudit.checkRevealLimit({ actor, guildId, userId, action: "full_detail" });
     const [detail, user, log, identityLink] = await Promise.all([
         getMemberDetail(guildId, userId, { canViewSensitive: true }),
         OAuthUser.findOne({ "discord.userId": userId })
@@ -539,7 +556,7 @@ async function getOwnerFullMemberDetail({ guildId, userId, actor = "owner-dashbo
         now,
         action: "owner_view_full_member_detail",
         route: "/api/guild/:guildId/member/:userId/full-detail",
-        scope: ["rawIp", "oauthTokens"]
+        scope: ["rawIp", "oauthTokens", "ipIdentity"]
     });
     if (!audit.ok) {
         const error = new Error("audit write failed; full detail blocked");

@@ -30,6 +30,7 @@ const DEFAULT_MODELS = Object.freeze({
     memberRoles: MemberRoleSnapshot
 });
 const scanCursors = new Map();
+let cleanupInFlight = false;
 
 function snapshotKey(userId, version) {
     return `${String(userId || "")}\u0000${String(version || "")}`;
@@ -183,7 +184,7 @@ async function applyModelCleanup(Model, { cutoff, orphanCandidates, dryRun, batc
     };
 }
 
-async function cleanupSnapshotGarbage(options = {}) {
+async function performSnapshotCleanup(options = {}) {
     const now = boundedNumber(options.now, Date.now(), 0);
     const graceHours = boundedNumber(options.graceHours, CLEANUP_GRACE_HOURS, 1);
     const scanMax = boundedNumber(options.scanMax, CLEANUP_SCAN_MAX, 10, 1000);
@@ -216,9 +217,15 @@ async function cleanupSnapshotGarbage(options = {}) {
     const modelEntries = Object.entries(models);
     const incompleteBatchLimit = Math.max(1, Math.floor(scanMax / Math.max(1, modelEntries.length)));
     for (const [name, Model] of modelEntries) {
+        const currentReferences = dryRun
+            ? referenced
+            : await loadReferenceKeys(orphanCandidates, references);
+        const currentlyOrphaned = orphanCandidates.filter(candidate =>
+            !currentReferences.has(snapshotKey(candidate.userId, candidate.version))
+        );
         const result = await applyModelCleanup(Model, {
             cutoff,
-            orphanCandidates,
+            orphanCandidates: currentlyOrphaned,
             dryRun,
             batchLimit: incompleteBatchLimit
         });
@@ -227,6 +234,18 @@ async function cleanupSnapshotGarbage(options = {}) {
         summary.orphanDocuments += result.orphaned;
     }
     return summary;
+}
+
+async function cleanupSnapshotGarbage(options = {}) {
+    if (cleanupInFlight) {
+        return { skipped: true, reason: "cleanup_in_flight", mode: "permanent_history" };
+    }
+    cleanupInFlight = true;
+    try {
+        return await performSnapshotCleanup(options);
+    } finally {
+        cleanupInFlight = false;
+    }
 }
 
 module.exports = {
@@ -244,6 +263,7 @@ module.exports = {
         orphanFilter,
         scanCandidates,
         loadReferenceKeys,
+        performSnapshotCleanup,
         resetScanCursors: () => scanCursors.clear()
     }
 };

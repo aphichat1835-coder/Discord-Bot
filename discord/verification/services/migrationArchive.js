@@ -19,6 +19,8 @@ async function archiveSourceDocument(sourceId, options = {}) {
         throw error;
     }
     const hash = contentHash(source);
+    // First backup wins: sourceId intentionally excludes contentHash so a retry
+    // can never overwrite the original document with partially migrated state.
     const result = await ArchiveModel.updateOne({
         migrationVersion,
         sourceCollection: OAuthUserModel.collection?.name || "oauthusers",

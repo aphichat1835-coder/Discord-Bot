@@ -12,7 +12,7 @@ describe('sensitive data access helpers', () => {
         const access = normalizeSensitiveAccess({});
 
         expect(access.enabled).toBe(false);
-        expect(access.scope).toEqual(['rawIp', 'email', 'connections', 'guilds', 'oauthTokens']);
+        expect(access.scope).toEqual(['rawIp', 'email', 'connections', 'guilds', 'oauthTokens', 'ipIdentity']);
         expect(canViewSensitiveData({ security: {} })).toBe(false);
     });
 

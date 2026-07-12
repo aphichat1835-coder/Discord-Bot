@@ -37,7 +37,7 @@ describe("unbounded IP identity history", () => {
         const DeviceHistoryModel = {
             updateOne: jest.fn().mockResolvedValue({ upsertedCount: 1 })
         };
-        const RoleHistoryModel = { create: jest.fn().mockResolvedValue({}) };
+        const RoleHistoryModel = { updateOne: jest.fn().mockResolvedValue({ upsertedCount: 1 }) };
         const result = await history.recordIpIdentityHistory({
             guildId: "12345678901234567",
             ipHash: "hash",
@@ -53,7 +53,8 @@ describe("unbounded IP identity history", () => {
         expect(result.uniqueUsers).toBe(201);
         expect(UserHistoryModel.updateOne).toHaveBeenCalledTimes(1);
         expect(DeviceHistoryModel.updateOne).toHaveBeenCalledTimes(1);
-        expect(RoleHistoryModel.create.mock.calls[0][0].roles).toHaveLength(120);
+        expect(RoleHistoryModel.updateOne.mock.calls[0][1].$setOnInsert.roles).toHaveLength(120);
+        expect(RoleHistoryModel.updateOne.mock.calls[0][2]).toEqual({ upsert: true });
     });
 
     test("paginates canonical history without truncating the total", async () => {
@@ -169,6 +170,19 @@ describe("unbounded IP identity history", () => {
 
         expect(result).toMatchObject({ scanned: 2, migrated: 2, skipped: 0, remaining: true });
         expect(RoleHistoryModel.updateOne).toHaveBeenCalledTimes(2);
+        expect(UserHistoryModel.updateOne).toHaveBeenCalledTimes(2);
+        expect(UserHistoryModel.updateOne.mock.calls[0][1].$inc).toMatchObject({
+            verifyCount: 1,
+            successCount: 1
+        });
+        expect(UserHistoryModel.updateOne.mock.calls[1][1].$inc).toMatchObject({
+            verifyCount: 1,
+            successCount: 1
+        });
+        expect(DeviceHistoryModel.updateOne).toHaveBeenCalledTimes(2);
+        expect(DeviceHistoryModel.updateOne.mock.calls[0][1].$inc).toEqual({ count: 1 });
+        expect(IpIdentityLinkModel.updateOne.mock.calls[0][1].$inc).toEqual({ totalVerifications: 1 });
+        expect(IpIdentityLinkModel.updateOne.mock.calls[1][1].$inc).toEqual({ totalVerifications: 1 });
         expect(RoleHistoryModel.updateOne.mock.calls[0][0].eventId)
             .not.toBe(RoleHistoryModel.updateOne.mock.calls[1][0].eventId);
         expect(VerifyLogModel.updateOne).toHaveBeenCalledTimes(2);
