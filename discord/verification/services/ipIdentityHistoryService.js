@@ -265,27 +265,35 @@ async function migrateLegacyLink(link, models, now) {
     }
 }
 
+function recoveredProfile(log, identity) {
+    return {
+        id: String(log.userId || identity.userId || ""),
+        username: identity.username || null,
+        globalName: identity.globalName || null,
+        displayTag: identity.displayTag || null,
+        avatarUrl: identity.avatarUrl || null
+    };
+}
+
+function recoveredMember(member) {
+    return {
+        roles: Array.isArray(member.roles) ? member.roles : [],
+        joinedAt: member.joinedAt || null,
+        pending: member.pending === true,
+        communicationDisabledUntil: member.communicationDisabledUntil || null
+    };
+}
+
 function recoveredLogInput(log) {
     const identity = log.discordSnapshot || {};
     const member = log.memberSnapshot || {};
     return {
         guildId: String(log.guildId || ""),
         ipHash: String(log.ipInfo?.ipHash || ""),
-        profile: {
-            id: String(log.userId || identity.userId || ""),
-            username: identity.username || null,
-            globalName: identity.globalName || null,
-            displayTag: identity.displayTag || null,
-            avatarUrl: identity.avatarUrl || null
-        },
+        profile: recoveredProfile(log, identity),
         ipInfo: log.ipInfo || {},
         device: log.device || null,
-        memberInfo: {
-            roles: Array.isArray(member.roles) ? member.roles : [],
-            joinedAt: member.joinedAt || null,
-            pending: member.pending === true,
-            communicationDisabledUntil: member.communicationDisabledUntil || null
-        },
+        memberInfo: recoveredMember(member),
         roleId: log.roleId || null,
         result: log.result || "failed",
         riskSummary: { score: log.riskScore || 0, flags: log.riskFlags || [] },
