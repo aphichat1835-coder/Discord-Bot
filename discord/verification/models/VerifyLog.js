@@ -38,6 +38,8 @@ const schema = new mongoose.Schema({
     snapshotRef: mixed,
     snapshotVersion: String,
     sensitiveAccessLog: [mixed],
+    ipHistoryMigrationVersion: Number,
+    ipHistoryMigratedAt: Number,
 
     ipInfo: {
         encryptedRawIp: String,
@@ -121,6 +123,7 @@ schema.index({ riskScore: -1 });
 schema.index({ stateMode: 1 });
 schema.index({ requestId: 1 });
 schema.index({ 'trackingSnapshot.uniqueUsers': -1 });
+schema.index({ ipHistoryMigrationVersion: 1, _id: 1 });
 
 module.exports =
     mongoose.models.VerifyLog ||

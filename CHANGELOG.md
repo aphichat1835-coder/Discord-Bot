@@ -8,6 +8,9 @@
   Join Campaign now scans every eligible OAuthUser in stable bounded batches,
   and per-IP users, devices, and role events use canonical unbounded history
   collections with additive legacy-array migration and Owner UI pagination.
+- Added automatic bounded backfill from historical `VerifyLog` records into
+  canonical IP identity collections. Deterministic event IDs and per-log
+  migration markers recover available pre-migration history without duplicates.
 
 - Closed the latest unified-runtime review findings: unconfigured-guild
   overview no longer fails on a missing audit target, oversized verification

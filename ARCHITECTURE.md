@@ -191,6 +191,11 @@ The active verification models are:
 | `VerificationMigrationArchive` | deduplicated original OAuthUser documents retained for migration rollback |
 | `VerificationMigrationState` | automatic migration lock, progress, result, and failure diagnostics |
 
+Legacy embedded IP histories are copied additively into the canonical history
+collections. Historical `VerifyLog` records are also scanned in bounded,
+idempotent maintenance batches so recoverable events that predate the canonical
+collections are restored without imposing an overall history ceiling.
+
 Snapshot maintenance uses permanent-history semantics. Every version referenced
 by the current `OAuthUser.snapshotRefs` or by any `VerifyLog` (including a
 soft-deleted historical log) is preserved. Only incomplete and unreferenced

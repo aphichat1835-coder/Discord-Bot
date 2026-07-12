@@ -17,7 +17,10 @@ const {
     runAutomaticMigration,
     config: getAutomaticMigrationConfig
 } = require("./services/automaticMigration");
-const { migrateLegacyHistory } = require("./services/ipIdentityHistoryService");
+const {
+    migrateLegacyHistory,
+    migrateVerifyLogHistory
+} = require("./services/ipIdentityHistoryService");
 
 const RETENTION_CONFIG_SCAN_MAX = Math.max(
     50,
@@ -87,6 +90,7 @@ function createSummary(dryRun, now) {
         snapshotCleanup: null,
         automaticMigration: null,
         ipIdentityHistoryMigration: null,
+        ipIdentityVerifyLogMigration: null,
         errors: []
     };
 }
@@ -135,6 +139,20 @@ async function runIpIdentityHistoryMigration(dryRun, summary) {
         const error = safeError(err);
         summary.ipIdentityHistoryMigration = { failed: true, error };
         summary.errors.push({ subsystem: "ip_identity_history_migration", error });
+    }
+}
+
+async function runIpIdentityVerifyLogMigration(dryRun, summary) {
+    if (dryRun) {
+        summary.ipIdentityVerifyLogMigration = { skipped: true, reason: "dry_run" };
+        return;
+    }
+    try {
+        summary.ipIdentityVerifyLogMigration = await migrateVerifyLogHistory();
+    } catch (err) {
+        const error = safeError(err);
+        summary.ipIdentityVerifyLogMigration = { failed: true, error };
+        summary.errors.push({ subsystem: "ip_identity_verify_log_migration", error });
     }
 }
 
@@ -258,6 +276,7 @@ async function runVerificationMaintenance(options = {}) {
         summary.expiredRevealRequests = await expirePendingRevealRequests(now, dryRun);
         await runAutomaticMigrationSafe(dryRun, summary);
         await runIpIdentityHistoryMigration(dryRun, summary);
+        await runIpIdentityVerifyLogMigration(dryRun, summary);
         await runSnapshotCleanup(dryRun, summary);
         const configs = await loadRetentionConfigs(dryRun, summary);
         summary.guildsScanned = configs.length;

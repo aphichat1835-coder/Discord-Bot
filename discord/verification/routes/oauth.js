@@ -855,6 +855,10 @@ async function saveVerifyLogSafe(payload) {
         delete discordCore.member;
         let doc = {
             ...payload,
+            ...(payload.trackingSnapshot ? {
+                ipHistoryMigrationVersion: 1,
+                ipHistoryMigratedAt: Date.now()
+            } : {}),
             snapshotVersion: payload.snapshotVersion || payload.snapshotRef?.version || null,
             snapshotRef: payload.snapshotRef || null,
             discordSnapshot: {

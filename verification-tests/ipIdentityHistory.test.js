@@ -12,6 +12,15 @@ function queryResult(value) {
     return query;
 }
 
+function findQuery(value) {
+    const query = {
+        sort: jest.fn(() => query),
+        limit: jest.fn(() => query),
+        lean: jest.fn().mockResolvedValue(value)
+    };
+    return query;
+}
+
 describe("unbounded IP identity history", () => {
     test("rejects non-snowflake history lookup identifiers before database access", () => {
         expect(() => history._test.strictSnowflake("$gt", "invalid_user_id"))
@@ -122,6 +131,69 @@ describe("unbounded IP identity history", () => {
             { _id: "link-1" },
             { $set: { historyMigrationVersion: 1, historyMigratedAt: 100 } }
         );
+    });
+
+    test("recovers every eligible VerifyLog in a bounded batch and marks it after copying", async () => {
+        const logs = [1, 2].map(at => ({
+            _id: `log-${at}`,
+            guildId: "12345678901234567",
+            userId: "22345678901234567",
+            roleId: "32345678901234567",
+            result: "success",
+            verifiedAt: at,
+            ipInfo: { ipHash: "hash" },
+            device: { fingerprintHash: "fingerprint" },
+            memberSnapshot: { roles: ["role"] }
+        }));
+        const VerifyLogModel = {
+            find: jest.fn(() => findQuery(logs)),
+            updateOne: jest.fn().mockResolvedValue({ modifiedCount: 1 })
+        };
+        const IpIdentityLinkModel = { updateOne: jest.fn().mockResolvedValue({}) };
+        const UserHistoryModel = {
+            updateOne: jest.fn().mockResolvedValue({}),
+            countDocuments: jest.fn().mockResolvedValue(1)
+        };
+        const DeviceHistoryModel = { updateOne: jest.fn().mockResolvedValue({}) };
+        const RoleHistoryModel = { updateOne: jest.fn().mockResolvedValue({}) };
+
+        const result = await history.migrateVerifyLogHistory({
+            VerifyLogModel,
+            IpIdentityLinkModel,
+            UserHistoryModel,
+            DeviceHistoryModel,
+            RoleHistoryModel,
+            limit: 2,
+            now: 100
+        });
+
+        expect(result).toMatchObject({ scanned: 2, migrated: 2, skipped: 0, remaining: true });
+        expect(RoleHistoryModel.updateOne).toHaveBeenCalledTimes(2);
+        expect(RoleHistoryModel.updateOne.mock.calls[0][0].eventId)
+            .not.toBe(RoleHistoryModel.updateOne.mock.calls[1][0].eventId);
+        expect(VerifyLogModel.updateOne).toHaveBeenCalledTimes(2);
+        expect(VerifyLogModel.updateOne).toHaveBeenLastCalledWith(
+            { _id: "log-2" },
+            { $set: { ipHistoryMigrationVersion: 1, ipHistoryMigratedAt: 100 } }
+        );
+        expect(IpIdentityLinkModel.updateOne).toHaveBeenLastCalledWith(
+            { guildId: "12345678901234567", ipHash: "hash" },
+            { $set: { uniqueUsers: 1, updatedAt: 100 } }
+        );
+    });
+
+    test("uses the same deterministic role event id for embedded and VerifyLog recovery", () => {
+        const link = { guildId: "guild", ipHash: "hash" };
+        const role = { userId: "user", roleId: "role", roles: ["one"], result: "success", at: 10 };
+        expect(history._test.legacyEventId(link, role)).toBe(history._test.roleEventId({
+            guildId: "guild",
+            ipHash: "hash",
+            userId: "user",
+            roleId: "role",
+            roles: ["one"],
+            result: "success",
+            at: 10
+        }));
     });
 
     test("runtime source no longer truncates canonical IP history arrays", () => {
