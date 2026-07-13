@@ -6,7 +6,7 @@ const { createHttpApp } = require("../core/http");
 const { getFeatureFlags, isFeatureEnabled } = require("../core/featureFlags");
 const service1Logger = require("../core/safeLogger");
 const service2Logger = require("../verification/utils/safeLogger");
-const { registerShadowPortal } = require("../index/server");
+const { registerShadowPortal, buildEnvReadiness } = require("../index/server");
 
 function createFakeExpress() {
     const app = {
@@ -208,4 +208,14 @@ test("missing Shadow web hook leaves the shared runtime available", (t) => { // 
         registerShadowPortal({ setupTelemetryRouter: null, app: {}, client: {} }),
         { registered: false, reason: "hook_unavailable" }
     );
+});
+
+test("owner diagnostics report the runtime token variable", () => {
+    const readiness = buildEnvReadiness({
+        NODE_ENV: "production",
+        TOKEN_MANAGER: "configured"
+    });
+
+    assert.equal(readiness.TOKEN_MANAGER, true);
+    assert.equal(Object.hasOwn(readiness, "BOT_TOKEN"), false);
 });

@@ -39,9 +39,10 @@ register `https://DOMAIN/auth/callback` in Discord Developer Portal.
 
 ### Render
 
-Sync the single root service from `render.yaml`. Host liveness health check is
-`/ping`; use `/health` for deeper readiness diagnostics after the service is
-running.
+Sync the single root service from `render.yaml`. Render uses `/health` as the
+combined readiness check for MongoDB, Discord, voice, and verification. Use
+`/ping` separately when checking only whether the HTTP process is alive during
+startup or a degraded dependency state.
 
 ## Pre-cutover
 

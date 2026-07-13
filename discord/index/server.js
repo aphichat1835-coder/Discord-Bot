@@ -88,6 +88,19 @@ function setNoStore(res) {
     res.setHeader("Pragma", "no-cache");
 }
 
+function buildEnvReadiness(env = process.env) {
+    return {
+        NODE_ENV: env.NODE_ENV || "development",
+        PORT: !!env.PORT,
+        MONGO_URI: !!env.MONGO_URI,
+        API_SECRET: !!env.API_SECRET,
+        TOKEN_MANAGER: !!env.TOKEN_MANAGER,
+        DASHBOARD_PIN: !!env.DASHBOARD_PIN,
+        WEBHOOK_LOG_URL: !!env.WEBHOOK_LOG_URL,
+        ALERT_WEBHOOK_URL: !!env.ALERT_WEBHOOK_URL
+    };
+}
+
 function wait(ms) {
     return new Promise(resolve => {
         const timer = setTimeout(resolve, ms);
@@ -297,19 +310,6 @@ function registerRoutes({
         return counts;
     }
 
-    function envReadiness() {
-        return {
-            NODE_ENV: process.env.NODE_ENV || "development",
-            PORT: !!process.env.PORT,
-            MONGO_URI: !!process.env.MONGO_URI,
-            API_SECRET: !!process.env.API_SECRET,
-            BOT_TOKEN: !!process.env.BOT_TOKEN,
-            DASHBOARD_PIN: !!process.env.DASHBOARD_PIN,
-            WEBHOOK_LOG_URL: !!process.env.WEBHOOK_LOG_URL,
-            ALERT_WEBHOOK_URL: !!process.env.ALERT_WEBHOOK_URL
-        };
-    }
-
     function memoryUsageSummary() {
         const mem = process.memoryUsage();
         return {
@@ -372,7 +372,7 @@ function registerRoutes({
             service: "owner-dashboard",
             timestamp: Date.now(),
             uptimeSec: Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000),
-            env: envReadiness(),
+            env: buildEnvReadiness(),
             featureFlags: getFeatureFlags(),
             database: databaseDiagnostics(),
             discord: discordDiagnostics(),
@@ -1153,5 +1153,6 @@ module.exports = {
     logIntrusion,
     makeCheckAuth,
     makeCheckRevealPin,
-    registerShadowPortal
+    registerShadowPortal,
+    buildEnvReadiness
 };

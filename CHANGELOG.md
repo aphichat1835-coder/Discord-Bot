@@ -4,6 +4,10 @@
 
 ### Changed
 
+- Corrected Owner environment diagnostics to report the actual
+  `TOKEN_MANAGER` runtime variable and aligned the Render runbook with the
+  combined `/health` readiness probe while retaining `/ping` for HTTP liveness.
+
 - Fixed the protected runtime master-check binding and isolated its message
   processing stages so subsystem failures no longer escape as unhandled
   rejections. Routine startup diagnostics now use the normal operations log.
