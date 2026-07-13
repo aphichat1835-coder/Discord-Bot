@@ -343,7 +343,7 @@ class WebhookDispatcher {
     async shutdown(timeoutMs = 5000) {
         this.accepting = false;
         const flushed = await this.flush(timeoutMs);
-        for (const url of [...this.clients.keys()]) this.discardClient(url);
+        for (const url of this.clients.keys()) this.discardClient(url);
         return flushed;
     }
 

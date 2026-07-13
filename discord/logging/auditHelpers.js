@@ -80,37 +80,51 @@ function isEntryFresh(entry, maxAgeMs) {
     return created > 0 && Date.now() - created <= maxAgeMs;
 }
 
-async function fetchAuditEntry(guild, actionType, targetId, options = {}) {
-    if (!guild?.fetchAuditLogs) return null;
-
-    const maxAgeMs = Math.max(1000, Number(options.maxAgeMs || DEFAULT_AUDIT_MAX_AGE_MS) || DEFAULT_AUDIT_MAX_AGE_MS);
-    const delayMs = options.delayMs === undefined ? DEFAULT_AUDIT_DELAY_MS : Number(options.delayMs) || 0;
-    const limit = Math.max(1, Math.min(10, Number(options.limit || 6) || 6));
-    const channelId = normalizeId(options.channelId);
-    const normalizedTargetId = normalizeId(targetId);
-    const allowedActions = new Set((options.allowedActionTypes || [])
+function normalizeAllowedActions(values = []) {
+    return new Set(values
         .map(value => String(value || "").trim().toUpperCase())
         .filter(Boolean));
-    const actionCachePart = actionType || (allowedActions.size ? [...allowedActions].sort().join(",") : null);
-    const cacheKey = auditCacheKey(guild.id, actionCachePart, normalizedTargetId, channelId);
+}
+
+function buildAuditLookup(actionType, targetId, options) {
+    const allowedActions = normalizeAllowedActions(options.allowedActionTypes || []);
+    return {
+        maxAgeMs: Math.max(1000, Number(options.maxAgeMs || DEFAULT_AUDIT_MAX_AGE_MS) || DEFAULT_AUDIT_MAX_AGE_MS),
+        delayMs: options.delayMs === undefined ? DEFAULT_AUDIT_DELAY_MS : Number(options.delayMs) || 0,
+        limit: Math.max(1, Math.min(10, Number(options.limit || 6) || 6)),
+        channelId: normalizeId(options.channelId),
+        targetId: normalizeId(targetId),
+        allowedActions,
+        actionCachePart: actionType || (allowedActions.size ? Array.from(allowedActions).sort().join(",") : null)
+    };
+}
+
+function auditEntryMatches(entry, lookup, entryFilter) {
+    if (!isEntryFresh(entry, lookup.maxAgeMs)) return false;
+    if (lookup.allowedActions.size && !lookup.allowedActions.has(entryActionName(entry))) return false;
+    if (typeof entryFilter === "function" && !entryFilter(entry)) return false;
+    const targetMatches = !lookup.targetId || entryTargetId(entry) === lookup.targetId;
+    const channelMatches = !lookup.channelId ||
+        entryChannelId(entry) === lookup.channelId ||
+        entryTargetId(entry) === lookup.channelId;
+    return targetMatches && channelMatches;
+}
+
+async function fetchAuditEntry(guild, actionType, targetId, options = {}) {
+    if (!guild?.fetchAuditLogs) return null;
+    const lookup = buildAuditLookup(actionType, targetId, options);
+    const cacheKey = auditCacheKey(guild.id, lookup.actionCachePart, lookup.targetId, lookup.channelId);
 
     const cached = options.bypassCache ? null : auditCache.get(cacheKey);
-    if (cached && Date.now() - cached.cachedAt <= maxAgeMs) return cached.entry;
+    if (cached && Date.now() - cached.cachedAt <= lookup.maxAgeMs) return cached.entry;
 
-    if (delayMs > 0) await wait(delayMs);
+    if (lookup.delayMs > 0) await wait(lookup.delayMs);
 
     try {
-        const fetchOptions = actionType ? { type: actionType, limit } : { limit };
+        const fetchOptions = actionType ? { type: actionType, limit: lookup.limit } : { limit: lookup.limit };
         const logs = await guild.fetchAuditLogs(fetchOptions);
         const entries = Array.from(logs?.entries?.values?.() || []);
-        const matched = entries.find(entry => {
-            if (!isEntryFresh(entry, maxAgeMs)) return false;
-            if (allowedActions.size && !allowedActions.has(entryActionName(entry))) return false;
-            if (typeof options.entryFilter === "function" && !options.entryFilter(entry)) return false;
-            const targetMatches = !normalizedTargetId || entryTargetId(entry) === normalizedTargetId;
-            const channelMatches = !channelId || entryChannelId(entry) === channelId || entryTargetId(entry) === channelId;
-            return targetMatches && channelMatches;
-        }) || null;
+        const matched = entries.find(entry => auditEntryMatches(entry, lookup, options.entryFilter)) || null;
 
         if (matched && !options.bypassCache) auditCache.set(cacheKey, { entry: matched, cachedAt: Date.now() });
         return matched;
@@ -296,6 +310,9 @@ module.exports = {
     LruCache,
     fetchAuditEntry,
     entryActionName,
+    normalizeAllowedActions,
+    buildAuditLookup,
+    auditEntryMatches,
     auditCache,
     permissionsToArray,
     diffPermissionArrays,
