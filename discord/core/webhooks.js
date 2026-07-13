@@ -365,7 +365,7 @@ class WebhookDispatcher {
             active: this.active,
             maxDepth: this.maxDepth,
             concurrency: this.concurrency,
-            targets: JSON.parse(JSON.stringify(this.metrics))
+            targets: structuredClone(this.metrics)
         };
     }
 }

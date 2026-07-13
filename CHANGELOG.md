@@ -9,7 +9,9 @@
   raw telemetry endpoint, and omit fake placeholder links when no valid public
   URL exists. The Shadow link is emitted only after its router mounts
   successfully. Repeated token-owner mismatch warnings now use the bounded
-  shared webhook dedupe path.
+  shared webhook dedupe path. Webhook diagnostics use the native structured
+  clone operation, and Sonar's unsupported `node:test` assertion warning is
+  scoped out without disabling other analysis rules.
 
 - Hardened webhook reliability across the unified runtime with validated
   Discord-only HTTPS targets, mention-safe and size-bounded payloads, a shared
