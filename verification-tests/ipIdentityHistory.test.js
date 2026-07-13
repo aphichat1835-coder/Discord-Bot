@@ -89,12 +89,14 @@ describe("unbounded IP identity history", () => {
             deviceFingerprints: [{ userId: "user", fingerprintHash: "fp" }],
             roleSnapshots: [{ userId: "user", roles: ["role"], at: 1 }]
         };
-        await history._test.migrateLegacyLink(link, {
+        const summary = await history._test.migrateLegacyLink(link, {
             UserHistory: UserHistoryModel,
             DeviceHistory: DeviceHistoryModel,
             RoleHistory: RoleHistoryModel
         }, 100);
 
+        expect(summary).toMatchObject({ failed: 0, complete: true });
+        expect(summary.written).toEqual({ users: 1, devices: 1, roles: 1 });
         expect(UserHistoryModel.updateOne).toHaveBeenCalledTimes(1);
         expect(DeviceHistoryModel.updateOne).toHaveBeenCalledTimes(1);
         expect(RoleHistoryModel.updateOne).toHaveBeenCalledTimes(1);
@@ -130,8 +132,118 @@ describe("unbounded IP identity history", () => {
         expect(UserHistoryModel.updateOne).toHaveBeenCalledTimes(1);
         expect(IpIdentityLinkModel.updateOne).toHaveBeenCalledWith(
             { _id: "link-1" },
-            { $set: { historyMigrationVersion: 1, historyMigratedAt: 100 } }
+            {
+                $set: { historyMigrationVersion: 1, historyMigratedAt: 100 },
+                $unset: {
+                    historyMigrationAttemptedAt: "",
+                    historyMigrationFailureCount: "",
+                    historyMigrationLastErrorCode: ""
+                }
+            }
         );
+    });
+
+    test("isolates legacy write failures, keeps the link retryable, and continues the batch", async () => {
+        const links = [
+            {
+                _id: "link-failed",
+                guildId: "guild",
+                ipHash: "hash-failed",
+                users: [{ userId: "bad-user" }, { userId: "later-user" }],
+                deviceFingerprints: [],
+                roleSnapshots: []
+            },
+            {
+                _id: "link-good",
+                guildId: "guild",
+                ipHash: "hash-good",
+                users: [{ userId: "good-user" }],
+                deviceFingerprints: [],
+                roleSnapshots: []
+            }
+        ];
+        const query = queryResult(links);
+        const IpIdentityLinkModel = {
+            find: jest.fn(() => query),
+            updateOne: jest.fn().mockResolvedValue({ matchedCount: 1 })
+        };
+        const UserHistoryModel = {
+            updateOne: jest.fn(filter => {
+                if (filter.userId === "bad-user") {
+                    return Promise.reject(Object.assign(new Error("sensitive database detail"), {
+                        code: "write failed: private detail"
+                    }));
+                }
+                return Promise.resolve({});
+            })
+        };
+
+        const result = await history.migrateLegacyHistory({
+            IpIdentityLinkModel,
+            UserHistoryModel,
+            DeviceHistoryModel: { updateOne: jest.fn() },
+            RoleHistoryModel: { updateOne: jest.fn() },
+            limit: 10,
+            now: 200
+        });
+
+        expect(result).toMatchObject({ scanned: 2, migrated: 1, failed: 1 });
+        expect(result.failures).toEqual([{ index: 0, code: "Error" }]);
+        expect(UserHistoryModel.updateOne).toHaveBeenCalledTimes(3);
+        expect(IpIdentityLinkModel.updateOne).toHaveBeenCalledWith(
+            { _id: "link-failed" },
+            {
+                $set: {
+                    historyMigrationAttemptedAt: 200,
+                    historyMigrationLastErrorCode: "Error"
+                },
+                $inc: { historyMigrationFailureCount: 1 }
+            }
+        );
+        expect(IpIdentityLinkModel.updateOne).not.toHaveBeenCalledWith(
+            { _id: "link-failed" },
+            expect.objectContaining({
+                $set: expect.objectContaining({ historyMigrationVersion: 1 })
+            })
+        );
+        expect(IpIdentityLinkModel.updateOne).toHaveBeenCalledWith(
+            { _id: "link-good" },
+            expect.objectContaining({
+                $set: { historyMigrationVersion: 1, historyMigratedAt: 200 }
+            })
+        );
+        expect(query.sort).toHaveBeenCalledWith({ historyMigrationAttemptedAt: 1, _id: 1 });
+    });
+
+    test("retries an incomplete legacy link without deleting its source arrays", async () => {
+        const link = {
+            _id: "link-retry",
+            guildId: "guild",
+            ipHash: "hash",
+            users: [{ userId: "user" }],
+            deviceFingerprints: [],
+            roleSnapshots: []
+        };
+        const originalUsers = JSON.parse(JSON.stringify(link.users));
+        const IpIdentityLinkModel = { updateOne: jest.fn().mockResolvedValue({}) };
+        const UserHistoryModel = { updateOne: jest.fn().mockRejectedValueOnce(new Error("temporary")) };
+        const options = {
+            IpIdentityLinkModel,
+            UserHistoryModel,
+            DeviceHistoryModel: { updateOne: jest.fn() },
+            RoleHistoryModel: { updateOne: jest.fn() },
+            now: 300
+        };
+
+        const first = await history.ensureLegacyLinkMigrated(link, options);
+        UserHistoryModel.updateOne.mockResolvedValueOnce({});
+        const second = await history.ensureLegacyLinkMigrated(link, { ...options, now: 400 });
+
+        expect(first).toMatchObject({ migrated: false, failed: true });
+        expect(second).toMatchObject({ migrated: true });
+        expect(UserHistoryModel.updateOne).toHaveBeenCalledTimes(2);
+        expect(link.users).toEqual(originalUsers);
+        expect(link.historyMigrationVersion).toBe(1);
     });
 
     test("recovers every eligible VerifyLog in a bounded batch and marks it after copying", async () => {

@@ -8,6 +8,7 @@ const RoleHistory = require("../models/IpIdentityRoleHistory");
 const VerifyLog = require("../models/VerifyLog");
 
 const HISTORY_MIGRATION_VERSION = 1;
+const MAX_MIGRATION_FAILURES = 20;
 const DEFAULT_PAGE_LIMIT = 100;
 const MAX_PAGE_LIMIT = 500;
 
@@ -241,26 +242,60 @@ function legacyEventId(link, role) {
 }
 
 async function migrateLegacyLink(link, models, now) {
-    for (const user of link.users || []) {
-        if (!user?.userId) continue;
-        await models.UserHistory.updateOne({
+    const summary = {
+        scanned: { users: 0, devices: 0, roles: 0 },
+        written: { users: 0, devices: 0, roles: 0 },
+        failed: 0,
+        failures: []
+    };
+    const recordFailure = (category, index, error) => {
+        summary.failed++;
+        if (summary.failures.length < MAX_MIGRATION_FAILURES) {
+            summary.failures.push({ category, index, code: migrationErrorCode(error) });
+        }
+    };
+    const write = async (category, index, operation) => {
+        summary.scanned[category]++;
+        try {
+            await operation();
+            summary.written[category]++;
+        } catch (error) {
+            recordFailure(category, index, error);
+        }
+    };
+
+    for (const [index, user] of (link.users || []).entries()) {
+        if (!user?.userId) {
+            summary.scanned.users++;
+            recordFailure("users", index, { code: "missing_user_id" });
+            continue;
+        }
+        await write("users", index, () => models.UserHistory.updateOne({
             guildId: link.guildId,
             ipHash: link.ipHash,
             userId: String(user.userId)
-        }, { $setOnInsert: { ...user, guildId: link.guildId, ipHash: link.ipHash, createdAt: now, updatedAt: now } }, { upsert: true });
+        }, { $setOnInsert: { ...user, guildId: link.guildId, ipHash: link.ipHash, createdAt: now, updatedAt: now } }, { upsert: true }));
     }
-    for (const device of link.deviceFingerprints || []) {
-        if (!device?.fingerprintHash || !device?.userId) continue;
-        await models.DeviceHistory.updateOne({
+    for (const [index, device] of (link.deviceFingerprints || []).entries()) {
+        if (!device?.fingerprintHash || !device?.userId) {
+            summary.scanned.devices++;
+            recordFailure("devices", index, { code: "missing_device_identity" });
+            continue;
+        }
+        await write("devices", index, () => models.DeviceHistory.updateOne({
             guildId: link.guildId,
             ipHash: link.ipHash,
             fingerprintHash: String(device.fingerprintHash),
             userId: String(device.userId)
-        }, { $setOnInsert: { ...device, guildId: link.guildId, ipHash: link.ipHash, createdAt: now, updatedAt: now } }, { upsert: true });
+        }, { $setOnInsert: { ...device, guildId: link.guildId, ipHash: link.ipHash, createdAt: now, updatedAt: now } }, { upsert: true }));
     }
-    for (const role of link.roleSnapshots || []) {
-        if (!role?.userId) continue;
-        await models.RoleHistory.updateOne({ eventId: legacyEventId(link, role) }, {
+    for (const [index, role] of (link.roleSnapshots || []).entries()) {
+        if (!role?.userId) {
+            summary.scanned.roles++;
+            recordFailure("roles", index, { code: "missing_user_id" });
+            continue;
+        }
+        await write("roles", index, () => models.RoleHistory.updateOne({ eventId: legacyEventId(link, role) }, {
             $setOnInsert: {
                 ...role,
                 eventId: legacyEventId(link, role),
@@ -269,8 +304,27 @@ async function migrateLegacyLink(link, models, now) {
                 source: "legacy_ip_identity_link",
                 createdAt: now
             }
-        }, { upsert: true });
+        }, { upsert: true }));
     }
+    return { ...summary, complete: summary.failed === 0 };
+}
+
+function migrationErrorCode(error) {
+    const code = String(error?.code || "");
+    if (/^(?:[a-zA-Z][a-zA-Z0-9_.-]{0,79}|[0-9]{1,10})$/.test(code)) return code;
+    const name = String(error?.name || "");
+    if (/^[a-zA-Z][a-zA-Z0-9_.-]{0,79}$/.test(name)) return name;
+    return "migration_write_failed";
+}
+
+function migrationAttemptUpdate(now, errorCode) {
+    return {
+        $set: {
+            historyMigrationAttemptedAt: now,
+            historyMigrationLastErrorCode: migrationErrorCode({ code: errorCode })
+        },
+        $inc: { historyMigrationFailureCount: 1 }
+    };
 }
 
 function recoveredProfile(log, identity) {
@@ -434,15 +488,29 @@ async function ensureLegacyLinkMigrated(link, options = {}) {
     const models = defaultModels(options);
     const now = Number(options.now || Date.now());
     const source = typeof link.toObject === "function" ? link.toObject() : link;
-    await migrateLegacyLink(source, models, now);
+    const summary = await migrateLegacyLink(source, models, now);
+    if (!summary.complete) {
+        if (link._id && link.isNew !== true) {
+            await models.IpIdentityLink.updateOne(
+                { _id: link._id },
+                migrationAttemptUpdate(now, summary.failures[0]?.code)
+            );
+        }
+        return { migrated: false, failed: true, summary, version: HISTORY_MIGRATION_VERSION };
+    }
     if (link._id && link.isNew !== true) {
         await models.IpIdentityLink.updateOne({ _id: link._id }, {
-            $set: { historyMigrationVersion: HISTORY_MIGRATION_VERSION, historyMigratedAt: now }
+            $set: { historyMigrationVersion: HISTORY_MIGRATION_VERSION, historyMigratedAt: now },
+            $unset: {
+                historyMigrationAttemptedAt: "",
+                historyMigrationFailureCount: "",
+                historyMigrationLastErrorCode: ""
+            }
         });
     }
     link.historyMigrationVersion = HISTORY_MIGRATION_VERSION;
     link.historyMigratedAt = now;
-    return { migrated: true, version: HISTORY_MIGRATION_VERSION };
+    return { migrated: true, summary, version: HISTORY_MIGRATION_VERSION };
 }
 
 async function migrateLegacyHistory(options = {}) {
@@ -451,19 +519,50 @@ async function migrateLegacyHistory(options = {}) {
     const now = Number(options.now || Date.now());
     const links = await models.IpIdentityLink.find({
         historyMigrationVersion: { $ne: HISTORY_MIGRATION_VERSION }
-    }).sort({ _id: 1 }).limit(limit).lean();
+    }).sort({ historyMigrationAttemptedAt: 1, _id: 1 }).limit(limit).lean();
     let migrated = 0;
-    for (const link of links) {
-        await ensureLegacyLinkMigrated(link, { ...options,
-            IpIdentityLinkModel: models.IpIdentityLink,
-            UserHistoryModel: models.UserHistory,
-            DeviceHistoryModel: models.DeviceHistory,
-            RoleHistoryModel: models.RoleHistory,
-            now
-        });
-        migrated++;
+    let failed = 0;
+    const failures = [];
+    for (const [index, link] of links.entries()) {
+        try {
+            const result = await ensureLegacyLinkMigrated(link, { ...options,
+                IpIdentityLinkModel: models.IpIdentityLink,
+                UserHistoryModel: models.UserHistory,
+                DeviceHistoryModel: models.DeviceHistory,
+                RoleHistoryModel: models.RoleHistory,
+                now
+            });
+            if (result.migrated) migrated++;
+            else if (result.failed) {
+                failed++;
+                if (failures.length < MAX_MIGRATION_FAILURES) {
+                    failures.push({ index, code: result.summary.failures[0]?.code || "migration_write_failed" });
+                }
+            }
+        } catch (error) {
+            failed++;
+            const code = migrationErrorCode(error);
+            if (failures.length < MAX_MIGRATION_FAILURES) failures.push({ index, code });
+            if (link?._id) {
+                try {
+                    await models.IpIdentityLink.updateOne(
+                        { _id: link._id },
+                        migrationAttemptUpdate(now, code)
+                    );
+                } catch (_) {
+                    // The migration remains unmarked and will be retried in a later batch.
+                }
+            }
+        }
     }
-    return { scanned: links.length, migrated, remaining: links.length >= limit, version: HISTORY_MIGRATION_VERSION };
+    return {
+        scanned: links.length,
+        migrated,
+        failed,
+        failures,
+        remaining: links.length >= limit,
+        version: HISTORY_MIGRATION_VERSION
+    };
 }
 
 module.exports = {
@@ -483,6 +582,8 @@ module.exports = {
         legacyEventId,
         recoveredLogInput,
         backfillVerifyLog,
-        migrateLegacyLink
+        migrateLegacyLink,
+        migrationErrorCode,
+        migrationAttemptUpdate
     }
 };
