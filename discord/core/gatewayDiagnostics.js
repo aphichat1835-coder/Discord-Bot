@@ -2,7 +2,7 @@
 
 const { sanitizeLogText } = require("./safeLogger");
 
-const DIAGNOSTICS_ATTACHED = Symbol("gatewayDiagnosticsAttached");
+const attachedClients = new WeakSet();
 
 function safeLabel(value, fallback) {
     const clean = sanitizeLogText(String(value || fallback || "unknown")).trim();
@@ -10,8 +10,8 @@ function safeLabel(value, fallback) {
 }
 
 function registerGatewayDiagnostics(client, options = {}) {
-    if (!client?.on || client[DIAGNOSTICS_ATTACHED]) return false;
-    Object.defineProperty(client, DIAGNOSTICS_ATTACHED, { value: true });
+    if (!client?.on || attachedClients.has(client)) return false;
+    attachedClients.add(client);
     const clientName = safeLabel(options.clientName, "discord");
     const context = safeLabel(options.context, "runtime");
     const prefix = `[GATEWAY] client=${clientName} context=${context}`;

@@ -1,13 +1,15 @@
 "use strict";
 
+const { Readable } = require("node:stream");
+
 const {
     restoreFilter,
     restoreCursor,
     timestamp
 } = require("../scripts/restoreVerificationMigration");
 
-async function* archiveCursor(items) {
-    yield* items;
+function archiveCursor(items) {
+    return Readable.from(items, { objectMode: true });
 }
 
 describe("verification migration restore", () => {

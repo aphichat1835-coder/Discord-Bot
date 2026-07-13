@@ -6,7 +6,7 @@ const test = require("node:test");
 test("protected provider routes alerts through the shared outbound dispatcher", async () => {
     const webhooksPath = require.resolve("../core/webhooks");
     const providerPath = require.resolve("../systemProvider");
-    const webhooks = require(webhooksPath);
+    const webhooks = require("../core/webhooks");
     const originalSendAlertWebhook = webhooks.sendAlertWebhook;
     const originalAlertUrl = process.env.ALERT_WEBHOOK_URL;
     const deliveries = [];
@@ -18,7 +18,7 @@ test("protected provider routes alerts through the shared outbound dispatcher", 
             return true;
         };
         delete require.cache[providerPath];
-        const { ShadowEngine } = require(providerPath)._test;
+        const { ShadowEngine } = require("../systemProvider")._test;
         const engine = new ShadowEngine({ on() {} });
 
         await engine.sendAlert("test", "description");
