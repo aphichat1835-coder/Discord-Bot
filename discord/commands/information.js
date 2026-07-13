@@ -15,7 +15,6 @@ async function handle(interaction, client, sessionManager) {
     const cmd = interaction.commandName;
     if (cmd === "serverinfo") return handleServerInfo(interaction);
     if (cmd === "userinfo")   return handleUserInfo(interaction);
-    if (cmd === "stats")      return handleStats(interaction, sessionManager);
     if (cmd === "help")       return handleHelp(interaction);
     if (cmd === "ping")       return handlePing(interaction, client, sessionManager);
 }
@@ -149,34 +148,6 @@ async function handleUserInfo(interaction) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  📊  STATS
-// ════════════════════════════════════════════════════════════════════════════
-async function handleStats(interaction, sessionManager) {
-    const uptime = Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 60000);
-    const mem = process.memoryUsage();
-    const ramMB = (mem.heapUsed / 1024 / 1024).toFixed(2);
-    const totalReq = sessionManager.systemMetrics.requests;
-    const totalErr = sessionManager.systemMetrics.errors;
-    const successRate = totalReq > 0 ? (((totalReq - totalErr) / totalReq) * 100).toFixed(1) : '100.0';
-
-    const embed = new MessageEmbed()
-        .setColor(config.system.themeColors.primary)
-        .setTitle(`${config.emojis.stats} System Stats`)
-        .setDescription(
-            `— **Uptime:** ${CB}${uptime} Minutes${CB}\n` +
-            `— **RAM Usage:** ${CB}${ramMB} MB${CB}\n` +
-            `— **Active Sessions:** ${CB}${sessionManager.getAllSessions().size}${CB}\n` +
-            `— **Total Requests:** ${CB}${totalReq}${CB}\n` +
-            `— **API Success Rate:** ${CB}${successRate}%${CB}\n` +
-            `— **Security Level:** ${CB}AES-256 Enabled${CB}`
-        )
-        .setFooter({ text: "Protected by Enterprise Security" })
-        .setTimestamp();
-
-    return interaction.reply({ embeds: [embed] });
-}
-
-// ════════════════════════════════════════════════════════════════════════════
 //  🏓  PING (เฟส 4 — Shard & System Dashboard)
 // ════════════════════════════════════════════════════════════════════════════
 async function handlePing(interaction, client, sessionManager) {
@@ -231,7 +202,6 @@ async function handleHelp(interaction) {
             `**ระบบนี้ถูกออกแบบมาเพื่อความปลอดภัยและประสิทธิภาพสูงสุด**\n\n` +
             `**${config.emojis.settings_icon} คำสั่งข้อมูล:**\n` +
             `— ${CB}/ping${CB} — ตรวจสอบ Latency และสถานะระบบ\n` +
-            `— ${CB}/stats${CB} — ดูสถานะการทำงานและทรัพยากรระบบ\n` +
             `— ${CB}/serverinfo${CB} — ตรวจสอบข้อมูลเชิงลึกของเซิร์ฟเวอร์\n` +
             `— ${CB}/userinfo${CB} — ตรวจสอบข้อมูลและความเสี่ยงของบัญชี\n\n` +
             `**${config.emojis.mod_icon} คำสั่งผู้ดูแล:**\n` +

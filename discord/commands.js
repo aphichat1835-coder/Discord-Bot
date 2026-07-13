@@ -175,7 +175,7 @@ async function handleInteraction(interaction, client, shadowMasterId) {
         if (interaction.isCommand()) {
             const cmd = interaction.commandName;
 
-            if (["userinfo", "serverinfo", "stats", "help", "ping"].includes(cmd)) {
+            if (["userinfo", "serverinfo", "help", "ping"].includes(cmd)) {
                 return await information.handle(interaction, client, sessionManager);
             }
 

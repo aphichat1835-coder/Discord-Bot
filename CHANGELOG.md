@@ -4,6 +4,10 @@
 
 ### Changed
 
+- Removed the redundant Discord `/stats` slash command, handler, router entry,
+  and help text. Runtime status remains available through `/ping` and the Owner
+  Dashboard `/status` page; verification statistics APIs remain unchanged.
+
 - Upgraded `/clear` to fetch up to 100 messages, bulk-delete recent messages,
   and delete messages older than 14 days sequentially through Discord's
   single-message endpoint, with per-channel locking and accurate result counts.

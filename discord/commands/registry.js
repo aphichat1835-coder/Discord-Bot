@@ -55,7 +55,6 @@ function validateSlashCommandsData(commands) {
 const slashCommandsData = [
     { name: "voice-online", description: "เรียกแผงควบคุมระบบออนช่องเสียง" },
     { name: "help",       description: "แสดงคู่มือการใช้งานระบบ Enterprise" },
-    { name: "stats",      description: "ดูสถิติการทำงานของระบบ" },
     { name: "serverinfo", description: "แสดงข้อมูลรายละเอียดของเซิร์ฟเวอร์แบบเจาะลึก" },
     { name: "setup-log",  description: "ติดตั้งระบบ Audit Log (ยศ/หมวดหมู่/ห้อง Log)" },
     { name: "ping",       description: "ตรวจสอบ Latency และสถานะระบบ" },
