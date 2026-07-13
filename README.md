@@ -112,11 +112,12 @@ cp .env.example .env
 npm start
 ```
 
-Required production values include `MONGO_URI`, `TOKEN_MANAGER`,
-`DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `ENCRYPTION_KEY`, `API_SECRET`,
-`VERIFY_STATE_SECRET`, `DASHBOARD_PIN`, and one public HTTPS base URL. Keep
-`PUBLIC_BASE_URL`, `DASHBOARD_URL`, `PUBLIC_DASHBOARD_URL`, and
-`DASHBOARD_PUBLIC_URL` equal while legacy aliases remain supported.
+Production has exactly 13 owner-maintained environment values: `NODE_ENV`,
+`MONGO_URI`, `TOKEN_MANAGER`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`,
+`ENCRYPTION_KEY`, `API_SECRET`, `VERIFY_STATE_SECRET`, `DASHBOARD_PIN`,
+`PUBLIC_BASE_URL`, `WEBHOOK_LOG_URL`, `ALERT_WEBHOOK_URL`, and `TRUST_PROXY`.
+All other runtime controls have code defaults. Legacy public-URL aliases remain
+read-compatible but do not need to be configured.
 
 Discord Developer Portal redirect URI:
 
@@ -131,8 +132,8 @@ Custom command: npm install && npm start
 Internal port:   PORT (or 3000)
 ```
 
-`render.yaml` describes one root Web Service with `npm start` and `/ping`
-as the host liveness check. Use `/health` for deeper readiness diagnostics.
+`render.yaml` describes one root Web Service with `npm start` and `/health`
+as the combined readiness check. `/ping` remains the lightweight liveness path.
 
 After deploy, run the single-port smoke helper from a trusted machine:
 

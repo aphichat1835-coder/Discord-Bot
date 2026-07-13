@@ -99,6 +99,9 @@ describe("single-process verification runtime contract", () => {
         expect(render).toContain("startCommand: npm start");
         expect(render).toContain("healthCheckPath: /health");
         expect(render).not.toContain("rootDir: dashboard-public");
+        expect((render.match(/^\s*- key: [A-Z][A-Z0-9_]*$/gm) || [])).toHaveLength(13);
+        expect(render).not.toContain("DASHBOARD_PUBLIC_URL");
+        expect(render).not.toContain("TRUST_PROXY_HOPS");
     });
 
     test("single-port smoke helper checks public liveness and owner boundary", () => {
@@ -185,7 +188,26 @@ describe("single-process verification runtime contract", () => {
         const envExample = readEnvExample();
         const security = readSecurityDoc();
 
-        expect(envExample).toContain("Required in production for signed verification state.");
+        const expectedKeys = [
+            "NODE_ENV",
+            "MONGO_URI",
+            "TOKEN_MANAGER",
+            "DISCORD_CLIENT_ID",
+            "DISCORD_CLIENT_SECRET",
+            "ENCRYPTION_KEY",
+            "API_SECRET",
+            "VERIFY_STATE_SECRET",
+            "DASHBOARD_PIN",
+            "PUBLIC_BASE_URL",
+            "WEBHOOK_LOG_URL",
+            "ALERT_WEBHOOK_URL",
+            "TRUST_PROXY"
+        ];
+        const configuredKeys = envExample
+            .split(/\r?\n/)
+            .filter(line => /^[A-Z][A-Z0-9_]*=/.test(line))
+            .map(line => line.slice(0, line.indexOf("=")));
+        expect(configuredKeys).toEqual(expectedKeys);
         for (const name of [
             "DASHBOARD_PIN",
             "API_SECRET",
@@ -196,7 +218,8 @@ describe("single-process verification runtime contract", () => {
         ]) {
             expect(security).toContain(name);
         }
-        expect(security).toContain("public HTTPS base URL");
+        expect(security).toContain("13 owner-maintained");
+        expect(security).toMatch(/public HTTPS\s+base URL/);
     });
 
     test("normal runtime has one listener and verification does not reconnect Mongoose", () => {

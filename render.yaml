@@ -2,7 +2,8 @@
 #
 # This blueprint defines the single Render Web Service used by this project.
 # It intentionally does NOT store secret environment values in the repo.
-# Add all required environment variables manually in Render Dashboard using .env.example as the reference.
+# The runtime has exactly 13 owner-maintained environment values, matching .env.example.
+# All advanced runtime controls use code defaults unless intentionally overridden.
 #
 # IMPORTANT:
 # - Confirm these service names match your existing Render services before syncing.
@@ -29,8 +30,6 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      - key: NODE_VERSION
-        value: "24"
       - key: MONGO_URI
         sync: false
       - key: TOKEN_MANAGER
@@ -41,35 +40,17 @@ services:
         sync: false
       - key: API_SECRET
         sync: false
-      - key: INTERNAL_API_SECRET
-        sync: false
       - key: VERIFY_STATE_SECRET
         sync: false
       - key: ENCRYPTION_KEY
         sync: false
       - key: DASHBOARD_PIN
         sync: false
-      - key: DASHBOARD_URL
-        sync: false
-      - key: PUBLIC_DASHBOARD_URL
-        sync: false
       - key: PUBLIC_BASE_URL
-        sync: false
-      - key: DASHBOARD_PUBLIC_URL
         sync: false
       - key: WEBHOOK_LOG_URL
         sync: false
       - key: ALERT_WEBHOOK_URL
         sync: false
-      - key: SHADOW_MASTER_ID
-        sync: false
       - key: TRUST_PROXY
         value: "true"
-      - key: TRUST_PROXY_HOPS
-        value: "1"
-      - key: VOICE_DEBUG_MULTI_CLIENT
-        value: "false"
-      - key: STORE_OAUTH_TOKENS
-        value: "true"
-      - key: ENABLE_CF_IP_HEADER
-        value: "false"

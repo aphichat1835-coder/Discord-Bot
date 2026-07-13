@@ -4,6 +4,11 @@
 
 ### Changed
 
+- Reduced the supported production deployment contract to exactly 13
+  owner-maintained environment values. Render and `.env.example` now expose
+  only that canonical set, while advanced voice, verification, migration,
+  audit, cache, timeout, retention, and memory controls use code defaults.
+
 - Removed the retired `/say` whitelist subsystem from slash commands, the
   Owner Dashboard, APIs, runtime state, diagnostics, and Mongoose registration.
   `/say` is now Administrator-only; the legacy MongoDB collection is left

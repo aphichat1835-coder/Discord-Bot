@@ -16,6 +16,22 @@ const WEAK_SECRET_VALUES = new Set([
     "enterprise-secret-key"
 ]);
 
+const OWNER_MAINTAINED_PRODUCTION_ENV = Object.freeze([
+    "NODE_ENV",
+    "MONGO_URI",
+    "TOKEN_MANAGER",
+    "DISCORD_CLIENT_ID",
+    "DISCORD_CLIENT_SECRET",
+    "ENCRYPTION_KEY",
+    "API_SECRET",
+    "VERIFY_STATE_SECRET",
+    "DASHBOARD_PIN",
+    "PUBLIC_BASE_URL",
+    "WEBHOOK_LOG_URL",
+    "ALERT_WEBHOOK_URL",
+    "TRUST_PROXY"
+]);
+
 function isProduction(env = process.env) {
     return String(env.NODE_ENV || "").trim().toLowerCase() === "production";
 }
@@ -61,6 +77,9 @@ function validateRequiredEnv(env = process.env, config = {}) {
     const discordClientId = normalizedEnvValue(env, "DISCORD_CLIENT_ID");
     const verifyStateSecret = normalizedEnvValue(env, "VERIFY_STATE_SECRET");
     const discordClientSecret = normalizedEnvValue(env, "DISCORD_CLIENT_SECRET");
+    const webhookLogUrl = normalizedEnvValue(env, "WEBHOOK_LOG_URL");
+    const alertWebhookUrl = normalizedEnvValue(env, "ALERT_WEBHOOK_URL");
+    const trustProxy = normalizedEnvValue(env, "TRUST_PROXY");
     const runtimePublicUrl = resolvePublicBaseUrl(env);
     const shadowMasterId = normalizedEnvValue(env, "SHADOW_MASTER_ID");
 
@@ -98,6 +117,14 @@ function validateRequiredEnv(env = process.env, config = {}) {
         assertStrongSecret("ENCRYPTION_KEY", encryptionKey, { minLength: 32 });
         assertStrongSecret("DISCORD_CLIENT_SECRET", discordClientSecret, { minLength: 16 });
         assertStrongSecret("DASHBOARD_PIN", dashboardPin, { minLength: 6 });
+        assertRequiredProductionValue("WEBHOOK_LOG_URL", webhookLogUrl);
+        assertRequiredProductionValue("ALERT_WEBHOOK_URL", alertWebhookUrl);
+        assertHttpsUrl("WEBHOOK_LOG_URL", webhookLogUrl);
+        assertHttpsUrl("ALERT_WEBHOOK_URL", alertWebhookUrl);
+        if (trustProxy.toLowerCase() !== "true") {
+            console.error("[FATAL] ❌ TRUST_PROXY=true is required for the managed production host.");
+            process.exit(1);
+        }
     }
 
     return {
@@ -113,6 +140,7 @@ function validateRequiredEnv(env = process.env, config = {}) {
 }
 
 module.exports = {
+    OWNER_MAINTAINED_PRODUCTION_ENV,
     normalizedEnvValue,
     assertStrongSecret,
     assertRequiredProductionValue,

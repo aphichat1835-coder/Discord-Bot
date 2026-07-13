@@ -36,7 +36,9 @@ Untrusted browser
   → configured IP lookup provider
 ```
 
-Set `TRUST_PROXY`/`TRUST_PROXY_HOPS` only to match the real hosting chain.
+The managed production deployment sets `TRUST_PROXY=true`; the hop count
+defaults to one. Change the advanced hop override only when the real hosting
+chain differs.
 `ENABLE_CF_IP_HEADER` must be enabled only when direct origin access is blocked
 and Cloudflare headers are genuinely trusted. Otherwise a client can spoof
 forwarding headers.
@@ -50,10 +52,13 @@ VPN, proxy, or TOR.
 The main dashboard and all verification management pages use the signed Owner
 PIN cookie in `discord/index/auth.js`.
 
-- Production requires `DASHBOARD_PIN`, `API_SECRET`, `VERIFY_STATE_SECRET`,
-  `ENCRYPTION_KEY`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, and one
-  public HTTPS base URL alias (`PUBLIC_BASE_URL`, `DASHBOARD_URL`,
-  `PUBLIC_DASHBOARD_URL`, or `DASHBOARD_PUBLIC_URL`).
+- Production uses exactly 13 owner-maintained environment values:
+  `NODE_ENV`, `MONGO_URI`, `TOKEN_MANAGER`, `DISCORD_CLIENT_ID`,
+  `DISCORD_CLIENT_SECRET`, `ENCRYPTION_KEY`, `API_SECRET`,
+  `VERIFY_STATE_SECRET`, `DASHBOARD_PIN`, `PUBLIC_BASE_URL`,
+  `WEBHOOK_LOG_URL`, `ALERT_WEBHOOK_URL`, and `TRUST_PROXY`. Advanced controls
+  use code defaults, and `PUBLIC_BASE_URL` must be the canonical public HTTPS
+  base URL.
 - Session cookies are HTTP-only, SameSite Strict, and Secure in production.
 - A separate readable SameSite CSRF cookie is HMAC-bound to the signed session.
 - Non-read management routes require the `X-CSRF-Token` header.
@@ -282,8 +287,9 @@ task approval required by `AGENTS.md`.
 1. Back up MongoDB.
 2. Rotate any credential suspected of exposure.
 3. Register `https://DOMAIN/auth/callback` in Discord Developer Portal.
-4. Set all public URL aliases to the same HTTPS origin.
-5. Set trusted-proxy values to the actual host.
+4. Set `PUBLIC_BASE_URL` to the one canonical HTTPS origin.
+5. Set `TRUST_PROXY=true` only on the approved managed reverse-proxy host; the
+   hop count defaults to one.
 6. Deploy one artifact and one command (`npm start`).
 7. Set `SMOKE_ALLOWED_HOSTS` to the exact deployed hostname before running the
    unified smoke helper; do not use wildcards.

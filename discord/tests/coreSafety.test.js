@@ -1,7 +1,10 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { validateRequiredEnv } = require("../core/env");
+const {
+    OWNER_MAINTAINED_PRODUCTION_ENV,
+    validateRequiredEnv
+} = require("../core/env");
 const { createHttpApp } = require("../core/http");
 const { getFeatureFlags, isFeatureEnabled } = require("../core/featureFlags");
 const service1Logger = require("../core/safeLogger");
@@ -111,6 +114,9 @@ test("validateRequiredEnv requires OAuth client id and https public URL in produ
         VERIFY_STATE_SECRET: "c".repeat(32),
         DISCORD_CLIENT_SECRET: "d".repeat(24),
         DASHBOARD_PIN: "123456",
+        WEBHOOK_LOG_URL: "https://discord.com/api/webhooks/12345/abcdefghijklmnopqrstuvwxyz",
+        ALERT_WEBHOOK_URL: "https://discord.com/api/webhooks/67890/abcdefghijklmnopqrstuvwxyz",
+        TRUST_PROXY: "true",
         NODE_ENV: "production"
     };
 
@@ -148,6 +154,25 @@ test("validateRequiredEnv requires OAuth client id and https public URL in produ
     });
     assert.equal(ok.DISCORD_CLIENT_ID_CONFIGURED, true);
     assert.equal(ok.PUBLIC_BASE_URL_CONFIGURED, true);
+});
+
+test("production deployment contract has exactly thirteen owner-maintained values", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
+    t.assert.equal(OWNER_MAINTAINED_PRODUCTION_ENV.length, 13);
+    assert.deepEqual(OWNER_MAINTAINED_PRODUCTION_ENV, [
+        "NODE_ENV",
+        "MONGO_URI",
+        "TOKEN_MANAGER",
+        "DISCORD_CLIENT_ID",
+        "DISCORD_CLIENT_SECRET",
+        "ENCRYPTION_KEY",
+        "API_SECRET",
+        "VERIFY_STATE_SECRET",
+        "DASHBOARD_PIN",
+        "PUBLIC_BASE_URL",
+        "WEBHOOK_LOG_URL",
+        "ALERT_WEBHOOK_URL",
+        "TRUST_PROXY"
+    ]);
 });
 
 test("createHttpApp only trusts proxies when explicitly configured", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
