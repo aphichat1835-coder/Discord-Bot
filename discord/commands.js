@@ -187,7 +187,7 @@ async function handleInteraction(interaction, client, shadowMasterId) {
                 return await setupLog.handle(interaction, client, sessionManager, getLogChannel);
             }
 
-            if (["say", "announce", "copy-emojis", "backup", "restore", "whitelist", "setup"].includes(cmd)) {
+            if (["say", "announce", "copy-emojis", "backup", "restore", "whitelist"].includes(cmd)) {
                 return await utility.handle(interaction, client, sessionManager, getLogChannel);
             }
 

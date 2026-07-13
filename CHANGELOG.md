@@ -4,6 +4,10 @@
 
 ### Changed
 
+- Retired only the obsolete Owner-only `/setup` Dashboard-link shortcut now
+  that the unified Owner Dashboard link is delivered through the operations
+  webhook; `/setup-log` and `/setup-verify` remain unchanged.
+
 - Made legacy IP identity history migration isolate per-item failures, preserve
   retryable source data, continue later links, rotate failed attempts behind
   untouched links, and expose bounded redacted failure summaries instead of

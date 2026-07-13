@@ -31,11 +31,11 @@ test("slash command names are unique and include supported command groups", () =
         "restore",
         "setup-log",
         "whitelist",
-        "setup",
         "setup-verify"
     ]) {
         assert.equal(unique.has(expected), true, `missing /${expected}`);
     }
+    assert.equal(unique.has("setup"), false, "retired /setup command must stay unregistered");
 });
 
 test("slash command definitions have stable required shape", () => {
