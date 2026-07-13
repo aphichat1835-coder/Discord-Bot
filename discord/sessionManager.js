@@ -6,7 +6,7 @@ ATTENTION AI ASSISTANT: DO NOT MODIFY, REFACTOR, OR SIMPLIFY THIS FILE.
 1. [DATABASE]: MONGO_URI is the ONLY storage. Local JSON fallback is REMOVED.
 2. [ENCRYPTION]: AES-256-GCM with CBC fallback must remain intact.
 3. [POOL]: maxPoolSize: 20 MUST remain in mongoose.connect().
-4. [SCHEMAS]: Do NOT remove PanelStateModel, LogChannelMapModel, WhitelistModel, BotSettingsModel.
+4. [SCHEMAS]: Do NOT remove PanelStateModel, LogChannelMapModel, BotSettingsModel.
 5. [METRICS]: increment() calls must remain for Dashboard accuracy.
 ================================================================================
 */
@@ -38,7 +38,6 @@ function boundedLimit(value, max, fallback = max) {
 const SESSION_LOAD_MAX = numberEnv("SESSION_LOAD_MAX", 100, 1);
 const APPROVED_GUILDS_LOAD_MAX = numberEnv("APPROVED_GUILDS_LOAD_MAX", 1000, 1);
 const PENDING_GUILDS_LOAD_MAX = numberEnv("PENDING_GUILDS_LOAD_MAX", 500, 1);
-const WHITELIST_LOAD_MAX = numberEnv("WHITELIST_LOAD_MAX", 1000, 1);
 const BOT_SETTINGS_LOAD_MAX = numberEnv("BOT_SETTINGS_LOAD_MAX", 500, 1);
 const PANEL_STATES_LOAD_MAX = numberEnv("PANEL_STATES_LOAD_MAX", 500, 1);
 let lastLoadStats = {
@@ -247,15 +246,6 @@ const logChannelMapSchema = new mongoose.Schema({
     updatedAt: { type: Number, default: Date.now }
 });
 const LogChannelMapModel = mongoose.model("LogChannelMap", logChannelMapSchema);
-
-// --- Whitelist Schema (เฟส 3: /say whitelist) ---
-const whitelistSchema = new mongoose.Schema({
-    userId: { type: String, required: true, unique: true },
-    addedBy: String,
-    addedAt: { type: Number, default: Date.now },
-    scope: { type: String, default: "say" }
-});
-const WhitelistModel = mongoose.model("Whitelist", whitelistSchema);
 
 // --- Bot Settings Schema (เฟส Dashboard Config) ---
 const botSettingsSchema = new mongoose.Schema({
@@ -1355,84 +1345,6 @@ async function deleteLogChannelMap(guildId) {
     }
 }
 // ════════════════════════════════════════════════════════════════════════════
-//  ✅ REGION 14: WHITELIST
-// ════════════════════════════════════════════════════════════════════════════
-async function isWhitelisted(userId, scope = "say") {
-    if (!dbConnected) return false;
-
-    try {
-        const doc = await WhitelistModel.findOne({
-            userId,
-            scope
-        });
-
-        return !!doc;
-    } catch (err) {
-        console.error(`[DATABASE] ❌ Failed to check whitelist for ${userId}: ${err.message}`);
-        systemMetrics.increment("errors");
-        return false;
-    }
-}
-
-async function addWhitelist(userId, addedBy, scope = "say") {
-    if (!dbConnected) return false;
-
-    try {
-        await WhitelistModel.updateOne(
-            { userId, scope },
-            {
-                $set: {
-                    userId,
-                    addedBy,
-                    scope,
-                    addedAt: Date.now()
-                }
-            },
-            { upsert: true }
-        );
-
-        return true;
-    } catch (err) {
-        console.error(`[DATABASE] ❌ Failed to add whitelist ${userId}: ${err.message}`);
-        systemMetrics.increment("errors");
-        return false;
-    }
-}
-
-async function removeWhitelist(userId, scope = "say") {
-    if (!dbConnected) return false;
-
-    try {
-        await WhitelistModel.deleteOne({ userId, scope });
-        return true;
-    } catch (err) {
-        console.error(`[DATABASE] ❌ Failed to remove whitelist ${userId}: ${err.message}`);
-        systemMetrics.increment("errors");
-        return false;
-    }
-}
-
-async function getWhitelist(scope = "say") {
-    if (!dbConnected) return [];
-
-    try {
-        return await WhitelistModel.find({ scope })
-            .select("userId addedBy addedAt scope")
-            .sort({ addedAt: -1, _id: -1 })
-            .limit(WHITELIST_LOAD_MAX)
-            .lean();
-    } catch (err) {
-        console.error(`[DATABASE] ❌ Failed to load whitelist: ${err.message}`);
-        systemMetrics.increment("errors");
-        return [];
-    }
-}
-
-async function getAllWhitelist(scope = "say") {
-    return getWhitelist(scope);
-}
-
-// ════════════════════════════════════════════════════════════════════════════
 //  ⚙️ REGION 15: BOT SETTINGS
 // ════════════════════════════════════════════════════════════════════════════
 async function setSetting(key, value) {
@@ -1565,7 +1477,6 @@ function getSessionDiagnostics() {
             sessionLoadMax: SESSION_LOAD_MAX,
             approvedGuildsLoadMax: APPROVED_GUILDS_LOAD_MAX,
             pendingGuildsLoadMax: PENDING_GUILDS_LOAD_MAX,
-            whitelistLoadMax: WHITELIST_LOAD_MAX,
             botSettingsLoadMax: BOT_SETTINGS_LOAD_MAX,
             panelStatesLoadMax: PANEL_STATES_LOAD_MAX
         },
@@ -1585,7 +1496,6 @@ function getDatabaseStatus() {
             sessionLoadMax: SESSION_LOAD_MAX,
             approvedGuildsLoadMax: APPROVED_GUILDS_LOAD_MAX,
             pendingGuildsLoadMax: PENDING_GUILDS_LOAD_MAX,
-            whitelistLoadMax: WHITELIST_LOAD_MAX,
             botSettingsLoadMax: BOT_SETTINGS_LOAD_MAX,
             panelStatesLoadMax: PANEL_STATES_LOAD_MAX
         }
@@ -1782,13 +1692,6 @@ module.exports = {
     getLogChannelMap,
     deleteLogChannelMap,
 
-    // Whitelist
-    isWhitelisted,
-    addWhitelist,
-    removeWhitelist,
-    getWhitelist,
-    getAllWhitelist,
-
     // Settings
     setSetting,
     getSetting,
@@ -1807,7 +1710,6 @@ module.exports = {
     PendingGuildModel,
     PanelStateModel,
     LogChannelMapModel,
-    WhitelistModel,
     BotSettingsModel,
 
     // Encryption helpers kept for existing code paths

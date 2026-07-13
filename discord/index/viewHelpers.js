@@ -13,7 +13,6 @@ const NAV_LINKS = [
     ["/status", "📊 สถานะ"],
     ["/settings", "⚙️ ตั้งค่า"],
     ["/commands", "⚡ คำสั่ง"],
-    ["/whitelist", "📋 Whitelist"],
     ["/approved", "✅ Approved"],
     ["/verification", "🛡️ Verification"],
     ["/join-campaign", "📥 Join"],

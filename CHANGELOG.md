@@ -4,6 +4,11 @@
 
 ### Changed
 
+- Removed the retired `/say` whitelist subsystem from slash commands, the
+  Owner Dashboard, APIs, runtime state, diagnostics, and Mongoose registration.
+  `/say` is now Administrator-only; the legacy MongoDB collection is left
+  untouched for rollback and is no longer read or written by the runtime.
+
 - Retired only the obsolete Owner-only `/setup` Dashboard-link shortcut now
   that the unified Owner Dashboard link is delivered through the operations
   webhook; `/setup-log` and `/setup-verify` remain unchanged.

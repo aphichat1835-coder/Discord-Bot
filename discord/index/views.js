@@ -3,7 +3,7 @@
 ================================================================================
   ENTERPRISE DASHBOARD — Views Layer
   ธีม: Dark Purple Glassmorphism
-  หน้าทั้งหมด: /, /status, /settings, /commands, /whitelist, /approved,
+  หน้าทั้งหมด: /, /status, /settings, /commands, /approved,
                /logs, /logs/voice, /session/:id, /docs
 ================================================================================
 */
@@ -613,114 +613,6 @@ async function toggleCmd(commandName, el){
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  📋  หน้า WHITELIST
-// ════════════════════════════════════════════════════════════════════════════
-function pageWhitelist(list, API_SECRET) {
-    const rows = (list || []).map(w => `
-<tr>
-    <td style="font-family:monospace;color:var(--accent3);">${escapeHtml(w.userId || "-")}</td>
-    <td>${escapeHtml(w.scope || "say")}</td>
-    <td style="color:var(--text3);">${escapeHtml(w.addedBy || "-")}</td>
-    <td style="color:var(--text3);">${new Date(w.addedAt || Date.now()).toLocaleString("th-TH")}</td>
-    <td><button class="btn btn-danger btn-sm" onclick="removeUser('${escapeHtml(w.userId || "")}')">ลบ</button></td>
-</tr>`).join("");
-
-    return shell("Whitelist", `
-<div class="container-lg">
-<h1 class="page-title">📋 Whitelist</h1>
-<p class="page-sub">จัดการคนที่ใช้คำสั่งพิเศษ เช่น /say</p>
-${navBar("/whitelist")}
-${toastScript()}
-
-<div class="card">
-    <h3>➕ เพิ่ม Whitelist</h3>
-    <label>Discord User ID</label>
-    <input id="userId" placeholder="เช่น 123456789012345678">
-    <button class="btn btn-success" onclick="addUser()">➕ เพิ่มผู้ใช้</button>
-</div>
-
-<div class="card" style="padding:0;overflow:hidden;">
-    <div class="table-scroll">
-    <table>
-        <thead>
-            <tr>
-                <th>User ID</th>
-                <th>Scope</th>
-                <th>Added By</th>
-                <th>Added At</th>
-                <th>Action</th>
-            </tr>
-        </thead>
-        <tbody>
-            ${rows || `<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:34px;">ยังไม่มี whitelist</td></tr>`}
-        </tbody>
-    </table>
-    </div>
-</div>
-</div>
-
-<script>
-const SECRET='';
-
-async function addUser(){
-    const userId=document.getElementById('userId').value.trim();
-
-    if(!/^\\d{17,20}$/.test(userId)){
-        return showToast('❌ User ID ไม่ถูกต้อง','err');
-    }
-
-    try{
-        const r=await fetch('/api/whitelist/add',{
-            method:'POST',
-            headers:{
-                'Content-Type':'application/json',
-                'Authorization':SECRET
-            },
-            body:JSON.stringify({userId})
-        });
-
-        const d=await r.json();
-
-        if(d.success){
-            showToast('✅ เพิ่มเรียบร้อย','ok');
-            setTimeout(()=>location.reload(),800);
-        }else{
-            showToast('❌ '+(d.error||'Unknown'),'err');
-        }
-    }catch(e){
-        showToast('❌ เชื่อมต่อไม่ได้','err');
-    }
-}
-
-async function removeUser(userId){
-    if(!confirm('ลบ '+userId+' ออกจาก whitelist?')) return;
-
-    try{
-        const r=await fetch('/api/whitelist/remove',{
-            method:'POST',
-            headers:{
-                'Content-Type':'application/json',
-                'Authorization':SECRET
-            },
-            body:JSON.stringify({userId})
-        });
-
-        const d=await r.json();
-
-        if(d.success){
-            showToast('✅ ลบเรียบร้อย','ok');
-            setTimeout(()=>location.reload(),800);
-        }else{
-            showToast('❌ '+(d.error||'Unknown'),'err');
-        }
-    }catch(e){
-        showToast('❌ เชื่อมต่อไม่ได้','err');
-    }
-}
-</script>`);
-}
-
-// ════════════════════════════════════════════════════════════════════════════
 //  ✅  หน้า APPROVED GUILDS
 // ════════════════════════════════════════════════════════════════════════════
 function pageApproved(approvedList, client, API_SECRET) {
@@ -1313,7 +1205,6 @@ function pageDocs() {
                 ["📊 /status", "ภาพรวมสถานะบอท, uptime, RAM, success rate"],
                 ["⚙️ /settings", "ตั้งค่า presence, rotate, natural, auto deaf, general config"],
                 ["⚡ /commands", "เปิด/ปิด slash commands แบบ realtime"],
-                ["📋 /whitelist", "จัดการ whitelist สำหรับคำสั่งเฉพาะ"],
                 ["✅ /approved", "จัดการเซิร์ฟเวอร์ที่อนุมัติ"],
                 ["🔊 /logs/voice", "ประวัติ voice event"],
                 ["🖥️ /session/:id", "ดูรายละเอียด session, ดู Token แบบ PIN protected, สั่งหยุดได้"]
@@ -1881,11 +1772,6 @@ function registerViewRoutes({
 
     app.get("/commands", auth.requirePin, (req, res) => {
         res.send(pageCommands(commands, disabledCommands, commandAuditLog, API_SECRET));
-    });
-
-    app.get("/whitelist", auth.requirePin, async (req, res) => {
-        const list = await sessionManager.getAllWhitelist();
-        res.send(pageWhitelist(list, API_SECRET));
     });
 
     app.get("/approved", auth.requirePin, async (req, res) => {

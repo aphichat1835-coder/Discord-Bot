@@ -239,8 +239,7 @@ async function handleHelp(interaction) {
             `— ${CB}/voicekickall${CB} — เตะทุกคนออกจากห้องเสียง\n` +
             `— ${CB}/clear${CB} — ลบข้อความ (สูงสุด 100)\n` +
             `— ${CB}/steal${CB} — ดึงอิโมจิเข้าเซิร์ฟเวอร์\n` +
-            `— ${CB}/say${CB} ${CB}/announce${CB} — ส่งข้อความและประกาศ\n` +
-            `— ${CB}/whitelist${CB} — จัดการสิทธิ์ /say\n\n` +
+            `— ${CB}/say${CB} ${CB}/announce${CB} — ส่งข้อความและประกาศ\n\n` +
             `**${config.emojis.backup_icon} คำสั่งระบบ:**\n` +
             `— ${CB}/setup-log${CB} — ติดตั้งโครงสร้าง Audit Log\n` +
             `— ${CB}/backup${CB} — บันทึกโครงสร้างเซิร์ฟเวอร์\n` +

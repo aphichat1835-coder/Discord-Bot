@@ -145,15 +145,6 @@ const slashCommandsData = [
     },
 
     {
-        name: "whitelist",
-        description: "จัดการ Whitelist /say (เฉพาะ Admin)",
-        options: [
-            { type: 3, name: "action",  description: "add / remove / list", required: true },
-            { type: 3, name: "user_id", description: "Discord User ID", required: false }
-        ]
-    },
-
-    {
         name: "setup-verify",
         description: "ติดตั้งแผงยืนยันตัวตน พร้อมระบบให้ยศอัตโนมัติ",
         options: [

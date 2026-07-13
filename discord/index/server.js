@@ -1029,47 +1029,7 @@ function registerRoutes({
         }
     });
 
-    // ── Whitelist ──
-    app.post("/api/whitelist/add", express.json(), async (req, res) => {
-        if (!checkAuth(req, res)) return;
-
-        try {
-            const { userId } = req.body;
-
-            if (!userId || typeof userId !== "string") {
-                return res.status(400).json({
-                    success: false,
-                    error: "Invalid userId"
-                });
-            }
-
-            await sessionManager.addWhitelist(userId, "dashboard");
-            res.json({ success: true });
-        } catch (e) {
-            res.status(500).json({ success: false, error: e.message });
-        }
-    });
-
-    app.post("/api/whitelist/remove", express.json(), async (req, res) => {
-        if (!checkAuth(req, res)) return;
-
-        try {
-            const { userId } = req.body;
-
-            if (!userId || typeof userId !== "string") {
-                return res.status(400).json({
-                    success: false,
-                    error: "Invalid userId"
-                });
-            }
-
-            await sessionManager.removeWhitelist(userId);
-            res.json({ success: true });
-        } catch (e) {
-            res.status(500).json({ success: false, error: e.message });
-        }
-    });
-        // ── Approved Guilds ──
+    // ── Approved Guilds ──
     app.post("/api/approve", express.json(), async (req, res) => {
         if (!checkAuth(req, res)) return;
 

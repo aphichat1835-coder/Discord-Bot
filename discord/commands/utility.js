@@ -5,7 +5,6 @@
 DO NOT REMOVE: activeRestores, activeBackups Sets — race condition guards.
 DO NOT REMOVE: finally blocks — they MUST unlock Sets after every operation.
 DO NOT SIMPLIFY: Restore loop — delay + setImmediate required (เฟส 19+21).
-DO NOT REMOVE: /whitelist command — required for เฟส 3 /say system.
 ================================================================================
 */
 
@@ -26,24 +25,6 @@ const { sendLogWebhook } = require("../core/webhooks");
 const activeRestores = new Set();
 const activeBackups  = new Set();
 
-// เฟส 3: /say usage tracking (2 ครั้งขึ้นไป → เช็ค whitelist)
-const sayUsageTracking = new Map();
-const SAY_USAGE_MAX_USERS = Math.max(100, Number(process.env.SAY_USAGE_MAX_USERS || 1000) || 1000);
-
-function trimSayUsageTracking(now = Date.now()) {
-    for (const [uid, h] of sayUsageTracking.entries()) {
-        const v = h.filter(t => now - t < 60000);
-        if (!v.length) sayUsageTracking.delete(uid);
-        else sayUsageTracking.set(uid, v);
-    }
-
-    while (sayUsageTracking.size > SAY_USAGE_MAX_USERS) {
-        const oldestKey = sayUsageTracking.keys().next().value;
-        if (!oldestKey) break;
-        sayUsageTracking.delete(oldestKey);
-    }
-}
-
 async function sendUtilLog(guild, channelType, description) {
     try {
         const map = await sessionManager.getLogChannelMap(guild.id);
@@ -56,70 +37,28 @@ async function sendUtilLog(guild, channelType, description) {
 
 async function handle(interaction, client, sessionManager, getLogChannel) {
     const cmd = interaction.commandName;
-    if (cmd === "say")        return handleSay(interaction, sessionManager);
+    if (cmd === "say")        return handleSay(interaction);
     if (cmd === "announce")   return handleAnnounce(interaction);
     if (cmd === "copy-emojis") return handleSteal(interaction);
     if (cmd === "backup")     return handleBackup(interaction);
     if (cmd === "restore")    return handleRestore(interaction);
     if (cmd === "setup-log")  return handleSetupLog(interaction, sessionManager);
-    if (cmd === "whitelist")  return handleWhitelist(interaction, sessionManager);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  📢  SAY (เฟส 3 — Dynamic Rate-Limit + Whitelist)
+//  📢  SAY (Administrator only)
 // ════════════════════════════════════════════════════════════════════════════
-async function handleSay(interaction, sessionManager) {
+async function handleSay(interaction) {
     const rawMsg = interaction.options.getString("message");
     const msg    = sanitizeUserMessage(rawMsg);
-    const userId = interaction.user.id;
 
     if (!msg) return interaction.reply({
         content: `> ${config.emojis.error} ข้อความว่างหรือถูกบล็อกทั้งหมด`,
         ephemeral: true
     });
-    const now = Date.now();
 
-    // เช็คสิทธิ์บอทก่อนเสมอ
+    if (!await requireMemberPermission(interaction, "ADMINISTRATOR", `> ${config.emojis.no_entry} ต้องเป็น Administrator เพื่อใช้คำสั่งนี้`)) return;
     if (!await requireBotPermission(interaction, ["SEND_MESSAGES", "VIEW_CHANNEL"], `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความในช่องนี้ (ขาด SEND_MESSAGES หรือ VIEW_CHANNEL)`, interaction.channel)) return;
-    if (!await requireMemberPermission(interaction, "MANAGE_MESSAGES", `> ${config.emojis.no_entry} ต้องมีสิทธิ์ Manage Messages เพื่อใช้คำสั่งนี้`)) return;
-
-    const prevHistory = (sayUsageTracking.get(userId) || []).filter(t => now - t < 60000);
-    const history = [...prevHistory, now];
-    sayUsageTracking.set(userId, history);
-    if (sayUsageTracking.size > SAY_USAGE_MAX_USERS) trimSayUsageTracking(now);
-
-    if (history.length === 1) {
-        await safeDefer(interaction, { ephemeral: true });
-        await interaction.channel.send(msg);
-        sendUtilLog(interaction.guild, 'message', `> ${config.emojis.announce_icon} **/say ถูกใช้**\n— **โดย:** <@${interaction.user.id}>\n— **ห้อง:** <#${interaction.channel.id}>\n— **ข้อความ:** ${msg.substring(0, 200)}`).catch(() => {});
-        return interaction.editReply({ content: `> ${config.emojis.success} ส่งเรียบร้อย` });
-    }
-
-    const isAdmin = interaction.member.permissions.has("ADMINISTRATOR");
-
-    if (!isAdmin) {
-        const whitelisted = await sessionManager.isWhitelisted(userId);
-        if (!whitelisted) {
-            sendLogWebhook({
-                content: `${config.emojis.alert} **[COMMAND ABUSE]** /say spam attempt\n` +
-                         `**User:** <@${userId}> (\`${interaction.user.tag}\`)\n` +
-                         `**Server:** ${interaction.guild.name} (\`${interaction.guild.id}\`)\n` +
-                         `**Count:** ${history.length} ครั้งใน 60s\n` +
-                         `**Message:** ${msg.substring(0, 200)}`
-            }).catch(() => {});
-            return interaction.reply({
-                content: `> ${config.emojis.no_entry} คุณไม่มีสิทธิ์ใช้คำสั่งนี้บ่อยขนาดนี้ กรุณาติดต่อแอดมิน`,
-                ephemeral: true
-            });
-        }
-        // Whitelist hard cap: 10 ครั้ง/นาที (U-3)
-        if (history.length > 10) {
-            return interaction.reply({
-                content: `> ${config.emojis.no_entry} เกินขีดจำกัด 10 ครั้ง/นาที กรุณารอสักครู่`,
-                ephemeral: true
-            });
-        }
-    }
 
     await safeDefer(interaction, { ephemeral: true });
     await interaction.channel.send(msg);
@@ -894,68 +833,16 @@ async function handleSetupLog(interaction, sessionManager) {
     });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-//  📋  WHITELIST
-// ════════════════════════════════════════════════════════════════════════════
-async function handleWhitelist(interaction, sessionManager) {
-    if (!await requireMemberPermission(interaction, "ADMINISTRATOR", `> ${config.emojis.no_entry} ต้องเป็น Administrator`)) return;
-
-    const action = interaction.options.getString("action");
-    const userId = interaction.options.getString("user_id");
-
-    if (action === "list") {
-        const wl = await sessionManager.getAllWhitelist();
-        if (wl.length === 0) {
-            return interaction.reply({ content: `> ${config.emojis.warning} ยังไม่มีรายชื่อใน Whitelist`, ephemeral: true });
-        }
-        const lines = wl.map((w, i) => `${i + 1}. <@${w.userId}> (\`${w.userId}\`)`).join('\n');
-        return interaction.reply({
-            content: `> ${config.emojis.success} **Whitelist (${wl.length} คน):**\n${lines}`,
-            ephemeral: true
-        });
-    }
-
-    if (!userId) {
-        return interaction.reply({ content: `> ${config.emojis.no_entry} ต้องระบุ user_id สำหรับ action \`${action}\``, ephemeral: true });
-    }
-
-    if (!/^\d{17,19}$/.test(userId)) {
-        return interaction.reply({
-            content: `> ${config.emojis.no_entry} User ID ต้องเป็นตัวเลข 17–19 หลักเท่านั้น`,
-            ephemeral: true
-        });
-    }
-
-    if (action === "add") {
-        await sessionManager.addWhitelist(userId, interaction.user.id);
-        return interaction.reply({
-            content: `> ${config.emojis.success} เพิ่ม <@${userId}> เข้า Whitelist แล้ว`,
-            ephemeral: true
-        });
-    } else if (action === "remove") {
-        await sessionManager.removeWhitelist(userId);
-        return interaction.reply({
-            content: `> ${config.emojis.success} ลบ <@${userId}> ออกจาก Whitelist แล้ว`,
-            ephemeral: true
-        });
-    } else {
-        return interaction.reply({ content: `> ${config.emojis.warning} action ต้องเป็น add, remove หรือ list`, ephemeral: true });
-    }
-}
-
-const sayUsageCleanupInterval = setInterval(() => {
-    trimSayUsageTracking();
-}, 60000);
-if (typeof sayUsageCleanupInterval.unref === "function") sayUsageCleanupInterval.unref();
-
 function getRuntimeDiagnostics() {
-    trimSayUsageTracking();
     return {
         activeRestores: activeRestores.size,
-        activeBackups: activeBackups.size,
-        sayUsageTracking: sayUsageTracking.size,
-        sayUsageMaxUsers: SAY_USAGE_MAX_USERS
+        activeBackups: activeBackups.size
     };
 }
 
-module.exports = { handle, handleRestoreConfirm, getRuntimeDiagnostics };
+module.exports = {
+    handle,
+    handleRestoreConfirm,
+    getRuntimeDiagnostics,
+    _test: { handleSay }
+};

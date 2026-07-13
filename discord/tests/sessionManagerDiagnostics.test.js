@@ -10,7 +10,6 @@ test("session manager diagnostics expose bounded load limits", () => {
     assert.equal(typeof diagnostics.limits.sessionLoadMax, "number");
     assert.equal(typeof diagnostics.limits.approvedGuildsLoadMax, "number");
     assert.equal(typeof diagnostics.limits.pendingGuildsLoadMax, "number");
-    assert.equal(typeof diagnostics.limits.whitelistLoadMax, "number");
     assert.equal(typeof diagnostics.limits.botSettingsLoadMax, "number");
     assert.equal(typeof diagnostics.limits.panelStatesLoadMax, "number");
     assert.equal(diagnostics.lastLoad.max, diagnostics.limits.sessionLoadMax);
