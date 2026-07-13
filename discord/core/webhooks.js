@@ -2,6 +2,7 @@
 
 const { WebhookClient } = require("discord.js");
 const { sanitizeLogText } = require("./safeLogger");
+const { resolvePublicBaseUrl } = require("./publicUrl");
 
 const WEBHOOK_TARGETS = Object.freeze({
     LOG: "WEBHOOK_LOG_URL",
@@ -13,7 +14,6 @@ const DISCORD_WEBHOOK_HOSTS = new Set([
     "canary.discord.com",
     "ptb.discord.com"
 ]);
-const DEFAULT_OWNER_DASHBOARD_URL = "https://your-app.onrender.com";
 const CONTENT_MAX = 2000;
 const EMBED_TOTAL_MAX = 6000;
 const EMBED_COUNT_MAX = 10;
@@ -62,7 +62,18 @@ function normalizeWebhookUrlForCompare(url) {
 }
 
 function getOwnerDashboardBaseUrl(env = process.env) {
-    return trimTrailingSlashes(env.RENDER_EXTERNAL_URL || env.DASHBOARD_URL || DEFAULT_OWNER_DASHBOARD_URL);
+    const configured = resolvePublicBaseUrl(env, env.RENDER_EXTERNAL_URL || "");
+    if (!configured) return null;
+
+    try {
+        const parsed = new URL(configured);
+        if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) return null;
+        parsed.hash = "";
+        parsed.search = "";
+        return parsed.origin;
+    } catch {
+        return null;
+    }
 }
 
 function getWebhookDiagnostics(env = process.env) {
@@ -459,13 +470,17 @@ function getWebhookDeliveryDiagnostics() {
 }
 
 function buildStartupNotice({ clientTag, baseUrl, includeShadowPortal = true, timestamp = Date.now() }) {
-    const safeBase = trimTrailingSlashes(baseUrl || DEFAULT_OWNER_DASHBOARD_URL);
+    const safeBase = getOwnerDashboardBaseUrl({ PUBLIC_BASE_URL: baseUrl });
     const lines = [
         `✅ **Bot พร้อมแล้ว!** \`${clientTag || "unknown"}\``,
-        "",
-        `🌐 **Dashboard:** ${safeBase}`
+        ""
     ];
-    if (includeShadowPortal) lines.push(`👁️‍🗨️ **Shadow Portal:** ${safeBase}/api/v1/telemetry/snapshot`);
+    if (safeBase) {
+        lines.push(`🌐 **Dashboard:** ${safeBase}`);
+        if (includeShadowPortal) lines.push(`👁️‍🗨️ **Shadow Portal:** ${safeBase}/shadow`);
+    } else {
+        lines.push("🌐 **Dashboard:** ยังไม่ได้ตั้งค่า public URL ที่ถูกต้อง");
+    }
     lines.push("", `⏰ <t:${Math.floor(timestamp / 1000)}:F>`);
     return { content: lines.join("\n") };
 }
@@ -473,7 +488,6 @@ function buildStartupNotice({ clientTag, baseUrl, includeShadowPortal = true, ti
 module.exports = {
     WEBHOOK_TARGETS,
     DISCORD_WEBHOOK_HOSTS,
-    DEFAULT_OWNER_DASHBOARD_URL,
     WebhookDispatcher,
     getWebhookUrl,
     validateWebhookUrl,

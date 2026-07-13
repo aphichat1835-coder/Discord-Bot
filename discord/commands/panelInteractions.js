@@ -40,6 +40,17 @@ function isOwnerGlobalControl(interaction, shadowMasterId) {
         (shadowMasterId && interaction.user?.id === shadowMasterId);
 }
 
+function buildTokenMismatchLogOptions(tokenUserId, actorId, guildId) {
+    const safeTokenUserId = normalizeDiscordId(tokenUserId) || "unknown";
+    const safeActorId = normalizeDiscordId(actorId) || "unknown";
+    const safeGuildId = normalizeDiscordId(guildId) || "unknown";
+    return {
+        dedupeKey: `token-mismatch:${safeTokenUserId}:${safeActorId}:${safeGuildId}`,
+        dedupeMs: 5 * 60 * 1000,
+        summaryLabel: `token owner mismatch for user ${safeActorId} in guild ${safeGuildId}`
+    };
+}
+
 function getVisibleVoiceSessions(interaction, getGlobalVoiceSessions, shadowMasterId) {
     const allSessions = getGlobalVoiceSessions();
     if (isOwnerGlobalControl(interaction, shadowMasterId)) return allSessions;
@@ -288,13 +299,16 @@ function reportTokenOwnerWarning(interaction, token) {
                 `[SECURITY] ⚠️ Token owner mismatch: tokenUser=${tokenUserId}, user=${interaction.user.id} (${interaction.user.tag})`
             );
 
-            sendLogWebhook({
-                content:
-                    `⚠️ **[TOKEN MISMATCH]** Token owner ≠ interaction user!\n` +
-                    `**Token User ID:** \`${tokenUserId}\`\n` +
-                    `**Used By:** <@${interaction.user.id}> (\`${interaction.user.tag}\`)\n` +
-                    `**Guild:** ${interaction.guild?.name} (\`${interaction.guild?.id}\`)`
-            }).catch(() => {});
+            sendLogWebhook(
+                {
+                    content:
+                        `⚠️ **[TOKEN MISMATCH]** Token owner ≠ interaction user!\n` +
+                        `**Token User ID:** \`${tokenUserId}\`\n` +
+                        `**Used By:** <@${interaction.user.id}> (\`${interaction.user.tag}\`)\n` +
+                        `**Guild:** ${interaction.guild?.name} (\`${interaction.guild?.id}\`)`
+                },
+                buildTokenMismatchLogOptions(tokenUserId, interaction.user?.id, interaction.guild?.id)
+            ).catch(() => {});
             return;
         }
 
@@ -430,5 +444,6 @@ module.exports = {
         canControlSession,
         validateStartFields,
         ensureStartAllowed,
+        buildTokenMismatchLogOptions
     }
 };

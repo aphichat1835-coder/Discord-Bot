@@ -2,7 +2,6 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const {
-    DEFAULT_OWNER_DASHBOARD_URL,
     getWebhookUrl,
     getOwnerDashboardBaseUrl,
     getWebhookDiagnostics,
@@ -55,18 +54,25 @@ test("webhook diagnostics detect missing and duplicated targets", () => {
     });
 });
 
-test("startup dashboard URL prefers the main owner service", () => {
+test("startup dashboard URL uses the canonical unified public origin", () => {
     assert.equal(getOwnerDashboardBaseUrl({
-        RENDER_EXTERNAL_URL: "https://owner-dashboard.example/",
-        DASHBOARD_URL: "https://dashboard-public.example"
+        RENDER_EXTERNAL_URL: "https://retired-dashboard-public.example/",
+        PUBLIC_BASE_URL: "https://owner-dashboard.example/",
+        DASHBOARD_URL: "https://owner-dashboard.example"
     }), "https://owner-dashboard.example");
 
     assert.equal(getOwnerDashboardBaseUrl({
         DASHBOARD_URL: "https://dashboard-public.example/"
     }), "https://dashboard-public.example");
 
-    assert.equal(getOwnerDashboardBaseUrl({}), DEFAULT_OWNER_DASHBOARD_URL);
-    assert.equal(DEFAULT_OWNER_DASHBOARD_URL, "https://your-app.onrender.com");
+    assert.equal(getOwnerDashboardBaseUrl({
+        RENDER_EXTERNAL_URL: "https://host-provided.example/"
+    }), "https://host-provided.example");
+    assert.equal(getOwnerDashboardBaseUrl({
+        PUBLIC_BASE_URL: "https://owner-dashboard.example/retired/path?old=1#fragment"
+    }), "https://owner-dashboard.example");
+    assert.equal(getOwnerDashboardBaseUrl({}), null);
+    assert.equal(getOwnerDashboardBaseUrl({ PUBLIC_BASE_URL: "not-a-url" }), null);
 });
 
 test("webhook payloads normalize strings and objects", () => {
@@ -250,7 +256,29 @@ test("startup notice only includes dashboard and optional shadow portal links", 
     assert.match(notice.content, /Bot พร้อมแล้ว/);
     assert.match(notice.content, /Dashboard/);
     assert.match(notice.content, /Shadow Portal/);
+    assert.match(notice.content, /https:\/\/example\.com\/shadow/);
+    assert.equal(notice.content.includes("telemetry/snapshot"), false);
     assert.equal(notice.content.includes("คู่มือ"), false);
     assert.equal(notice.content.includes("Health"), false);
     assert.equal(notice.content.includes("Ping"), false);
+});
+
+test("startup notice never emits a fake link when public URL is missing", () => {
+    const notice = buildStartupNotice({ clientTag: "Bot#0001", baseUrl: "" });
+
+    assert.match(notice.content, /ยังไม่ได้ตั้งค่า public URL/);
+    assert.equal(notice.content.includes("your-app.onrender.com"), false);
+    assert.equal(notice.content.includes("Shadow Portal"), false);
+});
+
+test("startup notice omits Shadow link when its router did not mount", () => {
+    const notice = buildStartupNotice({
+        clientTag: "Bot#0001",
+        baseUrl: "https://example.com",
+        includeShadowPortal: false
+    });
+
+    assert.match(notice.content, /https:\/\/example\.com/);
+    assert.equal(notice.content.includes("Shadow Portal"), false);
+    assert.equal(notice.content.includes("/shadow"), false);
 });

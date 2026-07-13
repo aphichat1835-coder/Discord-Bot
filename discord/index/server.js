@@ -1139,7 +1139,7 @@ function registerRoutes({
         voiceWorker
     }));
 
-    registerShadowPortal({ setupTelemetryRouter, app, client });
+    const shadowPortal = registerShadowPortal({ setupTelemetryRouter, app, client });
 
     const revealAttemptCleanupTimer = setInterval(() => {
         cleanupRevealAttempts();
@@ -1147,6 +1147,10 @@ function registerRoutes({
     }, 5 * 60 * 1000);
 
     revealAttemptCleanupTimer.unref?.();
+
+    return {
+        shadowPortalRegistered: shadowPortal.registered === true
+    };
 }
 
 module.exports = {

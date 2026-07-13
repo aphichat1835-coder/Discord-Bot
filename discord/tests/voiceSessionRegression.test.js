@@ -30,6 +30,7 @@ const panelInteractionsTest = require("../commands/panelInteractions")._test;
 const isOwnerGlobalControl = panelInteractionsTest.isOwnerGlobalControl;
 const getVisibleVoiceSessions = panelInteractionsTest.getVisibleVoiceSessions;
 const canControlSession = panelInteractionsTest.canControlSession;
+const buildTokenMismatchLogOptions = panelInteractionsTest.buildTokenMismatchLogOptions;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONTRACT COPIES — เฉพาะฟังก์ชันที่ยังต้อง inline เพราะพึ่ง Discord/DB runtime
@@ -238,6 +239,20 @@ test("canControlSession: guild admin CANNOT control different-guild session", ()
 test("canControlSession: returns false for null session", () => {
     const interaction = makeInteraction({ userId: "admin-A", guildId: "guild-A" });
     assert.equal(canControlSession(interaction, null, "shadow-999"), false);
+});
+
+test("token mismatch warnings use one bounded dedupe window per owner, actor, and guild", () => {
+    const options = buildTokenMismatchLogOptions(
+        "12345678901234567",
+        "22345678901234567",
+        "32345678901234567"
+    );
+
+    assert.deepEqual(options, {
+        dedupeKey: "token-mismatch:12345678901234567:22345678901234567:32345678901234567",
+        dedupeMs: 300000,
+        summaryLabel: "token owner mismatch for user 22345678901234567 in guild 32345678901234567"
+    });
 });
 
 // ════════════════════════════════════════════════════════════════════════════

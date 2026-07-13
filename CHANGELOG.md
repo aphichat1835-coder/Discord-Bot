@@ -4,6 +4,13 @@
 
 ### Changed
 
+- Fixed startup webhook links to use the canonical unified public origin instead
+  of a stale retired-service URL, point Owner access at `/shadow` instead of a
+  raw telemetry endpoint, and omit fake placeholder links when no valid public
+  URL exists. The Shadow link is emitted only after its router mounts
+  successfully. Repeated token-owner mismatch warnings now use the bounded
+  shared webhook dedupe path.
+
 - Hardened webhook reliability across the unified runtime with validated
   Discord-only HTTPS targets, mention-safe and size-bounded payloads, a shared
   priority queue, transient retry, bounded routine-event aggregation, Owner

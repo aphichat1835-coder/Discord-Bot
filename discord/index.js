@@ -223,7 +223,7 @@ async function startRotateTimer() {
 // ════════════════════════════════════════════════════════════════════════════
 //  🔌  REGISTER API ROUTES
 // ════════════════════════════════════════════════════════════════════════════
-registerRoutes({
+const routeRegistration = registerRoutes({
     app, express, config, sessionManager, voiceWorker,
     commands, webLogs, MAX_LOGS, client, auditLogger, memoryMonitor,
     botReadyAt: () => system.botReadyAt,
@@ -510,7 +510,7 @@ client.on("ready", async () => {
         await sendLogWebhook(buildStartupNotice({
             clientTag: client.user.tag,
             baseUrl: base,
-            includeShadowPortal: typeof setupTelemetryRouter === "function"
+            includeShadowPortal: routeRegistration.shadowPortalRegistered === true
         })).catch(() => {});
 
         if (!system.isShuttingDown?.()) {

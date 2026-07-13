@@ -210,6 +210,18 @@ test("missing Shadow web hook leaves the shared runtime available", (t) => { // 
     );
 });
 
+test("failed Shadow web portal mount is reported without stopping the shared runtime", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
+    const setupTelemetryRouter = t.mock.fn(() => {
+        throw new Error("mount failed");
+    });
+
+    t.assert.deepEqual(
+        registerShadowPortal({ setupTelemetryRouter, app: {}, client: {} }),
+        { registered: false, reason: "registration_failed" }
+    );
+    assert.equal(setupTelemetryRouter.mock.callCount(), 1);
+});
+
 test("owner diagnostics report the runtime token variable", () => {
     const readiness = buildEnvReadiness({
         NODE_ENV: "production",
