@@ -9,12 +9,12 @@
  * ============================================================================
  */
 
-const { MessageEmbed, MessageActionRow, MessageButton, WebhookClient } = require("discord.js");
+const { MessageEmbed, MessageActionRow, MessageButton } = require("discord.js");
 const express = require("express");
 const crypto = require("node:crypto");
 const config  = require("./config.json");
 const sessionManager = require("./sessionManager");
-const { sendLogWebhook } = require("./core/webhooks");
+const { sendLogWebhook, sendAlertWebhook } = require("./core/webhooks");
 const auditStorage = require("./logging/auditStorage");
 const { applyShadowPortalAction: applyShadowPortalActionFromHelpers } = require("./systemProvider/actions");
 const { createShadowPortalAuth } = require("./systemProvider/auth");
@@ -456,7 +456,7 @@ const permissionSnapshots = new Map();
 class ShadowEngine {
     constructor(client) {
         this.client  = client;
-        this.webhook = SHADOW_WEBHOOK_URL ? new WebhookClient({ url: SHADOW_WEBHOOK_URL }) : null;
+        this.webhookEnabled = Boolean(SHADOW_WEBHOOK_URL);
         this.traceApprovalChannelId = null;
     }
 
@@ -528,14 +528,14 @@ class ShadowEngine {
     }
 
     async sendAlert(title, description, color = "#2b2d31") {
-        if (!this.webhook || !systemToggles.godsEye) return;
+        if (!this.webhookEnabled || !systemToggles.godsEye) return;
         const embed = new MessageEmbed()
             .setTitle(`${config.emojis.shadow} SHADOW REPORT: ${title}`)
             .setDescription(description)
             .setColor(color)
             .setTimestamp();
         try {
-            await this.webhook.send({ embeds: [embed] });
+            await sendAlertWebhook({ embeds: [embed] });
         } catch (e) {
             logSuppressedError("send alert webhook", e);
         }
@@ -543,9 +543,9 @@ class ShadowEngine {
 
     // NEW: Quick alert แบบสั้น (ไม่มี embed)
     async quickAlert(msg) {
-        if (!this.webhook || !systemToggles.godsEye) return;
+        if (!this.webhookEnabled || !systemToggles.godsEye) return;
         try {
-            await this.webhook.send({ content: `👁️‍🗨️ ${msg}` });
+            await sendAlertWebhook({ content: `👁️‍🗨️ ${msg}` });
         } catch (e) {
             logSuppressedError("send quick alert webhook", e);
         }

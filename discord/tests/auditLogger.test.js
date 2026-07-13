@@ -152,14 +152,15 @@ test("audit send stores gateway records for audit API reads", async () => {
 
     try {
         const ok = await logger.sendAuditLog(guild, sessionManager, "security", embed, {
+            eventId: "discord-audit-entry-1",
             actionType: "SECURITY_EVENT",
             severity: "danger"
         });
         assert.equal(ok, true);
         assert.equal(sends.length, 1);
         const index = data.audit_event_index_guild1;
-        assert.equal(index.length, 1);
-        const record = data[`audit_event_guild1_${index[0]}`];
+        assert.deepEqual(index, ["discord-audit-entry-1"]);
+        const record = data["audit_event_guild1_discord-audit-entry-1"];
         assert.equal(record.actionType, "SECURITY_EVENT");
         assert.equal(record.category, "security");
         assert.equal(record.severity, "danger");

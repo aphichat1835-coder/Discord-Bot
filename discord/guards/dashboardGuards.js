@@ -24,8 +24,20 @@ function shouldBypassDashboardReadApi(req) {
 
 function logIntrusion(ip, path) {
     safeLogger.warn("dashboard_unauthorized_access", { path, ip });
+    const safePath = String(path || "unknown").slice(0, 180);
+    const secret = dashboardAuth.getApiSecret() || "dashboard-intrusion";
+    const dedupeKey = crypto.createHmac("sha256", secret)
+        .update(`${String(ip || "unknown")}|${safePath}`)
+        .digest("hex");
 
-    sendLogWebhook({ content: `🛑 **[INTRUSION]** \`${path}\` from \`${ip}\`` }).catch(() => {});
+    sendLogWebhook(
+        { content: `🛑 **[INTRUSION]** \`${safePath}\` from \`${ip}\`` },
+        {
+            dedupeKey: `dashboard-intrusion:${dedupeKey}`,
+            dedupeMs: 5 * 60 * 1000,
+            summaryLabel: `dashboard intrusion on ${safePath}`
+        }
+    ).catch(() => {});
 }
 
 function createRateLimiter(requestCounts, config, sessionManager = null) {

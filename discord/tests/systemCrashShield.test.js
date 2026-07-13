@@ -75,3 +75,45 @@ test("critical alert dispatcher sends a new occurrence after cooldown", async ()
     assert.deepEqual(harness.sent.map(item => item.content), ["first", "after cooldown"]);
     assert.equal(harness.timers[0].cleared, true);
 });
+
+test("critical dispatcher does not suppress a later occurrence when first delivery fails", async () => {
+    let attempts = 0;
+    const dispatcher = createCriticalAlertDispatcher({
+        cooldownMs: 1000,
+        send: async () => ++attempts > 1,
+        setTimer(callback) {
+            return { callback, cleared: false, unref() {} };
+        },
+        clearTimer(timer) {
+            timer.cleared = true;
+        }
+    });
+    const error = new Error("delivery failure");
+
+    assert.equal(await dispatcher.dispatch("unhandledRejection", error, { content: "first" }), false);
+    assert.equal(dispatcher.entries.size, 0);
+    assert.equal(await dispatcher.dispatch("unhandledRejection", error, { content: "second" }), true);
+    assert.equal(attempts, 2);
+    dispatcher.stop();
+});
+
+test("critical alert dispatcher does not suppress a retry after delivery failure", async () => {
+    let attempts = 0;
+    const timers = [];
+    const dispatcher = createCriticalAlertDispatcher({
+        cooldownMs: 1000,
+        send: async () => ++attempts > 1,
+        setTimer(callback) {
+            const timer = { callback, cleared: false, unref() {} };
+            timers.push(timer);
+            return timer;
+        },
+        clearTimer(timer) { timer.cleared = true; }
+    });
+    const error = new Error("delivery failed once");
+    assert.equal(await dispatcher.dispatch("unhandledRejection", error, { content: "first" }), false);
+    assert.equal(dispatcher.entries.size, 0);
+    assert.equal(timers[0].cleared, true);
+    assert.equal(await dispatcher.dispatch("unhandledRejection", error, { content: "retry" }), true);
+    assert.equal(attempts, 2);
+});

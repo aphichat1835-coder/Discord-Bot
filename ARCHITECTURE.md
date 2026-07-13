@@ -51,7 +51,15 @@ The HTTP-first design keeps `/ping` available during startup. `/health` remains
 
 Shutdown is coordinated by `discord/index/system.js`: it marks shutdown state,
 stops verification maintenance, pauses/stops voice work, destroys clients,
-closes MongoDB, and closes the HTTP listener.
+drains the bounded outbound webhook queue, closes MongoDB, and closes the HTTP
+listener.
+
+Operational and critical webhooks use one in-process dispatcher with cached
+Discord clients, bounded priority/concurrency, transient retry, payload limits,
+mention suppression, and redacted delivery diagnostics. Critical alerts take
+priority over queued routine logs. Discord audit webhook create/update/delete
+events remain separate from these outbound operational webhooks and are
+correlated to same-channel audit entries before storage/routing.
 
 ## 3. Repository map
 

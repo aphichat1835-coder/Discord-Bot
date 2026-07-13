@@ -224,7 +224,17 @@ sanitized. Data-quality failure reasons should be stable redacted codes such as
 `discord_http_403`, not provider response bodies.
 
 Webhook targets are secrets. Operational and critical alert targets should be
-separate where possible.
+separate where possible. The shared outbound dispatcher accepts only HTTPS
+Discord webhook endpoints, disables mentions, bounds Discord payload sizes and
+queue depth, prioritizes critical alerts, retries transient failures, and
+exposes redacted delivery counters through Owner diagnostics. Shutdown performs
+a bounded queue drain; diagnostics never contain webhook URLs.
+
+The Discord audit webhook event is correlated only with recent webhook
+create/update/delete audit entries from the same channel. Reconciler dedupe uses
+the Discord audit-entry ID, and repeated create/delete activity is flagged in
+audit-only mode for manual review. `/setup-log` warns when the bot lacks
+`VIEW_AUDIT_LOG`, because executor attribution is degraded without it.
 
 ## Runtime and dependency controls
 

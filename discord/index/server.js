@@ -28,7 +28,7 @@ const {
     getRevealAttemptStats,
     getRateLimitStats
 } = require("../guards/dashboardGuards");
-const { sendLogWebhook } = require("../core/webhooks");
+const { sendLogWebhook, getWebhookDeliveryDiagnostics } = require("../core/webhooks");
 const { getFeatureFlags } = require("../core/featureFlags");
 const { registerAuditWebBundle } = require("./auditWebBundle");
 const { registerJoinCampaignRoutes } = require("./joinCampaignRoutes");
@@ -379,6 +379,7 @@ function registerRoutes({
             sessions: sessionDiagnostics(),
             voiceWorker: voiceWorker.getWorkerDiagnostics?.() || {},
             audit: auditLogger?.getAuditStats?.() || {},
+            webhooks: getWebhookDeliveryDiagnostics(),
             memoryMonitor: memoryMonitor?.getMemoryMonitorState?.() || {},
             requestCounters: requestCounterDiagnostics(),
             commands: commands.getCommandRuntimeDiagnostics?.(client) || null,

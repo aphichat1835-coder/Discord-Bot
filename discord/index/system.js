@@ -7,7 +7,11 @@ DO NOT SIMPLIFY: Log capture ring buffer — prevents RAM bloat.
 ================================================================================
 */
 
-const { sendAlertWebhook } = require("../core/webhooks");
+const {
+    sendAlertWebhook,
+    flushWebhookQueue,
+    shutdownWebhookDispatcher
+} = require("../core/webhooks");
 const { sanitizeLogText, safeError } = require("../core/safeLogger");
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -133,7 +137,12 @@ function createCriticalAlertDispatcher(options = {}) {
         }, cooldownMs);
         entry.timer?.unref?.();
         entries.set(key, entry);
-        await send(payload).catch(() => {});
+        const delivered = await send(payload).catch(() => false);
+        if (delivered !== true) {
+            if (entry.timer) clearTimer(entry.timer);
+            entries.delete(key);
+            return false;
+        }
         return true;
     }
 
@@ -360,6 +369,9 @@ function initShutdown({
             if (client) { client.destroy(); console.log("[SHUTDOWN] ✅ Discord destroyed"); }
             if (memoryMonitor?.stopMemoryMonitor) memoryMonitor.stopMemoryMonitor();
             await closeServer();
+            const webhookFlushed = await flushWebhookQueue(2500);
+            if (!webhookFlushed) console.warn("[SHUTDOWN] ⚠️ Webhook queue did not fully drain before timeout");
+            await shutdownWebhookDispatcher(500);
             await sessionManager.disconnectDB?.();
             console.log("[SHUTDOWN] ✅ MongoDB disconnected");
             clearTimeout(timeout);

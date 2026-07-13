@@ -69,6 +69,12 @@ function entryChannelId(entry) {
     return normalizeId(entry?.extra?.channel?.id || entry?.target?.channelId || entry?.target?.id);
 }
 
+function entryActionName(entry) {
+    return String(entry?.action || entry?.action_type || entry?.actionType || entry?.type || "")
+        .trim()
+        .toUpperCase();
+}
+
 function isEntryFresh(entry, maxAgeMs) {
     const created = Number(entry?.createdTimestamp || entry?.createdAt?.getTime?.() || 0);
     return created > 0 && Date.now() - created <= maxAgeMs;
@@ -82,9 +88,13 @@ async function fetchAuditEntry(guild, actionType, targetId, options = {}) {
     const limit = Math.max(1, Math.min(10, Number(options.limit || 6) || 6));
     const channelId = normalizeId(options.channelId);
     const normalizedTargetId = normalizeId(targetId);
-    const cacheKey = auditCacheKey(guild.id, actionType, normalizedTargetId, channelId);
+    const allowedActions = new Set((options.allowedActionTypes || [])
+        .map(value => String(value || "").trim().toUpperCase())
+        .filter(Boolean));
+    const actionCachePart = actionType || (allowedActions.size ? [...allowedActions].sort().join(",") : null);
+    const cacheKey = auditCacheKey(guild.id, actionCachePart, normalizedTargetId, channelId);
 
-    const cached = auditCache.get(cacheKey);
+    const cached = options.bypassCache ? null : auditCache.get(cacheKey);
     if (cached && Date.now() - cached.cachedAt <= maxAgeMs) return cached.entry;
 
     if (delayMs > 0) await wait(delayMs);
@@ -95,12 +105,14 @@ async function fetchAuditEntry(guild, actionType, targetId, options = {}) {
         const entries = Array.from(logs?.entries?.values?.() || []);
         const matched = entries.find(entry => {
             if (!isEntryFresh(entry, maxAgeMs)) return false;
+            if (allowedActions.size && !allowedActions.has(entryActionName(entry))) return false;
+            if (typeof options.entryFilter === "function" && !options.entryFilter(entry)) return false;
             const targetMatches = !normalizedTargetId || entryTargetId(entry) === normalizedTargetId;
             const channelMatches = !channelId || entryChannelId(entry) === channelId || entryTargetId(entry) === channelId;
             return targetMatches && channelMatches;
         }) || null;
 
-        if (matched) auditCache.set(cacheKey, { entry: matched, cachedAt: Date.now() });
+        if (matched && !options.bypassCache) auditCache.set(cacheKey, { entry: matched, cachedAt: Date.now() });
         return matched;
     } catch (err) {
         console.warn(`[AUDIT_HELPER] fetchAuditEntry failed: ${safeAuditError(err, 240)}`);
@@ -283,6 +295,7 @@ const defaultMessageSnapshots = new MessageSnapshotCache({
 module.exports = {
     LruCache,
     fetchAuditEntry,
+    entryActionName,
     auditCache,
     permissionsToArray,
     diffPermissionArrays,

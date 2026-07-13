@@ -52,6 +52,14 @@ function buildPermissionOverwrites(guild) {
     return overwrites;
 }
 
+function canReadAuditLog(guild) {
+    try {
+        return guild?.members?.me?.permissions?.has?.("VIEW_AUDIT_LOG") === true;
+    } catch {
+        return false;
+    }
+}
+
 async function getOrCreateAuditCategory(guild) {
     let auditCategory = guild.channels.cache.find(
         channel => channel.type === "GUILD_CATEGORY" && channel.name === config.audit_channels.categoryName
@@ -106,7 +114,7 @@ async function createOrResolveLogChannel(interaction, sessionManager, category, 
     return { channel, created: true };
 }
 
-function buildSetupSummaryEmbed(guild, results) {
+function buildSetupSummaryEmbed(guild, results, options = {}) {
     const lines = results.map(result => {
         if (result.ok) {
             const status = result.created ? "สร้างใหม่" : "มีอยู่แล้ว";
@@ -115,13 +123,25 @@ function buildSetupSummaryEmbed(guild, results) {
         return `${config.emojis.error} **${result.category}** — ล้มเหลว: ${safeAuditText(result.error, 180)}`;
     });
 
-    return new MessageEmbed()
+    const embed = new MessageEmbed()
         .setColor(config.system.themeColors.success)
         .setTitle(`${config.emojis.settings_icon} Advanced Audit Log ติดตั้งเรียบร้อย`)
         .setDescription(lines.join("\n"))
-        .addField("ระบบที่พร้อมใช้งาน", "Message / Member / Voice / Server / Security / Moderation", false)
+        .addFields({
+            name: "ระบบที่พร้อมใช้งาน",
+            value: "Message / Member / Voice / Server / Security / Moderation",
+            inline: false
+        })
         .setFooter({ text: guild.name, iconURL: guild.iconURL({ dynamic: true }) || undefined })
         .setTimestamp();
+    if (options.auditLogReadable === false) {
+        embed.addFields({
+            name: "⚠️ Audit Log ยังไม่สมบูรณ์",
+            value: "บอทไม่มีสิทธิ์ View Audit Log จึงอาจระบุผู้ดำเนินการและเหตุผลของบางเหตุการณ์ไม่ได้",
+            inline: false
+        });
+    }
+    return embed;
 }
 
 async function handle(interaction, client, sessionManager) {
@@ -133,6 +153,7 @@ async function handle(interaction, client, sessionManager) {
     )) return;
 
     await safeDefer(interaction, { ephemeral: true });
+    const auditLogReadable = canReadAuditLog(interaction.guild);
     await interaction.editReply({ content: `${config.emojis.loading} **กำลังติดตั้ง Advanced Audit Log channels...**` });
 
     const results = [];
@@ -176,7 +197,10 @@ async function handle(interaction, client, sessionManager) {
     }
 
     auditLogger.invalidateAuditCache?.(interaction.guild.id);
-    return interaction.editReply({ embeds: [buildSetupSummaryEmbed(interaction.guild, results)], content: null });
+    return interaction.editReply({
+        embeds: [buildSetupSummaryEmbed(interaction.guild, results, { auditLogReadable })],
+        content: null
+    });
 }
 
 module.exports = {
@@ -186,6 +210,8 @@ module.exports = {
         getConfiguredChannelName,
         isTextChannel,
         buildPermissionOverwrites,
+        canReadAuditLog,
+        buildSetupSummaryEmbed,
         findExistingLogChannel,
         saveLogChannel
     }

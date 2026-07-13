@@ -70,9 +70,13 @@ if (webhookDiagnostics.sameTarget) {
 }
 if (!webhookDiagnostics.hasLog) {
     console.warn("[WEBHOOK] ⚠️ WEBHOOK_LOG_URL is not configured. Routine operation notices will be skipped.");
+} else if (!webhookDiagnostics.logValid) {
+    console.warn(`[WEBHOOK] ⚠️ WEBHOOK_LOG_URL is invalid (${webhookDiagnostics.logCode}). Routine operation notices will be skipped.`);
 }
 if (!webhookDiagnostics.hasAlert) {
     console.warn("[WEBHOOK] ⚠️ ALERT_WEBHOOK_URL is not configured. Critical alert notices will be skipped.");
+} else if (!webhookDiagnostics.alertValid) {
+    console.warn(`[WEBHOOK] ⚠️ ALERT_WEBHOOK_URL is invalid (${webhookDiagnostics.alertCode}). Critical alert notices will be skipped.`);
 }
 const { webLogs, originalLog, originalError } = system;
 const MAX_LOGS = config.limits.webLogsMaxEntries || 500;
@@ -176,7 +180,14 @@ async function checkApproval(guild, user) {
             { upsert: true }
         );
     } catch (e) { console.error('[checkApproval] upsert pending guild failed:', String(e?.message || e).slice(0, 200)); }
-    sendLogWebhook({ content: `🚨 **[UNAUTHORIZED]** <@${user.id}> tried bot in **${guild.name}** (${guild.id})` }).catch(() => {});
+    sendLogWebhook(
+        { content: `🚨 **[UNAUTHORIZED]** <@${user.id}> tried bot in **${guild.name}** (${guild.id})` },
+        {
+            dedupeKey: `unauthorized-guild:${guild.id}:${user.id}`,
+            dedupeMs: 5 * 60 * 1000,
+            summaryLabel: `unauthorized guild use in ${guild.id}`
+        }
+    ).catch(() => {});
     return false;
 }
 

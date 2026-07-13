@@ -5,6 +5,7 @@ const eventMap = require("../logging/auditEventMap");
 const formatter = require("../logging/auditGenericFormatter");
 const storage = require("../logging/auditStorage");
 const reconciler = require("../logging/auditReconciler");
+const auditHelpers = require("../logging/auditHelpers");
 
 test("audit event map resolves categories and severities", () => {
     assert.equal(eventMap.categoryForAuditEvent("MESSAGE_DELETE"), "message");
@@ -113,6 +114,39 @@ test("audit reconciler normalizes entries", () => {
     assert.equal(normalized.category, "security");
     assert.equal(normalized.actorId, "actor1");
     assert.equal(normalized.targetId, "target1");
+});
+
+test("audit helper correlates webhook events only to allowed actions in the same channel", async () => {
+    const entries = new Map([
+        ["wrong", {
+            id: "wrong",
+            action: "INTEGRATION_UPDATE",
+            target: { id: "integration1" },
+            extra: { channel: { id: "channel1" } },
+            createdTimestamp: Date.now()
+        }],
+        ["right", {
+            id: "right",
+            action: "WEBHOOK_DELETE",
+            target: { id: "webhook1" },
+            extra: { channel: { id: "channel1" } },
+            createdTimestamp: Date.now()
+        }]
+    ]);
+    const guild = {
+        id: "webhook-correlation-guild",
+        async fetchAuditLogs(options) {
+            assert.equal(options.type, undefined);
+            return { entries };
+        }
+    };
+
+    const entry = await auditHelpers.fetchAuditEntry(guild, null, null, {
+        channelId: "channel1",
+        delayMs: 0,
+        allowedActionTypes: ["WEBHOOK_CREATE", "WEBHOOK_UPDATE", "WEBHOOK_DELETE"]
+    });
+    assert.equal(entry.id, "right");
 });
 
 test("audit reconciler pages backward until the saved cursor", async () => {

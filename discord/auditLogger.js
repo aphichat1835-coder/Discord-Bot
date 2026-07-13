@@ -24,6 +24,9 @@ const {
     formatOverwriteDiff
 } = require("./logging/auditHelpers");
 const securityRules = require("./logging/securityRules");
+const { buildProtectionDecision } = require("./logging/protectionPolicy");
+const { defaultAuditDedup, auditEntryKey } = require("./logging/auditDedup");
+const { readEntryName } = require("./logging/auditGenericFormatter");
 const modCaseManager = require("./logging/modCaseManager");
 
 const registeredClients = new WeakSet();
@@ -43,6 +46,18 @@ let cleanupTimer = null;
 
 const LOG_MESSAGE_CREATE = String(process.env.AUDIT_LOG_MESSAGE_CREATE || "false").toLowerCase() === "true";
 const DUPLICATE_TTL_MS = Math.max(1000, Number(process.env.AUDIT_DUPLICATE_TTL_MS || 2500) || 2500);
+const webhookProtectionTracker = securityRules.createThresholdTracker({
+    windowMs: 60 * 1000,
+    threshold: 4,
+    maxEntries: 5000
+});
+
+function webhookPresentation(action) {
+    if (action === "WEBHOOK_CREATE") return { severity: "warning", title: "Webhook ถูกสร้าง" };
+    if (action === "WEBHOOK_DELETE") return { severity: "danger", title: "Webhook ถูกลบ" };
+    if (action === "WEBHOOK_UPDATE") return { severity: "warning", title: "Webhook ถูกแก้ไข" };
+    return { severity: "danger", title: "Webhook ในห้องเปลี่ยนแปลง" };
+}
 
 function now() { return Date.now(); }
 function isBot(user) { return !!user?.bot; }
@@ -142,6 +157,7 @@ function getAuditStats() {
         ...auditStats,
         duplicateKeys: recentEventKeys.size,
         messageSnapshots: defaultMessageSnapshots.stats(),
+        webhookProtection: webhookProtectionTracker.stats(),
         cleanupTimerActive: !!cleanupTimer
     };
 }
@@ -236,6 +252,7 @@ function buildStorageRecord(guild, category, embed, options = {}) {
     const description = data.description || "";
 
     return {
+        eventId: options.eventId || null,
         guildId: guild?.id,
         source: options.source || "gateway",
         category,
@@ -803,6 +820,70 @@ function registerVoiceEvents(client, sessionManager) {
 function channelTypeName(channel) { return channel?.type || "unknown"; }
 function baseChannelFields(channel) { return [field("📌 ชื่อ", code(channel?.name, 120), true), field("📂 ประเภท", code(channelTypeName(channel), 60), true), field("🆔 Channel ID", code(channel?.id), true)]; }
 
+async function fetchWebhookAuditEntry(channel) {
+    return fetchAuditEntry(channel.guild, null, null, {
+        channelId: channel.id,
+        delayMs: 1200,
+        allowedActionTypes: ["WEBHOOK_CREATE", "WEBHOOK_UPDATE", "WEBHOOK_DELETE"],
+        bypassCache: true,
+        entryFilter: candidate => !candidate?.id ||
+            !defaultAuditDedup.has(auditEntryKey(channel.guild.id, candidate.id))
+    }).catch(() => null);
+}
+
+function applyWebhookProtection(client, channel, action, actorId, fields, severity) {
+    if (!["WEBHOOK_CREATE", "WEBHOOK_DELETE"].includes(action) || !actorId) return severity;
+    const trackerKey = `${channel.guild.id}:${action}:${actorId}`;
+    const tracked = webhookProtectionTracker.record(trackerKey, { channelId: channel.id });
+    const decision = buildProtectionDecision(
+        { actionType: action, actorId, count: tracked.count },
+        {
+            mode: "audit_only",
+            trustedUsers: [config.system.ownerId],
+            trustedBots: [client.user?.id]
+        }
+    );
+    if (!decision.triggered) return severity;
+    fields.push(field(
+        "🚨 Protection threshold",
+        `${tracked.count} ครั้งภายใน ${Math.round(tracked.windowMs / 1000)} วินาที — audit-only, ต้องตรวจสอบด้วยตนเอง`,
+        false
+    ));
+    webhookProtectionTracker.clear(trackerKey);
+    return "critical";
+}
+
+async function handleWebhookUpdate(client, sessionManager, channel) {
+    const entry = await fetchWebhookAuditEntry(channel);
+    const action = readEntryName(entry);
+    const presentation = webhookPresentation(action);
+    const actorId = entry?.executor?.id || null;
+    const fields = [
+        field("📌 ห้อง", channelLabel(channel), true),
+        field("Action", code(action || "UNKNOWN"), true),
+        ...executorFields(entry),
+        field("⚠️ คำเตือน", "ตรวจสอบว่าเป็นการเปลี่ยนแปลงที่ได้รับอนุญาต", false)
+    ];
+    const severity = applyWebhookProtection(client, channel, action, actorId, fields, presentation.severity);
+    const embed = buildLogEmbed({
+        category: LOG_CHANNEL_TYPES.SECURITY,
+        severity,
+        title: `${config.emojis.alert} ${presentation.title}`,
+        noThumbnail: true,
+        fields
+    });
+    const logged = await sendAuditLog(channel.guild, sessionManager, LOG_CHANNEL_TYPES.SECURITY, embed, {
+        eventId: entry?.id || null,
+        source: "gateway_webhook",
+        severity,
+        actionType: action,
+        actorId,
+        targetId: entry?.target?.id || null,
+        channelId: channel.id
+    });
+    if (logged && entry?.id) defaultAuditDedup.remember(auditEntryKey(channel.guild.id, entry.id));
+}
+
 function registerServerEvents(client, sessionManager) {
     client.on("channelCreate", async (channel) => {
         if (!channel.guild) return;
@@ -896,10 +977,12 @@ function registerServerEvents(client, sessionManager) {
     client.on("threadDelete", async (thread) => sendThreadLog(thread.guild, sessionManager, "🧵 Thread ถูกลบ", "danger", thread));
     client.on("threadUpdate", async (oldThread, newThread) => sendSimpleUpdateLog(newThread.guild, sessionManager, "🧵 Thread ถูกแก้ไข", oldThread.name, newThread.name, newThread.id));
 
-    client.on("webhookUpdate", async (channel) => {
-        const entry = await fetchAuditEntry(channel.guild, null, channel.id, { channelId: channel.id, delayMs: 1200 }).catch(() => null);
-        const embed = buildLogEmbed({ category: LOG_CHANNEL_TYPES.SECURITY, severity: "danger", title: `${config.emojis.alert} Webhook ในห้องเปลี่ยนแปลง`, noThumbnail: true, fields: [field("📌 ห้อง", channelLabel(channel), true), ...executorFields(entry), field("⚠️ คำเตือน", "มีการสร้าง/แก้ไข/ลบ Webhook — ตรวจสอบทันที", false)] });
-        await sendAuditLog(channel.guild, sessionManager, LOG_CHANNEL_TYPES.SECURITY, embed);
+    client.on("webhookUpdate", (channel) => {
+        handleWebhookUpdate(client, sessionManager, channel).catch(err => {
+            auditStats.failed += 1;
+            auditStats.lastError = safeAuditText(err?.message || err, 300);
+            console.warn(`[AUDIT] webhookUpdate handling failed: ${auditStats.lastError}`);
+        });
     });
 
     client.on("guildIntegrationsUpdate", async (guild) => {

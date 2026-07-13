@@ -45,3 +45,17 @@ test("setup-log reports moderation save success only when a backing save works",
     };
     assert.equal(await setupLog._test.saveLogChannel(savedSession, "guild1", "moderation", "channel1"), true);
 });
+
+test("setup-log detects and reports degraded executor attribution without View Audit Log", () => {
+    const guild = {
+        name: "Test Guild",
+        iconURL: () => null,
+        members: { me: { permissions: { has: () => false } } }
+    };
+    assert.equal(setupLog._test.canReadAuditLog(guild), false);
+    const embed = setupLog._test.buildSetupSummaryEmbed(guild, [], { auditLogReadable: false }).toJSON();
+    assert.ok(embed.fields.some(field => field.name.includes("Audit Log")));
+
+    guild.members.me.permissions.has = permission => permission === "VIEW_AUDIT_LOG";
+    assert.equal(setupLog._test.canReadAuditLog(guild), true);
+});

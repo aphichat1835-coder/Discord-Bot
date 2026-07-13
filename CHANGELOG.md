@@ -4,6 +4,14 @@
 
 ### Changed
 
+- Hardened webhook reliability across the unified runtime with validated
+  Discord-only HTTPS targets, mention-safe and size-bounded payloads, a shared
+  priority queue, transient retry, bounded routine-event aggregation, Owner
+  delivery diagnostics, and graceful shutdown draining. Webhook audit events
+  now correlate create/update/delete actions by channel, preserve audit entry
+  IDs for reconciler dedupe, flag repeated create/delete activity in audit-only
+  mode, and report missing View Audit Log permission after `/setup-log`.
+
 - Corrected Owner environment diagnostics to report the actual
   `TOKEN_MANAGER` runtime variable and aligned the Render runbook with the
   combined `/health` readiness probe while retaining `/ping` for HTTP liveness.
