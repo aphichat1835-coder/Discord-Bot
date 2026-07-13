@@ -95,7 +95,9 @@ function buildAuditLookup(actionType, targetId, options) {
         channelId: normalizeId(options.channelId),
         targetId: normalizeId(targetId),
         allowedActions,
-        actionCachePart: actionType || (allowedActions.size ? Array.from(allowedActions).sort().join(",") : null)
+        actionCachePart: actionType || (allowedActions.size
+            ? Array.from(allowedActions).sort((left, right) => String(left).localeCompare(String(right))).join(",")
+            : null)
     };
 }
 

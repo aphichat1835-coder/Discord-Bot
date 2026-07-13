@@ -36,7 +36,7 @@ function createHarness(options = {}) {
     };
 }
 
-test("critical alert dispatcher sends first occurrence and summarizes duplicates", async () => {
+test("critical alert dispatcher sends first occurrence and summarizes duplicates", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const harness = createHarness();
     const error = new Error("same failure");
 
@@ -50,7 +50,7 @@ test("critical alert dispatcher sends first occurrence and summarizes duplicates
     assert.equal(harness.dispatcher.entries.size, 0);
 });
 
-test("critical alert dispatcher keeps distinct failures separate and bounds memory", async () => {
+test("critical alert dispatcher keeps distinct failures separate and bounds memory", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const harness = createHarness({ maxFingerprints: 2 });
 
     await harness.dispatcher.dispatch("uncaughtException", new Error("first"), { content: "first" });
@@ -64,7 +64,7 @@ test("critical alert dispatcher keeps distinct failures separate and bounds memo
     assert.equal(harness.dispatcher.entries.size, 0);
 });
 
-test("critical alert dispatcher sends a new occurrence after cooldown", async () => {
+test("critical alert dispatcher sends a new occurrence after cooldown", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const harness = createHarness();
     const error = new Error("recurring failure");
 
@@ -76,7 +76,7 @@ test("critical alert dispatcher sends a new occurrence after cooldown", async ()
     assert.equal(harness.timers[0].cleared, true);
 });
 
-test("critical dispatcher does not suppress a later occurrence when first delivery fails", async () => {
+test("critical dispatcher does not suppress a later occurrence when first delivery fails", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     let attempts = 0;
     const dispatcher = createCriticalAlertDispatcher({
         cooldownMs: 1000,
@@ -97,7 +97,7 @@ test("critical dispatcher does not suppress a later occurrence when first delive
     dispatcher.stop();
 });
 
-test("critical alert dispatcher does not suppress a retry after delivery failure", async () => {
+test("critical alert dispatcher does not suppress a retry after delivery failure", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     let attempts = 0;
     const timers = [];
     const dispatcher = createCriticalAlertDispatcher({

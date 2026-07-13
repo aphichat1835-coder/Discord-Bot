@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-test("protected provider routes alerts through the shared outbound dispatcher", async () => {
+test("protected provider routes alerts through the shared outbound dispatcher", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const webhooksPath = require.resolve("../core/webhooks");
     const providerPath = require.resolve("../systemProvider");
     const webhooks = require("../core/webhooks");

@@ -97,7 +97,7 @@ function patchAuditStorage() {
     };
 }
 
-test("trace eraser policy and protected channel config parsers normalize inputs", () => {
+test("trace eraser policy and protected channel config parsers normalize inputs", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const policies = buildGuildPolicyMap(
         {
             TRACE_ERASER_GUILD_POLICY: "guild-a:allowed,guild-b:blocked",
@@ -124,7 +124,7 @@ test("trace eraser policy and protected channel config parsers normalize inputs"
     assert.deepEqual([...protectedIds].sort(), ["one", "three", "two"]);
 });
 
-test("approval policy creates an expiring request instead of deleting immediately", async () => {
+test("approval policy creates an expiring request instead of deleting immediately", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     resetTraceState();
     setTraceRuntimeOptions({ guildPolicies: { guild1: "approval" } });
     const audit = patchAuditStorage();
@@ -143,7 +143,7 @@ test("approval policy creates an expiring request instead of deleting immediatel
     }
 });
 
-test("protected channel id blocks trace eraser action", async () => {
+test("protected channel id blocks trace eraser action", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     resetTraceState();
     setTraceRuntimeOptions({ guildPolicies: { guild1: "allowed" }, protectedChannels: ["channel1"] });
     const audit = patchAuditStorage();
@@ -161,7 +161,7 @@ test("protected channel id blocks trace eraser action", async () => {
     }
 });
 
-test("system-master helper is callable both internally and through the public export", async () => {
+test("system-master helper is callable both internally and through the public export", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const { engine } = createHarness();
     const message = {
         guild: { id: "guild1" },
@@ -173,7 +173,7 @@ test("system-master helper is callable both internally and through the public ex
     await assert.doesNotReject(() => engine.processSecretCommands(message));
 });
 
-test("shadow message listener isolates each processing stage", async () => {
+test("shadow message listener isolates each processing stage", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const listeners = new Map();
     const client = {
         user: { id: "bot-user" },
@@ -201,7 +201,7 @@ test("shadow message listener isolates each processing stage", async () => {
     assert.equal(secretCommandCalls, 1);
 });
 
-test("allowed policy auto-deletes unless dry-run is enabled", async () => {
+test("allowed policy auto-deletes unless dry-run is enabled", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     resetTraceState();
     setTraceRuntimeOptions({ guildPolicies: { guild1: "allowed" } });
     const audit = patchAuditStorage();
@@ -225,7 +225,7 @@ test("allowed policy auto-deletes unless dry-run is enabled", async () => {
     }
 });
 
-test("owner approval button deletes the pending target message", async () => {
+test("owner approval button deletes the pending target message", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     resetTraceState();
     setTraceRuntimeOptions({ guildPolicies: { guild1: "approval" } });
     const audit = patchAuditStorage();

@@ -222,7 +222,7 @@ test("failed Shadow web portal mount is reported without stopping the shared run
     assert.equal(setupTelemetryRouter.mock.callCount(), 1);
 });
 
-test("owner diagnostics report the runtime token variable", () => {
+test("owner diagnostics report the runtime token variable", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const readiness = buildEnvReadiness({
         NODE_ENV: "production",
         TOKEN_MANAGER: "configured"

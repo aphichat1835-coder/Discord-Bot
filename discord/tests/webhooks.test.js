@@ -15,7 +15,7 @@ const {
 const LOG_URL = "https://discord.com/api/webhooks/12345678901234567/abcdefghijklmnopqrstuvwxyzABCDE";
 const ALERT_URL = "https://discord.com/api/webhooks/22345678901234567/abcdefghijklmnopqrstuvwxyzABCDE";
 
-test("webhook target names map to separate environment variables", () => {
+test("webhook target names map to separate environment variables", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const env = {
         WEBHOOK_LOG_URL: "log-url",
         ALERT_WEBHOOK_URL: "alert-url"
@@ -25,7 +25,7 @@ test("webhook target names map to separate environment variables", () => {
     assert.equal(getWebhookUrl("ALERT", env), "alert-url");
 });
 
-test("webhook diagnostics detect missing and duplicated targets", () => {
+test("webhook diagnostics detect missing and duplicated targets", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.deepEqual(getWebhookDiagnostics({}), {
         hasLog: false,
         hasAlert: false,
@@ -54,7 +54,7 @@ test("webhook diagnostics detect missing and duplicated targets", () => {
     });
 });
 
-test("startup dashboard URL uses the canonical unified public origin", () => {
+test("startup dashboard URL uses the canonical unified public origin", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.equal(getOwnerDashboardBaseUrl({
         RENDER_EXTERNAL_URL: "https://retired-dashboard-public.example/",
         PUBLIC_BASE_URL: "https://owner-dashboard.example/",
@@ -75,7 +75,7 @@ test("startup dashboard URL uses the canonical unified public origin", () => {
     assert.equal(getOwnerDashboardBaseUrl({ PUBLIC_BASE_URL: "not-a-url" }), null);
 });
 
-test("webhook payloads normalize strings and objects", () => {
+test("webhook payloads normalize strings and objects", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.deepEqual(normalizeWebhookPayload("hello"), { content: "hello", allowedMentions: { parse: [] } });
     assert.deepEqual(normalizeWebhookPayload({ content: "ok" }), { content: "ok", allowedMentions: { parse: [] } });
     assert.deepEqual(
@@ -84,13 +84,13 @@ test("webhook payloads normalize strings and objects", () => {
     );
 });
 
-test("webhook URLs are restricted to HTTPS Discord webhook endpoints", () => {
+test("webhook URLs are restricted to HTTPS Discord webhook endpoints", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.equal(validateWebhookUrl(LOG_URL).valid, true);
     assert.equal(validateWebhookUrl("http://discord.com/api/webhooks/123/token-token-token-token").code, "https_required");
     assert.equal(validateWebhookUrl("https://example.com/api/webhooks/123456/token-token-token-token").code, "host_not_allowed");
 });
 
-test("sendWebhook sends to the requested target and destroys the client", async () => {
+test("sendWebhook sends to the requested target and destroys the client", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const calls = [];
 
     class FakeWebhookClient {
@@ -121,7 +121,7 @@ test("sendWebhook sends to the requested target and destroys the client", async 
     ]);
 });
 
-test("sendWebhook returns false when missing URL or send fails", async () => {
+test("sendWebhook returns false when missing URL or send fails", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.equal(await sendWebhook("LOG", "hello", { env: {} }), false);
 
     let destroyed = false;
@@ -144,7 +144,7 @@ test("sendWebhook returns false when missing URL or send fails", async () => {
     assert.equal(destroyed, true);
 });
 
-test("dispatcher retries transient failures and exposes bounded delivery metrics", async () => {
+test("dispatcher retries transient failures and exposes bounded delivery metrics", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     let attempts = 0;
     class RetryClient {
         async send() {
@@ -170,7 +170,7 @@ test("dispatcher retries transient failures and exposes bounded delivery metrics
     assert.equal(await dispatcher.shutdown(), true);
 });
 
-test("normalization enforces Discord payload limits without enabling mentions", () => {
+test("normalization enforces Discord payload limits without enabling mentions", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const payload = normalizeWebhookPayload({
         content: "x".repeat(3000),
         embeds: [{
@@ -191,7 +191,7 @@ test("normalization enforces Discord payload limits without enabling mentions", 
     assert.deepEqual(payload.allowedMentions, { parse: [] });
 });
 
-test("critical alerts preempt queued routine logs when the bounded queue is full", async () => {
+test("critical alerts preempt queued routine logs when the bounded queue is full", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const sent = [];
     let releaseFirst;
     class BlockingClient {
@@ -222,7 +222,7 @@ test("critical alerts preempt queued routine logs when the bounded queue is full
     await dispatcher.shutdown();
 });
 
-test("dispatcher flush is bounded and shutdown rejects new work", async () => {
+test("dispatcher flush is bounded and shutdown rejects new work", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     let release;
     class BlockingClient {
         async send() {
@@ -246,7 +246,7 @@ test("dispatcher flush is bounded and shutdown rejects new work", async () => {
     assert.equal(dispatcher.stats().targets.LOG.lastFailureCode, "dispatcher_stopping");
 });
 
-test("startup notice only includes dashboard and optional shadow portal links", () => {
+test("startup notice only includes dashboard and optional shadow portal links", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const notice = buildStartupNotice({
         clientTag: "Bot#0001",
         baseUrl: "https://example.com",
@@ -263,7 +263,7 @@ test("startup notice only includes dashboard and optional shadow portal links", 
     assert.equal(notice.content.includes("Ping"), false);
 });
 
-test("startup notice never emits a fake link when public URL is missing", () => {
+test("startup notice never emits a fake link when public URL is missing", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const notice = buildStartupNotice({ clientTag: "Bot#0001", baseUrl: "" });
 
     assert.match(notice.content, /ยังไม่ได้ตั้งค่า public URL/);
@@ -271,7 +271,7 @@ test("startup notice never emits a fake link when public URL is missing", () => 
     assert.equal(notice.content.includes("Shadow Portal"), false);
 });
 
-test("startup notice omits Shadow link when its router did not mount", () => {
+test("startup notice omits Shadow link when its router did not mount", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const notice = buildStartupNotice({
         clientTag: "Bot#0001",
         baseUrl: "https://example.com",

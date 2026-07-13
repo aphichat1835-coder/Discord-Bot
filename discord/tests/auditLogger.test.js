@@ -25,7 +25,7 @@ function freshAuditLogger(env = {}) {
     };
 }
 
-test("audit send queue continues after a failed send", async () => {
+test("audit send queue continues after a failed send", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const { logger, restore } = freshAuditLogger({ LOG_CORE_MAX_QUEUE_PER_GUILD: "5" });
     const sends = [];
     const channel = {
@@ -67,7 +67,7 @@ test("audit send queue continues after a failed send", async () => {
     }
 });
 
-test("audit cleanup removes stale duplicate keys and expired message snapshots", () => {
+test("audit cleanup removes stale duplicate keys and expired message snapshots", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const { logger, restore } = freshAuditLogger();
 
     try {
@@ -91,7 +91,7 @@ test("audit cleanup removes stale duplicate keys and expired message snapshots",
     }
 });
 
-test("audit embed builder truncates fields and total embed text", () => {
+test("audit embed builder truncates fields and total embed text", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const { logger, restore } = freshAuditLogger();
 
     try {
@@ -122,7 +122,7 @@ test("audit embed builder truncates fields and total embed text", () => {
     }
 });
 
-test("audit send stores gateway records for audit API reads", async () => {
+test("audit send stores gateway records for audit API reads", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const { logger, restore } = freshAuditLogger();
     const data = {};
     const sends = [];
@@ -171,7 +171,7 @@ test("audit send stores gateway records for audit API reads", async () => {
     }
 });
 
-test("audit settings disabled category prevents gateway send and storage", async () => {
+test("audit settings disabled category prevents gateway send and storage", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const { logger, restore } = freshAuditLogger();
     const data = {
         audit_settings_guild1: {

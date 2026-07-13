@@ -136,9 +136,14 @@ function normalizeEmbed(embed, budget) {
 }
 
 function normalizeWebhookPayload(payload) {
-    const source = typeof payload === "string"
-        ? { content: payload }
-        : (payload && typeof payload === "object" ? { ...payload } : { content: String(payload || "") });
+    let source;
+    if (typeof payload === "string") {
+        source = { content: payload };
+    } else if (payload && typeof payload === "object") {
+        source = { ...payload };
+    } else {
+        source = { content: String(payload || "") };
+    }
     const normalized = { ...source };
     if (source.content !== undefined) normalized.content = truncate(source.content, CONTENT_MAX);
     const budget = { remaining: EMBED_TOTAL_MAX };

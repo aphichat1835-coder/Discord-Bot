@@ -7,7 +7,7 @@ const storage = require("../logging/auditStorage");
 const reconciler = require("../logging/auditReconciler");
 const auditHelpers = require("../logging/auditHelpers");
 
-test("audit event map resolves categories and severities", () => {
+test("audit event map resolves categories and severities", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.equal(eventMap.categoryForAuditEvent("MESSAGE_DELETE"), "message");
     assert.equal(eventMap.categoryForAuditEvent("MEMBER_MOVE"), "voice");
     assert.equal(eventMap.categoryForAuditEvent("WEBHOOK_DELETE"), "security");
@@ -17,7 +17,7 @@ test("audit event map resolves categories and severities", () => {
     assert.equal(eventMap.severityForAuditEvent("ROLE_UPDATE"), "warning");
 });
 
-test("generic audit formatter renders options and changes safely", () => {
+test("generic audit formatter renders options and changes safely", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const entry = {
         id: "entry1",
         action: "CHANNEL_UPDATE",
@@ -34,7 +34,7 @@ test("generic audit formatter renders options and changes safely", () => {
     assert.ok(json.fields.some(field => field.name === "Changes"));
 });
 
-test("audit storage saves and lists records with settings fallback", async () => {
+test("audit storage saves and lists records with settings fallback", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const settings = new Map();
     const sessionManager = {
         async setSetting(key, value) { settings.set(key, value); return true; },
@@ -52,7 +52,7 @@ test("audit storage saves and lists records with settings fallback", async () =>
     assert.equal(listed[0].actionType, "ROLE_UPDATE");
 });
 
-test("audit storage fallback serializes concurrent index updates and filters fallback list", async () => {
+test("audit storage fallback serializes concurrent index updates and filters fallback list", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const settings = new Map();
     const sessionManager = {
         async setSetting(key, value) {
@@ -78,7 +78,7 @@ test("audit storage fallback serializes concurrent index updates and filters fal
     assert.deepEqual(security.map(record => record.eventId), ["event-b"]);
 });
 
-test("audit dead-letter fallback serializes concurrent index updates", async () => {
+test("audit dead-letter fallback serializes concurrent index updates", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const settings = new Map();
     const sessionManager = {
         async setSetting(key, value) {
@@ -101,7 +101,7 @@ test("audit dead-letter fallback serializes concurrent index updates", async () 
     assert.equal(listed.length, 2);
 });
 
-test("audit reconciler normalizes entries", () => {
+test("audit reconciler normalizes entries", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const normalized = reconciler.normalizeEntry({
         id: "entry1",
         action: "WEBHOOK_DELETE",
@@ -116,7 +116,7 @@ test("audit reconciler normalizes entries", () => {
     assert.equal(normalized.targetId, "target1");
 });
 
-test("audit helper correlates webhook events only to allowed actions in the same channel", async () => {
+test("audit helper correlates webhook events only to allowed actions in the same channel", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const entries = new Map([
         ["wrong", {
             id: "wrong",
@@ -149,7 +149,7 @@ test("audit helper correlates webhook events only to allowed actions in the same
     assert.equal(entry.id, "right");
 });
 
-test("audit reconciler pages backward until the saved cursor", async () => {
+test("audit reconciler pages backward until the saved cursor", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const settings = new Map([
         [reconciler.cursorKey("guild1"), { lastEntryId: "old" }]
     ]);

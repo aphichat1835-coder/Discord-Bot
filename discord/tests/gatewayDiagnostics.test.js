@@ -6,7 +6,7 @@ const { EventEmitter } = require("node:events");
 
 const { registerGatewayDiagnostics } = require("../core/gatewayDiagnostics");
 
-test("gateway diagnostics attach once and handle websocket lifecycle errors locally", () => {
+test("gateway diagnostics attach once and handle websocket lifecycle errors locally", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const client = new EventEmitter();
     const errors = [];
     const warnings = [];
