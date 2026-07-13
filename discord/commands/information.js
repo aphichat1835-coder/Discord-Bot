@@ -26,8 +26,15 @@ async function handleServerInfo(interaction) {
     await interaction.deferReply();
     const guild = interaction.guild;
 
-    const botCount   = guild.members.cache.filter(m => m.user.bot).size;
-    const humanCount = Math.max(0, guild.memberCount - botCount);
+    let members = guild.members.cache;
+    let memberSource = "ข้อมูลล่าสุดจาก Discord";
+    try {
+        members = await guild.members.fetch();
+    } catch {
+        memberSource = "คำนวณจาก cache เพราะโหลดรายชื่อสมาชิกล่าสุดไม่สำเร็จ";
+    }
+    const botCount = members.filter(m => m.user.bot).size;
+    const humanCount = members.filter(m => !m.user.bot).size;
 
     const textChannels  = guild.channels.cache.filter(c => c.type === 'GUILD_TEXT').size;
     const voiceChannels = guild.channels.cache.filter(c => c.type === 'GUILD_VOICE').size;
@@ -52,7 +59,8 @@ async function handleServerInfo(interaction) {
             `**${config.emojis.members} Members:**\n` +
             `— Total: ${CB}${guild.memberCount}${CB}\n` +
             `— ${config.emojis.human} Human: ${CB}${humanCount}${CB}\n` +
-            `— ${config.emojis.robot} Bot: ${CB}${botCount}${CB}\n\n` +
+            `— ${config.emojis.robot} Bot: ${CB}${botCount}${CB}\n` +
+            `— แหล่งข้อมูล: ${memberSource}\n\n` +
             `**${config.emojis.folder} Channels:**\n` +
             `— ${config.emojis.text_ch} Text: ${CB}${textChannels}${CB}\n` +
             `— ${config.emojis.voice_ch} Voice: ${CB}${voiceChannels}${CB}\n` +
@@ -115,10 +123,19 @@ async function handleUserInfo(interaction) {
 
     const hexColor = member.displayHexColor !== '#000000' ? member.displayHexColor : 'ไม่มี';
 
-    const roles = member.roles.cache
+    const roleMentions = member.roles.cache
         .filter(r => r.id !== interaction.guild.id)
-        .map(r => r.toString())
-        .join(" | ") || "ไม่มียศ";
+        .sort((a, b) => b.position - a.position)
+        .map(r => r.toString());
+    const visibleRoles = [];
+    let rolesLength = 0;
+    for (const mention of roleMentions) {
+        if (rolesLength + mention.length + 3 > 700) break;
+        visibleRoles.push(mention);
+        rolesLength += mention.length + 3;
+    }
+    const hiddenRoleCount = roleMentions.length - visibleRoles.length;
+    const roles = visibleRoles.join(" | ") + (hiddenRoleCount > 0 ? ` | และอีก ${hiddenRoleCount} ยศ` : "") || "ไม่มียศ";
 
     const hasWebhook = member.permissions.has("MANAGE_WEBHOOKS");
 
@@ -208,7 +225,7 @@ async function handleHelp(interaction) {
             `— ${CB}/ban${CB} ${CB}/kick${CB} ${CB}/timeout${CB} — ลงโทษพร้อม DM แจ้งเตือน\n` +
             `— ${CB}/voicekickall${CB} — เตะทุกคนออกจากห้องเสียง\n` +
             `— ${CB}/clear${CB} — ลบข้อความรวมข้อความเกิน 14 วัน (สูงสุด 100)\n` +
-            `— ${CB}/steal${CB} — ดึงอิโมจิเข้าเซิร์ฟเวอร์\n` +
+            `— ${CB}/copy-emojis${CB} — ดึงอิโมจิเข้าเซิร์ฟเวอร์\n` +
             `— ${CB}/say${CB} ${CB}/announce${CB} — ส่งข้อความและประกาศ\n\n` +
             `**${config.emojis.backup_icon} คำสั่งระบบ:**\n` +
             `— ${CB}/setup-log${CB} — ติดตั้งโครงสร้าง Audit Log\n` +
@@ -216,7 +233,8 @@ async function handleHelp(interaction) {
             `— ${CB}/restore${CB} — กู้คืนโครงสร้างเซิร์ฟเวอร์\n` +
             (isAdmin
                 ? `\n**${config.emojis.admin_icon} คำสั่ง Admin (ซ่อนจากผู้ใช้ทั่วไป):**\n` +
-                  `— ${CB}/panel${CB} — เรียกแผงควบคุมระบบออนช่องเสียง\n`
+                  `— ${CB}/voice-online${CB} — สร้างแผงควบคุมระบบออนช่องเสียง\n` +
+                  `— ${CB}/setup-verify${CB} — สร้างแผงยืนยันตัวตน\n`
                 : '') +
             `\n*หากพบปัญหา ติดต่อ: <@${config.system.ownerId}>*`
         )

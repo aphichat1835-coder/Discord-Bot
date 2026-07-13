@@ -99,7 +99,7 @@ const antiRaidLogDebounce = new Map();
 
 const COMMAND_COOLDOWNS_MS = {
     ban:5000, kick:5000, timeout:5000, voicekickall:5000,
-    say:5000, announce:5000, clear:10000, steal:10000,
+    say:5000, announce:5000, clear:10000, "copy-emojis":10000,
     backup:30000, restore:30000
 };
 const DEFAULT_COOLDOWN_MS = 3000;
@@ -364,8 +364,14 @@ async function boot() {
     try {
         const saved = await sessionManager.getSetting('disabledCommands', []);
         if (Array.isArray(saved) && saved.length > 0) {
-            saved.forEach(cmd => disabledCommands.add(cmd));
-            console.log(`[COMMANDS] 🔒 Loaded ${saved.length} disabled command(s): ${saved.join(', ')}`);
+            const registered = new Set(commands.slashCommandsData.map(command => command.name));
+            const cleanSaved = [...new Set(saved.filter(cmd => typeof cmd === "string" && registered.has(cmd)))];
+            cleanSaved.forEach(cmd => disabledCommands.add(cmd));
+            if (cleanSaved.length !== saved.length) {
+                const persisted = await sessionManager.setSetting('disabledCommands', cleanSaved);
+                if (!persisted) console.warn("[COMMANDS] ⚠️ Failed to persist cleaned disabled command list.");
+            }
+            console.log(`[COMMANDS] 🔒 Loaded ${cleanSaved.length} disabled command(s): ${cleanSaved.join(', ')}`);
         }
     } catch (e) { console.error(`[COMMANDS] ❌ Failed to load disabled: ${e.message}`); }
 

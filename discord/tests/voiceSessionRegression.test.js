@@ -64,9 +64,10 @@ function makeInteraction({ userId = "user1", guildId = "guild-A", ownerId = null
 }
 
 const SESSIONS = [
-    { sessionId: "s1", serverId: "guild-A" },
-    { sessionId: "s2", serverId: "guild-B" },
-    { sessionId: "s3", serverId: "guild-A" },
+    { sessionId: "s1", serverId: "guild-A", ownerId: "admin-A" },
+    { sessionId: "s2", serverId: "guild-B", ownerId: "admin-B" },
+    { sessionId: "s3", serverId: "guild-A", ownerId: "other-A" },
+    { sessionId: "legacy", serverId: "guild-A", ownerId: null }
 ];
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -147,7 +148,7 @@ test("panel normalizeDiscordId: rejects letters", () => { // NOSONAR -- node:tes
 
 // ════════════════════════════════════════════════════════════════════════════
 //  3. PANEL: validateStartFields regex สำหรับ serverId/voiceId
-//     (ปัจจุบัน 17-19 — document ว่าแตกต่างจาก worker ที่รับ 17-22)
+//     (ตรงกับ worker: 17-22)
 // ════════════════════════════════════════════════════════════════════════════
 test("panel validateStartFields regex: accepts 17-digit ID", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.ok(PANEL_ID_REGEX.test("12345678901234567"), "17-digit should pass panel validation");
@@ -165,8 +166,9 @@ test("panel validateStartFields regex: rejects non-numeric ID", () => { // NOSON
     assert.ok(!PANEL_ID_REGEX.test("abc1234567890123"), "non-numeric should fail panel validation");
 });
 
-test("panel validateStartFields regex: rejects 20-digit ID (above panel upper bound of 19)", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    assert.ok(!PANEL_ID_REGEX.test("12345678901234567890"), "20-digit should fail panel validation (panel upper bound is 19, unlike worker which allows 22)");
+test("panel validateStartFields regex: accepts 20 and 22-digit IDs", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    assert.ok(PANEL_ID_REGEX.test("12345678901234567890"));
+    assert.ok(PANEL_ID_REGEX.test("1234567890123456789012"));
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -195,17 +197,17 @@ test("isOwnerGlobalControl: null shadowMasterId does not grant control", () => {
 test("getVisibleVoiceSessions: owner (shadowMaster) sees ALL sessions", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const interaction = makeInteraction({ userId: "shadow-1", guildId: "guild-A" });
     const visible = getVisibleVoiceSessions(interaction, () => SESSIONS, "shadow-1");
-    assert.equal(visible.length, 3);
+    assert.equal(visible.length, 4);
 });
 
-test("getVisibleVoiceSessions: guild-A admin sees only guild-A sessions", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("getVisibleVoiceSessions: a guild admin sees only sessions they created", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const interaction = makeInteraction({ userId: "admin-A", guildId: "guild-A" });
     const visible = getVisibleVoiceSessions(interaction, () => SESSIONS, "shadow-999");
-    assert.equal(visible.length, 2);
-    assert.ok(visible.every(s => s.serverId === "guild-A"));
+    assert.equal(visible.length, 1);
+    assert.equal(visible[0].sessionId, "s1");
 });
 
-test("getVisibleVoiceSessions: guild-B admin sees only guild-B sessions", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("getVisibleVoiceSessions: another member sees only their own sessions", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const interaction = makeInteraction({ userId: "admin-B", guildId: "guild-B" });
     const visible = getVisibleVoiceSessions(interaction, () => SESSIONS, "shadow-999");
     assert.equal(visible.length, 1);
@@ -226,14 +228,20 @@ test("canControlSession: owner can control session in any guild", () => { // NOS
     assert.equal(canControlSession(interaction, { serverId: "guild-B" }, "shadow-1"), true);
 });
 
-test("canControlSession: guild admin can control same-guild session", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("canControlSession: a user can control their own session", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const interaction = makeInteraction({ userId: "admin-A", guildId: "guild-A" });
-    assert.equal(canControlSession(interaction, { serverId: "guild-A" }, "shadow-999"), true);
+    assert.equal(canControlSession(interaction, { serverId: "guild-A", ownerId: "admin-A" }, "shadow-999"), true);
 });
 
-test("canControlSession: guild admin CANNOT control different-guild session", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("canControlSession: a user cannot control another user's session", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const interaction = makeInteraction({ userId: "admin-A", guildId: "guild-A" });
-    assert.equal(canControlSession(interaction, { serverId: "guild-B" }, "shadow-999"), false);
+    assert.equal(canControlSession(interaction, { serverId: "guild-A", ownerId: "other-A" }, "shadow-999"), false);
+});
+
+test("legacy ownerless sessions are hidden from non-owners", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const interaction = makeInteraction({ userId: "admin-A", guildId: "guild-A" });
+    assert.equal(canControlSession(interaction, { serverId: "guild-A", ownerId: null }, "shadow-999"), false);
+    assert.equal(getVisibleVoiceSessions(interaction, () => [SESSIONS[3]], "shadow-999").length, 0);
 });
 
 test("canControlSession: returns false for null session", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
@@ -300,6 +308,12 @@ test("regression: ensureVoiceSession does not reference mainClient.guilds", () =
     );
 });
 
+test("regression: ensureVoiceSession rejects cross-owner token reuse", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const body = extractFunctionBody(readLifecycleSrc(), "ensureVoiceSession");
+    assert.ok(body.includes("token_in_use_by_another_user"));
+    assert.ok(body.includes("existingSession.ownerId"));
+});
+
 test("regression: ensureVoiceSession does not call resolveVoiceTarget", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const src = readLifecycleSrc();
     const body = extractFunctionBody(src, "ensureVoiceSession");
@@ -345,8 +359,7 @@ test("regression: pauseAll sets st.isShuttingDown (not bare variable)", () => { 
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-//  9. SOURCE CONTRACT: worker file accepts 17-22, panel field accepts 17-19
-//     (document the known mismatch ไม่ให้หลุดไป)
+//  9. SOURCE CONTRACT: worker and panel both accept 17-22
 // ════════════════════════════════════════════════════════════════════════════
 test("source contract: worker normalizeVoiceTarget regex is 17,22", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const src = fs.readFileSync(path.join(__dirname, "../voiceWorker/display.js"), "utf8"); // nosemgrep
@@ -360,7 +373,7 @@ test("source contract: worker normalizeVoiceTarget regex is 17,22", () => { // N
     );
 });
 
-test("source contract: panel validateStartFields uses PANEL_FIELD_ID_REGEX (known scope limit)", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("source contract: panel validateStartFields uses the shared 17-22 regex", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const panelSrc = fs.readFileSync(path.join(__dirname, "../commands/panelInteractions.js"), "utf8"); // nosemgrep
     const helperSrc = fs.readFileSync(path.join(__dirname, "../commands/panelHelpers.js"), "utf8"); // nosemgrep
     // ตรวจว่า validateStartFields ใช้ PANEL_FIELD_ID_REGEX (ไม่ inline regex เอง)
@@ -372,10 +385,10 @@ test("source contract: panel validateStartFields uses PANEL_FIELD_ID_REGEX (know
         validateBlock.includes("PANEL_FIELD_ID_REGEX"),
         "validateStartFields must delegate to PANEL_FIELD_ID_REGEX from panelHelpers"
     );
-    // ตรวจว่า panelHelpers กำหนด PANEL_FIELD_ID_REGEX ด้วย pattern \d{17,19} เจาะจง (ไม่ใช่แค่ตัวเลข)
+    // ตรวจว่า panel helper ใช้ source เดียวกับ normalizeDiscordId
     assert.ok(
-        helperSrc.includes("\\d{17,19}"),
-        "panelHelpers.PANEL_FIELD_ID_REGEX must contain \\d{17,19} digit-range pattern"
+        helperSrc.includes("const PANEL_FIELD_ID_REGEX = DISCORD_ID_REGEX"),
+        "panel field validation must share the 17-22 Discord ID regex"
     );
 });
 

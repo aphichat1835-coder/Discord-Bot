@@ -67,6 +67,19 @@ function now() {
   return Date.now();
 }
 
+async function saveConfigWithRetry(config, attempts = 3) {
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return await config.save();
+    } catch (err) {
+      lastError = err;
+      if (attempt + 1 < attempts) await new Promise(resolve => setTimeout(resolve, 150 * (attempt + 1)));
+    }
+  }
+  throw lastError || new Error("CONFIG_SAVE_FAILED");
+}
+
 function safeConsoleError(scope, err) {
   console.error(`[GUILD-DASHBOARD:${scope}]`, err?.message || err);
 }
@@ -832,7 +845,7 @@ router.post("/api/guild/:guildId/settings", requireAdmin, requireGuildAdmin, req
     config.verification = mergedVerification;
     config.updatedAt = now();
 
-    await config.save();
+    await saveConfigWithRetry(config);
 
     res.json({
       success: true,
@@ -902,6 +915,7 @@ router.post("/api/guild/:guildId/verify/validate", requireAdmin, requireGuildAdm
 ============================================================================= */
 
 router.post("/api/guild/:guildId/verify/panel/send", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
+  let sentPanel = null;
   try {
     const { guildId } = req.params;
     const adminId = getAdminId(req);
@@ -937,6 +951,7 @@ router.post("/api/guild/:guildId/verify/panel/send", requireAdmin, requireGuildA
 
     const payload = makePanelPayload(req, { guildId, verification });
     const sent = await discordAPI.createChannelMessage(channelId, payload);
+    sentPanel = sent.ok ? { channelId, messageId: sent.message?.id } : null;
 
     if (!sent.ok) {
       return res.status(400).json({
@@ -956,7 +971,7 @@ router.post("/api/guild/:guildId/verify/panel/send", requireAdmin, requireGuildA
     config.verification = verification;
     config.updatedAt = now();
 
-    await config.save();
+    await saveConfigWithRetry(config);
 
     res.json({
       success: true,
@@ -969,6 +984,9 @@ router.post("/api/guild/:guildId/verify/panel/send", requireAdmin, requireGuildA
       validation
     });
   } catch (err) {
+    if (sentPanel?.messageId) {
+      await discordAPI.deleteChannelMessage(sentPanel.channelId, sentPanel.messageId).catch(() => null);
+    }
     return sendServerError(res, "verify.panel.send", err, "ส่งแผงยืนยันตัวตนไม่สำเร็จ");
   }
 });

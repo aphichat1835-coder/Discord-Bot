@@ -33,6 +33,8 @@ try {
 }
 
 const VERIFY_SCOPE = "identify email connections guilds guilds.members.read guilds.join";
+const PANEL_LIMITS = Object.freeze({ content: 2000, title: 256, description: 4096, footer: 2048, url: 2048 });
+const PERSIST_RETRY_DELAYS_MS = Object.freeze([0, 150, 400]);
 
 const DEFAULT_PANEL = {
     content: "",
@@ -53,6 +55,43 @@ function cleanText(value, fallback = "") {
 
 function normalizeNewlines(value) {
     return cleanText(value, "").replace(/\\n/g, "\n");
+}
+
+function validatePanelText(value, field, maxLength) {
+    if (String(value || "").length <= maxLength) return;
+    const err = new Error("PANEL_INPUT_TOO_LONG");
+    err.safeMessage = `${field} ยาวเกิน ${maxLength} ตัวอักษร`;
+    throw err;
+}
+
+function cleanHttpsUrl(value, field) {
+    const raw = cleanText(value, null);
+    if (!raw) return null;
+    validatePanelText(raw, field, PANEL_LIMITS.url);
+    try {
+        const parsed = new URL(raw);
+        if (parsed.protocol !== "https:") throw new Error("HTTPS_REQUIRED");
+        return parsed.toString();
+    } catch {
+        const err = new Error("PANEL_URL_INVALID");
+        err.safeMessage = `${field} ต้องเป็นลิงก์ HTTPS ที่ถูกต้อง`;
+        throw err;
+    }
+}
+
+async function retryPersistence(operation) {
+    let lastError = null;
+    for (const delay of PERSIST_RETRY_DELAYS_MS) {
+        if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+        try {
+            const result = await operation();
+            if (result === false || result === null) throw new Error("PERSIST_RETURNED_FALSE");
+            return result;
+        } catch (err) {
+            lastError = err;
+        }
+    }
+    throw lastError || new Error("PERSIST_FAILED");
 }
 
 async function resolveGuildBotMember(guild, client) {
@@ -297,7 +336,7 @@ function normalizeColor(input) {
 }
 
 async function syncGuildConfig(interaction, role, channel, panelMsg, panelData) {
-    if (!GuildConfig) return;
+    if (!GuildConfig) throw new Error("GUILD_CONFIG_MODEL_UNAVAILABLE");
 
     const dashboardVerifyType = boolToDashboardVerifyType(panelData.verifyType);
     const legacyOauthMode = boolToLegacyOauthMode(panelData.verifyType);
@@ -305,8 +344,7 @@ async function syncGuildConfig(interaction, role, channel, panelMsg, panelData) 
     const panelRevision = panelData.panelRevision || makePanelRevision("panel");
     const panelRevisionUpdatedAt = panelData.panelRevisionUpdatedAt || Date.now();
 
-    try {
-        await GuildConfig.findOneAndUpdate(
+    return GuildConfig.findOneAndUpdate(
             { guildId: interaction.guild.id },
             {
                 $set: {
@@ -360,17 +398,83 @@ async function syncGuildConfig(interaction, role, channel, panelMsg, panelData) 
                     "verification.requireConnections": false,
                     "verification.minConnections": 1,
 
-                    "security.storeOAuthTokens": false,
+                    "security.storeOAuthTokens": true,
                     "security.storeRawIpEncrypted": true,
                     "security.ipRevealRequiresOwnerApproval": true,
                     "security.retentionMode": "until_admin_delete"
                 }
             },
-            { upsert: true }
+            { upsert: true, new: true }
         );
-    } catch (err) {
-        console.error("[VERIFY] GuildConfig sync failed:", err.message);
+}
+
+async function rollbackPanelConfig({ guildId, settingKey, previousLegacy, previousGuildConfig }) {
+    const tasks = [];
+    if (previousLegacy === null || previousLegacy === undefined) {
+        tasks.push(retryPersistence(() => sessionManager.deleteSetting(settingKey)));
+    } else {
+        tasks.push(retryPersistence(() => sessionManager.setSetting(settingKey, previousLegacy)));
     }
+    if (GuildConfig) {
+        tasks.push(previousGuildConfig
+            ? retryPersistence(() => GuildConfig.replaceOne({ guildId }, previousGuildConfig, { upsert: true }))
+            : retryPersistence(() => GuildConfig.deleteOne({ guildId })));
+    }
+    await Promise.allSettled(tasks);
+}
+
+function isCurrentDirectConfig(configDoc, interaction, roleId) {
+    const verification = configDoc?.verification || {};
+    const messageId = String(interaction.message?.id || "");
+    return verification.enabled !== false &&
+        String(verification.roleId || "") === String(roleId) &&
+        String(verification.messageId || "") === messageId &&
+        typeof verification.panelRevision === "string" && verification.panelRevision.length > 0 &&
+        ["direct", "direct-role"].includes(String(verification.verifyType || verification.oauthMode || ""));
+}
+
+async function lazyMigrateDirectConfig(interaction, role) {
+    if (!GuildConfig) return null;
+    const settings = await sessionManager.getAllSettings();
+    const candidates = Object.entries(settings || {})
+        .filter(([key, value]) => key.startsWith(`verify_config_${interaction.guild.id}_`) && value && typeof value === "object")
+        .map(([, value]) => value)
+        .filter(value => value.verifyType === false || value.dashboardVerifyType === "direct")
+        .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+    const latest = candidates[0];
+    if (!latest || String(latest.messageId || "") !== String(interaction.message?.id || "") ||
+        String(latest.roleId || "") !== String(role.id)) return null;
+
+    return retryPersistence(() => GuildConfig.findOneAndUpdate(
+        { guildId: interaction.guild.id },
+        {
+            $set: {
+                guildId: interaction.guild.id,
+                guildName: interaction.guild.name,
+                "verification.enabled": true,
+                "verification.roleId": role.id,
+                "verification.roleName": role.name,
+                "verification.channelId": latest.channelId,
+                "verification.messageId": latest.messageId,
+                "verification.verifyType": "direct",
+                "verification.oauthMode": "direct",
+                "verification.panelRevision": latest.panelRevision || makePanelRevision("legacy-direct"),
+                "verification.updatedAt": Date.now(),
+                "security.storeOAuthTokens": true
+            }
+        },
+        { upsert: true, new: true }
+    )).catch(() => null);
+}
+
+async function loadCurrentDirectConfig(interaction, role) {
+    if (!GuildConfig) return null;
+    let configDoc = await GuildConfig.findOne({ guildId: interaction.guild.id }).lean().catch(() => null);
+    if (!configDoc) {
+        const migrated = await lazyMigrateDirectConfig(interaction, role);
+        configDoc = migrated?.toObject?.() || migrated;
+    }
+    return isCurrentDirectConfig(configDoc, interaction, role.id) ? configDoc : null;
 }
 
 async function handle(interaction, client) {
@@ -392,17 +496,33 @@ async function handleSetupVerify(interaction) {
     const channel = interaction.options.getChannel("channel");
     const role = interaction.options.getRole("role");
 
+    if (!role) {
+        return interaction.editReply({ content: `> ${config.emojis.error} ไม่พบยศที่เลือก` });
+    }
+
     const verifyType = interaction.options.getBoolean("verify_type") ?? true;
 
     const content = normalizeNewlines(interaction.options.getString("content")) || DEFAULT_PANEL.content;
     const title = normalizeNewlines(interaction.options.getString("title")) || DEFAULT_PANEL.title;
     const description = normalizeNewlines(interaction.options.getString("description")) || DEFAULT_PANEL.description;
     const colorHex = normalizeColor(interaction.options.getString("color"));
-    const imageUrl = cleanText(interaction.options.getString("image"), null);
-    const thumbUrl = cleanText(interaction.options.getString("thumbnail"), null);
+    let imageUrl;
+    let thumbUrl;
     const footerText = normalizeNewlines(interaction.options.getString("footer")) || DEFAULT_PANEL.footer;
     const showTs = interaction.options.getBoolean("timestamp") ?? false;
-    const titleUrl = cleanText(interaction.options.getString("url"), null);
+    let titleUrl;
+
+    try {
+        validatePanelText(content, "content", PANEL_LIMITS.content);
+        validatePanelText(title, "title", PANEL_LIMITS.title);
+        validatePanelText(description, "description", PANEL_LIMITS.description);
+        validatePanelText(footerText, "footer", PANEL_LIMITS.footer);
+        imageUrl = cleanHttpsUrl(interaction.options.getString("image"), "image");
+        thumbUrl = cleanHttpsUrl(interaction.options.getString("thumbnail"), "thumbnail");
+        titleUrl = cleanHttpsUrl(interaction.options.getString("url"), "url");
+    } catch (err) {
+        return interaction.editReply({ content: `> ${config.emojis.error} ${err.safeMessage || "ข้อมูลแผงไม่ถูกต้อง"}` });
+    }
 
     const newButtonText = interaction.options.getString("button_text");
     const oldButtonLabel = interaction.options.getString("button_label");
@@ -459,6 +579,9 @@ async function handleSetupVerify(interaction) {
     }
 
     const roleCheck = validateDirectRoleAssignment(botMember, role);
+    if (role?.id === interaction.guild.id) {
+        return interaction.editReply({ content: `> ${config.emojis.error} ไม่สามารถใช้ยศ @everyone เป็นยศยืนยันตัวตนได้` });
+    }
     if (!roleCheck.ok) {
         return interaction.editReply({
             content: `> ${config.emojis.error} ${roleCheck.reason}`
@@ -496,8 +619,8 @@ async function handleSetupVerify(interaction) {
 
             return interaction.editReply({
                 content:
-                    `> ${config.emojis.error} สร้างลิงก์ OAuth ไม่สำเร็จ: ${err.message}\n` +
-                    `> ตรวจ PUBLIC_DASHBOARD_URL, VERIFY_STATE_SECRET, DISCORD_CLIENT_ID และความยาว domain`
+                    `> ${config.emojis.error} สร้างลิงก์ OAuth ไม่สำเร็จ\n` +
+                    `> กรุณาตรวจการตั้งค่า OAuth และ public URL แล้วลองใหม่`
             });
         }
 
@@ -521,6 +644,10 @@ async function handleSetupVerify(interaction) {
     }
 
     try {
+        if (!GuildConfig) throw new Error("GUILD_CONFIG_MODEL_UNAVAILABLE");
+        const settingKey = `verify_config_${interaction.guild.id}_${role.id}`;
+        const previousLegacy = await sessionManager.getSetting(settingKey, null);
+        const previousGuildConfig = await GuildConfig.findOne({ guildId: interaction.guild.id }).lean();
         const panelPayload = {
             embeds: [embed],
             components: [row]
@@ -535,7 +662,7 @@ async function handleSetupVerify(interaction) {
         const dashboardVerifyType = boolToDashboardVerifyType(verifyType);
         const legacyOauthMode = boolToLegacyOauthMode(verifyType);
 
-        await sessionManager.setSetting(`verify_config_${interaction.guild.id}_${role.id}`, {
+        const legacyConfig = {
             roleId: role.id,
             roleName: role.name,
             guildId: interaction.guild.id,
@@ -574,24 +701,36 @@ async function handleSetupVerify(interaction) {
             setBy: interaction.user.id,
             updatedAt: Date.now(),
             createdAt: Date.now()
-        });
+        };
 
-        await syncGuildConfig(interaction, role, channel, panelMsg, {
-            verifyType,
-            content,
-            title,
-            description,
-            colorHex,
-            imageUrl,
-            thumbUrl,
-            footerText,
-            titleUrl,
-            showTs,
-            buttonLabel: buttonParts.label,
-            buttonEmoji: buttonParts.emojiDisplay,
-            panelRevision,
-            panelRevisionUpdatedAt
-        });
+        try {
+            await retryPersistence(() => sessionManager.setSetting(settingKey, legacyConfig));
+            await retryPersistence(() => syncGuildConfig(interaction, role, channel, panelMsg, {
+                verifyType,
+                content,
+                title,
+                description,
+                colorHex,
+                imageUrl,
+                thumbUrl,
+                footerText,
+                titleUrl,
+                showTs,
+                buttonLabel: buttonParts.label,
+                buttonEmoji: buttonParts.emojiDisplay,
+                panelRevision,
+                panelRevisionUpdatedAt
+            }));
+        } catch (persistError) {
+            await panelMsg.delete().catch(() => null);
+            await rollbackPanelConfig({
+                guildId: interaction.guild.id,
+                settingKey,
+                previousLegacy,
+                previousGuildConfig
+            });
+            throw persistError;
+        }
 
         const resultEmbed = new MessageEmbed()
             .setColor(config.system.themeColors.success)
@@ -652,8 +791,8 @@ async function handleSetupVerify(interaction) {
 
         return interaction.editReply({
             content:
-                `> ${config.emojis.error} เกิดข้อผิดพลาด: ${err.message}\n` +
-                `> ตรวจสอบว่าบอทมีสิทธิ์ส่งข้อความในห้องนั้น และ URL/Emoji ถูกต้อง`
+                `> ${config.emojis.error} ติดตั้งแผงยืนยันไม่สำเร็จ ระบบไม่ได้เปิดใช้งานแผงที่บันทึกไม่ครบ\n` +
+                `> ตรวจสอบสิทธิ์ของบอทและสถานะฐานข้อมูล แล้วลองใหม่`
         });
     }
 }
@@ -681,6 +820,14 @@ async function handleVerifyButton(interaction) {
             });
         }
 
+        const currentConfig = await loadCurrentDirectConfig(interaction, role);
+        if (!currentConfig) {
+            return interaction.reply({
+                content: `> ${config.emojis.warning} แผงนี้ไม่ใช่แผงล่าสุดแล้ว กรุณาใช้แผงยืนยันตัวตนล่าสุด`,
+                ephemeral: true
+            });
+        }
+
         try {
             if (member.roles.cache.has(roleId)) {
                 return interaction.reply({
@@ -704,7 +851,7 @@ async function handleVerifyButton(interaction) {
 
         } catch (err) {
             return interaction.reply({
-                content: `> ${config.emojis.error} ไม่สามารถจัดการยศได้: ${err.message}`,
+                content: `> ${config.emojis.error} ไม่สามารถจัดการยศได้ กรุณาลองใหม่หรือติดต่อผู้ดูแล`,
                 ephemeral: true
             });
         }
@@ -725,6 +872,10 @@ module.exports = {
     handleVerifyButton,
     _test: {
         resolveGuildBotMember,
-        validateDirectRoleAssignment
+        validateDirectRoleAssignment,
+        validatePanelText,
+        cleanHttpsUrl,
+        isCurrentDirectConfig,
+        retryPersistence
     }
 };

@@ -3,6 +3,7 @@ const sessionManager = require("../sessionManager");
 const { requireMemberPermission, checkRoleHierarchy, safeDefer } = require("../guards/commandGuards");
 const modCaseManager = require("../logging/modCaseManager");
 const { LOG_CHANNEL_TYPES, routeAndSendLog } = require("../logging/logCore");
+const { sendAlertWebhook } = require("../core/webhooks");
 const {
     requiredModerationPermission,
     readModerationInput,
@@ -102,10 +103,10 @@ async function applyModerationAction(interaction, input) {
     return false;
 }
 
-async function createModerationCase(interaction, input, dmSent) {
+async function createModerationCase(interaction, input, dmSent, status = "pending") {
     return modCaseManager.createCase(
         sessionManager,
-        buildCaseInput(interaction, input.target, input.action, input.reason, input.duration.durationMs, dmSent)
+        { ...buildCaseInput(interaction, input.target, input.action, input.reason, input.duration.durationMs, dmSent), status }
     );
 }
 
@@ -122,14 +123,38 @@ async function sendModerationCaseLog(interaction, caseDoc, action) {
     });
 }
 
-async function performModeration(interaction, input) {
-    const dmSent = await applyModerationAction(interaction, input);
-    const caseDoc = await createModerationCase(interaction, input, dmSent);
-    const logSent = await sendModerationCaseLog(interaction, caseDoc, input.action).catch(err => {
+async function performModeration(interaction, input, deps = {}) {
+    const createCase = deps.createCase || createModerationCase;
+    const applyAction = deps.applyAction || applyModerationAction;
+    const updateStatus = deps.updateStatus || ((guildId, caseNumber, status, metadata) =>
+        modCaseManager.updateCaseStatus(sessionManager, guildId, caseNumber, status, metadata));
+    const sendCaseLog = deps.sendCaseLog || sendModerationCaseLog;
+    const pendingCase = await createCase(interaction, input, false, "pending");
+    let dmSent = false;
+    try {
+        dmSent = await applyAction(interaction, input);
+    } catch (err) {
+        await updateStatus(pendingCase.guildId, pendingCase.caseNumber, "failed", {
+            actionApplied: false,
+            failureCode: String(err?.code || err?.message || "action_failed").slice(0, 80)
+        }).catch(() => null);
+        throw err;
+    }
+    const completedCase = await updateStatus(
+        pendingCase.guildId,
+        pendingCase.caseNumber,
+        "completed",
+        { actionApplied: true, dmSent }
+    ).catch(() => null);
+    const caseDoc = completedCase || { ...pendingCase, metadata: { ...(pendingCase.metadata || {}), actionApplied: true, dmSent } };
+    const logSent = await sendCaseLog(interaction, caseDoc, input.action).catch(err => {
         console.warn(`[MODERATION] Log delivery failed after successful ${input.action}: ${err.message}`);
         return false;
     });
-    return { dmSent, caseDoc, logSent };
+    if (!logSent) {
+        sendAlertWebhook({ content: `⚠️ [MODERATION LOG] ส่ง log ไม่สำเร็จ | guild=${interaction.guild.id} | action=${input.action} | case=${caseDoc.caseNumber}` }).catch(() => {});
+    }
+    return { dmSent, caseDoc, logSent, caseCompleted: Boolean(completedCase) };
 }
 
 function successReply(interaction, input, result) {
@@ -141,7 +166,12 @@ function successReply(interaction, input, result) {
         result.dmSent,
         result.caseDoc.caseNumber
     );
-    return interaction.editReply({ embeds: [replyEmbed] });
+    return interaction.editReply({
+        content: result.caseCompleted
+            ? undefined
+            : `> ${config.emojis.warning} ดำเนินการกับสมาชิกแล้ว แต่ฐานข้อมูลยังคง Case #${result.caseDoc.caseNumber} เป็น pending เพื่อให้ตรวจสอบภายหลัง`,
+        embeds: [replyEmbed]
+    });
 }
 
 function failureReply(interaction, err) {
@@ -160,7 +190,7 @@ async function handleModerationCommand(interaction, client) {
     if (rejection === VALIDATION_STOP) return null;
     if (rejection) return rejection;
 
-    await safeDefer(interaction);
+    if (!await safeDefer(interaction)) return null;
     try {
         return successReply(interaction, input, await performModeration(interaction, input));
     } catch (err) {

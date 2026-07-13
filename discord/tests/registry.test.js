@@ -15,6 +15,7 @@ test("slash command names are unique and include supported command groups", () =
     const unique = new Set(names);
 
     assert.equal(unique.size, names.length);
+    assert.equal(names.length, 17);
 
     for (const expected of [
         "voice-online",
@@ -44,6 +45,7 @@ test("slash command definitions have stable required shape", () => {
         assert.match(command.name, /^[a-z0-9-]{1,32}$/);
         assert.equal(typeof command.description, "string");
         assert.ok(command.description.length > 0);
+        assert.equal(command.dmPermission, false);
 
         if (command.options) {
             assert.equal(Array.isArray(command.options), true);
@@ -78,10 +80,10 @@ test("slash command registry validation rejects empty or malformed payloads", ()
     assert.throws(() => validateSlashCommandsData([{ name: "Bad Name", description: "ok" }]), /invalid slash-command name/);
     assert.throws(() => validateSlashCommandsData([{ name: "ok", description: "" }]), /invalid description/);
     assert.throws(() => validateSlashCommandsData([
-        { name: "dup", description: "first" },
-        { name: "dup", description: "second" }
+        { name: "dup", description: "first", dmPermission: false },
+        { name: "dup", description: "second", dmPermission: false }
     ]), /duplicate/);
     assert.throws(() => validateSlashCommandsData([
-        { name: "ok", description: "valid", options: [{ type: 999, name: "x", description: "bad", required: true }] }
+        { name: "ok", description: "valid", dmPermission: false, options: [{ type: 999, name: "x", description: "bad", required: true }] }
     ]), /invalid type/);
 });

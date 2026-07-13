@@ -21,6 +21,7 @@ test("session error map returns known user-facing messages", () => {
     assert.match(getSessionErrorMessage(SESSION_ERROR_KEYS.TOKEN_INVALID, config), /Token ไม่ถูกต้อง/);
     assert.match(getSessionErrorMessage(SESSION_ERROR_KEYS.ALREADY_ACTIVE, config), /กำลังทำงานอยู่แล้ว/);
     assert.match(getSessionErrorMessage(SESSION_ERROR_KEYS.ALREADY_ACTIVE_DIFFERENT_CHANNEL, config), /คนละช่อง/);
+    assert.match(getSessionErrorMessage(SESSION_ERROR_KEYS.TOKEN_IN_USE_BY_ANOTHER_USER, config), /ผู้ใช้อื่น/);
     assert.match(getSessionErrorMessage(SESSION_ERROR_KEYS.SYSTEM_LIMIT, config), /3 เซสชัน/);
 });
 

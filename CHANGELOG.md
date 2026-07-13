@@ -4,6 +4,17 @@
 
 ### Changed
 
+- Completed the 17-command reliability pass while leaving `/setup-log`
+  unchanged for its separately approved retirement: all slash commands are
+  guild-only; Voice Panel sessions are isolated by the creating Discord user
+  except for Bot Owner/Shadow Master global control; verification panels now
+  enforce Discord limits, HTTPS resources, assignable roles, durable dual-store
+  persistence and latest-panel Direct Role checks; moderation creates durable
+  pending cases before Discord actions; backup snapshots use bounded chunks
+  with legacy restore compatibility and reauthorization; and command help,
+  permissions, mention handling, result counts, cooldowns, locks and payload
+  limits now match the registered command surface.
+
 - Removed the redundant Discord `/stats` slash command, handler, router entry,
   and help text. Runtime status remains available through `/ping` and the Owner
   Dashboard `/status` page; verification statistics APIs remain unchanged.

@@ -83,3 +83,28 @@ test("updateCaseReason amends existing case", async () => {
     assert.equal(updated.reason, "new reason");
     assert.equal(updated.amendedBy, "m2");
 });
+
+test("case fallback fails closed when a database write reports false", async () => {
+    const sessionManager = createFakeSessionManager();
+    sessionManager.setSetting = async () => false;
+    await assert.rejects(
+        modCaseManager.createCase(sessionManager, { guildId: "g1", action: "ban", userId: "u1" }),
+        /CASE_SAVE_FAILED|CASE_COUNTER_SAVE_FAILED/
+    );
+});
+
+test("updateCaseStatus persists pending workflow outcomes", async () => {
+    const sessionManager = createFakeSessionManager();
+    const created = await modCaseManager.createCase(sessionManager, {
+        guildId: "g1", action: "kick", userId: "u4", status: "pending"
+    });
+    const completed = await modCaseManager.updateCaseStatus(
+        sessionManager, "g1", created.caseNumber, "completed", { actionApplied: true }
+    );
+    assert.equal(completed.status, "completed");
+    assert.equal(completed.metadata.actionApplied, true);
+    await assert.rejects(
+        modCaseManager.updateCaseStatus(sessionManager, "g1", created.caseNumber, "unknown"),
+        /CASE_STATUS_INVALID/
+    );
+});

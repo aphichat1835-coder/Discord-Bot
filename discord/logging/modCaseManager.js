@@ -92,7 +92,9 @@ async function nextCaseNumberFallback(sessionManager, guildId) {
         const key = counterKey(guildId);
         const current = Number(await sessionManager.getSetting(key, 0)) || 0;
         const next = current + 1;
-        await sessionManager.setSetting(key, next);
+        if (await sessionManager.setSetting(key, next) !== true) {
+            throw new Error("CASE_COUNTER_SAVE_FAILED");
+        }
         return next;
     });
 }
@@ -111,13 +113,13 @@ async function nextCaseNumber(sessionManager, guildId) {
 async function saveCaseWithSettings(sessionManager, caseDoc) {
     if (!sessionManager?.setSetting || !sessionManager?.getSetting) return false;
     return withFallbackLock(`user:${caseDoc.guildId}:${caseDoc.userId || "unknown"}`, async () => {
-        await sessionManager.setSetting(caseKey(caseDoc.guildId, caseDoc.caseNumber), caseDoc);
+        if (await sessionManager.setSetting(caseKey(caseDoc.guildId, caseDoc.caseNumber), caseDoc) !== true) return false;
 
         const indexKey = userIndexKey(caseDoc.guildId, caseDoc.userId || "unknown");
         const current = await sessionManager.getSetting(indexKey, []);
         const list = Array.isArray(current) ? current : [];
         const next = [caseDoc.caseNumber, ...list.filter(n => n !== caseDoc.caseNumber)].slice(0, 50);
-        await sessionManager.setSetting(indexKey, next);
+        if (await sessionManager.setSetting(indexKey, next) !== true) return false;
         return true;
     });
 }
@@ -130,7 +132,7 @@ async function saveCase(sessionManager, caseDoc) {
             console.warn(`[MODCASE] Mongo save failed, fallback settings: ${safeAuditError(err, 240)}`);
         }
     }
-    await saveCaseWithSettings(sessionManager, caseDoc);
+    if (!await saveCaseWithSettings(sessionManager, caseDoc)) throw new Error("CASE_SETTINGS_SAVE_FAILED");
     return caseDoc;
 }
 
@@ -202,8 +204,29 @@ async function updateCaseReason(sessionManager, guildId, caseNumber, reason, ame
     }
 
     const updated = { ...existing, ...patch };
-    await sessionManager.setSetting(caseKey(guildId, caseNumber), updated);
-    return updated;
+    return await sessionManager.setSetting(caseKey(guildId, caseNumber), updated) === true ? updated : null;
+}
+
+async function updateCaseStatus(sessionManager, guildId, caseNumber, status, metadata = {}) {
+    const allowed = new Set(["pending", "completed", "failed"]);
+    if (!allowed.has(status)) throw new Error("CASE_STATUS_INVALID");
+    const existing = await getCase(sessionManager, guildId, caseNumber);
+    if (!existing) return null;
+    const patch = {
+        status,
+        metadata: { ...(existing.metadata || {}), ...(metadata || {}) },
+        updatedAt: Date.now()
+    };
+    if (canUseMongoStore()) {
+        try {
+            const updated = await modCaseStore.updateCase(guildId, caseNumber, patch);
+            if (updated) return updated;
+        } catch (err) {
+            console.warn(`[MODCASE] Mongo status update failed, fallback settings: ${safeAuditError(err, 240)}`);
+        }
+    }
+    const updated = { ...existing, ...patch };
+    return await sessionManager.setSetting(caseKey(guildId, caseNumber), updated) === true ? updated : null;
 }
 
 function buildModerationCaseEmbed(caseDoc, options = {}) {
@@ -238,6 +261,7 @@ module.exports = {
     getCase,
     listUserCases,
     updateCaseReason,
+    updateCaseStatus,
     buildModerationCaseEmbed,
     caseToLogEvent,
     _test: {

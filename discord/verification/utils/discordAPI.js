@@ -1099,6 +1099,17 @@ async function editChannelMessage(channelId, messageId, payload) {
     };
 }
 
+async function deleteChannelMessage(channelId, messageId) {
+    const cid = snowflake(channelId);
+    const mid = snowflake(messageId);
+    if (!cid || !mid || !hasBotToken()) return { ok: false, status: 400 };
+    const res = await fetchWithRetry(`/channels/${cid}/messages/${mid}`, {
+        method: "DELETE",
+        headers: botHeaders()
+    });
+    return { ok: res.ok, status: res.status };
+}
+
 /* =============================================================================
    DM
 ============================================================================= */
@@ -1242,6 +1253,7 @@ module.exports = {
     fetchChannelMessage,
     createChannelMessage,
     editChannelMessage,
+    deleteChannelMessage,
 
     createDMChannel,
     sendDM,

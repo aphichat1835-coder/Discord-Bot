@@ -41,18 +41,19 @@ async function handleVoiceKickAll(interaction, getLogChannel) {
     const vc = interaction.member.voice.channel;
     if (!vc) return interaction.reply({ content: `> ${config.emojis.no_entry} คุณต้องอยู่ในห้องเสียงก่อน!`, ephemeral: true });
     if (!await requireMemberPermission(interaction, "ADMINISTRATOR", `> ${config.emojis.no_entry} ไม่มีสิทธิ์ผู้ดูแลระบบ`)) return;
-    if (!await requireBotPermission(interaction, "MOVE_MEMBERS", `> ${config.emojis.error} บอทไม่มีสิทธิ์ย้ายสมาชิก`)) return;
+    if (!await requireBotPermission(interaction, "MOVE_MEMBERS", `> ${config.emojis.error} บอทไม่มีสิทธิ์ย้ายสมาชิกในห้องนี้`, vc)) return;
 
     if (activeVoiceKicks.has(interaction.guild.id)) {
         return interaction.reply({ content: `> ${config.emojis.warning} ระบบกำลังดำเนินการอยู่ กรุณารอ`, ephemeral: true });
     }
     activeVoiceKicks.add(interaction.guild.id);
-    await safeDefer(interaction);
 
     try {
+        if (!await safeDefer(interaction)) return null;
         const startTime = Date.now();
         const MAX_DURATION = 14 * 60 * 1000;
         const kicked = [];
+        let failed = 0;
         let isTimeoutHit = false;
 
         const memberSnapshot = Array.from(vc.members.values());
@@ -65,7 +66,9 @@ async function handleVoiceKickAll(interaction, getLogChannel) {
                     await member.voice.disconnect();
                     kicked.push(`<@${member.id}>`);
                     await new Promise(r => setTimeout(r, 500));
-                } catch {}
+                } catch {
+                    failed++;
+                }
             }
         }
 
@@ -79,7 +82,8 @@ async function handleVoiceKickAll(interaction, getLogChannel) {
                     ? (kicked.length > 50
                         ? kicked.slice(0, 50).join(", ") + `\n... และอีก ${kicked.length - 50} คน`
                         : kicked.join(", "))
-                    : "- ไม่มีใครถูกเตะ -"}${limitMsg}`
+                    : "- ไม่มีใครถูกเตะ -"}\n` +
+                `— **ล้มเหลว:** ${failed} คน${limitMsg}`
             );
 
         const logMap = await sessionManager.getLogChannelMap(interaction.guild.id);
@@ -145,7 +149,7 @@ async function deleteChannelMessages(channel, amount, now = Date.now()) {
 
 async function handleClear(interaction) {
     if (!await requireMemberPermission(interaction, "MANAGE_MESSAGES", `> ${config.emojis.no_entry} ไม่มีสิทธิ์ลบข้อความ`)) return;
-    if (!await requireBotPermission(interaction, ["VIEW_CHANNEL", "READ_MESSAGE_HISTORY", "MANAGE_MESSAGES"], `> ${config.emojis.error} บอทไม่มีสิทธิ์ดูประวัติหรือลบข้อความในช่องนี้`)) return;
+    if (!await requireBotPermission(interaction, ["VIEW_CHANNEL", "READ_MESSAGE_HISTORY", "MANAGE_MESSAGES"], `> ${config.emojis.error} บอทไม่มีสิทธิ์ดูประวัติหรือลบข้อความในช่องนี้`, interaction.channel)) return;
 
     const amt = interaction.options.getInteger("amount");
     if (amt < 1 || amt > 100) {
@@ -160,8 +164,8 @@ async function handleClear(interaction) {
     }
 
     activeClearChannels.add(interaction.channel.id);
-    await safeDefer(interaction, { ephemeral: true });
     try {
+        if (!await safeDefer(interaction, { ephemeral: true })) return null;
         const result = await deleteChannelMessages(interaction.channel, amt);
         if (result.deleted === 0) {
             return interaction.editReply({

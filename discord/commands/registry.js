@@ -43,6 +43,7 @@ function validateSlashCommandsData(commands) {
         assertDescription(command.description, label);
         if (seen.has(command.name)) throw new Error(`duplicate slash command: /${command.name}`);
         seen.add(command.name);
+        if (command.dmPermission !== false) throw new Error(`/${command.name} must be guild-only`);
         if (command.options !== undefined) {
             if (!Array.isArray(command.options)) throw new Error(`/${command.name} options must be an array`);
             command.options.forEach((option, optionIndex) => validateOption(option, command.name, optionIndex));
@@ -71,7 +72,7 @@ const slashCommandsData = [
         name: "clear",
         description: "ลบข้อความในช่องปัจจุบัน รวมข้อความเกิน 14 วัน (สูงสุด 100)",
         options: [
-            { type: 4, name: "amount", description: "จำนวนข้อความ (1-100)", required: true }
+            { type: 4, name: "amount", description: "จำนวนข้อความ (1-100)", required: true, min_value: 1, max_value: 100 }
         ]
     },
 
@@ -79,7 +80,7 @@ const slashCommandsData = [
         name: "say",
         description: "ส่งข้อความในนามระบบ",
         options: [
-            { type: 3, name: "message", description: "ข้อความที่ต้องการส่ง", required: true }
+            { type: 3, name: "message", description: "ข้อความที่ต้องการส่ง", required: true, min_length: 1, max_length: 2000 }
         ]
     },
 
@@ -87,9 +88,9 @@ const slashCommandsData = [
         name: "announce",
         description: "ส่งข้อความประกาศแบบ Embed",
         options: [
-            { type: 3, name: "title",   description: "หัวข้อประกาศ", required: true },
-            { type: 3, name: "message", description: "เนื้อหาประกาศ", required: true },
-            { type: 3, name: "content", description: "ข้อความดิบนอก Embed (เช่น @everyone)", required: false },
+            { type: 3, name: "title",   description: "หัวข้อประกาศ", required: true, min_length: 1, max_length: 250 },
+            { type: 3, name: "message", description: "เนื้อหาประกาศ", required: true, min_length: 1, max_length: 4096 },
+            { type: 3, name: "content", description: "ข้อความดิบนอก Embed (เช่น @everyone)", required: false, max_length: 2000 },
             { type: 5, name: "allow_mentions", description: "อนุญาตให้ content ping users/roles/everyone (ต้องมีสิทธิ์สูง)", required: false }
         ]
     },
@@ -138,7 +139,7 @@ const slashCommandsData = [
         description: "ระงับสมาชิกชั่วคราว พร้อม DM แจ้งเตือน",
         options: [
             { type: 6, name: "target",  description: "เป้าหมาย", required: true },
-            { type: 4, name: "minutes", description: "จำนวนนาที (1-40000)", required: true },
+            { type: 4, name: "minutes", description: "จำนวนนาที (1-40000)", required: true, min_value: 1, max_value: 40000 },
             { type: 3, name: "reason",  description: "เหตุผล", required: false }
         ]
     },
@@ -150,19 +151,19 @@ const slashCommandsData = [
             { type: 7, name: "channel", description: "ห้องข้อความที่จะให้บอทส่งแผงยืนยันตัวตน", required: true },
             { type: 8, name: "role", description: "ยศที่จะมอบให้สมาชิกหลังยืนยันตัวตนสำเร็จ", required: true },
             { type: 5, name: "verify_type", description: "เปิด = OAuth2 | ปิด = กดรับยศทันที | ไม่กรอก = OAuth2", required: false },
-            { type: 3, name: "content", description: "ข้อความนอก Embed เช่น @everyone หรือข้อความประกาศ", required: false },
-            { type: 3, name: "title", description: "หัวข้อหลักของ Embed ถ้าไม่กรอกจะใช้ค่าเริ่มต้น", required: false },
-            { type: 3, name: "description", description: String.raw`คำอธิบายใน Embed ใช้ \n เพื่อขึ้นบรรทัดใหม่ได้`, required: false },
-            { type: 3, name: "button_text", description: "ข้อความปุ่ม เช่น ✅ ยืนยันตัวตน ✅ หรือ <:verify:id> ยืนยันตัวตน ✅", required: false },
+            { type: 3, name: "content", description: "ข้อความนอก Embed เช่น @everyone หรือข้อความประกาศ", required: false, max_length: 2000 },
+            { type: 3, name: "title", description: "หัวข้อหลักของ Embed ถ้าไม่กรอกจะใช้ค่าเริ่มต้น", required: false, max_length: 256 },
+            { type: 3, name: "description", description: String.raw`คำอธิบายใน Embed ใช้ \n เพื่อขึ้นบรรทัดใหม่ได้`, required: false, max_length: 4096 },
+            { type: 3, name: "button_text", description: "ข้อความปุ่ม เช่น ✅ ยืนยันตัวตน ✅ หรือ <:verify:id> ยืนยันตัวตน ✅", required: false, max_length: 80 },
             { type: 3, name: "color", description: "สีขอบ Embed แบบ HEX เช่น #5865F2 หรือ FF0000", required: false },
-            { type: 3, name: "image", description: "ลิงก์รูปภาพหลักขนาดใหญ่ใน Embed", required: false },
-            { type: 3, name: "thumbnail", description: "ลิงก์รูปภาพเล็กมุมขวาของ Embed", required: false },
-            { type: 3, name: "footer", description: "ข้อความท้าย Embed เช่น Verification System", required: false },
+            { type: 3, name: "image", description: "ลิงก์รูปภาพหลักขนาดใหญ่ใน Embed", required: false, max_length: 2048 },
+            { type: 3, name: "thumbnail", description: "ลิงก์รูปภาพเล็กมุมขวาของ Embed", required: false, max_length: 2048 },
+            { type: 3, name: "footer", description: "ข้อความท้าย Embed เช่น Verification System", required: false, max_length: 2048 },
             { type: 5, name: "timestamp", description: "เปิดหรือปิดเวลาใต้ Embed", required: false },
-            { type: 3, name: "url", description: "ลิงก์ที่หัวข้อ Embed จะกดเข้าไปได้", required: false }
+            { type: 3, name: "url", description: "ลิงก์ที่หัวข้อ Embed จะกดเข้าไปได้", required: false, max_length: 2048 }
         ]
     }
-];
+].map(command => ({ ...command, dmPermission: false }));
 
 validateSlashCommandsData(slashCommandsData);
 

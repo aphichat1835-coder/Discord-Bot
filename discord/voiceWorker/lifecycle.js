@@ -634,6 +634,12 @@ async function ensureVoiceSession(input = {}) {
     const existing = sessionManager.findActiveVoiceSessionByTokenGuild?.(tokenHash, guildId);
     if (existing?.session) {
         const existingSession = existing.session;
+        if (!input.ownerId || String(existingSession.ownerId || "") !== String(input.ownerId)) {
+            return {
+                ok: false,
+                action: "token_in_use_by_another_user"
+            };
+        }
         const sameChannel = String(existingSession.voiceId || "") === String(channelId);
 
         if (!sameChannel) {
@@ -688,7 +694,9 @@ async function ensureVoiceSession(input = {}) {
     } catch (err) {
         if (!sessionId && err.message === "ALREADY_ACTIVE_IN_GUILD") {
             const racedExisting = sessionManager.findActiveVoiceSessionByTokenGuild?.(tokenHash, guildId);
-            if (racedExisting?.session && String(racedExisting.session.voiceId || "") === String(channelId)) {
+            const sameOwner = racedExisting?.session && input.ownerId &&
+                String(racedExisting.session.ownerId || "") === String(input.ownerId);
+            if (sameOwner && String(racedExisting.session.voiceId || "") === String(channelId)) {
                 const result = await startExistingSession({
                     sessionId: racedExisting.id || racedExisting.session.sessionId,
                     token,
@@ -702,6 +710,11 @@ async function ensureVoiceSession(input = {}) {
                     raced: true,
                     ...result
                 };
+            }
+            if (racedExisting?.session && !sameOwner) {
+                const ownershipError = new Error("token_in_use_by_another_user");
+                ownershipError.code = "TOKEN_IN_USE_BY_ANOTHER_USER";
+                throw ownershipError;
             }
         }
 

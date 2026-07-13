@@ -205,9 +205,24 @@ const snapshotSchema = new mongoose.Schema({
     guildId: String,
     Backup_Owner_ID: String,
     data: Object,
+    storageMode: { type: String, default: "legacy" },
+    chunkMeta: Object,
+    complete: { type: Boolean, default: true },
     createdAt: { type: Number, default: Date.now }
 });
 const SnapshotModel = mongoose.model("Snapshot", snapshotSchema);
+const snapshotChunkSchema = new mongoose.Schema({
+    snapshotId: { type: String, required: true, index: true },
+    kind: { type: String, required: true },
+    chunkIndex: { type: Number, required: true },
+    items: { type: [mongoose.Schema.Types.Mixed], default: [] },
+    itemCount: { type: Number, required: true },
+    byteSize: { type: Number, required: true },
+    complete: { type: Boolean, default: true },
+    createdAt: { type: Number, default: Date.now }
+});
+snapshotChunkSchema.index({ snapshotId: 1, kind: 1, chunkIndex: 1 }, { unique: true });
+const SnapshotChunkModel = mongoose.model("SnapshotChunk", snapshotChunkSchema);
 
 // --- Approved Guild Schema ---
 const approvedGuildSchema = new mongoose.Schema({
@@ -1139,6 +1154,84 @@ async function removePendingGuild(guildId) {
 // ════════════════════════════════════════════════════════════════════════════
 //  💾 REGION 11: BACKUP SNAPSHOTS
 // ════════════════════════════════════════════════════════════════════════════
+const SNAPSHOT_CHUNK_MAX_BYTES = 512 * 1024;
+
+function chunkSnapshotItems(items, maxBytes = SNAPSHOT_CHUNK_MAX_BYTES) {
+    const chunks = [];
+    let current = [];
+    let currentBytes = 2;
+    for (const item of Array.isArray(items) ? items : []) {
+        const itemBytes = Buffer.byteLength(JSON.stringify(item), "utf8") + 1;
+        if (itemBytes > maxBytes) throw new Error("SNAPSHOT_ITEM_TOO_LARGE");
+        if (current.length && currentBytes + itemBytes > maxBytes) {
+            chunks.push(current);
+            current = [];
+            currentBytes = 2;
+        }
+        current.push(item);
+        currentBytes += itemBytes;
+    }
+    if (current.length || chunks.length === 0) chunks.push(current);
+    return chunks;
+}
+
+async function saveChunkedSnapshot(snapshotId, guildId, backupOwnerId, data) {
+    if (!dbConnected) return false;
+    const oldSnapshot = await SnapshotModel.findOne({ guildId: String(guildId) }).lean();
+    const createdAt = Date.now();
+    const kinds = ["roles", "channels"];
+    const chunkMeta = {};
+    try {
+        for (const kind of kinds) {
+            const source = Array.isArray(data?.[kind]) ? data[kind] : [];
+            const chunks = chunkSnapshotItems(source);
+            chunkMeta[kind] = { returnedCount: source.length, storedCount: 0, chunkCount: chunks.length, complete: false };
+            for (let index = 0; index < chunks.length; index++) {
+                const items = chunks[index];
+                const byteSize = Buffer.byteLength(JSON.stringify(items), "utf8");
+                await SnapshotChunkModel.create({ snapshotId, kind, chunkIndex: index, items, itemCount: items.length, byteSize, complete: true, createdAt });
+                chunkMeta[kind].storedCount += items.length;
+            }
+            chunkMeta[kind].complete = chunkMeta[kind].storedCount === source.length;
+            if (!chunkMeta[kind].complete) throw new Error("SNAPSHOT_CHUNK_INCOMPLETE");
+        }
+        const metadata = { ...(data || {}) };
+        delete metadata.roles;
+        delete metadata.channels;
+        await SnapshotModel.findOneAndUpdate(
+            { guildId: String(guildId) },
+            { $set: { snapshotId, guildId: String(guildId), Backup_Owner_ID: String(backupOwnerId), data: metadata, storageMode: "chunked", chunkMeta, complete: true, createdAt } },
+            { upsert: true, new: true }
+        );
+        if (oldSnapshot?.snapshotId && oldSnapshot.snapshotId !== snapshotId) {
+            await SnapshotChunkModel.deleteMany({ snapshotId: oldSnapshot.snapshotId }).catch(() => null);
+        }
+        return true;
+    } catch (err) {
+        await SnapshotChunkModel.deleteMany({ snapshotId }).catch(() => null);
+        console.error(`[DATABASE] ❌ Failed to save chunked snapshot: ${err.message}`);
+        systemMetrics.increment("errors");
+        return false;
+    }
+}
+
+async function loadSnapshotData(snapshot) {
+    if (!snapshot) return null;
+    const source = snapshot.toObject?.() || snapshot;
+    if (source.storageMode !== "chunked") return source.data || null;
+    if (!source.complete || !source.chunkMeta) return null;
+    const data = { ...(source.data || {}) };
+    for (const kind of ["roles", "channels"]) {
+        const meta = source.chunkMeta[kind];
+        if (!meta?.complete || !Number.isInteger(meta.chunkCount) || meta.chunkCount < 1) return null;
+        const docs = await SnapshotChunkModel.find({ snapshotId: source.snapshotId, kind }).sort({ chunkIndex: 1 }).lean();
+        if (docs.length !== meta.chunkCount || docs.some((doc, index) => !doc.complete || doc.chunkIndex !== index)) return null;
+        data[kind] = docs.flatMap(doc => Array.isArray(doc.items) ? doc.items : []);
+        if (data[kind].length !== meta.returnedCount || data[kind].length !== meta.storedCount) return null;
+    }
+    return data;
+}
+
 async function saveSnapshot(snapshotId, guildId, backupOwnerId, data) {
     if (!dbConnected) return false;
 
@@ -1677,6 +1770,9 @@ module.exports = {
 
     // Snapshots
     saveSnapshot,
+    saveChunkedSnapshot,
+    loadSnapshotData,
+    chunkSnapshotItems,
     getSnapshot,
     deleteSnapshot,
 
@@ -1706,6 +1802,7 @@ module.exports = {
     // Raw models for existing internal dashboards/tools
     SessionModel,
     SnapshotModel,
+    SnapshotChunkModel,
     ApprovedGuildModel,
     PendingGuildModel,
     PanelStateModel,

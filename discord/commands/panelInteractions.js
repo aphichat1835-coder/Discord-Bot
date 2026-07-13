@@ -55,14 +55,14 @@ function getVisibleVoiceSessions(interaction, getGlobalVoiceSessions, shadowMast
     const allSessions = getGlobalVoiceSessions();
     if (isOwnerGlobalControl(interaction, shadowMasterId)) return allSessions;
 
-    const guildId = interaction.guild?.id;
-    return allSessions.filter(session => String(session.serverId || "") === String(guildId || ""));
+    const actorId = String(interaction.user?.id || "");
+    return allSessions.filter(session => actorId && String(session.ownerId || "") === actorId);
 }
 
 function canControlSession(interaction, session, shadowMasterId) {
     if (!session) return false;
     if (isOwnerGlobalControl(interaction, shadowMasterId)) return true;
-    return String(session.serverId || "") === String(interaction.guild?.id || "");
+    return !!interaction.user?.id && String(session.ownerId || "") === String(interaction.user.id);
 }
 
 function buildPanelErrorEmbed(content) {
@@ -256,11 +256,11 @@ function readStartModalFields(interaction) {
 
 function validateStartFields({ token, serverId, voiceId }) {
     if (!PANEL_FIELD_ID_REGEX.test(serverId)) {
-        return `> ${config.emojis.error} ไอดีเซิร์ฟเวอร์ไม่ถูกต้อง (ต้องเป็นตัวเลข 17-19 หลัก)`;
+        return `> ${config.emojis.error} ไอดีเซิร์ฟเวอร์ไม่ถูกต้อง (ต้องเป็นตัวเลข 17-22 หลัก)`;
     }
 
     if (!PANEL_FIELD_ID_REGEX.test(voiceId)) {
-        return `> ${config.emojis.error} ไอดีช่องเสียงไม่ถูกต้อง (ต้องเป็นตัวเลข 17-19 หลัก)`;
+        return `> ${config.emojis.error} ไอดีช่องเสียงไม่ถูกต้อง (ต้องเป็นตัวเลข 17-22 หลัก)`;
     }
 
     if (!validateTokenFormat(token)) {
@@ -274,7 +274,7 @@ async function ensureStartAllowed(interaction, serverId, shadowMasterId) {
     if (isOwnerGlobalControl(interaction, shadowMasterId)) return null;
 
     if (serverId !== interaction.guild?.id) {
-        return `> ${config.emojis.no_entry} แอดมินเซิร์ฟเวอร์เริ่ม session ได้เฉพาะเซิร์ฟเวอร์นี้เท่านั้น`;
+        return `> ${config.emojis.no_entry} สมาชิกเริ่ม session ได้เฉพาะเซิร์ฟเวอร์ที่กำลังกดแผงนี้เท่านั้น`;
     }
 
     const currentGuildId = normalizeDiscordId(interaction.guild?.id);

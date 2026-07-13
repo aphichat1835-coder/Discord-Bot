@@ -105,6 +105,7 @@ test("ensureVoiceSession reuses an existing ready target session", async () => {
         serverId: guildId,
         voiceId: channelId,
         accountId: "self-user",
+        ownerId: "owner",
         state: "active",
         client: {
             user: { id: "self-user" },
@@ -186,6 +187,7 @@ test("ensureVoiceSession treats duplicate create race as existing session reuse"
         serverId: guildId,
         voiceId: channelId,
         accountId: "self-user",
+        ownerId: "owner",
         state: "active",
         client: {
             user: { id: "self-user" },

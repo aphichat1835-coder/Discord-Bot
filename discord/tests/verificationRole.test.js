@@ -55,3 +55,34 @@ test("direct-role assignment helper rejects managed and higher roles", () => {
     assert.equal(tooHigh.ok, false);
     assert.match(tooHigh.reason, /role hierarchy|ยศบอท/);
 });
+
+test("verification panel accepts HTTPS URLs only and enforces text limits", () => {
+    assert.equal(_test.cleanHttpsUrl("https://example.com/image.png", "image"), "https://example.com/image.png");
+    assert.throws(() => _test.cleanHttpsUrl("http://example.com", "image"), /PANEL_URL_INVALID/);
+    assert.doesNotThrow(() => _test.validatePanelText("x".repeat(256), "title", 256));
+    assert.throws(() => _test.validatePanelText("x".repeat(257), "title", 256), /PANEL_INPUT_TOO_LONG/);
+});
+
+test("direct role config is bound to the latest guild message and role", () => {
+    const interaction = { message: { id: "222222222222222222" } };
+    const guildConfig = { verification: {
+        enabled: true,
+        roleId: "333333333333333333",
+        messageId: "222222222222222222",
+        verifyType: "direct",
+        panelRevision: "panel-test"
+    } };
+    assert.equal(_test.isCurrentDirectConfig(guildConfig, interaction, "333333333333333333"), true);
+    assert.equal(_test.isCurrentDirectConfig(guildConfig, { message: { id: "444444444444444444" } }, "333333333333333333"), false);
+});
+
+test("verification persistence retries bounded transient failures", async () => {
+    let attempts = 0;
+    const result = await _test.retryPersistence(async () => {
+        attempts++;
+        if (attempts < 3) return false;
+        return { ok: true };
+    });
+    assert.equal(result.ok, true);
+    assert.equal(attempts, 3);
+});
