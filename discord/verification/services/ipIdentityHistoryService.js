@@ -241,6 +241,24 @@ function legacyEventId(link, role) {
     });
 }
 
+function incrementMigrationCounter(counter, category) {
+    if (category === "users") {
+        counter.users++;
+        return;
+    }
+    if (category === "devices") {
+        counter.devices++;
+        return;
+    }
+    if (category === "roles") {
+        counter.roles++;
+        return;
+    }
+    throw Object.assign(new Error("invalid migration category"), {
+        code: "invalid_migration_category"
+    });
+}
+
 async function migrateLegacyLink(link, models, now) {
     const summary = {
         scanned: { users: 0, devices: 0, roles: 0 },
@@ -255,10 +273,10 @@ async function migrateLegacyLink(link, models, now) {
         }
     };
     const write = async (category, index, operation) => {
-        summary.scanned[category]++;
+        incrementMigrationCounter(summary.scanned, category);
         try {
             await operation();
-            summary.written[category]++;
+            incrementMigrationCounter(summary.written, category);
         } catch (error) {
             recordFailure(category, index, error);
         }
@@ -583,6 +601,7 @@ module.exports = {
         recoveredLogInput,
         backfillVerifyLog,
         migrateLegacyLink,
+        incrementMigrationCounter,
         migrationErrorCode,
         migrationAttemptUpdate
     }

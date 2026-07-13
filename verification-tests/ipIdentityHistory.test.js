@@ -29,6 +29,19 @@ describe("unbounded IP identity history", () => {
             .toBe("12345678901234567");
     });
 
+    test("migration counters accept only fixed legacy categories", () => {
+        const counter = { users: 0, devices: 0, roles: 0 };
+
+        history._test.incrementMigrationCounter(counter, "users");
+        history._test.incrementMigrationCounter(counter, "devices");
+        history._test.incrementMigrationCounter(counter, "roles");
+
+        expect(counter).toEqual({ users: 1, devices: 1, roles: 1 });
+        expect(() => history._test.incrementMigrationCounter(counter, "__proto__"))
+            .toThrow("invalid migration category");
+        expect(counter).toEqual({ users: 1, devices: 1, roles: 1 });
+    });
+
     test("writes user/device aggregates and one immutable role event without embedded caps", async () => {
         const UserHistoryModel = {
             updateOne: jest.fn().mockResolvedValue({ upsertedCount: 1 }),

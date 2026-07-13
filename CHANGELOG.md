@@ -7,7 +7,8 @@
 - Made legacy IP identity history migration isolate per-item failures, preserve
   retryable source data, continue later links, rotate failed attempts behind
   untouched links, and expose bounded redacted failure summaries instead of
-  aborting an entire startup batch.
+  aborting an entire startup batch. Migration summary counters now use fixed
+  category properties rather than dynamic object-key access.
 
 - Fixed startup webhook links to use the canonical unified public origin instead
   of a stale retired-service URL, point Owner access at `/shadow` instead of a
