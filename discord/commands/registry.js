@@ -70,7 +70,7 @@ const slashCommandsData = [
 
     {
         name: "clear",
-        description: "ลบข้อความในช่องปัจจุบัน (สูงสุด 100 ข้อความ)",
+        description: "ลบข้อความในช่องปัจจุบัน รวมข้อความเกิน 14 วัน (สูงสุด 100)",
         options: [
             { type: 4, name: "amount", description: "จำนวนข้อความ (1-100)", required: true }
         ]

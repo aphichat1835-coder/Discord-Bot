@@ -237,7 +237,7 @@ async function handleHelp(interaction) {
             `**${config.emojis.mod_icon} คำสั่งผู้ดูแล:**\n` +
             `— ${CB}/ban${CB} ${CB}/kick${CB} ${CB}/timeout${CB} — ลงโทษพร้อม DM แจ้งเตือน\n` +
             `— ${CB}/voicekickall${CB} — เตะทุกคนออกจากห้องเสียง\n` +
-            `— ${CB}/clear${CB} — ลบข้อความ (สูงสุด 100)\n` +
+            `— ${CB}/clear${CB} — ลบข้อความรวมข้อความเกิน 14 วัน (สูงสุด 100)\n` +
             `— ${CB}/steal${CB} — ดึงอิโมจิเข้าเซิร์ฟเวอร์\n` +
             `— ${CB}/say${CB} ${CB}/announce${CB} — ส่งข้อความและประกาศ\n\n` +
             `**${config.emojis.backup_icon} คำสั่งระบบ:**\n` +

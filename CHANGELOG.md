@@ -4,6 +4,10 @@
 
 ### Changed
 
+- Upgraded `/clear` to fetch up to 100 messages, bulk-delete recent messages,
+  and delete messages older than 14 days sequentially through Discord's
+  single-message endpoint, with per-channel locking and accurate result counts.
+
 - Reduced the supported production deployment contract to exactly 13
   owner-maintained environment values. Render and `.env.example` now expose
   only that canonical set, while advanced voice, verification, migration,
