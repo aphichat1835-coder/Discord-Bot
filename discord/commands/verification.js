@@ -35,6 +35,7 @@ try {
 const VERIFY_SCOPE = "identify email connections guilds guilds.members.read guilds.join";
 const PANEL_LIMITS = Object.freeze({ content: 2000, title: 256, description: 4096, footer: 2048, url: 2048 });
 const PERSIST_RETRY_DELAYS_MS = Object.freeze([0, 150, 400]);
+const SNOWFLAKE_RE = /^\d{17,22}$/;
 
 const DEFAULT_PANEL = {
     content: "",
@@ -51,6 +52,12 @@ const DEFAULT_PANEL = {
 function cleanText(value, fallback = "") {
     const v = typeof value === "string" ? value.trim() : "";
     return v || fallback;
+}
+
+function strictSnowflake(value) {
+    if (typeof value !== "string") return null;
+    const normalized = value.trim();
+    return SNOWFLAKE_RE.test(normalized) ? normalized : null;
 }
 
 function normalizeNewlines(value) {
@@ -469,7 +476,13 @@ async function lazyMigrateDirectConfig(interaction, role) {
 
 async function loadCurrentDirectConfig(interaction, role) {
     if (!GuildConfig) return null;
-    let configDoc = await GuildConfig.findOne({ guildId: interaction.guild.id }).lean().catch(() => null);
+    const guildId = strictSnowflake(interaction.guild?.id);
+    if (!guildId) return null;
+    let configDoc = await GuildConfig.findOne()
+        .where("guildId")
+        .equals(guildId)
+        .lean()
+        .catch(() => null);
     if (!configDoc) {
         const migrated = await lazyMigrateDirectConfig(interaction, role);
         configDoc = migrated?.toObject?.() || migrated;
@@ -495,9 +508,10 @@ async function handleSetupVerify(interaction) {
 
     const channel = interaction.options.getChannel("channel");
     const role = interaction.options.getRole("role");
+    const guildId = strictSnowflake(interaction.guild?.id);
 
-    if (!role) {
-        return interaction.editReply({ content: `> ${config.emojis.error} ไม่พบยศที่เลือก` });
+    if (!guildId || !role) {
+        return interaction.editReply({ content: `> ${config.emojis.error} ไม่พบเซิร์ฟเวอร์หรือยศที่ถูกต้อง` });
     }
 
     const verifyType = interaction.options.getBoolean("verify_type") ?? true;
@@ -645,9 +659,12 @@ async function handleSetupVerify(interaction) {
 
     try {
         if (!GuildConfig) throw new Error("GUILD_CONFIG_MODEL_UNAVAILABLE");
-        const settingKey = `verify_config_${interaction.guild.id}_${role.id}`;
+        const settingKey = `verify_config_${guildId}_${role.id}`;
         const previousLegacy = await sessionManager.getSetting(settingKey, null);
-        const previousGuildConfig = await GuildConfig.findOne({ guildId: interaction.guild.id }).lean();
+        const previousGuildConfig = await GuildConfig.findOne()
+            .where("guildId")
+            .equals(guildId)
+            .lean();
         const panelPayload = {
             embeds: [embed],
             components: [row]
@@ -876,6 +893,7 @@ module.exports = {
         validatePanelText,
         cleanHttpsUrl,
         isCurrentDirectConfig,
-        retryPersistence
+        retryPersistence,
+        strictSnowflake
     }
 };

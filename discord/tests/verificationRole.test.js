@@ -86,3 +86,10 @@ test("verification persistence retries bounded transient failures", async () => 
     assert.equal(result.ok, true);
     assert.equal(attempts, 3);
 });
+
+test("verification Mongo identifiers require strict string snowflakes", () => {
+    assert.equal(_test.strictSnowflake("12345678901234567"), "12345678901234567");
+    assert.equal(_test.strictSnowflake("1234567890123456789012"), "1234567890123456789012");
+    assert.equal(_test.strictSnowflake({ $ne: null }), null);
+    assert.equal(_test.strictSnowflake("1234"), null);
+});

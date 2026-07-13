@@ -14,8 +14,12 @@ function trimTrailingSlashes(value) {
 }
 
 function configuredPublicUrls(env = process.env) {
-    return PUBLIC_URL_KEYS
-        .map(key => ({ key, value: trimTrailingSlashes(env[key]) }))
+    return [
+        { key: "PUBLIC_BASE_URL", value: trimTrailingSlashes(env.PUBLIC_BASE_URL) },
+        { key: "PUBLIC_DASHBOARD_URL", value: trimTrailingSlashes(env.PUBLIC_DASHBOARD_URL) },
+        { key: "DASHBOARD_URL", value: trimTrailingSlashes(env.DASHBOARD_URL) },
+        { key: "DASHBOARD_PUBLIC_URL", value: trimTrailingSlashes(env.DASHBOARD_PUBLIC_URL) }
+    ]
         .filter(entry => entry.value);
 }
 

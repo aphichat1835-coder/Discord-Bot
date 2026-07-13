@@ -214,7 +214,7 @@ async function updateCaseStatus(sessionManager, guildId, caseNumber, status, met
     if (!existing) return null;
     const patch = {
         status,
-        metadata: { ...(existing.metadata || {}), ...(metadata || {}) },
+        metadata: { ...existing.metadata, ...metadata },
         updatedAt: Date.now()
     };
     if (canUseMongoStore()) {

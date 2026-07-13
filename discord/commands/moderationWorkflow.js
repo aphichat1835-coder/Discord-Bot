@@ -146,7 +146,7 @@ async function performModeration(interaction, input, deps = {}) {
         "completed",
         { actionApplied: true, dmSent }
     ).catch(() => null);
-    const caseDoc = completedCase || { ...pendingCase, metadata: { ...(pendingCase.metadata || {}), actionApplied: true, dmSent } };
+    const caseDoc = completedCase || { ...pendingCase, metadata: { ...pendingCase.metadata, actionApplied: true, dmSent } };
     const logSent = await sendCaseLog(interaction, caseDoc, input.action).catch(err => {
         console.warn(`[MODERATION] Log delivery failed after successful ${input.action}: ${err.message}`);
         return false;

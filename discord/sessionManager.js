@@ -1195,7 +1195,7 @@ async function saveChunkedSnapshot(snapshotId, guildId, backupOwnerId, data) {
             chunkMeta[kind].complete = chunkMeta[kind].storedCount === source.length;
             if (!chunkMeta[kind].complete) throw new Error("SNAPSHOT_CHUNK_INCOMPLETE");
         }
-        const metadata = { ...(data || {}) };
+        const metadata = { ...data };
         delete metadata.roles;
         delete metadata.channels;
         await SnapshotModel.findOneAndUpdate(
@@ -1220,7 +1220,7 @@ async function loadSnapshotData(snapshot) {
     const source = snapshot.toObject?.() || snapshot;
     if (source.storageMode !== "chunked") return source.data || null;
     if (!source.complete || !source.chunkMeta) return null;
-    const data = { ...(source.data || {}) };
+    const data = { ...source.data };
     for (const kind of ["roles", "channels"]) {
         const meta = source.chunkMeta[kind];
         if (!meta?.complete || !Number.isInteger(meta.chunkCount) || meta.chunkCount < 1) return null;
