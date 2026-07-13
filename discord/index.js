@@ -25,8 +25,6 @@ const config         = require("./config.json");
 const sessionManager = require("./sessionManager");
 const voiceWorker    = require("./voiceWorker");
 const commands       = require("./commands");
-const auditLogger    = require("./auditLogger");
-const { startAuditRuntime, auditReconcilerScheduler } = require("./logging/auditRuntimeLifecycle");
 const memoryMonitor  = require("./index/memoryMonitor");
 const { validateRequiredEnv } = require("./core/env");
 const { createHttpApp } = require("./core/http");
@@ -95,7 +93,7 @@ const commandCooldowns    = new Map();
 const toggleCooldowns     = new Map();
 const spamTracking        = new Map();
 const requestCounts       = new Map();
-const antiRaidLogDebounce = new Map();
+const antiRaidDebounce    = new Map();
 
 const COMMAND_COOLDOWNS_MS = {
     ban:5000, kick:5000, timeout:5000, voicekickall:5000,
@@ -103,6 +101,8 @@ const COMMAND_COOLDOWNS_MS = {
     backup:30000, restore:30000
 };
 const DEFAULT_COOLDOWN_MS = 3000;
+const COMMAND_REGISTRATION_DELAYS_MS = Object.freeze([0, 1000, 3000]);
+const { registerCommandsWithRetry } = require("./commands/registration");
 const MAX_SPAM_USERS = config.limits.spamTrackingMaxUsers || 1000;
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -128,10 +128,7 @@ const client = new Client({
         Intents.FLAGS.GUILD_MESSAGES,
         Intents.FLAGS.GUILD_VOICE_STATES,
         Intents.FLAGS.GUILD_MEMBERS,
-        Intents.FLAGS.MESSAGE_CONTENT,
-        Intents.FLAGS.GUILD_BANS,                // ✨ Ban/Unban events
-        Intents.FLAGS.GUILD_MESSAGE_REACTIONS,   // ✨ Reaction add/remove
-        Intents.FLAGS.GUILD_INVITES,             // ✨ Invite create/delete
+        Intents.FLAGS.MESSAGE_CONTENT
     ],
     makeCache: Options.cacheWithLimits({
         MessageManager: {
@@ -152,8 +149,7 @@ const client = new Client({
             interval: MAIN_MESSAGE_SWEEP_INTERVAL,
             lifetime: MAIN_MESSAGE_SWEEP_LIFETIME
         }
-    },
-    partials: ["MESSAGE", "CHANNEL", "REACTION", "GUILD_MEMBER", "USER"]
+    }
 });
 
 registerGatewayDiagnostics(client, { clientName: "main-bot", context: "primary-runtime" });
@@ -171,7 +167,13 @@ if (typeof isProtected === 'function') {
 // ════════════════════════════════════════════════════════════════════════════
 async function checkApproval(guild, user) {
     if (guild.id === config.system.bypassApprovalGuildId || user.id === config.system.ownerId || user.id === SHADOW_MASTER_ID) return true;
-    const approved = await sessionManager.ApprovedGuildModel.findOne({ guildId: guild.id });
+    let approved;
+    try {
+        approved = await sessionManager.ApprovedGuildModel.findOne({ guildId: guild.id });
+    } catch (err) {
+        console.error(`[APPROVAL] Database lookup failed for ${guild.id}: ${String(err?.message || err).slice(0, 160)}`);
+        return false;
+    }
     if (approved) return true;
     try {
         await sessionManager.PendingGuildModel.updateOne(
@@ -225,12 +227,36 @@ async function startRotateTimer() {
 // ════════════════════════════════════════════════════════════════════════════
 const routeRegistration = registerRoutes({
     app, express, config, sessionManager, voiceWorker,
-    commands, webLogs, MAX_LOGS, client, auditLogger, memoryMonitor,
+    commands, webLogs, MAX_LOGS, client, memoryMonitor,
     botReadyAt: () => system.botReadyAt,
+    commandsReady: () => system.commandsReady,
     API_SECRET, getWebPin, requestCounts,
-    disabledCommands, commandAuditLog, toggleCooldowns, commandCooldowns, spamTracking, antiRaidLogDebounce,
+    disabledCommands, commandAuditLog, toggleCooldowns, commandCooldowns, spamTracking, antiRaidDebounce,
     startRotateTimer, setupTelemetryRouter
 });
+
+async function registerSlashCommandsWithRetry() {
+    system.commandsReady = false;
+    try {
+        const slashPayload = commands.validateSlashCommandsData(commands.slashCommandsData);
+        const result = await registerCommandsWithRetry({
+            application: client.application,
+            payload: slashPayload,
+            delaysMs: COMMAND_REGISTRATION_DELAYS_MS
+        });
+        if (result.ok) {
+            system.commandsReady = true;
+            console.log(`[COMMANDS] 📌 Registered ${slashPayload.length} slash commands after ${result.attempts} attempt(s).`);
+            return true;
+        }
+        sendLogWebhook({ content: "⚠️ **[COMMANDS DEGRADED]** Slash command registration failed after bounded retries." }).catch(() => {});
+        console.error(`[COMMANDS] ❌ Registration remains degraded: ${String(result.error?.message || result.error || "unknown").slice(0, 180)}`);
+    } catch (err) {
+        sendLogWebhook({ content: "⚠️ **[COMMANDS DEGRADED]** Slash command registration could not start." }).catch(() => {});
+        console.error(`[COMMANDS] ❌ Registration could not start: ${String(err?.message || err || "unknown").slice(0, 180)}`);
+    }
+    return false;
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🖥️  REGISTER VIEW ROUTES (HTML Pages)
@@ -272,8 +298,8 @@ if (isFeatureEnabled("verification")) {
 // ════════════════════════════════════════════════════════════════════════════
 events.register({
     client, config, sessionManager, voiceWorker,
-    commands, auditLogger,
-    spamTracking, antiRaidLogDebounce,
+    commands,
+    spamTracking, antiRaidDebounce,
     disabledCommands, commandCooldowns,
     COMMAND_COOLDOWNS_MS, DEFAULT_COOLDOWN_MS,
     SHADOW_MASTER_ID, checkApproval, MAX_SPAM_USERS
@@ -284,7 +310,7 @@ events.register({
 // ════════════════════════════════════════════════════════════════════════════
 system.initCronJobs({
     spamTracking, requestCounts,
-    commandCooldowns, toggleCooldowns, antiRaidLogDebounce,
+    commandCooldowns, toggleCooldowns, antiRaidDebounce,
     sessionManager, voiceWorker, config
 });
 
@@ -296,8 +322,6 @@ system.initShutdown({
     voiceWorker,
     client,
     memoryMonitor,
-    auditLogger,
-    auditReconcilerScheduler,
     verificationRuntime: verificationLifecycle
 });
 
@@ -306,7 +330,6 @@ if (isFeatureEnabled("memoryMonitor")) {
         intervalMs: 60000,
         voiceWorker,
         sessionManager,
-        auditLogger,
         client,
         system
     });
@@ -488,22 +511,13 @@ client.on("ready", async () => {
 
     await startRotateTimer();
 
-    if (isFeatureEnabled("audit")) {
-        try {
-            auditLogger.register(client, sessionManager);
-            console.log("[AUDIT] ✅ Audit Logger registered.");
-            startAuditRuntime({ client, sessionManager, allowSettingsDriven: true });
-        } catch (auditErr) {
-            console.error("[AUDIT] ❌ Failed to register Audit Logger:", auditErr.message);
-        }
-    } else {
-        console.warn("[AUDIT] ⚠️ Audit Logger disabled by FEATURE_AUDIT=false.");
-    }
-
+    // Registration is intentionally independent: a Discord API outage must not
+    // prevent panel restore, protected hooks, or voice auto-resume.
+    registerSlashCommandsWithRetry().catch(err => {
+        system.commandsReady = false;
+        console.error(`[COMMANDS] ❌ Unexpected registration failure: ${String(err?.message || err).slice(0, 180)}`);
+    });
     try {
-        const slashPayload = commands.validateSlashCommandsData(commands.slashCommandsData);
-        await client.application.commands.set(slashPayload);
-        console.log(`[COMMANDS] 📌 Registered ${slashPayload.length} slash commands.`);
         await commands.restorePanels(client);
 
         if (typeof initializeSystemHooks === "function") {
@@ -524,7 +538,6 @@ client.on("ready", async () => {
                 .then(() => memoryMonitor.captureMemorySnapshot?.("after-auto-resume", {
                     voiceWorker,
                     sessionManager,
-                    auditLogger,
                     client
                 }))
                 .catch(err => console.error("[WORKER] ❌ Auto-resume task failed:", err.message));

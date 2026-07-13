@@ -99,10 +99,11 @@ test("updateCaseStatus persists pending workflow outcomes", async () => {
         guildId: "g1", action: "kick", userId: "u4", status: "pending"
     });
     const completed = await modCaseManager.updateCaseStatus(
-        sessionManager, "g1", created.caseNumber, "completed", { actionApplied: true }
+        sessionManager, "g1", created.caseNumber, "completed", { actionApplied: true, dmSent: true }
     );
     assert.equal(completed.status, "completed");
     assert.equal(completed.metadata.actionApplied, true);
+    assert.equal(completed.evidence.includes("DM sent: yes"), true);
     await assert.rejects(
         modCaseManager.updateCaseStatus(sessionManager, "g1", created.caseNumber, "unknown"),
         /CASE_STATUS_INVALID/

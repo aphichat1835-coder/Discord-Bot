@@ -1,12 +1,12 @@
 # Security and Privacy
 
-Last implementation review: 2026-07-04.
+Last implementation review: 2026-07-13.
 
 ## Scope
 
 The single runtime handles Discord credentials, OAuth grants, Owner controls,
 voice/session tokens, verification history, browser/device metadata, network
-metadata, and audit logs. Treat the repository, host environment, MongoDB, and
+metadata, moderation cases, and sensitive-access history. Treat the repository, host environment, MongoDB, and
 Owner session as security-sensitive.
 
 Never commit or print real:
@@ -190,7 +190,7 @@ Do not infer values that Discord did not return:
 
 ## Data minimization and retention
 
-The owner explicitly requires verification/audit history, but retention remains
+The owner explicitly requires verification and sensitive-access history, but retention remains
 configurable by guild. Verification logs and IP identity summaries use
 soft-delete retention behavior. Legacy pending reveal requests can expire
 automatically.
@@ -235,11 +235,11 @@ queue depth, prioritizes critical alerts, retries transient failures, and
 exposes redacted delivery counters through Owner diagnostics. Shutdown performs
 a bounded queue drain; diagnostics never contain webhook URLs.
 
-The Discord audit webhook event is correlated only with recent webhook
-create/update/delete audit entries from the same channel. Reconciler dedupe uses
-the Discord audit-entry ID, and repeated create/delete activity is flagged in
-audit-only mode for manual review. `/setup-log` warns when the bot lacks
-`VIEW_AUDIT_LOG`, because executor attribution is degraded without it.
+The Enterprise Audit server-activity subsystem is retired. Runtime no longer
+registers its Discord listeners, reads or writes its storage, sends log-channel
+embeds, or exposes its Dashboard/API routes. This does not remove the redacted
+operational/critical webhook dispatcher, ModCase persistence, or the internal
+audit attempt required by sensitive Verification reveal actions.
 
 ## Runtime and dependency controls
 
@@ -250,7 +250,7 @@ audit-only mode for manual review. `/setup-log` warns when the bot lacks
 - Discord response/body caps and role/channel dashboard caps protect runtime
   memory; persistence of OAuth guilds/connections/target roles has no arbitrary
   item cap after payload acceptance.
-- Volatile voice, audit, IP lookup, rate-limit, command, and session structures
+- Volatile voice, IP lookup, rate-limit, command, and session structures
   remain bounded.
 - Persistent per-IP users, device aggregates, and role events use paginated
   collections rather than truncating history arrays; request processing and UI

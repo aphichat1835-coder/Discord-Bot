@@ -5,10 +5,17 @@
  */
 
 const mongoose = require("mongoose");
-const { safeAuditText, safeAuditError, LOG_TYPES } = require("./logCore");
-const { buildCaseEmbed } = require("./logFormat");
+const { sanitizeLogText, safeError } = require("../core/safeLogger");
 const modCaseStore = require("./modCaseStore");
 const fallbackLocks = new Map();
+
+function safeText(value, max = 500) {
+    return sanitizeLogText(String(value ?? "")).slice(0, Math.max(1, Number(max) || 500)) || "-";
+}
+
+function safeErrorText(err, max = 500) {
+    return safeText(safeError(err), max);
+}
 
 async function withFallbackLock(key, fn) {
     const lockKey = String(key || "global");
@@ -46,7 +53,7 @@ function canUseMongoStore() {
 }
 
 function normalizeAction(action) {
-    return safeAuditText(String(action || "unknown").toLowerCase(), 40);
+    return safeText(String(action || "unknown").toLowerCase(), 40);
 }
 
 function normalizeEvidence(evidence = []) {
@@ -54,7 +61,7 @@ function normalizeEvidence(evidence = []) {
     return evidence
         .filter(item => item !== undefined && item !== null)
         .slice(0, 25)
-        .map(item => safeAuditText(typeof item === "string" ? item : JSON.stringify(item), 300));
+        .map(item => safeText(typeof item === "string" ? item : JSON.stringify(item), 300));
 }
 
 function normalizeDuration(input = {}) {
@@ -72,10 +79,10 @@ function buildCaseDoc(input, caseNumber, createdAt = Date.now()) {
         type: normalizeAction(input.type || input.action),
         userId: input.userId ? String(input.userId) : null,
         moderatorId: input.moderatorId ? String(input.moderatorId) : null,
-        reason: safeAuditText(input.reason || "ไม่มีเหตุผลระบุ", 500),
+        reason: safeText(input.reason || "ไม่มีเหตุผลระบุ", 500),
         durationMs,
         evidence: normalizeEvidence(input.evidence),
-        source: safeAuditText(input.source || "command", 80),
+        source: safeText(input.source || "command", 80),
         status: input.status || "active",
         createdAt: input.createdAt || createdAt,
         updatedAt: createdAt,
@@ -104,7 +111,7 @@ async function nextCaseNumber(sessionManager, guildId) {
         try {
             return await modCaseStore.nextCaseNumber(guildId);
         } catch (err) {
-            console.warn(`[MODCASE] Mongo counter unavailable, fallback settings: ${safeAuditError(err, 240)}`);
+            console.warn(`[MODCASE] Mongo counter unavailable, fallback settings: ${safeErrorText(err, 240)}`);
         }
     }
     return nextCaseNumberFallback(sessionManager, guildId);
@@ -127,11 +134,13 @@ async function saveCaseWithSettings(sessionManager, caseDoc) {
 async function saveCase(sessionManager, caseDoc) {
     if (canUseMongoStore()) {
         try {
+            caseDoc.metadata = { ...caseDoc.metadata, persistenceStore: "mongo" };
             return await modCaseStore.saveCase(caseDoc);
         } catch (err) {
-            console.warn(`[MODCASE] Mongo save failed, fallback settings: ${safeAuditError(err, 240)}`);
+            console.warn(`[MODCASE] Mongo save failed, fallback settings: ${safeErrorText(err, 240)}`);
         }
     }
+    caseDoc.metadata = { ...caseDoc.metadata, persistenceStore: "settings" };
     if (!await saveCaseWithSettings(sessionManager, caseDoc)) throw new Error("CASE_SETTINGS_SAVE_FAILED");
     return caseDoc;
 }
@@ -144,7 +153,7 @@ async function createCase(sessionManager, input = {}) {
     try {
         return await saveCase(sessionManager, caseDoc);
     } catch (err) {
-        throw new Error(`CASE_SAVE_FAILED: ${safeAuditError(err, 240)}`);
+        throw new Error(`CASE_SAVE_FAILED: ${safeErrorText(err, 240)}`);
     }
 }
 
@@ -153,9 +162,9 @@ async function getCase(sessionManager, guildId, caseNumber) {
     if (canUseMongoStore()) {
         try {
             const doc = await modCaseStore.getCase(guildId, caseNumber);
-            if (doc) return doc;
+            if (doc) return { ...doc, metadata: { ...doc.metadata, persistenceStore: doc.metadata?.persistenceStore || "mongo" } };
         } catch (err) {
-            console.warn(`[MODCASE] Mongo get failed, fallback settings: ${safeAuditError(err, 240)}`);
+            console.warn(`[MODCASE] Mongo get failed, fallback settings: ${safeErrorText(err, 240)}`);
         }
     }
     return sessionManager?.getSetting?.(caseKey(guildId, caseNumber), null) || null;
@@ -170,7 +179,7 @@ async function listUserCases(sessionManager, guildId, userId, limit = 10) {
             const docs = await modCaseStore.listUserCases(guildId, userId, max);
             if (docs.length) return docs;
         } catch (err) {
-            console.warn(`[MODCASE] Mongo list failed, fallback settings: ${safeAuditError(err, 240)}`);
+            console.warn(`[MODCASE] Mongo list failed, fallback settings: ${safeErrorText(err, 240)}`);
         }
     }
 
@@ -188,7 +197,7 @@ async function updateCaseReason(sessionManager, guildId, caseNumber, reason, ame
     if (!existing) return null;
 
     const patch = {
-        reason: safeAuditText(reason || "ไม่มีเหตุผลระบุ", 500),
+        reason: safeText(reason || "ไม่มีเหตุผลระบุ", 500),
         amendedBy: amendedBy ? String(amendedBy) : null,
         amendedAt: Date.now(),
         updatedAt: Date.now()
@@ -199,7 +208,7 @@ async function updateCaseReason(sessionManager, guildId, caseNumber, reason, ame
             const updated = await modCaseStore.updateCase(guildId, caseNumber, patch);
             if (updated) return updated;
         } catch (err) {
-            console.warn(`[MODCASE] Mongo update failed, fallback settings: ${safeAuditError(err, 240)}`);
+            console.warn(`[MODCASE] Mongo update failed, fallback settings: ${safeErrorText(err, 240)}`);
         }
     }
 
@@ -215,45 +224,31 @@ async function updateCaseStatus(sessionManager, guildId, caseNumber, status, met
     const patch = {
         status,
         metadata: { ...existing.metadata, ...metadata },
+        evidence: metadata.dmSent === undefined
+            ? existing.evidence
+            : normalizeEvidence([
+                ...(existing.evidence || []).filter(item => !String(item).startsWith("DM sent:")),
+                `DM sent: ${metadata.dmSent ? "yes" : "no"}`
+            ]),
         updatedAt: Date.now()
     };
-    if (canUseMongoStore()) {
+    const persistenceStore = existing.metadata?.persistenceStore || (canUseMongoStore() ? "mongo" : "settings");
+    if (persistenceStore === "mongo" && canUseMongoStore()) {
         try {
             const updated = await modCaseStore.updateCase(guildId, caseNumber, patch);
             if (updated) return updated;
         } catch (err) {
-            console.warn(`[MODCASE] Mongo status update failed, fallback settings: ${safeAuditError(err, 240)}`);
+            console.warn(`[MODCASE] Mongo status update failed, fallback settings: ${safeErrorText(err, 240)}`);
         }
+        await sessionManager?.setSetting?.(`modcase_reconcile_${guildId}_${caseNumber}`, {
+            guildId: String(guildId), caseNumber, intendedStatus: status,
+            metadata: patch.metadata, createdAt: Date.now()
+        }).catch(() => false);
+        return null;
     }
+    if (persistenceStore === "mongo") return null;
     const updated = { ...existing, ...patch };
     return await sessionManager.setSetting(caseKey(guildId, caseNumber), updated) === true ? updated : null;
-}
-
-function buildModerationCaseEmbed(caseDoc, options = {}) {
-    return buildCaseEmbed(caseDoc, {
-        title: options.title || `🛡️ Case #${caseDoc.caseNumber} | ${String(caseDoc.action || "ACTION").toUpperCase()}`,
-        severity: options.severity || "danger"
-    });
-}
-
-function caseToLogEvent(caseDoc) {
-    return {
-        type: LOG_TYPES.MOD_CASE_CREATE,
-        category: "moderation",
-        severity: "danger",
-        guildId: caseDoc.guildId,
-        actorId: caseDoc.moderatorId,
-        targetId: caseDoc.userId,
-        reason: caseDoc.reason,
-        evidence: caseDoc.evidence,
-        metadata: {
-            caseNumber: caseDoc.caseNumber,
-            action: caseDoc.action,
-            source: caseDoc.source,
-            status: caseDoc.status
-        },
-        createdAt: caseDoc.createdAt
-    };
 }
 
 module.exports = {
@@ -262,8 +257,6 @@ module.exports = {
     listUserCases,
     updateCaseReason,
     updateCaseStatus,
-    buildModerationCaseEmbed,
-    caseToLogEvent,
     _test: {
         counterKey,
         caseKey,

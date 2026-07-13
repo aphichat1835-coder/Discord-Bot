@@ -240,7 +240,6 @@ async function handleButton(interaction, client, shadowMasterId, deps = {}) {
 
 function getModalDeps(deps = {}) {
     return {
-        getLogChannel: deps.getLogChannel || (async () => null),
         updatePanel: deps.updatePanel || (async () => {}),
         shadowMasterId: deps.shadowMasterId || null
     };
@@ -324,28 +323,6 @@ function reportTokenOwnerWarning(interaction, token) {
     }
 }
 
-async function logStartedSession(interaction, getLogChannel, startedSession, guildName) {
-    const logCh = await getLogChannel(interaction.guild);
-    if (!logCh) return;
-
-    const accountLabel = getVoiceAccountLabel(startedSession);
-    const voiceLabel = getVoiceChannelLabel(startedSession);
-
-    logCh.send({
-        embeds: [
-            new MessageEmbed()
-                .setColor(config.system.themeColors.success)
-                .setDescription(
-                    `> ${config.emojis.success} **เริ่มการทำงานผู้ใช้งานใหม่!**\n` +
-                    `— **โดย:** <@${interaction.user.id}>\n` +
-                    `— **บัญชีที่ออน:** \`${accountLabel}\`\n` +
-                    `— **เซิร์ฟเวอร์:** \`${startedSession?.serverName || guildName}\`\n` +
-                    `— **ช่องเสียง:** ${voiceLabel}`
-                )
-        ]
-    }).catch(() => {});
-}
-
 async function startVoiceSessionFromModal(interaction, client, fields, modalDeps) {
     const { token, serverId, voiceId } = fields;
     const targetGuild = client.guilds.cache.get(serverId);
@@ -372,7 +349,6 @@ async function startVoiceSessionFromModal(interaction, client, fields, modalDeps
 
     const sessionId = result.sessionId;
     const startedSession = result.session || sessionManager.getSession(sessionId);
-    await logStartedSession(interaction, modalDeps.getLogChannel, startedSession, guildName);
 
     return { sessionId, startedSession, action: result.action, reused: result.reused };
 }

@@ -15,7 +15,7 @@ The project includes:
 - Owner-only verification dashboard integrated into the main web runtime.
 - OAuth2 verification.
 - MongoDB persistence.
-- Audit logging.
+- Verification sensitive-access audit and moderation cases.
 - Protection features.
 - Role buttons.
 - Moderation, utility/admin, and information commands.

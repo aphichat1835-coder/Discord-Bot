@@ -6,7 +6,7 @@ ATTENTION AI ASSISTANT: DO NOT MODIFY, REFACTOR, OR SIMPLIFY THIS FILE.
 1. [DATABASE]: MONGO_URI is the ONLY storage. Local JSON fallback is REMOVED.
 2. [ENCRYPTION]: AES-256-GCM with CBC fallback must remain intact.
 3. [POOL]: maxPoolSize: 20 MUST remain in mongoose.connect().
-4. [SCHEMAS]: Do NOT remove PanelStateModel, LogChannelMapModel, BotSettingsModel.
+4. [SCHEMAS]: Do NOT remove PanelStateModel or BotSettingsModel.
 5. [METRICS]: increment() calls must remain for Dashboard accuracy.
 ================================================================================
 */
@@ -23,6 +23,7 @@ const sessions = new Map();
 const reconnectTracking = new Map();
 const sessionLocks = new Set();
 const settingsCache = new Map();
+const RETIRED_ENTERPRISE_AUDIT_SETTINGS = /^(?:audit_|logChannelMapExtra_)/;
 function numberEnv(name, fallback, min = 1) {
     const value = Number(process.env[name]);
     if (!Number.isFinite(value)) return fallback;
@@ -208,8 +209,13 @@ const snapshotSchema = new mongoose.Schema({
     storageMode: { type: String, default: "legacy" },
     chunkMeta: Object,
     complete: { type: Boolean, default: true },
+    activationPending: { type: Boolean, default: false },
+    active: { type: Boolean, default: false },
+    supersededAt: { type: Number, default: null },
+    supersededBy: { type: String, default: null },
     createdAt: { type: Number, default: Date.now }
 });
+snapshotSchema.index({ guildId: 1 }, { unique: true, partialFilterExpression: { active: true } });
 const SnapshotModel = mongoose.model("Snapshot", snapshotSchema);
 const snapshotChunkSchema = new mongoose.Schema({
     snapshotId: { type: String, required: true, index: true },
@@ -248,19 +254,6 @@ const panelStateSchema = new mongoose.Schema({
     updatedAt: { type: Number, default: Date.now }
 });
 const PanelStateModel = mongoose.model("PanelState", panelStateSchema);
-
-// --- Log Channel Map Schema (เฟส 25: Public Audit Logging) ---
-const logChannelMapSchema = new mongoose.Schema({
-    guildId: { type: String, required: true, unique: true },
-    messageChannelId: String,
-    memberChannelId: String,
-    voiceChannelId: String,
-    serverChannelId: String,
-    securityChannelId: String,
-    moderationChannelId: String,
-    updatedAt: { type: Number, default: Date.now }
-});
-const LogChannelMapModel = mongoose.model("LogChannelMap", logChannelMapSchema);
 
 // --- Bot Settings Schema (เฟส Dashboard Config) ---
 const botSettingsSchema = new mongoose.Schema({
@@ -429,6 +422,9 @@ async function loadDatabase() {
     }
 
     try {
+        await reconcileSnapshotPointers().catch(err => {
+            console.warn(`[DATABASE] ⚠️ Snapshot pointer reconciliation deferred: ${String(err?.message || err).slice(0, 180)}`);
+        });
         const now = Date.now();
         const recoverableCutoff = now - LOAD_RECOVERABLE_STOP_CLEANUP_MS;
         const staleCutoff = now - STALE_STOPPED_SESSION_RETENTION_MS;
@@ -1177,7 +1173,8 @@ function chunkSnapshotItems(items, maxBytes = SNAPSHOT_CHUNK_MAX_BYTES) {
 
 async function saveChunkedSnapshot(snapshotId, guildId, backupOwnerId, data) {
     if (!dbConnected) return false;
-    const oldSnapshot = await SnapshotModel.findOne({ guildId: String(guildId) }).lean();
+    const normalizedGuildId = String(guildId);
+    const oldSnapshot = await getLatestSnapshotForGuild(normalizedGuildId);
     const createdAt = Date.now();
     const kinds = ["roles", "channels"];
     const chunkMeta = {};
@@ -1198,21 +1195,82 @@ async function saveChunkedSnapshot(snapshotId, guildId, backupOwnerId, data) {
         const metadata = { ...data };
         delete metadata.roles;
         delete metadata.channels;
-        await SnapshotModel.findOneAndUpdate(
-            { guildId: String(guildId) },
-            { $set: { snapshotId, guildId: String(guildId), Backup_Owner_ID: String(backupOwnerId), data: metadata, storageMode: "chunked", chunkMeta, complete: true, createdAt } },
-            { upsert: true, new: true }
+        await SnapshotModel.create({
+            snapshotId,
+            guildId: normalizedGuildId,
+            Backup_Owner_ID: String(backupOwnerId),
+            data: metadata,
+            storageMode: "chunked",
+            chunkMeta,
+            complete: true,
+            activationPending: true,
+            active: false,
+            createdAt
+        });
+
+        await SnapshotModel.updateMany(
+            { guildId: normalizedGuildId, snapshotId: { $ne: snapshotId } },
+            { $set: { active: false, supersededAt: createdAt, supersededBy: snapshotId } }
         );
-        if (oldSnapshot?.snapshotId && oldSnapshot.snapshotId !== snapshotId) {
-            await SnapshotChunkModel.deleteMany({ snapshotId: oldSnapshot.snapshotId }).catch(() => null);
+        try {
+            const activated = await SnapshotModel.updateOne(
+                { snapshotId, complete: true, activationPending: true },
+                { $set: { active: true, activationPending: false, supersededAt: null, supersededBy: null } }
+            );
+            if ((activated?.matchedCount ?? activated?.n ?? 0) !== 1) throw new Error("SNAPSHOT_ACTIVATION_FAILED");
+        } catch (activationError) {
+            if (oldSnapshot?.snapshotId) {
+                await SnapshotModel.updateOne(
+                    { snapshotId: oldSnapshot.snapshotId },
+                    { $set: { active: true, supersededAt: null, supersededBy: null } }
+                ).catch(() => null);
+            }
+            throw activationError;
         }
         return true;
     } catch (err) {
         await SnapshotChunkModel.deleteMany({ snapshotId }).catch(() => null);
+        await SnapshotModel.deleteOne({ snapshotId, active: { $ne: true } }).catch(() => null);
+        await reconcileSnapshotPointers().catch(() => null);
         console.error(`[DATABASE] ❌ Failed to save chunked snapshot: ${err.message}`);
         systemMetrics.increment("errors");
         return false;
     }
+}
+
+async function getLatestSnapshotForGuild(guildId) {
+    const normalizedGuildId = String(guildId || "");
+    if (!normalizedGuildId || !dbConnected) return null;
+    const readable = { complete: { $ne: false }, activationPending: { $ne: true } };
+    const active = await SnapshotModel.findOne({ guildId: normalizedGuildId, active: true, ...readable })
+        .sort({ createdAt: -1, _id: -1 });
+    if (active) return active;
+    return SnapshotModel.findOne({ guildId: normalizedGuildId, ...readable })
+        .sort({ createdAt: -1, _id: -1 });
+}
+
+async function reconcileSnapshotPointers() {
+    if (!dbConnected) return { guilds: 0, activated: 0 };
+    const guildIds = await SnapshotModel.distinct("guildId", { guildId: { $type: "string", $ne: "" } });
+    let activated = 0;
+    for (const guildId of guildIds) {
+        const latest = await SnapshotModel.findOne({ guildId, complete: { $ne: false }, activationPending: { $ne: true } })
+            .sort({ createdAt: -1, _id: -1 })
+            .select("snapshotId")
+            .lean();
+        if (!latest) continue;
+        const now = Date.now();
+        await SnapshotModel.updateMany(
+            { guildId, snapshotId: { $ne: latest.snapshotId } },
+            { $set: { active: false, supersededAt: now, supersededBy: latest.snapshotId } }
+        );
+        await SnapshotModel.updateOne(
+            { snapshotId: latest.snapshotId },
+            { $set: { active: true, activationPending: false, supersededAt: null, supersededBy: null } }
+        );
+        activated++;
+    }
+    return { guilds: guildIds.length, activated };
 }
 
 async function loadSnapshotData(snapshot) {
@@ -1351,92 +1409,7 @@ async function deletePanelState(guildId) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  📢 REGION 13: LOG CHANNEL MAP
 // ════════════════════════════════════════════════════════════════════════════
-async function saveLogChannelMap(guildId, map = {}) {
-    if (!dbConnected) return false;
-
-    try {
-        await LogChannelMapModel.updateOne(
-            { guildId },
-            {
-                $set: {
-                    guildId,
-                    messageChannelId: map.messageChannelId || null,
-                    memberChannelId: map.memberChannelId || null,
-                    voiceChannelId: map.voiceChannelId || null,
-                    serverChannelId: map.serverChannelId || null,
-                    securityChannelId: map.securityChannelId || null,
-                    moderationChannelId: map.moderationChannelId || null,
-                    updatedAt: Date.now()
-                }
-            },
-            { upsert: true }
-        );
-        return true;
-    } catch (err) {
-        console.error(`[DATABASE] ❌ Failed to save log channel map for ${guildId}: ${err.message}`);
-        systemMetrics.increment("errors");
-        return false;
-    }
-}
-
-async function setLogChannelMap(guildId, category, channelId) {
-    if (!dbConnected) return false;
-    const keyMap = {
-        message: "messageChannelId",
-        member: "memberChannelId",
-        voice: "voiceChannelId",
-        server: "serverChannelId",
-        security: "securityChannelId",
-        moderation: "moderationChannelId"
-    };
-    const key = keyMap[category];
-    if (!key) return false;
-    try {
-        await LogChannelMapModel.updateOne(
-            { guildId },
-            {
-                $set: {
-                    guildId,
-                    [key]: channelId || null,
-                    updatedAt: Date.now()
-                }
-            },
-            { upsert: true }
-        );
-        return true;
-    } catch (err) {
-        console.error(`[DATABASE] ❌ Failed to set log channel map ${category} for ${guildId}: ${err.message}`);
-        systemMetrics.increment("errors");
-        return false;
-    }
-}
-
-async function getLogChannelMap(guildId) {
-    if (!dbConnected) return null;
-
-    try {
-        return await LogChannelMapModel.findOne({ guildId });
-    } catch (err) {
-        console.error(`[DATABASE] ❌ Failed to get log channel map for ${guildId}: ${err.message}`);
-        systemMetrics.increment("errors");
-        return null;
-    }
-}
-
-async function deleteLogChannelMap(guildId) {
-    if (!dbConnected) return false;
-
-    try {
-        await LogChannelMapModel.deleteOne({ guildId });
-        return true;
-    } catch (err) {
-        console.error(`[DATABASE] ❌ Failed to delete log channel map for ${guildId}: ${err.message}`);
-        systemMetrics.increment("errors");
-        return false;
-    }
-}
 // ════════════════════════════════════════════════════════════════════════════
 //  ⚙️ REGION 15: BOT SETTINGS
 // ════════════════════════════════════════════════════════════════════════════
@@ -1480,6 +1453,24 @@ async function getSetting(key, fallback = null) {
     }
 }
 
+async function getSettingStrict(key) {
+    if (!dbConnected) throw new Error("DATABASE_NOT_CONNECTED");
+    const doc = await BotSettingsModel.findOne({ key: String(key) }).lean();
+    if (!doc) return { found: false, value: null };
+    settingsCache.set(String(key), doc.value);
+    return { found: true, value: doc.value };
+}
+
+async function getLatestSettingByPrefix(prefix) {
+    if (!dbConnected) throw new Error("DATABASE_NOT_CONNECTED");
+    const escaped = String(prefix || "").replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+    if (!escaped) return null;
+    const doc = await BotSettingsModel.findOne({ key: { $regex: `^${escaped}` } })
+        .sort({ updatedAt: -1, _id: -1 })
+        .lean();
+    return doc ? { key: doc.key, value: doc.value, updatedAt: doc.updatedAt } : null;
+}
+
 async function deleteSetting(key) {
     if (!dbConnected) return false;
 
@@ -1498,7 +1489,9 @@ async function getAllSettings() {
     if (!dbConnected) return {};
 
     try {
-        const docs = await BotSettingsModel.find({})
+        const docs = await BotSettingsModel.find({
+            key: { $not: RETIRED_ENTERPRISE_AUDIT_SETTINGS }
+        })
             .select("key value updatedAt")
             .sort({ updatedAt: -1, _id: -1 })
             .limit(BOT_SETTINGS_LOAD_MAX)
@@ -1506,6 +1499,7 @@ async function getAllSettings() {
         const result = {};
 
         for (const doc of docs) {
+            if (RETIRED_ENTERPRISE_AUDIT_SETTINGS.test(String(doc.key || ""))) continue;
             result[doc.key] = doc.value;
             settingsCache.set(doc.key, doc.value);
         }
@@ -1772,6 +1766,8 @@ module.exports = {
     saveSnapshot,
     saveChunkedSnapshot,
     loadSnapshotData,
+    getLatestSnapshotForGuild,
+    reconcileSnapshotPointers,
     chunkSnapshotItems,
     getSnapshot,
     deleteSnapshot,
@@ -1782,15 +1778,11 @@ module.exports = {
     getPanelStates,
     deletePanelState,
 
-    // Log channels
-    saveLogChannelMap,
-    setLogChannelMap,
-    getLogChannelMap,
-    deleteLogChannelMap,
-
     // Settings
     setSetting,
     getSetting,
+    getSettingStrict,
+    getLatestSettingByPrefix,
     getCachedSetting,
     deleteSetting,
     getAllSettings,
@@ -1806,7 +1798,6 @@ module.exports = {
     ApprovedGuildModel,
     PendingGuildModel,
     PanelStateModel,
-    LogChannelMapModel,
     BotSettingsModel,
 
     // Encryption helpers kept for existing code paths

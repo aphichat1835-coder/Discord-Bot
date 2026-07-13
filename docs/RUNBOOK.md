@@ -1,6 +1,6 @@
 # Unified Runtime Runbook
 
-Updated: 2026-07-04.
+Updated: 2026-07-13.
 
 ## Start and health
 
@@ -12,7 +12,8 @@ npm start
 The process must open one listener on `PORT || 3000`.
 
 - `/ping` proves the HTTP listener is alive.
-- `/health` reports combined MongoDB, Discord, voice, and verification
+- `/health` reports combined MongoDB, Discord slash-command registration,
+  voice, and verification
   readiness. A 503 during startup is expected; persistent 503 is not.
 
 Expected boot order in logs:
@@ -118,7 +119,8 @@ recovery.
 
 ### `/health` remains degraded
 
-- Check `dbConnected`, `botOnline`, `voiceReady`, and `verificationReady`.
+- Check `dbConnected`, `botOnline`, `commandsReady`, `voiceReady`, and
+  `verificationReady`.
 - If database is false, inspect `MONGO_URI`, network allow-list, and MongoDB
   availability.
 - If verification is false, inspect the safe maintenance summary and OAuth

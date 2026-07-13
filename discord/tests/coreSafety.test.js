@@ -186,17 +186,17 @@ test("createHttpApp only trusts proxies when explicitly configured", (t) => { //
 });
 
 test("feature flags default on and can be disabled by env", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
-    const oldAudit = process.env.FEATURE_AUDIT;
-    delete process.env.FEATURE_AUDIT;
+    const oldVerification = process.env.FEATURE_VERIFICATION;
+    delete process.env.FEATURE_VERIFICATION;
 
     try {
-        t.assert.equal(isFeatureEnabled("audit"), true);
-        process.env.FEATURE_AUDIT = "false";
-        assert.equal(isFeatureEnabled("audit"), false);
-        assert.equal(getFeatureFlags().audit, false);
+        t.assert.equal(isFeatureEnabled("verification"), true);
+        process.env.FEATURE_VERIFICATION = "false";
+        assert.equal(isFeatureEnabled("verification"), false);
+        assert.equal(getFeatureFlags().verification, false);
     } finally {
-        if (oldAudit === undefined) delete process.env.FEATURE_AUDIT;
-        else process.env.FEATURE_AUDIT = oldAudit;
+        if (oldVerification === undefined) delete process.env.FEATURE_VERIFICATION;
+        else process.env.FEATURE_VERIFICATION = oldVerification;
     }
 });
 

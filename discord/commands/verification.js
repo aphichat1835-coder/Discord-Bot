@@ -23,6 +23,7 @@ const config = require("../config.json");
 const sessionManager = require("../sessionManager");
 const { createCompactCallbackState } = require("../verification/utils/state");
 const { resolvePublicBaseUrl } = require("../core/publicUrl");
+const { markCommandAccepted } = require("../guards/commandGuards");
 
 let GuildConfig = null;
 
@@ -427,7 +428,25 @@ async function rollbackPanelConfig({ guildId, settingKey, previousLegacy, previo
             ? retryPersistence(() => GuildConfig.replaceOne({ guildId }, previousGuildConfig, { upsert: true }))
             : retryPersistence(() => GuildConfig.deleteOne({ guildId })));
     }
-    await Promise.allSettled(tasks);
+    const results = await Promise.allSettled(tasks);
+    return results.every(result => result.status === "fulfilled" && result.value !== false && result.value !== null);
+}
+
+async function disablePreviousVerificationPanel(interaction, previousGuildConfig, newMessageId) {
+    const previous = previousGuildConfig?.verification || {};
+    const channelId = strictSnowflake(previous.channelId);
+    const messageId = strictSnowflake(previous.messageId);
+    if (!channelId || !messageId || messageId === String(newMessageId)) return true;
+    try {
+        const channel = interaction.guild.channels.cache.get(channelId) ||
+            await interaction.guild.channels.fetch(channelId);
+        if (!channel?.messages?.fetch) return false;
+        const message = await channel.messages.fetch(messageId);
+        await message.edit({ components: [] });
+        return true;
+    } catch (err) {
+        return [10003, 10008].includes(Number(err?.code));
+    }
 }
 
 function isCurrentDirectConfig(configDoc, interaction, roleId) {
@@ -442,13 +461,9 @@ function isCurrentDirectConfig(configDoc, interaction, roleId) {
 
 async function lazyMigrateDirectConfig(interaction, role) {
     if (!GuildConfig) return null;
-    const settings = await sessionManager.getAllSettings();
-    const candidates = Object.entries(settings || {})
-        .filter(([key, value]) => key.startsWith(`verify_config_${interaction.guild.id}_`) && value && typeof value === "object")
-        .map(([, value]) => value)
-        .filter(value => value.verifyType === false || value.dashboardVerifyType === "direct")
-        .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
-    const latest = candidates[0];
+    const latestRecord = await sessionManager.getLatestSettingByPrefix(`verify_config_${interaction.guild.id}_`);
+    const latest = latestRecord?.value;
+    if (!(latest?.verifyType === false || latest?.dashboardVerifyType === "direct")) return null;
     if (!latest || String(latest.messageId || "") !== String(interaction.message?.id || "") ||
         String(latest.roleId || "") !== String(role.id)) return null;
 
@@ -471,7 +486,7 @@ async function lazyMigrateDirectConfig(interaction, role) {
             }
         },
         { upsert: true, new: true }
-    )).catch(() => null);
+    ));
 }
 
 async function loadCurrentDirectConfig(interaction, role) {
@@ -481,8 +496,7 @@ async function loadCurrentDirectConfig(interaction, role) {
     let configDoc = await GuildConfig.findOne()
         .where("guildId")
         .equals(guildId)
-        .lean()
-        .catch(() => null);
+        .lean();
     if (!configDoc) {
         const migrated = await lazyMigrateDirectConfig(interaction, role);
         configDoc = migrated?.toObject?.() || migrated;
@@ -601,6 +615,7 @@ async function handleSetupVerify(interaction) {
             content: `> ${config.emojis.error} ${roleCheck.reason}`
         });
     }
+    markCommandAccepted(interaction);
 
     const panelRevision = makePanelRevision("panel");
     const panelRevisionUpdatedAt = Date.now();
@@ -660,7 +675,8 @@ async function handleSetupVerify(interaction) {
     try {
         if (!GuildConfig) throw new Error("GUILD_CONFIG_MODEL_UNAVAILABLE");
         const settingKey = `verify_config_${guildId}_${role.id}`;
-        const previousLegacy = await sessionManager.getSetting(settingKey, null);
+        const previousLegacyRecord = await sessionManager.getSettingStrict(settingKey);
+        const previousLegacy = previousLegacyRecord.found ? previousLegacyRecord.value : null;
         const previousGuildConfig = await GuildConfig.findOne()
             .where("guildId")
             .equals(guildId)
@@ -738,14 +754,26 @@ async function handleSetupVerify(interaction) {
                 panelRevision,
                 panelRevisionUpdatedAt
             }));
+            if (!await disablePreviousVerificationPanel(interaction, previousGuildConfig, panelMsg.id)) {
+                throw Object.assign(new Error("PREVIOUS_PANEL_DISABLE_FAILED"), { code: "PREVIOUS_PANEL_DISABLE_FAILED" });
+            }
         } catch (persistError) {
-            await panelMsg.delete().catch(() => null);
-            await rollbackPanelConfig({
+            const disabled = await panelMsg.edit({ components: [] }).then(() => true).catch(() => false);
+            const deleted = await panelMsg.delete().then(() => true).catch(() => false);
+            const rolledBack = await rollbackPanelConfig({
                 guildId: interaction.guild.id,
                 settingKey,
                 previousLegacy,
                 previousGuildConfig
             });
+            if (!rolledBack || (!disabled && !deleted)) {
+                await sessionManager.setSetting(`verify_recovery_${guildId}_${panelMsg.id}`, {
+                    guildId, messageId: panelMsg.id, settingKey,
+                    rolledBack, panelDisabled: disabled, panelDeleted: deleted,
+                    createdAt: Date.now(), status: "manual_review_required"
+                }).catch(() => false);
+                persistError.recoveryRequired = true;
+            }
             throw persistError;
         }
 
@@ -808,7 +836,7 @@ async function handleSetupVerify(interaction) {
 
         return interaction.editReply({
             content:
-                `> ${config.emojis.error} ติดตั้งแผงยืนยันไม่สำเร็จ ระบบไม่ได้เปิดใช้งานแผงที่บันทึกไม่ครบ\n` +
+                `> ${config.emojis.error} ติดตั้งแผงยืนยันไม่สำเร็จ${err.recoveryRequired ? " และต้องตรวจสอบการคืนค่าจาก Owner Dashboard" : " ระบบปิดแผงที่บันทึกไม่ครบแล้ว"}\n` +
                 `> ตรวจสอบสิทธิ์ของบอทและสถานะฐานข้อมูล แล้วลองใหม่`
         });
     }
@@ -837,7 +865,16 @@ async function handleVerifyButton(interaction) {
             });
         }
 
-        const currentConfig = await loadCurrentDirectConfig(interaction, role);
+        let currentConfig;
+        try {
+            currentConfig = await loadCurrentDirectConfig(interaction, role);
+        } catch (err) {
+            console.error(`[VERIFY] Direct panel config read failed: ${String(err?.code || err?.name || "database_error").slice(0, 80)}`);
+            return interaction.reply({
+                content: `> ${config.emojis.warning} ตรวจสอบสถานะแผงล่าสุดจากฐานข้อมูลไม่ได้ กรุณาลองใหม่ภายหลัง`,
+                ephemeral: true
+            });
+        }
         if (!currentConfig) {
             return interaction.reply({
                 content: `> ${config.emojis.warning} แผงนี้ไม่ใช่แผงล่าสุดแล้ว กรุณาใช้แผงยืนยันตัวตนล่าสุด`,
@@ -894,6 +931,7 @@ module.exports = {
         cleanHttpsUrl,
         isCurrentDirectConfig,
         retryPersistence,
-        strictSnowflake
+        strictSnowflake,
+        disablePreviousVerificationPanel
     }
 };

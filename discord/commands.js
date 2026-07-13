@@ -16,7 +16,6 @@ const moderation   = require("./commands/moderation");
 const information  = require("./commands/information");
 const utility      = require("./commands/utility");
 const verification = require("./commands/verification");
-const setupLog     = require("./commands/setupLog");
 
 const { slashCommandsData, validateSlashCommandsData } = require("./commands/registry");
 const {
@@ -29,7 +28,8 @@ const {
 } = require("./commands/panelInteractions");
 const {
     requireMemberPermission,
-    safeReply
+    safeReply,
+    markCommandAccepted
 } = require("./guards/commandGuards");
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -67,27 +67,6 @@ async function cleanupGuild(guildId) {
     );
 }
 
-async function getLogChannel(guild, type = "member") {
-    try {
-        const map = await sessionManager.getLogChannelMap(guild.id);
-        const extraMap = await sessionManager.getSetting?.(`logChannelMapExtra_${guild.id}`, null).catch(() => null);
-        const channelId = map?.[`${type}ChannelId`] || extraMap?.[`${type}ChannelId`];
-
-        if (channelId) {
-            const ch = guild.channels.cache.get(channelId);
-            if (ch) return ch;
-        }
-
-        const configuredName = config.audit_channels?.[type];
-        if (configuredName) {
-            const ch = guild.channels.cache.find(c => c.name === configuredName && c.isText());
-            if (ch) return ch;
-        }
-    } catch (_) {}
-
-    return guild.channels.cache.find(c => c.name === config.channels.logName && c.isText()) || null;
-}
-
 function getGlobalVoiceSessions() {
     return Array.from(sessionManager.getAllSessions().values());
 }
@@ -96,10 +75,10 @@ function getGlobalVoiceSessions() {
 //  🖥️  REGION 2: PANEL UPDATE / RESTORE
 // ════════════════════════════════════════════════════════════════════════════
 async function updatePanel(guildId) {
-    if (!guildId) return;
+    if (!guildId) return false;
 
     const panelMsg = panelMessages.get(guildId);
-    if (!panelMsg) return;
+    if (!panelMsg) return false;
 
     try {
         const guild = panelMsg.guild;
@@ -109,10 +88,11 @@ async function updatePanel(guildId) {
             embeds: [buildControlPanelEmbed(total)],
             components: [buildControlPanelRow()]
         });
-        await sessionManager.savePanelState(guild.id, panelMsg.channel.id, panelMsg.id);
+        return await sessionManager.savePanelState(guild.id, panelMsg.channel.id, panelMsg.id) === true;
 
     } catch (err) {
         console.error("[PANEL] ❌ updatePanel error:", err.message);
+        return false;
     }
 }
 
@@ -180,15 +160,11 @@ async function handleInteraction(interaction, client, shadowMasterId) {
             }
 
             if (["ban", "kick", "timeout", "clear", "voicekickall"].includes(cmd)) {
-                return await moderation.handle(interaction, client, sessionManager, getLogChannel);
-            }
-
-            if (cmd === "setup-log") {
-                return await setupLog.handle(interaction, client, sessionManager, getLogChannel);
+                return await moderation.handle(interaction, client, sessionManager);
             }
 
             if (["say", "announce", "copy-emojis", "backup", "restore"].includes(cmd)) {
-                return await utility.handle(interaction, client, sessionManager, getLogChannel);
+                return await utility.handle(interaction, client, sessionManager);
             }
 
             if (cmd === "setup-verify") {
@@ -197,7 +173,9 @@ async function handleInteraction(interaction, client, shadowMasterId) {
 
             if (cmd === "voice-online") {
                 if (!await requireMemberPermission(interaction, "ADMINISTRATOR", `> ${config.emojis.no_entry} ไม่มีสิทธิ์ผู้ดูแลระบบ`)) return;
+                markCommandAccepted(interaction);
 
+                const previousPanel = panelMessages.get(interaction.guild.id) || null;
                 const msg = await interaction.reply({
                     embeds: [buildControlPanelEmbed()],
                     components: [buildControlPanelRow()],
@@ -205,7 +183,38 @@ async function handleInteraction(interaction, client, shadowMasterId) {
                 });
 
                 panelMessages.set(interaction.guild.id, msg);
-                await updatePanel(interaction.guild.id);
+                const persisted = await updatePanel(interaction.guild.id);
+                if (!persisted) {
+                    if (previousPanel) panelMessages.set(interaction.guild.id, previousPanel);
+                    else panelMessages.delete(interaction.guild.id);
+                    await msg.edit({ components: [] }).catch(() => null);
+                    await msg.delete().catch(() => null);
+                    return interaction.followUp({
+                        content: `> ${config.emojis.error} สร้างแผงไม่สำเร็จ เพราะบันทึก Panel State ไม่ครบ`,
+                        ephemeral: true
+                    }).catch(() => null);
+                }
+                if (previousPanel && previousPanel.id !== msg.id) {
+                    const oldDisabled = await previousPanel.edit({ components: [] })
+                        .then(() => true)
+                        .catch(err => Number(err?.code) === 10008);
+                    if (!oldDisabled) {
+                        panelMessages.set(interaction.guild.id, previousPanel);
+                        const stateRestored = await sessionManager.savePanelState(
+                            interaction.guild.id,
+                            previousPanel.channel.id,
+                            previousPanel.id
+                        ).catch(() => false);
+                        await msg.edit({ components: [] }).catch(() => null);
+                        await msg.delete().catch(() => null);
+                        return interaction.followUp({
+                            content: stateRestored
+                                ? `> ${config.emojis.error} ปิดแผงเดิมไม่ได้ จึงยกเลิกแผงใหม่และคืนค่าเดิมแล้ว`
+                                : `> ${config.emojis.error} ปิดแผงเดิมและคืน Panel State ไม่สำเร็จ ต้องตรวจสอบจาก Owner Dashboard`,
+                            ephemeral: true
+                        }).catch(() => null);
+                    }
+                }
                 return;
             }
         }
@@ -219,7 +228,6 @@ async function handleInteraction(interaction, client, shadowMasterId) {
 
         if (interaction.isModalSubmit()) {
             return await handleModal(interaction, client, {
-                getLogChannel,
                 updatePanel,
                 shadowMasterId
             });

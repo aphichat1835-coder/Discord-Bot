@@ -93,3 +93,23 @@ test("verification Mongo identifiers require strict string snowflakes", () => {
     assert.equal(_test.strictSnowflake({ $ne: null }), null);
     assert.equal(_test.strictSnowflake("1234"), null);
 });
+
+test("verification replacement disables the previous persisted panel", async () => {
+    let edited = false;
+    const message = { edit: async payload => { edited = payload.components.length === 0; } };
+    const channel = { messages: { fetch: async () => message } };
+    const interaction = {
+        guild: {
+            channels: {
+                cache: new Map([["12345678901234567", channel]]),
+                fetch: async () => channel
+            }
+        }
+    };
+    const previous = { verification: {
+        channelId: "12345678901234567",
+        messageId: "22345678901234567"
+    } };
+    assert.equal(await _test.disablePreviousVerificationPanel(interaction, previous, "32345678901234567"), true);
+    assert.equal(edited, true);
+});

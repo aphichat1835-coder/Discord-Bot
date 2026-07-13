@@ -1,6 +1,6 @@
 # Architecture
 
-Last implementation verification: 2026-07-11.
+Last implementation verification: 2026-07-13.
 
 ## 1. System shape
 
@@ -44,10 +44,13 @@ Authoritative orchestration is `discord/index.js`.
 6. Archive and migrate a bounded batch of legacy verification records, then
    start retention and encrypted OAuth refresh maintenance.
 7. Login the Discord client.
-8. Start normal event, audit, voice/session, and scheduled work.
+8. Start normal event, protection, voice/session, and scheduled work.
 
 The HTTP-first design keeps `/ping` available during startup. `/health` remains
-503 until MongoDB, Discord, required voice support, and verification are ready.
+503 until MongoDB, Discord, slash-command registration, required voice support,
+and verification are ready. Bounded command-registration retries run
+independently so an API registration outage does not block panel restore or
+Voice auto-resume.
 
 Shutdown is coordinated by `discord/index/system.js`: it marks shutdown state,
 stops verification maintenance, pauses/stops voice work, destroys clients,
@@ -57,9 +60,8 @@ listener.
 Operational and critical webhooks use one in-process dispatcher with cached
 Discord clients, bounded priority/concurrency, transient retry, payload limits,
 mention suppression, and redacted delivery diagnostics. Critical alerts take
-priority over queued routine logs. Discord audit webhook create/update/delete
-events remain separate from these outbound operational webhooks and are
-correlated to same-channel audit entries before storage/routing.
+priority over queued routine logs. The retired Enterprise Audit event capture,
+channel routing, queues, reconciliation, and dashboard are not part of runtime.
 
 ## 3. Repository map
 
@@ -74,7 +76,7 @@ correlated to same-channel audit entries before storage/routing.
 │   ├── features/                 protection, role button, Join Campaign
 │   ├── guards/                   command/dashboard guards
 │   ├── index/                    Owner web/API modules and lifecycle helpers
-│   ├── logging/                  audit, moderation cases, retention/reconciliation
+│   ├── logging/                  moderation cases and reconciliation
 │   ├── sessions/                 voice session helpers
 │   ├── voiceWorker.js
 │   ├── voiceWorker/              voice worker implementation
@@ -91,7 +93,7 @@ correlated to same-channel audit entries before storage/routing.
 │   └── tests/                    Node built-in tests
 ├── verification-tests/          Jest verification contracts/regressions
 ├── scripts/                     guards, diagnostics, additive migration
-├── docs/                        focused operational/audit notes
+├── docs/                        focused operational notes
 ├── render.yaml                  one root Web Service
 └── package.json                 single dependency and command manifest
 ```
@@ -380,16 +382,14 @@ Production cutover order:
 
 Authoritative placeholders are in `.env.example`.
 
-- Runtime: `NODE_ENV`, `PORT`, `MONGO_URI`, `TOKEN_MANAGER`
-- OAuth: `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`,
-  `VERIFY_STATE_SECRET`, public URL aliases
-- Sensitive storage: `ENCRYPTION_KEY`, `STORE_OAUTH_TOKENS`
-- Owner auth: `DASHBOARD_PIN`, `API_SECRET`, session age controls
-- Proxy/network: `TRUST_PROXY`, `TRUST_PROXY_HOPS`,
-  `ENABLE_CF_IP_HEADER`, IP lookup controls
-- Verification maintenance: refresh, retention, API-byte, and lookup cache limits
-- Voice/audit/memory: feature and bounded-runtime controls documented in
-  `.env.example`
+The Owner maintains exactly 13 values: `NODE_ENV`, `MONGO_URI`,
+`TOKEN_MANAGER`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`,
+`ENCRYPTION_KEY`, `API_SECRET`, `VERIFY_STATE_SECRET`, `DASHBOARD_PIN`,
+`PUBLIC_BASE_URL`, `WEBHOOK_LOG_URL`, `ALERT_WEBHOOK_URL`, and `TRUST_PROXY`.
+The host supplies `PORT` when needed; it falls back to 3000. Advanced cache,
+batch, timeout, retention, voice, verification, migration, proxy-hop, feature,
+and memory controls use code defaults and are not owner-maintained deployment
+requirements.
 
 Do not commit real values.
 

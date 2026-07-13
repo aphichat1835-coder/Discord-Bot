@@ -66,15 +66,12 @@ test("memory monitor trend stays bounded and compact", () => {
             getAllSessions: () => new Map([["s1", {}]]),
             getSessionDiagnostics: () => ({ total: 1 })
         };
-        const auditLogger = {
-            getAuditStats: () => ({ sendQueues: 7 })
-        };
         const client = makeFakeClient();
 
         withMutedConsole(() => {
-            monitor.captureMemorySnapshot("one", { voiceWorker, sessionManager, auditLogger, client });
-            monitor.captureMemorySnapshot("two", { voiceWorker, sessionManager, auditLogger, client });
-            monitor.captureMemorySnapshot("three", { voiceWorker, sessionManager, auditLogger, client });
+            monitor.captureMemorySnapshot("one", { voiceWorker, sessionManager, client });
+            monitor.captureMemorySnapshot("two", { voiceWorker, sessionManager, client });
+            monitor.captureMemorySnapshot("three", { voiceWorker, sessionManager, client });
         });
 
         const state = monitor.getMemoryMonitorState();
@@ -89,7 +86,7 @@ test("memory monitor trend stays bounded and compact", () => {
         assert.equal(state.trend[1].discordListeners, 1);
         assert.equal(state.trend[1].naturalTimers, 1);
         assert.equal(state.trend[1].autoDeafTimers, 2);
-        assert.equal(state.trend[1].auditQueues, 7);
+        assert.equal(Object.hasOwn(state.trend[1], "auditQueues"), false);
         assert.equal(Object.hasOwn(state.trend[1], "workerDiagnostics"), false);
         assert.equal(Object.hasOwn(state.trend[1], "selfClientCacheDetails"), false);
     } finally {

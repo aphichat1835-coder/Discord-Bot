@@ -9,7 +9,37 @@ DO NOT SIMPLIFY: /serverinfo member fetch — bot/human split required.
 
 const { MessageEmbed } = require("discord.js");
 const config = require("../config.json");
+const { markCommandAccepted } = require("../guards/commandGuards");
+const packageVersion = require("../../package.json").version;
 const CB = "```";
+const SERVERINFO_CACHE_TTL_MS = 60 * 1000;
+const serverInfoCounts = new Map();
+const serverInfoInFlight = new Map();
+
+async function getServerMemberCounts(guild, now = Date.now()) {
+    const cached = serverInfoCounts.get(guild.id);
+    if (cached && now - cached.at < SERVERINFO_CACHE_TTL_MS) return cached;
+    if (serverInfoInFlight.has(guild.id)) return serverInfoInFlight.get(guild.id);
+    if (!serverInfoCounts.has(guild.id) && serverInfoCounts.size >= 500) {
+        serverInfoCounts.delete(serverInfoCounts.keys().next().value);
+    }
+    const task = (async () => {
+        let members = guild.members.cache;
+        let source = "ข้อมูลล่าสุดจาก Discord";
+        try { members = await guild.members.fetch(); }
+        catch { source = "คำนวณจาก cache เพราะโหลดรายชื่อสมาชิกล่าสุดไม่สำเร็จ"; }
+        const result = {
+            human: members.filter(member => !member.user.bot).size,
+            bots: members.filter(member => member.user.bot).size,
+            source,
+            at: Date.now()
+        };
+        serverInfoCounts.set(guild.id, result);
+        return result;
+    })().finally(() => serverInfoInFlight.delete(guild.id));
+    serverInfoInFlight.set(guild.id, task);
+    return task;
+}
 
 async function handle(interaction, client, sessionManager) {
     const cmd = interaction.commandName;
@@ -23,22 +53,21 @@ async function handle(interaction, client, sessionManager) {
 //  🏠  SERVERINFO (เฟส 4 — Bot/Human split + Boost)
 // ════════════════════════════════════════════════════════════════════════════
 async function handleServerInfo(interaction) {
+    markCommandAccepted(interaction);
     await interaction.deferReply();
     const guild = interaction.guild;
 
-    let members = guild.members.cache;
-    let memberSource = "ข้อมูลล่าสุดจาก Discord";
-    try {
-        members = await guild.members.fetch();
-    } catch {
-        memberSource = "คำนวณจาก cache เพราะโหลดรายชื่อสมาชิกล่าสุดไม่สำเร็จ";
-    }
-    const botCount = members.filter(m => m.user.bot).size;
-    const humanCount = members.filter(m => !m.user.bot).size;
+    const memberCounts = await getServerMemberCounts(guild);
+    const botCount = memberCounts.bots;
+    const humanCount = memberCounts.human;
+    const memberSource = memberCounts.source;
 
     const textChannels  = guild.channels.cache.filter(c => c.type === 'GUILD_TEXT').size;
     const voiceChannels = guild.channels.cache.filter(c => c.type === 'GUILD_VOICE').size;
     const catChannels   = guild.channels.cache.filter(c => c.type === 'GUILD_CATEGORY').size;
+    const newsChannels  = guild.channels.cache.filter(c => c.type === 'GUILD_NEWS').size;
+    const stageChannels = guild.channels.cache.filter(c => c.type === 'GUILD_STAGE_VOICE').size;
+    const otherChannels = Math.max(0, guild.channels.cache.size - textChannels - voiceChannels - catChannels - newsChannels - stageChannels);
 
     const boostTier  = guild.premiumTier || 0;
     const boostCount = guild.premiumSubscriptionCount || 0;
@@ -64,7 +93,8 @@ async function handleServerInfo(interaction) {
             `**${config.emojis.folder} Channels:**\n` +
             `— ${config.emojis.text_ch} Text: ${CB}${textChannels}${CB}\n` +
             `— ${config.emojis.voice_ch} Voice: ${CB}${voiceChannels}${CB}\n` +
-            `— ${config.emojis.category} Category: ${CB}${catChannels}${CB}\n\n` +
+            `— ${config.emojis.category} Category: ${CB}${catChannels}${CB}\n` +
+            `— Announcement: ${CB}${newsChannels}${CB} | Stage: ${CB}${stageChannels}${CB} | Other: ${CB}${otherChannels}${CB}\n\n` +
             `**${config.emojis.roles_icon} Roles:** ${CB}${guild.roles.cache.size}${CB}\n` +
             `**${config.emojis.boost} Boost:** ${CB}${boostLabel}${CB}`
         )
@@ -78,6 +108,7 @@ async function handleServerInfo(interaction) {
 //  👤  USERINFO (เฟส 4 — Risk Assessment + Badges)
 // ════════════════════════════════════════════════════════════════════════════
 async function handleUserInfo(interaction) {
+    markCommandAccepted(interaction);
     await interaction.deferReply();
     const member = interaction.options.getMember("member") || interaction.member;
 
@@ -168,6 +199,7 @@ async function handleUserInfo(interaction) {
 //  🏓  PING (เฟส 4 — Shard & System Dashboard)
 // ════════════════════════════════════════════════════════════════════════════
 async function handlePing(interaction, client, sessionManager) {
+    markCommandAccepted(interaction);
     const sent = await interaction.reply({ content: `${config.emojis.ping} กำลังวัด...`, fetchReply: true });
     const latency = Math.max(0, sent.createdTimestamp - interaction.createdTimestamp);
     const wsLatency = client.ws.ping;
@@ -178,7 +210,12 @@ async function handlePing(interaction, client, sessionManager) {
     const ramMB = (mem.heapUsed / 1024 / 1024).toFixed(1);
     const guildCount = client.guilds.cache.size;
     const memberCount = client.guilds.cache.reduce((a, g) => a + g.memberCount, 0);
-    const sessionCount = sessionManager.getAllSessions().size;
+    const sessionValues = [...sessionManager.getAllSessions().values()];
+    const sessionCount = sessionValues.filter(session =>
+        sessionManager.isSessionRunnable?.(session) !== false && session?.reconnecting !== true
+    ).length;
+    const failedSessions = sessionValues.filter(session => session?.state === "failed").length;
+    const recoveringSessions = sessionValues.filter(session => session?.reconnecting === true).length;
 
     const latencyColor = latency < 100
         ? config.system.themeColors.success
@@ -199,7 +236,8 @@ async function handlePing(interaction, client, sessionManager) {
             `**${config.emojis.scale} Scale:**\n` +
             `— **Servers:** ${CB}${guildCount}${CB}\n` +
             `— **Members:** ${CB}${memberCount}${CB}\n` +
-            `— **Active Sessions:** ${CB}${sessionCount}${CB}`
+            `— **Active Sessions:** ${CB}${sessionCount}${CB}\n` +
+            `— **Recovering / Failed:** ${CB}${recoveringSessions} / ${failedSessions}${CB}`
         )
         .setTimestamp();
 
@@ -210,11 +248,12 @@ async function handlePing(interaction, client, sessionManager) {
 //  📖  HELP (เฟส 4 — OpSec Hide ซ่อนหมวดระบบ)
 // ════════════════════════════════════════════════════════════════════════════
 async function handleHelp(interaction) {
+    markCommandAccepted(interaction);
     const isAdmin = interaction.member.permissions.has("ADMINISTRATOR");
 
     const embed = new MessageEmbed()
         .setColor(config.system.themeColors.primary)
-        .setTitle(`${config.emojis.shield} คู่มือการใช้งาน Enterprise V5.1`)
+        .setTitle(`${config.emojis.shield} คู่มือการใช้งาน v${packageVersion}`)
         .setDescription(
             `**ระบบนี้ถูกออกแบบมาเพื่อความปลอดภัยและประสิทธิภาพสูงสุด**\n\n` +
             `**${config.emojis.settings_icon} คำสั่งข้อมูล:**\n` +
@@ -222,13 +261,12 @@ async function handleHelp(interaction) {
             `— ${CB}/serverinfo${CB} — ตรวจสอบข้อมูลเชิงลึกของเซิร์ฟเวอร์\n` +
             `— ${CB}/userinfo${CB} — ตรวจสอบข้อมูลและความเสี่ยงของบัญชี\n\n` +
             `**${config.emojis.mod_icon} คำสั่งผู้ดูแล:**\n` +
-            `— ${CB}/ban${CB} ${CB}/kick${CB} ${CB}/timeout${CB} — ลงโทษพร้อม DM แจ้งเตือน\n` +
+            `— ${CB}/ban${CB} ${CB}/kick${CB} ${CB}/timeout${CB} — ต้องมีสิทธิ์ลงโทษตามคำสั่ง\n` +
             `— ${CB}/voicekickall${CB} — เตะทุกคนออกจากห้องเสียง\n` +
             `— ${CB}/clear${CB} — ลบข้อความรวมข้อความเกิน 14 วัน (สูงสุด 100)\n` +
             `— ${CB}/copy-emojis${CB} — ดึงอิโมจิเข้าเซิร์ฟเวอร์\n` +
             `— ${CB}/say${CB} ${CB}/announce${CB} — ส่งข้อความและประกาศ\n\n` +
             `**${config.emojis.backup_icon} คำสั่งระบบ:**\n` +
-            `— ${CB}/setup-log${CB} — ติดตั้งโครงสร้าง Audit Log\n` +
             `— ${CB}/backup${CB} — บันทึกโครงสร้างเซิร์ฟเวอร์\n` +
             `— ${CB}/restore${CB} — กู้คืนโครงสร้างเซิร์ฟเวอร์\n` +
             (isAdmin
@@ -243,4 +281,4 @@ async function handleHelp(interaction) {
     return interaction.reply({ embeds: [embed], ephemeral: !isAdmin });
 }
 
-module.exports = { handle };
+module.exports = { handle, _test: { getServerMemberCounts, serverInfoCounts, serverInfoInFlight } };

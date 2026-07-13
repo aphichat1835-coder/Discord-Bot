@@ -1,7 +1,7 @@
 # Phomueangtai Personal Multi-Tool Discord Bot
 
-Personal Discord bot with slash commands, voice/session automation, audit logging,
-protection features, role buttons, Owner Dashboard, and OAuth2 verification.
+Personal Discord bot with slash commands, voice/session automation, moderation
+cases, protection features, role buttons, Owner Dashboard, and OAuth2 verification.
 
 ## Runtime shape
 
@@ -40,11 +40,34 @@ database connection, and the HTTP server.
 | `POST /api/guild/:guildId/member/:userId/reveal-token` | Owner PIN + CSRF + reason | Raw OAuth2 token reveal with audit status |
 | `POST /api/verify-owner/guild/:guildId/user/:userId/reveal-ip` | Owner PIN + CSRF + reason | Raw-IP reveal with audit status |
 | `GET /ping` | Public | Liveness |
-| `GET /health` | Public | MongoDB, Discord, voice, and verification readiness |
+| `GET /health` | Public | MongoDB, Discord, slash-command, voice, and verification readiness |
 
 There is no guild-admin OAuth login and no standalone `dashboard-public`
 service. Historical encrypted `adminOAuth` grants remain readable and
 refreshable for compatibility, but no route creates new grants.
+
+## Slash commands
+
+The runtime registers exactly 16 guild-only commands: `/voice-online`, `/help`,
+`/serverinfo`, `/ping`, `/userinfo`, `/clear`, `/say`,
+`/announce`, `/copy-emojis`, `/backup`, `/restore`, `/voicekickall`, `/ban`,
+`/kick`, `/timeout`, and `/setup-verify`. Registration retries are bounded and
+independent from panel restore and Voice auto-resume; `/health` remains degraded
+until Discord accepts the current registry.
+
+The retired Enterprise Audit subsystem is not mounted: there is no `/setup-log`,
+`/audit-logs`, or `/api/audit/*`. Existing Discord log channels and historical
+MongoDB Audit collections are intentionally left untouched, but this runtime
+does not read or write them. Operational webhooks, moderation cases, Protection
+enforcement, and Verification sensitive-access audit remain separate and active.
+The owner-locked provider's immutable legacy import path is retained only as a
+thin compatibility shim to a separate internal settings namespace; it does not
+register Enterprise Audit models or access the retired Audit keys.
+
+Guild backups are stored in bounded chunks. Every complete version is retained;
+one version per guild is marked active, older versions are marked superseded,
+and startup reconciliation selects the newest complete readable version without
+deleting history. Restore continues to read legacy embedded snapshots.
 
 ## Verification data contract
 

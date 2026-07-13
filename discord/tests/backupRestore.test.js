@@ -38,3 +38,17 @@ test("snapshot loader keeps legacy compatibility and rejects incomplete chunk po
         data: {}
     }), null);
 });
+
+test("snapshot history schema keeps one additive active pointer without deleting versions", () => {
+    const { SnapshotModel, getLatestSnapshotForGuild, reconcileSnapshotPointers } = sessionManager;
+    assert.ok(SnapshotModel.schema.path("active"));
+    assert.ok(SnapshotModel.schema.path("activationPending"));
+    assert.ok(SnapshotModel.schema.path("supersededAt"));
+    assert.ok(SnapshotModel.schema.path("supersededBy"));
+    const activeIndex = SnapshotModel.schema.indexes().find(([keys]) => keys.guildId === 1);
+    assert.ok(activeIndex);
+    assert.equal(activeIndex[1].unique, true);
+    assert.deepEqual(activeIndex[1].partialFilterExpression, { active: true });
+    assert.equal(typeof getLatestSnapshotForGuild, "function");
+    assert.equal(typeof reconcileSnapshotPointers, "function");
+});

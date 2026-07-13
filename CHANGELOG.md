@@ -1,19 +1,36 @@
 # Changelog
 
-## [Unreleased] - Unified Bot And Verification Runtime 2026-07-04
+## [Unreleased] - Unified Bot And Verification Runtime 2026-07-13
 
 ### Changed
 
-- Completed the 17-command reliability pass while leaving `/setup-log`
-  unchanged for its separately approved retirement: all slash commands are
+- Removed the complete Enterprise Audit / Advanced Audit Logger server-activity
+  subsystem without replacing it: `/setup-log`, `/audit-logs`, `/api/audit/*`,
+  Discord event listeners/intents/partials used only by Audit, channel delivery,
+  queues, caches, retention/reconciliation, storage models/helpers, diagnostics,
+  UI assets, focused docs and tests are gone. Existing MongoDB Audit collections
+  and Discord channels are deliberately not deleted. Operational/Critical
+  webhooks, Verification sensitive-access audit, ModCase persistence,
+  Protection enforcement, Voice, and the remaining Owner Dashboard stay active.
+  The immutable import path required by owner-locked code remains as a thin
+  adapter to a separate internal namespace and cannot access the retired Audit
+  model or key namespace.
+
+- Completed the 16-command reliability pass: all slash commands are
   guild-only; Voice Panel sessions are isolated by the creating Discord user
   except for Bot Owner/Shadow Master global control; verification panels now
   enforce Discord limits, HTTPS resources, assignable roles, durable dual-store
   persistence and latest-panel Direct Role checks; moderation creates durable
-  pending cases before Discord actions; backup snapshots use bounded chunks
-  with legacy restore compatibility and reauthorization; and command help,
+  pending cases before Discord actions; backup snapshots use bounded chunks,
+  retain every complete historical version, and select one reconciled active
+  version with legacy restore compatibility and reauthorization; and command help,
   permissions, mention handling, result counts, cooldowns, locks and payload
   limits now match the registered command surface.
+
+- Decoupled bounded slash-command registration retries from panel restore,
+  protected initialization, and Voice auto-resume. Combined readiness now
+  reports command-registration readiness, while approval database failures
+  fail closed without escaping the interaction handler.
 
 - Removed the redundant Discord `/stats` slash command, handler, router entry,
   and help text. Runtime status remains available through `/ping` and the Owner
@@ -26,16 +43,16 @@
 - Reduced the supported production deployment contract to exactly 13
   owner-maintained environment values. Render and `.env.example` now expose
   only that canonical set, while advanced voice, verification, migration,
-  audit, cache, timeout, retention, and memory controls use code defaults.
+  cache, timeout, retention, and memory controls use code defaults.
 
 - Removed the retired `/say` whitelist subsystem from slash commands, the
   Owner Dashboard, APIs, runtime state, diagnostics, and Mongoose registration.
   `/say` is now Administrator-only; the legacy MongoDB collection is left
   untouched for rollback and is no longer read or written by the runtime.
 
-- Retired only the obsolete Owner-only `/setup` Dashboard-link shortcut now
+- Retired the obsolete Owner-only `/setup` Dashboard-link shortcut now
   that the unified Owner Dashboard link is delivered through the operations
-  webhook; `/setup-log` and `/setup-verify` remain unchanged.
+  webhook; `/setup-verify` remains unchanged.
 
 - Made legacy IP identity history migration isolate per-item failures, preserve
   retryable source data, continue later links, rotate failed attempts behind
@@ -56,10 +73,7 @@
 - Hardened webhook reliability across the unified runtime with validated
   Discord-only HTTPS targets, mention-safe and size-bounded payloads, a shared
   priority queue, transient retry, bounded routine-event aggregation, Owner
-  delivery diagnostics, and graceful shutdown draining. Webhook audit events
-  now correlate create/update/delete actions by channel, preserve audit entry
-  IDs for reconciler dedupe, flag repeated create/delete activity in audit-only
-  mode, and report missing View Audit Log permission after `/setup-log`.
+  delivery diagnostics, and graceful shutdown draining.
 
 - Corrected Owner environment diagnostics to report the actual
   `TOKEN_MANAGER` runtime variable and aligned the Render runbook with the

@@ -13,18 +13,6 @@
         "spamTrackingMaxUsers": 1000,
         "webLogsMaxEntries": 500
     },
-    "channels": {
-        "logName": "manager-logs"
-    },
-    "audit_channels": {
-        "categoryName": "🛡️ ENTERPRISE AUDIT",
-        "message": "log-ข้อความ",
-        "member": "log-สมาชิก",
-        "voice": "log-ช่องเสียง",
-        "server": "log-เซิร์ฟเวอร์",
-        "security": "log-ความปลอดภัย",
-        "moderation": "log-การลงโทษ"
-    },
     "voice_worker": {
         "maxReconnectAttempts": 7,
         "loginTimeout": 35000,

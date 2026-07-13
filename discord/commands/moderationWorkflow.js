@@ -1,8 +1,7 @@
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");
-const { requireMemberPermission, checkRoleHierarchy, safeDefer } = require("../guards/commandGuards");
+const { requireMemberPermission, checkRoleHierarchy, safeDefer, markCommandAccepted } = require("../guards/commandGuards");
 const modCaseManager = require("../logging/modCaseManager");
-const { LOG_CHANNEL_TYPES, routeAndSendLog } = require("../logging/logCore");
 const { sendAlertWebhook } = require("../core/webhooks");
 const {
     requiredModerationPermission,
@@ -110,34 +109,23 @@ async function createModerationCase(interaction, input, dmSent, status = "pendin
     );
 }
 
-async function sendModerationCaseLog(interaction, caseDoc, action) {
-    const caseEmbed = modCaseManager.buildModerationCaseEmbed(caseDoc, {
-        title: `${config.emojis.mod_icon} Case #${caseDoc.caseNumber} | ${action.toUpperCase()} สำเร็จ`
-    });
-
-    return routeAndSendLog({
-        guild: interaction.guild,
-        sessionManager,
-        category: LOG_CHANNEL_TYPES.MODERATION,
-        embed: caseEmbed
-    });
-}
-
 async function performModeration(interaction, input, deps = {}) {
     const createCase = deps.createCase || createModerationCase;
     const applyAction = deps.applyAction || applyModerationAction;
     const updateStatus = deps.updateStatus || ((guildId, caseNumber, status, metadata) =>
         modCaseManager.updateCaseStatus(sessionManager, guildId, caseNumber, status, metadata));
-    const sendCaseLog = deps.sendCaseLog || sendModerationCaseLog;
     const pendingCase = await createCase(interaction, input, false, "pending");
     let dmSent = false;
     try {
         dmSent = await applyAction(interaction, input);
     } catch (err) {
-        await updateStatus(pendingCase.guildId, pendingCase.caseNumber, "failed", {
+        const failedCase = await updateStatus(pendingCase.guildId, pendingCase.caseNumber, "failed", {
             actionApplied: false,
-            failureCode: String(err?.code || err?.message || "action_failed").slice(0, 80)
+            failureCode: String(err?.code || "action_failed").replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 80)
         }).catch(() => null);
+        if (!failedCase) {
+            sendAlertWebhook({ content: `⚠️ [MODERATION CASE] Failed status requires reconciliation | guild=${pendingCase.guildId} | case=${pendingCase.caseNumber}` }).catch(() => {});
+        }
         throw err;
     }
     const completedCase = await updateStatus(
@@ -147,14 +135,10 @@ async function performModeration(interaction, input, deps = {}) {
         { actionApplied: true, dmSent }
     ).catch(() => null);
     const caseDoc = completedCase || { ...pendingCase, metadata: { ...pendingCase.metadata, actionApplied: true, dmSent } };
-    const logSent = await sendCaseLog(interaction, caseDoc, input.action).catch(err => {
-        console.warn(`[MODERATION] Log delivery failed after successful ${input.action}: ${err.message}`);
-        return false;
-    });
-    if (!logSent) {
-        sendAlertWebhook({ content: `⚠️ [MODERATION LOG] ส่ง log ไม่สำเร็จ | guild=${interaction.guild.id} | action=${input.action} | case=${caseDoc.caseNumber}` }).catch(() => {});
+    if (!completedCase) {
+        sendAlertWebhook({ content: `⚠️ [MODERATION CASE] Completed action remains pending | guild=${pendingCase.guildId} | case=${pendingCase.caseNumber}` }).catch(() => {});
     }
-    return { dmSent, caseDoc, logSent, caseCompleted: Boolean(completedCase) };
+    return { dmSent, caseDoc, caseCompleted: Boolean(completedCase) };
 }
 
 function successReply(interaction, input, result) {
@@ -190,6 +174,7 @@ async function handleModerationCommand(interaction, client) {
     if (rejection === VALIDATION_STOP) return null;
     if (rejection) return rejection;
 
+    markCommandAccepted(interaction);
     if (!await safeDefer(interaction)) return null;
     try {
         return successReply(interaction, input, await performModeration(interaction, input));
@@ -214,7 +199,6 @@ module.exports = {
     ACTION_HANDLERS,
     applyModerationAction,
     createModerationCase,
-    sendModerationCaseLog,
     performModeration,
     successReply,
     failureReply,

@@ -13,7 +13,8 @@ const sessionManager = require("../sessionManager");
 const {
     requireMemberPermission,
     requireBotPermission,
-    safeDefer
+    safeDefer,
+    markCommandAccepted
 } = require("../guards/commandGuards");
 const { handleModerationCommand } = require("./moderationWorkflow");
 
@@ -26,10 +27,10 @@ const BULK_DELETE_SAFETY_MS = 60 * 1000;
 // ════════════════════════════════════════════════════════════════════════════
 //  🛡️  MAIN HANDLER
 // ════════════════════════════════════════════════════════════════════════════
-async function handle(interaction, client, sessionManager, getLogChannel) {
+async function handle(interaction, client) {
     const cmd = interaction.commandName;
 
-    if (cmd === "voicekickall") return handleVoiceKickAll(interaction, getLogChannel);
+    if (cmd === "voicekickall") return handleVoiceKickAll(interaction);
     if (cmd === "clear")        return handleClear(interaction);
     if (["ban", "kick", "timeout"].includes(cmd)) return handleModerationCommand(interaction, client);
 }
@@ -37,7 +38,7 @@ async function handle(interaction, client, sessionManager, getLogChannel) {
 // ════════════════════════════════════════════════════════════════════════════
 //  🔇  VOICE KICK ALL
 // ════════════════════════════════════════════════════════════════════════════
-async function handleVoiceKickAll(interaction, getLogChannel) {
+async function handleVoiceKickAll(interaction) {
     const vc = interaction.member.voice.channel;
     if (!vc) return interaction.reply({ content: `> ${config.emojis.no_entry} คุณต้องอยู่ในห้องเสียงก่อน!`, ephemeral: true });
     if (!await requireMemberPermission(interaction, "ADMINISTRATOR", `> ${config.emojis.no_entry} ไม่มีสิทธิ์ผู้ดูแลระบบ`)) return;
@@ -47,6 +48,7 @@ async function handleVoiceKickAll(interaction, getLogChannel) {
         return interaction.reply({ content: `> ${config.emojis.warning} ระบบกำลังดำเนินการอยู่ กรุณารอ`, ephemeral: true });
     }
     activeVoiceKicks.add(interaction.guild.id);
+    markCommandAccepted(interaction);
 
     try {
         if (!await safeDefer(interaction)) return null;
@@ -73,10 +75,20 @@ async function handleVoiceKickAll(interaction, getLogChannel) {
         }
 
         const limitMsg = isTimeoutHit ? `\n> ${config.emojis.warning} **หยุดอัตโนมัติ:** เกิน 14 นาที` : "";
+        const eligibleCount = memberSnapshot.filter(member => !member.permissions.has("ADMINISTRATOR")).length;
+        let resultState = "failed";
+        if (kicked.length > 0) {
+            resultState = failed === 0 && !isTimeoutHit && kicked.length === eligibleCount
+                ? "complete"
+                : "partial";
+        }
+        let resultColor = config.system.themeColors.error;
+        if (resultState === "complete") resultColor = config.system.themeColors.success;
+        else if (resultState === "partial") resultColor = config.system.themeColors.warning;
         const embed = new MessageEmbed()
-            .setColor(config.system.themeColors.success)
+            .setColor(resultColor)
             .setDescription(
-                `> ${config.emojis.success} **จัดการห้องเสียงเรียบร้อย** ${config.emojis.broom}\n\n` +
+                `> **ผลการจัดการ: ${resultState}** ${config.emojis.broom}\n> เป้าหมายทั้งหมด: ${eligibleCount} คน\n\n` +
                 `— **เตะสำเร็จ ${kicked.length} คน:**\n` +
                 `${kicked.length > 0
                     ? (kicked.length > 50
@@ -86,9 +98,6 @@ async function handleVoiceKickAll(interaction, getLogChannel) {
                 `— **ล้มเหลว:** ${failed} คน${limitMsg}`
             );
 
-        const logMap = await sessionManager.getLogChannelMap(interaction.guild.id);
-        const logCh = logMap?.voiceChannelId ? interaction.guild.channels.cache.get(logMap.voiceChannelId) : null;
-        if (logCh) logCh.send({ embeds: [embed] }).catch(() => {});
         return interaction.editReply({ embeds: [embed] });
     } finally {
         activeVoiceKicks.delete(interaction.guild.id);
@@ -164,6 +173,7 @@ async function handleClear(interaction) {
     }
 
     activeClearChannels.add(interaction.channel.id);
+    markCommandAccepted(interaction);
     try {
         if (!await safeDefer(interaction, { ephemeral: true })) return null;
         const result = await deleteChannelMessages(interaction.channel, amt);
@@ -174,14 +184,6 @@ async function handleClear(interaction) {
                     : `> ${config.emojis.warning} ลบไม่สำเร็จ ${result.failed} ข้อความ`
             });
         }
-        sessionManager.getLogChannelMap(interaction.guild.id).then(logMap => {
-            const logCh = logMap?.messageChannelId ? interaction.guild.channels.cache.get(logMap.messageChannelId) : null;
-            if (logCh) logCh.send({ embeds: [new MessageEmbed()
-                .setColor(config.system.themeColors.warning)
-                .setDescription(`> ${config.emojis.broom} **/clear ถูกใช้**\n— **โดย:** <@${interaction.user.id}>\n— **ห้อง:** <#${interaction.channel.id}>\n— **ลบ:** ${result.deleted} ข้อความ\n— **Bulk:** ${result.bulkDeleted}\n— **รายข้อความ:** ${result.individualDeleted}\n— **ล้มเหลว:** ${result.failed}`)
-                .setTimestamp()
-            ] }).catch(() => {});
-        }).catch(() => {});
         return interaction.editReply({
             content: `> ${config.emojis.success} ลบข้อความสำเร็จ **${result.deleted}** ข้อความ` +
                 `\n> แบบรวดเดียว: **${result.bulkDeleted}** | ข้อความเก่า/รายข้อความ: **${result.individualDeleted}**` +

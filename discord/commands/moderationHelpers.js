@@ -1,6 +1,10 @@
 const { MessageEmbed } = require("discord.js");
 const config = require("../config.json");
-const { safeAuditText } = require("../logging/logCore");
+const { sanitizeLogText } = require("../core/safeLogger");
+
+function safeText(value, max = 500) {
+    return sanitizeLogText(String(value ?? "")).slice(0, Math.max(1, Number(max) || 500)) || "-";
+}
 
 function requiredModerationPermission(action) {
     return {
@@ -14,7 +18,7 @@ function readModerationInput(interaction) {
     return {
         action: interaction.commandName,
         target: interaction.options.getMember("target"),
-        reason: safeAuditText(interaction.options.getString("reason") || "ไม่มีเหตุผลระบุ", 500)
+        reason: safeText(interaction.options.getString("reason") || "ไม่มีเหตุผลระบุ", 500)
     };
 }
 

@@ -1,6 +1,6 @@
 # Roadmap
 
-Last reviewed: 2026-07-04.
+Last reviewed: 2026-07-13.
 
 ## Current architecture baseline
 
@@ -8,7 +8,7 @@ Last reviewed: 2026-07-04.
 - One Express listener on `PORT || 3000`.
 - One shared Mongoose connection.
 - Main bot, voice/session, Owner Dashboard, OAuth verification, maintenance, and
-  audit logging start through `npm start`.
+  protection start through `npm start`.
 - Verification management is Owner PIN only.
 - Member OAuth callback remains public.
 - Existing MongoDB collections and encryption compatibility are retained.
@@ -38,6 +38,9 @@ require a new explicit owner decision.
 - Added additive snapshot/data-quality fields and dry-run/apply migration.
 - Added audited Owner raw-IP reveal while keeping normal APIs redacted.
 - Consolidated CI and tests under the root package.
+- Retired Enterprise Audit server-activity capture, `/setup-log`, its Owner
+  routes/UI, channel delivery, and runtime storage while preserving historical
+  database records and Discord channels for separate cleanup.
 
 ## Near-term work
 

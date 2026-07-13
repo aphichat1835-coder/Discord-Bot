@@ -18,8 +18,7 @@ const NAV_LINKS = [
     ["/join-campaign", "📥 Join"],
     ["/docs", "📖 คู่มือ"],
     ["/logs", "📜 Logs"],
-    ["/logs/voice", "🔊 Voice"],
-    ["/audit-logs", "🧾 Audit"]
+    ["/logs/voice", "🔊 Voice"]
 ];
 
 function navBar(active = "") {

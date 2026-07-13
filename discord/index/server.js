@@ -30,7 +30,6 @@ const {
 } = require("../guards/dashboardGuards");
 const { sendLogWebhook, getWebhookDeliveryDiagnostics } = require("../core/webhooks");
 const { getFeatureFlags } = require("../core/featureFlags");
-const { registerAuditWebBundle } = require("./auditWebBundle");
 const { registerJoinCampaignRoutes } = require("./joinCampaignRoutes");
 const { getVerificationDiagnostics } = require("../verification/lifecycle");
 
@@ -259,9 +258,9 @@ async function handleApprovedGuildKick({
 // ════════════════════════════════════════════════════════════════════════════
 function registerRoutes({
     app, express, config, sessionManager, voiceWorker,
-    commands, webLogs, MAX_LOGS, client, auditLogger, memoryMonitor, botReadyAt,
+    commands, webLogs, MAX_LOGS, client, memoryMonitor, botReadyAt, commandsReady,
     API_SECRET, getWebPin, requestCounts,
-    disabledCommands, commandAuditLog, toggleCooldowns, commandCooldowns, spamTracking, antiRaidLogDebounce,
+    disabledCommands, commandAuditLog, toggleCooldowns, commandCooldowns, spamTracking, antiRaidDebounce,
     startRotateTimer, setupTelemetryRouter
 }) {
     const checkAuth      = makeCheckAuth(API_SECRET);
@@ -353,7 +352,7 @@ function registerRoutes({
             toggleCooldowns: toggleCooldowns?.size || 0,
             commandCooldownUsers: commandCooldowns?.size || 0,
             spamTracking: spamTracking?.size || 0,
-            antiRaidLogDebounce: antiRaidLogDebounce?.size || 0,
+            antiRaidDebounce: antiRaidDebounce?.size || 0,
             pinAttempts: getPinAttemptStats(),
             revealAttempts: getRevealAttemptStats()
         };
@@ -378,7 +377,6 @@ function registerRoutes({
             discord: discordDiagnostics(),
             sessions: sessionDiagnostics(),
             voiceWorker: voiceWorker.getWorkerDiagnostics?.() || {},
-            audit: auditLogger?.getAuditStats?.() || {},
             webhooks: getWebhookDeliveryDiagnostics(),
             memoryMonitor: memoryMonitor?.getMemoryMonitorState?.() || {},
             requestCounters: requestCounterDiagnostics(),
@@ -493,7 +491,8 @@ function registerRoutes({
         const voiceReady = !voiceRequired || (
             botOnline && dbConnected && voice?.ready === true
         );
-        const ready = botOnline && dbConnected && verificationReady && voiceReady;
+        const slashCommandsReady = commandsReady?.() === true;
+        const ready = botOnline && dbConnected && verificationReady && voiceReady && slashCommandsReady;
 
         res.status(ready ? 200 : 503).json({
             status: ready ? "ok" : "degraded",
@@ -503,7 +502,8 @@ function registerRoutes({
             dbConnected,
             db: dbConnected,
             voiceReady,
-            verificationReady
+            verificationReady,
+            commandsReady: slashCommandsReady
         });
     };
     app.get("/ready", sendReadiness);
@@ -517,18 +517,6 @@ function registerRoutes({
             return auth.requireCsrf(req, res, next);
         });
     });
-
-    registerAuditWebBundle({
-        app,
-        express,
-        sessionManager,
-        client,
-        auditLogger,
-        checkAuth,
-        requireCsrf: auth.requireCsrf
-    });
-
-    console.log("[AUDIT] 🧾 Audit dashboard routes registered at /audit-logs");
 
     registerJoinCampaignRoutes({
         app,

@@ -1,6 +1,6 @@
 # Project Context
 
-Last verified against the implementation: 2026-07-11.
+Last verified against the implementation: 2026-07-13.
 
 ## Identity
 
@@ -13,7 +13,7 @@ verification-only project. The same runtime contains:
 - Owner-only verification management
 - public member OAuth2 verification
 - MongoDB persistence
-- audit logging and moderation cases
+- moderation cases and protection enforcement
 - protection and role-button features
 - approved/pending guild controls
 - owner/system hooks protected by repository policy
@@ -48,8 +48,8 @@ create Express app and register routes
 ```
 
 The HTTP server starts first so `/ping` can answer while readiness is degraded.
-`/health` returns 200 only when required MongoDB, Discord, voice, and
-verification components are ready. Its public response exposes readiness
+`/health` returns 200 only when required MongoDB, Discord, slash-command
+registration, voice, and verification components are ready. Its public response exposes readiness
 booleans only; detailed diagnostics remain behind Owner authentication.
 
 ## Main implementation map
@@ -63,7 +63,7 @@ booleans only; detailed diagnostics remain behind Owner authentication.
 | Persistence | `discord/sessionManager.js` |
 | Commands | `discord/commands.js`, `discord/commands/` |
 | Voice/session | `discord/voiceWorker.js`, `discord/voiceWorker/`, `discord/sessions/` |
-| Audit/mod cases | `discord/auditLogger.js`, `discord/logging/` |
+| Moderation cases | `discord/logging/modCaseManager.js` |
 | Protection/role button | `discord/features/` |
 | Verification runtime | `discord/verification/runtime.js`, `discord/verification/lifecycle.js` |
 | Verification routes | `discord/verification/routes/` |
@@ -92,6 +92,13 @@ booleans only; detailed diagnostics remain behind Owner authentication.
 Existing command names, custom IDs, signed state, panel revisions,
 `guilds.join`, Join Campaign, role assignment, and retention behavior remain
 compatible.
+
+The Enterprise Audit server-activity logger has been retired. `/setup-log`, its
+Dashboard/API routes, Discord event listeners, storage/reconciliation modules,
+and channel delivery are absent. Historical MongoDB collections and Discord
+channels are preserved as orphaned rollback data. Operational webhooks,
+Verification sensitive-access audit, and ModCase persistence are separate and
+remain active.
 
 ## Sensitive data rules
 

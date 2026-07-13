@@ -3,10 +3,9 @@ const test = require("node:test");
 
 const { createViewHelpers } = require("../index/viewHelpers");
 
-test("dashboard nav includes audit logs link", () => {
+test("dashboard nav does not expose removed enterprise audit routes", () => {
     const { navBar } = createViewHelpers("");
-    const html = navBar("/audit-logs");
-    assert.match(html, /\/audit-logs/);
-    assert.match(html, /Audit/);
-    assert.match(html, /class="active"/);
+    const html = navBar("/");
+    assert.doesNotMatch(html, /\/audit-logs/);
+    assert.doesNotMatch(html, /Enterprise Audit/);
 });

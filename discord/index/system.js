@@ -22,6 +22,7 @@ const MAX_LOGS_DEFAULT = 500;
 
 let crashShieldReady = false;
 let botReadyAt = null;
+let commandsReady = false;
 let isAppShuttingDown = global.__APP_SHUTTING_DOWN === true;
 
 
@@ -227,7 +228,7 @@ function pruneCommandCooldowns(commandCooldowns, now, ttlMs) {
 
 function cleanupVolatileMaps({
     spamTracking, requestCounts,
-    commandCooldowns, toggleCooldowns, antiRaidLogDebounce,
+    commandCooldowns, toggleCooldowns, antiRaidDebounce,
     voiceWorker, config
 }, now) {
     const windowMs = config.limits.rateLimitWindowMs || 60000;
@@ -236,18 +237,18 @@ function cleanupVolatileMaps({
     pruneTimestampListMap(requestCounts, now, windowMs);
     pruneCommandCooldowns(commandCooldowns, now, 30000);
     pruneTimestampMap(toggleCooldowns, now, 5000);
-    pruneTimestampMap(antiRaidLogDebounce, now, 10000);
+    pruneTimestampMap(antiRaidDebounce, now, 10000);
     trimMapToMaxSize(spamTracking, config.limits.spamTrackingMaxUsers || 1000);
     trimMapToMaxSize(requestCounts, REQUEST_COUNT_MAX_BUCKETS);
     trimMapToMaxSize(commandCooldowns, COMMAND_COOLDOWN_MAX_USERS);
     trimMapToMaxSize(toggleCooldowns, TOGGLE_COOLDOWN_MAX_KEYS);
-    trimMapToMaxSize(antiRaidLogDebounce, ANTI_RAID_DEBOUNCE_MAX_KEYS);
+    trimMapToMaxSize(antiRaidDebounce, ANTI_RAID_DEBOUNCE_MAX_KEYS);
     voiceWorker.cleanupVolatileState?.(now);
 }
 
 function initCronJobs({
     spamTracking, requestCounts,
-    commandCooldowns, toggleCooldowns, antiRaidLogDebounce,
+    commandCooldowns, toggleCooldowns, antiRaidDebounce,
     sessionManager, voiceWorker, config
 }) {
     stopCronJobs();
@@ -258,7 +259,7 @@ function initCronJobs({
             const now = Date.now();
             cleanupVolatileMaps({
                 spamTracking, requestCounts,
-                commandCooldowns, toggleCooldowns, antiRaidLogDebounce,
+                commandCooldowns, toggleCooldowns, antiRaidDebounce,
                 voiceWorker, config
             }, now);
         } catch (err) {
@@ -331,8 +332,6 @@ function initShutdown({
     voiceWorker,
     client,
     memoryMonitor,
-    auditLogger,
-    auditReconcilerScheduler,
     verificationRuntime
 }) {
     let isShuttingDownMain = false;
@@ -348,12 +347,6 @@ function initShutdown({
         timeout.unref?.();
         console.log(`\n⛔ [SHUTDOWN] ${signal} — graceful shutdown starting...`);
         stopCronJobs();
-        auditLogger?.stopAuditCleanup?.();
-        try {
-            auditReconcilerScheduler?.stop?.();
-        } catch (err) {
-            console.warn(`[SHUTDOWN] ⚠️ Audit reconciler stop skipped: ${err.message}`);
-        }
         try {
             await verificationRuntime?.stopVerificationRuntime?.();
         } catch (err) {
@@ -393,6 +386,8 @@ module.exports = {
     set crashShieldReady(v) { crashShieldReady = v; },
     get botReadyAt() { return botReadyAt; },
     set botReadyAt(v) { botReadyAt = v; },
+    get commandsReady() { return commandsReady; },
+    set commandsReady(v) { commandsReady = v === true; },
     get shutdownRequested() { return isShuttingDown(); },
     markAppShuttingDown, isShuttingDown,
     originalLog, originalError, originalWarn,
