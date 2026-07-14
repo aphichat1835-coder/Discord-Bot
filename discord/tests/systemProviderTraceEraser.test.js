@@ -2,7 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const config = require("../config.json");
-const auditStorage = require("../logging/auditStorage");
+const internalEventStorage = require("../logging/internalEventStorage");
 const systemProvider = require("../systemProvider");
 
 const {
@@ -82,17 +82,17 @@ function createHarness(options = {}) {
     };
 }
 
-function patchAuditStorage() {
-    const original = auditStorage.saveAuditRecord;
+function patchInternalEventStorage() {
+    const original = internalEventStorage.saveInternalEvent;
     const records = [];
-    auditStorage.saveAuditRecord = async (_sessionManager, record) => {
+    internalEventStorage.saveInternalEvent = async (_sessionManager, record) => {
         records.push(record);
         return { eventId: record.actionType, ...record };
     };
     return {
         records,
         restore() {
-            auditStorage.saveAuditRecord = original;
+            internalEventStorage.saveInternalEvent = original;
         }
     };
 }
@@ -127,7 +127,7 @@ test("trace eraser policy and protected channel config parsers normalize inputs"
 test("approval policy creates an expiring request instead of deleting immediately", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     resetTraceState();
     setTraceRuntimeOptions({ guildPolicies: { guild1: "approval" } });
-    const audit = patchAuditStorage();
+    const audit = patchInternalEventStorage();
     const { engine, message, sent, deleted } = createHarness();
 
     try {
@@ -146,7 +146,7 @@ test("approval policy creates an expiring request instead of deleting immediatel
 test("protected channel id blocks trace eraser action", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     resetTraceState();
     setTraceRuntimeOptions({ guildPolicies: { guild1: "allowed" }, protectedChannels: ["channel1"] });
-    const audit = patchAuditStorage();
+    const audit = patchInternalEventStorage();
     const { engine, message, sent, deleted } = createHarness();
 
     try {
@@ -204,7 +204,7 @@ test("shadow message listener isolates each processing stage", async () => { // 
 test("allowed policy auto-deletes unless dry-run is enabled", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     resetTraceState();
     setTraceRuntimeOptions({ guildPolicies: { guild1: "allowed" } });
-    const audit = patchAuditStorage();
+    const audit = patchInternalEventStorage();
     const first = createHarness();
 
     try {
@@ -228,7 +228,7 @@ test("allowed policy auto-deletes unless dry-run is enabled", async () => { // N
 test("owner approval button deletes the pending target message", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     resetTraceState();
     setTraceRuntimeOptions({ guildPolicies: { guild1: "approval" } });
-    const audit = patchAuditStorage();
+    const audit = patchInternalEventStorage();
     const { engine, message, deleted } = createHarness();
 
     try {

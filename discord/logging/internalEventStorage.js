@@ -36,7 +36,7 @@ function normalizeMetadata(value) {
     return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
-function normalizeAuditRecord(input = {}) {
+function normalizeInternalEvent(input = {}) {
     const createdAt = Number(input.createdAt || Date.now());
     const eventId = safeText(input.eventId || input.id || makeEventId(createdAt), 120);
     return {
@@ -90,8 +90,8 @@ async function saveFallback(sessionManager, record) {
     });
 }
 
-async function saveAuditRecord(sessionManager, recordInput) {
-    const record = normalizeAuditRecord(recordInput);
+async function saveInternalEvent(sessionManager, recordInput) {
+    const record = normalizeInternalEvent(recordInput);
     try {
         return await saveFallback(sessionManager, record);
     } catch (err) {
@@ -100,7 +100,7 @@ async function saveAuditRecord(sessionManager, recordInput) {
     }
 }
 
-async function getAuditRecord(sessionManager, guildId, eventId) {
+async function getInternalEvent(sessionManager, guildId, eventId) {
     if (!sessionManager?.getSetting || !guildId || !eventId) return null;
     return sessionManager.getSetting(storageKey(guildId, eventId), null);
 }
@@ -151,7 +151,7 @@ function matchesFilters(record, filters = {}) {
     return Object.entries(filters || {}).every(([key, value]) => matchesFilter(record, key, value));
 }
 
-async function listAuditRecords(sessionManager, guildId, limit = 50, filters = {}) {
+async function listInternalEvents(sessionManager, guildId, limit = 50, filters = {}) {
     const records = await listFallback(sessionManager, guildId, limit);
     return Object.keys(filters || {}).length
         ? records.filter(record => matchesFilters(record, filters))
@@ -162,11 +162,11 @@ module.exports = {
     storageKey,
     indexKey,
     makeEventId,
-    normalizeAuditRecord,
+    normalizeInternalEvent,
     canUseMongoStore: () => false,
-    saveAuditRecord,
-    getAuditRecord,
-    listAuditRecords,
+    saveInternalEvent,
+    getInternalEvent,
+    listInternalEvents,
     _test: {
         saveFallback,
         listFallback,

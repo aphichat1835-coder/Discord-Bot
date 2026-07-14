@@ -60,9 +60,9 @@ The retired Enterprise Audit subsystem is not mounted: there is no `/setup-log`,
 MongoDB Audit collections are intentionally left untouched, but this runtime
 does not read or write them. Operational webhooks, moderation cases, Protection
 enforcement, and Verification sensitive-access audit remain separate and active.
-The owner-locked provider's immutable legacy import path is retained only as a
-thin compatibility shim to a separate internal settings namespace; it does not
-register Enterprise Audit models or access the retired Audit keys.
+The owner-locked provider imports the separate internal event store directly.
+No Enterprise Audit compatibility module remains, and internal events use the
+`internal_event_*` settings namespace without accessing retired Audit keys.
 
 Guild backups are stored in bounded chunks. Every complete version is retained;
 one version per guild is marked active, older versions are marked superseded,
