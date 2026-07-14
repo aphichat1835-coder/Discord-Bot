@@ -1,34 +1,110 @@
-name: Publish validated snapshot redesign code
+name: CI
 
 on:
+  push:
   pull_request:
 
-permissions:
-  contents: write
-
 jobs:
-  publish:
-    if: github.head_ref == 'tt' && github.actor != 'github-actions[bot]'
+  checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+
     steps:
-      - name: Checkout branch
+      - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
-          persist-credentials: true
-          ref: tt
+          persist-credentials: false
 
-      - name: Apply validated redesign
-        run: |
-          python3 scripts/applyCompleteSnapshotRedesign.py
-          git checkout HEAD -- .github/workflows/ci.yml
-          git checkout HEAD -- .github/workflows/export-snapshot-debug.yml
-          git checkout HEAD -- .github/workflows/redesign-snapshot-storage.yml
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
 
-      - name: Commit non-workflow changes
+      - name: Show tool versions
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Redesign snapshots for complete atomic storage"
-          git push origin HEAD:tt
+          node --version
+          npm --version
+
+      - name: Install root dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Verify Discord runtime dependencies
+        run: node -e "require('discord.js'); require('@discordjs/voice'); console.log('discord runtime ok')"
+
+      - name: Verify unified verification test runner
+        run: node -e "require.resolve('jest-circus/runner'); require('jest-resolve'); console.log('verification jest ok')"
+
+      - name: Resolve protected diff base
+        id: protected-base
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          BASE_REF: ${{ github.base_ref }}
+          REF_NAME: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          is_commit() {
+            local candidate="${1:-}"
+            [ -n "$candidate" ] &&
+              [[ ! "$candidate" =~ ^0+$ ]] &&
+              git cat-file -e "${candidate}^{commit}" 2>/dev/null
+          }
+
+          base=""
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base="$PR_BASE_SHA"
+          elif [ "$EVENT_NAME" = "push" ]; then
+            base="$PUSH_BEFORE_SHA"
+          fi
+
+          if ! is_commit "$base"; then
+            if [ "$EVENT_NAME" = "pull_request" ]; then
+              target_ref="${BASE_REF:-$DEFAULT_BRANCH}"
+              git fetch --no-tags origin "$target_ref"
+              base="$(git merge-base "origin/$target_ref" HEAD)"
+            elif [ "$EVENT_NAME" = "push" ] && [ "$REF_NAME" != "$DEFAULT_BRANCH" ]; then
+              git fetch --no-tags origin "$DEFAULT_BRANCH"
+              base="$(git merge-base "origin/$DEFAULT_BRANCH" HEAD)"
+            elif git rev-parse --verify HEAD^1 >/dev/null 2>&1; then
+              base="$(git rev-parse HEAD^1)"
+            fi
+          fi
+
+          if ! is_commit "$base"; then
+            echo "::error::Unable to resolve a usable protected diff base."
+            exit 1
+          fi
+
+          echo "sha=$base" >> "$GITHUB_OUTPUT"
+          echo "Protected diff base: $base"
+
+      - name: Protected path guard
+        env:
+          PROTECTED_BASE_SHA: ${{ steps.protected-base.outputs.sha }}
+        run: npm run check:protected
+
+      - name: Syntax check (Discord)
+        run: npm run check:all
+
+      - name: Syntax check (Scripts)
+        run: npm run check:scripts
+
+      - name: Memory guards check
+        run: npm run check:memory-guards
+
+      - name: Discord tests
+        run: npm run test:discord
+
+      - name: Voice tests
+        run: npm run test:voice
+
+      - name: Verification tests
+        run: npm run test:verification
+
+      - name: Root audit
+        run: npm audit --audit-level=high
