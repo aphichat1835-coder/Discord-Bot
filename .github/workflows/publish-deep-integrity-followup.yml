@@ -38,11 +38,10 @@ jobs:
           git fetch origin tt
           test "$(git rev-parse origin/tt)" = "$EXPECTED_BASE"
           git checkout --detach "$EXPECTED_BASE"
-          git apply --check /tmp/followup.patch
-          git apply /tmp/followup.patch
+          git apply --3way /tmp/followup.patch
           git diff --check
 
-      - name: Verify exact scope
+      - name: Verify exact scope and blobs
         shell: bash
         run: |
           set -euo pipefail
@@ -60,6 +59,11 @@ jobs:
           ! grep -Eq '^discord/systemProvider(\.js|/)' /tmp/actual-files
           ! grep -Eq '^package(-lock)?\.json$' /tmp/actual-files
           ! grep -Eq '^\.github/workflows/' /tmp/actual-files
+          test "$(git hash-object discord/logging/modCaseManager.js)" = "8bcfcff0ddec93308a9305169bdcbd5f026d452b"
+          test "$(git hash-object discord/tests/modCaseManager.test.js)" = "a48c5e6cdc167a1f3a79733a52e97a881b73b4e0"
+          test "$(git hash-object discord/verification/routes/oauth.js)" = "d17569811ed142733fefe8fd6207e2ea277e0546"
+          test "$(git hash-object discord/verification/services/ipIdentityHistoryService.js)" = "5d7a66fab68966d3a10cc98be73d7ab4e9025252"
+          test "$(git hash-object verification-tests/ipIdentityHistory.test.js)" = "81d6745a5e29e1ca663789fedb9559e2e4a3d0c3"
 
       - name: Set up Node.js 24
         uses: actions/setup-node@v4
@@ -86,6 +90,11 @@ jobs:
           git diff --check
           git diff --name-only | sort > /tmp/final-files
           diff -u /tmp/expected-files /tmp/final-files
+          test "$(git hash-object discord/logging/modCaseManager.js)" = "8bcfcff0ddec93308a9305169bdcbd5f026d452b"
+          test "$(git hash-object discord/tests/modCaseManager.test.js)" = "a48c5e6cdc167a1f3a79733a52e97a881b73b4e0"
+          test "$(git hash-object discord/verification/routes/oauth.js)" = "d17569811ed142733fefe8fd6207e2ea277e0546"
+          test "$(git hash-object discord/verification/services/ipIdentityHistoryService.js)" = "5d7a66fab68966d3a10cc98be73d7ab4e9025252"
+          test "$(git hash-object verification-tests/ipIdentityHistory.test.js)" = "81d6745a5e29e1ca663789fedb9559e2e4a3d0c3"
 
       - name: Commit and fast-forward tt
         shell: bash
