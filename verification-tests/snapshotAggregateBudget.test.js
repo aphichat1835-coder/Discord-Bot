@@ -1,7 +1,8 @@
 "use strict";
 
-// Aggregate size is no longer a data-loss boundary. Only individual MongoDB
-// documents are bounded; larger payloads must be split and stored completely.
+// Aggregate size is not a data-loss boundary. Every generated MongoDB document
+// must stay under the effective per-document budget, with oversized values
+// falling back to checksum-protected object chunks.
 const ENV_KEY = "VERIFICATION_SNAPSHOT_MAX_BYTES";
 const originalBudget = process.env[ENV_KEY];
 
@@ -11,6 +12,40 @@ function loadSnapshotStore() {
     return require("../discord/verification/services/oauthSnapshotStore");
 }
 
+function mockObjectChunkWrites(snapshotStore) {
+    const stored = [];
+    jest.spyOn(snapshotStore._models.ObjectChunkSnapshot, "bulkWrite")
+        .mockImplementation(async operations => {
+            stored.push(...operations.map(operation => operation.updateOne.update.$set));
+            return { acknowledged: true };
+        });
+    jest.spyOn(snapshotStore._models.ObjectChunkSnapshot, "updateMany")
+        .mockImplementation(async () => ({ matchedCount: stored.length }));
+    return stored;
+}
+
+async function reconstructObject(snapshotStore, stored, ref, options) {
+    const docs = stored.map(item => ({ ...item, complete: true }));
+    jest.spyOn(snapshotStore._models.ObjectChunkSnapshot, "find").mockReturnValue({
+        sort: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(docs)
+    });
+    return snapshotStore.loadObjectChunkSnapshot(
+        "123456789012345678",
+        ref,
+        options
+    );
+}
+
+function expectEveryDocumentSafe(snapshotStore, documentSets) {
+    expect(documentSets.length).toBeGreaterThan(0);
+    for (const documentSet of documentSets) {
+        expect(snapshotStore.documentSetBytes(documentSet))
+            .toBeLessThan(snapshotStore.DOCUMENT_MAX_BYTES);
+        expect(snapshotStore.isDocumentSetSafe(documentSet)).toBe(true);
+    }
+}
+
 afterEach(() => {
     jest.restoreAllMocks();
     if (originalBudget === undefined) delete process.env[ENV_KEY];
@@ -18,7 +53,7 @@ afterEach(() => {
     jest.resetModules();
 });
 
-test("array snapshots store the complete payload even above the old aggregate ceiling", async () => {
+test("array snapshots store the complete payload above the old aggregate ceiling", async () => {
     const snapshotStore = loadSnapshotStore();
     const operations = [];
     const Model = {
@@ -39,80 +74,108 @@ test("array snapshots store the complete payload even above the old aggregate ce
         items,
         now: 1000
     });
+
     expect(ref).toMatchObject({
         complete: true,
         returnedCount: items.length,
         storedCount: items.length
     });
-    expect(operations.flatMap(op => op.updateOne.update.$set.items)).toEqual(items);
+    expect(operations.flatMap(operation => operation.updateOne.update.$set.items)).toEqual(items);
+    expectEveryDocumentSafe(
+        snapshotStore,
+        operations.map(operation => operation.updateOne.update.$set)
+    );
 });
 
-test("profile snapshots above the old aggregate ceiling are written in full", async () => {
+test("profile above the embedded-document budget falls back to object chunks without data loss", async () => {
     const snapshotStore = loadSnapshotStore();
-    const write = jest.spyOn(snapshotStore._models.ProfileSnapshot, "findOneAndUpdate")
-        .mockResolvedValue({});
-    jest.spyOn(snapshotStore._models.ProfileSnapshot, "updateOne")
-        .mockResolvedValue({ matchedCount: 1 });
-    const profile = { id: "123456789012345678", payload: "x".repeat(140 * 1024) };
+    const stored = mockObjectChunkWrites(snapshotStore);
+    const profileWrite = jest.spyOn(snapshotStore._models.ProfileSnapshot, "findOneAndUpdate");
+    const profile = {
+        id: "123456789012345678",
+        payload: "x".repeat(snapshotStore.DOCUMENT_WRITE_MAX_BYTES - 80)
+    };
+    expect(Buffer.byteLength(JSON.stringify(profile), "utf8"))
+        .toBeLessThan(snapshotStore.DOCUMENT_MAX_BYTES);
+
     const ref = await snapshotStore.storeProfileSnapshot({
         userId: "123456789012345678",
         version: "aggregate-profile",
         profile,
         now: 1000
     });
-    expect(ref).toMatchObject({ complete: true, storedCount: 1 });
-    expect(write.mock.calls[0][1].$set.snapshot).toEqual(profile);
+
+    expect(ref).toMatchObject({
+        complete: true,
+        storedCount: 1,
+        format: "json-base64-chunks-v1"
+    });
+    expect(profileWrite).not.toHaveBeenCalled();
+    expectEveryDocumentSafe(snapshotStore, stored);
+    await expect(reconstructObject(snapshotStore, stored, ref, { kind: "profile" }))
+        .resolves.toEqual(profile);
 });
 
-test("member snapshots keep member core and every role above the old aggregate ceiling", async () => {
+test("member snapshot keeps member core and every role when member envelope is oversized", async () => {
     const snapshotStore = loadSnapshotStore();
-    const roleOps = [];
+    const roleOperations = [];
     jest.spyOn(snapshotStore._models.MemberRoleSnapshot, "bulkWrite")
         .mockImplementation(async operations => {
-            roleOps.push(...operations);
+            roleOperations.push(...operations);
             return { acknowledged: true };
         });
     jest.spyOn(snapshotStore._models.MemberRoleSnapshot, "updateMany")
-        .mockImplementation(async () => ({ matchedCount: roleOps.length }));
-    const memberWrite = jest.spyOn(snapshotStore._models.MemberSnapshot, "findOneAndUpdate")
-        .mockResolvedValue({});
-    jest.spyOn(snapshotStore._models.MemberSnapshot, "updateOne")
-        .mockResolvedValue({ matchedCount: 1 });
+        .mockImplementation(async () => ({ matchedCount: roleOperations.length }));
+    const stored = mockObjectChunkWrites(snapshotStore);
+    const memberWrite = jest.spyOn(snapshotStore._models.MemberSnapshot, "findOneAndUpdate");
     const roles = Array.from({ length: 250 }, (_, index) => String(index));
+    const member = {
+        roles,
+        snapshot: {
+            bio: "x".repeat(snapshotStore.DOCUMENT_WRITE_MAX_BYTES - 160),
+            roles
+        }
+    };
+    const memberCore = {
+        snapshot: { bio: member.snapshot.bio }
+    };
+    expect(Buffer.byteLength(JSON.stringify(memberCore), "utf8"))
+        .toBeLessThan(snapshotStore.DOCUMENT_MAX_BYTES);
+
     const ref = await snapshotStore.storeMemberSnapshot({
         userId: "123456789012345678",
         guildId: "987654321098765432",
         version: "aggregate-member",
-        member: {
-            roles,
-            snapshot: { bio: "x".repeat(140 * 1024), roles }
-        },
+        member,
         now: 1000
     });
+
     expect(ref).toMatchObject({
         complete: true,
         storedCount: 1,
+        format: "json-base64-chunks-v1",
         roleReturnedCount: roles.length,
         roleStoredCount: roles.length
     });
-    expect(roleOps.flatMap(op => op.updateOne.update.$set.items)).toEqual(roles);
-    expect(memberWrite.mock.calls[0][1].$set.snapshot.snapshot.bio)
-        .toBe("x".repeat(140 * 1024));
+    expect(roleOperations.flatMap(operation => operation.updateOne.update.$set.items)).toEqual(roles);
+    expect(memberWrite).not.toHaveBeenCalled();
+    expectEveryDocumentSafe(snapshotStore, [
+        ...roleOperations.map(operation => operation.updateOne.update.$set),
+        ...stored
+    ]);
+    const expectedCore = memberCore;
+    await expect(reconstructObject(snapshotStore, stored, ref, {
+        kind: "member",
+        guildId: "987654321098765432"
+    })).resolves.toEqual(expectedCore);
 });
 
-test("a single object larger than one MongoDB document is split and reconstructed exactly", async () => {
+test("a single object larger than one document is split and reconstructed byte-for-byte", async () => {
     const snapshotStore = loadSnapshotStore();
-    const stored = [];
-    jest.spyOn(snapshotStore._models.ObjectChunkSnapshot, "bulkWrite")
-        .mockImplementation(async operations => {
-            stored.push(...operations.map(op => op.updateOne.update.$set));
-            return { acknowledged: true };
-        });
-    jest.spyOn(snapshotStore._models.ObjectChunkSnapshot, "updateMany")
-        .mockImplementation(async () => ({ matchedCount: stored.length }));
+    const stored = mockObjectChunkWrites(snapshotStore);
     const profile = {
         id: "123456789012345678",
-        unicode: "ข้อมูลครบ🙂".repeat(800_000)
+        unicode: "ข้อมูลครบ🙂".repeat(80_000)
     };
     const ref = await snapshotStore.storeProfileSnapshot({
         userId: "123456789012345678",
@@ -120,44 +183,78 @@ test("a single object larger than one MongoDB document is split and reconstructe
         profile,
         now: 1000
     });
+
     expect(ref.format).toBe("json-base64-chunks-v1");
     expect(ref.complete).toBe(true);
     expect(ref.chunkCount).toBeGreaterThan(1);
+    expectEveryDocumentSafe(snapshotStore, stored);
+    await expect(reconstructObject(snapshotStore, stored, ref, { kind: "profile" }))
+        .resolves.toEqual(profile);
+});
 
-    const docs = stored.map(item => ({ ...item, complete: true }));
-    jest.spyOn(snapshotStore._models.ObjectChunkSnapshot, "find").mockReturnValue({
-        sort: jest.fn().mockReturnThis(),
-        lean: jest.fn().mockResolvedValue(docs)
+test("an item below the raw 12 MB ceiling falls back when its real document envelope is too large", async () => {
+    const snapshotStore = loadSnapshotStore();
+    const stored = mockObjectChunkWrites(snapshotStore);
+    const normalModel = {
+        bulkWrite: jest.fn(),
+        updateMany: jest.fn()
+    };
+    const item = {
+        id: "boundary",
+        payload: "x".repeat(snapshotStore.DOCUMENT_WRITE_MAX_BYTES - 80)
+    };
+    expect(Buffer.byteLength(JSON.stringify(item), "utf8"))
+        .toBeLessThan(snapshotStore.DOCUMENT_MAX_BYTES);
+
+    const ref = await snapshotStore.storeArraySnapshot(normalModel, {
+        kind: "connections",
+        userId: "123456789012345678",
+        version: "boundary-envelope",
+        items: [item],
+        now: 1000
     });
-    const loaded = await snapshotStore.loadObjectChunkSnapshot(
-        "123456789012345678",
-        ref,
-        { kind: "profile" }
-    );
-    expect(loaded).toEqual(profile);
+
+    expect(ref).toMatchObject({
+        format: "json-base64-chunks-v1",
+        complete: true,
+        storedCount: 1
+    });
+    expect(normalModel.bulkWrite).not.toHaveBeenCalled();
+    expectEveryDocumentSafe(snapshotStore, stored);
+    await expect(reconstructObject(snapshotStore, stored, ref, { kind: "connections" }))
+        .resolves.toEqual([item]);
 });
 
 test("one failed component rolls back the whole version instead of publishing partial refs", async () => {
     const snapshotStore = loadSnapshotStore();
     const models = snapshotStore._models;
-    const guildOps = [];
+    const guildOperations = [];
     jest.spyOn(models.ProfileSnapshot, "findOneAndUpdate").mockResolvedValue({});
     jest.spyOn(models.ProfileSnapshot, "updateOne").mockResolvedValue({ matchedCount: 1 });
     jest.spyOn(models.GuildSnapshot, "bulkWrite").mockImplementation(async operations => {
-        guildOps.push(...operations);
+        guildOperations.push(...operations);
         return { acknowledged: true };
     });
     jest.spyOn(models.GuildSnapshot, "updateMany")
-        .mockImplementationOnce(async () => ({ matchedCount: guildOps.length }))
-        .mockResolvedValue({ matchedCount: guildOps.length });
+        .mockImplementationOnce(async () => ({ matchedCount: guildOperations.length }))
+        .mockResolvedValue({ matchedCount: guildOperations.length });
     jest.spyOn(models.ConnectionSnapshot, "bulkWrite")
         .mockRejectedValue(Object.assign(new Error("db failed"), { code: "connection_write_failed" }));
-    for (const Model of Object.values(models)) {
+
+    for (const Model of [
+        models.GuildSnapshot,
+        models.ConnectionSnapshot,
+        models.MemberRoleSnapshot,
+        models.MemberSnapshot,
+        models.ProfileSnapshot,
+        models.ObjectChunkSnapshot
+    ]) {
         if (!jest.isMockFunction(Model.updateMany)) {
             jest.spyOn(Model, "updateMany").mockResolvedValue({ matchedCount: 0 });
         }
         jest.spyOn(Model, "deleteMany").mockResolvedValue({ deletedCount: 0 });
     }
+    jest.spyOn(models.SnapshotRecovery, "deleteOne").mockResolvedValue({ deletedCount: 0 });
     jest.spyOn(console, "error").mockImplementation(() => {});
 
     const result = await snapshotStore.storeOAuthSnapshots({
@@ -171,6 +268,7 @@ test("one failed component rolls back the whole version instead of publishing pa
     });
 
     expect(result.complete).toBe(false);
+    expect(result.rollback.complete).toBe(true);
     expect(result.profile.complete).toBe(false);
     expect(result.guilds.complete).toBe(false);
     expect(result.connections.complete).toBe(false);

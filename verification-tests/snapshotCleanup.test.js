@@ -43,6 +43,21 @@ function referenceModel(documents = [], rejected = null) {
     };
 }
 
+function filteringSnapshotModel({ complete = [], incomplete = [] } = {}) {
+    const withIds = (items, prefix) => items.map((item, index) => ({
+        _id: item._id || `${prefix}-${index + 1}`,
+        ...item
+    }));
+    const completeDocs = withIds(complete, "complete");
+    const incompleteDocs = withIds(incomplete, "incomplete");
+    const selectDocs = filter => filter?.complete === true ? completeDocs : incompleteDocs;
+    return {
+        find: jest.fn(filter => queryResult(selectDocs(filter))),
+        countDocuments: jest.fn(filter => Promise.resolve(selectDocs(filter).length)),
+        deleteMany: jest.fn().mockResolvedValue({ deletedCount: 0 })
+    };
+}
+
 describe("permanent-history snapshot garbage cleanup", () => {
     test("keeps every OAuthUser-referenced version and removes only unreferenced versions", async () => {
         const Model = snapshotModel([
@@ -214,6 +229,168 @@ describe("permanent-history snapshot garbage cleanup", () => {
         expect(incompleteDelete._id.$in).toHaveLength(10);
         expect(summary.scanMax).toBe(10);
         expect(summary.byModel.profile.incompleteBatchSize).toBe(10);
+    });
+
+    test("default cleanup lifecycle includes object chunk snapshots", () => {
+        expect(_test.DEFAULT_MODELS.objectChunks).toBeDefined();
+    });
+
+    test("keeps object chunks referenced by OAuthUser snapshotRefs or VerifyLog history", async () => {
+        const ObjectChunkModel = filteringSnapshotModel({
+            complete: [
+                {
+                    _id: "object-active",
+                    userId: "12345678901234567",
+                    snapshotVersion: "active-object-version"
+                },
+                {
+                    _id: "object-history",
+                    userId: "12345678901234567",
+                    snapshotVersion: "history-object-version"
+                }
+            ]
+        });
+
+        const summary = await cleanupSnapshotGarbage({
+            now: 2 * 60 * 60 * 1000,
+            graceHours: 1,
+            models: { objectChunks: ObjectChunkModel },
+            OAuthUserModel: referenceModel([{
+                discord: { userId: "12345678901234567" },
+                snapshotRefs: {
+                    profile: {
+                        version: "active-object-version",
+                        format: "json-base64-chunks-v1",
+                        complete: true
+                    }
+                }
+            }]),
+            VerifyLogModel: referenceModel([{
+                userId: "12345678901234567",
+                snapshotRef: {
+                    member: {
+                        version: "history-object-version",
+                        format: "json-base64-chunks-v1",
+                        complete: true
+                    }
+                }
+            }])
+        });
+
+        expect(summary.referencedVersionsKept).toBe(2);
+        expect(summary.orphanVersions).toBe(0);
+        expect(ObjectChunkModel.deleteMany).not.toHaveBeenCalled();
+    });
+
+    test("deletes stale incomplete object chunks after the grace period", async () => {
+        const ObjectChunkModel = filteringSnapshotModel({
+            incomplete: [{
+                _id: "object-incomplete",
+                userId: "12345678901234567",
+                snapshotVersion: "incomplete-version"
+            }]
+        });
+        ObjectChunkModel.deleteMany.mockResolvedValueOnce({ deletedCount: 1 });
+
+        const summary = await cleanupSnapshotGarbage({
+            now: 2 * 60 * 60 * 1000,
+            graceHours: 1,
+            models: { objectChunks: ObjectChunkModel },
+            OAuthUserModel: referenceModel([]),
+            VerifyLogModel: referenceModel([])
+        });
+
+        expect(summary.byModel.objectChunks.incomplete).toBe(1);
+        expect(ObjectChunkModel.deleteMany).toHaveBeenCalledWith({
+            _id: { $in: ["object-incomplete"] }
+        });
+    });
+
+    test("deletes complete object chunks only when no active or historical reference remains", async () => {
+        const ObjectChunkModel = filteringSnapshotModel({
+            complete: [{
+                _id: "object-orphan",
+                userId: "12345678901234567",
+                snapshotVersion: "orphan-object-version"
+            }]
+        });
+        ObjectChunkModel.deleteMany.mockResolvedValueOnce({ deletedCount: 1 });
+
+        const summary = await cleanupSnapshotGarbage({
+            now: 2 * 60 * 60 * 1000,
+            graceHours: 1,
+            models: { objectChunks: ObjectChunkModel },
+            OAuthUserModel: referenceModel([]),
+            VerifyLogModel: referenceModel([])
+        });
+
+        expect(summary.orphanVersions).toBe(1);
+        expect(summary.byModel.objectChunks.orphaned).toBe(1);
+        expect(ObjectChunkModel.deleteMany).toHaveBeenCalledWith({
+            complete: true,
+            _id: { $in: ["object-orphan"] }
+        });
+    });
+
+    test("object chunk cleanup dry-run reports candidates without deleting", async () => {
+        const ObjectChunkModel = filteringSnapshotModel({
+            complete: [{
+                _id: "object-dry-orphan",
+                userId: "12345678901234567",
+                snapshotVersion: "dry-orphan-version"
+            }],
+            incomplete: [{
+                _id: "object-dry-incomplete",
+                userId: "12345678901234567",
+                snapshotVersion: "dry-incomplete-version"
+            }]
+        });
+
+        const summary = await cleanupSnapshotGarbage({
+            dryRun: true,
+            now: 2 * 60 * 60 * 1000,
+            graceHours: 1,
+            models: { objectChunks: ObjectChunkModel },
+            OAuthUserModel: referenceModel([]),
+            VerifyLogModel: referenceModel([])
+        });
+
+        expect(summary.byModel.objectChunks).toMatchObject({
+            incomplete: 1,
+            orphaned: 1
+        });
+        expect(ObjectChunkModel.deleteMany).not.toHaveBeenCalled();
+    });
+
+    test("retries persisted rollback recovery metadata during a later cleanup run", async () => {
+        const RecoveryModel = referenceModel([{
+            userId: "12345678901234567",
+            snapshotVersion: "recovery-version"
+        }]);
+        const rollbackFn = jest.fn().mockResolvedValue({ complete: true });
+        const Model = filteringSnapshotModel();
+
+        const summary = await cleanupSnapshotGarbage({
+            now: 2 * 60 * 60 * 1000,
+            graceHours: 1,
+            models: { profile: Model },
+            RecoveryModel,
+            rollbackFn,
+            OAuthUserModel: referenceModel([]),
+            VerifyLogModel: referenceModel([])
+        });
+
+        expect(summary.recovery).toMatchObject({
+            scanned: 1,
+            completed: 1,
+            pending: 0,
+            dryRun: false
+        });
+        expect(rollbackFn).toHaveBeenCalledWith(expect.objectContaining({
+            userId: "12345678901234567",
+            version: "recovery-version",
+            RecoveryModel
+        }));
     });
 
     test("explicit zero cleanup values use safe floors instead of defaults", () => {

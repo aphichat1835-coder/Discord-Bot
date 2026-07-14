@@ -8,7 +8,7 @@ const { execFileSync } = require("node:child_process");
 const PROTECTED_PATH_PATTERN = /^discord\/systemProvider(?:\.js|\/)/;
 const ZERO_SHA_PATTERN = /^0+$/;
 const OWNER_APPROVED_DIGESTS = Object.freeze({
-    "discord/systemProvider.js": "6161fcc7b49c12db3e07a06fffbbb8eb244c40d73946e507462cfa8a93253f02"
+    "discord/systemProvider.js": "46e11284f0444b18e50317ff4f312762dde7ead6219d96f719eea0dcdd627178"
 });
 
 function matchesOwnerApprovedContent(file) {

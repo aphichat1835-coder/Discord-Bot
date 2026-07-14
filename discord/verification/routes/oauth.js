@@ -616,15 +616,20 @@ function buildLastMemberUpdate({ guildId, profileUserId, memberInfo }) {
 }
 
 function applySnapshotBudgetGuard(updateSet) {
-    const bytes = snapshotBudget.jsonBytes(updateSet);
-    if (!Number.isFinite(bytes) || bytes > snapshotBudget.MAX_MAX_BYTES) {
+    const bytes = snapshotStore.documentSetBytes(updateSet);
+    if (!snapshotStore.isDocumentSetSafe(updateSet)) {
         const err = new Error("oauth_user_update exceeds MongoDB-safe document size");
         err.code = "snapshot_document_too_large";
         err.bytes = bytes;
-        err.maxBytes = snapshotBudget.MAX_MAX_BYTES;
+        err.maxBytes = snapshotStore.DOCUMENT_WRITE_MAX_BYTES;
         throw err;
     }
-    return { ok: true, bytes, maxBytes: snapshotBudget.MAX_MAX_BYTES, truncated: false };
+    return {
+        ok: true,
+        bytes,
+        maxBytes: snapshotStore.DOCUMENT_WRITE_MAX_BYTES,
+        truncated: false
+    };
 }
 
 function applyStoredSnapshotMeta(snapshotMeta, kind, ref) {
@@ -1144,7 +1149,7 @@ async function saveOAuthUserSafe({
             const stagedRefs = Object.fromEntries(expectedKinds
                 .filter(kind => storedSnapshots[kind])
                 .map(kind => [kind, storedSnapshots[kind]]));
-            await snapshotStore.rollbackSnapshotVersion({
+            const rollback = await snapshotStore.rollbackSnapshotVersion({
                 userId: profileUserId,
                 version: storedSnapshots.version,
                 refs: stagedRefs
@@ -1153,7 +1158,8 @@ async function saveOAuthUserSafe({
                 saved: false,
                 snapshotVersion: storedSnapshots.version,
                 snapshotRefs: existing?.snapshotRefs || null,
-                snapshotWrites: storedSnapshots
+                snapshotWrites: storedSnapshots,
+                rollback
             };
         }
 

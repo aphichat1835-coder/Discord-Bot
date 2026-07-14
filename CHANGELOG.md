@@ -4,6 +4,23 @@
 
 ### Changed
 
+- Restored the original runtime probe contract: `/ping` remains the lightweight
+  listener liveness endpoint, while `/health` again reports combined MongoDB,
+  Discord, slash-command, Voice, and Verification readiness with 503 on
+  important dependency degradation. `/ready` remains an alias of that combined
+  readiness response.
+
+- Restored the owner-approved protected compatibility import as a thin adapter
+  over `internalEventStorage`; Enterprise Audit models, routes, channel logging,
+  and `audit_event_*` storage remain retired.
+
+- Hardened complete Snapshot persistence without adding an aggregate data cap:
+  normal writes are measured using their full MongoDB `$set` envelope, oversized
+  items/profile/member values fall back to checksum-protected Base64 chunks,
+  Object chunks participate in permanent-history cleanup, rollback reports and
+  persists sanitized recovery metadata, and Snapshot loading is split into pure
+  compatibility helpers to reduce static-analysis complexity.
+
 - Removed the complete Enterprise Audit / Advanced Audit Logger server-activity
   subsystem without replacing it: `/setup-log`, `/audit-logs`, `/api/audit/*`,
   Discord event listeners/intents/partials used only by Audit, channel delivery,

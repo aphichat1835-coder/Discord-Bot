@@ -7,6 +7,8 @@ const ConnectionSnapshot = require("../models/OAuthUserConnectionSnapshot");
 const MemberSnapshot = require("../models/OAuthMemberSnapshot");
 const MemberRoleSnapshot = require("../models/OAuthMemberRoleSnapshot");
 const ProfileSnapshot = require("../models/OAuthUserProfileSnapshot");
+const ObjectChunkSnapshot = require("../models/OAuthObjectChunkSnapshot");
+const SnapshotRecovery = require("../models/OAuthSnapshotRecovery");
 
 const HOUR_MS = 60 * 60 * 1000;
 function boundedNumber(value, fallback, min, max = Number.POSITIVE_INFINITY) {
@@ -27,7 +29,8 @@ const DEFAULT_MODELS = Object.freeze({
     guilds: GuildSnapshot,
     connections: ConnectionSnapshot,
     member: MemberSnapshot,
-    memberRoles: MemberRoleSnapshot
+    memberRoles: MemberRoleSnapshot,
+    objectChunks: ObjectChunkSnapshot
 });
 const scanCursors = new Map();
 let cleanupInFlight = false;
@@ -191,6 +194,47 @@ async function applyModelCleanup(Model, { cutoff, orphanCandidates, dryRun, batc
     };
 }
 
+async function processRecoveryQueue({
+    dryRun,
+    scanMax,
+    RecoveryModel = SnapshotRecovery,
+    rollbackFn = null,
+    now = Date.now()
+}) {
+    if (typeof RecoveryModel?.find !== "function") {
+        return { scanned: 0, completed: 0, pending: 0, dryRun };
+    }
+    const records = await RecoveryModel.find({ complete: { $ne: true } })
+        .select("userId snapshotVersion")
+        .sort({ updatedAt: 1, _id: 1 })
+        .limit(scanMax)
+        .lean();
+    if (dryRun) {
+        return {
+            scanned: records.length,
+            completed: 0,
+            pending: records.length,
+            dryRun: true
+        };
+    }
+    const runRollback = rollbackFn || require("./oauthSnapshotStore").rollbackSnapshotVersion;
+    let completed = 0;
+    let pending = 0;
+    for (const record of records) {
+        if (!record?.userId || !record?.snapshotVersion) continue;
+        const result = await runRollback({
+            userId: String(record.userId),
+            version: String(record.snapshotVersion),
+            refs: {},
+            RecoveryModel,
+            now
+        });
+        if (result?.complete === true) completed++;
+        else pending++;
+    }
+    return { scanned: records.length, completed, pending, dryRun: false };
+}
+
 async function performSnapshotCleanup(options = {}) {
     const now = boundedNumber(options.now, Date.now(), 0);
     const graceHours = boundedNumber(options.graceHours, CLEANUP_GRACE_HOURS, 1);
@@ -202,6 +246,18 @@ async function performSnapshotCleanup(options = {}) {
         VerifyLogModel: options.VerifyLogModel || VerifyLog
     };
     const cutoff = now - graceHours * HOUR_MS;
+    const processRecoveries = options.processRecoveries !== false && (
+        !options.models || options.RecoveryModel || options.rollbackFn
+    );
+    const recovery = processRecoveries
+        ? await processRecoveryQueue({
+            dryRun,
+            scanMax,
+            RecoveryModel: options.RecoveryModel || SnapshotRecovery,
+            rollbackFn: options.rollbackFn || null,
+            now
+        })
+        : { scanned: 0, completed: 0, pending: 0, dryRun, skipped: true };
 
     const candidates = await scanCandidates(models, cutoff, scanMax);
     const referenced = await loadReferenceKeys(candidates, references);
@@ -219,6 +275,7 @@ async function performSnapshotCleanup(options = {}) {
         incompleteDocuments: 0,
         incompleteBatchCapacity: scanMax,
         orphanDocuments: 0,
+        recovery,
         byModel: {}
     };
     const modelEntries = Object.entries(models);
@@ -271,7 +328,9 @@ module.exports = {
         orphanFilter,
         scanCandidates,
         loadReferenceKeys,
+        processRecoveryQueue,
         performSnapshotCleanup,
+        DEFAULT_MODELS,
         resetScanCursors: () => scanCursors.clear()
     }
 };

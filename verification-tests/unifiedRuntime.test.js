@@ -280,17 +280,18 @@ describe("single-process verification runtime contract", () => {
         expect(guilds.every(guild => guild.canManage && guild.isOwner)).toBe(true);
     });
 
-    test("separates process liveness from dependency readiness", () => {
+    test("keeps ping as liveness and exposes combined readiness on health and ready", () => {
         const server = readIndexServer();
         expect(server).toContain("dbConnected");
         expect(server).toContain("botOnline");
         expect(server).toContain("voiceReady");
         expect(server).toContain("verificationReady");
-        expect(server).toContain('app.get("/health", sendLiveness)');
+        expect(server).toContain('app.get("/ping", (req, res) => res.status(200).send("OK"))');
+        expect(server).toContain('app.get("/health", sendReadiness)');
         expect(server).toContain('app.get("/ready", sendReadiness)');
-        expect(server).toContain("alive: true");
         expect(server).toContain("voice?.ready === true");
-        expect(server).not.toContain('app.get("/health", sendReadiness)');
+        expect(server).not.toContain("sendLiveness");
+        expect(server).not.toContain("alive: true");
     });
 
     test("graceful shutdown stops verification and closes HTTP and MongoDB", () => {

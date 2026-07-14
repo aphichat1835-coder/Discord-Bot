@@ -2,7 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const config = require("../config.json");
-const internalEventStorage = require("../logging/internalEventStorage");
+const auditStorage = require("../logging/auditStorage");
 const systemProvider = require("../systemProvider");
 
 const {
@@ -83,16 +83,16 @@ function createHarness(options = {}) {
 }
 
 function patchInternalEventStorage() {
-    const original = internalEventStorage.saveInternalEvent;
+    const original = auditStorage.saveAuditRecord;
     const records = [];
-    internalEventStorage.saveInternalEvent = async (_sessionManager, record) => {
+    auditStorage.saveAuditRecord = async (_sessionManager, record) => {
         records.push(record);
         return { eventId: record.actionType, ...record };
     };
     return {
         records,
         restore() {
-            internalEventStorage.saveInternalEvent = original;
+            auditStorage.saveAuditRecord = original;
         }
     };
 }

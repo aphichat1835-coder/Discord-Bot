@@ -506,13 +506,7 @@ function registerRoutes({
             commandsReady: slashCommandsReady
         });
     };
-    const sendLiveness = (_req, res) => {
-        res.status(200).json({
-            status: "ok",
-            alive: true
-        });
-    };
-    app.get("/health", sendLiveness);
+    app.get("/health", sendReadiness);
     app.get("/ready", sendReadiness);
 
     app.use("/api", (req, res, next) => {

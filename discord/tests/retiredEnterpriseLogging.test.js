@@ -4,6 +4,7 @@ const test = require("node:test");
 
 const { slashCommandsData } = require("../commands/registry");
 const internalEventStorage = require("../logging/internalEventStorage");
+const auditStorage = require("../logging/auditStorage");
 
 test("Enterprise Audit command, web, runtime, and storage surfaces stay removed", () => {
     const commandNames = slashCommandsData.map(command => command.name);
@@ -39,26 +40,33 @@ test("Enterprise Audit command, web, runtime, and storage surfaces stay removed"
     assert.match(sessionSource, /RETIRED_ENTERPRISE_AUDIT_SETTINGS/);
 });
 
-test("protected internal event storage has no Enterprise Audit compatibility module", () => {
+test("protected compatibility adapter delegates only to retired-safe internal event storage", () => {
     const providerSource = fs.readFileSync("discord/systemProvider.js", "utf8");
+    const adapterSource = fs.readFileSync("discord/logging/auditStorage.js", "utf8");
     const internalSource = fs.readFileSync("discord/logging/internalEventStorage.js", "utf8");
-    const key = internalEventStorage.storageKey("guild", "event");
+    const key = auditStorage.storageKey("guild", "event");
 
-    assert.equal(fs.existsSync("discord/logging/auditStorage.js"), false);
-    assert.equal(internalEventStorage.canUseMongoStore(), false);
+    assert.equal(fs.existsSync("discord/logging/auditStorage.js"), true);
+    assert.equal(auditStorage.canUseMongoStore(), false);
     assert.match(key, /^internal_event_/);
     assert.equal(key.startsWith("audit_event_"), false);
-    assert.match(providerSource, /require\("\.\/logging\/internalEventStorage"\)/);
-    assert.doesNotMatch(providerSource, /logging\/auditStorage|auditStorage/);
+    assert.match(providerSource, /require\("\.\/logging\/auditStorage"\)/);
+    assert.match(providerSource, /auditStorage\.saveAuditRecord/);
+    assert.doesNotMatch(providerSource, /require\("\.\/logging\/internalEventStorage"\)/);
+    assert.equal(auditStorage.normalizeAuditRecord, internalEventStorage.normalizeInternalEvent);
+    assert.equal(auditStorage.saveAuditRecord, internalEventStorage.saveInternalEvent);
+    assert.equal(auditStorage.getAuditRecord, internalEventStorage.getInternalEvent);
+    assert.equal(auditStorage.listAuditRecords, internalEventStorage.listInternalEvents);
+    assert.equal(auditStorage.normalizeInternalEvent, internalEventStorage.normalizeInternalEvent);
+    assert.equal(auditStorage.saveInternalEvent, internalEventStorage.saveInternalEvent);
     assert.equal(typeof internalEventStorage.normalizeInternalEvent, "function");
     assert.equal(typeof internalEventStorage.saveInternalEvent, "function");
     assert.equal(typeof internalEventStorage.getInternalEvent, "function");
     assert.equal(typeof internalEventStorage.listInternalEvents, "function");
     assert.equal(internalEventStorage.normalizeAuditRecord, undefined);
     assert.equal(internalEventStorage.saveAuditRecord, undefined);
-    assert.equal(internalEventStorage.getAuditRecord, undefined);
-    assert.equal(internalEventStorage.listAuditRecords, undefined);
-    assert.doesNotMatch(internalSource, /require\("mongoose"\)|require\("\.\/auditLogStore"\)|mongoose\.connection|auditLogStore\./);
+    assert.doesNotMatch(adapterSource, /mongoose|AuditLogEvent|LogChannelMap|audit_event_|routeAndSendLog/);
+    assert.doesNotMatch(internalSource, /require\("mongoose"\)|require\("\.\/auditLogStore"\)|mongoose\.connection|auditLogStore\.|audit_event_/);
 });
 test("separate operational and Verification audit systems remain available", () => {
     const webhooks = require("../core/webhooks");

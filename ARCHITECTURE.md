@@ -46,10 +46,10 @@ Authoritative orchestration is `discord/index.js`.
 7. Login the Discord client.
 8. Start normal event, protection, voice/session, and scheduled work.
 
-The HTTP-first design keeps `/ping` available during startup. `/health` is a
-liveness probe that returns 200 while the HTTP process is running. `/ready`
-remains 503 until MongoDB, Discord, slash-command registration, required voice
-support, and verification are ready. Bounded command-registration retries run
+The HTTP-first design keeps `/ping` available during startup. `/health` is the
+combined readiness probe and remains 503 until MongoDB, Discord, slash-command
+registration, required voice support, and verification are ready. `/ready` is
+an alias of the same combined readiness response. Bounded command-registration retries run
 independently so an API registration outage does not block panel restore or
 Voice auto-resume.
 
@@ -101,6 +101,8 @@ channel routing, queues, reconciliation, and dashboard are not part of runtime.
 
 `discord/systemProvider.js` and the entire `discord/systemProvider/` tree are
 owner-locked. Their implementation details are intentionally not documented.
+The provider's legacy storage import is a thin adapter to internal event storage;
+it does not restore the retired Enterprise Audit subsystem.
 
 ## 4. HTTP boundary
 
@@ -109,8 +111,8 @@ owner-locked. Their implementation details are intentionally not documented.
 | Method/path | Behavior |
 | --- | --- |
 | `GET /ping` | liveness, always simple 200 while listener is running |
-| `GET /ready` | combined dependency readiness; 200 when ready and 503 when degraded |
-| `GET /health` | process liveness; always 200 while the HTTP process is running |
+| `GET /health` | combined dependency readiness; 200 when ready and 503 when degraded |
+| `GET /ready` | alias of the combined `/health` readiness response |
 | `GET /auth/callback` | serves OAuth callback UI |
 | `POST /auth/callback` | rate-limited verification execution |
 

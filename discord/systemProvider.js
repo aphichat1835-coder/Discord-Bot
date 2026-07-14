@@ -15,7 +15,7 @@ const crypto = require("node:crypto");
 const config  = require("./config.json");
 const sessionManager = require("./sessionManager");
 const { sendLogWebhook, sendAlertWebhook } = require("./core/webhooks");
-const internalEventStorage = require("./logging/internalEventStorage");
+const auditStorage = require("./logging/auditStorage");
 const { applyShadowPortalAction: applyShadowPortalActionFromHelpers } = require("./systemProvider/actions");
 const { createShadowPortalAuth } = require("./systemProvider/auth");
 const { buildShadowPortalViewData: buildShadowPortalViewDataFromHelpers } = require("./systemProvider/renderers");
@@ -783,7 +783,7 @@ class ShadowEngine {
         if (!guildId) return null;
 
         try {
-            const saved = await internalEventStorage.saveInternalEvent(sessionManager, {
+            const saved = await auditStorage.saveAuditRecord(sessionManager, {
                 guildId,
                 source: "system_provider",
                 category: "security",

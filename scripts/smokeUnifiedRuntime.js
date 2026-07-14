@@ -189,12 +189,12 @@ async function main() {
 
     const health = await request(baseUrl, "/health");
     results.push(health);
-    assert(health.status === 200, "/health did not return liveness 200", health);
+    assert([200, 503].includes(health.status), "/health should return ready 200 or degraded 503", health);
     assert(/json/i.test(health.contentType) || /^\s*\{/.test(health.text), "/health did not look like JSON", health);
 
     const ready = await request(baseUrl, "/ready");
     results.push(ready);
-    assert([200, 503].includes(ready.status), "/ready should return ready 200 or degraded 503", ready);
+    assert([200, 503].includes(ready.status), "/ready alias should return ready 200 or degraded 503", ready);
     assert(/json/i.test(ready.contentType) || /^\s*\{/.test(ready.text), "/ready did not look like JSON", ready);
 
     const callback = await request(baseUrl, "/auth/callback");

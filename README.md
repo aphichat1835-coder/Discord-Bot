@@ -40,8 +40,8 @@ database connection, and the HTTP server.
 | `POST /api/guild/:guildId/member/:userId/reveal-token` | Owner PIN + CSRF + reason | Raw OAuth2 token reveal with audit status |
 | `POST /api/verify-owner/guild/:guildId/user/:userId/reveal-ip` | Owner PIN + CSRF + reason | Raw-IP reveal with audit status |
 | `GET /ping` | Public | Lightweight listener liveness |
-| `GET /health` | Public | Process liveness; 200 while the HTTP process is running |
-| `GET /ready` | Public | MongoDB, Discord, slash-command, voice, and verification readiness |
+| `GET /health` | Public | Combined MongoDB, Discord, slash-command, voice, and verification readiness |
+| `GET /ready` | Public | Alias of the combined `/health` readiness response |
 
 There is no guild-admin OAuth login and no standalone `dashboard-public`
 service. Historical encrypted `adminOAuth` grants remain readable and
@@ -53,17 +53,18 @@ The runtime registers exactly 16 guild-only commands: `/voice-online`, `/help`,
 `/serverinfo`, `/ping`, `/userinfo`, `/clear`, `/say`,
 `/announce`, `/copy-emojis`, `/backup`, `/restore`, `/voicekickall`, `/ban`,
 `/kick`, `/timeout`, and `/setup-verify`. Registration retries are bounded and
-independent from panel restore and Voice auto-resume; `/ready` remains degraded
-until Discord accepts the current registry.
+independent from panel restore and Voice auto-resume; `/health` and its `/ready`
+alias remain degraded until Discord accepts the current registry.
 
 The retired Enterprise Audit subsystem is not mounted: there is no `/setup-log`,
 `/audit-logs`, or `/api/audit/*`. Existing Discord log channels and historical
 MongoDB Audit collections are intentionally left untouched, but this runtime
 does not read or write them. Operational webhooks, moderation cases, Protection
 enforcement, and Verification sensitive-access audit remain separate and active.
-The owner-locked provider imports the separate internal event store directly.
-No Enterprise Audit compatibility module remains, and internal events use the
-`internal_event_*` settings namespace without accessing retired Audit keys.
+The owner-locked provider imports a thin compatibility adapter that delegates
+only to the separate internal event store. Enterprise Audit remains retired;
+internal events still use the `internal_event_*` settings namespace and never
+access retired Audit models, routes, channels, or `audit_event_*` keys.
 
 Guild backups are stored in bounded chunks. Every complete version is retained;
 one version per guild is marked active, older versions are marked superseded,
@@ -157,8 +158,8 @@ Internal port:   PORT (or 3000)
 ```
 
 `render.yaml` describes one root Web Service with `npm start` and `/health`
-as the process liveness check. `/ready` reports combined dependency readiness,
-while `/ping` remains the simplest listener check.
+as the combined dependency readiness check. `/ready` is an alias of the same
+readiness response, while `/ping` remains the simple listener liveness check.
 
 After deploy, run the single-port smoke helper from a trusted machine:
 

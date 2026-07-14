@@ -271,7 +271,12 @@ describe("unified verification data contract", () => {
             where: jest.fn().mockReturnThis(),
             equals: jest.fn().mockReturnThis(),
             select: jest.fn().mockReturnThis(),
-            lean: jest.fn().mockResolvedValue({ snapshotMeta: {}, snapshotRefs: {} })
+            lean: jest.fn().mockResolvedValue({
+                snapshotMeta: {},
+                snapshotRefs: {
+                    profile: { version: "v-active", complete: true, storedCount: 1 }
+                }
+            })
         };
         jest.spyOn(OAuthUser, "findOne").mockReturnValue(query);
         jest.spyOn(OAuthUser, "findOneAndUpdate").mockRejectedValue(new Error("core write failed"));
@@ -288,7 +293,14 @@ describe("unified verification data contract", () => {
                 storedCount: 1, chunkCount: 1, complete: true
             }
         });
-        const rollback = jest.spyOn(snapshotStore, "rollbackSnapshotVersion").mockResolvedValue();
+        const rollbackResult = {
+            complete: false,
+            failedModels: ["objectChunks"],
+            attemptedModels: ["objectChunks"],
+            failureCodes: ["delete_failed"]
+        };
+        const rollback = jest.spyOn(snapshotStore, "rollbackSnapshotVersion")
+            .mockResolvedValue(rollbackResult);
         const errorLog = jest.spyOn(console, "error").mockImplementation(() => {});
 
         try {
@@ -309,7 +321,10 @@ describe("unified verification data contract", () => {
 
             expect(result.saved).toBe(false);
             expect(result.snapshotVersion).toBe("v-complete");
-            expect(result.snapshotRefs).toEqual({});
+            expect(result.snapshotRefs).toEqual({
+                profile: { version: "v-active", complete: true, storedCount: 1 }
+            });
+            expect(result.rollback).toEqual(rollbackResult);
             expect(rollback).toHaveBeenCalledWith({
                 userId: "12345678901234567",
                 version: "v-complete",

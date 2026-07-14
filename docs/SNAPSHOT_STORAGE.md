@@ -23,3 +23,31 @@ Verification snapshots use complete, versioned persistence. Aggregate payload si
 - `OAUTH_SNAPSHOT_WRITE_RETRY_DELAY_MS`: base retry delay; default 150 ms.
 
 The MongoDB per-document safety boundary remains enforced. The former aggregate snapshot ceiling is no longer a data-loss boundary.
+
+## Per-document safety
+
+The effective document ceiling is `VERIFICATION_SNAPSHOT_MAX_BYTES`, capped at
+12 MiB. Size checks use the complete `$set` document shape, including metadata,
+field names, array wrappers, references, and a safety margin for BSON/Mongoose
+overhead. A normal item, profile, or member object that cannot fit safely is
+stored with `json-base64-chunks-v1`; the aggregate snapshot may span any number
+of documents and is never truncated.
+
+Object chunk size is reduced automatically until every generated chunk document
+fits below the effective document ceiling. Each chunk and the reconstructed
+payload must pass SHA-256 and byte-length verification before it is returned.
+
+## Rollback recovery
+
+Rollback reports attempted models, failed models, sanitized failure codes, and
+per-model mark/delete results. Failed rollback work is recorded in
+`OAuthSnapshotRecovery` without user payloads or secrets. Snapshot maintenance
+retries those records on a later cleanup pass. Active references to the last
+successful snapshot are never replaced by a staged or incompletely rolled-back
+version.
+
+`OAuthObjectChunkSnapshot` participates in the same permanent-history cleanup
+rules as profile, guild, connection, member, and member-role snapshots:
+referenced complete versions are retained, stale incomplete chunks are removed
+after the grace period, and unreferenced complete chunks are removed only after
+references are checked again immediately before deletion.
