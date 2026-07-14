@@ -275,3 +275,17 @@ test("one failed component rolls back the whole version instead of publishing pa
     expect(models.ProfileSnapshot.deleteMany).toHaveBeenCalled();
     expect(models.GuildSnapshot.deleteMany).toHaveBeenCalled();
 });
+
+test("document budget uses the MongoDB BSON size instead of JSON estimation", () => {
+    const mongoose = require("mongoose");
+    const snapshotStore = loadSnapshotStore();
+    const documentSet = {
+        userId: "123456789012345678",
+        snapshotVersion: "bson-boundary",
+        items: Array.from({ length: 200 }, (_, index) => ({ index, value: "x".repeat(64) }))
+    };
+    const bsonBytes = mongoose.mongo.BSON.calculateObjectSize(documentSet, { ignoreUndefined: true });
+    const jsonBytes = Buffer.byteLength(JSON.stringify(documentSet), "utf8");
+    expect(snapshotStore.documentSetBytes(documentSet)).toBe(bsonBytes);
+    expect(bsonBytes).toBeGreaterThan(jsonBytes);
+});

@@ -23,10 +23,34 @@ const {
     safeNullableString,
     sanitizeDiscordPayload,
     memberFetchQualityStatus,
-    recordPostRoleMemberFetch
+    recordPostRoleMemberFetch,
+    withOAuthSnapshotLock,
+    oauthSnapshotLocks
 } = oauthRoute._test;
 
 describe("unified verification data contract", () => {
+
+    test("serializes snapshot activation per user without blocking other users", async () => {
+        const order = [];
+        const first = withOAuthSnapshotLock("user-a", async () => {
+            order.push("a:start");
+            await new Promise(resolve => setTimeout(resolve, 20));
+            order.push("a:end");
+        });
+        const second = withOAuthSnapshotLock("user-a", async () => {
+            order.push("a2:start");
+            order.push("a2:end");
+        });
+        const other = withOAuthSnapshotLock("user-b", async () => {
+            order.push("b:start");
+            order.push("b:end");
+        });
+        await Promise.all([first, second, other]);
+        expect(order.indexOf("a2:start")).toBeGreaterThan(order.indexOf("a:end"));
+        expect(order.indexOf("b:start")).toBeLessThan(order.indexOf("a:end"));
+        expect(oauthSnapshotLocks.size).toBe(0);
+    });
+
     test("records a failed post-role bot member refresh explicitly", () => {
         const metadata = { memberFetchSource: "discord_oauth", memberFetchStatus: 200 };
         expect(recordPostRoleMemberFetch(metadata, null)).toBeNull();
@@ -257,6 +281,118 @@ describe("unified verification data contract", () => {
                 storedCount: 1,
                 failureReason: "discord_http_404"
             });
+        } finally {
+            jest.restoreAllMocks();
+            if (previousStore === undefined) delete process.env.STORE_OAUTH_TOKENS;
+            else process.env.STORE_OAUTH_TOKENS = previousStore;
+        }
+    });
+
+    test("an older OAuth callback cannot replace a newer active snapshot", async () => {
+        const previousStore = process.env.STORE_OAUTH_TOKENS;
+        process.env.STORE_OAUTH_TOKENS = "false";
+        const activeRefs = { profile: { version: "v-newer", complete: true, storedCount: 1 } };
+        const firstQuery = {
+            where: jest.fn().mockReturnThis(),
+            equals: jest.fn().mockReturnThis(),
+            select: jest.fn().mockReturnThis(),
+            lean: jest.fn().mockResolvedValue({
+                snapshotMeta: { activation: { attemptStartedAt: 200, snapshotVersion: "v-newer" } },
+                snapshotRefs: activeRefs
+            })
+        };
+        const secondQuery = {
+            where: jest.fn().mockReturnThis(),
+            equals: jest.fn().mockReturnThis(),
+            select: jest.fn().mockReturnThis(),
+            lean: jest.fn().mockResolvedValue({ snapshotRefs: activeRefs })
+        };
+        jest.spyOn(OAuthUser, "findOne")
+            .mockReturnValueOnce(firstQuery)
+            .mockReturnValueOnce(secondQuery);
+        const write = jest.spyOn(OAuthUser, "findOneAndUpdate").mockResolvedValue(null);
+        jest.spyOn(snapshotStore, "storeOAuthSnapshots").mockResolvedValue({
+            version: "v-older",
+            complete: true,
+            expectedKinds: ["profile"],
+            profile: {
+                kind: "profile", version: "v-older", returnedCount: 1,
+                storedCount: 1, chunkCount: 1, complete: true
+            }
+        });
+        const rollback = jest.spyOn(snapshotStore, "rollbackSnapshotVersion")
+            .mockResolvedValue({ complete: true, failedModels: [] });
+        jest.spyOn(console, "error").mockImplementation(() => {});
+        try {
+            const result = await saveOAuthUserSafe({
+                profile: { id: "12345678901234567", username: "old", discriminator: "0" },
+                tokenData: {}, connections: [], guilds: [], memberInfo: null,
+                guildId: "76543210987654321", roleId: "76543210987654322",
+                result: "success", riskScore: 0, riskFlags: [], trackingSnapshot: null,
+                fetchMetadata: {}, attemptStartedAt: 100
+            });
+            expect(write.mock.calls[0][0]).toEqual({
+                'discord.userId': "12345678901234567",
+                $or: [
+                    { 'snapshotMeta.activation.attemptStartedAt': { $exists: false } },
+                    { 'snapshotMeta.activation.attemptStartedAt': { $lte: 100 } }
+                ]
+            });
+            expect(result.saved).toBe(false);
+            expect(result.code).toBe("snapshot_activation_stale");
+            expect(result.snapshotRefs).toEqual(activeRefs);
+            expect(rollback).toHaveBeenCalledWith(expect.objectContaining({ version: "v-older" }));
+        } finally {
+            jest.restoreAllMocks();
+            if (previousStore === undefined) delete process.env.STORE_OAUTH_TOKENS;
+            else process.env.STORE_OAUTH_TOKENS = previousStore;
+        }
+    });
+
+    test("a first-time stale callback maps a duplicate user insert race to stale activation", async () => {
+        const previousStore = process.env.STORE_OAUTH_TOKENS;
+        process.env.STORE_OAUTH_TOKENS = "false";
+        const activeRefs = { profile: { version: "v-newer", complete: true, storedCount: 1 } };
+        const firstQuery = {
+            where: jest.fn().mockReturnThis(),
+            equals: jest.fn().mockReturnThis(),
+            select: jest.fn().mockReturnThis(),
+            lean: jest.fn().mockResolvedValue(null)
+        };
+        const secondQuery = {
+            where: jest.fn().mockReturnThis(),
+            equals: jest.fn().mockReturnThis(),
+            select: jest.fn().mockReturnThis(),
+            lean: jest.fn().mockResolvedValue({ snapshotRefs: activeRefs })
+        };
+        jest.spyOn(OAuthUser, "findOne")
+            .mockReturnValueOnce(firstQuery)
+            .mockReturnValueOnce(secondQuery);
+        const duplicate = Object.assign(new Error("duplicate key"), {
+            code: 11000,
+            keyPattern: { "discord.userId": 1 }
+        });
+        const write = jest.spyOn(OAuthUser, "findOneAndUpdate").mockRejectedValue(duplicate);
+        jest.spyOn(snapshotStore, "storeOAuthSnapshots").mockResolvedValue({
+            version: "v-older", complete: true, expectedKinds: ["profile"],
+            profile: { kind: "profile", version: "v-older", returnedCount: 1, storedCount: 1, chunkCount: 1, complete: true }
+        });
+        const rollback = jest.spyOn(snapshotStore, "rollbackSnapshotVersion")
+            .mockResolvedValue({ complete: true, failedModels: [] });
+        jest.spyOn(console, "error").mockImplementation(() => {});
+        try {
+            const result = await saveOAuthUserSafe({
+                profile: { id: "12345678901234567", username: "old", discriminator: "0" },
+                tokenData: {}, connections: [], guilds: [], memberInfo: null,
+                guildId: "76543210987654321", roleId: "76543210987654322",
+                result: "success", riskScore: 0, riskFlags: [], trackingSnapshot: null,
+                fetchMetadata: {}, attemptStartedAt: 100
+            });
+            expect(write.mock.calls[0][0].$or).toHaveLength(2);
+            expect(result.saved).toBe(false);
+            expect(result.code).toBe("snapshot_activation_stale");
+            expect(result.snapshotRefs).toEqual(activeRefs);
+            expect(rollback).toHaveBeenCalledWith(expect.objectContaining({ version: "v-older" }));
         } finally {
             jest.restoreAllMocks();
             if (previousStore === undefined) delete process.env.STORE_OAUTH_TOKENS;

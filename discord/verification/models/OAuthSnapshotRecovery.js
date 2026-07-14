@@ -12,12 +12,13 @@ const schema = new mongoose.Schema({
     operationResults: { type: mongoose.Schema.Types.Mixed, default: {} },
     retryCount: { type: Number, default: 0 },
     lastAttemptAt: { type: Number, default: Date.now },
+    nextRetryAt: { type: Number, default: 0 },
     createdAt: { type: Number, default: Date.now },
     updatedAt: { type: Number, default: Date.now }
 }, { minimize: false });
 
 schema.index({ userId: 1, snapshotVersion: 1 }, { unique: true });
-schema.index({ complete: 1, updatedAt: 1 });
+schema.index({ complete: 1, nextRetryAt: 1, updatedAt: 1 });
 
 module.exports = mongoose.models.OAuthSnapshotRecovery ||
     mongoose.model("OAuthSnapshotRecovery", schema);

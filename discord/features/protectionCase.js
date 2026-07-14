@@ -1,5 +1,6 @@
 const { sanitizeLogText } = require("../core/safeLogger");
 const modCaseManager = require("../logging/modCaseManager");
+const { sendAlertWebhook } = require("../core/webhooks");
 
 function safeText(value, max = 500) {
     const limit = Math.max(1, Number(max) || 500);
@@ -87,10 +88,61 @@ async function createProtectionCase(sessionManager, event, options = {}) {
     return caseDoc;
 }
 
+function protectionCaseErrorCode(err) {
+    if (err?.code) return safeText(err.code, 80);
+    const prefix = String(err?.message || "").match(/^([A-Z0-9_]{3,80})(?::|$)/)?.[1];
+    return safeText(prefix || err?.name || "case_save_failed", 80);
+}
+
+function reconciliationKey(event) {
+    const guildId = safeText(event?.guildId || "unknown", 64);
+    const userId = safeText(event?.userId || "unknown", 64);
+    const createdAt = Number(event?.createdAt || Date.now());
+    return `protection_case_reconcile_${guildId}_${userId}_${createdAt}`;
+}
+
+async function persistProtectionReconciliation(sessionManager, event, errorCode) {
+    if (!sessionManager?.setSetting) return false;
+    const record = {
+        guildId: event.guildId || null,
+        userId: event.userId || null,
+        action: event.actionResult?.action || null,
+        actionSucceeded: event.actionResult?.success === true,
+        casePersistenceComplete: false,
+        errorCode: safeText(errorCode || "case_save_failed", 80),
+        createdAt: Number(event.createdAt || Date.now()),
+        recordedAt: Date.now(),
+        status: "reconciliation_required"
+    };
+    return sessionManager.setSetting(reconciliationKey(event), record)
+        .then(result => result === true)
+        .catch(() => false);
+}
+
 async function recordProtectionResult({ sessionManager, event, createCase = false }) {
     if (!event) return null;
-    if (createCase) await createProtectionCase(sessionManager, event).catch(() => null);
-    return event;
+    if (!createCase) return event;
+    try {
+        await createProtectionCase(sessionManager, event);
+        return event;
+    } catch (err) {
+        const code = protectionCaseErrorCode(err);
+        const reconciliationPersisted = await persistProtectionReconciliation(sessionManager, event, code);
+        console.warn(`[PROTECTION] case persistence failed | guild=${safeText(event.guildId, 64)} | code=${code} | reconciliation=${reconciliationPersisted}`);
+        sendAlertWebhook({
+            content: `⚠️ **[PROTECTION CASE]** การลงโทษสำเร็จแต่บันทึก ModCase ไม่สำเร็จ | guild=${safeText(event.guildId, 64)} | reconciliation=${reconciliationPersisted ? "stored" : "missing"}`
+        }).catch(() => {});
+        event.actionResult = {
+            ...event.actionResult,
+            casePersistence: {
+                complete: false,
+                reconciliationPersisted,
+                errorCode: code
+            }
+        };
+        event.casePersistence = event.actionResult.casePersistence;
+        return event;
+    }
 }
 
 module.exports = {
@@ -99,5 +151,5 @@ module.exports = {
     buildProtectionEvent,
     createProtectionCase,
     recordProtectionResult,
-    _test: { normalizeEvidenceItem, safeText }
+    _test: { normalizeEvidenceItem, safeText, protectionCaseErrorCode, reconciliationKey, persistProtectionReconciliation }
 };

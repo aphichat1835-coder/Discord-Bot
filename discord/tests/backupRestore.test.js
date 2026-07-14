@@ -21,11 +21,30 @@ test("restore schema rejects malformed snowflakes and accepts serialized guild d
             id: "333333333333333333",
             name: "general",
             parentId: null,
-            permissionOverwrites: [{ id: "222222222222222222" }]
+            permissionOverwrites: [{ id: "222222222222222222", type: "role", allow: "0", deny: "0" }]
         }]
     };
     assert.equal(utility._test.isValidSnapshotSchema(valid), true);
     assert.equal(utility._test.isValidSnapshotSchema({ ...valid, guild: { id: "$ne" } }), false);
+
+    assert.equal(utility._test.isValidSnapshotSchema({
+        ...valid,
+        channels: [{ ...valid.channels[0], permissionOverwrites: {} }]
+    }), false);
+    assert.equal(utility._test.isValidSnapshotSchema({
+        ...valid,
+        channels: [{
+            ...valid.channels[0],
+            permissionOverwrites: [{ id: "222222222222222222", type: "role", allow: "invalid", deny: "0" }]
+        }]
+    }), false);
+    assert.equal(utility._test.isValidSnapshotSchema({
+        ...valid,
+        channels: [{
+            ...valid.channels[0],
+            permissionOverwrites: [{ id: "222222222222222222", type: "unknown", allow: "0", deny: "0" }]
+        }]
+    }), false);
 });
 
 test("snapshot loader keeps legacy compatibility and rejects incomplete chunk pointers", async () => {

@@ -2,21 +2,32 @@
 
 const snapshotStore = require("../discord/verification/services/oauthSnapshotStore");
 
-function rollbackModel({ updateError = null, deleteError = null, deletedCount = 1 } = {}) {
+function rollbackModel({
+    updateError = null,
+    deleteError = null,
+    updateAcknowledged = true,
+    deleteAcknowledged = true,
+    deletedCount = 1
+} = {}) {
     return {
         updateMany: updateError
             ? jest.fn().mockRejectedValue(updateError)
-            : jest.fn().mockResolvedValue({ matchedCount: 1 }),
+            : jest.fn().mockResolvedValue({ acknowledged: updateAcknowledged, matchedCount: 1 }),
         deleteMany: deleteError
             ? jest.fn().mockRejectedValue(deleteError)
-            : jest.fn().mockResolvedValue({ deletedCount })
+            : jest.fn().mockResolvedValue({ acknowledged: deleteAcknowledged, deletedCount })
     };
 }
 
-function recoveryModel() {
+function recoveryModel({ updateAcknowledged = true, deleteAcknowledged = true, retryCount = 0 } = {}) {
+    const query = {
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue({ retryCount })
+    };
     return {
-        findOneAndUpdate: jest.fn().mockResolvedValue({}),
-        deleteOne: jest.fn().mockResolvedValue({ deletedCount: 1 })
+        findOne: jest.fn().mockReturnValue(query),
+        updateOne: jest.fn().mockResolvedValue({ acknowledged: updateAcknowledged, modifiedCount: 1 }),
+        deleteOne: jest.fn().mockResolvedValue({ acknowledged: deleteAcknowledged, deletedCount: 1 })
     };
 }
 
@@ -111,7 +122,7 @@ describe("snapshot rollback reporting", () => {
             recoveryPersisted: true
         });
         expect(result.failureCodes).toContain("delete_failed");
-        expect(RecoveryModel.findOneAndUpdate).toHaveBeenCalledWith(
+        expect(RecoveryModel.updateOne).toHaveBeenCalledWith(
             {
                 userId: "123456789012345678",
                 snapshotVersion: "v-delete-failed"
@@ -122,7 +133,7 @@ describe("snapshot rollback reporting", () => {
                     failureCodes: expect.arrayContaining(["delete_failed"])
                 })
             }),
-            { upsert: true, new: true }
+            { upsert: true }
         );
     });
 
@@ -154,4 +165,75 @@ describe("snapshot rollback reporting", () => {
             "object_mark_failed"
         ]));
     });
+});
+
+
+test("treats unacknowledged rollback writes as failures and queues recovery", async () => {
+    const RecoveryModel = recoveryModel();
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    const result = await snapshotStore.rollbackSnapshotVersion({
+        userId: "123456789012345678",
+        version: "v-unacknowledged",
+        models: {
+            profile: rollbackModel({ updateAcknowledged: false }),
+            objectChunks: rollbackModel({ deleteAcknowledged: false })
+        },
+        RecoveryModel,
+        now: 1000
+    });
+
+    expect(result.complete).toBe(false);
+    expect(result.failedModels).toEqual(["profile", "objectChunks"]);
+    expect(result.failureCodes).toEqual(expect.arrayContaining([
+        "rollback_profile_mark_unacknowledged",
+        "rollback_objectChunks_delete_unacknowledged"
+    ]));
+    expect(result.recoveryPersisted).toBe(true);
+});
+
+test("does not claim recovery metadata was persisted when MongoDB does not acknowledge it", async () => {
+    const RecoveryModel = recoveryModel({ updateAcknowledged: false });
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    const result = await snapshotStore.rollbackSnapshotVersion({
+        userId: "123456789012345678",
+        version: "v-recovery-unacknowledged",
+        models: { profile: rollbackModel({ deleteError: Object.assign(new Error("fail"), { code: "delete_failed" }) }) },
+        RecoveryModel,
+        now: 1000
+    });
+
+    expect(result.complete).toBe(false);
+    expect(result.recoveryPersisted).toBe(false);
+    expect(result.failureCodes).toContain("rollback_recovery_metadata_unacknowledged");
+});
+
+test("reports an unacknowledged recovery-record clear without misreporting the snapshot rollback", async () => {
+    const RecoveryModel = recoveryModel({ deleteAcknowledged: false });
+    const result = await snapshotStore.rollbackSnapshotVersion({
+        userId: "123456789012345678",
+        version: "v-clear-unacknowledged",
+        models: { profile: rollbackModel() },
+        RecoveryModel,
+        now: 1000
+    });
+
+    expect(result.complete).toBe(true);
+    expect(result.recoveryRecordCleared).toBe(false);
+    expect(result.failureCodes).toContain("rollback_recovery_clear_unacknowledged");
+});
+
+test("recovery metadata schedules exponential backoff with a bounded nextRetryAt", async () => {
+    const RecoveryModel = recoveryModel({ retryCount: 3 });
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    await snapshotStore.rollbackSnapshotVersion({
+        userId: "123456789012345678",
+        version: "v-backoff",
+        models: { profile: rollbackModel({ deleteError: Object.assign(new Error("fail"), { code: "delete_failed" }) }) },
+        RecoveryModel,
+        now: 1000
+    });
+    const update = RecoveryModel.updateOne.mock.calls[0][1];
+    expect(update.$set.retryCount).toBe(4);
+    expect(update.$set.nextRetryAt).toBe(1000 + snapshotStore.recoveryDelayMs(4));
+    expect(update.$set.nextRetryAt - 1000).toBeLessThanOrEqual(snapshotStore.RECOVERY_RETRY_MAX_MS);
 });

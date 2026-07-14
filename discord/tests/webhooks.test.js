@@ -282,3 +282,10 @@ test("startup notice omits Shadow link when its router did not mount", () => { /
     assert.equal(notice.content.includes("Shadow Portal"), false);
     assert.equal(notice.content.includes("/shadow"), false);
 });
+
+test("webhook dispatcher never retries a send_timeout because the original request may still complete", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const { _test } = require("../core/webhooks");
+    assert.equal(_test.retryable({ code: "send_timeout" }), false);
+    assert.equal(_test.retryable({ status: 503 }), true);
+    assert.equal(_test.retryable({ status: 429 }), true);
+});

@@ -167,8 +167,10 @@ function failureCode(error) {
 
 function retryable(error) {
     const status = Number(error?.status || error?.httpStatus || error?.response?.status || 0);
+    const code = String(error?.code || "").toLowerCase();
+    if (code === "send_timeout") return false;
     if (status === 429 || status >= 500) return true;
-    return !status && !["invalid_webhook_url", "invalid_token"].includes(String(error?.code || "").toLowerCase());
+    return !status && !["invalid_webhook_url", "invalid_token"].includes(code);
 }
 
 function delay(ms) {

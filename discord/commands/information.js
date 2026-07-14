@@ -13,8 +13,28 @@ const { markCommandAccepted } = require("../guards/commandGuards");
 const packageVersion = require("../../package.json").version;
 const CB = "```";
 const SERVERINFO_CACHE_TTL_MS = 60 * 1000;
+const SERVERINFO_FETCH_TIMEOUT_MS = 5 * 1000;
+const SERVERINFO_FULL_FETCH_MAX_MEMBERS = 2500;
 const serverInfoCounts = new Map();
 const serverInfoInFlight = new Map();
+
+function countCachedMembers(members) {
+    return {
+        human: members.filter(member => !member.user.bot).size,
+        bots: members.filter(member => member.user.bot).size
+    };
+}
+
+function unknownMemberCounts(guild, source) {
+    const total = Number(guild.memberCount);
+    return {
+        human: null,
+        bots: null,
+        total: Number.isFinite(total) && total >= 0 ? total : null,
+        source,
+        at: Date.now()
+    };
+}
 
 async function getServerMemberCounts(guild, now = Date.now()) {
     const cached = serverInfoCounts.get(guild.id);
@@ -24,18 +44,36 @@ async function getServerMemberCounts(guild, now = Date.now()) {
         serverInfoCounts.delete(serverInfoCounts.keys().next().value);
     }
     const task = (async () => {
-        let members = guild.members.cache;
-        let source = "ข้อมูลล่าสุดจาก Discord";
-        try { members = await guild.members.fetch(); }
-        catch { source = "คำนวณจาก cache เพราะโหลดรายชื่อสมาชิกล่าสุดไม่สำเร็จ"; }
-        const result = {
-            human: members.filter(member => !member.user.bot).size,
-            bots: members.filter(member => member.user.bot).size,
-            source,
-            at: Date.now()
-        };
-        serverInfoCounts.set(guild.id, result);
-        return result;
+        const cachedMembers = guild.members.cache;
+        const rawMemberCount = Number(guild.memberCount);
+        const memberCount = Number.isFinite(rawMemberCount) && rawMemberCount >= 0
+            ? rawMemberCount
+            : cachedMembers.size;
+        if (memberCount > SERVERINFO_FULL_FETCH_MAX_MEMBERS) {
+            const completeCache = memberCount > 0 && cachedMembers.size >= memberCount;
+            const result = completeCache
+                ? { ...countCachedMembers(cachedMembers), total: memberCount, source: "ข้อมูลจาก cache ที่ครบทั้งเซิร์ฟเวอร์", at: Date.now() }
+                : unknownMemberCounts(guild, `สมาชิก ${memberCount} คน เกินเพดาน full fetch จึงไม่โหลดทั้งหมด`);
+            serverInfoCounts.set(guild.id, result);
+            return result;
+        }
+        try {
+            const members = await guild.members.fetch({ time: SERVERINFO_FETCH_TIMEOUT_MS });
+            const result = {
+                ...countCachedMembers(members),
+                total: memberCount || members.size,
+                source: "ข้อมูลล่าสุดจาก Discord",
+                at: Date.now()
+            };
+            serverInfoCounts.set(guild.id, result);
+            return result;
+        } catch {
+            const result = cachedMembers.size > 0
+                ? { ...countCachedMembers(cachedMembers), total: memberCount || cachedMembers.size, source: "คำนวณจาก cache เพราะโหลดรายชื่อสมาชิกล่าสุดไม่สำเร็จ", at: Date.now() }
+                : unknownMemberCounts(guild, "ไม่สามารถประเมิน Bot/Human ได้ เพราะ Discord fetch ไม่สำเร็จและ cache ว่าง");
+            serverInfoCounts.set(guild.id, result);
+            return result;
+        }
     })().finally(() => serverInfoInFlight.delete(guild.id));
     serverInfoInFlight.set(guild.id, task);
     return task;
@@ -58,8 +96,8 @@ async function handleServerInfo(interaction) {
     const guild = interaction.guild;
 
     const memberCounts = await getServerMemberCounts(guild);
-    const botCount = memberCounts.bots;
-    const humanCount = memberCounts.human;
+    const botCount = Number.isFinite(memberCounts.bots) ? memberCounts.bots : "ประเมินไม่ได้";
+    const humanCount = Number.isFinite(memberCounts.human) ? memberCounts.human : "ประเมินไม่ได้";
     const memberSource = memberCounts.source;
 
     const textChannels  = guild.channels.cache.filter(c => c.type === 'GUILD_TEXT').size;
@@ -281,4 +319,15 @@ async function handleHelp(interaction) {
     return interaction.reply({ embeds: [embed], ephemeral: !isAdmin });
 }
 
-module.exports = { handle, _test: { getServerMemberCounts, serverInfoCounts, serverInfoInFlight } };
+module.exports = {
+    handle,
+    _test: {
+        getServerMemberCounts,
+        countCachedMembers,
+        unknownMemberCounts,
+        serverInfoCounts,
+        serverInfoInFlight,
+        SERVERINFO_FETCH_TIMEOUT_MS,
+        SERVERINFO_FULL_FETCH_MAX_MEMBERS
+    }
+};

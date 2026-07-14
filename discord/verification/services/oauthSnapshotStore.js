@@ -1,6 +1,7 @@
 "use strict";
 
 const crypto = require("node:crypto");
+const mongoose = require("mongoose");
 const GuildSnapshot = require("../models/OAuthUserGuildSnapshot");
 const ConnectionSnapshot = require("../models/OAuthUserConnectionSnapshot");
 const MemberSnapshot = require("../models/OAuthMemberSnapshot");
@@ -43,6 +44,8 @@ const WRITE_RETRY_DELAY_MS = Math.max(
     0,
     Math.min(10_000, Number(process.env.OAUTH_SNAPSHOT_WRITE_RETRY_DELAY_MS || 150) || 150)
 );
+const RECOVERY_RETRY_BASE_MS = 5 * 60 * 1000;
+const RECOVERY_RETRY_MAX_MS = 24 * 60 * 60 * 1000;
 
 function createSnapshotVersion(now = Date.now()) {
     return `${now}-${crypto.randomBytes(6).toString("hex")}`;
@@ -79,7 +82,27 @@ function sanitizedFailureCode(err, fallback = "operation_failed") {
 }
 
 function documentSetBytes(documentSet) {
-    return jsonBytes(documentSet);
+    try {
+        const calculateObjectSize = mongoose.mongo?.BSON?.calculateObjectSize;
+        if (typeof calculateObjectSize !== "function") return Number.POSITIVE_INFINITY;
+        return calculateObjectSize(documentSet, { ignoreUndefined: true });
+    } catch {
+        return Number.POSITIVE_INFINITY;
+    }
+}
+
+function assertAcknowledged(result, code = "snapshot_write_unacknowledged") {
+    if (result?.acknowledged === false) {
+        const error = new Error("MongoDB write was not acknowledged");
+        error.code = code;
+        throw error;
+    }
+    return result;
+}
+
+function recoveryDelayMs(retryCount) {
+    const exponent = Math.max(0, Math.min(20, Number(retryCount || 1) - 1));
+    return Math.min(RECOVERY_RETRY_MAX_MS, RECOVERY_RETRY_BASE_MS * (2 ** exponent));
 }
 
 function isDocumentSetSafe(documentSet, maxBytes = DOCUMENT_WRITE_MAX_BYTES) {
@@ -677,13 +700,16 @@ async function rollbackModel(name, Model, filter, now) {
     if (typeof Model?.updateMany === "function") {
         result.markIncomplete.attempted = true;
         try {
-            await retrySnapshotWrite(`rollback_${name}_mark`, () => Model.updateMany(filter, {
-                $set: {
-                    complete: false,
-                    failureReason: "snapshot_set_incomplete",
-                    updatedAt: now
-                }
-            }));
+            await retrySnapshotWrite(`rollback_${name}_mark`, async () => assertAcknowledged(
+                await Model.updateMany(filter, {
+                    $set: {
+                        complete: false,
+                        failureReason: "snapshot_set_incomplete",
+                        updatedAt: now
+                    }
+                }),
+                `rollback_${name}_mark_unacknowledged`
+            ));
             result.markIncomplete.complete = true;
         } catch (err) {
             result.markIncomplete.code = sanitizedFailureCode(err, `rollback_${name}_mark_failed`);
@@ -693,7 +719,10 @@ async function rollbackModel(name, Model, filter, now) {
     if (typeof Model?.deleteMany === "function") {
         result.delete.attempted = true;
         try {
-            const deleted = await retrySnapshotWrite(`rollback_${name}_delete`, () => Model.deleteMany(filter));
+            const deleted = await retrySnapshotWrite(`rollback_${name}_delete`, async () => assertAcknowledged(
+                await Model.deleteMany(filter),
+                `rollback_${name}_delete_unacknowledged`
+            ));
             result.delete.complete = true;
             result.delete.deletedCount = Number(deleted?.deletedCount || 0);
         } catch (err) {
@@ -707,34 +736,57 @@ async function rollbackModel(name, Model, filter, now) {
     return result;
 }
 
+async function readRecoveryRetryCount(RecoveryModel, userId, version) {
+    if (typeof RecoveryModel?.findOne !== "function") return 0;
+    const query = RecoveryModel.findOne({ userId, snapshotVersion: version });
+    const selected = typeof query?.select === "function" ? query.select("retryCount") : query;
+    const doc = typeof selected?.lean === "function" ? await selected.lean() : await selected;
+    return Math.max(0, Number(doc?.retryCount || 0));
+}
+
 async function persistRecoveryMetadata(RecoveryModel, metadata, now) {
-    if (typeof RecoveryModel?.findOneAndUpdate !== "function") return false;
-    await retrySnapshotWrite("rollback_recovery_metadata", () => RecoveryModel.findOneAndUpdate(
-        { userId: metadata.userId, snapshotVersion: metadata.version },
-        {
-            $set: {
-                complete: false,
-                attemptedModels: metadata.attemptedModels,
-                failedModels: metadata.failedModels,
-                failureCodes: metadata.failureCodes,
-                operationResults: metadata.operationResults,
-                lastAttemptAt: now,
-                updatedAt: now
-            },
-            $inc: { retryCount: 1 },
-            $setOnInsert: { createdAt: now }
+    if (typeof RecoveryModel?.updateOne !== "function" && typeof RecoveryModel?.findOneAndUpdate !== "function") {
+        return false;
+    }
+    const previousRetryCount = await readRecoveryRetryCount(
+        RecoveryModel,
+        metadata.userId,
+        metadata.version
+    );
+    const retryCount = previousRetryCount + 1;
+    const nextRetryAt = now + recoveryDelayMs(retryCount);
+    const filter = { userId: metadata.userId, snapshotVersion: metadata.version };
+    const update = {
+        $set: {
+            complete: false,
+            attemptedModels: metadata.attemptedModels,
+            failedModels: metadata.failedModels,
+            failureCodes: metadata.failureCodes,
+            operationResults: metadata.operationResults,
+            retryCount,
+            lastAttemptAt: now,
+            nextRetryAt,
+            updatedAt: now
         },
-        { upsert: true, new: true }
+        $setOnInsert: { createdAt: now }
+    };
+    const write = typeof RecoveryModel.updateOne === "function"
+        ? () => RecoveryModel.updateOne(filter, update, { upsert: true })
+        : () => RecoveryModel.findOneAndUpdate(filter, update, { upsert: true, new: true });
+    const result = await retrySnapshotWrite("rollback_recovery_metadata", async () => assertAcknowledged(
+        await write(),
+        "rollback_recovery_metadata_unacknowledged"
     ));
-    return true;
+    return result !== null && result !== false;
 }
 
 async function clearRecoveryMetadata(RecoveryModel, userId, version) {
     if (typeof RecoveryModel?.deleteOne !== "function") return false;
-    await retrySnapshotWrite("rollback_recovery_clear", () =>
-        RecoveryModel.deleteOne({ userId, snapshotVersion: version })
-    );
-    return true;
+    const result = await retrySnapshotWrite("rollback_recovery_clear", async () => assertAcknowledged(
+        await RecoveryModel.deleteOne({ userId, snapshotVersion: version }),
+        "rollback_recovery_clear_unacknowledged"
+    ));
+    return result !== null && result !== false;
 }
 
 function logRollbackWarning(metadata) {
@@ -940,6 +992,8 @@ module.exports = {
     CHUNK_MAX_ITEMS,
     OBJECT_CHUNK_RAW_BYTES,
     WRITE_RETRY_ATTEMPTS,
+    RECOVERY_RETRY_BASE_MS,
+    RECOVERY_RETRY_MAX_MS,
     DOCUMENT_MAX_BYTES,
     DOCUMENT_WRITE_MAX_BYTES,
     MAX_MAX_BYTES,
@@ -947,6 +1001,8 @@ module.exports = {
     documentSetBytes,
     isDocumentSetSafe,
     assertDocumentSetSafe,
+    assertAcknowledged,
+    recoveryDelayMs,
     chunkItems,
     encodeObjectChunks,
     prepareObjectChunkWrites,

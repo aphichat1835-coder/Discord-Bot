@@ -204,8 +204,15 @@ async function processRecoveryQueue({
     if (typeof RecoveryModel?.find !== "function") {
         return { scanned: 0, completed: 0, pending: 0, dryRun };
     }
-    const records = await RecoveryModel.find({ complete: { $ne: true } })
-        .select("userId snapshotVersion")
+    const records = await RecoveryModel.find({
+        complete: { $ne: true },
+        $or: [
+            { nextRetryAt: { $exists: false } },
+            { nextRetryAt: null },
+            { nextRetryAt: { $lte: now } }
+        ]
+    })
+        .select("userId snapshotVersion retryCount nextRetryAt")
         .sort({ updatedAt: 1, _id: 1 })
         .limit(scanMax)
         .lean();

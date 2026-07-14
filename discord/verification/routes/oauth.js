@@ -30,6 +30,19 @@ const DEVICE_DUPLICATE_LOOKUP_MAX = Math.max(
     Number(process.env.DEVICE_DUPLICATE_LOOKUP_MAX || 200) || 200
 );
 const DAY_MS = 24 * 60 * 60 * 1000;
+const oauthSnapshotLocks = new Map();
+
+async function withOAuthSnapshotLock(userId, operation) {
+    const key = String(userId || "unknown");
+    const previous = oauthSnapshotLocks.get(key) || Promise.resolve();
+    const current = previous.catch(() => {}).then(operation);
+    oauthSnapshotLocks.set(key, current);
+    try {
+        return await current;
+    } finally {
+        if (oauthSnapshotLocks.get(key) === current) oauthSnapshotLocks.delete(key);
+    }
+}
 
 function getCdnExtension(hash) {
     return String(hash || '').startsWith('a_') ? 'gif' : 'png';
@@ -1042,6 +1055,14 @@ async function updateIpIdentityTrackingSafe({
     }, null);
 }
 
+async function loadOAuthSnapshotState(profileUserId) {
+    return OAuthUser.findOne()
+        .where("discord.userId")
+        .equals(profileUserId)
+        .select("snapshotMeta snapshotRefs")
+        .lean();
+}
+
 async function saveOAuthUserSafe({
     profile,
     tokenData,
@@ -1054,121 +1075,150 @@ async function saveOAuthUserSafe({
     riskScore,
     riskFlags,
     trackingSnapshot,
-    fetchMetadata = {}
+    fetchMetadata = {},
+    attemptStartedAt = Date.now()
 }) {
     return safeSideEffect('saveOAuthUser', async () => {
-        const nowMs = Date.now();
         const profileUserId = safeSnowflakeStrict(profile.id, "discord_user_id");
-        const accountCreatedAt = getAccountCreatedAt(profileUserId);
-        const accountAgeDays = getAccountAgeDays(profileUserId);
-        const existing = await OAuthUser.findOne()
-            .where("discord.userId")
-            .equals(profileUserId)
-            .select('snapshotMeta snapshotRefs')
-            .lean();
-        const previousMeta = existing?.snapshotMeta || {};
-        const connectionSnapshot = normalizeConnections(connections);
-        const guildSnapshot = normalizeGuilds(guilds);
-        const lastMember = buildLastMemberUpdate({ guildId, profileUserId, memberInfo });
-        const storedSnapshots = await snapshotStore.storeOAuthSnapshots({
-            userId: profileUserId,
-            guildId,
-            profile: sanitizeDiscordPayload(profile),
-            guilds: guildSnapshot,
-            connections: connectionSnapshot,
-            member: lastMember,
-            fetchMetadata,
-            now: nowMs
-        });
-        if (!isCompleteSnapshotSet(storedSnapshots)) {
+        return withOAuthSnapshotLock(profileUserId, async () => {
+            const nowMs = Date.now();
+            const safeAttemptStartedAt = Math.max(0, Number(attemptStartedAt) || nowMs);
+            const accountCreatedAt = getAccountCreatedAt(profileUserId);
+            const accountAgeDays = getAccountAgeDays(profileUserId);
+            const connectionSnapshot = normalizeConnections(connections);
+            const guildSnapshot = normalizeGuilds(guilds);
+            const lastMember = buildLastMemberUpdate({ guildId, profileUserId, memberInfo });
+            const storedSnapshots = await snapshotStore.storeOAuthSnapshots({
+                userId: profileUserId,
+                guildId,
+                profile: sanitizeDiscordPayload(profile),
+                guilds: guildSnapshot,
+                connections: connectionSnapshot,
+                member: lastMember,
+                fetchMetadata,
+                now: nowMs
+            });
+            if (!isCompleteSnapshotSet(storedSnapshots)) {
+                const activeState = await loadOAuthSnapshotState(profileUserId).catch(() => null);
+                return {
+                    saved: false,
+                    snapshotVersion: storedSnapshots.version,
+                    snapshotRefs: activeState?.snapshotRefs || null,
+                    snapshotWrites: storedSnapshots
+                };
+            }
+            // Read after staging completes so optional-fetch preservation and ref
+            // merging use the freshest active state available before activation.
+            const existing = await loadOAuthSnapshotState(profileUserId);
+            const previousMeta = existing?.snapshotMeta || {};
+            let snapshotMeta = buildSnapshotMetaUpdate(
+                previousMeta,
+                fetchMetadata,
+                {
+                    connectionsSource: connections,
+                    connectionsStored: connectionSnapshot,
+                    guildsSource: guilds,
+                    guildsStored: guildSnapshot
+                },
+                memberInfo,
+                nowMs
+            );
+            snapshotMeta = applyStoredSnapshotMeta(snapshotMeta, "connections", storedSnapshots.connections);
+            snapshotMeta = applyStoredSnapshotMeta(snapshotMeta, "guilds", storedSnapshots.guilds);
+            snapshotMeta = applyStoredSnapshotMeta(snapshotMeta, "member", storedSnapshots.member);
+            snapshotMeta = applyStoredSnapshotMeta(snapshotMeta, "profile", storedSnapshots.profile);
+            snapshotMeta = preserveFailedMemberAttempt(snapshotMeta, previousMeta, fetchMetadata, nowMs);
+            snapshotMeta = {
+                ...snapshotMeta,
+                activation: {
+                    attemptStartedAt: safeAttemptStartedAt,
+                    snapshotVersion: storedSnapshots.version,
+                    activatedAt: nowMs
+                }
+            };
+            const snapshotRefs = mergeCompleteSnapshotRefs(existing?.snapshotRefs, storedSnapshots);
+
+            const updateSet = {
+                discord: buildOAuthDiscordUpdate(profile, profileUserId, accountCreatedAt, accountAgeDays),
+                lastVerify: {
+                    guildId,
+                    roleId,
+                    result,
+                    attemptStartedAt: safeAttemptStartedAt,
+                    verifiedAt: nowMs,
+                    riskScore,
+                    riskFlags: riskFlags || []
+                },
+                lastIpTracking: trackingSnapshot || null,
+                snapshotMeta,
+                snapshotRefs,
+                updatedAt: nowMs
+            };
+
+            applyOAuthTokenStorage(updateSet, tokenData);
+            let activated = null;
+            try {
+                applySnapshotBudgetGuard(updateSet);
+                const activationFilter = {
+                    'discord.userId': profileUserId,
+                    $or: [
+                        { 'snapshotMeta.activation.attemptStartedAt': { $exists: false } },
+                        { 'snapshotMeta.activation.attemptStartedAt': { $lte: safeAttemptStartedAt } }
+                    ]
+                };
+                activated = await OAuthUser.findOneAndUpdate(
+                    activationFilter,
+                    {
+                        $set: updateSet,
+                        $setOnInsert: { createdAt: nowMs }
+                    },
+                    {
+                        upsert: !existing,
+                        new: true
+                    }
+                );
+                if (!activated) {
+                    const stale = new Error("A newer OAuth snapshot attempt is already active");
+                    stale.code = "snapshot_activation_stale";
+                    throw stale;
+                }
+            } catch (err) {
+                const duplicateDiscordUser = Number(err?.code) === 11000 && (
+                    err?.keyPattern?.["discord.userId"] || err?.keyValue?.["discord.userId"]
+                );
+                if (duplicateDiscordUser) err.code = "snapshot_activation_stale";
+                console.error("[VERIFY] saveOAuthUser core failed:", JSON.stringify(sanitizeSideEffectError(err)));
+                const expectedKinds = Array.isArray(storedSnapshots.expectedKinds)
+                    ? storedSnapshots.expectedKinds
+                    : ["profile", "guilds", "connections", "member"].filter(kind => storedSnapshots[kind]);
+                const stagedRefs = Object.fromEntries(expectedKinds
+                    .filter(kind => storedSnapshots[kind])
+                    .map(kind => [kind, storedSnapshots[kind]]));
+                const rollback = await snapshotStore.rollbackSnapshotVersion({
+                    userId: profileUserId,
+                    version: storedSnapshots.version,
+                    refs: stagedRefs
+                });
+                const active = err?.code === "snapshot_activation_stale"
+                    ? await loadOAuthSnapshotState(profileUserId).catch(() => null)
+                    : null;
+                return {
+                    saved: false,
+                    code: err?.code || "oauth_user_write_failed",
+                    snapshotVersion: storedSnapshots.version,
+                    snapshotRefs: active?.snapshotRefs || existing?.snapshotRefs || null,
+                    snapshotWrites: storedSnapshots,
+                    rollback
+                };
+            }
+
             return {
-                saved: false,
+                saved: true,
                 snapshotVersion: storedSnapshots.version,
-                snapshotRefs: existing?.snapshotRefs || null,
+                snapshotRefs: activated?.snapshotRefs || snapshotRefs,
                 snapshotWrites: storedSnapshots
             };
-        }
-        let snapshotMeta = buildSnapshotMetaUpdate(
-            previousMeta,
-            fetchMetadata,
-            {
-                connectionsSource: connections,
-                connectionsStored: connectionSnapshot,
-                guildsSource: guilds,
-                guildsStored: guildSnapshot
-            },
-            memberInfo,
-            nowMs
-        );
-        snapshotMeta = applyStoredSnapshotMeta(snapshotMeta, "connections", storedSnapshots.connections);
-        snapshotMeta = applyStoredSnapshotMeta(snapshotMeta, "guilds", storedSnapshots.guilds);
-        snapshotMeta = applyStoredSnapshotMeta(snapshotMeta, "member", storedSnapshots.member);
-        snapshotMeta = applyStoredSnapshotMeta(snapshotMeta, "profile", storedSnapshots.profile);
-        snapshotMeta = preserveFailedMemberAttempt(snapshotMeta, previousMeta, fetchMetadata, nowMs);
-        const snapshotRefs = mergeCompleteSnapshotRefs(existing?.snapshotRefs, storedSnapshots);
-
-        const updateSet = {
-            discord: buildOAuthDiscordUpdate(profile, profileUserId, accountCreatedAt, accountAgeDays),
-
-            lastVerify: {
-                guildId,
-                roleId,
-                result,
-                verifiedAt: nowMs,
-                riskScore,
-                riskFlags: riskFlags || []
-            },
-
-            lastIpTracking: trackingSnapshot || null,
-            snapshotMeta,
-            snapshotRefs,
-            updatedAt: nowMs
-        };
-
-        applyOAuthTokenStorage(updateSet, tokenData);
-        try {
-            applySnapshotBudgetGuard(updateSet);
-            await OAuthUser.findOneAndUpdate(
-                { 'discord.userId': profileUserId },
-                {
-                    $set: updateSet,
-                    $setOnInsert: {
-                        createdAt: nowMs
-                    }
-                },
-                {
-                    upsert: true,
-                    new: true
-                }
-            );
-        } catch (err) {
-            console.error("[VERIFY] saveOAuthUser core failed:", JSON.stringify(sanitizeSideEffectError(err)));
-            const expectedKinds = Array.isArray(storedSnapshots.expectedKinds)
-                ? storedSnapshots.expectedKinds
-                : ["profile", "guilds", "connections", "member"].filter(kind => storedSnapshots[kind]);
-            const stagedRefs = Object.fromEntries(expectedKinds
-                .filter(kind => storedSnapshots[kind])
-                .map(kind => [kind, storedSnapshots[kind]]));
-            const rollback = await snapshotStore.rollbackSnapshotVersion({
-                userId: profileUserId,
-                version: storedSnapshots.version,
-                refs: stagedRefs
-            });
-            return {
-                saved: false,
-                snapshotVersion: storedSnapshots.version,
-                snapshotRefs: existing?.snapshotRefs || null,
-                snapshotWrites: storedSnapshots,
-                rollback
-            };
-        }
-
-        return {
-            saved: true,
-            snapshotVersion: storedSnapshots.version,
-            snapshotRefs,
-            snapshotWrites: storedSnapshots
-        };
+        });
     }, { saved: false, snapshotVersion: null, snapshotRefs: null, snapshotWrites: null });
 }
 
@@ -1435,6 +1485,7 @@ router.get('/auth/callback', (req, res) => {
 
 router.post('/auth/callback', async (req, res) => {
     const requestId = makeRequestId('verify');
+    const oauthAttemptStartedAt = Date.now();
     const { code, state } = req.body || {};
 
     if (!code) {
@@ -1591,7 +1642,8 @@ router.post('/auth/callback', async (req, res) => {
                 riskScore: riskSummary.score,
                 riskFlags: riskSummary.flags,
                 trackingSnapshot,
-                fetchMetadata
+                fetchMetadata,
+                attemptStartedAt: oauthAttemptStartedAt
             });
             const connectionsWrite = oauthPersistence?.snapshotWrites?.connections;
             const guildsWrite = oauthPersistence?.snapshotWrites?.guilds;
@@ -2148,5 +2200,8 @@ module.exports._test = {
     preserveFailedMemberAttempt,
     safeExtractDevice,
     saveOAuthUserSafe,
-    saveVerifyLogSafe
+    saveVerifyLogSafe,
+    loadOAuthSnapshotState,
+    withOAuthSnapshotLock,
+    oauthSnapshotLocks
 };

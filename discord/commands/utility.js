@@ -317,13 +317,26 @@ function buildBackupValidationReport(data) {
 
 function isValidSnapshotSchema(data) {
     const snowflake = value => /^\d{17,22}$/.test(String(value || ""));
+    const permissionBits = value => (
+        (typeof value === "string" && /^\d+$/.test(value)) ||
+        (Number.isSafeInteger(value) && value >= 0)
+    );
+    const overwriteType = value => [0, 1, "role", "member"].includes(value);
+    const validOverwrite = overwrite => (
+        !!overwrite &&
+        snowflake(overwrite.id) &&
+        overwriteType(overwrite.type) &&
+        permissionBits(overwrite.allow) &&
+        permissionBits(overwrite.deny)
+    );
     if (!data || !Array.isArray(data.roles) || !Array.isArray(data.channels)) return false;
     if (!snowflake(data.guild?.id)) return false;
     if (data.roles.some(role => !role || !snowflake(role.id) || typeof role.name !== "string")) return false;
     return !data.channels.some(channel =>
         !channel || !snowflake(channel.id) || typeof channel.name !== "string" ||
         (channel.parentId != null && !snowflake(channel.parentId)) ||
-        (Array.isArray(channel.permissionOverwrites) && channel.permissionOverwrites.some(overwrite => !snowflake(overwrite?.id)))
+        (channel.permissionOverwrites != null && !Array.isArray(channel.permissionOverwrites)) ||
+        (Array.isArray(channel.permissionOverwrites) && channel.permissionOverwrites.some(overwrite => !validOverwrite(overwrite)))
     );
 }
 

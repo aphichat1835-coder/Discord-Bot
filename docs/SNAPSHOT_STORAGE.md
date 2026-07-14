@@ -5,14 +5,16 @@ Verification snapshots use complete, versioned persistence. Aggregate payload si
 ## Invariants
 
 1. Every fetched profile, guild, connection, member, and member-role value is preserved.
-2. Normal arrays are divided into MongoDB-safe item chunks.
+2. Normal arrays are divided into MongoDB-safe item chunks measured with MongoDB BSON sizing, including metadata and field overhead.
 3. A single oversized object or item is serialized as UTF-8 JSON and divided into Base64 byte chunks.
 4. Every byte chunk stores its own SHA-256 checksum; the reference also stores the checksum and byte length of the complete payload.
 5. Readers reject missing, out-of-order, size-mismatched, or checksum-mismatched chunks.
 6. Snapshot writes are retried with bounded backoff.
 7. A snapshot version becomes active only after every expected component reports `complete: true` and `returnedCount === storedCount`.
 8. If any component or the final `OAuthUser` core write fails, the new version is rolled back and the previous active references remain unchanged.
-9. Failed optional Discord fetches do not replace previously stored successful snapshots with empty arrays.
+9. Rollback writes must be acknowledged; incomplete rollback state is persisted for bounded exponential recovery retries.
+10. Failed optional Discord fetches do not replace previously stored successful snapshots with empty arrays.
+11. Snapshot activation is serialized per user and conditionally rejects an older callback when a newer attempt is already active.
 
 ## Runtime controls
 

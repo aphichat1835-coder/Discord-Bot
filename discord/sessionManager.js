@@ -24,6 +24,10 @@ const reconnectTracking = new Map();
 const sessionLocks = new Set();
 const settingsCache = new Map();
 const RETIRED_ENTERPRISE_AUDIT_SETTINGS = /^(?:audit_|logChannelMapExtra_)/;
+const INTERNAL_EVENT_SETTINGS = /^internal_event_/;
+function shouldCacheSettingKey(key) {
+    return !INTERNAL_EVENT_SETTINGS.test(String(key || ""));
+}
 function numberEnv(name, fallback, min = 1) {
     const value = Number(process.env[name]);
     if (!Number.isFinite(value)) return fallback;
@@ -1417,7 +1421,7 @@ async function setSetting(key, value) {
     if (!dbConnected) return false;
 
     try {
-        await BotSettingsModel.updateOne(
+        const result = await BotSettingsModel.updateOne(
             { key },
             {
                 $set: {
@@ -1428,7 +1432,9 @@ async function setSetting(key, value) {
             },
             { upsert: true }
         );
-        settingsCache.set(key, value);
+        if (result?.acknowledged === false) return false;
+        if (shouldCacheSettingKey(key)) settingsCache.set(key, value);
+        else settingsCache.delete(key);
 
         return true;
     } catch (err) {
@@ -1444,7 +1450,7 @@ async function getSetting(key, fallback = null) {
     try {
         const doc = await BotSettingsModel.findOne({ key });
         if (!doc) return fallback;
-        settingsCache.set(key, doc.value);
+        if (shouldCacheSettingKey(key)) settingsCache.set(key, doc.value);
         return doc.value;
     } catch (err) {
         console.error(`[DATABASE] ❌ Failed to get setting ${key}: ${err.message}`);
@@ -1457,7 +1463,7 @@ async function getSettingStrict(key) {
     if (!dbConnected) throw new Error("DATABASE_NOT_CONNECTED");
     const doc = await BotSettingsModel.findOne({ key: String(key) }).lean();
     if (!doc) return { found: false, value: null };
-    settingsCache.set(String(key), doc.value);
+    if (shouldCacheSettingKey(key)) settingsCache.set(String(key), doc.value);
     return { found: true, value: doc.value };
 }
 
@@ -1481,7 +1487,8 @@ async function deleteSetting(key) {
     if (!dbConnected) return false;
 
     try {
-        await BotSettingsModel.deleteOne({ key });
+        const result = await BotSettingsModel.deleteOne({ key });
+        if (result?.acknowledged === false) return false;
         settingsCache.delete(key);
         return true;
     } catch (err) {
@@ -1496,7 +1503,10 @@ async function getAllSettings() {
 
     try {
         const docs = await BotSettingsModel.find({
-            key: { $not: RETIRED_ENTERPRISE_AUDIT_SETTINGS }
+            $nor: [
+                { key: RETIRED_ENTERPRISE_AUDIT_SETTINGS },
+                { key: INTERNAL_EVENT_SETTINGS }
+            ]
         })
             .select("key value updatedAt")
             .sort({ updatedAt: -1, _id: -1 })
@@ -1505,7 +1515,8 @@ async function getAllSettings() {
         const result = {};
 
         for (const doc of docs) {
-            if (RETIRED_ENTERPRISE_AUDIT_SETTINGS.test(String(doc.key || ""))) continue;
+            const key = String(doc.key || "");
+            if (RETIRED_ENTERPRISE_AUDIT_SETTINGS.test(key) || INTERNAL_EVENT_SETTINGS.test(key)) continue;
             result[doc.key] = doc.value;
             settingsCache.set(doc.key, doc.value);
         }

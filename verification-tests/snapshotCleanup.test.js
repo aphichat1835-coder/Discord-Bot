@@ -399,3 +399,30 @@ describe("permanent-history snapshot garbage cleanup", () => {
         expect(_test.boundedNumber("invalid", 200, 10, 1000)).toBe(200);
     });
 });
+
+test("recovery cleanup selects only records whose nextRetryAt is due", async () => {
+    const filterSeen = [];
+    const RecoveryModel = {
+        find: jest.fn(filter => {
+            filterSeen.push(filter);
+            return queryResult([{ userId: "u1", snapshotVersion: "v1", nextRetryAt: 900 }]);
+        })
+    };
+    const rollbackFn = jest.fn().mockResolvedValue({ complete: true });
+    const result = await _test.processRecoveryQueue({
+        dryRun: false,
+        scanMax: 10,
+        RecoveryModel,
+        rollbackFn,
+        now: 1000
+    });
+    expect(result.completed).toBe(1);
+    expect(filterSeen[0]).toEqual({
+        complete: { $ne: true },
+        $or: [
+            { nextRetryAt: { $exists: false } },
+            { nextRetryAt: null },
+            { nextRetryAt: { $lte: 1000 } }
+        ]
+    });
+});

@@ -77,16 +77,57 @@ async function withFallbackLock(guildId, fn) {
     }
 }
 
+async function deleteSettingWithRetry(sessionManager, key, attempts = 3) {
+    if (!sessionManager?.deleteSetting) return false;
+    const boundedAttempts = Math.max(1, Math.min(5, Number(attempts) || 3));
+    for (let attempt = 1; attempt <= boundedAttempts; attempt++) {
+        if (await sessionManager.deleteSetting(key) === true) return true;
+        if (attempt < boundedAttempts) {
+            await new Promise(resolve => setTimeout(resolve, 25 * attempt));
+        }
+    }
+    return false;
+}
+
+async function deleteStoredEvents(sessionManager, guildId, eventIds) {
+    if (!sessionManager?.deleteSetting) return false;
+    let complete = true;
+    for (const eventId of [...new Set(eventIds.filter(Boolean))]) {
+        const deleted = await deleteSettingWithRetry(sessionManager, storageKey(guildId, eventId));
+        if (!deleted) complete = false;
+    }
+    return complete;
+}
+
 async function saveFallback(sessionManager, record) {
     if (!sessionManager?.setSetting || !sessionManager?.getSetting) return null;
     return withFallbackLock(record.guildId, async () => {
-        const saved = await sessionManager.setSetting(storageKey(record.guildId, record.eventId), record);
-        if (saved === false) return null;
+        const recordKey = storageKey(record.guildId, record.eventId);
+        const previousRecord = await sessionManager.getSetting(recordKey, null);
+        const saved = await sessionManager.setSetting(recordKey, record);
+        if (saved !== true) return null;
+
         const current = await sessionManager.getSetting(indexKey(record.guildId), []);
-        const list = Array.isArray(current) ? current : [];
+        const list = Array.isArray(current) ? current.filter(Boolean).map(String) : [];
         const next = [record.eventId, ...list.filter(id => id !== record.eventId)].slice(0, MAX_INDEX_RECORDS);
         const indexed = await sessionManager.setSetting(indexKey(record.guildId), next);
-        return indexed === false ? null : record;
+        if (indexed !== true) {
+            const rolledBack = previousRecord === null
+                ? await deleteSettingWithRetry(sessionManager, recordKey)
+                : await sessionManager.setSetting(recordKey, previousRecord);
+            if (rolledBack !== true) {
+                console.warn('[INTERNAL_STORAGE] index write failed and record rollback was not acknowledged');
+            }
+            return null;
+        }
+
+        const retained = new Set(next);
+        const evicted = list.filter(eventId => !retained.has(eventId));
+        if (evicted.length) {
+            const cleaned = await deleteStoredEvents(sessionManager, record.guildId, evicted);
+            if (!cleaned) console.warn('[INTERNAL_STORAGE] one or more evicted records could not be deleted');
+        }
+        return record;
     });
 }
 
@@ -169,6 +210,8 @@ module.exports = {
     listInternalEvents,
     _test: {
         saveFallback,
+        deleteStoredEvents,
+        deleteSettingWithRetry,
         listFallback,
         textOrNull,
         idOrNull,

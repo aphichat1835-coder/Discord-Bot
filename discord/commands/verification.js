@@ -24,6 +24,7 @@ const sessionManager = require("../sessionManager");
 const { createCompactCallbackState } = require("../verification/utils/state");
 const { resolvePublicBaseUrl } = require("../core/publicUrl");
 const { markCommandAccepted } = require("../guards/commandGuards");
+const { sendAlertWebhook } = require("../core/webhooks");
 
 let GuildConfig = null;
 
@@ -432,6 +433,30 @@ async function rollbackPanelConfig({ guildId, settingKey, previousLegacy, previo
     return results.every(result => result.status === "fulfilled" && result.value !== false && result.value !== null);
 }
 
+async function persistVerificationRecovery({ guildId, messageId, settingKey, rolledBack, panelDisabled, panelDeleted }) {
+    const recoveryKey = `verify_recovery_${guildId}_${messageId}`;
+    const recoveryRecord = {
+        guildId,
+        messageId,
+        settingKey,
+        rolledBack,
+        panelDisabled,
+        panelDeleted,
+        createdAt: Date.now(),
+        status: "manual_review_required"
+    };
+    const persisted = await retryPersistence(() => sessionManager.setSetting(recoveryKey, recoveryRecord))
+        .then(result => result === true)
+        .catch(() => false);
+    if (!persisted) {
+        console.warn(`[VERIFY] recovery record persistence failed for guild=${guildId}`);
+        sendAlertWebhook({
+            content: `⚠️ **[VERIFY RECOVERY]** แผงยืนยันต้องตรวจสอบด้วยตนเองและบันทึก recovery record ไม่สำเร็จ | guild=${guildId} | message=${messageId}`
+        }).catch(() => {});
+    }
+    return { required: true, persisted, key: recoveryKey };
+}
+
 async function disablePreviousVerificationPanel(interaction, previousGuildConfig, newMessageId) {
     const previous = previousGuildConfig?.verification || {};
     const channelId = strictSnowflake(previous.channelId);
@@ -767,12 +792,16 @@ async function handleSetupVerify(interaction) {
                 previousGuildConfig
             });
             if (!rolledBack || (!disabled && !deleted)) {
-                await sessionManager.setSetting(`verify_recovery_${guildId}_${panelMsg.id}`, {
-                    guildId, messageId: panelMsg.id, settingKey,
-                    rolledBack, panelDisabled: disabled, panelDeleted: deleted,
-                    createdAt: Date.now(), status: "manual_review_required"
-                }).catch(() => false);
-                persistError.recoveryRequired = true;
+                const recovery = await persistVerificationRecovery({
+                    guildId,
+                    messageId: panelMsg.id,
+                    settingKey,
+                    rolledBack,
+                    panelDisabled: disabled,
+                    panelDeleted: deleted
+                });
+                persistError.recoveryRequired = recovery.required;
+                persistError.recoveryPersisted = recovery.persisted;
             }
             throw persistError;
         }
@@ -836,7 +865,11 @@ async function handleSetupVerify(interaction) {
 
         return interaction.editReply({
             content:
-                `> ${config.emojis.error} ติดตั้งแผงยืนยันไม่สำเร็จ${err.recoveryRequired ? " และต้องตรวจสอบการคืนค่าจาก Owner Dashboard" : " ระบบปิดแผงที่บันทึกไม่ครบแล้ว"}\n` +
+                `> ${config.emojis.error} ติดตั้งแผงยืนยันไม่สำเร็จ${err.recoveryRequired
+                    ? (err.recoveryPersisted
+                        ? " และมีรายการให้ตรวจสอบใน Owner Dashboard"
+                        : " และต้องตรวจสอบด้วยตนเองเพราะบันทึก recovery record ไม่สำเร็จ")
+                    : " ระบบปิดแผงที่บันทึกไม่ครบแล้ว"}\n` +
                 `> ตรวจสอบสิทธิ์ของบอทและสถานะฐานข้อมูล แล้วลองใหม่`
         });
     }
@@ -932,6 +965,7 @@ module.exports = {
         isCurrentDirectConfig,
         retryPersistence,
         strictSnowflake,
-        disablePreviousVerificationPanel
+        disablePreviousVerificationPanel,
+        persistVerificationRecovery
     }
 };

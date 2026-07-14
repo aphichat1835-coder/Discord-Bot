@@ -4,6 +4,13 @@
 
 ### Changed
 
+- Hardened persistence consistency before merge: bounded internal-event storage,
+  BSON-sized Snapshot documents, acknowledged rollback/recovery writes, panel
+  rollback on database failure, durable recovery reporting, timeout-safe
+  webhooks, Protection-case reconciliation, strict restore permissions,
+  per-user OAuth activation ordering, bounded `/serverinfo` member loading, and
+  Snapshot recovery backoff.
+
 - Restored the original runtime probe contract: `/ping` remains the lightweight
   listener liveness endpoint, while `/health` again reports combined MongoDB,
   Discord, slash-command, Voice, and Verification readiness with 503 on

@@ -80,6 +80,59 @@ async function saveConfigWithRetry(config, attempts = 3) {
   throw lastError || new Error("CONFIG_SAVE_FAILED");
 }
 
+function clonePlainValue(value) {
+  if (value && typeof value.toObject === "function") return value.toObject();
+  try { return JSON.parse(JSON.stringify(value || {})); }
+  catch { return {}; }
+}
+
+function safeRollbackEmbed(embed = {}) {
+  const out = {};
+  for (const key of ["title", "description", "url", "color", "timestamp", "fields", "footer", "image", "thumbnail", "author"]) {
+    if (embed[key] !== undefined) out[key] = embed[key];
+  }
+  return out;
+}
+
+function panelRollbackPayload(message = {}) {
+  return {
+    content: typeof message.content === "string" ? message.content : "",
+    embeds: Array.isArray(message.embeds) ? message.embeds.map(safeRollbackEmbed) : [],
+    components: Array.isArray(message.components) ? message.components : [],
+    allowed_mentions: { parse: [] }
+  };
+}
+
+async function persistedPanelMatches(guildId, verification) {
+  try {
+    const query = GuildConfig.findOne({ guildId: String(guildId) })
+      .select("verification.channelId verification.messageId verification.panelRevision");
+    const doc = typeof query?.lean === "function" ? await query.lean() : await query;
+    return String(doc?.verification?.channelId || "") === String(verification?.channelId || "") &&
+      String(doc?.verification?.messageId || "") === String(verification?.messageId || "") &&
+      String(doc?.verification?.panelRevision || "") === String(verification?.panelRevision || "");
+  } catch {
+    return false;
+  }
+}
+
+async function rollbackDiscordPanel(channelId, messageId, payload) {
+  try {
+    const result = await discordAPI.editChannelMessage(channelId, messageId, payload);
+    return {
+      complete: result?.ok === true,
+      status: Number(result?.status || 0) || null,
+      code: result?.ok === true ? null : "discord_panel_rollback_failed"
+    };
+  } catch (err) {
+    return {
+      complete: false,
+      status: null,
+      code: String(err?.code || "discord_panel_rollback_failed").slice(0, 80)
+    };
+  }
+}
+
 function safeConsoleError(scope, err) {
   console.error(`[GUILD-DASHBOARD:${scope}]`, err?.message || err);
 }
@@ -951,7 +1004,14 @@ router.post("/api/guild/:guildId/verify/panel/send", requireAdmin, requireGuildA
 
     const payload = makePanelPayload(req, { guildId, verification });
     const sent = await discordAPI.createChannelMessage(channelId, payload);
-    sentPanel = sent.ok ? { channelId, messageId: sent.message?.id } : null;
+    sentPanel = sent.ok ? {
+      guildId,
+      channelId,
+      messageId: sent.message?.id,
+      panelRevision: verification.panelRevision,
+      panelRevisionUpdatedAt: verification.panelRevisionUpdatedAt,
+      validation
+    } : null;
 
     if (!sent.ok) {
       return res.status(400).json({
@@ -985,7 +1045,38 @@ router.post("/api/guild/:guildId/verify/panel/send", requireAdmin, requireGuildA
     });
   } catch (err) {
     if (sentPanel?.messageId) {
-      await discordAPI.deleteChannelMessage(sentPanel.channelId, sentPanel.messageId).catch(() => null);
+      const persistenceConfirmed = await persistedPanelMatches(sentPanel.guildId, sentPanel);
+      if (persistenceConfirmed) {
+        return res.json({
+          success: true,
+          message: "ส่งแผงใหม่แล้ว และยืนยันค่าที่บันทึกจากฐานข้อมูลหลังการตอบกลับคลุมเครือ",
+          messageId: sentPanel.messageId,
+          channelId: sentPanel.channelId,
+          panelRevision: sentPanel.panelRevision,
+          panelRevisionUpdatedAt: sentPanel.panelRevisionUpdatedAt,
+          persistenceConfirmedAfterError: true,
+          validation: sentPanel.validation
+        });
+      }
+      const cleanup = await discordAPI.deleteChannelMessage(sentPanel.channelId, sentPanel.messageId)
+        .catch(cleanupErr => ({ ok: false, status: null, error: cleanupErr?.code || "delete_failed" }));
+      const cleanupComplete = cleanup?.ok === true || Number(cleanup?.status) === 404;
+      if (!cleanupComplete) {
+        safeConsoleError("verify.panel.send.cleanup", Object.assign(new Error("PANEL_DELETE_ROLLBACK_FAILED"), {
+          code: cleanup?.error || "panel_delete_rollback_failed"
+        }));
+        return res.status(503).json({
+          success: false,
+          error: "บันทึก config ไม่สำเร็จและลบแผงใหม่ไม่ได้ ต้องตรวจสอบด้วยตนเอง",
+          code: "panel_send_cleanup_failed",
+          recoveryRequired: true,
+          rollback: {
+            complete: false,
+            status: Number(cleanup?.status || 0) || null,
+            code: cleanup?.error || "panel_delete_rollback_failed"
+          }
+        });
+      }
     }
     return sendServerError(res, "verify.panel.send", err, "ส่งแผงยืนยันตัวตนไม่สำเร็จ");
   }
@@ -997,7 +1088,8 @@ router.patch("/api/guild/:guildId/verify/panel/update", requireAdmin, requireGui
     const adminId = getAdminId(req);
 
     const config = await ensureGuildConfig(guildId, req.adminGuild?.name);
-    const verification = mergeVerificationConfig(config.verification || {}, req.body || {});
+    const previousVerification = clonePlainValue(config.verification || {});
+    const verification = mergeVerificationConfig(previousVerification, req.body || {});
     const validation = await validateVerificationConfig(req, guildId, verification);
 
     if (validation.ok === false) {
@@ -1029,6 +1121,13 @@ router.patch("/api/guild/:guildId/verify/panel/update", requireAdmin, requireGui
       });
     }
 
+    let previousPanelPayload;
+    try {
+      previousPanelPayload = makePanelPayload(req, { guildId, verification: previousVerification });
+    } catch {
+      previousPanelPayload = panelRollbackPayload(existing.message);
+    }
+
     /*
       สำคัญ:
       แก้แผงเดิม = rotate state ใหม่เสมอ
@@ -1058,7 +1157,38 @@ router.patch("/api/guild/:guildId/verify/panel/update", requireAdmin, requireGui
     config.verification = verification;
     config.updatedAt = now();
 
-    await config.save();
+    try {
+      await saveConfigWithRetry(config);
+    } catch (saveError) {
+      const persistenceConfirmed = await persistedPanelMatches(guildId, verification);
+      if (persistenceConfirmed) {
+        return res.json({
+          success: true,
+          message: "แก้แผงเดิมแล้ว และยืนยันค่าที่บันทึกจากฐานข้อมูลหลังการตอบกลับคลุมเครือ",
+          messageId,
+          channelId,
+          panelRevision: verification.panelRevision,
+          panelRevisionUpdatedAt: verification.panelRevisionUpdatedAt,
+          persistenceConfirmedAfterError: true,
+          validation
+        });
+      }
+      const rollback = await rollbackDiscordPanel(channelId, messageId, previousPanelPayload);
+      if (!rollback.complete) {
+        safeConsoleError("verify.panel.update.rollback", Object.assign(new Error("PANEL_ROLLBACK_FAILED"), {
+          code: rollback.code
+        }));
+      }
+      return res.status(503).json({
+        success: false,
+        error: rollback.complete
+          ? "บันทึก config ไม่สำเร็จ แต่คืนค่าแผง Discord เดิมแล้ว"
+          : "บันทึก config ไม่สำเร็จและคืนค่าแผง Discord เดิมไม่ได้ ต้องตรวจสอบด้วยตนเอง",
+        code: "panel_config_save_failed",
+        recoveryRequired: !rollback.complete,
+        rollback
+      });
+    }
 
     res.json({
       success: true,
@@ -1439,7 +1569,13 @@ router.get("/api/guild/:guildId", requireAdmin, requireGuildAdmin, async (req, r
 router._test = {
   mergeVerificationConfig,
   recordSensitiveAccess,
-  tokenRevealErrorStatus
+  tokenRevealErrorStatus,
+  saveConfigWithRetry,
+  clonePlainValue,
+  safeRollbackEmbed,
+  panelRollbackPayload,
+  persistedPanelMatches,
+  rollbackDiscordPanel
 };
 
 module.exports = router;

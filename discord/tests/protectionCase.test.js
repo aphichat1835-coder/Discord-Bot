@@ -93,3 +93,35 @@ test("recordProtectionResult persists a ModCase after successful enforcement", a
     assert.equal(store.get("modcase_g1_1").source, "protection");
     assert.equal(store.get("modcase_g1_1").action, "timeout");
 });
+
+test("recordProtectionResult surfaces case persistence failure and writes reconciliation metadata", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const modCaseManager = require("../logging/modCaseManager");
+    const originalCreateCase = modCaseManager.createCase;
+    const store = new Map();
+    modCaseManager.createCase = async () => {
+        throw new Error("CASE_SAVE_FAILED: private database detail");
+    };
+    const event = protectionCase.buildProtectionEvent({
+        guildId: "g1",
+        userId: "u1",
+        action: "ban",
+        attempted: true,
+        success: true,
+        createdAt: 1000
+    });
+    try {
+        const result = await protectionCase.recordProtectionResult({
+            sessionManager: {
+                async setSetting(key, value) { store.set(key, value); return true; }
+            },
+            event,
+            createCase: true
+        });
+        assert.equal(result.casePersistence.complete, false);
+        assert.equal(result.casePersistence.reconciliationPersisted, true);
+        assert.equal(result.casePersistence.errorCode, "CASE_SAVE_FAILED");
+        assert.equal(store.get("protection_case_reconcile_g1_u1_1000").status, "reconciliation_required");
+    } finally {
+        modCaseManager.createCase = originalCreateCase;
+    }
+});
