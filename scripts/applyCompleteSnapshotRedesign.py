@@ -218,7 +218,5 @@ data_contract = replace_literal_once(
 )
 data_contract_path.write_text(data_contract)
 
-Path(".github/workflows/redesign-snapshot-storage.yml").unlink(missing_ok=True)
 Path("scripts/applyCompleteSnapshotRedesign.py").unlink(missing_ok=True)
-unpack("ci.gz.b64", ".github/workflows/ci.yml")
 shutil.rmtree(PAYLOAD_DIR)
