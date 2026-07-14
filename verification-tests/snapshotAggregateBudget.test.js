@@ -1,5 +1,6 @@
 "use strict";
 
+// Prevent chunking from bypassing the configured aggregate snapshot ceiling.
 const ENV_KEY = "VERIFICATION_SNAPSHOT_MAX_BYTES";
 const originalBudget = process.env[ENV_KEY];
 
