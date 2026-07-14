@@ -1,0 +1,116 @@
++                if (updated) return withPersistenceStore(updated, "mongo");
++            } catch (err) {
++                console.warn(`[MODCASE] Mongo update failed: ${safeErrorText(err, 240)}`);
++            }
+         }
++        await persistCaseReconciliation(sessionManager, guildId, caseNumber, "update_reason", patch);
++        return null;
+     }
+ 
+     const updated = { ...existing, ...patch };
+@@ -246,20 +306,18 @@ async function updateCaseStatus(sessionManager, guildId, caseNumber, status, met
+         updatedAt: Date.now()
+     };
+     const persistenceStore = existing.metadata?.persistenceStore || "settings";
+-    if (persistenceStore === "mongo" && canUseMongoStore()) {
+-        try {
+-            const updated = await modCaseStore.updateCase(guildId, caseNumber, patch);
+-            if (updated) return withPersistenceStore(updated, "mongo");
+-        } catch (err) {
+-            console.warn(`[MODCASE] Mongo status update failed, fallback settings: ${safeErrorText(err, 240)}`);
++    if (persistenceStore === "mongo") {
++        if (canUseMongoStore()) {
++            try {
++                const updated = await modCaseStore.updateCase(guildId, caseNumber, patch);
++                if (updated) return withPersistenceStore(updated, "mongo");
++            } catch (err) {
++                console.warn(`[MODCASE] Mongo status update failed: ${safeErrorText(err, 240)}`);
++            }
+         }
+-        await sessionManager?.setSetting?.(`modcase_reconcile_${guildId}_${caseNumber}`, {
+-            guildId: String(guildId), caseNumber, intendedStatus: status,
+-            metadata: patch.metadata, createdAt: Date.now()
+-        }).catch(() => false);
++        await persistCaseReconciliation(sessionManager, guildId, caseNumber, "update_status", patch);
+         return null;
+     }
+-    if (persistenceStore === "mongo") return null;
+     const updated = { ...existing, ...patch };
+     return await sessionManager.setSetting(caseKey(guildId, caseNumber), updated) === true ? updated : null;
+ }
+@@ -280,6 +338,10 @@ module.exports = {
+         buildCaseDoc,
+         canUseMongoStore,
+         withPersistenceStore,
++        getSettingsCase,
++        listSettingsUserCases,
++        mergeCaseLists,
++        persistCaseReconciliation,
+         nextCaseNumberFallback,
+         withFallbackLock
+     }
+diff --git a/discord/tests/modCaseManager.test.js b/discord/tests/modCaseManager.test.js
+index c6509d5..a48c5e6 100644
+--- a/discord/tests/modCaseManager.test.js
++++ b/discord/tests/modCaseManager.test.js
+@@ -137,6 +137,86 @@ test("legacy settings cases stay settings-backed when MongoDB is connected", asy
+     }
+ });
+ 
++
++test("case lookup and lists preserve settings fallback records alongside Mongo cases", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
++    const mongoose = require("mongoose");
++    const modCaseStore = require("../logging/modCaseStore");
++    const sessionManager = createFakeSessionManager();
++    sessionManager._store.set("modcase_g1_4", {
++        guildId: "g1", caseNumber: 4, action: "kick", userId: "u1",
++        status: "completed", createdAt: 400, metadata: {}
++    });
++    sessionManager._store.set("modcase_index_g1_u1", [4]);
++
++    const readyStateDescriptor = Object.getOwnPropertyDescriptor(mongoose.connection, "readyState");
++    const originalGetCase = modCaseStore.getCase;
++    const originalList = modCaseStore.listUserCases;
++    Object.defineProperty(mongoose.connection, "readyState", { configurable: true, value: 1 });
++    modCaseStore.getCase = async () => ({
++        guildId: "g1", caseNumber: 4, action: "ban", userId: "u1",
++        status: "completed", createdAt: 450, metadata: {}
++    });
++    modCaseStore.listUserCases = async () => [
++        { guildId: "g1", caseNumber: 5, action: "timeout", userId: "u1", createdAt: 500, metadata: {} },
++        { guildId: "g1", caseNumber: 4, action: "ban", userId: "u1", createdAt: 450, metadata: {} }
++    ];
++
++    try {
++        const loaded = await modCaseManager.getCase(sessionManager, "g1", 4);
++        assert.equal(loaded.action, "kick");
++        assert.equal(loaded.metadata.persistenceStore, "settings");
++
++        const listed = await modCaseManager.listUserCases(sessionManager, "g1", "u1", 10);
++        assert.deepEqual(listed.map(item => [item.caseNumber, item.action, item.metadata.persistenceStore]), [
++            [5, "timeout", "mongo"],
++            [4, "kick", "settings"]
++        ]);
++    } finally {
++        modCaseStore.getCase = originalGetCase;
++        modCaseStore.listUserCases = originalList;
++        if (readyStateDescriptor) Object.defineProperty(mongoose.connection, "readyState", readyStateDescriptor);
++        else delete mongoose.connection.readyState;
++    }
++});
++
++test("Mongo-backed case update failures create reconciliation without copying the case into settings", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
++    const mongoose = require("mongoose");
++    const modCaseStore = require("../logging/modCaseStore");
++    const sessionManager = createFakeSessionManager();
++    const readyStateDescriptor = Object.getOwnPropertyDescriptor(mongoose.connection, "readyState");
++    const originalGetCase = modCaseStore.getCase;
++    const originalUpdateCase = modCaseStore.updateCase;
++    Object.defineProperty(mongoose.connection, "readyState", { configurable: true, value: 1 });
++    modCaseStore.getCase = async () => ({
++        guildId: "g1", caseNumber: 9, action: "ban", userId: "u9",
++        status: "pending", evidence: [], metadata: { persistenceStore: "mongo" }
++    });
++    modCaseStore.updateCase = async () => null;
++
++    try {
