@@ -1,0 +1,420 @@
+name: Owner final hardening
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-validate:
+    if: github.event.pull_request.head.ref == 'tt' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout tt
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: tt
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+
+      - name: Apply owner-approved fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              file = Path(path)
+              text = file.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, found {count}")
+              file.write_text(text.replace(old, new, 1))
+
+          # Enforce the configured aggregate budget before any snapshot write.
+          snapshot_path = Path("discord/verification/services/oauthSnapshotStore.js")
+          snapshot = snapshot_path.read_text()
+          snapshot = snapshot.replace(
+              'const { jsonBytes, MAX_MAX_BYTES } = require("./snapshotBudget");',
+              'const { jsonBytes, MAX_MAX_BYTES, assertSnapshotBudget } = require("./snapshotBudget");',
+              1
+          )
+          snapshot = snapshot.replace(
+              '    try {\n        const chunks = chunkItems(itemList);',
+              '    try {\n        assertSnapshotBudget(itemList, { label: `${kind}_snapshot` });\n        const chunks = chunkItems(itemList);',
+              1
+          )
+
+          member_start = snapshot.index("async function storeMemberSnapshot")
+          member_end = snapshot.index("\nasync function storeProfileSnapshot", member_start)
+          member_function = '''async function storeMemberSnapshot({ userId, guildId, version, member, now = Date.now() }) {
+              const sourceRoles = Array.isArray(member?.roles)
+                  ? member.roles
+                  : member?.snapshot?.roles;
+              const roles = Array.isArray(sourceRoles) ? sourceRoles.map(String) : [];
+              const memberCore = { ...member };
+              delete memberCore.roles;
+              if (memberCore.snapshot && typeof memberCore.snapshot === "object") {
+                  const rawMemberCore = { ...memberCore.snapshot };
+                  delete rawMemberCore.roles;
+                  memberCore.snapshot = rawMemberCore;
+              }
+              try {
+                  assertSnapshotBudget({ member: memberCore, roles }, { label: "member_snapshot" });
+                  const roleRef = await storeArraySnapshot(MemberRoleSnapshot, {
+                      kind: "memberRoles",
+                      userId,
+                      version,
+                      items: roles,
+                      source: "discord_bot_api",
+                      now
+                  });
+                  const roleCount = roles.length;
+                  if (!roleRef.complete || roleRef.returnedCount !== roleRef.storedCount) {
+                      return {
+                          ...failedMeta("member", version, 1, {
+                              code: roleRef.failureReason || "member_roles_incomplete"
+                          }, now),
+                          guildId,
+                          roleRef
+                      };
+                  }
+                  if (jsonBytes(memberCore) > MAX_MAX_BYTES) {
+                      const error = new Error("member snapshot exceeds per-document maximum");
+                      error.code = "snapshot_item_too_large";
+                      throw error;
+                  }
+                  await MemberSnapshot.findOneAndUpdate(
+                      { userId, guildId, snapshotVersion: version },
+                      {
+                          $set: {
+                              userId,
+                              guildId,
+                              snapshotVersion: version,
+                              snapshot: memberCore,
+                              roleSnapshotRef: roleRef,
+                              roleCount,
+                              returnedCount: 1,
+                              storedCount: 1,
+                              complete: false,
+                              fetchStatus: "success",
+                              failureReason: null,
+                              source: "discord_bot_api",
+                              capturedAt: now,
+                              updatedAt: now
+                          }
+                      },
+                      { upsert: true, new: true }
+                  );
+                  const finalized = await MemberSnapshot.updateOne(
+                      { userId, guildId, snapshotVersion: version },
+                      { $set: { complete: true, updatedAt: now } }
+                  );
+                  const complete = Number(finalized?.matchedCount || 0) === 1;
+                  if (!complete) logSnapshotFailure("member", { code: "snapshot_finalize_incomplete" });
+                  return {
+                      kind: "member",
+                      version,
+                      guildId,
+                      returnedCount: 1,
+                      storedCount: complete ? 1 : 0,
+                      chunkCount: 1,
+                      complete,
+                      fetchStatus: complete ? "success" : "failed",
+                      failureReason: complete ? null : "snapshot_finalize_incomplete",
+                      source: "discord_bot_api",
+                      capturedAt: now,
+                      roleRef,
+                      roleReturnedCount: roleRef.returnedCount,
+                      roleStoredCount: roleRef.storedCount,
+                      roleChunkCount: roleRef.chunkCount
+                  };
+              } catch (err) {
+                  logSnapshotFailure("member", err);
+                  return { ...failedMeta("member", version, 1, err, now), guildId };
+              }
+          }
+          '''
+          snapshot = snapshot[:member_start] + member_function + snapshot[member_end:]
+          snapshot = snapshot.replace(
+              'async function storeProfileSnapshot({ userId, version, profile, now = Date.now() }) {\n    try {\n        if (jsonBytes(profile) > MAX_MAX_BYTES) {',
+              'async function storeProfileSnapshot({ userId, version, profile, now = Date.now() }) {\n    try {\n        assertSnapshotBudget(profile, { label: "profile_snapshot" });\n        if (jsonBytes(profile) > MAX_MAX_BYTES) {',
+              1
+          )
+          snapshot_path.write_text(snapshot)
+
+          # Split liveness from dependency readiness.
+          replace_once(
+              "discord/index/server.js",
+              '''    app.get("/ready", sendReadiness);
+              app.get("/health", sendReadiness);''',
+              '''    const sendLiveness = (_req, res) => {
+                  res.status(200).json({
+                      status: "ok",
+                      alive: true
+                  });
+              };
+              app.get("/health", sendLiveness);
+              app.get("/ready", sendReadiness);'''
+          )
+
+          replace_once(
+              "verification-tests/unifiedRuntime.test.js",
+              '''    test("combined health includes database, Discord, voice, and verification", () => {
+                  const server = readIndexServer();
+                  expect(server).toContain("dbConnected");
+                  expect(server).toContain("botOnline");
+                  expect(server).toContain("voiceReady");
+                  expect(server).toContain("verificationReady");
+                  expect(server).toContain('app.get("/ready"');
+                  expect(server).toContain('app.get("/health", sendReadiness)');
+                  expect(server).toContain("voice?.ready === true");
+                  expect(server).not.toContain('res.redirect(307, "/health")');
+              });''',
+              '''    test("separates process liveness from dependency readiness", () => {
+                  const server = readIndexServer();
+                  expect(server).toContain("dbConnected");
+                  expect(server).toContain("botOnline");
+                  expect(server).toContain("voiceReady");
+                  expect(server).toContain("verificationReady");
+                  expect(server).toContain('app.get("/health", sendLiveness)');
+                  expect(server).toContain('app.get("/ready", sendReadiness)');
+                  expect(server).toContain("alive: true");
+                  expect(server).toContain("voice?.ready === true");
+                  expect(server).not.toContain('app.get("/health", sendReadiness)');
+              });'''
+          )
+
+          # Smoke both contracts: liveness must be 200, readiness may be degraded.
+          replace_once(
+              "scripts/smokeUnifiedRuntime.js",
+              '''    const health = await request(baseUrl, "/health");
+              results.push(health);
+              assert([200, 503].includes(health.status), "/health should return ready 200 or degraded 503", health);
+              assert(/json/i.test(health.contentType) || /^\\s*\\{/.test(health.text), "/health did not look like JSON", health);
+
+              const callback = await request(baseUrl, "/auth/callback");''',
+              '''    const health = await request(baseUrl, "/health");
+              results.push(health);
+              assert(health.status === 200, "/health did not return liveness 200", health);
+              assert(/json/i.test(health.contentType) || /^\\s*\\{/.test(health.text), "/health did not look like JSON", health);
+
+              const ready = await request(baseUrl, "/ready");
+              results.push(ready);
+              assert([200, 503].includes(ready.status), "/ready should return ready 200 or degraded 503", ready);
+              assert(/json/i.test(ready.contentType) || /^\\s*\\{/.test(ready.text), "/ready did not look like JSON", ready);
+
+              const callback = await request(baseUrl, "/auth/callback");'''
+          )
+
+          # Documentation must match the runtime contracts and owner-approved campaign behavior.
+          replace_once(
+              "ARCHITECTURE.md",
+              '''The HTTP-first design keeps `/ping` available during startup. `/health` remains
+              503 until MongoDB, Discord, slash-command registration, required voice support,
+              and verification are ready. Bounded command-registration retries run''',
+              '''The HTTP-first design keeps `/ping` available during startup. `/health` is a
+              liveness probe that returns 200 while the HTTP process is running. `/ready`
+              remains 503 until MongoDB, Discord, slash-command registration, required voice
+              support, and verification are ready. Bounded command-registration retries run'''
+          )
+          replace_once(
+              "ARCHITECTURE.md",
+              '''| `GET /ready` | direct combined runtime readiness response; same contract as `/health` |
+              | `GET /health` | combined runtime readiness and diagnostics |''',
+              '''| `GET /ready` | combined dependency readiness; 200 when ready and 503 when degraded |
+              | `GET /health` | process liveness; always 200 while the HTTP process is running |'''
+          )
+          replace_once(
+              "ARCHITECTURE.md",
+              '''- each document remains below the 12 MB application budget''',
+              '''- each snapshot category is checked against the configured aggregate budget before chunking, and each document remains below the 12 MB hard ceiling'''
+          )
+
+          replace_once(
+              "README.md",
+              '''| `GET /ping` | Public | Liveness |
+              | `GET /health` | Public | MongoDB, Discord, slash-command, voice, and verification readiness |''',
+              '''| `GET /ping` | Public | Lightweight listener liveness |
+              | `GET /health` | Public | Process liveness; 200 while the HTTP process is running |
+              | `GET /ready` | Public | MongoDB, Discord, slash-command, voice, and verification readiness |'''
+          )
+          replace_once(
+              "README.md",
+              '''independent from panel restore and Voice auto-resume; `/health` remains degraded
+              until Discord accepts the current registry.''',
+              '''independent from panel restore and Voice auto-resume; `/ready` remains degraded
+              until Discord accepts the current registry.'''
+          )
+          replace_once(
+              "README.md",
+              '''`render.yaml` describes one root Web Service with `npm start` and `/health`
+              as the combined readiness check. `/ping` remains the lightweight liveness path.''',
+              '''`render.yaml` describes one root Web Service with `npm start` and `/health`
+              as the process liveness check. `/ready` reports combined dependency readiness,
+              while `/ping` remains the simplest listener check.'''
+          )
+
+          replace_once(
+              "docs/RUNBOOK.md",
+              '''- `/ping` proves the HTTP listener is alive.
+              - `/health` reports combined MongoDB, Discord slash-command registration,
+                voice, and verification
+                readiness. A 503 during startup is expected; persistent 503 is not.''',
+              '''- `/ping` proves the HTTP listener is alive.
+              - `/health` is the Render/process liveness probe and returns 200 while the
+                HTTP process is running.
+              - `/ready` reports combined MongoDB, Discord slash-command registration,
+                voice, and verification readiness. A 503 during startup is expected;
+                persistent 503 requires investigation.'''
+          )
+          replace_once(
+              "docs/RUNBOOK.md",
+              '''Sync the single root service from `render.yaml`. Render uses `/health` as the
+              combined readiness check for MongoDB, Discord, voice, and verification. Use
+              `/ping` separately when checking only whether the HTTP process is alive during
+              startup or a degraded dependency state.''',
+              '''Sync the single root service from `render.yaml`. Render uses `/health` as the
+              process liveness check. Use `/ready` when checking MongoDB, Discord, voice,
+              slash-command, and verification readiness, and use `/ping` for the simplest
+              listener-only check.'''
+          )
+          replace_once(
+              "docs/RUNBOOK.md",
+              '''### `/health` remains degraded
+
+              - Check `dbConnected`, `botOnline`, `commandsReady`, `voiceReady`, and''',
+              '''### `/ready` remains degraded
+
+              - Check `dbConnected`, `botOnline`, `commandsReady`, `voiceReady`, and'''
+          )
+
+          test_path = Path("verification-tests/snapshotAggregateBudget.test.js")
+          test_path.write_text('''"use strict";
+
+          const ENV_KEY = "VERIFICATION_SNAPSHOT_MAX_BYTES";
+          const originalBudget = process.env[ENV_KEY];
+
+          function loadSnapshotStore() {
+              process.env[ENV_KEY] = String(128 * 1024);
+              jest.resetModules();
+              return require("../discord/verification/services/oauthSnapshotStore");
+          }
+
+          afterEach(() => {
+              jest.restoreAllMocks();
+              if (originalBudget === undefined) delete process.env[ENV_KEY];
+              else process.env[ENV_KEY] = originalBudget;
+              jest.resetModules();
+          });
+
+          test("array snapshots reject an aggregate payload before chunk writes", async () => {
+              const snapshotStore = loadSnapshotStore();
+              jest.spyOn(console, "error").mockImplementation(() => {});
+              const Model = {
+                  bulkWrite: jest.fn(),
+                  updateMany: jest.fn()
+              };
+              const ref = await snapshotStore.storeArraySnapshot(Model, {
+                  kind: "guilds",
+                  userId: "123456789012345678",
+                  version: "aggregate-array",
+                  items: [{ id: "1", payload: "x".repeat(140 * 1024) }],
+                  now: 1000
+              });
+
+              expect(ref).toMatchObject({ complete: false, failureReason: "payload_too_large" });
+              expect(Model.bulkWrite).not.toHaveBeenCalled();
+              expect(Model.updateMany).not.toHaveBeenCalled();
+          });
+
+          test("profile snapshots reject an aggregate payload before MongoDB writes", async () => {
+              const snapshotStore = loadSnapshotStore();
+              jest.spyOn(console, "error").mockImplementation(() => {});
+              const write = jest.spyOn(snapshotStore._models.ProfileSnapshot, "findOneAndUpdate");
+              const finalize = jest.spyOn(snapshotStore._models.ProfileSnapshot, "updateOne");
+
+              const ref = await snapshotStore.storeProfileSnapshot({
+                  userId: "123456789012345678",
+                  version: "aggregate-profile",
+                  profile: { id: "123456789012345678", payload: "x".repeat(140 * 1024) },
+                  now: 1000
+              });
+
+              expect(ref).toMatchObject({ complete: false, failureReason: "payload_too_large" });
+              expect(write).not.toHaveBeenCalled();
+              expect(finalize).not.toHaveBeenCalled();
+          });
+
+          test("member snapshots include member core and roles in the aggregate budget", async () => {
+              const snapshotStore = loadSnapshotStore();
+              jest.spyOn(console, "error").mockImplementation(() => {});
+              const roleWrite = jest.spyOn(snapshotStore._models.MemberRoleSnapshot, "bulkWrite");
+              const memberWrite = jest.spyOn(snapshotStore._models.MemberSnapshot, "findOneAndUpdate");
+
+              const ref = await snapshotStore.storeMemberSnapshot({
+                  userId: "123456789012345678",
+                  guildId: "987654321098765432",
+                  version: "aggregate-member",
+                  member: {
+                      roles: ["1"],
+                      snapshot: { bio: "x".repeat(140 * 1024), roles: ["1"] }
+                  },
+                  now: 1000
+              });
+
+              expect(ref).toMatchObject({ complete: false, failureReason: "payload_too_large" });
+              expect(roleWrite).not.toHaveBeenCalled();
+              expect(memberWrite).not.toHaveBeenCalled();
+          });
+          ''')
+          PY
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Validate protected paths
+        env:
+          PROTECTED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: npm run check:protected
+
+      - name: Validate syntax and guards
+        run: |
+          npm run check:all
+          npm run check:scripts
+          npm run check:memory-guards
+          git diff --check
+
+      - name: Run Discord tests
+        run: npm run test:discord
+
+      - name: Run Voice tests
+        run: npm run test:voice
+
+      - name: Run Verification tests
+        run: npm run test:verification
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
+      - name: Commit validated fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/owner-final-hardening.yml
+          git config user.name "aphichat1835-coder"
+          git config user.email "aphichat1835-coder@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Harden snapshot limits and runtime probes"
+          git push origin HEAD:tt
