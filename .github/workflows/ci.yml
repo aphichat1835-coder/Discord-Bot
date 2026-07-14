@@ -1,4 +1,4 @@
-name: Snapshot redesign diagnostic
+name: Snapshot redesign full diagnostic
 
 on:
   pull_request:
@@ -29,24 +29,24 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
-      - name: Run focused snapshot tests
+      - name: Run full verification tests
         shell: bash
         run: |
           set +e
-          npx jest --runInBand verification-tests/snapshotAggregateBudget.test.js verification-tests/snapshotChunkStore.test.js > snapshot-test.log 2>&1
+          npm run test:verification > verification-test.log 2>&1
           code=$?
-          echo "$code" > snapshot-test.exit
+          echo "$code" > verification-test.exit
           exit 0
 
       - name: Upload complete test log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: snapshot-test-log
+          name: verification-test-log
           path: |
-            snapshot-test.log
-            snapshot-test.exit
+            verification-test.log
+            verification-test.exit
           if-no-files-found: error
 
       - name: Fail when tests failed
-        run: test "$(cat snapshot-test.exit)" = "0"
+        run: test "$(cat verification-test.exit)" = "0"
