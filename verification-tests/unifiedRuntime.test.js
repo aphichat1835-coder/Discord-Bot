@@ -280,16 +280,17 @@ describe("single-process verification runtime contract", () => {
         expect(guilds.every(guild => guild.canManage && guild.isOwner)).toBe(true);
     });
 
-    test("combined health includes database, Discord, voice, and verification", () => {
+    test("separates process liveness from dependency readiness", () => {
         const server = readIndexServer();
         expect(server).toContain("dbConnected");
         expect(server).toContain("botOnline");
         expect(server).toContain("voiceReady");
         expect(server).toContain("verificationReady");
-        expect(server).toContain('app.get("/ready"');
-        expect(server).toContain('app.get("/health", sendReadiness)');
+        expect(server).toContain('app.get("/health", sendLiveness)');
+        expect(server).toContain('app.get("/ready", sendReadiness)');
+        expect(server).toContain("alive: true");
         expect(server).toContain("voice?.ready === true");
-        expect(server).not.toContain('res.redirect(307, "/health")');
+        expect(server).not.toContain('app.get("/health", sendReadiness)');
     });
 
     test("graceful shutdown stops verification and closes HTTP and MongoDB", () => {

@@ -6,7 +6,7 @@ const ConnectionSnapshot = require("../models/OAuthUserConnectionSnapshot");
 const MemberSnapshot = require("../models/OAuthMemberSnapshot");
 const MemberRoleSnapshot = require("../models/OAuthMemberRoleSnapshot");
 const ProfileSnapshot = require("../models/OAuthUserProfileSnapshot");
-const { jsonBytes, MAX_MAX_BYTES } = require("./snapshotBudget");
+const { jsonBytes, MAX_MAX_BYTES, assertSnapshotBudget } = require("./snapshotBudget");
 
 const CHUNK_MAX_BYTES = Math.min(
     MAX_MAX_BYTES,
@@ -99,6 +99,7 @@ async function storeArraySnapshot(Model, {
 }) {
     const itemList = Array.isArray(items) ? items : [];
     try {
+        assertSnapshotBudget(itemList, { label: `${kind}_snapshot` });
         const chunks = chunkItems(itemList);
         const common = {
             userId,
@@ -150,6 +151,12 @@ async function storeMemberSnapshot({ userId, guildId, version, member, now = Dat
         const rawMemberCore = { ...memberCore.snapshot };
         delete rawMemberCore.roles;
         memberCore.snapshot = rawMemberCore;
+    }
+    try {
+        assertSnapshotBudget({ member: memberCore, roles }, { label: "member_snapshot" });
+    } catch (err) {
+        logSnapshotFailure("member", err);
+        return { ...failedMeta("member", version, 1, err, now), guildId };
     }
     const roleRef = await storeArraySnapshot(MemberRoleSnapshot, {
         kind: "memberRoles",
@@ -228,6 +235,7 @@ async function storeMemberSnapshot({ userId, guildId, version, member, now = Dat
 
 async function storeProfileSnapshot({ userId, version, profile, now = Date.now() }) {
     try {
+        assertSnapshotBudget(profile, { label: "profile_snapshot" });
         if (jsonBytes(profile) > MAX_MAX_BYTES) {
             const error = new Error("profile snapshot exceeds per-document maximum");
             error.code = "snapshot_item_too_large";

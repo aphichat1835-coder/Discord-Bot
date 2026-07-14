@@ -39,8 +39,9 @@ database connection, and the HTTP server.
 | `GET /api/guild/:guildId/member/:userId/ip-history` | Owner PIN | Paginated canonical users/devices/role history for the member's IP |
 | `POST /api/guild/:guildId/member/:userId/reveal-token` | Owner PIN + CSRF + reason | Raw OAuth2 token reveal with audit status |
 | `POST /api/verify-owner/guild/:guildId/user/:userId/reveal-ip` | Owner PIN + CSRF + reason | Raw-IP reveal with audit status |
-| `GET /ping` | Public | Liveness |
-| `GET /health` | Public | MongoDB, Discord, slash-command, voice, and verification readiness |
+| `GET /ping` | Public | Lightweight listener liveness |
+| `GET /health` | Public | Process liveness; 200 while the HTTP process is running |
+| `GET /ready` | Public | MongoDB, Discord, slash-command, voice, and verification readiness |
 
 There is no guild-admin OAuth login and no standalone `dashboard-public`
 service. Historical encrypted `adminOAuth` grants remain readable and
@@ -52,7 +53,7 @@ The runtime registers exactly 16 guild-only commands: `/voice-online`, `/help`,
 `/serverinfo`, `/ping`, `/userinfo`, `/clear`, `/say`,
 `/announce`, `/copy-emojis`, `/backup`, `/restore`, `/voicekickall`, `/ban`,
 `/kick`, `/timeout`, and `/setup-verify`. Registration retries are bounded and
-independent from panel restore and Voice auto-resume; `/health` remains degraded
+independent from panel restore and Voice auto-resume; `/ready` remains degraded
 until Discord accepts the current registry.
 
 The retired Enterprise Audit subsystem is not mounted: there is no `/setup-log`,
@@ -156,7 +157,8 @@ Internal port:   PORT (or 3000)
 ```
 
 `render.yaml` describes one root Web Service with `npm start` and `/health`
-as the combined readiness check. `/ping` remains the lightweight liveness path.
+as the process liveness check. `/ready` reports combined dependency readiness,
+while `/ping` remains the simplest listener check.
 
 After deploy, run the single-port smoke helper from a trusted machine:
 

@@ -12,9 +12,11 @@ npm start
 The process must open one listener on `PORT || 3000`.
 
 - `/ping` proves the HTTP listener is alive.
-- `/health` reports combined MongoDB, Discord slash-command registration,
-  voice, and verification
-  readiness. A 503 during startup is expected; persistent 503 is not.
+- `/health` is the Render/process liveness probe and returns 200 while the
+  HTTP process is running.
+- `/ready` reports combined MongoDB, Discord slash-command registration,
+  voice, and verification readiness. A 503 during startup is expected;
+  persistent 503 requires investigation.
 
 Expected boot order in logs:
 
@@ -41,9 +43,9 @@ register `https://DOMAIN/auth/callback` in Discord Developer Portal.
 ### Render
 
 Sync the single root service from `render.yaml`. Render uses `/health` as the
-combined readiness check for MongoDB, Discord, voice, and verification. Use
-`/ping` separately when checking only whether the HTTP process is alive during
-startup or a degraded dependency state.
+process liveness check. Use `/ready` when checking MongoDB, Discord, voice,
+slash-command, and verification readiness, and use `/ping` for the simplest
+listener-only check.
 
 ## Pre-cutover
 
@@ -117,7 +119,7 @@ recovery.
 
 ## Common failures
 
-### `/health` remains degraded
+### `/ready` remains degraded
 
 - Check `dbConnected`, `botOnline`, `commandsReady`, `voiceReady`, and
   `verificationReady`.

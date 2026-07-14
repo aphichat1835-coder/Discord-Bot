@@ -506,8 +506,14 @@ function registerRoutes({
             commandsReady: slashCommandsReady
         });
     };
+    const sendLiveness = (_req, res) => {
+        res.status(200).json({
+            status: "ok",
+            alive: true
+        });
+    };
+    app.get("/health", sendLiveness);
     app.get("/ready", sendReadiness);
-    app.get("/health", sendReadiness);
 
     app.use("/api", (req, res, next) => {
         if (shouldBypassDashboardReadApi(req)) return next();

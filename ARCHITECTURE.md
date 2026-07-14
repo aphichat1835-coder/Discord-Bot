@@ -46,9 +46,10 @@ Authoritative orchestration is `discord/index.js`.
 7. Login the Discord client.
 8. Start normal event, protection, voice/session, and scheduled work.
 
-The HTTP-first design keeps `/ping` available during startup. `/health` remains
-503 until MongoDB, Discord, slash-command registration, required voice support,
-and verification are ready. Bounded command-registration retries run
+The HTTP-first design keeps `/ping` available during startup. `/health` is a
+liveness probe that returns 200 while the HTTP process is running. `/ready`
+remains 503 until MongoDB, Discord, slash-command registration, required voice
+support, and verification are ready. Bounded command-registration retries run
 independently so an API registration outage does not block panel restore or
 Voice auto-resume.
 
@@ -108,8 +109,8 @@ owner-locked. Their implementation details are intentionally not documented.
 | Method/path | Behavior |
 | --- | --- |
 | `GET /ping` | liveness, always simple 200 while listener is running |
-| `GET /ready` | direct combined runtime readiness response; same contract as `/health` |
-| `GET /health` | combined runtime readiness and diagnostics |
+| `GET /ready` | combined dependency readiness; 200 when ready and 503 when degraded |
+| `GET /health` | process liveness; always 200 while the HTTP process is running |
 | `GET /auth/callback` | serves OAuth callback UI |
 | `POST /auth/callback` | rate-limited verification execution |
 
@@ -250,7 +251,7 @@ does not protect against loss of the entire MongoDB database.
   pagination, so older users remain reachable without an in-memory scan ceiling
 - a category is complete only when `returnedCount === storedCount`, every chunk
   finalized successfully, and `complete` is true
-- each document remains below the 12 MB application budget
+- each snapshot category is checked against the configured aggregate budget before chunking, and each document remains below the 12 MB hard ceiling
 
 ### Browser/device/network
 
