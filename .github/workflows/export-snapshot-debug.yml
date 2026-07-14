@@ -1,0 +1,22 @@
+name: Export snapshot debug bundle
+on:
+  push:
+    branches: [tt]
+    paths: [.github/workflows/export-snapshot-debug.yml]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: tt
+          fetch-depth: 0
+      - name: Create repository bundle
+        run: git bundle create snapshot-debug.bundle --all
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-debug-bundle
+          path: snapshot-debug.bundle
+          retention-days: 1
