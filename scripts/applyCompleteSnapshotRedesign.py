@@ -60,12 +60,23 @@ route = replace_literal_once(
     return next;
 }
 ''',
-    '''function mergeCompleteSnapshotRefs(previousRefs = {}, stored = {}) {
+    '''function isCompleteSnapshotSet(stored = {}) {
+    if (stored.complete === true) return true;
+    if (stored.complete === false) return false;
+    const presentKinds = ["profile", "guilds", "connections", "member"]
+        .filter(kind => stored[kind]);
+    return presentKinds.length > 0 && presentKinds.every(kind =>
+        stored[kind]?.complete === true &&
+        stored[kind].returnedCount === stored[kind].storedCount
+    );
+}
+
+function mergeCompleteSnapshotRefs(previousRefs = {}, stored = {}) {
     const next = { ...objectOrEmpty(previousRefs) };
-    if (stored.complete !== true) return next;
+    if (!isCompleteSnapshotSet(stored)) return next;
     const expectedKinds = Array.isArray(stored.expectedKinds)
         ? stored.expectedKinds
-        : ["profile", "guilds", "connections", "member"];
+        : ["profile", "guilds", "connections", "member"].filter(kind => stored[kind]);
     for (const kind of expectedKinds) {
         if (stored[kind]?.complete === true &&
             stored[kind].returnedCount === stored[kind].storedCount) {
@@ -88,7 +99,7 @@ route = replace_literal_once(
     route,
     '''        let snapshotMeta = buildSnapshotMetaUpdate(
 ''',
-    '''        if (storedSnapshots.complete !== true) {
+    '''        if (!isCompleteSnapshotSet(storedSnapshots)) {
             return {
                 saved: false,
                 snapshotVersion: storedSnapshots.version,
