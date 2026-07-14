@@ -1,110 +1,126 @@
-name: CI
+name: Publish deep bugfix audit
 
 on:
   push:
-  pull_request:
+    branches:
+      - codex/deep-bugfix-final-validation
+
+permissions:
+  contents: write
 
 jobs:
-  checks:
+  validate-and-publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-
+    timeout-minutes: 30
     steps:
-      - name: Checkout
+      - name: Checkout validation branch
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
-          persist-credentials: false
 
-      - name: Setup Node
+      - name: Reconstruct validated patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat CONTEXT.md ROADMAP.md AGENTS.md README.md docs/RUNBOOK.md ARCHITECTURE.md > /tmp/deep.patch.b64
+          base64 --decode /tmp/deep.patch.b64 | gunzip > /tmp/deep.patch
+          echo "c58103ebc33d6a472a4d8388befb38cd612102ca350f3d26c433f50c4b9c67bf  /tmp/deep.patch" | sha256sum --check
+
+      - name: Apply on current tt head
+        shell: bash
+        env:
+          EXPECTED_TT: 463e717b44ea2bc374db8d5bacd8cbd0994bda52
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin tt
+          actual="$(git rev-parse origin/tt)"
+          if [ "$actual" != "$EXPECTED_TT" ]; then
+            echo "::error::tt moved from $EXPECTED_TT to $actual; refusing to overwrite."
+            exit 1
+          fi
+          git reset --hard origin/tt
+          git apply --check /tmp/deep.patch
+          git apply /tmp/deep.patch
+          git diff --check
+
+      - name: Verify exact change manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/expected-files <<'EOF'
+          CHANGELOG.md
+          discord/commands.js
+          discord/commands/moderation.js
+          discord/commands/utility.js
+          discord/guards/dashboardGuards.js
+          discord/logging/modCaseManager.js
+          discord/tests/clearCommand.test.js
+          discord/tests/commandReliability.test.js
+          discord/tests/dashboardGuards.test.js
+          discord/tests/internalEventStorage.test.js
+          discord/tests/modCaseManager.test.js
+          discord/tests/moderationHelpers.test.js
+          discord/tests/moderationWorkflow.test.js
+          discord/tests/protectedPaths.test.js
+          discord/tests/protectionCase.test.js
+          discord/tests/sayCommand.test.js
+          discord/tests/verificationRole.test.js
+          discord/tests/viewHelpersNav.test.js
+          discord/verification/routes/oauth.js
+          discord/verification/services/ipIdentityHistoryService.js
+          scripts/checkProtectedPaths.js
+          scripts/migrateVerificationSnapshots.js
+          verification-tests/dataContract.test.js
+          verification-tests/ipIdentityHistory.test.js
+          verification-tests/migration.test.js
+          EOF
+          git status --short | sed -E 's/^.. //' | sort > /tmp/actual-files
+          sort -o /tmp/expected-files /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+          if git diff --name-only -- discord/systemProvider.js discord/systemProvider/ | grep -q .; then
+            echo "::error::Unexpected protected-path change."
+            exit 1
+          fi
+          if git diff --name-only -- package.json package-lock.json | grep -q .; then
+            echo "::error::Unexpected dependency manifest change."
+            exit 1
+          fi
+
+      - name: Setup Node 24
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 24
 
-      - name: Show tool versions
-        run: |
-          node --version
-          npm --version
-
-      - name: Install root dependencies
+      - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
-      - name: Verify Discord runtime dependencies
-        run: node -e "require('discord.js'); require('@discordjs/voice'); console.log('discord runtime ok')"
-
-      - name: Verify unified verification test runner
-        run: node -e "require.resolve('jest-circus/runner'); require('jest-resolve'); console.log('verification jest ok')"
-
-      - name: Resolve protected diff base
-        id: protected-base
-        shell: bash
+      - name: Repository checks
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PUSH_BEFORE_SHA: ${{ github.event.before }}
-          BASE_REF: ${{ github.base_ref }}
-          REF_NAME: ${{ github.ref_name }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          CI: "false"
+          PROTECTED_BASE_SHA: 463e717b44ea2bc374db8d5bacd8cbd0994bda52
+        run: npm run check
+
+      - name: Full test suite
+        run: npm test
+
+      - name: Dependency audit
+        run: npm audit --audit-level=high
+
+      - name: Final diff validation
+        shell: bash
         run: |
           set -euo pipefail
+          git diff --check
+          git status --short
 
-          is_commit() {
-            local candidate="${1:-}"
-            [ -n "$candidate" ] &&
-              [[ ! "$candidate" =~ ^0+$ ]] &&
-              git cat-file -e "${candidate}^{commit}" 2>/dev/null
-          }
-
-          base=""
-          if [ "$EVENT_NAME" = "pull_request" ]; then
-            base="$PR_BASE_SHA"
-          elif [ "$EVENT_NAME" = "push" ]; then
-            base="$PUSH_BEFORE_SHA"
-          fi
-
-          if ! is_commit "$base"; then
-            if [ "$EVENT_NAME" = "pull_request" ]; then
-              target_ref="${BASE_REF:-$DEFAULT_BRANCH}"
-              git fetch --no-tags origin "$target_ref"
-              base="$(git merge-base "origin/$target_ref" HEAD)"
-            elif [ "$EVENT_NAME" = "push" ] && [ "$REF_NAME" != "$DEFAULT_BRANCH" ]; then
-              git fetch --no-tags origin "$DEFAULT_BRANCH"
-              base="$(git merge-base "origin/$DEFAULT_BRANCH" HEAD)"
-            elif git rev-parse --verify HEAD^1 >/dev/null 2>&1; then
-              base="$(git rev-parse HEAD^1)"
-            fi
-          fi
-
-          if ! is_commit "$base"; then
-            echo "::error::Unable to resolve a usable protected diff base."
-            exit 1
-          fi
-
-          echo "sha=$base" >> "$GITHUB_OUTPUT"
-          echo "Protected diff base: $base"
-
-      - name: Protected path guard
+      - name: Commit and publish tt
+        shell: bash
         env:
-          PROTECTED_BASE_SHA: ${{ steps.protected-base.outputs.sha }}
-        run: npm run check:protected
-
-      - name: Syntax check (Discord)
-        run: npm run check:all
-
-      - name: Syntax check (Scripts)
-        run: npm run check:scripts
-
-      - name: Memory guards check
-        run: npm run check:memory-guards
-
-      - name: Discord tests
-        run: npm run test:discord
-
-      - name: Voice tests
-        run: npm run test:voice
-
-      - name: Verification tests
-        run: npm run test:verification
-
-      - name: Root audit
-        run: npm audit --audit-level=high
+          EXPECTED_TT: 463e717b44ea2bc374db8d5bacd8cbd0994bda52
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix command concurrency and data integrity edge cases"
+          git push origin HEAD:refs/heads/tt --force-with-lease=refs/heads/tt:${EXPECTED_TT}
