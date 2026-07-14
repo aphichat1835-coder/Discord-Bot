@@ -15,8 +15,6 @@
 +            roles: { $all: ["1", "2", "3"], $size: 3 }
 +        });
 +        expect(history._test.roleEventIdentity({ ...base, roles: [] }).roles).toEqual({ $size: 0 });
-+    });
-+
+     });
+ 
      test("rejects non-snowflake history lookup identifiers before database access", () => {
-         expect(() => history._test.strictSnowflake("$gt", "invalid_user_id"))
-             .toThrow("invalid_user_id");
