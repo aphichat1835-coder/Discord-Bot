@@ -1063,6 +1063,23 @@ async function loadOAuthSnapshotState(profileUserId) {
         .lean();
 }
 
+function stagedSnapshotRefs(storedSnapshots = {}) {
+    const expectedKinds = Array.isArray(storedSnapshots.expectedKinds)
+        ? storedSnapshots.expectedKinds
+        : ["profile", "guilds", "connections", "member"].filter(kind => storedSnapshots[kind]);
+    return Object.fromEntries(expectedKinds
+        .filter(kind => storedSnapshots[kind])
+        .map(kind => [kind, storedSnapshots[kind]]));
+}
+
+async function rollbackStoredSnapshots(profileUserId, storedSnapshots) {
+    return snapshotStore.rollbackSnapshotVersion({
+        userId: profileUserId,
+        version: storedSnapshots.version,
+        refs: stagedSnapshotRefs(storedSnapshots)
+    });
+}
+
 async function saveOAuthUserSafe({
     profile,
     tokenData,
@@ -1109,7 +1126,21 @@ async function saveOAuthUserSafe({
             }
             // Read after staging completes so optional-fetch preservation and ref
             // merging use the freshest active state available before activation.
-            const existing = await loadOAuthSnapshotState(profileUserId);
+            let existing;
+            try {
+                existing = await loadOAuthSnapshotState(profileUserId);
+            } catch (stateError) {
+                const rollback = await rollbackStoredSnapshots(profileUserId, storedSnapshots);
+                console.error("[VERIFY] active snapshot state read failed:", JSON.stringify(sanitizeSideEffectError(stateError)));
+                return {
+                    saved: false,
+                    code: stateError?.code || "oauth_snapshot_state_read_failed",
+                    snapshotVersion: storedSnapshots.version,
+                    snapshotRefs: null,
+                    snapshotWrites: storedSnapshots,
+                    rollback
+                };
+            }
             const previousMeta = existing?.snapshotMeta || {};
             let snapshotMeta = buildSnapshotMetaUpdate(
                 previousMeta,
@@ -1188,17 +1219,7 @@ async function saveOAuthUserSafe({
                 );
                 if (duplicateDiscordUser) err.code = "snapshot_activation_stale";
                 console.error("[VERIFY] saveOAuthUser core failed:", JSON.stringify(sanitizeSideEffectError(err)));
-                const expectedKinds = Array.isArray(storedSnapshots.expectedKinds)
-                    ? storedSnapshots.expectedKinds
-                    : ["profile", "guilds", "connections", "member"].filter(kind => storedSnapshots[kind]);
-                const stagedRefs = Object.fromEntries(expectedKinds
-                    .filter(kind => storedSnapshots[kind])
-                    .map(kind => [kind, storedSnapshots[kind]]));
-                const rollback = await snapshotStore.rollbackSnapshotVersion({
-                    userId: profileUserId,
-                    version: storedSnapshots.version,
-                    refs: stagedRefs
-                });
+                const rollback = await rollbackStoredSnapshots(profileUserId, storedSnapshots);
                 const active = err?.code === "snapshot_activation_stale"
                     ? await loadOAuthSnapshotState(profileUserId).catch(() => null)
                     : null;
@@ -2202,6 +2223,8 @@ module.exports._test = {
     saveOAuthUserSafe,
     saveVerifyLogSafe,
     loadOAuthSnapshotState,
+    stagedSnapshotRefs,
+    rollbackStoredSnapshots,
     withOAuthSnapshotLock,
     oauthSnapshotLocks
 };

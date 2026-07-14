@@ -52,6 +52,7 @@ describe("verification panel DB/Discord consistency", () => {
         const source = fs.readFileSync(require.resolve("../discord/verification/routes/guild"), "utf8");
         expect(source).toMatch(/await saveConfigWithRetry\(config\)/);
         expect(source).toMatch(/persistedPanelMatches\(guildId, verification\)/);
+        expect(source).toMatch(/const previousPanelPayload = panelRollbackPayload\(existing\.message\)/);
         expect(source).toMatch(/rollbackDiscordPanel\(channelId, messageId, previousPanelPayload\)/);
         expect(source).toMatch(/recoveryRequired: !rollback\.complete/);
         expect(source).toMatch(/persistedPanelMatches\(sentPanel\.guildId, sentPanel\)/);

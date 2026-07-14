@@ -400,6 +400,50 @@ describe("unified verification data contract", () => {
         }
     });
 
+    test("an active-state read failure rolls back staged chunks before returning", async () => {
+        const previousStore = process.env.STORE_OAUTH_TOKENS;
+        process.env.STORE_OAUTH_TOKENS = "false";
+        const query = {
+            where: jest.fn().mockReturnThis(),
+            equals: jest.fn().mockReturnThis(),
+            select: jest.fn().mockReturnThis(),
+            lean: jest.fn().mockRejectedValue(Object.assign(new Error("state read failed"), { code: "state_read_failed" }))
+        };
+        jest.spyOn(OAuthUser, "findOne").mockReturnValue(query);
+        jest.spyOn(snapshotStore, "storeOAuthSnapshots").mockResolvedValue({
+            version: "v-staged",
+            complete: true,
+            expectedKinds: ["profile"],
+            profile: {
+                kind: "profile", version: "v-staged", returnedCount: 1,
+                storedCount: 1, chunkCount: 1, complete: true
+            }
+        });
+        const rollback = jest.spyOn(snapshotStore, "rollbackSnapshotVersion")
+            .mockResolvedValue({ complete: true, failedModels: [] });
+        jest.spyOn(console, "error").mockImplementation(() => {});
+        try {
+            const result = await saveOAuthUserSafe({
+                profile: { id: "12345678901234567", username: "user", discriminator: "0" },
+                tokenData: {}, connections: [], guilds: [], memberInfo: null,
+                guildId: "76543210987654321", roleId: "76543210987654322",
+                result: "success", riskScore: 0, riskFlags: [], trackingSnapshot: null,
+                fetchMetadata: {}, attemptStartedAt: 100
+            });
+            expect(result.saved).toBe(false);
+            expect(result.code).toBe("state_read_failed");
+            expect(rollback).toHaveBeenCalledWith(expect.objectContaining({
+                userId: "12345678901234567",
+                version: "v-staged",
+                refs: { profile: expect.objectContaining({ version: "v-staged" }) }
+            }));
+        } finally {
+            jest.restoreAllMocks();
+            if (previousStore === undefined) delete process.env.STORE_OAUTH_TOKENS;
+            else process.env.STORE_OAUTH_TOKENS = previousStore;
+        }
+    });
+
     test("a core write failure rolls back staged chunks and preserves active references", async () => {
         const previousStore = process.env.STORE_OAUTH_TOKENS;
         process.env.STORE_OAUTH_TOKENS = "false";

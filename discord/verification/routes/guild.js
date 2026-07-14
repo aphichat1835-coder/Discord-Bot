@@ -1121,12 +1121,9 @@ router.patch("/api/guild/:guildId/verify/panel/update", requireAdmin, requireGui
       });
     }
 
-    let previousPanelPayload;
-    try {
-      previousPanelPayload = makePanelPayload(req, { guildId, verification: previousVerification });
-    } catch {
-      previousPanelPayload = panelRollbackPayload(existing.message);
-    }
+    // Roll back to the exact message Discord returned, not a regenerated OAuth
+    // payload that may contain a different state nonce or normalized content.
+    const previousPanelPayload = panelRollbackPayload(existing.message);
 
     /*
       สำคัญ:
