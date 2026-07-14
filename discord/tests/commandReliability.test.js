@@ -78,6 +78,121 @@ test("voice panel update reports persistence failure", async () => {
     }
 });
 
+
+test("voice-online rejects overlapping panel creation within the same guild", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    commands._test.activePanelCreates.clear();
+    commands.getPanelMessages().delete("guild-lock");
+    const originalSave = sessionManager.savePanelState;
+    sessionManager.savePanelState = async () => true;
+
+    let releaseFirstReply;
+    let firstReplyStarted;
+    const firstReplyReady = new Promise(resolve => { firstReplyStarted = resolve; });
+    const firstReplyGate = new Promise(resolve => { releaseFirstReply = resolve; });
+    const firstMessage = {
+        id: "panel-first",
+        guild: { id: "guild-lock" },
+        channel: { id: "channel-lock" },
+        edit: async () => ({})
+    };
+    const baseInteraction = () => ({
+        guild: { id: "guild-lock" },
+        member: { permissions: { has: permission => permission === "ADMINISTRATOR" } },
+        isCommand: () => true,
+        followUp: async () => null
+    });
+    const first = {
+        ...baseInteraction(),
+        reply: async () => {
+            firstReplyStarted();
+            await firstReplyGate;
+            return firstMessage;
+        }
+    };
+    const secondReplies = [];
+    const second = {
+        ...baseInteraction(),
+        reply: async payload => {
+            secondReplies.push(payload);
+            return null;
+        }
+    };
+
+    try {
+        const firstRun = commands._test.handleVoiceOnlineCommand(first);
+        await firstReplyReady;
+        await commands._test.handleVoiceOnlineCommand(second);
+        assert.equal(secondReplies.length, 1);
+        assert.match(secondReplies[0].content, /กำลังสร้างแผงควบคุม/);
+        assert.equal(secondReplies[0].ephemeral, true);
+        assert.equal(commands._test.activePanelCreates.size, 1);
+
+        releaseFirstReply();
+        await firstRun;
+        assert.equal(commands._test.activePanelCreates.size, 0);
+        assert.equal(commands.getPanelMessages().get("guild-lock"), firstMessage);
+    } finally {
+        releaseFirstReply?.();
+        commands._test.activePanelCreates.clear();
+        commands.getPanelMessages().delete("guild-lock");
+        sessionManager.savePanelState = originalSave;
+    }
+});
+
+
+
+test("voice-online guards are isolated per guild", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    commands._test.activePanelCreates.clear();
+    const originalSave = sessionManager.savePanelState;
+    sessionManager.savePanelState = async () => true;
+    const messages = new Map();
+    const interaction = guildId => ({
+        guild: { id: guildId },
+        member: { permissions: { has: permission => permission === "ADMINISTRATOR" } },
+        isCommand: () => true,
+        reply: async () => {
+            const message = {
+                id: `panel-${guildId}`,
+                guild: { id: guildId },
+                channel: { id: `channel-${guildId}` },
+                edit: async () => ({})
+            };
+            messages.set(guildId, message);
+            return message;
+        },
+        followUp: async () => null
+    });
+
+    try {
+        await Promise.all([
+            commands._test.handleVoiceOnlineCommand(interaction("guild-a")),
+            commands._test.handleVoiceOnlineCommand(interaction("guild-b"))
+        ]);
+        assert.equal(messages.size, 2);
+        assert.equal(commands.getPanelMessages().get("guild-a"), messages.get("guild-a"));
+        assert.equal(commands.getPanelMessages().get("guild-b"), messages.get("guild-b"));
+        assert.equal(commands._test.activePanelCreates.size, 0);
+    } finally {
+        commands._test.activePanelCreates.clear();
+        commands.getPanelMessages().delete("guild-a");
+        commands.getPanelMessages().delete("guild-b");
+        sessionManager.savePanelState = originalSave;
+    }
+});
+
+test("voice-online releases the guild guard when command instrumentation throws", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    commands._test.activePanelCreates.clear();
+    const interaction = {
+        guild: { id: "guild-instrumentation" },
+        member: { permissions: { has: permission => permission === "ADMINISTRATOR" } },
+        isCommand: () => true,
+        __onCommandAccepted: () => { throw new Error("metrics failed"); },
+        reply: async () => { throw new Error("reply must not run"); }
+    };
+    await assert.rejects(commands._test.handleVoiceOnlineCommand(interaction), /metrics failed/);
+    assert.equal(commands._test.activePanelCreates.has("guild-instrumentation"), false);
+});
+
 test("command router delegates registered command groups without changing handlers", () => {
     assert.equal(commands._test.delegatedCommandHandler("ping"), information.handle);
     assert.equal(typeof commands._test.delegatedCommandHandler("ban"), "function");

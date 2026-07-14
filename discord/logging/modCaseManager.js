@@ -52,6 +52,17 @@ function canUseMongoStore() {
     return mongoose.connection?.readyState === 1;
 }
 
+function withPersistenceStore(doc, persistenceStore) {
+    if (!doc || typeof doc !== "object") return doc || null;
+    return {
+        ...doc,
+        metadata: {
+            ...(doc.metadata && typeof doc.metadata === "object" ? doc.metadata : {}),
+            persistenceStore
+        }
+    };
+}
+
 function normalizeAction(action) {
     return safeText(String(action || "unknown").toLowerCase(), 40);
 }
@@ -162,12 +173,13 @@ async function getCase(sessionManager, guildId, caseNumber) {
     if (canUseMongoStore()) {
         try {
             const doc = await modCaseStore.getCase(guildId, caseNumber);
-            if (doc) return { ...doc, metadata: { ...doc.metadata, persistenceStore: doc.metadata?.persistenceStore || "mongo" } };
+            if (doc) return withPersistenceStore(doc, doc.metadata?.persistenceStore || "mongo");
         } catch (err) {
             console.warn(`[MODCASE] Mongo get failed, fallback settings: ${safeErrorText(err, 240)}`);
         }
     }
-    return sessionManager?.getSetting?.(caseKey(guildId, caseNumber), null) || null;
+    const settingsDoc = await sessionManager?.getSetting?.(caseKey(guildId, caseNumber), null);
+    return settingsDoc ? withPersistenceStore(settingsDoc, "settings") : null;
 }
 
 async function listUserCases(sessionManager, guildId, userId, limit = 10) {
@@ -177,7 +189,7 @@ async function listUserCases(sessionManager, guildId, userId, limit = 10) {
     if (canUseMongoStore()) {
         try {
             const docs = await modCaseStore.listUserCases(guildId, userId, max);
-            if (docs.length) return docs;
+            if (docs.length) return docs.map(doc => withPersistenceStore(doc, doc.metadata?.persistenceStore || "mongo"));
         } catch (err) {
             console.warn(`[MODCASE] Mongo list failed, fallback settings: ${safeErrorText(err, 240)}`);
         }
@@ -203,10 +215,11 @@ async function updateCaseReason(sessionManager, guildId, caseNumber, reason, ame
         updatedAt: Date.now()
     };
 
-    if (canUseMongoStore()) {
+    const persistenceStore = existing.metadata?.persistenceStore || "settings";
+    if (persistenceStore === "mongo" && canUseMongoStore()) {
         try {
             const updated = await modCaseStore.updateCase(guildId, caseNumber, patch);
-            if (updated) return updated;
+            if (updated) return withPersistenceStore(updated, "mongo");
         } catch (err) {
             console.warn(`[MODCASE] Mongo update failed, fallback settings: ${safeErrorText(err, 240)}`);
         }
@@ -232,11 +245,11 @@ async function updateCaseStatus(sessionManager, guildId, caseNumber, status, met
             ]),
         updatedAt: Date.now()
     };
-    const persistenceStore = existing.metadata?.persistenceStore || (canUseMongoStore() ? "mongo" : "settings");
+    const persistenceStore = existing.metadata?.persistenceStore || "settings";
     if (persistenceStore === "mongo" && canUseMongoStore()) {
         try {
             const updated = await modCaseStore.updateCase(guildId, caseNumber, patch);
-            if (updated) return updated;
+            if (updated) return withPersistenceStore(updated, "mongo");
         } catch (err) {
             console.warn(`[MODCASE] Mongo status update failed, fallback settings: ${safeErrorText(err, 240)}`);
         }
@@ -266,6 +279,7 @@ module.exports = {
         normalizeDuration,
         buildCaseDoc,
         canUseMongoStore,
+        withPersistenceStore,
         nextCaseNumberFallback,
         withFallbackLock
     }

@@ -13,7 +13,7 @@ function message(id, ageMs, now, onDelete) {
     };
 }
 
-test("clear bulk-deletes recent messages and individually deletes old messages", async () => {
+test("clear bulk-deletes recent messages and individually deletes old messages", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const now = Date.now();
     const individuallyDeleted = [];
     const recent = [
@@ -40,7 +40,7 @@ test("clear bulk-deletes recent messages and individually deletes old messages",
     assert.deepEqual(individuallyDeleted, ["old-1"]);
 });
 
-test("clear falls back to sequential deletion when bulk deletion fails", async () => {
+test("clear falls back to sequential deletion when bulk deletion fails", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const now = Date.now();
     const individuallyDeleted = [];
     const messages = [

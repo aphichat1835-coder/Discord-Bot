@@ -24,6 +24,8 @@ const {
     sanitizeDiscordPayload,
     memberFetchQualityStatus,
     recordPostRoleMemberFetch,
+    nextOAuthAttemptOrder,
+    buildSnapshotActivationFilter,
     withOAuthSnapshotLock,
     oauthSnapshotLocks
 } = oauthRoute._test;
@@ -331,12 +333,16 @@ describe("unified verification data contract", () => {
                 result: "success", riskScore: 0, riskFlags: [], trackingSnapshot: null,
                 fetchMetadata: {}, attemptStartedAt: 100
             });
-            expect(write.mock.calls[0][0]).toEqual({
-                'discord.userId': "12345678901234567",
-                $or: [
-                    { 'snapshotMeta.activation.attemptStartedAt': { $exists: false } },
-                    { 'snapshotMeta.activation.attemptStartedAt': { $lte: 100 } }
-                ]
+            const filter = write.mock.calls[0][0];
+            expect(filter['discord.userId']).toBe("12345678901234567");
+            expect(filter.$or).toHaveLength(3);
+            expect(filter.$or[1]).toEqual({
+                'snapshotMeta.activation.attemptOrder': { $exists: false },
+                'snapshotMeta.activation.attemptStartedAt': { $exists: false }
+            });
+            expect(filter.$or[2]).toEqual({
+                'snapshotMeta.activation.attemptOrder': { $exists: false },
+                'snapshotMeta.activation.attemptStartedAt': { $lte: 100 }
             });
             expect(result.saved).toBe(false);
             expect(result.code).toBe("snapshot_activation_stale");
@@ -388,11 +394,123 @@ describe("unified verification data contract", () => {
                 result: "success", riskScore: 0, riskFlags: [], trackingSnapshot: null,
                 fetchMetadata: {}, attemptStartedAt: 100
             });
-            expect(write.mock.calls[0][0].$or).toHaveLength(2);
+            expect(write.mock.calls[0][0].$or).toHaveLength(3);
             expect(result.saved).toBe(false);
             expect(result.code).toBe("snapshot_activation_stale");
             expect(result.snapshotRefs).toEqual(activeRefs);
             expect(rollback).toHaveBeenCalledWith(expect.objectContaining({ version: "v-older" }));
+        } finally {
+            jest.restoreAllMocks();
+            if (previousStore === undefined) delete process.env.STORE_OAUTH_TOKENS;
+            else process.env.STORE_OAUTH_TOKENS = previousStore;
+        }
+    });
+
+
+    test("same-millisecond callbacks use a total attempt order so older work cannot overwrite newer state", async () => {
+        const previousStore = process.env.STORE_OAUTH_TOKENS;
+        process.env.STORE_OAUTH_TOKENS = "false";
+        const olderOrder = nextOAuthAttemptOrder(500);
+        const newerOrder = nextOAuthAttemptOrder(500);
+        expect(olderOrder < newerOrder).toBe(true);
+        expect(buildSnapshotActivationFilter("12345678901234567", 500, olderOrder).$or).toHaveLength(3);
+
+        const newerRefs = { profile: { version: "v-newer", complete: true, storedCount: 1 } };
+        const query = value => ({
+            where: jest.fn().mockReturnThis(),
+            equals: jest.fn().mockReturnThis(),
+            select: jest.fn().mockReturnThis(),
+            lean: jest.fn().mockResolvedValue(value)
+        });
+        jest.spyOn(OAuthUser, "findOne")
+            .mockReturnValueOnce(query(null))
+            .mockReturnValueOnce(query({
+                snapshotMeta: { activation: { attemptStartedAt: 500, attemptOrder: newerOrder } },
+                snapshotRefs: newerRefs
+            }))
+            .mockReturnValueOnce(query({ snapshotRefs: newerRefs }));
+        jest.spyOn(snapshotStore, "storeOAuthSnapshots").mockImplementation(async ({ profile }) => {
+            const version = profile.username === "newer" ? "v-newer" : "v-older";
+            return {
+                version,
+                complete: true,
+                expectedKinds: ["profile"],
+                profile: { kind: "profile", version, returnedCount: 1, storedCount: 1, chunkCount: 1, complete: true }
+            };
+        });
+        const write = jest.spyOn(OAuthUser, "findOneAndUpdate")
+            .mockImplementationOnce(async (_filter, update) => ({ snapshotRefs: update.$set.snapshotRefs }))
+            .mockImplementationOnce(async filter => {
+                expect(filter.$or[0]['snapshotMeta.activation.attemptOrder'].$lte).toBe(olderOrder);
+                return null;
+            });
+        const rollback = jest.spyOn(snapshotStore, "rollbackSnapshotVersion")
+            .mockResolvedValue({ complete: true, failedModels: [] });
+        jest.spyOn(console, "error").mockImplementation(() => {});
+
+        try {
+            const newer = await saveOAuthUserSafe({
+                profile: { id: "12345678901234567", username: "newer", discriminator: "0" },
+                tokenData: {}, connections: [], guilds: [], memberInfo: null,
+                guildId: "76543210987654321", roleId: "76543210987654322",
+                result: "success", riskScore: 0, riskFlags: [], trackingSnapshot: null,
+                fetchMetadata: {}, attemptStartedAt: 500, attemptOrder: newerOrder
+            });
+            const older = await saveOAuthUserSafe({
+                profile: { id: "12345678901234567", username: "older", discriminator: "0" },
+                tokenData: {}, connections: [], guilds: [], memberInfo: null,
+                guildId: "76543210987654321", roleId: "76543210987654322",
+                result: "success", riskScore: 0, riskFlags: [], trackingSnapshot: null,
+                fetchMetadata: {}, attemptStartedAt: 500, attemptOrder: olderOrder
+            });
+            expect(newer.saved).toBe(true);
+            expect(older.saved).toBe(false);
+            expect(older.code).toBe("snapshot_activation_stale");
+            expect(older.snapshotRefs).toEqual(newerRefs);
+            expect(write).toHaveBeenCalledTimes(2);
+            expect(rollback).toHaveBeenCalledTimes(1);
+        } finally {
+            jest.restoreAllMocks();
+            if (previousStore === undefined) delete process.env.STORE_OAUTH_TOKENS;
+            else process.env.STORE_OAUTH_TOKENS = previousStore;
+        }
+    });
+
+    test("post-staging activation preparation failures roll back complete chunks immediately", async () => {
+        const previousStore = process.env.STORE_OAUTH_TOKENS;
+        process.env.STORE_OAUTH_TOKENS = "false";
+        const explosiveRefs = new Proxy({}, {
+            ownKeys() { throw Object.assign(new Error("snapshot ref expansion failed"), { code: "snapshot_ref_expand_failed" }); }
+        });
+        const query = {
+            where: jest.fn().mockReturnThis(),
+            equals: jest.fn().mockReturnThis(),
+            select: jest.fn().mockReturnThis(),
+            lean: jest.fn().mockResolvedValue({ snapshotMeta: {}, snapshotRefs: explosiveRefs })
+        };
+        jest.spyOn(OAuthUser, "findOne").mockReturnValue(query);
+        jest.spyOn(OAuthUser, "findOneAndUpdate");
+        jest.spyOn(snapshotStore, "storeOAuthSnapshots").mockResolvedValue({
+            version: "v-staged",
+            complete: true,
+            expectedKinds: ["profile"],
+            profile: { kind: "profile", version: "v-staged", returnedCount: 1, storedCount: 1, chunkCount: 1, complete: true }
+        });
+        const rollback = jest.spyOn(snapshotStore, "rollbackSnapshotVersion")
+            .mockResolvedValue({ complete: true, failedModels: [] });
+        jest.spyOn(console, "error").mockImplementation(() => {});
+        try {
+            const result = await saveOAuthUserSafe({
+                profile: { id: "12345678901234567", username: "user", discriminator: "0" },
+                tokenData: {}, connections: [], guilds: [], memberInfo: null,
+                guildId: "76543210987654321", roleId: "76543210987654322",
+                result: "success", riskScore: 0, riskFlags: [], trackingSnapshot: null,
+                fetchMetadata: {}, attemptStartedAt: 100
+            });
+            expect(result.saved).toBe(false);
+            expect(result.code).toBe("snapshot_ref_expand_failed");
+            expect(rollback).toHaveBeenCalledWith(expect.objectContaining({ version: "v-staged" }));
+            expect(OAuthUser.findOneAndUpdate).not.toHaveBeenCalled();
         } finally {
             jest.restoreAllMocks();
             if (previousStore === undefined) delete process.env.STORE_OAUTH_TOKENS;

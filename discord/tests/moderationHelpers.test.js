@@ -48,13 +48,14 @@ test("moderation helpers avoid exposing raw exception messages", () => {
     );
 });
 
-test("voice kick result state distinguishes complete, partial, and failed", () => {
+test("voice kick result state distinguishes complete, partial, and failed", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.equal(moderation._test.voiceKickResultState({ kicked: ["<@1>"], failed: 0, timedOut: false }, 1), "complete");
     assert.equal(moderation._test.voiceKickResultState({ kicked: ["<@1>"], failed: 1, timedOut: false }, 2), "partial");
     assert.equal(moderation._test.voiceKickResultState({ kicked: [], failed: 1, timedOut: false }, 1), "failed");
+    assert.equal(moderation._test.voiceKickResultState({ kicked: [], failed: 0, timedOut: false }, 0), "no_target");
 });
 
-test("voice kick processing skips administrators and counts disconnect failures", async () => {
+test("voice kick processing skips administrators and counts disconnect failures", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const disconnected = [];
     const member = (id, administrator, fails = false) => ({
         id,

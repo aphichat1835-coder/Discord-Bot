@@ -66,6 +66,7 @@ async function disconnectVoiceMembers(memberSnapshot, options = {}) {
 }
 
 function voiceKickResultState(result, eligibleCount) {
+    if (eligibleCount === 0 && result.failed === 0 && !result.timedOut) return "no_target";
     if (result.kicked.length === 0) return "failed";
     return result.failed === 0 && !result.timedOut && result.kicked.length === eligibleCount
         ? "complete"
@@ -74,7 +75,7 @@ function voiceKickResultState(result, eligibleCount) {
 
 function voiceKickResultColor(resultState) {
     if (resultState === "complete") return config.system.themeColors.success;
-    if (resultState === "partial") return config.system.themeColors.warning;
+    if (["partial", "no_target"].includes(resultState)) return config.system.themeColors.warning;
     return config.system.themeColors.error;
 }
 
@@ -89,12 +90,15 @@ function buildVoiceKickResultEmbed(result, eligibleCount) {
     const timeoutMessage = result.timedOut
         ? `\n> ${config.emojis.warning} **หยุดอัตโนมัติ:** เกิน 14 นาที`
         : "";
+    const noTargetMessage = resultState === "no_target"
+        ? `\n> ${config.emojis.warning} **ไม่มีสมาชิกที่เข้าเกณฑ์ให้เตะ**`
+        : "";
     return new MessageEmbed()
         .setColor(voiceKickResultColor(resultState))
         .setDescription(
             `> **ผลการจัดการ: ${resultState}** ${config.emojis.broom}\n> เป้าหมายทั้งหมด: ${eligibleCount} คน\n\n` +
             `— **เตะสำเร็จ ${result.kicked.length} คน:**\n${kickedMemberSummary(result.kicked)}\n` +
-            `— **ล้มเหลว:** ${result.failed} คน${timeoutMessage}`
+            `— **ล้มเหลว:** ${result.failed} คน${timeoutMessage}${noTargetMessage}`
         );
 }
 

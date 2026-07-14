@@ -3,7 +3,7 @@ const test = require("node:test");
 
 const storage = require("../logging/internalEventStorage");
 
-test("internal event filters accept supported fields and time bounds", () => {
+test("internal event filters accept supported fields and time bounds", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const record = {
         source: "protection",
         category: "moderation",
@@ -21,7 +21,7 @@ test("internal event filters accept supported fields and time bounds", () => {
     assert.equal(storage._test.matchesFilters(record, { to: 199 }), false);
 });
 
-test("internal event filters reject unknown fields and malformed time bounds", () => {
+test("internal event filters reject unknown fields and malformed time bounds", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const record = { source: "internal", createdAt: 200 };
 
     assert.equal(storage._test.matchesFilters(record, { unsupported: "value" }), false);

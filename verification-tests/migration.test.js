@@ -3,6 +3,7 @@
 const {
     buildPatch,
     migrateCursor,
+    bulkWriteFailureCount,
     badgeFlags,
     displayTag,
     avatarUrl,
@@ -175,6 +176,38 @@ describe("verification additive migration", () => {
         });
         expect(bulkWrite).toHaveBeenCalledTimes(2);
         expect(errorLog.mock.calls.flat().join(" ")).not.toContain("database details must stay hidden");
+    });
+
+
+    test("partial unordered bulk failures count only rejected operations", async () => {
+        expect(bulkWriteFailureCount({ writeErrors: [{ index: 1 }] }, 3)).toBe(1);
+        expect(bulkWriteFailureCount({ writeErrors: [], result: { modifiedCount: 2 } }, 3)).toBe(1);
+        expect(bulkWriteFailureCount({ result: { matchedCount: 2, upsertedCount: 0 } }, 3)).toBe(1);
+
+        const errorLog = jest.spyOn(console, "error").mockImplementation(() => {});
+        const summary = await migrateCursor({
+            cursor: [
+                { _id: "legacy-1", discord: { username: "one" } },
+                { _id: "legacy-2", discord: { username: "two" } },
+                { _id: "legacy-3", discord: { username: "three" } }
+            ],
+            apply: true,
+            batchSize: 3,
+            bulkWrite: async () => {
+                throw Object.assign(new Error("partial"), {
+                    code: 11000,
+                    writeErrors: [{ index: 1 }],
+                    result: { modifiedCount: 2, matchedCount: 2 }
+                });
+            },
+            now: () => 500
+        });
+        expect(summary).toMatchObject({
+            updated: 2,
+            batchErrors: 1,
+            failedOperations: 1
+        });
+        errorLog.mockRestore();
     });
 
     test("apply mode backfills complete chunk references without removing embedded data", async () => {

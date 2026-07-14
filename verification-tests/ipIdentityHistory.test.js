@@ -22,6 +22,26 @@ function findQuery(value) {
 }
 
 describe("unbounded IP identity history", () => {
+    test("role event ids are stable across role ordering and duplicates", () => {
+        const base = {
+            guildId: "12345678901234567",
+            ipHash: "ip-hash",
+            userId: "22345678901234567",
+            roleId: "32345678901234567",
+            result: "success",
+            at: 100
+        };
+        const first = history._test.roleEventId({ ...base, roles: ["3", "1", "2", "1"] });
+        const second = history._test.roleEventId({ ...base, roles: ["2", "3", "1"] });
+        expect(first).toBe(second);
+        expect(history._test.historyRoles({ roles: ["3", "1", "2", "1"] })).toEqual(["1", "2", "3"]);
+        const compatible = history._test.compatibleRoleEventIds({ ...base, roles: ["3", "1", "2", "1"] });
+        expect(compatible).toContain(first);
+        expect(compatible).toContain(history._test.legacyOrderedRoleEventId({ ...base, roles: ["3", "1", "2", "1"] }));
+        expect(history._test.roleEventFilter({ ...base, roles: ["3", "1", "2", "1"] }))
+            .toEqual({ eventId: { $in: compatible } });
+    });
+
     test("rejects non-snowflake history lookup identifiers before database access", () => {
         expect(() => history._test.strictSnowflake("$gt", "invalid_user_id"))
             .toThrow("invalid_user_id");
@@ -308,8 +328,8 @@ describe("unbounded IP identity history", () => {
         expect(DeviceHistoryModel.updateOne.mock.calls[0][1].$inc).toEqual({ count: 1 });
         expect(IpIdentityLinkModel.updateOne.mock.calls[0][1].$inc).toEqual({ totalVerifications: 1 });
         expect(IpIdentityLinkModel.updateOne.mock.calls[1][1].$inc).toEqual({ totalVerifications: 1 });
-        expect(RoleHistoryModel.updateOne.mock.calls[0][0].eventId)
-            .not.toBe(RoleHistoryModel.updateOne.mock.calls[1][0].eventId);
+        expect(RoleHistoryModel.updateOne.mock.calls[0][1].$setOnInsert.eventId)
+            .not.toBe(RoleHistoryModel.updateOne.mock.calls[1][1].$setOnInsert.eventId);
         expect(VerifyLogModel.updateOne).toHaveBeenCalledTimes(2);
         expect(VerifyLogModel.updateOne).toHaveBeenLastCalledWith(
             { _id: "log-2" },

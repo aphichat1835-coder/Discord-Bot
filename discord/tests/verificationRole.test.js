@@ -56,7 +56,7 @@ test("direct-role assignment helper rejects managed and higher roles", () => {
     assert.match(tooHigh.reason, /role hierarchy|ยศบอท/);
 });
 
-test("verification panel accepts HTTPS URLs only and enforces text limits", () => {
+test("verification panel accepts HTTPS URLs only and enforces text limits", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.equal(_test.cleanHttpsUrl("https://example.com/image.png", "image"), "https://example.com/image.png");
     assert.throws(() => _test.cleanHttpsUrl("http://example.com", "image"), /PANEL_URL_INVALID/);
     assert.doesNotThrow(() => _test.validatePanelText("x".repeat(256), "title", 256));
@@ -76,7 +76,7 @@ test("direct role config is bound to the latest guild message and role", () => {
     assert.equal(_test.isCurrentDirectConfig(guildConfig, { message: { id: "444444444444444444" } }, "333333333333333333"), false);
 });
 
-test("verification persistence retries bounded transient failures", async () => {
+test("verification persistence retries bounded transient failures", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     let attempts = 0;
     const result = await _test.retryPersistence(async () => {
         attempts++;

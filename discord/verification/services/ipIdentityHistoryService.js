@@ -81,35 +81,56 @@ async function upsertDeviceHistory(input, models) {
     }, { upsert: true });
 }
 
-function historyRoles(input) {
-    if (Array.isArray(input.memberInfo?.roles)) return input.memberInfo.roles.map(String);
-    if (Array.isArray(input.roles)) return input.roles.map(String);
-    return [];
+function orderedHistoryRoles(input) {
+    const roles = Array.isArray(input.memberInfo?.roles)
+        ? input.memberInfo.roles
+        : (Array.isArray(input.roles) ? input.roles : []);
+    return roles.map(String);
 }
 
-function roleEventId(input) {
+function historyRoles(input) {
+    return [...new Set(orderedHistoryRoles(input))].sort();
+}
+
+function hashRoleEvent(input, roles) {
     return `history:${crypto.createHash("sha256").update(JSON.stringify({
         guildId: input.guildId,
         ipHash: input.ipHash,
         userId: String(input.profile?.id || input.userId || ""),
         roleId: input.roleId || null,
-        roles: historyRoles(input),
+        roles,
         result: input.result || null,
         at: Number(input.now || input.at || 0)
     })).digest("hex")}`;
 }
 
+function roleEventId(input) {
+    return hashRoleEvent(input, historyRoles(input));
+}
+
+function legacyOrderedRoleEventId(input) {
+    return hashRoleEvent(input, orderedHistoryRoles(input));
+}
+
+function compatibleRoleEventIds(input) {
+    return [...new Set([roleEventId(input), legacyOrderedRoleEventId(input)])];
+}
+
+function roleEventFilter(input) {
+    return { eventId: { $in: compatibleRoleEventIds(input) } };
+}
+
 async function createRoleHistory(input, models) {
     const { guildId, ipHash, profile, memberInfo, roleId, result, now } = input;
     const eventId = roleEventId(input);
-    return models.RoleHistory.updateOne({ eventId }, {
+    return models.RoleHistory.updateOne(roleEventFilter(input), {
         $setOnInsert: {
             eventId,
             guildId,
             ipHash,
             userId: String(profile.id),
             roleId: roleId || null,
-            roles: Array.isArray(memberInfo?.roles) ? memberInfo.roles.map(String) : [],
+            roles: historyRoles({ memberInfo }),
             result,
             at: now,
             source: "oauth_verification",
@@ -313,10 +334,20 @@ async function migrateLegacyLink(link, models, now) {
             recordFailure("roles", index, { code: "missing_user_id" });
             continue;
         }
-        await write("roles", index, () => models.RoleHistory.updateOne({ eventId: legacyEventId(link, role) }, {
+        const roleInput = {
+            guildId: link.guildId,
+            ipHash: link.ipHash,
+            userId: role.userId,
+            roleId: role.roleId,
+            roles: role.roles,
+            result: role.result,
+            at: role.at
+        };
+        await write("roles", index, () => models.RoleHistory.updateOne(roleEventFilter(roleInput), {
             $setOnInsert: {
                 ...role,
-                eventId: legacyEventId(link, role),
+                roles: historyRoles(roleInput),
+                eventId: roleEventId(roleInput),
                 guildId: link.guildId,
                 ipHash: link.ipHash,
                 source: "legacy_ip_identity_link",
@@ -445,14 +476,14 @@ async function backfillVerifyLog(log, models, now) {
             $inc: { count: 1 }
         }, { upsert: true });
     }
-    await models.RoleHistory.updateOne({ eventId: roleEventId(input) }, {
+    await models.RoleHistory.updateOne(roleEventFilter(input), {
         $setOnInsert: {
             eventId: roleEventId(input),
             guildId: input.guildId,
             ipHash: input.ipHash,
             userId: input.profile.id,
             roleId: input.roleId,
-            roles: input.memberInfo.roles,
+            roles: historyRoles(input),
             result: input.result,
             at: input.now,
             source: "verify_log_backfill",
@@ -596,7 +627,12 @@ module.exports = {
         safePage,
         safeLimit,
         strictSnowflake,
+        orderedHistoryRoles,
+        historyRoles,
         roleEventId,
+        legacyOrderedRoleEventId,
+        compatibleRoleEventIds,
+        roleEventFilter,
         legacyEventId,
         recoveredLogInput,
         backfillVerifyLog,
