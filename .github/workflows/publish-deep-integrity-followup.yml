@@ -31,7 +31,7 @@ jobs:
           echo "9e473de9b9554e3990325e34791f606776dbe819f4c2fadbcd665bfd00d16461  /tmp/followup.patch" | sha256sum -c -
           echo "93908a18dc7f061f1ed21b161f33aaca2abab823f81e936b4802b6d1f900692c  /tmp/apply-followup-role-test.py" | sha256sum -c -
 
-      - name: Apply to exact tt head
+      - name: Checkout exact tt head
         shell: bash
         env:
           EXPECTED_BASE: 5152ee11bee628b0ef63b4133efe4f6780f5ef2a
@@ -40,7 +40,17 @@ jobs:
           git fetch origin tt
           test "$(git rev-parse origin/tt)" = "$EXPECTED_BASE"
           git checkout --detach "$EXPECTED_BASE"
+
+      - name: Apply four-file patch
+        shell: bash
+        run: |
+          set -euo pipefail
           git apply --exclude=verification-tests/ipIdentityHistory.test.js /tmp/followup.patch
+
+      - name: Transform role-history test
+        shell: bash
+        run: |
+          set -euo pipefail
           python /tmp/apply-followup-role-test.py
           git diff --check
 
