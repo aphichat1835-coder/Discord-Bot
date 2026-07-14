@@ -116,8 +116,28 @@ function compatibleRoleEventIds(input) {
     return [...new Set([roleEventId(input), legacyOrderedRoleEventId(input)])];
 }
 
+function roleEventIdentity(input) {
+    const roles = historyRoles(input);
+    return {
+        guildId: String(input.guildId || ""),
+        ipHash: String(input.ipHash || ""),
+        userId: String(input.profile?.id || input.userId || ""),
+        roleId: input.roleId || null,
+        result: input.result || null,
+        at: Number(input.now || input.at || 0),
+        roles: roles.length > 0
+            ? { $all: roles, $size: roles.length }
+            : { $size: 0 }
+    };
+}
+
 function roleEventFilter(input) {
-    return { eventId: { $in: compatibleRoleEventIds(input) } };
+    return {
+        $or: [
+            { eventId: { $in: compatibleRoleEventIds(input) } },
+            roleEventIdentity(input)
+        ]
+    };
 }
 
 async function createRoleHistory(input, models) {
@@ -632,6 +652,7 @@ module.exports = {
         roleEventId,
         legacyOrderedRoleEventId,
         compatibleRoleEventIds,
+        roleEventIdentity,
         roleEventFilter,
         legacyEventId,
         recoveredLogInput,

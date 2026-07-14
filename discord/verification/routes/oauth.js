@@ -1252,8 +1252,12 @@ async function saveOAuthUserSafe({
                     err?.keyPattern?.["discord.userId"] || err?.keyValue?.["discord.userId"]
                 );
                 if (duplicateDiscordUser) err.code = "snapshot_activation_stale";
-                console.error("[VERIFY] saveOAuthUser activation failed:", JSON.stringify(sanitizeSideEffectError(err)));
+                // Rollback is the data-integrity action; diagnostics must never be
+                // able to prevent it, even if a custom logger/console hook throws.
                 const rollback = await rollbackStoredSnapshots(profileUserId, storedSnapshots);
+                try {
+                    console.error("[VERIFY] saveOAuthUser activation failed:", JSON.stringify(sanitizeSideEffectError(err)));
+                } catch {}
                 const active = err?.code === "snapshot_activation_stale"
                     ? await loadOAuthSnapshotState(profileUserId).catch(() => null)
                     : null;

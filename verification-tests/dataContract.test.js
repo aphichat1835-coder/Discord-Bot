@@ -498,7 +498,7 @@ describe("unified verification data contract", () => {
         });
         const rollback = jest.spyOn(snapshotStore, "rollbackSnapshotVersion")
             .mockResolvedValue({ complete: true, failedModels: [] });
-        jest.spyOn(console, "error").mockImplementation(() => {});
+        jest.spyOn(console, "error").mockImplementation(() => { throw new Error("logger failed"); });
         try {
             const result = await saveOAuthUserSafe({
                 profile: { id: "12345678901234567", username: "user", discriminator: "0" },

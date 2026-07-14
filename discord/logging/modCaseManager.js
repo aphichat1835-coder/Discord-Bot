@@ -128,17 +128,41 @@ async function nextCaseNumber(sessionManager, guildId) {
     return nextCaseNumberFallback(sessionManager, guildId);
 }
 
+async function restoreSettingsCaseWrite(sessionManager, key, previous) {
+    try {
+        if (previous !== null && previous !== undefined) {
+            return await sessionManager.setSetting(key, previous) === true;
+        }
+        if (typeof sessionManager?.deleteSetting !== "function") return false;
+        return await sessionManager.deleteSetting(key) === true;
+    } catch (err) {
+        console.warn(`[MODCASE] Settings rollback failed: ${safeErrorText(err, 160)}`);
+        return false;
+    }
+}
+
 async function saveCaseWithSettings(sessionManager, caseDoc) {
     if (!sessionManager?.setSetting || !sessionManager?.getSetting) return false;
     return withFallbackLock(`user:${caseDoc.guildId}:${caseDoc.userId || "unknown"}`, async () => {
-        if (await sessionManager.setSetting(caseKey(caseDoc.guildId, caseDoc.caseNumber), caseDoc) !== true) return false;
+        const recordKey = caseKey(caseDoc.guildId, caseDoc.caseNumber);
+        const previous = await sessionManager.getSetting(recordKey, null);
+        if (await sessionManager.setSetting(recordKey, caseDoc) !== true) return false;
 
         const indexKey = userIndexKey(caseDoc.guildId, caseDoc.userId || "unknown");
-        const current = await sessionManager.getSetting(indexKey, []);
-        const list = Array.isArray(current) ? current : [];
-        const next = [caseDoc.caseNumber, ...list.filter(n => n !== caseDoc.caseNumber)].slice(0, 50);
-        if (await sessionManager.setSetting(indexKey, next) !== true) return false;
-        return true;
+        let indexSaved = false;
+        try {
+            const current = await sessionManager.getSetting(indexKey, []);
+            const list = Array.isArray(current) ? current : [];
+            const next = [caseDoc.caseNumber, ...list.filter(n => n !== caseDoc.caseNumber)].slice(0, 50);
+            indexSaved = await sessionManager.setSetting(indexKey, next) === true;
+        } catch (err) {
+            console.warn(`[MODCASE] Settings index write failed: ${safeErrorText(err, 160)}`);
+        }
+        if (indexSaved) return true;
+
+        const rolledBack = await restoreSettingsCaseWrite(sessionManager, recordKey, previous);
+        if (!rolledBack) console.warn("[MODCASE] Settings case rollback was not persisted");
+        return false;
     });
 }
 
@@ -168,40 +192,99 @@ async function createCase(sessionManager, input = {}) {
     }
 }
 
+async function getSettingsCase(sessionManager, guildId, caseNumber) {
+    if (typeof sessionManager?.getSetting !== "function") return null;
+    try {
+        const doc = await sessionManager.getSetting(caseKey(guildId, caseNumber), null);
+        return doc ? withPersistenceStore(doc, "settings") : null;
+    } catch (err) {
+        console.warn(`[MODCASE] Settings get failed: ${safeErrorText(err, 240)}`);
+        return null;
+    }
+}
+
 async function getCase(sessionManager, guildId, caseNumber) {
     if (!guildId || !caseNumber) return null;
+
+    // Prefer an explicitly persisted fallback case. Mongo and settings counters can
+    // temporarily overlap after an outage, and a settings-backed legacy case must
+    // not be mistaken for a different Mongo document with the same case number.
+    const settingsDoc = await getSettingsCase(sessionManager, guildId, caseNumber);
+    if (settingsDoc) return settingsDoc;
+
     if (canUseMongoStore()) {
         try {
             const doc = await modCaseStore.getCase(guildId, caseNumber);
             if (doc) return withPersistenceStore(doc, doc.metadata?.persistenceStore || "mongo");
         } catch (err) {
-            console.warn(`[MODCASE] Mongo get failed, fallback settings: ${safeErrorText(err, 240)}`);
+            console.warn(`[MODCASE] Mongo get failed: ${safeErrorText(err, 240)}`);
         }
     }
-    const settingsDoc = await sessionManager?.getSetting?.(caseKey(guildId, caseNumber), null);
-    return settingsDoc ? withPersistenceStore(settingsDoc, "settings") : null;
+    return null;
+}
+
+async function listSettingsUserCases(sessionManager, guildId, userId, max) {
+    if (typeof sessionManager?.getSetting !== "function") return [];
+    let numbers;
+    try {
+        numbers = await sessionManager.getSetting(userIndexKey(guildId, userId), []);
+    } catch (err) {
+        console.warn(`[MODCASE] Settings index read failed: ${safeErrorText(err, 240)}`);
+        return [];
+    }
+    const cases = [];
+    for (const number of (Array.isArray(numbers) ? numbers : []).slice(0, max)) {
+        const doc = await getSettingsCase(sessionManager, guildId, number);
+        if (doc) cases.push(doc);
+    }
+    return cases;
+}
+
+function mergeCaseLists(settingsCases, mongoCases, max) {
+    const byCaseNumber = new Map();
+    // Settings wins a number collision because it is the explicit outage fallback
+    // record that callers previously addressed by that case number.
+    for (const doc of mongoCases || []) byCaseNumber.set(String(doc.caseNumber), doc);
+    for (const doc of settingsCases || []) byCaseNumber.set(String(doc.caseNumber), doc);
+    return [...byCaseNumber.values()]
+        .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0) || Number(b.caseNumber || 0) - Number(a.caseNumber || 0))
+        .slice(0, max);
 }
 
 async function listUserCases(sessionManager, guildId, userId, limit = 10) {
     if (!guildId || !userId) return [];
     const max = Math.max(1, Math.min(50, Number(limit) || 10));
+    const settingsCases = await listSettingsUserCases(sessionManager, guildId, userId, max);
+    let mongoCases = [];
 
     if (canUseMongoStore()) {
         try {
             const docs = await modCaseStore.listUserCases(guildId, userId, max);
-            if (docs.length) return docs.map(doc => withPersistenceStore(doc, doc.metadata?.persistenceStore || "mongo"));
+            mongoCases = (docs || []).map(doc => withPersistenceStore(doc, doc.metadata?.persistenceStore || "mongo"));
         } catch (err) {
-            console.warn(`[MODCASE] Mongo list failed, fallback settings: ${safeErrorText(err, 240)}`);
+            console.warn(`[MODCASE] Mongo list failed: ${safeErrorText(err, 240)}`);
         }
     }
 
-    const numbers = await sessionManager?.getSetting?.(userIndexKey(guildId, userId), []) || [];
-    const cases = [];
-    for (const number of numbers.slice(0, max)) {
-        const doc = await getCase(sessionManager, guildId, number);
-        if (doc) cases.push(doc);
+    return mergeCaseLists(settingsCases, mongoCases, max);
+}
+
+async function persistCaseReconciliation(sessionManager, guildId, caseNumber, operation, patch) {
+    if (typeof sessionManager?.setSetting !== "function") return false;
+    try {
+        const persisted = await sessionManager.setSetting(`modcase_reconcile_${guildId}_${caseNumber}`, {
+            guildId: String(guildId),
+            caseNumber,
+            operation,
+            patch,
+            createdAt: Date.now()
+        }) === true;
+        if (!persisted) console.warn(`[MODCASE] Reconciliation marker was not persisted for ${operation}`);
+        return persisted;
+    } catch (err) {
+        console.warn(`[MODCASE] Reconciliation write failed: ${safeErrorText(err, 160)}`);
+        return false;
     }
-    return cases;
 }
 
 async function updateCaseReason(sessionManager, guildId, caseNumber, reason, amendedBy = null) {
@@ -216,13 +299,17 @@ async function updateCaseReason(sessionManager, guildId, caseNumber, reason, ame
     };
 
     const persistenceStore = existing.metadata?.persistenceStore || "settings";
-    if (persistenceStore === "mongo" && canUseMongoStore()) {
-        try {
-            const updated = await modCaseStore.updateCase(guildId, caseNumber, patch);
-            if (updated) return withPersistenceStore(updated, "mongo");
-        } catch (err) {
-            console.warn(`[MODCASE] Mongo update failed, fallback settings: ${safeErrorText(err, 240)}`);
+    if (persistenceStore === "mongo") {
+        if (canUseMongoStore()) {
+            try {
+                const updated = await modCaseStore.updateCase(guildId, caseNumber, patch);
+                if (updated) return withPersistenceStore(updated, "mongo");
+            } catch (err) {
+                console.warn(`[MODCASE] Mongo update failed: ${safeErrorText(err, 240)}`);
+            }
         }
+        await persistCaseReconciliation(sessionManager, guildId, caseNumber, "update_reason", patch);
+        return null;
     }
 
     const updated = { ...existing, ...patch };
@@ -246,20 +333,18 @@ async function updateCaseStatus(sessionManager, guildId, caseNumber, status, met
         updatedAt: Date.now()
     };
     const persistenceStore = existing.metadata?.persistenceStore || "settings";
-    if (persistenceStore === "mongo" && canUseMongoStore()) {
-        try {
-            const updated = await modCaseStore.updateCase(guildId, caseNumber, patch);
-            if (updated) return withPersistenceStore(updated, "mongo");
-        } catch (err) {
-            console.warn(`[MODCASE] Mongo status update failed, fallback settings: ${safeErrorText(err, 240)}`);
+    if (persistenceStore === "mongo") {
+        if (canUseMongoStore()) {
+            try {
+                const updated = await modCaseStore.updateCase(guildId, caseNumber, patch);
+                if (updated) return withPersistenceStore(updated, "mongo");
+            } catch (err) {
+                console.warn(`[MODCASE] Mongo status update failed: ${safeErrorText(err, 240)}`);
+            }
         }
-        await sessionManager?.setSetting?.(`modcase_reconcile_${guildId}_${caseNumber}`, {
-            guildId: String(guildId), caseNumber, intendedStatus: status,
-            metadata: patch.metadata, createdAt: Date.now()
-        }).catch(() => false);
+        await persistCaseReconciliation(sessionManager, guildId, caseNumber, "update_status", patch);
         return null;
     }
-    if (persistenceStore === "mongo") return null;
     const updated = { ...existing, ...patch };
     return await sessionManager.setSetting(caseKey(guildId, caseNumber), updated) === true ? updated : null;
 }
@@ -280,6 +365,11 @@ module.exports = {
         buildCaseDoc,
         canUseMongoStore,
         withPersistenceStore,
+        restoreSettingsCaseWrite,
+        getSettingsCase,
+        listSettingsUserCases,
+        mergeCaseLists,
+        persistCaseReconciliation,
         nextCaseNumberFallback,
         withFallbackLock
     }
