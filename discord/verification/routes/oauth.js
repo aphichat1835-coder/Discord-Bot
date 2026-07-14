@@ -616,7 +616,15 @@ function buildLastMemberUpdate({ guildId, profileUserId, memberInfo }) {
 }
 
 function applySnapshotBudgetGuard(updateSet) {
-    return snapshotBudget.assertSnapshotBudget(updateSet, { label: "oauth_user_update" });
+    const bytes = snapshotBudget.jsonBytes(updateSet);
+    if (!Number.isFinite(bytes) || bytes > snapshotBudget.MAX_MAX_BYTES) {
+        const err = new Error("oauth_user_update exceeds MongoDB-safe document size");
+        err.code = "snapshot_document_too_large";
+        err.bytes = bytes;
+        err.maxBytes = snapshotBudget.MAX_MAX_BYTES;
+        throw err;
+    }
+    return { ok: true, bytes, maxBytes: snapshotBudget.MAX_MAX_BYTES, truncated: false };
 }
 
 function applyStoredSnapshotMeta(snapshotMeta, kind, ref) {
@@ -661,14 +669,35 @@ function preserveFailedMemberAttempt(snapshotMeta, previousMeta, fetchMetadata, 
     };
 }
 
+function isCompleteSnapshotSet(stored = {}) {
+    if (stored.complete === true) return true;
+    if (stored.complete === false) return false;
+    const presentKinds = ["profile", "guilds", "connections", "member"]
+        .filter(kind => stored[kind]);
+    return presentKinds.length > 0 && presentKinds.every(kind =>
+        stored[kind]?.complete === true &&
+        stored[kind].returnedCount === stored[kind].storedCount
+    );
+}
+
 function mergeCompleteSnapshotRefs(previousRefs = {}, stored = {}) {
     const next = { ...objectOrEmpty(previousRefs) };
-    for (const kind of ["profile", "guilds", "connections", "member"]) {
+    if (!isCompleteSnapshotSet(stored)) return next;
+    const expectedKinds = Array.isArray(stored.expectedKinds)
+        ? stored.expectedKinds
+        : ["profile", "guilds", "connections", "member"].filter(kind => stored[kind]);
+    for (const kind of expectedKinds) {
         if (stored[kind]?.complete === true &&
             stored[kind].returnedCount === stored[kind].storedCount) {
             next[kind] = stored[kind];
         }
     }
+    next.snapshotSet = {
+        version: stored.version || null,
+        complete: true,
+        expectedKinds,
+        activatedAt: Date.now()
+    };
     return next;
 }
 
@@ -1046,6 +1075,14 @@ async function saveOAuthUserSafe({
             fetchMetadata,
             now: nowMs
         });
+        if (!isCompleteSnapshotSet(storedSnapshots)) {
+            return {
+                saved: false,
+                snapshotVersion: storedSnapshots.version,
+                snapshotRefs: existing?.snapshotRefs || null,
+                snapshotWrites: storedSnapshots
+            };
+        }
         let snapshotMeta = buildSnapshotMetaUpdate(
             previousMeta,
             fetchMetadata,
@@ -1101,10 +1138,21 @@ async function saveOAuthUserSafe({
             );
         } catch (err) {
             console.error("[VERIFY] saveOAuthUser core failed:", JSON.stringify(sanitizeSideEffectError(err)));
+            const expectedKinds = Array.isArray(storedSnapshots.expectedKinds)
+                ? storedSnapshots.expectedKinds
+                : ["profile", "guilds", "connections", "member"].filter(kind => storedSnapshots[kind]);
+            const stagedRefs = Object.fromEntries(expectedKinds
+                .filter(kind => storedSnapshots[kind])
+                .map(kind => [kind, storedSnapshots[kind]]));
+            await snapshotStore.rollbackSnapshotVersion({
+                userId: profileUserId,
+                version: storedSnapshots.version,
+                refs: stagedRefs
+            });
             return {
                 saved: false,
                 snapshotVersion: storedSnapshots.version,
-                snapshotRefs,
+                snapshotRefs: existing?.snapshotRefs || null,
                 snapshotWrites: storedSnapshots
             };
         }

@@ -264,7 +264,7 @@ describe("unified verification data contract", () => {
         }
     });
 
-    test("completed chunk references survive an OAuthUser core write failure", async () => {
+    test("a core write failure rolls back staged chunks and preserves active references", async () => {
         const previousStore = process.env.STORE_OAUTH_TOKENS;
         process.env.STORE_OAUTH_TOKENS = "false";
         const query = {
@@ -277,6 +277,8 @@ describe("unified verification data contract", () => {
         jest.spyOn(OAuthUser, "findOneAndUpdate").mockRejectedValue(new Error("core write failed"));
         jest.spyOn(snapshotStore, "storeOAuthSnapshots").mockResolvedValue({
             version: "v-complete",
+            complete: true,
+            expectedKinds: ["guilds", "connections"],
             guilds: {
                 kind: "guilds", version: "v-complete", returnedCount: 1,
                 storedCount: 1, chunkCount: 1, complete: true
@@ -286,6 +288,7 @@ describe("unified verification data contract", () => {
                 storedCount: 1, chunkCount: 1, complete: true
             }
         });
+        const rollback = jest.spyOn(snapshotStore, "rollbackSnapshotVersion").mockResolvedValue();
         const errorLog = jest.spyOn(console, "error").mockImplementation(() => {});
 
         try {
@@ -306,8 +309,15 @@ describe("unified verification data contract", () => {
 
             expect(result.saved).toBe(false);
             expect(result.snapshotVersion).toBe("v-complete");
-            expect(result.snapshotRefs.guilds.complete).toBe(true);
-            expect(result.snapshotRefs.connections.complete).toBe(true);
+            expect(result.snapshotRefs).toEqual({});
+            expect(rollback).toHaveBeenCalledWith({
+                userId: "12345678901234567",
+                version: "v-complete",
+                refs: {
+                    guilds: expect.objectContaining({ complete: true }),
+                    connections: expect.objectContaining({ complete: true })
+                }
+            });
             expect(errorLog).toHaveBeenCalled();
         } finally {
             jest.restoreAllMocks();
