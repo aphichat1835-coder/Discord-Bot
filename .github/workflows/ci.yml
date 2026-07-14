@@ -35,9 +35,57 @@ jobs:
       - name: Verify unified verification test runner
         run: node -e "require.resolve('jest-circus/runner'); require('jest-resolve'); console.log('verification jest ok')"
 
+      - name: Resolve protected diff base
+        id: protected-base
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          BASE_REF: ${{ github.base_ref }}
+          REF_NAME: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          is_commit() {
+            local candidate="${1:-}"
+            [ -n "$candidate" ] &&
+              [[ ! "$candidate" =~ ^0+$ ]] &&
+              git cat-file -e "${candidate}^{commit}" 2>/dev/null
+          }
+
+          base=""
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base="$PR_BASE_SHA"
+          elif [ "$EVENT_NAME" = "push" ]; then
+            base="$PUSH_BEFORE_SHA"
+          fi
+
+          if ! is_commit "$base"; then
+            if [ "$EVENT_NAME" = "pull_request" ]; then
+              target_ref="${BASE_REF:-$DEFAULT_BRANCH}"
+              git fetch --no-tags origin "$target_ref"
+              base="$(git merge-base "origin/$target_ref" HEAD)"
+            elif [ "$EVENT_NAME" = "push" ] && [ "$REF_NAME" != "$DEFAULT_BRANCH" ]; then
+              git fetch --no-tags origin "$DEFAULT_BRANCH"
+              base="$(git merge-base "origin/$DEFAULT_BRANCH" HEAD)"
+            elif git rev-parse --verify HEAD^1 >/dev/null 2>&1; then
+              base="$(git rev-parse HEAD^1)"
+            fi
+          fi
+
+          if ! is_commit "$base"; then
+            echo "::error::Unable to resolve a usable protected diff base."
+            exit 1
+          fi
+
+          echo "sha=$base" >> "$GITHUB_OUTPUT"
+          echo "Protected diff base: $base"
+
       - name: Protected path guard
         env:
-          PROTECTED_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          PROTECTED_BASE_SHA: ${{ steps.protected-base.outputs.sha }}
         run: npm run check:protected
 
       - name: Syntax check (Discord)
