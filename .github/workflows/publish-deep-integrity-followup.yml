@@ -1,0 +1,99 @@
+name: Publish Deep Integrity Follow-up
+
+on:
+  push:
+    branches:
+      - codex/deep-integrity-followup-20260715
+
+permissions:
+  contents: write
+
+jobs:
+  validate-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout payload branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reconstruct verified patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat scripts/.deep-integrity-followup.part* > /tmp/followup.patch
+          echo "bba4354e8bf3d3088e56bb821e4dcd15708453031a8af16c01a507a25d5e3682  /tmp/followup.patch" | sha256sum -c -
+
+      - name: Apply to exact tt head
+        shell: bash
+        env:
+          EXPECTED_BASE: 5152ee11bee628b0ef63b4133efe4f6780f5ef2a
+        run: |
+          set -euo pipefail
+          git fetch origin tt
+          test "$(git rev-parse origin/tt)" = "$EXPECTED_BASE"
+          git checkout --detach "$EXPECTED_BASE"
+          git apply --check /tmp/followup.patch
+          git apply /tmp/followup.patch
+          git diff --check
+
+      - name: Verify exact scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --name-only | sort > /tmp/actual-files
+          cat > /tmp/expected-files <<'EOF'
+          discord/logging/modCaseManager.js
+          discord/tests/modCaseManager.test.js
+          discord/verification/routes/oauth.js
+          discord/verification/services/ipIdentityHistoryService.js
+          verification-tests/ipIdentityHistory.test.js
+          EOF
+          sed -i 's/^          //' /tmp/expected-files
+          sort -o /tmp/expected-files /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+          ! grep -Eq '^discord/systemProvider(\.js|/)' /tmp/actual-files
+          ! grep -Eq '^package(-lock)?\.json$' /tmp/actual-files
+          ! grep -Eq '^\.github/workflows/' /tmp/actual-files
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies without lockfile changes
+        run: npm install --ignore-scripts --package-lock=false --no-audit --no-fund
+
+      - name: Run repository checks
+        run: CI=false npm run check
+
+      - name: Run complete test suite
+        run: npm test
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
+      - name: Recheck final tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git diff --name-only | sort > /tmp/final-files
+          diff -u /tmp/expected-files /tmp/final-files
+
+      - name: Commit and fast-forward tt
+        shell: bash
+        env:
+          EXPECTED_BASE: 5152ee11bee628b0ef63b4133efe4f6780f5ef2a
+        run: |
+          set -euo pipefail
+          git fetch origin tt
+          test "$(git rev-parse origin/tt)" = "$EXPECTED_BASE"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- $(cat /tmp/expected-files)
+          git diff --cached --check
+          git commit -m "Complete self-audited integrity safeguards"
+          git push origin HEAD:tt
