@@ -14,6 +14,21 @@ const REVEAL_ATTEMPT_TTL = 30 * 60 * 1000;
 const REVEAL_ATTEMPT_MAX_KEYS = 1000;
 const RATE_LIMIT_MAX_BUCKETS = Math.max(100, Number(process.env.RATE_LIMIT_MAX_BUCKETS || 5000) || 5000);
 
+function safeDiscordInlineCode(value, maxLength = 180) {
+    return String(value || "unknown")
+        .replace(/[\r\n\t]+/g, " ")
+        .replace(/`/g, "ˋ")
+        .replace(/\\/g, "\\\\")
+        .slice(0, Math.max(1, Number(maxLength) || 180));
+}
+
+function safeDiscordSummaryText(value, maxLength = 180) {
+    return String(value || "unknown")
+        .replace(/[\r\n\t]+/g, " ")
+        .replace(/([\\`*_{}[\]()#+\-.!|>~])/g, "\\$1")
+        .slice(0, Math.max(1, Number(maxLength) || 180));
+}
+
 function shouldBypassDashboardReadApi(req) {
     if (req.method !== "GET") return false;
 
@@ -24,18 +39,21 @@ function shouldBypassDashboardReadApi(req) {
 
 function logIntrusion(ip, path) {
     safeLogger.warn("dashboard_unauthorized_access", { path, ip });
-    const safePath = String(path || "unknown").slice(0, 180);
+    const rawPath = String(path || "unknown").slice(0, 180);
+    const rawIp = String(ip || "unknown").slice(0, 120);
+    const safePath = safeDiscordInlineCode(rawPath, 180);
+    const safeIp = safeDiscordInlineCode(rawIp, 120);
     const secret = dashboardAuth.getApiSecret() || "dashboard-intrusion";
     const dedupeKey = crypto.createHmac("sha256", secret)
-        .update(`${String(ip || "unknown")}|${safePath}`)
+        .update(`${rawIp}|${rawPath}`)
         .digest("hex");
 
     sendLogWebhook(
-        { content: `🛑 **[INTRUSION]** \`${safePath}\` from \`${ip}\`` },
+        { content: `🛑 **[INTRUSION]** \`${safePath}\` from \`${safeIp}\`` },
         {
             dedupeKey: `dashboard-intrusion:${dedupeKey}`,
             dedupeMs: 5 * 60 * 1000,
-            summaryLabel: `dashboard intrusion on ${safePath}`
+            summaryLabel: `dashboard intrusion on ${safeDiscordSummaryText(rawPath, 120)}`
         }
     ).catch(() => {});
 }
@@ -215,6 +233,8 @@ module.exports = {
     makeCheckAuth,
     makeCheckRevealPin,
     logIntrusion,
+    safeDiscordInlineCode,
+    safeDiscordSummaryText,
     cleanupRevealAttempts,
     getRevealAttemptStats,
     trimRateLimitBuckets,
