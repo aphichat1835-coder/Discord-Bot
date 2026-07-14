@@ -4,9 +4,13 @@ on:
   push:
     branches:
       - codex/deep-integrity-followup-20260715
+  pull_request:
+    branches:
+      - tt
 
 permissions:
   contents: write
+  pull-requests: read
 
 jobs:
   validate-and-publish:
