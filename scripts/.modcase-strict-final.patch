@@ -1,0 +1,299 @@
+diff --git a/discord/logging/modCaseManager.js b/discord/logging/modCaseManager.js
+index 5fb787e..4358f74 100644
+--- a/discord/logging/modCaseManager.js
++++ b/discord/logging/modCaseManager.js
+@@ -52,6 +52,30 @@ function canUseMongoStore() {
+     return mongoose.connection?.readyState === 1;
+ }
+ 
++async function readSettingValue(sessionManager, key, fallback = null) {
++    if (typeof sessionManager?.getSettingStrict === "function") {
++        try {
++            const result = await sessionManager.getSettingStrict(key);
++            if (!result || typeof result.found !== "boolean") {
++                console.warn("[MODCASE] Strict setting read returned an invalid result");
++                return { ok: false, value: fallback };
++            }
++            return { ok: true, value: result.found ? result.value : fallback };
++        } catch (err) {
++            console.warn(`[MODCASE] Strict setting read failed: ${safeErrorText(err, 160)}`);
++            return { ok: false, value: fallback };
++        }
++    }
++
++    if (typeof sessionManager?.getSetting !== "function") return { ok: false, value: fallback };
++    try {
++        return { ok: true, value: await sessionManager.getSetting(key, fallback) };
++    } catch (err) {
++        console.warn(`[MODCASE] Setting read failed: ${safeErrorText(err, 160)}`);
++        return { ok: false, value: fallback };
++    }
++}
++
+ function withPersistenceStore(doc, persistenceStore) {
+     if (!doc || typeof doc !== "object") return doc || null;
+     return {
+@@ -103,12 +127,14 @@ function buildCaseDoc(input, caseNumber, createdAt = Date.now()) {
+ }
+ 
+ async function nextCaseNumberFallback(sessionManager, guildId) {
+-    if (!sessionManager?.getSetting || !sessionManager?.setSetting) {
++    if ((!sessionManager?.getSettingStrict && !sessionManager?.getSetting) || !sessionManager?.setSetting) {
+         throw new Error("SESSION_MANAGER_SETTINGS_UNAVAILABLE");
+     }
+     return withFallbackLock(`counter:${guildId}`, async () => {
+         const key = counterKey(guildId);
+-        const current = Number(await sessionManager.getSetting(key, 0)) || 0;
++        const read = await readSettingValue(sessionManager, key, 0);
++        if (!read.ok) throw new Error("CASE_COUNTER_READ_FAILED");
++        const current = Number(read.value) || 0;
+         const next = current + 1;
+         if (await sessionManager.setSetting(key, next) !== true) {
+             throw new Error("CASE_COUNTER_SAVE_FAILED");
+@@ -142,16 +168,20 @@ async function restoreSettingsCaseWrite(sessionManager, key, previous) {
+ }
+ 
+ async function saveCaseWithSettings(sessionManager, caseDoc) {
+-    if (!sessionManager?.setSetting || !sessionManager?.getSetting) return false;
++    if (!sessionManager?.setSetting || (!sessionManager?.getSettingStrict && !sessionManager?.getSetting)) return false;
+     return withFallbackLock(`user:${caseDoc.guildId}:${caseDoc.userId || "unknown"}`, async () => {
+         const recordKey = caseKey(caseDoc.guildId, caseDoc.caseNumber);
+-        const previous = await sessionManager.getSetting(recordKey, null);
++        const previousRead = await readSettingValue(sessionManager, recordKey, null);
++        if (!previousRead.ok) return false;
++        const previous = previousRead.value;
+         if (await sessionManager.setSetting(recordKey, caseDoc) !== true) return false;
+ 
+         const indexKey = userIndexKey(caseDoc.guildId, caseDoc.userId || "unknown");
+         let indexSaved = false;
+         try {
+-            const current = await sessionManager.getSetting(indexKey, []);
++            const indexRead = await readSettingValue(sessionManager, indexKey, []);
++            if (!indexRead.ok) throw new Error("CASE_INDEX_READ_FAILED");
++            const current = indexRead.value;
+             const list = Array.isArray(current) ? current : [];
+             const next = [caseDoc.caseNumber, ...list.filter(n => n !== caseDoc.caseNumber)].slice(0, 50);
+             indexSaved = await sessionManager.setSetting(indexKey, next) === true;
+@@ -193,14 +223,9 @@ async function createCase(sessionManager, input = {}) {
+ }
+ 
+ async function getSettingsCase(sessionManager, guildId, caseNumber) {
+-    if (typeof sessionManager?.getSetting !== "function") return null;
+-    try {
+-        const doc = await sessionManager.getSetting(caseKey(guildId, caseNumber), null);
+-        return doc ? withPersistenceStore(doc, "settings") : null;
+-    } catch (err) {
+-        console.warn(`[MODCASE] Settings get failed: ${safeErrorText(err, 240)}`);
+-        return null;
+-    }
++    const read = await readSettingValue(sessionManager, caseKey(guildId, caseNumber), null);
++    if (!read.ok) throw new Error("CASE_SETTINGS_READ_FAILED");
++    return read.value ? withPersistenceStore(read.value, "settings") : null;
+ }
+ 
+ async function getCase(sessionManager, guildId, caseNumber) {
+@@ -209,7 +234,12 @@ async function getCase(sessionManager, guildId, caseNumber) {
+     // Prefer an explicitly persisted fallback case. Mongo and settings counters can
+     // temporarily overlap after an outage, and a settings-backed legacy case must
+     // not be mistaken for a different Mongo document with the same case number.
+-    const settingsDoc = await getSettingsCase(sessionManager, guildId, caseNumber);
++    let settingsDoc;
++    try {
++        settingsDoc = await getSettingsCase(sessionManager, guildId, caseNumber);
++    } catch {
++        return null;
++    }
+     if (settingsDoc) return settingsDoc;
+ 
+     if (canUseMongoStore()) {
+@@ -224,18 +254,17 @@ async function getCase(sessionManager, guildId, caseNumber) {
+ }
+ 
+ async function listSettingsUserCases(sessionManager, guildId, userId, max) {
+-    if (typeof sessionManager?.getSetting !== "function") return [];
+-    let numbers;
+-    try {
+-        numbers = await sessionManager.getSetting(userIndexKey(guildId, userId), []);
+-    } catch (err) {
+-        console.warn(`[MODCASE] Settings index read failed: ${safeErrorText(err, 240)}`);
+-        return [];
+-    }
++    const read = await readSettingValue(sessionManager, userIndexKey(guildId, userId), []);
++    if (!read.ok) return [];
++    const numbers = read.value;
+     const cases = [];
+     for (const number of (Array.isArray(numbers) ? numbers : []).slice(0, max)) {
+-        const doc = await getSettingsCase(sessionManager, guildId, number);
+-        if (doc) cases.push(doc);
++        try {
++            const doc = await getSettingsCase(sessionManager, guildId, number);
++            if (doc) cases.push(doc);
++        } catch {
++            return [];
++        }
+     }
+     return cases;
+ }
+@@ -271,11 +300,15 @@ async function listUserCases(sessionManager, guildId, userId, limit = 10) {
+ 
+ async function persistCaseReconciliation(sessionManager, guildId, caseNumber, operation, patch) {
+     if (typeof sessionManager?.setSetting !== "function") return false;
++    const safeOperation = String(operation || "unknown")
++        .toLowerCase()
++        .replace(/[^a-z0-9_-]+/g, "_")
++        .slice(0, 40) || "unknown";
+     try {
+-        const persisted = await sessionManager.setSetting(`modcase_reconcile_${guildId}_${caseNumber}`, {
++        const persisted = await sessionManager.setSetting(`modcase_reconcile_${guildId}_${caseNumber}_${safeOperation}`, {
+             guildId: String(guildId),
+             caseNumber,
+-            operation,
++            operation: safeOperation,
+             patch,
+             createdAt: Date.now()
+         }) === true;
+@@ -364,6 +397,7 @@ module.exports = {
+         normalizeDuration,
+         buildCaseDoc,
+         canUseMongoStore,
++        readSettingValue,
+         withPersistenceStore,
+         restoreSettingsCaseWrite,
+         getSettingsCase,
+diff --git a/discord/tests/modCaseManager.test.js b/discord/tests/modCaseManager.test.js
+index 84064e3..923e611 100644
+--- a/discord/tests/modCaseManager.test.js
++++ b/discord/tests/modCaseManager.test.js
+@@ -9,6 +9,11 @@ function createFakeSessionManager() {
+         async getSetting(key, fallback = null) {
+             return store.has(key) ? store.get(key) : fallback;
+         },
++        async getSettingStrict(key) {
++            return store.has(key)
++                ? { found: true, value: store.get(key) }
++                : { found: false, value: null };
++        },
+         async setSetting(key, value) {
+             store.set(key, value);
+             return true;
+@@ -117,10 +122,10 @@ test("settings fallback removes an orphan case when user-index persistence fails
+ 
+ test("settings fallback rolls back the case when index access throws", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+     const sessionManager = createFakeSessionManager();
+-    const originalGet = sessionManager.getSetting.bind(sessionManager);
+-    sessionManager.getSetting = async (key, fallback) => {
++    const originalGetStrict = sessionManager.getSettingStrict.bind(sessionManager);
++    sessionManager.getSettingStrict = async key => {
+         if (key === "modcase_index_g1_u1") throw new Error("index unavailable");
+-        return originalGet(key, fallback);
++        return originalGetStrict(key);
+     };
+     const warn = console.warn;
+     console.warn = () => {};
+@@ -135,6 +140,45 @@ test("settings fallback rolls back the case when index access throws", async ()
+     assert.equal(sessionManager._store.has("modcase_g1_1"), false);
+ });
+ 
++test("strict counter read failures do not reset the fallback counter or write a case", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
++    const sessionManager = createFakeSessionManager();
++    let writes = 0;
++    sessionManager.getSettingStrict = async () => { throw new Error("read unavailable"); };
++    sessionManager.setSetting = async () => { writes++; return true; };
++    const warn = console.warn;
++    console.warn = () => {};
++    try {
++        await assert.rejects(
++            modCaseManager.createCase(sessionManager, { guildId: "g1", action: "ban", userId: "u1" }),
++            /CASE_COUNTER_READ_FAILED/
++        );
++    } finally {
++        console.warn = warn;
++    }
++    assert.equal(writes, 0);
++    assert.equal(sessionManager._store.size, 0);
++});
++
++test("strict record read failures fail closed before overwriting settings", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
++    const sessionManager = createFakeSessionManager();
++    let writes = 0;
++    sessionManager.getSettingStrict = async () => { throw new Error("read unavailable"); };
++    sessionManager.setSetting = async () => { writes++; return true; };
++    const warn = console.warn;
++    console.warn = () => {};
++    try {
++        await assert.rejects(
++            modCaseManager.createCase(sessionManager, {
++                guildId: "g1", caseNumber: 9, action: "ban", userId: "u1"
++            }),
++            /CASE_SAVE_FAILED/
++        );
++    } finally {
++        console.warn = warn;
++    }
++    assert.equal(writes, 0);
++});
++
+ test("settings fallback restores a previous case when re-indexing the replacement fails", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+     const sessionManager = createFakeSessionManager();
+     sessionManager._store.set("modcase_g1_9", {
+@@ -192,7 +236,7 @@ test("legacy settings cases stay settings-backed when MongoDB is connected", asy
+         assert.equal(completed.status, "completed");
+         assert.equal(completed.metadata.persistenceStore, "settings");
+         assert.equal(mongoUpdates, 0);
+-        assert.equal(sessionManager._store.has("modcase_reconcile_g1_7"), false);
++        assert.equal([...sessionManager._store.keys()].some(key => key.startsWith("modcase_reconcile_g1_7_")), false);
+     } finally {
+         modCaseStore.getCase = originalGetCase;
+         modCaseStore.updateCase = originalUpdateCase;
+@@ -201,6 +245,30 @@ test("legacy settings cases stay settings-backed when MongoDB is connected", asy
+     }
+ });
+ 
++test("strict settings read failures do not fall through to a colliding Mongo case", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
++    const mongoose = require("mongoose");
++    const modCaseStore = require("../logging/modCaseStore");
++    const sessionManager = createFakeSessionManager();
++    const readyStateDescriptor = Object.getOwnPropertyDescriptor(mongoose.connection, "readyState");
++    const originalGetCase = modCaseStore.getCase;
++    let mongoReads = 0;
++    Object.defineProperty(mongoose.connection, "readyState", { configurable: true, value: 1 });
++    sessionManager.getSettingStrict = async () => { throw new Error("settings read unavailable"); };
++    modCaseStore.getCase = async () => { mongoReads++; return { guildId: "g1", caseNumber: 4 }; };
++    const warn = console.warn;
++    console.warn = () => {};
++    try {
++        const loaded = await modCaseManager.getCase(sessionManager, "g1", 4);
++        assert.equal(loaded, null);
++        assert.equal(mongoReads, 0);
++    } finally {
++        console.warn = warn;
++        modCaseStore.getCase = originalGetCase;
++        if (readyStateDescriptor) Object.defineProperty(mongoose.connection, "readyState", readyStateDescriptor);
++        else delete mongoose.connection.readyState;
++    }
++});
++
+ 
+ test("case lookup and lists preserve settings fallback records alongside Mongo cases", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+     const mongoose = require("mongoose");
+@@ -261,7 +329,7 @@ test("Mongo-backed case update failures create reconciliation without copying th
+         const amended = await modCaseManager.updateCaseReason(sessionManager, "g1", 9, "new reason", "m1");
+         assert.equal(amended, null);
+         assert.equal(sessionManager._store.has("modcase_g1_9"), false);
+-        const reasonRecovery = sessionManager._store.get("modcase_reconcile_g1_9");
++        const reasonRecovery = sessionManager._store.get("modcase_reconcile_g1_9_update_reason");
+         assert.equal(reasonRecovery.operation, "update_reason");
+         assert.equal(reasonRecovery.patch.reason, "new reason");
+ 
+@@ -270,9 +338,10 @@ test("Mongo-backed case update failures create reconciliation without copying th
+         );
+         assert.equal(completed, null);
+         assert.equal(sessionManager._store.has("modcase_g1_9"), false);
+-        const statusRecovery = sessionManager._store.get("modcase_reconcile_g1_9");
++        const statusRecovery = sessionManager._store.get("modcase_reconcile_g1_9_update_status");
+         assert.equal(statusRecovery.operation, "update_status");
+         assert.equal(statusRecovery.patch.status, "completed");
++        assert.equal(sessionManager._store.get("modcase_reconcile_g1_9_update_reason").patch.reason, "new reason");
+     } finally {
+         modCaseStore.getCase = originalGetCase;
+         modCaseStore.updateCase = originalUpdateCase;
