@@ -1,0 +1,118 @@
++        const amended = await modCaseManager.updateCaseReason(sessionManager, "g1", 9, "new reason", "m1");
++        assert.equal(amended, null);
++        assert.equal(sessionManager._store.has("modcase_g1_9"), false);
++        const reasonRecovery = sessionManager._store.get("modcase_reconcile_g1_9");
++        assert.equal(reasonRecovery.operation, "update_reason");
++        assert.equal(reasonRecovery.patch.reason, "new reason");
++
++        const completed = await modCaseManager.updateCaseStatus(
++            sessionManager, "g1", 9, "completed", { actionApplied: true }
++        );
++        assert.equal(completed, null);
++        assert.equal(sessionManager._store.has("modcase_g1_9"), false);
++        const statusRecovery = sessionManager._store.get("modcase_reconcile_g1_9");
++        assert.equal(statusRecovery.operation, "update_status");
++        assert.equal(statusRecovery.patch.status, "completed");
++    } finally {
++        modCaseStore.getCase = originalGetCase;
++        modCaseStore.updateCase = originalUpdateCase;
++        if (readyStateDescriptor) Object.defineProperty(mongoose.connection, "readyState", readyStateDescriptor);
++        else delete mongoose.connection.readyState;
++    }
++});
++
+ test("updateCaseStatus persists pending workflow outcomes", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+     const sessionManager = createFakeSessionManager();
+     const created = await modCaseManager.createCase(sessionManager, {
+diff --git a/discord/verification/routes/oauth.js b/discord/verification/routes/oauth.js
+index 86646ff..d175698 100644
+--- a/discord/verification/routes/oauth.js
++++ b/discord/verification/routes/oauth.js
+@@ -1252,8 +1252,12 @@ async function saveOAuthUserSafe({
+                     err?.keyPattern?.["discord.userId"] || err?.keyValue?.["discord.userId"]
+                 );
+                 if (duplicateDiscordUser) err.code = "snapshot_activation_stale";
+-                console.error("[VERIFY] saveOAuthUser activation failed:", JSON.stringify(sanitizeSideEffectError(err)));
++                // Rollback is the data-integrity action; diagnostics must never be
++                // able to prevent it, even if a custom logger/console hook throws.
+                 const rollback = await rollbackStoredSnapshots(profileUserId, storedSnapshots);
++                try {
++                    console.error("[VERIFY] saveOAuthUser activation failed:", JSON.stringify(sanitizeSideEffectError(err)));
++                } catch {}
+                 const active = err?.code === "snapshot_activation_stale"
+                     ? await loadOAuthSnapshotState(profileUserId).catch(() => null)
+                     : null;
+diff --git a/discord/verification/services/ipIdentityHistoryService.js b/discord/verification/services/ipIdentityHistoryService.js
+index fcdf921..5d7a66f 100644
+--- a/discord/verification/services/ipIdentityHistoryService.js
++++ b/discord/verification/services/ipIdentityHistoryService.js
+@@ -116,8 +116,28 @@ function compatibleRoleEventIds(input) {
+     return [...new Set([roleEventId(input), legacyOrderedRoleEventId(input)])];
+ }
+ 
++function roleEventIdentity(input) {
++    const roles = historyRoles(input);
++    return {
++        guildId: String(input.guildId || ""),
++        ipHash: String(input.ipHash || ""),
++        userId: String(input.profile?.id || input.userId || ""),
++        roleId: input.roleId || null,
++        result: input.result || null,
++        at: Number(input.now || input.at || 0),
++        roles: roles.length > 0
++            ? { $all: roles, $size: roles.length }
++            : { $size: 0 }
++    };
++}
++
+ function roleEventFilter(input) {
+-    return { eventId: { $in: compatibleRoleEventIds(input) } };
++    return {
++        $or: [
++            { eventId: { $in: compatibleRoleEventIds(input) } },
++            roleEventIdentity(input)
++        ]
++    };
+ }
+ 
+ async function createRoleHistory(input, models) {
+@@ -632,6 +652,7 @@ module.exports = {
+         roleEventId,
+         legacyOrderedRoleEventId,
+         compatibleRoleEventIds,
++        roleEventIdentity,
+         roleEventFilter,
+         legacyEventId,
+         recoveredLogInput,
+diff --git a/verification-tests/ipIdentityHistory.test.js b/verification-tests/ipIdentityHistory.test.js
+index 00f8539..81d6745 100644
+--- a/verification-tests/ipIdentityHistory.test.js
++++ b/verification-tests/ipIdentityHistory.test.js
+@@ -38,11 +38,47 @@ describe("unbounded IP identity history", () => {
+         const compatible = history._test.compatibleRoleEventIds({ ...base, roles: ["3", "1", "2", "1"] });
+         expect(compatible).toContain(first);
+         expect(compatible).toContain(history._test.legacyOrderedRoleEventId({ ...base, roles: ["3", "1", "2", "1"] }));
+-        expect(history._test.roleEventFilter({ ...base, roles: ["3", "1", "2", "1"] }))
+-            .toEqual({ eventId: { $in: compatible } });
++        expect(history._test.roleEventIdentity({ ...base, roles: ["3", "1", "2", "1"] })).toEqual({
++            guildId: base.guildId,
++            ipHash: base.ipHash,
++            userId: base.userId,
++            roleId: base.roleId,
++            result: base.result,
++            at: base.at,
++            roles: { $all: ["1", "2", "3"], $size: 3 }
++        });
++        expect(history._test.roleEventFilter({ ...base, roles: ["3", "1", "2", "1"] })).toEqual({
++            $or: [
++                { eventId: { $in: compatible } },
++                history._test.roleEventIdentity({ ...base, roles: ["3", "1", "2", "1"] })
++            ]
++        });
+     });
+ 
+ 
++    test("role filters match legacy records even when their stored role order differs", () => {
++        const base = {
++            guildId: "12345678901234567",
++            ipHash: "ip-hash",
