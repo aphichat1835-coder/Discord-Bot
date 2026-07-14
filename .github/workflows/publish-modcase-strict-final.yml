@@ -1,0 +1,98 @@
+name: Publish Strict ModCase Final
+
+on:
+  pull_request:
+    branches:
+      - tt
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  validate-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout validation branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify patch payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp scripts/.modcase-strict-final.patch /tmp/modcase-strict-final.patch
+          echo "c7e48905b200c05a19e720c4461049e603ea0cae4591d4316a3023462a204f14  /tmp/modcase-strict-final.patch" | sha256sum -c -
+
+      - name: Apply to exact tt head
+        shell: bash
+        env:
+          EXPECTED_BASE: 11d7de0a75f4699b3276c7e11349e7592b0840e4
+        run: |
+          set -euo pipefail
+          git fetch origin tt
+          test "$(git rev-parse origin/tt)" = "$EXPECTED_BASE"
+          git checkout --detach "$EXPECTED_BASE"
+          git apply --check /tmp/modcase-strict-final.patch
+          git apply /tmp/modcase-strict-final.patch
+          git diff --check
+
+      - name: Verify exact scope and blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --name-only | sort > /tmp/actual-files
+          printf '%s\n' \
+            discord/logging/modCaseManager.js \
+            discord/tests/modCaseManager.test.js | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+          test "$(git hash-object discord/logging/modCaseManager.js)" = "4358f749ad30f7cd533d6bcf234856639109c640"
+          test "$(git hash-object discord/tests/modCaseManager.test.js)" = "923e611ebe189931db34222a8983cedcb2f765ed"
+          ! grep -Eq '^discord/systemProvider(\.js|/)' /tmp/actual-files
+          ! grep -Eq '^package(-lock)?\.json$' /tmp/actual-files
+          ! grep -Eq '^\.github/workflows/' /tmp/actual-files
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies without lockfile changes
+        run: npm install --ignore-scripts --package-lock=false --no-audit --no-fund
+
+      - name: Run repository checks
+        run: CI=false npm run check
+
+      - name: Run complete test suite
+        run: npm test
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
+      - name: Recheck final tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git diff --name-only | sort > /tmp/final-files
+          diff -u /tmp/expected-files /tmp/final-files
+          test "$(git hash-object discord/logging/modCaseManager.js)" = "4358f749ad30f7cd533d6bcf234856639109c640"
+          test "$(git hash-object discord/tests/modCaseManager.test.js)" = "923e611ebe189931db34222a8983cedcb2f765ed"
+
+      - name: Commit and fast-forward tt
+        shell: bash
+        env:
+          EXPECTED_BASE: 11d7de0a75f4699b3276c7e11349e7592b0840e4
+        run: |
+          set -euo pipefail
+          git fetch origin tt
+          test "$(git rev-parse origin/tt)" = "$EXPECTED_BASE"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add discord/logging/modCaseManager.js discord/tests/modCaseManager.test.js
+          git diff --cached --check
+          git commit -m "Fail closed on ModCase setting read errors"
+          git push origin HEAD:tt
