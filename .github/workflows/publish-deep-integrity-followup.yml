@@ -26,7 +26,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat scripts/.deep-integrity-followup.part* > /tmp/followup.patch
+          cat scripts/.deep-integrity-followup.piece* > /tmp/followup.patch
           echo "bba4354e8bf3d3088e56bb821e4dcd15708453031a8af16c01a507a25d5e3682  /tmp/followup.patch" | sha256sum -c -
 
       - name: Apply to exact tt head
