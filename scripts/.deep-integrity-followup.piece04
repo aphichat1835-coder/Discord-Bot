@@ -1,0 +1,22 @@
++            userId: "22345678901234567",
++            roleId: "32345678901234567",
++            result: "success",
++            at: 100,
++            roles: ["3", "1", "2"]
++        };
++        const filter = history._test.roleEventFilter(base);
++        expect(filter.$or[1]).toEqual({
++            guildId: base.guildId,
++            ipHash: base.ipHash,
++            userId: base.userId,
++            roleId: base.roleId,
++            result: base.result,
++            at: base.at,
++            roles: { $all: ["1", "2", "3"], $size: 3 }
++        });
++        expect(history._test.roleEventIdentity({ ...base, roles: [] }).roles).toEqual({ $size: 0 });
++    });
++
+     test("rejects non-snowflake history lookup identifiers before database access", () => {
+         expect(() => history._test.strictSnowflake("$gt", "invalid_user_id"))
+             .toThrow("invalid_user_id");
