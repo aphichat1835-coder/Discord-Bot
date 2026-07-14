@@ -1,7 +1,6 @@
 from pathlib import Path
 import base64
 import gzip
-import re
 import shutil
 
 PAYLOAD_DIR = Path("scripts/.snapshot-redesign")
@@ -14,11 +13,11 @@ def unpack(source_name, destination):
     target.write_bytes(gzip.decompress(base64.b64decode(encoded)))
 
 
-def replace_once(text, pattern, replacement, label):
-    updated, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
+def replace_literal_once(text, old, new, label):
+    count = text.count(old)
     if count != 1:
         raise SystemExit(f"{label} expected one match, found {count}")
-    return updated
+    return text.replace(old, new, 1)
 
 
 unpack("service.gz.b64", "discord/verification/services/oauthSnapshotStore.js")
@@ -26,9 +25,13 @@ unpack("test.gz.b64", "verification-tests/snapshotAggregateBudget.test.js")
 
 route_path = Path("discord/verification/routes/oauth.js")
 route = route_path.read_text()
-route = replace_once(
+
+route = replace_literal_once(
     route,
-    r'function applySnapshotBudgetGuard\(updateSet\) \{.*?\n\}\n\nfunction applyStoredSnapshotMeta',
+    '''function applySnapshotBudgetGuard(updateSet) {
+    return snapshotBudget.assertSnapshotBudget(updateSet, { label: "oauth_user_update" });
+}
+''',
     '''function applySnapshotBudgetGuard(updateSet) {
     const bytes = snapshotBudget.jsonBytes(updateSet);
     if (!Number.isFinite(bytes) || bytes > snapshotBudget.MAX_MAX_BYTES) {
@@ -40,13 +43,23 @@ route = replace_once(
     }
     return { ok: true, bytes, maxBytes: snapshotBudget.MAX_MAX_BYTES, truncated: false };
 }
-
-function applyStoredSnapshotMeta''',
+''',
     "applySnapshotBudgetGuard"
 )
-route = replace_once(
+
+route = replace_literal_once(
     route,
-    r'function mergeCompleteSnapshotRefs\(previousRefs = \{\}, stored = \{\}\) \{.*?\n\}\n\nfunction applyOAuthTokenStorage',
+    '''function mergeCompleteSnapshotRefs(previousRefs = {}, stored = {}) {
+    const next = { ...objectOrEmpty(previousRefs) };
+    for (const kind of ["profile", "guilds", "connections", "member"]) {
+        if (stored[kind]?.complete === true &&
+            stored[kind].returnedCount === stored[kind].storedCount) {
+            next[kind] = stored[kind];
+        }
+    }
+    return next;
+}
+''',
     '''function mergeCompleteSnapshotRefs(previousRefs = {}, stored = {}) {
     const next = { ...objectOrEmpty(previousRefs) };
     if (stored.complete !== true) return next;
@@ -67,15 +80,15 @@ route = replace_once(
     };
     return next;
 }
-
-function applyOAuthTokenStorage''',
+''',
     "mergeCompleteSnapshotRefs"
 )
-route = replace_once(
+
+route = replace_literal_once(
     route,
-    r'(const storedSnapshots = await snapshotStore\.storeOAuthSnapshots\(\{.*?\n        \}\);)\n        let snapshotMeta = buildSnapshotMetaUpdate\(',
-    r'''\1
-        if (storedSnapshots.complete !== true) {
+    '''        let snapshotMeta = buildSnapshotMetaUpdate(
+''',
+    '''        if (storedSnapshots.complete !== true) {
             return {
                 saved: false,
                 snapshotVersion: storedSnapshots.version,
@@ -83,9 +96,11 @@ route = replace_once(
                 snapshotWrites: storedSnapshots
             };
         }
-        let snapshotMeta = buildSnapshotMetaUpdate(''',
+        let snapshotMeta = buildSnapshotMetaUpdate(
+''',
     "snapshot-set activation guard"
 )
+
 route_path.write_text(route)
 
 Path(".github/workflows/redesign-snapshot-storage.yml").unlink(missing_ok=True)
