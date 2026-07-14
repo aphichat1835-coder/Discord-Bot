@@ -85,10 +85,10 @@ index fcdf921..5d7a66f 100644
          legacyEventId,
          recoveredLogInput,
 diff --git a/verification-tests/ipIdentityHistory.test.js b/verification-tests/ipIdentityHistory.test.js
-index 00f8539..81d6745 100644
+index 5544c16..81d6745 100644
 --- a/verification-tests/ipIdentityHistory.test.js
 +++ b/verification-tests/ipIdentityHistory.test.js
-@@ -38,11 +38,47 @@ describe("unbounded IP identity history", () => {
+@@ -38,8 +38,45 @@ describe("unbounded IP identity history", () => {
          const compatible = history._test.compatibleRoleEventIds({ ...base, roles: ["3", "1", "2", "1"] });
          expect(compatible).toContain(first);
          expect(compatible).toContain(history._test.legacyOrderedRoleEventId({ ...base, roles: ["3", "1", "2", "1"] }));
@@ -109,9 +109,9 @@ index 00f8539..81d6745 100644
 +                history._test.roleEventIdentity({ ...base, roles: ["3", "1", "2", "1"] })
 +            ]
 +        });
-     });
- 
- 
++    });
++
++
 +    test("role filters match legacy records even when their stored role order differs", () => {
 +        const base = {
 +            guildId: "12345678901234567",
