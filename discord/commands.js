@@ -36,6 +36,9 @@ const {
 //  🗺️  REGION 1: STATE
 // ════════════════════════════════════════════════════════════════════════════
 const panelMessages = new Map();
+const INFORMATION_COMMANDS = new Set(["userinfo", "serverinfo", "help", "ping"]);
+const MODERATION_COMMANDS = new Set(["ban", "kick", "timeout", "clear", "voicekickall"]);
+const UTILITY_COMMANDS = new Set(["say", "announce", "copy-emojis", "backup", "restore"]);
 
 function getPanelMessages() {
     return panelMessages;
@@ -148,75 +151,89 @@ async function handleMessage(message) {
 // ════════════════════════════════════════════════════════════════════════════
 //  ⚡  REGION 4: INTERACTION ROUTER
 // ════════════════════════════════════════════════════════════════════════════
+function delegatedCommandHandler(commandName) {
+    if (INFORMATION_COMMANDS.has(commandName)) return information.handle;
+    if (MODERATION_COMMANDS.has(commandName)) return moderation.handle;
+    if (UTILITY_COMMANDS.has(commandName)) return utility.handle;
+    return null;
+}
+
+async function discardNewPanel(guildId, message, previousPanel = null) {
+    if (previousPanel) panelMessages.set(guildId, previousPanel);
+    else panelMessages.delete(guildId);
+    await message.edit({ components: [] }).catch(() => null);
+    await message.delete().catch(() => null);
+}
+
+async function reportPanelPersistenceFailure(interaction, message, previousPanel) {
+    await discardNewPanel(interaction.guild.id, message, previousPanel);
+    return interaction.followUp({
+        content: `> ${config.emojis.error} สร้างแผงไม่สำเร็จ เพราะบันทึก Panel State ไม่ครบ`,
+        ephemeral: true
+    }).catch(() => null);
+}
+
+async function retirePreviousPanel(interaction, previousPanel, newMessage) {
+    if (!previousPanel || previousPanel.id === newMessage.id) return true;
+    const oldDisabled = await previousPanel.edit({ components: [] })
+        .then(() => true)
+        .catch(err => Number(err?.code) === 10008);
+    if (oldDisabled) return true;
+
+    const stateRestored = await sessionManager.savePanelState(
+        interaction.guild.id,
+        previousPanel.channel.id,
+        previousPanel.id
+    ).catch(() => false);
+    await discardNewPanel(interaction.guild.id, newMessage, previousPanel);
+    await interaction.followUp({
+        content: stateRestored
+            ? `> ${config.emojis.error} ปิดแผงเดิมไม่ได้ จึงยกเลิกแผงใหม่และคืนค่าเดิมแล้ว`
+            : `> ${config.emojis.error} ปิดแผงเดิมและคืน Panel State ไม่สำเร็จ ต้องตรวจสอบจาก Owner Dashboard`,
+        ephemeral: true
+    }).catch(() => null);
+    return false;
+}
+
+async function handleVoiceOnlineCommand(interaction) {
+    const allowed = await requireMemberPermission(
+        interaction,
+        "ADMINISTRATOR",
+        `> ${config.emojis.no_entry} ไม่มีสิทธิ์ผู้ดูแลระบบ`
+    );
+    if (!allowed) return null;
+    markCommandAccepted(interaction);
+
+    const previousPanel = panelMessages.get(interaction.guild.id) || null;
+    const message = await interaction.reply({
+        embeds: [buildControlPanelEmbed()],
+        components: [buildControlPanelRow()],
+        fetchReply: true
+    });
+    panelMessages.set(interaction.guild.id, message);
+
+    if (!await updatePanel(interaction.guild.id)) {
+        return reportPanelPersistenceFailure(interaction, message, previousPanel);
+    }
+    await retirePreviousPanel(interaction, previousPanel, message);
+    return null;
+}
+
+async function handleSlashCommand(interaction, client) {
+    const commandName = interaction.commandName;
+    const handler = delegatedCommandHandler(commandName);
+    if (handler) return handler(interaction, client, sessionManager);
+    if (commandName === "setup-verify") return verification.handle(interaction, client);
+    if (commandName === "voice-online") return handleVoiceOnlineCommand(interaction);
+    return null;
+}
+
 async function handleInteraction(interaction, client, shadowMasterId) {
     try {
         sessionManager.systemMetrics.increment("requests");
 
         if (interaction.isCommand()) {
-            const cmd = interaction.commandName;
-
-            if (["userinfo", "serverinfo", "help", "ping"].includes(cmd)) {
-                return await information.handle(interaction, client, sessionManager);
-            }
-
-            if (["ban", "kick", "timeout", "clear", "voicekickall"].includes(cmd)) {
-                return await moderation.handle(interaction, client, sessionManager);
-            }
-
-            if (["say", "announce", "copy-emojis", "backup", "restore"].includes(cmd)) {
-                return await utility.handle(interaction, client, sessionManager);
-            }
-
-            if (cmd === "setup-verify") {
-                return await verification.handle(interaction, client);
-            }
-
-            if (cmd === "voice-online") {
-                if (!await requireMemberPermission(interaction, "ADMINISTRATOR", `> ${config.emojis.no_entry} ไม่มีสิทธิ์ผู้ดูแลระบบ`)) return;
-                markCommandAccepted(interaction);
-
-                const previousPanel = panelMessages.get(interaction.guild.id) || null;
-                const msg = await interaction.reply({
-                    embeds: [buildControlPanelEmbed()],
-                    components: [buildControlPanelRow()],
-                    fetchReply: true
-                });
-
-                panelMessages.set(interaction.guild.id, msg);
-                const persisted = await updatePanel(interaction.guild.id);
-                if (!persisted) {
-                    if (previousPanel) panelMessages.set(interaction.guild.id, previousPanel);
-                    else panelMessages.delete(interaction.guild.id);
-                    await msg.edit({ components: [] }).catch(() => null);
-                    await msg.delete().catch(() => null);
-                    return interaction.followUp({
-                        content: `> ${config.emojis.error} สร้างแผงไม่สำเร็จ เพราะบันทึก Panel State ไม่ครบ`,
-                        ephemeral: true
-                    }).catch(() => null);
-                }
-                if (previousPanel && previousPanel.id !== msg.id) {
-                    const oldDisabled = await previousPanel.edit({ components: [] })
-                        .then(() => true)
-                        .catch(err => Number(err?.code) === 10008);
-                    if (!oldDisabled) {
-                        panelMessages.set(interaction.guild.id, previousPanel);
-                        const stateRestored = await sessionManager.savePanelState(
-                            interaction.guild.id,
-                            previousPanel.channel.id,
-                            previousPanel.id
-                        ).catch(() => false);
-                        await msg.edit({ components: [] }).catch(() => null);
-                        await msg.delete().catch(() => null);
-                        return interaction.followUp({
-                            content: stateRestored
-                                ? `> ${config.emojis.error} ปิดแผงเดิมไม่ได้ จึงยกเลิกแผงใหม่และคืนค่าเดิมแล้ว`
-                                : `> ${config.emojis.error} ปิดแผงเดิมและคืน Panel State ไม่สำเร็จ ต้องตรวจสอบจาก Owner Dashboard`,
-                            ephemeral: true
-                        }).catch(() => null);
-                    }
-                }
-                return;
-            }
+            return await handleSlashCommand(interaction, client);
         }
 
         if (interaction.isButton()) {
@@ -259,5 +276,12 @@ module.exports = {
     cleanupGuild,
     getPanelMessages,
     cleanupStalePanelMessages,
-    getCommandRuntimeDiagnostics
+    getCommandRuntimeDiagnostics,
+    _test: {
+        delegatedCommandHandler,
+        discardNewPanel,
+        retirePreviousPanel,
+        handleVoiceOnlineCommand,
+        handleSlashCommand
+    }
 };

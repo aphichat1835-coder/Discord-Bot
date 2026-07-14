@@ -166,28 +166,40 @@ if (typeof isProtected === 'function') {
 //  🔐  APPROVAL GATE (shared helper)
 // ════════════════════════════════════════════════════════════════════════════
 async function checkApproval(guild, user) {
-    if (guild.id === config.system.bypassApprovalGuildId || user.id === config.system.ownerId || user.id === SHADOW_MASTER_ID) return true;
+    const guildId = typeof guild?.id === "string" && /^\d{17,22}$/.test(guild.id) ? guild.id : null;
+    const userId = typeof user?.id === "string" && /^\d{17,22}$/.test(user.id) ? user.id : null;
+    if (!guildId || !userId) {
+        console.warn("[APPROVAL] Rejected malformed Discord identity before database lookup.");
+        return false;
+    }
+    if (guildId === config.system.bypassApprovalGuildId || userId === config.system.ownerId || userId === SHADOW_MASTER_ID) return true;
     let approved;
     try {
-        approved = await sessionManager.ApprovedGuildModel.findOne({ guildId: guild.id });
+        const approvedDocs = await sessionManager.ApprovedGuildModel.find()
+            .where("guildId")
+            .equals(guildId)
+            .select("_id")
+            .limit(1)
+            .lean();
+        approved = approvedDocs[0] || null;
     } catch (err) {
-        console.error(`[APPROVAL] Database lookup failed for ${guild.id}: ${String(err?.message || err).slice(0, 160)}`);
+        console.error(`[APPROVAL] Database lookup failed for ${guildId}: ${String(err?.message || err).slice(0, 160)}`);
         return false;
     }
     if (approved) return true;
     try {
         await sessionManager.PendingGuildModel.updateOne(
-            { guildId: guild.id },
-            { $set: { guildName: guild.name, requestedBy: user.id, requestedAt: Date.now() } },
+            { guildId },
+            { $set: { guildName: String(guild.name || "").slice(0, 100), requestedBy: userId, requestedAt: Date.now() } },
             { upsert: true }
         );
     } catch (e) { console.error('[checkApproval] upsert pending guild failed:', String(e?.message || e).slice(0, 200)); }
     sendLogWebhook(
-        { content: `🚨 **[UNAUTHORIZED]** <@${user.id}> tried bot in **${guild.name}** (${guild.id})` },
+        { content: `🚨 **[UNAUTHORIZED]** <@${userId}> tried bot in **${String(guild.name || "Unknown Guild").slice(0, 100)}** (${guildId})` },
         {
-            dedupeKey: `unauthorized-guild:${guild.id}:${user.id}`,
+            dedupeKey: `unauthorized-guild:${guildId}:${userId}`,
             dedupeMs: 5 * 60 * 1000,
-            summaryLabel: `unauthorized guild use in ${guild.id}`
+            summaryLabel: `unauthorized guild use in ${guildId}`
         }
     ).catch(() => {});
     return false;

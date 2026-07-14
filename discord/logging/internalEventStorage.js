@@ -117,29 +117,38 @@ async function listFallback(sessionManager, guildId, limit = 50) {
     return out;
 }
 
+function isEmptyFilterValue(value) {
+    return value === undefined || value === null || value === "";
+}
+
+function matchesCreatedAt(record, key, value) {
+    const createdAt = Number(record.createdAt || 0);
+    if (key === "from") return createdAt >= Number(value);
+    if (key === "to") return createdAt <= Number(value);
+    return null;
+}
+
+function filterFieldValue(record, key) {
+    if (key === "source") return record.source;
+    if (key === "category") return record.category;
+    if (key === "severity") return record.severity;
+    if (key === "actionType") return record.actionType;
+    if (key === "actorId") return record.actorId;
+    if (key === "targetId") return record.targetId;
+    if (key === "channelId") return record.channelId;
+    return undefined;
+}
+
+function matchesFilter(record, key, value) {
+    if (isEmptyFilterValue(value)) return true;
+    const timeMatch = matchesCreatedAt(record, key, value);
+    if (timeMatch !== null) return timeMatch;
+    const actual = filterFieldValue(record, key);
+    return actual !== undefined && String(actual || "") === String(value);
+}
+
 function matchesFilters(record, filters = {}) {
-    for (const [key, value] of Object.entries(filters || {})) {
-        if (value === undefined || value === null || value === "") continue;
-        if (key === "from") {
-            if (Number(record.createdAt || 0) < Number(value)) return false;
-            continue;
-        }
-        if (key === "to") {
-            if (Number(record.createdAt || 0) > Number(value)) return false;
-            continue;
-        }
-        let actual;
-        if (key === "source") actual = record.source;
-        else if (key === "category") actual = record.category;
-        else if (key === "severity") actual = record.severity;
-        else if (key === "actionType") actual = record.actionType;
-        else if (key === "actorId") actual = record.actorId;
-        else if (key === "targetId") actual = record.targetId;
-        else if (key === "channelId") actual = record.channelId;
-        else return false;
-        if (String(actual || "") !== String(value)) return false;
-    }
-    return true;
+    return Object.entries(filters || {}).every(([key, value]) => matchesFilter(record, key, value));
 }
 
 async function listAuditRecords(sessionManager, guildId, limit = 50, filters = {}) {
@@ -165,6 +174,10 @@ module.exports = {
         idOrNull,
         normalizeEvidence,
         normalizeMetadata,
+        isEmptyFilterValue,
+        matchesCreatedAt,
+        filterFieldValue,
+        matchesFilter,
         matchesFilters,
         withFallbackLock
     }

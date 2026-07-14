@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const helpers = require("../commands/moderationHelpers");
+const moderation = require("../commands/moderation");
 const config = require("../config.json");
 
 test("moderation helpers map required permissions", () => {
@@ -45,4 +46,31 @@ test("moderation helpers avoid exposing raw exception messages", () => {
         helpers.moderationErrorReply(new Error("MISSING_PERMS")),
         `> ${config.emojis.error} บอทไม่มีสิทธิ์ที่จำเป็น!`
     );
+});
+
+test("voice kick result state distinguishes complete, partial, and failed", () => {
+    assert.equal(moderation._test.voiceKickResultState({ kicked: ["<@1>"], failed: 0, timedOut: false }, 1), "complete");
+    assert.equal(moderation._test.voiceKickResultState({ kicked: ["<@1>"], failed: 1, timedOut: false }, 2), "partial");
+    assert.equal(moderation._test.voiceKickResultState({ kicked: [], failed: 1, timedOut: false }, 1), "failed");
+});
+
+test("voice kick processing skips administrators and counts disconnect failures", async () => {
+    const disconnected = [];
+    const member = (id, administrator, fails = false) => ({
+        id,
+        permissions: { has: permission => permission === "ADMINISTRATOR" && administrator },
+        voice: {
+            disconnect: async () => {
+                if (fails) throw new Error("disconnect failed");
+                disconnected.push(id);
+            }
+        }
+    });
+    const result = await moderation._test.disconnectVoiceMembers(
+        [member("admin", true), member("ok", false), member("failed", false, true)],
+        { pause: async () => {}, yieldTurn: async () => {} }
+    );
+
+    assert.deepEqual(disconnected, ["ok"]);
+    assert.deepEqual(result, { kicked: ["<@ok>"], failed: 1, timedOut: false });
 });

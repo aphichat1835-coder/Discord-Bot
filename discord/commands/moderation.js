@@ -38,6 +38,66 @@ async function handle(interaction, client) {
 // ════════════════════════════════════════════════════════════════════════════
 //  🔇  VOICE KICK ALL
 // ════════════════════════════════════════════════════════════════════════════
+async function disconnectVoiceMembers(memberSnapshot, options = {}) {
+    const startedAt = options.startedAt || Date.now();
+    const maxDurationMs = options.maxDurationMs || 14 * 60 * 1000;
+    const pause = options.pause || (ms => new Promise(resolve => setTimeout(resolve, ms)));
+    const yieldTurn = options.yieldTurn || (() => new Promise(resolve => setImmediate(resolve)));
+    const kicked = [];
+    let failed = 0;
+    let timedOut = false;
+
+    for (const member of memberSnapshot) {
+        await yieldTurn();
+        if (Date.now() - startedAt > maxDurationMs) {
+            timedOut = true;
+            break;
+        }
+        if (member.permissions.has("ADMINISTRATOR")) continue;
+        try {
+            await member.voice.disconnect();
+            kicked.push(`<@${member.id}>`);
+            await pause(500);
+        } catch {
+            failed++;
+        }
+    }
+    return { kicked, failed, timedOut };
+}
+
+function voiceKickResultState(result, eligibleCount) {
+    if (result.kicked.length === 0) return "failed";
+    return result.failed === 0 && !result.timedOut && result.kicked.length === eligibleCount
+        ? "complete"
+        : "partial";
+}
+
+function voiceKickResultColor(resultState) {
+    if (resultState === "complete") return config.system.themeColors.success;
+    if (resultState === "partial") return config.system.themeColors.warning;
+    return config.system.themeColors.error;
+}
+
+function kickedMemberSummary(kicked) {
+    if (kicked.length === 0) return "- ไม่มีใครถูกเตะ -";
+    if (kicked.length <= 50) return kicked.join(", ");
+    return `${kicked.slice(0, 50).join(", ")}\n... และอีก ${kicked.length - 50} คน`;
+}
+
+function buildVoiceKickResultEmbed(result, eligibleCount) {
+    const resultState = voiceKickResultState(result, eligibleCount);
+    const timeoutMessage = result.timedOut
+        ? `\n> ${config.emojis.warning} **หยุดอัตโนมัติ:** เกิน 14 นาที`
+        : "";
+    return new MessageEmbed()
+        .setColor(voiceKickResultColor(resultState))
+        .setDescription(
+            `> **ผลการจัดการ: ${resultState}** ${config.emojis.broom}\n> เป้าหมายทั้งหมด: ${eligibleCount} คน\n\n` +
+            `— **เตะสำเร็จ ${result.kicked.length} คน:**\n${kickedMemberSummary(result.kicked)}\n` +
+            `— **ล้มเหลว:** ${result.failed} คน${timeoutMessage}`
+        );
+}
+
 async function handleVoiceKickAll(interaction) {
     const vc = interaction.member.voice.channel;
     if (!vc) return interaction.reply({ content: `> ${config.emojis.no_entry} คุณต้องอยู่ในห้องเสียงก่อน!`, ephemeral: true });
@@ -52,52 +112,10 @@ async function handleVoiceKickAll(interaction) {
 
     try {
         if (!await safeDefer(interaction)) return null;
-        const startTime = Date.now();
-        const MAX_DURATION = 14 * 60 * 1000;
-        const kicked = [];
-        let failed = 0;
-        let isTimeoutHit = false;
-
         const memberSnapshot = Array.from(vc.members.values());
-        for (const member of memberSnapshot) {
-            await new Promise(resolve => setImmediate(resolve));
-
-            if (Date.now() - startTime > MAX_DURATION) { isTimeoutHit = true; break; }
-            if (!member.permissions.has("ADMINISTRATOR")) {
-                try {
-                    await member.voice.disconnect();
-                    kicked.push(`<@${member.id}>`);
-                    await new Promise(r => setTimeout(r, 500));
-                } catch {
-                    failed++;
-                }
-            }
-        }
-
-        const limitMsg = isTimeoutHit ? `\n> ${config.emojis.warning} **หยุดอัตโนมัติ:** เกิน 14 นาที` : "";
         const eligibleCount = memberSnapshot.filter(member => !member.permissions.has("ADMINISTRATOR")).length;
-        let resultState = "failed";
-        if (kicked.length > 0) {
-            resultState = failed === 0 && !isTimeoutHit && kicked.length === eligibleCount
-                ? "complete"
-                : "partial";
-        }
-        let resultColor = config.system.themeColors.error;
-        if (resultState === "complete") resultColor = config.system.themeColors.success;
-        else if (resultState === "partial") resultColor = config.system.themeColors.warning;
-        const embed = new MessageEmbed()
-            .setColor(resultColor)
-            .setDescription(
-                `> **ผลการจัดการ: ${resultState}** ${config.emojis.broom}\n> เป้าหมายทั้งหมด: ${eligibleCount} คน\n\n` +
-                `— **เตะสำเร็จ ${kicked.length} คน:**\n` +
-                `${kicked.length > 0
-                    ? (kicked.length > 50
-                        ? kicked.slice(0, 50).join(", ") + `\n... และอีก ${kicked.length - 50} คน`
-                        : kicked.join(", "))
-                    : "- ไม่มีใครถูกเตะ -"}\n` +
-                `— **ล้มเหลว:** ${failed} คน${limitMsg}`
-            );
-
+        const result = await disconnectVoiceMembers(memberSnapshot);
+        const embed = buildVoiceKickResultEmbed(result, eligibleCount);
         return interaction.editReply({ embeds: [embed] });
     } finally {
         activeVoiceKicks.delete(interaction.guild.id);
@@ -215,6 +233,10 @@ module.exports = {
     _test: {
         isBulkDeletableMessage,
         deleteMessagesIndividually,
-        deleteChannelMessages
+        deleteChannelMessages,
+        disconnectVoiceMembers,
+        voiceKickResultState,
+        kickedMemberSummary,
+        buildVoiceKickResultEmbed
     }
 };

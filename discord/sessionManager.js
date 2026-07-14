@@ -1462,12 +1462,18 @@ async function getSettingStrict(key) {
 }
 
 async function getLatestSettingByPrefix(prefix) {
+    if (typeof prefix !== "string" || !/^[A-Za-z0-9_-]{1,160}$/.test(prefix)) {
+        throw new Error("INVALID_SETTING_PREFIX");
+    }
     if (!dbConnected) throw new Error("DATABASE_NOT_CONNECTED");
-    const escaped = String(prefix || "").replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
-    if (!escaped) return null;
-    const doc = await BotSettingsModel.findOne({ key: { $regex: `^${escaped}` } })
+    const docs = await BotSettingsModel.find()
+        .where("key")
+        .gte(prefix)
+        .lt(`${prefix}\uffff`)
         .sort({ updatedAt: -1, _id: -1 })
+        .limit(1)
         .lean();
+    const doc = docs[0] || null;
     return doc ? { key: doc.key, value: doc.value, updatedAt: doc.updatedAt } : null;
 }
 

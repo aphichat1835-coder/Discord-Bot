@@ -77,3 +77,22 @@ test("voice panel update reports persistence failure", async () => {
         sessionManager.savePanelState = originalSave;
     }
 });
+
+test("command router delegates registered command groups without changing handlers", () => {
+    assert.equal(commands._test.delegatedCommandHandler("ping"), information.handle);
+    assert.equal(typeof commands._test.delegatedCommandHandler("ban"), "function");
+    assert.equal(typeof commands._test.delegatedCommandHandler("backup"), "function");
+    assert.equal(commands._test.delegatedCommandHandler("voice-online"), null);
+    assert.equal(commands._test.delegatedCommandHandler("unknown"), null);
+});
+
+test("latest setting prefix rejects values that could alter a Mongo query", async () => {
+    await assert.rejects(
+        sessionManager.getLatestSettingByPrefix({ $ne: "" }),
+        /INVALID_SETTING_PREFIX/
+    );
+    await assert.rejects(
+        sessionManager.getLatestSettingByPrefix("verify_config_123_.*"),
+        /INVALID_SETTING_PREFIX/
+    );
+});
