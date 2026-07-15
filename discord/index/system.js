@@ -13,6 +13,7 @@ const {
     shutdownWebhookDispatcher
 } = require("../core/webhooks");
 const { sanitizeLogText, safeError } = require("../core/safeLogger");
+const { normalizeRuntimeLine } = require("../core/startupLogger");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🗂️  SHARED STATE (exported สำหรับ server.js / views.js ใช้)
@@ -59,18 +60,21 @@ function initLogCapture(maxLogs = MAX_LOGS_DEFAULT) {
 
     console.log = (...args) => {
         const msg = require('util').format(...args);
-        pushLog('info', msg);
-        originalLog(sanitizeLogText(msg));
+        const line = normalizeRuntimeLine('log', msg);
+        pushLog('info', line);
+        originalLog(line);
     };
     console.error = (...args) => {
         const msg = require('util').format(...args);
-        pushLog('error', msg);
-        originalError(sanitizeLogText(msg));
+        const line = normalizeRuntimeLine('error', msg);
+        pushLog('error', line);
+        originalError(line);
     };
     console.warn = (...args) => {
         const msg = require('util').format(...args);
-        pushLog('warn', msg);
-        originalWarn(sanitizeLogText(msg));
+        const line = normalizeRuntimeLine('warn', msg);
+        pushLog('warn', line);
+        originalWarn(line);
     };
 }
 
