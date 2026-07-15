@@ -29,7 +29,7 @@ test("internal event filters reject unknown fields and malformed time bounds", (
     assert.equal(storage._test.matchesFilters(record, { source: "" }), true);
 });
 
-test("internal event rollover deletes evicted records and keeps the index bounded", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("internal event rollover deletes evicted records and keeps the index bounded", async () => {
     const values = new Map();
     const guildId = "guild";
     const ids = Array.from({ length: 500 }, (_, index) => `event-${index}`);
@@ -55,7 +55,7 @@ test("internal event rollover deletes evicted records and keeps the index bounde
     assert.deepEqual(deleted, [storage.storageKey(guildId, "event-499")]);
 });
 
-test("internal event eviction retries a transient delete failure", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("internal event eviction retries a transient delete failure", async () => {
     let attempts = 0;
     const deleted = await storage._test.deleteSettingWithRetry({
         async deleteSetting() { attempts++; return attempts >= 2; }
@@ -64,7 +64,7 @@ test("internal event eviction retries a transient delete failure", async () => {
     assert.equal(attempts, 2);
 });
 
-test("internal event save removes the new record when index persistence fails", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("internal event save removes the new record when index persistence fails", async () => {
     const values = new Map();
     const guildId = "guild";
     const recordKey = storage.storageKey(guildId, "event-new");
@@ -85,7 +85,7 @@ test("internal event save removes the new record when index persistence fails", 
     assert.equal(values.has(recordKey), false);
 });
 
-test("internal event index failure restores a previous record with the same id", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("internal event index failure restores a previous record with the same id", async () => {
     const guildId = "guild";
     const recordKey = storage.storageKey(guildId, "same-event");
     const values = new Map([[recordKey, { guildId, eventId: "same-event", summary: "old" }]]);
@@ -104,7 +104,7 @@ test("internal event index failure restores a previous record with the same id",
     assert.equal(values.get(recordKey).summary, "old");
 });
 
-test("internal event save aborts before writing when a strict read fails", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("internal event save aborts before writing when a strict read fails", async () => {
     let writes = 0;
     const sessionManager = {
         async getSetting(_key, fallback) { return fallback; },
@@ -119,7 +119,7 @@ test("internal event save aborts before writing when a strict read fails", async
     assert.equal(writes, 0);
 });
 
-test("general settings loader excludes internal event namespaces before applying its limit", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("general settings loader excludes internal event namespaces before applying its limit", () => {
     const fs = require("node:fs");
     const source = fs.readFileSync(require.resolve("../sessionManager"), "utf8");
     assert.match(source, /const INTERNAL_EVENT_SETTINGS = \/\^internal_event_\//);

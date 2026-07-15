@@ -95,7 +95,7 @@ test("recordProtectionResult persists a ModCase after successful enforcement", a
     assert.equal(store.get("modcase_g1_1").action, "timeout");
 });
 
-test("recordProtectionResult surfaces case persistence failure and writes reconciliation metadata", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("recordProtectionResult surfaces case persistence failure and writes reconciliation metadata", async () => {
     const modCaseManager = require("../logging/modCaseManager");
     const originalCreateCase = modCaseManager.createCase;
     const store = new Map();
