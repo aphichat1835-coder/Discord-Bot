@@ -3,12 +3,12 @@
 const { sanitizeLogText } = require("./safeLogger");
 
 const LEVEL_LABELS = Object.freeze({
-    start: "START",
-    success: "OK",
-    info: "INFO",
-    warn: "WARN",
-    error: "FAIL",
-    skip: "SKIP"
+    start: "🚀 START",
+    success: "✅ OK",
+    info: "ℹ️ INFO",
+    warn: "⚠️ WARN",
+    error: "❌ FAIL",
+    skip: "⏭️ SKIP"
 });
 
 const RUNTIME_LEVELS = Object.freeze({
@@ -19,9 +19,20 @@ const RUNTIME_LEVELS = Object.freeze({
     debug: "info"
 });
 
-const FORMATTED_LINE_PATTERN = /^\[(?:BOOT|BOT)\] \[(?:START|OK|INFO|WARN|FAIL|SKIP)\] \[[^\]]+\] /;
+const FORMATTED_LINE_PATTERN = /^\[(?:BOOT|BOT)\] \[(?:🚀 START|✅ OK|ℹ️ INFO|⚠️ WARN|❌ FAIL|⏭️ SKIP)\] \[[^\]]+\] /;
 const LEADING_SCOPE_PATTERN = /^\[([a-zA-Z0-9_.:/-]{1,40})\]\s*/;
 const GENERIC_LEVEL_SCOPES = new Set(["START", "OK", "INFO", "WARN", "FAIL", "SKIP", "ERROR", "DEBUG"]);
+const LEGACY_STATUS_PATTERN = /^(✅|🟢|❌|🔴|⚠️?|ℹ️?)\s*/u;
+const LEGACY_STATUS_LEVEL = Object.freeze({
+    "✅": "success",
+    "🟢": "success",
+    "❌": "error",
+    "🔴": "error",
+    "⚠": "warn",
+    "⚠️": "warn",
+    "ℹ": "info",
+    "ℹ️": "info"
+});
 
 function safeLabel(value, fallback = "GENERAL", maxLength = 40) {
     const normalized = sanitizeLogText(String(value || fallback))
@@ -67,11 +78,16 @@ function normalizeRuntimeLine(type, value) {
     const candidateScope = match?.[1]?.toUpperCase();
     const hasSpecificScope = Boolean(candidateScope && !GENERIC_LEVEL_SCOPES.has(candidateScope));
     const scope = hasSpecificScope ? candidateScope : "GENERAL";
-    const body = match ? message.slice(match[0].length).trim() : message;
+    const rawBody = match ? message.slice(match[0].length).trim() : message;
+    const statusMatch = rawBody.match(LEGACY_STATUS_PATTERN);
+    const body = statusMatch ? rawBody.slice(statusMatch[0].length).trim() : rawBody;
+    const level = statusMatch?.[1]
+        ? LEGACY_STATUS_LEVEL[statusMatch[1]] || RUNTIME_LEVELS[type] || "info"
+        : RUNTIME_LEVELS[type] || "info";
 
     return formatStartupLine({
         prefix: "BOT",
-        level: RUNTIME_LEVELS[type] || "info",
+        level,
         scope,
         message: body || "-"
     });

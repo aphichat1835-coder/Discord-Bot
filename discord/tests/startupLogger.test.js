@@ -16,7 +16,7 @@ test("startup logger emits one stable readable line with sorted details", () => 
         message: "MongoDB connected",
         details: { ready: true, durationMs: 12 }
     });
-    assert.equal(line, "[BOOT] [OK] [DATABASE] MongoDB connected | durationMs=12 ready=true");
+    assert.equal(line, "[BOOT] [✅ OK] [DATABASE] MongoDB connected | durationMs=12 ready=true");
 });
 
 test("startup logger redacts secrets and keeps errors on stderr", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
@@ -51,7 +51,7 @@ test("startup stage records duration and degrades only optional work", async () 
     assert.equal(optional.ok, false);
     assert.equal(output.length, 4);
     assert.match(output[1], /durationMs=5 port=3000/);
-    assert.match(output[3], /\[WARN\].*code=verify_unavailable/);
+    assert.match(output[3], /\[⚠️ WARN\].*code=verify_unavailable/);
 });
 
 test("boot port accepts only valid TCP ports", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
@@ -64,16 +64,20 @@ test("boot port accepts only valid TCP ports", () => { // NOSONAR -- node:test a
 test("legacy runtime logs receive a consistent level and scope", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.equal(
         normalizeRuntimeLine("warn", "[MEMORY] Heap high: 512MB"),
-        "[BOT] [WARN] [MEMORY] Heap high: 512MB"
+        "[BOT] [⚠️ WARN] [MEMORY] Heap high: 512MB"
     );
     assert.equal(
         normalizeRuntimeLine("error", "Connection failed"),
-        "[BOT] [FAIL] [GENERAL] Connection failed"
+        "[BOT] [❌ FAIL] [GENERAL] Connection failed"
+    );
+    assert.equal(
+        normalizeRuntimeLine("log", "[DATABASE] ✅ Connection active"),
+        "[BOT] [✅ OK] [DATABASE] Connection active"
     );
 });
 
 test("runtime normalization preserves already formatted and redacted lines", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    const bootLine = "[BOOT] [OK] [HTTP] Listening | port=3000";
+    const bootLine = "[BOOT] [✅ OK] [HTTP] Listening | port=3000";
     assert.equal(normalizeRuntimeLine("log", bootLine), bootLine);
     assert.doesNotMatch(normalizeRuntimeLine("error", "[AUTH] token=private-value"), /private-value/);
 });
