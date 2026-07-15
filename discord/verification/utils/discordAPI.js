@@ -56,8 +56,7 @@ const PERMISSIONS = Object.freeze({
 
 const TEXT_CHANNEL_TYPES = new Set([
     0,  // GuildText
-    5,  // GuildAnnouncement
-    15  // GuildForum
+    5   // GuildAnnouncement
 ]);
 
 function sanitizeDiscordApiErrorText(value, max = 500) {
@@ -686,7 +685,8 @@ function computeMemberGuildPermissions(member, roles = []) {
     }
 
     const roleMap = new Map(roles.map(role => [String(role.id), role]));
-    let perms = 0n;
+    const everyoneRole = roles.find(role => role?.name === "@everyone");
+    let perms = toBigIntPermission(everyoneRole?.permissions);
 
     for (const roleId of member.roles) {
         const role = roleMap.get(String(roleId));
@@ -731,15 +731,22 @@ function applyChannelOverwrites(basePermissions, member, channel) {
         perms |= toBigIntPermission(ow.allow);
     }
 
-    // 2) role overwrites
+    // 2) role overwrites are combined before being applied. Discord applies all
+    // role denies first, then all role allows; array order must not affect access.
+    let roleDeny = 0n;
+    let roleAllow = 0n;
+
     for (const ow of overwrites) {
         if (Number(ow.type) !== 0) continue;
         if (guildId && String(ow.id) === guildId) continue;
         if (!memberRoleIds.has(String(ow.id))) continue;
 
-        perms &= ~toBigIntPermission(ow.deny);
-        perms |= toBigIntPermission(ow.allow);
+        roleDeny |= toBigIntPermission(ow.deny);
+        roleAllow |= toBigIntPermission(ow.allow);
     }
+
+    perms &= ~roleDeny;
+    perms |= roleAllow;
 
     // 3) member-specific overwrite
     for (const ow of overwrites) {
@@ -841,8 +848,8 @@ function validateBotCanUseChannel({ botMember, roles, channel }) {
     const channelPerms = applyChannelOverwrites(guildPerms, botMember, channel);
 
     const canView = hasPermission(channelPerms, PERMISSIONS.VIEW_CHANNEL);
-    const canSend = hasPermission(channelPerms, PERMISSIONS.SEND_MESSAGES);
-    const canEmbed = hasPermission(channelPerms, PERMISSIONS.EMBED_LINKS);
+    const canSend = canView && hasPermission(channelPerms, PERMISSIONS.SEND_MESSAGES);
+    const canEmbed = canSend && hasPermission(channelPerms, PERMISSIONS.EMBED_LINKS);
 
     const checks = [
         {

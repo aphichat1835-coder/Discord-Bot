@@ -323,22 +323,20 @@ async function runVerificationMaintenance(options = {}) {
 }
 
 async function startVerificationRuntime(options = {}) {
-    if (maintenanceTimer) return getVerificationDiagnostics();
     if (runtimeStartPromise) return runtimeStartPromise;
+    if (maintenanceTimer) return getVerificationDiagnostics();
     const maintenanceRunner = options.maintenanceRunner || runVerificationMaintenance;
     const createInterval = options.setIntervalFn || setInterval;
     maintenanceClearInterval = options.clearIntervalFn || clearInterval;
     runtimeStartPromise = (async () => {
-        await maintenanceRunner();
         if (!maintenanceTimer) {
-            maintenanceTimer = createInterval(() => {
-                maintenanceRunner().catch(err => {
-                    lastError = safeError(err);
-                    console.error("[VERIFICATION] maintenance failed:", lastError);
-                });
-            }, MAINTENANCE_INTERVAL_MS);
+            maintenanceTimer = createInterval(() => maintenanceRunner().catch(err => {
+                lastError = safeError(err);
+                console.error("[VERIFICATION] maintenance failed:", lastError);
+            }), MAINTENANCE_INTERVAL_MS);
             maintenanceTimer.unref?.();
         }
+        await maintenanceRunner();
         return getVerificationDiagnostics();
     })().finally(() => {
         runtimeStartPromise = null;

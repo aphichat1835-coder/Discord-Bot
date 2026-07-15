@@ -27,4 +27,32 @@ describe("verification runtime lifecycle", () => {
         expect(clearIntervalFn).toHaveBeenCalledTimes(1);
         expect(clearIntervalFn).toHaveBeenCalledWith(timer);
     });
+
+    test("keeps a recovery interval when initial maintenance fails", async () => {
+        const startupError = new Error("temporary database failure");
+        const maintenanceRunner = jest.fn()
+            .mockRejectedValueOnce(startupError)
+            .mockResolvedValue({ ok: true });
+        const timer = { unref: jest.fn() };
+        let scheduledMaintenance;
+        const setIntervalFn = jest.fn(callback => {
+            scheduledMaintenance = callback;
+            return timer;
+        });
+        const clearIntervalFn = jest.fn();
+
+        await expect(lifecycle.startVerificationRuntime({
+            maintenanceRunner,
+            setIntervalFn,
+            clearIntervalFn
+        })).rejects.toThrow("temporary database failure");
+
+        expect(setIntervalFn).toHaveBeenCalledTimes(1);
+        expect(lifecycle.getVerificationDiagnostics().timerActive).toBe(true);
+        await scheduledMaintenance();
+        expect(maintenanceRunner).toHaveBeenCalledTimes(2);
+
+        await lifecycle.stopVerificationRuntime();
+        expect(clearIntervalFn).toHaveBeenCalledWith(timer);
+    });
 });

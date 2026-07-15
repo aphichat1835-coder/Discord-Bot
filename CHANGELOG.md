@@ -4,6 +4,12 @@
 
 ### Changed
 
+- Corrected verification preflight permission calculations to include the
+  `@everyone` role, combine channel role overwrites using Discord's documented
+  order, honor implicit View/Send/Embed denials, and exclude Forum containers
+  that cannot receive a panel message directly. Verification maintenance now
+  retains its recovery interval when the initial startup run fails.
+
 - Hardened persistence consistency before merge: bounded internal-event storage,
   BSON-sized Snapshot documents, acknowledged rollback/recovery writes, panel
   rollback on database failure, durable recovery reporting, timeout-safe

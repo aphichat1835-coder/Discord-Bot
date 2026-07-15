@@ -94,4 +94,71 @@ describe('Discord API memory guards', () => {
         expect(sortedChannels).toHaveLength(diag.channelMax);
         expect(sortedChannels[0].permissionOverwrites).toHaveLength(diag.permissionOverwriteMax);
     });
+
+    test('includes @everyone permissions that Discord omits from member.roles', () => {
+        const permissions = discordAPI.computeMemberGuildPermissions({
+            roles: ['bot-role']
+        }, [
+            { id: 'guild-id', name: '@everyone', permissions: '1024' },
+            { id: 'bot-role', name: 'Bot', permissions: '2048' }
+        ]);
+
+        expect(BigInt(permissions) & 1024n).toBe(1024n);
+        expect(BigInt(permissions) & 2048n).toBe(2048n);
+    });
+
+    test('combines role overwrites without depending on Discord array order', () => {
+        const member = {
+            user: { id: 'bot-user' },
+            roles: ['allow-role', 'deny-role']
+        };
+        const allowOverwrite = { id: 'allow-role', type: 0, allow: '2048', deny: '0' };
+        const denyOverwrite = { id: 'deny-role', type: 0, allow: '0', deny: '2048' };
+        const channel = {
+            guildId: 'guild-id',
+            permissionOverwrites: [allowOverwrite, denyOverwrite]
+        };
+        const reversedChannel = {
+            ...channel,
+            permissionOverwrites: [denyOverwrite, allowOverwrite]
+        };
+
+        const first = discordAPI.applyChannelOverwrites('2048', member, channel);
+        const reversed = discordAPI.applyChannelOverwrites('2048', member, reversedChannel);
+
+        expect(BigInt(first) & 2048n).toBe(2048n);
+        expect(reversed).toBe(first);
+    });
+
+    test('excludes forum containers that cannot receive a panel message directly', () => {
+        const channels = discordAPI.sortChannelsForDashboard([
+            { id: 'text', name: 'text', type: 0, position: 0 },
+            { id: 'announcement', name: 'announcement', type: 5, position: 1 },
+            { id: 'forum', name: 'forum', type: 15, position: 2 }
+        ]);
+
+        expect(channels.map(channel => channel.id)).toEqual(['text', 'announcement']);
+    });
+
+    test('reports implicit send and embed denial when the bot cannot view a channel', () => {
+        const allPanelPermissions = String(1024n | 2048n | 16384n);
+        const result = discordAPI.validateBotCanUseChannel({
+            botMember: { user: { id: 'bot-user' }, roles: [] },
+            roles: [{ id: 'guild-id', name: '@everyone', permissions: allPanelPermissions }],
+            channel: {
+                id: 'channel-id',
+                guildId: 'guild-id',
+                name: 'hidden',
+                permissionOverwrites: [
+                    { id: 'guild-id', type: 0, allow: '0', deny: '1024' }
+                ]
+            }
+        });
+        const checks = Object.fromEntries(result.checks.map(check => [check.name, check.ok]));
+
+        expect(checks.view_channel).toBe(false);
+        expect(checks.send_messages).toBe(false);
+        expect(checks.embed_links).toBe(false);
+        expect(result.ok).toBe(false);
+    });
 });
