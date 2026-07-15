@@ -78,6 +78,23 @@ test("voice panel update reports persistence failure", async () => {
     }
 });
 
+test("voice panel rejects a second create while the guild operation is active", async () => {
+    commands._test.activePanelCreates.add("guild");
+    let reply = null;
+    const interaction = {
+        guild: { id: "guild" },
+        member: { permissions: { has: () => true } },
+        reply: async payload => { reply = payload; return payload; }
+    };
+    try {
+        await commands._test.handleVoiceOnlineCommand(interaction);
+        assert.equal(reply.ephemeral, true);
+        assert.match(reply.content, /กำลังสร้างแผงควบคุม/);
+    } finally {
+        commands._test.activePanelCreates.delete("guild");
+    }
+});
+
 test("command router delegates registered command groups without changing handlers", () => {
     assert.equal(commands._test.delegatedCommandHandler("ping"), information.handle);
     assert.equal(typeof commands._test.delegatedCommandHandler("ban"), "function");

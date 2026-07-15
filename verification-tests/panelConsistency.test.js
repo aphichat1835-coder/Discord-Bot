@@ -41,10 +41,20 @@ describe("verification panel DB/Discord consistency", () => {
         jest.spyOn(GuildConfig, "findOne").mockReturnValue(query);
         await expect(guildRoutes._test.persistedPanelMatches("guild", {
             channelId: "1", messageId: "2", panelRevision: "rev-2"
-        })).resolves.toBe(true);
+        })).resolves.toEqual({ status: "matched", errorCode: null });
         await expect(guildRoutes._test.persistedPanelMatches("guild", {
             channelId: "1", messageId: "2", panelRevision: "rev-old"
-        })).resolves.toBe(false);
+        })).resolves.toEqual({ status: "mismatched", errorCode: null });
+    });
+
+    test("keeps Discord untouched when persistence cannot be read", async () => {
+        const GuildConfig = require("../discord/verification/models/GuildConfig");
+        jest.spyOn(GuildConfig, "findOne").mockImplementation(() => {
+            throw Object.assign(new Error("database unavailable"), { code: "db_unavailable" });
+        });
+        await expect(guildRoutes._test.persistedPanelMatches("guild", {
+            channelId: "1", messageId: "2", panelRevision: "rev-2"
+        })).resolves.toEqual({ status: "unknown", errorCode: "db_unavailable" });
     });
 
     test("panel update route uses retry persistence and rolls Discord back on DB failure", () => {
@@ -56,5 +66,7 @@ describe("verification panel DB/Discord consistency", () => {
         expect(source).toMatch(/recoveryRequired: !rollback\.complete/);
         expect(source).toMatch(/persistedPanelMatches\(sentPanel\.guildId, sentPanel\)/);
         expect(source).toMatch(/code: "panel_send_cleanup_failed"/);
+        expect(source).toMatch(/persistence\.status === "unknown"/);
+        expect(source).toMatch(/code: "panel_persistence_unknown"/);
     });
 });

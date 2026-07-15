@@ -74,6 +74,7 @@ test("recordProtectionResult persists a ModCase after successful enforcement", a
     const store = new Map();
     const sessionManager = {
         async getSetting(key, fallback) { return store.has(key) ? store.get(key) : fallback; },
+        async getSettingStrict(key) { return { found: store.has(key), value: store.get(key) ?? null }; },
         async setSetting(key, value) { store.set(key, value); return true; }
     };
     const event = protectionCase.buildProtectionEvent({

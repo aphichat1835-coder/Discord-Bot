@@ -10,7 +10,9 @@ const {
     cleanupRevealAttempts,
     getRevealAttemptStats,
     getRateLimitStats,
-    trimRateLimitBuckets
+    trimRateLimitBuckets,
+    safeDiscordInlineCode,
+    safeDiscordSummaryText
 } = require("../guards/dashboardGuards");
 const dashboardAuth = require("../index/auth");
 const TEST_CLIENT_A = "test-client-a";
@@ -30,6 +32,15 @@ function createRes() {
         }
     };
 }
+
+test("dashboard intrusion text cannot break Discord formatting", () => {
+    const inline = safeDiscordInlineCode("/path`\n@everyone", 180);
+    assert.equal(inline.includes("`"), false);
+    assert.equal(inline.includes("\n"), false);
+    const summary = safeDiscordSummaryText("**bold**\n> mention", 180);
+    assert.match(summary, /\\\*\\\*bold/);
+    assert.equal(summary.includes("\n"), false);
+});
 
 test("dashboard read APIs do not bypass owner auth", () => {
     assert.equal(shouldBypassDashboardReadApi({ method: "GET", baseUrl: "/api", path: "/status" }), false);

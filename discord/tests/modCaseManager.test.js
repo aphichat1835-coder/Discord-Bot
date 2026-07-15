@@ -9,9 +9,15 @@ function createFakeSessionManager() {
         async getSetting(key, fallback = null) {
             return store.has(key) ? store.get(key) : fallback;
         },
+        async getSettingStrict(key) {
+            return { found: store.has(key), value: store.get(key) ?? null };
+        },
         async setSetting(key, value) {
             store.set(key, value);
             return true;
+        },
+        async deleteSetting(key) {
+            return store.delete(key);
         },
         _store: store
     };

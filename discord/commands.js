@@ -36,6 +36,7 @@ const {
 //  🗺️  REGION 1: STATE
 // ════════════════════════════════════════════════════════════════════════════
 const panelMessages = new Map();
+const activePanelCreates = new Set();
 const INFORMATION_COMMANDS = new Set(["userinfo", "serverinfo", "help", "ping"]);
 const MODERATION_COMMANDS = new Set(["ban", "kick", "timeout", "clear", "voicekickall"]);
 const UTILITY_COMMANDS = new Set(["say", "announce", "copy-emojis", "backup", "restore"]);
@@ -57,6 +58,7 @@ function getCommandRuntimeDiagnostics(client = null) {
 
     return {
         panelMessages: panelMessages.size,
+        activePanelCreates: activePanelCreates.size,
         moderation: moderation.getRuntimeDiagnostics?.() || {},
         utility: utility.getRuntimeDiagnostics?.() || {}
     };
@@ -202,21 +204,31 @@ async function handleVoiceOnlineCommand(interaction) {
         `> ${config.emojis.no_entry} ไม่มีสิทธิ์ผู้ดูแลระบบ`
     );
     if (!allowed) return null;
-    markCommandAccepted(interaction);
-
-    const previousPanel = panelMessages.get(interaction.guild.id) || null;
-    const message = await interaction.reply({
-        embeds: [buildControlPanelEmbed()],
-        components: [buildControlPanelRow()],
-        fetchReply: true
-    });
-    panelMessages.set(interaction.guild.id, message);
-
-    if (!await updatePanel(interaction.guild.id)) {
-        return reportPanelPersistenceFailure(interaction, message, previousPanel);
+    const guildId = String(interaction.guild.id);
+    if (activePanelCreates.has(guildId)) {
+        return interaction.reply({
+            content: `> ${config.emojis.warning} ระบบกำลังสร้างแผงควบคุมของเซิร์ฟเวอร์นี้อยู่ กรุณารอสักครู่`,
+            ephemeral: true
+        }).catch(() => null);
     }
-    await retirePreviousPanel(interaction, previousPanel, message);
-    return null;
+    activePanelCreates.add(guildId);
+    try {
+        markCommandAccepted(interaction);
+        const previousPanel = panelMessages.get(guildId) || null;
+        const message = await interaction.reply({
+            embeds: [buildControlPanelEmbed()],
+            components: [buildControlPanelRow()],
+            fetchReply: true
+        });
+        panelMessages.set(guildId, message);
+        if (!await updatePanel(guildId)) {
+            return reportPanelPersistenceFailure(interaction, message, previousPanel);
+        }
+        await retirePreviousPanel(interaction, previousPanel, message);
+        return null;
+    } finally {
+        activePanelCreates.delete(guildId);
+    }
 }
 
 async function handleSlashCommand(interaction, client) {
@@ -282,6 +294,7 @@ module.exports = {
         discardNewPanel,
         retirePreviousPanel,
         handleVoiceOnlineCommand,
+        activePanelCreates,
         handleSlashCommand
     }
 };

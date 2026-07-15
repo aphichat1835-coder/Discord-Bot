@@ -38,6 +38,7 @@ test("internal event rollover deletes evicted records and keeps the index bounde
     const deleted = [];
     const sessionManager = {
         async getSetting(key, fallback) { return values.has(key) ? values.get(key) : fallback; },
+        async getSettingStrict(key) { return { found: values.has(key), value: values.get(key) ?? null }; },
         async setSetting(key, value) { values.set(key, value); return true; },
         async deleteSetting(key) { deleted.push(key); values.delete(key); return true; }
     };
@@ -69,6 +70,7 @@ test("internal event save removes the new record when index persistence fails", 
     const recordKey = storage.storageKey(guildId, "event-new");
     const sessionManager = {
         async getSetting(_key, fallback) { return fallback; },
+        async getSettingStrict() { return { found: false, value: null }; },
         async setSetting(key, value) {
             if (key === storage.indexKey(guildId)) return false;
             values.set(key, value);
@@ -89,6 +91,7 @@ test("internal event index failure restores a previous record with the same id",
     const values = new Map([[recordKey, { guildId, eventId: "same-event", summary: "old" }]]);
     const sessionManager = {
         async getSetting(key, fallback) { return values.has(key) ? values.get(key) : fallback; },
+        async getSettingStrict(key) { return { found: values.has(key), value: values.get(key) ?? null }; },
         async setSetting(key, value) {
             if (key === storage.indexKey(guildId)) return false;
             values.set(key, value);
@@ -99,6 +102,21 @@ test("internal event index failure restores a previous record with the same id",
     const result = await storage._test.saveFallback(sessionManager, { guildId, eventId: "same-event", summary: "new" });
     assert.equal(result, null);
     assert.equal(values.get(recordKey).summary, "old");
+});
+
+test("internal event save aborts before writing when a strict read fails", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    let writes = 0;
+    const sessionManager = {
+        async getSetting(_key, fallback) { return fallback; },
+        async getSettingStrict() { throw new Error("database unavailable"); },
+        async setSetting() { writes++; return true; }
+    };
+
+    await assert.rejects(
+        storage._test.saveFallback(sessionManager, { guildId: "guild", eventId: "event-new" }),
+        /database unavailable/
+    );
+    assert.equal(writes, 0);
 });
 
 test("general settings loader excludes internal event namespaces before applying its limit", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.

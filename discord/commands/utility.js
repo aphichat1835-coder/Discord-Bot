@@ -39,16 +39,16 @@ async function handle(interaction) {
 //  📢  SAY (Administrator only)
 // ════════════════════════════════════════════════════════════════════════════
 async function handleSay(interaction) {
-    const rawMsg = interaction.options.getString("message");
-    const msg    = sanitizeUserMessage(rawMsg, { maxLength: 2000 });
+    if (!await requireMemberPermission(interaction, "ADMINISTRATOR", `> ${config.emojis.no_entry} ต้องเป็น Administrator เพื่อใช้คำสั่งนี้`)) return;
+    if (!await requireBotPermission(interaction, ["SEND_MESSAGES", "VIEW_CHANNEL"], `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความในช่องนี้ (ขาด SEND_MESSAGES หรือ VIEW_CHANNEL)`, interaction.channel)) return;
 
+    const rawMsg = interaction.options.getString("message");
+    const msg = sanitizeUserMessage(rawMsg, { maxLength: 2000 });
     if (!msg) return interaction.reply({
         content: `> ${config.emojis.error} ข้อความว่างหรือถูกบล็อกทั้งหมด`,
         ephemeral: true
     });
 
-    if (!await requireMemberPermission(interaction, "ADMINISTRATOR", `> ${config.emojis.no_entry} ต้องเป็น Administrator เพื่อใช้คำสั่งนี้`)) return;
-    if (!await requireBotPermission(interaction, ["SEND_MESSAGES", "VIEW_CHANNEL"], `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความในช่องนี้ (ขาด SEND_MESSAGES หรือ VIEW_CHANNEL)`, interaction.channel)) return;
     markCommandAccepted(interaction);
 
     if (!await safeDefer(interaction, { ephemeral: true })) return null;
@@ -321,7 +321,7 @@ function isValidSnapshotSchema(data) {
         (typeof value === "string" && /^\d+$/.test(value)) ||
         (Number.isSafeInteger(value) && value >= 0)
     );
-    const overwriteType = value => [0, 1, "role", "member"].includes(value);
+    const overwriteType = value => [0, 1, "0", "1", "role", "member"].includes(value);
     const validOverwrite = overwrite => (
         !!overwrite &&
         snowflake(overwrite.id) &&
@@ -338,6 +338,12 @@ function isValidSnapshotSchema(data) {
         (channel.permissionOverwrites != null && !Array.isArray(channel.permissionOverwrites)) ||
         (Array.isArray(channel.permissionOverwrites) && channel.permissionOverwrites.some(overwrite => !validOverwrite(overwrite)))
     );
+}
+
+function normalizeOverwriteType(value) {
+    if (value === 0 || value === "0") return "role";
+    if (value === 1 || value === "1") return "member";
+    return value;
 }
 
 function findExistingChannelForRestore(guild, cData, parentId) {
@@ -398,10 +404,11 @@ function planRestoreCategory(guild, channelData, categoryIdMap, plan) {
 }
 
 function resolveRestoreOverwriteTarget(guild, overwrite, roleIdMap, oldGuildId) {
+    const overwriteType = normalizeOverwriteType(overwrite.type);
     let targetId = roleIdMap.get(overwrite.id);
     if (overwrite.id === oldGuildId) targetId = guild.id;
-    if (!targetId && overwrite.type === "member" && guild.members.cache.has(overwrite.id)) targetId = overwrite.id;
-    if (!targetId && overwrite.type === "role" && guild.roles.cache.has(overwrite.id)) targetId = overwrite.id;
+    if (!targetId && overwriteType === "member" && guild.members.cache.has(overwrite.id)) targetId = overwrite.id;
+    if (!targetId && overwriteType === "role" && guild.roles.cache.has(overwrite.id)) targetId = overwrite.id;
     return targetId;
 }
 
@@ -409,7 +416,7 @@ function planRestoreOverwrites(guild, channelData, roleIdMap, oldGuildId, plan) 
     for (const overwrite of channelData.permissionOverwrites || []) {
         const targetId = resolveRestoreOverwriteTarget(guild, overwrite, roleIdMap, oldGuildId);
         if (targetId) plan.overwritesRestored++;
-        else if (overwrite.type === "member") plan.overwritesSkippedMemberMissing++;
+        else if (normalizeOverwriteType(overwrite.type) === "member") plan.overwritesSkippedMemberMissing++;
         else plan.overwritesSkippedRoleMissing++;
     }
 }
@@ -740,14 +747,15 @@ async function handleRestoreConfirm(interaction, sessionManager) {
                     const out = [];
                     if (!Array.isArray(cData.permissionOverwrites)) return out;
                     for (const ow of cData.permissionOverwrites) {
+                        const overwriteType = normalizeOverwriteType(ow.type);
                         let targetId = roleIdMap.get(ow.id);
                         if (ow.id === oldGuildId) targetId = guild.id;
-                        if (!targetId && ow.type === "member" && guild.members.cache.has(ow.id)) targetId = ow.id;
-                        if (!targetId && ow.type === "role" && guild.roles.cache.has(ow.id)) targetId = ow.id;
+                        if (!targetId && overwriteType === "member" && guild.members.cache.has(ow.id)) targetId = ow.id;
+                        if (!targetId && overwriteType === "role" && guild.roles.cache.has(ow.id)) targetId = ow.id;
                         if (targetId) {
                             overwriteStats.restored++;
                             out.push({ id: targetId, allow: restoreBigInt(ow.allow), deny: restoreBigInt(ow.deny) });
-                        } else if (ow.type === "member") {
+                        } else if (overwriteType === "member") {
                             overwriteStats.skippedMemberMissing++;
                         } else {
                             overwriteStats.skippedRoleMissing++;
@@ -864,5 +872,5 @@ module.exports = {
     handle,
     handleRestoreConfirm,
     getRuntimeDiagnostics,
-    _test: { handleSay, isValidSnapshotSchema, buildBackupValidationReport }
+    _test: { handleSay, isValidSnapshotSchema, buildBackupValidationReport, normalizeOverwriteType }
 };

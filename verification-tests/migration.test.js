@@ -6,7 +6,8 @@ const {
     badgeFlags,
     displayTag,
     avatarUrl,
-    bannerUrl
+    bannerUrl,
+    bulkWriteFailureCount
 } = require("../scripts/migrateVerificationSnapshots");
 
 describe("verification additive migration", () => {
@@ -175,6 +176,12 @@ describe("verification additive migration", () => {
         });
         expect(bulkWrite).toHaveBeenCalledTimes(2);
         expect(errorLog.mock.calls.flat().join(" ")).not.toContain("database details must stay hidden");
+    });
+
+    test("counts only the failed operations reported by an unordered bulk write", () => {
+        expect(bulkWriteFailureCount({ writeErrors: [{ index: 1 }, { index: 4 }] }, 5)).toBe(2);
+        expect(bulkWriteFailureCount({ result: { matchedCount: 3, upsertedCount: 1 } }, 5)).toBe(1);
+        expect(bulkWriteFailureCount({}, 5)).toBe(5);
     });
 
     test("apply mode backfills complete chunk references without removing embedded data", async () => {

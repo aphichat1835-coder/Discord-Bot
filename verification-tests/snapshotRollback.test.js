@@ -31,11 +31,11 @@ function recoveryModel({ updateAcknowledged = true, deleteAcknowledged = true, r
     };
 }
 
-describe("snapshot rollback reporting", () => {
-    afterEach(() => {
-        jest.restoreAllMocks();
-    });
+afterEach(() => {
+    jest.restoreAllMocks();
+});
 
+describe("snapshot rollback reporting", () => {
     test("reports a complete rollback only when every mark and delete succeeds", async () => {
         const refs = {
             profile: { version: "v1", complete: true, storedCount: 1 },

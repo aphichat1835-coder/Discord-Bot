@@ -52,6 +52,7 @@ test("voice kick result state distinguishes complete, partial, and failed", () =
     assert.equal(moderation._test.voiceKickResultState({ kicked: ["<@1>"], failed: 0, timedOut: false }, 1), "complete");
     assert.equal(moderation._test.voiceKickResultState({ kicked: ["<@1>"], failed: 1, timedOut: false }, 2), "partial");
     assert.equal(moderation._test.voiceKickResultState({ kicked: [], failed: 1, timedOut: false }, 1), "failed");
+    assert.equal(moderation._test.voiceKickResultState({ kicked: [], failed: 0, timedOut: false }, 0), "no_target");
 });
 
 test("voice kick processing skips administrators and counts disconnect failures", async () => {

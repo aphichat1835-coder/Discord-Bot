@@ -14,11 +14,15 @@ const OWNER_APPROVED_DIGESTS = Object.freeze({
 function matchesOwnerApprovedContent(file) {
     const approvedDigest = OWNER_APPROVED_DIGESTS[file];
     if (!approvedDigest || file !== "discord/systemProvider.js") return false;
-    const actualDigest = crypto
-        .createHash("sha256")
-        .update(fs.readFileSync("discord/systemProvider.js"))
-        .digest("hex");
-    return actualDigest === approvedDigest;
+    try {
+        const actualDigest = crypto
+            .createHash("sha256")
+            .update(fs.readFileSync(file))
+            .digest("hex");
+        return actualDigest === approvedDigest;
+    } catch {
+        return false;
+    }
 }
 function resolveGitBin() {
     if (fs.existsSync("/usr/bin/git")) return "/usr/bin/git";

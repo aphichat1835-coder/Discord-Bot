@@ -25,6 +25,19 @@ test("restore schema rejects malformed snowflakes and accepts serialized guild d
         }]
     };
     assert.equal(utility._test.isValidSnapshotSchema(valid), true);
+    const numericTypes = {
+        ...valid,
+        channels: [{
+            ...valid.channels[0],
+            permissionOverwrites: [
+                { id: "222222222222222222", type: 0, allow: "0", deny: "0" },
+                { id: "444444444444444444", type: 1, allow: "0", deny: "0" }
+            ]
+        }]
+    };
+    assert.equal(utility._test.isValidSnapshotSchema(numericTypes), true);
+    assert.equal(utility._test.normalizeOverwriteType(0), "role");
+    assert.equal(utility._test.normalizeOverwriteType(1), "member");
     assert.equal(utility._test.isValidSnapshotSchema({ ...valid, guild: { id: "$ne" } }), false);
 
     assert.equal(utility._test.isValidSnapshotSchema({

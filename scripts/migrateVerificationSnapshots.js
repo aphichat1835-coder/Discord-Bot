@@ -224,6 +224,41 @@ function countSnapshotResults(summary, storedSnapshots) {
     }
 }
 
+function reportedBulkWriteErrors(error) {
+    const candidates = [
+        error?.writeErrors,
+        error?.result?.writeErrors,
+        error?.result?.result?.writeErrors
+    ];
+    if (typeof error?.result?.getWriteErrors === "function") {
+        try { candidates.push(error.result.getWriteErrors()); } catch {}
+    }
+    return candidates.find(value => Array.isArray(value) && value.length > 0) || null;
+}
+
+function bulkWriteSuccessCount(error) {
+    const result = error?.result || {};
+    const matched = Number(result.matchedCount ?? result.nMatched);
+    const upserted = Number(result.upsertedCount ?? result.nUpserted);
+    if (Number.isFinite(matched) || Number.isFinite(upserted)) {
+        return Math.max(0,
+            (Number.isFinite(matched) ? matched : 0) +
+            (Number.isFinite(upserted) ? upserted : 0)
+        );
+    }
+    const modified = Number(result.modifiedCount ?? result.nModified);
+    return Number.isFinite(modified) ? Math.max(0, modified) : null;
+}
+
+function bulkWriteFailureCount(error, batchLength) {
+    const total = Math.max(0, Number(batchLength) || 0);
+    const writeErrors = reportedBulkWriteErrors(error);
+    if (writeErrors) return Math.min(total, writeErrors.length);
+    const successful = bulkWriteSuccessCount(error);
+    if (successful === null) return total;
+    return Math.max(1, Math.min(total, total - successful));
+}
+
 async function migrateCursor({
     cursor,
     apply = false,
@@ -259,7 +294,7 @@ async function migrateCursor({
             } catch (err) {
                 summary.updated += Number(err?.result?.modifiedCount || err?.result?.nModified || 0);
                 summary.batchErrors++;
-                summary.failedOperations += batch.length;
+                summary.failedOperations += bulkWriteFailureCount(err, batch.length);
                 console.error("[VERIFICATION-MIGRATION] batch write failed:", JSON.stringify({
                     code: String(err?.code || "migration_batch_write_failed").slice(0, 80),
                     name: String(err?.name || "Error").slice(0, 80),
@@ -328,6 +363,7 @@ if (require.main === module) {
 module.exports = {
     buildPatch,
     migrateCursor,
+    bulkWriteFailureCount,
     badgeFlags,
     displayTag,
     avatarUrl,

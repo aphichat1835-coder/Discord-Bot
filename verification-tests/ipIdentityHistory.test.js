@@ -308,8 +308,8 @@ describe("unbounded IP identity history", () => {
         expect(DeviceHistoryModel.updateOne.mock.calls[0][1].$inc).toEqual({ count: 1 });
         expect(IpIdentityLinkModel.updateOne.mock.calls[0][1].$inc).toEqual({ totalVerifications: 1 });
         expect(IpIdentityLinkModel.updateOne.mock.calls[1][1].$inc).toEqual({ totalVerifications: 1 });
-        expect(RoleHistoryModel.updateOne.mock.calls[0][0].eventId)
-            .not.toBe(RoleHistoryModel.updateOne.mock.calls[1][0].eventId);
+        expect(RoleHistoryModel.updateOne.mock.calls[0][0].$or[0].eventId.$in[0])
+            .not.toBe(RoleHistoryModel.updateOne.mock.calls[1][0].$or[0].eventId.$in[0]);
         expect(VerifyLogModel.updateOne).toHaveBeenCalledTimes(2);
         expect(VerifyLogModel.updateOne).toHaveBeenLastCalledWith(
             { _id: "log-2" },
@@ -333,6 +333,12 @@ describe("unbounded IP identity history", () => {
             result: "success",
             at: 10
         }));
+    });
+
+    test("role event identity is stable when Discord returns roles in a different order", () => {
+        const base = { guildId: "guild", ipHash: "hash", userId: "user", at: 10 };
+        expect(history._test.roleEventId({ ...base, roles: ["two", "one", "one"] }))
+            .toBe(history._test.roleEventId({ ...base, roles: ["one", "two"] }));
     });
 
     test("runtime source no longer truncates canonical IP history arrays", () => {

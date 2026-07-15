@@ -1063,6 +1063,34 @@ async function loadOAuthSnapshotState(profileUserId) {
         .lean();
 }
 
+function activeSnapshotVersion(state) {
+    const activationVersion = state?.snapshotMeta?.activation?.snapshotVersion;
+    if (activationVersion) return activationVersion;
+    const versions = Object.values(state?.snapshotRefs || {})
+        .map(ref => ref?.version)
+        .filter(Boolean);
+    return versions.length && versions.every(version => version === versions[0])
+        ? versions[0]
+        : null;
+}
+
+function stagedSnapshotRefs(storedSnapshots) {
+    const expectedKinds = Array.isArray(storedSnapshots?.expectedKinds)
+        ? storedSnapshots.expectedKinds
+        : ["profile", "guilds", "connections", "member"].filter(kind => storedSnapshots?.[kind]);
+    return Object.fromEntries(expectedKinds
+        .filter(kind => storedSnapshots?.[kind])
+        .map(kind => [kind, storedSnapshots[kind]]));
+}
+
+function rollbackStoredSnapshots(userId, storedSnapshots) {
+    return snapshotStore.rollbackSnapshotVersion({
+        userId,
+        version: storedSnapshots.version,
+        refs: stagedSnapshotRefs(storedSnapshots)
+    });
+}
+
 async function saveOAuthUserSafe({
     profile,
     tokenData,
@@ -1102,14 +1130,30 @@ async function saveOAuthUserSafe({
                 const activeState = await loadOAuthSnapshotState(profileUserId).catch(() => null);
                 return {
                     saved: false,
-                    snapshotVersion: storedSnapshots.version,
+                    snapshotVersion: activeSnapshotVersion(activeState),
+                    attemptedSnapshotVersion: storedSnapshots.version,
                     snapshotRefs: activeState?.snapshotRefs || null,
                     snapshotWrites: storedSnapshots
                 };
             }
             // Read after staging completes so optional-fetch preservation and ref
             // merging use the freshest active state available before activation.
-            const existing = await loadOAuthSnapshotState(profileUserId);
+            let existing;
+            try {
+                existing = await loadOAuthSnapshotState(profileUserId);
+            } catch (err) {
+                const rollback = await rollbackStoredSnapshots(profileUserId, storedSnapshots);
+                console.error("[VERIFY] active snapshot read failed:", JSON.stringify(sanitizeSideEffectError(err)));
+                return {
+                    saved: false,
+                    code: err?.code || "snapshot_active_read_failed",
+                    snapshotVersion: null,
+                    attemptedSnapshotVersion: storedSnapshots.version,
+                    snapshotRefs: null,
+                    snapshotWrites: storedSnapshots,
+                    rollback
+                };
+            }
             const previousMeta = existing?.snapshotMeta || {};
             let snapshotMeta = buildSnapshotMetaUpdate(
                 previousMeta,
@@ -1187,25 +1231,16 @@ async function saveOAuthUserSafe({
                     err?.keyPattern?.["discord.userId"] || err?.keyValue?.["discord.userId"]
                 );
                 if (duplicateDiscordUser) err.code = "snapshot_activation_stale";
+                const rollback = await rollbackStoredSnapshots(profileUserId, storedSnapshots);
                 console.error("[VERIFY] saveOAuthUser core failed:", JSON.stringify(sanitizeSideEffectError(err)));
-                const expectedKinds = Array.isArray(storedSnapshots.expectedKinds)
-                    ? storedSnapshots.expectedKinds
-                    : ["profile", "guilds", "connections", "member"].filter(kind => storedSnapshots[kind]);
-                const stagedRefs = Object.fromEntries(expectedKinds
-                    .filter(kind => storedSnapshots[kind])
-                    .map(kind => [kind, storedSnapshots[kind]]));
-                const rollback = await snapshotStore.rollbackSnapshotVersion({
-                    userId: profileUserId,
-                    version: storedSnapshots.version,
-                    refs: stagedRefs
-                });
                 const active = err?.code === "snapshot_activation_stale"
                     ? await loadOAuthSnapshotState(profileUserId).catch(() => null)
                     : null;
                 return {
                     saved: false,
                     code: err?.code || "oauth_user_write_failed",
-                    snapshotVersion: storedSnapshots.version,
+                    snapshotVersion: activeSnapshotVersion(active || existing),
+                    attemptedSnapshotVersion: storedSnapshots.version,
                     snapshotRefs: active?.snapshotRefs || existing?.snapshotRefs || null,
                     snapshotWrites: storedSnapshots,
                     rollback
@@ -1219,7 +1254,13 @@ async function saveOAuthUserSafe({
                 snapshotWrites: storedSnapshots
             };
         });
-    }, { saved: false, snapshotVersion: null, snapshotRefs: null, snapshotWrites: null });
+    }, {
+        saved: false,
+        snapshotVersion: null,
+        attemptedSnapshotVersion: null,
+        snapshotRefs: null,
+        snapshotWrites: null
+    });
 }
 
 async function getDeviceDuplicateSummary({ guildId, fingerprintHash, currentUserId }) {
@@ -1679,6 +1720,7 @@ router.post('/auth/callback', async (req, res) => {
                 oauthScope: tokenData.scope || '',
                 stateMode: stateObj.mode || null,
                 snapshotVersion: oauthPersistence?.snapshotVersion || null,
+                attemptedSnapshotVersion: oauthPersistence?.attemptedSnapshotVersion || null,
                 snapshotRef: oauthPersistence?.snapshotRefs || null,
 
                 policySnapshot,
@@ -2202,6 +2244,8 @@ module.exports._test = {
     saveOAuthUserSafe,
     saveVerifyLogSafe,
     loadOAuthSnapshotState,
+    activeSnapshotVersion,
+    stagedSnapshotRefs,
     withOAuthSnapshotLock,
     oauthSnapshotLocks
 };

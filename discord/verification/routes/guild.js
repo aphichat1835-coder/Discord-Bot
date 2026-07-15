@@ -108,11 +108,15 @@ async function persistedPanelMatches(guildId, verification) {
     const query = GuildConfig.findOne({ guildId: String(guildId) })
       .select("verification.channelId verification.messageId verification.panelRevision");
     const doc = typeof query?.lean === "function" ? await query.lean() : await query;
-    return String(doc?.verification?.channelId || "") === String(verification?.channelId || "") &&
+    const matched = String(doc?.verification?.channelId || "") === String(verification?.channelId || "") &&
       String(doc?.verification?.messageId || "") === String(verification?.messageId || "") &&
       String(doc?.verification?.panelRevision || "") === String(verification?.panelRevision || "");
-  } catch {
-    return false;
+    return { status: matched ? "matched" : "mismatched", errorCode: null };
+  } catch (err) {
+    return {
+      status: "unknown",
+      errorCode: String(err?.code || "panel_persistence_read_failed").slice(0, 80)
+    };
   }
 }
 
@@ -1045,8 +1049,8 @@ router.post("/api/guild/:guildId/verify/panel/send", requireAdmin, requireGuildA
     });
   } catch (err) {
     if (sentPanel?.messageId) {
-      const persistenceConfirmed = await persistedPanelMatches(sentPanel.guildId, sentPanel);
-      if (persistenceConfirmed) {
+      const persistence = await persistedPanelMatches(sentPanel.guildId, sentPanel);
+      if (persistence.status === "matched") {
         return res.json({
           success: true,
           message: "ส่งแผงใหม่แล้ว และยืนยันค่าที่บันทึกจากฐานข้อมูลหลังการตอบกลับคลุมเครือ",
@@ -1056,6 +1060,16 @@ router.post("/api/guild/:guildId/verify/panel/send", requireAdmin, requireGuildA
           panelRevisionUpdatedAt: sentPanel.panelRevisionUpdatedAt,
           persistenceConfirmedAfterError: true,
           validation: sentPanel.validation
+        });
+      }
+      if (persistence.status === "unknown") {
+        return res.status(503).json({
+          success: false,
+          error: "ส่งแผงแล้ว แต่ยังยืนยันสถานะฐานข้อมูลไม่ได้ จึงไม่ลบข้อความใน Discord",
+          code: "panel_persistence_unknown",
+          recoveryRequired: true,
+          messageId: sentPanel.messageId,
+          channelId: sentPanel.channelId
         });
       }
       const cleanup = await discordAPI.deleteChannelMessage(sentPanel.channelId, sentPanel.messageId)
@@ -1121,12 +1135,7 @@ router.patch("/api/guild/:guildId/verify/panel/update", requireAdmin, requireGui
       });
     }
 
-    let previousPanelPayload;
-    try {
-      previousPanelPayload = makePanelPayload(req, { guildId, verification: previousVerification });
-    } catch {
-      previousPanelPayload = panelRollbackPayload(existing.message);
-    }
+    const previousPanelPayload = panelRollbackPayload(existing.message);
 
     /*
       สำคัญ:
@@ -1160,8 +1169,9 @@ router.patch("/api/guild/:guildId/verify/panel/update", requireAdmin, requireGui
     try {
       await saveConfigWithRetry(config);
     } catch (saveError) {
-      const persistenceConfirmed = await persistedPanelMatches(guildId, verification);
-      if (persistenceConfirmed) {
+      safeConsoleError("verify.panel.update.save", saveError);
+      const persistence = await persistedPanelMatches(guildId, verification);
+      if (persistence.status === "matched") {
         return res.json({
           success: true,
           message: "แก้แผงเดิมแล้ว และยืนยันค่าที่บันทึกจากฐานข้อมูลหลังการตอบกลับคลุมเครือ",
@@ -1171,6 +1181,15 @@ router.patch("/api/guild/:guildId/verify/panel/update", requireAdmin, requireGui
           panelRevisionUpdatedAt: verification.panelRevisionUpdatedAt,
           persistenceConfirmedAfterError: true,
           validation
+        });
+      }
+      if (persistence.status === "unknown") {
+        return res.status(503).json({
+          success: false,
+          error: "แก้แผงใน Discord แล้ว แต่ยังยืนยันสถานะฐานข้อมูลไม่ได้ จึงไม่ย้อนข้อความอัตโนมัติ",
+          code: "panel_persistence_unknown",
+          recoveryRequired: true,
+          rollback: { attempted: false, complete: false, code: persistence.errorCode }
         });
       }
       const rollback = await rollbackDiscordPanel(channelId, messageId, previousPanelPayload);

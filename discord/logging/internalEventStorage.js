@@ -99,15 +99,26 @@ async function deleteStoredEvents(sessionManager, guildId, eventIds) {
     return complete;
 }
 
+async function readSettingStrict(sessionManager, key) {
+    if (typeof sessionManager?.getSettingStrict !== "function") {
+        const error = new Error("STRICT_SETTING_READ_UNAVAILABLE");
+        error.code = "strict_setting_read_unavailable";
+        throw error;
+    }
+    return sessionManager.getSettingStrict(key);
+}
+
 async function saveFallback(sessionManager, record) {
-    if (!sessionManager?.setSetting || !sessionManager?.getSetting) return null;
+    if (!sessionManager?.setSetting || !sessionManager?.getSettingStrict) return null;
     return withFallbackLock(record.guildId, async () => {
         const recordKey = storageKey(record.guildId, record.eventId);
-        const previousRecord = await sessionManager.getSetting(recordKey, null);
+        const previousRecordRead = await readSettingStrict(sessionManager, recordKey);
+        const previousRecord = previousRecordRead.found ? previousRecordRead.value : null;
+        const indexRead = await readSettingStrict(sessionManager, indexKey(record.guildId));
+        const current = indexRead.found ? indexRead.value : [];
         const saved = await sessionManager.setSetting(recordKey, record);
         if (saved !== true) return null;
 
-        const current = await sessionManager.getSetting(indexKey(record.guildId), []);
         const list = Array.isArray(current) ? current.filter(Boolean).map(String) : [];
         const next = [record.eventId, ...list.filter(id => id !== record.eventId)].slice(0, MAX_INDEX_RECORDS);
         const indexed = await sessionManager.setSetting(indexKey(record.guildId), next);
@@ -210,6 +221,7 @@ module.exports = {
     listInternalEvents,
     _test: {
         saveFallback,
+        readSettingStrict,
         deleteStoredEvents,
         deleteSettingWithRetry,
         listFallback,

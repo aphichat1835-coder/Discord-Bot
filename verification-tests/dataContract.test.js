@@ -456,7 +456,8 @@ describe("unified verification data contract", () => {
             });
 
             expect(result.saved).toBe(false);
-            expect(result.snapshotVersion).toBe("v-complete");
+            expect(result.snapshotVersion).toBe("v-active");
+            expect(result.attemptedSnapshotVersion).toBe("v-complete");
             expect(result.snapshotRefs).toEqual({
                 profile: { version: "v-active", complete: true, storedCount: 1 }
             });

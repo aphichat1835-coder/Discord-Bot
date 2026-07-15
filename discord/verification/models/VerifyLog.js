@@ -37,6 +37,7 @@ const schema = new mongoose.Schema({
     dataQuality: mixed,
     snapshotRef: mixed,
     snapshotVersion: String,
+    attemptedSnapshotVersion: String,
     sensitiveAccessLog: [mixed],
     ipHistoryMigrationVersion: Number,
     ipHistoryMigratedAt: Number,
