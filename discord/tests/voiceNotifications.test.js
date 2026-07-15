@@ -174,6 +174,11 @@ test("voice notification normalizes persisted event records and keeps history bo
         enumerable: true,
         configurable: true
     });
+    Object.defineProperty(session.notificationState.events, "bad\nkey", {
+        value: { status: "malicious", at: 2 },
+        enumerable: true,
+        configurable: true
+    });
     const harness = makeHarness([session]);
     harness.options.config = { eventHistoryMax: 2, ownerBudgetMax: 20 };
     const system = createVoiceNotificationSystem(harness.options);
@@ -185,5 +190,6 @@ test("voice notification normalizes persisted event records and keeps history bo
     const events = session.notificationState.events;
     assert.equal(Object.getPrototypeOf(events), null);
     assert.equal(Object.hasOwn(events, "__proto__"), false);
+    assert.equal(Object.hasOwn(events, "bad\nkey"), false);
     assert.equal(Object.keys(events).length, 2);
 });

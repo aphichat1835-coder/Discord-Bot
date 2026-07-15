@@ -22,12 +22,20 @@ const EVENTS = Object.freeze({
 const EVENT_TYPES = new Set(Object.values(EVENTS));
 const UNSAFE_RECORD_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
+function containsControlCharacter(value) {
+    for (const character of value) {
+        const codePoint = character.codePointAt(0);
+        if (codePoint < 32 || codePoint === 127) return true;
+    }
+    return false;
+}
+
 function isSafeRecordKey(value) {
     const key = String(value || "");
     return key.length > 0
         && key.length <= 512
         && !UNSAFE_RECORD_KEYS.has(key)
-        && !/[\u0000-\u001F\u007F]/u.test(key);
+        && !containsControlCharacter(key);
 }
 
 function createEventRecord(source = {}) {

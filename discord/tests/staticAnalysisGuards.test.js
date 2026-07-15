@@ -10,6 +10,7 @@ test("voice notification storage avoids computed object injection sinks", () => 
     assert.doesNotMatch(source, /notificationState\.events\s*\[[^\]]+\]/);
     assert.doesNotMatch(source, /digest\.counts\s*\[[^\]]+\]/);
     assert.doesNotMatch(source, /delete\s+events\s*\[/);
+    assert.doesNotMatch(source, /\\u0000|\\x00/);
     assert.match(source, /Object\.create\(null\)/);
     assert.match(source, /EVENT_TYPES\.has\(type\)/);
 });
