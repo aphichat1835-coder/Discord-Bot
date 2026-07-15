@@ -110,7 +110,11 @@ async function handleStopAllButton(interaction, shadowMasterId, panelDeps) {
     let failed = 0;
 
     for (const s of allSessions) {
-        const ok = await getVoiceWorker().stopSession(s.sessionId, { stoppedBy: interaction.user.id });
+        const ok = await getVoiceWorker().stopSession(s.sessionId, {
+            stoppedBy: interaction.user.id,
+            notifyReason: "manual",
+            actorNotified: true
+        });
         if (ok) stopped++;
         else failed++;
     }
@@ -175,7 +179,11 @@ async function handleStatusStopButton(interaction, customId, shadowMasterId, pan
         });
     }
 
-    const stopped = await getVoiceWorker().stopSession(sId, { stoppedBy: interaction.user.id });
+    const stopped = await getVoiceWorker().stopSession(sId, {
+        stoppedBy: interaction.user.id,
+        notifyReason: "manual",
+        actorNotified: true
+    });
     if (!stopped) {
         return interaction.editReply({
             embeds: [buildPanelErrorEmbed(`> ${config.emojis.warning} หยุดรายการนี้ไม่สำเร็จ กรุณาตรวจสอบ Dashboard`)],

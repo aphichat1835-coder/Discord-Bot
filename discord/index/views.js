@@ -1280,6 +1280,9 @@ function pageSettings(settings, config, client, API_SECRET) {
     const rateLimitReq = settings.rateLimitRequests ?? config.limits.rateLimitRequests;
     const antiRaid = settings.antiRaidEnabled ?? true;
     const idleHrs = settings.idleTimeoutHrs ?? 24;
+    const voiceDmMode = ["important_only", "all", "off"].includes(settings.voiceDmMode)
+        ? settings.voiceDmMode
+        : "important_only";
 
     const botStatus = settings.botStatus ?? config.bot_presence?.status ?? "idle";
     const botActivity = escapeHtml(settings.botActivity ?? config.bot_presence?.activityText ?? "ระบบออนช่องเสียง");
@@ -1322,6 +1325,13 @@ ${navBar("/settings")}
     <select id="antiRaidEnabled">
         <option value="true" ${antiRaid ? "selected" : ""}>✅ เปิดใช้งาน</option>
         <option value="false" ${!antiRaid ? "selected" : ""}>❌ ปิดใช้งาน</option>
+    </select>
+
+    <label>Voice DM — ระดับการแจ้งเตือนส่วนตัว</label>
+    <select id="voiceDmMode">
+        <option value="important_only" ${voiceDmMode === "important_only" ? "selected" : ""}>🛡️ เฉพาะเรื่องสำคัญ (แนะนำ)</option>
+        <option value="all" ${voiceDmMode === "all" ? "selected" : ""}>📨 แจ้งทุกสถานะ</option>
+        <option value="off" ${voiceDmMode === "off" ? "selected" : ""}>🔕 ปิด DM ทั้งหมด</option>
     </select>
 
     <button class="btn btn-primary" onclick="saveSettings()">💾 บันทึก General</button>
@@ -1485,6 +1495,7 @@ async function saveSettings(){
     const rateLimitRequests=Number.parseInt(document.getElementById('rateLimitRequests').value,10)||5;
     const idleTimeoutHrs=Number.parseInt(document.getElementById('idleTimeoutHrs').value,10)||24;
     const antiRaidEnabled=document.getElementById('antiRaidEnabled').value==='true';
+    const voiceDmMode=document.getElementById('voiceDmMode').value;
 
     try{
         const r=await fetch('/api/settings',{
@@ -1493,7 +1504,7 @@ async function saveSettings(){
                 'Content-Type':'application/json',
                 'Authorization':SECRET
             },
-            body:JSON.stringify({maxSessions,rateLimitRequests,idleTimeoutHrs,antiRaidEnabled})
+            body:JSON.stringify({maxSessions,rateLimitRequests,idleTimeoutHrs,antiRaidEnabled,voiceDmMode})
         });
 
         const d=await r.json();

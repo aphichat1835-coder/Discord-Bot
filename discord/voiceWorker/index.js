@@ -38,6 +38,7 @@ const {
     cleanupSelfClientCaches,
 } = require("./cacheUtils");
 const { voiceEventLog, getVoiceLogs } = require("./eventLog");
+const notifications = require("./notifications");
 const { sendSessionStoppedDM, sendTokenInvalidDM, sendSessionOnlineDM } = require("./dm");
 const {
     startNaturalTimer,
@@ -106,6 +107,7 @@ function getWorkerDiagnostics() {
         lastOnlineDMSent: lastOnlineDMSent.size,
         recoveryTimestamps: recoveryTimestamps.size,
         voiceEventLog: voiceEventLog.length,
+        voiceNotifications: notifications.getDiagnostics(),
         voiceLean: getVoiceLeanConfig(),
         lastLeanCleanup: st.lastLeanCleanup
     };
@@ -181,6 +183,7 @@ function cleanupVolatileState(now = Date.now(), options = {}) {
     const leanCleanup = VOICE_LEAN_MODE
         ? cleanupLeanActiveSessions(now, options.forceLeanCleanup === true)
         : null;
+    notifications.cleanupVolatileState(now);
 
     return {
         ...getWorkerDiagnostics(),

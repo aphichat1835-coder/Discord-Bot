@@ -719,7 +719,8 @@ function registerRoutes({
 
             const stopped = await voiceWorker.stopSession(sessionId, {
                 stoppedBy: "dashboard",
-                notifyReason: "manual"
+                notifyReason: "manual",
+                actorNotified: true
             });
 
             if (!stopped) {
@@ -827,13 +828,17 @@ function registerRoutes({
                 maxSessions,
                 rateLimitRequests,
                 idleTimeoutHrs,
-                antiRaidEnabled
+                antiRaidEnabled,
+                voiceDmMode
             } = req.body;
 
             if (maxSessions) await sessionManager.setSetting("maxSessions", maxSessions);
             if (rateLimitRequests) await sessionManager.setSetting("rateLimitRequests", rateLimitRequests);
             if (idleTimeoutHrs) await sessionManager.setSetting("idleTimeoutHrs", idleTimeoutHrs);
             if (antiRaidEnabled !== undefined) await sessionManager.setSetting("antiRaidEnabled", antiRaidEnabled);
+            if (["important_only", "all", "off"].includes(voiceDmMode)) {
+                await sessionManager.setSetting("voiceDmMode", voiceDmMode);
+            }
 
             res.json({ success: true });
         } catch (e) {

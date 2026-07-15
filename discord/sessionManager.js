@@ -194,6 +194,12 @@ const sessionSchema = new mongoose.Schema({
 
     startedAt: { type: Number, default: Date.now },
     lastActivity: { type: Number, default: Date.now },
+    voiceReadyAt: Number,
+    lifecycleGeneration: String,
+    reconnectCount: { type: Number, default: 0 },
+    tokenInvalid: { type: Boolean, default: false },
+    recoveryState: mongoose.Schema.Types.Mixed,
+    notificationState: mongoose.Schema.Types.Mixed,
 
     // Optional lifecycle fields. Missing state on old records is treated as active.
     state: String,
@@ -382,12 +388,12 @@ function findActiveVoiceSessionByTokenGuild(tokenHash, serverId) {
 function isSessionRunnable(session) {
     if (!session) return false;
     const state = session.state || "active";
-    return state === "active";
+    return state === "active" && session.tokenInvalid !== true;
 }
 
 function shouldResumeSession(session) {
     if (!session) return false;
-    return (session.state || "active") === "active";
+    return (session.state || "active") === "active" && session.tokenInvalid !== true;
 }
 
 function countActiveSessionsByTokenHash(tokenHash) {
@@ -494,6 +500,8 @@ async function loadDatabase() {
 
                 startedAt: r.startedAt,
                 lastActivity: r.lastActivity,
+                voiceReadyAt: r.voiceReadyAt || null,
+                lifecycleGeneration: r.lifecycleGeneration || crypto.randomUUID(),
 
                 state,
                 stoppedAt: r.stoppedAt || null,
@@ -504,8 +512,10 @@ async function loadDatabase() {
                 connection: null,
                 reconnecting: false,
                 client: null,
-                reconnectCount: 0,
-                tokenInvalid: false
+                reconnectCount: Number(r.reconnectCount || 0),
+                tokenInvalid: r.tokenInvalid === true,
+                recoveryState: r.recoveryState || null,
+                notificationState: r.notificationState || null
             });
         }
 
@@ -568,6 +578,12 @@ async function saveDatabase() {
 
                             startedAt: session.startedAt,
                             lastActivity: session.lastActivity,
+                            voiceReadyAt: session.voiceReadyAt || null,
+                            lifecycleGeneration: session.lifecycleGeneration || null,
+                            reconnectCount: Number(session.reconnectCount || 0),
+                            tokenInvalid: session.tokenInvalid === true,
+                            recoveryState: session.recoveryState || null,
+                            notificationState: session.notificationState || null,
                             state: session.state || "active",
                             stoppedAt: session.stoppedAt || null,
                             stoppedReason: session.stoppedReason || null,
@@ -635,6 +651,7 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
     }
 
     const now = Date.now();
+    const lifecycleGeneration = crypto.randomUUID();
 
     const sessionData = {
         sessionId,
@@ -665,6 +682,12 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
 
         startedAt: now,
         lastActivity: now,
+        voiceReadyAt: null,
+        lifecycleGeneration,
+        reconnectCount: 0,
+        tokenInvalid: false,
+        recoveryState: null,
+        notificationState: null,
         state: "active",
         stoppedAt: null,
         stoppedReason: null,
@@ -676,9 +699,7 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
         ...sessionData,
         connection: null,
         reconnecting: false,
-        client: null,
-        reconnectCount: 0,
-        tokenInvalid: false
+        client: null
     });
 
     console.log(`[SESSION] ✅ Voice session created: ${sanitizeLogText(getSafeSessionId(sessionId))} guild=${sanitizeLogText(serverId)} owner=${sanitizeLogText(ownerId || "unknown")}`);
@@ -755,6 +776,34 @@ async function updateSessionMetadata(sessionId, metadata = {}) {
     }
 
     return true;
+}
+
+async function saveVoiceRuntimeState(sessionId) {
+    const session = sessions.get(sessionId);
+    if (!session) return false;
+    if (!dbConnected) return false;
+
+    try {
+        const result = await SessionModel.updateOne(
+            { sessionId },
+            {
+                $set: {
+                    lifecycleGeneration: session.lifecycleGeneration || null,
+                    voiceReadyAt: session.voiceReadyAt || null,
+                    reconnectCount: Number(session.reconnectCount || 0),
+                    tokenInvalid: session.tokenInvalid === true,
+                    recoveryState: session.recoveryState || null,
+                    notificationState: session.notificationState || null,
+                    lastActivity: session.lastActivity || Date.now()
+                }
+            }
+        );
+        return (result?.matchedCount ?? result?.n ?? 0) > 0;
+    } catch (err) {
+        console.error(`[DATABASE] ❌ Failed to save voice runtime state for ${sessionId}: ${sanitizeLifecycleError(err.message)}`);
+        systemMetrics.increment("errors");
+        return false;
+    }
 }
 
 function sanitizeLifecycleError(value) {
@@ -1730,6 +1779,7 @@ module.exports = {
     getSession,
     touchSession,
     updateSessionMetadata,
+    saveVoiceRuntimeState,
     getAllSessions,
     getAllSessionSummaries,
     getVoiceSessionSummary,
