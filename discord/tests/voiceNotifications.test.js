@@ -156,3 +156,34 @@ test("voice embed reports explicit verified state without exposing a token", () 
     assert.match(serialized, /90|1 นาที/);
     assert.doesNotMatch(serialized, /secret-token-value/);
 });
+
+test("voice notification rejects unknown event types without mutating dynamic records", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const harness = makeHarness();
+    const system = createVoiceNotificationSystem(harness.options);
+    const result = await system.emit("session-1", "__proto__", { incidentId: "unsafe" });
+
+    assert.deepEqual(result, { status: "skipped", reason: "invalid_event_type" });
+    assert.equal(harness.sent.length, 0);
+    assert.equal(Object.hasOwn(harness.sessions.get("session-1").notificationState.events, "__proto__"), false);
+});
+
+test("voice notification normalizes persisted event records and keeps history bounded", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const session = makeSession();
+    Object.defineProperty(session.notificationState.events, "__proto__", {
+        value: { status: "malicious", at: 1 },
+        enumerable: true,
+        configurable: true
+    });
+    const harness = makeHarness([session]);
+    harness.options.config = { eventHistoryMax: 2, ownerBudgetMax: 20 };
+    const system = createVoiceNotificationSystem(harness.options);
+
+    await system.emit("session-1", EVENTS.SESSION_READY, { incidentId: "one" });
+    await system.emit("session-1", EVENTS.TOKEN_INVALID, { incidentId: "two" });
+    await system.emit("session-1", EVENTS.LOGIN_FAILED, { incidentId: "three" });
+
+    const events = session.notificationState.events;
+    assert.equal(Object.getPrototypeOf(events), null);
+    assert.equal(Object.hasOwn(events, "__proto__"), false);
+    assert.equal(Object.keys(events).length, 2);
+});

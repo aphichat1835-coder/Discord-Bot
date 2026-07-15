@@ -19,6 +19,46 @@ const EVENTS = Object.freeze({
     SESSION_STOPPED_MANUAL: "SESSION_STOPPED_MANUAL",
     STOP_FAILED: "STOP_FAILED"
 });
+const EVENT_TYPES = new Set(Object.values(EVENTS));
+const UNSAFE_RECORD_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+function isSafeRecordKey(value) {
+    const key = String(value || "");
+    return key.length > 0
+        && key.length <= 512
+        && !UNSAFE_RECORD_KEYS.has(key)
+        && !/[\u0000-\u001F\u007F]/u.test(key);
+}
+
+function createEventRecord(source = {}) {
+    const record = Object.create(null);
+    for (const [key, value] of Object.entries(source)) {
+        if (!isSafeRecordKey(key)) continue;
+        Object.defineProperty(record, key, {
+            value,
+            writable: true,
+            configurable: true,
+            enumerable: true
+        });
+    }
+    return record;
+}
+
+function getEventRecordValue(record, key) {
+    if (!record || !isSafeRecordKey(key)) return undefined;
+    return Object.getOwnPropertyDescriptor(record, key)?.value;
+}
+
+function setEventRecordValue(record, key, value) {
+    if (!record || !isSafeRecordKey(key)) return false;
+    Object.defineProperty(record, key, {
+        value,
+        writable: true,
+        configurable: true,
+        enumerable: true
+    });
+    return true;
+}
 
 const TERMINAL_EVENTS = new Set([
     EVENTS.RECOVERY_EXHAUSTED,
@@ -72,10 +112,12 @@ function createVoiceNotificationSystem(options = {}) {
     function ensureRuntimeState(session) {
         if (!session.lifecycleGeneration) session.lifecycleGeneration = randomUUID();
         if (!session.notificationState || typeof session.notificationState !== "object") {
-            session.notificationState = { events: {} };
+            session.notificationState = { events: createEventRecord() };
         }
         if (!session.notificationState.events || typeof session.notificationState.events !== "object") {
-            session.notificationState.events = {};
+            session.notificationState.events = createEventRecord();
+        } else if (Object.getPrototypeOf(session.notificationState.events) !== null) {
+            session.notificationState.events = createEventRecord(session.notificationState.events);
         }
         if (!session.recoveryState || typeof session.recoveryState !== "object") {
             session.recoveryState = {
@@ -106,26 +148,29 @@ function createVoiceNotificationSystem(options = {}) {
 
     function getIncidentKey(session, type, context = {}) {
         const incidentId = context.incidentId || session.recoveryState?.incidentId || "lifecycle";
-        return `${session.lifecycleGeneration}:${incidentId}:${type}`;
+        const rawKey = `${session.lifecycleGeneration}:${incidentId}:${type}`;
+        if (isSafeRecordKey(rawKey)) return rawKey;
+        return `event:${crypto.createHash("sha256").update(rawKey).digest("hex")}`;
     }
 
     function pruneEventHistory(events) {
         const entries = Object.entries(events);
-        if (entries.length <= config.eventHistoryMax) return;
+        if (entries.length <= config.eventHistoryMax) return events;
         entries.sort(([, left], [, right]) => Number(left?.at || 0) - Number(right?.at || 0));
-        for (const [key] of entries.slice(0, entries.length - config.eventHistoryMax)) delete events[key];
+        return createEventRecord(Object.fromEntries(entries.slice(-config.eventHistoryMax)));
     }
 
     async function setEventStatus(sessionId, eventKey, status, extra = {}) {
         const session = getSession(sessionId);
         if (!session) return false;
         ensureRuntimeState(session);
-        session.notificationState.events[eventKey] = {
+        const saved = setEventRecordValue(session.notificationState.events, eventKey, {
             status,
             at: now(),
             ...extra
-        };
-        pruneEventHistory(session.notificationState.events);
+        });
+        if (!saved) return false;
+        session.notificationState.events = pruneEventHistory(session.notificationState.events);
         return persist(sessionId);
     }
 
@@ -173,9 +218,9 @@ function createVoiceNotificationSystem(options = {}) {
         digest.timer = null;
         const items = digest.items.splice(0, digest.items.length);
         const total = digest.total;
-        const counts = { ...digest.counts };
+        const counts = Object.fromEntries(digest.counts);
         digest.total = 0;
-        digest.counts = {};
+        digest.counts.clear();
         if (total === 0) return { status: "skipped", reason: "digest_empty" };
 
         const result = await dmSender.sendVoiceDigestDM(ownerId, items, { total, counts });
@@ -189,11 +234,11 @@ function createVoiceNotificationSystem(options = {}) {
         if (!ownerId) return false;
         let digest = ownerDigests.get(ownerId);
         if (!digest) {
-            digest = { items: [], total: 0, counts: {}, timer: null, lastSentAt: 0 };
+            digest = { items: [], total: 0, counts: new Map(), timer: null, lastSentAt: 0 };
             ownerDigests.set(ownerId, digest);
         }
         digest.total++;
-        digest.counts[type] = Number(digest.counts[type] || 0) + 1;
+        digest.counts.set(type, Number(digest.counts.get(type) || 0) + 1);
         if (digest.items.length < 50) digest.items.push(dmSender.createVoiceSnapshot(session, type, context));
         scheduleDigest(ownerId);
         return true;
@@ -204,7 +249,7 @@ function createVoiceNotificationSystem(options = {}) {
         if (!session?.ownerId) return { status: "skipped", reason: "owner_missing" };
         ensureRuntimeState(session);
 
-        if (session.notificationState.events[eventKey]) {
+        if (getEventRecordValue(session.notificationState.events, eventKey)) {
             diagnostics.suppressed++;
             return { status: "skipped", reason: "duplicate" };
         }
@@ -236,6 +281,10 @@ function createVoiceNotificationSystem(options = {}) {
 
     function emit(sessionId, type, context = {}) {
         diagnostics.candidates++;
+        if (!EVENT_TYPES.has(type)) {
+            diagnostics.suppressed++;
+            return Promise.resolve({ status: "skipped", reason: "invalid_event_type" });
+        }
         const session = getSession(sessionId);
         if (!session) return Promise.resolve({ status: "skipped", reason: "session_missing" });
         ensureRuntimeState(session);
@@ -344,7 +393,9 @@ function createVoiceNotificationSystem(options = {}) {
             const delayedKey = session
                 ? getIncidentKey(session, EVENTS.RECOVERY_DELAYED, { incidentId: transition.previous.incidentId })
                 : null;
-            const delayedRecorded = Boolean(delayedKey && session?.notificationState?.events?.[delayedKey]);
+            const delayedRecorded = Boolean(
+                delayedKey && getEventRecordValue(session?.notificationState?.events, delayedKey)
+            );
             if (delayedRecorded || outageDurationMs >= config.recoveryGraceMs) {
                 return emit(sessionId, EVENTS.SESSION_RECOVERED, {
                     ...context,

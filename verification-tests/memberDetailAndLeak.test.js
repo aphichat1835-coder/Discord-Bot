@@ -255,4 +255,13 @@ describe("member detail serialization and leak guards", () => {
         expect(riskSource).not.toContain("innerHTML");
         expect(riskSource).toContain("replaceChildren");
     });
+
+    test("dashboard avoids HTML injection sinks globally and constrains API requests", () => {
+        const source = fs.readFileSync("discord/verification/public/js/guild-dashboard.js", "utf8");
+
+        expect(source).not.toMatch(/\b(?:innerHTML|outerHTML)\b|document\.write/);
+        expect(source).toContain('target.origin !== window.location.origin');
+        expect(source).toContain('target.pathname.startsWith("/api/guild/")');
+        expect(source).toContain("const safePath = `${target.pathname}${target.search}`");
+    });
 });

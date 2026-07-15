@@ -94,15 +94,6 @@
     return Array.from(root.querySelectorAll(selector));
   }
 
-  function h(value) {
-    return String(value ?? "")
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
-  }
-
   function compact(value, fallback = "—") {
     if (value === null || value === undefined || value === "") return fallback;
     return String(value);
@@ -110,12 +101,6 @@
 
   function boolText(value) {
     return value ? "ใช่" : "ไม่ใช่";
-  }
-
-  function yesNoBadge(value) {
-    return value
-      ? '<span class="badge badge-ok">ใช่</span>'
-      : '<span class="badge badge-muted">ไม่ใช่</span>';
   }
 
   function normalizeVerifyMode(value) {
@@ -185,39 +170,15 @@
 
   function iconUrl(guild) {
     if (!guild?.id || !guild?.icon) return "";
-    return `https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.webp?size=128`;
+    const guildId = encodeURIComponent(String(guild.id));
+    const iconHash = encodeURIComponent(String(guild.icon));
+    return `https://cdn.discordapp.com/icons/${guildId}/${iconHash}.webp?size=128`;
   }
 
   function initials(name) {
     const clean = String(name || "S").trim();
     const parts = clean.split(/\s+/).filter(Boolean).slice(0, 2);
     return parts.map((p) => p[0]).join("").toUpperCase() || clean[0]?.toUpperCase() || "S";
-  }
-
-  function riskBadge(score) {
-    const n = Number(score || 0);
-
-    if (n >= 70) return `<span class="badge badge-danger">${h(n)}</span>`;
-    if (n >= 35) return `<span class="badge badge-warn">${h(n)}</span>`;
-    return `<span class="badge badge-ok">${h(n)}</span>`;
-  }
-
-  function resultBadge(result) {
-    const raw = String(result || "failed").toLowerCase();
-
-    if (raw === "success" || raw === "ok") {
-      return '<span class="badge badge-ok">success</span>';
-    }
-
-    if (raw === "blocked") {
-      return '<span class="badge badge-blocked">blocked</span>';
-    }
-
-    if (raw === "pending") {
-      return '<span class="badge badge-warn">pending</span>';
-    }
-
-    return '<span class="badge badge-failed">failed</span>';
   }
 
   function badgeElement(label, className) {
@@ -240,12 +201,6 @@
     if (n >= 70) return badgeElement(n, "badge-danger");
     if (n >= 35) return badgeElement(n, "badge-warn");
     return badgeElement(n, "badge-ok");
-  }
-
-  function statusBadge(value, onLabel = "Enabled", offLabel = "Disabled") {
-    return value
-      ? `<span class="badge badge-ok">${h(onLabel)}</span>`
-      : `<span class="badge badge-failed">${h(offLabel)}</span>`;
   }
 
   function snowflakeOrEmpty(value) {
@@ -274,9 +229,20 @@
     if (el) el.textContent = compact(value, fallback);
   }
 
-  function setHtml(id, html) {
-    const el = $(id);
-    if (el) el.innerHTML = html;
+  function createElement(tag, className = "", text = "") {
+    const element = document.createElement(tag);
+    if (className) element.className = className;
+    if (text !== "") element.textContent = String(text);
+    return element;
+  }
+
+  function replaceWithMessage(container, className, message) {
+    if (!container) return;
+    container.replaceChildren(createElement("div", className, message));
+  }
+
+  function setMessage(id, className, message) {
+    replaceWithMessage($(id), className, message);
   }
 
   function setInput(id, value) {
@@ -365,7 +331,19 @@
     const headers = options.headers ?? {};
     const csrf = getCsrfToken();
     if (csrf) headers['X-CSRF-Token'] = csrf;
-    const res = await fetch(path, {
+    const rawPath = String(path || "");
+    const target = new URL(rawPath, window.location.origin);
+    if (
+      !rawPath.startsWith("/api/guild/") ||
+      rawPath.startsWith("//") ||
+      target.origin !== window.location.origin ||
+      !target.pathname.startsWith("/api/guild/")
+    ) {
+      throw new Error("เส้นทาง API ไม่ได้รับอนุญาต");
+    }
+    const safePath = `${target.pathname}${target.search}`;
+    // nosemgrep -- safePath is constrained above to this origin and the /api/guild/ namespace.
+    const res = await fetch(safePath, {
       ...options,
       headers: {
         "Content-Type": "application/json",
@@ -484,7 +462,10 @@
     const sideIcon = $(SELECTORS.sideIcon);
     if (sideIcon) {
       if (icon) {
-        sideIcon.innerHTML = `<img src="${h(icon)}" alt="">`;
+        const image = document.createElement("img");
+        image.src = icon;
+        image.alt = "";
+        sideIcon.replaceChildren(image);
       } else {
         sideIcon.textContent = initials(name);
       }
@@ -593,16 +574,39 @@
     setText(SELECTORS.statPending, fmtNumber(stats.lookupFailed));
   }
 
-    function renderOverviewLogs(logs = []) {
+  function buildCompactVerifyLogElement(log = {}) {
+    const username = log.globalName || log.username || log.tag || log.userId || "Unknown";
+    const ip = log.rawIp || log.ip || log.ipInfo?.ip || "—";
+    const location = [
+      log.ipInfo?.countryCode || log.countryCode,
+      log.ipInfo?.city || log.city,
+      log.ipInfo?.isp || log.isp
+    ].filter(Boolean).join(" / ") || "unknown";
+    const item = createElement("div", "list-item");
+    const title = createElement("div", "list-title");
+    const identity = document.createElement("span");
+    identity.append(resultBadgeElement(log.result), document.createTextNode(` ${username}`));
+    title.append(identity, riskBadgeElement(log.riskScore));
+    const meta = createElement("div", "list-meta");
+    appendDetailRow(meta, "User ID", log.userId || "—", "mono");
+    appendDetailRow(meta, "เหตุผล", log.reason || "—");
+    appendDetailRow(meta, "IP", ip, "mono");
+    appendDetailRow(meta, "พื้นที่/เครือข่าย", location);
+    appendDetailRow(meta, "เวลา", fmtTime(log.verifiedAt || log.createdAt));
+    item.append(title, meta);
+    return item;
+  }
+
+  function renderOverviewLogs(logs = []) {
     const box = $(SELECTORS.overviewLogs);
     if (!box) return;
 
     if (!logs.length) {
-      box.innerHTML = '<div class="empty">ยังไม่มีประวัติการยืนยัน</div>';
+      replaceWithMessage(box, "empty", "ยังไม่มีประวัติการยืนยัน");
       return;
     }
 
-    box.innerHTML = logs.slice(0, 8).map((log) => renderCompactVerifyLog(log)).join("");
+    box.replaceChildren(...logs.slice(0, 8).map(buildCompactVerifyLogElement));
   }
 
   function renderOverviewMembers(members = []) {
@@ -610,25 +614,36 @@
     if (!box) return;
 
     if (!members.length) {
-      box.innerHTML = '<div class="empty">ยังไม่มีสมาชิกที่ยืนยันสำเร็จ</div>';
+      replaceWithMessage(box, "empty", "ยังไม่มีสมาชิกที่ยืนยันสำเร็จ");
       return;
     }
 
-    box.innerHTML = members.slice(0, 8).map((member) => `
-      <div class="list-item">
-        <div class="list-title">
-          <span>${h(member.globalName || member.username || "Unknown")}</span>
-          ${riskBadge(member.riskScore)}
-        </div>
-        <div class="list-meta">
-          User ID: <span class="mono">${h(member.userId)}</span><br>
-          อายุบัญชี: ${h(member.accountAgeDays ?? "—")} วัน · Connections: ${h(member.connections ?? 0)}<br>
-          IP: <span class="mono">${h(member.rawIp || member.ip || "—")}</span><br>
-          Network: ${h(member.countryCode || "unknown")} / ${h(member.city || "unknown")} / ${h(member.isp || "unknown")}<br>
-          Device: ${h(member.device?.browser || member.browser || "unknown")} / ${h(member.device?.os || member.os || "unknown")}
-        </div>
-      </div>
-    `).join("");
+    const items = members.slice(0, 8).map((member) => {
+      const item = createElement("div", "list-item");
+      const title = createElement("div", "list-title");
+      title.append(
+        createElement("span", "", member.globalName || member.username || "Unknown"),
+        riskBadgeElement(member.riskScore)
+      );
+      const meta = createElement("div", "list-meta");
+      appendDetailRow(meta, "User ID", member.userId || "—", "mono");
+      appendDetailRow(meta, "อายุบัญชี", `${member.accountAgeDays ?? "—"} วัน`);
+      appendDetailRow(meta, "Connections", member.connections ?? 0);
+      appendDetailRow(meta, "IP", member.rawIp || member.ip || "—", "mono");
+      appendDetailRow(
+        meta,
+        "Network",
+        `${member.countryCode || "unknown"} / ${member.city || "unknown"} / ${member.isp || "unknown"}`
+      );
+      appendDetailRow(
+        meta,
+        "Device",
+        `${member.device?.browser || member.browser || "unknown"} / ${member.device?.os || member.os || "unknown"}`
+      );
+      item.append(title, meta);
+      return item;
+    });
+    box.replaceChildren(...items);
   }
 
   function renderRiskList(id, items = [], empty = "ไม่มีข้อมูล") {
@@ -636,19 +651,22 @@
     if (!box) return;
 
     if (!items.length) {
-      box.innerHTML = `<div class="empty">${h(empty)}</div>`;
+      replaceWithMessage(box, "empty", empty);
       return;
     }
 
-    box.innerHTML = items.map((item) => `
-      <div class="list-item">
-        <div class="list-title">
-          <span>${h(item.label || item.name || "unknown")}</span>
-          <span class="badge badge-info">${h(item.count || 0)}</span>
-        </div>
-        ${item.detail ? `<div class="list-meta">${h(item.detail)}</div>` : ""}
-      </div>
-    `).join("");
+    const rows = items.map((item) => {
+      const row = createElement("div", "list-item");
+      const title = createElement("div", "list-title");
+      title.append(
+        createElement("span", "", item.label || item.name || "unknown"),
+        createElement("span", "badge badge-info", item.count || 0)
+      );
+      row.appendChild(title);
+      if (item.detail) row.appendChild(createElement("div", "list-meta", item.detail));
+      return row;
+    });
+    box.replaceChildren(...rows);
   }
 
   function renderRisk(risk = {}) {
@@ -663,37 +681,11 @@
     if (!box) return;
 
     if (!recent.length) {
-      box.innerHTML = '<div class="empty">ยังไม่มี risk logs</div>';
+      replaceWithMessage(box, "empty", "ยังไม่มี risk logs");
       return;
     }
 
     box.replaceChildren(...recent.map(buildDetailedVerifyLogElement));
-  }
-
-  function renderCompactVerifyLog(log = {}) {
-    const username = log.globalName || log.username || log.tag || log.userId || "Unknown";
-    const ip = log.rawIp || log.ip || log.ipInfo?.ip || "—";
-    const location = [
-      log.ipInfo?.countryCode || log.countryCode,
-      log.ipInfo?.city || log.city,
-      log.ipInfo?.isp || log.isp
-    ].filter(Boolean).join(" / ") || "unknown";
-
-    return `
-      <div class="list-item">
-        <div class="list-title">
-          <span>${resultBadge(log.result)} ${h(username)}</span>
-          ${riskBadge(log.riskScore)}
-        </div>
-        <div class="list-meta">
-          User ID: <span class="mono">${h(log.userId || "—")}</span><br>
-          เหตุผล: ${h(log.reason || "—")}<br>
-          IP: <span class="mono">${h(ip)}</span><br>
-          พื้นที่/เครือข่าย: ${h(location)}<br>
-          เวลา: ${h(fmtTime(log.verifiedAt || log.createdAt))}
-        </div>
-      </div>
-    `;
   }
 
   function appendDetailRow(parent, label, value, valueClass = "") {
@@ -1445,7 +1437,7 @@
 
     if (!result) {
       box.classList.add("hidden");
-      body.innerHTML = "";
+      body.replaceChildren();
       return;
     }
 
@@ -1455,46 +1447,53 @@
     const warnings = Array.isArray(result.warnings) ? result.warnings : [];
     const errors = Array.isArray(result.errors) ? result.errors : [];
 
-    const checkHtml = checks.length ? checks.map((check) => `
-      <div class="list-item">
-        <div class="list-title">
-          <span>${check.ok ? "✅" : "❌"} ${h(check.label || check.name || check.message || check.key || "Check")}</span>
-          ${check.ok ? '<span class="badge badge-ok">ผ่าน</span>' : '<span class="badge badge-failed">ไม่ผ่าน</span>'}
-        </div>
-        ${check.detail ? `<div class="list-meta">${h(check.detail)}</div>` : ""}
-      </div>
-    `).join("") : '<div class="empty">ยังไม่มีผลตรวจ</div>';
+    const grid = createElement("div", "grid grid-3");
+    const addStat = (value, label, color) => {
+      const card = createElement("div", "stat-card");
+      const number = createElement("div", "num", value);
+      number.style.color = color;
+      card.append(number, createElement("div", "label", label));
+      grid.appendChild(card);
+    };
+    addStat(checks.filter((check) => check.ok).length, "ผ่าน", "var(--green-2)");
+    addStat(warnings.length, "เตือน", "var(--yellow-2)");
+    addStat(errors.length, "ผิดพลาด", "var(--red-2)");
 
-    body.innerHTML = `
-      <div class="grid grid-3">
-        <div class="stat-card">
-          <div class="num" style="color:var(--green-2);">${checks.filter((c) => c.ok).length}</div>
-          <div class="label">ผ่าน</div>
-        </div>
-        <div class="stat-card">
-          <div class="num" style="color:var(--yellow-2);">${warnings.length}</div>
-          <div class="label">เตือน</div>
-        </div>
-        <div class="stat-card">
-          <div class="num" style="color:var(--red-2);">${errors.length}</div>
-          <div class="label">ผิดพลาด</div>
-        </div>
-      </div>
+    const nodes = [grid];
+    if (warnings.length) {
+      const warningBox = createElement("div", "alert alert-warn mt-14");
+      warningBox.append(...warnings.map((warning) => createElement("div", "", `⚠️ ${warning}`)));
+      nodes.push(warningBox);
+    }
+    if (errors.length) {
+      const errorBox = createElement("div", "alert alert-danger mt-14");
+      errorBox.append(...errors.map((error) => createElement(
+        "div",
+        "",
+        `❌ ${error?.message || error?.label || error?.name || error?.key || error}`
+      )));
+      nodes.push(errorBox);
+    }
 
-      ${warnings.length ? `
-        <div class="alert alert-warn mt-14">
-          ${warnings.map((w) => `⚠️ ${h(w)}`).join("<br>")}
-        </div>
-      ` : ""}
-
-      ${errors.length ? `
-        <div class="alert alert-danger mt-14">
-          ${errors.map((e) => `❌ ${h(e.message || e.label || e.name || e.key || e)}`).join("<br>")}
-        </div>
-      ` : ""}
-
-      <div class="list mt-14">${checkHtml}</div>
-    `;
+    const list = createElement("div", "list mt-14");
+    if (!checks.length) {
+      list.appendChild(createElement("div", "empty", "ยังไม่มีผลตรวจ"));
+    } else {
+      const checkNodes = checks.map((check) => {
+        const item = createElement("div", "list-item");
+        const title = createElement("div", "list-title");
+        title.append(
+          createElement("span", "", `${check.ok ? "✅" : "❌"} ${check.label || check.name || check.message || check.key || "Check"}`),
+          createElement("span", check.ok ? "badge badge-ok" : "badge badge-failed", check.ok ? "ผ่าน" : "ไม่ผ่าน")
+        );
+        item.appendChild(title);
+        if (check.detail) item.appendChild(createElement("div", "list-meta", check.detail));
+        return item;
+      });
+      list.append(...checkNodes);
+    }
+    nodes.push(list);
+    body.replaceChildren(...nodes);
   }
 
   async function validateSettings() {
@@ -1720,8 +1719,8 @@
       const rolesBox = $("role-options");
       const channelsBox = $("channel-options");
 
-      if (rolesBox) rolesBox.innerHTML = `<div class="alert alert-warn">โหลดรายการยศไม่ได้: ${h(err.message)}</div>`;
-      if (channelsBox) channelsBox.innerHTML = `<div class="alert alert-warn">โหลดรายการห้องไม่ได้: ${h(err.message)}</div>`;
+      replaceWithMessage(rolesBox, "alert alert-warn", `โหลดรายการยศไม่ได้: ${err.message}`);
+      replaceWithMessage(channelsBox, "alert alert-warn", `โหลดรายการห้องไม่ได้: ${err.message}`);
     }
   }
 
@@ -1744,11 +1743,7 @@
     } catch (err) {
       showToast(`โหลด overview ไม่สำเร็จ: ${err.message}`, "err");
 
-      setHtml("overview-error", `
-        <div class="alert alert-danger">
-          โหลดข้อมูล dashboard ไม่สำเร็จ: ${h(err.message)}
-        </div>
-      `);
+      setMessage("overview-error", "alert alert-danger", `โหลดข้อมูล dashboard ไม่สำเร็จ: ${err.message}`);
 
       return null;
     }
@@ -2274,11 +2269,11 @@
   async function bootInitialData() {
     if (!state.guildId) {
       showToast("ไม่พบ Guild ID จาก URL", "err");
-      setHtml("overview-error", `
-        <div class="alert alert-danger">
-          ไม่พบ Guild ID จาก URL กรุณากลับไปเลือกเซิร์ฟเวอร์ใหม่
-        </div>
-      `);
+      setMessage(
+        "overview-error",
+        "alert alert-danger",
+        "ไม่พบ Guild ID จาก URL กรุณากลับไปเลือกเซิร์ฟเวอร์ใหม่"
+      );
 
       return;
     }

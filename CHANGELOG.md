@@ -4,6 +4,11 @@
 
 ### Changed
 
+- Removed dynamic HTML injection sinks from the Verification dashboard, limited
+  its HTTP helper to same-origin guild APIs, hardened Voice notification event
+  records against computed-key injection while preserving restart deduplication,
+  and made protected-file validation read only literal allowlisted paths.
+
 - Reorganized every Owner, Verification, callback, campaign, and approved
   Shadow web surface around clearer Thai labels, grouped navigation, searchable
   guild selection, responsive touch targets, visible keyboard focus, semantic

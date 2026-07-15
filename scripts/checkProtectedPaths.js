@@ -7,21 +7,30 @@ const { execFileSync } = require("node:child_process");
 
 const PROTECTED_PATH_PATTERN = /^discord\/systemProvider(?:\.js|\/)/;
 const ZERO_SHA_PATTERN = /^0+$/;
-const OWNER_APPROVED_DIGESTS = Object.freeze({
-    "discord/systemProvider.js": "46e11284f0444b18e50317ff4f312762dde7ead6219d96f719eea0dcdd627178",
-    "discord/systemProvider/dashboardHtml.js": "15cd12e2b3aaf1d9a00c5da38d34cc550fcf66f6083e0e6fa6fdf661ed0385b4",
-    "discord/systemProvider/renderers.js": "dfdc49664fb1cd8e171d942f5e5153e6a7e31e5b230562ea128c7f97cb64c3b4"
-});
+const OWNER_APPROVED_FILES = new Map([
+    ["discord/systemProvider.js", {
+        digest: "46e11284f0444b18e50317ff4f312762dde7ead6219d96f719eea0dcdd627178",
+        read: () => fs.readFileSync("discord/systemProvider.js")
+    }],
+    ["discord/systemProvider/dashboardHtml.js", {
+        digest: "15cd12e2b3aaf1d9a00c5da38d34cc550fcf66f6083e0e6fa6fdf661ed0385b4",
+        read: () => fs.readFileSync("discord/systemProvider/dashboardHtml.js")
+    }],
+    ["discord/systemProvider/renderers.js", {
+        digest: "dfdc49664fb1cd8e171d942f5e5153e6a7e31e5b230562ea128c7f97cb64c3b4",
+        read: () => fs.readFileSync("discord/systemProvider/renderers.js")
+    }]
+]);
 
 function matchesOwnerApprovedContent(file) {
-    const approvedDigest = OWNER_APPROVED_DIGESTS[file];
-    if (!approvedDigest) return false;
+    const approvedFile = OWNER_APPROVED_FILES.get(file);
+    if (!approvedFile) return false;
     try {
         const actualDigest = crypto
             .createHash("sha256")
-            .update(fs.readFileSync(file))
+            .update(approvedFile.read())
             .digest("hex");
-        return actualDigest === approvedDigest;
+        return actualDigest === approvedFile.digest;
     } catch {
         return false;
     }
