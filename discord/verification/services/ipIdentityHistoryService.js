@@ -82,14 +82,14 @@ async function upsertDeviceHistory(input, models) {
 }
 
 function orderedHistoryRoles(input) {
-    const roles = Array.isArray(input.memberInfo?.roles)
-        ? input.memberInfo.roles
-        : (Array.isArray(input.roles) ? input.roles : []);
-    return roles.map(String);
+    if (Array.isArray(input.memberInfo?.roles)) return input.memberInfo.roles.map(String);
+    if (Array.isArray(input.roles)) return input.roles.map(String);
+    return [];
 }
 
 function historyRoles(input) {
-    return [...new Set(orderedHistoryRoles(input))].sort();
+    return [...new Set(orderedHistoryRoles(input))]
+        .sort((left, right) => left.localeCompare(right, "en"));
 }
 
 function hashRoleEvent(input, roles) {
@@ -378,7 +378,7 @@ async function migrateLegacyLink(link, models, now) {
 
 function migrationErrorCode(error) {
     const code = String(error?.code || "");
-    if (/^(?:[a-zA-Z][a-zA-Z0-9_.-]{0,79}|[0-9]{1,10})$/.test(code)) return code;
+    if (/^(?:[a-zA-Z][a-zA-Z0-9_.-]{0,79}|\d{1,10})$/.test(code)) return code;
     const name = String(error?.name || "");
     if (/^[a-zA-Z][a-zA-Z0-9_.-]{0,79}$/.test(name)) return name;
     return "migration_write_failed";

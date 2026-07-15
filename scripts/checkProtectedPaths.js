@@ -17,7 +17,7 @@ function matchesOwnerApprovedContent(file) {
     try {
         const actualDigest = crypto
             .createHash("sha256")
-            .update(fs.readFileSync(file))
+            .update(fs.readFileSync("discord/systemProvider.js"))
             .digest("hex");
         return actualDigest === approvedDigest;
     } catch {

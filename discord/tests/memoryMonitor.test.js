@@ -47,7 +47,7 @@ function makeFakeClient() {
     return client;
 }
 
-test("memory monitor trend stays bounded and compact", () => {
+test("memory monitor trend stays bounded and compact", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const { monitor, restore } = freshMemoryMonitor({ MEMORY_TREND_MAX: "2" });
 
     try {

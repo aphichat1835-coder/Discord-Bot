@@ -1819,5 +1819,10 @@ module.exports = {
 
     // Encryption helpers kept for existing code paths
     encryptToken,
-    decryptToken
+    decryptToken,
+
+    _test: {
+        shouldCacheSettingKey,
+        INTERNAL_EVENT_SETTINGS
+    }
 };

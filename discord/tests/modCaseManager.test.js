@@ -23,7 +23,7 @@ function createFakeSessionManager() {
     };
 }
 
-test("createCase assigns increasing case numbers", async () => {
+test("createCase assigns increasing case numbers", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const sessionManager = createFakeSessionManager();
     const first = await modCaseManager.createCase(sessionManager, {
         guildId: "g1",
@@ -46,7 +46,7 @@ test("createCase assigns increasing case numbers", async () => {
     assert.equal(first.evidence[0], "message spam");
 });
 
-test("createCase fallback serializes concurrent counters and user indexes", async () => {
+test("createCase fallback serializes concurrent counters and user indexes", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const sessionManager = createFakeSessionManager();
     const [first, second] = await Promise.all([
         modCaseManager.createCase(sessionManager, { guildId: "g1", action: "ban", userId: "u1" }),
@@ -58,7 +58,7 @@ test("createCase fallback serializes concurrent counters and user indexes", asyn
     assert.equal(list.length, 2);
 });
 
-test("getCase and listUserCases work with settings fallback", async () => {
+test("getCase and listUserCases work with settings fallback", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const sessionManager = createFakeSessionManager();
     const created = await modCaseManager.createCase(sessionManager, {
         guildId: "g1",
@@ -75,7 +75,7 @@ test("getCase and listUserCases work with settings fallback", async () => {
     assert.equal(list[0].caseNumber, created.caseNumber);
 });
 
-test("updateCaseReason amends existing case", async () => {
+test("updateCaseReason amends existing case", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const sessionManager = createFakeSessionManager();
     const created = await modCaseManager.createCase(sessionManager, {
         guildId: "g1",
@@ -90,7 +90,7 @@ test("updateCaseReason amends existing case", async () => {
     assert.equal(updated.amendedBy, "m2");
 });
 
-test("case fallback fails closed when a database write reports false", async () => {
+test("case fallback fails closed when a database write reports false", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const sessionManager = createFakeSessionManager();
     sessionManager.setSetting = async () => false;
     await assert.rejects(
@@ -99,7 +99,7 @@ test("case fallback fails closed when a database write reports false", async () 
     );
 });
 
-test("updateCaseStatus persists pending workflow outcomes", async () => {
+test("updateCaseStatus persists pending workflow outcomes", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const sessionManager = createFakeSessionManager();
     const created = await modCaseManager.createCase(sessionManager, {
         guildId: "g1", action: "kick", userId: "u4", status: "pending"

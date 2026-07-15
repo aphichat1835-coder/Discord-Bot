@@ -17,8 +17,8 @@ const RATE_LIMIT_MAX_BUCKETS = Math.max(100, Number(process.env.RATE_LIMIT_MAX_B
 function safeDiscordInlineCode(value, maxLength = 180) {
     return String(value || "unknown")
         .replace(/[\r\n\t]+/g, " ")
-        .replace(/`/g, "ˋ")
-        .replace(/\\/g, "\\\\")
+        .replaceAll("`", "ˋ")
+        .replaceAll("\\", "\\\\")
         .slice(0, Math.max(1, Number(maxLength) || 180));
 }
 

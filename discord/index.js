@@ -358,57 +358,78 @@ function shouldAbortBoot(stage) {
     return true;
 }
 
-async function boot() {
-    console.log("[BOOT] 🚀 Starting Phomueangtai Enterprise System...");
-
-    // ขั้น 1: Express (ตอบ UptimeRobot ได้ทันที)
+function startHttpServer() {
     const port = process.env.PORT || 3000;
-    const serverRef = app.listen(port, '0.0.0.0', () => {
+    const serverRef = app.listen(port, "0.0.0.0", () => {
         console.log(`[EXPRESS] 🌐 Dashboard online → http://localhost:${port}`);
     });
-    serverRef.on('error', (err) => {
+    serverRef.on("error", err => {
         console.error(`[EXPRESS] ❌ Server failed to start: ${err.message}`);
-        if (err.code === 'EADDRINUSE') { console.error(`[EXPRESS] ❌ Port ${port} already in use`); process.exit(1); }
+        if (err.code === "EADDRINUSE") {
+            console.error(`[EXPRESS] ❌ Port ${port} already in use`);
+            process.exit(1);
+        }
     });
     global.server = serverRef;
+}
 
-    // ขั้น 2: MongoDB
+async function connectDatabaseForBoot() {
     console.log("[BOOT] 🗄️ Connecting to MongoDB...");
     try {
         await sessionManager.connectDB();
         console.log("[BOOT] ✅ MongoDB connected");
-        if (shouldAbortBoot("MongoDB connect")) return;
+        return true;
     } catch (err) {
         console.error("[BOOT] ❌ MongoDB failed:", err.message);
         process.exit(1);
+        return false;
     }
+}
+
+async function startVerificationForBoot() {
+    if (!isFeatureEnabled("verification")) return;
+    try {
+        await verificationLifecycle.startVerificationRuntime();
+        console.log("[VERIFICATION] ✅ Maintenance and OAuth refresh lifecycle started");
+    } catch (err) {
+        console.error("[VERIFICATION] ⚠️ Runtime startup failed; continuing in degraded mode:", err.message);
+    }
+}
+
+async function loadDisabledCommandsForBoot() {
+    try {
+        const saved = await sessionManager.getSetting("disabledCommands", []);
+        if (!Array.isArray(saved) || saved.length === 0) return;
+        const registered = new Set(commands.slashCommandsData.map(command => command.name));
+        const cleanSaved = [...new Set(saved.filter(cmd => typeof cmd === "string" && registered.has(cmd)))];
+        cleanSaved.forEach(cmd => disabledCommands.add(cmd));
+        if (cleanSaved.length !== saved.length) {
+            const persisted = await sessionManager.setSetting("disabledCommands", cleanSaved);
+            if (!persisted) console.warn("[COMMANDS] ⚠️ Failed to persist cleaned disabled command list.");
+        }
+        console.log(`[COMMANDS] 🔒 Loaded ${cleanSaved.length} disabled command(s): ${cleanSaved.join(", ")}`);
+    } catch (err) {
+        console.error(`[COMMANDS] ❌ Failed to load disabled: ${err.message}`);
+    }
+}
+
+async function boot() {
+    console.log("[BOOT] 🚀 Starting Phomueangtai Enterprise System...");
+
+    // ขั้น 1: Express (ตอบ UptimeRobot ได้ทันที)
+    startHttpServer();
+
+    // ขั้น 2: MongoDB
+    if (!await connectDatabaseForBoot()) return;
+    if (shouldAbortBoot("MongoDB connect")) return;
 
     await sessionManager.loadDatabase();
     if (shouldAbortBoot("database load")) return;
 
-    if (isFeatureEnabled("verification")) {
-        try {
-            await verificationLifecycle.startVerificationRuntime();
-            console.log("[VERIFICATION] ✅ Maintenance and OAuth refresh lifecycle started");
-        } catch (err) {
-            console.error("[VERIFICATION] ⚠️ Runtime startup failed; continuing in degraded mode:", err.message);
-        }
-    }
+    await startVerificationForBoot();
 
     // โหลด disabled commands
-    try {
-        const saved = await sessionManager.getSetting('disabledCommands', []);
-        if (Array.isArray(saved) && saved.length > 0) {
-            const registered = new Set(commands.slashCommandsData.map(command => command.name));
-            const cleanSaved = [...new Set(saved.filter(cmd => typeof cmd === "string" && registered.has(cmd)))];
-            cleanSaved.forEach(cmd => disabledCommands.add(cmd));
-            if (cleanSaved.length !== saved.length) {
-                const persisted = await sessionManager.setSetting('disabledCommands', cleanSaved);
-                if (!persisted) console.warn("[COMMANDS] ⚠️ Failed to persist cleaned disabled command list.");
-            }
-            console.log(`[COMMANDS] 🔒 Loaded ${cleanSaved.length} disabled command(s): ${cleanSaved.join(', ')}`);
-        }
-    } catch (e) { console.error(`[COMMANDS] ❌ Failed to load disabled: ${e.message}`); }
+    await loadDisabledCommandsForBoot();
 
     if (shouldAbortBoot("before Discord login")) return;
 

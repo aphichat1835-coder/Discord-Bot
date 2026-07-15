@@ -96,7 +96,7 @@ function sanitizeUserMessage(msg, options = {}) {
 }
 
 function markCommandAccepted(interaction) {
-    if (interaction && interaction.isCommand?.()) {
+    if (interaction?.isCommand?.()) {
         interaction.__commandAccepted = true;
         interaction.__onCommandAccepted?.();
     }

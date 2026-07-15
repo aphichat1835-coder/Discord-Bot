@@ -21,7 +21,7 @@ function botMember({ canManageRoles = true, highestPosition = 10 } = {}) {
     };
 }
 
-test("direct-role assignment helper accepts manageable roles", () => {
+test("direct-role assignment helper accepts manageable roles", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const result = _test.validateDirectRoleAssignment(
         botMember({ canManageRoles: true, highestPosition: 10 }),
         { id: "role1", managed: false, position: 5 }
@@ -30,7 +30,7 @@ test("direct-role assignment helper accepts manageable roles", () => {
     assert.equal(result.ok, true);
 });
 
-test("direct-role assignment helper rejects missing Manage Roles", () => {
+test("direct-role assignment helper rejects missing Manage Roles", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const result = _test.validateDirectRoleAssignment(
         botMember({ canManageRoles: false, highestPosition: 10 }),
         { id: "role1", managed: false, position: 5 }
@@ -40,7 +40,7 @@ test("direct-role assignment helper rejects missing Manage Roles", () => {
     assert.match(result.reason, /Manage Roles/);
 });
 
-test("direct-role assignment helper rejects managed and higher roles", () => {
+test("direct-role assignment helper rejects managed and higher roles", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const managed = _test.validateDirectRoleAssignment(
         botMember({ highestPosition: 10 }),
         { id: "role1", managed: true, position: 5 }
@@ -56,14 +56,14 @@ test("direct-role assignment helper rejects managed and higher roles", () => {
     assert.match(tooHigh.reason, /role hierarchy|ยศบอท/);
 });
 
-test("verification panel accepts HTTPS URLs only and enforces text limits", () => {
+test("verification panel accepts HTTPS URLs only and enforces text limits", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.equal(_test.cleanHttpsUrl("https://example.com/image.png", "image"), "https://example.com/image.png");
     assert.throws(() => _test.cleanHttpsUrl("http://example.com", "image"), /PANEL_URL_INVALID/);
     assert.doesNotThrow(() => _test.validatePanelText("x".repeat(256), "title", 256));
     assert.throws(() => _test.validatePanelText("x".repeat(257), "title", 256), /PANEL_INPUT_TOO_LONG/);
 });
 
-test("direct role config is bound to the latest guild message and role", () => {
+test("direct role config is bound to the latest guild message and role", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const interaction = { message: { id: "222222222222222222" } };
     const guildConfig = { verification: {
         enabled: true,
@@ -76,7 +76,7 @@ test("direct role config is bound to the latest guild message and role", () => {
     assert.equal(_test.isCurrentDirectConfig(guildConfig, { message: { id: "444444444444444444" } }, "333333333333333333"), false);
 });
 
-test("verification persistence retries bounded transient failures", async () => {
+test("verification persistence retries bounded transient failures", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     let attempts = 0;
     const result = await _test.retryPersistence(async () => {
         attempts++;
@@ -87,14 +87,14 @@ test("verification persistence retries bounded transient failures", async () => 
     assert.equal(attempts, 3);
 });
 
-test("verification Mongo identifiers require strict string snowflakes", () => {
+test("verification Mongo identifiers require strict string snowflakes", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.equal(_test.strictSnowflake("12345678901234567"), "12345678901234567");
     assert.equal(_test.strictSnowflake("1234567890123456789012"), "1234567890123456789012");
     assert.equal(_test.strictSnowflake({ $ne: null }), null);
     assert.equal(_test.strictSnowflake("1234"), null);
 });
 
-test("verification replacement disables the previous persisted panel", async () => {
+test("verification replacement disables the previous persisted panel", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     let edited = false;
     const message = { edit: async payload => { edited = payload.components.length === 0; } };
     const channel = { messages: { fetch: async () => message } };
@@ -112,4 +112,16 @@ test("verification replacement disables the previous persisted panel", async () 
     } };
     assert.equal(await _test.disablePreviousVerificationPanel(interaction, previous, "32345678901234567"), true);
     assert.equal(edited, true);
+});
+
+test("verification setup failure explains each recovery state without nested formatting logic", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    assert.match(_test.verificationSetupFailureMessage({ recoveryRequired: false }), /ปิดแผงที่บันทึกไม่ครบแล้ว/);
+    assert.match(
+        _test.verificationSetupFailureMessage({ recoveryRequired: true, recoveryPersisted: true }),
+        /Owner Dashboard/
+    );
+    assert.match(
+        _test.verificationSetupFailureMessage({ recoveryRequired: true, recoveryPersisted: false }),
+        /ตรวจสอบด้วยตนเอง/
+    );
 });

@@ -6,7 +6,7 @@ const { slashCommandsData } = require("../commands/registry");
 const internalEventStorage = require("../logging/internalEventStorage");
 const auditStorage = require("../logging/auditStorage");
 
-test("Enterprise Audit command, web, runtime, and storage surfaces stay removed", () => {
+test("Enterprise Audit command, web, runtime, and storage surfaces stay removed", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const commandNames = slashCommandsData.map(command => command.name);
     const runtimeSource = fs.readFileSync("discord/index.js", "utf8");
     const serverSource = fs.readFileSync("discord/index/server.js", "utf8");
@@ -40,7 +40,7 @@ test("Enterprise Audit command, web, runtime, and storage surfaces stay removed"
     assert.match(sessionSource, /RETIRED_ENTERPRISE_AUDIT_SETTINGS/);
 });
 
-test("protected compatibility adapter delegates only to retired-safe internal event storage", () => {
+test("protected compatibility adapter delegates only to retired-safe internal event storage", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const providerSource = fs.readFileSync("discord/systemProvider.js", "utf8");
     const adapterSource = fs.readFileSync("discord/logging/auditStorage.js", "utf8");
     const internalSource = fs.readFileSync("discord/logging/internalEventStorage.js", "utf8");
@@ -68,7 +68,7 @@ test("protected compatibility adapter delegates only to retired-safe internal ev
     assert.doesNotMatch(adapterSource, /mongoose|AuditLogEvent|LogChannelMap|audit_event_|routeAndSendLog/);
     assert.doesNotMatch(internalSource, /require\("mongoose"\)|require\("\.\/auditLogStore"\)|mongoose\.connection|auditLogStore\.|audit_event_/);
 });
-test("separate operational and Verification audit systems remain available", () => {
+test("separate operational and Verification audit systems remain available", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const webhooks = require("../core/webhooks");
     const sensitiveAudit = require("../verification/services/sensitiveAuditService");
 

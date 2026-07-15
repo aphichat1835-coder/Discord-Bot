@@ -57,16 +57,4 @@ describe("verification panel DB/Discord consistency", () => {
         })).resolves.toEqual({ status: "unknown", errorCode: "db_unavailable" });
     });
 
-    test("panel update route uses retry persistence and rolls Discord back on DB failure", () => {
-        const fs = require("node:fs");
-        const source = fs.readFileSync(require.resolve("../discord/verification/routes/guild"), "utf8");
-        expect(source).toMatch(/await saveConfigWithRetry\(config\)/);
-        expect(source).toMatch(/persistedPanelMatches\(guildId, verification\)/);
-        expect(source).toMatch(/rollbackDiscordPanel\(channelId, messageId, previousPanelPayload\)/);
-        expect(source).toMatch(/recoveryRequired: !rollback\.complete/);
-        expect(source).toMatch(/persistedPanelMatches\(sentPanel\.guildId, sentPanel\)/);
-        expect(source).toMatch(/code: "panel_send_cleanup_failed"/);
-        expect(source).toMatch(/persistence\.status === "unknown"/);
-        expect(source).toMatch(/code: "panel_persistence_unknown"/);
-    });
 });

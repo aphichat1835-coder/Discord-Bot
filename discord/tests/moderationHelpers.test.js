@@ -5,13 +5,13 @@ const helpers = require("../commands/moderationHelpers");
 const moderation = require("../commands/moderation");
 const config = require("../config.json");
 
-test("moderation helpers map required permissions", () => {
+test("moderation helpers map required permissions", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.equal(helpers.requiredModerationPermission("ban"), "BAN_MEMBERS");
     assert.equal(helpers.requiredModerationPermission("kick"), "KICK_MEMBERS");
     assert.equal(helpers.requiredModerationPermission("timeout"), "MODERATE_MEMBERS");
 });
 
-test("moderation helpers parse timeout duration", () => {
+test("moderation helpers parse timeout duration", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const interaction = { options: { getInteger: () => 15 } };
     const result = helpers.parseTimeoutDuration(interaction, "timeout");
     assert.equal(result.ok, true);
@@ -19,7 +19,7 @@ test("moderation helpers parse timeout duration", () => {
     assert.equal(result.durationMs, 900000);
 });
 
-test("moderation helpers build case input", () => {
+test("moderation helpers build case input", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const input = helpers.buildCaseInput(
         {
             guild: { id: "guild1" },
@@ -37,7 +37,7 @@ test("moderation helpers build case input", () => {
     assert.equal(input.metadata.dmSent, true);
 });
 
-test("moderation helpers avoid exposing raw exception messages", () => {
+test("moderation helpers avoid exposing raw exception messages", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.equal(
         helpers.moderationErrorReply(new Error("database password leaked")),
         `> ${config.emojis.error} ไม่สามารถดำเนินการได้ โปรดลองอีกครั้งหรือติดต่อผู้ดูแลระบบ`
@@ -48,14 +48,14 @@ test("moderation helpers avoid exposing raw exception messages", () => {
     );
 });
 
-test("voice kick result state distinguishes complete, partial, and failed", () => {
+test("voice kick result state distinguishes complete, partial, and failed", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.equal(moderation._test.voiceKickResultState({ kicked: ["<@1>"], failed: 0, timedOut: false }, 1), "complete");
     assert.equal(moderation._test.voiceKickResultState({ kicked: ["<@1>"], failed: 1, timedOut: false }, 2), "partial");
     assert.equal(moderation._test.voiceKickResultState({ kicked: [], failed: 1, timedOut: false }, 1), "failed");
     assert.equal(moderation._test.voiceKickResultState({ kicked: [], failed: 0, timedOut: false }, 0), "no_target");
 });
 
-test("voice kick processing skips administrators and counts disconnect failures", async () => {
+test("voice kick processing skips administrators and counts disconnect failures", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const disconnected = [];
     const member = (id, administrator, fails = false) => ({
         id,

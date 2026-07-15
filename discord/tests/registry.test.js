@@ -4,13 +4,13 @@ const test = require("node:test");
 const { slashCommandsData, validateSlashCommandsData } = require("../commands/registry");
 const commands = require("../commands");
 
-test("registry exports the command definitions consumed by commands.js", () => {
+test("registry exports the command definitions consumed by commands.js", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.equal(commands.slashCommandsData, slashCommandsData);
     assert.equal(Array.isArray(slashCommandsData), true);
     assert.ok(slashCommandsData.length > 0);
 });
 
-test("slash command names are unique and include supported command groups", () => {
+test("slash command names are unique and include supported command groups", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const names = slashCommandsData.map(command => command.name);
     const unique = new Set(names);
 
@@ -39,7 +39,7 @@ test("slash command names are unique and include supported command groups", () =
     assert.equal(unique.has("setup-log"), false, "retired /setup-log command must stay unregistered");
 });
 
-test("slash command definitions have stable required shape", () => {
+test("slash command definitions have stable required shape", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     for (const command of slashCommandsData) {
         assert.equal(typeof command.name, "string");
         assert.match(command.name, /^[a-z0-9-]{1,32}$/);
@@ -59,7 +59,7 @@ test("slash command definitions have stable required shape", () => {
     }
 });
 
-test("announce exposes safe mention opt-in", () => {
+test("announce exposes safe mention opt-in", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const announce = slashCommandsData.find(command => command.name === "announce");
     const allowMentions = announce.options.find(option => option.name === "allow_mentions");
 
@@ -67,7 +67,7 @@ test("announce exposes safe mention opt-in", () => {
     assert.equal(allowMentions.required, false);
 });
 
-test("restore exposes dry-run option", () => {
+test("restore exposes dry-run option", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const restore = slashCommandsData.find(command => command.name === "restore");
     const dryRun = restore.options.find(option => option.name === "dry_run");
 
@@ -75,7 +75,7 @@ test("restore exposes dry-run option", () => {
     assert.equal(dryRun.required, false);
 });
 
-test("slash command registry validation rejects empty or malformed payloads", () => {
+test("slash command registry validation rejects empty or malformed payloads", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.throws(() => validateSlashCommandsData([]), /empty/);
     assert.throws(() => validateSlashCommandsData([{ name: "Bad Name", description: "ok" }]), /invalid slash-command name/);
     assert.throws(() => validateSlashCommandsData([{ name: "ok", description: "" }]), /invalid description/);

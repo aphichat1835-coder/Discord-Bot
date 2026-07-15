@@ -863,16 +863,19 @@ async function handleSetupVerify(interaction) {
     } catch (err) {
         console.error(`[VERIFY] ❌ setup-verify failed: ${err.message}`);
 
-        return interaction.editReply({
-            content:
-                `> ${config.emojis.error} ติดตั้งแผงยืนยันไม่สำเร็จ${err.recoveryRequired
-                    ? (err.recoveryPersisted
-                        ? " และมีรายการให้ตรวจสอบใน Owner Dashboard"
-                        : " และต้องตรวจสอบด้วยตนเองเพราะบันทึก recovery record ไม่สำเร็จ")
-                    : " ระบบปิดแผงที่บันทึกไม่ครบแล้ว"}\n` +
-                `> ตรวจสอบสิทธิ์ของบอทและสถานะฐานข้อมูล แล้วลองใหม่`
-        });
+        return interaction.editReply({ content: verificationSetupFailureMessage(err) });
     }
+}
+
+function verificationRecoverySummary(err = {}) {
+    if (!err.recoveryRequired) return " ระบบปิดแผงที่บันทึกไม่ครบแล้ว";
+    if (err.recoveryPersisted) return " และมีรายการให้ตรวจสอบใน Owner Dashboard";
+    return " และต้องตรวจสอบด้วยตนเองเพราะบันทึก recovery record ไม่สำเร็จ";
+}
+
+function verificationSetupFailureMessage(err = {}) {
+    return `> ${config.emojis.error} ติดตั้งแผงยืนยันไม่สำเร็จ${verificationRecoverySummary(err)}\n` +
+        `> ตรวจสอบสิทธิ์ของบอทและสถานะฐานข้อมูล แล้วลองใหม่`;
 }
 
 async function handleVerifyButton(interaction) {
@@ -937,6 +940,10 @@ async function handleVerifyButton(interaction) {
             });
 
         } catch (err) {
+            const errorCode = String(err?.code || err?.name || "unknown")
+                .replace(/[^a-zA-Z0-9_.-]/g, "_")
+                .slice(0, 80);
+            console.warn(`[VERIFY] role interaction failed: ${errorCode}`);
             return interaction.reply({
                 content: `> ${config.emojis.error} ไม่สามารถจัดการยศได้ กรุณาลองใหม่หรือติดต่อผู้ดูแล`,
                 ephemeral: true
@@ -966,6 +973,8 @@ module.exports = {
         retryPersistence,
         strictSnowflake,
         disablePreviousVerificationPanel,
-        persistVerificationRecovery
+        persistVerificationRecovery,
+        verificationRecoverySummary,
+        verificationSetupFailureMessage
     }
 };

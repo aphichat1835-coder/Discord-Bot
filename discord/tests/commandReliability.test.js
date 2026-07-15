@@ -7,7 +7,7 @@ const information = require("../commands/information");
 const commands = require("../commands");
 const sessionManager = require("../sessionManager");
 
-test("command registration retries without blocking after a transient failure", async () => {
+test("command registration retries without blocking after a transient failure", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     let calls = 0;
     const waited = [];
     const result = await registerCommandsWithRetry({
@@ -21,7 +21,7 @@ test("command registration retries without blocking after a transient failure", 
     assert.deepEqual(waited, [5]);
 });
 
-test("command registration returns a degraded result after bounded retries", async () => {
+test("command registration returns a degraded result after bounded retries", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const result = await registerCommandsWithRetry({
         application: { commands: { set: async () => { throw new Error("down"); } } },
         payload: [], delaysMs: [0, 0], wait: async () => {}
@@ -30,7 +30,7 @@ test("command registration returns a degraded result after bounded retries", asy
     assert.equal(result.attempts, 2);
 });
 
-test("accepted command marker is explicit and leaves rejected interactions untouched", () => {
+test("accepted command marker is explicit and leaves rejected interactions untouched", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     let acceptedAt = 0;
     const accepted = { isCommand: () => true, __onCommandAccepted: () => { acceptedAt++; } };
     const rejected = { isCommand: () => false };
@@ -41,7 +41,7 @@ test("accepted command marker is explicit and leaves rejected interactions untou
     assert.equal(rejected.__commandAccepted, undefined);
 });
 
-test("serverinfo shares one in-flight member fetch per guild", async () => {
+test("serverinfo shares one in-flight member fetch per guild", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     information._test.serverInfoCounts.clear();
     information._test.serverInfoInFlight.clear();
     let fetches = 0;
@@ -60,7 +60,7 @@ test("serverinfo shares one in-flight member fetch per guild", async () => {
     assert.deepEqual(first, second);
 });
 
-test("voice panel update reports persistence failure", async () => {
+test("voice panel update reports persistence failure", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const originalSave = sessionManager.savePanelState;
     const panel = {
         id: "panel",
@@ -78,7 +78,7 @@ test("voice panel update reports persistence failure", async () => {
     }
 });
 
-test("voice panel rejects a second create while the guild operation is active", async () => {
+test("voice panel rejects a second create while the guild operation is active", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     commands._test.activePanelCreates.add("guild");
     let reply = null;
     const interaction = {
@@ -95,7 +95,7 @@ test("voice panel rejects a second create while the guild operation is active", 
     }
 });
 
-test("command router delegates registered command groups without changing handlers", () => {
+test("command router delegates registered command groups without changing handlers", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.equal(commands._test.delegatedCommandHandler("ping"), information.handle);
     assert.equal(typeof commands._test.delegatedCommandHandler("ban"), "function");
     assert.equal(typeof commands._test.delegatedCommandHandler("backup"), "function");
@@ -103,7 +103,7 @@ test("command router delegates registered command groups without changing handle
     assert.equal(commands._test.delegatedCommandHandler("unknown"), null);
 });
 
-test("latest setting prefix rejects values that could alter a Mongo query", async () => {
+test("latest setting prefix rejects values that could alter a Mongo query", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     await assert.rejects(
         sessionManager.getLatestSettingByPrefix({ $ne: "" }),
         /INVALID_SETTING_PREFIX/

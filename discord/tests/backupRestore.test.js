@@ -4,7 +4,7 @@ const test = require("node:test");
 const sessionManager = require("../sessionManager");
 const utility = require("../commands/utility");
 
-test("snapshot chunker preserves every item while bounding each chunk", () => {
+test("snapshot chunker preserves every item while bounding each chunk", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const items = Array.from({ length: 50 }, (_, index) => ({ id: String(index), value: "x".repeat(120) }));
     const chunks = sessionManager.chunkSnapshotItems(items, 1024);
     assert.deepEqual(chunks.flat(), items);
@@ -13,7 +13,7 @@ test("snapshot chunker preserves every item while bounding each chunk", () => {
     }
 });
 
-test("restore schema rejects malformed snowflakes and accepts serialized guild data", () => {
+test("restore schema rejects malformed snowflakes and accepts serialized guild data", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const valid = {
         guild: { id: "111111111111111111" },
         roles: [{ id: "222222222222222222", name: "Role" }],
@@ -60,7 +60,7 @@ test("restore schema rejects malformed snowflakes and accepts serialized guild d
     }), false);
 });
 
-test("snapshot loader keeps legacy compatibility and rejects incomplete chunk pointers", async () => {
+test("snapshot loader keeps legacy compatibility and rejects incomplete chunk pointers", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const legacy = { roles: [], channels: [], schemaVersion: 1 };
     assert.deepEqual(await sessionManager.loadSnapshotData({ storageMode: "legacy", data: legacy }), legacy);
     assert.equal(await sessionManager.loadSnapshotData({
@@ -71,7 +71,7 @@ test("snapshot loader keeps legacy compatibility and rejects incomplete chunk po
     }), null);
 });
 
-test("snapshot history schema keeps one additive active pointer without deleting versions", () => {
+test("snapshot history schema keeps one additive active pointer without deleting versions", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const { SnapshotModel, getLatestSnapshotForGuild, reconcileSnapshotPointers } = sessionManager;
     assert.ok(SnapshotModel.schema.path("active"));
     assert.ok(SnapshotModel.schema.path("activationPending"));

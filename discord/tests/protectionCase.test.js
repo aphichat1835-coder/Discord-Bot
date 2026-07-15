@@ -3,7 +3,7 @@ const test = require("node:test");
 
 const protectionCase = require("../features/protectionCase");
 
-test("buildProtectionEvent normalizes evidence and action results", () => {
+test("buildProtectionEvent normalizes evidence and action results", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const event = protectionCase.buildProtectionEvent({
         guildId: "g1",
         userId: "u1",
@@ -24,7 +24,7 @@ test("buildProtectionEvent normalizes evidence and action results", () => {
     assert.ok(event.evidence.some(item => item.includes("Messages")));
 });
 
-test("createActionResult records failed action details without an Audit renderer", () => {
+test("createActionResult records failed action details without an Audit renderer", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const result = protectionCase.createActionResult({
         action: "ban",
         attempted: true,
@@ -38,7 +38,7 @@ test("createActionResult records failed action details without an Audit renderer
     assert.equal(result.error, "role hierarchy");
 });
 
-test("createProtectionCase skips failed or skipped punitive actions", async () => {
+test("createProtectionCase skips failed or skipped punitive actions", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const sessionManager = {
         async getSetting(_key, fallback) { return fallback; },
         async setSetting() { throw new Error("case should not be saved"); }
@@ -54,7 +54,7 @@ test("createProtectionCase skips failed or skipped punitive actions", async () =
     assert.equal(await protectionCase.createProtectionCase(sessionManager, skippedEvent), null);
 });
 
-test("recordProtectionResult leaves audit-only detections silent and unpersisted", async () => {
+test("recordProtectionResult leaves audit-only detections silent and unpersisted", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     let writes = 0;
     const event = protectionCase.buildProtectionEvent({
         guildId: "g1", userId: "u1", action: "timeout", attempted: false, success: true
@@ -70,7 +70,7 @@ test("recordProtectionResult leaves audit-only detections silent and unpersisted
     assert.equal(event.caseNumber, undefined);
 });
 
-test("recordProtectionResult persists a ModCase after successful enforcement", async () => {
+test("recordProtectionResult persists a ModCase after successful enforcement", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const store = new Map();
     const sessionManager = {
         async getSetting(key, fallback) { return store.has(key) ? store.get(key) : fallback; },
@@ -95,7 +95,7 @@ test("recordProtectionResult persists a ModCase after successful enforcement", a
     assert.equal(store.get("modcase_g1_1").action, "timeout");
 });
 
-test("recordProtectionResult surfaces case persistence failure and writes reconciliation metadata", async () => {
+test("recordProtectionResult surfaces case persistence failure and writes reconciliation metadata", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const modCaseManager = require("../logging/modCaseManager");
     const originalCreateCase = modCaseManager.createCase;
     const store = new Map();

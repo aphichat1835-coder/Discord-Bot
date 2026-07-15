@@ -92,7 +92,7 @@ async function deleteSettingWithRetry(sessionManager, key, attempts = 3) {
 async function deleteStoredEvents(sessionManager, guildId, eventIds) {
     if (!sessionManager?.deleteSetting) return false;
     let complete = true;
-    for (const eventId of [...new Set(eventIds.filter(Boolean))]) {
+    for (const eventId of new Set(eventIds.filter(Boolean))) {
         const deleted = await deleteSettingWithRetry(sessionManager, storageKey(guildId, eventId));
         if (!deleted) complete = false;
     }

@@ -82,7 +82,7 @@ async function saveConfigWithRetry(config, attempts = 3) {
 
 function clonePlainValue(value) {
   if (value && typeof value.toObject === "function") return value.toObject();
-  try { return JSON.parse(JSON.stringify(value || {})); }
+  try { return structuredClone(value || {}); }
   catch { return {}; }
 }
 

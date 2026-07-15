@@ -43,7 +43,7 @@ function interactionFixture({ administrator, botCanSend = true, message = "hello
     return { interaction, replies, sent, edits };
 }
 
-test("say rejects non-administrators without sending a message", async () => {
+test("say rejects non-administrators without sending a message", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const fixture = interactionFixture({ administrator: false });
 
     await utility._test.handleSay(fixture.interaction);
@@ -54,7 +54,7 @@ test("say rejects non-administrators without sending a message", async () => {
     assert.equal(fixture.replies[0].ephemeral, true);
 });
 
-test("say preserves bot permission checks for administrators", async () => {
+test("say preserves bot permission checks for administrators", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const fixture = interactionFixture({ administrator: true, botCanSend: false });
 
     await utility._test.handleSay(fixture.interaction);
@@ -64,7 +64,7 @@ test("say preserves bot permission checks for administrators", async () => {
     assert.match(fixture.replies[0].content, /SEND_MESSAGES/);
 });
 
-test("say sanitizes and sends administrator messages", async () => {
+test("say sanitizes and sends administrator messages", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const fixture = interactionFixture({ administrator: true, message: "@everyone hello" });
 
     await utility._test.handleSay(fixture.interaction);
