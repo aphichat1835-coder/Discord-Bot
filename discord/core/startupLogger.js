@@ -126,7 +126,7 @@ function createStartupLogger({ consoleLike = console, now = Date.now, prefix = "
                 : options.details;
             write("success", scope, options.successMessage || `${message} completed`, {
                 durationMs,
-                ...(resolvedDetails || {})
+                ...resolvedDetails
             });
             return { ok: true, value, durationMs };
         } catch (error) {

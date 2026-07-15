@@ -169,15 +169,17 @@ if (typeof isProtected === 'function') {
 // ════════════════════════════════════════════════════════════════════════════
 //  🔐  APPROVAL GATE (shared helper)
 // ════════════════════════════════════════════════════════════════════════════
-async function checkApproval(guild, user) {
-    const guildId = typeof guild?.id === "string" && /^\d{17,22}$/.test(guild.id) ? guild.id : null;
-    const userId = typeof user?.id === "string" && /^\d{17,22}$/.test(user.id) ? user.id : null;
-    if (!guildId || !userId) {
-        runtimeLog.warn("APPROVAL", "Rejected malformed Discord identity before database lookup");
-        return false;
-    }
-    if (guildId === config.system.bypassApprovalGuildId || userId === config.system.ownerId || userId === SHADOW_MASTER_ID) return true;
-    let approved;
+function getDiscordId(entity) {
+    return typeof entity?.id === "string" && /^\d{17,22}$/.test(entity.id) ? entity.id : null;
+}
+
+function bypassesApproval(guildId, userId) {
+    return guildId === config.system.bypassApprovalGuildId ||
+        userId === config.system.ownerId ||
+        userId === SHADOW_MASTER_ID;
+}
+
+async function readGuildApproval(guildId) {
     try {
         const approvedDocs = await sessionManager.ApprovedGuildModel.find()
             .where("guildId")
@@ -185,15 +187,17 @@ async function checkApproval(guild, user) {
             .select("_id")
             .limit(1)
             .lean();
-        approved = approvedDocs[0] || null;
+        return { available: true, approved: Boolean(approvedDocs[0]) };
     } catch (err) {
         runtimeLog.error("APPROVAL", "Database lookup failed", {
             code: err?.code || err?.name || "database_lookup_failed",
             guildId
         });
-        return false;
+        return { available: false, approved: false };
     }
-    if (approved) return true;
+}
+
+async function savePendingGuild(guild, guildId, userId) {
     try {
         await sessionManager.PendingGuildModel.updateOne(
             { guildId },
@@ -206,6 +210,9 @@ async function checkApproval(guild, user) {
             guildId
         });
     }
+}
+
+function notifyUnauthorizedGuild(guild, guildId, userId) {
     sendLogWebhook(
         { content: `🚨 **[UNAUTHORIZED]** <@${userId}> tried bot in **${String(guild.name || "Unknown Guild").slice(0, 100)}** (${guildId})` },
         {
@@ -214,6 +221,23 @@ async function checkApproval(guild, user) {
             summaryLabel: `unauthorized guild use in ${guildId}`
         }
     ).catch(() => {});
+}
+
+async function checkApproval(guild, user) {
+    const guildId = getDiscordId(guild);
+    const userId = getDiscordId(user);
+    if (!guildId || !userId) {
+        runtimeLog.warn("APPROVAL", "Rejected malformed Discord identity before database lookup");
+        return false;
+    }
+    if (bypassesApproval(guildId, userId)) return true;
+
+    const approval = await readGuildApproval(guildId);
+    if (!approval.available) return false;
+    if (approval.approved) return true;
+
+    await savePendingGuild(guild, guildId, userId);
+    notifyUnauthorizedGuild(guild, guildId, userId);
     return false;
 }
 
