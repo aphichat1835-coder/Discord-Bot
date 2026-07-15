@@ -366,36 +366,45 @@ async function storeObjectChunkSnapshot({
     });
 }
 
-async function loadObjectChunkSnapshot(userId, ref, { kind = ref?.kind, guildId = null } = {}) {
-    if (!ref?.version || ref.complete !== true || ref.format !== "json-base64-chunks-v1") return null;
-    const query = ObjectChunkSnapshot.find({
-        userId,
-        guildId: guildId || null,
-        snapshotVersion: ref.version,
-        kind,
-        complete: true
-    }).sort({ chunkIndex: 1 });
-    const docs = await query.lean();
-    if (docs.length !== Number(ref.chunkCount || 0)) return null;
-    if (docs.some((doc, index) => doc.chunkIndex !== index || doc.complete !== true)) return null;
+function decodeObjectChunkDocuments(docs, expectedChunkCount) {
+    if (docs.length !== Number(expectedChunkCount || 0)) return null;
     const parts = [];
-    for (let index = 0; index < docs.length; index++) {
-        const doc = docs[index];
-        if (Number(doc.chunkIndex) !== index) return null;
+    for (const [index, doc] of docs.entries()) {
+        if (Number(doc.chunkIndex) !== index || doc.complete !== true) return null;
         const part = Buffer.from(String(doc.payloadBase64 || ""), "base64");
         const checksum = crypto.createHash("sha256").update(part).digest("hex");
         if (doc.chunkSha256 && checksum !== doc.chunkSha256) return null;
         parts.push(part);
     }
-    const payload = Buffer.concat(parts);
-    if (payload.length !== Number(ref.byteLength || payload.length)) return null;
-    const payloadChecksum = crypto.createHash("sha256").update(payload).digest("hex");
-    if (ref.sha256 && payloadChecksum !== ref.sha256) return null;
+    return Buffer.concat(parts);
+}
+
+function objectPayloadIntegrityMatches(payload, ref) {
+    if (payload.length !== Number(ref.byteLength || payload.length)) return false;
+    const checksum = crypto.createHash("sha256").update(payload).digest("hex");
+    return !ref.sha256 || checksum === ref.sha256;
+}
+
+function parseObjectPayload(payload) {
     try {
         return JSON.parse(payload.toString("utf8"));
     } catch {
         return null;
     }
+}
+
+async function loadObjectChunkSnapshot(userId, ref, { kind = ref?.kind, guildId = null } = {}) {
+    if (!ref?.version || ref.complete !== true || ref.format !== "json-base64-chunks-v1") return null;
+    const docs = await ObjectChunkSnapshot.find({
+        userId,
+        guildId: guildId || null,
+        snapshotVersion: ref.version,
+        kind,
+        complete: true
+    }).sort({ chunkIndex: 1 }).lean();
+    const payload = decodeObjectChunkDocuments(docs, ref.chunkCount);
+    if (!payload || !objectPayloadIntegrityMatches(payload, ref)) return null;
+    return parseObjectPayload(payload);
 }
 
 function buildArrayChunkSet(common, chunk, chunkIndex) {
