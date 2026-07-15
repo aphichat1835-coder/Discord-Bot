@@ -6,44 +6,117 @@ function verificationHomePage() {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Owner Verification</title>
+  <meta name="theme-color" content="#07050f">
+  <meta name="color-scheme" content="dark">
+  <title>จัดการระบบยืนยันตัวตน</title>
   <link rel="stylesheet" href="/verification-assets/css/dashboard.css">
 </head>
 <body class="owner-dashboard-theme">
-  <main class="page-shell">
-    <section class="hero-card">
+  <a class="skip-link" href="#main-content">ข้ามไปเนื้อหาหลัก</a>
+  <main id="main-content" class="page-shell" tabindex="-1">
+   <div class="owner-page-content">
+    <section class="card hero-card">
       <div>
-        <p class="eyebrow">OWNER ONLY</p>
-        <h1>Verification Dashboard</h1>
-        <p class="muted">เลือกเซิร์ฟเวอร์ที่บอทอยู่เพื่อจัดการ Panel, Logs, Members, Stats และ Risk</p>
+        <p class="eyebrow">OWNER DASHBOARD</p>
+        <h1 class="title-lg gradient-text">จัดการระบบยืนยันตัวตน</h1>
+        <p class="hero-desc">เลือกเซิร์ฟเวอร์เพื่อจัดการแผงยืนยัน สมาชิก บันทึก สถิติ ความเสี่ยง และนโยบายความปลอดภัย</p>
       </div>
-      <a class="btn btn-soft" href="/">← Owner Dashboard</a>
+      <div class="hero-actions">
+        <a class="btn btn-soft" href="/">← กลับศูนย์ควบคุม</a>
+      </div>
     </section>
-    <section class="section-card">
-      <div id="status" class="muted">กำลังโหลดเซิร์ฟเวอร์…</div>
-      <div id="guilds" class="guild-grid"></div>
+    <section class="card card-pad section-card mt-18" aria-labelledby="guild-list-title">
+      <div class="card-header">
+        <div>
+          <h2 id="guild-list-title">เซิร์ฟเวอร์ที่บอทอยู่</h2>
+          <p class="card-desc">ค้นหาจากชื่อหรือ Guild ID แล้วเลือกเพื่อเปิดหน้าจัดการ</p>
+        </div>
+      </div>
+      <div class="guild-toolbar">
+        <div class="guild-search-wrap">
+          <label for="guild-search">ค้นหาเซิร์ฟเวอร์</label>
+          <input id="guild-search" type="search" placeholder="พิมพ์ชื่อหรือ Guild ID…" autocomplete="off">
+        </div>
+        <div id="guild-count" class="guild-count">กำลังโหลด…</div>
+      </div>
+      <div id="status" class="loading-box" role="status" aria-live="polite">กำลังโหลดเซิร์ฟเวอร์…</div>
+      <div id="guilds" class="guild-grid" aria-live="polite"></div>
     </section>
+   </div>
   </main>
   <script>
-  (async function(){
+  (function(){
     const status=document.getElementById('status');
     const root=document.getElementById('guilds');
-    try{
-      const response=await fetch('/api/guilds');
-      const data=await response.json();
-      if(!response.ok||!data.success) throw new Error(data.error||'โหลดข้อมูลไม่สำเร็จ');
-      const guilds=Array.isArray(data.guilds)?data.guilds:[];
-      status.textContent=guilds.length?'พบ '+guilds.length+' เซิร์ฟเวอร์':'ไม่พบเซิร์ฟเวอร์ที่บอทอยู่';
-      root.innerHTML=guilds.map(function(guild){
-        const id=encodeURIComponent(String(guild.id||''));
-        const name=String(guild.name||guild.id||'Unknown').replace(/[&<>"']/g,function(ch){
-          return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];
-        });
-        return '<a class="guild-card" href="/verification/'+id+'"><strong>'+name+'</strong><span>'+id+'</span></a>';
-      }).join('');
-    }catch(err){
-      status.textContent=err.message||'โหลดข้อมูลไม่สำเร็จ';
+    const count=document.getElementById('guild-count');
+    const search=document.getElementById('guild-search');
+    let guilds=[];
+
+    function initials(name){
+      return String(name||'S').trim().split(/\s+/).slice(0,2).map(function(part){return part[0]||'';}).join('').toUpperCase()||'S';
     }
+
+    function guildCard(guild){
+      const id=String(guild.id||'');
+      const name=String(guild.name||id||'ไม่ทราบชื่อเซิร์ฟเวอร์');
+      const card=document.createElement('a');
+      card.className='guild-card';
+      card.href='/verification/'+encodeURIComponent(id);
+      card.setAttribute('aria-label','จัดการระบบยืนยันตัวตนของ '+name);
+
+      const icon=document.createElement('div');
+      icon.className='guild-card-icon';
+      const iconHash=String(guild.icon||'');
+      if(/^\w{2,}$/.test(iconHash)&&/^\d{17,22}$/.test(id)){
+        const image=document.createElement('img');
+        image.src='https://cdn.discordapp.com/icons/'+id+'/'+iconHash+'.webp?size=128';
+        image.alt='';
+        image.addEventListener('error',function(){icon.textContent=initials(name);});
+        icon.appendChild(image);
+      }else{
+        icon.textContent=initials(name);
+      }
+
+      const title=document.createElement('div');
+      title.className='guild-card-name';
+      title.textContent=name;
+      const meta=document.createElement('div');
+      meta.className='guild-card-meta';
+      meta.textContent='Guild ID: '+id;
+      card.append(icon,title,meta);
+      return card;
+    }
+
+    function render(){
+      const query=String(search.value||'').trim().toLowerCase();
+      const visible=guilds.filter(function(guild){
+        return !query||String(guild.name||'').toLowerCase().includes(query)||String(guild.id||'').includes(query);
+      });
+      root.replaceChildren(...visible.map(guildCard));
+      count.textContent='แสดง '+visible.length+' จาก '+guilds.length+' เซิร์ฟเวอร์';
+      status.className=visible.length?'muted small':'empty-state';
+      status.textContent=visible.length?'เลือกเซิร์ฟเวอร์ด้านล่างเพื่อจัดการ':query?'ไม่พบเซิร์ฟเวอร์ที่ตรงกับคำค้น':'ไม่พบเซิร์ฟเวอร์ที่บอทอยู่';
+    }
+
+    async function loadGuilds(){
+      status.className='loading-box';
+      status.textContent='กำลังโหลดเซิร์ฟเวอร์…';
+      root.replaceChildren();
+      try{
+        const response=await fetch('/api/guilds',{headers:{Accept:'application/json'}});
+        const data=await response.json().catch(function(){return null;});
+        if(!response.ok||!data||!data.success) throw new Error(data&&data.error||'โหลดข้อมูลไม่สำเร็จ');
+        guilds=Array.isArray(data.guilds)?data.guilds:[];
+        render();
+      }catch(err){
+        status.className='alert alert-danger';
+        status.textContent=(err&&err.message)||'โหลดข้อมูลไม่สำเร็จ กรุณารีเฟรชหน้า';
+        count.textContent='โหลดไม่สำเร็จ';
+      }
+    }
+
+    search.addEventListener('input',render);
+    loadGuilds();
   })();
   </script>
 </body>

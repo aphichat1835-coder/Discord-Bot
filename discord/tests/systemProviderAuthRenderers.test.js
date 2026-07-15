@@ -123,4 +123,10 @@ test("shadow portal renderers escape dynamic guild, metric, and dashboard values
     assert.doesNotMatch(html, /<guild>/);
     assert.doesNotMatch(html, /<metric>/);
     assert.doesNotMatch(html, /<default>/);
+    assert.match(html, /role="tablist"/);
+    assert.match(html, /role="tabpanel"/);
+    assert.match(html, /href="#shadow-main"/);
+    assert.match(html, /prefers-reduced-motion/);
+    assert.match(html, /aria-label="คัดลอกลิงก์ Portal"|title="คัดลอกลิงก์ Portal"/);
+    assert.doesNotMatch(html, /CSS\.escape/);
 });

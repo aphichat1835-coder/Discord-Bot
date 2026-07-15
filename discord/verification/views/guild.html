@@ -3,28 +3,31 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <title>Guild Dashboard — Discord Verification</title>
+  <meta name="theme-color" content="#07050f">
+  <meta name="color-scheme" content="dark">
+  <title>จัดการระบบยืนยันตัวตนของเซิร์ฟเวอร์</title>
   <link rel="stylesheet" href="/verification-assets/css/dashboard.css">
 </head>
 
 <body class="owner-dashboard-theme">
+  <a class="skip-link" href="#main-content">ข้ามไปเนื้อหาหลัก</a>
   <div class="mobile-bar">
     <div class="mobile-bar-inner">
-      <button id="sidebar-toggle" class="btn btn-soft btn-sm" type="button">
+      <button id="sidebar-toggle" class="btn btn-soft btn-sm" type="button" aria-controls="guild-sidebar" aria-expanded="false">
         ☰ เมนู
       </button>
 
       <div style="min-width:0;">
         <div id="guild-title-mobile" style="font-weight:1000;" class="truncate">
-          Guild Dashboard
+          หน้าจัดการเซิร์ฟเวอร์
         </div>
         <div class="xsmall muted truncate">
-          Verification Admin Panel
+          จัดการระบบยืนยันตัวตน
         </div>
       </div>
 
       <a class="btn btn-soft btn-sm" href="/verification">
-        เซิร์ฟ
+        เซิร์ฟเวอร์
       </a>
     </div>
   </div>
@@ -32,15 +35,15 @@
   <div id="sidebar-backdrop" class="sidebar-backdrop"></div>
 
   <div class="app-layout">
-    <aside class="sidebar">
+    <aside id="guild-sidebar" class="sidebar" aria-label="เมนูจัดการเซิร์ฟเวอร์">
       <div class="sidebar-brand">
         <div class="brand-icon">🛡️</div>
         <div style="min-width:0;">
-          <div class="brand-title">Verify Dashboard</div>
-          <div class="brand-sub">Discord + Security</div>
+          <div class="brand-title">ระบบยืนยันตัวตน</div>
+          <div class="brand-sub">สมาชิกและความปลอดภัย</div>
         </div>
 
-        <button id="sidebar-close" class="btn btn-soft btn-sm" type="button" style="margin-left:auto;">
+        <button id="sidebar-close" class="btn btn-soft btn-sm" type="button" aria-label="ปิดเมนู" style="margin-left:auto;">
           ✕
         </button>
       </div>
@@ -50,15 +53,15 @@
           <div id="side-icon" class="server-icon">S</div>
           <div style="min-width:0;">
             <div id="side-name" class="server-name">กำลังโหลด...</div>
-            <div id="side-perm" class="brand-sub">Admin access</div>
+            <div id="side-perm" class="brand-sub">สิทธิ์ผู้ดูแล</div>
           </div>
         </div>
 
         <div id="side-id" class="server-id mono">—</div>
       </div>
 
-      <nav class="nav">
-        <button class="nav-item active" type="button" data-tab="overview">
+      <nav class="nav" role="tablist" aria-label="หมวดการจัดการระบบยืนยันตัวตน">
+        <button id="tab-overview" class="nav-item active" type="button" role="tab" aria-selected="true" aria-controls="panel-overview" data-tab="overview">
           <span class="nav-item-left">
             <span class="nav-icon">🏠</span>
             <span class="nav-label">ภาพรวม</span>
@@ -66,7 +69,7 @@
           <span>›</span>
         </button>
 
-        <button class="nav-item" type="button" data-tab="verification">
+        <button id="tab-verification" class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="panel-verification" data-tab="verification">
           <span class="nav-item-left">
             <span class="nav-icon">🔐</span>
             <span class="nav-label">ตั้งค่ายืนยันตัวตน</span>
@@ -74,15 +77,15 @@
           <span>›</span>
         </button>
 
-        <button class="nav-item" type="button" data-tab="security">
+        <button id="tab-security" class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="panel-security" data-tab="security">
           <span class="nav-item-left">
             <span class="nav-icon">🧪</span>
-            <span class="nav-label">Security / Policy</span>
+            <span class="nav-label">ความปลอดภัยและนโยบาย</span>
           </span>
           <span>›</span>
         </button>
 
-        <button class="nav-item" type="button" data-tab="members">
+        <button id="tab-members" class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="panel-members" data-tab="members">
           <span class="nav-item-left">
             <span class="nav-icon">👥</span>
             <span class="nav-label">สมาชิกที่ยืนยันแล้ว</span>
@@ -90,26 +93,26 @@
           <span>›</span>
         </button>
 
-        <button class="nav-item" type="button" data-tab="logs">
+        <button id="tab-logs" class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="panel-logs" data-tab="logs">
           <span class="nav-item-left">
             <span class="nav-icon">📜</span>
-            <span class="nav-label">Verify Logs</span>
+            <span class="nav-label">บันทึกการยืนยัน</span>
           </span>
           <span>›</span>
         </button>
 
-        <button class="nav-item" type="button" data-tab="risk">
+        <button id="tab-risk" class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="panel-risk" data-tab="risk">
           <span class="nav-item-left">
             <span class="nav-icon">🌐</span>
-            <span class="nav-label">Risk & Network</span>
+            <span class="nav-label">ความเสี่ยงและเครือข่าย</span>
           </span>
           <span>›</span>
         </button>
 
-        <button class="nav-item" type="button" data-tab="privacy">
+        <button id="tab-privacy" class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="panel-privacy" data-tab="privacy">
           <span class="nav-item-left">
             <span class="nav-icon">🗂️</span>
-            <span class="nav-label">Data & Privacy</span>
+            <span class="nav-label">ข้อมูลและความเป็นส่วนตัว</span>
           </span>
           <span>›</span>
         </button>
@@ -117,7 +120,7 @@
         <a class="nav-item" href="/join-campaign">
           <span class="nav-item-left">
             <span class="nav-icon">📥</span>
-            <span class="nav-label">Join Authorized Users</span>
+            <span class="nav-label">ดึงสมาชิกที่อนุญาตแล้ว</span>
           </span>
           <span>↗</span>
         </a>
@@ -134,13 +137,13 @@
       </div>
     </aside>
 
-    <main class="main">
+    <main id="main-content" class="main" tabindex="-1">
       <div class="topbar">
         <div style="min-width:0;">
           <div class="breadcrumb">
-            <a href="/verification">Guilds</a>
+            <a href="/verification">เซิร์ฟเวอร์</a>
             <span>/</span>
-            <span>Dashboard</span>
+            <span>หน้าจัดการ</span>
           </div>
 
           <h1 id="guild-title" class="title-lg gradient-text truncate">
@@ -165,7 +168,7 @@
 
       <div id="overview-error" class="mb-0"></div>
 
-      <section data-section="overview">
+      <section id="panel-overview" role="tabpanel" aria-labelledby="tab-overview" tabindex="0" data-section="overview">
         <div class="grid grid-4">
           <div class="stat-card">
             <div id="stat-total" class="num" style="color:var(--discord);">0</div>
@@ -176,7 +179,7 @@
           <div class="stat-card">
             <div id="stat-success" class="num" style="color:var(--green-2);">0</div>
             <div class="label">สำเร็จ</div>
-            <div id="stat-rate" class="sub">Success rate 0%</div>
+            <div id="stat-rate" class="sub">อัตราสำเร็จ 0%</div>
           </div>
 
           <div class="stat-card">
@@ -187,7 +190,7 @@
 
           <div class="stat-card">
             <div id="stat-risk" class="num" style="color:var(--yellow-2);">0</div>
-            <div class="label">High Risk</div>
+            <div class="label">ความเสี่ยงสูง</div>
             <div class="sub">กลุ่มที่ควรตรวจเพิ่ม</div>
           </div>
         </div>
@@ -227,7 +230,7 @@
                   สรุป config ล่าสุดที่ Dashboard ใช้งานอยู่
                 </div>
               </div>
-              <span id="overview-enabled" class="badge badge-muted">Loading</span>
+              <span id="overview-enabled" class="badge badge-muted">กำลังโหลด</span>
             </div>
 
             <div class="kv">
@@ -271,7 +274,7 @@
           <div class="card card-pad">
             <div class="card-header">
               <div>
-                <h2>Quick Actions</h2>
+                <h2>ทางลัด</h2>
                 <div class="card-desc">
                   ทางลัดสำหรับจัดการแผงยืนยันตัวตน
                 </div>
@@ -348,7 +351,7 @@
           </div>
         </div>
       </section>
-            <section data-section="verification" class="hidden">
+            <section id="panel-verification" role="tabpanel" aria-labelledby="tab-verification" tabindex="0" data-section="verification" class="hidden">
         <div class="grid grid-2">
           <div class="card card-pad">
             <div class="card-header">
@@ -574,7 +577,7 @@
         </div>
       </section>
 
-      <section data-section="security" class="hidden">
+      <section id="panel-security" role="tabpanel" aria-labelledby="tab-security" tabindex="0" data-section="security" class="hidden">
         <div class="grid grid-2">
           <div class="card card-pad">
             <div class="card-header">
@@ -818,7 +821,7 @@
           </div>
         </div>
       </section>
-            <section data-section="members" class="hidden">
+            <section id="panel-members" role="tabpanel" aria-labelledby="tab-members" tabindex="0" data-section="members" class="hidden">
         <div class="card card-pad">
           <div class="card-header">
             <div>
@@ -855,7 +858,7 @@
               <label for="members-risk">ระดับความเสี่ยง</label>
               <select id="members-risk">
                 <option value="">ทั้งหมด</option>
-                <option value="high">High Risk</option>
+                <option value="high">ความเสี่ยงสูง</option>
                 <option value="medium">Medium Risk</option>
                 <option value="low">Low Risk</option>
               </select>
@@ -914,7 +917,7 @@
         </div>
       </section>
 
-      <section data-section="logs" class="hidden">
+      <section id="panel-logs" role="tabpanel" aria-labelledby="tab-logs" tabindex="0" data-section="logs" class="hidden">
         <div class="card card-pad">
           <div class="card-header">
             <div>
@@ -948,7 +951,7 @@
               <label for="logs-risk">Risk</label>
               <select id="logs-risk">
                 <option value="">ทั้งหมด</option>
-                <option value="high">High Risk</option>
+                <option value="high">ความเสี่ยงสูง</option>
                 <option value="medium">Medium Risk</option>
                 <option value="low">Low Risk</option>
               </select>
@@ -1007,7 +1010,7 @@
         </div>
       </section>
 
-      <section data-section="risk" class="hidden">
+      <section id="panel-risk" role="tabpanel" aria-labelledby="tab-risk" tabindex="0" data-section="risk" class="hidden">
         <div class="grid grid-2">
           <div class="card card-pad">
             <div class="card-header">
@@ -1103,7 +1106,7 @@
         </div>
       </section>
 
-      <section data-section="privacy" class="hidden">
+      <section id="panel-privacy" role="tabpanel" aria-labelledby="tab-privacy" tabindex="0" data-section="privacy" class="hidden">
         <div class="grid grid-2">
           <div class="card card-pad">
             <div class="card-header">
@@ -1214,11 +1217,11 @@
     </main>
   </div>
 
-  <div id="detail-modal" class="modal-backdrop">
-    <div class="modal">
+  <div id="detail-modal" class="modal-backdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="detail-modal-title" tabindex="-1">
       <div class="modal-head">
         <h2 id="detail-modal-title" class="modal-title">รายละเอียด</h2>
-        <button class="modal-close" type="button" data-close-modal>✕</button>
+        <button class="modal-close" type="button" aria-label="ปิดหน้าต่างรายละเอียด" data-close-modal>✕</button>
       </div>
 
       <div id="detail-modal-body"></div>
@@ -1231,7 +1234,7 @@
     </div>
   </div>
 
-  <div id="toast" class="toast"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <script src="/verification-assets/js/guild-dashboard.js"></script>
 </body>

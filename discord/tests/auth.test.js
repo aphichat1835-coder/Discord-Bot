@@ -46,6 +46,9 @@ test("parseCookies skips malformed cookie encoding without throwing", () => {
 test("pin page escapes hidden next attribute", () => {
     const html = auth.pinPageHTML(false, "/ok?x=\"&y=<tag>'");
     assert.match(html, /value="\/ok\?x=&quot;&amp;y=&lt;tag&gt;&#39;"/);
+    assert.match(html, /autocomplete="current-password"/);
+    assert.match(auth.pinPageHTML(true, "/"), /role="alert"/);
+    assert.match(html, /prefers-reduced-motion/);
 });
 
 test("csrf token is bound to a valid dashboard session token", () => {

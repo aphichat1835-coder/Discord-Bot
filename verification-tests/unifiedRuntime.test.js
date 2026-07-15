@@ -78,6 +78,22 @@ describe("single-process verification runtime contract", () => {
         expect(memberCallback).not.toContain("owner-dashboard-theme");
     });
 
+    test("verification pages expose responsive and accessible interaction states", () => {
+        const ownerGuildPage = fs.readFileSync("discord/verification/views/guild.html", "utf8");
+        const ownerHomePage = fs.readFileSync("discord/verification/page.js", "utf8");
+        const guildScript = fs.readFileSync("discord/verification/public/js/guild-dashboard.js", "utf8");
+        const memberCallback = fs.readFileSync("discord/verification/views/callback.html", "utf8");
+        const styles = fs.readFileSync("discord/verification/public/css/dashboard.css", "utf8");
+
+        expect(ownerHomePage).toContain('id="guild-search"');
+        expect(ownerHomePage).toContain("document.createElement");
+        expect(ownerGuildPage).toContain('role="tablist"');
+        expect(ownerGuildPage).toContain('role="dialog"');
+        expect(guildScript).toContain("aria-selected");
+        expect(memberCallback).toContain('aria-live="polite"');
+        expect(styles).toContain("prefers-reduced-motion");
+    });
+
     test("root package has one start command and no nested dashboard service", () => {
         const pkg = require("../package.json");
         const lock = readPackageLock();

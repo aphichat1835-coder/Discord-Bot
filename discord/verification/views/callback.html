@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
+  <meta name="theme-color" content="#070b14">
+  <meta name="color-scheme" content="dark">
   <title>กำลังยืนยันตัวตน — Discord Verification</title>
   <link rel="stylesheet" href="/verification-assets/css/dashboard.css">
 </head>
@@ -16,7 +18,7 @@
       </div>
 
       <div class="card callback-card callback-card-premium">
-        <div id="s-loading" class="callback-state active">
+        <div id="s-loading" class="callback-state active" role="status" aria-live="polite" tabindex="-1">
           <div class="verify-loader-wrap">
             <div class="verify-loader">
               <div class="verify-loader-ring"></div>
@@ -31,34 +33,34 @@
             กำลังรับข้อมูลจาก Discord
           </p>
 
-          <div class="verify-steps" aria-label="verification progress">
-            <div class="verify-step active" data-step="discord">
+          <ol class="verify-steps" aria-label="ขั้นตอนการยืนยันตัวตน">
+            <li class="verify-step active" data-step="discord">
               <span class="step-dot"></span>
               <span>กำลังรับข้อมูลจาก Discord</span>
-            </div>
+            </li>
 
-            <div class="verify-step" data-step="account">
+            <li class="verify-step" data-step="account">
               <span class="step-dot"></span>
               <span>กำลังตรวจสอบบัญชี Discord</span>
-            </div>
+            </li>
 
-            <div class="verify-step" data-step="security">
+            <li class="verify-step" data-step="security">
               <span class="step-dot"></span>
               <span>กำลังตรวจสอบเงื่อนไขความปลอดภัย</span>
-            </div>
+            </li>
 
-            <div class="verify-step" data-step="role">
+            <li class="verify-step" data-step="role">
               <span class="step-dot"></span>
               <span>กำลังเพิ่มยศให้คุณ</span>
-            </div>
-          </div>
+            </li>
+          </ol>
 
           <div class="callback-note callback-note-blue">
             กรุณารอสักครู่ อย่าปิดหน้านี้ระหว่างระบบกำลังทำงาน
           </div>
         </div>
 
-        <div id="s-success" class="callback-state">
+        <div id="s-success" class="callback-state" role="status" aria-live="polite" tabindex="-1">
           <div class="result-ring ok compact">
             <div class="result-icon ok">✓</div>
           </div>
@@ -72,7 +74,7 @@
           </p>
 
           <div class="user-mini callback-user-card">
-            <img id="avatar" class="user-mini-avatar" alt="avatar" style="display:none;">
+            <img id="avatar" class="user-mini-avatar" alt="รูปโปรไฟล์ Discord" style="display:none;">
 
             <div style="min-width:0;">
               <div id="name" class="callback-user-name truncate">Discord User</div>
@@ -90,12 +92,12 @@
 
           <div class="modal-actions callback-actions">
             <a class="btn btn-primary callback-main-btn" href="https://discord.com/">
-              เปิด Discord
+              เปิดแอป Discord
             </a>
           </div>
         </div>
 
-        <div id="s-error" class="callback-state">
+        <div id="s-error" class="callback-state" role="alert" aria-live="assertive" tabindex="-1">
           <div class="error-layout">
             <div class="error-cross-wrap">
               <div class="error-cross">×</div>

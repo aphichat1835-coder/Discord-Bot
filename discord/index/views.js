@@ -33,7 +33,7 @@ const {
 function pageHome(API_SECRET) {
     return shell("หน้าหลัก", `
 <div class="container">
-<h1 class="page-title">🚀 Enterprise Control Center</h1>
+<h1 class="page-title">🚀 ศูนย์ควบคุมระบบ</h1>
 <p class="page-sub" id="lastUpdate">กำลังโหลด...</p>
 ${navBar("/")}
 
@@ -80,7 +80,7 @@ ${navBar("/")}
 </div>
 
 <div class="card">
-    <h3>🧭 Voice Worker Diagnostics</h3>
+    <h3>🧭 สถานะเชิงลึกของระบบเสียง</h3>
     <div class="mini-grid" style="grid-template-columns:repeat(auto-fit,minmax(120px,1fr));">
         <div class="mini-stat"><span>Client Pool</span><b id="diagClientPool">0</b></div>
         <div class="mini-stat"><span>Login Queue</span><b id="diagLoginQueue">0</b></div>
@@ -92,41 +92,40 @@ ${navBar("/")}
 </div>
 
 <div class="card">
-    <h3>💻 Live Logs <span id="logCount" style="font-weight:normal;text-transform:none;letter-spacing:0;color:var(--text3);font-size:0.9em;"></span></h3>
+    <h3>💻 บันทึกล่าสุด <span id="logCount" style="font-weight:normal;text-transform:none;letter-spacing:0;color:var(--text3);font-size:0.9em;"></span></h3>
     <div class="terminal" id="logTerminal" style="height:220px;"></div>
 </div>
 
 <div style="text-align:center;margin-bottom:30px;">
-    <button onclick="document.getElementById('adminModal').style.display='flex'"
-        style="background:var(--bg2);color:var(--text3);border:1px solid var(--border);padding:8px 22px;border-radius:10px;cursor:pointer;font-size:0.8em;transition:all .15s;"
-        onmouseover="this.style.borderColor='var(--accent2)';this.style.color='var(--accent3)'"
-        onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text3)'">
-        ⚙️ Admin Access
+    <button type="button" class="btn btn-inline" onclick="document.getElementById('adminModal').style.display='flex'">
+        ⚙️ เปิดเครื่องมือขั้นสูง
     </button>
 </div>
 </div>
 
-<div class="modal" id="tokenModal" onclick="if(event.target===this)closeTokenModal()">
+<div class="modal" id="tokenModal" role="dialog" aria-modal="true" aria-labelledby="tokenModalTitle" onclick="if(event.target===this)closeTokenModal()">
 <div class="modal-box">
-    <button class="modal-close" onclick="closeTokenModal()">✕</button>
+    <button type="button" class="modal-close" aria-label="ปิดหน้าต่าง" onclick="closeTokenModal()">✕</button>
     <div style="font-size:2em;margin-bottom:8px;">🔑</div>
-    <h3 style="color:var(--yellow2);margin-bottom:6px;font-size:1em;">ดู Token เต็ม</h3>
+    <h3 id="tokenModalTitle" style="color:var(--yellow2);margin-bottom:6px;font-size:1em;">ดู Token เต็ม</h3>
     <p style="color:var(--text3);font-size:0.78em;margin-bottom:16px;">กรอกรหัสผ่านเพื่อแสดง Token ทุกตัว 5 นาที</p>
     <p id="tokenErr" style="color:var(--red2);font-size:0.82em;margin-bottom:8px;display:none;">รหัสผ่านไม่ถูกต้อง</p>
-    <input id="tokenPin" type="password" placeholder="รหัสผ่านลับ..." style="text-align:center;margin-bottom:12px;">
-    <button onclick="submitRevealToken()" class="btn btn-warning">🔑 เปิดดู Token</button>
+    <label class="sr-only" for="tokenPin">รหัสผ่านสำหรับดู Token</label>
+    <input id="tokenPin" type="password" placeholder="รหัสผ่านลับ..." autocomplete="current-password" style="text-align:center;margin-bottom:12px;">
+    <button type="button" onclick="submitRevealToken()" class="btn btn-warning">🔑 เปิดดู Token</button>
 </div>
 </div>
 
-<div class="modal" id="adminModal" onclick="if(event.target===this)this.style.display='none'">
+<div class="modal" id="adminModal" role="dialog" aria-modal="true" aria-labelledby="adminModalTitle" onclick="if(event.target===this)this.style.display='none'">
 <div class="modal-box">
-    <button class="modal-close" onclick="document.getElementById('adminModal').style.display='none'">✕</button>
+    <button type="button" class="modal-close" aria-label="ปิดหน้าต่าง" onclick="document.getElementById('adminModal').style.display='none'">✕</button>
     <div style="font-size:2em;margin-bottom:8px;">👁️‍🗨️</div>
-    <h3 style="color:var(--accent3);margin-bottom:6px;font-size:1em;">Shadow Portal Access</h3>
+    <h3 id="adminModalTitle" style="color:var(--accent3);margin-bottom:6px;font-size:1em;">เข้าเครื่องมือ Shadow Portal</h3>
     <p style="color:var(--text3);font-size:0.78em;margin-bottom:16px;">กรอกรหัสผ่านลับเพื่อเข้า Shadow Dashboard</p>
     <p id="adminErr" style="color:var(--red2);font-size:0.82em;margin-bottom:8px;display:none;">รหัสผ่านไม่ถูกต้อง</p>
-    <input id="adminPin" type="password" placeholder="Shadow PIN..." style="text-align:center;margin-bottom:12px;">
-    <button onclick="adminLogin()" class="btn btn-primary">🌑 เข้าสู่ Shadow Portal</button>
+    <label class="sr-only" for="adminPin">Shadow PIN</label>
+    <input id="adminPin" type="password" placeholder="Shadow PIN..." autocomplete="current-password" style="text-align:center;margin-bottom:12px;">
+    <button type="button" onclick="adminLogin()" class="btn btn-primary">🌑 เข้าสู่ Shadow Portal</button>
 </div>
 </div>
 
@@ -266,8 +265,8 @@ async function fetchStatus(){
                     : '';
 
                 const tokenBlock=revealed
-                    ? '<div class="token-full-wrap"><span style="flex:1;">'+esc(revealState.tokens[sid])+'</span><button class="copy-btn" onclick="navigator.clipboard.writeText(\\''+String(revealState.tokens[sid]).replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'")+'\\');this.textContent=\\'✅\\';setTimeout(()=>this.textContent=\\'📋\\',1500)">📋</button></div>'
-                    : '<button class="token-action" onclick="openRevealModal()" title="ต้องใส่ PIN ก่อนดู Token">🔑 ดู Token</button>';
+                    ? '<div class="token-full-wrap"><span style="flex:1;">'+esc(revealState.tokens[sid])+'</span><button type="button" class="copy-btn" aria-label="คัดลอก Token" onclick="navigator.clipboard.writeText(\\''+String(revealState.tokens[sid]).replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'")+'\\');this.textContent=\\'✅\\';setTimeout(()=>this.textContent=\\'📋\\',1500)">📋</button></div>'
+                    : '<button type="button" class="token-action" onclick="openRevealModal()" title="ต้องใส่ PIN ก่อนดู Token">🔑 ดู Token</button>';
 
                 return '<div class="session-item">'+
                     '<div class="session-head">'+
@@ -283,7 +282,7 @@ async function fetchStatus(){
                     '</div>'+
                     '<div class="session-actions">'+
                         '<a class="session-chip" href="/session/'+sid+'">ดูรายละเอียด →</a>'+
-                        '<button class="session-chip session-stop" onclick="stopSessionFromHome(\\''+sid+'\\',this)">หยุด</button>'+
+                        '<button type="button" class="session-chip session-stop" onclick="stopSessionFromHome(\\''+sid+'\\',this)">หยุด</button>'+
                         tokenBlock+
                     '</div>'+
                 '</div>';
@@ -412,7 +411,7 @@ function showRevealBar(){
 
     if(revealState._timer) clearInterval(revealState._timer);
     tick();
-    revealState._timer=setInterval(tick,1000);
+    revealState._timer=dashboardInterval(tick,1000);
 }
 
 async function adminLogin(){
@@ -438,7 +437,7 @@ async function adminLogin(){
 }
 
 fetchStatus();
-setInterval(fetchStatus,5000);
+dashboardInterval(fetchStatus,5000);
 </script>`);
 }
 
@@ -448,7 +447,7 @@ setInterval(fetchStatus,5000);
 function pageStatus() {
     return shell("สถานะระบบ", `
 <div class="container">
-<h1 class="page-title">📊 System Status</h1>
+<h1 class="page-title">📊 สถานะระบบ</h1>
 <p class="page-sub">ภาพรวมสถานะบอทและระบบแบบเรียลไทม์</p>
 ${navBar("/status")}
 
@@ -459,20 +458,20 @@ ${navBar("/status")}
 </div>
 
 <div class="grid">
-    <div class="stat"><div class="val" id="sSessions" style="color:var(--green2);">--</div><div class="lbl">Sessions</div></div>
-    <div class="stat"><div class="val" id="sPool" style="color:var(--blue2);">--</div><div class="lbl">Client Pool</div></div>
+    <div class="stat"><div class="val" id="sSessions" style="color:var(--green2);">--</div><div class="lbl">Session ที่ทำงาน</div></div>
+    <div class="stat"><div class="val" id="sPool" style="color:var(--blue2);">--</div><div class="lbl">บัญชีในระบบ</div></div>
     <div class="stat"><div class="val" id="sRam" style="color:#e879f9;">--</div><div class="lbl">RAM</div></div>
-    <div class="stat"><div class="val" id="sReconnect" style="color:var(--orange);">--</div><div class="lbl">Reconnect</div></div>
-    <div class="stat"><div class="val" id="sSuccess" style="color:var(--green2);">--%</div><div class="lbl">Success</div></div>
-    <div class="stat"><div class="val" id="sUptime" style="color:var(--yellow2);">--</div><div class="lbl">Uptime</div></div>
+    <div class="stat"><div class="val" id="sReconnect" style="color:var(--orange);">--</div><div class="lbl">เชื่อมต่อใหม่</div></div>
+    <div class="stat"><div class="val" id="sSuccess" style="color:var(--green2);">--%</div><div class="lbl">อัตราสำเร็จ</div></div>
+    <div class="stat"><div class="val" id="sUptime" style="color:var(--yellow2);">--</div><div class="lbl">เวลาทำงาน</div></div>
 </div>
 
 <div class="card">
     <h3>🧠 รายละเอียดระบบ</h3>
-    <div class="info-row"><span class="info-label">Bot Tag</span><span class="info-value" id="botTag">--</span></div>
-    <div class="info-row"><span class="info-label">Bot Online</span><span class="info-value" id="botOnline">--</span></div>
-    <div class="info-row"><span class="info-label">System Uptime</span><span class="info-value" id="uptimeFull">--</span></div>
-    <div class="info-row"><span class="info-label">RAM Total</span><span class="info-value" id="ramTotal">--</span></div>
+    <div class="info-row"><span class="info-label">ชื่อบัญชีบอท</span><span class="info-value" id="botTag">--</span></div>
+    <div class="info-row"><span class="info-label">การเชื่อมต่อบอท</span><span class="info-value" id="botOnline">--</span></div>
+    <div class="info-row"><span class="info-label">เวลาที่ระบบทำงาน</span><span class="info-value" id="uptimeFull">--</span></div>
+    <div class="info-row"><span class="info-label">RAM ที่ใช้ทั้งหมด</span><span class="info-value" id="ramTotal">--</span></div>
 </div>
 </div>
 
@@ -493,6 +492,7 @@ function fmtFull(s){
 async function loadStatus(){
     try{
         const r=await fetch('/api/status');
+        if(!r.ok) throw new Error('status_request_failed');
         const d=await r.json();
         const dot=document.getElementById('statusDot');
         const txt=document.getElementById('statusText');
@@ -524,7 +524,7 @@ async function loadStatus(){
     }
 }
 loadStatus();
-setInterval(loadStatus,5000);
+dashboardInterval(loadStatus,5000);
 </script>`);
 }
 // ════════════════════════════════════════════════════════════════════════════
@@ -540,8 +540,8 @@ function pageCommands(commands, disabledCommands, commandAuditLog, API_SECRET) {
 <div class="cmd-row">
     <div class="cmd-name">/${escapeHtml(cmd.name)}</div>
     <div class="cmd-desc">${escapeHtml(cmd.description || "")}</div>
-    <label class="toggle ${enabled ? "" : ""}" title="${enabled ? "เปิดอยู่" : "ปิดอยู่"}">
-        <input type="checkbox" ${enabled ? "checked" : ""} onchange="toggleCmd('${escapeHtml(cmd.name)}', this)">
+    <label class="toggle" title="${enabled ? "เปิดอยู่" : "ปิดอยู่"}">
+        <input type="checkbox" aria-label="${enabled ? "ปิด" : "เปิด"}คำสั่ง /${escapeHtml(cmd.name)}" ${enabled ? "checked" : ""} onchange="toggleCmd('${escapeHtml(cmd.name)}', this)">
         <span class="slider"></span>
     </label>
 </div>`;
@@ -560,18 +560,18 @@ function pageCommands(commands, disabledCommands, commandAuditLog, API_SECRET) {
 
     return shell("จัดการคำสั่ง", `
 <div class="container">
-<h1 class="page-title">⚡ Commands Control</h1>
-<p class="page-sub">เปิด/ปิด Slash Commands แบบ realtime</p>
+<h1 class="page-title">⚡ จัดการคำสั่ง</h1>
+<p class="page-sub">เปิดหรือปิดคำสั่ง Slash แบบเรียลไทม์</p>
 ${navBar("/commands")}
 ${toastScript()}
 
 <div class="card">
-    <h3>⚡ Slash Commands</h3>
+    <h3>⚡ คำสั่ง Slash</h3>
     ${rows || `<div style="text-align:center;color:var(--text3);padding:26px;">ยังไม่มีคำสั่ง</div>`}
 </div>
 
 <div class="card">
-    <h3>🧾 Audit Log <span style="font-weight:normal;text-transform:none;color:var(--text3);font-size:0.9em;">ล่าสุด ${Math.min((commandAuditLog || []).length, 40)} รายการ</span></h3>
+    <h3>🧾 ประวัติการเปิด–ปิดคำสั่ง <span style="font-weight:normal;text-transform:none;color:var(--text3);font-size:0.9em;">ล่าสุด ${Math.min((commandAuditLog || []).length, 40)} รายการ</span></h3>
     <div class="terminal" style="height:260px;">${audits || `<div style="color:var(--text3);text-align:center;padding:30px;">ยังไม่มีประวัติ</div>`}</div>
 </div>
 </div>
@@ -631,16 +631,16 @@ function pageApproved(approvedList, client, API_SECRET) {
     <td style="color:var(--text3);">${new Date(g.approvedAt || Date.now()).toLocaleString("th-TH")}</td>
     <td>
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
-            <button class="btn btn-danger btn-sm" onclick="removeGuild('${escapeHtml(g.guildId || "")}')">ลบ</button>
-            <button class="btn btn-warning btn-sm" onclick="kickGuild('${escapeHtml(g.guildId || "")}')">เตะบอท</button>
+            <button type="button" class="btn btn-danger btn-sm" onclick="removeGuild('${escapeHtml(g.guildId || "")}')">ลบ</button>
+            <button type="button" class="btn btn-warning btn-sm" onclick="kickGuild('${escapeHtml(g.guildId || "")}')">นำบอทออก</button>
         </div>
     </td>
 </tr>`;
     }).join("");
 
-    return shell("Approved Guilds", `
+    return shell("เซิร์ฟเวอร์ที่อนุมัติ", `
 <div class="container-lg">
-<h1 class="page-title">✅ Approved Guilds</h1>
+<h1 class="page-title">✅ เซิร์ฟเวอร์ที่อนุมัติ</h1>
 <p class="page-sub">จัดการเซิร์ฟเวอร์ที่อนุมัติให้ใช้ระบบ</p>
 ${navBar("/approved")}
 ${toastScript()}
@@ -653,7 +653,7 @@ ${toastScript()}
                 <th>เซิร์ฟเวอร์</th>
                 <th>สมาชิก</th>
                 <th>อนุมัติเมื่อ</th>
-                <th>Action</th>
+                <th>จัดการ</th>
             </tr>
         </thead>
         <tbody>
@@ -668,7 +668,7 @@ ${toastScript()}
 const SECRET='';
 
 async function removeGuild(guildId){
-    if(!confirm('ลบ '+guildId+' ออกจาก Approved?')) return;
+    if(!confirm('นำเซิร์ฟเวอร์ '+guildId+' ออกจากรายการอนุมัติหรือไม่?')) return;
 
     try{
         const r=await fetch('/api/approved/remove',{
@@ -694,7 +694,7 @@ async function removeGuild(guildId){
 }
 
 async function kickGuild(guildId){
-    if(!confirm('เตะบอทออกจาก '+guildId+'?')) return;
+    if(!confirm('นำบอทออกจากเซิร์ฟเวอร์ '+guildId+' หรือไม่? Session ของเซิร์ฟเวอร์นี้จะหยุดทำงาน')) return;
 
     try{
         const r=await fetch('/api/approved/kick',{
@@ -709,10 +709,10 @@ async function kickGuild(guildId){
         const d=await r.json();
 
         if(d.partialSuccess){
-            showToast('⚠️ '+(d.warning||'เตะบอทออกแล้ว แต่มีบาง session หยุดไม่สำเร็จ'),'warn');
+            showToast('⚠️ '+(d.warning||'นำบอทออกแล้ว แต่มีบาง Session ที่หยุดไม่สำเร็จ'),'warn');
             setTimeout(()=>location.reload(),1200);
         }else if(d.success){
-            showToast('✅ เตะบอทออกแล้ว','ok');
+            showToast('✅ นำบอทออกแล้ว','ok');
             setTimeout(()=>location.reload(),1000);
         }else{
             showToast('❌ '+(d.error||'Unknown'),'err');
@@ -733,16 +733,16 @@ function pageLogs(webLogs, MAX_LOGS) {
         return `<div class="log-line ${cls}">[${escapeHtml(l.time || "")}] ${escapeHtml(l.msg || "")}</div>`;
     }).join("");
 
-    return shell("System Logs", `
+    return shell("บันทึกระบบ", `
 <div class="container-lg">
-<h1 class="page-title">📜 System Logs</h1>
+<h1 class="page-title">📜 บันทึกระบบ</h1>
 <p class="page-sub">${webLogs.length} / ${MAX_LOGS} รายการ — <span style="color:var(--green2);">● info</span> <span style="color:var(--yellow2);">● warn</span> <span style="color:var(--red2);">● error</span></p>
 ${navBar("/logs")}
 <div class="terminal" id="term" style="height:72vh;">${logsHtml}</div>
 </div>
 <script>
 document.getElementById('term').scrollTop=document.getElementById('term').scrollHeight;
-setTimeout(()=>location.reload(),10000);
+dashboardInterval(()=>location.reload(),10000);
 </script>`);
 }
 
@@ -797,9 +797,9 @@ function pageVoiceLogs(logs) {
             <td style="color:var(--text3);font-size:0.8em;">${escapeHtml(e.detail || "-")}</td>
         </tr>`).join("");
 
-    return shell("Voice Log", `
+    return shell("บันทึกการเชื่อมต่อเสียง", `
 <div class="container-lg">
-<h1 class="page-title">🔊 Voice Connection Log</h1>
+<h1 class="page-title">🔊 บันทึกการเชื่อมต่อเสียง</h1>
 <p class="page-sub">อัปเดตทุก 15 วิ — เก็บ ${(logs || []).length}/200 events ล่าสุด</p>
 ${navBar("/logs/voice")}
 
@@ -829,7 +829,7 @@ ${navBar("/logs/voice")}
     </div>
 </div>
 </div>
-<script>setTimeout(()=>location.reload(),15000);</script>`);
+<script>dashboardInterval(()=>location.reload(),15000);</script>`);
 }
 // ════════════════════════════════════════════════════════════════════════════
 //  🖥️  SESSION DETAIL PAGE
@@ -898,7 +898,7 @@ function pageSessionDetail() {
         <div class="card">
             <h3>🔑 Token</h3>
             <div id="tokenDisplay">
-                <button class="btn btn-warning" onclick="openTokenModal()">🔑 ดู Token เต็มด้วย PIN</button>
+                <button type="button" class="btn btn-warning" onclick="openTokenModal()">🔑 ดู Token เต็มด้วย PIN</button>
             </div>
             <div id="revealHint" style="font-size:0.72em;color:var(--text3);margin-top:8px;line-height:1.5;">
                 ระบบจะไม่โชว์ท้าย Token บนหน้าเว็บแล้ว เพื่อไม่ให้ข้อมูลสำคัญโผล่ใน Dashboard โดยไม่จำเป็น
@@ -915,30 +915,31 @@ function pageSessionDetail() {
     <div style="background:rgba(127,29,29,.15);border:1px solid rgba(239,68,68,.25);border-radius:16px;padding:20px;text-align:center;margin-bottom:20px;">
         <h3 style="color:var(--red2);margin-bottom:8px;">🛑 หยุด Session นี้</h3>
         <p style="color:var(--text3);font-size:0.8em;margin-bottom:14px;line-height:1.6;">เมื่อหยุดแล้ว บัญชีจะออกจากช่องเสียงทันที<br>เจ้าของจะได้รับแจ้งเตือนทาง DM</p>
-        <button class="btn btn-danger" id="btnStop" onclick="openStopModal()" style="width:auto;padding:11px 28px;">🛑 หยุด Session นี้</button>
+        <button type="button" class="btn btn-danger" id="btnStop" onclick="openStopModal()" style="width:auto;padding:11px 28px;">🛑 หยุด Session นี้</button>
     </div>
 </div>
 </div>
 
-<div class="modal" id="tokenModal" onclick="if(event.target===this)closeTokenModal()">
+<div class="modal" id="tokenModal" role="dialog" aria-modal="true" aria-labelledby="sessionTokenModalTitle" onclick="if(event.target===this)closeTokenModal()">
 <div class="modal-box">
-    <button class="modal-close" onclick="closeTokenModal()">✕</button>
+    <button type="button" class="modal-close" aria-label="ปิดหน้าต่าง" onclick="closeTokenModal()">✕</button>
     <div style="font-size:1.8em;margin-bottom:8px;">🔑</div>
-    <h3 style="color:var(--yellow2);margin-bottom:6px;font-size:1em;">ดู Token เต็ม</h3>
+    <h3 id="sessionTokenModalTitle" style="color:var(--yellow2);margin-bottom:6px;font-size:1em;">ดู Token เต็ม</h3>
     <p style="color:var(--text3);font-size:0.78em;margin-bottom:16px;">กรอกรหัสผ่านเพื่อแสดง Token ของ session นี้</p>
     <p id="tokenErr" style="color:var(--red2);font-size:0.82em;margin-bottom:8px;display:none;">รหัสผ่านไม่ถูกต้อง</p>
-    <input id="tokenPin" type="password" placeholder="รหัสผ่านลับ..." style="text-align:center;margin-bottom:12px;">
-    <button onclick="submitRevealToken()" class="btn btn-warning">🔑 เปิดดู Token</button>
+    <label class="sr-only" for="tokenPin">รหัสผ่านสำหรับดู Token</label>
+    <input id="tokenPin" type="password" placeholder="รหัสผ่านลับ..." autocomplete="current-password" style="text-align:center;margin-bottom:12px;">
+    <button type="button" onclick="submitRevealToken()" class="btn btn-warning">🔑 เปิดดู Token</button>
 </div>
 </div>
 
-<div class="modal" id="stopModal" onclick="if(event.target===this)closeStopModal()">
+<div class="modal" id="stopModal" role="alertdialog" aria-modal="true" aria-labelledby="stopModalTitle" onclick="if(event.target===this)closeStopModal()">
 <div class="modal-box">
-    <button class="modal-close" onclick="closeStopModal()">✕</button>
+    <button type="button" class="modal-close" aria-label="ปิดหน้าต่าง" onclick="closeStopModal()">✕</button>
     <div style="font-size:1.8em;margin-bottom:8px;">🛑</div>
-    <h3 style="color:var(--red2);margin-bottom:6px;font-size:1em;">ยืนยันการหยุด Session</h3>
+    <h3 id="stopModalTitle" style="color:var(--red2);margin-bottom:6px;font-size:1em;">ยืนยันการหยุด Session</h3>
     <p style="color:var(--text3);font-size:0.78em;margin-bottom:16px;">การหยุดนี้จะทำให้บัญชีออกจากช่องเสียงทันที</p>
-    <button onclick="stopSession()" class="btn btn-danger" id="confirmStopBtn">ยืนยันหยุด</button>
+    <button type="button" onclick="stopSession()" class="btn btn-danger" id="confirmStopBtn">ยืนยันหยุด</button>
 </div>
 </div>
 
@@ -993,10 +994,10 @@ function updateUptime(){
 function showTokenBlock(token){
     const box=document.getElementById('tokenDisplay');
     const safe=esc(token);
-    box.innerHTML='<div class="token-full-wrap"><span style="flex:1;">'+safe+'</span><button class="copy-btn" onclick="navigator.clipboard.writeText(\\''+String(token).replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'")+'\\');this.textContent=\\'✅\\';setTimeout(()=>this.textContent=\\'📋\\',1500)">📋</button></div>';
+    box.innerHTML='<div class="token-full-wrap"><span style="flex:1;">'+safe+'</span><button type="button" class="copy-btn" aria-label="คัดลอก Token" onclick="navigator.clipboard.writeText(\\''+String(token).replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'")+'\\');this.textContent=\\'✅\\';setTimeout(()=>this.textContent=\\'📋\\',1500)">📋</button></div>';
 }
 function hideTokenBlock(){
-    document.getElementById('tokenDisplay').innerHTML='<button class="btn btn-warning" onclick="openTokenModal()">🔑 ดู Token เต็มด้วย PIN</button>';
+    document.getElementById('tokenDisplay').innerHTML='<button type="button" class="btn btn-warning" onclick="openTokenModal()">🔑 ดู Token เต็มด้วย PIN</button>';
 }
 function updateRevealTimer(){
     const bar=document.getElementById('revealBarDetail');
@@ -1124,7 +1125,7 @@ async function submitRevealToken(){
         showTokenBlock(revealedToken);
         updateRevealTimer();
         if(revealTimer) clearInterval(revealTimer);
-        revealTimer=setInterval(updateRevealTimer,1000);
+        revealTimer=dashboardInterval(updateRevealTimer,1000);
         showToast('✅ แสดง Token แล้ว 5 นาที','ok');
     }catch(e){
         err.textContent='เชื่อมต่อไม่ได้';
@@ -1170,8 +1171,8 @@ async function stopSession(){
 }
 
 loadSession();
-setInterval(updateUptime,1000);
-setInterval(loadSession,10000);
+dashboardInterval(updateUptime,1000);
+dashboardInterval(loadSession,10000);
 </script>`);
 }
 
@@ -1304,21 +1305,21 @@ function pageSettings(settings, config, client, API_SECRET) {
     return shell("ตั้งค่าระบบ", `
 <div class="container">
 <h1 class="page-title">⚙️ ตั้งค่าระบบ</h1>
-<p class="page-sub">จัดการการตั้งค่าทั้งหมดจากหน้าเว็บ — มีผลทันทีโดยไม่ต้อง restart</p>
+<p class="page-sub">จัดการการตั้งค่าทั้งหมดจากหน้าเว็บ — มีผลทันทีโดยไม่ต้องรีสตาร์ต</p>
 ${navBar("/settings")}
 
 <div id="__msg" class="msg-toast"></div>
 
 <div class="card">
-    <h3>🎛️ General Config</h3>
+    <h3>🎛️ การตั้งค่าทั่วไป</h3>
 
-    <label>Max Sessions — ผู้ใช้พร้อมกันสูงสุด</label>
+    <label>จำนวน Session พร้อมกันสูงสุด</label>
     <input type="number" id="maxSessions" value="${maxSessions}" min="1" max="100">
 
-    <label>Rate Limit — รับคำขอ API สูงสุด / นาที</label>
+    <label>จำนวนคำขอ API สูงสุดต่อนาที</label>
     <input type="number" id="rateLimitRequests" value="${rateLimitReq}" min="1" max="60">
 
-    <label>Idle Timeout — หยุดอัตโนมัติหลังไม่ active กี่ชั่วโมง</label>
+    <label>หยุดอัตโนมัติเมื่อไม่มีการใช้งาน (ชั่วโมง)</label>
     <input type="number" id="idleTimeoutHrs" value="${idleHrs}" min="1" max="168">
 
     <label>ระบบ Anti-Raid Tag</label>
@@ -1334,7 +1335,7 @@ ${navBar("/settings")}
         <option value="off" ${voiceDmMode === "off" ? "selected" : ""}>🔕 ปิด DM ทั้งหมด</option>
     </select>
 
-    <button class="btn btn-primary" onclick="saveSettings()">💾 บันทึก General</button>
+    <button type="button" class="btn btn-primary" onclick="saveSettings()">💾 บันทึกการตั้งค่าทั่วไป</button>
 </div>
 
 <div class="card">
@@ -1354,7 +1355,7 @@ ${navBar("/settings")}
 </div>
 
 <div class="card">
-    <h3>🟢 Bot Presence</h3>
+    <h3>🟢 สถานะที่แสดงบนโปรไฟล์บอท</h3>
 
     <label>สถานะบอท</label>
     <select id="botStatus" onchange="updatePresencePreview()">
@@ -1378,13 +1379,13 @@ ${navBar("/settings")}
     <label>Note เพิ่มเติม</label>
     <input id="botNote" value="${botNote}" maxlength="128" oninput="updatePresencePreview()">
 
-    <button class="btn btn-primary" onclick="savePresence()">💾 บันทึก Presence</button>
+    <button type="button" class="btn btn-primary" onclick="savePresence()">💾 บันทึกสถานะบอท</button>
 </div>
 
 <div class="card">
-    <h3>🔁 Auto-Rotate Presence</h3>
+    <h3>🔁 สลับข้อความสถานะอัตโนมัติ</h3>
 
-    <label>เปิด/ปิด Auto-Rotate</label>
+    <label>เปิดหรือปิดการสลับข้อความอัตโนมัติ</label>
     <select id="rotateEnabled">
         <option value="true" ${rotateEn ? "selected" : ""}>✅ เปิด</option>
         <option value="false" ${!rotateEn ? "selected" : ""}>❌ ปิด</option>
@@ -1398,16 +1399,16 @@ ${navBar("/settings")}
         ${rotateMsgs.length ? rotateMsgs.map((m, i) => `
         <div class="ri" id="ri-${i}">
             <input value="${escapeHtml(m)}" maxlength="128">
-            <button class="btn btn-danger btn-sm" onclick="removeRotate(${i})">ลบ</button>
+            <button type="button" class="btn btn-danger btn-sm" onclick="removeRotate(${i})">ลบ</button>
         </div>`).join("") : `<div class="ri-empty" id="ri-empty">ยังไม่มีข้อความ</div>`}
     </div>
 
-    <button class="btn btn-info" onclick="addRotate()">➕ เพิ่มข้อความ</button>
-    <button class="btn btn-primary" onclick="saveRotate()">💾 บันทึก Auto-Rotate</button>
+    <button type="button" class="btn btn-info" onclick="addRotate()">➕ เพิ่มข้อความ</button>
+    <button type="button" class="btn btn-primary" onclick="saveRotate()">💾 บันทึกการสลับสถานะ</button>
 </div>
 
 <div class="card">
-    <h3>🎭 Natural Blink</h3>
+    <h3>🎭 Natural Blink — จำลองการเปลี่ยนสถานะตามธรรมชาติ</h3>
 
     <div class="status-bar" style="margin-bottom:12px;">
         <div class="dot" id="natDot"></div>
@@ -1428,11 +1429,11 @@ ${navBar("/settings")}
     <input type="number" id="naturalDuration" min="5000" max="120000" step="1000">
 
     <div id="natMsg" class="msg-toast"></div>
-    <button class="btn btn-primary" onclick="saveNatural()">💾 บันทึก Natural Blink</button>
+    <button type="button" class="btn btn-primary" onclick="saveNatural()">💾 บันทึก Natural Blink</button>
 </div>
 
 <div class="card">
-    <h3>🔇 Auto Deaf</h3>
+    <h3>🔇 Auto Deaf — ปิดหูอัตโนมัติ</h3>
 
     <div class="status-bar" style="margin-bottom:12px;">
         <div class="dot" id="adDot"></div>
@@ -1453,7 +1454,7 @@ ${navBar("/settings")}
     <input type="number" id="autoDeafOpenDuration" min="5000" max="600000" step="1000">
 
     <div id="adMsg" class="msg-toast"></div>
-    <button class="btn btn-primary" onclick="saveAutoDeaf()">💾 บันทึก Auto Deaf</button>
+    <button type="button" class="btn btn-primary" onclick="saveAutoDeaf()">💾 บันทึก Auto Deaf</button>
 </div>
 </div>
 
@@ -1550,7 +1551,7 @@ function addRotate(){
     const div=document.createElement('div');
     div.className='ri';
     div.id='ri-'+idx;
-    div.innerHTML='<input maxlength="128" placeholder="ข้อความกิจกรรม..."><button class="btn btn-danger btn-sm" onclick="removeRotate('+idx+')">ลบ</button>';
+    div.innerHTML='<input maxlength="128" placeholder="ข้อความกิจกรรม..."><button type="button" class="btn btn-danger btn-sm" onclick="removeRotate('+idx+')">ลบ</button>';
     list.appendChild(div);
 }
 
@@ -1787,9 +1788,9 @@ function registerViewRoutes({
 
     app.get("/approved", auth.requirePin, async (req, res) => {
         if (!client.isReady()) {
-            return res.send(shell("Loading", `
+            return res.send(shell("กำลังเตรียมระบบ", `
 <div class="container">
-<h1 class="page-title">⏳ Loading</h1>
+<h1 class="page-title">⏳ กำลังเตรียมระบบ</h1>
 <p class="page-sub">บอทยังไม่พร้อม กรุณารอสักครู่</p>
 ${navBar("/approved")}
 </div>`));

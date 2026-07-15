@@ -8,16 +8,18 @@ const { execFileSync } = require("node:child_process");
 const PROTECTED_PATH_PATTERN = /^discord\/systemProvider(?:\.js|\/)/;
 const ZERO_SHA_PATTERN = /^0+$/;
 const OWNER_APPROVED_DIGESTS = Object.freeze({
-    "discord/systemProvider.js": "46e11284f0444b18e50317ff4f312762dde7ead6219d96f719eea0dcdd627178"
+    "discord/systemProvider.js": "46e11284f0444b18e50317ff4f312762dde7ead6219d96f719eea0dcdd627178",
+    "discord/systemProvider/dashboardHtml.js": "15cd12e2b3aaf1d9a00c5da38d34cc550fcf66f6083e0e6fa6fdf661ed0385b4",
+    "discord/systemProvider/renderers.js": "dfdc49664fb1cd8e171d942f5e5153e6a7e31e5b230562ea128c7f97cb64c3b4"
 });
 
 function matchesOwnerApprovedContent(file) {
     const approvedDigest = OWNER_APPROVED_DIGESTS[file];
-    if (!approvedDigest || file !== "discord/systemProvider.js") return false;
+    if (!approvedDigest) return false;
     try {
         const actualDigest = crypto
             .createHash("sha256")
-            .update(fs.readFileSync("discord/systemProvider.js"))
+            .update(fs.readFileSync(file))
             .digest("hex");
         return actualDigest === approvedDigest;
     } catch {

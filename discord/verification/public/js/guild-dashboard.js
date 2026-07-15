@@ -330,7 +330,7 @@
     const el = $(SELECTORS.toast);
     if (!el) return;
 
-    el.className = `toast ${type}`;
+    el.className = `toast ${type} show`;
     el.textContent = message;
 
     clearTimeout(showToast.timer);
@@ -346,11 +346,13 @@
     if (loading) {
       btn.dataset.oldText = btn.textContent;
       btn.disabled = true;
+      btn.setAttribute("aria-busy", "true");
       btn.textContent = loadingText;
       return;
     }
 
     btn.disabled = false;
+    btn.removeAttribute("aria-busy");
     btn.textContent = btn.dataset.oldText || btn.textContent;
   }
 
@@ -392,10 +394,13 @@
 
   function openSidebar() {
     document.body.classList.add("sidebar-open", "no-scroll");
+    $(SELECTORS.sidebarToggle)?.setAttribute("aria-expanded", "true");
+    $(SELECTORS.sidebarClose)?.focus();
   }
 
   function closeSidebar() {
     document.body.classList.remove("sidebar-open", "no-scroll");
+    $(SELECTORS.sidebarToggle)?.setAttribute("aria-expanded", "false");
   }
 
   function bindSidebar() {
@@ -416,11 +421,16 @@
     state.activeTab = tab;
 
     qsa("[data-tab]").forEach((btn) => {
-      btn.classList.toggle("active", btn.dataset.tab === tab);
+      const selected = btn.dataset.tab === tab;
+      btn.classList.toggle("active", selected);
+      btn.setAttribute("aria-selected", String(selected));
+      btn.tabIndex = selected ? 0 : -1;
     });
 
     qsa("[data-section]").forEach((section) => {
-      section.classList.toggle("hidden", section.dataset.section !== tab);
+      const hidden = section.dataset.section !== tab;
+      section.classList.toggle("hidden", hidden);
+      section.hidden = hidden;
     });
 
     closeSidebar();
@@ -432,8 +442,19 @@
   }
 
   function bindTabs() {
-    qsa("[data-tab]").forEach((btn) => {
+    const tabs = qsa("[data-tab]");
+    tabs.forEach((btn) => {
       btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+      btn.addEventListener("keydown", (event) => {
+        if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        let index = tabs.indexOf(btn);
+        if (event.key === "Home") index = 0;
+        else if (event.key === "End") index = tabs.length - 1;
+        else index = (index + (event.key === "ArrowDown" ? 1 : -1) + tabs.length) % tabs.length;
+        tabs[index].click();
+        tabs[index].focus();
+      });
     });
   }
 
@@ -450,7 +471,7 @@
   function updateGuildInfo(guild) {
     state.currentGuild = guild || state.currentGuild || {};
 
-    const name = state.currentGuild.name || "Server Dashboard";
+    const name = state.currentGuild.name || "หน้าจัดการเซิร์ฟเวอร์";
     const id = state.currentGuild.id || state.guildId;
     const icon = iconUrl(state.currentGuild);
 
@@ -458,7 +479,7 @@
     setText(SELECTORS.guildSubtitle, `Guild ID: ${id}`);
     setText(SELECTORS.sideName, name);
     setText(SELECTORS.sideId, id);
-    setText(SELECTORS.sidePerm, state.currentGuild.owner ? "Owner/Admin access" : "Admin access");
+    setText(SELECTORS.sidePerm, state.currentGuild.owner ? "สิทธิ์เจ้าของ/ผู้ดูแล" : "สิทธิ์ผู้ดูแล");
 
     const sideIcon = $(SELECTORS.sideIcon);
     if (sideIcon) {
@@ -565,7 +586,7 @@
     setText(SELECTORS.statSuccess, fmtNumber(stats.success));
     setText(SELECTORS.statBlocked, fmtNumber(stats.blocked));
     setText(SELECTORS.statRisk, fmtNumber(stats.highRisk));
-    setText(SELECTORS.statRate, `Success rate ${fmtPercent(stats.successRate)}`);
+    setText(SELECTORS.statRate, `อัตราสำเร็จ ${fmtPercent(stats.successRate)}`);
     setText(SELECTORS.statVpn, fmtNumber(stats.vpn));
     setText(SELECTORS.statProxy, fmtNumber(stats.proxy));
     setText(SELECTORS.statTor, fmtNumber(stats.tor));
@@ -2055,6 +2076,10 @@
 
     if (!modal || !body) return;
 
+    state.modalReturnFocus = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+
     if (titleEl) titleEl.textContent = title || "รายละเอียด";
     if (content instanceof Node) {
       body.replaceChildren(content);
@@ -2062,13 +2087,20 @@
       body.replaceChildren(document.createTextNode(String(content || "")));
     }
     modal.classList.add("show");
+    modal.setAttribute("aria-hidden", "false");
     document.body.classList.add("no-scroll");
+    modal.querySelector(".modal")?.focus();
   }
 
   function closeDetailModal() {
     const modal = $("detail-modal");
-    if (modal) modal.classList.remove("show");
+    if (modal) {
+      modal.classList.remove("show");
+      modal.setAttribute("aria-hidden", "true");
+    }
     document.body.classList.remove("no-scroll");
+    state.modalReturnFocus?.focus?.();
+    state.modalReturnFocus = null;
   }
 
   function bindModal() {
@@ -2191,6 +2223,14 @@
     }
   }
 
+  function tabFromHash() {
+    try {
+      return decodeURIComponent(location.hash.replace(/^#/, "") || "overview");
+    } catch {
+      return "overview";
+    }
+  }
+
   function bindHashTabs() {
     qsa("[data-tab]").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -2199,7 +2239,7 @@
     });
 
     window.addEventListener("hashchange", () => {
-      const tab = decodeURIComponent(location.hash.replace(/^#/, "") || "overview");
+      const tab = tabFromHash();
       const exists = qsa("[data-section]").some((section) => section.dataset.section === tab);
 
       if (exists) {
@@ -2213,7 +2253,7 @@
     const title = $("guild-title");
 
     if (mobile && title) {
-      mobile.textContent = title.textContent || "Guild Dashboard";
+      mobile.textContent = title.textContent || "หน้าจัดการเซิร์ฟเวอร์";
     }
   }
 
@@ -2248,10 +2288,10 @@
       loadResources()
     ]);
 
-    const tabFromHash = decodeURIComponent(location.hash.replace(/^#/, "") || "overview");
-    const hasTab = qsa("[data-section]").some((section) => section.dataset.section === tabFromHash);
+    const initialTab = tabFromHash();
+    const hasTab = qsa("[data-section]").some((section) => section.dataset.section === initialTab);
 
-    switchTab(hasTab ? tabFromHash : "overview");
+    switchTab(hasTab ? initialTab : "overview");
   }
 
   function init() {

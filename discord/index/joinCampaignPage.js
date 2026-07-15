@@ -10,21 +10,22 @@ const {
 function buildJoinCampaignPage() {
     return shell("ดึงสมาชิกเข้าเซิร์ฟเวอร์", `
 <div class="container">
-<h1 class="page-title">📥 Join Authorized Users</h1>
-<p class="page-sub">ดึงผู้ใช้ที่เคยอนุญาต OAuth scope <code>guilds.join</code> เข้าเซิร์ฟเวอร์เป้าหมายที่บอทอยู่</p>
+<h1 class="page-title">📥 ดึงสมาชิกที่เคยอนุญาต</h1>
+<p class="page-sub">เพิ่มผู้ใช้ที่เคยอนุญาตสิทธิ์ <code>guilds.join</code> เข้าเซิร์ฟเวอร์เป้าหมายอย่างเป็นขั้นตอน</p>
 ${navBar("/join-campaign")}
 
 <div class="card">
     <h3>🎯 เลือกเซิร์ฟเวอร์เป้าหมาย</h3>
     <p style="color:var(--text3);font-size:0.86em;margin-bottom:14px;">
-        ระบบจะใช้เฉพาะ token ที่มีสิทธิ์ <code>guilds.join</code>, refresh token ก่อนใช้เมื่อจำเป็น,
-        และจะไม่ sync/add role อัตโนมัติ
+        ระบบใช้เฉพาะ Token ที่มีสิทธิ์ <code>guilds.join</code> และต่ออายุ Token เมื่อจำเป็น
+        การทำงานนี้จะไม่เพิ่มหรือซิงก์ยศให้อัตโนมัติ
     </p>
+    <label for="targetGuild">เซิร์ฟเวอร์ที่จะเพิ่มสมาชิก</label>
     <select id="targetGuild" style="margin-bottom:12px;"></select>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;">
-        <button class="btn btn-primary" onclick="dryRun()">🔎 ตรวจจำนวนก่อน</button>
-        <button class="btn btn-success" onclick="startCampaign()">▶️ เริ่มดึงอัตโนมัติ</button>
-        <button class="btn btn-danger" onclick="stopCampaign()">⏹ หยุดงาน</button>
+    <div class="action-row">
+        <button id="btnDryRun" type="button" class="btn btn-primary" onclick="dryRun()">🔎 1. ตรวจจำนวนก่อน</button>
+        <button id="btnStartCampaign" type="button" class="btn btn-success" onclick="startCampaign()">▶️ 2. เริ่มเพิ่มสมาชิก</button>
+        <button id="btnStopCampaign" type="button" class="btn btn-danger" onclick="stopCampaign()">⏹ หยุดงานปัจจุบัน</button>
     </div>
 </div>
 
@@ -45,7 +46,7 @@ ${navBar("/join-campaign")}
         <div class="mini-stat"><span>ขาด scope</span><b id="missingScope">0</b></div>
         <div class="mini-stat"><span>Rate limit</span><b id="rateLimited">0</b></div>
     </div>
-    <div class="terminal" id="campaignLog" style="height:240px;margin-top:14px;"></div>
+    <div class="terminal" id="campaignLog" role="status" aria-live="polite" style="height:240px;margin-top:14px;"></div>
 </div>
 </div>
 
@@ -79,7 +80,8 @@ function renderSummary(summary){
         setText('campaignStatus','ยังไม่มีงาน');
         return;
     }
-    setText('campaignStatus',summary.status || '-');
+    const statusLabels={idle:'ยังไม่มีงาน',running:'กำลังทำงาน',completed:'เสร็จแล้ว',stopping:'กำลังหยุด',stopped:'หยุดแล้ว',failed:'เกิดข้อผิดพลาด'};
+    setText('campaignStatus',statusLabels[summary.status] || summary.status || '-');
     setText('usableUsers',summary.usableUsers || 0);
     setText('joinedUsers',summary.joined || 0);
     setText('alreadyUsers',summary.alreadyMember || 0);
@@ -136,6 +138,8 @@ async function refreshStatus(){
 async function dryRun(){
     const guildId=selectedGuildId();
     if(!guildId) return showToast('กรุณาเลือกเซิร์ฟเวอร์','err');
+    const button=document.getElementById('btnDryRun');
+    setDashboardButtonBusy(button,true,'กำลังตรวจ...');
     try{
         showToast('กำลังตรวจจำนวน...');
         const data=await api('/api/join-campaign/dry-run',{
@@ -146,12 +150,15 @@ async function dryRun(){
         renderSummary(data.summary);
         showToast('ตรวจจำนวนเสร็จแล้ว');
     }catch(e){showToast(e.message,'err');}
+    finally{setDashboardButtonBusy(button,false);}
 }
 async function startCampaign(){
     const guildId=selectedGuildId();
     if(!guildId) return showToast('กรุณาเลือกเซิร์ฟเวอร์','err');
     const select=document.getElementById('targetGuild');
     const guildName=select.options[select.selectedIndex]?.textContent || guildId;
+    const button=document.getElementById('btnStartCampaign');
+    setDashboardButtonBusy(button,true,'กำลังเตรียมงาน...');
     try{
         showToast('กำลังตรวจคนที่ดึงได้...');
         const preview=await api('/api/join-campaign/dry-run',{
@@ -182,16 +189,21 @@ async function startCampaign(){
         renderSummary(data.campaign);
         showToast('เริ่มงานแล้ว ระบบจะดึงอัตโนมัติจนจบ');
     }catch(e){showToast(e.message,'err');}
+    finally{setDashboardButtonBusy(button,false);}
 }
 async function stopCampaign(){
+    if(!window.confirm('ยืนยันว่าต้องการหยุดงานที่กำลังทำอยู่?')) return;
+    const button=document.getElementById('btnStopCampaign');
+    setDashboardButtonBusy(button,true,'กำลังส่งคำสั่งหยุด...');
     try{
         await api('/api/join-campaign/stop',{method:'POST'});
         showToast('ส่งคำสั่งหยุดแล้ว');
         refreshStatus();
     }catch(e){showToast(e.message,'err');}
+    finally{setDashboardButtonBusy(button,false);}
 }
 loadTargets().then(refreshStatus).catch(e=>showToast(e.message,'err'));
-setInterval(refreshStatus,3000);
+dashboardInterval(refreshStatus,3000);
 </script>`);
 }
 

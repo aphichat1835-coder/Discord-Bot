@@ -4,6 +4,13 @@
 
 ### Changed
 
+- Reorganized every Owner, Verification, callback, campaign, and approved
+  Shadow web surface around clearer Thai labels, grouped navigation, searchable
+  guild selection, responsive touch targets, visible keyboard focus, semantic
+  tabs/dialogs/live status, reduced-motion support, safer loading states, and
+  background-aware refresh timers. OAuth callback feedback now starts promptly
+  and tolerates malformed public error/hash input without stranding the page.
+
 - Corrected verification preflight permission calculations to include the
   `@everyone` role, combine channel role overwrites using Discord's documented
   order, honor implicit View/Send/Embed denials, and exclude Forum containers

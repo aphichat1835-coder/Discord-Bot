@@ -72,10 +72,15 @@
   function show(id) {
     document.querySelectorAll(".callback-state").forEach((el) => {
       el.classList.remove("active");
+      el.setAttribute("aria-hidden", "true");
     });
 
     const target = $(id);
-    if (target) target.classList.add("active");
+    if (target) {
+      target.classList.add("active");
+      target.setAttribute("aria-hidden", "false");
+      target.focus({ preventScroll: true });
+    }
   }
 
   function setStep(activeStep) {
@@ -85,11 +90,13 @@
       const index = stepOrder.indexOf(el.dataset.step);
 
       el.classList.remove("active", "done");
+      el.removeAttribute("aria-current");
 
       if (index < activeIndex) {
         el.classList.add("done");
       } else if (index === activeIndex) {
         el.classList.add("active");
+        el.setAttribute("aria-current", "step");
       }
     });
   }
@@ -211,7 +218,7 @@
 
     if (error) {
       fail(
-        errorMap[error] || decodeURIComponent(errorDescription || error),
+        errorMap[error] || errorDescription || error,
         error
       );
       return;
@@ -227,13 +234,13 @@
 
     try {
       setStatus("กำลังรับข้อมูลจาก Discord", "discord");
-      await wait(380);
+      await wait(80);
 
       setStatus("กำลังตรวจสอบบัญชี Discord", "account");
-      await wait(320);
+      await wait(80);
 
       setStatus("กำลังตรวจสอบเงื่อนไขความปลอดภัย", "security");
-      await wait(320);
+      await wait(80);
 
       const payload = {
         code,
