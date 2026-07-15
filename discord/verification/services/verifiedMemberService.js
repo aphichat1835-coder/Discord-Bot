@@ -308,10 +308,8 @@ function memberSearchStage(q) {
                 { "oauth.discord.username": text },
                 { "oauth.discord.globalName": text },
                 { "oauth.discord.displayTag": text },
-                { "oauth.discord.email": text },
                 { "log.discordSnapshot.username": text },
-                { "log.discordSnapshot.globalName": text },
-                { "log.discordSnapshot.email": text }
+                { "log.discordSnapshot.globalName": text }
             ]
         }
     };

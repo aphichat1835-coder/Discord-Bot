@@ -249,7 +249,7 @@ test("canControlSession: returns false for null session", () => { // NOSONAR -- 
     assert.equal(canControlSession(interaction, null, "shadow-999"), false);
 });
 
-test("token mismatch warnings use one bounded dedupe window per owner, actor, and guild", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("token mismatch warning metadata does not expose owner, actor, or guild identifiers", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const options = buildTokenMismatchLogOptions(
         "12345678901234567",
         "22345678901234567",
@@ -257,9 +257,9 @@ test("token mismatch warnings use one bounded dedupe window per owner, actor, an
     );
 
     assert.deepEqual(options, {
-        dedupeKey: "token-mismatch:12345678901234567:22345678901234567:32345678901234567",
+        dedupeKey: "token-owner-mismatch",
         dedupeMs: 300000,
-        summaryLabel: "token owner mismatch for user 22345678901234567 in guild 32345678901234567"
+        summaryLabel: "token owner mismatch"
     });
 });
 

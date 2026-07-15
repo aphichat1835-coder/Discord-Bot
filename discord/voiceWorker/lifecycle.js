@@ -562,33 +562,32 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
         if (disconnectHandling) return;
         disconnectHandling = true;
 
-        const recovery = await notifications.recordRecoveryAttempt(sessionId, { cause: "voice_disconnected" });
-        const reconnectAttempts = Number(recovery?.attempts || 0);
-        addReconnect(sessionId);
-
-        console.log(`[WORKER] ⚠️ Voice dropped for ${sanitizeLogText(sessionId)}. Attempt ${reconnectAttempts}/${CONFIG.MAX_RECONNECT_ATTEMPTS}`);
-
-        if (reconnectAttempts === 3) {
-            const sess = sessionManager.getSession(sessionId);
-            sendAlertWebhook({
-                content: [ // nosemgrep
-                    `${config.emojis.warning} **[SESSION WARNING]** session หลุดบ่อยผิดปกติ`,
-                    `${config.emojis.robot} Session: \`${getSessionShortId(sessionId)}\``,
-                    `${config.emojis.signal} เซิร์ฟเวอร์: **${sanitizeLogText(sess?.serverName || guildId)}**`,
-                    `${config.emojis.halt} ห้องเสียง: **${sanitizeLogText(sess?.voiceName || channel.name || channelId)}**`,
-                    `${config.emojis.alert} หลุดแล้ว: **${reconnectAttempts}** ครั้ง (สูงสุด ${CONFIG.MAX_RECONNECT_ATTEMPTS})`,
-                    `⏰ <t:${Math.floor(Date.now() / 1000)}:F>`
-                ].join("\n")
-            }).catch(() => {});
-        }
-
-        if (reconnectAttempts >= CONFIG.MAX_RECONNECT_ATTEMPTS) {
-            await handleMaxReconnectReached();
-            disconnectHandling = false;
-            return;
-        }
-
         try {
+            const recovery = await notifications.recordRecoveryAttempt(sessionId, { cause: "voice_disconnected" });
+            const reconnectAttempts = Number(recovery?.attempts || 0);
+            addReconnect(sessionId);
+
+            console.log(`[WORKER] ⚠️ Voice dropped for ${sanitizeLogText(sessionId)}. Attempt ${reconnectAttempts}/${CONFIG.MAX_RECONNECT_ATTEMPTS}`);
+
+            if (reconnectAttempts === 3) {
+                const sess = sessionManager.getSession(sessionId);
+                sendAlertWebhook({
+                    content: [ // nosemgrep
+                        `${config.emojis.warning} **[SESSION WARNING]** session หลุดบ่อยผิดปกติ`,
+                        `${config.emojis.robot} Session: \`${getSessionShortId(sessionId)}\``,
+                        `${config.emojis.signal} เซิร์ฟเวอร์: **${sanitizeLogText(sess?.serverName || guildId)}**`,
+                        `${config.emojis.halt} ห้องเสียง: **${sanitizeLogText(sess?.voiceName || channel.name || channelId)}**`,
+                        `${config.emojis.alert} หลุดแล้ว: **${reconnectAttempts}** ครั้ง (สูงสุด ${CONFIG.MAX_RECONNECT_ATTEMPTS})`,
+                        `⏰ <t:${Math.floor(Date.now() / 1000)}:F>`
+                    ].join("\n")
+                }).catch(() => {});
+            }
+
+            if (reconnectAttempts >= CONFIG.MAX_RECONNECT_ATTEMPTS) {
+                await handleMaxReconnectReached();
+                return;
+            }
+
             await handlePassiveReconnect(reconnectAttempts);
         } finally {
             disconnectHandling = false;

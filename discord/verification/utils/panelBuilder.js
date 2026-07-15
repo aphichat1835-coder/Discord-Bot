@@ -66,6 +66,7 @@ function parseEmbedColor(value) {
 }
 
 function normalizePanelInput(panel = {}) {
+  const rawVerifyType = panel.verifyType ?? panel.mode ?? panel.oauthMode;
   const next = {
     ...DEFAULT_PANEL,
     ...panel
@@ -90,11 +91,7 @@ function normalizePanelInput(panel = {}) {
   next.buttonText = buttonText;
   next.buttonLabel = buttonText;
 
-  next.verifyType = normalizeVerifyMode(
-    next.verifyType ??
-    next.mode ??
-    next.oauthMode
-  );
+  next.verifyType = normalizeVerifyMode(rawVerifyType);
 
   next.showTimestamp = !!next.showTimestamp;
 

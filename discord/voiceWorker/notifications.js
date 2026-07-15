@@ -38,6 +38,15 @@ function isSafeRecordKey(value) {
         && !containsControlCharacter(key);
 }
 
+function policyAllows(type, context, mode) {
+    if (mode === "off") return false;
+    if (context.source === "auto_resume" && type === EVENTS.SESSION_READY) return false;
+    if (mode === "important_only" && type === EVENTS.SESSION_STOPPED_MANUAL && context.actorNotified === true) {
+        return false;
+    }
+    return true;
+}
+
 function createEventRecord(source = {}) {
     const record = Object.create(null);
     for (const [key, value] of Object.entries(source)) {
@@ -186,15 +195,6 @@ function createVoiceNotificationSystem(options = {}) {
         if (typeof manager.getSetting !== "function") return "important_only";
         const mode = await manager.getSetting("voiceDmMode", "important_only").catch(() => "important_only");
         return ["all", "important_only", "off"].includes(mode) ? mode : "important_only";
-    }
-
-    function policyAllows(type, context, mode) {
-        if (mode === "off") return false;
-        if (context.source === "auto_resume" && type === EVENTS.SESSION_READY) return false;
-        if (mode === "important_only" && type === EVENTS.SESSION_STOPPED_MANUAL && context.actorNotified === true) {
-            return false;
-        }
-        return true;
     }
 
     function reserveOwnerBudget(ownerId) {

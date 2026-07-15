@@ -1,12 +1,6 @@
 const crypto = require("node:crypto");
-const { sanitizeLogText } = require("../core/safeLogger");
-
-const fallbackLocks = new Map();
+const { safeText, withFallbackLock } = require("./persistenceHelpers");
 const MAX_INDEX_RECORDS = 500;
-
-function safeText(value, max = 500) {
-    return sanitizeLogText(String(value ?? "")).slice(0, Math.max(1, Number(max) || 500));
-}
 
 function storageKey(guildId, eventId) {
     return `internal_event_${safeText(guildId || "unknown", 64)}_${safeText(eventId, 120)}`;
@@ -60,23 +54,6 @@ function normalizeInternalEvent(input = {}) {
     };
 }
 
-async function withFallbackLock(guildId, fn) {
-    const key = String(guildId || "unknown");
-    const previous = fallbackLocks.get(key) || Promise.resolve();
-    let release;
-    const current = new Promise(resolve => { release = resolve; });
-    const lock = previous.catch(() => {}).then(() => current);
-    fallbackLocks.set(key, lock);
-
-    try {
-        await previous.catch(() => {});
-        return await fn();
-    } finally {
-        release();
-        if (fallbackLocks.get(key) === lock) fallbackLocks.delete(key);
-    }
-}
-
 async function deleteSettingWithRetry(sessionManager, key, attempts = 3) {
     if (!sessionManager?.deleteSetting) return false;
     const boundedAttempts = Math.max(1, Math.min(5, Number(attempts) || 3));
@@ -110,7 +87,7 @@ async function readSettingStrict(sessionManager, key) {
 
 async function saveFallback(sessionManager, record) {
     if (!sessionManager?.setSetting || !sessionManager?.getSettingStrict) return null;
-    return withFallbackLock(record.guildId, async () => {
+    return withFallbackLock(`internal-event:${record.guildId}`, async () => {
         const recordKey = storageKey(record.guildId, record.eventId);
         const previousRecordRead = await readSettingStrict(sessionManager, recordKey);
         const previousRecord = previousRecordRead.found ? previousRecordRead.value : null;

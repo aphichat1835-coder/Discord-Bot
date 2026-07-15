@@ -17,6 +17,7 @@ const { requireCsrf } = require('../../index/auth');
 
 const router = require("express").Router();
 const crypto = require("node:crypto");
+const mongoose = require("mongoose");
 const { resolvePublicBaseUrl } = require("../../core/publicUrl");
 
 const GuildConfig = require("../models/GuildConfig");
@@ -971,6 +972,54 @@ router.post("/api/guild/:guildId/verify/validate", requireAdmin, requireGuildAdm
    Send / Update / Disable Verification Panel
 ============================================================================= */
 
+async function handlePanelSendFailure(res, err, sentPanel) {
+  if (!sentPanel?.messageId) {
+    return sendServerError(res, "verify.panel.send", err, "ส่งแผงยืนยันตัวตนไม่สำเร็จ");
+  }
+  const persistence = await persistedPanelMatches(sentPanel.guildId, sentPanel);
+  if (persistence.status === "matched") {
+    return res.json({
+      success: true,
+      message: "ส่งแผงใหม่แล้ว และยืนยันค่าที่บันทึกจากฐานข้อมูลหลังการตอบกลับคลุมเครือ",
+      messageId: sentPanel.messageId,
+      channelId: sentPanel.channelId,
+      panelRevision: sentPanel.panelRevision,
+      panelRevisionUpdatedAt: sentPanel.panelRevisionUpdatedAt,
+      persistenceConfirmedAfterError: true,
+      validation: sentPanel.validation
+    });
+  }
+  if (persistence.status === "unknown") {
+    return res.status(503).json({
+      success: false,
+      error: "ส่งแผงแล้ว แต่ยังยืนยันสถานะฐานข้อมูลไม่ได้ จึงไม่ลบข้อความใน Discord",
+      code: "panel_persistence_unknown",
+      recoveryRequired: true,
+      messageId: sentPanel.messageId,
+      channelId: sentPanel.channelId
+    });
+  }
+  const cleanup = await discordAPI.deleteChannelMessage(sentPanel.channelId, sentPanel.messageId)
+    .catch(cleanupErr => ({ ok: false, status: null, error: cleanupErr?.code || "delete_failed" }));
+  if (cleanup?.ok === true || Number(cleanup?.status) === 404) {
+    return sendServerError(res, "verify.panel.send", err, "ส่งแผงยืนยันตัวตนไม่สำเร็จ");
+  }
+  safeConsoleError("verify.panel.send.cleanup", Object.assign(new Error("PANEL_DELETE_ROLLBACK_FAILED"), {
+    code: cleanup?.error || "panel_delete_rollback_failed"
+  }));
+  return res.status(503).json({
+    success: false,
+    error: "บันทึก config ไม่สำเร็จและลบแผงใหม่ไม่ได้ ต้องตรวจสอบด้วยตนเอง",
+    code: "panel_send_cleanup_failed",
+    recoveryRequired: true,
+    rollback: {
+      complete: false,
+      status: Number(cleanup?.status || 0) || null,
+      code: cleanup?.error || "panel_delete_rollback_failed"
+    }
+  });
+}
+
 router.post("/api/guild/:guildId/verify/panel/send", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
   let sentPanel = null;
   try {
@@ -1048,51 +1097,7 @@ router.post("/api/guild/:guildId/verify/panel/send", requireAdmin, requireGuildA
       validation
     });
   } catch (err) {
-    if (sentPanel?.messageId) {
-      const persistence = await persistedPanelMatches(sentPanel.guildId, sentPanel);
-      if (persistence.status === "matched") {
-        return res.json({
-          success: true,
-          message: "ส่งแผงใหม่แล้ว และยืนยันค่าที่บันทึกจากฐานข้อมูลหลังการตอบกลับคลุมเครือ",
-          messageId: sentPanel.messageId,
-          channelId: sentPanel.channelId,
-          panelRevision: sentPanel.panelRevision,
-          panelRevisionUpdatedAt: sentPanel.panelRevisionUpdatedAt,
-          persistenceConfirmedAfterError: true,
-          validation: sentPanel.validation
-        });
-      }
-      if (persistence.status === "unknown") {
-        return res.status(503).json({
-          success: false,
-          error: "ส่งแผงแล้ว แต่ยังยืนยันสถานะฐานข้อมูลไม่ได้ จึงไม่ลบข้อความใน Discord",
-          code: "panel_persistence_unknown",
-          recoveryRequired: true,
-          messageId: sentPanel.messageId,
-          channelId: sentPanel.channelId
-        });
-      }
-      const cleanup = await discordAPI.deleteChannelMessage(sentPanel.channelId, sentPanel.messageId)
-        .catch(cleanupErr => ({ ok: false, status: null, error: cleanupErr?.code || "delete_failed" }));
-      const cleanupComplete = cleanup?.ok === true || Number(cleanup?.status) === 404;
-      if (!cleanupComplete) {
-        safeConsoleError("verify.panel.send.cleanup", Object.assign(new Error("PANEL_DELETE_ROLLBACK_FAILED"), {
-          code: cleanup?.error || "panel_delete_rollback_failed"
-        }));
-        return res.status(503).json({
-          success: false,
-          error: "บันทึก config ไม่สำเร็จและลบแผงใหม่ไม่ได้ ต้องตรวจสอบด้วยตนเอง",
-          code: "panel_send_cleanup_failed",
-          recoveryRequired: true,
-          rollback: {
-            complete: false,
-            status: Number(cleanup?.status || 0) || null,
-            code: cleanup?.error || "panel_delete_rollback_failed"
-          }
-        });
-      }
-    }
-    return sendServerError(res, "verify.panel.send", err, "ส่งแผงยืนยันตัวตนไม่สำเร็จ");
+    return handlePanelSendFailure(res, err, sentPanel);
   }
 });
 
@@ -1266,6 +1271,7 @@ router.post("/api/guild/:guildId/verify/disable", requireAdmin, requireGuildAdmi
 
 router.get("/api/guild/:guildId/logs", requireAdmin, requireGuildAdmin, async (req, res) => {
   try {
+    res.set("Cache-Control", "no-store");
     const { guildId } = req.params;
     const page = parsePage(req.query.page);
     const limit = parseLimit(req.query.limit, 25, 100);
@@ -1299,6 +1305,7 @@ router.get("/api/guild/:guildId/logs", requireAdmin, requireGuildAdmin, async (r
 });
 router.get("/api/guild/:guildId/members", requireAdmin, requireGuildAdmin, async (req, res) => {
   try {
+    res.set("Cache-Control", "no-store");
     const { guildId } = req.params;
     const page = parsePage(req.query.page);
     const limit = parseLimit(req.query.limit, 25, 100);
@@ -1338,6 +1345,7 @@ router.get("/api/guild/:guildId/members", requireAdmin, requireGuildAdmin, async
 
 router.get("/api/guild/:guildId/member/:userId/detail", requireAdmin, requireGuildAdmin, async (req, res) => {
   try {
+    res.set("Cache-Control", "no-store");
     const { guildId, userId } = req.params;
     const targetUserId = cleanSnowflake(userId);
     if (!targetUserId) {
@@ -1449,6 +1457,63 @@ router.get("/api/guild/:guildId/stats", requireAdmin, requireGuildAdmin, async (
   }
 });
 
+async function deleteMemberDataAtomically({ guildId, targetUserId, deletedAt, deletedBy }) {
+  const session = await mongoose.startSession();
+  let results;
+  try {
+    await session.withTransaction(async () => {
+      results = await Promise.all([
+        VerifyLog.updateMany(
+          { guildId, userId: targetUserId, deletedAt: { $exists: false } },
+          { $set: { deletedAt, deletedBy } },
+          { session }
+        ),
+        OAuthUser.updateOne(
+          { "discord.userId": targetUserId, deletedAt: { $exists: false } },
+          { $pull: { guilds: { id: guildId } }, $set: { updatedAt: deletedAt } },
+          { session }
+        ),
+        OAuthUser.updateOne(
+          {
+            "discord.userId": targetUserId,
+            $or: [{ "lastVerify.guildId": guildId }, { "lastMember.guildId": guildId }],
+            deletedAt: { $exists: false }
+          },
+          { $unset: { lastVerify: "", lastMember: "" }, $set: { updatedAt: deletedAt } },
+          { session }
+        ),
+        IpIdentityLink.updateMany(
+          {
+            guildId,
+            "users.userId": targetUserId,
+            uniqueUsers: { $lte: 1 },
+            deletedAt: { $exists: false }
+          },
+          { $set: { deletedAt, deletedBy, updatedAt: deletedAt } },
+          { session }
+        ),
+        IpIdentityLink.updateMany(
+          {
+            guildId,
+            "users.userId": targetUserId,
+            uniqueUsers: { $gt: 1 },
+            deletedAt: { $exists: false }
+          },
+          {
+            $pull: { users: { userId: targetUserId }, roleSnapshots: { userId: targetUserId } },
+            $inc: { uniqueUsers: -1 },
+            $set: { updatedAt: deletedAt }
+          },
+          { session }
+        )
+      ]);
+    });
+    return results;
+  } finally {
+    await session.endSession();
+  }
+}
+
 router.delete("/api/guild/:guildId/member/:userId", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
   try {
     const { guildId, userId } = req.params;
@@ -1466,89 +1531,8 @@ router.delete("/api/guild/:guildId/member/:userId", requireAdmin, requireGuildAd
     const deletedAt = now();
     const deletedBy = adminId || "owner-dashboard";
 
-    const [verifyLogs, oauthGuildData, oauthLastData, singleIpLinks, sharedIpLinks] = await Promise.all([
-      VerifyLog.updateMany(
-        {
-          guildId,
-          userId: targetUserId,
-          deletedAt: { $exists: false }
-        },
-        {
-          $set: {
-            deletedAt,
-            deletedBy
-          }
-        }
-      ),
-      OAuthUser.updateOne(
-        {
-          "discord.userId": targetUserId,
-          deletedAt: { $exists: false }
-        },
-        {
-          $pull: {
-            guilds: { id: guildId }
-          },
-          $set: {
-            updatedAt: deletedAt
-          }
-        }
-      ),
-      OAuthUser.updateOne(
-        {
-          "discord.userId": targetUserId,
-          $or: [
-            { "lastVerify.guildId": guildId },
-            { "lastMember.guildId": guildId }
-          ],
-          deletedAt: { $exists: false }
-        },
-        {
-          $unset: {
-            lastVerify: "",
-            lastMember: ""
-          },
-          $set: {
-            updatedAt: deletedAt
-          }
-        }
-      ),
-      IpIdentityLink.updateMany(
-        {
-          guildId,
-          "users.userId": targetUserId,
-          uniqueUsers: { $lte: 1 },
-          deletedAt: { $exists: false }
-        },
-        {
-          $set: {
-            deletedAt,
-            deletedBy,
-            updatedAt: deletedAt
-          }
-        }
-      ),
-      IpIdentityLink.updateMany(
-        {
-          guildId,
-          "users.userId": targetUserId,
-          uniqueUsers: { $gt: 1 },
-          deletedAt: { $exists: false }
-        },
-        {
-          $pull: {
-            users: { userId: targetUserId },
-            roleSnapshots: { userId: targetUserId }
-          },
-          $inc: {
-            uniqueUsers: -1
-          },
-          $set: {
-            updatedAt: deletedAt
-          }
-        }
-      )
-    ]);
+    const [verifyLogs, oauthGuildData, oauthLastData, singleIpLinks, sharedIpLinks] =
+      await deleteMemberDataAtomically({ guildId, targetUserId, deletedAt, deletedBy });
 
     res.json({
       success: true,

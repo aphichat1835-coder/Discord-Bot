@@ -29,12 +29,12 @@ test("moderation helpers build case input", () => { // NOSONAR -- node:test asse
         { id: "target1", user: { tag: "target#0001" } },
         "timeout",
         "reason",
-        60000,
-        true
+        60000
     );
     assert.equal(input.guildId, "guild1");
     assert.equal(input.userId, "target1");
-    assert.equal(input.metadata.dmSent, true);
+    assert.equal(input.metadata.dmSent, undefined);
+    assert.equal(input.evidence.some(item => item.includes("DM sent")), false);
 });
 
 test("moderation helpers avoid exposing raw exception messages", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.

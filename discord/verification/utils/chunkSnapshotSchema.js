@@ -27,4 +27,8 @@ function buildChunkSnapshotSchema() {
     return schema;
 }
 
-module.exports = { buildChunkSnapshotSchema };
+function registerChunkSnapshotModel(name) {
+    return mongoose.models[name] || mongoose.model(name, buildChunkSnapshotSchema());
+}
+
+module.exports = { buildChunkSnapshotSchema, registerChunkSnapshotModel };

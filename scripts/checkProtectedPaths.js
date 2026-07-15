@@ -4,20 +4,21 @@
 const fs = require("node:fs");
 const crypto = require("node:crypto");
 const { execFileSync } = require("node:child_process");
+const OWNER_APPROVED_DIGESTS = require("../.github/protected-path-digests.json");
 
 const PROTECTED_PATH_PATTERN = /^discord\/systemProvider(?:\.js|\/)/;
 const ZERO_SHA_PATTERN = /^0+$/;
 const OWNER_APPROVED_FILES = new Map([
     ["discord/systemProvider.js", {
-        digest: "46e11284f0444b18e50317ff4f312762dde7ead6219d96f719eea0dcdd627178",
+        digest: OWNER_APPROVED_DIGESTS["discord/systemProvider.js"],
         read: () => fs.readFileSync("discord/systemProvider.js")
     }],
     ["discord/systemProvider/dashboardHtml.js", {
-        digest: "15cd12e2b3aaf1d9a00c5da38d34cc550fcf66f6083e0e6fa6fdf661ed0385b4",
+        digest: OWNER_APPROVED_DIGESTS["discord/systemProvider/dashboardHtml.js"],
         read: () => fs.readFileSync("discord/systemProvider/dashboardHtml.js")
     }],
     ["discord/systemProvider/renderers.js", {
-        digest: "dfdc49664fb1cd8e171d942f5e5153e6a7e31e5b230562ea128c7f97cb64c3b4",
+        digest: OWNER_APPROVED_DIGESTS["discord/systemProvider/renderers.js"],
         read: () => fs.readFileSync("discord/systemProvider/renderers.js")
     }]
 ]);
@@ -83,6 +84,9 @@ function isUsableBaseSha(value) {
 
 function getChangedPaths() {
     if (!isGitRepository()) {
+        if (String(process.env.CI || "").trim().toLowerCase() === "true") {
+            throw new Error("Git repository is unavailable in CI");
+        }
         console.warn("[PROTECTED-PATHS] .git not found or unusable; skipping protected-path diff guard.");
         return [];
     }

@@ -34,6 +34,33 @@ const DEFAULT_MODELS = Object.freeze({
 });
 const scanCursors = new Map();
 let cleanupInFlight = false;
+let objectChunkIndexPromise = null;
+
+function isLegacyObjectChunkIdentity(index = {}) {
+    const keys = index.key || {};
+    return keys.userId === 1 && keys.snapshotVersion === 1 && keys.kind === 1 && keys.chunkIndex === 1 &&
+        keys.guildId === undefined;
+}
+
+async function ensureObjectChunkIdentityIndex() {
+    if (objectChunkIndexPromise) return objectChunkIndexPromise;
+    objectChunkIndexPromise = (async () => {
+        const collection = ObjectChunkSnapshot.collection;
+        await collection.createIndex(
+            { userId: 1, guildId: 1, snapshotVersion: 1, kind: 1, chunkIndex: 1 },
+            { unique: true, name: "oauth_object_chunk_identity_v2" }
+        );
+        const indexes = await collection.indexes();
+        for (const index of indexes) {
+            if (isLegacyObjectChunkIdentity(index)) await collection.dropIndex(index.name);
+        }
+        return { ready: true };
+    })().catch(err => {
+        objectChunkIndexPromise = null;
+        throw err;
+    });
+    return objectChunkIndexPromise;
+}
 
 function snapshotKey(userId, version) {
     return `${String(userId || "")}\u0000${String(version || "")}`;
@@ -314,6 +341,7 @@ async function cleanupSnapshotGarbage(options = {}) {
     }
     cleanupInFlight = true;
     try {
+        if (options.dryRun !== true && !options.models) await ensureObjectChunkIdentityIndex();
         return await performSnapshotCleanup(options);
     } finally {
         cleanupInFlight = false;
@@ -322,6 +350,7 @@ async function cleanupSnapshotGarbage(options = {}) {
 
 module.exports = {
     cleanupSnapshotGarbage,
+    ensureObjectChunkIdentityIndex,
     getSnapshotCleanupConfig: () => ({
         mode: "permanent_history",
         graceHours: CLEANUP_GRACE_HOURS,
@@ -338,6 +367,7 @@ module.exports = {
         processRecoveryQueue,
         performSnapshotCleanup,
         DEFAULT_MODELS,
-        resetScanCursors: () => scanCursors.clear()
+        resetScanCursors: () => scanCursors.clear(),
+        resetObjectChunkIndexPromise: () => { objectChunkIndexPromise = null; }
     }
 };

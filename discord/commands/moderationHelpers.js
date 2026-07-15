@@ -49,7 +49,7 @@ function buildModerationDmEmbed(interaction, target, action, reason, minutes = n
         .setThumbnail(target.user.displayAvatarURL({ dynamic: true, size: 1024 }));
 }
 
-function buildCaseInput(interaction, target, action, reason, durationMs, dmSent) {
+function buildCaseInput(interaction, target, action, reason, durationMs) {
     return {
         guildId: interaction.guild.id,
         action,
@@ -62,12 +62,10 @@ function buildCaseInput(interaction, target, action, reason, durationMs, dmSent)
         evidence: [
             `Command: /${action}`,
             `Target: ${target.user.tag} (${target.id})`,
-            `Moderator: ${interaction.user.tag} (${interaction.user.id})`,
-            `DM sent: ${dmSent ? "yes" : "no"}`
+            `Moderator: ${interaction.user.tag} (${interaction.user.id})`
         ],
         metadata: {
-            channelId: interaction.channel.id,
-            dmSent
+            channelId: interaction.channel.id
         }
     };
 }

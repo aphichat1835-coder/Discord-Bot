@@ -96,7 +96,8 @@ function buildVerification(oauth = {}, logSummary = null) {
     };
 }
 
-function buildOAuthTokenStatuses(oauth = {}) {
+function buildOAuthTokenStatuses(oauth = {}, canViewSensitive = false) {
+    if (!canViewSensitive) return { oauth: null, adminOAuth: null };
     return {
         oauth: tokenStatus(oauth.oauth || {}),
         adminOAuth: tokenStatus(oauth.adminOAuth || {})
@@ -145,7 +146,7 @@ function serializeMemberDetail({ guildId, userId, oauthUser = null, latestLog = 
         network: log ? safeIpInfo(log.ipInfo || {}) : {},
         tracking: buildTracking(log, oauth),
         verification: buildVerification(oauth, logSummary),
-        oauthTokens: buildOAuthTokenStatuses(oauth),
+        oauthTokens: buildOAuthTokenStatuses(oauth, canViewSensitive),
         rawSnapshots: buildRawSnapshots(oauth, targetMember, canViewSensitive)
     };
 }

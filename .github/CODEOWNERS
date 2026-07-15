@@ -1,3 +1,7 @@
 # Owner review is required for the protected owner/system subsystem.
 /discord/systemProvider.js @aphichat1835-coder
 /discord/systemProvider/ @aphichat1835-coder
+/scripts/checkProtectedPaths.js @aphichat1835-coder
+/.github/workflows/ci.yml @aphichat1835-coder
+/.github/CODEOWNERS @aphichat1835-coder
+/.github/protected-path-digests.json @aphichat1835-coder

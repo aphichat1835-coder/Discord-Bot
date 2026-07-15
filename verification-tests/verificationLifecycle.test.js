@@ -28,17 +28,13 @@ describe("verification runtime lifecycle", () => {
         expect(clearIntervalFn).toHaveBeenCalledWith(timer);
     });
 
-    test("keeps a recovery interval when initial maintenance fails", async () => {
+    test("does not schedule background work until initial maintenance succeeds", async () => {
         const startupError = new Error("temporary database failure");
         const maintenanceRunner = jest.fn()
             .mockRejectedValueOnce(startupError)
             .mockResolvedValue({ ok: true });
         const timer = { unref: jest.fn() };
-        let scheduledMaintenance;
-        const setIntervalFn = jest.fn(callback => {
-            scheduledMaintenance = callback;
-            return timer;
-        });
+        const setIntervalFn = jest.fn(() => timer);
         const clearIntervalFn = jest.fn();
 
         await expect(lifecycle.startVerificationRuntime({
@@ -47,10 +43,13 @@ describe("verification runtime lifecycle", () => {
             clearIntervalFn
         })).rejects.toThrow("temporary database failure");
 
+        expect(setIntervalFn).not.toHaveBeenCalled();
+        expect(lifecycle.getVerificationDiagnostics().timerActive).toBe(false);
+
+        await lifecycle.startVerificationRuntime({ maintenanceRunner, setIntervalFn, clearIntervalFn });
+        expect(maintenanceRunner).toHaveBeenCalledTimes(2);
         expect(setIntervalFn).toHaveBeenCalledTimes(1);
         expect(lifecycle.getVerificationDiagnostics().timerActive).toBe(true);
-        await scheduledMaintenance();
-        expect(maintenanceRunner).toHaveBeenCalledTimes(2);
 
         await lifecycle.stopVerificationRuntime();
         expect(clearIntervalFn).toHaveBeenCalledWith(timer);

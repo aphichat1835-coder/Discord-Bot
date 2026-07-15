@@ -340,6 +340,13 @@ function isValidSnapshotSchema(data) {
     );
 }
 
+function snapshotIdentityMatches(backup, backupData, expectedGuildId = null) {
+    const metadataGuildId = String(backup?.guildId || "");
+    const payloadGuildId = String(backupData?.guild?.id || "");
+    if (!metadataGuildId || payloadGuildId !== metadataGuildId) return false;
+    return expectedGuildId === null || metadataGuildId === String(expectedGuildId || "");
+}
+
 function normalizeOverwriteType(value) {
     if (value === 0 || value === "0") return "role";
     if (value === 1 || value === "1") return "member";
@@ -586,7 +593,7 @@ async function handleRestore(interaction) {
     }
 
     const backupData = await sessionManager.loadSnapshotData(backup);
-    if (!isValidSnapshotSchema(backupData)) {
+    if (!isValidSnapshotSchema(backupData) || !snapshotIdentityMatches(backup, backupData, targetId)) {
         return interaction.editReply({ content: `> ${config.emojis.error} Backup ไม่ครบหรือ schema ไม่ถูกต้อง จึงไม่สามารถกู้คืนได้` });
     }
     markCommandAccepted(interaction);
@@ -673,7 +680,7 @@ async function handleRestoreConfirm(interaction, sessionManager) {
             if (!isOwner || !ownsBackup || !botIsAdmin) {
                 return interaction.followUp({ content: `> ${config.emojis.no_entry} สิทธิ์สำหรับ Restore เปลี่ยนไป กรุณาเริ่มคำสั่งใหม่`, ephemeral: true }).catch(() => {});
             }
-            if (!isValidSnapshotSchema(backupData)) {
+            if (!isValidSnapshotSchema(backupData) || !snapshotIdentityMatches(backup, backupData)) {
                 return interaction.followUp({ content: `> ${config.emojis.error} ไม่พบข้อมูล Backup`, ephemeral: true }).catch(() => {});
             }
 
@@ -872,5 +879,5 @@ module.exports = {
     handle,
     handleRestoreConfirm,
     getRuntimeDiagnostics,
-    _test: { handleSay, isValidSnapshotSchema, buildBackupValidationReport, normalizeOverwriteType }
+    _test: { handleSay, isValidSnapshotSchema, snapshotIdentityMatches, buildBackupValidationReport, normalizeOverwriteType }
 };

@@ -1,6 +1,21 @@
 const mongoose = require('mongoose');
 
 const mixed = mongoose.Schema.Types.Mixed;
+
+function oauthTokenFields() {
+    return {
+        encryptedAccessToken: String,
+        encryptedRefreshToken: String,
+        expiresAt: Number,
+        scope: String,
+        tokenType: String,
+        lastRefreshAt: Number,
+        refreshFailCount: { type: Number, default: 0 },
+        lastRefreshError: String,
+        revokedAt: Number,
+        rawTokenMeta: mixed
+    };
+}
 const connectionSchema = new mongoose.Schema({
     type:         String,
     id:           String,
@@ -63,31 +78,9 @@ const schema = new mongoose.Schema({
         profileSnapshot:  mixed
     },
 
-    oauth: {
-        encryptedAccessToken:  String,
-        encryptedRefreshToken: String,
-        expiresAt:            Number,
-        scope:                String,
-        tokenType:            String,
-        lastRefreshAt:        Number,
-        refreshFailCount:     { type: Number, default: 0 },
-        lastRefreshError:     String,
-        revokedAt:            Number,
-        rawTokenMeta:          mixed
-    },
+    oauth: oauthTokenFields(),
 
-    adminOAuth: {
-        encryptedAccessToken:  String,
-        encryptedRefreshToken: String,
-        expiresAt:            Number,
-        scope:                String,
-        tokenType:            String,
-        lastRefreshAt:        Number,
-        refreshFailCount:     { type: Number, default: 0 },
-        lastRefreshError:     String,
-        revokedAt:            Number,
-        rawTokenMeta:          mixed
-    },
+    adminOAuth: oauthTokenFields(),
 
     connections: {
         type: [connectionSchema],

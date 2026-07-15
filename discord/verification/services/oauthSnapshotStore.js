@@ -329,12 +329,13 @@ async function storeObjectChunkSnapshot({
         now
     });
     const { encoded, common, documentSets } = prepared;
+    const chunkGuildId = guildId || null;
     documentSets.forEach(documentSet => assertDocumentSetSafe(documentSet, `${kind}_object_chunk`));
 
     await retrySnapshotWrite("snapshot_object_chunk_write", () => ObjectChunkSnapshot.bulkWrite(
         documentSets.map((documentSet, chunkIndex) => ({
             updateOne: {
-                filter: { userId, snapshotVersion: version, kind, chunkIndex },
+                filter: { userId, guildId: chunkGuildId, snapshotVersion: version, kind, chunkIndex },
                 update: { $set: documentSet },
                 upsert: true
             }
@@ -344,7 +345,7 @@ async function storeObjectChunkSnapshot({
 
     const finalized = await retrySnapshotWrite("snapshot_object_chunk_finalize", () =>
         ObjectChunkSnapshot.updateMany(
-            { userId, snapshotVersion: version, kind },
+            { userId, guildId: chunkGuildId, snapshotVersion: version, kind },
             { $set: { complete: true, updatedAt: now } }
         )
     );
@@ -369,13 +370,14 @@ async function loadObjectChunkSnapshot(userId, ref, { kind = ref?.kind, guildId 
     if (!ref?.version || ref.complete !== true || ref.format !== "json-base64-chunks-v1") return null;
     const query = ObjectChunkSnapshot.find({
         userId,
+        guildId: guildId || null,
         snapshotVersion: ref.version,
         kind,
-        complete: true,
-        ...(guildId ? { guildId } : {})
+        complete: true
     }).sort({ chunkIndex: 1 });
     const docs = await query.lean();
     if (docs.length !== Number(ref.chunkCount || 0)) return null;
+    if (docs.some((doc, index) => doc.chunkIndex !== index || doc.complete !== true)) return null;
     const parts = [];
     for (let index = 0; index < docs.length; index++) {
         const doc = docs[index];
@@ -918,6 +920,7 @@ async function loadArraySnapshot(Model, userId, ref) {
         .sort({ chunkIndex: 1 })
         .lean();
     if (docs.length !== Number(ref.chunkCount || 0)) return null;
+    if (docs.some((doc, index) => doc.chunkIndex !== index || doc.complete !== true)) return null;
     const items = docs.flatMap(doc => Array.isArray(doc.items) ? doc.items : []);
     return items.length === Number(ref.storedCount || 0) ? items : null;
 }

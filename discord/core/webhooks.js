@@ -1,6 +1,7 @@
 "use strict";
 
 const { WebhookClient } = require("discord.js");
+const crypto = require("node:crypto");
 const { sanitizeLogText } = require("./safeLogger");
 const { resolvePublicBaseUrl } = require("./publicUrl");
 
@@ -379,6 +380,24 @@ class WebhookDispatcher {
 
 const defaultDispatcher = new WebhookDispatcher();
 const routineDedupe = new Map();
+const dispatcherIds = new WeakMap();
+let nextDispatcherId = 1;
+
+function dispatcherIdentity(dispatcher) {
+    if (!dispatcher || (typeof dispatcher !== "object" && typeof dispatcher !== "function")) return "default";
+    if (!dispatcherIds.has(dispatcher)) dispatcherIds.set(dispatcher, nextDispatcherId++);
+    return `dispatcher:${dispatcherIds.get(dispatcher)}`;
+}
+
+function routineDestinationKey(options = {}) {
+    const dispatcher = options.dispatcher || null;
+    const env = options.env || dispatcher?.env || process.env;
+    const url = normalizeWebhookUrlForCompare(options.url || getWebhookUrl("LOG", env) || "missing");
+    return crypto.createHash("sha256")
+        .update(`${dispatcherIdentity(dispatcher)}\u0000${url}`)
+        .digest("hex")
+        .slice(0, 20);
+}
 
 function trimRoutineDedupe() {
     while (routineDedupe.size > ROUTINE_DEDUPE_MAX) {
@@ -390,7 +409,8 @@ function trimRoutineDedupe() {
 }
 
 async function sendRoutineDeduped(payload, options) {
-    const key = truncate(options.dedupeKey, 200) || "routine-event";
+    const baseKey = truncate(options.dedupeKey, 200) || "routine-event";
+    const key = `${routineDestinationKey(options)}:${baseKey}`;
     const ttlMs = Math.max(1000, Number(options.dedupeMs || 5 * 60 * 1000));
     const existing = routineDedupe.get(key);
     if (existing) {
@@ -403,11 +423,12 @@ async function sendRoutineDeduped(payload, options) {
         duplicates: 0,
         timer: null,
         label: truncate(options.summaryLabel || "routine event", 120),
+        options,
         pending: null
     };
     routineDedupe.set(key, entry);
     trimRoutineDedupe();
-    entry.pending = defaultDispatcher.enqueue("LOG", payload, options);
+    entry.pending = sendWebhook("LOG", payload, options);
     const sent = await entry.pending;
     if (!sent) {
         routineDedupe.delete(key);
@@ -416,9 +437,9 @@ async function sendRoutineDeduped(payload, options) {
     entry.timer = setTimeout(() => {
         routineDedupe.delete(key);
         if (entry.duplicates > 0) {
-            defaultDispatcher.enqueue("LOG", {
+            sendWebhook("LOG", {
                 content: `📋 **[LOG SUMMARY]** ${entry.label}\nเกิดซ้ำเพิ่ม **${entry.duplicates}** ครั้งในช่วง ${Math.round(ttlMs / 1000)} วินาที`
-            }).catch(() => {});
+            }, entry.options).catch(() => {});
         }
     }, ttlMs);
     entry.timer.unref?.();
@@ -455,9 +476,9 @@ async function flushWebhookQueue(timeoutMs = 5000) {
     for (const [key, entry] of routineDedupe.entries()) {
         if (entry.timer) clearTimeout(entry.timer);
         if (entry.duplicates > 0) {
-            defaultDispatcher.enqueue("LOG", {
+            sendWebhook("LOG", {
                 content: `📋 **[LOG SUMMARY]** ${entry.label}\nเกิดซ้ำเพิ่ม **${entry.duplicates}** ครั้งก่อนระบบหยุด`
-            }).catch(() => {});
+            }, entry.options).catch(() => {});
         }
         routineDedupe.delete(key);
     }

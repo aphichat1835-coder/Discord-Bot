@@ -406,7 +406,7 @@ function normalizeConnections(connections = []) {
                     )
                     : [],
 
-                metadata: safePlainObject(connection.metadata),
+                metadata: sanitizeDiscordPayload(safePlainObject(connection.metadata)) || {},
 
                 /*
                   ห้ามเก็บ raw object เต็มก้อนจาก Discord ลง DB/log
@@ -967,56 +967,11 @@ async function updateIpIdentityTrackingSafe({
 
         const nowMs = Date.now();
 
-        let doc = await IpIdentityLink.findOne({
+        const existing = await IpIdentityLink.findOne({
             guildId,
             ipHash: ipInfo.ipHash
         });
-
-        if (!doc) {
-            doc = new IpIdentityLink({
-                guildId,
-                guildName,
-                ipHash: ipInfo.ipHash,
-                encryptedRawIp: ipInfo.encryptedRawIp,
-                firstSeenAt: nowMs,
-                users: [],
-                deviceFingerprints: [],
-                roleSnapshots: [],
-                createdAt: nowMs
-            });
-        }
-
-        doc.guildName = guildName || doc.guildName || guildId;
-        doc.encryptedRawIp = ipInfo.encryptedRawIp || doc.encryptedRawIp;
-        doc.lastSeenAt = nowMs;
-        doc.totalVerifications = (doc.totalVerifications || 0) + 1;
-        doc.lastResult = result;
-        doc.lastRoleId = roleId;
-
-        doc.lastRiskScore = riskSummary?.score || ipInfo.riskScore || 0;
-        doc.maxRiskScore = Math.max(doc.maxRiskScore || 0, doc.lastRiskScore || 0);
-        doc.lastRiskFlags = riskSummary?.flags || [];
-
-        doc.lastCountry = ipInfo.country;
-        doc.lastCountryCode = ipInfo.countryCode;
-        doc.lastRegion = ipInfo.region;
-        doc.lastCity = ipInfo.city;
-        doc.lastTimezone = ipInfo.timezone;
-        doc.lastIsp = ipInfo.isp;
-        doc.lastOrg = ipInfo.org;
-        doc.lastAs = ipInfo.as;
-        doc.lastAsname = ipInfo.asname;
-
-        doc.isVPN = !!ipInfo.isVPN;
-        doc.isProxy = !!ipInfo.isProxy;
-        doc.isTOR = !!ipInfo.isTOR;
-        doc.hosting = !!ipInfo.hosting;
-        doc.mobile = !!ipInfo.mobile;
-
-        doc.lastIpInfo = ipInfo;
-        doc.lastDevice = device;
-
-        await ipIdentityHistory.ensureLegacyLinkMigrated(doc, { now: nowMs });
+        if (existing) await ipIdentityHistory.ensureLegacyLinkMigrated(existing, { now: nowMs });
 
         const history = await ipIdentityHistory.recordIpIdentityHistory({
             guildId,
@@ -1035,13 +990,53 @@ async function updateIpIdentityTrackingSafe({
             now: nowMs
         });
 
-        doc.uniqueUsers = Number(history?.uniqueUsers || doc.uniqueUsers || 0);
-        doc.updatedAt = nowMs;
-
-        doc.markModified('lastIpInfo');
-        doc.markModified('lastDevice');
-
-        await doc.save();
+        const lastRiskScore = Number(riskSummary?.score ?? ipInfo.riskScore ?? 0);
+        const setFields = {
+            guildName: guildName || existing?.guildName || guildId,
+            lastSeenAt: nowMs,
+            lastResult: result,
+            lastRoleId: roleId,
+            lastRiskScore,
+            lastRiskFlags: Array.isArray(riskSummary?.flags) ? riskSummary.flags : [],
+            lastCountry: ipInfo.country,
+            lastCountryCode: ipInfo.countryCode,
+            lastRegion: ipInfo.region,
+            lastCity: ipInfo.city,
+            lastTimezone: ipInfo.timezone,
+            lastIsp: ipInfo.isp,
+            lastOrg: ipInfo.org,
+            lastAs: ipInfo.as,
+            lastAsname: ipInfo.asname,
+            isVPN: !!ipInfo.isVPN,
+            isProxy: !!ipInfo.isProxy,
+            isTOR: !!ipInfo.isTOR,
+            hosting: !!ipInfo.hosting,
+            mobile: !!ipInfo.mobile,
+            lastIpInfo: ipInfo,
+            lastDevice: device,
+            uniqueUsers: Number(history?.uniqueUsers || existing?.uniqueUsers || 0),
+            updatedAt: nowMs
+        };
+        if (ipInfo.encryptedRawIp) setFields.encryptedRawIp = ipInfo.encryptedRawIp;
+        const doc = await IpIdentityLink.findOneAndUpdate(
+            { guildId, ipHash: ipInfo.ipHash },
+            {
+                $setOnInsert: {
+                    guildId,
+                    ipHash: ipInfo.ipHash,
+                    firstSeenAt: nowMs,
+                    users: [],
+                    deviceFingerprints: [],
+                    roleSnapshots: [],
+                    createdAt: nowMs
+                },
+                $inc: { totalVerifications: 1 },
+                $min: { firstSeenAt: nowMs },
+                $max: { maxRiskScore: lastRiskScore },
+                $set: setFields
+            },
+            { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
 
         return {
             ipHash: doc.ipHash,

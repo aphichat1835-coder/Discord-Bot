@@ -161,16 +161,24 @@ function delegatedCommandHandler(commandName) {
 }
 
 async function discardNewPanel(guildId, message, previousPanel = null) {
+    const disabled = await message.edit({ components: [] })
+        .then(() => true)
+        .catch(err => Number(err?.code) === 10008);
+    const removed = await message.delete()
+        .then(() => true)
+        .catch(err => Number(err?.code) === 10008);
+    if (!disabled && !removed) return false;
     if (previousPanel) panelMessages.set(guildId, previousPanel);
     else panelMessages.delete(guildId);
-    await message.edit({ components: [] }).catch(() => null);
-    await message.delete().catch(() => null);
+    return true;
 }
 
 async function reportPanelPersistenceFailure(interaction, message, previousPanel) {
-    await discardNewPanel(interaction.guild.id, message, previousPanel);
+    const cleanupComplete = await discardNewPanel(interaction.guild.id, message, previousPanel);
     return interaction.followUp({
-        content: `> ${config.emojis.error} สร้างแผงไม่สำเร็จ เพราะบันทึก Panel State ไม่ครบ`,
+        content: cleanupComplete
+            ? `> ${config.emojis.error} สร้างแผงไม่สำเร็จ เพราะบันทึก Panel State ไม่ครบ และยกเลิกแผงใหม่แล้ว`
+            : `> ${config.emojis.warning} บันทึก Panel State ไม่สำเร็จ และปิดแผงใหม่ไม่ได้ ต้องตรวจสอบแผงด้วยตนเอง`,
         ephemeral: true
     }).catch(() => null);
 }
@@ -187,9 +195,11 @@ async function retirePreviousPanel(interaction, previousPanel, newMessage) {
         previousPanel.channel.id,
         previousPanel.id
     ).catch(() => false);
-    await discardNewPanel(interaction.guild.id, newMessage, previousPanel);
+    const cleanupComplete = await discardNewPanel(interaction.guild.id, newMessage, previousPanel);
     await interaction.followUp({
-        content: stateRestored
+        content: !cleanupComplete
+            ? `> ${config.emojis.warning} ปิดแผงเดิมและยกเลิกแผงใหม่ไม่ได้ ต้องตรวจสอบ Panel State และข้อความด้วยตนเอง`
+            : stateRestored
             ? `> ${config.emojis.error} ปิดแผงเดิมไม่ได้ จึงยกเลิกแผงใหม่และคืนค่าเดิมแล้ว`
             : `> ${config.emojis.error} ปิดแผงเดิมและคืน Panel State ไม่สำเร็จ ต้องตรวจสอบจาก Owner Dashboard`,
         ephemeral: true

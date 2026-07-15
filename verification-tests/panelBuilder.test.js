@@ -164,6 +164,13 @@ describe('normalizePanelInput', () => {
     expect(result.verifyType).toBe('direct');
   });
 
+  test.each([
+    [{ mode: 'direct' }, 'mode'],
+    [{ oauthMode: 'direct' }, 'oauthMode'],
+  ])('preserves legacy direct mode from $label', (input) => {
+    expect(normalizePanelInput(input).verifyType).toBe('direct');
+  });
+
   test('showTimestamp is coerced to boolean', () => {
     expect(normalizePanelInput({ showTimestamp: 1 }).showTimestamp).toBe(true);
     expect(normalizePanelInput({ showTimestamp: 0 }).showTimestamp).toBe(false);

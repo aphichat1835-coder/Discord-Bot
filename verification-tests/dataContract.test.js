@@ -565,7 +565,7 @@ describe("unified verification data contract", () => {
         expect(serialized).not.toContain("encrypted-access");
         expect(serialized).not.toContain("encrypted-refresh");
         expect(serialized).not.toContain("access_token");
-        expect(detail.oauthTokens.oauth.hasAccessToken).toBe(true);
+        expect(detail.oauthTokens).toEqual({ oauth: null, adminOAuth: null });
     });
 
     test("normal owner serializers never decrypt or expose raw IP", () => {

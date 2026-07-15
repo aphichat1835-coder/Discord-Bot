@@ -25,8 +25,8 @@ const schema = new mongoose.Schema({
 }, { minimize: false });
 
 schema.index(
-    { userId: 1, snapshotVersion: 1, kind: 1, chunkIndex: 1 },
-    { unique: true }
+    { userId: 1, guildId: 1, snapshotVersion: 1, kind: 1, chunkIndex: 1 },
+    { unique: true, name: "oauth_object_chunk_identity_v2" }
 );
 schema.index({ complete: 1, updatedAt: 1 });
 

@@ -430,7 +430,11 @@ function recoveredLogInput(log) {
     };
 }
 
-async function backfillVerifyLog(log, models, now) {
+function transactionOptions(session, options = {}) {
+    return session ? { ...options, session } : options;
+}
+
+async function backfillVerifyLog(log, models, now, session = null) {
     const input = recoveredLogInput(log);
     if (!input.guildId || !input.ipHash || !input.profile.id) return false;
     await models.IpIdentityLink.updateOne({ guildId: input.guildId, ipHash: input.ipHash }, {
@@ -449,7 +453,7 @@ async function backfillVerifyLog(log, models, now) {
         $min: { firstSeenAt: input.now },
         $max: { lastSeenAt: input.now },
         $set: { updatedAt: now }
-    }, { upsert: true });
+    }, transactionOptions(session, { upsert: true }));
     const recoveredUser = userFields(input);
     delete recoveredUser.firstSeenAt;
     delete recoveredUser.lastSeenAt;
@@ -468,7 +472,7 @@ async function backfillVerifyLog(log, models, now) {
         $min: { firstSeenAt: input.now },
         $max: { lastSeenAt: input.now },
         $inc: { verifyCount: 1, ...resultCounter(input.result) }
-    }, { upsert: true });
+    }, transactionOptions(session, { upsert: true }));
     if (input.device?.fingerprintHash) {
         const filter = {
             guildId: input.guildId,
@@ -492,7 +496,7 @@ async function backfillVerifyLog(log, models, now) {
             $min: { firstSeenAt: input.now },
             $max: { lastSeenAt: input.now },
             $inc: { count: 1 }
-        }, { upsert: true });
+        }, transactionOptions(session, { upsert: true }));
     }
     await models.RoleHistory.updateOne(roleEventFilter(input), {
         $setOnInsert: {
@@ -507,8 +511,22 @@ async function backfillVerifyLog(log, models, now) {
             source: "verify_log_backfill",
             createdAt: now
         }
-    }, { upsert: true });
+    }, transactionOptions(session, { upsert: true }));
     return true;
+}
+
+async function withMigrationTransaction(VerifyLogModel, operation, transactionRunner = null) {
+    if (typeof transactionRunner === "function") return transactionRunner(operation);
+    const session = await VerifyLogModel.db.startSession();
+    let result;
+    try {
+        await session.withTransaction(async () => {
+            result = await operation(session);
+        });
+        return result;
+    } finally {
+        await session.endSession();
+    }
 }
 
 async function migrateVerifyLogHistory(options = {}) {
@@ -516,6 +534,7 @@ async function migrateVerifyLogHistory(options = {}) {
     const VerifyLogModel = options.VerifyLogModel || VerifyLog;
     const limit = Math.min(1000, Math.max(1, Number(options.limit || 200)));
     const now = Number(options.now || Date.now());
+    const transactionRunner = options.transactionRunner || null;
     const logs = await VerifyLogModel.find({
         "ipInfo.ipHash": { $exists: true, $ne: "" },
         ipHistoryMigrationVersion: { $ne: HISTORY_MIGRATION_VERSION }
@@ -524,16 +543,25 @@ async function migrateVerifyLogHistory(options = {}) {
     let migrated = 0;
     let skipped = 0;
     for (const log of logs) {
-        if (await backfillVerifyLog(log, models, now)) {
+        const outcome = await withMigrationTransaction(VerifyLogModel, async session => {
+            const marker = await VerifyLogModel.updateOne({
+                _id: log._id,
+                ipHistoryMigrationVersion: { $ne: HISTORY_MIGRATION_VERSION }
+            }, {
+                $set: { ipHistoryMigrationVersion: HISTORY_MIGRATION_VERSION, ipHistoryMigratedAt: now }
+            }, transactionOptions(session));
+            if (Number(marker?.matchedCount ?? marker?.modifiedCount ?? 0) === 0) {
+                return { alreadyMigrated: true, copied: false };
+            }
+            return { alreadyMigrated: false, copied: await backfillVerifyLog(log, models, now, session) };
+        }, transactionRunner);
+        if (outcome.copied) {
             const key = `${log.guildId}\u0000${log.ipInfo.ipHash}`;
             touched.set(key, { guildId: log.guildId, ipHash: log.ipInfo.ipHash });
-        } else {
+        } else if (!outcome.alreadyMigrated) {
             skipped++;
         }
-        await VerifyLogModel.updateOne({ _id: log._id }, {
-            $set: { ipHistoryMigrationVersion: HISTORY_MIGRATION_VERSION, ipHistoryMigratedAt: now }
-        });
-        migrated++;
+        if (!outcome.alreadyMigrated) migrated++;
     }
     for (const item of touched.values()) {
         const uniqueUsers = await models.UserHistory.countDocuments(item);
@@ -580,6 +608,37 @@ async function ensureLegacyLinkMigrated(link, options = {}) {
     return { migrated: true, summary, version: HISTORY_MIGRATION_VERSION };
 }
 
+async function migrateLegacyLinkEntry(link, index, models, options, now) {
+    try {
+        const result = await ensureLegacyLinkMigrated(link, {
+            ...options,
+            IpIdentityLinkModel: models.IpIdentityLink,
+            UserHistoryModel: models.UserHistory,
+            DeviceHistoryModel: models.DeviceHistory,
+            RoleHistoryModel: models.RoleHistory,
+            now
+        });
+        if (result.migrated) return { migrated: 1, failed: 0, failure: null };
+        if (result.failed) {
+            return {
+                migrated: 0,
+                failed: 1,
+                failure: { index, code: result.summary.failures[0]?.code || "migration_write_failed" }
+            };
+        }
+        return { migrated: 0, failed: 0, failure: null };
+    } catch (error) {
+        const code = migrationErrorCode(error);
+        if (link?._id) {
+            await models.IpIdentityLink.updateOne(
+                { _id: link._id },
+                migrationAttemptUpdate(now, code)
+            ).catch(() => {});
+        }
+        return { migrated: 0, failed: 1, failure: { index, code } };
+    }
+}
+
 async function migrateLegacyHistory(options = {}) {
     const models = defaultModels(options);
     const limit = Math.min(500, Math.max(1, Number(options.limit || 100)));
@@ -591,36 +650,10 @@ async function migrateLegacyHistory(options = {}) {
     let failed = 0;
     const failures = [];
     for (const [index, link] of links.entries()) {
-        try {
-            const result = await ensureLegacyLinkMigrated(link, { ...options,
-                IpIdentityLinkModel: models.IpIdentityLink,
-                UserHistoryModel: models.UserHistory,
-                DeviceHistoryModel: models.DeviceHistory,
-                RoleHistoryModel: models.RoleHistory,
-                now
-            });
-            if (result.migrated) migrated++;
-            else if (result.failed) {
-                failed++;
-                if (failures.length < MAX_MIGRATION_FAILURES) {
-                    failures.push({ index, code: result.summary.failures[0]?.code || "migration_write_failed" });
-                }
-            }
-        } catch (error) {
-            failed++;
-            const code = migrationErrorCode(error);
-            if (failures.length < MAX_MIGRATION_FAILURES) failures.push({ index, code });
-            if (link?._id) {
-                try {
-                    await models.IpIdentityLink.updateOne(
-                        { _id: link._id },
-                        migrationAttemptUpdate(now, code)
-                    );
-                } catch (_) {
-                    // The migration remains unmarked and will be retried in a later batch.
-                }
-            }
-        }
+        const result = await migrateLegacyLinkEntry(link, index, models, options, now);
+        migrated += result.migrated;
+        failed += result.failed;
+        if (result.failure && failures.length < MAX_MIGRATION_FAILURES) failures.push(result.failure);
     }
     return {
         scanned: links.length,

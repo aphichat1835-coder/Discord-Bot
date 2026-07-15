@@ -8,6 +8,8 @@ const {
     validateWebhookUrl,
     normalizeWebhookPayload,
     sendWebhook,
+    sendLogWebhook,
+    flushWebhookQueue,
     WebhookDispatcher,
     buildStartupNotice
 } = require("../core/webhooks");
@@ -168,6 +170,25 @@ test("dispatcher retries transient failures and exposes bounded delivery metrics
     assert.equal(dispatcher.stats().targets.LOG.retried, 1);
     assert.equal(dispatcher.stats().targets.LOG.sent, 1);
     assert.equal(await dispatcher.shutdown(), true);
+});
+
+test("routine dedupe remains isolated per dispatcher and summaries use the original target", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const firstCalls = [];
+    const secondCalls = [];
+    const firstDispatcher = { enqueue: async (target, payload) => { firstCalls.push({ target, payload }); return true; } };
+    const secondDispatcher = { enqueue: async (target, payload) => { secondCalls.push({ target, payload }); return true; } };
+    const options = { dedupeKey: "same-event", dedupeMs: 60_000, summaryLabel: "same event" };
+
+    await sendLogWebhook("first", { ...options, dispatcher: firstDispatcher });
+    await sendLogWebhook("duplicate", { ...options, dispatcher: firstDispatcher });
+    await sendLogWebhook("second destination", { ...options, dispatcher: secondDispatcher });
+    await flushWebhookQueue(20);
+    await new Promise(resolve => setImmediate(resolve));
+
+    assert.equal(firstCalls.length, 2);
+    assert.match(firstCalls[1].payload.content, /เกิดซ้ำเพิ่ม \*\*1\*\*/);
+    assert.equal(secondCalls.length, 1);
+    assert.equal(secondCalls[0].payload, "second destination");
 });
 
 test("normalization enforces Discord payload limits without enabling mentions", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.

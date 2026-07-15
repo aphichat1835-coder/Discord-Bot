@@ -28,11 +28,26 @@ function queryResult(value, rejected = null) {
 function snapshotModel(candidates = []) {
     const documents = candidates.map((candidate, index) => ({
         _id: candidate._id || `snapshot-${index + 1}`,
+        complete: candidate.complete ?? true,
+        updatedAt: candidate.updatedAt ?? 0,
         ...candidate
     }));
+    const matching = filter => documents.filter(document => {
+        const completeMatches = filter?.complete === true
+            ? document.complete === true
+            : filter?.complete?.$ne === true
+                ? document.complete !== true
+                : true;
+        const cutoff = filter?.$or?.[0]?.updatedAt?.$lt;
+        const ageMatches = cutoff === undefined ||
+            (document.updatedAt !== undefined && document.updatedAt < cutoff) ||
+            (document.updatedAt === undefined && document.capturedAt < cutoff);
+        const ids = filter?._id?.$in;
+        return completeMatches && ageMatches && (!ids || ids.includes(document._id));
+    });
     return {
-        find: jest.fn(() => queryResult(documents)),
-        countDocuments: jest.fn().mockResolvedValue(0),
+        find: jest.fn(filter => queryResult(matching(filter))),
+        countDocuments: jest.fn(filter => Promise.resolve(matching(filter).length)),
         deleteMany: jest.fn().mockResolvedValue({ deletedCount: 0 })
     };
 }
@@ -50,12 +65,10 @@ function filteringSnapshotModel({ complete = [], incomplete = [] } = {}) {
     }));
     const completeDocs = withIds(complete, "complete");
     const incompleteDocs = withIds(incomplete, "incomplete");
-    const selectDocs = filter => filter?.complete === true ? completeDocs : incompleteDocs;
-    return {
-        find: jest.fn(filter => queryResult(selectDocs(filter))),
-        countDocuments: jest.fn(filter => Promise.resolve(selectDocs(filter).length)),
-        deleteMany: jest.fn().mockResolvedValue({ deletedCount: 0 })
-    };
+    return snapshotModel([
+        ...completeDocs.map(document => ({ complete: true, updatedAt: 0, ...document })),
+        ...incompleteDocs.map(document => ({ complete: false, updatedAt: 0, ...document }))
+    ]);
 }
 
 describe("permanent-history snapshot garbage cleanup", () => {
@@ -64,9 +77,7 @@ describe("permanent-history snapshot garbage cleanup", () => {
             { userId: "12345678901234567", snapshotVersion: "kept-version" },
             { userId: "12345678901234567", snapshotVersion: "orphan-version" }
         ]);
-        Model.deleteMany
-            .mockResolvedValueOnce({ deletedCount: 2 })
-            .mockResolvedValueOnce({ deletedCount: 3 });
+        Model.deleteMany.mockResolvedValueOnce({ deletedCount: 3 });
         const OAuthUserModel = referenceModel([{
             discord: { userId: "12345678901234567" },
             snapshotRefs: { profile: { version: "kept-version", complete: true } }
@@ -86,10 +97,10 @@ describe("permanent-history snapshot garbage cleanup", () => {
             mode: "permanent_history",
             referencedVersionsKept: 1,
             orphanVersions: 1,
-            incompleteDocuments: 2,
+            incompleteDocuments: 0,
             orphanDocuments: 3
         });
-        const orphanDelete = Model.deleteMany.mock.calls[1][0];
+        const orphanDelete = Model.deleteMany.mock.calls[0][0];
         expect(orphanDelete).toEqual({ complete: true, _id: { $in: ["snapshot-2"] } });
     });
 
@@ -111,16 +122,14 @@ describe("permanent-history snapshot garbage cleanup", () => {
 
         expect(summary.referencedVersionsKept).toBe(1);
         expect(summary.orphanVersions).toBe(0);
-        expect(Model.deleteMany).toHaveBeenCalledTimes(1);
+        expect(Model.deleteMany).not.toHaveBeenCalled();
     });
 
     test("dry-run reports garbage without deleting documents", async () => {
         const Model = snapshotModel([
-            { userId: "12345678901234567", snapshotVersion: "orphan-version" }
+            { userId: "12345678901234567", snapshotVersion: "orphan-version" },
+            { userId: "12345678901234567", snapshotVersion: "incomplete-version", complete: false }
         ]);
-        Model.countDocuments
-            .mockResolvedValueOnce(4)
-            .mockResolvedValueOnce(5);
         const summary = await cleanupSnapshotGarbage({
             dryRun: true,
             now: 2 * 60 * 60 * 1000,
@@ -130,8 +139,8 @@ describe("permanent-history snapshot garbage cleanup", () => {
             VerifyLogModel: referenceModel([])
         });
 
-        expect(summary.incompleteDocuments).toBe(4);
-        expect(summary.orphanDocuments).toBe(5);
+        expect(summary.incompleteDocuments).toBe(1);
+        expect(summary.orphanDocuments).toBe(1);
         expect(Model.deleteMany).not.toHaveBeenCalled();
     });
 
@@ -169,8 +178,7 @@ describe("permanent-history snapshot garbage cleanup", () => {
             VerifyLogModel: referenceModel([])
         });
 
-        expect(Model.deleteMany).toHaveBeenCalledTimes(1);
-        expect(JSON.stringify(Model.deleteMany.mock.calls[0][0])).not.toContain("newly-referenced");
+        expect(Model.deleteMany).not.toHaveBeenCalled();
     });
 
     test("deletes orphan snapshots only from their originating model and id", async () => {
@@ -180,9 +188,7 @@ describe("permanent-history snapshot garbage cleanup", () => {
             snapshotVersion: "shared-version"
         }]);
         const GuildModel = snapshotModel([]);
-        ProfileModel.deleteMany
-            .mockResolvedValueOnce({ deletedCount: 0 })
-            .mockResolvedValueOnce({ deletedCount: 1 });
+        ProfileModel.deleteMany.mockResolvedValueOnce({ deletedCount: 1 });
 
         await cleanupSnapshotGarbage({
             now: 2 * 60 * 60 * 1000,
@@ -212,7 +218,8 @@ describe("permanent-history snapshot garbage cleanup", () => {
         const Model = snapshotModel(Array.from({ length: 12 }, (_, index) => ({
             _id: `incomplete-${index}`,
             userId: "12345678901234567",
-            snapshotVersion: `version-${index}`
+            snapshotVersion: `version-${index}`,
+            complete: false
         })));
         Model.deleteMany.mockResolvedValue({ deletedCount: 2 });
 
@@ -303,6 +310,46 @@ describe("permanent-history snapshot garbage cleanup", () => {
         expect(summary.byModel.objectChunks.incomplete).toBe(1);
         expect(ObjectChunkModel.deleteMany).toHaveBeenCalledWith({
             _id: { $in: ["object-incomplete"] }
+        });
+    });
+
+    test("excludes fresh incomplete and fresh or complete ineligible snapshots", async () => {
+        const Model = snapshotModel([
+            {
+                _id: "stale-incomplete",
+                userId: "12345678901234567",
+                snapshotVersion: "stale-incomplete-version",
+                complete: false,
+                updatedAt: 0
+            },
+            {
+                _id: "fresh-incomplete",
+                userId: "12345678901234567",
+                snapshotVersion: "fresh-incomplete-version",
+                complete: false,
+                updatedAt: 90 * 60 * 1000
+            },
+            {
+                _id: "fresh-complete",
+                userId: "12345678901234567",
+                snapshotVersion: "fresh-complete-version",
+                complete: true,
+                updatedAt: 90 * 60 * 1000
+            }
+        ]);
+        Model.deleteMany.mockResolvedValueOnce({ deletedCount: 1 });
+
+        await cleanupSnapshotGarbage({
+            now: 2 * 60 * 60 * 1000,
+            graceHours: 1,
+            models: { profile: Model },
+            OAuthUserModel: referenceModel([]),
+            VerifyLogModel: referenceModel([])
+        });
+
+        expect(Model.deleteMany).toHaveBeenCalledTimes(1);
+        expect(Model.deleteMany).toHaveBeenCalledWith({
+            _id: { $in: ["stale-incomplete"] }
         });
     });
 

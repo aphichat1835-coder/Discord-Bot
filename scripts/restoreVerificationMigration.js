@@ -8,6 +8,7 @@ const MigrationArchive = require("../discord/verification/models/VerificationMig
 const APPLY = process.argv.includes("--apply");
 const RESTORE_ALL = process.argv.includes("--all");
 const FORCE = process.argv.includes("--force");
+const MAINTENANCE_CONFIRMED = process.argv.includes("--maintenance-confirmed");
 const SOURCE_ID_ARG = process.argv.find(arg => arg.startsWith("--source-id="));
 const SOURCE_ID = SOURCE_ID_ARG ? SOURCE_ID_ARG.slice("--source-id=".length).trim() : "";
 
@@ -68,6 +69,9 @@ async function restoreCursor({
 async function run() {
     const mongoUri = String(process.env.MONGO_URI || "").trim();
     if (!mongoUri) throw new Error("MONGO_URI is required");
+    if (APPLY && !MAINTENANCE_CONFIRMED) {
+        throw new Error("Stop verification writes and add --maintenance-confirmed before applying a restore");
+    }
     const filter = restoreFilter();
     await mongoose.connect(mongoUri, { maxPoolSize: 2 });
     const cursor = MigrationArchive.find(filter)

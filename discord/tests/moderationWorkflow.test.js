@@ -87,15 +87,20 @@ test("moderation workflow reports a successful action with pending reconciliatio
 });
 
 test("moderation workflow marks the pending case failed when Discord action fails", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    const statuses = [];
+    const updates = [];
+    const actionError = new Error("discord failed");
+    actionError.moderationDmSent = true;
     await assert.rejects(workflow.performModeration({ guild: { id: "guild1" } }, { action: "ban" }, {
         createCase: async () => ({ guildId: "guild1", caseNumber: 9, metadata: {} }),
-        applyAction: async () => { throw new Error("discord failed"); },
-        updateStatus: async (_guildId, _caseNumber, status) => {
-            statuses.push(status);
+        applyAction: async () => { throw actionError; },
+        updateStatus: async (_guildId, _caseNumber, status, metadata) => {
+            updates.push({ status, metadata });
             return { status };
         },
         sendCaseLog: async () => true
     }), /discord failed/);
-    assert.deepEqual(statuses, ["failed"]);
+    assert.deepEqual(updates, [{
+        status: "failed",
+        metadata: { actionApplied: false, dmSent: true, failureCode: "action_failed" }
+    }]);
 });

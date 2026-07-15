@@ -1336,7 +1336,13 @@ async function loadSnapshotData(snapshot) {
         const meta = source.chunkMeta[kind];
         if (!meta?.complete || !Number.isInteger(meta.chunkCount) || meta.chunkCount < 1) return null;
         const docs = await SnapshotChunkModel.find({ snapshotId: source.snapshotId, kind }).sort({ chunkIndex: 1 }).lean();
-        if (docs.length !== meta.chunkCount || docs.some((doc, index) => !doc.complete || doc.chunkIndex !== index)) return null;
+        if (docs.length !== meta.chunkCount || docs.some((doc, index) => {
+            const items = Array.isArray(doc.items) ? doc.items : [];
+            return !doc.complete ||
+                doc.chunkIndex !== index ||
+                doc.itemCount !== items.length ||
+                doc.byteSize !== Buffer.byteLength(JSON.stringify(items), "utf8");
+        })) return null;
         data[kind] = docs.flatMap(doc => Array.isArray(doc.items) ? doc.items : []);
         if (data[kind].length !== meta.returnedCount || data[kind].length !== meta.storedCount) return null;
     }

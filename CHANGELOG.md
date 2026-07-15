@@ -20,7 +20,17 @@
   `@everyone` role, combine channel role overwrites using Discord's documented
   order, honor implicit View/Send/Embed denials, and exclude Forum containers
   that cannot receive a panel message directly. Verification maintenance now
-  retains its recovery interval when the initial startup run fails.
+  creates its recovery interval only after the initial startup run succeeds, so
+  failed startup leaves no leaked timer and a later start can retry immediately.
+
+- Closed the latest reliability, privacy, persistence, and review findings:
+  Voice reconnect guards always release, panel rollback remains trackable on
+  Discord cleanup failure, moderation DM evidence reconciles correctly,
+  redacted member search/detail cannot infer OAuth email or token state,
+  webhook deduplication remains destination-bound, restore payloads are bound
+  to their guild metadata, IP history migration is transactionally idempotent,
+  privacy deletion is atomic, snapshot chunk/index integrity is validated, and
+  restore apply now requires an explicitly confirmed maintenance window.
 
 - Hardened persistence consistency before merge: bounded internal-event storage,
   BSON-sized Snapshot documents, acknowledged rollback/recovery writes, panel

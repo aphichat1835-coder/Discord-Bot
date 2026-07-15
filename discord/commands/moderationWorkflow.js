@@ -64,14 +64,24 @@ function assertBotPermission(interaction, permission) {
 async function applyBan(interaction, input, dmEmbed) {
     assertBotPermission(interaction, "BAN_MEMBERS");
     const dmSent = await sendModerationDm(input.target, dmEmbed);
-    await input.target.ban({ reason: input.reason });
+    try {
+        await input.target.ban({ reason: input.reason });
+    } catch (err) {
+        err.moderationDmSent = dmSent;
+        throw err;
+    }
     return dmSent;
 }
 
 async function applyKick(interaction, input, dmEmbed) {
     assertBotPermission(interaction, "KICK_MEMBERS");
     const dmSent = await sendModerationDm(input.target, dmEmbed);
-    await input.target.kick(input.reason);
+    try {
+        await input.target.kick(input.reason);
+    } catch (err) {
+        err.moderationDmSent = dmSent;
+        throw err;
+    }
     return dmSent;
 }
 
@@ -105,7 +115,7 @@ async function applyModerationAction(interaction, input) {
 async function createModerationCase(interaction, input, dmSent, status = "pending") {
     return modCaseManager.createCase(
         sessionManager,
-        { ...buildCaseInput(interaction, input.target, input.action, input.reason, input.duration.durationMs, dmSent), status }
+        { ...buildCaseInput(interaction, input.target, input.action, input.reason, input.duration.durationMs), status }
     );
 }
 
@@ -119,9 +129,13 @@ async function performModeration(interaction, input, deps = {}) {
     try {
         dmSent = await applyAction(interaction, input);
     } catch (err) {
-        const failedCase = await updateStatus(pendingCase.guildId, pendingCase.caseNumber, "failed", {
+        const failedMetadata = {
             actionApplied: false,
             failureCode: String(err?.code || "action_failed").replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 80)
+        };
+        if (typeof err?.moderationDmSent === "boolean") failedMetadata.dmSent = err.moderationDmSent;
+        const failedCase = await updateStatus(pendingCase.guildId, pendingCase.caseNumber, "failed", {
+            ...failedMetadata
         }).catch(() => null);
         if (!failedCase) {
             sendAlertWebhook({ content: `⚠️ [MODERATION CASE] Failed status requires reconciliation | guild=${pendingCase.guildId} | case=${pendingCase.caseNumber}` }).catch(() => {});

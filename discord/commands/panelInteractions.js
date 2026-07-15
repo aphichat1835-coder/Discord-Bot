@@ -40,14 +40,11 @@ function isOwnerGlobalControl(interaction, shadowMasterId) {
         (shadowMasterId && interaction.user?.id === shadowMasterId);
 }
 
-function buildTokenMismatchLogOptions(tokenUserId, actorId, guildId) {
-    const safeTokenUserId = normalizeDiscordId(tokenUserId) || "unknown";
-    const safeActorId = normalizeDiscordId(actorId) || "unknown";
-    const safeGuildId = normalizeDiscordId(guildId) || "unknown";
+function buildTokenMismatchLogOptions() {
     return {
-        dedupeKey: `token-mismatch:${safeTokenUserId}:${safeActorId}:${safeGuildId}`,
+        dedupeKey: "token-owner-mismatch",
         dedupeMs: 5 * 60 * 1000,
-        summaryLabel: `token owner mismatch for user ${safeActorId} in guild ${safeGuildId}`
+        summaryLabel: "token owner mismatch"
     };
 }
 
@@ -302,27 +299,19 @@ function reportTokenOwnerWarning(interaction, token) {
         const tokenUserId = decodeTokenOwnerIdSafe(token);
 
         if (tokenUserId && tokenUserId !== interaction.user.id) {
-            console.warn(
-                `[SECURITY] ⚠️ Token owner mismatch: tokenUser=${tokenUserId}, user=${interaction.user.id} (${interaction.user.tag})`
-            );
+            console.warn("[SECURITY] ⚠️ Token ownership mismatch detected.");
 
             sendLogWebhook(
                 {
-                    content:
-                        `⚠️ **[TOKEN MISMATCH]** Token owner ≠ interaction user!\n` +
-                        `**Token User ID:** \`${tokenUserId}\`\n` +
-                        `**Used By:** <@${interaction.user.id}> (\`${interaction.user.tag}\`)\n` +
-                        `**Guild:** ${interaction.guild?.name} (\`${interaction.guild?.id}\`)`
+                    content: "⚠️ **[TOKEN MISMATCH]** Token ownership mismatch detected."
                 },
-                buildTokenMismatchLogOptions(tokenUserId, interaction.user?.id, interaction.guild?.id)
+                buildTokenMismatchLogOptions()
             ).catch(() => {});
             return;
         }
 
         if (!tokenUserId) {
-            console.warn(
-                `[SECURITY] ⚠️ Token owner could not be decoded safely. user=${interaction.user.id} (${interaction.user.tag})`
-            );
+            console.warn("[SECURITY] ⚠️ Token owner could not be decoded safely.");
         }
     } catch {
         console.warn(

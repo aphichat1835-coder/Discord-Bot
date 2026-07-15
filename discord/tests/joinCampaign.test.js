@@ -1,4 +1,3 @@
-const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const test = require("node:test");
 
@@ -43,11 +42,11 @@ test("join campaign candidate summary uses only tokens with guilds.join", (t) =>
     const summary = joinCampaign.summarizeJoinCandidates(docs);
 
     t.assert.equal(summary.scannedRecords, 4);
-    assert.equal(summary.uniqueUsers, 3);
-    assert.equal(summary.usableUsers, 2);
-    assert.equal(summary.missingScope, 1);
-    assert.equal(summary.byTokenField.oauth, 1);
-    assert.equal(summary.byTokenField.adminOAuth, 1);
+    t.assert.equal(summary.uniqueUsers, 3);
+    t.assert.equal(summary.usableUsers, 2);
+    t.assert.equal(summary.missingScope, 1);
+    t.assert.equal(summary.byTokenField.oauth, 1);
+    t.assert.equal(summary.byTokenField.adminOAuth, 1);
 });
 
 test("join campaign refreshes expiring token before adding member", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
@@ -75,8 +74,8 @@ test("join campaign refreshes expiring token before adding member", async (t) =>
     const fakeDiscord = {
         getGuildMemberWithBot: async () => null,
         refreshToken: async (refreshToken, redirectUri) => {
-            assert.equal(refreshToken, "old-refresh");
-            assert.match(redirectUri, /\/auth\/callback$/);
+            t.assert.equal(refreshToken, "old-refresh");
+            t.assert.match(redirectUri, /\/auth\/callback$/);
             return {
                 access_token: "new-access",
                 refresh_token: "new-refresh",
@@ -119,16 +118,16 @@ test("join campaign refreshes expiring token before adding member", async (t) =>
     });
 
     t.assert.equal(summary.joined, 1);
-    assert.equal(summary.refreshed, 1);
-    assert.equal(summary.failed, 0);
-    assert.equal(joined.length, 1);
-    assert.deepEqual(joined[0], {
+    t.assert.equal(summary.refreshed, 1);
+    t.assert.equal(summary.failed, 0);
+    t.assert.equal(joined.length, 1);
+    t.assert.deepEqual(joined[0], {
         guildId: "123456789012345678",
         userId: "100",
         accessToken: "new-access"
     });
-    assert.equal(updates.length, 1);
-    assert.equal(updates[0].update.$set.oauth.encryptedAccessToken, "enc:new-access");
+    t.assert.equal(updates.length, 1);
+    t.assert.equal(updates[0].update.$set.oauth.encryptedAccessToken, "enc:new-access");
 });
 
 test("Thai join campaign log summarizes counts without raw tokens", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
@@ -154,9 +153,9 @@ test("Thai join campaign log summarizes counts without raw tokens", (t) => { // 
     }, "finish");
 
     t.assert.match(payload.content, /งานดึงสมาชิกเข้าเซิร์ฟเวอร์เสร็จแล้ว/);
-    assert.match(payload.content, /ดึงเข้าสำเร็จ: 5/);
-    assert.equal(payload.content.includes("new-access"), false);
-    assert.equal(payload.content.includes("old-refresh"), false);
+    t.assert.match(payload.content, /ดึงเข้าสำเร็จ: 5/);
+    t.assert.equal(payload.content.includes("new-access"), false);
+    t.assert.equal(payload.content.includes("old-refresh"), false);
 });
 
 test("join campaign route helpers list and resolve allowed target guilds", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
@@ -172,11 +171,11 @@ test("join campaign route helpers list and resolve allowed target guilds", (t) =
 
         const targets = listJoinCampaignTargets(client);
         t.assert.equal(targets.length, 1);
-        assert.equal(targets[0].id, "111111111111111111");
+        t.assert.equal(targets[0].id, "111111111111111111");
 
-        assert.equal(resolveJoinCampaignTarget(client, "111111111111111111").ok, true);
-        assert.equal(resolveJoinCampaignTarget(client, "222222222222222222").status, 403);
-        assert.equal(resolveJoinCampaignTarget(client, "333333333333333333").status, 403);
+        t.assert.equal(resolveJoinCampaignTarget(client, "111111111111111111").ok, true);
+        t.assert.equal(resolveJoinCampaignTarget(client, "222222222222222222").status, 403);
+        t.assert.equal(resolveJoinCampaignTarget(client, "333333333333333333").status, 403);
     } finally {
         if (oldAllowed === undefined) delete process.env.JOIN_CAMPAIGN_ALLOWED_GUILDS;
         else process.env.JOIN_CAMPAIGN_ALLOWED_GUILDS = oldAllowed;
@@ -202,8 +201,8 @@ test("startJoinCampaign rejects disabled config before creating an active job", 
     });
 
     t.assert.equal(result.ok, false);
-    assert.equal(result.error, "campaign_disabled");
-    assert.equal(joinCampaign.getJoinCampaignStatus().active, null);
+    t.assert.equal(result.error, "campaign_disabled");
+    t.assert.equal(joinCampaign.getJoinCampaignStatus().active, null);
 });
 
 test("join campaign allows every bot guild when allowlist is empty", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
@@ -226,8 +225,8 @@ test("join campaign allows every bot guild when allowlist is empty", async (t) =
         },
         sendWebhook: async () => true
     });
-    assert.equal(summary.status, "finished");
-    assert.equal(summary.scannedRecords, 0);
+    t.assert.equal(summary.status, "finished");
+    t.assert.equal(summary.scannedRecords, 0);
 });
 
 test("join campaign follows database cursor batches until every OAuth user is scanned", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
@@ -269,12 +268,12 @@ test("join campaign follows database cursor batches until every OAuth user is sc
     });
 
     t.assert.equal(summary.scannedRecords, 3);
-    assert.equal(summary.uniqueUsers, 2);
-    assert.equal(summary.usableUsers, 2);
-    assert.equal(summary.missingScope, 0);
-    assert.equal(summary.batches, 2);
-    assert.equal(calls.length, 2);
-    assert.deepEqual(calls[1].$and.at(-1), { _id: { $gt: "2" } });
+    t.assert.equal(summary.uniqueUsers, 2);
+    t.assert.equal(summary.usableUsers, 2);
+    t.assert.equal(summary.missingScope, 0);
+    t.assert.equal(summary.batches, 2);
+    t.assert.equal(calls.length, 2);
+    t.assert.deepEqual(calls[1].$and.at(-1), { _id: { $gt: "2" } });
 });
 
 test("join campaign has no Sync Roles UI or route surface", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
@@ -288,12 +287,11 @@ test("join campaign has no Sync Roles UI or route surface", (t) => { // NOSONAR 
     ].join("\n");
 
     t.assert.equal(/sync-roles/i.test(runtimeSurface), false);
-    assert.equal(/syncRoles/.test(runtimeSurface), false);
-    assert.equal(/Sync Roles/.test(runtimeSurface), false);
+    t.assert.equal(/syncRoles/.test(runtimeSurface), false);
+    t.assert.equal(/Sync Roles/.test(runtimeSurface), false);
 });
 
 test("join campaign confirmation stays bound to the guild captured before dry-run", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
-    t.assert.ok(true);
     const source = fs.readFileSync("discord/index/joinCampaignPage.js", "utf8");
     const start = source.indexOf("async function startCampaign()");
     const capturedName = source.indexOf("const guildName=", start);
@@ -301,7 +299,7 @@ test("join campaign confirmation stays bound to the guild captured before dry-ru
     const selectionGuard = source.indexOf("if(selectedGuildId() !== guildId)", dryRun);
     const confirmation = source.indexOf("window.confirm", dryRun);
 
-    assert.ok(start >= 0);
-    assert.ok(capturedName > start && capturedName < dryRun);
-    assert.ok(selectionGuard > dryRun && selectionGuard < confirmation);
+    t.assert.ok(start >= 0);
+    t.assert.ok(capturedName > start && capturedName < dryRun);
+    t.assert.ok(selectionGuard > dryRun && selectionGuard < confirmation);
 });

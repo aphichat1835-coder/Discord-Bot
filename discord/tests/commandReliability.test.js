@@ -95,6 +95,38 @@ test("voice panel rejects a second create while the guild operation is active", 
     }
 });
 
+test("panel rollback keeps tracking the replacement when Discord cleanup fails", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const previous = { id: "previous" };
+    const replacement = {
+        id: "replacement",
+        edit: async () => { throw new Error("edit failed"); },
+        delete: async () => { throw new Error("delete failed"); }
+    };
+    commands.getPanelMessages().set("guild", replacement);
+    try {
+        assert.equal(await commands._test.discardNewPanel("guild", replacement, previous), false);
+        assert.equal(commands.getPanelMessages().get("guild"), replacement);
+    } finally {
+        commands.getPanelMessages().delete("guild");
+    }
+});
+
+test("panel rollback restores the previous panel only after cleanup succeeds", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const previous = { id: "previous" };
+    const replacement = {
+        id: "replacement",
+        edit: async () => ({}),
+        delete: async () => ({})
+    };
+    commands.getPanelMessages().set("guild", replacement);
+    try {
+        assert.equal(await commands._test.discardNewPanel("guild", replacement, previous), true);
+        assert.equal(commands.getPanelMessages().get("guild"), previous);
+    } finally {
+        commands.getPanelMessages().delete("guild");
+    }
+});
+
 test("command router delegates registered command groups without changing handlers", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.equal(commands._test.delegatedCommandHandler("ping"), information.handle);
     assert.equal(typeof commands._test.delegatedCommandHandler("ban"), "function");

@@ -238,8 +238,7 @@ function requestDiscordApi(endpointPath, options = {}) {
 
             if (Number.isFinite(contentLength) && contentLength > DISCORD_API_RESPONSE_MAX_BYTES) {
                 requestDiagnostics.responseTooLarge += 1;
-                res.resume();
-                fail(new Error(`Discord API response too large: ${contentLength} bytes`));
+                req.destroy(new Error(`Discord API response too large: ${contentLength} bytes`));
                 return;
             }
 

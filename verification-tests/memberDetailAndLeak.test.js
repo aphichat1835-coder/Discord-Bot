@@ -82,6 +82,7 @@ describe("member detail serialization and leak guards", () => {
         expect(detail.account.email).toBeNull();
         expect(detail.connections).toEqual([]);
         expect(detail.guilds).toEqual([]);
+        expect(detail.oauthTokens).toEqual({ oauth: null, adminOAuth: null });
     });
 
     test("legacy verified member serializer marks OAuthUser-only records as read-only legacy", () => {

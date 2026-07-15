@@ -290,7 +290,8 @@ describe("unbounded IP identity history", () => {
             DeviceHistoryModel,
             RoleHistoryModel,
             limit: 2,
-            now: 100
+            now: 100,
+            transactionRunner: operation => operation("test-session")
         });
 
         expect(result).toMatchObject({ scanned: 2, migrated: 2, skipped: 0, remaining: true });
@@ -312,8 +313,9 @@ describe("unbounded IP identity history", () => {
             .not.toBe(RoleHistoryModel.updateOne.mock.calls[1][0].$or[0].eventId.$in[0]);
         expect(VerifyLogModel.updateOne).toHaveBeenCalledTimes(2);
         expect(VerifyLogModel.updateOne).toHaveBeenLastCalledWith(
-            { _id: "log-2" },
-            { $set: { ipHistoryMigrationVersion: 1, ipHistoryMigratedAt: 100 } }
+            { _id: "log-2", ipHistoryMigrationVersion: { $ne: 1 } },
+            { $set: { ipHistoryMigrationVersion: 1, ipHistoryMigratedAt: 100 } },
+            { session: "test-session" }
         );
         expect(IpIdentityLinkModel.updateOne).toHaveBeenLastCalledWith(
             { guildId: "12345678901234567", ipHash: "hash" },

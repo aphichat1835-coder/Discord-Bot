@@ -16,6 +16,9 @@
 */
 
 const router = require("express").Router();
+const RISK_CACHE_TTL_MS = 15 * 1000;
+const RISK_CACHE_MAX = 500;
+const riskSummaryCache = new Map();
 
 const GuildConfig = require("../models/GuildConfig");
 const VerifyLog = require("../models/VerifyLog");
@@ -239,7 +242,7 @@ async function topDistribution(guildId, labelExpression, limit = 12) {
     ]);
 }
 
-async function buildRiskSummary(guildId, options = {}) {
+async function buildRiskSummaryUncached(guildId, options = {}) {
     const canViewSensitive = options.canViewSensitive === true;
     const [countries, isps, devices, reasons, recentLogs] = await Promise.all([
         topDistribution(guildId, {
@@ -271,6 +274,26 @@ async function buildRiskSummary(guildId, options = {}) {
         recentRiskLogs: recentLogs.map(log => safeLog(log, { canViewSensitive })),
         sampled: false
     };
+}
+
+function trimRiskSummaryCache() {
+    while (riskSummaryCache.size > RISK_CACHE_MAX) {
+        riskSummaryCache.delete(riskSummaryCache.keys().next().value);
+    }
+}
+
+async function buildRiskSummary(guildId, options = {}) {
+    const key = `${String(guildId)}:${options.canViewSensitive === true ? "sensitive" : "redacted"}`;
+    const timestamp = Date.now();
+    const existing = riskSummaryCache.get(key);
+    if (existing && existing.expiresAt > timestamp) return existing.promise;
+    const promise = buildRiskSummaryUncached(guildId, options).catch(err => {
+        if (riskSummaryCache.get(key)?.promise === promise) riskSummaryCache.delete(key);
+        throw err;
+    });
+    riskSummaryCache.set(key, { expiresAt: timestamp + RISK_CACHE_TTL_MS, promise });
+    trimRiskSummaryCache();
+    return promise;
 }
 
 async function buildRecentMembers(guildId, limit = 8, options = {}) {
@@ -360,6 +383,7 @@ router.get("/api/guild/:guildId/overview", requireAdmin, requireGuildAdmin, asyn
     const { guildId } = req.params;
 
     try {
+        res.set("Cache-Control", "no-store");
         const [config, stats, riskSummary, recentLogs] = await Promise.all([
             GuildConfig.findOne({ guildId }).lean(),
             buildStats(guildId),
@@ -394,6 +418,7 @@ router.get("/api/guild/:guildId/risk", requireAdmin, requireGuildAdmin, async (r
     const { guildId } = req.params;
 
     try {
+        res.set("Cache-Control", "no-store");
         res.json({
             success: true,
             guild: req.adminGuild,
@@ -410,7 +435,8 @@ router._test = {
     shouldAuditOverview,
     safeServerError,
     topDistribution,
-    buildRiskSummary
+    buildRiskSummary,
+    clearRiskSummaryCache: () => riskSummaryCache.clear()
 };
 
 module.exports = router;

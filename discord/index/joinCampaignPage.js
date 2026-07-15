@@ -39,14 +39,14 @@ ${navBar("/join-campaign")}
 <div class="card">
     <h3>📊 สถานะงาน</h3>
     <div class="mini-grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));">
-        <div class="mini-stat"><span>สถานะ</span><b id="campaignStatus">ยังไม่มีงาน</b></div>
+        <div class="mini-stat"><span>สถานะ</span><b id="campaignStatus" role="status" aria-live="polite">ยังไม่มีงาน</b></div>
         <div class="mini-stat"><span>Records</span><b id="scannedRecords">0</b></div>
         <div class="mini-stat"><span>Users</span><b id="uniqueUsers">0</b></div>
         <div class="mini-stat"><span>Refresh แล้ว</span><b id="refreshedUsers">0</b></div>
         <div class="mini-stat"><span>ขาด scope</span><b id="missingScope">0</b></div>
         <div class="mini-stat"><span>Rate limit</span><b id="rateLimited">0</b></div>
     </div>
-    <div class="terminal" id="campaignLog" role="status" aria-live="polite" style="height:240px;margin-top:14px;"></div>
+    <div class="terminal" id="campaignLog" style="height:240px;margin-top:14px;"></div>
 </div>
 </div>
 

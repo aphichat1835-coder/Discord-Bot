@@ -105,11 +105,14 @@ or IP values. It is additive and does not delete fields/collections.
 
 Inspect or restore an automatically archived original document:
 
+For `--apply`, first stop the bot runtime so all OAuth and verification writes
+remain paused until the restore command finishes.
+
 ```bash
 npm run restore:verification -- --source-id=OAUTH_USER_DOCUMENT_ID
-npm run restore:verification -- --source-id=OAUTH_USER_DOCUMENT_ID --apply
+npm run restore:verification -- --source-id=OAUTH_USER_DOCUMENT_ID --apply --maintenance-confirmed
 # Only after confirming that newer live OAuth data may be overwritten:
-npm run restore:verification -- --source-id=OAUTH_USER_DOCUMENT_ID --apply --force
+npm run restore:verification -- --source-id=OAUTH_USER_DOCUMENT_ID --apply --force --maintenance-confirmed
 ```
 
 The first restore command changes nothing. This archive is in the same MongoDB

@@ -1,11 +1,6 @@
-const { sanitizeLogText } = require("../core/safeLogger");
+const { safeText } = require("../logging/persistenceHelpers");
 const modCaseManager = require("../logging/modCaseManager");
 const { sendAlertWebhook } = require("../core/webhooks");
-
-function safeText(value, max = 500) {
-    const limit = Math.max(1, Number(max) || 500);
-    return sanitizeLogText(String(value ?? "")).slice(0, limit) || "-";
-}
 
 function normalizeEvidenceItem(item) {
     if (item === undefined || item === null) return null;

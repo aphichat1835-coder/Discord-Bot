@@ -187,11 +187,14 @@ The first command is dry-run mode.
 
 Rollback inspection is also dry-run by default:
 
+Before either `--apply` command, stop the bot runtime (or otherwise pause every
+OAuth and verification write) for the entire restore maintenance window.
+
 ```bash
 npm run restore:verification -- --source-id=OAUTH_USER_DOCUMENT_ID
-npm run restore:verification -- --source-id=OAUTH_USER_DOCUMENT_ID --apply
+npm run restore:verification -- --source-id=OAUTH_USER_DOCUMENT_ID --apply --maintenance-confirmed
 # Only when intentionally replacing newer live state:
-npm run restore:verification -- --source-id=OAUTH_USER_DOCUMENT_ID --apply --force
+npm run restore:verification -- --source-id=OAUTH_USER_DOCUMENT_ID --apply --force --maintenance-confirmed
 ```
 
 The archive is stored in the same MongoDB database. It protects against a bad

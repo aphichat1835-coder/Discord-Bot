@@ -84,3 +84,16 @@ test("snapshot history schema keeps one additive active pointer without deleting
     assert.equal(typeof getLatestSnapshotForGuild, "function");
     assert.equal(typeof reconcileSnapshotPointers, "function");
 });
+
+test("restore snapshot identity binds payload, metadata, and preview target guild", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const backup = {
+        guildId: "111111111111111111",
+    };
+    const data = { guild: { id: "111111111111111111" } };
+    assert.equal(utility._test.snapshotIdentityMatches(backup, data, "111111111111111111"), true);
+    assert.equal(utility._test.snapshotIdentityMatches(backup, data, "222222222222222222"), false);
+    assert.equal(utility._test.snapshotIdentityMatches(
+        backup,
+        { guild: { id: "222222222222222222" } }
+    ), false);
+});

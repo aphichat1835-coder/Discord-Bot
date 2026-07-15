@@ -5,35 +5,16 @@
  */
 
 const mongoose = require("mongoose");
-const { sanitizeLogText, safeError } = require("../core/safeLogger");
+const { safeError } = require("../core/safeLogger");
 const modCaseStore = require("./modCaseStore");
-const fallbackLocks = new Map();
-
-function safeText(value, max = 500) {
-    return sanitizeLogText(String(value ?? "")).slice(0, Math.max(1, Number(max) || 500)) || "-";
-}
+const { safeText, withFallbackLock: withSharedFallbackLock } = require("./persistenceHelpers");
 
 function safeErrorText(err, max = 500) {
     return safeText(safeError(err), max);
 }
 
 async function withFallbackLock(key, fn) {
-    const lockKey = String(key || "global");
-    const previous = fallbackLocks.get(lockKey) || Promise.resolve();
-    let release;
-    const current = new Promise(resolve => {
-        release = resolve;
-    });
-    const lock = previous.catch(() => {}).then(() => current);
-    fallbackLocks.set(lockKey, lock);
-
-    try {
-        await previous.catch(() => {});
-        return await fn();
-    } finally {
-        release();
-        if (fallbackLocks.get(lockKey) === lock) fallbackLocks.delete(lockKey);
-    }
+    return withSharedFallbackLock(`modcase:${String(key || "global")}`, fn);
 }
 
 function counterKey(guildId) {
@@ -119,7 +100,11 @@ async function nextCaseNumberFallback(sessionManager, guildId) {
         const key = counterKey(guildId);
         const read = await readSettingValue(sessionManager, key, 0);
         if (!read.ok) throw new Error("CASE_COUNTER_READ_FAILED");
-        const current = Number(read.value) || 0;
+        let mongoMaximum = 0;
+        if (canUseMongoStore() && typeof modCaseStore.getMaxCaseNumber === "function") {
+            mongoMaximum = await modCaseStore.getMaxCaseNumber(guildId).catch(() => 0);
+        }
+        const current = Math.max(Number(read.value) || 0, Number(mongoMaximum) || 0);
         const next = current + 1;
         if (await sessionManager.setSetting(key, next) !== true) {
             throw new Error("CASE_COUNTER_SAVE_FAILED");
@@ -212,10 +197,6 @@ async function getSettingsCase(sessionManager, guildId, caseNumber) {
 
 async function getCase(sessionManager, guildId, caseNumber) {
     if (!guildId || !caseNumber) return null;
-    let settingsDoc;
-    try { settingsDoc = await getSettingsCase(sessionManager, guildId, caseNumber); }
-    catch { return null; }
-    if (settingsDoc) return settingsDoc;
     if (canUseMongoStore()) {
         try {
             const doc = await modCaseStore.getCase(guildId, caseNumber);
@@ -224,7 +205,8 @@ async function getCase(sessionManager, guildId, caseNumber) {
             console.warn(`[MODCASE] Mongo get failed, fallback settings: ${safeErrorText(err, 240)}`);
         }
     }
-    return null;
+    try { return await getSettingsCase(sessionManager, guildId, caseNumber); }
+    catch { return null; }
 }
 
 async function listSettingsUserCases(sessionManager, guildId, userId, max) {
@@ -242,8 +224,8 @@ async function listSettingsUserCases(sessionManager, guildId, userId, max) {
 
 function mergeCaseLists(settingsCases, mongoCases, max) {
     const byCaseNumber = new Map();
-    for (const doc of mongoCases || []) byCaseNumber.set(String(doc.caseNumber), doc);
     for (const doc of settingsCases || []) byCaseNumber.set(String(doc.caseNumber), doc);
+    for (const doc of mongoCases || []) byCaseNumber.set(String(doc.caseNumber), doc);
     return [...byCaseNumber.values()]
         .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0) || Number(b.caseNumber || 0) - Number(a.caseNumber || 0))
         .slice(0, max);

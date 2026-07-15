@@ -641,7 +641,7 @@ async function sendReadyNotice() {
 
 async function resumeVoiceSessionsAfterReady() {
     await voiceWorker.autoResume();
-    await memoryMonitor.captureMemorySnapshot?.("after-auto-resume", {
+    memoryMonitor.captureMemorySnapshot?.("after-auto-resume", {
         voiceWorker,
         sessionManager,
         client
