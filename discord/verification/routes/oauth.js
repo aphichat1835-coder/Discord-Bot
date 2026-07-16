@@ -336,6 +336,14 @@ function safeSnowflakeStrict(value, label = "discord_id") {
     throw err;
 }
 
+function safeIpHashStrict(value) {
+    const text = String(value || "").trim().toLowerCase();
+    if (/^[a-f0-9]{64}$/.test(text)) return text;
+    const err = new Error("invalid ip_hash");
+    err.code = "invalid_ip_hash";
+    throw err;
+}
+
 function safePlainObject(value) {
     if (
         !value ||
@@ -1013,18 +1021,22 @@ async function updateIpIdentityTrackingSafe({
         if (!guildId || !profile?.id || !ipInfo?.ipHash) return null;
 
         const nowMs = Date.now();
+        const safeGuildId = safeSnowflakeStrict(guildId, 'guild_id');
+        const safeProfileId = safeSnowflakeStrict(profile.id, 'discord_user_id');
+        const safeIpHash = safeIpHashStrict(ipInfo.ipHash);
 
         const existing = await IpIdentityLink.findOne({
-            guildId,
-            ipHash: ipInfo.ipHash
+            guildId: safeGuildId,
+            ipHash: safeIpHash
         });
         if (existing) await ipIdentityHistory.ensureLegacyLinkMigrated(existing, { now: nowMs });
 
         const history = await ipIdentityHistory.recordIpIdentityHistory({
-            guildId,
-            ipHash: ipInfo.ipHash,
+            guildId: safeGuildId,
+            ipHash: safeIpHash,
             profile: {
                 ...profile,
+                id: safeProfileId,
                 displayTag: displayTag(profile),
                 avatarUrl: getAvatarUrl(profile)
             },
@@ -1039,7 +1051,7 @@ async function updateIpIdentityTrackingSafe({
 
         const lastRiskScore = Number(riskSummary?.score ?? ipInfo.riskScore ?? 0);
         const setFields = {
-            guildName: guildName || existing?.guildName || guildId,
+            guildName: guildName || existing?.guildName || safeGuildId,
             lastSeenAt: nowMs,
             lastResult: result,
             lastRoleId: roleId,
@@ -1066,11 +1078,11 @@ async function updateIpIdentityTrackingSafe({
         };
         if (ipInfo.encryptedRawIp) setFields.encryptedRawIp = ipInfo.encryptedRawIp;
         const doc = await IpIdentityLink.findOneAndUpdate(
-            { guildId, ipHash: ipInfo.ipHash },
+            { guildId: safeGuildId, ipHash: safeIpHash },
             {
                 $setOnInsert: {
-                    guildId,
-                    ipHash: ipInfo.ipHash,
+                    guildId: safeGuildId,
+                    ipHash: safeIpHash,
                     firstSeenAt: nowMs,
                     users: [],
                     deviceFingerprints: [],
@@ -1645,9 +1657,13 @@ router.post('/auth/callback', async (req, res) => {
         ipInfo = await safeProcessIP(req);
         device = safeExtractDevice(req);
 
-        const guildId = stateObj.guildId;
-        const stateRoleId = stateObj.roleId;
-        const expectedUserId = stateObj.expectedUserId || null;
+        const guildId = safeSnowflakeStrict(stateObj.guildId, 'guild_id');
+        const stateRoleId = stateObj.roleId
+            ? safeSnowflakeStrict(stateObj.roleId, 'role_id')
+            : null;
+        const expectedUserId = stateObj.expectedUserId
+            ? safeSnowflakeStrict(stateObj.expectedUserId, 'expected_user_id')
+            : null;
 
         guildConfig = await GuildConfig.findOne({ guildId });
 
@@ -2003,9 +2019,10 @@ router.post('/auth/callback', async (req, res) => {
         };
 
         if (ipInfo?.ipHash) {
+            const safeIpHash = safeIpHashStrict(ipInfo.ipHash);
             existingIpLink = await safeSideEffect(
                 'loadIpIdentityLink',
-                () => IpIdentityLink.findOne({ guildId, ipHash: ipInfo.ipHash }).lean(),
+                () => IpIdentityLink.findOne({ guildId, ipHash: safeIpHash }).lean(),
                 null
             );
         }
@@ -2250,6 +2267,7 @@ module.exports._test = {
         safeNullableString,
         sanitizeDiscordPayload,
         safeSnowflakeStrict,
+        safeIpHashStrict,
     memberFetchQualityStatus,
     recordPostRoleMemberFetch,
     preserveFailedMemberAttempt,

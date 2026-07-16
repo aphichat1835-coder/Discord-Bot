@@ -520,7 +520,7 @@ function mergeVerificationConfig(existing = {}, incoming = {}) {
     const source = clean.securityRules || {};
     mergedSecurityRules = normalizeSecurityRules(Object.fromEntries(SECURITY_RULE_KEYS.map(key => [
       key,
-      { ...(current.securityRules?.[key] || {}), ...(source[key] || {}) }
+      { ...current.securityRules?.[key], ...source[key] }
     ])), current);
   }
 
@@ -1099,10 +1099,13 @@ router.get("/api/guild/:guildId/verify/panel/sync", requireAdmin, requireGuildAd
     const fetched = await discordAPI.fetchChannelMessage(channelId, messageId);
     if (!fetched?.ok) {
       const status = Number(fetched?.status || 0);
+      let syncStatus = "discord_unavailable";
+      if (status === 404) syncStatus = "message_missing";
+      else if (status === 403) syncStatus = "cannot_read";
       return res.json({
         success: true,
         sync: {
-          status: status === 404 ? "message_missing" : status === 403 ? "cannot_read" : "discord_unavailable",
+          status: syncStatus,
           inSync: false,
           discordStatus: status || null,
           differences: [],
@@ -1112,7 +1115,7 @@ router.get("/api/guild/:guildId/verify/panel/sync", requireAdmin, requireGuildAd
     }
 
     const expected = comparablePanel({
-      ...(verification.panel || {}),
+      ...verification.panel,
       verifyType: verification.verifyType || verification.oauthMode || verification.panel?.verifyType
     });
     const actualPanel = panelConfigFromDiscordMessage(fetched.message || {});

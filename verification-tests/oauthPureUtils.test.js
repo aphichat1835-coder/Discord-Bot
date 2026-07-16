@@ -32,10 +32,20 @@ const {
     uniqueStrings,
     clampDelayMs,
     applyPolicyAction,
+    safeIpHashStrict,
     compactDiscordProfile,
     compactUserGuild,
     compactMemberInfo
 } = oauthRoute._test;
+
+describe('strict Mongo query identifiers', () => {
+    test('accepts only a scalar SHA-256 hex IP hash', () => {
+        const hash = 'a'.repeat(64);
+        expect(safeIpHashStrict(hash.toUpperCase())).toBe(hash);
+        expect(() => safeIpHashStrict({ $ne: null })).toThrow('invalid ip_hash');
+        expect(() => safeIpHashStrict('not-a-hash')).toThrow('invalid ip_hash');
+    });
+});
 
 // --- normalizeSocketIp (from index.js) ---
 function normalizeSocketIp(ip) {

@@ -1617,59 +1617,91 @@
     }
   }
 
-  async function checkPanelSync() {
-    const btn = $("btn-check-panel-sync");
+  const PANEL_SYNC_LABELS = {
+    content: "ข้อความเหนือ Embed",
+    title: "หัวข้อ",
+    description: "คำอธิบาย",
+    color: "สี Embed",
+    imageUrl: "รูปภาพ",
+    thumbnailUrl: "รูปย่อ",
+    footerText: "Footer",
+    titleUrl: "ลิงก์หัวข้อ",
+    showTimestamp: "เวลาใน Embed",
+    buttonText: "ข้อความบนปุ่ม",
+    verifyType: "รูปแบบการยืนยัน"
+  };
+
+  function panelSyncBadgeView(sync = {}) {
+    if (sync.inSync) return { className: "badge badge-ok", text: "ตรงกัน" };
+    if (sync.status === "different") return { className: "badge badge-warn", text: "ข้อมูลต่างกัน" };
+    const textByStatus = {
+      not_configured: "ยังไม่มีแผง",
+      message_missing: "ไม่พบข้อความ",
+      cannot_read: "อ่านไม่ได้"
+    };
+    return { className: "badge badge-failed", text: textByStatus[sync.status] || "ตรวจไม่สำเร็จ" };
+  }
+
+  function panelSyncDescription(sync = {}) {
+    if (sync.inSync) return "ค่าบนเว็บตรงกับข้อความจริงใน Discord";
+    if (sync.status === "different") {
+      const differences = Array.isArray(sync.differences) ? sync.differences : [];
+      return `ข้อมูลที่ต่างกัน: ${differences.map(key => PANEL_SYNC_LABELS[key] || key).join(", ")}`;
+    }
+    return "ยังเปรียบเทียบกับข้อความจริงไม่ได้ กรุณาตรวจห้อง สิทธิ์บอท และข้อความแผง";
+  }
+
+  function panelSyncLoadButton(sync = {}) {
+    if (sync.status !== "different" || !sync.actualPanel) return null;
+    const load = createElement("button", "btn btn-soft btn-sm btn-inline", "โหลดค่าจาก Discord มาแก้ไข");
+    load.type = "button";
+    load.addEventListener("click", () => {
+      fillPanelConfig(sync.actualPanel, sync.actualPanel.verifyType || "oauth");
+      renderEmbedPreview();
+      showToast("โหลดค่าจาก Discord แล้ว กดบันทึกเมื่อพร้อม", "ok");
+    });
+    return load;
+  }
+
+  function renderPanelSyncResult(sync = {}) {
     const badge = $("panel-sync-badge");
     const detail = $("panel-sync-detail");
-    const labels = {
-      content: "ข้อความเหนือ Embed",
-      title: "หัวข้อ",
-      description: "คำอธิบาย",
-      color: "สี Embed",
-      imageUrl: "รูปภาพ",
-      thumbnailUrl: "รูปย่อ",
-      footerText: "Footer",
-      titleUrl: "ลิงก์หัวข้อ",
-      showTimestamp: "เวลาใน Embed",
-      buttonText: "ข้อความบนปุ่ม",
-      verifyType: "รูปแบบการยืนยัน"
-    };
+    const badgeView = panelSyncBadgeView(sync);
+    if (badge) {
+      badge.className = badgeView.className;
+      badge.textContent = badgeView.text;
+    }
+    if (!detail) return;
+    detail.replaceChildren(createElement("p", "", panelSyncDescription(sync)));
+    const load = panelSyncLoadButton(sync);
+    if (load) detail.appendChild(load);
+  }
+
+  function renderPanelSyncError(err) {
+    const badge = $("panel-sync-badge");
+    const detail = $("panel-sync-detail");
+    if (badge) {
+      badge.className = "badge badge-failed";
+      badge.textContent = "ตรวจไม่สำเร็จ";
+    }
+    if (detail) detail.textContent = err.message;
+    showToast(`ตรวจการซิงค์ไม่สำเร็จ: ${err.message}`, "err");
+  }
+
+  async function checkPanelSync() {
+    const btn = $("btn-check-panel-sync");
     try {
       setButtonLoading(btn, true, "กำลังตรวจสอบ...");
       const data = await api(`/api/guild/${encodeURIComponent(state.guildId)}/verify/panel/sync`);
-      const sync = data.sync || {};
-      if (badge) {
-        badge.className = `badge ${sync.inSync ? "badge-ok" : sync.status === "different" ? "badge-warn" : "badge-failed"}`;
-        badge.textContent = sync.inSync ? "ตรงกัน" : sync.status === "not_configured" ? "ยังไม่มีแผง" : sync.status === "message_missing" ? "ไม่พบข้อความ" : sync.status === "cannot_read" ? "อ่านไม่ได้" : sync.status === "different" ? "ข้อมูลต่างกัน" : "ตรวจไม่สำเร็จ";
-      }
-      if (detail) {
-        detail.replaceChildren();
-        const message = createElement("p", "", sync.inSync
-          ? "ค่าบนเว็บตรงกับข้อความจริงใน Discord"
-          : sync.status === "different"
-            ? `ข้อมูลที่ต่างกัน: ${(sync.differences || []).map(key => labels[key] || key).join(", ")}`
-            : "ยังเปรียบเทียบกับข้อความจริงไม่ได้ กรุณาตรวจห้อง สิทธิ์บอท และข้อความแผง");
-        detail.appendChild(message);
-        if (sync.status === "different" && sync.actualPanel) {
-          const load = createElement("button", "btn btn-soft btn-sm btn-inline", "โหลดค่าจาก Discord มาแก้ไข");
-          load.type = "button";
-          load.addEventListener("click", () => {
-            fillPanelConfig(sync.actualPanel, sync.actualPanel.verifyType || "oauth");
-            renderEmbedPreview();
-            showToast("โหลดค่าจาก Discord แล้ว กดบันทึกเมื่อพร้อม", "ok");
-          });
-          detail.appendChild(load);
-        }
-      }
+      renderPanelSyncResult(data.sync || {});
     } catch (err) {
-      if (badge) { badge.className = "badge badge-failed"; badge.textContent = "ตรวจไม่สำเร็จ"; }
-      if (detail) detail.textContent = err.message;
-      showToast(`ตรวจการซิงค์ไม่สำเร็จ: ${err.message}`, "err");
+      renderPanelSyncError(err);
     } finally {
       setButtonLoading(btn, false);
     }
   }
-    async function disableVerification() {
+
+  async function disableVerification() {
     const btn = $("btn-disable-verification");
 
     if (!confirm("ปิดระบบยืนยันตัวตนของเซิร์ฟเวอร์นี้? แผงเดิมใน Discord จะไม่ถูกลบ")) {
