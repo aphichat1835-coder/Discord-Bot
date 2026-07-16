@@ -15,6 +15,8 @@ Verification snapshots use complete, versioned persistence. Aggregate payload si
 9. Rollback writes must be acknowledged; incomplete rollback state is persisted for bounded exponential recovery retries.
 10. Failed optional Discord fetches do not replace previously stored successful snapshots with empty arrays.
 11. Snapshot activation is serialized per user and conditionally rejects an older callback when a newer attempt is already active.
+12. Object-chunk identity includes `guildId`; the runtime migrates the legacy
+    non-guild-scoped unique index before normal cleanup.
 
 ## Runtime controls
 
@@ -53,3 +55,9 @@ rules as profile, guild, connection, member, and member-role snapshots:
 referenced complete versions are retained, stale incomplete chunks are removed
 after the grace period, and unreferenced complete chunks are removed only after
 references are checked again immediately before deletion.
+
+Readers reconstruct only finalized versions and reject a missing or duplicate
+chunk, a non-contiguous chunk index, inconsistent `chunkCount`, incorrect
+stored/returned counts, byte-length drift, or checksum failure. Legacy embedded
+snapshots remain readable during migration, but a staged or corrupt new version
+never replaces the last complete active reference.

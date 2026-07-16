@@ -2,7 +2,7 @@
 /*
 ================================================================================
   ENTERPRISE DASHBOARD — Views Layer
-  ธีม: Dark Purple Glassmorphism
+  ธีม: Owner operations dashboard
   หน้าทั้งหมด: /, /status, /settings, /commands, /approved,
                /logs, /logs/voice, /session/:id, /docs
 ================================================================================
@@ -53,9 +53,9 @@ ${navBar("/")}
     <div class="stat"><div class="val" id="statUptime" style="color:var(--yellow2);">--</div><div class="lbl">⏱ System Uptime</div></div>
     <div class="stat"><div class="val" id="statSessions" style="color:var(--green2);">--</div><div class="lbl">📡 Sessions</div></div>
     <div class="stat"><div class="val" id="statPool" style="color:var(--blue2);">--</div><div class="lbl">🔌 Client Pool</div></div>
-    <div class="stat"><div class="val" id="statRam" style="color:#e879f9;">-- MB</div><div class="lbl">🧠 RAM</div></div>
+    <div class="stat"><div class="val" id="statRam" style="color:#e879f9;">-- MB</div><div class="lbl">🧠 Process RAM (RSS)</div></div>
     <div class="stat"><div class="val" id="statReconnect" style="color:var(--orange);">--</div><div class="lbl">🔄 Reconnects</div></div>
-    <div class="stat"><div class="val" id="statSuccess" style="color:var(--green2);">--%</div><div class="lbl">✅ Success Rate</div></div>
+    <div class="stat"><div class="val" id="statSuccess" style="color:var(--red2);">--</div><div class="lbl">⚠️ Error Events</div></div>
 </div>
 
 <div class="card">
@@ -156,7 +156,8 @@ function safeId(v){
     return String(v||'').replace(/['"<>&]/g,'');
 }
 function accountLabel(s){
-    return s.accountLabel || s.accountTag || s.accountUsername || s.accountGlobalName || s.accountId || 'ไม่ทราบบัญชี';
+    if(s.tokenInvalid)return 'บัญชีนี้เข้าสู่ระบบไม่ได้';
+    return s.accountLabel || s.accountTag || s.accountUsername || s.accountGlobalName || s.accountId || 'กำลังรอข้อมูลบัญชี';
 }
 function voiceLabel(s){
     const name=s.voiceName?'# '+s.voiceName:null;
@@ -165,6 +166,8 @@ function voiceLabel(s){
     return name?esc(name):(id||'-');
 }
 function statusLabel(s){
+    if(s.tokenInvalid)return '🚫 Token ใช้งานไม่ได้';
+    if(s.state==='failed')return '⚠️ ต้องจัดการรายการนี้';
     const st=s.connectionStatus;
     if(st==='ready')return '🟢 เชื่อมต่ออยู่';
     if(st==='connecting'||st==='signalling')return '🟡 กำลังเชื่อมต่อ';
@@ -218,9 +221,9 @@ async function fetchStatus(){
         document.getElementById('statUptime').textContent=fmtUp(d.uptimeSec||0);
         document.getElementById('statSessions').textContent=(d.sessions||0)+'/'+(d.maxSessions||0);
         document.getElementById('statPool').textContent=d.clientPool||0;
-        document.getElementById('statRam').textContent=(d.ramMB||'0')+' MB';
+        document.getElementById('statRam').textContent=(d.rssMB||d.ramMB||'0')+' MB';
         document.getElementById('statReconnect').textContent=d.reconnects||0;
-        document.getElementById('statSuccess').textContent=(d.successRate||'100.0')+'%';
+        document.getElementById('statSuccess').textContent=d.errorCount??0;
 
         const diag=d.workerDiagnostics||{};
         document.getElementById('diagClientPool').textContent=diag.clientPool??d.clientPoolSize??d.clientPool??0;
@@ -253,7 +256,7 @@ async function fetchStatus(){
                 const rc=s.reconnectCount||0;
                 const acc=esc(accountLabel(s));
                 const avatar=s.accountAvatar||s.ownerAvatar||'https://cdn.discordapp.com/embed/avatars/0.png';
-                const server=esc(s.serverName||s.serverId||'Unknown Server');
+                const server=esc(s.serverName||s.serverId||'กำลังรอข้อมูลเซิร์ฟเวอร์');
                 const owner=esc(s.ownerTag||s.ownerId||'-');
                 const revealed=revealState.expiry>Date.now()&&revealState.tokens[sid];
                 const badges=[];
@@ -460,9 +463,9 @@ ${navBar("/status")}
 <div class="grid">
     <div class="stat"><div class="val" id="sSessions" style="color:var(--green2);">--</div><div class="lbl">Session ที่ทำงาน</div></div>
     <div class="stat"><div class="val" id="sPool" style="color:var(--blue2);">--</div><div class="lbl">บัญชีในระบบ</div></div>
-    <div class="stat"><div class="val" id="sRam" style="color:#e879f9;">--</div><div class="lbl">RAM</div></div>
+    <div class="stat"><div class="val" id="sRam" style="color:#e879f9;">--</div><div class="lbl">Process RAM (RSS)</div></div>
     <div class="stat"><div class="val" id="sReconnect" style="color:var(--orange);">--</div><div class="lbl">เชื่อมต่อใหม่</div></div>
-    <div class="stat"><div class="val" id="sSuccess" style="color:var(--green2);">--%</div><div class="lbl">อัตราสำเร็จ</div></div>
+    <div class="stat"><div class="val" id="sSuccess" style="color:var(--red2);">--</div><div class="lbl">ข้อผิดพลาดที่บันทึก</div></div>
     <div class="stat"><div class="val" id="sUptime" style="color:var(--yellow2);">--</div><div class="lbl">เวลาทำงาน</div></div>
 </div>
 
@@ -471,7 +474,7 @@ ${navBar("/status")}
     <div class="info-row"><span class="info-label">ชื่อบัญชีบอท</span><span class="info-value" id="botTag">--</span></div>
     <div class="info-row"><span class="info-label">การเชื่อมต่อบอท</span><span class="info-value" id="botOnline">--</span></div>
     <div class="info-row"><span class="info-label">เวลาที่ระบบทำงาน</span><span class="info-value" id="uptimeFull">--</span></div>
-    <div class="info-row"><span class="info-label">RAM ที่ใช้ทั้งหมด</span><span class="info-value" id="ramTotal">--</span></div>
+    <div class="info-row"><span class="info-label">V8 Heap ที่ใช้ / จองไว้</span><span class="info-value" id="ramTotal">--</span></div>
 </div>
 </div>
 
@@ -509,15 +512,15 @@ async function loadStatus(){
 
         document.getElementById('sSessions').textContent=(d.sessions||0)+'/'+(d.maxSessions||0);
         document.getElementById('sPool').textContent=d.clientPool||0;
-        document.getElementById('sRam').textContent=(d.ramMB||'0')+' MB';
+        document.getElementById('sRam').textContent=(d.rssMB||d.ramMB||'0')+' MB';
         document.getElementById('sReconnect').textContent=d.reconnects||0;
-        document.getElementById('sSuccess').textContent=(d.successRate||'100.0')+'%';
+        document.getElementById('sSuccess').textContent=d.errorCount??0;
         document.getElementById('sUptime').textContent=fmtUp(d.uptimeSec||0);
 
         document.getElementById('botTag').textContent=d.botTag||'-';
         document.getElementById('botOnline').textContent=d.botOnline?'ออนไลน์':'ออฟไลน์';
         document.getElementById('uptimeFull').textContent=fmtFull(d.uptimeSec||0);
-        document.getElementById('ramTotal').textContent=(d.ramTotalMB||'0')+' MB';
+        document.getElementById('ramTotal').textContent=(d.heapUsedMB||'0')+' / '+(d.heapTotalMB||'0')+' MB';
         document.getElementById('lastUpdate').textContent=new Date().toLocaleTimeString('th-TH');
     }catch(e){
         document.getElementById('statusText').textContent='⚠️ โหลดไม่ได้';
@@ -969,7 +972,8 @@ function fmtUp(ms){
     return ss+' วิ';
 }
 function accountLabel(s){
-    return s.accountLabel || s.accountTag || s.accountUsername || s.accountGlobalName || s.accountId || 'ไม่ทราบบัญชี';
+    if(s.tokenInvalid)return 'บัญชีนี้เข้าสู่ระบบไม่ได้';
+    return s.accountLabel || s.accountTag || s.accountUsername || s.accountGlobalName || s.accountId || 'กำลังรอข้อมูลบัญชี';
 }
 function voiceLabel(s){
     const name=s.voiceName?'# '+s.voiceName:null;
@@ -978,6 +982,8 @@ function voiceLabel(s){
     return name||id||'-';
 }
 function statusLabel(s){
+    if(s.tokenInvalid)return '🚫 Token ใช้งานไม่ได้';
+    if(s.state==='failed')return '⚠️ ต้องจัดการรายการนี้';
     const st=s.connectionStatus;
     if(st==='ready')return '🟢 เชื่อมต่ออยู่';
     if(st==='connecting'||st==='signalling')return '🟡 กำลังเชื่อมต่อ';
@@ -1023,7 +1029,7 @@ async function loadSession(){
         const r=await fetch('/api/session/'+encodeURIComponent(SESSION_ID));
         const d=await r.json();
 
-        if(!d.found){
+        if(!r.ok || d.success===false || !d.session){
             document.getElementById('notFound').style.display='block';
             document.getElementById('pageContent').style.display='none';
             return;

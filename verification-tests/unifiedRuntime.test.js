@@ -83,15 +83,24 @@ describe("single-process verification runtime contract", () => {
         const ownerHomePage = fs.readFileSync("discord/verification/page.js", "utf8");
         const guildScript = fs.readFileSync("discord/verification/public/js/guild-dashboard.js", "utf8");
         const memberCallback = fs.readFileSync("discord/verification/views/callback.html", "utf8");
+        const joinCampaignPage = fs.readFileSync("discord/index/joinCampaignPage.js", "utf8");
         const styles = fs.readFileSync("discord/verification/public/css/dashboard.css", "utf8");
+        const workspaceStyles = fs.readFileSync("discord/verification/public/css/workspace.css", "utf8");
 
         expect(ownerHomePage).toContain('id="guild-search"');
+        expect(ownerHomePage).toContain('class="verification-commandbar"');
         expect(ownerHomePage).toContain("document.createElement");
         expect(ownerGuildPage).toContain('role="tablist"');
+        expect(ownerGuildPage).toContain('id="guild-switcher"');
         expect(ownerGuildPage).toContain('role="dialog"');
         expect(guildScript).toContain("aria-selected");
         expect(memberCallback).toContain('aria-live="polite"');
         expect(styles).toContain("prefers-reduced-motion");
+        expect(workspaceStyles).toContain("Verification Workspace 2026");
+        expect(ownerHomePage).toContain('/verification-assets/css/workspace.css');
+        expect(ownerGuildPage).toContain('/verification-assets/css/workspace.css');
+        expect(memberCallback).toContain('/verification-assets/css/workspace.css');
+        expect(joinCampaignPage).toContain('/verification-assets/css/workspace.css');
     });
 
     test("root package has one start command and no nested dashboard service", () => {

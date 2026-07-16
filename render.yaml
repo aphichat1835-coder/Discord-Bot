@@ -8,6 +8,9 @@
 # IMPORTANT:
 # - Confirm these service names match your existing Render services before syncing.
 # - If the names do not match, Render may create new services instead of updating existing ones.
+# - `branch: main` is the production Blueprint source. Change it deliberately if
+#   a different release branch is intended; work on `tt` is not auto-deployed.
+# - `autoDeployTrigger: off` requires an intentional Blueprint sync/deploy.
 # - This file is documentation/deployment config only. It does not deploy anything by itself.
 
 previews:

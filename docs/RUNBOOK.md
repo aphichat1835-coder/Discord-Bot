@@ -1,6 +1,6 @@
 # Unified Runtime Runbook
 
-Updated: 2026-07-13.
+Updated: 2026-07-16 (`tt`).
 
 ## Start and health
 
@@ -22,8 +22,9 @@ Expected boot order in logs:
 ```text
 HTTP listener
 MongoDB connection and state load
-verification maintenance/OAuth refresh
+initial verification migration, history, snapshot, retention, reveal, and OAuth maintenance
 Discord login
+command registration, panel restore, and Voice auto-resume
 ready
 ```
 
@@ -36,8 +37,8 @@ Custom command: npm install && npm start
 Internal port: PORT, otherwise 3000
 ```
 
-Generate one domain for that port. Set all public URL aliases to this domain and
-register `https://DOMAIN/auth/callback` in Discord Developer Portal.
+Generate one domain for that port. Set `PUBLIC_BASE_URL` to its canonical HTTPS
+origin and register `https://DOMAIN/auth/callback` in Discord Developer Portal.
 
 ### Render
 
@@ -46,13 +47,14 @@ combined MongoDB, Discord, voice, slash-command, and verification readiness
 check. `/ready` returns the same readiness response, while `/ping` is the
 simple listener-only liveness check.
 
-## Pre-cutover
+## Pre-release/deployment
 
 1. Back up MongoDB and confirm restore access.
-2. Add the unified OAuth callback URI without removing the old URI yet.
+2. Register the unified OAuth callback URI.
 3. Copy required secrets into the unified service.
-4. Keep `PUBLIC_BASE_URL`, `DASHBOARD_URL`, `PUBLIC_DASHBOARD_URL`, and
-   `DASHBOARD_PUBLIC_URL` equal.
+4. Set the 13 owner-maintained values from `.env.example`. `PUBLIC_BASE_URL` is
+   canonical. If legacy URL aliases still exist in the host configuration,
+   keep them equal or remove them.
 5. If historical admin grants must refresh against the retired URI, set
    `LEGACY_ADMIN_OAUTH_REDIRECT_URI`.
 6. Deploy.
@@ -64,7 +66,8 @@ simple listener-only liveness check.
 
 8. Test Owner Dashboard, `/verification`, a target guild page, and a complete
    member verification.
-9. Stop the retired service only after all checks pass.
+9. If a legacy standalone service still exists, stop it only after all checks
+   pass. New/current installations have only the root service.
 
 ## Verification smoke test
 
@@ -136,7 +139,9 @@ recovery.
 
 - Confirm Developer Portal URI exactly matches
   `https://DOMAIN/auth/callback`.
-- Confirm all public base URL aliases use the same scheme/host and no extra path.
+- Confirm `PUBLIC_BASE_URL` uses the same scheme/host and has no extra path.
+- Remove stale legacy URL aliases, or keep them exactly equal to the canonical
+  origin while compatibility is still required.
 - Restart after changing environment variables because callback constants are
   initialized at process start.
 
@@ -171,6 +176,21 @@ For chunked snapshots, confirm `complete: true`, verify
 Dashboard changes only the displayed page; Member Detail reads all finalized
 chunks and does not treat pagination as truncation.
 
+### Voice Session shows no account or server data
+
+An invalid or undecryptable stored Voice token is terminal. On the next login/
+auto-resume attempt the runtime marks that record failed, removes it from active
+Dashboard cards, and does not keep retrying it as an online Session. Start a new
+Session with a valid token. Dashboard stop is idempotent, so a record already
+removed by cleanup is reported as stopped instead of returning a false failure.
+
+### Dashboard memory differs from the host panel
+
+The Dashboard RAM card is process RSS: resident memory of the Node process. The
+status detail reports V8 heap used/allocated separately. A hosting panel may add
+container/runtime overhead, so its number can be higher without either reading
+being false.
+
 ### Raw IP is missing
 
 - Normal APIs intentionally return null.
@@ -203,7 +223,7 @@ boot/import change.
 2. Keep the backup and old deployment configuration until unified smoke tests
    pass.
 3. If rollback is required, route traffic/callback to the known working
-   artifact and restore matching environment aliases.
+   artifact and restore its matching canonical `PUBLIC_BASE_URL`.
 4. Additive schema fields can remain; old readers should ignore them.
 5. Do not roll back encryption keys separately from encrypted records.
 6. Record the failure and safe diagnostics without secrets.

@@ -105,6 +105,25 @@ test("validateRequiredEnv rejects weak production secrets", (t) => { // NOSONAR 
     });
 });
 
+test("validateRequiredEnv accepts any non-empty owner dashboard PIN", () => { // NOSONAR -- node:test assertions are not recognized by S2699.
+    const result = validateRequiredEnv({
+        MONGO_URI: "mongodb://localhost/test",
+        TOKEN_MANAGER: "token",
+        DISCORD_CLIENT_ID: "client-id",
+        PUBLIC_BASE_URL: "https://example.test",
+        API_SECRET: "a".repeat(32),
+        ENCRYPTION_KEY: "b".repeat(32),
+        VERIFY_STATE_SECRET: "c".repeat(32),
+        DISCORD_CLIENT_SECRET: "d".repeat(24),
+        DASHBOARD_PIN: "1",
+        WEBHOOK_LOG_URL: "https://discord.com/api/webhooks/12345/abcdefghijklmnopqrstuvwxyz",
+        ALERT_WEBHOOK_URL: "https://discord.com/api/webhooks/67890/abcdefghijklmnopqrstuvwxyz",
+        TRUST_PROXY: "true",
+        NODE_ENV: "production"
+    });
+    assert.equal(result.DASHBOARD_PIN_CONFIGURED, true);
+});
+
 test("validateRequiredEnv requires OAuth client id and https public URL in production", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     const strong = {
         MONGO_URI: "mongodb://localhost/test",

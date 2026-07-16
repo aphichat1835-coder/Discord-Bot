@@ -1,7 +1,7 @@
 /*
 ================================================================================
   Owner Verification Dashboard
-  Theme: Discord + Security Dashboard
+  Theme: Verification Operations Workspace
 
   หน้าที่:
   - โหลด overview/config/members/logs/risk ของ guild
@@ -2252,6 +2252,52 @@
     }
   }
 
+  async function loadGuildSwitcher() {
+    const select = $("guild-switcher");
+    if (!select) return;
+
+    try {
+      const response = await fetch("/api/guilds", {
+        headers: { Accept: "application/json" }
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.success) throw new Error("guild_list_unavailable");
+
+      const guilds = Array.isArray(data.guilds) ? data.guilds : [];
+      const fragment = document.createDocumentFragment();
+      for (const guild of guilds) {
+        const option = document.createElement("option");
+        option.value = String(guild.id || "");
+        option.textContent = String(guild.name || guild.id || "ไม่ทราบชื่อเซิร์ฟเวอร์");
+        option.selected = option.value === state.guildId;
+        fragment.appendChild(option);
+      }
+
+      select.replaceChildren(fragment);
+      select.disabled = guilds.length === 0;
+      if (guilds.length === 0) {
+        const empty = document.createElement("option");
+        empty.textContent = "ไม่พบเซิร์ฟเวอร์";
+        select.appendChild(empty);
+      }
+    } catch {
+      const unavailable = document.createElement("option");
+      unavailable.textContent = "โหลดรายชื่อไม่สำเร็จ";
+      select.replaceChildren(unavailable);
+      select.disabled = true;
+    }
+  }
+
+  function bindGuildSwitcher() {
+    const select = $("guild-switcher");
+    if (!select) return;
+    select.addEventListener("change", () => {
+      const guildId = String(select.value || "");
+      if (!/^\d{17,22}$/.test(guildId) || guildId === state.guildId) return;
+      window.location.assign(`/verification/${encodeURIComponent(guildId)}#${encodeURIComponent(state.activeTab)}`);
+    });
+  }
+
   function patchGuildInfoObserver() {
     const title = $("guild-title");
     if (!title) return;
@@ -2280,7 +2326,8 @@
 
     await Promise.allSettled([
       loadOverview(),
-      loadResources()
+      loadResources(),
+      loadGuildSwitcher()
     ]);
 
     const initialTab = tabFromHash();
@@ -2304,6 +2351,7 @@
 
     bindModal();
     bindUtilityActions();
+    bindGuildSwitcher();
     patchGuildInfoObserver();
 
     bootInitialData();

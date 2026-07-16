@@ -1,6 +1,6 @@
 # Security and Privacy
 
-Last implementation review: 2026-07-13.
+Last implementation review: 2026-07-16 (`tt`).
 
 ## Scope
 
@@ -60,6 +60,9 @@ PIN cookie in `discord/index/auth.js`.
   use code defaults, and `PUBLIC_BASE_URL` must be the canonical public HTTPS
   base URL.
 - Session cookies are HTTP-only, SameSite Strict, and Secure in production.
+- `DASHBOARD_PIN` is required but intentionally has no application-enforced
+  length or composition rule. Use a private, non-reused value; PIN attempt
+  throttling remains active regardless of credential format.
 - A separate readable SameSite CSRF cookie is HMAC-bound to the signed session.
 - Non-read management routes require the `X-CSRF-Token` header.
 - PIN and API rate-limit maps are bounded and cleaned.
@@ -164,6 +167,10 @@ provider snapshots redact token-shaped keys before persistence.
 Chunks remain unreadable as a complete snapshot until every write is finalized;
 `complete` requires `returnedCount === storedCount`. VerifyLog stores the core
 audit event and snapshot references rather than duplicating oversized arrays.
+Aggregate payload size is not a truncation boundary. An oversized individual
+object uses Base64 byte chunks whose order, count, byte length, and SHA-256
+checksums are verified before reconstruction. Object-chunk identity includes the
+guild, user, version, category, item, and chunk indexes.
 Referenced snapshot history is permanent. Maintenance fails closed if reference
 lookups fail and deletes only incomplete or unreferenced versions older than the
 configured grace period; it never prunes a version referenced by OAuthUser or
@@ -179,6 +186,8 @@ documents must never be exposed through normal APIs, logs, or exports. External
 provider backup is still required to survive loss of the entire database.
 Restore skips a live OAuthUser whose update timestamp is newer than its archive.
 Overwriting newer live state requires the explicit operator-only `--force` flag.
+Any restore using `--apply` also requires `--maintenance-confirmed`; all OAuth
+and verification writers must remain stopped for the entire restore window.
 
 Do not infer values that Discord did not return:
 
@@ -220,6 +229,11 @@ Normal runtime uses exactly one Mongoose connection from
 - deletes no fields or collections.
 
 Back up MongoDB before apply mode.
+
+Privacy deletion uses one MongoDB transaction for the related verification and
+identity-history writes. Canonical IP-history backfill also commits each event's
+related writes transactionally and idempotently, preventing partial history
+when a process or database operation fails mid-event.
 
 ## Logging and error handling
 
@@ -270,7 +284,7 @@ npm run test:verification
 npm audit --audit-level=high
 ```
 
-Use a repository secret scanner before production cutover. Inspect findings;
+Use a repository secret scanner before release/deployment. Inspect findings;
 never paste discovered values into issues or chat.
 
 ## Protected code
@@ -297,7 +311,8 @@ task approval required by `AGENTS.md`.
    limiting.
 9. Verify normal APIs contain no raw token/IP.
 10. Run one audited IP reveal and confirm an audit record without server logging.
-11. Stop the retired service only after smoke tests pass.
+11. If a legacy standalone service still exists, stop it only after smoke tests
+    pass. Current deployments otherwise use only the root service.
 
 The administrator-only smoke CLI is excluded from Codacy static analysis in
 `.codacy.yml` because its validated, exact-allowlist URL remains a deliberate

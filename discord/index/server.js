@@ -592,7 +592,11 @@ function registerRoutes({
         try {
             const session = sessionManager.getSession(req.params.id);
             if (!session) return res.status(404).json({ success: false, error: "Session not found" });
-            res.json({ success: true, session: serializeVoiceSession(session) });
+            const voiceLogs = voiceWorker.getVoiceLogs()
+                .filter(entry => String(entry?.sessionId || "") === String(req.params.id))
+                .slice(-100)
+                .reverse();
+            res.json({ success: true, session: serializeVoiceSession(session), voiceLogs });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
         }
@@ -711,9 +715,9 @@ function registerRoutes({
             const session = sessionManager.getSession(sessionId);
 
             if (!session) {
-                return res.status(404).json({
-                    success: false,
-                    error: "ไม่พบ session"
+                return res.json({
+                    success: true,
+                    action: "already_removed"
                 });
             }
 

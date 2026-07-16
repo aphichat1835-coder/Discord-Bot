@@ -20,9 +20,11 @@ Only `process.env.PORT || 3000` is opened. Verification reuses the Mongoose
 connection owned by `discord/sessionManager.js`; it does not call
 `mongoose.connect()` during normal runtime.
 
-Boot order is HTTP → MongoDB → verification maintenance/token refresh → Discord
-login. Shutdown stops verification maintenance, voice/session work, Discord, the
-database connection, and the HTTP server.
+Boot order is HTTP → MongoDB/state → initial verification maintenance → Discord
+login. Slash-command registration, panel restore, and Voice auto-resume begin
+after Discord becomes ready. Shutdown stops verification maintenance,
+voice/session work, Discord clients, webhook delivery, the database connection,
+and the HTTP server.
 
 ## Web routes
 
@@ -35,7 +37,8 @@ database connection, and the HTTP server.
 | `POST /auth/callback` | Public, rate-limited | Exchange a one-time OAuth code and run verification |
 | `/api/guilds` | Owner PIN | Bot guild list |
 | `/api/guild/:guildId/*` | Owner PIN; CSRF on writes | Verification management APIs |
-| `GET /api/guild/:guildId/member/:userId/detail` | Owner PIN | Full per-user verification detail grouped by category |
+| `GET /api/guild/:guildId/member/:userId/detail` | Owner PIN | Categorized per-user verification summary with sensitive values redacted |
+| `POST /api/guild/:guildId/member/:userId/full-detail` | Owner PIN + CSRF, rate-limited | Audited full detail including decrypted raw IP and OAuth tokens |
 | `GET /api/guild/:guildId/member/:userId/ip-history` | Owner PIN | Paginated canonical users/devices/role history for the member's IP |
 | `POST /api/guild/:guildId/member/:userId/reveal-token` | Owner PIN + CSRF + reason | Raw OAuth2 token reveal with audit status |
 | `POST /api/verify-owner/guild/:guildId/user/:userId/reveal-ip` | Owner PIN + CSRF + reason | Raw-IP reveal with audit status |
@@ -69,7 +72,9 @@ access retired Audit models, routes, channels, or `audit_event_*` keys.
 Guild backups are stored in bounded chunks. Every complete version is retained;
 one version per guild is marked active, older versions are marked superseded,
 and startup reconciliation selects the newest complete readable version without
-deleting history. Restore continues to read legacy embedded snapshots.
+deleting history. Restore validates backup/target guild identity, chunk item
+counts and byte sizes, restores channel permission overwrites, and continues to
+read legacy embedded snapshots.
 
 ## Verification data contract
 
@@ -119,6 +124,12 @@ unreferenced snapshot garbage after a configurable grace period, in bounded
 batches; this permanent-history mode intentionally allows database usage to
 grow with verification history.
 
+Oversized profile/member/item objects are stored as Base64 byte chunks with
+per-chunk and aggregate SHA-256/length validation. There is no aggregate
+snapshot truncation ceiling; the safety limit applies to each MongoDB document.
+Incomplete rollback state is recorded without user payloads or secrets and is
+retried by maintenance.
+
 Per-IP summary state remains in `IpIdentityLink`, while users, devices, and role
 events are stored in paginated canonical history collections without an overall
 item ceiling. Legacy embedded arrays are migrated additively and retained for
@@ -143,6 +154,10 @@ Production has exactly 13 owner-maintained environment values: `NODE_ENV`,
 `PUBLIC_BASE_URL`, `WEBHOOK_LOG_URL`, `ALERT_WEBHOOK_URL`, and `TRUST_PROXY`.
 All other runtime controls have code defaults. Legacy public-URL aliases remain
 read-compatible but do not need to be configured.
+
+`DASHBOARD_PIN` must be non-empty in production. The application does not
+enforce a minimum length or character pattern; the Owner chooses the credential
+policy and should still use a private value that is difficult to guess.
 
 Discord Developer Portal redirect URI:
 

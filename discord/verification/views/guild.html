@@ -3,10 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <meta name="theme-color" content="#07050f">
+  <meta name="theme-color" content="#07110f">
   <meta name="color-scheme" content="dark">
   <title>จัดการระบบยืนยันตัวตนของเซิร์ฟเวอร์</title>
   <link rel="stylesheet" href="/verification-assets/css/dashboard.css">
+  <link rel="stylesheet" href="/verification-assets/css/workspace.css">
 </head>
 
 <body class="owner-dashboard-theme">
@@ -14,7 +15,7 @@
   <div class="mobile-bar">
     <div class="mobile-bar-inner">
       <button id="sidebar-toggle" class="btn btn-soft btn-sm" type="button" aria-controls="guild-sidebar" aria-expanded="false">
-        ☰ เมนู
+        ☰ หมวด
       </button>
 
       <div style="min-width:0;">
@@ -22,12 +23,12 @@
           หน้าจัดการเซิร์ฟเวอร์
         </div>
         <div class="xsmall muted truncate">
-          จัดการระบบยืนยันตัวตน
+          Verification workspace
         </div>
       </div>
 
       <a class="btn btn-soft btn-sm" href="/verification">
-        เซิร์ฟเวอร์
+        เปลี่ยน
       </a>
     </div>
   </div>
@@ -37,10 +38,10 @@
   <div class="app-layout">
     <aside id="guild-sidebar" class="sidebar" aria-label="เมนูจัดการเซิร์ฟเวอร์">
       <div class="sidebar-brand">
-        <div class="brand-icon">🛡️</div>
+        <div class="brand-icon">V</div>
         <div style="min-width:0;">
-          <div class="brand-title">ระบบยืนยันตัวตน</div>
-          <div class="brand-sub">สมาชิกและความปลอดภัย</div>
+          <div class="brand-title">VERIFY CONTROL</div>
+          <div class="brand-sub">Owner operations</div>
         </div>
 
         <button id="sidebar-close" class="btn btn-soft btn-sm" type="button" aria-label="ปิดเมนู" style="margin-left:auto;">
@@ -63,7 +64,7 @@
       <nav class="nav" role="tablist" aria-label="หมวดการจัดการระบบยืนยันตัวตน">
         <button id="tab-overview" class="nav-item active" type="button" role="tab" aria-selected="true" aria-controls="panel-overview" data-tab="overview">
           <span class="nav-item-left">
-            <span class="nav-icon">🏠</span>
+            <span class="nav-icon">01</span>
             <span class="nav-label">ภาพรวม</span>
           </span>
           <span>›</span>
@@ -71,7 +72,7 @@
 
         <button id="tab-verification" class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="panel-verification" data-tab="verification">
           <span class="nav-item-left">
-            <span class="nav-icon">🔐</span>
+            <span class="nav-icon">02</span>
             <span class="nav-label">ตั้งค่ายืนยันตัวตน</span>
           </span>
           <span>›</span>
@@ -79,7 +80,7 @@
 
         <button id="tab-security" class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="panel-security" data-tab="security">
           <span class="nav-item-left">
-            <span class="nav-icon">🧪</span>
+            <span class="nav-icon">03</span>
             <span class="nav-label">ความปลอดภัยและนโยบาย</span>
           </span>
           <span>›</span>
@@ -87,7 +88,7 @@
 
         <button id="tab-members" class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="panel-members" data-tab="members">
           <span class="nav-item-left">
-            <span class="nav-icon">👥</span>
+            <span class="nav-icon">04</span>
             <span class="nav-label">สมาชิกที่ยืนยันแล้ว</span>
           </span>
           <span>›</span>
@@ -95,7 +96,7 @@
 
         <button id="tab-logs" class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="panel-logs" data-tab="logs">
           <span class="nav-item-left">
-            <span class="nav-icon">📜</span>
+            <span class="nav-icon">05</span>
             <span class="nav-label">บันทึกการยืนยัน</span>
           </span>
           <span>›</span>
@@ -103,7 +104,7 @@
 
         <button id="tab-risk" class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="panel-risk" data-tab="risk">
           <span class="nav-item-left">
-            <span class="nav-icon">🌐</span>
+            <span class="nav-icon">06</span>
             <span class="nav-label">ความเสี่ยงและเครือข่าย</span>
           </span>
           <span>›</span>
@@ -111,7 +112,7 @@
 
         <button id="tab-privacy" class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="panel-privacy" data-tab="privacy">
           <span class="nav-item-left">
-            <span class="nav-icon">🗂️</span>
+            <span class="nav-icon">07</span>
             <span class="nav-label">ข้อมูลและความเป็นส่วนตัว</span>
           </span>
           <span>›</span>
@@ -119,20 +120,20 @@
 
         <a class="nav-item" href="/join-campaign">
           <span class="nav-item-left">
-            <span class="nav-icon">📥</span>
+            <span class="nav-icon">↗</span>
             <span class="nav-label">ดึงสมาชิกที่อนุญาตแล้ว</span>
           </span>
           <span>↗</span>
         </a>
       </nav>
 
-      <div class="alert alert-info mt-18">
-        Dashboard นี้แสดงข้อมูลละเอียดที่ระบบดึง/เก็บได้จากการยืนยันตัวตนของเซิร์ฟเวอร์นี้
+      <div class="workspace-context mt-18">
+        ข้อมูลทุกหมวดด้านขวาผูกกับเซิร์ฟเวอร์ที่เลือกอยู่เท่านั้น
       </div>
 
       <div class="mt-14">
         <a class="btn btn-soft btn-block" href="/verification">
-          ← กลับไปเลือกเซิร์ฟเวอร์
+          เปลี่ยนเซิร์ฟเวอร์
         </a>
       </div>
     </aside>
@@ -140,14 +141,10 @@
     <main id="main-content" class="main" tabindex="-1">
       <div class="topbar">
         <div style="min-width:0;">
-          <div class="breadcrumb">
-            <a href="/verification">เซิร์ฟเวอร์</a>
-            <span>/</span>
-            <span>หน้าจัดการ</span>
-          </div>
+          <p class="eyebrow">ACTIVE WORKSPACE</p>
 
-          <h1 id="guild-title" class="title-lg gradient-text truncate">
-            กำลังโหลด Dashboard...
+          <h1 id="guild-title" class="title-lg truncate">
+            กำลังเปิด Workspace...
           </h1>
 
           <p id="guild-subtitle" class="card-desc">
@@ -156,13 +153,11 @@
         </div>
 
         <div class="topbar-actions">
-          <button class="btn btn-soft" type="button" onclick="location.reload()">
-            🔄 รีเฟรช
-          </button>
-
-          <a class="btn btn-soft" href="/verification">
-            เปลี่ยนเซิร์ฟเวอร์
-          </a>
+          <label class="guild-switcher-label" for="guild-switcher">สลับเซิร์ฟเวอร์</label>
+          <select id="guild-switcher" class="guild-switcher" aria-label="สลับเซิร์ฟเวอร์">
+            <option value="">กำลังโหลดรายชื่อ…</option>
+          </select>
+          <button class="btn btn-soft" type="button" onclick="location.reload()">รีเฟรชข้อมูล</button>
         </div>
       </div>
 
@@ -172,7 +167,7 @@
         <div class="grid grid-4">
           <div class="stat-card">
             <div id="stat-total" class="num" style="color:var(--discord);">0</div>
-            <div class="label">Verify ทั้งหมด</div>
+            <div class="label">การยืนยันทั้งหมด</div>
             <div class="sub">จำนวนรายการยืนยันในเซิร์ฟเวอร์นี้</div>
           </div>
 
@@ -185,7 +180,7 @@
           <div class="stat-card">
             <div id="stat-blocked" class="num" style="color:var(--red-2);">0</div>
             <div class="label">ถูกบล็อก/ไม่ผ่าน</div>
-            <div class="sub">ไม่ผ่าน policy หรือเกิด error</div>
+            <div class="sub">ไม่ผ่านนโยบายหรือดำเนินการไม่สำเร็จ</div>
           </div>
 
           <div class="stat-card">
@@ -216,7 +211,7 @@
 
           <div class="stat-card">
             <div id="stat-pending" class="num" style="color:var(--yellow-2);">0</div>
-            <div class="label">Lookup ไม่สำเร็จ</div>
+            <div class="label">ตรวจเครือข่ายไม่สำเร็จ</div>
             <div class="sub">ไม่พบ IP หรือ provider ล้มเหลว</div>
           </div>
         </div>
@@ -227,7 +222,7 @@
               <div>
                 <h2>สถานะระบบยืนยันตัวตน</h2>
                 <div class="card-desc">
-                  สรุป config ล่าสุดที่ Dashboard ใช้งานอยู่
+                  สรุปการตั้งค่าล่าสุดที่ระบบกำลังใช้งาน
                 </div>
               </div>
               <span id="overview-enabled" class="badge badge-muted">กำลังโหลด</span>
@@ -291,16 +286,16 @@
               </button>
 
               <button class="btn btn-soft btn-block" type="button" data-tab="risk">
-                🌐 ดู Risk & Network
+                ดูความเสี่ยงและเครือข่าย
               </button>
 
               <button class="btn btn-soft btn-block" type="button" data-tab="logs">
-                📜 ดู Verify Logs
+                ดูประวัติการยืนยัน
               </button>
             </div>
 
             <div class="alert alert-warn mt-14">
-              Log Center เต็มยังพักไว้ก่อน รอบนี้เน้น Dashboard, Verification Panel และข้อมูลละเอียดที่มีอยู่
+              แต่ละหมวดโหลดข้อมูลเมื่อเปิดใช้งาน เพื่อลดภาระฐานข้อมูลและทำให้หน้าแรกตอบสนองเร็ว
             </div>
           </div>
         </div>
@@ -331,7 +326,7 @@
           <div class="card card-pad">
             <div class="card-header">
               <div>
-                <h2>Verify Logs ล่าสุด</h2>
+                <h2>ประวัติการยืนยันล่าสุด</h2>
                 <div class="card-desc">
                   สรุปผลยืนยันล่าสุดพร้อมเหตุผลและ network
                 </div>
@@ -433,7 +428,7 @@
           <div class="card card-pad">
             <div class="card-header">
               <div>
-                <h2>Panel Appearance</h2>
+                <h2>รูปแบบแผงใน Discord</h2>
                 <div class="card-desc">
                   ตั้งค่าข้อความ สี รูป GIF ปุ่ม และตัวอย่าง embed ก่อนส่งจริง
                 </div>
@@ -523,7 +518,7 @@
           <div class="card card-pad">
             <div class="card-header">
               <div>
-                <h2>Actions</h2>
+                <h2>คำสั่งจัดการแผง</h2>
                 <div class="card-desc">
                   ตรวจสอบ บันทึก ส่งใหม่ หรือแก้แผงเดิมใน Discord
                 </div>
@@ -582,7 +577,7 @@
           <div class="card card-pad">
             <div class="card-header">
               <div>
-                <h2>Security / Policy</h2>
+                <h2>นโยบายความปลอดภัย</h2>
                 <div class="card-desc">
                   ตั้งค่าเงื่อนไขการยืนยันตัวตนและการกรองความเสี่ยง
                 </div>
@@ -671,7 +666,7 @@
           <div class="card card-pad">
             <div class="card-header">
               <div>
-                <h2>🛡️ Anti-Alt / IP Security</h2>
+                <h2>ป้องกันบัญชีซ้ำและเครือข่ายเสี่ยง</h2>
                 <div class="card-desc">
                   ตั้งค่าการตรวจ IP ซ้ำ, device ซ้ำ, IP เคยโดนบล็อก, header spoof และ lookup failure ต่อเซิร์ฟเวอร์
                 </div>
@@ -768,7 +763,7 @@
           <div class="card card-pad">
             <div class="card-header">
               <div>
-                <h2>Policy Notes</h2>
+                <h2>ระบบใช้ข้อมูลอย่างไร</h2>
                 <div class="card-desc">
                   อธิบายเงื่อนไขที่ระบบจะใช้ประเมินสมาชิกตอนยืนยันตัวตน
                 </div>
@@ -859,8 +854,8 @@
               <select id="members-risk">
                 <option value="">ทั้งหมด</option>
                 <option value="high">ความเสี่ยงสูง</option>
-                <option value="medium">Medium Risk</option>
-                <option value="low">Low Risk</option>
+                <option value="medium">ความเสี่ยงปานกลาง</option>
+                <option value="low">ความเสี่ยงต่ำ</option>
               </select>
             </div>
           </div>
@@ -921,9 +916,9 @@
         <div class="card card-pad">
           <div class="card-header">
             <div>
-              <h2>Verify Logs</h2>
+              <h2>ประวัติการยืนยัน</h2>
               <div class="card-desc">
-                ประวัติการยืนยันตัวตนล่าสุดแบบละเอียด แต่ยังไม่ใช่ Log Center เต็มที่เราพักไว้ทำทีหลัง
+                ค้นหาและตรวจผลการยืนยันย้อนหลังตามผู้ใช้ ผลลัพธ์ และระดับความเสี่ยง
               </div>
             </div>
 
@@ -948,19 +943,19 @@
             </div>
 
             <div>
-              <label for="logs-risk">Risk</label>
+              <label for="logs-risk">ระดับความเสี่ยง</label>
               <select id="logs-risk">
                 <option value="">ทั้งหมด</option>
                 <option value="high">ความเสี่ยงสูง</option>
-                <option value="medium">Medium Risk</option>
-                <option value="low">Low Risk</option>
+                <option value="medium">ความเสี่ยงปานกลาง</option>
+                <option value="low">ความเสี่ยงต่ำ</option>
               </select>
             </div>
           </div>
 
           <div class="flex justify-between items-center gap-10 flex-wrap mt-16">
             <div class="muted small">
-              Log นี้เน้น verify/callback/result ก่อน ส่วน Admin Action Log เต็มพักไว้เฟส Log Center
+              แสดงเหตุการณ์จากขั้นตอนยืนยันตัวตนและผลลัพธ์ที่ระบบบันทึกไว้
             </div>
 
             <div class="flex gap-8 flex-wrap">
@@ -1088,9 +1083,9 @@
         <div class="card card-pad mt-18">
           <div class="card-header">
             <div>
-              <h2>Recent Risk Logs</h2>
+              <h2>เหตุการณ์ความเสี่ยงล่าสุด</h2>
               <div class="card-desc">
-                รายการล่าสุดที่มีข้อมูล risk/network/device ให้ดูแบบละเอียด
+                รายการล่าสุดที่มีข้อมูลความเสี่ยง เครือข่าย หรืออุปกรณ์ให้ตรวจต่อ
               </div>
             </div>
 
@@ -1111,9 +1106,9 @@
           <div class="card card-pad">
             <div class="card-header">
               <div>
-                <h2>Data & Privacy</h2>
+                <h2>ข้อมูลและความเป็นส่วนตัว</h2>
                 <div class="card-desc">
-                  อธิบายข้อมูลที่ระบบแสดงและขอบเขตการใช้งานใน Dashboard นี้
+                  ขอบเขตข้อมูลที่ระบบแสดงใน Workspace นี้
                 </div>
               </div>
 
@@ -1168,9 +1163,9 @@
           <div class="card card-pad">
             <div class="card-header">
               <div>
-                <h2>สิ่งที่ยังพักไว้ก่อน</h2>
+                <h2>การเข้าถึงและร่องรอยตรวจสอบ</h2>
                 <div class="card-desc">
-                  ไม่ทำในรอบนี้ เพื่อไม่ให้ scope บานและไม่ชนกับ Log Center ที่พักไว้
+                  หลักที่ระบบใช้ป้องกันข้อมูลสำคัญจากการเปิดดูโดยไม่ตั้งใจ
                 </div>
               </div>
             </div>
@@ -1178,38 +1173,37 @@
             <div class="list">
               <div class="list-item">
                 <div class="list-title">
-                  <span>📜 Log Center เต็ม</span>
-                  <span class="badge badge-muted">Later</span>
+                  <span>รายการทั่วไปถูกปกปิดข้อมูลสำคัญ</span>
+                  <span class="badge badge-ok">Default</span>
                 </div>
                 <div class="list-meta">
-                  Admin action logs, role assignment logs, data deletion logs, advanced filters และ audit center เต็มยังพักไว้
+                  หน้ารายการและข้อมูลส่งออกไม่คืน Raw IP หรือ OAuth Token แบบเต็ม
                 </div>
               </div>
 
               <div class="list-item">
                 <div class="list-title">
-                  <span>🗑️ Data Deletion เต็ม</span>
-                  <span class="badge badge-muted">Later</span>
+                  <span>การเปิดข้อมูลเต็มมีการตรวจสอบ</span>
+                  <span class="badge badge-warn">Audited</span>
                 </div>
                 <div class="list-meta">
-                  รอบนี้ยังไม่ขยายระบบลบข้อมูลทั้งชุด เพราะควรทำหลังมี Log/Audit Center ที่ตามรอยได้ก่อน
+                  Member Detail แบบเต็มต้องผ่าน Owner session, CSRF, rate limit และบันทึกเหตุการณ์ตรวจสอบ
                 </div>
               </div>
 
               <div class="list-item">
                 <div class="list-title">
-                  <span>🧰 Env Checker เต็ม</span>
-                  <span class="badge badge-muted">Later</span>
+                  <span>การเก็บข้อมูลควบคุมตามเซิร์ฟเวอร์</span>
+                  <span class="badge badge-info">Retention</span>
                 </div>
                 <div class="list-meta">
-                  Security Center/Env Checker แบบเต็มพักไว้ก่อน แต่ validation panel จะตรวจ env ที่จำเป็นต่อ verification เท่าที่ทำได้
+                  นโยบาย retention ใช้ soft-delete กับประวัติที่ครบกำหนด และรักษา Snapshot ที่ยังถูกอ้างอิง
                 </div>
               </div>
             </div>
 
             <div class="alert alert-info mt-16">
-              หน้านี้คือ Owner Verification Admin Center ใน runtime เดียว
-              edit existing panel และ callback hardening
+              การดูข้อมูลเต็มควรทำเฉพาะเมื่อจำเป็น และไม่ควรคัดลอกไปเก็บในแชตหรือ Log ภายนอก
             </div>
           </div>
         </div>

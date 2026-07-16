@@ -356,16 +356,21 @@ async function performClientLogin(newClient, sessionId, session, tokenHash, toke
         console.error(`[WORKER] ❌ Login failed for ${sanitizeLogText(sessionId)}. Destroying ghost client.`);
         try { disposeSelfClient(newClient, "login-failure"); } catch {}
         if (err.code === "OPERATION_QUEUE_FULL") throw new Error("VOICE_QUEUE_BUSY");
-        const isTokenErr =
-            err.message.includes("TOKEN_INVALID") ||
-            err.message.includes("Incorrect login") ||
-            err.message.includes("401");
+        const isTokenErr = isInvalidTokenError(err);
         if (isTokenErr) {
             await markTokenInvalid(sessionId, "login_rejected");
             throw new Error("TOKEN_INVALID");
         }
         throw err;
     }
+}
+
+function isInvalidTokenError(error) {
+    const code = String(error?.code ?? error?.status ?? "").trim();
+    const message = String(error?.message || error || "");
+    return code === "4004" ||
+        code === "401" ||
+        /TOKEN_INVALID|invalid token|incorrect login|authentication failed/i.test(message);
 }
 
 async function resolveOrLoginSessionClient(sessionId, session, tokenHash, tokenString) {
@@ -1046,6 +1051,12 @@ async function autoResume() {
                 await delay(warmUpJitter);
             } else {
                 skipped++;
+                await sessionManager.markSessionFailed?.(
+                    id,
+                    "token_unavailable",
+                    null,
+                    "stored token could not be decrypted or was missing"
+                ).catch(() => false);
             }
         } catch (err) {
             failed++;
@@ -1234,4 +1245,5 @@ module.exports = {
     scheduleHealthRecovery,
     healthCheck,
     cleanupIdleSessions,
+    isInvalidTokenError,
 };

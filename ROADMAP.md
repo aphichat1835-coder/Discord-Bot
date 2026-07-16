@@ -1,6 +1,6 @@
 # Roadmap
 
-Last reviewed: 2026-07-13.
+Last reviewed: 2026-07-16 (`tt`).
 
 ## Current architecture baseline
 
@@ -37,6 +37,17 @@ require a new explicit owner decision.
   with cursor batches and paginated canonical history collections.
 - Added additive snapshot/data-quality fields and dry-run/apply migration.
 - Added audited Owner raw-IP reveal while keeping normal APIs redacted.
+- Added a separate audited full-detail POST while keeping the normal detail GET
+  redacted and non-cacheable for sensitive responses.
+- Made snapshot persistence complete-version based with per-document BSON
+  sizing, oversized-object checksum chunks, rollback recovery, and no aggregate
+  truncation ceiling.
+- Made privacy deletion and IP-history backfill transactional/idempotent, and
+  required a confirmed maintenance window for archive restore apply.
+- Added guild-backup identity/chunk validation and permission-overwrite restore.
+- Replaced the inherited Verification dashboard presentation with one
+  mobile-first Operations Workspace and truthful callback/status states while
+  preserving routes, management capabilities, and OAuth behavior.
 - Consolidated CI and tests under the root package.
 - Retired Enterprise Audit server-activity capture, `/setup-log`, its Owner
   routes/UI, channel delivery, and runtime storage while preserving historical
@@ -63,14 +74,15 @@ require a new explicit owner decision.
 
 ### UI maintainability
 
-- Split the large verification browser script and stylesheet only as a scoped
-  behavior-preserving task.
-- Improve the Owner sensitive-review presentation without exposing raw values in
-  list endpoints or browser persistence.
+- Split the remaining large verification browser script and base component
+  stylesheet only as scoped behavior-preserving tasks. The Operations Workspace
+  theme is already isolated from the shared component foundation.
+- Continue focused accessibility and sensitive-review audits without exposing
+  raw values in list endpoints or browser persistence.
 
 ### Operations
 
-- Record the production cutover and rollback result in `CHANGELOG.md`.
+- Record each production release and any rollback result in `CHANGELOG.md`.
 - Periodically run the verification migration in dry-run mode until all legacy
   documents contain current derived metadata.
 - Review retention settings and privacy policy before changing data lifetime.
@@ -91,11 +103,12 @@ These are not approved by this roadmap:
 Each requires separate implementation evidence, owner approval, compatibility
 analysis, rollback planning, and full validation.
 
-## Definition of done for production cutover
+## Definition of done for a production release
 
 - MongoDB backup exists and restore steps are known.
 - Unified callback URI is registered in Discord Developer Portal.
-- All public URL aliases resolve to one HTTPS origin.
+- Canonical `PUBLIC_BASE_URL` resolves to the deployed HTTPS origin; any
+  retained legacy aliases match it exactly.
 - `npm run check`, `npm test`, dependency audit, secret scan, and protected-path
   guard pass.
 - `/ping` and `/health` behave correctly during startup and ready state.
@@ -103,4 +116,5 @@ analysis, rollback planning, and full validation.
 - A real OAuth flow verifies profile, optional data, guild join, target member,
   role assignment, persistence, and redaction.
 - Existing records remain readable before and after migration.
-- Retired service is stopped only after the new runtime passes.
+- If a legacy standalone service still exists, it is stopped only after the
+  unified runtime passes; current installations otherwise deploy one service.

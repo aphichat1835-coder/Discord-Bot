@@ -1,6 +1,24 @@
 # Changelog
 
-## [Unreleased] - Unified Bot And Verification Runtime 2026-07-13
+## [Unreleased] - Unified Bot And Verification Runtime 2026-07-16
+
+- Synchronized all repository documentation with the current `tt` runtime:
+  exact boot/maintenance lifecycle, 16-command and 13-variable contracts,
+  redacted versus audited Member Detail access, complete snapshot storage,
+  backup/restore validation, and one-service deployment guidance.
+- Rebuilt the Verification web experience as one responsive operations
+  workspace with an in-page guild switcher, consistent callback/campaign
+  surfaces, accessible state cues, restrained motion, and an isolated theme
+  stylesheet layered over the shared component foundation.
+- Classified Discord's `An invalid token was provided` login response as a
+  terminal Voice token failure so stale sessions no longer remain active in the
+  Owner Dashboard; fixed Session Detail response handling and idempotent stop.
+- Changed disabled Natural/AutoDeaf logging from failure-red to informational
+  pause state, and corrected Dashboard RAM to report process RSS with explicit
+  V8 heap details. Replaced the misleading mixed-counter Success Rate card with
+  the real process Error Events count.
+- Made production `DASHBOARD_PIN` accept any non-empty Owner-chosen value while
+  preserving PIN throttling and all session/CSRF protections.
 
 ### Changed
 

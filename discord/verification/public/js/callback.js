@@ -203,10 +203,6 @@
     };
   }
 
-  async function wait(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
   async function run() {
     setStep("discord");
 
@@ -233,14 +229,9 @@
     }
 
     try {
-      setStatus("กำลังรับข้อมูลจาก Discord", "discord");
-      await wait(80);
-
-      setStatus("กำลังตรวจสอบบัญชี Discord", "account");
-      await wait(80);
-
-      setStatus("กำลังตรวจสอบเงื่อนไขความปลอดภัย", "security");
-      await wait(80);
+      // The callback is one server operation, so do not pretend that the
+      // browser can observe percentages or internal phases it does not receive.
+      setStatus("กำลังส่งข้อมูลและรอผลตรวจสอบจากระบบ", "discord");
 
       const payload = {
         code,
@@ -256,8 +247,6 @@
         },
         body: JSON.stringify(payload)
       });
-
-      setStatus("กำลังเพิ่มยศให้คุณ", "role");
 
       const data = await res.json().catch(() => null);
 
@@ -280,7 +269,6 @@
         el.classList.add("done");
       });
 
-      await wait(180);
       success(data);
     } catch (err) {
       fail(

@@ -11,6 +11,8 @@ Before suggesting changes, use the current implementation as source of truth and
 - `SECURITY.md`
 - `README.md`
 - `CHANGELOG.md`
+- `docs/RUNBOOK.md`
+- `docs/SNAPSHOT_STORAGE.md`
 
 Rules:
 
@@ -24,3 +26,5 @@ Rules:
 - Prefer small helper extraction and compatibility layers over broad refactors.
 - Never expose real tokens, webhook URLs, MongoDB URLs, OAuth secrets, dashboard PINs, raw IP values, or hidden operational details.
 - Add or update documentation when adding routes, commands, models, env vars, or behavior that changes the architecture map.
+- Production has exactly 13 owner-maintained values in `.env.example`; advanced runtime controls use code defaults and are not deployment requirements.
+- Verification snapshot storage has no aggregate data-loss ceiling. Preserve per-document BSON safety, complete-version activation, integrity checks, and rollback recovery.

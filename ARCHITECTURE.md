@@ -1,6 +1,6 @@
 # Architecture
 
-Last implementation verification: 2026-07-13.
+Last implementation verification: 2026-07-16 (`tt`).
 
 ## 1. System shape
 
@@ -41,10 +41,12 @@ Authoritative orchestration is `discord/index.js`.
 3. Listen on `process.env.PORT || 3000`.
 4. Connect MongoDB through `discord/sessionManager.js`.
 5. Load persisted bot/session state.
-6. Archive and migrate a bounded batch of legacy verification records, then
-   start retention and encrypted OAuth refresh maintenance.
+6. Run the initial bounded verification lifecycle: migration, canonical
+   IP-history backfill, snapshot rollback recovery/cleanup, retention, reveal
+   expiry, and encrypted OAuth token refresh.
 7. Login the Discord client.
-8. Start normal event, protection, voice/session, and scheduled work.
+8. Register commands, restore panels, auto-resume eligible Voice sessions, and
+   start normal event, protection, voice/session, and scheduled work.
 
 The HTTP-first design keeps `/ping` available during startup. `/health` is the
 combined readiness probe and remains 503 until MongoDB, Discord, slash-command
@@ -83,7 +85,7 @@ channel routing, queues, reconciliation, and dashboard are not part of runtime.
 │   ├── voiceWorker/              voice worker implementation
 │   ├── verification/
 │   │   ├── runtime.js            mounts routes/assets into the main Express app
-│   │   ├── lifecycle.js          retention and encrypted token refresh
+│   │   ├── lifecycle.js          migration, history, snapshots, retention, and token refresh
 │   │   ├── ownerService.js       in-process Owner queries and audited IP reveal
 │   │   ├── page.js               Owner guild chooser
 │   │   ├── routes/               OAuth and Owner guild APIs
@@ -145,6 +147,16 @@ The management APIs retain their established response shapes where practical.
 Cross-service HTTP calls were replaced by direct calls to
 `discord/verification/ownerService.js`.
 
+The Verification owner surfaces share one responsive Operations Workspace
+design across guild selection, per-guild management, OAuth callback, and Join
+Campaign. Per-guild routes remain compatible but include an in-page guild
+switcher, so routine navigation does not require returning to the selector.
+
+`/api/status` reports process RSS as Dashboard RAM and exposes V8 heap used/
+allocated separately. Its historical success-rate field is compatibility-only
+because request and background-error counters are not a matched population; the
+UI displays the real error-event counter instead.
+
 ## 5. Verification flow
 
 ### Panel and signed state
@@ -195,6 +207,8 @@ The active verification models are:
 | `OAuthUserConnectionSnapshot` | versioned ordered chunks containing every connection returned by Discord |
 | `OAuthMemberSnapshot` | versioned target-guild member core and role-chunk reference |
 | `OAuthMemberRoleSnapshot` | versioned ordered chunks containing every returned target-member role |
+| `OAuthObjectChunkSnapshot` | versioned Base64 byte chunks for a profile, member, or single item too large for a normal document |
+| `OAuthSnapshotRecovery` | payload-free rollback diagnostics and bounded retry state for incomplete snapshot cleanup |
 | `VerifyLog` | immutable-per-attempt core result, snapshot references, policy/device/network state, join/role result, and quality metadata |
 | `IpIdentityLink` | per-guild hashed-IP correlation summary and first/last seen state |
 | `IpIdentityUserHistory` | canonical per-IP user identity aggregate without an overall item cap |
@@ -213,6 +227,8 @@ Snapshot maintenance uses permanent-history semantics. Every version referenced
 by the current `OAuthUser.snapshotRefs` or by any `VerifyLog` (including a
 soft-deleted historical log) is preserved. Only incomplete and unreferenced
 versions older than the cleanup grace period are eligible for bounded deletion.
+Object chunks use guild-scoped identity and participate in the same reference
+checks; startup maintenance migrates the legacy non-guild-scoped index safely.
 
 Model names, collection behavior, and current/historical token/IP encryption
 read compatibility are preserved.
@@ -222,7 +238,12 @@ is exhausted or the Owner stops the job. Its batch-size setting bounds memory;
 it is not a ceiling on the number of users processed.
 
 Automatic migration runs after the shared MongoDB connection is ready and on
-hourly verification maintenance. It processes a bounded batch with a persistent
+hourly verification maintenance. The same lifecycle also backfills canonical
+IP history from historical `VerifyLog` records, retries snapshot rollback,
+removes eligible snapshot garbage, applies soft-delete retention, expires legacy
+reveal requests, and refreshes encrypted OAuth tokens. Each task is bounded and
+does not start on an interval until the initial maintenance pass succeeds.
+Migration processes a bounded batch with a persistent
 source cursor so repeatedly failing records cannot starve later records, archives each
 source exactly once per migration version before writing, and skips records
 that already have an archive. Backup failure stops migration while leaving the
@@ -253,7 +274,12 @@ does not protect against loss of the entire MongoDB database.
   pagination, so older users remain reachable without an in-memory scan ceiling
 - a category is complete only when `returnedCount === storedCount`, every chunk
   finalized successfully, and `complete` is true
-- each snapshot category is checked against the configured aggregate budget before chunking, and each document remains below the 12 MB hard ceiling
+- aggregate payload size is not a truncation boundary; normal values are split
+  across as many ordered documents as needed
+- every document is measured with BSON overhead and remains below the effective
+  `VERIFICATION_SNAPSHOT_MAX_BYTES` ceiling, capped at 12 MiB
+- an individually oversized object uses Base64 byte chunks with per-chunk and
+  aggregate SHA-256/byte-length validation
 
 ### Browser/device/network
 
@@ -372,14 +398,16 @@ startCommand: npm start
 healthCheckPath: /health
 ```
 
-Production cutover order:
+Release/deployment verification order:
 
 1. Back up MongoDB.
 2. Add the new unified callback URI in Discord Developer Portal.
-3. Set all public URL aliases to the unified origin.
+3. Set canonical `PUBLIC_BASE_URL` to the unified HTTPS origin. Remove legacy
+   URL aliases when possible; if retained for compatibility, keep them equal.
 4. Deploy and test `/`, `/verification`, `/auth/callback`, `/ping`, and `/health`.
 5. Run a real verification smoke test including join and role assignment.
-6. Stop the retired service only after the unified runtime passes.
+6. If a legacy standalone service still exists, stop it only after the unified
+   runtime passes. A current installation deploys only the root service.
 
 ## 10. Environment groups
 

@@ -36,7 +36,13 @@ Required reading order for non-trivial work:
 5. `SECURITY.md`
 6. `README.md`
 7. `CHANGELOG.md`
-8. Relevant implementation files for the task
+8. `docs/RUNBOOK.md`
+9. `docs/SNAPSHOT_STORAGE.md`
+10. Relevant implementation files for the task
+
+Treat `.env.example` and `render.yaml` as operational documentation. Keep them
+aligned with the validated production environment contract and deployment
+shape whenever either contract changes.
 
 If documentation and implementation disagree, report the mismatch and inspect the implementation before recommending or applying changes.
 

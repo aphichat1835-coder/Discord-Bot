@@ -9,9 +9,14 @@ const {
 
 function buildJoinCampaignPage() {
     return shell("ดึงสมาชิกเข้าเซิร์ฟเวอร์", `
+<link rel="stylesheet" href="/verification-assets/css/dashboard.css">
+<link rel="stylesheet" href="/verification-assets/css/workspace.css">
+<script>document.body.classList.add('verification-campaign-host')</script>
+<div class="verification-campaign-page">
 <div class="container">
-<h1 class="page-title">📥 ดึงสมาชิกที่เคยอนุญาต</h1>
-<p class="page-sub">เพิ่มผู้ใช้ที่เคยอนุญาตสิทธิ์ <code>guilds.join</code> เข้าเซิร์ฟเวอร์เป้าหมายอย่างเป็นขั้นตอน</p>
+<p class="eyebrow">VERIFICATION OPERATIONS</p>
+<h1 class="page-title">ดึงสมาชิกที่เคยอนุญาต</h1>
+<p class="page-sub">ตรวจจำนวนก่อน แล้วจึงเพิ่มผู้ใช้ที่มีสิทธิ์ <code>guilds.join</code> เข้าเซิร์ฟเวอร์เป้าหมายอย่างควบคุมได้</p>
 ${navBar("/join-campaign")}
 
 <div class="card">
@@ -47,6 +52,7 @@ ${navBar("/join-campaign")}
         <div class="mini-stat"><span>Rate limit</span><b id="rateLimited">0</b></div>
     </div>
     <div class="terminal" id="campaignLog" style="height:240px;margin-top:14px;"></div>
+</div>
 </div>
 </div>
 

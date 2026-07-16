@@ -1,6 +1,6 @@
 # Project Context
 
-Last verified against the implementation: 2026-07-13.
+Last verified against the implementation: 2026-07-16 (`tt`).
 
 ## Identity
 
@@ -32,6 +32,9 @@ verification-only project. The same runtime contains:
 The former `dashboard-public` service no longer exists. Its active verification
 models, routes, utilities, views, and assets live in `discord/verification/`.
 Guild-admin OAuth/session access was removed; management is Owner PIN only.
+The Verification UI is one visual workspace across server selection, per-guild
+management, callback status, and Join Campaign. Existing routes stay compatible,
+while a per-guild header switcher removes the back-and-forth selector flow.
 
 ## Entrypoint and boot
 
@@ -42,7 +45,7 @@ create Express app and register routes
   → listen on PORT
   → connect MongoDB
   → load persisted bot/session state
-  → archive/migrate legacy verification records, then run retention and OAuth token refresh
+  → run initial verification migration, history backfill, snapshot recovery/cleanup, retention, reveal expiry, and OAuth token refresh
   → login Discord client
   → resume normal bot/voice work
 ```
@@ -93,6 +96,11 @@ Existing command names, custom IDs, signed state, panel revisions,
 `guilds.join`, Join Campaign, role assignment, and retention behavior remain
 compatible.
 
+Verification maintenance repeats hourly only after the initial pass succeeds.
+It resumes bounded automatic migration, canonical IP-history backfill, snapshot
+rollback recovery and garbage cleanup, soft-delete retention, legacy reveal
+expiry, and encrypted OAuth token refresh.
+
 The Enterprise Audit server-activity logger has been retired. `/setup-log`, its
 Dashboard/API routes, Discord event listeners, storage/reconciliation modules,
 and channel delivery are absent. Historical MongoDB collections and Discord
@@ -109,6 +117,8 @@ remain active.
   without an overall item cap; normal APIs never expose the encrypted field.
 - Fingerprint source material is never persisted; only its HMAC is stored.
 - Normal list/export APIs never return raw tokens or raw IP.
+- The normal Member Detail GET response is categorized but redacted. Full raw
+  values require the separate CSRF-protected and rate-limited POST action.
 - Member Detail is Owner-only and uses a CSRF-protected, rate-limited POST to
   decrypt and display the complete raw IP and OAuth tokens in one action while
   appending an internal audit event. Compatibility reveal routes retain their
@@ -124,6 +134,12 @@ The existing Mongoose model and collection names are preserved. Schema changes
 are additive. Historical `adminOAuth` encrypted fields are retained and the
 maintenance lifecycle can refresh them; `LEGACY_ADMIN_OAUTH_REDIRECT_URI` can
 pin their original redirect URI. No admin OAuth route creates new grants.
+
+Complete OAuth snapshots use versioned normal-item chunks and byte chunks for
+oversized objects. There is no aggregate truncation budget; every document must
+remain under the effective BSON ceiling and every reconstructed byte payload
+must pass count, order, length, and SHA-256 checks. Failed rollback work is
+persisted in `OAuthSnapshotRecovery` for bounded maintenance retries.
 
 ## Validation baseline
 

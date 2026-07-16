@@ -46,8 +46,10 @@ function buildRuntimeStatusPayload({
     const totalReq = sessionManager.systemMetrics.requests;
     const totalErr = sessionManager.systemMetrics.errors;
     const reconnects = sessionManager.systemMetrics.reconnects;
+    // Retain the compatibility field, but expose the source counters because
+    // background errors and tracked requests are not a matched population.
     const successRate = totalReq > 0
-        ? (((totalReq - totalErr) / totalReq) * 100).toFixed(1)
+        ? (Math.max(0, Math.min(100, ((totalReq - totalErr) / totalReq) * 100))).toFixed(1)
         : "100.0";
 
     const readyAt = typeof botReadyAt === "function" ? botReadyAt() : botReadyAt;
@@ -73,10 +75,19 @@ function buildRuntimeStatusPayload({
         recoveryQueue: workerDiagnostics.recoveryQueue ?? 0,
         loginQueue: workerDiagnostics.loginQueue ?? 0,
         workerDiagnostics,
-        ramMB: (mem.heapUsed / 1024 / 1024).toFixed(1),
-        ramTotalMB: (mem.heapTotal / 1024 / 1024).toFixed(1),
+        // RSS is the process footprint users expect from a dashboard labelled
+        // RAM. Keep explicit heap fields so V8 pressure remains inspectable.
+        ramMB: (mem.rss / 1024 / 1024).toFixed(1),
+        ramTotalMB: (mem.rss / 1024 / 1024).toFixed(1),
+        rssMB: (mem.rss / 1024 / 1024).toFixed(1),
+        heapUsedMB: (mem.heapUsed / 1024 / 1024).toFixed(1),
+        heapTotalMB: (mem.heapTotal / 1024 / 1024).toFixed(1),
+        externalMB: (mem.external / 1024 / 1024).toFixed(1),
         reconnects,
         successRate,
+        requestCount: totalReq,
+        errorCount: totalErr,
+        rateIsEstimate: true,
         voiceSummary,
         recentLogs: webLogs.slice(-60).reverse()
     });

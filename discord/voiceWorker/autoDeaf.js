@@ -129,7 +129,7 @@ function applyAutoDeafSettings(newSettings) {
 
     if (!st.autoDeafSettings.enabled) {
         stopAllAutoDeafTimers();
-        console.log("[AUTODEAF] 🔴 Disabled.");
+        console.log("[AUTODEAF] ⏸️ Disabled by settings.");
         return;
     }
 

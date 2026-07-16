@@ -116,7 +116,10 @@ function validateRequiredEnv(env = process.env, config = {}) {
         assertStrongSecret("VERIFY_STATE_SECRET", verifyStateSecret, { minLength: 32 });
         assertStrongSecret("ENCRYPTION_KEY", encryptionKey, { minLength: 32 });
         assertStrongSecret("DISCORD_CLIENT_SECRET", discordClientSecret, { minLength: 16 });
-        assertStrongSecret("DASHBOARD_PIN", dashboardPin, { minLength: 6 });
+        // The Owner explicitly controls the dashboard credential policy. Keep
+        // production fail-closed when it is missing, but do not impose a
+        // length or composition rule that could lock the Owner out.
+        assertRequiredProductionValue("DASHBOARD_PIN", dashboardPin);
         assertRequiredProductionValue("WEBHOOK_LOG_URL", webhookLogUrl);
         assertRequiredProductionValue("ALERT_WEBHOOK_URL", alertWebhookUrl);
         assertHttpsUrl("WEBHOOK_LOG_URL", webhookLogUrl);

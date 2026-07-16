@@ -1,0 +1,332 @@
+/*
+================================================================================
+  Verification Workspace 2026
+  Direction: matte operations desk — restrained, dense, mobile-first.
+  This final layer intentionally replaces the inherited purple glass treatment
+  without changing existing DOM ids or application behavior.
+================================================================================
+*/
+
+body.owner-dashboard-theme,
+body.callback-page,
+body.verification-campaign-host {
+  --bg: #07110f;
+  --bg-soft: #0a1714;
+  --bg-panel: #0d1d19;
+  --bg-panel-2: #11251f;
+  --bg-panel-3: #173029;
+  --card: #0d1d19;
+  --card-solid: #0d1d19;
+  --card-hover: #122821;
+  --line: rgba(191, 224, 210, 0.14);
+  --line-strong: rgba(191, 224, 210, 0.28);
+  --line-blue: rgba(67, 227, 181, 0.38);
+  --line-cyan: rgba(72, 205, 225, 0.34);
+  --text: #f3f7f5;
+  --text-soft: #d8e6e0;
+  --muted: #91aaa0;
+  --muted-2: #6f897f;
+  --muted-3: #536b62;
+  --discord: #43e3b5;
+  --discord-2: #25b98f;
+  --blue: #48cde1;
+  --cyan: #48cde1;
+  --green: #43e3b5;
+  --green-2: #75efc9;
+  --purple: #a8d8c7;
+  --yellow: #e4b85b;
+  --yellow-2: #f2cf7b;
+  --red: #f06f72;
+  --red-2: #ff9698;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 18px;
+  --shadow-sm: 0 8px 20px rgba(0, 0, 0, 0.18);
+  --shadow-md: 0 18px 44px rgba(0, 0, 0, 0.22);
+  --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.3);
+  background:
+    linear-gradient(rgba(116, 157, 140, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(116, 157, 140, 0.035) 1px, transparent 1px),
+    #07110f;
+  background-size: 32px 32px;
+  background-attachment: fixed;
+}
+
+body.owner-dashboard-theme::before,
+body.callback-page::before,
+body.verification-campaign-host::before {
+  content: "";
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: -1;
+  height: 240px;
+  background: linear-gradient(180deg, rgba(67, 227, 181, 0.07), transparent);
+  pointer-events: none;
+}
+
+body.verification-campaign-host { padding: 0; color: var(--text); }
+
+body.owner-dashboard-theme .gradient-text { color: var(--text); background: none; }
+
+.eyebrow {
+  margin: 0 0 7px;
+  color: var(--green-2);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+}
+
+.verification-commandbar {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.verification-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.verification-mark-symbol,
+.callback-brand-mark {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  color: #07110f;
+  background: var(--green-2);
+  border-radius: 9px 9px 9px 3px;
+  font-family: var(--mono);
+  font-weight: 1000;
+}
+
+.verification-mark span:last-child { display: grid; }
+.verification-mark b { font-family: var(--mono); font-size: 0.82rem; letter-spacing: 0.06em; }
+.verification-mark small { margin-top: 2px; color: var(--muted); font-size: 0.69rem; }
+.verification-commandbar-actions { display: flex; gap: 8px; }
+
+.verification-intro {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(250px, 0.55fr);
+  gap: 24px;
+  align-items: end;
+  padding: clamp(42px, 8vw, 88px) 0 30px;
+}
+
+.verification-intro .title-lg { max-width: 760px; font-size: clamp(2rem, 5vw, 4.4rem); letter-spacing: -0.045em; }
+.verification-intro .hero-desc { max-width: 690px; margin-top: 17px; color: var(--muted); font-size: 0.96rem; }
+.verification-intro-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 15px 16px;
+  border-top: 1px solid var(--line-strong);
+  border-bottom: 1px solid var(--line);
+}
+.verification-intro-note div { display: grid; gap: 3px; }
+.verification-intro-note b { font-size: 0.82rem; }
+.verification-intro-note small { color: var(--muted); line-height: 1.45; }
+.status-beacon { width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: var(--green-2); box-shadow: 0 0 0 5px rgba(67,227,181,.1); }
+
+body.owner-dashboard-theme .card,
+.verification-campaign-page .card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+body.owner-dashboard-theme .section-card { border-top: 3px solid var(--green-2); }
+body.owner-dashboard-theme .stat-card {
+  position: relative;
+  overflow: hidden;
+  background: #0b1916;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: none;
+}
+body.owner-dashboard-theme .stat-card::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 36px;
+  height: 2px;
+  background: currentColor;
+  opacity: .8;
+}
+body.owner-dashboard-theme .stat-card .num { font-family: var(--mono); letter-spacing: -0.05em; }
+body.owner-dashboard-theme .stat-card .label { margin-top: 9px; }
+
+body.owner-dashboard-theme .btn,
+.verification-campaign-page .btn {
+  border-radius: 9px;
+  box-shadow: none;
+  font-weight: 800;
+}
+body.owner-dashboard-theme .btn-primary,
+.verification-campaign-page .btn-primary,
+.verification-campaign-page .btn-success {
+  color: #06100d;
+  background: var(--green-2);
+  border: 1px solid var(--green-2);
+}
+body.owner-dashboard-theme .btn-soft,
+.verification-campaign-page .btn-soft {
+  color: var(--text-soft);
+  background: #0b1916;
+  border: 1px solid var(--line-strong);
+}
+body.owner-dashboard-theme .btn-danger,
+.verification-campaign-page .btn-danger {
+  color: #ffd9da;
+  background: rgba(240, 111, 114, 0.09);
+  border: 1px solid rgba(240, 111, 114, 0.36);
+}
+
+body.owner-dashboard-theme input,
+body.owner-dashboard-theme select,
+body.owner-dashboard-theme textarea,
+.verification-campaign-page input,
+.verification-campaign-page select,
+.verification-campaign-page textarea {
+  color: var(--text);
+  background: #081411;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+}
+body.owner-dashboard-theme input:focus,
+body.owner-dashboard-theme select:focus,
+body.owner-dashboard-theme textarea:focus {
+  border-color: var(--green-2);
+  box-shadow: 0 0 0 3px rgba(67, 227, 181, 0.12);
+}
+
+body.owner-dashboard-theme .guild-grid { grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
+body.owner-dashboard-theme .guild-card {
+  min-height: 148px;
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  grid-template-rows: 1fr auto;
+  gap: 4px 14px;
+  align-items: center;
+  padding: 19px;
+  color: var(--text);
+  background: #0b1916;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: none;
+}
+body.owner-dashboard-theme .guild-card:hover { transform: translateY(-2px); border-color: var(--green-2); background: #0f221d; }
+body.owner-dashboard-theme .guild-card::after { content: "เปิด Workspace  →"; grid-column: 2; color: var(--green-2); font-family: var(--mono); font-size: .68rem; }
+body.owner-dashboard-theme .guild-card-icon { grid-row: 1 / 3; border-radius: 12px 12px 12px 4px; background: #173029; border-color: var(--line-strong); }
+body.owner-dashboard-theme .guild-card-name { align-self: end; font-size: 1rem; }
+body.owner-dashboard-theme .guild-card-meta { align-self: start; color: var(--muted-2); }
+
+body.owner-dashboard-theme .app-layout { grid-template-columns: var(--sidebar-w) minmax(0, 1fr); }
+body.owner-dashboard-theme .sidebar {
+  background: #081411;
+  border-right: 1px solid var(--line);
+  box-shadow: none;
+}
+body.owner-dashboard-theme .sidebar-brand { padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+body.owner-dashboard-theme .brand-icon { color: #07110f; background: var(--green-2); border-radius: 9px 9px 9px 3px; font-family: var(--mono); font-weight: 1000; }
+body.owner-dashboard-theme .brand-title { font-family: var(--mono); letter-spacing: .06em; }
+body.owner-dashboard-theme .server-card { background: #0d1d19; border: 1px solid var(--line); border-radius: 12px; box-shadow: none; }
+body.owner-dashboard-theme .nav { gap: 3px; }
+body.owner-dashboard-theme .nav-item {
+  min-height: 46px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+body.owner-dashboard-theme .nav-item:hover { color: var(--text); background: #0d1d19; border-color: var(--line); }
+body.owner-dashboard-theme .nav-item.active { color: #07110f; background: var(--green-2); border-color: var(--green-2); box-shadow: none; }
+body.owner-dashboard-theme .nav-icon { min-width: 24px; color: inherit; font-family: var(--mono); font-size: .66rem; font-weight: 900; }
+.workspace-context { padding: 13px; color: var(--muted); background: rgba(67,227,181,.045); border-left: 2px solid var(--green-2); font-size: .76rem; }
+
+body.owner-dashboard-theme .main { padding: 28px clamp(16px, 3vw, 42px) 60px; }
+body.owner-dashboard-theme .topbar { margin-bottom: 26px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
+.guild-switcher-label { color: var(--muted); font-size: .72rem; font-weight: 800; white-space: nowrap; }
+.guild-switcher { width: min(260px, 44vw); margin: 0; }
+body.owner-dashboard-theme .mobile-bar { background: rgba(8,20,17,.94); border-bottom-color: var(--line); backdrop-filter: blur(14px); }
+
+body.owner-dashboard-theme table { border-collapse: collapse; }
+body.owner-dashboard-theme th { color: var(--muted); background: #091613; font-family: var(--mono); font-size: .67rem; letter-spacing: .04em; }
+body.owner-dashboard-theme td { border-top-color: var(--line); }
+body.owner-dashboard-theme tbody tr:hover { background: rgba(67,227,181,.035); }
+body.owner-dashboard-theme .badge { border-radius: 6px; }
+body.owner-dashboard-theme .alert { border-radius: 9px; }
+body.owner-dashboard-theme .modal { background: #0b1916; border-color: var(--line-strong); border-radius: 16px; box-shadow: var(--shadow-lg); }
+
+body.callback-page { display: grid; place-items: center; padding: 18px; }
+body.callback-page .callback-center { min-height: calc(100vh - 36px); padding: 0; }
+body.callback-page .callback-shell { width: min(640px, 100%); }
+body.callback-page .callback-brand { display: flex; align-items: center; justify-content: flex-start; gap: 12px; margin-bottom: 14px; text-align: left; }
+body.callback-page .callback-brand h2 { margin: 0; color: var(--text); font-family: var(--mono); font-size: .86rem; letter-spacing: .04em; }
+body.callback-page .callback-card-premium { overflow: hidden; padding: clamp(22px, 5vw, 42px); background: #0b1916; border: 1px solid var(--line-strong); border-top: 3px solid var(--green-2); border-radius: 16px; box-shadow: var(--shadow-lg); }
+body.callback-page .callback-card-premium::before { display: none; }
+body.callback-page .callback-title { color: var(--text); background: none; -webkit-text-fill-color: initial; }
+body.callback-page .verify-loader-ring { border-color: rgba(67,227,181,.14); border-top-color: var(--green-2); }
+body.callback-page .verify-loader-ring-2 { border-color: rgba(72,205,225,.12); border-bottom-color: var(--blue); }
+body.callback-page .verify-loader-core { background: var(--green-2); box-shadow: 0 0 0 9px rgba(67,227,181,.08); }
+body.callback-page .verify-steps { background: #081411; border: 1px solid var(--line); border-radius: 10px; }
+body.callback-page .verify-step { border-radius: 7px; }
+body.callback-page .verify-step.active { color: var(--text); background: rgba(67,227,181,.07); }
+body.callback-page .callback-note { border-radius: 8px; }
+
+.verification-campaign-page { min-height: 100vh; padding: 26px 0 60px; color: var(--text); }
+.verification-campaign-page .container { width: min(1080px, calc(100% - 28px)); max-width: none; }
+.verification-campaign-page .page-title { margin: 0; color: var(--text); background: none; -webkit-text-fill-color: initial; text-align: left; font-size: clamp(1.8rem, 5vw, 3.5rem); letter-spacing: -.04em; }
+.verification-campaign-page .page-sub { max-width: 720px; margin: 8px 0 22px; color: var(--muted); text-align: left; }
+.verification-campaign-page .nav { position: static; padding: 8px 0 20px; background: transparent; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; box-shadow: none; backdrop-filter: none; }
+.verification-campaign-page .nav-group-label { color: var(--muted-2); }
+.verification-campaign-page .nav a { color: var(--muted); background: #0b1916; border-color: var(--line); border-radius: 8px; }
+.verification-campaign-page .nav a.active { color: #07110f; background: var(--green-2); box-shadow: none; }
+.verification-campaign-page .card { padding: 20px; }
+.verification-campaign-page .card h3 { color: var(--text); border-color: var(--line); }
+.verification-campaign-page .grid { gap: 10px; }
+.verification-campaign-page .stat,
+.verification-campaign-page .mini-stat { background: #0b1916; border: 1px solid var(--line); border-radius: 10px; box-shadow: none; }
+.verification-campaign-page .terminal { color: #bcebdc; background: #06100d; border-color: var(--line); border-radius: 9px; }
+
+@media (max-width: 920px) {
+  .verification-intro { grid-template-columns: 1fr; }
+  .verification-intro-note { max-width: 520px; }
+  body.owner-dashboard-theme .topbar-actions { align-items: flex-end; }
+}
+
+@media (max-width: 740px) {
+  .owner-page-content { width: min(100% - 22px, 1180px); padding-top: 0; }
+  .verification-commandbar { min-height: 64px; }
+  .verification-commandbar-actions .btn:last-child { display: none; }
+  .verification-intro { padding: 38px 0 22px; }
+  .verification-intro .title-lg { font-size: clamp(2rem, 11vw, 3.15rem); }
+  .guild-toolbar { align-items: stretch; flex-direction: column; }
+  .guild-count { white-space: normal; }
+  body.owner-dashboard-theme .guild-card { min-height: 126px; }
+  body.owner-dashboard-theme .main { padding: 18px 12px 44px; }
+  body.owner-dashboard-theme .topbar { align-items: stretch; }
+  body.owner-dashboard-theme .topbar-actions { display: grid; grid-template-columns: 1fr auto; align-items: end; }
+  .guild-switcher-label { grid-column: 1 / -1; }
+  .guild-switcher { width: 100%; }
+  body.callback-page { padding: 10px; }
+  body.callback-page .callback-card-premium { padding: 23px 17px; }
+  .verification-campaign-page { padding-top: 18px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.owner-dashboard-theme *,
+  body.callback-page * { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
