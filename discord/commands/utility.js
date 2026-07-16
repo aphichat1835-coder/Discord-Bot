@@ -75,13 +75,12 @@ async function handleAnnounce(interaction) {
             ephemeral: true
         });
     }
-    const content = rawContent
-        ? (allowMentions
-            ? sanitizeUserMessage(rawContent, { maxLength: 2000 })
-                .replaceAll("@\u200beveryone", "@everyone")
-                .replaceAll("@\u200bhere", "@here")
-            : sanitizeUserMessage(rawContent, { maxLength: 2000 }))
-        : null;
+    let content = rawContent ? sanitizeUserMessage(rawContent, { maxLength: 2000 }) : null;
+    if (content && allowMentions) {
+        content = content
+            .replaceAll("@\u200beveryone", "@everyone")
+            .replaceAll("@\u200bhere", "@here");
+    }
     if (!titleText || !msgStr) {
         return interaction.reply({ content: `> ${config.emojis.error} หัวข้อและข้อความต้องไม่ว่าง`, ephemeral: true });
     }

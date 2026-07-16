@@ -38,7 +38,7 @@ function createAuth() {
     });
 }
 
-test("shadow portal auth accepts the configured PIN and issues a session cookie", () => {
+test("shadow portal auth accepts the configured PIN and issues a session cookie", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const auth = createAuth();
     const req = { ip: "127.0.0.1", headers: {} };
     const res = createResponse();
@@ -53,7 +53,7 @@ test("shadow portal auth accepts the configured PIN and issues a session cookie"
     }), true);
 });
 
-test("shadow portal auth never accepts an unset PIN", () => {
+test("shadow portal auth never accepts an unset PIN", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const oldDashboardPin = process.env.DASHBOARD_PIN;
     delete process.env.DASHBOARD_PIN;
     try {
@@ -68,7 +68,7 @@ test("shadow portal auth never accepts an unset PIN", () => {
     }
 });
 
-test("shadow portal auth accepts DASHBOARD_PIN as the owner recovery PIN", () => {
+test("shadow portal auth accepts DASHBOARD_PIN as the owner recovery PIN", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const oldDashboardPin = process.env.DASHBOARD_PIN;
     process.env.DASHBOARD_PIN = "owner recovery phrase";
     try {
@@ -82,7 +82,7 @@ test("shadow portal auth accepts DASHBOARD_PIN as the owner recovery PIN", () =>
     }
 });
 
-test("shadow portal auth accepts a valid cookie session without a PIN", () => {
+test("shadow portal auth accepts a valid cookie session without a PIN", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const auth = createAuth();
     const token = createShadowSessionToken({ ttlMs: 60_000, getCookieSecret: () => "unit-secret" });
     const req = { ip: "127.0.0.1", headers: { cookie: `shadow_cookie=${encodeURIComponent(token)}` } };
@@ -92,7 +92,7 @@ test("shadow portal auth accepts a valid cookie session without a PIN", () => {
     assert.equal(res.sent, "");
 });
 
-test("shadow portal auth locks repeated invalid PIN attempts", () => {
+test("shadow portal auth locks repeated invalid PIN attempts", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const auth = createAuth();
     const req = { ip: "10.0.0.5", headers: {} };
 
@@ -107,7 +107,7 @@ test("shadow portal auth locks repeated invalid PIN attempts", () => {
     assert.match(blocked.sent, /Blocked|ล็อก/);
 });
 
-test("shadow portal renderers escape dynamic guild, metric, and dashboard values", () => {
+test("shadow portal renderers escape dynamic guild, metric, and dashboard values", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const context = {
         SECRET_PHRASE: "<secret>",
         systemToggles: { feature: true },

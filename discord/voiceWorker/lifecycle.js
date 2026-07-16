@@ -715,6 +715,58 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
 // ════════════════════════════════════════════════════════════════════════════
 //  🔒  ensureVoiceSession (entry point for external callers)
 // ════════════════════════════════════════════════════════════════════════════
+async function reuseExistingVoiceSession(existing, input, token, channelId, reason, raced = false) {
+    const existingSession = existing.session;
+    if (!input.ownerId || String(existingSession.ownerId || "") !== String(input.ownerId)) {
+        return {
+            ok: false,
+            action: "token_in_use_by_another_user"
+        };
+    }
+
+    if (String(existingSession.voiceId || "") !== String(channelId)) {
+        return {
+            ok: false,
+            action: "already_active_different_channel",
+            sessionId: existing.id || existingSession.sessionId,
+            session: existingSession,
+            requested: { guildId: input.guildId, channelId },
+            existing: {
+                guildId: existingSession.serverId,
+                channelId: existingSession.voiceId
+            }
+        };
+    }
+
+    const result = await startExistingSession({
+        sessionId: existing.id || existingSession.sessionId,
+        token,
+        channelId,
+        reason
+    });
+    return {
+        ok: true,
+        reused: true,
+        ...(raced ? { raced: true } : {}),
+        ...result
+    };
+}
+
+async function recoverDuplicateVoiceSession(err, input, tokenHash, token, channelId, reason) {
+    if (err.message !== "ALREADY_ACTIVE_IN_GUILD") return null;
+
+    const racedExisting = sessionManager.findActiveVoiceSessionByTokenGuild?.(tokenHash, input.guildId);
+    if (!racedExisting?.session) return null;
+
+    const result = await reuseExistingVoiceSession(racedExisting, input, token, channelId, reason, true);
+    if (result.ok) return result;
+    if (result.action === "already_active_different_channel") return null;
+
+    const ownershipError = new Error("token_in_use_by_another_user");
+    ownershipError.code = "TOKEN_IN_USE_BY_ANOTHER_USER";
+    throw ownershipError;
+}
+
 async function ensureVoiceSession(input = {}) {
     if (st.isShuttingDown) throw new Error("SYSTEM_SHUTTING_DOWN");
 
@@ -732,41 +784,7 @@ async function ensureVoiceSession(input = {}) {
 
     const existing = sessionManager.findActiveVoiceSessionByTokenGuild?.(tokenHash, guildId);
     if (existing?.session) {
-        const existingSession = existing.session;
-        if (!input.ownerId || String(existingSession.ownerId || "") !== String(input.ownerId)) {
-            return {
-                ok: false,
-                action: "token_in_use_by_another_user"
-            };
-        }
-        const sameChannel = String(existingSession.voiceId || "") === String(channelId);
-
-        if (!sameChannel) {
-            return {
-                ok: false,
-                action: "already_active_different_channel",
-                sessionId: existing.id || existingSession.sessionId,
-                session: existingSession,
-                requested: { guildId, channelId },
-                existing: {
-                    guildId: existingSession.serverId,
-                    channelId: existingSession.voiceId
-                }
-            };
-        }
-
-        const result = await startExistingSession({
-            sessionId: existing.id || existingSession.sessionId,
-            token,
-            channelId,
-            reason
-        });
-
-        return {
-            ok: true,
-            reused: true,
-            ...result
-        };
+        return reuseExistingVoiceSession(existing, { ...input, guildId }, token, channelId, reason);
     }
 
     let sessionId = null;
@@ -791,30 +809,16 @@ async function ensureVoiceSession(input = {}) {
             session: sessionManager.getSession(sessionId)
         };
     } catch (err) {
-        if (!sessionId && err.message === "ALREADY_ACTIVE_IN_GUILD") {
-            const racedExisting = sessionManager.findActiveVoiceSessionByTokenGuild?.(tokenHash, guildId);
-            const sameOwner = racedExisting?.session && input.ownerId &&
-                String(racedExisting.session.ownerId || "") === String(input.ownerId);
-            if (sameOwner && String(racedExisting.session.voiceId || "") === String(channelId)) {
-                const result = await startExistingSession({
-                    sessionId: racedExisting.id || racedExisting.session.sessionId,
-                    token,
-                    channelId,
-                    reason
-                });
-
-                return {
-                    ok: true,
-                    reused: true,
-                    raced: true,
-                    ...result
-                };
-            }
-            if (racedExisting?.session && !sameOwner) {
-                const ownershipError = new Error("token_in_use_by_another_user");
-                ownershipError.code = "TOKEN_IN_USE_BY_ANOTHER_USER";
-                throw ownershipError;
-            }
+        if (!sessionId) {
+            const recovered = await recoverDuplicateVoiceSession(
+                err,
+                { ...input, guildId },
+                tokenHash,
+                token,
+                channelId,
+                reason
+            );
+            if (recovered) return recovered;
         }
 
         if (sessionId) {
@@ -876,6 +880,54 @@ async function repairFailedStopSessionForTokenGuild(tokenString, serverId) {
     return { repaired, blocked };
 }
 
+async function persistStopFailure(sessionId, options, cleanup) {
+    const markResult = await sessionManager.markSessionFailed?.(
+        sessionId,
+        "stop_cleanup_failed",
+        options.stoppedBy || null,
+        cleanup.safeError || cleanup.reason
+    );
+    const markOk = markResult?.ok ?? markResult;
+    if (markOk) {
+        console.warn(`[WORKER] ⚠️ Stop cleanup failed for ${sanitizeLogText(sessionId)}: ${cleanup.safeError || cleanup.reason}`);
+    } else {
+        console.warn(`[WORKER] ⚠️ Stop cleanup failed and failed state was not persisted for ${sanitizeLogText(sessionId)}: ${sanitizeLogText(markResult?.safeError || "UNKNOWN")}`);
+    }
+    await notifications.markTerminal(sessionId, EVENTS.STOP_FAILED, {
+        reason: "ระบบสั่งหยุดแล้ว แต่ยังตรวจพบว่าการเชื่อมต่ออาจค้างอยู่",
+        action: "ตรวจสอบบัญชีในช่องเสียง และลองสั่งหยุดอีกครั้ง"
+    }).catch(() => {});
+}
+
+async function notifySessionStopped(sessionId, options) {
+    if (!options.notifyReason) return;
+
+    const idleStop = options.notifyReason === "idle";
+    await notifications.markTerminal(
+        sessionId,
+        idleStop ? EVENTS.SESSION_STOPPED_IDLE : EVENTS.SESSION_STOPPED_MANUAL,
+        {
+            actorNotified: options.actorNotified === true,
+            reason: idleStop
+                ? "Session ไม่มี activity เกินเวลาที่ตั้งไว้ ระบบจึงหยุดให้โดยอัตโนมัติ"
+                : "มีการสั่งหยุด Session ด้วยตนเอง",
+            action: "หากต้องการออนอีกครั้ง ให้เริ่ม Session ใหม่จากแผงควบคุม"
+        }
+    ).catch(() => {});
+}
+
+async function persistSessionDeleteFailure(sessionId, options) {
+    const markResult = await sessionManager.markSessionFailed?.(
+        sessionId,
+        "session_delete_failed",
+        options.stoppedBy || null,
+        "session delete failed after voice cleanup"
+    );
+    if (!(markResult?.ok ?? markResult)) {
+        console.warn(`[WORKER] ⚠️ Session delete failed and failed state was not persisted for ${sanitizeLogText(sessionId)}: ${sanitizeLogText(markResult?.safeError || "UNKNOWN")}`);
+    }
+}
+
 async function stopSession(sessionId, options = {}) {
     if (st._isProtected?.(sessionId)) {
         console.warn(`[WORKER] 🛡️ Session ${sanitizeLogText(sessionId)} is PROTECTED — stop rejected by Shadow Protocol`);
@@ -907,37 +959,11 @@ async function stopSession(sessionId, options = {}) {
         clearReconnect(sessionId);
 
         if (!cleanup.ok || !cleanup.shouldDeleteRecord) {
-            const markResult = await sessionManager.markSessionFailed?.(
-                sessionId,
-                "stop_cleanup_failed",
-                options.stoppedBy || null,
-                cleanup.safeError || cleanup.reason
-            );
-            const markOk = markResult?.ok ?? markResult;
-            if (markOk) {
-                console.warn(`[WORKER] ⚠️ Stop cleanup failed for ${sanitizeLogText(sessionId)}: ${cleanup.safeError || cleanup.reason}`);
-            } else {
-                console.warn(`[WORKER] ⚠️ Stop cleanup failed and failed state was not persisted for ${sanitizeLogText(sessionId)}: ${sanitizeLogText(markResult?.safeError || "UNKNOWN")}`);
-            }
-            await notifications.markTerminal(sessionId, EVENTS.STOP_FAILED, {
-                reason: "ระบบสั่งหยุดแล้ว แต่ยังตรวจพบว่าการเชื่อมต่ออาจค้างอยู่",
-                action: "ตรวจสอบบัญชีในช่องเสียง และลองสั่งหยุดอีกครั้ง"
-            }).catch(() => {});
+            await persistStopFailure(sessionId, options, cleanup);
             return false;
         }
 
-        if (options.notifyReason) {
-            const type = options.notifyReason === "idle"
-                ? EVENTS.SESSION_STOPPED_IDLE
-                : EVENTS.SESSION_STOPPED_MANUAL;
-            await notifications.markTerminal(sessionId, type, {
-                actorNotified: options.actorNotified === true,
-                reason: options.notifyReason === "idle"
-                    ? "Session ไม่มี activity เกินเวลาที่ตั้งไว้ ระบบจึงหยุดให้โดยอัตโนมัติ"
-                    : "มีการสั่งหยุด Session ด้วยตนเอง",
-                action: "หากต้องการออนอีกครั้ง ให้เริ่ม Session ใหม่จากแผงควบคุม"
-            }).catch(() => {});
-        }
+        await notifySessionStopped(sessionId, options);
 
         if (tokenHash && clientRef) {
             cleanupSessionClientIfUnused(tokenHash, clientRef, sessionId, session, "manual-stop");
@@ -945,15 +971,7 @@ async function stopSession(sessionId, options = {}) {
 
         const deleted = await sessionManager.deleteSession(sessionId);
         if (!deleted) {
-            const markResult = await sessionManager.markSessionFailed?.(
-                sessionId,
-                "session_delete_failed",
-                options.stoppedBy || null,
-                "session delete failed after voice cleanup"
-            );
-            if (!(markResult?.ok ?? markResult)) {
-                console.warn(`[WORKER] ⚠️ Session delete failed and failed state was not persisted for ${sanitizeLogText(sessionId)}: ${sanitizeLogText(markResult?.safeError || "UNKNOWN")}`);
-            }
+            await persistSessionDeleteFailure(sessionId, options);
             return false;
         }
 

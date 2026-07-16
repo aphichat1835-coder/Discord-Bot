@@ -309,7 +309,7 @@ test("regression: ensureVoiceSession does not reference mainClient.guilds", () =
 });
 
 test("regression: ensureVoiceSession rejects cross-owner token reuse", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    const body = extractFunctionBody(readLifecycleSrc(), "ensureVoiceSession");
+    const body = extractFunctionBody(readLifecycleSrc(), "reuseExistingVoiceSession");
     assert.ok(body.includes("token_in_use_by_another_user"));
     assert.ok(body.includes("existingSession.ownerId"));
 });

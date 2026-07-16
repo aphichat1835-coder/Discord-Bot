@@ -85,7 +85,7 @@ async function createProtectionCase(sessionManager, event, options = {}) {
 
 function protectionCaseErrorCode(err) {
     if (err?.code) return safeText(err.code, 80);
-    const prefix = String(err?.message || "").match(/^([A-Z0-9_]{3,80})(?::|$)/)?.[1];
+    const prefix = /^([A-Z0-9_]{3,80})(?::|$)/.exec(String(err?.message || ""))?.[1];
     return safeText(prefix || err?.name || "case_save_failed", 80);
 }
 

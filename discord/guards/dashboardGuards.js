@@ -25,7 +25,7 @@ function safeDiscordInlineCode(value, maxLength = 180) {
 function safeDiscordSummaryText(value, maxLength = 180) {
     return String(value || "unknown")
         .replace(/[\r\n\t]+/g, " ")
-        .replace(/([\\`*_{}[\]()#+\-.!|>~])/g, "\\$1")
+        .replace(/([\\`*_{}[\]()#+\-.!|>~])/g, String.raw`\$1`)
         .slice(0, Math.max(1, Number(maxLength) || 180));
 }
 

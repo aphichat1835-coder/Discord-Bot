@@ -74,12 +74,12 @@ function normalizeRuntimeLine(type, value) {
     const message = safeMessage(value);
     if (FORMATTED_LINE_PATTERN.test(message)) return message;
 
-    const match = message.match(LEADING_SCOPE_PATTERN);
+    const match = LEADING_SCOPE_PATTERN.exec(message);
     const candidateScope = match?.[1]?.toUpperCase();
     const hasSpecificScope = Boolean(candidateScope && !GENERIC_LEVEL_SCOPES.has(candidateScope));
     const scope = hasSpecificScope ? candidateScope : "GENERAL";
     const rawBody = match ? message.slice(match[0].length).trim() : message;
-    const statusMatch = rawBody.match(LEGACY_STATUS_PATTERN);
+    const statusMatch = LEGACY_STATUS_PATTERN.exec(rawBody);
     const body = statusMatch ? rawBody.slice(statusMatch[0].length).trim() : rawBody;
     const level = statusMatch?.[1]
         ? LEGACY_STATUS_LEVEL[statusMatch[1]] || RUNTIME_LEVELS[type] || "info"

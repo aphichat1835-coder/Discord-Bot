@@ -25,8 +25,13 @@ const sessionLocks = new Set();
 const settingsCache = new Map();
 const RETIRED_ENTERPRISE_AUDIT_SETTINGS = /^(?:audit_|logChannelMapExtra_)/;
 const INTERNAL_EVENT_SETTINGS = /^internal_event_/;
+const RETIRED_ENTERPRISE_AUDIT_PREFIXES = ["audit_", "logChannelMapExtra_"];
+const INTERNAL_EVENT_PREFIX = "internal_event_";
+function isRetiredEnterpriseAuditSetting(key) {
+    return RETIRED_ENTERPRISE_AUDIT_PREFIXES.some(prefix => key.startsWith(prefix));
+}
 function shouldCacheSettingKey(key) {
-    return !INTERNAL_EVENT_SETTINGS.test(String(key || ""));
+    return !String(key || "").startsWith(INTERNAL_EVENT_PREFIX);
 }
 function numberEnv(name, fallback, min = 1) {
     const value = Number(process.env[name]);
@@ -1571,7 +1576,7 @@ async function getAllSettings() {
 
         for (const doc of docs) {
             const key = String(doc.key || "");
-            if (RETIRED_ENTERPRISE_AUDIT_SETTINGS.test(key) || INTERNAL_EVENT_SETTINGS.test(key)) continue;
+            if (isRetiredEnterpriseAuditSetting(key) || key.startsWith(INTERNAL_EVENT_PREFIX)) continue;
             result[doc.key] = doc.value;
             settingsCache.set(doc.key, doc.value);
         }

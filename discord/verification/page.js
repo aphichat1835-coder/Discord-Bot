@@ -7,7 +7,7 @@ const { OWNER_VERIFICATION_CSS } = require("./ownerStyles");
 const { navBar, shell } = createViewHelpers(`${BASE_CSS}${OWNER_VERIFICATION_CSS}`);
 
 function verificationHomePage() {
-    return shell("ยืนยันตัวตน", `
+    return shell("ยืนยันตัวตน", String.raw`
 <div class="verify-shell">
 ${navBar("/verification")}
 

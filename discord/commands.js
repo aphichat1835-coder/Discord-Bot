@@ -196,12 +196,14 @@ async function retirePreviousPanel(interaction, previousPanel, newMessage) {
         previousPanel.id
     ).catch(() => false);
     const cleanupComplete = await discardNewPanel(interaction.guild.id, newMessage, previousPanel);
+    let failureMessage = `> ${config.emojis.error} ปิดแผงเดิมและคืน Panel State ไม่สำเร็จ ต้องตรวจสอบจาก Owner Dashboard`;
+    if (!cleanupComplete) {
+        failureMessage = `> ${config.emojis.warning} ปิดแผงเดิมและยกเลิกแผงใหม่ไม่ได้ ต้องตรวจสอบ Panel State และข้อความด้วยตนเอง`;
+    } else if (stateRestored) {
+        failureMessage = `> ${config.emojis.error} ปิดแผงเดิมไม่ได้ จึงยกเลิกแผงใหม่และคืนค่าเดิมแล้ว`;
+    }
     await interaction.followUp({
-        content: !cleanupComplete
-            ? `> ${config.emojis.warning} ปิดแผงเดิมและยกเลิกแผงใหม่ไม่ได้ ต้องตรวจสอบ Panel State และข้อความด้วยตนเอง`
-            : stateRestored
-            ? `> ${config.emojis.error} ปิดแผงเดิมไม่ได้ จึงยกเลิกแผงใหม่และคืนค่าเดิมแล้ว`
-            : `> ${config.emojis.error} ปิดแผงเดิมและคืน Panel State ไม่สำเร็จ ต้องตรวจสอบจาก Owner Dashboard`,
+        content: failureMessage,
         ephemeral: true
     }).catch(() => null);
     return false;

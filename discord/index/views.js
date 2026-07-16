@@ -1247,31 +1247,73 @@ ${sectionsHtml}
 // ════════════════════════════════════════════════════════════════════════════
 //  ⚙️  หน้า SETTINGS
 // ════════════════════════════════════════════════════════════════════════════
-function pageSettings(settings, config, client, API_SECRET) {
-    const maxSessions = settings.maxSessions ?? config.limits.maxSessions;
-    const rateLimitReq = settings.rateLimitRequests ?? config.limits.rateLimitRequests;
-    const antiRaid = settings.antiRaidEnabled ?? true;
-    const idleHrs = settings.idleTimeoutHrs ?? 24;
-    const voiceDmMode = ["important_only", "all", "off"].includes(settings.voiceDmMode)
-        ? settings.voiceDmMode
-        : "important_only";
+function selectedAttr(actual, expected) {
+    return actual === expected ? "selected" : "";
+}
 
+function normalizeVoiceDmMode(value) {
+    return ["important_only", "all", "off"].includes(value) ? value : "important_only";
+}
+
+function normalizeRotateMessages(value) {
+    return Array.isArray(value) ? value : [];
+}
+
+function renderRotateMessageRows(messages) {
+    if (!messages.length) return `<div class="ri-empty" id="ri-empty">ยังไม่มีข้อความ</div>`;
+    return messages.map((message, index) => `
+        <div class="ri" id="ri-${index}">
+            <input value="${escapeHtml(message)}" maxlength="128">
+            <button type="button" class="btn btn-danger btn-sm" onclick="removeRotate(${index})">ลบ</button>
+        </div>`).join("");
+}
+
+function buildSettingsPageView(settings, config, client) {
     const botStatus = settings.botStatus ?? config.bot_presence?.status ?? "idle";
-    const botActivity = escapeHtml(settings.botActivity ?? config.bot_presence?.activityText ?? "ระบบออนช่องเสียง");
     const botNote = escapeHtml(settings.botNote ?? "");
-    const actType = settings.botActivityType || "WATCHING";
-
-    const rotateEn = settings.rotateEnabled ?? false;
-    const rotateInt = settings.rotateInterval ?? 5;
-    const rotateMsgs = Array.isArray(settings.rotateMessages) ? settings.rotateMessages : [];
-
-    const botName = escapeHtml(client?.user?.username || "Bot");
     const statusColors = {
         online: "#4ade80",
         idle: "#fbbf24",
         dnd: "#f87171",
         invisible: "transparent"
     };
+    return {
+        maxSessions: settings.maxSessions ?? config.limits.maxSessions,
+        rateLimitReq: settings.rateLimitRequests ?? config.limits.rateLimitRequests,
+        antiRaid: settings.antiRaidEnabled ?? true,
+        idleHrs: settings.idleTimeoutHrs ?? 24,
+        voiceDmMode: normalizeVoiceDmMode(settings.voiceDmMode),
+        botStatus,
+        botActivity: escapeHtml(settings.botActivity ?? config.bot_presence?.activityText ?? "ระบบออนช่องเสียง"),
+        botNote,
+        previewNote: botNote || "ไม่มี note",
+        actType: settings.botActivityType || "WATCHING",
+        rotateEn: settings.rotateEnabled ?? false,
+        rotateInt: settings.rotateInterval ?? 5,
+        rotateMsgs: normalizeRotateMessages(settings.rotateMessages),
+        botName: escapeHtml(client?.user?.username || "Bot"),
+        statusColor: statusColors[botStatus] || statusColors.idle
+    };
+}
+
+function pageSettings(settings, config, client, API_SECRET) {
+    const {
+        maxSessions,
+        rateLimitReq,
+        antiRaid,
+        idleHrs,
+        voiceDmMode,
+        botStatus,
+        botActivity,
+        botNote,
+        previewNote,
+        actType,
+        rotateEn,
+        rotateInt,
+        rotateMsgs,
+        botName,
+        statusColor
+    } = buildSettingsPageView(settings, config, client);
 
     return shell("ตั้งค่าระบบ", `
 <div class="container">
@@ -1295,15 +1337,15 @@ ${navBar("/settings")}
 
     <label>ระบบ Anti-Raid Tag</label>
     <select id="antiRaidEnabled">
-        <option value="true" ${antiRaid ? "selected" : ""}>✅ เปิดใช้งาน</option>
-        <option value="false" ${!antiRaid ? "selected" : ""}>❌ ปิดใช้งาน</option>
+        <option value="true" ${selectedAttr(antiRaid, true)}>✅ เปิดใช้งาน</option>
+        <option value="false" ${selectedAttr(antiRaid, false)}>❌ ปิดใช้งาน</option>
     </select>
 
     <label>Voice DM — ระดับการแจ้งเตือนส่วนตัว</label>
     <select id="voiceDmMode">
-        <option value="important_only" ${voiceDmMode === "important_only" ? "selected" : ""}>🛡️ เฉพาะเรื่องสำคัญ (แนะนำ)</option>
-        <option value="all" ${voiceDmMode === "all" ? "selected" : ""}>📨 แจ้งทุกสถานะ</option>
-        <option value="off" ${voiceDmMode === "off" ? "selected" : ""}>🔕 ปิด DM ทั้งหมด</option>
+        <option value="important_only" ${selectedAttr(voiceDmMode, "important_only")}>🛡️ เฉพาะเรื่องสำคัญ (แนะนำ)</option>
+        <option value="all" ${selectedAttr(voiceDmMode, "all")}>📨 แจ้งทุกสถานะ</option>
+        <option value="off" ${selectedAttr(voiceDmMode, "off")}>🔕 ปิด DM ทั้งหมด</option>
     </select>
 
     <button type="button" class="btn btn-primary" onclick="saveSettings()">💾 บันทึกการตั้งค่าทั่วไป</button>
@@ -1315,12 +1357,12 @@ ${navBar("/settings")}
     <div class="preview">
         <div class="av">
             🤖
-            <div class="av-dot" id="previewDot" style="background:${statusColors[botStatus] || statusColors.idle};"></div>
+            <div class="av-dot" id="previewDot" style="background:${statusColor};"></div>
         </div>
         <div>
             <div style="font-weight:900;color:var(--text);">${botName}</div>
             <div id="previewActivity" style="font-size:0.8em;color:var(--text2);margin-top:3px;">${botActivity}</div>
-            <div id="previewNote" style="font-size:0.72em;color:var(--text3);margin-top:3px;">${botNote || "ไม่มี note"}</div>
+            <div id="previewNote" style="font-size:0.72em;color:var(--text3);margin-top:3px;">${previewNote}</div>
         </div>
     </div>
 </div>
@@ -1330,18 +1372,18 @@ ${navBar("/settings")}
 
     <label>สถานะบอท</label>
     <select id="botStatus" onchange="updatePresencePreview()">
-        <option value="online" ${botStatus === "online" ? "selected" : ""}>🟢 Online</option>
-        <option value="idle" ${botStatus === "idle" ? "selected" : ""}>🌙 Idle</option>
-        <option value="dnd" ${botStatus === "dnd" ? "selected" : ""}>⛔ Do Not Disturb</option>
-        <option value="invisible" ${botStatus === "invisible" ? "selected" : ""}>⚫ Invisible</option>
+        <option value="online" ${selectedAttr(botStatus, "online")}>🟢 Online</option>
+        <option value="idle" ${selectedAttr(botStatus, "idle")}>🌙 Idle</option>
+        <option value="dnd" ${selectedAttr(botStatus, "dnd")}>⛔ Do Not Disturb</option>
+        <option value="invisible" ${selectedAttr(botStatus, "invisible")}>⚫ Invisible</option>
     </select>
 
     <label>ประเภทกิจกรรม</label>
     <select id="botActivityType">
-        <option value="WATCHING" ${actType === "WATCHING" ? "selected" : ""}>👁️ กำลังดู</option>
-        <option value="LISTENING" ${actType === "LISTENING" ? "selected" : ""}>🎧 กำลังฟัง</option>
-        <option value="PLAYING" ${actType === "PLAYING" ? "selected" : ""}>🎮 กำลังเล่น</option>
-        <option value="COMPETING" ${actType === "COMPETING" ? "selected" : ""}>🏆 กำลังแข่ง</option>
+        <option value="WATCHING" ${selectedAttr(actType, "WATCHING")}>👁️ กำลังดู</option>
+        <option value="LISTENING" ${selectedAttr(actType, "LISTENING")}>🎧 กำลังฟัง</option>
+        <option value="PLAYING" ${selectedAttr(actType, "PLAYING")}>🎮 กำลังเล่น</option>
+        <option value="COMPETING" ${selectedAttr(actType, "COMPETING")}>🏆 กำลังแข่ง</option>
     </select>
 
     <label>ข้อความกิจกรรม</label>
@@ -1358,8 +1400,8 @@ ${navBar("/settings")}
 
     <label>เปิดหรือปิดการสลับข้อความอัตโนมัติ</label>
     <select id="rotateEnabled">
-        <option value="true" ${rotateEn ? "selected" : ""}>✅ เปิด</option>
-        <option value="false" ${!rotateEn ? "selected" : ""}>❌ ปิด</option>
+        <option value="true" ${selectedAttr(rotateEn, true)}>✅ เปิด</option>
+        <option value="false" ${selectedAttr(rotateEn, false)}>❌ ปิด</option>
     </select>
 
     <label>สลับทุกกี่นาที</label>
@@ -1367,11 +1409,7 @@ ${navBar("/settings")}
 
     <label>ข้อความที่จะเอาไปหมุน</label>
     <div id="rotate-list">
-        ${rotateMsgs.length ? rotateMsgs.map((m, i) => `
-        <div class="ri" id="ri-${i}">
-            <input value="${escapeHtml(m)}" maxlength="128">
-            <button type="button" class="btn btn-danger btn-sm" onclick="removeRotate(${i})">ลบ</button>
-        </div>`).join("") : `<div class="ri-empty" id="ri-empty">ยังไม่มีข้อความ</div>`}
+        ${renderRotateMessageRows(rotateMsgs)}
     </div>
 
     <button type="button" class="btn btn-info" onclick="addRotate()">➕ เพิ่มข้อความ</button>

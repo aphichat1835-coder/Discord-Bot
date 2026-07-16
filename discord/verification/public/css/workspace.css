@@ -190,8 +190,8 @@ body.owner-dashboard-theme .btn-soft,
 body.owner-dashboard-theme .btn-danger,
 .verification-campaign-page .btn-danger {
   color: #ffd9da;
-  background: rgba(240, 111, 114, 0.09);
-  border: 1px solid rgba(240, 111, 114, 0.36);
+  background: #2a1118;
+  border: 1px solid #8a3e49;
 }
 
 body.owner-dashboard-theme input,

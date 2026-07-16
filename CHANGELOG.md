@@ -2,6 +2,11 @@
 
 ## [Unreleased] - Unified Bot And Verification Runtime 2026-07-16
 
+- Resolved the SonarCloud follow-up set without changing public contracts:
+  simplified Voice start/stop and Settings-page control flow, replaced nested
+  conditionals and avoidable regular expressions, improved callback semantics
+  and danger-button contrast, and documented the analyzer's known `node:test`
+  assertion false positives at the affected declarations.
 - Replaced the separate green Owner Verification pages with a newly rendered
   five-section module inside the purple Owner Dashboard. Server selection,
   configuration, panel editing, policy/role conditions, members, history, risk,
