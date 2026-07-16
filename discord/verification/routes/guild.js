@@ -19,6 +19,7 @@ const router = require("express").Router();
 const crypto = require("node:crypto");
 const mongoose = require("mongoose");
 const { resolvePublicBaseUrl } = require("../../core/publicUrl");
+const { verificationGuildPage } = require("../guildPage");
 
 const GuildConfig = require("../models/GuildConfig");
 const VerifyLog = require("../models/VerifyLog");
@@ -852,7 +853,7 @@ async function validateVerificationConfig(req, guildId, verification) {
 ============================================================================= */
 
 router.get("/verification/:guildId", requireAdmin, requireGuildAdmin, (req, res) => {
-  res.sendFile(require("path").join(__dirname, "../views/guild.html"));
+  res.send(verificationGuildPage());
 });
 
 /* =============================================================================

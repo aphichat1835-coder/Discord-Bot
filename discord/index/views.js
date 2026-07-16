@@ -97,9 +97,9 @@ ${navBar("/")}
 </div>
 
 <div style="text-align:center;margin-bottom:30px;">
-    <button type="button" class="btn btn-inline" onclick="document.getElementById('adminModal').style.display='flex'">
+    <a class="btn btn-inline" href="/shadow">
         ⚙️ เปิดเครื่องมือขั้นสูง
-    </button>
+    </a>
 </div>
 </div>
 
@@ -113,19 +113,6 @@ ${navBar("/")}
     <label class="sr-only" for="tokenPin">รหัสผ่านสำหรับดู Token</label>
     <input id="tokenPin" type="password" placeholder="รหัสผ่านลับ..." autocomplete="current-password" style="text-align:center;margin-bottom:12px;">
     <button type="button" onclick="submitRevealToken()" class="btn btn-warning">🔑 เปิดดู Token</button>
-</div>
-</div>
-
-<div class="modal" id="adminModal" role="dialog" aria-modal="true" aria-labelledby="adminModalTitle" onclick="if(event.target===this)this.style.display='none'">
-<div class="modal-box">
-    <button type="button" class="modal-close" aria-label="ปิดหน้าต่าง" onclick="document.getElementById('adminModal').style.display='none'">✕</button>
-    <div style="font-size:2em;margin-bottom:8px;">👁️‍🗨️</div>
-    <h3 id="adminModalTitle" style="color:var(--accent3);margin-bottom:6px;font-size:1em;">เข้าเครื่องมือ Shadow Portal</h3>
-    <p style="color:var(--text3);font-size:0.78em;margin-bottom:16px;">กรอกรหัสผ่านลับเพื่อเข้า Shadow Dashboard</p>
-    <p id="adminErr" style="color:var(--red2);font-size:0.82em;margin-bottom:8px;display:none;">รหัสผ่านไม่ถูกต้อง</p>
-    <label class="sr-only" for="adminPin">Shadow PIN</label>
-    <input id="adminPin" type="password" placeholder="Shadow PIN..." autocomplete="current-password" style="text-align:center;margin-bottom:12px;">
-    <button type="button" onclick="adminLogin()" class="btn btn-primary">🌑 เข้าสู่ Shadow Portal</button>
 </div>
 </div>
 
@@ -415,28 +402,6 @@ function showRevealBar(){
     if(revealState._timer) clearInterval(revealState._timer);
     tick();
     revealState._timer=dashboardInterval(tick,1000);
-}
-
-async function adminLogin(){
-    const pin=document.getElementById('adminPin').value;
-    const err=document.getElementById('adminErr');
-
-    try{
-        const r=await fetch('/auth/pin',{
-            method:'POST',
-            headers:{'Content-Type':'application/x-www-form-urlencoded'},
-            body:'pin='+encodeURIComponent(pin)+'&next='+encodeURIComponent('/shadow')
-        });
-
-        if(r.redirected){
-            location.href=r.url;
-            return;
-        }
-
-        err.style.display='block';
-    }catch(e){
-        err.style.display='block';
-    }
 }
 
 fetchStatus();

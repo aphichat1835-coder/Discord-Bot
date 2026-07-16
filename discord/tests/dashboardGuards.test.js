@@ -12,7 +12,8 @@ const {
     getRateLimitStats,
     trimRateLimitBuckets,
     safeDiscordInlineCode,
-    safeDiscordSummaryText
+    safeDiscordSummaryText,
+    getRequestPath
 } = require("../guards/dashboardGuards");
 const dashboardAuth = require("../index/auth");
 const TEST_CLIENT_A = "test-client-a";
@@ -40,6 +41,11 @@ test("dashboard intrusion text cannot break Discord formatting", () => { // NOSO
     const summary = safeDiscordSummaryText("**bold**\n> mention", 180);
     assert.match(summary, /\\\*\\\*bold/);
     assert.equal(summary.includes("\n"), false);
+});
+
+test("dashboard security logs keep the mounted API path and omit query data", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    assert.equal(getRequestPath({ originalUrl: "/api/graphql?token=secret", baseUrl: "/api", path: "/graphql" }), "/api/graphql");
+    assert.equal(getRequestPath({ baseUrl: "/api", path: "/gql" }), "/api/gql");
 });
 
 test("dashboard read APIs do not bypass owner auth", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.

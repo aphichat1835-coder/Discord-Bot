@@ -1,7 +1,7 @@
 /*
 ================================================================================
   Owner Verification Dashboard
-  Theme: Verification Operations Workspace
+  Owner Dashboard Verification Workspace
 
   หน้าที่:
   - โหลด overview/config/members/logs/risk ของ guild
@@ -11,7 +11,7 @@
   - validate config
   - send panel ใหม่
   - update/edit panel เดิมใน Discord
-  - เปิด raw IP ผ่าน owner action ที่บังคับ reason และ audit
+  - เปิดข้อมูลสมาชิกฉบับเต็มในหน้ารายละเอียดเดียว
 ================================================================================
 */
 
@@ -398,7 +398,7 @@
   function switchTab(tab) {
     state.activeTab = tab;
 
-    qsa("[data-tab]").forEach((btn) => {
+    qsa('[role="tab"][data-tab]').forEach((btn) => {
       const selected = btn.dataset.tab === tab;
       btn.classList.toggle("active", selected);
       btn.setAttribute("aria-selected", String(selected));
@@ -413,23 +413,28 @@
 
     closeSidebar();
 
-    if (tab === "members") loadMembers(state.membersPage);
-    if (tab === "logs") loadLogs(state.logsPage);
-    if (tab === "risk") loadRisk();
-    if (tab === "verification") renderEmbedPreview();
+    if (tab === "data") {
+      loadMembers(state.membersPage);
+      loadLogs(state.logsPage);
+      loadRisk();
+    }
+    if (tab === "panel") renderEmbedPreview();
   }
 
   function bindTabs() {
-    const tabs = qsa("[data-tab]");
-    tabs.forEach((btn) => {
+    const controls = qsa("[data-tab]");
+    const tabs = qsa('[role="tab"][data-tab]');
+    controls.forEach((btn) => {
       btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+    });
+    tabs.forEach((btn) => {
       btn.addEventListener("keydown", (event) => {
-        if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
         event.preventDefault();
         let index = tabs.indexOf(btn);
         if (event.key === "Home") index = 0;
         else if (event.key === "End") index = tabs.length - 1;
-        else index = (index + (event.key === "ArrowDown" ? 1 : -1) + tabs.length) % tabs.length;
+        else index = (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
         tabs[index].click();
         tabs[index].focus();
       });
@@ -1533,7 +1538,7 @@
       const data = await api(`/api/guild/${encodeURIComponent(state.guildId)}/preflight`);
       renderValidation(data.preflight || data);
       showToast((data.preflight || data).ok ? "Setup พร้อมใช้งาน" : "พบจุดที่ต้องแก้", (data.preflight || data).ok ? "ok" : "warn");
-      switchTab("verification");
+      switchTab("system");
     } catch (err) {
       showToast(`Check Setup ไม่สำเร็จ: ${err.message}`, "err");
     } finally {
@@ -2220,7 +2225,16 @@
 
   function tabFromHash() {
     try {
-      return decodeURIComponent(location.hash.replace(/^#/, "") || "overview");
+      const raw = decodeURIComponent(location.hash.replace(/^#/, "") || "overview");
+      const aliases = {
+        verification: "system",
+        security: "policy",
+        members: "data",
+        logs: "data",
+        risk: "data",
+        privacy: "data"
+      };
+      return aliases[raw] || raw;
     } catch {
       return "overview";
     }

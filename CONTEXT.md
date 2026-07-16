@@ -32,9 +32,10 @@ verification-only project. The same runtime contains:
 The former `dashboard-public` service no longer exists. Its active verification
 models, routes, utilities, views, and assets live in `discord/verification/`.
 Guild-admin OAuth/session access was removed; management is Owner PIN only.
-The Verification UI is one visual workspace across server selection, per-guild
-management, callback status, and Join Campaign. Existing routes stay compatible,
-while a per-guild header switcher removes the back-and-forth selector flow.
+Owner Verification is rendered inside the purple Owner Dashboard shell. The
+guild chooser and five-section per-guild workspace use the existing Owner PIN,
+navigation, and CSRF boundary; the public `/auth/callback` member page keeps its
+existing independent design. Existing routes stay compatible.
 
 ## Entrypoint and boot
 
@@ -73,7 +74,8 @@ booleans only; detailed diagnostics remain behind Owner authentication.
 | Verification persistence | `discord/verification/models/` |
 | Per-IP identity correlation | `discord/verification/models/IpIdentityLink.js`, `IpIdentity*History.js` |
 | OAuth/IP/device/crypto helpers | `discord/verification/utils/` |
-| Verification UI | `discord/verification/views/`, `discord/verification/public/` |
+| Owner Verification UI | `discord/verification/page.js`, `guildPage.js`, `ownerStyles.js`, `public/js/guild-dashboard.js` |
+| Public callback UI | `discord/verification/views/callback.html`, `public/css/`, `public/js/callback.js` |
 | Verification tests | `verification-tests/` |
 | Migration/guards | `scripts/` |
 

@@ -2,6 +2,17 @@
 
 ## [Unreleased] - Unified Bot And Verification Runtime 2026-07-16
 
+- Replaced the separate green Owner Verification pages with a newly rendered
+  five-section module inside the purple Owner Dashboard. Server selection,
+  configuration, panel editing, policy/role conditions, members, history, risk,
+  and full member detail now share the Owner shell; the public OAuth callback
+  remains unchanged.
+- Fixed Dashboard scanner alerts to report blocked requests with the complete
+  `/api/...` path and bounded deduplication instead of labelling every rejected
+  request an intrusion. The advanced-tools entry now opens Shadow Portal
+  directly, and Shadow authentication rejects unset PINs while accepting the
+  Owner `DASHBOARD_PIN` as a timing-safe recovery credential.
+
 - Synchronized all repository documentation with the current `tt` runtime:
   exact boot/maintenance lifecycle, 16-command and 13-variable contracts,
   redacted versus audited Member Detail access, complete snapshot storage,

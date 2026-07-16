@@ -31,8 +31,8 @@ and the HTTP server.
 | Route | Access | Purpose |
 | --- | --- | --- |
 | `GET /` | Owner PIN | Main Owner Dashboard |
-| `GET /verification` | Owner PIN | Select any guild currently cached by the bot |
-| `GET /verification/:guildId` | Owner PIN | Verification config, panels, members, logs, stats, risk, and sensitive review |
+| `GET /verification` | Owner PIN | Owner Dashboard guild chooser |
+| `GET /verification/:guildId` | Owner PIN | Integrated Overview, System, Panel, Policy/Role, and Verification Data workspace |
 | `GET /auth/callback` | Public | OAuth callback page |
 | `POST /auth/callback` | Public, rate-limited | Exchange a one-time OAuth code and run verification |
 | `/api/guilds` | Owner PIN | Bot guild list |

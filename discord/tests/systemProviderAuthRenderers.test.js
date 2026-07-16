@@ -53,6 +53,35 @@ test("shadow portal auth accepts the configured PIN and issues a session cookie"
     }), true);
 });
 
+test("shadow portal auth never accepts an unset PIN", () => {
+    const oldDashboardPin = process.env.DASHBOARD_PIN;
+    delete process.env.DASHBOARD_PIN;
+    try {
+        const auth = createShadowPortalAuth({ cookieName: "shadow_cookie", ttlMs: 60_000, getPin: () => undefined, getCookieSecret: () => "unit-secret" });
+        const res = createResponse();
+        assert.equal(auth.authorize({ ip: "127.0.0.2", headers: {} }, res, {}, undefined), false);
+        assert.equal(res.cookies.length, 0);
+        assert.match(res.sent, /SHADOW PORTAL/);
+    } finally {
+        if (oldDashboardPin === undefined) delete process.env.DASHBOARD_PIN;
+        else process.env.DASHBOARD_PIN = oldDashboardPin;
+    }
+});
+
+test("shadow portal auth accepts DASHBOARD_PIN as the owner recovery PIN", () => {
+    const oldDashboardPin = process.env.DASHBOARD_PIN;
+    process.env.DASHBOARD_PIN = "owner recovery phrase";
+    try {
+        const auth = createShadowPortalAuth({ cookieName: "shadow_cookie", ttlMs: 60_000, getPin: () => "separate-shadow-pin", getCookieSecret: () => "unit-secret" });
+        const res = createResponse();
+        assert.equal(auth.authorize({ ip: "127.0.0.3", headers: {} }, res, { pin: "owner recovery phrase" }, "owner recovery phrase"), true);
+        assert.equal(res.cookies.length, 1);
+    } finally {
+        if (oldDashboardPin === undefined) delete process.env.DASHBOARD_PIN;
+        else process.env.DASHBOARD_PIN = oldDashboardPin;
+    }
+});
+
 test("shadow portal auth accepts a valid cookie session without a PIN", () => {
     const auth = createAuth();
     const token = createShadowSessionToken({ ttlMs: 60_000, getCookieSecret: () => "unit-secret" });

@@ -87,11 +87,13 @@ channel routing, queues, reconciliation, and dashboard are not part of runtime.
 │   │   ├── runtime.js            mounts routes/assets into the main Express app
 │   │   ├── lifecycle.js          migration, history, snapshots, retention, and token refresh
 │   │   ├── ownerService.js       in-process Owner queries and audited IP reveal
-│   │   ├── page.js               Owner guild chooser
+│   │   ├── page.js               Owner Dashboard guild chooser
+│   │   ├── guildPage.js          five-section Owner guild workspace
+│   │   ├── ownerStyles.js        Owner Dashboard-compatible Verification styles
 │   │   ├── routes/               OAuth and Owner guild APIs
 │   │   ├── models/               existing verification model/collection names
 │   │   ├── utils/                Discord API, crypto, state, IP/device, serializers
-│   │   ├── views/                callback and guild dashboard HTML
+│   │   ├── views/                public callback HTML
 │   │   └── public/               verification CSS/browser JavaScript
 │   └── tests/                    Node built-in tests
 ├── verification-tests/          Jest verification contracts/regressions
@@ -147,10 +149,11 @@ The management APIs retain their established response shapes where practical.
 Cross-service HTTP calls were replaced by direct calls to
 `discord/verification/ownerService.js`.
 
-The Verification owner surfaces share one responsive Operations Workspace
-design across guild selection, per-guild management, OAuth callback, and Join
-Campaign. Per-guild routes remain compatible but include an in-page guild
-switcher, so routine navigation does not require returning to the selector.
+The Verification owner surfaces use the same purple shell and grouped navigation
+as the main Owner Dashboard. `/verification` selects a bot guild and
+`/verification/:guildId` exposes Overview, System, Panel, Policy/Role, and
+Verification Data sections with an in-page guild switcher. The public OAuth
+callback remains visually and operationally independent.
 
 `/api/status` reports process RSS as Dashboard RAM and exposes V8 heap used/
 allocated separately. Its historical success-rate field is compatibility-only

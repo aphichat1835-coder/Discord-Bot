@@ -29,6 +29,12 @@ function safeDiscordSummaryText(value, maxLength = 180) {
         .slice(0, Math.max(1, Number(maxLength) || 180));
 }
 
+function getRequestPath(req) {
+    const originalUrl = String(req?.originalUrl || "").split("?", 1)[0];
+    if (originalUrl) return originalUrl.slice(0, 180);
+    return `${req?.baseUrl || ""}${req?.path || ""}`.slice(0, 180) || "unknown";
+}
+
 function shouldBypassDashboardReadApi(req) {
     if (req.method !== "GET") return false;
 
@@ -37,25 +43,29 @@ function shouldBypassDashboardReadApi(req) {
         DASHBOARD_READ_API_PREFIX_BYPASS.some(prefix => fullPath.startsWith(prefix));
 }
 
-function logIntrusion(ip, path) {
-    safeLogger.warn("dashboard_unauthorized_access", { path, ip });
+function logIntrusion(ip, path, reason = "blocked request") {
+    safeLogger.warn("dashboard_request_blocked", { path, ip, reason });
     const rawPath = String(path || "unknown").slice(0, 180);
     const rawIp = String(ip || "unknown").slice(0, 120);
     const safePath = safeDiscordInlineCode(rawPath, 180);
     const safeIp = safeDiscordInlineCode(rawIp, 120);
     const secret = dashboardAuth.getApiSecret() || "dashboard-intrusion";
     const dedupeKey = crypto.createHmac("sha256", secret)
-        .update(`${rawIp}|${rawPath}`)
+        .update(`${rawIp}|${reason}`)
         .digest("hex");
 
     sendLogWebhook(
-        { content: `🛑 **[INTRUSION]** \`${safePath}\` from \`${safeIp}\`` },
+        { content: `⚠️ **[BLOCKED]** \`${safePath}\` from \`${safeIp}\` — ${safeDiscordSummaryText(reason, 80)}` },
         {
-            dedupeKey: `dashboard-intrusion:${dedupeKey}`,
-            dedupeMs: 5 * 60 * 1000,
-            summaryLabel: `dashboard intrusion on ${safeDiscordSummaryText(rawPath, 120)}`
+            dedupeKey: `dashboard-blocked:${dedupeKey}`,
+            dedupeMs: 15 * 60 * 1000,
+            summaryLabel: `blocked dashboard requests from ${safeDiscordSummaryText(rawIp, 80)}`
         }
     ).catch(() => {});
+}
+
+function logAuthRejected(req) {
+    safeLogger.warn("dashboard_auth_rejected", { path: getRequestPath(req), ip: req?.ip });
 }
 
 function createRateLimiter(requestCounts, config, sessionManager = null) {
@@ -80,7 +90,7 @@ function createRateLimiter(requestCounts, config, sessionManager = null) {
         }
 
         if (history.length > maxReq) {
-            logIntrusion(ip, req.path);
+            logIntrusion(ip, getRequestPath(req), "rate limit exceeded");
             return res.status(429).json({ error: "Too Many Requests" });
         }
 
@@ -131,13 +141,13 @@ function makeCheckAuth(API_SECRET) {
         const secBuf = Buffer.from(configuredSecret, "utf8");
 
         if (authBuf.length !== secBuf.length) {
-            logIntrusion(req.ip, req.path);
+            logAuthRejected(req);
             res.status(401).json({ success: false, error: "Unauthorized" });
             return false;
         }
 
         if (!crypto.timingSafeEqual(authBuf, secBuf)) {
-            logIntrusion(req.ip, req.path);
+            logAuthRejected(req);
             res.status(401).json({ success: false, error: "Unauthorized" });
             return false;
         }
@@ -169,7 +179,8 @@ function makeCheckRevealPin(getWebPin) {
         if (!webPin || pin !== webPin) {
             rec.count = (rec.count || 0) + 1;
 
-            if (rec.count >= REVEAL_MAX) {
+            const reachedLimit = rec.count >= REVEAL_MAX;
+            if (reachedLimit) {
                 rec.lockedUntil = now + REVEAL_LOCKOUT;
                 rec.count = 0;
             }
@@ -177,7 +188,9 @@ function makeCheckRevealPin(getWebPin) {
             rec.updatedAt = now;
             revealTokenAttempts.set(ip, rec);
             trimRevealAttempts(now);
-            logIntrusion(ip, req.path);
+            if (reachedLimit) {
+                logIntrusion(ip, getRequestPath(req), "token reveal PIN locked");
+            }
             res.status(401).json({ success: false, error: "PIN ไม่ถูกต้อง" });
             return null;
         }
@@ -235,6 +248,7 @@ module.exports = {
     logIntrusion,
     safeDiscordInlineCode,
     safeDiscordSummaryText,
+    getRequestPath,
     cleanupRevealAttempts,
     getRevealAttemptStats,
     trimRateLimitBuckets,

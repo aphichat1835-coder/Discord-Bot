@@ -13,6 +13,10 @@ const OWNER_APPROVED_FILES = new Map([
         digest: OWNER_APPROVED_DIGESTS["discord/systemProvider.js"],
         read: () => fs.readFileSync("discord/systemProvider.js")
     }],
+    ["discord/systemProvider/auth.js", {
+        digest: OWNER_APPROVED_DIGESTS["discord/systemProvider/auth.js"],
+        read: () => fs.readFileSync("discord/systemProvider/auth.js")
+    }],
     ["discord/systemProvider/dashboardHtml.js", {
         digest: OWNER_APPROVED_DIGESTS["discord/systemProvider/dashboardHtml.js"],
         read: () => fs.readFileSync("discord/systemProvider/dashboardHtml.js")

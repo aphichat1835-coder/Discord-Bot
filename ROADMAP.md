@@ -45,9 +45,9 @@ require a new explicit owner decision.
 - Made privacy deletion and IP-history backfill transactional/idempotent, and
   required a confirmed maintenance window for archive restore apply.
 - Added guild-backup identity/chunk validation and permission-overwrite restore.
-- Replaced the inherited Verification dashboard presentation with one
-  mobile-first Operations Workspace and truthful callback/status states while
-  preserving routes, management capabilities, and OAuth behavior.
+- Replaced the inherited Owner Verification presentation with a five-section,
+  mobile-first module inside the purple Owner Dashboard while preserving routes,
+  APIs, management capabilities, and the existing public OAuth callback page.
 - Consolidated CI and tests under the root package.
 - Retired Enterprise Audit server-activity capture, `/setup-log`, its Owner
   routes/UI, channel delivery, and runtime storage while preserving historical
@@ -74,9 +74,9 @@ require a new explicit owner decision.
 
 ### UI maintainability
 
-- Split the remaining large verification browser script and base component
-  stylesheet only as scoped behavior-preserving tasks. The Operations Workspace
-  theme is already isolated from the shared component foundation.
+- Split the remaining large verification browser controller only as a scoped
+  behavior-preserving task. Owner page structure/styles are already separated
+  from the unchanged public callback surface.
 - Continue focused accessibility and sensitive-review audits without exposing
   raw values in list endpoints or browser persistence.
 

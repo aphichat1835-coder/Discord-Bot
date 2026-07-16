@@ -7,6 +7,7 @@ const oauthRoutes = require("./routes/oauth");
 const guildRoutes = require("./routes/guild");
 const guildDashboardRoutes = require("./routes/guildDashboard");
 const { verificationHomePage } = require("./page");
+const { verificationGuildPage } = require("./guildPage");
 const {
     getVerificationDiagnostics,
     runVerificationMaintenance
@@ -40,13 +41,13 @@ function ownerContext(client) {
     };
 }
 
-function serveLegacyGuildPage(req, res) {
+function serveGuildPage(req, res) {
     const guildId = String(req.params?.guildId || "");
     const guilds = Array.isArray(req.verificationGuilds) ? req.verificationGuilds : [];
     const canManage = /^\d{17,22}$/.test(guildId) &&
         guilds.some(guild => String(guild.id) === guildId);
     if (!canManage) return res.redirect(302, "/verification");
-    return res.sendFile(path.join(__dirname, "views", "guild.html"));
+    return res.send(verificationGuildPage());
 }
 
 function registerVerificationRuntime({ app, express, client, sessionManager }) {
@@ -87,7 +88,7 @@ function registerVerificationRuntime({ app, express, client, sessionManager }) {
         res.redirect(302, "/verification");
     });
     app.get("/guild/:guildId", ownerAuth.requirePin, attachOwner, (req, res) => {
-        return serveLegacyGuildPage(req, res);
+        return serveGuildPage(req, res);
     });
     app.get("/verification", ownerAuth.requirePin, attachOwner, (_req, res) => {
         res.send(verificationHomePage());
@@ -117,5 +118,6 @@ module.exports = {
     registerVerificationRuntime,
     ownerGuilds,
     ownerContext,
-    serveLegacyGuildPage
+    serveGuildPage,
+    serveLegacyGuildPage: serveGuildPage
 };

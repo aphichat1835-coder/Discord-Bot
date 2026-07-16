@@ -72,10 +72,11 @@ simple listener-only liveness check.
 ## Verification smoke test
 
 1. Login through Owner PIN at `/`.
-2. Open `/verification`; confirm every bot guild is selectable, including a
-   guild not present in Approved Guild records.
-3. Open `/verification/:guildId`.
-4. Validate/send or update a verification panel.
+2. Open the Dashboard navigation item `สมาชิก → ยืนยันตัวตน`; confirm every bot
+   guild is selectable, including a guild not present in Approved Guild records.
+3. Open `/verification/:guildId`; confirm Overview, System, Panel, Policy/Role,
+   and Verification Data stay inside the purple Owner Dashboard shell.
+4. Validate/send or update a verification panel and return to the guild chooser.
 5. In a test member account, authorize the callback.
 6. Confirm:
    - callback POST succeeds;

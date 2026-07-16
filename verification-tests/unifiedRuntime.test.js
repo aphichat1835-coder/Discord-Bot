@@ -3,8 +3,10 @@
 const fs = require("node:fs");
 const {
     ownerGuilds,
-    serveLegacyGuildPage,
+    serveGuildPage,
 } = require("../discord/verification/runtime");
+const { verificationHomePage } = require("../discord/verification/page");
+const { verificationGuildPage } = require("../discord/verification/guildPage");
 const {
     normalizeBaseUrl,
     assertSafeResolvedHost,
@@ -69,38 +71,57 @@ function readVerifyOwnerRoutes() {
 
 describe("single-process verification runtime contract", () => {
     test("scopes the Owner theme away from the public verification callback", () => {
-        const ownerGuildPage = fs.readFileSync("discord/verification/views/guild.html", "utf8");
-        const ownerHomePage = fs.readFileSync("discord/verification/page.js", "utf8");
+        const ownerGuildPage = verificationGuildPage();
+        const ownerHomePage = verificationHomePage();
         const memberCallback = fs.readFileSync("discord/verification/views/callback.html", "utf8");
-        expect(ownerGuildPage).toContain('body class="owner-dashboard-theme"');
-        expect(ownerHomePage).toContain('body class="owner-dashboard-theme"');
+        expect(ownerGuildPage).toContain('class="nav"');
+        expect(ownerHomePage).toContain('class="nav"');
+        expect(ownerGuildPage).toContain("--accent:    #7c3aed");
+        expect(ownerHomePage).toContain("--accent:    #7c3aed");
         expect(memberCallback).toContain('body class="callback-page"');
-        expect(memberCallback).not.toContain("owner-dashboard-theme");
+        expect(memberCallback).not.toContain("verify-tabs");
     });
 
     test("verification pages expose responsive and accessible interaction states", () => {
-        const ownerGuildPage = fs.readFileSync("discord/verification/views/guild.html", "utf8");
-        const ownerHomePage = fs.readFileSync("discord/verification/page.js", "utf8");
+        const ownerGuildPage = verificationGuildPage();
+        const ownerHomePage = verificationHomePage();
         const guildScript = fs.readFileSync("discord/verification/public/js/guild-dashboard.js", "utf8");
         const memberCallback = fs.readFileSync("discord/verification/views/callback.html", "utf8");
         const joinCampaignPage = fs.readFileSync("discord/index/joinCampaignPage.js", "utf8");
         const styles = fs.readFileSync("discord/verification/public/css/dashboard.css", "utf8");
-        const workspaceStyles = fs.readFileSync("discord/verification/public/css/workspace.css", "utf8");
+        const ownerStyles = fs.readFileSync("discord/verification/ownerStyles.js", "utf8");
 
         expect(ownerHomePage).toContain('id="guild-search"');
-        expect(ownerHomePage).toContain('class="verification-commandbar"');
+        expect(ownerHomePage).toContain('class="verify-hero"');
         expect(ownerHomePage).toContain("document.createElement");
         expect(ownerGuildPage).toContain('role="tablist"');
         expect(ownerGuildPage).toContain('id="guild-switcher"');
         expect(ownerGuildPage).toContain('role="dialog"');
+        expect(ownerGuildPage).toContain('data-section="data"');
         expect(guildScript).toContain("aria-selected");
         expect(memberCallback).toContain('aria-live="polite"');
         expect(styles).toContain("prefers-reduced-motion");
-        expect(workspaceStyles).toContain("Verification Workspace 2026");
-        expect(ownerHomePage).toContain('/verification-assets/css/workspace.css');
-        expect(ownerGuildPage).toContain('/verification-assets/css/workspace.css');
+        expect(ownerStyles).toContain("prefers-reduced-motion");
+        expect(ownerHomePage).not.toContain('/verification-assets/css/workspace.css');
+        expect(ownerGuildPage).not.toContain('/verification-assets/css/workspace.css');
         expect(memberCallback).toContain('/verification-assets/css/workspace.css');
         expect(joinCampaignPage).toContain('/verification-assets/css/workspace.css');
+    });
+
+    test("integrated Owner verification workspace has five unique sections and retires the old page file", () => {
+        const page = verificationGuildPage();
+        const ids = [...page.matchAll(/\sid="([^"]+)"/g)].map(match => match[1]);
+        expect(new Set(ids).size).toBe(ids.length);
+        expect([...page.matchAll(/data-section="([^"]+)"/g)].map(match => match[1])).toEqual([
+            "overview",
+            "system",
+            "panel",
+            "policy",
+            "data"
+        ]);
+        expect(page).toContain("ข้อมูลบัญชี Email, IP, Network, Device, Connections, Guild snapshots และ OAuth Token");
+        expect(page).not.toContain("VERIFY CONTROL");
+        expect(fs.existsSync("discord/verification/views/guild.html")).toBe(false);
     });
 
     test("root package has one start command and no nested dashboard service", () => {
@@ -139,11 +160,11 @@ describe("single-process verification runtime contract", () => {
     });
 
     test("Owner verification copy does not describe the retired sensitive approval flow", () => {
-        const guildView = fs.readFileSync("discord/verification/views/guild.html", "utf8");
+        const guildView = verificationGuildPage();
         const guildScript = fs.readFileSync("discord/verification/public/js/guild-dashboard.js", "utf8");
         expect(`${guildView}\n${guildScript}`).not.toMatch(/owner approval|อนุมัติ sensitive|approval หมดอายุ/i);
-        expect(guildView).toContain("Member Detail");
-        expect(guildView).toContain("บันทึก audit");
+        expect(guildView).toContain("ข้อมูลฉบับเต็ม");
+        expect(guildView).not.toMatch(/Audit|บันทึก audit|ข้อมูลและความเป็นส่วนตัว/i);
     });
 
     test("single-port smoke helper requires an exact allowlisted hostname", () => {
@@ -181,32 +202,32 @@ describe("single-process verification runtime contract", () => {
     test("legacy guild alias serves the requested manageable guild page", () => {
         const guildId = "123456789012345678";
         const res = {
-            sendFile: jest.fn(value => value),
+            send: jest.fn(value => value),
             redirect: jest.fn()
         };
 
-        serveLegacyGuildPage({
+        serveGuildPage({
             params: { guildId },
             verificationGuilds: [{ id: guildId }]
         }, res);
 
-        expect(res.sendFile).toHaveBeenCalledWith(expect.stringMatching(/verification\/views\/guild\.html$/));
+        expect(res.send).toHaveBeenCalledWith(expect.stringContaining('id="panel-overview"'));
         expect(res.redirect).not.toHaveBeenCalled();
     });
 
     test("legacy guild alias rejects invalid or unmanaged guild ids", () => {
         const res = {
-            sendFile: jest.fn(),
+            send: jest.fn(),
             redirect: jest.fn()
         };
 
-        serveLegacyGuildPage({
+        serveGuildPage({
             params: { guildId: "not-a-snowflake" },
             verificationGuilds: []
         }, res);
 
         expect(res.redirect).toHaveBeenCalledWith(302, "/verification");
-        expect(res.sendFile).not.toHaveBeenCalled();
+        expect(res.send).not.toHaveBeenCalled();
     });
 
     test("docs describe production OAuth runtime requirements consistently", () => {

@@ -281,7 +281,7 @@ test("join campaign has no Sync Roles UI or route surface", (t) => { // NOSONAR 
         fs.readFileSync("discord/index/joinCampaignPage.js", "utf8"),
         fs.readFileSync("discord/index/joinCampaignRoutes.js", "utf8"),
         fs.readFileSync("discord/features/joinCampaign.js", "utf8"),
-        fs.readFileSync("discord/verification/views/guild.html", "utf8"),
+        fs.readFileSync("discord/verification/guildPage.js", "utf8"),
         fs.readFileSync("discord/verification/public/js/guild-dashboard.js", "utf8"),
         fs.readFileSync("discord/verification/routes/guild.js", "utf8")
     ].join("\n");

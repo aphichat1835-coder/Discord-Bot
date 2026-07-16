@@ -63,9 +63,15 @@ PIN cookie in `discord/index/auth.js`.
 - `DASHBOARD_PIN` is required but intentionally has no application-enforced
   length or composition rule. Use a private, non-reused value; PIN attempt
   throttling remains active regardless of credential format.
+- Shadow Portal rejects missing/blank credentials and accepts either its
+  configured Shadow PIN or the Owner `DASHBOARD_PIN` as a recovery credential;
+  both comparisons are timing-safe and successful login clears failed attempts.
 - A separate readable SameSite CSRF cookie is HMAC-bound to the signed session.
 - Non-read management routes require the `X-CSRF-Token` header.
 - PIN and API rate-limit maps are bounded and cleaned.
+- Rejected API requests are logged locally; the webhook emits a deduplicated
+  `BLOCKED` notice only for rate-limit enforcement or a locked token-reveal PIN,
+  and strips query strings from the reported path.
 - Redirect targets are normalized to local paths.
 
 The former guild-admin OAuth/session boundary was removed. There is no public
