@@ -207,7 +207,7 @@ async function buildStats(guildId) {
         VerifyLog.countDocuments({ ...filter, "ipInfo.isTOR": true }),
         VerifyLog.countDocuments({ ...filter, "ipInfo.hosting": true }),
         VerifyLog.countDocuments({ ...filter, "ipInfo.mobile": true }),
-        VerifyLog.countDocuments({ ...filter, riskScore: { $gte: 70 } }),
+        VerifyLog.countDocuments({ ...filter, "riskFlags.0": { $exists: true } }),
         VerifyLog.countDocuments({
             ...filter,
             "ipInfo.lookupStatus": { $in: ["lookup_failed", "ip_unknown"] }

@@ -10,6 +10,7 @@ function leanQuery(value) {
     return {
         select: jest.fn().mockReturnThis(),
         sort: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue(value)
     };
 }
@@ -326,6 +327,7 @@ describe("OAuth snapshot chunk persistence", () => {
             result: "success",
             memberSnapshot: { roles: ["legacy-log-role"] }
         }));
+        jest.spyOn(VerifyLog, "find").mockReturnValue(leanQuery([]));
         jest.spyOn(snapshotStore, "loadOAuthSnapshots").mockResolvedValue({
             profile: { id: "123456789012345678", futureField: "preserved" },
             guilds: Array.from({ length: 200 }, (_, index) => ({ id: String(index), name: `guild-${index}` })),

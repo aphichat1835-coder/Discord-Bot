@@ -92,7 +92,9 @@ describe("single-process verification runtime contract", () => {
         const ownerStyles = fs.readFileSync("discord/verification/ownerStyles.js", "utf8");
 
         expect(ownerHomePage).toContain('id="guild-search"');
-        expect(ownerHomePage).toContain('class="verify-hero"');
+        expect(ownerHomePage).toContain('class="server-picker"');
+        expect(ownerHomePage).toContain("ระบบยืนยันเปิดอยู่");
+        expect(ownerHomePage).toContain("memberCount");
         expect(ownerHomePage).toContain("document.createElement");
         expect(ownerGuildPage).toContain('role="tablist"');
         expect(ownerGuildPage).toContain('id="guild-switcher"');
@@ -119,7 +121,8 @@ describe("single-process verification runtime contract", () => {
             "policy",
             "data"
         ]);
-        expect(page).toContain("ข้อมูลบัญชี Email, IP, Network, Device, Connections, Guild snapshots และ OAuth Token");
+        expect(page).toContain("สมาชิกและข้อมูลฉบับเต็ม");
+        expect(page).toContain("ข้อมูลบัญชี เซิร์ฟเวอร์ อุปกรณ์ เครือข่าย ประวัติ และ OAuth");
         expect(page).not.toContain("VERIFY CONTROL");
         expect(fs.existsSync("discord/verification/views/guild.html")).toBe(false);
     });
@@ -163,7 +166,7 @@ describe("single-process verification runtime contract", () => {
         const guildView = verificationGuildPage();
         const guildScript = fs.readFileSync("discord/verification/public/js/guild-dashboard.js", "utf8");
         expect(`${guildView}\n${guildScript}`).not.toMatch(/owner approval|อนุมัติ sensitive|approval หมดอายุ/i);
-        expect(guildView).toContain("ข้อมูลฉบับเต็ม");
+        expect(guildView).toContain("สมาชิกและข้อมูลฉบับเต็ม");
         expect(guildView).not.toMatch(/Audit|บันทึก audit|ข้อมูลและความเป็นส่วนตัว/i);
     });
 

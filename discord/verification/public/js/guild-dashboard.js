@@ -4,7 +4,7 @@
   Owner Dashboard Verification Workspace
 
   หน้าที่:
-  - โหลด overview/config/members/logs/risk ของ guild
+  - โหลด overview/config และข้อมูลสมาชิกฉบับเต็มของ guild
   - แสดงข้อมูล verification ให้ละเอียดเป็นหมวด
   - ตั้งค่า verification ผ่านเว็บ
   - preview embed/button
@@ -25,7 +25,6 @@
     overviewData: null,
     resources: null,
 
-    logsPage: 0,
     membersPage: 0,
 
     lastValidation: null,
@@ -35,6 +34,16 @@
 
     activeTab: "overview"
   };
+
+  const SECURITY_RULE_KEYS = [
+    "vpnProxyTor",
+    "hosting",
+    "ipDuplicate",
+    "deviceDuplicate",
+    "previouslyBlockedIp",
+    "spoofedHeader",
+    "unknownLookup"
+  ];
 
   const $ = (id) => document.getElementById(id);
 
@@ -64,26 +73,15 @@
     overviewEnabled: "overview-enabled",
     overviewRole: "overview-role",
     overviewChannel: "overview-channel",
-    overviewMessage: "overview-message",
     overviewMode: "overview-mode",
     overviewUpdated: "overview-updated",
     overviewSource: "overview-source",
-    overviewLogs: "overview-logs",
-    overviewMembers: "overview-members",
 
     validationBox: "validation-box",
     validationBody: "validation-body",
 
     membersBody: "members-body",
-    membersPage: "members-page",
-    logsBody: "logs-body",
-    logsPage: "logs-page",
-
-    riskCountries: "risk-countries",
-    riskIsps: "risk-isps",
-    riskDevices: "risk-devices",
-    riskReasons: "risk-reasons",
-    riskRecent: "risk-recent"
+    membersPage: "members-page"
   };
 
   function qs(selector, root = document) {
@@ -196,13 +194,6 @@
     return badgeElement("failed", "badge-failed");
   }
 
-  function riskBadgeElement(score) {
-    const n = Number(score || 0);
-    if (n >= 70) return badgeElement(n, "badge-danger");
-    if (n >= 35) return badgeElement(n, "badge-warn");
-    return badgeElement(n, "badge-ok");
-  }
-
   function snowflakeOrEmpty(value) {
     const v = String(value || "").trim();
     if (!v) return "";
@@ -271,25 +262,11 @@
     return Math.max(min, Math.min(max, Math.floor(n)));
   }
 
-  function normalizePolicyAction(value, fallback = "log_only") {
-    const actions = ["off", "log_only", "delay", "block"];
-    return actions.includes(String(value || "")) ? String(value) : fallback;
-  }
-
-  function defaultAntiAltConfig(value = {}) {
-    const raw = value && typeof value === "object" ? value : {};
-
-    return {
-      enabled: raw.enabled === true,
-      ipDuplicateAction: normalizePolicyAction(raw.ipDuplicateAction, "log_only"),
-      maxUsersPerIp: clampNumber(raw.maxUsersPerIp, 1, 20, 3),
-      deviceDuplicateAction: normalizePolicyAction(raw.deviceDuplicateAction, "log_only"),
-      maxUsersPerDevice: clampNumber(raw.maxUsersPerDevice, 1, 20, 2),
-      previouslyBlockedIpAction: normalizePolicyAction(raw.previouslyBlockedIpAction, "delay"),
-      spoofedHeaderAction: normalizePolicyAction(raw.spoofedHeaderAction, "delay"),
-      unknownLookupAction: normalizePolicyAction(raw.unknownLookupAction, "delay"),
-      delayMs: clampNumber(raw.delayMs, 0, 10000, 5000)
-    };
+  function normalizeRuleAction(value, fallback = "allow") {
+    const compatibility = { off: "allow", log_only: "allow", delay: "allow", block: "deny_role" };
+    const actions = ["allow", "deny_role", "timeout", "kick", "ban"];
+    const mapped = compatibility[String(value || "")] || String(value || "");
+    return actions.includes(mapped) ? mapped : fallback;
   }
 
   function showToast(message, type = "ok") {
@@ -415,8 +392,6 @@
 
     if (tab === "data") {
       loadMembers(state.membersPage);
-      loadLogs(state.logsPage);
-      loadRisk();
     }
     if (tab === "panel") renderEmbedPreview();
   }
@@ -491,6 +466,7 @@
     setInput("v-roleId", verification.roleId || "");
     setInput("v-channelId", verification.channelId || "");
     setInput("v-messageId", verification.messageId || "");
+    setText("system-message-id", verification.messageId || "ยังไม่มีแผง");
   }
 
   function fillPanelConfig(panel = {}, mode = "oauth") {
@@ -507,23 +483,25 @@
     setChecked("p-showTimestamp", !!panel.showTimestamp);
   }
 
-  function fillAntiAltConfig(antiAltConfig = {}) {
-    const antiAlt = defaultAntiAltConfig(antiAltConfig);
+  function fillSecurityRules(rules = {}) {
+    SECURITY_RULE_KEYS.forEach((key) => {
+      const rule = rules[key] || {};
+      setChecked(`rule-${key}-enabled`, rule.enabled === true);
+      setSelect(`rule-${key}-action`, normalizeRuleAction(rule.action), "allow");
+      setInput(`rule-${key}-timeout`, clampNumber(rule.timeoutMinutes, 1, 40320, 60));
+      if (key === "ipDuplicate" || key === "deviceDuplicate") {
+        setInput(`rule-${key}-threshold`, clampNumber(rule.threshold, 1, 20, key === "ipDuplicate" ? 3 : 2));
+      }
+      updateRuleTimeoutVisibility(key);
+    });
+  }
 
-    setChecked("v-antiAltEnabled", !!antiAlt.enabled);
-    setSelect("v-ipDuplicateAction", antiAlt.ipDuplicateAction, "log_only");
-    setInput("v-maxUsersPerIp", antiAlt.maxUsersPerIp);
-    setSelect("v-deviceDuplicateAction", antiAlt.deviceDuplicateAction, "log_only");
-    setInput("v-maxUsersPerDevice", antiAlt.maxUsersPerDevice);
-    setSelect("v-previouslyBlockedIpAction", antiAlt.previouslyBlockedIpAction, "delay");
-    setSelect("v-spoofedHeaderAction", antiAlt.spoofedHeaderAction, "delay");
-    setSelect("v-unknownLookupAction", antiAlt.unknownLookupAction, "delay");
-    setInput("v-securityDelayMs", antiAlt.delayMs);
+  function updateRuleTimeoutVisibility(key) {
+    const section = qs(`[data-security-rule="${key}"]`);
+    section?.classList.toggle("uses-timeout", readValue(`rule-${key}-action`) === "timeout");
   }
 
   function fillVerificationPolicy(verification = {}) {
-    setChecked("v-blockVPN", verification.blockVPN !== false);
-    setChecked("v-blockHosting", !!verification.blockHosting);
     setChecked("v-requireEmail", !!verification.requireEmail);
     setChecked("v-requireEmailVerified", !!verification.requireEmailVerified);
     setChecked("v-requireConnections", !!verification.requireConnections);
@@ -541,8 +519,10 @@
 
     fillVerificationCore(verification);
     fillPanelConfig(panel, mode);
-    fillAntiAltConfig(verification.antiAlt || {});
+    fillSecurityRules(verification.securityRules || {});
     fillVerificationPolicy(verification);
+
+    if (state.resources) renderResources(state.resources);
 
     updateOverviewConfig();
     renderEmbedPreview();
@@ -561,7 +541,6 @@
 
     setText(SELECTORS.overviewRole, verification.roleName || verification.roleId || "ยังไม่ได้ตั้งค่า");
     setText(SELECTORS.overviewChannel, verification.channelName || verification.channelId || "ยังไม่ได้ตั้งค่า");
-    setText(SELECTORS.overviewMessage, verification.messageId || "ยังไม่มีแผง");
     setText(SELECTORS.overviewMode, verifyModeLabel(mode));
     setText(SELECTORS.overviewUpdated, fmtTime(verification.updatedAt || state.currentConfig?.updatedAt));
     setText(SELECTORS.overviewSource, verification.updatedBy ? `อัปเดตโดย ${verification.updatedBy}` : "ยังไม่มีข้อมูล");
@@ -577,120 +556,6 @@
     setText(SELECTORS.statProxy, fmtNumber(stats.proxy));
     setText(SELECTORS.statTor, fmtNumber(stats.tor));
     setText(SELECTORS.statPending, fmtNumber(stats.lookupFailed));
-  }
-
-  function buildCompactVerifyLogElement(log = {}) {
-    const username = log.globalName || log.username || log.tag || log.userId || "Unknown";
-    const ip = log.rawIp || log.ip || log.ipInfo?.ip || "—";
-    const location = [
-      log.ipInfo?.countryCode || log.countryCode,
-      log.ipInfo?.city || log.city,
-      log.ipInfo?.isp || log.isp
-    ].filter(Boolean).join(" / ") || "unknown";
-    const item = createElement("div", "list-item");
-    const title = createElement("div", "list-title");
-    const identity = document.createElement("span");
-    identity.append(resultBadgeElement(log.result), document.createTextNode(` ${username}`));
-    title.append(identity, riskBadgeElement(log.riskScore));
-    const meta = createElement("div", "list-meta");
-    appendDetailRow(meta, "User ID", log.userId || "—", "mono");
-    appendDetailRow(meta, "เหตุผล", log.reason || "—");
-    appendDetailRow(meta, "IP", ip, "mono");
-    appendDetailRow(meta, "พื้นที่/เครือข่าย", location);
-    appendDetailRow(meta, "เวลา", fmtTime(log.verifiedAt || log.createdAt));
-    item.append(title, meta);
-    return item;
-  }
-
-  function renderOverviewLogs(logs = []) {
-    const box = $(SELECTORS.overviewLogs);
-    if (!box) return;
-
-    if (!logs.length) {
-      replaceWithMessage(box, "empty", "ยังไม่มีประวัติการยืนยัน");
-      return;
-    }
-
-    box.replaceChildren(...logs.slice(0, 8).map(buildCompactVerifyLogElement));
-  }
-
-  function renderOverviewMembers(members = []) {
-    const box = $(SELECTORS.overviewMembers);
-    if (!box) return;
-
-    if (!members.length) {
-      replaceWithMessage(box, "empty", "ยังไม่มีสมาชิกที่ยืนยันสำเร็จ");
-      return;
-    }
-
-    const items = members.slice(0, 8).map((member) => {
-      const item = createElement("div", "list-item");
-      const title = createElement("div", "list-title");
-      title.append(
-        createElement("span", "", member.globalName || member.username || "Unknown"),
-        riskBadgeElement(member.riskScore)
-      );
-      const meta = createElement("div", "list-meta");
-      appendDetailRow(meta, "User ID", member.userId || "—", "mono");
-      appendDetailRow(meta, "อายุบัญชี", `${member.accountAgeDays ?? "—"} วัน`);
-      appendDetailRow(meta, "Connections", member.connections ?? 0);
-      appendDetailRow(meta, "IP", member.rawIp || member.ip || "—", "mono");
-      appendDetailRow(
-        meta,
-        "Network",
-        `${member.countryCode || "unknown"} / ${member.city || "unknown"} / ${member.isp || "unknown"}`
-      );
-      appendDetailRow(
-        meta,
-        "Device",
-        `${member.device?.browser || member.browser || "unknown"} / ${member.device?.os || member.os || "unknown"}`
-      );
-      item.append(title, meta);
-      return item;
-    });
-    box.replaceChildren(...items);
-  }
-
-  function renderRiskList(id, items = [], empty = "ไม่มีข้อมูล") {
-    const box = $(id);
-    if (!box) return;
-
-    if (!items.length) {
-      replaceWithMessage(box, "empty", empty);
-      return;
-    }
-
-    const rows = items.map((item) => {
-      const row = createElement("div", "list-item");
-      const title = createElement("div", "list-title");
-      title.append(
-        createElement("span", "", item.label || item.name || "unknown"),
-        createElement("span", "badge badge-info", item.count || 0)
-      );
-      row.appendChild(title);
-      if (item.detail) row.appendChild(createElement("div", "list-meta", item.detail));
-      return row;
-    });
-    box.replaceChildren(...rows);
-  }
-
-  function renderRisk(risk = {}) {
-    renderRiskList(SELECTORS.riskCountries, risk.countries || [], "ไม่มีข้อมูลประเทศ");
-    renderRiskList(SELECTORS.riskIsps, risk.isps || [], "ไม่มีข้อมูล ISP");
-    renderRiskList(SELECTORS.riskDevices, risk.devices || [], "ไม่มีข้อมูลอุปกรณ์");
-    renderRiskList(SELECTORS.riskReasons, risk.reasons || [], "ไม่มีเหตุผล fail/block");
-
-    const recent = risk.recentRiskLogs || [];
-    const box = $(SELECTORS.riskRecent);
-
-    if (!box) return;
-
-    if (!recent.length) {
-      replaceWithMessage(box, "empty", "ยังไม่มี risk logs");
-      return;
-    }
-
-    box.replaceChildren(...recent.map(buildDetailedVerifyLogElement));
   }
 
   function appendDetailRow(parent, label, value, valueClass = "") {
@@ -745,15 +610,50 @@
     ];
   }
 
-  function revealedTokenRows(sensitive = {}) {
+  function secretControl(label, value) {
+    const row = createElement("div", "secret-control");
+    const text = createElement("div", "secret-control-value");
+    const name = createElement("b", "", label);
+    const code = createElement("code", "mono", value ? "••••••••••••••••" : "ไม่มีข้อมูล");
+    const actions = createElement("div", "secret-control-actions");
+    let timer = null;
+    if (value) {
+      const reveal = createElement("button", "btn btn-soft btn-sm btn-inline", "แสดง");
+      const copy = createElement("button", "btn btn-soft btn-sm btn-inline", "คัดลอก");
+      reveal.type = "button";
+      copy.type = "button";
+      reveal.addEventListener("click", () => {
+        const showing = reveal.dataset.visible === "true";
+        reveal.dataset.visible = String(!showing);
+        reveal.textContent = showing ? "แสดง" : "ซ่อน";
+        code.textContent = showing ? "••••••••••••••••" : value;
+        clearTimeout(timer);
+        if (!showing) timer = setTimeout(() => {
+          reveal.dataset.visible = "false";
+          reveal.textContent = "แสดง";
+          code.textContent = "••••••••••••••••";
+        }, 30000);
+      });
+      copy.addEventListener("click", () => copyText(value, `คัดลอก ${label} แล้ว`));
+      actions.append(reveal, copy);
+    }
+    text.append(name, code);
+    row.append(text, actions);
+    return row;
+  }
+
+  function sensitiveValuesElement(detail = {}) {
+    const sensitive = detail.sensitive || {};
     const oauth = sensitive.oauth || {};
     const adminOAuth = sensitive.adminOAuth || {};
-    return [
-      ["Access Token", oauth.accessToken || "ไม่มีข้อมูล", "mono secret-value"],
-      ["Refresh Token", oauth.refreshToken || "ไม่มีข้อมูล", "mono secret-value"],
-      ["Admin OAuth Access Token", adminOAuth.accessToken || "ไม่มีข้อมูล", "mono secret-value"],
-      ["Admin OAuth Refresh Token", adminOAuth.refreshToken || "ไม่มีข้อมูล", "mono secret-value"]
-    ];
+    const root = createElement("div", "secret-list");
+    root.append(
+      secretControl("Access Token", oauth.accessToken),
+      secretControl("Refresh Token", oauth.refreshToken),
+      secretControl("Admin OAuth Access Token", adminOAuth.accessToken),
+      secretControl("Admin OAuth Refresh Token", adminOAuth.refreshToken)
+    );
+    return root;
   }
 
   function verificationResultRows(detail = {}) {
@@ -767,7 +667,7 @@
 
   function missingOAuthScopeIssues(oauth = {}) {
     const granted = new Set(String(oauth.scope || "").split(/\s+/).filter(Boolean));
-    const required = ["identify", "email", "connections", "guilds", "guilds.members.read", "guilds.join"];
+    const required = ["identify", "identify.premium", "email", "connections", "guilds", "guilds.members.read", "guilds.join"];
     return required
       .filter(scope => !granted.has(scope))
       .map(scope => `ขาด scope: ${scope}`);
@@ -822,12 +722,15 @@
   function buildVerificationCardElement(detail = {}) {
     const token = detail.oauthTokens || {};
     const sensitive = detail.sensitive || {};
-    return detailCardElement("Verification / OAuth Token", [
+    const extra = createElement("div", "");
+    const notice = oauthReadinessNotice(detail);
+    if (notice) extra.appendChild(notice);
+    extra.appendChild(sensitiveValuesElement(detail));
+    return detailCardElement("การยืนยันและ OAuth", [
       ...verificationSummaryRows(detail),
       ...oauthStatusRows(token),
-      ...revealedTokenRows(sensitive),
       ...verificationResultRows(detail)
-    ], oauthReadinessNotice(detail));
+    ], extra);
   }
 
   function connectionDetailElement(connection = {}) {
@@ -836,7 +739,17 @@
       ? Object.keys(connection.metadata)
       : [];
     const integrationCount = Array.isArray(connection.integrations) ? connection.integrations.length : 0;
-    item.textContent = `• ${connection.type || "unknown"} — ${connection.name || connection.username || connection.id || "—"} | platform account id: ${connection.id || "—"} · verified: ${boolText(connection.verified)} · visibility: ${connection.visibility ?? "—"} · revoked: ${boolText(connection.revoked)} · integrations: ${integrationCount} · metadata keys: ${metadataKeys.join(", ") || "—"}`;
+    item.className = "detail-entity-card";
+    const head = createElement("div", "detail-entity-head");
+    head.append(createElement("b", "", connection.type || "ไม่ทราบบริการ"), badgeElement(connection.verified ? "ยืนยันแล้ว" : "ยังไม่ยืนยัน", connection.verified ? "badge-ok" : "badge-muted"));
+    const meta = createElement("div", "detail-entity-meta");
+    appendDetailRow(meta, "ชื่อบัญชี", connection.name || connection.username || "—");
+    appendDetailRow(meta, "Account ID", connection.id || "—", "mono");
+    appendDetailRow(meta, "การมองเห็น", connection.visibility ?? "—");
+    appendDetailRow(meta, "ถูกยกเลิก", boolText(connection.revoked));
+    appendDetailRow(meta, "Integrations", integrationCount);
+    appendDetailRow(meta, "Metadata", metadataKeys.join(", ") || "—");
+    item.append(head, meta);
     if (connection.raw) item.append(rawSnapshotDetailsElement("ข้อมูล Connection ทั้งหมด", connection.raw));
     return item;
   }
@@ -844,7 +757,25 @@
   function guildDetailElement(guild = {}) {
     const item = document.createElement("div");
     const permissionFlags = Array.isArray(guild.permissionFlags) ? guild.permissionFlags : [];
-    item.textContent = `• ${guild.name || guild.id || "unknown"} (${guild.id || "—"}) | icon: ${guild.iconUrl || guild.icon || "—"} · owner: ${boolText(guild.owner || guild.isOwner)} · admin: ${boolText(guild.isAdmin)} · manage guild: ${boolText(guild.canManageGuild)} · manage roles: ${boolText(guild.canManageRoles)} · ban members: ${boolText(guild.canBanMembers)} · permission bitfield: ${guild.permissions || "0"} · permission labels: ${permissionFlags.join(", ") || "—"}`;
+    item.className = "detail-entity-card guild-entity";
+    const head = createElement("div", "detail-entity-head");
+    const icon = createElement("div", "detail-guild-icon", initials(guild.name || "S"));
+    const iconUrl = guild.iconUrl || (guild.id && guild.icon ? `https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.webp?size=64` : "");
+    if (iconUrl) {
+      const image = document.createElement("img"); image.src = iconUrl; image.alt = ""; image.loading = "lazy"; icon.replaceChildren(image);
+    }
+    const title = createElement("div", "");
+    title.append(createElement("b", "", guild.name || guild.id || "ไม่ทราบชื่อเซิร์ฟเวอร์"), createElement("small", "mono muted-2", guild.id || "—"));
+    head.append(icon, title);
+    const meta = createElement("div", "detail-entity-meta");
+    appendDetailRow(meta, "เจ้าของเซิร์ฟเวอร์", boolText(guild.owner || guild.isOwner));
+    appendDetailRow(meta, "ผู้ดูแลระบบ", boolText(guild.isAdmin));
+    appendDetailRow(meta, "จัดการเซิร์ฟเวอร์", boolText(guild.canManageGuild));
+    appendDetailRow(meta, "จัดการยศ", boolText(guild.canManageRoles));
+    appendDetailRow(meta, "แบนสมาชิก", boolText(guild.canBanMembers));
+    appendDetailRow(meta, "Permission bitfield", guild.permissions || "0", "mono");
+    appendDetailRow(meta, "สิทธิ์ที่พบ", permissionFlags.join(", ") || "—");
+    item.append(head, meta);
     if (guild.raw) item.append(rawSnapshotDetailsElement("ข้อมูล Guild ทั้งหมด", guild.raw));
     return item;
   }
@@ -912,7 +843,7 @@
   function buildIdentityDetailCard(detail = {}) {
     const identity = detail.identity || {};
     const account = detail.account || {};
-    return detailCardElement("Identity / Discord", [
+    return detailCardElement("ตัวตนบน Discord", [
       ["User ID", firstTruthy(detail.userId, identity.userId), "mono"],
       ["Username", firstTruthy(identity.username)],
       ["Discriminator", firstDefined(identity.discriminator)],
@@ -928,12 +859,17 @@
   function buildAccountDetailCard(detail = {}) {
     const identity = detail.identity || {};
     const account = detail.account || {};
-    return detailCardElement("Account / Email", [
+    const scopes = String(detail.oauthTokens?.oauth?.scope || "").split(/\s+/);
+    const premiumKnown = scopes.includes("identify.premium");
+    const premiumLabels = { 0: "ไม่มี Nitro", 1: "Nitro Classic", 2: "Nitro", 3: "Nitro Basic" };
+    const rawProfile = detail.rawSnapshots?.profile || {};
+    const mfaKnown = Object.hasOwn(rawProfile, "mfa_enabled") || Object.hasOwn(rawProfile, "mfaEnabled");
+    return detailCardElement("บัญชีและความปลอดภัย", [
       ["Email", firstDefined(account.email, identity.email)],
       ["Email verified", boolText(firstDefinedValue(account.emailVerified, identity.emailVerified))],
       ["Locale", firstTruthy(account.locale, identity.locale)],
-      ["MFA", boolText(firstDefinedValue(account.mfaEnabled, identity.mfaEnabled))],
-      ["Premium type (compatibility raw value, ไม่ใช่ Nitro verdict)", firstDefined(account.premiumType, identity.premiumType)],
+      ["MFA / 2FA", mfaKnown ? boolText(firstDefinedValue(account.mfaEnabled, identity.mfaEnabled)) : "Discord ไม่ได้ส่งข้อมูล"],
+      ["Nitro", premiumKnown ? (premiumLabels[Number(firstDefinedValue(account.premiumType, identity.premiumType) || 0)] || "ไม่ทราบประเภท") : "Discord ไม่ได้ส่งข้อมูล"],
       ["Flags / Public", `${firstDefined(account.flags, identity.flags)} / ${firstDefined(account.publicFlags, identity.publicFlags)}`],
       ["Created", fmtTime(firstTruthyValue(account.accountCreatedAt, identity.accountCreatedAt))],
       ["Age", `${firstDefined(account.accountAgeDays, identity.accountAgeDays)} วัน`]
@@ -943,7 +879,7 @@
   function buildTargetMemberDetailCard(detail = {}) {
     const member = detail.targetMember || {};
     const roles = Array.isArray(member.roles) ? member.roles : [];
-    return detailCardElement("Target Guild Member", [
+    return detailCardElement("ข้อมูลในเซิร์ฟเวอร์นี้", [
       ["Nickname", firstTruthy(member.nick, member.nickname)],
       ["Joined at", fmtTime(member.joinedAt)],
       ["Pending verification", boolText(member.pending)],
@@ -956,7 +892,7 @@
 
   function buildDeviceDetailCard(detail = {}) {
     const device = detail.device || {};
-    return detailCardElement("Browser / Device", [
+    return detailCardElement("อุปกรณ์และเบราว์เซอร์", [
       ["Browser", firstTruthy(device.browser)],
       ["OS", firstTruthy(device.os)],
       ["Platform", firstTruthy(device.platform)],
@@ -974,8 +910,7 @@
   function buildNetworkDetailCard(detail = {}) {
     const network = detail.network || {};
     const tracking = detail.tracking || {};
-    return detailCardElement("Network / IP", [
-      ["Raw IP", detail.sensitive?.rawIp || "ไม่มีข้อมูล", "mono secret-value"],
+    return detailCardElement("เครือข่ายและ IP", [
       ["Country/City", `${firstTruthy(network.country, network.countryCode)} / ${firstTruthy(network.city)}`],
       ["Region / Timezone", `${firstTruthy(network.region)} / ${firstTruthy(network.timezone)}`],
       ["ISP", firstTruthy(network.isp)],
@@ -984,15 +919,15 @@
       ["Hosting / Mobile", `${boolText(firstTruthyValue(network.isHosting, network.hosting))} / ${boolText(network.mobile)}`],
       ["Lookup", `${firstTruthy(network.lookupProvider)} / ${firstTruthy(network.lookupStatus, "unknown")}`],
       ["IP first seen / Last seen", `${fmtTime(tracking.firstSeenAt)} / ${fmtTime(tracking.lastSeenAt)}`]
-    ]);
+    ], secretControl("IP ที่ระบบตรวจพบ", detail.sensitive?.rawIp));
   }
 
   function buildMemberListCards(detail = {}) {
     const connections = Array.isArray(detail.connections) ? detail.connections : [];
     const guilds = Array.isArray(detail.guilds) ? detail.guilds : [];
     return [
-      detailListCardElement("Connections", connections, connectionDetailElement),
-      detailListCardElement("Guilds", guilds, guildDetailElement)
+      detailListCardElement("บัญชีภายนอกที่เชื่อมกับ Discord", connections, connectionDetailElement),
+      detailListCardElement("เซิร์ฟเวอร์ทั้งหมดที่ Discord ส่งมา", guilds, guildDetailElement)
     ];
   }
 
@@ -1004,13 +939,6 @@
       ["Device fingerprints", Array.isArray(history.deviceFingerprints) ? history.deviceFingerprints.length : 0],
       ["Role snapshots", Array.isArray(history.roleSnapshots) ? history.roleSnapshots.length : 0],
       ["Last result / Role", `${history.lastResult || "—"} / ${history.lastRoleId || "—"}`]
-    ];
-  }
-
-  function ipHistoryRiskRows(history = {}) {
-    return [
-      ["Risk max / latest", `${history.maxRiskScore ?? 0} / ${history.lastRiskScore ?? 0}`],
-      ["Risk flags", Array.isArray(history.lastRiskFlags) ? history.lastRiskFlags.join(", ") || "—" : "—"]
     ];
   }
 
@@ -1090,11 +1018,10 @@
     if (!history) return null;
     const rows = [
       ...ipHistorySummaryRows(history),
-      ...ipHistoryRiskRows(history),
       ...ipHistoryNetworkRows(history)
     ];
     const raw = ipHistoryPagerElement(detail, history);
-    const card = detailCardElement("IP Identity / History", rows, raw);
+    const card = detailCardElement("ประวัติ IP อุปกรณ์ และยศ", rows, raw);
     card.classList.add("mt-14");
     return card;
   }
@@ -1111,23 +1038,73 @@
     return cards.filter(Boolean);
   }
 
+  function memberDetailSection(title, subtitle, nodes = [], open = false) {
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    const text = createElement("span", "member-detail-section-title");
+    const body = createElement("div", "member-detail-section-body");
+    details.className = "member-detail-section";
+    details.open = open;
+    text.append(createElement("b", "", title), createElement("small", "", subtitle));
+    summary.append(text, createElement("span", "member-detail-chevron", "⌄"));
+    nodes.filter(Boolean).forEach(node => body.appendChild(node));
+    details.append(summary, body);
+    return details;
+  }
+
+  function memberProfileHeader(detail = {}) {
+    const identity = detail.identity || {};
+    const root = createElement("header", "member-profile-header");
+    if (identity.bannerUrl) {
+      const banner = document.createElement("img");
+      banner.className = "member-profile-banner";
+      banner.src = identity.bannerUrl;
+      banner.alt = "";
+      root.appendChild(banner);
+    }
+    const content = createElement("div", "member-profile-content");
+    const avatar = createElement("div", "member-profile-avatar", initials(identity.globalName || identity.username || "U"));
+    if (identity.avatarUrl) {
+      const image = document.createElement("img"); image.src = identity.avatarUrl; image.alt = "รูปโปรไฟล์"; avatar.replaceChildren(image);
+    }
+    const title = createElement("div", "member-profile-name");
+    title.append(createElement("h2", "", identity.globalName || identity.username || "ไม่ทราบชื่อ"), createElement("div", "", identity.displayTag || identity.username || "—"), createElement("code", "mono", identity.userId || detail.userId || "—"));
+    content.append(avatar, title, resultBadgeElement(detail.verification?.latest?.result || detail.verification?.lastVerify?.result || "success"));
+    root.appendChild(content);
+    return root;
+  }
+
+  function verificationHistoryElement(detail = {}) {
+    const history = Array.isArray(detail.history) ? detail.history : [];
+    const root = createElement("div", "verification-timeline");
+    if (!history.length) return createElement("div", "empty", "ยังไม่มีประวัติการยืนยัน");
+    history.forEach(item => {
+      const row = createElement("article", "timeline-item");
+      const head = createElement("div", "timeline-head");
+      head.append(resultBadgeElement(item.result), createElement("time", "", fmtTime(item.verifiedAt)));
+      row.append(head, createElement("div", "timeline-reason", item.reason || "ไม่มีเหตุผลเพิ่มเติม"));
+      if (Array.isArray(item.findings) && item.findings.length) row.appendChild(createElement("div", "muted small", `สิ่งที่พบ: ${item.findings.join(", ")}`));
+      root.appendChild(row);
+    });
+    if (detail.historyTruncated) root.appendChild(createElement("div", "notice notice-warn", "แสดง 100 รายการล่าสุด"));
+    return root;
+  }
+
   function buildMemberDetailElement(detail = {}) {
     const root = document.createDocumentFragment();
-    const grid = document.createElement("div");
-    grid.className = "grid grid-2";
-    grid.append(
-      buildIdentityDetailCard(detail),
-      buildAccountDetailCard(detail),
-      buildTargetMemberDetailCard(detail),
-      buildDeviceDetailCard(detail),
-      buildNetworkDetailCard(detail),
-      buildVerificationCardElement(detail)
-    );
+    const [connections, guilds] = buildMemberListCards(detail);
+    const rawCards = buildRawSnapshotCards(detail);
     root.append(
-      grid,
-      ...buildMemberListCards(detail),
-      ...existingDetailCards(buildIpIdentityHistoryCard(detail), buildDataQualityCard(detail)),
-      ...buildRawSnapshotCards(detail)
+      memberProfileHeader(detail),
+      memberDetailSection("ตัวตนและบัญชี", "ชื่อ รูปโปรไฟล์ Email Nitro MFA และอายุบัญชี", [buildIdentityDetailCard(detail), buildAccountDetailCard(detail)], true),
+      memberDetailSection("ข้อมูลในเซิร์ฟเวอร์นี้", "Nickname ยศ วันที่เข้า Avatar และสถานะหมดเวลา", [buildTargetMemberDetailCard(detail)]),
+      memberDetailSection("เซิร์ฟเวอร์ทั้งหมด", `${Array.isArray(detail.guilds) ? detail.guilds.length : 0} เซิร์ฟเวอร์ พร้อมสิทธิ์ที่ Discord ส่งมา`, [guilds]),
+      memberDetailSection("บัญชีภายนอก", `${Array.isArray(detail.connections) ? detail.connections.length : 0} บริการที่เชื่อมกับ Discord`, [connections]),
+      memberDetailSection("อุปกรณ์และเครือข่าย", "Browser OS หน้าจอ ISP ตำแหน่ง VPN Proxy TOR และ IP", [buildDeviceDetailCard(detail), buildNetworkDetailCard(detail)]),
+      memberDetailSection("ประวัติการยืนยัน", `${Array.isArray(detail.history) ? detail.history.length : 0} เหตุการณ์ล่าสุด`, [verificationHistoryElement(detail)]),
+      memberDetailSection("OAuth และ Token", "Scope วันหมดอายุ สถานะ Refresh และข้อมูลเข้ารหัส", [buildVerificationCardElement(detail)]),
+      memberDetailSection("ประวัติ IP อุปกรณ์ และยศ", "ข้อมูลความสัมพันธ์ที่บันทึกจากการยืนยันของระบบนี้", existingDetailCards(buildIpIdentityHistoryCard(detail))),
+      memberDetailSection("คุณภาพและข้อมูลต้นฉบับ", "สถานะการดึงข้อมูลและ Snapshot ที่ระบบเก็บได้", [...existingDetailCards(buildDataQualityCard(detail)), ...rawCards])
     );
     return root;
   }
@@ -1149,7 +1126,7 @@
       resultBadgeElement(log.result),
       document.createTextNode(` ${firstTruthy(user.globalName, log.globalName, user.username, log.username, log.userId, "Unknown")}`)
     );
-    title.append(identity, riskBadgeElement(log.riskScore));
+    title.append(identity);
     return title;
   }
 
@@ -1255,6 +1232,17 @@
     if (messageId === null) throw new Error("Message ID ต้องเป็นตัวเลข 17–22 หลัก หรือปล่อยว่าง");
 
     const mode = normalizeVerifyMode(readValue("p-verifyType"));
+    const securityRules = Object.fromEntries(SECURITY_RULE_KEYS.map((key) => {
+      const rule = {
+        enabled: readBool(`rule-${key}-enabled`),
+        action: normalizeRuleAction(readValue(`rule-${key}-action`)),
+        timeoutMinutes: clampNumber(readText(`rule-${key}-timeout`), 1, 40320, 60)
+      };
+      if (key === "ipDuplicate" || key === "deviceDuplicate") {
+        rule.threshold = clampNumber(readText(`rule-${key}-threshold`), 1, 20, key === "ipDuplicate" ? 3 : 2);
+      }
+      return [key, rule];
+    }));
 
     return {
       enabled: readBool("v-enabled"),
@@ -1262,19 +1250,7 @@
       channelId: channelId || null,
       messageId: messageId || null,
 
-      blockVPN: readBool("v-blockVPN"),
-      blockHosting: readBool("v-blockHosting"),
-      antiAlt: {
-        enabled: readBool("v-antiAltEnabled"),
-        ipDuplicateAction: normalizePolicyAction(readValue("v-ipDuplicateAction"), "log_only"),
-        maxUsersPerIp: clampNumber(readText("v-maxUsersPerIp"), 1, 20, 3),
-        deviceDuplicateAction: normalizePolicyAction(readValue("v-deviceDuplicateAction"), "log_only"),
-        maxUsersPerDevice: clampNumber(readText("v-maxUsersPerDevice"), 1, 20, 2),
-        previouslyBlockedIpAction: normalizePolicyAction(readValue("v-previouslyBlockedIpAction"), "delay"),
-        spoofedHeaderAction: normalizePolicyAction(readValue("v-spoofedHeaderAction"), "delay"),
-        unknownLookupAction: normalizePolicyAction(readValue("v-unknownLookupAction"), "delay"),
-        delayMs: clampNumber(readText("v-securityDelayMs"), 0, 10000, 5000)
-      },
+      securityRules,
       requireEmail: readBool("v-requireEmail"),
       requireEmailVerified: readBool("v-requireEmailVerified"),
       requireConnections: readBool("v-requireConnections"),
@@ -1380,7 +1356,6 @@
 
   function buildEmbedPreviewNodes(panel = {}) {
     return [
-      previewContentElement(panel.content),
       previewTitleElement(panel),
       previewDescriptionElement(panel.description),
       previewImageElement("embed-preview-thumb", panel.thumbnailUrl),
@@ -1408,6 +1383,11 @@
     const panel = readEmbedPreviewPanel();
     const color = /^#[0-9A-Fa-f]{6}$/.test(panel.color) ? panel.color : "#5865F2";
     box.style.borderLeftColor = color;
+    const content = $("preview-content");
+    if (content) {
+      content.textContent = panel.content || "";
+      content.hidden = !panel.content;
+    }
     box.replaceChildren(...buildEmbedPreviewNodes(panel));
     renderPreviewButton(btnBox, panel);
   }
@@ -1451,6 +1431,32 @@
     const checks = Array.isArray(result.checks) ? result.checks : [];
     const warnings = Array.isArray(result.warnings) ? result.warnings : [];
     const errors = Array.isArray(result.errors) ? result.errors : [];
+    const summaryBadge = $("validation-summary-badge");
+    if (summaryBadge) {
+      summaryBadge.className = `badge ${errors.length ? "badge-failed" : warnings.length ? "badge-warn" : "badge-ok"}`;
+      summaryBadge.textContent = errors.length ? `${errors.length} จุดต้องแก้` : warnings.length ? `${warnings.length} คำเตือน` : "พร้อมใช้งาน";
+    }
+
+    const remediation = (text) => {
+      const value = String(text || "");
+      if (/Role|ยศ/i.test(value)) return ["ตรวจว่ายศยังอยู่ในเซิร์ฟเวอร์", "เลื่อนยศของบอทให้อยู่สูงกว่ายศที่จะมอบ", "ให้สิทธิ์ Manage Roles แก่บอท แล้วตรวจใหม่"];
+      if (/Channel|ห้อง|View Channel|Send Messages|Embed Links/i.test(value)) return ["เลือกห้องที่บอทมองเห็น", "อนุญาต View Channel, Send Messages และ Embed Links", "กลับมากดตรวจสอบอีกครั้ง"];
+      if (/Token|CLIENT|SECRET|State|Environment/i.test(value)) return ["ตรวจ Environment Variables ของบริการที่รันบอท", "ใช้ค่าจาก Discord Application เดียวกับ Bot Token", "รีสตาร์ตบริการแล้วตรวจใหม่ โดยห้ามส่งค่าลับผ่านแชต"];
+      if (/guild|เซิร์ฟเวอร์|member/i.test(value)) return ["ตรวจว่าบอทยังอยู่ในเซิร์ฟเวอร์", "ตรวจสิทธิ์และลำดับยศของบอท", "รีโหลดข้อมูลแล้วลองใหม่"];
+      return ["อ่านข้อความปัญหาและตรวจค่าที่เกี่ยวข้อง", "แก้การตั้งค่าในหมวดนี้", "กดตรวจสอบซ้ำก่อนส่งแผง"];
+    };
+
+    const issueButton = (kind, text) => {
+      const button = createElement("button", `validation-issue ${kind}`);
+      button.type = "button";
+      button.append(createElement("span", "", kind === "warning" ? "⚠️" : "!"), createElement("span", "", text), createElement("span", "validation-open", "ดูวิธีแก้ →"));
+      button.addEventListener("click", () => {
+        const list = createElement("ol", "remediation-list");
+        remediation(text).forEach(step => list.appendChild(createElement("li", "", step)));
+        openDetailModal("แนวทางแก้ไข", detailCardElement(text, [], list));
+      });
+      return button;
+    };
 
     const grid = createElement("div", "grid grid-3");
     const addStat = (value, label, color) => {
@@ -1467,16 +1473,12 @@
     const nodes = [grid];
     if (warnings.length) {
       const warningBox = createElement("div", "alert alert-warn mt-14");
-      warningBox.append(...warnings.map((warning) => createElement("div", "", `⚠️ ${warning}`)));
+      warningBox.replaceChildren(...warnings.map((warning) => issueButton("warning", String(warning))));
       nodes.push(warningBox);
     }
     if (errors.length) {
       const errorBox = createElement("div", "alert alert-danger mt-14");
-      errorBox.append(...errors.map((error) => createElement(
-        "div",
-        "",
-        `❌ ${error?.message || error?.label || error?.name || error?.key || error}`
-      )));
+      errorBox.replaceChildren(...errors.map((error) => issueButton("error", String(error?.message || error?.label || error?.name || error?.key || error))));
       nodes.push(errorBox);
     }
 
@@ -1485,14 +1487,17 @@
       list.appendChild(createElement("div", "empty", "ยังไม่มีผลตรวจ"));
     } else {
       const checkNodes = checks.map((check) => {
-        const item = createElement("div", "list-item");
+        const item = document.createElement("details");
+        item.className = "validation-check";
         const title = createElement("div", "list-title");
         title.append(
           createElement("span", "", `${check.ok ? "✅" : "❌"} ${check.label || check.name || check.message || check.key || "Check"}`),
           createElement("span", check.ok ? "badge badge-ok" : "badge badge-failed", check.ok ? "ผ่าน" : "ไม่ผ่าน")
         );
-        item.appendChild(title);
-        if (check.detail) item.appendChild(createElement("div", "list-meta", check.detail));
+        const summary = document.createElement("summary");
+        summary.appendChild(title);
+        item.appendChild(summary);
+        if (check.detail) item.appendChild(createElement("div", "list-meta validation-check-detail", check.detail));
         return item;
       });
       list.append(...checkNodes);
@@ -1611,6 +1616,59 @@
       setButtonLoading(btn, false);
     }
   }
+
+  async function checkPanelSync() {
+    const btn = $("btn-check-panel-sync");
+    const badge = $("panel-sync-badge");
+    const detail = $("panel-sync-detail");
+    const labels = {
+      content: "ข้อความเหนือ Embed",
+      title: "หัวข้อ",
+      description: "คำอธิบาย",
+      color: "สี Embed",
+      imageUrl: "รูปภาพ",
+      thumbnailUrl: "รูปย่อ",
+      footerText: "Footer",
+      titleUrl: "ลิงก์หัวข้อ",
+      showTimestamp: "เวลาใน Embed",
+      buttonText: "ข้อความบนปุ่ม",
+      verifyType: "รูปแบบการยืนยัน"
+    };
+    try {
+      setButtonLoading(btn, true, "กำลังตรวจสอบ...");
+      const data = await api(`/api/guild/${encodeURIComponent(state.guildId)}/verify/panel/sync`);
+      const sync = data.sync || {};
+      if (badge) {
+        badge.className = `badge ${sync.inSync ? "badge-ok" : sync.status === "different" ? "badge-warn" : "badge-failed"}`;
+        badge.textContent = sync.inSync ? "ตรงกัน" : sync.status === "not_configured" ? "ยังไม่มีแผง" : sync.status === "message_missing" ? "ไม่พบข้อความ" : sync.status === "cannot_read" ? "อ่านไม่ได้" : sync.status === "different" ? "ข้อมูลต่างกัน" : "ตรวจไม่สำเร็จ";
+      }
+      if (detail) {
+        detail.replaceChildren();
+        const message = createElement("p", "", sync.inSync
+          ? "ค่าบนเว็บตรงกับข้อความจริงใน Discord"
+          : sync.status === "different"
+            ? `ข้อมูลที่ต่างกัน: ${(sync.differences || []).map(key => labels[key] || key).join(", ")}`
+            : "ยังเปรียบเทียบกับข้อความจริงไม่ได้ กรุณาตรวจห้อง สิทธิ์บอท และข้อความแผง");
+        detail.appendChild(message);
+        if (sync.status === "different" && sync.actualPanel) {
+          const load = createElement("button", "btn btn-soft btn-sm btn-inline", "โหลดค่าจาก Discord มาแก้ไข");
+          load.type = "button";
+          load.addEventListener("click", () => {
+            fillPanelConfig(sync.actualPanel, sync.actualPanel.verifyType || "oauth");
+            renderEmbedPreview();
+            showToast("โหลดค่าจาก Discord แล้ว กดบันทึกเมื่อพร้อม", "ok");
+          });
+          detail.appendChild(load);
+        }
+      }
+    } catch (err) {
+      if (badge) { badge.className = "badge badge-failed"; badge.textContent = "ตรวจไม่สำเร็จ"; }
+      if (detail) detail.textContent = err.message;
+      showToast(`ตรวจการซิงค์ไม่สำเร็จ: ${err.message}`, "err");
+    } finally {
+      setButtonLoading(btn, false);
+    }
+  }
     async function disableVerification() {
     const btn = $("btn-disable-verification");
 
@@ -1644,6 +1702,7 @@
     const send = $("btn-send-panel");
     const update = $("btn-update-panel");
     const disable = $("btn-disable-verification");
+    const sync = $("btn-check-panel-sync");
 
     if (save) save.addEventListener("click", saveSettings);
     if (validate) validate.addEventListener("click", validateSettings);
@@ -1651,6 +1710,10 @@
     if (send) send.addEventListener("click", sendPanel);
     if (update) update.addEventListener("click", updatePanel);
     if (disable) disable.addEventListener("click", disableVerification);
+    if (sync) sync.addEventListener("click", checkPanelSync);
+    SECURITY_RULE_KEYS.forEach((key) => {
+      $(`rule-${key}-action`)?.addEventListener("change", () => updateRuleTimeoutVisibility(key));
+    });
   }
 
   function renderResourceButtons(container, items, { emptyText, prefix, datasetKey }) {
@@ -1670,6 +1733,8 @@
       button.className = "btn btn-soft btn-sm";
       button.type = "button";
       button.dataset[datasetKey] = id;
+      const selectedId = datasetKey === "pickRole" ? readText("v-roleId") : readText("v-channelId");
+      button.classList.toggle("selected", selectedId === id);
       idLabel.className = "mono muted-2";
       idLabel.textContent = id;
       button.append(document.createTextNode(`${prefix}${label} `), idLabel);
@@ -1703,14 +1768,16 @@
     qsa("[data-pick-role]").forEach((btn) => {
       btn.addEventListener("click", () => {
         setInput("v-roleId", btn.dataset.pickRole || "");
-        showToast("ใส่ Role ID แล้ว", "ok");
+        qsa("[data-pick-role]").forEach(item => item.classList.toggle("selected", item === btn));
+        showToast("เลือกยศแล้ว", "ok");
       });
     });
 
     qsa("[data-pick-channel]").forEach((btn) => {
       btn.addEventListener("click", () => {
         setInput("v-channelId", btn.dataset.pickChannel || "");
-        showToast("ใส่ Channel ID แล้ว", "ok");
+        qsa("[data-pick-channel]").forEach(item => item.classList.toggle("selected", item === btn));
+        showToast("เลือกห้องแล้ว", "ok");
       });
     });
   }
@@ -1739,10 +1806,6 @@
       fillConfig(data.config || data.guildConfig || state.currentConfig || {});
 
       renderStats(data.stats || {});
-      renderOverviewLogs(data.recentLogs || []);
-      renderOverviewMembers(data.recentMembers || []);
-
-      if (data.riskSummary) renderRisk(data.riskSummary);
 
       return data;
     } catch (err) {
@@ -1761,11 +1824,9 @@
 
     const q = readText("members-search");
     const result = readValue("members-result");
-    const risk = readValue("members-risk");
 
     if (q) params.set("q", q);
     if (result) params.set("result", result);
-    if (risk) params.set("risk", risk);
 
     return params.toString();
   }
@@ -1779,31 +1840,21 @@
   }
 
   function memberTableMessage(message, className = "empty") {
-    const tr = document.createElement("tr");
-    const td = document.createElement("td");
     const box = document.createElement("div");
-    td.colSpan = 8;
     box.className = className;
     box.textContent = message;
-    td.appendChild(box);
-    tr.appendChild(td);
-    return tr;
+    return box;
   }
 
   function memberTableLoadingRow() {
-    const tr = document.createElement("tr");
-    const td = document.createElement("td");
     const box = document.createElement("div");
     const spinner = document.createElement("div");
     const label = document.createElement("div");
-    td.colSpan = 8;
     box.className = "loading-box";
     spinner.className = "spinner";
     label.textContent = "กำลังโหลดสมาชิก...";
     box.append(spinner, label);
-    td.appendChild(box);
-    tr.appendChild(td);
-    return tr;
+    return box;
   }
 
   function memberLocationText(member = {}) {
@@ -1826,12 +1877,6 @@
     const result = document.createElement("td");
     result.appendChild(resultBadgeElement(member.result || "success"));
     return result;
-  }
-
-  function memberRiskCell(member = {}) {
-    const risk = document.createElement("td");
-    risk.appendChild(riskBadgeElement(member.riskScore));
-    return risk;
   }
 
   function memberNetworkCell(member = {}) {
@@ -1874,19 +1919,41 @@
   }
 
   function renderMemberRow(member = {}) {
-    const tr = document.createElement("tr");
+    const card = document.createElement("article");
+    const top = createElement("div", "member-card-top");
+    const avatar = createElement("div", "member-avatar");
+    const identity = createElement("div", "member-card-identity");
+    const name = createElement("h3", "", member.globalName || member.username || member.userId || "ไม่ทราบชื่อ");
+    const tag = createElement("div", "muted small", member.tag || member.username || "ไม่มี Username");
+    const id = createElement("div", "mono muted-2 small", member.userId || "—");
+    const status = createElement("div", "member-card-status");
+    const facts = createElement("div", "member-card-facts");
+    const action = createElement("button", "btn btn-soft member-open", "เปิดข้อมูลทั้งหมด");
+    card.className = "member-card";
+    action.type = "button";
+    action.dataset.memberDetail = String(member.userId || "");
 
-    tr.append(
-      memberIdentityCell(member),
-      memberResultCell(member),
-      memberRiskCell(member),
-      memberNetworkCell(member),
-      memberDeviceCell(member),
-      memberCountsCell(member),
-      memberTimeCell(member),
-      memberActionsCell(member)
+    const avatarUrl = member.avatarUrl || member.discordSnapshot?.avatarUrl || member.user?.avatarUrl;
+    if (avatarUrl) {
+      const image = document.createElement("img");
+      image.src = avatarUrl;
+      image.alt = `รูปโปรไฟล์ของ ${name.textContent}`;
+      image.loading = "lazy";
+      image.addEventListener("error", () => { avatar.textContent = initials(name.textContent); }, { once: true });
+      avatar.appendChild(image);
+    } else avatar.textContent = initials(name.textContent);
+
+    identity.append(name, tag, id);
+    status.append(resultBadgeElement(member.result || "success"), createElement("span", "muted small", fmtTime(member.verifiedAt || member.createdAt)));
+    top.append(avatar, identity, status);
+    facts.append(
+      createElement("span", "", `${member.connectionsCount ?? member.connections ?? 0} บัญชีที่เชื่อม`),
+      createElement("span", "", `${member.guildsCount ?? member.guilds ?? 0} เซิร์ฟเวอร์`),
+      createElement("span", "", memberLocationText(member)),
+      createElement("span", "", `${member.device?.browser || member.browser || "ไม่ทราบเบราว์เซอร์"} · ${member.device?.os || member.os || "ไม่ทราบระบบ"}`)
     );
-    return tr;
+    card.append(top, facts, action);
+    return card;
   }
 
   function bindMemberTableActions(members = []) {
@@ -2152,7 +2219,7 @@
       loadMembers(0);
     }, 350);
 
-    ["members-search", "members-result", "members-risk"].forEach((id) => {
+    ["members-search", "members-result"].forEach((id) => {
       const el = $(id);
       if (!el) return;
 
@@ -2361,7 +2428,6 @@
     bindVerificationActions();
 
     bindMembersControls();
-    bindLogsControls();
 
     bindModal();
     bindUtilityActions();

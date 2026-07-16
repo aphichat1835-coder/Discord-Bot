@@ -47,10 +47,13 @@ const requestDiagnostics = {
 };
 
 const PERMISSIONS = Object.freeze({
+    KICK_MEMBERS: 1n << 1n,
+    BAN_MEMBERS: 1n << 2n,
     VIEW_CHANNEL: 1n << 10n,
     SEND_MESSAGES: 1n << 11n,
     EMBED_LINKS: 1n << 14n,
     MANAGE_ROLES: 1n << 28n,
+    MODERATE_MEMBERS: 1n << 40n,
     ADMINISTRATOR: 1n << 3n
 });
 
@@ -982,6 +985,38 @@ async function addRoleToMember(guildId, userId, roleId) {
     };
 }
 
+async function moderateVerificationMember(guildId, userId, action, options = {}) {
+    const gid = snowflake(guildId);
+    const uid = snowflake(userId);
+    const normalizedAction = String(action || "").trim().toLowerCase();
+    if (!gid || !uid || !["timeout", "kick", "ban"].includes(normalizedAction) || !hasBotToken()) {
+        return { ok: false, status: 400, action: normalizedAction, error: "Invalid verification moderation request" };
+    }
+
+    const reason = String(options.reason || "Verification policy").slice(0, 400);
+    let path = `/guilds/${gid}/members/${uid}`;
+    let method = "DELETE";
+    let body;
+
+    if (normalizedAction === "timeout") {
+        const minutes = Math.max(1, Math.min(40320, Number(options.timeoutMinutes || 60) || 60));
+        method = "PATCH";
+        body = JSON.stringify({ communication_disabled_until: new Date(Date.now() + minutes * 60000).toISOString() });
+    } else if (normalizedAction === "ban") {
+        path = `/guilds/${gid}/bans/${uid}`;
+        method = "PUT";
+        body = JSON.stringify({ delete_message_seconds: 0 });
+    }
+
+    const headers = botHeaders({
+        "X-Audit-Log-Reason": encodeURIComponent(reason),
+        ...(body ? { "Content-Type": "application/json" } : {})
+    });
+    const res = await fetchWithRetry(path, { method, headers, ...(body ? { body } : {}) });
+    if (res.ok) return { ok: true, status: res.status, action: normalizedAction };
+    return { ok: false, status: res.status, action: normalizedAction, error: await readError(res) };
+}
+
 /* =============================================================================
    Messages / Verification Panel
 ============================================================================= */
@@ -1254,6 +1289,7 @@ module.exports = {
     // Compatibility alias for older callback code. New code should use addMemberToGuild.
     addGuildMember: addMemberToGuild,
     addRoleToMember,
+    moderateVerificationMember,
 
     getChannel,
     fetchChannelMessage,

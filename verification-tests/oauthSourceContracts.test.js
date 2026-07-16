@@ -10,13 +10,13 @@ describe('OAuth callback integration contracts', () => {
 
     test('requests guilds.join from every verification entry point', () => {
         expect(routeSource).toContain(
-            "const VERIFY_SCOPE = 'identify email connections guilds guilds.members.read guilds.join';"
+            "const VERIFY_SCOPE = 'identify identify.premium email connections guilds guilds.members.read guilds.join';"
         );
         expect(guildRouteSource).toContain(
-            'scope: "identify email connections guilds guilds.members.read guilds.join"'
+            'scope: "identify identify.premium email connections guilds guilds.members.read guilds.join"'
         );
         expect(commandVerificationSource).toContain(
-            'const VERIFY_SCOPE = "identify email connections guilds guilds.members.read guilds.join";'
+            'const VERIFY_SCOPE = "identify identify.premium email connections guilds guilds.members.read guilds.join";'
         );
         expect(routeSource).not.toContain("ADMIN_SCOPE");
         expect(routeSource).not.toContain("/oauth/admin");

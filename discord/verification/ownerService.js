@@ -53,7 +53,15 @@ function statsGroup() {
         proxy: { $sum: { $cond: [{ $eq: ["$ipInfo.isProxy", true] }, 1, 0] } },
         tor: { $sum: { $cond: [{ $eq: ["$ipInfo.isTOR", true] }, 1, 0] } },
         hosting: { $sum: { $cond: [{ $eq: ["$ipInfo.hosting", true] }, 1, 0] } },
-        highRisk: { $sum: { $cond: [{ $gte: ["$riskScore", 70] }, 1, 0] } },
+        highRisk: {
+            $sum: {
+                $cond: [
+                    { $gt: [{ $size: { $ifNull: ["$riskFlags", []] } }, 0] },
+                    1,
+                    0
+                ]
+            }
+        },
         lookupFailed: {
             $sum: {
                 $cond: [
@@ -78,7 +86,8 @@ function safeRecent(log) {
         roleId: log.roleId || null,
         result: log.result,
         reason: log.reason || "",
-        riskScore: Number(log.riskScore || log.ipInfo?.riskScore || 0),
+        findings: Array.isArray(log.riskFlags) ? log.riskFlags : [],
+        roleResult: log.roleAssignResult || null,
         country: log.ipInfo?.country || null,
         countryCode: log.ipInfo?.countryCode || null,
         city: log.ipInfo?.city || null,
@@ -319,7 +328,7 @@ async function revealRawIp({ guildId, userId, reason, actor = "owner-dashboard" 
 }
 
 async function getMemberDetail(guildId, userId, { canViewSensitive = false } = {}) {
-    const [oauthUser, latestLog] = await Promise.all([
+    const [oauthUser, latestLog, historyLogs] = await Promise.all([
         OAuthUser.findOne({ "discord.userId": userId })
             .select({
                 discord: 1,
@@ -338,6 +347,10 @@ async function getMemberDetail(guildId, userId, { canViewSensitive = false } = {
             .lean(),
         VerifyLog.findOne({ ...baseFilter(guildId), userId })
             .sort({ verifiedAt: -1, createdAt: -1, _id: -1 })
+            .lean(),
+        VerifyLog.find({ ...baseFilter(guildId), userId })
+            .sort({ verifiedAt: -1, createdAt: -1, _id: -1 })
+            .limit(100)
             .lean()
     ]);
 
@@ -368,13 +381,17 @@ async function getMemberDetail(guildId, userId, { canViewSensitive = false } = {
         };
     }
 
-    return serializeMemberDetail({
+    return {
+      ...serializeMemberDetail({
         guildId,
         userId,
         oauthUser: hydratedOAuthUser,
         latestLog,
         canViewSensitive
-    });
+      }),
+      history: historyLogs.map(safeRecent),
+      historyTruncated: historyLogs.length >= 100
+    };
 }
 
 function revealTokenState(token = {}) {

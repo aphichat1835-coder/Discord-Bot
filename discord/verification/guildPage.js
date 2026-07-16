@@ -6,6 +6,21 @@ const { OWNER_VERIFICATION_CSS } = require("./ownerStyles");
 
 const { navBar, shell } = createViewHelpers(`${BASE_CSS}${OWNER_VERIFICATION_CSS}`);
 
+function securityActionOptions() {
+    return `<option value="allow">อนุญาตและบันทึก</option><option value="deny_role">ไม่ให้ยศ</option><option value="timeout">หมดเวลาใน Discord</option><option value="kick">เตะออกจากเซิร์ฟเวอร์</option><option value="ban">แบนจากเซิร์ฟเวอร์</option>`;
+}
+
+function securityRuleMarkup(key, title, description, hasThreshold = false, threshold = 2) {
+    return `<section class="security-rule" data-security-rule="${key}">
+      <div class="security-rule-head"><div><h3>${title}</h3><p>${description}</p></div><label class="toggle"><input id="rule-${key}-enabled" type="checkbox"><span class="slider"></span></label></div>
+      <div class="security-rule-fields">
+        ${hasThreshold ? `<div><label for="rule-${key}-threshold">จำนวนสูงสุดที่อนุญาต</label><input id="rule-${key}-threshold" type="number" min="1" max="20" value="${threshold}"></div>` : ""}
+        <div><label for="rule-${key}-action">เมื่อพบเงื่อนไขนี้</label><select id="rule-${key}-action">${securityActionOptions()}</select></div>
+        <div class="timeout-field"><label for="rule-${key}-timeout">ระยะเวลาหมดเวลา (นาที)</label><input id="rule-${key}-timeout" type="number" min="1" max="40320" value="60"></div>
+      </div>
+    </section>`;
+}
+
 function verificationGuildPage() {
     return shell("จัดการระบบยืนยันตัวตน", `
 <div class="verify-shell">
@@ -42,7 +57,7 @@ ${navBar("/verification")}
       <div class="stat-card"><div id="stat-total" class="num">0</div><div class="label">การยืนยันทั้งหมด</div><div class="sub">เหตุการณ์ของเซิร์ฟเวอร์นี้</div></div>
       <div class="stat-card"><div id="stat-success" class="num" style="color:var(--green2)">0</div><div class="label">สำเร็จ</div><div id="stat-rate" class="sub">อัตราสำเร็จ 0%</div></div>
       <div class="stat-card"><div id="stat-blocked" class="num" style="color:var(--red2)">0</div><div class="label">ไม่ผ่าน/ถูกบล็อก</div><div class="sub">นโยบายหรือการทำงานไม่สำเร็จ</div></div>
-      <div class="stat-card"><div id="stat-risk" class="num" style="color:var(--yellow2)">0</div><div class="label">ความเสี่ยงสูง</div><div class="sub">รายการที่ควรตรวจเพิ่ม</div></div>
+      <div class="stat-card"><div id="stat-risk" class="num" style="color:var(--yellow2)">0</div><div class="label">ควรตรวจเพิ่ม</div><div class="sub">พบเงื่อนไขที่ควรตรวจสอบ</div></div>
     </div>
     <div class="verify-grid four mt-14">
       <div class="stat-card"><div id="stat-vpn" class="num">0</div><div class="label">VPN</div></div>
@@ -50,13 +65,12 @@ ${navBar("/verification")}
       <div class="stat-card"><div id="stat-tor" class="num">0</div><div class="label">TOR</div></div>
       <div class="stat-card"><div id="stat-pending" class="num">0</div><div class="label">Lookup ไม่สำเร็จ</div></div>
     </div>
-    <div class="verify-grid two mt-14">
-      <article class="verify-panel">
+    <div class="verify-grid one mt-14">
+      <article class="verify-panel system-summary-card">
         <div class="section-title"><div><h2>สถานะระบบ</h2><p>ค่าที่ระบบกำลังใช้งานจริง</p></div><span id="overview-enabled" class="badge badge-muted">กำลังโหลด</span></div>
         <div class="kv">
           <div class="kv-row"><span class="kv-key">ยศหลังยืนยัน</span><span id="overview-role" class="kv-val">—</span></div>
           <div class="kv-row"><span class="kv-key">ห้องแผงยืนยัน</span><span id="overview-channel" class="kv-val">—</span></div>
-          <div class="kv-row"><span class="kv-key">Message ID</span><span id="overview-message" class="kv-val mono">—</span></div>
           <div class="kv-row"><span class="kv-key">โหมด</span><span id="overview-mode" class="kv-val">—</span></div>
           <div class="kv-row"><span class="kv-key">อัปเดตล่าสุด</span><span id="overview-updated" class="kv-val">—</span></div>
           <div class="kv-row"><span class="kv-key">แหล่งข้อมูล</span><span id="overview-source" class="kv-val">—</span></div>
@@ -68,32 +82,20 @@ ${navBar("/verification")}
           <button class="btn btn-soft" type="button" data-tab="data">เปิดข้อมูลสมาชิก</button>
         </div>
       </article>
-      <article class="verify-panel">
-        <div class="section-title"><div><h2>สมาชิกยืนยันล่าสุด</h2><p>บัญชีและสัญญาณความเสี่ยงล่าสุด</p></div><button class="btn btn-soft btn-sm btn-inline" type="button" data-tab="data">ดูทั้งหมด</button></div>
-        <div id="overview-members" class="list"><div class="loading-box"><div class="spinner"></div>กำลังโหลด…</div></div>
-      </article>
     </div>
-    <article class="verify-panel mt-14">
-      <div class="section-title"><div><h2>เหตุการณ์ล่าสุด</h2><p>ผลการยืนยันและเหตุผลล่าสุด</p></div><button class="btn btn-soft btn-sm btn-inline" type="button" data-tab="data">เปิดข้อมูลทั้งหมด</button></div>
-      <div id="overview-logs" class="list"><div class="loading-box"><div class="spinner"></div>กำลังโหลด…</div></div>
-    </article>
   </section>
 
   <section id="panel-system" data-section="system" role="tabpanel" aria-labelledby="tab-system" tabindex="0" class="hidden" hidden>
-    <div class="verify-grid two">
+    <div class="verify-grid one">
       <article class="verify-panel">
-        <div class="section-title"><div><h2>การทำงานหลัก</h2><p>เปิดระบบ เลือกยศและห้องที่ใช้งาน</p></div><span class="badge badge-info">Config</span></div>
+        <div class="section-title"><div><h2>ตั้งค่าการทำงาน</h2><p>เลือกข้อมูลจาก Discord โดยตรง ระบบจะบันทึก ID ที่จำเป็นให้เอง</p></div><span class="badge badge-info">Discord</span></div>
         <div class="toggle-row"><div><div class="toggle-title">เปิดระบบยืนยันตัวตน</div><div class="toggle-sub">เมื่อปิด Callback จะไม่มอบยศ แม้ข้อความแผงเดิมยังอยู่</div></div><label class="toggle"><input id="v-enabled" type="checkbox" checked><span class="slider"></span></label></div>
-        <div class="form-row form-row-2">
-          <div><label for="v-roleId">Role ID หลังยืนยัน</label><input id="v-roleId" type="text" inputmode="numeric" placeholder="123456789012345678"><div class="field-hint">ยศต้องอยู่ต่ำกว่ายศสูงสุดของบอท</div></div>
-          <div><label for="v-channelId">Channel ID ของแผง</label><input id="v-channelId" type="text" inputmode="numeric" placeholder="123456789012345678"><div class="field-hint">ห้องที่บอทส่งหรือแก้ไขข้อความได้</div></div>
+        <input id="v-roleId" type="hidden"><input id="v-channelId" type="hidden"><input id="v-messageId" type="hidden">
+        <div class="resource-picker-grid mt-14">
+          <section><div class="picker-label"><b>ยศที่จะได้รับ</b><span>เลือก 1 ยศ</span></div><div id="role-options" class="resource-options"><div class="loading-box" style="width:100%"><div class="spinner"></div>กำลังโหลดยศ…</div></div></section>
+          <section><div class="picker-label"><b>ห้องสำหรับแผงยืนยัน</b><span>เลือก 1 ห้อง</span></div><div id="channel-options" class="resource-options"><div class="loading-box" style="width:100%"><div class="spinner"></div>กำลังโหลดห้อง…</div></div></section>
         </div>
-        <label for="v-messageId">Message ID ของแผงปัจจุบัน</label><input id="v-messageId" type="text" inputmode="numeric" placeholder="ปล่อยว่างหากยังไม่มีแผง"><div class="field-hint">ใช้แก้ข้อความเดิมโดยไม่สร้างแผงซ้ำ</div>
-      </article>
-      <article class="verify-panel">
-        <div class="section-title"><div><h2>เลือกจากข้อมูล Discord</h2><p>รายการที่บอทมองเห็นและจัดการได้</p></div></div>
-        <label>เลือกยศ</label><div id="role-options" class="resource-options"><div class="loading-box" style="width:100%"><div class="spinner"></div>กำลังโหลด Role…</div></div>
-        <label class="mt-14">เลือกห้อง</label><div id="channel-options" class="resource-options"><div class="loading-box" style="width:100%"><div class="spinner"></div>กำลังโหลด Channel…</div></div>
+        <details class="technical-details mt-14"><summary>ข้อมูลแผงที่ระบบดูแลอัตโนมัติ</summary><div class="kv mt-10"><div class="kv-row"><span class="kv-key">ข้อความแผงล่าสุด</span><span id="system-message-id" class="kv-val mono">ยังไม่มีแผง</span></div></div></details>
       </article>
     </div>
     <article class="verify-panel mt-14">
@@ -125,9 +127,13 @@ ${navBar("/verification")}
       </article>
       <div>
         <article class="verify-panel">
-          <div class="section-title"><div><h2>ตัวอย่างก่อนส่ง</h2><p>แสดงรูปแบบใกล้เคียงข้อความจริงใน Discord</p></div></div>
-          <div id="embed-preview" class="embed-preview"><div class="embed-preview-title">🔐 ยืนยันตัวตนเพื่อเข้าดิส</div><div class="embed-preview-desc">กดปุ่มด้านล่างเพื่อยืนยันตัวตน</div></div>
-          <div id="button-preview"><div class="button-preview">✅ ยืนยันตัวตน ✅</div></div>
+          <div class="section-title"><div><h2>ตัวอย่างก่อนส่ง</h2><p>จำลองพื้นที่ข้อความจริงทั้งบนคอมพิวเตอร์และมือถือ</p></div><span class="badge badge-muted">Preview</span></div>
+          <div class="discord-message-preview"><div class="discord-preview-author"><span class="discord-preview-avatar">B</span><div><b>Phomueangtai</b><small>BOT</small></div></div><div id="preview-content" class="discord-preview-content"></div><div id="embed-preview" class="embed-preview"><div class="embed-preview-title">🔐 ยืนยันตัวตนเพื่อเข้าดิส</div><div class="embed-preview-desc">กดปุ่มด้านล่างเพื่อยืนยันตัวตน</div></div><div id="button-preview"><div class="button-preview">✅ ยืนยันตัวตน ✅</div></div></div>
+        </article>
+        <article class="verify-panel mt-14">
+          <div class="section-title"><div><h2>สถานะการซิงค์กับ Discord</h2><p>ตรวจข้อความจริงโดยไม่แก้ไขข้อมูล</p></div><span id="panel-sync-badge" class="badge badge-muted">ยังไม่ได้ตรวจ</span></div>
+          <div id="panel-sync-detail" class="muted small">กดตรวจสอบเพื่อเปรียบเทียบเว็บกับแผงล่าสุดใน Discord</div>
+          <button id="btn-check-panel-sync" class="btn btn-soft mt-14" type="button">ตรวจสอบการซิงค์</button>
         </article>
         <article class="verify-panel mt-14">
           <div class="section-title"><div><h2>ส่งและอัปเดตแผง</h2><p>ตรวจข้อมูลก่อนแก้ข้อความจริง</p></div></div>
@@ -142,67 +148,43 @@ ${navBar("/verification")}
   </section>
 
   <section id="panel-policy" data-section="policy" role="tabpanel" aria-labelledby="tab-policy" tabindex="0" class="hidden" hidden>
-    <div class="verify-grid two">
+    <div class="verify-grid one">
       <article class="verify-panel">
         <div class="section-title"><div><h2>เงื่อนไขบัญชี</h2><p>ข้อกำหนดที่สมาชิกต้องผ่านก่อนรับยศ</p></div><span class="badge badge-warn">Policy</span></div>
-        <div class="toggle-row"><div><div class="toggle-title">บล็อก VPN/Proxy/TOR</div><div class="toggle-sub">ปฏิเสธเครือข่ายที่ปกปิดตัวตน</div></div><label class="toggle"><input id="v-blockVPN" type="checkbox" checked><span class="slider"></span></label></div>
-        <div class="toggle-row"><div><div class="toggle-title">บล็อก Hosting/Datacenter</div><div class="toggle-sub">ปฏิเสธเครือข่ายเซิร์ฟเวอร์และดาต้าเซ็นเตอร์</div></div><label class="toggle"><input id="v-blockHosting" type="checkbox"><span class="slider"></span></label></div>
         <div class="toggle-row"><div><div class="toggle-title">ต้องมี Email</div></div><label class="toggle"><input id="v-requireEmail" type="checkbox"><span class="slider"></span></label></div>
         <div class="toggle-row"><div><div class="toggle-title">Email ต้องยืนยันแล้ว</div></div><label class="toggle"><input id="v-requireEmailVerified" type="checkbox"><span class="slider"></span></label></div>
-        <div class="toggle-row"><div><div class="toggle-title">ต้องมี Connections</div></div><label class="toggle"><input id="v-requireConnections" type="checkbox"><span class="slider"></span></label></div>
-        <div class="form-row form-row-2"><div><label for="v-minAge">อายุบัญชีขั้นต่ำ (วัน)</label><input id="v-minAge" type="number" min="0" max="3650" value="7"></div><div><label for="v-minConnections">Connections ขั้นต่ำ</label><input id="v-minConnections" type="number" min="1" max="20" value="1"></div></div>
+        <div class="toggle-row"><div><div class="toggle-title">ต้องเชื่อมบัญชีภายนอกกับ Discord</div><div class="toggle-sub">เช่น Steam, Twitch, YouTube หรือ GitHub</div></div><label class="toggle"><input id="v-requireConnections" type="checkbox"><span class="slider"></span></label></div>
+        <div class="form-row form-row-2"><div><label for="v-minAge">อายุบัญชีขั้นต่ำ (วัน)</label><input id="v-minAge" type="number" min="0" max="3650" value="7"></div><div><label for="v-minConnections">ต้องเชื่อมอย่างน้อยกี่บริการ</label><input id="v-minConnections" type="number" min="1" max="20" value="1"></div></div>
         <label for="v-allowedCountries">ประเทศที่อนุญาต</label><input id="v-allowedCountries" type="text" placeholder="TH,US,JP หรือปล่อยว่าง">
         <label for="v-blockedCountries">ประเทศที่บล็อก</label><input id="v-blockedCountries" type="text" placeholder="CN,RU หรือปล่อยว่าง">
       </article>
-      <article class="verify-panel">
-        <div class="section-title"><div><h2>Anti-Alt และเครือข่ายซ้ำ</h2><p>กำหนดวิธีรับมือบัญชีหรืออุปกรณ์ที่สัมพันธ์กัน</p></div><span class="badge badge-warn">Hardening</span></div>
-        <div class="toggle-row"><div><div class="toggle-title">เปิด Anti-Alt</div><div class="toggle-sub">เปิดใช้กฎ IP, Device และ Lookup ด้านล่าง</div></div><label class="toggle"><input id="v-antiAltEnabled" type="checkbox"><span class="slider"></span></label></div>
-        <div class="form-row form-row-2"><div><label for="v-ipDuplicateAction">หลายบัญชีต่อ IP</label><select id="v-ipDuplicateAction"><option value="off">ปิด</option><option value="log_only">บันทึกอย่างเดียว</option><option value="delay">หน่วงตรวจสอบ</option><option value="block">บล็อก</option></select></div><div><label for="v-maxUsersPerIp">จำนวนสูงสุดต่อ IP</label><input id="v-maxUsersPerIp" type="number" min="1" max="20" value="3"></div></div>
-        <div class="form-row form-row-2"><div><label for="v-deviceDuplicateAction">หลายบัญชีต่อ Device</label><select id="v-deviceDuplicateAction"><option value="off">ปิด</option><option value="log_only">บันทึกอย่างเดียว</option><option value="delay">หน่วงตรวจสอบ</option><option value="block">บล็อก</option></select></div><div><label for="v-maxUsersPerDevice">จำนวนสูงสุดต่อ Device</label><input id="v-maxUsersPerDevice" type="number" min="1" max="20" value="2"></div></div>
-        <label for="v-previouslyBlockedIpAction">IP ที่เคยถูกบล็อก</label><select id="v-previouslyBlockedIpAction"><option value="off">ปิด</option><option value="log_only">บันทึกอย่างเดียว</option><option value="delay">หน่วงตรวจสอบ</option><option value="block">บล็อก</option></select>
-        <label for="v-spoofedHeaderAction">Header ที่อาจปลอม IP</label><select id="v-spoofedHeaderAction"><option value="off">ปิด</option><option value="log_only">บันทึกอย่างเดียว</option><option value="delay">หน่วงตรวจสอบ</option><option value="block">บล็อก</option></select>
-        <label for="v-unknownLookupAction">ตรวจ IP ไม่สำเร็จ</label><select id="v-unknownLookupAction"><option value="off">ปิด</option><option value="log_only">บันทึกอย่างเดียว</option><option value="delay">หน่วงตรวจสอบ</option><option value="block">บล็อก</option></select>
-        <label for="v-securityDelayMs">เวลาหน่วง (ms)</label><input id="v-securityDelayMs" type="number" min="0" max="10000" value="5000">
-      </article>
+      <article class="verify-panel"><div class="section-title"><div><h2>กฎตรวจสอบและการดำเนินการ</h2><p>แต่ละกฎเปิด–ปิดและเลือกการทำงานใน Discord ได้แยกจากกัน</p></div></div><div id="security-rules" class="security-rules">
+        ${securityRuleMarkup("vpnProxyTor", "VPN, Proxy หรือ TOR", "ตรวจเครือข่ายที่ปกปิดต้นทาง")}
+        ${securityRuleMarkup("hosting", "Hosting หรือ Datacenter", "ตรวจ IP ของเซิร์ฟเวอร์และศูนย์ข้อมูล")}
+        ${securityRuleMarkup("ipDuplicate", "หลายบัญชีต่อ IP", "จำกัดจำนวนบัญชีที่ใช้เครือข่ายเดียวกัน", true, 3)}
+        ${securityRuleMarkup("deviceDuplicate", "หลายบัญชีต่ออุปกรณ์", "จำกัดจำนวนบัญชีที่ใช้อุปกรณ์เดียวกัน", true, 2)}
+        ${securityRuleMarkup("previouslyBlockedIp", "IP ที่เคยถูกปฏิเสธ", "ตรวจประวัติการยืนยันจาก IP เดิม")}
+        ${securityRuleMarkup("spoofedHeader", "ข้อมูล IP จากเบราว์เซอร์ไม่ตรงกัน", "ตรวจ Header ที่ขัดแย้งกับต้นทาง")}
+        ${securityRuleMarkup("unknownLookup", "ตรวจสอบ IP ไม่สำเร็จ", "กำหนดวิธีรับมือเมื่อผู้ให้บริการตรวจ IP ล้มเหลว")}
+      </div></article>
     </div>
     <div class="alert alert-info">กด “บันทึกทั้งหมด” ด้านบนหลังแก้เงื่อนไข ระบบจะตรวจรูปแบบและบันทึกให้เซิร์ฟเวอร์ที่กำลังเลือกเท่านั้น</div>
   </section>
 
   <section id="panel-data" data-section="data" role="tabpanel" aria-labelledby="tab-data" tabindex="0" class="hidden" hidden>
-    <div class="alert alert-warn">ข้อมูลบัญชี Email, IP, Network, Device, Connections, Guild snapshots และ OAuth Token อยู่รวมใน “ดูข้อมูลทั้งหมด” ของสมาชิกแต่ละคน</div>
-    <div class="data-stack">
-      <article class="verify-panel">
-        <div class="data-heading"><span class="data-index">1</span><div><h2>สมาชิกและข้อมูลฉบับเต็ม</h2><p class="muted small">ค้นหาบัญชีแล้วเปิดข้อมูลทั้งหมดในหน้าต่างเดียว</p></div></div>
-        <div class="form-row form-row-3">
+    <div class="data-stack"><article class="verify-panel member-directory">
+        <div class="data-heading"><div><h2>สมาชิกและข้อมูลฉบับเต็ม</h2><p class="muted small">ข้อมูลบัญชี เซิร์ฟเวอร์ อุปกรณ์ เครือข่าย ประวัติ และ OAuth อยู่ในโปรไฟล์เดียว</p></div></div>
+        <div class="form-row form-row-2">
           <div><label for="members-search">ค้นหา</label><input id="members-search" type="search" placeholder="User ID / username / IP / email"></div>
-          <div><label for="members-result">ผลการยืนยัน</label><select id="members-result"><option value="">ทั้งหมด</option><option value="success">Success</option><option value="failed">Failed</option><option value="blocked">Blocked</option></select></div>
-          <div><label for="members-risk">ระดับความเสี่ยง</label><select id="members-risk"><option value="">ทั้งหมด</option><option value="high">สูง</option><option value="medium">ปานกลาง</option><option value="low">ต่ำ</option></select></div>
+          <div><label for="members-result">ผลการยืนยัน</label><select id="members-result"><option value="">ทั้งหมด</option><option value="success">สำเร็จ</option><option value="failed">ไม่สำเร็จ</option><option value="blocked">ไม่ผ่านเงื่อนไข</option></select></div>
         </div>
-        <div class="flex justify-between items-center gap-8 flex-wrap mt-14"><span class="muted small">รายละเอียดเต็มจะเปิดใน Drawer โดยไม่ออกจาก Dashboard</span><div class="flex gap-8"><button id="btn-members-prev" class="btn btn-soft btn-sm btn-inline" type="button">← ก่อนหน้า</button><span id="members-page" class="badge badge-muted">หน้า 1</span><button id="btn-members-next" class="btn btn-soft btn-sm btn-inline" type="button">ถัดไป →</button><button id="btn-members-refresh" class="btn btn-soft btn-sm btn-inline" type="button">รีเฟรช</button></div></div>
-        <div class="table-wrap mt-14"><table><thead><tr><th>บัญชี</th><th>ผล</th><th>Risk</th><th>IP/Network</th><th>Device</th><th>Connections</th><th>เวลา</th><th></th></tr></thead><tbody id="members-body"><tr><td colspan="8"><div class="loading-box"><div class="spinner"></div>กำลังโหลดสมาชิก…</div></td></tr></tbody></table></div>
-      </article>
-
-      <article class="verify-panel">
-        <div class="data-heading"><span class="data-index">2</span><div><h2>ประวัติการยืนยัน</h2><p class="muted small">เหตุการณ์ ผลลัพธ์ เหตุผล และการมอบยศย้อนหลัง</p></div></div>
-        <div class="form-row form-row-3">
-          <div><label for="logs-search">ค้นหา</label><input id="logs-search" type="search" placeholder="User ID / username / IP / reason"></div>
-          <div><label for="logs-result">ผลลัพธ์</label><select id="logs-result"><option value="">ทั้งหมด</option><option value="success">Success</option><option value="failed">Failed</option><option value="blocked">Blocked</option><option value="pending">Pending</option></select></div>
-          <div><label for="logs-risk">ระดับความเสี่ยง</label><select id="logs-risk"><option value="">ทั้งหมด</option><option value="high">สูง</option><option value="medium">ปานกลาง</option><option value="low">ต่ำ</option></select></div>
-        </div>
-        <div class="flex justify-between items-center gap-8 flex-wrap mt-14"><span class="muted small">ใช้ข้อมูลที่บันทึกจากการยืนยันจริง</span><div class="flex gap-8"><button id="btn-logs-prev" class="btn btn-soft btn-sm btn-inline" type="button">← ก่อนหน้า</button><span id="logs-page" class="badge badge-muted">หน้า 1</span><button id="btn-logs-next" class="btn btn-soft btn-sm btn-inline" type="button">ถัดไป →</button><button id="btn-logs-refresh" class="btn btn-soft btn-sm btn-inline" type="button">รีเฟรช</button></div></div>
-        <div class="table-wrap mt-14"><table><thead><tr><th>บัญชี</th><th>ผล</th><th>Risk</th><th>IP/Location</th><th>Reason</th><th>Role Result</th><th>เวลา</th><th></th></tr></thead><tbody id="logs-body"><tr><td colspan="8"><div class="loading-box"><div class="spinner"></div>กำลังโหลดประวัติ…</div></td></tr></tbody></table></div>
-      </article>
-
-      <article class="verify-panel">
-        <div class="data-heading"><span class="data-index">3</span><div><h2>ภาพรวมความเสี่ยง</h2><p class="muted small">การกระจายประเทศ เครือข่าย อุปกรณ์ และเหตุผลที่ไม่ผ่าน</p></div></div>
-        <div class="verify-grid four"><div><h3>ประเทศ</h3><div id="risk-countries" class="list"><div class="loading-box">กำลังโหลด…</div></div></div><div><h3>ISP/ASN</h3><div id="risk-isps" class="list"><div class="loading-box">กำลังโหลด…</div></div></div><div><h3>Device</h3><div id="risk-devices" class="list"><div class="loading-box">กำลังโหลด…</div></div></div><div><h3>เหตุผล</h3><div id="risk-reasons" class="list"><div class="loading-box">กำลังโหลด…</div></div></div></div>
-        <h3 class="mt-14">เหตุการณ์เสี่ยงล่าสุด</h3><div id="risk-recent" class="list mt-8"><div class="loading-box">กำลังโหลด…</div></div>
-      </article>
-    </div>
+        <div class="flex justify-between items-center gap-8 flex-wrap mt-14"><span class="muted small">แตะสมาชิกเพื่อเปิดหน้าข้อมูลแบบเต็มโดยไม่ออกจาก Dashboard</span><div class="flex gap-8"><button id="btn-members-prev" class="btn btn-soft btn-sm btn-inline" type="button">← ก่อนหน้า</button><span id="members-page" class="badge badge-muted">หน้า 1</span><button id="btn-members-next" class="btn btn-soft btn-sm btn-inline" type="button">ถัดไป →</button><button id="btn-members-refresh" class="btn btn-soft btn-sm btn-inline" type="button">รีเฟรช</button></div></div>
+        <div id="members-body" class="member-card-grid mt-14"><div class="loading-box"><div class="spinner"></div>กำลังโหลดสมาชิก…</div></div>
+      </article></div>
   </section>
 </div>
 
-<section id="validation-box" class="verify-panel hidden"><div class="section-title"><div><h2>ผลการตรวจสอบ</h2><p>สิทธิ์บอท ยศ ห้อง และค่าที่จำเป็น</p></div></div><div id="validation-body"></div></section>
+<section id="validation-box" class="verify-panel hidden"><details id="validation-details" open><summary class="validation-summary"><span><b>ผลการตรวจสอบ</b><small>สิทธิ์บอท ยศ ห้อง และค่าที่จำเป็น</small></span><span id="validation-summary-badge" class="badge badge-muted">ยังไม่ได้ตรวจ</span></summary><div id="validation-body" class="mt-14"></div></details></section>
 </div>
 
 <div id="detail-modal" class="modal-backdrop" aria-hidden="true">

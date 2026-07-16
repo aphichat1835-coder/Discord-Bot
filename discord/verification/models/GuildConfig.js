@@ -26,6 +26,16 @@ const panelSchema = new mongoose.Schema({
     legacyVerifyType: String
 }, { _id: false, minimize: false });
 
+function securityRuleSchema({ enabled = false, action = 'deny_role', threshold } = {}) {
+    const definition = {
+        enabled:        { type: Boolean, default: enabled },
+        action:         { type: String, enum: ['allow', 'deny_role', 'timeout', 'kick', 'ban'], default: action },
+        timeoutMinutes: { type: Number, min: 1, max: 40320, default: 60 }
+    };
+    if (threshold !== undefined) definition.threshold = { type: Number, min: 1, max: 20, default: threshold };
+    return new mongoose.Schema(definition, { _id: false, minimize: false });
+}
+
 const schema = new mongoose.Schema({
     guildId:   { type: String, required: true, unique: true, index: true },
     guildName: String,
@@ -94,6 +104,20 @@ const schema = new mongoose.Schema({
             unknownLookupAction:       { type: String, default: 'delay' },
 
             delayMs:                   { type: Number, default: 5000 }
+        },
+
+        /*
+          กฎความปลอดภัยรุ่นใหม่เปิด/ปิดและเลือกการทำงานแยกจากกัน
+          antiAlt ด้านบนยังคงอ่านได้เพื่อ compatibility กับข้อมูลเดิม
+        */
+        securityRules: {
+            vpnProxyTor:        { type: securityRuleSchema({ enabled: true }), default: undefined },
+            hosting:            { type: securityRuleSchema(), default: undefined },
+            ipDuplicate:        { type: securityRuleSchema({ action: 'allow', threshold: 3 }), default: undefined },
+            deviceDuplicate:    { type: securityRuleSchema({ action: 'allow', threshold: 2 }), default: undefined },
+            previouslyBlockedIp:{ type: securityRuleSchema(), default: undefined },
+            spoofedHeader:      { type: securityRuleSchema(), default: undefined },
+            unknownLookup:      { type: securityRuleSchema(), default: undefined }
         },
 
         panel:                { type: panelSchema, default: () => ({}) },

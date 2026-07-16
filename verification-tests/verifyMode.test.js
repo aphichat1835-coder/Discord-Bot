@@ -15,12 +15,49 @@
 const {
     VERIFY_MODES,
     POLICY_ACTIONS,
+    RULE_ACTIONS,
+    SECURITY_RULE_KEYS,
     DEFAULT_ANTI_ALT,
     normalizeAction,
     clampNumber,
     normalizeAntiAltConfig,
+    normalizeRuleAction,
+    normalizeSecurityRules,
     normalizeVerificationConfig,
 } = require('../discord/verification/utils/verifyMode');
+
+describe('independent verification security rules', () => {
+    test('supports the Discord moderation actions exposed by the Owner UI', () => {
+        expect(RULE_ACTIONS).toEqual(['allow', 'deny_role', 'timeout', 'kick', 'ban']);
+        expect(SECURITY_RULE_KEYS).toHaveLength(7);
+        expect(normalizeRuleAction('BLOCK')).toBe('deny_role');
+        expect(normalizeRuleAction('timeout')).toBe('timeout');
+    });
+
+    test('normalizes every rule independently without a global Anti-Alt switch', () => {
+        const rules = normalizeSecurityRules({
+            ipDuplicate: { enabled: true, action: 'kick', threshold: 4 },
+            deviceDuplicate: { enabled: false, action: 'ban', threshold: 2 },
+            spoofedHeader: { enabled: true, action: 'timeout', timeoutMinutes: 90 }
+        }, { blockVPN: false });
+
+        expect(rules.ipDuplicate).toMatchObject({ enabled: true, action: 'kick', threshold: 4 });
+        expect(rules.deviceDuplicate).toMatchObject({ enabled: false, action: 'ban', threshold: 2 });
+        expect(rules.spoofedHeader).toMatchObject({ enabled: true, action: 'timeout', timeoutMinutes: 90 });
+        expect(rules.vpnProxyTor.enabled).toBe(false);
+    });
+
+    test('migrates legacy Anti-Alt actions without preserving delay as fake moderation', () => {
+        const rules = normalizeSecurityRules({}, {
+            blockVPN: true,
+            antiAlt: { enabled: true, ipDuplicateAction: 'block', maxUsersPerIp: 5, unknownLookupAction: 'delay' }
+        });
+
+        expect(rules.vpnProxyTor).toMatchObject({ enabled: true, action: 'deny_role' });
+        expect(rules.ipDuplicate).toMatchObject({ enabled: true, action: 'deny_role', threshold: 5 });
+        expect(rules.unknownLookup).toMatchObject({ enabled: true, action: 'allow' });
+    });
+});
 
 // ---------------------------------------------------------------------------
 // POLICY_ACTIONS constant

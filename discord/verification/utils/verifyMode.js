@@ -21,6 +21,17 @@ const VERIFY_MODES = Object.freeze({
 
 const POLICY_ACTIONS = Object.freeze(["off", "log_only", "delay", "block"]);
 
+const RULE_ACTIONS = Object.freeze(["allow", "deny_role", "timeout", "kick", "ban"]);
+const SECURITY_RULE_KEYS = Object.freeze([
+  "vpnProxyTor",
+  "hosting",
+  "ipDuplicate",
+  "deviceDuplicate",
+  "previouslyBlockedIp",
+  "spoofedHeader",
+  "unknownLookup"
+]);
+
 const DEFAULT_ANTI_ALT = Object.freeze({
   enabled: false,
   ipDuplicateAction: "log_only",
@@ -31,6 +42,16 @@ const DEFAULT_ANTI_ALT = Object.freeze({
   spoofedHeaderAction: "delay",
   unknownLookupAction: "delay",
   delayMs: 5000
+});
+
+const DEFAULT_SECURITY_RULES = Object.freeze({
+  vpnProxyTor: Object.freeze({ enabled: true, action: "deny_role", timeoutMinutes: 60 }),
+  hosting: Object.freeze({ enabled: false, action: "deny_role", timeoutMinutes: 60 }),
+  ipDuplicate: Object.freeze({ enabled: false, action: "allow", timeoutMinutes: 60, threshold: 3 }),
+  deviceDuplicate: Object.freeze({ enabled: false, action: "allow", timeoutMinutes: 60, threshold: 2 }),
+  previouslyBlockedIp: Object.freeze({ enabled: false, action: "deny_role", timeoutMinutes: 60 }),
+  spoofedHeader: Object.freeze({ enabled: false, action: "deny_role", timeoutMinutes: 60 }),
+  unknownLookup: Object.freeze({ enabled: false, action: "deny_role", timeoutMinutes: 60 })
 });
 
 const LEGACY_VERIFY_MODE_MAP = Object.freeze({
@@ -73,6 +94,19 @@ function normalizeAction(value, fallback = "log_only") {
   return POLICY_ACTIONS.includes(raw) ? raw : safeFallback;
 }
 
+function normalizeRuleAction(value, fallback = "allow") {
+  const raw = String(value || "").trim().toLowerCase();
+  const compatibility = {
+    off: "allow",
+    log_only: "allow",
+    delay: "allow",
+    block: "deny_role"
+  };
+  const mapped = compatibility[raw] || raw;
+  const safeFallback = RULE_ACTIONS.includes(fallback) ? fallback : "allow";
+  return RULE_ACTIONS.includes(mapped) ? mapped : safeFallback;
+}
+
 function clampNumber(value, min, max, fallback) {
   const n = Number(value);
 
@@ -97,6 +131,62 @@ function normalizeAntiAltConfig(value = {}) {
     unknownLookupAction: normalizeAction(raw.unknownLookupAction, DEFAULT_ANTI_ALT.unknownLookupAction),
     delayMs: clampNumber(raw.delayMs, 0, 10000, DEFAULT_ANTI_ALT.delayMs)
   };
+}
+
+function legacyRuleSource(config = {}) {
+  const antiAlt = normalizeAntiAltConfig(config.antiAlt || {});
+  const fromLegacy = (action, fallback) => ({
+    enabled: antiAlt.enabled === true && action !== "off",
+    action: normalizeRuleAction(action, fallback),
+    timeoutMinutes: 60
+  });
+
+  return {
+    vpnProxyTor: {
+      enabled: config.blockVPN !== false,
+      action: "deny_role",
+      timeoutMinutes: 60
+    },
+    hosting: {
+      enabled: config.blockHosting === true,
+      action: "deny_role",
+      timeoutMinutes: 60
+    },
+    ipDuplicate: {
+      ...fromLegacy(antiAlt.ipDuplicateAction, "allow"),
+      threshold: antiAlt.maxUsersPerIp
+    },
+    deviceDuplicate: {
+      ...fromLegacy(antiAlt.deviceDuplicateAction, "allow"),
+      threshold: antiAlt.maxUsersPerDevice
+    },
+    previouslyBlockedIp: fromLegacy(antiAlt.previouslyBlockedIpAction, "deny_role"),
+    spoofedHeader: fromLegacy(antiAlt.spoofedHeaderAction, "deny_role"),
+    unknownLookup: fromLegacy(antiAlt.unknownLookupAction, "deny_role")
+  };
+}
+
+function normalizeSecurityRule(value = {}, defaults = {}) {
+  const raw = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const fallback = defaults && typeof defaults === "object" ? defaults : {};
+  return {
+    enabled: raw.enabled === true,
+    action: normalizeRuleAction(raw.action, fallback.action || "allow"),
+    timeoutMinutes: clampNumber(raw.timeoutMinutes, 1, 40320, fallback.timeoutMinutes || 60),
+    ...(Object.hasOwn(fallback, "threshold") || Object.hasOwn(raw, "threshold") ? {
+      threshold: clampNumber(raw.threshold, 1, 20, fallback.threshold || 2)
+    } : {})
+  };
+}
+
+function normalizeSecurityRules(value = {}, config = {}) {
+  const raw = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const legacy = legacyRuleSource(config);
+  return Object.fromEntries(SECURITY_RULE_KEYS.map(key => {
+    const defaults = legacy[key] || DEFAULT_SECURITY_RULES[key];
+    const source = Object.hasOwn(raw, key) ? raw[key] : defaults;
+    return [key, normalizeSecurityRule(source, defaults)];
+  }));
 }
 
 function toLegacyCommandVerifyMode(value) {
@@ -182,17 +272,25 @@ function normalizeVerificationConfig(config = {}) {
     next.antiAlt = normalizeAntiAltConfig(next.antiAlt || {});
   }
 
+  next.securityRules = normalizeSecurityRules(next.securityRules || {}, next);
+
   return next;
 }
 
 module.exports = {
   VERIFY_MODES,
   POLICY_ACTIONS,
+  RULE_ACTIONS,
+  SECURITY_RULE_KEYS,
   DEFAULT_ANTI_ALT,
+  DEFAULT_SECURITY_RULES,
   normalizeVerifyMode,
   normalizeAction,
+  normalizeRuleAction,
   clampNumber,
   normalizeAntiAltConfig,
+  normalizeSecurityRule,
+  normalizeSecurityRules,
   toLegacyCommandVerifyMode,
   toLegacyOauthMode,
   toDashboardVerifyMode,

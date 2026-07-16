@@ -201,19 +201,21 @@ describe("member detail serialization and leak guards", () => {
         expect(snapshotBudget.resolveDefaultMaxBytes(0)).toBe(snapshotBudget.MAX_MAX_BYTES);
     });
 
-    test("dashboard labels premiumType as compatibility data instead of a Nitro verdict", () => {
+    test("dashboard only presents Nitro after identify.premium was granted", () => {
         const source = fs.readFileSync("discord/verification/public/js/guild-dashboard.js", "utf8");
 
-        expect(source).toContain("Premium type (compatibility raw value, ไม่ใช่ Nitro verdict)");
+        expect(source).toContain('scopes.includes("identify.premium")');
+        expect(source).toContain('Discord ไม่ได้ส่งข้อมูล');
+        expect(source).toContain('Nitro Basic');
     });
 
     test("dashboard member detail renders connection, guild permission, and token metadata", () => {
         const source = fs.readFileSync("discord/verification/public/js/guild-dashboard.js", "utf8");
 
-        expect(source).toContain("platform account id");
-        expect(source).toContain("metadata keys");
-        expect(source).toContain("permission bitfield");
-        expect(source).toContain("permission labels");
+        expect(source).toContain('"Account ID"');
+        expect(source).toContain('"Metadata"');
+        expect(source).toContain('"Permission bitfield"');
+        expect(source).toContain('"สิทธิ์ที่พบ"');
         expect(source).toContain("Admin OAuth access/refresh");
         expect(source).toContain("Join result");
         expect(source).toContain("Role assignment");

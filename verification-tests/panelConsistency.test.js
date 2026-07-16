@@ -29,6 +29,27 @@ describe("verification panel DB/Discord consistency", () => {
             .resolves.toEqual({ complete: false, status: 500, code: "discord_panel_rollback_failed" });
     });
 
+    test("compares the live Discord message with the saved panel fields", () => {
+        const live = guildRoutes._test.panelConfigFromDiscordMessage({
+            content: "ก่อนเริ่ม",
+            embeds: [{ title: "ยืนยัน", description: "กดปุ่ม", color: 0x5865F2, footer: { text: "Discord Verification System" } }],
+            components: [{ components: [{ type: 2, label: "ยืนยันตอนนี้", url: "https://example.test" }] }]
+        });
+        const expected = guildRoutes._test.comparablePanel({
+            content: "ก่อนเริ่ม",
+            title: "ยืนยัน",
+            description: "กดปุ่ม",
+            color: "#5865F2",
+            buttonText: "ยืนยันตอนนี้",
+            verifyType: "oauth"
+        });
+        const actual = guildRoutes._test.comparablePanel(live);
+
+        expect(guildRoutes._test.panelDifferences(expected, actual)).toEqual([]);
+        expect(guildRoutes._test.panelDifferences(expected, { ...actual, title: "เปลี่ยนแล้ว" }))
+            .toEqual(["title"]);
+    });
+
 
     test("confirms an ambiguous config save from the database before rolling Discord back", async () => {
         const GuildConfig = require("../discord/verification/models/GuildConfig");

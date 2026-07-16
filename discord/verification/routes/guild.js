@@ -37,9 +37,12 @@ const {
 const {
   normalizeVerifyMode,
   normalizeAction,
+  normalizeRuleAction,
   clampNumber,
   normalizePanel,
   normalizeAntiAltConfig,
+  normalizeSecurityRules,
+  SECURITY_RULE_KEYS,
   normalizeVerificationConfig
 } = require("../utils/verifyMode");
 
@@ -105,6 +108,52 @@ function panelRollbackPayload(message = {}) {
   };
 }
 
+function panelColorHex(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? `#${number.toString(16).padStart(6, "0").slice(-6)}`.toUpperCase() : "#5865F2";
+}
+
+function panelConfigFromDiscordMessage(message = {}) {
+  const embed = Array.isArray(message.embeds) ? message.embeds[0] || {} : {};
+  const rows = Array.isArray(message.components) ? message.components : [];
+  const button = rows.flatMap(row => Array.isArray(row.components) ? row.components : [])
+    .find(component => Number(component?.type) === 2) || {};
+  return normalizePanelInput({
+    content: typeof message.content === "string" ? message.content : "",
+    title: embed.title || "",
+    description: embed.description || "",
+    color: panelColorHex(embed.color),
+    imageUrl: embed.image?.url || "",
+    thumbnailUrl: embed.thumbnail?.url || "",
+    footerText: embed.footer?.text || "",
+    titleUrl: embed.url || "",
+    showTimestamp: !!embed.timestamp,
+    buttonText: button.label || "",
+    verifyType: button.url ? "oauth" : "direct"
+  });
+}
+
+function comparablePanel(panel = {}) {
+  const normalized = normalizePanelInput(panel);
+  return {
+    content: normalized.content || "",
+    title: normalized.title || "",
+    description: normalized.description || "",
+    color: String(normalized.color || "#5865F2").toUpperCase(),
+    imageUrl: normalized.imageUrl || "",
+    thumbnailUrl: normalized.thumbnailUrl || "",
+    footerText: normalized.footerText || "",
+    titleUrl: normalized.titleUrl || "",
+    showTimestamp: normalized.showTimestamp === true,
+    buttonText: normalized.buttonText || normalized.buttonLabel || "",
+    verifyType: normalizeVerifyMode(normalized.verifyType)
+  };
+}
+
+function panelDifferences(expected = {}, actual = {}) {
+  return Object.keys(expected).filter(key => String(expected[key] ?? "") !== String(actual[key] ?? ""));
+}
+
 async function persistedPanelMatches(guildId, verification) {
   try {
     const query = GuildConfig.findOne({ guildId: String(guildId) })
@@ -162,6 +211,7 @@ function normalizeGuild(guild = {}) {
     id: String(guild.id || ""),
     name: String(guild.name || "Unknown Server"),
     icon: guild.icon || null,
+    memberCount: Number.isFinite(Number(guild.memberCount)) ? Number(guild.memberCount) : null,
     owner: policy.owner,
     permissions: String(guild.permissions || "0"),
     isAdmin: policy.isAdmin,
@@ -372,6 +422,22 @@ function sanitizeVerification(input = {}) {
     out.antiAlt = antiAlt;
   }
 
+  if ("securityRules" in input && input.securityRules && typeof input.securityRules === "object" && !Array.isArray(input.securityRules)) {
+    out.securityRules = {};
+    for (const key of SECURITY_RULE_KEYS) {
+      const rawRule = input.securityRules[key];
+      if (!rawRule || typeof rawRule !== "object" || Array.isArray(rawRule)) continue;
+      const rule = {};
+      if ("enabled" in rawRule) rule.enabled = rawRule.enabled === true || rawRule.enabled === "true" || rawRule.enabled === "on";
+      if ("action" in rawRule) rule.action = normalizeRuleAction(rawRule.action, "allow");
+      if ("timeoutMinutes" in rawRule) rule.timeoutMinutes = clampNumber(rawRule.timeoutMinutes, 1, 40320, 60);
+      if ((key === "ipDuplicate" || key === "deviceDuplicate") && "threshold" in rawRule) {
+        rule.threshold = clampNumber(rawRule.threshold, 1, 20, key === "ipDuplicate" ? 3 : 2);
+      }
+      out.securityRules[key] = rule;
+    }
+  }
+
   if ("panel" in input && input.panel && typeof input.panel === "object") {
     const rawPanel = input.panel;
     const panel = {};
@@ -426,12 +492,14 @@ function mergeVerificationConfig(existing = {}, incoming = {}) {
   const clean = sanitizeVerification(incoming || {});
   const hasIncomingAntiAlt = Object.hasOwn(incoming || {}, "antiAlt");
   const hasIncomingPanel = Object.hasOwn(incoming || {}, "panel");
+  const hasIncomingSecurityRules = Object.hasOwn(incoming || {}, "securityRules");
   const currentAntiAlt = current.antiAlt ?? {};
   const cleanAntiAlt = clean.antiAlt ?? {};
   const currentPanel = current.panel ?? {};
   const cleanPanel = clean.panel ?? {};
   let mergedAntiAlt = current.antiAlt;
   let mergedPanel = currentPanel;
+  let mergedSecurityRules = current.securityRules;
 
   if (hasIncomingAntiAlt) {
     mergedAntiAlt = normalizeAntiAltConfig({
@@ -447,6 +515,15 @@ function mergeVerificationConfig(existing = {}, incoming = {}) {
     };
   }
 
+
+  if (hasIncomingSecurityRules) {
+    const source = clean.securityRules || {};
+    mergedSecurityRules = normalizeSecurityRules(Object.fromEntries(SECURITY_RULE_KEYS.map(key => [
+      key,
+      { ...(current.securityRules?.[key] || {}), ...(source[key] || {}) }
+    ])), current);
+  }
+
   const merged = {
     ...current,
     ...clean,
@@ -458,12 +535,17 @@ function mergeVerificationConfig(existing = {}, incoming = {}) {
     panelRevision: current.panelRevision || clean.panelRevision || null,
     panelRevisionUpdatedAt: current.panelRevisionUpdatedAt || clean.panelRevisionUpdatedAt || null,
     antiAlt: mergedAntiAlt,
+    securityRules: mergedSecurityRules,
     panel: normalizePanel(mergedPanel),
     updatedAt: now()
   };
   merged.oauthMode = normalizeVerifyMode(merged.verifyType || merged.panel?.verifyType);
   merged.verifyType = merged.oauthMode;
   merged.panel.verifyType = merged.oauthMode;
+  if (hasIncomingSecurityRules) {
+    merged.blockVPN = merged.securityRules?.vpnProxyTor?.enabled === true;
+    merged.blockHosting = merged.securityRules?.hosting?.enabled === true;
+  }
   return normalizeVerificationConfig(merged);
 }
 
@@ -588,7 +670,7 @@ function buildDiscordAuthorizeUrl(req, { guildId, roleId, panelRevision = null }
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: "code",
-    scope: "identify email connections guilds guilds.members.read guilds.join",
+    scope: "identify identify.premium email connections guilds guilds.members.read guilds.join",
     state,
     prompt: "consent"
   });
@@ -796,6 +878,35 @@ async function validateVerificationConfig(req, guildId, verification) {
     checks.push(...channelResult.checks);
     warnings.push(...channelResult.warnings);
     errors.push(...channelResult.errors);
+
+    const securityRules = normalizeSecurityRules(verification.securityRules || {}, verification);
+    const enabledRules = Object.values(securityRules).filter(rule => rule.enabled === true);
+    const enabledActions = new Set(enabledRules.map(rule => rule.action));
+
+    if (mode !== "oauth" && enabledRules.length > 0) {
+      warnings.push("เงื่อนไขเครือข่ายและอุปกรณ์จะทำงานเฉพาะโหมด OAuth เพราะโหมดรับยศทันทีไม่มีข้อมูลสำหรับตรวจสอบ");
+    }
+
+    if (mode === "oauth") {
+      const guildPermissions = discordAPI.computeMemberGuildPermissions(context.botMember, context.roles);
+      const moderationPermissions = [
+        ["timeout", discordAPI.PERMISSIONS.MODERATE_MEMBERS, "หมดเวลา", "Moderate Members"],
+        ["kick", discordAPI.PERMISSIONS.KICK_MEMBERS, "เตะสมาชิก", "Kick Members"],
+        ["ban", discordAPI.PERMISSIONS.BAN_MEMBERS, "แบนสมาชิก", "Ban Members"]
+      ];
+
+      for (const [action, permission, thaiLabel, discordLabel] of moderationPermissions) {
+        if (!enabledActions.has(action)) continue;
+        const permitted = discordAPI.hasPermission(guildPermissions, permission);
+        checks.push({
+          name: `moderation_permission_${action}`,
+          label: `บอทมีสิทธิ์${thaiLabel}`,
+          ok: permitted,
+          detail: permitted ? `มีสิทธิ์ ${discordLabel}` : `ต้องเปิดสิทธิ์ ${discordLabel} ให้บอท`
+        });
+        if (!permitted) errors.push(`บอทไม่มีสิทธิ์ ${discordLabel} สำหรับการทำงาน “${thaiLabel}”`);
+      }
+    }
   }
 
   const panel = normalizePanelInput(verification.panel || {});
@@ -860,15 +971,33 @@ router.get("/verification/:guildId", requireAdmin, requireGuildAdmin, (req, res)
    Guild List
 ============================================================================= */
 
-router.get("/api/guilds", requireAdmin, (req, res) => {
+router.get("/api/guilds", requireAdmin, async (req, res) => {
   const guilds = getSessionGuilds(req)
     .map(normalizeGuild)
     .filter(guild => guild.canManage || guild.isAdmin || guild.isOwner || guild.owner);
-  res.json({
-    success: true,
-    guilds,
-    preferredGuildId: null
-  });
+  try {
+    const ids = guilds.map(guild => guild.id);
+    const configs = ids.length
+      ? await GuildConfig.find({ guildId: { $in: ids } })
+        .select("guildId verification.enabled verification.updatedAt")
+        .lean()
+      : [];
+    const status = new Map(configs.map(config => [String(config.guildId), {
+      enabled: config.verification?.enabled !== false,
+      configured: true,
+      updatedAt: config.verification?.updatedAt || null
+    }]));
+    res.json({
+      success: true,
+      guilds: guilds.map(guild => ({
+        ...guild,
+        verification: status.get(guild.id) || { enabled: false, configured: false, updatedAt: null }
+      })),
+      preferredGuildId: null
+    });
+  } catch (err) {
+    return sendServerError(res, "guilds", err, "โหลดรายชื่อเซิร์ฟเวอร์ไม่สำเร็จ");
+  }
 });
 /* =============================================================================
    Config / Resources
@@ -950,6 +1079,59 @@ router.get("/api/guild/:guildId/preflight", requireAdmin, requireGuildAdmin, asy
     res.json({ success: true, preflight });
   } catch (err) {
     return sendServerError(res, "verify.preflight", err, "ตรวจสอบความพร้อมไม่สำเร็จ");
+  }
+});
+
+router.get("/api/guild/:guildId/verify/panel/sync", requireAdmin, requireGuildAdmin, async (req, res) => {
+  try {
+    const { guildId } = req.params;
+    const config = await ensureGuildConfig(guildId, req.adminGuild?.name);
+    const verification = normalizeVerificationConfig(config.verification || {});
+    const channelId = cleanSnowflake(verification.channelId);
+    const messageId = cleanSnowflake(verification.messageId);
+    if (!channelId || !messageId) {
+      return res.json({
+        success: true,
+        sync: { status: "not_configured", inSync: false, differences: [], actualPanel: null }
+      });
+    }
+
+    const fetched = await discordAPI.fetchChannelMessage(channelId, messageId);
+    if (!fetched?.ok) {
+      const status = Number(fetched?.status || 0);
+      return res.json({
+        success: true,
+        sync: {
+          status: status === 404 ? "message_missing" : status === 403 ? "cannot_read" : "discord_unavailable",
+          inSync: false,
+          discordStatus: status || null,
+          differences: [],
+          actualPanel: null
+        }
+      });
+    }
+
+    const expected = comparablePanel({
+      ...(verification.panel || {}),
+      verifyType: verification.verifyType || verification.oauthMode || verification.panel?.verifyType
+    });
+    const actualPanel = panelConfigFromDiscordMessage(fetched.message || {});
+    const actual = comparablePanel(actualPanel);
+    const differences = panelDifferences(expected, actual);
+    return res.json({
+      success: true,
+      sync: {
+        status: differences.length ? "different" : "matched",
+        inSync: differences.length === 0,
+        checkedAt: now(),
+        channelId,
+        messageId,
+        differences,
+        actualPanel
+      }
+    });
+  } catch (err) {
+    return sendServerError(res, "verify.panel.sync", err, "ตรวจสอบการซิงค์แผงไม่สำเร็จ");
   }
 });
 
@@ -1578,6 +1760,9 @@ router._test = {
   clonePlainValue,
   safeRollbackEmbed,
   panelRollbackPayload,
+  panelConfigFromDiscordMessage,
+  comparablePanel,
+  panelDifferences,
   persistedPanelMatches,
   rollbackDiscordPanel
 };

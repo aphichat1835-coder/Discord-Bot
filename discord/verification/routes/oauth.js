@@ -5,7 +5,13 @@ const crypto = require('node:crypto');
 
 const discord = require('../utils/discordAPI');
 const { processIP, extractDevice } = require('../utils/ipUtils');
-const { normalizeVerificationConfig, normalizeAction, clampNumber } = require('../utils/verifyMode');
+const {
+    normalizeVerificationConfig,
+    normalizeAction,
+    normalizeRuleAction,
+    normalizeSecurityRules,
+    clampNumber
+} = require('../utils/verifyMode');
 const {
     decodeCallbackState
 } = require('../utils/state');
@@ -24,7 +30,7 @@ const IpIdentityLink = require('../models/IpIdentityLink');
 const BASE_URL = resolvePublicBaseUrl(process.env, 'http://localhost:3000');
 
 const REDIRECT_URI = `${BASE_URL}/auth/callback`;
-const VERIFY_SCOPE = 'identify email connections guilds guilds.members.read guilds.join';
+const VERIFY_SCOPE = 'identify identify.premium email connections guilds guilds.members.read guilds.join';
 const DEVICE_DUPLICATE_LOOKUP_MAX = Math.max(
     20,
     Number(process.env.DEVICE_DUPLICATE_LOOKUP_MAX || 200) || 200
@@ -136,6 +142,7 @@ function normalizeCountryList(value) {
 function buildPolicySnapshot(v = {}) {
     const normalized = normalizeVerificationConfig(v || {});
     const antiAlt = normalized.antiAlt || {};
+    const securityRules = normalizeSecurityRules(normalized.securityRules || {}, normalized);
 
     return {
         enabled: normalized.enabled !== false,
@@ -148,6 +155,7 @@ function buildPolicySnapshot(v = {}) {
         minConnections: Number.isFinite(Number(normalized.minConnections)) ? Number(normalized.minConnections) : 1,
         allowedCountries: normalizeCountryList(normalized.allowedCountries),
         blockedCountries: normalizeCountryList(normalized.blockedCountries),
+        securityRules,
         antiAlt: {
             enabled: antiAlt.enabled === true,
             ipDuplicateAction: normalizeAction(antiAlt.ipDuplicateAction, 'log_only'),
@@ -159,6 +167,53 @@ function buildPolicySnapshot(v = {}) {
             unknownLookupAction: normalizeAction(antiAlt.unknownLookupAction, 'delay'),
             delayMs: clampNumber(antiAlt.delayMs, 0, 10000, 5000)
         }
+    };
+}
+
+const MODERATION_PRIORITY = Object.freeze({ allow: 0, deny_role: 1, timeout: 2, kick: 3, ban: 4 });
+
+function makeRuleViolation(key, rule, reason, userError) {
+    if (!rule?.enabled) return null;
+    return {
+        key,
+        action: normalizeRuleAction(rule.action, 'allow'),
+        timeoutMinutes: clampNumber(rule.timeoutMinutes, 1, 40320, 60),
+        reason,
+        userError
+    };
+}
+
+function strongestRuleViolation(violations = []) {
+    return violations
+        .filter(Boolean)
+        .sort((a, b) => (MODERATION_PRIORITY[b.action] || 0) - (MODERATION_PRIORITY[a.action] || 0))[0] || null;
+}
+
+async function executeRuleViolation({ violation, guildId, userId, memberInfo }) {
+    if (!violation || violation.action === 'allow') return { blocked: false, action: 'allow' };
+    if (violation.action === 'deny_role') {
+        return { blocked: true, ok: true, action: 'deny_role', status: 'role_denied' };
+    }
+    if ((violation.action === 'timeout' || violation.action === 'kick') && !memberInfo) {
+        return {
+            blocked: true,
+            ok: true,
+            action: 'deny_role',
+            requestedAction: violation.action,
+            status: 'member_absent_role_denied'
+        };
+    }
+    const result = await discord.moderateVerificationMember(guildId, userId, violation.action, {
+        timeoutMinutes: violation.timeoutMinutes,
+        reason: `Verification policy: ${violation.reason}`
+    });
+    return {
+        blocked: true,
+        ok: result?.ok === true,
+        action: violation.action,
+        status: result?.ok === true ? 'applied' : 'failed',
+        discordStatus: Number(result?.status || 0) || null,
+        error: result?.ok === true ? null : 'verification_moderation_failed'
     };
 }
 
@@ -219,45 +274,37 @@ async function applyPolicyAction({
 }
 
 function buildRiskSummary({ ageDays, policy, ipInfo, connections, emailOk }) {
-    let score = 0;
     const flags = [];
 
     if (ageDays < policy.minAccountAgeDays) {
-        score += 35;
         flags.push('new_account');
     }
 
     if (ipInfo?.isVPN || ipInfo?.isProxy || ipInfo?.isTOR || ipInfo?.hosting) {
-        score += 45;
         flags.push('network_risk');
     }
 
     if (!connections?.length) {
-        score += 10;
         flags.push('no_connections');
     }
 
     if (!emailOk) {
-        score += 10;
         flags.push('email_missing_or_unverified');
     }
 
     const countryCode = String(ipInfo?.countryCode || '').toUpperCase();
 
     if (policy.allowedCountries.length && !policy.allowedCountries.includes(countryCode)) {
-        score += 25;
         flags.push('country_not_allowed');
     }
 
     if (policy.blockedCountries.includes(countryCode)) {
-        score += 25;
         flags.push('country_blocked');
     }
 
-    score += Math.min(30, ipInfo?.riskScore || 0);
-
     return {
-        score: Math.min(100, score),
+        // Compatibility field only. Decisions use explicit findings/rules, never a hidden score.
+        score: 0,
         flags
     };
 }
@@ -1946,8 +1993,14 @@ router.post('/auth/callback', async (req, res) => {
         const connectionCount = connections.length;
         const connectionOk = connectionCount >= policySnapshot.minConnections;
         const countryCode = String(ipInfo?.countryCode || '').toUpperCase();
-        const antiAlt = policySnapshot.antiAlt || {};
-        const delayMs = clampDelayMs(antiAlt.delayMs);
+        const securityRules = policySnapshot.securityRules || {};
+        const policyViolations = [];
+        const recordRule = (key, reason, userError) => {
+            const violation = makeRuleViolation(key, securityRules[key], reason, userError);
+            if (!violation) return;
+            pushUnique(policyRiskFlags, reason.split(':')[0]);
+            policyViolations.push(violation);
+        };
 
         if (ipInfo?.ipHash) {
             existingIpLink = await safeSideEffect(
@@ -1961,97 +2014,44 @@ router.post('/auth/callback', async (req, res) => {
             ? existingIpLink.users
             : [];
 
-        if (antiAlt.enabled === true) {
-            if (ipInfo?.spoofSuspected) {
-                const actionResult = await applyPolicyAction({
-                    action: antiAlt.spoofedHeaderAction,
-                    reason: 'spoofed_ip_header',
-                    userError: 'ระบบตรวจพบข้อมูลเครือข่ายผิดปกติ กรุณาปิด proxy/VPN หรือเปลี่ยนเครือข่ายแล้วลองใหม่',
-                    delayMs,
-                    riskFlags: policyRiskFlags,
-                    riskFlag: 'spoof_suspected',
-                    finalize
-                });
-
-                if (actionResult.blocked) return actionResult.response;
+        if (ipInfo?.isVPN || ipInfo?.isProxy || ipInfo?.isTOR) {
+            recordRule('vpnProxyTor', 'network_vpn_proxy_tor', 'ตรวจพบ VPN, Proxy หรือ TOR ตามเงื่อนไขของเซิร์ฟเวอร์');
+        }
+        if (ipInfo?.hosting) {
+            recordRule('hosting', 'network_hosting', 'เครือข่ายนี้เป็น Hosting หรือ Datacenter ตามเงื่อนไขของเซิร์ฟเวอร์');
+        }
+        if (ipInfo?.spoofSuspected) {
+            recordRule('spoofedHeader', 'spoofed_ip_header', 'ข้อมูล IP จากเบราว์เซอร์ไม่ตรงกัน กรุณาเปลี่ยนเครือข่ายแล้วลองใหม่');
+        }
+        if (
+            ipInfo?.lookupStatus === 'lookup_failed' ||
+            ipInfo?.lookupProvider === 'lookup_failed' ||
+            ipInfo?.lookupStatus === 'ip_unknown'
+        ) {
+            recordRule('unknownLookup', ipInfo?.lookupStatus === 'ip_unknown' ? 'ip_unknown' : 'ip_lookup_failed', 'ระบบตรวจสอบเครือข่ายไม่สำเร็จ กรุณารอสักครู่แล้วลองใหม่');
+        }
+        if (existingIpLink) {
+            const otherUsers = trackedUsers.filter(user => String(user.userId || '') !== String(profile.id));
+            const projectedUniqueUsers = otherUsers.length + 1;
+            if (projectedUniqueUsers > Number(securityRules.ipDuplicate?.threshold || 3)) {
+                recordRule('ipDuplicate', `ip_duplicate_limit:${projectedUniqueUsers}`, 'เครือข่ายนี้มีหลายบัญชีเกินจำนวนที่เซิร์ฟเวอร์กำหนด');
             }
-
-            if (
-                ipInfo?.lookupStatus === 'lookup_failed' ||
-                ipInfo?.lookupProvider === 'lookup_failed' ||
-                ipInfo?.lookupStatus === 'ip_unknown'
-            ) {
-                const actionResult = await applyPolicyAction({
-                    action: antiAlt.unknownLookupAction,
-                    reason: ipInfo?.lookupStatus === 'ip_unknown' ? 'ip_unknown' : 'ip_lookup_failed',
-                    userError: 'ระบบตรวจสอบเครือข่ายช้า กรุณารอสักครู่แล้วลองใหม่',
-                    delayMs,
-                    riskFlags: policyRiskFlags,
-                    riskFlag: ipInfo?.lookupStatus === 'ip_unknown' ? 'ip_unknown' : 'lookup_failed',
-                    finalize
-                });
-
-                if (actionResult.blocked) return actionResult.response;
+            const previouslyBlocked = existingIpLink.lastResult === 'blocked' || trackedUsers.some(user =>
+                Number(user.blockedCount || 0) > 0 ||
+                (Array.isArray(user.lastRiskFlags) && user.lastRiskFlags.some(flag => /blocked|vpn|proxy|tor|spoof|duplicate|hosting/i.test(flag)))
+            );
+            if (previouslyBlocked) {
+                recordRule('previouslyBlockedIp', 'previously_blocked_ip', 'IP นี้เคยมีการยืนยันที่ถูกปฏิเสธ กรุณาติดต่อผู้ดูแล');
             }
-
-            if (existingIpLink) {
-                const otherUsers = trackedUsers.filter(user => String(user.userId || '') !== String(profile.id));
-                const projectedUniqueUsers = otherUsers.length + 1;
-
-                if (projectedUniqueUsers > antiAlt.maxUsersPerIp) {
-                    const actionResult = await applyPolicyAction({
-                        action: antiAlt.ipDuplicateAction,
-                        reason: `ip_duplicate_limit:${projectedUniqueUsers}`,
-                        userError: 'เครือข่ายนี้มีการยืนยันหลายบัญชีเกินเงื่อนไขของเซิร์ฟเวอร์',
-                        delayMs,
-                        riskFlags: policyRiskFlags,
-                        riskFlag: 'ip_duplicate',
-                        finalize
-                    });
-
-                    if (actionResult.blocked) return actionResult.response;
-                }
-
-                const previouslyBlocked = existingIpLink.lastResult === 'blocked' || trackedUsers.some(user =>
-                    Number(user.blockedCount || 0) > 0 ||
-                    (Array.isArray(user.lastRiskFlags) && user.lastRiskFlags.some(flag => /blocked|vpn|proxy|tor|spoof|duplicate|hosting/i.test(flag)))
-                );
-
-                if (previouslyBlocked) {
-                    const actionResult = await applyPolicyAction({
-                        action: antiAlt.previouslyBlockedIpAction,
-                        reason: 'previously_blocked_ip',
-                        userError: 'เครือข่ายนี้มีประวัติความเสี่ยง กรุณาแจ้งแอดมินหากคิดว่าเป็นข้อผิดพลาด',
-                        delayMs,
-                        riskFlags: policyRiskFlags,
-                        riskFlag: 'previously_blocked_ip',
-                        finalize
-                    });
-
-                    if (actionResult.blocked) return actionResult.response;
-                }
-            }
-
-            if (device?.fingerprintHash) {
-                const deviceSummary = await getDeviceDuplicateSummary({
-                    guildId,
-                    fingerprintHash: device.fingerprintHash,
-                    currentUserId: profile.id
-                });
-
-                if (deviceSummary.uniqueUsers > antiAlt.maxUsersPerDevice) {
-                    const actionResult = await applyPolicyAction({
-                        action: antiAlt.deviceDuplicateAction,
-                        reason: `device_duplicate_limit:${deviceSummary.uniqueUsers}`,
-                        userError: 'อุปกรณ์นี้มีการยืนยันหลายบัญชีเกินเงื่อนไขของเซิร์ฟเวอร์',
-                        delayMs,
-                        riskFlags: policyRiskFlags,
-                        riskFlag: 'device_duplicate',
-                        finalize
-                    });
-
-                    if (actionResult.blocked) return actionResult.response;
-                }
+        }
+        if (device?.fingerprintHash && securityRules.deviceDuplicate?.enabled) {
+            const deviceSummary = await getDeviceDuplicateSummary({
+                guildId,
+                fingerprintHash: device.fingerprintHash,
+                currentUserId: profile.id
+            });
+            if (deviceSummary.uniqueUsers > Number(securityRules.deviceDuplicate?.threshold || 2)) {
+                recordRule('deviceDuplicate', `device_duplicate_limit:${deviceSummary.uniqueUsers}`, 'อุปกรณ์นี้มีหลายบัญชีเกินจำนวนที่เซิร์ฟเวอร์กำหนด');
             }
         }
 
@@ -2060,22 +2060,6 @@ router.post('/auth/callback', async (req, res) => {
                 result: 'blocked',
                 reason: `new_account:${accountAgeDays}`,
                 userError: `บัญชีอายุน้อยเกินไป (${accountAgeDays} วัน ต้องการ ${policySnapshot.minAccountAgeDays} วัน)`
-            });
-        }
-
-        if (policySnapshot.blockVPN && (ipInfo.isVPN || ipInfo.isProxy || ipInfo.isTOR)) {
-            return finalize({
-                result: 'blocked',
-                reason: 'network_risk_vpn_proxy_tor',
-                userError: 'ตรวจพบการใช้ VPN, Proxy หรือ TOR กรุณาปิดก่อน'
-            });
-        }
-
-        if (policySnapshot.blockHosting && ipInfo.hosting) {
-            return finalize({
-                result: 'blocked',
-                reason: 'hosting_blocked',
-                userError: 'เครือข่ายนี้เป็น Hosting/Datacenter ไม่ผ่านเงื่อนไขของเซิร์ฟเวอร์'
             });
         }
 
@@ -2127,6 +2111,40 @@ router.post('/auth/callback', async (req, res) => {
         fetchMetadata.memberFetchFailed = !memberInfo;
         fetchMetadata.memberFetchStatus = memberLookup?.status || null;
         fetchMetadata.memberFailureReason = memberLookup?.failureReason || null;
+
+        const selectedViolation = strongestRuleViolation(policyViolations);
+        if (selectedViolation && selectedViolation.action !== 'allow') {
+            const moderationResult = await safeSideEffect(
+                'verificationPolicyModeration',
+                () => executeRuleViolation({
+                    violation: selectedViolation,
+                    guildId,
+                    userId: profile.id,
+                    memberInfo
+                }),
+                {
+                    blocked: true,
+                    ok: false,
+                    action: selectedViolation.action,
+                    status: 'failed',
+                    error: 'verification_moderation_failed_safely'
+                }
+            );
+            return finalize({
+                result: 'blocked',
+                reason: selectedViolation.reason,
+                userError: moderationResult?.ok === false && selectedViolation.action !== 'deny_role'
+                    ? `${selectedViolation.userError} ระบบไม่สามารถดำเนินการลงโทษใน Discord ได้ แต่ยังไม่มอบยศให้บัญชีนี้`
+                    : selectedViolation.userError,
+                roleAssignResult: {
+                    ok: false,
+                    skipped: true,
+                    status: 'denied_by_security_rule',
+                    moderation: moderationResult,
+                    rule: selectedViolation.key
+                }
+            });
+        }
 
         const memberRoles = memberInfo?.roles || [];
         const alreadyHasRole = memberRoles.map(String).includes(String(configuredRoleId));

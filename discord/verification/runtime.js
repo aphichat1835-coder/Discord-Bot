@@ -20,6 +20,7 @@ function ownerGuilds(client) {
         id: String(guild.id),
         name: guild.name || String(guild.id),
         icon: guild.icon || null,
+        memberCount: Number.isFinite(Number(guild.memberCount)) ? Number(guild.memberCount) : null,
         owner: true,
         isOwner: true,
         isAdmin: true,

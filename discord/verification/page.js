@@ -11,21 +11,10 @@ function verificationHomePage() {
 <div class="verify-shell">
 ${navBar("/verification")}
 
-<section class="verify-hero" aria-labelledby="verification-title">
-  <div class="verify-hero-main">
-    <p class="verify-kicker">Owner verification</p>
-    <h1 id="verification-title" class="verify-title">จัดการระบบยืนยันตัวตนใน Dashboard เดียว</h1>
-    <p class="verify-lead">เลือกเซิร์ฟเวอร์เพื่อเปิดสถานะ การตั้งค่า แผง เงื่อนไข และข้อมูลสมาชิก โดยยังอยู่ในศูนย์ควบคุมเจ้าของบอท</p>
-  </div>
-  <aside class="verify-hero-side" aria-label="สถานะแหล่งข้อมูล">
-    <div class="verify-live"><span class="verify-live-dot" aria-hidden="true"></span><div><b>ข้อมูลสดจากบอท</b><small>รายชื่อมาจากเซิร์ฟเวอร์ที่บอทมองเห็นในขณะนี้</small></div></div>
-    <div class="verify-live"><span class="badge badge-info">Owner only</span><div><b>ใช้สิทธิ์ Dashboard เดิม</b><small>ไม่ต้อง Login หรือเปิดเว็บไซต์จัดการอีกชุด</small></div></div>
-  </aside>
-</section>
-
-<section class="verify-panel" aria-labelledby="guild-directory-title">
-  <div class="verify-panel-head">
-    <div><p class="verify-kicker">Server directory</p><h2 id="guild-directory-title">เลือกเซิร์ฟเวอร์</h2><p>ค้นหาด้วยชื่อหรือ Guild ID แล้วเปิดพื้นที่จัดการของเซิร์ฟเวอร์นั้น</p></div>
+<section class="server-picker" aria-labelledby="guild-directory-title">
+  <div class="server-picker-head">
+    <div><p class="verify-kicker">ระบบยืนยันตัวตน</p><h1 id="guild-directory-title">เลือกเซิร์ฟเวอร์ที่ต้องการจัดการ</h1><p>ดูสถานะและเปิดการตั้งค่าของแต่ละเซิร์ฟเวอร์ได้จากรายการด้านล่าง</p></div>
+    <div class="server-picker-legend" aria-label="คำอธิบายสถานะ"><span><i class="status-dot on"></i>เปิดใช้งาน</span><span><i class="status-dot off"></i>ปิดใช้งาน</span></div>
   </div>
   <div class="verify-toolbar">
     <div><label for="guild-search">ค้นหาเซิร์ฟเวอร์</label><input id="guild-search" type="search" placeholder="ชื่อเซิร์ฟเวอร์หรือ Guild ID" autocomplete="off"></div>
@@ -71,6 +60,10 @@ ${navBar("/verification")}
     const text=document.createElement('div');
     const title=document.createElement('div');
     const meta=document.createElement('div');
+    const facts=document.createElement('div');
+    const statusLine=document.createElement('div');
+    const statusDot=document.createElement('i');
+    const enabled=guild.verification&&guild.verification.enabled===true;
     const open=document.createElement('div');
     link.className='verify-guild-card';
     link.href='/verification/'+encodeURIComponent(id);
@@ -79,12 +72,19 @@ ${navBar("/verification")}
     title.className='verify-guild-name';
     title.textContent=name;
     meta.className='verify-guild-id';
-    meta.textContent='Guild ID: '+id;
+    meta.textContent='ID '+id;
+    facts.className='verify-guild-facts';
+    const members=document.createElement('span');
+    members.textContent=Number.isFinite(Number(guild.memberCount))?Number(guild.memberCount).toLocaleString('th-TH')+' สมาชิก':'ไม่พบจำนวนสมาชิก';
+    statusLine.className='verify-guild-status '+(enabled?'is-on':'is-off');
+    statusDot.className='status-dot '+(enabled?'on':'off');
+    statusLine.append(statusDot,document.createTextNode(enabled?'ระบบยืนยันเปิดอยู่':'ระบบยืนยันปิดอยู่'));
+    facts.append(members,statusLine);
     text.style.minWidth='0';
-    text.append(title,meta);
+    text.append(title,meta,facts);
     top.append(iconNode(guild,name),text);
     open.className='verify-guild-open';
-    open.append(document.createTextNode('เปิดพื้นที่จัดการ'),document.createTextNode('→'));
+    open.append(document.createTextNode('จัดการเซิร์ฟเวอร์'),document.createTextNode('→'));
     link.append(top,open);
     link.addEventListener('click',function(){
       status.hidden=false;
