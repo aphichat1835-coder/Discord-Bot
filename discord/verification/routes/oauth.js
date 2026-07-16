@@ -1025,10 +1025,9 @@ async function updateIpIdentityTrackingSafe({
         const safeProfileId = safeSnowflakeStrict(profile.id, 'discord_user_id');
         const safeIpHash = safeIpHashStrict(ipInfo.ipHash);
 
-        const existing = await IpIdentityLink.findOne({
-            guildId: safeGuildId,
-            ipHash: safeIpHash
-        });
+        const existing = await IpIdentityLink.findOne()
+            .where('guildId').equals(safeGuildId)
+            .where('ipHash').equals(safeIpHash);
         if (existing) await ipIdentityHistory.ensureLegacyLinkMigrated(existing, { now: nowMs });
 
         const history = await ipIdentityHistory.recordIpIdentityHistory({
@@ -1665,7 +1664,8 @@ router.post('/auth/callback', async (req, res) => {
             ? safeSnowflakeStrict(stateObj.expectedUserId, 'expected_user_id')
             : null;
 
-        guildConfig = await GuildConfig.findOne({ guildId });
+        guildConfig = await GuildConfig.findOne()
+            .where('guildId').equals(guildId);
 
         const verificationConfig = guildConfig?.verification || {};
         const configuredRoleId = getConfiguredRoleId(guildConfig, stateRoleId);
@@ -2022,7 +2022,10 @@ router.post('/auth/callback', async (req, res) => {
             const safeIpHash = safeIpHashStrict(ipInfo.ipHash);
             existingIpLink = await safeSideEffect(
                 'loadIpIdentityLink',
-                () => IpIdentityLink.findOne({ guildId, ipHash: safeIpHash }).lean(),
+                () => IpIdentityLink.findOne()
+                    .where('guildId').equals(guildId)
+                    .where('ipHash').equals(safeIpHash)
+                    .lean(),
                 null
             );
         }

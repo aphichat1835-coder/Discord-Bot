@@ -33,4 +33,12 @@ describe('OAuth callback integration contracts', () => {
         expect(callbackSource).toContain('oauth_code_expired_or_used:');
         expect(callbackSource).toContain('history.replaceState');
     });
+
+    test('does not pass callback-derived object filters directly to findOne', () => {
+        expect(routeSource).not.toMatch(/IpIdentityLink\.findOne\(\s*\{/);
+        expect(routeSource).not.toMatch(/GuildConfig\.findOne\(\s*\{/);
+        expect(routeSource).toContain(".where('guildId').equals(safeGuildId)");
+        expect(routeSource).toContain(".where('ipHash').equals(safeIpHash)");
+        expect(routeSource).toContain(".where('guildId').equals(guildId)");
+    });
 });
