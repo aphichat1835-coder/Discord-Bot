@@ -42,7 +42,6 @@
     member_not_found_after_oauth: "ระบบหาโปรไฟล์สมาชิกในเซิร์ฟเวอร์ไม่เจอ กรุณาเข้าดิสก่อนแล้วลองใหม่",
 
     new_account: "บัญชี Discord อายุน้อยเกินไป ไม่ผ่านเงื่อนไขของเซิร์ฟเวอร์",
-    network_risk_vpn_proxy_tor: "ตรวจพบการใช้ VPN, Proxy หรือ TOR กรุณาปิดก่อนแล้วลองใหม่",
     email_requirement_failed: "บัญชีนี้ไม่มี Email หรือ Email ยังไม่ผ่านเงื่อนไขของเซิร์ฟเวอร์",
     connections_requirement_failed: "บัญชีนี้ยังไม่ผ่านเงื่อนไข connections ของเซิร์ฟเวอร์",
     country_not_allowed: "ประเทศของคุณไม่ผ่านเงื่อนไขของเซิร์ฟเวอร์",

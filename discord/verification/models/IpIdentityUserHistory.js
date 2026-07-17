@@ -23,8 +23,7 @@ const schema = new mongoose.Schema({
     lastMemberPending: Boolean,
     lastCommunicationDisabledUntil: String,
     lastDeviceFingerprintHash: String,
-    lastRiskScore: Number,
-    lastRiskFlags: [String],
+    lastFindings: [String],
     createdAt: { type: Number, default: Date.now },
     updatedAt: { type: Number, default: Date.now }
 }, { minimize: false });

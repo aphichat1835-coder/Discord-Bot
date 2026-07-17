@@ -35,7 +35,7 @@ function safeIpFlags(ipInfo = {}) {
     isHosting: !!(ipInfo.isHosting ?? ipInfo.hosting),
     hosting: !!(ipInfo.hosting ?? ipInfo.isHosting),
     mobile: !!ipInfo.mobile,
-    riskScore: Number(ipInfo.riskScore || 0)
+    findings: Array.isArray(ipInfo.findings) ? ipInfo.findings : []
   };
 }
 
@@ -52,8 +52,8 @@ function safeIpLookup(ipInfo = {}) {
 
 function safeIpInfo(ipInfo = {}) {
   return {
-    // Raw IP is intentionally unavailable in normal list/detail serializers.
-    // Owner reveal is a separate PIN + CSRF + reason + audit action.
+    // Raw IP is unavailable in normal list serializers and only returned by
+    // the owner-only, CSRF-protected full-detail route.
     rawIp: null,
     ip: null,
     ...safeIpLocation(ipInfo),
@@ -262,9 +262,7 @@ function safeTrackingSnapshot(snapshot = {}) {
     firstSeenAt: snapshot.firstSeenAt || null,
     lastSeenAt: snapshot.lastSeenAt || null,
     totalVerifications: snapshot.totalVerifications || 0,
-    uniqueUsers: snapshot.uniqueUsers || 0,
-    maxRiskScore: snapshot.maxRiskScore || 0,
-    lastRiskScore: snapshot.lastRiskScore || 0
+    uniqueUsers: snapshot.uniqueUsers || 0
   };
 }
 
@@ -306,8 +304,7 @@ function buildVerifyLogCommon(parts = {}, options = {}) {
     sensitiveRedacted: options.canViewSensitive !== true || ipInfo.rawIp == null,
     result,
     reason: raw.reason || "",
-    riskScore: Number(raw.riskScore || ipInfo.riskScore || 0),
-    riskFlags: Array.isArray(raw.riskFlags) ? raw.riskFlags : [],
+    findings: Array.isArray(raw.findings) ? raw.findings : [],
     oauthScope: raw.oauthScope || "",
     stateMode: raw.stateMode || "",
     user: discord,

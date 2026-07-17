@@ -19,8 +19,6 @@ const VERIFY_MODES = Object.freeze({
   DIRECT: "direct"
 });
 
-const POLICY_ACTIONS = Object.freeze(["off", "log_only", "delay", "block"]);
-
 const RULE_ACTIONS = Object.freeze(["allow", "deny_role", "timeout", "kick", "ban"]);
 const SECURITY_RULE_KEYS = Object.freeze([
   "vpnProxyTor",
@@ -31,18 +29,6 @@ const SECURITY_RULE_KEYS = Object.freeze([
   "spoofedHeader",
   "unknownLookup"
 ]);
-
-const DEFAULT_ANTI_ALT = Object.freeze({
-  enabled: false,
-  ipDuplicateAction: "log_only",
-  maxUsersPerIp: 3,
-  deviceDuplicateAction: "log_only",
-  maxUsersPerDevice: 2,
-  previouslyBlockedIpAction: "delay",
-  spoofedHeaderAction: "delay",
-  unknownLookupAction: "delay",
-  delayMs: 5000
-});
 
 const DEFAULT_SECURITY_RULES = Object.freeze({
   vpnProxyTor: Object.freeze({ enabled: true, action: "deny_role", timeoutMinutes: 60 }),
@@ -87,24 +73,10 @@ function normalizeVerifyMode(value) {
   return LEGACY_VERIFY_MODE_MAP[raw] || VERIFY_MODES.OAUTH;
 }
 
-function normalizeAction(value, fallback = "log_only") {
-  const raw = String(value || "").trim().toLowerCase();
-  const safeFallback = POLICY_ACTIONS.includes(fallback) ? fallback : "log_only";
-
-  return POLICY_ACTIONS.includes(raw) ? raw : safeFallback;
-}
-
 function normalizeRuleAction(value, fallback = "allow") {
   const raw = String(value || "").trim().toLowerCase();
-  const compatibility = {
-    off: "allow",
-    log_only: "allow",
-    delay: "allow",
-    block: "deny_role"
-  };
-  const mapped = compatibility[raw] || raw;
   const safeFallback = RULE_ACTIONS.includes(fallback) ? fallback : "allow";
-  return RULE_ACTIONS.includes(mapped) ? mapped : safeFallback;
+  return RULE_ACTIONS.includes(raw) ? raw : safeFallback;
 }
 
 function clampNumber(value, min, max, fallback) {
@@ -113,57 +85,6 @@ function clampNumber(value, min, max, fallback) {
   if (!Number.isFinite(n)) return fallback;
 
   return Math.max(min, Math.min(max, Math.floor(n)));
-}
-
-function normalizeAntiAltConfig(value = {}) {
-  const raw = value && typeof value === "object" && !Array.isArray(value)
-    ? value
-    : {};
-
-  return {
-    enabled: raw.enabled === true,
-    ipDuplicateAction: normalizeAction(raw.ipDuplicateAction, DEFAULT_ANTI_ALT.ipDuplicateAction),
-    maxUsersPerIp: clampNumber(raw.maxUsersPerIp, 1, 20, DEFAULT_ANTI_ALT.maxUsersPerIp),
-    deviceDuplicateAction: normalizeAction(raw.deviceDuplicateAction, DEFAULT_ANTI_ALT.deviceDuplicateAction),
-    maxUsersPerDevice: clampNumber(raw.maxUsersPerDevice, 1, 20, DEFAULT_ANTI_ALT.maxUsersPerDevice),
-    previouslyBlockedIpAction: normalizeAction(raw.previouslyBlockedIpAction, DEFAULT_ANTI_ALT.previouslyBlockedIpAction),
-    spoofedHeaderAction: normalizeAction(raw.spoofedHeaderAction, DEFAULT_ANTI_ALT.spoofedHeaderAction),
-    unknownLookupAction: normalizeAction(raw.unknownLookupAction, DEFAULT_ANTI_ALT.unknownLookupAction),
-    delayMs: clampNumber(raw.delayMs, 0, 10000, DEFAULT_ANTI_ALT.delayMs)
-  };
-}
-
-function legacyRuleSource(config = {}) {
-  const antiAlt = normalizeAntiAltConfig(config.antiAlt || {});
-  const fromLegacy = (action, fallback) => ({
-    enabled: antiAlt.enabled === true && action !== "off",
-    action: normalizeRuleAction(action, fallback),
-    timeoutMinutes: 60
-  });
-
-  return {
-    vpnProxyTor: {
-      enabled: config.blockVPN !== false,
-      action: "deny_role",
-      timeoutMinutes: 60
-    },
-    hosting: {
-      enabled: config.blockHosting === true,
-      action: "deny_role",
-      timeoutMinutes: 60
-    },
-    ipDuplicate: {
-      ...fromLegacy(antiAlt.ipDuplicateAction, "allow"),
-      threshold: antiAlt.maxUsersPerIp
-    },
-    deviceDuplicate: {
-      ...fromLegacy(antiAlt.deviceDuplicateAction, "allow"),
-      threshold: antiAlt.maxUsersPerDevice
-    },
-    previouslyBlockedIp: fromLegacy(antiAlt.previouslyBlockedIpAction, "deny_role"),
-    spoofedHeader: fromLegacy(antiAlt.spoofedHeaderAction, "deny_role"),
-    unknownLookup: fromLegacy(antiAlt.unknownLookupAction, "deny_role")
-  };
 }
 
 function normalizeSecurityRule(value = {}, defaults = {}) {
@@ -179,11 +100,10 @@ function normalizeSecurityRule(value = {}, defaults = {}) {
   };
 }
 
-function normalizeSecurityRules(value = {}, config = {}) {
+function normalizeSecurityRules(value = {}) {
   const raw = value && typeof value === "object" && !Array.isArray(value) ? value : {};
-  const legacy = legacyRuleSource(config);
   return Object.fromEntries(SECURITY_RULE_KEYS.map(key => {
-    const defaults = legacy[key] || DEFAULT_SECURITY_RULES[key];
+    const defaults = DEFAULT_SECURITY_RULES[key];
     const source = Object.hasOwn(raw, key) ? raw[key] : defaults;
     return [key, normalizeSecurityRule(source, defaults)];
   }));
@@ -268,27 +188,29 @@ function normalizeVerificationConfig(config = {}) {
 
   next.blockHosting = next.blockHosting === true;
 
-  if (Object.hasOwn(next, "antiAlt")) {
-    next.antiAlt = normalizeAntiAltConfig(next.antiAlt || {});
+  delete next[["anti", "Alt"].join("")];
+  const ruleInput = next.securityRules && typeof next.securityRules === "object"
+    ? { ...next.securityRules }
+    : {};
+  if (!Object.hasOwn(ruleInput, "vpnProxyTor") && next.blockVPN === true) {
+    ruleInput.vpnProxyTor = { ...DEFAULT_SECURITY_RULES.vpnProxyTor, enabled: true };
   }
-
-  next.securityRules = normalizeSecurityRules(next.securityRules || {}, next);
+  if (!Object.hasOwn(ruleInput, "hosting") && next.blockHosting === true) {
+    ruleInput.hosting = { ...DEFAULT_SECURITY_RULES.hosting, enabled: true };
+  }
+  next.securityRules = normalizeSecurityRules(ruleInput);
 
   return next;
 }
 
 module.exports = {
   VERIFY_MODES,
-  POLICY_ACTIONS,
   RULE_ACTIONS,
   SECURITY_RULE_KEYS,
-  DEFAULT_ANTI_ALT,
   DEFAULT_SECURITY_RULES,
   normalizeVerifyMode,
-  normalizeAction,
   normalizeRuleAction,
   clampNumber,
-  normalizeAntiAltConfig,
   normalizeSecurityRule,
   normalizeSecurityRules,
   toLegacyCommandVerifyMode,

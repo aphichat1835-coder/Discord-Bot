@@ -12,8 +12,6 @@
  *   From oauth.js:
  *     - pushUnique()
  *     - uniqueStrings()
- *     - clampDelayMs()
- *     - applyPolicyAction()
  *     - compactDiscordProfile()
  *     - compactUserGuild()
  *     - compactMemberInfo()
@@ -30,8 +28,6 @@ const oauthRoute = require('../discord/verification/routes/oauth');
 const {
     pushUnique,
     uniqueStrings,
-    clampDelayMs,
-    applyPolicyAction,
     safeIpHashStrict,
     compactDiscordProfile,
     compactUserGuild,
@@ -150,143 +146,6 @@ describe('uniqueStrings', () => {
 
     test('preserves insertion order for unique values', () => {
         expect(uniqueStrings(['c', 'a', 'b'])).toEqual(['c', 'a', 'b']);
-    });
-});
-
-// ---------------------------------------------------------------------------
-// clampDelayMs()
-// ---------------------------------------------------------------------------
-describe('clampDelayMs', () => {
-    test('returns value within [0, 10000]', () => {
-        expect(clampDelayMs(3000)).toBe(3000);
-        expect(clampDelayMs(0)).toBe(0);
-        expect(clampDelayMs(10000)).toBe(10000);
-    });
-
-    test('clamps negative to 0', () => {
-        expect(clampDelayMs(-100)).toBe(0);
-    });
-
-    test('clamps above 10000 to 10000', () => {
-        expect(clampDelayMs(99999)).toBe(10000);
-    });
-
-    test('returns default fallback for NaN', () => {
-        expect(clampDelayMs(NaN)).toBe(5000);
-    });
-
-    test('uses custom fallback when provided', () => {
-        expect(clampDelayMs(NaN, 2000)).toBe(2000);
-    });
-});
-
-// ---------------------------------------------------------------------------
-// applyPolicyAction()
-// ---------------------------------------------------------------------------
-describe('applyPolicyAction', () => {
-    const noopFinalize = jest.fn().mockResolvedValue({ json: true });
-
-    beforeEach(() => {
-        noopFinalize.mockClear();
-    });
-
-    test('returns { blocked: false } immediately for action = off', async () => {
-        const riskFlags = [];
-        const result = await applyPolicyAction({
-            action: 'off',
-            reason: 'spoof',
-            userError: 'bad',
-            delayMs: 0,
-            riskFlags,
-            riskFlag: 'spoof_suspected',
-            finalize: noopFinalize
-        });
-        expect(result).toEqual({ blocked: false });
-        expect(riskFlags).toHaveLength(0); // should NOT push flag for 'off'
-        expect(noopFinalize).not.toHaveBeenCalled();
-    });
-
-    test('returns { blocked: false, logged: true } for action = log_only', async () => {
-        const riskFlags = [];
-        const result = await applyPolicyAction({
-            action: 'log_only',
-            reason: 'spoof',
-            userError: 'bad',
-            delayMs: 0,
-            riskFlags,
-            riskFlag: 'my_flag',
-            finalize: noopFinalize
-        });
-        expect(result).toMatchObject({ blocked: false, logged: true });
-        expect(riskFlags).toContain('my_flag'); // flag pushed
-    });
-
-    test('returns { blocked: false, delayed: true } for action = delay', async () => {
-        const riskFlags = [];
-        const result = await applyPolicyAction({
-            action: 'delay',
-            reason: 'lookup_failed',
-            userError: 'slow',
-            delayMs: 0, // 0ms delay for test speed
-            riskFlags,
-            riskFlag: 'lookup_failed',
-            finalize: noopFinalize
-        });
-        expect(result).toMatchObject({ blocked: false, delayed: true });
-        expect(riskFlags).toContain('lookup_failed');
-        expect(noopFinalize).not.toHaveBeenCalled();
-    });
-
-    test('calls finalize and returns { blocked: true } for action = block', async () => {
-        const riskFlags = [];
-        const finalizeReturn = { status: 'blocked_response' };
-        const mockFinalize = jest.fn().mockResolvedValue(finalizeReturn);
-
-        const result = await applyPolicyAction({
-            action: 'block',
-            reason: 'ip_duplicate_limit:5',
-            userError: 'Too many accounts',
-            delayMs: 0,
-            riskFlags,
-            riskFlag: 'ip_duplicate',
-            finalize: mockFinalize
-        });
-        expect(result.blocked).toBe(true);
-        expect(result.response).toBe(finalizeReturn);
-        expect(mockFinalize).toHaveBeenCalledWith({
-            result: 'blocked',
-            reason: 'ip_duplicate_limit:5',
-            userError: 'Too many accounts'
-        });
-        expect(riskFlags).toContain('ip_duplicate');
-    });
-
-    test('uses reason as riskFlag when riskFlag is not provided', async () => {
-        const riskFlags = [];
-        await applyPolicyAction({
-            action: 'log_only',
-            reason: 'spoofed_ip_header',
-            userError: 'err',
-            delayMs: 0,
-            riskFlags,
-            finalize: noopFinalize
-        });
-        expect(riskFlags).toContain('spoofed_ip_header');
-    });
-
-    test('invalid action falls back to log_only behavior', async () => {
-        const riskFlags = [];
-        const result = await applyPolicyAction({
-            action: 'explode',
-            reason: 'test',
-            userError: 'err',
-            delayMs: 0,
-            riskFlags,
-            riskFlag: 'test_flag',
-            finalize: noopFinalize
-        });
-        // log_only fallback
-        expect(result).toMatchObject({ blocked: false, logged: true });
     });
 });
 

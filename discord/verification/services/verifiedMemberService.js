@@ -84,8 +84,7 @@ function legacyMemberFields(user = {}) {
 
 function legacyVerificationFields(user = {}) {
     return {
-        riskScore: Number(user.lastVerify?.riskScore || 0),
-        riskFlags: Array.isArray(user.lastVerify?.riskFlags) ? user.lastVerify.riskFlags : [],
+        findings: Array.isArray(user.lastVerify?.findings) ? user.lastVerify.findings : [],
         verifiedAt: user.lastVerify?.verifiedAt || user.updatedAt || null,
         createdAt: user.createdAt || null
     };
@@ -182,8 +181,7 @@ function latestLogMemberStages(guildId) {
                 roleId: 1,
                 result: 1,
                 reason: 1,
-                riskScore: 1,
-                riskFlags: 1,
+                findings: 1,
                 oauthScope: 1,
                 stateMode: 1,
                 ipInfo: 1,

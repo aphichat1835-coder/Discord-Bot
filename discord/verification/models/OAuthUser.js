@@ -130,8 +130,7 @@ const schema = new mongoose.Schema({
         roleId:     String,
         result:     String,
         verifiedAt: Number,
-        riskScore:  Number,
-        riskFlags:  [String]
+        findings:   [String]
     },
 
     lastIpTracking: {
@@ -139,9 +138,7 @@ const schema = new mongoose.Schema({
         firstSeenAt:        Number,
         lastSeenAt:         Number,
         totalVerifications: Number,
-        uniqueUsers:        Number,
-        maxRiskScore:       Number,
-        lastRiskScore:      Number
+        uniqueUsers:        Number
     },
 
     snapshotMeta: mixed,

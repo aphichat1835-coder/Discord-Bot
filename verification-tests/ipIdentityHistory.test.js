@@ -59,7 +59,7 @@ describe("unbounded IP identity history", () => {
             memberInfo: { roles: Array.from({ length: 120 }, (_, index) => `role-${index}`) },
             roleId: "32345678901234567",
             result: "success",
-            riskSummary: { score: 10, flags: [] },
+            findings: ["vpn"],
             now: 100
         }, { UserHistoryModel, DeviceHistoryModel, RoleHistoryModel });
 

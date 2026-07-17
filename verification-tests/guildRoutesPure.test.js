@@ -1,7 +1,7 @@
 const guildRoute = require("../discord/verification/routes/guild");
 const guildDashboardRoute = require("../discord/verification/routes/guildDashboard");
 
-test("mergeVerificationConfig preserves existing panel on unrelated settings saves", () => {
+test("mergeVerificationConfig preserves the panel when security rules change", () => {
   const merged = guildRoute._test.mergeVerificationConfig(
     {
       verifyType: "oauth",
@@ -13,8 +13,8 @@ test("mergeVerificationConfig preserves existing panel on unrelated settings sav
       }
     },
     {
-      antiAlt: {
-        enabled: true
+      securityRules: {
+        ipDuplicate: { enabled: true, action: "kick", threshold: 4 }
       }
     }
   );
@@ -22,10 +22,10 @@ test("mergeVerificationConfig preserves existing panel on unrelated settings sav
   expect(merged.panel.title).toBe("Existing title");
   expect(merged.panel.description).toBe("Existing description");
   expect(merged.panel.buttonLabel).toBe("Verify now");
-  expect(merged.antiAlt.enabled).toBe(true);
+  expect(merged.securityRules.ipDuplicate).toMatchObject({ enabled: true, action: "kick", threshold: 4 });
 });
 
-test("mergeVerificationConfig keeps direct mode when saving only antiAlt patch", () => {
+test("mergeVerificationConfig keeps direct mode when saving one independent rule", () => {
   const merged = guildRoute._test.mergeVerificationConfig(
     {
       verifyType: "direct",
@@ -35,14 +35,13 @@ test("mergeVerificationConfig keeps direct mode when saving only antiAlt patch",
         verifyType: "direct",
         title: "Direct verify"
       },
-      antiAlt: {
-        enabled: false,
-        maxUsersPerIp: 9
+      securityRules: {
+        ipDuplicate: { enabled: false, action: "allow", threshold: 9 }
       }
     },
     {
-      antiAlt: {
-        enabled: true
+      securityRules: {
+        ipDuplicate: { enabled: true, action: "ban", threshold: 4 }
       }
     }
   );
@@ -51,16 +50,14 @@ test("mergeVerificationConfig keeps direct mode when saving only antiAlt patch",
   expect(merged.oauthMode).toBe("direct");
   expect(merged.panel.verifyType).toBe("direct");
   expect(merged.blockHosting).toBe(true);
-  expect(merged.antiAlt.enabled).toBe(true);
-  expect(merged.antiAlt.maxUsersPerIp).toBe(9);
+  expect(merged.securityRules.ipDuplicate).toMatchObject({ enabled: true, action: "ban", threshold: 4 });
 });
 
-test("guild dashboard safeLog preserves normalized empty result fallback", () => {
-  const log = guildDashboardRoute._test.safeLog({ _id: "log1" });
-
-  expect(log.result).toBe("");
-});
-
-test("token reveal maps failed audit persistence to service unavailable", () => {
-  expect(guildRoute._test.tokenRevealErrorStatus("audit_write_failed")).toBe(503);
+test("guild dashboard computes factual review counts", async () => {
+  const VerifyLog = require("../discord/verification/models/VerifyLog");
+  const counts = [2, 1, 0, 1, 1, 1, 0, 0, 0];
+  jest.spyOn(VerifyLog, "countDocuments").mockImplementation(() => Promise.resolve(counts.shift()));
+  const overview = await guildDashboardRoute._test.buildStats("guild");
+  expect(overview).toMatchObject({ total: 2, success: 1, failed: 1, reviewRequired: 1, vpn: 1 });
+  jest.restoreAllMocks();
 });

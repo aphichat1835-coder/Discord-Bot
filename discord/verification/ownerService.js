@@ -4,7 +4,6 @@ const GuildConfig = require("./models/GuildConfig");
 const VerifyLog = require("./models/VerifyLog");
 const OAuthUser = require("./models/OAuthUser");
 const { decryptIP, decryptToken } = require("./utils/crypto");
-const sensitiveAudit = require("./services/sensitiveAuditService");
 const { serializeMemberDetail } = require("./serializers/memberDetailSerializer");
 const verifiedMemberService = require("./services/verifiedMemberService");
 const snapshotStore = require("./services/oauthSnapshotStore");
@@ -13,10 +12,6 @@ const ipIdentityHistory = require("./services/ipIdentityHistoryService");
 const OVERVIEW_MAX = Math.max(
     50,
     Number(process.env.INTERNAL_OVERVIEW_GUILDS_MAX || 500) || 500
-);
-const SENSITIVE_ACCESS_LOG_MAX = Math.max(
-    10,
-    Number(process.env.SENSITIVE_ACCESS_LOG_MAX || 100) || 100
 );
 
 function baseFilter(guildId) {
@@ -33,7 +28,7 @@ function emptyStats() {
         proxy: 0,
         tor: 0,
         hosting: 0,
-        highRisk: 0,
+        reviewRequired: 0,
         lookupFailed: 0,
         panelRevisionMismatch: 0,
         lastAt: null,
@@ -53,10 +48,10 @@ function statsGroup() {
         proxy: { $sum: { $cond: [{ $eq: ["$ipInfo.isProxy", true] }, 1, 0] } },
         tor: { $sum: { $cond: [{ $eq: ["$ipInfo.isTOR", true] }, 1, 0] } },
         hosting: { $sum: { $cond: [{ $eq: ["$ipInfo.hosting", true] }, 1, 0] } },
-        highRisk: {
+        reviewRequired: {
             $sum: {
                 $cond: [
-                    { $gt: [{ $size: { $ifNull: ["$riskFlags", []] } }, 0] },
+                    { $gt: [{ $size: { $ifNull: ["$findings", []] } }, 0] },
                     1,
                     0
                 ]
@@ -86,7 +81,7 @@ function safeRecent(log) {
         roleId: log.roleId || null,
         result: log.result,
         reason: log.reason || "",
-        findings: Array.isArray(log.riskFlags) ? log.riskFlags : [],
+        findings: Array.isArray(log.findings) ? log.findings : [],
         roleResult: log.roleAssignResult || null,
         country: log.ipInfo?.country || null,
         countryCode: log.ipInfo?.countryCode || null,
@@ -185,90 +180,7 @@ async function getGuildMembers(guildId, { page = 0, limit = 20, q = "" } = {}) {
     };
 }
 
-function safeAuditError(err) {
-    return {
-        ok: false,
-        code: err?.code ? String(err.code).slice(0, 80) : "audit_write_failed",
-        message: err?.message ? String(err.message).slice(0, 160) : "audit_write_failed"
-    };
-}
-
-function assertAuditRecorded(result, label) {
-    const recorded = result && (
-        result.modifiedCount > 0 ||
-        result.matchedCount > 0 ||
-        result._id
-    );
-    if (recorded) return;
-    const error = new Error(`${label} audit target not found`);
-    error.code = "audit_target_not_found";
-    throw error;
-}
-
-async function auditRevealWrites({ guildId, userId, verifyLogId = null, actor, reason, now, action, route, scope }) {
-    const writes = {
-        verifyLog: { ok: false, skipped: false },
-        guildConfig: { ok: false, skipped: false }
-    };
-
-    try {
-        const update = {
-            $push: {
-                sensitiveAccessLog: {
-                    $each: [sensitiveAudit.auditVerifyLogEntry({
-                        action,
-                        actor,
-                        reason,
-                        viewedAt: now
-                    })],
-                    $slice: -SENSITIVE_ACCESS_LOG_MAX
-                }
-            }
-        };
-        if (verifyLogId) {
-            const result = await VerifyLog.updateOne({ _id: verifyLogId }, update);
-            assertAuditRecorded(result, "verify_log");
-        } else {
-            const result = await VerifyLog.findOneAndUpdate(
-                { ...baseFilter(guildId), userId },
-                update,
-                { sort: { verifiedAt: -1, createdAt: -1, _id: -1 } }
-            );
-            assertAuditRecorded(result, "verify_log");
-        }
-        writes.verifyLog = { ok: true, skipped: false };
-    } catch (err) {
-        writes.verifyLog = safeAuditError(err);
-    }
-
-    try {
-        const result = await GuildConfig.updateOne(
-            { guildId },
-            sensitiveAudit.auditGuildConfigUpdate({
-                actor,
-                route,
-                scope,
-                now
-            })
-        );
-        assertAuditRecorded(result, "guild_config");
-        writes.guildConfig = { ok: true, skipped: false };
-    } catch (err) {
-        writes.guildConfig = safeAuditError(err);
-    }
-
-    const ok = writes.verifyLog.ok === true || writes.guildConfig.ok === true;
-    return {
-        ok,
-        status: ok ? "recorded" : "failed",
-        failOpen: ok !== true,
-        writes
-    };
-}
-
-async function revealRawIp({ guildId, userId, reason, actor = "owner-dashboard" }) {
-    const safeReason = sensitiveAudit.safeReason(reason);
-    sensitiveAudit.checkRevealLimit({ actor, guildId, userId, action: "raw_ip" });
+async function revealRawIp({ guildId, userId }) {
 
     const log = await VerifyLog.findOne({
         ...baseFilter(guildId),
@@ -281,39 +193,18 @@ async function revealRawIp({ guildId, userId, reason, actor = "owner-dashboard" 
         throw error;
     }
 
-    const now = Date.now();
     const rawIp = decryptIP(log.ipInfo.encryptedRawIp);
     if (!rawIp) {
         const error = new Error("encrypted IP could not be decrypted");
         error.code = "ip_decrypt_failed";
         throw error;
     }
-    const audit = await auditRevealWrites({
-        guildId,
-        userId,
-        verifyLogId: log._id,
-        actor,
-        reason: safeReason,
-        now,
-        action: "owner_reveal_raw_ip",
-        route: "/api/verify-owner/guild/:guildId/user/:userId/reveal-ip",
-        scope: ["rawIp"]
-    });
-    if (!audit.ok) {
-        const error = new Error("audit write failed; reveal blocked");
-        error.code = "audit_write_failed";
-        throw error;
-    }
-
     return {
         success: true,
         guildId,
         userId,
         verifyLogId: String(log._id),
         rawIp,
-        viewedAt: now,
-        auditStatus: audit.status,
-        audit,
         ipInfo: {
             country: log.ipInfo.country || null,
             countryCode: log.ipInfo.countryCode || null,
@@ -439,8 +330,6 @@ function ownerIpSummary(link = {}) {
         uniqueUsers: Number(link.uniqueUsers || 0),
         lastResult: link.lastResult || null,
         lastRoleId: link.lastRoleId || null,
-        maxRiskScore: Number(link.maxRiskScore || 0),
-        lastRiskScore: Number(link.lastRiskScore || 0),
         lastIpInfo: link.lastIpInfo || null,
         lastDevice: link.lastDevice || null
     };
@@ -457,7 +346,7 @@ function ownerIpIdentityDetail(link = null, history = null) {
         ...ownerIpSummary(link),
         location: ownerIpLocation(link),
         signals: ownerIpSignals(link),
-        lastRiskFlags: Array.isArray(link.lastRiskFlags) ? link.lastRiskFlags : [],
+        lastFindings: Array.isArray(link.lastFindings) ? link.lastFindings : [],
         users,
         deviceFingerprints: devices,
         roleSnapshots: roles,
@@ -470,7 +359,7 @@ function ownerIpIdentityDetail(link = null, history = null) {
     };
 }
 
-async function getOwnerIpHistoryPage({ guildId, userId, kind, page, limit, actor = "owner-dashboard" }) {
+async function getOwnerIpHistoryPage({ guildId, userId, kind, page, limit }) {
     const link = await ipIdentityHistory.findLinkForUser(guildId, userId);
     if (!link?.ipHash) {
         const error = new Error("IP identity history not found");
@@ -484,29 +373,10 @@ async function getOwnerIpHistoryPage({ guildId, userId, kind, page, limit, actor
         page,
         limit
     });
-    const now = Date.now();
-    const audit = await auditRevealWrites({
-        guildId,
-        userId,
-        actor,
-        reason: "owner_ip_history",
-        now,
-        action: "owner_view_ip_history",
-        route: "/api/guild/:guildId/member/:userId/ip-history",
-        scope: ["ipIdentity"]
-    });
-    if (!audit.ok) {
-        const error = new Error("audit write failed; IP history blocked");
-        error.code = "audit_write_failed";
-        throw error;
-    }
-    return { success: true, guildId, userId, auditStatus: audit.status, ...result };
+    return { success: true, guildId, userId, ...result };
 }
 
-async function revealOAuthTokens({ guildId, userId, reason, actor = "owner-dashboard" }) {
-    const safeReason = sensitiveAudit.safeReason(reason);
-    sensitiveAudit.checkRevealLimit({ actor, guildId, userId, action: "raw_token" });
-
+async function revealOAuthTokens({ guildId, userId }) {
     const user = await OAuthUser.findOne({ "discord.userId": userId })
         .select("discord.userId oauth adminOAuth")
         .lean();
@@ -517,37 +387,16 @@ async function revealOAuthTokens({ guildId, userId, reason, actor = "owner-dashb
         throw error;
     }
 
-    const now = Date.now();
-    const audit = await auditRevealWrites({
-        guildId,
-        userId,
-        actor,
-        reason: safeReason,
-        now,
-        action: "owner_reveal_oauth_token",
-        route: "/api/guild/:guildId/member/:userId/reveal-token",
-        scope: ["oauthTokens"]
-    });
-    if (!audit.ok) {
-        const error = new Error("audit write failed; reveal blocked");
-        error.code = "audit_write_failed";
-        throw error;
-    }
-
     return {
         success: true,
         guildId,
         userId,
-        viewedAt: now,
-        auditStatus: audit.status,
-        audit,
         oauth: revealTokenState(user.oauth || {}),
         adminOAuth: revealTokenState(user.adminOAuth || {})
     };
 }
 
-async function getOwnerFullMemberDetail({ guildId, userId, actor = "owner-dashboard" }) {
-    sensitiveAudit.checkRevealLimit({ actor, guildId, userId, action: "full_detail" });
+async function getOwnerFullMemberDetail({ guildId, userId }) {
     const [detail, user, log, identityLink] = await Promise.all([
         getMemberDetail(guildId, userId, { canViewSensitive: true }),
         OAuthUser.findOne({ "discord.userId": userId })
@@ -563,23 +412,6 @@ async function getOwnerFullMemberDetail({ guildId, userId, actor = "owner-dashbo
     const history = identityLink?.ipHash
         ? await ipIdentityHistory.loadInitialHistory({ guildId, ipHash: identityLink.ipHash })
         : null;
-    const now = Date.now();
-    const audit = await auditRevealWrites({
-        guildId,
-        userId,
-        verifyLogId: log?._id,
-        actor,
-        reason: "owner_member_detail",
-        now,
-        action: "owner_view_full_member_detail",
-        route: "/api/guild/:guildId/member/:userId/full-detail",
-        scope: ["rawIp", "oauthTokens", "ipIdentity"]
-    });
-    if (!audit.ok) {
-        const error = new Error("audit write failed; full detail blocked");
-        error.code = "audit_write_failed";
-        throw error;
-    }
     return {
         ...detail,
         sensitive: {
@@ -587,8 +419,7 @@ async function getOwnerFullMemberDetail({ guildId, userId, actor = "owner-dashbo
             oauth: revealTokenState(user?.oauth || {}),
             adminOAuth: revealTokenState(user?.adminOAuth || {}),
             ipIdentity: ownerIpIdentityDetail(identityLink, history)
-        },
-        sensitiveAccessAudit: { status: audit.status, viewedAt: now }
+        }
     };
 }
 

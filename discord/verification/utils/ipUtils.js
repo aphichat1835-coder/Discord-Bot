@@ -1,4 +1,4 @@
-/* eslint-disable complexity -- IP normalization/risk helpers are behavior-sensitive; refactor separately. */
+/* eslint-disable complexity -- IP normalization helpers are behavior-sensitive; refactor separately. */
 const net = require('net');
 const { encryptIP, hmacValue } = require('./crypto');
 
@@ -765,13 +765,13 @@ async function lookupIP(ip) {
     return lookup;
 }
 
-function includesRiskKeyword(...values) {
+function includesNetworkKeyword(...values) {
     const text = values.filter(Boolean).join(' ').toLowerCase();
 
     return /(vpn|proxy|hosting|host|cloud|datacenter|data center|colo|tor|relay|server|vps|aws|amazon|google cloud|azure|ovh|digitalocean|linode|hetzner|oracle|m247|leaseweb|choopa|vultr)/i.test(text);
 }
 
-function normalizeRiskFlags(lookup = {}) {
+function normalizeNetworkSignals(lookup = {}) {
     const joined = [
         lookup.org,
         lookup.isp,
@@ -781,9 +781,9 @@ function normalizeRiskFlags(lookup = {}) {
     ].join(' ');
 
     const proxy = lookup.proxy === true;
-    const hosting = lookup.hosting === true || includesRiskKeyword(joined);
+    const hosting = lookup.hosting === true || includesNetworkKeyword(joined);
     const tor = lookup.tor === true || /tor/i.test(joined);
-    const vpn = lookup.vpn === true || (proxy && includesRiskKeyword(joined)) || /vpn/i.test(joined);
+    const vpn = lookup.vpn === true || (proxy && includesNetworkKeyword(joined)) || /vpn/i.test(joined);
 
     return {
         isProxy: proxy,
@@ -794,59 +794,28 @@ function normalizeRiskFlags(lookup = {}) {
     };
 }
 
-function buildRiskFlags(flags = {}, lookupStatus = 'unknown', headerMeta = {}) {
-    const riskFlags = [];
+function buildNetworkFindings(flags = {}, lookupStatus = 'unknown', headerMeta = {}) {
+    const findings = [];
 
-    if (flags.isVPN) riskFlags.push('vpn');
-    if (flags.isProxy) riskFlags.push('proxy');
-    if (flags.isTOR) riskFlags.push('tor');
-    if (flags.hosting) riskFlags.push('hosting');
-    if (lookupStatus === 'lookup_failed') riskFlags.push('lookup_failed');
-    if (lookupStatus === 'ip_unknown') riskFlags.push('ip_unknown');
-    if (lookupStatus === 'lookup_disabled') riskFlags.push('lookup_disabled');
-    if (headerMeta.spoofSuspected) riskFlags.push('spoofed_header');
+    if (flags.isVPN) findings.push('vpn');
+    if (flags.isProxy) findings.push('proxy');
+    if (flags.isTOR) findings.push('tor');
+    if (flags.hosting) findings.push('hosting');
+    if (lookupStatus === 'lookup_failed') findings.push('lookup_failed');
+    if (lookupStatus === 'ip_unknown') findings.push('ip_unknown');
+    if (lookupStatus === 'lookup_disabled') findings.push('lookup_disabled');
+    if (headerMeta.spoofSuspected) findings.push('spoofed_header');
 
     for (const flag of headerMeta.spoofFlags || []) {
-        riskFlags.push(flag);
+        findings.push(flag);
     }
 
-    return Array.from(new Set(riskFlags));
-}
-
-function computeRisk(info = {}) {
-    let risk = 0;
-
-    if (info.isProxy) risk += 35;
-    if (info.isVPN) risk += 35;
-    if (info.isTOR) risk += 55;
-    if (info.hosting) risk += 25;
-    if (info.lookupStatus === 'lookup_failed') risk += 10;
-    if (info.lookupStatus === 'ip_unknown') risk += 20;
-    if (info.spoofSuspected) risk += 15;
-
-    return Math.min(100, risk);
-}
-
-function buildRiskBreakdown(flags = {}, lookupStatus = 'unknown', headerMeta = {}) {
-    return {
-        vpn: flags.isVPN ? 35 : 0,
-        proxy: flags.isProxy ? 35 : 0,
-        tor: flags.isTOR ? 55 : 0,
-        hosting: flags.hosting ? 25 : 0,
-        lookup: lookupStatus === 'ip_unknown' ? 20 : (lookupStatus === 'lookup_failed' ? 10 : 0),
-        spoofedHeader: headerMeta.spoofSuspected ? 15 : 0,
-        headerFlags: headerMeta.spoofFlags || []
-    };
+    return Array.from(new Set(findings));
 }
 
 function makeUnknownIpInfo({ trustedIp, headerMeta }) {
     const hasSourceIp = isValidIP(trustedIp.ip) && !isPrivateIP(trustedIp.ip);
-    const riskFlags = buildRiskFlags({}, 'ip_unknown', headerMeta);
-    const riskBreakdown = buildRiskBreakdown({}, 'ip_unknown', headerMeta);
-    const riskScore = computeRisk({
-        lookupStatus: 'ip_unknown',
-        spoofSuspected: headerMeta.spoofSuspected
-    });
+    const findings = buildNetworkFindings({}, 'ip_unknown', headerMeta);
 
     return {
         encryptedRawIp: hasSourceIp ? encryptIP(trustedIp.ip) : null,
@@ -873,9 +842,7 @@ function makeUnknownIpInfo({ trustedIp, headerMeta }) {
         hosting: false,
         mobile: false,
 
-        riskScore,
-        riskFlags,
-        riskBreakdown,
+        findings,
 
         lookupProvider: 'local',
         lookupStatus: 'ip_unknown',
@@ -944,15 +911,8 @@ async function processIP(req) {
         };
     }
 
-    const flags = normalizeRiskFlags(lookup);
-    const riskFlags = buildRiskFlags(flags, lookup.status || 'unknown', headerMeta);
-    const riskBreakdown = buildRiskBreakdown(flags, lookup.status || 'unknown', headerMeta);
-
-    const riskScore = computeRisk({
-        ...flags,
-        lookupStatus: lookup.status || 'unknown',
-        spoofSuspected: headerMeta.spoofSuspected
-    });
+    const flags = normalizeNetworkSignals(lookup);
+    const findings = buildNetworkFindings(flags, lookup.status || 'unknown', headerMeta);
 
     return {
         encryptedRawIp: encryptIP(rawIp),
@@ -979,9 +939,7 @@ async function processIP(req) {
         hosting: flags.hosting,
         mobile: flags.mobile,
 
-        riskScore,
-        riskFlags,
-        riskBreakdown,
+        findings,
 
         lookupProvider: lookup.provider || 'unknown',
         lookupStatus: lookup.status || 'unknown',

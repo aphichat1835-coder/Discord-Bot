@@ -225,7 +225,6 @@ describe("member detail serialization and leak guards", () => {
         const source = fs.readFileSync("discord/verification/public/js/guild-dashboard.js", "utf8");
         const markers = [
             "async function loadLogs",
-            "async function loadRisk",
             "function openDetailModal",
             "function closeDetailModal",
             "function renderEmbedPreview",
@@ -234,7 +233,7 @@ describe("member detail serialization and leak guards", () => {
         for (const marker of markers) expect(source.indexOf(marker)).toBeGreaterThan(-1);
         const loadLogsSource = source.slice(
             source.indexOf("async function loadLogs"),
-            source.indexOf("async function loadRisk")
+            source.indexOf("function openDetailModal")
         );
         const modalSource = source.slice(
             source.indexOf("function openDetailModal"),
@@ -244,19 +243,12 @@ describe("member detail serialization and leak guards", () => {
             source.indexOf("function renderEmbedPreview"),
             source.indexOf("function bindPreviewInputs")
         );
-        const riskSource = source.slice(
-            source.indexOf("async function loadRisk"),
-            source.indexOf("function openDetailModal")
-        );
-
         expect(loadLogsSource).not.toContain("innerHTML");
         expect(loadLogsSource).toContain("replaceChildren");
         expect(modalSource).not.toContain("innerHTML");
         expect(modalSource).toContain("replaceChildren");
         expect(previewSource).not.toContain("innerHTML");
         expect(previewSource).toContain("replaceChildren");
-        expect(riskSource).not.toContain("innerHTML");
-        expect(riskSource).toContain("replaceChildren");
     });
 
     test("dashboard avoids HTML injection sinks globally and constrains API requests", () => {

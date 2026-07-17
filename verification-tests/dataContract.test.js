@@ -190,7 +190,7 @@ describe("unified verification data contract", () => {
         expect(OAuthUser.schema.path("discord.badgeFlags")).toBeDefined();
         expect(VerifyLog.schema.path("ipInfo.encryptedRawIp")).toBeDefined();
         expect(VerifyLog.schema.path("dataQuality")).toBeDefined();
-        expect(VerifyLog.schema.path("sensitiveAccessLog")).toBeDefined();
+        expect(VerifyLog.schema.path("findings")).toBeDefined();
     });
 
     test("failed optional fetches update quality only and do not write empty snapshots", async () => {
@@ -239,8 +239,7 @@ describe("unified verification data contract", () => {
                 guildId: "76543210987654321",
                 roleId: "76543210987654322",
                 result: "failed",
-                riskScore: 0,
-                riskFlags: [],
+                findings: [],
                 trackingSnapshot: null,
                 fetchMetadata: {
                     connectionsFetchFailed: true,
@@ -328,7 +327,7 @@ describe("unified verification data contract", () => {
                 profile: { id: "12345678901234567", username: "old", discriminator: "0" },
                 tokenData: {}, connections: [], guilds: [], memberInfo: null,
                 guildId: "76543210987654321", roleId: "76543210987654322",
-                result: "success", riskScore: 0, riskFlags: [], trackingSnapshot: null,
+                result: "success", findings: [], trackingSnapshot: null,
                 fetchMetadata: {}, attemptStartedAt: 100
             });
             expect(write.mock.calls[0][0]).toEqual({
@@ -385,7 +384,7 @@ describe("unified verification data contract", () => {
                 profile: { id: "12345678901234567", username: "old", discriminator: "0" },
                 tokenData: {}, connections: [], guilds: [], memberInfo: null,
                 guildId: "76543210987654321", roleId: "76543210987654322",
-                result: "success", riskScore: 0, riskFlags: [], trackingSnapshot: null,
+                result: "success", findings: [], trackingSnapshot: null,
                 fetchMetadata: {}, attemptStartedAt: 100
             });
             expect(write.mock.calls[0][0].$or).toHaveLength(2);
@@ -449,8 +448,7 @@ describe("unified verification data contract", () => {
                 guildId: "76543210987654321",
                 roleId: "76543210987654322",
                 result: "success",
-                riskScore: 0,
-                riskFlags: [],
+                findings: [],
                 trackingSnapshot: null,
                 fetchMetadata: {}
             });

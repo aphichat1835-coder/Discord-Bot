@@ -7,7 +7,6 @@ const discord = require('../utils/discordAPI');
 const { processIP, extractDevice } = require('../utils/ipUtils');
 const {
     normalizeVerificationConfig,
-    normalizeAction,
     normalizeRuleAction,
     normalizeSecurityRules,
     clampNumber
@@ -141,8 +140,7 @@ function normalizeCountryList(value) {
 
 function buildPolicySnapshot(v = {}) {
     const normalized = normalizeVerificationConfig(v || {});
-    const antiAlt = normalized.antiAlt || {};
-    const securityRules = normalizeSecurityRules(normalized.securityRules || {}, normalized);
+    const securityRules = normalizeSecurityRules(normalized.securityRules || {});
 
     return {
         enabled: normalized.enabled !== false,
@@ -155,18 +153,7 @@ function buildPolicySnapshot(v = {}) {
         minConnections: Number.isFinite(Number(normalized.minConnections)) ? Number(normalized.minConnections) : 1,
         allowedCountries: normalizeCountryList(normalized.allowedCountries),
         blockedCountries: normalizeCountryList(normalized.blockedCountries),
-        securityRules,
-        antiAlt: {
-            enabled: antiAlt.enabled === true,
-            ipDuplicateAction: normalizeAction(antiAlt.ipDuplicateAction, 'log_only'),
-            maxUsersPerIp: clampNumber(antiAlt.maxUsersPerIp, 1, 20, 3),
-            deviceDuplicateAction: normalizeAction(antiAlt.deviceDuplicateAction, 'log_only'),
-            maxUsersPerDevice: clampNumber(antiAlt.maxUsersPerDevice, 1, 20, 2),
-            previouslyBlockedIpAction: normalizeAction(antiAlt.previouslyBlockedIpAction, 'delay'),
-            spoofedHeaderAction: normalizeAction(antiAlt.spoofedHeaderAction, 'delay'),
-            unknownLookupAction: normalizeAction(antiAlt.unknownLookupAction, 'delay'),
-            delayMs: clampNumber(antiAlt.delayMs, 0, 10000, 5000)
-        }
+        securityRules
     };
 }
 
@@ -217,17 +204,6 @@ async function executeRuleViolation({ violation, guildId, userId, memberInfo }) 
     };
 }
 
-function sleep(ms) {
-    return new Promise(resolve => {
-        const timer = setTimeout(resolve, ms);
-        timer.unref?.();
-    });
-}
-
-function clampDelayMs(value, fallback = 5000) {
-    return clampNumber(value, 0, 10000, fallback);
-}
-
 function pushUnique(list, value) {
     if (!value) return;
     if (!list.includes(value)) list.push(value);
@@ -237,76 +213,36 @@ function uniqueStrings(values = []) {
     return Array.from(new Set((values || []).map(v => String(v || '').trim()).filter(Boolean)));
 }
 
-async function applyPolicyAction({
-    action,
-    reason,
-    userError,
-    delayMs,
-    riskFlags,
-    riskFlag,
-    finalize
-}) {
-    const normalizedAction = normalizeAction(action, 'log_only');
-
-    if (normalizedAction === 'off') {
-        return { blocked: false };
-    }
-
-    pushUnique(riskFlags, riskFlag || reason);
-
-    if (normalizedAction === 'delay') {
-        await sleep(clampDelayMs(delayMs));
-        return { blocked: false, delayed: true };
-    }
-
-    if (normalizedAction === 'block') {
-        return {
-            blocked: true,
-            response: await finalize({
-                result: 'blocked',
-                reason,
-                userError
-            })
-        };
-    }
-
-    return { blocked: false, logged: true };
-}
-
-function buildRiskSummary({ ageDays, policy, ipInfo, connections, emailOk }) {
-    const flags = [];
+function buildFindings({ ageDays, policy, ipInfo, connections, emailOk }) {
+    const findings = [];
 
     if (ageDays < policy.minAccountAgeDays) {
-        flags.push('new_account');
+        findings.push('new_account');
     }
 
     if (ipInfo?.isVPN || ipInfo?.isProxy || ipInfo?.isTOR || ipInfo?.hosting) {
-        flags.push('network_risk');
+        findings.push('network_anonymizer_or_hosting');
     }
 
     if (!connections?.length) {
-        flags.push('no_connections');
+        findings.push('no_connections');
     }
 
     if (!emailOk) {
-        flags.push('email_missing_or_unverified');
+        findings.push('email_missing_or_unverified');
     }
 
     const countryCode = String(ipInfo?.countryCode || '').toUpperCase();
 
     if (policy.allowedCountries.length && !policy.allowedCountries.includes(countryCode)) {
-        flags.push('country_not_allowed');
+        findings.push('country_not_allowed');
     }
 
     if (policy.blockedCountries.includes(countryCode)) {
-        flags.push('country_blocked');
+        findings.push('country_blocked');
     }
 
-    return {
-        // Compatibility field only. Decisions use explicit findings/rules, never a hidden score.
-        score: 0,
-        flags
-    };
+    return findings;
 }
 
 function safeString(value, maxLen = 0) {
@@ -927,9 +863,8 @@ function minimalVerifyLog(payload, budgetErr) {
         requestId: safeNullableString(payload.requestId, 160),
         result: payload.result,
         reason: safeNullableString(payload.reason, 500),
-        riskScore: safeNumberOrNull(payload.riskScore) ?? 0,
-        riskFlags: Array.isArray(payload.riskFlags)
-            ? payload.riskFlags.map(flag => safeString(flag, 80))
+        findings: Array.isArray(payload.findings)
+            ? payload.findings.map(flag => safeString(flag, 80))
             : [],
         oauthScope: safeNullableString(payload.oauthScope, 500),
         stateMode: safeNullableString(payload.stateMode, 80),
@@ -951,7 +886,6 @@ function absoluteMinimumVerifyLog(payload, budgetErr) {
         requestId: safeNullableString(payload.requestId, 160),
         result: safeString(payload.result || "error", 80),
         reason: "verify_log_payload_too_large",
-        riskScore: safeNumberOrNull(payload.riskScore) ?? 0,
         verifiedAt: safeNumberOrNull(payload.verifiedAt) ?? Date.now(),
         dataQuality: {
             budget: snapshotBudget.failureMeta(budgetErr, "verify_log_absolute_minimum")
@@ -1015,7 +949,7 @@ async function updateIpIdentityTrackingSafe({
     memberInfo,
     roleId,
     result,
-    riskSummary
+    findings
 }) {
     return safeSideEffect('updateIpIdentityTracking', async () => {
         if (!guildId || !profile?.id || !ipInfo?.ipHash) return null;
@@ -1044,18 +978,16 @@ async function updateIpIdentityTrackingSafe({
             memberInfo,
             roleId,
             result,
-            riskSummary,
+            findings,
             now: nowMs
         });
 
-        const lastRiskScore = Number(riskSummary?.score ?? ipInfo.riskScore ?? 0);
         const setFields = {
             guildName: guildName || existing?.guildName || safeGuildId,
             lastSeenAt: nowMs,
             lastResult: result,
             lastRoleId: roleId,
-            lastRiskScore,
-            lastRiskFlags: Array.isArray(riskSummary?.flags) ? riskSummary.flags : [],
+            lastFindings: Array.isArray(findings) ? findings : [],
             lastCountry: ipInfo.country,
             lastCountryCode: ipInfo.countryCode,
             lastRegion: ipInfo.region,
@@ -1090,7 +1022,6 @@ async function updateIpIdentityTrackingSafe({
                 },
                 $inc: { totalVerifications: 1 },
                 $min: { firstSeenAt: nowMs },
-                $max: { maxRiskScore: lastRiskScore },
                 $set: setFields
             },
             { upsert: true, new: true, setDefaultsOnInsert: true }
@@ -1101,9 +1032,7 @@ async function updateIpIdentityTrackingSafe({
             firstSeenAt: doc.firstSeenAt,
             lastSeenAt: doc.lastSeenAt,
             totalVerifications: doc.totalVerifications,
-            uniqueUsers: doc.uniqueUsers,
-            maxRiskScore: doc.maxRiskScore,
-            lastRiskScore: doc.lastRiskScore
+            uniqueUsers: doc.uniqueUsers
         };
     }, null);
 }
@@ -1153,8 +1082,7 @@ async function saveOAuthUserSafe({
     guildId,
     roleId,
     result,
-    riskScore,
-    riskFlags,
+    findings,
     trackingSnapshot,
     fetchMetadata = {},
     attemptStartedAt = Date.now()
@@ -1243,8 +1171,7 @@ async function saveOAuthUserSafe({
                     result,
                     attemptStartedAt: safeAttemptStartedAt,
                     verifiedAt: nowMs,
-                    riskScore,
-                    riskFlags: riskFlags || []
+                    findings: findings || []
                 },
                 lastIpTracking: trackingSnapshot || null,
                 snapshotMeta,
@@ -1395,8 +1322,7 @@ async function safeProcessIP(req) {
         hosting: false,
         mobile: false,
 
-        riskScore: 0,
-        riskFlags: ['lookup_failed'],
+        findings: ['lookup_failed'],
 
         lookupProvider: 'fallback',
         lookupStatus: 'lookup_failed',
@@ -1614,7 +1540,7 @@ router.post('/auth/callback', async (req, res) => {
     let guildConfig = null;
     let joinResult = null;
     let existingIpLink = null;
-    const policyRiskFlags = [];
+    const policyFindings = [];
     const fetchMetadata = {
         connectionsFetchFailed: false,
         connectionsFetchStatus: null,
@@ -1682,7 +1608,7 @@ router.post('/auth/callback', async (req, res) => {
             sendDm = true,
             discordSnapshotExtra = {}
         }) {
-            const riskSummary = buildRiskSummary({
+            const findings = buildFindings({
                 ageDays: getAccountAgeDays(profile.id),
                 policy: policySnapshot,
                 ipInfo,
@@ -1694,19 +1620,16 @@ router.post('/auth/callback', async (req, res) => {
                 )
             });
 
-            if (ipInfo?.isVPN) pushUnique(policyRiskFlags, 'vpn');
-            if (ipInfo?.isProxy) pushUnique(policyRiskFlags, 'proxy');
-            if (ipInfo?.isTOR) pushUnique(policyRiskFlags, 'tor');
-            if (ipInfo?.hosting) pushUnique(policyRiskFlags, 'hosting');
-            if (ipInfo?.spoofSuspected) pushUnique(policyRiskFlags, 'spoof_suspected');
-            if (ipInfo?.lookupStatus === 'lookup_failed') pushUnique(policyRiskFlags, 'lookup_failed');
-            if (ipInfo?.lookupStatus === 'ip_unknown') pushUnique(policyRiskFlags, 'ip_unknown');
-            for (const flag of ipInfo?.riskFlags || []) pushUnique(policyRiskFlags, flag);
+            if (ipInfo?.isVPN) pushUnique(policyFindings, 'vpn');
+            if (ipInfo?.isProxy) pushUnique(policyFindings, 'proxy');
+            if (ipInfo?.isTOR) pushUnique(policyFindings, 'tor');
+            if (ipInfo?.hosting) pushUnique(policyFindings, 'hosting');
+            if (ipInfo?.spoofSuspected) pushUnique(policyFindings, 'spoof_suspected');
+            if (ipInfo?.lookupStatus === 'lookup_failed') pushUnique(policyFindings, 'lookup_failed');
+            if (ipInfo?.lookupStatus === 'ip_unknown') pushUnique(policyFindings, 'ip_unknown');
+            for (const finding of ipInfo?.findings || []) pushUnique(policyFindings, finding);
 
-            riskSummary.flags = uniqueStrings([
-                ...(riskSummary.flags || []),
-                ...policyRiskFlags
-            ]);
+            const allFindings = uniqueStrings([...findings, ...policyFindings]);
 
             const discordSnapshot = {
                 ...buildDiscordSnapshot(profile, connections, memberInfo, stateObj),
@@ -1717,7 +1640,7 @@ router.post('/auth/callback', async (req, res) => {
                 latestPanelRevision: getLatestPanelRevision(guildConfig),
                 ...discordSnapshotExtra
             };
-                        const trackingSnapshot = await updateIpIdentityTrackingSafe({
+            const trackingSnapshot = await updateIpIdentityTrackingSafe({
                 guildId,
                 guildName,
                 profile,
@@ -1726,7 +1649,7 @@ router.post('/auth/callback', async (req, res) => {
                 memberInfo,
                 roleId: configuredRoleId,
                 result,
-                riskSummary
+                findings: allFindings
             });
 
             const oauthPersistence = await saveOAuthUserSafe({
@@ -1738,8 +1661,7 @@ router.post('/auth/callback', async (req, res) => {
                 guildId,
                 roleId: configuredRoleId,
                 result,
-                riskScore: riskSummary.score,
-                riskFlags: riskSummary.flags,
+                findings: allFindings,
                 trackingSnapshot,
                 fetchMetadata,
                 attemptStartedAt: oauthAttemptStartedAt
@@ -1772,9 +1694,7 @@ router.post('/auth/callback', async (req, res) => {
                 requestId,
                 result,
                 reason,
-
-                riskScore: riskSummary.score,
-                riskFlags: riskSummary.flags,
+                findings: allFindings,
                 oauthScope: tokenData.scope || '',
                 stateMode: stateObj.mode || null,
                 snapshotVersion: oauthPersistence?.snapshotVersion || null,
@@ -2014,7 +1934,7 @@ router.post('/auth/callback', async (req, res) => {
         const recordRule = (key, reason, userError) => {
             const violation = makeRuleViolation(key, securityRules[key], reason, userError);
             if (!violation) return;
-            pushUnique(policyRiskFlags, reason.split(':')[0]);
+            pushUnique(policyFindings, reason.split(':')[0]);
             policyViolations.push(violation);
         };
 
@@ -2058,7 +1978,7 @@ router.post('/auth/callback', async (req, res) => {
             }
             const previouslyBlocked = existingIpLink.lastResult === 'blocked' || trackedUsers.some(user =>
                 Number(user.blockedCount || 0) > 0 ||
-                (Array.isArray(user.lastRiskFlags) && user.lastRiskFlags.some(flag => /blocked|vpn|proxy|tor|spoof|duplicate|hosting/i.test(flag)))
+                (Array.isArray(user.lastFindings) && user.lastFindings.some(finding => /blocked|vpn|proxy|tor|spoof|duplicate|hosting/i.test(finding)))
             );
             if (previouslyBlocked) {
                 recordRule('previouslyBlockedIp', 'previously_blocked_ip', 'IP นี้เคยมีการยืนยันที่ถูกปฏิเสธ กรุณาติดต่อผู้ดูแล');
@@ -2262,15 +2182,13 @@ module.exports._test = {
     compactMemberInfo,
     compactDiscordProfile,
     compactUserGuild,
-    applyPolicyAction,
     pushUnique,
     uniqueStrings,
-    clampDelayMs,
     safeString,
-        safeNullableString,
-        sanitizeDiscordPayload,
-        safeSnowflakeStrict,
-        safeIpHashStrict,
+    safeNullableString,
+    sanitizeDiscordPayload,
+    safeSnowflakeStrict,
+    safeIpHashStrict,
     memberFetchQualityStatus,
     recordPostRoleMemberFetch,
     preserveFailedMemberAttempt,

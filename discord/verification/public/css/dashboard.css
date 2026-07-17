@@ -2453,18 +2453,6 @@ pre.json-block {
   overflow-wrap: anywhere;
 }
 
-.risk-low {
-  color: #bbf7d0;
-}
-
-.risk-medium {
-  color: #fde68a;
-}
-
-.risk-high {
-  color: #fecaca;
-}
-
 .status-dot {
   width: 9px;
   height: 9px;

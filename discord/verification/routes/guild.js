@@ -10,7 +10,7 @@ const { requireCsrf } = require('../../index/auth');
   - Verification panel resources / validation / send / update / disable
   - Members / logs APIs with detailed verification data
   - Sensitive verification data visible only inside the Owner boundary
-  - Raw IP remains outside normal serializers and uses an audited action
+  - Raw IP remains outside normal list serializers and is owner-only
   - Panel Revision / Rotate State for long-lived OAuth panel state
 ================================================================================
 */
@@ -36,11 +36,9 @@ const {
 } = require("../utils/guildPermissions");
 const {
   normalizeVerifyMode,
-  normalizeAction,
   normalizeRuleAction,
   clampNumber,
   normalizePanel,
-  normalizeAntiAltConfig,
   normalizeSecurityRules,
   SECURITY_RULE_KEYS,
   normalizeVerificationConfig
@@ -53,10 +51,7 @@ const {
 } = require("../utils/panelBuilder");
 
 const discordAPI = require("../utils/discordAPI");
-const {
-  normalizeSensitiveAccess
-} = require("../utils/sensitiveAccess");
-const { getAdminUser, getAdminId, recordSensitiveAccess } = require("../utils/ownerRouteAccess");
+const { getAdminUser, getAdminId } = require("../utils/ownerRouteAccess");
 const {
   buildVerifyLogCommon,
   buildVerifyLogParts
@@ -195,7 +190,7 @@ function safeConsoleError(scope, err) {
 function sendServerError(res, scope, err, fallback = "เกิดข้อผิดพลาดภายในระบบ") {
   safeConsoleError(scope, err);
 
-  return res.status(err?.code === "audit_write_failed" ? 503 : 500).json({
+  return res.status(500).json({
     success: false,
     error: fallback
   });
@@ -328,17 +323,13 @@ function parseLimit(value, fallback = 25, max = 100) {
 }
 
 function tokenRevealErrorStatus(code) {
-  if (["reason_required", "reason_too_long"].includes(code)) return 400;
-  if (["rate_limited", "cooldown"].includes(code)) return 429;
   if (code === "member_not_found") return 404;
-  if (code === "audit_write_failed") return 503;
   return 500;
 }
 
 function ipHistoryErrorStatus(code) {
   if (code === "invalid_history_kind") return 400;
   if (code === "ip_history_not_found") return 404;
-  if (code === "audit_write_failed") return 503;
   return 500;
 }
 
@@ -406,21 +397,6 @@ function sanitizeVerification(input = {}) {
 
   if ("allowedCountries" in input) out.allowedCountries = normalizeStringArray(input.allowedCountries);
   if ("blockedCountries" in input) out.blockedCountries = normalizeStringArray(input.blockedCountries);
-
-  if ("antiAlt" in input && input.antiAlt && typeof input.antiAlt === "object" && !Array.isArray(input.antiAlt)) {
-    const rawAntiAlt = input.antiAlt;
-    const antiAlt = {};
-    if ("enabled" in rawAntiAlt) antiAlt.enabled = rawAntiAlt.enabled === true || rawAntiAlt.enabled === "true" || rawAntiAlt.enabled === "on";
-    if ("ipDuplicateAction" in rawAntiAlt) antiAlt.ipDuplicateAction = normalizeAction(rawAntiAlt.ipDuplicateAction, "log_only");
-    if ("maxUsersPerIp" in rawAntiAlt) antiAlt.maxUsersPerIp = clampNumber(rawAntiAlt.maxUsersPerIp, 1, 20, 3);
-    if ("deviceDuplicateAction" in rawAntiAlt) antiAlt.deviceDuplicateAction = normalizeAction(rawAntiAlt.deviceDuplicateAction, "log_only");
-    if ("maxUsersPerDevice" in rawAntiAlt) antiAlt.maxUsersPerDevice = clampNumber(rawAntiAlt.maxUsersPerDevice, 1, 20, 2);
-    if ("previouslyBlockedIpAction" in rawAntiAlt) antiAlt.previouslyBlockedIpAction = normalizeAction(rawAntiAlt.previouslyBlockedIpAction, "delay");
-    if ("spoofedHeaderAction" in rawAntiAlt) antiAlt.spoofedHeaderAction = normalizeAction(rawAntiAlt.spoofedHeaderAction, "delay");
-    if ("unknownLookupAction" in rawAntiAlt) antiAlt.unknownLookupAction = normalizeAction(rawAntiAlt.unknownLookupAction, "delay");
-    if ("delayMs" in rawAntiAlt) antiAlt.delayMs = clampNumber(rawAntiAlt.delayMs, 0, 10000, 5000);
-    out.antiAlt = antiAlt;
-  }
 
   if ("securityRules" in input && input.securityRules && typeof input.securityRules === "object" && !Array.isArray(input.securityRules)) {
     out.securityRules = {};
@@ -490,23 +466,12 @@ function sanitizeVerification(input = {}) {
 function mergeVerificationConfig(existing = {}, incoming = {}) {
   const current = normalizeVerificationConfig(existing || {});
   const clean = sanitizeVerification(incoming || {});
-  const hasIncomingAntiAlt = Object.hasOwn(incoming || {}, "antiAlt");
   const hasIncomingPanel = Object.hasOwn(incoming || {}, "panel");
   const hasIncomingSecurityRules = Object.hasOwn(incoming || {}, "securityRules");
-  const currentAntiAlt = current.antiAlt ?? {};
-  const cleanAntiAlt = clean.antiAlt ?? {};
   const currentPanel = current.panel ?? {};
   const cleanPanel = clean.panel ?? {};
-  let mergedAntiAlt = current.antiAlt;
   let mergedPanel = currentPanel;
   let mergedSecurityRules = current.securityRules;
-
-  if (hasIncomingAntiAlt) {
-    mergedAntiAlt = normalizeAntiAltConfig({
-      ...currentAntiAlt,
-      ...cleanAntiAlt
-    });
-  }
 
   if (hasIncomingPanel) {
     mergedPanel = {
@@ -534,7 +499,6 @@ function mergeVerificationConfig(existing = {}, incoming = {}) {
     */
     panelRevision: current.panelRevision || clean.panelRevision || null,
     panelRevisionUpdatedAt: current.panelRevisionUpdatedAt || clean.panelRevisionUpdatedAt || null,
-    antiAlt: mergedAntiAlt,
     securityRules: mergedSecurityRules,
     panel: normalizePanel(mergedPanel),
     updatedAt: now()
@@ -552,16 +516,15 @@ function mergeVerificationConfig(existing = {}, incoming = {}) {
 function serializeConfig(doc) {
   const raw = doc?.toObject ? doc.toObject() : doc || {};
   const verification = normalizeVerificationConfig(raw.verification || {});
-  const security = raw.security || {};
+  const security = { ...(raw.security || {}) };
+  delete security.sensitiveDataAccess;
+  delete security.ipRevealRequiresOwnerApproval;
 
   return {
     guildId: raw.guildId || "",
     guildName: raw.guildName || "",
     verification,
-    security: {
-      ...security,
-      sensitiveDataAccess: normalizeSensitiveAccess(security)
-    },
+    security,
     setupBy: raw.setupBy || null,
     createdAt: raw.createdAt || null,
     updatedAt: raw.updatedAt || null
@@ -618,11 +581,6 @@ function buildLogQuery(guildId, reqQuery = {}) {
   if (["success", "failed", "blocked", "pending"].includes(result)) {
     filter.result = result;
   }
-
-  const risk = String(reqQuery.risk || "").trim().toLowerCase();
-  if (risk === "high") filter.riskScore = { $gte: 70 };
-  if (risk === "medium") filter.riskScore = { $gte: 35, $lt: 70 };
-  if (risk === "low") filter.riskScore = { $lt: 35 };
 
   const q = String(reqQuery.q || "").trim();
   if (q) {
@@ -1465,8 +1423,7 @@ router.get("/api/guild/:guildId/logs", requireAdmin, requireGuildAdmin, async (r
 
     const filter = buildLogQuery(guildId, req.query);
 
-    const [config, total, logs] = await Promise.all([
-      GuildConfig.findOne({ guildId }).select("security").lean(),
+    const [total, logs] = await Promise.all([
       VerifyLog.countDocuments(filter),
       VerifyLog.find(filter)
         .sort({ verifiedAt: -1, createdAt: -1, _id: -1 })
@@ -1475,13 +1432,8 @@ router.get("/api/guild/:guildId/logs", requireAdmin, requireGuildAdmin, async (r
         .lean()
     ]);
     const canViewSensitive = req.verificationOwner === true;
-    if (canViewSensitive) {
-      await recordSensitiveAccess(guildId, req, "/api/guild/:guildId/logs");
-    }
-
     res.json({
       success: true,
-      sensitiveDataAccess: normalizeSensitiveAccess(config?.security || {}),
       logs: logs.map(log => serializeVerifyLog(log, { canViewSensitive })),
       pagination: pagination(page, limit, total)
     });
@@ -1496,24 +1448,15 @@ router.get("/api/guild/:guildId/members", requireAdmin, requireGuildAdmin, async
     const page = parsePage(req.query.page);
     const limit = parseLimit(req.query.limit, 25, 100);
     const q = String(req.query.q || "").trim();
-    const [config, result] = await Promise.all([
-      GuildConfig.findOne({ guildId }).select("security").lean(),
-      verifiedMemberService.listVerifiedMembers(guildId, {
-        page,
-        limit,
-        q,
-        includeLegacy: true,
-        canViewSensitive: req.verificationOwner === true
-      })
-    ]);
-    const canViewSensitive = req.verificationOwner === true;
-    if (canViewSensitive) {
-      await recordSensitiveAccess(guildId, req, "/api/guild/:guildId/members");
-    }
-
+    const result = await verifiedMemberService.listVerifiedMembers(guildId, {
+      page,
+      limit,
+      q,
+      includeLegacy: true,
+      canViewSensitive: req.verificationOwner === true
+    });
     res.json({
       success: true,
-      sensitiveDataAccess: normalizeSensitiveAccess(config?.security || {}),
       members: result.members,
       pagination: {
         ...pagination(page, limit, result.total),
@@ -1538,17 +1481,10 @@ router.get("/api/guild/:guildId/member/:userId/detail", requireAdmin, requireGui
       return res.status(400).json({ success: false, code: "invalid_user_id", error: "User ID ไม่ถูกต้อง" });
     }
     const canViewSensitive = req.verificationOwner === true;
-    const audit = canViewSensitive
-      ? await recordSensitiveAccess(guildId, req, "/api/guild/:guildId/member/:userId/detail")
-      : { ok: false, status: "not_required" };
     const detail = await verificationOwnerService.getMemberDetail(guildId, targetUserId, {
       canViewSensitive
     });
-    res.json({
-      ...detail,
-      sensitiveAccessAudit: audit,
-      auditStatus: audit.status
-    });
+    res.json(detail);
   } catch (err) {
     if (err?.code === "member_not_found") {
       return res.status(404).json({
@@ -1571,15 +1507,13 @@ router.post("/api/guild/:guildId/member/:userId/full-detail", requireAdmin, requ
     res.set("Cache-Control", "no-store");
     res.json(await verificationOwnerService.getOwnerFullMemberDetail({
       guildId,
-      userId: targetUserId,
-      actor: getAdminId(req) || "owner-dashboard"
+      userId: targetUserId
     }));
   } catch (err) {
     if (err?.code === "member_not_found") {
       return res.status(404).json({ success: false, code: err.code, error: "ไม่พบรายละเอียดสมาชิก" });
     }
-    const status = err?.code === "audit_write_failed" ? 503 : 500;
-    return res.status(status).json({
+    return res.status(500).json({
       success: false,
       code: err?.code || "full_detail_failed",
       error: "โหลดรายละเอียดสมาชิกแบบเต็มไม่สำเร็จ"
@@ -1600,8 +1534,7 @@ router.get("/api/guild/:guildId/member/:userId/ip-history", requireAdmin, requir
       userId: targetUserId,
       kind: String(req.query?.kind || "users"),
       page: parsePage(req.query?.page),
-      limit: parseLimit(req.query?.limit, 100),
-      actor: getAdminId(req) || "owner-dashboard"
+      limit: parseLimit(req.query?.limit, 100)
     }));
   } catch (err) {
     const status = ipHistoryErrorStatus(err?.code);
@@ -1616,12 +1549,14 @@ router.get("/api/guild/:guildId/member/:userId/ip-history", requireAdmin, requir
 router.post("/api/guild/:guildId/member/:userId/reveal-token", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
   try {
     const { guildId, userId } = req.params;
+    const targetUserId = cleanSnowflake(userId);
+    if (!targetUserId) {
+      return res.status(400).json({ success: false, code: "invalid_user_id", error: "User ID ไม่ถูกต้อง" });
+    }
     res.set("Cache-Control", "no-store");
     res.json(await verificationOwnerService.revealOAuthTokens({
       guildId,
-      userId,
-      reason: req.body?.reason,
-      actor: getAdminId(req) || "owner-dashboard"
+      userId: targetUserId
     }));
   } catch (err) {
     const status = tokenRevealErrorStatus(err?.code);
@@ -1757,7 +1692,6 @@ router.get("/api/guild/:guildId", requireAdmin, requireGuildAdmin, async (req, r
 
 router._test = {
   mergeVerificationConfig,
-  recordSensitiveAccess,
   tokenRevealErrorStatus,
   saveConfigWithRetry,
   clonePlainValue,

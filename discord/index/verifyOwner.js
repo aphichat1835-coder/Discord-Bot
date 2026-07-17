@@ -5,18 +5,13 @@ const verificationOwnerService = require("../verification/ownerService");
 
 function sendError(res, err) {
     const publicCodes = new Set([
-        "reason_required",
-        "reason_too_long",
         "rate_limited",
         "cooldown",
-        "ip_not_found",
-        "audit_write_failed"
+        "ip_not_found"
     ]);
     let status = 500;
-    if (["reason_required", "reason_too_long"].includes(err?.code)) status = 400;
-    else if (["rate_limited", "cooldown"].includes(err?.code)) status = 429;
+    if (["rate_limited", "cooldown"].includes(err?.code)) status = 429;
     else if (err?.code === "ip_not_found") status = 404;
-    else if (err?.code === "audit_write_failed") status = 503;
     const code = publicCodes.has(err?.code) ? err.code : "verification_owner_error";
     res.status(status).json({
         success: false,
@@ -113,9 +108,7 @@ function registerVerifyOwnerRoutes({ app, express }) {
             try {
                 res.json(await verificationOwnerService.revealRawIp({
                     guildId,
-                    userId,
-                    reason: req.body?.reason,
-                    actor: "owner-dashboard"
+                    userId
                 }));
             } catch (err) {
                 sendError(res, err);

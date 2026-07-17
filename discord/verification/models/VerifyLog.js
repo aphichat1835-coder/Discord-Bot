@@ -12,8 +12,7 @@ const schema = new mongoose.Schema({
     result: { type: String, enum: ['success', 'failed', 'blocked'], required: true },
     reason: String,
 
-    riskScore: Number,
-    riskFlags: [String],
+    findings: [String],
     oauthScope: String,
     stateMode: String,
 
@@ -29,16 +28,13 @@ const schema = new mongoose.Schema({
         firstSeenAt: Number,
         lastSeenAt: Number,
         totalVerifications: Number,
-        uniqueUsers: Number,
-        maxRiskScore: Number,
-        lastRiskScore: Number
+        uniqueUsers: Number
     },
 
     dataQuality: mixed,
     snapshotRef: mixed,
     snapshotVersion: String,
     attemptedSnapshotVersion: String,
-    sensitiveAccessLog: [mixed],
     ipHistoryMigrationVersion: Number,
     ipHistoryMigratedAt: Number,
 
@@ -67,15 +63,14 @@ const schema = new mongoose.Schema({
         hosting: Boolean,
         mobile: Boolean,
 
-        riskScore: Number,
-        riskFlags: [String],
+        findings: [String],
 
         lookupProvider: String,
         lookupStatus: String,
         lookupMessage: String,
         lookupRaw: mixed,
 
-        // Owner Approved: It is explicitly required and necessary to collect and use raw IP data for auditing and system security.
+        // Raw IP is encrypted at rest and only returned inside the owner boundary.
         ipSource: String,
         headerIps: mixed,
         spoofSuspected: Boolean,
@@ -120,7 +115,6 @@ schema.index({ guildId: 1, verifiedAt: -1 });
 schema.index({ guildId: 1, result: 1, verifiedAt: -1 });
 schema.index({ 'ipInfo.ipHash': 1 });
 schema.index({ 'device.fingerprintHash': 1 });
-schema.index({ riskScore: -1 });
 schema.index({ stateMode: 1 });
 schema.index({ requestId: 1 });
 schema.index({ 'trackingSnapshot.uniqueUsers': -1 });

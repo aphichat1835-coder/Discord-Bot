@@ -68,11 +68,9 @@ test("protected compatibility adapter delegates only to retired-safe internal ev
     assert.doesNotMatch(adapterSource, /mongoose|AuditLogEvent|LogChannelMap|audit_event_|routeAndSendLog/);
     assert.doesNotMatch(internalSource, /require\("mongoose"\)|require\("\.\/auditLogStore"\)|mongoose\.connection|auditLogStore\.|audit_event_/);
 });
-test("separate operational and Verification audit systems remain available", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("operational webhook logging remains available", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const webhooks = require("../core/webhooks");
-    const sensitiveAudit = require("../verification/services/sensitiveAuditService");
 
     assert.equal(typeof webhooks.sendLogWebhook, "function");
     assert.equal(typeof webhooks.sendAlertWebhook, "function");
-    assert.equal(typeof sensitiveAudit.auditGuildConfigUpdate, "function");
 });

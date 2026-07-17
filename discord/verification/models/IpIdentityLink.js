@@ -25,8 +25,7 @@ const userSchema = new mongoose.Schema({
     lastCommunicationDisabledUntil: String,
 
     lastDeviceFingerprintHash: String,
-    lastRiskScore: Number,
-    lastRiskFlags: [String]
+    lastFindings: [String]
 }, { _id: false, minimize: false });
 
 const deviceSchema = new mongoose.Schema({
@@ -69,9 +68,7 @@ const schema = new mongoose.Schema({
     lastResult: String,
     lastRoleId: String,
 
-    maxRiskScore: { type: Number, default: 0 },
-    lastRiskScore: Number,
-    lastRiskFlags: [String],
+    lastFindings: [String],
 
     lastCountry: String,
     lastCountryCode: String,
@@ -112,7 +109,6 @@ const schema = new mongoose.Schema({
 schema.index({ guildId: 1, ipHash: 1 }, { unique: true });
 schema.index({ guildId: 1, lastSeenAt: -1 });
 schema.index({ guildId: 1, uniqueUsers: -1 });
-schema.index({ guildId: 1, maxRiskScore: -1 });
 schema.index({ historyMigrationVersion: 1, historyMigrationAttemptedAt: 1, _id: 1 });
 schema.index({ 'users.userId': 1 });
 schema.index({ 'deviceFingerprints.fingerprintHash': 1 });

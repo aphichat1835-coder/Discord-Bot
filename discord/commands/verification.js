@@ -409,7 +409,6 @@ async function syncGuildConfig(interaction, role, channel, panelMsg, panelData) 
 
                     "security.storeOAuthTokens": true,
                     "security.storeRawIpEncrypted": true,
-                    "security.ipRevealRequiresOwnerApproval": true,
                     "security.retentionMode": "until_admin_delete"
                 }
             },

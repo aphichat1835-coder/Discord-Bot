@@ -1,7 +1,6 @@
 "use strict";
 
 const GuildConfig = require("./models/GuildConfig");
-const IPRevealRequest = require("./models/IPRevealRequest");
 const IpIdentityLink = require("./models/IpIdentityLink");
 const VerifyLog = require("./models/VerifyLog");
 const { safeError } = require("./utils/safeLogger");
@@ -81,7 +80,6 @@ function createSummary(dryRun, now) {
         skipped: false,
         startedAt: now,
         finishedAt: null,
-        expiredRevealRequests: 0,
         guildsScanned: 0,
         guildsWithRetention: 0,
         retentionCursorWrapped: false,
@@ -184,20 +182,6 @@ async function loadRetentionConfigs(dryRun, summary) {
     return configs;
 }
 
-async function expirePendingRevealRequests(now, dryRun) {
-    const filter = { status: "pending", expiresAt: { $lte: now } };
-    if (dryRun) return IPRevealRequest.countDocuments(filter);
-
-    const result = await IPRevealRequest.updateMany(filter, {
-        $set: {
-            status: "expired",
-            updatedAt: now,
-            ownerNote: "expired automatically"
-        }
-    });
-    return result.modifiedCount || 0;
-}
-
 function retentionFilters(guildId, cutoff) {
     return {
         verify: {
@@ -273,7 +257,6 @@ async function runVerificationMaintenance(options = {}) {
     const summary = createSummary(dryRun, now);
 
     try {
-        summary.expiredRevealRequests = await expirePendingRevealRequests(now, dryRun);
         await runAutomaticMigrationSafe(dryRun, summary);
         await runIpIdentityHistoryMigration(dryRun, summary);
         await runIpIdentityVerifyLogMigration(dryRun, summary);

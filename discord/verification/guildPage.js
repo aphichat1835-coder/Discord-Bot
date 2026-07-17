@@ -57,7 +57,7 @@ ${navBar("/verification")}
       <div class="stat-card"><div id="stat-total" class="num">0</div><div class="label">การยืนยันทั้งหมด</div><div class="sub">เหตุการณ์ของเซิร์ฟเวอร์นี้</div></div>
       <div class="stat-card"><div id="stat-success" class="num" style="color:var(--green2)">0</div><div class="label">สำเร็จ</div><div id="stat-rate" class="sub">อัตราสำเร็จ 0%</div></div>
       <div class="stat-card"><div id="stat-blocked" class="num" style="color:var(--red2)">0</div><div class="label">ไม่ผ่าน/ถูกบล็อก</div><div class="sub">นโยบายหรือการทำงานไม่สำเร็จ</div></div>
-      <div class="stat-card"><div id="stat-risk" class="num" style="color:var(--yellow2)">0</div><div class="label">ควรตรวจเพิ่ม</div><div class="sub">พบเงื่อนไขที่ควรตรวจสอบ</div></div>
+      <div class="stat-card"><div id="stat-review" class="num" style="color:var(--yellow2)">0</div><div class="label">ควรตรวจเพิ่ม</div><div class="sub">VPN, Proxy, TOR หรือตรวจ IP ไม่สำเร็จ</div></div>
     </div>
     <div class="verify-grid four mt-14">
       <div class="stat-card"><div id="stat-vpn" class="num">0</div><div class="label">VPN</div></div>

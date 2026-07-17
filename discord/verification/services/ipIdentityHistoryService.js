@@ -18,7 +18,7 @@ function resultCounter(result) {
     return { failedCount: 1 };
 }
 
-function userFields({ profile, device, memberInfo, roleId, result, riskSummary, ipInfo, now }) {
+function userFields({ profile, device, memberInfo, roleId, result, findings, ipInfo, now }) {
     return {
         username: profile.username || null,
         globalName: profile.global_name ?? profile.globalName ?? null,
@@ -33,8 +33,9 @@ function userFields({ profile, device, memberInfo, roleId, result, riskSummary, 
         lastCommunicationDisabledUntil:
             memberInfo?.communication_disabled_until || memberInfo?.communicationDisabledUntil || null,
         lastDeviceFingerprintHash: device?.fingerprintHash || null,
-        lastRiskScore: Number(riskSummary?.score ?? ipInfo?.riskScore ?? 0),
-        lastRiskFlags: Array.isArray(riskSummary?.flags) ? riskSummary.flags : [],
+        lastFindings: Array.isArray(findings)
+            ? findings
+            : (Array.isArray(ipInfo?.findings) ? ipInfo.findings : []),
         updatedAt: now
     };
 }
@@ -425,7 +426,7 @@ function recoveredLogInput(log) {
         memberInfo: recoveredMember(member),
         roleId: log.roleId || null,
         result: log.result || "failed",
-        riskSummary: { score: log.riskScore || 0, flags: log.riskFlags || [] },
+        findings: Array.isArray(log.findings) ? log.findings : [],
         now: Number(log.verifiedAt || log.createdAt || Date.now())
     };
 }

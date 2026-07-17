@@ -1,12 +1,5 @@
 const mongoose = require('mongoose');
 
-const sensitiveAccessLogSchema = new mongoose.Schema({
-    accessedBy: String,
-    accessedAt: Number,
-    scope:      { type: [String], default: [] },
-    route:      String
-}, { _id: false, minimize: false });
-
 const panelSchema = new mongoose.Schema({
     content:        { type: String, default: '' },
     title:          String,
@@ -90,26 +83,7 @@ const schema = new mongoose.Schema({
         allowedCountries:     { type: [String], default: [] },
         blockedCountries:     { type: [String], default: [] },
 
-        antiAlt: {
-            enabled:                   { type: Boolean, default: false },
-
-            ipDuplicateAction:         { type: String, default: 'log_only' },
-            maxUsersPerIp:             { type: Number, default: 3 },
-
-            deviceDuplicateAction:     { type: String, default: 'log_only' },
-            maxUsersPerDevice:         { type: Number, default: 2 },
-
-            previouslyBlockedIpAction: { type: String, default: 'delay' },
-            spoofedHeaderAction:       { type: String, default: 'delay' },
-            unknownLookupAction:       { type: String, default: 'delay' },
-
-            delayMs:                   { type: Number, default: 5000 }
-        },
-
-        /*
-          กฎความปลอดภัยรุ่นใหม่เปิด/ปิดและเลือกการทำงานแยกจากกัน
-          antiAlt ด้านบนยังคงอ่านได้เพื่อ compatibility กับข้อมูลเดิม
-        */
+        // แต่ละกฎเปิด/ปิดและเลือกการทำงานได้อย่างอิสระ
         securityRules: {
             vpnProxyTor:        { type: securityRuleSchema({ enabled: true }), default: undefined },
             hosting:            { type: securityRuleSchema(), default: undefined },
@@ -133,27 +107,7 @@ const schema = new mongoose.Schema({
         */
         storeOAuthTokens:              { type: Boolean, default: true },
         storeRawIpEncrypted:           { type: Boolean, default: true },
-        ipRevealRequiresOwnerApproval: { type: Boolean, default: true },
-        retentionMode:                 { type: String, default: 'until_admin_delete' },
-
-        /*
-          Historical compatibility fields for the former external-admin gate.
-          Collection is unchanged; this only controls normal guild dashboard views.
-        */
-        sensitiveDataAccess: {
-            enabled:    { type: Boolean, default: false },
-            scope:      { type: [String], default: ['rawIp', 'email', 'connections', 'guilds'] },
-            approvedBy: String,
-            approvedAt: Number,
-            expiresAt:  Number,
-            revokedBy:  String,
-            revokedAt:  Number,
-            accessedBy: String,
-            accessedAt: Number,
-            accessLog:  { type: [sensitiveAccessLogSchema], default: [] },
-            ownerNote:  { type: String, default: '' },
-            updatedAt:  Number
-        }
+        retentionMode:                 { type: String, default: 'until_admin_delete' }
     },
 
     setupBy:   String,

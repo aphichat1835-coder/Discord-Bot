@@ -63,7 +63,7 @@
     statTotal: "stat-total",
     statSuccess: "stat-success",
     statBlocked: "stat-blocked",
-    statRisk: "stat-risk",
+    statReview: "stat-review",
     statRate: "stat-rate",
     statVpn: "stat-vpn",
     statProxy: "stat-proxy",
@@ -263,10 +263,9 @@
   }
 
   function normalizeRuleAction(value, fallback = "allow") {
-    const compatibility = { off: "allow", log_only: "allow", delay: "allow", block: "deny_role" };
     const actions = ["allow", "deny_role", "timeout", "kick", "ban"];
-    const mapped = compatibility[String(value || "")] || String(value || "");
-    return actions.includes(mapped) ? mapped : fallback;
+    const action = String(value || "");
+    return actions.includes(action) ? action : fallback;
   }
 
   function showToast(message, type = "ok") {
@@ -536,7 +535,7 @@
     const enabledEl = $(SELECTORS.overviewEnabled);
     if (enabledEl) {
       enabledEl.className = verification.enabled === false ? "badge badge-failed" : "badge badge-ok";
-      enabledEl.textContent = verification.enabled === false ? "Disabled" : "Enabled";
+      enabledEl.textContent = verification.enabled === false ? "ปิดใช้งาน" : "เปิดใช้งาน";
     }
 
     setText(SELECTORS.overviewRole, verification.roleName || verification.roleId || "ยังไม่ได้ตั้งค่า");
@@ -550,7 +549,7 @@
     setText(SELECTORS.statTotal, fmtNumber(stats.total));
     setText(SELECTORS.statSuccess, fmtNumber(stats.success));
     setText(SELECTORS.statBlocked, fmtNumber(stats.blocked));
-    setText(SELECTORS.statRisk, fmtNumber(stats.highRisk));
+    setText(SELECTORS.statReview, fmtNumber(stats.reviewRequired));
     setText(SELECTORS.statRate, `อัตราสำเร็จ ${fmtPercent(stats.successRate)}`);
     setText(SELECTORS.statVpn, fmtNumber(stats.vpn));
     setText(SELECTORS.statProxy, fmtNumber(stats.proxy));
@@ -775,6 +774,17 @@
     appendDetailRow(meta, "แบนสมาชิก", boolText(guild.canBanMembers));
     appendDetailRow(meta, "Permission bitfield", guild.permissions || "0", "mono");
     appendDetailRow(meta, "สิทธิ์ที่พบ", permissionFlags.join(", ") || "—");
+    if (guild.member) {
+      const member = guild.member;
+      appendDetailRow(meta, "Nickname", firstTruthy(member.nick, member.nickname));
+      appendDetailRow(meta, "วันที่เข้าเซิร์ฟเวอร์", fmtTime(member.joinedAt));
+      appendDetailRow(meta, "Avatar ในเซิร์ฟเวอร์", firstTruthy(member.avatarUrl, member.avatar), "mono");
+      appendDetailRow(meta, "รอผ่านกฎสมาชิก", boolText(member.pending));
+      appendDetailRow(meta, "กำลังถูกหมดเวลา", boolText(member.timedOut));
+      appendDetailRow(meta, "ยศทั้งหมด", firstArray(member.roles).join(", ") || "—");
+    } else {
+      appendDetailRow(meta, "ข้อมูลสมาชิกในเซิร์ฟเวอร์นี้", "Discord ไม่ได้ส่ง Nickname, ยศ และวันเข้ามากับรายการเซิร์ฟเวอร์");
+    }
     item.append(head, meta);
     if (guild.raw) item.append(rawSnapshotDetailsElement("ข้อมูล Guild ทั้งหมด", guild.raw));
     return item;
@@ -913,6 +923,7 @@
     return detailCardElement("เครือข่ายและ IP", [
       ["Country/City", `${firstTruthy(network.country, network.countryCode)} / ${firstTruthy(network.city)}`],
       ["Region / Timezone", `${firstTruthy(network.region)} / ${firstTruthy(network.timezone)}`],
+      ["Latitude / Longitude", `${firstDefined(network.lat)} / ${firstDefined(network.lon)}`],
       ["ISP", firstTruthy(network.isp)],
       ["Org/ASN", `${firstTruthy(network.org)} / ${firstTruthy(network.asn, network.as)}`],
       ["VPN / Proxy / TOR", `${boolText(network.isVPN)} / ${boolText(network.isProxy)} / ${boolText(network.isTOR)}`],
@@ -924,7 +935,12 @@
 
   function buildMemberListCards(detail = {}) {
     const connections = Array.isArray(detail.connections) ? detail.connections : [];
-    const guilds = Array.isArray(detail.guilds) ? detail.guilds : [];
+    const guilds = Array.isArray(detail.guilds) ? detail.guilds.map(guild => ({
+      ...guild,
+      member: String(guild.id || "") === String(detail.guildId || "")
+        ? (detail.targetMember || null)
+        : null
+    })) : [];
     return [
       detailListCardElement("บัญชีภายนอกที่เชื่อมกับ Discord", connections, connectionDetailElement),
       detailListCardElement("เซิร์ฟเวอร์ทั้งหมดที่ Discord ส่งมา", guilds, guildDetailElement)
@@ -959,8 +975,9 @@
     view.button.disabled = true;
     try {
       const result = await api(ipHistoryPageUrl(view.userId, view.kind, view.nextPage));
-      view.items.push(...(Array.isArray(result.items) ? result.items : []));
-      view.pre.textContent = JSON.stringify(view.items, null, 2);
+      const nextItems = Array.isArray(result.items) ? result.items : [];
+      view.items.push(...nextItems);
+      view.list.append(...nextItems.map(item => ipHistoryItemElement(view.kind, item)));
       view.summary.textContent = `${view.label} (${view.items.length}/${result.total ?? view.items.length})`;
       view.nextPage++;
       if (!result.hasMore) view.button.remove();
@@ -971,13 +988,55 @@
     }
   }
 
+  function ipHistoryItemRows(kind, item = {}) {
+    if (kind === "users") return [
+      ["ผู้ใช้", firstTruthy(item.globalName, item.username, item.displayTag)],
+      ["User ID", firstTruthy(item.userId), "mono"],
+      ["พบครั้งแรก / ล่าสุด", `${fmtTime(item.firstSeenAt)} / ${fmtTime(item.lastSeenAt)}`],
+      ["จำนวนการยืนยัน", firstDefined(item.verifyCount)],
+      ["ผลล่าสุด", firstTruthy(item.lastResult)],
+      ["ยศล่าสุด", firstArray(item.lastRoles).join(", ") || "—"],
+      ["เข้าเซิร์ฟเวอร์เมื่อ", fmtTime(item.lastJoinedAt)]
+    ];
+    if (kind === "devices") return [
+      ["อุปกรณ์", `${firstTruthy(item.deviceType)} · ${firstTruthy(item.browser)} · ${firstTruthy(item.os)}`],
+      ["ผู้ใช้", firstTruthy(item.userId), "mono"],
+      ["ภาษา / Timezone", `${firstTruthy(item.language)} / ${firstTruthy(item.timezone)}`],
+      ["ขนาดหน้าจอ", firstTruthy(item.screenSize)],
+      ["พบครั้งแรก / ล่าสุด", `${fmtTime(item.firstSeenAt)} / ${fmtTime(item.lastSeenAt)}`],
+      ["Fingerprint", firstTruthy(item.fingerprintHash), "mono"]
+    ];
+    return [
+      ["User ID", firstTruthy(item.userId), "mono"],
+      ["ผลการยืนยัน", firstTruthy(item.result)],
+      ["ยศที่ระบบจัดการ", firstTruthy(item.roleId), "mono"],
+      ["ยศทั้งหมดในครั้งนั้น", firstArray(item.roles).join(", ") || "—"],
+      ["บันทึกเมื่อ", fmtTime(item.at)]
+    ];
+  }
+
+  function ipHistoryItemElement(kind, item = {}) {
+    let title = `ยศเมื่อ ${fmtTime(item.at)}`;
+    if (kind === "users") {
+      title = firstTruthy(item.globalName, item.username, item.displayTag, item.userId);
+    } else if (kind === "devices") {
+      title = `${firstTruthy(item.deviceType)} · ${firstTruthy(item.browser)}`;
+    }
+    const card = detailCardElement(title, ipHistoryItemRows(kind, item));
+    card.classList.add("detail-entity-card");
+    card.appendChild(rawSnapshotDetailsElement("ดูข้อมูลต้นฉบับ", item));
+    return card;
+  }
+
   function ipHistoryCategoryElement({ userId, history, kind, label, field }) {
     const items = Array.isArray(history[field]) ? [...history[field]] : [];
     const pageInfo = history.pagination?.[kind] || { page: 0, total: items.length, hasMore: false };
-    const details = rawSnapshotDetailsElement(
-      `${label} (${items.length}/${pageInfo.total ?? items.length})`,
-      items
-    );
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    const list = createElement("div", "detail-list mt-10");
+    summary.textContent = `${label} (${items.length}/${pageInfo.total ?? items.length})`;
+    list.append(...items.map(item => ipHistoryItemElement(kind, item)));
+    details.append(summary, list);
     if (!pageInfo.hasMore || !userId) return details;
     const button = document.createElement("button");
     button.type = "button";
@@ -992,7 +1051,7 @@
       button,
       nextPage: Number(pageInfo.page || 0) + 1,
       summary: details.querySelector("summary"),
-      pre: details.querySelector("pre")
+      list
     };
     button.addEventListener("click", () => loadMoreIpHistory(view));
     details.appendChild(button);
@@ -1003,9 +1062,9 @@
     const root = document.createElement("div");
     const userId = firstTruthyValue(detail.identity?.userId, detail.userId);
     const definitions = [
-      ["users", "Users", "users"],
-      ["devices", "Devices", "deviceFingerprints"],
-      ["roles", "Role snapshots", "roleSnapshots"]
+      ["users", "บัญชีที่เคยใช้ IP นี้", "users"],
+      ["devices", "อุปกรณ์ที่เคยพบ", "deviceFingerprints"],
+      ["roles", "ประวัติยศจากการยืนยัน", "roleSnapshots"]
     ];
     root.append(...definitions.map(([kind, label, field]) =>
       ipHistoryCategoryElement({ userId, history, kind, label, field })
@@ -1029,7 +1088,7 @@
   function buildDataQualityCard(detail = {}) {
     const metadata = detail.verification?.snapshotMeta;
     if (!metadata) return null;
-    const card = detailCardElement("Snapshot / Data Quality", [], rawSnapshotDetailsElement("เปิดดูสถานะการเก็บข้อมูลทุกหมวด", metadata));
+    const card = detailCardElement("ความครบถ้วนของข้อมูล", [], rawSnapshotDetailsElement("เปิดดูสถานะการดึงข้อมูลทุกหมวด", metadata));
     card.classList.add("mt-14");
     return card;
   }
@@ -2031,11 +2090,9 @@
     params.set("limit", "25");
 
     const result = readValue("logs-result");
-    const risk = readValue("logs-risk");
     const q = readText("logs-search");
 
     if (result) params.set("result", result);
-    if (risk) params.set("risk", risk);
     if (q) params.set("q", q);
 
     return params.toString();
@@ -2096,13 +2153,10 @@
   function renderLogRow(log = {}) {
     const row = document.createElement("tr");
     const result = document.createElement("td");
-    const risk = document.createElement("td");
     result.appendChild(resultBadgeElement(log.result));
-    risk.appendChild(riskBadgeElement(log.riskScore));
     row.append(
       logIdentityCell(log),
       result,
-      risk,
       logNetworkCell(log),
       textTableCell(log.reason || "—"),
       textTableCell(log.roleResult || log.roleAssignmentResult || "—"),
@@ -2150,21 +2204,6 @@
       bindLogTableActions(logs);
     } catch (err) {
       body.replaceChildren(memberTableMessage(`โหลด logs ไม่สำเร็จ: ${err.message}`, "alert alert-danger"));
-    }
-  }
-
-  async function loadRisk() {
-    try {
-      const data = await api(`/api/guild/${encodeURIComponent(state.guildId)}/risk`);
-      renderRisk(data.risk || data);
-    } catch (err) {
-      const box = $(SELECTORS.riskRecent);
-      if (box) {
-        const alert = document.createElement("div");
-        alert.className = "alert alert-danger";
-        alert.textContent = `โหลด risk ไม่สำเร็จ: ${err.message}`;
-        box.replaceChildren(alert);
-      }
     }
   }
 
@@ -2288,7 +2327,7 @@
       loadLogs(0);
     }, 350);
 
-    ["logs-search", "logs-result", "logs-risk"].forEach((id) => {
+    ["logs-search", "logs-result"].forEach((id) => {
       const el = $(id);
       if (!el) return;
 
@@ -2330,7 +2369,6 @@
         security: "policy",
         members: "data",
         logs: "data",
-        risk: "data",
         privacy: "data"
       };
       return aliases[raw] || raw;

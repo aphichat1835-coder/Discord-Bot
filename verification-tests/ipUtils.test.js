@@ -307,7 +307,7 @@ describe('bounded IP lookup response reader', () => {
     });
 });
 
-describe('processIP risk flags', () => {
+describe('processIP factual network findings', () => {
     const oldFetch = global.fetch;
     const oldLookupEnabled = process.env.IP_LOOKUP_ENABLED;
 
@@ -317,7 +317,7 @@ describe('processIP risk flags', () => {
         else process.env.IP_LOOKUP_ENABLED = oldLookupEnabled;
     });
 
-    test('returns concrete risk flags from lookup and headers', async () => {
+    test('returns concrete findings from lookup and headers without a score', async () => {
         process.env.IP_LOOKUP_ENABLED = 'true';
         const providerPayload = {
             status: 'success',
@@ -344,20 +344,14 @@ describe('processIP risk flags', () => {
             }
         }));
 
-        expect(info.riskFlags).toEqual(expect.arrayContaining([
+        expect(info.findings).toEqual(expect.arrayContaining([
             'vpn',
             'proxy',
             'hosting',
             'spoofed_header',
             'xRealIp_conflicts_with_trusted_ip'
         ]));
-        expect(info.riskBreakdown).toMatchObject({
-            vpn: 35,
-            proxy: 35,
-            hosting: 25,
-            spoofedHeader: 15
-        });
-        expect(info.riskScore).toBeGreaterThan(0);
+        expect(info.lookupStatus).toBe('success');
     });
 });
 
