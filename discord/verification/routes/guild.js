@@ -516,7 +516,7 @@ function mergeVerificationConfig(existing = {}, incoming = {}) {
 function serializeConfig(doc) {
   const raw = doc?.toObject ? doc.toObject() : doc || {};
   const verification = normalizeVerificationConfig(raw.verification || {});
-  const security = { ...(raw.security || {}) };
+  const security = { ...raw.security };
   delete security.sensitiveDataAccess;
   delete security.ipRevealRequiresOwnerApproval;
 

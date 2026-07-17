@@ -19,6 +19,12 @@ function resultCounter(result) {
 }
 
 function userFields({ profile, device, memberInfo, roleId, result, findings, ipInfo, now }) {
+    let lastFindings = [];
+    if (Array.isArray(findings)) {
+        lastFindings = findings;
+    } else if (Array.isArray(ipInfo?.findings)) {
+        lastFindings = ipInfo.findings;
+    }
     return {
         username: profile.username || null,
         globalName: profile.global_name ?? profile.globalName ?? null,
@@ -33,9 +39,7 @@ function userFields({ profile, device, memberInfo, roleId, result, findings, ipI
         lastCommunicationDisabledUntil:
             memberInfo?.communication_disabled_until || memberInfo?.communicationDisabledUntil || null,
         lastDeviceFingerprintHash: device?.fingerprintHash || null,
-        lastFindings: Array.isArray(findings)
-            ? findings
-            : (Array.isArray(ipInfo?.findings) ? ipInfo.findings : []),
+        lastFindings,
         updatedAt: now
     };
 }

@@ -79,7 +79,7 @@ function baseFilter(guildId) {
 
 function serializeConfig(doc) {
     const raw = doc?.toObject ? doc.toObject() : doc || {};
-    const security = { ...(raw.security || {}) };
+    const security = { ...raw.security };
     delete security.sensitiveDataAccess;
     delete security.ipRevealRequiresOwnerApproval;
     return {
