@@ -572,7 +572,8 @@ function providerHeaders(provider) {
     const accountId = String(process.env.MAXMIND_ACCOUNT_ID || '').trim();
     const licenseKey = String(process.env.MAXMIND_LICENSE_KEY || '').trim();
     if (!accountId || !licenseKey) throw new Error('MaxMind credentials are not configured');
-    headers.Authorization = `Basic ${Buffer.from(`${accountId}:${licenseKey}`, 'utf8').toString('base64')}`;
+    const credentials = `${accountId}:${licenseKey}`;
+    headers.Authorization = `Basic ${Buffer.from(credentials, 'utf8').toString('base64')}`;
     return headers;
 }
 
@@ -794,38 +795,36 @@ function confidenceLabel(score, { providerCount, obscured, countryConflict }) {
     return 'medium';
 }
 
-function locationConfidence(results, agreement, flags, accuracyRadiusKm) {
+function providerCountConfidence(providerCount) {
+    return providerCount < 2
+        ? { score: 40, reasons: ['single_provider'] }
+        : { score: 55, reasons: [] };
+}
+
+function agreementConfidence(value, dimension, agreedScore, conflictScore) {
+    if (value.agreed) {
+        return { score: agreedScore, reasons: [`providers_agree_${dimension}`] };
+    }
+    if (value.conflict) {
+        return { score: conflictScore, reasons: [`providers_disagree_${dimension}`] };
+    }
+    return { score: 0, reasons: [] };
+}
+
+function accuracyConfidence(accuracyRadiusKm) {
+    if (!Number.isFinite(accuracyRadiusKm)) {
+        return { score: 0, reasons: ['accuracy_radius_unavailable'] };
+    }
+
+    let score = 0;
+    if (accuracyRadiusKm <= 50) score += 5;
+    if (accuracyRadiusKm >= 250) score -= 10;
+    return { score, reasons: ['provider_supplied_accuracy_radius'] };
+}
+
+function networkFlagConfidence(flags) {
     const reasons = [];
-    let score = results.length >= 2 ? 55 : 40;
-    if (results.length < 2) reasons.push('single_provider');
-    if (agreement.countryCode.agreed) {
-        score += 15;
-        reasons.push('providers_agree_country');
-    } else if (agreement.countryCode.conflict) {
-        score -= 25;
-        reasons.push('providers_disagree_country');
-    }
-    if (agreement.region.agreed) {
-        score += 10;
-        reasons.push('providers_agree_region');
-    } else if (agreement.region.conflict) {
-        score -= 10;
-        reasons.push('providers_disagree_region');
-    }
-    if (agreement.city.agreed) {
-        score += 10;
-        reasons.push('providers_agree_city');
-    } else if (agreement.city.conflict) {
-        score -= 5;
-        reasons.push('providers_disagree_city');
-    }
-    if (Number.isFinite(accuracyRadiusKm)) {
-        reasons.push('provider_supplied_accuracy_radius');
-        if (accuracyRadiusKm <= 50) score += 5;
-        if (accuracyRadiusKm >= 250) score -= 10;
-    } else {
-        reasons.push('accuracy_radius_unavailable');
-    }
+    let score = 0;
     if (flags.mobile) {
         score -= 10;
         reasons.push('mobile_or_cgnat_location');
@@ -842,13 +841,30 @@ function locationConfidence(results, agreement, flags, accuracyRadiusKm) {
         score -= 35;
         reasons.push('network_exit_location');
     }
+    return { score, reasons };
+}
+
+function locationIsObscured(flags) {
+    return flags.isVPN || flags.isProxy || flags.isTOR || flags.hosting || flags.anycast;
+}
+
+function locationConfidence(results, agreement, flags, accuracyRadiusKm) {
+    const contributions = [
+        providerCountConfidence(results.length),
+        agreementConfidence(agreement.countryCode, 'country', 15, -25),
+        agreementConfidence(agreement.region, 'region', 10, -10),
+        agreementConfidence(agreement.city, 'city', 10, -5),
+        accuracyConfidence(accuracyRadiusKm),
+        networkFlagConfidence(flags)
+    ];
+    let score = contributions.reduce((sum, contribution) => sum + contribution.score, 0);
+    const reasons = contributions.flatMap(contribution => contribution.reasons);
     score = Math.max(0, Math.min(100, Math.round(score)));
-    const obscured = flags.isVPN || flags.isProxy || flags.isTOR || flags.hosting || flags.anycast;
     return {
         score,
         label: confidenceLabel(score, {
             providerCount: results.length,
-            obscured,
+            obscured: locationIsObscured(flags),
             countryConflict: agreement.countryCode.conflict
         }),
         reasons: [...new Set(reasons)]
