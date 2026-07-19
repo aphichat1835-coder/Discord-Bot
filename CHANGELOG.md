@@ -2,6 +2,13 @@
 
 ## [Unreleased] - Unified Bot And Verification Runtime 2026-07-16
 
+- Rebuilt `/userinfo`, `/serverinfo`, and `/ping` as Thai, mobile-readable
+  information panels. User lookup now preserves the selected target when the
+  guild member is not cached, account age is presented as context instead of a
+  risk verdict, Server Info labels cache/fetch limitations, and Ping reports
+  process RSS, V8 heap, sampled CPU, database metrics, shard state, and Voice
+  session states without mixing their meanings.
+
 - Retired the `/help` slash command from registration and runtime routing; the
   Owner Dashboard documentation page remains available separately.
 

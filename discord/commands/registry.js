@@ -55,12 +55,12 @@ function validateSlashCommandsData(commands) {
 
 const slashCommandsData = [
     { name: "voice-online", description: "เรียกแผงควบคุมระบบออนช่องเสียง" },
-    { name: "serverinfo", description: "แสดงข้อมูลรายละเอียดของเซิร์ฟเวอร์แบบเจาะลึก" },
-    { name: "ping",       description: "ตรวจสอบ Latency และสถานะระบบ" },
+    { name: "serverinfo", description: "ดูสมาชิก ช่อง ความปลอดภัย Boost และทรัพยากรของเซิร์ฟเวอร์" },
+    { name: "ping",       description: "วัดการตอบสนอง RAM CPU และสถานะระบบแบบเรียลไทม์" },
 
     {
         name: "userinfo",
-        description: "แสดงข้อมูลโปรไฟล์ของสมาชิก",
+        description: "ดูบัญชี อายุ ยศ สิทธิ์ และสถานะของสมาชิกในเซิร์ฟเวอร์",
         options: [
             { type: 6, name: "member", description: "สมาชิกที่ต้องการดูข้อมูล", required: false }
         ]

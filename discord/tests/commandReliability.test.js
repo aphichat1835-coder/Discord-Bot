@@ -179,7 +179,7 @@ test("serverinfo skips full member fetch for large guilds with incomplete cache"
     assert.equal(fetches, 0);
     assert.equal(result.human, null);
     assert.equal(result.bots, null);
-    assert.match(result.source, /เกินเพดาน full fetch/);
+    assert.match(result.source, /ไม่โหลดรายชื่อทั้งหมด/);
 });
 
 
@@ -206,5 +206,5 @@ test("serverinfo bounds member fetch time and falls back to cache on timeout", a
     assert.equal(optionsSeen.time, information._test.SERVERINFO_FETCH_TIMEOUT_MS);
     assert.equal(result.human, 1);
     assert.equal(result.bots, 1);
-    assert.match(result.source, /cache/);
+    assert.match(result.source, /ข้อมูลที่บอทเก็บไว้/);
 });
