@@ -7,26 +7,34 @@ function arrayOrEmpty(value) {
   return Array.isArray(value) ? value : [];
 }
 
+function valueOrDefault(value, defaultValue) {
+  return value || defaultValue;
+}
+
+function valueOrNull(value) {
+  return value ?? null;
+}
+
 function safeIpLocation(ipInfo = {}) {
   return {
-    country: ipInfo.country || "unknown",
-    countryCode: ipInfo.countryCode || "unknown",
-    region: ipInfo.region || "",
-    city: ipInfo.city || "unknown",
-    zip: ipInfo.zip || "",
-    lat: ipInfo.lat ?? null,
-    lon: ipInfo.lon ?? null,
-    timezone: ipInfo.timezone || "",
-    accuracyRadiusKm: ipInfo.accuracyRadiusKm ?? null,
-    locationAccuracy: ipInfo.locationAccuracy || "",
-    locationConfidence: ipInfo.locationConfidence || "unknown",
-    locationConfidenceScore: ipInfo.locationConfidenceScore ?? null,
+    country: valueOrDefault(ipInfo.country, "unknown"),
+    countryCode: valueOrDefault(ipInfo.countryCode, "unknown"),
+    region: valueOrDefault(ipInfo.region, ""),
+    city: valueOrDefault(ipInfo.city, "unknown"),
+    zip: valueOrDefault(ipInfo.zip, ""),
+    lat: valueOrNull(ipInfo.lat),
+    lon: valueOrNull(ipInfo.lon),
+    timezone: valueOrDefault(ipInfo.timezone, ""),
+    accuracyRadiusKm: valueOrNull(ipInfo.accuracyRadiusKm),
+    locationAccuracy: valueOrDefault(ipInfo.locationAccuracy, ""),
+    locationConfidence: valueOrDefault(ipInfo.locationConfidence, "unknown"),
+    locationConfidenceScore: valueOrNull(ipInfo.locationConfidenceScore),
     locationConfidenceReasons: arrayOrEmpty(ipInfo.locationConfidenceReasons),
-    providerAgreement: ipInfo.providerAgreement || null,
+    providerAgreement: valueOrDefault(ipInfo.providerAgreement, null),
     providerEvidence: arrayOrEmpty(ipInfo.providerEvidence),
-    browserTimezone: ipInfo.browserTimezone || "",
-    browserTimezoneMatches: ipInfo.browserTimezoneMatches ?? null,
-    historyConsistency: ipInfo.historyConsistency || null
+    browserTimezone: valueOrDefault(ipInfo.browserTimezone, ""),
+    browserTimezoneMatches: valueOrNull(ipInfo.browserTimezoneMatches),
+    historyConsistency: valueOrDefault(ipInfo.historyConsistency, null)
   };
 }
 
