@@ -459,7 +459,10 @@ function ownerIpLocation(link = {}) {
         isp: link.lastIsp || null,
         org: link.lastOrg || null,
         as: link.lastAs || null,
-        asname: link.lastAsname || null
+        asname: link.lastAsname || null,
+        accuracyRadiusKm: link.accuracyRadiusKm ?? link.lastIpInfo?.accuracyRadiusKm ?? null,
+        locationConfidence: link.locationConfidence || link.lastIpInfo?.locationConfidence || "unknown",
+        locationConfidenceScore: link.locationConfidenceScore ?? link.lastIpInfo?.locationConfidenceScore ?? null
     };
 }
 
@@ -469,7 +472,9 @@ function ownerIpSignals(link = {}) {
         isProxy: link.isProxy === true,
         isTOR: link.isTOR === true,
         hosting: link.hosting === true,
-        mobile: link.mobile === true
+        mobile: link.mobile === true,
+        anycast: link.anycast === true,
+        networkType: link.networkType || link.lastIpInfo?.networkType || null
     };
 }
 

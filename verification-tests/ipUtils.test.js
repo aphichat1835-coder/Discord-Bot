@@ -29,6 +29,7 @@ const {
     isPrivateIP,
     extractDevice,
     processIP,
+    applyHistoricalLocationContext,
     _test
 } = require('../discord/verification/utils/ipUtils');
 
@@ -362,6 +363,8 @@ describe('IP lookup config', () => {
     const oldEnabled = process.env.IP_LOOKUP_ENABLED;
     const oldBaseUrl = process.env.IP_LOOKUP_API_BASE_URL;
     const oldFallbackEnabled = process.env.IP_LOOKUP_FALLBACK_ENABLED;
+    const oldMaxmindAccountId = process.env.MAXMIND_ACCOUNT_ID;
+    const oldMaxmindLicenseKey = process.env.MAXMIND_LICENSE_KEY;
 
     afterEach(() => {
         if (oldEnabled === undefined) delete process.env.IP_LOOKUP_ENABLED;
@@ -372,6 +375,11 @@ describe('IP lookup config', () => {
 
         if (oldFallbackEnabled === undefined) delete process.env.IP_LOOKUP_FALLBACK_ENABLED;
         else process.env.IP_LOOKUP_FALLBACK_ENABLED = oldFallbackEnabled;
+
+        if (oldMaxmindAccountId === undefined) delete process.env.MAXMIND_ACCOUNT_ID;
+        else process.env.MAXMIND_ACCOUNT_ID = oldMaxmindAccountId;
+        if (oldMaxmindLicenseKey === undefined) delete process.env.MAXMIND_LICENSE_KEY;
+        else process.env.MAXMIND_LICENSE_KEY = oldMaxmindLicenseKey;
     });
 
     test('uses HTTPS default lookup base URL', () => {
@@ -393,6 +401,23 @@ describe('IP lookup config', () => {
             .toThrow('credential-free HTTPS');
     });
 
+    test('keeps optional MaxMind credentials out of the request URL and public config', () => {
+        process.env.MAXMIND_ACCOUNT_ID = '123456';
+        process.env.MAXMIND_LICENSE_KEY = 'test-license-secret';
+        const config = getIpLookupConfig();
+        const provider = config.providers.find(item => item.type === 'maxmind');
+        const url = _test.providerUrl(provider, '8.8.8.8');
+        const headers = _test.providerHeaders(provider);
+
+        expect(provider).toBeDefined();
+        expect(url.hostname).toBe('geoip.maxmind.com');
+        expect(url.username).toBe('');
+        expect(url.password).toBe('');
+        expect(url.toString()).not.toContain('test-license-secret');
+        expect(JSON.stringify(config)).not.toContain('test-license-secret');
+        expect(headers.Authorization).toMatch(/^Basic /);
+    });
+
     test('can disable external IP lookup', async () => {
         process.env.IP_LOOKUP_ENABLED = 'false';
 
@@ -407,10 +432,11 @@ describe('IP lookup config', () => {
         process.env.IP_LOOKUP_ENABLED = 'true';
         delete process.env.IP_LOOKUP_API_BASE_URL;
         process.env.IP_LOOKUP_FALLBACK_ENABLED = 'true';
-        global.fetch = jest.fn()
-            .mockResolvedValueOnce({ ok: false, status: 503, text: async () => '' })
-            .mockResolvedValueOnce({ ok: false, status: 503, text: async () => '' })
-            .mockResolvedValueOnce({
+        global.fetch = jest.fn(async url => {
+            if (String(url).includes('api.ipapi.is')) {
+                return { ok: false, status: 503, text: async () => '' };
+            }
+            return {
                 ok: true,
                 text: async () => JSON.stringify({
                     ip: '9.9.9.8',
@@ -423,7 +449,8 @@ describe('IP lookup config', () => {
                     org: 'Example ISP',
                     asn: 'AS64500'
                 })
-            });
+            };
+        });
 
         const lookup = await lookupIP('9.9.9.8');
 
@@ -433,6 +460,76 @@ describe('IP lookup config', () => {
         expect(lookup.securitySignalsAvailable).toBe(false);
         expect(lookup.countryCode).toBe('TH');
         expect(lookup.city).toBe('Krabi');
+        expect(lookup.locationConfidence).toBe('low');
+        expect(lookup.locationConfidenceReasons).toContain('single_provider');
+    });
+
+    test('combines matching providers and exposes honest confidence evidence', async () => {
+        process.env.IP_LOOKUP_ENABLED = 'true';
+        delete process.env.IP_LOOKUP_API_BASE_URL;
+        process.env.IP_LOOKUP_FALLBACK_ENABLED = 'true';
+        global.fetch = jest.fn(async url => {
+            if (String(url).includes('api.ipapi.is')) {
+                return {
+                    ok: true,
+                    text: async () => JSON.stringify({
+                        ip: '9.9.9.7',
+                        location: {
+                            country: 'Thailand', country_code: 'TH', state: 'Krabi', city: 'Krabi',
+                            latitude: 8.0863, longitude: 98.9063, timezone: 'Asia/Bangkok', accuracy: 30
+                        },
+                        company: { name: 'Example ISP', type: 'isp' },
+                        asn: { asn: 64500, org: 'Example ISP' },
+                        is_proxy: false, is_vpn: false, is_tor: false, is_datacenter: false
+                    })
+                };
+            }
+            return {
+                ok: true,
+                text: async () => JSON.stringify({
+                    ip: '9.9.9.7', country_name: 'Thailand', country_code: 'TH',
+                    region: 'Krabi', city: 'Krabi', latitude: 8.08, longitude: 98.9,
+                    timezone: 'Asia/Bangkok', org: 'Example ISP', asn: 'AS64500'
+                })
+            };
+        });
+
+        const lookup = await lookupIP('9.9.9.7');
+
+        expect(lookup.provider).toBe('consensus');
+        expect(lookup.consensusUsed).toBe(true);
+        expect(lookup.providerCount).toBe(2);
+        expect(lookup.providerAgreement.countryCode.agreed).toBe(true);
+        expect(lookup.locationConfidence).toBe('high');
+        expect(lookup.accuracyRadiusKm).toBe(30);
+        expect(lookup.providerEvidence).toHaveLength(2);
+        expect(JSON.stringify(lookup.providerEvidence)).not.toContain('9.9.9.7');
+    });
+
+    test('marks country disagreement as low confidence instead of averaging coordinates', () => {
+        const merged = _test.mergeProviderResults([
+            { provider: 'one', status: 'success', countryCode: 'TH', region: 'Krabi', city: 'Krabi', lat: 8, lon: 99 },
+            { provider: 'two', status: 'success', countryCode: 'SG', region: 'Singapore', city: 'Singapore', lat: 1.3, lon: 103.8 }
+        ], [], ['one', 'two']);
+
+        expect(merged.locationConfidence).toBe('low');
+        expect(merged.locationConfidenceReasons).toContain('providers_disagree_country');
+        expect([[8, 99], [1.3, 103.8]]).toContainEqual([merged.lat, merged.lon]);
+    });
+
+    test('normalizes MaxMind confidence and accuracy radius without exposing credentials', () => {
+        const result = _test.normalizeMaxMindResponse({
+            country: { iso_code: 'TH', confidence: 95, names: { en: 'Thailand' } },
+            subdivisions: [{ confidence: 80, names: { en: 'Krabi' } }],
+            city: { confidence: 70, names: { en: 'Krabi' } },
+            location: { latitude: 8.08, longitude: 98.9, time_zone: 'Asia/Bangkok', accuracy_radius: 25 },
+            traits: { autonomous_system_number: 64500, autonomous_system_organization: 'Example ISP' }
+        }, 'geoip.maxmind.com');
+
+        expect(result).toMatchObject({
+            countryCode: 'TH', region: 'Krabi', city: 'Krabi', accuracyRadiusKm: 25,
+            countryConfidence: 95, regionConfidence: 80, cityConfidence: 70
+        });
     });
 
     test('opens circuit breaker after repeated provider failures', async () => {
@@ -448,6 +545,31 @@ describe('IP lookup config', () => {
         const lookup = await lookupIP('1.0.0.1');
         expect(lookup.provider).toBe('circuit_breaker');
         expect(lookup.status).toBe('lookup_failed');
+    });
+});
+
+describe('location confidence context', () => {
+    test('uses matching browser timezone only as a small supporting signal', () => {
+        const result = _test.applyRequestLocationContext({
+            timezone: 'Asia/Bangkok', locationConfidenceScore: 70,
+            locationConfidenceReasons: [], providerCount: 2, providerAgreement: { countryCode: { conflict: false } }
+        }, { body: { timezone: 'Asia/Bangkok' } }, { spoofSuspected: false });
+
+        expect(result.locationConfidenceScore).toBe(75);
+        expect(result.browserTimezoneMatches).toBe(true);
+        expect(result.locationConfidenceReasons).toContain('browser_timezone_matches');
+    });
+
+    test('compares the latest stored network without treating history as proof', () => {
+        const result = applyHistoricalLocationContext({
+            countryCode: 'TH', region: 'Krabi', as: 'AS64500',
+            locationConfidenceScore: 70, locationConfidenceReasons: [],
+            lookupProviderCount: 2, providerAgreement: { countryCode: { conflict: false } }
+        }, { lastCountryCode: 'TH', lastRegion: 'Krabi', lastAs: 'AS64500' });
+
+        expect(result.locationConfidenceScore).toBe(75);
+        expect(result.locationConfidenceReasons).toContain('historical_network_matches');
+        expect(result.historyConsistency.matches).toEqual(['country', 'region', 'asn']);
     });
 });
 

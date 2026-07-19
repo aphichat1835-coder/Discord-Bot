@@ -94,10 +94,11 @@ MongoDB model/collection names and encryption format.
 - Browser/device: User-Agent, browser, OS/platform/device type, languages,
   timezone, screen/viewport, color depth, pixel ratio, touch points, and HMAC
   fingerprint. Fingerprint source material is not persisted.
-- Network: trusted-proxy source IP, HMAC hash, encrypted raw IP, location,
-  ISP/org/ASN, VPN/proxy/TOR/hosting/mobile signals, provider/status, and
+- Network: trusted-proxy source IP, HMAC hash, encrypted raw IP, multi-provider
+  location consensus, provider-supplied accuracy radius, confidence with
+  reasons, ISP/org/ASN, VPN/proxy/TOR/hosting/mobile/anycast signals, and
   spoof/header-conflict signals. The system records the source IP visible to the
-  trusted proxy; it does not claim to bypass a VPN.
+  trusted proxy; it does not claim to bypass a VPN or identify a street address.
 - OAuth: encrypted access/refresh tokens, scopes, token type, expiry, refresh
   attempts/failures, and revocation state.
 - Data quality: snapshot version, source, attempt/fetch timestamps, status,
@@ -154,6 +155,13 @@ Production has exactly 13 owner-maintained environment values: `NODE_ENV`,
 `PUBLIC_BASE_URL`, `WEBHOOK_LOG_URL`, `ALERT_WEBHOOK_URL`, and `TRUST_PROXY`.
 All other runtime controls have code defaults. Legacy public-URL aliases remain
 read-compatible but do not need to be configured.
+
+IP location compares `ipapi.is` and `ipapi.co` by default. Optional
+`MAXMIND_ACCOUNT_ID` and `MAXMIND_LICENSE_KEY` enable MaxMind GeoIP as an
+additional precision source; they are not required for startup. Lookup requests
+run concurrently with bounded timeout/retry, cache, response-size limits, and a
+circuit breaker. The Dashboard treats returned coordinates as approximate and
+shows a radius only when a provider supplies one.
 
 `DASHBOARD_PIN` must be non-empty in production. The application does not
 enforce a minimum length or character pattern; the Owner chooses the credential

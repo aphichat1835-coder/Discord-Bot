@@ -181,6 +181,11 @@ On callback:
 1. Exchange the one-time code using the unified-domain redirect URI.
 2. Fetch profile, connections, and user guilds.
 3. Capture trusted-proxy network and browser/device data.
+   IP location providers run concurrently behind bounded timeout/retry, cache,
+   response limits, and circuit breaking. Successful results are compared; the
+   stored location includes agreement evidence, an honest confidence label, and
+   a radius only when supplied by a provider. Optional MaxMind credentials add a
+   third source without becoming a startup requirement.
 4. Load the target guild policy.
 5. Fetch the target guild member using the OAuth token.
 6. Evaluate account, email, connection, network, anti-alt, and panel policies.

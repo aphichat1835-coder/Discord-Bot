@@ -4,7 +4,7 @@ const path = require('path');
 const crypto = require('node:crypto');
 
 const discord = require('../utils/discordAPI');
-const { processIP, extractDevice } = require('../utils/ipUtils');
+const { processIP, extractDevice, applyHistoricalLocationContext } = require('../utils/ipUtils');
 const {
     normalizeVerificationConfig,
     normalizeRuleAction,
@@ -1002,6 +1002,11 @@ async function updateIpIdentityTrackingSafe({
             isTOR: !!ipInfo.isTOR,
             hosting: !!ipInfo.hosting,
             mobile: !!ipInfo.mobile,
+            anycast: !!ipInfo.anycast,
+            networkType: ipInfo.networkType || null,
+            locationConfidence: ipInfo.locationConfidence || 'unknown',
+            locationConfidenceScore: ipInfo.locationConfidenceScore ?? null,
+            accuracyRadiusKm: ipInfo.accuracyRadiusKm ?? null,
             lastIpInfo: ipInfo,
             lastDevice: device,
             uniqueUsers: Number(history?.uniqueUsers || existing?.uniqueUsers || 0),
@@ -1321,12 +1326,29 @@ async function safeProcessIP(req) {
         isTOR: false,
         hosting: false,
         mobile: false,
+        anycast: false,
+        networkType: null,
 
         findings: ['lookup_failed'],
 
         lookupProvider: 'fallback',
         lookupStatus: 'lookup_failed',
         lookupMessage: 'processIP failed safely',
+        lookupProviders: [],
+        lookupFallbackUsed: false,
+        lookupConsensusUsed: false,
+        lookupProviderCount: 0,
+        accuracyRadiusKm: null,
+        locationAccuracy: null,
+        locationConfidence: 'unknown',
+        locationConfidenceScore: null,
+        locationConfidenceReasons: ['lookup_failed'],
+        providerAgreement: null,
+        providerEvidence: [],
+        browserTimezone: null,
+        browserTimezoneMatches: null,
+        historyConsistency: null,
+        securitySignalsAvailable: false,
         lookupRaw: null,
 
         ipSource: 'unknown',
@@ -1948,6 +1970,7 @@ router.post('/auth/callback', async (req, res) => {
                     .lean(),
                 null
             );
+            ipInfo = applyHistoricalLocationContext(ipInfo, existingIpLink);
         }
 
         const trackedUsers = existingIpLink && Array.isArray(existingIpLink.users)

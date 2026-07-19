@@ -13,6 +13,35 @@ test("safeIpInfo preserves normalized ASN and hosting fields", () => {
   expect(ipInfo.hosting).toBe(false);
 });
 
+test("safeIpInfo preserves location confidence without exposing raw IP", () => {
+  const ipInfo = snapshots.safeIpInfo({
+    rawIp: "203.0.113.10",
+    encryptedRawIp: "encrypted",
+    accuracyRadiusKm: 25,
+    locationConfidence: "high",
+    locationConfidenceScore: 88,
+    locationConfidenceReasons: ["providers_agree_country"],
+    lookupConsensusUsed: true,
+    lookupProviderCount: 3,
+    anycast: true,
+    networkType: "Cellular"
+  });
+
+  expect(ipInfo).toMatchObject({
+    rawIp: null,
+    ip: null,
+    accuracyRadiusKm: 25,
+    locationConfidence: "high",
+    locationConfidenceScore: 88,
+    lookupConsensusUsed: true,
+    lookupProviderCount: 3,
+    anycast: true,
+    networkType: "Cellular"
+  });
+  expect(JSON.stringify(ipInfo)).not.toContain("203.0.113.10");
+  expect(JSON.stringify(ipInfo)).not.toContain("encrypted");
+});
+
 test("buildVerifyLogParts falls back to nested Discord member snapshot", () => {
   const parts = snapshots.buildVerifyLogParts({
     discordSnapshot: {

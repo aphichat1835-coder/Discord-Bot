@@ -62,6 +62,8 @@ const schema = new mongoose.Schema({
         isTOR: Boolean,
         hosting: Boolean,
         mobile: Boolean,
+        anycast: Boolean,
+        networkType: String,
 
         findings: [String],
 
@@ -70,7 +72,18 @@ const schema = new mongoose.Schema({
         lookupMessage: String,
         lookupProviders: [String],
         lookupFallbackUsed: Boolean,
+        lookupConsensusUsed: Boolean,
+        lookupProviderCount: Number,
+        accuracyRadiusKm: Number,
         locationAccuracy: String,
+        locationConfidence: String,
+        locationConfidenceScore: Number,
+        locationConfidenceReasons: [String],
+        providerAgreement: mixed,
+        providerEvidence: mixed,
+        browserTimezone: String,
+        browserTimezoneMatches: Boolean,
+        historyConsistency: mixed,
         securitySignalsAvailable: Boolean,
         lookupRaw: mixed,
 

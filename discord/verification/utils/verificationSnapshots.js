@@ -12,7 +12,19 @@ function safeIpLocation(ipInfo = {}) {
     zip: ipInfo.zip || "",
     lat: ipInfo.lat ?? null,
     lon: ipInfo.lon ?? null,
-    timezone: ipInfo.timezone || ""
+    timezone: ipInfo.timezone || "",
+    accuracyRadiusKm: ipInfo.accuracyRadiusKm ?? null,
+    locationAccuracy: ipInfo.locationAccuracy || "",
+    locationConfidence: ipInfo.locationConfidence || "unknown",
+    locationConfidenceScore: ipInfo.locationConfidenceScore ?? null,
+    locationConfidenceReasons: Array.isArray(ipInfo.locationConfidenceReasons)
+      ? ipInfo.locationConfidenceReasons
+      : [],
+    providerAgreement: ipInfo.providerAgreement || null,
+    providerEvidence: Array.isArray(ipInfo.providerEvidence) ? ipInfo.providerEvidence : [],
+    browserTimezone: ipInfo.browserTimezone || "",
+    browserTimezoneMatches: ipInfo.browserTimezoneMatches ?? null,
+    historyConsistency: ipInfo.historyConsistency || null
   };
 }
 
@@ -35,6 +47,8 @@ function safeIpFlags(ipInfo = {}) {
     isHosting: !!(ipInfo.isHosting ?? ipInfo.hosting),
     hosting: !!(ipInfo.hosting ?? ipInfo.isHosting),
     mobile: !!ipInfo.mobile,
+    anycast: !!ipInfo.anycast,
+    networkType: ipInfo.networkType || "",
     findings: Array.isArray(ipInfo.findings) ? ipInfo.findings : []
   };
 }
@@ -46,7 +60,8 @@ function safeIpLookup(ipInfo = {}) {
     lookupMessage: ipInfo.lookupMessage || "",
     lookupProviders: Array.isArray(ipInfo.lookupProviders) ? ipInfo.lookupProviders : [],
     lookupFallbackUsed: ipInfo.lookupFallbackUsed === true,
-    locationAccuracy: ipInfo.locationAccuracy || "",
+    lookupConsensusUsed: ipInfo.lookupConsensusUsed === true,
+    lookupProviderCount: Number(ipInfo.lookupProviderCount || 0),
     securitySignalsAvailable: ipInfo.securitySignalsAvailable === true,
     proxyCheckProvider: ipInfo.proxyCheckProvider || "",
     proxyCheckStatus: ipInfo.proxyCheckStatus || "",

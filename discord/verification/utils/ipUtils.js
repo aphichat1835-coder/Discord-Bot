@@ -11,6 +11,7 @@ const IP_LOOKUP_CACHE_MAX = Math.max(100, Number(process.env.IP_LOOKUP_CACHE_MAX
 const IP_LOOKUP_CIRCUIT_FAIL_THRESHOLD = Math.max(1, Number(process.env.IP_LOOKUP_CIRCUIT_FAIL_THRESHOLD || 10) || 10);
 const IP_LOOKUP_CIRCUIT_OPEN_MS = Math.max(10000, Number(process.env.IP_LOOKUP_CIRCUIT_OPEN_MS || 5 * 60 * 1000) || 5 * 60 * 1000);
 const DEFAULT_IP_LOOKUP_RESPONSE_MAX_BYTES = 256 * 1024;
+const DEFAULT_MAXMIND_CITY_URL = 'https://geoip.maxmind.com/geoip/v2.1/city/{ip}';
 function resolveResponseMaxBytes(value) {
     const parsed = Number(value);
     if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_IP_LOOKUP_RESPONSE_MAX_BYTES;
@@ -22,7 +23,7 @@ const X_FORWARDED_FOR_MAX_ENTRIES = 20;
 const IPV4_MASK_ALL = 2 ** 32 - 1;
 const DEFAULT_IP_LOOKUP_API_BASE_URL = 'https://api.ipapi.is';
 const DEFAULT_IP_LOOKUP_FALLBACK_URL = 'https://ipapi.co/{ip}/json/';
-const DEFAULT_IP_LOOKUP_HOSTS = Object.freeze(['api.ipapi.is', 'ipapi.co']);
+const DEFAULT_IP_LOOKUP_HOSTS = Object.freeze(['api.ipapi.is', 'ipapi.co', 'geoip.maxmind.com']);
 const lookupCache = new Map();
 const lookupCircuit = {
     failures: 0,
@@ -36,13 +37,25 @@ function getIpLookupConfig() {
     const customBaseUrl = String(process.env.IP_LOOKUP_API_BASE_URL || '').trim();
     const fallbackRaw = String(process.env.IP_LOOKUP_FALLBACK_ENABLED ?? 'true').trim().toLowerCase();
     const fallbackEnabled = !['0', 'false', 'no', 'off', 'disabled'].includes(fallbackRaw);
+    const consensusRaw = String(process.env.IP_LOOKUP_CONSENSUS_ENABLED ?? 'true').trim().toLowerCase();
+    const consensusEnabled = !['0', 'false', 'no', 'off', 'disabled'].includes(consensusRaw);
+    const maxmindRaw = String(process.env.MAXMIND_IP_LOOKUP_ENABLED ?? 'true').trim().toLowerCase();
+    const maxmindConfigured = !!String(process.env.MAXMIND_ACCOUNT_ID || '').trim() &&
+        !!String(process.env.MAXMIND_LICENSE_KEY || '').trim();
+    const maxmindEnabled = maxmindConfigured &&
+        !['0', 'false', 'no', 'off', 'disabled'].includes(maxmindRaw);
     const baseUrl = customBaseUrl || DEFAULT_IP_LOOKUP_API_BASE_URL;
 
     return {
         enabled,
         baseUrl,
         fallbackEnabled,
+        consensusEnabled,
+        maxmindEnabled,
         providers: [
+            ...(maxmindEnabled
+                ? [{ name: 'maxmind', baseUrl: DEFAULT_MAXMIND_CITY_URL, type: 'maxmind' }]
+                : []),
             customBaseUrl
                 ? { name: 'custom', baseUrl: customBaseUrl, type: 'ip-api' }
                 : { name: 'ipapi.is', baseUrl: DEFAULT_IP_LOOKUP_API_BASE_URL, type: 'ipapi-is' },
@@ -525,7 +538,10 @@ function ipApiFields() {
         'hosting',
         'query',
         'vpn',
-        'tor'
+        'tor',
+        'anycast',
+        'networkType',
+        'accuracyRadiusKm'
     ].join(',');
 
     return fields;
@@ -544,6 +560,20 @@ function providerUrl(provider, ip) {
     const url = new URL(endpoint);
     if (provider.type === 'ip-api') url.searchParams.set('fields', ipApiFields());
     return url;
+}
+
+function providerHeaders(provider) {
+    const headers = {
+        'User-Agent': 'Phomueangtai-Verify/1.2',
+        'Accept': 'application/json'
+    };
+    if (provider.type !== 'maxmind') return headers;
+
+    const accountId = String(process.env.MAXMIND_ACCOUNT_ID || '').trim();
+    const licenseKey = String(process.env.MAXMIND_LICENSE_KEY || '').trim();
+    if (!accountId || !licenseKey) throw new Error('MaxMind credentials are not configured');
+    headers.Authorization = `Basic ${Buffer.from(`${accountId}:${licenseKey}`, 'utf8').toString('base64')}`;
+    return headers;
 }
 
 function configuredLookupHosts() {
@@ -586,6 +616,9 @@ function normalizeIpapiIsResponse(data = {}, hostname = '') {
         mobile: data.is_mobile === true, proxy: data.is_proxy === true,
         hosting: data.is_datacenter === true, vpn: data.is_vpn === true,
         tor: data.is_tor === true, query: data.ip, message: null,
+        anycast: data.is_anycast === true,
+        networkType: company.type || asn.type || null,
+        accuracyRadiusKm: safeNumber(location.accuracy, null),
         locationAccuracy: location.accuracy || null,
         securitySignalsAvailable: true
     };
@@ -601,12 +634,55 @@ function normalizeIpapiCoResponse(data = {}, hostname = '') {
         isp: data.org, org: data.org, as: data.asn, asname: data.org,
         reverse: data.hostname || null, mobile: false, proxy: false,
         hosting: false, vpn: false, tor: false, query: data.ip, message: null,
+        anycast: false, networkType: data.network || null,
+        accuracyRadiusKm: null,
         locationAccuracy: null,
         securitySignalsAvailable: false
     };
 }
 
+function maxmindName(value = {}) {
+    if (!value || typeof value !== 'object') return null;
+    return value.en || Object.values(value).find(Boolean) || null;
+}
+
+function normalizeMaxMindResponse(data = {}, hostname = '') {
+    if (data.error || data.code) {
+        throw new Error(String(data.error || data.code || 'MaxMind lookup failed'));
+    }
+    const location = data.location || {};
+    const traits = data.traits || {};
+    const subdivision = Array.isArray(data.subdivisions) ? data.subdivisions[0] || {} : {};
+    const asNumber = traits.autonomous_system_number;
+    return {
+        provider: hostname || 'maxmind', raw: data, status: 'success',
+        country: maxmindName(data.country?.names), countryCode: data.country?.iso_code,
+        region: maxmindName(subdivision.names), city: maxmindName(data.city?.names),
+        zip: data.postal?.code, lat: location.latitude, lon: location.longitude,
+        timezone: location.time_zone, isp: traits.isp || traits.organization,
+        org: traits.organization || traits.autonomous_system_organization,
+        as: asNumber ? `AS${asNumber}` : null,
+        asname: traits.autonomous_system_organization, reverse: traits.domain || null,
+        mobile: traits.connection_type === 'Cellular',
+        proxy: traits.is_anonymous_proxy === true || traits.is_public_proxy === true,
+        hosting: traits.user_type === 'hosting' || traits.user_type === 'content_delivery_network',
+        vpn: traits.is_anonymous_vpn === true,
+        tor: traits.is_tor_exit_node === true,
+        anycast: traits.is_anycast === true,
+        networkType: traits.connection_type || traits.user_type || null,
+        query: null, message: null,
+        accuracyRadiusKm: safeNumber(location.accuracy_radius, null),
+        locationAccuracy: location.accuracy_radius == null ? null : `±${location.accuracy_radius} km`,
+        countryConfidence: safeNumber(data.country?.confidence, null),
+        regionConfidence: safeNumber(subdivision.confidence, null),
+        cityConfidence: safeNumber(data.city?.confidence, null),
+        postalConfidence: safeNumber(data.postal?.confidence, null),
+        securitySignalsAvailable: true
+    };
+}
+
 function normalizeProviderResponse(provider, data, hostname) {
+    if (provider.type === 'maxmind') return normalizeMaxMindResponse(data, hostname);
     if (provider.type === 'ipapi-is') return normalizeIpapiIsResponse(data, hostname);
     if (provider.type === 'ipapi-co') return normalizeIpapiCoResponse(data, hostname);
     if (data.status === 'fail') throw new Error(data.message || 'IP lookup failed');
@@ -626,9 +702,7 @@ async function lookupWithProvider(provider, ip) {
         // nosemgrep -- The target is HTTPS, credential-free, host-allowlisted, and built from a net.isIP-validated value above.
         const res = await fetch(url.toString(), {
             signal: controller.signal,
-            headers: {
-                'User-Agent': 'Phomueangtai-Verify/1.1'
-            }
+            headers: providerHeaders(provider)
         });
         if (!res.ok) throw new Error(`${provider.name} lookup failed: ${res.status}`);
         const data = JSON.parse(await readLimitedResponseText(res, IP_LOOKUP_RESPONSE_MAX_BYTES, controller));
@@ -653,26 +727,252 @@ async function lookupWithRetries(provider, ip) {
     throw lastError || new Error(`${provider.name} lookup failed`);
 }
 
+function usefulProviderValue(value) {
+    if (value === undefined || value === null || value === '') return false;
+    return !['unknown', 'n/a', 'null'].includes(String(value).trim().toLowerCase());
+}
+
+function comparableProviderValue(value) {
+    return usefulProviderValue(value)
+        ? String(value).trim().toLowerCase().replace(/\s+/g, ' ')
+        : null;
+}
+
+function providerAgreement(results, field) {
+    const groups = new Map();
+    for (const result of results) {
+        const normalized = comparableProviderValue(result[field]);
+        if (!normalized) continue;
+        const current = groups.get(normalized) || { value: result[field], count: 0, providers: [] };
+        current.count += 1;
+        current.providers.push(result.provider);
+        groups.set(normalized, current);
+    }
+    const ordered = [...groups.values()].sort((left, right) => right.count - left.count);
+    const best = ordered[0] || null;
+    const considered = ordered.reduce((sum, item) => sum + item.count, 0);
+    return {
+        value: best?.value ?? null,
+        agreed: !!best && best.count >= 2,
+        topCount: best?.count || 0,
+        considered,
+        ratio: considered > 0 ? (best?.count || 0) / considered : 0,
+        conflict: ordered.length > 1,
+        providers: best?.providers || []
+    };
+}
+
+function firstUseful(results, field, fallback = null) {
+    const found = results.find(result => usefulProviderValue(result[field]));
+    return found ? found[field] : fallback;
+}
+
+function locationSource(results, consensus) {
+    const candidates = results.filter(result => Number.isFinite(Number(result.lat)) && Number.isFinite(Number(result.lon)));
+    if (!candidates.length) return null;
+    const matching = candidates.filter(result => {
+        const countryMatch = !consensus.countryCode.value ||
+            comparableProviderValue(result.countryCode) === comparableProviderValue(consensus.countryCode.value);
+        const regionMatch = !consensus.region.agreed ||
+            comparableProviderValue(result.region) === comparableProviderValue(consensus.region.value);
+        const cityMatch = !consensus.city.agreed ||
+            comparableProviderValue(result.city) === comparableProviderValue(consensus.city.value);
+        return countryMatch && regionMatch && cityMatch;
+    });
+    const pool = matching.length ? matching : candidates;
+    return [...pool].sort((left, right) => {
+        const leftRadius = Number.isFinite(Number(left.accuracyRadiusKm)) ? Number(left.accuracyRadiusKm) : Infinity;
+        const rightRadius = Number.isFinite(Number(right.accuracyRadiusKm)) ? Number(right.accuracyRadiusKm) : Infinity;
+        return leftRadius - rightRadius;
+    })[0];
+}
+
+function confidenceLabel(score, { providerCount, obscured, countryConflict }) {
+    if (!providerCount) return 'unknown';
+    if (obscured || countryConflict || score < 50) return 'low';
+    if (providerCount >= 2 && score >= 80) return 'high';
+    return 'medium';
+}
+
+function locationConfidence(results, agreement, flags, accuracyRadiusKm) {
+    const reasons = [];
+    let score = results.length >= 2 ? 55 : 40;
+    if (results.length < 2) reasons.push('single_provider');
+    if (agreement.countryCode.agreed) {
+        score += 15;
+        reasons.push('providers_agree_country');
+    } else if (agreement.countryCode.conflict) {
+        score -= 25;
+        reasons.push('providers_disagree_country');
+    }
+    if (agreement.region.agreed) {
+        score += 10;
+        reasons.push('providers_agree_region');
+    } else if (agreement.region.conflict) {
+        score -= 10;
+        reasons.push('providers_disagree_region');
+    }
+    if (agreement.city.agreed) {
+        score += 10;
+        reasons.push('providers_agree_city');
+    } else if (agreement.city.conflict) {
+        score -= 5;
+        reasons.push('providers_disagree_city');
+    }
+    if (Number.isFinite(accuracyRadiusKm)) {
+        reasons.push('provider_supplied_accuracy_radius');
+        if (accuracyRadiusKm <= 50) score += 5;
+        if (accuracyRadiusKm >= 250) score -= 10;
+    } else {
+        reasons.push('accuracy_radius_unavailable');
+    }
+    if (flags.mobile) {
+        score -= 10;
+        reasons.push('mobile_or_cgnat_location');
+    }
+    if (flags.anycast) {
+        score -= 15;
+        reasons.push('anycast_location');
+    }
+    if (flags.hosting) {
+        score -= 20;
+        reasons.push('hosting_location');
+    }
+    if (flags.isVPN || flags.isProxy || flags.isTOR) {
+        score -= 35;
+        reasons.push('network_exit_location');
+    }
+    score = Math.max(0, Math.min(100, Math.round(score)));
+    const obscured = flags.isVPN || flags.isProxy || flags.isTOR || flags.hosting || flags.anycast;
+    return {
+        score,
+        label: confidenceLabel(score, {
+            providerCount: results.length,
+            obscured,
+            countryConflict: agreement.countryCode.conflict
+        }),
+        reasons: [...new Set(reasons)]
+    };
+}
+
+function providerEvidence(result) {
+    return {
+        provider: result.provider || 'unknown',
+        countryCode: result.countryCode || null,
+        region: result.region || null,
+        city: result.city || null,
+        lat: safeNumber(result.lat, null),
+        lon: safeNumber(result.lon, null),
+        accuracyRadiusKm: safeNumber(result.accuracyRadiusKm, null),
+        as: result.as || null,
+        networkType: result.networkType || null,
+        securitySignalsAvailable: result.securitySignalsAvailable === true
+    };
+}
+
+function mergeProviderResults(results, failures, attemptedProviders) {
+    const agreement = {
+        countryCode: providerAgreement(results, 'countryCode'),
+        region: providerAgreement(results, 'region'),
+        city: providerAgreement(results, 'city'),
+        as: providerAgreement(results, 'as')
+    };
+    const source = locationSource(results, agreement) || results[0];
+    const flags = {
+        mobile: results.some(result => result.mobile === true),
+        proxy: results.some(result => result.proxy === true),
+        hosting: results.some(result => result.hosting === true),
+        vpn: results.some(result => result.vpn === true),
+        tor: results.some(result => result.tor === true),
+        anycast: results.some(result => result.anycast === true)
+    };
+    const reportedRadii = results
+        .map(result => safeNumber(result.accuracyRadiusKm, null))
+        .filter(Number.isFinite);
+    const accuracyRadiusKm = reportedRadii.length ? Math.max(...reportedRadii) : null;
+    const confidence = locationConfidence(results, agreement, {
+        isVPN: flags.vpn,
+        isProxy: flags.proxy,
+        isTOR: flags.tor,
+        hosting: flags.hosting,
+        mobile: flags.mobile,
+        anycast: flags.anycast
+    }, accuracyRadiusKm);
+    return {
+        ...source,
+        provider: results.length > 1 ? 'consensus' : source.provider,
+        status: 'success',
+        raw: null,
+        country: firstUseful(results.filter(result => comparableProviderValue(result.countryCode) === comparableProviderValue(agreement.countryCode.value)), 'country', firstUseful(results, 'country')),
+        countryCode: agreement.countryCode.value || firstUseful(results, 'countryCode'),
+        region: agreement.region.value || firstUseful(results, 'region'),
+        city: agreement.city.value || firstUseful(results, 'city'),
+        zip: firstUseful(results, 'zip'),
+        lat: safeNumber(source?.lat, null),
+        lon: safeNumber(source?.lon, null),
+        timezone: firstUseful(results, 'timezone'),
+        isp: firstUseful(results, 'isp'),
+        org: firstUseful(results, 'org'),
+        as: agreement.as.value || firstUseful(results, 'as'),
+        asname: firstUseful(results, 'asname'),
+        reverse: firstUseful(results, 'reverse'),
+        networkType: firstUseful(results, 'networkType'),
+        ...flags,
+        accuracyRadiusKm,
+        locationAccuracy: Number.isFinite(accuracyRadiusKm) ? `±${accuracyRadiusKm} km` : null,
+        locationConfidence: confidence.label,
+        locationConfidenceScore: confidence.score,
+        locationConfidenceReasons: confidence.reasons,
+        providerAgreement: agreement,
+        providerEvidence: results.map(providerEvidence),
+        providerCount: results.length,
+        consensusUsed: results.length > 1,
+        securitySignalsAvailable: results.some(result => result.securitySignalsAvailable === true),
+        attemptedProviders,
+        providerFailures: failures,
+        fallbackUsed: failures.length > 0,
+        message: failures.length ? 'Some IP lookup providers failed; available results were preserved' : null
+    };
+}
+
 async function lookupAcrossProviders(ip) {
     const config = getIpLookupConfig();
     if (!config.enabled) throw new Error('IP lookup is disabled');
+    if (!config.consensusEnabled) {
+        const failures = [];
+        for (const provider of config.providers) {
+            try {
+                const result = await lookupWithRetries(provider, ip);
+                return mergeProviderResults([result], failures, [...failures.map(item => item.provider), provider.name]);
+            } catch (err) {
+                failures.push({
+                    provider: provider.name,
+                    error: safeSmallString(err?.message || err?.name || 'lookup_failed', 'lookup_failed')
+                });
+            }
+        }
+        const error = new Error(failures.map(item => `${item.provider}:${item.error}`).join('; ') || 'All IP lookup providers failed');
+        error.providerFailures = failures;
+        throw error;
+    }
+
+    const settled = await Promise.allSettled(
+        config.providers.map(provider => lookupWithRetries(provider, ip))
+    );
+    const results = [];
     const failures = [];
-    for (const provider of config.providers) {
-        try {
-            const result = await lookupWithRetries(provider, ip);
-            return {
-                ...result,
-                attemptedProviders: [...failures.map(item => item.provider), provider.name],
-                providerFailures: failures,
-                fallbackUsed: failures.length > 0
-            };
-        } catch (err) {
+    settled.forEach((item, index) => {
+        const provider = config.providers[index];
+        if (item.status === 'fulfilled') {
+            results.push(item.value);
+        } else {
             failures.push({
                 provider: provider.name,
-                error: safeSmallString(err?.message || err?.name || 'lookup_failed', 'lookup_failed')
+                error: safeSmallString(item.reason?.message || item.reason?.name || 'lookup_failed', 'lookup_failed')
             });
         }
-    }
+    });
+    if (results.length) return mergeProviderResults(results, failures, config.providers.map(provider => provider.name));
     const error = new Error(failures.map(item => `${item.provider}:${item.error}`).join('; ') || 'All IP lookup providers failed');
     error.providerFailures = failures;
     throw error;
@@ -687,7 +987,10 @@ function normalizeIpApiResponse(data = {}, hostname = '') {
         isp: data.isp, org: data.org, as: data.as, asname: data.asname, reverse: data.reverse,
         mobile: data.mobile === true, proxy: data.proxy === true,
         hosting: data.hosting === true, vpn: data.vpn === true, tor: data.tor === true,
-        query: data.query, message: data.message || null
+        anycast: data.anycast === true, networkType: data.networkType || null,
+        accuracyRadiusKm: safeNumber(data.accuracyRadiusKm ?? data.accuracy_radius, null),
+        query: data.query, message: data.message || null,
+        securitySignalsAvailable: data.proxy !== undefined || data.vpn !== undefined || data.tor !== undefined
     };
 }
 
@@ -747,6 +1050,18 @@ function makeLookupDisabledInfo(ip) {
         hosting: false,
         vpn: false,
         tor: false,
+        anycast: false,
+        networkType: null,
+        accuracyRadiusKm: null,
+        locationAccuracy: null,
+        locationConfidence: 'unknown',
+        locationConfidenceScore: null,
+        locationConfidenceReasons: ['lookup_disabled'],
+        providerAgreement: null,
+        providerEvidence: [],
+        providerCount: 0,
+        consensusUsed: false,
+        securitySignalsAvailable: false,
 
         query: ip,
         message: 'External IP lookup is disabled'
@@ -826,7 +1141,21 @@ function compactLookupRaw(lookup = {}, rawIp = null) {
         vpn: lookup.vpn === true,
         tor: lookup.tor === true,
         mobile: lookup.mobile === true,
+        anycast: lookup.anycast === true,
+        networkType: lookup.networkType || null,
+        accuracyRadiusKm: safeNumber(lookup.accuracyRadiusKm, null),
         locationAccuracy: lookup.locationAccuracy || null,
+        locationConfidence: lookup.locationConfidence || 'unknown',
+        locationConfidenceScore: safeNumber(lookup.locationConfidenceScore, null),
+        locationConfidenceReasons: Array.isArray(lookup.locationConfidenceReasons)
+            ? lookup.locationConfidenceReasons.slice(0, 20)
+            : [],
+        providerAgreement: lookup.providerAgreement || null,
+        providerEvidence: Array.isArray(lookup.providerEvidence)
+            ? lookup.providerEvidence.slice(0, 5)
+            : [],
+        providerCount: Number(lookup.providerCount || 0),
+        consensusUsed: lookup.consensusUsed === true,
         securitySignalsAvailable: lookup.securitySignalsAvailable === true,
         fallbackUsed: lookup.fallbackUsed === true,
         attemptedProviders: Array.isArray(lookup.attemptedProviders) ? lookup.attemptedProviders.slice(0, 5) : [],
@@ -933,6 +1262,18 @@ async function lookupIP(ip) {
             hosting: false,
             vpn: false,
             tor: false,
+            anycast: false,
+            networkType: null,
+            accuracyRadiusKm: null,
+            locationAccuracy: null,
+            locationConfidence: 'unknown',
+            locationConfidenceScore: null,
+            locationConfidenceReasons: ['private_or_reserved_ip'],
+            providerAgreement: null,
+            providerEvidence: [],
+            providerCount: 0,
+            consensusUsed: false,
+            securitySignalsAvailable: false,
 
             query: ip,
             message: null
@@ -988,7 +1329,98 @@ function normalizeNetworkSignals(lookup = {}) {
         isVPN: vpn,
         isTOR: tor,
         hosting,
-        mobile: lookup.mobile === true
+        mobile: lookup.mobile === true,
+        anycast: lookup.anycast === true,
+        networkType: lookup.networkType || null
+    };
+}
+
+function adjustedConfidenceLabel(score, lookup = {}) {
+    const obscured = lookup.vpn === true || lookup.proxy === true || lookup.tor === true ||
+        lookup.hosting === true || lookup.anycast === true;
+    return confidenceLabel(score, {
+        providerCount: Number(lookup.providerCount || 0),
+        obscured,
+        countryConflict: lookup.providerAgreement?.countryCode?.conflict === true
+    });
+}
+
+function applyRequestLocationContext(lookup = {}, req = {}, headerMeta = {}) {
+    let score = Number.isFinite(Number(lookup.locationConfidenceScore))
+        ? Number(lookup.locationConfidenceScore)
+        : 0;
+    const reasons = Array.isArray(lookup.locationConfidenceReasons)
+        ? [...lookup.locationConfidenceReasons]
+        : [];
+    const browserTimezone = safeSmallString(req.body?.timezone || '');
+    let browserTimezoneMatches = null;
+    if (browserTimezone && usefulProviderValue(lookup.timezone)) {
+        browserTimezoneMatches = browserTimezone === lookup.timezone;
+        if (browserTimezoneMatches) {
+            score += 5;
+            reasons.push('browser_timezone_matches');
+        } else {
+            score -= 5;
+            reasons.push('browser_timezone_differs');
+        }
+    }
+    if (headerMeta.spoofSuspected) {
+        score -= 20;
+        reasons.push('forwarded_header_conflict');
+    }
+    score = Math.max(0, Math.min(100, Math.round(score)));
+    return {
+        ...lookup,
+        locationConfidenceScore: score,
+        locationConfidence: adjustedConfidenceLabel(score, lookup),
+        locationConfidenceReasons: [...new Set(reasons)],
+        browserTimezone: browserTimezone || null,
+        browserTimezoneMatches
+    };
+}
+
+function applyHistoricalLocationContext(ipInfo = {}, history = null) {
+    if (!history) return ipInfo;
+    let score = Number.isFinite(Number(ipInfo.locationConfidenceScore))
+        ? Number(ipInfo.locationConfidenceScore)
+        : 0;
+    const reasons = Array.isArray(ipInfo.locationConfidenceReasons)
+        ? [...ipInfo.locationConfidenceReasons]
+        : [];
+    const comparisons = [
+        ['country', ipInfo.countryCode, history.lastCountryCode],
+        ['region', ipInfo.region, history.lastRegion],
+        ['asn', ipInfo.as, history.lastAs]
+    ].filter(([, current, previous]) => usefulProviderValue(current) && usefulProviderValue(previous));
+    const matches = comparisons.filter(([, current, previous]) =>
+        comparableProviderValue(current) === comparableProviderValue(previous));
+    const conflicts = comparisons.filter(([, current, previous]) =>
+        comparableProviderValue(current) !== comparableProviderValue(previous));
+    if (matches.length) {
+        score += Math.min(5, matches.length * 2);
+        reasons.push('historical_network_matches');
+    }
+    if (conflicts.length) {
+        score -= Math.min(15, conflicts.length * 5);
+        reasons.push('historical_network_differs');
+    }
+    score = Math.max(0, Math.min(100, Math.round(score)));
+    return {
+        ...ipInfo,
+        locationConfidenceScore: score,
+        locationConfidence: adjustedConfidenceLabel(score, {
+            ...ipInfo,
+            vpn: ipInfo.isVPN,
+            proxy: ipInfo.isProxy,
+            tor: ipInfo.isTOR,
+            providerCount: ipInfo.lookupProviderCount
+        }),
+        locationConfidenceReasons: [...new Set(reasons)],
+        historyConsistency: {
+            compared: comparisons.length > 0,
+            matches: matches.map(([field]) => field),
+            conflicts: conflicts.map(([field]) => field)
+        }
     };
 }
 
@@ -999,6 +1431,7 @@ function buildNetworkFindings(flags = {}, lookupStatus = 'unknown', headerMeta =
     if (flags.isProxy) findings.push('proxy');
     if (flags.isTOR) findings.push('tor');
     if (flags.hosting) findings.push('hosting');
+    if (flags.anycast) findings.push('anycast');
     if (lookupStatus === 'lookup_failed') findings.push('lookup_failed');
     if (lookupStatus === 'ip_unknown') findings.push('ip_unknown');
     if (lookupStatus === 'lookup_disabled') findings.push('lookup_disabled');
@@ -1039,6 +1472,8 @@ function makeUnknownIpInfo({ trustedIp, headerMeta }) {
         isTOR: false,
         hosting: false,
         mobile: false,
+        anycast: false,
+        networkType: null,
 
         findings,
 
@@ -1047,7 +1482,18 @@ function makeUnknownIpInfo({ trustedIp, headerMeta }) {
         lookupMessage: 'Unable to determine trusted public client IP',
         lookupProviders: [],
         lookupFallbackUsed: false,
+        lookupConsensusUsed: false,
+        lookupProviderCount: 0,
+        accuracyRadiusKm: null,
         locationAccuracy: null,
+        locationConfidence: 'unknown',
+        locationConfidenceScore: null,
+        locationConfidenceReasons: ['trusted_public_ip_unavailable'],
+        providerAgreement: null,
+        providerEvidence: [],
+        browserTimezone: null,
+        browserTimezoneMatches: null,
+        historyConsistency: null,
         securitySignalsAvailable: false,
         lookupRaw: compactLookupRaw({
             provider: 'local',
@@ -1113,6 +1559,7 @@ async function processIP(req) {
         };
     }
 
+    lookup = applyRequestLocationContext(lookup, req, headerMeta);
     const flags = normalizeNetworkSignals(lookup);
     const findings = buildNetworkFindings(flags, lookup.status || 'unknown', headerMeta);
 
@@ -1140,6 +1587,8 @@ async function processIP(req) {
         isTOR: flags.isTOR,
         hosting: flags.hosting,
         mobile: flags.mobile,
+        anycast: flags.anycast,
+        networkType: flags.networkType,
 
         findings,
 
@@ -1148,7 +1597,20 @@ async function processIP(req) {
         lookupMessage: sanitizedLookupMessage(lookup.message, rawIp),
         lookupProviders: Array.isArray(lookup.attemptedProviders) ? lookup.attemptedProviders : [],
         lookupFallbackUsed: lookup.fallbackUsed === true,
+        lookupConsensusUsed: lookup.consensusUsed === true,
+        lookupProviderCount: Number(lookup.providerCount || 0),
+        accuracyRadiusKm: safeNumber(lookup.accuracyRadiusKm, null),
         locationAccuracy: lookup.locationAccuracy || null,
+        locationConfidence: lookup.locationConfidence || 'unknown',
+        locationConfidenceScore: safeNumber(lookup.locationConfidenceScore, null),
+        locationConfidenceReasons: Array.isArray(lookup.locationConfidenceReasons)
+            ? lookup.locationConfidenceReasons
+            : [],
+        providerAgreement: lookup.providerAgreement || null,
+        providerEvidence: Array.isArray(lookup.providerEvidence) ? lookup.providerEvidence : [],
+        browserTimezone: lookup.browserTimezone || null,
+        browserTimezoneMatches: lookup.browserTimezoneMatches ?? null,
+        historyConsistency: null,
         securitySignalsAvailable: lookup.securitySignalsAvailable === true,
         lookupRaw: compactLookupRaw(lookup, rawIp),
 
@@ -1177,6 +1639,7 @@ module.exports = {
     isPrivateIP,
     extractDevice,
     processIP,
+    applyHistoricalLocationContext,
     compactLookupRaw,
     _test: {
         splitHeaderIps,
@@ -1188,6 +1651,12 @@ module.exports = {
         makeUnknownIpInfo,
         normalizeIpapiIsResponse,
         normalizeIpapiCoResponse,
+        normalizeMaxMindResponse,
+        mergeProviderResults,
+        providerAgreement,
+        applyRequestLocationContext,
+        providerUrl,
+        providerHeaders,
         detectUserAgentAnomalies,
         validateLookupTarget
     }

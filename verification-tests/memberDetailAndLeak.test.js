@@ -231,7 +231,11 @@ describe("member detail serialization and leak guards", () => {
         expect(source).toContain("Snapshot ล่าสุดจากตอนยืนยัน");
         expect(source).toContain('"User-Agent"');
         expect(source).toContain("User-Agent อาจถูกปลอมแปลง");
-        expect(source).toContain("Providers ที่ลอง");
+        expect(source).toContain("แหล่งข้อมูลที่ตรวจ");
+        expect(source).toContain("รัศมีความคลาดเคลื่อน");
+        expect(source).toContain("ความมั่นใจตำแหน่ง");
+        expect(source).toContain("เหตุผลการประเมิน");
+        expect(source).toContain("ตำแหน่งนี้เป็นตำแหน่งทางออกของเครือข่าย");
         expect(source).toContain("securitySignalsAvailable === false");
         expect(source).toContain('createElement("button", "btn btn-soft btn-sm btn-inline", "ซ่อน")');
     });

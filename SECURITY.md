@@ -47,6 +47,13 @@ The stored source IP is the public address visible to the trusted proxy. It is
 not proof of a residential/home IP and cannot reveal an address hidden behind
 VPN, proxy, or TOR.
 
+IP geolocation is evidence, not an identity proof. The runtime compares bounded
+responses from allowlisted HTTPS providers and stores provider agreement,
+confidence reasons, and any provider-supplied accuracy radius. MaxMind is
+disabled unless both optional credentials are configured. Credentials are sent
+only in the Authorization header to the fixed MaxMind hostname and are never
+placed in lookup URLs, persisted lookup evidence, or logs.
+
 ## Owner authentication
 
 The main dashboard and all verification management pages use the signed Owner

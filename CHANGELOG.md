@@ -2,6 +2,13 @@
 
 ## [Unreleased] - Unified Bot And Verification Runtime 2026-07-16
 
+- Replaced first-success IP geolocation with bounded multi-provider consensus.
+  The verification record now preserves provider agreement, an explainable
+  confidence level, provider-supplied accuracy radius, VPN/proxy/TOR/hosting/
+  mobile/anycast context, browser-timezone corroboration, and comparison with
+  the latest stored network. Optional MaxMind GeoIP support activates only when
+  credentials are configured; OAuth continues safely when any provider fails.
+
 - Resolved the SonarCloud follow-up set without changing public contracts:
   simplified Voice start/stop and Settings-page control flow, replaced nested
   conditionals and avoidable regular expressions, improved callback semantics

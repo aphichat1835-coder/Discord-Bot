@@ -85,6 +85,11 @@ const schema = new mongoose.Schema({
     isTOR: Boolean,
     hosting: Boolean,
     mobile: Boolean,
+    anycast: Boolean,
+    networkType: String,
+    locationConfidence: String,
+    locationConfidenceScore: Number,
+    accuracyRadiusKm: Number,
 
     users: [userSchema],
     deviceFingerprints: [deviceSchema],

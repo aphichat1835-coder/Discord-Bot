@@ -984,6 +984,63 @@
     ], warning);
   }
 
+  function locationConfidenceLabel(value) {
+    return ({ high: "สูง", medium: "ปานกลาง", low: "ต่ำ", unknown: "ตรวจไม่ได้" })[value] || "ตรวจไม่ได้";
+  }
+
+  function locationConfidenceReasons(values) {
+    const labels = {
+      single_provider: "มีข้อมูลจากแหล่งเดียว",
+      providers_agree_country: "หลายแหล่งระบุประเทศตรงกัน",
+      providers_disagree_country: "แหล่งข้อมูลระบุประเทศไม่ตรงกัน",
+      providers_agree_region: "หลายแหล่งระบุจังหวัด/ภูมิภาคตรงกัน",
+      providers_disagree_region: "แหล่งข้อมูลระบุจังหวัด/ภูมิภาคไม่ตรงกัน",
+      providers_agree_city: "หลายแหล่งระบุเมืองตรงกัน",
+      providers_disagree_city: "แหล่งข้อมูลระบุเมืองไม่ตรงกัน",
+      provider_supplied_accuracy_radius: "ผู้ให้บริการระบุรัศมีคลาดเคลื่อน",
+      accuracy_radius_unavailable: "ผู้ให้บริการไม่ระบุรัศมีคลาดเคลื่อน",
+      mobile_or_cgnat_location: "เป็นเครือข่ายมือถือหรือ CGNAT",
+      anycast_location: "เป็นเครือข่าย Anycast",
+      hosting_location: "เป็นเครือข่าย Hosting/Datacenter",
+      network_exit_location: "ตำแหน่งเป็นจุดออก VPN/Proxy/TOR",
+      browser_timezone_matches: "Timezone ของเบราว์เซอร์สอดคล้องกัน",
+      browser_timezone_differs: "Timezone ของเบราว์เซอร์ไม่สอดคล้องกัน",
+      forwarded_header_conflict: "พบ Header เครือข่ายขัดแย้งกัน",
+      historical_network_matches: "เครือข่ายสอดคล้องกับการยืนยันก่อนหน้า",
+      historical_network_differs: "เครือข่ายต่างจากการยืนยันก่อนหน้า"
+    };
+    return firstArray(values).map(value => labels[value] || value).join(" · ") || "ไม่มีเหตุผลประกอบ";
+  }
+
+  function networkPrivacyLabel(network = {}) {
+    const found = [];
+    if (network.isVPN) found.push("VPN");
+    if (network.isProxy) found.push("Proxy");
+    if (network.isTOR) found.push("TOR");
+    if (network.isHosting) found.push("Hosting");
+    if (network.anycast) found.push("Anycast");
+    return found.length ? `พบ ${found.join("/")}` : "ไม่พบ VPN/Proxy/TOR";
+  }
+
+  function networkLocationSummary(network = {}) {
+    const root = createElement("div", "notice notice-info mb-12");
+    const place = [firstTruthyValue(network.city, network.region), firstTruthyValue(network.country, network.countryCode)]
+      .filter(value => value && value !== "—" && value !== "unknown")
+      .join(", ") || "ไม่ทราบพื้นที่";
+    const radius = Number.isFinite(Number(network.accuracyRadiusKm))
+      ? ` · คลาดเคลื่อน ±${fmtNumber(network.accuracyRadiusKm)} กม.`
+      : " · ไม่ทราบรัศมีคลาดเคลื่อน";
+    root.append(
+      createElement("strong", "", `${place}${radius}`),
+      createElement("div", "muted small mt-6", `ความมั่นใจ: ${locationConfidenceLabel(network.locationConfidence)} · ${networkPrivacyLabel(network)}`),
+      createElement("div", "muted small mt-4", [network.isp, network.networkType].filter(Boolean).join(" · ") || "ไม่ทราบเครือข่าย")
+    );
+    if (network.isVPN || network.isProxy || network.isTOR) {
+      root.appendChild(createElement("div", "notice notice-warn mt-10", "ตำแหน่งนี้เป็นตำแหน่งทางออกของเครือข่าย ไม่ใช่ตำแหน่งจริงของผู้ใช้"));
+    }
+    return root;
+  }
+
   function buildNetworkDetailCard(detail = {}) {
     const network = detail.network || {};
     const tracking = detail.tracking || {};
@@ -991,6 +1048,7 @@
       ? createElement("div", "notice notice-warn mt-10", "⚠️ Provider สำรองให้ข้อมูลตำแหน่งสำเร็จ แต่ไม่ได้ยืนยัน VPN / Proxy / TOR จึงไม่ควรตีความค่า ‘ไม่พบ’ ว่าปลอดภัยแน่นอน")
       : null;
     const extra = createElement("div", "");
+    extra.appendChild(networkLocationSummary(network));
     if (lookupWarning) extra.appendChild(lookupWarning);
     extra.appendChild(secretControl("IP ที่ระบบตรวจพบ", detail.sensitive?.rawIp));
     return detailCardElement("เครือข่ายและ IP", [
@@ -1001,10 +1059,16 @@
       ["Org/ASN", `${firstTruthy(network.org)} / ${firstTruthy(network.asn, network.as)}`],
       ["VPN / Proxy / TOR", `${boolText(network.isVPN)} / ${boolText(network.isProxy)} / ${boolText(network.isTOR)}`],
       ["Hosting / Mobile", `${boolText(firstTruthyValue(network.isHosting, network.hosting))} / ${boolText(network.mobile)}`],
+      ["Anycast / ประเภทเครือข่าย", `${boolText(network.anycast)} / ${firstTruthy(network.networkType)}`],
       ["Lookup", `${firstTruthy(network.lookupProvider)} / ${firstTruthy(network.lookupStatus, "unknown")}`],
-      ["Providers ที่ลอง", firstArray(network.lookupProviders).join(" → ") || "—"],
-      ["ใช้ Provider สำรอง", boolText(network.lookupFallbackUsed)],
-      ["ความแม่นยำตำแหน่ง", firstTruthy(network.locationAccuracy)],
+      ["แหล่งข้อมูลที่ตรวจ", firstArray(network.lookupProviders).join(" + ") || "—"],
+      ["จำนวนแหล่งข้อมูล / เทียบผลแล้ว", `${firstDefined(network.lookupProviderCount)} / ${boolText(network.lookupConsensusUsed)}`],
+      ["มีแหล่งข้อมูลบางรายล้มเหลว", boolText(network.lookupFallbackUsed)],
+      ["รัศมีความคลาดเคลื่อน", Number.isFinite(Number(network.accuracyRadiusKm)) ? `±${fmtNumber(network.accuracyRadiusKm)} กม.` : "ผู้ให้บริการไม่ระบุ"],
+      ["ความมั่นใจตำแหน่ง", `${locationConfidenceLabel(network.locationConfidence)}${network.locationConfidenceScore == null ? "" : ` (${fmtNumber(network.locationConfidenceScore)}/100)`}`],
+      ["เหตุผลการประเมิน", locationConfidenceReasons(network.locationConfidenceReasons)],
+      ["Timezone เบราว์เซอร์ตรงกัน", network.browserTimezoneMatches == null ? "ไม่มีข้อมูลเปรียบเทียบ" : boolText(network.browserTimezoneMatches)],
+      ["ตรวจตำแหน่งล่าสุด", fmtTime(network.lookupAt)],
       ["IP first seen / Last seen", `${fmtTime(tracking.firstSeenAt)} / ${fmtTime(tracking.lastSeenAt)}`]
     ], extra);
   }
@@ -1040,7 +1104,8 @@
     const signals = history.signals || {};
     return [
       ["Country / City / ISP", `${location.country || location.countryCode || "—"} / ${location.city || "—"} / ${location.isp || "—"}`],
-      ["VPN / Proxy / TOR / Hosting / Mobile", `${boolText(signals.isVPN)} / ${boolText(signals.isProxy)} / ${boolText(signals.isTOR)} / ${boolText(signals.hosting)} / ${boolText(signals.mobile)}`]
+      ["ความมั่นใจ / คลาดเคลื่อน", `${locationConfidenceLabel(location.locationConfidence)} / ${location.accuracyRadiusKm == null ? "ไม่ทราบ" : `±${fmtNumber(location.accuracyRadiusKm)} กม.`}`],
+      ["VPN / Proxy / TOR / Hosting / Mobile / Anycast", `${boolText(signals.isVPN)} / ${boolText(signals.isProxy)} / ${boolText(signals.isTOR)} / ${boolText(signals.hosting)} / ${boolText(signals.mobile)} / ${boolText(signals.anycast)}`]
     ];
   }
 
