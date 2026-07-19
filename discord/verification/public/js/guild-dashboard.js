@@ -932,18 +932,20 @@
     const premiumLabels = { 0: "ไม่มี Nitro", 1: "Nitro Classic", 2: "Nitro", 3: "Nitro Basic" };
     const rawProfile = detail.rawSnapshots?.profile || {};
     const mfaKnown = account.mfaEnabled != null && (Object.hasOwn(rawProfile, "mfa_enabled") || Object.hasOwn(rawProfile, "mfaEnabled"));
-    const rows = [
+    const rows = [];
+    const email = firstDefinedValue(account.email, identity.email);
+    if (email) {
+      rows.push(["Email", email]);
+      rows.push(["Email verified", boolText(firstDefinedValue(account.emailVerified, identity.emailVerified))]);
+    }
+    if (mfaKnown) rows.push(["MFA / 2FA", boolText(account.mfaEnabled)]);
+    if (premiumKnown) rows.push(["Nitro", premiumLabels[Number(account.premiumType)] || "ไม่ทราบประเภท"]);
+    rows.push(
       ["Locale", firstTruthy(account.locale, identity.locale)],
       ["Flags / Public", `${firstDefined(account.flags, identity.flags)} / ${firstDefined(account.publicFlags, identity.publicFlags)}`],
       ["Created", fmtTime(firstTruthyValue(account.accountCreatedAt, identity.accountCreatedAt))],
       ["Age", `${firstDefined(account.accountAgeDays, identity.accountAgeDays)} วัน`]
-    ];
-    const email = firstDefinedValue(account.email, identity.email);
-    if (email) rows.unshift(["Email verified", boolText(firstDefinedValue(account.emailVerified, identity.emailVerified))]);
-    if (email) rows.unshift(["Email", email]);
-    if (mfaKnown) rows.splice(email ? 2 : 0, 0, ["MFA / 2FA", boolText(account.mfaEnabled)]);
-    if (premiumKnown) rows.splice(email ? (mfaKnown ? 3 : 2) : (mfaKnown ? 1 : 0), 0,
-      ["Nitro", premiumLabels[Number(account.premiumType)] || "ไม่ทราบประเภท"]);
+    );
     return detailCardElement("บัญชีและความปลอดภัย", rows);
   }
 

@@ -382,6 +382,17 @@ describe('IP lookup config', () => {
         expect(config.baseUrl.startsWith('https://')).toBe(true);
     });
 
+    test('allows only credential-free HTTPS lookup hosts from the explicit allowlist', () => {
+        expect(_test.validateLookupTarget(new URL('https://api.ipapi.is/?q=8.8.8.8')).hostname)
+            .toBe('api.ipapi.is');
+        expect(() => _test.validateLookupTarget(new URL('http://api.ipapi.is/?q=8.8.8.8')))
+            .toThrow('credential-free HTTPS');
+        expect(() => _test.validateLookupTarget(new URL('https://127.0.0.1/8.8.8.8')))
+            .toThrow('not allowlisted');
+        expect(() => _test.validateLookupTarget(new URL('https://user:pass@api.ipapi.is/?q=8.8.8.8')))
+            .toThrow('credential-free HTTPS');
+    });
+
     test('can disable external IP lookup', async () => {
         process.env.IP_LOOKUP_ENABLED = 'false';
 

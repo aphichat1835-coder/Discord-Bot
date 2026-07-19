@@ -22,6 +22,7 @@ const X_FORWARDED_FOR_MAX_ENTRIES = 20;
 const IPV4_MASK_ALL = 2 ** 32 - 1;
 const DEFAULT_IP_LOOKUP_API_BASE_URL = 'https://api.ipapi.is';
 const DEFAULT_IP_LOOKUP_FALLBACK_URL = 'https://ipapi.co/{ip}/json/';
+const DEFAULT_IP_LOOKUP_HOSTS = Object.freeze(['api.ipapi.is', 'ipapi.co']);
 const lookupCache = new Map();
 const lookupCircuit = {
     failures: 0,
@@ -545,6 +546,25 @@ function providerUrl(provider, ip) {
     return url;
 }
 
+function configuredLookupHosts() {
+    const configured = String(process.env.IP_LOOKUP_ALLOWED_HOSTS || '')
+        .split(',')
+        .map(value => value.trim().toLowerCase())
+        .filter(host => /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))+$/.test(host));
+    return new Set([...DEFAULT_IP_LOOKUP_HOSTS, ...configured]);
+}
+
+function validateLookupTarget(url) {
+    if (!(url instanceof URL)) throw new Error('IP lookup URL is invalid');
+    const hostname = url.hostname.toLowerCase();
+    if (url.protocol !== 'https:' || url.username || url.password) {
+        throw new Error('IP lookup URL must use credential-free HTTPS');
+    }
+    if (url.port && url.port !== '443') throw new Error('IP lookup URL port is not allowed');
+    if (!configuredLookupHosts().has(hostname)) throw new Error('IP lookup hostname is not allowlisted');
+    return url;
+}
+
 function normalizeIpapiIsResponse(data = {}, hostname = '') {
     // Custom endpoints historically returned the flat ip-api shape. Preserve
     // compatibility when that shape reaches the new default normalizer.
@@ -594,13 +614,16 @@ function normalizeProviderResponse(provider, data, hostname) {
 }
 
 async function lookupWithProvider(provider, ip) {
-    const url = providerUrl(provider, ip);
+    const safeIp = normalizeIP(ip);
+    if (net.isIP(safeIp) === 0) throw new Error('IP lookup requires a valid IP address');
+    const url = validateLookupTarget(providerUrl(provider, safeIp));
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), IP_LOOKUP_TIMEOUT_MS);
     timeout.unref?.();
 
     try {
+        // nosemgrep -- The target is HTTPS, credential-free, host-allowlisted, and built from a net.isIP-validated value above.
         const res = await fetch(url.toString(), {
             signal: controller.signal,
             headers: {
@@ -1165,6 +1188,7 @@ module.exports = {
         makeUnknownIpInfo,
         normalizeIpapiIsResponse,
         normalizeIpapiCoResponse,
-        detectUserAgentAnomalies
+        detectUserAgentAnomalies,
+        validateLookupTarget
     }
 };
