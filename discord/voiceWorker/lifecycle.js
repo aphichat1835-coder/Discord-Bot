@@ -107,6 +107,7 @@ function getSelfVoiceStateInfo(client, session) {
         inTargetGuild: !!channelId,
         inTargetChannel: !!channelId && String(channelId) === String(session.voiceId),
         channelId,
+        channelSource: channelId ? "voice_state" : null,
         voiceState,
         memberVoice
     };
@@ -136,7 +137,13 @@ async function waitForTargetVoice(clientRef, session, timeoutMs = 3000, connecti
     const connectionReady = connection?.state?.status === VoiceConnectionStatus.Ready;
     const joinedChannelId = connection?.joinConfig?.channelId || null;
     if (!info.inspectable && connectionReady && String(joinedChannelId) === String(session.voiceId)) {
-        return { ...info, inTargetGuild: true, inTargetChannel: true, channelId: joinedChannelId };
+        return {
+            ...info,
+            inTargetGuild: true,
+            inTargetChannel: true,
+            channelId: joinedChannelId,
+            channelSource: "connection_state"
+        };
     }
     return info;
 }
@@ -323,7 +330,6 @@ async function notifyStartFailure(sessionId, error) {
     else if (/Missing Permissions|VOICE_PERMISSION|403/i.test(message)) type = EVENTS.VOICE_PERMISSION_DENIED;
     else if (/VOICE_TARGET_NOT_CONFIRMED|VOICE_CONNECTION|AbortError|aborted/i.test(message)) type = EVENTS.VOICE_CONNECTION_FAILED;
     await notifications.markTerminal(sessionId, type, {
-        reason: sanitizeLifecycleError(message),
         action: type === EVENTS.LOGIN_FAILED
             ? "รอสักครู่แล้วลองเริ่มใหม่ หากยังไม่สำเร็จให้ตรวจสอบบัญชีและ Token"
             : "ตรวจสอบว่าเซิร์ฟเวอร์ ช่องเสียง และสิทธิ์ของบัญชียังถูกต้อง"
@@ -443,6 +449,7 @@ async function startSession(sessionId, tokenString, options = {}) {
             notifyInitial: options.notifyInitial !== false,
             source: options.source || "manual_start",
             actualChannelId: voiceInfo.channelId || conn.joinConfig?.channelId,
+            actualChannelSource: voiceInfo.channelSource || "connection_state",
             verifiedAt: Date.now(),
             reason: "ระบบยืนยันแล้วว่าบัญชีอยู่ในช่องเสียงเป้าหมาย"
         });
@@ -673,6 +680,7 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
             if (!voiceInfo.inTargetChannel) throw new Error("VOICE_TARGET_NOT_CONFIRMED");
             await notifications.markReady(sessionId, {
                 actualChannelId: voiceInfo.channelId || connection.joinConfig?.channelId,
+                actualChannelSource: voiceInfo.channelSource || "connection_state",
                 verifiedAt: Date.now(),
                 reason: "การเชื่อมต่อกลับมาปกติและตรวจพบในช่องเป้าหมายแล้ว"
             });
@@ -926,6 +934,10 @@ async function persistSessionDeleteFailure(sessionId, options) {
     if (!(markResult?.ok ?? markResult)) {
         console.warn(`[WORKER] ⚠️ Session delete failed and failed state was not persisted for ${sanitizeLogText(sessionId)}: ${sanitizeLogText(markResult?.safeError || "UNKNOWN")}`);
     }
+    await notifications.markTerminal(sessionId, EVENTS.STOP_FAILED, {
+        reason: "บัญชีออกจากช่องเสียงแล้ว แต่ระบบลบข้อมูลการออนรายการนี้ไม่สำเร็จ",
+        action: "ลองกดหยุดอีกครั้ง หากรายการยังค้างอยู่ให้ตรวจสอบฐานข้อมูล"
+    }).catch(() => {});
 }
 
 async function stopSession(sessionId, options = {}) {
@@ -1075,6 +1087,11 @@ async function autoResume() {
                     null,
                     "stored token could not be decrypted or was missing"
                 ).catch(() => false);
+                await notifications.markTerminal(id, EVENTS.LOGIN_FAILED, {
+                    source: "auto_resume",
+                    reason: "ไม่พบ Token ที่อ่านได้สำหรับเริ่มการออนเดิมหลังระบบเปิดใหม่",
+                    action: "เปิดรายละเอียดบัญชีแล้วใส่ Token ใหม่ จากนั้นเริ่มออนอีกครั้ง"
+                }).catch(() => {});
             }
         } catch (err) {
             failed++;
@@ -1132,6 +1149,7 @@ async function recoverSessionConnection(sessionId, tokenHash) {
         const voiceInfo = getSelfVoiceStateInfo(latest.client, latest);
         await notifications.markReady(sessionId, {
             actualChannelId: voiceInfo.channelId || conn.joinConfig?.channelId,
+            actualChannelSource: voiceInfo.channelSource || "connection_state",
             verifiedAt: Date.now(),
             reason: "ระบบกู้คืนสำเร็จและยืนยันตำแหน่งในช่องเสียงแล้ว"
         });

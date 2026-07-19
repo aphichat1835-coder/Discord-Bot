@@ -3,6 +3,7 @@ const sessionManager = require("../sessionManager");
 const { requireMemberPermission, checkRoleHierarchy, safeDefer, markCommandAccepted } = require("../guards/commandGuards");
 const modCaseManager = require("../logging/modCaseManager");
 const { sendAlertWebhook } = require("../core/webhooks");
+const dmService = require("../dm");
 const {
     requiredModerationPermission,
     readModerationInput,
@@ -54,41 +55,101 @@ async function validateModerationRequest(interaction, client, input) {
 }
 
 async function sendModerationDm(target, embed) {
-    return target.user.send({ embeds: [embed] }).then(() => true).catch(() => false);
+    return target.user.send({
+        embeds: [embed],
+        allowedMentions: { parse: [], repliedUser: false }
+    }).catch(() => null);
 }
 
 function assertBotPermission(interaction, permission) {
     if (!interaction.guild.members.me.permissions.has(permission)) throw new Error("MISSING_PERMS");
 }
 
-async function applyBan(interaction, input, dmEmbed) {
+async function queueFinalModerationDm(interaction, input, caseNumber, state, endsAt = null) {
+    const embed = buildModerationDmEmbed(
+        interaction,
+        input.target,
+        input.action,
+        input.reason,
+        input.duration.minutes,
+        { state, caseNumber, endsAt }
+    );
+    return dmService.send({
+        eventKey: `moderation:${interaction.guild.id}:${caseNumber}:${state}`,
+        recipientId: input.target.id,
+        category: "moderation",
+        priority: state === "failed" ? "normal" : "high",
+        payload: { embeds: [embed] }
+    });
+}
+
+async function finishPendingModerationDm(message, finalEmbed, fallback) {
+    if (message) {
+        const edited = await message.edit({ embeds: [finalEmbed], allowedMentions: { parse: [] } }).catch(() => null);
+        if (edited) return { status: "sent", message: edited };
+    }
+    return fallback();
+}
+
+async function applyRemovalAction(interaction, input, pendingCase, action) {
+    const pendingEmbed = buildModerationDmEmbed(
+        interaction, input.target, input.action, input.reason, input.duration.minutes,
+        { state: "pending", caseNumber: pendingCase.caseNumber }
+    );
+    const pendingMessage = await sendModerationDm(input.target, pendingEmbed);
+    try {
+        await action();
+    } catch (err) {
+        const failedEmbed = buildModerationDmEmbed(
+            interaction, input.target, input.action, input.reason, input.duration.minutes,
+            { state: "failed", caseNumber: pendingCase.caseNumber }
+        );
+        await finishPendingModerationDm(
+            pendingMessage,
+            failedEmbed,
+            () => queueFinalModerationDm(interaction, input, pendingCase.caseNumber, "failed")
+        );
+        err.moderationDmSent = Boolean(pendingMessage);
+        throw err;
+    }
+    const finalEmbed = buildModerationDmEmbed(
+        interaction, input.target, input.action, input.reason, input.duration.minutes,
+        { state: "succeeded", caseNumber: pendingCase.caseNumber }
+    );
+    const result = await finishPendingModerationDm(
+        pendingMessage,
+        finalEmbed,
+        () => queueFinalModerationDm(interaction, input, pendingCase.caseNumber, "succeeded")
+    );
+    return result?.status === "sent";
+}
+
+async function applyBan(interaction, input, pendingCase) {
     assertBotPermission(interaction, "BAN_MEMBERS");
-    const dmSent = await sendModerationDm(input.target, dmEmbed);
-    try {
-        await input.target.ban({ reason: input.reason });
-    } catch (err) {
-        err.moderationDmSent = dmSent;
-        throw err;
-    }
-    return dmSent;
+    return applyRemovalAction(
+        interaction,
+        input,
+        pendingCase,
+        () => input.target.ban({ reason: input.reason })
+    );
 }
 
-async function applyKick(interaction, input, dmEmbed) {
+async function applyKick(interaction, input, pendingCase) {
     assertBotPermission(interaction, "KICK_MEMBERS");
-    const dmSent = await sendModerationDm(input.target, dmEmbed);
-    try {
-        await input.target.kick(input.reason);
-    } catch (err) {
-        err.moderationDmSent = dmSent;
-        throw err;
-    }
-    return dmSent;
+    return applyRemovalAction(interaction, input, pendingCase, () => input.target.kick(input.reason));
 }
 
-async function applyTimeout(interaction, input, dmEmbed) {
+async function applyTimeout(interaction, input, pendingCase) {
     assertBotPermission(interaction, "MODERATE_MEMBERS");
     await input.target.timeout(input.duration.durationMs, input.reason);
-    return sendModerationDm(input.target, dmEmbed);
+    const result = await queueFinalModerationDm(
+        interaction,
+        input,
+        pendingCase.caseNumber,
+        "succeeded",
+        Date.now() + input.duration.durationMs
+    );
+    return result?.status === "sent";
 }
 
 const ACTION_HANDLERS = Object.freeze({
@@ -97,18 +158,10 @@ const ACTION_HANDLERS = Object.freeze({
     timeout: applyTimeout
 });
 
-async function applyModerationAction(interaction, input) {
-    const dmEmbed = buildModerationDmEmbed(
-        interaction,
-        input.target,
-        input.action,
-        input.reason,
-        input.duration.minutes
-    );
-
-    if (input.action === "ban") return applyBan(interaction, input, dmEmbed);
-    if (input.action === "kick") return applyKick(interaction, input, dmEmbed);
-    if (input.action === "timeout") return applyTimeout(interaction, input, dmEmbed);
+async function applyModerationAction(interaction, input, pendingCase) {
+    if (input.action === "ban") return applyBan(interaction, input, pendingCase);
+    if (input.action === "kick") return applyKick(interaction, input, pendingCase);
+    if (input.action === "timeout") return applyTimeout(interaction, input, pendingCase);
     return false;
 }
 
@@ -127,7 +180,7 @@ async function performModeration(interaction, input, deps = {}) {
     const pendingCase = await createCase(interaction, input, false, "pending");
     let dmSent = false;
     try {
-        dmSent = await applyAction(interaction, input);
+        dmSent = await applyAction(interaction, input, pendingCase);
     } catch (err) {
         const failedMetadata = {
             actionApplied: false,
@@ -206,6 +259,8 @@ module.exports = {
     rejectInvalidDuration,
     validateModerationRequest,
     sendModerationDm,
+    queueFinalModerationDm,
+    finishPendingModerationDm,
     assertBotPermission,
     applyBan,
     applyKick,

@@ -655,19 +655,18 @@ function registerRoutes({
                 guildId,
                 serverId,
                 channelId,
-                voiceId,
-                ownerId,
-                ownerTag,
-                ownerAvatar
+                voiceId
             } = req.body || {};
+
+            const dashboardOwner = client.users.cache.get(config.system.ownerId) || null;
 
             const result = await voiceWorker.ensureVoiceSession({
                 token,
                 guildId: guildId || serverId,
                 channelId: channelId || voiceId,
-                ownerId: ownerId || "dashboard",
-                ownerTag: ownerTag || "Owner Dashboard",
-                ownerAvatar: ownerAvatar || null,
+                ownerId: config.system.ownerId,
+                ownerTag: dashboardOwner?.tag || "เจ้าของบอท",
+                ownerAvatar: dashboardOwner?.displayAvatarURL?.({ dynamic: true, size: 256 }) || null,
                 reason: "dashboard_api"
             });
 

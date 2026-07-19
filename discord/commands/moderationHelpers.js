@@ -1,6 +1,7 @@
 const { MessageEmbed } = require("discord.js");
 const config = require("../config.json");
 const { sanitizeLogText } = require("../core/safeLogger");
+const { design } = require("../dm");
 
 function safeText(value, max = 500) {
     return sanitizeLogText(String(value ?? "")).slice(0, Math.max(1, Number(max) || 500)) || "-";
@@ -33,20 +34,69 @@ function parseTimeoutDuration(interaction, action) {
 function moderationActionLabel(action, minutes = null) {
     if (action === "ban") return "แบนถาวร";
     if (action === "kick") return "เตะออกจากเซิร์ฟเวอร์";
-    if (action === "timeout") return `Timeout ${minutes} นาที ${config.emojis.timeout_icon}`;
+    if (action === "timeout") return `หมดเวลา ${minutes} นาที ${config.emojis.timeout_icon}`;
     return action;
 }
 
-function buildModerationDmEmbed(interaction, target, action, reason, minutes = null) {
-    return new MessageEmbed()
-        .setColor(config.system.themeColors.error)
-        .setTitle(`${config.emojis.punishment} คุณถูกระงับสิทธิ์ในเซิร์ฟเวอร์ ${interaction.guild.name}`)
-        .setDescription(
-            `— **การดำเนินการ:** ${moderationActionLabel(action, minutes)}\n` +
-            `— **ผู้ดำเนินการ:** ${interaction.user.tag}\n` +
-            `— **เหตุผล:** ${reason}`
-        )
-        .setThumbnail(target.user.displayAvatarURL({ dynamic: true, size: 1024 }));
+function moderationTitle(action, state) {
+    const labels = {
+        ban: "การแบน",
+        kick: "การเตะออก",
+        timeout: "การหมดเวลา"
+    };
+    const label = labels[action] || "การลงโทษ";
+    if (state === "pending") return `⏳ กำลังดำเนิน${label}`;
+    if (state === "failed") return `⚠️ ยกเลิก${label}`;
+    return `🛡️ ${label}มีผลแล้ว`;
+}
+
+function moderationSummary(state, actionLabel) {
+    if (state === "pending") {
+        return `เซิร์ฟเวอร์ได้รับคำสั่ง ${actionLabel} แล้ว แต่ยังไม่ยืนยันผลจาก Discord`;
+    }
+    if (state === "failed") {
+        return `Discord ไม่ได้ดำเนินการ ${actionLabel} คำสั่งครั้งนี้จึงไม่มีผล`;
+    }
+    return `Discord ยืนยันแล้วว่าการดำเนินการ ${actionLabel} สำเร็จ`;
+}
+
+function moderationTone(state) {
+    if (state === "failed") return "warning";
+    if (state === "pending") return "action";
+    return "danger";
+}
+
+function buildModerationDmEmbed(interaction, target, action, reason, minutes = null, options = {}) {
+    const state = options.state || "succeeded";
+    const caseNumber = options.caseNumber || "กำลังสร้าง";
+    const actionLabel = moderationActionLabel(action, minutes);
+    const endsAt = action === "timeout" && options.endsAt
+        ? `<t:${Math.floor(Number(options.endsAt) / 1000)}:F>`
+        : null;
+    const summary = moderationSummary(state, actionLabel);
+    let nextAction = "หากต้องการสอบถามเหตุผลหรืออุทธรณ์ โปรดติดต่อผู้ดูแลเซิร์ฟเวอร์โดยตรง";
+    if (state === "pending") {
+        nextAction = "รอข้อความอัปเดตผล ข้อความนี้ยังไม่ใช่การยืนยันว่าคุณถูกลงโทษ";
+    } else if (state === "failed") {
+        nextAction = "คุณไม่ถูกลงโทษจากคำสั่งครั้งนี้ หากพบสถานะไม่ตรงกันให้ติดต่อผู้ดูแลเซิร์ฟเวอร์";
+    }
+
+    return design.buildDmEmbed({
+        tone: moderationTone(state),
+        title: moderationTitle(action, state),
+        summary,
+        profile: design.profileFromUser(target.user, { id: target.id }),
+        fields: [
+            { name: "🏠 เซิร์ฟเวอร์", value: `${design.markdownText(interaction.guild.name, "ไม่ทราบเซิร์ฟเวอร์", 100)}\n${design.code(interaction.guild.id)}`, inline: true },
+            { name: "🛡️ การดำเนินการ", value: actionLabel, inline: true },
+            { name: "👮 ผู้ดำเนินการ", value: `${design.markdownText(interaction.user.tag, "ผู้ดูแล", 100)}\n${design.code(interaction.user.id)}`, inline: true },
+            ...(endsAt ? [{ name: "⏰ สิ้นสุดการหมดเวลา", value: endsAt, inline: true }] : [])
+        ],
+        details: reason,
+        nextAction,
+        referenceId: `CASE-${caseNumber}`,
+        footer: "Phomueangtai • การดูแลเซิร์ฟเวอร์"
+    });
 }
 
 function buildCaseInput(interaction, target, action, reason, durationMs) {
@@ -95,6 +145,9 @@ module.exports = {
     readModerationInput,
     parseTimeoutDuration,
     moderationActionLabel,
+    moderationTitle,
+    moderationSummary,
+    moderationTone,
     buildModerationDmEmbed,
     buildCaseInput,
     buildModerationReplyEmbed,

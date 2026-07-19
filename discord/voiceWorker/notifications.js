@@ -20,6 +20,35 @@ const EVENTS = Object.freeze({
     STOP_FAILED: "STOP_FAILED"
 });
 const EVENT_TYPES = new Set(Object.values(EVENTS));
+const IMPORTANT_EVENTS = new Set([
+    EVENTS.RECOVERY_DELAYED,
+    EVENTS.RECOVERY_EXHAUSTED,
+    EVENTS.TOKEN_INVALID,
+    EVENTS.LOGIN_FAILED,
+    EVENTS.GUILD_NOT_FOUND,
+    EVENTS.CHANNEL_NOT_FOUND,
+    EVENTS.VOICE_PERMISSION_DENIED,
+    EVENTS.VOICE_CONNECTION_FAILED,
+    EVENTS.SESSION_STOPPED_IDLE,
+    EVENTS.STOP_FAILED
+]);
+const CRITICAL_EVENTS = new Set([
+    EVENTS.RECOVERY_EXHAUSTED,
+    EVENTS.TOKEN_INVALID,
+    EVENTS.STOP_FAILED
+]);
+const HIGH_EVENTS = new Set([
+    EVENTS.LOGIN_FAILED,
+    EVENTS.GUILD_NOT_FOUND,
+    EVENTS.CHANNEL_NOT_FOUND,
+    EVENTS.VOICE_PERMISSION_DENIED,
+    EVENTS.VOICE_CONNECTION_FAILED
+]);
+const LOW_EVENTS = new Set([
+    EVENTS.SESSION_READY,
+    EVENTS.SESSION_RECOVERED,
+    EVENTS.SESSION_STOPPED_MANUAL
+]);
 const UNSAFE_RECORD_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 function containsControlCharacter(value) {
@@ -41,10 +70,18 @@ function isSafeRecordKey(value) {
 function policyAllows(type, context, mode) {
     if (mode === "off") return false;
     if (context.source === "auto_resume" && type === EVENTS.SESSION_READY) return false;
-    if (mode === "important_only" && type === EVENTS.SESSION_STOPPED_MANUAL && context.actorNotified === true) {
-        return false;
+    if (mode === "important_only" && type === EVENTS.SESSION_RECOVERED) {
+        return context.recoveryNoticeSent === true;
     }
+    if (mode === "important_only") return IMPORTANT_EVENTS.has(type);
     return true;
+}
+
+function eventPriority(type) {
+    if (CRITICAL_EVENTS.has(type)) return "critical";
+    if (HIGH_EVENTS.has(type)) return "high";
+    if (LOW_EVENTS.has(type)) return "low";
+    return "normal";
 }
 
 function createEventRecord(source = {}) {
@@ -232,6 +269,15 @@ function createVoiceNotificationSystem(options = {}) {
         if (total === 0) return { status: "skipped", reason: "digest_empty" };
 
         const result = await dmSender.sendVoiceDigestDM(ownerId, items, { total, counts });
+        if (!["sent", "retrying"].includes(result?.status)) {
+            digest.items.unshift(...items);
+            digest.total += total;
+            for (const [type, count] of Object.entries(counts)) {
+                digest.counts.set(type, Number(digest.counts.get(type) || 0) + Number(count || 0));
+            }
+            scheduleDigest(ownerId);
+            return result;
+        }
         digest.lastSentAt = now();
         if (digest.items.length) scheduleDigest(ownerId);
         return result;
@@ -270,14 +316,19 @@ function createVoiceNotificationSystem(options = {}) {
             return { status: "skipped", reason: "policy" };
         }
 
-        if (!reserveOwnerBudget(String(session.ownerId))) {
+        const priority = eventPriority(type);
+        if (!["critical", "high"].includes(priority) && !reserveOwnerBudget(String(session.ownerId))) {
             const queued = queueDigest(session, type, context);
             diagnostics.digested++;
             await setEventStatus(sessionId, eventKey, "digested");
             return { status: queued ? "digested" : "skipped", reason: "owner_budget" };
         }
 
-        const snapshot = dmSender.createVoiceSnapshot(session, type, context);
+        const snapshot = dmSender.createVoiceSnapshot(session, type, {
+            ...context,
+            notificationEventKey: eventKey,
+            priority
+        });
         const result = await dmSender.sendVoiceEventDM(snapshot);
         if (result?.status === "sent") diagnostics.sent++;
         else diagnostics.failed++;
@@ -376,6 +427,7 @@ function createVoiceNotificationSystem(options = {}) {
             if (!session) return null;
             ensureRuntimeState(session);
             const previous = { ...session.recoveryState };
+            const previousVoiceReadyAt = Number(session.voiceReadyAt || 0);
             const readyAt = now();
             session.voiceReadyAt = readyAt;
             session.lastActivity = readyAt;
@@ -391,7 +443,7 @@ function createVoiceNotificationSystem(options = {}) {
             };
             cancelIncidentTimer(sessionId);
             await persist(sessionId);
-            return { previous, readyAt };
+            return { previous, previousVoiceReadyAt, readyAt };
         });
         if (!transition) return { status: "skipped", reason: "session_missing" };
 
@@ -409,7 +461,9 @@ function createVoiceNotificationSystem(options = {}) {
                     ...context,
                     incidentId: transition.previous.incidentId,
                     outageDurationMs,
-                    attempts: transition.previous.attempts
+                    attempts: transition.previous.attempts,
+                    onlineSince: transition.previousVoiceReadyAt,
+                    recoveryNoticeSent: delayedRecorded
                 });
             }
             diagnostics.suppressed++;
@@ -498,6 +552,8 @@ module.exports = {
     EVENTS,
     TERMINAL_EVENTS,
     DEFAULTS,
+    policyAllows,
+    eventPriority,
     createVoiceNotificationSystem,
     ...notificationSystem
 };

@@ -32,6 +32,7 @@ const { isFeatureEnabled } = require("./core/featureFlags");
 const { createStartupLogger, resolveBootPort } = require("./core/startupLogger");
 const { registerVerificationRuntime } = require("./verification/runtime");
 const verificationLifecycle = require("./verification/lifecycle");
+const dmService = require("./dm");
 const bootLog = createStartupLogger();
 const runtimeLog = createStartupLogger({ prefix: "BOT" });
 const {
@@ -159,6 +160,7 @@ const client = new Client({
 registerGatewayDiagnostics(client, { clientName: "main-bot", context: "primary-runtime" });
 
 voiceWorker.setMainClient(client);
+dmService.configure({ client });
 
 // ── เชื่อม Protected Session checker กับ Shadow Protocol ──
 if (typeof isProtected === 'function') {
@@ -383,7 +385,8 @@ system.initShutdown({
     voiceWorker,
     client,
     memoryMonitor,
-    verificationRuntime: verificationLifecycle
+    verificationRuntime: verificationLifecycle,
+    dmService
 });
 
 if (isFeatureEnabled("memoryMonitor")) {
@@ -660,6 +663,7 @@ async function initializeClientReady() {
     system.crashShieldReady = true;
     bootLog.success("DISCORD", "Discord ready event received", { user: client.user.tag });
     voiceWorker.setShuttingDown(false);
+    dmService.start();
 
     await bootLog.runStage("SETTINGS", "Apply presence and voice settings", applyReadySettings, {
         required: false,

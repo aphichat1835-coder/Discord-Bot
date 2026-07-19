@@ -104,3 +104,70 @@ test("moderation workflow marks the pending case failed when Discord action fail
         metadata: { actionApplied: false, dmSent: true, failureCode: "action_failed" }
     }]);
 });
+
+function makeModerationActionHarness(actionFails = false) {
+    const order = [];
+    const edits = [];
+    const message = {
+        edit: async payload => {
+            order.push("dm_final");
+            edits.push(payload);
+            return message;
+        }
+    };
+    const user = {
+        id: "111111111111111111",
+        username: "target",
+        globalName: "Target",
+        discriminator: "0",
+        displayAvatarURL: () => "https://cdn.discordapp.com/embed/avatars/0.png",
+        send: async payload => {
+            order.push("dm_pending");
+            return Object.assign(message, { initialPayload: payload });
+        }
+    };
+    const target = {
+        id: user.id,
+        user,
+        ban: async () => {
+            order.push("discord_action");
+            if (actionFails) throw new Error("discord failed");
+        }
+    };
+    const interaction = {
+        guild: {
+            id: "222222222222222222",
+            name: "Guild",
+            members: { me: { permissions: { has: () => true } } }
+        },
+        user: { id: "333333333333333333", tag: "moderator" }
+    };
+    const input = {
+        target,
+        action: "ban",
+        reason: "reason",
+        duration: { minutes: null, durationMs: null }
+    };
+    return { order, edits, message, interaction, input };
+}
+
+test("ban DM starts pending and is confirmed only after Discord succeeds", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const harness = makeModerationActionHarness();
+    const dmSent = await workflow.applyBan(harness.interaction, harness.input, { caseNumber: 10 });
+
+    assert.equal(dmSent, true);
+    assert.deepEqual(harness.order, ["dm_pending", "discord_action", "dm_final"]);
+    assert.match(JSON.stringify(harness.message.initialPayload), /ยังไม่ยืนยันผล/);
+    assert.match(JSON.stringify(harness.edits[0]), /ยืนยันแล้ว.*สำเร็จ/);
+});
+
+test("failed ban edits the pending DM to say the action had no effect", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const harness = makeModerationActionHarness(true);
+    await assert.rejects(
+        workflow.applyBan(harness.interaction, harness.input, { caseNumber: 11 }),
+        /discord failed/
+    );
+
+    assert.deepEqual(harness.order, ["dm_pending", "discord_action", "dm_final"]);
+    assert.match(JSON.stringify(harness.edits[0]), /คำสั่งครั้งนี้จึงไม่มีผล/);
+});

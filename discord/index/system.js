@@ -336,7 +336,8 @@ function initShutdown({
     voiceWorker,
     client,
     memoryMonitor,
-    verificationRuntime
+    verificationRuntime,
+    dmService
 }) {
     let isShuttingDownMain = false;
 
@@ -351,6 +352,7 @@ function initShutdown({
         timeout.unref?.();
         console.log(`\n⛔ [SHUTDOWN] ${signal} — graceful shutdown starting...`);
         stopCronJobs();
+        dmService?.stop?.();
         try {
             await verificationRuntime?.stopVerificationRuntime?.();
         } catch (err) {

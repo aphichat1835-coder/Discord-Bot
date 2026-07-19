@@ -20,11 +20,50 @@ const {
     markCommandAccepted
 } = require("../guards/commandGuards");
 const { sendLogWebhook } = require("../core/webhooks");
+const dmService = require("../dm");
 
 // Race Condition Guards
 const activeRestores = new Set();
 const activeBackups  = new Set();
 const activeEmojiCopies = new Set();
+
+function restoreStateLabel(state) {
+    if (state === "complete") return "สำเร็จครบถ้วน";
+    if (state === "partial") return "สำเร็จบางส่วน";
+    return "ไม่สำเร็จ";
+}
+
+function restoreTone(state) {
+    if (state === "complete") return "success";
+    if (state === "partial") return "warning";
+    return "danger";
+}
+
+function buildRestoreResultDmEmbed(input) {
+    const stateLabel = restoreStateLabel(input.resultState);
+    const tone = restoreTone(input.resultState);
+    return dmService.design.buildDmEmbed({
+        tone,
+        title: input.resultState === "complete" ? "✅ กู้คืนเซิร์ฟเวอร์เสร็จแล้ว" : "⚠️ ผลการกู้คืนต้องตรวจสอบ",
+        summary: `งานกู้คืนสิ้นสุดด้วยสถานะ “${stateLabel}” รายละเอียดนี้ส่งเฉพาะผู้สั่งงาน`,
+        profile: dmService.design.profileFromUser(input.interaction.user),
+        fields: [
+            { name: "🏠 เซิร์ฟเวอร์", value: `${dmService.design.markdownText(input.interaction.guild.name, "ไม่ทราบเซิร์ฟเวอร์", 100)}\n${dmService.design.code(input.interaction.guild.id)}`, inline: true },
+            { name: "🎖️ ยศที่สร้าง", value: `${input.restoredRoles} ยศ`, inline: true },
+            { name: "🗂️ ห้องที่สร้าง", value: `${input.restoredChannels} ห้อง`, inline: true },
+            { name: "⏭️ รายการที่ข้าม", value: `${input.skippedRoles} ยศ / ${input.skippedChannels} ห้อง`, inline: true },
+            { name: "❓ ชื่อซ้ำหรือไม่แน่ชัด", value: `${input.ambiguousRoles} ยศ / ${input.ambiguousChannels} ห้อง`, inline: true },
+            { name: "🔐 สิทธิ์ห้อง", value: `${input.overwriteStats.restored} สำเร็จ / ${input.overwriteStats.skippedRoleMissing + input.overwriteStats.skippedMemberMissing} ข้าม`, inline: true },
+            { name: "⚠️ ข้อผิดพลาด", value: String(input.restoreErrors), inline: true },
+            { name: "⏱️ หมดเวลาระหว่างทำงาน", value: input.timeoutHit ? "ใช่" : "ไม่", inline: true }
+        ],
+        nextAction: input.resultState === "complete"
+            ? "ตรวจสอบยศ ห้อง และสิทธิ์สำคัญใน Discord อีกครั้งก่อนเปิดใช้งานเต็มรูปแบบ"
+            : "ตรวจสอบรายการที่ข้ามและข้อผิดพลาด แล้วกู้คืนเฉพาะส่วนที่ยังขาด",
+        referenceId: input.interaction.id || `restore-${input.interaction.guild.id}`,
+        footer: "Phomueangtai • กู้คืนเซิร์ฟเวอร์"
+    });
+}
 
 async function handle(interaction) {
     const cmd = interaction.commandName;
@@ -844,11 +883,34 @@ async function handleRestoreConfirm(interaction, sessionManager) {
             if (restoreErrors === 0 && !timeoutHit && incompleteItems === 0) resultState = "complete";
             else if (restoredRoles + restoredChannels > 0) resultState = "partial";
             const resultIcon = resultState === "complete" ? config.emojis.success : config.emojis.warning;
-            const resultMsg = `> ${resultIcon} **ผลการกู้คืน: ${resultState}**\n— สร้างยศใหม่: ${restoredRoles} ยศ\n— สร้างห้องใหม่: ${restoredChannels} ห้อง${detailMsg}${timeMsg}`;
+            const resultMsg = `> ${resultIcon} **ผลการกู้คืน: ${restoreStateLabel(resultState)}**\n— สร้างยศใหม่: ${restoredRoles} ยศ\n— สร้างห้องใหม่: ${restoredChannels} ห้อง${detailMsg}${timeMsg}`;
             const sent = await interaction.followUp({ content: resultMsg, ephemeral: true }).catch(() => null);
             if (!sent) {
-                const dmSent = await interaction.user.send({ content: `${resultMsg}\n*(แจ้งทาง DM เพราะ interaction หมดอายุ)*` }).catch(() => null);
-                if (!dmSent) interaction.channel?.send({ content: resultMsg }).catch(() => {});
+                const embed = buildRestoreResultDmEmbed({
+                    interaction,
+                    resultState,
+                    restoredRoles,
+                    restoredChannels,
+                    skippedRoles,
+                    skippedChannels,
+                    ambiguousRoles,
+                    ambiguousChannels,
+                    overwriteStats,
+                    restoreErrors,
+                    timeoutHit
+                });
+                const delivery = await dmService.send({
+                    eventKey: `restore:${interaction.guild.id}:${interaction.id || startTime}`,
+                    recipientId: interaction.user.id,
+                    category: "restore",
+                    priority: resultState === "complete" ? "normal" : "high",
+                    payload: { embeds: [embed] }
+                });
+                if (!["sent", "retrying"].includes(delivery?.status)) {
+                    sendLogWebhook({
+                        content: `⚠️ [RESTORE RESULT] ส่งผลส่วนตัวไม่ได้ | guild=${interaction.guild.id} | ref=${interaction.id || "unknown"}`
+                    }).catch(() => {});
+                }
             }
 
         } catch (err) {
@@ -878,5 +940,14 @@ module.exports = {
     handle,
     handleRestoreConfirm,
     getRuntimeDiagnostics,
-    _test: { handleSay, isValidSnapshotSchema, snapshotIdentityMatches, buildBackupValidationReport, normalizeOverwriteType }
+    _test: {
+        handleSay,
+        isValidSnapshotSchema,
+        snapshotIdentityMatches,
+        buildBackupValidationReport,
+        normalizeOverwriteType,
+        restoreStateLabel,
+        restoreTone,
+        buildRestoreResultDmEmbed
+    }
 };

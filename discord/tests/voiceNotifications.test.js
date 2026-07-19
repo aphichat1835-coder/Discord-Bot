@@ -193,3 +193,54 @@ test("voice notification normalizes persisted event records and keeps history bo
     assert.equal(Object.hasOwn(events, "bad\nkey"), false);
     assert.equal(Object.keys(events).length, 2);
 });
+
+test("critical voice events bypass the routine owner digest budget", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const sessions = Array.from({ length: 5 }, (_, index) => makeSession(`critical-${index}`, "same-owner"));
+    const harness = makeHarness(sessions);
+    harness.options.config = { ownerBudgetMax: 1 };
+    const system = createVoiceNotificationSystem(harness.options);
+
+    await system.emit(sessions[0].sessionId, EVENTS.SESSION_READY);
+    await system.emit(sessions[1].sessionId, EVENTS.SESSION_READY);
+    await system.emit(sessions[2].sessionId, EVENTS.TOKEN_INVALID);
+
+    assert.deepEqual(harness.sent.map(item => item.type), [EVENTS.SESSION_READY, EVENTS.TOKEN_INVALID]);
+    assert.equal(system.getDiagnostics().digested, 1);
+});
+
+test("failed digest delivery keeps its items for a later retry", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const sessions = Array.from({ length: 3 }, (_, index) => makeSession(`digest-${index}`, "digest-owner"));
+    const harness = makeHarness(sessions);
+    harness.options.config = { ownerBudgetMax: 1 };
+    let calls = 0;
+    harness.options.dm.sendVoiceDigestDM = async (_ownerId, items) => {
+        calls++;
+        harness.digests.push(items.map(item => item.sessionId));
+        return calls === 1 ? { status: "failed" } : { status: "sent" };
+    };
+    const system = createVoiceNotificationSystem(harness.options);
+    for (const session of sessions) await system.emit(session.sessionId, EVENTS.SESSION_READY);
+
+    await system.flushDigest("digest-owner");
+    await system.flushDigest("digest-owner");
+
+    assert.equal(calls, 2);
+    assert.deepEqual(harness.digests[1], harness.digests[0]);
+});
+
+test("recovery notification preserves the prior online duration", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const session = makeSession();
+    session.voiceReadyAt = 900_000;
+    const harness = makeHarness([session]);
+    const system = createVoiceNotificationSystem(harness.options);
+    await system.beginIncident(session.sessionId);
+    const timer = harness.timers.at(-1);
+    harness.advance(timer.delay);
+    await timer.callback();
+    await new Promise(resolve => setImmediate(resolve));
+    harness.advance(30_000);
+    await system.markReady(session.sessionId, { actualChannelId: session.voiceId });
+
+    const recovered = harness.sent.find(item => item.type === EVENTS.SESSION_RECOVERED);
+    assert.ok(recovered.onlineDurationMs > 0);
+});

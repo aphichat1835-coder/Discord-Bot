@@ -882,7 +882,7 @@ function pageSessionDetail() {
 
     <div style="background:rgba(127,29,29,.15);border:1px solid rgba(239,68,68,.25);border-radius:16px;padding:20px;text-align:center;margin-bottom:20px;">
         <h3 style="color:var(--red2);margin-bottom:8px;">🛑 หยุด Session นี้</h3>
-        <p style="color:var(--text3);font-size:0.8em;margin-bottom:14px;line-height:1.6;">เมื่อหยุดแล้ว บัญชีจะออกจากช่องเสียงทันที<br>เจ้าของจะได้รับแจ้งเตือนทาง DM</p>
+        <p style="color:var(--text3);font-size:0.8em;margin-bottom:14px;line-height:1.6;">เมื่อหยุดแล้ว บัญชีจะออกจากช่องเสียงทันที<br>DM จะส่งตามโหมดแจ้งเตือนที่ตั้งไว้</p>
         <button type="button" class="btn btn-danger" id="btnStop" onclick="openStopModal()" style="width:auto;padding:11px 28px;">🛑 หยุด Session นี้</button>
     </div>
 </div>

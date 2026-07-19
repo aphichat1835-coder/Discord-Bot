@@ -3,6 +3,11 @@
 Personal Discord bot with slash commands, voice/session automation, moderation
 cases, protection features, role buttons, Owner Dashboard, and OAuth2 verification.
 
+Private notifications for Voice, moderation, verification, and restore results
+use a shared profile-first Thai Embed design. Delivery is mention-safe,
+deduplicated, prioritized, and retained in a bounded MongoDB outbox for retry
+after transient Discord or process failures.
+
 ## Runtime shape
 
 The repository deploys as one Node.js 24 process:

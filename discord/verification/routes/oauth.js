@@ -1848,9 +1848,18 @@ router.post('/auth/callback', async (req, res) => {
                     'sendVerificationDM',
                     () => discord.sendVerificationDM(profile.id, {
                         ok: result === 'success',
+                        result,
                         guildName,
                         roleName,
-                        reason: userError || reason
+                        reason: userError || reason,
+                        reasonCode: reason,
+                        requestId,
+                        profile: {
+                            username: profile.username,
+                            globalName: profile.global_name,
+                            discriminator: profile.discriminator,
+                            avatarUrl: getAvatarUrl(profile)
+                        }
                     }),
                     false
                 ));

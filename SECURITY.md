@@ -113,6 +113,22 @@ and regression tests.
 
 ## Sensitive persistence
 
+### Direct-message outbox
+
+The shared `DmNotification` outbox stores only the final mention-disabled DM
+payload and delivery metadata for up to 30 days. Callers must construct payloads
+from the minimum information required for the recipient. OAuth access/refresh
+tokens, raw IP addresses, voice account tokens, credentials, and decrypted
+sensitive records must never enter the outbox. A unique server-derived event
+key prevents duplicate side effects; browser-provided recipient IDs are not an
+authority source. Restore results never fall back to a public channel when
+private delivery fails.
+
+Discord error `50007` and unknown-user delivery failures become terminal after
+bounded handling. Transient failures use the persisted retry schedule. Every
+payload disables mentions and dynamic profile/server/role text is normalized
+before Discord rendering.
+
 ### OAuth tokens
 
 Access and refresh tokens are encrypted before MongoDB storage using the

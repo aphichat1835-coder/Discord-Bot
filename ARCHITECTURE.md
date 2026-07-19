@@ -1,6 +1,6 @@
 # Architecture
 
-Last implementation verification: 2026-07-16 (`tt`).
+Last implementation verification: 2026-07-20 (`tt`).
 
 ## 1. System shape
 
@@ -76,6 +76,7 @@ channel routing, queues, reconciliation, and dashboard are not part of runtime.
 │   ├── commands.js
 │   ├── commands/                 slash command modules
 │   ├── core/                     env, HTTP, feature flags, safe logging, webhooks
+│   ├── dm/                       shared DM design, profile resolution, durable outbox, and retry
 │   ├── features/                 protection, role button, Join Campaign
 │   ├── guards/                   command/dashboard guards
 │   ├── index/                    Owner web/API modules and lifecycle helpers
@@ -107,6 +108,24 @@ channel routing, queues, reconciliation, and dashboard are not part of runtime.
 owner-locked. Their implementation details are intentionally not documented.
 The provider's legacy storage import is a thin adapter to internal event storage;
 it does not restore the retired Enterprise Audit subsystem.
+
+### Direct-message delivery
+
+Voice, moderation, verification, and restore-result notifications share the
+DM service under `discord/dm/`. Every delivered payload disables mentions and
+uses the same profile-first Thai Embed hierarchy. `DmNotification` is a
+30-day MongoDB outbox with a unique event key, bounded retry schedule, delivery
+state, and priority ordering. Closed DMs and unknown users are terminal;
+transient delivery failures remain retryable across process restarts.
+
+Voice keeps its lifecycle-specific incident deduplication and routine digest,
+but high/critical failures bypass the routine DM budget. A recovered event is
+sent in important-only mode when it closes a previously announced outage.
+Moderation ban/kick messages begin in an explicitly unconfirmed state and are
+edited only after Discord returns the real action result. Verification
+distinguishes a newly successful verification, an already-held role, policy
+denial, and an operational failure. Restore detail is never used as a public
+channel fallback when private delivery is unavailable.
 
 ## 4. HTTP boundary
 

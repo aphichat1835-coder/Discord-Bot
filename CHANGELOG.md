@@ -2,6 +2,20 @@
 
 ## [Unreleased] - Unified Bot And Verification Runtime 2026-07-16
 
+- Unified Voice, moderation, verification, and restore-result DMs behind a
+  profile-first Thai Embed system with mention suppression, Markdown-safe
+  dynamic text, server-derived recipients, priority, event deduplication, and a
+  30-day MongoDB outbox with bounded restart-safe retry. Critical Voice failures
+  bypass routine digests, digest failures retain their items, inferred versus
+  observed voice channels are labelled honestly, and error codes no longer
+  replace the user-facing diagnosis.
+- Made moderation DMs truthful across partial failure: ban/kick notifications
+  start as unconfirmed and are edited after Discord succeeds or fails; timeout
+  includes its end time and every result carries the member profile and Case
+  reference. Verification now distinguishes a newly granted role, an existing
+  role, a policy block, and an operational failure. Restore results no longer
+  expose structural details in a public channel when private delivery fails.
+
 - Replaced first-success IP geolocation with bounded multi-provider consensus.
   The verification record now preserves provider agreement, an explainable
   confidence level, provider-supplied accuracy radius, VPN/proxy/TOR/hosting/

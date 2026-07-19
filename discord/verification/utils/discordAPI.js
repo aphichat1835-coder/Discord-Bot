@@ -17,6 +17,7 @@ const https = require("https");
 
 const { encryptToken, decryptToken } = require("./crypto");
 const { sanitizeLogText } = require("./safeLogger");
+const dmService = require("../../dm");
 
 const BASE = "https://discord.com/api/v10";
 const MAX_DISCORD_API_RESPONSE_BYTES = 12 * 1024 * 1024;
@@ -1209,6 +1210,46 @@ async function sendDM(userId, payload) {
     return res.ok;
 }
 
+function verificationDmCopy({ ok, blocked, alreadyVerified, reasonCode }) {
+    if (alreadyVerified) {
+        return {
+            title: "ℹ️ บัญชีนี้ยืนยันไว้แล้ว",
+            summary: "ระบบตรวจพบว่าบัญชีนี้มียศยืนยันอยู่ก่อนแล้ว จึงไม่ได้เพิ่มยศซ้ำ",
+            nextAction: "ไม่ต้องดำเนินการเพิ่มเติม คุณสามารถกลับไปใช้งานเซิร์ฟเวอร์ได้",
+            tone: "info",
+            resultLabel: "มียศอยู่แล้ว"
+        };
+    }
+    if (ok) {
+        return {
+            title: "✅ ยืนยันตัวตนสำเร็จ",
+            summary: "Discord ยืนยันแล้วว่ากระบวนการเสร็จสมบูรณ์และผลการให้ยศสำเร็จ",
+            nextAction: "ไม่ต้องดำเนินการเพิ่มเติม คุณสามารถกลับไปใช้งานเซิร์ฟเวอร์ได้",
+            tone: "success",
+            resultLabel: "สำเร็จ"
+        };
+    }
+    if (blocked) {
+        return {
+            title: "🛡️ ไม่ผ่านเงื่อนไขของเซิร์ฟเวอร์",
+            summary: "ระบบตรวจสอบข้อมูลสำเร็จ แต่บัญชีไม่ผ่านเงื่อนไขที่เซิร์ฟเวอร์ตั้งไว้",
+            nextAction: "ติดต่อผู้ดูแลเซิร์ฟเวอร์หากต้องการสอบถามเงื่อนไขเพิ่มเติม",
+            tone: "warning",
+            resultLabel: "ไม่ผ่านเงื่อนไข"
+        };
+    }
+    const stalePanel = reasonCode === "panel_revision_mismatch" || reasonCode === "role_mismatch_latest_config";
+    return {
+        title: "⚠️ ยืนยันตัวตนไม่สำเร็จ",
+        summary: "กระบวนการยืนยันยังไม่เสร็จสมบูรณ์ กรุณาตรวจสอบรายละเอียดด้านล่าง",
+        nextAction: stalePanel
+            ? "กลับไป Discord แล้วกดปุ่มจากแผงยืนยันล่าสุด"
+            : "ลองใหม่อีกครั้ง หากยังไม่สำเร็จให้แจ้งผู้ดูแลพร้อมรหัสอ้างอิง",
+        tone: "action",
+        resultLabel: "ดำเนินการไม่สำเร็จ"
+    };
+}
+
 async function sendVerificationDM(userId, data = {}) {
     if (!userId) return false;
 
@@ -1216,22 +1257,41 @@ async function sendVerificationDM(userId, data = {}) {
     const guildName = data.guildName || "Discord Server";
     const roleName = data.roleName || null;
     const reason = data.reason || (ok ? "ยืนยันสำเร็จ" : "ยืนยันไม่สำเร็จ");
-
-    return sendDM(userId, {
-        embeds: [
-            {
-                title: ok ? "✅ ยืนยันตัวตนสำเร็จ" : "❌ ยืนยันตัวตนไม่สำเร็จ",
-                description: ok
-                    ? `คุณยืนยันตัวตนใน **${guildName}** สำเร็จแล้ว${roleName ? ` และได้รับยศ **${roleName}**` : ""}`
-                    : `การยืนยันตัวตนใน **${guildName}** ไม่สำเร็จ\nเหตุผล: ${reason}`,
-                color: ok ? 0x45e67a : 0xef4444,
-                timestamp: new Date().toISOString(),
-                footer: {
-                    text: "Verification System"
-                }
-            }
-        ]
+    const resultType = data.result || (ok ? "success" : "failed");
+    const reasonCode = String(data.reasonCode || "");
+    const alreadyVerified = ok && reasonCode === "already_verified_has_role";
+    const blocked = resultType === "blocked";
+    const copy = verificationDmCopy({ ok, blocked, alreadyVerified, reasonCode });
+    const profile = await dmService.resolveProfile(userId, {
+        id: userId,
+        username: data.profile?.username,
+        globalName: data.profile?.global_name || data.profile?.globalName,
+        discriminator: data.profile?.discriminator,
+        avatarUrl: data.profile?.avatarUrl
     });
+    const embed = dmService.design.buildDmEmbed({
+        tone: copy.tone,
+        title: copy.title,
+        summary: copy.summary,
+        profile,
+        fields: [
+            { name: "🏠 เซิร์ฟเวอร์", value: dmService.design.markdownText(guildName, "Discord Server", 100), inline: true },
+            ...(roleName ? [{ name: "🎖️ ยศยืนยัน", value: dmService.design.markdownText(roleName, "ไม่ทราบ", 100), inline: true }] : []),
+            { name: "📍 ผลการตรวจ", value: copy.resultLabel, inline: true }
+        ],
+        details: reason,
+        nextAction: copy.nextAction,
+        referenceId: data.requestId || "verification",
+        footer: "Phomueangtai • ระบบยืนยันตัวตน"
+    });
+    const delivery = await dmService.send({
+        eventKey: `verification:${data.requestId || `${userId}:${Date.now()}`}`,
+        recipientId: userId,
+        category: "verification",
+        priority: ok ? "normal" : "high",
+        payload: { embeds: [embed] }
+    });
+    return delivery?.status === "sent";
 }
 
 /* =============================================================================
@@ -1318,6 +1378,7 @@ module.exports = {
 
     createDMChannel,
     sendDM,
+    verificationDmCopy,
     sendVerificationDM,
 
     prepareTokenStorage
