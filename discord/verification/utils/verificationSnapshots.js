@@ -3,6 +3,10 @@ const {
   redactSensitiveIpInfo
 } = require("./sensitiveAccess");
 
+function arrayOrEmpty(value) {
+  return Array.isArray(value) ? value : [];
+}
+
 function safeIpLocation(ipInfo = {}) {
   return {
     country: ipInfo.country || "unknown",
@@ -17,11 +21,9 @@ function safeIpLocation(ipInfo = {}) {
     locationAccuracy: ipInfo.locationAccuracy || "",
     locationConfidence: ipInfo.locationConfidence || "unknown",
     locationConfidenceScore: ipInfo.locationConfidenceScore ?? null,
-    locationConfidenceReasons: Array.isArray(ipInfo.locationConfidenceReasons)
-      ? ipInfo.locationConfidenceReasons
-      : [],
+    locationConfidenceReasons: arrayOrEmpty(ipInfo.locationConfidenceReasons),
     providerAgreement: ipInfo.providerAgreement || null,
-    providerEvidence: Array.isArray(ipInfo.providerEvidence) ? ipInfo.providerEvidence : [],
+    providerEvidence: arrayOrEmpty(ipInfo.providerEvidence),
     browserTimezone: ipInfo.browserTimezone || "",
     browserTimezoneMatches: ipInfo.browserTimezoneMatches ?? null,
     historyConsistency: ipInfo.historyConsistency || null
