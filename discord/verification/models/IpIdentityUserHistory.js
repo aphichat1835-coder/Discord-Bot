@@ -19,6 +19,7 @@ const schema = new mongoose.Schema({
     lastResult: String,
     lastRoleId: String,
     lastRoles: [String],
+    firstJoinedAt: String,
     lastJoinedAt: String,
     lastMemberPending: Boolean,
     lastCommunicationDisabledUntil: String,

@@ -361,6 +361,7 @@ describe('processIP factual network findings', () => {
 describe('IP lookup config', () => {
     const oldEnabled = process.env.IP_LOOKUP_ENABLED;
     const oldBaseUrl = process.env.IP_LOOKUP_API_BASE_URL;
+    const oldFallbackEnabled = process.env.IP_LOOKUP_FALLBACK_ENABLED;
 
     afterEach(() => {
         if (oldEnabled === undefined) delete process.env.IP_LOOKUP_ENABLED;
@@ -368,6 +369,9 @@ describe('IP lookup config', () => {
 
         if (oldBaseUrl === undefined) delete process.env.IP_LOOKUP_API_BASE_URL;
         else process.env.IP_LOOKUP_API_BASE_URL = oldBaseUrl;
+
+        if (oldFallbackEnabled === undefined) delete process.env.IP_LOOKUP_FALLBACK_ENABLED;
+        else process.env.IP_LOOKUP_FALLBACK_ENABLED = oldFallbackEnabled;
     });
 
     test('uses HTTPS default lookup base URL', () => {
@@ -386,6 +390,38 @@ describe('IP lookup config', () => {
         expect(lookup.provider).toBe('disabled');
         expect(lookup.status).toBe('lookup_disabled');
         expect(lookup.query).toBe('9.9.9.9');
+    });
+
+    test('falls back to the HTTPS location provider and preserves signal uncertainty', async () => {
+        process.env.IP_LOOKUP_ENABLED = 'true';
+        delete process.env.IP_LOOKUP_API_BASE_URL;
+        process.env.IP_LOOKUP_FALLBACK_ENABLED = 'true';
+        global.fetch = jest.fn()
+            .mockResolvedValueOnce({ ok: false, status: 503, text: async () => '' })
+            .mockResolvedValueOnce({ ok: false, status: 503, text: async () => '' })
+            .mockResolvedValueOnce({
+                ok: true,
+                text: async () => JSON.stringify({
+                    ip: '9.9.9.8',
+                    country_name: 'Thailand',
+                    country_code: 'TH',
+                    region: 'Krabi',
+                    city: 'Krabi',
+                    latitude: 8.0863,
+                    longitude: 98.9063,
+                    org: 'Example ISP',
+                    asn: 'AS64500'
+                })
+            });
+
+        const lookup = await lookupIP('9.9.9.8');
+
+        expect(lookup.provider).toBe('ipapi.co');
+        expect(lookup.fallbackUsed).toBe(true);
+        expect(lookup.attemptedProviders).toEqual(['ipapi.is', 'ipapi.co']);
+        expect(lookup.securitySignalsAvailable).toBe(false);
+        expect(lookup.countryCode).toBe('TH');
+        expect(lookup.city).toBe('Krabi');
     });
 
     test('opens circuit breaker after repeated provider failures', async () => {
@@ -421,6 +457,26 @@ describe('device fingerprint metadata', () => {
 
         expect(device.fingerprintVersion).toBe(1);
         expect(device.fingerprintHash).toEqual(expect.any(String));
+    });
+
+    test('keeps User-Agent visible while marking contradictory client hints', () => {
+        const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/138.0.0.0 Safari/537.36';
+        const device = extractDevice({
+            headers: { 'user-agent': userAgent, 'accept-language': 'th-TH' },
+            body: {
+                userAgent,
+                platform: 'MacIntel',
+                clientHints: { platform: 'macOS', mobile: true, brands: [{ brand: 'Chromium', version: '138' }] }
+            }
+        });
+
+        expect(device.userAgent).toBe(userAgent);
+        expect(device.userAgentSuspected).toBe(true);
+        expect(device.userAgentFlags).toEqual(expect.arrayContaining([
+            'navigator_platform_conflicts_with_user_agent',
+            'client_hint_platform_conflicts_with_user_agent',
+            'client_hint_mobile_conflicts_with_user_agent'
+        ]));
     });
 });
 

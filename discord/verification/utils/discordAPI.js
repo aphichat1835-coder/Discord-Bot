@@ -985,6 +985,24 @@ async function addRoleToMember(guildId, userId, roleId) {
     };
 }
 
+async function removeRoleFromMember(guildId, userId, roleId) {
+    const gid = snowflake(guildId);
+    const uid = snowflake(userId);
+    const rid = snowflake(roleId);
+    if (!gid || !uid || !rid) return { ok: false, status: 400, error: "Invalid guildId/userId/roleId" };
+    if (!hasBotToken()) return { ok: false, status: 500, error: "Missing bot token" };
+
+    const res = await fetchWithRetry(`/guilds/${gid}/members/${uid}/roles/${rid}`, {
+        method: "DELETE",
+        headers: {
+            Authorization: `Bot ${getBotToken()}`,
+            "X-Audit-Log-Reason": encodeURIComponent("Verification OAuth recovery role revoke")
+        }
+    });
+    if (res.status === 204) return { ok: true, status: 204 };
+    return { ok: false, status: res.status, error: await readError(res) };
+}
+
 async function moderateVerificationMember(guildId, userId, action, options = {}) {
     const gid = snowflake(guildId);
     const uid = snowflake(userId);
@@ -1289,6 +1307,7 @@ module.exports = {
     // Compatibility alias for older callback code. New code should use addMemberToGuild.
     addGuildMember: addMemberToGuild,
     addRoleToMember,
+    removeRoleFromMember,
     moderateVerificationMember,
 
     getChannel,

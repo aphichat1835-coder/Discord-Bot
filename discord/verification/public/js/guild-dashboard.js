@@ -24,6 +24,8 @@
     currentConfig: null,
     overviewData: null,
     resources: null,
+    oauthRecovery: null,
+    oauthRecoveryLoading: false,
 
     membersPage: 0,
 
@@ -132,6 +134,29 @@
     } catch {
       return String(ts);
     }
+  }
+
+  function fmtDuration(ms) {
+    const value = Number(ms);
+    if (!Number.isFinite(value)) return "—";
+    const seconds = Math.max(0, Math.floor(Math.abs(value) / 1000));
+    const units = [
+      [86400, "วัน"],
+      [3600, "ชม."],
+      [60, "นาที"],
+      [1, "วินาที"]
+    ];
+    let remaining = seconds;
+    const parts = [];
+    for (const [size, label] of units) {
+      const count = Math.floor(remaining / size);
+      if (count || (label === "วินาที" && parts.length === 0)) {
+        parts.push(`${count} ${label}`);
+        remaining %= size;
+      }
+      if (parts.length === 2) break;
+    }
+    return parts.join(" ");
   }
 
   function fmtDateShort(ts) {
@@ -391,6 +416,7 @@
 
     if (tab === "data") {
       loadMembers(state.membersPage);
+      loadOAuthRecovery();
     }
     if (tab === "panel") renderEmbedPreview();
   }
@@ -562,11 +588,41 @@
     const labelNode = document.createElement("span");
     const valueNode = document.createElement("span");
     labelNode.textContent = `${label}: `;
-    valueNode.textContent = String(value ?? "—");
+    if (value instanceof Node) valueNode.appendChild(value);
+    else valueNode.textContent = String(value ?? "—");
     if (valueClass) valueNode.className = valueClass;
     row.append(labelNode, valueNode);
     parent.appendChild(row);
     return row;
+  }
+
+  function roleResource(roleId) {
+    const roles = Array.isArray(state.resources?.roles) ? state.resources.roles : [];
+    return roles.find(role => String(role?.id || "") === String(roleId || "")) || null;
+  }
+
+  function roleChipElement(roleId) {
+    const id = String(roleId || "");
+    const role = roleResource(id);
+    const name = String(role?.name || "ไม่พบชื่อยศ");
+    const button = createElement("button", "role-copy-chip", name);
+    button.type = "button";
+    button.title = `${name} — คลิกเพื่อคัดลอก Role ID: ${id}`;
+    button.setAttribute("aria-label", `${name} กดเพื่อคัดลอก Role ID`);
+    const color = Number(role?.color || 0);
+    if (Number.isInteger(color) && color > 0 && color <= 0xFFFFFF) {
+      button.style.setProperty("--role-color", `#${color.toString(16).padStart(6, "0")}`);
+    }
+    button.addEventListener("click", () => copyText(id, `คัดลอก ID ยศ ${name} แล้ว`));
+    return button;
+  }
+
+  function roleListElement(roleIds = []) {
+    const ids = [...new Set((Array.isArray(roleIds) ? roleIds : []).map(String).filter(Boolean))];
+    const root = createElement("span", "role-copy-list");
+    if (!ids.length) root.textContent = "—";
+    else root.append(...ids.map(roleChipElement));
+    return root;
   }
 
   function detailCardElement(title, rows = [], extraNode = null) {
@@ -596,15 +652,23 @@
   }
 
   function oauthStatusRows(token = {}) {
+    const oauth = token.oauth || {};
+    const now = Date.now();
+    const tokenAge = oauth.issuedAt ? Math.max(0, now - Number(oauth.issuedAt)) : null;
+    const remaining = oauth.expiresAt ? Number(oauth.expiresAt) - now : null;
     return [
-      ["OAuth scope", token.oauth?.scope || "—"],
-      ["Token type", token.oauth?.tokenType || "—"],
-      ["Has access token", boolText(token.oauth?.hasAccessToken)],
-      ["Has refresh token", boolText(token.oauth?.hasRefreshToken)],
-      ["Expires at", fmtTime(token.oauth?.expiresAt)],
-      ["Last refresh at", fmtTime(token.oauth?.lastRefreshAt)],
-      ["Refresh failures", token.oauth?.refreshFailCount ?? 0],
-      ["Revoked at", fmtTime(token.oauth?.revokedAt)],
+      ["OAuth scope", oauth.scope || "—"],
+      ["Token type", oauth.tokenType || "—"],
+      ["Has access token", boolText(oauth.hasAccessToken)],
+      ["Has refresh token", boolText(oauth.hasRefreshToken)],
+      ["ออก Token เมื่อ", fmtTime(oauth.issuedAt)],
+      ["อายุ Token ปัจจุบัน", tokenAge === null ? "—" : fmtDuration(tokenAge)],
+      ["อายุใช้งานทั้งหมด", oauth.lifetimeMs == null ? "—" : fmtDuration(oauth.lifetimeMs)],
+      ["หมดอายุเมื่อ", fmtTime(oauth.expiresAt)],
+      ["เวลาคงเหลือ", remaining === null ? "—" : (remaining > 0 ? fmtDuration(remaining) : `หมดอายุแล้ว ${fmtDuration(-remaining)}`)],
+      ["Last refresh at", fmtTime(oauth.lastRefreshAt)],
+      ["Refresh failures", oauth.refreshFailCount ?? 0],
+      ["Revoked at", fmtTime(oauth.revokedAt)],
       ["Admin OAuth access/refresh", `${boolText(token.adminOAuth?.hasAccessToken)} / ${boolText(token.adminOAuth?.hasRefreshToken)}`]
     ];
   }
@@ -613,25 +677,19 @@
     const row = createElement("div", "secret-control");
     const text = createElement("div", "secret-control-value");
     const name = createElement("b", "", label);
-    const code = createElement("code", "mono", value ? "••••••••••••••••" : "ไม่มีข้อมูล");
+    const code = createElement("code", "mono", value || "ไม่มีข้อมูล");
     const actions = createElement("div", "secret-control-actions");
-    let timer = null;
     if (value) {
-      const reveal = createElement("button", "btn btn-soft btn-sm btn-inline", "แสดง");
+      const reveal = createElement("button", "btn btn-soft btn-sm btn-inline", "ซ่อน");
       const copy = createElement("button", "btn btn-soft btn-sm btn-inline", "คัดลอก");
       reveal.type = "button";
       copy.type = "button";
+      reveal.dataset.visible = "true";
       reveal.addEventListener("click", () => {
         const showing = reveal.dataset.visible === "true";
         reveal.dataset.visible = String(!showing);
         reveal.textContent = showing ? "แสดง" : "ซ่อน";
         code.textContent = showing ? "••••••••••••••••" : value;
-        clearTimeout(timer);
-        if (!showing) timer = setTimeout(() => {
-          reveal.dataset.visible = "false";
-          reveal.textContent = "แสดง";
-          code.textContent = "••••••••••••••••";
-        }, 30000);
       });
       copy.addEventListener("click", () => copyText(value, `คัดลอก ${label} แล้ว`));
       actions.append(reveal, copy);
@@ -666,7 +724,7 @@
 
   function missingOAuthScopeIssues(oauth = {}) {
     const granted = new Set(String(oauth.scope || "").split(/\s+/).filter(Boolean));
-    const required = ["identify", "identify.premium", "email", "connections", "guilds", "guilds.members.read", "guilds.join"];
+    const required = ["identify", "email", "connections", "guilds", "guilds.members.read", "guilds.join"];
     return required
       .filter(scope => !granted.has(scope))
       .map(scope => `ขาด scope: ${scope}`);
@@ -781,7 +839,7 @@
       appendDetailRow(meta, "Avatar ในเซิร์ฟเวอร์", firstTruthy(member.avatarUrl, member.avatar), "mono");
       appendDetailRow(meta, "รอผ่านกฎสมาชิก", boolText(member.pending));
       appendDetailRow(meta, "กำลังถูกหมดเวลา", boolText(member.timedOut));
-      appendDetailRow(meta, "ยศทั้งหมด", firstArray(member.roles).join(", ") || "—");
+      appendDetailRow(meta, "ยศทั้งหมด", roleListElement(firstArray(member.roles)));
     } else {
       appendDetailRow(meta, "ข้อมูลสมาชิกในเซิร์ฟเวอร์นี้", "Discord ไม่ได้ส่ง Nickname, ยศ และวันเข้ามากับรายการเซิร์ฟเวอร์");
     }
@@ -870,20 +928,23 @@
     const identity = detail.identity || {};
     const account = detail.account || {};
     const scopes = String(detail.oauthTokens?.oauth?.scope || "").split(/\s+/);
-    const premiumKnown = scopes.includes("identify.premium");
+    const premiumKnown = scopes.includes("identify.premium") && account.premiumType != null;
     const premiumLabels = { 0: "ไม่มี Nitro", 1: "Nitro Classic", 2: "Nitro", 3: "Nitro Basic" };
     const rawProfile = detail.rawSnapshots?.profile || {};
-    const mfaKnown = Object.hasOwn(rawProfile, "mfa_enabled") || Object.hasOwn(rawProfile, "mfaEnabled");
-    return detailCardElement("บัญชีและความปลอดภัย", [
-      ["Email", firstDefined(account.email, identity.email)],
-      ["Email verified", boolText(firstDefinedValue(account.emailVerified, identity.emailVerified))],
+    const mfaKnown = account.mfaEnabled != null && (Object.hasOwn(rawProfile, "mfa_enabled") || Object.hasOwn(rawProfile, "mfaEnabled"));
+    const rows = [
       ["Locale", firstTruthy(account.locale, identity.locale)],
-      ["MFA / 2FA", mfaKnown ? boolText(firstDefinedValue(account.mfaEnabled, identity.mfaEnabled)) : "Discord ไม่ได้ส่งข้อมูล"],
-      ["Nitro", premiumKnown ? (premiumLabels[Number(firstDefinedValue(account.premiumType, identity.premiumType) || 0)] || "ไม่ทราบประเภท") : "Discord ไม่ได้ส่งข้อมูล"],
       ["Flags / Public", `${firstDefined(account.flags, identity.flags)} / ${firstDefined(account.publicFlags, identity.publicFlags)}`],
       ["Created", fmtTime(firstTruthyValue(account.accountCreatedAt, identity.accountCreatedAt))],
       ["Age", `${firstDefined(account.accountAgeDays, identity.accountAgeDays)} วัน`]
-    ]);
+    ];
+    const email = firstDefinedValue(account.email, identity.email);
+    if (email) rows.unshift(["Email verified", boolText(firstDefinedValue(account.emailVerified, identity.emailVerified))]);
+    if (email) rows.unshift(["Email", email]);
+    if (mfaKnown) rows.splice(email ? 2 : 0, 0, ["MFA / 2FA", boolText(account.mfaEnabled)]);
+    if (premiumKnown) rows.splice(email ? (mfaKnown ? 3 : 2) : (mfaKnown ? 1 : 0), 0,
+      ["Nitro", premiumLabels[Number(account.premiumType)] || "ไม่ทราบประเภท"]);
+    return detailCardElement("บัญชีและความปลอดภัย", rows);
   }
 
   function buildTargetMemberDetailCard(detail = {}) {
@@ -896,12 +957,15 @@
       ["Timeout", boolText(member.timedOut)],
       ["Timeout until", fmtTime(member.communicationDisabledUntil)],
       ["Guild avatar", firstTruthy(member.avatarUrl, member.avatar), "mono"],
-      [`Roles (${roles.length})`, roles.join(", ") || "—"]
+      [`Roles (${roles.length})`, roleListElement(roles)]
     ]);
   }
 
   function buildDeviceDetailCard(detail = {}) {
     const device = detail.device || {};
+    const warning = device.userAgentSuspected
+      ? createElement("div", "notice notice-warn mt-10", `⚠️ User-Agent อาจถูกปลอมแปลงหรือข้อมูลขัดแย้งกัน: ${firstArray(device.userAgentFlags).join(", ")}`)
+      : null;
     return detailCardElement("อุปกรณ์และเบราว์เซอร์", [
       ["Browser", firstTruthy(device.browser)],
       ["OS", firstTruthy(device.os)],
@@ -913,13 +977,20 @@
       ["Screen / Viewport", `${firstTruthy(device.screenSize)} / ${firstTruthy(device.viewportSize)}`],
       ["Color depth / Pixel ratio", `${firstDefined(device.colorDepth)} / ${firstDefined(device.devicePixelRatio)}`],
       ["Touch points", firstDefined(device.touchPoints)],
+      ["Client hints", device.clientHints ? JSON.stringify(device.clientHints) : "—", "mono"],
       ["User-Agent", firstTruthy(device.userAgent), "mono"]
-    ]);
+    ], warning);
   }
 
   function buildNetworkDetailCard(detail = {}) {
     const network = detail.network || {};
     const tracking = detail.tracking || {};
+    const lookupWarning = network.securitySignalsAvailable === false && network.lookupStatus === "success"
+      ? createElement("div", "notice notice-warn mt-10", "⚠️ Provider สำรองให้ข้อมูลตำแหน่งสำเร็จ แต่ไม่ได้ยืนยัน VPN / Proxy / TOR จึงไม่ควรตีความค่า ‘ไม่พบ’ ว่าปลอดภัยแน่นอน")
+      : null;
+    const extra = createElement("div", "");
+    if (lookupWarning) extra.appendChild(lookupWarning);
+    extra.appendChild(secretControl("IP ที่ระบบตรวจพบ", detail.sensitive?.rawIp));
     return detailCardElement("เครือข่ายและ IP", [
       ["Country/City", `${firstTruthy(network.country, network.countryCode)} / ${firstTruthy(network.city)}`],
       ["Region / Timezone", `${firstTruthy(network.region)} / ${firstTruthy(network.timezone)}`],
@@ -929,8 +1000,11 @@
       ["VPN / Proxy / TOR", `${boolText(network.isVPN)} / ${boolText(network.isProxy)} / ${boolText(network.isTOR)}`],
       ["Hosting / Mobile", `${boolText(firstTruthyValue(network.isHosting, network.hosting))} / ${boolText(network.mobile)}`],
       ["Lookup", `${firstTruthy(network.lookupProvider)} / ${firstTruthy(network.lookupStatus, "unknown")}`],
+      ["Providers ที่ลอง", firstArray(network.lookupProviders).join(" → ") || "—"],
+      ["ใช้ Provider สำรอง", boolText(network.lookupFallbackUsed)],
+      ["ความแม่นยำตำแหน่ง", firstTruthy(network.locationAccuracy)],
       ["IP first seen / Last seen", `${fmtTime(tracking.firstSeenAt)} / ${fmtTime(tracking.lastSeenAt)}`]
-    ], secretControl("IP ที่ระบบตรวจพบ", detail.sensitive?.rawIp));
+    ], extra);
   }
 
   function buildMemberListCards(detail = {}) {
@@ -949,12 +1023,13 @@
 
   function ipHistorySummaryRows(history = {}) {
     return [
-      ["First seen / Last seen", `${fmtTime(history.firstSeenAt)} / ${fmtTime(history.lastSeenAt)}`],
+      ["ระบบพบ IP ครั้งแรก / ล่าสุด", `${fmtTime(history.firstSeenAt)} / ${fmtTime(history.lastSeenAt)}`],
       ["Verification count / Users", `${history.totalVerifications ?? 0} / ${history.uniqueUsers ?? 0}`],
       ["Users on this IP", Array.isArray(history.users) ? history.users.length : 0],
       ["Device fingerprints", Array.isArray(history.deviceFingerprints) ? history.deviceFingerprints.length : 0],
       ["Role snapshots", Array.isArray(history.roleSnapshots) ? history.roleSnapshots.length : 0],
-      ["Last result / Role", `${history.lastResult || "—"} / ${history.lastRoleId || "—"}`]
+      ["ผลล่าสุด", history.lastResult || "—"],
+      ["ยศที่ระบบจัดการล่าสุด", history.lastRoleId ? roleListElement([history.lastRoleId]) : "—"]
     ];
   }
 
@@ -992,11 +1067,11 @@
     if (kind === "users") return [
       ["ผู้ใช้", firstTruthy(item.globalName, item.username, item.displayTag)],
       ["User ID", firstTruthy(item.userId), "mono"],
-      ["พบครั้งแรก / ล่าสุด", `${fmtTime(item.firstSeenAt)} / ${fmtTime(item.lastSeenAt)}`],
+      ["ระบบพบบัญชีนี้บน IP ครั้งแรก / ล่าสุด", `${fmtTime(item.firstSeenAt)} / ${fmtTime(item.lastSeenAt)}`],
       ["จำนวนการยืนยัน", firstDefined(item.verifyCount)],
       ["ผลล่าสุด", firstTruthy(item.lastResult)],
-      ["ยศล่าสุด", firstArray(item.lastRoles).join(", ") || "—"],
-      ["เข้าเซิร์ฟเวอร์เมื่อ", fmtTime(item.lastJoinedAt)]
+      ["ยศล่าสุด", roleListElement(firstArray(item.lastRoles))],
+      ["วันที่เข้าเซิร์ฟเวอร์ที่ Discord รายงาน", fmtTime(item.firstJoinedAt || item.lastJoinedAt)]
     ];
     if (kind === "devices") return [
       ["อุปกรณ์", `${firstTruthy(item.deviceType)} · ${firstTruthy(item.browser)} · ${firstTruthy(item.os)}`],
@@ -1009,8 +1084,8 @@
     return [
       ["User ID", firstTruthy(item.userId), "mono"],
       ["ผลการยืนยัน", firstTruthy(item.result)],
-      ["ยศที่ระบบจัดการ", firstTruthy(item.roleId), "mono"],
-      ["ยศทั้งหมดในครั้งนั้น", firstArray(item.roles).join(", ") || "—"],
+      ["ยศที่ระบบจัดการ", item.roleId ? roleListElement([item.roleId]) : "—"],
+      ["ยศทั้งหมดในครั้งนั้น", roleListElement(firstArray(item.roles))],
       ["บันทึกเมื่อ", fmtTime(item.at)]
     ];
   }
@@ -1153,12 +1228,14 @@
     const root = document.createDocumentFragment();
     const [connections, guilds] = buildMemberListCards(detail);
     const rawCards = buildRawSnapshotCards(detail);
+    const snapshotAt = detail.verification?.latest?.verifiedAt || detail.verification?.lastVerify?.verifiedAt;
+    const snapshotLabel = `Snapshot ล่าสุดจากตอนยืนยัน ${fmtTime(snapshotAt)}`;
     root.append(
       memberProfileHeader(detail),
       memberDetailSection("ตัวตนและบัญชี", "ชื่อ รูปโปรไฟล์ Email Nitro MFA และอายุบัญชี", [buildIdentityDetailCard(detail), buildAccountDetailCard(detail)], true),
       memberDetailSection("ข้อมูลในเซิร์ฟเวอร์นี้", "Nickname ยศ วันที่เข้า Avatar และสถานะหมดเวลา", [buildTargetMemberDetailCard(detail)]),
-      memberDetailSection("เซิร์ฟเวอร์ทั้งหมด", `${Array.isArray(detail.guilds) ? detail.guilds.length : 0} เซิร์ฟเวอร์ พร้อมสิทธิ์ที่ Discord ส่งมา`, [guilds]),
-      memberDetailSection("บัญชีภายนอก", `${Array.isArray(detail.connections) ? detail.connections.length : 0} บริการที่เชื่อมกับ Discord`, [connections]),
+      memberDetailSection("เซิร์ฟเวอร์ทั้งหมด", `${Array.isArray(detail.guilds) ? detail.guilds.length : 0} เซิร์ฟเวอร์ · ${snapshotLabel}`, [guilds]),
+      memberDetailSection("บัญชีภายนอก", `${Array.isArray(detail.connections) ? detail.connections.length : 0} บริการที่ Discord ส่งมา · ${snapshotLabel}`, [connections]),
       memberDetailSection("อุปกรณ์และเครือข่าย", "Browser OS หน้าจอ ISP ตำแหน่ง VPN Proxy TOR และ IP", [buildDeviceDetailCard(detail), buildNetworkDetailCard(detail)]),
       memberDetailSection("ประวัติการยืนยัน", `${Array.isArray(detail.history) ? detail.history.length : 0} เหตุการณ์ล่าสุด`, [verificationHistoryElement(detail)]),
       memberDetailSection("OAuth และ Token", "Scope วันหมดอายุ สถานะ Refresh และข้อมูลเข้ารหัส", [buildVerificationCardElement(detail)]),
@@ -1200,7 +1277,7 @@
       ["Locale / Flags", `${firstTruthy(user.locale, log.locale)} / ${firstDefined(user.flags, log.flags)}`],
       ["Nickname", firstTruthy(log.memberNick, log.nickname)],
       ["Joined at", fmtTime(log.joinedAt)],
-      ["Roles", roles.join(", ") || "—"]
+      ["Roles", roleListElement(roles)]
     ];
   }
 
@@ -2084,6 +2161,113 @@
     }
   }
 
+  function recoveryMemberElement(member = {}) {
+    const card = createElement("article", "recovery-member");
+    const avatar = createElement("div", "recovery-member-avatar", initials(member.globalName || member.username || "U"));
+    if (member.avatarUrl) {
+      const image = document.createElement("img");
+      image.src = member.avatarUrl;
+      image.alt = "";
+      image.loading = "lazy";
+      avatar.replaceChildren(image);
+    }
+    const main = createElement("div", "recovery-member-main");
+    const reasons = createElement("div", "recovery-reasons");
+    reasons.append(...firstArray(member.reasonLabels).map(label => createElement("span", "", label)));
+    main.append(
+      createElement("b", "", firstTruthy(member.globalName, member.username, member.displayTag, member.userId)),
+      createElement("code", "mono muted-2", member.userId || "—"),
+      reasons
+    );
+    const revoke = createElement("button", "btn btn-danger btn-sm btn-inline", "ถอนยศ");
+    revoke.type = "button";
+    revoke.disabled = !member.roleId;
+    revoke.addEventListener("click", async () => {
+      setButtonLoading(revoke, true, "กำลังถอน...");
+      try {
+        await api(`/api/guild/${encodeURIComponent(state.guildId)}/oauth-recovery/member/${encodeURIComponent(member.userId)}/revoke-role`, {
+          method: "POST",
+          body: "{}"
+        });
+        revoke.textContent = "ถอนยศแล้ว";
+        revoke.disabled = true;
+        showToast(`ถอนยศของ ${member.globalName || member.username || member.userId} แล้ว`, "ok");
+      } catch (err) {
+        setButtonLoading(revoke, false);
+        showToast(`ถอนยศไม่สำเร็จ: ${err.message}`, "err");
+      }
+    });
+    card.append(avatar, main, revoke);
+    return card;
+  }
+
+  function renderOAuthRecovery(data = {}) {
+    state.oauthRecovery = data;
+    const list = $("oauth-recovery-list");
+    const revokeAll = $("btn-oauth-recovery-revoke-all");
+    setText("oauth-recovery-count", fmtNumber(data.count));
+    setText("oauth-recovery-status", data.truncated
+      ? `ตรวจ ${fmtNumber(data.scanned)} บัญชีถึงขีดจำกัด ${fmtNumber(data.scanMax)} — ควรเพิ่ม OAUTH_RECOVERY_SCAN_MAX`
+      : `ตรวจล่าสุดแล้ว ${fmtNumber(data.scanned)} บัญชีที่เคยได้รับยศ`);
+    if (revokeAll) revokeAll.disabled = Number(data.count || 0) === 0;
+    if (!list) return;
+    const members = Array.isArray(data.members) ? data.members : [];
+    list.replaceChildren(...(members.length
+      ? members.map(recoveryMemberElement)
+      : [createElement("div", "empty", "Token ของสมาชิกที่ตรวจพบพร้อมใช้งานทั้งหมด")]));
+  }
+
+  async function loadOAuthRecovery() {
+    if (state.oauthRecoveryLoading) return;
+    state.oauthRecoveryLoading = true;
+    setText("oauth-recovery-status", "กำลังตรวจ Token และ Scope...");
+    try {
+      renderOAuthRecovery(await api(`/api/guild/${encodeURIComponent(state.guildId)}/oauth-recovery`));
+    } catch (err) {
+      setText("oauth-recovery-status", `โหลดรายการไม่สำเร็จ: ${err.message}`);
+      showToast(`ตรวจ OAuth recovery ไม่สำเร็จ: ${err.message}`, "err");
+    } finally {
+      state.oauthRecoveryLoading = false;
+    }
+  }
+
+  function closeRecoveryConfirm() {
+    const modal = $("oauth-recovery-confirm");
+    if (!modal) return;
+    modal.classList.remove("show");
+    modal.setAttribute("aria-hidden", "true");
+  }
+
+  function openRecoveryConfirm() {
+    const modal = $("oauth-recovery-confirm");
+    const count = Number(state.oauthRecovery?.count || 0);
+    if (!modal || count <= 0) return;
+    setText("oauth-recovery-confirm-text", `กำลังถอนยศยืนยันออกจากสมาชิก ${fmtNumber(count)} คน การทำงานนี้แก้ยศจริงใน Discord`);
+    modal.classList.add("show");
+    modal.setAttribute("aria-hidden", "false");
+    $("btn-confirm-oauth-recovery-revoke")?.focus();
+  }
+
+  async function confirmRecoveryRevokeAll() {
+    const button = $("btn-confirm-oauth-recovery-revoke");
+    const count = Number(state.oauthRecovery?.count || 0);
+    setButtonLoading(button, true, "กำลังถอนยศ...");
+    try {
+      const result = await api(`/api/guild/${encodeURIComponent(state.guildId)}/oauth-recovery/revoke-all-roles`, {
+        method: "POST",
+        body: JSON.stringify({ confirmation: "REVOKE_OAUTH_RECOVERY_ROLES", count })
+      });
+      closeRecoveryConfirm();
+      showToast(`ถอนยศสำเร็จ ${fmtNumber(result.removed)} คน · ไม่สำเร็จ ${fmtNumber(result.failed)} คน`, result.failed ? "warn" : "ok");
+      await loadOAuthRecovery();
+    } catch (err) {
+      showToast(`ถอนยศทั้งหมดไม่สำเร็จ: ${err.message}`, "err");
+      await loadOAuthRecovery();
+    } finally {
+      setButtonLoading(button, false);
+    }
+  }
+
   function buildLogsQuery(page = 0) {
     const params = new URLSearchParams();
     params.set("page", String(page));
@@ -2266,6 +2450,13 @@
     const prev = $("btn-members-prev");
     const next = $("btn-members-next");
     const refresh = $("btn-members-refresh");
+    $("btn-oauth-recovery-refresh")?.addEventListener("click", loadOAuthRecovery);
+    $("btn-oauth-recovery-revoke-all")?.addEventListener("click", openRecoveryConfirm);
+    $("btn-confirm-oauth-recovery-revoke")?.addEventListener("click", confirmRecoveryRevokeAll);
+    qsa("[data-close-recovery-confirm]").forEach(button => button.addEventListener("click", closeRecoveryConfirm));
+    $("oauth-recovery-confirm")?.addEventListener("click", event => {
+      if (event.target === $("oauth-recovery-confirm")) closeRecoveryConfirm();
+    });
 
     if (prev) {
       prev.addEventListener("click", () => {

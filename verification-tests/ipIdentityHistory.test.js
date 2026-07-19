@@ -56,7 +56,10 @@ describe("unbounded IP identity history", () => {
             ipHash: "hash",
             profile: { id: "22345678901234567", username: "name" },
             device: { fingerprintHash: "fingerprint", browser: "Chrome" },
-            memberInfo: { roles: Array.from({ length: 120 }, (_, index) => `role-${index}`) },
+            memberInfo: {
+                roles: Array.from({ length: 120 }, (_, index) => `role-${index}`),
+                joined_at: "2026-07-17T10:00:00.000Z"
+            },
             roleId: "32345678901234567",
             result: "success",
             findings: ["vpn"],
@@ -65,6 +68,9 @@ describe("unbounded IP identity history", () => {
 
         expect(result.uniqueUsers).toBe(201);
         expect(UserHistoryModel.updateOne).toHaveBeenCalledTimes(1);
+        expect(UserHistoryModel.updateOne.mock.calls[0][1].$min).toEqual({
+            firstJoinedAt: "2026-07-17T10:00:00.000Z"
+        });
         expect(DeviceHistoryModel.updateOne).toHaveBeenCalledTimes(1);
         expect(RoleHistoryModel.updateOne.mock.calls[0][1].$setOnInsert.roles).toHaveLength(120);
         expect(RoleHistoryModel.updateOne.mock.calls[0][2]).toEqual({ upsert: true });

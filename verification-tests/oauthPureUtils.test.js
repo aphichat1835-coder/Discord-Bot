@@ -247,9 +247,9 @@ describe('compactDiscordProfile', () => {
         expect(result.mfaEnabled).toBe(false);
     });
 
-    test('premiumType defaults to 0 when not provided', () => {
+    test('premiumType remains unknown when Discord does not provide it', () => {
         const result = compactDiscordProfile({});
-        expect(result.premiumType).toBe(0);
+        expect(result.premiumType).toBeNull();
     });
 
     test('flags default to 0 when not provided', () => {
@@ -289,9 +289,9 @@ describe('compactDiscordProfile', () => {
         const result = compactDiscordProfile({});
         expect(result).toMatchObject({
             verified: false,
-            emailVerified: false,
-            mfaEnabled: false,
-            premiumType: 0,
+            emailVerified: null,
+            mfaEnabled: null,
+            premiumType: null,
             flags: 0,
             publicFlags: 0
         });

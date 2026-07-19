@@ -68,6 +68,10 @@ const schema = new mongoose.Schema({
         lookupProvider: String,
         lookupStatus: String,
         lookupMessage: String,
+        lookupProviders: [String],
+        lookupFallbackUsed: Boolean,
+        locationAccuracy: String,
+        securitySignalsAvailable: Boolean,
         lookupRaw: mixed,
 
         // Raw IP is encrypted at rest and only returned inside the owner boundary.
@@ -99,6 +103,9 @@ const schema = new mongoose.Schema({
         devicePixelRatio: Number,
         touchPoints: Number,
         referrer: String,
+        clientHints: mixed,
+        userAgentSuspected: Boolean,
+        userAgentFlags: [String],
         fingerprintHash: String
     },
 

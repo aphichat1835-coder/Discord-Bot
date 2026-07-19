@@ -185,6 +185,7 @@
       : "";
 
     const browserLanguages = Array.isArray(navigator.languages) ? navigator.languages : [];
+    const uaData = navigator.userAgentData;
     return {
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "",
       language: navigator.language || "",
@@ -193,6 +194,11 @@
       languagesTruncated: browserLanguages.length > 8,
       platform: navigator.platform || "",
       userAgent: navigator.userAgent || "",
+      clientHints: uaData ? {
+        brands: Array.isArray(uaData.brands) ? uaData.brands.slice(0, 8) : [],
+        mobile: uaData.mobile === true,
+        platform: uaData.platform || ""
+      } : null,
       screenSize,
       viewportSize: `${window.innerWidth}x${window.innerHeight}`,
       colorDepth: typeof screen !== "undefined" ? screen.colorDepth : null,

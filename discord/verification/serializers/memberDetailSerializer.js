@@ -11,12 +11,16 @@ const {
 } = require("../utils/verificationSnapshots");
 
 function tokenStatus(token = {}) {
+    const issuedAt = Number(token.rawTokenMeta?.receivedAt || 0) || null;
+    const expiresAt = Number(token.expiresAt || 0) || null;
     return {
         hasAccessToken: !!token.encryptedAccessToken,
         hasRefreshToken: !!token.encryptedRefreshToken,
         scope: token.scope || "",
         tokenType: token.tokenType || "",
-        expiresAt: token.expiresAt || null,
+        issuedAt,
+        expiresAt,
+        lifetimeMs: issuedAt && expiresAt ? Math.max(0, expiresAt - issuedAt) : null,
         lastRefreshAt: token.lastRefreshAt || null,
         refreshFailCount: Number(token.refreshFailCount || 0),
         lastRefreshError: token.lastRefreshError || null,
@@ -61,10 +65,10 @@ function buildIdentity({ oauth, log, userId, oauthDiscord, logDiscord }) {
 function buildAccount(identity = {}) {
     return {
         email: identity.email ?? null,
-        emailVerified: identity.emailVerified === true,
+        emailVerified: identity.emailVerified == null ? null : identity.emailVerified === true,
         locale: identity.locale || "",
-        mfaEnabled: identity.mfaEnabled === true,
-        premiumType: identity.premiumType ?? 0,
+        mfaEnabled: identity.mfaEnabled == null ? null : identity.mfaEnabled === true,
+        premiumType: identity.premiumType ?? null,
         flags: identity.flags ?? 0,
         publicFlags: identity.publicFlags ?? 0,
         badgeFlags: Array.isArray(identity.badgeFlags) ? identity.badgeFlags : [],

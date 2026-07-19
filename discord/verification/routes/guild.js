@@ -1568,6 +1568,66 @@ router.post("/api/guild/:guildId/member/:userId/reveal-token", requireAdmin, req
   }
 });
 
+router.get("/api/guild/:guildId/oauth-recovery", requireAdmin, requireGuildAdmin, async (req, res) => {
+  try {
+    const guildId = cleanSnowflake(req.params.guildId);
+    if (!guildId) return res.status(400).json({ success: false, code: "invalid_guild_id", error: "Guild ID ไม่ถูกต้อง" });
+    res.set("Cache-Control", "no-store");
+    res.json(await verificationOwnerService.getOAuthRecoveryCenter(guildId));
+  } catch (err) {
+    return sendServerError(res, "oauth.recovery", err, "โหลดรายการที่ต้อง OAuth ใหม่ไม่สำเร็จ");
+  }
+});
+
+router.post("/api/guild/:guildId/oauth-recovery/member/:userId/revoke-role", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
+  try {
+    const guildId = cleanSnowflake(req.params.guildId);
+    const targetUserId = cleanSnowflake(req.params.userId);
+    if (!guildId || !targetUserId) {
+      return res.status(400).json({ success: false, code: "invalid_discord_id", error: "Guild ID หรือ User ID ไม่ถูกต้อง" });
+    }
+    const result = await verificationOwnerService.revokeRecoveryMemberRole({
+      guildId,
+      userId: targetUserId
+    });
+    if (!result.success) {
+      return res.status(502).json({ success: false, code: "discord_role_revoke_failed", error: "ถอนยศใน Discord ไม่สำเร็จ" });
+    }
+    return res.json(result);
+  } catch (err) {
+    const status = err?.code === "oauth_recovery_not_required" ? 409 : 400;
+    return res.status(status).json({
+      success: false,
+      code: err?.code || "oauth_recovery_revoke_failed",
+      error: err?.code === "oauth_recovery_not_required" ? "ผู้ใช้นี้ไม่จำเป็นต้อง OAuth ใหม่แล้ว" : "ถอนยศยืนยันไม่สำเร็จ"
+    });
+  }
+});
+
+router.post("/api/guild/:guildId/oauth-recovery/revoke-all-roles", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
+  try {
+    const guildId = cleanSnowflake(req.params.guildId);
+    if (!guildId) return res.status(400).json({ success: false, code: "invalid_guild_id", error: "Guild ID ไม่ถูกต้อง" });
+    if (req.body?.confirmation !== "REVOKE_OAUTH_RECOVERY_ROLES") {
+      return res.status(400).json({ success: false, code: "confirmation_required", error: "ต้องยืนยันการถอนยศทั้งหมด" });
+    }
+    return res.json(await verificationOwnerService.revokeAllRecoveryRoles({
+      guildId,
+      expectedCount: Number(req.body?.count)
+    }));
+  } catch (err) {
+    if (err?.code === "oauth_recovery_confirmation_mismatch") {
+      return res.status(409).json({
+        success: false,
+        code: err.code,
+        error: "จำนวนผู้ใช้เปลี่ยนไป กรุณาตรวจรายการและยืนยันอีกครั้ง",
+        currentCount: err.currentCount
+      });
+    }
+    return sendServerError(res, "oauth.recovery.revoke_all", err, "ถอนยศยืนยันแบบกลุ่มไม่สำเร็จ");
+  }
+});
+
 router.get("/api/guild/:guildId/stats", requireAdmin, requireGuildAdmin, async (req, res) => {
   try {
     const { guildId } = req.params;

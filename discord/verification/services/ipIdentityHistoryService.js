@@ -46,7 +46,8 @@ function userFields({ profile, device, memberInfo, roleId, result, findings, ipI
 
 async function upsertUserHistory(input, models) {
     const { guildId, ipHash, profile, now, result } = input;
-    return models.UserHistory.updateOne({ guildId, ipHash, userId: String(profile.id) }, {
+    const joinedAt = input.memberInfo?.joined_at || input.memberInfo?.joinedAt || null;
+    const update = {
         $set: userFields(input),
         $setOnInsert: {
             guildId,
@@ -56,7 +57,13 @@ async function upsertUserHistory(input, models) {
             createdAt: now
         },
         $inc: { verifyCount: 1, ...resultCounter(result) }
-    }, { upsert: true });
+    };
+    if (joinedAt) update.$min = { firstJoinedAt: joinedAt };
+    return models.UserHistory.updateOne(
+        { guildId, ipHash, userId: String(profile.id) },
+        update,
+        { upsert: true }
+    );
 }
 
 async function upsertDeviceHistory(input, models) {

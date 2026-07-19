@@ -172,7 +172,14 @@ ${navBar("/verification")}
   </section>
 
   <section id="panel-data" data-section="data" role="tabpanel" aria-labelledby="tab-data" tabindex="0" class="hidden" hidden>
-    <div class="data-stack"><article class="verify-panel member-directory">
+    <div class="data-stack">
+      <article class="verify-panel oauth-recovery-panel">
+        <div class="data-heading"><div><p class="verify-kicker">OAuth recovery</p><h2>บัญชีที่ต้องยืนยันใหม่</h2><p class="muted small">ตรวจ Token ที่หาย หมดอายุ ถอดรหัสไม่ได้ ถูกยกเลิก หรือขาด Scope โดยไม่ส่งข้อความรบกวนสมาชิก</p></div><div class="recovery-count-wrap"><strong id="oauth-recovery-count">—</strong><span>บัญชี</span></div></div>
+        <div id="oauth-recovery-status" class="muted small mt-10">เปิดหมวดนี้เพื่อโหลดสถานะล่าสุด</div>
+        <div class="flex gap-8 flex-wrap mt-14"><button id="btn-oauth-recovery-refresh" class="btn btn-soft btn-inline" type="button">ตรวจใหม่</button><button id="btn-oauth-recovery-revoke-all" class="btn btn-danger btn-inline" type="button" disabled>ถอนยศทั้งหมดในรายการ</button></div>
+        <div id="oauth-recovery-list" class="recovery-list mt-14"><div class="empty">ยังไม่ได้โหลดข้อมูล</div></div>
+      </article>
+      <article class="verify-panel member-directory">
         <div class="data-heading"><div><h2>สมาชิกและข้อมูลฉบับเต็ม</h2><p class="muted small">ข้อมูลบัญชี เซิร์ฟเวอร์ อุปกรณ์ เครือข่าย ประวัติ และ OAuth อยู่ในโปรไฟล์เดียว</p></div></div>
         <div class="form-row form-row-2">
           <div><label for="members-search">ค้นหา</label><input id="members-search" type="search" placeholder="User ID / username / IP / email"></div>
@@ -180,7 +187,8 @@ ${navBar("/verification")}
         </div>
         <div class="flex justify-between items-center gap-8 flex-wrap mt-14"><span class="muted small">แตะสมาชิกเพื่อเปิดหน้าข้อมูลแบบเต็มโดยไม่ออกจาก Dashboard</span><div class="flex gap-8"><button id="btn-members-prev" class="btn btn-soft btn-sm btn-inline" type="button">← ก่อนหน้า</button><span id="members-page" class="badge badge-muted">หน้า 1</span><button id="btn-members-next" class="btn btn-soft btn-sm btn-inline" type="button">ถัดไป →</button><button id="btn-members-refresh" class="btn btn-soft btn-sm btn-inline" type="button">รีเฟรช</button></div></div>
         <div id="members-body" class="member-card-grid mt-14"><div class="loading-box"><div class="spinner"></div>กำลังโหลดสมาชิก…</div></div>
-      </article></div>
+      </article>
+    </div>
   </section>
 </div>
 
@@ -192,6 +200,14 @@ ${navBar("/verification")}
     <div class="modal-head"><h2 id="detail-modal-title" class="modal-title">รายละเอียดสมาชิก</h2><button class="modal-close" type="button" aria-label="ปิด" data-close-modal>✕</button></div>
     <div id="detail-modal-body"></div>
     <div class="modal-actions"><button class="btn btn-soft btn-inline" type="button" data-close-modal>ปิด</button></div>
+  </div>
+</div>
+<div id="oauth-recovery-confirm" class="modal-backdrop" aria-hidden="true">
+  <div class="modal compact-modal" role="dialog" aria-modal="true" aria-labelledby="oauth-recovery-confirm-title" tabindex="-1">
+    <div class="modal-head"><h2 id="oauth-recovery-confirm-title" class="modal-title">ยืนยันการถอนยศ</h2><button class="modal-close" type="button" aria-label="ยกเลิก" data-close-recovery-confirm>✕</button></div>
+    <div id="oauth-recovery-confirm-text" class="notice notice-warn"></div>
+    <p class="muted small mt-10">ระบบจะถอนเฉพาะยศยืนยันใน Discord และจะไม่ส่ง DM หรือข้อความแจ้งสมาชิก</p>
+    <div class="modal-actions"><button class="btn btn-soft btn-inline" type="button" data-close-recovery-confirm>ยกเลิก</button><button id="btn-confirm-oauth-recovery-revoke" class="btn btn-danger btn-inline" type="button">ยืนยันถอนยศ</button></div>
   </div>
 </div>
 <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>

@@ -2,6 +2,7 @@
 
 const VerifyLog = require("../discord/verification/models/VerifyLog");
 const OAuthUser = require("../discord/verification/models/OAuthUser");
+const GuildConfig = require("../discord/verification/models/GuildConfig");
 const cryptoUtils = require("../discord/verification/utils/crypto");
 const ownerService = require("../discord/verification/ownerService");
 const ipIdentityHistory = require("../discord/verification/services/ipIdentityHistoryService");
@@ -59,6 +60,68 @@ describe("Owner full member data", () => {
           scope: "identify guilds email"
         }
       });
+  });
+
+  test("marks incomplete OAuth credentials for owner recovery without requiring optional Nitro scope", () => {
+    const completeScopes = "identify email connections guilds guilds.members.read guilds.join";
+    const complete = {
+      encryptedAccessToken: cryptoUtils.encryptToken("access-token-value"),
+      encryptedRefreshToken: cryptoUtils.encryptToken("refresh-token-value"),
+      scope: completeScopes,
+      expiresAt: Date.now() + 60_000
+    };
+
+    expect(ownerService.tokenRecoveryReasons(complete)).toEqual([]);
+    expect(ownerService.tokenRecoveryReasons({ scope: completeScopes })).toEqual([
+      "missing_access_token",
+      "missing_refresh_token"
+    ]);
+    expect(ownerService.tokenRecoveryReasons({
+      ...complete,
+      scope: "identify email"
+    })).toEqual(expect.arrayContaining([
+      "missing_scope:connections",
+      "missing_scope:guilds.members.read"
+    ]));
+  });
+
+  test("recovery center only returns successful recipients whose stored OAuth is incomplete", async () => {
+    const guildId = "12345678901234567";
+    const incompleteUserId = "22345678901234567";
+    const completeUserId = "32345678901234567";
+    const roleId = "42345678901234567";
+    const completeScopes = "identify email connections guilds guilds.members.read guilds.join";
+    jest.spyOn(GuildConfig, "findOne").mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue({ verification: { roleId } })
+    });
+    jest.spyOn(VerifyLog, "aggregate").mockResolvedValue([
+      { _id: incompleteUserId, roleId, verifiedAt: 20 },
+      { _id: completeUserId, roleId, verifiedAt: 10 }
+    ]);
+    jest.spyOn(OAuthUser, "find").mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([
+        { discord: { userId: incompleteUserId, username: "needs-oauth" }, oauth: { scope: "identify" } },
+        {
+          discord: { userId: completeUserId, username: "complete" },
+          oauth: {
+            encryptedAccessToken: cryptoUtils.encryptToken("access-token-value"),
+            encryptedRefreshToken: cryptoUtils.encryptToken("refresh-token-value"),
+            scope: completeScopes,
+            expiresAt: Date.now() + 60_000
+          }
+        }
+      ])
+    });
+
+    await expect(ownerService.getOAuthRecoveryCenter(guildId)).resolves.toMatchObject({
+      success: true,
+      guildId,
+      scanned: 2,
+      count: 1,
+      members: [{ userId: incompleteUserId, roleId }]
+    });
   });
 
   test("keeps identity users, devices, roles, location, and factual findings", () => {

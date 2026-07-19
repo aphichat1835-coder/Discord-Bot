@@ -24,7 +24,9 @@ describe("member detail serialization and leak guards", () => {
                     refreshToken: "raw-refresh-token",
                     access_token: "raw-access-token-snake",
                     refresh_token: "raw-refresh-token-snake",
-                    scope: "identify guilds.join"
+                    scope: "identify guilds.join",
+                    expiresAt: 7000,
+                    rawTokenMeta: { receivedAt: 1000 }
                 },
                 connections: [{ type: "github", name: "octo", verified: true }],
                 guilds: [{ id: "guild", name: "Guild", permissions: "8", owner: true }],
@@ -48,6 +50,9 @@ describe("member detail serialization and leak guards", () => {
         expect(detail.guilds).toHaveLength(1);
         expect(detail.oauthTokens.oauth.hasAccessToken).toBe(true);
         expect(detail.oauthTokens.oauth.scope).toBe("identify guilds.join");
+        expect(detail.oauthTokens.oauth.issuedAt).toBe(1000);
+        expect(detail.oauthTokens.oauth.expiresAt).toBe(7000);
+        expect(detail.oauthTokens.oauth.lifetimeMs).toBe(6000);
 
         const serialized = JSON.stringify(detail);
         expect(serialized).not.toContain("encrypted-access");
@@ -205,7 +210,7 @@ describe("member detail serialization and leak guards", () => {
         const source = fs.readFileSync("discord/verification/public/js/guild-dashboard.js", "utf8");
 
         expect(source).toContain('scopes.includes("identify.premium")');
-        expect(source).toContain('Discord ไม่ได้ส่งข้อมูล');
+        expect(source).toContain('account.premiumType != null');
         expect(source).toContain('Nitro Basic');
     });
 
@@ -219,6 +224,28 @@ describe("member detail serialization and leak guards", () => {
         expect(source).toContain("Admin OAuth access/refresh");
         expect(source).toContain("Join result");
         expect(source).toContain("Role assignment");
+        expect(source).toContain("function roleChipElement");
+        expect(source).toContain("คลิกเพื่อคัดลอก Role ID");
+        expect(source).toContain("อายุ Token ปัจจุบัน");
+        expect(source).toContain("เวลาคงเหลือ");
+        expect(source).toContain("Snapshot ล่าสุดจากตอนยืนยัน");
+        expect(source).toContain('"User-Agent"');
+        expect(source).toContain("User-Agent อาจถูกปลอมแปลง");
+        expect(source).toContain("Providers ที่ลอง");
+        expect(source).toContain("securitySignalsAvailable === false");
+        expect(source).toContain('createElement("button", "btn btn-soft btn-sm btn-inline", "ซ่อน")');
+    });
+
+    test("dashboard has an owner-only OAuth recovery center without messaging members", () => {
+        const page = fs.readFileSync("discord/verification/guildPage.js", "utf8");
+        const source = fs.readFileSync("discord/verification/public/js/guild-dashboard.js", "utf8");
+
+        expect(page).toContain('id="oauth-recovery-count"');
+        expect(page).toContain('id="btn-oauth-recovery-revoke-all"');
+        expect(source).toContain("/oauth-recovery");
+        expect(source).toContain("/revoke-role");
+        expect(source).toContain("/revoke-all-roles");
+        expect(page).toContain("จะไม่ส่ง DM หรือข้อความแจ้งสมาชิก");
     });
 
     test("dashboard log table and detail modal avoid HTML injection sinks", () => {

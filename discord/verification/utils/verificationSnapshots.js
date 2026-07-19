@@ -44,6 +44,10 @@ function safeIpLookup(ipInfo = {}) {
     lookupProvider: ipInfo.lookupProvider || "",
     lookupStatus: ipInfo.lookupStatus || "",
     lookupMessage: ipInfo.lookupMessage || "",
+    lookupProviders: Array.isArray(ipInfo.lookupProviders) ? ipInfo.lookupProviders : [],
+    lookupFallbackUsed: ipInfo.lookupFallbackUsed === true,
+    locationAccuracy: ipInfo.locationAccuracy || "",
+    securitySignalsAvailable: ipInfo.securitySignalsAvailable === true,
     proxyCheckProvider: ipInfo.proxyCheckProvider || "",
     proxyCheckStatus: ipInfo.proxyCheckStatus || "",
     lookupAt: ipInfo.lookupAt || null
@@ -84,6 +88,9 @@ function safeDeviceDisplay(device = {}) {
     devicePixelRatio: device.devicePixelRatio ?? null,
     touchPoints: device.touchPoints ?? null,
     referrer: device.referrer || "",
+    clientHints: device.clientHints || null,
+    userAgentSuspected: device.userAgentSuspected === true,
+    userAgentFlags: Array.isArray(device.userAgentFlags) ? device.userAgentFlags : [],
     fingerprintVersion: Number(device.fingerprintVersion || 0) || null,
     hasFingerprint: !!device.fingerprintHash
   };
@@ -143,10 +150,10 @@ function safeDiscordSecurity(profile = {}, snapshot = {}) {
 
   return {
     email: profile.email ?? snapshot.email ?? null,
-    emailVerified: profile.emailVerified ?? profile.verified ?? snapshot.emailVerified ?? snapshot.verified ?? false,
+    emailVerified: profile.emailVerified ?? profile.verified ?? snapshot.emailVerified ?? snapshot.verified ?? null,
     locale: profile.locale ?? snapshot.locale ?? "",
-    mfaEnabled: profile.mfaEnabled ?? profile.mfa_enabled ?? snapshot.mfaEnabled ?? snapshot.mfa_enabled ?? false,
-    premiumType: profile.premiumType ?? profile.premium_type ?? snapshot.premiumType ?? snapshot.premium_type ?? 0,
+    mfaEnabled: profile.mfaEnabled ?? profile.mfa_enabled ?? snapshot.mfaEnabled ?? snapshot.mfa_enabled ?? null,
+    premiumType: profile.premiumType ?? profile.premium_type ?? snapshot.premiumType ?? snapshot.premium_type ?? null,
     flags: profile.flags ?? snapshot.flags ?? 0,
     publicFlags: profile.publicFlags ?? profile.public_flags ?? snapshot.publicFlags ?? snapshot.public_flags ?? 0,
     badgeFlags,

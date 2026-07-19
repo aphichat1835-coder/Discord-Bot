@@ -1,5 +1,6 @@
 const guildRoute = require("../discord/verification/routes/guild");
 const guildDashboardRoute = require("../discord/verification/routes/guildDashboard");
+const fs = require("node:fs");
 
 test("mergeVerificationConfig preserves the panel when security rules change", () => {
   const merged = guildRoute._test.mergeVerificationConfig(
@@ -60,4 +61,13 @@ test("guild dashboard computes factual review counts", async () => {
   const overview = await guildDashboardRoute._test.buildStats("guild");
   expect(overview).toMatchObject({ total: 2, success: 1, failed: 1, reviewRequired: 1, vpn: 1 });
   jest.restoreAllMocks();
+});
+
+test("OAuth recovery role mutations require owner auth, current guild access, and CSRF", () => {
+  const source = fs.readFileSync("discord/verification/routes/guild.js", "utf8");
+
+  expect(source).toContain('router.post("/api/guild/:guildId/oauth-recovery/member/:userId/revoke-role", requireAdmin, requireGuildAdmin, requireCsrf');
+  expect(source).toContain('router.post("/api/guild/:guildId/oauth-recovery/revoke-all-roles", requireAdmin, requireGuildAdmin, requireCsrf');
+  expect(source).toContain('confirmation !== "REVOKE_OAUTH_RECOVERY_ROLES"');
+  expect(source).toContain("oauth_recovery_confirmation_mismatch");
 });

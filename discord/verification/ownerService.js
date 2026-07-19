@@ -8,11 +8,26 @@ const { serializeMemberDetail } = require("./serializers/memberDetailSerializer"
 const verifiedMemberService = require("./services/verifiedMemberService");
 const snapshotStore = require("./services/oauthSnapshotStore");
 const ipIdentityHistory = require("./services/ipIdentityHistoryService");
+const discordAPI = require("./utils/discordAPI");
 
 const OVERVIEW_MAX = Math.max(
     50,
     Number(process.env.INTERNAL_OVERVIEW_GUILDS_MAX || 500) || 500
 );
+const OAUTH_RECOVERY_SCAN_MAX = Math.max(100, Math.min(5000,
+    Number(process.env.OAUTH_RECOVERY_SCAN_MAX || 1000) || 1000));
+const REQUIRED_USER_SCOPES = Object.freeze([
+    "identify", "email", "connections", "guilds", "guilds.members.read", "guilds.join"
+]);
+const SNOWFLAKE_RE = /^\d{17,22}$/;
+
+function requireSnowflake(value, field = "Discord ID") {
+    const normalized = String(value || "").trim();
+    if (SNOWFLAKE_RE.test(normalized)) return normalized;
+    const error = new Error(`${field} is invalid`);
+    error.code = "invalid_snowflake";
+    throw error;
+}
 
 function baseFilter(guildId) {
     return { guildId, deletedAt: { $exists: false } };
@@ -286,15 +301,151 @@ async function getMemberDetail(guildId, userId, { canViewSensitive = false } = {
 }
 
 function revealTokenState(token = {}) {
+    const issuedAt = Number(token.rawTokenMeta?.receivedAt || 0) || null;
+    const expiresAt = Number(token.expiresAt || 0) || null;
     return {
         accessToken: token.encryptedAccessToken ? decryptToken(token.encryptedAccessToken) : null,
         refreshToken: token.encryptedRefreshToken ? decryptToken(token.encryptedRefreshToken) : null,
         scope: token.scope || "",
         tokenType: token.tokenType || "",
-        expiresAt: token.expiresAt || null,
+        issuedAt,
+        expiresAt,
+        lifetimeMs: issuedAt && expiresAt ? Math.max(0, expiresAt - issuedAt) : null,
         lastRefreshAt: token.lastRefreshAt || null,
         refreshFailCount: Number(token.refreshFailCount || 0),
         revokedAt: token.revokedAt || null
+    };
+}
+
+function tokenRecoveryReasons(token = {}, now = Date.now()) {
+    const reasons = [];
+    const accessToken = token.encryptedAccessToken ? decryptToken(token.encryptedAccessToken) : null;
+    const refreshToken = token.encryptedRefreshToken ? decryptToken(token.encryptedRefreshToken) : null;
+    if (!token.encryptedAccessToken) reasons.push("missing_access_token");
+    else if (!accessToken) reasons.push("access_token_decrypt_failed");
+    if (!token.encryptedRefreshToken) reasons.push("missing_refresh_token");
+    else if (!refreshToken) reasons.push("refresh_token_decrypt_failed");
+    if (token.revokedAt) reasons.push("token_revoked");
+    if (Number(token.expiresAt || 0) > 0 && Number(token.expiresAt) <= now && !refreshToken) {
+        reasons.push("access_token_expired_without_refresh");
+    }
+    const scopes = new Set(String(token.scope || "").split(/\s+/).filter(Boolean));
+    for (const scope of REQUIRED_USER_SCOPES) {
+        if (!scopes.has(scope)) reasons.push(`missing_scope:${scope}`);
+    }
+    return [...new Set(reasons)];
+}
+
+function recoveryReasonLabel(reason) {
+    const labels = {
+        missing_access_token: "ไม่มี Access Token",
+        access_token_decrypt_failed: "ถอดรหัส Access Token ไม่สำเร็จ",
+        missing_refresh_token: "ไม่มี Refresh Token",
+        refresh_token_decrypt_failed: "ถอดรหัส Refresh Token ไม่สำเร็จ",
+        token_revoked: "Token ถูกยกเลิก",
+        access_token_expired_without_refresh: "Access Token หมดอายุและต่ออายุไม่ได้"
+    };
+    if (String(reason).startsWith("missing_scope:")) return `ขาด Scope ${String(reason).slice(14)}`;
+    return labels[reason] || String(reason);
+}
+
+async function getOAuthRecoveryCenter(guildId) {
+    const safeGuildId = requireSnowflake(guildId, "Guild ID");
+    const [config, recipients] = await Promise.all([
+        GuildConfig.findOne({ guildId: safeGuildId }).select("verification.roleId").lean(),
+        VerifyLog.aggregate([
+            { $match: { ...baseFilter(safeGuildId), result: "success" } },
+            { $sort: { verifiedAt: -1, createdAt: -1, _id: -1 } },
+            { $group: { _id: "$userId", roleId: { $first: "$roleId" }, verifiedAt: { $first: "$verifiedAt" } } },
+            { $limit: OAUTH_RECOVERY_SCAN_MAX }
+        ])
+    ]);
+    const userIds = recipients.map(item => String(item._id || "")).filter(Boolean);
+    const oauthUsers = userIds.length ? await OAuthUser.find({ "discord.userId": { $in: userIds } })
+        .select("discord.userId discord.username discord.globalName discord.displayTag discord.avatarUrl oauth")
+        .lean() : [];
+    const oauthMap = new Map(oauthUsers.map(item => [String(item.discord?.userId || ""), item]));
+    const defaultRoleId = config?.verification?.roleId || null;
+    const members = [];
+    for (const recipient of recipients) {
+        const userId = String(recipient._id || "");
+        const oauthUser = oauthMap.get(userId);
+        const reasons = tokenRecoveryReasons(oauthUser?.oauth || {});
+        if (!reasons.length) continue;
+        members.push({
+            userId,
+            username: oauthUser?.discord?.username || null,
+            globalName: oauthUser?.discord?.globalName || null,
+            displayTag: oauthUser?.discord?.displayTag || null,
+            avatarUrl: oauthUser?.discord?.avatarUrl || null,
+            roleId: recipient.roleId || defaultRoleId,
+            lastVerifiedAt: recipient.verifiedAt || null,
+            reasons,
+            reasonLabels: reasons.map(recoveryReasonLabel)
+        });
+    }
+    return {
+        success: true,
+        guildId: safeGuildId,
+        configuredRoleId: defaultRoleId,
+        scanned: recipients.length,
+        scanMax: OAUTH_RECOVERY_SCAN_MAX,
+        truncated: recipients.length >= OAUTH_RECOVERY_SCAN_MAX,
+        count: members.length,
+        members
+    };
+}
+
+async function revokeRecoveryMemberRole({ guildId, userId }) {
+    const safeGuildId = requireSnowflake(guildId, "Guild ID");
+    const safeUserId = requireSnowflake(userId, "User ID");
+    const center = await getOAuthRecoveryCenter(safeGuildId);
+    const member = center.members.find(item => item.userId === safeUserId);
+    if (!member) {
+        const error = new Error("OAuth recovery not required");
+        error.code = "oauth_recovery_not_required";
+        throw error;
+    }
+    if (!member.roleId) {
+        const error = new Error("Verification role is unavailable");
+        error.code = "verification_role_missing";
+        throw error;
+    }
+    const result = await discordAPI.removeRoleFromMember(safeGuildId, member.userId, member.roleId);
+    return { success: result.ok === true, member, result };
+}
+
+async function revokeAllRecoveryRoles({ guildId, expectedCount, concurrency = 3 }) {
+    const safeGuildId = requireSnowflake(guildId, "Guild ID");
+    const center = await getOAuthRecoveryCenter(safeGuildId);
+    if (Number(expectedCount) !== center.count) {
+        const error = new Error("OAuth recovery count changed");
+        error.code = "oauth_recovery_confirmation_mismatch";
+        error.currentCount = center.count;
+        throw error;
+    }
+    const queue = [...center.members];
+    const results = [];
+    const workerCount = Math.max(1, Math.min(5, Number(concurrency || 3) || 3));
+    async function worker() {
+        while (queue.length) {
+            const member = queue.shift();
+            if (!member?.roleId) {
+                results.push({ userId: member?.userId || null, ok: false, code: "verification_role_missing" });
+                continue;
+            }
+            const result = await discordAPI.removeRoleFromMember(safeGuildId, member.userId, member.roleId);
+            results.push({ userId: member.userId, roleId: member.roleId, ok: result.ok === true, status: result.status, error: result.error || null });
+        }
+    }
+    await Promise.all(Array.from({ length: Math.min(workerCount, Math.max(1, queue.length)) }, worker));
+    return {
+        success: true,
+        count: center.count,
+        removed: results.filter(item => item.ok).length,
+        failed: results.filter(item => !item.ok).length,
+        truncated: center.truncated,
+        results
     };
 }
 
@@ -430,9 +581,13 @@ module.exports = {
     revealRawIp,
     getMemberDetail,
     revealOAuthTokens,
+    getOAuthRecoveryCenter,
+    revokeRecoveryMemberRole,
+    revokeAllRecoveryRoles,
     getOwnerFullMemberDetail,
     getOwnerIpHistoryPage,
     ownerIpIdentityDetail,
     emptyStats,
-    safeRecent
+    safeRecent,
+    tokenRecoveryReasons
 };
