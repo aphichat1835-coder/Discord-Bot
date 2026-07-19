@@ -135,6 +135,35 @@ async function claimRecord(record) {
     ).lean();
 }
 
+function trackRetryOutcome(permanent) {
+    if (permanent) diagnostics.failedPermanent++;
+    else diagnostics.retrying++;
+}
+
+async function deferRecord(record, reason, permanentFailure = false) {
+    const attempts = Number(record.attempts || 0) + 1;
+    const permanent = permanentFailure || attempts > RETRY_DELAYS_MS.length;
+    const status = permanent ? "failed_permanent" : "retrying";
+    await updateRecord(record, {
+        attempts,
+        status,
+        lastError: reason,
+        nextAttemptAt: Date.now() + (RETRY_DELAYS_MS[attempts - 1] || 0)
+    });
+    trackRetryOutcome(permanent);
+    return { status, reason };
+}
+
+async function markDelivered(record, message) {
+    rememberDelivered(record.eventKey);
+    const persisted = await updateRecord(record, { status: "sent", sentAt: Date.now(), lastError: null });
+    if (record?._id && !persisted) {
+        console.warn(`[DM] delivery succeeded but outbox acknowledgement was not persisted | category=${safeText(record.category, "general", 80)}`);
+    }
+    diagnostics.sent++;
+    return { status: "sent", message };
+}
+
 async function attempt(record) {
     const claimed = await claimRecord(record);
     if (!claimed) return { status: "skipped", reason: "already_claimed" };
@@ -144,41 +173,13 @@ async function attempt(record) {
         return { status: "skipped", reason: "already_delivered_in_process" };
     }
     const recipient = await fetchRecipient(record.recipientId);
-    if (!recipient) {
-        const attempts = Number(record.attempts || 0) + 1;
-        const permanent = attempts > RETRY_DELAYS_MS.length;
-        await updateRecord(record, {
-            attempts,
-            status: permanent ? "failed_permanent" : "retrying",
-            lastError: "recipient_unavailable",
-            nextAttemptAt: Date.now() + (RETRY_DELAYS_MS[attempts - 1] || 0)
-        });
-        if (permanent) diagnostics.failedPermanent++;
-        else diagnostics.retrying++;
-        return { status: permanent ? "failed_permanent" : "retrying", reason: "recipient_unavailable" };
-    }
+    if (!recipient) return deferRecord(record, "recipient_unavailable");
 
     try {
         const message = await recipient.send(record.payload);
-        rememberDelivered(record.eventKey);
-        const persisted = await updateRecord(record, { status: "sent", sentAt: Date.now(), lastError: null });
-        if (record?._id && !persisted) {
-            console.warn(`[DM] delivery succeeded but outbox acknowledgement was not persisted | category=${safeText(record.category, "general", 80)}`);
-        }
-        diagnostics.sent++;
-        return { status: "sent", message };
+        return markDelivered(record, message);
     } catch (error) {
-        const attempts = Number(record.attempts || 0) + 1;
-        const permanent = isPermanent(error) || attempts > RETRY_DELAYS_MS.length;
-        await updateRecord(record, {
-            attempts,
-            status: permanent ? "failed_permanent" : "retrying",
-            lastError: safeFailure(error),
-            nextAttemptAt: Date.now() + (RETRY_DELAYS_MS[attempts - 1] || 0)
-        });
-        if (permanent) diagnostics.failedPermanent++;
-        else diagnostics.retrying++;
-        return { status: permanent ? "failed_permanent" : "retrying", reason: safeFailure(error) };
+        return deferRecord(record, safeFailure(error), isPermanent(error));
     }
 }
 
@@ -209,8 +210,7 @@ async function reserve(input) {
         return { duplicate: false, record };
     } catch (error) {
         if (Number(error?.code) !== 11000) throw error;
-        const existing = await DmNotification.findOne({ eventKey }).lean();
-        return { duplicate: true, record: existing };
+        return { duplicate: true, record: null };
     }
 }
 

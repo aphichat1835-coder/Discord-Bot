@@ -1284,8 +1284,9 @@ async function sendVerificationDM(userId, data = {}) {
         referenceId: data.requestId || "verification",
         footer: "Phomueangtai • ระบบยืนยันตัวตน"
     });
+    const fallbackRequestId = `${userId}:${Date.now()}`;
     const delivery = await dmService.send({
-        eventKey: `verification:${data.requestId || `${userId}:${Date.now()}`}`,
+        eventKey: `verification:${data.requestId || fallbackRequestId}`,
         recipientId: userId,
         category: "verification",
         priority: ok ? "normal" : "high",
