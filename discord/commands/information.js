@@ -10,7 +10,6 @@ DO NOT SIMPLIFY: /serverinfo member fetch — bot/human split required.
 const { MessageEmbed } = require("discord.js");
 const config = require("../config.json");
 const { markCommandAccepted } = require("../guards/commandGuards");
-const packageVersion = require("../../package.json").version;
 const CB = "```";
 const SERVERINFO_CACHE_TTL_MS = 60 * 1000;
 const SERVERINFO_FETCH_TIMEOUT_MS = 5 * 1000;
@@ -83,7 +82,6 @@ async function handle(interaction, client, sessionManager) {
     const cmd = interaction.commandName;
     if (cmd === "serverinfo") return handleServerInfo(interaction);
     if (cmd === "userinfo")   return handleUserInfo(interaction);
-    if (cmd === "help")       return handleHelp(interaction);
     if (cmd === "ping")       return handlePing(interaction, client, sessionManager);
 }
 
@@ -280,43 +278,6 @@ async function handlePing(interaction, client, sessionManager) {
         .setTimestamp();
 
     return interaction.editReply({ content: null, embeds: [embed] });
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-//  📖  HELP (เฟส 4 — OpSec Hide ซ่อนหมวดระบบ)
-// ════════════════════════════════════════════════════════════════════════════
-async function handleHelp(interaction) {
-    markCommandAccepted(interaction);
-    const isAdmin = interaction.member.permissions.has("ADMINISTRATOR");
-
-    const embed = new MessageEmbed()
-        .setColor(config.system.themeColors.primary)
-        .setTitle(`${config.emojis.shield} คู่มือการใช้งาน v${packageVersion}`)
-        .setDescription(
-            `**ระบบนี้ถูกออกแบบมาเพื่อความปลอดภัยและประสิทธิภาพสูงสุด**\n\n` +
-            `**${config.emojis.settings_icon} คำสั่งข้อมูล:**\n` +
-            `— ${CB}/ping${CB} — ตรวจสอบ Latency และสถานะระบบ\n` +
-            `— ${CB}/serverinfo${CB} — ตรวจสอบข้อมูลเชิงลึกของเซิร์ฟเวอร์\n` +
-            `— ${CB}/userinfo${CB} — ตรวจสอบข้อมูลและความเสี่ยงของบัญชี\n\n` +
-            `**${config.emojis.mod_icon} คำสั่งผู้ดูแล:**\n` +
-            `— ${CB}/ban${CB} ${CB}/kick${CB} ${CB}/timeout${CB} — ต้องมีสิทธิ์ลงโทษตามคำสั่ง\n` +
-            `— ${CB}/voicekickall${CB} — เตะทุกคนออกจากห้องเสียง\n` +
-            `— ${CB}/clear${CB} — ลบข้อความรวมข้อความเกิน 14 วัน (สูงสุด 100)\n` +
-            `— ${CB}/copy-emojis${CB} — ดึงอิโมจิเข้าเซิร์ฟเวอร์\n` +
-            `— ${CB}/say${CB} ${CB}/announce${CB} — ส่งข้อความและประกาศ\n\n` +
-            `**${config.emojis.backup_icon} คำสั่งระบบ:**\n` +
-            `— ${CB}/backup${CB} — บันทึกโครงสร้างเซิร์ฟเวอร์\n` +
-            `— ${CB}/restore${CB} — กู้คืนโครงสร้างเซิร์ฟเวอร์\n` +
-            (isAdmin
-                ? `\n**${config.emojis.admin_icon} คำสั่ง Admin (ซ่อนจากผู้ใช้ทั่วไป):**\n` +
-                  `— ${CB}/voice-online${CB} — สร้างแผงควบคุมระบบออนช่องเสียง\n` +
-                  `— ${CB}/setup-verify${CB} — สร้างแผงยืนยันตัวตน\n`
-                : '') +
-            `\n*หากพบปัญหา ติดต่อ: <@${config.system.ownerId}>*`
-        )
-        .setTimestamp();
-
-    return interaction.reply({ embeds: [embed], ephemeral: !isAdmin });
 }
 
 module.exports = {

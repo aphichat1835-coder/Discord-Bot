@@ -2,6 +2,9 @@
 
 ## [Unreleased] - Unified Bot And Verification Runtime 2026-07-16
 
+- Retired the `/help` slash command from registration and runtime routing; the
+  Owner Dashboard documentation page remains available separately.
+
 - Unified Voice, moderation, verification, and restore-result DMs behind a
   profile-first Thai Embed system with mention suppression, Markdown-safe
   dynamic text, server-derived recipients, priority, event deduplication, and a

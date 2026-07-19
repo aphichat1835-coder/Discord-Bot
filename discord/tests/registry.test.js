@@ -15,11 +15,10 @@ test("slash command names are unique and include supported command groups", () =
     const unique = new Set(names);
 
     assert.equal(unique.size, names.length);
-    assert.equal(names.length, 16);
+    assert.equal(names.length, 15);
 
     for (const expected of [
         "voice-online",
-        "help",
         "clear",
         "ban",
         "kick",
@@ -33,6 +32,7 @@ test("slash command names are unique and include supported command groups", () =
     ]) {
         assert.equal(unique.has(expected), true, `missing /${expected}`);
     }
+    assert.equal(unique.has("help"), false, "retired /help command must stay unregistered");
     assert.equal(unique.has("setup"), false, "retired /setup command must stay unregistered");
     assert.equal(unique.has("stats"), false, "retired /stats command must stay unregistered");
     assert.equal(unique.has("whitelist"), false, "retired /whitelist command must stay unregistered");
