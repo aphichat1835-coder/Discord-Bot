@@ -43,7 +43,7 @@
   Owner `DASHBOARD_PIN` as a timing-safe recovery credential.
 
 - Synchronized all repository documentation with the current `tt` runtime:
-  exact boot/maintenance lifecycle, 16-command and 13-variable contracts,
+  exact boot/maintenance lifecycle, 15-command and 13-variable contracts,
   redacted versus audited Member Detail access, complete snapshot storage,
   backup/restore validation, and one-service deployment guidance.
 - Rebuilt the Verification web experience as one responsive operations
@@ -126,14 +126,14 @@
   adapter to a separate internal namespace and cannot access the retired Audit
   model or key namespace.
 
-- Completed the 16-command reliability pass: all slash commands are
+- Completed the slash-command reliability pass: all registered commands are
   guild-only; Voice Panel sessions are isolated by the creating Discord user
   except for Bot Owner/Shadow Master global control; verification panels now
   enforce Discord limits, HTTPS resources, assignable roles, durable dual-store
   persistence and latest-panel Direct Role checks; moderation creates durable
   pending cases before Discord actions; backup snapshots use bounded chunks,
   retain every complete historical version, and select one reconciled active
-  version with legacy restore compatibility and reauthorization; and command help,
+  version with legacy restore compatibility and reauthorization; and command guidance,
   permissions, mention handling, result counts, cooldowns, locks and payload
   limits now match the registered command surface.
 

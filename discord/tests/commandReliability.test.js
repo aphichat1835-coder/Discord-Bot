@@ -30,6 +30,19 @@ test("command registration returns a degraded result after bounded retries", asy
     assert.equal(result.attempts, 2);
 });
 
+test("command registration replaces Discord global commands with the current 15-command registry", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    let registeredPayload = null;
+    const result = await registerCommandsWithRetry({
+        application: { commands: { set: async payload => { registeredPayload = payload; } } },
+        payload: commands.slashCommandsData,
+        delaysMs: [0]
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(registeredPayload.length, 15);
+    assert.equal(registeredPayload.some(command => command.name === "help"), false);
+});
+
 test("accepted command marker is explicit and leaves rejected interactions untouched", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     let acceptedAt = 0;
     const accepted = { isCommand: () => true, __onCommandAccepted: () => { acceptedAt++; } };
