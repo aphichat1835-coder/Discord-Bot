@@ -19,6 +19,10 @@ const { shouldStoreOAuthTokens } = require('../utils/oauthTokenLifecycle');
 const snapshotBudget = require('../services/snapshotBudget');
 const snapshotStore = require('../services/oauthSnapshotStore');
 const ipIdentityHistory = require('../services/ipIdentityHistoryService');
+const {
+    snapshotMutationLocks: oauthSnapshotLocks,
+    withSnapshotMutationLock: withOAuthSnapshotLock
+} = require('../services/snapshotMutationLock');
 const { resolvePublicBaseUrl } = require('../../core/publicUrl');
 
 const OAuthUser = require('../models/OAuthUser');
@@ -35,19 +39,6 @@ const DEVICE_DUPLICATE_LOOKUP_MAX = Math.max(
     Number(process.env.DEVICE_DUPLICATE_LOOKUP_MAX || 200) || 200
 );
 const DAY_MS = 24 * 60 * 60 * 1000;
-const oauthSnapshotLocks = new Map();
-
-async function withOAuthSnapshotLock(userId, operation) {
-    const key = String(userId || "unknown");
-    const previous = oauthSnapshotLocks.get(key) || Promise.resolve();
-    const current = previous.catch(() => {}).then(operation);
-    oauthSnapshotLocks.set(key, current);
-    try {
-        return await current;
-    } finally {
-        if (oauthSnapshotLocks.get(key) === current) oauthSnapshotLocks.delete(key);
-    }
-}
 
 function getCdnExtension(hash) {
     return String(hash || '').startsWith('a_') ? 'gif' : 'png';

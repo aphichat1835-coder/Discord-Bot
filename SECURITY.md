@@ -203,7 +203,10 @@ guild, user, version, category, item, and chunk indexes.
 Referenced snapshot history is permanent. Maintenance fails closed if reference
 lookups fail and deletes only incomplete or unreferenced versions older than the
 configured grace period; it never prunes a version referenced by OAuthUser or
-VerifyLog, including soft-deleted logs.
+VerifyLog, including soft-deleted logs. OAuth activation and cleanup share a
+per-user mutation lock in the single runtime; cleanup then repeats the age,
+completion, and reference predicates at deletion time so an in-flight writer
+cannot turn a valid snapshot into a stale deletion target.
 
 ### Automatic migration archive
 

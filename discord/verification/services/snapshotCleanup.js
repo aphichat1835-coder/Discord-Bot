@@ -9,6 +9,7 @@ const MemberRoleSnapshot = require("../models/OAuthMemberRoleSnapshot");
 const ProfileSnapshot = require("../models/OAuthUserProfileSnapshot");
 const ObjectChunkSnapshot = require("../models/OAuthObjectChunkSnapshot");
 const SnapshotRecovery = require("../models/OAuthSnapshotRecovery");
+const { withSnapshotMutationLock } = require("./snapshotMutationLock");
 
 const HOUR_MS = 60 * 60 * 1000;
 function boundedNumber(value, fallback, min, max = Number.POSITIVE_INFINITY) {
@@ -186,12 +187,66 @@ function orphanFilter(candidates) {
     };
 }
 
-async function applyModelCleanup(Model, { cutoff, orphanCandidates, dryRun, batchLimit = CLEANUP_SCAN_MAX }) {
+function groupByUser(items) {
+    const groups = new Map();
+    for (const item of items) {
+        const userId = String(item?.userId || "unknown");
+        const group = groups.get(userId) || [];
+        group.push(item);
+        groups.set(userId, group);
+    }
+    return groups;
+}
+
+async function deleteIncompleteGroups(Model, documents, incompleteFilter, lockMutation) {
+    let deletedCount = 0;
+    for (const [userId, group] of groupByUser(documents)) {
+        await lockMutation(userId, async () => {
+            const ids = group.map(document => document?._id).filter(Boolean);
+            if (!ids.length) return;
+            const result = await Model.deleteMany({
+                ...incompleteFilter,
+                _id: { $in: ids }
+            });
+            deletedCount += Number(result?.deletedCount || 0);
+        });
+    }
+    return deletedCount;
+}
+
+async function deleteOrphanGroups(Model, candidates, cutoff, references, lockMutation) {
+    let deletedCount = 0;
+    for (const [userId, group] of groupByUser(candidates)) {
+        await lockMutation(userId, async () => {
+            const currentReferences = await loadReferenceKeys(group, references);
+            const currentlyOrphaned = group.filter(candidate =>
+                !currentReferences.has(snapshotKey(candidate.userId, candidate.version))
+            );
+            const ids = currentlyOrphaned.map(candidate => candidate.id).filter(Boolean);
+            if (!ids.length) return;
+            const result = await Model.deleteMany({
+                ...staleSnapshotFilter(cutoff, true),
+                _id: { $in: ids }
+            });
+            deletedCount += Number(result?.deletedCount || 0);
+        });
+    }
+    return deletedCount;
+}
+
+async function applyModelCleanup(Model, {
+    cutoff,
+    orphanCandidates,
+    dryRun,
+    references,
+    lockMutation = withSnapshotMutationLock,
+    batchLimit = CLEANUP_SCAN_MAX
+}) {
     const incompleteFilter = staleSnapshotFilter(cutoff, false);
     const orphanedFilter = orphanCandidates.length ? orphanFilter(orphanCandidates) : null;
     const safeBatchLimit = Math.max(1, Number(batchLimit || CLEANUP_SCAN_MAX));
     const incompleteDocs = await Model.find(incompleteFilter)
-        .select("_id")
+        .select("_id userId snapshotVersion")
         .sort({ _id: 1 })
         .limit(safeBatchLimit)
         .lean();
@@ -208,16 +263,16 @@ async function applyModelCleanup(Model, { cutoff, orphanCandidates, dryRun, batc
             orphaned
         };
     }
-    const incompleteResult = incompleteIds.length
-        ? await Model.deleteMany({ _id: { $in: incompleteIds } })
-        : { deletedCount: 0 };
-    const orphanedResult = orphanedFilter
-        ? await Model.deleteMany(orphanedFilter)
-        : { deletedCount: 0 };
+    const incompleteDeleted = incompleteIds.length
+        ? await deleteIncompleteGroups(Model, incompleteDocs, incompleteFilter, lockMutation)
+        : 0;
+    const orphanedDeleted = orphanedFilter
+        ? await deleteOrphanGroups(Model, orphanCandidates, cutoff, references, lockMutation)
+        : 0;
     return {
-        incomplete: Number(incompleteResult?.deletedCount || 0),
+        incomplete: incompleteDeleted,
         incompleteBatchSize: incompleteIds.length,
-        orphaned: Number(orphanedResult?.deletedCount || 0)
+        orphaned: orphanedDeleted
     };
 }
 
@@ -279,6 +334,7 @@ async function performSnapshotCleanup(options = {}) {
         OAuthUserModel: options.OAuthUserModel || OAuthUser,
         VerifyLogModel: options.VerifyLogModel || VerifyLog
     };
+    const lockMutation = options.withMutationLock || withSnapshotMutationLock;
     const cutoff = now - graceHours * HOUR_MS;
     const processRecoveries = options.processRecoveries !== false && (
         !options.models || options.RecoveryModel || options.rollbackFn
@@ -316,16 +372,12 @@ async function performSnapshotCleanup(options = {}) {
     const incompleteBatchLimit = Math.max(1, Math.floor(scanMax / Math.max(1, modelEntries.length)));
     for (const [name, Model] of modelEntries) {
         const modelCandidates = orphanCandidates.filter(candidate => candidate.model === name);
-        const currentReferences = dryRun
-            ? referenced
-            : await loadReferenceKeys(modelCandidates, references);
-        const currentlyOrphaned = modelCandidates.filter(candidate =>
-            !currentReferences.has(snapshotKey(candidate.userId, candidate.version))
-        );
         const result = await applyModelCleanup(Model, {
             cutoff,
-            orphanCandidates: currentlyOrphaned,
+            orphanCandidates: modelCandidates,
             dryRun,
+            references,
+            lockMutation,
             batchLimit: incompleteBatchLimit
         });
         summary.byModel[name] = result;
@@ -364,6 +416,9 @@ module.exports = {
         orphanFilter,
         scanCandidates,
         loadReferenceKeys,
+        applyModelCleanup,
+        deleteIncompleteGroups,
+        deleteOrphanGroups,
         processRecoveryQueue,
         performSnapshotCleanup,
         DEFAULT_MODELS,

@@ -9,6 +9,21 @@ const ipIdentityHistory = require("../discord/verification/services/ipIdentityHi
 
 describe("Owner full member data", () => {
   const previousKey = process.env.ENCRYPTION_KEY;
+  const guildId = "123456789012345678";
+  const userId = "223456789012345678";
+
+  function queryResult(value) {
+    return {
+      where: jest.fn().mockReturnThis(),
+      equals: jest.fn().mockReturnThis(),
+      exists: jest.fn().mockReturnThis(),
+      ne: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue(value)
+    };
+  }
 
   beforeAll(() => {
     process.env.ENCRYPTION_KEY = "owner-reveal-test-key-at-least-32-bytes";
@@ -39,19 +54,17 @@ describe("Owner full member data", () => {
   });
 
   test("decrypts OAuth tokens directly for the authenticated Owner route", async () => {
-    jest.spyOn(OAuthUser, "findOne").mockReturnValue({
-      select: jest.fn().mockReturnThis(),
-      lean: jest.fn().mockResolvedValue({
-        discord: { userId: "user" },
+    jest.spyOn(VerifyLog, "findOne").mockReturnValue(queryResult({ _id: "association" }));
+    jest.spyOn(OAuthUser, "findOne").mockReturnValue(queryResult({
+        discord: { userId },
         oauth: {
           encryptedAccessToken: cryptoUtils.encryptToken("access-token-value"),
           encryptedRefreshToken: cryptoUtils.encryptToken("refresh-token-value"),
           scope: "identify guilds email"
         }
-      })
-    });
+    }));
 
-    await expect(ownerService.revealOAuthTokens({ guildId: "guild", userId: "user" }))
+    await expect(ownerService.revealOAuthTokens({ guildId, userId }))
       .resolves.toMatchObject({
         success: true,
         oauth: {
@@ -60,6 +73,34 @@ describe("Owner full member data", () => {
           scope: "identify guilds email"
         }
       });
+  });
+
+  test("rejects OAuth token access when the user is unrelated to the selected guild", async () => {
+    jest.spyOn(VerifyLog, "findOne").mockReturnValue(queryResult(null));
+    jest.spyOn(OAuthUser, "findOne").mockReturnValue(queryResult(null));
+
+    await expect(ownerService.revealOAuthTokens({ guildId, userId }))
+      .rejects.toMatchObject({ code: "member_not_found" });
+
+    const oauthQuery = OAuthUser.findOne.mock.results[0].value;
+    expect(oauthQuery.where).toHaveBeenCalledWith("lastVerify.guildId");
+    expect(oauthQuery.equals).toHaveBeenCalledWith(guildId);
+  });
+
+  test("rejects member and full-detail reads before loading unrelated OAuth secrets", async () => {
+    jest.spyOn(VerifyLog, "findOne").mockReturnValue(queryResult(null));
+    jest.spyOn(VerifyLog, "find").mockReturnValue(queryResult([]));
+    jest.spyOn(OAuthUser, "findOne").mockReturnValue(queryResult(null));
+
+    await expect(ownerService.getMemberDetail(guildId, userId, { canViewSensitive: true }))
+      .rejects.toMatchObject({ code: "member_not_found" });
+    await expect(ownerService.getOwnerFullMemberDetail({ guildId, userId }))
+      .rejects.toMatchObject({ code: "member_not_found" });
+
+    expect(OAuthUser.findOne).toHaveBeenCalledTimes(2);
+    for (const result of OAuthUser.findOne.mock.results) {
+      expect(result.value.where).toHaveBeenCalledWith("lastVerify.guildId");
+    }
   });
 
   test("marks incomplete OAuth credentials for owner recovery without requiring optional Nitro scope", () => {

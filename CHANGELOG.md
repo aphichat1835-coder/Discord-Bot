@@ -2,6 +2,12 @@
 
 ## [Unreleased] - Unified Bot And Verification Runtime 2026-07-16
 
+- Closed the remaining confirmed PR review defects in Owner member access and snapshot
+  maintenance. OAuth profile/token reads now require a verification association
+  with the selected guild, and cleanup shares the per-user snapshot mutation
+  lock with OAuth writers while rechecking age, completion, and references at
+  deletion time.
+
 - Rebuilt `/userinfo`, `/serverinfo`, and `/ping` as Thai, mobile-readable
   information panels. User lookup now preserves the selected target when the
   guild member is not cached, account age is presented as context instead of a

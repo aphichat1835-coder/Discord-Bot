@@ -8,6 +8,9 @@ const verifiedMemberService = require("../discord/verification/services/verified
 
 function leanQuery(value) {
     return {
+        where: jest.fn().mockReturnThis(),
+        equals: jest.fn().mockReturnThis(),
+        exists: jest.fn().mockReturnThis(),
         select: jest.fn().mockReturnThis(),
         sort: jest.fn().mockReturnThis(),
         limit: jest.fn().mockReturnThis(),

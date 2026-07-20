@@ -4,6 +4,10 @@ const {
     cleanupSnapshotGarbage,
     _test
 } = require("../discord/verification/services/snapshotCleanup");
+const {
+    snapshotMutationLocks,
+    withSnapshotMutationLock
+} = require("../discord/verification/services/snapshotMutationLock");
 
 function queryResult(value, rejected = null) {
     let resultLimit = null;
@@ -72,6 +76,8 @@ function filteringSnapshotModel({ complete = [], incomplete = [] } = {}) {
 }
 
 describe("permanent-history snapshot garbage cleanup", () => {
+    afterEach(() => snapshotMutationLocks.clear());
+
     test("keeps every OAuthUser-referenced version and removes only unreferenced versions", async () => {
         const Model = snapshotModel([
             { userId: "12345678901234567", snapshotVersion: "kept-version" },
@@ -101,7 +107,8 @@ describe("permanent-history snapshot garbage cleanup", () => {
             orphanDocuments: 3
         });
         const orphanDelete = Model.deleteMany.mock.calls[0][0];
-        expect(orphanDelete).toEqual({ complete: true, _id: { $in: ["snapshot-2"] } });
+        expect(orphanDelete).toMatchObject({ complete: true, _id: { $in: ["snapshot-2"] } });
+        expect(orphanDelete.$or).toBeDefined();
     });
 
     test("keeps versions referenced by historical VerifyLog documents", async () => {
@@ -198,10 +205,10 @@ describe("permanent-history snapshot garbage cleanup", () => {
             VerifyLogModel: referenceModel([])
         });
 
-        expect(ProfileModel.deleteMany).toHaveBeenLastCalledWith({
+        expect(ProfileModel.deleteMany).toHaveBeenLastCalledWith(expect.objectContaining({
             complete: true,
             _id: { $in: ["stale-profile"] }
-        });
+        }));
         expect(GuildModel.deleteMany).not.toHaveBeenCalled();
     });
 
@@ -308,9 +315,10 @@ describe("permanent-history snapshot garbage cleanup", () => {
         });
 
         expect(summary.byModel.objectChunks.incomplete).toBe(1);
-        expect(ObjectChunkModel.deleteMany).toHaveBeenCalledWith({
+        expect(ObjectChunkModel.deleteMany).toHaveBeenCalledWith(expect.objectContaining({
+            complete: { $ne: true },
             _id: { $in: ["object-incomplete"] }
-        });
+        }));
     });
 
     test("excludes fresh incomplete and fresh or complete ineligible snapshots", async () => {
@@ -348,9 +356,10 @@ describe("permanent-history snapshot garbage cleanup", () => {
         });
 
         expect(Model.deleteMany).toHaveBeenCalledTimes(1);
-        expect(Model.deleteMany).toHaveBeenCalledWith({
+        expect(Model.deleteMany).toHaveBeenCalledWith(expect.objectContaining({
+            complete: { $ne: true },
             _id: { $in: ["stale-incomplete"] }
-        });
+        }));
     });
 
     test("deletes complete object chunks only when no active or historical reference remains", async () => {
@@ -373,10 +382,54 @@ describe("permanent-history snapshot garbage cleanup", () => {
 
         expect(summary.orphanVersions).toBe(1);
         expect(summary.byModel.objectChunks.orphaned).toBe(1);
-        expect(ObjectChunkModel.deleteMany).toHaveBeenCalledWith({
+        expect(ObjectChunkModel.deleteMany).toHaveBeenCalledWith(expect.objectContaining({
             complete: true,
             _id: { $in: ["object-orphan"] }
+        }));
+    });
+
+    test("waits for an in-flight writer and preserves the reference it activates", async () => {
+        const userId = "12345678901234567";
+        const version = "writer-version";
+        const Model = snapshotModel([{ userId, snapshotVersion: version }]);
+        let references = [];
+        let releaseWriter;
+        let writerLocked;
+        let initialReferenceRead;
+        const writerLockedPromise = new Promise(resolve => { writerLocked = resolve; });
+        const releaseWriterPromise = new Promise(resolve => { releaseWriter = resolve; });
+        const initialReferenceReadPromise = new Promise(resolve => { initialReferenceRead = resolve; });
+        const OAuthUserModel = {
+            find: jest.fn(() => {
+                initialReferenceRead();
+                return queryResult(references);
+            })
+        };
+        const writer = withSnapshotMutationLock(userId, async () => {
+            writerLocked();
+            await releaseWriterPromise;
+            references = [{
+                discord: { userId },
+                snapshotRefs: { profile: { version, complete: true } }
+            }];
         });
+        await writerLockedPromise;
+
+        const cleanup = cleanupSnapshotGarbage({
+            now: 2 * 60 * 60 * 1000,
+            graceHours: 1,
+            models: { profile: Model },
+            OAuthUserModel,
+            VerifyLogModel: referenceModel([])
+        });
+        await initialReferenceReadPromise;
+        releaseWriter();
+        await writer;
+        const summary = await cleanup;
+
+        expect(OAuthUserModel.find).toHaveBeenCalledTimes(2);
+        expect(Model.deleteMany).not.toHaveBeenCalled();
+        expect(summary.orphanDocuments).toBe(0);
     });
 
     test("object chunk cleanup dry-run reports candidates without deleting", async () => {

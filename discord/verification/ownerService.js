@@ -33,6 +33,29 @@ function baseFilter(guildId) {
     return { guildId, deletedAt: { $exists: false } };
 }
 
+function scopedGuildUserQuery(query, guildId, userId) {
+    return query
+        .where("guildId").equals(guildId)
+        .where("userId").equals(userId)
+        .where("deletedAt").exists(false);
+}
+
+function scopedOAuthUserQuery(query, guildId, userId, requireLegacyAssociation = false) {
+    const scoped = query
+        .where("discord.userId").equals(userId)
+        .where("deletedAt").exists(false);
+    if (!requireLegacyAssociation) return scoped;
+    return scoped
+        .where("lastVerify.guildId").equals(guildId)
+        .where("lastVerify.result").equals("success");
+}
+
+function memberNotFoundError() {
+    const error = new Error("member detail not found");
+    error.code = "member_not_found";
+    return error;
+}
+
 function emptyStats() {
     return {
         total: 0,
@@ -234,8 +257,13 @@ async function revealRawIp({ guildId, userId }) {
 }
 
 async function getMemberDetail(guildId, userId, { canViewSensitive = false } = {}) {
-    const [oauthUser, latestLog, historyLogs] = await Promise.all([
-        OAuthUser.findOne({ "discord.userId": userId })
+    const safeGuildId = requireSnowflake(guildId, "Guild ID");
+    const safeUserId = requireSnowflake(userId, "User ID");
+    const latestLog = await scopedGuildUserQuery(VerifyLog.findOne(), safeGuildId, safeUserId)
+        .sort({ verifiedAt: -1, createdAt: -1, _id: -1 })
+        .lean();
+    const [oauthUser, historyLogs] = await Promise.all([
+        scopedOAuthUserQuery(OAuthUser.findOne(), safeGuildId, safeUserId, !latestLog)
             .select({
                 discord: 1,
                 connections: 1,
@@ -251,20 +279,13 @@ async function getMemberDetail(guildId, userId, { canViewSensitive = false } = {
                 updatedAt: 1
             })
             .lean(),
-        VerifyLog.findOne({ ...baseFilter(guildId), userId })
-            .sort({ verifiedAt: -1, createdAt: -1, _id: -1 })
-            .lean(),
-        VerifyLog.find({ ...baseFilter(guildId), userId })
+        scopedGuildUserQuery(VerifyLog.find(), safeGuildId, safeUserId)
             .sort({ verifiedAt: -1, createdAt: -1, _id: -1 })
             .limit(100)
             .lean()
     ]);
 
-    if (!oauthUser && !latestLog) {
-        const error = new Error("member detail not found");
-        error.code = "member_not_found";
-        throw error;
-    }
+    if (!oauthUser && !latestLog) throw memberNotFoundError();
 
     let hydratedOAuthUser = oauthUser;
     const snapshotRefs = {
@@ -275,7 +296,7 @@ async function getMemberDetail(guildId, userId, { canViewSensitive = false } = {
         const chunks = await snapshotStore.loadOAuthSnapshots({
             userId: oauthUser?.discord?.userId || latestLog?.userId || userId,
             refs: snapshotRefs,
-            guildId
+            guildId: safeGuildId
         });
         hydratedOAuthUser = {
             ...oauthUser,
@@ -289,8 +310,8 @@ async function getMemberDetail(guildId, userId, { canViewSensitive = false } = {
 
     return {
       ...serializeMemberDetail({
-        guildId,
-        userId,
+        guildId: safeGuildId,
+        userId: safeUserId,
         oauthUser: hydratedOAuthUser,
         latestLog,
         canViewSensitive
@@ -533,40 +554,41 @@ async function getOwnerIpHistoryPage({ guildId, userId, kind, page, limit }) {
 }
 
 async function revealOAuthTokens({ guildId, userId }) {
-    const user = await OAuthUser.findOne({ "discord.userId": userId })
+    const safeGuildId = requireSnowflake(guildId, "Guild ID");
+    const safeUserId = requireSnowflake(userId, "User ID");
+    const association = await scopedGuildUserQuery(VerifyLog.findOne(), safeGuildId, safeUserId)
+        .select("_id")
+        .lean();
+    const user = await scopedOAuthUserQuery(OAuthUser.findOne(), safeGuildId, safeUserId, !association)
         .select("discord.userId oauth adminOAuth")
         .lean();
 
-    if (!user?.discord?.userId) {
-        const error = new Error("OAuth user not found");
-        error.code = "member_not_found";
-        throw error;
-    }
+    if (!user?.discord?.userId) throw memberNotFoundError();
 
     return {
         success: true,
-        guildId,
-        userId,
+        guildId: safeGuildId,
+        userId: safeUserId,
         oauth: revealTokenState(user.oauth || {}),
         adminOAuth: revealTokenState(user.adminOAuth || {})
     };
 }
 
 async function getOwnerFullMemberDetail({ guildId, userId }) {
-    const [detail, user, log, identityLink] = await Promise.all([
-        getMemberDetail(guildId, userId, { canViewSensitive: true }),
-        OAuthUser.findOne({ "discord.userId": userId })
+    const safeGuildId = requireSnowflake(guildId, "Guild ID");
+    const safeUserId = requireSnowflake(userId, "User ID");
+    const detail = await getMemberDetail(safeGuildId, safeUserId, { canViewSensitive: true });
+    const [user, log, identityLink] = await Promise.all([
+        scopedOAuthUserQuery(OAuthUser.findOne(), safeGuildId, safeUserId)
             .select("discord.userId oauth adminOAuth")
             .lean(),
-        VerifyLog.findOne({
-            ...baseFilter(guildId),
-            userId,
-            "ipInfo.encryptedRawIp": { $exists: true, $ne: "" }
-        }).sort({ verifiedAt: -1, createdAt: -1, _id: -1 }),
-        ipIdentityHistory.findLinkForUser(guildId, userId)
+        scopedGuildUserQuery(VerifyLog.findOne(), safeGuildId, safeUserId)
+            .where("ipInfo.encryptedRawIp").exists(true).ne("")
+            .sort({ verifiedAt: -1, createdAt: -1, _id: -1 }),
+        ipIdentityHistory.findLinkForUser(safeGuildId, safeUserId)
     ]);
     const history = identityLink?.ipHash
-        ? await ipIdentityHistory.loadInitialHistory({ guildId, ipHash: identityLink.ipHash })
+        ? await ipIdentityHistory.loadInitialHistory({ guildId: safeGuildId, ipHash: identityLink.ipHash })
         : null;
     return {
         ...detail,

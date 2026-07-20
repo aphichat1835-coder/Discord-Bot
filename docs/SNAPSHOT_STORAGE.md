@@ -54,7 +54,10 @@ version.
 rules as profile, guild, connection, member, and member-role snapshots:
 referenced complete versions are retained, stale incomplete chunks are removed
 after the grace period, and unreferenced complete chunks are removed only after
-references are checked again immediately before deletion.
+references are checked again immediately before deletion. The OAuth writer and
+cleanup use the same per-user mutation lock, and each delete repeats the stale
+and completion filters, preventing a snapshot finalized or referenced by an
+in-flight verification from being deleted by that cleanup pass.
 
 Readers reconstruct only finalized versions and reject a missing or duplicate
 chunk, a non-contiguous chunk index, inconsistent `chunkCount`, incorrect
