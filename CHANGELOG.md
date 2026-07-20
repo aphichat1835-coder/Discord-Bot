@@ -7,7 +7,9 @@
   guild member is not cached, account age is presented as context instead of a
   risk verdict, Server Info labels cache/fetch limitations, and Ping reports
   process RSS, V8 heap, sampled CPU, database metrics, shard state, and Voice
-  session states without mixing their meanings.
+  session states without mixing their meanings. Each command now opens with a
+  distinct animated, truthful loading panel that is replaced in place when the
+  final result is ready.
 
 - Retired the `/help` slash command from registration and runtime routing; the
   Owner Dashboard documentation page remains available separately.
