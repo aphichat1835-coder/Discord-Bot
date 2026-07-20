@@ -76,6 +76,34 @@ test("serverinfo groups current Discord data into readable Thai sections", () =>
     assert.doesNotMatch(JSON.stringify(json), /Server Information|Enterprise Architecture/);
 });
 
+test("information commands use distinct truthful loading embeds before the final result", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const interaction = {
+        guild: { name: "Test Server", iconURL: () => null },
+        user: { username: "caller", displayAvatarURL: () => null },
+        options: { getUser: () => ({ username: "target", displayAvatarURL: () => null }) },
+        reply: async payload => payload
+    };
+    const server = information._test.buildLoadingEmbed("serverinfo", interaction).toJSON();
+    const user = information._test.buildLoadingEmbed("userinfo", interaction).toJSON();
+    const ping = information._test.buildLoadingEmbed("ping", interaction).toJSON();
+    const sent = await information._test.sendLoadingState(interaction, "ping");
+
+    assert.match(server.title, /กำลังสำรวจเซิร์ฟเวอร์/);
+    assert.match(server.fields[0].value, /MEMBERS/);
+    assert.match(user.title, /กำลังเปิดแฟ้มข้อมูลสมาชิก/);
+    assert.match(user.fields[0].value, /โปรไฟล์และอายุบัญชี/);
+    assert.match(ping.title, /กำลังจับสัญญาณระบบ/);
+    assert.match(ping.description, /LATENCY/);
+    assert.notEqual(server.color, user.color);
+    assert.notEqual(user.color, ping.color);
+    assert.doesNotMatch(JSON.stringify([server, user, ping]), /\d+%|progress/i);
+    assert.equal(sent.fetchReply, true);
+    assert.deepEqual(sent.allowedMentions, { parse: [] });
+    assertEmbedWithinDiscordLimits(information._test.buildLoadingEmbed("serverinfo", interaction));
+    assertEmbedWithinDiscordLimits(information._test.buildLoadingEmbed("userinfo", interaction));
+    assertEmbedWithinDiscordLimits(information._test.buildLoadingEmbed("ping", interaction));
+});
+
 test("userinfo resolves the selected user instead of silently falling back to the caller", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const selected = { id: "333456789012345678", username: "selected" };
     const fetchedMember = { id: selected.id, user: selected };
