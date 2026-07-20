@@ -119,6 +119,71 @@ function formatLatency(value) {
         : "ไม่ทราบ";
 }
 
+function buildServerLoadingEmbed(interaction) {
+    const guildName = markdownText(interaction.guild?.name, "เซิร์ฟเวอร์นี้", 100);
+    const embed = new MessageEmbed()
+        .setColor(config.system.themeColors.primary)
+        .setTitle(`${config.emojis.signal || "🛰️"} กำลังสำรวจเซิร์ฟเวอร์`)
+        .setDescription(`กำลังเปิดภาพรวมของ **${guildName}** และตรวจข้อมูลล่าสุดที่บอทมองเห็น`)
+        .addField(
+            "ขอบเขตที่กำลังตรวจสอบ",
+            "`MEMBERS` คนและบอท\n`CHANNELS` ช่องและหมวดหมู่\n`SECURITY` การยืนยัน 2FA และตัวกรองสื่อ"
+        )
+        .setFooter({ text: "เซิร์ฟเวอร์ขนาดใหญ่อาจใช้เวลานานขึ้นเล็กน้อย" })
+        .setTimestamp();
+    const icon = interaction.guild?.iconURL?.({ dynamic: true, size: 256 });
+    if (icon) embed.setThumbnail(icon);
+    return embed;
+}
+
+function buildUserLoadingEmbed(interaction) {
+    const selectedUser = interaction.options?.getUser?.("member");
+    const user = selectedUser || interaction.user;
+    const targetLabel = user?.globalName || user?.username || "สมาชิก";
+    const embed = new MessageEmbed()
+        .setColor(config.system.themeColors.info)
+        .setTitle(`${config.emojis.search || "🔍"} กำลังเปิดแฟ้มข้อมูลสมาชิก`)
+        .setDescription(`**${markdownText(targetLabel, "สมาชิก", 100)}**\nกำลังโหลดโปรไฟล์ล่าสุดจาก Discord และจับคู่กับข้อมูลในเซิร์ฟเวอร์นี้`)
+        .addField(
+            "กำลังจัดเรียงข้อมูล",
+            `${config.emojis.loading || "⏳"} โปรไฟล์และอายุบัญชี • ยศและสิทธิ์ • Timeout และสถานะสมาชิก`
+        )
+        .setFooter({ text: "แสดงเฉพาะข้อมูลที่บอทเข้าถึงได้ • ผลลัพธ์จะมาแทนที่ข้อความนี้" })
+        .setTimestamp();
+    const avatar = user?.displayAvatarURL?.({ dynamic: true, size: 256 });
+    if (avatar) embed.setThumbnail(avatar);
+    return embed;
+}
+
+function buildPingLoadingEmbed() {
+    return new MessageEmbed()
+        .setColor(config.system.themeColors.warning)
+        .setTitle(`${config.emojis.ping || "🏓"} กำลังจับสัญญาณระบบ`)
+        .setDescription(
+            "```text\n" +
+            "LATENCY   กำลังวัดการตอบกลับ\n" +
+            "CPU/RAM   กำลังเก็บตัวอย่าง\n" +
+            "VOICE     กำลังอ่านสถานะ\n" +
+            "```"
+        )
+        .setFooter({ text: "ค่าทั้งหมดวัดใหม่จากการเรียกคำสั่งครั้งนี้" })
+        .setTimestamp();
+}
+
+function buildLoadingEmbed(kind, interaction) {
+    if (kind === "serverinfo") return buildServerLoadingEmbed(interaction);
+    if (kind === "userinfo") return buildUserLoadingEmbed(interaction);
+    return buildPingLoadingEmbed();
+}
+
+function sendLoadingState(interaction, kind) {
+    return interaction.reply({
+        embeds: [buildLoadingEmbed(kind, interaction)],
+        fetchReply: true,
+        allowedMentions: { parse: [] }
+    });
+}
+
 function channelCounts(guild) {
     const channels = guild.channels?.cache;
     const count = type => channels?.filter?.(channel => channel.type === type).size || 0;
@@ -259,7 +324,7 @@ function buildServerInfoEmbed(guild, owner, memberCounts) {
 // ════════════════════════════════════════════════════════════════════════════
 async function handleServerInfo(interaction) {
     markCommandAccepted(interaction);
-    await interaction.deferReply();
+    await sendLoadingState(interaction, "serverinfo");
     const guild = interaction.guild;
     if (!guild) return interaction.editReply({ content: "คำสั่งนี้ใช้ได้เฉพาะในเซิร์ฟเวอร์", embeds: [] });
     const memberCounts = await getServerMemberCounts(guild);
@@ -434,7 +499,7 @@ async function resolveUserInfoTarget(interaction) {
 // ════════════════════════════════════════════════════════════════════════════
 async function handleUserInfo(interaction) {
     markCommandAccepted(interaction);
-    await interaction.deferReply();
+    await sendLoadingState(interaction, "userinfo");
     const { user, member } = await resolveUserInfoTarget(interaction);
     return interaction.editReply({ embeds: [buildUserInfoEmbed(interaction, user, member)], allowedMentions: { parse: [] } });
 }
@@ -516,7 +581,7 @@ async function handlePing(interaction, client, sessionManager) {
     markCommandAccepted(interaction);
     const cpuStart = process.cpuUsage();
     const wallStart = process.hrtime.bigint();
-    const sent = await interaction.reply({ content: `${config.emojis.ping} กำลังวัด...`, fetchReply: true });
+    const sent = await sendLoadingState(interaction, "ping");
     const cpuEnd = process.cpuUsage();
     const elapsedMicroseconds = Number(process.hrtime.bigint() - wallStart) / 1000;
     const interactionLatency = Math.max(0, Number(sent.createdTimestamp) - Number(interaction.createdTimestamp));
@@ -562,6 +627,11 @@ module.exports = {
         discordTimestamp,
         formatDuration,
         formatLatency,
+        buildServerLoadingEmbed,
+        buildUserLoadingEmbed,
+        buildPingLoadingEmbed,
+        buildLoadingEmbed,
+        sendLoadingState,
         channelCounts,
         verificationLevelLabel,
         contentFilterLabel,
