@@ -5,6 +5,10 @@ const test = require("node:test");
 const { Collection } = require("discord.js");
 const information = require("../commands/information");
 
+const SECOND_MS = 1000;
+const DAY_MS = 24 * 60 * 60 * SECOND_MS;
+const SAMPLE_UPTIME_SECONDS = 24 * 60 * 60 + 60 * 60 + 60 + 1;
+
 function field(embed, name) {
     return embed.toJSON().fields.find(item => item.name === name)?.value || "";
 }
@@ -35,7 +39,7 @@ test("serverinfo groups current Discord data into readable Thai sections", () =>
         id: "123456789012345678",
         name: "Test **Server**",
         ownerId: "223456789012345678",
-        createdTimestamp: Date.now() - 86400000,
+        createdTimestamp: Date.now() - DAY_MS,
         preferredLocale: "th",
         available: true,
         description: "พื้นที่ทดสอบ",
@@ -158,7 +162,7 @@ test("userinfo presents age as context rather than declaring a person high risk"
         username: "tester",
         discriminator: "0",
         globalName: "Tester",
-        createdTimestamp: Date.now() - 2 * 86400000,
+        createdTimestamp: Date.now() - 2 * DAY_MS,
         bot: false,
         system: false,
         flags: { toArray: () => ["ACTIVE_DEVELOPER"] },
@@ -181,8 +185,8 @@ test("ping labels process RSS, V8 heap, CPU sample and session states precisely"
         websocketLatency: 40,
         shardId: 0,
         shardCount: 1,
-        startedAt: Date.now() - 90061000,
-        uptimeSeconds: 90061,
+        startedAt: Date.now() - SAMPLE_UPTIME_SECONDS * SECOND_MS,
+        uptimeSeconds: SAMPLE_UPTIME_SECONDS,
         rssMB: 180.25,
         heapUsedMB: 55.5,
         heapTotalMB: 64,
@@ -201,7 +205,7 @@ test("ping labels process RSS, V8 heap, CPU sample and session states precisely"
     assert.match(field(embed, "🧠 หน่วยความจำของ Process"), /RAM \(RSS\) \*\*180\.3 MB\*\*/);
     assert.match(field(embed, "⚙️ การประมวลผล"), /CPU ระหว่างการวัด \*\*12\.3%\*\*/);
     assert.match(field(embed, "🎙️ Voice Sessions"), /ใช้งาน \*\*2\*\*/);
-    assert.equal(information._test.formatDuration(90061), "1 วัน 1 ชม. 1 นาที 1 วินาที");
+    assert.equal(information._test.formatDuration(SAMPLE_UPTIME_SECONDS), "1 วัน 1 ชม. 1 นาที 1 วินาที");
     assert.equal(information._test.cpuPercent({ user: 0, system: 0 }, { user: 250, system: 250 }, 1000), 50);
     assert.equal(information._test.buildPingEmbed({
         interactionLatency: 25,
