@@ -175,6 +175,130 @@ function buildApprovedKickWarning(failedStops, approvalCleanupFailed) {
     ].filter(Boolean).join(" | ") || null;
 }
 
+const COMMAND_TOGGLE_COOLDOWN_MS = 5000;
+const COMMAND_AUDIT_MAX = 100;
+
+function validateCommandToggleRequest(commands, commandName) {
+    if (!commandName || typeof commandName !== "string") {
+        return { ok: false, status: 400, error: "ไม่ระบุชื่อคำสั่ง" };
+    }
+
+    const exists = (commands.slashCommandsData || []).some(command => command.name === commandName);
+    if (!exists) {
+        return { ok: false, status: 404, error: `ไม่พบคำสั่ง /${commandName}` };
+    }
+
+    return { ok: true, commandName };
+}
+
+function getCommandToggleCooldown(toggleCooldowns, toggleKey, now = Date.now()) {
+    const lastToggle = toggleCooldowns.get(toggleKey) || 0;
+    const remainingMs = COMMAND_TOGGLE_COOLDOWN_MS - (now - lastToggle);
+    return Math.max(0, remainingMs);
+}
+
+function createCommandTogglePlan(disabledCommands, commandName) {
+    const nextDisabledCommands = new Set(disabledCommands);
+    if (nextDisabledCommands.has(commandName)) nextDisabledCommands.delete(commandName);
+    else nextDisabledCommands.add(commandName);
+
+    return {
+        nextDisabledCommands,
+        nowEnabled: !nextDisabledCommands.has(commandName)
+    };
+}
+
+async function persistCommandToggle(sessionManager, disabledCommands, commandName) {
+    const plan = createCommandTogglePlan(disabledCommands, commandName);
+    const persisted = await sessionManager.setSetting("disabledCommands", [...plan.nextDisabledCommands]);
+    if (persisted !== true) return { ok: false, nowEnabled: !disabledCommands.has(commandName) };
+
+    disabledCommands.clear();
+    for (const disabledCommand of plan.nextDisabledCommands) disabledCommands.add(disabledCommand);
+    return { ok: true, nowEnabled: plan.nowEnabled };
+}
+
+function recordCommandToggleAudit(commandAuditLog, commandName, nowEnabled, auditIp, timestamp) {
+    if (commandAuditLog.length >= COMMAND_AUDIT_MAX) commandAuditLog.shift();
+    commandAuditLog.push({
+        commandName,
+        action: nowEnabled ? "enabled" : "disabled",
+        ip: auditIp,
+        timestamp
+    });
+}
+
+function notifyCommandToggle(commandName, nowEnabled, auditIp) {
+    sendWebhookEvent({
+        target: "LOG",
+        severity: "INFO",
+        category: "OWNER",
+        code: nowEnabled ? "owner.command.enabled" : "owner.command.disabled",
+        title: nowEnabled ? "เปิดใช้งานคำสั่งแล้ว" : "ปิดใช้งานคำสั่งแล้ว",
+        context: {
+            "คำสั่ง": `/${commandName}`,
+            "สถานะใหม่": nowEnabled ? "เปิดใช้งาน" : "ปิดใช้งาน",
+            "IP ผู้ดำเนินการ": auditIp
+        }
+    }).catch(() => {});
+}
+
+async function handleCommandToggle({
+    req,
+    res,
+    checkAuth,
+    commands,
+    sessionManager,
+    disabledCommands,
+    commandAuditLog,
+    toggleCooldowns,
+    now = Date.now
+}) {
+    if (!checkAuth(req, res)) return;
+
+    const validation = validateCommandToggleRequest(commands, req.body?.commandName);
+    if (!validation.ok) return res.status(validation.status).json({ success: false, error: validation.error });
+
+    const timestamp = now();
+    const auditIp = hashAuditIp(req.ip);
+    const toggleKey = `${auditIp}:${validation.commandName}`;
+    const remainingMs = getCommandToggleCooldown(toggleCooldowns, toggleKey, timestamp);
+    if (remainingMs > 0) {
+        return res.status(429).json({
+            success: false,
+            error: `กรุณารอ ${(remainingMs / 1000).toFixed(1)}s`
+        });
+    }
+
+    try {
+        const result = await persistCommandToggle(sessionManager, disabledCommands, validation.commandName);
+        if (!result.ok) {
+            return res.status(503).json({
+                success: false,
+                error: "บันทึกสถานะคำสั่งไม่สำเร็จ กรุณาลองใหม่"
+            });
+        }
+
+        toggleCooldowns.set(toggleKey, timestamp);
+        recordCommandToggleAudit(
+            commandAuditLog,
+            validation.commandName,
+            result.nowEnabled,
+            auditIp,
+            timestamp
+        );
+        notifyCommandToggle(validation.commandName, result.nowEnabled, auditIp);
+
+        return res.json({
+            success: true,
+            commandName: validation.commandName,
+            enabled: result.nowEnabled
+        });
+    } catch (error) {
+        return res.status(500).json({ success: false, error: error.message });
+    }
+}
+
 async function sendGuildNotFoundKickResponse({
     res,
     sessionManager,
@@ -764,84 +888,16 @@ function registerRoutes({
         }
     });
 
-    app.post("/api/commands/toggle", express.json(), async (req, res) => {
-        if (!checkAuth(req, res)) return;
-
-        try {
-            const { commandName } = req.body || {};
-
-            if (!commandName || typeof commandName !== "string") {
-                return res.status(400).json({
-                    success: false,
-                    error: "ไม่ระบุชื่อคำสั่ง"
-                });
-            }
-
-            const exists = (commands.slashCommandsData || []).some(c => c.name === commandName);
-
-            if (!exists) {
-                return res.status(404).json({
-                    success: false,
-                    error: `ไม่พบคำสั่ง /${commandName}`
-                });
-            }
-
-            const auditIp     = hashAuditIp(req.ip);
-            const toggleKey   = `${auditIp}:${commandName}`;
-            const lastToggle  = toggleCooldowns.get(toggleKey) || 0;
-            const sinceToggle = Date.now() - lastToggle;
-
-            if (sinceToggle < 5000) {
-                const waitSec = ((5000 - sinceToggle) / 1000).toFixed(1);
-                return res.status(429).json({
-                    success: false,
-                    error: `กรุณารอ ${waitSec}s`
-                });
-            }
-
-            toggleCooldowns.set(toggleKey, Date.now());
-
-            if (disabledCommands.has(commandName)) {
-                disabledCommands.delete(commandName);
-            } else {
-                disabledCommands.add(commandName);
-            }
-
-            await sessionManager.setSetting("disabledCommands", [...disabledCommands]);
-
-            const nowEnabled = !disabledCommands.has(commandName);
-
-            if (commandAuditLog.length >= 100) commandAuditLog.shift();
-
-            commandAuditLog.push({
-                commandName,
-                action: nowEnabled ? "enabled" : "disabled",
-                ip: auditIp,
-                timestamp: Date.now()
-            });
-
-            sendWebhookEvent({
-                target: "LOG",
-                severity: "INFO",
-                category: "OWNER",
-                code: nowEnabled ? "owner.command.enabled" : "owner.command.disabled",
-                title: nowEnabled ? "เปิดใช้งานคำสั่งแล้ว" : "ปิดใช้งานคำสั่งแล้ว",
-                context: {
-                    "คำสั่ง": `/${commandName}`,
-                    "สถานะใหม่": nowEnabled ? "เปิดใช้งาน" : "ปิดใช้งาน",
-                    "IP ผู้ดำเนินการ": auditIp
-                }
-            }).catch(() => {});
-
-            res.json({
-                success: true,
-                commandName,
-                enabled: nowEnabled
-            });
-        } catch (e) {
-            res.status(500).json({ success: false, error: e.message });
-        }
-    });
+    app.post("/api/commands/toggle", express.json(), (req, res) => handleCommandToggle({
+        req,
+        res,
+        checkAuth,
+        commands,
+        sessionManager,
+        disabledCommands,
+        commandAuditLog,
+        toggleCooldowns
+    }));
 
     app.get("/api/commands-audit", (req, res) => {
         res.json(buildCommandAuditPayload(commandAuditLog));
@@ -1152,5 +1208,13 @@ module.exports = {
     makeCheckAuth,
     makeCheckRevealPin,
     registerShadowPortal,
-    buildEnvReadiness
+    buildEnvReadiness,
+    _test: {
+        validateCommandToggleRequest,
+        getCommandToggleCooldown,
+        createCommandTogglePlan,
+        persistCommandToggle,
+        recordCommandToggleAudit,
+        handleCommandToggle
+    }
 };

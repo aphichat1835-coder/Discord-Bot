@@ -431,40 +431,49 @@ function resolveCampaignSeverity(summary, phase) {
     return hasPartialFailures ? "WARNING" : "SUCCESS";
 }
 
-function buildJoinCampaignEvent(summary, phase) {
-    const failedEntireJob = summary.status === "failed";
-    const severity = resolveCampaignSeverity(summary, phase);
+function buildJoinCampaignContext(summary) {
+    return {
+        "รหัสงาน": summary.campaignId,
+        "เซิร์ฟเวอร์": summary.targetGuildName || summary.targetGuildId,
+        "Guild ID": summary.targetGuildId,
+        "โหมด": summary.dryRun ? "ตรวจจำนวนเท่านั้น" : "ดึงสมาชิกจริง",
+        "สถานะงาน": summary.status,
+        "Records ที่ตรวจ": Number(summary.scannedRecords || 0),
+        "ผู้ใช้ไม่ซ้ำ": Number(summary.uniqueUsers || 0),
+        "ใช้ได้จริง": Number(summary.usableUsers || 0),
+        "ดึงเข้าสำเร็จ": Number(summary.joined || 0),
+        "เป็นสมาชิกอยู่แล้ว": Number(summary.alreadyMember || 0),
+        "ไม่สำเร็จ": Number(summary.failed || 0),
+        "Refresh สำเร็จ": Number(summary.refreshed || 0),
+        "Refresh ไม่สำเร็จ": Number(summary.refreshFailed || 0),
+        "ขาด Scope": Number(summary.missingScope || 0),
+        "Token ใช้ไม่ได้": Number(summary.tokenInvalid || 0),
+        "บอทขาดสิทธิ์": Number(summary.botMissingPermission || 0),
+        "ติด Rate Limit": Number(summary.rateLimited || 0)
+    };
+}
+
+function buildJoinCampaignFailureDetails(summary, failedEntireJob) {
     const errors = (summary.errors || []).slice(0, 5).map(formatCampaignErrorLine).join("\n");
     return {
+        description: errors ? `ตัวอย่างรายการที่ไม่สำเร็จ:\n${errors}` : undefined,
+        impact: failedEntireJob ? "งานหยุดก่อนประมวลผลครบทุกบัญชี" : undefined,
+        action: failedEntireJob ? "ตรวจ Runtime Log และสาเหตุล่าสุดก่อนเริ่ม Campaign ใหม่" : undefined
+    };
+}
+
+function buildJoinCampaignEvent(summary, phase) {
+    const failedEntireJob = summary.status === "failed";
+    return {
         target: failedEntireJob ? "ALERT" : "LOG",
-        severity,
+        severity: resolveCampaignSeverity(summary, phase),
         category: "CAMPAIGN",
         code: failedEntireJob ? "campaign.join.failed" : `campaign.join.${phase}`,
         state: failedEntireJob ? "OPEN" : undefined,
         title: getJoinCampaignTitle(phase),
         sourceIconUrl: summary.targetGuildIconUrl,
-        description: errors ? `ตัวอย่างรายการที่ไม่สำเร็จ:\n${errors}` : undefined,
-        impact: failedEntireJob ? "งานหยุดก่อนประมวลผลครบทุกบัญชี" : undefined,
-        action: failedEntireJob ? "ตรวจ Runtime Log และสาเหตุล่าสุดก่อนเริ่ม Campaign ใหม่" : undefined,
-        context: {
-            "รหัสงาน": summary.campaignId,
-            "เซิร์ฟเวอร์": summary.targetGuildName || summary.targetGuildId,
-            "Guild ID": summary.targetGuildId,
-            "โหมด": summary.dryRun ? "ตรวจจำนวนเท่านั้น" : "ดึงสมาชิกจริง",
-            "สถานะงาน": summary.status,
-            "Records ที่ตรวจ": Number(summary.scannedRecords || 0),
-            "ผู้ใช้ไม่ซ้ำ": Number(summary.uniqueUsers || 0),
-            "ใช้ได้จริง": Number(summary.usableUsers || 0),
-            "ดึงเข้าสำเร็จ": Number(summary.joined || 0),
-            "เป็นสมาชิกอยู่แล้ว": Number(summary.alreadyMember || 0),
-            "ไม่สำเร็จ": Number(summary.failed || 0),
-            "Refresh สำเร็จ": Number(summary.refreshed || 0),
-            "Refresh ไม่สำเร็จ": Number(summary.refreshFailed || 0),
-            "ขาด Scope": Number(summary.missingScope || 0),
-            "Token ใช้ไม่ได้": Number(summary.tokenInvalid || 0),
-            "บอทขาดสิทธิ์": Number(summary.botMissingPermission || 0),
-            "ติด Rate Limit": Number(summary.rateLimited || 0)
-        },
+        ...buildJoinCampaignFailureDetails(summary, failedEntireJob),
+        context: buildJoinCampaignContext(summary),
         dedupeKey: failedEntireJob ? `join-campaign-failed:${summary.campaignId}` : undefined,
         dedupeMs: 15 * 60 * 1000
     };
@@ -763,6 +772,9 @@ module.exports = {
         makeCampaignId,
         markTokenRefreshFailure,
         recordJoinFailure,
+        buildJoinCampaignContext,
+        buildJoinCampaignFailureDetails,
+        buildJoinCampaignEvent,
         campaignBatchSize,
         mergeCandidateSummary,
         processAllCandidateBatches,

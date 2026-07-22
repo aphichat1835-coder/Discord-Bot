@@ -430,3 +430,15 @@ test("webhook dispatcher never retries a send_timeout because the original reque
     assert.equal(_test.retryable({ status: 503 }), true);
     assert.equal(_test.retryable({ status: 429 }), true);
 });
+
+test("event token normalization bounds hostile input without changing webhook colors", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const { _test } = require("../core/webhooks");
+    const hostileToken = `A${"_".repeat(100_000)}B`;
+    const hostileCode = `a${".".repeat(100_000)}b`;
+
+    assert.equal(_test.normalizeEventToken(hostileToken, "SYSTEM"), "A");
+    assert.equal(_test.normalizeWebhookEventCode(hostileCode), "a");
+    assert.equal(buildWebhookEventPayload({ severity: "WARNING" }).embeds[0].color, 16705372);
+    assert.equal(buildWebhookEventPayload({ severity: "ERROR" }).embeds[0].color, 15548997);
+    assert.equal(buildWebhookEventPayload({ severity: "CRITICAL" }).embeds[0].color, 10038562);
+});

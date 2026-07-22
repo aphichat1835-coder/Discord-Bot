@@ -22,11 +22,11 @@ const WEBHOOK_EVENT_STATES = Object.freeze({
     RESOLVED: "RESOLVED"
 });
 const EVENT_PRESENTATION = Object.freeze({
-    INFO: { emoji: "🔵", color: 0x5865F2, label: "ข้อมูล" },
-    SUCCESS: { emoji: "🟢", color: 0x57F287, label: "สำเร็จ" },
-    WARNING: { emoji: "🟠", color: 0xFEE75C, label: "คำเตือน" },
-    ERROR: { emoji: "🔴", color: 0xED4245, label: "ข้อผิดพลาด" },
-    CRITICAL: { emoji: "🚨", color: 0x992D22, label: "วิกฤต" }
+    INFO: { emoji: "🔵", color: 5793266, label: "ข้อมูล" },
+    SUCCESS: { emoji: "🟢", color: 5763719, label: "สำเร็จ" },
+    WARNING: { emoji: "🟠", color: 16705372, label: "คำเตือน" },
+    ERROR: { emoji: "🔴", color: 15548997, label: "ข้อผิดพลาด" },
+    CRITICAL: { emoji: "🚨", color: 10038562, label: "วิกฤต" }
 });
 const EVENT_STATE_LABELS = Object.freeze({
     OPEN: "เกิดปัญหา",
@@ -65,6 +65,8 @@ const DEFAULT_CONCURRENCY = Math.max(1, Math.min(5, Number(process.env.WEBHOOK_C
 const DEFAULT_ATTEMPTS = Math.max(1, Math.min(5, Number(process.env.WEBHOOK_MAX_ATTEMPTS || 3) || 3));
 const DEFAULT_TIMEOUT_MS = Math.max(1000, Number(process.env.WEBHOOK_SEND_TIMEOUT_MS || 15000) || 15000);
 const ROUTINE_DEDUPE_MAX = Math.max(100, Number(process.env.WEBHOOK_ROUTINE_DEDUPE_MAX || 2000) || 2000);
+const EVENT_TOKEN_INPUT_MAX = 500;
+const EVENT_TOKEN_OUTPUT_MAX = 100;
 
 function trimTrailingSlashes(value) {
     let clean = String(value || "").trim();
@@ -200,12 +202,21 @@ function normalizeWebhookPayload(payload) {
     return normalized;
 }
 
+function trimEdgeCharacter(value, character) {
+    let start = 0;
+    let end = value.length;
+    while (start < end && value[start] === character) start++;
+    while (end > start && value[end - 1] === character) end--;
+    return value.slice(start, end);
+}
+
 function normalizeEventToken(value, fallback) {
-    const normalized = String(value || fallback || "")
+    const replaced = String(value || fallback || "")
+        .slice(0, EVENT_TOKEN_INPUT_MAX)
         .trim()
         .toUpperCase()
-        .replace(/[^A-Z0-9_]+/g, "_")
-        .replace(/^_+|_+$/g, "");
+        .replace(/[^A-Z0-9_]+/g, "_");
+    const normalized = trimEdgeCharacter(replaced, "_").slice(0, EVENT_TOKEN_OUTPUT_MAX);
     return normalized || fallback;
 }
 
@@ -239,12 +250,12 @@ function resolveWebhookEventTarget(event = {}) {
 }
 
 function normalizeWebhookEventCode(value) {
-    return String(value || "system.event")
+    const replaced = String(value || "system.event")
+        .slice(0, EVENT_TOKEN_INPUT_MAX)
         .trim()
         .toLowerCase()
-        .replace(/[^a-z0-9._-]+/g, ".")
-        .replace(/^\.+|\.+$/g, "")
-        .slice(0, 100) || "system.event";
+        .replace(/[^a-z0-9._-]+/g, ".");
+    return trimEdgeCharacter(replaced, ".").slice(0, EVENT_TOKEN_OUTPUT_MAX) || "system.event";
 }
 
 function normalizeDiscordMediaUrl(value) {
@@ -279,6 +290,36 @@ function getDiscordGuildIconUrl(guild) {
     }
 }
 
+function appendEventField(fields, name, value, inline) {
+    if (value === undefined || value === null || value === "") return;
+    fields.push({ name, value: formatEventContextValue(value), inline });
+}
+
+function buildEventFields(event, state) {
+    const fields = [];
+    appendEventField(fields, "สถานะ", state ? EVENT_STATE_LABELS[state] || state : null, true);
+    appendEventField(fields, "ผลกระทบ", event.impact, false);
+    appendEventField(fields, "สิ่งที่ควรทำ", event.action, false);
+
+    for (const [name, value] of Object.entries(event.context || {})) {
+        appendEventField(fields, String(name || "รายละเอียด").slice(0, 100), value, true);
+    }
+    return fields.slice(0, FIELD_COUNT_MAX);
+}
+
+function resolveEventTimestamp(value) {
+    const timestamp = new Date(Number(value || Date.now()));
+    return Number.isNaN(timestamp.getTime()) ? new Date() : timestamp;
+}
+
+function buildEventAuthor(target, sourceIconUrl) {
+    const targetLabel = target === "ALERT" ? "ACTION REQUIRED" : "ACTIVITY & AUDIT";
+    return {
+        name: `PHOMUEANGTAI • ${targetLabel}`,
+        ...(sourceIconUrl ? { icon_url: sourceIconUrl } : {})
+    };
+}
+
 function buildWebhookEventPayload(event = {}) {
     const severity = normalizeEventToken(event.severity, WEBHOOK_SEVERITIES.INFO);
     const presentation = EVENT_PRESENTATION[severity] || EVENT_PRESENTATION.INFO;
@@ -286,45 +327,21 @@ function buildWebhookEventPayload(event = {}) {
     const categoryLabel = EVENT_CATEGORY_LABELS[category] || category;
     const state = event.state ? normalizeEventToken(event.state, "UPDATE") : null;
     const code = normalizeWebhookEventCode(event.code);
-    const fields = [];
-
-    if (state) {
-        fields.push({ name: "สถานะ", value: EVENT_STATE_LABELS[state] || state, inline: true });
-    }
-    if (event.impact) {
-        fields.push({ name: "ผลกระทบ", value: formatEventContextValue(event.impact), inline: false });
-    }
-    if (event.action) {
-        fields.push({ name: "สิ่งที่ควรทำ", value: formatEventContextValue(event.action), inline: false });
-    }
-    for (const [name, value] of Object.entries(event.context || {})) {
-        if (value === undefined || value === null || value === "") continue;
-        fields.push({
-            name: String(name || "รายละเอียด").slice(0, 100),
-            value: formatEventContextValue(value),
-            inline: true
-        });
-    }
+    const fields = buildEventFields(event, state);
 
     const target = resolveWebhookEventTarget({ ...event, severity });
-    const targetLabel = target === "ALERT" ? "ACTION REQUIRED" : "ACTIVITY & AUDIT";
-    const timestamp = new Date(Number(event.timestamp || Date.now()));
-    const safeTimestamp = Number.isNaN(timestamp.getTime()) ? new Date() : timestamp;
     const sourceIconUrl = normalizeDiscordMediaUrl(event.sourceIconUrl);
     const thumbnailUrl = normalizeDiscordMediaUrl(event.thumbnailUrl);
     return {
         embeds: [{
             color: presentation.color,
-            author: {
-                name: `PHOMUEANGTAI • ${targetLabel}`,
-                ...(sourceIconUrl ? { icon_url: sourceIconUrl } : {})
-            },
+            author: buildEventAuthor(target, sourceIconUrl),
             title: `${presentation.emoji} ${presentation.label} · ${String(event.title || categoryLabel)}`,
             description: event.description ? String(event.description) : undefined,
-            fields: fields.slice(0, FIELD_COUNT_MAX),
+            fields,
             footer: { text: `${categoryLabel} • ${code}` },
             ...(thumbnailUrl ? { thumbnail: { url: thumbnailUrl } } : {}),
-            timestamp: safeTimestamp.toISOString()
+            timestamp: resolveEventTimestamp(event.timestamp).toISOString()
         }]
     };
 }
@@ -765,5 +782,14 @@ module.exports = {
     flushWebhookQueue,
     shutdownWebhookDispatcher,
     buildStartupNotice,
-    _test: { failureCode, retryable, withTimeout, routineDedupe, normalizeWebhookEventCode }
+    _test: {
+        failureCode,
+        retryable,
+        withTimeout,
+        routineDedupe,
+        trimEdgeCharacter,
+        normalizeEventToken,
+        normalizeWebhookEventCode,
+        buildEventFields
+    }
 };

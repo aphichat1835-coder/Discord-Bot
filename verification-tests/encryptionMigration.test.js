@@ -69,7 +69,7 @@ function fakeModel(docs) {
 
 describe("encryption migration", () => {
     const previousKey = process.env.ENCRYPTION_KEY;
-    const secret = "verification-encryption-migration-test-key-32-plus";
+    const secret = crypto.randomBytes(48).toString("base64url");
 
     beforeAll(() => {
         process.env.ENCRYPTION_KEY = secret;

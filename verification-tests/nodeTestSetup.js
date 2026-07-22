@@ -8,12 +8,13 @@ const jestMock = require("jest-mock");
 const PROJECT_ROOT = path.resolve(__dirname, "..");
 const SETUP_FILE = __filename;
 const activeSpies = new Set();
+const STRING_FORMAT_TOKENS = new Set(["%s"]);
 
 function formatCaseName(template, values) {
     let index = 0;
     return String(template).replace(/%[psdifjo]/g, token => {
         const value = values[index++];
-        if (token === "%s") return String(value);
+        if (STRING_FORMAT_TOKENS.has(token)) return String(value);
         if (["%d", "%i", "%f"].includes(token)) return String(Number(value));
         try {
             return JSON.stringify(value);

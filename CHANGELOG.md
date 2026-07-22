@@ -18,6 +18,14 @@
 - Updated GitHub Actions to pinned `checkout` v6.0.2 and `setup-node` v6.3.0,
   added least-privilege workflow permissions, aligned Render and `.node-version`,
   and moved deterministic installs to npm 12 lockfile mode.
+- Hardened the npm bootstrap in CI and Render with lifecycle scripts disabled.
+  Command toggles now persist the proposed state before mutating runtime state,
+  return an unavailable response when MongoDB cannot acknowledge the write, and
+  avoid recording a cooldown or audit event for a change that never committed.
+- Bounded webhook event identifiers before normalization, replaced the
+  backtracking edge-trim expressions with linear scanning, and split webhook and
+  Join Campaign presentation builders into focused helpers without changing the
+  emitted Discord payload contract.
 
 - Upgraded new Verification and Voice secrets to versioned `v3:gcm` payloads
   derived from the full 32-byte SHA-256 digest. Existing Service-compatible
