@@ -125,7 +125,7 @@ function applyNaturalSettings(newSettings) {
 
     if (!st.naturalSettings.enabled) {
         stopAllNaturalTimers();
-        console.log("[NATURAL] 🔴 Disabled.");
+        console.log("[NATURAL] ⏸️ Disabled by settings.");
         return;
     }
 

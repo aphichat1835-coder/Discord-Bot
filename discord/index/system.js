@@ -7,8 +7,13 @@ DO NOT SIMPLIFY: Log capture ring buffer — prevents RAM bloat.
 ================================================================================
 */
 
-const { sendAlertWebhook } = require("../core/webhooks");
+const {
+    sendAlertWebhook,
+    flushWebhookQueue,
+    shutdownWebhookDispatcher
+} = require("../core/webhooks");
 const { sanitizeLogText, safeError } = require("../core/safeLogger");
+const { normalizeRuntimeLine } = require("../core/startupLogger");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🗂️  SHARED STATE (exported สำหรับ server.js / views.js ใช้)
@@ -18,6 +23,7 @@ const MAX_LOGS_DEFAULT = 500;
 
 let crashShieldReady = false;
 let botReadyAt = null;
+let commandsReady = false;
 let isAppShuttingDown = global.__APP_SHUTTING_DOWN === true;
 
 
@@ -34,6 +40,8 @@ const originalLog   = console.log;
 const originalError = console.error;
 const originalWarn  = console.warn;
 const cronTimers = [];
+const CRITICAL_ALERT_COOLDOWN_MS = Math.max(1000, Number(process.env.CRITICAL_ALERT_COOLDOWN_MS || 5 * 60 * 1000) || 5 * 60 * 1000);
+const CRITICAL_ALERT_MAX_FINGERPRINTS = Math.max(10, Number(process.env.CRITICAL_ALERT_MAX_FINGERPRINTS || 100) || 100);
 const REQUEST_COUNT_MAX_BUCKETS = Math.max(100, Number(process.env.RATE_LIMIT_MAX_BUCKETS || 5000) || 5000);
 const COMMAND_COOLDOWN_MAX_USERS = Math.max(100, Number(process.env.COMMAND_COOLDOWN_MAX_USERS || 5000) || 5000);
 const TOGGLE_COOLDOWN_MAX_KEYS = Math.max(100, Number(process.env.TOGGLE_COOLDOWN_MAX_KEYS || 1000) || 1000);
@@ -52,30 +60,114 @@ function initLogCapture(maxLogs = MAX_LOGS_DEFAULT) {
 
     console.log = (...args) => {
         const msg = require('util').format(...args);
-        pushLog('info', msg);
-        originalLog(sanitizeLogText(msg));
+        const line = normalizeRuntimeLine('log', msg);
+        pushLog('info', line);
+        originalLog(line);
     };
     console.error = (...args) => {
         const msg = require('util').format(...args);
-        pushLog('error', msg);
-        originalError(sanitizeLogText(msg));
+        const line = normalizeRuntimeLine('error', msg);
+        pushLog('error', line);
+        originalError(line);
     };
     console.warn = (...args) => {
         const msg = require('util').format(...args);
-        pushLog('warn', msg);
-        originalWarn(sanitizeLogText(msg));
+        const line = normalizeRuntimeLine('warn', msg);
+        pushLog('warn', line);
+        originalWarn(line);
     };
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 //  💥  CRASH SHIELD — Global Process Handlers
 // ════════════════════════════════════════════════════════════════════════════
+function firstStackFrame(error) {
+    return String(error?.stack || "")
+        .split("\n")
+        .slice(1)
+        .map(line => line.trim())
+        .find(Boolean) || "no-stack";
+}
+
+function criticalFingerprint(type, error) {
+    return [type, safeError(error), sanitizeLogText(firstStackFrame(error))].join("|");
+}
+
+function createCriticalAlertDispatcher(options = {}) {
+    const send = options.send || sendAlertWebhook;
+    const cooldownMs = Math.max(1000, Number(options.cooldownMs || CRITICAL_ALERT_COOLDOWN_MS));
+    const maxFingerprints = Math.max(1, Number(options.maxFingerprints || CRITICAL_ALERT_MAX_FINGERPRINTS));
+    const now = options.now || Date.now;
+    const setTimer = options.setTimer || setTimeout;
+    const clearTimer = options.clearTimer || clearTimeout;
+    const entries = new Map();
+
+    function forgetOldestEntry() {
+        if (entries.size < maxFingerprints) return;
+        const oldestKey = entries.keys().next().value;
+        const oldest = entries.get(oldestKey);
+        if (oldest?.timer) clearTimer(oldest.timer);
+        entries.delete(oldestKey);
+    }
+
+    async function sendSummary(key) {
+        const entry = entries.get(key);
+        if (!entry) return;
+        entries.delete(key);
+        if (entry.duplicates < 1) return;
+        await send({
+            content: `🚨 **[CRITICAL SUMMARY] ${entry.type}**\n\`\`\`\n${entry.message}\nRepeated ${entry.duplicates} additional time(s) within ${Math.round(cooldownMs / 1000)}s.\n\`\`\``
+        }).catch(() => {});
+    }
+
+    async function dispatch(type, error, payload) {
+        const key = criticalFingerprint(type, error);
+        const existing = entries.get(key);
+        if (existing && now() - existing.startedAt < cooldownMs) {
+            existing.duplicates++;
+            return false;
+        }
+        if (existing?.timer) clearTimer(existing.timer);
+        if (existing) entries.delete(key);
+        forgetOldestEntry();
+        const entry = {
+            type,
+            message: safeError(error),
+            startedAt: now(),
+            duplicates: 0,
+            timer: null
+        };
+        entry.timer = setTimer(() => {
+            sendSummary(key).catch(() => {});
+        }, cooldownMs);
+        entry.timer?.unref?.();
+        entries.set(key, entry);
+        const delivered = await send(payload).catch(() => false);
+        if (delivered !== true) {
+            if (entry.timer) clearTimer(entry.timer);
+            entries.delete(key);
+            return false;
+        }
+        return true;
+    }
+
+    function stop() {
+        for (const entry of entries.values()) {
+            if (entry.timer) clearTimer(entry.timer);
+        }
+        entries.clear();
+    }
+
+    return { dispatch, sendSummary, stop, entries };
+}
+
 function initCrashShield(config) {
+    const criticalAlerts = createCriticalAlertDispatcher();
     process.on("uncaughtException", async (err) => {
         originalError(sanitizeLogText(`[CRITICAL] uncaughtException: ${err.message}\n${err.stack || ""}`));
-        await sendAlertWebhook({
+        await criticalAlerts.dispatch("uncaughtException", err, {
             content: `🚨 **[CRITICAL] uncaughtException**\n\`\`\`\n${safeError(err)}\n${sanitizeLogText(err.stack || "").substring(0, 800)}\n\`\`\``
-        }).catch(() => {});
+        });
         if (!crashShieldReady) {
             await new Promise(r => setTimeout(r, 1500));
             process.exit(1);
@@ -83,16 +175,18 @@ function initCrashShield(config) {
     });
 
     process.on("unhandledRejection", async (reason) => {
-        const msg = reason?.message ?? String(reason);
+        const error = reason instanceof Error ? reason : new Error(String(reason));
+        const msg = error.message;
         originalError(sanitizeLogText(`[CRITICAL] unhandledRejection: ${msg}`));
-        await sendAlertWebhook({
+        await criticalAlerts.dispatch("unhandledRejection", error, {
             content: `🚨 **[CRITICAL] unhandledRejection**\n\`\`\`\n${sanitizeLogText(msg).substring(0, 900)}\n\`\`\``
-        }).catch(() => {});
+        });
         if (!crashShieldReady) {
             await new Promise(r => setTimeout(r, 1500));
             process.exit(1);
         }
     });
+    return criticalAlerts;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -138,7 +232,7 @@ function pruneCommandCooldowns(commandCooldowns, now, ttlMs) {
 
 function cleanupVolatileMaps({
     spamTracking, requestCounts,
-    commandCooldowns, toggleCooldowns, antiRaidLogDebounce,
+    commandCooldowns, toggleCooldowns, antiRaidDebounce,
     voiceWorker, config
 }, now) {
     const windowMs = config.limits.rateLimitWindowMs || 60000;
@@ -147,18 +241,18 @@ function cleanupVolatileMaps({
     pruneTimestampListMap(requestCounts, now, windowMs);
     pruneCommandCooldowns(commandCooldowns, now, 30000);
     pruneTimestampMap(toggleCooldowns, now, 5000);
-    pruneTimestampMap(antiRaidLogDebounce, now, 10000);
+    pruneTimestampMap(antiRaidDebounce, now, 10000);
     trimMapToMaxSize(spamTracking, config.limits.spamTrackingMaxUsers || 1000);
     trimMapToMaxSize(requestCounts, REQUEST_COUNT_MAX_BUCKETS);
     trimMapToMaxSize(commandCooldowns, COMMAND_COOLDOWN_MAX_USERS);
     trimMapToMaxSize(toggleCooldowns, TOGGLE_COOLDOWN_MAX_KEYS);
-    trimMapToMaxSize(antiRaidLogDebounce, ANTI_RAID_DEBOUNCE_MAX_KEYS);
+    trimMapToMaxSize(antiRaidDebounce, ANTI_RAID_DEBOUNCE_MAX_KEYS);
     voiceWorker.cleanupVolatileState?.(now);
 }
 
 function initCronJobs({
     spamTracking, requestCounts,
-    commandCooldowns, toggleCooldowns, antiRaidLogDebounce,
+    commandCooldowns, toggleCooldowns, antiRaidDebounce,
     sessionManager, voiceWorker, config
 }) {
     stopCronJobs();
@@ -169,7 +263,7 @@ function initCronJobs({
             const now = Date.now();
             cleanupVolatileMaps({
                 spamTracking, requestCounts,
-                commandCooldowns, toggleCooldowns, antiRaidLogDebounce,
+                commandCooldowns, toggleCooldowns, antiRaidDebounce,
                 voiceWorker, config
             }, now);
         } catch (err) {
@@ -237,27 +331,34 @@ async function closeServer() {
     });
 }
 
-function initShutdown({ sessionManager, voiceWorker, client, memoryMonitor, auditLogger, auditReconcilerScheduler }) {
+function initShutdown({
+    sessionManager,
+    voiceWorker,
+    client,
+    memoryMonitor,
+    verificationRuntime,
+    dmService
+}) {
     let isShuttingDownMain = false;
 
     async function shutdown(signal) {
         if (isShuttingDownMain) return;
         isShuttingDownMain = true;
         markAppShuttingDown();
-        console.log(`\n⛔ [SHUTDOWN] ${signal} — graceful shutdown starting...`);
-        stopCronJobs();
-        auditLogger?.stopAuditCleanup?.();
-        try {
-            auditReconcilerScheduler?.stop?.();
-        } catch (err) {
-            console.warn(`[SHUTDOWN] ⚠️ Audit reconciler stop skipped: ${err.message}`);
-        }
-        voiceWorker.setShuttingDown(true);
-
         const timeout = setTimeout(() => {
             console.error("[SHUTDOWN] ⏱️ Timeout — forcing exit");
             process.exit(1);
         }, 10000);
+        timeout.unref?.();
+        console.log(`\n⛔ [SHUTDOWN] ${signal} — graceful shutdown starting...`);
+        stopCronJobs();
+        dmService?.stop?.();
+        try {
+            await verificationRuntime?.stopVerificationRuntime?.();
+        } catch (err) {
+            console.warn(`[SHUTDOWN] ⚠️ Verification runtime stop skipped: ${err.message}`);
+        }
+        voiceWorker.setShuttingDown(true);
 
         try {
             await sessionManager.saveDatabase();
@@ -267,6 +368,11 @@ function initShutdown({ sessionManager, voiceWorker, client, memoryMonitor, audi
             if (client) { client.destroy(); console.log("[SHUTDOWN] ✅ Discord destroyed"); }
             if (memoryMonitor?.stopMemoryMonitor) memoryMonitor.stopMemoryMonitor();
             await closeServer();
+            const webhookFlushed = await flushWebhookQueue(2500);
+            if (!webhookFlushed) console.warn("[SHUTDOWN] ⚠️ Webhook queue did not fully drain before timeout");
+            await shutdownWebhookDispatcher(500);
+            await sessionManager.disconnectDB?.();
+            console.log("[SHUTDOWN] ✅ MongoDB disconnected");
             clearTimeout(timeout);
             process.exit(0);
         } catch (err) {
@@ -286,8 +392,11 @@ module.exports = {
     set crashShieldReady(v) { crashShieldReady = v; },
     get botReadyAt() { return botReadyAt; },
     set botReadyAt(v) { botReadyAt = v; },
+    get commandsReady() { return commandsReady; },
+    set commandsReady(v) { commandsReady = v === true; },
     get shutdownRequested() { return isShuttingDown(); },
     markAppShuttingDown, isShuttingDown,
     originalLog, originalError, originalWarn,
-    initLogCapture, initCrashShield, initCronJobs, stopCronJobs, initShutdown
+    initLogCapture, initCrashShield, initCronJobs, stopCronJobs, initShutdown,
+    criticalFingerprint, createCriticalAlertDispatcher
 };

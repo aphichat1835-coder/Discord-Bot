@@ -38,7 +38,7 @@ function createAuth() {
     });
 }
 
-test("shadow portal auth accepts the configured PIN and issues a session cookie", () => {
+test("shadow portal auth accepts the configured PIN and issues a session cookie", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const auth = createAuth();
     const req = { ip: "127.0.0.1", headers: {} };
     const res = createResponse();
@@ -53,7 +53,36 @@ test("shadow portal auth accepts the configured PIN and issues a session cookie"
     }), true);
 });
 
-test("shadow portal auth accepts a valid cookie session without a PIN", () => {
+test("shadow portal auth never accepts an unset PIN", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const oldDashboardPin = process.env.DASHBOARD_PIN;
+    delete process.env.DASHBOARD_PIN;
+    try {
+        const auth = createShadowPortalAuth({ cookieName: "shadow_cookie", ttlMs: 60_000, getPin: () => undefined, getCookieSecret: () => "unit-secret" });
+        const res = createResponse();
+        assert.equal(auth.authorize({ ip: "127.0.0.2", headers: {} }, res, {}, undefined), false);
+        assert.equal(res.cookies.length, 0);
+        assert.match(res.sent, /SHADOW PORTAL/);
+    } finally {
+        if (oldDashboardPin === undefined) delete process.env.DASHBOARD_PIN;
+        else process.env.DASHBOARD_PIN = oldDashboardPin;
+    }
+});
+
+test("shadow portal auth accepts DASHBOARD_PIN as the owner recovery PIN", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const oldDashboardPin = process.env.DASHBOARD_PIN;
+    process.env.DASHBOARD_PIN = "owner recovery phrase";
+    try {
+        const auth = createShadowPortalAuth({ cookieName: "shadow_cookie", ttlMs: 60_000, getPin: () => "separate-shadow-pin", getCookieSecret: () => "unit-secret" });
+        const res = createResponse();
+        assert.equal(auth.authorize({ ip: "127.0.0.3", headers: {} }, res, { pin: "owner recovery phrase" }, "owner recovery phrase"), true);
+        assert.equal(res.cookies.length, 1);
+    } finally {
+        if (oldDashboardPin === undefined) delete process.env.DASHBOARD_PIN;
+        else process.env.DASHBOARD_PIN = oldDashboardPin;
+    }
+});
+
+test("shadow portal auth accepts a valid cookie session without a PIN", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const auth = createAuth();
     const token = createShadowSessionToken({ ttlMs: 60_000, getCookieSecret: () => "unit-secret" });
     const req = { ip: "127.0.0.1", headers: { cookie: `shadow_cookie=${encodeURIComponent(token)}` } };
@@ -63,7 +92,7 @@ test("shadow portal auth accepts a valid cookie session without a PIN", () => {
     assert.equal(res.sent, "");
 });
 
-test("shadow portal auth locks repeated invalid PIN attempts", () => {
+test("shadow portal auth locks repeated invalid PIN attempts", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const auth = createAuth();
     const req = { ip: "10.0.0.5", headers: {} };
 
@@ -78,7 +107,7 @@ test("shadow portal auth locks repeated invalid PIN attempts", () => {
     assert.match(blocked.sent, /Blocked|ล็อก/);
 });
 
-test("shadow portal renderers escape dynamic guild, metric, and dashboard values", () => {
+test("shadow portal renderers escape dynamic guild, metric, and dashboard values", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const context = {
         SECRET_PHRASE: "<secret>",
         systemToggles: { feature: true },
@@ -123,4 +152,10 @@ test("shadow portal renderers escape dynamic guild, metric, and dashboard values
     assert.doesNotMatch(html, /<guild>/);
     assert.doesNotMatch(html, /<metric>/);
     assert.doesNotMatch(html, /<default>/);
+    assert.match(html, /role="tablist"/);
+    assert.match(html, /role="tabpanel"/);
+    assert.match(html, /href="#shadow-main"/);
+    assert.match(html, /prefers-reduced-motion/);
+    assert.match(html, /aria-label="คัดลอกลิงก์ Portal"|title="คัดลอกลิงก์ Portal"/);
+    assert.doesNotMatch(html, /CSS\.escape/);
 });

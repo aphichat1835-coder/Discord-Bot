@@ -1,427 +1,366 @@
-# Security
+# Security and Privacy
 
-This file is the security and privacy reference for the Phomueangtai Personal Multi-Tool Discord Bot.
+Last implementation review: 2026-07-16 (`tt`).
 
-## Secret Policy
+## Scope
 
-Never commit, paste into docs, log, or expose real values for:
+The single runtime handles Discord credentials, OAuth grants, Owner controls,
+voice/session tokens, verification history, browser/device metadata, network
+metadata, moderation cases, and sensitive-access history. Treat the repository, host environment, MongoDB, and
+Owner session as security-sensitive.
 
-- Discord bot tokens.
-- OAuth client secrets.
-- OAuth access or refresh tokens.
-- Webhook URLs.
-- MongoDB URLs or passwords.
-- Dashboard PINs.
-- API/internal secrets.
-- Encryption keys.
-- Private keys.
-- Provider API keys.
-- Hidden owner/system operational details.
+Never commit or print real:
 
-Use `.env.example` only as a placeholder reference.
+- Discord bot/self-bot/OAuth tokens
+- OAuth client secrets
+- MongoDB URIs
+- encryption/signing/API secrets
+- Owner PINs
+- webhook URLs
+- raw IP addresses
+- decrypted OAuth metadata
+- hidden protected-system procedures
 
-## Environment Variables
+`.env.example` is placeholders only.
 
-Shared/core variables:
+## Trust boundaries
 
-```txt
-NODE_ENV
-NODE_VERSION
-MONGO_URI
-ENCRYPTION_KEY
-API_SECRET
-INTERNAL_API_SECRET
-VERIFY_STATE_SECRET
+```text
+Untrusted browser
+  → trusted reverse proxy
+  → one Express app
+      → Owner PIN/CSRF boundary
+      → public rate-limited callback boundary
+  → shared MongoDB
+  → Discord API
+  → configured IP lookup provider
 ```
 
-Service 1 variables:
+The managed production deployment sets `TRUST_PROXY=true`; the hop count
+defaults to one. Change the advanced hop override only when the real hosting
+chain differs.
+`ENABLE_CF_IP_HEADER` must be enabled only when direct origin access is blocked
+and Cloudflare headers are genuinely trusted. Otherwise a client can spoof
+forwarding headers.
 
-```txt
-TOKEN_MANAGER
-PORT
-DASHBOARD_PIN
-DASHBOARD_SESSION_MAX_AGE_MS
-DASHBOARD_SESSION_REFRESH_AFTER_MS
-DASHBOARD_URL
-PUBLIC_DASHBOARD_URL
-WEBHOOK_LOG_URL
-ALERT_WEBHOOK_URL
-JOIN_CAMPAIGN_ALLOWED_GUILDS
-JOIN_CAMPAIGN_DELAY_MS
-JOIN_CAMPAIGN_ENABLED
-JOIN_CAMPAIGN_MAX_USERS
-JOIN_CAMPAIGN_PROGRESS_EVERY
-JOIN_CAMPAIGN_REFRESH_MARGIN_MS
-SHADOW_MASTER_ID
-SHADOW_PROTECTED_CHANNEL_IDS
-RENDER_EXTERNAL_URL
-TRACE_ERASER_ALLOWED_GUILDS
-TRACE_ERASER_APPROVAL_GUILDS
-TRACE_ERASER_BLOCKED_GUILDS
-TRACE_ERASER_DEFAULT_POLICY
-TRACE_ERASER_DRY_RUN
-TRACE_ERASER_GUILD_POLICY
-TRACE_ERASER_KILL_SWITCH
-TRACE_ERASER_PROTECTED_CHANNEL_IDS
-TRACE_ERASER_RATE_LIMIT_MAX
-TRACE_ERASER_RATE_LIMIT_WINDOW_MS
-VOICE_DEBUG_MULTI_CLIENT
-SESSION_LOAD_MAX
-APPROVED_GUILDS_LOAD_MAX
-PENDING_GUILDS_LOAD_MAX
-WHITELIST_LOAD_MAX
-BOT_SETTINGS_LOAD_MAX
-PANEL_STATES_LOAD_MAX
-RATE_LIMIT_MAX_BUCKETS
-COMMAND_COOLDOWN_MAX_USERS
-TOGGLE_COOLDOWN_MAX_KEYS
-ANTI_RAID_DEBOUNCE_MAX_KEYS
-PIN_ATTEMPT_MAX_KEYS
-ROTATE_MESSAGES_MAX
-SAY_USAGE_MAX_USERS
-MEMORY_WARN_MB
-MEMORY_CRITICAL_MB
-MEMORY_CRITICAL_ROUNDS
-MEMORY_TREND_MAX
-MEMORY_CRITICAL_MODE
-VOICE_LOG_MAX
-VOICE_LEAN_MODE
-VOICE_LEAN_KEEP_TARGET_GUILD
-VOICE_LEAN_CLEANUP_INTERVAL_MS
-VOICE_LEAN_LOG
-VOICE_SELF_MESSAGE_CACHE_MAX
-VOICE_SELF_MEMBER_CACHE_MAX
-VOICE_SELF_USER_CACHE_MAX
-VOICE_SELF_CACHE_CLEANUP_TTL_MS
-DISCORD_MESSAGE_CACHE_MAX
-DISCORD_MESSAGE_SWEEP_INTERVAL_SEC
-DISCORD_MESSAGE_SWEEP_LIFETIME_SEC
-SPAM_TRACKING_CLEANUP_MS
-SPAM_TRACKING_ENTRY_TTL_MS
-AUDIT_RECONCILER_ENABLED
-AUDIT_RECONCILER_INTERVAL_MS
-AUDIT_RECONCILER_LIMIT
-AUDIT_RETENTION_DAYS
-AUDIT_DEDUP_MAX_KEYS
-AUDIT_DEDUP_TTL_MS
-AUDIT_HELPER_CACHE_MAX
-AUDIT_HELPER_MAX_AGE_MS
-AUDIT_HELPER_DELAY_MS
-MESSAGE_SNAPSHOT_CACHE_MAX
-MESSAGE_SNAPSHOT_CACHE_TTL_MS
-AUDIT_MAX_QUEUE_PER_GUILD
-LOG_CORE_MAX_QUEUE_PER_GUILD
-AUDIT_CIRCUIT_FAILURES
-AUDIT_CIRCUIT_OPEN_MS
-AUDIT_DUPLICATE_TTL_MS
-AUDIT_LOG_MESSAGE_CREATE
-AUDIT_LOG_DELETED_MESSAGE_CONTENT
-AUDIT_LOG_EDITED_MESSAGE_CONTENT
-AUDIT_REDACT_LINKS
-AUDIT_REDACT_MENTIONS
-AUDIT_MAX_CONTENT_LENGTH
-FEATURE_AUDIT
-FEATURE_BACKUP
-FEATURE_MEMORY_MONITOR
-FEATURE_PROTECTION
-FEATURE_ROLE_BUTTON
-FEATURE_SENSITIVE_ACCESS
-FEATURE_VERIFICATION
-FEATURE_VOICE
+The stored source IP is the public address visible to the trusted proxy. It is
+not proof of a residential/home IP and cannot reveal an address hidden behind
+VPN, proxy, or TOR.
+
+IP geolocation is evidence, not an identity proof. The runtime compares bounded
+responses from allowlisted HTTPS providers and stores provider agreement,
+confidence reasons, and any provider-supplied accuracy radius. MaxMind is
+disabled unless both optional credentials are configured. Credentials are sent
+only in the Authorization header to the fixed MaxMind hostname and are never
+placed in lookup URLs, persisted lookup evidence, or logs.
+
+## Owner authentication
+
+The main dashboard and all verification management pages use the signed Owner
+PIN cookie in `discord/index/auth.js`.
+
+- Production uses exactly 13 owner-maintained environment values:
+  `NODE_ENV`, `MONGO_URI`, `TOKEN_MANAGER`, `DISCORD_CLIENT_ID`,
+  `DISCORD_CLIENT_SECRET`, `ENCRYPTION_KEY`, `API_SECRET`,
+  `VERIFY_STATE_SECRET`, `DASHBOARD_PIN`, `PUBLIC_BASE_URL`,
+  `WEBHOOK_LOG_URL`, `ALERT_WEBHOOK_URL`, and `TRUST_PROXY`. Advanced controls
+  use code defaults, and `PUBLIC_BASE_URL` must be the canonical public HTTPS
+  base URL.
+- Session cookies are HTTP-only, SameSite Strict, and Secure in production.
+- `DASHBOARD_PIN` is required but intentionally has no application-enforced
+  length or composition rule. Use a private, non-reused value; PIN attempt
+  throttling remains active regardless of credential format.
+- Shadow Portal rejects missing/blank credentials and accepts either its
+  configured Shadow PIN or the Owner `DASHBOARD_PIN` as a recovery credential;
+  both comparisons are timing-safe and successful login clears failed attempts.
+- A separate readable SameSite CSRF cookie is HMAC-bound to the signed session.
+- Non-read management routes require the `X-CSRF-Token` header.
+- PIN and API rate-limit maps are bounded and cleaned.
+- Rejected API requests are logged locally; the webhook emits a deduplicated
+  `BLOCKED` notice only for rate-limit enforcement or a locked token-reveal PIN,
+  and strips query strings from the reported path.
+- Redirect targets are normalized to local paths.
+
+The former guild-admin OAuth/session boundary was removed. There is no public
+admin login, admin callback, or external sensitive-data approval request.
+
+## Public OAuth callback
+
+`GET /auth/callback` serves a page. `POST /auth/callback` is rate-limited and
+requires MongoDB readiness.
+
+Controls:
+
+- signed/expiring verification state
+- panel-revision validation
+- one-time Discord authorization code exchange
+- explicit handling of expired/replayed `invalid_grant`
+- response/request byte limits for Discord calls
+- safe error serialization
+- removal of OAuth code/state from browser history
+- no raw token logging
+- join failure stops role assignment
+- target role and panel configuration validation
+
+The OAuth scopes are:
+
+```text
+identify email connections guilds guilds.members.read guilds.join
 ```
 
-Webhook routing:
+Only request scopes that are actually used. Any scope change requires consent
+and regression tests.
 
-- `WEBHOOK_LOG_URL` is for routine operations, security, and audit-style notices.
-- `ALERT_WEBHOOK_URL` is for critical runtime alerts, crash shield messages, and severe voice/session failures.
-- Do not point both variables at the same Discord channel unless you intentionally want mixed traffic.
-- Service 1 warns at boot if both webhook variables point to the same target or if either target is missing.
-- Trace Eraser guard variables are non-secret controls for policy, dry-run, kill-switch, rate-limit, and protected channel IDs. Do not put webhook URLs, tokens, private keys, or other secrets in channel ID or guild policy variables.
+## Sensitive persistence
 
-Service 2 variables:
+### Direct-message outbox
 
-```txt
-PORT
-PORT_DASHBOARD
-DISCORD_CLIENT_ID
-DISCORD_CLIENT_SECRET
-TOKEN_MANAGER
-SESSION_SECRET
-ADMIN_SESSION_COOKIE_SECURE
-ADMIN_SESSION_MAX_AGE_MS
-ADMIN_SESSION_ROLLING
-ADMIN_SESSION_TOUCH_AFTER_SEC
-OAUTH_TOKEN_REFRESH_FAIL_MAX
-OAUTH_TOKEN_REFRESH_MARGIN_MS
-OAUTH_TOKEN_REFRESH_SCAN_LIMIT
-PUBLIC_BASE_URL
-DASHBOARD_PUBLIC_URL
-DASHBOARD_URL
-PUBLIC_DASHBOARD_URL
-STORE_OAUTH_TOKENS
-TRUST_PROXY
-TRUST_PROXY_HOPS
-ENABLE_CF_IP_HEADER
-IP_LOOKUP_ENABLED
-IP_LOOKUP_API_BASE_URL
-IP_LOOKUP_CACHE_MAX
-IP_LOOKUP_CACHE_TTL_MS
-IP_LOOKUP_CIRCUIT_FAIL_THRESHOLD
-IP_LOOKUP_CIRCUIT_OPEN_MS
-IP_LINK_USERS_MAX
-IP_LINK_DEVICE_FINGERPRINTS_MAX
-IP_LINK_ROLE_SNAPSHOTS_MAX
-OAUTH_CONNECTIONS_MAX
-OAUTH_GUILDS_MAX
-OAUTH_MEMBER_ROLES_MAX
-OAUTH_USER_SUMMARY_MAX
-ADMIN_GUILDS_SESSION_MAX
-DISCORD_API_RESPONSE_MAX_BYTES
-DISCORD_API_BODY_MAX_BYTES
-DISCORD_API_ROLE_MAX
-DISCORD_API_CHANNEL_MAX
-DISCORD_API_PERMISSION_OVERWRITE_MAX
-INTERNAL_OVERVIEW_GUILDS_MAX
-RETENTION_CONFIG_SCAN_MAX
-RETENTION_ERROR_MAX
-DEVICE_DUPLICATE_LOOKUP_MAX
-STATIC_CACHE_MAX_AGE
-```
+The shared `DmNotification` outbox stores only the final mention-disabled DM
+payload and delivery metadata for up to 30 days. Callers must construct payloads
+from the minimum information required for the recipient. OAuth access/refresh
+tokens, raw IP addresses, voice account tokens, credentials, and decrypted
+sensitive records must never enter the outbox. A unique server-derived event
+key prevents duplicate side effects; browser-provided recipient IDs are not an
+authority source. Restore results never fall back to a public channel when
+private delivery fails.
 
-Compatibility/fallback names may also appear in code, such as `TOKEN`, `BOT_TOKEN`, or `DISCORD_BOT_TOKEN`. Do not add new secret names without documenting them in `.env.example`, the active architecture reference, and this file.
+Discord error `50007` and unknown-user delivery failures become terminal after
+bounded handling. Transient failures use the persisted retry schedule. Every
+payload disables mentions and dynamic profile/server/role text is normalized
+before Discord rendering.
 
-## Service 1 Security Notes
+### OAuth tokens
 
-### Owner dashboard
+Access and refresh tokens are encrypted before MongoDB storage using the
+existing compatible format. Current and historical decrypt formats remain
+readable. Token metadata includes scope, type, expiry, refresh time/failures,
+safe last error, and revocation time.
 
-- Owner dashboard routes are PIN-protected.
-- Use a strong `DASHBOARD_PIN` in production.
-- Do not commit the PIN.
-- Do not weaken cookie, PIN, or auth behavior during dashboard changes.
-- Keep owner-only actions guarded and rate-limited.
-- Owner dashboard signed-cookie POST APIs use CSRF protection for browser cookie requests.
-- Server-side API-secret calls are still allowed for internal compatibility.
+Raw tokens must never appear in:
 
-### Owner Join Campaign
+- Owner list APIs or normal member-detail APIs
+- logs or webhooks
+- exports
+- tests/fixtures
+- migrations
+- docs or pull-request text
 
-- Join Campaign controls are owner-dashboard-only and use `WEBHOOK_LOG_URL` for Thai owner-visible summaries.
-- `JOIN_CAMPAIGN_ENABLED=false` disables all campaign execution and is the safe default.
-- `JOIN_CAMPAIGN_ALLOWED_GUILDS` must explicitly list target guild IDs before a campaign can run; an empty allowlist blocks target resolution even when the feature is enabled.
-- Campaigns use only stored OAuth token records whose scope includes `guilds.join`.
-- Campaign execution refreshes stored OAuth access tokens before use when they are near expiry.
-- Do not log raw OAuth access tokens, refresh tokens, client secrets, or webhook URLs in campaign summaries.
-- Rate and batch behavior is controlled by `JOIN_CAMPAIGN_DELAY_MS`, `JOIN_CAMPAIGN_MAX_USERS`, `JOIN_CAMPAIGN_PROGRESS_EVERY`, and `JOIN_CAMPAIGN_REFRESH_MARGIN_MS`.
+The Owner-only per-user OAuth token reveal action is the only exception. It
+requires a valid Owner session, CSRF token, non-empty reason, and
+rate-limit/cooldown checks. It attempts to write an audit event and returns an
+explicit audit status so a failed audit write is visible to the Owner. The
+response is for the immediate Owner view only and must not be stored in browser
+persistence or included in lists/exports/logs.
 
-### API secret
+Historical `adminOAuth` fields remain refresh-compatible. No route creates a new
+admin grant. Configure `LEGACY_ADMIN_OAUTH_REDIRECT_URI` when old tokens require
+the retired origin during refresh.
 
-- `API_SECRET` protects sensitive owner dashboard API actions.
-- Do not use default or weak values.
-- Unauthorized access is logged and may trigger alert webhooks.
+### Raw IP
 
-### Token reveal
+The current raw source IP is encrypted; an HMAC hash is used for correlation.
+Normal serializers always return `rawIp: null` and `ip: null`, even to the
+Owner. Location/network/risk fields remain available without decryption.
+Paginated IP-history APIs return canonical user/device/role metadata only and
+never return encrypted or decrypted raw IP or OAuth tokens.
 
-- Token reveal endpoints are sensitive.
-- Normal dashboard session serializers must not expose token, encrypted token, token tail, or token hash.
-- Reveal flows must remain owner-controlled and PIN-protected.
-- Do not log raw tokens.
-- Do not include tokens in docs, summaries, screenshots, or test fixtures.
+Raw-IP access requires:
 
-### Voice/session tokens
+1. valid Owner PIN session;
+2. CSRF token;
+3. guild and user identifiers;
+4. an audit reason (the rate-limited full Member Detail route supplies a fixed
+   internal reason; compatibility reveal routes require Owner input);
+5. an audit attempt with actor and timestamp, with failure surfaced in the
+   response if the audit write fails.
 
-- Voice/session token handling is sensitive.
-- Token encryption/decryption behavior in `discord/sessionManager.js` is high-risk.
-- Do not change token lifecycle, hashing, encryption compatibility, session identity, or cleanup behavior without a scoped security review.
+The response is intended for the immediate Owner Member Detail view only. Do
+not add raw IP to lists, exports, client storage, logs, query strings, or
+webhook messages.
 
-### Memory stability for long-running voice
+### Browser/device
 
-- Long-running voice sessions are a production requirement.
-- Do not remove memory diagnostics, bounded cache limits, queue limits, timer cleanup, or log-buffer limits while changing voice/session behavior.
-- Voice lean mode should stay enabled in production unless a scoped incident requires disabling it. It keeps only target-session metadata/cache needed for the current voice run and removes unrelated selfbot guild/channel/message/member/role/emoji cache pressure.
-- Do not "fix" RAM by exposing tokens, raw IP data, hidden owner/system details, or sensitive cache contents in logs.
-- Prefer safe counts and redacted diagnostics: session counts, client pool size, cache sizes, queue depths, timer counts, circuit states, and heap/RSS/external memory.
-- Treat unbounded Maps/Sets/arrays/timers in runtime code as production risks, especially in voice worker, audit logger, owner dashboard guards, PIN/rate-limit buckets, command cooldowns, rotate messages, and Dashboard Public OAuth/IP/session/retention paths.
+The callback stores browser/device values supplied by the browser. Fingerprint
+source values are combined in memory and HMAC-hashed; only the hash is
+persisted. A fingerprint is a correlation signal, not a guaranteed identity.
 
-## Service 2 Security Notes
+### Discord snapshots
 
-### OAuth
+Optional Discord fetch failure must not erase the last successful connections,
+guilds, or target-member snapshot. Data-quality metadata distinguishes success,
+failure, and not-attempted states and stores redacted failure codes.
 
-- OAuth callback state must remain signed and validated.
-- Panel revision freshness checks prevent old panel/state reuse.
-- Public callback responses must stay safe and avoid internal debug detail leaks.
-- Keep Discord role assignment behavior scoped to configured guild/role settings.
+Large guild and connection arrays are stored in versioned chunk collections.
+Target-member roles use a separate versioned role-chunk collection, and full
+provider snapshots redact token-shaped keys before persistence.
+Chunks remain unreadable as a complete snapshot until every write is finalized;
+`complete` requires `returnedCount === storedCount`. VerifyLog stores the core
+audit event and snapshot references rather than duplicating oversized arrays.
+Aggregate payload size is not a truncation boundary. An oversized individual
+object uses Base64 byte chunks whose order, count, byte length, and SHA-256
+checksums are verified before reconstruction. Object-chunk identity includes the
+guild, user, version, category, item, and chunk indexes.
+Referenced snapshot history is permanent. Maintenance fails closed if reference
+lookups fail and deletes only incomplete or unreferenced versions older than the
+configured grace period; it never prunes a version referenced by OAuthUser or
+VerifyLog, including soft-deleted logs. OAuth activation and cleanup share a
+per-user mutation lock in the single runtime; cleanup then repeats the age,
+completion, and reference predicates at deletion time so an in-flight writer
+cannot turn a valid snapshot into a stale deletion target.
 
-### Sessions and cookies
+### Automatic migration archive
 
-- Service 2 uses Express sessions backed by MongoDB.
-- `SESSION_SECRET` must be strong.
-- Production cookies should use HTTPS-compatible settings.
-- Admin session compatibility middleware exists for old/new dashboard route shapes; do not remove casually.
-- Current Dashboard Public session storage uses `connect-mongo` 6.x. Treat session document shape and expiry behavior as compatibility-sensitive.
+Before automatic legacy migration changes an OAuthUser, the runtime stores the
+complete encrypted source document in a same-database rollback archive. One
+archive exists per source and migration version, so restarts do not create
+duplicates. Archive failure aborts migration before the source write. Archive
+documents must never be exposed through normal APIs, logs, or exports. External
+provider backup is still required to survive loss of the entire database.
+Restore skips a live OAuthUser whose update timestamp is newer than its archive.
+Overwriting newer live state requires the explicit operator-only `--force` flag.
+Any restore using `--apply` also requires `--maintenance-confirmed`; all OAuth
+and verification writers must remain stopped for the entire restore window.
 
-### OAuth token storage
+Do not infer values that Discord did not return:
 
-- Discord OAuth token storage for verification and admin OAuth flows is enabled by default after owner approval so access can be refreshed before Discord's short-lived access token expires.
-- Admin OAuth now requests `guilds.join` so newly authorized admin OAuth tokens can also be eligible for owner Join Campaign use.
-- Set `STORE_OAUTH_TOKENS=false` to disable storage and refresh maintenance.
-- Stored OAuth access and refresh tokens are encrypted and remain sensitive.
-- Refresh maintenance is controlled by `OAUTH_TOKEN_REFRESH_MARGIN_MS`, `OAUTH_TOKEN_REFRESH_SCAN_LIMIT`, and `OAUTH_TOKEN_REFRESH_FAIL_MAX`.
+- unknown/unavailable remains null or unknown;
+- `premiumType` is not a reliable Nitro conclusion;
+- target member details are not claimed for every user guild;
+- false VPN/proxy flags with failed lookup are not treated as a confirmed
+  negative without checking lookup status.
 
-## IP, Device, And Risk Data
+## Data minimization and retention
 
-Verification logs can include:
+The owner explicitly requires verification and sensitive-access history, but retention remains
+configurable by guild. Verification logs and IP identity summaries use
+soft-delete retention behavior. Legacy pending reveal requests can expire
+automatically.
 
-- IP hash and encrypted raw IP.
-- Country, ISP, hosting/VPN/proxy/TOR/mobile signals.
-- Spoof/header metadata.
-- Device/browser/OS/fingerprint summary.
-- Risk score and risk flags.
-- Policy snapshots and role assignment results.
+Before reducing or extending retention:
 
-Treat all of this as sensitive. Normal guild admin views should prefer summaries, hashes, and redacted data. Raw IP access should go through owner approval.
+- check legal/privacy obligations for the deployment jurisdiction;
+- back up and test restore;
+- preserve audit requirements;
+- update user-facing policy/consent;
+- verify that the migration is additive and rollback-safe.
 
-Guild admin access to collected sensitive verification details is gated per guild:
+Do not introduce bulk raw-token or raw-IP exports.
 
-- Raw IP, email, connection lists, and mutual guild lists are hidden by default.
-- The bot owner can approve a guild's sensitive data access from the owner verification dashboard.
-- Approved sensitive access is time-bound with `expiresAt`.
-- Access views record `accessedAt`, `accessedBy`, route, and scope metadata.
-- The bot owner can revoke that access later.
-- This gate does not remove or redesign collection logic; it controls normal guild dashboard visibility.
-- Counts and risk summaries may remain visible so admins can operate moderation workflows without exposing raw sensitive values.
-- External IP lookup can be disabled with `IP_LOOKUP_ENABLED=false`.
-- `IP_LOOKUP_API_BASE_URL` controls the lookup provider URL and defaults to an HTTPS endpoint.
-- Keep `ENABLE_CF_IP_HEADER=false` unless the app is reachable only through trusted Cloudflare forwarding; direct public traffic can spoof `cf-connecting-ip`.
-- `cf-connecting-ip` is trusted only when both `ENABLE_CF_IP_HEADER=true` and `TRUST_PROXY=true` are configured.
-- IP lookup failures use a circuit breaker and cached lookups are periodically cleaned up.
-- IP risk records include both `riskFlags` and a source-oriented `riskBreakdown` so dashboard views can explain why a score increased.
+## Database and migration
 
-## Raw IP Reveal Workflow
+Normal runtime uses exactly one Mongoose connection from
+`discord/sessionManager.js`. Verification models attach to that connection.
 
-The project includes an owner-approved raw IP reveal concept:
+`scripts/migrateVerificationSnapshots.js`:
 
-```txt
-guild admin requests reveal with a reason
-request is stored as IPRevealRequest
-owner reviews request from owner surface
-owner approves or rejects
-approved data access should be minimal, audited, and time-bound
-```
+- defaults to dry-run;
+- requires explicit `--apply` to write;
+- selects profile/guild/connection/metadata fields only;
+- never selects, decrypts, or prints OAuth tokens or raw IP;
+- adds derived fields and metadata;
+- deletes no fields or collections.
 
-Do not bypass this flow. Do not expose raw IPs directly in normal public or guild admin responses.
-Approving a raw IP reveal must atomically claim a pending, unexpired request and log who approved and viewed the raw IP.
+Back up MongoDB before apply mode.
 
-## Dashboard Public Session Policy
+Privacy deletion uses one MongoDB transaction for the related verification and
+identity-history writes. Canonical IP-history backfill also commits each event's
+related writes transactionally and idempotently, preventing partial history
+when a process or database operation fails mid-event.
 
-Dashboard Public admin sessions use an explicit cookie policy:
+## Logging and error handling
 
-- Default policy is rolling extension so active guild admins are not logged out during normal use.
-- Default max age is 24 hours and can be changed with `ADMIN_SESSION_MAX_AGE_MS`.
-- Rolling extension can be disabled with `ADMIN_SESSION_ROLLING=false`.
-- MongoDB session touch frequency can be changed with `ADMIN_SESSION_TOUCH_AFTER_SEC`.
-- HTTPS cookie behavior can be changed with `ADMIN_SESSION_COOKIE_SECURE`, which defaults to `auto` in production.
-- Logout destroys the current admin session. A global revoke-all endpoint is intentionally not exposed.
+Use safe/redacted log helpers. Error output may include operation/status codes,
+not payload bodies or credentials. Discord API errors are length-limited and
+sanitized. Data-quality failure reasons should be stable redacted codes such as
+`discord_http_403`, not provider response bodies.
 
-Service 1 owner dashboard signed-cookie sessions default to 24 hours and refresh while active. Use `DASHBOARD_SESSION_MAX_AGE_MS` and `DASHBOARD_SESSION_REFRESH_AFTER_MS` to tune that behavior.
+Webhook targets are secrets. Operational and critical alert targets should be
+separate where possible. The shared outbound dispatcher accepts only HTTPS
+Discord webhook endpoints, disables mentions, bounds Discord payload sizes and
+queue depth, prioritizes critical alerts, retries transient failures, and
+exposes redacted delivery counters through Owner diagnostics. Shutdown performs
+a bounded queue drain; diagnostics never contain webhook URLs.
 
-## Retention Policy
+The Enterprise Audit server-activity subsystem is retired. Runtime no longer
+registers its Discord listeners, reads or writes its storage, sends log-channel
+embeds, or exposes its Dashboard/API routes. This does not remove the redacted
+operational/critical webhook dispatcher, ModCase persistence, or the internal
+audit attempt required by sensitive Verification reveal actions.
 
-Dashboard Public retention is guild-scoped:
+## Runtime and dependency controls
 
-- `VerifyLog` and `IpIdentityLink` records are soft-deleted according to the guild retention mode.
-- Expired raw-IP reveal requests are marked expired automatically.
-- `OAuthUser` is account-level and can reference multiple guilds, so retention does not delete the whole account record for one guild's rolling window.
-- Guild-admin deletion flows remove that guild's OAuth guild link and clear guild-scoped last member/verify snapshots.
-- Internal retention dry-run reports what would be expired or soft-deleted without changing records.
+- Node.js is pinned to 24.x.
+- `discord.js` stays on v13 until explicitly approved.
+- Production dependencies live only in the root package.
+- There is no `connect-mongo` or `express-session`.
+- Discord response/body caps and role/channel dashboard caps protect runtime
+  memory; persistence of OAuth guilds/connections/target roles has no arbitrary
+  item cap after payload acceptance.
+- Volatile voice, IP lookup, rate-limit, command, and session structures
+  remain bounded.
+- Persistent per-IP users, device aggregates, and role events use paginated
+  collections rather than truncating history arrays; request processing and UI
+  reads remain batch-limited without imposing a total-history ceiling.
 
-## Discord Role Assignment
-
-Role assignment is security-sensitive because it changes guild membership state.
-
-Before changing role logic:
-
-- Confirm bot token and permissions.
-- Confirm role hierarchy checks.
-- Confirm configured role and guild IDs.
-- Preserve safe failure messages.
-- Preserve logs and role assignment result persistence.
-
-## Logging Rules
-
-Safe to log:
-
-- Request IDs.
-- Route names.
-- Generic status codes.
-- Redacted errors.
-- Guild/user IDs when needed for audit.
-- Risk flags and summaries when not exposing raw sensitive fields.
-
-Do not log:
-
-- Raw tokens.
-- OAuth access/refresh tokens.
-- Client secrets.
-- Raw MongoDB URLs.
-- Dashboard PINs.
-- Raw IP values outside owner-approved reveal flow.
-- Hidden owner/system operational details.
-
-## Protected Owner/System Hooks
-
-`discord/systemProvider.js` and all files inside `discord/systemProvider/` are OWNER-LOCKED.
-
-The protected set currently includes:
-
-```txt
-discord/systemProvider.js
-discord/systemProvider/actions.js
-discord/systemProvider/auth.js
-discord/systemProvider/dashboardHtml.js
-discord/systemProvider/htmlUtils.js
-discord/systemProvider/renderers.js
-```
-
-Do not edit, move, delete, rename, reformat, lint-fix, split, comment-edit, refactor, or document hidden operational details from any file in this protected set unless the owner explicitly approves that exact action in the current task.
-
-Do not change imports or boot logic that initializes or references any file in this protected set.
-
-## Production Hardening Checklist
-
-- Set `NODE_ENV=production`.
-- Use strong random values for `API_SECRET`, `INTERNAL_API_SECRET`, `SESSION_SECRET`, `VERIFY_STATE_SECRET`, and `ENCRYPTION_KEY`.
-- Use HTTPS URLs for public dashboards and OAuth redirects.
-- Configure Discord Developer Portal redirect URIs exactly.
-- Set `STORE_OAUTH_TOKENS=false` only if persistent Discord OAuth authorization is not required.
-- Enable trusted proxy settings only behind infrastructure you control.
-- Keep Render secrets in Render Dashboard, not in `render.yaml`.
-- Rotate secrets after accidental exposure.
-- Review logs before sharing.
-- Monitor Service 1 `/api/diagnostics` and Dashboard Public `/health` or `/internal/diagnostics` during long-running voice/session deployments.
-- Run high-severity dependency audits before deploy:
-  - `npm audit --audit-level=high`
-  - `npm --prefix dashboard-public audit --audit-level=high`
-- For Dashboard Public production dependency audit, use `npm --prefix dashboard-public audit --omit=dev`. A plain dashboard audit may report moderate dev-only Jest-chain advisories.
-- Tune memory-related env vars before increasing architecture complexity: `MEMORY_WARN_MB`, `MEMORY_CRITICAL_MB`, `MEMORY_TREND_MAX`, `VOICE_LOG_MAX`, `DISCORD_MESSAGE_CACHE_MAX`, `VOICE_SELF_MESSAGE_CACHE_MAX`, `VOICE_SELF_MEMBER_CACHE_MAX`, `VOICE_SELF_USER_CACHE_MAX`, `RATE_LIMIT_MAX_BUCKETS`, `COMMAND_COOLDOWN_MAX_USERS`, `PIN_ATTEMPT_MAX_KEYS`, `ROTATE_MESSAGES_MAX`, `SESSION_LOAD_MAX`, `APPROVED_GUILDS_LOAD_MAX`, `PENDING_GUILDS_LOAD_MAX`, `WHITELIST_LOAD_MAX`, `BOT_SETTINGS_LOAD_MAX`, `PANEL_STATES_LOAD_MAX`, `OAUTH_CONNECTIONS_MAX`, `OAUTH_GUILDS_MAX`, `OAUTH_MEMBER_ROLES_MAX`, `OAUTH_USER_SUMMARY_MAX`, `ADMIN_GUILDS_SESSION_MAX`, `DISCORD_API_RESPONSE_MAX_BYTES`, `DISCORD_API_BODY_MAX_BYTES`, `DISCORD_API_ROLE_MAX`, `DISCORD_API_CHANNEL_MAX`, `DISCORD_API_PERMISSION_OVERWRITE_MAX`, `INTERNAL_OVERVIEW_GUILDS_MAX`, `RETENTION_CONFIG_SCAN_MAX`, `DEVICE_DUPLICATE_LOOKUP_MAX`, and Dashboard Public IP lookup cache limits.
-- Keep protected owner/system hooks minimally documented.
-
-## Validation Commands
-
-Protected file validation:
+Validation:
 
 ```bash
-(git diff --name-only && git status --short -- discord/systemProvider.js discord/systemProvider/) | grep -E '^discord/systemProvider(\.js|/.+)$' && exit 1 || true
+npm run check:protected
+npm run check:all
+npm run check:scripts
+npm run check:memory-guards
+npm run check:memory-trend < diagnostics.json
+npm run test:discord
+npm run test:voice
+npm run test:verification
+npm audit --audit-level=high
 ```
 
-Concrete secret scan:
+Use a repository secret scanner before release/deployment. Inspect findings;
+never paste discovered values into issues or chat.
 
-```bash
-git diff | grep -Ei "discord\\.com/api/webhooks/[A-Za-z0-9_/-]+|mongodb\\+srv://[^[:space:]<>'\\\"]+:[^[:space:]<>'\\\"]+@|mfa\\.[A-Za-z0-9_-]{20,}|(client_secret|password|private key|api key)[[:space:]]*[:=][[:space:]]*['\\\"][^'\\\"]{8,}" || true
-```
+## Protected code
 
-Keyword review helper:
+`discord/systemProvider.js` and all files recursively under
+`discord/systemProvider/` are owner-locked. Do not edit, move, reformat, change
+imports/boot references, or document hidden behavior without the exact current
+task approval required by `AGENTS.md`.
 
-```bash
-grep -RInE "(TOKEN_MANAGER|DISCORD_CLIENT_SECRET|MONGO_URI|WEBHOOK_LOG_URL|ALERT_WEBHOOK_URL|DASHBOARD_PIN)" --include="*.md" --include=".env.example" .
-```
+`.github/CODEOWNERS`, `npm run check:protected`, and CI provide defense in depth.
 
-Keyword matches may be safe placeholder or env-var mentions. Review concrete values manually.
+## Deployment checklist
+
+1. Back up MongoDB.
+2. Rotate any credential suspected of exposure.
+3. Register `https://DOMAIN/auth/callback` in Discord Developer Portal.
+4. Set `PUBLIC_BASE_URL` to the one canonical HTTPS origin.
+5. Set `TRUST_PROXY=true` only on the approved managed reverse-proxy host; the
+   hop count defaults to one.
+6. Deploy one artifact and one command (`npm start`).
+7. Set `SMOKE_ALLOWED_HOSTS` to the exact deployed hostname before running the
+   unified smoke helper; do not use wildcards.
+8. Verify `/ping`, degraded/ready `/health`, Owner PIN, CSRF, and callback rate
+   limiting.
+9. Verify normal APIs contain no raw token/IP.
+10. Run one audited IP reveal and confirm an audit record without server logging.
+11. If a legacy standalone service still exists, stop it only after smoke tests
+    pass. Current deployments otherwise use only the root service.
+
+The administrator-only smoke CLI is excluded from Codacy static analysis in
+`.codacy.yml` because its validated, exact-allowlist URL remains a deliberate
+network sink that Codacy reports as tainted. Runtime HTTP and OAuth files remain
+included in analysis, and smoke URL validation is covered by repository tests.
+
+## Incident response
+
+If a token, raw IP, PIN, database URI, or signing secret may have leaked:
+
+1. Stop affected access without deleting evidence.
+2. Rotate/revoke the credential at its provider.
+3. Invalidate Owner sessions by rotating `API_SECRET` and, when needed,
+   `DASHBOARD_PIN`.
+4. Restrict MongoDB/network access.
+5. Preserve sanitized timestamps, request IDs, and audit records.
+6. Search logs/exports/history for exposure without redisplaying the value.
+7. Patch and validate the leak path.
+8. Redeploy and document impact/remediation without including the secret.

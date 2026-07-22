@@ -154,7 +154,6 @@ function compactTrendSample(snapshot) {
         activeHandles: toSafeNumber(snapshot.activeHandles?.total),
         naturalTimers: snapshot.natural?.activeTimers ?? 0,
         autoDeafTimers: snapshot.autoDeaf?.activeTimers ?? 0,
-        auditQueues: toSafeNumber(snapshot.auditStats?.sendQueues),
         v8Available: toSafeNumber(snapshot.v8?.totalAvailableSize),
         v8Malloced: toSafeNumber(snapshot.v8?.mallocedMemory)
     };
@@ -168,7 +167,7 @@ function recordMemoryTrend(snapshot) {
     }
 }
 
-function buildMemorySnapshot({ voiceWorker, sessionManager, auditLogger, client }) {
+function buildMemorySnapshot({ voiceWorker, sessionManager, client }) {
     const mem = process.memoryUsage();
     const heapUsed = mb(mem.heapUsed);
     const heapTotal = mb(mem.heapTotal);
@@ -178,7 +177,6 @@ function buildMemorySnapshot({ voiceWorker, sessionManager, auditLogger, client 
     const natural = voiceWorker?.getNaturalSettings?.();
     const autoDeaf = voiceWorker?.getAutoDeafSettings?.();
     const workerDiagnostics = voiceWorker?.getWorkerDiagnostics?.();
-    const auditStats = auditLogger?.getAuditStats?.();
     const sessionDiagnostics = sessionManager?.getSessionDiagnostics?.();
 
     lastHeapUsed = heapUsed;
@@ -194,7 +192,6 @@ function buildMemorySnapshot({ voiceWorker, sessionManager, auditLogger, client 
         natural,
         autoDeaf,
         workerDiagnostics,
-        auditStats,
         sessionDiagnostics,
         discordCaches: getDiscordCacheStats(client),
         discordListeners: getEmitterListenerStats(client, [
@@ -223,7 +220,6 @@ function logMemorySnapshot(snapshot) {
         `naturalTimers=${snapshot.natural?.activeTimers ?? "-"} ` +
         `autoDeafTimers=${snapshot.autoDeaf?.activeTimers ?? "-"} ` +
         `worker=${snapshot.workerDiagnostics ? JSON.stringify(snapshot.workerDiagnostics) : "-"} ` +
-        `audit=${snapshot.auditStats ? JSON.stringify(snapshot.auditStats) : "-"} ` +
         `discord=${JSON.stringify(snapshot.discordCaches)} ` +
         `session=${snapshot.sessionDiagnostics ? JSON.stringify(snapshot.sessionDiagnostics) : "-"} ` +
         `listeners=${JSON.stringify(snapshot.discordListeners)} ` +
@@ -283,7 +279,6 @@ function startMemoryMonitor({
     intervalMs = 60000,
     voiceWorker,
     sessionManager,
-    auditLogger,
     client,
     system
 } = {}) {
@@ -296,7 +291,7 @@ function startMemoryMonitor({
     memoryTimer = setInterval(async () => {
         try {
             if (system?.isShuttingDown?.()) return;
-            lastSnapshot = buildMemorySnapshot({ voiceWorker, sessionManager, auditLogger, client });
+            lastSnapshot = buildMemorySnapshot({ voiceWorker, sessionManager, client });
             recordMemoryTrend(lastSnapshot);
             logMemorySnapshot(lastSnapshot);
 
@@ -323,8 +318,8 @@ function startMemoryMonitor({
     memoryTimer.unref?.();
 }
 
-function captureMemorySnapshot(label, { voiceWorker, sessionManager, auditLogger, client } = {}) {
-    lastSnapshot = buildMemorySnapshot({ voiceWorker, sessionManager, auditLogger, client });
+function captureMemorySnapshot(label, { voiceWorker, sessionManager, client } = {}) {
+    lastSnapshot = buildMemorySnapshot({ voiceWorker, sessionManager, client });
     recordMemoryTrend(lastSnapshot);
     const labelText = label ? ` ${label}` : "";
     console.log(`[MEMORY] Snapshot${labelText}`);

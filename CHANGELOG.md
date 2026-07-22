@@ -1,5 +1,356 @@
 # Changelog
 
+## [Unreleased] - Unified Bot And Verification Runtime 2026-07-16
+
+- Closed the remaining confirmed PR review defects in Owner member access and snapshot
+  maintenance. OAuth profile/token reads now require a verification association
+  with the selected guild, and cleanup shares the per-user snapshot mutation
+  lock with OAuth writers while rechecking age, completion, and references at
+  deletion time.
+
+- Rebuilt `/userinfo`, `/serverinfo`, and `/ping` as Thai, mobile-readable
+  information panels. User lookup now preserves the selected target when the
+  guild member is not cached, account age is presented as context instead of a
+  risk verdict, Server Info labels cache/fetch limitations, and Ping reports
+  process RSS, V8 heap, sampled CPU, database metrics, shard state, and Voice
+  session states without mixing their meanings. Each command now opens with a
+  distinct animated, truthful loading panel that is replaced in place when the
+  final result is ready.
+
+- Retired the `/help` slash command from registration and runtime routing; the
+  Owner Dashboard documentation page remains available separately.
+
+- Unified Voice, moderation, verification, and restore-result DMs behind a
+  profile-first Thai Embed system with mention suppression, Markdown-safe
+  dynamic text, server-derived recipients, priority, event deduplication, and a
+  30-day MongoDB outbox with bounded restart-safe retry. Critical Voice failures
+  bypass routine digests, digest failures retain their items, inferred versus
+  observed voice channels are labelled honestly, and error codes no longer
+  replace the user-facing diagnosis.
+- Made moderation DMs truthful across partial failure: ban/kick notifications
+  start as unconfirmed and are edited after Discord succeeds or fails; timeout
+  includes its end time and every result carries the member profile and Case
+  reference. Verification now distinguishes a newly granted role, an existing
+  role, a policy block, and an operational failure. Restore results no longer
+  expose structural details in a public channel when private delivery fails.
+
+- Replaced first-success IP geolocation with bounded multi-provider consensus.
+  The verification record now preserves provider agreement, an explainable
+  confidence level, provider-supplied accuracy radius, VPN/proxy/TOR/hosting/
+  mobile/anycast context, browser-timezone corroboration, and comparison with
+  the latest stored network. Optional MaxMind GeoIP support activates only when
+  credentials are configured; OAuth continues safely when any provider fails.
+
+- Resolved the SonarCloud follow-up set without changing public contracts:
+  simplified Voice start/stop and Settings-page control flow, replaced nested
+  conditionals and avoidable regular expressions, improved callback semantics
+  and danger-button contrast, and documented the analyzer's known `node:test`
+  assertion false positives at the affected declarations.
+- Replaced the separate green Owner Verification pages with a newly rendered
+  five-section module inside the purple Owner Dashboard. Server selection,
+  configuration, panel editing, policy/role conditions, members, history, risk,
+  and full member detail now share the Owner shell; the public OAuth callback
+  remains unchanged.
+- Fixed Dashboard scanner alerts to report blocked requests with the complete
+  `/api/...` path and bounded deduplication instead of labelling every rejected
+  request an intrusion. The advanced-tools entry now opens Shadow Portal
+  directly, and Shadow authentication rejects unset PINs while accepting the
+  Owner `DASHBOARD_PIN` as a timing-safe recovery credential.
+
+- Synchronized all repository documentation with the current `tt` runtime:
+  exact boot/maintenance lifecycle, 15-command and 13-variable contracts,
+  redacted versus audited Member Detail access, complete snapshot storage,
+  backup/restore validation, and one-service deployment guidance.
+- Rebuilt the Verification web experience as one responsive operations
+  workspace with an in-page guild switcher, consistent callback/campaign
+  surfaces, accessible state cues, restrained motion, and an isolated theme
+  stylesheet layered over the shared component foundation.
+- Classified Discord's `An invalid token was provided` login response as a
+  terminal Voice token failure so stale sessions no longer remain active in the
+  Owner Dashboard; fixed Session Detail response handling and idempotent stop.
+- Changed disabled Natural/AutoDeaf logging from failure-red to informational
+  pause state, and corrected Dashboard RAM to report process RSS with explicit
+  V8 heap details. Replaced the misleading mixed-counter Success Rate card with
+  the real process Error Events count.
+- Made production `DASHBOARD_PIN` accept any non-empty Owner-chosen value while
+  preserving PIN throttling and all session/CSRF protections.
+
+### Changed
+
+- Removed dynamic HTML injection sinks from the Verification dashboard, limited
+  its HTTP helper to same-origin guild APIs, hardened Voice notification event
+  records against computed-key injection while preserving restart deduplication,
+  and made protected-file validation read only literal allowlisted paths.
+
+- Reorganized every Owner, Verification, callback, campaign, and approved
+  Shadow web surface around clearer Thai labels, grouped navigation, searchable
+  guild selection, responsive touch targets, visible keyboard focus, semantic
+  tabs/dialogs/live status, reduced-motion support, safer loading states, and
+  background-aware refresh timers. OAuth callback feedback now starts promptly
+  and tolerates malformed public error/hash input without stranding the page.
+
+- Corrected verification preflight permission calculations to include the
+  `@everyone` role, combine channel role overwrites using Discord's documented
+  order, honor implicit View/Send/Embed denials, and exclude Forum containers
+  that cannot receive a panel message directly. Verification maintenance now
+  creates its recovery interval only after the initial startup run succeeds, so
+  failed startup leaves no leaked timer and a later start can retry immediately.
+
+- Closed the latest reliability, privacy, persistence, and review findings:
+  Voice reconnect guards always release, panel rollback remains trackable on
+  Discord cleanup failure, moderation DM evidence reconciles correctly,
+  redacted member search/detail cannot infer OAuth email or token state,
+  webhook deduplication remains destination-bound, restore payloads are bound
+  to their guild metadata, IP history migration is transactionally idempotent,
+  privacy deletion is atomic, snapshot chunk/index integrity is validated, and
+  restore apply now requires an explicitly confirmed maintenance window.
+
+- Hardened persistence consistency before merge: bounded internal-event storage,
+  BSON-sized Snapshot documents, acknowledged rollback/recovery writes, panel
+  rollback on database failure, durable recovery reporting, timeout-safe
+  webhooks, Protection-case reconciliation, strict restore permissions,
+  per-user OAuth activation ordering, bounded `/serverinfo` member loading, and
+  Snapshot recovery backoff.
+
+- Restored the original runtime probe contract: `/ping` remains the lightweight
+  listener liveness endpoint, while `/health` again reports combined MongoDB,
+  Discord, slash-command, Voice, and Verification readiness with 503 on
+  important dependency degradation. `/ready` remains an alias of that combined
+  readiness response.
+
+- Restored the owner-approved protected compatibility import as a thin adapter
+  over `internalEventStorage`; Enterprise Audit models, routes, channel logging,
+  and `audit_event_*` storage remain retired.
+
+- Hardened complete Snapshot persistence without adding an aggregate data cap:
+  normal writes are measured using their full MongoDB `$set` envelope, oversized
+  items/profile/member values fall back to checksum-protected Base64 chunks,
+  Object chunks participate in permanent-history cleanup, rollback reports and
+  persists sanitized recovery metadata, and Snapshot loading is split into pure
+  compatibility helpers to reduce static-analysis complexity.
+
+- Removed the complete Enterprise Audit / Advanced Audit Logger server-activity
+  subsystem without replacing it: `/setup-log`, `/audit-logs`, `/api/audit/*`,
+  Discord event listeners/intents/partials used only by Audit, channel delivery,
+  queues, caches, retention/reconciliation, storage models/helpers, diagnostics,
+  UI assets, focused docs and tests are gone. Existing MongoDB Audit collections
+  and Discord channels are deliberately not deleted. Operational/Critical
+  webhooks, Verification sensitive-access audit, ModCase persistence,
+  Protection enforcement, Voice, and the remaining Owner Dashboard stay active.
+  The immutable import path required by owner-locked code remains as a thin
+  adapter to a separate internal namespace and cannot access the retired Audit
+  model or key namespace.
+
+- Completed the slash-command reliability pass: all registered commands are
+  guild-only; Voice Panel sessions are isolated by the creating Discord user
+  except for Bot Owner/Shadow Master global control; verification panels now
+  enforce Discord limits, HTTPS resources, assignable roles, durable dual-store
+  persistence and latest-panel Direct Role checks; moderation creates durable
+  pending cases before Discord actions; backup snapshots use bounded chunks,
+  retain every complete historical version, and select one reconciled active
+  version with legacy restore compatibility and reauthorization; and command guidance,
+  permissions, mention handling, result counts, cooldowns, locks and payload
+  limits now match the registered command surface.
+
+- Decoupled bounded slash-command registration retries from panel restore,
+  protected initialization, and Voice auto-resume. Combined readiness now
+  reports command-registration readiness, while approval database failures
+  fail closed without escaping the interaction handler.
+
+- Removed the redundant Discord `/stats` slash command, handler, router entry,
+  and help text. Runtime status remains available through `/ping` and the Owner
+  Dashboard `/status` page; verification statistics APIs remain unchanged.
+
+- Upgraded `/clear` to fetch up to 100 messages, bulk-delete recent messages,
+  and delete messages older than 14 days sequentially through Discord's
+  single-message endpoint, with per-channel locking and accurate result counts.
+
+- Reduced the supported production deployment contract to exactly 13
+  owner-maintained environment values. Render and `.env.example` now expose
+  only that canonical set, while advanced voice, verification, migration,
+  cache, timeout, retention, and memory controls use code defaults.
+
+- Removed the retired `/say` whitelist subsystem from slash commands, the
+  Owner Dashboard, APIs, runtime state, diagnostics, and Mongoose registration.
+  `/say` is now Administrator-only; the legacy MongoDB collection is left
+  untouched for rollback and is no longer read or written by the runtime.
+
+- Retired the obsolete Owner-only `/setup` Dashboard-link shortcut now
+  that the unified Owner Dashboard link is delivered through the operations
+  webhook; `/setup-verify` remains unchanged.
+
+- Made legacy IP identity history migration isolate per-item failures, preserve
+  retryable source data, continue later links, rotate failed attempts behind
+  untouched links, and expose bounded redacted failure summaries instead of
+  aborting an entire startup batch. Migration summary counters now use fixed
+  category properties rather than dynamic object-key access.
+
+- Fixed startup webhook links to use the canonical unified public origin instead
+  of a stale retired-service URL, point Owner access at `/shadow` instead of a
+  raw telemetry endpoint, and omit fake placeholder links when no valid public
+  URL exists. The Shadow link is emitted only after its router mounts
+  successfully. Repeated token-owner mismatch warnings now use the bounded
+  shared webhook dedupe path. Webhook diagnostics use the native structured
+  clone operation, and known Sonar `node:test` assertion false positives are
+  documented at their test declarations without disabling other analysis
+  rules.
+
+- Hardened webhook reliability across the unified runtime with validated
+  Discord-only HTTPS targets, mention-safe and size-bounded payloads, a shared
+  priority queue, transient retry, bounded routine-event aggregation, Owner
+  delivery diagnostics, and graceful shutdown draining.
+
+- Corrected Owner environment diagnostics to report the actual
+  `TOKEN_MANAGER` runtime variable and aligned the Render runbook with the
+  combined `/health` readiness probe while retaining `/ping` for HTTP liveness.
+
+- Fixed the protected runtime master-check binding and isolated its message
+  processing stages so subsystem failures no longer escape as unhandled
+  rejections. Routine startup diagnostics now use the normal operations log.
+- Added bounded duplicate aggregation for global critical alerts and labelled,
+  sanitized gateway lifecycle diagnostics for the main Discord client and
+  voice session clients, making future WebSocket handshake failures traceable
+  without logging tokens or connection URLs.
+
+- Closed the follow-up review findings: snapshot garbage deletion is scoped to
+  the originating collection and document ID, restore skips newer live data
+  unless explicitly forced, migration batch failures are isolated and counted,
+  Join Campaign confirmation/deduplication stay bound across cursor batches,
+  and Owner audit/status/redaction paths now report consistent results.
+
+- Hardened the unified runtime review surface: public readiness now returns
+  booleans instead of internal diagnostics; sensitive Owner routes use safe
+  errors, audit/rate controls, and IP-history auditing; OAuth integration and
+  migration snapshots remove token-shaped fields; failed device/member fetches
+  remain failed in data-quality metadata; history replay counters, role-event
+  idempotency, snapshot finalization, cleanup races, and shutdown persistence
+  now have explicit safeguards and regression coverage.
+
+- Replaced the final total-count ceilings with cursor/pagination storage:
+  Join Campaign now scans every eligible OAuthUser in stable bounded batches,
+  and per-IP users, devices, and role events use canonical unbounded history
+  collections with additive legacy-array migration and Owner UI pagination.
+- Added automatic bounded backfill from historical `VerifyLog` records into
+  canonical IP identity collections. Deterministic event IDs and per-log
+  migration markers recover available pre-migration history without duplicates.
+
+- Closed the latest unified-runtime review findings: unconfigured-guild
+  overview no longer fails on a missing audit target, oversized verification
+  attempts retain an absolute-minimum audit record, voice/readiness reports
+  real initialization and shutdown state, cleanup options use safe explicit
+  floors, legacy badge fallback remains intact, provider messages share one
+  bounded redactor, and redundant per-field IP correlation indexes were removed
+  from the schema definition.
+
+- Removed the verified-member 5,000-record visibility ceiling with database-side
+  union/deduplicated pagination, bounded incomplete-snapshot deletion batches,
+  persisted automatic-migration cursor progress, centralized public URL alias
+  resolution with production mismatch rejection, and full-dataset risk/stats
+  aggregation.
+
+- Made the Render service probe combined readiness through `/health` and
+  replaced retired sensitive-approval wording in the Owner verification UI
+  with the actual one-click, audited Member Detail behavior.
+
+- Hardened the unified verification runtime after full review: migration writes
+  now use optimistic concurrency, sensitive reads fail closed when audit writes
+  fail, reveal responses are non-cacheable, OAuth raw snapshots redact
+  token-shaped fields, private IPs are not persisted, IP lookup bodies are
+  streamed within a byte limit, lifecycle startup is concurrency-safe, and
+  preflight/member pagination metadata remains accurate at edge cases.
+
+- Added automatic bounded legacy verification migration on the shared MongoDB
+  connection. Each eligible OAuthUser is archived once per migration version
+  before modification, duplicate archives are skipped, failures leave the
+  source untouched, hourly maintenance resumes remaining records, diagnostics
+  report progress, and a dry-run-first restore CLI supports rollback.
+
+- Aligned the integrated verification management pages with the established
+  purple Owner Dashboard theme. Owner Member Detail now loads encrypted raw IP
+  and OAuth token values as one CSRF-protected, internally audited action, and
+  Join Campaign previews eligible users before a simple final confirmation.
+- Added readable Owner Member Detail sections for snapshot data-quality metadata
+  and the complete stored per-IP identity history, including linked users,
+  device hashes, role snapshots, location, and risk signals.
+- Added an inline OAuth readiness note to each Owner Member Detail card so the
+  Owner can immediately see missing scopes, absent or undecryptable tokens,
+  expiry, refresh failures, and revocation without adding another dashboard tab;
+  complete users remain unlabelled so only actionable gaps draw attention.
+
+- Moved the active OAuth verification models, routes, utilities, views, and
+  assets into `discord/verification/` and mounted them in the main Express app.
+- Changed deployment to one Node process, one `npm start`, one Mongoose runtime
+  connection, and one public port for bot, voice/session, Owner Dashboard, and
+  verification.
+- Made `/verification` and `/verification/:guildId` Owner-PIN-only management
+  pages for every guild in the bot cache; kept `/auth/callback` public and
+  rate-limited.
+- Replaced Owner cross-service HTTP calls with in-process model/service calls.
+- Removed the standalone Dashboard Public server/package, admin OAuth
+  login/session routes, guild-admin permission/session middleware,
+  `connect-mongo`, and the second Render service.
+- Preserved the existing verification collections, encryption compatibility,
+  signed state, panel revisions, `guilds.join`, Join Campaign, retention, join,
+  and role-assignment behavior.
+- Historical encrypted `adminOAuth` fields remain refreshable, including an
+  optional legacy redirect override; no route creates new admin grants.
+- Removed arbitrary persistence caps for Discord-returned connections, guilds,
+  connection integrations, and target-member roles after payload byte limits
+  pass; bounded browser-controlled strings and language lists before storage.
+- Added additive category-level data-quality metadata and failure-preserving
+  writes so optional fetch failures do not clear successful snapshots.
+- Restricted raw IP to a PIN + CSRF + reason + audit Owner action; normal
+  list/detail APIs never decrypt or expose it.
+- Added a dry-run/apply additive snapshot migration that never selects,
+  decrypts, prints, or deletes token/raw-IP data.
+- Consolidated root verification tests, CI, Render configuration, environment
+  documentation, and operational documentation around the unified runtime.
+- Added `.github/CODEOWNERS` and `scripts/checkProtectedPaths.js` coverage for both `discord/systemProvider.js` and the full `discord/systemProvider/` directory.
+- Added the protected-path guard to local validation and CI, and excluded the protected directory from broad syntax scanning.
+- Documented the five memory-trend diagnostic threshold variables already consumed by `scripts/checkMemoryTrend.js`.
+- Added Owner-only per-user member detail and audited OAuth2 token reveal, plus read-only legacy verified-member listing from `OAuthUser.lastVerify`.
+- Updated Join Campaign defaults so Owner can target any guild currently cached by the bot unless `JOIN_CAMPAIGN_ALLOWED_GUILDS` restricts it; this joins authorized users only and does not sync roles.
+- Switched Render liveness to `/ping`, added `/ready`, `/guilds`, and `/guild/:guildId` compatibility aliases, and added production secret strength checks.
+- Hardened verification review findings: degraded verification startup, dry-run
+  diagnostics isolation, graceful verification shutdown drain, redacted member
+  list fallbacks, per-request member fetch metadata, VerifyLog snapshot budget
+  guard, explicit reveal audit status, and legacy verify-owner API redirects.
+- Removed API/user-controlled `innerHTML` sinks from verification log rows and
+  Owner detail/reveal modals by rendering DOM nodes with `textContent`, and
+  simplified verification config merging to avoid nested conditional expressions.
+- Replaced tainted compatibility redirects with direct Owner service responses,
+  made the legacy guild alias redirect fixed, clarified Mongo equality lookup,
+  removed dynamic test/tool paths, and restricted the deploy smoke CLI to exact
+  hostnames in `SMOKE_ALLOWED_HOSTS`.
+- Split Owner member/log DOM builders into focused card, row, header, notice,
+  and metadata helpers, and documented a scoped Codacy exclusion for the
+  administrator-only smoke CLI whose validated URL sink is a false positive.
+- Replaced the remaining tainted embed-preview and risk-error HTML assignments
+  with DOM construction, text-only rendering, and HTTP(S)-only preview URLs.
+- Made raw-IP and OAuth-token reveal fail closed unless at least one bounded
+  audit record is actually persisted; bounded reveal limiter state and
+  per-log sensitive-access history.
+- Added cursor-based retention scans, bounded verified-member scans with
+  truncation metadata, minimal VerifyLog fallbacks for oversized snapshots,
+  reduced-update budget rechecks, bounded device/IP-provider payloads, and
+  startup/shutdown lifecycle guards.
+- Restored the Shadow web hook mount on the shared Express application using
+  its established external registration contract, without modifying the
+  owner-locked provider implementation.
+- Clamped verification snapshot budgets at both safe bounds and restored the
+  20-entry cap for attacker-controlled `x-forwarded-for` chains.
+- Replaced oversized OAuth array fallbacks with additive versioned chunk
+  collections for guilds and connections plus a target-member snapshot. Member
+  Detail now hydrates every finalized chunk, while VerifyLog stores core audit
+  fields and snapshot references without discarding returned Discord data.
+- Raised the bounded Discord response ingestion ceiling to 12 MB, added
+  sanitized forward-compatible profile/provider snapshots, split target-member
+  roles into ordered chunks, and extended the additive migration to backfill
+  legacy embedded snapshots without deleting their source fields.
+- Added bounded permanent-history snapshot garbage maintenance: referenced
+  versions are kept forever, while stale incomplete and fully unreferenced
+  versions are removed only after a grace period and fail-closed reference scan.
+
 ## [Unreleased] - Dashboard Public OAuth Runtime Fixes 2026-07-03
 
 ### Fixed
@@ -89,7 +440,7 @@
 - Added owner-only `/api/diagnostics` with safe readiness, session state, voice worker, audit, and memory-monitor diagnostics.
 - Added configurable memory monitor thresholds/mode, audit queue/circuit/content controls, IP lookup circuit breaker settings, and feature flag placeholders.
 - Added Dashboard Public shared verification snapshot serializers to remove duplicate guild log serialization while preserving sensitive-data redaction and existing response shapes.
-- Added protected owner/system hook safeguards for Trace Eraser policy modes, protected channel IDs, dry-run, kill-switch, rate limiting, metrics, startup diagnostics, auditStorage records, and focused guard tests.
+- Added protected owner/system hook safeguards for Trace Eraser policy modes, protected channel IDs, dry-run, kill-switch, rate limiting, metrics, startup diagnostics, internal event records, and focused guard tests.
 - Added owner-dashboard rolling cookie refresh controls and Dashboard Public session-store touch controls to reduce unexpected login expiry during active use.
 - Added persistent Discord OAuth token refresh lifecycle for verification and admin OAuth flows so encrypted refresh tokens can keep authorization usable beyond Discord's short-lived access token lifetime.
 - Added owner-dashboard Join Campaign controls to dry-run and automatically add eligible `guilds.join` OAuth users into a selected bot guild with refresh-before-use behavior and Thai owner webhook summaries.
@@ -159,7 +510,7 @@
 - Updated `.env.example`, `SECURITY.md`, and `ARCHITECTURE.md` with non-secret Trace Eraser guard controls while keeping hidden owner/system operational details out of public documentation.
 - Updated session documentation and placeholders for owner dashboard and Dashboard Public rolling session controls.
 - Updated OAuth token storage documentation and placeholders to reflect persistent encrypted token storage with refresh maintenance.
-- Hardened owner Join Campaign defaults so execution is disabled unless explicit target guild IDs are allowlisted, and kept admin OAuth login scoped to `identify guilds` while verification OAuth remains eligible for `guilds.join`.
+- Historical behavior: Join Campaign execution originally required an explicit target-guild allowlist. Current behavior is documented above: an empty `JOIN_CAMPAIGN_ALLOWED_GUILDS` permits any guild currently cached by the bot, under Owner-only controls. Admin OAuth originally remained scoped to `identify guilds`; the later OAuth scope update above adds `guilds.join`.
 
 ### Notes
 

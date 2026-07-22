@@ -8,7 +8,7 @@ function restoreEnv(name, value) {
     else process.env[name] = value;
 }
 
-test("dashboard auth has no fallback secret", () => {
+test("dashboard auth has no fallback secret", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const oldSecret = process.env.API_SECRET;
     delete process.env.API_SECRET;
 
@@ -18,7 +18,7 @@ test("dashboard auth has no fallback secret", () => {
     restoreEnv("API_SECRET", oldSecret);
 });
 
-test("production check trims NODE_ENV", () => {
+test("production check trims NODE_ENV", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const oldEnv = process.env.NODE_ENV;
 
     process.env.NODE_ENV = " production ";
@@ -30,7 +30,7 @@ test("production check trims NODE_ENV", () => {
     restoreEnv("NODE_ENV", oldEnv);
 });
 
-test("parseCookies skips malformed cookie encoding without throwing", () => {
+test("parseCookies skips malformed cookie encoding without throwing", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const req = {
         headers: {
             cookie: "good=value; broken=%E0%A4%A; another=ok"
@@ -43,12 +43,15 @@ test("parseCookies skips malformed cookie encoding without throwing", () => {
     });
 });
 
-test("pin page escapes hidden next attribute", () => {
+test("pin page escapes hidden next attribute", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const html = auth.pinPageHTML(false, "/ok?x=\"&y=<tag>'");
     assert.match(html, /value="\/ok\?x=&quot;&amp;y=&lt;tag&gt;&#39;"/);
+    assert.match(html, /autocomplete="current-password"/);
+    assert.match(auth.pinPageHTML(true, "/"), /role="alert"/);
+    assert.match(html, /prefers-reduced-motion/);
 });
 
-test("csrf token is bound to a valid dashboard session token", () => {
+test("csrf token is bound to a valid dashboard session token", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const oldSecret = process.env.API_SECRET;
     process.env.API_SECRET = "csrf-test-secret";
 
@@ -62,7 +65,7 @@ test("csrf token is bound to a valid dashboard session token", () => {
     restoreEnv("API_SECRET", oldSecret);
 });
 
-test("dashboard auth session duration is configurable and bounded", () => {
+test("dashboard auth session duration is configurable and bounded", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const oldMaxAge = process.env.DASHBOARD_SESSION_MAX_AGE_MS;
     const oldRefresh = process.env.DASHBOARD_SESSION_REFRESH_AFTER_MS;
 

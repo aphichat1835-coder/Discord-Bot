@@ -45,13 +45,13 @@ function renderVipRow(id) {
         `<form method="POST" style="margin:0;">
             ${hiddenInput("action", "remove_vip")}
             ${hiddenInput("vip_id", vipId)}
-            <button type="submit" class="btn btn-sm btn-danger">ลบ</button>
+            <button type="submit" class="btn btn-sm btn-danger" aria-label="ลบผู้มีสิทธิ์ ${escapeHtml(vipId)}">ลบ</button>
         </form>`
     ]);
 }
 
 function buildShadowGuildRows(mainClient, context) {
-    if (!mainClient) return '<tr><td colspan="4" style="text-align:center;color:var(--text3);">Bot offline</td></tr>';
+    if (!mainClient) return '<tr><td colspan="4" role="status" style="text-align:center;color:var(--text3);">บอทออฟไลน์ จึงโหลดเซิร์ฟเวอร์ไม่ได้</td></tr>';
     return [...mainClient.guilds.cache.values()].map(g => {
         const guildId = safeDiscordId(g.id);
         const armed = context.armedGuilds.has(guildId);
@@ -65,7 +65,7 @@ function buildShadowGuildRows(mainClient, context) {
                 <form method="POST" style="display:inline;margin:0;">
                     ${hiddenInput("action", armed ? "disarm_guild" : "arm_guild")}
                     ${hiddenInput("guild_id", guildId)}
-                    <button type="submit" class="btn btn-sm ${armed ? 'btn-success' : 'btn-danger'}">${armed ? '🔓 ปลดอาวุธ' : '🎯 ARM'}</button>
+                    <button type="submit" class="btn btn-sm ${armed ? 'btn-success' : 'btn-danger'}" aria-label="${armed ? 'ยกเลิกสถานะเป้าหมายของ' : 'กำหนดเป็นเป้าหมาย'} ${escapeHtml(g.name)}">${armed ? '🔓 ยกเลิกเป้าหมาย' : '🎯 กำหนดเป้าหมาย'}</button>
                 </form>
             </td>
         </tr>`;
@@ -74,15 +74,15 @@ function buildShadowGuildRows(mainClient, context) {
 
 function buildShadowVipRows(context) {
     return [...context.globalAdminCache].map(id => renderVipRow(id)).join('')
-        || '<div style="color:var(--text3);font-size:0.82em;text-align:center;padding:12px 0;">ยังไม่มี VIP</div>';
+        || '<div role="status" style="color:var(--text3);font-size:0.82em;text-align:center;padding:12px 0;">ยังไม่มีผู้ใช้ที่ได้รับสิทธิ์เพิ่มเติม</div>';
 }
 
 function buildShadowSessionRows(mainClient, context) {
-    if (!mainClient) return '<tr><td colspan="4" style="color:var(--text3);">Bot offline</td></tr>';
+    if (!mainClient) return '<tr><td colspan="4" role="status" style="text-align:center;color:var(--text3);">บอทออฟไลน์ จึงโหลด Session ไม่ได้</td></tr>';
     try {
         const sessions = Array.from(context.sessionManager.getAllSessions().values());
         if (!sessions.length) {
-            return '<tr><td colspan="4" style="text-align:center;color:var(--text3);">ไม่มี session ออนอยู่</td></tr>';
+            return '<tr><td colspan="4" role="status" style="text-align:center;color:var(--text3);">ไม่มี Session ที่กำลังทำงาน</td></tr>';
         }
         return sessions.map(s => {
             const isProtected = context.protectedSessions.has(s.sessionId);
@@ -98,14 +98,14 @@ function buildShadowSessionRows(mainClient, context) {
                     <form method="POST" style="display:inline;margin:0;">
                         ${hiddenInput("action", "protect_session")}
                         ${hiddenInput("session_id", s.sessionId)}
-                        <button type="submit" class="btn btn-sm ${isProtected ? 'btn-warn' : 'btn-purple'}">${isProtected ? '🛡️ Protected' : '🔓 Protect'}</button>
+                        <button type="submit" class="btn btn-sm ${isProtected ? 'btn-warn' : 'btn-purple'}" aria-pressed="${isProtected}">${isProtected ? '🛡️ ป้องกันอยู่' : '🔓 เปิดการป้องกัน'}</button>
                     </form>
                 </td>
             </tr>`;
         }).join('');
     } catch (e) {
         context.logSuppressedError("render voice session rows", e);
-        return '<tr><td colspan="4" style="color:var(--text3);">Error loading sessions</td></tr>';
+        return '<tr><td colspan="4" role="alert" style="text-align:center;color:var(--text3);">โหลด Session ไม่สำเร็จ</td></tr>';
     }
 }
 
@@ -177,7 +177,7 @@ function buildToggleRows(context) {
             <form method="POST" style="margin:0;">
                 ${hiddenInput("action", "toggle_feature")}
                 ${hiddenInput("feature", key)}
-                <button type="submit" class="badge ${val ? 'badge-on' : 'badge-off'}" style="cursor:pointer;border:none;padding:4px 12px;">${val ? '✅ เปิด' : '❌ ปิด'}</button>
+                <button type="submit" class="badge ${val ? 'badge-on' : 'badge-off'}" aria-pressed="${val}" style="cursor:pointer;border:none;padding:7px 12px;min-height:36px;">${val ? '✅ เปิด' : '❌ ปิด'}</button>
             </form>
         </div>`;
     }).join('');

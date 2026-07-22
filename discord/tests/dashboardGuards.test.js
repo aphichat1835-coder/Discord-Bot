@@ -7,10 +7,14 @@ const {
     createRateLimiter,
     makeCheckAuth,
     makeCheckRevealPin,
+    safeSecretEqual,
     cleanupRevealAttempts,
     getRevealAttemptStats,
     getRateLimitStats,
-    trimRateLimitBuckets
+    trimRateLimitBuckets,
+    safeDiscordInlineCode,
+    safeDiscordSummaryText,
+    getRequestPath
 } = require("../guards/dashboardGuards");
 const dashboardAuth = require("../index/auth");
 const TEST_CLIENT_A = "test-client-a";
@@ -31,13 +35,35 @@ function createRes() {
     };
 }
 
-test("dashboard read APIs do not bypass owner auth", () => {
+test("sensitive secret comparison is constant-time and type-strict", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    assert.equal(safeSecretEqual("1234", "1234"), true);
+    assert.equal(safeSecretEqual("1235", "1234"), false);
+    assert.equal(safeSecretEqual("12345", "1234"), false);
+    assert.equal(safeSecretEqual(1234, "1234"), false);
+    assert.equal(safeSecretEqual(null, "1234"), false);
+});
+
+test("dashboard intrusion text cannot break Discord formatting", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const inline = safeDiscordInlineCode("/path`\n@everyone", 180);
+    assert.equal(inline.includes("`"), false);
+    assert.equal(inline.includes("\n"), false);
+    const summary = safeDiscordSummaryText("**bold**\n> mention", 180);
+    assert.match(summary, /\\\*\\\*bold/);
+    assert.equal(summary.includes("\n"), false);
+});
+
+test("dashboard security logs keep the mounted API path and omit query data", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    assert.equal(getRequestPath({ originalUrl: "/api/graphql?token=secret", baseUrl: "/api", path: "/graphql" }), "/api/graphql");
+    assert.equal(getRequestPath({ baseUrl: "/api", path: "/gql" }), "/api/gql");
+});
+
+test("dashboard read APIs do not bypass owner auth", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.equal(shouldBypassDashboardReadApi({ method: "GET", baseUrl: "/api", path: "/status" }), false);
     assert.equal(shouldBypassDashboardReadApi({ method: "GET", baseUrl: "/api", path: "/session/vc_1" }), false);
     assert.equal(shouldBypassDashboardReadApi({ method: "POST", baseUrl: "/api", path: "/status" }), false);
 });
 
-test("rate limiter blocks after configured request count", () => {
+test("rate limiter blocks after configured request count", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const counts = new Map();
     const limiter = createRateLimiter(counts, {
         limits: {
@@ -59,7 +85,7 @@ test("rate limiter blocks after configured request count", () => {
     assert.equal(second.body.error, "Too Many Requests");
 });
 
-test("rate limiter buckets expire stale entries and stay capped", () => {
+test("rate limiter buckets expire stale entries and stay capped", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const counts = new Map();
     const staleAt = Date.now() - 120000;
 
@@ -77,7 +103,7 @@ test("rate limiter buckets expire stale entries and stay capped", () => {
     assert.equal(getRateLimitStats(counts).buckets, counts.size);
 });
 
-test("checkAuth accepts exact secret and rejects mismatches", () => {
+test("checkAuth accepts exact secret and rejects mismatches", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const oldPin = process.env.DASHBOARD_PIN;
     const oldSecret = process.env.API_SECRET;
     process.env.DASHBOARD_PIN = "1234";
@@ -105,7 +131,7 @@ test("checkAuth accepts exact secret and rejects mismatches", () => {
     else process.env.API_SECRET = oldSecret;
 });
 
-test("checkAuth fails closed when API_SECRET is not configured", () => {
+test("checkAuth fails closed when API_SECRET is not configured", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const oldPin = process.env.DASHBOARD_PIN;
     process.env.DASHBOARD_PIN = "1234";
 
@@ -120,7 +146,7 @@ test("checkAuth fails closed when API_SECRET is not configured", () => {
     else process.env.DASHBOARD_PIN = oldPin;
 });
 
-test("reveal PIN guard locks after repeated failures and can clean expired attempts", () => {
+test("reveal PIN guard locks after repeated failures and can clean expired attempts", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     revealTokenAttempts.clear();
 
     const checkPin = makeCheckRevealPin(() => "1234");
@@ -143,7 +169,7 @@ test("reveal PIN guard locks after repeated failures and can clean expired attem
     assert.equal(checkPin({ ip: TEST_CLIENT_B, path: "/api/reveal-token", body: { pin: "1234" } }, goodRes), true);
 });
 
-test("reveal PIN attempts expire stale unlocked records and stay capped", () => {
+test("reveal PIN attempts expire stale unlocked records and stay capped", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     revealTokenAttempts.clear();
 
     const staleAt = Date.now() - 31 * 60 * 1000;

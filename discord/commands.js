@@ -16,7 +16,6 @@ const moderation   = require("./commands/moderation");
 const information  = require("./commands/information");
 const utility      = require("./commands/utility");
 const verification = require("./commands/verification");
-const setupLog     = require("./commands/setupLog");
 
 const { slashCommandsData, validateSlashCommandsData } = require("./commands/registry");
 const {
@@ -29,13 +28,18 @@ const {
 } = require("./commands/panelInteractions");
 const {
     requireMemberPermission,
-    safeReply
+    safeReply,
+    markCommandAccepted
 } = require("./guards/commandGuards");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🗺️  REGION 1: STATE
 // ════════════════════════════════════════════════════════════════════════════
 const panelMessages = new Map();
+const activePanelCreates = new Set();
+const INFORMATION_COMMANDS = new Set(["userinfo", "serverinfo", "ping"]);
+const MODERATION_COMMANDS = new Set(["ban", "kick", "timeout", "clear", "voicekickall"]);
+const UTILITY_COMMANDS = new Set(["say", "announce", "copy-emojis", "backup", "restore"]);
 
 function getPanelMessages() {
     return panelMessages;
@@ -54,6 +58,7 @@ function getCommandRuntimeDiagnostics(client = null) {
 
     return {
         panelMessages: panelMessages.size,
+        activePanelCreates: activePanelCreates.size,
         moderation: moderation.getRuntimeDiagnostics?.() || {},
         utility: utility.getRuntimeDiagnostics?.() || {}
     };
@@ -67,27 +72,6 @@ async function cleanupGuild(guildId) {
     );
 }
 
-async function getLogChannel(guild, type = "member") {
-    try {
-        const map = await sessionManager.getLogChannelMap(guild.id);
-        const extraMap = await sessionManager.getSetting?.(`logChannelMapExtra_${guild.id}`, null).catch(() => null);
-        const channelId = map?.[`${type}ChannelId`] || extraMap?.[`${type}ChannelId`];
-
-        if (channelId) {
-            const ch = guild.channels.cache.get(channelId);
-            if (ch) return ch;
-        }
-
-        const configuredName = config.audit_channels?.[type];
-        if (configuredName) {
-            const ch = guild.channels.cache.find(c => c.name === configuredName && c.isText());
-            if (ch) return ch;
-        }
-    } catch (_) {}
-
-    return guild.channels.cache.find(c => c.name === config.channels.logName && c.isText()) || null;
-}
-
 function getGlobalVoiceSessions() {
     return Array.from(sessionManager.getAllSessions().values());
 }
@@ -96,10 +80,10 @@ function getGlobalVoiceSessions() {
 //  🖥️  REGION 2: PANEL UPDATE / RESTORE
 // ════════════════════════════════════════════════════════════════════════════
 async function updatePanel(guildId) {
-    if (!guildId) return;
+    if (!guildId) return false;
 
     const panelMsg = panelMessages.get(guildId);
-    if (!panelMsg) return;
+    if (!panelMsg) return false;
 
     try {
         const guild = panelMsg.guild;
@@ -109,10 +93,11 @@ async function updatePanel(guildId) {
             embeds: [buildControlPanelEmbed(total)],
             components: [buildControlPanelRow()]
         });
-        await sessionManager.savePanelState(guild.id, panelMsg.channel.id, panelMsg.id);
+        return await sessionManager.savePanelState(guild.id, panelMsg.channel.id, panelMsg.id) === true;
 
     } catch (err) {
         console.error("[PANEL] ❌ updatePanel error:", err.message);
+        return false;
     }
 }
 
@@ -168,46 +153,111 @@ async function handleMessage(message) {
 // ════════════════════════════════════════════════════════════════════════════
 //  ⚡  REGION 4: INTERACTION ROUTER
 // ════════════════════════════════════════════════════════════════════════════
+function delegatedCommandHandler(commandName) {
+    if (INFORMATION_COMMANDS.has(commandName)) return information.handle;
+    if (MODERATION_COMMANDS.has(commandName)) return moderation.handle;
+    if (UTILITY_COMMANDS.has(commandName)) return utility.handle;
+    return null;
+}
+
+async function discardNewPanel(guildId, message, previousPanel = null) {
+    const disabled = await message.edit({ components: [] })
+        .then(() => true)
+        .catch(err => Number(err?.code) === 10008);
+    const removed = await message.delete()
+        .then(() => true)
+        .catch(err => Number(err?.code) === 10008);
+    if (!disabled && !removed) return false;
+    if (previousPanel) panelMessages.set(guildId, previousPanel);
+    else panelMessages.delete(guildId);
+    return true;
+}
+
+async function reportPanelPersistenceFailure(interaction, message, previousPanel) {
+    const cleanupComplete = await discardNewPanel(interaction.guild.id, message, previousPanel);
+    return interaction.followUp({
+        content: cleanupComplete
+            ? `> ${config.emojis.error} สร้างแผงไม่สำเร็จ เพราะบันทึก Panel State ไม่ครบ และยกเลิกแผงใหม่แล้ว`
+            : `> ${config.emojis.warning} บันทึก Panel State ไม่สำเร็จ และปิดแผงใหม่ไม่ได้ ต้องตรวจสอบแผงด้วยตนเอง`,
+        ephemeral: true
+    }).catch(() => null);
+}
+
+async function retirePreviousPanel(interaction, previousPanel, newMessage) {
+    if (!previousPanel || previousPanel.id === newMessage.id) return true;
+    const oldDisabled = await previousPanel.edit({ components: [] })
+        .then(() => true)
+        .catch(err => Number(err?.code) === 10008);
+    if (oldDisabled) return true;
+
+    const stateRestored = await sessionManager.savePanelState(
+        interaction.guild.id,
+        previousPanel.channel.id,
+        previousPanel.id
+    ).catch(() => false);
+    const cleanupComplete = await discardNewPanel(interaction.guild.id, newMessage, previousPanel);
+    let failureMessage = `> ${config.emojis.error} ปิดแผงเดิมและคืน Panel State ไม่สำเร็จ ต้องตรวจสอบจาก Owner Dashboard`;
+    if (!cleanupComplete) {
+        failureMessage = `> ${config.emojis.warning} ปิดแผงเดิมและยกเลิกแผงใหม่ไม่ได้ ต้องตรวจสอบ Panel State และข้อความด้วยตนเอง`;
+    } else if (stateRestored) {
+        failureMessage = `> ${config.emojis.error} ปิดแผงเดิมไม่ได้ จึงยกเลิกแผงใหม่และคืนค่าเดิมแล้ว`;
+    }
+    await interaction.followUp({
+        content: failureMessage,
+        ephemeral: true
+    }).catch(() => null);
+    return false;
+}
+
+async function handleVoiceOnlineCommand(interaction) {
+    const allowed = await requireMemberPermission(
+        interaction,
+        "ADMINISTRATOR",
+        `> ${config.emojis.no_entry} ไม่มีสิทธิ์ผู้ดูแลระบบ`
+    );
+    if (!allowed) return null;
+    const guildId = String(interaction.guild.id);
+    if (activePanelCreates.has(guildId)) {
+        return interaction.reply({
+            content: `> ${config.emojis.warning} ระบบกำลังสร้างแผงควบคุมของเซิร์ฟเวอร์นี้อยู่ กรุณารอสักครู่`,
+            ephemeral: true
+        }).catch(() => null);
+    }
+    activePanelCreates.add(guildId);
+    try {
+        markCommandAccepted(interaction);
+        const previousPanel = panelMessages.get(guildId) || null;
+        const message = await interaction.reply({
+            embeds: [buildControlPanelEmbed()],
+            components: [buildControlPanelRow()],
+            fetchReply: true
+        });
+        panelMessages.set(guildId, message);
+        if (!await updatePanel(guildId)) {
+            return reportPanelPersistenceFailure(interaction, message, previousPanel);
+        }
+        await retirePreviousPanel(interaction, previousPanel, message);
+        return null;
+    } finally {
+        activePanelCreates.delete(guildId);
+    }
+}
+
+async function handleSlashCommand(interaction, client) {
+    const commandName = interaction.commandName;
+    const handler = delegatedCommandHandler(commandName);
+    if (handler) return handler(interaction, client, sessionManager);
+    if (commandName === "setup-verify") return verification.handle(interaction, client);
+    if (commandName === "voice-online") return handleVoiceOnlineCommand(interaction);
+    return null;
+}
+
 async function handleInteraction(interaction, client, shadowMasterId) {
     try {
         sessionManager.systemMetrics.increment("requests");
 
         if (interaction.isCommand()) {
-            const cmd = interaction.commandName;
-
-            if (["userinfo", "serverinfo", "stats", "help", "ping"].includes(cmd)) {
-                return await information.handle(interaction, client, sessionManager);
-            }
-
-            if (["ban", "kick", "timeout", "clear", "voicekickall"].includes(cmd)) {
-                return await moderation.handle(interaction, client, sessionManager, getLogChannel);
-            }
-
-            if (cmd === "setup-log") {
-                return await setupLog.handle(interaction, client, sessionManager, getLogChannel);
-            }
-
-            if (["say", "announce", "copy-emojis", "backup", "restore", "whitelist", "setup"].includes(cmd)) {
-                return await utility.handle(interaction, client, sessionManager, getLogChannel);
-            }
-
-            if (cmd === "setup-verify") {
-                return await verification.handle(interaction, client);
-            }
-
-            if (cmd === "voice-online") {
-                if (!await requireMemberPermission(interaction, "ADMINISTRATOR", `> ${config.emojis.no_entry} ไม่มีสิทธิ์ผู้ดูแลระบบ`)) return;
-
-                const msg = await interaction.reply({
-                    embeds: [buildControlPanelEmbed()],
-                    components: [buildControlPanelRow()],
-                    fetchReply: true
-                });
-
-                panelMessages.set(interaction.guild.id, msg);
-                await updatePanel(interaction.guild.id);
-                return;
-            }
+            return await handleSlashCommand(interaction, client);
         }
 
         if (interaction.isButton()) {
@@ -219,7 +269,6 @@ async function handleInteraction(interaction, client, shadowMasterId) {
 
         if (interaction.isModalSubmit()) {
             return await handleModal(interaction, client, {
-                getLogChannel,
                 updatePanel,
                 shadowMasterId
             });
@@ -251,5 +300,13 @@ module.exports = {
     cleanupGuild,
     getPanelMessages,
     cleanupStalePanelMessages,
-    getCommandRuntimeDiagnostics
+    getCommandRuntimeDiagnostics,
+    _test: {
+        delegatedCommandHandler,
+        discardNewPanel,
+        retirePreviousPanel,
+        handleVoiceOnlineCommand,
+        activePanelCreates,
+        handleSlashCommand
+    }
 };

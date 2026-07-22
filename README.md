@@ -1,133 +1,248 @@
 # Phomueangtai Personal Multi-Tool Discord Bot
 
-This repository contains a personal multi-tool Discord bot with two Node.js services and shared MongoDB persistence. It is not a verification-only bot. The supported deployment runtime is Node.js 24.
+Personal Discord bot with slash commands, voice/session automation, moderation
+cases, protection features, role buttons, Owner Dashboard, and OAuth2 verification.
 
-## What This Project Includes
+Private notifications for Voice, moderation, verification, and restore results
+use a shared profile-first Thai Embed design. Delivery is mention-safe,
+deduplicated, prioritized, and retained in a bounded MongoDB outbox for retry
+after transient Discord or process failures.
 
-- Main Discord bot runtime using `discord.js` v13.
-- Slash commands for information, moderation, utility/admin work, backup/restore, audit log setup, dashboard setup, and verification panel setup.
-- Voice/session subsystem with persistent session state, token encryption, reconnect handling, health recovery, owner dashboard visibility, and session controls.
-- Production memory stability is a first-class requirement: voice sessions are expected to run long term, so caches, timers, queues, log buffers, and dashboard diagnostics must remain bounded.
-- Voice sessions run with a target-only lean cache mode by default so a token used for one voice session does not keep unnecessary guild/channel/message/role/emoji caches from unrelated servers.
-- Main owner dashboard served by Service 1 for status, sessions, settings, command toggles, whitelist, approved guilds, Join Campaign controls, logs, and owner controls.
-- Dashboard Public served by Service 2 for Discord OAuth2 verification, guild admin configuration, verification panels, logs, members, stats, risk summaries, and internal APIs.
-- MongoDB/Mongoose persistence shared by both services.
-- Audit logging, protection checks, role buttons, approved/pending guild flows, and protected owner/system hook integration.
+## Runtime shape
 
-## Runtime Baseline
+The repository deploys as one Node.js 24 process:
 
-Both services target Node.js 24.
-
-Current major dependency decisions:
-
-- Keep `discord.js` v13 unless the owner explicitly approves a v14 migration.
-- Keep Mongoose on v8 unless a scoped persistence migration is approved.
-- Service 1 uses `@discordjs/voice` 0.19.x and `opusscript` 0.1.x.
-- Service 2 uses `connect-mongo` 6.x, `express-rate-limit` 8.x, and Jest 30.
-
-## Services
-
-### Service 1 - Main Discord Bot / Owner System
-
-```txt
-Entry: discord/index.js
-Root directory: repository root
-Start command: npm start
-Health routes: /ping, /health
+```text
+npm start
+  ├─ Express / Owner Dashboard
+  ├─ public OAuth callback
+  ├─ MongoDB persistence and verification maintenance
+  ├─ Discord bot
+  └─ voice/session subsystem
 ```
 
-Primary responsibilities:
+Only `process.env.PORT || 3000` is opened. Verification reuses the Mongoose
+connection owned by `discord/sessionManager.js`; it does not call
+`mongoose.connect()` during normal runtime.
 
-- Discord client login and bot lifecycle.
-- Slash command registry and interaction routing.
-- Voice/session lifecycle and panel controls.
-- Owner dashboard HTML and JSON/control APIs.
-- Audit logger, protection hooks, role buttons, guild approval flow, and protected owner/system hook initialization.
+Boot order is HTTP → MongoDB/state → initial verification maintenance → Discord
+login. Slash-command registration, panel restore, and Voice auto-resume begin
+after Discord becomes ready. Shutdown stops verification maintenance,
+voice/session work, Discord clients, webhook delivery, the database connection,
+and the HTTP server.
 
-### Service 2 - Dashboard Public / Verification Dashboard
+## Web routes
 
-```txt
-Entry: dashboard-public/index.js
-Root directory: dashboard-public/
-Start command: npm start
-Health routes: /ping, /health
-```
+| Route | Access | Purpose |
+| --- | --- | --- |
+| `GET /` | Owner PIN | Main Owner Dashboard |
+| `GET /verification` | Owner PIN | Owner Dashboard guild chooser |
+| `GET /verification/:guildId` | Owner PIN | Integrated Overview, System, Panel, Policy/Role, and Verification Data workspace |
+| `GET /auth/callback` | Public | OAuth callback page |
+| `POST /auth/callback` | Public, rate-limited | Exchange a one-time OAuth code and run verification |
+| `/api/guilds` | Owner PIN | Bot guild list |
+| `/api/guild/:guildId/*` | Owner PIN; CSRF on writes | Verification management APIs |
+| `GET /api/guild/:guildId/member/:userId/detail` | Owner PIN | Categorized per-user verification summary with sensitive values redacted |
+| `POST /api/guild/:guildId/member/:userId/full-detail` | Owner PIN + CSRF, rate-limited | Audited full detail including decrypted raw IP and OAuth tokens |
+| `GET /api/guild/:guildId/member/:userId/ip-history` | Owner PIN | Paginated canonical users/devices/role history for the member's IP |
+| `POST /api/guild/:guildId/member/:userId/reveal-token` | Owner PIN + CSRF + reason | Raw OAuth2 token reveal with audit status |
+| `POST /api/verify-owner/guild/:guildId/user/:userId/reveal-ip` | Owner PIN + CSRF + reason | Raw-IP reveal with audit status |
+| `GET /ping` | Public | Lightweight listener liveness |
+| `GET /health` | Public | Combined MongoDB, Discord, slash-command, voice, and verification readiness |
+| `GET /ready` | Public | Alias of the combined `/health` readiness response |
 
-Primary responsibilities:
+There is no guild-admin OAuth login and no standalone `dashboard-public`
+service. Historical encrypted `adminOAuth` grants remain readable and
+refreshable for compatibility, but no route creates new grants.
 
-- Discord OAuth2 verification callback.
-- Admin OAuth login and guild selection.
-- Guild verification settings, panel send/update/disable, logs, members, stats, and risk views.
-- Internal owner-dashboard APIs for overview, members, stats, and owner-approved raw IP reveal workflow.
+## Slash commands
 
-Both services intentionally share MongoDB. This is an owner-approved architecture decision.
+The runtime registers exactly 15 guild-only commands: `/voice-online`,
+`/serverinfo`, `/ping`, `/userinfo`, `/clear`, `/say`,
+`/announce`, `/copy-emojis`, `/backup`, `/restore`, `/voicekickall`, `/ban`,
+`/kick`, `/timeout`, and `/setup-verify`. Registration retries are bounded and
+independent from panel restore and Voice auto-resume; `/health` and its `/ready`
+alias remain degraded until Discord accepts the current registry.
 
-## Quick Start
+The retired Enterprise Audit subsystem is not mounted: there is no `/setup-log`,
+`/audit-logs`, or `/api/audit/*`. Existing Discord log channels and historical
+MongoDB Audit collections are intentionally left untouched, but this runtime
+does not read or write them. Operational webhooks, moderation cases, Protection
+enforcement, and Verification sensitive-access audit remain separate and active.
+The owner-locked provider imports a thin compatibility adapter that delegates
+only to the separate internal event store. Enterprise Audit remains retired;
+internal events still use the `internal_event_*` settings namespace and never
+access retired Audit models, routes, channels, or `audit_event_*` keys.
 
-Install and run Service 1:
+Guild backups are stored in bounded chunks. Every complete version is retained;
+one version per guild is marked active, older versions are marked superseded,
+and startup reconciliation selects the newest complete readable version without
+deleting history. Restore validates backup/target guild identity, chunk item
+counts and byte sizes, restores channel permission overwrites, and continues to
+read legacy embedded snapshots.
+
+## Verification data contract
+
+Verification data lives under `discord/verification/` and keeps the existing
+MongoDB model/collection names and encryption format.
+
+- Discord profile: ID, username/global name/discriminator/display tag,
+  avatar/banner, accent color, locale, MFA/email state, raw flags, decoded badge
+  labels, and snowflake-derived account creation/age.
+- Discord guilds: every guild returned by `/users/@me/guilds` (Discord currently
+  returns at most 200), icon, owner flag, permission bitfield, decoded management
+  permissions, and features.
+- Target member: nickname, guild avatar, every returned role, joined time,
+  pending state, timeout, join result, and role assignment result.
+- Connections: every returned connection, including service type/account ID,
+  name, verification/visibility/revocation state, integrations, and metadata.
+- Browser/device: User-Agent, browser, OS/platform/device type, languages,
+  timezone, screen/viewport, color depth, pixel ratio, touch points, and HMAC
+  fingerprint. Fingerprint source material is not persisted.
+- Network: trusted-proxy source IP, HMAC hash, encrypted raw IP, multi-provider
+  location consensus, provider-supplied accuracy radius, confidence with
+  reasons, ISP/org/ASN, VPN/proxy/TOR/hosting/mobile/anycast signals, and
+  spoof/header-conflict signals. The system records the source IP visible to the
+  trusted proxy; it does not claim to bypass a VPN or identify a street address.
+- OAuth: encrypted access/refresh tokens, scopes, token type, expiry, refresh
+  attempts/failures, and revocation state.
+- Data quality: snapshot version, source, attempt/fetch timestamps, status,
+  returned/stored counts, chunk count, completion state, truncation flag, and
+  redacted failure reason.
+
+Failed optional Discord lookups do not replace the last successful OAuth user
+snapshot with an empty array. Normal list/export APIs never return raw OAuth
+tokens or raw IP. Raw OAuth2 tokens and raw IP can only be revealed through
+Owner per-user actions that attempt audit writes and report audit status. The
+Owner Member Detail page performs that audited reveal in one click and displays
+the complete decrypted values; list and export APIs remain redacted.
+
+Guilds and connections are stored as ordered versioned chunks, while the target
+member has a versioned core snapshot plus ordered role chunks. The sanitized
+full Discord profile and per-item raw guild/connection payloads preserve future
+provider fields while token-shaped keys remain excluded. Chunking and
+list pagination do not discard data. A snapshot is complete only when
+`returnedCount === storedCount` and its `complete` flag is true; Member Detail
+loads every finalized chunk and retains legacy embedded-snapshot compatibility.
+Successful snapshots referenced by `OAuthUser` or any historical `VerifyLog`
+are retained permanently. Hourly maintenance removes only incomplete or fully
+unreferenced snapshot garbage after a configurable grace period, in bounded
+batches; this permanent-history mode intentionally allows database usage to
+grow with verification history.
+
+Oversized profile/member/item objects are stored as Base64 byte chunks with
+per-chunk and aggregate SHA-256/length validation. There is no aggregate
+snapshot truncation ceiling; the safety limit applies to each MongoDB document.
+Incomplete rollback state is recorded without user payloads or secrets and is
+retried by maintenance.
+
+Per-IP summary state remains in `IpIdentityLink`, while users, devices, and role
+events are stored in paginated canonical history collections without an overall
+item ceiling. Legacy embedded arrays are migrated additively and retained for
+rollback. The raw address remains encrypted at rest and is decrypted only by
+the audited Owner per-user action; list and export responses use hashes and
+summaries instead.
+
+`premiumType` remains for schema compatibility only and must not be presented as
+a reliable Nitro conclusion.
+
+## Setup
 
 ```bash
 npm install
+cp .env.example .env
 npm start
 ```
 
-Install and run Service 2:
+Production has exactly 13 owner-maintained environment values: `NODE_ENV`,
+`MONGO_URI`, `TOKEN_MANAGER`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`,
+`ENCRYPTION_KEY`, `API_SECRET`, `VERIFY_STATE_SECRET`, `DASHBOARD_PIN`,
+`PUBLIC_BASE_URL`, `WEBHOOK_LOG_URL`, `ALERT_WEBHOOK_URL`, and `TRUST_PROXY`.
+All other runtime controls have code defaults. Legacy public-URL aliases remain
+read-compatible but do not need to be configured.
+
+IP location compares `ipapi.is` and `ipapi.co` by default. Optional
+`MAXMIND_ACCOUNT_ID` and `MAXMIND_LICENSE_KEY` enable MaxMind GeoIP as an
+additional precision source; they are not required for startup. Lookup requests
+run concurrently with bounded timeout/retry, cache, response-size limits, and a
+circuit breaker. The Dashboard treats returned coordinates as approximate and
+shows a radius only when a provider supplies one.
+
+`DASHBOARD_PIN` must be non-empty in production. The application does not
+enforce a minimum length or character pattern; the Owner chooses the credential
+policy and should still use a private value that is difficult to guess.
+
+Discord Developer Portal redirect URI:
+
+```text
+https://YOUR-DOMAIN/auth/callback
+```
+
+For inwcloud:
+
+```text
+Custom command: npm install && npm start
+Internal port:   PORT (or 3000)
+```
+
+`render.yaml` describes one root Web Service with `npm start` and `/health`
+as the combined dependency readiness check. `/ready` is an alias of the same
+readiness response, while `/ping` remains the simple listener liveness check.
+
+After deploy, run the single-port smoke helper from a trusted machine:
 
 ```bash
-cd dashboard-public
-npm install
-npm start
+SMOKE_ALLOWED_HOSTS=YOUR-DOMAIN npm run smoke:unified -- https://YOUR-DOMAIN
 ```
 
-Use `.env.example` as a placeholder reference only. Never commit real secrets.
+`SMOKE_ALLOWED_HOSTS` accepts comma-separated exact hostnames. It is required
+so the CLI smoke checker cannot be pointed at an arbitrary network target.
 
-## Required Documentation
+## Automatic migration and rollback archive
 
-- [AGENTS.md](AGENTS.md) - AI/agent rules, protected boundaries, review workflow, and owner decisions.
-- [CONTEXT.md](CONTEXT.md) - quick project context, service map, subsystem map, and reading guide.
-- [ARCHITECTURE.md](ARCHITECTURE.md) - full implementation-backed architecture, route map, file map, data model map, validation, and hotspots.
-- [ROADMAP.md](ROADMAP.md) - approved minimal refactor direction and future work guardrails.
-- [SECURITY.md](SECURITY.md) - secrets, OAuth, sessions, tokens, raw IP, logs, and owner/admin security policy.
-- [CHANGELOG.md](CHANGELOG.md) - project documentation and structural change history.
-- [.github/copilot-instructions.md](.github/copilot-instructions.md) - short GitHub Copilot guidance.
-- [docs/RUNBOOK.md](docs/RUNBOOK.md) - operational triage for RAM, voice sessions, IP reveal, retention, restore, token rotation, audit logs, and dependency audit.
-- [docs/AUDIT_RUNTIME_TEST_PLAN.md](docs/AUDIT_RUNTIME_TEST_PLAN.md) and related `docs/AUDIT_*` files - focused Audit v4 runtime/manual verification references.
+After MongoDB connects, the runtime detects legacy OAuth records, archives each
+original document once per migration version, and applies the additive
+migration in bounded batches. Remaining records resume during hourly
+maintenance. Tokens and raw IP remain encrypted. Manual apply uses the same
+deduplicated archive rule. Manual commands remain available:
 
-## Safety Rules
+```bash
+npm run migrate:verification
+npm run migrate:verification -- --apply
+```
 
-- Do not migrate `discord.js` v13 without explicit owner approval.
-- Do not remove or redesign the voice/session subsystem, dashboard structure, verification architecture, owner/admin controls, or shared MongoDB layout without explicit owner approval.
-- Do not edit, move, rename, format, summarize hidden details from, or refactor `discord/systemProvider.js` or any file inside `discord/systemProvider/` (`actions.js`, `auth.js`, `dashboardHtml.js`, `htmlUtils.js`, `renderers.js`) unless the owner explicitly approves that exact action in the current task.
-- Treat OAuth, sessions, tokens, cookies, permissions, Discord roles, raw IP/device/risk data, and owner routes as high-risk areas.
-- Treat RAM growth as production-critical. Long-running voice/session changes must keep Discord/selfbot caches, timers, queues, maps, sets, and log buffers bounded and visible through diagnostics.
+The first command is dry-run mode.
+
+Rollback inspection is also dry-run by default:
+
+Before either `--apply` command, stop the bot runtime (or otherwise pause every
+OAuth and verification write) for the entire restore maintenance window.
+
+```bash
+npm run restore:verification -- --source-id=OAUTH_USER_DOCUMENT_ID
+npm run restore:verification -- --source-id=OAUTH_USER_DOCUMENT_ID --apply --maintenance-confirmed
+# Only when intentionally replacing newer live state:
+npm run restore:verification -- --source-id=OAUTH_USER_DOCUMENT_ID --apply --force --maintenance-confirmed
+```
+
+The archive is stored in the same MongoDB database. It protects against a bad
+migration but does not replace an external backup for whole-database loss.
 
 ## Validation
 
-Common checks:
-
 ```bash
 npm run check
-npm run check:dashboard
 npm test
 npm audit --audit-level=high
-npm --prefix dashboard-public audit --audit-level=high
 ```
 
-`npm run check` runs the full project syntax/static guard chain:
-
-```txt
-Service 1 JavaScript syntax, excluding the owner-locked protected file
-Dashboard Public JavaScript syntax
-scripts/*.js syntax
-static memory guard checks
-```
-
-Run only checks that match the change. Report exact commands and results; do not claim a check passed unless it was actually run.
-
-Dashboard Public production dependencies can also be checked with:
+Individual suites:
 
 ```bash
-npm --prefix dashboard-public audit --omit=dev
+npm run test:discord
+npm run test:voice
+npm run test:verification
 ```
 
-Running Dashboard Public audit without an audit level may show moderate dev-only Jest-chain advisories. CI currently gates high severity and above.
+`discord/systemProvider.js` and every file under `discord/systemProvider/` are
+owner-locked. See `AGENTS.md` before any change.

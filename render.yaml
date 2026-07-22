@@ -1,19 +1,23 @@
 # Render Blueprint for Phomueangtai Enterprise Discord System
 #
-# This blueprint defines the two Render Web Services used by this project.
+# This blueprint defines the single Render Web Service used by this project.
 # It intentionally does NOT store secret environment values in the repo.
-# Add all required environment variables manually in Render Dashboard using .env.example as the reference.
+# The runtime has exactly 13 owner-maintained environment values, matching .env.example.
+# All advanced runtime controls use code defaults unless intentionally overridden.
 #
 # IMPORTANT:
 # - Confirm these service names match your existing Render services before syncing.
 # - If the names do not match, Render may create new services instead of updating existing ones.
+# - `branch: main` is the production Blueprint source. Change it deliberately if
+#   a different release branch is intended; work on `tt` is not auto-deployed.
+# - `autoDeployTrigger: off` requires an intentional Blueprint sync/deploy.
 # - This file is documentation/deployment config only. It does not deploy anything by itself.
 
 previews:
   generation: manual
 
 services:
-  # Service 1: Main Discord Bot / Owner Dashboard
+  # Bot + voice/session + Owner Dashboard + public OAuth verification callback
   - type: web
     runtime: node
     name: discord-bot-4hjp
@@ -23,67 +27,12 @@ services:
     rootDir: .
     buildCommand: npm install
     startCommand: npm start
-    healthCheckPath: /ping
+    healthCheckPath: /health
     autoDeployTrigger: off
     maxShutdownDelaySeconds: 60
     envVars:
       - key: NODE_ENV
         value: production
-      - key: NODE_VERSION
-        value: "24"
-      - key: MONGO_URI
-        sync: false
-      - key: TOKEN_MANAGER
-        sync: false
-      - key: API_SECRET
-        sync: false
-      - key: INTERNAL_API_SECRET
-        sync: false
-      - key: VERIFY_STATE_SECRET
-        sync: false
-      - key: ENCRYPTION_KEY
-        sync: false
-      - key: DASHBOARD_PIN
-        sync: false
-      - key: DASHBOARD_URL
-        sync: false
-      - key: PUBLIC_DASHBOARD_URL
-        sync: false
-      - key: PUBLIC_BASE_URL
-        sync: false
-      - key: DASHBOARD_PUBLIC_URL
-        sync: false
-      - key: WEBHOOK_LOG_URL
-        sync: false
-      - key: ALERT_WEBHOOK_URL
-        sync: false
-      - key: SHADOW_MASTER_ID
-        sync: false
-      - key: TRUST_PROXY
-        value: "true"
-      - key: TRUST_PROXY_HOPS
-        value: "1"
-      - key: VOICE_DEBUG_MULTI_CLIENT
-        value: "false"
-
-  # Service 2: Dashboard Public / OAuth2 Verification Dashboard
-  - type: web
-    runtime: node
-    name: discordbot-dashboard-public
-    region: singapore
-    plan: free
-    branch: main
-    rootDir: dashboard-public
-    buildCommand: npm install
-    startCommand: npm start
-    healthCheckPath: /ping
-    autoDeployTrigger: off
-    maxShutdownDelaySeconds: 60
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: NODE_VERSION
-        value: "24"
       - key: MONGO_URI
         sync: false
       - key: TOKEN_MANAGER
@@ -92,29 +41,19 @@ services:
         sync: false
       - key: DISCORD_CLIENT_SECRET
         sync: false
-      - key: ENCRYPTION_KEY
-        sync: false
-      - key: SESSION_SECRET
-        sync: false
       - key: API_SECRET
-        sync: false
-      - key: INTERNAL_API_SECRET
         sync: false
       - key: VERIFY_STATE_SECRET
         sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: DASHBOARD_PIN
+        sync: false
       - key: PUBLIC_BASE_URL
         sync: false
-      - key: DASHBOARD_PUBLIC_URL
+      - key: WEBHOOK_LOG_URL
         sync: false
-      - key: PUBLIC_DASHBOARD_URL
+      - key: ALERT_WEBHOOK_URL
         sync: false
-      - key: DASHBOARD_URL
-        sync: false
-      - key: STORE_OAUTH_TOKENS
-        value: "true"
       - key: TRUST_PROXY
         value: "true"
-      - key: TRUST_PROXY_HOPS
-        value: "1"
-      - key: ENABLE_CF_IP_HEADER
-        value: "false"

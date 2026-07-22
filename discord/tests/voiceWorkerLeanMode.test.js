@@ -34,7 +34,7 @@ function guild(id, targetChannelId, selfUserId) {
     };
 }
 
-test("voice lean cleanup keeps only target guild/channel and self identity", () => {
+test("voice lean cleanup keeps only target guild/channel and self identity", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const voiceWorker = require("../voiceWorker");
     const selfUserId = "self-user";
     const targetGuildId = "guild-target";
@@ -86,7 +86,7 @@ test("voice lean cleanup keeps only target guild/channel and self identity", () 
     assert.deepEqual([...client.users.cache.keys()], [selfUserId]);
 });
 
-test("ensureVoiceSession reuses an existing ready target session", async () => {
+test("ensureVoiceSession reuses an existing ready target session", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const voiceWorker = require("../voiceWorker");
     const sessionManager = require("../sessionManager");
     const token = "aaaaaaaaaaaaaaaaaaaaaaaa.bbbbbb.ccccccccccccccccccccccccccc";
@@ -105,6 +105,7 @@ test("ensureVoiceSession reuses an existing ready target session", async () => {
         serverId: guildId,
         voiceId: channelId,
         accountId: "self-user",
+        ownerId: "owner",
         state: "active",
         client: {
             user: { id: "self-user" },
@@ -167,7 +168,7 @@ test("ensureVoiceSession reuses an existing ready target session", async () => {
     }
 });
 
-test("ensureVoiceSession treats duplicate create race as existing session reuse", async () => {
+test("ensureVoiceSession treats duplicate create race as existing session reuse", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const voiceWorker = require("../voiceWorker");
     const sessionManager = require("../sessionManager");
     const token = "aaaaaaaaaaaaaaaaaaaaaaaa.bbbbbb.ccccccccccccccccccccccccccc";
@@ -186,6 +187,7 @@ test("ensureVoiceSession treats duplicate create race as existing session reuse"
         serverId: guildId,
         voiceId: channelId,
         accountId: "self-user",
+        ownerId: "owner",
         state: "active",
         client: {
             user: { id: "self-user" },

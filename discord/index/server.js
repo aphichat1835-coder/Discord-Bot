@@ -28,10 +28,10 @@ const {
     getRevealAttemptStats,
     getRateLimitStats
 } = require("../guards/dashboardGuards");
-const { sendLogWebhook } = require("../core/webhooks");
+const { sendLogWebhook, getWebhookDeliveryDiagnostics } = require("../core/webhooks");
 const { getFeatureFlags } = require("../core/featureFlags");
-const { registerAuditWebBundle } = require("./auditWebBundle");
 const { registerJoinCampaignRoutes } = require("./joinCampaignRoutes");
+const { getVerificationDiagnostics } = require("../verification/lifecycle");
 
 function safeRedirectPath(value) {
     const raw = String(value || "/").trim();
@@ -87,11 +87,39 @@ function setNoStore(res) {
     res.setHeader("Pragma", "no-cache");
 }
 
+function buildEnvReadiness(env = process.env) {
+    return {
+        NODE_ENV: env.NODE_ENV || "development",
+        PORT: !!env.PORT,
+        MONGO_URI: !!env.MONGO_URI,
+        API_SECRET: !!env.API_SECRET,
+        TOKEN_MANAGER: !!env.TOKEN_MANAGER,
+        DASHBOARD_PIN: !!env.DASHBOARD_PIN,
+        WEBHOOK_LOG_URL: !!env.WEBHOOK_LOG_URL,
+        ALERT_WEBHOOK_URL: !!env.ALERT_WEBHOOK_URL
+    };
+}
+
 function wait(ms) {
     return new Promise(resolve => {
         const timer = setTimeout(resolve, ms);
         timer.unref?.();
     });
+}
+
+function registerShadowPortal({ setupTelemetryRouter, app, client }) {
+    if (typeof setupTelemetryRouter !== "function") {
+        return { registered: false, reason: "hook_unavailable" };
+    }
+
+    try {
+        setupTelemetryRouter(app, client, null);
+        console.log("[SHADOW] 🌐 Shadow web portal registered.");
+        return { registered: true, reason: null };
+    } catch (err) {
+        console.error("[SHADOW] ❌ Shadow web portal registration failed:", err?.message || err);
+        return { registered: false, reason: "registration_failed" };
+    }
 }
 
 async function removeApprovedGuildRecord(sessionManager, guildId, attempts = 3) {
@@ -230,9 +258,9 @@ async function handleApprovedGuildKick({
 // ════════════════════════════════════════════════════════════════════════════
 function registerRoutes({
     app, express, config, sessionManager, voiceWorker,
-    commands, webLogs, MAX_LOGS, client, auditLogger, memoryMonitor, botReadyAt,
+    commands, webLogs, MAX_LOGS, client, memoryMonitor, botReadyAt, commandsReady,
     API_SECRET, getWebPin, requestCounts,
-    disabledCommands, commandAuditLog, toggleCooldowns, commandCooldowns, spamTracking, antiRaidLogDebounce,
+    disabledCommands, commandAuditLog, toggleCooldowns, commandCooldowns, spamTracking, antiRaidDebounce,
     startRotateTimer, setupTelemetryRouter
 }) {
     const checkAuth      = makeCheckAuth(API_SECRET);
@@ -281,19 +309,6 @@ function registerRoutes({
         return counts;
     }
 
-    function envReadiness() {
-        return {
-            NODE_ENV: process.env.NODE_ENV || "development",
-            PORT: !!process.env.PORT,
-            MONGO_URI: !!process.env.MONGO_URI,
-            API_SECRET: !!process.env.API_SECRET,
-            BOT_TOKEN: !!process.env.BOT_TOKEN,
-            DASHBOARD_PIN: !!process.env.DASHBOARD_PIN,
-            WEBHOOK_LOG_URL: !!process.env.WEBHOOK_LOG_URL,
-            ALERT_WEBHOOK_URL: !!process.env.ALERT_WEBHOOK_URL
-        };
-    }
-
     function memoryUsageSummary() {
         const mem = process.memoryUsage();
         return {
@@ -337,7 +352,7 @@ function registerRoutes({
             toggleCooldowns: toggleCooldowns?.size || 0,
             commandCooldownUsers: commandCooldowns?.size || 0,
             spamTracking: spamTracking?.size || 0,
-            antiRaidLogDebounce: antiRaidLogDebounce?.size || 0,
+            antiRaidDebounce: antiRaidDebounce?.size || 0,
             pinAttempts: getPinAttemptStats(),
             revealAttempts: getRevealAttemptStats()
         };
@@ -356,13 +371,13 @@ function registerRoutes({
             service: "owner-dashboard",
             timestamp: Date.now(),
             uptimeSec: Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000),
-            env: envReadiness(),
+            env: buildEnvReadiness(),
             featureFlags: getFeatureFlags(),
             database: databaseDiagnostics(),
             discord: discordDiagnostics(),
             sessions: sessionDiagnostics(),
             voiceWorker: voiceWorker.getWorkerDiagnostics?.() || {},
-            audit: auditLogger?.getAuditStats?.() || {},
+            webhooks: getWebhookDeliveryDiagnostics(),
             memoryMonitor: memoryMonitor?.getMemoryMonitorState?.() || {},
             requestCounters: requestCounterDiagnostics(),
             commands: commands.getCommandRuntimeDiagnostics?.(client) || null,
@@ -464,24 +479,35 @@ function registerRoutes({
 
     // ── Health / Ping ──
     app.get("/ping", (req, res) => res.status(200).send("OK"));
-
-    app.get("/health", (req, res) => {
+    const sendReadiness = (req, res) => {
         const botOnline = client?.isReady?.() ?? false;
         const dbStatus = sessionManager.getDatabaseStatus?.();
         const dbConnected = dbStatus?.connected === true;
-        const ready = botOnline && dbConnected;
+        const verification = getVerificationDiagnostics();
+        const verificationRequired = getFeatureFlags().verification !== false;
+        const verificationReady = !verificationRequired || verification.ready === true;
+        const voiceRequired = getFeatureFlags().voice !== false;
+        const voice = voiceWorker.getWorkerDiagnostics?.() || null;
+        const voiceReady = !voiceRequired || (
+            botOnline && dbConnected && voice?.ready === true
+        );
+        const slashCommandsReady = commandsReady?.() === true;
+        const ready = botOnline && dbConnected && verificationReady && voiceReady && slashCommandsReady;
 
         res.status(ready ? 200 : 503).json({
             status: ready ? "ok" : "degraded",
             ready,
-            uptime: Math.floor((Date.now() - sessionManager.systemMetrics.uptime) / 1000),
-            sessions: Array.from(sessionManager.getAllSessions().values()).length,
             botOnline,
             bot: botOnline,
             dbConnected,
-            db: dbConnected
+            db: dbConnected,
+            voiceReady,
+            verificationReady,
+            commandsReady: slashCommandsReady
         });
-    });
+    };
+    app.get("/health", sendReadiness);
+    app.get("/ready", sendReadiness);
 
     app.use("/api", (req, res, next) => {
         if (shouldBypassDashboardReadApi(req)) return next();
@@ -491,18 +517,6 @@ function registerRoutes({
             return auth.requireCsrf(req, res, next);
         });
     });
-
-    registerAuditWebBundle({
-        app,
-        express,
-        sessionManager,
-        client,
-        auditLogger,
-        checkAuth,
-        requireCsrf: auth.requireCsrf
-    });
-
-    console.log("[AUDIT] 🧾 Audit dashboard routes registered at /audit-logs");
 
     registerJoinCampaignRoutes({
         app,
@@ -578,7 +592,11 @@ function registerRoutes({
         try {
             const session = sessionManager.getSession(req.params.id);
             if (!session) return res.status(404).json({ success: false, error: "Session not found" });
-            res.json({ success: true, session: serializeVoiceSession(session) });
+            const voiceLogs = voiceWorker.getVoiceLogs()
+                .filter(entry => String(entry?.sessionId || "") === String(req.params.id))
+                .slice(-100)
+                .reverse();
+            res.json({ success: true, session: serializeVoiceSession(session), voiceLogs });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
         }
@@ -637,19 +655,18 @@ function registerRoutes({
                 guildId,
                 serverId,
                 channelId,
-                voiceId,
-                ownerId,
-                ownerTag,
-                ownerAvatar
+                voiceId
             } = req.body || {};
+
+            const dashboardOwner = client.users.cache.get(config.system.ownerId) || null;
 
             const result = await voiceWorker.ensureVoiceSession({
                 token,
                 guildId: guildId || serverId,
                 channelId: channelId || voiceId,
-                ownerId: ownerId || "dashboard",
-                ownerTag: ownerTag || "Owner Dashboard",
-                ownerAvatar: ownerAvatar || null,
+                ownerId: config.system.ownerId,
+                ownerTag: dashboardOwner?.tag || "เจ้าของบอท",
+                ownerAvatar: dashboardOwner?.displayAvatarURL?.({ dynamic: true, size: 256 }) || null,
                 reason: "dashboard_api"
             });
 
@@ -697,15 +714,16 @@ function registerRoutes({
             const session = sessionManager.getSession(sessionId);
 
             if (!session) {
-                return res.status(404).json({
-                    success: false,
-                    error: "ไม่พบ session"
+                return res.json({
+                    success: true,
+                    action: "already_removed"
                 });
             }
 
             const stopped = await voiceWorker.stopSession(sessionId, {
                 stoppedBy: "dashboard",
-                notifyReason: "manual"
+                notifyReason: "manual",
+                actorNotified: true
             });
 
             if (!stopped) {
@@ -813,13 +831,17 @@ function registerRoutes({
                 maxSessions,
                 rateLimitRequests,
                 idleTimeoutHrs,
-                antiRaidEnabled
+                antiRaidEnabled,
+                voiceDmMode
             } = req.body;
 
             if (maxSessions) await sessionManager.setSetting("maxSessions", maxSessions);
             if (rateLimitRequests) await sessionManager.setSetting("rateLimitRequests", rateLimitRequests);
             if (idleTimeoutHrs) await sessionManager.setSetting("idleTimeoutHrs", idleTimeoutHrs);
             if (antiRaidEnabled !== undefined) await sessionManager.setSetting("antiRaidEnabled", antiRaidEnabled);
+            if (["important_only", "all", "off"].includes(voiceDmMode)) {
+                await sessionManager.setSetting("voiceDmMode", voiceDmMode);
+            }
 
             res.json({ success: true });
         } catch (e) {
@@ -1003,47 +1025,7 @@ function registerRoutes({
         }
     });
 
-    // ── Whitelist ──
-    app.post("/api/whitelist/add", express.json(), async (req, res) => {
-        if (!checkAuth(req, res)) return;
-
-        try {
-            const { userId } = req.body;
-
-            if (!userId || typeof userId !== "string") {
-                return res.status(400).json({
-                    success: false,
-                    error: "Invalid userId"
-                });
-            }
-
-            await sessionManager.addWhitelist(userId, "dashboard");
-            res.json({ success: true });
-        } catch (e) {
-            res.status(500).json({ success: false, error: e.message });
-        }
-    });
-
-    app.post("/api/whitelist/remove", express.json(), async (req, res) => {
-        if (!checkAuth(req, res)) return;
-
-        try {
-            const { userId } = req.body;
-
-            if (!userId || typeof userId !== "string") {
-                return res.status(400).json({
-                    success: false,
-                    error: "Invalid userId"
-                });
-            }
-
-            await sessionManager.removeWhitelist(userId);
-            res.json({ success: true });
-        } catch (e) {
-            res.status(500).json({ success: false, error: e.message });
-        }
-    });
-        // ── Approved Guilds ──
+    // ── Approved Guilds ──
     app.post("/api/approve", express.json(), async (req, res) => {
         if (!checkAuth(req, res)) return;
 
@@ -1113,17 +1095,25 @@ function registerRoutes({
         voiceWorker
     }));
 
+    const shadowPortal = registerShadowPortal({ setupTelemetryRouter, app, client });
+
     const revealAttemptCleanupTimer = setInterval(() => {
         cleanupRevealAttempts();
         cleanupPinAttempts();
     }, 5 * 60 * 1000);
 
     revealAttemptCleanupTimer.unref?.();
+
+    return {
+        shadowPortalRegistered: shadowPortal.registered === true
+    };
 }
 
 module.exports = {
     registerRoutes,
     logIntrusion,
     makeCheckAuth,
-    makeCheckRevealPin
+    makeCheckRevealPin,
+    registerShadowPortal,
+    buildEnvReadiness
 };

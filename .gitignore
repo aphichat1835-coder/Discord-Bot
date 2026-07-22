@@ -43,7 +43,6 @@ private/
 # Dependencies
 # -------------------------
 node_modules/
-dashboard-public/node_modules/
 .npmrc
 
 # -------------------------

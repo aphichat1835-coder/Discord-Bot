@@ -40,18 +40,26 @@ function isOwnerGlobalControl(interaction, shadowMasterId) {
         (shadowMasterId && interaction.user?.id === shadowMasterId);
 }
 
+function buildTokenMismatchLogOptions() {
+    return {
+        dedupeKey: "token-owner-mismatch",
+        dedupeMs: 5 * 60 * 1000,
+        summaryLabel: "token owner mismatch"
+    };
+}
+
 function getVisibleVoiceSessions(interaction, getGlobalVoiceSessions, shadowMasterId) {
     const allSessions = getGlobalVoiceSessions();
     if (isOwnerGlobalControl(interaction, shadowMasterId)) return allSessions;
 
-    const guildId = interaction.guild?.id;
-    return allSessions.filter(session => String(session.serverId || "") === String(guildId || ""));
+    const actorId = String(interaction.user?.id || "");
+    return allSessions.filter(session => actorId && String(session.ownerId || "") === actorId);
 }
 
 function canControlSession(interaction, session, shadowMasterId) {
     if (!session) return false;
     if (isOwnerGlobalControl(interaction, shadowMasterId)) return true;
-    return String(session.serverId || "") === String(interaction.guild?.id || "");
+    return !!interaction.user?.id && String(session.ownerId || "") === String(interaction.user.id);
 }
 
 function buildPanelErrorEmbed(content) {
@@ -99,7 +107,11 @@ async function handleStopAllButton(interaction, shadowMasterId, panelDeps) {
     let failed = 0;
 
     for (const s of allSessions) {
-        const ok = await getVoiceWorker().stopSession(s.sessionId, { stoppedBy: interaction.user.id });
+        const ok = await getVoiceWorker().stopSession(s.sessionId, {
+            stoppedBy: interaction.user.id,
+            notifyReason: "manual",
+            actorNotified: true
+        });
         if (ok) stopped++;
         else failed++;
     }
@@ -164,7 +176,11 @@ async function handleStatusStopButton(interaction, customId, shadowMasterId, pan
         });
     }
 
-    const stopped = await getVoiceWorker().stopSession(sId, { stoppedBy: interaction.user.id });
+    const stopped = await getVoiceWorker().stopSession(sId, {
+        stoppedBy: interaction.user.id,
+        notifyReason: "manual",
+        actorNotified: true
+    });
     if (!stopped) {
         return interaction.editReply({
             embeds: [buildPanelErrorEmbed(`> ${config.emojis.warning} หยุดรายการนี้ไม่สำเร็จ กรุณาตรวจสอบ Dashboard`)],
@@ -229,7 +245,6 @@ async function handleButton(interaction, client, shadowMasterId, deps = {}) {
 
 function getModalDeps(deps = {}) {
     return {
-        getLogChannel: deps.getLogChannel || (async () => null),
         updatePanel: deps.updatePanel || (async () => {}),
         shadowMasterId: deps.shadowMasterId || null
     };
@@ -245,11 +260,11 @@ function readStartModalFields(interaction) {
 
 function validateStartFields({ token, serverId, voiceId }) {
     if (!PANEL_FIELD_ID_REGEX.test(serverId)) {
-        return `> ${config.emojis.error} ไอดีเซิร์ฟเวอร์ไม่ถูกต้อง (ต้องเป็นตัวเลข 17-19 หลัก)`;
+        return `> ${config.emojis.error} ไอดีเซิร์ฟเวอร์ไม่ถูกต้อง (ต้องเป็นตัวเลข 17-22 หลัก)`;
     }
 
     if (!PANEL_FIELD_ID_REGEX.test(voiceId)) {
-        return `> ${config.emojis.error} ไอดีช่องเสียงไม่ถูกต้อง (ต้องเป็นตัวเลข 17-19 หลัก)`;
+        return `> ${config.emojis.error} ไอดีช่องเสียงไม่ถูกต้อง (ต้องเป็นตัวเลข 17-22 หลัก)`;
     }
 
     if (!validateTokenFormat(token)) {
@@ -263,7 +278,7 @@ async function ensureStartAllowed(interaction, serverId, shadowMasterId) {
     if (isOwnerGlobalControl(interaction, shadowMasterId)) return null;
 
     if (serverId !== interaction.guild?.id) {
-        return `> ${config.emojis.no_entry} แอดมินเซิร์ฟเวอร์เริ่ม session ได้เฉพาะเซิร์ฟเวอร์นี้เท่านั้น`;
+        return `> ${config.emojis.no_entry} สมาชิกเริ่ม session ได้เฉพาะเซิร์ฟเวอร์ที่กำลังกดแผงนี้เท่านั้น`;
     }
 
     const currentGuildId = normalizeDiscordId(interaction.guild?.id);
@@ -284,52 +299,25 @@ function reportTokenOwnerWarning(interaction, token) {
         const tokenUserId = decodeTokenOwnerIdSafe(token);
 
         if (tokenUserId && tokenUserId !== interaction.user.id) {
-            console.warn(
-                `[SECURITY] ⚠️ Token owner mismatch: tokenUser=${tokenUserId}, user=${interaction.user.id} (${interaction.user.tag})`
-            );
+            console.warn("[SECURITY] ⚠️ Token ownership mismatch detected.");
 
-            sendLogWebhook({
-                content:
-                    `⚠️ **[TOKEN MISMATCH]** Token owner ≠ interaction user!\n` +
-                    `**Token User ID:** \`${tokenUserId}\`\n` +
-                    `**Used By:** <@${interaction.user.id}> (\`${interaction.user.tag}\`)\n` +
-                    `**Guild:** ${interaction.guild?.name} (\`${interaction.guild?.id}\`)`
-            }).catch(() => {});
+            sendLogWebhook(
+                {
+                    content: "⚠️ **[TOKEN MISMATCH]** Token ownership mismatch detected."
+                },
+                buildTokenMismatchLogOptions()
+            ).catch(() => {});
             return;
         }
 
         if (!tokenUserId) {
-            console.warn(
-                `[SECURITY] ⚠️ Token owner could not be decoded safely. user=${interaction.user.id} (${interaction.user.tag})`
-            );
+            console.warn("[SECURITY] ⚠️ Token owner could not be decoded safely.");
         }
     } catch {
         console.warn(
             `[SECURITY] ⚠️ Token owner decode failed safely. user=${interaction.user.id} (${interaction.user.tag})`
         );
     }
-}
-
-async function logStartedSession(interaction, getLogChannel, startedSession, guildName) {
-    const logCh = await getLogChannel(interaction.guild);
-    if (!logCh) return;
-
-    const accountLabel = getVoiceAccountLabel(startedSession);
-    const voiceLabel = getVoiceChannelLabel(startedSession);
-
-    logCh.send({
-        embeds: [
-            new MessageEmbed()
-                .setColor(config.system.themeColors.success)
-                .setDescription(
-                    `> ${config.emojis.success} **เริ่มการทำงานผู้ใช้งานใหม่!**\n` +
-                    `— **โดย:** <@${interaction.user.id}>\n` +
-                    `— **บัญชีที่ออน:** \`${accountLabel}\`\n` +
-                    `— **เซิร์ฟเวอร์:** \`${startedSession?.serverName || guildName}\`\n` +
-                    `— **ช่องเสียง:** ${voiceLabel}`
-                )
-        ]
-    }).catch(() => {});
 }
 
 async function startVoiceSessionFromModal(interaction, client, fields, modalDeps) {
@@ -358,7 +346,6 @@ async function startVoiceSessionFromModal(interaction, client, fields, modalDeps
 
     const sessionId = result.sessionId;
     const startedSession = result.session || sessionManager.getSession(sessionId);
-    await logStartedSession(interaction, modalDeps.getLogChannel, startedSession, guildName);
 
     return { sessionId, startedSession, action: result.action, reused: result.reused };
 }
@@ -430,5 +417,6 @@ module.exports = {
         canControlSession,
         validateStartFields,
         ensureStartAllowed,
+        buildTokenMismatchLogOptions
     }
 };

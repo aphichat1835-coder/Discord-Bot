@@ -8,39 +8,83 @@ function escapeHtml(str) {
         .replaceAll("'", "&#39;");
 }
 
-const NAV_LINKS = [
-    ["/", "🏠 หน้าหลัก"],
-    ["/status", "📊 สถานะ"],
-    ["/settings", "⚙️ ตั้งค่า"],
-    ["/commands", "⚡ คำสั่ง"],
-    ["/whitelist", "📋 Whitelist"],
-    ["/approved", "✅ Approved"],
-    ["/join-campaign", "📥 Join"],
-    ["/docs", "📖 คู่มือ"],
-    ["/logs", "📜 Logs"],
-    ["/logs/voice", "🔊 Voice"],
-    ["/audit-logs", "🧾 Audit"]
+const NAV_GROUPS = [
+    ["ภาพรวม", [
+        ["/", "🏠 หน้าหลัก"],
+        ["/status", "📊 สถานะระบบ"]
+    ]],
+    ["จัดการ", [
+        ["/settings", "⚙️ ตั้งค่าบอท"],
+        ["/commands", "⚡ คำสั่ง"],
+        ["/approved", "✅ เซิร์ฟเวอร์"]
+    ]],
+    ["สมาชิก", [
+        ["/verification", "🛡️ ยืนยันตัวตน"],
+        ["/join-campaign", "📥 ดึงสมาชิก"]
+    ]],
+    ["ติดตามและช่วยเหลือ", [
+        ["/logs", "📜 บันทึกระบบ"],
+        ["/logs/voice", "🔊 บันทึกเสียง"],
+        ["/docs", "📖 คู่มือ"]
+    ]]
 ];
 
 function navBar(active = "") {
-    return `<nav class="nav">${NAV_LINKS.map(([href, label]) =>
-        `<a href="${href}"${href === active ? " class=\"active\"" : ""}>${label}</a>`
+    return `<nav class="nav" aria-label="เมนูหลักของ Owner Dashboard">${NAV_GROUPS.map(([group, links]) =>
+        `<div class="nav-group"><span class="nav-group-label">${group}</span><div class="nav-group-links">${links.map(([href, label]) =>
+            `<a href="${href}"${href === active ? " class=\"active\" aria-current=\"page\"" : ""}>${label}</a>`
+        ).join("")}</div></div>`
     ).join("")}</nav>`;
 }
 
 function toastScript() {
     return `
-<div class="toast" id="__toast"></div>
+<div class="toast" id="__toast" role="status" aria-live="polite" aria-atomic="true"></div>
 <script>
 function showToast(msg,type){
     type=type||'ok';
     const t=document.getElementById('__toast');
     t.textContent=msg;
     t.className='toast '+type;
-    t.style.display='block';
+    t.classList.add('show');
     clearTimeout(t.__t);
-    t.__t=setTimeout(()=>t.style.display='none',3800);
+    t.__t=setTimeout(()=>t.classList.remove('show'),3800);
 }
+</script>`;
+}
+
+function dashboardUxScript() {
+    return `<script>
+(function(){
+    window.dashboardInterval=function(callback,delay){
+        return window.setInterval(function(){
+            if(!document.hidden) callback();
+        },delay);
+    };
+    window.setDashboardButtonBusy=function(button,busy,label){
+        if(!button) return;
+        if(busy){
+            button.dataset.idleText=button.textContent;
+            button.disabled=true;
+            button.setAttribute('aria-busy','true');
+            if(label) button.textContent=label;
+            return;
+        }
+        button.disabled=false;
+        button.removeAttribute('aria-busy');
+        if(button.dataset.idleText) button.textContent=button.dataset.idleText;
+    };
+    document.addEventListener('keydown',function(event){
+        if(event.key!=='Escape') return;
+        const openModal=[...document.querySelectorAll('.modal')].find(function(modal){
+            return getComputedStyle(modal).display!=='none';
+        });
+        if(!openModal) return;
+        const close=openModal.querySelector('.modal-close');
+        if(close) close.click();
+        else openModal.style.display='none';
+    });
+})();
 </script>`;
 }
 
@@ -87,9 +131,12 @@ function createViewHelpers(baseCss) {
     function shell(title, body) {
         return `<!DOCTYPE html><html lang="th"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<meta name="theme-color" content="#07050f"><meta name="color-scheme" content="dark">
 <title>${title} — Phomueangtai Enterprise</title>
 <style>${baseCss}</style>
-</head><body>${body}${csrfFetchScript()}</body></html>`;
+</head><body><a class="skip-link" href="#main-content">ข้ามไปเนื้อหาหลัก</a>
+<div class="ambient-layer" aria-hidden="true"><span></span><span></span></div>
+${dashboardUxScript()}<main id="main-content" tabindex="-1">${body}</main>${csrfFetchScript()}</body></html>`;
     }
 
     return {

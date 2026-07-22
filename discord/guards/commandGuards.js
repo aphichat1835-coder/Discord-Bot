@@ -95,6 +95,14 @@ function sanitizeUserMessage(msg, options = {}) {
     return clean.trim();
 }
 
+function markCommandAccepted(interaction) {
+    if (interaction?.isCommand?.()) {
+        interaction.__commandAccepted = true;
+        interaction.__onCommandAccepted?.();
+    }
+    return true;
+}
+
 function isVoicePanelControl(customId, ids, prefixes) {
     if (typeof customId !== "string") return false;
 
@@ -115,6 +123,7 @@ module.exports = {
     checkRoleHierarchy,
     safeReply,
     safeDefer,
+    markCommandAccepted,
     sanitizeUserMessage,
     isVoicePanelControl
 };

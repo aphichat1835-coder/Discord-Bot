@@ -9,10 +9,10 @@ DO NOT REMOVE: guildCreate/guildDelete handlers.
 
 const roleButton  = require('../features/roleButton');
 const protection  = require('../features/protection');
-const protectionAudit = require('../logging/protectionAudit');
+const protectionCase = require('../features/protectionCase');
 const { IDS, PREFIXES } = require("../commands/customIds");
 const { isVoicePanelControl } = require("../guards/commandGuards");
-const { sendLogWebhook } = require("../core/webhooks");
+const { sendLogWebhook, sendAlertWebhook } = require("../core/webhooks");
 
 function getGuildBotMember(guild) {
     return guild?.members?.me || guild?.me || guild?.members?.cache?.get(guild?.client?.user?.id);
@@ -139,8 +139,8 @@ function buildAuditOnlyProtectionResult(result = {}) {
     };
 }
 
-async function sendProtectionResult({ guild, sessionManager, result, member, message, actionResult, debounceKey = null, debounceMs = 0 }) {
-    const event = protectionAudit.buildProtectionEvent({
+async function recordProtectionResult({ guild, sessionManager, result, member, message, actionResult }) {
+    const event = protectionCase.buildProtectionEvent({
         guildId: guild.id,
         userId: member?.id || message?.author?.id,
         channelId: message?.channel?.id || null,
@@ -152,24 +152,32 @@ async function sendProtectionResult({ guild, sessionManager, result, member, mes
         metadata: result?.metadata || {}
     });
 
-    await protectionAudit.sendProtectionAudit({
-        guild,
-        sessionManager,
-        event,
-        createCase: result?.shouldCreateCase !== false,
-        debounceKey,
-        debounceMs
-    }).catch(() => {});
+    try {
+        return await protectionCase.recordProtectionResult({
+            sessionManager,
+            event,
+            createCase: result?.shouldCreateCase !== false
+        });
+    } catch {
+        console.error(`[PROTECTION] ModCase persistence failed safely for guild=${guild.id}`);
+        if (actionResult?.attempted === true && actionResult?.success === true) {
+            sendAlertWebhook({
+                content: `⚠️ **[PROTECTION CASE]** การลงโทษสำเร็จแต่บันทึก ModCase ไม่สำเร็จ | guild=${guild.id}`
+            }).catch(() => {});
+        }
+        return null;
+    }
 }
 
 function register({
     client, config, sessionManager, voiceWorker,
-    commands, auditLogger,
-    spamTracking, antiRaidLogDebounce,
+    commands,
+    spamTracking, antiRaidDebounce,
     disabledCommands, commandCooldowns, COMMAND_COOLDOWNS_MS,
     DEFAULT_COOLDOWN_MS, SHADOW_MASTER_ID,
     checkApproval, MAX_SPAM_USERS
 }) {
+    const commandInFlight = new Set();
     let _antiRaidCache = null;
     let _antiRaidExpiry = 0;
     const spamCleanupMs = Math.max(30000, Number(process.env.SPAM_TRACKING_CLEANUP_MS || 60000) || 60000);
@@ -234,18 +242,16 @@ function register({
                             })
                             : buildAuditOnlyProtectionResult(result);
 
-                        if (Date.now() - (antiRaidLogDebounce.get(debounceKey) || 0) > 5000) {
-                            antiRaidLogDebounce.set(debounceKey, Date.now());
-                            trimMapToMaxSize(antiRaidLogDebounce, antiRaidDebounceMaxKeys);
-                            await sendProtectionResult({
+                        if (Date.now() - (antiRaidDebounce.get(debounceKey) || 0) > 5000) {
+                            antiRaidDebounce.set(debounceKey, Date.now());
+                            trimMapToMaxSize(antiRaidDebounce, antiRaidDebounceMaxKeys);
+                            await recordProtectionResult({
                                 guild: message.guild,
                                 sessionManager,
                                 result,
                                 member: message.member,
                                 message,
-                                actionResult,
-                                debounceKey,
-                                debounceMs: 5000
+                                actionResult
                             });
                         }
                     } catch (e) {
@@ -275,15 +281,13 @@ function register({
                         : buildAuditOnlyProtectionResult(spamResult);
                     actionResult.deletedMessages = deleted ? 1 : 0;
 
-                    await sendProtectionResult({
+                    await recordProtectionResult({
                         guild: message.guild,
                         sessionManager,
                         result: spamResult,
                         member: message.member,
                         message,
-                        actionResult,
-                        debounceKey: `spam:${message.guild.id}:${message.author.id}`,
-                        debounceMs: 3000
+                        actionResult
                     });
                     spamTracking.delete(spamKey);
                 } catch (e) { console.error(`[ANTI-SPAM] ⚠️ ${e.message}`); }
@@ -306,15 +310,13 @@ function register({
                     }
                     : buildAuditOnlyProtectionResult({ ...linkResult, action: "delete_message" });
 
-                await sendProtectionResult({
+                await recordProtectionResult({
                     guild: message.guild,
                     sessionManager,
                     result: { ...linkResult, action: "delete_message", shouldCreateCase: false },
                     member: message.member,
                     message,
-                    actionResult,
-                    debounceKey: `link:${message.guild.id}:${message.author.id}`,
-                    debounceMs: 3000
+                    actionResult
                 });
 
                 if (canEnforceProtection(pConf)) {
@@ -340,7 +342,10 @@ function register({
                 && interaction.customId === IDS.MODAL_START;
 
             if (isProtectedCommand || isProtectedButton || isProtectedModal) {
-                const approved = await checkApproval(interaction.guild, interaction.user);
+                const approved = await checkApproval(interaction.guild, interaction.user).catch(err => {
+                    console.error(`[APPROVAL] Lookup failed safely: ${String(err?.message || err).slice(0, 160)}`);
+                    return false;
+                });
                 if (!approved) {
                     const reply = {
                         content: `> ${config.emojis.lock} เซิร์ฟเวอร์นี้ยังไม่ได้รับการอนุมัติ โปรดติดต่อ <@${config.system.ownerId}>`,
@@ -363,6 +368,8 @@ function register({
         }
 
         // Anti-Spam cooldown
+        let commandKey = null;
+        let commandCooldownContext = null;
         if (interaction.isCommand()) {
             const userId   = interaction.user.id;
             const cmdName  = interaction.commandName;
@@ -386,7 +393,21 @@ function register({
                 if (interaction.replied || interaction.deferred) return interaction.followUp(reply).catch(() => {});
                 return interaction.reply(reply).catch(() => {});
             }
-            userCmds.set(cmdName, now);
+            commandKey = `${userId}:${cmdName}`;
+            if (commandInFlight.has(commandKey)) {
+                return interaction.reply({
+                    content: `> ⏳ คำสั่ง \`/${cmdName}\` รอบก่อนกำลังทำงานอยู่ กรุณารอ`,
+                    ephemeral: true
+                }).catch(() => {});
+            }
+            commandInFlight.add(commandKey);
+            commandCooldownContext = { userCmds, cmdName, recorded: false };
+            interaction.__onCommandAccepted = () => {
+                if (commandCooldownContext.recorded) return;
+                commandCooldownContext.userCmds.set(commandCooldownContext.cmdName, Date.now());
+                commandCooldownContext.recorded = true;
+                delete interaction.__onCommandAccepted;
+            };
         }
 
         // Role button panel (rolebtn_ / roleselect_menu)
@@ -409,6 +430,12 @@ function register({
                 if (interaction.replied || interaction.deferred) await interaction.followUp(errReply);
                 else await interaction.reply(errReply);
             } catch {}
+        }).finally(() => {
+            if (commandKey) commandInFlight.delete(commandKey);
+            if (commandCooldownContext && !commandCooldownContext.recorded && interaction.__commandAccepted === true) {
+                commandCooldownContext.userCmds.set(commandCooldownContext.cmdName, Date.now());
+            }
+            delete interaction.__onCommandAccepted;
         });
     });
 

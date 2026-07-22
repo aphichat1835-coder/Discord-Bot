@@ -1,0 +1,677 @@
+'use strict';
+
+/**
+ * Tests for discord/verification/utils/ipUtils.js
+ *
+ * Covers new/changed code from the PR:
+ *   - normalizeIP() – enhanced with IPv6 bracket stripping and IPv4:port stripping
+ *   - splitHeaderIps() – new helper (tested indirectly via getTrustedRequestIp)
+ *   - isValidIP() – new helper (tested via getTrustedRequestIp)
+ *   - getTrustedRequestIp() – new exported function
+ *   - getRealIP() – thin wrapper on getTrustedRequestIp
+ *   - detectSpoofedHeaders() – tested via processIP behavior (internal, tested indirectly)
+ *
+ * NOTE: processIP() requires network access and crypto env vars.
+ * We test it in isolation by mocking fetch and setting ENCRYPTION_KEY.
+ */
+
+// Set up required env vars before requiring the module
+process.env.ENCRYPTION_KEY = 'test-key-for-unit-tests-only';
+process.env.API_SECRET = 'test-api-secret';
+
+const {
+    normalizeIP,
+    getTrustedRequestIp,
+    getRealIP,
+    getIpLookupConfig,
+    getIpLookupDiagnostics,
+    lookupIP,
+    isPrivateIP,
+    extractDevice,
+    processIP,
+    applyHistoricalLocationContext,
+    _test
+} = require('../discord/verification/utils/ipUtils');
+
+test('x-forwarded-for parsing is capped before normalization', () => {
+    const values = Array.from({ length: 50 }, (_, index) => `203.0.113.${index + 1}`);
+    const parsed = _test.splitHeaderIps(values.join(','));
+
+    expect(parsed).toHaveLength(_test.X_FORWARDED_FOR_MAX_ENTRIES);
+    expect(parsed).toEqual(values.slice(0, _test.X_FORWARDED_FOR_MAX_ENTRIES));
+});
+
+// ---------------------------------------------------------------------------
+// Helper to build a mock Express request
+// ---------------------------------------------------------------------------
+function makeReq({ ip, socketIp, headers = {} } = {}) {
+    return {
+        ip,
+        socket: socketIp ? { remoteAddress: socketIp } : {},
+        connection: {},
+        headers
+    };
+}
+
+// ---------------------------------------------------------------------------
+// normalizeIP()
+// ---------------------------------------------------------------------------
+describe('normalizeIP', () => {
+    test('returns unknown for falsy input', () => {
+        expect(normalizeIP(null)).toBe('unknown');
+        expect(normalizeIP(undefined)).toBe('unknown');
+        expect(normalizeIP('')).toBe('unknown');
+        expect(normalizeIP(0)).toBe('unknown');
+    });
+
+    test('strips IPv4-mapped IPv6 prefix ::ffff:', () => {
+        expect(normalizeIP('::ffff:1.2.3.4')).toBe('1.2.3.4');
+        expect(normalizeIP('::ffff:192.168.1.100')).toBe('192.168.1.100');
+    });
+
+    test('maps ::1 to 127.0.0.1', () => {
+        expect(normalizeIP('::1')).toBe('127.0.0.1');
+    });
+
+    test('strips zone ID from IPv6 link-local addresses', () => {
+        expect(normalizeIP('fe80::1%eth0')).toBe('fe80::1');
+        expect(normalizeIP('fe80::abc:def%lo')).toBe('fe80::abc:def');
+    });
+
+    test('strips brackets from bracketed IPv6 addresses (new in PR)', () => {
+        expect(normalizeIP('[::1]')).toBe('::1');
+        expect(normalizeIP('[2001:db8::1]')).toBe('2001:db8::1');
+        expect(normalizeIP('[fe80::1]')).toBe('fe80::1');
+    });
+
+    test('strips port from IPv4:port format (new in PR)', () => {
+        expect(normalizeIP('1.2.3.4:8080')).toBe('1.2.3.4');
+        expect(normalizeIP('10.0.0.1:443')).toBe('10.0.0.1');
+        expect(normalizeIP('192.168.1.1:3000')).toBe('192.168.1.1');
+    });
+
+    test('returns regular IPv4 addresses unchanged', () => {
+        expect(normalizeIP('8.8.8.8')).toBe('8.8.8.8');
+        expect(normalizeIP('1.1.1.1')).toBe('1.1.1.1');
+        expect(normalizeIP('192.168.0.1')).toBe('192.168.0.1');
+    });
+
+    test('returns regular IPv6 addresses unchanged', () => {
+        expect(normalizeIP('2001:db8::1')).toBe('2001:db8::1');
+    });
+
+    test('trims whitespace', () => {
+        expect(normalizeIP('  8.8.8.8  ')).toBe('8.8.8.8');
+    });
+
+    test('returns unknown for empty string after processing', () => {
+        // edge case: whitespace-only
+        expect(normalizeIP('   ')).toBe('unknown');
+    });
+
+    // Regression: ::ffff: + IPv4:port should strip both prefixes in correct order
+    test('handles ::ffff: prefix before port stripping', () => {
+        // ::ffff:1.2.3.4 → 1.2.3.4, not treated as IPv4:port
+        expect(normalizeIP('::ffff:1.2.3.4')).toBe('1.2.3.4');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// getTrustedRequestIp()
+// ---------------------------------------------------------------------------
+describe('getTrustedRequestIp', () => {
+    describe('when ENABLE_CF_IP_HEADER is false (default)', () => {
+        // By default the module is loaded without ENABLE_CF_IP_HEADER=true,
+        // so CF header should NOT be used as the trusted source.
+
+        test('uses req.ip when it is a valid public IP', () => {
+            const req = makeReq({ ip: '8.8.8.8' });
+            const result = getTrustedRequestIp(req);
+            expect(result.ip).toBe('8.8.8.8');
+            expect(result.source).toBe('req.ip');
+        });
+
+        test('falls back to socket remoteAddress when req.ip is absent', () => {
+            const req = makeReq({ socketIp: '8.8.4.4' });
+            const result = getTrustedRequestIp(req);
+            expect(result.ip).toBe('8.8.4.4');
+            expect(result.source).toBe('remoteAddress');
+        });
+
+        test('returns unknown when no valid IP is available', () => {
+            const req = makeReq({});
+            const result = getTrustedRequestIp(req);
+            expect(result.ip).toBe('unknown');
+            expect(result.source).toBe('unknown');
+        });
+
+        test('ignores cf-connecting-ip header when ENABLE_CF_IP_HEADER is false', () => {
+            const req = makeReq({
+                ip: '8.8.8.8',
+                headers: { 'cf-connecting-ip': '1.2.3.4' }
+            });
+            const result = getTrustedRequestIp(req);
+            // Should use req.ip, not CF header
+            expect(result.ip).toBe('8.8.8.8');
+            expect(result.source).toBe('req.ip');
+        });
+
+        test('prefers req.ip over remoteAddress', () => {
+            const req = makeReq({ ip: '8.8.8.8', socketIp: '1.1.1.1' });
+            const result = getTrustedRequestIp(req);
+            expect(result.ip).toBe('8.8.8.8');
+            expect(result.source).toBe('req.ip');
+        });
+
+        test('strips ::ffff: from req.ip before using', () => {
+            const req = makeReq({ ip: '::ffff:8.8.8.8' });
+            const result = getTrustedRequestIp(req);
+            expect(result.ip).toBe('8.8.8.8');
+        });
+
+        test('private req.ip is still selected over remoteAddress (isValidIP only)', () => {
+            // 192.168.x.x is private – not a valid public IP
+            const req = makeReq({ ip: '192.168.1.1', socketIp: '8.8.8.8' });
+            const result = getTrustedRequestIp(req);
+            // 192.168.1.1 is a valid IP (passes isValidIP) but isPrivateIP
+            // getTrustedRequestIp uses isValidIP only (not isPrivateIP) to choose req.ip
+            // so req.ip (private) should still be selected over remoteAddress
+            expect(result.ip).toBe('192.168.1.1');
+            expect(result.source).toBe('req.ip');
+        });
+
+        test('uses localhost socket remoteAddress when it is the only source', () => {
+            const req = makeReq({ socketIp: '127.0.0.1' });
+            const result = getTrustedRequestIp(req);
+            // 127.0.0.1 is valid for isValidIP (net.isIP returns 4) but is private
+            // getTrustedRequestIp checks isValidIP only, so it will use it
+            expect(result.ip).toBe('127.0.0.1');
+            expect(result.source).toBe('remoteAddress');
+        });
+    });
+
+    describe('req object edge cases', () => {
+        test('handles req.ip of undefined gracefully', () => {
+            const req = { headers: {}, socket: {}, connection: {} };
+            const result = getTrustedRequestIp(req);
+            expect(result).toHaveProperty('ip');
+            expect(result).toHaveProperty('source');
+        });
+
+        test('handles completely empty headers', () => {
+            const req = makeReq({ ip: '8.8.8.8', headers: {} });
+            const result = getTrustedRequestIp(req);
+            expect(result.ip).toBe('8.8.8.8');
+        });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// getRealIP()
+// ---------------------------------------------------------------------------
+describe('getRealIP', () => {
+    test('returns the ip from getTrustedRequestIp', () => {
+        const req = makeReq({ ip: '1.1.1.1' });
+        expect(getRealIP(req)).toBe('1.1.1.1');
+    });
+
+    test('returns unknown when no valid IP available', () => {
+        const req = makeReq({});
+        expect(getRealIP(req)).toBe('unknown');
+    });
+
+    test('returns normalized IP (strips ::ffff:)', () => {
+        const req = makeReq({ ip: '::ffff:8.8.4.4' });
+        expect(getRealIP(req)).toBe('8.8.4.4');
+    });
+});
+
+describe('IP lookup diagnostics', () => {
+    test('reports bounded cache and circuit state without sensitive IP values', () => {
+        const diag = getIpLookupDiagnostics();
+
+        expect(diag).toHaveProperty('cacheSize');
+        expect(diag).toHaveProperty('cacheMax');
+        expect(diag).toHaveProperty('cacheTtlMs');
+        expect(diag).toHaveProperty('circuitFailures');
+        expect(diag).toHaveProperty('circuitOpen');
+        expect(diag.cacheSize).toBeLessThanOrEqual(diag.cacheMax);
+        const publicIpSample = ['8', '8', '8', '8'].join('.');
+        expect(JSON.stringify(diag)).not.toContain(publicIpSample);
+    });
+});
+
+describe('private and reserved IP detection', () => {
+    test.each([
+        '10.0.0.1',
+        '100.64.0.1',
+        '169.254.1.1',
+        '172.16.0.1',
+        '192.0.2.10',
+        '198.51.100.10',
+        '203.0.113.10',
+        '224.0.0.1',
+        '240.0.0.1',
+        '2001:db8::1',
+        'ff02::1'
+    ])('%s is treated as private/reserved', ip => {
+        expect(isPrivateIP(ip)).toBe(true);
+    });
+
+    test('public IP remains lookup eligible', () => {
+        expect(isPrivateIP('8.8.8.8')).toBe(false);
+    });
+
+    test.each(['127.0.0.1', '10.0.0.1', '192.168.1.10'])(
+        '%s is not persisted as a client identity', ip => {
+            const info = _test.makeUnknownIpInfo({
+                trustedIp: { ip, source: 'req.ip' },
+                headerMeta: { headerIps: [], spoofFlags: [], spoofSuspected: false, headerIpConflict: false }
+            });
+            expect(info.encryptedRawIp).toBeNull();
+            expect(info.ipHash).toBeNull();
+        }
+    );
+});
+
+describe('bounded IP lookup response reader', () => {
+    test('rejects non-finite configured byte limits', () => {
+        expect(_test.resolveResponseMaxBytes(Infinity)).toBe(256 * 1024);
+        expect(_test.resolveResponseMaxBytes('not-a-number')).toBe(256 * 1024);
+    });
+
+    test('aborts an oversized chunked response before buffering the remainder', async () => {
+        const abort = jest.fn();
+        const cancel = jest.fn().mockResolvedValue(undefined);
+        const releaseLock = jest.fn();
+        const reads = [
+            { done: false, value: Buffer.alloc(10) },
+            { done: false, value: Buffer.alloc(10) }
+        ];
+        const response = {
+            body: { getReader: () => ({ read: jest.fn(() => Promise.resolve(reads.shift())), cancel, releaseLock }) }
+        };
+        await expect(_test.readLimitedResponseText(response, 15, { abort }))
+            .rejects.toThrow('exceeded configured byte limit');
+        expect(abort).toHaveBeenCalled();
+        expect(cancel).toHaveBeenCalled();
+        expect(releaseLock).toHaveBeenCalled();
+    });
+
+    test('propagates a slow or aborted stream failure and releases the reader', async () => {
+        const releaseLock = jest.fn();
+        const response = {
+            body: { getReader: () => ({ read: jest.fn().mockRejectedValue(new Error('aborted')), releaseLock }) }
+        };
+        await expect(_test.readLimitedResponseText(response, 1024)).rejects.toThrow('aborted');
+        expect(releaseLock).toHaveBeenCalled();
+    });
+});
+
+describe('processIP factual network findings', () => {
+    const oldFetch = global.fetch;
+    const oldLookupEnabled = process.env.IP_LOOKUP_ENABLED;
+
+    afterEach(() => {
+        global.fetch = oldFetch;
+        if (oldLookupEnabled === undefined) delete process.env.IP_LOOKUP_ENABLED;
+        else process.env.IP_LOOKUP_ENABLED = oldLookupEnabled;
+    });
+
+    test('returns concrete findings from lookup and headers without a score', async () => {
+        process.env.IP_LOOKUP_ENABLED = 'true';
+        const providerPayload = {
+            status: 'success',
+            country: 'United States',
+            countryCode: 'US',
+            isp: 'Example VPN Hosting',
+            org: 'Example Hosting',
+            as: 'AS123 Example',
+            proxy: true,
+            hosting: true,
+            vpn: true,
+            tor: false,
+            query: '8.8.8.8'
+        };
+        global.fetch = jest.fn(async () => ({
+            ok: true,
+            text: async () => JSON.stringify(providerPayload)
+        }));
+
+        const info = await processIP(makeReq({
+            ip: '8.8.8.8',
+            headers: {
+                'x-real-ip': '1.1.1.1'
+            }
+        }));
+
+        expect(info.findings).toEqual(expect.arrayContaining([
+            'vpn',
+            'proxy',
+            'hosting',
+            'spoofed_header',
+            'xRealIp_conflicts_with_trusted_ip'
+        ]));
+        expect(info.lookupStatus).toBe('success');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// External IP lookup config
+// ---------------------------------------------------------------------------
+describe('IP lookup config', () => {
+    const oldEnabled = process.env.IP_LOOKUP_ENABLED;
+    const oldBaseUrl = process.env.IP_LOOKUP_API_BASE_URL;
+    const oldFallbackEnabled = process.env.IP_LOOKUP_FALLBACK_ENABLED;
+    const oldMaxmindAccountId = process.env.MAXMIND_ACCOUNT_ID;
+    const oldMaxmindLicenseKey = process.env.MAXMIND_LICENSE_KEY;
+
+    afterEach(() => {
+        if (oldEnabled === undefined) delete process.env.IP_LOOKUP_ENABLED;
+        else process.env.IP_LOOKUP_ENABLED = oldEnabled;
+
+        if (oldBaseUrl === undefined) delete process.env.IP_LOOKUP_API_BASE_URL;
+        else process.env.IP_LOOKUP_API_BASE_URL = oldBaseUrl;
+
+        if (oldFallbackEnabled === undefined) delete process.env.IP_LOOKUP_FALLBACK_ENABLED;
+        else process.env.IP_LOOKUP_FALLBACK_ENABLED = oldFallbackEnabled;
+
+        if (oldMaxmindAccountId === undefined) delete process.env.MAXMIND_ACCOUNT_ID;
+        else process.env.MAXMIND_ACCOUNT_ID = oldMaxmindAccountId;
+        if (oldMaxmindLicenseKey === undefined) delete process.env.MAXMIND_LICENSE_KEY;
+        else process.env.MAXMIND_LICENSE_KEY = oldMaxmindLicenseKey;
+    });
+
+    test('uses HTTPS default lookup base URL', () => {
+        delete process.env.IP_LOOKUP_API_BASE_URL;
+        const config = getIpLookupConfig();
+
+        expect(config.enabled).toBe(true);
+        expect(config.baseUrl.startsWith('https://')).toBe(true);
+    });
+
+    test('allows only credential-free HTTPS lookup hosts from the explicit allowlist', () => {
+        expect(_test.validateLookupTarget(new URL('https://api.ipapi.is/?q=8.8.8.8')).hostname)
+            .toBe('api.ipapi.is');
+        expect(() => _test.validateLookupTarget(new URL('http://api.ipapi.is/?q=8.8.8.8')))
+            .toThrow('credential-free HTTPS');
+        expect(() => _test.validateLookupTarget(new URL('https://127.0.0.1/8.8.8.8')))
+            .toThrow('not allowlisted');
+        expect(() => _test.validateLookupTarget(new URL('https://user:pass@api.ipapi.is/?q=8.8.8.8')))
+            .toThrow('credential-free HTTPS');
+    });
+
+    test('keeps optional MaxMind credentials out of the request URL and public config', () => {
+        process.env.MAXMIND_ACCOUNT_ID = '123456';
+        process.env.MAXMIND_LICENSE_KEY = 'test-license-secret';
+        const config = getIpLookupConfig();
+        const provider = config.providers.find(item => item.type === 'maxmind');
+        const url = _test.providerUrl(provider, '8.8.8.8');
+        const headers = _test.providerHeaders(provider);
+
+        expect(provider).toBeDefined();
+        expect(url.hostname).toBe('geoip.maxmind.com');
+        expect(url.username).toBe('');
+        expect(url.password).toBe('');
+        expect(url.toString()).not.toContain('test-license-secret');
+        expect(JSON.stringify(config)).not.toContain('test-license-secret');
+        expect(headers.Authorization).toMatch(/^Basic /);
+    });
+
+    test('can disable external IP lookup', async () => {
+        process.env.IP_LOOKUP_ENABLED = 'false';
+
+        const lookup = await lookupIP('9.9.9.9');
+
+        expect(lookup.provider).toBe('disabled');
+        expect(lookup.status).toBe('lookup_disabled');
+        expect(lookup.query).toBe('9.9.9.9');
+    });
+
+    test('falls back to the HTTPS location provider and preserves signal uncertainty', async () => {
+        process.env.IP_LOOKUP_ENABLED = 'true';
+        delete process.env.IP_LOOKUP_API_BASE_URL;
+        process.env.IP_LOOKUP_FALLBACK_ENABLED = 'true';
+        global.fetch = jest.fn(async url => {
+            if (String(url).includes('api.ipapi.is')) {
+                return { ok: false, status: 503, text: async () => '' };
+            }
+            return {
+                ok: true,
+                text: async () => JSON.stringify({
+                    ip: '9.9.9.8',
+                    country_name: 'Thailand',
+                    country_code: 'TH',
+                    region: 'Krabi',
+                    city: 'Krabi',
+                    latitude: 8.0863,
+                    longitude: 98.9063,
+                    org: 'Example ISP',
+                    asn: 'AS64500'
+                })
+            };
+        });
+
+        const lookup = await lookupIP('9.9.9.8');
+
+        expect(lookup.provider).toBe('ipapi.co');
+        expect(lookup.fallbackUsed).toBe(true);
+        expect(lookup.attemptedProviders).toEqual(['ipapi.is', 'ipapi.co']);
+        expect(lookup.securitySignalsAvailable).toBe(false);
+        expect(lookup.countryCode).toBe('TH');
+        expect(lookup.city).toBe('Krabi');
+        expect(lookup.locationConfidence).toBe('low');
+        expect(lookup.locationConfidenceReasons).toContain('single_provider');
+    });
+
+    test('combines matching providers and exposes honest confidence evidence', async () => {
+        process.env.IP_LOOKUP_ENABLED = 'true';
+        delete process.env.IP_LOOKUP_API_BASE_URL;
+        process.env.IP_LOOKUP_FALLBACK_ENABLED = 'true';
+        global.fetch = jest.fn(async url => {
+            if (String(url).includes('api.ipapi.is')) {
+                return {
+                    ok: true,
+                    text: async () => JSON.stringify({
+                        ip: '9.9.9.7',
+                        location: {
+                            country: 'Thailand', country_code: 'TH', state: 'Krabi', city: 'Krabi',
+                            latitude: 8.0863, longitude: 98.9063, timezone: 'Asia/Bangkok', accuracy: 30
+                        },
+                        company: { name: 'Example ISP', type: 'isp' },
+                        asn: { asn: 64500, org: 'Example ISP' },
+                        is_proxy: false, is_vpn: false, is_tor: false, is_datacenter: false
+                    })
+                };
+            }
+            return {
+                ok: true,
+                text: async () => JSON.stringify({
+                    ip: '9.9.9.7', country_name: 'Thailand', country_code: 'TH',
+                    region: 'Krabi', city: 'Krabi', latitude: 8.08, longitude: 98.9,
+                    timezone: 'Asia/Bangkok', org: 'Example ISP', asn: 'AS64500'
+                })
+            };
+        });
+
+        const lookup = await lookupIP('9.9.9.7');
+
+        expect(lookup.provider).toBe('consensus');
+        expect(lookup.consensusUsed).toBe(true);
+        expect(lookup.providerCount).toBe(2);
+        expect(lookup.providerAgreement.countryCode.agreed).toBe(true);
+        expect(lookup.locationConfidence).toBe('high');
+        expect(lookup.accuracyRadiusKm).toBe(30);
+        expect(lookup.providerEvidence).toHaveLength(2);
+        expect(JSON.stringify(lookup.providerEvidence)).not.toContain('9.9.9.7');
+    });
+
+    test('marks country disagreement as low confidence instead of averaging coordinates', () => {
+        const merged = _test.mergeProviderResults([
+            { provider: 'one', status: 'success', countryCode: 'TH', region: 'Krabi', city: 'Krabi', lat: 8, lon: 99 },
+            { provider: 'two', status: 'success', countryCode: 'SG', region: 'Singapore', city: 'Singapore', lat: 1.3, lon: 103.8 }
+        ], [], ['one', 'two']);
+
+        expect(merged.locationConfidence).toBe('low');
+        expect(merged.locationConfidenceReasons).toContain('providers_disagree_country');
+        expect([[8, 99], [1.3, 103.8]]).toContainEqual([merged.lat, merged.lon]);
+    });
+
+    test('normalizes MaxMind confidence and accuracy radius without exposing credentials', () => {
+        const result = _test.normalizeMaxMindResponse({
+            country: { iso_code: 'TH', confidence: 95, names: { en: 'Thailand' } },
+            subdivisions: [{ confidence: 80, names: { en: 'Krabi' } }],
+            city: { confidence: 70, names: { en: 'Krabi' } },
+            location: { latitude: 8.08, longitude: 98.9, time_zone: 'Asia/Bangkok', accuracy_radius: 25 },
+            traits: { autonomous_system_number: 64500, autonomous_system_organization: 'Example ISP' }
+        }, 'geoip.maxmind.com');
+
+        expect(result).toMatchObject({
+            countryCode: 'TH', region: 'Krabi', city: 'Krabi', accuracyRadiusKm: 25,
+            countryConfidence: 95, regionConfidence: 80, cityConfidence: 70
+        });
+    });
+
+    test('opens circuit breaker after repeated provider failures', async () => {
+        process.env.IP_LOOKUP_ENABLED = 'true';
+        global.fetch = jest.fn(async () => {
+            throw new Error('provider down');
+        });
+
+        for (let i = 0; i < 10; i++) {
+            await expect(lookupIP(`8.8.4.${i}`)).rejects.toThrow('provider down');
+        }
+
+        const lookup = await lookupIP('1.0.0.1');
+        expect(lookup.provider).toBe('circuit_breaker');
+        expect(lookup.status).toBe('lookup_failed');
+    });
+});
+
+describe('location confidence context', () => {
+    test('uses matching browser timezone only as a small supporting signal', () => {
+        const result = _test.applyRequestLocationContext({
+            timezone: 'Asia/Bangkok', locationConfidenceScore: 70,
+            locationConfidenceReasons: [], providerCount: 2, providerAgreement: { countryCode: { conflict: false } }
+        }, { body: { timezone: 'Asia/Bangkok' } }, { spoofSuspected: false });
+
+        expect(result.locationConfidenceScore).toBe(75);
+        expect(result.browserTimezoneMatches).toBe(true);
+        expect(result.locationConfidenceReasons).toContain('browser_timezone_matches');
+    });
+
+    test('compares the latest stored network without treating history as proof', () => {
+        const result = applyHistoricalLocationContext({
+            countryCode: 'TH', region: 'Krabi', as: 'AS64500',
+            locationConfidenceScore: 70, locationConfidenceReasons: [],
+            lookupProviderCount: 2, providerAgreement: { countryCode: { conflict: false } }
+        }, { lastCountryCode: 'TH', lastRegion: 'Krabi', lastAs: 'AS64500' });
+
+        expect(result.locationConfidenceScore).toBe(75);
+        expect(result.locationConfidenceReasons).toContain('historical_network_matches');
+        expect(result.historyConsistency.matches).toEqual(['country', 'region', 'asn']);
+    });
+});
+
+describe('device fingerprint metadata', () => {
+    test('includes a fingerprint version next to fingerprintHash', () => {
+        const device = extractDevice({
+            headers: {
+                'user-agent': 'Mozilla/5.0 Test',
+                'accept-language': 'th-TH'
+            },
+            body: {
+                platform: 'MacIntel',
+                timezone: 'Asia/Bangkok',
+                screenSize: '1440x900',
+                viewportSize: '1200x800'
+            }
+        });
+
+        expect(device.fingerprintVersion).toBe(1);
+        expect(device.fingerprintHash).toEqual(expect.any(String));
+    });
+
+    test('keeps User-Agent visible while marking contradictory client hints', () => {
+        const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/138.0.0.0 Safari/537.36';
+        const device = extractDevice({
+            headers: { 'user-agent': userAgent, 'accept-language': 'th-TH' },
+            body: {
+                userAgent,
+                platform: 'MacIntel',
+                clientHints: { platform: 'macOS', mobile: true, brands: [{ brand: 'Chromium', version: '138' }] }
+            }
+        });
+
+        expect(device.userAgent).toBe(userAgent);
+        expect(device.userAgentSuspected).toBe(true);
+        expect(device.userAgentFlags).toEqual(expect.arrayContaining([
+            'navigator_platform_conflicts_with_user_agent',
+            'client_hint_platform_conflicts_with_user_agent',
+            'client_hint_mobile_conflicts_with_user_agent'
+        ]));
+    });
+});
+
+// ---------------------------------------------------------------------------
+// detectSpoofedHeaders() – tested indirectly via getTrustedRequestIp behavior
+// and by examining what getRealIP returns under suspicious header conditions
+//
+// We test the key flag behaviors by manually replicating the logic:
+// The function is internal but its effects surface through processIP.
+// Here we test the observable behaviors via the exported API.
+// ---------------------------------------------------------------------------
+describe('Spoof detection via exported API behavior', () => {
+    test('getTrustedRequestIp does NOT use cf-connecting-ip by default', () => {
+        // Even with a different CF header, the req.ip wins
+        const req = makeReq({
+            ip: '8.8.8.8',
+            headers: {
+                'cf-connecting-ip': '5.5.5.5'
+            }
+        });
+        expect(getRealIP(req)).toBe('8.8.8.8');
+    });
+
+    test('getTrustedRequestIp uses remoteAddress as fallback when req.ip is missing', () => {
+        const req = {
+            headers: { 'x-forwarded-for': '8.8.8.8' },
+            socket: { remoteAddress: '1.2.3.4' },
+            connection: {}
+        };
+        const result = getTrustedRequestIp(req);
+        // Should use remoteAddress, not x-forwarded-for (no trust proxy)
+        expect(result.ip).toBe('1.2.3.4');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// normalizeIP edge cases and regression tests
+// ---------------------------------------------------------------------------
+describe('normalizeIP regression cases', () => {
+    test('does not break on IPv4 with no port', () => {
+        expect(normalizeIP('203.0.113.5')).toBe('203.0.113.5');
+    });
+
+    test('handles IPv4:port edge case with port 0', () => {
+        expect(normalizeIP('1.2.3.4:0')).toBe('1.2.3.4');
+    });
+
+    test('does not strip colon from IPv6 address (not IPv4:port pattern)', () => {
+        const ipv6 = '2001:db8:85a3::8a2e:370:7334';
+        const result = normalizeIP(ipv6);
+        // Should return the IPv6 address unchanged (it doesn't match IPv4:port regex)
+        expect(result).toBe('2001:db8:85a3::8a2e:370:7334');
+    });
+
+    test('handles string with only spaces', () => {
+        expect(normalizeIP('   ')).toBe('unknown');
+    });
+
+    test('handles large number as input (coerced to string)', () => {
+        // normalizeIP does String(ip) internally
+        const result = normalizeIP(2130706433); // 127.0.0.1 as integer
+        // Result should be the string representation, not a valid IP format
+        expect(typeof result).toBe('string');
+    });
+});

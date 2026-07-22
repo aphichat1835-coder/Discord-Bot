@@ -1,187 +1,20 @@
-const crypto = require("node:crypto");
-const mongoose = require("mongoose");
-const { safeAuditText, safeAuditError } = require("./logCore");
-const auditLogStore = require("./auditLogStore");
-const fallbackLocks = new Map();
+"use strict";
 
-function loadAuditLogStore() {
-    return auditLogStore;
-}
-
-function canUseMongoStore() {
-    return mongoose.connection?.readyState === 1;
-}
-
-function storageKey(guildId, eventId) {
-    return `audit_event_${guildId}_${eventId}`;
-}
-
-function indexKey(guildId) {
-    return `audit_event_index_${guildId}`;
-}
-
-function makeEventId(createdAt = Date.now()) {
-    return `${createdAt}_${crypto.randomUUID().slice(0, 8)}`;
-}
-
-function textOrNull(value, max) {
-    return value ? safeAuditText(value, max) : null;
-}
-
-function idOrNull(value) {
-    return value ? String(value) : null;
-}
-
-function normalizeEvidence(value) {
-    return Array.isArray(value) ? value.slice(0, 25).map(item => safeAuditText(item, 300)) : [];
-}
-
-function normalizeMetadata(value) {
-    return value && typeof value === "object" ? value : {};
-}
-
-async function withFallbackLock(guildId, fn) {
-    const key = String(guildId || "unknown");
-    const previous = fallbackLocks.get(key) || Promise.resolve();
-    let release;
-    const current = new Promise(resolve => {
-        release = resolve;
-    });
-    const lock = previous.catch(() => {}).then(() => current);
-    fallbackLocks.set(key, lock);
-
-    try {
-        await previous.catch(() => {});
-        return await fn();
-    } finally {
-        release();
-        if (fallbackLocks.get(key) === lock) fallbackLocks.delete(key);
-    }
-}
-
-function normalizeAuditRecord(input = {}) {
-    const createdAt = Number(input.createdAt || Date.now());
-    const eventId = safeAuditText(input.eventId || input.id || makeEventId(createdAt), 120);
-    return {
-        eventId,
-        guildId: String(input.guildId || "unknown"),
-        source: safeAuditText(input.source || "audit", 40),
-        category: safeAuditText(input.category || "server", 40),
-        severity: safeAuditText(input.severity || "info", 40),
-        actionType: safeAuditText(input.actionType || input.type || "UNKNOWN", 120),
-        actorId: idOrNull(input.actorId),
-        targetId: idOrNull(input.targetId),
-        channelId: idOrNull(input.channelId),
-        messageId: idOrNull(input.messageId),
-        roleId: idOrNull(input.roleId),
-        reason: textOrNull(input.reason, 500),
-        summary: textOrNull(input.summary, 1000),
-        evidence: normalizeEvidence(input.evidence),
-        metadata: normalizeMetadata(input.metadata),
-        createdAt,
-        storedAt: Date.now()
-    };
-}
-
-async function saveFallback(sessionManager, record) {
-    if (!sessionManager?.setSetting || !sessionManager?.getSetting) return null;
-    return withFallbackLock(record.guildId, async () => {
-        await sessionManager.setSetting(storageKey(record.guildId, record.eventId), record);
-        const current = await sessionManager.getSetting(indexKey(record.guildId), []);
-        const list = Array.isArray(current) ? current : [];
-        const next = [record.eventId, ...list.filter(id => id !== record.eventId)].slice(0, 500);
-        await sessionManager.setSetting(indexKey(record.guildId), next);
-        return record;
-    });
-}
-
-async function saveAuditRecord(sessionManager, recordInput) {
-    const record = normalizeAuditRecord(recordInput);
-    try {
-        let savedToStore = false;
-        if (canUseMongoStore() && auditLogStore?.saveRecord) {
-            await auditLogStore.saveRecord(record);
-            savedToStore = true;
-        }
-        const fallbackRecord = await saveFallback(sessionManager, record).catch(() => null);
-        return fallbackRecord || (savedToStore ? record : null);
-    } catch (err) {
-        console.warn(`[AUDIT_STORAGE] save failed: ${safeAuditError(err, 240)}`);
-        return saveFallback(sessionManager, record).catch(() => null);
-    }
-}
-
-async function getAuditRecord(sessionManager, guildId, eventId) {
-    if (!guildId || !eventId) return null;
-    try {
-        const fromStore = canUseMongoStore() && auditLogStore?.getRecord ? await auditLogStore.getRecord(guildId, eventId) : null;
-        if (fromStore) return fromStore;
-    } catch (err) {
-        console.warn(`[AUDIT_STORAGE] store get failed: ${safeAuditError(err, 240)}`);
-    }
-    if (!sessionManager?.getSetting) return null;
-    return sessionManager.getSetting(storageKey(guildId, eventId), null);
-}
-
-async function listFallback(sessionManager, guildId, limit = 50) {
-    if (!sessionManager?.getSetting || !guildId) return [];
-    const ids = await sessionManager.getSetting(indexKey(guildId), []);
-    const out = [];
-    for (const id of (Array.isArray(ids) ? ids : []).slice(0, Math.max(1, Math.min(200, Number(limit) || 50)))) {
-        const record = await sessionManager.getSetting(storageKey(guildId, id), null);
-        if (record) out.push(record);
-    }
-    return out;
-}
-
-function matchesFilters(record, filters = {}) {
-    for (const [key, value] of Object.entries(filters || {})) {
-        if (value === undefined || value === null || value === "") continue;
-        if (key === "from") {
-            if (Number(record.createdAt || 0) < Number(value)) return false;
-            continue;
-        }
-        if (key === "to") {
-            if (Number(record.createdAt || 0) > Number(value)) return false;
-            continue;
-        }
-        if (String(record[key] || "") !== String(value)) return false;
-    }
-    return true;
-}
-
-async function listAuditRecords(sessionManager, guildId, limit = 50, filters = {}) {
-    if (!guildId) return [];
-    let storeAvailable = canUseMongoStore() && auditLogStore?.listRecords;
-    try {
-        if (storeAvailable) return await auditLogStore.listRecords(guildId, limit, filters);
-    } catch (err) {
-        console.warn(`[AUDIT_STORAGE] store list failed: ${safeAuditError(err, 240)}`);
-        storeAvailable = false;
-    }
-    const fallbackRecords = await listFallback(sessionManager, guildId, limit);
-    return Object.keys(filters || {}).length
-        ? fallbackRecords.filter(record => matchesFilters(record, filters))
-        : fallbackRecords;
-}
+// Protected compatibility boundary only. Enterprise Audit remains retired.
+// Every operation delegates to the internal-event namespace and storage rules.
+const internalEventStorage = require("./internalEventStorage");
 
 module.exports = {
-    storageKey,
-    indexKey,
-    makeEventId,
-    normalizeAuditRecord,
-    canUseMongoStore,
-    saveAuditRecord,
-    getAuditRecord,
-    listAuditRecords,
-    _test: {
-        saveFallback,
-        listFallback,
-        textOrNull,
-        idOrNull,
-        normalizeEvidence,
-        normalizeMetadata,
-        matchesFilters,
-        withFallbackLock
-    }
+    normalizeAuditRecord: internalEventStorage.normalizeInternalEvent,
+    saveAuditRecord: internalEventStorage.saveInternalEvent,
+    getAuditRecord: internalEventStorage.getInternalEvent,
+    listAuditRecords: internalEventStorage.listInternalEvents,
+
+    normalizeInternalEvent: internalEventStorage.normalizeInternalEvent,
+    saveInternalEvent: internalEventStorage.saveInternalEvent,
+    getInternalEvent: internalEventStorage.getInternalEvent,
+    listInternalEvents: internalEventStorage.listInternalEvents,
+    storageKey: internalEventStorage.storageKey,
+    indexKey: internalEventStorage.indexKey,
+    canUseMongoStore: internalEventStorage.canUseMongoStore
 };

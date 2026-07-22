@@ -1,7 +1,7 @@
 "use strict";
 
 const DISCORD_ID_REGEX = /^\d{17,22}$/;
-const PANEL_FIELD_ID_REGEX = /^\d{17,19}$/;
+const PANEL_FIELD_ID_REGEX = DISCORD_ID_REGEX;
 
 function normalizeDiscordId(value) {
     const id = String(value || "").trim();

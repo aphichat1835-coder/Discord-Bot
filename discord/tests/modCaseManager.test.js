@@ -9,15 +9,21 @@ function createFakeSessionManager() {
         async getSetting(key, fallback = null) {
             return store.has(key) ? store.get(key) : fallback;
         },
+        async getSettingStrict(key) {
+            return { found: store.has(key), value: store.get(key) ?? null };
+        },
         async setSetting(key, value) {
             store.set(key, value);
             return true;
+        },
+        async deleteSetting(key) {
+            return store.delete(key);
         },
         _store: store
     };
 }
 
-test("createCase assigns increasing case numbers", async () => {
+test("createCase assigns increasing case numbers", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const sessionManager = createFakeSessionManager();
     const first = await modCaseManager.createCase(sessionManager, {
         guildId: "g1",
@@ -40,7 +46,7 @@ test("createCase assigns increasing case numbers", async () => {
     assert.equal(first.evidence[0], "message spam");
 });
 
-test("createCase fallback serializes concurrent counters and user indexes", async () => {
+test("createCase fallback serializes concurrent counters and user indexes", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const sessionManager = createFakeSessionManager();
     const [first, second] = await Promise.all([
         modCaseManager.createCase(sessionManager, { guildId: "g1", action: "ban", userId: "u1" }),
@@ -52,7 +58,7 @@ test("createCase fallback serializes concurrent counters and user indexes", asyn
     assert.equal(list.length, 2);
 });
 
-test("getCase and listUserCases work with settings fallback", async () => {
+test("getCase and listUserCases work with settings fallback", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const sessionManager = createFakeSessionManager();
     const created = await modCaseManager.createCase(sessionManager, {
         guildId: "g1",
@@ -69,7 +75,7 @@ test("getCase and listUserCases work with settings fallback", async () => {
     assert.equal(list[0].caseNumber, created.caseNumber);
 });
 
-test("updateCaseReason amends existing case", async () => {
+test("updateCaseReason amends existing case", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const sessionManager = createFakeSessionManager();
     const created = await modCaseManager.createCase(sessionManager, {
         guildId: "g1",
@@ -82,4 +88,30 @@ test("updateCaseReason amends existing case", async () => {
     const updated = await modCaseManager.updateCaseReason(sessionManager, "g1", created.caseNumber, "new reason", "m2");
     assert.equal(updated.reason, "new reason");
     assert.equal(updated.amendedBy, "m2");
+});
+
+test("case fallback fails closed when a database write reports false", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const sessionManager = createFakeSessionManager();
+    sessionManager.setSetting = async () => false;
+    await assert.rejects(
+        modCaseManager.createCase(sessionManager, { guildId: "g1", action: "ban", userId: "u1" }),
+        /CASE_SAVE_FAILED|CASE_COUNTER_SAVE_FAILED/
+    );
+});
+
+test("updateCaseStatus persists pending workflow outcomes", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const sessionManager = createFakeSessionManager();
+    const created = await modCaseManager.createCase(sessionManager, {
+        guildId: "g1", action: "kick", userId: "u4", status: "pending"
+    });
+    const completed = await modCaseManager.updateCaseStatus(
+        sessionManager, "g1", created.caseNumber, "completed", { actionApplied: true, dmSent: true }
+    );
+    assert.equal(completed.status, "completed");
+    assert.equal(completed.metadata.actionApplied, true);
+    assert.equal(completed.evidence.includes("DM sent: yes"), true);
+    await assert.rejects(
+        modCaseManager.updateCaseStatus(sessionManager, "g1", created.caseNumber, "unknown"),
+        /CASE_STATUS_INVALID/
+    );
 });

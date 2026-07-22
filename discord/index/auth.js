@@ -206,7 +206,8 @@ function pinPageHTML(error = false, next = '/') {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Dashboard — ยืนยันตัวตน</title>
+<meta name="theme-color" content="#07050f"><meta name="color-scheme" content="dark">
+<title>เข้าสู่ Owner Dashboard</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   body{font-family:'Segoe UI','Noto Sans Thai',sans-serif;background:#07050f;
@@ -235,24 +236,37 @@ function pinPageHTML(error = false, next = '/') {
          transition:all .18s;font-family:inherit}
   button:hover{box-shadow:0 0 20px rgba(124,58,237,.45);transform:translateY(-1px)}
   button:active{transform:scale(.98)}
+  :focus-visible{outline:3px solid rgba(216,180,254,.9);outline-offset:3px}
+  button[aria-busy=true]{opacity:.72;cursor:wait;transform:none}
   .attempts{font-size:.7rem;color:rgba(255,255,255,.2);margin-top:14px}
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 </style>
 </head>
 <body>
 <div class="card">
-  <div class="icon">🛡️</div>
-  <h1>Admin Dashboard</h1>
-  <p class="sub">กรุณากรอกรหัสผ่านเพื่อเข้าถึง</p>
-  ${error ? '<div class="err">❌ รหัสผ่านไม่ถูกต้อง กรุณาลองใหม่</div>' : ''}
-  <form method="POST" action="/auth/pin">
+  <div class="icon" aria-hidden="true">🛡️</div>
+  <h1>Owner Dashboard</h1>
+  <p class="sub">กรอกรหัสผ่านเจ้าของเพื่อเข้าสู่ศูนย์ควบคุม</p>
+  ${error ? '<div class="err" role="alert">❌ รหัสผ่านไม่ถูกต้อง กรุณาลองใหม่</div>' : ''}
+  <form id="pinForm" method="POST" action="/auth/pin">
     <input type="hidden" name="next" value="${escapeAttr(next)}">
     <div class="pin-wrap">
-      <input type="password" name="pin" placeholder="กรอกรหัสผ่าน..." autofocus autocomplete="current-password">
+      <label class="sr-only" for="ownerPin">รหัสผ่านเจ้าของ</label>
+      <input id="ownerPin" type="password" name="pin" placeholder="กรอกรหัสผ่าน..." autofocus required autocomplete="current-password">
     </div>
     <button type="submit">🔐 เข้าสู่ Dashboard</button>
   </form>
   <p class="attempts">Phomueangtai Enterprise — Admin Only</p>
 </div>
+<script>
+document.getElementById('pinForm').addEventListener('submit',function(){
+  const button=this.querySelector('button');
+  button.disabled=true;
+  button.setAttribute('aria-busy','true');
+  button.textContent='⏳ กำลังตรวจสอบ...';
+});
+</script>
 </body>
 </html>`;
 }

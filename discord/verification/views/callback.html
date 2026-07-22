@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
+  <meta name="theme-color" content="#07110f">
+  <meta name="color-scheme" content="dark">
+  <title>กำลังยืนยันตัวตน — Discord Verification</title>
+  <link rel="stylesheet" href="/verification-assets/css/dashboard.css">
+  <link rel="stylesheet" href="/verification-assets/css/workspace.css">
+</head>
+
+<body class="callback-page">
+  <main class="callback-center">
+    <section class="callback-shell">
+      <div class="callback-brand callback-brand-clean">
+        <span class="callback-brand-mark" aria-hidden="true">V</span>
+        <div><h2>ยืนยันตัวตนกับเซิร์ฟเวอร์</h2>
+        <div class="muted small">เชื่อมบัญชี ตรวจเงื่อนไข และรับยศในขั้นตอนเดียว</div></div>
+      </div>
+
+      <div class="card callback-card callback-card-premium">
+        <output id="s-loading" class="callback-state active" aria-live="polite" tabindex="-1">
+          <div class="verify-loader-wrap">
+            <div class="verify-loader">
+              <div class="verify-loader-ring"></div>
+              <div class="verify-loader-ring verify-loader-ring-2"></div>
+              <div class="verify-loader-core"></div>
+            </div>
+          </div>
+
+          <h1 class="callback-title loading-title">กำลังตรวจสอบข้อมูลของคุณ</h1>
+
+          <p id="statusText" class="callback-subtitle">
+            กำลังรับข้อมูลจาก Discord
+          </p>
+
+          <ol class="verify-steps" aria-label="ขั้นตอนการยืนยันตัวตน">
+            <li class="verify-step active" data-step="discord">
+              <span class="step-dot"></span>
+              <span>กำลังรับข้อมูลจาก Discord</span>
+            </li>
+
+            <li class="verify-step" data-step="account">
+              <span class="step-dot"></span>
+              <span>กำลังตรวจสอบบัญชี Discord</span>
+            </li>
+
+            <li class="verify-step" data-step="security">
+              <span class="step-dot"></span>
+              <span>กำลังตรวจสอบเงื่อนไขความปลอดภัย</span>
+            </li>
+
+            <li class="verify-step" data-step="role">
+              <span class="step-dot"></span>
+              <span>กำลังเพิ่มยศให้คุณ</span>
+            </li>
+          </ol>
+
+          <div class="callback-note callback-note-blue">
+            หน้านี้จะอัปเดตสถานะให้เอง ไม่ต้องกดซ้ำหรือรีเฟรช
+          </div>
+        </output>
+
+        <output id="s-success" class="callback-state" aria-live="polite" tabindex="-1">
+          <div class="result-ring ok compact">
+            <div class="result-icon ok">✓</div>
+          </div>
+
+          <h1 class="callback-title success-title">
+            ยืนยันตัวตนสำเร็จ
+          </h1>
+
+          <p id="ok-msg" class="callback-subtitle">
+            ระบบเพิ่มยศให้เรียบร้อยแล้ว
+          </p>
+
+          <div class="user-mini callback-user-card">
+            <img id="avatar" class="user-mini-avatar" alt="รูปโปรไฟล์ Discord" style="display:none;">
+
+            <div style="min-width:0;">
+              <div id="name" class="callback-user-name truncate">Discord User</div>
+              <div id="tag" class="muted small mono truncate">—</div>
+
+              <div id="rolePill" class="badge badge-ok mt-8" style="display:none;">
+                ได้รับยศ: <span id="roleName">—</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="callback-note callback-note-success compact-note">
+            กลับไปที่ Discord ได้เลย ถ้ายศยังไม่ขึ้นให้รีเฟรช Discord
+          </div>
+
+          <div class="modal-actions callback-actions">
+            <a class="btn btn-primary callback-main-btn" href="https://discord.com/">
+              เปิดแอป Discord
+            </a>
+          </div>
+        </output>
+
+        <div id="s-error" class="callback-state" role="alert" aria-live="assertive" tabindex="-1">
+          <div class="error-layout">
+            <div class="error-cross-wrap">
+              <div class="error-cross">×</div>
+            </div>
+
+            <div class="error-copy">
+              <h1 class="callback-title error-title">
+                ยืนยันไม่สำเร็จ
+              </h1>
+
+              <p id="err-msg" class="callback-subtitle error-message">
+                กรุณากลับไปกดปุ่มยืนยันใหม่อีกครั้ง
+              </p>
+            </div>
+
+            <div id="request-id" class="error-ref" style="display:none;"></div>
+
+            <div id="err-detail" class="error-ref error-ref-danger" style="display:none;"></div>
+
+            <div class="error-guide-card">
+              <div class="error-guide-title">ควรทำยังไงต่อ?</div>
+
+              <div class="error-guide-list">
+                <div class="error-guide-item">
+                  <span>1</span>
+                  <p>กลับไปที่ Discord แล้วกดปุ่มยืนยันใหม่</p>
+                </div>
+
+                <div class="error-guide-item">
+                  <span>2</span>
+                  <p>ใช้บัญชี Discord เดิมที่กดอนุญาต</p>
+                </div>
+
+                <div class="error-guide-item">
+                  <span>3</span>
+                  <p>ถ้ายังไม่ได้ ให้แจ้งแอดมินเซิร์ฟเวอร์</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="modal-actions callback-actions">
+              <a class="btn btn-soft callback-main-btn" href="https://discord.com/">
+                กลับไป Discord
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/verification-assets/js/callback.js"></script>
+</body>
+</html>

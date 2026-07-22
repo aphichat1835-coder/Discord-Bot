@@ -38,6 +38,7 @@ function renderShadowLoginPage(showInvalidPin, shadowCss = "") {
         <input type="password" name="pin" placeholder="🔑 กรอกรหัสผ่านลับ..." style="text-align:center;margin-bottom:14px;">
         <button type="submit" class="btn btn-danger">เข้าสู่ Shadow Portal</button>
     </form>
+    <p style="color:var(--text3);font-size:0.72em;margin-top:14px;">ใช้ Shadow PIN ที่ตั้งไว้ หรือ DASHBOARD_PIN ของเจ้าของบอท</p>
     <p style="color:var(--text3);font-size:0.7em;margin-top:16px;">Unauthorized access is monitored & logged.</p>
 </div>
 </div>
@@ -86,6 +87,29 @@ function bruteKey(req) {
     return req.ip || "unknown";
 }
 
+function readNonEmptyPin(value) {
+    if (value === undefined || value === null) return "";
+    const pin = String(value);
+    return pin.trim() ? pin : "";
+}
+
+function timingSafePinEqual(providedPin, expectedPin) {
+    const provided = readNonEmptyPin(providedPin);
+    const expected = readNonEmptyPin(expectedPin);
+    if (!provided || !expected) return false;
+    const providedBuffer = Buffer.from(provided, "utf8");
+    const expectedBuffer = Buffer.from(expected, "utf8");
+    return providedBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(providedBuffer, expectedBuffer);
+}
+
+function readShadowPin(getPin) {
+    try {
+        return readNonEmptyPin(typeof getPin === "function" ? getPin() : "");
+    } catch {
+        return "";
+    }
+}
+
 function createShadowPortalAuth({
     cookieName,
     ttlMs,
@@ -116,7 +140,11 @@ function createShadowPortalAuth({
     function authorize(req, res, body, providedPin) {
         const requestBody = body || {};
         const options = { cookieName, ttlMs, getCookieSecret };
-        if (providedPin === getPin()) {
+        const shadowPin = readShadowPin(getPin);
+        const ownerRecoveryPin = readNonEmptyPin(process.env.DASHBOARD_PIN);
+        const validPin = timingSafePinEqual(providedPin, shadowPin) || timingSafePinEqual(providedPin, ownerRecoveryPin);
+        if (validPin) {
+            bruteGuard.delete(bruteKey(req));
             issueShadowSessionCookie(res, options);
             return true;
         }
@@ -153,6 +181,9 @@ module.exports = {
     renderShadowBlockedPage,
     renderShadowLoginPage,
     _test: {
-        escapeHtml
+        escapeHtml,
+        readNonEmptyPin,
+        timingSafePinEqual,
+        readShadowPin
     }
 };

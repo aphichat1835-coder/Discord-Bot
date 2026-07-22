@@ -1,275 +1,157 @@
 # Project Context
 
-This is the quick context file for the Phomueangtai Personal Multi-Tool Discord Bot.
+Last verified against the implementation: 2026-07-16 (`tt`).
 
 ## Identity
 
-```txt
-Repository: aphichat1835-coder/Discord-Bot
-Runtime: Node.js 24
-Discord library: discord.js v13
-Database: MongoDB / Mongoose
-Web framework: Express
-Architecture: one repository, two services, shared MongoDB
+Phomueangtai is a personal multi-tool Discord bot. It is not a
+verification-only project. The same runtime contains:
+
+- Discord bot and slash commands
+- voice/session management
+- Owner Dashboard
+- Owner-only verification management
+- public member OAuth2 verification
+- MongoDB persistence
+- moderation cases and protection enforcement
+- protection and role-button features
+- approved/pending guild controls
+- owner/system hooks protected by repository policy
+
+## Locked runtime architecture
+
+- One repository.
+- One Node.js 24 process started by `npm start`.
+- One Express app and one public port: `PORT || 3000`.
+- One Mongoose connection owned by `discord/sessionManager.js`.
+- One public HTTPS origin for the Owner Dashboard and OAuth callback.
+- `discord.js` remains v13.
+- Voice/session remains enabled and is not merged into verification code.
+- `discord/systemProvider.js` and `discord/systemProvider/` remain owner-locked.
+
+The former `dashboard-public` service no longer exists. Its active verification
+models, routes, utilities, views, and assets live in `discord/verification/`.
+Guild-admin OAuth/session access was removed; management is Owner PIN only.
+Owner Verification is rendered inside the purple Owner Dashboard shell. The
+guild chooser and five-section per-guild workspace use the existing Owner PIN,
+navigation, and CSRF boundary; the public `/auth/callback` member page keeps its
+existing independent design. Existing routes stay compatible.
+
+## Entrypoint and boot
+
+`discord/index.js` is the only runtime entrypoint.
+
+```text
+create Express app and register routes
+  → listen on PORT
+  → connect MongoDB
+  → load persisted bot/session state
+  → run initial verification migration, history backfill, snapshot recovery/cleanup, retention, reveal expiry, and OAuth token refresh
+  → login Discord client
+  → resume normal bot/voice work
 ```
 
-This project is not verification-only. Verification is one subsystem inside a broader personal multi-tool Discord bot.
+The HTTP server starts first so `/ping` can answer while readiness is degraded.
+`/health` returns 200 only when required MongoDB, Discord, slash-command
+registration, voice, and verification components are ready. Its public response exposes readiness
+booleans only; detailed diagnostics remain behind Owner authentication.
 
-Current dependency baseline:
+## Main implementation map
 
-- Service 1 keeps `discord.js` v13 and uses `@discordjs/voice` 0.19.x, Mongoose 8.x, and Express 5.x.
-- Service 2 uses Express 5.x, Mongoose 8.x, `connect-mongo` 6.x, `express-rate-limit` 8.x, and Jest 30.
-- `discord.js` v14 and Mongoose v9 are not current project targets without scoped owner approval.
+| Area | Source |
+| --- | --- |
+| Runtime orchestration | `discord/index.js`, `discord/index/system.js` |
+| Main HTTP APIs and health | `discord/index/server.js` |
+| Owner pages/auth | `discord/index/views.js`, `discord/index/auth.js` |
+| Owner verification bridge | `discord/index/verifyOwner.js` |
+| Persistence | `discord/sessionManager.js` |
+| Commands | `discord/commands.js`, `discord/commands/` |
+| Voice/session | `discord/voiceWorker.js`, `discord/voiceWorker/`, `discord/sessions/` |
+| Moderation cases | `discord/logging/modCaseManager.js` |
+| Protection/role button | `discord/features/` |
+| Verification runtime | `discord/verification/runtime.js`, `discord/verification/lifecycle.js` |
+| Verification routes | `discord/verification/routes/` |
+| Verification persistence | `discord/verification/models/` |
+| Per-IP identity correlation | `discord/verification/models/IpIdentityLink.js`, `IpIdentity*History.js` |
+| OAuth/IP/device/crypto helpers | `discord/verification/utils/` |
+| Owner Verification UI | `discord/verification/page.js`, `guildPage.js`, `ownerStyles.js`, `public/js/guild-dashboard.js` |
+| Public callback UI | `discord/verification/views/callback.html`, `public/css/`, `public/js/callback.js` |
+| Verification tests | `verification-tests/` |
+| Migration/guards | `scripts/` |
 
-## Non-Negotiable Owner Decisions
+## Public and Owner verification flow
 
-- Keep `discord.js` v13 for now.
-- Keep the voice/session subsystem.
-- Keep the current dashboard structure.
-- Keep the current verification architecture.
-- Keep owner/admin controls.
-- Keep one repository with two services and shared MongoDB.
-- Keep `discord/systemProvider.js` and all files inside `discord/systemProvider/` owner-locked.
+1. `/setup-verify` creates/updates a verification panel using signed state and
+   panel revision.
+2. A member authorizes the documented OAuth scopes, including `guilds.join`.
+3. `GET /auth/callback` serves the browser collection page.
+4. `POST /auth/callback` exchanges the one-time code, fetches Discord profile,
+   connections and guilds, captures browser/network information, evaluates
+   policy, joins the target guild if needed, assigns the configured role, and
+   persists the result.
+5. Optional fetch failure records data-quality status and preserves the last
+   successful account snapshot.
+6. Owner management is available at `/verification` and
+   `/verification/:guildId` for every guild the bot is currently in.
 
-## Service Map
+Existing command names, custom IDs, signed state, panel revisions,
+`guilds.join`, Join Campaign, role assignment, and retention behavior remain
+compatible.
 
-### Service 1 - Main Discord Bot / Owner System
+Verification maintenance repeats hourly only after the initial pass succeeds.
+It resumes bounded automatic migration, canonical IP-history backfill, snapshot
+rollback recovery and garbage cleanup, soft-delete retention, legacy reveal
+expiry, and encrypted OAuth token refresh.
 
-```txt
-Entry: discord/index.js
-Root directory: .
-Start command: npm start
-Health routes: /ping, /health
+The Enterprise Audit server-activity logger has been retired. `/setup-log`, its
+Dashboard/API routes, Discord event listeners, storage/reconciliation modules,
+and channel delivery are absent. Historical MongoDB collections and Discord
+channels are preserved as orphaned rollback data. Operational webhooks,
+Verification sensitive-access audit, and ModCase persistence are separate and
+remain active.
+
+## Sensitive data rules
+
+- Access/refresh tokens are encrypted with the existing compatible format.
+- Raw IP is encrypted; an HMAC hash is used for correlation.
+- `IpIdentityLink` stores the encrypted raw IP and per-guild correlation
+  summary. Canonical user/device/role history uses separate paginated documents
+  without an overall item cap; normal APIs never expose the encrypted field.
+- Fingerprint source material is never persisted; only its HMAC is stored.
+- Normal list/export APIs never return raw tokens or raw IP.
+- The normal Member Detail GET response is categorized but redacted. Full raw
+  values require the separate CSRF-protected and rate-limited POST action.
+- Member Detail is Owner-only and uses a CSRF-protected, rate-limited POST to
+  decrypt and display the complete raw IP and OAuth tokens in one action while
+  appending an internal audit event. Compatibility reveal routes retain their
+  stricter Owner-supplied reason contract.
+- Failure messages saved in data-quality metadata are redacted status codes.
+- Logs, tests, migrations, docs, and exports must not print secrets, tokens, or
+  raw IP.
+- `premiumType` is compatibility data, not a reliable Nitro verdict.
+
+## Compatibility
+
+The existing Mongoose model and collection names are preserved. Schema changes
+are additive. Historical `adminOAuth` encrypted fields are retained and the
+maintenance lifecycle can refresh them; `LEGACY_ADMIN_OAUTH_REDIRECT_URI` can
+pin their original redirect URI. No admin OAuth route creates new grants.
+
+Complete OAuth snapshots use versioned normal-item chunks and byte chunks for
+oversized objects. There is no aggregate truncation budget; every document must
+remain under the effective BSON ceiling and every reconstructed byte payload
+must pass count, order, length, and SHA-256 checks. Failed rollback work is
+persisted in `OAuthSnapshotRecovery` for bounded maintenance retries.
+
+## Validation baseline
+
+Use:
+
+```bash
+npm run check
+npm test
+npm audit --audit-level=high
 ```
 
-Responsibilities:
-
-- Discord bot runtime and login.
-- Slash command registration and routing.
-- Voice/session lifecycle, resume, health, and control panel.
-- Owner dashboard pages and JSON/control APIs.
-- Owner Audit dashboard/API bundle at `/audit-logs` and `/api/audit/*`.
-- Audit logging, protection hooks, role buttons, and guild approval flow.
-- Owner verification/IP reveal review surface.
-- Protected owner/system hook initialization at subsystem level.
-
-### Service 2 - Dashboard Public / Verification Dashboard
-
-```txt
-Entry: dashboard-public/index.js
-Root directory: dashboard-public/
-Start command: npm start
-Health routes: /ping, /health
-```
-
-Responsibilities:
-
-- Discord OAuth2 verification callback.
-- Admin OAuth login and guild selection.
-- Guild admin dashboard.
-- Verification panel management.
-- Verification logs, members, stats, risk summaries, and reveal requests.
-- Internal APIs consumed by Service 1 owner dashboard.
-
-## Subsystem Map
-
-### Main bot and boot
-
-Start with:
-
-```txt
-discord/index.js
-discord/core/env.js
-discord/core/http.js
-discord/core/webhooks.js
-discord/core/safeLogger.js
-discord/core/featureFlags.js
-discord/core/loadEnv.js
-discord/index/system.js
-discord/index/events.js
-discord/index/server.js
-discord/index/auth.js
-discord/index/views.js
-discord/index/viewStyles.js
-discord/index/viewHelpers.js
-discord/index/dashboardState.js
-discord/index/sessionSerializer.js
-discord/index/memoryMonitor.js
-discord/index/auditWebBundle.js
-discord/index/auditApiRoutes.js
-discord/index/auditDashboardPage.js
-discord/index/joinCampaignRoutes.js
-discord/index/joinCampaignPage.js
-discord/index/verifyOwner.js
-```
-
-Important: boot order is Express first, MongoDB second, Discord login third. Do not reorder casually.
-
-### Slash commands
-
-Start with:
-
-```txt
-discord/commands.js
-discord/commands/registry.js
-discord/commands/customIds.js
-discord/commands/panelViews.js
-discord/commands/panelInteractions.js
-discord/commands/information.js
-discord/commands/moderation.js
-discord/commands/moderationWorkflow.js
-discord/commands/moderationHelpers.js
-discord/commands/utility.js
-discord/commands/verification.js
-discord/commands/setupLog.js
-```
-
-Command areas:
-
-- `/panel`
-- `/help`
-- `/stats`
-- `/serverinfo`
-- `/userinfo`
-- `/ping`
-- `/clear`
-- `/ban`
-- `/kick`
-- `/timeout`
-- `/voicekickall`
-- `/say`
-- `/announce`
-- `/steal`
-- `/backup`
-- `/restore`
-- `/setup-log`
-- `/whitelist`
-- `/setup`
-- `/setup-verify`
-
-### Voice/session
-
-Start with:
-
-```txt
-discord/sessionManager.js
-discord/voiceWorker.js
-discord/voiceWorker/lifecycle.js
-discord/voiceWorker/session.js
-discord/voiceWorker/state.js
-discord/voiceWorker/queue.js
-discord/voiceWorker/cacheUtils.js
-discord/commands.js
-discord/index/server.js
-discord/index/views.js
-```
-
-Preserve:
-
-- Token encryption/decryption behavior.
-- Session identity and active-session rules.
-- One identity can run in multiple guilds.
-- One identity should not be active in multiple voice channels inside the same guild.
-- Multiple identities can be active in the same guild/channel.
-- `voiceWorker` owns live lifecycle.
-- `sessionManager` owns persistence, locks, metadata, and DB state.
-- Dashboard/API starts should flow through the central `voiceWorker.ensureVoiceSession()` path instead of creating duplicate join logic.
-
-### Owner dashboard
-
-Start with:
-
-```txt
-discord/index/server.js
-discord/index/auditWebBundle.js
-discord/index/joinCampaignRoutes.js
-discord/index/views.js
-discord/index/auth.js
-discord/index/verifyOwner.js
-```
-
-Surfaces:
-
-- PIN login/logout.
-- Home/status/session detail.
-- Settings and presence.
-- Natural/auto-deaf settings.
-- Command toggles and audit.
-- Whitelist management.
-- Approved guild management.
-- Join Campaign controls for eligible `guilds.join` OAuth users.
-- Audit search/export/health/settings/dead-letter dashboard.
-- Logs and voice logs.
-- Token reveal controls.
-- Owner verification/IP reveal review.
-
-### Dashboard Public and verification
-
-Start with:
-
-```txt
-dashboard-public/index.js
-dashboard-public/routes/oauth.js
-dashboard-public/routes/guild.js
-dashboard-public/routes/guildDashboard.js
-dashboard-public/routes/api.js
-dashboard-public/routes/adminSessionCompat.js
-dashboard-public/models/
-dashboard-public/utils/
-dashboard-public/utils/verificationSnapshots.js
-dashboard-public/views/
-dashboard-public/public/
-```
-
-Preserve:
-
-- Signed callback state.
-- Panel revision freshness checks.
-- Command-created and dashboard-created panel compatibility.
-- Safe public callback responses.
-- Role assignment through configured bot identity.
-- Verification logs, risk summaries, and owner-approved raw IP reveal flow.
-- Shared verification log serializers in `dashboard-public/utils/verificationSnapshots.js` keep guild route responses consistent while preserving sensitive-data redaction.
-
-### Audit, protection, role buttons
-
-Start with:
-
-```txt
-discord/auditLogger.js
-discord/logging/
-discord/features/protection.js
-discord/features/roleButton.js
-discord/index/events.js
-```
-
-These cover message/member/voice/server/security audit logging, anti-raid/anti-spam/link checks, and role button interactions.
-
-## Active Documentation
-
-- `README.md` - project entry point.
-- `AGENTS.md` - AI/agent rules.
-- `.github/copilot-instructions.md` - short Copilot rules.
-- `CONTEXT.md` - this quick map.
-- `ARCHITECTURE.md` - full implementation-backed architecture and file map.
-- `ROADMAP.md` - approved minimal refactor and future work.
-- `SECURITY.md` - security/privacy policy.
-- `CHANGELOG.md` - change history.
-- `docs/RUNBOOK.md` and focused `docs/AUDIT_*` files - operational/audit runbooks, not architecture source of truth.
-
-## High-Risk Areas
-
-Treat these as security-sensitive or behavior-sensitive:
-
-- OAuth callback and signed state.
-- Sessions, cookies, PIN auth, internal API auth.
-- Token storage, token reveal, encryption/decryption.
-- Raw IP reveal, device fingerprints, risk summaries.
-- Discord role assignment and bot permissions.
-- Owner dashboard controls and approved guild flows.
-- Bot boot, event registration, shutdown, and voice/session lifecycle.
-- `discord/systemProvider.js` and any boot/import reference to it.
-
-## Validation Pointer
-
-Use the validation commands in `ARCHITECTURE.md` and `SECURITY.md`. Report exact commands and results honestly.
+The root package owns all runtime and test dependencies. There is no nested
+service install or second test command.

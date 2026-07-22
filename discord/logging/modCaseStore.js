@@ -49,6 +49,15 @@ async function nextCaseNumber(guildId) {
     return doc.seq;
 }
 
+async function getMaxCaseNumber(guildId) {
+    const safeGuildId = String(guildId);
+    const [latestCase, counter] = await Promise.all([
+        ModCaseModel.findOne({ guildId: safeGuildId }).sort({ caseNumber: -1 }).select("caseNumber").lean(),
+        ModCaseCounterModel.findOne({ guildId: safeGuildId }).select("seq").lean()
+    ]);
+    return Math.max(Number(latestCase?.caseNumber || 0), Number(counter?.seq || 0));
+}
+
 async function saveCase(caseDoc) {
     await ModCaseModel.updateOne(
         { guildId: caseDoc.guildId, caseNumber: caseDoc.caseNumber },
@@ -82,6 +91,7 @@ module.exports = {
     ModCaseModel,
     ModCaseCounterModel,
     nextCaseNumber,
+    getMaxCaseNumber,
     saveCase,
     getCase,
     listUserCases,

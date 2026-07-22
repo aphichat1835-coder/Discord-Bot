@@ -6,7 +6,7 @@ ATTENTION AI ASSISTANT: DO NOT MODIFY, REFACTOR, OR SIMPLIFY THIS FILE.
 1. [DATABASE]: MONGO_URI is the ONLY storage. Local JSON fallback is REMOVED.
 2. [ENCRYPTION]: AES-256-GCM with CBC fallback must remain intact.
 3. [POOL]: maxPoolSize: 20 MUST remain in mongoose.connect().
-4. [SCHEMAS]: Do NOT remove PanelStateModel, LogChannelMapModel, WhitelistModel, BotSettingsModel.
+4. [SCHEMAS]: Do NOT remove PanelStateModel or BotSettingsModel.
 5. [METRICS]: increment() calls must remain for Dashboard accuracy.
 ================================================================================
 */
@@ -23,6 +23,16 @@ const sessions = new Map();
 const reconnectTracking = new Map();
 const sessionLocks = new Set();
 const settingsCache = new Map();
+const RETIRED_ENTERPRISE_AUDIT_SETTINGS = /^(?:audit_|logChannelMapExtra_)/;
+const INTERNAL_EVENT_SETTINGS = /^internal_event_/;
+const RETIRED_ENTERPRISE_AUDIT_PREFIXES = ["audit_", "logChannelMapExtra_"];
+const INTERNAL_EVENT_PREFIX = "internal_event_";
+function isRetiredEnterpriseAuditSetting(key) {
+    return RETIRED_ENTERPRISE_AUDIT_PREFIXES.some(prefix => key.startsWith(prefix));
+}
+function shouldCacheSettingKey(key) {
+    return !String(key || "").startsWith(INTERNAL_EVENT_PREFIX);
+}
 function numberEnv(name, fallback, min = 1) {
     const value = Number(process.env[name]);
     if (!Number.isFinite(value)) return fallback;
@@ -38,7 +48,6 @@ function boundedLimit(value, max, fallback = max) {
 const SESSION_LOAD_MAX = numberEnv("SESSION_LOAD_MAX", 100, 1);
 const APPROVED_GUILDS_LOAD_MAX = numberEnv("APPROVED_GUILDS_LOAD_MAX", 1000, 1);
 const PENDING_GUILDS_LOAD_MAX = numberEnv("PENDING_GUILDS_LOAD_MAX", 500, 1);
-const WHITELIST_LOAD_MAX = numberEnv("WHITELIST_LOAD_MAX", 1000, 1);
 const BOT_SETTINGS_LOAD_MAX = numberEnv("BOT_SETTINGS_LOAD_MAX", 500, 1);
 const PANEL_STATES_LOAD_MAX = numberEnv("PANEL_STATES_LOAD_MAX", 500, 1);
 let lastLoadStats = {
@@ -190,6 +199,12 @@ const sessionSchema = new mongoose.Schema({
 
     startedAt: { type: Number, default: Date.now },
     lastActivity: { type: Number, default: Date.now },
+    voiceReadyAt: Number,
+    lifecycleGeneration: String,
+    reconnectCount: { type: Number, default: 0 },
+    tokenInvalid: { type: Boolean, default: false },
+    recoveryState: mongoose.Schema.Types.Mixed,
+    notificationState: mongoose.Schema.Types.Mixed,
 
     // Optional lifecycle fields. Missing state on old records is treated as active.
     state: String,
@@ -206,9 +221,29 @@ const snapshotSchema = new mongoose.Schema({
     guildId: String,
     Backup_Owner_ID: String,
     data: Object,
+    storageMode: { type: String, default: "legacy" },
+    chunkMeta: Object,
+    complete: { type: Boolean, default: true },
+    activationPending: { type: Boolean, default: false },
+    active: { type: Boolean, default: false },
+    supersededAt: { type: Number, default: null },
+    supersededBy: { type: String, default: null },
     createdAt: { type: Number, default: Date.now }
 });
+snapshotSchema.index({ guildId: 1 }, { unique: true, partialFilterExpression: { active: true } });
 const SnapshotModel = mongoose.model("Snapshot", snapshotSchema);
+const snapshotChunkSchema = new mongoose.Schema({
+    snapshotId: { type: String, required: true, index: true },
+    kind: { type: String, required: true },
+    chunkIndex: { type: Number, required: true },
+    items: { type: [mongoose.Schema.Types.Mixed], default: [] },
+    itemCount: { type: Number, required: true },
+    byteSize: { type: Number, required: true },
+    complete: { type: Boolean, default: true },
+    createdAt: { type: Number, default: Date.now }
+});
+snapshotChunkSchema.index({ snapshotId: 1, kind: 1, chunkIndex: 1 }, { unique: true });
+const SnapshotChunkModel = mongoose.model("SnapshotChunk", snapshotChunkSchema);
 
 // --- Approved Guild Schema ---
 const approvedGuildSchema = new mongoose.Schema({
@@ -234,28 +269,6 @@ const panelStateSchema = new mongoose.Schema({
     updatedAt: { type: Number, default: Date.now }
 });
 const PanelStateModel = mongoose.model("PanelState", panelStateSchema);
-
-// --- Log Channel Map Schema (เฟส 25: Public Audit Logging) ---
-const logChannelMapSchema = new mongoose.Schema({
-    guildId: { type: String, required: true, unique: true },
-    messageChannelId: String,
-    memberChannelId: String,
-    voiceChannelId: String,
-    serverChannelId: String,
-    securityChannelId: String,
-    moderationChannelId: String,
-    updatedAt: { type: Number, default: Date.now }
-});
-const LogChannelMapModel = mongoose.model("LogChannelMap", logChannelMapSchema);
-
-// --- Whitelist Schema (เฟส 3: /say whitelist) ---
-const whitelistSchema = new mongoose.Schema({
-    userId: { type: String, required: true, unique: true },
-    addedBy: String,
-    addedAt: { type: Number, default: Date.now },
-    scope: { type: String, default: "say" }
-});
-const WhitelistModel = mongoose.model("Whitelist", whitelistSchema);
 
 // --- Bot Settings Schema (เฟส Dashboard Config) ---
 const botSettingsSchema = new mongoose.Schema({
@@ -312,6 +325,22 @@ async function connectDB() {
     await flushPendingSessionDeletes();
 }
 
+async function disconnectDB() {
+    if (mongoose.connection.readyState === 0) {
+        dbConnected = false;
+        return;
+    }
+    try {
+        await flushPendingSessionDeletes();
+    } finally {
+        try {
+            await mongoose.disconnect();
+        } finally {
+            dbConnected = false;
+        }
+    }
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  🔑 REGION 6: VOICE SESSION IDENTITY HELPERS
 // ════════════════════════════════════════════════════════════════════════════
@@ -364,12 +393,12 @@ function findActiveVoiceSessionByTokenGuild(tokenHash, serverId) {
 function isSessionRunnable(session) {
     if (!session) return false;
     const state = session.state || "active";
-    return state === "active";
+    return state === "active" && session.tokenInvalid !== true;
 }
 
 function shouldResumeSession(session) {
     if (!session) return false;
-    return (session.state || "active") === "active";
+    return (session.state || "active") === "active" && session.tokenInvalid !== true;
 }
 
 function countActiveSessionsByTokenHash(tokenHash) {
@@ -408,6 +437,9 @@ async function loadDatabase() {
     }
 
     try {
+        await reconcileSnapshotPointers().catch(err => {
+            console.warn(`[DATABASE] ⚠️ Snapshot pointer reconciliation deferred: ${String(err?.message || err).slice(0, 180)}`);
+        });
         const now = Date.now();
         const recoverableCutoff = now - LOAD_RECOVERABLE_STOP_CLEANUP_MS;
         const staleCutoff = now - STALE_STOPPED_SESSION_RETENTION_MS;
@@ -473,6 +505,8 @@ async function loadDatabase() {
 
                 startedAt: r.startedAt,
                 lastActivity: r.lastActivity,
+                voiceReadyAt: r.voiceReadyAt || null,
+                lifecycleGeneration: r.lifecycleGeneration || crypto.randomUUID(),
 
                 state,
                 stoppedAt: r.stoppedAt || null,
@@ -483,8 +517,10 @@ async function loadDatabase() {
                 connection: null,
                 reconnecting: false,
                 client: null,
-                reconnectCount: 0,
-                tokenInvalid: false
+                reconnectCount: Number(r.reconnectCount || 0),
+                tokenInvalid: r.tokenInvalid === true,
+                recoveryState: r.recoveryState || null,
+                notificationState: r.notificationState || null
             });
         }
 
@@ -547,6 +583,12 @@ async function saveDatabase() {
 
                             startedAt: session.startedAt,
                             lastActivity: session.lastActivity,
+                            voiceReadyAt: session.voiceReadyAt || null,
+                            lifecycleGeneration: session.lifecycleGeneration || null,
+                            reconnectCount: Number(session.reconnectCount || 0),
+                            tokenInvalid: session.tokenInvalid === true,
+                            recoveryState: session.recoveryState || null,
+                            notificationState: session.notificationState || null,
                             state: session.state || "active",
                             stoppedAt: session.stoppedAt || null,
                             stoppedReason: session.stoppedReason || null,
@@ -614,6 +656,7 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
     }
 
     const now = Date.now();
+    const lifecycleGeneration = crypto.randomUUID();
 
     const sessionData = {
         sessionId,
@@ -644,6 +687,12 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
 
         startedAt: now,
         lastActivity: now,
+        voiceReadyAt: null,
+        lifecycleGeneration,
+        reconnectCount: 0,
+        tokenInvalid: false,
+        recoveryState: null,
+        notificationState: null,
         state: "active",
         stoppedAt: null,
         stoppedReason: null,
@@ -655,9 +704,7 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
         ...sessionData,
         connection: null,
         reconnecting: false,
-        client: null,
-        reconnectCount: 0,
-        tokenInvalid: false
+        client: null
     });
 
     console.log(`[SESSION] ✅ Voice session created: ${sanitizeLogText(getSafeSessionId(sessionId))} guild=${sanitizeLogText(serverId)} owner=${sanitizeLogText(ownerId || "unknown")}`);
@@ -734,6 +781,34 @@ async function updateSessionMetadata(sessionId, metadata = {}) {
     }
 
     return true;
+}
+
+async function saveVoiceRuntimeState(sessionId) {
+    const session = sessions.get(sessionId);
+    if (!session) return false;
+    if (!dbConnected) return false;
+
+    try {
+        const result = await SessionModel.updateOne(
+            { sessionId },
+            {
+                $set: {
+                    lifecycleGeneration: session.lifecycleGeneration || null,
+                    voiceReadyAt: session.voiceReadyAt || null,
+                    reconnectCount: Number(session.reconnectCount || 0),
+                    tokenInvalid: session.tokenInvalid === true,
+                    recoveryState: session.recoveryState || null,
+                    notificationState: session.notificationState || null,
+                    lastActivity: session.lastActivity || Date.now()
+                }
+            }
+        );
+        return (result?.matchedCount ?? result?.n ?? 0) > 0;
+    } catch (err) {
+        console.error(`[DATABASE] ❌ Failed to save voice runtime state for ${sessionId}: ${sanitizeLifecycleError(err.message)}`);
+        systemMetrics.increment("errors");
+        return false;
+    }
 }
 
 function sanitizeLifecycleError(value) {
@@ -1133,6 +1208,152 @@ async function removePendingGuild(guildId) {
 // ════════════════════════════════════════════════════════════════════════════
 //  💾 REGION 11: BACKUP SNAPSHOTS
 // ════════════════════════════════════════════════════════════════════════════
+const SNAPSHOT_CHUNK_MAX_BYTES = 512 * 1024;
+
+function chunkSnapshotItems(items, maxBytes = SNAPSHOT_CHUNK_MAX_BYTES) {
+    const chunks = [];
+    let current = [];
+    let currentBytes = 2;
+    for (const item of Array.isArray(items) ? items : []) {
+        const itemBytes = Buffer.byteLength(JSON.stringify(item), "utf8") + 1;
+        if (itemBytes > maxBytes) throw new Error("SNAPSHOT_ITEM_TOO_LARGE");
+        if (current.length && currentBytes + itemBytes > maxBytes) {
+            chunks.push(current);
+            current = [];
+            currentBytes = 2;
+        }
+        current.push(item);
+        currentBytes += itemBytes;
+    }
+    if (current.length || chunks.length === 0) chunks.push(current);
+    return chunks;
+}
+
+async function saveChunkedSnapshot(snapshotId, guildId, backupOwnerId, data) {
+    if (!dbConnected) return false;
+    const normalizedGuildId = String(guildId);
+    const oldSnapshot = await getLatestSnapshotForGuild(normalizedGuildId);
+    const createdAt = Date.now();
+    const kinds = ["roles", "channels"];
+    const chunkMeta = {};
+    try {
+        for (const kind of kinds) {
+            const source = Array.isArray(data?.[kind]) ? data[kind] : [];
+            const chunks = chunkSnapshotItems(source);
+            chunkMeta[kind] = { returnedCount: source.length, storedCount: 0, chunkCount: chunks.length, complete: false };
+            for (let index = 0; index < chunks.length; index++) {
+                const items = chunks[index];
+                const byteSize = Buffer.byteLength(JSON.stringify(items), "utf8");
+                await SnapshotChunkModel.create({ snapshotId, kind, chunkIndex: index, items, itemCount: items.length, byteSize, complete: true, createdAt });
+                chunkMeta[kind].storedCount += items.length;
+            }
+            chunkMeta[kind].complete = chunkMeta[kind].storedCount === source.length;
+            if (!chunkMeta[kind].complete) throw new Error("SNAPSHOT_CHUNK_INCOMPLETE");
+        }
+        const metadata = { ...data };
+        delete metadata.roles;
+        delete metadata.channels;
+        await SnapshotModel.create({
+            snapshotId,
+            guildId: normalizedGuildId,
+            Backup_Owner_ID: String(backupOwnerId),
+            data: metadata,
+            storageMode: "chunked",
+            chunkMeta,
+            complete: true,
+            activationPending: true,
+            active: false,
+            createdAt
+        });
+
+        await SnapshotModel.updateMany(
+            { guildId: normalizedGuildId, snapshotId: { $ne: snapshotId } },
+            { $set: { active: false, supersededAt: createdAt, supersededBy: snapshotId } }
+        );
+        try {
+            const activated = await SnapshotModel.updateOne(
+                { snapshotId, complete: true, activationPending: true },
+                { $set: { active: true, activationPending: false, supersededAt: null, supersededBy: null } }
+            );
+            if ((activated?.matchedCount ?? activated?.n ?? 0) !== 1) throw new Error("SNAPSHOT_ACTIVATION_FAILED");
+        } catch (activationError) {
+            if (oldSnapshot?.snapshotId) {
+                await SnapshotModel.updateOne(
+                    { snapshotId: oldSnapshot.snapshotId },
+                    { $set: { active: true, supersededAt: null, supersededBy: null } }
+                ).catch(() => null);
+            }
+            throw activationError;
+        }
+        return true;
+    } catch (err) {
+        await SnapshotChunkModel.deleteMany({ snapshotId }).catch(() => null);
+        await SnapshotModel.deleteOne({ snapshotId, active: { $ne: true } }).catch(() => null);
+        await reconcileSnapshotPointers().catch(() => null);
+        console.error(`[DATABASE] ❌ Failed to save chunked snapshot: ${err.message}`);
+        systemMetrics.increment("errors");
+        return false;
+    }
+}
+
+async function getLatestSnapshotForGuild(guildId) {
+    const normalizedGuildId = String(guildId || "");
+    if (!normalizedGuildId || !dbConnected) return null;
+    const readable = { complete: { $ne: false }, activationPending: { $ne: true } };
+    const active = await SnapshotModel.findOne({ guildId: normalizedGuildId, active: true, ...readable })
+        .sort({ createdAt: -1, _id: -1 });
+    if (active) return active;
+    return SnapshotModel.findOne({ guildId: normalizedGuildId, ...readable })
+        .sort({ createdAt: -1, _id: -1 });
+}
+
+async function reconcileSnapshotPointers() {
+    if (!dbConnected) return { guilds: 0, activated: 0 };
+    const guildIds = await SnapshotModel.distinct("guildId", { guildId: { $type: "string", $ne: "" } });
+    let activated = 0;
+    for (const guildId of guildIds) {
+        const latest = await SnapshotModel.findOne({ guildId, complete: { $ne: false }, activationPending: { $ne: true } })
+            .sort({ createdAt: -1, _id: -1 })
+            .select("snapshotId")
+            .lean();
+        if (!latest) continue;
+        const now = Date.now();
+        await SnapshotModel.updateMany(
+            { guildId, snapshotId: { $ne: latest.snapshotId } },
+            { $set: { active: false, supersededAt: now, supersededBy: latest.snapshotId } }
+        );
+        await SnapshotModel.updateOne(
+            { snapshotId: latest.snapshotId },
+            { $set: { active: true, activationPending: false, supersededAt: null, supersededBy: null } }
+        );
+        activated++;
+    }
+    return { guilds: guildIds.length, activated };
+}
+
+async function loadSnapshotData(snapshot) {
+    if (!snapshot) return null;
+    const source = snapshot.toObject?.() || snapshot;
+    if (source.storageMode !== "chunked") return source.data || null;
+    if (!source.complete || !source.chunkMeta) return null;
+    const data = { ...source.data };
+    for (const kind of ["roles", "channels"]) {
+        const meta = source.chunkMeta[kind];
+        if (!meta?.complete || !Number.isInteger(meta.chunkCount) || meta.chunkCount < 1) return null;
+        const docs = await SnapshotChunkModel.find({ snapshotId: source.snapshotId, kind }).sort({ chunkIndex: 1 }).lean();
+        if (docs.length !== meta.chunkCount || docs.some((doc, index) => {
+            const items = Array.isArray(doc.items) ? doc.items : [];
+            return !doc.complete ||
+                doc.chunkIndex !== index ||
+                doc.itemCount !== items.length ||
+                doc.byteSize !== Buffer.byteLength(JSON.stringify(items), "utf8");
+        })) return null;
+        data[kind] = docs.flatMap(doc => Array.isArray(doc.items) ? doc.items : []);
+        if (data[kind].length !== meta.returnedCount || data[kind].length !== meta.storedCount) return null;
+    }
+    return data;
+}
+
 async function saveSnapshot(snapshotId, guildId, backupOwnerId, data) {
     if (!dbConnected) return false;
 
@@ -1252,170 +1473,7 @@ async function deletePanelState(guildId) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  📢 REGION 13: LOG CHANNEL MAP
 // ════════════════════════════════════════════════════════════════════════════
-async function saveLogChannelMap(guildId, map = {}) {
-    if (!dbConnected) return false;
-
-    try {
-        await LogChannelMapModel.updateOne(
-            { guildId },
-            {
-                $set: {
-                    guildId,
-                    messageChannelId: map.messageChannelId || null,
-                    memberChannelId: map.memberChannelId || null,
-                    voiceChannelId: map.voiceChannelId || null,
-                    serverChannelId: map.serverChannelId || null,
-                    securityChannelId: map.securityChannelId || null,
-                    moderationChannelId: map.moderationChannelId || null,
-                    updatedAt: Date.now()
-                }
-            },
-            { upsert: true }
-        );
-        return true;
-    } catch (err) {
-        console.error(`[DATABASE] ❌ Failed to save log channel map for ${guildId}: ${err.message}`);
-        systemMetrics.increment("errors");
-        return false;
-    }
-}
-
-async function setLogChannelMap(guildId, category, channelId) {
-    if (!dbConnected) return false;
-    const keyMap = {
-        message: "messageChannelId",
-        member: "memberChannelId",
-        voice: "voiceChannelId",
-        server: "serverChannelId",
-        security: "securityChannelId",
-        moderation: "moderationChannelId"
-    };
-    const key = keyMap[category];
-    if (!key) return false;
-    try {
-        await LogChannelMapModel.updateOne(
-            { guildId },
-            {
-                $set: {
-                    guildId,
-                    [key]: channelId || null,
-                    updatedAt: Date.now()
-                }
-            },
-            { upsert: true }
-        );
-        return true;
-    } catch (err) {
-        console.error(`[DATABASE] ❌ Failed to set log channel map ${category} for ${guildId}: ${err.message}`);
-        systemMetrics.increment("errors");
-        return false;
-    }
-}
-
-async function getLogChannelMap(guildId) {
-    if (!dbConnected) return null;
-
-    try {
-        return await LogChannelMapModel.findOne({ guildId });
-    } catch (err) {
-        console.error(`[DATABASE] ❌ Failed to get log channel map for ${guildId}: ${err.message}`);
-        systemMetrics.increment("errors");
-        return null;
-    }
-}
-
-async function deleteLogChannelMap(guildId) {
-    if (!dbConnected) return false;
-
-    try {
-        await LogChannelMapModel.deleteOne({ guildId });
-        return true;
-    } catch (err) {
-        console.error(`[DATABASE] ❌ Failed to delete log channel map for ${guildId}: ${err.message}`);
-        systemMetrics.increment("errors");
-        return false;
-    }
-}
-// ════════════════════════════════════════════════════════════════════════════
-//  ✅ REGION 14: WHITELIST
-// ════════════════════════════════════════════════════════════════════════════
-async function isWhitelisted(userId, scope = "say") {
-    if (!dbConnected) return false;
-
-    try {
-        const doc = await WhitelistModel.findOne({
-            userId,
-            scope
-        });
-
-        return !!doc;
-    } catch (err) {
-        console.error(`[DATABASE] ❌ Failed to check whitelist for ${userId}: ${err.message}`);
-        systemMetrics.increment("errors");
-        return false;
-    }
-}
-
-async function addWhitelist(userId, addedBy, scope = "say") {
-    if (!dbConnected) return false;
-
-    try {
-        await WhitelistModel.updateOne(
-            { userId, scope },
-            {
-                $set: {
-                    userId,
-                    addedBy,
-                    scope,
-                    addedAt: Date.now()
-                }
-            },
-            { upsert: true }
-        );
-
-        return true;
-    } catch (err) {
-        console.error(`[DATABASE] ❌ Failed to add whitelist ${userId}: ${err.message}`);
-        systemMetrics.increment("errors");
-        return false;
-    }
-}
-
-async function removeWhitelist(userId, scope = "say") {
-    if (!dbConnected) return false;
-
-    try {
-        await WhitelistModel.deleteOne({ userId, scope });
-        return true;
-    } catch (err) {
-        console.error(`[DATABASE] ❌ Failed to remove whitelist ${userId}: ${err.message}`);
-        systemMetrics.increment("errors");
-        return false;
-    }
-}
-
-async function getWhitelist(scope = "say") {
-    if (!dbConnected) return [];
-
-    try {
-        return await WhitelistModel.find({ scope })
-            .select("userId addedBy addedAt scope")
-            .sort({ addedAt: -1, _id: -1 })
-            .limit(WHITELIST_LOAD_MAX)
-            .lean();
-    } catch (err) {
-        console.error(`[DATABASE] ❌ Failed to load whitelist: ${err.message}`);
-        systemMetrics.increment("errors");
-        return [];
-    }
-}
-
-async function getAllWhitelist(scope = "say") {
-    return getWhitelist(scope);
-}
-
 // ════════════════════════════════════════════════════════════════════════════
 //  ⚙️ REGION 15: BOT SETTINGS
 // ════════════════════════════════════════════════════════════════════════════
@@ -1423,7 +1481,7 @@ async function setSetting(key, value) {
     if (!dbConnected) return false;
 
     try {
-        await BotSettingsModel.updateOne(
+        const result = await BotSettingsModel.updateOne(
             { key },
             {
                 $set: {
@@ -1434,7 +1492,9 @@ async function setSetting(key, value) {
             },
             { upsert: true }
         );
-        settingsCache.set(key, value);
+        if (result?.acknowledged === false) return false;
+        if (shouldCacheSettingKey(key)) settingsCache.set(key, value);
+        else settingsCache.delete(key);
 
         return true;
     } catch (err) {
@@ -1450,7 +1510,7 @@ async function getSetting(key, fallback = null) {
     try {
         const doc = await BotSettingsModel.findOne({ key });
         if (!doc) return fallback;
-        settingsCache.set(key, doc.value);
+        if (shouldCacheSettingKey(key)) settingsCache.set(key, doc.value);
         return doc.value;
     } catch (err) {
         console.error(`[DATABASE] ❌ Failed to get setting ${key}: ${err.message}`);
@@ -1459,11 +1519,36 @@ async function getSetting(key, fallback = null) {
     }
 }
 
+async function getSettingStrict(key) {
+    if (!dbConnected) throw new Error("DATABASE_NOT_CONNECTED");
+    const doc = await BotSettingsModel.findOne({ key: String(key) }).lean();
+    if (!doc) return { found: false, value: null };
+    if (shouldCacheSettingKey(key)) settingsCache.set(String(key), doc.value);
+    return { found: true, value: doc.value };
+}
+
+async function getLatestSettingByPrefix(prefix) {
+    if (typeof prefix !== "string" || !/^[A-Za-z0-9_-]{1,160}$/.test(prefix)) {
+        throw new Error("INVALID_SETTING_PREFIX");
+    }
+    if (!dbConnected) throw new Error("DATABASE_NOT_CONNECTED");
+    const docs = await BotSettingsModel.find()
+        .where("key")
+        .gte(prefix)
+        .lt(`${prefix}\uffff`)
+        .sort({ updatedAt: -1, _id: -1 })
+        .limit(1)
+        .lean();
+    const doc = docs[0] || null;
+    return doc ? { key: doc.key, value: doc.value, updatedAt: doc.updatedAt } : null;
+}
+
 async function deleteSetting(key) {
     if (!dbConnected) return false;
 
     try {
-        await BotSettingsModel.deleteOne({ key });
+        const result = await BotSettingsModel.deleteOne({ key });
+        if (result?.acknowledged === false) return false;
         settingsCache.delete(key);
         return true;
     } catch (err) {
@@ -1477,7 +1562,12 @@ async function getAllSettings() {
     if (!dbConnected) return {};
 
     try {
-        const docs = await BotSettingsModel.find({})
+        const docs = await BotSettingsModel.find({
+            $nor: [
+                { key: RETIRED_ENTERPRISE_AUDIT_SETTINGS },
+                { key: INTERNAL_EVENT_SETTINGS }
+            ]
+        })
             .select("key value updatedAt")
             .sort({ updatedAt: -1, _id: -1 })
             .limit(BOT_SETTINGS_LOAD_MAX)
@@ -1485,6 +1575,8 @@ async function getAllSettings() {
         const result = {};
 
         for (const doc of docs) {
+            const key = String(doc.key || "");
+            if (isRetiredEnterpriseAuditSetting(key) || key.startsWith(INTERNAL_EVENT_PREFIX)) continue;
             result[doc.key] = doc.value;
             settingsCache.set(doc.key, doc.value);
         }
@@ -1549,7 +1641,6 @@ function getSessionDiagnostics() {
             sessionLoadMax: SESSION_LOAD_MAX,
             approvedGuildsLoadMax: APPROVED_GUILDS_LOAD_MAX,
             pendingGuildsLoadMax: PENDING_GUILDS_LOAD_MAX,
-            whitelistLoadMax: WHITELIST_LOAD_MAX,
             botSettingsLoadMax: BOT_SETTINGS_LOAD_MAX,
             panelStatesLoadMax: PANEL_STATES_LOAD_MAX
         },
@@ -1569,7 +1660,6 @@ function getDatabaseStatus() {
             sessionLoadMax: SESSION_LOAD_MAX,
             approvedGuildsLoadMax: APPROVED_GUILDS_LOAD_MAX,
             pendingGuildsLoadMax: PENDING_GUILDS_LOAD_MAX,
-            whitelistLoadMax: WHITELIST_LOAD_MAX,
             botSettingsLoadMax: BOT_SETTINGS_LOAD_MAX,
             panelStatesLoadMax: PANEL_STATES_LOAD_MAX
         }
@@ -1689,6 +1779,7 @@ function getSessionShortId(sessionId) {
 module.exports = {
     // DB
     connectDB,
+    disconnectDB,
     loadDatabase,
     saveDatabase,
     getDatabaseStatus,
@@ -1699,6 +1790,7 @@ module.exports = {
     getSession,
     touchSession,
     updateSessionMetadata,
+    saveVoiceRuntimeState,
     getAllSessions,
     getAllSessionSummaries,
     getVoiceSessionSummary,
@@ -1750,6 +1842,11 @@ module.exports = {
 
     // Snapshots
     saveSnapshot,
+    saveChunkedSnapshot,
+    loadSnapshotData,
+    getLatestSnapshotForGuild,
+    reconcileSnapshotPointers,
+    chunkSnapshotItems,
     getSnapshot,
     deleteSnapshot,
 
@@ -1759,22 +1856,11 @@ module.exports = {
     getPanelStates,
     deletePanelState,
 
-    // Log channels
-    saveLogChannelMap,
-    setLogChannelMap,
-    getLogChannelMap,
-    deleteLogChannelMap,
-
-    // Whitelist
-    isWhitelisted,
-    addWhitelist,
-    removeWhitelist,
-    getWhitelist,
-    getAllWhitelist,
-
     // Settings
     setSetting,
     getSetting,
+    getSettingStrict,
+    getLatestSettingByPrefix,
     getCachedSetting,
     deleteSetting,
     getAllSettings,
@@ -1786,14 +1872,18 @@ module.exports = {
     // Raw models for existing internal dashboards/tools
     SessionModel,
     SnapshotModel,
+    SnapshotChunkModel,
     ApprovedGuildModel,
     PendingGuildModel,
     PanelStateModel,
-    LogChannelMapModel,
-    WhitelistModel,
     BotSettingsModel,
 
     // Encryption helpers kept for existing code paths
     encryptToken,
-    decryptToken
+    decryptToken,
+
+    _test: {
+        shouldCacheSettingKey,
+        INTERNAL_EVENT_SETTINGS
+    }
 };

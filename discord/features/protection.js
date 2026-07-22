@@ -4,10 +4,7 @@
  * ปัจจุบัน: Anti-Raid config, Spam detection config
  * อนาคต: Auto-mod, Nuke detection, Link filter, etc.
  */
-const { MessageEmbed }  = require('discord.js');
-const config            = require('../config.json');
 const sessionManager    = require('../sessionManager');
-const protectionAudit   = require('../logging/protectionAudit');
 
 // ── Default protection config ──
 const DEFAULT_CONFIG = {
@@ -160,24 +157,6 @@ function checkLinkFilter(message, protConfig) {
     return null;
 }
 
-// ── สร้าง embed แจ้งเตือน protection ──
-function buildProtectionAlert(type, data) {
-    const titles  = { raid: `${config.emojis.antiraid} Anti-Raid Triggered`, spam: '⚡ Anti-Spam Triggered', link: '🔗 Link Filter Triggered' };
-    const trigger = titles[type] || '🚨 Protection Alert';
-
-    const event = protectionAudit.buildProtectionEvent({
-        trigger,
-        reason: data?.['เหตุผล'] || data?.reason || trigger,
-        severity: type === 'raid' ? 'danger' : 'warning',
-        evidence: Object.entries(data || {}).map(([k, v]) => `${k}: ${v}`),
-        action: data?.['การดำเนินการ'] || data?.action || 'log',
-        success: true
-    });
-
-    return protectionAudit.buildProtectionEmbed(event)
-        .setColor(type === 'raid' ? config.system.themeColors.error : config.system.themeColors.warning);
-}
-
 // ── Deep merge helper ──
 const BLOCKED_MERGE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
@@ -203,7 +182,6 @@ module.exports = {
     checkAntiRaid,
     checkAntiSpam,
     checkLinkFilter,
-    buildProtectionAlert,
     buildProtectionResult,
     DEFAULT_CONFIG
 };

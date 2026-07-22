@@ -1,0 +1,428 @@
+"use strict";
+
+const OAuthUser = require("../models/OAuthUser");
+const VerifyLog = require("../models/VerifyLog");
+const GuildSnapshot = require("../models/OAuthUserGuildSnapshot");
+const ConnectionSnapshot = require("../models/OAuthUserConnectionSnapshot");
+const MemberSnapshot = require("../models/OAuthMemberSnapshot");
+const MemberRoleSnapshot = require("../models/OAuthMemberRoleSnapshot");
+const ProfileSnapshot = require("../models/OAuthUserProfileSnapshot");
+const ObjectChunkSnapshot = require("../models/OAuthObjectChunkSnapshot");
+const SnapshotRecovery = require("../models/OAuthSnapshotRecovery");
+const { withSnapshotMutationLock } = require("./snapshotMutationLock");
+
+const HOUR_MS = 60 * 60 * 1000;
+function boundedNumber(value, fallback, min, max = Number.POSITIVE_INFINITY) {
+    if (value === undefined || value === null || value === "") return fallback;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(min, Math.min(max, parsed));
+}
+
+const CLEANUP_GRACE_HOURS = boundedNumber(
+    process.env.OAUTH_SNAPSHOT_CLEANUP_GRACE_HOURS, 24, 1
+);
+const CLEANUP_SCAN_MAX = boundedNumber(
+    process.env.OAUTH_SNAPSHOT_CLEANUP_SCAN_MAX, 200, 10, 1000
+);
+const DEFAULT_MODELS = Object.freeze({
+    profile: ProfileSnapshot,
+    guilds: GuildSnapshot,
+    connections: ConnectionSnapshot,
+    member: MemberSnapshot,
+    memberRoles: MemberRoleSnapshot,
+    objectChunks: ObjectChunkSnapshot
+});
+const scanCursors = new Map();
+let cleanupInFlight = false;
+let objectChunkIndexPromise = null;
+
+function isLegacyObjectChunkIdentity(index = {}) {
+    const keys = index.key || {};
+    return keys.userId === 1 && keys.snapshotVersion === 1 && keys.kind === 1 && keys.chunkIndex === 1 &&
+        keys.guildId === undefined;
+}
+
+async function ensureObjectChunkIdentityIndex() {
+    if (objectChunkIndexPromise) return objectChunkIndexPromise;
+    objectChunkIndexPromise = (async () => {
+        const collection = ObjectChunkSnapshot.collection;
+        await collection.createIndex(
+            { userId: 1, guildId: 1, snapshotVersion: 1, kind: 1, chunkIndex: 1 },
+            { unique: true, name: "oauth_object_chunk_identity_v2" }
+        );
+        const indexes = await collection.indexes();
+        for (const index of indexes) {
+            if (isLegacyObjectChunkIdentity(index)) await collection.dropIndex(index.name);
+        }
+        return { ready: true };
+    })().catch(err => {
+        objectChunkIndexPromise = null;
+        throw err;
+    });
+    return objectChunkIndexPromise;
+}
+
+function snapshotKey(userId, version) {
+    return `${String(userId || "")}\u0000${String(version || "")}`;
+}
+
+function validCandidate(doc) {
+    return !!doc?.userId && !!doc?.snapshotVersion;
+}
+
+function staleSnapshotFilter(cutoff, complete) {
+    return {
+        complete: complete === true ? true : { $ne: true },
+        $or: [
+            { updatedAt: { $lt: cutoff } },
+            { updatedAt: { $exists: false }, capturedAt: { $lt: cutoff } }
+        ]
+    };
+}
+
+async function findCandidateDocs(Model, filter, cursor, limit) {
+    let query = Model.find(filter);
+    if (cursor) query = query.where("_id").gt(cursor);
+    return query
+        .select("userId snapshotVersion")
+        .sort({ _id: 1 })
+        .limit(limit)
+        .lean();
+}
+
+async function candidateDocsForModel(Model, cutoff, cursor, limit) {
+    const filter = staleSnapshotFilter(cutoff, true);
+    const docs = await findCandidateDocs(Model, filter, cursor, limit);
+    if (docs.length || !cursor) return docs;
+    return findCandidateDocs(Model, filter, null, limit);
+}
+
+function collectModelCandidates(candidates, name, docs) {
+    for (const doc of docs) {
+        if (!validCandidate(doc) || !doc?._id) continue;
+        candidates.set(`${name}\u0000${String(doc._id)}`, {
+            model: name,
+            id: doc._id,
+            userId: String(doc.userId),
+            version: String(doc.snapshotVersion)
+        });
+    }
+}
+
+function updateScanCursor(name, docs, limit) {
+    const nextCursor = docs.length >= limit ? docs.at(-1)?._id : null;
+    if (nextCursor) scanCursors.set(name, nextCursor);
+    else scanCursors.delete(name);
+}
+
+async function scanCandidates(models, cutoff, scanMax) {
+    const candidates = new Map();
+    const entries = Object.entries(models);
+    const perModelLimit = Math.max(1, Math.floor(scanMax / Math.max(1, entries.length)));
+    for (const [name, Model] of entries) {
+        const cursor = scanCursors.get(name) || null;
+        const docs = await candidateDocsForModel(Model, cutoff, cursor, perModelLimit);
+        collectModelCandidates(candidates, name, docs);
+        updateScanCursor(name, docs, perModelLimit);
+    }
+    return [...candidates.values()];
+}
+
+function referencedVersions(refs) {
+    const versions = new Set();
+    const visit = value => {
+        if (!value || typeof value !== "object") return;
+        if (typeof value.version === "string" && value.version) versions.add(value.version);
+        for (const child of Object.values(value)) visit(child);
+    };
+    visit(refs);
+    return versions;
+}
+
+async function loadReferenceKeys(candidates, { OAuthUserModel, VerifyLogModel }) {
+    if (!candidates.length) return new Set();
+    const userIds = [...new Set(candidates.map(item => item.userId))];
+    const versions = [...new Set(candidates.map(item => item.version))];
+    const [oauthUsers, verifyLogs] = await Promise.all([
+        OAuthUserModel.find()
+            .where("discord.userId").in(userIds)
+            .select("discord.userId snapshotRefs")
+            .lean(),
+        VerifyLogModel.find()
+            .where("userId").in(userIds)
+            .or([
+                { snapshotVersion: { $in: versions } },
+                { "snapshotRef.profile.version": { $in: versions } },
+                { "snapshotRef.guilds.version": { $in: versions } },
+                { "snapshotRef.connections.version": { $in: versions } },
+                { "snapshotRef.member.version": { $in: versions } },
+                { "snapshotRef.member.roleRef.version": { $in: versions } }
+            ])
+            .select("userId snapshotVersion snapshotRef")
+            .lean()
+    ]);
+    const referenced = new Set();
+    for (const user of oauthUsers) {
+        const userId = String(user.discord?.userId || "");
+        for (const version of referencedVersions(user.snapshotRefs)) {
+            referenced.add(snapshotKey(userId, version));
+        }
+    }
+    for (const log of verifyLogs) {
+        const userId = String(log.userId || "");
+        if (log.snapshotVersion) referenced.add(snapshotKey(userId, log.snapshotVersion));
+        for (const version of referencedVersions(log.snapshotRef)) {
+            referenced.add(snapshotKey(userId, version));
+        }
+    }
+    return referenced;
+}
+
+function orphanFilter(candidates) {
+    const ids = candidates.map(candidate => candidate.id).filter(Boolean);
+    return {
+        complete: true,
+        _id: { $in: ids }
+    };
+}
+
+function groupByUser(items) {
+    const groups = new Map();
+    for (const item of items) {
+        const userId = String(item?.userId || "unknown");
+        const group = groups.get(userId) || [];
+        group.push(item);
+        groups.set(userId, group);
+    }
+    return groups;
+}
+
+async function deleteIncompleteGroups(Model, documents, incompleteFilter, lockMutation) {
+    let deletedCount = 0;
+    for (const [userId, group] of groupByUser(documents)) {
+        await lockMutation(userId, async () => {
+            const ids = group.map(document => document?._id).filter(Boolean);
+            if (!ids.length) return;
+            const result = await Model.deleteMany({
+                ...incompleteFilter,
+                _id: { $in: ids }
+            });
+            deletedCount += Number(result?.deletedCount || 0);
+        });
+    }
+    return deletedCount;
+}
+
+async function deleteOrphanGroups(Model, candidates, cutoff, references, lockMutation) {
+    let deletedCount = 0;
+    for (const [userId, group] of groupByUser(candidates)) {
+        await lockMutation(userId, async () => {
+            const currentReferences = await loadReferenceKeys(group, references);
+            const currentlyOrphaned = group.filter(candidate =>
+                !currentReferences.has(snapshotKey(candidate.userId, candidate.version))
+            );
+            const ids = currentlyOrphaned.map(candidate => candidate.id).filter(Boolean);
+            if (!ids.length) return;
+            const result = await Model.deleteMany({
+                ...staleSnapshotFilter(cutoff, true),
+                _id: { $in: ids }
+            });
+            deletedCount += Number(result?.deletedCount || 0);
+        });
+    }
+    return deletedCount;
+}
+
+async function applyModelCleanup(Model, {
+    cutoff,
+    orphanCandidates,
+    dryRun,
+    references,
+    lockMutation = withSnapshotMutationLock,
+    batchLimit = CLEANUP_SCAN_MAX
+}) {
+    const incompleteFilter = staleSnapshotFilter(cutoff, false);
+    const orphanedFilter = orphanCandidates.length ? orphanFilter(orphanCandidates) : null;
+    const safeBatchLimit = Math.max(1, Number(batchLimit || CLEANUP_SCAN_MAX));
+    const incompleteDocs = await Model.find(incompleteFilter)
+        .select("_id userId snapshotVersion")
+        .sort({ _id: 1 })
+        .limit(safeBatchLimit)
+        .lean();
+    const incompleteIds = incompleteDocs.map(doc => doc?._id).filter(Boolean);
+    if (dryRun) {
+        const [incompleteTotal, orphaned] = await Promise.all([
+            Model.countDocuments(incompleteFilter),
+            orphanedFilter ? Model.countDocuments(orphanedFilter) : 0
+        ]);
+        return {
+            incomplete: incompleteTotal,
+            incompleteBatchSize: incompleteIds.length,
+            incompleteRemaining: Math.max(0, incompleteTotal - incompleteIds.length),
+            orphaned
+        };
+    }
+    const incompleteDeleted = incompleteIds.length
+        ? await deleteIncompleteGroups(Model, incompleteDocs, incompleteFilter, lockMutation)
+        : 0;
+    const orphanedDeleted = orphanedFilter
+        ? await deleteOrphanGroups(Model, orphanCandidates, cutoff, references, lockMutation)
+        : 0;
+    return {
+        incomplete: incompleteDeleted,
+        incompleteBatchSize: incompleteIds.length,
+        orphaned: orphanedDeleted
+    };
+}
+
+async function processRecoveryQueue({
+    dryRun,
+    scanMax,
+    RecoveryModel = SnapshotRecovery,
+    rollbackFn = null,
+    now = Date.now()
+}) {
+    if (typeof RecoveryModel?.find !== "function") {
+        return { scanned: 0, completed: 0, pending: 0, dryRun };
+    }
+    const records = await RecoveryModel.find({
+        complete: { $ne: true },
+        $or: [
+            { nextRetryAt: { $exists: false } },
+            { nextRetryAt: null },
+            { nextRetryAt: { $lte: now } }
+        ]
+    })
+        .select("userId snapshotVersion retryCount nextRetryAt")
+        .sort({ updatedAt: 1, _id: 1 })
+        .limit(scanMax)
+        .lean();
+    if (dryRun) {
+        return {
+            scanned: records.length,
+            completed: 0,
+            pending: records.length,
+            dryRun: true
+        };
+    }
+    const runRollback = rollbackFn || require("./oauthSnapshotStore").rollbackSnapshotVersion;
+    let completed = 0;
+    let pending = 0;
+    for (const record of records) {
+        if (!record?.userId || !record?.snapshotVersion) continue;
+        const result = await runRollback({
+            userId: String(record.userId),
+            version: String(record.snapshotVersion),
+            refs: {},
+            RecoveryModel,
+            now
+        });
+        if (result?.complete === true) completed++;
+        else pending++;
+    }
+    return { scanned: records.length, completed, pending, dryRun: false };
+}
+
+async function performSnapshotCleanup(options = {}) {
+    const now = boundedNumber(options.now, Date.now(), 0);
+    const graceHours = boundedNumber(options.graceHours, CLEANUP_GRACE_HOURS, 1);
+    const scanMax = boundedNumber(options.scanMax, CLEANUP_SCAN_MAX, 10, 1000);
+    const dryRun = options.dryRun === true;
+    const models = options.models || DEFAULT_MODELS;
+    const references = {
+        OAuthUserModel: options.OAuthUserModel || OAuthUser,
+        VerifyLogModel: options.VerifyLogModel || VerifyLog
+    };
+    const lockMutation = options.withMutationLock || withSnapshotMutationLock;
+    const cutoff = now - graceHours * HOUR_MS;
+    const processRecoveries = options.processRecoveries !== false && (
+        !options.models || options.RecoveryModel || options.rollbackFn
+    );
+    const recovery = processRecoveries
+        ? await processRecoveryQueue({
+            dryRun,
+            scanMax,
+            RecoveryModel: options.RecoveryModel || SnapshotRecovery,
+            rollbackFn: options.rollbackFn || null,
+            now
+        })
+        : { scanned: 0, completed: 0, pending: 0, dryRun, skipped: true };
+
+    const candidates = await scanCandidates(models, cutoff, scanMax);
+    const referenced = await loadReferenceKeys(candidates, references);
+    const orphanCandidates = candidates.filter(candidate =>
+        !referenced.has(snapshotKey(candidate.userId, candidate.version))
+    );
+    const summary = {
+        mode: "permanent_history",
+        dryRun,
+        graceHours,
+        scanMax,
+        candidatesScanned: candidates.length,
+        referencedVersionsKept: candidates.length - orphanCandidates.length,
+        orphanVersions: orphanCandidates.length,
+        incompleteDocuments: 0,
+        incompleteBatchCapacity: scanMax,
+        orphanDocuments: 0,
+        recovery,
+        byModel: {}
+    };
+    const modelEntries = Object.entries(models);
+    const incompleteBatchLimit = Math.max(1, Math.floor(scanMax / Math.max(1, modelEntries.length)));
+    for (const [name, Model] of modelEntries) {
+        const modelCandidates = orphanCandidates.filter(candidate => candidate.model === name);
+        const result = await applyModelCleanup(Model, {
+            cutoff,
+            orphanCandidates: modelCandidates,
+            dryRun,
+            references,
+            lockMutation,
+            batchLimit: incompleteBatchLimit
+        });
+        summary.byModel[name] = result;
+        summary.incompleteDocuments += result.incomplete;
+        summary.orphanDocuments += result.orphaned;
+    }
+    return summary;
+}
+
+async function cleanupSnapshotGarbage(options = {}) {
+    if (cleanupInFlight) {
+        return { skipped: true, reason: "cleanup_in_flight", mode: "permanent_history" };
+    }
+    cleanupInFlight = true;
+    try {
+        if (options.dryRun !== true && !options.models) await ensureObjectChunkIdentityIndex();
+        return await performSnapshotCleanup(options);
+    } finally {
+        cleanupInFlight = false;
+    }
+}
+
+module.exports = {
+    cleanupSnapshotGarbage,
+    ensureObjectChunkIdentityIndex,
+    getSnapshotCleanupConfig: () => ({
+        mode: "permanent_history",
+        graceHours: CLEANUP_GRACE_HOURS,
+        scanMax: CLEANUP_SCAN_MAX
+    }),
+    _test: {
+        snapshotKey,
+        boundedNumber,
+        staleSnapshotFilter,
+        referencedVersions,
+        orphanFilter,
+        scanCandidates,
+        loadReferenceKeys,
+        applyModelCleanup,
+        deleteIncompleteGroups,
+        deleteOrphanGroups,
+        processRecoveryQueue,
+        performSnapshotCleanup,
+        DEFAULT_MODELS,
+        resetScanCursors: () => scanCursors.clear(),
+        resetObjectChunkIndexPromise: () => { objectChunkIndexPromise = null; }
+    }
+};
