@@ -7,8 +7,16 @@ const {
     getWebhookDiagnostics,
     validateWebhookUrl,
     normalizeWebhookPayload,
+    normalizeLegacyWebhookPayload,
+    normalizeDiscordMediaUrl,
+    getDiscordAvatarUrl,
+    getDiscordGuildIconUrl,
+    resolveWebhookEventTarget,
+    buildWebhookEventPayload,
     sendWebhook,
     sendLogWebhook,
+    sendAlertWebhook,
+    sendWebhookEvent,
     flushWebhookQueue,
     WebhookDispatcher,
     buildStartupNotice
@@ -84,6 +92,80 @@ test("webhook payloads normalize strings and objects", () => { // NOSONAR -- nod
         normalizeWebhookPayload({ content: "@everyone", allowedMentions: { parse: ["everyone"] } }).allowedMentions,
         { parse: [] }
     );
+});
+
+test("webhook events route by severity and render one consistent embed", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    assert.equal(resolveWebhookEventTarget({ severity: "SUCCESS" }), "LOG");
+    assert.equal(resolveWebhookEventTarget({ severity: "WARNING" }), "LOG");
+    assert.equal(resolveWebhookEventTarget({ severity: "ERROR" }), "ALERT");
+    assert.equal(resolveWebhookEventTarget({ severity: "CRITICAL" }), "ALERT");
+    assert.equal(resolveWebhookEventTarget({ severity: "WARNING", target: "ALERT" }), "ALERT");
+
+    const payload = buildWebhookEventPayload({
+        severity: "ERROR",
+        category: "VOICE",
+        code: "voice.session.dead",
+        state: "OPEN",
+        title: "Session เชื่อมต่อกลับไม่ได้",
+        impact: "บัญชีหลุดจากห้องเสียง",
+        action: "เริ่ม Session ใหม่",
+        context: { Session: "vc_test\n`spoof`" },
+        timestamp: 1000
+    });
+    assert.equal(payload.embeds.length, 1);
+    assert.match(payload.embeds[0].author.name, /ACTION REQUIRED/);
+    assert.match(payload.embeds[0].title, /Session เชื่อมต่อกลับไม่ได้/);
+    assert.match(payload.embeds[0].footer.text, /voice\.session\.dead/);
+    assert.equal(payload.embeds[0].fields.some(field => field.name === "สิ่งที่ควรทำ"), true);
+    assert.equal(payload.embeds[0].fields.some(field => field.value.includes("\n") || field.value.includes("`")), false);
+});
+
+test("event profile images accept Discord CDN URLs and reject arbitrary hosts", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const avatar = "https://cdn.discordapp.com/avatars/123/hash.png";
+    const icon = "https://media.discordapp.net/icons/456/hash.webp";
+    assert.equal(normalizeDiscordMediaUrl(avatar), avatar);
+    assert.equal(normalizeDiscordMediaUrl("https://example.com/tracker.png"), null);
+    assert.equal(getDiscordAvatarUrl({ displayAvatarURL: () => avatar }), avatar);
+    assert.equal(getDiscordGuildIconUrl({ iconURL: () => icon }), icon);
+
+    const payload = buildWebhookEventPayload({
+        severity: "INFO",
+        category: "GUILD",
+        code: "guild.profile.test",
+        title: "ทดสอบโปรไฟล์",
+        sourceIconUrl: icon,
+        thumbnailUrl: avatar
+    });
+    assert.equal(payload.embeds[0].author.icon_url, icon);
+    assert.equal(payload.embeds[0].thumbnail.url, avatar);
+});
+
+test("legacy text payloads receive the common event presentation", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const logPayload = normalizeLegacyWebhookPayload("LOG", "legacy log");
+    const alertPayload = normalizeLegacyWebhookPayload("ALERT", { content: "legacy alert" });
+    assert.match(logPayload.embeds[0].author.name, /ACTIVITY & AUDIT/);
+    assert.match(logPayload.embeds[0].description, /legacy log/);
+    assert.match(alertPayload.embeds[0].author.name, /ACTION REQUIRED/);
+    assert.match(alertPayload.embeds[0].description, /legacy alert/);
+});
+
+test("event delivery normalization removes raw credentials and IP addresses", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const token = `${"A".repeat(24)}.${"B".repeat(6)}.${"C".repeat(20)}`;
+    const webhookUrl = `${LOG_URL}/unsafe`;
+    const payload = normalizeWebhookPayload(buildWebhookEventPayload({
+        severity: "ERROR",
+        category: "SECURITY",
+        code: "security.redaction.test",
+        title: "ทดสอบข้อมูลอ่อนไหว",
+        context: { IP: "203.0.113.7", Token: token, Webhook: webhookUrl }
+    }));
+    const text = JSON.stringify(payload);
+    assert.equal(text.includes("203.0.113.7"), false);
+    assert.equal(text.includes(token), false);
+    assert.equal(text.includes(webhookUrl), false);
+    assert.match(text, /REDACTED_IP/);
+    assert.match(text, /REDACTED_TOKEN|REDACTED_SECRET/);
+    assert.match(text, /REDACTED_WEBHOOK/);
 });
 
 test("webhook URLs are restricted to HTTPS Discord webhook endpoints", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
@@ -186,9 +268,44 @@ test("routine dedupe remains isolated per dispatcher and summaries use the origi
     await new Promise(resolve => setImmediate(resolve));
 
     assert.equal(firstCalls.length, 2);
-    assert.match(firstCalls[1].payload.content, /เกิดซ้ำเพิ่ม \*\*1\*\*/);
+    assert.match(firstCalls[1].payload.embeds[0].title, /สรุปเหตุการณ์ที่เกิดซ้ำ/);
+    assert.equal(firstCalls[1].payload.embeds[0].fields.some(field => /1 ครั้ง/.test(field.value)), true);
     assert.equal(secondCalls.length, 1);
-    assert.equal(secondCalls[0].payload, "second destination");
+    assert.match(secondCalls[0].payload.embeds[0].description, /second destination/);
+});
+
+test("deduplication applies independently to alert events", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const calls = [];
+    const dispatcher = { enqueue: async (target, payload) => { calls.push({ target, payload }); return true; } };
+    const options = {
+        dispatcher,
+        dedupeKey: "critical-event",
+        dedupeMs: 60_000,
+        summaryLabel: "critical event",
+        summaryCategory: "SYSTEM",
+        eventCode: "runtime.critical"
+    };
+    await sendAlertWebhook("first", options);
+    await sendAlertWebhook("duplicate", options);
+    await flushWebhookQueue(20);
+    await new Promise(resolve => setImmediate(resolve));
+
+    assert.equal(calls.length, 2);
+    assert.equal(calls.every(call => call.target === "ALERT"), true);
+    assert.match(calls[1].payload.embeds[0].footer.text, /runtime\.critical\.repeated/);
+});
+
+test("sendWebhookEvent selects the destination and keeps the event code", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const calls = [];
+    const dispatcher = { enqueue: async (target, payload) => { calls.push({ target, payload }); return true; } };
+    await sendWebhookEvent({
+        severity: "ERROR",
+        category: "COMMAND",
+        code: "commands.registration.degraded",
+        title: "ลงทะเบียนคำสั่งไม่สำเร็จ"
+    }, { dispatcher });
+    assert.equal(calls[0].target, "ALERT");
+    assert.match(calls[0].payload.embeds[0].footer.text, /commands\.registration\.degraded/);
 });
 
 test("normalization enforces Discord payload limits without enabling mentions", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
@@ -274,22 +391,24 @@ test("startup notice only includes dashboard and optional shadow portal links", 
         timestamp: Date.UTC(2026, 5, 12, 9, 6, 40)
     });
 
-    assert.match(notice.content, /Bot พร้อมแล้ว/);
-    assert.match(notice.content, /Dashboard/);
-    assert.match(notice.content, /Shadow Portal/);
-    assert.match(notice.content, /https:\/\/example\.com\/shadow/);
-    assert.equal(notice.content.includes("telemetry/snapshot"), false);
-    assert.equal(notice.content.includes("คู่มือ"), false);
-    assert.equal(notice.content.includes("Health"), false);
-    assert.equal(notice.content.includes("Ping"), false);
+    const text = JSON.stringify(notice);
+    assert.match(text, /บอทพร้อมใช้งานแล้ว/);
+    assert.match(text, /Dashboard/);
+    assert.match(text, /เครื่องมือขั้นสูง/);
+    assert.match(text, /https:\/\/example\.com\/shadow/);
+    assert.equal(text.includes("telemetry/snapshot"), false);
+    assert.equal(text.includes("คู่มือ"), false);
+    assert.equal(text.includes("Health"), false);
+    assert.equal(text.includes("Ping"), false);
 });
 
 test("startup notice never emits a fake link when public URL is missing", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const notice = buildStartupNotice({ clientTag: "Bot#0001", baseUrl: "" });
 
-    assert.match(notice.content, /ยังไม่ได้ตั้งค่า public URL/);
-    assert.equal(notice.content.includes("your-app.onrender.com"), false);
-    assert.equal(notice.content.includes("Shadow Portal"), false);
+    const text = JSON.stringify(notice);
+    assert.match(text, /ยังไม่ได้ตั้งค่า public URL/);
+    assert.equal(text.includes("your-app.onrender.com"), false);
+    assert.equal(text.includes("เครื่องมือขั้นสูง"), false);
 });
 
 test("startup notice omits Shadow link when its router did not mount", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
@@ -299,9 +418,10 @@ test("startup notice omits Shadow link when its router did not mount", () => { /
         includeShadowPortal: false
     });
 
-    assert.match(notice.content, /https:\/\/example\.com/);
-    assert.equal(notice.content.includes("Shadow Portal"), false);
-    assert.equal(notice.content.includes("/shadow"), false);
+    const text = JSON.stringify(notice);
+    assert.match(text, /https:\/\/example\.com/);
+    assert.equal(text.includes("เครื่องมือขั้นสูง"), false);
+    assert.equal(text.includes("/shadow"), false);
 });
 
 test("webhook dispatcher never retries a send_timeout because the original request may still complete", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.

@@ -19,7 +19,6 @@ const {
     sanitizeUserMessage,
     markCommandAccepted
 } = require("../guards/commandGuards");
-const { sendLogWebhook } = require("../core/webhooks");
 const dmService = require("../dm");
 
 // Race Condition Guards
@@ -575,10 +574,6 @@ async function handleBackup(interaction) {
         );
         if (!stored) throw new Error("SNAPSHOT_SAVE_FAILED");
 
-        await sendLogWebhook({
-            content: `${config.emojis.backup_icon} **[BACKUP]** Guild: ${interaction.guild.name}\nBy: ${interaction.user.tag}\nRoles: ${data.roles.length} | Channels: ${data.channels.length}`
-        }).catch(() => {});
-
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.success)
             .setDescription(
@@ -907,9 +902,9 @@ async function handleRestoreConfirm(interaction, sessionManager) {
                     payload: { embeds: [embed] }
                 });
                 if (!["sent", "retrying"].includes(delivery?.status)) {
-                    sendLogWebhook({
-                        content: `⚠️ [RESTORE RESULT] ส่งผลส่วนตัวไม่ได้ | guild=${interaction.guild.id} | ref=${interaction.id || "unknown"}`
-                    }).catch(() => {});
+                    console.warn(
+                        `[RESTORE] Private result delivery unavailable | guild=${interaction.guild.id} | ref=${interaction.id || "unknown"}`
+                    );
                 }
             }
 

@@ -63,14 +63,15 @@ let lastLoadStats = {
 // ════════════════════════════════════════════════════════════════════════════
 //  🔐  REGION 2: ENCRYPTION (AES-256-GCM + CBC BACKWARD COMPAT)
 // ════════════════════════════════════════════════════════════════════════════
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY
-    ? crypto.createHash("sha256").update(process.env.ENCRYPTION_KEY).digest("base64").substring(0, 32)
-    : "default-key-change-me-32-chars!!";
-
 const LEGACY_KEY = "default-key-change-me-32-chars!!";
 const IS_PRODUCTION = String(process.env.NODE_ENV || "").trim() === "production";
+const ENCRYPTION_SECRET = process.env.ENCRYPTION_KEY || LEGACY_KEY;
+const CURRENT_ENCRYPTION_KEY = crypto.createHash("sha256").update(ENCRYPTION_SECRET).digest();
+const LEGACY_DERIVED_KEY = process.env.ENCRYPTION_KEY
+    ? Buffer.from(crypto.createHash("sha256").update(process.env.ENCRYPTION_KEY).digest("base64").substring(0, 32))
+    : Buffer.from(LEGACY_KEY);
 
-if (IS_PRODUCTION && ENCRYPTION_KEY === LEGACY_KEY) {
+if (IS_PRODUCTION && !process.env.ENCRYPTION_KEY) {
     throw new Error("[SECURITY] ENCRYPTION_KEY is required in production for session encryption.");
 }
 
@@ -79,73 +80,93 @@ function encryptToken(text) {
 
     try {
         const iv = crypto.randomBytes(12);
-        const cipher = crypto.createCipheriv("aes-256-gcm", Buffer.from(ENCRYPTION_KEY), iv);
+        const cipher = crypto.createCipheriv("aes-256-gcm", CURRENT_ENCRYPTION_KEY, iv);
 
         let encrypted = cipher.update(text, "utf-8", "hex");
         encrypted += cipher.final("hex");
 
         const authTag = cipher.getAuthTag().toString("hex");
 
-        return `gcm:${iv.toString("hex")}:${authTag}:${encrypted}`;
+        return `v3:gcm:${iv.toString("hex")}:${authTag}:${encrypted}`;
     } catch (err) {
         console.error(`[SECURITY] ❌ Failed to encrypt token: ${err.message}`);
         return null;
     }
 }
 
-function decryptToken(text) {
-    if (!text) return null;
+function decryptGcmToken(text, key, versioned) {
+    const parts = text.split(":");
+    const offset = versioned ? 2 : 1;
+    const iv = Buffer.from(parts[offset], "hex");
+    const authTag = Buffer.from(parts[offset + 1], "hex");
+    const encrypted = Buffer.from(parts.slice(offset + 2).join(":"), "hex");
+    if (iv.length !== 12 || authTag.length !== 16 || encrypted.length === 0) {
+        throw new Error("Invalid GCM token payload");
+    }
+    const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+    decipher.setAuthTag(authTag);
+    return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf-8");
+}
 
-    if (text.startsWith("gcm:")) {
+function decryptCbcToken(text, key) {
+    const textParts = text.split(":");
+    const iv = Buffer.from(textParts.shift(), "hex");
+    const encryptedText = Buffer.from(textParts.join(":"), "hex");
+    if (iv.length !== 16 || encryptedText.length === 0) throw new Error("Invalid CBC token payload");
+    const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+    return Buffer.concat([decipher.update(encryptedText), decipher.final()]).toString("utf-8");
+}
+
+function decryptTokenWithMetadata(text) {
+    if (!text || typeof text !== "string") return null;
+
+    if (text.startsWith("v3:gcm:")) {
         try {
-            const parts = text.split(":");
-            const iv = Buffer.from(parts[1], "hex");
-            const authTag = Buffer.from(parts[2], "hex");
-            const encrypted = Buffer.from(parts.slice(3).join(":"), "hex");
-
-            const decipher = crypto.createDecipheriv("aes-256-gcm", Buffer.from(ENCRYPTION_KEY), iv);
-            decipher.setAuthTag(authTag);
-
-            let decrypted = decipher.update(encrypted, "hex", "utf-8");
-            decrypted += decipher.final("utf-8");
-
-            return decrypted;
+            return { plaintext: decryptGcmToken(text, CURRENT_ENCRYPTION_KEY, true), needsMigration: false };
         } catch (err) {
             console.error(`[SECURITY] ❌ GCM decryption failed: ${err.message}`);
             return null;
         }
     }
 
-    try {
-        const textParts = text.split(":");
-        const iv = Buffer.from(textParts.shift(), "hex");
-        const encryptedText = Buffer.from(textParts.join(":"), "hex");
-
-        const decipher = crypto.createDecipheriv("aes-256-cbc", Buffer.from(ENCRYPTION_KEY), iv);
-        let decrypted = decipher.update(encryptedText, "hex", "utf-8");
-        decrypted += decipher.final("utf-8");
-
-        return decrypted;
-    } catch (_) {}
-
-    if (ENCRYPTION_KEY !== LEGACY_KEY) {
+    if (text.startsWith("gcm:")) {
         try {
-            const textParts = text.split(":");
-            const iv = Buffer.from(textParts.shift(), "hex");
-            const encryptedText = Buffer.from(textParts.join(":"), "hex");
-
-            const decipher = crypto.createDecipheriv("aes-256-cbc", Buffer.from(LEGACY_KEY), iv);
-            let decrypted = decipher.update(encryptedText, "hex", "utf-8");
-            decrypted += decipher.final("utf-8");
-
-            console.log("[SECURITY] 🔄 CBC→GCM migration: token ถอดรหัสด้วย legacy key — จะถูก re-encrypt เป็น GCM อัตโนมัติ");
-            return decrypted;
+            return { plaintext: decryptGcmToken(text, LEGACY_DERIVED_KEY, false), needsMigration: true };
         } catch (err) {
-            console.error(`[SECURITY] ❌ Decryption failed (GCM + CBC + legacy): ${err.message}`);
+            console.error(`[SECURITY] ❌ Legacy GCM decryption failed: ${err.message}`);
+            return null;
         }
     }
 
+    const legacyKeys = [LEGACY_DERIVED_KEY, Buffer.from(LEGACY_KEY)]
+        .filter((key, index, keys) => keys.findIndex(candidate => candidate.equals(key)) === index);
+    for (const key of legacyKeys) {
+        try {
+            return { plaintext: decryptCbcToken(text, key), needsMigration: true };
+        } catch (_) {}
+    }
+
+    console.error("[SECURITY] ❌ Decryption failed for all compatible Voice token formats");
     return null;
+}
+
+function decryptToken(text) {
+    return decryptTokenWithMetadata(text)?.plaintext || null;
+}
+
+/*
+ * Existing records are migrated only after authenticated decryption succeeds.
+ * ENCRYPTION_KEY must stay unchanged during this transition.
+ */
+function migrateEncryptedToken(text) {
+    const result = decryptTokenWithMetadata(text);
+    if (!result?.plaintext || result.needsMigration !== true) return { token: text, migrated: false };
+    try {
+        const token = encryptToken(result.plaintext);
+        return token ? { token, migrated: true } : { token: text, migrated: false };
+    } finally {
+        result.plaintext = null;
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -474,15 +495,26 @@ async function loadDatabase() {
 
         let activeLoaded = 0;
         let recoverableLoaded = 0;
+        const encryptionMigrationOps = [];
 
         for (const r of records) {
             const state = r.state || "active";
             if (state === "active") activeLoaded++;
             else recoverableLoaded++;
 
+            const migratedToken = migrateEncryptedToken(r.token);
+            if (migratedToken.migrated) {
+                encryptionMigrationOps.push({
+                    updateOne: {
+                        filter: { _id: r._id, token: r.token },
+                        update: { $set: { token: migratedToken.token } }
+                    }
+                });
+            }
+
             sessions.set(r.sessionId, {
                 sessionId: r.sessionId,
-                token: r.token,
+                token: migratedToken.token,
 
                 serverId: r.serverId,
                 voiceId: r.voiceId,
@@ -522,6 +554,15 @@ async function loadDatabase() {
                 recoveryState: r.recoveryState || null,
                 notificationState: r.notificationState || null
             });
+        }
+
+        if (encryptionMigrationOps.length > 0) {
+            try {
+                const migrationResult = await SessionModel.bulkWrite(encryptionMigrationOps, { ordered: false });
+                console.log(`[SECURITY] 🔄 Migrated ${migrationResult.modifiedCount || 0} Voice session token(s) to v3 encryption.`);
+            } catch (err) {
+                console.warn(`[SECURITY] ⚠️ Voice token migration will retry on the next save: ${err.message}`);
+            }
         }
 
         lastLoadStats = {
@@ -1884,6 +1925,8 @@ module.exports = {
 
     _test: {
         shouldCacheSettingKey,
-        INTERNAL_EVENT_SETTINGS
+        INTERNAL_EVENT_SETTINGS,
+        decryptTokenWithMetadata,
+        migrateEncryptedToken
     }
 };

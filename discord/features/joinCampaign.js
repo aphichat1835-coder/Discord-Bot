@@ -7,7 +7,7 @@ const {
     getVerificationRedirectUri,
     getAdminRedirectUri
 } = require("../verification/utils/oauthTokenLifecycle");
-const { sendLogWebhook } = require("../core/webhooks");
+const { buildWebhookEventPayload, sendWebhookEvent } = require("../core/webhooks");
 const { safeError } = require("../core/safeLogger");
 
 const TOKEN_FIELDS = Object.freeze([
@@ -158,11 +158,20 @@ function makeCampaignId(now = Date.now()) {
     return `join_${now.toString(36)}_${crypto.randomBytes(4).toString("hex")}`;
 }
 
-function makeBaseSummary({ campaignId, targetGuildId, targetGuildName, dryRun = false, startedBy = "owner-dashboard", startedAt = Date.now() }) {
+function makeBaseSummary({
+    campaignId,
+    targetGuildId,
+    targetGuildName,
+    targetGuildIconUrl,
+    dryRun = false,
+    startedBy = "owner-dashboard",
+    startedAt = Date.now()
+}) {
     return {
         campaignId,
         targetGuildId: String(targetGuildId),
         targetGuildName: targetGuildName || null,
+        targetGuildIconUrl: targetGuildIconUrl || null,
         dryRun,
         startedBy,
         startedAt,
@@ -310,7 +319,6 @@ function recordJoinFailure(summary, userId, reason, detail = null) {
 async function maybeReportCampaignProgress(summary, processed, config, options) {
     if (processed % config.progressEvery !== 0) return;
     options.onSummary?.(summary);
-    await sendCampaignWebhook(summary, "progress", options.sendWebhook || sendLogWebhook);
 }
 
 async function waitBetweenJoinAttempts(config, options) {
@@ -413,42 +421,62 @@ function formatCampaignErrorLine(item = {}) {
 }
 
 function formatThaiJoinCampaignLog(summary, phase = "progress") {
-    const title = getJoinCampaignTitle(phase);
-    const targetName = summary.targetGuildName
-        ? `${summary.targetGuildName} (${summary.targetGuildId})`
-        : summary.targetGuildId;
-    const lines = [
-        `📥 **${title}**`,
-        `รหัสงาน: \`${summary.campaignId}\``,
-        `เซิร์ฟเวอร์เป้าหมาย: \`${targetName}\``,
-        `โหมด: ${summary.dryRun ? "ตรวจจำนวนเท่านั้น" : "ดึงจริง"}`,
-        `สถานะ: ${summary.status}`,
-        "",
-        `ตรวจพบทั้งหมด: ${summary.scannedRecords} records / ${summary.uniqueUsers} users`,
-        `ใช้ได้จริง: ${summary.usableUsers} users`,
-        `ดึงเข้าสำเร็จ: ${summary.joined}`,
-        `อยู่ในเซิร์ฟเวอร์แล้ว: ${summary.alreadyMember}`,
-        `ไม่สำเร็จ: ${summary.failed}`,
-        `refresh token แล้ว: ${summary.refreshed}`,
-        `refresh ไม่สำเร็จ: ${summary.refreshFailed}`,
-        `ขาด scope guilds.join: ${summary.missingScope}`,
-        `token ใช้ไม่ได้: ${summary.tokenInvalid}`,
-        `บอทขาดสิทธิ์: ${summary.botMissingPermission}`,
-        `โดน rate limit: ${summary.rateLimited}`
-    ];
-
-    if (summary.errors.length) {
-        lines.push("", "ตัวอย่างรายการที่ไม่สำเร็จ:");
-        for (const item of summary.errors.slice(0, 5)) {
-            lines.push(formatCampaignErrorLine(item));
-        }
-    }
-
-    return { content: lines.join("\n").slice(0, 1900) };
+    return buildWebhookEventPayload(buildJoinCampaignEvent(summary, phase));
 }
 
-async function sendCampaignWebhook(summary, phase, sendWebhook = sendLogWebhook) {
-    await sendWebhook(formatThaiJoinCampaignLog(summary, phase)).catch(() => {});
+function resolveCampaignSeverity(summary, phase) {
+    if (summary.status === "failed") return "ERROR";
+    if (phase === "start") return "INFO";
+    const hasPartialFailures = Number(summary.failed || 0) > 0 || Number(summary.refreshFailed || 0) > 0;
+    return hasPartialFailures ? "WARNING" : "SUCCESS";
+}
+
+function buildJoinCampaignEvent(summary, phase) {
+    const failedEntireJob = summary.status === "failed";
+    const severity = resolveCampaignSeverity(summary, phase);
+    const errors = (summary.errors || []).slice(0, 5).map(formatCampaignErrorLine).join("\n");
+    return {
+        target: failedEntireJob ? "ALERT" : "LOG",
+        severity,
+        category: "CAMPAIGN",
+        code: failedEntireJob ? "campaign.join.failed" : `campaign.join.${phase}`,
+        state: failedEntireJob ? "OPEN" : undefined,
+        title: getJoinCampaignTitle(phase),
+        sourceIconUrl: summary.targetGuildIconUrl,
+        description: errors ? `ตัวอย่างรายการที่ไม่สำเร็จ:\n${errors}` : undefined,
+        impact: failedEntireJob ? "งานหยุดก่อนประมวลผลครบทุกบัญชี" : undefined,
+        action: failedEntireJob ? "ตรวจ Runtime Log และสาเหตุล่าสุดก่อนเริ่ม Campaign ใหม่" : undefined,
+        context: {
+            "รหัสงาน": summary.campaignId,
+            "เซิร์ฟเวอร์": summary.targetGuildName || summary.targetGuildId,
+            "Guild ID": summary.targetGuildId,
+            "โหมด": summary.dryRun ? "ตรวจจำนวนเท่านั้น" : "ดึงสมาชิกจริง",
+            "สถานะงาน": summary.status,
+            "Records ที่ตรวจ": Number(summary.scannedRecords || 0),
+            "ผู้ใช้ไม่ซ้ำ": Number(summary.uniqueUsers || 0),
+            "ใช้ได้จริง": Number(summary.usableUsers || 0),
+            "ดึงเข้าสำเร็จ": Number(summary.joined || 0),
+            "เป็นสมาชิกอยู่แล้ว": Number(summary.alreadyMember || 0),
+            "ไม่สำเร็จ": Number(summary.failed || 0),
+            "Refresh สำเร็จ": Number(summary.refreshed || 0),
+            "Refresh ไม่สำเร็จ": Number(summary.refreshFailed || 0),
+            "ขาด Scope": Number(summary.missingScope || 0),
+            "Token ใช้ไม่ได้": Number(summary.tokenInvalid || 0),
+            "บอทขาดสิทธิ์": Number(summary.botMissingPermission || 0),
+            "ติด Rate Limit": Number(summary.rateLimited || 0)
+        },
+        dedupeKey: failedEntireJob ? `join-campaign-failed:${summary.campaignId}` : undefined,
+        dedupeMs: 15 * 60 * 1000
+    };
+}
+
+async function sendCampaignWebhook(summary, phase, sendWebhook) {
+    const event = buildJoinCampaignEvent(summary, phase);
+    if (sendWebhook) {
+        await sendWebhook(buildWebhookEventPayload(event)).catch(() => {});
+        return;
+    }
+    await sendWebhookEvent(event).catch(() => {});
 }
 
 function buildExecutionContext(options = {}) {
@@ -483,6 +511,7 @@ function createExecutionSummary(options, context, docs) {
         campaignId: options.campaignId || makeCampaignId(context.now),
         targetGuildId: context.targetGuildId,
         targetGuildName: options.targetGuildName || null,
+        targetGuildIconUrl: options.targetGuildIconUrl || null,
         dryRun: options.dryRun === true,
         startedBy: options.startedBy || "owner-dashboard",
         startedAt: context.now
@@ -511,7 +540,7 @@ async function completeDryRun(summary, options, now) {
     summary.finishedAt = now;
     options.onSummary?.(summary);
     if (options.sendFinishLog) {
-        await sendCampaignWebhook(summary, "finish", options.sendWebhook || sendLogWebhook);
+        await sendCampaignWebhook(summary, "finish", options.sendWebhook);
     }
     return summary;
 }
@@ -589,7 +618,7 @@ async function finishCampaignSummary(summary, options) {
     options.onSummary?.(summary);
 
     if (options.sendFinishLog !== false) {
-        await sendCampaignWebhook(summary, "finish", options.sendWebhook || sendLogWebhook);
+        await sendCampaignWebhook(summary, "finish", options.sendWebhook);
     }
 
     return summary;
@@ -604,7 +633,7 @@ async function executeJoinCampaign(options = {}) {
     options.onSummary?.(summary);
 
     if (options.sendStartLog) {
-        await sendCampaignWebhook(summary, "start", options.sendWebhook || sendLogWebhook);
+        await sendCampaignWebhook(summary, "start", options.sendWebhook);
     }
 
     if (suppliedDocs) {
@@ -656,6 +685,7 @@ function startJoinCampaign(options = {}) {
         campaignId,
         targetGuildId,
         targetGuildName: options.targetGuildName,
+        targetGuildIconUrl: options.targetGuildIconUrl,
         dryRun: false,
         startedBy: options.startedBy || "owner-dashboard"
     });
@@ -684,7 +714,7 @@ function startJoinCampaign(options = {}) {
         pushError(failed, null, "campaign_failed", safeError(err));
         runningState.active = failed;
         runningState.last = failed;
-        sendCampaignWebhook(failed, "finish", options.sendWebhook || sendLogWebhook).catch(() => {});
+        sendCampaignWebhook(failed, "finish", options.sendWebhook).catch(() => {});
     });
 
     return {

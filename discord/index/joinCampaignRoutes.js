@@ -1,4 +1,5 @@
 const joinCampaign = require("../features/joinCampaign");
+const { getDiscordGuildIconUrl } = require("../core/webhooks");
 
 function listJoinCampaignTargets(client) {
     const campaignConfig = joinCampaign.getJoinCampaignConfig();
@@ -83,6 +84,7 @@ function registerJoinCampaignRoutes({ app, express, client, checkAuth }) {
             const summary = await joinCampaign.executeJoinCampaign({
                 targetGuildId: target.guild.id,
                 targetGuildName: target.guild.name,
+                targetGuildIconUrl: getDiscordGuildIconUrl(target.guild),
                 dryRun: true,
                 sendFinishLog: false,
                 startedBy: "owner-dashboard"
@@ -109,6 +111,7 @@ function registerJoinCampaignRoutes({ app, express, client, checkAuth }) {
             const started = joinCampaign.startJoinCampaign({
                 targetGuildId: target.guild.id,
                 targetGuildName: target.guild.name,
+                targetGuildIconUrl: getDiscordGuildIconUrl(target.guild),
                 startedBy: "owner-dashboard"
             });
 

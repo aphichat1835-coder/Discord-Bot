@@ -10,7 +10,7 @@ DO NOT SIMPLIFY: OperationQueue concurrency — prevents IP ban from Discord.
 const { Client: SelfClient } = require("discord.js-selfbot-v13");
 const { joinVoiceChannel, getVoiceConnection, VoiceConnectionStatus, entersState } = require("@discordjs/voice");
 const sessionManager = require("../sessionManager");
-const { sendAlertWebhook } = require("../core/webhooks");
+const { sendWebhookEvent, getDiscordGuildIconUrl } = require("../core/webhooks");
 const { sanitizeLogText } = require("../core/safeLogger");
 const { registerGatewayDiagnostics } = require("../core/gatewayDiagnostics");
 const {
@@ -581,20 +581,6 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
 
             console.log(`[WORKER] ⚠️ Voice dropped for ${sanitizeLogText(sessionId)}. Attempt ${reconnectAttempts}/${CONFIG.MAX_RECONNECT_ATTEMPTS}`);
 
-            if (reconnectAttempts === 3) {
-                const sess = sessionManager.getSession(sessionId);
-                sendAlertWebhook({
-                    content: [ // nosemgrep
-                        `${config.emojis.warning} **[SESSION WARNING]** session หลุดบ่อยผิดปกติ`,
-                        `${config.emojis.robot} Session: \`${getSessionShortId(sessionId)}\``,
-                        `${config.emojis.signal} เซิร์ฟเวอร์: **${sanitizeLogText(sess?.serverName || guildId)}**`,
-                        `${config.emojis.halt} ห้องเสียง: **${sanitizeLogText(sess?.voiceName || channel.name || channelId)}**`,
-                        `${config.emojis.alert} หลุดแล้ว: **${reconnectAttempts}** ครั้ง (สูงสุด ${CONFIG.MAX_RECONNECT_ATTEMPTS})`,
-                        `⏰ <t:${Math.floor(Date.now() / 1000)}:F>`
-                    ].join("\n")
-                }).catch(() => {});
-            }
-
             if (reconnectAttempts >= CONFIG.MAX_RECONNECT_ATTEMPTS) {
                 await handleMaxReconnectReached();
                 return;
@@ -631,6 +617,25 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
             );
             if (!(markResult?.ok ?? markResult)) {
                 console.warn(`[WORKER] ⚠️ Max reconnect failed state was not persisted for ${sanitizeLogText(sessionId)}: ${markResult?.safeError || "UNKNOWN"}`);
+                sendWebhookEvent({
+                    severity: "ERROR",
+                    category: "DATA",
+                    code: "voice.session.failure_state_persistence_failed",
+                    state: "OPEN",
+                    title: "บันทึกสถานะ Voice Session ที่หยุดทำงานไม่ได้",
+                    description: "Session หยุดหลังเชื่อมต่อใหม่ไม่สำเร็จ แต่ฐานข้อมูลไม่ยืนยันการเปลี่ยนสถานะ",
+                    impact: "Dashboard อาจยังแสดงสถานะ Session ไม่ตรงกับการทำงานจริง",
+                    action: "ตรวจ MongoDB และสถานะ Session แล้วนำรายการค้างออกหากจำเป็น",
+                    context: {
+                        "Session": getSessionShortId(sessionId),
+                        "Guild ID": failedSession.serverId || guildId,
+                        "รหัสข้อผิดพลาด": markResult?.safeError || "persistence_unacknowledged"
+                    },
+                    sourceIconUrl: getDiscordGuildIconUrl(guild),
+                    thumbnailUrl: failedSession.accountAvatar,
+                    dedupeKey: `voice-state-persistence:${getSessionShortId(sessionId)}`,
+                    dedupeMs: 30 * 60 * 1000
+                }).catch(() => {});
             }
             cleanupSessionClientIfUnused(failedTokenHash, failedClientRef, sessionId, failedSession, "max-reconnect");
         }
@@ -641,17 +646,6 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
             action: "ตรวจสอบสิทธิ์และช่องเสียง แล้วสั่งเริ่ม Session ใหม่"
         });
 
-        const sess = sessionManager.getSession(sessionId);
-        sendAlertWebhook({
-            content: [ // nosemgrep
-                `${config.emojis.error} **[SESSION DEAD]** session หลุดเกินกำหนด ระบบหยุดแล้ว`,
-                `${config.emojis.robot} Session: \`${getSessionShortId(sessionId)}\``,
-                `${config.emojis.signal} เซิร์ฟเวอร์: **${sanitizeLogText(sess?.serverName || guildId)}**`,
-                `${config.emojis.stop} ห้องเสียง: **${sanitizeLogText(sess?.voiceName || channel.name || channelId)}**`,
-                `${config.emojis.no_entry} พยายามต่อใหม่: **${CONFIG.MAX_RECONNECT_ATTEMPTS}/${CONFIG.MAX_RECONNECT_ATTEMPTS}** ครั้ง — ยกเลิกแล้ว`,
-                `⏰ <t:${Math.floor(Date.now() / 1000)}:F>`
-            ].join("\n")
-        }).catch(() => {});
     }
 
     async function handlePassiveReconnect(reconnectAttempts) {

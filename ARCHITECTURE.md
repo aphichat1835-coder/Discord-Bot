@@ -66,6 +66,20 @@ mention suppression, and redacted delivery diagnostics. Critical alerts take
 priority over queued routine logs. The retired Enterprise Audit event capture,
 channel routing, queues, reconciliation, and dashboard are not part of runtime.
 
+Webhook producers use a shared event envelope with a stable event code,
+category, severity, optional lifecycle state, impact, action, and bounded
+context. `WEBHOOK_LOG_URL` receives informational, successful, and recoverable
+warning events; `ALERT_WEBHOOK_URL` receives errors, critical failures, and
+events requiring Owner action. Duplicate fingerprints are isolated by target
+and summarized after a bounded window. Voice notifications distinguish an
+individual session outcome from an Owner-level system incident: reconnect,
+recovery, and terminal exhaustion stay in the session DM/Dashboard flow, while
+an unacknowledged database state transition reaches the action-required
+webhook. Join Campaign sends only start and finish summaries; live progress
+remains in the Owner Dashboard. When an event has a real Discord subject, its
+embed uses the relevant guild icon and/or account avatar; system-only events do
+not invent a profile image.
+
 ## 3. Repository map
 
 ```text
@@ -257,8 +271,11 @@ versions older than the cleanup grace period are eligible for bounded deletion.
 Object chunks use guild-scoped identity and participate in the same reference
 checks; startup maintenance migrates the legacy non-guild-scoped index safely.
 
-Model names, collection behavior, and current/historical token/IP encryption
-read compatibility are preserved.
+Model names and collection behavior are preserved. New token/IP and Voice
+session writes use versioned `v3:gcm` encryption with the full binary SHA-256
+key. Historical key derivations remain read-compatible during a bounded,
+conditional migration; deployment must keep `ENCRYPTION_KEY` unchanged until
+maintenance diagnostics report no legacy records.
 
 Join Campaign scans OAuth users in stable `_id` cursor batches until the query
 is exhausted or the Owner stops the job. Its batch-size setting bounds memory;
@@ -390,6 +407,8 @@ decrypt or serialize raw tokens.
 `discord/verification/lifecycle.js` runs after MongoDB is ready and periodically:
 
 - applies configured soft-delete retention to verification/IP correlation data;
+- migrates bounded batches of legacy OAuth token and encrypted-IP fields to
+  `v3:gcm`, reporting migrated, failed, and remaining counts;
 - expires legacy pending reveal requests;
 - refreshes encrypted verification and historical admin OAuth tokens.
 

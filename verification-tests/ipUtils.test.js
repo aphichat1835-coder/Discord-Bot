@@ -25,6 +25,8 @@ const {
     getRealIP,
     getIpLookupConfig,
     getIpLookupDiagnostics,
+    startLookupCacheCleanup,
+    stopLookupCacheCleanup,
     lookupIP,
     isPrivateIP,
     extractDevice,
@@ -32,6 +34,13 @@ const {
     applyHistoricalLocationContext,
     _test
 } = require('../discord/verification/utils/ipUtils');
+
+test('IP lookup cache cleanup timer can stop and restart explicitly', () => {
+    expect(stopLookupCacheCleanup()).toBe(true);
+    expect(stopLookupCacheCleanup()).toBe(false);
+    expect(startLookupCacheCleanup()).toBe(true);
+    expect(startLookupCacheCleanup()).toBe(false);
+});
 
 test('x-forwarded-for parsing is capped before normalization', () => {
     const values = Array.from({ length: 50 }, (_, index) => `203.0.113.${index + 1}`);

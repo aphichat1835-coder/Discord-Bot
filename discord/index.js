@@ -37,9 +37,12 @@ const bootLog = createStartupLogger();
 const runtimeLog = createStartupLogger({ prefix: "BOT" });
 const {
     sendLogWebhook,
+    sendWebhookEvent,
     buildStartupNotice,
     getWebhookDiagnostics,
-    getOwnerDashboardBaseUrl
+    getOwnerDashboardBaseUrl,
+    getDiscordAvatarUrl,
+    getDiscordGuildIconUrl
 } = require("./core/webhooks");
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -214,15 +217,25 @@ async function savePendingGuild(guild, guildId, userId) {
     }
 }
 
-function notifyUnauthorizedGuild(guild, guildId, userId) {
-    sendLogWebhook(
-        { content: `🚨 **[UNAUTHORIZED]** <@${userId}> tried bot in **${String(guild.name || "Unknown Guild").slice(0, 100)}** (${guildId})` },
-        {
-            dedupeKey: `unauthorized-guild:${guildId}:${userId}`,
-            dedupeMs: 5 * 60 * 1000,
-            summaryLabel: `unauthorized guild use in ${guildId}`
-        }
-    ).catch(() => {});
+function notifyUnauthorizedGuild(guild, guildId, userId, user) {
+    sendWebhookEvent({
+        target: "LOG",
+        severity: "WARNING",
+        category: "SECURITY",
+        code: "security.guild.unauthorized",
+        title: "เซิร์ฟเวอร์ที่ยังไม่ได้รับอนุญาตเรียกใช้บอท",
+        description: "ระบบปฏิเสธคำสั่งและบันทึกคำขอไว้แล้ว",
+        context: {
+            "เซิร์ฟเวอร์": String(guild.name || "Unknown Guild").slice(0, 100),
+            "Guild ID": guildId,
+            "User ID": userId
+        },
+        sourceIconUrl: getDiscordGuildIconUrl(guild),
+        thumbnailUrl: getDiscordAvatarUrl(user),
+        dedupeKey: `unauthorized-guild:${guildId}:${userId}`,
+        dedupeMs: 5 * 60 * 1000,
+        summaryLabel: `เซิร์ฟเวอร์ ${guildId} เรียกใช้บอทโดยยังไม่ได้รับอนุญาต`
+    }).catch(() => {});
 }
 
 async function checkApproval(guild, user) {
@@ -239,7 +252,7 @@ async function checkApproval(guild, user) {
     if (approval.approved) return true;
 
     await savePendingGuild(guild, guildId, userId);
-    notifyUnauthorizedGuild(guild, guildId, userId);
+    notifyUnauthorizedGuild(guild, guildId, userId, user);
     return false;
 }
 
@@ -308,12 +321,35 @@ async function registerSlashCommandsWithRetry() {
             });
             return true;
         }
-        sendLogWebhook({ content: "⚠️ **[COMMANDS DEGRADED]** Slash command registration failed after bounded retries." }).catch(() => {});
+        sendWebhookEvent({
+            severity: "ERROR",
+            category: "COMMAND",
+            code: "commands.registration.degraded",
+            state: "OPEN",
+            title: "ลงทะเบียน Slash Commands ไม่สำเร็จ",
+            description: "ระบบลองใหม่ครบจำนวนที่กำหนดแล้ว แต่คำสั่งอาจแสดงไม่ครบ",
+            impact: "ผู้ใช้อาจไม่เห็นหรือเรียกใช้ Slash Commands บางคำสั่ง",
+            action: "ตรวจสถานะ Discord API และสิทธิ์ของแอป แล้วเริ่มบอทใหม่",
+            dedupeKey: "commands-registration-degraded",
+            dedupeMs: 15 * 60 * 1000
+        }).catch(() => {});
         bootLog.warn("COMMANDS", "Slash command registration remains degraded", {
             code: result.error?.code || result.error?.name || "registration_failed"
         });
     } catch (err) {
-        sendLogWebhook({ content: "⚠️ **[COMMANDS DEGRADED]** Slash command registration could not start." }).catch(() => {});
+        sendWebhookEvent({
+            severity: "ERROR",
+            category: "COMMAND",
+            code: "commands.registration.start_failed",
+            state: "OPEN",
+            title: "เริ่มลงทะเบียน Slash Commands ไม่ได้",
+            description: "ขั้นตอนลงทะเบียนคำสั่งหยุดก่อนเริ่มส่งข้อมูลไป Discord",
+            impact: "Slash Commands อาจไม่พร้อมใช้งาน",
+            action: "ตรวจ Error ใน Runtime Log แล้วเริ่มบอทใหม่",
+            context: { "รหัสข้อผิดพลาด": err?.code || err?.name || "registration_start_failed" },
+            dedupeKey: "commands-registration-start-failed",
+            dedupeMs: 15 * 60 * 1000
+        }).catch(() => {});
         bootLog.error("COMMANDS", "Slash command registration could not start", {
             code: err?.code || err?.name || "registration_start_failed"
         });
@@ -359,7 +395,7 @@ if (isFeatureEnabled("verification")) {
 // ════════════════════════════════════════════════════════════════════════════
 //  ⚡  REGISTER DISCORD EVENTS
 // ════════════════════════════════════════════════════════════════════════════
-events.register({
+const eventRuntime = events.register({
     client, config, sessionManager, voiceWorker,
     commands,
     spamTracking, antiRaidDebounce,
@@ -386,7 +422,8 @@ system.initShutdown({
     client,
     memoryMonitor,
     verificationRuntime: verificationLifecycle,
-    dmService
+    dmService,
+    runtimeCleanups: [eventRuntime, routeRegistration]
 });
 
 if (isFeatureEnabled("memoryMonitor")) {

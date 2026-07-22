@@ -1245,11 +1245,26 @@ function getIpLookupDiagnostics() {
     };
 }
 
-const lookupCacheCleanupTimer = setInterval(
-    cleanupLookupCache,
-    Math.max(IP_LOOKUP_CACHE_TTL_MS, 60 * 1000)
-);
-lookupCacheCleanupTimer.unref?.();
+let lookupCacheCleanupTimer = null;
+
+function startLookupCacheCleanup() {
+    if (lookupCacheCleanupTimer) return false;
+    lookupCacheCleanupTimer = setInterval(
+        cleanupLookupCache,
+        Math.max(IP_LOOKUP_CACHE_TTL_MS, 60 * 1000)
+    );
+    lookupCacheCleanupTimer.unref?.();
+    return true;
+}
+
+function stopLookupCacheCleanup() {
+    if (!lookupCacheCleanupTimer) return false;
+    clearInterval(lookupCacheCleanupTimer);
+    lookupCacheCleanupTimer = null;
+    return true;
+}
+
+startLookupCacheCleanup();
 
 async function lookupIP(ip) {
     if (isPrivateIP(ip)) {
@@ -1651,6 +1666,8 @@ module.exports = {
     getIpLookupConfig,
     lookupIP,
     cleanupLookupCache,
+    startLookupCacheCleanup,
+    stopLookupCacheCleanup,
     getIpLookupDiagnostics,
     isPrivateIP,
     extractDevice,

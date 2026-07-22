@@ -20,6 +20,11 @@ const {
     migrateLegacyHistory,
     migrateVerifyLogHistory
 } = require("./services/ipIdentityHistoryService");
+const { runEncryptionMigration } = require("./services/encryptionMigration");
+const {
+    startLookupCacheCleanup,
+    stopLookupCacheCleanup
+} = require("./utils/ipUtils");
 
 const RETENTION_CONFIG_SCAN_MAX = Math.max(
     50,
@@ -86,11 +91,22 @@ function createSummary(dryRun, now) {
         verifyLogs: 0,
         ipIdentityLinks: 0,
         snapshotCleanup: null,
+        encryptionMigration: null,
         automaticMigration: null,
         ipIdentityHistoryMigration: null,
         ipIdentityVerifyLogMigration: null,
         errors: []
     };
+}
+
+async function runEncryptionMigrationSafe(dryRun, summary) {
+    try {
+        summary.encryptionMigration = await runEncryptionMigration({ dryRun });
+    } catch (err) {
+        const error = safeError(err);
+        summary.encryptionMigration = { failed: true, error };
+        summary.errors.push({ subsystem: "encryption_migration", error });
+    }
 }
 
 async function runAutomaticMigrationSafe(dryRun, summary) {
@@ -258,6 +274,7 @@ async function runVerificationMaintenance(options = {}) {
 
     try {
         await runAutomaticMigrationSafe(dryRun, summary);
+        await runEncryptionMigrationSafe(dryRun, summary);
         await runIpIdentityHistoryMigration(dryRun, summary);
         await runIpIdentityVerifyLogMigration(dryRun, summary);
         await runSnapshotCleanup(dryRun, summary);
@@ -311,6 +328,7 @@ async function startVerificationRuntime(options = {}) {
     const maintenanceRunner = options.maintenanceRunner || runVerificationMaintenance;
     const createInterval = options.setIntervalFn || setInterval;
     maintenanceClearInterval = options.clearIntervalFn || clearInterval;
+    startLookupCacheCleanup();
     runtimeStartPromise = (async () => {
         await maintenanceRunner();
         if (!maintenanceTimer) {
@@ -332,6 +350,7 @@ async function stopVerificationRuntime() {
     if (maintenanceTimer) maintenanceClearInterval(maintenanceTimer);
     maintenanceTimer = null;
     maintenanceClearInterval = clearInterval;
+    stopLookupCacheCleanup();
     await waitForMaintenanceIdle();
 }
 
@@ -359,6 +378,10 @@ function getVerificationDiagnostics() {
             lastRunAt: lastAutomaticMigrationAt,
             lastError: lastAutomaticMigrationError,
             lastSummary: lastAutomaticMigrationSummary
+        },
+        encryptionMigration: {
+            version: 3,
+            lastSummary: lastSummary?.encryptionMigration || null
         },
         oauthTokenRefresh: {
             config: getOAuthRefreshConfig(),

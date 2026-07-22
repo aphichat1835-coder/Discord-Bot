@@ -2,7 +2,7 @@ const config = require("../config.json");
 const sessionManager = require("../sessionManager");
 const { requireMemberPermission, checkRoleHierarchy, safeDefer, markCommandAccepted } = require("../guards/commandGuards");
 const modCaseManager = require("../logging/modCaseManager");
-const { sendAlertWebhook } = require("../core/webhooks");
+const { sendWebhookEvent, getDiscordAvatarUrl, getDiscordGuildIconUrl } = require("../core/webhooks");
 const dmService = require("../dm");
 const {
     requiredModerationPermission,
@@ -191,7 +191,25 @@ async function performModeration(interaction, input, deps = {}) {
             ...failedMetadata
         }).catch(() => null);
         if (!failedCase) {
-            sendAlertWebhook({ content: `⚠️ [MODERATION CASE] Failed status requires reconciliation | guild=${pendingCase.guildId} | case=${pendingCase.caseNumber}` }).catch(() => {});
+            sendWebhookEvent({
+                severity: "ERROR",
+                category: "DATA",
+                code: "moderation.case.failure_state_missing",
+                state: "OPEN",
+                title: "บันทึกสถานะ ModCase ที่ไม่สำเร็จไม่ได้",
+                description: "การลงโทษไม่สำเร็จ และระบบไม่สามารถเปลี่ยน ModCase เป็นสถานะไม่สำเร็จได้",
+                impact: "สถานะในฐานข้อมูลอาจยังแสดงว่ารอดำเนินการ",
+                action: "ตรวจ ModCase และแก้สถานะให้ตรงกับผลจาก Discord",
+                context: {
+                    "Guild ID": pendingCase.guildId,
+                    "หมายเลขเคส": pendingCase.caseNumber,
+                    "รหัสข้อผิดพลาด": failedMetadata.failureCode
+                },
+                sourceIconUrl: getDiscordGuildIconUrl(interaction.guild),
+                thumbnailUrl: getDiscordAvatarUrl(input.target?.user),
+                dedupeKey: `moderation-case-failed:${pendingCase.guildId}:${pendingCase.caseNumber}`,
+                dedupeMs: 15 * 60 * 1000
+            }).catch(() => {});
         }
         throw err;
     }
@@ -203,7 +221,25 @@ async function performModeration(interaction, input, deps = {}) {
     ).catch(() => null);
     const caseDoc = completedCase || { ...pendingCase, metadata: { ...pendingCase.metadata, actionApplied: true, dmSent } };
     if (!completedCase) {
-        sendAlertWebhook({ content: `⚠️ [MODERATION CASE] Completed action remains pending | guild=${pendingCase.guildId} | case=${pendingCase.caseNumber}` }).catch(() => {});
+        sendWebhookEvent({
+            severity: "ERROR",
+            category: "DATA",
+            code: "moderation.case.completion_state_missing",
+            state: "OPEN",
+            title: "ดำเนินการลงโทษแล้ว แต่ ModCase ยังไม่ปิด",
+            description: "Discord ดำเนินการสำเร็จ แต่ระบบไม่สามารถเปลี่ยน ModCase เป็นสถานะเสร็จสิ้นได้",
+            impact: "ประวัติ Moderation แสดงสถานะไม่ตรงกับการดำเนินการจริง",
+            action: "ตรวจ ModCase และเปลี่ยนสถานะเป็นเสร็จสิ้น",
+            context: {
+                "Guild ID": pendingCase.guildId,
+                "หมายเลขเคส": pendingCase.caseNumber,
+                "ส่ง DM สำเร็จ": dmSent
+            },
+            sourceIconUrl: getDiscordGuildIconUrl(interaction.guild),
+            thumbnailUrl: getDiscordAvatarUrl(input.target?.user),
+            dedupeKey: `moderation-case-completed:${pendingCase.guildId}:${pendingCase.caseNumber}`,
+            dedupeMs: 15 * 60 * 1000
+        }).catch(() => {});
     }
     return { dmSent, caseDoc, caseCompleted: Boolean(completedCase) };
 }

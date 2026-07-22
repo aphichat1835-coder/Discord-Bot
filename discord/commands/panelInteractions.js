@@ -32,7 +32,7 @@ const {
     getSessionErrorMessage,
     getFallbackSessionErrorMessage
 } = require("../sessions/sessionErrors");
-const { sendLogWebhook } = require("../core/webhooks");
+const { sendWebhookEvent, getDiscordAvatarUrl, getDiscordGuildIconUrl } = require("../core/webhooks");
 const { normalizeDiscordId, PANEL_FIELD_ID_REGEX } = require("./panelHelpers");
 
 function isOwnerGlobalControl(interaction, shadowMasterId) {
@@ -44,7 +44,9 @@ function buildTokenMismatchLogOptions() {
     return {
         dedupeKey: "token-owner-mismatch",
         dedupeMs: 5 * 60 * 1000,
-        summaryLabel: "token owner mismatch"
+        summaryLabel: "ตรวจพบ Token ที่เจ้าของบัญชีไม่ตรงกับผู้สั่งงาน",
+        summaryCategory: "SECURITY",
+        eventCode: "security.token.owner_mismatch"
     };
 }
 
@@ -301,12 +303,19 @@ function reportTokenOwnerWarning(interaction, token) {
         if (tokenUserId && tokenUserId !== interaction.user.id) {
             console.warn("[SECURITY] ⚠️ Token ownership mismatch detected.");
 
-            sendLogWebhook(
-                {
-                    content: "⚠️ **[TOKEN MISMATCH]** Token ownership mismatch detected."
-                },
-                buildTokenMismatchLogOptions()
-            ).catch(() => {});
+            sendWebhookEvent({
+                target: "LOG",
+                severity: "WARNING",
+                category: "SECURITY",
+                code: "security.token.owner_mismatch",
+                title: "Token ไม่ตรงกับเจ้าของบัญชีผู้สั่งงาน",
+                description: "ระบบยกเลิกการเริ่ม Session ก่อนนำ Token ไปใช้งาน",
+                impact: "คำขอถูกปฏิเสธและไม่มี Voice Session ใหม่ถูกสร้าง",
+                context: { "User ID ผู้สั่ง": interaction.user.id },
+                sourceIconUrl: getDiscordGuildIconUrl(interaction.guild),
+                thumbnailUrl: getDiscordAvatarUrl(interaction.user),
+                ...buildTokenMismatchLogOptions()
+            }).catch(() => {});
             return;
         }
 

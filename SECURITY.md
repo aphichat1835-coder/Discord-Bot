@@ -21,6 +21,14 @@ Never commit or print real:
 - decrypted OAuth metadata
 - hidden protected-system procedures
 
+The shared webhook event formatter does not weaken these rules. Owner-only
+Discord channels are still external log storage: event context may include
+bounded Discord IDs and safe references, but raw tokens, webhook credentials,
+decrypted OAuth values, and raw IP addresses remain prohibited. Every webhook
+payload suppresses mentions and passes through the shared sanitizer and Discord
+payload limits before delivery. Event profile images are accepted only from
+Discord's HTTPS CDN/media hosts; arbitrary remote image URLs are discarded.
+
 `.env.example` is placeholders only.
 
 ## Trust boundaries
@@ -132,9 +140,13 @@ before Discord rendering.
 ### OAuth tokens
 
 Access and refresh tokens are encrypted before MongoDB storage using the
-existing compatible format. Current and historical decrypt formats remain
-readable. Token metadata includes scope, type, expiry, refresh time/failures,
-safe last error, and revocation time.
+versioned `v3:gcm` format. Its AES-256 key uses the full 32-byte SHA-256 digest
+of `ENCRYPTION_KEY`; historical Service-compatible GCM/CBC formats remain
+readable only for migration. Bounded maintenance conditionally replaces a
+legacy value only when authenticated decryption succeeds and the stored value
+has not changed concurrently. Keep `ENCRYPTION_KEY` stable until diagnostics
+report no remaining legacy records. Token metadata includes scope, type,
+expiry, refresh time/failures, safe last error, and revocation time.
 
 Raw tokens must never appear in:
 

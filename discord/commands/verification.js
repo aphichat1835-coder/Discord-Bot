@@ -24,7 +24,7 @@ const sessionManager = require("../sessionManager");
 const { createCompactCallbackState } = require("../verification/utils/state");
 const { resolvePublicBaseUrl } = require("../core/publicUrl");
 const { markCommandAccepted } = require("../guards/commandGuards");
-const { sendAlertWebhook } = require("../core/webhooks");
+const { sendWebhookEvent, getDiscordGuildIconUrl } = require("../core/webhooks");
 
 let GuildConfig = null;
 
@@ -432,7 +432,7 @@ async function rollbackPanelConfig({ guildId, settingKey, previousLegacy, previo
     return results.every(result => result.status === "fulfilled" && result.value !== false && result.value !== null);
 }
 
-async function persistVerificationRecovery({ guildId, messageId, settingKey, rolledBack, panelDisabled, panelDeleted }) {
+async function persistVerificationRecovery({ guildId, messageId, settingKey, rolledBack, panelDisabled, panelDeleted, sourceIconUrl }) {
     const recoveryKey = `verify_recovery_${guildId}_${messageId}`;
     const recoveryRecord = {
         guildId,
@@ -449,8 +449,25 @@ async function persistVerificationRecovery({ guildId, messageId, settingKey, rol
         .catch(() => false);
     if (!persisted) {
         console.warn(`[VERIFY] recovery record persistence failed for guild=${guildId}`);
-        sendAlertWebhook({
-            content: `⚠️ **[VERIFY RECOVERY]** แผงยืนยันต้องตรวจสอบด้วยตนเองและบันทึก recovery record ไม่สำเร็จ | guild=${guildId} | message=${messageId}`
+        sendWebhookEvent({
+            severity: "ERROR",
+            category: "VERIFICATION",
+            code: "verification.panel.recovery_persistence_failed",
+            state: "OPEN",
+            title: "แผงยืนยันต้องตรวจสอบด้วยตนเอง",
+            description: "ระบบกู้คืนแผงไม่สมบูรณ์และไม่สามารถบันทึก Recovery Record ได้",
+            impact: "สถานะแผงใน Discord กับฐานข้อมูลอาจไม่ตรงกัน",
+            action: "ตรวจแผงยืนยันล่าสุดใน Discord แล้วตั้งค่าแผงใหม่หากจำเป็น",
+            context: {
+                "Guild ID": guildId,
+                "Message ID": messageId,
+                "ย้อนค่าตั้งค่าแล้ว": rolledBack,
+                "ปิดแผงเดิมแล้ว": panelDisabled,
+                "ลบแผงเดิมแล้ว": panelDeleted
+            },
+            sourceIconUrl,
+            dedupeKey: `verification-panel-recovery:${guildId}:${messageId}`,
+            dedupeMs: 15 * 60 * 1000
         }).catch(() => {});
     }
     return { required: true, persisted, key: recoveryKey };
@@ -797,7 +814,8 @@ async function handleSetupVerify(interaction) {
                     settingKey,
                     rolledBack,
                     panelDisabled: disabled,
-                    panelDeleted: deleted
+                    panelDeleted: deleted,
+                    sourceIconUrl: getDiscordGuildIconUrl(interaction.guild)
                 });
                 persistError.recoveryRequired = recovery.required;
                 persistError.recoveryPersisted = recovery.persisted;

@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { createCriticalAlertDispatcher } = require("../index/system");
+const { createCriticalAlertDispatcher, stopRuntimeCleanups } = require("../index/system");
 
 function createHarness(options = {}) {
     const sent = [];
@@ -46,7 +46,8 @@ test("critical alert dispatcher sends first occurrence and summarizes duplicates
 
     await harness.timers[0].callback();
     assert.equal(harness.sent.length, 2);
-    assert.match(harness.sent[1].content, /Repeated 1 additional time/);
+    assert.match(harness.sent[1].embeds[0].title, /ข้อผิดพลาดระดับวิกฤตเกิดซ้ำ/);
+    assert.equal(harness.sent[1].embeds[0].fields.some(field => /1 ครั้ง/.test(field.value)), true);
     assert.equal(harness.dispatcher.entries.size, 0);
 });
 
@@ -116,4 +117,23 @@ test("critical alert dispatcher does not suppress a retry after delivery failure
     assert.equal(timers[0].cleared, true);
     assert.equal(await dispatcher.dispatch("unhandledRejection", error, { content: "retry" }), true);
     assert.equal(attempts, 2);
+});
+
+test("runtime cleanup stops every healthy timer even when one cleanup fails", (t) => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    let stopped = 0;
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    try {
+        const result = stopRuntimeCleanups([
+            { stop() { stopped++; } },
+            { stop() { throw new Error("cleanup failure"); } },
+            null,
+            { stop() { stopped++; } }
+        ]);
+
+        t.assert.deepEqual(result, { stopped: 2, failed: 1 });
+        t.assert.equal(stopped, 2);
+    } finally {
+        console.warn = originalWarn;
+    }
 });

@@ -2,6 +2,27 @@
 
 ## [Unreleased] - Unified Bot And Verification Runtime 2026-07-16
 
+- Upgraded new Verification and Voice secrets to versioned `v3:gcm` payloads
+  derived from the full 32-byte SHA-256 digest. Existing Service-compatible
+  GCM/CBC records remain readable and are conditionally re-encrypted after
+  successful authenticated decryption. Verification maintenance now reports
+  remaining legacy encrypted records, and Voice migrates loaded sessions
+  without overwriting concurrent database changes.
+- Added explicit graceful-shutdown cleanup for spam tracking, reveal-attempt,
+  and IP lookup cache intervals; `.unref()` remains as a secondary safeguard.
+
+- Standardized both operational webhooks behind one event envelope with stable
+  codes, categories, severities, Thai presentation, impact/action fields,
+  target-aware duplicate summaries, and legacy-payload compatibility. Routine
+  activity remains in the audit webhook while process, security, persistence,
+  and data-integrity failures route to the action-required webhook. Individual
+  Voice disconnect/recovery/terminal outcomes and routine Backup/Restore-result
+  delivery no longer notify the Owner webhook; Voice alerts only when durable
+  state cannot be reconciled. Join Campaign no longer emits repeated progress
+  webhooks between its start and finish summaries. Relevant guild and account
+  events now include their Discord icon/avatar so Owner messages are easier to
+  identify at a glance.
+
 - Closed the remaining confirmed PR review defects in Owner member access and snapshot
   maintenance. OAuth profile/token reads now require a verification association
   with the selected guild, and cleanup shares the per-user snapshot mutation

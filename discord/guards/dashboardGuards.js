@@ -1,5 +1,5 @@
 const crypto = require("node:crypto");
-const { sendLogWebhook } = require("../core/webhooks");
+const { sendWebhookEvent } = require("../core/webhooks");
 const safeLogger = require("../core/safeLogger");
 const dashboardAuth = require("../index/auth");
 
@@ -54,14 +54,28 @@ function logIntrusion(ip, path, reason = "blocked request") {
         .update(`${rawIp}|${reason}`)
         .digest("hex");
 
-    sendLogWebhook(
-        { content: `⚠️ **[BLOCKED]** \`${safePath}\` from \`${safeIp}\` — ${safeDiscordSummaryText(reason, 80)}` },
-        {
-            dedupeKey: `dashboard-blocked:${dedupeKey}`,
-            dedupeMs: 15 * 60 * 1000,
-            summaryLabel: `blocked dashboard requests from ${safeDiscordSummaryText(rawIp, 80)}`
-        }
-    ).catch(() => {});
+    const revealPinLocked = reason === "token reveal PIN locked";
+    sendWebhookEvent({
+        target: revealPinLocked ? "ALERT" : "LOG",
+        severity: revealPinLocked ? "ERROR" : "WARNING",
+        category: "SECURITY",
+        code: revealPinLocked ? "security.token_reveal.pin_locked" : "security.dashboard.rate_limited",
+        state: revealPinLocked ? "OPEN" : undefined,
+        title: revealPinLocked ? "ล็อกการเปิดเผย Token ชั่วคราว" : "Dashboard ปฏิเสธคำขอที่ถี่เกินกำหนด",
+        description: revealPinLocked
+            ? "มีการกรอก PIN ผิดครบจำนวน ระบบจึงล็อกการเปิดเผย Token ชั่วคราว"
+            : "Rate Limiter ปฏิเสธคำขอเพื่อป้องกันการใช้งานถี่ผิดปกติ",
+        impact: revealPinLocked ? "ไม่สามารถเปิดเผย Token ผ่าน Dashboard ได้ระหว่างถูกล็อก" : undefined,
+        action: revealPinLocked ? "ตรวจว่าเป็นการใช้งานของเจ้าของ แล้วรอให้ระยะล็อกสิ้นสุด" : undefined,
+        context: {
+            "เส้นทาง": safePath,
+            "IP": safeIp,
+            "สาเหตุ": safeDiscordSummaryText(reason, 80)
+        },
+        dedupeKey: `dashboard-blocked:${dedupeKey}`,
+        dedupeMs: 15 * 60 * 1000,
+        summaryLabel: `Dashboard ปฏิเสธคำขอจาก ${safeDiscordSummaryText(rawIp, 80)}`
+    }).catch(() => {});
 }
 
 function logAuthRejected(req) {

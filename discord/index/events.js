@@ -12,7 +12,7 @@ const protection  = require('../features/protection');
 const protectionCase = require('../features/protectionCase');
 const { IDS, PREFIXES } = require("../commands/customIds");
 const { isVoicePanelControl } = require("../guards/commandGuards");
-const { sendLogWebhook, sendAlertWebhook } = require("../core/webhooks");
+const { sendWebhookEvent, getDiscordAvatarUrl, getDiscordGuildIconUrl } = require("../core/webhooks");
 
 function getGuildBotMember(guild) {
     return guild?.members?.me || guild?.me || guild?.members?.cache?.get(guild?.client?.user?.id);
@@ -149,7 +149,9 @@ async function recordProtectionResult({ guild, sessionManager, result, member, m
         severity: result?.severity || "danger",
         evidence: result?.evidence || [],
         actionResult,
-        metadata: result?.metadata || {}
+        metadata: result?.metadata || {},
+        sourceIconUrl: getDiscordGuildIconUrl(guild),
+        thumbnailUrl: getDiscordAvatarUrl(member?.user || message?.author)
     });
 
     try {
@@ -161,8 +163,20 @@ async function recordProtectionResult({ guild, sessionManager, result, member, m
     } catch {
         console.error(`[PROTECTION] ModCase persistence failed safely for guild=${guild.id}`);
         if (actionResult?.attempted === true && actionResult?.success === true) {
-            sendAlertWebhook({
-                content: `⚠️ **[PROTECTION CASE]** การลงโทษสำเร็จแต่บันทึก ModCase ไม่สำเร็จ | guild=${guild.id}`
+            sendWebhookEvent({
+                severity: "ERROR",
+                category: "DATA",
+                code: "protection.case.persistence_failed",
+                state: "OPEN",
+                title: "ผลการป้องกันกับ ModCase ไม่ตรงกัน",
+                description: "Discord ดำเนินการลงโทษสำเร็จ แต่ระบบบันทึก ModCase ไม่สำเร็จ",
+                impact: "ประวัติการดูแลสมาชิกอาจไม่มีรายการของการดำเนินการครั้งนี้",
+                action: "ตรวจ Runtime Log และสร้างหรือแก้ ModCase ให้ตรงกับการดำเนินการจริง",
+                context: { "Guild ID": guild.id },
+                sourceIconUrl: getDiscordGuildIconUrl(guild),
+                thumbnailUrl: getDiscordAvatarUrl(member?.user || message?.author),
+                dedupeKey: `protection-case-persistence:${guild.id}`,
+                dedupeMs: 5 * 60 * 1000
             }).catch(() => {});
         }
         return null;
@@ -198,6 +212,10 @@ function register({
         }
     }, spamCleanupMs);
     spamCleanupTimer.unref?.();
+
+    const stop = () => {
+        clearInterval(spamCleanupTimer);
+    };
 
     // ════════════════════════════════════════════════════════════════════════
     //  💬  messageCreate — Protection checks
@@ -454,11 +472,19 @@ function register({
             }
         } catch {}
 
-        sendLogWebhook({
-            content: `🤖 **บอทถูกเชิญเข้าเซิร์ฟเวอร์ใหม่!**\n` +
-                     `**ชื่อ:** ${guild.name}\n` +
-                     `**คน:** ${guild.memberCount}\n` +
-                     `**ลิงก์:** ${inviteStr}`
+        sendWebhookEvent({
+            target: "LOG",
+            severity: "INFO",
+            category: "GUILD",
+            code: "guild.joined",
+            title: "บอทเข้าร่วมเซิร์ฟเวอร์ใหม่",
+            context: {
+                "เซิร์ฟเวอร์": guild.name,
+                "Guild ID": guild.id,
+                "จำนวนสมาชิก": guild.memberCount,
+                "ลิงก์เชิญชั่วคราว": inviteStr
+            },
+            sourceIconUrl: getDiscordGuildIconUrl(guild)
         }).catch(() => {});
     });
 
@@ -468,6 +494,8 @@ function register({
     client.on("guildDelete", (guild) => {
         commands.cleanupGuild(guild.id);
     });
+
+    return { stop };
 }
 
 module.exports = { register };

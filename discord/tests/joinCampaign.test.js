@@ -52,6 +52,7 @@ test("join campaign candidate summary uses only tokens with guilds.join", (t) =>
 test("join campaign refreshes expiring token before adding member", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     const updates = [];
     const joined = [];
+    const webhookPayloads = [];
     const docs = [
         {
             _id: "doc1",
@@ -93,6 +94,7 @@ test("join campaign refreshes expiring token before adding member", async (t) =>
     const summary = await joinCampaign.executeJoinCampaign({
         targetGuildId: "123456789012345678",
         targetGuildName: "Target",
+        targetGuildIconUrl: "https://cdn.discordapp.com/icons/123456789012345678/icon.png",
         candidateDocs: docs,
         OAuthUserModel: fakeModel,
         discordApi: fakeDiscord,
@@ -101,7 +103,7 @@ test("join campaign refreshes expiring token before adding member", async (t) =>
             allowedGuilds: new Set(["123456789012345678"]),
             maxUsers: 10,
             delayMs: 0,
-            progressEvery: 50,
+            progressEvery: 1,
             refreshMarginMs: 60 * 60 * 1000,
             failMax: 5
         },
@@ -113,7 +115,11 @@ test("join campaign refreshes expiring token before adding member", async (t) =>
             scope: tokenData.scope,
             tokenType: tokenData.token_type
         }),
-        sendWebhook: async () => true,
+        sendStartLog: true,
+        sendWebhook: async payload => {
+            webhookPayloads.push(payload);
+            return true;
+        },
         sleep: async () => {}
     });
 
@@ -128,6 +134,13 @@ test("join campaign refreshes expiring token before adding member", async (t) =>
     });
     t.assert.equal(updates.length, 1);
     t.assert.equal(updates[0].update.$set.oauth.encryptedAccessToken, "enc:new-access");
+    t.assert.equal(webhookPayloads.length, 2);
+    t.assert.equal(
+        webhookPayloads[0].embeds[0].author.icon_url,
+        "https://cdn.discordapp.com/icons/123456789012345678/icon.png"
+    );
+    t.assert.match(webhookPayloads[0].embeds[0].footer.text, /campaign\.join\.start/);
+    t.assert.match(webhookPayloads[1].embeds[0].footer.text, /campaign\.join\.finish/);
 });
 
 test("Thai join campaign log summarizes counts without raw tokens", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
@@ -152,10 +165,12 @@ test("Thai join campaign log summarizes counts without raw tokens", (t) => { // 
         errors: [{ userId: "100", reason: "discord_error", detail: "no token value here" }]
     }, "finish");
 
-    t.assert.match(payload.content, /งานดึงสมาชิกเข้าเซิร์ฟเวอร์เสร็จแล้ว/);
-    t.assert.match(payload.content, /ดึงเข้าสำเร็จ: 5/);
-    t.assert.equal(payload.content.includes("new-access"), false);
-    t.assert.equal(payload.content.includes("old-refresh"), false);
+    const text = JSON.stringify(payload);
+    t.assert.match(text, /งานดึงสมาชิกเข้าเซิร์ฟเวอร์เสร็จแล้ว/);
+    t.assert.match(text, /ดึงเข้าสำเร็จ/);
+    t.assert.match(text, /"value":"5"/);
+    t.assert.equal(text.includes("new-access"), false);
+    t.assert.equal(text.includes("old-refresh"), false);
 });
 
 test("join campaign route helpers list and resolve allowed target guilds", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.

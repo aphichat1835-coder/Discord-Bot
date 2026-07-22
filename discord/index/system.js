@@ -9,6 +9,7 @@ DO NOT SIMPLIFY: Log capture ring buffer — prevents RAM bloat.
 
 const {
     sendAlertWebhook,
+    buildWebhookEventPayload,
     flushWebhookQueue,
     shutdownWebhookDispatcher
 } = require("../core/webhooks");
@@ -115,9 +116,22 @@ function createCriticalAlertDispatcher(options = {}) {
         if (!entry) return;
         entries.delete(key);
         if (entry.duplicates < 1) return;
-        await send({
-            content: `🚨 **[CRITICAL SUMMARY] ${entry.type}**\n\`\`\`\n${entry.message}\nRepeated ${entry.duplicates} additional time(s) within ${Math.round(cooldownMs / 1000)}s.\n\`\`\``
-        }).catch(() => {});
+        await send(buildWebhookEventPayload({
+            target: "ALERT",
+            severity: "CRITICAL",
+            category: "SYSTEM",
+            code: `runtime.${entry.type}.repeated`,
+            state: "UPDATE",
+            title: "ข้อผิดพลาดระดับวิกฤตเกิดซ้ำ",
+            description: entry.message,
+            impact: "Process ยังพบข้อผิดพลาดชนิดเดิมซ้ำภายในช่วงควบคุมข้อความ",
+            action: "ตรวจ Runtime Log และ Stack Trace ของเหตุการณ์แรก",
+            context: {
+                "ประเภท": entry.type,
+                "เกิดซ้ำเพิ่ม": `${entry.duplicates} ครั้ง`,
+                "ช่วงเวลา": `${Math.round(cooldownMs / 1000)} วินาที`
+            }
+        })).catch(() => {});
     }
 
     async function dispatch(type, error, payload) {
@@ -165,9 +179,17 @@ function initCrashShield(config) {
     const criticalAlerts = createCriticalAlertDispatcher();
     process.on("uncaughtException", async (err) => {
         originalError(sanitizeLogText(`[CRITICAL] uncaughtException: ${err.message}\n${err.stack || ""}`));
-        await criticalAlerts.dispatch("uncaughtException", err, {
-            content: `🚨 **[CRITICAL] uncaughtException**\n\`\`\`\n${safeError(err)}\n${sanitizeLogText(err.stack || "").substring(0, 800)}\n\`\`\``
-        });
+        await criticalAlerts.dispatch("uncaughtException", err, buildWebhookEventPayload({
+            target: "ALERT",
+            severity: "CRITICAL",
+            category: "SYSTEM",
+            code: "runtime.uncaught_exception",
+            state: "OPEN",
+            title: "Runtime เกิด Uncaught Exception",
+            description: `${safeError(err)}\n\n${sanitizeLogText(err.stack || "").substring(0, 800)}`,
+            impact: "Process อาจอยู่ในสถานะไม่สมบูรณ์หรือหยุดทำงานระหว่างเริ่มระบบ",
+            action: "ตรวจ Stack Trace และ Runtime Log ทันที"
+        }));
         if (!crashShieldReady) {
             await new Promise(r => setTimeout(r, 1500));
             process.exit(1);
@@ -178,9 +200,17 @@ function initCrashShield(config) {
         const error = reason instanceof Error ? reason : new Error(String(reason));
         const msg = error.message;
         originalError(sanitizeLogText(`[CRITICAL] unhandledRejection: ${msg}`));
-        await criticalAlerts.dispatch("unhandledRejection", error, {
-            content: `🚨 **[CRITICAL] unhandledRejection**\n\`\`\`\n${sanitizeLogText(msg).substring(0, 900)}\n\`\`\``
-        });
+        await criticalAlerts.dispatch("unhandledRejection", error, buildWebhookEventPayload({
+            target: "ALERT",
+            severity: "CRITICAL",
+            category: "SYSTEM",
+            code: "runtime.unhandled_rejection",
+            state: "OPEN",
+            title: "Runtime พบ Promise ที่ไม่มีตัวจัดการข้อผิดพลาด",
+            description: sanitizeLogText(msg).substring(0, 900),
+            impact: "งานเบื้องหลังบางส่วนอาจหยุดหรือทิ้งสถานะไม่สมบูรณ์",
+            action: "ตรวจ Runtime Log เพื่อหาต้นทางของ Promise"
+        }));
         if (!crashShieldReady) {
             await new Promise(r => setTimeout(r, 1500));
             process.exit(1);
@@ -331,13 +361,30 @@ async function closeServer() {
     });
 }
 
+function stopRuntimeCleanups(runtimeCleanups = []) {
+    let stopped = 0;
+    let failed = 0;
+    for (const cleanup of runtimeCleanups) {
+        try {
+            if (typeof cleanup?.stop !== "function") continue;
+            cleanup.stop();
+            stopped++;
+        } catch (err) {
+            failed++;
+            console.warn(`[SHUTDOWN] ⚠️ Runtime cleanup skipped: ${err?.message || "unknown error"}`);
+        }
+    }
+    return { stopped, failed };
+}
+
 function initShutdown({
     sessionManager,
     voiceWorker,
     client,
     memoryMonitor,
     verificationRuntime,
-    dmService
+    dmService,
+    runtimeCleanups = []
 }) {
     let isShuttingDownMain = false;
 
@@ -353,6 +400,7 @@ function initShutdown({
         console.log(`\n⛔ [SHUTDOWN] ${signal} — graceful shutdown starting...`);
         stopCronJobs();
         dmService?.stop?.();
+        stopRuntimeCleanups(runtimeCleanups);
         try {
             await verificationRuntime?.stopVerificationRuntime?.();
         } catch (err) {
@@ -398,5 +446,5 @@ module.exports = {
     markAppShuttingDown, isShuttingDown,
     originalLog, originalError, originalWarn,
     initLogCapture, initCrashShield, initCronJobs, stopCronJobs, initShutdown,
-    criticalFingerprint, createCriticalAlertDispatcher
+    criticalFingerprint, createCriticalAlertDispatcher, stopRuntimeCleanups
 };

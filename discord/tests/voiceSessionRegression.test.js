@@ -259,7 +259,9 @@ test("token mismatch warning metadata does not expose owner, actor, or guild ide
     assert.deepEqual(options, {
         dedupeKey: "token-owner-mismatch",
         dedupeMs: 300000,
-        summaryLabel: "token owner mismatch"
+        summaryLabel: "ตรวจพบ Token ที่เจ้าของบัญชีไม่ตรงกับผู้สั่งงาน",
+        summaryCategory: "SECURITY",
+        eventCode: "security.token.owner_mismatch"
     });
 });
 
@@ -398,4 +400,13 @@ test("source contract: panel normalizeDiscordId uses 17-22 regex (consistent wit
         src.includes("/^\\d{17,22}$/.test(id)") || src.includes("\\d{17,22}"),
         "normalizeDiscordId in panelHelpers must use 17-22 regex matching worker"
     );
+});
+
+test("voice webhooks ignore individual connection outcomes and alert only on persistence failure", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const source = require("node:fs").readFileSync("discord/voiceWorker/lifecycle.js", "utf8");
+    assert.doesNotMatch(source, /code:\s*"voice\.session\.reconnect_unstable"/);
+    assert.doesNotMatch(source, /code:\s*"voice\.session\.recovered"/);
+    assert.doesNotMatch(source, /code:\s*"voice\.session\.dead"/);
+    assert.match(source, /code:\s*"voice\.session\.failure_state_persistence_failed"/);
+    assert.match(source, /category:\s*"DATA"/);
 });

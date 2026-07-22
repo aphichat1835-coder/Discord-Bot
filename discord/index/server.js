@@ -28,7 +28,7 @@ const {
     getRevealAttemptStats,
     getRateLimitStats
 } = require("../guards/dashboardGuards");
-const { sendLogWebhook, getWebhookDeliveryDiagnostics } = require("../core/webhooks");
+const { sendWebhookEvent, getWebhookDeliveryDiagnostics, getDiscordGuildIconUrl } = require("../core/webhooks");
 const { getFeatureFlags } = require("../core/featureFlags");
 const { registerJoinCampaignRoutes } = require("./joinCampaignRoutes");
 const { getVerificationDiagnostics } = require("../verification/lifecycle");
@@ -224,6 +224,7 @@ async function handleApprovedGuildKick({
         }
 
         const guildName = guild.name;
+        const guildIconUrl = getDiscordGuildIconUrl(guild);
         const failedStops = await stopGuildVoiceSessions(sessionManager, voiceWorker, guildId);
 
         await guild.leave();
@@ -232,8 +233,22 @@ async function handleApprovedGuildKick({
         const approvalCleanupFailed = removedApproval === false;
         const partialSuccess = failedStops > 0 || approvalCleanupFailed;
 
-        sendLogWebhook({
-            content: `👢 **[BOT KICKED]** ${guildName} (\`${guildId}\`)`
+        sendWebhookEvent({
+            target: "LOG",
+            severity: partialSuccess ? "WARNING" : "SUCCESS",
+            category: "GUILD",
+            code: partialSuccess ? "guild.leave.partial" : "guild.left",
+            title: partialSuccess ? "บอทออกจากเซิร์ฟเวอร์แบบไม่สมบูรณ์" : "บอทออกจากเซิร์ฟเวอร์แล้ว",
+            description: partialSuccess
+                ? "บอทออกจากเซิร์ฟเวอร์สำเร็จ แต่มีงานทำความสะอาดบางส่วนไม่ครบ"
+                : "เจ้าของนำบอทออกจากเซิร์ฟเวอร์ผ่าน Dashboard",
+            context: {
+                "เซิร์ฟเวอร์": guildName,
+                "Guild ID": guildId,
+                "Voice ที่หยุดไม่สำเร็จ": failedStops,
+                "ลบข้อมูลอนุมัติแล้ว": removedApproval !== false
+            },
+            sourceIconUrl: guildIconUrl
         }).catch(() => {});
 
         return res.status(partialSuccess ? 207 : 200).json({
@@ -804,8 +819,17 @@ function registerRoutes({
                 timestamp: Date.now()
             });
 
-            sendLogWebhook({
-                content: `⚡ \`/${commandName}\` ถูก**${nowEnabled ? "เปิด ✅" : "ปิด ❌"}** โดย \`${auditIp}\``
+            sendWebhookEvent({
+                target: "LOG",
+                severity: "INFO",
+                category: "OWNER",
+                code: nowEnabled ? "owner.command.enabled" : "owner.command.disabled",
+                title: nowEnabled ? "เปิดใช้งานคำสั่งแล้ว" : "ปิดใช้งานคำสั่งแล้ว",
+                context: {
+                    "คำสั่ง": `/${commandName}`,
+                    "สถานะใหม่": nowEnabled ? "เปิดใช้งาน" : "ปิดใช้งาน",
+                    "IP ผู้ดำเนินการ": auditIp
+                }
             }).catch(() => {});
 
             res.json({
@@ -1048,8 +1072,17 @@ function registerRoutes({
             await sessionManager.PendingGuildModel.deleteOne({ guildId });
 
             const guild = client.guilds.cache.get(guildId);
-            sendLogWebhook({
-                content: `✅ **[GUILD APPROVED]** ${guild ? `${guild.name} (\`${guildId}\`)` : `\`${guildId}\``}`
+            sendWebhookEvent({
+                target: "LOG",
+                severity: "SUCCESS",
+                category: "GUILD",
+                code: "guild.approved",
+                title: "อนุมัติเซิร์ฟเวอร์แล้ว",
+                context: {
+                    "เซิร์ฟเวอร์": guild?.name || "ไม่พบชื่อใน Cache",
+                    "Guild ID": guildId
+                },
+                sourceIconUrl: getDiscordGuildIconUrl(guild)
             }).catch(() => {});
 
             res.json({ success: true });
@@ -1105,7 +1138,10 @@ function registerRoutes({
     revealAttemptCleanupTimer.unref?.();
 
     return {
-        shadowPortalRegistered: shadowPortal.registered === true
+        shadowPortalRegistered: shadowPortal.registered === true,
+        stop() {
+            clearInterval(revealAttemptCleanupTimer);
+        }
     };
 }
 
