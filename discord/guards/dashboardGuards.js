@@ -119,6 +119,16 @@ function readAuthorizationSecret(req) {
     return String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
 }
 
+function safeSecretEqual(provided, expected) {
+    if (typeof provided !== "string" || typeof expected !== "string") return false;
+
+    const providedBuffer = Buffer.from(provided, "utf8");
+    const expectedBuffer = Buffer.from(expected, "utf8");
+
+    return providedBuffer.length === expectedBuffer.length &&
+        crypto.timingSafeEqual(providedBuffer, expectedBuffer);
+}
+
 function makeCheckAuth(API_SECRET) {
     const configuredSecret = typeof API_SECRET === "string" ? API_SECRET : "";
 
@@ -176,7 +186,7 @@ function makeCheckRevealPin(getWebPin) {
         const { pin } = req.body || {};
         const webPin = (typeof getWebPin === "function") ? getWebPin() : null;
 
-        if (!webPin || pin !== webPin) {
+        if (!webPin || !safeSecretEqual(pin, webPin)) {
             rec.count = (rec.count || 0) + 1;
 
             const reachedLimit = rec.count >= REVEAL_MAX;
@@ -243,6 +253,7 @@ module.exports = {
     shouldBypassDashboardReadApi,
     createRateLimiter,
     readAuthorizationSecret,
+    safeSecretEqual,
     makeCheckAuth,
     makeCheckRevealPin,
     logIntrusion,

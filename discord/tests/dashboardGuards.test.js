@@ -7,6 +7,7 @@ const {
     createRateLimiter,
     makeCheckAuth,
     makeCheckRevealPin,
+    safeSecretEqual,
     cleanupRevealAttempts,
     getRevealAttemptStats,
     getRateLimitStats,
@@ -33,6 +34,14 @@ function createRes() {
         }
     };
 }
+
+test("sensitive secret comparison is constant-time and type-strict", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    assert.equal(safeSecretEqual("1234", "1234"), true);
+    assert.equal(safeSecretEqual("1235", "1234"), false);
+    assert.equal(safeSecretEqual("12345", "1234"), false);
+    assert.equal(safeSecretEqual(1234, "1234"), false);
+    assert.equal(safeSecretEqual(null, "1234"), false);
+});
 
 test("dashboard intrusion text cannot break Discord formatting", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const inline = safeDiscordInlineCode("/path`\n@everyone", 180);
