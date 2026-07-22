@@ -7,7 +7,7 @@ DO NOT SIMPLIFY: Permission check chain — each check serves a specific purpose
 ================================================================================
 */
 
-const { MessageEmbed } = require("discord.js");
+const { MessageEmbed } = require("../core/discordCompat");
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");
 const {

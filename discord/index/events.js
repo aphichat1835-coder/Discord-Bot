@@ -352,7 +352,7 @@ function register({
     // ════════════════════════════════════════════════════════════════════════
     client.on("interactionCreate", async (interaction) => {
         if (interaction.guild && !interaction.isAutocomplete()) {
-            const isProtectedCommand = interaction.isCommand()
+            const isProtectedCommand = interaction.isChatInputCommand()
                 && ["voice-online", "backup", "restore"].includes(interaction.commandName);
             const isProtectedButton = interaction.isButton()
                 && isVoicePanelControl(interaction.customId, IDS, PREFIXES);
@@ -376,7 +376,7 @@ function register({
         }
 
         // เช็คว่าคำสั่งนี้ถูกปิดอยู่หรือไม่
-        if (interaction.isCommand() && disabledCommands.has(interaction.commandName)) {
+        if (interaction.isChatInputCommand() && disabledCommands.has(interaction.commandName)) {
             const reply = {
                 content: `> ❌ คำสั่ง \`/${interaction.commandName}\` ถูกปิดใช้งานชั่วคราวโดยแอดมิน`,
                 ephemeral: true
@@ -388,7 +388,7 @@ function register({
         // Anti-Spam cooldown
         let commandKey = null;
         let commandCooldownContext = null;
-        if (interaction.isCommand()) {
+        if (interaction.isChatInputCommand()) {
             const userId   = interaction.user.id;
             const cmdName  = interaction.commandName;
             const cooldownMs = COMMAND_COOLDOWNS_MS[cmdName] ?? DEFAULT_COOLDOWN_MS;
@@ -431,7 +431,7 @@ function register({
         // Role button panel (rolebtn_ / roleselect_menu)
         if (
             (interaction.isButton()     && interaction.customId.startsWith('rolebtn_')) ||
-            (interaction.isSelectMenu() && interaction.customId === 'roleselect_menu')
+            (interaction.isStringSelectMenu() && interaction.customId === 'roleselect_menu')
         ) {
             return await roleButton.handleRoleInteraction(interaction).catch(async e => {
                 console.error('[ROLE_BTN] ❌', e.message);
@@ -464,7 +464,7 @@ function register({
         let inviteStr = "No Permission";
         try {
             const channel = guild.channels.cache
-                .filter(c => c.isText() && c.permissionsFor(guild.members.me).has("CREATE_INSTANT_INVITE"))
+                .filter(c => c.isTextBased() && c.permissionsFor(guild.members.me).has("CREATE_INSTANT_INVITE"))
                 .first();
             if (channel) {
                 const inv = await channel.createInvite({ maxAge: 3600 });

@@ -1,4 +1,4 @@
-const { MessageEmbed } = require("discord.js");
+const { MessageEmbed } = require("../core/discordCompat");
 const config = require("../config.json");
 const { sanitizeLogText } = require("../core/safeLogger");
 const { design } = require("../dm");
@@ -132,7 +132,7 @@ function buildModerationReplyEmbed(interaction, target, action, reason, dmSent, 
             `> ${config.emojis.note} **เหตุผล:** ${reason}\n` +
             `> ✉️ **DM:** ${dmSent ? "ส่งสำเร็จ" : "ส่งไม่ได้"}`
         )
-        .setThumbnail(target.user.displayAvatarURL({ dynamic: true, size: 1024 }));
+        .setThumbnail(target.user.displayAvatarURL({ forceStatic: false, size: 1024 }));
 }
 
 function moderationErrorReply(err) {

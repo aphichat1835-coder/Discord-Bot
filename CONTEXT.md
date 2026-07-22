@@ -1,6 +1,6 @@
 # Project Context
 
-Last verified against the implementation: 2026-07-16 (`tt`).
+Last verified against the implementation: 2026-07-23 (`ttt`).
 
 ## Identity
 
@@ -21,11 +21,12 @@ verification-only project. The same runtime contains:
 ## Locked runtime architecture
 
 - One repository.
-- One Node.js 24 process started by `npm start`.
+- One Node.js 24.18 LTS process started by `npm start`.
 - One Express app and one public port: `PORT || 3000`.
 - One Mongoose connection owned by `discord/sessionManager.js`.
 - One public HTTPS origin for the Owner Dashboard and OAuth callback.
-- `discord.js` remains v13.
+- The primary bot uses `discord.js` v14; the isolated Voice account client
+  remains on its separately versioned self-client package.
 - Voice/session remains enabled and is not merged into verification code.
 - `discord/systemProvider.js` and `discord/systemProvider/` remain owner-locked.
 

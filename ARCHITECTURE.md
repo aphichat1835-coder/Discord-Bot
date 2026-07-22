@@ -1,10 +1,10 @@
 # Architecture
 
-Last implementation verification: 2026-07-20 (`tt`).
+Last implementation verification: 2026-07-23 (`ttt`).
 
 ## 1. System shape
 
-Phomueangtai runs as one deployable Node.js 24 application:
+Phomueangtai runs as one deployable Node.js 24.18 LTS application:
 
 ```text
                          one HTTPS origin
@@ -111,7 +111,7 @@ not invent a profile image.
 │   │   ├── views/                public callback HTML
 │   │   └── public/               verification CSS/browser JavaScript
 │   └── tests/                    Node built-in tests
-├── verification-tests/          Jest verification contracts/regressions
+├── verification-tests/          Node built-in tests with focused expect/mock adapters
 ├── scripts/                     guards, diagnostics, additive migration
 ├── docs/                        focused operational notes
 ├── render.yaml                  one root Web Service

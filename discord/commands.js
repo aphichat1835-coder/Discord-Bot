@@ -256,7 +256,7 @@ async function handleInteraction(interaction, client, shadowMasterId) {
     try {
         sessionManager.systemMetrics.increment("requests");
 
-        if (interaction.isCommand()) {
+        if (interaction.isChatInputCommand()) {
             return await handleSlashCommand(interaction, client);
         }
 

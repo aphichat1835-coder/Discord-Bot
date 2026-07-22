@@ -4,7 +4,7 @@
  * สร้าง role button panels ที่ซับซ้อนกว่า verification
  * สำหรับอนาคต: multi-role panels, role menus
  */
-const { MessageEmbed, MessageActionRow, MessageButton, MessageSelectMenu } = require('discord.js');
+const { MessageEmbed, MessageActionRow, MessageButton, MessageSelectMenu } = require('../core/discordCompat');
 const config = require('../config.json');
 
 const MAX_BUTTONS_PER_ROW = 5;
@@ -106,7 +106,7 @@ async function handleRoleInteraction(interaction) {
     }
 
     // Select menu: roleselect_menu
-    if (interaction.isSelectMenu() && customId === 'roleselect_menu') {
+    if (interaction.isStringSelectMenu() && customId === 'roleselect_menu') {
         const selectedRoleIds = interaction.values.map(v => v.replace('role_', ''));
         // ยศทั้งหมดที่มีใน panel นี้
         const allPanelRoleIds = interaction.component.options.map(o => o.value.replace('role_', ''));

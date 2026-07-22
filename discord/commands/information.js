@@ -7,7 +7,7 @@ DO NOT SIMPLIFY: /serverinfo member fetch — bot/human split required.
 ================================================================================
 */
 
-const { MessageEmbed } = require("discord.js");
+const { MessageEmbed, getLegacyChannelType } = require("../core/discordCompat");
 const config = require("../config.json");
 const { markCommandAccepted } = require("../guards/commandGuards");
 const { code, markdownText, safeText } = require("../dm/design");
@@ -131,7 +131,7 @@ function buildServerLoadingEmbed(interaction) {
         )
         .setFooter({ text: "เซิร์ฟเวอร์ขนาดใหญ่อาจใช้เวลานานขึ้นเล็กน้อย" })
         .setTimestamp();
-    const icon = interaction.guild?.iconURL?.({ dynamic: true, size: 256 });
+    const icon = interaction.guild?.iconURL?.({ forceStatic: false, size: 256 });
     if (icon) embed.setThumbnail(icon);
     return embed;
 }
@@ -150,7 +150,7 @@ function buildUserLoadingEmbed(interaction) {
         )
         .setFooter({ text: "แสดงเฉพาะข้อมูลที่บอทเข้าถึงได้ • ผลลัพธ์จะมาแทนที่ข้อความนี้" })
         .setTimestamp();
-    const avatar = user?.displayAvatarURL?.({ dynamic: true, size: 256 });
+    const avatar = user?.displayAvatarURL?.({ forceStatic: false, size: 256 });
     if (avatar) embed.setThumbnail(avatar);
     return embed;
 }
@@ -186,7 +186,7 @@ function sendLoadingState(interaction, kind) {
 
 function channelCounts(guild) {
     const channels = guild.channels?.cache;
-    const count = type => channels?.filter?.(channel => channel.type === type).size || 0;
+    const count = type => channels?.filter?.(channel => getLegacyChannelType(channel.type) === type).size || 0;
     const known = ["GUILD_TEXT", "GUILD_VOICE", "GUILD_CATEGORY", "GUILD_NEWS", "GUILD_STAGE_VOICE"];
     const knownTotal = known.reduce((total, type) => total + count(type), 0);
     return {
@@ -312,9 +312,9 @@ function buildServerInfoEmbed(guild, owner, memberCounts) {
                 inline: false
             }
         )
-        .setFooter({ text: `เรียกดูโดย ${safeText(guild.me?.user?.tag || "Phomueangtai", "Phomueangtai", 120)} • ข้อมูลอาจเปลี่ยนหลังเรียกคำสั่ง` })
+        .setFooter({ text: `เรียกดูโดย ${safeText(guild.members?.me?.user?.tag || "Phomueangtai", "Phomueangtai", 120)} • ข้อมูลอาจเปลี่ยนหลังเรียกคำสั่ง` })
         .setTimestamp();
-    const iconUrl = guild.iconURL?.({ dynamic: true, size: 1024 });
+    const iconUrl = guild.iconURL?.({ forceStatic: false, size: 1024 });
     if (iconUrl) embed.setThumbnail(iconUrl);
     return embed;
 }
@@ -474,10 +474,10 @@ function buildUserInfoEmbed(interaction, user, member) {
         )
         .setFooter({ text: `เรียกดูโดย ${safeText(interaction.user?.tag || interaction.user?.username, "สมาชิก", 120)} • แสดงเฉพาะข้อมูลที่บอทเข้าถึงได้` })
         .setTimestamp();
-    const avatar = member?.displayAvatarURL?.({ dynamic: true, size: 1024 }) ||
-        user.displayAvatarURL?.({ dynamic: true, size: 1024 });
+    const avatar = member?.displayAvatarURL?.({ forceStatic: false, size: 1024 }) ||
+        user.displayAvatarURL?.({ forceStatic: false, size: 1024 });
     if (avatar) embed.setThumbnail(avatar);
-    const banner = user.bannerURL?.({ dynamic: true, size: 1024 });
+    const banner = user.bannerURL?.({ forceStatic: false, size: 1024 });
     if (banner) embed.setImage(banner);
     return embed;
 }

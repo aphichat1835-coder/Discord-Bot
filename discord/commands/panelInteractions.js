@@ -1,4 +1,4 @@
-const { MessageEmbed } = require("discord.js");
+const { MessageEmbed } = require("../core/discordCompat");
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");
 function getVoiceWorker() {
@@ -340,7 +340,7 @@ async function startVoiceSessionFromModal(interaction, client, fields, modalDeps
         channelId: voiceId,
         guildName,
         ownerId: interaction.user.id,
-        ownerAvatar: interaction.user.displayAvatarURL({ dynamic: true }),
+        ownerAvatar: interaction.user.displayAvatarURL({ forceStatic: false }),
         ownerTag: interaction.user.tag,
         reason: "panel_modal"
     });

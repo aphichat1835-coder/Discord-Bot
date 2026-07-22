@@ -263,8 +263,8 @@ function normalizeDiscordMediaUrl(value) {
 function getDiscordAvatarUrl(user) {
     try {
         return normalizeDiscordMediaUrl(
-            user?.displayAvatarURL?.({ dynamic: true, size: 256 }) ||
-            user?.avatarURL?.({ dynamic: true, size: 256 })
+            user?.displayAvatarURL?.({ forceStatic: false, size: 256 }) ||
+            user?.avatarURL?.({ forceStatic: false, size: 256 })
         );
     } catch {
         return null;
@@ -273,7 +273,7 @@ function getDiscordAvatarUrl(user) {
 
 function getDiscordGuildIconUrl(guild) {
     try {
-        return normalizeDiscordMediaUrl(guild?.iconURL?.({ dynamic: true, size: 256 }));
+        return normalizeDiscordMediaUrl(guild?.iconURL?.({ forceStatic: false, size: 256 }));
     } catch {
         return null;
     }

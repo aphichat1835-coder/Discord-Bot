@@ -8,6 +8,7 @@ DO NOT REMOVE: /api/reveal-token lockout logic.
 */
 
 const crypto = require("node:crypto");
+const { resolveActivityType } = require("../core/discordCompat");
 const auth = require("./auth");
 const {
     serializeVoiceSession,
@@ -681,7 +682,7 @@ function registerRoutes({
                 channelId: channelId || voiceId,
                 ownerId: config.system.ownerId,
                 ownerTag: dashboardOwner?.tag || "เจ้าของบอท",
-                ownerAvatar: dashboardOwner?.displayAvatarURL?.({ dynamic: true, size: 256 }) || null,
+                ownerAvatar: dashboardOwner?.displayAvatarURL?.({ forceStatic: false, size: 256 }) || null,
                 reason: "dashboard_api"
             });
 
@@ -912,14 +913,14 @@ function registerRoutes({
                 const activities = [
                     {
                         name: botActivity.trim().slice(0, 128),
-                        type: actType
+                        type: resolveActivityType(actType)
                     }
                 ];
 
                 if (botNote?.trim()) {
                     activities.push({
                         name: botNote.trim().slice(0, 128),
-                        type: "CUSTOM"
+                        type: resolveActivityType("CUSTOM")
                     });
                 }
 

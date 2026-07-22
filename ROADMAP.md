@@ -1,10 +1,10 @@
 # Roadmap
 
-Last reviewed: 2026-07-16 (`tt`).
+Last reviewed: 2026-07-23 (`ttt`).
 
 ## Current architecture baseline
 
-- One repository and one Node.js 24 runtime.
+- One repository and one Node.js 24.18 LTS runtime.
 - One Express listener on `PORT || 3000`.
 - One shared Mongoose connection.
 - Main bot, voice/session, Owner Dashboard, OAuth verification, maintenance, and
@@ -12,7 +12,8 @@ Last reviewed: 2026-07-16 (`tt`).
 - Verification management is Owner PIN only.
 - Member OAuth callback remains public.
 - Existing MongoDB collections and encryption compatibility are retained.
-- `discord.js` remains v13.
+- The primary bot runs `discord.js` v14; the isolated Voice account client is
+  retained until a supported replacement can preserve that lifecycle.
 - Protected owner/system files remain locked.
 
 Changes that would reintroduce a second service, second port, second runtime

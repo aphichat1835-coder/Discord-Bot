@@ -1,6 +1,6 @@
 {
   "name": "phomueangtai-enterprise",
-  "version": "4.0.1",
+  "version": "5.0.0",
   "description": "Phomueangtai personal multi-tool Discord bot and owner dashboard",
   "private": true,
   "main": "discord/index.js",
@@ -20,29 +20,24 @@
     "test": "npm run test:discord && npm run test:voice && npm run test:verification",
     "test:discord": "find discord/tests -name '*.test.js' ! -name 'voice*.test.js' -print0 | xargs -0 -r node --test",
     "test:voice": "node --test discord/tests/voice*.test.js",
-    "test:verification": "jest --runInBand --testPathPatterns=verification-tests/"
+    "test:verification": "node --require ./verification-tests/nodeTestSetup.js --test verification-tests/*.test.js"
   },
   "engines": {
-    "node": "24.x"
+    "node": ">=24.18.0 <25",
+    "npm": ">=12 <13"
   },
+  "packageManager": "npm@12.0.1",
   "dependencies": {
     "@discordjs/voice": "^0.19.2",
-    "discord.js": "^13.17.1",
+    "discord.js": "^14.27.0",
     "discord.js-selfbot-v13": "^3.7.1",
     "express": "^5.2.1",
-    "express-rate-limit": "^8.5.2",
+    "express-rate-limit": "^8.6.0",
     "libsodium-wrappers": "^0.8.4",
-    "mongoose": "^8.24.1",
-    "opusscript": "^0.1.1",
-    "tweetnacl": "^1.0.3"
+    "mongoose": "^9.8.0"
   },
   "devDependencies": {
-    "jest": "^30.4.2"
-  },
-  "jest": {
-    "testEnvironment": "node",
-    "testMatch": [
-      "<rootDir>/verification-tests/**/*.test.js"
-    ]
+    "expect": "^30.4.1",
+    "jest-mock": "^30.4.1"
   }
 }

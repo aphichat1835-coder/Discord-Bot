@@ -8,7 +8,13 @@ DO NOT SIMPLIFY: Restore loop — delay + setImmediate required (เฟส 19+21
 ================================================================================
 */
 
-const { MessageEmbed, MessageActionRow, MessageButton } = require("discord.js");
+const {
+    MessageEmbed,
+    MessageActionRow,
+    MessageButton,
+    getLegacyChannelType,
+    resolveChannelType
+} = require("../core/discordCompat");
 const crypto = require("node:crypto");
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");
@@ -211,7 +217,7 @@ async function handleSteal(interaction) {
         if (!isAnimated && staticAdded >= staticFree)    { skipped++; continue; }
 
         try {
-            await interaction.guild.emojis.create(url, name);
+            await interaction.guild.emojis.create({ attachment: url, name });
             if (isAnimated) animatedAdded++; else staticAdded++;
             added++;
             await new Promise(r => setTimeout(r, 1000));
@@ -269,7 +275,7 @@ function serializeChannelForBackup(channel) {
     const out = {
         id: channel.id,
         name: channel.name,
-        type: channel.type,
+        type: getLegacyChannelType(channel.type),
         parentId: channel.parentId,
         position: channel.position,
         rawPosition: channel.rawPosition,
@@ -313,7 +319,7 @@ function roleCreatePayload(rData) {
 
 function channelCreatePayload(cData, parentId, permissionOverwrites) {
     const payload = {
-        type: cData.type,
+        type: resolveChannelType(cData.type),
         parent: parentId,
         permissionOverwrites,
         reason: "Enterprise Restore"
@@ -391,7 +397,9 @@ function normalizeOverwriteType(value) {
 }
 
 function findExistingChannelForRestore(guild, cData, parentId) {
-    let matches = guild.channels.cache.filter(c => c.name === cData.name && c.type === cData.type);
+    let matches = guild.channels.cache.filter(c =>
+        c.name === cData.name && getLegacyChannelType(c.type) === cData.type
+    );
 
     if (cData.type !== "GUILD_CATEGORY") {
         if (cData.parentId && parentId) {
@@ -810,7 +818,9 @@ async function handleRestoreConfirm(interaction, sessionManager) {
                     await new Promise(resolve => setImmediate(resolve));
                     if (Date.now() - startTime > MAX_DUR) { timeoutHit = true; break; }
 
-                    const matches = guild.channels.cache.filter(c => c.name === cData.name && c.type === 'GUILD_CATEGORY');
+                    const matches = guild.channels.cache.filter(c =>
+                        c.name === cData.name && getLegacyChannelType(c.type) === "GUILD_CATEGORY"
+                    );
                     const exists = matches.size === 1 ? matches.first() : null;
                     if (!exists && matches.size > 1) {
                         ambiguousChannels++;
@@ -820,9 +830,10 @@ async function handleRestoreConfirm(interaction, sessionManager) {
                         if (cData.id) categoryIdMap.set(cData.id, exists.id);
                     } else {
                         try {
-                            const newCat = await guild.channels.create(cData.name, {
+                            const newCat = await guild.channels.create({
+                                name: cData.name,
                                 ...channelCreatePayload(cData, undefined, buildOverwrites(cData)),
-                                type: 'GUILD_CATEGORY'
+                                type: resolveChannelType("GUILD_CATEGORY")
                             });
                             if (cData.id) categoryIdMap.set(cData.id, newCat.id);
                             restoredChannels++;
@@ -851,7 +862,10 @@ async function handleRestoreConfirm(interaction, sessionManager) {
                         if (!exists) {
                             try {
                                 if (validTypes.includes(cData.type)) {
-                                    await guild.channels.create(cData.name, channelCreatePayload(cData, parentId, buildOverwrites(cData)));
+                                    await guild.channels.create({
+                                        name: cData.name,
+                                        ...channelCreatePayload(cData, parentId, buildOverwrites(cData))
+                                    });
                                     restoredChannels++;
                                     await new Promise(r => setTimeout(r, 600));
                                 } else {

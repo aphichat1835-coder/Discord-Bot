@@ -1,6 +1,6 @@
 # Security and Privacy
 
-Last implementation review: 2026-07-16 (`tt`).
+Last implementation review: 2026-07-23 (`ttt`).
 
 ## Scope
 
@@ -301,8 +301,15 @@ audit attempt required by sensitive Verification reveal actions.
 
 ## Runtime and dependency controls
 
-- Node.js is pinned to 24.x.
-- `discord.js` stays on v13 until explicitly approved.
+- Node.js is pinned to 24.18 LTS and npm 12 through the manifest, CI, and
+  deployment configuration.
+- The primary bot uses `discord.js` v14. The separately isolated Voice account
+  client remains on the latest published `discord.js-selfbot-v13` release;
+  that upstream package is deprecated and has no supported v14 replacement.
+- Mongoose uses v9 while retaining the existing collection names and additive
+  data readers.
+- Voice does not install an Opus codec because this runtime joins channels but
+  never creates audio players or encodes/decodes audio.
 - Production dependencies live only in the root package.
 - There is no `connect-mongo` or `express-session`.
 - Discord response/body caps and role/channel dashboard caps protect runtime

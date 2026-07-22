@@ -10,7 +10,7 @@ after transient Discord or process failures.
 
 ## Runtime shape
 
-The repository deploys as one Node.js 24 process:
+The repository deploys as one Node.js 24.18 LTS process with npm 12:
 
 ```text
 npm start

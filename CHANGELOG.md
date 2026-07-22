@@ -2,6 +2,23 @@
 
 ## [Unreleased] - Unified Bot And Verification Runtime 2026-07-16
 
+- Upgraded the primary runtime to Node.js 24.18 LTS, npm 12, `discord.js`
+  14.27, Mongoose 9.8, and `express-rate-limit` 8.6. Added a narrow Discord v14
+  compatibility boundary for existing Embed/component contracts, migrated
+  interaction, activity, channel, emoji, backup, and restore APIs, and kept all
+  slash-command names, custom IDs, routes, collections, and environment values
+  unchanged.
+- Replaced the Jest runner with Node's built-in test runner plus focused
+  `expect` and `jest-mock` adapters. This removes the obsolete `glob@7` and
+  `inflight` test dependency chain while preserving the 435 Verification
+  regression contracts.
+- Removed unused `tweetnacl` and the mismatched `opusscript` dependency. Voice
+  has no audio-player/resource path, so no native Opus build is required for
+  its connection-only lifecycle.
+- Updated GitHub Actions to pinned `checkout` v6.0.2 and `setup-node` v6.3.0,
+  added least-privilege workflow permissions, aligned Render and `.node-version`,
+  and moved deterministic installs to npm 12 lockfile mode.
+
 - Upgraded new Verification and Voice secrets to versioned `v3:gcm` payloads
   derived from the full 32-byte SHA-256 digest. Existing Service-compatible
   GCM/CBC records remain readable and are conditionally re-encrypted after

@@ -19,7 +19,8 @@ const { setupTelemetryRouter, initializeSystemHooks, getWebPin, isProtected } = 
 
 const crypto  = require("node:crypto");
 const express = require("express");
-const { Client, Intents, Options, LimitedCollection } = require("discord.js");
+const { Client, Options, LimitedCollection } = require("discord.js");
+const { Intents, resolveActivityType } = require("./core/discordCompat");
 const config         = require("./config.json");
 const sessionManager = require("./sessionManager");
 const voiceWorker    = require("./voiceWorker");
@@ -276,7 +277,7 @@ async function startRotateTimer() {
         _rotateIdx = 0;
         _rotateTimer = setInterval(() => {
             if (!client?.isReady?.()) return;
-            client.user.setPresence({ status, activities: [{ name: msgs[_rotateIdx % msgs.length], type: actType }] });
+            client.user.setPresence({ status, activities: [{ name: msgs[_rotateIdx % msgs.length], type: resolveActivityType(actType) }] });
             _rotateIdx++;
         }, intervalMs);
         _rotateTimer.unref?.();
@@ -653,8 +654,8 @@ async function applyReadySettings() {
     const note = settings.botNote || "";
     const validTypes = ["WATCHING", "LISTENING", "PLAYING", "COMPETING"];
     const activityType = validTypes.includes(settings.botActivityType) ? settings.botActivityType : "WATCHING";
-    const activities = [{ name: activity, type: activityType }];
-    if (note.trim()) activities.push({ name: note.trim(), type: "CUSTOM" });
+    const activities = [{ name: activity, type: resolveActivityType(activityType) }];
+    if (note.trim()) activities.push({ name: note.trim(), type: resolveActivityType("CUSTOM") });
     client.user.setPresence({ status, activities });
 
     voiceWorker.applyNaturalSettings({
