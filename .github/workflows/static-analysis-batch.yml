@@ -1,0 +1,99 @@
+name: Static Analysis Batch
+
+on:
+  push:
+    branches:
+      - agent/static-analysis-batch-20260724
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-push:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      EXPECTED_TTT_SHA: 1aca581afcac8d00ebb8ca535ca161c95ca16c8e
+
+    steps:
+      - name: Checkout staging branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Preserve batch patcher
+        run: cp scripts/apply_static_analysis_batch.py /tmp/apply_static_analysis_batch.py
+
+      - name: Verify and checkout exact ttt head
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin ttt
+          actual="$(git rev-parse origin/ttt)"
+          test "$actual" = "$EXPECTED_TTT_SHA"
+          git checkout --detach "$EXPECTED_TTT_SHA"
+
+      - name: Apply complete batch
+        run: python3 /tmp/apply_static_analysis_batch.py
+
+      - name: Validate intended diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add -A
+          git diff --cached --check
+          cat > /tmp/expected-files.txt <<'EOF'
+          CHANGELOG.md
+          discord/sessionManager.js
+          discord/tests/mongoose9Compatibility.test.js
+          discord/tests/sessionEncryption.test.js
+          package.json
+          scripts/checkMongoose9Compatibility.js
+          scripts/checkMongoose9Compatibility.sh
+          EOF
+          git diff --cached --name-only | sort > /tmp/actual-files.txt
+          diff -u /tmp/expected-files.txt /tmp/actual-files.txt
+          node -e "const p=require('./package.json'); if(p.dependencies['discord.js-selfbot-v13'] !== '^3.7.1') process.exit(1)"
+
+      - name: Setup Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 24.18.0
+
+      - name: Bootstrap pinned npm
+        run: |
+          npm install --global --ignore-scripts npm@12.0.1
+          test "$(npm --version)" = "12.0.1"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Static validation
+        run: |
+          npm run check:protected
+          npm run check:protected-syntax
+          npm run check:all
+          npm run check:scripts
+          npm run check:memory-guards
+          npm run check:mongoose9
+
+      - name: Regression tests
+        run: |
+          node --test discord/tests/mongoose9Compatibility.test.js
+          node --test discord/tests/sessionEncryption.test.js
+          npm test
+
+      - name: Dependency audit
+        run: npm audit --audit-level=high
+
+      - name: Commit and push once to ttt
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin ttt
+          actual="$(git rev-parse origin/ttt)"
+          test "$actual" = "$EXPECTED_TTT_SHA"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: resolve Codacy and Sonar static analysis findings"
+          git push origin HEAD:refs/heads/ttt
