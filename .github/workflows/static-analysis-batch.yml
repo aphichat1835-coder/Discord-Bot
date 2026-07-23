@@ -1,7 +1,7 @@
 name: Static Analysis Batch
 
 on:
-  push:
+  pull_request:
     branches:
       - agent/static-analysis-batch-20260724
 
@@ -16,7 +16,7 @@ jobs:
       EXPECTED_TTT_SHA: 1aca581afcac8d00ebb8ca535ca161c95ca16c8e
 
     steps:
-      - name: Checkout staging branch
+      - name: Checkout staging pull request
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
@@ -97,5 +97,3 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "fix: resolve Codacy and Sonar static analysis findings"
           git push origin HEAD:refs/heads/ttt
-
-# Triggered after the workflow file existed on the staging branch.
