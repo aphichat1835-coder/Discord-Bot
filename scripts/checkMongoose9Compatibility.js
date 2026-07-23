@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 "use strict";
 
-const fs = require("node:fs");
 const acorn = require("acorn");
 
 const REMOVED_CALLBACK_METHODS = new Set(["doValidate", "updateOne"]);
@@ -112,9 +111,16 @@ function normalizedFileLabel(value) {
     return label.slice(0, 300) || "stdin";
 }
 
-function runCli() {
+async function readStdin() {
+    process.stdin.setEncoding("utf8");
+    let source = "";
+    for await (const chunk of process.stdin) source += chunk;
+    return source;
+}
+
+async function runCli() {
     const file = normalizedFileLabel(process.argv[2]);
-    const source = fs.readFileSync(0, "utf8");
+    const source = await readStdin();
     const findings = analyzeSource(source, file);
     if (!findings.length) return;
 
@@ -123,6 +129,11 @@ function runCli() {
     process.exitCode = 1;
 }
 
-if (require.main === module) runCli();
+if (require.main === module) {
+    runCli().catch(error => {
+        console.error(`[MONGOOSE9] Scanner failed: ${error.message}`);
+        process.exitCode = 1;
+    });
+}
 
 module.exports = { analyzeSource };
