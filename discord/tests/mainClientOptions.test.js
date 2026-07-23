@@ -1,5 +1,7 @@
 "use strict";
 
+const fs = require("node:fs");
+const path = require("node:path");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { Client, Options } = require("discord.js");
@@ -28,4 +30,12 @@ test("builds discord.js v14 client options with cache and default sweepers", asy
     assert.equal(client.options.sweepers.messages.interval, 60);
     assert.equal(client.options.sweepers.messages.lifetime, 120);
     await client.destroy();
+});
+
+test("entrypoint uses the v14 client option boundary without stale v13 sweepers", () => {
+    const entrypoint = fs.readFileSync(path.join(__dirname, "..", "index.js"), "utf8");
+
+    assert.match(entrypoint, /new Client\(buildMainClientOptions\(process\.env\)\)/);
+    assert.doesNotMatch(entrypoint, /LimitedCollection\.filterByLifetime/);
+    assert.doesNotMatch(entrypoint, /Options\.defaultSweeperSettings/);
 });
