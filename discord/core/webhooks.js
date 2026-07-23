@@ -220,17 +220,39 @@ function normalizeEventToken(value, fallback) {
     return normalized || fallback;
 }
 
-function normalizeEventContextText(value) {
-    return String(value)
+const DISCORD_MARKDOWN_CHARACTERS = new Set(["\\", "*", "_", "~", "|", ">", "[", "]", "(", ")"]);
+
+function escapeDiscordMarkdown(value) {
+    let output = "";
+    for (const character of String(value)) {
+        if (DISCORD_MARKDOWN_CHARACTERS.has(character)) output += "\\";
+        output += character;
+    }
+    return output;
+}
+
+function normalizeEventContextText(value, options = {}) {
+    const normalized = String(value)
         .replace(/[\r\n\t]+/g, " ")
         .replaceAll("`", "ˋ")
         .trim();
+    return options.escapeMarkdown === false ? normalized : escapeDiscordMarkdown(normalized);
+}
+
+function isSafeDisplayUrl(value) {
+    if (typeof value !== "string") return false;
+    try {
+        const parsed = new URL(value);
+        return ["http:", "https:"].includes(parsed.protocol) && !parsed.username && !parsed.password;
+    } catch {
+        return false;
+    }
 }
 
 function formatEventContextValue(value) {
     if (value === undefined || value === null || value === "") return "-";
     if (typeof value === "boolean") return value ? "ใช่" : "ไม่";
-    if (Array.isArray(value)) return value.map(normalizeEventContextText).join(", ");
+    if (Array.isArray(value)) return value.map(item => normalizeEventContextText(item)).join(", ");
     if (typeof value === "object") {
         try {
             return normalizeEventContextText(JSON.stringify(value));
@@ -238,7 +260,7 @@ function formatEventContextValue(value) {
             return "[อ่านค่าไม่ได้]";
         }
     }
-    return normalizeEventContextText(value);
+    return normalizeEventContextText(value, { escapeMarkdown: !isSafeDisplayUrl(value) });
 }
 
 function resolveWebhookEventTarget(event = {}) {
@@ -292,7 +314,11 @@ function getDiscordGuildIconUrl(guild) {
 
 function appendEventField(fields, name, value, inline) {
     if (value === undefined || value === null || value === "") return;
-    fields.push({ name, value: formatEventContextValue(value), inline });
+    fields.push({
+        name: normalizeEventContextText(name),
+        value: formatEventContextValue(value),
+        inline
+    });
 }
 
 function buildEventFields(event, state) {
@@ -730,7 +756,7 @@ function getWebhookDeliveryDiagnostics() {
     return {
         ...defaultDispatcher.stats(),
         configuration: getWebhookDiagnostics(process.env),
-        eventDedupeKeys: routineDedupe.size,
+        dedupeKeys: routineDedupe.size,
         routineDedupeKeys: routineDedupe.size
     };
 }
@@ -790,6 +816,8 @@ module.exports = {
         trimEdgeCharacter,
         normalizeEventToken,
         normalizeWebhookEventCode,
+        normalizeEventContextText,
+        escapeDiscordMarkdown,
         buildEventFields
     }
 };

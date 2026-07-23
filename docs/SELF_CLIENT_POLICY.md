@@ -37,4 +37,4 @@ Before changing Voice/session code, verify that:
 
 ## Validation record
 
-The `ttt` runtime-upgrade and lifecycle-hardening work completed on 2026-07-23 preserved this boundary: the dependency declaration, lockfile entry, self-client-specific options, Voice login flow, session lifecycle, reconnect behavior, and cleanup contracts were not removed or migrated to the primary Discord.js v14 client.
+The Discord.js v14 runtime-upgrade and lifecycle-hardening work completed on 2026-07-23 preserved this boundary: the dependency declaration, lockfile entry, self-client-specific options, Voice login flow, session lifecycle, reconnect behavior, and cleanup contracts were not removed or migrated to the primary Discord.js v14 client.

@@ -27,5 +27,6 @@ test("Discord v14 compatibility maps legacy channel and activity identifiers", (
     assert.equal(resolveChannelType("GUILD_TEXT"), ChannelType.GuildText);
     assert.equal(getLegacyChannelType(ChannelType.GuildVoice), "GUILD_VOICE");
     assert.equal(resolveActivityType("WATCHING"), ActivityType.Watching);
+    assert.equal(resolveChannelType("GUILD_STORE"), null);
     assert.equal(resolveChannelType(12345), 12345);
 });

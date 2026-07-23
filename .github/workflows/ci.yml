@@ -10,7 +10,9 @@ permissions:
 jobs:
   checks:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
     steps:
       - name: Checkout
@@ -108,14 +110,24 @@ jobs:
       - name: Mongoose 9 compatibility check
         run: npm run check:mongoose9
 
-      - name: Discord tests
-        run: npm run test:discord
+      - name: Discord tests with LCOV coverage
+        run: npm run test:coverage:discord
 
-      - name: Voice tests
-        run: npm run test:voice
+      - name: Voice tests with LCOV coverage
+        run: npm run test:coverage:voice
 
-      - name: Verification tests
-        run: npm run test:verification
+      - name: Verification tests with LCOV coverage
+        run: npm run test:coverage:verification
+
+      - name: Verify LCOV reports
+        run: |
+          test -s coverage/discord.lcov
+          test -s coverage/voice.lcov
+          test -s coverage/verification.lcov
+
+      - name: SonarCloud analysis
+        if: ${{ env.SONAR_TOKEN != '' }}
+        run: npm run sonar -- -Dsonar.token="$SONAR_TOKEN"
 
       - name: Root audit
         run: npm audit --audit-level=high

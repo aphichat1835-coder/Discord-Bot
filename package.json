@@ -21,7 +21,11 @@
     "test": "npm run test:discord && npm run test:voice && npm run test:verification",
     "test:discord": "find discord/tests -name '*.test.js' ! -name 'voice*.test.js' -print0 | xargs -0 -r node --test",
     "test:voice": "node --test discord/tests/voice*.test.js",
-    "test:verification": "node --require ./verification-tests/nodeTestSetup.js --test verification-tests/*.test.js"
+    "test:verification": "node --require ./verification-tests/nodeTestSetup.js --test verification-tests/*.test.js",
+    "test:coverage:discord": "mkdir -p coverage && find discord/tests -name '*.test.js' ! -name 'voice*.test.js' -print0 | xargs -0 -r node --test --experimental-test-coverage --test-reporter=spec --test-reporter=lcov --test-reporter-destination=stdout --test-reporter-destination=coverage/discord.lcov",
+    "test:coverage:voice": "mkdir -p coverage && node --test --experimental-test-coverage --test-reporter=spec --test-reporter=lcov --test-reporter-destination=stdout --test-reporter-destination=coverage/voice.lcov discord/tests/voice*.test.js",
+    "test:coverage:verification": "mkdir -p coverage && node --require ./verification-tests/nodeTestSetup.js --test --experimental-test-coverage --test-reporter=spec --test-reporter=lcov --test-reporter-destination=stdout --test-reporter-destination=coverage/verification.lcov verification-tests/*.test.js",
+    "sonar": "sonar-scanner-npm"
   },
   "engines": {
     "node": ">=24.18.0 <25",
@@ -38,6 +42,8 @@
     "mongoose": "^9.8.0"
   },
   "devDependencies": {
+    "@sonar/scan": "5.0.0",
+    "acorn": "8.17.0",
     "expect": "^30.4.1",
     "jest-mock": "^30.4.1"
   }

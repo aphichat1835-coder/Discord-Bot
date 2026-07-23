@@ -44,7 +44,6 @@ const LEGACY_CHANNEL_TYPES = Object.freeze({
     GROUP_DM: ChannelType.GroupDM,
     GUILD_CATEGORY: ChannelType.GuildCategory,
     GUILD_NEWS: ChannelType.GuildAnnouncement,
-    GUILD_STORE: ChannelType.GuildStore,
     GUILD_NEWS_THREAD: ChannelType.AnnouncementThread,
     GUILD_PUBLIC_THREAD: ChannelType.PublicThread,
     GUILD_PRIVATE_THREAD: ChannelType.PrivateThread,
@@ -53,6 +52,8 @@ const LEGACY_CHANNEL_TYPES = Object.freeze({
     GUILD_FORUM: ChannelType.GuildForum,
     GUILD_MEDIA: ChannelType.GuildMedia
 });
+
+const UNSUPPORTED_LEGACY_CHANNEL_TYPES = new Set(["GUILD_STORE"]);
 
 const CHANNEL_TYPE_NAMES = new Map(
     Object.entries(LEGACY_CHANNEL_TYPES)
@@ -83,6 +84,7 @@ class TextInputComponent extends TextInputBuilder {
 }
 
 function resolveChannelType(type) {
+    if (UNSUPPORTED_LEGACY_CHANNEL_TYPES.has(type)) return null;
     return LEGACY_CHANNEL_TYPES[type] ?? type;
 }
 

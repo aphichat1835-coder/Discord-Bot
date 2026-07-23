@@ -12,21 +12,17 @@ const protection  = require('../features/protection');
 const protectionCase = require('../features/protectionCase');
 const { IDS, PREFIXES } = require("../commands/customIds");
 const { isVoicePanelControl } = require("../guards/commandGuards");
+const {
+    canBanMember,
+    canCreateInvite,
+    canDeleteMessage,
+    isAdministrator
+} = require("../core/discordPermissions");
 const { sendWebhookEvent, getDiscordAvatarUrl, getDiscordGuildIconUrl } = require("../core/webhooks");
-
-function getGuildBotMember(guild) {
-    return guild?.members?.me || guild?.me || guild?.members?.cache?.get(guild?.client?.user?.id);
-}
-
-function canDeleteMessage(message) {
-    const botMember = getGuildBotMember(message.guild);
-    const perms = message.channel?.permissionsFor?.(botMember);
-    return message.deletable === true && perms?.has?.("MANAGE_MESSAGES");
-}
 
 async function deleteMessageWithLog(message, scope = "message-delete") {
     if (!canDeleteMessage(message)) {
-        console.warn(`[PROTECTION] Cannot delete message for ${scope}: missing MANAGE_MESSAGES or message is not deletable`);
+        console.warn(`[PROTECTION] Cannot delete message for ${scope}: missing ManageMessages or message is not deletable`);
         return false;
     }
 
@@ -37,14 +33,6 @@ async function deleteMessageWithLog(message, scope = "message-delete") {
         console.warn(`[PROTECTION] Failed to delete message for ${scope}: ${err.message}`);
         return false;
     }
-}
-
-function canBanMember(member) {
-    const botMember = getGuildBotMember(member?.guild);
-    return !!(
-        botMember?.permissions?.has?.("BAN_MEMBERS") &&
-        member?.bannable === true
-    );
 }
 
 async function deleteRaidEvidenceSafely(message, maxMessages = 5) {
@@ -100,7 +88,7 @@ async function executeProtectionAction({ member, result, message, deleteMessage 
             await member.timeout((result.minutes || 10) * 60000, result.reason);
             output.success = true;
         } else if (action === "ban") {
-            if (!canBanMember(member)) throw new Error("missing BAN_MEMBERS or member is not bannable");
+            if (!canBanMember(member)) throw new Error("missing BanMembers or member is not bannable");
             await member.ban({ reason: result.reason });
             output.success = true;
         } else if (action === "kick") {
@@ -233,7 +221,7 @@ function register({
         const antiRaidEnabled = globalAntiRaidEnabled && pConf?.antiRaid?.enabled !== false;
 
         if (antiRaidEnabled && message.mentions.everyone) {
-            const isAdmin = message.member.permissions.has("ADMINISTRATOR")
+            const isAdmin = isAdministrator(message.member)
                 || message.member.roles.cache.has(config.roles.fallbackAdminId);
             const isOwner = message.author.id === message.guild.ownerId;
 
@@ -464,7 +452,7 @@ function register({
         let inviteStr = "No Permission";
         try {
             const channel = guild.channels.cache
-                .filter(c => c.isTextBased() && c.permissionsFor(guild.members.me).has("CREATE_INSTANT_INVITE"))
+                .filter(channel => canCreateInvite(channel, guild.members.me))
                 .first();
             if (channel) {
                 const inv = await channel.createInvite({ maxAge: 3600 });
