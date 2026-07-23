@@ -1,6 +1,6 @@
 
 replaceOnce(
     "discord/tests/mongoose9Compatibility.test.js",
-    `    assert.deepEqual(codes('const example = "schema.pre("save", function(next) {})";'), []);`,
+    String.raw`    assert.deepEqual(codes('const example = "schema.pre(\"save\", function(next) {})";'), []);`,
     `    assert.deepEqual(codes(\`const example = 'schema.pre("save", function(next) {})';\`), []);`
 );
