@@ -19,8 +19,9 @@ const { setupTelemetryRouter, initializeSystemHooks, getWebPin, isProtected } = 
 
 const crypto  = require("node:crypto");
 const express = require("express");
-const { Client, Options, LimitedCollection } = require("discord.js");
-const { Intents, resolveActivityType } = require("./core/discordCompat");
+const { Client } = require("discord.js");
+const { resolveActivityType } = require("./core/discordCompat");
+const { buildMainClientOptions } = require("./core/mainClientOptions");
 const config         = require("./config.json");
 const sessionManager = require("./sessionManager");
 const voiceWorker    = require("./voiceWorker");
@@ -126,40 +127,9 @@ const app = createHttpApp(express, { trustProxy });
 // ════════════════════════════════════════════════════════════════════════════
 //  🚀  DISCORD CLIENT
 // ════════════════════════════════════════════════════════════════════════════
-const MAIN_MESSAGE_CACHE_MAX = Math.max(20, Number(process.env.DISCORD_MESSAGE_CACHE_MAX || 75) || 75);
-const MAIN_MESSAGE_SWEEP_INTERVAL = Math.max(60, Number(process.env.DISCORD_MESSAGE_SWEEP_INTERVAL_SEC || 300) || 300);
-const MAIN_MESSAGE_SWEEP_LIFETIME = Math.max(60, Number(process.env.DISCORD_MESSAGE_SWEEP_LIFETIME_SEC || 900) || 900);
 const ROTATE_MESSAGES_MAX = Math.max(1, Number(process.env.ROTATE_MESSAGES_MAX || 20) || 20);
 
-const client = new Client({
-    intents: [
-        Intents.FLAGS.GUILDS,
-        Intents.FLAGS.GUILD_MESSAGES,
-        Intents.FLAGS.GUILD_VOICE_STATES,
-        Intents.FLAGS.GUILD_MEMBERS,
-        Intents.FLAGS.MESSAGE_CONTENT
-    ],
-    makeCache: Options.cacheWithLimits({
-        MessageManager: {
-            maxSize: MAIN_MESSAGE_CACHE_MAX,
-            sweepInterval: MAIN_MESSAGE_SWEEP_INTERVAL,
-            sweepFilter: LimitedCollection.filterByLifetime({
-                lifetime: MAIN_MESSAGE_SWEEP_LIFETIME,
-                getComparisonTimestamp: message => message.editedTimestamp ?? message.createdTimestamp
-            })
-        },
-        GuildMemberManager: 200,
-        UserManager: 200,
-        ReactionManager: 0
-    }),
-    sweepers: {
-        ...Options.defaultSweeperSettings,
-        messages: {
-            interval: MAIN_MESSAGE_SWEEP_INTERVAL,
-            lifetime: MAIN_MESSAGE_SWEEP_LIFETIME
-        }
-    }
-});
+const client = new Client(buildMainClientOptions(process.env));
 
 registerGatewayDiagnostics(client, { clientName: "main-bot", context: "primary-runtime" });
 

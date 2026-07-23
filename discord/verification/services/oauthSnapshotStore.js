@@ -53,9 +53,10 @@ function createSnapshotVersion(now = Date.now()) {
 
 function delay(ms) {
     if (!ms) return Promise.resolve();
+    // This timer is awaited control flow. Keep it ref'd so the promise can settle
+    // in isolated workers and native node:test runs.
     return new Promise(resolve => {
-        const timer = setTimeout(resolve, ms);
-        timer.unref?.();
+        setTimeout(resolve, ms);
     });
 }
 

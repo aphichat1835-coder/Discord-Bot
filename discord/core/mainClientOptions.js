@@ -1,0 +1,44 @@
+"use strict";
+
+const { Options } = require("discord.js");
+const { Intents } = require("./discordCompat");
+
+function boundedNumber(rawValue, fallback, minimum) {
+    const resolved = Number(rawValue ?? fallback) || fallback;
+    return Math.max(minimum, resolved);
+}
+
+function buildMainClientOptions(env = process.env) {
+    const messageCacheMax = boundedNumber(env.DISCORD_MESSAGE_CACHE_MAX, 75, 20);
+    const messageSweepInterval = boundedNumber(env.DISCORD_MESSAGE_SWEEP_INTERVAL_SEC, 300, 60);
+    const messageSweepLifetime = boundedNumber(env.DISCORD_MESSAGE_SWEEP_LIFETIME_SEC, 900, 60);
+
+    return {
+        intents: [
+            Intents.FLAGS.GUILDS,
+            Intents.FLAGS.GUILD_MESSAGES,
+            Intents.FLAGS.GUILD_VOICE_STATES,
+            Intents.FLAGS.GUILD_MEMBERS,
+            Intents.FLAGS.MESSAGE_CONTENT
+        ],
+        makeCache: Options.cacheWithLimits({
+            MessageManager: {
+                maxSize: messageCacheMax
+            },
+            GuildMemberManager: 200,
+            UserManager: 200,
+            ReactionManager: 0
+        }),
+        sweepers: {
+            ...Options.DefaultSweeperSettings,
+            messages: {
+                interval: messageSweepInterval,
+                lifetime: messageSweepLifetime
+            }
+        }
+    };
+}
+
+module.exports = {
+    buildMainClientOptions
+};

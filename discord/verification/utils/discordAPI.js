@@ -139,9 +139,10 @@ function isOAuthInvalidGrantError(err) {
 }
 
 function sleep(ms) {
+    // Retry backoff is awaited control flow; an unref'd timer can let Node exit
+    // while the returned promise is still pending.
     return new Promise(resolve => {
-        const timer = setTimeout(resolve, ms);
-        timer.unref?.();
+        setTimeout(resolve, ms);
     });
 }
 
@@ -180,7 +181,10 @@ function validateRequestBodySize(body) {
     const bytes = Buffer.byteLength(body);
     if (bytes > DISCORD_API_BODY_MAX_BYTES) {
         requestDiagnostics.requestBodyTooLarge += 1;
-        throw new Error(`Discord API request body too large: ${bytes} bytes`);
+        const error = new Error(`Discord API request body too large: ${bytes} bytes`);
+        error.code = "discord_request_body_too_large";
+        error.retryable = false;
+        throw error;
     }
 }
 
@@ -300,7 +304,7 @@ async function fetchWithRetry(pathAndSearch, options = {}) {
             return res;
         } catch (err) {
             lastError = err;
-            if (attempt >= attempts) throw err;
+            if (err?.retryable === false || attempt >= attempts) throw err;
             await sleep(Math.min(250 * attempt, 1500));
         } finally {
             clearTimeout(timer);
