@@ -97,3 +97,7 @@ test("Voice session legacy CBC rejects control-character plaintext before migrat
         console.error = originalError;
     }
 });
+
+test("Voice token plausibility accepts printable Unicode code points", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
+    t.assert.equal(sessionManager._test.isPlausiblePlaintext("voice-token-🔐"), true);
+});

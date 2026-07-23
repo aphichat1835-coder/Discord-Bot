@@ -2,35 +2,9 @@
 "use strict";
 
 const fs = require("node:fs");
-const path = require("node:path");
 const acorn = require("acorn");
 
-const REPOSITORY_ROOT = path.resolve(__dirname, "..");
-const SOURCE_ROOT = fs.realpathSync(path.join(REPOSITORY_ROOT, "discord"));
-const EXCLUDED_DIRECTORIES = new Set(["node_modules", "tests", "public", "views"]);
 const REMOVED_CALLBACK_METHODS = new Set(["doValidate", "updateOne"]);
-
-function ensureInsideSourceRoot(candidate) {
-    const resolved = fs.realpathSync(candidate);
-    const relative = path.relative(SOURCE_ROOT, resolved);
-    const outside = relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
-    if (outside) throw new Error(`Refusing to scan outside Discord source root: ${candidate}`);
-    return resolved;
-}
-
-function walk(directory = SOURCE_ROOT) {
-    const safeDirectory = ensureInsideSourceRoot(directory);
-    const files = [];
-    for (const entry of fs.readdirSync(safeDirectory, { withFileTypes: true })) {
-        const safePath = ensureInsideSourceRoot(path.resolve(safeDirectory, entry.name));
-        if (entry.isDirectory()) {
-            if (!EXCLUDED_DIRECTORIES.has(entry.name)) files.push(...walk(safePath));
-        } else if (entry.isFile() && entry.name.endsWith(".js")) {
-            files.push(safePath);
-        }
-    }
-    return files;
-}
 
 function parseSource(source, file) {
     try {
@@ -99,6 +73,12 @@ function resolveCallback(node, namedCallbacks) {
     return null;
 }
 
+function findingCode(method) {
+    if (method === "pre") return "pre-middleware-next-callback";
+    if (method === "doValidate") return "doValidate-callback";
+    return "updateOne-callback";
+}
+
 function analyzeSource(source, file = "inline") {
     const ast = parseSource(source, file);
     const namedCallbacks = collectNamedCallbacks(ast);
@@ -118,38 +98,31 @@ function analyzeSource(source, file = "inline") {
         findings.push({
             file,
             line: node.loc?.start?.line || 1,
-            code: method === "pre"
-                ? "pre-middleware-next-callback"
-                : method === "doValidate"
-                    ? "doValidate-callback"
-                    : "updateOne-callback"
+            code: findingCode(method)
         });
     });
 
     return findings;
 }
 
-function readSourceFile(file) {
-    const safeFile = ensureInsideSourceRoot(file);
-    return fs.readFileSync(safeFile, "utf8");
+function normalizedFileLabel(value) {
+    const label = String(value || "stdin")
+        .replace(/[\r\n\t]+/g, " ")
+        .trim();
+    return label.slice(0, 300) || "stdin";
 }
 
-function scanRepository() {
-    return walk().flatMap(file => analyzeSource(
-        readSourceFile(file),
-        path.relative(REPOSITORY_ROOT, file).replaceAll(path.sep, "/")
-    ));
+function runCli() {
+    const file = normalizedFileLabel(process.argv[2]);
+    const source = fs.readFileSync(0, "utf8");
+    const findings = analyzeSource(source, file);
+    if (!findings.length) return;
+
+    console.error("[MONGOOSE9] Removed callback-style API patterns detected:");
+    for (const item of findings) console.error(`- ${item.file}:${item.line} ${item.code}`);
+    process.exitCode = 1;
 }
 
-if (require.main === module) {
-    const findings = scanRepository();
-    if (findings.length) {
-        console.error("[MONGOOSE9] Removed callback-style API patterns detected:");
-        for (const item of findings) console.error(`- ${item.file}:${item.line} ${item.code}`);
-        process.exitCode = 1;
-    } else {
-        console.log("[MONGOOSE9] Compatibility AST check passed");
-    }
-}
+if (require.main === module) runCli();
 
-module.exports = { analyzeSource, scanRepository };
+module.exports = { analyzeSource };

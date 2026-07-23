@@ -131,8 +131,8 @@ function decryptCbcToken(text, key) {
 
 function isPlausiblePlaintext(value) {
     if (typeof value !== "string" || value.length === 0) return false;
-    for (let index = 0; index < value.length; index++) {
-        const code = value.charCodeAt(index);
+    for (const character of value) {
+        const code = character.codePointAt(0);
         const allowedWhitespace = code === 9 || code === 10 || code === 13;
         if ((code < 32 && !allowedWhitespace) || code === 127) return false;
     }

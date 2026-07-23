@@ -2,6 +2,7 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const { spawnSync } = require("node:child_process");
 const { analyzeSource } = require("../../scripts/checkMongoose9Compatibility");
 
 function codes(source) {
@@ -46,4 +47,21 @@ test("Mongoose 9 AST scanner flags callback doValidate and updateOne forms", () 
 test("Mongoose 9 AST scanner allows Promise-based middleware and updates", () => {
     assert.deepEqual(codes('schema.pre("save", async function() { await work(); });'), []);
     assert.deepEqual(codes('await Model.updateOne(filter, update, options);'), []);
+});
+
+test("Mongoose 9 CLI scanner reads source from stdin instead of opening dynamic paths", () => {
+    const scanner = require.resolve("../../scripts/checkMongoose9Compatibility");
+    const blocked = spawnSync(process.execPath, [scanner, "discord/models/Example.js"], {
+        input: 'schema.pre("save", function(next) { next(); });',
+        encoding: "utf8"
+    });
+    const clean = spawnSync(process.execPath, [scanner, "discord/models/Example.js"], {
+        input: 'schema.pre("save", async function() { await work(); });',
+        encoding: "utf8"
+    });
+
+    assert.equal(blocked.status, 1);
+    assert.match(blocked.stderr, /discord\/models\/Example\.js:1 pre-middleware-next-callback/);
+    assert.equal(clean.status, 0);
+    assert.equal(clean.stderr, "");
 });

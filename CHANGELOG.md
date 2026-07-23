@@ -2,6 +2,8 @@
 
 ## [Unreleased] - Unified Bot And Verification Runtime 2026-07-16
 
+- Removed JavaScript-side dynamic path construction from the Mongoose 9 compatibility gate by feeding fixed-root source files over stdin, added CLI regression coverage, simplified finding classification, and updated Voice plaintext validation to iterate Unicode code points.
+
 - Closed the remaining Discord.js v14 permission boundary in event protection and invite handling, replaced the Mongoose 9 regex scanner with AST analysis, rejected unsupported legacy Store channels explicitly, escaped untrusted Discord Markdown in webhook events, and clarified dedupe diagnostics. Added degraded Discord-login coverage, bounded encryption-migration counting during recurring maintenance, and connected Node test LCOV output to CI-based Sonar analysis.
 
 - Upgraded the primary runtime to Node.js 24.18 LTS, npm 12, `discord.js`
