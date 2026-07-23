@@ -31,6 +31,10 @@ args = "memory-guards"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
+args = "mongoose9-compat"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
 args = "test-discord"
 
 [[workflows.workflow.tasks]]
@@ -81,6 +85,17 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "npm run check:memory-guards"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "mongoose9-compat"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run check:mongoose9"
 
 [workflows.workflow.metadata]
 isValidation = true
