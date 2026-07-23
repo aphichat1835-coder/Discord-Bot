@@ -1,0 +1,114 @@
+#!/usr/bin/env node
+"use strict";
+
+const fs = require("node:fs");
+const path = require("node:path");
+
+const ROOT = process.cwd();
+
+function filePath(relativePath) {
+    return path.join(ROOT, relativePath);
+}
+
+function read(relativePath) {
+    return fs.readFileSync(filePath(relativePath), "utf8");
+}
+
+function write(relativePath, content) {
+    const target = filePath(relativePath);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, content.endsWith("\n") ? content : `${content}\n`);
+}
+
+function occurrences(source, search) {
+    if (!search) return 0;
+    let count = 0;
+    let index = 0;
+    while ((index = source.indexOf(search, index)) >= 0) {
+        count++;
+        index += search.length;
+    }
+    return count;
+}
+
+function replaceOnce(relativePath, search, replacement) {
+    const source = read(relativePath);
+    const count = occurrences(source, search);
+    if (count !== 1) {
+        throw new Error(`${relativePath}: expected exactly one match, found ${count}`);
+    }
+    write(relativePath, source.replace(search, replacement));
+}
+
+function appendOnce(relativePath, marker, addition) {
+    const source = read(relativePath);
+    if (source.includes(marker)) return;
+    write(relativePath, `${source.trimEnd()}\n\n${addition.trim()}\n`);
+}
+
+function updatePackageScripts() {
+    const relativePath = "package.json";
+    const pkg = JSON.parse(read(relativePath));
+    pkg.scripts = {
+        ...pkg.scripts,
+        "test:coverage:discord": "mkdir -p coverage && find discord/tests -name '*.test.js' ! -name 'voice*.test.js' -print0 | xargs -0 -r node --test --experimental-test-coverage --test-reporter=spec --test-reporter=lcov --test-reporter-destination=stdout --test-reporter-destination=coverage/discord.lcov",
+        "test:coverage:voice": "mkdir -p coverage && node --test --experimental-test-coverage --test-reporter=spec --test-reporter=lcov --test-reporter-destination=stdout --test-reporter-destination=coverage/voice.lcov discord/tests/voice*.test.js",
+        "test:coverage:verification": "mkdir -p coverage && node --require ./verification-tests/nodeTestSetup.js --test --experimental-test-coverage --test-reporter=spec --test-reporter=lcov --test-reporter-destination=stdout --test-reporter-destination=coverage/verification.lcov verification-tests/*.test.js",
+        sonar: "sonar-scanner-npm"
+    };
+    write(relativePath, `${JSON.stringify(pkg, null, 2)}\n`);
+}
+
+function updateEvents() {
+    const relativePath = "discord/index/events.js";
+    replaceOnce(
+        relativePath,
+        "const { isVoicePanelControl } = require(\"../guards/commandGuards\");\nconst { sendWebhookEvent, getDiscordAvatarUrl, getDiscordGuildIconUrl } = require(\"../core/webhooks\");",
+        "const { isVoicePanelControl } = require(\"../guards/commandGuards\");\nconst {\n    canBanMember,\n    canCreateInvite,\n    canDeleteMessage,\n    isAdministrator\n} = require(\"../core/discordPermissions\");\nconst { sendWebhookEvent, getDiscordAvatarUrl, getDiscordGuildIconUrl } = require(\"../core/webhooks\");"
+    );
+
+    replaceOnce(
+        relativePath,
+        `\nfunction getGuildBotMember(guild) {\n    return guild?.members?.me || guild?.me || guild?.members?.cache?.get(guild?.client?.user?.id);\n}\n\nfunction canDeleteMessage(message) {\n    const botMember = getGuildBotMember(message.guild);\n    const perms = message.channel?.permissionsFor?.(botMember);\n    return message.deletable === true && perms?.has?.(\"MANAGE_MESSAGES\");\n}\n\n`,
+        "\n"
+    );
+
+    replaceOnce(
+        relativePath,
+        `\nfunction canBanMember(member) {\n    const botMember = getGuildBotMember(member?.guild);\n    return !!(\n        botMember?.permissions?.has?.(\"BAN_MEMBERS\") &&\n        member?.bannable === true\n    );\n}\n\n`,
+        "\n"
+    );
+
+    replaceOnce(
+        relativePath,
+        "missing MANAGE_MESSAGES or message is not deletable",
+        "missing ManageMessages or message is not deletable"
+    );
+    replaceOnce(
+        relativePath,
+        "missing BAN_MEMBERS or member is not bannable",
+        "missing BanMembers or member is not bannable"
+    );
+    replaceOnce(
+        relativePath,
+        `const isAdmin = message.member.permissions.has(\"ADMINISTRATOR\")\n                || message.member.roles.cache.has(config.roles.fallbackAdminId);`,
+        `const isAdmin = isAdministrator(message.member)\n                || message.member.roles.cache.has(config.roles.fallbackAdminId);`
+    );
+    replaceOnce(
+        relativePath,
+        `.filter(c => c.isTextBased() && c.permissionsFor(guild.members.me).has(\"CREATE_INSTANT_INVITE\"))`,
+        `.filter(channel => canCreateInvite(channel, guild.members.me))`
+    );
+}
+
+function updateDiscordCompat() {
+    const relativePath = "discord/core/discordCompat.js";
+    replaceOnce(relativePath, "    GUILD_STORE: ChannelType.GuildStore,\n", "");
+    replaceOnce(
+        relativePath,
+        `const CHANNEL_TYPE_NAMES = new Map(\n    Object.entries(LEGACY_CHANNEL_TYPES)\n        .filter(([, value]) => Number.isInteger(value))\n        .map(([name, value]) => [value, name])\n);`,
+        `const UNSUPPORTED_LEGACY_CHANNEL_TYPES = new Set([\"GUILD_STORE\"]);\n\nconst CHANNEL_TYPE_NAMES = new Map(\n    Object.entries(LEGACY_CHANNEL_TYPES)\n        .filter(([, value]) => Number.isInteger(value))\n        .map(([name, value]) => [value, name])\n);`
+    );
+    replaceOnce(
+        relativePath,
+        `function resolveChannelType(t

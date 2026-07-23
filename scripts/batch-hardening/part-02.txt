@@ -1,0 +1,45 @@
+em) => sum + item.remainingDocuments, 0),\n        collections`,
+        `        remainingDocuments: settings.countRemaining\n            ? collections.reduce((sum, item) => sum + Number(item.remainingDocuments || 0), 0)\n            : null,\n        collections`
+    );
+
+    replaceOnce(
+        "discord/verification/lifecycle.js",
+        `        summary.encryptionMigration = await runEncryptionMigration({ dryRun });`,
+        `        summary.encryptionMigration = await runEncryptionMigration({\n            dryRun,\n            countRemaining: dryRun\n        });`
+    );
+}
+
+function updateCiWorkflow() {
+    const relativePath = ".github/workflows/ci.yml";
+    const source = read(relativePath)
+        .replace(
+            `  push:\n    branches-ignore:\n      - agent/batch-hardening-20260723\n  pull_request:`,
+            `  push:\n  pull_request:`
+        )
+        .replace(
+            `  checks:\n    runs-on: ubuntu-latest\n    timeout-minutes: 20`,
+            `  checks:\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    env:\n      SONAR_TOKEN: \${{ secrets.SONAR_TOKEN }}`
+        )
+        .replace(
+            `      - name: Discord tests\n        run: npm run test:discord\n\n      - name: Voice tests\n        run: npm run test:voice\n\n      - name: Verification tests\n        run: npm run test:verification\n\n      - name: Root audit\n        run: npm audit --audit-level=high`,
+            `      - name: Discord tests with LCOV coverage\n        run: npm run test:coverage:discord\n\n      - name: Voice tests with LCOV coverage\n        run: npm run test:coverage:voice\n\n      - name: Verification tests with LCOV coverage\n        run: npm run test:coverage:verification\n\n      - name: Verify LCOV reports\n        run: |\n          test -s coverage/discord.lcov\n          test -s coverage/voice.lcov\n          test -s coverage/verification.lcov\n\n      - name: SonarCloud analysis\n        if: \${{ env.SONAR_TOKEN != '' }}\n        run: npm run sonar -- -Dsonar.token=\"$SONAR_TOKEN\"\n\n      - name: Root audit\n        run: npm audit --audit-level=high`
+        );
+    if (source === read(relativePath)) throw new Error("CI workflow was not updated");
+    write(relativePath, source);
+}
+
+function updateChangelog() {
+    const relativePath = "CHANGELOG.md";
+    const marker = "- Closed the remaining Discord.js v14 permission boundary";
+    if (read(relativePath).includes(marker)) return;
+    replaceOnce(
+        relativePath,
+        "## [Unreleased] - Unified Bot And Verification Runtime 2026-07-16\n",
+        `## [Unreleased] - Unified Bot And Verification Runtime 2026-07-16\n\n- Closed the remaining Discord.js v14 permission boundary in event protection and invite handling, replaced the Mongoose 9 regex scanner with AST analysis, rejected unsupported legacy Store channels explicitly, escaped untrusted Discord Markdown in webhook events, and clarified dedupe diagnostics. Added degraded Discord-login coverage, bounded encryption-migration counting during recurring maintenance, and connected Node test LCOV output to CI-based Sonar analysis.\n`
+    );
+}
+
+function writeNewFiles() {
+    write("discord/core/discordPermissions.js", `"use strict";\n\nconst { PermissionFlagsBits } = require("discord.js");\n\nfunction getGuildBotMember(guild) {\n    return guild?.members?.me || guild?.me || guild?.members?.cache?.get(guild?.client?.user?.id);\n}\n\nfunction canDeleteMessage(message) {\n    const botMember = getGuildBotMember(message?.guild);\n    const permissions = message?.channel?.permissionsFor?.(botMember);\n    return message?.deletable === true && permissions?.has?.(PermissionFlagsBits.ManageMessages) === true;\n}\n\nfunction canBanMember(member) {\n    const botMember = getGuildBotMember(member?.guild);\n    return botMember?.permissions?.has?.(PermissionFlagsBits.BanMembers) === true && member?.bannable === true;\n}\n\nfunction isAdministrator(member) {\n    return member?.permissions?.has?.(PermissionFlagsBits.Administrator) === true;\n}\n\nfunction canCreateInvite(channel, guildMember) {\n    if (channel?.isTextBased?.() !== true) return false;\n    return channel.permissionsFor?.(guildMember)?.has?.(PermissionFlagsBits.CreateInstantInvite) === true;\n}\n\nmodule.exports = {\n    canBanMember,\n    canCreateInvite,\n    canDeleteMessage,\n    getGuildBotMember,\n    isAdministrator\n};\n`);
+
+    write("discord/tests/discordPermissions.test.js", `"use strict";\n\nconst assert = require("node:assert/strict");\nconst test = require("node:test");\nconst { PermissionFlagsBits } = require("discord.js");\nconst {\n    canBanMember,\n    canCreateInvite,\n    canDeleteMessage,\n    isAdministrator\n} = require("../core/discordPermissions");\n\nfunction permissionSet(expected, result = true) {\n    return {\n        has(permission) {\n            assert.equal(permission, expected);\n            return result;\n        }\n    };\n}\n\ntest("event permission helpers use Discord.js v14 permission flags", () => {\n    const botMember = { permissions: permissionSet(PermissionFlagsBits.BanMembers) };\n    const guild = { members: { me: botMember } };\n    const message = {\n        guild,\n        deletable: true,\n        channel: { permissionsFor: member => {\n            assert.equal(member, botMember);\n            return permissionSet(PermissionFlagsBits.ManageMessages);\n        } }\n    };\n    const member = { guild, bannable: true, permissions: permissionSet(PermissionFlagsBits.Admi

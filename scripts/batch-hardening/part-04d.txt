@@ -1,0 +1,1 @@
+ => ({}),\n        connectDatabase: async () => ({}),\n        loadDatabase: async () => ({}),\n    
