@@ -26,6 +26,7 @@ const {
     markCommandAccepted
 } = require("../guards/commandGuards");
 const dmService = require("../dm");
+const { safeError } = require("../core/safeLogger");
 const {
     sendWebhookEvent,
     getDiscordAvatarUrl,
@@ -286,6 +287,10 @@ async function handleSteal(interaction) {
 // ════════════════════════════════════════════════════════════════════════════
 //  💾  BACKUP
 // ════════════════════════════════════════════════════════════════════════════
+function sortedCollectionValues(collection, compareFn) {
+    return Array.from(collection?.values?.() || []).sort(compareFn);
+}
+
 function serializeRoleForBackup(role) {
     return {
         id: role.id,
@@ -566,6 +571,42 @@ function buildRestorePlan(guild, backupData, oldGuildId) {
     return plan;
 }
 
+function buildBackupCreatedEvent(interaction, snapshotId, data, durationMs) {
+    return {
+        target: "LOG", severity: "SUCCESS", category: "BACKUP", code: "backup.created",
+        title: "สร้างข้อมูลสำรองเซิร์ฟเวอร์สำเร็จ",
+        context: {
+  "Guild ID": String(interaction.guild?.id || "unknown"),
+  "User ID": String(interaction.user?.id || "unknown"),
+  "Snapshot ID": String(snapshotId || "unknown"),
+  "Schema": `v${data?.schemaVersion || 1}`,
+  "Roles": Number(data?.roles?.length || 0),
+  "Channels": Number(data?.channels?.length || 0),
+  "ระยะเวลา": `${Math.max(0, Number(durationMs || 0))} ms`
+        },
+        sourceIconUrl: getDiscordGuildIconUrl(interaction.guild),
+        thumbnailUrl: getDiscordAvatarUrl(interaction.user)
+    };
+}
+
+function buildBackupFailedEvent(interaction, error, durationMs) {
+    const guildId = String(interaction.guild?.id || "unknown");
+    return {
+        target: "ALERT", severity: "ERROR", category: "BACKUP", code: "backup.failed", state: "OPEN",
+        title: "สร้างข้อมูลสำรองเซิร์ฟเวอร์ไม่สำเร็จ", description: safeError(error),
+        impact: "ไม่มีการสลับไปใช้ snapshot ที่บันทึกไม่ครบ",
+        action: "ตรวจ Runtime Log, MongoDB และสิทธิ์อ่านโครงสร้างเซิร์ฟเวอร์ก่อนลองใหม่",
+        context: {
+  "Guild ID": guildId,
+  "User ID": String(interaction.user?.id || "unknown"),
+  "ระยะเวลา": `${Math.max(0, Number(durationMs || 0))} ms`
+        },
+        sourceIconUrl: getDiscordGuildIconUrl(interaction.guild),
+        thumbnailUrl: getDiscordAvatarUrl(interaction.user),
+        dedupeKey: `backup-failed:${guildId}`, dedupeMs: 5 * 60 * 1000
+    };
+}
+
 async function handleBackup(interaction) {
     if (interaction.user.id !== interaction.guild.ownerId &&
         interaction.user.id !== config.system.ownerId) {
@@ -582,6 +623,7 @@ async function handleBackup(interaction) {
         });
     }
     activeBackups.add(interaction.guild.id);
+    const backupStartedAt = Date.now();
 
     try {
         await interaction.deferReply();
@@ -610,12 +652,14 @@ async function handleBackup(interaction) {
                 "managed_roles_not_recreated",
                 "webhooks_invites_threads_messages_not_restored"
             ],
-            roles: interaction.guild.roles.cache
-                .sort((a, b) => a.position - b.position)
-                .map(serializeRoleForBackup),
-            channels: interaction.guild.channels.cache
-                .sort((a, b) => (a.rawPosition || 0) - (b.rawPosition || 0))
-                .map(serializeChannelForBackup)
+            roles: sortedCollectionValues(
+                interaction.guild.roles.cache,
+                (a, b) => a.position - b.position
+            ).map(serializeRoleForBackup),
+            channels: sortedCollectionValues(
+                interaction.guild.channels.cache,
+                (a, b) => (a.rawPosition || 0) - (b.rawPosition || 0)
+            ).map(serializeChannelForBackup)
         };
         data.validationReport = buildBackupValidationReport(data);
 
@@ -628,6 +672,10 @@ async function handleBackup(interaction) {
         );
         if (!stored) throw new Error("SNAPSHOT_SAVE_FAILED");
 
+        sendWebhookEvent(buildBackupCreatedEvent(
+            interaction, snapshotId, data, Date.now() - backupStartedAt
+        )).catch(() => {});
+
         const embed = new MessageEmbed()
             .setColor(config.system.themeColors.success)
             .setDescription(
@@ -639,6 +687,9 @@ async function handleBackup(interaction) {
         return interaction.editReply({ embeds: [embed] });
     } catch (err) {
         console.error("[BACKUP] Failed:", err.message);
+        sendWebhookEvent(buildBackupFailedEvent(
+            interaction, err, Date.now() - backupStartedAt
+        )).catch(() => {});
         return interaction.editReply({ content: `> ${config.emojis.error} สำรองข้อมูลไม่สำเร็จ และไม่ได้สลับไปใช้ snapshot ที่บันทึกไม่ครบ` });
     } finally {
         activeBackups.delete(interaction.guild.id);
@@ -1007,6 +1058,9 @@ module.exports = {
         normalizeSnapshotChannelType,
         normalizeSnapshotChannels,
         buildRestoreDeliveryFailureEvent,
+        buildBackupCreatedEvent,
+        buildBackupFailedEvent,
+        sortedCollectionValues,
         restoreStateLabel,
         restoreTone,
         buildRestoreResultDmEmbed

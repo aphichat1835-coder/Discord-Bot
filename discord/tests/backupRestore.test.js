@@ -144,3 +144,32 @@ test("restore snapshot identity binds payload, metadata, and preview target guil
         { guild: { id: "222222222222222222" } }
     ), false);
 });
+
+
+test("backup sorting does not mutate live Discord manager cache order", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const cache = new Collection([
+        ["role-high", { id: "role-high", position: 10 }],
+        ["role-low", { id: "role-low", position: 1 }]
+    ]);
+    const before = Array.from(cache.keys());
+    const sorted = utility._test.sortedCollectionValues(cache, (a, b) => a.position - b.position);
+    assert.deepEqual(sorted.map(item => item.id), ["role-low", "role-high"]);
+    assert.deepEqual(Array.from(cache.keys()), before);
+});
+
+test("backup webhook events contain bounded operational metadata", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const interaction = {
+        guild: { id: "111111111111111111", iconURL: () => null },
+        user: { id: "222222222222222222", displayAvatarURL: () => null }
+    };
+    const success = utility._test.buildBackupCreatedEvent(interaction, "snapshot-1", {
+        schemaVersion: 2, roles: [{}, {}], channels: [{}]
+    }, 15);
+    const failure = utility._test.buildBackupFailedEvent(interaction, new Error("database unavailable"), 20);
+    assert.equal(success.code, "backup.created");
+    assert.equal(success.context.Roles, 2);
+    assert.equal(success.context.Channels, 1);
+    assert.equal(failure.code, "backup.failed");
+    assert.equal(failure.target, "ALERT");
+    assert.match(failure.description, /database unavailable/);
+});
