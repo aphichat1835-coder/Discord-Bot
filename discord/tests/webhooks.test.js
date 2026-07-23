@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const { Colors } = require("discord.js");
 
 const {
     getWebhookUrl,
@@ -438,7 +439,7 @@ test("event token normalization bounds hostile input without changing webhook co
 
     assert.equal(_test.normalizeEventToken(hostileToken, "SYSTEM"), "A");
     assert.equal(_test.normalizeWebhookEventCode(hostileCode), "a");
-    assert.equal(buildWebhookEventPayload({ severity: "WARNING" }).embeds[0].color, 16705372);
-    assert.equal(buildWebhookEventPayload({ severity: "ERROR" }).embeds[0].color, 15548997);
-    assert.equal(buildWebhookEventPayload({ severity: "CRITICAL" }).embeds[0].color, 10038562);
+    assert.equal(buildWebhookEventPayload({ severity: "WARNING" }).embeds[0].color, Colors.Yellow);
+    assert.equal(buildWebhookEventPayload({ severity: "ERROR" }).embeds[0].color, Colors.Red);
+    assert.equal(buildWebhookEventPayload({ severity: "CRITICAL" }).embeds[0].color, Colors.DarkRed);
 });

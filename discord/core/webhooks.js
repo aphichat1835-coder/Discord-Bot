@@ -1,6 +1,6 @@
 "use strict";
 
-const { WebhookClient } = require("discord.js");
+const { Colors, WebhookClient } = require("discord.js");
 const crypto = require("node:crypto");
 const { sanitizeLogText } = require("./safeLogger");
 const { resolvePublicBaseUrl } = require("./publicUrl");
@@ -22,11 +22,11 @@ const WEBHOOK_EVENT_STATES = Object.freeze({
     RESOLVED: "RESOLVED"
 });
 const EVENT_PRESENTATION = Object.freeze({
-    INFO: { emoji: "🔵", color: 5793266, label: "ข้อมูล" },
-    SUCCESS: { emoji: "🟢", color: 5763719, label: "สำเร็จ" },
-    WARNING: { emoji: "🟠", color: 16705372, label: "คำเตือน" },
-    ERROR: { emoji: "🔴", color: 15548997, label: "ข้อผิดพลาด" },
-    CRITICAL: { emoji: "🚨", color: 10038562, label: "วิกฤต" }
+    INFO: { emoji: "🔵", color: Colors.Blurple, label: "ข้อมูล" },
+    SUCCESS: { emoji: "🟢", color: Colors.Green, label: "สำเร็จ" },
+    WARNING: { emoji: "🟠", color: Colors.Yellow, label: "คำเตือน" },
+    ERROR: { emoji: "🔴", color: Colors.Red, label: "ข้อผิดพลาด" },
+    CRITICAL: { emoji: "🚨", color: Colors.DarkRed, label: "วิกฤต" }
 });
 const EVENT_STATE_LABELS = Object.freeze({
     OPEN: "เกิดปัญหา",
