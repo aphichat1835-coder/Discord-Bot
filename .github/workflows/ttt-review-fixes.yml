@@ -1,0 +1,95 @@
+name: ttt-review-fixes
+
+on:
+  push:
+    branches: [ttt]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ttt
+          fetch-depth: 0
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: 24.18.0
+          cache: npm
+      - name: Apply review fixes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def read(name): return Path(name).read_text(encoding="utf-8")
+          def write(name, content): Path(name).write_text(content, encoding="utf-8")
+          def replace(name, old, new):
+              text = read(name)
+              if old not in text: raise SystemExit(f"expected review pattern not found: {name}")
+              write(name, text.replace(old, new, 1))
+
+          replace("discord/core/mainClientOptions.js",
+              '''function boundedNumber(rawValue, fallback, minimum) {\n    const resolved = Number(rawValue ?? fallback) || fallback;\n    return Math.max(minimum, resolved);\n}\n''',
+              '''function boundedNumber(rawValue, fallback, minimum) {\n    const parsed = Number(rawValue ?? fallback);\n    const resolved = Number.isFinite(parsed) && parsed !== 0 ? parsed : fallback;\n    return Math.max(minimum, resolved);\n}\n''')
+          replace("discord/core/mainClientOptions.js",
+              '''module.exports = {\n    buildMainClientOptions\n};\n''',
+              '''module.exports = {\n    buildMainClientOptions,\n    _test: { boundedNumber }\n};\n''')
+          replace("discord/tests/mainClientOptions.test.js",
+              'const { buildMainClientOptions } = require("../core/mainClientOptions");\n',
+              'const { buildMainClientOptions, _test } = require("../core/mainClientOptions");\n')
+          main_test = read("discord/tests/mainClientOptions.test.js")
+          if 'rejects non-finite cache and sweeper overrides' not in main_test:
+              main_test += '''\n\ntest("rejects non-finite cache and sweeper overrides", () => {\n    assert.equal(_test.boundedNumber("Infinity", 75, 20), 75);\n    assert.equal(_test.boundedNumber("-Infinity", 75, 20), 75);\n    assert.equal(_test.boundedNumber("NaN", 75, 20), 75);\n    assert.equal(_test.boundedNumber("0", 75, 20), 75);\n    assert.equal(_test.boundedNumber("-1", 75, 20), 20);\n\n    const options = buildMainClientOptions({\n        DISCORD_MESSAGE_CACHE_MAX: "Infinity",\n        DISCORD_MESSAGE_SWEEP_INTERVAL_SEC: "Infinity",\n        DISCORD_MESSAGE_SWEEP_LIFETIME_SEC: "Infinity"\n    });\n    assert.equal(options.sweepers.messages.interval, 300);\n    assert.equal(options.sweepers.messages.lifetime, 900);\n});\n'''
+              write("discord/tests/mainClientOptions.test.js", main_test)
+
+          plausibility = '''function isPlausiblePlaintext(value) {
+              if (typeof value !== "string" || value.length === 0) return false;
+              for (let index = 0; index < value.length; index++) {
+                  const code = value.charCodeAt(index);
+                  const allowedWhitespace = code === 9 || code === 10 || code === 13;
+                  if ((code < 32 && !allowedWhitespace) || code === 127) return false;
+              }
+              return true;
+          }
+
+          '''.replace("          ", "")
+          replace("discord/sessionManager.js",
+              'function decryptTokenWithMetadata(text) {\n',
+              plausibility + 'function decryptTokenWithMetadata(text) {\n')
+          replace("discord/sessionManager.js",
+              '''    for (const key of LEGACY_DECRYPTION_KEYS) {\n        try {\n            return { plaintext: decryptCbcToken(text, key), needsMigration: true };\n        } catch (_) {}\n    }\n''',
+              '''    for (const key of LEGACY_DECRYPTION_KEYS) {\n        try {\n            const plaintext = decryptCbcToken(text, key);\n            if (!isPlausiblePlaintext(plaintext)) continue;\n            return { plaintext, needsMigration: true };\n        } catch (_) {}\n    }\n''')
+          replace("discord/sessionManager.js",
+              '        decryptTokenWithMetadata,\n',
+              '        decryptTokenWithMetadata,\n        isPlausiblePlaintext,\n')
+
+          session_test = read("discord/tests/sessionEncryption.test.js")
+          if 'rejects control-character plaintext before migration' not in session_test:
+              session_test += '''\n\ntest("Voice session legacy CBC rejects control-character plaintext before migration", (t) => {\n    const legacy = legacyVoiceCbcToken("invalid\\u0000voice-token");\n    const originalError = console.error;\n    console.error = () => {};\n    try {\n        t.assert.equal(sessionManager._test.decryptTokenWithMetadata(legacy), null);\n        t.assert.deepEqual(\n            sessionManager._test.migrateEncryptedToken(legacy),\n            { token: legacy, migrated: false }\n        );\n    } finally {\n        console.error = originalError;\n    }\n});\n'''
+              write("discord/tests/sessionEncryption.test.js", session_test)
+
+          Path(".github/workflows/ttt-review-fixes.yml").unlink()
+          PY
+      - name: Install dependencies
+        run: |
+          npm install --global --ignore-scripts npm@12.0.1
+          npm ci --ignore-scripts --no-audit --no-fund
+      - name: Validate review fixes
+        run: |
+          npm run check:all
+          npm run check:scripts
+          npm run check:memory-guards
+          npm run check:mongoose9
+          node --test discord/tests/mainClientOptions.test.js discord/tests/sessionEncryption.test.js
+      - name: Commit review fixes
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "fix non-finite client limits and validate legacy CBC plaintext"
+          git push origin HEAD:ttt
