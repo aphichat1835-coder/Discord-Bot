@@ -329,7 +329,11 @@ test("sendWebhookEvent preserves event-level summary metadata for duplicate repo
     await new Promise(resolve => setImmediate(resolve));
 
     assert.equal(calls.length, 2);
-    assert.match(calls[1].payload.embeds[0].footer.text, /security\.owner_mismatch\.repeated/);
+    const duplicateEmbed = calls[1].payload.embeds[0];
+    assert.match(duplicateEmbed.title, /สรุปเหตุการณ์ที่เกิดซ้ำ/);
+    assert.equal(duplicateEmbed.description, "เหตุการณ์ทดสอบ");
+    assert.match(duplicateEmbed.footer.text, /ความปลอดภัย/);
+    assert.match(duplicateEmbed.footer.text, /security\.owner_mismatch\.repeated/);
 });
 
 test("normalization enforces Discord payload limits without enabling mentions", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.

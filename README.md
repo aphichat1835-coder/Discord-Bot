@@ -161,6 +161,13 @@ Production has exactly 13 owner-maintained environment values: `NODE_ENV`,
 All other runtime controls have code defaults. Legacy public-URL aliases remain
 read-compatible but do not need to be configured.
 
+`ENCRYPTION_KEY` alone derives the AES key for OAuth tokens, raw IP values, and
+Voice session tokens. IP/device correlation hashes use a separate HMAC key
+derived from `ENCRYPTION_KEY` plus `API_SECRET` (or the legacy-compatible
+`INTERNAL_API_SECRET` fallback). Keep both HMAC inputs stable unless correlation
+history is deliberately migrated or rebuilt; rotating `API_SECRET` also
+invalidates Owner sessions.
+
 IP location compares `ipapi.is` and `ipapi.co` by default. Optional
 `MAXMIND_ACCOUNT_ID` and `MAXMIND_LICENSE_KEY` enable MaxMind GeoIP as an
 additional precision source; they are not required for startup. Lookup requests

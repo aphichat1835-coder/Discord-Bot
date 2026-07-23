@@ -16,7 +16,9 @@ Before suggesting changes, use the current implementation as source of truth and
 
 Rules:
 
-- Preserve `discord.js` v13 unless the owner explicitly approves migration.
+- Preserve the owner-approved `discord.js` v14 baseline for the primary bot.
+- Preserve the isolated Voice account client on its separately versioned
+  `discord.js-selfbot-v13` package until a supported replacement is approved.
 - Preserve voice/session, Owner Dashboard, verification, owner controls, and shared MongoDB architecture.
 - Preserve the single Node process, single HTTP port, and single Mongoose runtime connection.
 - Do not rewrite the project or split the repository by default.

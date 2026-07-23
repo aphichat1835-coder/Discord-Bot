@@ -277,6 +277,13 @@ key. Historical key derivations remain read-compatible during a bounded,
 conditional migration; deployment must keep `ENCRYPTION_KEY` unchanged until
 maintenance diagnostics report no legacy records.
 
+AES encryption keys are derived from `ENCRYPTION_KEY` only. A separate
+IP/device correlation HMAC key is derived from `ENCRYPTION_KEY` plus
+`API_SECRET` (or the legacy-compatible `INTERNAL_API_SECRET` fallback).
+Deployments must keep both HMAC inputs stable unless a coordinated correlation
+migration or re-verification plan is executed; rotating `API_SECRET` also
+invalidates Owner sessions.
+
 Join Campaign scans OAuth users in stable `_id` cursor batches until the query
 is exhausted or the Owner stops the job. Its batch-size setting bounds memory;
 it is not a ceiling on the number of users processed.

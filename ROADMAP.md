@@ -92,7 +92,9 @@ require a new explicit owner decision.
 
 These are not approved by this roadmap:
 
-- `discord.js` v14 migration
+- reverting the primary bot from the approved `discord.js` v14 baseline
+- replacing the isolated `discord.js-selfbot-v13` Voice client without a
+  supported lifecycle-compatible alternative
 - replacement of MongoDB
 - rewrite of voice/session
 - splitting the repository or verification runtime again

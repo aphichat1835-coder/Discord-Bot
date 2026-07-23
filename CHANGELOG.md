@@ -35,6 +35,11 @@
 - Removed the inactive duplicate Owner renderer implementation after the routed
   renderer module became authoritative, while preserving its protected-file
   digest and focused render/auth tests.
+- Aligned the active documentation and agent instructions with the
+  owner-approved `discord.js` v14 primary runtime, documented the separate AES
+  and IP/device-correlation key contracts, removed a secret-like legacy test
+  fixture in favor of a byte-level historical fallback compatibility vector,
+  and expanded duplicate-webhook metadata assertions.
 
 - Upgraded new Verification and Voice secrets to versioned `v3:gcm` payloads
   derived from the full 32-byte SHA-256 digest. Existing Service-compatible
@@ -112,7 +117,7 @@
   directly, and Shadow authentication rejects unset PINs while accepting the
   Owner `DASHBOARD_PIN` as a timing-safe recovery credential.
 
-- Synchronized all repository documentation with the current `tt` runtime:
+- Synchronized all repository documentation with the current `ttt` runtime:
   exact boot/maintenance lifecycle, 15-command and 13-variable contracts,
   redacted versus audited Member Detail access, complete snapshot storage,
   backup/restore validation, and one-service deployment guidance.

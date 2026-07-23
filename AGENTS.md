@@ -62,7 +62,10 @@ If documentation and implementation disagree, report the mismatch and inspect th
 
 Preserve these decisions unless the owner explicitly approves a specific change:
 
-- Keep `discord.js` v13 for now.
+- Keep the primary bot on the owner-approved `discord.js` v14 baseline.
+- Keep the isolated Voice account client on its separately versioned
+  `discord.js-selfbot-v13` package until a supported replacement can preserve
+  its connection-only lifecycle.
 - Keep the voice/session subsystem.
 - Keep the Owner Dashboard and integrated verification dashboard structure.
 - Keep verification in the single main runtime unless the owner approves another change.
@@ -72,7 +75,9 @@ Preserve these decisions unless the owner explicitly approves a specific change:
 
 Do not re-suggest these without new implementation evidence and explicit owner approval:
 
-- Immediate migration to `discord.js` v14.
+- Reverting the primary bot to `discord.js` v13.
+- Treating the isolated Voice self-client as if it were part of the primary
+  `discord.js` v14 runtime.
 - Rewriting the entire project.
 - Removing voice/session.
 - Removing dashboards.

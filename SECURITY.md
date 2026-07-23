@@ -148,6 +148,15 @@ has not changed concurrently. Keep `ENCRYPTION_KEY` stable until diagnostics
 report no remaining legacy records. Token metadata includes scope, type,
 expiry, refresh time/failures, safe last error, and revocation time.
 
+Token and raw-IP encryption do not include `API_SECRET` in their AES key.
+IP/device correlation hashes use a separate HMAC key derived from
+`ENCRYPTION_KEY` together with `API_SECRET` (falling back to
+`INTERNAL_API_SECRET` only for legacy-compatible deployments). Keep both HMAC
+inputs stable during normal operation: changing either input prevents new
+correlation hashes from matching historical hashes. Any coordinated rotation
+therefore requires an explicit correlation migration or re-verification plan.
+Rotating `API_SECRET` also invalidates Owner sessions.
+
 Raw tokens must never appear in:
 
 - Owner list APIs or normal member-detail APIs

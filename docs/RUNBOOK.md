@@ -1,6 +1,6 @@
 # Unified Runtime Runbook
 
-Updated: 2026-07-16 (`tt`).
+Updated: 2026-07-23 (`ttt`).
 
 ## Start and health
 
@@ -57,16 +57,20 @@ simple listener-only liveness check.
    keep them equal or remove them.
 5. If historical admin grants must refresh against the retired URI, set
    `LEGACY_ADMIN_OAUTH_REDIRECT_URI`.
-6. Deploy.
-7. Run the single-port smoke helper:
+6. Keep `ENCRYPTION_KEY` stable for AES migration. Keep both
+   `ENCRYPTION_KEY` and `API_SECRET` stable for IP/device correlation unless a
+   coordinated correlation migration or re-verification is planned. Rotating
+   `API_SECRET` invalidates existing Owner sessions.
+7. Deploy.
+8. Run the single-port smoke helper:
 
    ```bash
    SMOKE_ALLOWED_HOSTS=DOMAIN npm run smoke:unified -- https://DOMAIN
    ```
 
-8. Test Owner Dashboard, `/verification`, a target guild page, and a complete
+9. Test Owner Dashboard, `/verification`, a target guild page, and a complete
    member verification.
-9. If a legacy standalone service still exists, stop it only after all checks
+10. If a legacy standalone service still exists, stop it only after all checks
    pass. New/current installations have only the root service.
 
 ## Verification smoke test

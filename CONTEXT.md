@@ -122,6 +122,12 @@ remain active.
 - Normal list/export APIs never return raw tokens or raw IP.
 - The normal Member Detail GET response is categorized but redacted. Full raw
   values require the separate CSRF-protected and rate-limited POST action.
+
+AES token/raw-IP encryption derives from `ENCRYPTION_KEY` only. IP/device
+correlation hashes use a distinct HMAC key derived from `ENCRYPTION_KEY` and
+`API_SECRET`, with `INTERNAL_API_SECRET` retained only as a compatible fallback.
+Both HMAC inputs must remain stable unless correlation data is deliberately
+migrated or rebuilt through re-verification.
 - Member Detail is Owner-only and uses a CSRF-protected, rate-limited POST to
   decrypt and display the complete raw IP and OAuth tokens in one action while
   appending an internal audit event. Compatibility reveal routes retain their
