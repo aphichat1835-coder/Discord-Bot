@@ -97,3 +97,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "fix: resolve Codacy and Sonar static analysis findings"
           git push origin HEAD:refs/heads/ttt
+
+# Triggered after the workflow file existed on the staging branch.
