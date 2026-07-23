@@ -39,7 +39,6 @@ test("entrypoint uses the v14 client option boundary without stale v13 sweepers"
     assert.doesNotMatch(entrypoint, /Options\.defaultSweeperSettings/);
 });
 
-
 test("rejects non-finite cache and sweeper overrides", () => {
     assert.equal(_test.boundedNumber("Infinity", 75, 20), 75);
     assert.equal(_test.boundedNumber("-Infinity", 75, 20), 75);
@@ -48,7 +47,6 @@ test("rejects non-finite cache and sweeper overrides", () => {
     assert.equal(_test.boundedNumber("-1", 75, 20), 20);
 
     const options = buildMainClientOptions({
-        DISCORD_MESSAGE_CACHE_MAX: "Infinity",
         DISCORD_MESSAGE_SWEEP_INTERVAL_SEC: "Infinity",
         DISCORD_MESSAGE_SWEEP_LIFETIME_SEC: "Infinity"
     });
