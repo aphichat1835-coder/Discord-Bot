@@ -82,7 +82,12 @@ function encryptToken(text) {
 
     try {
         const iv = crypto.randomBytes(12);
-        const cipher = crypto.createCipheriv("aes-256-gcm", CURRENT_ENCRYPTION_KEY, iv);
+        const cipher = crypto.createCipheriv(
+            "aes-256-gcm",
+            CURRENT_ENCRYPTION_KEY,
+            iv,
+            { authTagLength: 16 }
+        );
 
         let encrypted = cipher.update(text, "utf-8", "hex");
         encrypted += cipher.final("hex");
@@ -105,7 +110,12 @@ function decryptGcmToken(text, key, versioned) {
     if (iv.length !== 12 || authTag.length !== 16 || encrypted.length === 0) {
         throw new Error("Invalid GCM token payload");
     }
-    const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+    const decipher = crypto.createDecipheriv(
+        "aes-256-gcm",
+        key,
+        iv,
+        { authTagLength: 16 }
+    );
     decipher.setAuthTag(authTag);
     return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf-8");
 }

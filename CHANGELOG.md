@@ -39,7 +39,9 @@
   owner-approved `discord.js` v14 primary runtime, documented the separate AES
   and IP/device-correlation key contracts, removed a secret-like legacy test
   fixture in favor of a byte-level historical fallback compatibility vector,
-  and expanded duplicate-webhook metadata assertions.
+  expanded duplicate-webhook metadata assertions, and made the 16-byte
+  AES-GCM authentication-tag contract explicit during Voice token encryption
+  and decryption.
 
 - Upgraded new Verification and Voice secrets to versioned `v3:gcm` payloads
   derived from the full 32-byte SHA-256 digest. Existing Service-compatible
