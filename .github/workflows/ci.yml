@@ -105,6 +105,9 @@ jobs:
       - name: Memory guards check
         run: npm run check:memory-guards
 
+      - name: Mongoose 9 compatibility check
+        run: npm run check:mongoose9
+
       - name: Discord tests
         run: npm run test:discord
 
