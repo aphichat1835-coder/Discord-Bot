@@ -702,8 +702,8 @@ function sendWebhookEvent(event, options = {}) {
         dedupeKey: options.dedupeKey || event.dedupeKey,
         dedupeMs: options.dedupeMs || event.dedupeMs,
         summaryLabel: options.summaryLabel || event.summaryLabel || event.title,
-        summaryCategory: options.summaryCategory || event.category,
-        eventCode: options.eventCode || event.code
+        summaryCategory: options.summaryCategory || event.summaryCategory || event.category,
+        eventCode: options.eventCode || event.eventCode || event.code
     };
     const payload = buildWebhookEventPayload({ ...event, target });
     return target === "ALERT"

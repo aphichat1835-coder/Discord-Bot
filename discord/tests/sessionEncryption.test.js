@@ -19,6 +19,17 @@ function legacyVoiceToken(plaintext) {
     return `gcm:${iv.toString("hex")}:${cipher.getAuthTag().toString("hex")}:${ciphertext.toString("hex")}`;
 }
 
+function legacyVoiceTokenWithoutConfiguredKey(plaintext) {
+    const key = Buffer.from(
+        "ZGVmYXVsdC1rZXktY2hhbmdlLW1lLTMyLWNoYXJzISE=",
+        "base64"
+    );
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+    const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+    return `gcm:${iv.toString("hex")}:${cipher.getAuthTag().toString("hex")}:${ciphertext.toString("hex")}`;
+}
+
 function legacyVoiceCbcToken(plaintext) {
     const key = Buffer.from(
         crypto.createHash("sha256")
@@ -47,6 +58,15 @@ test("Voice session legacy GCM tokens migrate without changing plaintext", (t) =
     t.assert.equal(migration.migrated, true);
     t.assert.match(migration.token, /^v3:gcm:/);
     t.assert.equal(sessionManager.decryptToken(migration.token), "legacy-voice-token-value");
+});
+
+test("Voice session legacy GCM tokens created before ENCRYPTION_KEY remain migratable", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
+    const legacy = legacyVoiceTokenWithoutConfiguredKey("legacy-default-key-token-value");
+    const migration = sessionManager._test.migrateEncryptedToken(legacy);
+
+    t.assert.equal(migration.migrated, true);
+    t.assert.match(migration.token, /^v3:gcm:/);
+    t.assert.equal(sessionManager.decryptToken(migration.token), "legacy-default-key-token-value");
 });
 
 test("Voice session legacy CBC tokens remain readable and migrate to authenticated GCM", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.

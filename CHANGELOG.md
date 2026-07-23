@@ -17,7 +17,8 @@
   its connection-only lifecycle.
 - Updated GitHub Actions to pinned `checkout` v6.0.2 and `setup-node` v6.3.0,
   added least-privilege workflow permissions, aligned Render and `.node-version`,
-  and moved deterministic installs to npm 12 lockfile mode.
+  pinned the CI/Render bootstrap to npm 12.0.1, and kept project dependency
+  installation in lockfile-based `npm ci` mode.
 - Hardened the npm bootstrap in CI and Render with lifecycle scripts disabled.
   Command toggles now persist the proposed state before mutating runtime state,
   return an unavailable response when MongoDB cannot acknowledge the write, and
@@ -26,6 +27,14 @@
   backtracking edge-trim expressions with linear scanning, and split webhook and
   Join Campaign presentation builders into focused helpers without changing the
   emitted Discord payload contract.
+- Restored Voice-session migration compatibility for legacy GCM records created
+  before `ENCRYPTION_KEY` was configured, normalized numeric channel types in
+  Backup/Restore planning and execution, preserved event-level metadata in
+  duplicate webhook summaries, and restored structured reporting when a Restore
+  result cannot be delivered privately.
+- Removed the inactive duplicate Owner renderer implementation after the routed
+  renderer module became authoritative, while preserving its protected-file
+  digest and focused render/auth tests.
 
 - Upgraded new Verification and Voice secrets to versioned `v3:gcm` payloads
   derived from the full 32-byte SHA-256 digest. Existing Service-compatible

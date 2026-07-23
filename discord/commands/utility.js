@@ -26,6 +26,11 @@ const {
     markCommandAccepted
 } = require("../guards/commandGuards");
 const dmService = require("../dm");
+const {
+    sendWebhookEvent,
+    getDiscordAvatarUrl,
+    getDiscordGuildIconUrl
+} = require("../core/webhooks");
 
 // Race Condition Guards
 const activeRestores = new Set();
@@ -68,6 +73,31 @@ function buildRestoreResultDmEmbed(input) {
         referenceId: input.interaction.id || `restore-${input.interaction.guild.id}`,
         footer: "Phomueangtai • กู้คืนเซิร์ฟเวอร์"
     });
+}
+
+function buildRestoreDeliveryFailureEvent(interaction) {
+    const guildId = String(interaction.guild?.id || "unknown");
+    const userId = String(interaction.user?.id || "unknown");
+    return {
+        target: "LOG",
+        severity: "WARNING",
+        category: "BACKUP",
+        code: "restore.result.private_delivery_failed",
+        title: "ส่งผลการกู้คืนแบบส่วนตัวไม่สำเร็จ",
+        description: "ระบบแสดงผลใน Interaction และส่งข้อความส่วนตัวไม่ได้",
+        impact: "ผู้สั่งงานอาจไม่เห็นรายละเอียดผลลัพธ์หลัง Interaction หมดอายุ",
+        action: "ตรวจสอบสิทธิ์รับข้อความส่วนตัวและสถานะการส่ง DM ของผู้สั่งงาน",
+        context: {
+            "Guild ID": guildId,
+            "User ID": userId,
+            "Interaction ID": String(interaction.id || "unknown")
+        },
+        sourceIconUrl: getDiscordGuildIconUrl(interaction.guild),
+        thumbnailUrl: getDiscordAvatarUrl(interaction.user),
+        dedupeKey: `restore-private-delivery:${guildId}:${userId}`,
+        dedupeMs: 5 * 60 * 1000,
+        summaryLabel: "ส่งผลการกู้คืนแบบส่วนตัวไม่สำเร็จ"
+    };
 }
 
 async function handle(interaction) {
@@ -335,6 +365,18 @@ function channelCreatePayload(cData, parentId, permissionOverwrites) {
     return payload;
 }
 
+function normalizeSnapshotChannelType(type) {
+    return Number.isInteger(type) ? getLegacyChannelType(type) : type;
+}
+
+function normalizeSnapshotChannels(channels) {
+    if (!Array.isArray(channels)) return [];
+    return channels.map(channel => ({
+        ...channel,
+        type: normalizeSnapshotChannelType(channel?.type)
+    }));
+}
+
 function buildBackupValidationReport(data) {
     const roles = Array.isArray(data.roles) ? data.roles : [];
     const channels = Array.isArray(data.channels) ? data.channels : [];
@@ -345,8 +387,11 @@ function buildBackupValidationReport(data) {
     const managedRoles = roles.filter(role => role.managed).length;
     if (managedRoles) warnings.push(`${managedRoles} managed roles cannot be recreated`);
 
-    const unsupportedChannels = channels.filter(c => !["GUILD_TEXT","GUILD_VOICE","GUILD_CATEGORY","GUILD_NEWS","GUILD_STAGE_VOICE"].includes(c.type));
-    for (const channel of unsupportedChannels) unsupportedItems.push(`channel:${channel.type}:${channel.name}`);
+    const unsupportedChannels = channels.filter(c => !["GUILD_TEXT","GUILD_VOICE","GUILD_CATEGORY","GUILD_NEWS","GUILD_STAGE_VOICE"]
+        .includes(normalizeSnapshotChannelType(c.type)));
+    for (const channel of unsupportedChannels) {
+        unsupportedItems.push(`channel:${normalizeSnapshotChannelType(channel.type)}:${channel.name}`);
+    }
 
     return {
         schemaVersion: data.schemaVersion || 1,
@@ -397,11 +442,12 @@ function normalizeOverwriteType(value) {
 }
 
 function findExistingChannelForRestore(guild, cData, parentId) {
+    const channelType = normalizeSnapshotChannelType(cData.type);
     let matches = guild.channels.cache.filter(c =>
-        c.name === cData.name && getLegacyChannelType(c.type) === cData.type
+        c.name === cData.name && getLegacyChannelType(c.type) === channelType
     );
 
-    if (cData.type !== "GUILD_CATEGORY") {
+    if (channelType !== "GUILD_CATEGORY") {
         if (cData.parentId && parentId) {
             matches = matches.filter(c => c.parentId === parentId);
         } else if (cData.parentId && !parentId) {
@@ -485,7 +531,7 @@ function planRestoreChannel(guild, channelData, categoryIdMap, roleIdMap, oldGui
 
 function buildRestorePlan(guild, backupData, oldGuildId) {
     const roles = Array.isArray(backupData.roles) ? backupData.roles : [];
-    const channels = Array.isArray(backupData.channels) ? backupData.channels : [];
+    const channels = normalizeSnapshotChannels(backupData.channels);
     const roleIdMap = new Map();
     const categoryIdMap = new Map();
     const plan = {
@@ -726,7 +772,8 @@ async function handleRestoreConfirm(interaction, sessionManager) {
             }
 
             const guild = interaction.guild;
-            const { roles, channels } = backupData;
+            const roles = backupData.roles;
+            const channels = normalizeSnapshotChannels(backupData.channels);
             const oldGuildId = backup.guildId;
             const roleIdMap  = new Map();
             let restoredRoles    = 0;
@@ -919,6 +966,7 @@ async function handleRestoreConfirm(interaction, sessionManager) {
                     console.warn(
                         `[RESTORE] Private result delivery unavailable | guild=${interaction.guild.id} | ref=${interaction.id || "unknown"}`
                     );
+                    await sendWebhookEvent(buildRestoreDeliveryFailureEvent(interaction)).catch(() => false);
                 }
             }
 
@@ -954,7 +1002,11 @@ module.exports = {
         isValidSnapshotSchema,
         snapshotIdentityMatches,
         buildBackupValidationReport,
+        buildRestorePlan,
         normalizeOverwriteType,
+        normalizeSnapshotChannelType,
+        normalizeSnapshotChannels,
+        buildRestoreDeliveryFailureEvent,
         restoreStateLabel,
         restoreTone,
         buildRestoreResultDmEmbed

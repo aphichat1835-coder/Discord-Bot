@@ -309,6 +309,29 @@ test("sendWebhookEvent selects the destination and keeps the event code", async 
     assert.match(calls[0].payload.embeds[0].footer.text, /commands\.registration\.degraded/);
 });
 
+test("sendWebhookEvent preserves event-level summary metadata for duplicate reports", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const calls = [];
+    const dispatcher = { enqueue: async (target, payload) => { calls.push({ target, payload }); return true; } };
+    const event = {
+        severity: "WARNING",
+        category: "COMMAND",
+        code: "commands.fallback",
+        title: "เหตุการณ์ทดสอบ",
+        dedupeKey: "event-summary-metadata",
+        dedupeMs: 60_000,
+        summaryCategory: "SECURITY",
+        eventCode: "security.owner_mismatch"
+    };
+
+    await sendWebhookEvent(event, { dispatcher });
+    await sendWebhookEvent(event, { dispatcher });
+    await flushWebhookQueue(20);
+    await new Promise(resolve => setImmediate(resolve));
+
+    assert.equal(calls.length, 2);
+    assert.match(calls[1].payload.embeds[0].footer.text, /security\.owner_mismatch\.repeated/);
+});
+
 test("normalization enforces Discord payload limits without enabling mentions", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const payload = normalizeWebhookPayload({
         content: "x".repeat(3000),

@@ -1,5 +1,5 @@
 {
-  "discord/systemProvider.js": "9b0d233657cd5392c73e48620efecff432f6cd616c57f081719e8fad318a0d5a",
+  "discord/systemProvider.js": "18fee371a6e3620ceb002c7045e3ad077b2b50074aae4ff8456a690ec0636acc",
   "discord/systemProvider/auth.js": "51bc9e76265426ddd40f9c4df40b3873d2c15abf11ae5e6c1d1c3a9a104b2727",
   "discord/systemProvider/dashboardHtml.js": "15cd12e2b3aaf1d9a00c5da38d34cc550fcf66f6083e0e6fa6fdf661ed0385b4",
   "discord/systemProvider/renderers.js": "dfdc49664fb1cd8e171d942f5e5153e6a7e31e5b230562ea128c7f97cb64c3b4"

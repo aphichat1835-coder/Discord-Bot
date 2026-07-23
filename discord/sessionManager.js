@@ -70,6 +70,8 @@ const CURRENT_ENCRYPTION_KEY = crypto.createHash("sha256").update(ENCRYPTION_SEC
 const LEGACY_DERIVED_KEY = process.env.ENCRYPTION_KEY
     ? Buffer.from(crypto.createHash("sha256").update(process.env.ENCRYPTION_KEY).digest("base64").substring(0, 32))
     : Buffer.from(LEGACY_KEY);
+const LEGACY_DECRYPTION_KEYS = [LEGACY_DERIVED_KEY, Buffer.from(LEGACY_KEY)]
+    .filter((key, index, keys) => keys.findIndex(candidate => candidate.equals(key)) === index);
 
 if (IS_PRODUCTION && !process.env.ENCRYPTION_KEY) {
     throw new Error("[SECURITY] ENCRYPTION_KEY is required in production for session encryption.");
@@ -130,17 +132,19 @@ function decryptTokenWithMetadata(text) {
     }
 
     if (text.startsWith("gcm:")) {
-        try {
-            return { plaintext: decryptGcmToken(text, LEGACY_DERIVED_KEY, false), needsMigration: true };
-        } catch (err) {
-            console.error(`[SECURITY] ❌ Legacy GCM decryption failed: ${err.message}`);
-            return null;
+        let lastError = null;
+        for (const key of LEGACY_DECRYPTION_KEYS) {
+            try {
+                return { plaintext: decryptGcmToken(text, key, false), needsMigration: true };
+            } catch (err) {
+                lastError = err;
+            }
         }
+        console.error(`[SECURITY] ❌ Legacy GCM decryption failed: ${lastError?.message || "unknown"}`);
+        return null;
     }
 
-    const legacyKeys = [LEGACY_DERIVED_KEY, Buffer.from(LEGACY_KEY)]
-        .filter((key, index, keys) => keys.findIndex(candidate => candidate.equals(key)) === index);
-    for (const key of legacyKeys) {
+    for (const key of LEGACY_DECRYPTION_KEYS) {
         try {
             return { plaintext: decryptCbcToken(text, key), needsMigration: true };
         } catch (_) {}
