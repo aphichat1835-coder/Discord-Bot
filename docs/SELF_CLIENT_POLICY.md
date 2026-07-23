@@ -34,3 +34,7 @@ Before changing Voice/session code, verify that:
 3. Main-bot changes do not alter self-client login, cache, session, reconnect, or cleanup contracts.
 4. Tests cover the affected Voice/session behavior.
 5. The final report states explicitly whether this policy boundary was preserved.
+
+## Validation record
+
+The `ttt` runtime-upgrade and lifecycle-hardening work completed on 2026-07-23 preserved this boundary: the dependency declaration, lockfile entry, self-client-specific options, Voice login flow, session lifecycle, reconnect behavior, and cleanup contracts were not removed or migrated to the primary Discord.js v14 client.
