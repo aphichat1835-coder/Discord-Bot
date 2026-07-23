@@ -2,101 +2,132 @@ name: CI
 
 on:
   push:
-    branches:
-      - agent/batch-hardening-20260723
+  pull_request:
 
 permissions:
-  contents: write
-
-concurrency:
-  group: batch-hardening-push-validation
-  cancel-in-progress: true
+  contents: read
 
 jobs:
   checks:
-    if: ${{ !contains(github.event.head_commit.message || '', '[batch-final]') && !contains(github.event.head_commit.message || '', '[batch-report]') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
     steps:
-      - name: Checkout staging branch
+      - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: agent/batch-hardening-20260723
           fetch-depth: 0
-          persist-credentials: true
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
           node-version: 24.18.0
 
-      - name: Prepare complete batch
+      - name: Bootstrap pinned npm
         run: |
-          set -euo pipefail
           npm install --global --ignore-scripts npm@12.0.1
           test "$(npm --version)" = "12.0.1"
-          npm ci --ignore-scripts --no-audit --no-fund
-          git show d41d9af4d4b656a7e5984aa0c7d84f729d601113:.github/workflows/ci.yml > .github/workflows/ci.yml
-          cat scripts/batch-hardening/part-*.txt > scripts/applyBatchFixes.js
-          node --check scripts/applyBatchFixes.js
-          node scripts/applyBatchFixes.js
-          npm install --save-dev --save-exact --ignore-scripts --no-audit --no-fund acorn@8.17.0 @sonar/scan@5.0.0
 
-      - name: Validate complete batch
+      - name: Show tool versions
+        run: |
+          node --version
+          npm --version
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Verify Discord runtime dependencies
+        run: node -e "require('discord.js'); require('@discordjs/voice'); console.log('discord runtime ok')"
+
+      - name: Verify unified verification test runner
+        run: node -e "require('node:test'); require('expect'); require('jest-mock'); console.log('verification node:test runner ok')"
+
+      - name: Resolve protected diff base
+        id: protected-base
+        shell: bash
         env:
-          PROTECTED_BASE_SHA: d41d9af4d4b656a7e5984aa0c7d84f729d601113
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          BASE_REF: ${{ github.base_ref }}
+          REF_NAME: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
-          node -e "const p=require('./package.json'); if(p.dependencies['discord.js-selfbot-v13']!=='^3.7.1') process.exit(1)"
-          grep -q 'discord.js-selfbot-v13' package-lock.json
-          npm run check
-          npm run test:coverage:discord
-          npm run test:coverage:voice
-          npm run test:coverage:verification
-          test -s coverage/discord.lcov
-          test -s coverage/voice.lcov
-          test -s coverage/verification.lcov
-          npm audit --audit-level=high
-          git diff --check
-          if git diff --name-only d41d9af4d4b656a7e5984aa0c7d84f729d601113 -- discord/systemProvider.js discord/systemProvider | grep -q .; then
-            echo "Protected system provider changed unexpectedly" >&2
+
+          is_commit() {
+            local candidate="${1:-}"
+            [ -n "$candidate" ] &&
+              [[ ! "$candidate" =~ ^0+$ ]] &&
+              git cat-file -e "${candidate}^{commit}" 2>/dev/null
+          }
+
+          base=""
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base="$PR_BASE_SHA"
+          elif [ "$EVENT_NAME" = "push" ]; then
+            base="$PUSH_BEFORE_SHA"
+          fi
+
+          if ! is_commit "$base"; then
+            if [ "$EVENT_NAME" = "pull_request" ]; then
+              target_ref="${BASE_REF:-$DEFAULT_BRANCH}"
+              git fetch --no-tags origin "$target_ref"
+              base="$(git merge-base "origin/$target_ref" HEAD)"
+            elif [ "$EVENT_NAME" = "push" ] && [ "$REF_NAME" != "$DEFAULT_BRANCH" ]; then
+              git fetch --no-tags origin "$DEFAULT_BRANCH"
+              base="$(git merge-base "origin/$DEFAULT_BRANCH" HEAD)"
+            elif git rev-parse --verify HEAD^1 >/dev/null 2>&1; then
+              base="$(git rev-parse HEAD^1)"
+            fi
+          fi
+
+          if ! is_commit "$base"; then
+            echo "::error::Unable to resolve a usable protected diff base."
             exit 1
           fi
 
-      - name: Commit validated source snapshot
-        env:
-          BRANCH: agent/batch-hardening-20260723
-        run: |
-          set -euo pipefail
-          git show HEAD:.github/workflows/ci.yml > .github/workflows/ci.yml
-          rm -f BATCH_VALIDATION_FAILURE.md
-          rm -f scripts/applyBatchFixes.js
-          rm -rf scripts/batch-hardening
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git diff --cached --check
-          git commit -m "fix: close runtime and quality gaps [batch-final]"
-          git push origin "HEAD:$BRANCH"
+          echo "sha=$base" >> "$GITHUB_OUTPUT"
+          echo "Protected diff base: $base"
 
-      - name: Publish failure evidence
-        if: failure()
+      - name: Protected path guard
         env:
-          BRANCH: agent/batch-hardening-20260723
-          RUN_ID: ${{ github.run_id }}
-          FAILED_SHA: ${{ github.sha }}
+          PROTECTED_BASE_SHA: ${{ steps.protected-base.outputs.sha }}
+        run: npm run check:protected
+
+      - name: Syntax check (Discord)
+        run: npm run check:all
+
+      - name: Syntax check (Scripts)
+        run: npm run check:scripts
+
+      - name: Memory guards check
+        run: npm run check:memory-guards
+
+      - name: Mongoose 9 compatibility check
+        run: npm run check:mongoose9
+
+      - name: Discord tests with LCOV coverage
+        run: npm run test:coverage:discord
+
+      - name: Voice tests with LCOV coverage
+        run: npm run test:coverage:voice
+
+      - name: Verification tests with LCOV coverage
+        run: npm run test:coverage:verification
+
+      - name: Verify LCOV reports
         run: |
-          git reset --hard HEAD
-          git clean -fdx
-          {
-            echo "# Batch validation failed"
-            echo
-            echo "- Run ID: $RUN_ID"
-            echo "- Staging SHA: $FAILED_SHA"
-          } > BATCH_VALIDATION_FAILURE.md
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add BATCH_VALIDATION_FAILURE.md
-          git commit -m "chore: publish batch validation failure [batch-report]"
-          git push origin "HEAD:$BRANCH"
+          test -s coverage/discord.lcov
+          test -s coverage/voice.lcov
+          test -s coverage/verification.lcov
+
+      - name: SonarCloud analysis
+        if: ${{ env.SONAR_TOKEN != '' }}
+        run: npm run sonar -- -Dsonar.token="$SONAR_TOKEN"
+
+      - name: Root audit
+        run: npm audit --audit-level=high
