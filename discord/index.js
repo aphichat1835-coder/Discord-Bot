@@ -32,6 +32,8 @@ const { createHttpApp } = require("./core/http");
 const { registerGatewayDiagnostics } = require("./core/gatewayDiagnostics");
 const { isFeatureEnabled } = require("./core/featureFlags");
 const { createStartupLogger, resolveBootPort } = require("./core/startupLogger");
+const { runBootLifecycle } = require("./core/bootLifecycle");
+const { createReadyInitializationController } = require("./core/readyInitialization");
 const { registerVerificationRuntime } = require("./verification/runtime");
 const verificationLifecycle = require("./verification/lifecycle");
 const dmService = require("./dm");
@@ -104,6 +106,7 @@ const toggleCooldowns     = new Map();
 const spamTracking        = new Map();
 const requestCounts       = new Map();
 const antiRaidDebounce    = new Map();
+let readyInitializationController = null;
 
 const COMMAND_COOLDOWNS_MS = {
     ban:5000, kick:5000, timeout:5000, voicekickall:5000,
@@ -394,7 +397,7 @@ system.initShutdown({
     memoryMonitor,
     verificationRuntime: verificationLifecycle,
     dmService,
-    runtimeCleanups: [eventRuntime, routeRegistration]
+    runtimeCleanups: [eventRuntime, routeRegistration, { stop: () => readyInitializationController?.stop() }]
 });
 
 if (isFeatureEnabled("memoryMonitor")) {
@@ -470,79 +473,34 @@ async function loadDisabledCommandsForBoot() {
 
 async function boot() {
     const bootStartedAt = Date.now();
-    const degradedStages = [];
-    bootLog.info("SYSTEM", "Starting Phomueangtai Enterprise System", {
-        node: process.version,
-        pid: process.pid
+    bootLog.info("SYSTEM", "Starting Phomueangtai Enterprise System", { node: process.version, pid: process.pid });
+    const result = await runBootLifecycle({
+        runStage: (...args) => bootLog.runStage(...args),
+        startHttpServer,
+        connectDatabase: connectDatabaseForBoot,
+        loadDatabase: () => sessionManager.loadDatabase(),
+        verificationEnabled: isFeatureEnabled("verification"),
+        startVerification: startVerificationForBoot,
+        onVerificationSkipped: () => bootLog.skip("VERIFICATION", "04/06 Verification disabled by feature flag"),
+        loadDisabledCommands: loadDisabledCommandsForBoot,
+        loginDiscord: async () => {
+  if (await startBot()) return { attempts: _startBotAttempts, ready: true };
+  const error = new Error("DISCORD_LOGIN_DEFERRED"); error.code = "discord_login_deferred"; throw error;
+        },
+        shouldAbort: stage => shouldAbortBoot(stage)
     });
-
-    // ขั้น 1: Express (ตอบ UptimeRobot ได้ทันที)
-    await bootLog.runStage("HTTP", "01/06 Start HTTP server", startHttpServer, {
-        successMessage: "01/06 HTTP server listening",
-        details: value => value
-    });
-
-    // ขั้น 2: MongoDB
-    await bootLog.runStage("DATABASE", "02/06 Connect MongoDB", connectDatabaseForBoot, {
-        successMessage: "02/06 MongoDB connected"
-    });
-    if (shouldAbortBoot("MongoDB connect")) return;
-
-    await bootLog.runStage("DATABASE", "03/06 Load application data", () => sessionManager.loadDatabase(), {
-        successMessage: "03/06 Application data loaded"
-    });
-    if (shouldAbortBoot("database load")) return;
-
-    if (isFeatureEnabled("verification")) {
-        const verificationStage = await bootLog.runStage("VERIFICATION", "04/06 Start verification lifecycle", startVerificationForBoot, {
-            required: false,
-            successMessage: "04/06 Verification lifecycle started"
-        });
-        if (!verificationStage.ok) degradedStages.push("verification");
-    } else {
-        bootLog.skip("VERIFICATION", "04/06 Verification disabled by feature flag");
-    }
-
-    // โหลด disabled commands
-    const commandSettingsStage = await bootLog.runStage("COMMANDS", "05/06 Load disabled commands", loadDisabledCommandsForBoot, {
-        required: false,
-        successMessage: "05/06 Disabled commands loaded",
-        details: value => value
-    });
-    if (!commandSettingsStage.ok) degradedStages.push("command_settings");
-
-    if (shouldAbortBoot("before Discord login")) return;
-
-    // ขั้น 3: Discord login (เป็นขั้นสุดท้าย)
-    const discordStage = await bootLog.runStage("DISCORD", "06/06 Login Discord client", async () => {
-        if (await startBot()) return { attempts: _startBotAttempts, ready: true };
-        const error = new Error("DISCORD_LOGIN_DEFERRED");
-        error.code = "discord_login_deferred";
-        throw error;
-    }, {
-        required: false,
-        successMessage: "06/06 Discord client connected",
-        details: value => value
-    });
-    if (!discordStage.ok) {
-        degradedStages.push("discord");
+    if (result.aborted) return;
+    if (!result.discordReady) {
         bootLog.warn("SYSTEM", "Boot completed in degraded mode; Discord login will retry", {
-            degraded: degradedStages.join(","),
-            durationMs: Date.now() - bootStartedAt
+  degraded: result.degradedStages.join(","), durationMs: Date.now() - bootStartedAt
         });
         return;
     }
-
-    if (shouldAbortBoot("Discord login")) return;
-
     system.crashShieldReady = true;
-    const bootDetails = {
-        crashShield: "active",
-        degraded: degradedStages.length ? degradedStages.join(",") : "none",
-        durationMs: Date.now() - bootStartedAt
-    };
-    if (degradedStages.length) bootLog.warn("SYSTEM", "Boot sequence completed with degraded services", bootDetails);
-    else bootLog.success("SYSTEM", "Boot sequence completed", bootDetails);
+    const details = { crashShield: "active", degraded: result.degradedStages.length ? result.degradedStages.join(",") : "none",
+        durationMs: Date.now() - bootStartedAt };
+    if (result.degradedStages.length) bootLog.warn("SYSTEM", "Boot sequence completed with degraded services", details);
+    else bootLog.success("SYSTEM", "Boot sequence completed", details);
 }
 
 let _startBotAttempts = 0;
@@ -723,18 +681,17 @@ async function initializeClientReady() {
     });
 }
 
-let readyInitialization = null;
-client.on("ready", () => {
-    if (!readyInitialization) {
-        readyInitialization = initializeClientReady().catch(err => {
-            bootLog.error("READY", "Post-ready initialization failed", {
-                code: err?.code || err?.name || "ready_initialization_failed"
-            });
-        });
-        return;
-    }
-    bootLog.info("DISCORD", "Additional ready event received; initialization already started");
+readyInitializationController = createReadyInitializationController({
+    initialize: initializeClientReady,
+    isReady: () => client.isReady(),
+    isShuttingDown: () => system.isShuttingDown?.() === true,
+    retryMs: 10000,
+    onError: (err, attempt) => bootLog.error("READY", "Post-ready initialization failed; retry scheduled", {
+        attempt, code: err?.code || err?.name || "ready_initialization_failed"
+    })
 });
+
+client.on("ready", () => { readyInitializationController.start(); });
 
 boot().catch(err => {
     bootLog.error("SYSTEM", "Fatal boot failure", {
