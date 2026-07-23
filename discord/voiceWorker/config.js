@@ -9,6 +9,7 @@ DO NOT SIMPLIFY: OperationQueue concurrency — prevents IP ban from Discord.
 */
 
 const crypto = require("node:crypto");
+const { delay, withTimeoutValue, withTimeoutReject } = require("../core/timers");
 const config = require("../config.json");
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -59,47 +60,6 @@ function randomInt(min, max) {
 
 function randomJitter(rangeMs) {
     return randomInt(-rangeMs, rangeMs + 1);
-}
-
-function delay(ms, value = undefined) {
-    return new Promise(resolve => {
-        const timer = setTimeout(() => resolve(value), ms);
-        timer.unref?.();
-    });
-}
-
-async function withTimeoutValue(promise, timeoutMs, timeoutValue) {
-    let timer = null;
-    try {
-        return await Promise.race([
-            Promise.resolve(promise).finally(() => {
-                if (timer) clearTimeout(timer);
-            }),
-            new Promise(resolve => {
-                timer = setTimeout(() => resolve(timeoutValue), timeoutMs);
-                timer.unref?.();
-            })
-        ]);
-    } finally {
-        if (timer) clearTimeout(timer);
-    }
-}
-
-async function withTimeoutReject(promise, timeoutMs, message) {
-    let timer = null;
-    try {
-        return await Promise.race([
-            Promise.resolve(promise).finally(() => {
-                if (timer) clearTimeout(timer);
-            }),
-            new Promise((_, reject) => {
-                timer = setTimeout(() => reject(new Error(message)), timeoutMs);
-                timer.unref?.();
-            })
-        ]);
-    } finally {
-        if (timer) clearTimeout(timer);
-    }
 }
 
 module.exports = {

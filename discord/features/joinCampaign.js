@@ -9,6 +9,7 @@ const {
 } = require("../verification/utils/oauthTokenLifecycle");
 const { buildWebhookEventPayload, sendWebhookEvent } = require("../core/webhooks");
 const { safeError } = require("../core/safeLogger");
+const { delay: awaitedDelay } = require("../core/timers");
 
 const TOKEN_FIELDS = Object.freeze([
     { tokenField: "oauth", label: "verify", redirectUri: getVerificationRedirectUri },
@@ -402,10 +403,7 @@ async function handleJoinCandidateError({ err, summary, userId, model, doc, chos
 }
 
 function sleep(ms) {
-    return new Promise(resolve => {
-        const timer = setTimeout(resolve, ms);
-        timer.unref?.();
-    });
+    return awaitedDelay(ms);
 }
 
 function getJoinCampaignTitle(phase = "progress") {

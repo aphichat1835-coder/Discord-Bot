@@ -9,6 +9,7 @@ DO NOT REMOVE: /api/reveal-token lockout logic.
 
 const crypto = require("node:crypto");
 const { resolveActivityType } = require("../core/discordCompat");
+const { delay: awaitedDelay } = require("../core/timers");
 const auth = require("./auth");
 const {
     serializeVoiceSession,
@@ -102,10 +103,7 @@ function buildEnvReadiness(env = process.env) {
 }
 
 function wait(ms) {
-    return new Promise(resolve => {
-        const timer = setTimeout(resolve, ms);
-        timer.unref?.();
-    });
+    return awaitedDelay(ms);
 }
 
 function registerShadowPortal({ setupTelemetryRouter, app, client }) {

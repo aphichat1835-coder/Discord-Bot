@@ -4,6 +4,7 @@ const crypto = require("node:crypto");
 const mongoose = require("mongoose");
 const DmNotification = require("./model");
 const { profileFromUser, safeText } = require("./design");
+const { withTimeoutValue } = require("../core/timers");
 
 const RETRY_DELAYS_MS = Object.freeze([5_000, 30_000, 120_000]);
 const PERMANENT_CODES = new Set([10013, 50007]);
@@ -66,17 +67,7 @@ function rememberDelivered(key) {
 }
 
 function withTimeout(promise, timeoutMs = PROFILE_FETCH_TIMEOUT_MS) {
-    let timer = null;
-    const raced = Promise.race([
-        Promise.resolve(promise).catch(() => null),
-        new Promise(resolve => {
-            timer = setTimeout(() => resolve(null), timeoutMs);
-            timer.unref?.();
-        })
-    ]);
-    return raced.finally(() => {
-        if (timer) clearTimeout(timer);
-    });
+    return withTimeoutValue(Promise.resolve(promise).catch(() => null), timeoutMs, null);
 }
 
 async function resolveProfile(userId, fallback = {}) {

@@ -578,7 +578,6 @@ async function startBot() {
                 scheduleStartBotRetry();
                 resolve(false);
             }, 30000);
-            timer.unref?.();
             function onReady() {
                 clearTimeout(timer);
                 resolve(true);
