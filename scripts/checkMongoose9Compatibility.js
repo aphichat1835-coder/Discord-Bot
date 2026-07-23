@@ -10,9 +10,9 @@ function walk(directory) {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
         const fullPath = path.join(directory, entry.name);
         if (entry.isDirectory()) {
-  if (!EXCLUDED_DIRECTORIES.has(entry.name)) files.push(...walk(fullPath));
+            if (!EXCLUDED_DIRECTORIES.has(entry.name)) files.push(...walk(fullPath));
         } else if (entry.isFile() && entry.name.endsWith(".js")) {
-  files.push(fullPath);
+            files.push(fullPath);
         }
     }
     return files;
@@ -34,40 +34,40 @@ function findClosingParenthesis(source, openingIndex) {
         const next = source[index + 1];
 
         if (lineComment) {
-  if (character === "\n") lineComment = false;
-  continue;
+            if (character === "\n") lineComment = false;
+            continue;
         }
         if (blockComment) {
-  if (character === "*" && next === "/") {
-      blockComment = false;
-      index++;
-  }
-  continue;
+            if (character === "*" && next === "/") {
+                blockComment = false;
+                index++;
+            }
+            continue;
         }
         if (quote) {
-  if (escaped) escaped = false;
-  else if (character === "\\") escaped = true;
-  else if (character === quote) quote = null;
-  continue;
+            if (escaped) escaped = false;
+            else if (character === "\\") escaped = true;
+            else if (character === quote) quote = null;
+            continue;
         }
         if (character === "/" && next === "/") {
-  lineComment = true;
-  index++;
-  continue;
+            lineComment = true;
+            index++;
+            continue;
         }
         if (character === "/" && next === "*") {
-  blockComment = true;
-  index++;
-  continue;
+            blockComment = true;
+            index++;
+            continue;
         }
         if (character === '"' || character === "'" || character === "`") {
-  quote = character;
-  continue;
+            quote = character;
+            continue;
         }
         if (character === "(") depth++;
         else if (character === ")") {
-  depth--;
-  if (depth === 0) return index;
+            depth--;
+            if (depth === 0) return index;
         }
     }
     return -1;
@@ -85,14 +85,14 @@ function splitTopLevelArguments(source) {
     for (let index = 0; index < source.length; index++) {
         const character = source[index];
         if (quote) {
-  if (escaped) escaped = false;
-  else if (character === "\\") escaped = true;
-  else if (character === quote) quote = null;
-  continue;
+            if (escaped) escaped = false;
+            else if (character === "\\") escaped = true;
+            else if (character === quote) quote = null;
+            continue;
         }
         if (character === '"' || character === "'" || character === "`") {
-  quote = character;
-  continue;
+            quote = character;
+            continue;
         }
         if (character === "(") round++;
         else if (character === ")") round--;
@@ -101,8 +101,8 @@ function splitTopLevelArguments(source) {
         else if (character === "{") curly++;
         else if (character === "}") curly--;
         else if (character === "," && round === 0 && square === 0 && curly === 0) {
-  argumentsList.push(source.slice(start, index).trim());
-  start = index + 1;
+            argumentsList.push(source.slice(start, index).trim());
+            start = index + 1;
         }
     }
     argumentsList.push(source.slice(start).trim());
@@ -127,9 +127,9 @@ function findMethodCalls(source) {
         const closingIndex = findClosingParenthesis(source, openingIndex);
         if (closingIndex < 0) continue;
         calls.push({
-  method: match[1],
-  index: match.index,
-  args: splitTopLevelArguments(source.slice(openingIndex + 1, closingIndex))
+            method: match[1],
+            index: match.index,
+            args: splitTopLevelArguments(source.slice(openingIndex + 1, closingIndex))
         });
         methodPattern.lastIndex = closingIndex + 1;
     }
@@ -140,19 +140,23 @@ function analyzeSource(source, file = "inline") {
     const findings = [];
     for (const call of findMethodCalls(source)) {
         if (call.method === "pre") {
-  const parameters = callbackParameters(call.args.at(-1));
-  if (parameters?.includes("next")) {
-      findings.push({ file, line: lineAt(source, call.index), code: "pre-middleware-next-callback" });
-  }
-  continue;
+            const parameters = callbackParameters(call.args.at(-1));
+            if (parameters?.includes("next")) {
+                findings.push({
+                    file,
+                    line: lineAt(source, call.index),
+                    code: "pre-middleware-next-callback"
+                });
+            }
+            continue;
         }
         if (call.method === "post") continue;
         const parameters = callbackParameters(call.args.at(-1));
         if (!parameters) continue;
         findings.push({
-  file,
-  line: lineAt(source, call.index),
-  code: call.method === "doValidate" ? "doValidate-callback" : "updateOne-callback"
+            file,
+            line: lineAt(source, call.index),
+            code: call.method === "doValidate" ? "doValidate-callback" : "updateOne-callback"
         });
     }
     return findings;
@@ -166,7 +170,9 @@ if (require.main === module) {
     const findings = scanRepository();
     if (findings.length) {
         console.error("[MONGOOSE9] Removed callback-style API patterns detected:");
-        for (const item of findings) console.error(`- ${item.file}:${item.line} ${item.code}`);
+        for (const item of findings) {
+            console.error(`- ${item.file}:${item.line} ${item.code}`);
+        }
         process.exitCode = 1;
     } else {
         console.log("[MONGOOSE9] Compatibility pattern check passed");
