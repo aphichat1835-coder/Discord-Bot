@@ -38,6 +38,8 @@ jobs:
         run: python3 scripts/applyUpgradeRegressionFix.py
 
       - name: Diff and syntax guards
+        env:
+          PROTECTED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           git diff --check
           npm run check
