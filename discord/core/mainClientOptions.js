@@ -4,7 +4,8 @@ const { Options } = require("discord.js");
 const { Intents } = require("./discordCompat");
 
 function boundedNumber(rawValue, fallback, minimum) {
-    const resolved = Number(rawValue ?? fallback) || fallback;
+    const parsed = Number(rawValue ?? fallback);
+    const resolved = Number.isFinite(parsed) && parsed !== 0 ? parsed : fallback;
     return Math.max(minimum, resolved);
 }
 
@@ -40,5 +41,6 @@ function buildMainClientOptions(env = process.env) {
 }
 
 module.exports = {
-    buildMainClientOptions
+    buildMainClientOptions,
+    _test: { boundedNumber }
 };

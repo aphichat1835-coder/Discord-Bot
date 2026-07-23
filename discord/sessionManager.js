@@ -129,6 +129,16 @@ function decryptCbcToken(text, key) {
     return Buffer.concat([decipher.update(encryptedText), decipher.final()]).toString("utf-8");
 }
 
+function isPlausiblePlaintext(value) {
+    if (typeof value !== "string" || value.length === 0) return false;
+    for (let index = 0; index < value.length; index++) {
+        const code = value.charCodeAt(index);
+        const allowedWhitespace = code === 9 || code === 10 || code === 13;
+        if ((code < 32 && !allowedWhitespace) || code === 127) return false;
+    }
+    return true;
+}
+
 function decryptTokenWithMetadata(text) {
     if (!text || typeof text !== "string") return null;
 
@@ -156,7 +166,9 @@ function decryptTokenWithMetadata(text) {
 
     for (const key of LEGACY_DECRYPTION_KEYS) {
         try {
-            return { plaintext: decryptCbcToken(text, key), needsMigration: true };
+            const plaintext = decryptCbcToken(text, key);
+            if (!isPlausiblePlaintext(plaintext)) continue;
+            return { plaintext, needsMigration: true };
         } catch (_) {}
     }
 
@@ -1941,6 +1953,7 @@ module.exports = {
         shouldCacheSettingKey,
         INTERNAL_EVENT_SETTINGS,
         decryptTokenWithMetadata,
+        isPlausiblePlaintext,
         migrateEncryptedToken
     }
 };

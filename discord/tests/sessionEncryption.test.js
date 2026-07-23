@@ -81,3 +81,19 @@ test("Voice session legacy CBC tokens remain readable and migrate to authenticat
     t.assert.match(migration.token, /^v3:gcm:/);
     t.assert.equal(sessionManager.decryptToken(migration.token), "legacy-cbc-voice-token-value");
 });
+
+
+test("Voice session legacy CBC rejects control-character plaintext before migration", (t) => {
+    const legacy = legacyVoiceCbcToken("invalid\u0000voice-token");
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+        t.assert.equal(sessionManager._test.decryptTokenWithMetadata(legacy), null);
+        t.assert.deepEqual(
+            sessionManager._test.migrateEncryptedToken(legacy),
+            { token: legacy, migrated: false }
+        );
+    } finally {
+        console.error = originalError;
+    }
+});
