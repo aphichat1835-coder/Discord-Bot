@@ -28,8 +28,8 @@ function createReadyInitializationController(options = {}) {
     function scheduleRetry() {
         if (stopped || completed || retryTimer || isShuttingDown()) return false;
         retryTimer = setTimer(() => {
-  retryTimer = null;
-  if (!stopped && !isShuttingDown() && isReady()) start();
+            retryTimer = null;
+            if (!stopped && !isShuttingDown() && isReady()) start();
         }, retryMs);
         retryTimer?.unref?.();
         return true;
@@ -42,22 +42,22 @@ function createReadyInitializationController(options = {}) {
         if (inFlight) return inFlight;
         attempts++;
         inFlight = Promise.resolve()
-  .then(() => options.initialize())
-  .then(() => {
-      completed = true;
-      lastError = null;
-      clearRetry();
-      return true;
-  })
-  .catch(error => {
-      lastError = error;
-      onError(error, attempts);
-      scheduleRetry();
-      return false;
-  })
-  .finally(() => {
-      inFlight = null;
-  });
+            .then(() => options.initialize())
+            .then(() => {
+                completed = true;
+                lastError = null;
+                clearRetry();
+                return true;
+            })
+            .catch(error => {
+                lastError = error;
+                onError(error, attempts);
+                scheduleRetry();
+                return false;
+            })
+            .finally(() => {
+                inFlight = null;
+            });
         return inFlight;
     }
 
@@ -68,13 +68,13 @@ function createReadyInitializationController(options = {}) {
 
     function diagnostics() {
         return {
-  completed,
-  stopped,
-  inFlight: Boolean(inFlight),
-  retryScheduled: Boolean(retryTimer),
-  retryMs,
-  attempts,
-  lastError: lastError?.code || lastError?.name || lastError?.message || null
+            completed,
+            stopped,
+            inFlight: Boolean(inFlight),
+            retryScheduled: Boolean(retryTimer),
+            retryMs,
+            attempts,
+            lastError: lastError?.code || lastError?.name || lastError?.message || null
         };
     }
 
