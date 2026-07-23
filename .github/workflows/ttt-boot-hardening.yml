@@ -1,0 +1,280 @@
+name: ttt-boot-hardening
+
+on:
+  push:
+    branches: [ttt]
+
+permissions:
+  contents: write
+
+jobs:
+  harden:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ttt
+          fetch-depth: 0
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: 24.18.0
+          cache: npm
+      - name: Apply boot hardening
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def read(name): return Path(name).read_text(encoding="utf-8")
+          def write(name, content):
+              target = Path(name); target.parent.mkdir(parents=True, exist_ok=True)
+              target.write_text(content, encoding="utf-8")
+          def replace(name, old, new):
+              text = read(name)
+              if old not in text: raise SystemExit(f"expected boot pattern not found: {name}")
+              write(name, text.replace(old, new, 1))
+          def between(name, start_marker, end_marker, replacement):
+              text = read(name); start = text.index(start_marker); end = text.index(end_marker, start)
+              write(name, text[:start] + replacement + text[end:])
+
+          write("discord/core/bootLifecycle.js", '''"use strict";
+
+          async function runBootLifecycle(options = {}) {
+              if (typeof options.runStage !== "function") throw new TypeError("runStage must be a function");
+              const degradedStages = [];
+              const stageOrder = [];
+              const shouldAbort = options.shouldAbort || (() => false);
+              const stage = async (category, label, task, stageOptions = {}) => {
+                  stageOrder.push(label);
+                  return options.runStage(category, label, task, stageOptions);
+              };
+
+              await stage("HTTP", "01/06 Start HTTP server", options.startHttpServer, {
+                  successMessage: "01/06 HTTP server listening", details: value => value
+              });
+              await stage("DATABASE", "02/06 Connect MongoDB", options.connectDatabase, {
+                  successMessage: "02/06 MongoDB connected"
+              });
+              if (shouldAbort("MongoDB connect")) return { aborted: true, abortedAt: "MongoDB connect", degradedStages, stageOrder, discordReady: false };
+
+              await stage("DATABASE", "03/06 Load application data", options.loadDatabase, {
+                  successMessage: "03/06 Application data loaded"
+              });
+              if (shouldAbort("database load")) return { aborted: true, abortedAt: "database load", degradedStages, stageOrder, discordReady: false };
+
+              if (options.verificationEnabled) {
+                  const result = await stage("VERIFICATION", "04/06 Start verification lifecycle", options.startVerification, {
+                      required: false, successMessage: "04/06 Verification lifecycle started"
+                  });
+                  if (!result?.ok) degradedStages.push("verification");
+              } else options.onVerificationSkipped?.();
+
+              const commandResult = await stage("COMMANDS", "05/06 Load disabled commands", options.loadDisabledCommands, {
+                  required: false, successMessage: "05/06 Disabled commands loaded", details: value => value
+              });
+              if (!commandResult?.ok) degradedStages.push("command_settings");
+              if (shouldAbort("before Discord login")) return { aborted: true, abortedAt: "before Discord login", degradedStages, stageOrder, discordReady: false };
+
+              const discordResult = await stage("DISCORD", "06/06 Login Discord client", options.loginDiscord, {
+                  required: false, successMessage: "06/06 Discord client connected", details: value => value
+              });
+              if (!discordResult?.ok) degradedStages.push("discord");
+              if (shouldAbort("Discord login")) return { aborted: true, abortedAt: "Discord login", degradedStages, stageOrder, discordReady: false };
+              return { aborted: false, abortedAt: null, degradedStages, stageOrder, discordReady: Boolean(discordResult?.ok) };
+          }
+
+          module.exports = { runBootLifecycle };
+          '''.replace("          ", ""))
+
+          write("discord/core/readyInitialization.js", '''"use strict";
+
+          function createReadyInitializationController(options = {}) {
+              if (typeof options.initialize !== "function") throw new TypeError("initialize must be a function");
+              const isReady = options.isReady || (() => true);
+              const isShuttingDown = options.isShuttingDown || (() => false);
+              const onError = options.onError || (() => {});
+              const setTimer = options.setTimer || setTimeout;
+              const clearTimer = options.clearTimer || clearTimeout;
+              const retryMs = Math.max(100, Number(options.retryMs || 10000));
+              let inFlight = null, retryTimer = null, completed = false, attempts = 0, lastError = null;
+
+              function clearRetry() {
+                  if (!retryTimer) return;
+                  clearTimer(retryTimer); retryTimer = null;
+              }
+              function scheduleRetry() {
+                  if (completed || retryTimer || isShuttingDown()) return false;
+                  retryTimer = setTimer(() => {
+                      retryTimer = null;
+                      if (!isShuttingDown() && isReady()) start();
+                  }, retryMs);
+                  retryTimer?.unref?.();
+                  return true;
+              }
+              function start() {
+                  if (completed) return Promise.resolve(true);
+                  if (isShuttingDown() || !isReady()) return Promise.resolve(false);
+                  if (inFlight) return inFlight;
+                  attempts++;
+                  inFlight = Promise.resolve().then(() => options.initialize()).then(() => {
+                      completed = true; lastError = null; clearRetry(); return true;
+                  }).catch(error => {
+                      lastError = error; onError(error, attempts); scheduleRetry(); return false;
+                  }).finally(() => { inFlight = null; });
+                  return inFlight;
+              }
+              function stop() { clearRetry(); }
+              function diagnostics() {
+                  return { completed, inFlight: Boolean(inFlight), retryScheduled: Boolean(retryTimer), attempts,
+                      lastError: lastError?.code || lastError?.name || lastError?.message || null };
+              }
+              return { start, stop, diagnostics };
+          }
+
+          module.exports = { createReadyInitializationController };
+          '''.replace("          ", ""))
+
+          replace("discord/index.js",
+              'const { createStartupLogger, resolveBootPort } = require("./core/startupLogger");\n',
+              'const { createStartupLogger, resolveBootPort } = require("./core/startupLogger");\nconst { runBootLifecycle } = require("./core/bootLifecycle");\nconst { createReadyInitializationController } = require("./core/readyInitialization");\n')
+          replace("discord/index.js", 'const antiRaidDebounce    = new Map();\n',
+              'const antiRaidDebounce    = new Map();\nlet readyInitializationController = null;\n')
+          replace("discord/index.js", '    runtimeCleanups: [eventRuntime, routeRegistration]\n',
+              '    runtimeCleanups: [eventRuntime, routeRegistration, { stop: () => readyInitializationController?.stop() }]\n')
+
+          boot = '''async function boot() {
+              const bootStartedAt = Date.now();
+              bootLog.info("SYSTEM", "Starting Phomueangtai Enterprise System", { node: process.version, pid: process.pid });
+              const result = await runBootLifecycle({
+                  runStage: (...args) => bootLog.runStage(...args),
+                  startHttpServer,
+                  connectDatabase: connectDatabaseForBoot,
+                  loadDatabase: () => sessionManager.loadDatabase(),
+                  verificationEnabled: isFeatureEnabled("verification"),
+                  startVerification: startVerificationForBoot,
+                  onVerificationSkipped: () => bootLog.skip("VERIFICATION", "04/06 Verification disabled by feature flag"),
+                  loadDisabledCommands: loadDisabledCommandsForBoot,
+                  loginDiscord: async () => {
+                      if (await startBot()) return { attempts: _startBotAttempts, ready: true };
+                      const error = new Error("DISCORD_LOGIN_DEFERRED"); error.code = "discord_login_deferred"; throw error;
+                  },
+                  shouldAbort: stage => shouldAbortBoot(stage)
+              });
+              if (result.aborted) return;
+              if (!result.discordReady) {
+                  bootLog.warn("SYSTEM", "Boot completed in degraded mode; Discord login will retry", {
+                      degraded: result.degradedStages.join(","), durationMs: Date.now() - bootStartedAt
+                  });
+                  return;
+              }
+              system.crashShieldReady = true;
+              const details = { crashShield: "active", degraded: result.degradedStages.length ? result.degradedStages.join(",") : "none",
+                  durationMs: Date.now() - bootStartedAt };
+              if (result.degradedStages.length) bootLog.warn("SYSTEM", "Boot sequence completed with degraded services", details);
+              else bootLog.success("SYSTEM", "Boot sequence completed", details);
+          }
+
+          '''.replace("          ", "")
+          between("discord/index.js", "async function boot() {", "let _startBotAttempts = 0;", boot)
+
+          ready = '''readyInitializationController = createReadyInitializationController({
+              initialize: initializeClientReady,
+              isReady: () => client.isReady(),
+              isShuttingDown: () => system.isShuttingDown?.() === true,
+              retryMs: 10000,
+              onError: (err, attempt) => bootLog.error("READY", "Post-ready initialization failed; retry scheduled", {
+                  attempt, code: err?.code || err?.name || "ready_initialization_failed"
+              })
+          });
+
+          client.on("ready", () => { readyInitializationController.start(); });
+
+          '''.replace("          ", "")
+          between("discord/index.js", "let readyInitialization = null;", "boot().catch(err => {", ready)
+
+          write("discord/tests/bootLifecycle.test.js", '''"use strict";
+          const assert = require("node:assert/strict");
+          const test = require("node:test");
+          const { runBootLifecycle } = require("../core/bootLifecycle");
+
+          function runner(failed = new Set()) {
+              return async (category, label, task, options = {}) => {
+                  if (failed.has(label)) return { ok: false };
+                  return { ok: true, value: await task(), category, options };
+              };
+          }
+
+          test("mocked boot preserves HTTP Mongo verification settings Discord order", async () => {
+              const calls = []; const mark = name => async () => { calls.push(name); return { name }; };
+              const result = await runBootLifecycle({ runStage: runner(), startHttpServer: mark("http"),
+                  connectDatabase: mark("mongo-connect"), loadDatabase: mark("mongo-load"), verificationEnabled: true,
+                  startVerification: mark("verification"), loadDisabledCommands: mark("settings"), loginDiscord: mark("discord") });
+              assert.deepEqual(calls, ["http", "mongo-connect", "mongo-load", "verification", "settings", "discord"]);
+              assert.equal(result.discordReady, true); assert.deepEqual(result.degradedStages, []);
+          });
+
+          test("optional boot failures stay degraded and Discord still starts", async () => {
+              let logins = 0; const failed = new Set(["04/06 Start verification lifecycle", "05/06 Load disabled commands"]);
+              const result = await runBootLifecycle({ runStage: runner(failed), startHttpServer: async () => ({}),
+                  connectDatabase: async () => ({}), loadDatabase: async () => ({}), verificationEnabled: true,
+                  startVerification: async () => ({}), loadDisabledCommands: async () => ({}),
+                  loginDiscord: async () => { logins++; return {}; } });
+              assert.equal(logins, 1); assert.equal(result.discordReady, true);
+              assert.deepEqual(result.degradedStages, ["verification", "command_settings"]);
+          });
+
+          test("shutdown aborts before Discord login", async () => {
+              let logins = 0;
+              const result = await runBootLifecycle({ runStage: runner(), startHttpServer: async () => ({}),
+                  connectDatabase: async () => ({}), loadDatabase: async () => ({}), verificationEnabled: false,
+                  loadDisabledCommands: async () => ({}), loginDiscord: async () => { logins++; },
+                  shouldAbort: stage => stage === "before Discord login" });
+              assert.equal(result.aborted, true); assert.equal(result.abortedAt, "before Discord login"); assert.equal(logins, 0);
+          });
+          '''.replace("          ", ""))
+
+          write("discord/tests/readyInitialization.test.js", '''"use strict";
+          const assert = require("node:assert/strict");
+          const test = require("node:test");
+          const { createReadyInitializationController } = require("../core/readyInitialization");
+
+          test("post-ready initialization retries once after failure", async () => {
+              const timers = []; let attempts = 0;
+              const controller = createReadyInitializationController({ initialize: async () => {
+                  attempts++; if (attempts === 1) throw new Error("first failure");
+              }, setTimer(callback) { const timer = { callback, cleared: false, unref() {} }; timers.push(timer); return timer; },
+                  clearTimer(timer) { timer.cleared = true; } });
+              assert.equal(await controller.start(), false); assert.equal(controller.diagnostics().retryScheduled, true);
+              timers[0].callback(); await new Promise(resolve => setImmediate(resolve)); await new Promise(resolve => setImmediate(resolve));
+              assert.equal(attempts, 2); assert.equal(controller.diagnostics().completed, true);
+              assert.equal(await controller.start(), true); assert.equal(attempts, 2);
+          });
+
+          test("controller stop clears scheduled retry", async () => {
+              const timers = [];
+              const controller = createReadyInitializationController({ initialize: async () => { throw new Error("failure"); },
+                  setTimer(callback) { const timer = { callback, cleared: false, unref() {} }; timers.push(timer); return timer; },
+                  clearTimer(timer) { timer.cleared = true; } });
+              await controller.start(); controller.stop();
+              assert.equal(timers[0].cleared, true); assert.equal(controller.diagnostics().retryScheduled, false);
+          });
+          '''.replace("          ", ""))
+
+          Path(".github/workflows/ttt-boot-hardening.yml").unlink()
+          PY
+      - name: Install dependencies
+        run: |
+          npm install --global --ignore-scripts npm@12.0.1
+          npm ci --ignore-scripts --no-audit --no-fund
+      - name: Validate boot patch
+        run: |
+          npm run check:all
+          node --test discord/tests/bootLifecycle.test.js discord/tests/readyInitialization.test.js discord/tests/systemCrashShield.test.js
+      - name: Commit boot hardening
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "harden boot and post-ready lifecycle recovery"
+          git push origin HEAD:ttt
