@@ -140,7 +140,7 @@ async function migrateSpec(spec, options) {
         eligibleFields: 0,
         migratedFields: 0,
         failedFields: 0,
-        remainingDocuments: 0,
+        remainingDocuments: null,
         cursorWrapped
     };
 
@@ -154,7 +154,9 @@ async function migrateSpec(spec, options) {
         migrationCursors.set(spec.name, docs.at(-1)._id);
     }
 
-    summary.remainingDocuments = await spec.model.countDocuments(modelLegacyFilter(spec.fields));
+    if (options.countRemaining) {
+        summary.remainingDocuments = await spec.model.countDocuments(modelLegacyFilter(spec.fields));
+    }
     return summary;
 }
 
@@ -166,7 +168,8 @@ async function runEncryptionMigration(options = {}) {
     };
     const settings = {
         dryRun: options.dryRun === true,
-        scanMax: Math.max(1, Math.min(1000, Number(options.scanMax || DEFAULT_SCAN_MAX) || DEFAULT_SCAN_MAX))
+        scanMax: Math.max(1, Math.min(1000, Number(options.scanMax || DEFAULT_SCAN_MAX) || DEFAULT_SCAN_MAX)),
+        countRemaining: options.countRemaining !== false
     };
 
     const collections = [];
@@ -178,11 +181,14 @@ async function runEncryptionMigration(options = {}) {
         version: 3,
         dryRun: settings.dryRun,
         scanMax: settings.scanMax,
+        countedRemainingDocuments: settings.countRemaining,
         scannedDocuments: collections.reduce((sum, item) => sum + item.scannedDocuments, 0),
         eligibleFields: collections.reduce((sum, item) => sum + item.eligibleFields, 0),
         migratedFields: collections.reduce((sum, item) => sum + item.migratedFields, 0),
         failedFields: collections.reduce((sum, item) => sum + item.failedFields, 0),
-        remainingDocuments: collections.reduce((sum, item) => sum + item.remainingDocuments, 0),
+        remainingDocuments: settings.countRemaining
+            ? collections.reduce((sum, item) => sum + Number(item.remainingDocuments || 0), 0)
+            : null,
         collections
     };
 }

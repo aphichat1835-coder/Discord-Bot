@@ -37,3 +37,20 @@ test("shutdown aborts before Discord login", async () => {
         shouldAbort: stage => stage === "before Discord login" });
     assert.equal(result.aborted, true); assert.equal(result.abortedAt, "before Discord login"); assert.equal(logins, 0);
 });
+
+test("Discord login failure leaves boot degraded without aborting", async () => {
+    const failed = new Set(["06/06 Login Discord client"]);
+    const result = await runBootLifecycle({
+        runStage: runner(failed),
+        startHttpServer: async () => ({}),
+        connectDatabase: async () => ({}),
+        loadDatabase: async () => ({}),
+        verificationEnabled: false,
+        loadDisabledCommands: async () => ({}),
+        loginDiscord: async () => ({})
+    });
+
+    assert.equal(result.aborted, false);
+    assert.equal(result.discordReady, false);
+    assert.deepEqual(result.degradedStages, ["discord"]);
+});

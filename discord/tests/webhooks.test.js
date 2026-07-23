@@ -6,6 +6,7 @@ const {
     getWebhookUrl,
     getOwnerDashboardBaseUrl,
     getWebhookDiagnostics,
+    getWebhookDeliveryDiagnostics,
     validateWebhookUrl,
     normalizeWebhookPayload,
     normalizeLegacyWebhookPayload,
@@ -110,7 +111,10 @@ test("webhook events route by severity and render one consistent embed", () => {
         title: "Session เชื่อมต่อกลับไม่ได้",
         impact: "บัญชีหลุดจากห้องเสียง",
         action: "เริ่ม Session ใหม่",
-        context: { Session: "vc_test\n`spoof`" },
+        context: {
+            Session: "*admin* _spoof_ ||hidden|| > quote [label](https://example.com)\n`spoof`",
+            Dashboard: "https://owner-dashboard.example/path_value"
+        },
         timestamp: 1000
     });
     assert.equal(payload.embeds.length, 1);
@@ -119,6 +123,13 @@ test("webhook events route by severity and render one consistent embed", () => {
     assert.match(payload.embeds[0].footer.text, /voice\.session\.dead/);
     assert.equal(payload.embeds[0].fields.some(field => field.name === "สิ่งที่ควรทำ"), true);
     assert.equal(payload.embeds[0].fields.some(field => field.value.includes("\n") || field.value.includes("`")), false);
+    const sessionField = payload.embeds[0].fields.find(field => field.name === "Session");
+    assert.equal(sessionField.value.includes("\\*admin\\*"), true);
+    assert.equal(sessionField.value.includes("\\_spoof\\_"), true);
+    assert.equal(sessionField.value.includes("\\|\\|hidden\\|\\|"), true);
+    assert.equal(sessionField.value.includes("\\> quote"), true);
+    const dashboardField = payload.embeds[0].fields.find(field => field.name === "Dashboard");
+    assert.equal(dashboardField.value, "https://owner-dashboard.example/path_value");
 });
 
 test("event profile images accept Discord CDN URLs and reject arbitrary hosts", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
@@ -469,4 +480,10 @@ test("event token normalization bounds hostile input without changing webhook co
     assert.equal(buildWebhookEventPayload({ severity: "WARNING" }).embeds[0].color, Colors.Yellow);
     assert.equal(buildWebhookEventPayload({ severity: "ERROR" }).embeds[0].color, Colors.Red);
     assert.equal(buildWebhookEventPayload({ severity: "CRITICAL" }).embeds[0].color, Colors.DarkRed);
+});
+
+test("delivery diagnostics expose one canonical dedupe count", () => {
+    const diagnostics = getWebhookDeliveryDiagnostics();
+    assert.equal(diagnostics.dedupeKeys, diagnostics.routineDedupeKeys);
+    assert.equal(Object.hasOwn(diagnostics, "eventDedupeKeys"), false);
 });

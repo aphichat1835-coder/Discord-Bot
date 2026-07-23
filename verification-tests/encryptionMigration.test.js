@@ -43,7 +43,7 @@ function matchesLegacyFilter(doc, filter) {
     });
 }
 
-function fakeModel(docs) {
+function fakeModel(docs, stats = { countDocuments: 0 }) {
     return {
         find(filter) {
             const matches = docs.filter(doc => matchesLegacyFilter(doc, filter));
@@ -62,6 +62,7 @@ function fakeModel(docs) {
             return { modifiedCount: 1 };
         },
         async countDocuments(filter) {
+            stats.countDocuments++;
             return docs.filter(doc => matchesLegacyFilter(doc, filter)).length;
         }
     };
@@ -181,4 +182,32 @@ describe("encryption migration", () => {
         expect(oauthDocs[1].oauth.encryptedAccessToken).toMatch(/^v3:gcm:/);
         errorSpy.mockRestore();
     });
+});
+
+test("skips expensive remaining-document counts during bounded maintenance batches", async () => {
+    const previousKey = process.env.ENCRYPTION_KEY;
+    const localSecret = crypto.randomBytes(48).toString("base64url");
+    process.env.ENCRYPTION_KEY = localSecret;
+    _test.resetMigrationCursors();
+    try {
+        const stats = { countDocuments: 0 };
+        const legacy = encryptLegacy("access-token-value", localSecret);
+        const oauthDocs = [{ _id: "oauth-4", oauth: { encryptedAccessToken: legacy } }];
+        const emptyModel = fakeModel([], stats);
+
+        const summary = await runEncryptionMigration({
+            OAuthUserModel: fakeModel(oauthDocs, stats),
+            VerifyLogModel: emptyModel,
+            IpIdentityLinkModel: emptyModel,
+            countRemaining: false
+        });
+
+        expect(summary.countedRemainingDocuments).toBe(false);
+        expect(summary.remainingDocuments).toBeNull();
+        expect(summary.collections.every(item => item.remainingDocuments === null)).toBe(true);
+        expect(stats.countDocuments).toBe(0);
+    } finally {
+        if (previousKey === undefined) delete process.env.ENCRYPTION_KEY;
+        else process.env.ENCRYPTION_KEY = previousKey;
+    }
 });

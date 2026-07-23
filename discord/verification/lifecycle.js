@@ -101,7 +101,10 @@ function createSummary(dryRun, now) {
 
 async function runEncryptionMigrationSafe(dryRun, summary) {
     try {
-        summary.encryptionMigration = await runEncryptionMigration({ dryRun });
+        summary.encryptionMigration = await runEncryptionMigration({
+            dryRun,
+            countRemaining: dryRun
+        });
     } catch (err) {
         const error = safeError(err);
         summary.encryptionMigration = { failed: true, error };

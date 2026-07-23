@@ -1,9 +1,0 @@
-back"\n                : method === "doValidate"\n                    ? "doValidate-callback"\n                    : "updateOne-callback"\n        });\n    });\n\n    return findings;\n}\n\nfunction readSourceFile(file) {\n    const safeFile = ensureInsideSourceRoot(file);\n    return fs.readFileSync(safeFile, "utf8");\n}\n\nfunction scanRepository() {\n    return walk().flatMap(file => analyzeSource(\n        readSourceFile(file),\n        path.relative(REPOSITORY_ROOT, file).replaceAll(path.sep, "/")\n    ));\n}\n\nif (require.main === module) {\n    const findings = scanRepository();\n    if (findings.length) {\n        console.error("[MONGOOSE9] Removed callback-style API patterns detected:");\n        for (const item of findings) console.error(\`- \${item.file}:\${item.line} \${item.code}\`);\n        process.exitCode = 1;\n    } else {\n        console.log("[MONGOOSE9] Compatibility AST check passed");\n    }\n}\n\nmodule.exports = { analyzeSource, scanRepository };\n`);
-
-    write("sonar-project.properties", `sonar.projectKey=aphichat1835-coder_Discord-Bot\nsonar.organization=aphichat1835-coder\nsonar.host.url=https://sonarcloud.io\nsonar.sourceEncoding=UTF-8\nsonar.sources=discord,scripts\nsonar.tests=discord/tests,verification-tests\nsonar.exclusions=discord/tests/**,discord/public/**,discord/views/**\nsonar.test.inclusions=discord/tests/**/*.test.js,verification-tests/**/*.test.js\nsonar.coverage.exclusions=discord/tests/**,verification-tests/**,discord/public/**,discord/views/**\nsonar.javascript.lcov.reportPaths=coverage/discord.lcov,coverage/voice.lcov,coverage/verification.lcov\nsonar.qualitygate.wait=true\n`);
-}
-
-function updateTests() {
-    replaceOnce(
-        "discord/tests/discordV14Compatibility.test.js",
-        `    assert.equal(resolveActivityType
