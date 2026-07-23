@@ -55,12 +55,24 @@ jobs:
           grep -q 'discord.js-selfbot-v13' package-lock.json
           npm run check
 
-      - name: Run all tests with LCOV
+      - name: Discord tests with LCOV
         run: |
           set -euo pipefail
-          npm run test:coverage:discord
-          npm run test:coverage:voice
-          npm run test:coverage:verification
+          npm run test:coverage:discord 2>&1 | tee /tmp/batch-error.log
+
+      - name: Voice tests with LCOV
+        run: |
+          set -euo pipefail
+          npm run test:coverage:voice 2>&1 | tee /tmp/batch-error.log
+
+      - name: Verification tests with LCOV
+        run: |
+          set -euo pipefail
+          npm run test:coverage:verification 2>&1 | tee /tmp/batch-error.log
+
+      - name: Verify LCOV reports
+        run: |
+          set -euo pipefail
           test -s coverage/discord.lcov
           test -s coverage/voice.lcov
           test -s coverage/verification.lcov
@@ -88,4 +100,29 @@ jobs:
           git add -A
           git diff --cached --check
           git commit -m "fix: close runtime and quality gaps [batch-final]"
+          git push origin "HEAD:$BRANCH"
+
+      - name: Publish failure evidence
+        if: failure()
+        env:
+          BRANCH: agent/batch-hardening-20260723
+          RUN_ID: ${{ github.run_id }}
+          FAILED_SHA: ${{ github.sha }}
+        run: |
+          git reset --hard HEAD
+          git clean -fdx
+          {
+            echo "# Batch validation failed"
+            echo
+            echo "- Run ID: $RUN_ID"
+            echo "- Staging SHA: $FAILED_SHA"
+            echo
+            echo '```text'
+            cat /tmp/batch-error.log 2>/dev/null || echo "No captured test output"
+            echo '```'
+          } > BATCH_VALIDATION_FAILURE.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add BATCH_VALIDATION_FAILURE.md
+          git commit -m "chore: publish batch validation failure [batch-report]"
           git push origin "HEAD:$BRANCH"
