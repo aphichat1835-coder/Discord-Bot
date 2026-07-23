@@ -1,1 +1,2 @@
 Trigger the static-analysis batch workflow against the staging base.
+Run: isolated-gates-2
