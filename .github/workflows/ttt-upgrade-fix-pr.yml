@@ -1,0 +1,103 @@
+name: TTT Upgrade Regression Repair PR
+
+on:
+  pull_request:
+    branches:
+      - ttt
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  repair-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout head branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 24.18.0
+
+      - name: Bootstrap pinned npm
+        run: |
+          npm install --global --ignore-scripts npm@12.0.1
+          test "$(npm --version)" = "12.0.1"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Apply scoped repair
+        run: python3 scripts/applyUpgradeRegressionFix.py
+
+      - name: Diff and syntax guards
+        run: |
+          git diff --check
+          npm run check
+
+      - name: Audit Mongoose 9 removed patterns
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          removed = re.compile(r"useNewUrlParser|useUnifiedTopology|useFindAndModify|execPopulate")
+          callback_hook = re.compile(
+              r"\.(?:pre|post)\(\s*['\"][^'\"]+['\"]\s*,\s*(?:async\s+)?function\s*\([^)]*\bnext\b"
+          )
+          findings = []
+          for root in (Path("discord"), Path("scripts"), Path("verification-tests")):
+              if not root.exists():
+                  continue
+              for path in root.rglob("*.js"):
+                  text = path.read_text(encoding="utf-8", errors="replace")
+                  if removed.search(text):
+                      findings.append(f"{path}: removed Mongoose option/API")
+                  if ("mongoose" in text or "Schema" in text) and callback_hook.search(text):
+                      findings.append(f"{path}: callback-style Mongoose middleware")
+          if findings:
+              raise SystemExit("\n".join(findings))
+          print("Mongoose 9 removed-pattern audit passed")
+          PY
+
+      - name: Discord tests
+        run: npm run test:discord
+
+      - name: Voice tests
+        run: npm run test:voice
+
+      - name: Previously cancelled tests in isolation
+        run: |
+          node --require ./verification-tests/nodeTestSetup.js --test verification-tests/discordAPI.test.js
+          node --require ./verification-tests/nodeTestSetup.js --test verification-tests/snapshotChunkStore.test.js verification-tests/snapshotAggregateBudget.test.js verification-tests/snapshotRollback.test.js
+
+      - name: Full verification tests
+        run: npm run test:verification
+
+      - name: Dependency audit
+        run: npm audit --audit-level=high --ignore-scripts
+
+      - name: Commit verified repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            discord/index.js \
+            discord/core/mainClientOptions.js \
+            discord/verification/services/oauthSnapshotStore.js \
+            discord/verification/utils/discordAPI.js \
+            discord/tests/mainClientOptions.test.js
+          git diff --cached --check
+          git commit -m "Fix Discord v14 startup and retry lifecycle regressions"
+          git push origin HEAD:fix/ttt-upgrade-regressions
