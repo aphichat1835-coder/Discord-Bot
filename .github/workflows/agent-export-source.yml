@@ -1,0 +1,36 @@
+name: Agent Source Export
+
+on:
+  pull_request:
+    branches:
+      - ttt
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    if: ${{ github.head_ref == 'agent/full-hardening-work' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact pull request head
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Package tracked workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          git ls-files -z | tar --null -T - -czf discord-bot-source.tgz
+          test -s discord-bot-source.tgz
+
+      - name: Upload source artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: discord-bot-source-${{ github.event.pull_request.head.sha }}
+          path: discord-bot-source.tgz
+          if-no-files-found: error
+          retention-days: 1
