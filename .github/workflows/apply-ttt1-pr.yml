@@ -28,7 +28,7 @@ jobs:
           test -f .github/ttt1-patch/READY
           count="$(find .github/ttt1-patch -maxdepth 1 -type f -name 'chunk-*' | wc -l)"
           echo "Payload chunks: $count"
-          test "$count" -eq 13
+          test "$count" -eq 14
 
       - name: Reconstruct and verify payload hashes
         shell: bash
@@ -57,6 +57,8 @@ jobs:
           git rm -r .github/ttt1-patch
           git rm .github/workflows/apply-ttt1-local.yml
           git rm .github/workflows/apply-ttt1-pr.yml
+          git rm .github/workflows/verify-ttt1-chunks.yml
+          git rm .github/workflows/verify-ttt1-payload.yml
           git config user.name "OpenAI Coding Agent"
           git config user.email "noreply@openai.com"
           git commit -m "fix: harden Discord runtime, recovery, and owner controls"
