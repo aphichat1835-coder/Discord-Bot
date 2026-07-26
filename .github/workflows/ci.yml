@@ -2,54 +2,24 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
+      - ttt
   pull_request:
 
 permissions:
   contents: read
+  issues: read
+  pull-requests: read
 
 jobs:
-  apply-local-remediation:
-    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'ttt.1' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout ttt.1
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ttt.1
-          fetch-depth: 0
-          persist-credentials: true
-
-      - name: Apply local working copy
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f .github/ttt1-patch/READY
-          cat .github/ttt1-patch/chunk-* > /tmp/ttt1-remediation.patch.xz.b64
-          echo "00cf35f78fffe8212035a4ecf1841e692468099b43d0db806828e69f6e8781b0  /tmp/ttt1-remediation.patch.xz.b64" | sha256sum -c -
-          base64 --decode /tmp/ttt1-remediation.patch.xz.b64 > /tmp/ttt1-remediation.patch.xz
-          echo "6301f0ce1b25a94c280e58a29cac9eb705d9019cd1310607552d7d52dc307dde  /tmp/ttt1-remediation.patch.xz" | sha256sum -c -
-          xz --decompress --stdout /tmp/ttt1-remediation.patch.xz > /tmp/ttt1-remediation.patch
-          echo "9d5b7a77f30c538a6f95d010b76f24cbaf671a1a753da8778ca222b4cde3728b  /tmp/ttt1-remediation.patch" | sha256sum -c -
-          git fetch --no-tags origin ttt
-          git show origin/ttt:.github/workflows/ci.yml > .github/workflows/ci.yml
-          git apply --check --binary /tmp/ttt1-remediation.patch
-          git apply --index --binary /tmp/ttt1-remediation.patch
-          git add .github/workflows/ci.yml
-          git rm -r .github/ttt1-patch
-          git rm .github/workflows/apply-ttt1-local.yml
-          git config user.name "OpenAI Coding Agent"
-          git config user.email "noreply@openai.com"
-          git commit -m "fix: harden Discord runtime, recovery, and owner controls"
-          git push origin HEAD:ttt.1
-
   checks:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      REQUIRE_SONAR: ${{ vars.REQUIRE_SONAR }}
+      GITHUB_TOKEN: ${{ github.token }}
 
     steps:
       - name: Checkout
@@ -94,7 +64,6 @@ jobs:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
-
           is_commit() {
             local candidate="${1:-}"
             [ -n "$candidate" ] &&
@@ -135,6 +104,12 @@ jobs:
           PROTECTED_BASE_SHA: ${{ steps.protected-base.outputs.sha }}
         run: npm run check:protected
 
+      - name: Syntax check (Protected owner subsystem)
+        run: npm run check:protected-syntax
+
+      - name: Discord.js v14 compatibility guard
+        run: npm run check:discord14
+
       - name: Syntax check (Discord)
         run: npm run check:all
 
@@ -156,15 +131,23 @@ jobs:
       - name: Verification tests with LCOV coverage
         run: npm run test:coverage:verification
 
-      - name: Verify LCOV reports
-        run: |
-          test -s coverage/discord.lcov
-          test -s coverage/voice.lcov
-          test -s coverage/verification.lcov
+      - name: Verify LCOV reports and thresholds
+        run: npm run check:coverage
 
       - name: SonarCloud analysis
         if: ${{ env.SONAR_TOKEN != '' }}
         run: npm run sonar -- -Dsonar.token="$SONAR_TOKEN"
+
+      - name: SonarCloud degraded-status gate
+        if: ${{ env.SONAR_TOKEN == '' }}
+        shell: bash
+        run: |
+          echo "::warning::SONAR_TOKEN is unavailable; SonarCloud analysis is in visible degraded status."
+          echo "### SonarCloud: degraded (SONAR_TOKEN unavailable)" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${REQUIRE_SONAR,,}" = "true" ]; then
+            echo "::error::REQUIRE_SONAR is enabled but SONAR_TOKEN is unavailable."
+            exit 1
+          fi
 
       - name: Root audit
         run: npm audit --audit-level=high
