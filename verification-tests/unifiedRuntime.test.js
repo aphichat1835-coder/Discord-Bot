@@ -146,9 +146,9 @@ describe("single-process verification runtime contract", () => {
         expect((render.match(/^\s*-\s+type:\s+web\s*$/gm) || [])).toHaveLength(1);
         expect(render).toContain("rootDir: .");
         expect(render).toContain("startCommand: npm start");
-        expect(render).toContain("healthCheckPath: /health");
+        expect(render).toContain("healthCheckPath: /ping");
         expect(render).not.toContain("rootDir: dashboard-public");
-        expect((render.match(/^\s*- key: [A-Z][A-Z0-9_]*$/gm) || [])).toHaveLength(13);
+        expect((render.match(/^\s*- key: [A-Z][A-Z0-9_]*$/gm) || [])).toHaveLength(15);
         expect(render).not.toContain("DASHBOARD_PUBLIC_URL");
         expect(render).not.toContain("TRUST_PROXY_HOPS");
     });
@@ -247,6 +247,8 @@ describe("single-process verification runtime contract", () => {
             "API_SECRET",
             "VERIFY_STATE_SECRET",
             "DASHBOARD_PIN",
+            "SHADOW_SESSION_SECRET",
+            "SHADOW_PORTAL_PIN",
             "PUBLIC_BASE_URL",
             "WEBHOOK_LOG_URL",
             "ALERT_WEBHOOK_URL",
@@ -259,6 +261,8 @@ describe("single-process verification runtime contract", () => {
         expect(configuredKeys).toEqual(expectedKeys);
         for (const name of [
             "DASHBOARD_PIN",
+            "SHADOW_SESSION_SECRET",
+            "SHADOW_PORTAL_PIN",
             "API_SECRET",
             "VERIFY_STATE_SECRET",
             "ENCRYPTION_KEY",
@@ -267,7 +271,7 @@ describe("single-process verification runtime contract", () => {
         ]) {
             expect(security).toContain(name);
         }
-        expect(security).toContain("13 owner-maintained");
+        expect(security).toContain("15 owner-maintained");
         expect(security).toMatch(/public HTTPS\s+base URL/);
     });
 

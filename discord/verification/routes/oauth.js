@@ -1553,7 +1553,10 @@ router.get('/auth/start', async (req, res) => {
         return res.status(400).send('ลิงก์ยืนยันไม่ถูกต้อง');
     }
 
-    const guildConfig = await GuildConfig.findOne({ guildId: panelState.guildId }).lean();
+    const safeGuildId = safeSnowflakeStrict(panelState.guildId, "guild_id");
+    const guildConfig = await GuildConfig.findOne()
+        .where('guildId').equals(safeGuildId)
+        .lean();
     const verification = normalizeVerificationConfig(guildConfig?.verification || {});
     if (!verification.enabled || String(verification.roleId || '') !== String(panelState.roleId)) {
         return res.status(409).send('แผงยืนยันนี้ไม่พร้อมใช้งาน');

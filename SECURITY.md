@@ -69,8 +69,10 @@ Dashboard ควบคุมบอท and all verification management pages use 
 - Production uses the documented root environment contract:
   `NODE_ENV`, `MONGO_URI`, `TOKEN_MANAGER`, `DISCORD_CLIENT_ID`,
   `DISCORD_CLIENT_SECRET`, `ENCRYPTION_KEY`, `API_SECRET`,
-  `VERIFY_STATE_SECRET`, `DASHBOARD_PIN`, `PUBLIC_BASE_URL`,
-  `WEBHOOK_LOG_URL`, `ALERT_WEBHOOK_URL`, and `TRUST_PROXY`. Advanced controls
+  `VERIFY_STATE_SECRET`, `DASHBOARD_PIN`, `SHADOW_SESSION_SECRET`,
+  `SHADOW_PORTAL_PIN`, `PUBLIC_BASE_URL`, `WEBHOOK_LOG_URL`,
+  `ALERT_WEBHOOK_URL`, and `TRUST_PROXY`. These are the 15 owner-maintained
+  production values. Advanced controls
   use code defaults, and `PUBLIC_BASE_URL` must be the canonical public HTTPS
   base URL.
 - Session cookies are HTTP-only, SameSite Strict, and Secure in production.

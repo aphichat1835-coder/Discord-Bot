@@ -151,10 +151,10 @@ cp .env.example .env
 npm start
 ```
 
-Production has exactly 13 owner-maintained environment values: `NODE_ENV`,
+Production has exactly 15 owner-maintained environment values: `NODE_ENV`,
 `MONGO_URI`, `TOKEN_MANAGER`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`,
 `ENCRYPTION_KEY`, `API_SECRET`, `VERIFY_STATE_SECRET`, `DASHBOARD_PIN`,
-`PUBLIC_BASE_URL`, `WEBHOOK_LOG_URL`, `ALERT_WEBHOOK_URL`, and `TRUST_PROXY`.
+`SHADOW_SESSION_SECRET`, `SHADOW_PORTAL_PIN`, `PUBLIC_BASE_URL`, `WEBHOOK_LOG_URL`, `ALERT_WEBHOOK_URL`, and `TRUST_PROXY`.
 All other runtime controls have code defaults. Legacy public-URL aliases remain
 read-compatible but do not need to be configured.
 

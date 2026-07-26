@@ -56,8 +56,8 @@ describe("permissionFlags", () => {
     it("returns array of flag names for combined bits", () => {
         const bits = String(PERMISSIONS.Administrator | PERMISSIONS.ManageGuild);
         const flags = permissionFlags(bits);
-        expect(flags).toContain("ADMINISTRATOR");
-        expect(flags).toContain("MANAGE_GUILD");
+        expect(flags).toContain("Administrator");
+        expect(flags).toContain("ManageGuild");
     });
 
     it("returns empty array for 0", () => {

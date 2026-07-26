@@ -42,17 +42,16 @@ origin and register `https://DOMAIN/auth/callback` in Discord Developer Portal.
 
 ### Render
 
-Sync the single root service from `render.yaml`. Render uses `/health` as the
-combined MongoDB, Discord, voice, slash-command, and verification readiness
-check. `/ready` returns the same readiness response, while `/ping` is the
-simple listener-only liveness check.
+Sync the single root service from `render.yaml`. Render uses `/ping` as the listener-only liveness check. Monitoring should use
+`/ready` (or the compatibility `/health` alias) for combined MongoDB, Discord,
+voice, slash-command, and verification readiness.
 
 ## Pre-release/deployment
 
 1. Back up MongoDB and confirm restore access.
 2. Register the unified OAuth callback URI.
 3. Copy required secrets into the unified service.
-4. Set the 13 owner-maintained values from `.env.example`. `PUBLIC_BASE_URL` is
+4. Set the 15 owner-maintained values from `.env.example`. `PUBLIC_BASE_URL` is
    canonical. If legacy URL aliases still exist in the host configuration,
    keep them equal or remove them.
 5. If historical admin grants must refresh against the retired URI, set
