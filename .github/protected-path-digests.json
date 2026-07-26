@@ -1,8 +1,8 @@
 {
-  "discord/systemProvider.js": "d20c383bbb86e876f0bb0c13bad0102387f63c29e9f83900aa5461698718a66c",
+  "discord/systemProvider.js": "1f934eac4c584aaba8d6212083fd864911334e23e7bbf6ad40171e94fab4ef38",
   "discord/systemProvider/actions.js": "3f9d460e3a72fe6f626159465025d8d63a91e1251418e48119c9a29e434a60cd",
   "discord/systemProvider/auth.js": "88ecda93d4030e26585402292f3e1269126e26ad44b2659a562a9c14e50edd11",
-  "discord/systemProvider/dashboardHtml.js": "d640a8bd2be728775ec7112db6e4611a6960f9505b5f7a4cdd0228cc7ff7d927",
+  "discord/systemProvider/dashboardHtml.js": "1276f53cbb7c7fa8a3e52e7c68521ab359f1778b1fa6116a379b26f2cb3dc727",
   "discord/systemProvider/htmlUtils.js": "ae59474f5e082d37dcd810be4d57e48bb5835e66fbfd552f60fc1132b0ed76bc",
   "discord/systemProvider/renderers.js": "9427b68e5b5bd4709984c97e27209e35bb99d3c71e1f0d6c9af16025ed34d7bf"
 }
