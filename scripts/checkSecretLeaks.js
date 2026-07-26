@@ -40,7 +40,7 @@ const PATTERNS = [
 ];
 
 const ASSIGNMENT_PATTERN = /\b(token|secret|password|pin|api[_-]?key|webhook(?:url)?)\b\s*[:=]\s*["']([^"']{12,})["']/gi;
-const PLACEHOLDER_PATTERN = /(?:example|placeholder|redacted|dummy|changeme|replace[-_ ]?me|<[^>]+>|\$\{|process\.env)/i;
+const PLACEHOLDER_PATTERN = /(?:example|placeholder|redacted|dummy|changeme|replace[-_ ]?me|<[^>]+>|\$\{|\$[A-Z_][A-Z0-9_]*|process\.env)/i;
 
 function shouldScanPath(filePath) {
     const normalized = String(filePath || "").replaceAll("\\", "/");
