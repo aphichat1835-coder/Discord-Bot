@@ -1,6 +1,9 @@
 name: Isolated Environment Gate
 
 on:
+  pull_request:
+    branches:
+      - ttt
   workflow_dispatch:
     inputs:
       expected_sha:
@@ -15,9 +18,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: isolated-environment-${{ github.event.pull_request.head.sha || inputs.expected_sha || github.sha }}
+  cancel-in-progress: false
+
 env:
-  TEST_ENVIRONMENT_CONFIRMATION: ${{ inputs.confirmation }}
-  TEST_COMMIT_SHA: ${{ inputs.expected_sha }}
+  TEST_ENVIRONMENT_CONFIRMATION: ${{ github.event_name == 'workflow_dispatch' && inputs.confirmation || 'ISOLATED_TEST_ONLY' }}
+  TEST_COMMIT_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_sha || github.event.pull_request.head.sha }}
   TEST_MONGO_URI: ${{ secrets.TEST_MONGO_URI }}
   TEST_DISCORD_TOKEN: ${{ secrets.TEST_DISCORD_TOKEN }}
   TEST_GUILD_ID: ${{ secrets.TEST_GUILD_ID }}
@@ -27,11 +34,12 @@ env:
   TEST_DISCORD_CLIENT_SECRET: ${{ secrets.TEST_DISCORD_CLIENT_SECRET }}
   TEST_PUBLIC_BASE_URL: ${{ secrets.TEST_PUBLIC_BASE_URL }}
   TEST_ALLOWED_HOSTS: ${{ vars.TEST_ALLOWED_HOSTS }}
-  PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PUBLIC_BASE_URL }}
+  PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PUBLIC_BASE_URL }}
   GATE_RECORD_DIR: artifacts
 
 jobs:
   verify:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.head_ref == 'ttt.1' && vars.RUN_ISOLATED_ENVIRONMENT_GATE == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: isolated-integration
@@ -39,7 +47,7 @@ jobs:
       - name: Checkout exact ref
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ inputs.expected_sha }}
+          ref: ${{ env.TEST_COMMIT_SHA }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -48,10 +56,12 @@ jobs:
         run: |
           set -euo pipefail
           test "$TEST_ENVIRONMENT_CONFIRMATION" = "ISOLATED_TEST_ONLY"
-          test "$(git rev-parse HEAD)" = "$TEST_COMMIT_SHA"
+          test "$TEST_COMMIT_SHA" = "$(git rev-parse HEAD)"
           test -n "$TEST_MONGO_URI"
           test -n "$TEST_DISCORD_TOKEN"
           test -n "$TEST_PUBLIC_BASE_URL"
+          test -n "$TEST_ALLOWED_HOSTS"
+          test -n "$PRODUCTION_PUBLIC_BASE_URL"
 
       - name: Setup Node
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
@@ -91,7 +101,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: isolated-environment-gate-${{ inputs.expected_sha }}
+          name: isolated-environment-gate-${{ env.TEST_COMMIT_SHA }}
           path: artifacts/environment-gate-*.json
           if-no-files-found: error
           retention-days: 30
