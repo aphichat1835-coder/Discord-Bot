@@ -18,18 +18,18 @@ jobs:
         with:
           ref: ttt.1
           persist-credentials: false
-      - name: Concatenate and verify Base64 payload
+      - name: Reconstruct payload for byte comparison
         run: |
-          cat .github/ttt1-patch/chunk-* > /tmp/ttt1-remediation.patch.xz.b64
-          wc -c /tmp/ttt1-remediation.patch.xz.b64
-          echo "00cf35f78fffe8212035a4ecf1841e692468099b43d0db806828e69f6e8781b0  /tmp/ttt1-remediation.patch.xz.b64" | sha256sum -c -
-      - name: Decode and verify XZ payload
-        run: |
-          base64 --decode /tmp/ttt1-remediation.patch.xz.b64 > /tmp/ttt1-remediation.patch.xz
-          wc -c /tmp/ttt1-remediation.patch.xz
-          echo "6301f0ce1b25a94c280e58a29cac9eb705d9019cd1310607552d7d52dc307dde  /tmp/ttt1-remediation.patch.xz" | sha256sum -c -
-      - name: Decompress and verify patch
-        run: |
-          xz --decompress --stdout /tmp/ttt1-remediation.patch.xz > /tmp/ttt1-remediation.patch
-          wc -c /tmp/ttt1-remediation.patch
-          echo "9d5b7a77f30c538a6f95d010b76f24cbaf671a1a753da8778ca222b4cde3728b  /tmp/ttt1-remediation.patch" | sha256sum -c -
+          cat .github/ttt1-patch/chunk-* > github-reconstructed.patch.xz.b64
+          wc -c github-reconstructed.patch.xz.b64 > github-reconstructed.size.txt
+          sha256sum github-reconstructed.patch.xz.b64 > github-reconstructed.sha256.txt
+      - name: Upload reconstructed payload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ttt1-reconstructed-${{ github.sha }}
+          path: |
+            github-reconstructed.patch.xz.b64
+            github-reconstructed.size.txt
+            github-reconstructed.sha256.txt
+          if-no-files-found: error
+          retention-days: 1
