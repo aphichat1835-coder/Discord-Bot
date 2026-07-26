@@ -9,13 +9,10 @@ const verifiedMemberService = require("./services/verifiedMemberService");
 const snapshotStore = require("./services/oauthSnapshotStore");
 const ipIdentityHistory = require("./services/ipIdentityHistoryService");
 const discordAPI = require("./utils/discordAPI");
+const { readFiniteInteger } = require("../core/numbers");
 
-const OVERVIEW_MAX = Math.max(
-    50,
-    Number(process.env.INTERNAL_OVERVIEW_GUILDS_MAX || 500) || 500
-);
-const OAUTH_RECOVERY_SCAN_MAX = Math.max(100, Math.min(5000,
-    Number(process.env.OAUTH_RECOVERY_SCAN_MAX || 1000) || 1000));
+const OVERVIEW_MAX = readFiniteInteger(process.env.INTERNAL_OVERVIEW_GUILDS_MAX, { fallback: 500, min: 50, max: 5000 });
+const OAUTH_RECOVERY_SCAN_MAX = readFiniteInteger(process.env.OAUTH_RECOVERY_SCAN_MAX, { fallback: 1000, min: 100, max: 5000 });
 const REQUIRED_USER_SCOPES = Object.freeze([
     "identify", "email", "connections", "guilds", "guilds.members.read", "guilds.join"
 ]);

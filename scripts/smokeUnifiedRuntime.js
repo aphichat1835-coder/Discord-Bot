@@ -3,11 +3,9 @@
 
 const dns = require("node:dns").promises;
 const { BlockList, isIP } = require("node:net");
+const { readFiniteInteger } = require("../discord/core/numbers");
 
-const DEFAULT_TIMEOUT_MS = Math.max(
-    1000,
-    Number(process.env.SMOKE_TIMEOUT_MS || 8000) || 8000
-);
+const DEFAULT_TIMEOUT_MS = readFiniteInteger(process.env.SMOKE_TIMEOUT_MS, { fallback: 8000, min: 1000, max: 120000 });
 const RESERVED_IPV4 = new BlockList();
 const RESERVED_IPV6 = new BlockList();
 

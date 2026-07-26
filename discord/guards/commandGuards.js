@@ -1,3 +1,4 @@
+const { hasResolvedPermission } = require("../core/discordPermissions");
 const BLOCKED_MESSAGE_PATTERNS = [
     /discord\.gg\/\S+/gi,
     /https?:\/\/\S+\.(exe|bat|cmd|sh|ps1)/gi
@@ -5,13 +6,11 @@ const BLOCKED_MESSAGE_PATTERNS = [
 
 function hasPermission(target, permissions, mode = "all") {
     const required = Array.isArray(permissions) ? permissions : [permissions];
-    if (!target?.permissions?.has) return false;
+    const permissionTarget = target?.permissions;
+    if (!permissionTarget || required.length === 0) return false;
 
-    if (mode === "any") {
-        return required.some(permission => target.permissions.has(permission));
-    }
-
-    return required.every(permission => target.permissions.has(permission));
+    const check = permission => hasResolvedPermission(permissionTarget, permission);
+    return mode === "any" ? required.some(check) : required.every(check);
 }
 
 async function safeReply(interaction, payload) {

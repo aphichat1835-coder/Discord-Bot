@@ -1,12 +1,11 @@
 # Phomueangtai Personal Multi-Tool Discord Bot
 
 Personal Discord bot with slash commands, voice/session automation, moderation
-cases, protection features, role buttons, Owner Dashboard, and OAuth2 verification.
+cases, protection features, role buttons, a private bot-control dashboard, and OAuth2 verification.
 
 Private notifications for Voice, moderation, verification, and restore results
 use a shared profile-first Thai Embed design. Delivery is mention-safe,
-deduplicated, prioritized, and retained in a bounded MongoDB outbox for retry
-after transient Discord or process failures.
+deduplicated and prioritized. A bounded in-memory recovery queue preserves delivery attempts while MongoDB is temporarily unavailable, then reconciles them into the durable MongoDB outbox.
 
 ## Runtime shape
 
@@ -14,7 +13,7 @@ The repository deploys as one Node.js 24.18 LTS process with npm 12:
 
 ```text
 npm start
-  ├─ Express / Owner Dashboard
+  ├─ Express / Dashboard ควบคุมบอท
   ├─ public OAuth callback
   ├─ MongoDB persistence and verification maintenance
   ├─ Discord bot
@@ -35,18 +34,18 @@ and the HTTP server.
 
 | Route | Access | Purpose |
 | --- | --- | --- |
-| `GET /` | Owner PIN | Main Owner Dashboard |
-| `GET /verification` | Owner PIN | Owner Dashboard guild chooser |
+| `GET /` | Owner PIN | Dashboard ควบคุมบอท |
+| `GET /verification` | Owner PIN | Verification guild chooser inside the bot-control dashboard |
 | `GET /verification/:guildId` | Owner PIN | Integrated Overview, System, Panel, Policy/Role, and Verification Data workspace |
 | `GET /auth/callback` | Public | OAuth callback page |
 | `POST /auth/callback` | Public, rate-limited | Exchange a one-time OAuth code and run verification |
 | `/api/guilds` | Owner PIN | Bot guild list |
 | `/api/guild/:guildId/*` | Owner PIN; CSRF on writes | Verification management APIs |
 | `GET /api/guild/:guildId/member/:userId/detail` | Owner PIN | Categorized per-user verification summary with sensitive values redacted |
-| `POST /api/guild/:guildId/member/:userId/full-detail` | Owner PIN + CSRF, rate-limited | Audited full detail including decrypted raw IP and OAuth tokens |
+| `POST /api/guild/:guildId/member/:userId/full-detail` | Owner PIN + CSRF, rate-limited | Categorized detail with sensitive values still redacted |
 | `GET /api/guild/:guildId/member/:userId/ip-history` | Owner PIN | Paginated canonical users/devices/role history for the member's IP |
-| `POST /api/guild/:guildId/member/:userId/reveal-token` | Owner PIN + CSRF + reason | Raw OAuth2 token reveal with audit status |
-| `POST /api/verify-owner/guild/:guildId/user/:userId/reveal-ip` | Owner PIN + CSRF + reason | Raw-IP reveal with audit status |
+| `POST /api/guild/:guildId/member/:userId/reveal-token` | Owner PIN + CSRF, rate-limited | Per-user OAuth2 token reveal with automatic audit status |
+| `POST /api/verify-owner/guild/:guildId/user/:userId/reveal-ip` | Owner PIN + CSRF, rate-limited | Per-user raw-IP reveal with automatic audit status |
 | `GET /ping` | Public | Lightweight listener liveness |
 | `GET /health` | Public | Combined MongoDB, Discord, slash-command, voice, and verification readiness |
 | `GET /ready` | Public | Alias of the combined `/health` readiness response |
@@ -113,9 +112,7 @@ MongoDB model/collection names and encryption format.
 Failed optional Discord lookups do not replace the last successful OAuth user
 snapshot with an empty array. Normal list/export APIs never return raw OAuth
 tokens or raw IP. Raw OAuth2 tokens and raw IP can only be revealed through
-Owner per-user actions that attempt audit writes and report audit status. The
-Owner Member Detail page performs that audited reveal in one click and displays
-the complete decrypted values; list and export APIs remain redacted.
+separate per-user actions that require the Owner session, CSRF, rate limiting, and successful audit writes. The dashboard does not ask for a manual reason; it records an automatic action reason and reveals only the requested value. List, full-detail, and export APIs remain redacted.
 
 Guilds and connections are stored as ordered versioned chunks, while the target
 member has a versioned core snapshot plus ordered role chunks. The sanitized
@@ -192,9 +189,7 @@ Custom command: npm install && npm start
 Internal port:   PORT (or 3000)
 ```
 
-`render.yaml` describes one root Web Service with `npm start` and `/health`
-as the combined dependency readiness check. `/ready` is an alias of the same
-readiness response, while `/ping` remains the simple listener liveness check.
+`render.yaml` describes one root Web Service with `npm start` and uses `/ping` for host liveness. `/health` and `/ready` remain the combined dependency-readiness responses used by monitoring and diagnostics.
 
 After deploy, run the single-port smoke helper from a trusted machine:
 
@@ -240,6 +235,7 @@ migration but does not replace an external backup for whole-database loss.
 ```bash
 npm run check
 npm test
+npm run check:coverage
 npm audit --audit-level=high
 ```
 

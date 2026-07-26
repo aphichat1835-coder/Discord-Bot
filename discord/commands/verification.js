@@ -17,6 +17,7 @@
 ================================================================================
 */
 
+const { PermissionFlagsBits } = require("discord.js");
 const crypto = require("node:crypto");
 const { MessageEmbed, MessageActionRow, MessageButton } = require("../core/discordCompat");
 const config = require("../config.json");
@@ -552,7 +553,7 @@ async function handle(interaction, client) {
 }
 
 async function handleSetupVerify(interaction) {
-    if (!interaction.member.permissions.has("ADMINISTRATOR")) {
+    if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
         return interaction.reply({
             content: `> ${config.emojis.no_entry} ต้องเป็น Administrator`,
             ephemeral: true
@@ -630,7 +631,7 @@ async function handleSetupVerify(interaction) {
         };
     }
 
-    if (!channel?.isText?.()) {
+    if (channel?.isTextBased?.() !== true || channel?.isSendable?.() !== true || channel?.isThread?.() === true) {
         return interaction.editReply({
             content: `> ${config.emojis.error} กรุณาเลือกห้องข้อความเท่านั้น`
         });
@@ -639,7 +640,7 @@ async function handleSetupVerify(interaction) {
     const botMember = await resolveGuildBotMember(interaction.guild, interaction.client);
     const sendPerms = channel.permissionsFor(botMember);
 
-    if (!sendPerms?.has("SEND_MESSAGES") || !sendPerms?.has("EMBED_LINKS")) {
+    if (!sendPerms?.has(PermissionFlagsBits.SendMessages) || !sendPerms?.has(PermissionFlagsBits.EmbedLinks)) {
         return interaction.editReply({
             content:
                 `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความหรือ Embed ในห้อง <#${channel.id}>\n` +

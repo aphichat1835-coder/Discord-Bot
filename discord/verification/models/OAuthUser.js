@@ -10,6 +10,7 @@ function oauthTokenFields() {
         scope: String,
         tokenType: String,
         lastRefreshAt: Number,
+        version: { type: Number, default: 0 },
         refreshFailCount: { type: Number, default: 0 },
         lastRefreshError: String,
         revokedAt: Number,

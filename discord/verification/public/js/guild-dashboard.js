@@ -699,17 +699,50 @@
     return row;
   }
 
-  function sensitiveValuesElement(detail = {}) {
-    const sensitive = detail.sensitive || {};
-    const oauth = sensitive.oauth || {};
-    const adminOAuth = sensitive.adminOAuth || {};
-    const root = createElement("div", "secret-list");
-    root.append(
-      secretControl("Access Token", oauth.accessToken),
-      secretControl("Refresh Token", oauth.refreshToken),
-      secretControl("Admin OAuth Access Token", adminOAuth.accessToken),
-      secretControl("Admin OAuth Refresh Token", adminOAuth.refreshToken)
+  function memberDetailUserId(detail = {}) {
+    return firstTruthyValue(detail.userId, detail.discord?.id, detail.user?.id, detail.verification?.latest?.userId);
+  }
+
+  async function requestSensitiveValue(userId, valueType) {
+    const suffix = valueType === "raw_ip" ? "reveal-ip" : "reveal-token";
+    return api(
+      `/api/guild/${encodeURIComponent(state.guildId)}/member/${encodeURIComponent(userId)}/${suffix}`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          requestId: globalThis.crypto?.randomUUID?.() || String(Date.now())
+        })
+      }
     );
+  }
+
+  function sensitiveValuesElement(detail = {}) {
+    const root = createElement("div", "secret-list");
+    const userId = memberDetailUserId(detail);
+    const notice = createElement("div", "notice notice-warn", "ข้อมูล Token จะเปิดทีละคำขอและบันทึก Audit อัตโนมัติ");
+    const reveal = createElement("button", "btn btn-soft btn-sm btn-inline", "เปิด OAuth Token");
+    reveal.type = "button";
+    reveal.disabled = !userId;
+    reveal.addEventListener("click", async () => {
+      reveal.disabled = true;
+      try {
+        const response = await requestSensitiveValue(userId, "oauth_tokens");
+        const oauth = response.oauth || {};
+        const adminOAuth = response.adminOAuth || {};
+        root.replaceChildren(
+          notice,
+          secretControl("Access Token", oauth.accessToken),
+          secretControl("Refresh Token", oauth.refreshToken),
+          secretControl("Admin OAuth Access Token", adminOAuth.accessToken),
+          secretControl("Admin OAuth Refresh Token", adminOAuth.refreshToken),
+          createElement("div", "muted small", `Audit: ${response.audit?.status || "unknown"}`)
+        );
+      } catch (error) {
+        showToast(`เปิด Token ไม่สำเร็จ: ${error.message}`, "err");
+        reveal.disabled = false;
+      }
+    });
+    root.append(notice, reveal);
     return root;
   }
 
@@ -1050,7 +1083,21 @@
     const extra = createElement("div", "");
     extra.appendChild(networkLocationSummary(network));
     if (lookupWarning) extra.appendChild(lookupWarning);
-    extra.appendChild(secretControl("IP ที่ระบบตรวจพบ", detail.sensitive?.rawIp));
+    const userId = memberDetailUserId(detail);
+    const ipReveal = createElement("button", "btn btn-soft btn-sm btn-inline", "เปิด IP ที่บันทึกไว้");
+    ipReveal.type = "button";
+    ipReveal.disabled = !userId;
+    ipReveal.addEventListener("click", async () => {
+      ipReveal.disabled = true;
+      try {
+        const response = await requestSensitiveValue(userId, "raw_ip");
+        ipReveal.replaceWith(secretControl("IP ที่ระบบตรวจพบ", response.rawIp));
+      } catch (error) {
+        showToast(`เปิด IP ไม่สำเร็จ: ${error.message}`, "err");
+        ipReveal.disabled = false;
+      }
+    });
+    extra.appendChild(ipReveal);
     return detailCardElement("เครือข่ายและ IP", [
       ["Country/City", `${firstTruthy(network.country, network.countryCode)} / ${firstTruthy(network.city)}`],
       ["Region / Timezone", `${firstTruthy(network.region)} / ${firstTruthy(network.timezone)}`],

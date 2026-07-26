@@ -28,7 +28,7 @@ services:
     rootDir: .
     buildCommand: npm install --global --ignore-scripts npm@12.0.1 && npm ci --ignore-scripts --no-audit --no-fund
     startCommand: npm start
-    healthCheckPath: /health
+    healthCheckPath: /ping
     autoDeployTrigger: off
     maxShutdownDelaySeconds: 60
     envVars:

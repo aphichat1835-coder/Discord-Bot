@@ -19,6 +19,7 @@ const {
     isAdministrator
 } = require("../core/discordPermissions");
 const { sendWebhookEvent, getDiscordAvatarUrl, getDiscordGuildIconUrl } = require("../core/webhooks");
+const { readFiniteInteger } = require("../core/numbers");
 
 async function deleteMessageWithLog(message, scope = "message-delete") {
     if (!canDeleteMessage(message)) {
@@ -66,7 +67,7 @@ function trimMapToMaxSize(map, maxSize) {
     }
 }
 
-async function executeProtectionAction({ member, result, message, deleteMessage = false }) {
+async function executeProtectionAction({ member, result, message, deleteMode = "none" }) {
     const action = result?.action || "log";
     const output = {
         action,
@@ -79,8 +80,10 @@ async function executeProtectionAction({ member, result, message, deleteMessage 
     };
 
     try {
-        if (deleteMessage && message) {
+        if (message && deleteMode === "raid") {
             output.deletedMessages = await deleteRaidEvidenceSafely(message, 5);
+        } else if (message && deleteMode === "single") {
+            output.deletedMessages = await deleteMessageWithLog(message, "protection-pipeline") ? 1 : 0;
         }
 
         if (action === "timeout") {
@@ -171,10 +174,44 @@ async function recordProtectionResult({ guild, sessionManager, result, member, m
     }
 }
 
+const PROTECTION_ACTION_RANK = Object.freeze({ log: 0, delete_message: 1, timeout: 2, kick: 3, ban: 4 });
+const PROTECTION_SEVERITY_RANK = Object.freeze({ info: 0, warning: 1, danger: 2, critical: 3 });
+
+function mergeProtectionFindings(findings = []) {
+    if (!findings.length) return null;
+    const ordered = [...findings].sort((left, right) =>
+        (PROTECTION_ACTION_RANK[right.action || (right.shouldDelete ? "delete_message" : "log")] || 0) -
+        (PROTECTION_ACTION_RANK[left.action || (left.shouldDelete ? "delete_message" : "log")] || 0)
+    );
+    const strongest = ordered[0];
+    const severity = [...findings].sort((left, right) =>
+        (PROTECTION_SEVERITY_RANK[right.severity] || 0) - (PROTECTION_SEVERITY_RANK[left.severity] || 0)
+    )[0]?.severity || "warning";
+    const ruleIds = findings.map(item => item.trigger || "Protection Triggered");
+    return {
+        ...strongest,
+        action: strongest.action || (strongest.shouldDelete ? "delete_message" : "log"),
+        severity,
+        trigger: ruleIds.join(" + "),
+        reason: findings.map(item => item.reason).filter(Boolean).join(" | ").slice(0, 480),
+        evidence: [...new Set(findings.flatMap(item => item.evidence || []))].slice(0, 20),
+        shouldCreateCase: findings.some(item => item.shouldCreateCase !== false),
+        metadata: {
+            ...findings.reduce((out, item) => ({ ...out, ...(item.metadata || {}) }), {}),
+            ruleIds
+        },
+        deleteMode: findings.some(item => item.trigger?.includes("Anti-Raid"))
+            ? "raid"
+            : findings.some(item => item.shouldDelete)
+                ? "single"
+                : "none"
+    };
+}
+
 function register({
     client, config, sessionManager, voiceWorker,
     commands,
-    spamTracking, antiRaidDebounce,
+    spamTracking,
     disabledCommands, commandCooldowns, COMMAND_COOLDOWNS_MS,
     DEFAULT_COOLDOWN_MS, SHADOW_MASTER_ID,
     checkApproval, MAX_SPAM_USERS
@@ -182,10 +219,9 @@ function register({
     const commandInFlight = new Set();
     let _antiRaidCache = null;
     let _antiRaidExpiry = 0;
-    const spamCleanupMs = Math.max(30000, Number(process.env.SPAM_TRACKING_CLEANUP_MS || 60000) || 60000);
-    const spamEntryTtlMs = Math.max(60000, Number(process.env.SPAM_TRACKING_ENTRY_TTL_MS || 5 * 60 * 1000) || 5 * 60 * 1000);
-    const commandCooldownMaxUsers = Math.max(100, Number(process.env.COMMAND_COOLDOWN_MAX_USERS || 5000) || 5000);
-    const antiRaidDebounceMaxKeys = Math.max(100, Number(process.env.ANTI_RAID_DEBOUNCE_MAX_KEYS || 5000) || 5000);
+    const spamCleanupMs = readFiniteInteger(process.env.SPAM_TRACKING_CLEANUP_MS, { fallback: 60000, min: 30000, max: 60 * 60 * 1000 });
+    const spamEntryTtlMs = readFiniteInteger(process.env.SPAM_TRACKING_ENTRY_TTL_MS, { fallback: 5 * 60 * 1000, min: 60000, max: 24 * 60 * 60 * 1000 });
+    const commandCooldownMaxUsers = readFiniteInteger(process.env.COMMAND_COOLDOWN_MAX_USERS, { fallback: 5000, min: 100, max: 100000 });
 
     const spamCleanupTimer = setInterval(() => {
         const cutoff = Date.now() - spamEntryTtlMs;
@@ -209,130 +245,95 @@ function register({
     //  💬  messageCreate — Protection checks
     // ════════════════════════════════════════════════════════════════════════
     client.on("messageCreate", async (message) => {
-        if (message.author.bot || !message.guild) return;
+        if (message.author?.bot || !message.guild) return;
 
-        const now = Date.now();
-        if (!_antiRaidCache || now > _antiRaidExpiry) {
-            _antiRaidCache  = await sessionManager.getSetting('antiRaidEnabled', true);
-            _antiRaidExpiry = now + 10000;
-        }
-        const globalAntiRaidEnabled = _antiRaidCache;
-        const pConf = await protection.getProtectionConfig(message.guild.id).catch(() => protection.DEFAULT_CONFIG);
-        const antiRaidEnabled = globalAntiRaidEnabled && pConf?.antiRaid?.enabled !== false;
+        try {
+            const now = Date.now();
+            if (!_antiRaidCache || now > _antiRaidExpiry) {
+                _antiRaidCache = await sessionManager.getSetting("antiRaidEnabled", true);
+                _antiRaidExpiry = now + 10000;
+            }
 
-        if (antiRaidEnabled && message.mentions.everyone) {
-            const isAdmin = isAdministrator(message.member)
-                || message.member.roles.cache.has(config.roles.fallbackAdminId);
+            const pConf = await protection.getProtectionConfig(message.guild.id)
+                .catch(() => protection.DEFAULT_CONFIG);
+            const findings = [];
+            const touchedKeys = [];
+            const member = message.member;
+
+            const isAdmin = member
+                ? isAdministrator(member) || member.roles?.cache?.has?.(config.roles.fallbackAdminId)
+                : false;
             const isOwner = message.author.id === message.guild.ownerId;
+            const antiRaidEnabled = _antiRaidCache && pConf?.antiRaid?.enabled !== false;
 
-            if (!isAdmin && !isOwner) {
-                if (spamTracking.size >= MAX_SPAM_USERS) spamTracking.delete(spamTracking.keys().next().value);
-
-                const spamKey = `${message.guild.id}_${message.author.id}`;
-                const raidWindowMs = pConf?.antiRaid?.spamWindowMs || 60000;
-                const history = (spamTracking.get(spamKey) || []).filter(t => Date.now() - t < raidWindowMs);
-                history.push(Date.now());
-                spamTracking.set(spamKey, history);
-
-                const result = protection.checkAntiRaid(message.member, history, pConf);
-
-                if (result) {
-                    const debounceKey = `${message.guild.id}_${message.author.id}`;
-                    try {
-                        const actionResult = canEnforceProtection(pConf)
-                            ? await executeProtectionAction({
-                                member: message.member,
-                                result,
-                                message,
-                                deleteMessage: true
-                            })
-                            : buildAuditOnlyProtectionResult(result);
-
-                        if (Date.now() - (antiRaidDebounce.get(debounceKey) || 0) > 5000) {
-                            antiRaidDebounce.set(debounceKey, Date.now());
-                            trimMapToMaxSize(antiRaidDebounce, antiRaidDebounceMaxKeys);
-                            await recordProtectionResult({
-                                guild: message.guild,
-                                sessionManager,
-                                result,
-                                member: message.member,
-                                message,
-                                actionResult
-                            });
-                        }
-                    } catch (e) {
-                        console.error(`[PROTECTION] ⚠️ ${e.message}`);
-                    } finally {
-                        spamTracking.delete(spamKey);
-                    }
-                }
+            if (member && antiRaidEnabled && message.mentions?.everyone && !isAdmin && !isOwner) {
+                const key = `${message.guild.id}_${message.author.id}`;
+                const windowMs = pConf?.antiRaid?.spamWindowMs || 60000;
+                const history = (spamTracking.get(key) || []).filter(timestamp => now - timestamp < windowMs);
+                history.push(now);
+                spamTracking.set(key, history);
+                touchedKeys.push(key);
+                const finding = protection.checkAntiRaid(member, history, pConf);
+                if (finding) findings.push(finding);
             }
-        }
 
-        // ── Anti-Spam (ข้อความธรรมดา) ──
-        if (pConf?.antiSpam?.enabled) {
-            const spamKey  = `spam_${message.guild.id}_${message.author.id}`;
-            const spamWindowMs = pConf?.antiSpam?.windowMs || 5000;
-            const spamHist = (spamTracking.get(spamKey) || []).filter(t => Date.now() - t < spamWindowMs);
-            spamHist.push(Date.now());
-            spamTracking.set(spamKey, spamHist);
+            if (member && pConf?.antiSpam?.enabled) {
+                const key = `spam_${message.guild.id}_${message.author.id}`;
+                const windowMs = pConf?.antiSpam?.windowMs || 5000;
+                const history = (spamTracking.get(key) || []).filter(timestamp => now - timestamp < windowMs);
+                history.push(now);
+                spamTracking.set(key, history);
+                touchedKeys.push(key);
+                const finding = protection.checkAntiSpam(member, history, pConf);
+                if (finding) findings.push(finding);
+            }
+
+            if (pConf?.linkFilter?.enabled) {
+                const finding = protection.checkLinkFilter(message, pConf);
+                if (finding) findings.push({ ...finding, action: "delete_message", shouldDelete: true, shouldCreateCase: false });
+            }
+
             trimMapToMaxSize(spamTracking, MAX_SPAM_USERS);
+            const result = mergeProtectionFindings(findings);
+            if (!result) return;
 
-            const spamResult = protection.checkAntiSpam(message.member, spamHist, pConf);
-            if (spamResult) {
-                try {
-                    const deleted = canEnforceProtection(pConf) ? await deleteMessageWithLog(message, "anti-spam") : false;
-                    const actionResult = canEnforceProtection(pConf)
-                        ? await executeProtectionAction({ member: message.member, result: spamResult })
-                        : buildAuditOnlyProtectionResult(spamResult);
-                    actionResult.deletedMessages = deleted ? 1 : 0;
-
-                    await recordProtectionResult({
-                        guild: message.guild,
-                        sessionManager,
-                        result: spamResult,
-                        member: message.member,
-                        message,
-                        actionResult
-                    });
-                    spamTracking.delete(spamKey);
-                } catch (e) { console.error(`[ANTI-SPAM] ⚠️ ${e.message}`); }
-            }
-
-        }
-
-        // ── Link Filter ──
-        if (pConf?.linkFilter?.enabled) {
-            const linkResult = protection.checkLinkFilter(message, pConf);
-            if (linkResult) {
-                const deleted = canEnforceProtection(pConf) ? await deleteMessageWithLog(message, "link-filter") : false;
-                const actionResult = canEnforceProtection(pConf)
-                    ? {
-                        action: "delete_message",
-                        attempted: true,
-                        success: deleted,
-                        reason: linkResult.reason,
-                        error: deleted ? null : "message delete failed"
-                    }
-                    : buildAuditOnlyProtectionResult({ ...linkResult, action: "delete_message" });
-
-                await recordProtectionResult({
-                    guild: message.guild,
-                    sessionManager,
-                    result: { ...linkResult, action: "delete_message", shouldCreateCase: false },
-                    member: message.member,
+            const actionResult = canEnforceProtection(pConf)
+                ? await executeProtectionAction({
+                    member,
+                    result,
                     message,
-                    actionResult
-                });
+                    deleteMode: result.deleteMode
+                })
+                : buildAuditOnlyProtectionResult(result);
 
-                if (canEnforceProtection(pConf)) {
-                    message.channel.send({
-                        content: `> 🔗 <@${message.author.id}> ลิงก์ถูกบล็อกโดยระบบ`
-                    }).then(m => setTimeout(() => m.delete().catch(() => {}), 5000)).catch(() => {});
+            await recordProtectionResult({
+                guild: message.guild,
+                sessionManager,
+                result,
+                member,
+                message,
+                actionResult
+            });
+
+            for (const key of touchedKeys) spamTracking.delete(key);
+
+            if (
+                canEnforceProtection(pConf) &&
+                findings.some(finding => finding.shouldDelete) &&
+                actionResult.deletedMessages > 0
+            ) {
+                const notice = await message.channel.send({
+                    content: `> 🔗 <@${message.author.id}> ข้อความถูกบล็อกโดยระบบ`,
+                    allowedMentions: { parse: [] }
+                }).catch(() => null);
+                if (notice) {
+                    const timer = setTimeout(() => notice.delete().catch(() => {}), 5000);
+                    timer.unref?.();
                 }
             }
+        } catch (error) {
+            console.error(`[PROTECTION] Top-level message pipeline failed safely: ${error?.message || error}`);
         }
-
     });
 
     // ════════════════════════════════════════════════════════════════════════
@@ -486,4 +487,4 @@ function register({
     return { stop };
 }
 
-module.exports = { register };
+module.exports = { register, _test: { mergeProtectionFindings, executeProtectionAction } };

@@ -6,14 +6,18 @@ const { resolvePublicBaseUrl } = require('../../core/publicUrl');
 const DEFAULT_REFRESH_MARGIN_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_REFRESH_SCAN_LIMIT = 100;
 const DEFAULT_REFRESH_FAIL_MAX = 5;
+const refreshLocks = new Map();
 
 function readBooleanDefaultTrue(value) {
     if (value === undefined || value === null || value === '') return true;
     return !['0', 'false', 'no', 'off'].includes(String(value).trim().toLowerCase());
 }
 
-function shouldStoreOAuthTokens(env = process.env) {
-    return readBooleanDefaultTrue(env.STORE_OAUTH_TOKENS);
+function shouldStoreOAuthTokens(env = process.env, guildConfig = null) {
+    const globalEnabled = readBooleanDefaultTrue(env.STORE_OAUTH_TOKENS);
+    const guildSetting = guildConfig?.security?.storeOAuthTokens;
+    if (guildSetting === false) return false;
+    return globalEnabled && guildSetting !== false;
 }
 
 function getPublicBaseUrl(env = process.env) {
@@ -51,6 +55,22 @@ function getOAuthRefreshConfig(env = process.env) {
     };
 }
 
+
+async function withRefreshLock(key, fn) {
+    const previous = refreshLocks.get(key) || Promise.resolve();
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const current = previous.catch(() => {}).then(() => gate);
+    refreshLocks.set(key, current);
+    await previous.catch(() => {});
+    try {
+        return await fn();
+    } finally {
+        release();
+        if (refreshLocks.get(key) === current) refreshLocks.delete(key);
+    }
+}
+
 function tokenPath(tokenField, key) {
     return `${tokenField}.${key}`;
 }
@@ -59,11 +79,15 @@ function buildRefreshQuery(now, marginMs, failMax, tokenField = 'oauth') {
     return {
         [tokenPath(tokenField, 'encryptedRefreshToken')]: { $exists: true, $ne: '' },
         [tokenPath(tokenField, 'revokedAt')]: { $in: [null] },
-        [tokenPath(tokenField, 'expiresAt')]: { $lte: now + marginMs },
         $or: [
+            { [tokenPath(tokenField, 'expiresAt')]: { $lte: now + marginMs } },
+            { [tokenPath(tokenField, 'expiresAt')]: { $exists: false } },
+            { [tokenPath(tokenField, 'expiresAt')]: null }
+        ],
+        $and: [{ $or: [
             { [tokenPath(tokenField, 'refreshFailCount')]: { $exists: false } },
             { [tokenPath(tokenField, 'refreshFailCount')]: { $lt: failMax } }
-        ]
+        ] }]
     };
 }
 
@@ -77,17 +101,46 @@ function buildStoredOAuthUpdate(tokenData, now, prepareTokenStorage = discord.pr
     };
 }
 
-async function refreshOneOAuthUser(doc, { discordApi, redirectUri, now, prepareTokenStorage, tokenField = 'oauth' }) {
-    const tokenState = doc[tokenField] || {};
-    const tokenData = await discordApi.refreshToken(tokenState.encryptedRefreshToken, redirectUri);
-    const oauth = buildStoredOAuthUpdate(tokenData, now, prepareTokenStorage);
-    await doc.updateOne({
-        $set: {
-            [tokenField]: oauth,
-            updatedAt: now
+async function refreshOneOAuthUser(doc, { model, discordApi, redirectUri, now, prepareTokenStorage, tokenField = 'oauth' }) {
+    const userId = doc.discord?.userId || String(doc._id);
+    return withRefreshLock(`${userId}:${tokenField}`, async () => {
+        const tokenState = doc[tokenField] || {};
+        const previousRefreshToken = tokenState.encryptedRefreshToken;
+        const previousVersion = Number(tokenState.version || 0);
+        const tokenData = await discordApi.refreshToken(previousRefreshToken, redirectUri);
+        const oauth = {
+            ...buildStoredOAuthUpdate(tokenData, now, prepareTokenStorage),
+            version: previousVersion + 1
+        };
+        const versionCondition = previousVersion > 0
+            ? { [tokenPath(tokenField, 'version')]: previousVersion }
+            : {
+                $or: [
+                    { [tokenPath(tokenField, 'version')]: 0 },
+                    { [tokenPath(tokenField, 'version')]: { $exists: false } }
+                ]
+            };
+        const result = await model.updateOne(
+            {
+                _id: doc._id,
+                [tokenPath(tokenField, 'encryptedRefreshToken')]: previousRefreshToken,
+                ...versionCondition
+            },
+            {
+                $set: {
+                    [tokenField]: oauth,
+                    updatedAt: now
+                }
+            }
+        );
+        const modified = Number(result?.modifiedCount ?? result?.nModified ?? 0);
+        if (modified !== 1) {
+            const conflict = new Error('OAuth refresh state changed before persistence');
+            conflict.code = 'TOKEN_REFRESH_CONFLICT';
+            throw conflict;
         }
+        return { ok: true, tokenField, userId, version: oauth.version };
     });
-    return { ok: true, tokenField, userId: doc.discord?.userId || doc.id };
 }
 
 async function markRefreshFailure(doc, err, { now, failMax, tokenField = 'oauth' }) {
@@ -136,6 +189,7 @@ async function refreshTokenField({ model, tokenField, redirectUri, now, config, 
     for (const doc of docs) {
         try {
             await refreshOneOAuthUser(doc, {
+                model,
                 discordApi,
                 redirectUri,
                 now,
@@ -232,6 +286,8 @@ module.exports = {
         readPositiveNumber,
         refreshOneOAuthUser,
         markRefreshFailure,
-        refreshTokenField
+        refreshTokenField,
+        withRefreshLock,
+        refreshLocks
     }
 };

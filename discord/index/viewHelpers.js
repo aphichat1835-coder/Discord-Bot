@@ -112,7 +112,13 @@ function csrfFetchScript() {
         const opts=init ? Object.assign({},init) : {};
         const method=String(opts.method || (input && input.method) || 'GET').toUpperCase();
         const rawUrl=typeof input==='string' ? input : String(input && input.url || '');
-        const sameOrigin=rawUrl.startsWith('/') || rawUrl.startsWith(window.location.origin);
+        let sameOrigin=false;
+        try{
+            const target=new URL(rawUrl || window.location.href,window.location.href);
+            sameOrigin=target.origin===window.location.origin;
+        }catch{
+            sameOrigin=false;
+        }
         if(sameOrigin && !['GET','HEAD','OPTIONS'].includes(method)){
             const headers=new Headers(opts.headers || {});
             if(!headers.has('x-csrf-token')){

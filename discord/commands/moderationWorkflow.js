@@ -1,3 +1,4 @@
+const { PermissionFlagsBits } = require("discord.js");
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");
 const { requireMemberPermission, checkRoleHierarchy, safeDefer, markCommandAccepted } = require("../guards/commandGuards");
@@ -19,7 +20,7 @@ const VALIDATION_STOP = Symbol("VALIDATION_STOP");
 async function requireModerationPermission(interaction, action) {
     return requireMemberPermission(
         interaction,
-        [requiredModerationPermission(action), "ADMINISTRATOR"],
+        [requiredModerationPermission(action), PermissionFlagsBits.Administrator],
         `> ${config.emojis.no_entry} ไม่มีสิทธิ์ใช้งานคำสั่งนี้!`,
         { mode: "any" }
     );
@@ -125,7 +126,7 @@ async function applyRemovalAction(interaction, input, pendingCase, action) {
 }
 
 async function applyBan(interaction, input, pendingCase) {
-    assertBotPermission(interaction, "BAN_MEMBERS");
+    assertBotPermission(interaction, PermissionFlagsBits.BanMembers);
     return applyRemovalAction(
         interaction,
         input,
@@ -135,12 +136,12 @@ async function applyBan(interaction, input, pendingCase) {
 }
 
 async function applyKick(interaction, input, pendingCase) {
-    assertBotPermission(interaction, "KICK_MEMBERS");
+    assertBotPermission(interaction, PermissionFlagsBits.KickMembers);
     return applyRemovalAction(interaction, input, pendingCase, () => input.target.kick(input.reason));
 }
 
 async function applyTimeout(interaction, input, pendingCase) {
-    assertBotPermission(interaction, "MODERATE_MEMBERS");
+    assertBotPermission(interaction, PermissionFlagsBits.ModerateMembers);
     await input.target.timeout(input.duration.durationMs, input.reason);
     const result = await queueFinalModerationDm(
         interaction,

@@ -4,6 +4,7 @@
  * สร้าง role button panels ที่ซับซ้อนกว่า verification
  * สำหรับอนาคต: multi-role panels, role menus
  */
+const { PermissionFlagsBits } = require("discord.js");
 const { MessageEmbed, MessageActionRow, MessageButton, MessageSelectMenu } = require('../core/discordCompat');
 const config = require('../config.json');
 
@@ -22,7 +23,7 @@ function validateRoleChange(guild, member, role) {
 
     const botMember = getBotMember(guild);
     if (!botMember) return { ok: false, reason: 'ไม่พบข้อมูลบอทในเซิร์ฟเวอร์' };
-    if (!botMember.permissions?.has?.('MANAGE_ROLES')) return { ok: false, reason: 'บอทไม่มีสิทธิ์ Manage Roles' };
+    if (!botMember.permissions?.has?.(PermissionFlagsBits.ManageRoles)) return { ok: false, reason: 'บอทไม่มีสิทธิ์ Manage Roles' };
     if (role.managed) return { ok: false, reason: 'ยศนี้เป็น managed role' };
     if (botMember.roles?.highest && role.position >= botMember.roles.highest.position) {
         return { ok: false, reason: 'ยศสูงกว่าหรือเท่ากับยศสูงสุดของบอท' };
@@ -69,7 +70,7 @@ function buildRolePanel(options = {}) {
                 label:       r.label || `ยศ ${r.roleId}`,
                 value:       `role_${r.roleId}`,
                 emoji:       r.emoji  || '🎭',
-                description: r.desc   || null
+                ...(r.desc ? { description: String(r.desc).slice(0, 100) } : {})
             })));
         components = [new MessageActionRow().addComponents(menu)];
     } else {

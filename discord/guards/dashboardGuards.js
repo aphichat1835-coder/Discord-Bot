@@ -2,6 +2,7 @@ const crypto = require("node:crypto");
 const { sendWebhookEvent } = require("../core/webhooks");
 const safeLogger = require("../core/safeLogger");
 const dashboardAuth = require("../index/auth");
+const { readFiniteInteger } = require("../core/numbers");
 
 const DASHBOARD_READ_API_BYPASS = new Set([]);
 
@@ -12,7 +13,7 @@ const REVEAL_MAX = 5;
 const REVEAL_LOCKOUT = 15 * 60 * 1000;
 const REVEAL_ATTEMPT_TTL = 30 * 60 * 1000;
 const REVEAL_ATTEMPT_MAX_KEYS = 1000;
-const RATE_LIMIT_MAX_BUCKETS = Math.max(100, Number(process.env.RATE_LIMIT_MAX_BUCKETS || 5000) || 5000);
+const RATE_LIMIT_MAX_BUCKETS = readFiniteInteger(process.env.RATE_LIMIT_MAX_BUCKETS, { fallback: 5000, min: 100, max: 100000 });
 
 function safeDiscordInlineCode(value, maxLength = 180) {
     return String(value || "unknown")
@@ -130,7 +131,9 @@ function trimRateLimitBuckets(requestCounts, now = Date.now(), windowMs = 60000)
 }
 
 function readAuthorizationSecret(req) {
-    return String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+    const bearer = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+    if (bearer) return bearer;
+    return String(req.headers["x-internal-secret"] || "").trim();
 }
 
 function safeSecretEqual(provided, expected) {
@@ -147,6 +150,7 @@ function makeCheckAuth(API_SECRET) {
     const configuredSecret = typeof API_SECRET === "string" ? API_SECRET : "";
 
     return function checkAuth(req, res) {
+        req.authenticatedByServerSecret = false;
         if (!dashboardAuth.PIN()) return true;
 
         if (!configuredSecret) {
@@ -176,6 +180,7 @@ function makeCheckAuth(API_SECRET) {
             return false;
         }
 
+        req.authenticatedByServerSecret = true;
         return true;
     };
 }

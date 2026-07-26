@@ -15,6 +15,7 @@ const mongoose = require("mongoose");
 const crypto = require("node:crypto");
 const config = require("./config.json");
 const { sanitizeLogText } = require("./core/safeLogger");
+const { readFiniteInteger } = require("./core/numbers");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🗺️  REGION 1: IN-MEMORY STATE
@@ -615,7 +616,8 @@ async function saveDatabase() {
 
     try {
         if (sessions.size === 0) {
-            await SessionModel.deleteMany({}).catch(e => console.error("[DATABASE] ❌ clearAll failed:", e.message));
+            // An empty in-memory map is not proof that the owner requested a destructive wipe.
+            // Explicit bulk deletion is handled only by clearAllSessions().
             return;
         }
 
@@ -707,9 +709,13 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
         throw new Error("ALREADY_ACTIVE_IN_GUILD");
     }
 
-    const configuredMaxSessions = Math.max(
-        1,
-        Number(await getSetting("maxSessions", config.limits.maxSessions)) || config.limits.maxSessions
+    const configuredMaxSessions = readFiniteInteger(
+        await getSetting("maxSessions", config.limits.maxSessions),
+        {
+            fallback: readFiniteInteger(config.limits.maxSessions, { fallback: 1, min: 1, max: 1000 }),
+            min: 1,
+            max: 1000
+        }
     );
     const activeSessionCount = Array.from(sessions.values()).filter(isSessionRunnable).length;
     if (activeSessionCount >= configuredMaxSessions) {
@@ -991,9 +997,15 @@ function getAllSessions() {
     return sessions;
 }
 
-async function deleteSession(sessionId) {
+async function deleteSession(sessionId, options = {}) {
     const session = sessions.get(sessionId);
     if (!session) return false;
+
+    const expectedGeneration = options.expectedGeneration || null;
+    if (expectedGeneration && session.lifecycleGeneration !== expectedGeneration) {
+        console.warn(`[SESSION] ⚠️ Refused stale cleanup for ${sanitizeLogText(getSafeSessionId(sessionId))}; lifecycle generation changed.`);
+        return false;
+    }
 
     if (!dbConnected) {
         console.warn(`[DATABASE] ⚠️ Queued session ${sessionId} delete until database reconnects`);
@@ -1005,7 +1017,10 @@ async function deleteSession(sessionId) {
     }
 
     try {
-        const result = await SessionModel.deleteOne({ sessionId });
+        const deleteFilter = expectedGeneration
+            ? { sessionId, lifecycleGeneration: expectedGeneration }
+            : { sessionId };
+        const result = await SessionModel.deleteOne(deleteFilter);
         const deleted = result?.deletedCount ?? result?.n ?? 0;
         if (deleted < 1) {
             console.warn(`[DATABASE] ⚠️ Session ${sessionId} was already absent in database; clearing memory record`);

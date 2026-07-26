@@ -1,5 +1,6 @@
 const crypto = require("node:crypto");
 const { safeText, withFallbackLock } = require("./persistenceHelpers");
+const { sanitizeSensitiveValue } = require("../core/sensitiveData");
 const MAX_INDEX_RECORDS = 500;
 
 function storageKey(guildId, eventId) {
@@ -27,7 +28,9 @@ function normalizeEvidence(value) {
 }
 
 function normalizeMetadata(value) {
-    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    return value && typeof value === "object" && !Array.isArray(value)
+        ? sanitizeSensitiveValue(value, { maxDepth: 5, maxKeys: 100, maxArray: 50, maxString: 1000 })
+        : {};
 }
 
 function normalizeInternalEvent(input = {}) {
@@ -181,10 +184,11 @@ function matchesFilters(record, filters = {}) {
 }
 
 async function listInternalEvents(sessionManager, guildId, limit = 50, filters = {}) {
-    const records = await listFallback(sessionManager, guildId, limit);
-    return Object.keys(filters || {}).length
-        ? records.filter(record => matchesFilters(record, filters))
-        : records;
+    const boundedLimit = Math.max(1, Math.min(200, Number(limit) || 50));
+    const hasFilters = Object.keys(filters || {}).length > 0;
+    const records = await listFallback(sessionManager, guildId, hasFilters ? MAX_INDEX_RECORDS : boundedLimit);
+    const matched = hasFilters ? records.filter(record => matchesFilters(record, filters)) : records;
+    return matched.slice(0, boundedLimit);
 }
 
 module.exports = {

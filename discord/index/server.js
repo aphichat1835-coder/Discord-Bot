@@ -34,6 +34,33 @@ const { sendWebhookEvent, getWebhookDeliveryDiagnostics, getDiscordGuildIconUrl 
 const { getFeatureFlags } = require("../core/featureFlags");
 const { registerJoinCampaignRoutes } = require("./joinCampaignRoutes");
 const { getVerificationDiagnostics } = require("../verification/lifecycle");
+const { readFiniteInteger } = require("../core/numbers");
+
+function buildReadinessPayload({ client, sessionManager, voiceWorker, commandsReady, featureFlags, verification }) {
+    const botOnline = client?.isReady?.() ?? false;
+    const dbStatus = sessionManager?.getDatabaseStatus?.();
+    const dbConnected = dbStatus?.connected === true;
+    const resolvedFeatures = featureFlags || {};
+    const verificationRequired = resolvedFeatures.verification !== false;
+    const verificationReady = !verificationRequired || verification?.ready === true;
+    const voiceRequired = resolvedFeatures.voice !== false;
+    const voice = voiceWorker?.getWorkerDiagnostics?.() || null;
+    const voiceReady = !voiceRequired || (botOnline && dbConnected && voice?.ready === true);
+    const slashCommandsReady = commandsReady?.() === true;
+    const ready = botOnline && dbConnected && verificationReady && voiceReady && slashCommandsReady;
+
+    return {
+        status: ready ? "ok" : "degraded",
+        ready,
+        botOnline,
+        bot: botOnline,
+        dbConnected,
+        db: dbConnected,
+        voiceReady,
+        verificationReady,
+        commandsReady: slashCommandsReady
+    };
+}
 
 function safeRedirectPath(value) {
     const raw = String(value || "/").trim();
@@ -398,15 +425,15 @@ function registerRoutes({
     app, express, config, sessionManager, voiceWorker,
     commands, webLogs, MAX_LOGS, client, memoryMonitor, botReadyAt, commandsReady,
     API_SECRET, getWebPin, requestCounts,
-    disabledCommands, commandAuditLog, toggleCooldowns, commandCooldowns, spamTracking, antiRaidDebounce,
+    disabledCommands, commandAuditLog, toggleCooldowns, commandCooldowns, spamTracking,
     startRotateTimer, setupTelemetryRouter
 }) {
     const checkAuth      = makeCheckAuth(API_SECRET);
     const checkRevealPin = makeCheckRevealPin(getWebPin);
     const rateLimiter    = createRateLimiter(requestCounts, config, sessionManager);
     const PIN_ATTEMPT_TTL_MS = 10 * 60 * 1000;
-    const PIN_ATTEMPT_MAX_KEYS = Math.max(100, Number(process.env.PIN_ATTEMPT_MAX_KEYS || 1000) || 1000);
-    const ROTATE_MESSAGES_MAX = Math.max(1, Number(process.env.ROTATE_MESSAGES_MAX || 20) || 20);
+    const PIN_ATTEMPT_MAX_KEYS = readFiniteInteger(process.env.PIN_ATTEMPT_MAX_KEYS, { fallback: 1000, min: 100, max: 100000 });
+    const ROTATE_MESSAGES_MAX = readFiniteInteger(process.env.ROTATE_MESSAGES_MAX, { fallback: 20, min: 1, max: 500 });
 
     function getPinAttempts() {
         if (!app._pinAttempts) app._pinAttempts = new Map();
@@ -618,31 +645,15 @@ function registerRoutes({
     // ── Health / Ping ──
     app.get("/ping", (req, res) => res.status(200).send("OK"));
     const sendReadiness = (req, res) => {
-        const botOnline = client?.isReady?.() ?? false;
-        const dbStatus = sessionManager.getDatabaseStatus?.();
-        const dbConnected = dbStatus?.connected === true;
-        const verification = getVerificationDiagnostics();
-        const verificationRequired = getFeatureFlags().verification !== false;
-        const verificationReady = !verificationRequired || verification.ready === true;
-        const voiceRequired = getFeatureFlags().voice !== false;
-        const voice = voiceWorker.getWorkerDiagnostics?.() || null;
-        const voiceReady = !voiceRequired || (
-            botOnline && dbConnected && voice?.ready === true
-        );
-        const slashCommandsReady = commandsReady?.() === true;
-        const ready = botOnline && dbConnected && verificationReady && voiceReady && slashCommandsReady;
-
-        res.status(ready ? 200 : 503).json({
-            status: ready ? "ok" : "degraded",
-            ready,
-            botOnline,
-            bot: botOnline,
-            dbConnected,
-            db: dbConnected,
-            voiceReady,
-            verificationReady,
-            commandsReady: slashCommandsReady
+        const payload = buildReadinessPayload({
+            client,
+            sessionManager,
+            voiceWorker,
+            commandsReady,
+            featureFlags: getFeatureFlags(),
+            verification: getVerificationDiagnostics()
         });
+        return res.status(payload.ready ? 200 : 503).json(payload);
     };
     app.get("/health", sendReadiness);
     app.get("/ready", sendReadiness);
@@ -1208,6 +1219,7 @@ module.exports = {
     registerShadowPortal,
     buildEnvReadiness,
     _test: {
+        buildReadinessPayload,
         validateCommandToggleRequest,
         getCommandToggleCooldown,
         createCommandTogglePlan,

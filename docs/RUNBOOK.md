@@ -12,7 +12,7 @@ npm start
 The process must open one listener on `PORT || 3000`.
 
 - `/ping` proves the HTTP listener is alive.
-- `/health` is the Render combined-readiness probe for MongoDB, Discord
+- `/ping` is the Render host-liveness probe. `/health` is the combined-readiness response for MongoDB, Discord
   slash-command registration, voice, and verification. A 503 during startup is
   expected; persistent 503 requires investigation.
 - `/ready` is an alias of the same combined-readiness response.
@@ -90,7 +90,7 @@ simple listener-only liveness check.
      join/role result, and data-quality metadata are persisted;
    - no raw token/IP appears in logs or normal APIs.
 7. Open a verified user's “ดูข้อมูลทั้งหมด”, confirm the full Owner view shows
-   decrypted raw IP and OAuth tokens and creates an internal audit entry.
+   reveal Token or IP separately when needed; each action creates automatic audit intent/result records and normal/full-detail APIs remain redacted.
 
 ## Migration
 
@@ -215,11 +215,12 @@ was issued. No new admin OAuth route exists.
 npm ci --no-audit --no-fund
 npm run check
 npm test
+npm run check:coverage
 npm audit --audit-level=high
 ```
 
 Also run an approved secret scan and inspect `git diff --check`. Confirm the
-protected-path guard passes and that `git diff` contains no protected file or
+protected-path guard verifies the complete six-file manifest and an Owner PR approval marker bound to the exact head SHA; also confirm that `git diff` contains no unreviewed protected file or
 boot/import change.
 
 ## Rollback

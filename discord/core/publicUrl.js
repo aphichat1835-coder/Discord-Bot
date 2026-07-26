@@ -27,6 +27,20 @@ function resolvePublicBaseUrl(env = process.env, fallback = "") {
     return configuredPublicUrls(env)[0]?.value || trimTrailingSlashes(fallback);
 }
 
+function requirePublicBaseUrl(env = process.env, options = {}) {
+    const configured = resolvePublicBaseUrl(env);
+    if (configured) return configured;
+
+    const production = String(env.NODE_ENV || "").toLowerCase() === "production";
+    if (!production && options.allowDevelopmentFallback !== false) {
+        return trimTrailingSlashes(options.developmentFallback || "http://localhost:3000");
+    }
+
+    const error = new Error("PUBLIC_BASE_URL is required");
+    error.code = "public_base_url_required";
+    throw error;
+}
+
 function assertConsistentPublicOrigins(env = process.env) {
     const configured = configuredPublicUrls(env);
     if (configured.length < 2) return resolvePublicBaseUrl(env);
@@ -42,5 +56,6 @@ module.exports = {
     trimTrailingSlashes,
     configuredPublicUrls,
     resolvePublicBaseUrl,
+    requirePublicBaseUrl,
     assertConsistentPublicOrigins
 };

@@ -116,13 +116,20 @@ test("checkAuth accepts exact secret and rejects mismatches", () => { // NOSONAR
     const cookieRes = createRes();
     const token = dashboardAuth.makeToken();
 
-    assert.equal(checkAuth({ ip: TEST_CLIENT_A, path: "/api", headers: { authorization: "secret" } }, goodRes), true);
-    assert.equal(checkAuth({ ip: TEST_CLIENT_A, path: "/api", headers: { authorization: "wrong" } }, badRes), false);
-    assert.equal(checkAuth({
+    const secretRequest = { ip: TEST_CLIENT_A, path: "/api", headers: { authorization: "secret" } };
+    const rejectedRequest = { ip: TEST_CLIENT_A, path: "/api", headers: { authorization: "wrong" } };
+    const cookieRequest = {
         ip: TEST_CLIENT_A,
         path: "/api",
         headers: { cookie: `${dashboardAuth.COOKIE_NAME}=${encodeURIComponent(token)}` }
-    }, cookieRes), true);
+    };
+
+    assert.equal(checkAuth(secretRequest, goodRes), true);
+    assert.equal(secretRequest.authenticatedByServerSecret, true);
+    assert.equal(checkAuth(rejectedRequest, badRes), false);
+    assert.equal(rejectedRequest.authenticatedByServerSecret, false);
+    assert.equal(checkAuth(cookieRequest, cookieRes), true);
+    assert.equal(cookieRequest.authenticatedByServerSecret, false);
     assert.equal(badRes.statusCode, 401);
 
     if (oldPin === undefined) delete process.env.DASHBOARD_PIN;

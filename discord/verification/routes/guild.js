@@ -18,7 +18,7 @@ const { requireCsrf } = require('../../index/auth');
 const router = require("express").Router();
 const crypto = require("node:crypto");
 const mongoose = require("mongoose");
-const { resolvePublicBaseUrl } = require("../../core/publicUrl");
+const { requirePublicBaseUrl } = require("../../core/publicUrl");
 const { verificationGuildPage } = require("../guildPage");
 
 const GuildConfig = require("../models/GuildConfig");
@@ -58,6 +58,8 @@ const {
 } = require("../utils/verificationSnapshots");
 const verifiedMemberService = require("../services/verifiedMemberService");
 const verificationOwnerService = require("../ownerService");
+const { runMemberPrivacyDeletion } = require("../services/privacyDeletion");
+const { revealSensitiveValue } = require("../services/sensitiveAccessService");
 const { runGuildPreflight } = require("../services/guildPreflightService");
 
 const SNOWFLAKE_RE = /^\d{17,22}$/;
@@ -353,14 +355,10 @@ function pagination(page, limit, total) {
   };
 }
 
-function getPublicBaseUrl(req) {
-  const envUrl = resolvePublicBaseUrl(process.env, process.env.RENDER_EXTERNAL_URL || "");
-
-  if (envUrl) return trimTrailingSlashes(envUrl);
-
-  const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
-  const host = req.headers["x-forwarded-host"] || req.headers.host;
-  return trimTrailingSlashes(`${proto}://${host}`);
+function getPublicBaseUrl() {
+  return trimTrailingSlashes(requirePublicBaseUrl(process.env, {
+    developmentFallback: "http://localhost:3000"
+  }));
 }
 
 function trimTrailingSlashes(value) {
@@ -615,25 +613,14 @@ function buildDiscordAuthorizeUrl(req, { guildId, roleId, panelRevision = null }
   if (!dashboardUrl) throw new Error("Missing PUBLIC_BASE_URL/DASHBOARD_PUBLIC_URL");
   if (!clientId) throw new Error("Missing DISCORD_CLIENT_ID");
 
-  const redirectUri = `${dashboardUrl}/auth/callback`;
-
-  const state = createCompactCallbackState({
+  const panelState = createCompactCallbackState({
     guildId,
     roleId,
     expectedUserId: null,
     panelRevision
   });
 
-  const params = new URLSearchParams({
-    client_id: clientId,
-    redirect_uri: redirectUri,
-    response_type: "code",
-    scope: "identify identify.premium email connections guilds guilds.members.read guilds.join",
-    state,
-    prompt: "consent"
-  });
-
-  return `https://discord.com/oauth2/authorize?${params.toString()}`;
+  return `${dashboardUrl}/auth/start?state=${encodeURIComponent(panelState)}`;
 }
 
 function makePanelPayload(req, { guildId, verification }) {
@@ -1505,10 +1492,7 @@ router.post("/api/guild/:guildId/member/:userId/full-detail", requireAdmin, requ
       return res.status(400).json({ success: false, code: "invalid_user_id", error: "User ID ไม่ถูกต้อง" });
     }
     res.set("Cache-Control", "no-store");
-    res.json(await verificationOwnerService.getOwnerFullMemberDetail({
-      guildId,
-      userId: targetUserId
-    }));
+    res.json(await verificationOwnerService.getMemberDetail(guildId, targetUserId, { canViewSensitive: false }));
   } catch (err) {
     if (err?.code === "member_not_found") {
       return res.status(404).json({ success: false, code: err.code, error: "ไม่พบรายละเอียดสมาชิก" });
@@ -1554,9 +1538,13 @@ router.post("/api/guild/:guildId/member/:userId/reveal-token", requireAdmin, req
       return res.status(400).json({ success: false, code: "invalid_user_id", error: "User ID ไม่ถูกต้อง" });
     }
     res.set("Cache-Control", "no-store");
-    res.json(await verificationOwnerService.revealOAuthTokens({
+    res.json(await revealSensitiveValue({
+      actorId: getAdminId(req),
       guildId,
-      userId: targetUserId
+      userId: targetUserId,
+      valueType: "oauth_tokens",
+      requestId: req.body?.requestId,
+      loader: () => verificationOwnerService.revealOAuthTokens({ guildId, userId: targetUserId })
     }));
   } catch (err) {
     const status = tokenRevealErrorStatus(err?.code);
@@ -1565,6 +1553,26 @@ router.post("/api/guild/:guildId/member/:userId/reveal-token", requireAdmin, req
       code: err?.code || "token_reveal_failed",
       error: "เปิด OAuth token ไม่สำเร็จ"
     });
+  }
+});
+
+router.post("/api/guild/:guildId/member/:userId/reveal-ip", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
+  try {
+    const { guildId, userId } = req.params;
+    const targetUserId = cleanSnowflake(userId);
+    if (!targetUserId) return res.status(400).json({ success: false, code: "invalid_user_id", error: "User ID ไม่ถูกต้อง" });
+    res.set("Cache-Control", "no-store");
+    return res.json(await revealSensitiveValue({
+      actorId: getAdminId(req),
+      guildId,
+      userId: targetUserId,
+      valueType: "raw_ip",
+      requestId: req.body?.requestId,
+      loader: () => verificationOwnerService.revealRawIp({ guildId, userId: targetUserId })
+    }));
+  } catch (err) {
+    const status = err?.code?.startsWith("audit") ? 503 : 500;
+    return res.status(status).json({ success: false, code: err?.code || "ip_reveal_failed", error: "เปิด IP ไม่สำเร็จ" });
   }
 });
 
@@ -1638,63 +1646,6 @@ router.get("/api/guild/:guildId/stats", requireAdmin, requireGuildAdmin, async (
   }
 });
 
-async function deleteMemberDataAtomically({ guildId, targetUserId, deletedAt, deletedBy }) {
-  const session = await mongoose.startSession();
-  let results;
-  try {
-    await session.withTransaction(async () => {
-      results = await Promise.all([
-        VerifyLog.updateMany(
-          { guildId, userId: targetUserId, deletedAt: { $exists: false } },
-          { $set: { deletedAt, deletedBy } },
-          { session }
-        ),
-        OAuthUser.updateOne(
-          { "discord.userId": targetUserId, deletedAt: { $exists: false } },
-          { $pull: { guilds: { id: guildId } }, $set: { updatedAt: deletedAt } },
-          { session }
-        ),
-        OAuthUser.updateOne(
-          {
-            "discord.userId": targetUserId,
-            $or: [{ "lastVerify.guildId": guildId }, { "lastMember.guildId": guildId }],
-            deletedAt: { $exists: false }
-          },
-          { $unset: { lastVerify: "", lastMember: "" }, $set: { updatedAt: deletedAt } },
-          { session }
-        ),
-        IpIdentityLink.updateMany(
-          {
-            guildId,
-            "users.userId": targetUserId,
-            uniqueUsers: { $lte: 1 },
-            deletedAt: { $exists: false }
-          },
-          { $set: { deletedAt, deletedBy, updatedAt: deletedAt } },
-          { session }
-        ),
-        IpIdentityLink.updateMany(
-          {
-            guildId,
-            "users.userId": targetUserId,
-            uniqueUsers: { $gt: 1 },
-            deletedAt: { $exists: false }
-          },
-          {
-            $pull: { users: { userId: targetUserId }, roleSnapshots: { userId: targetUserId } },
-            $inc: { uniqueUsers: -1 },
-            $set: { updatedAt: deletedAt }
-          },
-          { session }
-        )
-      ]);
-    });
-    return results;
-  } finally {
-    await session.endSession();
-  }
-}
-
 router.delete("/api/guild/:guildId/member/:userId", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
   try {
     const { guildId, userId } = req.params;
@@ -1709,22 +1660,19 @@ router.delete("/api/guild/:guildId/member/:userId", requireAdmin, requireGuildAd
       });
     }
 
-    const deletedAt = now();
-    const deletedBy = adminId || "owner-dashboard";
-
-    const [verifyLogs, oauthGuildData, oauthLastData, singleIpLinks, sharedIpLinks] =
-      await deleteMemberDataAtomically({ guildId, targetUserId, deletedAt, deletedBy });
+    const deletion = await runMemberPrivacyDeletion({
+      guildId,
+      userId: targetUserId,
+      requestedBy: adminId || "dashboard-control"
+    });
 
     res.json({
       success: true,
-      deletedCount: verifyLogs.modifiedCount || 0,
-      details: {
-        verifyLogs: verifyLogs.modifiedCount || 0,
-        oauthGuildsPulled: oauthGuildData.modifiedCount || 0,
-        oauthLastSnapshotsCleared: oauthLastData.modifiedCount || 0,
-        ipIdentityLinksDeleted: singleIpLinks.modifiedCount || 0,
-        ipIdentityLinksUpdated: sharedIpLinks.modifiedCount || 0
-      }
+      jobId: deletion.jobId,
+      deletedCount: Object.values(deletion.manifest || {})
+        .filter(value => Number.isFinite(Number(value)))
+        .reduce((sum, value) => sum + Number(value), 0),
+      details: deletion.manifest
     });
   } catch (err) {
     return sendServerError(res, "delete-member-data", err, "ลบข้อมูลสมาชิกไม่สำเร็จ");

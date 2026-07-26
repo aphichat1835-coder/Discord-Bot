@@ -5,13 +5,11 @@ const mongoose = require("mongoose");
 const OAuthUser = require("../discord/verification/models/OAuthUser");
 const snapshotStore = require("../discord/verification/services/oauthSnapshotStore");
 const { archiveSourceDocument } = require("../discord/verification/services/migrationArchive");
+const { readFiniteInteger } = require("../discord/core/numbers");
 
 const APPLY = process.argv.includes("--apply");
 const DRY_RUN = process.argv.includes("--dry-run");
-const BATCH_SIZE = Math.max(
-    10,
-    Math.min(500, Number(process.env.VERIFICATION_MIGRATION_BATCH_SIZE || 100) || 100)
-);
+const BATCH_SIZE = readFiniteInteger(process.env.VERIFICATION_MIGRATION_BATCH_SIZE, { fallback: 100, min: 10, max: 500 });
 
 function migrationFilter() {
     return {

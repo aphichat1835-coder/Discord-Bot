@@ -18,27 +18,21 @@ const https = require("https");
 const { encryptToken, decryptToken } = require("./crypto");
 const { sanitizeLogText } = require("./safeLogger");
 const dmService = require("../../dm");
+const { readFiniteInteger } = require("../../core/numbers");
 
 const BASE = "https://discord.com/api/v10";
 const MAX_DISCORD_API_RESPONSE_BYTES = 12 * 1024 * 1024;
-const DISCORD_API_RESPONSE_MAX_BYTES = Math.min(
-    MAX_DISCORD_API_RESPONSE_BYTES,
-    Math.max(
-        64 * 1024,
-        Number(process.env.DISCORD_API_RESPONSE_MAX_BYTES || MAX_DISCORD_API_RESPONSE_BYTES) ||
-            MAX_DISCORD_API_RESPONSE_BYTES
-    )
-);
-const DISCORD_API_BODY_MAX_BYTES = Math.max(
-    16 * 1024,
-    Number(process.env.DISCORD_API_BODY_MAX_BYTES || 512 * 1024) || 512 * 1024
-);
-const DISCORD_API_ROLE_MAX = Math.max(50, Number(process.env.DISCORD_API_ROLE_MAX || 500) || 500);
-const DISCORD_API_CHANNEL_MAX = Math.max(50, Number(process.env.DISCORD_API_CHANNEL_MAX || 500) || 500);
-const DISCORD_API_PERMISSION_OVERWRITE_MAX = Math.max(
-    20,
-    Number(process.env.DISCORD_API_PERMISSION_OVERWRITE_MAX || 100) || 100
-);
+const DISCORD_API_RESPONSE_MAX_BYTES = readFiniteInteger(process.env.DISCORD_API_RESPONSE_MAX_BYTES, {
+    fallback: MAX_DISCORD_API_RESPONSE_BYTES, min: 64 * 1024, max: MAX_DISCORD_API_RESPONSE_BYTES
+});
+const DISCORD_API_BODY_MAX_BYTES = readFiniteInteger(process.env.DISCORD_API_BODY_MAX_BYTES, {
+    fallback: 512 * 1024, min: 16 * 1024, max: 4 * 1024 * 1024
+});
+const DISCORD_API_ROLE_MAX = readFiniteInteger(process.env.DISCORD_API_ROLE_MAX, { fallback: 500, min: 50, max: 5000 });
+const DISCORD_API_CHANNEL_MAX = readFiniteInteger(process.env.DISCORD_API_CHANNEL_MAX, { fallback: 500, min: 50, max: 5000 });
+const DISCORD_API_PERMISSION_OVERWRITE_MAX = readFiniteInteger(process.env.DISCORD_API_PERMISSION_OVERWRITE_MAX, {
+    fallback: 100, min: 20, max: 5000
+});
 const requestDiagnostics = {
     total: 0,
     inFlight: 0,

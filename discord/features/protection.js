@@ -4,6 +4,7 @@
  * ปัจจุบัน: Anti-Raid config, Spam detection config
  * อนาคต: Auto-mod, Nuke detection, Link filter, etc.
  */
+const { PermissionFlagsBits } = require("discord.js");
 const sessionManager    = require('../sessionManager');
 
 // ── Default protection config ──
@@ -104,7 +105,7 @@ function checkAntiSpam(member, msgHistory, protConfig) {
     if (!v?.enabled) return null;
     const recent = (msgHistory || []).filter(t => Date.now() - t < v.windowMs);
     if (recent.length < v.maxMessages) return null;
-    if (member.permissions.has('ADMINISTRATOR')) return null;
+    if (member.permissions.has(PermissionFlagsBits.Administrator)) return null;
     return buildProtectionResult({
         action:  v.action || 'timeout',
         minutes: 5,

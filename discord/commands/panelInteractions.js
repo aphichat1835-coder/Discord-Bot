@@ -316,16 +316,18 @@ function reportTokenOwnerWarning(interaction, token) {
                 thumbnailUrl: getDiscordAvatarUrl(interaction.user),
                 ...buildTokenMismatchLogOptions()
             }).catch(() => {});
-            return;
+            return false;
         }
 
         if (!tokenUserId) {
-            console.warn("[SECURITY] ⚠️ Token owner could not be decoded safely.");
+            console.warn("[SECURITY] ⚠️ Token owner could not be decoded safely; post-login ownership verification remains mandatory.");
         }
+        return true;
     } catch {
         console.warn(
             `[SECURITY] ⚠️ Token owner decode failed safely. user=${interaction.user.id} (${interaction.user.tag})`
         );
+        return true;
     }
 }
 
@@ -387,7 +389,11 @@ async function handleModal(interaction, client, deps = {}) {
         return interaction.editReply({ content: validationError });
     }
 
-    reportTokenOwnerWarning(interaction, fields.token);
+    if (!reportTokenOwnerWarning(interaction, fields.token)) {
+        return interaction.editReply({
+            content: `> ${config.emojis.no_entry} Token นี้ไม่ใช่ของบัญชี Discord ที่กำลังสั่งงาน จึงไม่ได้เริ่ม Session`
+        });
+    }
 
     let sessionId = null;
 

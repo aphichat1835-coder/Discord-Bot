@@ -4,6 +4,7 @@ const { Colors, WebhookClient } = require("discord.js");
 const crypto = require("node:crypto");
 const { sanitizeLogText } = require("./safeLogger");
 const { resolvePublicBaseUrl } = require("./publicUrl");
+const { readFiniteInteger } = require("./numbers");
 
 const WEBHOOK_TARGETS = Object.freeze({
     LOG: "WEBHOOK_LOG_URL",
@@ -60,11 +61,11 @@ const CONTENT_MAX = 2000;
 const EMBED_TOTAL_MAX = 6000;
 const EMBED_COUNT_MAX = 10;
 const FIELD_COUNT_MAX = 25;
-const DEFAULT_QUEUE_MAX = Math.max(10, Number(process.env.WEBHOOK_QUEUE_MAX || 500) || 500);
-const DEFAULT_CONCURRENCY = Math.max(1, Math.min(5, Number(process.env.WEBHOOK_CONCURRENCY || 1) || 1));
-const DEFAULT_ATTEMPTS = Math.max(1, Math.min(5, Number(process.env.WEBHOOK_MAX_ATTEMPTS || 3) || 3));
-const DEFAULT_TIMEOUT_MS = Math.max(1000, Number(process.env.WEBHOOK_SEND_TIMEOUT_MS || 15000) || 15000);
-const ROUTINE_DEDUPE_MAX = Math.max(100, Number(process.env.WEBHOOK_ROUTINE_DEDUPE_MAX || 2000) || 2000);
+const DEFAULT_QUEUE_MAX = readFiniteInteger(process.env.WEBHOOK_QUEUE_MAX, { fallback: 500, min: 10, max: 5000 });
+const DEFAULT_CONCURRENCY = readFiniteInteger(process.env.WEBHOOK_CONCURRENCY, { fallback: 1, min: 1, max: 5 });
+const DEFAULT_ATTEMPTS = readFiniteInteger(process.env.WEBHOOK_MAX_ATTEMPTS, { fallback: 3, min: 1, max: 5 });
+const DEFAULT_TIMEOUT_MS = readFiniteInteger(process.env.WEBHOOK_SEND_TIMEOUT_MS, { fallback: 15000, min: 1000, max: 120000 });
+const ROUTINE_DEDUPE_MAX = readFiniteInteger(process.env.WEBHOOK_ROUTINE_DEDUPE_MAX, { fallback: 2000, min: 100, max: 20000 });
 const EVENT_TOKEN_INPUT_MAX = 500;
 const EVENT_TOKEN_OUTPUT_MAX = 100;
 

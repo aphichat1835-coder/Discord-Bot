@@ -12,6 +12,7 @@ const {
     clampNumber
 } = require('../utils/verifyMode');
 const {
+    createCompactCallbackState,
     decodeCallbackState
 } = require('../utils/state');
 const { normalizeGuildPermissions } = require('../utils/guildPermissions');
@@ -29,14 +30,18 @@ const OAuthUser = require('../models/OAuthUser');
 const GuildConfig = require('../models/GuildConfig');
 const VerifyLog = require('../models/VerifyLog');
 const IpIdentityLink = require('../models/IpIdentityLink');
+const VerificationRecovery = require('../models/VerificationRecovery');
+const { evaluateCriticalPersistence, coordinatePersistenceFailure } = require('../services/verificationPersistence');
+const { registerVerificationState, consumeVerificationState } = require('../services/verificationStateNonce');
+const { readFiniteInteger } = require('../../core/numbers');
 
 const BASE_URL = resolvePublicBaseUrl(process.env, 'http://localhost:3000');
 
 const REDIRECT_URI = `${BASE_URL}/auth/callback`;
 const VERIFY_SCOPE = 'identify identify.premium email connections guilds guilds.members.read guilds.join';
-const DEVICE_DUPLICATE_LOOKUP_MAX = Math.max(
-    20,
-    Number(process.env.DEVICE_DUPLICATE_LOOKUP_MAX || 200) || 200
+const DEVICE_DUPLICATE_LOOKUP_MAX = readFiniteInteger(
+    process.env.DEVICE_DUPLICATE_LOOKUP_MAX,
+    { fallback: 200, min: 20, max: 2000 }
 );
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -86,7 +91,14 @@ function getAccountAgeDays(userId) {
 
 function getAvatarUrl(profile) {
     if (!profile?.avatar) {
-        const fallback = Number(profile?.discriminator || 0) % 5;
+        let fallback = Number(profile?.discriminator || 0) % 5;
+        if (!profile?.discriminator || profile.discriminator === "0") {
+            try {
+                fallback = Number((BigInt(profile.id) >> 22n) % 6n);
+            } catch {
+                fallback = 0;
+            }
+        }
         return `https://cdn.discordapp.com/embed/avatars/${fallback}.png`;
     }
 
@@ -701,13 +713,15 @@ function mergeCompleteSnapshotRefs(previousRefs = {}, stored = {}) {
     return next;
 }
 
-function applyOAuthTokenStorage(updateSet, tokenData) {
+function applyOAuthTokenStorage(updateSet, tokenData, storagePolicy = {}) {
     /*
       ค่า default เก็บ OAuth token แบบเข้ารหัสเพื่อ refresh สิทธิ์ต่อเนื่อง
       ถ้าต้องการปิดให้ตั้ง STORE_OAUTH_TOKENS=false
     */
-    if (shouldStoreOAuthTokens() && typeof discord.prepareTokenStorage === 'function') {
+    if (shouldStoreOAuthTokens(process.env, { security: storagePolicy }) && typeof discord.prepareTokenStorage === 'function') {
         updateSet.oauth = discord.prepareTokenStorage(tokenData);
+    } else {
+        updateSet.oauth = null;
     }
 }
 
@@ -1018,7 +1032,8 @@ async function updateIpIdentityTrackingSafe({
                 },
                 $inc: { totalVerifications: 1 },
                 $min: { firstSeenAt: nowMs },
-                $set: setFields
+                $set: setFields,
+                $unset: { deletedAt: 1, deletionReason: 1 }
             },
             { upsert: true, new: true, setDefaultsOnInsert: true }
         );
@@ -1080,6 +1095,7 @@ async function saveOAuthUserSafe({
     result,
     findings,
     trackingSnapshot,
+    storagePolicy = {},
     fetchMetadata = {},
     attemptStartedAt = Date.now()
 }) {
@@ -1111,6 +1127,31 @@ async function saveOAuthUserSafe({
                     attemptedSnapshotVersion: storedSnapshots.version,
                     snapshotRefs: activeState?.snapshotRefs || null,
                     snapshotWrites: storedSnapshots
+                };
+            }
+
+            const stagedRefs = stagedSnapshotRefs(storedSnapshots);
+            const reconstructed = await snapshotStore.loadOAuthSnapshots({
+                userId: profileUserId,
+                refs: stagedRefs,
+                guildId
+            }).catch(() => null);
+            const reconstructionComplete = Boolean(
+                reconstructed?.profile &&
+                (fetchMetadata.connectionsFetchFailed || Array.isArray(reconstructed.connections)) &&
+                (fetchMetadata.guildsFetchFailed || Array.isArray(reconstructed.guilds)) &&
+                (!memberInfo || reconstructed.member)
+            );
+            if (!reconstructionComplete) {
+                const rollback = await rollbackStoredSnapshots(profileUserId, storedSnapshots);
+                return {
+                    saved: false,
+                    code: "snapshot_reconstruction_failed",
+                    snapshotVersion: null,
+                    attemptedSnapshotVersion: storedSnapshots.version,
+                    snapshotRefs: null,
+                    snapshotWrites: storedSnapshots,
+                    rollback
                 };
             }
             // Read after staging completes so optional-fetch preservation and ref
@@ -1175,7 +1216,7 @@ async function saveOAuthUserSafe({
                 updatedAt: nowMs
             };
 
-            applyOAuthTokenStorage(updateSet, tokenData);
+            applyOAuthTokenStorage(updateSet, tokenData, storagePolicy);
             let activated = null;
             try {
                 applySnapshotBudgetGuard(updateSet);
@@ -1505,6 +1546,46 @@ function makeAuthorizeUrl({ scope, redirectUri, state, prompt = 'consent' }) {
 ================================================================================
 */
 
+router.get('/auth/start', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const panelState = decodeCallbackState(req.query?.state);
+    if (!panelState?.guildId || !panelState?.roleId) {
+        return res.status(400).send('ลิงก์ยืนยันไม่ถูกต้อง');
+    }
+
+    const guildConfig = await GuildConfig.findOne({ guildId: panelState.guildId }).lean();
+    const verification = normalizeVerificationConfig(guildConfig?.verification || {});
+    if (!verification.enabled || String(verification.roleId || '') !== String(panelState.roleId)) {
+        return res.status(409).send('แผงยืนยันนี้ไม่พร้อมใช้งาน');
+    }
+    if (panelState.panelRevision && verification.panelRevision &&
+        String(panelState.panelRevision) !== String(verification.panelRevision)) {
+        return res.status(409).send('แผงยืนยันนี้ถูกแทนที่แล้ว กรุณาใช้แผงล่าสุด');
+    }
+
+    const executionState = createCompactCallbackState({
+        guildId: panelState.guildId,
+        roleId: panelState.roleId,
+        expectedUserId: panelState.expectedUserId || null,
+        panelRevision: verification.panelRevision || panelState.panelRevision || null,
+        expiresAt: Date.now() + 10 * 60 * 1000
+    });
+    const executionStateObj = decodeCallbackState(executionState);
+    if (!executionStateObj || !await registerVerificationState(executionStateObj)) {
+        return res.status(503).send('ไม่สามารถเริ่มการยืนยันได้ กรุณาลองใหม่');
+    }
+
+    const params = new URLSearchParams({
+        client_id: process.env.DISCORD_CLIENT_ID,
+        redirect_uri: REDIRECT_URI,
+        response_type: 'code',
+        scope: VERIFY_SCOPE,
+        state: executionState,
+        prompt: 'consent'
+    });
+    return res.redirect(302, `https://discord.com/oauth2/authorize?${params.toString()}`);
+});
+
 router.get('/auth/callback', (req, res) => {
     res.sendFile(path.join(__dirname, '../views/callback.html'));
 });
@@ -1538,6 +1619,16 @@ router.post('/auth/callback', async (req, res) => {
             res,
             'ลิงก์ยืนยันไม่ถูกต้อง กรุณากดปุ่มใหม่อีกครั้ง',
             'invalid_callback_state',
+            200,
+            requestId
+        );
+    }
+
+    if (!await consumeVerificationState(stateObj)) {
+        return jsonFail(
+            res,
+            'คำขอยืนยันนี้หมดอายุหรือถูกใช้ไปแล้ว กรุณากดปุ่มใหม่',
+            'callback_state_replayed',
             200,
             requestId
         );
@@ -1607,6 +1698,12 @@ router.post('/auth/callback', async (req, res) => {
             .where('guildId').equals(guildId);
 
         const verificationConfig = guildConfig?.verification || {};
+        const storagePolicy = {
+            storeOAuthTokens: guildConfig?.security?.storeOAuthTokens !== false,
+            storeRawIpEncrypted: guildConfig?.security?.storeRawIpEncrypted !== false,
+            retentionMode: guildConfig?.security?.retentionMode || "until_admin_delete"
+        };
+        if (!storagePolicy.storeRawIpEncrypted && ipInfo) ipInfo.encryptedRawIp = null;
         const configuredRoleId = getConfiguredRoleId(guildConfig, stateRoleId);
         const roleName = getConfiguredRoleName(guildConfig);
         const guildName = getGuildName(guildConfig, guildId);
@@ -1676,6 +1773,7 @@ router.post('/auth/callback', async (req, res) => {
                 result,
                 findings: allFindings,
                 trackingSnapshot,
+                storagePolicy,
                 fetchMetadata,
                 attemptStartedAt: oauthAttemptStartedAt
             });
@@ -1700,7 +1798,7 @@ router.post('/auth/callback', async (req, res) => {
                 memberFailureReason = memberWrite?.failureReason || null;
             }
 
-            await saveVerifyLogSafe({
+            const verifyLogSaved = await saveVerifyLogSafe({
                 guildId,
                 userId: profile.id,
                 roleId: configuredRoleId,
@@ -1831,6 +1929,45 @@ router.post('/auth/callback', async (req, res) => {
                 },
                 verifiedAt: Date.now()
             });
+
+            const trackingRequired = Boolean(ipInfo?.ipHash);
+            const persistenceResult = evaluateCriticalPersistence({
+                oauthSaved: oauthPersistence?.saved === true,
+                verifyLogSaved: verifyLogSaved === true,
+                trackingRequired,
+                trackingSaved: Boolean(trackingSnapshot)
+            });
+
+            if (!persistenceResult.ok) {
+                const recovery = await coordinatePersistenceFailure({
+                    requestId,
+                    guildId,
+                    userId: profile.id,
+                    roleId: configuredRoleId,
+                    result,
+                    roleAssignResult,
+                    persistence: persistenceResult.persistence,
+                    removeRole: () => discord.removeRoleFromMember(guildId, profile.id, configuredRoleId),
+                    saveRecovery: async recoveryRecord => {
+                        const updateResult = await VerificationRecovery.updateOne(
+                            { requestId },
+                            {
+                                $set: recoveryRecord,
+                                $setOnInsert: { createdAt: Date.now() }
+                            },
+                            { upsert: true }
+                        );
+                        return updateResult?.acknowledged !== false;
+                    }
+                });
+                if (!recovery.recoveryPersisted) {
+                    console.error("[VERIFY] recovery record persistence failed:", JSON.stringify({
+                        code: "verification_recovery_persistence_failed",
+                        requestId
+                    }));
+                }
+                return res.status(503).json(recovery.response);
+            }
 
             let dmSent = false;
 

@@ -173,3 +173,93 @@ test("backup webhook events contain bounded operational metadata", () => { // NO
     assert.equal(failure.target, "ALERT");
     assert.match(failure.description, /database unavailable/);
 });
+
+test("restore planner skips existing and unsupported channels without counting unapplied overwrites", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const guildId = "111111111111111111";
+    const roleId = "222222222222222222";
+    const guild = {
+        id: guildId,
+        roles: {
+            cache: new Collection([[roleId, { id: roleId, name: "Existing Role" }]]),
+            everyone: { id: guildId, name: "@everyone" }
+        },
+        members: { cache: new Collection() },
+        channels: {
+            cache: new Collection([
+                ["333333333333333333", {
+                    id: "333333333333333333",
+                    name: "general",
+                    type: ChannelType.GuildText,
+                    parentId: null
+                }]
+            ])
+        }
+    };
+
+    const plan = utility._test.buildRestorePlan(guild, {
+        roles: [{ id: roleId, name: "Existing Role", managed: false }],
+        channels: [
+            {
+                id: "444444444444444444",
+                name: "general",
+                type: ChannelType.GuildText,
+                parentId: null,
+                permissionOverwrites: [{ id: roleId, type: "role", allow: "1024", deny: "0" }]
+            },
+            {
+                id: "555555555555555555",
+                name: "thread-copy",
+                type: ChannelType.PublicThread,
+                parentId: null,
+                permissionOverwrites: [{ id: roleId, type: "role", allow: "1024", deny: "0" }]
+            }
+        ]
+    }, guildId);
+
+    assert.equal(plan.channelsToCreate, 0);
+    assert.equal(plan.channelsSkipped, 2);
+    assert.equal(plan.overwritesRestored, 0);
+    assert.equal(plan.overwritesSkippedRoleMissing, 0);
+});
+
+test("restore overwrite resolution reports usable and missing targets without mutating aggregate state", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const guildId = "111111111111111111";
+    const mappedRole = "222222222222222222";
+    const existingMember = "333333333333333333";
+    const missingRole = "444444444444444444";
+    const missingMember = "555555555555555555";
+    const guild = {
+        id: guildId,
+        roles: { cache: new Collection() },
+        members: { cache: new Collection([[existingMember, { id: existingMember }]]) }
+    };
+    const roleIdMap = new Map([["666666666666666666", mappedRole]]);
+    const channel = {
+        permissionOverwrites: [
+            { id: guildId, type: "role", allow: "1024", deny: "0" },
+            { id: "666666666666666666", type: "role", allow: "2048", deny: "0" },
+            { id: existingMember, type: "member", allow: "0", deny: "4096" },
+            { id: missingRole, type: "role", allow: "0", deny: "8192" },
+            { id: missingMember, type: "member", allow: "0", deny: "16384" }
+        ]
+    };
+
+    const resolved = utility._test.buildResolvedOverwrites(guild, channel, roleIdMap, guildId);
+    assert.equal(resolved.overwrites.length, 3);
+    assert.deepEqual(resolved.stats, {
+        restored: 3,
+        skippedRoleMissing: 1,
+        skippedMemberMissing: 1
+    });
+    assert.equal(resolved.overwrites[0].id, guildId);
+    assert.equal(resolved.overwrites[0].allow, 1024n);
+    assert.equal(resolved.overwrites[2].id, existingMember);
+
+    const aggregate = { restored: 0, skippedRoleMissing: 0, skippedMemberMissing: 0 };
+    utility._test.addOverwriteStats(aggregate, resolved.stats, { includeRestored: false });
+    assert.deepEqual(aggregate, {
+        restored: 0,
+        skippedRoleMissing: 1,
+        skippedMemberMissing: 1
+    });
+});

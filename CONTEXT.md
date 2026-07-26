@@ -1,6 +1,6 @@
 # Project Context
 
-Last verified against the implementation: 2026-07-23 (`ttt`).
+Last verified against the implementation: 2026-07-26 (`ttt.1` release candidate).
 
 ## Identity
 
@@ -9,7 +9,7 @@ verification-only project. The same runtime contains:
 
 - Discord bot and slash commands
 - voice/session management
-- Owner Dashboard
+- Dashboard ควบคุมบอท
 - Owner-only verification management
 - public member OAuth2 verification
 - MongoDB persistence
@@ -24,7 +24,7 @@ verification-only project. The same runtime contains:
 - One Node.js 24.18 LTS process started by `npm start`.
 - One Express app and one public port: `PORT || 3000`.
 - One Mongoose connection owned by `discord/sessionManager.js`.
-- One public HTTPS origin for the Owner Dashboard and OAuth callback.
+- One public HTTPS origin for the bot-control dashboard and OAuth callback.
 - The primary bot uses `discord.js` v14; the isolated Voice account client
   remains on its separately versioned self-client package.
 - Voice/session remains enabled and is not merged into verification code.
@@ -33,7 +33,7 @@ verification-only project. The same runtime contains:
 The former `dashboard-public` service no longer exists. Its active verification
 models, routes, utilities, views, and assets live in `discord/verification/`.
 Guild-admin OAuth/session access was removed; management is Owner PIN only.
-Owner Verification is rendered inside the purple Owner Dashboard shell. The
+Owner Verification is rendered inside the private Dashboard ควบคุมบอท shell. The
 guild chooser and five-section per-guild workspace use the existing Owner PIN,
 navigation, and CSRF boundary; the public `/auth/callback` member page keeps its
 existing independent design. Existing routes stay compatible.
@@ -63,7 +63,7 @@ booleans only; detailed diagnostics remain behind Owner authentication.
 | --- | --- |
 | Runtime orchestration | `discord/index.js`, `discord/index/system.js` |
 | Main HTTP APIs and health | `discord/index/server.js` |
-| Owner pages/auth | `discord/index/views.js`, `discord/index/auth.js` |
+| Bot-control pages/auth | `discord/index/views.js`, `discord/index/auth.js` |
 | Owner verification bridge | `discord/index/verifyOwner.js` |
 | Persistence | `discord/sessionManager.js` |
 | Commands | `discord/commands.js`, `discord/commands/` |
@@ -75,7 +75,7 @@ booleans only; detailed diagnostics remain behind Owner authentication.
 | Verification persistence | `discord/verification/models/` |
 | Per-IP identity correlation | `discord/verification/models/IpIdentityLink.js`, `IpIdentity*History.js` |
 | OAuth/IP/device/crypto helpers | `discord/verification/utils/` |
-| Owner Verification UI | `discord/verification/page.js`, `guildPage.js`, `ownerStyles.js`, `public/js/guild-dashboard.js` |
+| Verification management UI | `discord/verification/page.js`, `guildPage.js`, `ownerStyles.js`, `public/js/guild-dashboard.js` |
 | Public callback UI | `discord/verification/views/callback.html`, `public/css/`, `public/js/callback.js` |
 | Verification tests | `verification-tests/` |
 | Migration/guards | `scripts/` |
@@ -120,18 +120,14 @@ remain active.
   without an overall item cap; normal APIs never expose the encrypted field.
 - Fingerprint source material is never persisted; only its HMAC is stored.
 - Normal list/export APIs never return raw tokens or raw IP.
-- The normal Member Detail GET response is categorized but redacted. Full raw
-  values require the separate CSRF-protected and rate-limited POST action.
+- Normal Member Detail and full-detail responses remain categorized and redacted. Raw values require separate CSRF-protected, rate-limited, per-value POST actions.
 
 AES token/raw-IP encryption derives from `ENCRYPTION_KEY` only. IP/device
 correlation hashes use a distinct HMAC key derived from `ENCRYPTION_KEY` and
 `API_SECRET`, with `INTERNAL_API_SECRET` retained only as a compatible fallback.
 Both HMAC inputs must remain stable unless correlation data is deliberately
 migrated or rebuilt through re-verification.
-- Member Detail is Owner-only and uses a CSRF-protected, rate-limited POST to
-  decrypt and display the complete raw IP and OAuth tokens in one action while
-  appending an internal audit event. Compatibility reveal routes retain their
-  stricter Owner-supplied reason contract.
+- Sensitive per-user actions are Owner-only, CSRF-protected, rate-limited, and fail closed when the audit intent/result cannot be stored. They use an automatic dashboard action reason and reveal only the requested Token or IP value.
 - Failure messages saved in data-quality metadata are redacted status codes.
 - Logs, tests, migrations, docs, and exports must not print secrets, tokens, or
   raw IP.
@@ -157,6 +153,7 @@ Use:
 ```bash
 npm run check
 npm test
+npm run check:coverage
 npm audit --audit-level=high
 ```
 

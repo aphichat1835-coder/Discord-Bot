@@ -15,6 +15,7 @@ const {
 } = require("../core/webhooks");
 const { sanitizeLogText, safeError } = require("../core/safeLogger");
 const { normalizeRuntimeLine } = require("../core/startupLogger");
+const { readFiniteInteger } = require("../core/numbers");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🗂️  SHARED STATE (exported สำหรับ server.js / views.js ใช้)
@@ -24,6 +25,8 @@ const MAX_LOGS_DEFAULT = 500;
 
 let crashShieldReady = false;
 let botReadyAt = null;
+let fatalShutdownHandler = null;
+let fatalShutdownStarted = false;
 let commandsReady = false;
 let isAppShuttingDown = global.__APP_SHUTTING_DOWN === true;
 
@@ -41,12 +44,12 @@ const originalLog   = console.log;
 const originalError = console.error;
 const originalWarn  = console.warn;
 const cronTimers = [];
-const CRITICAL_ALERT_COOLDOWN_MS = Math.max(1000, Number(process.env.CRITICAL_ALERT_COOLDOWN_MS || 5 * 60 * 1000) || 5 * 60 * 1000);
-const CRITICAL_ALERT_MAX_FINGERPRINTS = Math.max(10, Number(process.env.CRITICAL_ALERT_MAX_FINGERPRINTS || 100) || 100);
-const REQUEST_COUNT_MAX_BUCKETS = Math.max(100, Number(process.env.RATE_LIMIT_MAX_BUCKETS || 5000) || 5000);
-const COMMAND_COOLDOWN_MAX_USERS = Math.max(100, Number(process.env.COMMAND_COOLDOWN_MAX_USERS || 5000) || 5000);
-const TOGGLE_COOLDOWN_MAX_KEYS = Math.max(100, Number(process.env.TOGGLE_COOLDOWN_MAX_KEYS || 1000) || 1000);
-const ANTI_RAID_DEBOUNCE_MAX_KEYS = Math.max(100, Number(process.env.ANTI_RAID_DEBOUNCE_MAX_KEYS || 5000) || 5000);
+const CRITICAL_ALERT_COOLDOWN_MS = readFiniteInteger(process.env.CRITICAL_ALERT_COOLDOWN_MS, { fallback: 5 * 60 * 1000, min: 1000, max: 24 * 60 * 60 * 1000 });
+const CRITICAL_ALERT_MAX_FINGERPRINTS = readFiniteInteger(process.env.CRITICAL_ALERT_MAX_FINGERPRINTS, { fallback: 100, min: 10, max: 10000 });
+const REQUEST_COUNT_MAX_BUCKETS = readFiniteInteger(process.env.RATE_LIMIT_MAX_BUCKETS, { fallback: 5000, min: 100, max: 100000 });
+const COMMAND_COOLDOWN_MAX_USERS = readFiniteInteger(process.env.COMMAND_COOLDOWN_MAX_USERS, { fallback: 5000, min: 100, max: 100000 });
+const TOGGLE_COOLDOWN_MAX_KEYS = readFiniteInteger(process.env.TOGGLE_COOLDOWN_MAX_KEYS, { fallback: 1000, min: 100, max: 100000 });
+
 
 // ════════════════════════════════════════════════════════════════════════════
 //  📜  LOG CAPTURE — Ring Buffer (กัน RAM บวม)
@@ -175,6 +178,27 @@ function createCriticalAlertDispatcher(options = {}) {
     return { dispatch, sendSummary, stop, entries };
 }
 
+async function terminateAfterFatal(type, error) {
+    if (fatalShutdownStarted) return;
+    fatalShutdownStarted = true;
+
+    if (typeof fatalShutdownHandler === "function") {
+        try {
+            await fatalShutdownHandler(`FATAL_${type}`, 1);
+            return;
+        } catch (shutdownError) {
+            originalError(`[CRITICAL] fatal shutdown failed: ${shutdownError?.message || shutdownError}`);
+        }
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 250));
+    process.exit(1);
+}
+
+function setFatalShutdownHandler(handler) {
+    fatalShutdownHandler = typeof handler === "function" ? handler : null;
+}
+
 function initCrashShield(config) {
     const criticalAlerts = createCriticalAlertDispatcher();
     process.on("uncaughtException", async (err) => {
@@ -194,6 +218,7 @@ function initCrashShield(config) {
             await new Promise(r => setTimeout(r, 1500));
             process.exit(1);
         }
+        await terminateAfterFatal("uncaughtException", err);
     });
 
     process.on("unhandledRejection", async (reason) => {
@@ -215,6 +240,7 @@ function initCrashShield(config) {
             await new Promise(r => setTimeout(r, 1500));
             process.exit(1);
         }
+        await terminateAfterFatal("unhandledRejection", error);
     });
     return criticalAlerts;
 }
@@ -262,7 +288,7 @@ function pruneCommandCooldowns(commandCooldowns, now, ttlMs) {
 
 function cleanupVolatileMaps({
     spamTracking, requestCounts,
-    commandCooldowns, toggleCooldowns, antiRaidDebounce,
+    commandCooldowns, toggleCooldowns,
     voiceWorker, config
 }, now) {
     const windowMs = config.limits.rateLimitWindowMs || 60000;
@@ -271,18 +297,16 @@ function cleanupVolatileMaps({
     pruneTimestampListMap(requestCounts, now, windowMs);
     pruneCommandCooldowns(commandCooldowns, now, 30000);
     pruneTimestampMap(toggleCooldowns, now, 5000);
-    pruneTimestampMap(antiRaidDebounce, now, 10000);
     trimMapToMaxSize(spamTracking, config.limits.spamTrackingMaxUsers || 1000);
     trimMapToMaxSize(requestCounts, REQUEST_COUNT_MAX_BUCKETS);
     trimMapToMaxSize(commandCooldowns, COMMAND_COOLDOWN_MAX_USERS);
     trimMapToMaxSize(toggleCooldowns, TOGGLE_COOLDOWN_MAX_KEYS);
-    trimMapToMaxSize(antiRaidDebounce, ANTI_RAID_DEBOUNCE_MAX_KEYS);
     voiceWorker.cleanupVolatileState?.(now);
 }
 
 function initCronJobs({
     spamTracking, requestCounts,
-    commandCooldowns, toggleCooldowns, antiRaidDebounce,
+    commandCooldowns, toggleCooldowns,
     sessionManager, voiceWorker, config
 }) {
     stopCronJobs();
@@ -293,7 +317,7 @@ function initCronJobs({
             const now = Date.now();
             cleanupVolatileMaps({
                 spamTracking, requestCounts,
-                commandCooldowns, toggleCooldowns, antiRaidDebounce,
+                commandCooldowns, toggleCooldowns,
                 voiceWorker, config
             }, now);
         } catch (err) {
@@ -388,7 +412,7 @@ function initShutdown({
 }) {
     let isShuttingDownMain = false;
 
-    async function shutdown(signal) {
+    async function shutdown(signal, exitCode = 0) {
         if (isShuttingDownMain) return;
         isShuttingDownMain = true;
         markAppShuttingDown();
@@ -409,10 +433,10 @@ function initShutdown({
         voiceWorker.setShuttingDown(true);
 
         try {
-            await sessionManager.saveDatabase();
-            console.log("[SHUTDOWN] ✅ Database synced");
             await voiceWorker.pauseAll();
             console.log("[SHUTDOWN] ✅ Voice paused");
+            await sessionManager.saveDatabase();
+            console.log("[SHUTDOWN] ✅ Final database state synced");
             if (client) { client.destroy(); console.log("[SHUTDOWN] ✅ Discord destroyed"); }
             if (memoryMonitor?.stopMemoryMonitor) memoryMonitor.stopMemoryMonitor();
             await closeServer();
@@ -422,7 +446,7 @@ function initShutdown({
             await sessionManager.disconnectDB?.();
             console.log("[SHUTDOWN] ✅ MongoDB disconnected");
             clearTimeout(timeout);
-            process.exit(0);
+            process.exit(exitCode);
         } catch (err) {
             console.error("[SHUTDOWN] ❌ Error:", err.message);
             clearTimeout(timeout);
@@ -430,8 +454,10 @@ function initShutdown({
         }
     }
 
-    process.on("SIGTERM", () => shutdown("SIGTERM"));
-    process.on("SIGINT",  () => shutdown("SIGINT"));
+    setFatalShutdownHandler(shutdown);
+    process.on("SIGTERM", () => shutdown("SIGTERM", 0));
+    process.on("SIGINT",  () => shutdown("SIGINT", 0));
+    return shutdown;
 }
 
 module.exports = {
@@ -445,6 +471,6 @@ module.exports = {
     get shutdownRequested() { return isShuttingDown(); },
     markAppShuttingDown, isShuttingDown,
     originalLog, originalError, originalWarn,
-    initLogCapture, initCrashShield, initCronJobs, stopCronJobs, initShutdown,
+    initLogCapture, initCrashShield, initCronJobs, stopCronJobs, initShutdown, setFatalShutdownHandler, terminateAfterFatal,
     criticalFingerprint, createCriticalAlertDispatcher, stopRuntimeCleanups
 };

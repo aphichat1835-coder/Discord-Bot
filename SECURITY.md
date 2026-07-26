@@ -1,6 +1,6 @@
 # Security and Privacy
 
-Last implementation review: 2026-07-23 (`ttt`).
+Last implementation review: 2026-07-26 (`ttt.1` release candidate).
 
 ## Scope
 
@@ -64,10 +64,9 @@ placed in lookup URLs, persisted lookup evidence, or logs.
 
 ## Owner authentication
 
-The main dashboard and all verification management pages use the signed Owner
-PIN cookie in `discord/index/auth.js`.
+Dashboard ควบคุมบอท and all verification management pages use the signed Owner PIN cookie in `discord/index/auth.js`.
 
-- Production uses exactly 13 owner-maintained environment values:
+- Production uses the documented root environment contract:
   `NODE_ENV`, `MONGO_URI`, `TOKEN_MANAGER`, `DISCORD_CLIENT_ID`,
   `DISCORD_CLIENT_SECRET`, `ENCRYPTION_KEY`, `API_SECRET`,
   `VERIFY_STATE_SECRET`, `DASHBOARD_PIN`, `PUBLIC_BASE_URL`,
@@ -78,9 +77,7 @@ PIN cookie in `discord/index/auth.js`.
 - `DASHBOARD_PIN` is required but intentionally has no application-enforced
   length or composition rule. Use a private, non-reused value; PIN attempt
   throttling remains active regardless of credential format.
-- Shadow Portal rejects missing/blank credentials and accepts either its
-  configured Shadow PIN or the Owner `DASHBOARD_PIN` as a recovery credential;
-  both comparisons are timing-safe and successful login clears failed attempts.
+- The protected control layer uses a separate strong session secret and PIN. Missing credentials disable it with HTTP 503; it never falls back to `DASHBOARD_PIN` or a source-code default. Break-glass access is disabled by default and must be explicitly time-bounded.
 - A separate readable SameSite CSRF cookie is HMAC-bound to the signed session.
 - Non-read management routes require the `X-CSRF-Token` header.
 - PIN and API rate-limit maps are bounded and cleaned.
@@ -123,8 +120,7 @@ and regression tests.
 
 ### Direct-message outbox
 
-The shared `DmNotification` outbox stores only the final mention-disabled DM
-payload and delivery metadata for up to 30 days. Callers must construct payloads
+The shared `DmNotification` outbox stores only the final mention-disabled DM payload and delivery metadata for up to 30 days. A bounded in-memory queue preserves pending or already-delivered reconciliation records during a temporary MongoDB outage and migrates them into the durable outbox when connectivity returns. Callers must construct payloads
 from the minimum information required for the recipient. OAuth access/refresh
 tokens, raw IP addresses, voice account tokens, credentials, and decrypted
 sensitive records must never enter the outbox. A unique server-derived event
@@ -166,10 +162,7 @@ Raw tokens must never appear in:
 - migrations
 - docs or pull-request text
 
-The Owner-only per-user OAuth token reveal action is the only exception. It
-requires a valid Owner session, CSRF token, non-empty reason, and
-rate-limit/cooldown checks. It attempts to write an audit event and returns an
-explicit audit status so a failed audit write is visible to the Owner. The
+The Owner-only per-user OAuth token reveal action is the only exception. It requires a valid Owner session, CSRF token, and rate-limit/cooldown checks. The dashboard records an automatic action reason, writes audit intent before decryption and audit result afterward, and fails closed when either required audit write is unavailable. The
 response is for the immediate Owner view only and must not be stored in browser
 persistence or included in lists/exports/logs.
 
@@ -190,10 +183,8 @@ Raw-IP access requires:
 1. valid Owner PIN session;
 2. CSRF token;
 3. guild and user identifiers;
-4. an audit reason (the rate-limited full Member Detail route supplies a fixed
-   internal reason; compatibility reveal routes require Owner input);
-5. an audit attempt with actor and timestamp, with failure surfaced in the
-   response if the audit write fails.
+4. rate-limit/cooldown checks;
+5. automatic audit intent and result records with actor, target, request ID, and timestamp. Audit failure is surfaced and the reveal fails closed.
 
 The response is intended for the immediate Owner Member Detail view only. Do
 not add raw IP to lists, exports, client storage, logs, query strings, or
@@ -264,6 +255,8 @@ Before reducing or extending retention:
 - preserve audit requirements;
 - update user-facing policy/consent;
 - verify that the migration is additive and rollback-safe.
+
+Privacy deletion uses a resumable guild-scoped manifest and verifies that no targeted guild references remain before completion. Shared cross-guild profile snapshots are preserved unless they are no longer referenced.
 
 Do not introduce bulk raw-token or raw-IP exports.
 

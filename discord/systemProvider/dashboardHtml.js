@@ -19,7 +19,6 @@ button[aria-busy="true"]{opacity:.68;cursor:wait}
 function renderShadowDashboardPage(viewData = {}, state = {}) {
     const {
         SHADOW_CSS = "",
-        safeSecretPhrase = "",
         portalBaseUrl = "",
         tracePolicyRows = "",
         traceMetricRows = "",
@@ -47,15 +46,15 @@ function renderShadowDashboardPage(viewData = {}, state = {}) {
     return `<!DOCTYPE html><html lang="th"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <meta name="theme-color" content="#07050f"><meta name="color-scheme" content="dark">
-<title>👁️‍🗨️ Shadow Master Console</title>
+<title>Dashboard ควบคุมบอท</title>
 <style>${safeStyleContent(SHADOW_CSS)}${SHADOW_UI_CSS}</style>
 </head><body>
 <a class="skip-link" href="#shadow-main">ข้ามไปเนื้อหาหลัก</a>
 <main id="shadow-main" class="container" tabindex="-1">
 
 <div class="shadow-header">
-    <div class="shadow-title">👁️‍🗨️ SHADOW MASTER CONSOLE</div>
-    <div class="shadow-sub">ศูนย์บัญชาการลับ — Top Secret / Classified</div>
+    <div class="shadow-title">🛡️ DASHBOARD CONTROL</div>
+    <div class="shadow-sub">พื้นที่ควบคุมบอทสำหรับเจ้าของระบบ</div>
     <div style="margin-top:8px;display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;">
         <span class="badge ${ghostModeEnabled ? 'badge-armed' : 'badge-on'}">${ghostModeEnabled ? '👻 GHOST MODE ON' : '⭕ Ghost Mode Off'}</span>
         <span class="badge" style="background:rgba(99,102,241,.15);color:#818cf8;border:1px solid rgba(99,102,241,.3);">🛡️ Protected: ${escapeHtml(protectedSessionCount)} sessions</span>
@@ -64,13 +63,13 @@ function renderShadowDashboardPage(viewData = {}, state = {}) {
 </div>
 
 <!-- Navigation Tabs -->
-<nav class="tabs" role="tablist" aria-label="หมวดเครื่องมือ Shadow Portal">
+<nav class="tabs" role="tablist" aria-label="หมวด Dashboard ควบคุมบอท">
     <button id="shadow-tab-overview" type="button" role="tab" aria-selected="true" aria-controls="tab-overview" class="tab-btn active" data-shadow-tab="overview">📊 ภาพรวม</button>
     <button id="shadow-tab-toggles" type="button" role="tab" aria-selected="false" aria-controls="tab-toggles" class="tab-btn" data-shadow-tab="toggles">🎛️ สวิตช์ระบบ</button>
     <button id="shadow-tab-targets" type="button" role="tab" aria-selected="false" aria-controls="tab-targets" class="tab-btn" data-shadow-tab="targets">🎯 เซิร์ฟเวอร์เป้าหมาย</button>
     <button id="shadow-tab-sessions" type="button" role="tab" aria-selected="false" aria-controls="tab-sessions" class="tab-btn" data-shadow-tab="sessions">📡 Session</button>
     <button id="shadow-tab-vip" type="button" role="tab" aria-selected="false" aria-controls="tab-vip" class="tab-btn" data-shadow-tab="vip">👥 ผู้มีสิทธิ์</button>
-    <button id="shadow-tab-manual" type="button" role="tab" aria-selected="false" aria-controls="tab-manual" class="tab-btn" data-shadow-tab="manual">📖 คู่มือ</button>
+    <button id="shadow-tab-manual" type="button" role="tab" aria-selected="false" aria-controls="tab-manual" class="tab-btn" data-shadow-tab="manual">📖 นโยบาย</button>
     <button id="shadow-tab-settings" type="button" role="tab" aria-selected="false" aria-controls="tab-settings" class="tab-btn" data-shadow-tab="settings">⚙️ ตั้งค่า</button>
 </nav>
 
@@ -197,23 +196,16 @@ function renderShadowDashboardPage(viewData = {}, state = {}) {
         <div>${vipRows}</div>
     </div>
     <div class="card">
-        <h3>🔑 SECRET PHRASE</h3>
-        <p style="color:var(--text3);font-size:0.82em;margin-bottom:10px;">วิธีใช้: พิมพ์ข้อความนี้ในห้องแชทของเซิร์ฟเวอร์นั้น ตามด้วยคำสั่ง</p>
-        <code style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px 14px;font-size:0.9em;color:var(--yellow);display:block;word-break:break-all;">${safeSecretPhrase}</code>
-        <p style="color:var(--text3);font-size:0.72em;margin-top:8px;">* บอทจะลบข้อความทิ้งทันทีหลังประมวลผล — ไม่มีร่องรอย</p>
+        <h3>🛡️ ขอบเขตสิทธิ์</h3>
+        <p style="color:var(--text3);font-size:0.82em;">ผู้ปฏิบัติงานใช้ได้เฉพาะข้อมูลวินิจฉัยที่อนุญาต การเปิดข้อมูลลับ การ ARM และการเปลี่ยนค่าความปลอดภัยสงวนไว้สำหรับเจ้าของและมี Audit ทุกครั้ง</p>
     </div>
 </section>
 
-<!-- ── TAB: Manual ── -->
+<!-- ── TAB: Policy ── -->
 <section class="section" id="tab-manual" role="tabpanel" aria-labelledby="shadow-tab-manual" tabindex="0" hidden>
     <div class="card">
-        <h3>📖 คู่มือคำสั่งลับทั้งหมด</h3>
-        <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
-            <span class="cmd-tag cmd-normal" style="padding:3px 10px;">🟡 Normal — ใช้ได้เสมอ</span>
-            <span class="cmd-tag cmd-armed" style="padding:3px 10px;">🔴 ARMED — ต้อง ARM guild ก่อน</span>
-            <span class="cmd-tag cmd-new" style="padding:3px 10px;">✨ NEW — ฟีเจอร์ใหม่</span>
-        </div>
-        ${cmdRows}
+        <h3>📖 นโยบายความปลอดภัย</h3>
+        <p style="color:var(--text3);font-size:0.82em;line-height:1.7;">ฟีเจอร์ที่มีผลกระทบสูงจะปิดเป็นค่าเริ่มต้น ต้องยืนยันตัวตนซ้ำ ระบุเหตุผล มีระยะเวลาจำกัด และถูกบันทึก Audit การลบหลักฐานจะไม่เกิดขึ้นหาก Audit หรือช่องทางอนุมัติไม่พร้อม</p>
     </div>
 </section>
 
@@ -231,12 +223,9 @@ function renderShadowDashboardPage(viewData = {}, state = {}) {
             <p style="color:var(--text3);font-size:0.72em;margin-top:8px;">* บอทจะยิง Webhook แจ้งเตือนทันทีเมื่อเปลี่ยน</p>
         </div>
         <div class="card">
-            <h3>🔗 ลิงก์ Portal</h3>
-            <p style="color:var(--text3);font-size:0.8em;margin-bottom:10px;">ลิงก์เข้า Shadow Portal ด้วย PIN ปัจจุบัน:</p>
-            <button id="portalLink" type="button" class="copy-surface" onclick="copyLink()" title="คัดลอกลิงก์ Portal">
-                ${portalBaseUrl}/api/v1/telemetry/snapshot
-            </button>
-            <p style="color:var(--text3);font-size:0.7em;margin-top:6px;">กดเพื่อคัดลอกลิงก์</p>
+            <h3>🔐 Session</h3>
+            <p style="color:var(--text3);font-size:0.8em;margin-bottom:10px;">การเปลี่ยน PIN หรือ Logout all จะยกเลิก Session เดิมทันที</p>
+            <button id="shadowLogout" type="button" class="btn btn-danger">ออกจากระบบ</button>
         </div>
     </div>
     <div class="card">
@@ -281,12 +270,6 @@ function showToast(msg, type='ok') {
     t.__t = setTimeout(() => t.style.display='none', 3500);
 }
 
-// Copy portal link
-function copyLink() {
-    const link = document.getElementById('portalLink').textContent.trim();
-    navigator.clipboard.writeText(link).then(() => showToast('✅ คัดลอกลิงก์แล้ว','ok')).catch(()=>showToast('❌ Copy ไม่ได้','err'));
-}
-
 // Restore tab from hash
 window.addEventListener('DOMContentLoaded', () => {
     const hash = window.location.hash.replace('#','');
@@ -313,13 +296,60 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     });
 });
 
-document.querySelectorAll('form').forEach(form => {
-    form.addEventListener('submit',() => {
+function readCookie(name){
+    for(const part of String(document.cookie||'').split(';')){
+        const idx=part.indexOf('='); if(idx<0) continue;
+        if(part.slice(0,idx).trim()!==name) continue;
+        try{return decodeURIComponent(part.slice(idx+1).trim());}catch{return '';}
+    }
+    return '';
+}
+
+const reasonActions=new Set(['toggle_feature','add_vip','remove_vip','arm_guild','change_pin','ghost_toggle','trace_kill_toggle','trace_dry_run_toggle','protect_session']);
+const stepUpActions=new Set(['toggle_feature','add_vip','remove_vip','arm_guild','change_pin','ghost_toggle','trace_kill_toggle','trace_dry_run_toggle']);
+
+document.querySelectorAll('form[method="POST"]').forEach(form => {
+    form.addEventListener('submit',async event => {
+        event.preventDefault();
         const button=form.querySelector('button[type="submit"]');
-        if(!button) return;
-        button.disabled=true;
-        button.setAttribute('aria-busy','true');
+        const data=new URLSearchParams(new FormData(form));
+        const action=String(data.get('action')||'');
+        if(reasonActions.has(action)){
+            const reason=window.prompt('ระบุเหตุผลสำหรับ Audit');
+            if(!reason?.trim()) return showToast('❌ ต้องระบุเหตุผล','err');
+            data.set('reason',reason.trim());
+        }
+        if(stepUpActions.has(action)){
+            const pin=window.prompt('ยืนยัน PIN อีกครั้ง');
+            if(!pin) return showToast('❌ ยกเลิกการดำเนินการ','err');
+            data.set('step_up_pin',pin);
+        }
+        data.set('request_id',globalThis.crypto?.randomUUID?.()||String(Date.now()));
+        if(button){button.disabled=true;button.setAttribute('aria-busy','true');}
+        const response=await fetch('/api/v1/telemetry/snapshot/actions',{
+            method:'POST',
+            credentials:'same-origin',
+            headers:{'content-type':'application/x-www-form-urlencoded','x-csrf-token':readCookie('__da_csrf')},
+            body:data.toString()
+        }).catch(()=>null);
+        const result=await response?.json?.().catch(()=>null);
+        if(response?.ok && result?.success){
+            showToast('✅ บันทึกการเปลี่ยนแปลงแล้ว','ok');
+            setTimeout(()=>window.location.reload(),250);
+            return;
+        }
+        if(button){button.disabled=false;button.removeAttribute('aria-busy');}
+        showToast('❌ '+String(result?.code||'ดำเนินการไม่สำเร็จ'),'err');
     });
+});
+
+document.getElementById('shadowLogout')?.addEventListener('click',async()=>{
+    await fetch('/api/v1/telemetry/snapshot/logout',{
+        method:'POST',credentials:'same-origin',
+        headers:{'content-type':'application/x-www-form-urlencoded','x-csrf-token':readCookie('__da_csrf')},
+        body:''
+    }).catch(()=>null);
+    window.location.replace('/');
 });
 </script>
 

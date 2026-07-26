@@ -15,10 +15,20 @@ test("voice notification storage avoids computed object injection sinks", () => 
     assert.match(source, /EVENT_TYPES\.has\(type\)/);
 });
 
-test("protected path guard reads only literal allowlisted files", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("protected path guard inventories the complete protected tree and requires external head approval", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const source = fs.readFileSync("scripts/checkProtectedPaths.js", "utf8");
+    const manifest = JSON.parse(fs.readFileSync(".github/protected-path-digests.json", "utf8"));
 
-    assert.doesNotMatch(source, /readFileSync\(file\)/);
-    assert.match(source, /readFileSync\("discord\/systemProvider\.js"\)/);
-    assert.match(source, /OWNER_APPROVED_FILES\.get\(file\)/);
+    assert.match(source, /git\(\["ls-files", PROTECTED_ROOT_FILE, PROTECTED_DIRECTORY\]\)/);
+    assert.match(source, /protected-owner-approval:/);
+    assert.match(source, /pull_request\?\.head\?\.sha/);
+    assert.match(source, /comments\?per_page=100/);
+    assert.deepEqual(Object.keys(manifest).sort(), [
+        "discord/systemProvider.js",
+        "discord/systemProvider/actions.js",
+        "discord/systemProvider/auth.js",
+        "discord/systemProvider/dashboardHtml.js",
+        "discord/systemProvider/htmlUtils.js",
+        "discord/systemProvider/renderers.js"
+    ]);
 });
