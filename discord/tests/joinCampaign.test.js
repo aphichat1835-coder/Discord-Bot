@@ -175,6 +175,8 @@ test("Thai join campaign log summarizes counts without raw tokens", (t) => { // 
 
 test("join campaign route helpers list and resolve allowed target guilds", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     const oldAllowed = process.env.JOIN_CAMPAIGN_ALLOWED_GUILDS;
+    const oldEnabled = process.env.JOIN_CAMPAIGN_ENABLED;
+    process.env.JOIN_CAMPAIGN_ENABLED = "true";
     process.env.JOIN_CAMPAIGN_ALLOWED_GUILDS = "111111111111111111";
 
     try {
@@ -194,6 +196,8 @@ test("join campaign route helpers list and resolve allowed target guilds", (t) =
     } finally {
         if (oldAllowed === undefined) delete process.env.JOIN_CAMPAIGN_ALLOWED_GUILDS;
         else process.env.JOIN_CAMPAIGN_ALLOWED_GUILDS = oldAllowed;
+        if (oldEnabled === undefined) delete process.env.JOIN_CAMPAIGN_ENABLED;
+        else process.env.JOIN_CAMPAIGN_ENABLED = oldEnabled;
     }
 });
 
@@ -216,32 +220,37 @@ test("startJoinCampaign rejects disabled config before creating an active job", 
     });
 
     t.assert.equal(result.ok, false);
+    t.assert.equal(result.code, "CAMPAIGN_DISABLED");
     t.assert.equal(result.error, "campaign_disabled");
     t.assert.equal(joinCampaign.getJoinCampaignStatus().active, null);
 });
 
-test("join campaign allows every bot guild when allowlist is empty", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
+test("join campaign is default-off and requires an explicit guild allowlist", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
+    const defaults = joinCampaign.getJoinCampaignConfig({});
+    t.assert.equal(defaults.enabled, false);
+    t.assert.equal(defaults.allowedGuilds.size, 0);
     t.assert.equal(joinCampaign.isGuildAllowed("123456789012345678", {
         enabled: true,
         allowedGuilds: new Set()
-    }), true);
+    }), false);
 
-    const summary = await joinCampaign.executeJoinCampaign({
-        targetGuildId: "123456789012345678",
-        candidateDocs: [],
-        config: {
-            enabled: true,
-            allowedGuilds: new Set(),
-            maxUsers: 10,
-            delayMs: 0,
-            progressEvery: 10,
-            refreshMarginMs: 60 * 60 * 1000,
-            failMax: 5
-        },
-        sendWebhook: async () => true
-    });
-    t.assert.equal(summary.status, "finished");
-    t.assert.equal(summary.scannedRecords, 0);
+    await t.assert.rejects(
+        joinCampaign.executeJoinCampaign({
+            targetGuildId: "123456789012345678",
+            candidateDocs: [],
+            config: {
+                enabled: true,
+                allowedGuilds: new Set(),
+                maxUsers: 10,
+                delayMs: 0,
+                progressEvery: 10,
+                refreshMarginMs: 60 * 60 * 1000,
+                failMax: 5
+            },
+            sendWebhook: async () => true
+        }),
+        error => error?.code === "CAMPAIGN_ALLOWLIST_REQUIRED" && error?.status === 503
+    );
 });
 
 test("join campaign follows database cursor batches until every OAuth user is scanned", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
@@ -272,7 +281,7 @@ test("join campaign follows database cursor batches until every OAuth user is sc
         dryRun: true,
         config: {
             enabled: true,
-            allowedGuilds: new Set(),
+            allowedGuilds: new Set(["123456789012345678"]),
             batchSize: 2,
             delayMs: 0,
             progressEvery: 10,

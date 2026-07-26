@@ -22,8 +22,8 @@ const runningState = {
     stopRequested: false
 };
 
-function readBooleanDefaultTrue(value) {
-    if (value === undefined || value === null || value === "") return true;
+function readBooleanDefaultFalse(value) {
+    if (value === undefined || value === null || value === "") return false;
     return ["1", "true", "yes", "on"].includes(String(value).trim().toLowerCase());
 }
 
@@ -44,7 +44,7 @@ function getJoinCampaignConfig(env = process.env) {
     const legacyBatchSize = readPositiveInt(env.JOIN_CAMPAIGN_MAX_USERS, 500, 1, 1000);
     const batchSize = readPositiveInt(env.JOIN_CAMPAIGN_BATCH_SIZE, legacyBatchSize, 1, 1000);
     return {
-        enabled: readBooleanDefaultTrue(env.JOIN_CAMPAIGN_ENABLED),
+        enabled: readBooleanDefaultFalse(env.JOIN_CAMPAIGN_ENABLED),
         allowedGuilds: parseIdSet(env.JOIN_CAMPAIGN_ALLOWED_GUILDS),
         batchSize,
         maxUsers: batchSize,
@@ -61,7 +61,15 @@ function isSnowflake(value) {
 
 function isGuildAllowed(guildId, config = getJoinCampaignConfig()) {
     if (!isSnowflake(guildId)) return false;
-    return config.allowedGuilds.size === 0 || config.allowedGuilds.has(String(guildId));
+    if (!(config.allowedGuilds instanceof Set) || config.allowedGuilds.size === 0) return false;
+    return config.allowedGuilds.has(String(guildId));
+}
+
+function createCampaignError(code, message, status = 400) {
+    const error = new Error(message);
+    error.code = code;
+    error.status = status;
+    return error;
 }
 
 function normalizeScope(scope) {
@@ -506,10 +514,16 @@ function buildExecutionContext(options = {}) {
 
 function assertCampaignCanRun(targetGuildId, config) {
     if (!config.enabled) {
-        throw new Error("JOIN_CAMPAIGN_ENABLED is disabled");
+        throw createCampaignError("CAMPAIGN_DISABLED", "JOIN_CAMPAIGN_ENABLED is disabled", 503);
+    }
+    if (!(config.allowedGuilds instanceof Set) || config.allowedGuilds.size === 0) {
+        throw createCampaignError("CAMPAIGN_ALLOWLIST_REQUIRED", "JOIN_CAMPAIGN_ALLOWED_GUILDS is required", 503);
+    }
+    if (!isSnowflake(targetGuildId)) {
+        throw createCampaignError("INVALID_GUILD_ID", "Target guild ID is invalid", 400);
     }
     if (!isGuildAllowed(targetGuildId, config)) {
-        throw new Error("Target guild is not allowed");
+        throw createCampaignError("TARGET_GUILD_NOT_ALLOWED", "Target guild is not allowed", 403);
     }
 }
 
@@ -661,6 +675,7 @@ function startJoinCampaign(options = {}) {
     if (runningState.active?.status === "running") {
         return {
             ok: false,
+            code: "CAMPAIGN_ALREADY_RUNNING",
             error: "campaign_already_running",
             campaign: runningState.active
         };
@@ -675,13 +690,31 @@ function startJoinCampaign(options = {}) {
     if (!config.enabled) {
         return {
             ok: false,
+            code: "CAMPAIGN_DISABLED",
             error: "campaign_disabled"
+        };
+    }
+
+    if (!(config.allowedGuilds instanceof Set) || config.allowedGuilds.size === 0) {
+        return {
+            ok: false,
+            code: "CAMPAIGN_ALLOWLIST_REQUIRED",
+            error: "campaign_allowlist_required"
+        };
+    }
+
+    if (!isSnowflake(targetGuildId)) {
+        return {
+            ok: false,
+            code: "INVALID_GUILD_ID",
+            error: "invalid_guild_id"
         };
     }
 
     if (!isGuildAllowed(targetGuildId, config)) {
         return {
             ok: false,
+            code: "TARGET_GUILD_NOT_ALLOWED",
             error: "target_guild_not_allowed"
         };
     }
@@ -765,7 +798,9 @@ module.exports = {
     getJoinCampaignStatus,
     _test: {
         parseIdSet,
-        readBooleanDefaultTrue,
+        readBooleanDefaultFalse,
+        createCampaignError,
+        assertCampaignCanRun,
         readPositiveInt,
         makeCampaignId,
         markTokenRefreshFailure,

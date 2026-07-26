@@ -1,8 +1,7 @@
 const joinCampaign = require("../features/joinCampaign");
 const { getDiscordGuildIconUrl } = require("../core/webhooks");
 
-function listJoinCampaignTargets(client) {
-    const campaignConfig = joinCampaign.getJoinCampaignConfig();
+function listJoinCampaignTargets(client, campaignConfig = joinCampaign.getJoinCampaignConfig()) {
     const guilds = Array.from(client?.guilds?.cache?.values?.() || []);
 
     return guilds
@@ -16,14 +15,23 @@ function listJoinCampaignTargets(client) {
         .sort((a, b) => String(a.name).localeCompare(String(b.name)));
 }
 
-function resolveJoinCampaignTarget(client, guildId) {
+function resolveJoinCampaignTarget(client, guildId, campaignConfig = joinCampaign.getJoinCampaignConfig()) {
     const safeGuildId = String(guildId || "").trim();
-    const campaignConfig = joinCampaign.getJoinCampaignConfig();
 
+    if (!campaignConfig.enabled) {
+        return { ok: false, status: 503, code: "CAMPAIGN_DISABLED", error: "ระบบ Join Campaign ถูกปิด" };
+    }
+    if (!(campaignConfig.allowedGuilds instanceof Set) || campaignConfig.allowedGuilds.size === 0) {
+        return { ok: false, status: 503, code: "CAMPAIGN_ALLOWLIST_REQUIRED", error: "ยังไม่ได้ตั้งค่ารายการเซิร์ฟเวอร์ที่อนุญาต" };
+    }
+    if (!/^\d{17,22}$/.test(safeGuildId)) {
+        return { ok: false, status: 400, code: "INVALID_GUILD_ID", error: "Guild ID ไม่ถูกต้อง" };
+    }
     if (!joinCampaign.isGuildAllowed(safeGuildId, campaignConfig)) {
         return {
             ok: false,
             status: 403,
+            code: "TARGET_GUILD_NOT_ALLOWED",
             error: "เซิร์ฟเวอร์นี้ไม่ได้อยู่ในรายการที่อนุญาต"
         };
     }
@@ -33,6 +41,7 @@ function resolveJoinCampaignTarget(client, guildId) {
         return {
             ok: false,
             status: 404,
+            code: "TARGET_GUILD_NOT_FOUND",
             error: "บอทไม่ได้อยู่ในเซิร์ฟเวอร์เป้าหมายนี้"
         };
     }
@@ -47,10 +56,12 @@ function registerJoinCampaignRoutes({ app, express, client, checkAuth }) {
     app.get("/api/join-campaign/targets", (req, res) => {
         if (!checkAuth(req, res)) return;
         try {
+            const config = joinCampaign.getJoinCampaignConfig();
             res.json({
                 success: true,
-                enabled: joinCampaign.getJoinCampaignConfig().enabled,
-                targets: listJoinCampaignTargets(client)
+                enabled: config.enabled,
+                allowlistConfigured: config.allowedGuilds.size > 0,
+                targets: listJoinCampaignTargets(client, config)
             });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
@@ -77,6 +88,7 @@ function registerJoinCampaignRoutes({ app, express, client, checkAuth }) {
             if (!target.ok) {
                 return res.status(target.status).json({
                     success: false,
+                    code: target.code || null,
                     error: target.error
                 });
             }
@@ -92,7 +104,11 @@ function registerJoinCampaignRoutes({ app, express, client, checkAuth }) {
 
             res.json({ success: true, summary });
         } catch (e) {
-            res.status(500).json({ success: false, error: e.message });
+            res.status(Number(e?.status) || 500).json({
+                success: false,
+                code: e?.code || "CAMPAIGN_DRY_RUN_FAILED",
+                error: e.message
+            });
         }
     });
 
@@ -104,6 +120,7 @@ function registerJoinCampaignRoutes({ app, express, client, checkAuth }) {
             if (!target.ok) {
                 return res.status(target.status).json({
                     success: false,
+                    code: target.code || null,
                     error: target.error
                 });
             }
@@ -116,8 +133,16 @@ function registerJoinCampaignRoutes({ app, express, client, checkAuth }) {
             });
 
             if (!started.ok) {
-                return res.status(409).json({
+                const status = started.code === "CAMPAIGN_DISABLED" || started.code === "CAMPAIGN_ALLOWLIST_REQUIRED"
+                    ? 503
+                    : started.code === "INVALID_GUILD_ID"
+                        ? 400
+                        : started.code === "TARGET_GUILD_NOT_ALLOWED"
+                            ? 403
+                            : 409;
+                return res.status(status).json({
                     success: false,
+                    code: started.code || "CAMPAIGN_ALREADY_RUNNING",
                     error: started.error,
                     campaign: started.campaign
                 });

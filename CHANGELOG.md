@@ -375,7 +375,7 @@
 - Added the protected-path guard to local validation and CI, and excluded the protected directory from broad syntax scanning.
 - Documented the five memory-trend diagnostic threshold variables already consumed by `scripts/checkMemoryTrend.js`.
 - Added Owner-only per-user member detail and audited OAuth2 token reveal, plus read-only legacy verified-member listing from `OAuthUser.lastVerify`.
-- Updated Join Campaign defaults so Owner can target any guild currently cached by the bot unless `JOIN_CAMPAIGN_ALLOWED_GUILDS` restricts it; this joins authorized users only and does not sync roles.
+- Join Campaign is now fail-closed: `JOIN_CAMPAIGN_ENABLED` defaults to disabled and `JOIN_CAMPAIGN_ALLOWED_GUILDS` must explicitly list every target guild.
 - Switched Render liveness to `/ping`, added `/ready`, `/guilds`, and `/guild/:guildId` compatibility aliases, and added production secret strength checks.
 - Hardened verification review findings: degraded verification startup, dry-run
   diagnostics isolation, graceful verification shutdown drain, redacted member
@@ -576,7 +576,7 @@
 - Updated `.env.example`, `SECURITY.md`, and `ARCHITECTURE.md` with non-secret Trace Eraser guard controls while keeping hidden owner/system operational details out of public documentation.
 - Updated session documentation and placeholders for owner dashboard and Dashboard Public rolling session controls.
 - Updated OAuth token storage documentation and placeholders to reflect persistent encrypted token storage with refresh maintenance.
-- Historical behavior: Join Campaign execution originally required an explicit target-guild allowlist. Current behavior is documented above: an empty `JOIN_CAMPAIGN_ALLOWED_GUILDS` permits any guild currently cached by the bot, under Owner-only controls. Admin OAuth originally remained scoped to `identify guilds`; the later OAuth scope update above adds `guilds.join`.
+- Historical note: a prior revision allowed an empty Join Campaign allow-list to target any cached guild. The hardened runtime no longer permits that behavior; an explicit allow-list is mandatory. Admin OAuth originally remained scoped to `identify guilds`; the later OAuth scope update above adds `guilds.join`.
 
 ### Notes
 
