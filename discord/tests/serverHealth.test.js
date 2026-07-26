@@ -13,6 +13,11 @@ function payload(overrides = {}) {
         commandsReady: () => true,
         featureFlags: { voice: true, verification: true },
         verification: { ready: true },
+        release: {
+            commitSha: "abcdef1234567890abcdef1234567890abcdef12",
+            provider: "render",
+            preview: true
+        },
         ...overrides
     });
 }
@@ -35,4 +40,12 @@ test("disabled optional subsystems do not block readiness", () => { // NOSONAR -
     assert.equal(result.ready, true);
     assert.equal(result.voiceReady, true);
     assert.equal(result.verificationReady, true);
+});
+
+test("readiness exposes the exact redacted release identity used by deployed smoke", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    assert.deepEqual(payload().release, {
+        commitSha: "abcdef1234567890abcdef1234567890abcdef12",
+        provider: "render",
+        preview: true
+    });
 });
