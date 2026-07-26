@@ -1,0 +1,45 @@
+name: Apply TTT1 Local Remediation
+
+on:
+  push:
+    branches:
+      - ttt.1
+    paths:
+      - .github/ttt1-patch/READY
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout ttt.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ttt.1
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Reconstruct and verify patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/ttt1-patch/chunk-* > /tmp/ttt1-remediation.patch.b64
+          echo "0bc82f744609a662cc284e4c75620ffe132a9ae12f78d9111883981b8a6b6dc8  /tmp/ttt1-remediation.patch.b64" | sha256sum -c -
+          base64 --decode /tmp/ttt1-remediation.patch.b64 > /tmp/ttt1-remediation.patch
+          echo "9d5b7a77f30c538a6f95d010b76f24cbaf671a1a753da8778ca222b4cde3728b  /tmp/ttt1-remediation.patch" | sha256sum -c -
+          git apply --check --binary /tmp/ttt1-remediation.patch
+
+      - name: Apply local working copy
+        shell: bash
+        run: |
+          set -euo pipefail
+          git apply --index --binary /tmp/ttt1-remediation.patch
+          git rm -r .github/ttt1-patch
+          git rm .github/workflows/apply-ttt1-local.yml
+          git config user.name "OpenAI Coding Agent"
+          git config user.email "noreply@openai.com"
+          git commit -m "fix: harden Discord runtime, recovery, and owner controls"
+          git push origin HEAD:ttt.1
