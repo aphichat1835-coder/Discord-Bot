@@ -110,6 +110,9 @@ jobs:
       - name: Discord.js v14 compatibility guard
         run: npm run check:discord14
 
+      - name: Secret leak guard
+        run: npm run check:secrets
+
       - name: Syntax check (Discord)
         run: npm run check:all
 
