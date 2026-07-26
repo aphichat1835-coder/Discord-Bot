@@ -1,4 +1,4 @@
-name: Diagnose TTT1 Discord Tests
+name: Diagnose TTT1 Verification Tests
 
 on:
   pull_request:
@@ -12,7 +12,7 @@ jobs:
   diagnose:
     if: ${{ github.head_ref == 'ttt.1' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -30,23 +30,23 @@ jobs:
           test "$(npm --version)" = "12.0.1"
       - name: Install dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Run Discord tests and capture full log
+      - name: Run Verification tests and capture full log
         id: tests
         shell: bash
         run: |
           set +e
-          npm run test:coverage:discord > discord-test.log 2>&1
+          npm run test:coverage:verification > verification-test.log 2>&1
           status=$?
           echo "status=$status" >> "$GITHUB_OUTPUT"
-          cat discord-test.log
+          cat verification-test.log
           exit 0
-      - name: Upload Discord test diagnostics
+      - name: Upload Verification test diagnostics
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ttt1-discord-test-diagnostics-${{ github.sha }}
+          name: ttt1-verification-test-diagnostics-${{ github.sha }}
           path: |
-            discord-test.log
-            coverage/discord.lcov
+            verification-test.log
+            coverage/verification.lcov
           if-no-files-found: warn
           retention-days: 1
       - name: Preserve failure status
