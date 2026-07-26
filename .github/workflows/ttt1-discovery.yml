@@ -22,20 +22,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Build repository inventory
+      - name: Build repository snapshot
         shell: bash
         run: |
           set -euo pipefail
           git rev-parse HEAD > audited-head.txt
           git ls-files | sort > repository-files.txt
-          {
-            echo '## Legacy Discord permission calls'
-            grep -RInE --include='*.js' '\.has\(["'"'][A-Z][A-Z0-9_]+["'"']\)' discord scripts verification-tests || true
-            echo '## Legacy permission overwrite keys'
-            grep -RInE --include='*.js' '\b[A-Z][A-Z0-9_]+\s*:' discord scripts verification-tests || true
-            echo '## High-risk lifecycle patterns'
-            grep -RInE --include='*.js' 'deleteMany\(\{\}\)|req\.query\.pin|client\.channels\.cache\.clear\(\)|app\.all\(' discord scripts verification-tests || true
-          } > repository-audit-seeds.txt
           git archive --format=tar.gz --output=ttt1-source.tar.gz HEAD
 
       - name: Upload source snapshot
@@ -45,7 +37,6 @@ jobs:
           path: |
             ttt1-source.tar.gz
             repository-files.txt
-            repository-audit-seeds.txt
             audited-head.txt
           if-no-files-found: error
           retention-days: 1
