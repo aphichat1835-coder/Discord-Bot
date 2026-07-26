@@ -1,0 +1,48 @@
+name: TTT1 Discovery
+
+on:
+  push:
+    branches:
+      - ttt.1
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Build repository inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD > audited-head.txt
+          git ls-files | sort > repository-files.txt
+          {
+            echo '## Legacy Discord permission calls'
+            grep -RInE --include='*.js' '\.has\(["'"'][A-Z][A-Z0-9_]+["'"']\)' discord scripts verification-tests || true
+            echo '## Legacy permission overwrite keys'
+            grep -RInE --include='*.js' '\b[A-Z][A-Z0-9_]+\s*:' discord scripts verification-tests || true
+            echo '## High-risk lifecycle patterns'
+            grep -RInE --include='*.js' 'deleteMany\(\{\}\)|req\.query\.pin|client\.channels\.cache\.clear\(\)|app\.all\(' discord scripts verification-tests || true
+          } > repository-audit-seeds.txt
+          tar --exclude=.git --exclude=node_modules --exclude=coverage -czf ttt1-source.tar.gz .
+
+      - name: Upload source snapshot
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ttt1-source-${{ github.sha }}
+          path: |
+            ttt1-source.tar.gz
+            repository-files.txt
+            repository-audit-seeds.txt
+            audited-head.txt
+          if-no-files-found: error
+          retention-days: 1
