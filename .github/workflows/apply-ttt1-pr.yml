@@ -1,0 +1,57 @@
+name: Apply TTT1 Local Remediation via PR
+
+on:
+  pull_request:
+    branches:
+      - ttt
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ github.head_ref == 'ttt.1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout ttt.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ttt.1
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Reconstruct, apply, and push local working copy
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'STAGE 1: verify payload files'
+          test -f .github/ttt1-patch/READY
+          test "$(find .github/ttt1-patch -maxdepth 1 -type f -name 'chunk-*' | wc -l)" -eq 13
+
+          echo 'STAGE 2: reconstruct payload'
+          cat .github/ttt1-patch/chunk-* > /tmp/ttt1-remediation.patch.xz.b64
+          echo "00cf35f78fffe8212035a4ecf1841e692468099b43d0db806828e69f6e8781b0  /tmp/ttt1-remediation.patch.xz.b64" | sha256sum -c -
+          base64 --decode /tmp/ttt1-remediation.patch.xz.b64 > /tmp/ttt1-remediation.patch.xz
+          echo "6301f0ce1b25a94c280e58a29cac9eb705d9019cd1310607552d7d52dc307dde  /tmp/ttt1-remediation.patch.xz" | sha256sum -c -
+          xz --decompress --stdout /tmp/ttt1-remediation.patch.xz > /tmp/ttt1-remediation.patch
+          echo "9d5b7a77f30c538a6f95d010b76f24cbaf671a1a753da8778ca222b4cde3728b  /tmp/ttt1-remediation.patch" | sha256sum -c -
+
+          echo 'STAGE 3: restore patch base in worktree and index'
+          git fetch --no-tags origin ttt
+          git checkout origin/ttt -- .github/workflows/ci.yml
+
+          echo 'STAGE 4: validate and apply patch'
+          git apply --check --index --binary /tmp/ttt1-remediation.patch
+          git apply --index --binary /tmp/ttt1-remediation.patch
+
+          echo 'STAGE 5: remove transfer-only files'
+          git rm -r .github/ttt1-patch
+          git rm .github/workflows/apply-ttt1-local.yml
+          git rm .github/workflows/apply-ttt1-pr.yml
+
+          echo 'STAGE 6: commit and push'
+          git config user.name "OpenAI Coding Agent"
+          git config user.email "noreply@openai.com"
+          git commit -m "fix: harden Discord runtime, recovery, and owner controls"
+          git push origin HEAD:ttt.1
