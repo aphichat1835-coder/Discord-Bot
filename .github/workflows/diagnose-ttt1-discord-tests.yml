@@ -1,4 +1,4 @@
-name: Diagnose TTT1 Verification Tests
+name: Diagnose TTT1 Voice Coverage
 
 on:
   pull_request:
@@ -12,7 +12,7 @@ jobs:
   diagnose:
     if: ${{ github.head_ref == 'ttt.1' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -30,24 +30,28 @@ jobs:
           test "$(npm --version)" = "12.0.1"
       - name: Install dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Run Verification tests and capture full log
+      - name: Run Voice tests and capture coverage
         id: tests
         shell: bash
         run: |
           set +e
-          npm run test:coverage:verification > verification-test.log 2>&1
-          status=$?
-          echo "status=$status" >> "$GITHUB_OUTPUT"
-          cat verification-test.log
+          npm run test:coverage:voice > voice-test.log 2>&1
+          test_status=$?
+          node scripts/checkCoverageThresholds.js coverage/voice.lcov > voice-coverage.log 2>&1
+          coverage_status=$?
+          echo "status=$(( test_status || coverage_status ))" >> "$GITHUB_OUTPUT"
+          cat voice-test.log
+          cat voice-coverage.log
           exit 0
-      - name: Upload Verification test diagnostics
+      - name: Upload Voice coverage diagnostics
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ttt1-verification-test-diagnostics-${{ github.sha }}
+          name: ttt1-voice-coverage-diagnostics-${{ github.sha }}
           path: |
-            verification-test.log
-            coverage/verification.lcov
-          if-no-files-found: warn
+            voice-test.log
+            voice-coverage.log
+            coverage/voice.lcov
+          if-no-files-found: error
           retention-days: 1
       - name: Preserve failure status
         if: ${{ steps.tests.outputs.status != '0' }}
