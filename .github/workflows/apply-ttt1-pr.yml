@@ -36,7 +36,6 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-
           chunks = []
           for path in sorted(Path('.github/ttt1-patch').glob('chunk-*')):
               data = path.read_bytes()
@@ -61,17 +60,33 @@ jobs:
           git checkout origin/ttt -- .github/workflows/ci.yml
           git apply --check --index --binary /tmp/ttt1-remediation.patch
 
-      - name: Apply, clean transfer files, commit, and push
+      - name: Apply remediation patch
         shell: bash
         run: |
           set -euo pipefail
           git apply --index --binary /tmp/ttt1-remediation.patch
+          git status --short | head -200
+
+      - name: Remove transfer-only files
+        shell: bash
+        run: |
+          set -euo pipefail
           git rm -r .github/ttt1-patch
           git rm .github/workflows/apply-ttt1-local.yml
           git rm .github/workflows/apply-ttt1-pr.yml
           git rm .github/workflows/verify-ttt1-chunks.yml
           git rm .github/workflows/verify-ttt1-payload.yml
+
+      - name: Commit remediation
+        shell: bash
+        run: |
+          set -euo pipefail
           git config user.name "OpenAI Coding Agent"
           git config user.email "noreply@openai.com"
           git commit -m "fix: harden Discord runtime, recovery, and owner controls"
+
+      - name: Push remediation to ttt.1
+        shell: bash
+        run: |
+          set -euo pipefail
           git push origin HEAD:ttt.1
