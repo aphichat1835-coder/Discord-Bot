@@ -21,19 +21,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Verify payload inventory
+      - name: Reconstruct and verify remediation patch
         shell: bash
         run: |
           set -euo pipefail
           test -f .github/ttt1-patch/READY
           count="$(find .github/ttt1-patch -maxdepth 1 -type f -name 'chunk-*' | wc -l)"
-          echo "Payload chunks: $count"
           test "$count" -eq 14
-
-      - name: Reconstruct and verify payload hashes
-        shell: bash
-        run: |
-          set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
           chunks = []
@@ -52,32 +46,19 @@ jobs:
           xz --decompress --stdout /tmp/ttt1-remediation.patch.xz > /tmp/ttt1-remediation.patch
           echo "9d5b7a77f30c538a6f95d010b76f24cbaf671a1a753da8778ca222b4cde3728b  /tmp/ttt1-remediation.patch" | sha256sum -c -
 
-      - name: Restore patch base and validate patch
+      - name: Apply code changes without workflow mutations
         shell: bash
         run: |
           set -euo pipefail
-          git fetch --no-tags origin ttt
+          git fetch --no-tags origin ttt ttt.1
           git checkout origin/ttt -- .github/workflows/ci.yml
           git apply --check --index --binary /tmp/ttt1-remediation.patch
-
-      - name: Apply remediation patch
-        shell: bash
-        run: |
-          set -euo pipefail
           git apply --index --binary /tmp/ttt1-remediation.patch
+          git checkout origin/ttt.1 -- .github/workflows
+          git rm -r .github/ttt1-patch
           git status --short | head -200
 
-      - name: Remove transfer-only files
-        shell: bash
-        run: |
-          set -euo pipefail
-          git rm -r .github/ttt1-patch
-          git rm .github/workflows/apply-ttt1-local.yml
-          git rm .github/workflows/apply-ttt1-pr.yml
-          git rm .github/workflows/verify-ttt1-chunks.yml
-          git rm .github/workflows/verify-ttt1-payload.yml
-
-      - name: Commit remediation
+      - name: Commit code changes
         shell: bash
         run: |
           set -euo pipefail
@@ -85,7 +66,7 @@ jobs:
           git config user.email "noreply@openai.com"
           git commit -m "fix: harden Discord runtime, recovery, and owner controls"
 
-      - name: Push remediation to ttt.1
+      - name: Push code changes to ttt.1
         shell: bash
         run: |
           set -euo pipefail
