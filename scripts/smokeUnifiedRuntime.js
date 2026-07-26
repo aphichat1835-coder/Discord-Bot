@@ -4,6 +4,7 @@
 const dns = require("node:dns").promises;
 const { BlockList, isIP } = require("node:net");
 const { readFiniteInteger } = require("../discord/core/numbers");
+const { normalizeCommitSha } = require("../discord/core/releaseIdentity");
 
 const DEFAULT_TIMEOUT_MS = readFiniteInteger(process.env.SMOKE_TIMEOUT_MS, { fallback: 8000, min: 1000, max: 120000 });
 const RESERVED_IPV4 = new BlockList();
@@ -47,11 +48,13 @@ function usage() {
     return [
         "Usage: node scripts/smokeUnifiedRuntime.js <https://domain>",
         "Requires: SMOKE_ALLOWED_HOSTS=domain.example[,other.example]",
+        "Optional exact-release proof: SMOKE_EXPECTED_COMMIT_SHA=<40 hex> SMOKE_REQUIRE_PREVIEW=true",
         "",
-        "Checks the unified single-port runtime after deploy without requiring secrets.",
+        "Checks the unified single-port runtime after deploy without requiring application secrets.",
         "Expected:",
         "- /ping returns 200 OK",
-        "- /health returns JSON with 200 or startup/degraded 503",
+        "- /health and /ready return JSON with 200 or startup/degraded 503",
+        "- release identity matches the expected SHA when configured",
         "- /auth/callback serves the public callback page",
         "- / and /verification are reachable and may redirect to Owner PIN"
     ].join("\n");
@@ -64,6 +67,14 @@ function allowedSmokeHosts() {
             .map(value => value.trim().toLowerCase())
             .filter(Boolean)
     );
+}
+
+function expectedCommitSha(env = process.env) {
+    const raw = String(env.SMOKE_EXPECTED_COMMIT_SHA || "").trim();
+    if (!raw) return null;
+    const normalized = normalizeCommitSha(raw);
+    if (!normalized) throw new Error("SMOKE_EXPECTED_COMMIT_SHA must be an exact 40-character commit SHA");
+    return normalized;
 }
 
 function trimTrailingSlashes(value) {
@@ -149,7 +160,7 @@ async function request(baseUrl, path, { redirect = "manual" } = {}) {
             ok: response.ok,
             contentType: response.headers.get("content-type") || "",
             location: response.headers.get("location") || "",
-            text: text.slice(0, 500)
+            text: text.slice(0, 2000)
         };
     } finally {
         clearTimeout(timeout);
@@ -162,6 +173,37 @@ function assert(condition, message, details) {
         err.details = details;
         throw err;
     }
+}
+
+function parseJsonResult(result) {
+    try {
+        return JSON.parse(String(result?.text || ""));
+    } catch {
+        return null;
+    }
+}
+
+function assertReleaseIdentity(result, expectedSha, requirePreview = false) {
+    if (!expectedSha && !requirePreview) return null;
+    const payload = parseJsonResult(result);
+    assert(payload && typeof payload === "object", `${result.path} did not contain parseable release JSON`, result);
+    const actualSha = normalizeCommitSha(payload?.release?.commitSha);
+    if (expectedSha) {
+        assert(actualSha === expectedSha, `${result.path} release SHA did not match the expected commit`, {
+            path: result.path,
+            status: result.status,
+            expectedSha,
+            actualSha
+        });
+    }
+    if (requirePreview) {
+        assert(payload?.release?.preview === true, `${result.path} did not identify a pull-request preview`, {
+            path: result.path,
+            status: result.status,
+            preview: payload?.release?.preview ?? null
+        });
+    }
+    return payload.release;
 }
 
 function isOwnerReachable(result) {
@@ -178,6 +220,8 @@ function looksLikeHtml(result) {
 
 async function main() {
     const baseUrl = normalizeBaseUrl(process.argv[2]);
+    const expectedSha = expectedCommitSha();
+    const requirePreview = String(process.env.SMOKE_REQUIRE_PREVIEW || "").toLowerCase() === "true";
     await assertSafeResolvedHost(new URL(baseUrl).hostname);
     const results = [];
 
@@ -189,20 +233,22 @@ async function main() {
     results.push(health);
     assert([200, 503].includes(health.status), "/health should return ready 200 or degraded 503", health);
     assert(/json/i.test(health.contentType) || /^\s*\{/.test(health.text), "/health did not look like JSON", health);
+    assertReleaseIdentity(health, expectedSha, requirePreview);
 
     const ready = await request(baseUrl, "/ready");
     results.push(ready);
     assert([200, 503].includes(ready.status), "/ready alias should return ready 200 or degraded 503", ready);
     assert(/json/i.test(ready.contentType) || /^\s*\{/.test(ready.text), "/ready did not look like JSON", ready);
+    assertReleaseIdentity(ready, expectedSha, requirePreview);
 
     const callback = await request(baseUrl, "/auth/callback");
     results.push(callback);
     assert(callback.status === 200 && looksLikeHtml(callback), "/auth/callback did not serve callback HTML", callback);
 
-    for (const path of ["/", "/verification"]) {
-        const result = await request(baseUrl, path);
+    for (const routePath of ["/", "/verification"]) {
+        const result = await request(baseUrl, routePath);
         results.push(result);
-        assert(isOwnerReachable(result), `${path} was not reachable through Owner boundary`, result);
+        assert(isOwnerReachable(result), `${routePath} was not reachable through Owner boundary`, result);
     }
 
     console.log("[UNIFIED-SMOKE] ok");
@@ -224,7 +270,10 @@ if (require.main === module) {
 
 module.exports = {
     allowedSmokeHosts,
+    assertReleaseIdentity,
     normalizeBaseUrl,
+    expectedCommitSha,
+    parseJsonResult,
     assertSafeResolvedHost,
     trimTrailingSlashes,
     isBlockedSmokeHost,
