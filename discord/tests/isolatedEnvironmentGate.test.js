@@ -14,6 +14,7 @@ const {
 function validEnvironment() {
     return {
         TEST_ENVIRONMENT_CONFIRMATION: "ISOLATED_TEST_ONLY",
+        TEST_COMMIT_SHA: "abcdef1234567890abcdef1234567890abcdef12",
         TEST_MONGO_URI: "mongodb://gate_user:gate_password@mongo.example.test/project_integration_test?retryWrites=false",
         TEST_DISCORD_TOKEN: "test-bot-token-value-not-a-real-token",
         TEST_GUILD_ID: "123456789012345678",
@@ -23,7 +24,7 @@ function validEnvironment() {
         TEST_DISCORD_CLIENT_SECRET: "test-client-secret-value",
         TEST_PUBLIC_BASE_URL: "https://preview.example.test/",
         TEST_ALLOWED_HOSTS: "preview.example.test,other.example.test",
-        GITHUB_SHA: "abcdef1234567890"
+        PRODUCTION_PUBLIC_BASE_URL: "https://production.example.test"
     };
 }
 
@@ -31,6 +32,8 @@ test("isolated environment gate accepts an explicitly separated test configurati
     const config = validateIsolatedEnvironment(validEnvironment());
     assert.equal(config.databaseName, "project_integration_test");
     assert.equal(config.publicBaseUrl, "https://preview.example.test");
+    assert.equal(config.productionOrigin, "https://production.example.test");
+    assert.equal(config.commitSha, "abcdef1234567890abcdef1234567890abcdef12");
     assert.deepEqual(config.allowedHosts, ["other.example.test", "preview.example.test"]);
     assert.equal(config.guildId, "123456789012345678");
 });
@@ -41,15 +44,23 @@ test("isolated environment gate rejects missing confirmation, production reuse, 
     assert.throws(() => validateIsolatedEnvironment(missingConfirmation), /CONFIRMATION_REQUIRED/);
 
     const productionReuse = validEnvironment();
-    productionReuse.PUBLIC_BASE_URL = "https://preview.example.test";
+    productionReuse.PRODUCTION_PUBLIC_BASE_URL = "https://preview.example.test";
     assert.throws(() => validateIsolatedEnvironment(productionReuse), /MUST_DIFFER_FROM_PRODUCTION/);
+
+    const missingProductionOrigin = validEnvironment();
+    delete missingProductionOrigin.PRODUCTION_PUBLIC_BASE_URL;
+    assert.throws(() => validateIsolatedEnvironment(missingProductionOrigin), /MISSING_TEST_ENVIRONMENT/);
 
     const productionDatabase = validEnvironment();
     productionDatabase.TEST_MONGO_URI = "mongodb://mongo.example.test/production";
     assert.throws(() => validateIsolatedEnvironment(productionDatabase), /DATABASE_NAME_REQUIRED/);
 });
 
-test("isolated environment gate validates exact host allowlisting and Discord snowflakes", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("isolated environment gate validates exact SHA, exact host allowlisting, and Discord snowflakes", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const invalidSha = validEnvironment();
+    invalidSha.TEST_COMMIT_SHA = "abcdef";
+    assert.throws(() => validateIsolatedEnvironment(invalidSha), /INVALID_TEST_COMMIT_SHA/);
+
     const wrongHost = validEnvironment();
     wrongHost.TEST_ALLOWED_HOSTS = "example.test";
     assert.throws(() => validateIsolatedEnvironment(wrongHost), /HOST_NOT_ALLOWLISTED/);
