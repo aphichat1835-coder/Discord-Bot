@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - ttt.1
+  pull_request:
+    branches:
+      - ttt
 
 permissions:
   contents: read
