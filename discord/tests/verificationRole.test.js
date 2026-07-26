@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const { PermissionFlagsBits } = require("discord.js");
 
 process.env.ENCRYPTION_KEY ||= "test-key-for-unit-tests-only";
 process.env.API_SECRET ||= "test-api-secret";
@@ -10,7 +11,7 @@ function botMember({ canManageRoles = true, highestPosition = 10 } = {}) {
     return {
         permissions: {
             has(permission) {
-                return permission === "MANAGE_ROLES" && canManageRoles;
+                return permission === PermissionFlagsBits.ManageRoles && canManageRoles;
             }
         },
         roles: {

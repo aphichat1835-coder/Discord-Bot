@@ -20,9 +20,11 @@ const CHANNEL_ID = "222222222222222222";
 const MESSAGE_ID = "333333333333333333";
 const AUTHOR_ID = "444444444444444444";
 const BOT_ID = "999999999999999999";
+const APPROVAL_CHANNEL_ID = "555555555555555555";
 
 function createHarness(options = {}) {
     const sent = [];
+    const approvalSent = [];
     const deleted = [];
     const listeners = new Map();
     const targetMessage = {
@@ -64,15 +66,28 @@ function createHarness(options = {}) {
     };
     targetMessage.channel = channel;
 
+    const approvalChannel = {
+        id: APPROVAL_CHANNEL_ID,
+        name: "private-approvals",
+        sent: approvalSent,
+        async send(payload) {
+            approvalSent.push(payload);
+            return payload;
+        }
+    };
+
+    const channels = new Map([[channel.id, channel]]);
+    if (options.secureApproval !== false) channels.set(approvalChannel.id, approvalChannel);
+
     const client = {
         user: {
             id: BOT_ID,
             username: "TraceBot"
         },
         channels: {
-            cache: new Map([[channel.id, channel]]),
+            cache: channels,
             async fetch(channelId) {
-                return channelId === channel.id ? channel : null;
+                return channels.get(channelId) || null;
             }
         },
         async fetchWebhook() {
@@ -87,12 +102,13 @@ function createHarness(options = {}) {
     };
 
     const engine = new ShadowEngine(client);
-    if (options.secureApproval !== false) engine.traceApprovalChannelId = channel.id;
+    if (options.secureApproval !== false) engine.traceApprovalChannelId = approvalChannel.id;
     return {
         engine,
         message: targetMessage,
         channel,
         sent,
+        approvalSent,
         deleted,
         listeners
     };
@@ -143,15 +159,16 @@ test("trace policy and protected-channel parsers normalize configured values", (
 
 test("approval policy records audit then sends only to the configured secure destination", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     resetTraceState();
-    setTraceRuntimeOptions({ guildPolicies: { [GUILD_ID]: "approval" } });
+    setTraceRuntimeOptions({ enabled: true, guildPolicies: { [GUILD_ID]: "approval" } });
     const audit = patchAuditStorage();
-    const { engine, message, sent, deleted } = createHarness();
+    const { engine, message, sent, approvalSent, deleted } = createHarness();
 
     try {
         await engine.handleTraceEraser(message);
 
         assert.equal(deleted.length, 0);
-        assert.equal(sent.length, 1);
+        assert.equal(sent.length, 0);
+        assert.equal(approvalSent.length, 1);
         assert.equal(traceDeletionRequests.size, 1);
         assert.equal(traceMetrics.approvalsRequested, 1);
         assert.equal(audit.records[0].actionType, "TRACE_APPROVAL_REQUESTED");
@@ -163,7 +180,7 @@ test("approval policy records audit then sends only to the configured secure des
 
 test("missing secure approval destination never falls back to the source channel", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     resetTraceState();
-    setTraceRuntimeOptions({ guildPolicies: { [GUILD_ID]: "approval" } });
+    setTraceRuntimeOptions({ enabled: true, guildPolicies: { [GUILD_ID]: "approval" } });
     const audit = patchAuditStorage();
     const { engine, message, sent, deleted } = createHarness({ secureApproval: false });
 
@@ -180,16 +197,16 @@ test("missing secure approval destination never falls back to the source channel
 
 test("trace preview redacts sensitive content before a secure approval prompt", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     resetTraceState();
-    setTraceRuntimeOptions({ guildPolicies: { [GUILD_ID]: "approval" } });
+    setTraceRuntimeOptions({ enabled: true, guildPolicies: { [GUILD_ID]: "approval" } });
     const audit = patchAuditStorage();
     const content = `Bot ${BOT_ID} deleted a channel token=abc.def.ghi email=test@example.com ip=203.0.113.9`;
-    const { engine, message, sent } = createHarness({ content });
+    const { engine, message, approvalSent } = createHarness({ content });
 
     try {
         await engine.handleTraceEraser(message);
-        const description = sent[0]?.embeds?.[0]?.data?.description
-            || sent[0]?.embeds?.[0]?.description
-            || String(sent[0]?.embeds?.[0] || "");
+        const description = approvalSent[0]?.embeds?.[0]?.data?.description
+            || approvalSent[0]?.embeds?.[0]?.description
+            || String(approvalSent[0]?.embeds?.[0] || "");
         assert.doesNotMatch(description, /abc\.def\.ghi/);
         assert.doesNotMatch(description, /test@example\.com/);
         assert.doesNotMatch(description, /203\.0\.113\.9/);
@@ -200,7 +217,7 @@ test("trace preview redacts sensitive content before a secure approval prompt", 
 
 test("allowed deletion fails closed when audit intent cannot be persisted", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     resetTraceState();
-    setTraceRuntimeOptions({ guildPolicies: { [GUILD_ID]: "allowed" } });
+    setTraceRuntimeOptions({ enabled: true, guildPolicies: { [GUILD_ID]: "allowed" } });
     const audit = patchAuditStorage(() => null);
     const { engine, message, deleted } = createHarness();
 
@@ -216,7 +233,7 @@ test("allowed deletion fails closed when audit intent cannot be persisted", asyn
 
 test("allowed policy records intent before deleting and records the final result", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     resetTraceState();
-    setTraceRuntimeOptions({ guildPolicies: { [GUILD_ID]: "allowed" } });
+    setTraceRuntimeOptions({ enabled: true, guildPolicies: { [GUILD_ID]: "allowed" } });
     const audit = patchAuditStorage();
     const { engine, message, deleted } = createHarness();
 
@@ -235,7 +252,7 @@ test("allowed policy records intent before deleting and records the final result
 
 test("approval request is claimed atomically so concurrent approvals delete once", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     resetTraceState();
-    setTraceRuntimeOptions({ guildPolicies: { [GUILD_ID]: "approval" } });
+    setTraceRuntimeOptions({ enabled: true, guildPolicies: { [GUILD_ID]: "approval" } });
     const audit = patchAuditStorage();
     let releaseDelete;
     const deleteGate = new Promise(resolve => { releaseDelete = resolve; });
@@ -275,6 +292,7 @@ test("approval request is claimed atomically so concurrent approvals delete once
 test("protected message and repeated initialization remain safe", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     resetTraceState();
     setTraceRuntimeOptions({
+        enabled: true,
         guildPolicies: { [GUILD_ID]: "allowed" },
         protectedChannels: [CHANNEL_ID]
     });

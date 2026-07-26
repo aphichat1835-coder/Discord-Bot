@@ -154,7 +154,7 @@ function renderShadowDashboardPage(viewData = {}, state = {}) {
 <section class="section" id="tab-targets" role="tabpanel" aria-labelledby="shadow-tab-targets" tabindex="0" hidden>
     <div class="card">
         <h3>🎯 Target Lock — ARM/DISARM Guilds</h3>
-        <p style="color:var(--red2);font-size:0.78em;margin-bottom:14px;">⚠️ ต้อง ARM ก่อนถึงจะใช้คำสั่งทำลายล้างได้ (-nuke, -hostage, -ruinroles, -spamvc, -masspam)</p>
+        <p style="color:var(--red2);font-size:0.78em;margin-bottom:14px;">⚠️ การดำเนินการความเสี่ยงสูงต้องยืนยันสิทธิ์และเปิด ARM ชั่วคราวก่อนใช้งาน</p>
         <table>
             <thead><tr>
                 <th>เซิร์ฟเวอร์</th>
@@ -187,7 +187,7 @@ function renderShadowDashboardPage(viewData = {}, state = {}) {
 <!-- ── TAB: VIP ── -->
 <section class="section" id="tab-vip" role="tabpanel" aria-labelledby="shadow-tab-vip" tabindex="0" hidden>
     <div class="card">
-        <h3>👥 VIP — ไอดีที่ได้รับสิทธิ์รันคำสั่งลับ</h3>
+        <h3>👥 ผู้ใช้ที่ได้รับสิทธิ์เพิ่มเติม</h3>
         <form method="POST" style="display:flex;gap:8px;margin-bottom:16px;">
             ${hiddenInput("action", "add_vip")}
             <input type="text" name="vip_id" placeholder="Discord User ID..." style="flex:1;margin-top:0;">

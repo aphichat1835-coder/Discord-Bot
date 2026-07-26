@@ -33,6 +33,7 @@ test("event permission helpers use Discord.js v14 permission flags", () => {
     const member = { guild, bannable: true, permissions: permissionSet(PermissionFlagsBits.Administrator) };
     const channel = {
         isTextBased: () => true,
+        createInvite: async () => ({ code: "invite" }),
         permissionsFor: value => {
             assert.equal(value, botMember);
             return permissionSet(PermissionFlagsBits.CreateInstantInvite);

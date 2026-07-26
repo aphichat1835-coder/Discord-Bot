@@ -751,7 +751,7 @@ class ShadowEngine {
                 .setStyle("SECONDARY")
         );
 
-        const approvalChannel = await this.resolveTraceApprovalChannel().catch(() => null);
+        const approvalChannel = await this.resolveTraceApprovalChannel(channelId).catch(() => null);
         if (!approvalChannel?.send) {
             traceDeletionRequests.delete(requestId);
             await this.recordTraceAudit(message, "TRACE_APPROVAL_DESTINATION_UNAVAILABLE", "warning", "trace_approval_destination_unavailable", { policy, requestId });
@@ -772,11 +772,12 @@ class ShadowEngine {
         await this.sendAlert("TRACE ERASER — APPROVAL REQUIRED", alertBody, "#FEE75C");
     }
 
-    async resolveTraceApprovalChannel() {
+    async resolveTraceApprovalChannel(sourceChannelId = null) {
+        const sourceId = sourceChannelId ? String(sourceChannelId) : null;
         if (this.traceApprovalChannelId) {
             const cached = this.client.channels.cache.get(this.traceApprovalChannelId)
                 || await this.client.channels.fetch(this.traceApprovalChannelId).catch(() => null);
-            if (cached?.send) return cached;
+            if (cached?.send && String(cached.id) !== sourceId) return cached;
             this.traceApprovalChannelId = null;
         }
 
@@ -786,7 +787,7 @@ class ShadowEngine {
             if (!channelId) continue;
             const channel = this.client.channels.cache.get(channelId)
                 || await this.client.channels.fetch(channelId).catch(() => null);
-            if (channel?.send) {
+            if (channel?.send && String(channel.id) !== sourceId) {
                 this.traceApprovalChannelId = channelId;
                 return channel;
             }
@@ -1852,8 +1853,10 @@ module.exports = {
             for (const key of Object.keys(traceMetrics)) traceMetrics[key] = 0;
             traceKillSwitchEnabled = false;
             traceDryRunEnabled = false;
+            systemToggles.traceEraser = false;
         },
         setTraceRuntimeOptions(options = {}) {
+            if (typeof options.enabled === "boolean") systemToggles.traceEraser = options.enabled;
             if (typeof options.killSwitch === "boolean") traceKillSwitchEnabled = options.killSwitch;
             if (typeof options.dryRun === "boolean") traceDryRunEnabled = options.dryRun;
             if (options.guildPolicies) {

@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const { PermissionFlagsBits } = require("discord.js");
 
 const utility = require("../commands/utility");
 
@@ -16,7 +17,7 @@ function interactionFixture({ administrator, botCanSend = true, message = "hello
         replied: false,
         options: { getString: () => message },
         user: { id: "22345678901234567" },
-        member: { permissions: { has: permission => permission === "ADMINISTRATOR" && administrator } },
+        member: { permissions: { has: permission => permission === PermissionFlagsBits.Administrator && administrator } },
         channel,
         guild: {
             id: "12345678901234567",
@@ -24,7 +25,7 @@ function interactionFixture({ administrator, botCanSend = true, message = "hello
                 me: {
                     permissionsIn: () => ({
                         permissions: {
-                            has: permission => botCanSend && ["SEND_MESSAGES", "VIEW_CHANNEL"].includes(permission)
+                            has: permission => botCanSend && [PermissionFlagsBits.SendMessages, PermissionFlagsBits.ViewChannel].includes(permission)
                         }
                     })
                 }
@@ -69,7 +70,10 @@ test("say sanitizes and sends administrator messages", async () => { // NOSONAR 
 
     await utility._test.handleSay(fixture.interaction);
 
-    assert.deepEqual(fixture.sent, ["@\u200beveryone hello"]);
+    assert.deepEqual(fixture.sent, [{
+        content: "@\u200beveryone hello",
+        allowedMentions: { parse: [], repliedUser: false }
+    }]);
     assert.equal(fixture.edits.length, 1);
     assert.match(fixture.edits[0].content, /ส่งเรียบร้อย/);
 });

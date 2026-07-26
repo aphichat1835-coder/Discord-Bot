@@ -117,7 +117,7 @@ test("protected portal works through the real main-auth and CSRF middleware stac
         });
         assert.equal(login.status, 200);
         const protectedCookie = cookiePair(login.headers.get("set-cookie"));
-        assert.match(protectedCookie, /^__shadow=/);
+        assert.match(protectedCookie, /^__shadow_console=/);
 
         const dashboard = await fetch(`${baseUrl}/api/v1/telemetry/snapshot`, {
             headers: { cookie: `${mainCookies}; ${protectedCookie}` }
