@@ -54,7 +54,8 @@
 | F-032 | Source-regex mocks and LCOV-file existence could create false confidence | Real v14 objects/flags, behavioural tests and metric thresholds; Voice LCOV is scoped to Voice/Session runtime without lowering thresholds | Discord, Voice and Verification coverage suites | Closed — automated |
 | F-033 | Documentation could claim behaviour not implemented or disclose protected internals | README, SECURITY, architecture, runbook, environment and deployment files align with runtime and use the public wording “Dashboard ควบคุมบอท” | Documentation/source contract tests and final review | Closed — reviewed |
 | F-034 | Protected files could self-approve digest changes and external analysis could be silently skipped | Complete six-file manifest, base comparison, exact-head owner approval and explicit Sonar degraded status | Protected guard tests and CI | Closed — automated; Sonar external scan is environment-dependent |
-| F-035 | Runtime behaviour on Discord, MongoDB and the deployed web service must be proven outside mocks | `scripts/smokeUnifiedRuntime.js` provides bounded deployed-service checks; Test Guild/Test DB scenarios are listed below | Requires configured test environment and credentials | **Environment gate** |
+| F-035 | Runtime behaviour on Discord, MongoDB and the deployed web service must be proven outside mocks and against the exact deployed commit | `scripts/runIsolatedEnvironmentGate.js`, `.github/workflows/isolated-environment-gate.yml`, `scripts/smokeUnifiedRuntime.js`, runtime release identity and `docs/ISOLATED_ENVIRONMENT_GATE.md` | Gate validation/redaction tests, exact-SHA readiness/smoke tests; a successful external artifact still requires isolated credentials and preview infrastructure | **Environment gate — executable runner complete; external record pending** |
+| F-036 | Tracked production files could contain credential-shaped literals without a permanent repository gate | `scripts/checkSecretLeaks.js`, `npm run check:secrets`, CI Secret leak step with redacted path/line output | `discord/tests/secretLeakGuard.test.js`; full tracked-file scan | Closed — automated |
 
 ## Automated gate command
 
@@ -63,6 +64,7 @@ The required repository gate is:
 ```bash
 npm ci --ignore-scripts --no-audit --no-fund
 npm run check
+npm run check:secrets
 npm run test:coverage:discord
 npm run test:coverage:voice
 npm run test:coverage:verification
@@ -71,7 +73,8 @@ npm audit --audit-level=high
 ```
 
 CI additionally verifies pinned Node/npm versions, protected-path owner approval,
-Sonar availability/degraded status and LCOV report presence.
+Sonar availability/degraded status, tracked-file secret patterns and LCOV report
+presence.
 
 ## Repository-wide negative scan
 
@@ -87,33 +90,56 @@ client.channels.cache.clear()
 unscoped deleteMany({})
 GET logout or sensitive reveal routes
 prefix-only window.location.origin comparison
+credential-shaped literals in tracked production files
 ```
 
-The AST guard deliberately contains fixture strings for these patterns under
-`discord/tests`; those fixtures are expected and prove rejection.
+The AST and secret guards deliberately contain fixture strings under
+`discord/tests`; those fixtures are expected and prove rejection without printing
+secret values.
 
-## Required deployed smoke gate
+## Required isolated environment gate
 
-Run only against an isolated test deployment, Test Guild and Test database:
+The permanent runner is documented in `docs/ISOLATED_ENVIRONMENT_GATE.md`. It is
+available on pull requests when `RUN_ISOLATED_ENVIRONMENT_GATE=true` and through
+manual dispatch after the workflow exists on the default branch.
 
-1. Liveness and readiness endpoints.
-2. Command permission and mention-suppression cases.
-3. Verification direct/OAuth flows, policy on/off, rollback and recovery.
-4. Privacy deletion and sensitive reveal audit.
-5. Voice create/stop/reconnect, concurrent create, owner mismatch, late login,
-   health recovery and restart.
-6. DM database outage/recovery and priority ordering.
-7. Backup/Restore thread, overwrite and partial-failure behaviour.
-8. Protection multi-rule dedupe.
-9. Dashboard CSRF, cross-origin, session revocation and protected approval race.
-10. Fatal shutdown and restart.
+The gate refuses production reuse and requires:
 
-Record the deployment identifier, test database name, Guild ID (redacted in
-public output), start/end timestamps and result for every scenario. Do not merge
-or deploy the branch to production until this environment gate is complete.
+1. Exact 40-character PR head SHA.
+2. Dedicated Test MongoDB with a clearly test-only database name.
+3. Dedicated Discord bot application, Test Guild, text channel and Voice channel.
+4. Dedicated OAuth client credentials.
+5. Separate HTTPS preview origin and exact hostname allow-list.
+6. A production origin value that must differ from the preview.
+7. Runtime `/health` and `/ready` release identity matching the exact SHA and
+   identifying a pull-request preview.
+
+It then proves Mongo write/read/delete, OAuth client credentials, Discord bot
+message create/delete with mention suppression, bot Voice connect/disconnect,
+and the deployed single-port smoke routes. The resulting artifact is redacted and
+bound to the exact commit.
+
+The repository currently contains no isolated credentials or preview URL. The
+availability probe found no Test Mongo, Test Discord application/Guild/channels,
+OAuth test application, or Test deployment configuration. Production values are
+not an acceptable substitute. Live automation of a normal Discord user account
+is not part of this gate; the self-client compatibility boundary remains covered
+by automated lifecycle, concurrency, timeout, cleanup and recovery tests.
+
+## Remaining human interaction scenarios
+
+Discord does not provide a compliant bot-side mechanism to originate a real user
+slash-command interaction. After the automated isolated gate succeeds, a human
+tester in the Test Guild must execute the documented command/verification flows
+and attach the redacted result to the same exact SHA. This must include permission
+allow/deny, mention suppression, direct/OAuth verification, privacy policy on/off,
+recovery, Backup/Restore partial failure, protection dedupe, Dashboard CSRF and
+fatal restart observation. No standard-user token may be placed in CI.
 
 ## Merge rule
 
-`ttt.1` remains a Draft workstream. A successful automated CI run plus a
-completed deployed smoke record and resolved external review findings are
-required before any commit is brought into `ttt`.
+`ttt.1` remains a Draft workstream. A successful automated CI run plus a passing
+isolated-environment artifact, the Test Guild interaction record, and resolved
+external review findings are required before any commit is brought into `ttt`.
+Any new commit invalidates the external records and requires the gates to run
+again against the new exact head SHA.
