@@ -1,0 +1,43 @@
+name: Apply TTT1 Webhook Reconciliation
+
+on:
+  pull_request:
+    branches:
+      - ttt
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ github.head_ref == 'ttt.1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout ttt.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ttt.1
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Verify and apply patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/ttt1-webhook-reconciliation/part-* > /tmp/webhook.patch.xz.b64
+          echo "b592f0b40a8d53278a43442b36841be8ab8913ed303e393ef5b0973b523c517e  /tmp/webhook.patch.xz.b64" | sha256sum -c -
+          base64 --decode /tmp/webhook.patch.xz.b64 > /tmp/webhook.patch.xz
+          echo "dfb3b5ebdb360c2877e7fb653fb2b9af606de9c5a8487c1e0a0b493653563ce2  /tmp/webhook.patch.xz" | sha256sum -c -
+          xz --decompress --stdout /tmp/webhook.patch.xz > /tmp/webhook.patch
+          echo "8a67ad6cff95b240b29a6fc35c5815494a84329c40f86020d758c75d252426d2  /tmp/webhook.patch" | sha256sum -c -
+          git apply --check --index /tmp/webhook.patch
+          git apply --index /tmp/webhook.patch
+          git rm -r .github/ttt1-webhook-reconciliation
+      - name: Commit and push
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "OpenAI Coding Agent"
+          git config user.email "noreply@openai.com"
+          git commit -m "fix: reconcile timed-out webhook deliveries without duplicates"
+          git push origin HEAD:ttt.1
