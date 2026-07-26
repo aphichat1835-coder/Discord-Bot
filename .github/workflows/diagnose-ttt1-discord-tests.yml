@@ -35,6 +35,7 @@ jobs:
         shell: bash
         run: |
           set +e
+          # Re-run after scoping LCOV to the Voice and Session runtime.
           npm run test:coverage:voice > voice-test.log 2>&1
           test_status=$?
           node scripts/checkCoverageThresholds.js coverage/voice.lcov > voice-coverage.log 2>&1
