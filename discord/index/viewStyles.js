@@ -216,6 +216,21 @@ button, a { -webkit-tap-highlight-color: transparent; }
   border-color: transparent;
   box-shadow: 0 0 14px rgba(124,58,237,.5);
 }
+.nav-actions { margin-left: auto; display: flex; align-items: center; }
+.nav .nav-logout {
+  background: rgba(127,29,29,.2);
+  color: var(--red2);
+  padding: 7px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(239,68,68,.28);
+  font: inherit;
+  font-size: .78em;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.nav .nav-logout:hover { background: rgba(239,68,68,.18); border-color: var(--red2); }
+.nav .nav-logout:disabled { opacity: .6; cursor: wait; }
 
 .grid {
   display: grid;

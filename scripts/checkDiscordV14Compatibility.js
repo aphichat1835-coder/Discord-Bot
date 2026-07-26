@@ -40,6 +40,24 @@ const LEGACY_PERMISSION_KEYS = new Set([
     "MODERATE_MEMBERS"
 ]);
 
+
+const FORBIDDEN_STATE_GET_ROUTES = new Set([
+    "/auth/logout"
+]);
+
+function httpRoutePath(node) {
+    if (node?.type !== "CallExpression") return null;
+    const method = propertyName(node.callee);
+    if (!method || !["get", "post", "put", "patch", "delete", "all"].includes(method)) return null;
+    const owner = node.callee.object;
+    if (owner?.type !== "Identifier" || !["app", "router"].includes(owner.name)) return null;
+    return { method, path: literalString(node.arguments?.[0]) };
+}
+
+function isEmptyObject(node) {
+    return node?.type === "ObjectExpression" && node.properties.length === 0;
+}
+
 function propertyName(node) {
     if (!node) return null;
     if (!node.computed && node.property?.type === "Identifier") return node.property.name;
@@ -134,6 +152,24 @@ function analyzeSource(source, filename = "source.js") {
             if (method === "all" && node.callee.object?.type === "Identifier" && node.callee.object.name === "app") {
                 findings.push(finding("STATE_ROUTE_APP_ALL", "Use explicit HTTP methods instead of app.all()", node));
             }
+            const route = httpRoutePath(node);
+            if (route?.method === "get" && route.path && (
+                FORBIDDEN_STATE_GET_ROUTES.has(route.path) ||
+                /^\/api\/reveal(?:-|\/)/.test(route.path)
+            )) {
+                findings.push(finding(
+                    "STATE_CHANGING_GET",
+                    `Sensitive or state-changing route ${route.path} must use POST with CSRF`,
+                    node
+                ));
+            }
+            if (method === "deleteMany" && isEmptyObject(node.arguments?.[0])) {
+                findings.push(finding(
+                    "UNSCOPED_DELETE_MANY",
+                    "Unscoped deleteMany({}) is forbidden in production runtime",
+                    node
+                ));
+            }
             if (isDirectChannelCacheClear(node)) {
                 findings.push(finding("DIRECT_CHANNEL_CACHE_CLEAR", "Do not clear the Discord channel cache directly", node));
             }
@@ -209,6 +245,7 @@ function runCli() {
 if (require.main === module) runCli();
 
 module.exports = {
+    FORBIDDEN_STATE_GET_ROUTES,
     LEGACY_PERMISSION_KEYS,
     analyzeSource,
     isDirectChannelCacheClear,

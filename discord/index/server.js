@@ -637,9 +637,10 @@ function registerRoutes({
         res.redirect(safePath);
     });
 
-    app.get("/auth/logout", (req, res) => {
+    app.post("/auth/logout", auth.requirePin, auth.requireCsrf, (req, res) => {
+        setNoStore(res);
         res.setHeader("Set-Cookie", auth.clearSessionCookieHeaders(auth.isProduction()));
-        res.redirect("/auth/pin");
+        return res.status(200).json({ success: true });
     });
 
     // ── Health / Ping ──
@@ -769,8 +770,6 @@ function registerRoutes({
         }
     });
 
-    // Legacy GET kept for dashboard compatibility. New clients should use POST.
-    app.get("/api/reveal-token/:sessionId", revealTokenHandler);
     app.post("/api/reveal-token/:sessionId", express.json({ limit: "4kb" }), revealTokenHandler);
 
     app.post("/api/reveal-all-tokens", express.json(), (req, res) => {

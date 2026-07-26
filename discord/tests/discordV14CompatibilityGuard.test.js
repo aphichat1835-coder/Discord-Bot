@@ -19,13 +19,19 @@ test("Discord.js v14 guard rejects credential query, app.all, direct cache clear
     const result = codes(`
         const pin = req.query.pin;
         app.all('/private', handler);
+        app.get('/auth/logout', handler);
+        router.get('/api/reveal-token/:sessionId', handler);
+        SessionModel.deleteMany({});
         client.channels.cache.clear();
         raw.startsWith(window.location.origin);
     `);
     assert.deepEqual(result.sort(), [
         "DIRECT_CHANNEL_CACHE_CLEAR",
         "QUERY_PIN",
+        "STATE_CHANGING_GET",
+        "STATE_CHANGING_GET",
         "STATE_ROUTE_APP_ALL",
+        "UNSCOPED_DELETE_MANY",
         "UNSAFE_SAME_ORIGIN_PREFIX"
     ]);
 });
@@ -36,6 +42,9 @@ test("Discord.js v14 guard accepts canonical runtime patterns", () => { // NOSON
         channel.permissionOverwrites.edit(id, { SendMessages: false });
         channel.isTextBased();
         app.post('/private', handler);
+        app.post('/auth/logout', handler);
+        router.post('/api/reveal-token/:sessionId', handler);
+        SessionModel.deleteMany({ guildId });
         const target = new URL(raw, window.location.href);
         if (target.origin === window.location.origin) use(target);
     `), []);

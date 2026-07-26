@@ -32,3 +32,20 @@ test("protected path guard inventories the complete protected tree and requires 
         "discord/systemProvider/renderers.js"
     ]);
 });
+
+
+test("main dashboard destructive and sensitive routes are POST-only and CSRF-protected", () => { // NOSONAR -- node:test assertions are not recognized by S2699.
+    const server = fs.readFileSync("discord/index/server.js", "utf8");
+    const sessions = fs.readFileSync("discord/sessionManager.js", "utf8");
+    const views = fs.readFileSync("discord/index/views.js", "utf8");
+    const helpers = fs.readFileSync("discord/index/viewHelpers.js", "utf8");
+
+    assert.doesNotMatch(server, /app\.get\("\/auth\/logout"/);
+    assert.match(server, /app\.post\("\/auth\/logout", auth\.requirePin, auth\.requireCsrf/);
+    assert.doesNotMatch(server, /app\.get\("\/api\/reveal-token/);
+    assert.match(server, /app\.post\("\/api\/reveal-token\/:sessionId"/);
+    assert.match(views, /fetch\('\/api\/reveal-token\/'\+encodeURIComponent\(SESSION_ID\)/);
+    assert.match(helpers, /fetch\('\/auth\/logout',\{method:'POST'\}\)/);
+    assert.doesNotMatch(sessions, /clearAllSessions/);
+    assert.doesNotMatch(sessions, /deleteMany\(\{\}\)/);
+});

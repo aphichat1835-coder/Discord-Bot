@@ -617,7 +617,6 @@ async function saveDatabase() {
     try {
         if (sessions.size === 0) {
             // An empty in-memory map is not proof that the owner requested a destructive wipe.
-            // Explicit bulk deletion is handled only by clearAllSessions().
             return;
         }
 
@@ -1072,30 +1071,6 @@ async function pauseSession(sessionId) {
     return true;
 }
 
-async function clearAllSessions() {
-    for (const [sessionId, session] of sessions) {
-        try {
-            if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
-            if (session.connection) session.connection.destroy();
-        } catch {}
-        reconnectTracking.delete(sessionId);
-        sessionLocks.delete(sessionId);
-    }
-
-    sessions.clear();
-
-    if (dbConnected) {
-        try {
-            await SessionModel.deleteMany({});
-        } catch (err) {
-            console.error(`[DATABASE] ❌ Failed to clear sessions: ${err.message}`);
-            systemMetrics.increment("errors");
-        }
-    }
-
-    console.log("[SESSION] 🧹 All sessions cleared.");
-    return true;
-}
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🛡️ REGION 9: RECONNECT TRACKING / LOCKS
@@ -1879,7 +1854,6 @@ module.exports = {
     markSessionFailed,
     deleteSession,
     pauseSession,
-    clearAllSessions,
 
     // Voice identity helpers
     hashToken,

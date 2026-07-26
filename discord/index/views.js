@@ -1076,7 +1076,7 @@ async function submitRevealToken(){
     const err=document.getElementById('tokenErr');
 
     try{
-        const r=await fetch('/api/reveal-token',{
+        const r=await fetch('/api/reveal-token/'+encodeURIComponent(SESSION_ID),{
             method:'POST',
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify({pin,sessionId:SESSION_ID})
