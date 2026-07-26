@@ -1,0 +1,97 @@
+name: Isolated Environment Gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact commit SHA being verified
+        required: true
+        type: string
+      confirmation:
+        description: Type ISOLATED_TEST_ONLY to confirm this is not production
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  TEST_ENVIRONMENT_CONFIRMATION: ${{ inputs.confirmation }}
+  TEST_COMMIT_SHA: ${{ inputs.expected_sha }}
+  TEST_MONGO_URI: ${{ secrets.TEST_MONGO_URI }}
+  TEST_DISCORD_TOKEN: ${{ secrets.TEST_DISCORD_TOKEN }}
+  TEST_GUILD_ID: ${{ secrets.TEST_GUILD_ID }}
+  TEST_TEXT_CHANNEL_ID: ${{ secrets.TEST_TEXT_CHANNEL_ID }}
+  TEST_VOICE_CHANNEL_ID: ${{ secrets.TEST_VOICE_CHANNEL_ID }}
+  TEST_DISCORD_CLIENT_ID: ${{ secrets.TEST_DISCORD_CLIENT_ID }}
+  TEST_DISCORD_CLIENT_SECRET: ${{ secrets.TEST_DISCORD_CLIENT_SECRET }}
+  TEST_PUBLIC_BASE_URL: ${{ secrets.TEST_PUBLIC_BASE_URL }}
+  TEST_ALLOWED_HOSTS: ${{ vars.TEST_ALLOWED_HOSTS }}
+  PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PUBLIC_BASE_URL }}
+  GATE_RECORD_DIR: artifacts
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: isolated-integration
+    steps:
+      - name: Checkout exact ref
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.expected_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Refuse stale or production-targeted execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$TEST_ENVIRONMENT_CONFIRMATION" = "ISOLATED_TEST_ONLY"
+          test "$(git rev-parse HEAD)" = "$TEST_COMMIT_SHA"
+          test -n "$TEST_MONGO_URI"
+          test -n "$TEST_DISCORD_TOKEN"
+          test -n "$TEST_PUBLIC_BASE_URL"
+
+      - name: Setup Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 24.18.0
+
+      - name: Bootstrap pinned npm
+        run: |
+          npm install --global --ignore-scripts npm@12.0.1
+          test "$(npm --version)" = "12.0.1"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Repository checks excluding approval-bound diff guard
+        run: |
+          npm run check:protected-syntax
+          npm run check:discord14
+          npm run check:secrets
+          npm run check:all
+          npm run check:scripts
+          npm run check:memory-guards
+          npm run check:mongoose9
+
+      - name: Full automated suites and coverage
+        run: |
+          npm run test:coverage:discord
+          npm run test:coverage:voice
+          npm run test:coverage:verification
+          npm run check:coverage
+          npm audit --audit-level=high
+
+      - name: Run isolated external environment gate
+        run: npm run gate:environment
+
+      - name: Upload redacted environment record
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: isolated-environment-gate-${{ inputs.expected_sha }}
+          path: artifacts/environment-gate-*.json
+          if-no-files-found: error
+          retention-days: 30
