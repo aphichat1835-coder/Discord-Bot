@@ -18,16 +18,21 @@ jobs:
         with:
           ref: ttt.1
           persist-credentials: false
-      - name: Reconstruct payload for byte comparison
+      - name: Export transfer chunks and reconstructed payload
         run: |
+          wc -c .github/ttt1-patch/chunk-* > github-chunk-sizes.txt
+          sha256sum .github/ttt1-patch/chunk-* > github-chunk-sha256.txt
           cat .github/ttt1-patch/chunk-* > github-reconstructed.patch.xz.b64
           wc -c github-reconstructed.patch.xz.b64 > github-reconstructed.size.txt
           sha256sum github-reconstructed.patch.xz.b64 > github-reconstructed.sha256.txt
-      - name: Upload reconstructed payload
+      - name: Upload transfer diagnostics
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ttt1-reconstructed-${{ github.sha }}
+          name: ttt1-transfer-diagnostics-${{ github.sha }}
           path: |
+            .github/ttt1-patch/chunk-*
+            github-chunk-sizes.txt
+            github-chunk-sha256.txt
             github-reconstructed.patch.xz.b64
             github-reconstructed.size.txt
             github-reconstructed.sha256.txt
