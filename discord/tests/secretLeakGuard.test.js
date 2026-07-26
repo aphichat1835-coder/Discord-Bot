@@ -27,6 +27,8 @@ test("secret guard accepts environment references and explicit placeholders", ()
         const token = process.env.TOKEN_MANAGER;
         const secret = "<set-in-hosting-provider>";
         const password = "replace-me-before-deploy";
+        sonar-scanner -Dsonar.token="$SONAR_TOKEN";
+        const apiKey = "${API_SECRET}";
     `, "discord/index.js"), []);
 });
 
