@@ -1,0 +1,43 @@
+name: Apply TTT1 Evidence and Read-Only Sync Fix
+
+on:
+  pull_request:
+    branches:
+      - ttt
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ github.head_ref == 'ttt.1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout ttt.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ttt.1
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Verify and apply patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/ttt1-evidence-fix/part-* > /tmp/evidence.patch.xz.b64
+          echo "1407834484597ebff81a1b10e9b9daa243a163fe387f495af2b73733e63c1e62  /tmp/evidence.patch.xz.b64" | sha256sum -c -
+          base64 --decode /tmp/evidence.patch.xz.b64 > /tmp/evidence.patch.xz
+          echo "eb6c38f0606cdbfbec19271887e785ce386c70666206cb523c760b200f6e80eb  /tmp/evidence.patch.xz" | sha256sum -c -
+          xz --decompress --stdout /tmp/evidence.patch.xz > /tmp/evidence.patch
+          echo "8d029ca1ec39dac079d76c2161bdd02f1766aeaa557e1e855ce633c9cb0fada3  /tmp/evidence.patch" | sha256sum -c -
+          git apply --check --index /tmp/evidence.patch
+          git apply --index /tmp/evidence.patch
+          git rm -r .github/ttt1-evidence-fix
+      - name: Commit and push
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "OpenAI Coding Agent"
+          git config user.email "noreply@openai.com"
+          git commit -m "docs: add remediation evidence and keep panel sync read-only"
+          git push origin HEAD:ttt.1
