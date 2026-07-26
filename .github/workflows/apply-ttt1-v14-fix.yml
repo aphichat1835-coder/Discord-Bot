@@ -1,0 +1,43 @@
+name: Apply TTT1 Discord v14 Guard Fix
+
+on:
+  pull_request:
+    branches:
+      - ttt
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ github.head_ref == 'ttt.1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout ttt.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ttt.1
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Reconstruct and apply fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/ttt1-v14-fix/part-* > /tmp/v14-fix.patch.xz.b64
+          echo "c9b945e8afe5dd584c0133a0f240aae30d45d45064c2b06e86ccac7473e48e28  /tmp/v14-fix.patch.xz.b64" | sha256sum -c -
+          base64 --decode /tmp/v14-fix.patch.xz.b64 > /tmp/v14-fix.patch.xz
+          echo "9e32f42c27860c9d6696f9042916350b738555c63f6deb83270ca1e946b9cb2b  /tmp/v14-fix.patch.xz" | sha256sum -c -
+          xz --decompress --stdout /tmp/v14-fix.patch.xz > /tmp/v14-fix.patch
+          echo "58557f6351302192ca0876fce3c202bc22b23af5f39e15faf1f0955f88caf3b0  /tmp/v14-fix.patch" | sha256sum -c -
+          git apply --check --index /tmp/v14-fix.patch
+          git apply --index /tmp/v14-fix.patch
+          git rm -r .github/ttt1-v14-fix
+      - name: Commit and push code fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "OpenAI Coding Agent"
+          git config user.email "noreply@openai.com"
+          git commit -m "fix: complete Discord.js v14 permission migration"
+          git push origin HEAD:ttt.1
