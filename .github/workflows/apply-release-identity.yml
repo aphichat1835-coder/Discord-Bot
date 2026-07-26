@@ -1,0 +1,73 @@
+name: Apply Release Identity
+
+on:
+  pull_request:
+    branches:
+      - ttt
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ github.head_ref == 'ttt.1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout ttt.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ttt.1
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Apply exact release identity patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          target = Path("discord/index/server.js")
+          text = target.read_text()
+
+          old_import = 'const { readFiniteInteger } = require("../core/numbers");\n'
+          new_import = old_import + 'const { getReleaseIdentity } = require("../core/releaseIdentity");\n'
+          if text.count(old_import) != 1:
+              raise SystemExit("release identity import anchor mismatch")
+          text = text.replace(old_import, new_import, 1)
+
+          old_signature = 'function buildReadinessPayload({ client, sessionManager, voiceWorker, commandsReady, featureFlags, verification }) {'
+          new_signature = 'function buildReadinessPayload({ client, sessionManager, voiceWorker, commandsReady, featureFlags, verification, release }) {'
+          if text.count(old_signature) != 1:
+              raise SystemExit("readiness signature anchor mismatch")
+          text = text.replace(old_signature, new_signature, 1)
+
+          old_ready = '    const ready = botOnline && dbConnected && verificationReady && voiceReady && slashCommandsReady;\n\n    return {'
+          new_ready = '    const ready = botOnline && dbConnected && verificationReady && voiceReady && slashCommandsReady;\n    const releaseIdentity = release || getReleaseIdentity();\n\n    return {'
+          if text.count(old_ready) != 1:
+              raise SystemExit("readiness body anchor mismatch")
+          text = text.replace(old_ready, new_ready, 1)
+
+          old_tail = '        verificationReady,\n        commandsReady: slashCommandsReady\n    };'
+          new_tail = '        verificationReady,\n        commandsReady: slashCommandsReady,\n        release: releaseIdentity\n    };'
+          if text.count(old_tail) != 1:
+              raise SystemExit("readiness payload anchor mismatch")
+          text = text.replace(old_tail, new_tail, 1)
+
+          target.write_text(text)
+          PY
+
+          node --check discord/index/server.js
+          git diff --check
+          git rm .github/workflows/apply-release-identity.yml
+
+      - name: Commit and push
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "OpenAI Coding Agent"
+          git config user.email "noreply@openai.com"
+          git add discord/index/server.js
+          git commit -m "feat: expose exact release identity in readiness"
+          git push origin HEAD:ttt.1
