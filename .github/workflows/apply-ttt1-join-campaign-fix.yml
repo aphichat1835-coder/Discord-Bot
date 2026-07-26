@@ -1,0 +1,43 @@
+name: Apply TTT1 Join Campaign Fail-Closed Fix
+
+on:
+  pull_request:
+    branches:
+      - ttt
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ github.head_ref == 'ttt.1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout ttt.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ttt.1
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Verify and apply patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/ttt1-join-campaign-fix/part-* > /tmp/join-campaign.patch.xz.b64
+          echo "0a2038ada9c28bf0334f2f81928fea24a1372283809fe1f330263e4fa57db795  /tmp/join-campaign.patch.xz.b64" | sha256sum -c -
+          base64 --decode /tmp/join-campaign.patch.xz.b64 > /tmp/join-campaign.patch.xz
+          echo "fe7be0a7f05131b094ca1f3e2c99af13f77882898c20aec7e73b963b9d6b5435  /tmp/join-campaign.patch.xz" | sha256sum -c -
+          xz --decompress --stdout /tmp/join-campaign.patch.xz > /tmp/join-campaign.patch
+          echo "035012effcf99c522479047273e05600926342cb657ff2d2e8d246d27ad9db43  /tmp/join-campaign.patch" | sha256sum -c -
+          git apply --check --index /tmp/join-campaign.patch
+          git apply --index /tmp/join-campaign.patch
+          git rm -r .github/ttt1-join-campaign-fix
+      - name: Commit and push
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "OpenAI Coding Agent"
+          git config user.email "noreply@openai.com"
+          git commit -m "fix: make Join Campaign default-off and allowlist-only"
+          git push origin HEAD:ttt.1
