@@ -63,3 +63,13 @@ test("coverage thresholds reject Infinity and fall back to bounded defaults", ()
     assert.equal(result.thresholds.functions, 0);
     assert.equal(result.thresholds.branches, 100);
 });
+
+test("Voice coverage is scoped to the voice/session runtime instead of unrelated imports", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const pkg = require("../../package.json");
+    const command = pkg.scripts["test:coverage:voice"];
+    assert.match(command, /--test-coverage-include='discord\/voiceWorker\.js'/);
+    assert.match(command, /--test-coverage-include='discord\/voiceWorker\/\*\*\/\*\.js'/);
+    assert.match(command, /--test-coverage-include='discord\/sessionManager\.js'/);
+    assert.match(command, /--test-coverage-include='discord\/sessions\/\*\*\/\*\.js'/);
+    assert.equal(command.includes("--test-coverage-exclude"), false);
+});
