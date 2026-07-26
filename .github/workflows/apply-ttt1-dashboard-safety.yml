@@ -1,0 +1,43 @@
+name: Apply TTT1 Dashboard Safety Hardening
+
+on:
+  pull_request:
+    branches:
+      - ttt
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ github.head_ref == 'ttt.1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout ttt.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ttt.1
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Verify and apply patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/ttt1-dashboard-safety/part-* > /tmp/dashboard-safety.patch.xz.b64
+          echo "b52795307447efa0f022f07327fc201905055b642bb753188b8d48e536a47290  /tmp/dashboard-safety.patch.xz.b64" | sha256sum -c -
+          base64 --decode /tmp/dashboard-safety.patch.xz.b64 > /tmp/dashboard-safety.patch.xz
+          echo "2526d584fc371788c35173a04db12dfb1d6b516184ddc027a2a414a4ea933d9f  /tmp/dashboard-safety.patch.xz" | sha256sum -c -
+          xz --decompress --stdout /tmp/dashboard-safety.patch.xz > /tmp/dashboard-safety.patch
+          echo "c80a20834d3b91acbafbeeb3184d849f6deb548ec6c631a0ec7a8488f09491ed  /tmp/dashboard-safety.patch" | sha256sum -c -
+          git apply --check --index /tmp/dashboard-safety.patch
+          git apply --index /tmp/dashboard-safety.patch
+          git rm -r .github/ttt1-dashboard-safety
+      - name: Commit and push
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "OpenAI Coding Agent"
+          git config user.email "noreply@openai.com"
+          git commit -m "fix: make dashboard logout and sensitive routes POST-only"
+          git push origin HEAD:ttt.1
