@@ -36,8 +36,7 @@ jobs:
             echo '## High-risk lifecycle patterns'
             grep -RInE --include='*.js' 'deleteMany\(\{\}\)|req\.query\.pin|client\.channels\.cache\.clear\(\)|app\.all\(' discord scripts verification-tests || true
           } > repository-audit-seeds.txt
-          tar --exclude=.git --exclude=node_modules --exclude=coverage -czf /tmp/ttt1-source.tar.gz .
-          cp /tmp/ttt1-source.tar.gz ./ttt1-source.tar.gz
+          git archive --format=tar.gz --output=ttt1-source.tar.gz HEAD
 
       - name: Upload source snapshot
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
