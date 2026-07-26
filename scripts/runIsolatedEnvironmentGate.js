@@ -15,6 +15,7 @@ const {
 const { normalizeDiscordSnowflake } = require("../discord/core/snowflakes");
 
 const REQUIRED_NAMES = [
+    "TEST_COMMIT_SHA",
     "TEST_MONGO_URI",
     "TEST_DISCORD_TOKEN",
     "TEST_GUILD_ID",
@@ -23,7 +24,8 @@ const REQUIRED_NAMES = [
     "TEST_DISCORD_CLIENT_ID",
     "TEST_DISCORD_CLIENT_SECRET",
     "TEST_PUBLIC_BASE_URL",
-    "TEST_ALLOWED_HOSTS"
+    "TEST_ALLOWED_HOSTS",
+    "PRODUCTION_PUBLIC_BASE_URL"
 ];
 
 function requiredText(env, name) {
@@ -53,6 +55,17 @@ function exactAllowedHosts(value) {
     );
 }
 
+function normalizeHttpsOrigin(value, errorCode) {
+    let url;
+    try {
+        url = new URL(String(value || "").trim());
+    } catch {
+        throw new Error(`${errorCode}_INVALID`);
+    }
+    if (url.protocol !== "https:") throw new Error(`${errorCode}_MUST_USE_HTTPS`);
+    return url.origin;
+}
+
 function validateIsolatedEnvironment(env = process.env) {
     if (String(env.TEST_ENVIRONMENT_CONFIRMATION || "") !== "ISOLATED_TEST_ONLY") {
         throw new Error("TEST_ENVIRONMENT_CONFIRMATION_REQUIRED");
@@ -60,6 +73,9 @@ function validateIsolatedEnvironment(env = process.env) {
 
     const missing = REQUIRED_NAMES.filter(name => !String(env[name] || "").trim());
     if (missing.length) throw new Error(`MISSING_TEST_ENVIRONMENT:${missing.join(",")}`);
+
+    const commitSha = requiredText(env, "TEST_COMMIT_SHA").toLowerCase();
+    if (!/^[a-f0-9]{40}$/.test(commitSha)) throw new Error("INVALID_TEST_COMMIT_SHA");
 
     const mongoUri = requiredText(env, "TEST_MONGO_URI");
     const databaseName = databaseNameFromMongoUri(mongoUri);
@@ -80,11 +96,13 @@ function validateIsolatedEnvironment(env = process.env) {
     if (!allowedHosts.has(publicUrl.hostname.toLowerCase())) {
         throw new Error("TEST_PUBLIC_HOST_NOT_ALLOWLISTED");
     }
-    if (env.PUBLIC_BASE_URL) {
-        const productionUrl = new URL(String(env.PUBLIC_BASE_URL).trim());
-        if (productionUrl.origin === publicUrl.origin) {
-            throw new Error("TEST_PUBLIC_URL_MUST_DIFFER_FROM_PRODUCTION");
-        }
+
+    const productionOrigin = normalizeHttpsOrigin(
+        requiredText(env, "PRODUCTION_PUBLIC_BASE_URL"),
+        "PRODUCTION_PUBLIC_BASE_URL"
+    );
+    if (productionOrigin === publicUrl.origin) {
+        throw new Error("TEST_PUBLIC_URL_MUST_DIFFER_FROM_PRODUCTION");
     }
 
     const ids = {};
@@ -108,8 +126,9 @@ function validateIsolatedEnvironment(env = process.env) {
         textChannelId: ids.TEST_TEXT_CHANNEL_ID,
         voiceChannelId: ids.TEST_VOICE_CHANNEL_ID,
         publicBaseUrl: publicUrl.toString().replace(/\/$/, ""),
+        productionOrigin,
         allowedHosts: [...allowedHosts].sort(),
-        commitSha: String(env.GITHUB_SHA || env.TEST_COMMIT_SHA || "local").trim(),
+        commitSha,
         recordDir: String(env.GATE_RECORD_DIR || "artifacts").trim() || "artifacts"
     };
 }
@@ -270,7 +289,7 @@ async function main() {
         status: "failed",
         startedAt,
         finishedAt: null,
-        commitSha: String(process.env.GITHUB_SHA || process.env.TEST_COMMIT_SHA || "local"),
+        commitSha: String(process.env.TEST_COMMIT_SHA || process.env.GITHUB_SHA || "local"),
         evidence: {}
     };
 
@@ -280,6 +299,7 @@ async function main() {
         record.environment = {
             database: config.databaseName,
             deploymentOriginHash: hashIdentifier(new URL(config.publicBaseUrl).origin),
+            productionOriginHash: hashIdentifier(config.productionOrigin),
             guildHash: hashIdentifier(config.guildId)
         };
         record.evidence.mongo = await runMongoGate(config);
@@ -323,6 +343,7 @@ module.exports = {
     databaseNameFromMongoUri,
     exactAllowedHosts,
     hashIdentifier,
+    normalizeHttpsOrigin,
     redactSecrets,
     validateIsolatedEnvironment
 };
