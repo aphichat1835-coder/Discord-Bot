@@ -1,0 +1,76 @@
+name: Apply Mongo URI Parser Fix
+
+on:
+  pull_request:
+    branches:
+      - ttt
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ github.head_ref == 'ttt.1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout ttt.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ttt.1
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Apply parser fix and remove diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/apply.py <<'PY'
+          from pathlib import Path
+          p = Path("scripts/runIsolatedEnvironmentGate.js")
+          s = p.read_text()
+          old = '''function databaseNameFromMongoUri(uri) {
+              const value = String(uri || "").trim();
+              const withoutQuery = value.split("?", 1)[0];
+              const slash = withoutQuery.lastIndexOf("/");
+              if (slash < 0 || slash === withoutQuery.length - 1) return "";
+              try {
+                  return decodeURIComponent(withoutQuery.slice(slash + 1));
+              } catch {
+                  return withoutQuery.slice(slash + 1);
+              }
+          }'''.replace("          ", "")
+          new = '''function databaseNameFromMongoUri(uri) {
+              let parsed;
+              try {
+                  parsed = new URL(String(uri || "").trim());
+              } catch {
+                  return "";
+              }
+              const pathname = String(parsed.pathname || "").replace(/^\\/+/, "");
+              if (!pathname) return "";
+              try {
+                  return decodeURIComponent(pathname);
+              } catch {
+                  return pathname;
+              }
+          }'''.replace("          ", "")
+          if s.count(old) != 1:
+              raise SystemExit(f"mongo parser anchor count={s.count(old)}")
+          p.write_text(s.replace(old, new, 1))
+          PY
+          python /tmp/apply.py
+          node --check scripts/runIsolatedEnvironmentGate.js
+          git diff --check
+          git rm .github/workflows/diagnose-environment-tests.yml
+          git rm .github/workflows/apply-mongo-uri-parser-fix.yml
+
+      - name: Commit and push
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "OpenAI Coding Agent"
+          git config user.email "noreply@openai.com"
+          git add scripts/runIsolatedEnvironmentGate.js
+          git commit -m "fix: parse isolated Mongo database names structurally"
+          git push origin HEAD:ttt.1
