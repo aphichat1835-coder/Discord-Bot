@@ -21,15 +21,19 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Reconstruct, apply, and push local working copy
+      - name: Verify payload inventory
         shell: bash
         run: |
           set -euo pipefail
-          echo 'STAGE 1: verify payload files'
           test -f .github/ttt1-patch/READY
-          test "$(find .github/ttt1-patch -maxdepth 1 -type f -name 'chunk-*' | wc -l)" -eq 13
+          count="$(find .github/ttt1-patch -maxdepth 1 -type f -name 'chunk-*' | wc -l)"
+          echo "Payload chunks: $count"
+          test "$count" -eq 13
 
-          echo 'STAGE 2: reconstruct payload'
+      - name: Reconstruct and verify payload hashes
+        shell: bash
+        run: |
+          set -euo pipefail
           cat .github/ttt1-patch/chunk-* > /tmp/ttt1-remediation.patch.xz.b64
           echo "00cf35f78fffe8212035a4ecf1841e692468099b43d0db806828e69f6e8781b0  /tmp/ttt1-remediation.patch.xz.b64" | sha256sum -c -
           base64 --decode /tmp/ttt1-remediation.patch.xz.b64 > /tmp/ttt1-remediation.patch.xz
@@ -37,20 +41,22 @@ jobs:
           xz --decompress --stdout /tmp/ttt1-remediation.patch.xz > /tmp/ttt1-remediation.patch
           echo "9d5b7a77f30c538a6f95d010b76f24cbaf671a1a753da8778ca222b4cde3728b  /tmp/ttt1-remediation.patch" | sha256sum -c -
 
-          echo 'STAGE 3: restore patch base in worktree and index'
+      - name: Restore patch base and validate patch
+        shell: bash
+        run: |
+          set -euo pipefail
           git fetch --no-tags origin ttt
           git checkout origin/ttt -- .github/workflows/ci.yml
-
-          echo 'STAGE 4: validate and apply patch'
           git apply --check --index --binary /tmp/ttt1-remediation.patch
-          git apply --index --binary /tmp/ttt1-remediation.patch
 
-          echo 'STAGE 5: remove transfer-only files'
+      - name: Apply, clean transfer files, commit, and push
+        shell: bash
+        run: |
+          set -euo pipefail
+          git apply --index --binary /tmp/ttt1-remediation.patch
           git rm -r .github/ttt1-patch
           git rm .github/workflows/apply-ttt1-local.yml
           git rm .github/workflows/apply-ttt1-pr.yml
-
-          echo 'STAGE 6: commit and push'
           git config user.name "OpenAI Coding Agent"
           git config user.email "noreply@openai.com"
           git commit -m "fix: harden Discord runtime, recovery, and owner controls"
