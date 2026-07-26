@@ -35,8 +35,9 @@ const { getFeatureFlags } = require("../core/featureFlags");
 const { registerJoinCampaignRoutes } = require("./joinCampaignRoutes");
 const { getVerificationDiagnostics } = require("../verification/lifecycle");
 const { readFiniteInteger } = require("../core/numbers");
+const { getReleaseIdentity } = require("../core/releaseIdentity");
 
-function buildReadinessPayload({ client, sessionManager, voiceWorker, commandsReady, featureFlags, verification }) {
+function buildReadinessPayload({ client, sessionManager, voiceWorker, commandsReady, featureFlags, verification, release }) {
     const botOnline = client?.isReady?.() ?? false;
     const dbStatus = sessionManager?.getDatabaseStatus?.();
     const dbConnected = dbStatus?.connected === true;
@@ -48,6 +49,7 @@ function buildReadinessPayload({ client, sessionManager, voiceWorker, commandsRe
     const voiceReady = !voiceRequired || (botOnline && dbConnected && voice?.ready === true);
     const slashCommandsReady = commandsReady?.() === true;
     const ready = botOnline && dbConnected && verificationReady && voiceReady && slashCommandsReady;
+    const releaseIdentity = release || getReleaseIdentity();
 
     return {
         status: ready ? "ok" : "degraded",
@@ -58,7 +60,8 @@ function buildReadinessPayload({ client, sessionManager, voiceWorker, commandsRe
         db: dbConnected,
         voiceReady,
         verificationReady,
-        commandsReady: slashCommandsReady
+        commandsReady: slashCommandsReady,
+        release: releaseIdentity
     };
 }
 
