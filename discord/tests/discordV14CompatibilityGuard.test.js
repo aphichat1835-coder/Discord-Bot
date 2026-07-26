@@ -31,8 +31,8 @@ test("Discord.js v14 guard rejects credential query, app.all, direct cache clear
         "STATE_CHANGING_GET",
         "STATE_CHANGING_GET",
         "STATE_ROUTE_APP_ALL",
-        "UNSCOPED_DELETE_MANY",
-        "UNSAFE_SAME_ORIGIN_PREFIX"
+        "UNSAFE_SAME_ORIGIN_PREFIX",
+        "UNSCOPED_DELETE_MANY"
     ]);
 });
 
