@@ -35,14 +35,18 @@ function requiredText(env, name) {
 }
 
 function databaseNameFromMongoUri(uri) {
-    const value = String(uri || "").trim();
-    const withoutQuery = value.split("?", 1)[0];
-    const slash = withoutQuery.lastIndexOf("/");
-    if (slash < 0 || slash === withoutQuery.length - 1) return "";
+    let parsed;
     try {
-        return decodeURIComponent(withoutQuery.slice(slash + 1));
+        parsed = new URL(String(uri || "").trim());
     } catch {
-        return withoutQuery.slice(slash + 1);
+        return "";
+    }
+    const pathname = String(parsed.pathname || "").replace(/^\/+/, "");
+    if (!pathname) return "";
+    try {
+        return decodeURIComponent(pathname);
+    } catch {
+        return pathname;
     }
 }
 
