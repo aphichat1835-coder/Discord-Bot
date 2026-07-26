@@ -1030,8 +1030,8 @@ router.get("/api/guild/:guildId/preflight", requireAdmin, requireGuildAdmin, asy
 router.get("/api/guild/:guildId/verify/panel/sync", requireAdmin, requireGuildAdmin, async (req, res) => {
   try {
     const { guildId } = req.params;
-    const config = await ensureGuildConfig(guildId, req.adminGuild?.name);
-    const verification = normalizeVerificationConfig(config.verification || {});
+    const config = await GuildConfig.findOne({ guildId }).lean();
+    const verification = normalizeVerificationConfig(config?.verification || {});
     const channelId = cleanSnowflake(verification.channelId);
     const messageId = cleanSnowflake(verification.messageId);
     if (!channelId || !messageId) {
