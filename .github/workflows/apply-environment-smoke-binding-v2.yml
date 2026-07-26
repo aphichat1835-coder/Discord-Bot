@@ -1,0 +1,56 @@
+name: Apply Environment Smoke Binding V2
+
+on:
+  pull_request:
+    branches:
+      - ttt
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ github.head_ref == 'ttt.1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout ttt.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ttt.1
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Apply exact patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/apply.py <<'PY'
+          from pathlib import Path
+          p = Path("scripts/runIsolatedEnvironmentGate.js")
+          s = p.read_text()
+          needle = '                SMOKE_ALLOWED_HOSTS: config.allowedHosts.join(",")\n'
+          replacement = (
+              '                SMOKE_ALLOWED_HOSTS: config.allowedHosts.join(","),\n'
+              '                SMOKE_EXPECTED_COMMIT_SHA: config.commitSha,\n'
+              '                SMOKE_REQUIRE_PREVIEW: "true"\n'
+          )
+          if s.count(needle) != 1:
+              raise SystemExit(f"smoke binding anchor count={s.count(needle)}")
+          p.write_text(s.replace(needle, replacement, 1))
+          PY
+          python /tmp/apply.py
+          node --check scripts/runIsolatedEnvironmentGate.js
+          git diff --check
+          git rm .github/workflows/apply-environment-smoke-binding.yml
+          git rm .github/workflows/apply-environment-smoke-binding-v2.yml
+
+      - name: Commit and push
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "OpenAI Coding Agent"
+          git config user.email "noreply@openai.com"
+          git add scripts/runIsolatedEnvironmentGate.js
+          git commit -m "test: bind deployed smoke to exact preview SHA"
+          git push origin HEAD:ttt.1
