@@ -470,6 +470,72 @@ test("webhook dispatcher never retries a send_timeout because the original reque
     assert.equal(_test.retryable({ status: 429 }), true);
 });
 
+
+test("timed-out webhook operations reconcile a late success without a duplicate send", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    let release;
+    let sends = 0;
+    class LateSuccessClient {
+        async send() {
+            sends++;
+            await new Promise(resolve => { release = resolve; });
+        }
+        destroy() {}
+    }
+    const dispatcher = new WebhookDispatcher({
+        WebhookClientClass: LateSuccessClient,
+        env: { WEBHOOK_LOG_URL: LOG_URL },
+        maxAttempts: 3,
+        timeoutMs: 100
+    });
+
+    assert.equal(await dispatcher.enqueue("LOG", "late success"), true);
+    let stats = dispatcher.stats();
+    assert.equal(sends, 1);
+    assert.equal(stats.targets.LOG.timedOut, 1);
+    assert.equal(stats.targets.LOG.pendingTimedOut, 1);
+    assert.equal(stats.pendingReconciliations, 1);
+    assert.equal(stats.targets.LOG.failed, 0);
+
+    release();
+    assert.equal(await dispatcher.flush(500), true);
+    stats = dispatcher.stats();
+    assert.equal(sends, 1);
+    assert.equal(stats.targets.LOG.pendingTimedOut, 0);
+    assert.equal(stats.targets.LOG.lateSucceeded, 1);
+    assert.equal(stats.targets.LOG.sent, 1);
+    assert.equal(stats.targets.LOG.failed, 0);
+    assert.equal(stats.recentOperations.at(-1).state, "late_succeeded");
+    await dispatcher.shutdown();
+});
+
+test("timed-out webhook operations reconcile a late failure and keep flush bounded", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    let rejectSend;
+    class LateFailureClient {
+        async send() {
+            return new Promise((_, reject) => { rejectSend = reject; });
+        }
+        destroy() {}
+    }
+    const dispatcher = new WebhookDispatcher({
+        WebhookClientClass: LateFailureClient,
+        env: { WEBHOOK_LOG_URL: LOG_URL },
+        maxAttempts: 2,
+        timeoutMs: 100
+    });
+
+    assert.equal(await dispatcher.enqueue("LOG", "late failure"), true);
+    assert.equal(await dispatcher.flush(120), false);
+    rejectSend(Object.assign(new Error("late network failure"), { status: 503 }));
+    assert.equal(await dispatcher.flush(500), true);
+    const stats = dispatcher.stats();
+    assert.equal(stats.targets.LOG.lateFailed, 1);
+    assert.equal(stats.targets.LOG.failed, 1);
+    assert.equal(stats.targets.LOG.pendingTimedOut, 0);
+    assert.equal(stats.recentOperations.at(-1).state, "late_failed");
+    assert.equal(stats.recentOperations.at(-1).failureCode, "http_503");
+    await dispatcher.shutdown();
+});
+
 test("event token normalization bounds hostile input without changing webhook colors", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const { _test } = require("../core/webhooks");
     const hostileToken = `A${"_".repeat(100_000)}B`;
