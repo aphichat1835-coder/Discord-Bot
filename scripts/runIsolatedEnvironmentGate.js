@@ -260,7 +260,9 @@ function runDeploymentSmoke(config) {
             timeout: 120000,
             env: {
                 ...process.env,
-                SMOKE_ALLOWED_HOSTS: config.allowedHosts.join(",")
+                SMOKE_ALLOWED_HOSTS: config.allowedHosts.join(","),
+                SMOKE_EXPECTED_COMMIT_SHA: config.commitSha,
+                SMOKE_REQUIRE_PREVIEW: "true"
             },
             maxBuffer: 1024 * 1024
         }
