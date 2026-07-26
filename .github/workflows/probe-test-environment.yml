@@ -1,0 +1,68 @@
+name: Probe Isolated Test Environment
+
+on:
+  pull_request:
+    branches:
+      - ttt
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    if: ${{ github.head_ref == 'ttt.1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TEST_MONGO_URI: ${{ secrets.TEST_MONGO_URI }}
+      TEST_DISCORD_TOKEN: ${{ secrets.TEST_DISCORD_TOKEN }}
+      TEST_BOT_TOKEN: ${{ secrets.TEST_BOT_TOKEN }}
+      TEST_VOICE_TOKEN: ${{ secrets.TEST_VOICE_TOKEN }}
+      TEST_GUILD_ID: ${{ secrets.TEST_GUILD_ID }}
+      TEST_TEXT_CHANNEL_ID: ${{ secrets.TEST_TEXT_CHANNEL_ID }}
+      TEST_VOICE_CHANNEL_ID: ${{ secrets.TEST_VOICE_CHANNEL_ID }}
+      TEST_MEMBER_ID: ${{ secrets.TEST_MEMBER_ID }}
+      TEST_DISCORD_CLIENT_ID: ${{ secrets.TEST_DISCORD_CLIENT_ID }}
+      TEST_DISCORD_CLIENT_SECRET: ${{ secrets.TEST_DISCORD_CLIENT_SECRET }}
+      TEST_PUBLIC_BASE_URL: ${{ secrets.TEST_PUBLIC_BASE_URL }}
+      TEST_PUBLIC_BASE_URL_VAR: ${{ vars.TEST_PUBLIC_BASE_URL }}
+      TEST_ALLOWED_HOSTS: ${{ secrets.TEST_ALLOWED_HOSTS }}
+      TEST_ALLOWED_HOSTS_VAR: ${{ vars.TEST_ALLOWED_HOSTS }}
+    steps:
+      - name: Record availability without exposing values
+        shell: bash
+        run: |
+          set -euo pipefail
+          report=test-environment-probe.txt
+          : > "$report"
+          check() {
+            local label="$1"
+            shift
+            local present=false
+            for name in "$@"; do
+              if [ -n "${!name:-}" ]; then present=true; fi
+            done
+            if [ "$present" = true ]; then
+              echo "$label=PRESENT" >> "$report"
+            else
+              echo "$label=MISSING" >> "$report"
+            fi
+          }
+          check TEST_MONGO TEST_MONGO_URI
+          check TEST_DISCORD_BOT TEST_DISCORD_TOKEN TEST_BOT_TOKEN
+          check TEST_DISCORD_VOICE TEST_VOICE_TOKEN
+          check TEST_GUILD TEST_GUILD_ID
+          check TEST_TEXT_CHANNEL TEST_TEXT_CHANNEL_ID
+          check TEST_VOICE_CHANNEL TEST_VOICE_CHANNEL_ID
+          check TEST_MEMBER TEST_MEMBER_ID
+          check TEST_OAUTH_APP TEST_DISCORD_CLIENT_ID TEST_DISCORD_CLIENT_SECRET
+          check TEST_DEPLOYMENT TEST_PUBLIC_BASE_URL TEST_PUBLIC_BASE_URL_VAR
+          check TEST_ALLOWED_HOSTS TEST_ALLOWED_HOSTS TEST_ALLOWED_HOSTS_VAR
+          cat "$report"
+      - name: Upload availability report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: isolated-test-environment-probe-${{ github.sha }}
+          path: test-environment-probe.txt
+          if-no-files-found: error
+          retention-days: 1
