@@ -63,6 +63,7 @@ test("stored OAuth update records new token metadata and clears refresh failures
 test("refresh maintenance updates due OAuth user tokens", async () => {
   const updates = [];
   const doc = {
+    _id: "doc1",
     id: "doc1",
     discord: { userId: "user1" },
     oauth: {
@@ -166,6 +167,7 @@ test("refresh maintenance records failures and marks revoked after max failures"
 test("refresh maintenance can update admin OAuth tokens separately", async () => {
   const updates = [];
   const doc = {
+    _id: "doc1",
     id: "doc1",
     discord: { userId: "admin1" },
     adminOAuth: {

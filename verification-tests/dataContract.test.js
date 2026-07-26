@@ -323,7 +323,9 @@ describe("unified verification data contract", () => {
             }
         });
         jest.spyOn(snapshotStore, "loadOAuthSnapshots").mockResolvedValue({
-            profile: { id: "12345678901234567", username: "old" }
+            profile: { id: "12345678901234567", username: "old" },
+            connections: [],
+            guilds: []
         });
         const rollback = jest.spyOn(snapshotStore, "rollbackSnapshotVersion")
             .mockResolvedValue({ complete: true, failedModels: [] });
@@ -383,7 +385,9 @@ describe("unified verification data contract", () => {
             profile: { kind: "profile", version: "v-older", returnedCount: 1, storedCount: 1, chunkCount: 1, complete: true }
         });
         jest.spyOn(snapshotStore, "loadOAuthSnapshots").mockResolvedValue({
-            profile: { id: "12345678901234567", username: "old" }
+            profile: { id: "12345678901234567", username: "old" },
+            connections: [],
+            guilds: []
         });
         const rollback = jest.spyOn(snapshotStore, "rollbackSnapshotVersion")
             .mockResolvedValue({ complete: true, failedModels: [] });
