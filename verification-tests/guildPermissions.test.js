@@ -10,10 +10,10 @@ const {
 
 describe("PERMISSIONS constants", () => {
     it("are BigInt flags", () => {
-        expect(typeof PERMISSIONS.ADMINISTRATOR).toBe("bigint");
-        expect(typeof PERMISSIONS.MANAGE_GUILD).toBe("bigint");
-        expect(PERMISSIONS.ADMINISTRATOR).toBe(0x8n);
-        expect(PERMISSIONS.MANAGE_GUILD).toBe(0x20n);
+        expect(typeof PERMISSIONS.Administrator).toBe("bigint");
+        expect(typeof PERMISSIONS.ManageGuild).toBe("bigint");
+        expect(PERMISSIONS.Administrator).toBe(0x8n);
+        expect(PERMISSIONS.ManageGuild).toBe(0x20n);
     });
 });
 
@@ -34,27 +34,27 @@ describe("permissionBigInt", () => {
 
 describe("hasPerm", () => {
     it("returns true when flag is set", () => {
-        expect(hasPerm("8", PERMISSIONS.ADMINISTRATOR)).toBe(true);
-        expect(hasPerm("32", PERMISSIONS.MANAGE_GUILD)).toBe(true);
-        expect(hasPerm("4", PERMISSIONS.BAN_MEMBERS)).toBe(true);
+        expect(hasPerm("8", PERMISSIONS.Administrator)).toBe(true);
+        expect(hasPerm("32", PERMISSIONS.ManageGuild)).toBe(true);
+        expect(hasPerm("4", PERMISSIONS.BanMembers)).toBe(true);
     });
 
     it("returns false when flag is not set", () => {
-        expect(hasPerm("0", PERMISSIONS.ADMINISTRATOR)).toBe(false);
-        expect(hasPerm("4", PERMISSIONS.MANAGE_GUILD)).toBe(false);
+        expect(hasPerm("0", PERMISSIONS.Administrator)).toBe(false);
+        expect(hasPerm("4", PERMISSIONS.ManageGuild)).toBe(false);
     });
 
     it("works with combined permission bitfield", () => {
-        const combined = String(PERMISSIONS.ADMINISTRATOR | PERMISSIONS.BAN_MEMBERS);
-        expect(hasPerm(combined, PERMISSIONS.ADMINISTRATOR)).toBe(true);
-        expect(hasPerm(combined, PERMISSIONS.BAN_MEMBERS)).toBe(true);
-        expect(hasPerm(combined, PERMISSIONS.MANAGE_GUILD)).toBe(false);
+        const combined = String(PERMISSIONS.Administrator | PERMISSIONS.BanMembers);
+        expect(hasPerm(combined, PERMISSIONS.Administrator)).toBe(true);
+        expect(hasPerm(combined, PERMISSIONS.BanMembers)).toBe(true);
+        expect(hasPerm(combined, PERMISSIONS.ManageGuild)).toBe(false);
     });
 });
 
 describe("permissionFlags", () => {
     it("returns array of flag names for combined bits", () => {
-        const bits = String(PERMISSIONS.ADMINISTRATOR | PERMISSIONS.MANAGE_GUILD);
+        const bits = String(PERMISSIONS.Administrator | PERMISSIONS.ManageGuild);
         const flags = permissionFlags(bits);
         expect(flags).toContain("ADMINISTRATOR");
         expect(flags).toContain("MANAGE_GUILD");
@@ -85,7 +85,7 @@ describe("normalizeGuildPermissions", () => {
     });
 
     it("ADMINISTRATOR bit grants all management", () => {
-        const result = normalizeGuildPermissions({ permissions: String(PERMISSIONS.ADMINISTRATOR) });
+        const result = normalizeGuildPermissions({ permissions: String(PERMISSIONS.Administrator) });
         expect(result.isAdmin).toBe(true);
         expect(result.canManage).toBe(true);
         expect(result.canManageGuild).toBe(true);
@@ -95,7 +95,7 @@ describe("normalizeGuildPermissions", () => {
     });
 
     it("MANAGE_GUILD bit grants canManageGuild but not isAdmin", () => {
-        const result = normalizeGuildPermissions({ permissions: String(PERMISSIONS.MANAGE_GUILD) });
+        const result = normalizeGuildPermissions({ permissions: String(PERMISSIONS.ManageGuild) });
         expect(result.canManageGuild).toBe(true);
         expect(result.canManage).toBe(true);
         expect(result.isAdmin).toBe(false);
@@ -119,7 +119,7 @@ describe("normalizeGuildPermissions", () => {
     });
 
     it("BAN_MEMBERS bit grants canBanMembers but not canManageGuild", () => {
-        const result = normalizeGuildPermissions({ permissions: String(PERMISSIONS.BAN_MEMBERS) });
+        const result = normalizeGuildPermissions({ permissions: String(PERMISSIONS.BanMembers) });
         expect(result.canBanMembers).toBe(true);
         expect(result.canManageGuild).toBe(false);
     });
@@ -131,11 +131,11 @@ describe("canAccessGuildDashboard", () => {
     });
 
     it("true for ADMINISTRATOR", () => {
-        expect(canAccessGuildDashboard({ permissions: String(PERMISSIONS.ADMINISTRATOR) })).toBe(true);
+        expect(canAccessGuildDashboard({ permissions: String(PERMISSIONS.Administrator) })).toBe(true);
     });
 
     it("true for MANAGE_GUILD", () => {
-        expect(canAccessGuildDashboard({ permissions: String(PERMISSIONS.MANAGE_GUILD) })).toBe(true);
+        expect(canAccessGuildDashboard({ permissions: String(PERMISSIONS.ManageGuild) })).toBe(true);
     });
 
     it("false for no permissions", () => {
@@ -153,11 +153,11 @@ describe("canEditVerificationPanel", () => {
     });
 
     it("true for MANAGE_GUILD", () => {
-        expect(canEditVerificationPanel({ permissions: String(PERMISSIONS.MANAGE_GUILD) })).toBe(true);
+        expect(canEditVerificationPanel({ permissions: String(PERMISSIONS.ManageGuild) })).toBe(true);
     });
 
     it("false for BAN_MEMBERS only", () => {
-        expect(canEditVerificationPanel({ permissions: String(PERMISSIONS.BAN_MEMBERS) })).toBe(false);
+        expect(canEditVerificationPanel({ permissions: String(PERMISSIONS.BanMembers) })).toBe(false);
     });
 
     it("false for no permissions", () => {

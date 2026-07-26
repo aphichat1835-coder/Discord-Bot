@@ -835,9 +835,9 @@ async function validateVerificationConfig(req, guildId, verification) {
     if (mode === "oauth") {
       const guildPermissions = discordAPI.computeMemberGuildPermissions(context.botMember, context.roles);
       const moderationPermissions = [
-        ["timeout", discordAPI.PERMISSIONS.MODERATE_MEMBERS, "หมดเวลา", "Moderate Members"],
-        ["kick", discordAPI.PERMISSIONS.KICK_MEMBERS, "เตะสมาชิก", "Kick Members"],
-        ["ban", discordAPI.PERMISSIONS.BAN_MEMBERS, "แบนสมาชิก", "Ban Members"]
+        ["timeout", discordAPI.PERMISSIONS.ModerateMembers, "หมดเวลา", "Moderate Members"],
+        ["kick", discordAPI.PERMISSIONS.KickMembers, "เตะสมาชิก", "Kick Members"],
+        ["ban", discordAPI.PERMISSIONS.BanMembers, "แบนสมาชิก", "Ban Members"]
       ];
 
       for (const [action, permission, thaiLabel, discordLabel] of moderationPermissions) {

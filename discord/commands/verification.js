@@ -119,7 +119,7 @@ async function resolveGuildBotMember(guild, client) {
 
 function validateDirectRoleAssignment(botMember, role) {
     if (!botMember) return { ok: false, reason: "ไม่พบข้อมูลบอทในเซิร์ฟเวอร์" };
-    if (!botMember.permissions?.has?.("MANAGE_ROLES")) return { ok: false, reason: "บอทไม่มีสิทธิ์ Manage Roles" };
+    if (!botMember.permissions?.has?.(PermissionFlagsBits.ManageRoles)) return { ok: false, reason: "บอทไม่มีสิทธิ์ Manage Roles" };
     if (!role) return { ok: false, reason: "ไม่พบยศนี้แล้ว กรุณาแจ้ง Admin ตั้งค่าใหม่" };
     if (role.managed) return { ok: false, reason: "ยศนี้เป็น managed role ไม่สามารถมอบให้อัตโนมัติได้" };
     if (botMember.roles?.highest && role.position >= botMember.roles.highest.position) {

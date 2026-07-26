@@ -14,6 +14,7 @@
 */
 
 const https = require("https");
+const { PermissionFlagsBits } = require("discord.js");
 
 const { encryptToken, decryptToken } = require("./crypto");
 const { sanitizeLogText } = require("./safeLogger");
@@ -42,14 +43,14 @@ const requestDiagnostics = {
 };
 
 const PERMISSIONS = Object.freeze({
-    KICK_MEMBERS: 1n << 1n,
-    BAN_MEMBERS: 1n << 2n,
-    VIEW_CHANNEL: 1n << 10n,
-    SEND_MESSAGES: 1n << 11n,
-    EMBED_LINKS: 1n << 14n,
-    MANAGE_ROLES: 1n << 28n,
-    MODERATE_MEMBERS: 1n << 40n,
-    ADMINISTRATOR: 1n << 3n
+    KickMembers: PermissionFlagsBits.KickMembers,
+    BanMembers: PermissionFlagsBits.BanMembers,
+    ViewChannel: PermissionFlagsBits.ViewChannel,
+    SendMessages: PermissionFlagsBits.SendMessages,
+    EmbedLinks: PermissionFlagsBits.EmbedLinks,
+    ManageRoles: PermissionFlagsBits.ManageRoles,
+    ModerateMembers: PermissionFlagsBits.ModerateMembers,
+    Administrator: PermissionFlagsBits.Administrator
 });
 
 const TEXT_CHANNEL_TYPES = new Set([
@@ -365,7 +366,7 @@ function toBigIntPermission(value) {
 function hasPermission(permissionValue, flag) {
     const perms = toBigIntPermission(permissionValue);
 
-    return (perms & PERMISSIONS.ADMINISTRATOR) === PERMISSIONS.ADMINISTRATOR ||
+    return (perms & PERMISSIONS.Administrator) === PERMISSIONS.Administrator ||
         (perms & flag) === flag;
 }
 
@@ -702,7 +703,7 @@ function computeMemberGuildPermissions(member, roles = []) {
 function applyChannelOverwrites(basePermissions, member, channel) {
     let perms = toBigIntPermission(basePermissions);
 
-    if ((perms & PERMISSIONS.ADMINISTRATOR) === PERMISSIONS.ADMINISTRATOR) {
+    if ((perms & PERMISSIONS.Administrator) === PERMISSIONS.Administrator) {
         return perms.toString();
     }
 
@@ -796,7 +797,7 @@ function validateBotCanManageRole({ botMember, roles, targetRoleId }) {
         detail: `${target.name} (${target.id})`
     });
 
-    const hasManageRoles = hasPermission(guildPerms, PERMISSIONS.MANAGE_ROLES);
+    const hasManageRoles = hasPermission(guildPerms, PERMISSIONS.ManageRoles);
 
     checks.push({
         name: "manage_roles",
@@ -848,9 +849,9 @@ function validateBotCanUseChannel({ botMember, roles, channel }) {
     const guildPerms = computeMemberGuildPermissions(botMember, roles);
     const channelPerms = applyChannelOverwrites(guildPerms, botMember, channel);
 
-    const canView = hasPermission(channelPerms, PERMISSIONS.VIEW_CHANNEL);
-    const canSend = canView && hasPermission(channelPerms, PERMISSIONS.SEND_MESSAGES);
-    const canEmbed = canSend && hasPermission(channelPerms, PERMISSIONS.EMBED_LINKS);
+    const canView = hasPermission(channelPerms, PERMISSIONS.ViewChannel);
+    const canSend = canView && hasPermission(channelPerms, PERMISSIONS.SendMessages);
+    const canEmbed = canSend && hasPermission(channelPerms, PERMISSIONS.EmbedLinks);
 
     const checks = [
         {
