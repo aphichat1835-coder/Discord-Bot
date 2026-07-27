@@ -23,19 +23,4 @@ const replacement = `{
 }`;
 authSource = authSource.slice(0, first) + replacement + authSource.slice(secondEnd + 3);
 fs.writeFileSync(authPatchPath, authSource);
-
-const verificationPatchPath = path.join(__dirname, "tempPatchVerification.js");
-let verificationSource = fs.readFileSync(verificationPatchPath, "utf8");
-verificationSource = verificationSource.replace(
-    `    if (source.indexOf(search, first + search.length) >= 0) throw new Error(\`PATCH_SOURCE_NOT_UNIQUE:\${file}\`);\n`,
-    ""
-);
-verificationSource = verificationSource.replace(
-    "            await refreshOneOAuthUser(doc, {",
-    "            const result = await refreshOneOAuthUser(doc, {"
-);
-if (!verificationSource.includes("const result = await refreshOneOAuthUser")) {
-    throw new Error("VERIFICATION_PATCH_RESULT_BINDING_MISSING");
-}
-fs.writeFileSync(verificationPatchPath, verificationSource);
-console.log("[TEMP-PATCH] patch scripts normalized");
+console.log("[TEMP-PATCH] auth patch normalized");
