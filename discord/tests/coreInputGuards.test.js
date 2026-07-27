@@ -15,6 +15,21 @@ test("finite configuration guards reject NaN and Infinity while enforcing bounds
     assert.equal(readFiniteInteger("4.8", { fallback: 1, min: 0, max: 10 }), 4);
 });
 
+test("blank numeric configuration uses fallback instead of coercing to zero", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    for (const value of [undefined, null, "", "   "]) {
+        assert.equal(readFiniteNumber(value, { fallback: 10, min: 1, max: 20 }), 10);
+        assert.equal(readFiniteInteger(value, { fallback: 7, min: 1, max: 20 }), 7);
+    }
+    assert.equal(readFiniteNumber("0", { fallback: 10, min: 0, max: 20 }), 0);
+    assert.equal(readFiniteNumber("0", { fallback: 10, min: 1, max: 20 }), 1);
+    assert.equal(readFiniteNumber(" 5 ", { fallback: 10, min: 1, max: 20 }), 5);
+});
+
+test("blank numeric bounds use safe defaults", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    assert.equal(readFiniteNumber("9", { fallback: 3, min: "", max: "" }), 9);
+    assert.equal(readFiniteNumber("bad", { fallback: " ", min: 1, max: 20 }), 1);
+});
+
 test("Discord snowflake guard accepts only 17 to 22 digits", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.equal(isDiscordSnowflake("12345678901234567"), true);
     assert.equal(isDiscordSnowflake("1234567890123456789012"), true);
