@@ -42,13 +42,20 @@ jobs:
           node --check scripts/tempPatchVerification.js
           node --check scripts/tempPatchCi.js
 
-      - name: Apply fail-fast remediation patches
-        run: |
-          node scripts/tempPatchPrepare.js
-          node scripts/tempPatchCore.js
-          node scripts/tempPatchAuth.js
-          node scripts/tempPatchVerification.js
-          node scripts/tempPatchCi.js
+      - name: Normalize temporary patch scripts
+        run: node scripts/tempPatchPrepare.js
+
+      - name: Apply core remediation patch
+        run: node scripts/tempPatchCore.js
+
+      - name: Apply protected auth remediation patch
+        run: node scripts/tempPatchAuth.js
+
+      - name: Apply verification remediation patch
+        run: node scripts/tempPatchVerification.js
+
+      - name: Apply CI remediation patch
+        run: node scripts/tempPatchCi.js
 
       - name: Install dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
