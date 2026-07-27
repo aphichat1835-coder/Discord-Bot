@@ -11,6 +11,9 @@ const generatedStart = authSource.indexOf('write("discord/systemProvider/pinCred
 const generatedEnd = authSource.indexOf("\nreplaceOnce(", generatedStart);
 if (generatedStart < 0 || generatedEnd < 0) throw new Error("AUTH_PATCH_GENERATED_CREDENTIAL_BLOCK_MISSING");
 authSource = authSource.slice(0, generatedStart) + authSource.slice(generatedEnd + 1);
+authSource = authSource
+    .replaceAll("${cookieName}", "\\${cookieName}")
+    .replaceAll("${sessionToken}", "\\${sessionToken}");
 
 const marker = `replaceOnce(\n    "discord/systemProvider/dashboardHtml.js"`;
 const first = authSource.indexOf(marker);
