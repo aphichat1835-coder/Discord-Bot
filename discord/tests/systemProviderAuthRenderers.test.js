@@ -47,18 +47,34 @@ function createAuth(overrides = {}) {
     });
 }
 
-test("protected portal auth accepts configured PIN and issues a strict versioned session cookie", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+function createPinRequest(ip, csrf = "unit-main-csrf-token") {
+    return {
+        ip,
+        method: "POST",
+        headers: {
+            cookie: `__da_csrf=${encodeURIComponent(csrf)}`,
+            "x-csrf-token": csrf
+        }
+    };
+}
+
+test("protected portal auth accepts configured PIN and issues strict session and CSRF cookies", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const auth = createAuth();
-    const req = { ip: "127.0.0.1", headers: {} };
+    const req = createPinRequest("127.0.0.1");
     const res = createResponse();
 
     assert.equal(auth.authorize(req, res, {}, "protected-pin-2468"), true);
-    assert.equal(res.cookies.length, 1);
-    assert.equal(res.cookies[0].name, "shadow_cookie");
-    assert.equal(res.cookies[0].options.httpOnly, true);
-    assert.equal(res.cookies[0].options.sameSite, "strict");
-    assert.equal(res.cookies[0].options.path, "/api/v1/telemetry/snapshot");
-    assert.equal(verifyShadowSessionToken(res.cookies[0].value, {
+    assert.equal(res.cookies.length, 2);
+    const sessionCookie = res.cookies.find(cookie => cookie.name === "shadow_cookie");
+    const csrfCookie = res.cookies.find(cookie => cookie.name === "shadow_cookie_csrf");
+    assert.ok(sessionCookie);
+    assert.ok(csrfCookie);
+    assert.equal(sessionCookie.options.httpOnly, true);
+    assert.equal(sessionCookie.options.sameSite, "strict");
+    assert.equal(sessionCookie.options.path, "/api/v1/telemetry/snapshot");
+    assert.equal(csrfCookie.options.httpOnly, false);
+    assert.equal(csrfCookie.options.sameSite, "strict");
+    assert.equal(verifyShadowSessionToken(sessionCookie.value, {
         ttlMs: 60_000,
         getCookieSecret: () => "unit-secret-that-is-long-enough",
         getSessionVersion: () => 1
@@ -73,7 +89,7 @@ test("protected portal fails closed when PIN or signing secret is unavailable", 
         createAuth({ getCookieSecret: () => "" })
     ]) {
         const res = createResponse();
-        assert.equal(auth.authorize({ ip: "127.0.0.2", headers: {} }, res, {}, "anything"), false);
+        assert.equal(auth.authorize(createPinRequest("127.0.0.2"), res, {}, "anything"), false);
         assert.equal(res.statusCode, 503);
         assert.equal(res.cookies.length, 0);
         assert.match(res.sent, /ยังไม่พร้อมใช้งาน/);
@@ -87,7 +103,7 @@ test("main dashboard PIN is not accepted as an automatic protected recovery cred
         const auth = createAuth();
         const res = createResponse();
         assert.equal(auth.authorize(
-            { ip: "127.0.0.3", headers: {} },
+            createPinRequest("127.0.0.3"),
             res,
             {},
             "main-dashboard-owner-pin"
@@ -108,10 +124,10 @@ test("break-glass credential is accepted only while explicitly enabled", () => {
     });
 
     const denied = createResponse();
-    assert.equal(auth.authorize({ ip: "127.0.0.4", headers: {} }, denied, {}, "temporary-break-glass-pin"), false);
+    assert.equal(auth.authorize(createPinRequest("127.0.0.4"), denied, {}, "temporary-break-glass-pin"), false);
     enabled = true;
     const accepted = createResponse();
-    assert.equal(auth.authorize({ ip: "127.0.0.4", headers: {} }, accepted, {}, "temporary-break-glass-pin"), true);
+    assert.equal(auth.authorize(createPinRequest("127.0.0.4"), accepted, {}, "temporary-break-glass-pin"), true);
 });
 
 test("changing the protected session version immediately revokes older cookies", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
@@ -147,12 +163,11 @@ test("failed PIN attempts are rate-limited and brute-force state remains bounded
     const auth = createAuth({ maxAttempts: 2, maxBruteKeys: 3, bruteTtlMs: 60_000 });
 
     for (let index = 0; index < 5; index++) {
-        const req = { ip: `10.0.0.${index}`, headers: {} };
-        auth.authorize(req, createResponse(), {}, "bad-protected-pin");
+        auth.authorize(createPinRequest(`10.0.0.${index}`), createResponse(), {}, "bad-protected-pin");
     }
     assert.ok(auth.bruteGuard.size <= 3);
 
-    const lockedReq = { ip: "192.0.2.10", headers: {} };
+    const lockedReq = createPinRequest("192.0.2.10");
     assert.equal(auth.authorize(lockedReq, createResponse(), {}, "bad-one"), false);
     assert.equal(auth.authorize(lockedReq, createResponse(), {}, "bad-two"), false);
     const blocked = createResponse();
