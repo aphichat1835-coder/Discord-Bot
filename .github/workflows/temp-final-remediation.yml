@@ -55,9 +55,7 @@ jobs:
             node --check scripts/tempPatchCi.js
           } > .github/temp-normalized-error.txt 2>&1
           status=$?
-          if [ "$status" -eq 0 ]; then
-            rm -f .github/temp-normalized-error.txt
-          fi
+          if [ "$status" -eq 0 ]; then rm -f .github/temp-normalized-error.txt; fi
           exit "$status"
 
       - name: Preserve normalized patch diagnostic
@@ -135,11 +133,40 @@ jobs:
 
       - name: Full tests and coverage
         run: |
-          npm run test:coverage:discord
-          npm run test:coverage:voice
-          npm run test:coverage:verification
-          npm run check:coverage
-          npm audit --audit-level=high
+          set +e
+          : > /tmp/full-tests.log
+          for command in \
+            "npm run test:coverage:discord" \
+            "npm run test:coverage:voice" \
+            "npm run test:coverage:verification" \
+            "npm run check:coverage" \
+            "npm audit --audit-level=high"
+          do
+            echo "===== COMMAND: $command =====" | tee -a /tmp/full-tests.log
+            bash -lc "$command" >> /tmp/full-tests.log 2>&1
+            status=$?
+            if [ "$status" -ne 0 ]; then
+              {
+                echo "FAILED_COMMAND=$command"
+                echo "EXIT_STATUS=$status"
+                tail -n 300 /tmp/full-tests.log
+              } > .github/temp-test-error.txt
+              cat .github/temp-test-error.txt
+              exit "$status"
+            fi
+          done
+          rm -f .github/temp-test-error.txt
+
+      - name: Preserve full test diagnostic
+        if: failure()
+        run: |
+          if [ -f .github/temp-test-error.txt ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .github/temp-test-error.txt
+            git commit -m "chore: record temporary full test diagnostic"
+            git push origin HEAD:audit/final-remediation-20260728
+          fi
 
       - name: Remove temporary patch machinery
         run: |
@@ -147,6 +174,7 @@ jobs:
           rm -f .github/temp-auth-error.txt
           rm -f .github/temp-verification-error.txt
           rm -f .github/temp-ci-error.txt
+          rm -f .github/temp-test-error.txt
           rm -f scripts/tempPatchPrepare.js
           rm -f scripts/tempPatchCore.js
           rm -f scripts/tempPatchAuth.js
