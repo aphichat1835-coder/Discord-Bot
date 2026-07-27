@@ -5,3 +5,11 @@
 /.github/workflows/ci.yml @aphichat1835-coder
 /.github/CODEOWNERS @aphichat1835-coder
 /.github/protected-path-digests.json @aphichat1835-coder
+
+# Binding owner-intent policy and every AI instruction surface require Owner review.
+/docs/OWNER_INTENT_POLICY.md @aphichat1835-coder
+/AGENTS.md @aphichat1835-coder
+/.github/copilot-instructions.md @aphichat1835-coder
+/CONTEXT.md @aphichat1835-coder
+/SECURITY.md @aphichat1835-coder
+/README.md @aphichat1835-coder
