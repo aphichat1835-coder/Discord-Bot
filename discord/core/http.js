@@ -1,3 +1,12 @@
+"use strict";
+
+const { getReleaseIdentity } = require("./releaseIdentity");
+const { installShutdownCoordinator } = require("./runtimeLifecycle");
+
+// Install the best-effort shutdown contract before index.js registers process
+// handlers. The installer is idempotent and does not attach signals by itself.
+installShutdownCoordinator();
+
 function applySecurityHeaders(req, res, next) {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "no-referrer");
@@ -30,18 +39,51 @@ function buildHealthPayload(options = {}) {
     return {
         status: shuttingDown ? "stopping" : "ok",
         healthy: !shuttingDown,
-        timestamp: Date.now(),
-        uptimeSec: Math.floor(process.uptime())
+        timestamp: options.timestamp ?? Date.now(),
+        uptimeSec: options.uptimeSec ?? Math.floor(process.uptime()),
+        release: options.release || getReleaseIdentity(options.env)
     };
 }
 
+function buildStoppingReadinessPayload(options = {}) {
+    return {
+        status: "stopping",
+        ready: false,
+        botOnline: false,
+        bot: false,
+        dbConnected: false,
+        db: false,
+        voiceReady: false,
+        verificationReady: false,
+        commandsReady: false,
+        release: options.release || getReleaseIdentity(options.env)
+    };
+}
+
+const HEALTH_ROUTE_GUARD = Symbol("health-route-guard");
+
 function registerHealthRoute(app) {
-    if (typeof app?.get !== "function") return false;
-    app.get("/health", (_req, res) => {
+    if (typeof app?.get !== "function" || app[HEALTH_ROUTE_GUARD]) return false;
+
+    const originalGet = app.get.bind(app);
+    originalGet("/health", (_req, res) => {
         const payload = buildHealthPayload();
         return res.status(payload.healthy ? 200 : 503).json(payload);
     });
+
+    // Health belongs to the core HTTP contract. Ignore later duplicate route
+    // registration while preserving Express setting reads and every other GET.
+    app.get = (path, ...handlers) => {
+        if (path === "/health" && handlers.length > 0) return app;
+        return originalGet(path, ...handlers);
+    };
+    app[HEALTH_ROUTE_GUARD] = true;
     return true;
+}
+
+function applyReadinessShutdownGuard(req, res, next) {
+    if (req.path !== "/ready" || global.__APP_SHUTTING_DOWN !== true) return next();
+    return res.status(503).json(buildStoppingReadinessPayload());
 }
 
 function createHttpApp(express, options = {}) {
@@ -57,6 +99,7 @@ function createHttpApp(express, options = {}) {
     app.use(applySecurityHeaders);
     app.use(applySensitiveResponseHeaders);
     registerHealthRoute(app);
+    app.use(applyReadinessShutdownGuard);
     app.use(express.json({ limit: jsonLimit }));
     app.use(express.urlencoded({ extended: true, limit: urlencodedLimit }));
 
@@ -66,7 +109,9 @@ function createHttpApp(express, options = {}) {
 module.exports = {
     applySecurityHeaders,
     applySensitiveResponseHeaders,
+    applyReadinessShutdownGuard,
     buildHealthPayload,
+    buildStoppingReadinessPayload,
     registerHealthRoute,
     createHttpApp
 };
