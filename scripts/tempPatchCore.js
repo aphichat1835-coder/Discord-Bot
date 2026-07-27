@@ -114,11 +114,12 @@ replaceRegexOnce(
         return { processed: pending.length };
     })();
 
-    workerPromise = activePromise.finally(() => {
+    let trackedPromise;
+    trackedPromise = activePromise.finally(() => {
         workerBusy = false;
-        if (workerPromise === activePromise || workerPromise === trackedPromise) workerPromise = null;
+        if (workerPromise === trackedPromise) workerPromise = null;
     });
-    const trackedPromise = workerPromise;
+    workerPromise = trackedPromise;
     return trackedPromise;
 }
 
@@ -230,8 +231,8 @@ replaceOnce(
 `const PROTECTION_ACTIONS = new Set(['timeout', 'kick', 'ban']);
 
 function normalizeDomain(value) {
-    const domain = String(value || '').trim().toLowerCase().replace(/^\.+|\.+$/g, '');
-    if (!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(domain)) return null;
+    const domain = String(value || '').trim().toLowerCase().replace(/^[.]+|[.]+$/g, '');
+    if (!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?[.])+[a-z]{2,63}$/.test(domain)) return null;
     return domain;
 }
 
