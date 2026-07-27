@@ -1,6 +1,13 @@
 # Security and Privacy
 
-Last implementation review: 2026-07-26 (`ttt.1` release candidate).
+> **Binding owner policy:** This document is subordinate to
+> [`docs/OWNER_INTENT_POLICY.md`](docs/OWNER_INTENT_POLICY.md). For Voice-token
+> ownership, verification collection, Owner Dashboard access, and private
+> Owner-only logs/webhooks, OI-01 through OI-04 are mandatory. Generic security,
+> privacy, minimization, or UX preferences must not silently override them.
+
+
+Last implementation review: 2026-07-27 (`ttt.1` owner-intent policy alignment).
 
 ## Scope
 
@@ -9,25 +16,25 @@ voice/session tokens, verification history, browser/device metadata, network
 metadata, moderation cases, and sensitive-access history. Treat the repository, host environment, MongoDB, and
 Owner session as security-sensitive.
 
-Never commit or print real:
+Never commit to source control, CI output, public documentation, public issue/PR
+text, or public logs:
 
-- Discord bot/self-bot/OAuth tokens
+- Discord bot/self-client credentials
 - OAuth client secrets
 - MongoDB URIs
 - encryption/signing/API secrets
 - Owner PINs
-- webhook URLs
-- raw IP addresses
-- decrypted OAuth metadata
+- webhook endpoint URLs
 - hidden protected-system procedures
 
-The shared webhook event formatter does not weaken these rules. Owner-only
-Discord channels are still external log storage: event context may include
-bounded Discord IDs and safe references, but raw tokens, webhook credentials,
-decrypted OAuth values, and raw IP addresses remain prohibited. Every webhook
-payload suppresses mentions and passes through the shared sanitizer and Discord
-payload limits before delivery. Event profile images are accepted only from
-Discord's HTTPS CDN/media hosts; arbitrary remote image URLs are discarded.
+Private Owner-only event logs and webhooks are a separate trusted output boundary.
+When the Owner-selected event schema includes raw IP, OAuth/verification values,
+email, IDs, device/network detail, or another sensitive field, the formatter must
+preserve the real value as required by OI-04. Do not invent or dump unrelated
+environment secrets, credentials, PINs, MongoDB URIs, or webhook endpoint URLs.
+Discord payload-size limits and destination validation still apply. Event profile
+images are accepted only from Discord's HTTPS CDN/media hosts; arbitrary remote
+image URLs are discarded.
 
 `.env.example` is placeholders only.
 
@@ -83,9 +90,9 @@ Dashboard ควบคุมบอท and all verification management pages use 
 - A separate readable SameSite CSRF cookie is HMAC-bound to the signed session.
 - Non-read management routes require the `X-CSRF-Token` header.
 - PIN and API rate-limit maps are bounded and cleaned.
-- Rejected API requests are logged locally; the webhook emits a deduplicated
-  `BLOCKED` notice only for rate-limit enforcement or a locked token-reveal PIN,
-  and strips query strings from the reported path.
+- Rejected API requests may be logged locally and to the private Owner webhook.
+  Dashboard data viewing must not require a second reveal PIN, manual reason,
+  step-up authentication, or approval queue after a valid Owner session exists.
 - Redirect targets are normalized to local paths.
 
 The former guild-admin OAuth/session boundary was removed. There is no public
@@ -155,18 +162,16 @@ correlation hashes from matching historical hashes. Any coordinated rotation
 therefore requires an explicit correlation migration or re-verification plan.
 Rotating `API_SECRET` also invalidates Owner sessions.
 
-Raw tokens must never appear in:
+Raw tokens must never appear in source control, CI output, public documentation,
+public issue/PR text, unauthenticated responses, or public logs.
 
-- Owner list APIs or normal member-detail APIs
-- logs or webhooks
-- exports
-- tests/fixtures
-- migrations
-- docs or pull-request text
-
-The Owner-only per-user OAuth token reveal action is the only exception. It requires a valid Owner session, CSRF token, and rate-limit/cooldown checks. The dashboard records an automatic action reason, writes audit intent before decryption and audit result afterward, and fails closed when either required audit write is unavailable. The
-response is for the immediate Owner view only and must not be stored in browser
-persistence or included in lists/exports/logs.
+After a valid Owner PIN session exists, the Owner Dashboard may return the complete
+OAuth token as part of direct Owner data access. It must not require a manual
+reason, repeated PIN, step-up authentication, reveal intent, approval queue, or
+blocking audit write. Automatic CSRF/session validation and non-blocking background
+audit are allowed. Private Owner-only logs/webhooks may include a token only when
+the Owner-selected event schema intentionally includes that field, as required by
+OI-04; unrelated credentials must not be added to an event automatically.
 
 Historical `adminOAuth` fields remain refresh-compatible. No route creates a new
 admin grant. Configure `LEGACY_ADMIN_OAUTH_REDIRECT_URI` when old tokens require
@@ -174,23 +179,17 @@ the retired origin during refresh.
 
 ### Raw IP
 
-The current raw source IP is encrypted; an HMAC hash is used for correlation.
-Normal serializers always return `rawIp: null` and `ip: null`, even to the
-Owner. Location/network/risk fields remain available without decryption.
-Paginated IP-history APIs return canonical user/device/role metadata only and
-never return encrypted or decrypted raw IP or OAuth tokens.
+The current raw source IP is encrypted at rest; an HMAC hash remains available
+for correlation. Public and unauthenticated serializers must not return raw IP.
+A valid Owner Dashboard session may receive the decrypted raw IP directly in the
+member detail/full-detail flow or the existing Owner route without a manual
+reason, repeated PIN, step-up authentication, reveal intent, approval queue, or
+blocking audit write. Automatic CSRF/session validation may remain invisible in
+the background.
 
-Raw-IP access requires:
-
-1. valid Owner PIN session;
-2. CSRF token;
-3. guild and user identifiers;
-4. rate-limit/cooldown checks;
-5. automatic audit intent and result records with actor, target, request ID, and timestamp. Audit failure is surfaced and the reveal fails closed.
-
-The response is intended for the immediate Owner Member Detail view only. Do
-not add raw IP to lists, exports, client storage, logs, query strings, or
-webhook messages.
+Private Owner-only logs/webhooks may contain raw IP when that field is intentionally
+part of the Owner-selected event schema. Do not expose raw IP through public pages,
+public logs, source control, CI output, or unauthenticated endpoints.
 
 ### Browser/device
 
@@ -243,24 +242,23 @@ Do not infer values that Discord did not return:
 - false VPN/proxy flags with failed lookup are not treated as a confirmed
   negative without checking lookup status.
 
-## Data minimization and retention
+## Mandatory collection and retention
 
-The owner explicitly requires verification and sensitive-access history, but retention remains
-configurable by guild. Verification logs and IP identity summaries use
-soft-delete retention behavior. Legacy pending reveal requests can expire
-automatically.
+The repository is a private Owner-operated system. Every guild uses the same
+Owner-required verification collection contract. Per-guild privacy toggles,
+opt-outs, defaults that omit OAuth tokens/raw IP, and guild-specific reduction of
+the core dataset are prohibited by OI-02. Collection includes the supported
+profile, OAuth, raw-IP, guild/member/role/permission, connection, device/browser,
+network, verification-history, OAuth-history, and snapshot fields.
 
-Before reducing or extending retention:
+Retention and deletion behavior must be controlled by one Owner policy, not by
+independent guild choices. Existing cleanup of incomplete/unreferenced technical
+garbage may remain, but it must not remove a complete Owner-required record or
+reduce one guild's dataset compared with another. Owner-initiated deletion or a
+new direct Owner instruction may change retained data.
 
-- check legal/privacy obligations for the deployment jurisdiction;
-- back up and test restore;
-- preserve audit requirements;
-- update user-facing policy/consent;
-- verify that the migration is additive and rollback-safe.
-
-Privacy deletion uses a resumable guild-scoped manifest and verifies that no targeted guild references remain before completion. Shared cross-guild profile snapshots are preserved unless they are no longer referenced.
-
-Do not introduce bulk raw-token or raw-IP exports.
+Before changing the global retention contract, back up and test restore, preserve
+transactional integrity, and update the binding Owner policy when instructed.
 
 ## Database and migration
 
@@ -285,23 +283,26 @@ when a process or database operation fails mid-event.
 
 ## Logging and error handling
 
-Use safe/redacted log helpers. Error output may include operation/status codes,
-not payload bodies or credentials. Discord API errors are length-limited and
-sanitized. Data-quality failure reasons should be stable redacted codes such as
-`discord_http_403`, not provider response bodies.
+Separate public/CI logs from private Owner-only logs. Public logs, CI output,
+source-control text, and unauthenticated diagnostics must not expose credentials
+or environment secrets. Private Owner-only logs and webhooks must preserve the
+full value of every field intentionally included by the Owner-selected event
+schema, including raw IP, email, Discord IDs, account/device/network detail,
+permissions, verification result, error detail, and selected OAuth/verification
+fields. Generic sanitizers must not mask, hash, drop, summarize, or replace those
+fields merely because an AI considers them sensitive.
 
-Webhook targets are secrets. Operational and critical alert targets should be
-separate where possible. The shared outbound dispatcher accepts only HTTPS
-Discord webhook endpoints, disables mentions, bounds Discord payload sizes and
-queue depth, prioritizes critical alerts, retries transient failures, and
-exposes redacted delivery counters through Owner diagnostics. Shutdown performs
-a bounded queue drain; diagnostics never contain webhook URLs.
+Webhook endpoint URLs remain credentials and must not be included in payloads or
+diagnostics. The shared outbound dispatcher may enforce exact HTTPS destinations,
+Discord payload-size/queue limits, priority, retry, deduplication, and bounded
+shutdown drain. These transport controls must not silently remove Owner-selected
+event fields.
 
 The Enterprise Audit server-activity subsystem is retired. Runtime no longer
-registers its Discord listeners, reads or writes its storage, sends log-channel
-embeds, or exposes its Dashboard/API routes. This does not remove the redacted
-operational/critical webhook dispatcher, ModCase persistence, or the internal
-audit attempt required by sensitive Verification reveal actions.
+registers its retired Discord listeners, storage, channel embeds, or Dashboard/API
+routes. Operational/critical Owner webhooks, ModCase persistence, and current
+Owner event records remain active under OI-04. Data viewing in the Owner Dashboard
+must not depend on a successful audit write.
 
 ## Runtime and dependency controls
 
@@ -364,9 +365,14 @@ task approval required by `AGENTS.md`.
    unified smoke helper; do not use wildcards.
 8. Verify `/ping`, degraded/ready `/health`, Owner PIN, CSRF, and callback rate
    limiting.
-9. Verify normal APIs contain no raw token/IP.
-10. Run one audited IP reveal and confirm an audit record without server logging.
-11. If a legacy standalone service still exists, stop it only after smoke tests
+9. Verify public/unauthenticated APIs contain no raw token/IP.
+10. Verify the authenticated Owner Dashboard can directly display complete Token,
+    raw IP, and full detail without a manual reason, repeated PIN, step-up flow,
+    approval queue, or blocking audit dependency.
+11. Verify a private Owner webhook preserves the complete values of the selected
+    event schema while keeping the webhook endpoint URL and unrelated environment
+    credentials out of the payload.
+12. If a legacy standalone service still exists, stop it only after smoke tests
     pass. Current deployments otherwise use only the root service.
 
 The administrator-only smoke CLI is excluded from Codacy static analysis in
