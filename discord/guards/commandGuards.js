@@ -6,7 +6,7 @@ const BLOCKED_MESSAGE_PATTERNS = [
 
 function hasPermission(target, permissions, mode = "all") {
     const required = Array.isArray(permissions) ? permissions : [permissions];
-    const permissionTarget = target?.permissions;
+    const permissionTarget = target?.permissions || target;
     if (!permissionTarget || required.length === 0) return false;
 
     const check = permission => hasResolvedPermission(permissionTarget, permission);
@@ -29,10 +29,51 @@ async function safeDefer(interaction, options = {}) {
     }
 }
 
-async function requireMemberPermission(interaction, permissions, content, options = {}) {
-    if (hasPermission(interaction.member, permissions, options.mode)) return true;
+function readCommandOption(interaction, name) {
+    try {
+        return interaction?.options?.getString?.(name) || "";
+    } catch {
+        return "";
+    }
+}
+
+function getElevatedMentionRequirement(interaction) {
+    const commandName = String(interaction?.commandName || "").toLowerCase();
+    const content = commandName === "say"
+        ? readCommandOption(interaction, "message")
+        : commandName === "announce"
+            ? readCommandOption(interaction, "content")
+            : "";
+
+    if (!content) return null;
+    if (/@(?:everyone|here)\b/i.test(content)) return "everyone";
+
+    const roleIds = [...content.matchAll(/<@&(\d{17,22})>/g)].map(match => match[1]);
+    for (const roleId of roleIds) {
+        const role = interaction?.guild?.roles?.cache?.get?.(roleId);
+        if (role?.mentionable !== true) return "role";
+    }
+
+    return null;
+}
+
+async function requireElevatedMentionPermission(interaction, permissionTarget, actor) {
+    if (!getElevatedMentionRequirement(interaction)) return true;
+    if (hasPermission(permissionTarget, "MentionEveryone")) return true;
+
+    const content = actor === "bot"
+        ? "> ❌ บอทไม่มีสิทธิ์ Mention @everyone, @here หรือยศที่ไม่ได้เปิดให้ Mention"
+        : "> ⛔ คุณไม่มีสิทธิ์ Mention @everyone, @here หรือยศที่ไม่ได้เปิดให้ Mention";
     await safeReply(interaction, { content, ephemeral: true });
     return false;
+}
+
+async function requireMemberPermission(interaction, permissions, content, options = {}) {
+    if (!hasPermission(interaction.member, permissions, options.mode)) {
+        await safeReply(interaction, { content, ephemeral: true });
+        return false;
+    }
+    return requireElevatedMentionPermission(interaction, interaction.member, "member");
 }
 
 async function requireBotPermission(interaction, permissions, content, channel = null, options = {}) {
@@ -41,9 +82,11 @@ async function requireBotPermission(interaction, permissions, content, channel =
         ? botMember.permissionsIn(channel)
         : botMember;
 
-    if (hasPermission(permissionTarget, permissions, options.mode)) return true;
-    await safeReply(interaction, { content, ephemeral: true });
-    return false;
+    if (!hasPermission(permissionTarget, permissions, options.mode)) {
+        await safeReply(interaction, { content, ephemeral: true });
+        return false;
+    }
+    return requireElevatedMentionPermission(interaction, permissionTarget, "bot");
 }
 
 function checkRoleHierarchy({ interaction, target, client, config }) {
@@ -107,7 +150,6 @@ function markCommandAccepted(interaction) {
 
 function isVoicePanelControl(customId, ids, prefixes) {
     if (typeof customId !== "string") return false;
-
     return [
         ids.BTN_START,
         ids.BTN_STATUS,
@@ -122,6 +164,8 @@ module.exports = {
     hasPermission,
     requireMemberPermission,
     requireBotPermission,
+    requireElevatedMentionPermission,
+    getElevatedMentionRequirement,
     checkRoleHierarchy,
     safeReply,
     safeDefer,
