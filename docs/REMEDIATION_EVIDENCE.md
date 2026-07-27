@@ -22,17 +22,17 @@
 |---|---|---|---|---|
 | F-001 | Discord.js v13 permission strings reached v14 runtime callers | `discord/core/discordPermissions.js`, command guards, moderation, verification and protected callers | `scripts/checkDiscordV14Compatibility.js`, `discord/tests/discordV14CompatibilityGuard.test.js`, command tests | Closed — automated |
 | F-002 | Verification panel setup used deprecated channel checks and incomplete permissions | Verification command and panel interaction validation use sendable text-channel contracts and canonical flags | Command and panel tests, v14 AST guard | Closed — automated |
-| F-003 | User-authored messages must be sent exactly as the owner requests, including mentions | `/say`, `/announce` and private webhook payloads preserve Discord mentions | Utility and webhook tests inspect outbound payloads | Closed — automated |
+| F-003 | Owner-authored messages must remain unchanged without letting the bot bypass Discord mention permissions | `/say` and `/announce` preserve content; command guards require both caller and bot `MentionEveryone` capability for `@everyone`, `@here`, and non-mentionable roles | Utility, command-guard and mention-permission behavioural tests | Closed — automated |
 | F-004 | Voice runtime must support alternate accounts and must not bind a token to the requester identity | Token-owner pre/post login rejection was removed; requester identity remains only session-control metadata | Voice lifecycle tests | Closed — automated |
 | F-005 | Concurrent Voice creation could create duplicate clients or leave an old target active | Same token+Guild requests are serialized; stale queued requests are superseded and the latest request replaces the previous session | Voice latest-wins and concurrency tests | Closed — automated |
 | F-006 | A login completing after timeout could become a ghost client | Cancelled login generations destroy late clients before registration | Voice late-login tests | Closed — automated |
 | F-007 | Active Voice records with missing clients were not recovered | Health recovery claims a lock, logs in, rechecks ownership and reconnects | Voice health-recovery tests | Closed — automated |
 | F-008 | Empty memory state could trigger unscoped database deletion | Automatic bulk deletion was removed; the unused unscoped clear-all primitive was removed | Static guard rejects `deleteMany({})`; repository scan | Closed — automated |
-| F-009 | Shutdown could persist state before pausing runtime activity | Ordered shutdown stops intake/timers, pauses Voice, saves final state, destroys clients and closes dependencies | Voice lifecycle and health tests; syntax/runtime guards | Closed — automated |
+| F-009 | Shutdown could persist state before pausing runtime activity or skip later cleanup after one failure | Ordered best-effort shutdown stops intake/timers, pauses Voice, saves final state, closes each dependency independently and exits non-zero when any cleanup fails | Behavioural shutdown tests prove order, idempotency and continuation after injected failure | Closed — automated |
 | F-010 | Verification could return success after critical persistence failed | Critical persistence contract, role rollback and durable recovery records | Verification persistence and recovery tests | Closed — automated |
 | F-011 | A private bot must store the requested OAuth and encrypted Raw-IP data consistently in every Guild | Storage is forced on globally and Guild settings cannot disable it | OAuth storage and recovery tests | Closed — automated |
 | F-012 | OAuth refresh races could overwrite newer credentials | Per-user lock, token version and compare-and-set update | OAuth lifecycle CAS tests | Closed — automated |
-| F-013 | Re-verification could write into a soft-deleted identity | Reactivation clears deletion markers before new state is stored | Verification lifecycle tests | Closed — automated |
+| F-013 | Re-verification could write into a soft-deleted identity | Deletion markers are cleared only when the persisted verification result is exactly `success`; failed, blocked and unrelated OAuth updates remain deleted | Verification lifecycle tests cover success, failed, blocked, legacy and token-refresh paths | Closed — automated |
 | F-014 | Privacy deletion did not cover all Guild-scoped references | Durable deletion job and collection manifest scrub/delete Guild-scoped data and verify remaining references | `verification-tests/privacyDeletion.test.js` | Closed — automated |
 | F-015 | Snapshot activation/retention could leave corrupt or orphaned data | Reconstruction validation, checksums, chunks, finalisation and scoped cleanup remain enforced | Snapshot chunk, rollback, cleanup and budget tests | Closed — automated |
 | F-016 | Long-lived OAuth state could be replayed | Short-lived registered nonce and one-time consumption | Security recovery and state tests | Closed — automated |
@@ -44,7 +44,7 @@
 | F-022 | Webhook timeout could cause duplicate retry after a late success | Operation IDs, pending timeout state, late result reconciliation and bounded pending flush | Webhook late-success and late-failure tests | Closed — automated |
 | F-023 | Merely sending an auth-looking header could bypass CSRF | Only successfully authenticated server-secret middleware sets the bypass flag | Dashboard auth/CSRF tests | Closed — automated |
 | F-024 | Prefix origin checks and request-derived public URLs were unsafe | Parsed exact-origin comparison and canonical production `PUBLIC_BASE_URL` validation | Dashboard guard and unified runtime tests | Closed — automated |
-| F-025 | Liveness, readiness and fatal process state were conflated | `/ping` is liveness; readiness reports dependency state; fatal errors enter bounded shutdown and non-zero exit | Server health and lifecycle tests | Closed — automated |
+| F-025 | Liveness, readiness and fatal process state were conflated | Core `/health` is unique process liveness with release identity; `/ready` remains dependency readiness and returns `503 stopping` immediately after shutdown begins | HTTP integration tests exercise both routes, duplicate registration, exact release identity and shutdown transition | Closed — automated |
 | F-026 | Protected control authentication had defaults, query credentials and non-revocable sessions | Fail-closed credentials, POST/CSRF actions, versioned sessions, bounded attempts and persist-first PIN changes | Protected auth and route integration tests | Closed — automated |
 | F-027 | Protected restore/state mixed schemas and could restore unrelated state | Separate role/overwrite/mute snapshots, Guild-scoped state, TTL/generation and lifecycle cleanup | Protected action/renderer tests | Closed — automated |
 | F-028 | Protected trace deletion could proceed without durable intent or a secure approval destination | Audit-before-delete, secure destination, redacted preview and atomic claim | Trace approval tests | Closed — automated |
@@ -132,9 +132,9 @@ Discord does not provide a compliant bot-side mechanism to originate a real user
 slash-command interaction. After the automated isolated gate succeeds, a human
 tester in the Test Guild must execute the documented command/verification flows
 and attach the redacted result to the same exact SHA. This must include permission
-allow/deny, mention suppression, direct/OAuth verification, privacy policy on/off,
-recovery, Backup/Restore partial failure, protection dedupe, Dashboard CSRF and
-fatal restart observation. No standard-user token may be placed in CI.
+allow/deny, mention-permission allow/deny, direct/OAuth verification, privacy policy
+on/off, recovery, Backup/Restore partial failure, protection dedupe, Dashboard CSRF
+and fatal restart observation. No standard-user token may be placed in CI.
 
 ## Merge rule
 

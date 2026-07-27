@@ -9,12 +9,24 @@ function isPlainObject(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function isVerificationActivationUpdate(update) {
-    if (!isPlainObject(update)) return false;
+function readVerificationResult(update) {
+    if (!isPlainObject(update)) return null;
     const set = update.$set;
-    return isPlainObject(set) &&
-        Object.hasOwn(set, "lastVerify") &&
-        isPlainObject(set.lastVerify);
+    if (!isPlainObject(set)) return null;
+
+    if (isPlainObject(set.lastVerify)) {
+        return String(set.lastVerify.result || "").trim().toLowerCase() || null;
+    }
+
+    if (Object.hasOwn(set, "lastVerify.result")) {
+        return String(set["lastVerify.result"] || "").trim().toLowerCase() || null;
+    }
+
+    return null;
+}
+
+function isVerificationActivationUpdate(update) {
+    return readVerificationResult(update) === "success";
 }
 
 function applyVerificationReactivation(update) {
@@ -31,6 +43,7 @@ function applyVerificationReactivation(update) {
 
 module.exports = {
     REACTIVATION_UNSET_FIELDS,
+    readVerificationResult,
     isVerificationActivationUpdate,
     applyVerificationReactivation
 };
