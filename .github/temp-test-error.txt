@@ -1,0 +1,302 @@
+FAILED_COMMAND=npm run test:coverage:verification
+EXIT_STATUS=1
+                  });
+              }·
+              console.log(\"[DASHBOARD] 🛑 Session stopped via dashboard\");
+              res.json({ success: true });
+          } catch (e) {
+              res.status(500).json({ success: false, error: e.message });
+          }
+      });
+          // ── Commands Status / Toggle / Audit ──
+      app.get(\"/api/commands-status\", (req, res) => {
+          try {
+              res.json(buildCommandStatusPayload(commands, disabledCommands));
+          } catch (e) {
+              res.status(500).json({ success: false, error: e.message });
+          }
+      });·
+      app.post(\"/api/commands/toggle\", express.json(), (req, res) => handleCommandToggle({
+          req,
+          res,
+          checkAuth,
+          commands,
+          sessionManager,
+          disabledCommands,
+          commandAuditLog,
+          toggleCooldowns
+      }));·
+      app.get(\"/api/commands-audit\", (req, res) => {
+          res.json(buildCommandAuditPayload(commandAuditLog));
+      });·
+      // ── Settings ──
+      app.post(\"/api/settings\", express.json(), async (req, res) => {
+          if (!checkAuth(req, res)) return;·
+          try {
+              const {
+                  maxSessions,
+                  rateLimitRequests,
+                  idleTimeoutHrs,
+                  antiRaidEnabled,
+                  voiceDmMode
+              } = req.body;·
+              if (maxSessions) await sessionManager.setSetting(\"maxSessions\", maxSessions);
+              if (rateLimitRequests) await sessionManager.setSetting(\"rateLimitRequests\", rateLimitRequests);
+              if (idleTimeoutHrs) await sessionManager.setSetting(\"idleTimeoutHrs\", idleTimeoutHrs);
+              if (antiRaidEnabled !== undefined) await sessionManager.setSetting(\"antiRaidEnabled\", antiRaidEnabled);
+              if ([\"important_only\", \"all\", \"off\"].includes(voiceDmMode)) {
+                  await sessionManager.setSetting(\"voiceDmMode\", voiceDmMode);
+              }·
+              res.json({ success: true });
+          } catch (e) {
+              res.status(500).json({ success: false, error: e.message });
+          }
+      });·
+      // ── Presence ──
+      app.post(\"/api/presence\", express.json(), async (req, res) => {
+          if (!checkAuth(req, res)) return;·
+          try {
+              const {
+                  botStatus,
+                  botActivityType,
+                  botActivity,
+                  botNote
+              } = req.body;·
+              if (![\"online\", \"idle\", \"dnd\", \"invisible\"].includes(botStatus)) {
+                  return res.status(400).json({
+                      success: false,
+                      error: \"สถานะไม่ถูกต้อง\"
+                  });
+              }·
+              if (!botActivity?.trim()) {
+                  return res.status(400).json({
+                      success: false,
+                      error: \"กรุณากรอกข้อความกิจกรรม\"
+                  });
+              }·
+              const actType = [\"WATCHING\", \"LISTENING\", \"PLAYING\", \"COMPETING\"].includes(botActivityType)
+                  ? botActivityType
+                  : \"WATCHING\";·
+              await sessionManager.setSetting(\"botStatus\", botStatus);
+              await sessionManager.setSetting(\"botActivityType\", actType);
+              await sessionManager.setSetting(\"botActivity\", botActivity.trim().slice(0, 128));
+              await sessionManager.setSetting(\"botNote\", (botNote || \"\").trim().slice(0, 128));·
+              if (client?.isReady?.()) {
+                  const activities = [
+                      {
+                          name: botActivity.trim().slice(0, 128),
+                          type: resolveActivityType(actType)
+                      }
+                  ];·
+                  if (botNote?.trim()) {
+                      activities.push({
+                          name: botNote.trim().slice(0, 128),
+                          type: resolveActivityType(\"CUSTOM\")
+                      });
+                  }·
+                  client.user.setPresence({
+                      status: botStatus,
+                      activities
+                  });
+              }·
+              res.json({ success: true });
+          } catch (e) {
+              res.status(500).json({ success: false, error: e.message });
+          }
+      });·
+      app.post(\"/api/presence/rotate\", express.json(), async (req, res) => {
+          if (!checkAuth(req, res)) return;·
+          try {
+              const {
+                  rotateEnabled,
+                  rotateInterval,
+                  rotateMessages
+              } = req.body;·
+              if (typeof rotateEnabled !== \"boolean\") {
+                  return res.status(400).json({
+                      success: false,
+                      error: \"rotateEnabled ต้องเป็น boolean\"
+                  });
+              }·
+              const interval = Math.max(1, Number.parseInt(rotateInterval, 10) || 5);
+              const msgs = Array.isArray(rotateMessages)
+                  ? rotateMessages.map(m => String(m).trim().slice(0, 128)).filter(Boolean).slice(0, ROTATE_MESSAGES_MAX)
+                  : [];·
+              await sessionManager.setSetting(\"rotateEnabled\", rotateEnabled);
+              await sessionManager.setSetting(\"rotateInterval\", interval);
+              await sessionManager.setSetting(\"rotateMessages\", msgs);·
+              await startRotateTimer();·
+              res.json({ success: true });
+          } catch (e) {
+              res.status(500).json({ success: false, error: e.message });
+          }
+      });·
+      // ── Natural Settings ──
+      app.post(\"/api/settings/natural\", express.json(), async (req, res) => {
+          if (!checkAuth(req, res)) return;·
+          try {
+              const {
+                  enabled,
+                  intervalMs,
+                  durationMs
+              } = req.body;·
+              if (typeof enabled !== \"boolean\") {
+                  return res.status(400).json({
+                      success: false,
+                      error: \"enabled ต้องเป็น boolean\"
+                  });
+              }·
+              const safeInterval = Math.max(60000, Number.parseInt(intervalMs, 10) || 3600000);
+              const safeDuration = Math.min(120000, Math.max(5000, Number.parseInt(durationMs, 10) || 30000));·
+              await sessionManager.setSetting(\"naturalEnabled\", enabled);
+              await sessionManager.setSetting(\"naturalIntervalMs\", safeInterval);
+              await sessionManager.setSetting(\"naturalDurationMs\", safeDuration);·
+              voiceWorker.applyNaturalSettings({
+                  enabled,
+                  intervalMs: safeInterval,
+                  durationMs: safeDuration
+              });·
+              res.json({
+                  success: true,
+                  settings: voiceWorker.getNaturalSettings()
+              });
+          } catch (e) {
+              res.status(500).json({ success: false, error: e.message });
+          }
+      });·
+      // ── Auto Deaf Settings ──
+      app.post(\"/api/settings/auto-deaf\", express.json(), async (req, res) => {
+          if (!checkAuth(req, res)) return;·
+          try {
+              const {
+                  enabled,
+                  intervalMs,
+                  openDurationMs
+              } = req.body;·
+              if (typeof enabled !== \"boolean\") {
+                  return res.status(400).json({
+                      success: false,
+                      error: \"enabled ต้องเป็น boolean\"
+                  });
+              }·
+              const safeInterval = Math.max(60000, Number.parseInt(intervalMs, 10) || 3600000);
+              const safeOpenDuration = Math.min(600000, Math.max(5000, Number.parseInt(openDurationMs, 10) || 60000));·
+              await sessionManager.setSetting(\"autoDeafEnabled\", enabled);
+              await sessionManager.setSetting(\"autoDeafIntervalMs\", safeInterval);
+              await sessionManager.setSetting(\"autoDeafOpenDurationMs\", safeOpenDuration);·
+              voiceWorker.applyAutoDeafSettings({
+                  enabled,
+                  intervalMs: safeInterval,
+                  openDurationMs: safeOpenDuration
+              });·
+              res.json({
+                  success: true,
+                  settings: voiceWorker.getAutoDeafSettings()
+              });
+          } catch (e) {
+              res.status(500).json({ success: false, error: e.message });
+          }
+      });·
+      // ── Approved Guilds ──
+      app.post(\"/api/approve\", express.json(), async (req, res) => {
+          if (!checkAuth(req, res)) return;·
+          try {
+              const { guildId } = req.body;·
+              if (!guildId || typeof guildId !== \"string\") {
+                  return res.status(400).json({
+                      success: false,
+                      error: \"Invalid guildId\"
+                  });
+              }·
+              await sessionManager.ApprovedGuildModel.updateOne(
+                  { guildId },
+                  { $setOnInsert: { guildId } },
+                  { upsert: true }
+              );·
+              await sessionManager.PendingGuildModel.deleteOne({ guildId });·
+              const guild = client.guilds.cache.get(guildId);
+              sendWebhookEvent({
+                  target: \"LOG\",
+                  severity: \"SUCCESS\",
+                  category: \"GUILD\",
+                  code: \"guild.approved\",
+                  title: \"อนุมัติเซิร์ฟเวอร์แล้ว\",
+                  context: {
+                      \"เซิร์ฟเวอร์\": guild?.name || \"ไม่พบชื่อใน Cache\",
+                      \"Guild ID\": guildId
+                  },
+                  sourceIconUrl: getDiscordGuildIconUrl(guild)
+              }).catch(() => {});·
+              res.json({ success: true });
+          } catch (e) {
+              res.status(500).json({ success: false, error: e.message });
+          }
+      });·
+      app.post(\"/api/approved/remove\", express.json(), async (req, res) => {
+          if (!checkAuth(req, res)) return;·
+          try {
+              const { guildId } = req.body;·
+              if (!guildId || typeof guildId !== \"string\") {
+                  return res.status(400).json({
+                      success: false,
+                      error: \"Invalid guildId\"
+                  });
+              }·
+              const removedApproval = await removeApprovedGuildRecord(sessionManager, guildId);·
+              if (!removedApproval) {
+                  return res.status(503).json({
+                      success: false,
+                      error: \"Failed to remove approved guild record\"
+                  });
+              }·
+              res.json({ success: true });
+          } catch (e) {
+              res.status(500).json({ success: false, error: e.message });
+          }
+      });·
+      app.post(\"/api/approved/kick\", express.json(), (req, res) => handleApprovedGuildKick({
+          req,
+          res,
+          checkAuth,
+          client,
+          sessionManager,
+          voiceWorker
+      }));·
+      const shadowPortal = registerShadowPortal({ setupTelemetryRouter, app, client });·
+      const pinAttemptCleanupTimer = setInterval(() => {
+          cleanupPinAttempts();
+      }, 5 * 60 * 1000);·
+      pinAttemptCleanupTimer.unref?.();·
+      return {
+          shadowPortalRegistered: shadowPortal.registered === true,
+          stop() {
+              clearInterval(pinAttemptCleanupTimer);
+          }
+      };
+  }·
+  module.exports = {
+      registerRoutes,
+      logIntrusion,
+      makeCheckAuth,
+      registerShadowPortal,
+      buildEnvReadiness,
+      _test: {
+          buildReadinessPayload,
+          validateCommandToggleRequest,
+          getCommandToggleCooldown,
+          createCommandTogglePlan,
+          persistCommandToggle,
+          recordCommandToggleAudit,
+          handleCommandToggle
+      }
+  };
+  "
+      at TestContext.<anonymous> (/home/runner/work/Discord-Bot/Discord-Bot/verification-tests/unifiedRuntime.test.js:341:24)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Suite.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    matcherResult: { message: 'expect(received).toContain(expected) // indexOf\n\nExpected substring: "app.get(\\"/health\\", sendReadiness)"\nReceived string:    "/*\n================================================================================\n⚠️ [AI COGNITIVE DIRECTIVE] ⚠️\nDO NOT HARDCODE PORT — use process.env.PORT.\nDO NOT REMOVE: rateLimitMiddleware, checkAuth, logIntrusion.\n================================================================================\n*/·\nconst crypto = require(\\"node:crypto\\");\nconst { resolveActivityType } = require(\\"../core/discordCompat\\");\nconst { delay: awaitedDelay } = require(\\"../core/timers\\");\nconst auth = require(\\"./auth\\");\nconst {\n    serializeVoiceSession,\n    getSessionTokenSafe\n} = require(\\"./sessionSerializer\\");\nconst {\n    buildCommandStatusPayload,\n    buildCommandAuditPayload,\n    buildRuntimeStatusPayload\n} = require(\\"./dashboardState\\");\nconst {\n    shouldBypassDashboardReadApi,\n    createRateLimiter,\n    makeCheckAuth,\n    logIntrusion,\n    getRateLimitStats\n} = require(\\"../guards/dashboardGuards\\");\nconst { sendWebhookEvent, getWebhookDeliveryDiagnostics, getDiscordGuildIconUrl } = require(\\"../core/webhooks\\");\nconst { getFeatureFlags } = require(\\"../core/featureFlags\\");\nconst { registerJoinCampaignRoutes } = require(\\"./joinCampaignRoutes\\");\nconst { getVerificationDiagnostics } = require(\\"../verification/lifecycle\\");\nconst { readFiniteInteger } = require(\\"../core/numbers\\");\nconst { getReleaseIdentity } = require(\\"../core/releaseIdentity\\");·\nfunction buildReadinessPayload({ client, sessionManager, voiceWorker, commandsReady, featureFlags, verification, release }) {\n    const botOnline = client?.isReady?.() ?? false;\n    const dbStatus = sessionManager?.getDatabaseStatus?.();\n    const dbConnected = dbStatus?.connected === true;\n    const resolvedFeatures = featureFlags || {};\n    const verificationRequired = resolvedFeatures.verification !== false;\n    const verificationReady = !verificationRequired || verification?.ready === true;\n    const voiceRequired = resolvedFeatures.voice !== false;\n    const voice = voiceWorker?.getWorkerDiagnostics?.() || null;\n    const voiceReady = !voiceRequired || (botOnline && dbConnected && voice?.ready === true);\n    const slashCommandsReady = commandsReady?.() === true;\n    const ready = botOnline && dbConnected && verificationReady && voiceReady && slashCommandsReady;\n    const releaseIdentity = release || getReleaseIdentity();·\n    return {\n        status: ready ? \\"ok\\" : \\"degraded\\",\n        ready,\n        botOnline,\n        bot: botOnline,\n        dbConnected,\n        db: dbConnected,\n        voiceReady,\n        verificationReady,\n        commandsReady: slashCommandsReady,\n        release: releaseIdentity\n    };\n}·\nfunction safeRedirectPath(value) {\n    const raw = String(value || \\"/\\").trim();\n    if (!raw.startsWith(\\"/\\") || raw.startsWith(\\"//\\")) return \\"/\\";·\n    try {\n        const parsed = new URL(raw, \\"https://dashboard.local\\");\n        return `${parsed.pathname}${parsed.search}${parsed.hash}` || \\"/\\";\n    } catch {\n        return \\"/\\";\n    }\n}·\nfunction hashAuditIp(ip) {\n    const raw = String(ip || \\"unknown\\");\n    const secret = auth.getApiSecret() || \\"dashboard-audit\\";\n    const hash = crypto\n        .createHmac(\\"sha256\\", secret)\n        .update(raw)\n        .digest(\\"hex\\")\n        .slice(0, 12);·\n    return `ip#${hash}`;\n}·\nfunction voiceSessionEnsureErrorStatus(errorMessage) {\n    const badRequestErrors = [\n        \\"INVALID_TOKEN_FORMAT\\",\n        \\"INVALID_GUILD_ID\\",\n        \\"INVALID_VOICE_CHANNEL_ID\\",\n        \\"GUILD_NOT_FOUND\\",\n        \\"CHANNEL_NOT_FOUND\\"\n    ];\n    const conflictErrors = [\n        \\"ALREADY_ACTIVE_IN_GUILD\\",\n        \\"already_active_different_channel\\",\n        \\"SESSION_LOCKED\\",\n        \\"VOICE_QUEUE_BUSY\\"\n    ];\n    const unavailableErrors = [\n        \\"DATABASE_NOT_CONNECTED\\",\n        \\"SYSTEM_SHUTTING_DOWN\\"\n    ];·\n    if (badRequestErrors.includes(errorMessage)) return 400;\n    if (conflictErrors.includes(errorMessage)) return 409;\n    if (unavailableErrors.includes(errorMessage)) return 503;\n    return 500;\n}·\nfunction setNoStore(res) {\n    res.setHeader(\\"Cache-Control\\", \\"no-store\\");\n    res.setHeader(\\"Pragma\\", \\"no-cache\\");\n}·\nfunction buildEnvReadiness(env = process.env) {\n    return {\n        NODE_ENV: env.NODE_ENV || \\"development\\",\n        PORT: !!env.PORT,\n        MONGO_URI: !!env.MONGO_URI,\n        API_SECRET: !!env.API_SECRET,\n        TOKEN_MANAGER: !!env.TOKEN_MANAGER,\n        DASHBOARD_PIN: !!env.DASHBOARD_PIN,\n        WEBHOOK_LOG_URL: !!env.WEBHOOK_LOG_URL,\n        ALERT_WEBHOOK_URL: !!env.ALERT_WEBHOOK_URL\n    };\n}·\nfunction wait(ms) {\n    return awaitedDelay(ms);\n}·\nfunction registerShadowPortal({ setupTelemetryRouter, app, client }) {\n    if (typeof setupTelemetryRouter !== \\"function\\") {\n        return { registered: false, reason: \\"hook_unavailable\\" };\n    }·\n    try {\n        setupTelemetryRouter(app, client, null);\n        console.log(\\"[SHADOW] 🌐 Shadow web portal registered.\\");\n        return { registered: true, reason: null };\n    } catch (err) {\n        console.error(\\"[SHADOW] ❌ Shadow web portal registration failed:\\", err?.message || err);\n        return { registered: false, reason: \\"registration_failed\\" };\n    }\n}·\nasync function removeApprovedGuildRecord(sessionManager, guildId, attempts = 3) {\n    for (let attempt = 1; attempt <= attempts; attempt++) {\n        try {\n            await sessionManager.ApprovedGuildModel.deleteOne({ guildId });\n            return true;\n        } catch {\n            console.warn(`[DASHBOARD] ⚠️ Approved guild cleanup failed (${attempt}/${attempts})`);·\n            if (attempt < attempts) {\n                await wait(250 * attempt);\n            }\n        }\n    }·\n    return false;\n}·\nasync function stopGuildVoiceSessions(sessionManager, voiceWorker, guildId) {\n    const guildSessions = Array.from(sessionManager.getAllSessions().values())\n        .filter(session => session.serverId === guildId);·\n    let failedStops = 0;·\n    for (const session of guildSessions) {\n        const stopped = await voiceWorker.stopSession(session.sessionId, {\n            stoppedBy: \\"dashboard\\"\n        }).catch(() => {\n            console.warn(\\"[DASHBOARD] ⚠️ Best-effort guild kick voice stop failed\\");\n            return false;\n        });·\n        if (!stopped) failedStops++;\n    }·\n    if (failedStops > 0) {\n        console.warn(`[DASHBOARD] ⚠️ Continuing guild leave after ${failedStops} voice session stop failure(s)`);\n    }·\n    return failedStops;\n}·\nfunction buildApprovedKickWarning(failedStops, approvalCleanupFailed) {\n    return [\n        failedStops > 0\n            ? \\"บอทถูกนำออกแล้ว แต่มี voice sessions บางรายการหยุดไม่สำเร็จ\\"\n            : null,\n        approvalCleanupFailed\n            ? \\"บอทถูกนำออกแล้ว แต่ลบ approved guild record ไม่สำเร็จ\\"\n            : null\n    ].filter(Boolean).join(\\" | \\") || null;\n}·\nconst COMMAND_TOGGLE_COOLDOWN_MS = 5000;\nconst COMMAND_AUDIT_MAX = 100;·\nfunction validateCommandToggleRequest(commands, commandName) {\n    if (!commandName || typeof commandName !== \\"string\\") {\n        return { ok: false, status: 400, error: \\"ไม่ระบุชื่อคำสั่ง\\" };\n    }·\n    const exists = (commands.slashCommandsData || []).some(command => command.name === commandName);\n    if (!exists) {\n        return { ok: false, status: 404, error: `ไม่พบคำสั่ง /${commandName}` };\n    }·\n    return { ok: true, commandName };\n}·\nfunction getCommandToggleCooldown(toggleCooldowns, toggleKey, now = Date.now()) {\n    const lastToggle = toggleCooldowns.get(toggleKey) || 0;\n    const remainingMs = COMMAND_TOGGLE_COOLDOWN_MS - (now - lastToggle);\n    return Math.max(0, remainingMs);\n}·\nfunction createCommandTogglePlan(disabledCommands, commandName) {\n    const nextDisabledCommands = new Set(disabledCommands);\n    if (nextDisabledCommands.has(commandName)) nextDisabledCommands.delete(commandName);\n    else nextDisabledCommands.add(commandName);·\n    return {\n        nextDisabledCommands,\n        nowEnabled: !nextDisabledCommands.has(commandName)\n    };\n}·\nasync function persistCommandToggle(sessionManager, disabledCommands, commandName) {\n    const plan = createCommandTogglePlan(disabledCommands, commandName);\n    const persisted = await sessionManager.setSetting(\\"disabledCommands\\", [...plan.nextDisabledCommands]);\n    if (persisted !== true) return { ok: false, nowEnabled: !disabledCommands.has(commandName) };·\n    disabledCommands.clear();\n    for (const disabledCommand of plan.nextDisabledCommands) disabledCommands.add(disabledCommand);\n    return { ok: true, nowEnabled: plan.nowEnabled };\n}·\nfunction recordCommandToggleAudit(commandAuditLog, commandName, nowEnabled, auditIp, timestamp) {\n    if (commandAuditLog.length >= COMMAND_AUDIT_MAX) commandAuditLog.shift();\n    commandAuditLog.push({\n        commandName,\n        action: nowEnabled ? \\"enabled\\" : \\"disabled\\",\n        ip: auditIp,\n        timestamp\n    });\n}·\nfunction notifyCommandToggle(commandName, nowEnabled, auditIp) {\n    sendWebhookEvent({\n        target: \\"LOG\\",\n        severity: \\"INFO\\",\n        category: \\"OWNER\\",\n        code: nowEnabled ? \\"owner.command.enabled\\" : \\"owner.command.disabled\\",\n        title: nowEnabled ? \\"เปิดใช้งานคำสั่งแล้ว\\" : \\"ปิดใช้งานคำสั่งแล้ว\\",\n        context: {\n            \\"คำสั่ง\\": `/${commandName}`,\n            \\"สถานะใหม่\\": nowEnabled ? \\"เปิดใช้งาน\\" : \\"ปิดใช้งาน\\",\n            \\"IP ผู้ดำเนินการ\\": auditIp\n        }\n    }).catch(() => {});\n}·\nasync function handleCommandToggle({\n    req,\n    res,\n    checkAuth,\n    commands,\n    sessionManager,\n    disabledCommands,\n    commandAuditLog,\n    toggleCooldowns,\n    now = Date.now\n}) {\n    if (!checkAuth(req, res)) return;·\n    const validation = validateCommandToggleRequest(commands, req.body?.commandName);\n    if (!validation.ok) return res.status(validation.status).json({ success: false, error: validation.error });·\n    const timestamp = now();\n    const audi'... 30221 more characters, pass: false }
+  }
