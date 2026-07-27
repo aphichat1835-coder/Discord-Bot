@@ -46,6 +46,31 @@ jobs:
       - name: Normalize temporary patch scripts
         run: node scripts/tempPatchPrepare.js
 
+      - name: Validate normalized patch scripts
+        run: |
+          set +e
+          {
+            node --check scripts/tempPatchAuth.js
+            node --check scripts/tempPatchVerification.js
+            node --check scripts/tempPatchCi.js
+          } > .github/temp-normalized-error.txt 2>&1
+          status=$?
+          if [ "$status" -eq 0 ]; then
+            rm -f .github/temp-normalized-error.txt
+          fi
+          exit "$status"
+
+      - name: Preserve normalized patch diagnostic
+        if: failure()
+        run: |
+          if [ -f .github/temp-normalized-error.txt ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .github/temp-normalized-error.txt
+            git commit -m "chore: record normalized patch diagnostic"
+            git push origin HEAD:audit/final-remediation-20260728
+          fi
+
       - name: Apply core remediation patch
         run: node scripts/tempPatchCore.js
 
@@ -118,6 +143,7 @@ jobs:
 
       - name: Remove temporary patch machinery
         run: |
+          rm -f .github/temp-normalized-error.txt
           rm -f .github/temp-auth-error.txt
           rm -f .github/temp-verification-error.txt
           rm -f .github/temp-ci-error.txt
