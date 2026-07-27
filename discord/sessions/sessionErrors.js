@@ -2,9 +2,6 @@ const SESSION_ERROR_KEYS = Object.freeze({
     INVALID_TOKEN_FORMAT: "INVALID_TOKEN_FORMAT",
     ALREADY_ACTIVE: "ALREADY_ACTIVE",
     ALREADY_ACTIVE_IN_GUILD: "ALREADY_ACTIVE_IN_GUILD",
-    ALREADY_ACTIVE_DIFFERENT_CHANNEL: "already_active_different_channel",
-    TOKEN_IN_USE_BY_ANOTHER_USER: "token_in_use_by_another_user",
-    TOKEN_OWNER_MISMATCH: "TOKEN_OWNER_MISMATCH",
     LOGIN_GENERATION_CANCELLED: "LOGIN_GENERATION_CANCELLED",
     SYSTEM_LIMIT: "SYSTEM_LIMIT",
     LOGIN_TIMEOUT: "LOGIN_TIMEOUT",
@@ -15,7 +12,9 @@ const SESSION_ERROR_KEYS = Object.freeze({
     SESSION_LOCKED: "SESSION_LOCKED",
     TOKEN_DECRYPTION_FAILED: "TOKEN_DECRYPTION_FAILED",
     DATABASE_NOT_CONNECTED: "DATABASE_NOT_CONNECTED",
-    SESSION_PERSIST_FAILED: "SESSION_PERSIST_FAILED"
+    SESSION_PERSIST_FAILED: "SESSION_PERSIST_FAILED",
+    SESSION_REPLACEMENT_FAILED: "SESSION_REPLACEMENT_FAILED",
+    SUPERSEDED_BY_NEWER_REQUEST: "superseded_by_newer_request"
 });
 
 function getSessionErrorMessage(errorKey, config) {
@@ -28,10 +27,7 @@ function getSessionErrorMessage(errorKey, config) {
     const messages = {
         [SESSION_ERROR_KEYS.INVALID_TOKEN_FORMAT]: `> ${error} รูปแบบ Token ไม่ถูกต้อง`,
         [SESSION_ERROR_KEYS.ALREADY_ACTIVE]: `> ${warning} Token นี้กำลังทำงานอยู่แล้ว`,
-        [SESSION_ERROR_KEYS.ALREADY_ACTIVE_IN_GUILD]: `> ${warning} บัญชีนี้กำลังออนอยู่ในเซิร์ฟเวอร์นี้แล้ว หากต้องการย้ายช่อง ให้หยุดรายการเดิมของเซิร์ฟเวอร์นี้ก่อน`,
-        [SESSION_ERROR_KEYS.ALREADY_ACTIVE_DIFFERENT_CHANNEL]: `> ${warning} บัญชีนี้กำลังออนอยู่ในเซิร์ฟเวอร์นี้แล้ว แต่เป็นคนละช่อง หากต้องการย้ายช่องให้หยุด session เดิมก่อน`,
-        [SESSION_ERROR_KEYS.TOKEN_IN_USE_BY_ANOTHER_USER]: `> ${warning} Token นี้ถูกใช้งานในเซิร์ฟเวอร์นี้โดยผู้ใช้อื่นแล้ว`,
-        [SESSION_ERROR_KEYS.TOKEN_OWNER_MISMATCH]: `> ${error} Token นี้ไม่ตรงกับบัญชี Discord ของผู้สั่งงาน`,
+        [SESSION_ERROR_KEYS.ALREADY_ACTIVE_IN_GUILD]: `> ${warning} มีรายการเดิมของบัญชีนี้ในเซิร์ฟเวอร์ ระบบกำลังแทนด้วยคำสั่งล่าสุด`,
         [SESSION_ERROR_KEYS.LOGIN_GENERATION_CANCELLED]: `> ${warning} คำขอเข้าสู่ระบบหมดอายุและถูกยกเลิกอย่างปลอดภัย โปรดลองใหม่`,
         [SESSION_ERROR_KEYS.SYSTEM_LIMIT]: `> ${error} ระบบเต็ม! (เกินขีดจำกัด ${limits.maxSessions} เซสชัน)`,
         [SESSION_ERROR_KEYS.LOGIN_TIMEOUT]: `> ${warning} เชื่อมต่อล่าช้า โปรดลองใหม่`,
@@ -42,7 +38,9 @@ function getSessionErrorMessage(errorKey, config) {
         [SESSION_ERROR_KEYS.SESSION_LOCKED]: `> ${warning} Session นี้กำลังประมวลผลอยู่ โปรดลองใหม่อีกครั้ง`,
         [SESSION_ERROR_KEYS.TOKEN_DECRYPTION_FAILED]: `> ${error} ระบบอ่าน Token ไม่สำเร็จ โปรดลองเริ่มใหม่`,
         [SESSION_ERROR_KEYS.DATABASE_NOT_CONNECTED]: `> ${error} ฐานข้อมูลยังไม่พร้อม โปรดลองใหม่อีกครั้ง`,
-        [SESSION_ERROR_KEYS.SESSION_PERSIST_FAILED]: `> ${error} ระบบบันทึก Session ไม่สำเร็จ โปรดลองใหม่อีกครั้ง`
+        [SESSION_ERROR_KEYS.SESSION_PERSIST_FAILED]: `> ${error} ระบบบันทึก Session ไม่สำเร็จ โปรดลองใหม่อีกครั้ง`,
+        [SESSION_ERROR_KEYS.SESSION_REPLACEMENT_FAILED]: `> ${warning} หยุดรายการเดิมไม่สำเร็จ จึงยังไม่ย้ายไปห้องใหม่`,
+        [SESSION_ERROR_KEYS.SUPERSEDED_BY_NEWER_REQUEST]: `> ${warning} คำสั่งนี้ถูกคำสั่งที่ใหม่กว่าแทนแล้ว`
     };
 
     return messages[errorKey] || null;

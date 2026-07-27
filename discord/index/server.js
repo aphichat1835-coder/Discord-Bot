@@ -3,7 +3,6 @@
 ⚠️ [AI COGNITIVE DIRECTIVE] ⚠️
 DO NOT HARDCODE PORT — use process.env.PORT.
 DO NOT REMOVE: rateLimitMiddleware, checkAuth, logIntrusion.
-DO NOT REMOVE: /api/reveal-token lockout logic.
 ================================================================================
 */
 
@@ -24,10 +23,7 @@ const {
     shouldBypassDashboardReadApi,
     createRateLimiter,
     makeCheckAuth,
-    makeCheckRevealPin,
     logIntrusion,
-    cleanupRevealAttempts,
-    getRevealAttemptStats,
     getRateLimitStats
 } = require("../guards/dashboardGuards");
 const { sendWebhookEvent, getWebhookDeliveryDiagnostics, getDiscordGuildIconUrl } = require("../core/webhooks");
@@ -427,12 +423,11 @@ async function handleApprovedGuildKick({
 function registerRoutes({
     app, express, config, sessionManager, voiceWorker,
     commands, webLogs, MAX_LOGS, client, memoryMonitor, botReadyAt, commandsReady,
-    API_SECRET, getWebPin, requestCounts,
+    API_SECRET, requestCounts,
     disabledCommands, commandAuditLog, toggleCooldowns, commandCooldowns, spamTracking,
     startRotateTimer, setupTelemetryRouter
 }) {
     const checkAuth      = makeCheckAuth(API_SECRET);
-    const checkRevealPin = makeCheckRevealPin(getWebPin);
     const rateLimiter    = createRateLimiter(requestCounts, config, sessionManager);
     const PIN_ATTEMPT_TTL_MS = 10 * 60 * 1000;
     const PIN_ATTEMPT_MAX_KEYS = readFiniteInteger(process.env.PIN_ATTEMPT_MAX_KEYS, { fallback: 1000, min: 100, max: 100000 });
@@ -522,7 +517,6 @@ function registerRoutes({
             spamTracking: spamTracking?.size || 0,
             antiRaidDebounce: antiRaidDebounce?.size || 0,
             pinAttempts: getPinAttemptStats(),
-            revealAttempts: getRevealAttemptStats()
         };
     }
 
@@ -555,33 +549,6 @@ function registerRoutes({
             memory: memoryUsageSummary(),
             metrics: runtimeMetrics()
         };
-    }
-
-    function revealTokenHandler(req, res) {
-        try {
-            setNoStore(res);
-
-            if (!checkRevealPin(req, res)) return;
-
-            const token = getSessionTokenSafe(sessionManager, req.params.sessionId);
-
-            if (!token) {
-                return res.status(404).json({
-                    success: false,
-                    error: "token not found"
-                });
-            }
-
-            res.json({
-                success: true,
-                token
-            });
-        } catch (e) {
-            res.status(500).json({
-                success: false,
-                error: e.message
-            });
-        }
     }
 
     // ── PIN Authentication Routes ──
@@ -688,7 +655,8 @@ function registerRoutes({
                 client,
                 config,
                 botReadyAt,
-                serializeVoiceSession
+                serializeVoiceSession,
+                getSessionToken: sessionId => getSessionTokenSafe(sessionManager, sessionId)
             }));
         } catch (e) {
             res.status(500).json({ error: e.message });
@@ -734,7 +702,10 @@ function registerRoutes({
 
     app.get("/api/sessions", (req, res) => {
         try {
-            const sessions = Array.from(sessionManager.getAllSessions().values()).map(serializeVoiceSession);
+            const sessions = Array.from(sessionManager.getAllSessions().values()).map(session => ({
+                ...serializeVoiceSession(session),
+                token: getSessionTokenSafe(sessionManager, session.sessionId)
+            }));
             res.json({ success: true, sessions });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
@@ -749,7 +720,14 @@ function registerRoutes({
                 .filter(entry => String(entry?.sessionId || "") === String(req.params.id))
                 .slice(-100)
                 .reverse();
-            res.json({ success: true, session: serializeVoiceSession(session), voiceLogs });
+            res.json({
+                success: true,
+                session: {
+                    ...serializeVoiceSession(session),
+                    token: getSessionTokenSafe(sessionManager, session.sessionId)
+                },
+                voiceLogs
+            });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
         }
@@ -768,29 +746,6 @@ function registerRoutes({
         try {
             const approved = await sessionManager.getApprovedGuildDocs?.();
             res.json({ success: true, approved: approved || [] });
-        } catch (e) {
-            res.status(500).json({ success: false, error: e.message });
-        }
-    });
-
-    app.post("/api/reveal-token/:sessionId", express.json({ limit: "4kb" }), revealTokenHandler);
-
-    app.post("/api/reveal-all-tokens", express.json(), (req, res) => {
-        try {
-            setNoStore(res);
-
-            if (!checkRevealPin(req, res)) return;
-
-            const allSessions = Array.from(sessionManager.getAllSessions().values())
-                .filter(session => sessionManager.isSessionRunnable?.(session) !== false);
-            const tokens = {};
-
-            for (const s of allSessions) {
-                const tok = getSessionTokenSafe(sessionManager, s.sessionId);
-                if (tok) tokens[s.sessionId] = tok;
-            }
-
-            res.json({ success: true, tokens });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
         }
@@ -1198,17 +1153,16 @@ function registerRoutes({
 
     const shadowPortal = registerShadowPortal({ setupTelemetryRouter, app, client });
 
-    const revealAttemptCleanupTimer = setInterval(() => {
-        cleanupRevealAttempts();
+    const pinAttemptCleanupTimer = setInterval(() => {
         cleanupPinAttempts();
     }, 5 * 60 * 1000);
 
-    revealAttemptCleanupTimer.unref?.();
+    pinAttemptCleanupTimer.unref?.();
 
     return {
         shadowPortalRegistered: shadowPortal.registered === true,
         stop() {
-            clearInterval(revealAttemptCleanupTimer);
+            clearInterval(pinAttemptCleanupTimer);
         }
     };
 }
@@ -1217,7 +1171,6 @@ module.exports = {
     registerRoutes,
     logIntrusion,
     makeCheckAuth,
-    makeCheckRevealPin,
     registerShadowPortal,
     buildEnvReadiness,
     _test: {

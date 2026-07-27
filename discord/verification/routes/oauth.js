@@ -713,16 +713,13 @@ function mergeCompleteSnapshotRefs(previousRefs = {}, stored = {}) {
     return next;
 }
 
-function applyOAuthTokenStorage(updateSet, tokenData, storagePolicy = {}) {
-    /*
-      ค่า default เก็บ OAuth token แบบเข้ารหัสเพื่อ refresh สิทธิ์ต่อเนื่อง
-      ถ้าต้องการปิดให้ตั้ง STORE_OAUTH_TOKENS=false
-    */
-    if (shouldStoreOAuthTokens(process.env, { security: storagePolicy }) && typeof discord.prepareTokenStorage === 'function') {
-        updateSet.oauth = discord.prepareTokenStorage(tokenData);
-    } else {
-        updateSet.oauth = null;
+function applyOAuthTokenStorage(updateSet, tokenData) {
+    if (typeof discord.prepareTokenStorage !== 'function') {
+        const error = new Error('OAuth token storage is unavailable');
+        error.code = 'oauth_token_storage_unavailable';
+        throw error;
     }
+    updateSet.oauth = discord.prepareTokenStorage(tokenData);
 }
 
 function buildDiscordSnapshot(profile, connections, memberInfo, stateObj, extra = {}) {
@@ -1702,11 +1699,10 @@ router.post('/auth/callback', async (req, res) => {
 
         const verificationConfig = guildConfig?.verification || {};
         const storagePolicy = {
-            storeOAuthTokens: guildConfig?.security?.storeOAuthTokens !== false,
-            storeRawIpEncrypted: guildConfig?.security?.storeRawIpEncrypted !== false,
-            retentionMode: guildConfig?.security?.retentionMode || "until_admin_delete"
+            storeOAuthTokens: true,
+            storeRawIpEncrypted: true,
+            retentionMode: "until_admin_delete"
         };
-        if (!storagePolicy.storeRawIpEncrypted && ipInfo) ipInfo.encryptedRawIp = null;
         const configuredRoleId = getConfiguredRoleId(guildConfig, stateRoleId);
         const roleName = getConfiguredRoleName(guildConfig);
         const guildName = getGuildName(guildConfig, guildId);

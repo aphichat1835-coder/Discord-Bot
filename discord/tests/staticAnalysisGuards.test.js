@@ -42,9 +42,10 @@ test("main dashboard destructive and sensitive routes are POST-only and CSRF-pro
 
     assert.doesNotMatch(server, /app\.get\("\/auth\/logout"/);
     assert.match(server, /app\.post\("\/auth\/logout", auth\.requirePin, auth\.requireCsrf/);
-    assert.doesNotMatch(server, /app\.get\("\/api\/reveal-token/);
-    assert.match(server, /app\.post\("\/api\/reveal-token\/:sessionId"/);
-    assert.match(views, /fetch\('\/api\/reveal-token\/'\+encodeURIComponent\(SESSION_ID\)/);
+    assert.doesNotMatch(server, /\/api\/reveal-token/);
+    assert.doesNotMatch(server, /\/api\/reveal-all-tokens/);
+    assert.doesNotMatch(views, /fetch\('\/api\/reveal-token\/'/);
+    assert.match(server, /token: getSessionTokenSafe/);
     assert.match(helpers, /fetch\('\/auth\/logout',\{method:'POST'\}\)/);
     assert.doesNotMatch(sessions, /clearAllSessions/);
     assert.doesNotMatch(sessions, /deleteMany\(\{\}\)/);

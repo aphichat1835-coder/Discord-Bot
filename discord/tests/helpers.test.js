@@ -25,35 +25,6 @@ const {
 } = require("../index/viewHelpers");
 const { BASE_CSS } = require("../index/viewStyles");
 const views = require("../index/views");
-const {
-    decodeTokenOwnerIdSafe
-} = require("../sessions/tokenUtils");
-
-function stripBase64Padding(value) {
-    let clean = String(value);
-    while (clean.endsWith("=")) {
-        clean = clean.slice(0, -1);
-    }
-    return clean;
-}
-
-test("decodeTokenOwnerIdSafe extracts a canonical Discord user ID", () => {
-    const userId = "123456789012345678";
-    const encodedUserId = stripBase64Padding(Buffer.from(userId)
-        .toString("base64")
-        .replaceAll("+", "-")
-        .replaceAll("/", "_"));
-    const encodedInvalidUser = stripBase64Padding(Buffer.from("not-a-user")
-        .toString("base64")
-        .replaceAll("+", "-")
-        .replaceAll("/", "_"));
-    const token = `${encodedUserId}.abcdef.${"a".repeat(32)}`;
-
-    assert.equal(decodeTokenOwnerIdSafe(token), userId);
-    assert.equal(decodeTokenOwnerIdSafe(null), null);
-    assert.equal(decodeTokenOwnerIdSafe("not-a-token"), null);
-    assert.equal(decodeTokenOwnerIdSafe(`${encodedInvalidUser}.x.y`), null);
-});
 
 test("custom ID helpers preserve the routing parser contract", () => {
     assert.equal(isVerifyButton(`${PREFIXES.VERIFY_ROLE}abc`), true);

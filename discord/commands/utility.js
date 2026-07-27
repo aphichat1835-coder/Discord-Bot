@@ -128,7 +128,10 @@ async function handleSay(interaction) {
     markCommandAccepted(interaction);
 
     if (!await safeDefer(interaction, { ephemeral: true })) return null;
-    await interaction.channel.send({ content: msg, allowedMentions: { parse: [], repliedUser: false } });
+    await interaction.channel.send({
+        content: msg,
+        allowedMentions: { parse: ["users", "roles", "everyone"], repliedUser: false }
+    });
     return interaction.editReply({ content: `> ${config.emojis.success} ส่งเรียบร้อย` });
 }
 
@@ -143,20 +146,7 @@ async function handleAnnounce(interaction) {
     const title = `${config.emojis.announce_icon} ${titleText}`.slice(0, 256);
     const msgStr = sanitizeUserMessage(interaction.options.getString("message"), { maxLength: 4096 });
     const rawContent = interaction.options.getString("content");
-    const allowMentions = interaction.options.getBoolean("allow_mentions") === true;
-
-    if (allowMentions && !interaction.member.permissions.has(PermissionFlagsBits.Administrator) && !interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
-        return interaction.reply({
-            content: `> ${config.emojis.no_entry} การเปิด mention ต้องมี Administrator หรือ Manage Server`,
-            ephemeral: true
-        });
-    }
-    let content = rawContent ? sanitizeUserMessage(rawContent, { maxLength: 2000 }) : null;
-    if (content && allowMentions) {
-        content = content
-            .replaceAll("@\u200beveryone", "@everyone")
-            .replaceAll("@\u200bhere", "@here");
-    }
+    const content = rawContent ? sanitizeUserMessage(rawContent, { maxLength: 2000 }) : null;
     if (!titleText || !msgStr) {
         return interaction.reply({ content: `> ${config.emojis.error} หัวข้อและข้อความต้องไม่ว่าง`, ephemeral: true });
     }
@@ -173,9 +163,7 @@ async function handleAnnounce(interaction) {
     await interaction.channel.send({
         content: content || undefined,
         embeds: [embed],
-        allowedMentions: allowMentions
-            ? { parse: ["users", "roles", "everyone"] }
-            : { parse: [], repliedUser: false }
+        allowedMentions: { parse: ["users", "roles", "everyone"], repliedUser: false }
     });
     return interaction.editReply({ content: `> ${config.emojis.success} ประกาศสำเร็จ` });
 }

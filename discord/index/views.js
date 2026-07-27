@@ -103,18 +103,6 @@ ${navBar("/")}
 </div>
 </div>
 
-<div class="modal" id="tokenModal" role="dialog" aria-modal="true" aria-labelledby="tokenModalTitle" onclick="if(event.target===this)closeTokenModal()">
-<div class="modal-box">
-    <button type="button" class="modal-close" aria-label="ปิดหน้าต่าง" onclick="closeTokenModal()">✕</button>
-    <div style="font-size:2em;margin-bottom:8px;">🔑</div>
-    <h3 id="tokenModalTitle" style="color:var(--yellow2);margin-bottom:6px;font-size:1em;">ดู Token เต็ม</h3>
-    <p style="color:var(--text3);font-size:0.78em;margin-bottom:16px;">กรอกรหัสผ่านเพื่อแสดง Token ทุกตัว 5 นาที</p>
-    <p id="tokenErr" style="color:var(--red2);font-size:0.82em;margin-bottom:8px;display:none;">รหัสผ่านไม่ถูกต้อง</p>
-    <label class="sr-only" for="tokenPin">รหัสผ่านสำหรับดู Token</label>
-    <input id="tokenPin" type="password" placeholder="รหัสผ่านลับ..." autocomplete="current-password" style="text-align:center;margin-bottom:12px;">
-    <button type="button" onclick="submitRevealToken()" class="btn btn-warning">🔑 เปิดดู Token</button>
-</div>
-</div>
 
 ${toastScript()}
 <script>
@@ -163,7 +151,6 @@ function statusLabel(s){
     return s.hasConnection?'⚪ '+esc(st||'unknown'):'⚫ ไม่มี connection';
 }
 
-const revealState={expiry:0,tokens:{},_timer:null};
 async function fetchStatus(){
     try{
         const r=await fetch('/api/status');
@@ -245,7 +232,7 @@ async function fetchStatus(){
                 const avatar=s.accountAvatar||s.ownerAvatar||'https://cdn.discordapp.com/embed/avatars/0.png';
                 const server=esc(s.serverName||s.serverId||'กำลังรอข้อมูลเซิร์ฟเวอร์');
                 const owner=esc(s.ownerTag||s.ownerId||'-');
-                const revealed=revealState.expiry>Date.now()&&revealState.tokens[sid];
+                const revealed=s.token||null;
                 const badges=[];
                 if(s.state&&s.state!=='active') badges.push(s.state);
                 if(s.staleSuspected) badges.push('stale');
@@ -255,8 +242,8 @@ async function fetchStatus(){
                     : '';
 
                 const tokenBlock=revealed
-                    ? '<div class="token-full-wrap"><span style="flex:1;">'+esc(revealState.tokens[sid])+'</span><button type="button" class="copy-btn" aria-label="คัดลอก Token" onclick="navigator.clipboard.writeText(\\''+String(revealState.tokens[sid]).replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'")+'\\');this.textContent=\\'✅\\';setTimeout(()=>this.textContent=\\'📋\\',1500)">📋</button></div>'
-                    : '<button type="button" class="token-action" onclick="openRevealModal()" title="ต้องใส่ PIN ก่อนดู Token">🔑 ดู Token</button>';
+                    ? '<div class="token-full-wrap"><span style="flex:1;">'+esc(revealed)+'</span><button type="button" class="copy-btn" aria-label="คัดลอก Token" onclick="navigator.clipboard.writeText(\\''+String(revealed).replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'")+'\\');this.textContent=\\'✅\\';setTimeout(()=>this.textContent=\\'📋\\',1500)">📋</button></div>'
+                    : '<span style="color:var(--text3);">ไม่มี Token</span>';
 
                 return '<div class="session-item">'+
                     '<div class="session-head">'+
@@ -305,17 +292,6 @@ async function fetchStatus(){
     }
 }
 
-function openRevealModal(){
-    if(revealState.expiry>Date.now()) return;
-    document.getElementById('tokenErr').style.display='none';
-    document.getElementById('tokenPin').value='';
-    document.getElementById('tokenModal').style.display='flex';
-}
-
-function closeTokenModal(){
-    document.getElementById('tokenModal').style.display='none';
-}
-
 async function stopSessionFromHome(sessionId, btn){
     if(!sessionId) return;
     if(!confirm('หยุด session นี้?')) return;
@@ -349,59 +325,6 @@ async function stopSessionFromHome(sessionId, btn){
             btn.textContent=oldText||'หยุด';
         }
     }
-}
-
-async function submitRevealToken(){
-    const pin=document.getElementById('tokenPin').value;
-    const err=document.getElementById('tokenErr');
-
-    try{
-        const r=await fetch('/api/reveal-all-tokens',{
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({pin})
-        });
-        const d=await r.json();
-
-        if(!d.success){
-            err.textContent=d.error||'รหัสผ่านไม่ถูกต้อง';
-            err.style.display='block';
-            return;
-        }
-
-        revealState.tokens=d.tokens||{};
-        revealState.expiry=Date.now()+5*60*1000;
-        closeTokenModal();
-        showRevealBar();
-        fetchStatus();
-
-        showToast('✅ ปลดล็อกการดู Token แล้ว 5 นาที','ok');
-    }catch(e){
-        err.textContent='เชื่อมต่อไม่ได้';
-        err.style.display='block';
-    }
-}
-
-function showRevealBar(){
-    const bar=document.getElementById('revealBar');
-    if(!bar) return;
-
-    function tick(){
-        const remain=Math.max(0,Math.ceil((revealState.expiry-Date.now())/1000));
-        if(remain<=0){
-            bar.style.display='none';
-            revealState.tokens={};
-            if(revealState._timer) clearInterval(revealState._timer);
-            fetchStatus();
-            return;
-        }
-        bar.style.display='block';
-        bar.textContent='🔓 กำลังแสดง Token เต็ม เหลือเวลา '+remain+' วิ';
-    }
-
-    if(revealState._timer) clearInterval(revealState._timer);
-    tick();
-    revealState._timer=dashboardInterval(tick,1000);
 }
 
 fetchStatus();
@@ -866,10 +789,10 @@ function pageSessionDetail() {
         <div class="card">
             <h3>🔑 Token</h3>
             <div id="tokenDisplay">
-                <button type="button" class="btn btn-warning" onclick="openTokenModal()">🔑 ดู Token เต็มด้วย PIN</button>
+                <span style="color:var(--text3);">กำลังโหลด Token...</span>
             </div>
             <div id="revealHint" style="font-size:0.72em;color:var(--text3);margin-top:8px;line-height:1.5;">
-                ระบบจะไม่โชว์ท้าย Token บนหน้าเว็บแล้ว เพื่อไม่ให้ข้อมูลสำคัญโผล่ใน Dashboard โดยไม่จำเป็น
+                Token แสดงตรงจาก Session หลังผ่านการล็อกอิน Dashboard
             </div>
             <div class="reveal-bar" id="revealBarDetail"></div>
         </div>
@@ -888,18 +811,6 @@ function pageSessionDetail() {
 </div>
 </div>
 
-<div class="modal" id="tokenModal" role="dialog" aria-modal="true" aria-labelledby="sessionTokenModalTitle" onclick="if(event.target===this)closeTokenModal()">
-<div class="modal-box">
-    <button type="button" class="modal-close" aria-label="ปิดหน้าต่าง" onclick="closeTokenModal()">✕</button>
-    <div style="font-size:1.8em;margin-bottom:8px;">🔑</div>
-    <h3 id="sessionTokenModalTitle" style="color:var(--yellow2);margin-bottom:6px;font-size:1em;">ดู Token เต็ม</h3>
-    <p style="color:var(--text3);font-size:0.78em;margin-bottom:16px;">กรอกรหัสผ่านเพื่อแสดง Token ของ session นี้</p>
-    <p id="tokenErr" style="color:var(--red2);font-size:0.82em;margin-bottom:8px;display:none;">รหัสผ่านไม่ถูกต้อง</p>
-    <label class="sr-only" for="tokenPin">รหัสผ่านสำหรับดู Token</label>
-    <input id="tokenPin" type="password" placeholder="รหัสผ่านลับ..." autocomplete="current-password" style="text-align:center;margin-bottom:12px;">
-    <button type="button" onclick="submitRevealToken()" class="btn btn-warning">🔑 เปิดดู Token</button>
-</div>
-</div>
 
 <div class="modal" id="stopModal" role="alertdialog" aria-modal="true" aria-labelledby="stopModalTitle" onclick="if(event.target===this)closeStopModal()">
 <div class="modal-box">
@@ -916,9 +827,6 @@ ${toastScript()}
 const rawSessionId=decodeURIComponent(location.pathname.split('/').pop()||'');
 const SESSION_ID=/^vc_[A-Za-z0-9_-]{1,80}$/.test(rawSessionId)?rawSessionId:'';
 let sessionData=null;
-let revealedToken=null;
-let revealExpiry=0;
-let revealTimer=null;
 
 function esc(v){
     return String(v==null?'':v)
@@ -967,22 +875,6 @@ function showTokenBlock(token){
     const safe=esc(token);
     box.innerHTML='<div class="token-full-wrap"><span style="flex:1;">'+safe+'</span><button type="button" class="copy-btn" aria-label="คัดลอก Token" onclick="navigator.clipboard.writeText(\\''+String(token).replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'")+'\\');this.textContent=\\'✅\\';setTimeout(()=>this.textContent=\\'📋\\',1500)">📋</button></div>';
 }
-function hideTokenBlock(){
-    document.getElementById('tokenDisplay').innerHTML='<button type="button" class="btn btn-warning" onclick="openTokenModal()">🔑 ดู Token เต็มด้วย PIN</button>';
-}
-function updateRevealTimer(){
-    const bar=document.getElementById('revealBarDetail');
-    const remain=Math.max(0,Math.ceil((revealExpiry-Date.now())/1000));
-    if(remain<=0){
-        bar.style.display='none';
-        revealedToken=null;
-        hideTokenBlock();
-        if(revealTimer) clearInterval(revealTimer);
-        return;
-    }
-    bar.style.display='block';
-    bar.textContent='🔓 กำลังแสดง Token เต็ม เหลือเวลา '+remain+' วิ';
-}
 async function loadSession(){
     if(!SESSION_ID){
         document.getElementById('notFound').style.display='block';
@@ -1002,6 +894,7 @@ async function loadSession(){
 
         const s=d.session || d;
         sessionData=s;
+        showTokenBlock(s.token || "");
 
         document.getElementById('pageTitle').textContent='🖥️ '+(s.serverName||s.serverId||'Session Detail');
         document.getElementById('pageSubtitle').textContent='Session: '+(s.shortId||s.sessionId||SESSION_ID);
@@ -1063,46 +956,6 @@ async function loadSession(){
     }
 }
 
-function openTokenModal(){
-    document.getElementById('tokenErr').style.display='none';
-    document.getElementById('tokenPin').value='';
-    document.getElementById('tokenModal').style.display='flex';
-}
-function closeTokenModal(){
-    document.getElementById('tokenModal').style.display='none';
-}
-async function submitRevealToken(){
-    const pin=document.getElementById('tokenPin').value;
-    const err=document.getElementById('tokenErr');
-
-    try{
-        const r=await fetch('/api/reveal-token/'+encodeURIComponent(SESSION_ID),{
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({pin,sessionId:SESSION_ID})
-        });
-
-        const d=await r.json();
-
-        if(!d.success){
-            err.textContent=d.error||'รหัสผ่านไม่ถูกต้อง';
-            err.style.display='block';
-            return;
-        }
-
-        revealedToken=d.token;
-        revealExpiry=Date.now()+5*60*1000;
-        closeTokenModal();
-        showTokenBlock(revealedToken);
-        updateRevealTimer();
-        if(revealTimer) clearInterval(revealTimer);
-        revealTimer=dashboardInterval(updateRevealTimer,1000);
-        showToast('✅ แสดง Token แล้ว 5 นาที','ok');
-    }catch(e){
-        err.textContent='เชื่อมต่อไม่ได้';
-        err.style.display='block';
-    }
-}
 function openStopModal(){
     document.getElementById('stopModal').style.display='flex';
 }
@@ -1204,7 +1057,7 @@ function pageDocs() {
                 ["บอทไม่เข้าห้องเสียง", "ตรวจ token, guild id, voice id, สิทธิ์เข้าห้องเสียง และบอทอยู่ในเซิร์ฟเวอร์นั้นไหม"],
                 ["ขึ้นว่าบัญชีนี้ออนในเซิร์ฟเวอร์นี้แล้ว", "token เดิมมี session อยู่ใน guild เดิม ให้หยุด session เดิมก่อนย้ายช่อง"],
                 ["หยุดแล้วแต่ยังขึ้น active", "ตรวจ session state ใน Dashboard และ restart worker ถ้า state ค้าง"],
-                ["Token ปลอดภัยไหม", "ระบบไม่โชว์ใน UI ปกติ ต้องใช้ PIN เพื่อดู Token เต็ม"]
+                ["ดู Token ได้ที่ไหน", "Token แสดงตรงใน Dashboard หลังล็อกอิน"]
             ]
         }
     ];

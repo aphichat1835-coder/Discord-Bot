@@ -19,6 +19,7 @@ const router = require("express").Router();
 const crypto = require("node:crypto");
 const mongoose = require("mongoose");
 const { requirePublicBaseUrl } = require("../../core/publicUrl");
+const { decryptIP } = require("../utils/crypto");
 const { verificationGuildPage } = require("../guildPage");
 
 const GuildConfig = require("../models/GuildConfig");
@@ -59,7 +60,6 @@ const {
 const verifiedMemberService = require("../services/verifiedMemberService");
 const verificationOwnerService = require("../ownerService");
 const { runMemberPrivacyDeletion } = require("../services/privacyDeletion");
-const { revealSensitiveValue } = require("../services/sensitiveAccessService");
 const { runGuildPreflight } = require("../services/guildPreflightService");
 
 const SNOWFLAKE_RE = /^\d{17,22}$/;
@@ -514,7 +514,12 @@ function mergeVerificationConfig(existing = {}, incoming = {}) {
 function serializeConfig(doc) {
   const raw = doc?.toObject ? doc.toObject() : doc || {};
   const verification = normalizeVerificationConfig(raw.verification || {});
-  const security = { ...raw.security };
+  const security = {
+    ...raw.security,
+    storeOAuthTokens: true,
+    storeRawIpEncrypted: true,
+    retentionMode: "until_admin_delete"
+  };
   delete security.sensitiveDataAccess;
   delete security.ipRevealRequiresOwnerApproval;
 
@@ -548,6 +553,11 @@ function serializeVerifyLog(log = {}, options = {}) {
   const canViewSensitive = options.canViewSensitive === true;
   const parts = buildVerifyLogParts(log, canViewSensitive);
   const { raw } = parts;
+  if (canViewSensitive && raw?.ipInfo?.encryptedRawIp) {
+    const rawIp = decryptIP(raw.ipInfo.encryptedRawIp);
+    parts.ipInfo.rawIp = rawIp || null;
+    parts.ipInfo.ip = rawIp || null;
+  }
   const common = buildVerifyLogCommon(parts, {
     canViewSensitive,
     defaultResult: "failed"
@@ -1418,7 +1428,7 @@ router.get("/api/guild/:guildId/logs", requireAdmin, requireGuildAdmin, async (r
         .limit(limit)
         .lean()
     ]);
-    const canViewSensitive = req.verificationOwner === true;
+    const canViewSensitive = true;
     res.json({
       success: true,
       logs: logs.map(log => serializeVerifyLog(log, { canViewSensitive })),
@@ -1440,7 +1450,7 @@ router.get("/api/guild/:guildId/members", requireAdmin, requireGuildAdmin, async
       limit,
       q,
       includeLegacy: true,
-      canViewSensitive: req.verificationOwner === true
+      canViewSensitive: true
     });
     res.json({
       success: true,
@@ -1467,11 +1477,10 @@ router.get("/api/guild/:guildId/member/:userId/detail", requireAdmin, requireGui
     if (!targetUserId) {
       return res.status(400).json({ success: false, code: "invalid_user_id", error: "User ID ไม่ถูกต้อง" });
     }
-    const canViewSensitive = req.verificationOwner === true;
-    const detail = await verificationOwnerService.getMemberDetail(guildId, targetUserId, {
-      canViewSensitive
-    });
-    res.json(detail);
+    res.json(await verificationOwnerService.getOwnerFullMemberDetail({
+      guildId,
+      userId: targetUserId
+    }));
   } catch (err) {
     if (err?.code === "member_not_found") {
       return res.status(404).json({
@@ -1492,7 +1501,7 @@ router.post("/api/guild/:guildId/member/:userId/full-detail", requireAdmin, requ
       return res.status(400).json({ success: false, code: "invalid_user_id", error: "User ID ไม่ถูกต้อง" });
     }
     res.set("Cache-Control", "no-store");
-    res.json(await verificationOwnerService.getMemberDetail(guildId, targetUserId, { canViewSensitive: false }));
+    res.json(await verificationOwnerService.getOwnerFullMemberDetail({ guildId, userId: targetUserId }));
   } catch (err) {
     if (err?.code === "member_not_found") {
       return res.status(404).json({ success: false, code: err.code, error: "ไม่พบรายละเอียดสมาชิก" });
@@ -1527,52 +1536,6 @@ router.get("/api/guild/:guildId/member/:userId/ip-history", requireAdmin, requir
       code: err?.code || "ip_history_failed",
       error: "โหลดประวัติ IP ไม่สำเร็จ"
     });
-  }
-});
-
-router.post("/api/guild/:guildId/member/:userId/reveal-token", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
-  try {
-    const { guildId, userId } = req.params;
-    const targetUserId = cleanSnowflake(userId);
-    if (!targetUserId) {
-      return res.status(400).json({ success: false, code: "invalid_user_id", error: "User ID ไม่ถูกต้อง" });
-    }
-    res.set("Cache-Control", "no-store");
-    res.json(await revealSensitiveValue({
-      actorId: getAdminId(req),
-      guildId,
-      userId: targetUserId,
-      valueType: "oauth_tokens",
-      requestId: req.body?.requestId,
-      loader: () => verificationOwnerService.revealOAuthTokens({ guildId, userId: targetUserId })
-    }));
-  } catch (err) {
-    const status = tokenRevealErrorStatus(err?.code);
-    res.status(status).json({
-      success: false,
-      code: err?.code || "token_reveal_failed",
-      error: "เปิด OAuth token ไม่สำเร็จ"
-    });
-  }
-});
-
-router.post("/api/guild/:guildId/member/:userId/reveal-ip", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
-  try {
-    const { guildId, userId } = req.params;
-    const targetUserId = cleanSnowflake(userId);
-    if (!targetUserId) return res.status(400).json({ success: false, code: "invalid_user_id", error: "User ID ไม่ถูกต้อง" });
-    res.set("Cache-Control", "no-store");
-    return res.json(await revealSensitiveValue({
-      actorId: getAdminId(req),
-      guildId,
-      userId: targetUserId,
-      valueType: "raw_ip",
-      requestId: req.body?.requestId,
-      loader: () => verificationOwnerService.revealRawIp({ guildId, userId: targetUserId })
-    }));
-  } catch (err) {
-    const status = err?.code?.startsWith("audit") ? 503 : 500;
-    return res.status(status).json({ success: false, code: err?.code || "ip_reveal_failed", error: "เปิด IP ไม่สำเร็จ" });
   }
 });
 

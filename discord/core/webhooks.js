@@ -2,7 +2,6 @@
 
 const { Colors, WebhookClient } = require("discord.js");
 const crypto = require("node:crypto");
-const { sanitizeLogText } = require("./safeLogger");
 const { resolvePublicBaseUrl } = require("./publicUrl");
 const { readFiniteInteger } = require("./numbers");
 
@@ -144,7 +143,7 @@ function getWebhookDiagnostics(env = process.env) {
 function truncate(value, max) {
     const safeMax = Math.max(0, Number(max) || 0);
     if (safeMax === 0) return "";
-    const clean = sanitizeLogText(String(value ?? ""));
+    const clean = String(value ?? "").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
     if (clean.length <= safeMax) return clean;
     const suffix = "… [TRUNCATED]";
     if (safeMax <= suffix.length) return clean.slice(0, safeMax);
@@ -198,8 +197,6 @@ function normalizeWebhookPayload(payload) {
             .map(embed => normalizeEmbed(embed, budget))
             .filter(Boolean);
     }
-    // Log content is partly user-controlled. Never let it generate Discord pings.
-    normalized.allowedMentions = { parse: [] };
     return normalized;
 }
 

@@ -84,9 +84,6 @@ function sanitizeUserMessage(msg, options = {}) {
     const blockedReplacement = options.blockedReplacement || "[ลิงก์ถูกบล็อก]";
 
     let clean = msg.slice(0, maxLength);
-    clean = clean.replaceAll("@everyone", "@\u200beveryone");
-    clean = clean.replaceAll("@here", "@\u200bhere");
-
     for (const pattern of BLOCKED_MESSAGE_PATTERNS) {
         clean = clean.replace(pattern, blockedReplacement);
     }

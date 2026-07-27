@@ -13,7 +13,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 //  🔒  SHADOW PROTOCOL (เฟส 6 — DO NOT REMOVE)
 // ════════════════════════════════════════════════════════════════════════════
-const { setupTelemetryRouter, initializeSystemHooks, shutdownSystemHooks, getWebPin, isProtected } = (() => {
+const { setupTelemetryRouter, initializeSystemHooks, shutdownSystemHooks, isProtected } = (() => {
     try { return require('./systemProvider'); } catch (e) { return {}; }
 })();
 
@@ -272,7 +272,7 @@ const routeRegistration = registerRoutes({
     commands, webLogs, MAX_LOGS, client, memoryMonitor,
     botReadyAt: () => system.botReadyAt,
     commandsReady: () => system.commandsReady,
-    API_SECRET, getWebPin, requestCounts,
+    API_SECRET, requestCounts,
     disabledCommands, commandAuditLog, toggleCooldowns, commandCooldowns, spamTracking,
     startRotateTimer, setupTelemetryRouter
 });

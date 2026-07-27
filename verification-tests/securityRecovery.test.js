@@ -3,8 +3,6 @@ const test = require("node:test");
 
 const stateNonceModel = require("../discord/verification/models/VerificationStateNonce");
 const stateNonce = require("../discord/verification/services/verificationStateNonce");
-const auditStorage = require("../discord/logging/auditStorage");
-const sensitiveAccess = require("../discord/verification/services/sensitiveAccessService");
 const {
     evaluateCriticalPersistence,
     coordinatePersistenceFailure
@@ -51,30 +49,6 @@ test("verification state nonce registration hashes the nonce and consumption is 
     }
 });
 
-test("Token/IP reveal requires audit but does not require owner-entered reason", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    const originalSave = auditStorage.saveAuditRecord;
-    const records = [];
-    try {
-        auditStorage.saveAuditRecord = async (_manager, record) => {
-            records.push(record);
-            return { eventId: `event-${records.length}` };
-        };
-        const revealed = await sensitiveAccess.revealSensitiveValue({
-            actorId: ACTOR_ID,
-            guildId: GUILD_ID,
-            userId: USER_ID,
-            valueType: "oauth_tokens",
-            loader: async () => ({ accessToken: "decrypted-test-token" }),
-            requestId: "sensitive-test"
-        });
-        assert.equal(revealed.accessToken, "decrypted-test-token");
-        assert.equal(revealed.audit.status, "recorded");
-        assert.deepEqual(records.map(record => record.metadata.phase), ["intent", "result"]);
-        assert.equal(records[0].reason, "owner_dashboard_reveal:oauth_tokens");
-    } finally {
-        auditStorage.saveAuditRecord = originalSave;
-    }
-});
 
 test("critical verification persistence failure rolls back a newly applied role and records recovery", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const evaluated = evaluateCriticalPersistence({

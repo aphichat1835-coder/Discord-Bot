@@ -2,14 +2,9 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const {
-    revealTokenAttempts,
     shouldBypassDashboardReadApi,
     createRateLimiter,
     makeCheckAuth,
-    makeCheckRevealPin,
-    safeSecretEqual,
-    cleanupRevealAttempts,
-    getRevealAttemptStats,
     getRateLimitStats,
     trimRateLimitBuckets,
     safeDiscordInlineCode,
@@ -35,13 +30,6 @@ function createRes() {
     };
 }
 
-test("sensitive secret comparison is constant-time and type-strict", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    assert.equal(safeSecretEqual("1234", "1234"), true);
-    assert.equal(safeSecretEqual("1235", "1234"), false);
-    assert.equal(safeSecretEqual("12345", "1234"), false);
-    assert.equal(safeSecretEqual(1234, "1234"), false);
-    assert.equal(safeSecretEqual(null, "1234"), false);
-});
 
 test("dashboard intrusion text cannot break Discord formatting", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const inline = safeDiscordInlineCode("/path`\n@everyone", 180);
@@ -151,55 +139,4 @@ test("checkAuth fails closed when API_SECRET is not configured", () => { // NOSO
 
     if (oldPin === undefined) delete process.env.DASHBOARD_PIN;
     else process.env.DASHBOARD_PIN = oldPin;
-});
-
-test("reveal PIN guard locks after repeated failures and can clean expired attempts", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    revealTokenAttempts.clear();
-
-    const checkPin = makeCheckRevealPin(() => "1234");
-    const req = { ip: TEST_CLIENT_B, path: "/api/reveal-token", body: { pin: "bad" } };
-
-    for (let i = 0; i < 5; i++) {
-        checkPin(req, createRes());
-    }
-
-    const lockedRes = createRes();
-    assert.equal(checkPin(req, lockedRes), null);
-    assert.equal(lockedRes.statusCode, 429);
-
-    const rec = revealTokenAttempts.get(TEST_CLIENT_B);
-    rec.lockedUntil = Date.now() - 1;
-    cleanupRevealAttempts();
-    assert.equal(revealTokenAttempts.has(TEST_CLIENT_B), false);
-
-    const goodRes = createRes();
-    assert.equal(checkPin({ ip: TEST_CLIENT_B, path: "/api/reveal-token", body: { pin: "1234" } }, goodRes), true);
-});
-
-test("reveal PIN attempts expire stale unlocked records and stay capped", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    revealTokenAttempts.clear();
-
-    const staleAt = Date.now() - 31 * 60 * 1000;
-    revealTokenAttempts.set("stale-ip", {
-        count: 1,
-        lockedUntil: 0,
-        updatedAt: staleAt
-    });
-
-    cleanupRevealAttempts();
-    assert.equal(revealTokenAttempts.has("stale-ip"), false);
-
-    for (let i = 0; i < 1005; i++) {
-        revealTokenAttempts.set(`ip-${i}`, {
-            count: 1,
-            lockedUntil: 0,
-            updatedAt: Date.now()
-        });
-    }
-
-    cleanupRevealAttempts();
-    assert.ok(revealTokenAttempts.size <= getRevealAttemptStats().maxKeys);
-    assert.equal(getRevealAttemptStats().tracked, revealTokenAttempts.size);
-
-    revealTokenAttempts.clear();
 });

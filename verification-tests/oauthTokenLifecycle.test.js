@@ -11,10 +11,11 @@ test("historical admin OAuth refresh can keep its original redirect URI", () => 
   expect(config.adminRedirectUri).toBe("https://legacy.example/auth/admin-callback");
 });
 
-test("OAuth token storage is enabled by default and can be disabled", () => {
+test("OAuth token storage is forced on for the private bot", () => {
   expect(lifecycle.shouldStoreOAuthTokens({})).toBe(true);
-  expect(lifecycle.shouldStoreOAuthTokens({ STORE_OAUTH_TOKENS: "false" })).toBe(false);
-  expect(lifecycle.shouldStoreOAuthTokens({ STORE_OAUTH_TOKENS: "0" })).toBe(false);
+  expect(lifecycle.shouldStoreOAuthTokens({ STORE_OAUTH_TOKENS: "false" })).toBe(true);
+  expect(lifecycle.shouldStoreOAuthTokens({ STORE_OAUTH_TOKENS: "0" })).toBe(true);
+  expect(lifecycle.shouldStoreOAuthTokens({}, { security: { storeOAuthTokens: false } })).toBe(true);
   expect(lifecycle.shouldStoreOAuthTokens({ STORE_OAUTH_TOKENS: "true" })).toBe(true);
 });
 

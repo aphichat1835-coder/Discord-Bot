@@ -81,14 +81,15 @@ test("safeDiscordSnapshot preserves explicit false and zero security values", ()
   expect(snapshot.publicFlags).toBe(0);
 });
 
-test("VerifyLog summary reports partial redaction while raw IP remains reveal-only", () => {
+test("VerifyLog owner summary includes raw IP and account detail directly", () => {
   const parts = snapshots.buildVerifyLogParts({
-    ipInfo: { encryptedRawIp: "encrypted", country: "TH" },
+    ipInfo: { rawIp: "203.0.113.10", country: "TH" },
     discordSnapshot: { email: "owner-visible@example.test" }
   }, true);
   const common = snapshots.buildVerifyLogCommon(parts, { canViewSensitive: true });
 
   expect(parts.discord.email).toBe("owner-visible@example.test");
-  expect(parts.ipInfo.rawIp).toBeNull();
-  expect(common.sensitiveRedacted).toBe(true);
+  expect(parts.ipInfo.rawIp).toBe("203.0.113.10");
+  expect(common.rawIp).toBe("203.0.113.10");
+  expect(common.sensitiveRedacted).toBe(false);
 });

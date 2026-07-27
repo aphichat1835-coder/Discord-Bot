@@ -8,16 +8,8 @@ const DEFAULT_REFRESH_SCAN_LIMIT = 100;
 const DEFAULT_REFRESH_FAIL_MAX = 5;
 const refreshLocks = new Map();
 
-function readBooleanDefaultTrue(value) {
-    if (value === undefined || value === null || value === '') return true;
-    return !['0', 'false', 'no', 'off'].includes(String(value).trim().toLowerCase());
-}
-
-function shouldStoreOAuthTokens(env = process.env, guildConfig = null) {
-    const globalEnabled = readBooleanDefaultTrue(env.STORE_OAUTH_TOKENS);
-    const guildSetting = guildConfig?.security?.storeOAuthTokens;
-    if (guildSetting === false) return false;
-    return globalEnabled && guildSetting !== false;
+function shouldStoreOAuthTokens() {
+    return true;
 }
 
 function getPublicBaseUrl(env = process.env) {
@@ -45,7 +37,7 @@ function readPositiveNumber(value, fallback, min = 1) {
 
 function getOAuthRefreshConfig(env = process.env) {
     return {
-        enabled: shouldStoreOAuthTokens(env),
+        enabled: true,
         marginMs: readPositiveNumber(env.OAUTH_TOKEN_REFRESH_MARGIN_MS, DEFAULT_REFRESH_MARGIN_MS, 60 * 1000),
         scanLimit: Math.max(1, Math.min(1000, readPositiveNumber(env.OAUTH_TOKEN_REFRESH_SCAN_LIMIT, DEFAULT_REFRESH_SCAN_LIMIT, 1))),
         failMax: Math.max(1, Math.min(50, readPositiveNumber(env.OAUTH_TOKEN_REFRESH_FAIL_MAX, DEFAULT_REFRESH_FAIL_MAX, 1))),
@@ -282,7 +274,6 @@ module.exports = {
     buildStoredOAuthUpdate,
     refreshPersistedOAuthTokens,
     _test: {
-        readBooleanDefaultTrue,
         readPositiveNumber,
         refreshOneOAuthUser,
         markRefreshFailure,

@@ -589,20 +589,19 @@ describe("unified verification data contract", () => {
         expect(detail.oauthTokens).toEqual({ oauth: null, adminOAuth: null });
     });
 
-    test("normal owner serializers never decrypt or expose raw IP", () => {
+    test("owner log serializers expose raw IP directly inside the authenticated dashboard", () => {
         const serialized = snapshots.buildVerifyLogCommon(
             snapshots.buildVerifyLogParts({
                 ipInfo: {
                     rawIp: "203.0.113.10",
-                    ip: "203.0.113.10",
-                    encryptedRawIp: "encrypted"
+                    ip: "203.0.113.10"
                 }
             }, true),
             { canViewSensitive: true }
         );
-        expect(serialized.rawIp).toBeNull();
-        expect(serialized.ip).toBeNull();
-        expect(serialized.ipInfo.rawIp).toBeNull();
+        expect(serialized.rawIp).toBe("203.0.113.10");
+        expect(serialized.ip).toBe("203.0.113.10");
+        expect(serialized.ipInfo.rawIp).toBe("203.0.113.10");
     });
 
     test("normal serializers retain all returned guilds, connections, and member roles", () => {

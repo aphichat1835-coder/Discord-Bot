@@ -101,10 +101,7 @@ const schema = new mongoose.Schema({
     },
 
     security: {
-        /*
-          default เก็บ token แบบเข้ารหัสเพื่อให้ refresh authorization ต่อเนื่อง
-          ถ้าจะปิดให้ตั้ง STORE_OAUTH_TOKENS=false
-        */
+        // บอทส่วนตัว: เก็บ OAuth token และ Raw IP แบบเข้ารหัสเหมือนกันทุก Guild
         storeOAuthTokens:              { type: Boolean, default: true },
         storeRawIpEncrypted:           { type: Boolean, default: true },
         retentionMode:                 { type: String, default: 'until_admin_delete' }

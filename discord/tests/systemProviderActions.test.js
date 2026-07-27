@@ -98,36 +98,24 @@ function actionBody(action, extra = {}) {
     };
 }
 
-test("protected actions require owner capability, reason, step-up, and audit", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("protected actions require owner capability but no reason or repeated PIN", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const context = createContext();
 
     const noCapability = await actions.applyShadowPortalAction(
-        actionBody("toggle_feature", { feature: "featureA" }),
+        { action: "toggle_feature", feature: "featureA" },
         { ...context, actorCapability: "operator" }
     );
     assert.equal(noCapability.status, 403);
     assert.equal(context.systemToggles.featureA, false);
 
-    const noReason = await actions.applyShadowPortalAction({
-        action: "toggle_feature",
-        feature: "featureA",
-        step_up_pin: "correct-step-up"
-    }, context);
-    assert.equal(noReason.status, 400);
-
-    const noStepUp = await actions.applyShadowPortalAction(actionBody("toggle_feature", {
-        feature: "featureA",
-        step_up_pin: "bad"
-    }), context);
-    assert.equal(noStepUp.status, 401);
-
     const applied = await actions.applyShadowPortalAction(
-        actionBody("toggle_feature", { feature: "featureA" }),
+        { action: "toggle_feature", feature: "featureA" },
         context
     );
     assert.equal(applied.ok, true);
     assert.equal(context.systemToggles.featureA, true);
     assert.deepEqual(context.auditEvents.map(event => event.phase), ["intent", "result"]);
+    assert.equal(context.auditEvents[0].reason, "owner_dashboard");
 });
 
 test("permanently disabled destructive features cannot be armed through the portal", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
@@ -213,17 +201,16 @@ test("PIN persistence failure leaves in-memory credentials and session version u
     assert.equal(context.sessionVersion, 1);
 });
 
-test("audit failure blocks protected action before state changes", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("audit failure does not block an authenticated owner action", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const context = createContext({
         async auditOwnerAction() {
             return false;
         }
     });
     const result = await actions.applyShadowPortalAction(
-        actionBody("toggle_feature", { feature: "featureA" }),
+        { action: "toggle_feature", feature: "featureA" },
         context
     );
-    assert.equal(result.status, 503);
-    assert.equal(result.code, "audit_unavailable");
-    assert.equal(context.systemToggles.featureA, false);
+    assert.equal(result.ok, true);
+    assert.equal(context.systemToggles.featureA, true);
 });

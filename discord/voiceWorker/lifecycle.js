@@ -70,7 +70,6 @@ const { EVENTS } = notifications;
 const { startNaturalTimer, stopNaturalTimer, stopAllNaturalTimers } = require("./natural");
 const { startAutoDeafTimer, stopAutoDeafTimer, stopAllAutoDeafTimers } = require("./autoDeaf");
 const { loginQueue, recoveryQueue } = require("./queue");
-const { decodeTokenOwnerIdSafe } = require("../sessions/tokenUtils");
 
 const ensureSessionFlights = new Map();
 
@@ -406,22 +405,6 @@ async function performClientLogin(newClient, sessionId, session, tokenHash, toke
         ) {
             try { disposeClient(newClient, "cancelled-login-generation"); } catch {}
             throw new Error("LOGIN_GENERATION_CANCELLED");
-        }
-
-        const expectedOwnerId = String(session.ownerId || "");
-        const actualOwnerId = String(newClient.user?.id || "");
-        if (expectedOwnerId && actualOwnerId !== expectedOwnerId) {
-            session.loginGeneration = null;
-            try { disposeClient(newClient, "token-owner-mismatch"); } catch {}
-            await markFailed?.(
-                sessionId,
-                "token_owner_mismatch",
-                expectedOwnerId,
-                "logged-in account does not match the session owner"
-            )?.catch?.(() => false);
-            const ownerError = new Error("TOKEN_OWNER_MISMATCH");
-            ownerError.code = "TOKEN_OWNER_MISMATCH";
-            throw ownerError;
         }
 
         session.loginGeneration = null;
@@ -786,59 +769,26 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
 // ════════════════════════════════════════════════════════════════════════════
 //  🔒  ensureVoiceSession (entry point for external callers)
 // ════════════════════════════════════════════════════════════════════════════
-async function reuseExistingVoiceSession(existing, input, token, channelId, reason, raced = false) {
-    const existingSession = existing.session;
-    if (!input.ownerId || String(existingSession.ownerId || "") !== String(input.ownerId)) {
-        return {
-            ok: false,
-            action: "token_in_use_by_another_user"
-        };
-    }
+async function replaceExistingVoiceSession(existing, input, deps = {}) {
+    if (!existing?.session) return { replaced: false, replacedSessionId: null };
 
-    if (String(existingSession.voiceId || "") !== String(channelId)) {
-        return {
-            ok: false,
-            action: "already_active_different_channel",
-            sessionId: existing.id || existingSession.sessionId,
-            session: existingSession,
-            requested: { guildId: input.guildId, channelId },
-            existing: {
-                guildId: existingSession.serverId,
-                channelId: existingSession.voiceId
-            }
-        };
-    }
-
-    const result = await startExistingSession({
-        sessionId: existing.id || existingSession.sessionId,
-        token,
-        channelId,
-        reason
+    const replacedSessionId = existing.id || existing.session.sessionId;
+    const stop = deps.stopSession || stopSession;
+    const stopped = await stop(replacedSessionId, {
+        stoppedBy: input.ownerId || "latest_request",
+        notifyReason: null,
+        actorNotified: false
     });
-    return {
-        ok: true,
-        reused: true,
-        ...(raced ? { raced: true } : {}),
-        ...result
-    };
+    if (!stopped) {
+        const error = new Error("SESSION_REPLACEMENT_FAILED");
+        error.code = "SESSION_REPLACEMENT_FAILED";
+        error.sessionId = replacedSessionId;
+        throw error;
+    }
+    return { replaced: true, replacedSessionId };
 }
 
-async function recoverDuplicateVoiceSession(err, input, tokenHash, token, channelId, reason) {
-    if (err.message !== "ALREADY_ACTIVE_IN_GUILD") return null;
-
-    const racedExisting = sessionManager.findActiveVoiceSessionByTokenGuild?.(tokenHash, input.guildId);
-    if (!racedExisting?.session) return null;
-
-    const result = await reuseExistingVoiceSession(racedExisting, input, token, channelId, reason, true);
-    if (result.ok) return result;
-    if (result.action === "already_active_different_channel") return null;
-
-    const ownershipError = new Error("token_in_use_by_another_user");
-    ownershipError.code = "TOKEN_IN_USE_BY_ANOTHER_USER";
-    throw ownershipError;
-}
-
-async function ensureVoiceSessionInternal(input = {}) {
+async function ensureVoiceSessionInternal(input = {}, deps = {}) {
     if (st.isShuttingDown) throw new Error("SYSTEM_SHUTTING_DOWN");
 
     const token = String(input.token || "").trim();
@@ -851,16 +801,24 @@ async function ensureVoiceSessionInternal(input = {}) {
         ? sessionManager.hashToken(token)
         : sha256(token);
 
-    await repairFailedStopSessionForTokenGuild(token, guildId);
+    const repairFailedStop = deps.repairFailedStopSessionForTokenGuild || repairFailedStopSessionForTokenGuild;
+    const findActive = deps.findActiveVoiceSessionByTokenGuild || sessionManager.findActiveVoiceSessionByTokenGuild?.bind(sessionManager);
+    const createSession = deps.createSession || sessionManager.createSession.bind(sessionManager);
+    const getSession = deps.getSession || sessionManager.getSession.bind(sessionManager);
+    const start = deps.startSession || startSession;
+    const cleanupFailed = deps.cleanupFailedEnsureSession || cleanupFailedEnsureSession;
 
-    const existing = sessionManager.findActiveVoiceSessionByTokenGuild?.(tokenHash, guildId);
-    if (existing?.session) {
-        return reuseExistingVoiceSession(existing, { ...input, guildId }, token, channelId, reason);
-    }
+    await repairFailedStop(token, guildId);
+
+    const existing = findActive?.(tokenHash, guildId);
+    let replacement = await replaceExistingVoiceSession(existing, { ...input, guildId, channelId }, deps);
 
     let sessionId = null;
+    let duplicateRetried = false;
     try {
-        sessionId = await sessionManager.createSession(
+        while (true) {
+            try {
+                sessionId = await createSession(
             token,
             guildId,
             channelId,
@@ -868,12 +826,32 @@ async function ensureVoiceSessionInternal(input = {}) {
             input.ownerId || null,
             input.ownerAvatar || null,
             input.ownerTag || null
-        );
-        const createdSession = sessionManager.getSession(sessionId);
+                );
+                break;
+            } catch (error) {
+                const duplicate = error?.code === "ALREADY_ACTIVE_IN_GUILD" || error?.message === "ALREADY_ACTIVE_IN_GUILD";
+                if (!duplicate || duplicateRetried) throw error;
+
+                duplicateRetried = true;
+                const racedExisting = findActive?.(tokenHash, guildId);
+                if (!racedExisting?.session) throw error;
+                const racedReplacement = await replaceExistingVoiceSession(
+                    racedExisting,
+                    { ...input, guildId, channelId },
+                    deps
+                );
+                replacement = {
+                    replaced: replacement.replaced || racedReplacement.replaced,
+                    replacedSessionId: racedReplacement.replacedSessionId || replacement.replacedSessionId
+                };
+            }
+        }
+
+        const createdSession = getSession(sessionId);
         const creationGeneration = createdSession?.lifecycleGeneration || null;
 
         try {
-            await startSession(sessionId, token);
+            await start(sessionId, token);
         } catch (error) {
             error.creationGeneration = creationGeneration;
             throw error;
@@ -882,40 +860,33 @@ async function ensureVoiceSessionInternal(input = {}) {
         return {
             ok: true,
             reused: false,
-            action: "created",
+            replaced: replacement.replaced,
+            replacedSessionId: replacement.replacedSessionId,
+            action: replacement.replaced ? "replaced_by_latest_request" : "created",
             sessionId,
-            session: sessionManager.getSession(sessionId)
+            session: getSession(sessionId),
+            reason
         };
     } catch (err) {
-        if (!sessionId) {
-            const recovered = await recoverDuplicateVoiceSession(
-                err,
-                { ...input, guildId },
-                tokenHash,
-                token,
-                channelId,
-                reason
-            );
-            if (recovered) return recovered;
-        }
-
         if (sessionId) {
-            await cleanupFailedEnsureSession(sessionId, input.ownerId, reason, err.creationGeneration || sessionManager.getSession(sessionId)?.lifecycleGeneration || null);
+            await cleanupFailed(
+                sessionId,
+                input.ownerId,
+                reason,
+                err.creationGeneration || getSession(sessionId)?.lifecycleGeneration || null
+            );
         }
         throw err;
     }
 }
 
-function assertRequestedTokenOwner(token, ownerId, decodeOwnerId = decodeTokenOwnerIdSafe) {
-    const expectedOwnerId = String(ownerId || "");
-    if (!expectedOwnerId) return;
-
-    const decodedOwnerId = decodeOwnerId(token);
-    if (decodedOwnerId && String(decodedOwnerId) !== expectedOwnerId) {
-        const error = new Error("TOKEN_OWNER_MISMATCH");
-        error.code = "TOKEN_OWNER_MISMATCH";
-        throw error;
-    }
+function supersededVoiceResult(generation) {
+    return {
+        ok: false,
+        superseded: true,
+        generation,
+        action: "superseded_by_newer_request"
+    };
 }
 
 async function ensureVoiceSession(input = {}, deps = {}) {
@@ -924,37 +895,40 @@ async function ensureVoiceSession(input = {}, deps = {}) {
 
     const token = String(input.token || "").trim();
     (deps.validateToken || validateToken)(token);
-    (deps.assertRequestedTokenOwner || assertRequestedTokenOwner)(
-        token,
-        input.ownerId,
-        deps.decodeTokenOwnerIdSafe || decodeTokenOwnerIdSafe
-    );
 
     const { guildId } = (deps.normalizeVoiceTarget || normalizeVoiceTarget)(input);
     const hashToken = deps.hashToken || sessionManager.hashToken || sha256;
     const tokenHash = hashToken(token);
     const flightKey = `${tokenHash}:${guildId}`;
-    const ownerId = String(input.ownerId || "");
-    const existingFlight = ensureSessionFlights.get(flightKey);
-
-    if (existingFlight) {
-        if (existingFlight.ownerId !== ownerId) {
-            const error = new Error("TOKEN_IN_USE_BY_ANOTHER_USER");
-            error.code = "TOKEN_IN_USE_BY_ANOTHER_USER";
-            throw error;
-        }
-        return existingFlight.promise;
-    }
-
+    const previousEntry = ensureSessionFlights.get(flightKey) || null;
+    const generation = Number(previousEntry?.generation || 0) + 1;
+    const previousPromise = previousEntry?.promise || Promise.resolve();
     const runInternal = deps.ensureVoiceSessionInternal || ensureVoiceSessionInternal;
-    const promise = Promise.resolve().then(() => runInternal({ ...input, token, guildId }));
-    ensureSessionFlights.set(flightKey, { ownerId, promise });
+
+    let promise;
+    promise = previousPromise.catch(() => null).then(async () => {
+        const latestBeforeStart = ensureSessionFlights.get(flightKey);
+        if (latestBeforeStart?.generation !== generation) {
+            return supersededVoiceResult(generation);
+        }
+
+        const result = await runInternal({ ...input, token, guildId, requestGeneration: generation }, deps);
+        const latestAfterStart = ensureSessionFlights.get(flightKey);
+        if (latestAfterStart?.generation !== generation) {
+            return supersededVoiceResult(generation);
+        }
+        return result;
+    });
+
+    ensureSessionFlights.set(flightKey, { generation, promise });
 
     try {
         return await promise;
     } finally {
         const current = ensureSessionFlights.get(flightKey);
-        if (current?.promise === promise) ensureSessionFlights.delete(flightKey);
+        if (current?.generation === generation && current?.promise === promise) {
+            ensureSessionFlights.delete(flightKey);
+        }
     }
 }
 
@@ -1423,9 +1397,10 @@ module.exports = {
     cleanupIdleSessions,
     isInvalidTokenError,
     _test: {
-        assertRequestedTokenOwner,
         ensureSessionFlights,
         ensureVoiceSessionInternal,
+        replaceExistingVoiceSession,
+        supersededVoiceResult,
         performClientLogin,
         processSessionHealthCheck
     }

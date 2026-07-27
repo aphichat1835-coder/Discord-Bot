@@ -8,11 +8,6 @@ const DASHBOARD_READ_API_BYPASS = new Set([]);
 
 const DASHBOARD_READ_API_PREFIX_BYPASS = [];
 
-const revealTokenAttempts = new Map();
-const REVEAL_MAX = 5;
-const REVEAL_LOCKOUT = 15 * 60 * 1000;
-const REVEAL_ATTEMPT_TTL = 30 * 60 * 1000;
-const REVEAL_ATTEMPT_MAX_KEYS = 1000;
 const RATE_LIMIT_MAX_BUCKETS = readFiniteInteger(process.env.RATE_LIMIT_MAX_BUCKETS, { fallback: 5000, min: 100, max: 100000 });
 
 function safeDiscordInlineCode(value, maxLength = 180) {
@@ -55,19 +50,13 @@ function logIntrusion(ip, path, reason = "blocked request") {
         .update(`${rawIp}|${reason}`)
         .digest("hex");
 
-    const revealPinLocked = reason === "token reveal PIN locked";
     sendWebhookEvent({
-        target: revealPinLocked ? "ALERT" : "LOG",
-        severity: revealPinLocked ? "ERROR" : "WARNING",
+        target: "LOG",
+        severity: "WARNING",
         category: "SECURITY",
-        code: revealPinLocked ? "security.token_reveal.pin_locked" : "security.dashboard.rate_limited",
-        state: revealPinLocked ? "OPEN" : undefined,
-        title: revealPinLocked ? "ล็อกการเปิดเผย Token ชั่วคราว" : "Dashboard ปฏิเสธคำขอที่ถี่เกินกำหนด",
-        description: revealPinLocked
-            ? "มีการกรอก PIN ผิดครบจำนวน ระบบจึงล็อกการเปิดเผย Token ชั่วคราว"
-            : "Rate Limiter ปฏิเสธคำขอเพื่อป้องกันการใช้งานถี่ผิดปกติ",
-        impact: revealPinLocked ? "ไม่สามารถเปิดเผย Token ผ่าน Dashboard ได้ระหว่างถูกล็อก" : undefined,
-        action: revealPinLocked ? "ตรวจว่าเป็นการใช้งานของเจ้าของ แล้วรอให้ระยะล็อกสิ้นสุด" : undefined,
+        code: "security.dashboard.rate_limited",
+        title: "Dashboard ปฏิเสธคำขอที่ถี่เกินกำหนด",
+        description: "Rate Limiter ปฏิเสธคำขอเพื่อป้องกันการใช้งานถี่ผิดปกติ",
         context: {
             "เส้นทาง": safePath,
             "IP": safeIp,
@@ -136,16 +125,6 @@ function readAuthorizationSecret(req) {
     return String(req.headers["x-internal-secret"] || "").trim();
 }
 
-function safeSecretEqual(provided, expected) {
-    if (typeof provided !== "string" || typeof expected !== "string") return false;
-
-    const providedBuffer = Buffer.from(provided, "utf8");
-    const expectedBuffer = Buffer.from(expected, "utf8");
-
-    return providedBuffer.length === expectedBuffer.length &&
-        crypto.timingSafeEqual(providedBuffer, expectedBuffer);
-}
-
 function makeCheckAuth(API_SECRET) {
     const configuredSecret = typeof API_SECRET === "string" ? API_SECRET : "";
 
@@ -185,79 +164,6 @@ function makeCheckAuth(API_SECRET) {
     };
 }
 
-function makeCheckRevealPin(getWebPin) {
-    return function checkRevealPin(req, res) {
-        const ip = req.ip;
-        const now = Date.now();
-        const rec = revealTokenAttempts.get(ip) || { count: 0, lockedUntil: 0 };
-
-        if (rec.updatedAt && now - rec.updatedAt > REVEAL_ATTEMPT_TTL) {
-            rec.count = 0;
-            rec.lockedUntil = 0;
-        }
-
-        if (rec.lockedUntil > now) {
-            const mins = Math.ceil((rec.lockedUntil - now) / 60000);
-            res.status(429).json({ success: false, error: `ลองผิดเกินกำหนด ล็อค ${mins} นาที` });
-            return null;
-        }
-
-        const { pin } = req.body || {};
-        const webPin = (typeof getWebPin === "function") ? getWebPin() : null;
-
-        if (!webPin || !safeSecretEqual(pin, webPin)) {
-            rec.count = (rec.count || 0) + 1;
-
-            const reachedLimit = rec.count >= REVEAL_MAX;
-            if (reachedLimit) {
-                rec.lockedUntil = now + REVEAL_LOCKOUT;
-                rec.count = 0;
-            }
-
-            rec.updatedAt = now;
-            revealTokenAttempts.set(ip, rec);
-            trimRevealAttempts(now);
-            if (reachedLimit) {
-                logIntrusion(ip, getRequestPath(req), "token reveal PIN locked");
-            }
-            res.status(401).json({ success: false, error: "PIN ไม่ถูกต้อง" });
-            return null;
-        }
-
-        revealTokenAttempts.delete(ip);
-        return true;
-    };
-}
-
-function trimRevealAttempts(now = Date.now()) {
-    for (const [ip, rec] of revealTokenAttempts.entries()) {
-        const staleUnlocked = !rec.lockedUntil && (!rec.updatedAt || now - rec.updatedAt > REVEAL_ATTEMPT_TTL);
-        const expiredLock = rec.lockedUntil > 0 && rec.lockedUntil < now;
-        if (staleUnlocked || expiredLock) {
-            revealTokenAttempts.delete(ip);
-        }
-    }
-
-    while (revealTokenAttempts.size > REVEAL_ATTEMPT_MAX_KEYS) {
-        const oldestKey = revealTokenAttempts.keys().next().value;
-        if (!oldestKey) break;
-        revealTokenAttempts.delete(oldestKey);
-    }
-}
-
-function cleanupRevealAttempts(now = Date.now()) {
-    trimRevealAttempts(now);
-}
-
-function getRevealAttemptStats() {
-    return {
-        tracked: revealTokenAttempts.size,
-        maxKeys: REVEAL_ATTEMPT_MAX_KEYS,
-        ttlMs: REVEAL_ATTEMPT_TTL,
-        lockoutMs: REVEAL_LOCKOUT
-    };
-}
-
 function getRateLimitStats(requestCounts) {
     return {
         buckets: requestCounts?.size || 0,
@@ -268,19 +174,14 @@ function getRateLimitStats(requestCounts) {
 module.exports = {
     DASHBOARD_READ_API_BYPASS,
     DASHBOARD_READ_API_PREFIX_BYPASS,
-    revealTokenAttempts,
     shouldBypassDashboardReadApi,
     createRateLimiter,
     readAuthorizationSecret,
-    safeSecretEqual,
     makeCheckAuth,
-    makeCheckRevealPin,
     logIntrusion,
     safeDiscordInlineCode,
     safeDiscordSummaryText,
     getRequestPath,
-    cleanupRevealAttempts,
-    getRevealAttemptStats,
     trimRateLimitBuckets,
     getRateLimitStats
 };

@@ -148,10 +148,10 @@ test("checkRoleHierarchy rejects protected targets and allows lower targets", ()
     }).ok, true);
 });
 
-test("sanitizeUserMessage neutralizes mentions and blocks risky links", () => {
+test("sanitizeUserMessage preserves mentions and blocks risky links", () => {
     const clean = sanitizeUserMessage("@everyone join discord.gg/test run https://x.test/file.exe");
 
-    assert.match(clean, /@\u200beveryone/);
+    assert.match(clean, /@everyone/);
     assert.equal(clean.includes("discord.gg/test"), false);
     assert.equal(clean.includes("file.exe"), false);
 });

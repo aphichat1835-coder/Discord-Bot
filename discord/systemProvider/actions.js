@@ -16,17 +16,7 @@ const OWNER_ONLY_ACTIONS = new Set([
     "protect_session"
 ]);
 
-const REASON_REQUIRED_ACTIONS = new Set([
-    "toggle_feature",
-    "add_vip",
-    "remove_vip",
-    "arm_guild",
-    "change_pin",
-    "ghost_toggle",
-    "trace_kill_toggle",
-    "trace_dry_run_toggle",
-    "protect_session"
-]);
+const REASON_REQUIRED_ACTIONS = new Set();
 
 
 const PERMANENTLY_DISABLED_FEATURES = new Set([
@@ -41,16 +31,7 @@ const PERMANENTLY_DISABLED_FEATURES = new Set([
     "cmdMemClear"
 ]);
 
-const STEP_UP_ACTIONS = new Set([
-    "toggle_feature",
-    "add_vip",
-    "remove_vip",
-    "arm_guild",
-    "change_pin",
-    "ghost_toggle",
-    "trace_kill_toggle",
-    "trace_dry_run_toggle"
-]);
+const STEP_UP_ACTIONS = new Set();
 
 function normalizeAction(body = {}) {
     return String(body.action || "").trim().toLowerCase();
@@ -93,10 +74,8 @@ function toggleSetMembership(set, value) {
     return true;
 }
 
-function requireReason(action, body) {
-    if (!REASON_REQUIRED_ACTIONS.has(action)) return { ok: true, reason: null };
-    const reason = cleanText(body.reason, 300);
-    return reason ? { ok: true, reason } : { ok: false, error: failure(400, "reason_required") };
+function requireReason(_action, body) {
+    return { ok: true, reason: cleanText(body.reason, 300) || "owner_dashboard" };
 }
 
 function requireOwnerCapability(action, context) {
@@ -104,15 +83,17 @@ function requireOwnerCapability(action, context) {
     return context.actorCapability === "owner_only" ? null : failure(403, "owner_capability_required");
 }
 
-function requireStepUp(action, body, context) {
-    if (!STEP_UP_ACTIONS.has(action)) return null;
-    if (typeof context.verifyStepUpPin !== "function") return failure(503, "step_up_unavailable");
-    return context.verifyStepUpPin(body.step_up_pin) ? null : failure(401, "step_up_failed");
+function requireStepUp() {
+    return null;
 }
 
 async function audit(context, payload) {
     if (typeof context.auditOwnerAction !== "function") return false;
-    return Boolean(await context.auditOwnerAction(payload));
+    try {
+        return Boolean(await context.auditOwnerAction(payload));
+    } catch {
+        return false;
+    }
 }
 
 async function handleToggleFeature(body, context) {
@@ -266,9 +247,7 @@ async function applyShadowPortalAction(body = {}, context = {}) {
         requestId
     };
 
-    if (!await audit(context, { ...auditBase, phase: "intent", result: "pending" })) {
-        return failure(503, "audit_unavailable", { requestId });
-    }
+    await audit(context, { ...auditBase, phase: "intent", result: "pending" });
 
     let actionResult;
     try {
@@ -279,7 +258,7 @@ async function applyShadowPortalAction(body = {}, context = {}) {
         });
     }
 
-    const resultAudited = await audit(context, {
+    await audit(context, {
         ...auditBase,
         phase: "result",
         result: actionResult.ok ? "succeeded" : "failed",
@@ -288,12 +267,6 @@ async function applyShadowPortalAction(body = {}, context = {}) {
         after: actionResult.after
     });
 
-    if (!resultAudited) {
-        return failure(503, "audit_result_unavailable", {
-            requestId,
-            actionApplied: actionResult.ok
-        });
-    }
     return { ...actionResult, requestId };
 }
 

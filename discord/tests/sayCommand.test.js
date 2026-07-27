@@ -71,8 +71,8 @@ test("say sanitizes and sends administrator messages", async () => { // NOSONAR 
     await utility._test.handleSay(fixture.interaction);
 
     assert.deepEqual(fixture.sent, [{
-        content: "@\u200beveryone hello",
-        allowedMentions: { parse: [], repliedUser: false }
+        content: "@everyone hello",
+        allowedMentions: { parse: ["users", "roles", "everyone"], repliedUser: false }
     }]);
     assert.equal(fixture.edits.length, 1);
     assert.match(fixture.edits[0].content, /ส่งเรียบร้อย/);

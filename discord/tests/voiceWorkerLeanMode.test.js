@@ -86,166 +86,117 @@ test("voice lean cleanup keeps only target guild/channel and self identity", () 
     assert.deepEqual([...client.users.cache.keys()], [selfUserId]);
 });
 
-test("ensureVoiceSession reuses an existing ready target session", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    const voiceWorker = require("../voiceWorker");
-    const sessionManager = require("../sessionManager");
+test("ensureVoiceSession replaces an existing ready target session with the latest request", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const lifecycle = require("../voiceWorker/lifecycle");
     const token = "aaaaaaaaaaaaaaaaaaaaaaaa.bbbbbb.ccccccccccccccccccccccccccc";
     const guildId = "111111111111111111";
     const channelId = "222222222222222222";
-    const sessionId = "vc_existing_target";
-    const old = {
-        hashToken: sessionManager.hashToken,
-        findActiveVoiceSessionByTokenGuild: sessionManager.findActiveVoiceSessionByTokenGuild,
-        getSession: sessionManager.getSession,
-        touchSession: sessionManager.touchSession,
-        createSession: sessionManager.createSession
-    };
-    const session = {
-        sessionId,
-        serverId: guildId,
-        voiceId: channelId,
-        accountId: "self-user",
+    const oldSessionId = "vc_existing_target";
+    const newSessionId = "vc_latest_target";
+    const calls = [];
+    const sessions = new Map([
+        [newSessionId, { sessionId: newSessionId, lifecycleGeneration: "generation-latest" }]
+    ]);
+
+    const result = await lifecycle._test.ensureVoiceSessionInternal({
+        token,
+        guildId,
+        channelId,
         ownerId: "owner",
-        state: "active",
-        client: {
-            user: { id: "self-user" },
-            guilds: manager(),
-            channels: manager([[channelId, channel(channelId, 1)]]),
-            users: manager([["self-user", { id: "self-user" }]])
+        ownerTag: "Owner",
+        reason: "test"
+    }, {
+        repairFailedStopSessionForTokenGuild: async () => ({ repaired: 0, blocked: 0 }),
+        findActiveVoiceSessionByTokenGuild: () => ({
+            id: oldSessionId,
+            session: { sessionId: oldSessionId, serverId: guildId, voiceId: channelId }
+        }),
+        stopSession: async (sessionId, options) => {
+            calls.push(["stop", sessionId, options.stoppedBy]);
+            return true;
         },
-        connection: {
-            state: { status: VoiceConnectionStatus.Ready },
-            joinConfig: { channelId }
+        createSession: async (_token, serverId, voiceId, _guildName, ownerId) => {
+            calls.push(["create", serverId, voiceId, ownerId]);
+            return newSessionId;
+        },
+        getSession: sessionId => sessions.get(sessionId) || null,
+        startSession: async (sessionId, suppliedToken) => {
+            calls.push(["start", sessionId, suppliedToken]);
+        },
+        cleanupFailedEnsureSession: async () => {
+            throw new Error("cleanup should not run for a successful replacement");
         }
-    };
-    const targetChannel = { id: channelId, name: "Voice", isVoice: () => true };
-    const targetGuild = {
-        id: guildId,
-        name: "Target Guild",
-        channels: {
-            cache: new Map([[channelId, targetChannel]]),
-            fetch: async () => targetChannel
-        }
-    };
-    const client = {
-        guilds: {
-            cache: new Map([[guildId, targetGuild]]),
-            fetch: async () => targetGuild
-        }
-    };
+    });
 
-    try {
-        voiceWorker.setMainClient(client);
-        sessionManager.hashToken = () => "token-hash";
-        sessionManager.findActiveVoiceSessionByTokenGuild = () => ({ id: sessionId, session });
-        sessionManager.getSession = () => session;
-        sessionManager.touchSession = id => {
-            assert.equal(id, sessionId);
-            session.touched = true;
-            return session;
-        };
-        sessionManager.createSession = async () => {
-            throw new Error("createSession should not be called for an existing ready session");
-        };
-
-        const result = await voiceWorker.ensureVoiceSession({
-            token,
-            guildId,
-            channelId,
-            ownerId: "owner",
-            ownerTag: "Owner",
-            reason: "test"
-        });
-
-        assert.equal(result.ok, true);
-        assert.equal(result.reused, true);
-        assert.equal(result.action, "already_active");
-        assert.equal(result.sessionId, sessionId);
-        assert.equal(session.touched, true);
-    } finally {
-        Object.assign(sessionManager, old);
-        voiceWorker.setMainClient(null);
-    }
+    assert.equal(result.ok, true);
+    assert.equal(result.reused, false);
+    assert.equal(result.replaced, true);
+    assert.equal(result.replacedSessionId, oldSessionId);
+    assert.equal(result.action, "replaced_by_latest_request");
+    assert.equal(result.sessionId, newSessionId);
+    assert.deepEqual(calls, [
+        ["stop", oldSessionId, "owner"],
+        ["create", guildId, channelId, "owner"],
+        ["start", newSessionId, token]
+    ]);
 });
 
-test("ensureVoiceSession treats duplicate create race as existing session reuse", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    const voiceWorker = require("../voiceWorker");
-    const sessionManager = require("../sessionManager");
+test("ensureVoiceSession resolves a duplicate create race by replacing the raced session", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const lifecycle = require("../voiceWorker/lifecycle");
     const token = "aaaaaaaaaaaaaaaaaaaaaaaa.bbbbbb.ccccccccccccccccccccccccccc";
     const guildId = "111111111111111111";
     const channelId = "222222222222222222";
-    const sessionId = "vc_raced_target";
-    const old = {
-        hashToken: sessionManager.hashToken,
-        findActiveVoiceSessionByTokenGuild: sessionManager.findActiveVoiceSessionByTokenGuild,
-        getSession: sessionManager.getSession,
-        touchSession: sessionManager.touchSession,
-        createSession: sessionManager.createSession
-    };
-    const session = {
-        sessionId,
-        serverId: guildId,
-        voiceId: channelId,
-        accountId: "self-user",
-        ownerId: "owner",
-        state: "active",
-        client: {
-            user: { id: "self-user" },
-            guilds: manager(),
-            channels: manager(),
-            users: manager([["self-user", { id: "self-user" }]])
-        },
-        connection: {
-            state: { status: VoiceConnectionStatus.Ready },
-            joinConfig: { channelId }
-        }
-    };
-    const targetChannel = { id: channelId, name: "Voice", isVoice: () => true };
-    const targetGuild = {
-        id: guildId,
-        name: "Target Guild",
-        channels: {
-            cache: new Map([[channelId, targetChannel]]),
-            fetch: async () => targetChannel
-        }
-    };
-    const client = {
-        guilds: {
-            cache: new Map([[guildId, targetGuild]]),
-            fetch: async () => targetGuild
-        }
-    };
+    const racedSessionId = "vc_raced_target";
+    const newSessionId = "vc_after_race";
     let lookupCount = 0;
+    let createCount = 0;
+    const stopped = [];
+    const sessions = new Map([
+        [newSessionId, { sessionId: newSessionId, lifecycleGeneration: "generation-after-race" }]
+    ]);
 
-    try {
-        voiceWorker.setMainClient(client);
-        sessionManager.hashToken = () => "token-hash";
-        sessionManager.findActiveVoiceSessionByTokenGuild = () => {
+    const result = await lifecycle._test.ensureVoiceSessionInternal({
+        token,
+        guildId,
+        channelId,
+        ownerId: "owner",
+        ownerTag: "Owner",
+        reason: "test_race"
+    }, {
+        repairFailedStopSessionForTokenGuild: async () => ({ repaired: 0, blocked: 0 }),
+        findActiveVoiceSessionByTokenGuild: () => {
             lookupCount++;
-            return lookupCount === 1 ? null : { id: sessionId, session };
-        };
-        sessionManager.getSession = () => session;
-        sessionManager.touchSession = () => session;
-        sessionManager.createSession = async () => {
-            throw new Error("ALREADY_ACTIVE_IN_GUILD");
-        };
+            if (lookupCount === 1) return null;
+            return {
+                id: racedSessionId,
+                session: { sessionId: racedSessionId, serverId: guildId, voiceId: channelId }
+            };
+        },
+        stopSession: async sessionId => {
+            stopped.push(sessionId);
+            return true;
+        },
+        createSession: async () => {
+            createCount++;
+            if (createCount === 1) {
+                const error = new Error("ALREADY_ACTIVE_IN_GUILD");
+                error.code = "ALREADY_ACTIVE_IN_GUILD";
+                throw error;
+            }
+            return newSessionId;
+        },
+        getSession: sessionId => sessions.get(sessionId) || null,
+        startSession: async () => {},
+        cleanupFailedEnsureSession: async () => {
+            throw new Error("cleanup should not run after duplicate-race recovery");
+        }
+    });
 
-        const result = await voiceWorker.ensureVoiceSession({
-            token,
-            guildId,
-            channelId,
-            ownerId: "owner",
-            ownerTag: "Owner",
-            reason: "test_race"
-        });
-
-        assert.equal(result.ok, true);
-        assert.equal(result.reused, true);
-        assert.equal(result.raced, true);
-        assert.equal(result.action, "already_active");
-        assert.equal(result.sessionId, sessionId);
-    } finally {
-        Object.assign(sessionManager, old);
-        voiceWorker.setMainClient(null);
-    }
+    assert.equal(result.ok, true);
+    assert.equal(result.replaced, true);
+    assert.equal(result.replacedSessionId, racedSessionId);
+    assert.equal(result.action, "replaced_by_latest_request");
+    assert.equal(result.sessionId, newSessionId);
+    assert.equal(createCount, 2);
+    assert.deepEqual(stopped, [racedSessionId]);
 });

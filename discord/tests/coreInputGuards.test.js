@@ -24,18 +24,18 @@ test("Discord snowflake guard accepts only 17 to 22 digits", () => { // NOSONAR 
     assert.equal(normalizeDiscordSnowflake("invalid"), null);
 });
 
-test("sensitive-data sanitizer redacts nested credentials and personal network data", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    const token = "abc.def.ghi";
-    const text = sanitizeSensitiveValue(`token=${token} email=user@example.com ip=203.0.113.9`);
-    assert.doesNotMatch(text, /abc\.def\.ghi/);
-    assert.doesNotMatch(text, /user@example\.com/);
-    assert.doesNotMatch(text, /203\.0\.113\.9/);
+test("private log data stays owner-visible while control characters and bounds are enforced", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const text = sanitizeSensitiveValue("token=abc.def.ghi email=user@example.com ip=203.0.113.9\u0000");
+    assert.equal(text.includes("abc.def.ghi"), true);
+    assert.equal(text.includes("user@example.com"), true);
+    assert.equal(text.includes("203.0.113.9"), true);
+    assert.equal(text.includes("\u0000"), false);
 
     const object = sanitizeSensitiveValue({
         authorization: "Bearer secret-value",
         nested: { accessToken: "secret-token", safe: "visible" }
     });
-    assert.notEqual(object.authorization, "Bearer secret-value");
-    assert.notEqual(object.nested.accessToken, "secret-token");
+    assert.equal(object.authorization, "Bearer secret-value");
+    assert.equal(object.nested.accessToken, "secret-token");
     assert.equal(object.nested.safe, "visible");
 });

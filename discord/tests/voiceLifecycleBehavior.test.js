@@ -5,119 +5,103 @@ const test = require("node:test");
 const lifecycle = require("../voiceWorker/lifecycle");
 
 const {
-    assertRequestedTokenOwner,
     ensureSessionFlights,
     performClientLogin,
     processSessionHealthCheck
 } = lifecycle._test;
 
-test("voice token ownership fails closed before creating a session", () => {
-    assert.throws(
-        () => assertRequestedTokenOwner("token", "111111111111111111", () => "222222222222222222"),
-        error => error?.code === "TOKEN_OWNER_MISMATCH"
-    );
-    assert.doesNotThrow(
-        () => assertRequestedTokenOwner("token", "111111111111111111", () => "111111111111111111")
-    );
-});
-
-test("ensureVoiceSession singleflights the same token and guild", async () => {
+test("same token and guild uses latest-request-wins while skipping stale queued work", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     ensureSessionFlights.clear();
-    let internalCalls = 0;
-    let release;
-    const gate = new Promise(resolve => { release = resolve; });
+    const calls = [];
+    let releaseFirst;
+    const firstGate = new Promise(resolve => { releaseFirst = resolve; });
     const deps = {
         isShuttingDown: () => false,
         validateToken: () => true,
-        assertRequestedTokenOwner: () => true,
-        normalizeVoiceTarget: input => ({ guildId: input.guildId, channelId: input.channelId }),
-        hashToken: () => "token-hash",
-        ensureVoiceSessionInternal: async () => {
-            internalCalls++;
-            await gate;
-            return { ok: true, sessionId: "session-1" };
-        }
-    };
-    const input = {
-        token: "token",
-        ownerId: "111111111111111111",
-        guildId: "222222222222222222",
-        channelId: "333333333333333333"
-    };
-    const first = lifecycle.ensureVoiceSession(input, deps);
-    const second = lifecycle.ensureVoiceSession(input, deps);
-    await Promise.resolve();
-    assert.equal(internalCalls, 1);
-    release();
-    assert.deepEqual(await first, { ok: true, sessionId: "session-1" });
-    assert.deepEqual(await second, { ok: true, sessionId: "session-1" });
-    assert.equal(ensureSessionFlights.size, 0);
-});
-
-test("ensureVoiceSession blocks a different owner while creation is in flight", async () => {
-    ensureSessionFlights.clear();
-    let release;
-    const gate = new Promise(resolve => { release = resolve; });
-    const deps = {
-        isShuttingDown: () => false,
-        validateToken: () => true,
-        assertRequestedTokenOwner: () => true,
         normalizeVoiceTarget: input => ({ guildId: input.guildId, channelId: input.channelId }),
         hashToken: () => "shared-token-hash",
-        ensureVoiceSessionInternal: async () => {
-            await gate;
-            return { ok: true };
+        ensureVoiceSessionInternal: async input => {
+            calls.push(input.channelId);
+            if (input.channelId === "333333333333333333") await firstGate;
+            return { ok: true, sessionId: `session-${input.channelId}`, channelId: input.channelId };
         }
     };
+
     const first = lifecycle.ensureVoiceSession({
         token: "token", ownerId: "111111111111111111",
         guildId: "222222222222222222", channelId: "333333333333333333"
     }, deps);
-    await assert.rejects(
-        lifecycle.ensureVoiceSession({
-            token: "token", ownerId: "444444444444444444",
-            guildId: "222222222222222222", channelId: "333333333333333333"
-        }, deps),
-        error => error?.code === "TOKEN_IN_USE_BY_ANOTHER_USER"
-    );
-    release();
-    await first;
+    await new Promise(resolve => setImmediate(resolve));
+
+    const second = lifecycle.ensureVoiceSession({
+        token: "token", ownerId: "444444444444444444",
+        guildId: "222222222222222222", channelId: "555555555555555555"
+    }, deps);
+    const latest = lifecycle.ensureVoiceSession({
+        token: "token", ownerId: "666666666666666666",
+        guildId: "222222222222222222", channelId: "777777777777777777"
+    }, deps);
+
+    releaseFirst();
+    assert.equal((await first).action, "superseded_by_newer_request");
+    assert.equal((await second).action, "superseded_by_newer_request");
+    assert.deepEqual(await latest, {
+        ok: true,
+        sessionId: "session-777777777777777777",
+        channelId: "777777777777777777"
+    });
+    assert.deepEqual(calls, ["333333333333333333", "777777777777777777"]);
+    assert.equal(ensureSessionFlights.size, 0);
 });
 
-test("post-login owner mismatch destroys the client and never pools it", async () => {
+test("different tokens can start concurrently in the same guild", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    ensureSessionFlights.clear();
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    let calls = 0;
+    const deps = {
+        isShuttingDown: () => false,
+        validateToken: () => true,
+        normalizeVoiceTarget: input => ({ guildId: input.guildId, channelId: input.channelId }),
+        hashToken: token => `hash-${token}`,
+        ensureVoiceSessionInternal: async input => {
+            calls++;
+            await gate;
+            return { ok: true, sessionId: input.token };
+        }
+    };
+    const one = lifecycle.ensureVoiceSession({ token: "one", guildId: "222222222222222222", channelId: "333333333333333333" }, deps);
+    const two = lifecycle.ensureVoiceSession({ token: "two", guildId: "222222222222222222", channelId: "444444444444444444" }, deps);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(calls, 2);
+    release();
+    assert.equal((await one).sessionId, "one");
+    assert.equal((await two).sessionId, "two");
+});
+
+test("post-login account may differ from the requester and is still pooled", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const session = { ownerId: "111111111111111111" };
     const disposed = [];
     const pooled = [];
-    const failures = [];
     const client = {
         user: null,
         async login() {
             this.user = { id: "222222222222222222" };
         }
     };
-    const originalError = console.error;
-    console.error = () => {};
-    try {
-        await assert.rejects(
-            performClientLogin(client, "session-1", session, "hash", "token", {
-                getSession: () => session,
-                waitForTokenLoginCooldown: async () => {},
-                loginQueue: { add: operation => operation() },
-                withTimeoutReject: promise => promise,
-                disposeSelfClient: (_client, reason) => disposed.push(reason),
-                setSessionClientInPool: (...args) => pooled.push(args),
-                markSessionFailed: async (...args) => failures.push(args),
-                isShuttingDown: () => false,
-                markTokenInvalid: async () => {}
-            }),
-            error => error?.code === "TOKEN_OWNER_MISMATCH"
-        );
-    } finally {
-        console.error = originalError;
-    }
-    assert.equal(pooled.length, 0);
-    assert.equal(failures.length, 1);
-    assert.ok(disposed.includes("token-owner-mismatch"));
+    await performClientLogin(client, "session-1", session, "hash", "token", {
+        getSession: () => session,
+        waitForTokenLoginCooldown: async () => {},
+        loginQueue: { add: operation => operation() },
+        withTimeoutReject: promise => promise,
+        disposeSelfClient: (_client, reason) => disposed.push(reason),
+        setSessionClientInPool: (...args) => pooled.push(args),
+        isShuttingDown: () => false,
+        markTokenInvalid: async () => {}
+    });
+    assert.equal(pooled.length, 1);
+    assert.deepEqual(disposed, []);
+    assert.equal(session.loginGeneration, null);
 });
 
 test("a login completing after timeout is disposed and cannot enter the pool", async () => {

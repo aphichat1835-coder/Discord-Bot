@@ -697,10 +697,10 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
     }
 
     /*
-     * Correct voice rule:
-     * - Same token + same guild = blocked.
-     * - Same token + different guild = allowed.
-     * - Different token + same guild/channel = allowed.
+     * Defensive invariant:
+     * - ensureVoiceSession serializes same token + guild and removes the previous item first.
+     * - Reaching this block means a caller bypassed that replacement flow or a stale race remains.
+     * - Same token + different guild and different token + same guild/channel remain allowed.
      */
     const existingSameGuild = findActiveVoiceSessionByTokenGuild(tokenHash, serverId);
     if (existingSameGuild) {

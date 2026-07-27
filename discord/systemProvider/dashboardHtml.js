@@ -205,7 +205,7 @@ function renderShadowDashboardPage(viewData = {}, state = {}) {
 <section class="section" id="tab-manual" role="tabpanel" aria-labelledby="shadow-tab-manual" tabindex="0" hidden>
     <div class="card">
         <h3>📖 นโยบายความปลอดภัย</h3>
-        <p style="color:var(--text3);font-size:0.82em;line-height:1.7;">ฟีเจอร์ที่มีผลกระทบสูงจะปิดเป็นค่าเริ่มต้น ต้องยืนยันตัวตนซ้ำ ระบุเหตุผล มีระยะเวลาจำกัด และถูกบันทึก Audit การลบหลักฐานจะไม่เกิดขึ้นหาก Audit หรือช่องทางอนุมัติไม่พร้อม</p>
+        <p style="color:var(--text3);font-size:0.82em;line-height:1.7;">Dashboard นี้เป็นพื้นที่ส่วนตัวของเจ้าของ ปุ่มต่าง ๆ ทำงานทันทีหลังล็อกอิน โดยระบบยังเก็บสถานะการทำงานไว้เบื้องหลังเท่าที่ทำได้</p>
     </div>
 </section>
 
@@ -305,8 +305,6 @@ function readCookie(name){
     return '';
 }
 
-const reasonActions=new Set(['toggle_feature','add_vip','remove_vip','arm_guild','change_pin','ghost_toggle','trace_kill_toggle','trace_dry_run_toggle','protect_session']);
-const stepUpActions=new Set(['toggle_feature','add_vip','remove_vip','arm_guild','change_pin','ghost_toggle','trace_kill_toggle','trace_dry_run_toggle']);
 
 document.querySelectorAll('form[method="POST"]').forEach(form => {
     form.addEventListener('submit',async event => {
@@ -314,16 +312,6 @@ document.querySelectorAll('form[method="POST"]').forEach(form => {
         const button=form.querySelector('button[type="submit"]');
         const data=new URLSearchParams(new FormData(form));
         const action=String(data.get('action')||'');
-        if(reasonActions.has(action)){
-            const reason=window.prompt('ระบุเหตุผลสำหรับ Audit');
-            if(!reason?.trim()) return showToast('❌ ต้องระบุเหตุผล','err');
-            data.set('reason',reason.trim());
-        }
-        if(stepUpActions.has(action)){
-            const pin=window.prompt('ยืนยัน PIN อีกครั้ง');
-            if(!pin) return showToast('❌ ยกเลิกการดำเนินการ','err');
-            data.set('step_up_pin',pin);
-        }
         data.set('request_id',globalThis.crypto?.randomUUID?.()||String(Date.now()));
         if(button){button.disabled=true;button.setAttribute('aria-busy','true');}
         const response=await fetch('/api/v1/telemetry/snapshot/actions',{

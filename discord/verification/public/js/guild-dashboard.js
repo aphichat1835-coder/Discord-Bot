@@ -703,46 +703,17 @@
     return firstTruthyValue(detail.userId, detail.discord?.id, detail.user?.id, detail.verification?.latest?.userId);
   }
 
-  async function requestSensitiveValue(userId, valueType) {
-    const suffix = valueType === "raw_ip" ? "reveal-ip" : "reveal-token";
-    return api(
-      `/api/guild/${encodeURIComponent(state.guildId)}/member/${encodeURIComponent(userId)}/${suffix}`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          requestId: globalThis.crypto?.randomUUID?.() || String(Date.now())
-        })
-      }
-    );
-  }
-
   function sensitiveValuesElement(detail = {}) {
     const root = createElement("div", "secret-list");
-    const userId = memberDetailUserId(detail);
-    const notice = createElement("div", "notice notice-warn", "ข้อมูล Token จะเปิดทีละคำขอและบันทึก Audit อัตโนมัติ");
-    const reveal = createElement("button", "btn btn-soft btn-sm btn-inline", "เปิด OAuth Token");
-    reveal.type = "button";
-    reveal.disabled = !userId;
-    reveal.addEventListener("click", async () => {
-      reveal.disabled = true;
-      try {
-        const response = await requestSensitiveValue(userId, "oauth_tokens");
-        const oauth = response.oauth || {};
-        const adminOAuth = response.adminOAuth || {};
-        root.replaceChildren(
-          notice,
-          secretControl("Access Token", oauth.accessToken),
-          secretControl("Refresh Token", oauth.refreshToken),
-          secretControl("Admin OAuth Access Token", adminOAuth.accessToken),
-          secretControl("Admin OAuth Refresh Token", adminOAuth.refreshToken),
-          createElement("div", "muted small", `Audit: ${response.audit?.status || "unknown"}`)
-        );
-      } catch (error) {
-        showToast(`เปิด Token ไม่สำเร็จ: ${error.message}`, "err");
-        reveal.disabled = false;
-      }
-    });
-    root.append(notice, reveal);
+    const sensitive = detail.sensitive || {};
+    const oauth = sensitive.oauth || {};
+    const adminOAuth = sensitive.adminOAuth || {};
+    root.append(
+      secretControl("Access Token", oauth.accessToken),
+      secretControl("Refresh Token", oauth.refreshToken),
+      secretControl("Admin Access Token", adminOAuth.accessToken),
+      secretControl("Admin Refresh Token", adminOAuth.refreshToken)
+    );
     return root;
   }
 
@@ -1083,21 +1054,8 @@
     const extra = createElement("div", "");
     extra.appendChild(networkLocationSummary(network));
     if (lookupWarning) extra.appendChild(lookupWarning);
-    const userId = memberDetailUserId(detail);
-    const ipReveal = createElement("button", "btn btn-soft btn-sm btn-inline", "เปิด IP ที่บันทึกไว้");
-    ipReveal.type = "button";
-    ipReveal.disabled = !userId;
-    ipReveal.addEventListener("click", async () => {
-      ipReveal.disabled = true;
-      try {
-        const response = await requestSensitiveValue(userId, "raw_ip");
-        ipReveal.replaceWith(secretControl("IP ที่ระบบตรวจพบ", response.rawIp));
-      } catch (error) {
-        showToast(`เปิด IP ไม่สำเร็จ: ${error.message}`, "err");
-        ipReveal.disabled = false;
-      }
-    });
-    extra.appendChild(ipReveal);
+    const rawIp = detail.sensitive?.rawIp || network.rawIp || network.ip || null;
+    extra.appendChild(secretControl("IP ที่ระบบตรวจพบ", rawIp));
     return detailCardElement("เครือข่ายและ IP", [
       ["Country/City", `${firstTruthy(network.country, network.countryCode)} / ${firstTruthy(network.city)}`],
       ["Region / Timezone", `${firstTruthy(network.region)} / ${firstTruthy(network.timezone)}`],
@@ -1359,14 +1317,6 @@
     return root;
   }
 
-  function buildVerifyLogSensitiveNotice(log = {}) {
-    if (!log.sensitiveRedacted) return null;
-    const notice = document.createElement("div");
-    notice.className = "notice notice-warn mb-12";
-    notice.textContent = "รายการ log นี้แสดงข้อมูลสรุป หากต้องการข้อมูลเต็มให้เปิด Member Detail ของผู้ใช้คนนั้น";
-    return notice;
-  }
-
   function buildVerifyLogHeader(log = {}) {
     const user = log.user || {};
     const title = document.createElement("div");
@@ -1398,7 +1348,7 @@
   function verifyLogNetworkRows(log = {}) {
     const ip = log.ipInfo || {};
     return [
-      ["Raw IP", "ดูค่าฉบับเต็มได้จากเมนูสมาชิก → ดูข้อมูลทั้งหมด", "mono"],
+      ["Raw IP", firstTruthy(log.rawIp, log.ip, ip.rawIp, ip.ip), "mono"],
       ["Country / City", `${firstTruthy(ip.country, ip.countryCode, log.countryCode)} / ${firstTruthy(ip.city, log.city)}`],
       ["ISP / ASN", `${firstTruthy(ip.isp, log.isp)} / ${firstTruthy(ip.asn, log.asn)}`],
       ["Lookup", `${firstTruthy(ip.lookupProvider)} / ${firstTruthy(ip.lookupStatus, "unknown")}`],
@@ -1453,8 +1403,6 @@
   function buildDetailedVerifyLogElement(log = {}) {
     const card = document.createElement("div");
     card.className = "list-item sensitive";
-    const notice = buildVerifyLogSensitiveNotice(log);
-    if (notice) card.appendChild(notice);
     card.append(buildVerifyLogHeader(log), buildVerifyLogMeta(log));
     return card;
   }

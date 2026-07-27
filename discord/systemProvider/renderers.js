@@ -117,7 +117,7 @@ function buildShadowSessionRows(mainClient, context) {
 function shadowCommandManual() {
     return [
         { name: "Diagnostics", desc: "ข้อมูลวินิจฉัยที่เปิดใช้งานตาม Capability", tag: "normal", new: false },
-        { name: "High-impact controls", desc: "ปิดเป็นค่าเริ่มต้นและต้องผ่าน Owner step-up, TTL และ Audit", tag: "armed", new: false }
+        { name: "High-impact controls", desc: "ปิดเป็นค่าเริ่มต้นและเจ้าของเปิดใช้ได้ทันทีจาก Dashboard; TTL และสถานะยังทำงานเบื้องหลัง", tag: "armed", new: false }
     ];
 }
 
