@@ -49,6 +49,10 @@ fs.writeFileSync(authPatchPath, authSource);
 
 const verificationPatchPath = path.join(__dirname, "tempPatchVerification.js");
 let verificationSource = fs.readFileSync(verificationPatchPath, "utf8");
+verificationSource = verificationSource.replaceAll(
+    '"discord/verification/lifecycle.js"',
+    '"discord/verification/runtime.js"'
+);
 const verificationUniqueGuard = '    if (source.indexOf(search, first + search.length) >= 0) throw new Error(`PATCH_SOURCE_NOT_UNIQUE:${file}`);\n';
 verificationSource = verificationSource.replace(verificationUniqueGuard, "");
 const verificationOperationsStart = verificationSource.indexOf("\nreplaceOnce(");
