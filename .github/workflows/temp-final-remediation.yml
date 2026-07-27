@@ -48,26 +48,9 @@ jobs:
 
       - name: Validate normalized patch scripts
         run: |
-          set +e
-          {
-            node --check scripts/tempPatchAuth.js
-            node --check scripts/tempPatchVerification.js
-            node --check scripts/tempPatchCi.js
-          } > .github/temp-normalized-error.txt 2>&1
-          status=$?
-          if [ "$status" -eq 0 ]; then rm -f .github/temp-normalized-error.txt; fi
-          exit "$status"
-
-      - name: Preserve normalized patch diagnostic
-        if: failure()
-        run: |
-          if [ -f .github/temp-normalized-error.txt ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add .github/temp-normalized-error.txt
-            git commit -m "chore: record normalized patch diagnostic"
-            git push origin HEAD:audit/final-remediation-20260728
-          fi
+          node --check scripts/tempPatchAuth.js
+          node --check scripts/tempPatchVerification.js
+          node --check scripts/tempPatchCi.js
 
       - name: Apply core remediation patch
         run: node scripts/tempPatchCore.js
@@ -75,47 +58,14 @@ jobs:
       - name: Apply protected auth remediation patch
         run: node scripts/tempPatchAuth.js
 
-      - name: Preserve protected auth patch diagnostic
-        if: failure()
-        run: |
-          if [ -f .github/temp-auth-error.txt ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add .github/temp-auth-error.txt
-            git commit -m "chore: record temporary auth patch diagnostic"
-            git push origin HEAD:audit/final-remediation-20260728
-          fi
-
       - name: Apply verification remediation patch
         run: node scripts/tempPatchVerification.js
-
-      - name: Preserve verification patch diagnostic
-        if: failure()
-        run: |
-          if [ -f .github/temp-verification-error.txt ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add .github/temp-verification-error.txt
-            git commit -m "chore: record temporary verification patch diagnostic"
-            git push origin HEAD:audit/final-remediation-20260728
-          fi
 
       - name: Apply post-patch invariants
         run: node scripts/tempPatchPost.js
 
       - name: Apply CI remediation patch
         run: node scripts/tempPatchCi.js
-
-      - name: Preserve CI patch diagnostic
-        if: failure()
-        run: |
-          if [ -f .github/temp-ci-error.txt ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add .github/temp-ci-error.txt
-            git commit -m "chore: record temporary CI patch diagnostic"
-            git push origin HEAD:audit/final-remediation-20260728
-          fi
 
       - name: Install dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
@@ -133,42 +83,13 @@ jobs:
 
       - name: Full tests and coverage
         run: |
-          set +e
-          : > /tmp/full-tests.log
-          for command in \
-            "npm run test:coverage:discord" \
-            "npm run test:coverage:voice" \
-            "npm run test:coverage:verification" \
-            "npm run check:coverage" \
-            "npm audit --audit-level=high"
-          do
-            echo "===== COMMAND: $command =====" | tee -a /tmp/full-tests.log
-            bash -lc "$command" >> /tmp/full-tests.log 2>&1
-            status=$?
-            if [ "$status" -ne 0 ]; then
-              {
-                echo "FAILED_COMMAND=$command"
-                echo "EXIT_STATUS=$status"
-                tail -n 300 /tmp/full-tests.log
-              } > .github/temp-test-error.txt
-              cat .github/temp-test-error.txt
-              exit "$status"
-            fi
-          done
-          rm -f .github/temp-test-error.txt
+          npm run test:coverage:discord
+          npm run test:coverage:voice
+          npm run test:coverage:verification
+          npm run check:coverage
+          npm audit --audit-level=high
 
-      - name: Preserve full test diagnostic
-        if: failure()
-        run: |
-          if [ -f .github/temp-test-error.txt ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add .github/temp-test-error.txt
-            git commit -m "chore: record temporary full test diagnostic"
-            git push origin HEAD:audit/final-remediation-20260728
-          fi
-
-      - name: Remove temporary patch machinery
+      - name: Remove temporary patch scripts
         run: |
           rm -f .github/temp-normalized-error.txt
           rm -f .github/temp-auth-error.txt
@@ -181,13 +102,17 @@ jobs:
           rm -f scripts/tempPatchVerification.js
           rm -f scripts/tempPatchPost.js
           rm -f scripts/tempPatchCi.js
-          rm -f .github/workflows/temp-final-remediation.yml
 
-      - name: Commit tested remediation result
+      - name: Stage and validate tested tree
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git diff --cached --check
-          git commit -m "fix: close final remediation audit findings"
-          git push origin HEAD:audit/final-remediation-20260728
+          git diff --cached --stat
+
+      - name: Commit tested remediation result
+        run: git commit -m "fix: close final remediation audit findings"
+
+      - name: Push tested remediation result
+        run: git push origin HEAD:audit/final-remediation-20260728
