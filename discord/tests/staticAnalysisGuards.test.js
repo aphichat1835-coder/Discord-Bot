@@ -29,6 +29,7 @@ test("protected path guard inventories the complete protected tree and requires 
         "discord/systemProvider/auth.js",
         "discord/systemProvider/dashboardHtml.js",
         "discord/systemProvider/htmlUtils.js",
+        "discord/systemProvider/pinCredential.js",
         "discord/systemProvider/renderers.js"
     ]);
 });
