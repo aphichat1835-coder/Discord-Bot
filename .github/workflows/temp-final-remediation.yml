@@ -1,7 +1,7 @@
 name: Temporary Final Remediation
 
 on:
-  push:
+  pull_request:
     branches:
       - audit/final-remediation-20260728
 
@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - name: Checkout temporary remediation branch
+      - name: Checkout temporary remediation base branch
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           ref: audit/final-remediation-20260728
