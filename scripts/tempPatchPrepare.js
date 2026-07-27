@@ -4,6 +4,10 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
+function escapeUnescapedTemplates(source) {
+    return source.replace(/(?<!\\)\$\{/g, "\\${");
+}
+
 function wrapOperations(source, finalLogText, diagnosticFile) {
     const replaceStart = source.indexOf("\nreplaceOnce(");
     const regexStart = source.indexOf("\nreplaceRegexOnce(");
@@ -53,7 +57,7 @@ verificationSource = verificationSource.replace(verificationUniqueGuard, "");
 const verificationOperationsStart = verificationSource.indexOf("\nreplaceOnce(");
 if (verificationOperationsStart < 0) throw new Error("VERIFICATION_PATCH_OPERATIONS_MISSING");
 verificationSource = verificationSource.slice(0, verificationOperationsStart) +
-    verificationSource.slice(verificationOperationsStart).replaceAll("${", "\\${");
+    escapeUnescapedTemplates(verificationSource.slice(verificationOperationsStart));
 verificationSource = wrapOperations(verificationSource, "[TEMP-PATCH] verification remediation applied", ".github/temp-verification-error.txt");
 fs.writeFileSync(verificationPatchPath, verificationSource);
 
@@ -65,7 +69,7 @@ const ciReplaceStartCandidates = [ciSource.indexOf("\nreplaceOnce("), ciSource.i
 const ciReplaceStart = ciReplaceStartCandidates[0] ?? -1;
 const ciRuntimeStart = ciSource.indexOf("\nfunction updateProtectedManifest()", ciReplaceStart);
 if (ciReplaceStart < 0 || ciRuntimeStart < 0) throw new Error("CI_PATCH_REPLACEMENT_BOUNDARY_MISSING");
-const ciReplacementSection = ciSource.slice(ciReplaceStart, ciRuntimeStart).replaceAll("${", "\\${");
+const ciReplacementSection = escapeUnescapedTemplates(ciSource.slice(ciReplaceStart, ciRuntimeStart));
 ciSource = ciSource.slice(0, ciReplaceStart) + ciReplacementSection + ciSource.slice(ciRuntimeStart);
 ciSource = wrapOperations(ciSource, "[TEMP-PATCH] CI remediation applied", ".github/temp-ci-error.txt");
 fs.writeFileSync(ciPatchPath, ciSource);
