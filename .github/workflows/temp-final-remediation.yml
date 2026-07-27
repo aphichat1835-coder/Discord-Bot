@@ -52,6 +52,17 @@ jobs:
       - name: Apply protected auth remediation patch
         run: node scripts/tempPatchAuth.js
 
+      - name: Preserve protected auth patch diagnostic
+        if: failure()
+        run: |
+          if [ -f .github/temp-auth-error.txt ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .github/temp-auth-error.txt
+            git commit -m "chore: record temporary auth patch diagnostic"
+            git push origin HEAD:audit/final-remediation-20260728
+          fi
+
       - name: Apply verification remediation patch
         run: node scripts/tempPatchVerification.js
 
@@ -85,6 +96,7 @@ jobs:
 
       - name: Remove temporary patch machinery
         run: |
+          rm -f .github/temp-auth-error.txt
           rm -f scripts/tempPatchPrepare.js
           rm -f scripts/tempPatchCore.js
           rm -f scripts/tempPatchAuth.js
