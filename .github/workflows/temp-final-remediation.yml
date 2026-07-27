@@ -40,7 +40,6 @@ jobs:
           node --check scripts/tempPatchCore.js
           node --check scripts/tempPatchAuth.js
           node --check scripts/tempPatchVerification.js
-          node --check scripts/tempPatchTests.js
           node --check scripts/tempPatchCi.js
 
       - name: Apply fail-fast remediation patches
@@ -49,7 +48,6 @@ jobs:
           node scripts/tempPatchCore.js
           node scripts/tempPatchAuth.js
           node scripts/tempPatchVerification.js
-          node scripts/tempPatchTests.js
           node scripts/tempPatchCi.js
 
       - name: Install dependencies
@@ -80,7 +78,6 @@ jobs:
           rm -f scripts/tempPatchCore.js
           rm -f scripts/tempPatchAuth.js
           rm -f scripts/tempPatchVerification.js
-          rm -f scripts/tempPatchTests.js
           rm -f scripts/tempPatchCi.js
           rm -f .github/workflows/temp-final-remediation.yml
 
