@@ -6,6 +6,12 @@ const path = require("node:path");
 
 const authPatchPath = path.join(__dirname, "tempPatchAuth.js");
 let authSource = fs.readFileSync(authPatchPath, "utf8");
+
+const generatedStart = authSource.indexOf('write("discord/systemProvider/pinCredential.js"');
+const generatedEnd = authSource.indexOf("\nreplaceOnce(", generatedStart);
+if (generatedStart < 0 || generatedEnd < 0) throw new Error("AUTH_PATCH_GENERATED_CREDENTIAL_BLOCK_MISSING");
+authSource = authSource.slice(0, generatedStart) + authSource.slice(generatedEnd + 1);
+
 const marker = `replaceOnce(\n    "discord/systemProvider/dashboardHtml.js"`;
 const first = authSource.indexOf(marker);
 const second = authSource.indexOf(marker, first + marker.length);
