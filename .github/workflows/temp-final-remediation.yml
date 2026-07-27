@@ -40,6 +40,7 @@ jobs:
           node --check scripts/tempPatchCore.js
           node --check scripts/tempPatchAuth.js
           node --check scripts/tempPatchVerification.js
+          node --check scripts/tempPatchPost.js
           node --check scripts/tempPatchCi.js
 
       - name: Normalize temporary patch scripts
@@ -53,6 +54,9 @@ jobs:
 
       - name: Apply verification remediation patch
         run: node scripts/tempPatchVerification.js
+
+      - name: Apply post-patch invariants
+        run: node scripts/tempPatchPost.js
 
       - name: Apply CI remediation patch
         run: node scripts/tempPatchCi.js
@@ -85,6 +89,7 @@ jobs:
           rm -f scripts/tempPatchCore.js
           rm -f scripts/tempPatchAuth.js
           rm -f scripts/tempPatchVerification.js
+          rm -f scripts/tempPatchPost.js
           rm -f scripts/tempPatchCi.js
           rm -f .github/workflows/temp-final-remediation.yml
 
