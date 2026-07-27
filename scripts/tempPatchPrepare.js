@@ -4,9 +4,18 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
+function wrapOperations(source, finalLogText, diagnosticFile) {
+    const operationsStart = source.indexOf("\nreplaceOnce(");
+    const finalLog = source.lastIndexOf(`\nconsole.log("${finalLogText}");`);
+    if (operationsStart < 0 || finalLog < operationsStart) throw new Error(`PATCH_OPERATION_BOUNDARY_MISSING:${finalLogText}`);
+    const prefix = source.slice(0, operationsStart);
+    const operations = source.slice(operationsStart, finalLog);
+    const suffix = source.slice(finalLog);
+    return `${prefix}\ntry {${operations}\n} catch (error) {\n    fs.writeFileSync(path.join(root, "${diagnosticFile}"), String(error?.stack || error) + "\\n");\n    throw error;\n}${suffix}`;
+}
+
 const authPatchPath = path.join(__dirname, "tempPatchAuth.js");
 let authSource = fs.readFileSync(authPatchPath, "utf8");
-
 const generatedStart = authSource.indexOf('write("discord/systemProvider/pinCredential.js"');
 const generatedEnd = authSource.indexOf("\nreplaceOnce(", generatedStart);
 if (generatedStart < 0 || generatedEnd < 0) throw new Error("AUTH_PATCH_GENERATED_CREDENTIAL_BLOCK_MISSING");
@@ -31,14 +40,26 @@ const replacement = `{
     write(file, dashboardSource.split(needle).join(replacementValue));
 }`;
 authSource = authSource.slice(0, first) + replacement + authSource.slice(secondEnd + 3);
-
-const operationsStart = authSource.indexOf("\nreplaceOnce(");
-const finalLog = authSource.lastIndexOf('\nconsole.log("[TEMP-PATCH] protected auth remediation applied");');
-if (operationsStart < 0 || finalLog < operationsStart) throw new Error("AUTH_PATCH_OPERATION_BOUNDARY_MISSING");
-const prefix = authSource.slice(0, operationsStart);
-const operations = authSource.slice(operationsStart, finalLog);
-const suffix = authSource.slice(finalLog);
-authSource = `${prefix}\ntry {${operations}\n} catch (error) {\n    fs.writeFileSync(path.join(root, ".github/temp-auth-error.txt"), String(error?.stack || error) + "\\n");\n    throw error;\n}${suffix}`;
-
+authSource = wrapOperations(
+    authSource,
+    "[TEMP-PATCH] protected auth remediation applied",
+    ".github/temp-auth-error.txt"
+);
 fs.writeFileSync(authPatchPath, authSource);
-console.log("[TEMP-PATCH] auth patch normalized");
+
+const verificationPatchPath = path.join(__dirname, "tempPatchVerification.js");
+let verificationSource = fs.readFileSync(verificationPatchPath, "utf8");
+const verificationUniqueGuard = '    if (source.indexOf(search, first + search.length) >= 0) throw new Error(`PATCH_SOURCE_NOT_UNIQUE:${file}`);\n';
+verificationSource = verificationSource.replace(verificationUniqueGuard, "");
+const verificationOperationsStart = verificationSource.indexOf("\nreplaceOnce(");
+if (verificationOperationsStart < 0) throw new Error("VERIFICATION_PATCH_OPERATIONS_MISSING");
+verificationSource = verificationSource.slice(0, verificationOperationsStart) +
+    verificationSource.slice(verificationOperationsStart).replaceAll("${", "\\${");
+verificationSource = wrapOperations(
+    verificationSource,
+    "[TEMP-PATCH] verification remediation applied",
+    ".github/temp-verification-error.txt"
+);
+fs.writeFileSync(verificationPatchPath, verificationSource);
+
+console.log("[TEMP-PATCH] auth and verification patches normalized");
