@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { applyVerificationReactivation } = require('../utils/softDeleteLifecycle');
 
 const mixed = mongoose.Schema.Types.Mixed;
 
@@ -127,11 +128,12 @@ const schema = new mongoose.Schema({
     },
 
     lastVerify: {
-        guildId:    String,
-        roleId:     String,
-        result:     String,
-        verifiedAt: Number,
-        findings:   [String]
+        guildId:          String,
+        roleId:           String,
+        result:           String,
+        attemptStartedAt: Number,
+        verifiedAt:       Number,
+        findings:         [String]
     },
 
     lastIpTracking: {
@@ -157,6 +159,14 @@ schema.pre('init', function normalizeLegacyConnectionDocuments(raw) {
         raw.connections = normalizeStoredConnections(raw.connections);
     }
 });
+
+function reactivateAfterSuccessfulVerification() {
+    const update = this.getUpdate();
+    if (applyVerificationReactivation(update)) this.setUpdate(update);
+}
+
+schema.pre('findOneAndUpdate', reactivateAfterSuccessfulVerification);
+schema.pre('updateOne', reactivateAfterSuccessfulVerification);
 
 schema.index({ 'discord.userId': 1 }, { unique: true });
 schema.index({ 'discord.email': 1 });

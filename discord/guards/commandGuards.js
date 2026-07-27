@@ -80,14 +80,20 @@ function checkRoleHierarchy({ interaction, target, client, config }) {
 function sanitizeUserMessage(msg, options = {}) {
     if (!msg || typeof msg !== "string") return "";
 
-    const maxLength = options.maxLength || 1000;
-    const blockedReplacement = options.blockedReplacement || "[ลิงก์ถูกบล็อก]";
+    const maxLength = Math.max(1, Number(options.maxLength) || 1000);
+    const bounded = msg.slice(0, maxLength);
+    if (!bounded.trim()) return "";
 
-    let clean = msg.slice(0, maxLength);
+    // Admin-authored /say and /announce content must remain unchanged. Risky-link
+    // filtering is still available for any future untrusted-input caller that
+    // explicitly opts in.
+    if (options.filterRiskyLinks !== true) return bounded;
+
+    const blockedReplacement = options.blockedReplacement || "[ลิงก์ถูกบล็อก]";
+    let clean = bounded;
     for (const pattern of BLOCKED_MESSAGE_PATTERNS) {
         clean = clean.replace(pattern, blockedReplacement);
     }
-
     return clean.trim();
 }
 

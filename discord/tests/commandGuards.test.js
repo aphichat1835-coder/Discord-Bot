@@ -148,8 +148,20 @@ test("checkRoleHierarchy rejects protected targets and allows lower targets", ()
     }).ok, true);
 });
 
-test("sanitizeUserMessage preserves mentions and blocks risky links", () => {
-    const clean = sanitizeUserMessage("@everyone join discord.gg/test run https://x.test/file.exe");
+test("sanitizeUserMessage preserves administrator-authored content exactly", () => {
+    const message = "  @everyone join discord.gg/test run https://x.test/file.exe  ";
+    const clean = sanitizeUserMessage(message, { maxLength: 2000 });
+
+    assert.equal(clean, message);
+    assert.equal(sanitizeUserMessage("   ", { maxLength: 2000 }), "");
+    assert.equal(sanitizeUserMessage("abcdef", { maxLength: 3 }), "abc");
+});
+
+test("sanitizeUserMessage can still filter risky links when explicitly requested", () => {
+    const clean = sanitizeUserMessage(
+        "@everyone join discord.gg/test run https://x.test/file.exe",
+        { filterRiskyLinks: true }
+    );
 
     assert.match(clean, /@everyone/);
     assert.equal(clean.includes("discord.gg/test"), false);

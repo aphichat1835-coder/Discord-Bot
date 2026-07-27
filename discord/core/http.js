@@ -10,6 +10,40 @@ function applySecurityHeaders(req, res, next) {
     next();
 }
 
+function applySensitiveResponseHeaders(req, res, next) {
+    const requestPath = String(req.path || req.originalUrl || "").split("?", 1)[0];
+    const sensitive = requestPath === "/api" ||
+        requestPath.startsWith("/api/") ||
+        requestPath === "/auth" ||
+        requestPath.startsWith("/auth/");
+
+    if (sensitive) {
+        res.setHeader("Cache-Control", "no-store");
+        res.setHeader("Pragma", "no-cache");
+        res.setHeader("Expires", "0");
+    }
+    next();
+}
+
+function buildHealthPayload(options = {}) {
+    const shuttingDown = options.shuttingDown ?? (global.__APP_SHUTTING_DOWN === true);
+    return {
+        status: shuttingDown ? "stopping" : "ok",
+        healthy: !shuttingDown,
+        timestamp: Date.now(),
+        uptimeSec: Math.floor(process.uptime())
+    };
+}
+
+function registerHealthRoute(app) {
+    if (typeof app?.get !== "function") return false;
+    app.get("/health", (_req, res) => {
+        const payload = buildHealthPayload();
+        return res.status(payload.healthy ? 200 : 503).json(payload);
+    });
+    return true;
+}
+
 function createHttpApp(express, options = {}) {
     const app = express();
     const jsonLimit = options.jsonLimit || "64kb";
@@ -21,6 +55,8 @@ function createHttpApp(express, options = {}) {
 
     app.disable("x-powered-by");
     app.use(applySecurityHeaders);
+    app.use(applySensitiveResponseHeaders);
+    registerHealthRoute(app);
     app.use(express.json({ limit: jsonLimit }));
     app.use(express.urlencoded({ extended: true, limit: urlencodedLimit }));
 
@@ -29,5 +65,8 @@ function createHttpApp(express, options = {}) {
 
 module.exports = {
     applySecurityHeaders,
+    applySensitiveResponseHeaders,
+    buildHealthPayload,
+    registerHealthRoute,
     createHttpApp
 };
