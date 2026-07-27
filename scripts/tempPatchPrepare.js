@@ -5,12 +5,12 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const authPatchPath = path.join(__dirname, "tempPatchAuth.js");
-let source = fs.readFileSync(authPatchPath, "utf8");
+let authSource = fs.readFileSync(authPatchPath, "utf8");
 const marker = `replaceOnce(\n    "discord/systemProvider/dashboardHtml.js"`;
-const first = source.indexOf(marker);
-const second = source.indexOf(marker, first + marker.length);
+const first = authSource.indexOf(marker);
+const second = authSource.indexOf(marker, first + marker.length);
 if (first < 0 || second < 0) throw new Error("AUTH_PATCH_DASHBOARD_MARKERS_MISSING");
-const secondEnd = source.indexOf("\n);", second);
+const secondEnd = authSource.indexOf("\n);", second);
 if (secondEnd < 0) throw new Error("AUTH_PATCH_DASHBOARD_BLOCK_END_MISSING");
 const replacement = `{
     const file = "discord/systemProvider/dashboardHtml.js";
@@ -21,6 +21,21 @@ const replacement = `{
     if (count !== 2) throw new Error(\`PATCH_SOURCE_COUNT:\${file}:\${count}\`);
     write(file, dashboardSource.split(needle).join(replacementValue));
 }`;
-source = source.slice(0, first) + replacement + source.slice(secondEnd + 3);
-fs.writeFileSync(authPatchPath, source);
+authSource = authSource.slice(0, first) + replacement + authSource.slice(secondEnd + 3);
+fs.writeFileSync(authPatchPath, authSource);
+
+const verificationPatchPath = path.join(__dirname, "tempPatchVerification.js");
+let verificationSource = fs.readFileSync(verificationPatchPath, "utf8");
+verificationSource = verificationSource.replace(
+    `    if (source.indexOf(search, first + search.length) >= 0) throw new Error(\`PATCH_SOURCE_NOT_UNIQUE:\${file}\`);\n`,
+    ""
+);
+verificationSource = verificationSource.replace(
+    "            await refreshOneOAuthUser(doc, {",
+    "            const result = await refreshOneOAuthUser(doc, {"
+);
+if (!verificationSource.includes("const result = await refreshOneOAuthUser")) {
+    throw new Error("VERIFICATION_PATCH_RESULT_BINDING_MISSING");
+}
+fs.writeFileSync(verificationPatchPath, verificationSource);
 console.log("[TEMP-PATCH] patch scripts normalized");
