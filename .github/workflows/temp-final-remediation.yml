@@ -1,0 +1,94 @@
+name: Temporary Final Remediation
+
+on:
+  push:
+    branches:
+      - audit/final-remediation-20260728
+
+permissions:
+  contents: write
+
+concurrency:
+  group: temp-final-remediation
+  cancel-in-progress: false
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout temporary remediation branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: audit/final-remediation-20260728
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Setup Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: 24.18.0
+
+      - name: Bootstrap pinned npm
+        run: |
+          npm install --global --ignore-scripts npm@12.0.1
+          test "$(npm --version)" = "12.0.1"
+
+      - name: Validate temporary patch scripts
+        run: |
+          node --check scripts/tempPatchPrepare.js
+          node --check scripts/tempPatchCore.js
+          node --check scripts/tempPatchAuth.js
+          node --check scripts/tempPatchVerification.js
+          node --check scripts/tempPatchTests.js
+          node --check scripts/tempPatchCi.js
+
+      - name: Apply fail-fast remediation patches
+        run: |
+          node scripts/tempPatchPrepare.js
+          node scripts/tempPatchCore.js
+          node scripts/tempPatchAuth.js
+          node scripts/tempPatchVerification.js
+          node scripts/tempPatchTests.js
+          node scripts/tempPatchCi.js
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Static and compatibility checks
+        run: |
+          npm run check:protected-syntax
+          npm run check:discord14
+          npm run check:secrets
+          npm run check:all
+          npm run check:scripts
+          npm run check:memory-guards
+          npm run check:mongoose9
+          CI= PROTECTED_OWNER_APPROVAL=1 npm run check:protected
+
+      - name: Full tests and coverage
+        run: |
+          npm run test:coverage:discord
+          npm run test:coverage:voice
+          npm run test:coverage:verification
+          npm run check:coverage
+          npm audit --audit-level=high
+
+      - name: Remove temporary patch machinery
+        run: |
+          rm -f scripts/tempPatchPrepare.js
+          rm -f scripts/tempPatchCore.js
+          rm -f scripts/tempPatchAuth.js
+          rm -f scripts/tempPatchVerification.js
+          rm -f scripts/tempPatchTests.js
+          rm -f scripts/tempPatchCi.js
+          rm -f .github/workflows/temp-final-remediation.yml
+
+      - name: Commit tested remediation result
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: close final remediation audit findings"
+          git push origin HEAD:audit/final-remediation-20260728
