@@ -1,0 +1,302 @@
+FAILED_COMMAND=npm run test:coverage:discord
+EXIT_STATUS=123
+ℹ pass 326
+ℹ fail 6
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 11366.353458
+ℹ start of coverage report
+ℹ -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ℹ file                               | line % | branch % | funcs % | uncovered lines
+ℹ -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ℹ discord                            |        |          |         | 
+ℹ  commands.js                       |  48.72 |    74.07 |   50.00 | 48-54 56-65 67-73 99-101 104-144 149-151 172 176-184 186-210 226-228 235-243 246-253 255-288
+ℹ  commands                          |        |          |         | 
+ℹ   customIds.js                     |  94.44 |    87.50 |   83.33 | 25-27
+ℹ   information.js                   |  88.65 |    46.75 |   84.31 | 44-45 82-87 326-334 371-374 501-506 508-516 527-528 581-616
+ℹ   moderation.js                    |  55.47 |    78.95 |   47.06 | 31-37 54-56 77-81 83-87 89-104 106-128 182-226 228-233
+ℹ   moderationHelpers.js             |  90.38 |    74.51 |   91.67 | 39 124-137
+ℹ   moderationWorkflow.js            |  59.11 |    70.37 |   29.03 | 20-27 34-38 40-43 45-48 50-56 69-85 92 138-141 143-154 162-167 169-174 195-214 248-263 265-268 275-288
+ℹ   panelHelpers.js                  |  63.64 |   100.00 |    0.00 | 6-9
+ℹ   panelInteractions.js             |  16.36 |   100.00 |    0.00 | 4-6 36-39 41-47 49-53 55-59 61-65 67-72 74-79 81-116 118-123 125-154 156-201 203-234 236-241 243-249 251-265 267-285 287-315 317-329 331-372
+ℹ   panelViews.js                    |  55.97 |    80.00 |   60.00 | 47-72 94-126
+ℹ   registration.js                  | 100.00 |    80.00 |   50.00 | 
+ℹ   registry.js                      |  96.41 |    81.48 |  100.00 | 19-20 27-28 40-41
+ℹ   utility.js                       |  37.64 |    60.00 |   73.08 | 45 51 105-112 124-126 141-169 174-278 287-300 310-340 351-360 362-378 392-416 466 484-486 492-494 497-499 505-507 511 516-518 558-563 574-576 581-582 616-617 658-745 750-821 826-1075 1077-1083
+ℹ   verification.js                  |  22.95 |    68.75 |   38.46 | 35-36 66-68 107-118 132-134 136-138 140-142 144-153 155-157 159-202 204-215 217-247 249-271 273-283 285-291 293-304 306-334 336-346 348-418 420-434 490-491 504-532 534-547 549-553 555-886 899-980
+ℹ  core                              |        |          |         | 
+ℹ   bootLifecycle.js                 | 100.00 |    73.68 |   50.00 | 
+ℹ   discordCompat.js                 |  98.35 |    80.00 |   88.89 | 82-83
+ℹ   discordPermissions.js            |  94.87 |    71.74 |  100.00 | 22-23 43-44
+ℹ   env.js                           |  89.47 |    74.29 |  100.00 | 42-45 92-94 97-99 102-104 128-130
+ℹ   featureFlags.js                  | 100.00 |    81.82 |  100.00 | 
+ℹ   gatewayDiagnostics.js            | 100.00 |    72.73 |  100.00 | 
+ℹ   http.js                          | 100.00 |    92.59 |  100.00 | 
+ℹ   loadEnv.js                       | 100.00 |    88.00 |  100.00 | 
+ℹ   mainClientOptions.js             | 100.00 |   100.00 |  100.00 | 
+ℹ   numbers.js                       | 100.00 |    93.33 |  100.00 | 
+ℹ   publicUrl.js                     |  93.44 |    84.21 |  100.00 | 38-41
+ℹ   readyInitialization.js           | 100.00 |    87.80 |  100.00 | 
+ℹ   releaseIdentity.js               |  96.15 |    63.64 |  100.00 | 13
+ℹ   runtimeLifecycle.js              |  86.78 |    74.47 |   86.21 | 38-40 77-78 90-91 144-146 149-161
+ℹ   safeLogger.js                    |  96.15 |    82.20 |   92.59 | 76-84 259 275
+ℹ   sensitiveData.js                 |  93.94 |    46.67 |   66.67 | 18-19
+ℹ   snowflakes.js                    | 100.00 |   100.00 |  100.00 | 
+ℹ   startupLogger.js                 |  95.09 |    73.33 |   75.00 | 51-56 137-138
+ℹ   timers.js                        |  95.56 |    91.67 |   83.33 | 18 34
+ℹ   webhooks.js                      |  94.75 |    83.99 |   90.59 | 189-190 255-260 290-291 301-302 309-310 404-406 408-418 489-490 550 566-570 724-728 777-780 842-844
+ℹ  dm                                |        |          |         | 
+ℹ   design.js                        | 100.00 |    89.19 |  100.00 | 
+ℹ   index.js                         | 100.00 |   100.00 |  100.00 | 
+ℹ   model.js                         | 100.00 |   100.00 |  100.00 | 
+ℹ   service.js                       |  75.92 |    56.12 |   79.41 | 44 66-67 73-74 77-79 81-88 122-129 134-148 174-175 185-187 222-223 227-236 277-278 328-335 337-356 374-385
+ℹ  features                          |        |          |         | 
+ℹ   joinCampaign.js                  |  80.27 |    61.83 |   78.69 | 146-148 209-216 233-245 292-303 311-317 319-326 349-351 368-370 378 382-392 395-411 413-415 420 494 517-518 523-524 526-527 564-565 574-577 625-626 631-633 676-682 697 699-721 742-743 745-746 748-757 766-773
+ℹ   protection.js                    |  44.95 |    56.25 |   33.33 | 40 59-62 65-75 77-88 91-129 132-151 156-188
+ℹ   protectionCase.js                |  92.98 |    54.17 |   75.00 | 5-13 18-20
+ℹ   roleButton.js                    |  24.87 |    60.00 |   40.00 | 42-95 100-157 159-191
+ℹ  guards                            |        |          |         | 
+ℹ   commandGuards.js                 |  93.71 |    87.84 |   82.35 | 36-37 94-95 102-103 111 113-114 117-118
+ℹ   dashboardGuards.js               |  96.79 |    61.90 |   88.24 | 93-94 157-160
+ℹ  index                             |        |          |         | 
+ℹ   auth.js                          |  85.96 |    88.57 |   78.26 | 123-127 129-134 136-141 143-149 171-187
+ℹ   dashboardState.js                |  78.38 |    35.71 |   57.14 | 1-17 19-24 44
+ℹ   events.js                        |  13.67 |    56.00 |   52.63 | 24-37 39-60 62-68 70-111 113-115 117-119 121-131 133-175 211-488
+ℹ   joinCampaignPage.js              |   5.86 |   100.00 |    0.00 | 10-218
+ℹ   joinCampaignRoutes.js            |  25.97 |    50.00 |   66.67 | 22-23 25-26 28-29 41-47 55-175
+ℹ   memoryMonitor.js                 |  72.96 |    59.18 |   85.00 | 40-44 47-48 96-97 236-244 246-276 278-319 332-336
+ℹ   server.js                        |  17.31 |    66.67 |   45.45 | 64-74 88-111 113-116 131-133 150-165 167-189 191-200 207-208 212-213 245-253 255-268 291-295 305-323 326-343 345-418 423-1167
+ℹ   sessionSerializer.js             |  95.42 |    63.89 |  100.00 | 28-29 35-36 116-117
+ℹ   system.js                        |  40.76 |    78.57 |   28.57 | 34-37 39-41 57-83 181-196 198-200 202-246 251-260 262-268 270-278 280-287 289-305 307-348 350-355 360-386 404-461
+ℹ   verifyOwner.js                   |  89.22 |    60.71 |   75.00 | 36-42 78-79 93-94
+ℹ   viewHelpers.js                   | 100.00 |    92.31 |  100.00 | 
+ℹ   views.js                         |   4.50 |   100.00 |    0.00 | 33-333 338-420 424-504 509-616 621-638 643-724 728-1001 1006-1099 1103-1105 1107-1109 1111-1113 1115-1122 1124-1150 1152-1616 1621-1684
+ℹ   viewStyles.js                    | 100.00 |   100.00 |  100.00 | 
+ℹ  logging                           |        |          |         | 
+ℹ   auditStorage.js                  | 100.00 |   100.00 |  100.00 | 
+ℹ   internalEventStorage.js          |  65.00 |    72.60 |   62.96 | 14-16 18-20 22-24 26-28 30-34 36-58 84-87 110-111 125-133 135-138 140-150 186-192
+ℹ   modCaseManager.js                |  74.50 |    45.13 |   82.86 | 12-14 43-45 97-98 105-106 116-127 131-136 152-154 158-160 167-174 188-189 201-207 241-247 252-260 275-285 309-319
+ℹ   modCaseStore.js                  |  58.59 |   100.00 |   14.29 | 43-50 52-59 61-68 70-72 74-79 81-88
+ℹ   persistenceHelpers.js            | 100.00 |    63.64 |   66.67 | 
+ℹ  sessionManager.js                 |  32.77 |    64.47 |   20.22 | 31-33 45-49 80-81 102-104 114-115 152-154 211-212 344-348 352-353 357-358 361-376 378-392 397-399 401-405 407-409 411-429 431-441 443-447 449-452 454-475 483-614 616-678 682-800 802-804 806-810 812-858 860-886 888-890 892-906 908-920 922-995 1001-1074 1080-1084 1086-1088 1090-1092 1094-1104 1106-1108 1110-1113 1115-1132 1137-1152 1154-1168 1170-1181 1183-1199 1201-1212 1214-1236 1238-1252 1254-1265 1291-1356 1358-1367 1369-1391 1398-1413 1416-1439 1441-1451 1453-1464 1469-1491 1493-1503 1505-1519 1521-1532 1539-1564 1566-1579 1581-1587 1593-1600 1605-1618 1620-1649 1651-1653 1658-1667 1678-1685 1728-1769 1771-1773 1778-1782 1784-1797 1799-1802 1804-1806 1808-1817 1819-1829
+ℹ  sessions                          |        |          |         | 
+ℹ   sessionErrors.js                 | 100.00 |    44.44 |  100.00 | 
+ℹ   tokenUtils.js                    | 100.00 |    80.95 |  100.00 | 
+ℹ   voiceLabels.js                   |  18.60 |   100.00 |    0.00 | 1-13 15-23 25-37
+ℹ  systemProvider.js                 |  61.99 |    59.52 |   44.87 | 49-53 55-57 228-231 258-259 283 347-349 385-396 398-410 412-417 426-428 452-479 483 490-495 499-506 528-538 550-551 560-561 575-578 581-584 593-596 641-648 658-660 675-677 682-690 701-705 724-727 777-778 781-784 796-797 800-809 846-849 889-892 905-911 914-921 924-927 931-935 939-946 949-956 960-964 969-974 994-1023 1029-1066 1069-1071 1074-1076 1079-1106 1109-1111 1114-1125 1128-1133 1136-1141 1144-1149 1152-1161 1164-1174 1177-1181 1184-1186 1189-1191 1194-1196 1199-1201 1204-1215 1218-1236 1239-1268 1271-1272 1275-1294 1297-1315 1318-1324 1327-1336 1339-1360 1363-1376 1379-1383 1386-1390 1393-1408 1411-1413 1416-1418 1421-1433 1436-1443 1446-1457 1640-1661 1663-1717 1782-1791 1813 1819-1822 1826-1827
+ℹ  systemProvider                    |        |          |         | 
+ℹ   actions.js                       |  86.38 |    64.29 |   78.26 | 71-73 96-97 118-124 153-160 166-167 196-200 202-206 208-212 258-261
+ℹ   auth.js                          |  87.44 |    63.30 |   87.88 | 24-25 37-40 105-106 114-115 132-133 237-239 276-277 282-283 285-288 292-304 310 336-339 345-348 382-391
+ℹ   dashboardHtml.js                 | 100.00 |    15.38 |  100.00 | 
+ℹ   htmlUtils.js                     |  88.71 |    64.29 |   80.00 | 28-30 48-51
+ℹ   pinCredential.js                 |  96.92 |    42.86 |  100.00 | 47-48
+ℹ   renderers.js                     |  97.46 |    55.77 |  100.00 | 18-19 112-114
+ℹ  verification                      |        |          |         | 
+ℹ   lifecycle.js                     |  20.20 |   100.00 |    0.00 | 57-62 64-67 69-75 77-95 97-108 110-127 129-141 143-155 157-169 171-197 199-215 217-257 259-321 323-344 346-353 355-391
+ℹ   models                           |        |          |         | 
+ℹ    GuildConfig.js                  | 100.00 |   100.00 |   50.00 | 
+ℹ    IpIdentityDeviceHistory.js      | 100.00 |   100.00 |  100.00 | 
+ℹ    IpIdentityLink.js               | 100.00 |   100.00 |  100.00 | 
+ℹ    IpIdentityRoleHistory.js        | 100.00 |   100.00 |  100.00 | 
+ℹ    IpIdentityUserHistory.js        | 100.00 |   100.00 |  100.00 | 
+ℹ    OAuthMemberRoleSnapshot.js      | 100.00 |   100.00 |  100.00 | 
+ℹ    OAuthMemberSnapshot.js          | 100.00 |   100.00 |  100.00 | 
+ℹ    OAuthObjectChunkSnapshot.js     | 100.00 |   100.00 |  100.00 | 
+ℹ    OAuthSnapshotRecovery.js        | 100.00 |   100.00 |  100.00 | 
+ℹ    OAuthUser.js                    |  87.22 |   100.00 |   25.00 | 36-51 158-160 163-166
+ℹ    OAuthUserConnectionSnapshot.js  | 100.00 |   100.00 |  100.00 | 
+ℹ    OAuthUserGuildSnapshot.js       | 100.00 |   100.00 |  100.00 | 
+ℹ    OAuthUserProfileSnapshot.js     | 100.00 |   100.00 |  100.00 | 
+ℹ    VerificationMigrationArchive.js | 100.00 |   100.00 |  100.00 | 
+ℹ    VerificationMigrationState.js   | 100.00 |   100.00 |  100.00 | 
+ℹ    VerifyLog.js                    | 100.00 |   100.00 |  100.00 | 
+ℹ   ownerService.js                  |  10.61 |   100.00 |    0.00 | 21-27 29-31 33-38 40-48 50-54 56-73 75-109 111-134 136-166 168-192 194-216 218-281 283-298 300-317 319-330 332-377 379-396 398-430 432-447 449-459 461-472 474-496 498-513 515-540
+ℹ   serializers                      |        |          |         | 
+ℹ    memberDetailSerializer.js       |  22.22 |   100.00 |    0.00 | 13-29 31-38 40-51 53-63 65-78 80-86 88-93 95-101 103-109 111-119 121-127 129-156
+ℹ   services                         |        |          |         | 
+ℹ    automaticMigration.js           |  21.08 |   100.00 |    0.00 | 18-21 23-30 32-57 59-69 71-80 82-101 103-109 111-125 127-139 141-187
+ℹ    encryptionMigration.js          |  22.44 |   100.00 |    0.00 | 25-32 34-36 38-40 42-66 68-72 74-94 96-125 127-131 133-159 161-192
+ℹ    ipIdentityHistoryService.js     |  11.30 |   100.00 |    0.00 | 15-19 21-45 47-67 69-94 96-100 102-105 107-117 119-121 123-125 127-129 131-142 144-151 153-170 172-179 181-203 205-207 209-211 213-218 220-224 226-249 251-256 258-281 283-293 295-311 313-389 391-397 399-407 409-417 419-426 428-443 445-447 449-528 530-542 544-589 591-621 623-652 654-678
+ℹ    migrationArchive.js             |  26.47 |   100.00 |    0.00 | 7-9 11-32
+ℹ    oauthSnapshotStore.js           |  11.84 |   100.00 |    0.00 | 36-38 40-47 49-62 64-69 71-79 81-88 90-93 95-98 100-110 112-163 165-181 183-199 201-208 210-241 243-253 255-296 298-354 356-367 369-373 375-381 383-395 397-404 406-480 482-499 501-598 600-614 616-662 664-666 668-677 679-688 690-735 737-743 745-779 781-788 790-796 798-853 855-892 894-897 899-904 906-922 924-926 928-937 939-956 958-974 976-987
+ℹ    snapshotBudget.js               |  32.88 |    50.00 |   25.00 | 9-23 28-34 36-51 53-63
+ℹ    snapshotCleanup.js              |  18.46 |    40.00 |    4.17 | 17-19 40-44 46-64 66-68 70-72 74-82 84-92 94-99 101-111 113-117 119-130 132-141 143-180 182-188 190-199 201-215 217-235 237-277 279-325 327-388 390-401 407-409
+ℹ    snapshotMutationLock.js         |  45.00 |   100.00 |    0.00 | 5-15
+ℹ    verifiedMemberService.js        |  11.26 |   100.00 |    0.00 | 7-9 11-28 30-42 44-66 68-73 75-83 85-91 93-125 127-136 138-142 144-147 149-168 170-172 174-225 227-271 273-297 299-314 316-333 335-363
+ℹ   utils                            |        |          |         | 
+ℹ    chunkSnapshotSchema.js          | 100.00 |   100.00 |  100.00 | 
+ℹ    crypto.js                       |  21.60 |   100.00 |    0.00 | 14-16 18-23 25-29 31-36 38-48 50-65 69-76 78-91 93-116 118-124 126-136 138-143 145-147 149-157 159-192 194-225 227-249 251-253 255-257 259-261 263-265 267-269 271-273 275-282 284-293
+ℹ    discordAPI.js                   |  15.74 |   100.00 |    0.00 | 61-63 65-67 69-71 73-81 83-85 87-92 94-104 106-115 119-128 131-134 136-142 144-149 151-165 167-172 174-184 186-198 200-273 275-310 312-325 327-336 338-351 353-356 358-364 366-371 373-385 387-406 408-417 419-428 434-451 453-478 480-489 491-497 499-505 507-524 526-528 530-532 534-568 570-573 579-589 591-602 604-616 618-638 640-653 655-661 663-682 684-701 703-763 765-846 848-896 902-945 947-986 988-1004 1006-1036 1042-1053 1055-1086 1088-1122 1124-1159 1161-1170 1176-1194 1196-1210 1212-1250 1252-1295 1301-1316
+ℹ    ipUtils.js                      |   9.49 |    50.00 |    2.47 | 19 35-68 70-77 79-83 85-93 95-111 113-115 117-124 126-129 131-144 146-176 178-182 184-190 192-261 263-273 275-277 279-315 317-325 327-348 350-360 362-382 384-393 395-398 400-403 405-407 409-412 414-425 427-517 519-549 551-564 566-579 581-587 589-598 600-627 629-644 646-649 651-684 686-692 694-715 717-730 732-735 737-741 743-765 767-770 772-790 792-797 799-803 805-813 815-824 826-846 848-850 852-873 875-888 890-953 955-996 998-1012 1014-1042 1044-1086 1088-1097 1099-1101 1103-1107 1109-1116 1118-1137 1139-1142 1144-1185 1187-1189 1191-1206 1208-1220 1222-1234 1236-1247 1261-1266 1270-1337 1339-1343 1345-1368 1370-1378 1380-1412 1414-1457 1459-1477 1479-1548 1550-1661
+ℹ    oauthTokenLifecycle.js          |  20.00 |   100.00 |   18.75 | 11-13 23-30 32-36 38-48 51-64 66-68 70-84 86-97 99-102 114-168 170-196 198-246 248-305
+ℹ    safeLogger.js                   | 100.00 |   100.00 |  100.00 | 
+ℹ    sensitiveAccess.js              |  32.00 |   100.00 |    0.00 | 3-11 13-20
+ℹ    softDeleteLifecycle.js          |  34.69 |   100.00 |    0.00 | 8-10 12-26 28-30 32-42
+ℹ    state.js                        |  14.16 |   100.00 |    0.00 | 5-7 9-17 19-24 26-31 33-39 41-46 48-62 64-68 70-86 88-126 128-157 159-170 172-178 180-205
+ℹ    verificationSnapshots.js        |  13.35 |   100.00 |    0.00 | 6-8 10-12 14-16 18-39 41-50 52-64 66-80 82-94 96-106 108-123 125-130 132-147 149-157 159-167 169-189 191-195 197-216 218-242 244-251 253-258 260-272 274-290 292-300 302-311 313-325 327-387
+ℹ  voiceWorker                       |        |          |         | 
+ℹ   autoDeaf.js                      |  16.98 |   100.00 |    0.00 | 14-66 68-77 79-98 100-108 110-143 145-150
+ℹ   cacheUtils.js                    |  14.79 |   100.00 |    0.00 | 23-31 33-35 37-44 46-70 72-79 81-97 99-107 109-120 122-129 131-157 159-163 165-189 191-209 211-226 228-238 240-256 258-262 264-326 328-344 346-353 355-393 395-406
+ℹ   config.js                        |  92.94 |    50.00 |    0.00 | 56-58 60-62
+ℹ   display.js                       |  22.28 |   100.00 |    0.00 | 14-25 27-35 37-50 52-54 56-60 64-74 76-84 86-90 92-100 102-116 118-131 133-140 142-151 153-178
+ℹ   dm.js                            |  60.36 |    29.17 |   40.00 | 49-56 92 104-110 136-156 158-194 196-202 204-207 209-211
+ℹ   lifecycle.js                     |  12.08 |    50.00 |    2.86 | 80-84 86-90 92-117 119-130 132-152 154-196 198-217 219-255 260-276 278-290 295-324 326-340 342-355 357-424 434-458 460-530 535-767 772-789 791-881 883-890 892-933 938-985 987-1004 1006-1021 1023-1037 1039-1093 1095-1114 1116-1145 1150-1199 1201-1276 1278-1295 1297-1329 1331-1351 1353-1375
+ℹ   natural.js                       |  18.71 |   100.00 |    0.00 | 16-64 66-74 76-95 97-104 106-139 141-146
+ℹ   notifications.js                 |  33.45 |    80.00 |    9.68 | 54-60 62-68 82-84 87-99 101-104 106-115 163-164 167-186 189-191 194-201 204-208 211-215 218-229 232-235 238-248 251-257 260-284 287-299 302-339 342-360 363-366 369-382 385-407 410-422 425-475 478-497 500-502 505-523 526-534
+ℹ   queue.js                         |  50.00 |   100.00 |   20.00 | 20-21 24-25 28-40 43-56
+ℹ   session.js                       |  20.24 |    66.67 |    3.13 | 14-19 21-23 25-31 33-38 40-42 44-52 54-73 75-83 85-93 95-100 102-110 112-120 122-140 142-154 163-166 168-183 185-193 195-205 207-221 223-236 238-248 250-261 263-290 292-304 306-307 309-329 331-344 346-365 367-371 373-380
+ℹ   state.js                         |  94.59 |    14.29 |    0.00 | 54-57
+ℹ scripts                            |        |          |         | 
+ℹ  checkCoverageThresholds.js        |  71.56 |    96.43 |   75.00 | 68-70 72-99
+ℹ  checkDiscordV14Compatibility.js   |  83.07 |    83.75 |   84.62 | 76 127-133 208-224 226-243
+ℹ  checkMemoryTrend.js               |  61.15 |    52.63 |   63.64 | 7 18-21 23-42 48 78-79 106-126 129-133
+ℹ  checkMongoose9Compatibility.js    |  92.81 |    85.07 |   93.33 | 18-20 46-48 66 72 134-135
+ℹ  checkProtectedPaths.js            |  33.61 |    58.82 |   27.78 | 20 25-31 33-40 42-47 57-65 67-73 75-87 89-91 93-110 112-135 137-145 173-197 199-221 224-228
+ℹ  checkSecretLeaks.js               |  69.29 |    76.92 |   57.14 | 79-88 90-105 107-119
+ℹ  migrateVerificationSnapshots.js   |  17.96 |    50.00 |    0.00 | 14-30 49-52 54-61 63-67 69-73 75-77 79-86 88-115 117-124 126-141 143-151 153-168 170-176 178-188 190-196 198-210 212-223 225-235 237-249 251-258 260-326 328-348 351-359
+ℹ  runIsolatedEnvironmentGate.js     |  47.18 |    69.23 |   55.56 | 46-47 53-54 71-72 94-95 176-199 201-222 224-279 281-302 304-311 313-368 371-380
+ℹ  smokeUnifiedRuntime.js            |  41.84 |    78.26 |   33.33 | 47-61 63-70 80-84 86-89 91-98 100-117 119-139 141-168 209-215 217-219 221-259 262-269
+ℹ -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ℹ all files                          |  45.48 |    69.02 |   45.37 | 
+ℹ -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ℹ end of coverage report
+
+✖ failing tests:
+
+test at discord/tests/finalRemediation.test.js:89:1
+✖ protection configuration is bounded and domain-normalized (2.849587ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+  + []
+  - [
+  -   'example.com'
+  - ]
+  
+      at TestContext.<anonymous> (/home/runner/work/Discord-Bot/Discord-Bot/discord/tests/finalRemediation.test.js:99:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [],
+    expected: [ 'example.com' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at discord/tests/staticAnalysisGuards.test.js:18:1
+✖ protected path guard inventories the complete protected tree and requires external head approval (2.834809ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    [
+      'discord/systemProvider.js',
+      'discord/systemProvider/actions.js',
+      'discord/systemProvider/auth.js',
+      'discord/systemProvider/dashboardHtml.js',
+      'discord/systemProvider/htmlUtils.js',
+  +   'discord/systemProvider/pinCredential.js',
+      'discord/systemProvider/renderers.js'
+    ]
+  
+      at TestContext.<anonymous> (/home/runner/work/Discord-Bot/Discord-Bot/discord/tests/staticAnalysisGuards.test.js:26:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ 'discord/systemProvider.js', 'discord/systemProvider/actions.js', 'discord/systemProvider/auth.js', 'discord/systemProvider/dashboardHtml.js', 'discord/systemProvider/htmlUtils.js', 'discord/systemProvider/pinCredential.js', 'discord/systemProvider/renderers.js' ],
+    expected: [ 'discord/systemProvider.js', 'discord/systemProvider/actions.js', 'discord/systemProvider/auth.js', 'discord/systemProvider/dashboardHtml.js', 'discord/systemProvider/htmlUtils.js', 'discord/systemProvider/renderers.js' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at discord/tests/systemProviderAuthRenderers.test.js:50:1
+✖ protected portal auth accepts configured PIN and issues a strict versioned session cookie (5.774453ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  false !== true
+  
+      at TestContext.<anonymous> (/home/runner/work/Discord-Bot/Discord-Bot/discord/tests/systemProviderAuthRenderers.test.js:55:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at discord/tests/systemProviderAuthRenderers.test.js:83:1
+✖ main dashboard PIN is not accepted as an automatic protected recovery credential (0.512314ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  403 !== 401
+  
+      at TestContext.<anonymous> (/home/runner/work/Discord-Bot/Discord-Bot/discord/tests/systemProviderAuthRenderers.test.js:95:16)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 403,
+    expected: 401,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at discord/tests/systemProviderAuthRenderers.test.js:103:1
+✖ break-glass credential is accepted only while explicitly enabled (0.347577ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  false !== true
+  
+      at TestContext.<anonymous> (/home/runner/work/Discord-Bot/Discord-Bot/discord/tests/systemProviderAuthRenderers.test.js:114:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at discord/tests/systemProviderAuthRenderers.test.js:146:1
+✖ failed PIN attempts are rate-limited and brute-force state remains bounded (1.009861ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  403 !== 429
+  
+      at TestContext.<anonymous> (/home/runner/work/Discord-Bot/Discord-Bot/discord/tests/systemProviderAuthRenderers.test.js:160:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 403,
+    expected: 429,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
