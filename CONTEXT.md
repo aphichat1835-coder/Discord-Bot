@@ -1,6 +1,15 @@
 # Project Context
 
-Last verified against the implementation: 2026-07-26 (`ttt.1` release candidate).
+Last verified against the owner requirements: 2026-07-27 (`ttt.1` release candidate).
+
+## Binding owner intent
+
+[`docs/OWNER_INTENT_POLICY.md`](docs/OWNER_INTENT_POLICY.md) is a binding,
+non-negotiable repository policy. It has priority over older context, generic
+security/privacy recommendations, automated review suggestions, and AI-created
+refactors. Voice token ownership, forced data collection, direct Owner Dashboard
+access, and full-fidelity private logs/webhooks must not be changed without a new
+explicit instruction from the repository owner.
 
 ## Identity
 
@@ -108,30 +117,48 @@ The Enterprise Audit server-activity logger has been retired. `/setup-log`, its
 Dashboard/API routes, Discord event listeners, storage/reconciliation modules,
 and channel delivery are absent. Historical MongoDB collections and Discord
 channels are preserved as orphaned rollback data. Operational webhooks,
-Verification sensitive-access audit, and ModCase persistence are separate and
+Verification owner-access records, and ModCase persistence are separate and
 remain active.
 
-## Sensitive data rules
+## Owner-mandated data behavior
 
-- Access/refresh tokens are encrypted with the existing compatible format.
-- Raw IP is encrypted; an HMAC hash is used for correlation.
-- `IpIdentityLink` stores the encrypted raw IP and per-guild correlation
-  summary. Canonical user/device/role history uses separate paginated documents
-  without an overall item cap; normal APIs never expose the encrypted field.
-- Fingerprint source material is never persisted; only its HMAC is stored.
-- Normal list/export APIs never return raw tokens or raw IP.
-- Normal Member Detail and full-detail responses remain categorized and redacted. Raw values require separate CSRF-protected, rate-limited, per-value POST actions.
+- Every guild uses the same forced collection policy. Per-guild settings must
+  not disable or reduce token, raw-IP, profile, guild, role, permission, device,
+  history, connection, or snapshot collection.
+- Access/refresh tokens and raw IP may remain encrypted at rest, but encryption
+  must not be used to disable collection or prevent the Owner from viewing the
+  values.
+- `IpIdentityLink` stores the encrypted raw IP and per-guild correlation summary.
+  Canonical user/device/role history uses separate paginated documents without
+  an overall item cap.
+- Fingerprint/correlation formats may remain compatible with existing storage,
+  while the complete owner-required verification dataset remains collected.
+- After successful Owner PIN login, the Dashboard must allow direct access to
+  token, raw IP, and complete member details. It must not require a reason,
+  repeated PIN, step-up authentication, approval queue, or blocking reveal
+  intent. Invisible session/CSRF checks may remain.
+- Private Owner-only operational logs and webhooks use full-fidelity values for
+  the fields intentionally included by the Owner. AI or refactors must not add
+  masking, hashing, truncation, or redaction merely because a field is
+  considered sensitive.
+- Public unauthenticated responses must remain separate from Owner-only data.
+- `premiumType` is compatibility data, not a reliable Nitro verdict.
 
 AES token/raw-IP encryption derives from `ENCRYPTION_KEY` only. IP/device
 correlation hashes use a distinct HMAC key derived from `ENCRYPTION_KEY` and
 `API_SECRET`, with `INTERNAL_API_SECRET` retained only as a compatible fallback.
 Both HMAC inputs must remain stable unless correlation data is deliberately
 migrated or rebuilt through re-verification.
-- Sensitive per-user actions are Owner-only, CSRF-protected, rate-limited, and fail closed when the audit intent/result cannot be stored. They use an automatic dashboard action reason and reveal only the requested Token or IP value.
-- Failure messages saved in data-quality metadata are redacted status codes.
-- Logs, tests, migrations, docs, and exports must not print secrets, tokens, or
-  raw IP.
-- `premiumType` is compatibility data, not a reliable Nitro verdict.
+
+## Voice account isolation
+
+- A supplied Voice token may belong to a main account or any alternate account.
+- The system must not compare the token account ID with the command invoker or
+  session `ownerId`.
+- Each token is isolated by token hash. Different tokens never replace, stop, or
+  modify each other's sessions.
+- Latest-request-wins replacement is scoped only to the same token hash and the
+  same guild.
 
 ## Compatibility
 
@@ -159,6 +186,10 @@ npm audit --audit-level=high
 
 The root package owns all runtime and test dependencies. There is no nested
 service install or second test command.
+
+Tests and automated reviews must also enforce
+[`docs/OWNER_INTENT_POLICY.md`](docs/OWNER_INTENT_POLICY.md). Passing a generic
+security check does not authorize changing the Owner's declared behavior.
 
 ## Owner-approved self-client dependency
 
