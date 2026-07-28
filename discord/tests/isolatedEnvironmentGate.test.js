@@ -6,7 +6,9 @@ const test = require("node:test");
 const {
     databaseNameFromMongoUri,
     exactAllowedHosts,
+    exactSnowflakeSet,
     hashIdentifier,
+    persistGateRecord,
     redactSecrets,
     validateIsolatedEnvironment
 } = require("../../scripts/runIsolatedEnvironmentGate");
@@ -24,7 +26,10 @@ function validEnvironment() {
         TEST_DISCORD_CLIENT_SECRET: "test-client-secret-value",
         TEST_PUBLIC_BASE_URL: "https://preview.example.test/",
         TEST_ALLOWED_HOSTS: "preview.example.test,other.example.test",
-        PRODUCTION_PUBLIC_BASE_URL: "https://production.example.test"
+        PRODUCTION_PUBLIC_BASE_URL: "https://production.example.test",
+        PRODUCTION_DISCORD_CLIENT_IDS: "523456789012345678",
+        PRODUCTION_GUILD_IDS: "623456789012345678",
+        PRODUCTION_CHANNEL_IDS: "723456789012345678,823456789012345678"
     };
 }
 
@@ -36,6 +41,7 @@ test("isolated environment gate accepts an explicitly separated test configurati
     assert.equal(config.commitSha, "abcdef1234567890abcdef1234567890abcdef12");
     assert.deepEqual(config.allowedHosts, ["other.example.test", "preview.example.test"]);
     assert.equal(config.guildId, "123456789012345678");
+    assert.deepEqual(config.productionResourceCounts, { clients: 1, guilds: 1, channels: 2 });
 });
 
 test("isolated environment gate rejects missing confirmation, production reuse, and non-test databases", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
@@ -73,6 +79,28 @@ test("isolated environment gate validates exact SHA, exact host allowlisting, an
         "a.example.test",
         "b.example.test"
     ]);
+    assert.deepEqual([...exactSnowflakeSet("123456789012345678,123456789012345678", "TEST_IDS")], [
+        "123456789012345678"
+    ]);
+    assert.throws(() => exactSnowflakeSet("invalid", "TEST_IDS"), /INVALID_TEST_IDS/);
+});
+
+test("isolated environment gate rejects production Discord application, guild, and channel reuse", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const clientReuse = validEnvironment();
+    clientReuse.PRODUCTION_DISCORD_CLIENT_IDS = clientReuse.TEST_DISCORD_CLIENT_ID;
+    assert.throws(() => validateIsolatedEnvironment(clientReuse), /CLIENT_MUST_DIFFER_FROM_PRODUCTION/);
+
+    const guildReuse = validEnvironment();
+    guildReuse.PRODUCTION_GUILD_IDS = guildReuse.TEST_GUILD_ID;
+    assert.throws(() => validateIsolatedEnvironment(guildReuse), /GUILD_MUST_DIFFER_FROM_PRODUCTION/);
+
+    const textChannelReuse = validEnvironment();
+    textChannelReuse.PRODUCTION_CHANNEL_IDS = textChannelReuse.TEST_TEXT_CHANNEL_ID;
+    assert.throws(() => validateIsolatedEnvironment(textChannelReuse), /CHANNELS_MUST_DIFFER_FROM_PRODUCTION/);
+
+    const voiceChannelReuse = validEnvironment();
+    voiceChannelReuse.PRODUCTION_CHANNEL_IDS = voiceChannelReuse.TEST_VOICE_CHANNEL_ID;
+    assert.throws(() => validateIsolatedEnvironment(voiceChannelReuse), /CHANNELS_MUST_DIFFER_FROM_PRODUCTION/);
 });
 
 test("environment gate evidence redacts credentials and hashes identifiers", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
@@ -85,6 +113,26 @@ test("environment gate evidence redacts credentials and hashes identifiers", () 
     assert.equal((redacted.match(/\[REDACTED\]/g) || []).length, 3);
     assert.match(hashIdentifier(config.guildId), /^[a-f0-9]{16}$/);
     assert.notEqual(hashIdentifier(config.guildId), config.guildId);
+});
+
+test("record persistence failure is reported without escaping the helper", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const messages = [];
+    const config = validateIsolatedEnvironment(validEnvironment());
+    const result = persistGateRecord(config, { status: "failed" }, {
+        writer() {
+            throw new Error(`cannot write ${config.mongoUri}`);
+        },
+        logger: {
+            log() {},
+            error(message) { messages.push(message); }
+        }
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, "ENV_GATE_RECORD_WRITE_FAILED");
+    assert.equal(result.error.message.includes(config.mongoUri), false);
+    assert.match(messages[0], /record write failed/);
+    assert.equal(messages[0].includes(config.mongoUri), false);
 });
 
 test("Mongo database name parser handles standard and SRV connection strings", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
