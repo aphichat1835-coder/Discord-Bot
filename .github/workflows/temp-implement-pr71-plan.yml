@@ -26,7 +26,26 @@ jobs:
           persist-credentials: true
 
       - name: Apply reviewed implementation
-        run: python3 .github/scripts/temp_apply_pr71_plan.py
+        id: apply
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          set -o pipefail
+          python3 .github/scripts/temp_apply_pr71_plan.py 2>&1 | tee artifacts/pr71-patch.log
+
+      - name: Upload patch diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pr71-patch-diagnostics-${{ github.event.pull_request.head.sha }}
+          path: artifacts/pr71-patch.log
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Stop when patch failed
+        if: ${{ steps.apply.outcome != 'success' }}
+        run: exit 1
 
       - name: Install dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
@@ -46,6 +65,7 @@ jobs:
           rm -f .github/workflows/temp-implement-pr71-push.yml
           rm -f .github/scripts/temp_apply_pr71_plan.py
           rm -f .github/.temp-pr71-trigger
+          rm -rf artifacts
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
