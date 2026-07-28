@@ -7,6 +7,9 @@ const schema = new mongoose.Schema({
     guildId: { type: String, required: true, index: true },
     userId: { type: String, required: true, index: true },
     subjectHash: { type: String, default: null, index: true },
+    operationKey: { type: String, required: true, index: true },
+    activeKey: { type: String, default: undefined },
+    attempt: { type: Number, default: 1, min: 1 },
     requestedBy: { type: String, required: true },
     status: { type: String, enum: ["pending", "running", "completed", "failed"], default: "pending", index: true },
     manifestVersion: { type: Number, default: 1 },
@@ -18,6 +21,8 @@ const schema = new mongoose.Schema({
 }, { minimize: false });
 
 schema.index({ status: 1, updatedAt: 1 });
+schema.index({ activeKey: 1 }, { unique: true, sparse: true });
+schema.index({ operationKey: 1, completedAt: -1 });
 
 module.exports = mongoose.models.PrivacyDeletionJob ||
     mongoose.model("PrivacyDeletionJob", schema);

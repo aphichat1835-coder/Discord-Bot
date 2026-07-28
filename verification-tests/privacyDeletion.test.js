@@ -5,6 +5,7 @@ const test = require("node:test");
 const {
     buildOAuthUserPrivacyUpdate,
     createManifest,
+    deletionOperationKey,
     redactArchivedOAuthPayload,
     runMemberPrivacyDeletion,
     totalDeletionCount
@@ -14,6 +15,7 @@ function queryResult(value) {
     return {
         select() { return this; },
         session() { return this; },
+        sort() { return this; },
         lean: async () => value
     };
 }
@@ -309,4 +311,153 @@ test("completion persistence failure prevents a successful deletion result", asy
         error => error === completionError
     );
     assert.ok(jobUpdates.some(update => update.$set?.status === "failed"));
+});
+
+test("privacy deletion reuses an active job without starting another transaction", async () => {
+    let created = 0;
+    let sessionsStarted = 0;
+    const activeJob = {
+        jobId: "active-job",
+        status: "running",
+        updatedAt: 9_900,
+        attempt: 1,
+        manifest: createManifest()
+    };
+    const models = createModels({
+        PrivacyDeletionJob: createModel({
+            findOne: () => queryResult(activeJob),
+            create: async () => { created++; }
+        })
+    });
+    const result = await runMemberPrivacyDeletion({
+        guildId: "guild-a",
+        userId: "111111111111111111",
+        requestedBy: "owner",
+        now: 10_000,
+        models,
+        mongooseInstance: { async startSession() { sessionsStarted++; throw new Error("must not start"); } }
+    });
+
+    assert.equal(result.jobId, "active-job");
+    assert.equal(result.reused, true);
+    assert.equal(result.pending, true);
+    assert.equal(result.status, "running");
+    assert.equal(created, 0);
+    assert.equal(sessionsStarted, 0);
+});
+
+test("privacy deletion reuses a recently completed result", async () => {
+    const manifest = createManifest();
+    manifest.deletedCount = 7;
+    const completed = {
+        jobId: "completed-job",
+        status: "completed",
+        updatedAt: 9_800,
+        completedAt: 9_800,
+        attempt: 1,
+        manifest
+    };
+    const models = createModels({
+        PrivacyDeletionJob: createModel({ findOne: () => queryResult(completed) })
+    });
+    const result = await runMemberPrivacyDeletion({
+        guildId: "guild-a",
+        userId: "111111111111111111",
+        requestedBy: "owner",
+        now: 10_000,
+        completedReuseMs: 500,
+        models,
+        mongooseInstance: { async startSession() { throw new Error("must not start"); } }
+    });
+
+    assert.equal(result.jobId, "completed-job");
+    assert.equal(result.reused, true);
+    assert.equal(result.pending, false);
+    assert.equal(result.manifest.deletedCount, 7);
+});
+
+test("privacy deletion resolves a duplicate-key race to the winning active job", async () => {
+    let reads = 0;
+    const duplicate = Object.assign(new Error("duplicate active key"), { code: 11000 });
+    const active = { jobId: "winner", status: "pending", updatedAt: 10_000, manifest: createManifest() };
+    const models = createModels({
+        PrivacyDeletionJob: createModel({
+            findOne: () => queryResult(++reads === 1 ? null : active),
+            create: async () => { throw duplicate; }
+        })
+    });
+    const result = await runMemberPrivacyDeletion({
+        guildId: "guild-a",
+        userId: "111111111111111111",
+        requestedBy: "owner",
+        now: 10_000,
+        models,
+        mongooseInstance: { async startSession() { throw new Error("must not start"); } }
+    });
+
+    assert.equal(result.jobId, "winner");
+    assert.equal(result.reused, true);
+    assert.equal(reads, 2);
+});
+
+test("privacy deletion retries failed jobs with an incremented attempt", async () => {
+    let createdJob = null;
+    const failed = { jobId: "failed-job", status: "failed", updatedAt: 5_000, attempt: 2 };
+    const models = createModels({
+        PrivacyDeletionJob: createModel({
+            findOne: () => queryResult(failed),
+            create: async job => { createdJob = job; },
+            updateOne: async () => writeResult(1)
+        })
+    });
+    const result = await runMemberPrivacyDeletion({
+        guildId: "guild-a",
+        userId: "111111111111111111",
+        requestedBy: "owner",
+        now: 10_000,
+        models,
+        mongooseInstance: fakeMongoose()
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.reused, false);
+    assert.equal(createdJob.attempt, 3);
+    assert.equal(createdJob.activeKey, createdJob.operationKey);
+});
+
+test("privacy deletion marks stale active work failed before retrying", async () => {
+    const updates = [];
+    let createdJob = null;
+    const stale = { jobId: "stale-job", status: "running", updatedAt: 1_000, attempt: 4 };
+    const models = createModels({
+        PrivacyDeletionJob: createModel({
+            findOne: () => queryResult(stale),
+            create: async job => { createdJob = job; },
+            updateOne: async (filter, update) => {
+                updates.push({ filter, update });
+                return writeResult(1);
+            }
+        })
+    });
+    await runMemberPrivacyDeletion({
+        guildId: "guild-a",
+        userId: "111111111111111111",
+        requestedBy: "owner",
+        now: 20_000,
+        staleJobMs: 5_000,
+        models,
+        mongooseInstance: fakeMongoose()
+    });
+
+    const staleUpdate = updates.find(item => item.update.$set?.errorCode === "PRIVACY_DELETION_STALE");
+    assert.ok(staleUpdate);
+    assert.equal(staleUpdate.update.$unset.activeKey, "");
+    assert.equal(createdJob.attempt, 5);
+});
+
+test("privacy deletion operation keys isolate guild and member scope", () => {
+    const first = deletionOperationKey("guild-a", "user-a");
+    assert.notEqual(first, deletionOperationKey("guild-b", "user-a"));
+    assert.notEqual(first, deletionOperationKey("guild-a", "user-b"));
+    assert.equal(first, deletionOperationKey("guild-a", "user-a"));
 });

@@ -1632,6 +1632,9 @@ router.delete("/api/guild/:guildId/member/:userId", requireAdmin, requireGuildAd
     res.json({
       success: true,
       jobId: deletion.jobId,
+      status: deletion.status || "completed",
+      reused: deletion.reused === true,
+      pending: deletion.pending === true,
       deletedCount: Number(deletion.manifest?.deletedCount || 0),
       details: deletion.manifest
     });
