@@ -1,5 +1,7 @@
 "use strict";
 
+const { drainDmService } = require("../dm/drain");
+
 async function runCleanupStep(name, action, state) {
     if (typeof action !== "function") return true;
     try {
@@ -65,7 +67,9 @@ function createShutdownCoordinator(options = {}) {
         clearTimer = clearTimeout,
         logger = console,
         forceTimeoutMs = 10000,
-        httpCloseTimeoutMs = 3000
+        httpCloseTimeoutMs = 3000,
+        dmDrainTimeoutMs = 5000,
+        drainDm = drainDmService
     } = options;
 
     let shutdownPromise = null;
@@ -87,7 +91,10 @@ function createShutdownCoordinator(options = {}) {
             logger.log(`\n⛔ [SHUTDOWN] ${signal} — graceful shutdown starting...`);
 
             await runCleanupStep("cron stop", () => system.stopCronJobs?.(), state);
-            await runCleanupStep("DM stop", () => dmService?.stop?.(), state);
+            await runCleanupStep("DM drain", () => drainDm(dmService, {
+                timeoutMs: dmDrainTimeoutMs,
+                setTimer
+            }), state);
             await runCleanupStep("runtime cleanups", async () => {
                 if (typeof system.stopRuntimeCleanups === "function") {
                     const result = system.stopRuntimeCleanups(runtimeCleanups);
