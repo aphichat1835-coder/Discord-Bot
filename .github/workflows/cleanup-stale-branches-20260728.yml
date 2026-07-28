@@ -1,15 +1,20 @@
 name: Cleanup stale remediation branches
 
 on:
-  push:
+  pull_request:
     branches:
-      - cleanup/remove-stale-branches-20260728
+      - ttt.1
+    types:
+      - opened
+      - reopened
+      - synchronize
 
 permissions:
   contents: write
 
 jobs:
   cleanup:
+    if: ${{ github.head_ref == 'cleanup/remove-stale-branches-20260728' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
