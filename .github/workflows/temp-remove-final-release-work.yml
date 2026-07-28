@@ -1,0 +1,52 @@
+name: TEMP remove final release work branch
+
+on:
+  pull_request:
+    branches: [ttt.1]
+    types: [opened, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: ${{ github.head_ref == 'cleanup/remove-final-release-work-20260729' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete merged work branch and cleanup branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          branches=(
+            "fix/final-release-blockers-pr71"
+            "cleanup/remove-final-release-work-20260729"
+          )
+          for branch in "${branches[@]}"; do
+            encoded=${branch//\//%2F}
+            status=$(curl --silent --show-error \
+              --output /tmp/delete-response.json \
+              --write-out "%{http_code}" \
+              --request DELETE \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer ${GH_TOKEN}" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/git/refs/heads/${encoded}")
+            case "${status}" in
+              204) echo "Deleted ${branch}" ;;
+              404) echo "Already absent: ${branch}" ;;
+              422)
+                if grep -q 'Reference does not exist' /tmp/delete-response.json; then
+                  echo "Already absent: ${branch}"
+                else
+                  cat /tmp/delete-response.json
+                  exit 1
+                fi
+                ;;
+              *)
+                cat /tmp/delete-response.json
+                exit 1
+                ;;
+            esac
+          done
