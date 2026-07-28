@@ -1632,9 +1632,7 @@ router.delete("/api/guild/:guildId/member/:userId", requireAdmin, requireGuildAd
     res.json({
       success: true,
       jobId: deletion.jobId,
-      deletedCount: Object.values(deletion.manifest || {})
-        .filter(value => Number.isFinite(Number(value)))
-        .reduce((sum, value) => sum + Number(value), 0),
+      deletedCount: Number(deletion.manifest?.deletedCount || 0),
       details: deletion.manifest
     });
   } catch (err) {
