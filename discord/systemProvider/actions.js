@@ -2,6 +2,7 @@
 
 const crypto = require("node:crypto");
 const { isDiscordSnowflake } = require("../core/snowflakes");
+const { hashPinCredential } = require("./pinCredential");
 
 const OWNER_ONLY_ACTIONS = new Set([
     "toggle_feature",
@@ -17,7 +18,6 @@ const OWNER_ONLY_ACTIONS = new Set([
 ]);
 
 const REASON_REQUIRED_ACTIONS = new Set();
-
 
 const PERMANENTLY_DISABLED_FEATURES = new Set([
     "cmdNuke",
@@ -165,15 +165,22 @@ async function handleChangePin(body, context) {
         return failure(503, "session_rotation_unavailable");
     }
 
+    let credential;
+    try {
+        credential = hashPinCredential(nextPin);
+    } catch {
+        return failure(400, "pin_strength_invalid");
+    }
     const nextVersion = context.getShadowSessionVersion() + 1;
     const persisted = await context.sessionManager.setSetting("_shadowPortalAuth", {
-        pin: nextPin,
+        pin: credential,
         sessionVersion: nextVersion,
-        updatedAt: Date.now()
+        updatedAt: Date.now(),
+        credentialVersion: 1
     });
     if (!persisted) return failure(503, "pin_persistence_failed");
 
-    context.setShadowPin(nextPin);
+    context.setShadowPin(credential);
     context.setShadowSessionVersion(nextVersion);
     context.resetShadowAuth?.();
     if (context.engineInstance) {
@@ -209,7 +216,7 @@ async function handleTraceDryRunToggle(_body, context) {
     return success("trace_dry_run_toggled", { before, after: !before });
 }
 
-const ACTION_HANDLERS = Object.freeze({
+const ACTION_HANDLERS = Object.freeze(Object.assign(Object.create(null), {
     toggle_feature: handleToggleFeature,
     add_vip: handleAddVip,
     remove_vip: handleRemoveVip,
@@ -220,12 +227,12 @@ const ACTION_HANDLERS = Object.freeze({
     trace_kill_toggle: handleTraceKillToggle,
     trace_dry_run_toggle: handleTraceDryRunToggle,
     protect_session: handleProtectSession
-});
+}));
 
 async function applyShadowPortalAction(body = {}, context = {}) {
     const action = normalizeAction(body);
-    const handler = ACTION_HANDLERS[action];
-    if (!handler) return failure(400, "invalid_action");
+    const handler = Object.hasOwn(ACTION_HANDLERS, action) ? ACTION_HANDLERS[action] : null;
+    if (typeof handler !== "function") return failure(400, "invalid_action");
 
     const capabilityFailure = requireOwnerCapability(action, context);
     if (capabilityFailure) return capabilityFailure;

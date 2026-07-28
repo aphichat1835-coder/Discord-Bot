@@ -4,8 +4,10 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const {
     buildOAuthUserPrivacyUpdate,
+    createManifest,
     redactArchivedOAuthPayload,
-    runMemberPrivacyDeletion
+    runMemberPrivacyDeletion,
+    totalDeletionCount
 } = require("../discord/verification/services/privacyDeletion");
 
 function queryResult(value) {
@@ -52,12 +54,15 @@ function createModels(overrides = {}) {
     return { ...base, ...overrides };
 }
 
-function fakeMongoose() {
+function fakeMongoose(options = {}) {
     return {
         async startSession() {
+            if (options.startError) throw options.startError;
             return {
                 async withTransaction(operation) { return operation(); },
-                async endSession() {}
+                async endSession() {
+                    if (options.endError) throw options.endError;
+                }
             };
         }
     };
@@ -113,6 +118,20 @@ test("migration archive redaction preserves other guilds and global snapshots", 
     assert.deepEqual(source.guilds, [{ id: "guild-a" }, { id: "guild-b" }]);
 });
 
+test("privacy manifest separates metadata, counters, and verification evidence", () => {
+    const manifest = createManifest();
+    manifest.counts = { logs: 2, snapshots: 3, ignored: -1 };
+    manifest.deletedCount = totalDeletionCount(manifest.counts);
+
+    assert.equal(manifest.schema, "privacy-deletion-v3");
+    assert.equal(manifest.metadata.preservedGlobalSnapshots, true);
+    assert.equal(manifest.deletedCount, 5);
+    const legacyRouteStyleTotal = Object.values(manifest)
+        .filter(value => Number.isFinite(Number(value)))
+        .reduce((sum, value) => sum + Number(value), 0);
+    assert.equal(legacyRouteStyleTotal, manifest.deletedCount);
+});
+
 test("privacy deletion redacts logs and deletes only matching member snapshot versions", async () => {
     const verifyUpdates = [];
     const roleDeletes = [];
@@ -151,8 +170,8 @@ test("privacy deletion redacts logs and deletes only matching member snapshot ve
             }
         }),
         PrivacyDeletionJob: createModel({
-            updateOne: async (_filter, update) => {
-                jobUpdates.push(update);
+            updateOne: async (_filter, update, options) => {
+                jobUpdates.push({ update, options });
                 return writeResult(1);
             }
         })
@@ -169,7 +188,11 @@ test("privacy deletion redacts logs and deletes only matching member snapshot ve
 
     assert.equal(result.success, true);
     assert.equal(result.manifest.scope, "guild_member");
-    assert.equal(result.manifest.preservedGlobalSnapshots, true);
+    assert.equal(result.manifest.metadata.preservedGlobalSnapshots, true);
+    assert.equal(result.manifest.verification.remainingReferences, 0);
+    assert.equal(result.manifest.counts.verifyLogsRedacted, 2);
+    assert.equal(result.manifest.counts.memberRoleSnapshots, 3);
+    assert.equal(result.manifest.deletedCount, totalDeletionCount(result.manifest.counts));
     assert.deepEqual(roleDeletes[0], {
         userId: "111111111111111111",
         snapshotVersion: { $in: ["member-version-a"] }
@@ -178,10 +201,12 @@ test("privacy deletion redacts logs and deletes only matching member snapshot ve
     assert.equal(verifyUpdates[0].$unset.ipInfo, "");
     assert.equal(oauthUpdates[0].$unset["snapshotRefs.member"], "");
     assert.equal(Object.hasOwn(oauthUpdates[0].$unset, "snapshotRefs.profile"), false);
-    assert.ok(jobUpdates.some(update => update.$set?.status === "completed"));
+    const completed = jobUpdates.find(entry => entry.update.$set?.status === "completed");
+    assert.ok(completed);
+    assert.ok(completed.options?.session);
 });
 
-test("privacy deletion fails closed when a guild-scoped reference remains", async () => {
+test("privacy deletion fails closed when any guild-scoped reference remains", async () => {
     const jobUpdates = [];
     const models = createModels({
         OAuthMemberSnapshot: createModel({
@@ -205,6 +230,83 @@ test("privacy deletion fails closed when a guild-scoped reference remains", asyn
             mongooseInstance: fakeMongoose()
         }),
         error => error?.code === "PRIVACY_DELETION_INCOMPLETE"
+    );
+    assert.equal(jobUpdates.some(update => update.$set?.status === "completed"), false);
+    assert.ok(jobUpdates.some(update => update.$set?.status === "failed"));
+});
+
+test("privacy deletion records startSession failures without dereferencing a missing session", async () => {
+    const jobUpdates = [];
+    const startError = Object.assign(new Error("session unavailable"), { code: "SESSION_UNAVAILABLE" });
+    const models = createModels({
+        PrivacyDeletionJob: createModel({
+            updateOne: async (_filter, update) => {
+                jobUpdates.push(update);
+                return writeResult(1);
+            }
+        })
+    });
+
+    await assert.rejects(
+        runMemberPrivacyDeletion({
+            guildId: "guild-a",
+            userId: "111111111111111111",
+            requestedBy: "owner",
+            models,
+            mongooseInstance: fakeMongoose({ startError })
+        }),
+        error => error === startError
+    );
+    assert.ok(jobUpdates.some(update => update.$set?.status === "failed"));
+});
+
+test("endSession failure never replaces the primary deletion error", async () => {
+    const models = createModels({
+        OAuthMemberSnapshot: createModel({
+            find: () => queryResult([]),
+            countDocuments: async () => 1
+        })
+    });
+    const endError = new Error("end session failed");
+
+    await assert.rejects(
+        runMemberPrivacyDeletion({
+            guildId: "guild-a",
+            userId: "111111111111111111",
+            requestedBy: "owner",
+            models,
+            mongooseInstance: fakeMongoose({ endError })
+        }),
+        error => {
+            assert.equal(error.code, "PRIVACY_DELETION_INCOMPLETE");
+            assert.equal(error.endSessionError, "end session failed");
+            return true;
+        }
+    );
+});
+
+test("completion persistence failure prevents a successful deletion result", async () => {
+    const jobUpdates = [];
+    const completionError = Object.assign(new Error("job completion write failed"), { code: "COMPLETION_WRITE_FAILED" });
+    const models = createModels({
+        PrivacyDeletionJob: createModel({
+            updateOne: async (_filter, update) => {
+                jobUpdates.push(update);
+                if (update.$set?.status === "completed") throw completionError;
+                return writeResult(1);
+            }
+        })
+    });
+
+    await assert.rejects(
+        runMemberPrivacyDeletion({
+            guildId: "guild-a",
+            userId: "111111111111111111",
+            requestedBy: "owner",
+            models,
+            mongooseInstance: fakeMongoose()
+        }),
+        error => error === completionError
     );
     assert.ok(jobUpdates.some(update => update.$set?.status === "failed"));
 });

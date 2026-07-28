@@ -35,6 +35,9 @@ env:
   TEST_PUBLIC_BASE_URL: ${{ secrets.TEST_PUBLIC_BASE_URL }}
   TEST_ALLOWED_HOSTS: ${{ vars.TEST_ALLOWED_HOSTS }}
   PRODUCTION_PUBLIC_BASE_URL: ${{ vars.PRODUCTION_PUBLIC_BASE_URL }}
+  PRODUCTION_DISCORD_CLIENT_IDS: ${{ vars.PRODUCTION_DISCORD_CLIENT_IDS }}
+  PRODUCTION_GUILD_IDS: ${{ vars.PRODUCTION_GUILD_IDS }}
+  PRODUCTION_CHANNEL_IDS: ${{ vars.PRODUCTION_CHANNEL_IDS }}
   GATE_RECORD_DIR: artifacts
 
 jobs:
@@ -62,6 +65,9 @@ jobs:
           test -n "$TEST_PUBLIC_BASE_URL"
           test -n "$TEST_ALLOWED_HOSTS"
           test -n "$PRODUCTION_PUBLIC_BASE_URL"
+          test -n "$PRODUCTION_DISCORD_CLIENT_IDS"
+          test -n "$PRODUCTION_GUILD_IDS"
+          test -n "$PRODUCTION_CHANNEL_IDS"
 
       - name: Setup Node
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0

@@ -64,19 +64,10 @@ const HEALTH_ROUTE_GUARD = Symbol("health-route-guard");
 
 function registerHealthRoute(app) {
     if (typeof app?.get !== "function" || app[HEALTH_ROUTE_GUARD]) return false;
-
-    const originalGet = app.get.bind(app);
-    originalGet("/health", (_req, res) => {
+    app.get("/health", (_req, res) => {
         const payload = buildHealthPayload();
         return res.status(payload.healthy ? 200 : 503).json(payload);
     });
-
-    // Health belongs to the core HTTP contract. Ignore later duplicate route
-    // registration while preserving Express setting reads and every other GET.
-    app.get = (path, ...handlers) => {
-        if (path === "/health" && handlers.length > 0) return app;
-        return originalGet(path, ...handlers);
-    };
     app[HEALTH_ROUTE_GUARD] = true;
     return true;
 }

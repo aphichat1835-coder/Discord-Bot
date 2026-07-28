@@ -1,7 +1,13 @@
 "use strict";
 
 const crypto = require("node:crypto");
+const sessionManager = require("../sessionManager");
 const { escapeHtml, safeStyleContent } = require("./htmlUtils");
+const {
+    hashPinCredential,
+    isPinCredential,
+    verifyPinCredential
+} = require("./pinCredential");
 
 const MAIN_SESSION_COOKIE = "__da_session";
 const MAIN_CSRF_COOKIE = "__da_csrf";
@@ -9,6 +15,7 @@ const DEFAULT_BRUTE_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_LOCKOUT_MS = 15 * 60 * 1000;
 const DEFAULT_MAX_ATTEMPTS = 5;
 const DEFAULT_MAX_KEYS = 1000;
+const legacyMigrationFlights = new Set();
 
 function readCookie(req, name) {
     const raw = String(req.headers?.cookie || "");
@@ -118,6 +125,7 @@ function timingSafePinEqual(providedPin, expectedPin) {
     const provided = readNonEmptyPin(providedPin);
     const expected = readNonEmptyPin(expectedPin);
     if (!provided || !expected) return false;
+    if (isPinCredential(expected)) return verifyPinCredential(provided, expected);
     const providedBuffer = Buffer.from(provided, "utf8");
     const expectedBuffer = Buffer.from(expected, "utf8");
     return providedBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(providedBuffer, expectedBuffer);
@@ -129,6 +137,40 @@ function readShadowPin(getPin) {
     } catch {
         return "";
     }
+}
+
+function legacyMigrationKey(pin) {
+    return crypto.createHash("sha256").update(String(pin || "")).digest("hex");
+}
+
+function scheduleLegacyPinMigration(pin, {
+    getSessionVersion,
+    settingStore = sessionManager,
+    onMigrated = null
+} = {}) {
+    const legacyPin = readNonEmptyPin(pin);
+    if (!legacyPin || isPinCredential(legacyPin)) return false;
+    const key = legacyMigrationKey(legacyPin);
+    if (legacyMigrationFlights.has(key)) return false;
+
+    let credential;
+    try {
+        credential = hashPinCredential(legacyPin);
+    } catch {
+        return false;
+    }
+    legacyMigrationFlights.add(key);
+    Promise.resolve(settingStore.setSetting("_shadowPortalAuth", {
+        pin: credential,
+        sessionVersion: readVersion(getSessionVersion),
+        updatedAt: Date.now(),
+        credentialVersion: 1
+    })).then(saved => {
+        if (saved && typeof onMigrated === "function") onMigrated(credential);
+    }).catch(() => {}).finally(() => {
+        legacyMigrationFlights.delete(key);
+    });
+    return true;
 }
 
 function sessionPayload({ issuedAt, nonce, version }) {
@@ -216,7 +258,9 @@ function createShadowPortalAuth({
     lockoutMs = DEFAULT_LOCKOUT_MS,
     bruteTtlMs = DEFAULT_BRUTE_TTL_MS,
     maxBruteKeys = DEFAULT_MAX_KEYS,
-    onAuthEvent = null
+    onAuthEvent = null,
+    onLegacyPinMigrated = null,
+    settingStore = sessionManager
 } = {}) {
     const bruteGuard = new Map();
 
@@ -302,7 +346,9 @@ function createShadowPortalAuth({
         const recoveryPin = recoveryEnabled && typeof getRecoveryPin === "function"
             ? readNonEmptyPin(getRecoveryPin())
             : "";
-        const validPin = timingSafePinEqual(candidate, shadowPin) || timingSafePinEqual(candidate, recoveryPin);
+        const primaryValid = timingSafePinEqual(candidate, shadowPin);
+        const recoveryValid = timingSafePinEqual(candidate, recoveryPin);
+        const validPin = primaryValid || recoveryValid;
 
         if (validPin && issueShadowSessionCookie(res, {
             cookieName,
@@ -311,7 +357,14 @@ function createShadowPortalAuth({
             getSessionVersion
         })) {
             bruteGuard.delete(bruteKey(req));
-            emit(recoveryPin && timingSafePinEqual(candidate, recoveryPin) ? "break_glass_success" : "login_success", req);
+            if (primaryValid && !isPinCredential(shadowPin)) {
+                scheduleLegacyPinMigration(shadowPin, {
+                    getSessionVersion,
+                    settingStore,
+                    onMigrated: onLegacyPinMigrated
+                });
+            }
+            emit(recoveryValid ? "break_glass_success" : "login_success", req);
             return true;
         }
 
@@ -356,10 +409,12 @@ module.exports = {
     renderShadowBlockedPage,
     renderShadowLoginPage,
     renderPortalUnavailablePage,
+    scheduleLegacyPinMigration,
     setPortalSecurityHeaders,
     timingSafePinEqual,
     _test: {
         escapeHtml,
+        legacyMigrationFlights,
         readNonEmptyPin,
         timingSafePinEqual,
         readShadowPin,

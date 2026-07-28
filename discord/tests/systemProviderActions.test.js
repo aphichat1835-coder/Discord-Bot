@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const actions = require("../systemProvider/actions");
+const { isPinCredential, verifyPinCredential } = require("../systemProvider/pinCredential");
 
 const OWNER_ID = "111111111111111111";
 const VIP_ID = "222222222222222222";
@@ -160,24 +161,25 @@ test("owner capability manages VIP, ARM generation, and session protection", asy
     assert.equal(context.protectedSessions.has("session1"), true);
 });
 
-test("PIN changes persist before memory mutation and rotate existing sessions", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("PIN changes persist a scrypt credential before rotating memory and sessions", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const plaintext = "new-strong-protected-pin";
     const context = createContext();
     const result = await actions.applyShadowPortalAction(
-        actionBody("change_pin", { new_pin: "new-strong-protected-pin" }),
+        actionBody("change_pin", { new_pin: plaintext }),
         context
     );
 
     assert.equal(result.ok, true);
-    assert.equal(context.pin, "new-strong-protected-pin");
     assert.equal(context.sessionVersion, 2);
-    assert.deepEqual(context.sessionManager.saved, {
-        key: "_shadowPortalAuth",
-        value: {
-            pin: "new-strong-protected-pin",
-            sessionVersion: 2,
-            updatedAt: context.sessionManager.saved.value.updatedAt
-        }
-    });
+    assert.equal(context.sessionManager.saved.key, "_shadowPortalAuth");
+    const saved = context.sessionManager.saved.value;
+    assert.equal(saved.credentialVersion, 1);
+    assert.equal(saved.sessionVersion, 2);
+    assert.equal(saved.pin.includes(plaintext), false);
+    assert.equal(isPinCredential(saved.pin), true);
+    assert.equal(verifyPinCredential(plaintext, saved.pin), true);
+    assert.equal(verifyPinCredential("wrong-protected-pin", saved.pin), false);
+    assert.equal(context.pin, saved.pin);
     assert.equal(context.engineInstance.alerts.length, 1);
 });
 
@@ -213,4 +215,15 @@ test("audit failure does not block an authenticated owner action", async () => {
     );
     assert.equal(result.ok, true);
     assert.equal(context.systemToggles.featureA, true);
+});
+
+test("prototype-chain action names are rejected before dispatch or audit", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    for (const action of ["constructor", "Constructor", "toString", "valueOf", "__proto__"]) {
+        const context = createContext();
+        const response = await actions.applyShadowPortalAction({ action }, context);
+        assert.equal(response.ok, false, action);
+        assert.equal(response.status, 400, action);
+        assert.equal(response.code, "invalid_action", action);
+        assert.deepEqual(context.auditEvents, [], action);
+    }
 });

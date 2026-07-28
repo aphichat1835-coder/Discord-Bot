@@ -12,6 +12,9 @@ const PROTECTED_DIRECTORY = "discord/systemProvider";
 const PROTECTED_PATH_PATTERN = /^discord\/systemProvider(?:\.js|\/[^/].*)$/;
 const ZERO_SHA_PATTERN = /^0+$/;
 const APPROVAL_MARKER_PREFIX = "<!-- protected-owner-approval:";
+const APPROVAL_PAGE_SIZE = 100;
+const APPROVAL_MAX_PAGES = 100;
+const GIT_BLOB_PREFIX = "git:";
 
 function resolveGitBin() {
     for (const candidate of ["/usr/bin/git", "/usr/local/bin/git", "/opt/homebrew/bin/git", "/bin/git"]) {
@@ -90,17 +93,37 @@ function sha256(content) {
     return crypto.createHash("sha256").update(content).digest("hex");
 }
 
+function gitBlobSha(file) {
+    const normalized = normalizeRepositoryPath(file);
+    if (!isProtectedPath(normalized)) throw new Error(`Unsafe protected path: ${normalized}`);
+    return git(["hash-object", "--", normalized]);
+}
+
+function manifestEntryMatches(file, expected) {
+    const value = String(expected || "").trim();
+    if (value.startsWith(GIT_BLOB_PREFIX)) {
+        const expectedBlob = value.slice(GIT_BLOB_PREFIX.length);
+        return /^[a-f0-9]{40}$/i.test(expectedBlob) && gitBlobSha(file) === expectedBlob;
+    }
+    return /^[a-f0-9]{64}$/i.test(value) && sha256(readProtectedFile(file)) === value;
+}
+
 function validateManifest() {
     const tracked = listTrackedProtectedFiles();
     const manifestFiles = Object.keys(PROTECTED_DIGESTS).map(normalizeRepositoryPath).sort();
     const missing = tracked.filter(file => !manifestFiles.includes(file));
     const extra = manifestFiles.filter(file => !tracked.includes(file));
-    const mismatched = tracked.filter(file => sha256(readProtectedFile(file)) !== PROTECTED_DIGESTS[file]);
+    const malformed = manifestFiles.filter(file => {
+        const value = String(PROTECTED_DIGESTS[file] || "");
+        return !/^[a-f0-9]{64}$/i.test(value) && !/^git:[a-f0-9]{40}$/i.test(value);
+    });
+    const mismatched = tracked.filter(file => !malformed.includes(file) && !manifestEntryMatches(file, PROTECTED_DIGESTS[file]));
 
-    if (missing.length || extra.length || mismatched.length) {
+    if (missing.length || extra.length || malformed.length || mismatched.length) {
         console.error("[PROTECTED-PATHS] protected manifest is incomplete or does not match the current files.");
         for (const file of missing) console.error(`- missing manifest entry: ${file}`);
         for (const file of extra) console.error(`- stale manifest entry: ${file}`);
+        for (const file of malformed) console.error(`- malformed manifest entry: ${file}`);
         for (const file of mismatched) console.error(`- digest mismatch: ${file}`);
         return false;
     }
@@ -144,25 +167,37 @@ function readEventPayload() {
     }
 }
 
+function ownerApprovalUrl(repository, pullNumber, page) {
+    const params = new URLSearchParams({
+        per_page: String(APPROVAL_PAGE_SIZE),
+        page: String(page),
+        sort: "created",
+        direction: "desc"
+    });
+    return `https://api.github.com/repos/${repository}/issues/${pullNumber}/comments?${params}`;
+}
+
 async function fetchOwnerApproval({ repository, owner, pullNumber, headSha, token }) {
     const marker = `${APPROVAL_MARKER_PREFIX}${headSha} -->`;
-    const response = await fetch(
-        `https://api.github.com/repos/${repository}/issues/${pullNumber}/comments?per_page=100`,
-        {
+    for (let page = 1; page <= APPROVAL_MAX_PAGES; page++) {
+        const response = await fetch(ownerApprovalUrl(repository, pullNumber, page), {
             headers: {
                 accept: "application/vnd.github+json",
                 authorization: `Bearer ${token}`,
                 "user-agent": "discord-bot-protected-path-guard",
                 "x-github-api-version": "2022-11-28"
             }
-        }
-    );
-    if (!response.ok) throw new Error(`GitHub approval lookup failed with HTTP ${response.status}`);
-    const comments = await response.json();
-    return Array.isArray(comments) && comments.some(comment =>
-        String(comment?.user?.login || "").toLowerCase() === owner.toLowerCase() &&
-        String(comment?.body || "").includes(marker)
-    );
+        });
+        if (!response.ok) throw new Error(`GitHub approval lookup failed with HTTP ${response.status}`);
+        const comments = await response.json();
+        if (!Array.isArray(comments)) throw new Error("GitHub approval lookup returned an invalid response");
+        if (comments.some(comment =>
+            String(comment?.user?.login || "").toLowerCase() === owner.toLowerCase() &&
+            String(comment?.body || "").includes(marker)
+        )) return true;
+        if (comments.length < APPROVAL_PAGE_SIZE) return false;
+    }
+    throw new Error(`GitHub approval lookup exceeded ${APPROVAL_MAX_PAGES} pages`);
 }
 
 async function hasExternalOwnerApproval() {
@@ -224,10 +259,16 @@ if (require.main === module) {
 
 module.exports = {
     APPROVAL_MARKER_PREFIX,
+    APPROVAL_MAX_PAGES,
+    APPROVAL_PAGE_SIZE,
+    GIT_BLOB_PREFIX,
     fetchOwnerApproval,
+    gitBlobSha,
     isProtectedPath,
     listTrackedProtectedFiles,
+    manifestEntryMatches,
     normalizeRepositoryPath,
+    ownerApprovalUrl,
     sha256,
     validateManifest
 };

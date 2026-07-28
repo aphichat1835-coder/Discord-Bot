@@ -39,3 +39,19 @@ test("secret guard excludes test fixtures but scans production and configuration
     assert.equal(shouldScanPath("render.yaml"), true);
     assert.equal(shouldScanPath(".env.example"), true);
 });
+
+test("secret guard handles long adversarial non-matches in bounded time", { timeout: 1500 }, () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const longCredentialLikeText = `mongodb+srv://${"a".repeat(300_000)} without-delimiters`;
+    const longAssignmentLikeText = `const token = "${"x".repeat(300_000)}`;
+    const startedAt = Date.now();
+    assert.deepEqual(analyzeText(`${longCredentialLikeText}\n${longAssignmentLikeText}`, "discord/adversarial.js"), []);
+    assert.ok(Date.now() - startedAt < 1000);
+});
+
+test("secret guard bounds credential fields without missing normal encoded Mongo credentials", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const findings = analyzeText(
+        'const uri = "mongodb+srv://owner%40mail:p%40ssw0rd@example.invalid/test";',
+        "discord/mongo.js"
+    );
+    assert.equal(findings.some(item => item.code === "MONGODB_CREDENTIAL_LITERAL"), true);
+});

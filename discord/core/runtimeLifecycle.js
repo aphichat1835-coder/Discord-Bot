@@ -1,5 +1,7 @@
 "use strict";
 
+const { drainDmService } = require("../dm/drain");
+
 async function runCleanupStep(name, action, state) {
     if (typeof action !== "function") return true;
     try {
@@ -41,6 +43,12 @@ async function closeHttpServer(server, options = {}) {
     });
 }
 
+function normalizeExitCode(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return 1;
+    return Math.max(0, Math.trunc(parsed));
+}
+
 function createShutdownCoordinator(options = {}) {
     const {
         system = {},
@@ -59,12 +67,16 @@ function createShutdownCoordinator(options = {}) {
         clearTimer = clearTimeout,
         logger = console,
         forceTimeoutMs = 10000,
-        httpCloseTimeoutMs = 3000
+        httpCloseTimeoutMs = 3000,
+        dmDrainTimeoutMs = 5000,
+        drainDm = drainDmService
     } = options;
 
     let shutdownPromise = null;
+    let highestRequestedExitCode = 0;
 
     function shutdown(signal, requestedExitCode = 0) {
+        highestRequestedExitCode = Math.max(highestRequestedExitCode, normalizeExitCode(requestedExitCode));
         if (shutdownPromise) return shutdownPromise;
 
         shutdownPromise = (async () => {
@@ -79,7 +91,10 @@ function createShutdownCoordinator(options = {}) {
             logger.log(`\n⛔ [SHUTDOWN] ${signal} — graceful shutdown starting...`);
 
             await runCleanupStep("cron stop", () => system.stopCronJobs?.(), state);
-            await runCleanupStep("DM stop", () => dmService?.stop?.(), state);
+            await runCleanupStep("DM drain", () => drainDm(dmService, {
+                timeoutMs: dmDrainTimeoutMs,
+                setTimer
+            }), state);
             await runCleanupStep("runtime cleanups", async () => {
                 if (typeof system.stopRuntimeCleanups === "function") {
                     const result = system.stopRuntimeCleanups(runtimeCleanups);
@@ -109,11 +124,11 @@ function createShutdownCoordinator(options = {}) {
             await runCleanupStep("database disconnect", () => sessionManager?.disconnectDB?.(), state);
 
             clearTimer(forceTimer);
-            const finalExitCode = state.failures.length > 0 ? 1 : requestedExitCode;
+            const finalExitCode = state.failures.length > 0 ? Math.max(1, highestRequestedExitCode) : highestRequestedExitCode;
             processRef.exit(finalExitCode);
             return {
                 signal,
-                requestedExitCode,
+                requestedExitCode: highestRequestedExitCode,
                 exitCode: finalExitCode,
                 completed: state.completed,
                 failures: state.failures.map(item => ({
@@ -127,6 +142,7 @@ function createShutdownCoordinator(options = {}) {
     }
 
     shutdown.isShutdownStarted = () => shutdownPromise !== null;
+    shutdown.getRequestedExitCode = () => highestRequestedExitCode;
     return shutdown;
 }
 
@@ -167,5 +183,6 @@ module.exports = {
     runCleanupStep,
     closeHttpServer,
     createShutdownCoordinator,
-    installShutdownCoordinator
+    installShutdownCoordinator,
+    normalizeExitCode
 };

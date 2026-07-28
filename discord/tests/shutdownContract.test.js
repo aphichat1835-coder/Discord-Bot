@@ -5,7 +5,7 @@ const test = require("node:test");
 
 const { createShutdownCoordinator } = require("../core/runtimeLifecycle");
 
-function fixture({ failAt = null } = {}) {
+function fixture({ failAt = null, pauseGate = null } = {}) {
     const calls = [];
     const exitCodes = [];
     const timers = new Set();
@@ -44,7 +44,11 @@ function fixture({ failAt = null } = {}) {
         },
         voiceWorker: {
             setShuttingDown: value => calls.push(`voice shutting:${value}`),
-            pauseAll: step("pause voice")
+            async pauseAll() {
+                calls.push("pause voice");
+                if (pauseGate) await pauseGate;
+                if (failAt === "pause voice") throw new Error("pause voice failed");
+            }
         },
         client: { destroy: () => calls.push("destroy Discord") },
         memoryMonitor: { stopMemoryMonitor: () => calls.push("stop memory") },
@@ -114,4 +118,26 @@ test("duplicate shutdown calls share one cleanup execution", async () => { // NO
 
     assert.equal(calls.filter(value => value === "pause voice").length, 1);
     assert.deepEqual(exitCodes, [0]);
+});
+
+test("fatal error escalates an in-progress graceful shutdown to exit code one", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    let releasePause;
+    const pauseGate = new Promise(resolve => { releasePause = resolve; });
+    const { shutdown, calls, exitCodes } = fixture({ pauseGate });
+
+    const graceful = shutdown("SIGTERM", 0);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(shutdown.getRequestedExitCode(), 0);
+    assert.ok(calls.includes("pause voice"));
+
+    const fatal = shutdown("FATAL_uncaughtException", 1);
+    assert.equal(fatal, graceful);
+    assert.equal(shutdown.getRequestedExitCode(), 1);
+    releasePause();
+
+    const result = await graceful;
+    assert.deepEqual(exitCodes, [1]);
+    assert.equal(result.requestedExitCode, 1);
+    assert.equal(result.exitCode, 1);
+    assert.equal(calls.filter(value => value === "pause voice").length, 1);
 });
