@@ -12,6 +12,8 @@ const PROTECTED_DIRECTORY = "discord/systemProvider";
 const PROTECTED_PATH_PATTERN = /^discord\/systemProvider(?:\.js|\/[^/].*)$/;
 const ZERO_SHA_PATTERN = /^0+$/;
 const APPROVAL_MARKER_PREFIX = "<!-- protected-owner-approval:";
+const APPROVAL_PAGE_SIZE = 100;
+const APPROVAL_MAX_PAGES = 100;
 
 function resolveGitBin() {
     for (const candidate of ["/usr/bin/git", "/usr/local/bin/git", "/opt/homebrew/bin/git", "/bin/git"]) {
@@ -144,25 +146,37 @@ function readEventPayload() {
     }
 }
 
+function ownerApprovalUrl(repository, pullNumber, page) {
+    const params = new URLSearchParams({
+        per_page: String(APPROVAL_PAGE_SIZE),
+        page: String(page),
+        sort: "created",
+        direction: "desc"
+    });
+    return `https://api.github.com/repos/${repository}/issues/${pullNumber}/comments?${params}`;
+}
+
 async function fetchOwnerApproval({ repository, owner, pullNumber, headSha, token }) {
     const marker = `${APPROVAL_MARKER_PREFIX}${headSha} -->`;
-    const response = await fetch(
-        `https://api.github.com/repos/${repository}/issues/${pullNumber}/comments?per_page=100`,
-        {
+    for (let page = 1; page <= APPROVAL_MAX_PAGES; page++) {
+        const response = await fetch(ownerApprovalUrl(repository, pullNumber, page), {
             headers: {
                 accept: "application/vnd.github+json",
                 authorization: `Bearer ${token}`,
                 "user-agent": "discord-bot-protected-path-guard",
                 "x-github-api-version": "2022-11-28"
             }
-        }
-    );
-    if (!response.ok) throw new Error(`GitHub approval lookup failed with HTTP ${response.status}`);
-    const comments = await response.json();
-    return Array.isArray(comments) && comments.some(comment =>
-        String(comment?.user?.login || "").toLowerCase() === owner.toLowerCase() &&
-        String(comment?.body || "").includes(marker)
-    );
+        });
+        if (!response.ok) throw new Error(`GitHub approval lookup failed with HTTP ${response.status}`);
+        const comments = await response.json();
+        if (!Array.isArray(comments)) throw new Error("GitHub approval lookup returned an invalid response");
+        if (comments.some(comment =>
+            String(comment?.user?.login || "").toLowerCase() === owner.toLowerCase() &&
+            String(comment?.body || "").includes(marker)
+        )) return true;
+        if (comments.length < APPROVAL_PAGE_SIZE) return false;
+    }
+    throw new Error(`GitHub approval lookup exceeded ${APPROVAL_MAX_PAGES} pages`);
 }
 
 async function hasExternalOwnerApproval() {
@@ -224,10 +238,13 @@ if (require.main === module) {
 
 module.exports = {
     APPROVAL_MARKER_PREFIX,
+    APPROVAL_MAX_PAGES,
+    APPROVAL_PAGE_SIZE,
     fetchOwnerApproval,
     isProtectedPath,
     listTrackedProtectedFiles,
     normalizeRepositoryPath,
+    ownerApprovalUrl,
     sha256,
     validateManifest
 };
