@@ -25,6 +25,35 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
+      - name: Normalize deterministic patch script
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/scripts/temp_apply_pr71_plan.py')
+          text = path.read_text()
+
+          def replace_call(label, replacement):
+              global text
+              end_marker = f'    "{label}",\n)\n'
+              end = text.find(end_marker)
+              if end < 0:
+                  raise SystemExit(f'missing script call label: {label}')
+              end += len(end_marker)
+              start = text.rfind('backup_test = replace_once(', 0, end)
+              if start < 0:
+                  raise SystemExit(f'missing script call start: {label}')
+              text = text[:start] + replacement + text[end:]
+
+          replace_call(
+              'resolved overwrite expectation',
+              '''stats_expectation = "        skippedRoleMissing: 1,\\n        skippedMemberMissing: 1\\n    });"\nrequire(\n    backup_test.count(stats_expectation) == 2,\n    f"restore stats expectations: expected 2, found {backup_test.count(stats_expectation)}",\n)\nbackup_test = backup_test.replace(\n    stats_expectation,\n    "        skippedRoleMissing: 1,\\n        skippedMemberMissing: 1,\\n        skippedMemberUnresolved: 0\\n    });",\n)\n'''
+          )
+          replace_call('aggregate stats expectation', '')
+          path.write_text(text)
+          PY
+
       - name: Apply reviewed implementation
         id: apply
         continue-on-error: true
