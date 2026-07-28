@@ -26,186 +26,7 @@ jobs:
           persist-credentials: true
 
       - name: Apply reviewed implementation
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 <<'PY'
-          from pathlib import Path
-
-          def replace_once(text, old, new, label):
-              if old not in text:
-                  raise SystemExit(f"missing patch target: {label}")
-              if text.count(old) != 1:
-                  raise SystemExit(f"non-unique patch target: {label} ({text.count(old)})")
-              return text.replace(old, new, 1)
-
-          workflow_path = Path('.github/workflows/isolated-environment-gate.yml')
-          workflow = workflow_path.read_text()
-          workflow = replace_once(
-              workflow,
-              "    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.head_ref == 'ttt.1' && vars.RUN_ISOLATED_ENVIRONMENT_GATE == 'true') }}",
-              "    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.head_ref == 'ttt.1') }}",
-              'required isolated gate condition'
-          )
-          workflow_path.write_text(workflow)
-
-          gate_test_path = Path('discord/tests/isolatedEnvironmentGate.test.js')
-          gate_test = gate_test_path.read_text()
-          gate_test = replace_once(
-              gate_test,
-              'const assert = require("node:assert/strict");\nconst test = require("node:test");',
-              'const assert = require("node:assert/strict");\nconst fs = require("node:fs");\nconst path = require("node:path");\nconst test = require("node:test");',
-              'gate test imports'
-          )
-          gate_test += '''\n\ntest("isolated environment workflow cannot be disabled for PR 71", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.\n    const workflow = fs.readFileSync(\n        path.join(__dirname, "../../.github/workflows/isolated-environment-gate.yml"),\n        "utf8"\n    );\n    assert.doesNotMatch(workflow, /RUN_ISOLATED_ENVIRONMENT_GATE/);\n    assert.match(workflow, /github\\.head_ref == ['"]ttt\\.1['"]/);\n    assert.match(workflow, /workflow_dispatch/);\n});\n'''
-          gate_test_path.write_text(gate_test)
-
-          utility_path = Path('discord/commands/utility.js')
-          utility = utility_path.read_text()
-
-          utility = replace_once(
-              utility,
-              '            { name: "🔐 สิทธิ์ห้อง", value: `${input.overwriteStats.restored} สำเร็จ / ${input.overwriteStats.skippedRoleMissing + input.overwriteStats.skippedMemberMissing} ข้าม`, inline: true },',
-              '            { name: "🔐 สิทธิ์ห้อง", value: `${input.overwriteStats.restored} สำเร็จ / ${input.overwriteStats.skippedRoleMissing + input.overwriteStats.skippedMemberMissing} หาย / ${input.overwriteStats.skippedMemberUnresolved} ตรวจไม่ได้`, inline: true },',
-              'restore DM overwrite summary'
-          )
-
-          old_resolver = '''function resolveRestoreOverwriteTarget(guild, overwrite, roleIdMap, oldGuildId) {\n    const overwriteType = normalizeOverwriteType(overwrite.type);\n    let targetId = roleIdMap.get(overwrite.id);\n    if (overwrite.id === oldGuildId) targetId = guild.id;\n    if (!targetId && overwriteType === "member" && guild.members.cache.has(overwrite.id)) targetId = overwrite.id;\n    if (!targetId && overwriteType === "role" && guild.roles.cache.has(overwrite.id)) targetId = overwrite.id;\n    return targetId;\n}\n\nfunction buildResolvedOverwrites(guild, channelData, roleIdMap, oldGuildId) {\n    const stats = { restored: 0, skippedRoleMissing: 0, skippedMemberMissing: 0 };\n    const overwrites = [];\n    for (const overwrite of channelData.permissionOverwrites || []) {\n        const overwriteType = normalizeOverwriteType(overwrite.type);\n        const targetId = resolveRestoreOverwriteTarget(guild, overwrite, roleIdMap, oldGuildId);\n        if (targetId) {\n            stats.restored++;\n            overwrites.push({\n                id: targetId,\n                allow: restoreBigInt(overwrite.allow),\n                deny: restoreBigInt(overwrite.deny)\n            });\n        } else if (overwriteType === "member") {\n            stats.skippedMemberMissing++;\n        } else {\n            stats.skippedRoleMissing++;\n        }\n    }\n    return { overwrites, stats };\n}\n\nfunction addOverwriteStats(target, source, { includeRestored = true } = {}) {\n    if (includeRestored) target.restored += Number(source.restored || 0);\n    target.skippedRoleMissing += Number(source.skippedRoleMissing || 0);\n    target.skippedMemberMissing += Number(source.skippedMemberMissing || 0);\n}\n'''
-
-          new_resolver = '''const RESTORE_MEMBER_FETCH_CONCURRENCY = 4;\nconst RESTORE_MEMBER_FETCH_TIMEOUT_MS = 5000;\n\nfunction collectRestoreMemberIds(channels) {\n    const memberIds = new Set();\n    for (const channelData of channels || []) {\n        for (const overwrite of channelData.permissionOverwrites || []) {\n            if (normalizeOverwriteType(overwrite.type) === "member") memberIds.add(overwrite.id);\n        }\n    }\n    return [...memberIds];\n}\n\nfunction isMissingRestoreMemberError(error) {\n    const code = Number(error?.code ?? error?.rawError?.code);\n    return code === 10007 || Number(error?.status) === 404;\n}\n\nasync function fetchRestoreMemberWithTimeout(guild, memberId, timeoutMs) {\n    let timeout;\n    try {\n        return await Promise.race([\n            Promise.resolve().then(() => guild.members.fetch(memberId)),\n            new Promise((resolve, reject) => {\n                timeout = setTimeout(() => {\n                    const error = new Error(`RESTORE_MEMBER_FETCH_TIMEOUT:${memberId}`);\n                    error.code = "RESTORE_MEMBER_FETCH_TIMEOUT";\n                    reject(error);\n                }, timeoutMs);\n            })\n        ]);\n    } finally {\n        if (timeout) clearTimeout(timeout);\n    }\n}\n\nasync function resolveRestoreMemberTargets(guild, channels, options = {}) {\n    const states = new Map();\n    const pending = [];\n    for (const memberId of collectRestoreMemberIds(channels)) {\n        if (guild.members.cache.has(memberId)) states.set(memberId, "resolved");\n        else pending.push(memberId);\n    }\n\n    if (pending.length === 0) return states;\n    if (typeof guild.members.fetch !== "function") {\n        for (const memberId of pending) states.set(memberId, "unresolved");\n        return states;\n    }\n\n    const concurrency = Math.max(1, Math.min(\n        10,\n        Number(options.memberFetchConcurrency || RESTORE_MEMBER_FETCH_CONCURRENCY)\n    ));\n    const timeoutMs = Math.max(100, Math.min(\n        30000,\n        Number(options.memberFetchTimeoutMs || RESTORE_MEMBER_FETCH_TIMEOUT_MS)\n    ));\n    let cursor = 0;\n    const workers = Array.from({ length: Math.min(concurrency, pending.length) }, async () => {\n        while (cursor < pending.length) {\n            const memberId = pending[cursor++];\n            try {\n                const member = await fetchRestoreMemberWithTimeout(guild, memberId, timeoutMs);\n                states.set(memberId, member ? "resolved" : "missing");\n            } catch (error) {\n                states.set(memberId, isMissingRestoreMemberError(error) ? "missing" : "unresolved");\n            }\n        }\n    });\n    await Promise.all(workers);\n    return states;\n}\n\nfunction resolveRestoreOverwriteTarget(guild, overwrite, roleIdMap, oldGuildId, memberTargetStates = new Map()) {\n    const overwriteType = normalizeOverwriteType(overwrite.type);\n    let targetId = roleIdMap.get(overwrite.id);\n    if (overwrite.id === oldGuildId) targetId = guild.id;\n    if (!targetId && overwriteType === "member" && guild.members.cache.has(overwrite.id)) targetId = overwrite.id;\n    if (!targetId && overwriteType === "member" && memberTargetStates.get(overwrite.id) === "resolved") targetId = overwrite.id;\n    if (!targetId && overwriteType === "role" && guild.roles.cache.has(overwrite.id)) targetId = overwrite.id;\n    return targetId;\n}\n\nfunction buildResolvedOverwrites(guild, channelData, roleIdMap, oldGuildId, memberTargetStates = new Map()) {\n    const stats = {\n        restored: 0,\n        skippedRoleMissing: 0,\n        skippedMemberMissing: 0,\n        skippedMemberUnresolved: 0\n    };\n    const overwrites = [];\n    for (const overwrite of channelData.permissionOverwrites || []) {\n        const overwriteType = normalizeOverwriteType(overwrite.type);\n        const targetId = resolveRestoreOverwriteTarget(\n            guild, overwrite, roleIdMap, oldGuildId, memberTargetStates\n        );\n        if (targetId) {\n            stats.restored++;\n            overwrites.push({\n                id: targetId,\n                allow: restoreBigInt(overwrite.allow),\n                deny: restoreBigInt(overwrite.deny)\n            });\n        } else if (overwriteType === "member") {\n            if (memberTargetStates.get(overwrite.id) === "unresolved") stats.skippedMemberUnresolved++;\n            else stats.skippedMemberMissing++;\n        } else {\n            stats.skippedRoleMissing++;\n        }\n    }\n    return { overwrites, stats };\n}\n\nfunction addOverwriteStats(target, source, { includeRestored = true } = {}) {\n    if (includeRestored) target.restored += Number(source.restored || 0);\n    target.skippedRoleMissing += Number(source.skippedRoleMissing || 0);\n    target.skippedMemberMissing += Number(source.skippedMemberMissing || 0);\n    target.skippedMemberUnresolved += Number(source.skippedMemberUnresolved || 0);\n}\n'''
-          utility = replace_once(utility, old_resolver, new_resolver, 'restore member resolver block')
-
-          utility = replace_once(
-              utility,
-              'function planRestoreOverwrites(guild, channelData, roleIdMap, oldGuildId, plan) {\n    const resolved = buildResolvedOverwrites(guild, channelData, roleIdMap, oldGuildId);',
-              'function planRestoreOverwrites(guild, channelData, roleIdMap, oldGuildId, plan, memberTargetStates) {\n    const resolved = buildResolvedOverwrites(guild, channelData, roleIdMap, oldGuildId, memberTargetStates);',
-              'plan overwrite resolver'
-          )
-          utility = replace_once(
-              utility,
-              '    plan.overwritesSkippedMemberMissing += resolved.stats.skippedMemberMissing;\n}',
-              '    plan.overwritesSkippedMemberMissing += resolved.stats.skippedMemberMissing;\n    plan.overwritesSkippedMemberUnresolved += resolved.stats.skippedMemberUnresolved;\n}',
-              'plan unresolved member stats'
-          )
-          utility = replace_once(
-              utility,
-              'function planRestoreChannel(guild, channelData, categoryIdMap, roleIdMap, oldGuildId, plan) {',
-              'function planRestoreChannel(guild, channelData, categoryIdMap, roleIdMap, oldGuildId, plan, memberTargetStates) {',
-              'plan channel signature'
-          )
-          utility = replace_once(
-              utility,
-              '    planRestoreOverwrites(guild, channelData, roleIdMap, oldGuildId, plan);',
-              '    planRestoreOverwrites(guild, channelData, roleIdMap, oldGuildId, plan, memberTargetStates);',
-              'plan channel overwrite call'
-          )
-          utility = replace_once(
-              utility,
-              'function buildRestorePlan(guild, backupData, oldGuildId) {\n    const roles = Array.isArray(backupData.roles) ? backupData.roles : [];\n    const channels = normalizeSnapshotChannels(backupData.channels);',
-              'async function buildRestorePlan(guild, backupData, oldGuildId, options = {}) {\n    const roles = Array.isArray(backupData.roles) ? backupData.roles : [];\n    const channels = normalizeSnapshotChannels(backupData.channels);\n    const memberTargetStates = options.memberTargetStates instanceof Map\n        ? options.memberTargetStates\n        : await resolveRestoreMemberTargets(guild, channels, options);',
-              'async restore plan'
-          )
-          utility = replace_once(
-              utility,
-              '        overwritesSkippedMemberMissing: 0,\n        warnings: []',
-              '        overwritesSkippedMemberMissing: 0,\n        overwritesSkippedMemberUnresolved: 0,\n        warnings: []',
-              'restore plan unresolved counter'
-          )
-          utility = replace_once(
-              utility,
-              '        planRestoreChannel(guild, cData, categoryIdMap, roleIdMap, oldGuildId, plan);',
-              '        planRestoreChannel(guild, cData, categoryIdMap, roleIdMap, oldGuildId, plan, memberTargetStates);',
-              'restore plan member states call'
-          )
-          utility = replace_once(
-              utility,
-              '    const plan = buildRestorePlan(interaction.guild, backupData, backup.guildId);',
-              '    const plan = await buildRestorePlan(interaction.guild, backupData, backup.guildId);',
-              'await restore plan'
-          )
-          utility = replace_once(
-              utility,
-              '        `— Permission overwrites: ${plan.overwritesRestored} ใช้ได้, ${plan.overwritesSkippedRoleMissing} role หาย, ${plan.overwritesSkippedMemberMissing} member หาย`;',
-              '        `— Permission overwrites: ${plan.overwritesRestored} ใช้ได้, ${plan.overwritesSkippedRoleMissing} role หาย, ${plan.overwritesSkippedMemberMissing} member หาย, ${plan.overwritesSkippedMemberUnresolved} member ตรวจไม่ได้`;',
-              'preview overwrite summary'
-          )
-          utility = replace_once(
-              utility,
-              '            const channels = normalizeSnapshotChannels(backupData.channels);\n            const oldGuildId = backup.guildId;',
-              '            const channels = normalizeSnapshotChannels(backupData.channels);\n            const memberTargetStates = await resolveRestoreMemberTargets(guild, channels);\n            const oldGuildId = backup.guildId;',
-              'restore confirmation prefetch'
-          )
-          utility = replace_once(
-              utility,
-              '                skippedRoleMissing: 0,\n                skippedMemberMissing: 0\n            };',
-              '                skippedRoleMissing: 0,\n                skippedMemberMissing: 0,\n                skippedMemberUnresolved: 0\n            };',
-              'restore aggregate unresolved counter'
-          )
-          utility = utility.replace(
-              'buildResolvedOverwrites(guild, cData, roleIdMap, oldGuildId)',
-              'buildResolvedOverwrites(guild, cData, roleIdMap, oldGuildId, memberTargetStates)'
-          )
-          utility = replace_once(
-              utility,
-              '                `\n— Permission overwrites: ${overwriteStats.restored} ใช้ได้, ${overwriteStats.skippedRoleMissing} role หาย, ${overwriteStats.skippedMemberMissing} member หาย` +',
-              '                `\n— Permission overwrites: ${overwriteStats.restored} ใช้ได้, ${overwriteStats.skippedRoleMissing} role หาย, ${overwriteStats.skippedMemberMissing} member หาย, ${overwriteStats.skippedMemberUnresolved} member ตรวจไม่ได้` +',
-              'restore result overwrite summary'
-          )
-          utility = replace_once(
-              utility,
-              '                overwriteStats.skippedRoleMissing + overwriteStats.skippedMemberMissing;',
-              '                overwriteStats.skippedRoleMissing + overwriteStats.skippedMemberMissing +\n                overwriteStats.skippedMemberUnresolved;',
-              'restore incomplete unresolved count'
-          )
-          utility = replace_once(
-              utility,
-              '        buildRestorePlan,\n        buildResolvedOverwrites,',
-              '        buildRestorePlan,\n        collectRestoreMemberIds,\n        resolveRestoreMemberTargets,\n        buildResolvedOverwrites,',
-              'restore test exports'
-          )
-          utility_path.write_text(utility)
-
-          backup_test_path = Path('discord/tests/backupRestore.test.js')
-          backup_test = backup_test_path.read_text()
-          backup_test = backup_test.replace(
-              'test("restore planning maps numeric category parents before matching child channels", () => {',
-              'test("restore planning maps numeric category parents before matching child channels", async () => {'
-          )
-          backup_test = backup_test.replace(
-              '    const plan = utility._test.buildRestorePlan(guild, {',
-              '    const plan = await utility._test.buildRestorePlan(guild, {',
-              1
-          )
-          backup_test = backup_test.replace(
-              'test("restore planner skips existing and unsupported channels without counting unapplied overwrites", () => {',
-              'test("restore planner skips existing and unsupported channels without counting unapplied overwrites", async () => {'
-          )
-          marker = '    const plan = utility._test.buildRestorePlan(guild, {'
-          pos = backup_test.find(marker, backup_test.find('restore planner skips existing'))
-          if pos < 0:
-              raise SystemExit('missing second restore plan test call')
-          backup_test = backup_test[:pos] + backup_test[pos:].replace(marker, '    const plan = await utility._test.buildRestorePlan(guild, {', 1)
-          backup_test = replace_once(
-              backup_test,
-              '        skippedRoleMissing: 1,\n        skippedMemberMissing: 1\n    });',
-              '        skippedRoleMissing: 1,\n        skippedMemberMissing: 1,\n        skippedMemberUnresolved: 0\n    });',
-              'resolved overwrite expected stats'
-          )
-          backup_test = replace_once(
-              backup_test,
-              '    const aggregate = { restored: 0, skippedRoleMissing: 0, skippedMemberMissing: 0 };',
-              '    const aggregate = {\n        restored: 0,\n        skippedRoleMissing: 0,\n        skippedMemberMissing: 0,\n        skippedMemberUnresolved: 0\n    };',
-              'aggregate unresolved setup'
-          )
-          backup_test = replace_once(
-              backup_test,
-              '        restored: 0,\n        skippedRoleMissing: 1,\n        skippedMemberMissing: 1\n    });\n});',
-              '        restored: 0,\n        skippedRoleMissing: 1,\n        skippedMemberMissing: 1,\n        skippedMemberUnresolved: 0\n    });\n});',
-              'aggregate unresolved expectation'
-          )
-          backup_test += '''\n\ntest("restore member targets fetch uncached members once and distinguish missing from unresolved", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.\n    const guildId = "111111111111111111";\n    const cachedMember = "222222222222222222";\n    const fetchedMember = "333333333333333333";\n    const missingMember = "444444444444444444";\n    const unresolvedMember = "555555555555555555";\n    const fetchCalls = [];\n    const guild = {\n        id: guildId,\n        roles: { cache: new Collection(), everyone: { id: guildId, name: "@everyone" } },\n        members: {\n            cache: new Collection([[cachedMember, { id: cachedMember }]]),\n            async fetch(memberId) {\n                fetchCalls.push(memberId);\n                if (memberId === fetchedMember) return { id: memberId };\n                if (memberId === missingMember) {\n                    const error = new Error("Unknown Member");\n                    error.code = 10007;\n                    throw error;\n                }\n                throw new Error("network unavailable");\n            }\n        },\n        channels: { cache: new Collection() }\n    };\n    const channels = [{\n        id: "666666666666666666",\n        name: "private",\n        type: ChannelType.GuildText,\n        parentId: null,\n        permissionOverwrites: [\n            { id: cachedMember, type: "member", allow: "1", deny: "0" },\n            { id: fetchedMember, type: "member", allow: "2", deny: "0" },\n            { id: fetchedMember, type: "member", allow: "4", deny: "0" },\n            { id: missingMember, type: "member", allow: "8", deny: "0" },\n            { id: unresolvedMember, type: "member", allow: "16", deny: "0" }\n        ]\n    }];\n\n    const states = await utility._test.resolveRestoreMemberTargets(guild, channels, {\n        memberFetchConcurrency: 2,\n        memberFetchTimeoutMs: 1000\n    });\n    assert.equal(states.get(cachedMember), "resolved");\n    assert.equal(states.get(fetchedMember), "resolved");\n    assert.equal(states.get(missingMember), "missing");\n    assert.equal(states.get(unresolvedMember), "unresolved");\n    assert.deepEqual(fetchCalls.sort(), [fetchedMember, missingMember, unresolvedMember].sort());\n\n    const resolved = utility._test.buildResolvedOverwrites(\n        guild, channels[0], new Map(), guildId, states\n    );\n    assert.equal(resolved.overwrites.length, 3);\n    assert.deepEqual(resolved.stats, {\n        restored: 3,\n        skippedRoleMissing: 0,\n        skippedMemberMissing: 1,\n        skippedMemberUnresolved: 1\n    });\n\n    const plan = await utility._test.buildRestorePlan(guild, { roles: [], channels }, guildId, {\n        memberTargetStates: states\n    });\n    assert.equal(plan.overwritesRestored, resolved.stats.restored);\n    assert.equal(plan.overwritesSkippedMemberMissing, resolved.stats.skippedMemberMissing);\n    assert.equal(plan.overwritesSkippedMemberUnresolved, resolved.stats.skippedMemberUnresolved);\n});\n'''
-          backup_test_path.write_text(backup_test)
-          PY
+        run: python3 .github/scripts/temp_apply_pr71_plan.py
 
       - name: Install dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
@@ -216,18 +37,18 @@ jobs:
           node --test discord/tests/isolatedEnvironmentGate.test.js discord/tests/backupRestore.test.js
           npm run check:scripts
 
-      - name: Commit validated implementation and remove runner
+      - name: Commit validated implementation and remove temporary files
         shell: bash
         run: |
           set -euo pipefail
-          rm .github/workflows/temp-implement-pr71-plan.yml
+          rm -f .github/workflows/temp-implement-pr71-plan.yml
+          rm -f .github/workflows/temp-implement-pr71-plan-v2.yml
+          rm -f .github/workflows/temp-implement-pr71-push.yml
+          rm -f .github/scripts/temp_apply_pr71_plan.py
+          rm -f .github/.temp-pr71-trigger
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/workflows/isolated-environment-gate.yml \
-                  discord/commands/utility.js \
-                  discord/tests/isolatedEnvironmentGate.test.js \
-                  discord/tests/backupRestore.test.js \
-                  .github/workflows/temp-implement-pr71-plan.yml
+          git add -A
           git diff --cached --check
           git commit -m "fix: require isolated gate and resolve restore members"
           git push origin HEAD:${{ github.event.pull_request.head.ref }}
