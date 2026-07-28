@@ -42,7 +42,7 @@ env:
 
 jobs:
   verify:
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.head_ref == 'ttt.1' && vars.RUN_ISOLATED_ENVIRONMENT_GATE == 'true') }}
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.head_ref == 'ttt.1') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: isolated-integration
