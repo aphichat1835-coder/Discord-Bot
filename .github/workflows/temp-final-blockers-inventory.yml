@@ -27,3 +27,71 @@ jobs:
           grep -RIn --exclude-dir=node_modules 'SYSTEM_SHUTTING_DOWN\|isShuttingDown' discord/tests/voice*.test.js discord/voiceWorker | head -n 280 || true
           echo '=== coverage tests ==='
           grep -RIn --exclude-dir=node_modules 'checkCoverageThresholds\|parseLcov\|evaluateCoverage' discord/tests verification-tests scripts | head -n 240 || true
+
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-node@v6.3.0
+        with:
+          node-version: '24.18.0'
+          cache: npm
+      - run: npm install --global npm@12.0.1 --ignore-scripts
+      - run: npm ci --ignore-scripts
+      - name: Generate coverage reports
+        run: |
+          npm run test:coverage:discord
+          npm run test:coverage:voice
+          npm run test:coverage:verification
+      - name: Print critical file baseline
+        shell: python
+        run: |
+          from pathlib import Path
+
+          critical = [
+              'discord/verification/services/privacyDeletion.js',
+              'discord/verification/services/verificationStateNonce.js',
+              'discord/verification/utils/oauthTokenLifecycle.js',
+              'discord/voiceWorker/lifecycle.js',
+              'discord/commands/utility.js',
+              'discord/verification/routes/guild.js',
+              'discord/verification/routes/oauth.js',
+              'discord/verification/routes/oauthStart.js',
+          ]
+
+          def norm(value):
+              value = value.replace('\\', '/')
+              for marker in ('discord/', 'scripts/', 'verification-tests/'):
+                  pos = value.find(marker)
+                  if pos >= 0:
+                      return value[pos:]
+              return value.lstrip('./')
+
+          files = {}
+          for report in Path('coverage').glob('*.lcov'):
+              current = None
+              for raw in report.read_text(encoding='utf-8').splitlines():
+                  line = raw.strip()
+                  if line.startswith('SF:'):
+                      current = norm(line[3:].strip())
+                      files.setdefault(current, {'LF': 0, 'LH': 0, 'FNF': 0, 'FNH': 0, 'BRF': 0, 'BRH': 0, 'reports': set()})
+                      files[current]['reports'].add(report.name)
+                  elif current and ':' in line:
+                      key, value = line.split(':', 1)
+                      if key in ('LF', 'LH', 'FNF', 'FNH', 'BRF', 'BRH'):
+                          try: files[current][key] += int(value)
+                          except ValueError: pass
+
+          for path in critical:
+              item = files.get(path)
+              if not item:
+                  print(f'CRITICAL {path} MISSING')
+                  continue
+              def pct(hit, found):
+                  return 100.0 * hit / found if found else None
+              print('CRITICAL', path,
+                    f"lines={pct(item['LH'], item['LF'])}",
+                    f"functions={pct(item['FNH'], item['FNF'])}",
+                    f"branches={pct(item['BRH'], item['BRF'])}",
+                    f"reports={','.join(sorted(item['reports']))}")
