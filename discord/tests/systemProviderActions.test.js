@@ -214,3 +214,14 @@ test("audit failure does not block an authenticated owner action", async () => {
     assert.equal(result.ok, true);
     assert.equal(context.systemToggles.featureA, true);
 });
+
+test("prototype-chain action names are rejected before dispatch or audit", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    for (const action of ["constructor", "Constructor", "toString", "valueOf", "__proto__"]) {
+        const context = createContext();
+        const response = await actions.applyShadowPortalAction({ action }, context);
+        assert.equal(response.ok, false, action);
+        assert.equal(response.status, 400, action);
+        assert.equal(response.code, "invalid_action", action);
+        assert.deepEqual(context.auditEvents, [], action);
+    }
+});
