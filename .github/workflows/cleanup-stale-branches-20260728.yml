@@ -59,6 +59,15 @@ jobs:
               404)
                 echo "Already absent: ${branch}"
                 ;;
+              422)
+                if grep -q 'Reference does not exist' /tmp/delete-response.json; then
+                  echo "Already absent: ${branch}"
+                else
+                  echo "Failed to delete ${branch}; HTTP ${status}"
+                  cat /tmp/delete-response.json
+                  exit 1
+                fi
+                ;;
               *)
                 echo "Failed to delete ${branch}; HTTP ${status}"
                 cat /tmp/delete-response.json
