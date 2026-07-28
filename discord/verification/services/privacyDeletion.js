@@ -16,7 +16,7 @@ const VerificationMigrationArchive = require("../models/VerificationMigrationArc
 const VerificationRecovery = require("../models/VerificationRecovery");
 const PrivacyDeletionJob = require("../models/PrivacyDeletionJob");
 
-const MANIFEST_VERSION = 2;
+const MANIFEST_VERSION = 3;
 const VERIFY_LOG_SENSITIVE_PATHS = Object.freeze([
     "roleId",
     "requestId",
@@ -91,9 +91,6 @@ function buildOAuthUserPrivacyUpdate(document, guildId, now) {
     if (belongsToGuild(refs.member, guildId)) {
         unset["snapshotRefs.member"] = "";
         unset["snapshotMeta.member"] = "";
-        // A snapshot-set activation that referenced the removed member snapshot
-        // is no longer complete. Keep the global profile/guild/connection refs,
-        // but force the next verification to activate a fresh complete set.
         unset["snapshotRefs.snapshotSet"] = "";
         unset["snapshotMeta.activation"] = "";
     }
@@ -211,6 +208,104 @@ async function scrubIdentityLinks({ LinkModel, guildId, userId, requestedBy, now
     return { deleted, updated };
 }
 
+function createManifest() {
+    return {
+        schema: `privacy-deletion-v${MANIFEST_VERSION}`,
+        scope: "guild_member",
+        metadata: {
+            preservedGlobalSnapshots: true
+        },
+        counts: {},
+        verification: {
+            checks: {},
+            remainingReferences: null
+        },
+        deletedCount: 0
+    };
+}
+
+function totalDeletionCount(counts = {}) {
+    return Object.values(counts).reduce((sum, value) => {
+        const numeric = Number(value);
+        return Number.isFinite(numeric) && numeric > 0 ? sum + numeric : sum;
+    }, 0);
+}
+
+async function countDocumentsWithSession(Model, filter, session) {
+    let query = Model.countDocuments(filter);
+    if (query && typeof query.session === "function") query = query.session(session);
+    return Number(await query || 0);
+}
+
+async function verifyNoRemainingReferences({
+    models,
+    guildId,
+    userId,
+    memberVersions,
+    session
+}) {
+    const {
+        VerifyLog: VerifyLogModel,
+        OAuthUser: OAuthUserModel,
+        IpIdentityLink: IpIdentityLinkModel,
+        IpIdentityUserHistory: IpIdentityUserHistoryModel,
+        IpIdentityDeviceHistory: IpIdentityDeviceHistoryModel,
+        IpIdentityRoleHistory: IpIdentityRoleHistoryModel,
+        OAuthMemberSnapshot: OAuthMemberSnapshotModel,
+        OAuthMemberRoleSnapshot: OAuthMemberRoleSnapshotModel,
+        OAuthObjectChunkSnapshot: OAuthObjectChunkSnapshotModel,
+        OAuthSnapshotRecovery: OAuthSnapshotRecoveryModel,
+        VerificationMigrationArchive: VerificationMigrationArchiveModel,
+        VerificationRecovery: VerificationRecoveryModel
+    } = models;
+
+    const checks = {
+        verifyLogs: await countDocumentsWithSession(VerifyLogModel, { guildId, userId }, session),
+        memberSnapshots: await countDocumentsWithSession(OAuthMemberSnapshotModel, { guildId, userId }, session),
+        memberRoleSnapshots: memberVersions.length
+            ? await countDocumentsWithSession(OAuthMemberRoleSnapshotModel, { userId, snapshotVersion: { $in: memberVersions } }, session)
+            : 0,
+        ipUserHistory: await countDocumentsWithSession(IpIdentityUserHistoryModel, { guildId, userId }, session),
+        ipDeviceHistory: await countDocumentsWithSession(IpIdentityDeviceHistoryModel, { guildId, userId }, session),
+        ipRoleHistory: await countDocumentsWithSession(IpIdentityRoleHistoryModel, { guildId, userId }, session),
+        objectChunks: await countDocumentsWithSession(OAuthObjectChunkSnapshotModel, { guildId, userId }, session),
+        snapshotRecovery: memberVersions.length
+            ? await countDocumentsWithSession(OAuthSnapshotRecoveryModel, { userId, snapshotVersion: { $in: memberVersions } }, session)
+            : 0,
+        verificationRecovery: await countDocumentsWithSession(VerificationRecoveryModel, { guildId, userId }, session),
+        identityLinks: await countDocumentsWithSession(IpIdentityLinkModel, {
+            guildId,
+            $or: [
+                { "users.userId": userId },
+                { "deviceFingerprints.userId": userId },
+                { "roleSnapshots.userId": userId }
+            ]
+        }, session),
+        oauthUserReferences: await countDocumentsWithSession(OAuthUserModel, {
+            "discord.userId": userId,
+            $or: [
+                { "guilds.id": guildId },
+                { "lastMember.guildId": guildId },
+                { "lastVerify.guildId": guildId },
+                { "snapshotRefs.member.guildId": guildId }
+            ]
+        }, session),
+        migrationArchiveReferences: await countDocumentsWithSession(VerificationMigrationArchiveModel, {
+            "payload.discord.userId": userId,
+            $or: [
+                { "payload.guilds.id": guildId },
+                { "payload.lastMember.guildId": guildId },
+                { "payload.lastVerify.guildId": guildId },
+                { "payload.snapshotRefs.member.guildId": guildId }
+            ]
+        }, session)
+    };
+    return {
+        checks,
+        remainingReferences: Object.values(checks).reduce((sum, value) => sum + Number(value || 0), 0)
+    };
+}
+
 async function runMemberPrivacyDeletion({
     guildId,
     userId,
@@ -224,6 +319,7 @@ async function runMemberPrivacyDeletion({
     const safeRequestedBy = String(requestedBy || "dashboard-control").slice(0, 120);
     const hash = subjectHash(safeGuildId, safeUserId);
     const jobId = crypto.randomUUID();
+    const manifest = createManifest();
     const {
         VerifyLog: VerifyLogModel,
         OAuthUser: OAuthUserModel,
@@ -252,18 +348,17 @@ async function runMemberPrivacyDeletion({
         updatedAt: now
     });
 
-    const dbSession = await mongooseInstance.startSession();
-    const manifest = {
-        version: MANIFEST_VERSION,
-        scope: "guild_member",
-        preservedGlobalSnapshots: true
-    };
+    let dbSession = null;
+    let operationError = null;
     try {
-        await PrivacyDeletionJobModel.updateOne(
-            { jobId },
-            { $set: { status: "running", updatedAt: Date.now() } }
-        );
+        dbSession = await mongooseInstance.startSession();
         await dbSession.withTransaction(async () => {
+            await PrivacyDeletionJobModel.updateOne(
+                { jobId },
+                { $set: { status: "running", updatedAt: Date.now() } },
+                { session: dbSession }
+            );
+
             const memberSnapshots = await OAuthMemberSnapshotModel.find({ userId: safeUserId, guildId: safeGuildId })
                 .select("snapshotVersion")
                 .session(dbSession)
@@ -287,7 +382,7 @@ async function runMemberPrivacyDeletion({
                 },
                 { session: dbSession }
             );
-            manifest.verifyLogsRedacted = resultCount(verifyLogResult);
+            manifest.counts.verifyLogsRedacted = resultCount(verifyLogResult);
 
             const operations = [
                 ["ipUserHistory", () => IpIdentityUserHistoryModel.deleteMany(
@@ -321,7 +416,7 @@ async function runMemberPrivacyDeletion({
                     { guildId: safeGuildId, userId: safeUserId }, { session: dbSession }
                 )]
             ];
-            for (const [name, operation] of operations) manifest[name] = resultCount(await operation());
+            for (const [name, operation] of operations) manifest.counts[name] = resultCount(await operation());
 
             const identity = await scrubIdentityLinks({
                 LinkModel: IpIdentityLinkModel,
@@ -331,8 +426,8 @@ async function runMemberPrivacyDeletion({
                 now,
                 session: dbSession
             });
-            manifest.ipIdentityLinksDeleted = identity.deleted;
-            manifest.ipIdentityLinksUpdated = identity.updated;
+            manifest.counts.ipIdentityLinksDeleted = identity.deleted;
+            manifest.counts.ipIdentityLinksUpdated = identity.updated;
 
             const oauthDocument = await OAuthUserModel.findOne({ "discord.userId": safeUserId })
                 .select("guilds lastMember lastVerify lastIpTracking snapshotMeta snapshotRefs")
@@ -344,12 +439,12 @@ async function runMemberPrivacyDeletion({
                     buildOAuthUserPrivacyUpdate(oauthDocument, safeGuildId, now),
                     { session: dbSession }
                 );
-                manifest.oauthUserUpdated = resultCount(oauthResult);
+                manifest.counts.oauthUserUpdated = resultCount(oauthResult);
             } else {
-                manifest.oauthUserUpdated = 0;
+                manifest.counts.oauthUserUpdated = 0;
             }
 
-            manifest.migrationArchivesRedacted = await redactMigrationArchives({
+            manifest.counts.migrationArchivesRedacted = await redactMigrationArchives({
                 ArchiveModel: VerificationMigrationArchiveModel,
                 userId: safeUserId,
                 guildId: safeGuildId,
@@ -357,47 +452,40 @@ async function runMemberPrivacyDeletion({
                 now,
                 session: dbSession
             });
-        });
 
-        const remainingChecks = await Promise.all([
-            VerifyLogModel.countDocuments({ guildId: safeGuildId, userId: safeUserId }),
-            OAuthMemberSnapshotModel.countDocuments({ guildId: safeGuildId, userId: safeUserId }),
-            IpIdentityUserHistoryModel.countDocuments({ guildId: safeGuildId, userId: safeUserId }),
-            IpIdentityDeviceHistoryModel.countDocuments({ guildId: safeGuildId, userId: safeUserId }),
-            IpIdentityRoleHistoryModel.countDocuments({ guildId: safeGuildId, userId: safeUserId }),
-            OAuthObjectChunkSnapshotModel.countDocuments({ guildId: safeGuildId, userId: safeUserId }),
-            VerificationRecoveryModel.countDocuments({ guildId: safeGuildId, userId: safeUserId }),
-            IpIdentityLinkModel.countDocuments({
+            const verification = await verifyNoRemainingReferences({
+                models,
                 guildId: safeGuildId,
-                $or: [
-                    { "users.userId": safeUserId },
-                    { "deviceFingerprints.userId": safeUserId },
-                    { "roleSnapshots.userId": safeUserId }
-                ]
-            })
-        ]);
-        manifest.remainingReferences = remainingChecks.reduce((sum, value) => sum + Number(value || 0), 0);
-        if (manifest.remainingReferences !== 0) {
-            const error = new Error("Privacy deletion left remaining guild-scoped references");
-            error.code = "PRIVACY_DELETION_INCOMPLETE";
-            throw error;
-        }
-
-        await PrivacyDeletionJobModel.updateOne(
-            { jobId },
-            {
-                $set: {
-                    userId: deletedSubjectId(hash),
-                    subjectHash: hash,
-                    status: "completed",
-                    manifest,
-                    completedAt: Date.now(),
-                    updatedAt: Date.now()
-                }
+                userId: safeUserId,
+                memberVersions,
+                session: dbSession
+            });
+            manifest.verification = verification;
+            manifest.deletedCount = totalDeletionCount(manifest.counts);
+            if (verification.remainingReferences !== 0) {
+                const error = new Error("Privacy deletion left remaining guild-scoped references");
+                error.code = "PRIVACY_DELETION_INCOMPLETE";
+                throw error;
             }
-        );
+
+            await PrivacyDeletionJobModel.updateOne(
+                { jobId },
+                {
+                    $set: {
+                        userId: deletedSubjectId(hash),
+                        subjectHash: hash,
+                        status: "completed",
+                        manifest,
+                        completedAt: Date.now(),
+                        updatedAt: Date.now()
+                    }
+                },
+                { session: dbSession }
+            );
+        });
         return { success: true, jobId, manifest };
     } catch (error) {
+        operationError = error;
         await PrivacyDeletionJobModel.updateOne(
             { jobId },
             {
@@ -411,7 +499,14 @@ async function runMemberPrivacyDeletion({
         ).catch(() => {});
         throw error;
     } finally {
-        await dbSession.endSession();
+        if (dbSession) {
+            try {
+                await dbSession.endSession();
+            } catch (endError) {
+                if (!operationError) throw endError;
+                operationError.endSessionError = endError?.message || String(endError);
+            }
+        }
     }
 }
 
@@ -419,7 +514,10 @@ module.exports = {
     MANIFEST_VERSION,
     VERIFY_LOG_SENSITIVE_PATHS,
     buildOAuthUserPrivacyUpdate,
+    createManifest,
     redactArchivedOAuthPayload,
     runMemberPrivacyDeletion,
-    subjectHash
+    subjectHash,
+    totalDeletionCount,
+    verifyNoRemainingReferences
 };
