@@ -306,19 +306,127 @@ async function verifyNoRemainingReferences({
     };
 }
 
+
+const DEFAULT_PRIVACY_DELETION_STALE_MS = 15 * 60 * 1000;
+const DEFAULT_PRIVACY_DELETION_REUSE_MS = 5 * 60 * 1000;
+const ACTIVE_PRIVACY_DELETION_STATUSES = new Set(["pending", "running"]);
+
+function deletionOperationKey(guildId, userId) {
+    return crypto.createHash("sha256")
+        .update(`privacy-deletion:v1:guild_member:${String(guildId)}:${String(userId)}`)
+        .digest("hex");
+}
+
+function isMongoDuplicateKey(error) {
+    return Number(error?.code) === 11000;
+}
+
+async function leanLatest(Model, filter) {
+    let query = Model.findOne(filter);
+    if (query && typeof query.sort === "function") query = query.sort({ updatedAt: -1, createdAt: -1 });
+    if (query && typeof query.lean === "function") return await query.lean();
+    return await query;
+}
+
+function deletionJobResult(job, reused) {
+    const status = String(job?.status || "pending");
+    return {
+        success: true,
+        jobId: String(job?.jobId || ""),
+        manifest: job?.manifest && typeof job.manifest === "object" ? job.manifest : createManifest(),
+        reused: reused === true,
+        status,
+        pending: status === "pending" || status === "running"
+    };
+}
+
+async function reservePrivacyDeletionJob({
+    Model,
+    guildId,
+    userId,
+    requestedBy,
+    subjectHash: hash,
+    now,
+    staleJobMs,
+    completedReuseMs
+}) {
+    const operationKey = deletionOperationKey(guildId, userId);
+    let latest = await leanLatest(Model, { operationKey });
+    const latestUpdatedAt = Number(latest?.updatedAt || latest?.createdAt || 0);
+
+    if (latest && ACTIVE_PRIVACY_DELETION_STATUSES.has(String(latest.status))) {
+        const stale = !Number.isFinite(latestUpdatedAt) || latestUpdatedAt <= now - staleJobMs;
+        if (!stale) {
+            return { reused: true, operationKey, result: deletionJobResult(latest, true) };
+        }
+        await Model.updateOne(
+            { jobId: latest.jobId, activeKey: operationKey, status: latest.status },
+            {
+                $set: {
+                    status: "failed",
+                    errorCode: "PRIVACY_DELETION_STALE",
+                    updatedAt: now
+                },
+                $unset: { activeKey: "" }
+            }
+        );
+    }
+
+    const completedAt = Number(latest?.completedAt || 0);
+    if (
+        latest?.status === "completed" &&
+        Number.isFinite(completedAt) &&
+        completedAt > 0 &&
+        completedAt >= now - completedReuseMs
+    ) {
+        return { reused: true, operationKey, result: deletionJobResult(latest, true) };
+    }
+
+    const attempt = Math.max(1, Number(latest?.attempt || 0) + 1);
+    const jobId = crypto.randomUUID();
+    const job = {
+        jobId,
+        guildId,
+        userId,
+        subjectHash: hash,
+        operationKey,
+        activeKey: operationKey,
+        attempt,
+        requestedBy,
+        status: "pending",
+        manifestVersion: MANIFEST_VERSION,
+        createdAt: now,
+        updatedAt: now
+    };
+
+    try {
+        await Model.create(job);
+    } catch (error) {
+        if (!isMongoDuplicateKey(error)) throw error;
+        const active = await leanLatest(Model, { activeKey: operationKey });
+        if (!active) throw error;
+        return { reused: true, operationKey, result: deletionJobResult(active, true) };
+    }
+
+    return { reused: false, operationKey, jobId, attempt, result: null };
+}
+
 async function runMemberPrivacyDeletion({
     guildId,
     userId,
     requestedBy,
     now = Date.now(),
     models = DEFAULT_MODELS,
-    mongooseInstance = mongoose
+    mongooseInstance = mongoose,
+    staleJobMs = DEFAULT_PRIVACY_DELETION_STALE_MS,
+    completedReuseMs = DEFAULT_PRIVACY_DELETION_REUSE_MS
 }) {
     const safeGuildId = String(guildId || "");
     const safeUserId = String(userId || "");
     const safeRequestedBy = String(requestedBy || "dashboard-control").slice(0, 120);
     const hash = subjectHash(safeGuildId, safeUserId);
-    const jobId = crypto.randomUUID();
+    const safeStaleJobMs = Math.max(1000, Number(staleJobMs) || DEFAULT_PRIVACY_DELETION_STALE_MS);
+    const safeCompletedReuseMs = Math.max(0, Number(completedReuseMs) || 0);
     const manifest = createManifest();
     const {
         VerifyLog: VerifyLogModel,
@@ -336,17 +444,18 @@ async function runMemberPrivacyDeletion({
         PrivacyDeletionJob: PrivacyDeletionJobModel
     } = models;
 
-    await PrivacyDeletionJobModel.create({
-        jobId,
+    const reservation = await reservePrivacyDeletionJob({
+        Model: PrivacyDeletionJobModel,
         guildId: safeGuildId,
         userId: safeUserId,
-        subjectHash: hash,
         requestedBy: safeRequestedBy,
-        status: "pending",
-        manifestVersion: MANIFEST_VERSION,
-        createdAt: now,
-        updatedAt: now
+        subjectHash: hash,
+        now,
+        staleJobMs: safeStaleJobMs,
+        completedReuseMs: safeCompletedReuseMs
     });
+    if (reservation.reused) return reservation.result;
+    const { jobId, operationKey } = reservation;
 
     let dbSession = null;
     let operationError = null;
@@ -354,7 +463,7 @@ async function runMemberPrivacyDeletion({
         dbSession = await mongooseInstance.startSession();
         await dbSession.withTransaction(async () => {
             await PrivacyDeletionJobModel.updateOne(
-                { jobId },
+                { jobId, activeKey: operationKey },
                 { $set: { status: "running", updatedAt: Date.now() } },
                 { session: dbSession }
             );
@@ -478,12 +587,13 @@ async function runMemberPrivacyDeletion({
                         manifest,
                         completedAt: Date.now(),
                         updatedAt: Date.now()
-                    }
+                    },
+                    $unset: { activeKey: "" }
                 },
                 { session: dbSession }
             );
         });
-        return { success: true, jobId, manifest };
+        return { success: true, jobId, manifest, reused: false, status: "completed", pending: false };
     } catch (error) {
         operationError = error;
         await PrivacyDeletionJobModel.updateOne(
@@ -494,7 +604,8 @@ async function runMemberPrivacyDeletion({
                     manifest,
                     errorCode: error.code || error.name || "PRIVACY_DELETION_FAILED",
                     updatedAt: Date.now()
-                }
+                },
+                $unset: { activeKey: "" }
             }
         ).catch(() => {});
         throw error;
@@ -511,11 +622,17 @@ async function runMemberPrivacyDeletion({
 }
 
 module.exports = {
+    ACTIVE_PRIVACY_DELETION_STATUSES,
+    DEFAULT_PRIVACY_DELETION_REUSE_MS,
+    DEFAULT_PRIVACY_DELETION_STALE_MS,
     MANIFEST_VERSION,
     VERIFY_LOG_SENSITIVE_PATHS,
     buildOAuthUserPrivacyUpdate,
     createManifest,
+    deletionOperationKey,
+    deletionJobResult,
     redactArchivedOAuthPayload,
+    reservePrivacyDeletionJob,
     runMemberPrivacyDeletion,
     subjectHash,
     totalDeletionCount,

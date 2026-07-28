@@ -2,7 +2,8 @@
 
 const {
   authorizeUrl,
-  createOAuthStartHandler
+  createOAuthStartHandler,
+  createRegisteredExecutionState
 } = require("../discord/verification/routes/oauthStart");
 
 const GUILD_ID = "111111111111111111";
@@ -166,4 +167,70 @@ test("authorize URL builder cannot change the destination origin", () => {
   }));
   expect(url.origin).toBe("https://discord.com");
   expect(url.searchParams.get("state")).toBe("https://attacker.invalid/redirect");
+});
+
+test("OAuth start retries one duplicate nonce and redirects with the registered replacement", async () => {
+  const createState = jest.fn()
+    .mockReturnValueOnce("execution-state-1")
+    .mockReturnValueOnce("execution-state-2");
+  const registerState = jest.fn()
+    .mockRejectedValueOnce(Object.assign(new Error("duplicate nonceHash"), {
+      code: 11000,
+      keyPattern: { nonceHash: 1 }
+    }))
+    .mockResolvedValueOnce(true);
+  const handler = createHandler({
+    createState,
+    decodeState: jest.fn(value => value === "panel-state"
+      ? { guildId: GUILD_ID, roleId: ROLE_ID, expectedUserId: USER_ID, panelRevision: "revision-1" }
+      : { guildId: GUILD_ID, roleId: ROLE_ID, nonce: value, ts: 700000 }),
+    registerState
+  });
+  const res = responseFixture();
+
+  await handler({ query: { state: "panel-state" } }, res);
+
+  expect(res.statusCode).toBe(302);
+  expect(new URL(res.redirectLocation).searchParams.get("state")).toBe("execution-state-2");
+  expect(createState).toHaveBeenCalledTimes(2);
+  expect(registerState).toHaveBeenCalledTimes(2);
+});
+
+test("OAuth start does not retry non-duplicate persistence failures", async () => {
+  const createState = jest.fn(() => "execution-state");
+  const registerState = jest.fn(() => Promise.reject(Object.assign(new Error("database down"), { code: "DB_DOWN" })));
+  const handler = createHandler({ createState, registerState });
+  const res = responseFixture();
+
+  await handler({ query: { state: "panel-state" } }, res);
+
+  expect(res.statusCode).toBe(503);
+  expect(res.redirectLocation).toBeNull();
+  expect(createState).toHaveBeenCalledTimes(1);
+  expect(registerState).toHaveBeenCalledTimes(1);
+});
+
+test("registered execution state stops after the bounded duplicate retry limit", async () => {
+  const duplicate = Object.assign(new Error("duplicate nonceHash"), { code: 11000, keyValue: { nonceHash: "hash" } });
+  const createState = jest.fn()
+    .mockReturnValueOnce("state-1")
+    .mockReturnValueOnce("state-2");
+  const registerState = jest.fn(() => Promise.reject(duplicate));
+
+  await expect(createRegisteredExecutionState({}, {
+    createState,
+    decodeState: value => ({ nonce: value }),
+    registerState,
+    attempts: 2
+  })).rejects.toBe(duplicate);
+  expect(createState).toHaveBeenCalledTimes(2);
+  expect(registerState).toHaveBeenCalledTimes(2);
+});
+
+test("duplicate nonce classifier is limited to nonceHash duplicate-key errors", () => {
+  const { isDuplicateNonceError } = require("../discord/verification/services/verificationStateNonce");
+  expect(isDuplicateNonceError({ code: 11000, keyPattern: { nonceHash: 1 } })).toBe(true);
+  expect(isDuplicateNonceError({ code: 11000, keyValue: { nonceHash: "x" } })).toBe(true);
+  expect(isDuplicateNonceError({ code: 11000, keyPattern: { guildId: 1 } })).toBe(false);
+  expect(isDuplicateNonceError({ code: "DB_DOWN", message: "nonceHash" })).toBe(false);
 });

@@ -5,7 +5,7 @@ const test = require("node:test");
 
 const { _test } = require("../voiceWorker/lifecycle");
 
-const { performClientLogin } = _test;
+const { assertVoiceStartupAllowed, performClientLogin } = _test;
 
 test("voice client finishing login after shutdown starts is disposed and never pooled", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const session = { ownerId: "111111111111111111" };
@@ -42,4 +42,38 @@ test("voice client finishing login after shutdown starts is disposed and never p
     assert.equal(pooled.length, 0);
     assert.ok(disposed.includes("cancelled-login-generation"));
     assert.equal(session.loginGeneration, null);
+});
+
+test("voice startup guard rejects shutdown at every protected stage", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const session = {};
+    for (const stage of ["pre_login", "post_login", "post_jitter", "pre_connect", "post_connect", "pre_timers", "pre_ready"]) {
+        assert.throws(
+            () => assertVoiceStartupAllowed("session", session, stage, {
+                isShuttingDown: () => true,
+                getSession: () => session
+            }),
+            error => error?.code === "SYSTEM_SHUTTING_DOWN" && error?.stage === stage
+        );
+    }
+});
+
+test("voice startup guard rejects a session replaced during startup", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const original = {};
+    assert.throws(
+        () => assertVoiceStartupAllowed("session", original, "post_connect", {
+            isShuttingDown: () => false,
+            getSession: () => ({ replacement: true })
+        }),
+        error => error?.code === "SESSION_SUPERSEDED" && error?.stage === "post_connect"
+    );
+});
+
+test("startSession protects every asynchronous startup boundary", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const source = String(require("../voiceWorker/lifecycle").startSession);
+    for (const stage of ["pre_login", "post_login", "post_jitter", "pre_connect", "post_connect", "pre_timers", "pre_ready"]) {
+        assert.match(source, new RegExp(`assertVoiceStartupAllowed\\(sessionId, session, \\"${stage}\\"`));
+    }
+    assert.match(source, /stopNaturalTimer\(sessionId\)/);
+    assert.match(source, /stopAutoDeafTimer\(sessionId\)/);
+    assert.match(source, /session\.connection\.destroy\(\)/);
 });
