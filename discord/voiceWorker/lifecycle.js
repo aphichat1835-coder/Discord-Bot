@@ -457,6 +457,23 @@ async function resolveOrLoginSessionClient(sessionId, session, tokenHash, tokenS
     await performClientLogin(newClient, sessionId, session, tokenHash, tokenString);
 }
 
+
+function startupGuardError(code, stage) {
+    const error = new Error(code);
+    error.code = code;
+    error.stage = stage;
+    return error;
+}
+
+function assertVoiceStartupAllowed(sessionId, session, stage, deps = {}) {
+    const isShuttingDown = deps.isShuttingDown || (() => st.isShuttingDown);
+    const getSession = deps.getSession || (id => sessionManager.getSession(id));
+    if (isShuttingDown()) throw startupGuardError("SYSTEM_SHUTTING_DOWN", stage);
+    const current = getSession(sessionId);
+    if (!current || current !== session) throw startupGuardError("SESSION_SUPERSEDED", stage);
+    return current;
+}
+
 async function startSession(sessionId, tokenString, options = {}) {
     if (st.isShuttingDown) throw new Error("SYSTEM_SHUTTING_DOWN");
 
@@ -471,8 +488,10 @@ async function startSession(sessionId, tokenString, options = {}) {
     }
 
     let tokenHash = null;
+    const startupDeps = options.startupDeps || {};
 
     try {
+        assertVoiceStartupAllowed(sessionId, session, "pre_login", startupDeps);
         tokenHash = getSessionTokenHash(sessionId, session);
         if (!tokenHash) throw new Error("TOKEN_DECRYPTION_FAILED");
 
@@ -481,20 +500,26 @@ async function startSession(sessionId, tokenString, options = {}) {
          * gets separate SelfClient instances to avoid shared gateway voice-state fights.
          */
         await resolveOrLoginSessionClient(sessionId, session, tokenHash, tokenString);
+        assertVoiceStartupAllowed(sessionId, session, "post_login", startupDeps);
 
         const jitterDelay = randomInt(1500, 3500);
         await delay(jitterDelay);
+        assertVoiceStartupAllowed(sessionId, session, "post_jitter", startupDeps);
+        assertVoiceStartupAllowed(sessionId, session, "pre_connect", startupDeps);
 
         const conn = await connectToVoice(session.client, session.serverId, session.voiceId, tokenHash, sessionId);
         session.connection = conn;
+        assertVoiceStartupAllowed(sessionId, session, "post_connect", startupDeps);
 
         console.log(`[WORKER] 🎧 Voice connected for Session: ${sanitizeLogText(sessionId)} Guild: ${session.serverId}`);
 
         await refreshSessionMetadataFast(sessionId, 1800).catch(() => {});
         cleanupLeanSessionClient(sessionId, "post-connect");
 
+        assertVoiceStartupAllowed(sessionId, session, "pre_timers", startupDeps);
         startNaturalTimer(sessionId);
         startAutoDeafTimer(sessionId);
+        assertVoiceStartupAllowed(sessionId, session, "pre_ready", startupDeps);
 
         const voiceInfo = getSelfVoiceStateInfo(session.client, session);
         await notifications.markReady(sessionId, {
@@ -1401,6 +1426,7 @@ module.exports = {
         ensureVoiceSessionInternal,
         replaceExistingVoiceSession,
         supersededVoiceResult,
+        assertVoiceStartupAllowed,
         performClientLogin,
         processSessionHealthCheck
     }
