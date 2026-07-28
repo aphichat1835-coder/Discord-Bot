@@ -65,7 +65,7 @@ function buildRestoreResultDmEmbed(input) {
             { name: "🗂️ ห้องที่สร้าง", value: `${input.restoredChannels} ห้อง`, inline: true },
             { name: "⏭️ รายการที่ข้าม", value: `${input.skippedRoles} ยศ / ${input.skippedChannels} ห้อง`, inline: true },
             { name: "❓ ชื่อซ้ำหรือไม่แน่ชัด", value: `${input.ambiguousRoles} ยศ / ${input.ambiguousChannels} ห้อง`, inline: true },
-            { name: "🔐 สิทธิ์ห้อง", value: `${input.overwriteStats.restored} สำเร็จ / ${input.overwriteStats.skippedRoleMissing + input.overwriteStats.skippedMemberMissing} ข้าม`, inline: true },
+            { name: "🔐 สิทธิ์ห้อง", value: `${input.overwriteStats.restored} สำเร็จ / ${input.overwriteStats.skippedRoleMissing + input.overwriteStats.skippedMemberMissing} หาย / ${Number(input.overwriteStats.skippedMemberUnresolved || 0)} ตรวจไม่ได้`, inline: true },
             { name: "⚠️ ข้อผิดพลาด", value: String(input.restoreErrors), inline: true },
             { name: "⏱️ หมดเวลาระหว่างทำงาน", value: input.timeoutHit ? "ใช่" : "ไม่", inline: true }
         ],
@@ -518,21 +518,103 @@ function planRestoreCategory(guild, channelData, categoryIdMap, plan) {
     }
 }
 
-function resolveRestoreOverwriteTarget(guild, overwrite, roleIdMap, oldGuildId) {
+const RESTORE_MEMBER_FETCH_CONCURRENCY = 4;
+const RESTORE_MEMBER_FETCH_TIMEOUT_MS = 5000;
+
+function collectRestoreMemberIds(channels) {
+    const memberIds = new Set();
+    for (const channelData of channels || []) {
+        for (const overwrite of channelData.permissionOverwrites || []) {
+            if (normalizeOverwriteType(overwrite.type) === "member") memberIds.add(overwrite.id);
+        }
+    }
+    return [...memberIds];
+}
+
+function isMissingRestoreMemberError(error) {
+    const code = Number(error?.code ?? error?.rawError?.code);
+    return code === 10007 || Number(error?.status) === 404;
+}
+
+async function fetchRestoreMemberWithTimeout(guild, memberId, timeoutMs) {
+    let timeout;
+    try {
+        return await Promise.race([
+            Promise.resolve().then(() => guild.members.fetch(memberId)),
+            new Promise((_, reject) => {
+                timeout = setTimeout(() => {
+                    const error = new Error(`RESTORE_MEMBER_FETCH_TIMEOUT:${memberId}`);
+                    error.code = "RESTORE_MEMBER_FETCH_TIMEOUT";
+                    reject(error);
+                }, timeoutMs);
+            })
+        ]);
+    } finally {
+        if (timeout) clearTimeout(timeout);
+    }
+}
+
+async function resolveRestoreMemberTargets(guild, channels, options = {}) {
+    const states = new Map();
+    const pending = [];
+    for (const memberId of collectRestoreMemberIds(channels)) {
+        if (guild.members.cache.has(memberId)) states.set(memberId, "resolved");
+        else pending.push(memberId);
+    }
+
+    if (pending.length === 0) return states;
+    if (typeof guild.members.fetch !== "function") {
+        for (const memberId of pending) states.set(memberId, "unresolved");
+        return states;
+    }
+
+    const requestedConcurrency = Number(options.memberFetchConcurrency);
+    const requestedTimeoutMs = Number(options.memberFetchTimeoutMs);
+    const concurrency = Number.isFinite(requestedConcurrency)
+        ? Math.max(1, Math.min(10, Math.trunc(requestedConcurrency)))
+        : RESTORE_MEMBER_FETCH_CONCURRENCY;
+    const timeoutMs = Number.isFinite(requestedTimeoutMs)
+        ? Math.max(100, Math.min(30000, Math.trunc(requestedTimeoutMs)))
+        : RESTORE_MEMBER_FETCH_TIMEOUT_MS;
+    let cursor = 0;
+    const workers = Array.from({ length: Math.min(concurrency, pending.length) }, async () => {
+        while (cursor < pending.length) {
+            const memberId = pending[cursor++];
+            try {
+                const member = await fetchRestoreMemberWithTimeout(guild, memberId, timeoutMs);
+                states.set(memberId, member ? "resolved" : "missing");
+            } catch (error) {
+                states.set(memberId, isMissingRestoreMemberError(error) ? "missing" : "unresolved");
+            }
+        }
+    });
+    await Promise.all(workers);
+    return states;
+}
+
+function resolveRestoreOverwriteTarget(guild, overwrite, roleIdMap, oldGuildId, memberTargetStates = new Map()) {
     const overwriteType = normalizeOverwriteType(overwrite.type);
     let targetId = roleIdMap.get(overwrite.id);
     if (overwrite.id === oldGuildId) targetId = guild.id;
     if (!targetId && overwriteType === "member" && guild.members.cache.has(overwrite.id)) targetId = overwrite.id;
+    if (!targetId && overwriteType === "member" && memberTargetStates.get(overwrite.id) === "resolved") targetId = overwrite.id;
     if (!targetId && overwriteType === "role" && guild.roles.cache.has(overwrite.id)) targetId = overwrite.id;
     return targetId;
 }
 
-function buildResolvedOverwrites(guild, channelData, roleIdMap, oldGuildId) {
-    const stats = { restored: 0, skippedRoleMissing: 0, skippedMemberMissing: 0 };
+function buildResolvedOverwrites(guild, channelData, roleIdMap, oldGuildId, memberTargetStates = new Map()) {
+    const stats = {
+        restored: 0,
+        skippedRoleMissing: 0,
+        skippedMemberMissing: 0,
+        skippedMemberUnresolved: 0
+    };
     const overwrites = [];
     for (const overwrite of channelData.permissionOverwrites || []) {
         const overwriteType = normalizeOverwriteType(overwrite.type);
-        const targetId = resolveRestoreOverwriteTarget(guild, overwrite, roleIdMap, oldGuildId);
+        const targetId = resolveRestoreOverwriteTarget(
+            guild, overwrite, roleIdMap, oldGuildId, memberTargetStates
+        );
         if (targetId) {
             stats.restored++;
             overwrites.push({
@@ -541,7 +623,8 @@ function buildResolvedOverwrites(guild, channelData, roleIdMap, oldGuildId) {
                 deny: restoreBigInt(overwrite.deny)
             });
         } else if (overwriteType === "member") {
-            stats.skippedMemberMissing++;
+            if (memberTargetStates.get(overwrite.id) === "unresolved") stats.skippedMemberUnresolved++;
+            else stats.skippedMemberMissing++;
         } else {
             stats.skippedRoleMissing++;
         }
@@ -553,16 +636,23 @@ function addOverwriteStats(target, source, { includeRestored = true } = {}) {
     if (includeRestored) target.restored += Number(source.restored || 0);
     target.skippedRoleMissing += Number(source.skippedRoleMissing || 0);
     target.skippedMemberMissing += Number(source.skippedMemberMissing || 0);
+    target.skippedMemberUnresolved = Number(target.skippedMemberUnresolved || 0) +
+        Number(source.skippedMemberUnresolved || 0);
 }
 
-function planRestoreOverwrites(guild, channelData, roleIdMap, oldGuildId, plan) {
-    const resolved = buildResolvedOverwrites(guild, channelData, roleIdMap, oldGuildId);
+function planRestoreOverwrites(guild, channelData, roleIdMap, oldGuildId, plan, memberTargetStates) {
+    const resolved = buildResolvedOverwrites(
+        guild, channelData, roleIdMap, oldGuildId, memberTargetStates
+    );
     plan.overwritesRestored += resolved.stats.restored;
     plan.overwritesSkippedRoleMissing += resolved.stats.skippedRoleMissing;
     plan.overwritesSkippedMemberMissing += resolved.stats.skippedMemberMissing;
+    plan.overwritesSkippedMemberUnresolved += resolved.stats.skippedMemberUnresolved;
 }
 
-function planRestoreChannel(guild, channelData, categoryIdMap, roleIdMap, oldGuildId, plan) {
+function planRestoreChannel(
+    guild, channelData, categoryIdMap, roleIdMap, oldGuildId, plan, memberTargetStates
+) {
     if (!SUPPORTED_BACKUP_CHANNEL_TYPES.has(channelData.type)) {
         plan.channelsSkipped++;
         return;
@@ -579,12 +669,17 @@ function planRestoreChannel(guild, channelData, categoryIdMap, roleIdMap, oldGui
         return;
     }
     plan.channelsToCreate++;
-    planRestoreOverwrites(guild, channelData, roleIdMap, oldGuildId, plan);
+    planRestoreOverwrites(
+        guild, channelData, roleIdMap, oldGuildId, plan, memberTargetStates
+    );
 }
 
-function buildRestorePlan(guild, backupData, oldGuildId) {
+async function buildRestorePlan(guild, backupData, oldGuildId, options = {}) {
     const roles = Array.isArray(backupData.roles) ? backupData.roles : [];
     const channels = normalizeSnapshotChannels(backupData.channels);
+    const memberTargetStates = options.memberTargetStates instanceof Map
+        ? options.memberTargetStates
+        : await resolveRestoreMemberTargets(guild, channels, options);
     const roleIdMap = new Map();
     const categoryIdMap = new Map();
     const plan = {
@@ -597,6 +692,7 @@ function buildRestorePlan(guild, backupData, oldGuildId) {
         overwritesRestored: 0,
         overwritesSkippedRoleMissing: 0,
         overwritesSkippedMemberMissing: 0,
+        overwritesSkippedMemberUnresolved: 0,
         warnings: []
     };
 
@@ -609,7 +705,9 @@ function buildRestorePlan(guild, backupData, oldGuildId) {
     }
 
     for (const cData of channels.filter(c => c.type !== "GUILD_CATEGORY")) {
-        planRestoreChannel(guild, cData, categoryIdMap, roleIdMap, oldGuildId, plan);
+        planRestoreChannel(
+            guild, cData, categoryIdMap, roleIdMap, oldGuildId, plan, memberTargetStates
+        );
     }
 
     if (plan.rolesAmbiguous || plan.channelsAmbiguous) {
@@ -783,13 +881,13 @@ async function handleRestore(interaction) {
         return interaction.editReply({ content: `> ${config.emojis.error} Backup ไม่ครบหรือ schema ไม่ถูกต้อง จึงไม่สามารถกู้คืนได้` });
     }
     markCommandAccepted(interaction);
-    const plan = buildRestorePlan(interaction.guild, backupData, backup.guildId);
+    const plan = await buildRestorePlan(interaction.guild, backupData, backup.guildId);
     const validation = backupData.validationReport || buildBackupValidationReport(backupData);
     const planText =
         `— จะสร้างยศใหม่: ${plan.rolesToCreate}\n` +
         `— จะสร้างห้องใหม่: ${plan.channelsToCreate}\n` +
         `— ข้าม/ชื่อซ้ำ: ${plan.rolesSkipped + plan.channelsSkipped} ข้าม, ${plan.rolesAmbiguous + plan.channelsAmbiguous} ชื่อซ้ำ\n` +
-        `— Permission overwrites: ${plan.overwritesRestored} ใช้ได้, ${plan.overwritesSkippedRoleMissing} role หาย, ${plan.overwritesSkippedMemberMissing} member หาย`;
+        `— Permission overwrites: ${plan.overwritesRestored} ใช้ได้, ${plan.overwritesSkippedRoleMissing} role หาย, ${plan.overwritesSkippedMemberMissing} member หาย, ${plan.overwritesSkippedMemberUnresolved} member ตรวจไม่ได้`;
 
     const embed = new MessageEmbed()
         .setColor(config.system.themeColors.error)
@@ -873,6 +971,7 @@ async function handleRestoreConfirm(interaction, sessionManager) {
             const guild = interaction.guild;
             const roles = backupData.roles;
             const channels = normalizeSnapshotChannels(backupData.channels);
+            const memberTargetStates = await resolveRestoreMemberTargets(guild, channels);
             const oldGuildId = backup.guildId;
             const roleIdMap  = new Map();
             let restoredRoles    = 0;
@@ -885,7 +984,8 @@ async function handleRestoreConfirm(interaction, sessionManager) {
             const overwriteStats = {
                 restored: 0,
                 skippedRoleMissing: 0,
-                skippedMemberMissing: 0
+                skippedMemberMissing: 0,
+                skippedMemberUnresolved: 0
             };
             const startTime      = Date.now();
             const MAX_DUR        = 14 * 60 * 1000;
@@ -958,7 +1058,7 @@ async function handleRestoreConfirm(interaction, sessionManager) {
                         if (cData.id) categoryIdMap.set(cData.id, exists.id);
                     } else {
                         try {
-                            const resolvedOverwrites = buildResolvedOverwrites(guild, cData, roleIdMap, oldGuildId);
+                            const resolvedOverwrites = buildResolvedOverwrites(guild, cData, roleIdMap, oldGuildId, memberTargetStates);
                             const newCat = await guild.channels.create({
                                 name: cData.name,
                                 ...channelCreatePayload(cData, undefined, resolvedOverwrites.overwrites),
@@ -996,7 +1096,7 @@ async function handleRestoreConfirm(interaction, sessionManager) {
                         if (!exists) {
                             try {
                                 if (validTypes.includes(cData.type)) {
-                                    const resolvedOverwrites = buildResolvedOverwrites(guild, cData, roleIdMap, oldGuildId);
+                                    const resolvedOverwrites = buildResolvedOverwrites(guild, cData, roleIdMap, oldGuildId, memberTargetStates);
                                     await guild.channels.create({
                                         name: cData.name,
                                         ...channelCreatePayload(cData, parentId, resolvedOverwrites.overwrites)
@@ -1020,10 +1120,11 @@ async function handleRestoreConfirm(interaction, sessionManager) {
             const detailMsg =
                 `\n— ข้าม: ${skippedRoles} ยศ, ${skippedChannels} ห้อง` +
                 `\n— ชื่อซ้ำ/ไม่แน่ชัด: ${ambiguousRoles} ยศ, ${ambiguousChannels} ห้อง` +
-                `\n— Permission overwrites: ${overwriteStats.restored} ใช้ได้, ${overwriteStats.skippedRoleMissing} role หาย, ${overwriteStats.skippedMemberMissing} member หาย` +
+                `\n— Permission overwrites: ${overwriteStats.restored} ใช้ได้, ${overwriteStats.skippedRoleMissing} role หาย, ${overwriteStats.skippedMemberMissing} member หาย, ${overwriteStats.skippedMemberUnresolved} member ตรวจไม่ได้` +
                 `\n— Error: ${restoreErrors}`;
             const incompleteItems = skippedChannels + ambiguousRoles + ambiguousChannels +
-                overwriteStats.skippedRoleMissing + overwriteStats.skippedMemberMissing;
+                overwriteStats.skippedRoleMissing + overwriteStats.skippedMemberMissing +
+                overwriteStats.skippedMemberUnresolved;
             let resultState = "failed";
             if (restoreErrors === 0 && !timeoutHit && incompleteItems === 0) resultState = "complete";
             else if (restoredRoles + restoredChannels > 0) resultState = "partial";
@@ -1092,6 +1193,8 @@ module.exports = {
         snapshotIdentityMatches,
         buildBackupValidationReport,
         buildRestorePlan,
+        collectRestoreMemberIds,
+        resolveRestoreMemberTargets,
         buildResolvedOverwrites,
         addOverwriteStats,
         normalizeOverwriteType,
