@@ -1,9 +1,10 @@
 "use strict";
 
 function delay(ms, setTimer = setTimeout) {
+    // This timer is awaited shutdown control flow. Keep it referenced so the
+    // promise can always settle even when no other event-loop handle exists.
     return new Promise(resolve => {
-        const timer = setTimer(resolve, ms);
-        timer?.unref?.();
+        setTimer(resolve, ms);
     });
 }
 
