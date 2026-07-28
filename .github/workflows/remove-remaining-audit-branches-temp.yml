@@ -1,0 +1,63 @@
+name: TEMP remove remaining audit branches
+
+on:
+  pull_request:
+    branches:
+      - ttt.1
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Delete remaining stale branches and self
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_BRANCH: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          branches=(
+            "audit/final-remediation-trigger-20260728"
+            "audit/final-remediation-trigger-20260728-2"
+            "audit/final-remediation-trigger-20260728-3"
+            "audit/final-remediation-trigger-20260728-pr"
+            "audit/final-remediation-trigger-20260728-pr2"
+            "${HEAD_BRANCH}"
+          )
+
+          for branch in "${branches[@]}"; do
+            status=$(curl --silent --show-error \
+              --output /tmp/delete-response.json \
+              --write-out "%{http_code}" \
+              --request DELETE \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer ${GH_TOKEN}" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/git/refs/heads/${branch}")
+            case "${status}" in
+              204)
+                echo "Deleted ${branch}"
+                ;;
+              404)
+                echo "Already absent: ${branch}"
+                ;;
+              422)
+                if grep -q 'Reference does not exist' /tmp/delete-response.json; then
+                  echo "Already absent: ${branch}"
+                else
+                  echo "Failed to delete ${branch}; HTTP ${status}"
+                  cat /tmp/delete-response.json
+                  exit 1
+                fi
+                ;;
+              *)
+                echo "Failed to delete ${branch}; HTTP ${status}"
+                cat /tmp/delete-response.json
+                exit 1
+                ;;
+            esac
+          done
