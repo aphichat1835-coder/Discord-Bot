@@ -14,6 +14,7 @@ const ZERO_SHA_PATTERN = /^0+$/;
 const APPROVAL_MARKER_PREFIX = "<!-- protected-owner-approval:";
 const APPROVAL_PAGE_SIZE = 100;
 const APPROVAL_MAX_PAGES = 100;
+const GIT_BLOB_PREFIX = "git:";
 
 function resolveGitBin() {
     for (const candidate of ["/usr/bin/git", "/usr/local/bin/git", "/opt/homebrew/bin/git", "/bin/git"]) {
@@ -92,17 +93,37 @@ function sha256(content) {
     return crypto.createHash("sha256").update(content).digest("hex");
 }
 
+function gitBlobSha(file) {
+    const normalized = normalizeRepositoryPath(file);
+    if (!isProtectedPath(normalized)) throw new Error(`Unsafe protected path: ${normalized}`);
+    return git(["hash-object", "--", normalized]);
+}
+
+function manifestEntryMatches(file, expected) {
+    const value = String(expected || "").trim();
+    if (value.startsWith(GIT_BLOB_PREFIX)) {
+        const expectedBlob = value.slice(GIT_BLOB_PREFIX.length);
+        return /^[a-f0-9]{40}$/i.test(expectedBlob) && gitBlobSha(file) === expectedBlob;
+    }
+    return /^[a-f0-9]{64}$/i.test(value) && sha256(readProtectedFile(file)) === value;
+}
+
 function validateManifest() {
     const tracked = listTrackedProtectedFiles();
     const manifestFiles = Object.keys(PROTECTED_DIGESTS).map(normalizeRepositoryPath).sort();
     const missing = tracked.filter(file => !manifestFiles.includes(file));
     const extra = manifestFiles.filter(file => !tracked.includes(file));
-    const mismatched = tracked.filter(file => sha256(readProtectedFile(file)) !== PROTECTED_DIGESTS[file]);
+    const malformed = manifestFiles.filter(file => {
+        const value = String(PROTECTED_DIGESTS[file] || "");
+        return !/^[a-f0-9]{64}$/i.test(value) && !/^git:[a-f0-9]{40}$/i.test(value);
+    });
+    const mismatched = tracked.filter(file => !malformed.includes(file) && !manifestEntryMatches(file, PROTECTED_DIGESTS[file]));
 
-    if (missing.length || extra.length || mismatched.length) {
+    if (missing.length || extra.length || malformed.length || mismatched.length) {
         console.error("[PROTECTED-PATHS] protected manifest is incomplete or does not match the current files.");
         for (const file of missing) console.error(`- missing manifest entry: ${file}`);
         for (const file of extra) console.error(`- stale manifest entry: ${file}`);
+        for (const file of malformed) console.error(`- malformed manifest entry: ${file}`);
         for (const file of mismatched) console.error(`- digest mismatch: ${file}`);
         return false;
     }
@@ -240,9 +261,12 @@ module.exports = {
     APPROVAL_MARKER_PREFIX,
     APPROVAL_MAX_PAGES,
     APPROVAL_PAGE_SIZE,
+    GIT_BLOB_PREFIX,
     fetchOwnerApproval,
+    gitBlobSha,
     isProtectedPath,
     listTrackedProtectedFiles,
+    manifestEntryMatches,
     normalizeRepositoryPath,
     ownerApprovalUrl,
     sha256,
