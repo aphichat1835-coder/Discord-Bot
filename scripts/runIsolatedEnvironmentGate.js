@@ -25,7 +25,10 @@ const REQUIRED_NAMES = [
     "TEST_DISCORD_CLIENT_SECRET",
     "TEST_PUBLIC_BASE_URL",
     "TEST_ALLOWED_HOSTS",
-    "PRODUCTION_PUBLIC_BASE_URL"
+    "PRODUCTION_PUBLIC_BASE_URL",
+    "PRODUCTION_DISCORD_CLIENT_IDS",
+    "PRODUCTION_GUILD_IDS",
+    "PRODUCTION_CHANNEL_IDS"
 ];
 
 function requiredText(env, name) {
@@ -57,6 +60,17 @@ function exactAllowedHosts(value) {
             .map(item => item.trim().toLowerCase())
             .filter(Boolean)
     );
+}
+
+function exactSnowflakeSet(value, errorCode) {
+    const ids = new Set();
+    for (const item of String(value || "").split(",").map(entry => entry.trim()).filter(Boolean)) {
+        const normalized = normalizeDiscordSnowflake(item);
+        if (!normalized) throw new Error(`INVALID_${errorCode}`);
+        ids.add(normalized);
+    }
+    if (!ids.size) throw new Error(`MISSING_${errorCode}`);
+    return ids;
 }
 
 function normalizeHttpsOrigin(value, errorCode) {
@@ -120,6 +134,28 @@ function validateIsolatedEnvironment(env = process.env) {
         if (!ids[name]) throw new Error(`INVALID_${name}`);
     }
 
+    const productionClientIds = exactSnowflakeSet(
+        requiredText(env, "PRODUCTION_DISCORD_CLIENT_IDS"),
+        "PRODUCTION_DISCORD_CLIENT_IDS"
+    );
+    const productionGuildIds = exactSnowflakeSet(
+        requiredText(env, "PRODUCTION_GUILD_IDS"),
+        "PRODUCTION_GUILD_IDS"
+    );
+    const productionChannelIds = exactSnowflakeSet(
+        requiredText(env, "PRODUCTION_CHANNEL_IDS"),
+        "PRODUCTION_CHANNEL_IDS"
+    );
+    if (productionClientIds.has(ids.TEST_DISCORD_CLIENT_ID)) {
+        throw new Error("TEST_DISCORD_CLIENT_MUST_DIFFER_FROM_PRODUCTION");
+    }
+    if (productionGuildIds.has(ids.TEST_GUILD_ID)) {
+        throw new Error("TEST_GUILD_MUST_DIFFER_FROM_PRODUCTION");
+    }
+    if (productionChannelIds.has(ids.TEST_TEXT_CHANNEL_ID) || productionChannelIds.has(ids.TEST_VOICE_CHANNEL_ID)) {
+        throw new Error("TEST_CHANNELS_MUST_DIFFER_FROM_PRODUCTION");
+    }
+
     return {
         mongoUri,
         databaseName,
@@ -131,6 +167,11 @@ function validateIsolatedEnvironment(env = process.env) {
         voiceChannelId: ids.TEST_VOICE_CHANNEL_ID,
         publicBaseUrl: publicUrl.toString().replace(/\/$/, ""),
         productionOrigin,
+        productionResourceCounts: {
+            clients: productionClientIds.size,
+            guilds: productionGuildIds.size,
+            channels: productionChannelIds.size
+        },
         allowedHosts: [...allowedHosts].sort(),
         commitSha,
         recordDir: String(env.GATE_RECORD_DIR || "artifacts").trim() || "artifacts"
@@ -287,8 +328,29 @@ function writeRecord(config, record) {
     return filename;
 }
 
+function persistGateRecord(config, record, options = {}) {
+    const writer = options.writer || writeRecord;
+    const logger = options.logger || console;
+    try {
+        const filename = writer(config, record);
+        logger.log(`[ENV-GATE] record=${filename} status=${record.status}`);
+        return { ok: true, filename, error: null };
+    } catch (writeError) {
+        const safeMessage = redactSecrets(writeError?.message || writeError, config);
+        logger.error(`[ENV-GATE] record write failed: ${safeMessage}`);
+        return {
+            ok: false,
+            filename: null,
+            error: Object.assign(new Error(safeMessage || "environment gate record write failed"), {
+                code: "ENV_GATE_RECORD_WRITE_FAILED"
+            })
+        };
+    }
+}
+
 async function main() {
     let config = null;
+    let primaryError = null;
     const startedAt = new Date().toISOString();
     const record = {
         schemaVersion: 1,
@@ -306,6 +368,7 @@ async function main() {
             database: config.databaseName,
             deploymentOriginHash: hashIdentifier(new URL(config.publicBaseUrl).origin),
             productionOriginHash: hashIdentifier(config.productionOrigin),
+            productionResourceCounts: config.productionResourceCounts,
             guildHash: hashIdentifier(config.guildId)
         };
         record.evidence.mongo = await runMongoGate(config);
@@ -320,15 +383,19 @@ async function main() {
         return record;
     } catch (error) {
         record.error = redactSecrets(error?.message || error, config);
-        throw Object.assign(error instanceof Error ? error : new Error(String(error)), { gateRecord: record, gateConfig: config });
+        primaryError = Object.assign(error instanceof Error ? error : new Error(String(error)), {
+            gateRecord: record,
+            gateConfig: config
+        });
+        throw primaryError;
     } finally {
         record.finishedAt = new Date().toISOString();
         const fallbackConfig = config || {
             commitSha: record.commitSha,
             recordDir: String(process.env.GATE_RECORD_DIR || "artifacts")
         };
-        const filename = writeRecord(fallbackConfig, record);
-        console.log(`[ENV-GATE] record=${filename} status=${record.status}`);
+        const persistence = persistGateRecord(fallbackConfig, record);
+        if (!persistence.ok && !primaryError) throw persistence.error;
     }
 }
 
@@ -348,8 +415,11 @@ module.exports = {
     REQUIRED_NAMES,
     databaseNameFromMongoUri,
     exactAllowedHosts,
+    exactSnowflakeSet,
     hashIdentifier,
     normalizeHttpsOrigin,
+    persistGateRecord,
     redactSecrets,
-    validateIsolatedEnvironment
+    validateIsolatedEnvironment,
+    writeRecord
 };
