@@ -41,6 +41,12 @@ async function closeHttpServer(server, options = {}) {
     });
 }
 
+function normalizeExitCode(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return 1;
+    return Math.max(0, Math.trunc(parsed));
+}
+
 function createShutdownCoordinator(options = {}) {
     const {
         system = {},
@@ -63,8 +69,10 @@ function createShutdownCoordinator(options = {}) {
     } = options;
 
     let shutdownPromise = null;
+    let highestRequestedExitCode = 0;
 
     function shutdown(signal, requestedExitCode = 0) {
+        highestRequestedExitCode = Math.max(highestRequestedExitCode, normalizeExitCode(requestedExitCode));
         if (shutdownPromise) return shutdownPromise;
 
         shutdownPromise = (async () => {
@@ -109,11 +117,11 @@ function createShutdownCoordinator(options = {}) {
             await runCleanupStep("database disconnect", () => sessionManager?.disconnectDB?.(), state);
 
             clearTimer(forceTimer);
-            const finalExitCode = state.failures.length > 0 ? 1 : requestedExitCode;
+            const finalExitCode = state.failures.length > 0 ? Math.max(1, highestRequestedExitCode) : highestRequestedExitCode;
             processRef.exit(finalExitCode);
             return {
                 signal,
-                requestedExitCode,
+                requestedExitCode: highestRequestedExitCode,
                 exitCode: finalExitCode,
                 completed: state.completed,
                 failures: state.failures.map(item => ({
@@ -127,6 +135,7 @@ function createShutdownCoordinator(options = {}) {
     }
 
     shutdown.isShutdownStarted = () => shutdownPromise !== null;
+    shutdown.getRequestedExitCode = () => highestRequestedExitCode;
     return shutdown;
 }
 
@@ -167,5 +176,6 @@ module.exports = {
     runCleanupStep,
     closeHttpServer,
     createShutdownCoordinator,
-    installShutdownCoordinator
+    installShutdownCoordinator,
+    normalizeExitCode
 };
