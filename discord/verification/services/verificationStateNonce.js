@@ -7,6 +7,17 @@ function nonceHash(nonce) {
     return crypto.createHash("sha256").update(String(nonce || "")).digest("hex");
 }
 
+
+function isDuplicateNonceError(error) {
+    if (Number(error?.code) !== 11000) return false;
+    const fields = [
+        ...Object.keys(error?.keyPattern || {}),
+        ...Object.keys(error?.keyValue || {})
+    ];
+    if (fields.includes("nonceHash")) return true;
+    return /nonceHash/i.test(String(error?.message || ""));
+}
+
 async function registerVerificationState(stateObj) {
     if (!stateObj?.nonce || !stateObj.guildId || !stateObj.roleId || !Number.isFinite(Number(stateObj.ts))) return false;
     await VerificationStateNonce.create({
@@ -44,6 +55,7 @@ async function consumeVerificationState(stateObj) {
 }
 
 module.exports = {
+    isDuplicateNonceError,
     nonceHash,
     registerVerificationState,
     consumeVerificationState

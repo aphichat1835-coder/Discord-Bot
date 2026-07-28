@@ -5,10 +5,11 @@ const { resolvePublicBaseUrl } = require("../../core/publicUrl");
 const { normalizeDiscordSnowflake } = require("../../core/snowflakes");
 const { normalizeVerificationConfig } = require("../utils/verifyMode");
 const { createCompactCallbackState, decodeCallbackState } = require("../utils/state");
-const { registerVerificationState } = require("../services/verificationStateNonce");
+const { isDuplicateNonceError, registerVerificationState } = require("../services/verificationStateNonce");
 
 const VERIFY_SCOPE = "identify identify.premium email connections guilds guilds.members.read guilds.join";
 const EXECUTION_STATE_TTL_MS = 10 * 60 * 1000;
+const STATE_REGISTRATION_ATTEMPTS = 2;
 
 function authorizeUrl({ clientId, redirectUri, state, scope = VERIFY_SCOPE }) {
     const params = new URLSearchParams({
@@ -22,12 +23,40 @@ function authorizeUrl({ clientId, redirectUri, state, scope = VERIFY_SCOPE }) {
     return `https://discord.com/oauth2/authorize?${params.toString()}`;
 }
 
+
+async function createRegisteredExecutionState(payload, options = {}) {
+    const createState = options.createState;
+    const decodeState = options.decodeState;
+    const registerState = options.registerState;
+    const duplicateError = options.isDuplicateStateError || isDuplicateNonceError;
+    const attempts = Math.max(1, Math.min(3, Number(options.attempts) || STATE_REGISTRATION_ATTEMPTS));
+    let lastDuplicate = null;
+
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+        const state = createState(payload);
+        const stateObj = decodeState(state);
+        if (!stateObj) return null;
+        try {
+            if (await registerState(stateObj)) return { state, stateObj, attempt };
+            return null;
+        } catch (error) {
+            if (!duplicateError(error)) throw error;
+            lastDuplicate = error;
+        }
+    }
+    throw lastDuplicate || Object.assign(new Error("Verification state registration failed"), {
+        code: "VERIFICATION_STATE_REGISTRATION_FAILED"
+    });
+}
+
 function createOAuthStartHandler(options = {}) {
     const {
         GuildConfigModel = GuildConfig,
         decodeState = decodeCallbackState,
         createState = createCompactCallbackState,
         registerState = registerVerificationState,
+        isDuplicateStateError = isDuplicateNonceError,
+        stateRegistrationAttempts = STATE_REGISTRATION_ATTEMPTS,
         normalizeConfig = normalizeVerificationConfig,
         now = Date.now,
         env = process.env,
@@ -56,17 +85,23 @@ function createOAuthStartHandler(options = {}) {
                 return res.status(409).send("แผงยืนยันนี้ถูกแทนที่แล้ว กรุณาใช้แผงล่าสุด");
             }
 
-            const executionState = createState({
+            const registered = await createRegisteredExecutionState({
                 guildId,
                 roleId,
                 expectedUserId: normalizeDiscordSnowflake(panelState.expectedUserId) || null,
                 panelRevision: verification.panelRevision || panelState.panelRevision || null,
                 expiresAt: now() + EXECUTION_STATE_TTL_MS
+            }, {
+                createState,
+                decodeState,
+                registerState,
+                isDuplicateStateError,
+                attempts: stateRegistrationAttempts
             });
-            const executionStateObj = decodeState(executionState);
-            if (!executionStateObj || !await registerState(executionStateObj)) {
+            if (!registered) {
                 return res.status(503).send("ไม่สามารถเริ่มการยืนยันได้ กรุณาลองใหม่");
             }
+            const executionState = registered.state;
 
             const clientId = normalizeDiscordSnowflake(env.DISCORD_CLIENT_ID);
             if (!clientId) throw Object.assign(new Error("Discord client ID is unavailable"), {
@@ -90,7 +125,9 @@ function createOAuthStartHandler(options = {}) {
 
 module.exports = {
     EXECUTION_STATE_TTL_MS,
+    STATE_REGISTRATION_ATTEMPTS,
     VERIFY_SCOPE,
     authorizeUrl,
-    createOAuthStartHandler
+    createOAuthStartHandler,
+    createRegisteredExecutionState
 };
