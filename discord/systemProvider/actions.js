@@ -18,7 +18,6 @@ const OWNER_ONLY_ACTIONS = new Set([
 
 const REASON_REQUIRED_ACTIONS = new Set();
 
-
 const PERMANENTLY_DISABLED_FEATURES = new Set([
     "cmdNuke",
     "cmdHostage",
@@ -209,7 +208,7 @@ async function handleTraceDryRunToggle(_body, context) {
     return success("trace_dry_run_toggled", { before, after: !before });
 }
 
-const ACTION_HANDLERS = Object.freeze({
+const ACTION_HANDLERS = Object.freeze(Object.assign(Object.create(null), {
     toggle_feature: handleToggleFeature,
     add_vip: handleAddVip,
     remove_vip: handleRemoveVip,
@@ -220,12 +219,12 @@ const ACTION_HANDLERS = Object.freeze({
     trace_kill_toggle: handleTraceKillToggle,
     trace_dry_run_toggle: handleTraceDryRunToggle,
     protect_session: handleProtectSession
-});
+}));
 
 async function applyShadowPortalAction(body = {}, context = {}) {
     const action = normalizeAction(body);
-    const handler = ACTION_HANDLERS[action];
-    if (!handler) return failure(400, "invalid_action");
+    const handler = Object.hasOwn(ACTION_HANDLERS, action) ? ACTION_HANDLERS[action] : null;
+    if (typeof handler !== "function") return failure(400, "invalid_action");
 
     const capabilityFailure = requireOwnerCapability(action, context);
     if (capabilityFailure) return capabilityFailure;
