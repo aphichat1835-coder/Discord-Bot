@@ -19,7 +19,7 @@ const PATTERNS = [
     },
     {
         code: "GITHUB_TOKEN_LITERAL",
-        regex: /(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{30,})/g
+        regex: /(?:github_pat_[A-Za-z0-9_]{20,255}|gh[pousr]_[A-Za-z0-9]{30,255})/g
     },
     {
         code: "AWS_ACCESS_KEY_LITERAL",
@@ -27,11 +27,11 @@ const PATTERNS = [
     },
     {
         code: "MONGODB_CREDENTIAL_LITERAL",
-        regex: /mongodb(?:\+srv)?:\/\/[^\s"']+:[^\s"']+@/gi
+        regex: /mongodb(?:\+srv)?:\/\/[^\s"'@:/]{1,256}:[^\s"'@/]{1,256}@/gi
     },
     {
         code: "DISCORD_WEBHOOK_LITERAL",
-        regex: /https:\/\/(?:discord(?:app)?\.com)\/api\/webhooks\/\d+\/[A-Za-z0-9._-]{20,}/gi
+        regex: /https:\/\/(?:discord(?:app)?\.com)\/api\/webhooks\/\d{5,25}\/[A-Za-z0-9._-]{20,255}/gi
     },
     {
         code: "PRIVATE_KEY_LITERAL",
@@ -39,7 +39,7 @@ const PATTERNS = [
     }
 ];
 
-const ASSIGNMENT_PATTERN = /\b(token|secret|password|pin|api[_-]?key|webhook(?:url)?)\b\s*[:=]\s*["']([^"']{12,})["']/gi;
+const ASSIGNMENT_PATTERN = /\b(token|secret|password|pin|api[_-]?key|webhook(?:url)?)\b\s*[:=]\s*["']([^"'\r\n]{12,512})["']/gi;
 const PLACEHOLDER_PATTERN = /(?:example|placeholder|redacted|dummy|changeme|replace[-_ ]?me|<[^>]+>|\$\{|\$[A-Z_][A-Z0-9_]*|process\.env)/i;
 
 function shouldScanPath(filePath) {
