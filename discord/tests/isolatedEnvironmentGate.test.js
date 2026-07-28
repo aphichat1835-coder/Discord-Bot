@@ -1,6 +1,8 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const test = require("node:test");
 
 const {
@@ -139,4 +141,14 @@ test("Mongo database name parser handles standard and SRV connection strings", (
     assert.equal(databaseNameFromMongoUri("mongodb://localhost:27017/project_test?x=1"), "project_test");
     assert.equal(databaseNameFromMongoUri("mongodb+srv://user:pass@example.test/sandbox%2Ddb"), "sandbox-db");
     assert.equal(databaseNameFromMongoUri("mongodb://localhost:27017"), "");
+});
+
+test("isolated environment workflow cannot be disabled for PR 71", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const workflow = fs.readFileSync(
+        path.join(__dirname, "../../.github/workflows/isolated-environment-gate.yml"),
+        "utf8"
+    );
+    assert.doesNotMatch(workflow, /RUN_ISOLATED_ENVIRONMENT_GATE/);
+    assert.match(workflow, /github\.head_ref == ['"]ttt\.1['"]/);
+    assert.match(workflow, /workflow_dispatch/);
 });
