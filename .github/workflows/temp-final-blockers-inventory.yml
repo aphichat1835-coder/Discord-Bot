@@ -1,0 +1,29 @@
+name: TEMP final blocker inventory
+
+on:
+  pull_request:
+    branches: [ttt.1]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - name: Show relevant files and test contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== relevant test files ==='
+          find discord/tests verification-tests scripts -type f \( -name '*privacy*' -o -name '*oauth*' -o -name '*voice*' -o -name '*coverage*' -o -name '*nonce*' \) -print | sort
+          echo '=== privacy deletion references ==='
+          grep -RIn --exclude-dir=node_modules 'runMemberPrivacyDeletion\|PrivacyDeletionJob' discord/tests verification-tests discord/verification | head -n 240 || true
+          echo '=== nonce references ==='
+          grep -RIn --exclude-dir=node_modules 'registerVerificationState\|VerificationStateNonce' discord/tests verification-tests discord/verification | head -n 240 || true
+          echo '=== voice shutdown references ==='
+          grep -RIn --exclude-dir=node_modules 'SYSTEM_SHUTTING_DOWN\|isShuttingDown' discord/tests/voice*.test.js discord/voiceWorker | head -n 280 || true
+          echo '=== coverage tests ==='
+          grep -RIn --exclude-dir=node_modules 'checkCoverageThresholds\|parseLcov\|evaluateCoverage' discord/tests verification-tests scripts | head -n 240 || true
