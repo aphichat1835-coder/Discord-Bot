@@ -1,5 +1,21 @@
 const lifecycle = require("../discord/verification/utils/oauthTokenLifecycle");
 
+function freshQuery(getValue) {
+  const query = {
+    select: jest.fn(() => query),
+    lean: jest.fn(() => Promise.resolve(getValue()))
+  };
+  return query;
+}
+
+function scanQuery(docs) {
+  const query = {
+    sort: jest.fn(() => query),
+    limit: jest.fn(() => Promise.resolve(docs))
+  };
+  return query;
+}
+
 test("historical admin OAuth refresh can keep its original redirect URI", () => {
   const config = lifecycle.getOAuthRefreshConfig({
     STORE_OAUTH_TOKENS: "true",
@@ -58,32 +74,35 @@ test("stored OAuth update records new token metadata and clears refresh failures
   expect(update.encryptedRefreshToken).toBe("enc:new-refresh");
   expect(update.lastRefreshAt).toBe(12345);
   expect(update.refreshFailCount).toBe(0);
+  expect(update.lastRefreshError).toBeNull();
   expect(update.revokedAt).toBeNull();
 });
 
-test("refresh maintenance updates due OAuth user tokens", async () => {
+test("refresh maintenance updates due OAuth user tokens from a fresh locked read", async () => {
   const updates = [];
   const doc = {
     _id: "doc1",
     id: "doc1",
     discord: { userId: "user1" },
     oauth: {
-      encryptedRefreshToken: "old-refresh",
+      encryptedRefreshToken: "stale-refresh",
       expiresAt: 1000,
       refreshFailCount: 0
-    },
-    updateOne: jest.fn(update => {
-      updates.push(update);
-      return Promise.resolve();
-    })
+    }
   };
-
-  const fakeQuery = {
-    sort: jest.fn(() => fakeQuery),
-    limit: jest.fn(() => Promise.resolve([doc]))
+  const fresh = {
+    _id: "doc1",
+    discord: { userId: "user1" },
+    oauth: {
+      encryptedRefreshToken: "old-refresh",
+      expiresAt: 1000,
+      refreshFailCount: 0,
+      version: 2
+    }
   };
   const model = {
-    find: jest.fn(() => fakeQuery),
+    find: jest.fn(() => scanQuery([doc])),
+    findById: jest.fn(() => freshQuery(() => structuredClone(fresh))),
     updateOne: jest.fn((filter, update) => {
       updates.push({ filter, update });
       return Promise.resolve({ modifiedCount: 1 });
@@ -105,7 +124,6 @@ test("refresh maintenance updates due OAuth user tokens", async () => {
       encryptedRefreshToken: `enc:${tokenData.refresh_token}`,
       expiresAt: 99999
     }),
-    env: { STORE_OAUTH_TOKENS: "true" },
     now: 5000,
     marginMs: 1000,
     scanLimit: 10,
@@ -117,39 +135,140 @@ test("refresh maintenance updates due OAuth user tokens", async () => {
   expect(result.refreshed).toBe(1);
   expect(result.failed).toBe(0);
   expect(discordApi.refreshToken).toHaveBeenCalledWith("old-refresh", "https://example.com/auth/callback");
+  expect(model.findById).toHaveBeenCalledWith("doc1");
   expect(updates[0].filter).toMatchObject({
     _id: "doc1",
-    "oauth.encryptedRefreshToken": "old-refresh"
+    "oauth.encryptedRefreshToken": "old-refresh",
+    "oauth.version": 2
   });
   expect(updates[0].update.$set.oauth.encryptedAccessToken).toBe("enc:fresh-access");
-  expect(updates[0].update.$set.oauth.lastRefreshAt).toBe(5000);
+  expect(updates[0].update.$set.oauth.version).toBe(3);
 });
 
-test("refresh maintenance records failures and marks revoked after max failures", async () => {
+test("overlapping refreshes re-read rotated state and do not call the provider twice", async () => {
+  lifecycle._test.refreshLocks.clear();
+  const staleDoc = {
+    _id: "doc-race",
+    discord: { userId: "user-race" },
+    oauth: {
+      encryptedRefreshToken: "refresh-v0",
+      expiresAt: 1000,
+      refreshFailCount: 0,
+      version: 1
+    }
+  };
+  let current = structuredClone(staleDoc);
+  let releaseProvider;
+  const providerGate = new Promise(resolve => { releaseProvider = resolve; });
+  const discordApi = {
+    refreshToken: jest.fn(async () => {
+      await providerGate;
+      return { access_token: "access-v1", refresh_token: "refresh-v1", expires_in: 604800 };
+    })
+  };
+  const model = {
+    findById: jest.fn(() => freshQuery(() => structuredClone(current))),
+    updateOne: jest.fn(async (filter, update) => {
+      if (filter["oauth.encryptedRefreshToken"] !== current.oauth.encryptedRefreshToken) return { modifiedCount: 0 };
+      current = { ...current, oauth: structuredClone(update.$set.oauth), updatedAt: update.$set.updatedAt };
+      return { modifiedCount: 1 };
+    })
+  };
+  const options = {
+    model,
+    discordApi,
+    redirectUri: "https://example.com/auth/callback",
+    now: 5000,
+    marginMs: 1000,
+    failMax: 5,
+    prepareTokenStorage: tokenData => ({
+      encryptedAccessToken: `enc:${tokenData.access_token}`,
+      encryptedRefreshToken: tokenData.refresh_token,
+      expiresAt: 99999
+    }),
+    tokenField: "oauth"
+  };
+
+  const first = lifecycle._test.refreshOneOAuthUser(staleDoc, options);
+  await new Promise(resolve => setImmediate(resolve));
+  const second = lifecycle._test.refreshOneOAuthUser(staleDoc, options);
+  releaseProvider();
+
+  const [firstResult, secondResult] = await Promise.all([first, second]);
+  expect(firstResult.refreshed).toBe(true);
+  expect(secondResult.skipped).toBe(true);
+  expect(secondResult.reason).toBe("not_due");
+  expect(discordApi.refreshToken).toHaveBeenCalledTimes(1);
+  expect(current.oauth.refreshFailCount).toBe(0);
+  expect(current.oauth.revokedAt).toBeNull();
+  expect(lifecycle._test.refreshLocks.size).toBe(0);
+});
+
+test("refresh persistence conflicts are skipped without incrementing failure state", async () => {
+  const doc = {
+    _id: "doc-conflict",
+    discord: { userId: "user-conflict" },
+    oauth: {
+      encryptedRefreshToken: "refresh-old",
+      expiresAt: 1000,
+      refreshFailCount: 0,
+      version: 4
+    }
+  };
+  const model = {
+    findById: jest.fn(() => freshQuery(() => structuredClone(doc))),
+    updateOne: jest.fn(() => Promise.resolve({ modifiedCount: 0 }))
+  };
+  const outcome = await lifecycle._test.refreshOneOAuthUser(doc, {
+    model,
+    discordApi: {
+      refreshToken: jest.fn(() => Promise.resolve({
+        access_token: "access-new",
+        refresh_token: "refresh-new",
+        expires_in: 604800
+      }))
+    },
+    redirectUri: "https://example.com/auth/callback",
+    now: 5000,
+    marginMs: 1000,
+    failMax: 5,
+    prepareTokenStorage: tokenData => ({
+      encryptedAccessToken: tokenData.access_token,
+      encryptedRefreshToken: tokenData.refresh_token,
+      expiresAt: 99999
+    }),
+    tokenField: "oauth"
+  });
+
+  expect(outcome).toMatchObject({ ok: true, skipped: true, reason: "refresh_state_changed" });
+  expect(model.updateOne).toHaveBeenCalledTimes(1);
+});
+
+test("refresh maintenance records real provider failures and revokes after max failures", async () => {
   const updates = [];
   const doc = {
+    _id: "doc1",
     id: "doc1",
     discord: { userId: "user1" },
     oauth: {
       encryptedRefreshToken: "bad-refresh",
       expiresAt: 1000,
-      refreshFailCount: 4
-    },
-    updateOne: jest.fn(update => {
-      updates.push(update);
-      return Promise.resolve();
+      refreshFailCount: 4,
+      version: 3
+    }
+  };
+  const model = {
+    find: jest.fn(() => scanQuery([doc])),
+    findById: jest.fn(() => freshQuery(() => structuredClone(doc))),
+    updateOne: jest.fn((filter, update) => {
+      updates.push({ filter, update });
+      return Promise.resolve({ modifiedCount: 1 });
     })
   };
 
-  const fakeQuery = {
-    sort: jest.fn(() => fakeQuery),
-    limit: jest.fn(() => Promise.resolve([doc]))
-  };
-
   const result = await lifecycle.refreshPersistedOAuthTokens({
-    OAuthUserModel: { find: jest.fn(() => fakeQuery) },
+    OAuthUserModel: model,
     discordApi: { refreshToken: jest.fn(() => Promise.reject(new Error("invalid_grant"))) },
-    env: { STORE_OAUTH_TOKENS: "true" },
     now: 5000,
     marginMs: 1000,
     scanLimit: 10,
@@ -161,8 +280,13 @@ test("refresh maintenance records failures and marks revoked after max failures"
   expect(result.refreshed).toBe(0);
   expect(result.failed).toBe(1);
   expect(result.revoked).toBe(1);
-  expect(updates[0].$set["oauth.refreshFailCount"]).toBe(5);
-  expect(updates[0].$set["oauth.revokedAt"]).toBe(5000);
+  expect(updates[0].filter).toMatchObject({
+    _id: "doc1",
+    "oauth.encryptedRefreshToken": "bad-refresh",
+    "oauth.version": 3
+  });
+  expect(updates[0].update.$set["oauth.refreshFailCount"]).toBe(5);
+  expect(updates[0].update.$set["oauth.revokedAt"]).toBe(5000);
 });
 
 test("refresh maintenance can update admin OAuth tokens separately", async () => {
@@ -174,17 +298,17 @@ test("refresh maintenance can update admin OAuth tokens separately", async () =>
     adminOAuth: {
       encryptedRefreshToken: "admin-refresh",
       expiresAt: 1000,
-      refreshFailCount: 0
-    },
-    updateOne: jest.fn(update => {
-      updates.push(update);
-      return Promise.resolve();
-    })
+      refreshFailCount: 0,
+      version: 1
+    }
   };
-
-  const fakeQuery = {
-    sort: jest.fn(() => fakeQuery),
-    limit: jest.fn(() => Promise.resolve([doc]))
+  const model = {
+    find: jest.fn(() => scanQuery([doc])),
+    findById: jest.fn(() => freshQuery(() => structuredClone(doc))),
+    updateOne: jest.fn((filter, update) => {
+      updates.push({ filter, update });
+      return Promise.resolve({ modifiedCount: 1 });
+    })
   };
   const discordApi = {
     refreshToken: jest.fn(() => Promise.resolve({
@@ -192,14 +316,6 @@ test("refresh maintenance can update admin OAuth tokens separately", async () =>
       refresh_token: "admin-refresh-new",
       expires_in: 604800
     }))
-  };
-
-  const model = {
-    find: jest.fn(() => fakeQuery),
-    updateOne: jest.fn((filter, update) => {
-      updates.push({ filter, update });
-      return Promise.resolve({ modifiedCount: 1 });
-    })
   };
 
   const result = await lifecycle.refreshPersistedOAuthTokens({
@@ -210,7 +326,6 @@ test("refresh maintenance can update admin OAuth tokens separately", async () =>
       encryptedRefreshToken: `enc:${tokenData.refresh_token}`,
       expiresAt: 99999
     }),
-    env: { STORE_OAUTH_TOKENS: "true" },
     now: 5000,
     marginMs: 1000,
     scanLimit: 10,
@@ -223,7 +338,8 @@ test("refresh maintenance can update admin OAuth tokens separately", async () =>
   expect(discordApi.refreshToken).toHaveBeenCalledWith("admin-refresh", "https://example.com/auth/admin-callback");
   expect(updates[0].filter).toMatchObject({
     _id: "doc1",
-    "adminOAuth.encryptedRefreshToken": "admin-refresh"
+    "adminOAuth.encryptedRefreshToken": "admin-refresh",
+    "adminOAuth.version": 1
   });
   expect(updates[0].update.$set.adminOAuth.encryptedAccessToken).toBe("enc:admin-access");
   expect(updates[0].update.$set.adminOAuth.lastRefreshAt).toBe(5000);
