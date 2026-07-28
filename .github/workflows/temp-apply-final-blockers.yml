@@ -1,0 +1,94 @@
+name: TEMP apply final release blockers
+
+on:
+  pull_request:
+    branches: [ttt.1]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: temp-final-blockers-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  implement:
+    if: ${{ github.head_ref == 'fix/final-release-blockers-pr71' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout working branch
+        uses: actions/checkout@v6.0.2
+        with:
+          ref: fix/final-release-blockers-pr71
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6.3.0
+        with:
+          node-version: '24.18.0'
+          cache: npm
+
+      - name: Apply, validate, and commit four phases
+        shell: bash
+        env:
+          BRANCH_NAME: fix/final-release-blockers-pr71
+        run: |
+          set -euo pipefail
+          if grep -q 'CRITICAL_FILE_THRESHOLDS' scripts/checkCoverageThresholds.js; then
+            echo 'Final blocker implementation is already present; no repeat mutation.'
+            exit 0
+          fi
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          npm install --global npm@12.0.1 --ignore-scripts
+          npm ci --ignore-scripts
+
+          base64 --decode scripts/temp_apply_final_blockers.py.gz.b64 | gzip --decompress > /tmp/apply_final_blockers.py
+          python -m py_compile /tmp/apply_final_blockers.py
+
+          python /tmp/apply_final_blockers.py privacy
+          node --check discord/verification/services/privacyDeletion.js
+          node --check discord/verification/models/PrivacyDeletionJob.js
+          node --check discord/verification/routes/guild.js
+          node --require ./verification-tests/nodeTestSetup.js --test verification-tests/privacyDeletion.test.js
+          git add discord/verification/services/privacyDeletion.js discord/verification/models/PrivacyDeletionJob.js discord/verification/routes/guild.js verification-tests/privacyDeletion.test.js
+          git commit -m 'fix: make privacy deletion idempotent'
+
+          python /tmp/apply_final_blockers.py voice
+          node --check discord/voiceWorker/lifecycle.js
+          node --test discord/tests/voiceShutdownRegression.test.js discord/tests/voiceLifecycleBehavior.test.js
+          git add discord/voiceWorker/lifecycle.js discord/tests/voiceShutdownRegression.test.js
+          git commit -m 'fix: cancel voice startup during shutdown'
+
+          python /tmp/apply_final_blockers.py nonce
+          node --check discord/verification/services/verificationStateNonce.js
+          node --check discord/verification/routes/oauthStart.js
+          node --require ./verification-tests/nodeTestSetup.js --test verification-tests/oauthStartRoute.test.js verification-tests/securityRecovery.test.js
+          git add discord/verification/services/verificationStateNonce.js discord/verification/routes/oauthStart.js verification-tests/oauthStartRoute.test.js
+          git commit -m 'fix: retry duplicate verification nonces'
+
+          python /tmp/apply_final_blockers.py coverage
+          node --check scripts/checkCoverageThresholds.js
+          node --test discord/tests/coverageThresholds.test.js
+          git add scripts/checkCoverageThresholds.js discord/tests/coverageThresholds.test.js
+          git commit -m 'test: enforce critical file coverage'
+
+          npm run check:protected-syntax
+          npm run check:discord14
+          npm run check:secrets
+          npm run check:all
+          npm run check:scripts
+          npm run check:memory-guards
+          npm run check:mongoose9
+          npm run test:discord
+          npm run test:voice
+          npm run test:verification
+          npm run test:coverage:discord
+          npm run test:coverage:voice
+          npm run test:coverage:verification
+          npm run check:coverage
+
+          git push origin HEAD:${BRANCH_NAME}
