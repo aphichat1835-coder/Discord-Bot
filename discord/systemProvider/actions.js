@@ -2,6 +2,7 @@
 
 const crypto = require("node:crypto");
 const { isDiscordSnowflake } = require("../core/snowflakes");
+const { hashPinCredential } = require("./pinCredential");
 
 const OWNER_ONLY_ACTIONS = new Set([
     "toggle_feature",
@@ -164,15 +165,22 @@ async function handleChangePin(body, context) {
         return failure(503, "session_rotation_unavailable");
     }
 
+    let credential;
+    try {
+        credential = hashPinCredential(nextPin);
+    } catch {
+        return failure(400, "pin_strength_invalid");
+    }
     const nextVersion = context.getShadowSessionVersion() + 1;
     const persisted = await context.sessionManager.setSetting("_shadowPortalAuth", {
-        pin: nextPin,
+        pin: credential,
         sessionVersion: nextVersion,
-        updatedAt: Date.now()
+        updatedAt: Date.now(),
+        credentialVersion: 1
     });
     if (!persisted) return failure(503, "pin_persistence_failed");
 
-    context.setShadowPin(nextPin);
+    context.setShadowPin(credential);
     context.setShadowSessionVersion(nextVersion);
     context.resetShadowAuth?.();
     if (context.engineInstance) {
