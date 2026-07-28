@@ -411,8 +411,10 @@ function initShutdown({
     runtimeCleanups = []
 }) {
     let isShuttingDownMain = false;
+    let shutdownExitCode = 0;
 
     async function shutdown(signal, exitCode = 0) {
+        shutdownExitCode = Math.max(shutdownExitCode, Number(exitCode) || 0);
         if (isShuttingDownMain) return;
         isShuttingDownMain = true;
         markAppShuttingDown();
@@ -446,7 +448,7 @@ function initShutdown({
             await sessionManager.disconnectDB?.();
             console.log("[SHUTDOWN] ✅ MongoDB disconnected");
             clearTimeout(timeout);
-            process.exit(exitCode);
+            process.exit(shutdownExitCode);
         } catch (err) {
             console.error("[SHUTDOWN] ❌ Error:", err.message);
             clearTimeout(timeout);

@@ -150,6 +150,7 @@ channel fallback when private delivery is unavailable.
 | `GET /ping` | liveness, always simple 200 while listener is running |
 | `GET /health` | combined dependency readiness; 200 when ready and 503 when degraded |
 | `GET /ready` | alias of the combined `/health` readiness response |
+| `GET /auth/start` | validates the panel state, registers a one-time execution state, and redirects to Discord OAuth |
 | `GET /auth/callback` | serves OAuth callback UI |
 | `POST /auth/callback` | rate-limited verification execution |
 
