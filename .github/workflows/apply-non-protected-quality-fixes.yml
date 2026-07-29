@@ -59,6 +59,7 @@ jobs:
           node --test discord/tests/protectionConfig.test.js discord/tests/commandGuards.test.js
           npm run check:all
           npm run test:coverage:discord
+          npm run test:coverage:voice
           npm run test:coverage:verification
           npm run check:coverage
 
