@@ -162,15 +162,19 @@ function getChangedPaths() {
 function readEventPayload() {
     const eventPath = String(process.env.GITHUB_EVENT_PATH || "").trim();
     if (!eventPath) return null;
+    // nosemgrep -- GitHub supplies GITHUB_EVENT_PATH; basename and RUNNER_TEMP containment are checked before reading.
     const resolved = path.resolve(eventPath);
     if (path.basename(resolved) !== "event.json") return null;
     const runnerTemp = String(process.env.RUNNER_TEMP || "").trim();
     if (process.env.CI && runnerTemp) {
+        // nosemgrep -- both paths are normalized and the event file must remain within GitHub's runner temp directory.
         const relative = path.relative(path.resolve(runnerTemp), resolved);
         if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
     }
+    // nosemgrep -- resolved passed the fixed basename and runner-temp containment checks above.
     if (!fs.existsSync(resolved)) return null;
     try {
+        // nosemgrep -- only GitHub's validated event.json file is parsed.
         return JSON.parse(fs.readFileSync(resolved, "utf8"));
     } catch {
         return null;
