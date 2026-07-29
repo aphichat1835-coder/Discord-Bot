@@ -1,0 +1,63 @@
+name: Apply Final Quality Gate Remediation
+
+on:
+  push:
+    branches:
+      - fix/final-quality-gate-remediation
+    paths:
+      - scripts/applyFinalQualityGateRemediation.js
+      - .github/workflows/apply-final-quality-gate-remediation.yml
+
+permissions:
+  contents: write
+
+jobs:
+  remediate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout remediation branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: fix/final-quality-gate-remediation
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 24.18.0
+
+      - name: Apply scoped patches
+        run: node scripts/applyFinalQualityGateRemediation.js
+
+      - name: Validate syntax
+        run: |
+          node --check discord/verification/services/privacyDeletion.js
+          node --check scripts/runIsolatedEnvironmentGate.js
+          node --check verification-tests/privacyDeletion.test.js
+          node --check discord/tests/isolatedEnvironmentGate.test.js
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run focused regression tests
+        run: node --test verification-tests/privacyDeletion.test.js discord/tests/isolatedEnvironmentGate.test.js
+
+      - name: Commit remediation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            discord/verification/services/privacyDeletion.js \
+            verification-tests/privacyDeletion.test.js \
+            scripts/runIsolatedEnvironmentGate.js \
+            discord/tests/isolatedEnvironmentGate.test.js \
+            .github/workflows/isolated-environment-gate.yml
+          if git diff --cached --quiet; then
+            echo "No remediation changes to commit"
+            exit 0
+          fi
+          git commit -m "fix: preserve deletion success and persist gate evidence"
+          git push origin HEAD:fix/final-quality-gate-remediation
