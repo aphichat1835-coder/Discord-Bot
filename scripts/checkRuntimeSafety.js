@@ -26,9 +26,10 @@ function readRepositorySource(relativePath) {
 
 function walk(directory) {
     const resolvedDirectory = resolveRepositoryPath(directory);
+    const normalizedDirectory = directory.replaceAll("\\", "/");
     // nosemgrep -- resolvedDirectory is constrained to a non-root path beneath REPOSITORY_ROOT.
     return fs.readdirSync(resolvedDirectory, { withFileTypes: true }).flatMap(entry => {
-        const relative = `${directory.replaceAll("\\", "/").replace(/\/+$/, "")}/${entry.name}`;
+        const relative = `${normalizedDirectory}/${entry.name}`;
         resolveRepositoryPath(relative);
         if (relative === "discord/systemProvider") return [];
         if (entry.isDirectory()) return walk(relative);

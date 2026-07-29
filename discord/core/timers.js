@@ -2,7 +2,7 @@
 
 const { readFiniteInteger } = require("./numbers");
 
-const MAX_TIMEOUT_MS = 2147483647;
+const MAX_TIMEOUT_MS = (2 ** 31) - 1;
 
 function normalizeDelay(ms) {
     return readFiniteInteger(ms, { fallback: 0, min: 0, max: MAX_TIMEOUT_MS });
