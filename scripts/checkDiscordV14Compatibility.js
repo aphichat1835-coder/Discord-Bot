@@ -114,6 +114,66 @@ function finding(code, message, node) {
     };
 }
 
+function inspectCallExpression(node, findings) {
+    if (node.type !== "CallExpression") return;
+    const method = propertyName(node.callee);
+    if (method === "has") {
+        const permission = literalString(node.arguments?.[0]);
+        if (permission && LEGACY_PERMISSION_KEYS.has(permission)) {
+            findings.push(finding(
+                "LEGACY_PERMISSION_HAS",
+                `Use PermissionFlagsBits instead of .has("${permission}")`,
+                node
+            ));
+        }
+    }
+    if (method === "isText") {
+        findings.push(finding("DEPRECATED_IS_TEXT", "Use isTextBased()/isSendable() instead of isText()", node));
+    }
+    if (method === "all" && node.callee.object?.type === "Identifier" && node.callee.object.name === "app") {
+        findings.push(finding("STATE_ROUTE_APP_ALL", "Use explicit HTTP methods instead of app.all()", node));
+    }
+    const route = httpRoutePath(node);
+    const revealRoute = route?.path?.startsWith("/api/reveal-") || route?.path?.startsWith("/api/reveal/");
+    if (route?.method === "get" && route.path && (FORBIDDEN_STATE_GET_ROUTES.has(route.path) || revealRoute)) {
+        findings.push(finding(
+            "STATE_CHANGING_GET",
+            `Sensitive or state-changing route ${route.path} must use POST with CSRF`,
+            node
+        ));
+    }
+    if (method === "deleteMany" && isEmptyObject(node.arguments?.[0])) {
+        findings.push(finding(
+            "UNSCOPED_DELETE_MANY",
+            "Unscoped deleteMany({}) is forbidden in production runtime",
+            node
+        ));
+    }
+    if (isDirectChannelCacheClear(node)) {
+        findings.push(finding("DIRECT_CHANNEL_CACHE_CLEAR", "Do not clear the Discord channel cache directly", node));
+    }
+}
+
+function inspectProperty(node, findings) {
+    if (node.type !== "Property") return;
+    const key = objectPropertyName(node);
+    if (key && LEGACY_PERMISSION_KEYS.has(key)) {
+        findings.push(finding(
+            "LEGACY_PERMISSION_OBJECT_KEY",
+            `Use the canonical Discord.js v14 permission key instead of ${key}`,
+            node
+        ));
+    }
+}
+
+function inspectCompatibilityNode(node, findings) {
+    inspectCallExpression(node, findings);
+    inspectProperty(node, findings);
+    if (isReqQueryPin(node)) {
+        findings.push(finding("QUERY_PIN", "Credentials must never be accepted from req.query.pin", node));
+    }
+}
+
 function analyzeSource(source, filename = "source.js") {
     let ast;
     try {
@@ -133,63 +193,7 @@ function analyzeSource(source, filename = "source.js") {
     }
 
     const findings = [];
-    walk(ast, node => {
-        if (node.type === "CallExpression") {
-            const method = propertyName(node.callee);
-            if (method === "has") {
-                const permission = literalString(node.arguments?.[0]);
-                if (permission && LEGACY_PERMISSION_KEYS.has(permission)) {
-                    findings.push(finding(
-                        "LEGACY_PERMISSION_HAS",
-                        `Use PermissionFlagsBits instead of .has(\"${permission}\")`,
-                        node
-                    ));
-                }
-            }
-            if (method === "isText") {
-                findings.push(finding("DEPRECATED_IS_TEXT", "Use isTextBased()/isSendable() instead of isText()", node));
-            }
-            if (method === "all" && node.callee.object?.type === "Identifier" && node.callee.object.name === "app") {
-                findings.push(finding("STATE_ROUTE_APP_ALL", "Use explicit HTTP methods instead of app.all()", node));
-            }
-            const route = httpRoutePath(node);
-            if (route?.method === "get" && route.path && (
-                FORBIDDEN_STATE_GET_ROUTES.has(route.path) ||
-                /^\/api\/reveal(?:-|\/)/.test(route.path)
-            )) {
-                findings.push(finding(
-                    "STATE_CHANGING_GET",
-                    `Sensitive or state-changing route ${route.path} must use POST with CSRF`,
-                    node
-                ));
-            }
-            if (method === "deleteMany" && isEmptyObject(node.arguments?.[0])) {
-                findings.push(finding(
-                    "UNSCOPED_DELETE_MANY",
-                    "Unscoped deleteMany({}) is forbidden in production runtime",
-                    node
-                ));
-            }
-            if (isDirectChannelCacheClear(node)) {
-                findings.push(finding("DIRECT_CHANNEL_CACHE_CLEAR", "Do not clear the Discord channel cache directly", node));
-            }
-        }
-
-        if (node.type === "Property") {
-            const key = objectPropertyName(node);
-            if (key && LEGACY_PERMISSION_KEYS.has(key)) {
-                findings.push(finding(
-                    "LEGACY_PERMISSION_OBJECT_KEY",
-                    `Use the canonical Discord.js v14 permission key instead of ${key}`,
-                    node
-                ));
-            }
-        }
-
-        if (isReqQueryPin(node)) {
-            findings.push(finding("QUERY_PIN", "Credentials must never be accepted from req.query.pin", node));
-        }
-    });
+    walk(ast, node => inspectCompatibilityNode(node, findings));
 
     const rawSource = String(source);
     const unsafeOriginPattern = /\.startsWith\(\s*window\.location\.origin\s*\)/g;
@@ -205,29 +209,40 @@ function analyzeSource(source, filename = "source.js") {
     return findings;
 }
 
-function listJavaScriptFiles(root) {
+const REPOSITORY_ROOT = path.resolve(__dirname, "..");
+
+function resolveSourceRoot(root) {
+    const resolved = path.resolve(REPOSITORY_ROOT, String(root || "discord"));
+    const relative = path.relative(REPOSITORY_ROOT, resolved);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+        throw new Error("Discord compatibility source root escaped repository");
+    }
+    return resolved;
+}
+
+function listJavaScriptFiles(root = "discord") {
+    const sourceRoot = resolveSourceRoot(root);
     const output = [];
     function visit(current) {
         for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
             const fullPath = path.join(current, entry.name);
-            const relative = fullPath.replaceAll("\\", "/");
             if (entry.isDirectory()) {
                 if (entry.name === "tests" || entry.name === "node_modules" || entry.name === "coverage") continue;
                 visit(fullPath);
             } else if (entry.isFile() && entry.name.endsWith(".js")) {
-                output.push(relative);
+                output.push(path.relative(REPOSITORY_ROOT, fullPath).replaceAll("\\", "/"));
             }
         }
     }
-    if (fs.existsSync(root)) visit(root);
-    return output.sort();
+    if (fs.existsSync(sourceRoot)) visit(sourceRoot);
+    return output.sort((a, b) => a.localeCompare(b));
 }
 
 function runCli() {
     const files = listJavaScriptFiles("discord");
     const allFindings = [];
     for (const file of files) {
-        const source = fs.readFileSync(file, "utf8");
+        const source = fs.readFileSync(path.join(REPOSITORY_ROOT, file), "utf8");
         for (const item of analyzeSource(source, file)) allFindings.push({ file, ...item });
     }
 

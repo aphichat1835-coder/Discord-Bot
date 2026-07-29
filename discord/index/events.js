@@ -67,6 +67,34 @@ function trimMapToMaxSize(map, maxSize) {
     }
 }
 
+async function deleteProtectionEvidence(message, deleteMode) {
+    if (!message) return 0;
+    if (deleteMode === "raid") return deleteRaidEvidenceSafely(message, 5);
+    if (deleteMode === "single") {
+        return await deleteMessageWithLog(message, "protection-pipeline") ? 1 : 0;
+    }
+    return 0;
+}
+
+async function applyProtectionMemberAction(member, result, action) {
+    if (action === "timeout") {
+        if (!member.manageable) throw new Error("member is not manageable");
+        await member.timeout((result.minutes || 10) * 60000, result.reason);
+        return { attempted: true, success: true };
+    }
+    if (action === "ban") {
+        if (!canBanMember(member)) throw new Error("missing BanMembers or member is not bannable");
+        await member.ban({ reason: result.reason });
+        return { attempted: true, success: true };
+    }
+    if (action === "kick") {
+        if (!member.kickable) throw new Error("member is not kickable");
+        await member.kick(result.reason);
+        return { attempted: true, success: true };
+    }
+    return { attempted: false, success: true };
+}
+
 async function executeProtectionAction({ member, result, message, deleteMode = "none" }) {
     const action = result?.action || "log";
     const output = {
@@ -80,28 +108,8 @@ async function executeProtectionAction({ member, result, message, deleteMode = "
     };
 
     try {
-        if (message && deleteMode === "raid") {
-            output.deletedMessages = await deleteRaidEvidenceSafely(message, 5);
-        } else if (message && deleteMode === "single") {
-            output.deletedMessages = await deleteMessageWithLog(message, "protection-pipeline") ? 1 : 0;
-        }
-
-        if (action === "timeout") {
-            if (!member.manageable) throw new Error("member is not manageable");
-            await member.timeout((result.minutes || 10) * 60000, result.reason);
-            output.success = true;
-        } else if (action === "ban") {
-            if (!canBanMember(member)) throw new Error("missing BanMembers or member is not bannable");
-            await member.ban({ reason: result.reason });
-            output.success = true;
-        } else if (action === "kick") {
-            if (!member.kickable) throw new Error("member is not kickable");
-            await member.kick(result.reason);
-            output.success = true;
-        } else {
-            output.attempted = false;
-            output.success = true;
-        }
+        output.deletedMessages = await deleteProtectionEvidence(message, deleteMode);
+        Object.assign(output, await applyProtectionMemberAction(member, result, action));
     } catch (err) {
         output.error = err.message;
         console.warn(`[PROTECTION] Action ${action} failed for ${member?.id}: ${err.message}`);
@@ -177,6 +185,20 @@ async function recordProtectionResult({ guild, sessionManager, result, member, m
 const PROTECTION_ACTION_RANK = Object.freeze({ log: 0, delete_message: 1, timeout: 2, kick: 3, ban: 4 });
 const PROTECTION_SEVERITY_RANK = Object.freeze({ info: 0, warning: 1, danger: 2, critical: 3 });
 
+function mergeProtectionMetadata(findings) {
+    const metadata = {};
+    for (const item of findings) {
+        if (item.metadata && typeof item.metadata === "object") Object.assign(metadata, item.metadata);
+    }
+    return metadata;
+}
+
+function resolveProtectionDeleteMode(findings) {
+    if (findings.some(item => item.trigger?.includes("Anti-Raid"))) return "raid";
+    if (findings.some(item => item.shouldDelete)) return "single";
+    return "none";
+}
+
 function mergeProtectionFindings(findings = []) {
     if (!findings.length) return null;
     const ordered = [...findings].sort((left, right) =>
@@ -197,14 +219,10 @@ function mergeProtectionFindings(findings = []) {
         evidence: [...new Set(findings.flatMap(item => item.evidence || []))].slice(0, 20),
         shouldCreateCase: findings.some(item => item.shouldCreateCase !== false),
         metadata: {
-            ...findings.reduce((out, item) => ({ ...out, ...(item.metadata || {}) }), {}),
+            ...mergeProtectionMetadata(findings),
             ruleIds
         },
-        deleteMode: findings.some(item => item.trigger?.includes("Anti-Raid"))
-            ? "raid"
-            : findings.some(item => item.shouldDelete)
-                ? "single"
-                : "none"
+        deleteMode: resolveProtectionDeleteMode(findings)
     };
 }
 

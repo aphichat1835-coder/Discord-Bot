@@ -362,7 +362,6 @@ async function performClientLogin(newClient, sessionId, session, tokenHash, toke
     const waitWithTimeout = deps.withTimeoutReject || withTimeoutReject;
     const disposeClient = deps.disposeSelfClient || disposeSelfClient;
     const putClientInPool = deps.setSessionClientInPool || setSessionClientInPool;
-    const markFailed = deps.markSessionFailed || ((...args) => sessionManager.markSessionFailed?.(...args));
     const markInvalid = deps.markTokenInvalid || markTokenInvalid;
     const isShuttingDown = deps.isShuttingDown || (() => st.isShuttingDown);
     session.loginGeneration = loginGeneration;

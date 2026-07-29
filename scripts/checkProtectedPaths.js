@@ -58,7 +58,7 @@ function isProtectedPath(value) {
 }
 
 function isUsableBaseSha(value) {
-    if (!value || ZERO_SHA_PATTERN.test(value)) return false;
+    if (!/^[a-f0-9]{40}$/i.test(String(value || "")) || ZERO_SHA_PATTERN.test(value)) return false;
     try {
         git(["cat-file", "-e", `${value}^{commit}`]);
         return true;
@@ -72,7 +72,7 @@ function listTrackedProtectedFiles() {
     return splitLines(git(["ls-files", PROTECTED_ROOT_FILE, PROTECTED_DIRECTORY]))
         .map(normalizeRepositoryPath)
         .filter(isProtectedPath)
-        .sort();
+        .sort((a, b) => a.localeCompare(b));
 }
 
 function readProtectedFile(file) {
@@ -110,7 +110,9 @@ function manifestEntryMatches(file, expected) {
 
 function validateManifest() {
     const tracked = listTrackedProtectedFiles();
-    const manifestFiles = Object.keys(PROTECTED_DIGESTS).map(normalizeRepositoryPath).sort();
+    const manifestFiles = Object.keys(PROTECTED_DIGESTS)
+        .map(normalizeRepositoryPath)
+        .sort((a, b) => a.localeCompare(b));
     const missing = tracked.filter(file => !manifestFiles.includes(file));
     const extra = manifestFiles.filter(file => !tracked.includes(file));
     const malformed = manifestFiles.filter(file => {
@@ -159,25 +161,51 @@ function getChangedPaths() {
 
 function readEventPayload() {
     const eventPath = String(process.env.GITHUB_EVENT_PATH || "").trim();
-    if (!eventPath || !fs.existsSync(eventPath)) return null;
+    if (!eventPath) return null;
+    const resolved = path.resolve(eventPath);
+    if (path.basename(resolved) !== "event.json") return null;
+    const runnerTemp = String(process.env.RUNNER_TEMP || "").trim();
+    if (process.env.CI && runnerTemp) {
+        const relative = path.relative(path.resolve(runnerTemp), resolved);
+        if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
+    }
+    if (!fs.existsSync(resolved)) return null;
     try {
-        return JSON.parse(fs.readFileSync(eventPath, "utf8"));
+        return JSON.parse(fs.readFileSync(resolved, "utf8"));
     } catch {
         return null;
     }
 }
 
+function validateRepositorySlug(repository) {
+    const value = String(repository || "").trim();
+    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value)) {
+        throw new Error("invalid GitHub repository slug");
+    }
+    return value;
+}
+
 function ownerApprovalUrl(repository, pullNumber, page) {
-    const params = new URLSearchParams({
+    const safeRepository = validateRepositorySlug(repository);
+    if (!Number.isSafeInteger(pullNumber) || pullNumber <= 0) throw new Error("invalid pull request number");
+    if (!Number.isSafeInteger(page) || page <= 0 || page > APPROVAL_MAX_PAGES) throw new Error("invalid approval page");
+    const url = new URL(`https://api.github.com/repos/${safeRepository}/issues/${pullNumber}/comments`);
+    url.search = new URLSearchParams({
         per_page: String(APPROVAL_PAGE_SIZE),
         page: String(page),
         sort: "created",
         direction: "desc"
-    });
-    return `https://api.github.com/repos/${repository}/issues/${pullNumber}/comments?${params}`;
+    }).toString();
+    if (url.origin !== "https://api.github.com") throw new Error("invalid GitHub API origin");
+    return url.toString();
 }
 
 async function fetchOwnerApproval({ repository, owner, pullNumber, headSha, token }) {
+    validateRepositorySlug(repository);
+    if (!String(owner || "").trim()) throw new Error("invalid repository owner");
+    if (!Number.isSafeInteger(pullNumber) || pullNumber <= 0) throw new Error("invalid pull request number");
+    if (!/^[a-f0-9]{40}$/i.test(String(headSha || ""))) throw new Error("invalid protected head SHA");
+    if (!String(token || "").trim()) throw new Error("missing GitHub token");
     const marker = `${APPROVAL_MARKER_PREFIX}${headSha} -->`;
     for (let page = 1; page <= APPROVAL_MAX_PAGES; page++) {
         const response = await fetch(ownerApprovalUrl(repository, pullNumber, page), {
@@ -233,7 +261,7 @@ async function main() {
     const protectedChanges = getChangedPaths()
         .map(normalizeRepositoryPath)
         .filter(isProtectedPath)
-        .sort();
+        .sort((a, b) => a.localeCompare(b));
 
     if (!protectedChanges.length) {
         console.log("[PROTECTED-PATHS] owner-locked file and directory are unchanged.");

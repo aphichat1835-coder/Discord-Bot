@@ -617,7 +617,7 @@ function makePanelRevision(prefix = "panel") {
 }
 
 function buildDiscordAuthorizeUrl(req, { guildId, roleId, panelRevision = null }) {
-  const dashboardUrl = getPublicBaseUrl(req);
+  const dashboardUrl = getPublicBaseUrl();
   const clientId = process.env.DISCORD_CLIENT_ID;
 
   if (!dashboardUrl) throw new Error("Missing PUBLIC_BASE_URL/DASHBOARD_PUBLIC_URL");
