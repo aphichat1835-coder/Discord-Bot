@@ -459,6 +459,7 @@ async function runMemberPrivacyDeletion({
 
     let dbSession = null;
     let operationError = null;
+    let result = null;
     try {
         dbSession = await mongooseInstance.startSession();
         await dbSession.withTransaction(async () => {
@@ -593,7 +594,7 @@ async function runMemberPrivacyDeletion({
                 { session: dbSession }
             );
         });
-        return { success: true, jobId, manifest, reused: false, status: "completed", pending: false };
+        result = { success: true, jobId, manifest, reused: false, status: "completed", pending: false };
     } catch (error) {
         operationError = error;
         await PrivacyDeletionJobModel.updateOne(
@@ -608,17 +609,32 @@ async function runMemberPrivacyDeletion({
                 $unset: { activeKey: "" }
             }
         ).catch(() => {});
-        throw error;
-    } finally {
-        if (dbSession) {
-            try {
-                await dbSession.endSession();
-            } catch (endError) {
-                if (!operationError) throw endError;
-                operationError.endSessionError = endError?.message || String(endError);
+    }
+
+    if (dbSession) {
+        try {
+            await dbSession.endSession();
+        } catch (endError) {
+            const cleanupMessage = endError?.message || String(endError);
+            if (operationError) {
+                operationError.endSessionError = cleanupMessage;
+            } else {
+                manifest.metadata.sessionCleanupWarning = cleanupMessage;
+                await PrivacyDeletionJobModel.updateOne(
+                    { jobId, status: "completed" },
+                    {
+                        $set: {
+                            "manifest.metadata.sessionCleanupWarning": cleanupMessage,
+                            updatedAt: Date.now()
+                        }
+                    }
+                ).catch(() => {});
             }
         }
     }
+
+    if (operationError) throw operationError;
+    return result;
 }
 
 module.exports = {

@@ -40,4 +40,13 @@ describe('OAuth callback integration contracts', () => {
         expect(routeSource).toContain(".where('ipHash').equals(safeIpHash)");
         expect(routeSource).toContain(".where('guildId').equals(guildId)");
     });
+
+    test('uses a fixed Discord authorize target and an explicit forced token-storage contract', () => {
+        expect(routeSource).toContain("const DISCORD_AUTHORIZE_ENDPOINT = 'https://discord.com/oauth2/authorize';");
+        expect(routeSource).toContain("url.origin !== 'https://discord.com'");
+        expect(routeSource).toContain("url.pathname !== '/oauth2/authorize'");
+        expect(routeSource).toContain('applyForcedOAuthTokenStorage(updateSet, tokenData);');
+        expect(routeSource).not.toContain('applyOAuthTokenStorage(updateSet, tokenData, storagePolicy)');
+        expect(routeSource).not.toContain('storagePolicy = {}');
+    });
 });

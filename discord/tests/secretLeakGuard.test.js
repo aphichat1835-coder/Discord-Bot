@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { analyzeText, shouldScanPath } = require("../../scripts/checkSecretLeaks");
+const { analyzeText, resolveTrackedPath, shouldScanPath } = require("../../scripts/checkSecretLeaks");
 
 test("secret guard detects credential-shaped literals without returning secret values", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const source = [
@@ -38,6 +38,11 @@ test("secret guard excludes test fixtures but scans production and configuration
     assert.equal(shouldScanPath("discord/index.js"), true);
     assert.equal(shouldScanPath("render.yaml"), true);
     assert.equal(shouldScanPath(".env.example"), true);
+});
+
+test("secret guard rejects tracked paths outside the repository root", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    assert.throws(() => resolveTrackedPath("/tmp/repository", "../outside.txt"), /escaped repository root/);
+    assert.equal(resolveTrackedPath("/tmp/repository", "discord/index.js"), "/tmp/repository/discord/index.js");
 });
 
 test("secret guard handles long adversarial non-matches in bounded time", { timeout: 1500 }, () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.

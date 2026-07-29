@@ -2,11 +2,12 @@
 
 const { Options } = require("discord.js");
 const { Intents } = require("./discordCompat");
+const { readFiniteInteger } = require("./numbers");
 
-function boundedNumber(rawValue, fallback, minimum) {
-    const parsed = Number(rawValue ?? fallback);
-    const resolved = Number.isFinite(parsed) && parsed !== 0 ? parsed : fallback;
-    return Math.max(minimum, resolved);
+function boundedNumber(rawValue, fallback, minimum, maximum = 10_000) {
+    const parsed = Number(rawValue);
+    if (!Number.isFinite(parsed) || parsed === 0) return fallback;
+    return readFiniteInteger(parsed, { fallback, min: minimum, max: maximum });
 }
 
 function buildMainClientOptions(env = process.env) {

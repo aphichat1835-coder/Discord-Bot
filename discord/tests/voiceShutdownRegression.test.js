@@ -71,7 +71,11 @@ test("voice startup guard rejects a session replaced during startup", () => { //
 test("startSession protects every asynchronous startup boundary", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const source = String(require("../voiceWorker/lifecycle").startSession);
     for (const stage of ["pre_login", "post_login", "post_jitter", "pre_connect", "post_connect", "pre_timers", "pre_ready"]) {
-        assert.match(source, new RegExp(`assertVoiceStartupAllowed\\(sessionId, session, \\"${stage}\\"`));
+        assert.equal(
+            source.includes(`assertVoiceStartupAllowed(sessionId, session, "${stage}"`),
+            true,
+            `missing startup boundary guard for ${stage}`
+        );
     }
     assert.match(source, /stopNaturalTimer\(sessionId\)/);
     assert.match(source, /stopAutoDeafTimer\(sessionId\)/);

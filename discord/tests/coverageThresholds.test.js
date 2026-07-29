@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { evaluateCoverage, evaluateCriticalFiles, normalizeCoveragePath, parseLcov, percentage } = require("../../scripts/checkCoverageThresholds");
+const { evaluateCoverage, evaluateCriticalFiles, normalizeCoveragePath, parseLcov, percentage, resolveCoverageReportPath } = require("../../scripts/checkCoverageThresholds");
 
 test("LCOV threshold parser aggregates source files, lines, functions, and branches", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const totals = parseLcov(`
@@ -89,6 +89,12 @@ test("coverage reports with no measured data fail closed instead of reporting on
     assert.deepEqual(result.invalid.sort(), ["branches", "functions", "lines", "sourceFiles"]);
     assert.deepEqual(result.failures.sort(), ["branches", "functions", "lines"]);
     assert.equal(Number.isNaN(result.metrics.lines), true);
+});
+
+test("coverage report paths stay inside the repository and require LCOV files", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    assert.equal(resolveCoverageReportPath("coverage/discord.lcov", "/tmp/repository"), "/tmp/repository/coverage/discord.lcov");
+    assert.throws(() => resolveCoverageReportPath("../outside.lcov", "/tmp/repository"), /escaped repository/);
+    assert.throws(() => resolveCoverageReportPath("coverage/report.json", "/tmp/repository"), /not LCOV/);
 });
 
 test("Voice coverage is scoped to the voice/session runtime instead of unrelated imports", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.

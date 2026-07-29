@@ -79,7 +79,7 @@ test("different tokens can start concurrently in the same guild", async () => { 
     assert.equal((await two).sessionId, "two");
 });
 
-test("post-login account may differ from the requester and is still pooled", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("post-login account mismatch is rejected and never pooled", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const session = { ownerId: "111111111111111111" };
     const disposed = [];
     const pooled = [];
@@ -89,7 +89,7 @@ test("post-login account may differ from the requester and is still pooled", asy
             this.user = { id: "222222222222222222" };
         }
     };
-    await performClientLogin(client, "session-1", session, "hash", "token", {
+    await assert.rejects(() => performClientLogin(client, "session-1", session, "hash", "token", {
         getSession: () => session,
         waitForTokenLoginCooldown: async () => {},
         loginQueue: { add: operation => operation() },
@@ -98,9 +98,9 @@ test("post-login account may differ from the requester and is still pooled", asy
         setSessionClientInPool: (...args) => pooled.push(args),
         isShuttingDown: () => false,
         markTokenInvalid: async () => {}
-    });
-    assert.equal(pooled.length, 1);
-    assert.deepEqual(disposed, []);
+    }), error => error?.code === "TOKEN_OWNER_MISMATCH");
+    assert.equal(pooled.length, 0);
+    assert.ok(disposed.includes("login-failure"));
     assert.equal(session.loginGeneration, null);
 });
 

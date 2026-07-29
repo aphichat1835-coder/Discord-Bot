@@ -235,6 +235,36 @@ async function refreshOneOAuthUser(doc, {
     });
 }
 
+function applyRefreshOutcome(summary, outcome) {
+    if (outcome?.refreshed) {
+        summary.refreshed++;
+        return;
+    }
+    if (outcome?.skipped) {
+        summary.skipped++;
+        if (String(outcome.reason || "").includes("changed")) summary.conflicts++;
+        return;
+    }
+    if (!outcome?.failed) return;
+    summary.failed++;
+    if (outcome.revoked) summary.revoked++;
+    if (outcome.persisted === false) summary.persistenceFailed++;
+    if (summary.errors.length < 10) summary.errors.push(outcome);
+}
+
+function recordRefreshException(summary, tokenField, doc, error) {
+    summary.failed++;
+    summary.persistenceFailed++;
+    if (summary.errors.length >= 10) return;
+    summary.errors.push({
+        ok: false,
+        tokenField,
+        userId: doc.discord?.userId || doc.id,
+        error: safeError(error),
+        persisted: false
+    });
+}
+
 async function refreshTokenField({ model, tokenField, redirectUri, now, config, discordApi, prepareTokenStorage }) {
     const query = buildRefreshQuery(now, config.marginMs, config.failMax, tokenField);
     const docs = await model.find(query)
@@ -264,33 +294,9 @@ async function refreshTokenField({ model, tokenField, redirectUri, now, config, 
                 prepareTokenStorage,
                 tokenField
             });
-            if (outcome?.refreshed) {
-                summary.refreshed++;
-                continue;
-            }
-            if (outcome?.skipped) {
-                summary.skipped++;
-                if (String(outcome.reason || '').includes('changed')) summary.conflicts++;
-                continue;
-            }
-            if (outcome?.failed) {
-                summary.failed++;
-                if (outcome.revoked) summary.revoked++;
-                if (outcome.persisted === false) summary.persistenceFailed++;
-                if (summary.errors.length < 10) summary.errors.push(outcome);
-            }
-        } catch (err) {
-            summary.failed++;
-            summary.persistenceFailed++;
-            if (summary.errors.length < 10) {
-                summary.errors.push({
-                    ok: false,
-                    tokenField,
-                    userId: doc.discord?.userId || doc.id,
-                    error: safeError(err),
-                    persisted: false
-                });
-            }
+            applyRefreshOutcome(summary, outcome);
+        } catch (error) {
+            recordRefreshException(summary, tokenField, doc, error);
         }
     }
 

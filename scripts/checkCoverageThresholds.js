@@ -136,58 +136,79 @@ function evaluateCriticalFiles(parsed, thresholds = {}) {
     return { results, failures };
 }
 
+const REPOSITORY_ROOT = path.resolve(__dirname, "..");
+const DEFAULT_REPORTS = Object.freeze([
+    "coverage/discord.lcov",
+    "coverage/voice.lcov",
+    "coverage/verification.lcov"
+]);
+
+function resolveCoverageReportPath(file, root = REPOSITORY_ROOT) {
+    const repositoryRoot = path.resolve(root);
+    const resolved = path.resolve(repositoryRoot, String(file || ""));
+    const relative = path.relative(repositoryRoot, resolved);
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative) || path.extname(resolved) !== ".lcov") {
+        throw new Error("coverage report path escaped repository or is not LCOV");
+    }
+    return resolved;
+}
+
 function formatPercent(value) {
     return Number.isFinite(value) ? `${value.toFixed(2)}%` : "n/a";
 }
 
-function runCli(args = process.argv.slice(2)) {
-    const files = args.length ? args : [
-        "coverage/discord.lcov",
-        "coverage/voice.lcov",
-        "coverage/verification.lcov"
-    ];
-    let failed = false;
-
-    for (const file of files) {
-        const normalized = path.normalize(file);
-        if (!fs.existsSync(normalized) || fs.statSync(normalized).size === 0) {
-            console.error(`[COVERAGE] missing or empty report: ${file}`);
-            failed = true;
+function reportCriticalCoverage(file, parsed, reportName) {
+    const critical = evaluateCriticalFiles(parsed, CRITICAL_FILE_THRESHOLDS[reportName] || {});
+    for (const item of critical.results) {
+        if (item.missing) {
+            console.error(`[COVERAGE] critical file missing from ${file}: ${item.sourcePath}`);
             continue;
         }
-        const parsed = parseLcov(fs.readFileSync(normalized, "utf8"));
-        const result = evaluateCoverage(parsed);
-        const summary = Object.keys(result.metrics)
-            .map(name => `${name}=${formatPercent(result.metrics[name])} (min ${formatPercent(result.thresholds[name])})`)
+        const details = Object.keys(item.thresholds)
+            .map(name => `${name}=${formatPercent(item.metrics[name])} (min ${formatPercent(item.thresholds[name])})`)
             .join(", ");
-        console.log(`[COVERAGE] ${file}: ${summary}`);
-        if (result.invalid.length) {
-            console.error(`[COVERAGE] ${file} has missing coverage data: ${result.invalid.join(", ")}`);
-            failed = true;
+        console.log(`[COVERAGE] critical ${item.sourcePath}: ${details}`);
+        if (item.failures.length) {
+            console.error(`[COVERAGE] critical ${item.sourcePath} below threshold: ${item.failures.join(", ")}`);
         }
-        if (result.failures.length) {
-            console.error(`[COVERAGE] ${file} below threshold: ${result.failures.join(", ")}`);
-            failed = true;
-        }
+    }
+    return critical.failures.length > 0;
+}
 
-        const critical = evaluateCriticalFiles(parsed, CRITICAL_FILE_THRESHOLDS[path.basename(normalized)] || {});
-        for (const item of critical.results) {
-            if (item.missing) {
-                console.error(`[COVERAGE] critical file missing from ${file}: ${item.sourcePath}`);
-                continue;
-            }
-            const details = Object.keys(item.thresholds)
-                .map(name => `${name}=${formatPercent(item.metrics[name])} (min ${formatPercent(item.thresholds[name])})`)
-                .join(", ");
-            console.log(`[COVERAGE] critical ${item.sourcePath}: ${details}`);
-            if (item.failures.length) {
-                console.error(`[COVERAGE] critical ${item.sourcePath} below threshold: ${item.failures.join(", ")}`);
-            }
-        }
-        if (critical.failures.length) failed = true;
+function evaluateCoverageReport(file) {
+    let absolutePath;
+    try {
+        absolutePath = resolveCoverageReportPath(file);
+    } catch (error) {
+        console.error(`[COVERAGE] invalid report path ${file}: ${error.message}`);
+        return true;
+    }
+    // nosemgrep -- resolveCoverageReportPath constrains this path to a non-root .lcov file inside the repository.
+    if (!fs.existsSync(absolutePath) || fs.statSync(absolutePath).size === 0) {
+        console.error(`[COVERAGE] missing or empty report: ${file}`);
+        return true;
     }
 
-    if (failed) process.exitCode = 1;
+    // nosemgrep -- absolutePath passed the repository-boundary and .lcov-extension checks above.
+    const parsed = parseLcov(fs.readFileSync(absolutePath, "utf8"));
+    const result = evaluateCoverage(parsed);
+    const summary = Object.keys(result.metrics)
+        .map(name => `${name}=${formatPercent(result.metrics[name])} (min ${formatPercent(result.thresholds[name])})`)
+        .join(", ");
+    console.log(`[COVERAGE] ${file}: ${summary}`);
+    if (result.invalid.length) {
+        console.error(`[COVERAGE] ${file} has missing coverage data: ${result.invalid.join(", ")}`);
+    }
+    if (result.failures.length) {
+        console.error(`[COVERAGE] ${file} below threshold: ${result.failures.join(", ")}`);
+    }
+    const criticalFailed = reportCriticalCoverage(file, parsed, path.basename(absolutePath));
+    return result.invalid.length > 0 || result.failures.length > 0 || criticalFailed;
+}
+
+function runCli(args = process.argv.slice(2)) {
+    const files = args.length ? args : DEFAULT_REPORTS;
+    if (files.some(evaluateCoverageReport)) process.exitCode = 1;
 }
 
 if (require.main === module) runCli();
@@ -202,5 +223,6 @@ module.exports = {
     normalizeCoveragePath,
     parseLcov,
     percentage,
+    resolveCoverageReportPath,
     resolveThreshold
 };

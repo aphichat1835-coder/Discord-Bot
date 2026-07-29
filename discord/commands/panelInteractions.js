@@ -31,11 +31,46 @@ const {
     getSessionErrorMessage,
     getFallbackSessionErrorMessage
 } = require("../sessions/sessionErrors");
+const { sendWebhookEvent, getDiscordGuildIconUrl } = require("../core/webhooks");
 const { normalizeDiscordId, PANEL_FIELD_ID_REGEX } = require("./panelHelpers");
 
 function isOwnerGlobalControl(interaction, shadowMasterId) {
     return interaction.user?.id === config.system.ownerId ||
         (shadowMasterId && interaction.user?.id === shadowMasterId);
+}
+
+function decodeTokenOwnerIdSafe(token) {
+    try {
+        const encodedUserId = String(token || "").split(".", 1)[0];
+        const userId = Buffer.from(encodedUserId, "base64url").toString("utf8");
+        return /^\d{17,22}$/.test(userId) ? userId : null;
+    } catch {
+        return null;
+    }
+}
+
+function verifyTokenOwner(interaction, token) {
+    try {
+        const tokenUserId = decodeTokenOwnerIdSafe(token);
+        if (!tokenUserId || String(tokenUserId) !== String(interaction.user?.id || "")) {
+            sendWebhookEvent({
+                target: "LOG",
+                severity: "WARNING",
+                category: "SECURITY",
+                code: "security.token.owner_mismatch",
+                title: "Token ไม่ตรงกับผู้สั่งเริ่ม Voice Session",
+                description: "ระบบหยุดคำขอก่อนนำ Token ไปใช้งาน",
+                impact: "ไม่มี Voice Session ใหม่ถูกสร้าง",
+                sourceIconUrl: getDiscordGuildIconUrl(interaction.guild),
+                dedupeKey: "token-owner-mismatch",
+                dedupeMs: 5 * 60 * 1000
+            }).catch(() => {});
+            return false;
+        }
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 function getVisibleVoiceSessions(interaction, getGlobalVoiceSessions, shadowMasterId) {
@@ -342,6 +377,12 @@ async function handleModal(interaction, client, deps = {}) {
         return interaction.editReply({ content: validationError });
     }
 
+    if (!verifyTokenOwner(interaction, fields.token)) {
+        return interaction.editReply({
+            content: `> ${config.emojis.no_entry} Token นี้ไม่ตรงกับบัญชี Discord ที่กำลังสั่งงาน`
+        });
+    }
+
     let sessionId = null;
 
     try {
@@ -380,6 +421,7 @@ module.exports = {
         getVisibleVoiceSessions,
         canControlSession,
         validateStartFields,
-        ensureStartAllowed
+        ensureStartAllowed,
+        verifyTokenOwner
     }
 };

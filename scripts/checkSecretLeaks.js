@@ -15,11 +15,11 @@ const SKIPPED_PREFIXES = [
 const PATTERNS = [
     {
         code: "DISCORD_TOKEN_LITERAL",
-        regex: /(?<![A-Za-z0-9_])[A-Za-z\d]{20,30}\.[A-Za-z\d_-]{6}\.[A-Za-z\d_-]{25,50}(?![A-Za-z0-9_])/g
+        regex: /(?<![\w-])[\w-]{20,30}\.[\w-]{6}\.[\w-]{25,50}(?![\w-])/g
     },
     {
         code: "GITHUB_TOKEN_LITERAL",
-        regex: /(?:github_pat_[A-Za-z0-9_]{20,255}|gh[pousr]_[A-Za-z0-9]{30,255})/g
+        regex: /(?:github_pat_\w{20,255}|gh[pousr]_[A-Za-z0-9]{30,255})/g
     },
     {
         code: "AWS_ACCESS_KEY_LITERAL",
@@ -39,8 +39,59 @@ const PATTERNS = [
     }
 ];
 
-const ASSIGNMENT_PATTERN = /\b(token|secret|password|pin|api[_-]?key|webhook(?:url)?)\b\s*[:=]\s*["']([^"'\r\n]{12,512})["']/gi;
+const ASSIGNMENT_NAME_PATTERN = /\b(?:token|secret|password|pin|api[_-]?key|webhook(?:url)?)\b/gi;
+const MAX_ASSIGNMENT_LINE_LENGTH = 4096;
+const MAX_SCANNED_FILE_BYTES = 2 * 1024 * 1024;
+const REPOSITORY_ROOT = path.resolve(__dirname, "..");
+const GIT_BINARY = process.platform === "win32" ? "git.exe" : "/usr/bin/git";
 const PLACEHOLDER_PATTERN = /(?:example|placeholder|redacted|dummy|changeme|replace[-_ ]?me|<[^>]+>|\$\{|\$[A-Z_][A-Z0-9_]*|process\.env)/i;
+
+function resolveTrackedPath(root, relativePath) {
+    const repositoryRoot = path.resolve(root);
+    const resolved = path.resolve(repositoryRoot, String(relativePath || ""));
+    const relative = path.relative(repositoryRoot, resolved);
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+        throw new Error("tracked path escaped repository root");
+    }
+    return resolved;
+}
+
+function extractAssignmentValue(line, match) {
+    const tail = line.slice(match.index + match[0].length);
+    const assignment = /^\s*[:=]\s*(["'])/.exec(tail);
+    if (!assignment) return null;
+    const valueStart = match.index + match[0].length + assignment[0].length;
+    const valueEnd = line.indexOf(assignment[1], valueStart);
+    return valueEnd === -1 ? null : line.slice(valueStart, valueEnd);
+}
+
+function isSecretCandidate(value) {
+    return value !== null &&
+        value.length >= 12 &&
+        value.length <= 512 &&
+        !PLACEHOLDER_PATTERN.test(value);
+}
+
+function assignmentFindings(source, filePath) {
+    const findings = [];
+    let offset = 0;
+    for (const line of source.split(/\r?\n/)) {
+        if (line.length <= MAX_ASSIGNMENT_LINE_LENGTH) {
+            ASSIGNMENT_NAME_PATTERN.lastIndex = 0;
+            for (const match of line.matchAll(ASSIGNMENT_NAME_PATTERN)) {
+                const value = extractAssignmentValue(line, match);
+                if (!isSecretCandidate(value)) continue;
+                findings.push({
+                    code: "HARDCODED_SECRET_ASSIGNMENT",
+                    filePath,
+                    line: lineNumber(source, offset + match.index)
+                });
+            }
+        }
+        offset += line.length + 1;
+    }
+    return findings;
+}
 
 function shouldScanPath(filePath) {
     const normalized = String(filePath || "").replaceAll("\\", "/");
@@ -62,22 +113,13 @@ function analyzeText(text, filePath = "fixture") {
         }
     }
 
-    ASSIGNMENT_PATTERN.lastIndex = 0;
-    for (const match of source.matchAll(ASSIGNMENT_PATTERN)) {
-        const value = String(match[2] || "");
-        if (PLACEHOLDER_PATTERN.test(value)) continue;
-        findings.push({
-            code: "HARDCODED_SECRET_ASSIGNMENT",
-            filePath,
-            line: lineNumber(source, match.index)
-        });
-    }
-
+    findings.push(...assignmentFindings(source, filePath));
     return findings;
 }
 
-function trackedFiles() {
-    const result = spawnSync("git", ["ls-files", "-z"], {
+function trackedFiles(root = REPOSITORY_ROOT) {
+    const result = spawnSync(GIT_BINARY, ["ls-files", "-z"], {
+        cwd: path.resolve(root),
         encoding: "utf8",
         maxBuffer: 16 * 1024 * 1024
     });
@@ -87,18 +129,24 @@ function trackedFiles() {
     return result.stdout.split("\0").filter(Boolean);
 }
 
-function scanRepository(root = process.cwd()) {
+function scanRepository(root = REPOSITORY_ROOT) {
+    const repositoryRoot = path.resolve(root);
     const findings = [];
-    for (const relativePath of trackedFiles()) {
+    for (const relativePath of trackedFiles(repositoryRoot)) {
         if (!shouldScanPath(relativePath)) continue;
-        const absolutePath = path.join(root, relativePath);
+        let absolutePath;
+        try {
+            absolutePath = resolveTrackedPath(repositoryRoot, relativePath);
+        } catch {
+            continue;
+        }
         let buffer;
         try {
             buffer = fs.readFileSync(absolutePath);
         } catch {
             continue;
         }
-        if (buffer.length > 2 * 1024 * 1024 || buffer.includes(0)) continue;
+        if (buffer.length > MAX_SCANNED_FILE_BYTES || buffer.includes(0)) continue;
         findings.push(...analyzeText(buffer.toString("utf8"), relativePath));
     }
     return findings;
@@ -122,6 +170,7 @@ if (require.main === module) main();
 
 module.exports = {
     analyzeText,
+    resolveTrackedPath,
     scanRepository,
     shouldScanPath
 };

@@ -39,6 +39,19 @@ const BASE_URL = resolvePublicBaseUrl(process.env, 'http://localhost:3000');
 
 const REDIRECT_URI = `${BASE_URL}/auth/callback`;
 const VERIFY_SCOPE = 'identify identify.premium email connections guilds guilds.members.read guilds.join';
+const DISCORD_AUTHORIZE_ENDPOINT = 'https://discord.com/oauth2/authorize';
+
+function buildDiscordAuthorizeUrl(params) {
+    const url = new URL(DISCORD_AUTHORIZE_ENDPOINT);
+    url.search = params.toString();
+    if (url.origin !== 'https://discord.com' || url.pathname !== '/oauth2/authorize') {
+        const error = new Error('Discord OAuth authorize endpoint is invalid');
+        error.code = 'discord_oauth_authorize_endpoint_invalid';
+        throw error;
+    }
+    return url.toString();
+}
+
 const DEVICE_DUPLICATE_LOOKUP_MAX = readFiniteInteger(
     process.env.DEVICE_DUPLICATE_LOOKUP_MAX,
     { fallback: 200, min: 20, max: 2000 }
@@ -713,7 +726,7 @@ function mergeCompleteSnapshotRefs(previousRefs = {}, stored = {}) {
     return next;
 }
 
-function applyOAuthTokenStorage(updateSet, tokenData) {
+function applyForcedOAuthTokenStorage(updateSet, tokenData) {
     if (typeof discord.prepareTokenStorage !== 'function') {
         const error = new Error('OAuth token storage is unavailable');
         error.code = 'oauth_token_storage_unavailable';
@@ -1092,7 +1105,6 @@ async function saveOAuthUserSafe({
     result,
     findings,
     trackingSnapshot,
-    storagePolicy = {},
     fetchMetadata = {},
     attemptStartedAt = Date.now()
 }) {
@@ -1213,7 +1225,7 @@ async function saveOAuthUserSafe({
                 updatedAt: nowMs
             };
 
-            applyOAuthTokenStorage(updateSet, tokenData, storagePolicy);
+            applyForcedOAuthTokenStorage(updateSet, tokenData);
             let activated = null;
             try {
                 applySnapshotBudgetGuard(updateSet);
@@ -1584,7 +1596,7 @@ router.get('/auth/start', async (req, res) => {
             state: executionState,
             prompt: 'consent'
         });
-        return res.redirect(302, `https://discord.com/oauth2/authorize?${params.toString()}`);
+        return res.redirect(302, buildDiscordAuthorizeUrl(params));
     } catch (error) {
         const errorCode = String(error?.code || error?.name || 'oauth_start_failed').slice(0, 80);
         console.error(`[VERIFY] auth/start failed: ${errorCode}`);
@@ -1785,6 +1797,18 @@ router.post('/auth/callback', async (req, res) => {
                 fetchMetadata,
                 attemptStartedAt: oauthAttemptStartedAt
             });
+            // Discord role assignment and MongoDB snapshot activation are two
+            // external effects. Do not report a completed verification when
+            // the durable owner record is missing; the role may exist, but the
+            // callback must preserve that partial truth for reconciliation.
+            const persistenceIncomplete = result === 'success' && oauthPersistence?.saved !== true;
+            const finalResult = persistenceIncomplete ? 'failed' : result;
+            const finalReason = persistenceIncomplete
+                ? 'verification_persistence_failed'
+                : reason;
+            const finalUserError = persistenceIncomplete
+                ? 'เพิ่มยศใน Discord แล้ว แต่บันทึกข้อมูลยืนยันไม่สมบูรณ์ กรุณาแจ้งแอดมินเพื่อตรวจสอบ'
+                : userError;
             const connectionsWrite = oauthPersistence?.snapshotWrites?.connections;
             const guildsWrite = oauthPersistence?.snapshotWrites?.guilds;
             const memberWrite = oauthPersistence?.snapshotWrites?.member;
@@ -1811,8 +1835,8 @@ router.post('/auth/callback', async (req, res) => {
                 userId: profile.id,
                 roleId: configuredRoleId,
                 requestId,
-                result,
-                reason,
+                result: finalResult,
+                reason: finalReason,
                 findings: allFindings,
                 oauthScope: tokenData.scope || '',
                 stateMode: stateObj.mode || null,
@@ -1983,12 +2007,12 @@ router.post('/auth/callback', async (req, res) => {
                 dmSent = !!(await safeSideEffect(
                     'sendVerificationDM',
                     () => discord.sendVerificationDM(profile.id, {
-                        ok: result === 'success',
-                        result,
+                        ok: finalResult === 'success',
+                        result: finalResult,
                         guildName,
                         roleName,
-                        reason: userError || reason,
-                        reasonCode: reason,
+                        reason: finalUserError || finalReason,
+                        reasonCode: finalReason,
                         requestId,
                         profile: {
                             username: profile.username,
@@ -2002,19 +2026,20 @@ router.post('/auth/callback', async (req, res) => {
             }
 
             return res.json({
-                success: result === 'success',
+                success: finalResult === 'success',
 
-                error: result === 'success' ? undefined : userError,
-                message: result === 'success'
+                error: finalResult === 'success' ? undefined : finalUserError,
+                message: finalResult === 'success'
                     ? (message || 'ระบบเพิ่มยศให้เรียบร้อยแล้ว')
                     : undefined,
 
-                code: result === 'success' ? undefined : publicDebugCode(reason),
-                debugCode: result === 'success' ? undefined : publicDebugCode(reason),
+                code: finalResult === 'success' ? undefined : publicDebugCode(finalReason),
+                debugCode: finalResult === 'success' ? undefined : publicDebugCode(finalReason),
                 requestId,
+                recoveryRequired: persistenceIncomplete || undefined,
 
                 roleName,
-                alreadyHasRole: reason === 'already_verified_has_role',
+                alreadyHasRole: finalReason === 'already_verified_has_role',
                 dmSent,
 
                 user: {
@@ -2344,6 +2369,7 @@ router.post('/auth/callback', async (req, res) => {
 
 module.exports = router;
 module.exports._test = {
+    buildDiscordAuthorizeUrl,
     decodeUserBadgeFlags,
     normalizeConnections,
     normalizeGuilds,

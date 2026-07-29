@@ -1035,7 +1035,7 @@ async function handleRestoreConfirm(interaction, sessionManager) {
 
             if (Array.isArray(channels)) {
                 const categoryIdMap = new Map();
-                const validTypes = [...SUPPORTED_BACKUP_CHANNEL_TYPES];
+                const validTypes = new Set(SUPPORTED_BACKUP_CHANNEL_TYPES);
 
 
 
@@ -1095,7 +1095,7 @@ async function handleRestoreConfirm(interaction, sessionManager) {
                         }
                         if (!exists) {
                             try {
-                                if (validTypes.includes(cData.type)) {
+                                if (validTypes.has(cData.type)) {
                                     const resolvedOverwrites = buildResolvedOverwrites(guild, cData, roleIdMap, oldGuildId, memberTargetStates);
                                     await guild.channels.create({
                                         name: cData.name,

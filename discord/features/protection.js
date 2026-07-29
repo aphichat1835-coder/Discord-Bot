@@ -40,12 +40,24 @@ function booleanValue(value, fallback) {
 }
 
 function normalizeDomain(value) {
-    const raw = String(value || "").trim().toLowerCase().replace(/^\.+|\.+$/g, "");
-    if (!raw || raw.length > 253 || raw.includes("/") || raw.includes(":")) return null;
+    const input = String(value || "").trim();
+    if (!input || input.length > 253) return null;
+
+    let raw = input.toLowerCase();
+    while (raw.startsWith(".")) raw = raw.slice(1);
+    while (raw.endsWith(".")) raw = raw.slice(0, -1);
+    if (
+        !raw ||
+        raw.length > 253 ||
+        raw.includes("..") ||
+        /[^\p{L}\p{N}.-]/u.test(raw)
+    ) return null;
+
     try {
         const parsed = new URL(`https://${raw}`);
-        if (parsed.hostname !== raw || !raw.includes(".")) return null;
-        return raw;
+        const hostname = parsed.hostname.toLowerCase();
+        if (!hostname || hostname.length > 253 || !hostname.includes(".")) return null;
+        return hostname;
     } catch {
         return null;
     }
@@ -172,7 +184,7 @@ function checkAntiSpam(member, msgHistory, protConfig) {
     });
 }
 
-const INVITE_REGEX = /discord(?:app)?\.(?:com\/invite|gg)\/[a-zA-Z0-9-]+/i;
+const INVITE_REGEX = /discord(?:app)?\.(?:com\/invite|gg)\/[a-z0-9-]+/i;
 
 function checkLinkFilter(message, protConfig) {
     const v = protConfig?.linkFilter;

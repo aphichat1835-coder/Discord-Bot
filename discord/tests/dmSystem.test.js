@@ -76,6 +76,38 @@ test("DM outbox schema keeps unique event keys, finite states and automatic expi
     assert.equal(eventKey.options.unique, true);
     assert.deepEqual(status.options.enum, ["pending", "sending", "retrying", "sent", "failed_permanent"]);
     assert.deepEqual(expiresAt.options.index, { expireAfterSeconds: 0 });
+    assert.equal(DmNotification.schema.path("priorityRank").options.default, 2);
+});
+
+test("volatile outbox retains a transient failure when MongoDB is unavailable", async () => {
+    dmService._test.resetTestState();
+    dmService._test.setDatabaseReadyForTest(false);
+    const recipient = {
+        send: async () => {
+            const error = new Error("temporary timeout");
+            error.code = "ETIMEDOUT";
+            throw error;
+        }
+    };
+    dmService.configure({
+        client: {
+            users: { cache: new Map([["volatile-dm", recipient]]), fetch: async () => recipient },
+            isReady: () => true
+        }
+    });
+
+    const result = await dmService.send({
+        eventKey: "test:volatile-dm",
+        recipientId: "volatile-dm",
+        category: "test",
+        priority: "critical",
+        payload: { content: "test" }
+    });
+
+    assert.equal(result.status, "retrying");
+    assert.equal(dmService._test.volatileOutbox.has("test:volatile-dm"), true);
+    assert.equal(dmService._test.volatileOutbox.get("test:volatile-dm").priorityRank, 0);
+    dmService._test.resetTestState();
 });
 
 test("voice important-only policy is materially different from all", () => {

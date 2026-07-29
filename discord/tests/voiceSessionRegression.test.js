@@ -294,13 +294,18 @@ test("regression: ensureVoiceSession does not reference mainClient.guilds", () =
     );
 });
 
-test("regression: voice lifecycle does not bind token ownership to requester IDs", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("regression: Voice session startup rejects a token that belongs to another Discord account", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const src = readLifecycleSrc();
-    assert.equal(src.includes("TOKEN_OWNER_MISMATCH"), false);
+    assert.match(src, /TOKEN_OWNER_MISMATCH/);
     assert.equal(src.includes("token_in_use_by_another_user"), false);
-    assert.equal(src.includes("assertRequestedTokenOwner"), false);
     assert.match(src, /replaceExistingVoiceSession/);
     assert.match(src, /superseded_by_newer_request/);
+});
+
+test("panel rejects a decodable token with a different owner before session creation", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const foreignId = "111111111111111111";
+    const token = `${Buffer.from(foreignId).toString("base64url")}.abcdef.abcdefghijklmnopqrstuvwxyz0123456789`;
+    assert.equal(panelInteractionsTest.verifyTokenOwner({ user: { id: "222222222222222222" } }, token), false);
 });
 
 test("regression: ensureVoiceSession does not call resolveVoiceTarget", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.

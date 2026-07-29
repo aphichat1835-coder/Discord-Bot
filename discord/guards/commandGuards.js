@@ -39,11 +39,12 @@ function readCommandOption(interaction, name) {
 
 function getElevatedMentionRequirement(interaction) {
     const commandName = String(interaction?.commandName || "").toLowerCase();
-    const content = commandName === "say"
-        ? readCommandOption(interaction, "message")
-        : commandName === "announce"
-            ? readCommandOption(interaction, "content")
-            : "";
+    let content = "";
+    if (commandName === "say") {
+        content = readCommandOption(interaction, "message");
+    } else if (commandName === "announce") {
+        content = readCommandOption(interaction, "content");
+    }
 
     if (!content) return null;
     if (/@(?:everyone|here)\b/i.test(content)) return "everyone";
