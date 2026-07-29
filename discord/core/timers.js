@@ -1,7 +1,11 @@
 "use strict";
 
+const { readFiniteInteger } = require("./numbers");
+
+const MAX_TIMEOUT_MS = 2_147_483_647;
+
 function normalizeDelay(ms) {
-    return Math.max(0, Number(ms) || 0);
+    return readFiniteInteger(ms, { fallback: 0, min: 0, max: MAX_TIMEOUT_MS });
 }
 
 function delay(ms, value = undefined) {
@@ -42,4 +46,9 @@ async function withTimeoutReject(promise, timeoutMs, message) {
     }
 }
 
-module.exports = { delay, withTimeoutValue, withTimeoutReject };
+module.exports = {
+    delay,
+    withTimeoutValue,
+    withTimeoutReject,
+    _test: { normalizeDelay, MAX_TIMEOUT_MS }
+};

@@ -107,6 +107,40 @@ test("restore planning maps numeric category parents before matching child chann
     assert.equal(plan.channelsAmbiguous, 0);
 });
 
+test("restore dry-run counts only overwrites that its create actions can apply", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const guild = {
+        id: "111111111111111111",
+        roles: { cache: new Collection(), everyone: null },
+        members: { cache: new Collection() },
+        channels: { cache: new Collection([
+            ["444444444444444444", { id: "444444444444444444", name: "existing", type: ChannelType.GuildText, parentId: null }]
+        ]) }
+    };
+    const plan = await utility._test.buildRestorePlan(guild, {
+        roles: [],
+        channels: [
+            {
+                id: "333333333333333333",
+                name: "existing",
+                type: ChannelType.GuildText,
+                parentId: null,
+                permissionOverwrites: [{ id: "999999999999999999", type: "role", allow: "0", deny: "0" }]
+            },
+            {
+                id: "555555555555555555",
+                name: "unsupported",
+                type: "GUILD_FORUM",
+                parentId: null,
+                permissionOverwrites: []
+            }
+        ]
+    }, guild.id);
+
+    assert.equal(plan.channelsToCreate, 0);
+    assert.equal(plan.channelsSkipped, 2);
+    assert.equal(plan.overwritesSkippedRoleMissing, 0);
+});
+
 test("snapshot loader keeps legacy compatibility and rejects incomplete chunk pointers", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const legacy = { roles: [], channels: [], schemaVersion: 1 };
     assert.deepEqual(await sessionManager.loadSnapshotData({ storageMode: "legacy", data: legacy }), legacy);

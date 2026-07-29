@@ -1797,6 +1797,18 @@ router.post('/auth/callback', async (req, res) => {
                 fetchMetadata,
                 attemptStartedAt: oauthAttemptStartedAt
             });
+            // Discord role assignment and MongoDB snapshot activation are two
+            // external effects. Do not report a completed verification when
+            // the durable owner record is missing; the role may exist, but the
+            // callback must preserve that partial truth for reconciliation.
+            const persistenceIncomplete = result === 'success' && oauthPersistence?.saved !== true;
+            const finalResult = persistenceIncomplete ? 'failed' : result;
+            const finalReason = persistenceIncomplete
+                ? 'verification_persistence_failed'
+                : reason;
+            const finalUserError = persistenceIncomplete
+                ? 'เพิ่มยศใน Discord แล้ว แต่บันทึกข้อมูลยืนยันไม่สมบูรณ์ กรุณาแจ้งแอดมินเพื่อตรวจสอบ'
+                : userError;
             const connectionsWrite = oauthPersistence?.snapshotWrites?.connections;
             const guildsWrite = oauthPersistence?.snapshotWrites?.guilds;
             const memberWrite = oauthPersistence?.snapshotWrites?.member;
@@ -1823,8 +1835,8 @@ router.post('/auth/callback', async (req, res) => {
                 userId: profile.id,
                 roleId: configuredRoleId,
                 requestId,
-                result,
-                reason,
+                result: finalResult,
+                reason: finalReason,
                 findings: allFindings,
                 oauthScope: tokenData.scope || '',
                 stateMode: stateObj.mode || null,
@@ -1995,12 +2007,12 @@ router.post('/auth/callback', async (req, res) => {
                 dmSent = !!(await safeSideEffect(
                     'sendVerificationDM',
                     () => discord.sendVerificationDM(profile.id, {
-                        ok: result === 'success',
-                        result,
+                        ok: finalResult === 'success',
+                        result: finalResult,
                         guildName,
                         roleName,
-                        reason: userError || reason,
-                        reasonCode: reason,
+                        reason: finalUserError || finalReason,
+                        reasonCode: finalReason,
                         requestId,
                         profile: {
                             username: profile.username,
@@ -2014,19 +2026,20 @@ router.post('/auth/callback', async (req, res) => {
             }
 
             return res.json({
-                success: result === 'success',
+                success: finalResult === 'success',
 
-                error: result === 'success' ? undefined : userError,
-                message: result === 'success'
+                error: finalResult === 'success' ? undefined : finalUserError,
+                message: finalResult === 'success'
                     ? (message || 'ระบบเพิ่มยศให้เรียบร้อยแล้ว')
                     : undefined,
 
-                code: result === 'success' ? undefined : publicDebugCode(reason),
-                debugCode: result === 'success' ? undefined : publicDebugCode(reason),
+                code: finalResult === 'success' ? undefined : publicDebugCode(finalReason),
+                debugCode: finalResult === 'success' ? undefined : publicDebugCode(finalReason),
                 requestId,
+                recoveryRequired: persistenceIncomplete || undefined,
 
                 roleName,
-                alreadyHasRole: reason === 'already_verified_has_role',
+                alreadyHasRole: finalReason === 'already_verified_has_role',
                 dmSent,
 
                 user: {
