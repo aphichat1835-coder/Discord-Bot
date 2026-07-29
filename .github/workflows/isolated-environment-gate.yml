@@ -39,7 +39,6 @@ env:
   PRODUCTION_GUILD_IDS: ${{ vars.PRODUCTION_GUILD_IDS }}
   PRODUCTION_CHANNEL_IDS: ${{ vars.PRODUCTION_CHANNEL_IDS }}
   GATE_RECORD_DIR: artifacts
-  FALLBACK_GATE_RECORD_DIR: ${{ runner.temp }}/environment-gate-fallback
 
 jobs:
   verify:
@@ -50,6 +49,8 @@ jobs:
     steps:
       - name: Initialize redacted environment record
         shell: bash
+        env:
+          FALLBACK_GATE_RECORD_DIR: ${{ runner.temp }}/environment-gate-fallback
         run: |
           set -euo pipefail
           node <<'NODE'
@@ -119,6 +120,8 @@ jobs:
       - name: Prefer final environment record
         if: ${{ always() }}
         shell: bash
+        env:
+          FALLBACK_GATE_RECORD_DIR: ${{ runner.temp }}/environment-gate-fallback
         run: |
           set -euo pipefail
           if compgen -G "artifacts/environment-gate-*.json" > /dev/null; then
@@ -132,6 +135,6 @@ jobs:
           name: isolated-environment-gate-${{ env.TEST_COMMIT_SHA }}
           path: |
             artifacts/environment-gate-*.json
-            ${{ env.FALLBACK_GATE_RECORD_DIR }}/environment-gate-*.json
+            ${{ runner.temp }}/environment-gate-fallback/environment-gate-*.json
           if-no-files-found: error
           retention-days: 30
