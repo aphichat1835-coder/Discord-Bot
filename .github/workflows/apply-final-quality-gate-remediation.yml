@@ -7,12 +7,20 @@ on:
     paths:
       - scripts/applyFinalQualityGateRemediation.js
       - .github/workflows/apply-final-quality-gate-remediation.yml
+  pull_request:
+    branches:
+      - ttt.1
+    types:
+      - opened
+      - reopened
+      - synchronize
 
 permissions:
   contents: write
 
 jobs:
   remediate:
+    if: ${{ github.head_ref == 'fix/final-quality-gate-remediation' || github.ref_name == 'fix/final-quality-gate-remediation' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
