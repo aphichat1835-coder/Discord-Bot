@@ -51,20 +51,20 @@ jobs:
       - name: Run focused regression tests
         run: node --test verification-tests/privacyDeletion.test.js discord/tests/isolatedEnvironmentGate.test.js
 
-      - name: Commit remediation
+      - name: Commit remediation code
         shell: bash
         run: |
           set -euo pipefail
+          git restore .github/workflows/isolated-environment-gate.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add \
             discord/verification/services/privacyDeletion.js \
             verification-tests/privacyDeletion.test.js \
             scripts/runIsolatedEnvironmentGate.js \
-            discord/tests/isolatedEnvironmentGate.test.js \
-            .github/workflows/isolated-environment-gate.yml
+            discord/tests/isolatedEnvironmentGate.test.js
           if git diff --cached --quiet; then
-            echo "No remediation changes to commit"
+            echo "No remediation code changes to commit"
             exit 0
           fi
           git commit -m "fix: preserve deletion success and persist gate evidence"
