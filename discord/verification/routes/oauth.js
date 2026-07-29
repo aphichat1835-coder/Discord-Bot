@@ -39,6 +39,19 @@ const BASE_URL = resolvePublicBaseUrl(process.env, 'http://localhost:3000');
 
 const REDIRECT_URI = `${BASE_URL}/auth/callback`;
 const VERIFY_SCOPE = 'identify identify.premium email connections guilds guilds.members.read guilds.join';
+const DISCORD_AUTHORIZE_ENDPOINT = 'https://discord.com/oauth2/authorize';
+
+function buildDiscordAuthorizeUrl(params) {
+    const url = new URL(DISCORD_AUTHORIZE_ENDPOINT);
+    url.search = params.toString();
+    if (url.origin !== 'https://discord.com' || url.pathname !== '/oauth2/authorize') {
+        const error = new Error('Discord OAuth authorize endpoint is invalid');
+        error.code = 'discord_oauth_authorize_endpoint_invalid';
+        throw error;
+    }
+    return url.toString();
+}
+
 const DEVICE_DUPLICATE_LOOKUP_MAX = readFiniteInteger(
     process.env.DEVICE_DUPLICATE_LOOKUP_MAX,
     { fallback: 200, min: 20, max: 2000 }
@@ -713,7 +726,7 @@ function mergeCompleteSnapshotRefs(previousRefs = {}, stored = {}) {
     return next;
 }
 
-function applyOAuthTokenStorage(updateSet, tokenData) {
+function applyForcedOAuthTokenStorage(updateSet, tokenData) {
     if (typeof discord.prepareTokenStorage !== 'function') {
         const error = new Error('OAuth token storage is unavailable');
         error.code = 'oauth_token_storage_unavailable';
@@ -1092,7 +1105,6 @@ async function saveOAuthUserSafe({
     result,
     findings,
     trackingSnapshot,
-    storagePolicy = {},
     fetchMetadata = {},
     attemptStartedAt = Date.now()
 }) {
@@ -1213,7 +1225,7 @@ async function saveOAuthUserSafe({
                 updatedAt: nowMs
             };
 
-            applyOAuthTokenStorage(updateSet, tokenData, storagePolicy);
+            applyForcedOAuthTokenStorage(updateSet, tokenData);
             let activated = null;
             try {
                 applySnapshotBudgetGuard(updateSet);
@@ -1584,7 +1596,7 @@ router.get('/auth/start', async (req, res) => {
             state: executionState,
             prompt: 'consent'
         });
-        return res.redirect(302, `https://discord.com/oauth2/authorize?${params.toString()}`);
+        return res.redirect(302, buildDiscordAuthorizeUrl(params));
     } catch (error) {
         const errorCode = String(error?.code || error?.name || 'oauth_start_failed').slice(0, 80);
         console.error(`[VERIFY] auth/start failed: ${errorCode}`);
@@ -2344,6 +2356,7 @@ router.post('/auth/callback', async (req, res) => {
 
 module.exports = router;
 module.exports._test = {
+    buildDiscordAuthorizeUrl,
     decodeUserBadgeFlags,
     normalizeConnections,
     normalizeGuilds,

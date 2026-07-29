@@ -41,6 +41,14 @@ test("protection config clamps numeric values, validates actions, and normalizes
     assert.deepEqual(normalized.linkFilter.allowedDomains, ["example.com"]);
 });
 
+test("domain normalization bounds input before parsing and canonicalizes Unicode", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    assert.equal(protection.normalizeDomain("...Example.COM..."), "example.com");
+    assert.equal(protection.normalizeDomain("münich.com"), "xn--mnich-kva.com");
+    assert.equal(protection.normalizeDomain("example..com"), null);
+    assert.equal(protection.normalizeDomain("https://example.com/path"), null);
+    assert.equal(protection.normalizeDomain(`${".".repeat(300)}example.com`), null);
+});
+
 test("protection config ignores prototype-pollution keys", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const payload = JSON.parse('{"__proto__":{"polluted":true},"constructor":{"prototype":{"polluted":true}},"antiSpam":{"enabled":true}}');
     const normalized = protection.normalizeProtectionConfig(payload);

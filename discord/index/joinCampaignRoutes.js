@@ -52,6 +52,20 @@ function resolveJoinCampaignTarget(client, guildId, campaignConfig = joinCampaig
     };
 }
 
+function resolveJoinCampaignStartStatus(code) {
+    switch (code) {
+        case "CAMPAIGN_DISABLED":
+        case "CAMPAIGN_ALLOWLIST_REQUIRED":
+            return 503;
+        case "INVALID_GUILD_ID":
+            return 400;
+        case "TARGET_GUILD_NOT_ALLOWED":
+            return 403;
+        default:
+            return 409;
+    }
+}
+
 function registerJoinCampaignRoutes({ app, express, client, checkAuth }) {
     app.get("/api/join-campaign/targets", (req, res) => {
         if (!checkAuth(req, res)) return;
@@ -133,13 +147,7 @@ function registerJoinCampaignRoutes({ app, express, client, checkAuth }) {
             });
 
             if (!started.ok) {
-                const status = started.code === "CAMPAIGN_DISABLED" || started.code === "CAMPAIGN_ALLOWLIST_REQUIRED"
-                    ? 503
-                    : started.code === "INVALID_GUILD_ID"
-                        ? 400
-                        : started.code === "TARGET_GUILD_NOT_ALLOWED"
-                            ? 403
-                            : 409;
+                const status = resolveJoinCampaignStartStatus(started.code);
                 return res.status(status).json({
                     success: false,
                     code: started.code || "CAMPAIGN_ALREADY_RUNNING",
@@ -176,6 +184,7 @@ function registerJoinCampaignRoutes({ app, express, client, checkAuth }) {
 
 module.exports = {
     listJoinCampaignTargets,
+    resolveJoinCampaignStartStatus,
     resolveJoinCampaignTarget,
     registerJoinCampaignRoutes
 };
