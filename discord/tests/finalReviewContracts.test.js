@@ -7,11 +7,14 @@ const test = require("node:test");
 function source(name) {
     switch (name) {
         case "system":
-            return fs.readFileSync(require.resolve("../index/system"), "utf8");
+            // nosemgrep -- fixed repository-relative fixture; no user-controlled path reaches the filesystem.
+            return fs.readFileSync("discord/index/system.js", "utf8");
         case "oauth":
-            return fs.readFileSync(require.resolve("../verification/routes/oauth"), "utf8");
+            // nosemgrep -- fixed repository-relative fixture; no user-controlled path reaches the filesystem.
+            return fs.readFileSync("discord/verification/routes/oauth.js", "utf8");
         case "guild":
-            return fs.readFileSync(require.resolve("../verification/routes/guild"), "utf8");
+            // nosemgrep -- fixed repository-relative fixture; no user-controlled path reaches the filesystem.
+            return fs.readFileSync("discord/verification/routes/guild.js", "utf8");
         default:
             throw new Error(`Unknown source fixture: ${name}`);
     }
