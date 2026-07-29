@@ -56,6 +56,22 @@ function resolveTrackedPath(root, relativePath) {
     return resolved;
 }
 
+function extractAssignmentValue(line, match) {
+    const tail = line.slice(match.index + match[0].length);
+    const assignment = /^\s*[:=]\s*(["'])/.exec(tail);
+    if (!assignment) return null;
+    const valueStart = match.index + match[0].length + assignment[0].length;
+    const valueEnd = line.indexOf(assignment[1], valueStart);
+    return valueEnd === -1 ? null : line.slice(valueStart, valueEnd);
+}
+
+function isSecretCandidate(value) {
+    return value !== null &&
+        value.length >= 12 &&
+        value.length <= 512 &&
+        !PLACEHOLDER_PATTERN.test(value);
+}
+
 function assignmentFindings(source, filePath) {
     const findings = [];
     let offset = 0;
@@ -63,15 +79,8 @@ function assignmentFindings(source, filePath) {
         if (line.length <= MAX_ASSIGNMENT_LINE_LENGTH) {
             ASSIGNMENT_NAME_PATTERN.lastIndex = 0;
             for (const match of line.matchAll(ASSIGNMENT_NAME_PATTERN)) {
-                const tail = line.slice(match.index + match[0].length);
-                const assignment = /^\s*[:=]\s*(["'])/.exec(tail);
-                if (!assignment) continue;
-                const quote = assignment[1];
-                const valueStart = match.index + match[0].length + assignment[0].length;
-                const valueEnd = line.indexOf(quote, valueStart);
-                if (valueEnd === -1) continue;
-                const value = line.slice(valueStart, valueEnd);
-                if (value.length < 12 || value.length > 512 || PLACEHOLDER_PATTERN.test(value)) continue;
+                const value = extractAssignmentValue(line, match);
+                if (!isSecretCandidate(value)) continue;
                 findings.push({
                     code: "HARDCODED_SECRET_ASSIGNMENT",
                     filePath,

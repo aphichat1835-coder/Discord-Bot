@@ -5,13 +5,32 @@ const fs = require("node:fs");
 const path = require("node:path");
 const acorn = require("acorn");
 
+const REPOSITORY_ROOT = path.resolve(__dirname, "..");
 const DISCORD_ROOT = "discord";
 const LEGACY_PERMISSION_PATTERN = /^[A-Z][A-Z_]+$/;
 
+function resolveRepositoryPath(relativePath) {
+    const resolved = path.resolve(REPOSITORY_ROOT, String(relativePath || ""));
+    const relative = path.relative(REPOSITORY_ROOT, resolved);
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+        throw new Error("runtime-safety path escaped repository root");
+    }
+    return resolved;
+}
+
+function readRepositorySource(relativePath) {
+    const resolved = resolveRepositoryPath(relativePath);
+    // nosemgrep -- resolveRepositoryPath rejects repository-root and out-of-repository paths before this read.
+    return fs.readFileSync(resolved, "utf8");
+}
+
 function walk(directory) {
-    return fs.readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
-        const relative = path.join(directory, entry.name);
-        if (relative === path.join(DISCORD_ROOT, "systemProvider")) return [];
+    const resolvedDirectory = resolveRepositoryPath(directory);
+    // nosemgrep -- resolvedDirectory is constrained to a non-root path beneath REPOSITORY_ROOT.
+    return fs.readdirSync(resolvedDirectory, { withFileTypes: true }).flatMap(entry => {
+        const relative = `${directory.replaceAll("\\", "/").replace(/\/+$/, "")}/${entry.name}`;
+        resolveRepositoryPath(relative);
+        if (relative === "discord/systemProvider") return [];
         if (entry.isDirectory()) return walk(relative);
         return entry.isFile() && entry.name.endsWith(".js") ? [relative] : [];
     });
@@ -55,8 +74,8 @@ function functionBody(source, name) {
 }
 
 const findings = [];
-const authSource = fs.readFileSync("discord/index/auth.js", "utf8");
-const dashboardGuardSource = fs.readFileSync("discord/guards/dashboardGuards.js", "utf8");
+const authSource = readRepositorySource("discord/index/auth.js");
+const dashboardGuardSource = readRepositorySource("discord/guards/dashboardGuards.js");
 if (!/req\.authenticatedByServerSecret\s*===\s*true/.test(authSource)) {
     findings.push("discord/index/auth.js: requireCsrf must trust only the verified request-local auth marker");
 }
@@ -68,7 +87,7 @@ if (/hasServerAuthHeader|x-internal-secret/.test(authSource)) {
     findings.push("discord/index/auth.js: unverified auth-header CSRF bypass must not be reintroduced");
 }
 
-const saveDatabaseBody = functionBody(fs.readFileSync("discord/sessionManager.js", "utf8"), "saveDatabase");
+const saveDatabaseBody = functionBody(readRepositorySource("discord/sessionManager.js"), "saveDatabase");
 if (!saveDatabaseBody || /deleteMany\s*\(\s*\{\s*\}\s*\)/.test(saveDatabaseBody)) {
     findings.push("discord/sessionManager.js: periodic saveDatabase must not delete all persisted sessions");
 }
@@ -76,7 +95,7 @@ if (!saveDatabaseBody || /deleteMany\s*\(\s*\{\s*\}\s*\)/.test(saveDatabaseBody)
 for (const file of walk(DISCORD_ROOT).filter(file =>
     file !== "discord/systemProvider.js" && !file.startsWith("discord/tests/")
 )) {
-    const source = fs.readFileSync(file, "utf8");
+    const source = readRepositorySource(file);
     let ast;
     try {
         ast = acorn.parse(source, { ecmaVersion: "latest", sourceType: "script", locations: true });
