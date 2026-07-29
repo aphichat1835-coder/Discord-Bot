@@ -2,20 +2,19 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const path = require("node:path");
 const test = require("node:test");
 
-const REPOSITORY_ROOT = path.resolve(__dirname, "../..");
-const SOURCE_FILES = Object.freeze({
-    system: path.join(REPOSITORY_ROOT, "discord/index/system.js"),
-    oauth: path.join(REPOSITORY_ROOT, "discord/verification/routes/oauth.js"),
-    guild: path.join(REPOSITORY_ROOT, "discord/verification/routes/guild.js")
-});
-
 function source(name) {
-    const filename = SOURCE_FILES[name];
-    if (!filename) throw new Error(`Unknown source fixture: ${name}`);
-    return fs.readFileSync(filename, "utf8");
+    switch (name) {
+        case "system":
+            return fs.readFileSync(require.resolve("../index/system"), "utf8");
+        case "oauth":
+            return fs.readFileSync(require.resolve("../verification/routes/oauth"), "utf8");
+        case "guild":
+            return fs.readFileSync(require.resolve("../verification/routes/guild"), "utf8");
+        default:
+            throw new Error(`Unknown source fixture: ${name}`);
+    }
 }
 
 test("fatal shutdown escalates the exit code of an in-progress graceful shutdown", () => {
