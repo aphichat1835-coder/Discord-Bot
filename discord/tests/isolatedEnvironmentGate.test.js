@@ -9,9 +9,11 @@ const {
     databaseNameFromMongoUri,
     exactAllowedHosts,
     exactSnowflakeSet,
+    assertCurrentCheckoutSha,
     hashIdentifier,
     persistGateRecord,
     redactSecrets,
+    runIsolatedEnvironmentGate,
     validateIsolatedEnvironment
 } = require("../../scripts/runIsolatedEnvironmentGate");
 
@@ -137,6 +139,92 @@ test("record persistence failure is reported without escaping the helper", () =>
     assert.equal(messages[0].includes(config.mongoUri), false);
 });
 
+test("missing environment still persists a redacted failure record", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const records = [];
+    const env = {
+        TEST_ENVIRONMENT_CONFIRMATION: "ISOLATED_TEST_ONLY",
+        TEST_COMMIT_SHA: "abcdef1234567890abcdef1234567890abcdef12"
+    };
+
+    await assert.rejects(
+        runIsolatedEnvironmentGate(env, {
+            writer(_config, record) {
+                records.push(structuredClone(record));
+                return "memory://environment-gate.json";
+            },
+            logger: { log() {}, error() {} }
+        }),
+        /MISSING_TEST_ENVIRONMENT/
+    );
+
+    assert.equal(records.length, 1);
+    assert.equal(records[0].status, "failed");
+    assert.equal(records[0].errorCode, "MISSING_TEST_ENVIRONMENT");
+    assert.ok(records[0].missing.includes("TEST_MONGO_URI"));
+    assert.equal(JSON.stringify(records[0]).includes("test-bot-token-value-not-a-real-token"), false);
+});
+
+test("SHA mismatch persists evidence before external checks run", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const records = [];
+    let externalCalls = 0;
+    await assert.rejects(
+        runIsolatedEnvironmentGate(validEnvironment(), {
+            currentCheckoutSha: () => "1111111111111111111111111111111111111111",
+            runMongoGate: async () => { externalCalls++; },
+            writer(_config, record) {
+                records.push(structuredClone(record));
+                return "memory://environment-gate.json";
+            },
+            logger: { log() {}, error() {} }
+        }),
+        error => error?.code === "TEST_COMMIT_SHA_MISMATCH"
+    );
+
+    assert.equal(externalCalls, 0);
+    assert.equal(records.length, 1);
+    assert.equal(records[0].errorCode, "TEST_COMMIT_SHA_MISMATCH");
+});
+
+test("record writer failure does not replace the primary gate error", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    await assert.rejects(
+        runIsolatedEnvironmentGate(validEnvironment(), {
+            currentCheckoutSha: () => "1111111111111111111111111111111111111111",
+            writer() { throw new Error("writer failed"); },
+            logger: { log() {}, error() {} }
+        }),
+        error => {
+            assert.equal(error.code, "TEST_COMMIT_SHA_MISMATCH");
+            assert.match(error.recordPersistenceError, /writer failed/);
+            return true;
+        }
+    );
+});
+
+test("record writer failure becomes primary only after a successful gate", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const success = async () => ({ ok: true });
+    await assert.rejects(
+        runIsolatedEnvironmentGate(validEnvironment(), {
+            currentCheckoutSha: () => validEnvironment().TEST_COMMIT_SHA,
+            runMongoGate: success,
+            requestClientCredentials: success,
+            runDiscordBotGate: success,
+            runDeploymentSmoke: success,
+            writer() { throw new Error("writer failed"); },
+            logger: { log() {}, error() {} }
+        }),
+        error => error?.code === "ENV_GATE_RECORD_WRITE_FAILED"
+    );
+});
+
+test("checkout SHA validation accepts only the exact expected commit", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const expected = validEnvironment().TEST_COMMIT_SHA;
+    assert.equal(assertCurrentCheckoutSha(expected, { currentCheckoutSha: () => expected }), expected);
+    assert.throws(
+        () => assertCurrentCheckoutSha(expected, { currentCheckoutSha: () => "invalid" }),
+        /INVALID_CURRENT_COMMIT_SHA/
+    );
+});
+
 test("Mongo database name parser handles standard and SRV connection strings", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.equal(databaseNameFromMongoUri("mongodb://localhost:27017/project_test?x=1"), "project_test");
     assert.equal(databaseNameFromMongoUri("mongodb+srv://user:pass@example.test/sandbox%2Ddb"), "sandbox-db");
@@ -151,4 +239,6 @@ test("isolated environment workflow cannot be disabled for PR 71", () => { // NO
     assert.doesNotMatch(workflow, /RUN_ISOLATED_ENVIRONMENT_GATE/);
     assert.match(workflow, /github\.head_ref == ['"]ttt\.1['"]/);
     assert.match(workflow, /workflow_dispatch/);
+    assert.match(workflow, /Initialize redacted environment record/);
+    assert.doesNotMatch(workflow, /test -n "\$TEST_MONGO_URI"/);
 });

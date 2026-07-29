@@ -172,7 +172,7 @@ function validateIsolatedEnvironment(env = process.env) {
             guilds: productionGuildIds.size,
             channels: productionChannelIds.size
         },
-        allowedHosts: [...allowedHosts].sort(),
+        allowedHosts: [...allowedHosts].sort((a, b) => a.localeCompare(b)),
         commitSha,
         recordDir: String(env.GATE_RECORD_DIR || "artifacts").trim() || "artifacts"
     };
@@ -180,6 +180,68 @@ function validateIsolatedEnvironment(env = process.env) {
 
 function hashIdentifier(value) {
     return crypto.createHash("sha256").update(String(value || "")).digest("hex").slice(0, 16);
+}
+
+function normalizeRecordSha(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    return /^[a-f0-9]{40}$/.test(normalized) ? normalized : "local";
+}
+
+function resolveRecordDirectory(recordDir, repositoryRoot = path.resolve(__dirname, "..")) {
+    const root = path.resolve(repositoryRoot);
+    const directory = path.resolve(root, String(recordDir || "artifacts"));
+    const relative = path.relative(root, directory);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+        const error = new Error("ENV_GATE_RECORD_DIRECTORY_OUTSIDE_REPOSITORY");
+        error.code = "ENV_GATE_RECORD_DIRECTORY_OUTSIDE_REPOSITORY";
+        throw error;
+    }
+    return directory;
+}
+
+function currentCheckoutSha(options = {}) {
+    if (typeof options.currentCheckoutSha === "function") {
+        return String(options.currentCheckoutSha() || "").trim().toLowerCase();
+    }
+    const gitBinary = process.platform === "win32" ? "git.exe" : "/usr/bin/git";
+    const result = spawnSync(gitBinary, ["rev-parse", "HEAD"], {
+        cwd: path.resolve(__dirname, ".."),
+        encoding: "utf8",
+        timeout: 10000
+    });
+    if (result.error || result.status !== 0) {
+        const error = new Error("CURRENT_COMMIT_SHA_UNAVAILABLE");
+        error.code = "CURRENT_COMMIT_SHA_UNAVAILABLE";
+        throw error;
+    }
+    return String(result.stdout || "").trim().toLowerCase();
+}
+
+function assertCurrentCheckoutSha(expectedSha, options = {}) {
+    const actualSha = currentCheckoutSha(options);
+    if (!/^[a-f0-9]{40}$/.test(actualSha)) {
+        const error = new Error("INVALID_CURRENT_COMMIT_SHA");
+        error.code = "INVALID_CURRENT_COMMIT_SHA";
+        throw error;
+    }
+    if (actualSha !== String(expectedSha || "").trim().toLowerCase()) {
+        const error = new Error("TEST_COMMIT_SHA_MISMATCH");
+        error.code = "TEST_COMMIT_SHA_MISMATCH";
+        throw error;
+    }
+    return actualSha;
+}
+
+function gateErrorDetails(error) {
+    const message = String(error?.message || error || "ENVIRONMENT_GATE_FAILED");
+    const separator = message.indexOf(":");
+    const messageCode = separator === -1 ? message : message.slice(0, separator);
+    const detail = separator === -1 ? "" : message.slice(separator + 1);
+    const errorCode = String(error?.code || messageCode || "ENVIRONMENT_GATE_FAILED");
+    const missing = errorCode === "MISSING_TEST_ENVIRONMENT"
+        ? detail.split(",").map(item => item.trim()).filter(Boolean).sort((a, b) => a.localeCompare(b))
+        : [];
+    return { errorCode, missing };
 }
 
 function redactSecrets(message, config) {
@@ -320,9 +382,9 @@ function runDeploymentSmoke(config) {
 }
 
 function writeRecord(config, record) {
-    const directory = path.resolve(config.recordDir);
+    const directory = resolveRecordDirectory(config.recordDir);
     fs.mkdirSync(directory, { recursive: true });
-    const safeSha = String(config.commitSha || "local").replace(/[^a-fA-F0-9_-]/g, "").slice(0, 64) || "local";
+    const safeSha = normalizeRecordSha(config.commitSha);
     const filename = path.join(directory, `environment-gate-${safeSha}.json`);
     fs.writeFileSync(filename, JSON.stringify(record, null, 2) + "\n", { mode: 0o600 });
     return filename;
@@ -348,21 +410,21 @@ function persistGateRecord(config, record, options = {}) {
     }
 }
 
-async function main() {
+async function runIsolatedEnvironmentGate(env = process.env, options = {}) {
     let config = null;
     let primaryError = null;
-    const startedAt = new Date().toISOString();
     const record = {
         schemaVersion: 1,
         status: "failed",
-        startedAt,
+        startedAt: new Date().toISOString(),
         finishedAt: null,
-        commitSha: String(process.env.TEST_COMMIT_SHA || process.env.GITHUB_SHA || "local"),
+        commitSha: String(env.TEST_COMMIT_SHA || env.GITHUB_SHA || "local"),
         evidence: {}
     };
 
     try {
-        config = validateIsolatedEnvironment(process.env);
+        config = validateIsolatedEnvironment(env);
+        assertCurrentCheckoutSha(config.commitSha, options);
         record.commitSha = config.commitSha;
         record.environment = {
             database: config.databaseName,
@@ -371,32 +433,51 @@ async function main() {
             productionResourceCounts: config.productionResourceCounts,
             guildHash: hashIdentifier(config.guildId)
         };
-        record.evidence.mongo = await runMongoGate(config);
-        record.evidence.oauth = await requestClientCredentials(config);
-        record.evidence.discord = await runDiscordBotGate(config);
-        record.evidence.deployment = runDeploymentSmoke(config);
+        record.evidence.mongo = await (options.runMongoGate || runMongoGate)(config);
+        record.evidence.oauth = await (options.requestClientCredentials || requestClientCredentials)(config);
+        record.evidence.discord = await (options.runDiscordBotGate || runDiscordBotGate)(config);
+        record.evidence.deployment = await (options.runDeploymentSmoke || runDeploymentSmoke)(config);
         record.evidence.selfBotLiveAutomation = {
             executed: false,
             reason: "Discord standard-user automation is not part of the compliant live gate"
         };
         record.status = "passed";
-        return record;
     } catch (error) {
+        const details = gateErrorDetails(error);
         record.error = redactSecrets(error?.message || error, config);
+        record.errorCode = details.errorCode;
+        if (details.missing.length) record.missing = details.missing;
         primaryError = Object.assign(error instanceof Error ? error : new Error(String(error)), {
             gateRecord: record,
             gateConfig: config
         });
-        throw primaryError;
-    } finally {
-        record.finishedAt = new Date().toISOString();
-        const fallbackConfig = config || {
-            commitSha: record.commitSha,
-            recordDir: String(process.env.GATE_RECORD_DIR || "artifacts")
-        };
-        const persistence = persistGateRecord(fallbackConfig, record);
-        if (!persistence.ok && !primaryError) throw persistence.error;
     }
+
+    record.finishedAt = new Date().toISOString();
+    const fallbackConfig = config || {
+        commitSha: record.commitSha,
+        recordDir: String(env.GATE_RECORD_DIR || "artifacts")
+    };
+    const persistence = persistGateRecord(fallbackConfig, record, {
+        writer: options.writer,
+        logger: options.logger
+    });
+    if (!persistence.ok) {
+        if (primaryError) {
+            primaryError.recordPersistenceError = persistence.error.message;
+        } else {
+            primaryError = Object.assign(persistence.error, {
+                gateRecord: record,
+                gateConfig: config
+            });
+        }
+    }
+    if (primaryError) throw primaryError;
+    return record;
+}
+
+async function main() {
+    return runIsolatedEnvironmentGate(process.env);
 }
 
 if (require.main === module) {
@@ -413,13 +494,18 @@ if (require.main === module) {
 
 module.exports = {
     REQUIRED_NAMES,
+    assertCurrentCheckoutSha,
     databaseNameFromMongoUri,
     exactAllowedHosts,
     exactSnowflakeSet,
+    gateErrorDetails,
     hashIdentifier,
     normalizeHttpsOrigin,
+    normalizeRecordSha,
     persistGateRecord,
     redactSecrets,
+    resolveRecordDirectory,
+    runIsolatedEnvironmentGate,
     validateIsolatedEnvironment,
     writeRecord
 };

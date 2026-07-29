@@ -287,6 +287,37 @@ test("endSession failure never replaces the primary deletion error", async () =>
     );
 });
 
+test("endSession failure after successful deletion preserves the completed result", async () => {
+    const jobUpdates = [];
+    const endError = new Error("end session failed after completion");
+    const models = createModels({
+        PrivacyDeletionJob: createModel({
+            updateOne: async (filter, update) => {
+                jobUpdates.push({ filter, update });
+                return writeResult(1);
+            }
+        })
+    });
+
+    const result = await runMemberPrivacyDeletion({
+        guildId: "guild-a",
+        userId: "111111111111111111",
+        requestedBy: "owner",
+        models,
+        mongooseInstance: fakeMongoose({ endError })
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.status, "completed");
+    assert.equal(result.pending, false);
+    assert.equal(result.manifest.metadata.sessionCleanupWarning, endError.message);
+    assert.ok(jobUpdates.some(entry => entry.update.$set?.status === "completed"));
+    assert.equal(jobUpdates.some(entry => entry.update.$set?.status === "failed"), false);
+    assert.ok(jobUpdates.some(entry =>
+        entry.update.$set?.["manifest.metadata.sessionCleanupWarning"] === endError.message
+    ));
+});
+
 test("completion persistence failure prevents a successful deletion result", async () => {
     const jobUpdates = [];
     const completionError = Object.assign(new Error("job completion write failed"), { code: "COMPLETION_WRITE_FAILED" });
