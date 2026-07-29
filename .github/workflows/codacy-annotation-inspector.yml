@@ -1,0 +1,67 @@
+name: Codacy Annotation Inspector
+
+on:
+  pull_request:
+    branches:
+      - ttt.1
+
+permissions:
+  checks: read
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Read Codacy annotations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TARGET_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          node <<'NODE'
+          const headers = {
+            accept: "application/vnd.github+json",
+            authorization: `Bearer ${process.env.GH_TOKEN}`,
+            "user-agent": "codacy-annotation-inspector",
+            "x-github-api-version": "2022-11-28"
+          };
+          const base = `https://api.github.com/repos/${process.env.REPOSITORY}`;
+          const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+          async function request(url) {
+            const response = await fetch(url, { headers });
+            if (!response.ok) throw new Error(`GitHub API ${response.status}`);
+            return response.json();
+          }
+
+          let codacy = null;
+          for (let attempt = 1; attempt <= 20; attempt++) {
+            const payload = await request(`${base}/commits/${process.env.TARGET_SHA}/check-runs?per_page=100`);
+            codacy = payload.check_runs.find(check => /codacy/i.test(check.name));
+            if (codacy?.status === "completed") break;
+            console.log(`[INSPECT] waiting for Codacy check (${attempt}/20)`);
+            await delay(15000);
+          }
+
+          if (!codacy) {
+            console.log("[INSPECT] no Codacy check run found");
+            process.exit(0);
+          }
+          console.log(`[INSPECT] Codacy id=${codacy.id} status=${codacy.status} conclusion=${codacy.conclusion}`);
+
+          let page = 1;
+          let total = 0;
+          while (page <= 10) {
+            const annotations = await request(`${base}/check-runs/${codacy.id}/annotations?per_page=100&page=${page}`);
+            for (const item of annotations) {
+              total++;
+              const message = String(item.message || "").replace(/\s+/g, " ").slice(0, 500);
+              console.log(`[CODACY-ANNOTATION] ${item.path}:${item.start_line || 1}-${item.end_line || item.start_line || 1} ${item.annotation_level || "notice"} ${message}`);
+            }
+            if (annotations.length < 100) break;
+            page++;
+          }
+          console.log(`[INSPECT] annotations=${total}`);
+          NODE
