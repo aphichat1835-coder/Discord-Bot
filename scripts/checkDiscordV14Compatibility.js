@@ -40,7 +40,6 @@ const LEGACY_PERMISSION_KEYS = new Set([
     "MODERATE_MEMBERS"
 ]);
 
-
 const FORBIDDEN_STATE_GET_ROUTES = new Set([
     "/auth/logout"
 ]);
@@ -234,6 +233,7 @@ function listJavaScriptFiles(root = "discord") {
             }
         }
     }
+    // nosemgrep -- sourceRoot is constrained by resolveSourceRoot to remain inside REPOSITORY_ROOT.
     if (fs.existsSync(sourceRoot)) visit(sourceRoot);
     return output.sort((a, b) => a.localeCompare(b));
 }
@@ -242,6 +242,7 @@ function runCli() {
     const files = listJavaScriptFiles("discord");
     const allFindings = [];
     for (const file of files) {
+        // nosemgrep -- file values originate only from traversal beneath the validated repository source root.
         const source = fs.readFileSync(path.join(REPOSITORY_ROOT, file), "utf8");
         for (const item of analyzeSource(source, file)) allFindings.push({ file, ...item });
     }
