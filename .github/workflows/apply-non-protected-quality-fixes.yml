@@ -7,12 +7,24 @@ on:
     paths:
       - scripts/applyNonProtectedQualityFixes.js
       - .github/workflows/apply-non-protected-quality-fixes.yml
+  pull_request:
+    branches:
+      - ttt.1
+    types:
+      - opened
+      - reopened
+      - synchronize
 
 permissions:
   contents: write
 
+concurrency:
+  group: non-protected-remediation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   remediate:
+    if: ${{ github.head_ref == 'fix/final-quality-gate-remediation' || github.ref_name == 'fix/final-quality-gate-remediation' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
