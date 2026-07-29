@@ -152,6 +152,11 @@ function patchOAuthContracts() {
     write(file, content);
 }
 
+if (read("discord/features/protection.js").includes("while (raw.startsWith(\".\"))")) {
+    console.log("Non-protected quality fixes are already applied.");
+    process.exit(0);
+}
+
 patchProtection();
 patchProtectionTests();
 patchCommandGuards();
