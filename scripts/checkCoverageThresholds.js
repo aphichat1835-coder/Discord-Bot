@@ -183,11 +183,13 @@ function evaluateCoverageReport(file) {
         console.error(`[COVERAGE] invalid report path ${file}: ${error.message}`);
         return true;
     }
+    // nosemgrep -- resolveCoverageReportPath constrains this path to a non-root .lcov file inside the repository.
     if (!fs.existsSync(absolutePath) || fs.statSync(absolutePath).size === 0) {
         console.error(`[COVERAGE] missing or empty report: ${file}`);
         return true;
     }
 
+    // nosemgrep -- absolutePath passed the repository-boundary and .lcov-extension checks above.
     const parsed = parseLcov(fs.readFileSync(absolutePath, "utf8"));
     const result = evaluateCoverage(parsed);
     const summary = Object.keys(result.metrics)
