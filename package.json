@@ -17,7 +17,6 @@
     "check:mongoose9": "bash scripts/checkMongoose9Compatibility.sh",
     "check:secrets": "node scripts/checkSecretLeaks.js",
     "check:memory-trend": "node scripts/checkMemoryTrend.js",
-    "gate:environment": "node scripts/runIsolatedEnvironmentGate.js",
     "smoke:unified": "node scripts/smokeUnifiedRuntime.js",
     "migrate:verification": "node -r ./discord/core/loadEnv scripts/migrateVerificationSnapshots.js",
     "restore:verification": "node -r ./discord/core/loadEnv scripts/restoreVerificationMigration.js",
