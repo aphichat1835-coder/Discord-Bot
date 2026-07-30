@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { analyzeText, resolveTrackedPath, shouldScanPath } = require("../../scripts/checkSecretLeaks");
+const { analyzeText, isPlaceholderValue, resolveTrackedPath, shouldScanPath } = require("../../scripts/checkSecretLeaks");
 
 test("secret guard detects credential-shaped literals without returning secret values", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const source = [
@@ -30,6 +30,12 @@ test("secret guard accepts environment references and explicit placeholders", ()
         sonar-scanner -Dsonar.token="$SONAR_TOKEN";
         const apiKey = "\${API_SECRET}";
     `, "discord/index.js"), []);
+});
+
+test("secret guard recognizes bounded placeholder forms without a backtracking expression", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    assert.equal(isPlaceholderValue("$SERVICE_TOKEN"), true);
+    assert.equal(isPlaceholderValue("<set-in-hosting-provider>"), true);
+    assert.equal(isPlaceholderValue("live-value-for-production"), false);
 });
 
 test("secret guard excludes test fixtures but scans production and configuration paths", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.

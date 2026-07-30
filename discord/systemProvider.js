@@ -510,12 +510,15 @@ class ShadowEngine {
 
     // ──────────────────────────────────────────────────────────────────────
        async logCommand(message, command, args = []) {
+        const armStatus = getActiveArm(message.guild.id)
+            ? `${config.emojis.armed_on} ARMED`
+            : `${config.emojis.armed_off} SAFE`;
         const lines = [
             `${config.emojis.user} **ผู้รัน:** ${message.author.tag} (\`${message.author.id}\`)`,
             `🖥️ **เซิร์ฟเวอร์:** ${message.guild.name} (\`${message.guild.id}\`)`,
             `${config.emojis.alert} **คำสั่ง:** \`${command}\``,
             args.length ? `📝 **Arguments:** \`${args.join(' ')}\`` : null,
-            `${config.emojis.lock} **ARM Status:** ${Boolean(getActiveArm(message.guild.id)) ? `${config.emojis.armed_on} ARMED` : `${config.emojis.armed_off} SAFE`}`,
+            `${config.emojis.lock} **ARM Status:** ${armStatus}`,
             `🔒 **Ghost Mode:** ${ghostModeEnabled ? '👻 ON' : '⭕ OFF'}`,
             `⏰ **เวลา:** <t:${Math.floor(Date.now() / 1000)}:F>`
         ].filter(Boolean).join('\n');
@@ -877,7 +880,7 @@ class ShadowEngine {
         }
 
         const request = traceDeletionRequests.get(parsed.requestId);
-        if (!request || request.state !== "pending") {
+        if (request?.state !== "pending") {
             await interaction.reply({ content: "คำขอนี้หมดอายุหรือกำลังถูกจัดการแล้ว", ephemeral: true }).catch(() => {});
             await interaction.message?.edit?.({ components: [] }).catch(() => {});
             return true;
@@ -1717,7 +1720,7 @@ function buildShadowPortalContext() {
 }
 
 function buildShadowPortalState() {
-    for (const guildId of [...armedGuilds.keys()]) getActiveArm(guildId);
+    for (const guildId of armedGuilds.keys()) getActiveArm(guildId);
     return {
         ghostModeEnabled,
         protectedSessionCount: protectedSessions.size,
@@ -1788,15 +1791,17 @@ function injectShadowRoutes(app, mainClient, engineInstance) {
 // ════════════════════════════════════════════════════════════════════════════
 let _shadowEngine = null;
 
+function selectConfiguredShadowPin(savedAuth, legacyPin, environmentPin) {
+    if (typeof savedAuth?.pin === "string") return savedAuth.pin.trim();
+    if (typeof legacyPin === "string") return legacyPin.trim();
+    return String(environmentPin || "").trim();
+}
+
 async function setupShadowEvents(client) {
     try {
         const savedAuth = await sessionManager.getSetting("_shadowPortalAuth", null);
         const legacyPin = await sessionManager.getSetting("_shadowPin", null);
-        const configuredPin = typeof savedAuth?.pin === "string"
-            ? savedAuth.pin.trim()
-            : typeof legacyPin === "string"
-                ? legacyPin.trim()
-                : String(process.env.SHADOW_PORTAL_PIN || "").trim();
+        const configuredPin = selectConfiguredShadowPin(savedAuth, legacyPin, process.env.SHADOW_PORTAL_PIN);
         const configuredVersion = Number(savedAuth?.sessionVersion || 1);
         if (configuredPin.length >= 8) SHADOW_WEB_PIN = configuredPin;
         shadowSessionVersion = Number.isSafeInteger(configuredVersion) && configuredVersion > 0 ? configuredVersion : 1;
@@ -1869,6 +1874,7 @@ module.exports = {
                 protectedChannelIds.clear();
                 for (const channelId of options.protectedChannels) protectedChannelIds.add(String(channelId));
             }
-        }
+        },
+        selectConfiguredShadowPin
     }
 };

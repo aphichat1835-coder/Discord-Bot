@@ -26,6 +26,8 @@ test("protected path guard inventories the complete protected tree and requires 
     assert.match(source, /sort:\s*"created"/);
     assert.match(source, /direction:\s*"desc"/);
     assert.match(source, /for \(let page = 1; page <= APPROVAL_MAX_PAGES; page\+\+\)/);
+    assert.match(source, /hostname: "api\.github\.com"/);
+    assert.doesNotMatch(source, /fetch\(/);
     assert.deepEqual(Object.keys(manifest).sort(), [
         "discord/systemProvider.js",
         "discord/systemProvider/actions.js",
@@ -36,8 +38,15 @@ test("protected path guard inventories the complete protected tree and requires 
         "discord/systemProvider/renderers.js"
     ]);
     for (const value of Object.values(manifest)) {
-        assert.match(value, /^(?:[a-f0-9]{64}|git:[a-f0-9]{40})$/i);
+        assert.match(value, /^git:[a-f0-9]{40}$/i);
     }
+});
+
+test("CI uploads Discord diagnostics only when the test log exists", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const workflow = fs.readFileSync(".github/workflows/ci.yml", "utf8");
+    assert.match(workflow, /if: \$\{\{ failure\(\) && hashFiles\('artifacts\/discord-tests\.log'\) != '' \}\}/);
+    assert.match(workflow, /actions\/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7\.0\.1/);
+    assert.match(workflow, /if-no-files-found: warn/);
 });
 
 

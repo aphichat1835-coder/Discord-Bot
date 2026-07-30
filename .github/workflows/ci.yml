@@ -140,12 +140,12 @@ jobs:
           exit "$status"
 
       - name: Upload Discord test diagnostics
-        if: ${{ failure() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ failure() && hashFiles('artifacts/discord-tests.log') != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: discord-test-diagnostics-${{ github.sha }}
           path: artifacts/discord-tests.log
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
 
       - name: Voice tests with LCOV coverage

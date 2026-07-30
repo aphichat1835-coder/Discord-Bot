@@ -14,95 +14,64 @@ test("protected path matcher covers the root and every nested protected file", (
 });
 
 test("external protected approval is accepted only from repository owner and exact head SHA", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    const originalFetch = global.fetch;
     const headSha = "a".repeat(40);
-    try {
-        global.fetch = async () => ({
-            ok: true,
-            async json() {
-                return [
-                    { user: { login: "other-user" }, body: `<!-- protected-owner-approval:${headSha} -->` },
-                    { user: { login: "repo-owner" }, body: "approval for another commit" }
-                ];
-            }
-        });
-        assert.equal(await guard.fetchOwnerApproval({
-            repository: "repo-owner/project",
-            owner: "repo-owner",
-            pullNumber: 71,
-            headSha,
-            token: "test-token"
-        }), false);
+    const request = {
+        repository: "repo-owner/project",
+        owner: "repo-owner",
+        pullNumber: 71,
+        headSha,
+        token: "test-token"
+    };
+    assert.equal(await guard.fetchOwnerApproval({
+        ...request,
+        requestComments: async () => [
+            { user: { login: "other-user" }, body: `<!-- protected-owner-approval:${headSha} -->` },
+            { user: { login: "repo-owner" }, body: "approval for another commit" }
+        ]
+    }), false);
 
-        global.fetch = async () => ({
-            ok: true,
-            async json() {
-                return [{
-                    user: { login: "repo-owner" },
-                    body: `Owner approved. <!-- protected-owner-approval:${headSha} -->`
-                }];
-            }
-        });
-        assert.equal(await guard.fetchOwnerApproval({
-            repository: "repo-owner/project",
-            owner: "repo-owner",
-            pullNumber: 71,
-            headSha,
-            token: "test-token"
-        }), true);
-    } finally {
-        global.fetch = originalFetch;
-    }
+    assert.equal(await guard.fetchOwnerApproval({
+        ...request,
+        requestComments: async () => [{
+            user: { login: "repo-owner" },
+            body: `Owner approved. <!-- protected-owner-approval:${headSha} -->`
+        }]
+    }), true);
 });
 
 test("protected approval lookup finds an exact owner marker beyond the first page", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    const originalFetch = global.fetch;
     const headSha = "b".repeat(40);
-    const urls = [];
-    try {
-        global.fetch = async url => {
-            urls.push(String(url));
-            if (urls.length === 1) {
-                return {
-                    ok: true,
-                    async json() {
-                        return Array.from({ length: guard.APPROVAL_PAGE_SIZE }, (_, index) => ({
-                            user: { login: "repo-owner" },
-                            body: `old comment ${index}`
-                        }));
-                    }
-                };
+    const requests = [];
+    assert.equal(await guard.fetchOwnerApproval({
+        repository: "repo-owner/project",
+        owner: "repo-owner",
+        pullNumber: 71,
+        headSha,
+        token: "test-token",
+        requestComments: async options => {
+            requests.push(options);
+            if (requests.length === 1) {
+                return Array.from({ length: guard.APPROVAL_PAGE_SIZE }, (_, index) => ({
+                    user: { login: "repo-owner" },
+                    body: `old comment ${index}`
+                }));
             }
-            return {
-                ok: true,
-                async json() {
-                    return [{
-                        user: { login: "repo-owner" },
-                        body: `<!-- protected-owner-approval:${headSha} -->`
-                    }];
-                }
-            };
-        };
-
-        assert.equal(await guard.fetchOwnerApproval({
-            repository: "repo-owner/project",
-            owner: "repo-owner",
-            pullNumber: 71,
-            headSha,
-            token: "test-token"
-        }), true);
-        assert.equal(urls.length, 2);
-        assert.match(urls[0], /page=1/);
-        assert.match(urls[0], /sort=created/);
-        assert.match(urls[0], /direction=desc/);
-        assert.match(urls[1], /page=2/);
-    } finally {
-        global.fetch = originalFetch;
-    }
+            return [{
+                user: { login: "repo-owner" },
+                body: `<!-- protected-owner-approval:${headSha} -->`
+            }];
+        }
+    }), true);
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0].hostname, "api.github.com");
+    assert.equal(requests[0].protocol, "https:");
+    assert.match(requests[0].path, /page=1/);
+    assert.match(requests[0].path, /sort=created/);
+    assert.match(requests[0].path, /direction=desc/);
+    assert.match(requests[1].path, /page=2/);
 });
 
-test("protected approval lookup fails closed on API and payload errors", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    const originalFetch = global.fetch;
+test("protected approval lookup fails closed on transport and payload errors", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const request = {
         repository: "repo-owner/project",
         owner: "repo-owner",
@@ -110,13 +79,24 @@ test("protected approval lookup fails closed on API and payload errors", async (
         headSha: "c".repeat(40),
         token: "test-token"
     };
-    try {
-        global.fetch = async () => ({ ok: false, status: 503 });
-        await assert.rejects(guard.fetchOwnerApproval(request), /HTTP 503/);
+    await assert.rejects(guard.fetchOwnerApproval({
+        ...request,
+        requestComments: async () => { throw new Error("HTTP 503"); }
+    }), /HTTP 503/);
+    await assert.rejects(guard.fetchOwnerApproval({
+        ...request,
+        requestComments: async () => ({ invalid: true })
+    }), /invalid response/);
+});
 
-        global.fetch = async () => ({ ok: true, async json() { return { invalid: true }; } });
-        await assert.rejects(guard.fetchOwnerApproval(request), /invalid response/);
-    } finally {
-        global.fetch = originalFetch;
-    }
+test("protected approval transport always fixes the GitHub host and validates repository input", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const options = guard.ownerApprovalRequestOptions("repo-owner/project", 71, 1, "test-token");
+    assert.equal(options.hostname, "api.github.com");
+    assert.equal(options.port, 443);
+    assert.equal(options.method, "GET");
+    assert.match(options.path, /^\/repos\/repo-owner\/project\/issues\/71\/comments\?/);
+    assert.throws(
+        () => guard.ownerApprovalRequestOptions("repo-owner/project?target=bad", 71, 1, "test-token"),
+        /invalid GitHub repository slug/
+    );
 });

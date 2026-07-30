@@ -869,6 +869,61 @@ async function safeSideEffect(label, fn, fallback = null) {
     }
 }
 
+async function finalizeCriticalPersistenceFailure({
+    requestId,
+    guildId,
+    userId,
+    roleId,
+    result,
+    roleAssignResult,
+    persistence,
+    sendDm,
+    removeRole,
+    saveRecovery,
+    sendFailureDm,
+    coordinate = coordinatePersistenceFailure,
+    runSideEffect = safeSideEffect
+}) {
+    const recovery = await coordinate({
+        requestId,
+        guildId,
+        userId,
+        roleId,
+        result,
+        roleAssignResult,
+        persistence,
+        removeRole,
+        saveRecovery
+    });
+
+    if (!recovery.recoveryPersisted) {
+        console.error("[VERIFY] recovery record persistence failed:", JSON.stringify({
+            code: "verification_recovery_persistence_failed",
+            requestId
+        }));
+    }
+
+    let dmSent = false;
+    if (sendDm && typeof sendFailureDm === "function") {
+        dmSent = !!(await runSideEffect(
+            "sendVerificationPersistenceFailureDM",
+            sendFailureDm,
+            false
+        ));
+    }
+
+    return {
+        statusCode: 503,
+        body: {
+            ...recovery.response,
+            recoveryRequired: true,
+            rollbackAttempted: recovery.rollbackAttempted,
+            rollbackSucceeded: recovery.rollbackSucceeded,
+            dmSent
+        }
+    };
+}
+
 function minimalVerifyLog(payload, budgetErr) {
     const dataQuality = objectOrEmpty(payload.dataQuality);
     return {
@@ -1971,7 +2026,7 @@ router.post('/auth/callback', async (req, res) => {
             });
 
             if (!persistenceResult.ok) {
-                const recovery = await coordinatePersistenceFailure({
+                const outcome = await finalizeCriticalPersistenceFailure({
                     requestId,
                     guildId,
                     userId: profile.id,
@@ -1990,15 +2045,25 @@ router.post('/auth/callback', async (req, res) => {
                             { upsert: true }
                         );
                         return updateResult?.acknowledged !== false;
-                    }
+                    },
+                    sendDm,
+                    sendFailureDm: () => discord.sendVerificationDM(profile.id, {
+                        ok: false,
+                        result: "failed",
+                        guildName,
+                        roleName,
+                        reason: "ระบบบันทึกข้อมูลยืนยันไม่สมบูรณ์ กำลังตรวจสอบและกู้คืนสถานะ",
+                        reasonCode: "verification_persistence_failed",
+                        requestId,
+                        profile: {
+                            username: profile.username,
+                            globalName: profile.global_name,
+                            discriminator: profile.discriminator,
+                            avatarUrl: getAvatarUrl(profile)
+                        }
+                    })
                 });
-                if (!recovery.recoveryPersisted) {
-                    console.error("[VERIFY] recovery record persistence failed:", JSON.stringify({
-                        code: "verification_recovery_persistence_failed",
-                        requestId
-                    }));
-                }
-                return res.status(503).json(recovery.response);
+                return res.status(outcome.statusCode).json(outcome.body);
             }
 
             let dmSent = false;
@@ -2393,5 +2458,6 @@ module.exports._test = {
     activeSnapshotVersion,
     stagedSnapshotRefs,
     withOAuthSnapshotLock,
-    oauthSnapshotLocks
+    oauthSnapshotLocks,
+    finalizeCriticalPersistenceFailure
 };

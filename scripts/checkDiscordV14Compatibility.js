@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 "use strict";
 
-const fs = require("node:fs");
 const path = require("node:path");
+const { execFileSync } = require("node:child_process");
 const acorn = require("acorn");
 
 const LEGACY_PERMISSION_KEYS = new Set([
@@ -69,10 +69,18 @@ function literalString(node) {
 }
 
 function objectPropertyName(node) {
-    if (!node || node.type !== "Property") return null;
+    if (node?.type !== "Property") return null;
     if (!node.computed && node.key?.type === "Identifier") return node.key.name;
     if (node.key?.type === "Literal") return String(node.key.value);
     return null;
+}
+
+function walkChild(value, visitor, parent) {
+    if (Array.isArray(value)) {
+        for (const child of value) walkChild(child, visitor, parent);
+        return;
+    }
+    if (value && typeof value.type === "string") walk(value, visitor, parent);
 }
 
 function walk(node, visitor, parent = null) {
@@ -80,13 +88,7 @@ function walk(node, visitor, parent = null) {
     visitor(node, parent);
     for (const [key, value] of Object.entries(node)) {
         if (key === "loc" || key === "start" || key === "end") continue;
-        if (Array.isArray(value)) {
-            for (const child of value) {
-                if (child && typeof child.type === "string") walk(child, visitor, node);
-            }
-        } else if (value && typeof value.type === "string") {
-            walk(value, visitor, node);
-        }
+        walkChild(value, visitor, node);
     }
 }
 
@@ -209,41 +211,42 @@ function analyzeSource(source, filename = "source.js") {
 }
 
 const REPOSITORY_ROOT = path.resolve(__dirname, "..");
+const GIT_BINARY = process.platform === "win32" ? "git.exe" : "git";
 
-function resolveSourceRoot(root) {
-    const resolved = path.resolve(REPOSITORY_ROOT, String(root || "discord"));
-    const relative = path.relative(REPOSITORY_ROOT, resolved);
-    if (relative.startsWith("..") || path.isAbsolute(relative)) {
-        throw new Error("Discord compatibility source root escaped repository");
-    }
-    return resolved;
+function git(args) {
+    return execFileSync(GIT_BINARY, args, {
+        cwd: REPOSITORY_ROOT,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"]
+    });
+}
+
+function isProductionDiscordJavaScriptPath(file) {
+    return file.startsWith("discord/") &&
+        file.endsWith(".js") &&
+        !file.startsWith("discord/tests/") &&
+        !file.includes("/node_modules/") &&
+        !file.includes("/coverage/");
 }
 
 function listJavaScriptFiles(root = "discord") {
-    const sourceRoot = resolveSourceRoot(root);
-    const output = [];
-    function visit(current) {
-        for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-            const fullPath = path.join(current, entry.name);
-            if (entry.isDirectory()) {
-                if (entry.name === "tests" || entry.name === "node_modules" || entry.name === "coverage") continue;
-                visit(fullPath);
-            } else if (entry.isFile() && entry.name.endsWith(".js")) {
-                output.push(path.relative(REPOSITORY_ROOT, fullPath).replaceAll("\\", "/"));
-            }
-        }
-    }
-    // nosemgrep -- sourceRoot is constrained by resolveSourceRoot to remain inside REPOSITORY_ROOT.
-    if (fs.existsSync(sourceRoot)) visit(sourceRoot);
-    return output.sort((a, b) => a.localeCompare(b));
+    if (root !== "discord") throw new Error("Discord compatibility guard only supports the discord source tree");
+    return git(["ls-files", "-z", "--", "discord"])
+        .split("\0")
+        .filter(isProductionDiscordJavaScriptPath)
+        .sort((a, b) => a.localeCompare(b));
+}
+
+function readIndexedSource(file) {
+    if (!isProductionDiscordJavaScriptPath(file)) throw new Error(`Unsafe Discord source path: ${file}`);
+    return git(["show", `:${file}`]);
 }
 
 function runCli() {
     const files = listJavaScriptFiles("discord");
     const allFindings = [];
     for (const file of files) {
-        // nosemgrep -- file values originate only from traversal beneath the validated repository source root.
-        const source = fs.readFileSync(path.join(REPOSITORY_ROOT, file), "utf8");
+        const source = readIndexedSource(file);
         for (const item of analyzeSource(source, file)) allFindings.push({ file, ...item });
     }
 
@@ -265,6 +268,8 @@ module.exports = {
     LEGACY_PERMISSION_KEYS,
     analyzeSource,
     isDirectChannelCacheClear,
+    isProductionDiscordJavaScriptPath,
     isReqQueryPin,
-    listJavaScriptFiles
+    listJavaScriptFiles,
+    readIndexedSource
 };

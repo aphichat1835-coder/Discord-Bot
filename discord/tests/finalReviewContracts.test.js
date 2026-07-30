@@ -31,7 +31,8 @@ test("OAuth start has a bounded friendly error boundary and a fixed Discord redi
     const oauth = source("oauth");
     const start = oauth.indexOf("router.get('/auth/start'");
     const end = oauth.indexOf("router.get('/auth/callback'", start);
-    assert.ok(start >= 0 && end > start);
+    assert.ok(start >= 0, "OAuth start route must exist");
+    assert.ok(end > start, "OAuth callback route must follow the start route");
     const handler = oauth.slice(start, end);
     assert.match(handler, /try \{/);
     assert.match(handler, /catch \(error\)/);

@@ -200,3 +200,36 @@ test("ensureVoiceSession resolves a duplicate create race by replacing the raced
     assert.equal(createCount, 2);
     assert.deepEqual(stopped, [racedSessionId]);
 });
+
+test("ensureVoiceSession cleans up only the created generation when startup fails", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const lifecycle = require("../voiceWorker/lifecycle");
+    const token = "aaaaaaaaaaaaaaaaaaaaaaaa.bbbbbb.ccccccccccccccccccccccccccc";
+    const sessionId = "vc_failed_start";
+    const cleaned = [];
+
+    await assert.rejects(() => lifecycle._test.ensureVoiceSessionInternal({
+        token,
+        guildId: "111111111111111111",
+        channelId: "222222222222222222",
+        ownerId: "owner",
+        reason: "startup_failure_test"
+    }, {
+        repairFailedStopSessionForTokenGuild: async () => ({ repaired: 0, blocked: 0 }),
+        findActiveVoiceSessionByTokenGuild: () => null,
+        createSession: async () => sessionId,
+        getSession: id => id === sessionId
+            ? { sessionId, lifecycleGeneration: "generation-created" }
+            : null,
+        startSession: async () => {
+            throw new Error("START_FAILED");
+        },
+        cleanupFailedEnsureSession: async (...args) => cleaned.push(args)
+    }), /START_FAILED/);
+
+    assert.deepEqual(cleaned, [[
+        sessionId,
+        "owner",
+        "startup_failure_test",
+        "generation-created"
+    ]]);
+});

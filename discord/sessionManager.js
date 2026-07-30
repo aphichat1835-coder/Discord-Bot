@@ -330,7 +330,9 @@ const BotSettingsModel = mongoose.model("BotSettings", botSettingsSchema);
 //  🌐  REGION 5: DATABASE CONNECTION
 // ════════════════════════════════════════════════════════════════════════════
 let dbConnected = false;
-const pendingSessionDeletes = new Set();
+// Keep the lifecycle generation with a deferred delete. A session id can be
+// reused after a restart, so deleting by id alone could remove a newer session.
+const pendingSessionDeletes = new Map();
 const MONGO_POOL_CONFIG = {
     maxPoolSize: 20,
     minPoolSize: 2,
@@ -522,7 +524,7 @@ async function loadDatabase() {
 
         let activeLoaded = 0;
         let recoverableLoaded = 0;
-        const encryptionMigrationOps = [];
+        const loadRepairOps = [];
 
         for (const r of records) {
             const state = r.state || "active";
@@ -530,11 +532,20 @@ async function loadDatabase() {
             else recoverableLoaded++;
 
             const migratedToken = migrateEncryptedToken(r.token);
+            const lifecycleGeneration = r.lifecycleGeneration || crypto.randomUUID();
+            const repairSet = {};
+            const repairFilter = { _id: r._id };
+
             if (migratedToken.migrated) {
-                encryptionMigrationOps.push({
+                repairSet.token = migratedToken.token;
+                repairFilter.token = r.token;
+            }
+            if (!r.lifecycleGeneration) repairSet.lifecycleGeneration = lifecycleGeneration;
+            if (Object.keys(repairSet).length > 0) {
+                loadRepairOps.push({
                     updateOne: {
-                        filter: { _id: r._id, token: r.token },
-                        update: { $set: { token: migratedToken.token } }
+                        filter: repairFilter,
+                        update: { $set: repairSet }
                     }
                 });
             }
@@ -565,7 +576,7 @@ async function loadDatabase() {
                 startedAt: r.startedAt,
                 lastActivity: r.lastActivity,
                 voiceReadyAt: r.voiceReadyAt || null,
-                lifecycleGeneration: r.lifecycleGeneration || crypto.randomUUID(),
+                lifecycleGeneration,
 
                 state,
                 stoppedAt: r.stoppedAt || null,
@@ -583,12 +594,12 @@ async function loadDatabase() {
             });
         }
 
-        if (encryptionMigrationOps.length > 0) {
+        if (loadRepairOps.length > 0) {
             try {
-                const migrationResult = await SessionModel.bulkWrite(encryptionMigrationOps, { ordered: false });
-                console.log(`[SECURITY] 🔄 Migrated ${migrationResult.modifiedCount || 0} Voice session token(s) to v3 encryption.`);
+                const repairResult = await SessionModel.bulkWrite(loadRepairOps, { ordered: false });
+                console.log(`[DATABASE] 🔄 Repaired ${repairResult.modifiedCount || 0} Voice session load record(s).`);
             } catch (err) {
-                console.warn(`[SECURITY] ⚠️ Voice token migration will retry on the next save: ${err.message}`);
+                console.warn(`[DATABASE] ⚠️ Voice session load repair will retry on the next load: ${err.message}`);
             }
         }
 
@@ -611,65 +622,84 @@ async function loadDatabase() {
     }
 }
 
-async function saveDatabase() {
-    if (!dbConnected) return;
+function buildSessionSaveOperation(sessionId, session) {
+    const lifecycleGeneration = session.lifecycleGeneration || null;
+    if (!lifecycleGeneration) return null;
+
+    return {
+        updateOne: {
+            // Periodic persistence is a refresh, never an authority to create
+            // a record. The generation fences a stale save from overwriting a
+            // session recreated with the same deterministic session id.
+            filter: { sessionId, lifecycleGeneration },
+            update: {
+                $set: {
+                    token: session.token,
+
+                    serverId: session.serverId,
+                    voiceId: session.voiceId,
+                    serverName: session.serverName,
+                    voiceName: session.voiceName,
+                    guildIcon: session.guildIcon,
+
+                    tokenTail: session.tokenTail,
+                    tokenHash: session.tokenHash,
+
+                    ownerId: session.ownerId,
+                    ownerAvatar: session.ownerAvatar,
+                    ownerTag: session.ownerTag,
+
+                    accountId: session.accountId,
+                    accountUsername: session.accountUsername,
+                    accountGlobalName: session.accountGlobalName,
+                    accountTag: session.accountTag,
+                    accountAvatar: session.accountAvatar,
+
+                    startedAt: session.startedAt,
+                    lastActivity: session.lastActivity,
+                    voiceReadyAt: session.voiceReadyAt || null,
+                    lifecycleGeneration,
+                    reconnectCount: Number(session.reconnectCount || 0),
+                    tokenInvalid: session.tokenInvalid === true,
+                    recoveryState: session.recoveryState || null,
+                    notificationState: session.notificationState || null,
+                    state: session.state || "active",
+                    stoppedAt: session.stoppedAt || null,
+                    stoppedReason: session.stoppedReason || null,
+                    stoppedBy: session.stoppedBy || null,
+                    lastStopError: session.lastStopError || null
+                }
+            },
+            upsert: false
+        }
+    };
+}
+
+async function saveDatabase(deps = {}) {
+    const connected = deps.dbConnected ?? dbConnected;
+    const sessionStore = deps.sessions || sessions;
+    const sessionModel = deps.sessionModel || SessionModel;
+    if (!connected) return;
 
     try {
-        if (sessions.size === 0) {
+        if (sessionStore.size === 0) {
             // An empty in-memory map is not proof that the owner requested a destructive wipe.
             return;
         }
 
         const ops = [];
 
-        for (const [id, session] of sessions) {
-            ops.push({
-                updateOne: {
-                    filter: { sessionId: id },
-                    update: {
-                        $set: {
-                            token: session.token,
-
-                            serverId: session.serverId,
-                            voiceId: session.voiceId,
-                            serverName: session.serverName,
-                            voiceName: session.voiceName,
-                            guildIcon: session.guildIcon,
-
-                            tokenTail: session.tokenTail,
-                            tokenHash: session.tokenHash,
-
-                            ownerId: session.ownerId,
-                            ownerAvatar: session.ownerAvatar,
-                            ownerTag: session.ownerTag,
-
-                            accountId: session.accountId,
-                            accountUsername: session.accountUsername,
-                            accountGlobalName: session.accountGlobalName,
-                            accountTag: session.accountTag,
-                            accountAvatar: session.accountAvatar,
-
-                            startedAt: session.startedAt,
-                            lastActivity: session.lastActivity,
-                            voiceReadyAt: session.voiceReadyAt || null,
-                            lifecycleGeneration: session.lifecycleGeneration || null,
-                            reconnectCount: Number(session.reconnectCount || 0),
-                            tokenInvalid: session.tokenInvalid === true,
-                            recoveryState: session.recoveryState || null,
-                            notificationState: session.notificationState || null,
-                            state: session.state || "active",
-                            stoppedAt: session.stoppedAt || null,
-                            stoppedReason: session.stoppedReason || null,
-                            stoppedBy: session.stoppedBy || null,
-                            lastStopError: session.lastStopError || null
-                        }
-                    },
-                    upsert: true
-                }
-            });
+        for (const [id, session] of sessionStore) {
+            const operation = buildSessionSaveOperation(id, session);
+            if (operation) ops.push(operation);
         }
 
-        await SessionModel.bulkWrite(ops, { ordered: false });
+        if (ops.length === 0) return;
+        const result = await sessionModel.bulkWrite(ops, { ordered: false });
+        const matched = Number(result?.matchedCount ?? result?.n ?? ops.length);
+        if (matched < ops.length) {
+            console.warn(`[DATABASE] ⚠️ Skipped ${ops.length - matched} stale Voice session save(s).`);
+        }
     } catch (err) {
         console.error(`[DATABASE] ❌ MongoDB save failed: ${err.message}`);
     }
@@ -903,14 +933,31 @@ function cleanupSessionMemory(sessionId, session) {
     sessionLocks.delete(sessionId);
 }
 
-async function flushPendingSessionDeletes() {
-    if (!dbConnected || pendingSessionDeletes.size === 0) return;
+function queuePendingSessionDelete(sessionId, lifecycleGeneration, pendingDeletes = pendingSessionDeletes) {
+    pendingDeletes.set(sessionId, lifecycleGeneration || null);
+}
 
-    const sessionIds = [...pendingSessionDeletes];
+function buildPendingSessionDeleteFilter(entries) {
+    return {
+        $or: entries.map(([sessionId, lifecycleGeneration]) => (
+            lifecycleGeneration
+                ? { sessionId, lifecycleGeneration }
+                : { sessionId }
+        ))
+    };
+}
+
+async function flushPendingSessionDeletes(deps = {}) {
+    const connected = deps.dbConnected ?? dbConnected;
+    const pendingDeletes = deps.pendingDeletes || pendingSessionDeletes;
+    const sessionModel = deps.sessionModel || SessionModel;
+    if (!connected || pendingDeletes.size === 0) return;
+
+    const entries = [...pendingDeletes];
     try {
-        await SessionModel.deleteMany({ sessionId: { $in: sessionIds } });
-        for (const sessionId of sessionIds) pendingSessionDeletes.delete(sessionId);
-        console.log(`[DATABASE] 🧹 Flushed ${sessionIds.length} pending session delete(s).`);
+        await sessionModel.deleteMany(buildPendingSessionDeleteFilter(entries));
+        for (const [sessionId] of entries) pendingDeletes.delete(sessionId);
+        console.log(`[DATABASE] 🧹 Flushed ${entries.length} pending session delete(s).`);
     } catch (err) {
         console.error(`[DATABASE] ❌ Failed to flush pending session deletes: ${sanitizeLifecycleError(err.message)}`);
         systemMetrics.increment("errors");
@@ -1008,7 +1055,7 @@ async function deleteSession(sessionId, options = {}) {
 
     if (!dbConnected) {
         console.warn(`[DATABASE] ⚠️ Queued session ${sessionId} delete until database reconnects`);
-        pendingSessionDeletes.add(sessionId);
+        queuePendingSessionDelete(sessionId, session.lifecycleGeneration);
         cleanupSessionMemory(sessionId, session);
         systemMetrics.increment("errors");
         console.log(`[SESSION] 🗑️ Session removed from memory: ${sessionId}`);
@@ -1016,8 +1063,9 @@ async function deleteSession(sessionId, options = {}) {
     }
 
     try {
-        const deleteFilter = expectedGeneration
-            ? { sessionId, lifecycleGeneration: expectedGeneration }
+        const deleteGeneration = expectedGeneration || session.lifecycleGeneration || null;
+        const deleteFilter = deleteGeneration
+            ? { sessionId, lifecycleGeneration: deleteGeneration }
             : { sessionId };
         const result = await SessionModel.deleteOne(deleteFilter);
         const deleted = result?.deletedCount ?? result?.n ?? 0;
@@ -1026,7 +1074,7 @@ async function deleteSession(sessionId, options = {}) {
         }
     } catch (err) {
         console.error(`[DATABASE] ❌ Failed to delete session ${sessionId}; queued retry: ${sanitizeLifecycleError(err.message)}`);
-        pendingSessionDeletes.add(sessionId);
+        queuePendingSessionDelete(sessionId, session.lifecycleGeneration);
         cleanupSessionMemory(sessionId, session);
         systemMetrics.increment("errors");
         console.log(`[SESSION] 🗑️ Session removed from memory: ${sessionId}`);
@@ -1943,6 +1991,11 @@ module.exports = {
         INTERNAL_EVENT_SETTINGS,
         decryptTokenWithMetadata,
         isPlausiblePlaintext,
-        migrateEncryptedToken
+        migrateEncryptedToken,
+        buildSessionSaveOperation,
+        saveDatabase,
+        queuePendingSessionDelete,
+        buildPendingSessionDeleteFilter,
+        flushPendingSessionDeletes
     }
 };

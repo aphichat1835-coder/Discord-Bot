@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 "use strict";
 
-const fs = require("node:fs");
 const path = require("node:path");
-const { spawnSync } = require("node:child_process");
+const { execFileSync, spawnSync } = require("node:child_process");
 
 const SKIPPED_PREFIXES = [
     "discord/tests/",
@@ -31,7 +30,7 @@ const PATTERNS = [
     },
     {
         code: "DISCORD_WEBHOOK_LITERAL",
-        regex: /https:\/\/(?:discord(?:app)?\.com)\/api\/webhooks\/\d{5,25}\/[A-Za-z0-9._-]{20,255}/gi
+        regex: /https:\/\/(?:discord(?:app)?\.com)\/api\/webhooks\/\d{5,25}\/[A-Z0-9._-]{20,255}/gi
     },
     {
         code: "PRIVATE_KEY_LITERAL",
@@ -43,8 +42,8 @@ const ASSIGNMENT_NAME_PATTERN = /\b(?:token|secret|password|pin|api[_-]?key|webh
 const MAX_ASSIGNMENT_LINE_LENGTH = 4096;
 const MAX_SCANNED_FILE_BYTES = 2 * 1024 * 1024;
 const REPOSITORY_ROOT = path.resolve(__dirname, "..");
-const GIT_BINARY = process.platform === "win32" ? "git.exe" : "/usr/bin/git";
-const PLACEHOLDER_PATTERN = /(?:example|placeholder|redacted|dummy|changeme|replace[-_ ]?me|<[^>]+>|\$\{|\$[A-Z_][A-Z0-9_]*|process\.env)/i;
+const GIT_BINARY = process.platform === "win32" ? "git.exe" : "git";
+const PLACEHOLDER_WORDS = ["example", "placeholder", "redacted", "dummy", "changeme", "replace-me", "replace_me", "replace me", "process.env"];
 
 function resolveTrackedPath(root, relativePath) {
     const repositoryRoot = path.resolve(root);
@@ -65,11 +64,20 @@ function extractAssignmentValue(line, match) {
     return valueEnd === -1 ? null : line.slice(valueStart, valueEnd);
 }
 
+function isPlaceholderValue(value) {
+    const text = String(value || "");
+    const normalized = text.toLowerCase();
+    if (PLACEHOLDER_WORDS.some(word => normalized.includes(word))) return true;
+    if (text.includes("${")) return true;
+    if (/^\$[A-Z_][A-Z0-9_]{0,127}$/.test(text)) return true;
+    return /^<[^<>\r\n]{1,256}>$/.test(text);
+}
+
 function isSecretCandidate(value) {
     return value !== null &&
         value.length >= 12 &&
         value.length <= 512 &&
-        !PLACEHOLDER_PATTERN.test(value);
+        !isPlaceholderValue(value);
 }
 
 function assignmentFindings(source, filePath) {
@@ -129,20 +137,25 @@ function trackedFiles(root = REPOSITORY_ROOT) {
     return result.stdout.split("\0").filter(Boolean);
 }
 
+function readTrackedBlob(root, relativePath) {
+    const normalized = String(relativePath || "").replaceAll("\\", "/");
+    resolveTrackedPath(root, normalized);
+    return execFileSync(GIT_BINARY, ["show", `:${normalized}`], {
+        cwd: path.resolve(root),
+        encoding: null,
+        maxBuffer: MAX_SCANNED_FILE_BYTES + 1,
+        stdio: ["ignore", "pipe", "pipe"]
+    });
+}
+
 function scanRepository(root = REPOSITORY_ROOT) {
     const repositoryRoot = path.resolve(root);
     const findings = [];
     for (const relativePath of trackedFiles(repositoryRoot)) {
         if (!shouldScanPath(relativePath)) continue;
-        let absolutePath;
-        try {
-            absolutePath = resolveTrackedPath(repositoryRoot, relativePath);
-        } catch {
-            continue;
-        }
         let buffer;
         try {
-            buffer = fs.readFileSync(absolutePath);
+            buffer = readTrackedBlob(repositoryRoot, relativePath);
         } catch {
             continue;
         }
@@ -170,6 +183,8 @@ if (require.main === module) main();
 
 module.exports = {
     analyzeText,
+    isPlaceholderValue,
+    readTrackedBlob,
     resolveTrackedPath,
     scanRepository,
     shouldScanPath

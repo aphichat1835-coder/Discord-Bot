@@ -238,7 +238,7 @@ async function applyShadowPortalAction(body = {}, context = {}) {
     if (capabilityFailure) return capabilityFailure;
     const reasonResult = requireReason(action, body);
     if (!reasonResult.ok) return reasonResult.error;
-    const stepUpFailure = requireStepUp(action, body, context);
+    const stepUpFailure = requireStepUp();
     if (stepUpFailure) return stepUpFailure;
 
     const requestId = makeRequestId(body.request_id);

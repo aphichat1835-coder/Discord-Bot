@@ -3,7 +3,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const crypto = require("node:crypto");
+const https = require("node:https");
 const { execFileSync } = require("node:child_process");
 const PROTECTED_DIGESTS = require("../.github/protected-path-digests.json");
 
@@ -14,19 +14,12 @@ const ZERO_SHA_PATTERN = /^0+$/;
 const APPROVAL_MARKER_PREFIX = "<!-- protected-owner-approval:";
 const APPROVAL_PAGE_SIZE = 100;
 const APPROVAL_MAX_PAGES = 100;
+const APPROVAL_RESPONSE_MAX_BYTES = 512 * 1024;
+const APPROVAL_REQUEST_TIMEOUT_MS = 10_000;
 const GIT_BLOB_PREFIX = "git:";
-
-function resolveGitBin() {
-    for (const candidate of ["/usr/bin/git", "/usr/local/bin/git", "/opt/homebrew/bin/git", "/bin/git"]) {
-        if (fs.existsSync(candidate)) return candidate;
-    }
-    return "";
-}
-
-const GIT_BIN = resolveGitBin();
+const GIT_BIN = process.platform === "win32" ? "git.exe" : "git";
 
 function git(args) {
-    if (!GIT_BIN) throw new Error("git binary not found");
     return execFileSync(GIT_BIN, args, {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"]
@@ -75,24 +68,6 @@ function listTrackedProtectedFiles() {
         .sort((a, b) => a.localeCompare(b));
 }
 
-function readProtectedFile(file) {
-    const normalized = normalizeRepositoryPath(file);
-    if (!isProtectedPath(normalized)) throw new Error(`Unsafe protected path: ${normalized}`);
-
-    const repositoryRoot = fs.realpathSync(process.cwd());
-    const resolved = fs.realpathSync(path.resolve(repositoryRoot, normalized));
-    const protectedRoot = path.resolve(repositoryRoot, PROTECTED_DIRECTORY);
-    const protectedFile = path.resolve(repositoryRoot, PROTECTED_ROOT_FILE);
-    if (resolved !== protectedFile && !resolved.startsWith(`${protectedRoot}${path.sep}`)) {
-        throw new Error(`Protected path escaped its boundary: ${normalized}`);
-    }
-    return fs.readFileSync(resolved);
-}
-
-function sha256(content) {
-    return crypto.createHash("sha256").update(content).digest("hex");
-}
-
 function gitBlobSha(file) {
     const normalized = normalizeRepositoryPath(file);
     if (!isProtectedPath(normalized)) throw new Error(`Unsafe protected path: ${normalized}`);
@@ -101,11 +76,10 @@ function gitBlobSha(file) {
 
 function manifestEntryMatches(file, expected) {
     const value = String(expected || "").trim();
-    if (value.startsWith(GIT_BLOB_PREFIX)) {
-        const expectedBlob = value.slice(GIT_BLOB_PREFIX.length);
-        return /^[a-f0-9]{40}$/i.test(expectedBlob) && gitBlobSha(file) === expectedBlob;
-    }
-    return /^[a-f0-9]{64}$/i.test(value) && sha256(readProtectedFile(file)) === value;
+    const expectedBlob = value.slice(GIT_BLOB_PREFIX.length);
+    return value.startsWith(GIT_BLOB_PREFIX) &&
+        /^[a-f0-9]{40}$/i.test(expectedBlob) &&
+        gitBlobSha(file) === expectedBlob;
 }
 
 function validateManifest() {
@@ -117,7 +91,7 @@ function validateManifest() {
     const extra = manifestFiles.filter(file => !tracked.includes(file));
     const malformed = manifestFiles.filter(file => {
         const value = String(PROTECTED_DIGESTS[file] || "");
-        return !/^[a-f0-9]{64}$/i.test(value) && !/^git:[a-f0-9]{40}$/i.test(value);
+        return !/^git:[a-f0-9]{40}$/i.test(value);
     });
     const mismatched = tracked.filter(file => !malformed.includes(file) && !manifestEntryMatches(file, PROTECTED_DIGESTS[file]));
 
@@ -189,22 +163,65 @@ function validateRepositorySlug(repository) {
     return value;
 }
 
-function ownerApprovalUrl(repository, pullNumber, page) {
+function ownerApprovalRequestOptions(repository, pullNumber, page, token) {
     const safeRepository = validateRepositorySlug(repository);
     if (!Number.isSafeInteger(pullNumber) || pullNumber <= 0) throw new Error("invalid pull request number");
     if (!Number.isSafeInteger(page) || page <= 0 || page > APPROVAL_MAX_PAGES) throw new Error("invalid approval page");
-    const url = new URL(`https://api.github.com/repos/${safeRepository}/issues/${pullNumber}/comments`);
-    url.search = new URLSearchParams({
+    const query = new URLSearchParams({
         per_page: String(APPROVAL_PAGE_SIZE),
         page: String(page),
         sort: "created",
         direction: "desc"
-    }).toString();
-    if (url.origin !== "https://api.github.com") throw new Error("invalid GitHub API origin");
-    return url.toString();
+    });
+    return {
+        protocol: "https:",
+        hostname: "api.github.com",
+        port: 443,
+        method: "GET",
+        path: `/repos/${safeRepository}/issues/${pullNumber}/comments?${query}`,
+        headers: {
+            accept: "application/vnd.github+json",
+            authorization: `Bearer ${token}`,
+            "user-agent": "discord-bot-protected-path-guard",
+            "x-github-api-version": "2022-11-28"
+        }
+    };
 }
 
-async function fetchOwnerApproval({ repository, owner, pullNumber, headSha, token }) {
+function requestGitHubComments(options) {
+    return new Promise((resolve, reject) => {
+        const request = https.request(options, response => {
+            const chunks = [];
+            let bytes = 0;
+            response.on("data", chunk => {
+                bytes += chunk.length;
+                if (bytes > APPROVAL_RESPONSE_MAX_BYTES) {
+                    request.destroy(new Error("GitHub approval lookup response exceeded the size limit"));
+                    return;
+                }
+                chunks.push(chunk);
+            });
+            response.once("end", () => {
+                if (response.statusCode < 200 || response.statusCode >= 300) {
+                    reject(new Error(`GitHub approval lookup failed with HTTP ${response.statusCode}`));
+                    return;
+                }
+                try {
+                    resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+                } catch {
+                    reject(new Error("GitHub approval lookup returned invalid JSON"));
+                }
+            });
+        });
+        request.once("error", reject);
+        request.setTimeout(APPROVAL_REQUEST_TIMEOUT_MS, () => {
+            request.destroy(new Error("GitHub approval lookup timed out"));
+        });
+        request.end();
+    });
+}
+
+async function fetchOwnerApproval({ repository, owner, pullNumber, headSha, token, requestComments = requestGitHubComments }) {
     validateRepositorySlug(repository);
     if (!String(owner || "").trim()) throw new Error("invalid repository owner");
     if (!Number.isSafeInteger(pullNumber) || pullNumber <= 0) throw new Error("invalid pull request number");
@@ -212,16 +229,7 @@ async function fetchOwnerApproval({ repository, owner, pullNumber, headSha, toke
     if (!String(token || "").trim()) throw new Error("missing GitHub token");
     const marker = `${APPROVAL_MARKER_PREFIX}${headSha} -->`;
     for (let page = 1; page <= APPROVAL_MAX_PAGES; page++) {
-        const response = await fetch(ownerApprovalUrl(repository, pullNumber, page), {
-            headers: {
-                accept: "application/vnd.github+json",
-                authorization: `Bearer ${token}`,
-                "user-agent": "discord-bot-protected-path-guard",
-                "x-github-api-version": "2022-11-28"
-            }
-        });
-        if (!response.ok) throw new Error(`GitHub approval lookup failed with HTTP ${response.status}`);
-        const comments = await response.json();
+        const comments = await requestComments(ownerApprovalRequestOptions(repository, pullNumber, page, token));
         if (!Array.isArray(comments)) throw new Error("GitHub approval lookup returned an invalid response");
         if (comments.some(comment =>
             String(comment?.user?.login || "").toLowerCase() === owner.toLowerCase() &&
@@ -293,6 +301,8 @@ module.exports = {
     APPROVAL_MARKER_PREFIX,
     APPROVAL_MAX_PAGES,
     APPROVAL_PAGE_SIZE,
+    APPROVAL_REQUEST_TIMEOUT_MS,
+    APPROVAL_RESPONSE_MAX_BYTES,
     GIT_BLOB_PREFIX,
     fetchOwnerApproval,
     gitBlobSha,
@@ -300,7 +310,7 @@ module.exports = {
     listTrackedProtectedFiles,
     manifestEntryMatches,
     normalizeRepositoryPath,
-    ownerApprovalUrl,
-    sha256,
+    ownerApprovalRequestOptions,
+    requestGitHubComments,
     validateManifest
 };
