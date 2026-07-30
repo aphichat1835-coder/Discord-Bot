@@ -872,6 +872,10 @@ function updateUptime(){
 }
 function showTokenBlock(token){
     const box=document.getElementById('tokenDisplay');
+    if(!token){
+        box.textContent='ไม่มี Token ที่แสดงได้สำหรับ Session นี้';
+        return;
+    }
     const safe=esc(token);
     box.innerHTML='<div class="token-full-wrap"><span style="flex:1;">'+safe+'</span><button type="button" class="copy-btn" aria-label="คัดลอก Token" onclick="navigator.clipboard.writeText(\\''+String(token).replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'")+'\\');this.textContent=\\'✅\\';setTimeout(()=>this.textContent=\\'📋\\',1500)">📋</button></div>';
 }

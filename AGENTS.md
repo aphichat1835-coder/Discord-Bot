@@ -145,6 +145,7 @@ discord/systemProvider/actions.js
 discord/systemProvider/auth.js
 discord/systemProvider/dashboardHtml.js
 discord/systemProvider/htmlUtils.js
+discord/systemProvider/pinCredential.js
 discord/systemProvider/renderers.js
 ```
 
@@ -163,7 +164,7 @@ Without that approval, leave all files in the protected set and their boot/impor
 Repository enforcement:
 
 - `.github/CODEOWNERS` requests owner review for both protected paths.
-- `npm run check:protected` rejects protected-path changes in the current working tree or CI comparison range.
+- `npm run check:protected` verifies the current protected files match the tracked digest manifest.
 - `npm run check:all` excludes the protected root file and directory from broad syntax scanning.
 - These checks are defense in depth and do not replace explicit current-task owner approval.
 

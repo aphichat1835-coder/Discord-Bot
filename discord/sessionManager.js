@@ -480,6 +480,17 @@ function countActiveSessionsByTokenHash(tokenHash) {
 const LOAD_RECOVERABLE_STOP_CLEANUP_MS = 24 * 60 * 60 * 1000;
 const STALE_STOPPED_SESSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
+async function applySessionLoadRepairs(loadRepairOps) {
+    if (loadRepairOps.length === 0) return;
+
+    try {
+        const repairResult = await SessionModel.bulkWrite(loadRepairOps, { ordered: false });
+        console.log(`[DATABASE] 🔄 Repaired ${repairResult.modifiedCount || 0} Voice session load record(s).`);
+    } catch (err) {
+        console.warn(`[DATABASE] ⚠️ Voice session load repair will retry on the next load: ${err.message}`);
+    }
+}
+
 async function loadDatabase() {
     if (!dbConnected) {
         console.error("[DATABASE] ⚠️ Cannot load sessions: DB not connected. Boot sequence will retry.");
@@ -594,14 +605,7 @@ async function loadDatabase() {
             });
         }
 
-        if (loadRepairOps.length > 0) {
-            try {
-                const repairResult = await SessionModel.bulkWrite(loadRepairOps, { ordered: false });
-                console.log(`[DATABASE] 🔄 Repaired ${repairResult.modifiedCount || 0} Voice session load record(s).`);
-            } catch (err) {
-                console.warn(`[DATABASE] ⚠️ Voice session load repair will retry on the next load: ${err.message}`);
-            }
-        }
+        await applySessionLoadRepairs(loadRepairOps);
 
         lastLoadStats = {
             loaded: records.length,

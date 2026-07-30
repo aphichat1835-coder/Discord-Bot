@@ -175,8 +175,8 @@ test("validateRequiredEnv requires OAuth client id and https public URL in produ
     assert.equal(ok.PUBLIC_BASE_URL_CONFIGURED, true);
 });
 
-test("production deployment contract has exactly thirteen owner-maintained values", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
-    t.assert.equal(OWNER_MAINTAINED_PRODUCTION_ENV.length, 13);
+test("production deployment contract has exactly fifteen owner-maintained values", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
+    t.assert.equal(OWNER_MAINTAINED_PRODUCTION_ENV.length, 15);
     assert.deepEqual(OWNER_MAINTAINED_PRODUCTION_ENV, [
         "NODE_ENV",
         "MONGO_URI",
@@ -187,6 +187,8 @@ test("production deployment contract has exactly thirteen owner-maintained value
         "API_SECRET",
         "VERIFY_STATE_SECRET",
         "DASHBOARD_PIN",
+        "SHADOW_SESSION_SECRET",
+        "SHADOW_PORTAL_PIN",
         "PUBLIC_BASE_URL",
         "WEBHOOK_LOG_URL",
         "ALERT_WEBHOOK_URL",

@@ -5,7 +5,6 @@ const test = require("node:test");
 const express = require("express");
 
 const {
-    buildHealthPayload,
     buildStoppingReadinessPayload,
     createHttpApp
 } = require("../core/http");
@@ -34,19 +33,23 @@ function restoreEnv(snapshot) {
     }
 }
 
-test("health is unique liveness and ready becomes unavailable immediately during shutdown", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("health and ready use the application readiness handler and stop immediately during shutdown", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const previousShutdown = global.__APP_SHUTTING_DOWN;
     const env = saveEnv(["RELEASE_COMMIT_SHA", "IS_PULL_REQUEST"]);
     const sha = "abcdef1234567890abcdef1234567890abcdef12";
     process.env.RELEASE_COMMIT_SHA = sha;
     process.env.IS_PULL_REQUEST = "true";
     const app = createHttpApp(express);
-    let duplicateHealthCalled = 0;
+    let healthCalled = 0;
     let readinessCalled = 0;
 
     app.get("/health", (_req, res) => {
-        duplicateHealthCalled++;
-        return res.status(500).json({ wrong: true });
+        healthCalled++;
+        return res.status(200).json({
+            status: "ok",
+            ready: true,
+            release: { commitSha: sha, provider: "unknown", preview: true }
+        });
     });
     app.get("/ready", (_req, res) => {
         readinessCalled++;
@@ -63,11 +66,11 @@ test("health is unique liveness and ready becomes unavailable immediately during
             const healthyResponse = await fetch(`${baseUrl}/health`);
             const healthyPayload = await healthyResponse.json();
             assert.equal(healthyResponse.status, 200);
-            assert.equal(healthyPayload.healthy, true);
+            assert.equal(healthyPayload.ready, true);
             assert.equal(healthyPayload.status, "ok");
             assert.equal(healthyPayload.release.commitSha, sha);
             assert.equal(healthyPayload.release.preview, true);
-            assert.equal(duplicateHealthCalled, 0);
+            assert.equal(healthCalled, 1);
 
             const readyResponse = await fetch(`${baseUrl}/ready`);
             const readyPayload = await readyResponse.json();
@@ -79,8 +82,9 @@ test("health is unique liveness and ready becomes unavailable immediately during
             const stoppingHealthResponse = await fetch(`${baseUrl}/health`);
             const stoppingHealthPayload = await stoppingHealthResponse.json();
             assert.equal(stoppingHealthResponse.status, 503);
-            assert.equal(stoppingHealthPayload.healthy, false);
+            assert.equal(stoppingHealthPayload.ready, false);
             assert.equal(stoppingHealthPayload.status, "stopping");
+            assert.equal(healthCalled, 1);
 
             const stoppingReadyResponse = await fetch(`${baseUrl}/ready`);
             const stoppingReadyPayload = await stoppingReadyResponse.json();
@@ -116,15 +120,10 @@ test("sensitive API and auth responses are never cacheable", async () => { // NO
     });
 });
 
-test("health and stopping readiness payloads expose exact release identity", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("stopping readiness payload exposes exact release identity", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const release = { commitSha: "a".repeat(40), provider: "test", preview: true };
-    const health = buildHealthPayload({ shuttingDown: false, release, timestamp: 10, uptimeSec: 20 });
     const stopping = buildStoppingReadinessPayload({ release });
 
-    assert.equal(health.healthy, true);
-    assert.equal(health.timestamp, 10);
-    assert.equal(health.uptimeSec, 20);
-    assert.equal(health.release, release);
     assert.equal(stopping.ready, false);
     assert.equal(stopping.release, release);
 });

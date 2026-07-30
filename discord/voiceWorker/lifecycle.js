@@ -406,12 +406,6 @@ async function performClientLogin(newClient, sessionId, session, tokenHash, toke
             throw new Error("LOGIN_GENERATION_CANCELLED");
         }
 
-        if (!newClient.user?.id || String(newClient.user.id) !== String(session.ownerId || "")) {
-            const ownershipError = new Error("TOKEN_OWNER_MISMATCH");
-            ownershipError.code = "TOKEN_OWNER_MISMATCH";
-            throw ownershipError;
-        }
-
         session.loginGeneration = null;
         putClientInPool(sessionId, session, tokenHash, newClient);
     } catch (err) {

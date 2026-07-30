@@ -1774,11 +1774,6 @@ router.post('/auth/callback', async (req, res) => {
             .where('guildId').equals(guildId);
 
         const verificationConfig = guildConfig?.verification || {};
-        const storagePolicy = {
-            storeOAuthTokens: true,
-            storeRawIpEncrypted: true,
-            retentionMode: "until_admin_delete"
-        };
         const configuredRoleId = getConfiguredRoleId(guildConfig, stateRoleId);
         const roleName = getConfiguredRoleName(guildConfig);
         const guildName = getGuildName(guildConfig, guildId);
@@ -1848,7 +1843,6 @@ router.post('/auth/callback', async (req, res) => {
                 result,
                 findings: allFindings,
                 trackingSnapshot,
-                storagePolicy,
                 fetchMetadata,
                 attemptStartedAt: oauthAttemptStartedAt
             });

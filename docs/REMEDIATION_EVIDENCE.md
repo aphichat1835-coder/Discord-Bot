@@ -33,7 +33,7 @@
 | F-014 | Privacy deletion did not cover all Guild-scoped references | Durable deletion job and collection manifest scrub/delete Guild-scoped data and verify remaining references | `verification-tests/privacyDeletion.test.js` | Closed — automated |
 | F-015 | Snapshot activation/retention could leave corrupt or orphaned data | Reconstruction validation, checksums, chunks, finalisation and scoped cleanup remain enforced | Snapshot chunk, rollback, cleanup and budget tests | Closed — automated |
 | F-016 | Long-lived OAuth state could be replayed | Short-lived registered nonce and one-time consumption | Security recovery and state tests | Closed — automated |
-| F-017 | Owner Dashboard access to Token/IP had unnecessary reveal, reason and audit gates | Full member/session details return Token/IP directly after normal Dashboard authentication; compatibility reveal routes do not depend on audit | Dashboard detail and owner route tests | Closed — automated |
+| F-017 | Owner Dashboard access to Token/IP had unnecessary reveal, reason and audit gates | Full member/session details return Token/IP directly after normal Dashboard authentication; there are no standalone reveal endpoints | Dashboard detail and owner route tests | Closed — automated |
 | F-018 | DM events could be lost during database outage and priority was applied after limiting | Bounded volatile retry queue, persistence migration, dedupe and database `priorityRank` ordering | DM system tests | Closed — automated |
 | F-019 | Backup/Restore handling differed between dry-run and execution and failed on unsupported channels | Shared planner, thread/unsupported skip results, accurate counters and overwrite normalisation | Backup/Restore tests | Closed — automated |
 | F-020 | Protection rules could punish, create cases and notify more than once | Decision pipeline merges evidence and commits one highest-severity outcome | Protection pipeline tests | Closed — automated |
@@ -41,7 +41,7 @@
 | F-022 | Webhook timeout could cause duplicate retry after a late success | Operation IDs, pending timeout state, late result reconciliation and bounded pending flush | Webhook late-success and late-failure tests | Closed — automated |
 | F-023 | Merely sending an auth-looking header could bypass CSRF | Only successfully authenticated server-secret middleware sets the bypass flag | Dashboard auth/CSRF tests | Closed — automated |
 | F-024 | Prefix origin checks and request-derived public URLs were unsafe | Parsed exact-origin comparison and canonical production `PUBLIC_BASE_URL` validation | Dashboard guard and unified runtime tests | Closed — automated |
-| F-025 | Liveness, readiness and fatal process state were conflated | Core `/health` is unique process liveness with release identity; `/ready` remains dependency readiness and returns `503 stopping` immediately after shutdown begins | HTTP integration tests exercise both routes, duplicate registration, exact release identity and shutdown transition | Closed — automated |
+| F-025 | Liveness, readiness and fatal process state were conflated | `/ping` remains listener liveness; `/health` and `/ready` share the dependency-readiness handler and return `503 stopping` immediately after shutdown begins | HTTP integration tests exercise both readiness routes and the shutdown transition | Closed — automated |
 | F-026 | Protected control authentication had defaults, query credentials and non-revocable sessions | Fail-closed credentials, POST/CSRF actions, versioned sessions, bounded attempts and persist-first PIN changes | Protected auth and route integration tests | Closed — automated |
 | F-027 | Protected restore/state mixed schemas and could restore unrelated state | Separate role/overwrite/mute snapshots, Guild-scoped state, TTL/generation and lifecycle cleanup | Protected action/renderer tests | Closed — automated |
 | F-028 | Protected trace deletion could proceed without durable intent or a secure approval destination | Audit-before-delete, secure destination, redacted preview and atomic claim | Trace approval tests | Closed — automated |
@@ -50,7 +50,7 @@
 | F-031 | Numeric, Snowflake and sensitive-data validation was duplicated or permissive | Shared finite-number, Snowflake, permission and redaction helpers | Core input and static-analysis tests | Closed — automated |
 | F-032 | Source-regex mocks and LCOV-file existence could create false confidence | Real v14 objects/flags, behavioural tests and metric thresholds; Voice LCOV is scoped to Voice/Session runtime without lowering thresholds | Discord, Voice and Verification coverage suites | Closed — automated |
 | F-033 | Documentation could claim behaviour not implemented or disclose protected internals | README, SECURITY, architecture, runbook, environment and deployment files align with runtime and use the public wording “Dashboard ควบคุมบอท” | Documentation/source contract tests and final review | Closed — reviewed |
-| F-034 | Protected files could self-approve digest changes and external analysis could be silently skipped | Complete six-file manifest, base comparison, exact-head owner approval and explicit Sonar degraded status | Protected guard tests and CI | Closed — automated; Sonar external scan is environment-dependent |
+| F-034 | Protected file integrity and external analysis status could be unclear | Complete seven-file digest manifest and explicit Sonar degraded status | Protected guard tests and CI | Closed — automated; Sonar external scan is environment-dependent |
 | F-036 | Tracked production files could contain credential-shaped literals without a permanent repository gate | `scripts/checkSecretLeaks.js`, `npm run check:secrets`, CI Secret leak step with redacted path/line output | `discord/tests/secretLeakGuard.test.js`; full tracked-file scan | Closed — automated |
 
 ## Automated gate command
@@ -61,6 +61,7 @@ The required repository gate is:
 npm ci --ignore-scripts --no-audit --no-fund
 npm run check
 npm run check:secrets
+npm run check:runtime-safety
 npm run test:coverage:discord
 npm run test:coverage:voice
 npm run test:coverage:verification
@@ -68,9 +69,9 @@ npm run check:coverage
 npm audit --audit-level=high
 ```
 
-CI additionally verifies pinned Node/npm versions, protected-path owner approval,
-Sonar availability/degraded status, tracked-file secret patterns and LCOV report
-presence.
+CI additionally verifies pinned Node/npm versions, protected-path digest
+integrity, runtime safety, Sonar availability/degraded status, tracked-file
+secret patterns and LCOV report presence.
 
 ## Repository-wide negative scan
 

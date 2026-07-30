@@ -2,6 +2,7 @@
 
 const { getReleaseIdentity } = require("./releaseIdentity");
 const { installShutdownCoordinator } = require("./runtimeLifecycle");
+const READINESS_PATHS = new Set(["/health", "/ready"]);
 
 // Install the best-effort shutdown contract before index.js registers process
 // handlers. The installer is idempotent and does not attach signals by itself.
@@ -34,17 +35,6 @@ function applySensitiveResponseHeaders(req, res, next) {
     next();
 }
 
-function buildHealthPayload(options = {}) {
-    const shuttingDown = options.shuttingDown ?? (global.__APP_SHUTTING_DOWN === true);
-    return {
-        status: shuttingDown ? "stopping" : "ok",
-        healthy: !shuttingDown,
-        timestamp: options.timestamp ?? Date.now(),
-        uptimeSec: options.uptimeSec ?? Math.floor(process.uptime()),
-        release: options.release || getReleaseIdentity(options.env)
-    };
-}
-
 function buildStoppingReadinessPayload(options = {}) {
     return {
         status: "stopping",
@@ -60,20 +50,8 @@ function buildStoppingReadinessPayload(options = {}) {
     };
 }
 
-const HEALTH_ROUTE_GUARD = Symbol("health-route-guard");
-
-function registerHealthRoute(app) {
-    if (typeof app?.get !== "function" || app[HEALTH_ROUTE_GUARD]) return false;
-    app.get("/health", (_req, res) => {
-        const payload = buildHealthPayload();
-        return res.status(payload.healthy ? 200 : 503).json(payload);
-    });
-    app[HEALTH_ROUTE_GUARD] = true;
-    return true;
-}
-
 function applyReadinessShutdownGuard(req, res, next) {
-    if (req.path !== "/ready" || global.__APP_SHUTTING_DOWN !== true) return next();
+    if (!READINESS_PATHS.has(req.path) || global.__APP_SHUTTING_DOWN !== true) return next();
     return res.status(503).json(buildStoppingReadinessPayload());
 }
 
@@ -89,7 +67,6 @@ function createHttpApp(express, options = {}) {
     app.disable("x-powered-by");
     app.use(applySecurityHeaders);
     app.use(applySensitiveResponseHeaders);
-    registerHealthRoute(app);
     app.use(applyReadinessShutdownGuard);
     app.use(express.json({ limit: jsonLimit }));
     app.use(express.urlencoded({ extended: true, limit: urlencodedLimit }));
@@ -101,8 +78,6 @@ module.exports = {
     applySecurityHeaders,
     applySensitiveResponseHeaders,
     applyReadinessShutdownGuard,
-    buildHealthPayload,
     buildStoppingReadinessPayload,
-    registerHealthRoute,
     createHttpApp
 };

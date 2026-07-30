@@ -50,8 +50,6 @@ and the HTTP server.
 | `GET /api/guild/:guildId/member/:userId/detail` | Owner PIN | Complete Owner-visible per-user verification detail |
 | `POST /api/guild/:guildId/member/:userId/full-detail` | Owner PIN + automatic CSRF | Complete Owner-visible member data without a manual reason or repeated PIN |
 | `GET /api/guild/:guildId/member/:userId/ip-history` | Owner PIN | Paginated canonical users/devices/role history for the member's IP |
-| `POST /api/guild/:guildId/member/:userId/reveal-token` | Owner PIN + automatic CSRF | Direct per-user OAuth2 token access for the authenticated Owner |
-| `POST /api/verify-owner/guild/:guildId/user/:userId/reveal-ip` | Owner PIN + automatic CSRF | Direct per-user raw-IP access for the authenticated Owner |
 | `GET /ping` | Public | Lightweight listener liveness |
 | `GET /health` | Public | Combined MongoDB, Discord, slash-command, voice, and verification readiness |
 | `GET /ready` | Public | Alias of the combined `/health` readiness response |

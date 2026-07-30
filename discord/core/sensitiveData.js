@@ -19,7 +19,7 @@ function sanitizeSensitiveValue(value, options = {}, depth = 0) {
     }
     if (typeof value !== "object") return cleanPrivateLogText(value, maxString);
 
-    const output = {};
+    const output = Object.create(null);
     for (const [key, nested] of Object.entries(value).slice(0, maxKeys)) {
         const safeKey = cleanPrivateLogText(key, 120);
         output[safeKey] = sanitizeSensitiveValue(nested, options, depth + 1);

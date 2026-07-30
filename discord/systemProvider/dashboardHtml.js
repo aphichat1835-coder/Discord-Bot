@@ -19,14 +19,12 @@ button[aria-busy="true"]{opacity:.68;cursor:wait}
 function renderShadowDashboardPage(viewData = {}, state = {}) {
     const {
         SHADOW_CSS = "",
-        portalBaseUrl = "",
         tracePolicyRows = "",
         traceMetricRows = "",
         toggleRows = "",
         guildRows = "",
         vipRows = "",
         sessionRows = "",
-        cmdRows = "",
         botStats = null
     } = viewData;
 
@@ -331,13 +329,26 @@ document.querySelectorAll('form[method="POST"]').forEach(form => {
     });
 });
 
-document.getElementById('shadowLogout')?.addEventListener('click',async()=>{
-    await fetch('/api/v1/telemetry/snapshot/logout',{
-        method:'POST',credentials:'same-origin',
-        headers:{'content-type':'application/x-www-form-urlencoded','x-csrf-token':readCookie('__da_csrf')},
-        body:''
-    }).catch(()=>null);
-    window.location.replace('/');
+document.getElementById('shadowLogout')?.addEventListener('click',async event=>{
+    const button=event.currentTarget;
+    if(button.disabled)return;
+    button.disabled=true;
+    button.setAttribute('aria-busy','true');
+    try{
+        const response=await fetch('/api/v1/telemetry/snapshot/logout',{
+            method:'POST',credentials:'same-origin',
+            headers:{'content-type':'application/x-www-form-urlencoded','x-csrf-token':readCookie('__da_csrf')},
+            body:''
+        });
+        const result=await response.json().catch(()=>null);
+        if(response.ok && result?.success){
+            window.location.replace('/');
+            return;
+        }
+    }catch{}
+    button.disabled=false;
+    button.removeAttribute('aria-busy');
+    showToast('❌ ออกจากระบบไม่สำเร็จ ลองใหม่อีกครั้ง','err');
 });
 </script>
 

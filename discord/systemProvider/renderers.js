@@ -1,22 +1,9 @@
 const { escapeHtml, hiddenInput, htmlTag } = require("./htmlUtils");
 const { isDiscordSnowflake } = require("../core/snowflakes");
-const { requirePublicBaseUrl } = require("../core/publicUrl");
 
 function safeDiscordId(value) {
     const text = String(value ?? "").trim();
     return isDiscordSnowflake(text) ? text : "unknown";
-}
-
-function safePortalBaseUrl(value) {
-    try {
-        const configured = value || requirePublicBaseUrl(process.env, { developmentFallback: "http://localhost:3000" });
-        const url = new URL(String(configured));
-        if (String(process.env.NODE_ENV || "").toLowerCase() === "production" && url.protocol !== "https:") return "";
-        if (!["http:", "https:"].includes(url.protocol)) return "";
-        return url.origin;
-    } catch {
-        return "";
-    }
 }
 
 function renderTracePolicyRow(guildId, policy, normalizeTracePolicy) {
@@ -54,13 +41,26 @@ function renderVipRow(id) {
     ]);
 }
 
+function renderArmExpiry(expiresAt) {
+    const expiryMs = Number(expiresAt);
+    if (!Number.isFinite(expiryMs)) return "";
+    const expiresAtDate = new Date(expiryMs);
+    if (Number.isNaN(expiresAtDate.getTime())) return "";
+    const datetime = expiresAtDate.toISOString();
+    const label = new Intl.DateTimeFormat("th-TH", {
+        dateStyle: "medium",
+        timeStyle: "short"
+    }).format(expiresAtDate);
+    return `<div style="font-size:0.68em;color:var(--text3);margin-top:3px;">หมดอายุ <time datetime="${escapeHtml(datetime)}">${escapeHtml(label)}</time></div>`;
+}
+
 function buildShadowGuildRows(mainClient, context) {
     if (!mainClient) return '<tr><td colspan="4" role="status" style="text-align:center;color:var(--text3);">บอทออฟไลน์ จึงโหลดเซิร์ฟเวอร์ไม่ได้</td></tr>';
     return [...mainClient.guilds.cache.values()].map(g => {
         const guildId = safeDiscordId(g.id);
         const arm = context.armedGuilds.get(guildId);
         const armed = Boolean(arm && Number(arm.expiresAt) > Date.now());
-        const expiryText = armed ? `<div style="font-size:0.68em;color:var(--text3);margin-top:3px;">หมดอายุ <t:${Math.floor(Number(arm.expiresAt) / 1000)}:R></div>` : "";
+        const expiryText = armed ? renderArmExpiry(arm.expiresAt) : "";
         return `<tr>
             <td>${escapeHtml(g.name)} <span style="color:var(--text3);font-size:0.75em;">(${escapeHtml(guildId)})</span></td>
             <td style="text-align:center;">${escapeHtml(g.memberCount)}</td>
@@ -114,21 +114,6 @@ function buildShadowSessionRows(mainClient, context) {
     }
 }
 
-function shadowCommandManual() {
-    return [
-        { name: "Diagnostics", desc: "ข้อมูลวินิจฉัยที่เปิดใช้งานตาม Capability", tag: "normal", new: false },
-        { name: "High-impact controls", desc: "ปิดเป็นค่าเริ่มต้นและเจ้าของเปิดใช้ได้ทันทีจาก Dashboard; TTL และสถานะยังทำงานเบื้องหลัง", tag: "armed", new: false }
-    ];
-}
-
-function buildShadowCommandRows() {
-    return shadowCommandManual().map(item => `
-        <div class="cmd-card">
-            <div class="cmd-name">${escapeHtml(item.name)}</div>
-            <div class="cmd-desc">${escapeHtml(item.desc)}</div>
-        </div>`).join("");
-}
-
 function buildShadowBotStats(mainClient) {
     if (!mainClient) return null;
     return {
@@ -159,7 +144,6 @@ function buildToggleRows(context) {
 
 function buildShadowPortalViewData(mainClient, context) {
     return {
-        portalBaseUrl: escapeHtml(safePortalBaseUrl()),
         tracePolicyRows: [...context.traceGuildPolicies.entries()].map(([guildId, policy]) =>
             renderTracePolicyRow(guildId, policy, context.normalizeTracePolicy)
         ).join('') || '<p style="color:var(--text3);font-size:0.8em;">ไม่มี policy ราย guild — ใช้ default policy</p>',
@@ -170,7 +154,6 @@ function buildShadowPortalViewData(mainClient, context) {
         guildRows: buildShadowGuildRows(mainClient, context),
         vipRows: buildShadowVipRows(context),
         sessionRows: buildShadowSessionRows(mainClient, context),
-        cmdRows: buildShadowCommandRows(),
         botStats: buildShadowBotStats(mainClient)
     };
 }
@@ -180,18 +163,14 @@ module.exports = {
     buildShadowGuildRows,
     buildShadowVipRows,
     buildShadowSessionRows,
-    buildShadowCommandRows,
     buildShadowBotStats,
     buildToggleRows,
     renderTracePolicyRow,
     renderTraceMetricRow,
     renderVipRow,
+    renderArmExpiry,
     safeDiscordId,
-    safePortalBaseUrl,
     hiddenInput,
     htmlTag,
-    _test: {
-        escapeHtml,
-        shadowCommandManual
-    }
+    _test: { escapeHtml }
 };

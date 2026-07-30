@@ -93,6 +93,21 @@ if (!saveDatabaseBody || /deleteMany\s*\(\s*\{\s*\}\s*\)/.test(saveDatabaseBody)
     findings.push("discord/sessionManager.js: periodic saveDatabase must not delete all persisted sessions");
 }
 
+const voiceLifecycleSource = readRepositorySource("discord/voiceWorker/lifecycle.js");
+const panelInteractionSource = readRepositorySource("discord/commands/panelInteractions.js");
+if (/TOKEN_OWNER_MISMATCH|newClient\.user\?\.id\s*!==\s*String\(session\.ownerId/.test(voiceLifecycleSource) ||
+    /verifyTokenOwner|decodeTokenOwnerIdSafe|TOKEN_OWNER_MISMATCH/.test(panelInteractionSource)) {
+    findings.push("voice runtime: tokens must not be bound to the Discord account that requested the session");
+}
+
+const httpSource = readRepositorySource("discord/core/http.js");
+const serverSource = readRepositorySource("discord/index/server.js");
+if (/registerHealthRoute|app\.get\(\"\/health\"/.test(httpSource) ||
+    !/app\.get\(\"\/health\", sendReadiness\)/.test(serverSource) ||
+    !/app\.get\(\"\/ready\", sendReadiness\)/.test(serverSource)) {
+    findings.push("health contract: /health and /ready must share the application readiness handler");
+}
+
 for (const file of walk(DISCORD_ROOT).filter(file =>
     file !== "discord/systemProvider.js" && !file.startsWith("discord/tests/")
 )) {
@@ -118,4 +133,4 @@ if (findings.length) {
     process.exit(1);
 }
 
-console.log("[RUNTIME-SAFETY] CSRF, session persistence, and Discord permission guards verified.");
+console.log("[RUNTIME-SAFETY] CSRF, session persistence, Voice identity, readiness, and Discord permission guards verified.");

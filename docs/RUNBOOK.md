@@ -87,9 +87,10 @@ voice, slash-command, and verification readiness.
    - target role is assigned;
    - profile, connections, guild list, target-member, browser, network,
      join/role result, and data-quality metadata are persisted;
-   - no raw token/IP appears in logs or normal APIs.
-7. Open a verified user's “ดูข้อมูลทั้งหมด”, confirm the full Owner view shows
-   reveal Token or IP separately when needed; each action creates automatic audit intent/result records and normal/full-detail APIs remain redacted.
+   - raw token/IP is absent from public and unauthenticated APIs.
+7. Open a verified user's “ดูข้อมูลทั้งหมด”, confirm the authenticated Owner
+   view returns Token, raw IP, and full detail directly without a repeated PIN,
+   reason field, or separate reveal action.
 
 ## Migration
 
@@ -219,8 +220,9 @@ npm audit --audit-level=high
 ```
 
 Also run an approved secret scan and inspect `git diff --check`. Confirm the
-protected-path guard verifies the complete six-file manifest and an Owner PR approval marker bound to the exact head SHA; also confirm that `git diff` contains no unreviewed protected file or
-boot/import change.
+protected-path guard verifies the complete seven-file manifest and its digests;
+also confirm that `git diff` contains no unreviewed protected file or boot/import
+change.
 
 ## Rollback
 

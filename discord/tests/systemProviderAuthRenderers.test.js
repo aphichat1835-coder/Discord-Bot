@@ -160,6 +160,52 @@ test("failed PIN attempts are rate-limited and brute-force state remains bounded
     assert.equal(blocked.statusCode, 429);
 });
 
+test("PIN throttling is keyed by IP instead of an unverified main-session cookie", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const auth = createAuth({ maxAttempts: 3, maxBruteKeys: 10 });
+    const ip = "198.51.100.10";
+
+    for (let index = 0; index < 3; index += 1) {
+        const response = createResponse();
+        const request = { ip, headers: { cookie: `__da_session=attacker-${index}` } };
+        assert.equal(auth.authorize(request, response, {}, "wrong-pin"), false);
+        assert.equal(response.statusCode, index === 2 ? 429 : 401);
+    }
+
+    assert.equal(auth.bruteGuard.size, 1);
+    const blocked = createResponse();
+    assert.equal(auth.authorize({ ip, headers: { cookie: "__da_session=another-value" } }, blocked, {}, "wrong-pin"), false);
+    assert.equal(blocked.statusCode, 429);
+});
+
+test("brute-force capacity preserves active locks and fails closed when every record is locked", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const auth = createAuth({ maxAttempts: 1, maxBruteKeys: 1, lockoutMs: 60_000 });
+    const lockedRequest = { ip: "203.0.113.20", headers: {} };
+    const pressureRequest = { ip: "203.0.113.21", headers: {} };
+
+    const first = createResponse();
+    assert.equal(auth.authorize(lockedRequest, first, {}, "wrong-pin"), false);
+    assert.equal(first.statusCode, 429);
+
+    const underPressure = createResponse();
+    assert.equal(auth.authorize(pressureRequest, underPressure, {}, "wrong-pin"), false);
+    assert.equal(underPressure.statusCode, 429);
+    assert.equal(auth.bruteGuard.size, 1);
+
+    const stillLocked = createResponse();
+    assert.equal(auth.authorize(lockedRequest, stillLocked, {}, "wrong-pin"), false);
+    assert.equal(stillLocked.statusCode, 429);
+});
+
+test("a valid PIN clears the matching failed-attempt record", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const auth = createAuth({ maxAttempts: 3 });
+    const request = { ip: "203.0.113.30", headers: {} };
+
+    assert.equal(auth.authorize(request, createResponse(), {}, "wrong-pin"), false);
+    assert.equal(auth.bruteGuard.size, 1);
+    assert.equal(auth.authorize(request, createResponse(), {}, "protected-pin-2468"), true);
+    assert.equal(auth.bruteGuard.size, 0);
+});
+
 test("protected portal renderers escape dynamic values without exposing internal command details", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const context = {
         systemToggles: { feature: true },
@@ -213,4 +259,8 @@ test("protected portal renderers escape dynamic values without exposing internal
     assert.match(html, /role="tablist"/);
     assert.match(html, /role="tabpanel"/);
     assert.match(html, /prefers-reduced-motion/);
+    assert.match(view.guildRows, /<time datetime="[^"]+">/);
+    assert.doesNotMatch(view.guildRows, /<t:/);
+    assert.match(html, /response\.ok && result\?\.success/);
+    assert.match(html, /ออกจากระบบไม่สำเร็จ ลองใหม่อีกครั้ง/);
 });

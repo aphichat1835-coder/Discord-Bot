@@ -288,24 +288,29 @@ test("regression: ensureVoiceSession does not reference mainClient.guilds", () =
     const src = readLifecycleSrc();
     const body = extractFunctionBody(src, "ensureVoiceSession");
     assert.ok(body, "ensureVoiceSession must exist in lifecycle.js");
-    assert.ok(
-        !body.includes("mainClient.guilds") && !body.includes("mainClient?.guilds"),
+    assert.equal(
+        body.includes("mainClient.guilds"),
+        false,
         "ensureVoiceSession must NOT call mainClient.guilds — violates separation from main bot"
+    );
+    assert.equal(
+        body.includes("mainClient?.guilds"),
+        false,
+        "ensureVoiceSession must NOT call mainClient?.guilds — violates separation from main bot"
     );
 });
 
-test("regression: Voice session startup rejects a token that belongs to another Discord account", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("regression: Voice session startup does not bind a token to the requester account", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const src = readLifecycleSrc();
-    assert.match(src, /TOKEN_OWNER_MISMATCH/);
+    assert.doesNotMatch(src, /TOKEN_OWNER_MISMATCH/);
     assert.equal(src.includes("token_in_use_by_another_user"), false);
     assert.match(src, /replaceExistingVoiceSession/);
     assert.match(src, /superseded_by_newer_request/);
 });
 
-test("panel rejects a decodable token with a different owner before session creation", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    const foreignId = "111111111111111111";
-    const token = `${Buffer.from(foreignId).toString("base64url")}.abcdef.abcdefghijklmnopqrstuvwxyz0123456789`;
-    assert.equal(panelInteractionsTest.verifyTokenOwner({ user: { id: "222222222222222222" } }, token), false);
+test("panel has no decoded-token owner gate before session creation", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const src = fs.readFileSync(path.join(__dirname, "../commands/panelInteractions.js"), "utf8"); // nosemgrep
+    assert.doesNotMatch(src, /verifyTokenOwner|decodeTokenOwnerIdSafe|TOKEN_OWNER_MISMATCH/);
 });
 
 test("regression: ensureVoiceSession does not call resolveVoiceTarget", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
@@ -326,9 +331,15 @@ test("regression: connectToVoice resolves guild via self-client param, not mainC
         body.includes("client.guilds"),
         "connectToVoice must resolve guild via self-client parameter"
     );
-    assert.ok(
-        !body.includes("mainClient.guilds") && !body.includes("st.mainClient.guilds"),
+    assert.equal(
+        body.includes("mainClient.guilds"),
+        false,
         "connectToVoice must NOT use mainClient.guilds"
+    );
+    assert.equal(
+        body.includes("st.mainClient.guilds"),
+        false,
+        "connectToVoice must NOT use st.mainClient.guilds"
     );
 });
 

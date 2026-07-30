@@ -9,7 +9,6 @@ const {
     verifyPinCredential
 } = require("./pinCredential");
 
-const MAIN_SESSION_COOKIE = "__da_session";
 const MAIN_CSRF_COOKIE = "__da_csrf";
 const DEFAULT_BRUTE_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_LOCKOUT_MS = 15 * 60 * 1000;
@@ -240,9 +239,10 @@ function shortHash(value) {
 
 function bruteKey(req) {
     const ip = String(req.ip || "unknown");
-    const session = readCookie(req, MAIN_SESSION_COOKIE) || (req.authenticatedByServerSecret ? "server-secret" : "anonymous");
-    const actor = String(req.authenticatedOwnerId || req.user?.id || "owner-boundary");
-    return `${shortHash(ip)}:${shortHash(session)}:${shortHash(actor)}`;
+    const verifiedActor = req?.authenticatedByServerSecret === true
+        ? String(req.authenticatedOwnerId || req.user?.id || "server-secret")
+        : "anonymous";
+    return `${shortHash(ip)}:${shortHash(verifiedActor)}`;
 }
 
 function createShadowPortalAuth({
@@ -263,6 +263,7 @@ function createShadowPortalAuth({
     settingStore = sessionManager
 } = {}) {
     const bruteGuard = new Map();
+    const boundedMaxBruteKeys = Math.max(1, Math.floor(Number(maxBruteKeys) || DEFAULT_MAX_KEYS));
 
     function emit(event, req, extra = {}) {
         if (typeof onAuthEvent !== "function") return;
@@ -275,28 +276,46 @@ function createShadowPortalAuth({
 
     function cleanup(now = Date.now()) {
         for (const [key, rec] of bruteGuard) {
-            if (!rec || now - Number(rec.updatedAt || 0) > bruteTtlMs) bruteGuard.delete(key);
-        }
-        while (bruteGuard.size > maxBruteKeys) {
-            const oldest = bruteGuard.keys().next().value;
-            if (!oldest) break;
-            bruteGuard.delete(oldest);
+            const lockActive = Number(rec?.lockUntil || 0) > now;
+            if (!rec || (!lockActive && now - Number(rec.updatedAt || 0) > bruteTtlMs)) {
+                bruteGuard.delete(key);
+            }
         }
     }
 
+    function reserveBruteRecord(key, now = Date.now()) {
+        if (bruteGuard.has(key) || bruteGuard.size < boundedMaxBruteKeys) return true;
+
+        let oldestUnlockedKey = null;
+        let oldestUpdatedAt = Number.POSITIVE_INFINITY;
+        for (const [candidateKey, record] of bruteGuard) {
+            if (Number(record?.lockUntil || 0) > now) continue;
+            const updatedAt = Number(record?.updatedAt || 0);
+            if (updatedAt < oldestUpdatedAt) {
+                oldestUnlockedKey = candidateKey;
+                oldestUpdatedAt = updatedAt;
+            }
+        }
+        if (!oldestUnlockedKey) return false;
+        bruteGuard.delete(oldestUnlockedKey);
+        return true;
+    }
+
     function trackFailedPin(req, providedPin) {
-        if (!readNonEmptyPin(providedPin)) return;
-        cleanup();
+        if (!readNonEmptyPin(providedPin)) return true;
+        const now = Date.now();
+        cleanup(now);
         const key = bruteKey(req);
+        if (!reserveBruteRecord(key, now)) return false;
         const rec = bruteGuard.get(key) || { attempts: 0, lockUntil: 0, updatedAt: 0 };
         rec.attempts += 1;
-        rec.updatedAt = Date.now();
+        rec.updatedAt = now;
         if (rec.attempts >= maxAttempts) {
-            rec.lockUntil = Date.now() + lockoutMs;
+            rec.lockUntil = now + lockoutMs;
             rec.attempts = 0;
         }
         bruteGuard.set(key, rec);
-        cleanup();
+        return true;
     }
 
     function lockMinutes(req) {
@@ -368,8 +387,12 @@ function createShadowPortalAuth({
             return true;
         }
 
-        trackFailedPin(req, candidate);
-        emit("login_failure", req);
+        const trackedFailure = trackFailedPin(req, candidate);
+        emit(trackedFailure ? "login_failure" : "brute_guard_saturated", req);
+        if (!trackedFailure) {
+            res.status(429).send(renderShadowBlockedPage(Math.ceil(lockoutMs / 60_000)));
+            return false;
+        }
         const remainingLock = lockMinutes(req);
         if (remainingLock > 0) {
             res.status(429).send(renderShadowBlockedPage(remainingLock));

@@ -49,4 +49,9 @@ test("private log data stays owner-visible while control characters and bounds a
     assert.equal(object.authorization, "Bearer secret-value");
     assert.equal(object.nested.accessToken, "secret-token");
     assert.equal(object.nested.safe, "visible");
+
+    const prototypeSafe = sanitizeSensitiveValue(JSON.parse('{"__proto__":{"polluted":true}}'));
+    assert.equal(Object.getPrototypeOf(prototypeSafe), null);
+    assert.equal(prototypeSafe.__proto__.polluted, "true");
+    assert.equal(Object.hasOwn(prototypeSafe, "__proto__"), true);
 });
