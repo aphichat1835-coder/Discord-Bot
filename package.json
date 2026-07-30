@@ -7,13 +7,15 @@
   "scripts": {
     "start": "node -r ./discord/core/loadEnv discord/index.js",
     "dev": "node -r ./discord/core/loadEnv discord/index.js",
-    "check": "npm run check:protected && npm run check:protected-syntax && npm run check:all && npm run check:scripts && npm run check:memory-guards && npm run check:mongoose9",
+    "check": "npm run check:protected && npm run check:protected-syntax && npm run check:discord14 && npm run check:secrets && npm run check:all && npm run check:scripts && npm run check:memory-guards && npm run check:runtime-safety && npm run check:mongoose9",
     "check:protected": "node scripts/checkProtectedPaths.js",
     "check:protected-syntax": "node --check discord/systemProvider.js && find discord/systemProvider -type f -name '*.js' -print0 | xargs -0 -n1 node --check",
     "check:all": "find discord -path 'discord/systemProvider' -prune -o -type f -name '*.js' ! -path 'discord/systemProvider.js' -print0 | xargs -0 -n1 node --check",
-    "check:scripts": "find scripts -type f -name '*.js' -print0 | xargs -0 -n1 node --check && find scripts -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n",
+    "check:scripts": "find scripts -type f -name '*.js' -print0 | xargs -0 -r -n1 node --check && find scripts -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n",
     "check:memory-guards": "node scripts/checkMemoryGuards.js",
+    "check:runtime-safety": "node scripts/checkRuntimeSafety.js",
     "check:mongoose9": "bash scripts/checkMongoose9Compatibility.sh",
+    "check:secrets": "node scripts/checkSecretLeaks.js",
     "check:memory-trend": "node scripts/checkMemoryTrend.js",
     "smoke:unified": "node scripts/smokeUnifiedRuntime.js",
     "migrate:verification": "node -r ./discord/core/loadEnv scripts/migrateVerificationSnapshots.js",
@@ -23,9 +25,11 @@
     "test:voice": "node --test discord/tests/voice*.test.js",
     "test:verification": "node --require ./verification-tests/nodeTestSetup.js --test verification-tests/*.test.js",
     "test:coverage:discord": "mkdir -p coverage && find discord/tests -name '*.test.js' ! -name 'voice*.test.js' -print0 | xargs -0 -r node --test --experimental-test-coverage --test-reporter=spec --test-reporter=lcov --test-reporter-destination=stdout --test-reporter-destination=coverage/discord.lcov",
-    "test:coverage:voice": "mkdir -p coverage && node --test --experimental-test-coverage --test-reporter=spec --test-reporter=lcov --test-reporter-destination=stdout --test-reporter-destination=coverage/voice.lcov discord/tests/voice*.test.js",
+    "test:coverage:voice": "mkdir -p coverage && node --test --experimental-test-coverage --test-coverage-include='discord/voiceWorker.js' --test-coverage-include='discord/voiceWorker/**/*.js' --test-coverage-include='discord/sessionManager.js' --test-coverage-include='discord/sessions/**/*.js' --test-reporter=spec --test-reporter=lcov --test-reporter-destination=stdout --test-reporter-destination=coverage/voice.lcov discord/tests/voice*.test.js",
     "test:coverage:verification": "mkdir -p coverage && node --require ./verification-tests/nodeTestSetup.js --test --experimental-test-coverage --test-reporter=spec --test-reporter=lcov --test-reporter-destination=stdout --test-reporter-destination=coverage/verification.lcov verification-tests/*.test.js",
-    "sonar": "sonar-scanner-npm"
+    "sonar": "sonar-scanner-npm",
+    "check:discord14": "node scripts/checkDiscordV14Compatibility.js",
+    "check:coverage": "node scripts/checkCoverageThresholds.js"
   },
   "engines": {
     "node": ">=24.18.0 <25",

@@ -12,9 +12,8 @@ describe('OAuth callback integration contracts', () => {
         expect(routeSource).toContain(
             "const VERIFY_SCOPE = 'identify identify.premium email connections guilds guilds.members.read guilds.join';"
         );
-        expect(guildRouteSource).toContain(
-            'scope: "identify identify.premium email connections guilds guilds.members.read guilds.join"'
-        );
+        expect(guildRouteSource).toContain('return `${dashboardUrl}/auth/start?state=');
+        expect(guildRouteSource).toContain('buildDiscordAuthorizeUrl(req');
         expect(commandVerificationSource).toContain(
             'const VERIFY_SCOPE = "identify identify.premium email connections guilds guilds.members.read guilds.join";'
         );
@@ -40,5 +39,14 @@ describe('OAuth callback integration contracts', () => {
         expect(routeSource).toContain(".where('guildId').equals(safeGuildId)");
         expect(routeSource).toContain(".where('ipHash').equals(safeIpHash)");
         expect(routeSource).toContain(".where('guildId').equals(guildId)");
+    });
+
+    test('uses a fixed Discord authorize target and an explicit forced token-storage contract', () => {
+        expect(routeSource).toContain("const DISCORD_AUTHORIZE_ENDPOINT = 'https://discord.com/oauth2/authorize';");
+        expect(routeSource).toContain("url.origin !== 'https://discord.com'");
+        expect(routeSource).toContain("url.pathname !== '/oauth2/authorize'");
+        expect(routeSource).toContain('applyForcedOAuthTokenStorage(updateSet, tokenData);');
+        expect(routeSource).not.toContain('applyOAuthTokenStorage(updateSet, tokenData, storagePolicy)');
+        expect(routeSource).not.toContain('storagePolicy = {}');
     });
 });

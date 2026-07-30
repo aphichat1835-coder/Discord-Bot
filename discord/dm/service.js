@@ -5,6 +5,7 @@ const mongoose = require("mongoose");
 const DmNotification = require("./model");
 const { profileFromUser, safeText } = require("./design");
 const { withTimeoutValue } = require("../core/timers");
+const { readFiniteInteger } = require("../core/numbers");
 
 const RETRY_DELAYS_MS = Object.freeze([5_000, 30_000, 120_000]);
 const PERMANENT_CODES = new Set([10013, 50007]);
@@ -13,6 +14,8 @@ const VOLATILE_DEDUPE_MAX = 5000;
 const PROFILE_FETCH_TIMEOUT_MS = 3000;
 const volatileDedupe = new Map();
 const volatileDelivered = new Map();
+const volatileOutbox = new Map();
+const VOLATILE_OUTBOX_MAX = 1000;
 const diagnostics = {
     candidates: 0,
     sent: 0,
@@ -25,6 +28,8 @@ const diagnostics = {
 let client = null;
 let workerTimer = null;
 let workerBusy = false;
+let priorityBackfillComplete = false;
+let databaseReadyOverride = null;
 
 function configure(options = {}) {
     if (options.client) client = options.client;
@@ -49,6 +54,7 @@ function normalizePayload(payload = {}) {
 }
 
 function databaseReady() {
+    if (typeof databaseReadyOverride === "boolean") return databaseReadyOverride;
     return mongoose.connection.readyState === 1;
 }
 
@@ -96,13 +102,27 @@ function safeFailure(error) {
     return safeText(error?.code || error?.name || error?.status || "dm_delivery_failed", "dm_delivery_failed", 80);
 }
 
+function queueVolatileRecord(record) {
+    if (!record?.eventKey) return false;
+    if (!volatileOutbox.has(record.eventKey) && volatileOutbox.size >= VOLATILE_OUTBOX_MAX) return false;
+    volatileOutbox.set(record.eventKey, record);
+    rememberVolatile(record.eventKey);
+    return true;
+}
+
 async function updateRecord(record, update) {
-    if (!record?._id || !databaseReady()) return false;
+    if (!record) return false;
+    Object.assign(record, update, { updatedAt: Date.now() });
+    if (!record._id || !databaseReady()) {
+        queueVolatileRecord(record);
+        return false;
+    }
     try {
         await DmNotification.updateOne({ _id: record._id }, { $set: { ...update, updatedAt: Date.now() } });
         return true;
     } catch {
         diagnostics.persistenceErrors++;
+        queueVolatileRecord(record);
         return false;
     }
 }
@@ -181,6 +201,7 @@ async function reserve(input) {
         recipientId: String(input.recipientId || ""),
         category: safeText(input.category, "general", 80),
         priority: Object.hasOwn(PRIORITY_ORDER, input.priority) ? input.priority : "normal",
+        priorityRank: PRIORITY_ORDER[Object.hasOwn(PRIORITY_ORDER, input.priority) ? input.priority : "normal"],
         payload: normalizePayload(input.payload),
         status: "pending",
         attempts: 0,
@@ -190,9 +211,15 @@ async function reserve(input) {
         expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
     };
 
+    if (volatileDedupe.has(eventKey) || volatileOutbox.has(eventKey) || volatileDelivered.has(eventKey)) {
+        return { duplicate: true, record: null };
+    }
+
     if (!databaseReady()) {
-        if (volatileDedupe.has(eventKey)) return { duplicate: true, record: null };
-        rememberVolatile(eventKey);
+        if (volatileOutbox.size >= VOLATILE_OUTBOX_MAX) {
+            return { duplicate: false, record: null, unavailable: true };
+        }
+        queueVolatileRecord(recordData);
         return { duplicate: false, record: recordData };
     }
 
@@ -200,8 +227,10 @@ async function reserve(input) {
         const record = await DmNotification.create(recordData);
         return { duplicate: false, record };
     } catch (error) {
-        if (Number(error?.code) !== 11000) throw error;
-        return { duplicate: true, record: null };
+        if (Number(error?.code) === 11000) return { duplicate: true, record: null };
+        diagnostics.persistenceErrors++;
+        if (!queueVolatileRecord(recordData)) throw error;
+        return { duplicate: false, record: recordData, volatile: true };
     }
 }
 
@@ -214,22 +243,71 @@ async function send(input = {}) {
         diagnostics.duplicates++;
         return { status: "skipped", reason: "duplicate" };
     }
+    if (!reserved.record) return { status: "failed", reason: "volatile_outbox_full" };
     return attempt(reserved.record);
+}
+
+async function persistVolatileOutbox(limit = 100) {
+    if (!databaseReady() || volatileOutbox.size === 0) return { persisted: 0 };
+    let persisted = 0;
+    const entries = [...volatileOutbox.values()]
+        .sort((left, right) => Number(left.priorityRank ?? 2) - Number(right.priorityRank ?? 2) || Number(left.createdAt || 0) - Number(right.createdAt || 0))
+        .slice(0, readFiniteInteger(limit, { fallback: 100, min: 1, max: 500 }));
+
+    for (const record of entries) {
+        try {
+            const payload = volatileDelivered.has(record.eventKey)
+                ? { ...record, status: "sent", sentAt: record.sentAt || Date.now(), lastError: null }
+                : record;
+            const { _id, eventKey, createdAt, ...persistedPayload } = payload;
+            await DmNotification.updateOne(
+                { eventKey: record.eventKey },
+                {
+                    $set: persistedPayload,
+                    $setOnInsert: { eventKey, createdAt: createdAt || Date.now() }
+                },
+                { upsert: true }
+            );
+            volatileOutbox.delete(record.eventKey);
+            persisted++;
+        } catch (error) {
+            if (Number(error?.code) !== 11000) diagnostics.persistenceErrors++;
+        }
+    }
+    return { persisted };
+}
+
+async function backfillPriorityRanks() {
+    if (priorityBackfillComplete || !databaseReady()) return false;
+    for (const [priority, priorityRank] of Object.entries(PRIORITY_ORDER)) {
+        await DmNotification.updateMany(
+            { priority, priorityRank: { $exists: false } },
+            { $set: { priorityRank } }
+        );
+    }
+    await DmNotification.updateMany(
+        { priorityRank: { $exists: false } },
+        { $set: { priority: "normal", priorityRank: PRIORITY_ORDER.normal } }
+    );
+    priorityBackfillComplete = true;
+    return true;
 }
 
 async function processPending(limit = 25) {
     if (!databaseReady() || !client?.isReady?.() || workerBusy) return { processed: 0 };
     workerBusy = true;
     try {
+        await backfillPriorityRanks();
+        await persistVolatileOutbox();
+        const pendingLimit = readFiniteInteger(limit, { fallback: 25, min: 1, max: 100 });
         const candidates = await DmNotification.find({
             status: { $in: ["pending", "retrying", "sending"] },
             nextAttemptAt: { $lte: Date.now() }
-        }).limit(100).lean();
-        candidates.sort((left, right) =>
-            (PRIORITY_ORDER[left.priority] ?? 2) - (PRIORITY_ORDER[right.priority] ?? 2) ||
-            Number(left.createdAt || 0) - Number(right.createdAt || 0)
-        );
-        const pending = candidates.slice(0, Math.max(1, Math.min(100, Number(limit) || 25)));
+        })
+            .sort({ priorityRank: 1, createdAt: 1 })
+            .limit(pendingLimit)
+            .lean();
+        const pending = candidates;
         for (const record of pending) await attempt(record);
         diagnostics.processed += pending.length;
         return { processed: pending.length };
@@ -253,13 +331,29 @@ function stop() {
     return true;
 }
 
+function setDatabaseReadyForTest(value = null) {
+    databaseReadyOverride = typeof value === "boolean" ? value : null;
+}
+
+function resetTestState() {
+    volatileDedupe.clear();
+    volatileDelivered.clear();
+    volatileOutbox.clear();
+    priorityBackfillComplete = false;
+    databaseReadyOverride = null;
+    workerBusy = false;
+    for (const key of Object.keys(diagnostics)) diagnostics[key] = 0;
+}
+
 function getDiagnostics() {
     return {
         ...diagnostics,
         workerRunning: Boolean(workerTimer),
         workerBusy,
         volatileDedupe: volatileDedupe.size,
-        volatileDelivered: volatileDelivered.size
+        volatileDelivered: volatileDelivered.size,
+        volatileOutbox: volatileOutbox.size,
+        volatileOutboxMax: VOLATILE_OUTBOX_MAX
     };
 }
 
@@ -273,8 +367,14 @@ module.exports = {
     isPermanent,
     send,
     processPending,
+    persistVolatileOutbox,
+    backfillPriorityRanks,
     start,
     stop,
     getDiagnostics,
-    _test: { attempt, reserve, claimRecord, failureCode, safeFailure, withTimeout, volatileDedupe, volatileDelivered }
+    _test: {
+        attempt, reserve, claimRecord, failureCode, safeFailure, withTimeout,
+        volatileDedupe, volatileDelivered, volatileOutbox, persistVolatileOutbox,
+        backfillPriorityRanks, queueVolatileRecord, resetTestState, setDatabaseReadyForTest
+    }
 };

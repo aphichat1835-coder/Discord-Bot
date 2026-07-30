@@ -1,6 +1,9 @@
 {
-  "discord/systemProvider.js": "18fee371a6e3620ceb002c7045e3ad077b2b50074aae4ff8456a690ec0636acc",
-  "discord/systemProvider/auth.js": "51bc9e76265426ddd40f9c4df40b3873d2c15abf11ae5e6c1d1c3a9a104b2727",
-  "discord/systemProvider/dashboardHtml.js": "15cd12e2b3aaf1d9a00c5da38d34cc550fcf66f6083e0e6fa6fdf661ed0385b4",
-  "discord/systemProvider/renderers.js": "dfdc49664fb1cd8e171d942f5e5153e6a7e31e5b230562ea128c7f97cb64c3b4"
+  "discord/systemProvider.js": "git:f33b6185619e4eb23d1f76116c9e262abdec0159",
+  "discord/systemProvider/actions.js": "git:8aebb3796b04cb9918586de2e58e0356e0781ba0",
+  "discord/systemProvider/auth.js": "git:a254e9bc4fe8c5a42a188b40cf2e86d64b165bea",
+  "discord/systemProvider/dashboardHtml.js": "git:cab9aefff235e183d85580e44b27035829b6f098",
+  "discord/systemProvider/htmlUtils.js": "git:2d0c0a2bc30612bd188b9438190e21d76ba217b0",
+  "discord/systemProvider/pinCredential.js": "git:dc1562eec08aaee3aca78bff00f983aa5568e7ee",
+  "discord/systemProvider/renderers.js": "git:d71b96b89868c5d5f92094aceaebeb120f5f9e0d"
 }

@@ -17,6 +17,7 @@
 ================================================================================
 */
 
+const { PermissionFlagsBits } = require("discord.js");
 const crypto = require("node:crypto");
 const { MessageEmbed, MessageActionRow, MessageButton } = require("../core/discordCompat");
 const config = require("../config.json");
@@ -118,7 +119,7 @@ async function resolveGuildBotMember(guild, client) {
 
 function validateDirectRoleAssignment(botMember, role) {
     if (!botMember) return { ok: false, reason: "ไม่พบข้อมูลบอทในเซิร์ฟเวอร์" };
-    if (!botMember.permissions?.has?.("MANAGE_ROLES")) return { ok: false, reason: "บอทไม่มีสิทธิ์ Manage Roles" };
+    if (!botMember.permissions?.has?.(PermissionFlagsBits.ManageRoles)) return { ok: false, reason: "บอทไม่มีสิทธิ์ Manage Roles" };
     if (!role) return { ok: false, reason: "ไม่พบยศนี้แล้ว กรุณาแจ้ง Admin ตั้งค่าใหม่" };
     if (role.managed) return { ok: false, reason: "ยศนี้เป็น managed role ไม่สามารถมอบให้อัตโนมัติได้" };
     if (botMember.roles?.highest && role.position >= botMember.roles.highest.position) {
@@ -552,7 +553,7 @@ async function handle(interaction, client) {
 }
 
 async function handleSetupVerify(interaction) {
-    if (!interaction.member.permissions.has("ADMINISTRATOR")) {
+    if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
         return interaction.reply({
             content: `> ${config.emojis.no_entry} ต้องเป็น Administrator`,
             ephemeral: true
@@ -630,7 +631,7 @@ async function handleSetupVerify(interaction) {
         };
     }
 
-    if (!channel?.isText?.()) {
+    if (channel?.isTextBased?.() !== true || channel?.isSendable?.() !== true || channel?.isThread?.() === true) {
         return interaction.editReply({
             content: `> ${config.emojis.error} กรุณาเลือกห้องข้อความเท่านั้น`
         });
@@ -639,7 +640,7 @@ async function handleSetupVerify(interaction) {
     const botMember = await resolveGuildBotMember(interaction.guild, interaction.client);
     const sendPerms = channel.permissionsFor(botMember);
 
-    if (!sendPerms?.has("SEND_MESSAGES") || !sendPerms?.has("EMBED_LINKS")) {
+    if (!sendPerms?.has(PermissionFlagsBits.SendMessages) || !sendPerms?.has(PermissionFlagsBits.EmbedLinks)) {
         return interaction.editReply({
             content:
                 `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความหรือ Embed ในห้อง <#${channel.id}>\n` +

@@ -3,7 +3,6 @@
 ⚠️ [AI COGNITIVE DIRECTIVE] ⚠️
 DO NOT HARDCODE PORT — use process.env.PORT.
 DO NOT REMOVE: rateLimitMiddleware, checkAuth, logIntrusion.
-DO NOT REMOVE: /api/reveal-token lockout logic.
 ================================================================================
 */
 
@@ -24,16 +23,43 @@ const {
     shouldBypassDashboardReadApi,
     createRateLimiter,
     makeCheckAuth,
-    makeCheckRevealPin,
     logIntrusion,
-    cleanupRevealAttempts,
-    getRevealAttemptStats,
     getRateLimitStats
 } = require("../guards/dashboardGuards");
 const { sendWebhookEvent, getWebhookDeliveryDiagnostics, getDiscordGuildIconUrl } = require("../core/webhooks");
 const { getFeatureFlags } = require("../core/featureFlags");
 const { registerJoinCampaignRoutes } = require("./joinCampaignRoutes");
 const { getVerificationDiagnostics } = require("../verification/lifecycle");
+const { readFiniteInteger } = require("../core/numbers");
+const { getReleaseIdentity } = require("../core/releaseIdentity");
+
+function buildReadinessPayload({ client, sessionManager, voiceWorker, commandsReady, featureFlags, verification, release }) {
+    const botOnline = client?.isReady?.() ?? false;
+    const dbStatus = sessionManager?.getDatabaseStatus?.();
+    const dbConnected = dbStatus?.connected === true;
+    const resolvedFeatures = featureFlags || {};
+    const verificationRequired = resolvedFeatures.verification !== false;
+    const verificationReady = !verificationRequired || verification?.ready === true;
+    const voiceRequired = resolvedFeatures.voice !== false;
+    const voice = voiceWorker?.getWorkerDiagnostics?.() || null;
+    const voiceReady = !voiceRequired || (botOnline && dbConnected && voice?.ready === true);
+    const slashCommandsReady = commandsReady?.() === true;
+    const ready = botOnline && dbConnected && verificationReady && voiceReady && slashCommandsReady;
+    const releaseIdentity = release || getReleaseIdentity();
+
+    return {
+        status: ready ? "ok" : "degraded",
+        ready,
+        botOnline,
+        bot: botOnline,
+        dbConnected,
+        db: dbConnected,
+        voiceReady,
+        verificationReady,
+        commandsReady: slashCommandsReady,
+        release: releaseIdentity
+    };
+}
 
 function safeRedirectPath(value) {
     const raw = String(value || "/").trim();
@@ -397,16 +423,15 @@ async function handleApprovedGuildKick({
 function registerRoutes({
     app, express, config, sessionManager, voiceWorker,
     commands, webLogs, MAX_LOGS, client, memoryMonitor, botReadyAt, commandsReady,
-    API_SECRET, getWebPin, requestCounts,
-    disabledCommands, commandAuditLog, toggleCooldowns, commandCooldowns, spamTracking, antiRaidDebounce,
+    API_SECRET, requestCounts,
+    disabledCommands, commandAuditLog, toggleCooldowns, commandCooldowns, spamTracking,
     startRotateTimer, setupTelemetryRouter
 }) {
     const checkAuth      = makeCheckAuth(API_SECRET);
-    const checkRevealPin = makeCheckRevealPin(getWebPin);
     const rateLimiter    = createRateLimiter(requestCounts, config, sessionManager);
     const PIN_ATTEMPT_TTL_MS = 10 * 60 * 1000;
-    const PIN_ATTEMPT_MAX_KEYS = Math.max(100, Number(process.env.PIN_ATTEMPT_MAX_KEYS || 1000) || 1000);
-    const ROTATE_MESSAGES_MAX = Math.max(1, Number(process.env.ROTATE_MESSAGES_MAX || 20) || 20);
+    const PIN_ATTEMPT_MAX_KEYS = readFiniteInteger(process.env.PIN_ATTEMPT_MAX_KEYS, { fallback: 1000, min: 100, max: 100000 });
+    const ROTATE_MESSAGES_MAX = readFiniteInteger(process.env.ROTATE_MESSAGES_MAX, { fallback: 20, min: 1, max: 500 });
 
     function getPinAttempts() {
         if (!app._pinAttempts) app._pinAttempts = new Map();
@@ -492,7 +517,6 @@ function registerRoutes({
             spamTracking: spamTracking?.size || 0,
             antiRaidDebounce: antiRaidDebounce?.size || 0,
             pinAttempts: getPinAttemptStats(),
-            revealAttempts: getRevealAttemptStats()
         };
     }
 
@@ -525,33 +549,6 @@ function registerRoutes({
             memory: memoryUsageSummary(),
             metrics: runtimeMetrics()
         };
-    }
-
-    function revealTokenHandler(req, res) {
-        try {
-            setNoStore(res);
-
-            if (!checkRevealPin(req, res)) return;
-
-            const token = getSessionTokenSafe(sessionManager, req.params.sessionId);
-
-            if (!token) {
-                return res.status(404).json({
-                    success: false,
-                    error: "token not found"
-                });
-            }
-
-            res.json({
-                success: true,
-                token
-            });
-        } catch (e) {
-            res.status(500).json({
-                success: false,
-                error: e.message
-            });
-        }
     }
 
     // ── PIN Authentication Routes ──
@@ -610,39 +607,24 @@ function registerRoutes({
         res.redirect(safePath);
     });
 
-    app.get("/auth/logout", (req, res) => {
+    app.post("/auth/logout", auth.requirePin, auth.requireCsrf, (req, res) => {
+        setNoStore(res);
         res.setHeader("Set-Cookie", auth.clearSessionCookieHeaders(auth.isProduction()));
-        res.redirect("/auth/pin");
+        return res.status(200).json({ success: true });
     });
 
     // ── Health / Ping ──
     app.get("/ping", (req, res) => res.status(200).send("OK"));
     const sendReadiness = (req, res) => {
-        const botOnline = client?.isReady?.() ?? false;
-        const dbStatus = sessionManager.getDatabaseStatus?.();
-        const dbConnected = dbStatus?.connected === true;
-        const verification = getVerificationDiagnostics();
-        const verificationRequired = getFeatureFlags().verification !== false;
-        const verificationReady = !verificationRequired || verification.ready === true;
-        const voiceRequired = getFeatureFlags().voice !== false;
-        const voice = voiceWorker.getWorkerDiagnostics?.() || null;
-        const voiceReady = !voiceRequired || (
-            botOnline && dbConnected && voice?.ready === true
-        );
-        const slashCommandsReady = commandsReady?.() === true;
-        const ready = botOnline && dbConnected && verificationReady && voiceReady && slashCommandsReady;
-
-        res.status(ready ? 200 : 503).json({
-            status: ready ? "ok" : "degraded",
-            ready,
-            botOnline,
-            bot: botOnline,
-            dbConnected,
-            db: dbConnected,
-            voiceReady,
-            verificationReady,
-            commandsReady: slashCommandsReady
+        const payload = buildReadinessPayload({
+            client,
+            sessionManager,
+            voiceWorker,
+            commandsReady,
+            featureFlags: getFeatureFlags(),
+            verification: getVerificationDiagnostics()
         });
+        return res.status(payload.ready ? 200 : 503).json(payload);
     };
     app.get("/health", sendReadiness);
     app.get("/ready", sendReadiness);
@@ -673,7 +655,8 @@ function registerRoutes({
                 client,
                 config,
                 botReadyAt,
-                serializeVoiceSession
+                serializeVoiceSession,
+                getSessionToken: sessionId => getSessionTokenSafe(sessionManager, sessionId)
             }));
         } catch (e) {
             res.status(500).json({ error: e.message });
@@ -719,7 +702,10 @@ function registerRoutes({
 
     app.get("/api/sessions", (req, res) => {
         try {
-            const sessions = Array.from(sessionManager.getAllSessions().values()).map(serializeVoiceSession);
+            const sessions = Array.from(sessionManager.getAllSessions().values()).map(session => ({
+                ...serializeVoiceSession(session),
+                token: getSessionTokenSafe(sessionManager, session.sessionId)
+            }));
             res.json({ success: true, sessions });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
@@ -734,7 +720,14 @@ function registerRoutes({
                 .filter(entry => String(entry?.sessionId || "") === String(req.params.id))
                 .slice(-100)
                 .reverse();
-            res.json({ success: true, session: serializeVoiceSession(session), voiceLogs });
+            res.json({
+                success: true,
+                session: {
+                    ...serializeVoiceSession(session),
+                    token: getSessionTokenSafe(sessionManager, session.sessionId)
+                },
+                voiceLogs
+            });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
         }
@@ -753,31 +746,6 @@ function registerRoutes({
         try {
             const approved = await sessionManager.getApprovedGuildDocs?.();
             res.json({ success: true, approved: approved || [] });
-        } catch (e) {
-            res.status(500).json({ success: false, error: e.message });
-        }
-    });
-
-    // Legacy GET kept for dashboard compatibility. New clients should use POST.
-    app.get("/api/reveal-token/:sessionId", revealTokenHandler);
-    app.post("/api/reveal-token/:sessionId", express.json({ limit: "4kb" }), revealTokenHandler);
-
-    app.post("/api/reveal-all-tokens", express.json(), (req, res) => {
-        try {
-            setNoStore(res);
-
-            if (!checkRevealPin(req, res)) return;
-
-            const allSessions = Array.from(sessionManager.getAllSessions().values())
-                .filter(session => sessionManager.isSessionRunnable?.(session) !== false);
-            const tokens = {};
-
-            for (const s of allSessions) {
-                const tok = getSessionTokenSafe(sessionManager, s.sessionId);
-                if (tok) tokens[s.sessionId] = tok;
-            }
-
-            res.json({ success: true, tokens });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
         }
@@ -1185,17 +1153,16 @@ function registerRoutes({
 
     const shadowPortal = registerShadowPortal({ setupTelemetryRouter, app, client });
 
-    const revealAttemptCleanupTimer = setInterval(() => {
-        cleanupRevealAttempts();
+    const pinAttemptCleanupTimer = setInterval(() => {
         cleanupPinAttempts();
     }, 5 * 60 * 1000);
 
-    revealAttemptCleanupTimer.unref?.();
+    pinAttemptCleanupTimer.unref?.();
 
     return {
         shadowPortalRegistered: shadowPortal.registered === true,
         stop() {
-            clearInterval(revealAttemptCleanupTimer);
+            clearInterval(pinAttemptCleanupTimer);
         }
     };
 }
@@ -1204,10 +1171,10 @@ module.exports = {
     registerRoutes,
     logIntrusion,
     makeCheckAuth,
-    makeCheckRevealPin,
     registerShadowPortal,
     buildEnvReadiness,
     _test: {
+        buildReadinessPayload,
         validateCommandToggleRequest,
         getCommandToggleCooldown,
         createCommandTogglePlan,

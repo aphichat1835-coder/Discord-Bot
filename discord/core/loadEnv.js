@@ -58,10 +58,22 @@ function loadLocalEnv(env = process.env) {
     return loaded;
 }
 
+function deleteBlankEnvironmentValues(env = process.env) {
+    let removed = 0;
+    for (const [key, value] of Object.entries(env)) {
+        if (typeof value !== "string" || value.trim() !== "") continue;
+        delete env[key];
+        removed += 1;
+    }
+    return removed;
+}
+
 loadLocalEnv();
+deleteBlankEnvironmentValues();
 
 module.exports = {
     parseEnvLine,
     loadEnvFile,
-    loadLocalEnv
+    loadLocalEnv,
+    deleteBlankEnvironmentValues
 };

@@ -7,6 +7,7 @@ DO NOT REMOVE: isShuttingDown flag — critical for SIGTERM safety (เฟส 8+
 DO NOT SIMPLIFY: OperationQueue concurrency — prevents IP ban from Discord.
 ================================================================================
 */
+const crypto = require("node:crypto");
 const { Client: SelfClient } = require("discord.js-selfbot-v13");
 const { joinVoiceChannel, getVoiceConnection, VoiceConnectionStatus, entersState } = require("@discordjs/voice");
 const sessionManager = require("../sessionManager");
@@ -69,6 +70,8 @@ const { EVENTS } = notifications;
 const { startNaturalTimer, stopNaturalTimer, stopAllNaturalTimers } = require("./natural");
 const { startAutoDeafTimer, stopAutoDeafTimer, stopAllAutoDeafTimers } = require("./autoDeaf");
 const { loginQueue, recoveryQueue } = require("./queue");
+
+const ensureSessionFlights = new Map();
 
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -272,10 +275,10 @@ async function startExistingSession({ sessionId, token, channelId, reason }) {
     };
 }
 
-async function cleanupFailedEnsureSession(sessionId, ownerId, reason) {
+async function cleanupFailedEnsureSession(sessionId, ownerId, reason, expectedGeneration = null) {
     if (!sessionId) return;
 
-    const removed = await sessionManager.deleteSession(sessionId).catch(() => false);
+    const removed = await sessionManager.deleteSession(sessionId, { expectedGeneration }).catch(() => false);
     if (removed) return;
 
     await sessionManager.markSessionFailed?.(
@@ -351,20 +354,74 @@ function setupClientEventHandlers(newClient, sessionId) {
     });
 }
 
-async function performClientLogin(newClient, sessionId, session, tokenHash, tokenString) {
+async function performClientLogin(newClient, sessionId, session, tokenHash, tokenString, deps = {}) {
+    const loginGeneration = crypto.randomUUID();
+    const getSession = deps.getSession || (id => sessionManager.getSession(id));
+    const waitForCooldown = deps.waitForTokenLoginCooldown || waitForTokenLoginCooldown;
+    const queue = deps.loginQueue || loginQueue;
+    const waitWithTimeout = deps.withTimeoutReject || withTimeoutReject;
+    const disposeClient = deps.disposeSelfClient || disposeSelfClient;
+    const putClientInPool = deps.setSessionClientInPool || setSessionClientInPool;
+    const markInvalid = deps.markTokenInvalid || markTokenInvalid;
+    const isShuttingDown = deps.isShuttingDown || (() => st.isShuttingDown);
+    session.loginGeneration = loginGeneration;
+    let loginPromise = null;
+
+    const disposeLateLogin = () => {
+        Promise.resolve(loginPromise).then(() => {
+            const current = getSession(sessionId);
+            if (
+                isShuttingDown() ||
+                !current ||
+                current !== session ||
+                current.loginGeneration !== loginGeneration
+            ) {
+                try { disposeClient(newClient, "late-login-completion"); } catch {}
+            }
+        }).catch(() => {});
+    };
+
     try {
-        await waitForTokenLoginCooldown(tokenHash);
-        await loginQueue.add(async () => {
-            await withTimeoutReject(newClient.login(tokenString), CONFIG.LOGIN_TIMEOUT, "LOGIN_TIMEOUT");
+        await waitForCooldown(tokenHash);
+        await queue.add(async () => {
+            loginPromise = Promise.resolve().then(() => newClient.login(tokenString));
+            loginPromise.catch(() => {});
+            try {
+                await waitWithTimeout(loginPromise, CONFIG.LOGIN_TIMEOUT, "LOGIN_TIMEOUT");
+            } catch (error) {
+                if (session.loginGeneration === loginGeneration) session.loginGeneration = null;
+                disposeLateLogin();
+                throw error;
+            }
         });
-        setSessionClientInPool(sessionId, session, tokenHash, newClient);
+
+        const current = getSession(sessionId);
+        if (
+            isShuttingDown() ||
+            !current ||
+            current !== session ||
+            current.loginGeneration !== loginGeneration
+        ) {
+            try { disposeClient(newClient, "cancelled-login-generation"); } catch {}
+            throw new Error("LOGIN_GENERATION_CANCELLED");
+        }
+
+        if (!newClient.user?.id || String(newClient.user.id) !== String(session.ownerId || "")) {
+            const ownershipError = new Error("TOKEN_OWNER_MISMATCH");
+            ownershipError.code = "TOKEN_OWNER_MISMATCH";
+            throw ownershipError;
+        }
+
+        session.loginGeneration = null;
+        putClientInPool(sessionId, session, tokenHash, newClient);
     } catch (err) {
+        if (session.loginGeneration === loginGeneration) session.loginGeneration = null;
         console.error(`[WORKER] ❌ Login failed for ${sanitizeLogText(sessionId)}. Destroying ghost client.`);
-        try { disposeSelfClient(newClient, "login-failure"); } catch {}
+        try { disposeClient(newClient, "login-failure"); } catch {}
         if (err.code === "OPERATION_QUEUE_FULL") throw new Error("VOICE_QUEUE_BUSY");
         const isTokenErr = isInvalidTokenError(err);
         if (isTokenErr) {
-            await markTokenInvalid(sessionId, "login_rejected");
+            await markInvalid(sessionId, "login_rejected");
             throw new Error("TOKEN_INVALID");
         }
         throw err;
@@ -405,6 +462,23 @@ async function resolveOrLoginSessionClient(sessionId, session, tokenHash, tokenS
     await performClientLogin(newClient, sessionId, session, tokenHash, tokenString);
 }
 
+
+function startupGuardError(code, stage) {
+    const error = new Error(code);
+    error.code = code;
+    error.stage = stage;
+    return error;
+}
+
+function assertVoiceStartupAllowed(sessionId, session, stage, deps = {}) {
+    const isShuttingDown = deps.isShuttingDown || (() => st.isShuttingDown);
+    const getSession = deps.getSession || (id => sessionManager.getSession(id));
+    if (isShuttingDown()) throw startupGuardError("SYSTEM_SHUTTING_DOWN", stage);
+    const current = getSession(sessionId);
+    if (!current || current !== session) throw startupGuardError("SESSION_SUPERSEDED", stage);
+    return current;
+}
+
 async function startSession(sessionId, tokenString, options = {}) {
     if (st.isShuttingDown) throw new Error("SYSTEM_SHUTTING_DOWN");
 
@@ -419,8 +493,10 @@ async function startSession(sessionId, tokenString, options = {}) {
     }
 
     let tokenHash = null;
+    const startupDeps = options.startupDeps || {};
 
     try {
+        assertVoiceStartupAllowed(sessionId, session, "pre_login", startupDeps);
         tokenHash = getSessionTokenHash(sessionId, session);
         if (!tokenHash) throw new Error("TOKEN_DECRYPTION_FAILED");
 
@@ -429,20 +505,26 @@ async function startSession(sessionId, tokenString, options = {}) {
          * gets separate SelfClient instances to avoid shared gateway voice-state fights.
          */
         await resolveOrLoginSessionClient(sessionId, session, tokenHash, tokenString);
+        assertVoiceStartupAllowed(sessionId, session, "post_login", startupDeps);
 
         const jitterDelay = randomInt(1500, 3500);
         await delay(jitterDelay);
+        assertVoiceStartupAllowed(sessionId, session, "post_jitter", startupDeps);
+        assertVoiceStartupAllowed(sessionId, session, "pre_connect", startupDeps);
 
         const conn = await connectToVoice(session.client, session.serverId, session.voiceId, tokenHash, sessionId);
         session.connection = conn;
+        assertVoiceStartupAllowed(sessionId, session, "post_connect", startupDeps);
 
         console.log(`[WORKER] 🎧 Voice connected for Session: ${sanitizeLogText(sessionId)} Guild: ${session.serverId}`);
 
         await refreshSessionMetadataFast(sessionId, 1800).catch(() => {});
         cleanupLeanSessionClient(sessionId, "post-connect");
 
+        assertVoiceStartupAllowed(sessionId, session, "pre_timers", startupDeps);
         startNaturalTimer(sessionId);
         startAutoDeafTimer(sessionId);
+        assertVoiceStartupAllowed(sessionId, session, "pre_ready", startupDeps);
 
         const voiceInfo = getSelfVoiceStateInfo(session.client, session);
         await notifications.markReady(sessionId, {
@@ -717,59 +799,85 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
 // ════════════════════════════════════════════════════════════════════════════
 //  🔒  ensureVoiceSession (entry point for external callers)
 // ════════════════════════════════════════════════════════════════════════════
-async function reuseExistingVoiceSession(existing, input, token, channelId, reason, raced = false) {
-    const existingSession = existing.session;
-    if (!input.ownerId || String(existingSession.ownerId || "") !== String(input.ownerId)) {
-        return {
-            ok: false,
-            action: "token_in_use_by_another_user"
-        };
-    }
+async function replaceExistingVoiceSession(existing, input, deps = {}) {
+    if (!existing?.session) return { replaced: false, replacedSessionId: null };
 
-    if (String(existingSession.voiceId || "") !== String(channelId)) {
-        return {
-            ok: false,
-            action: "already_active_different_channel",
-            sessionId: existing.id || existingSession.sessionId,
-            session: existingSession,
-            requested: { guildId: input.guildId, channelId },
-            existing: {
-                guildId: existingSession.serverId,
-                channelId: existingSession.voiceId
-            }
-        };
-    }
-
-    const result = await startExistingSession({
-        sessionId: existing.id || existingSession.sessionId,
-        token,
-        channelId,
-        reason
+    const replacedSessionId = existing.id || existing.session.sessionId;
+    const stop = deps.stopSession || stopSession;
+    const stopped = await stop(replacedSessionId, {
+        stoppedBy: input.ownerId || "latest_request",
+        notifyReason: null,
+        actorNotified: false
     });
+    if (!stopped) {
+        const error = new Error("SESSION_REPLACEMENT_FAILED");
+        error.code = "SESSION_REPLACEMENT_FAILED";
+        error.sessionId = replacedSessionId;
+        throw error;
+    }
+    return { replaced: true, replacedSessionId };
+}
+
+function mergeVoiceSessionReplacement(current, next) {
     return {
-        ok: true,
-        reused: true,
-        ...(raced ? { raced: true } : {}),
-        ...result
+        replaced: current.replaced || next.replaced,
+        replacedSessionId: next.replacedSessionId || current.replacedSessionId
     };
 }
 
-async function recoverDuplicateVoiceSession(err, input, tokenHash, token, channelId, reason) {
-    if (err.message !== "ALREADY_ACTIVE_IN_GUILD") return null;
-
-    const racedExisting = sessionManager.findActiveVoiceSessionByTokenGuild?.(tokenHash, input.guildId);
-    if (!racedExisting?.session) return null;
-
-    const result = await reuseExistingVoiceSession(racedExisting, input, token, channelId, reason, true);
-    if (result.ok) return result;
-    if (result.action === "already_active_different_channel") return null;
-
-    const ownershipError = new Error("token_in_use_by_another_user");
-    ownershipError.code = "TOKEN_IN_USE_BY_ANOTHER_USER";
-    throw ownershipError;
+function isDuplicateVoiceSessionError(error) {
+    return error?.code === "ALREADY_ACTIVE_IN_GUILD" || error?.message === "ALREADY_ACTIVE_IN_GUILD";
 }
 
-async function ensureVoiceSession(input = {}) {
+async function createVoiceSessionWithDuplicateRecovery({
+    input,
+    token,
+    tokenHash,
+    guildId,
+    channelId,
+    guildName
+}, deps = {}) {
+    const findActive = deps.findActiveVoiceSessionByTokenGuild || sessionManager.findActiveVoiceSessionByTokenGuild?.bind(sessionManager);
+    const createSession = deps.createSession || sessionManager.createSession.bind(sessionManager);
+    const replacementInput = { ...input, guildId, channelId };
+    let replacement = await replaceExistingVoiceSession(findActive?.(tokenHash, guildId), replacementInput, deps);
+    let duplicateRetried = false;
+
+    while (true) {
+        try {
+            const sessionId = await createSession(
+                token,
+                guildId,
+                channelId,
+                guildName,
+                input.ownerId || null,
+                input.ownerAvatar || null,
+                input.ownerTag || null
+            );
+            return { sessionId, replacement };
+        } catch (error) {
+            if (!isDuplicateVoiceSessionError(error) || duplicateRetried) throw error;
+
+            duplicateRetried = true;
+            const racedExisting = findActive?.(tokenHash, guildId);
+            if (!racedExisting?.session) throw error;
+            const racedReplacement = await replaceExistingVoiceSession(racedExisting, replacementInput, deps);
+            replacement = mergeVoiceSessionReplacement(replacement, racedReplacement);
+        }
+    }
+}
+
+async function startCreatedVoiceSession(sessionId, token, getSession, start) {
+    const creationGeneration = getSession(sessionId)?.lifecycleGeneration || null;
+    try {
+        await start(sessionId, token);
+    } catch (error) {
+        error.creationGeneration = creationGeneration;
+        throw error;
+    }
+}
+
+async function ensureVoiceSessionInternal(input = {}, deps = {}) {
     if (st.isShuttingDown) throw new Error("SYSTEM_SHUTTING_DOWN");
 
     const token = String(input.token || "").trim();
@@ -782,51 +890,98 @@ async function ensureVoiceSession(input = {}) {
         ? sessionManager.hashToken(token)
         : sha256(token);
 
-    await repairFailedStopSessionForTokenGuild(token, guildId);
+    const repairFailedStop = deps.repairFailedStopSessionForTokenGuild || repairFailedStopSessionForTokenGuild;
+    const getSession = deps.getSession || sessionManager.getSession.bind(sessionManager);
+    const start = deps.startSession || startSession;
+    const cleanupFailed = deps.cleanupFailedEnsureSession || cleanupFailedEnsureSession;
 
-    const existing = sessionManager.findActiveVoiceSessionByTokenGuild?.(tokenHash, guildId);
-    if (existing?.session) {
-        return reuseExistingVoiceSession(existing, { ...input, guildId }, token, channelId, reason);
-    }
+    await repairFailedStop(token, guildId);
 
     let sessionId = null;
     try {
-        sessionId = await sessionManager.createSession(
+        const creation = await createVoiceSessionWithDuplicateRecovery({
+            input,
             token,
+            tokenHash,
             guildId,
             channelId,
-            guildName,
-            input.ownerId || null,
-            input.ownerAvatar || null,
-            input.ownerTag || null
-        );
-
-        await startSession(sessionId, token);
+            guildName
+        }, deps);
+        sessionId = creation.sessionId;
+        await startCreatedVoiceSession(sessionId, token, getSession, start);
 
         return {
             ok: true,
             reused: false,
-            action: "created",
+            replaced: creation.replacement.replaced,
+            replacedSessionId: creation.replacement.replacedSessionId,
+            action: creation.replacement.replaced ? "replaced_by_latest_request" : "created",
             sessionId,
-            session: sessionManager.getSession(sessionId)
+            session: getSession(sessionId),
+            reason
         };
     } catch (err) {
-        if (!sessionId) {
-            const recovered = await recoverDuplicateVoiceSession(
-                err,
-                { ...input, guildId },
-                tokenHash,
-                token,
-                channelId,
-                reason
-            );
-            if (recovered) return recovered;
-        }
-
         if (sessionId) {
-            await cleanupFailedEnsureSession(sessionId, input.ownerId, reason);
+            await cleanupFailed(
+                sessionId,
+                input.ownerId,
+                reason,
+                err.creationGeneration || getSession(sessionId)?.lifecycleGeneration || null
+            );
         }
         throw err;
+    }
+}
+
+function supersededVoiceResult(generation) {
+    return {
+        ok: false,
+        superseded: true,
+        generation,
+        action: "superseded_by_newer_request"
+    };
+}
+
+async function ensureVoiceSession(input = {}, deps = {}) {
+    const shuttingDown = deps.isShuttingDown || (() => st.isShuttingDown);
+    if (shuttingDown()) throw new Error("SYSTEM_SHUTTING_DOWN");
+
+    const token = String(input.token || "").trim();
+    (deps.validateToken || validateToken)(token);
+
+    const { guildId } = (deps.normalizeVoiceTarget || normalizeVoiceTarget)(input);
+    const hashToken = deps.hashToken || sessionManager.hashToken || sha256;
+    const tokenHash = hashToken(token);
+    const flightKey = `${tokenHash}:${guildId}`;
+    const previousEntry = ensureSessionFlights.get(flightKey) || null;
+    const generation = Number(previousEntry?.generation || 0) + 1;
+    const previousPromise = previousEntry?.promise || Promise.resolve();
+    const runInternal = deps.ensureVoiceSessionInternal || ensureVoiceSessionInternal;
+
+    let promise;
+    promise = previousPromise.catch(() => null).then(async () => {
+        const latestBeforeStart = ensureSessionFlights.get(flightKey);
+        if (latestBeforeStart?.generation !== generation) {
+            return supersededVoiceResult(generation);
+        }
+
+        const result = await runInternal({ ...input, token, guildId, requestGeneration: generation }, deps);
+        const latestAfterStart = ensureSessionFlights.get(flightKey);
+        if (latestAfterStart?.generation !== generation) {
+            return supersededVoiceResult(generation);
+        }
+        return result;
+    });
+
+    ensureSessionFlights.set(flightKey, { generation, promise });
+
+    try {
+        return await promise;
+    } finally {
+        const current = ensureSessionFlights.get(flightKey);
+        if (current?.generation === generation && current?.promise === promise) {
+            ensureSessionFlights.delete(flightKey);
+        }
     }
 }
 
@@ -1096,67 +1251,125 @@ async function autoResume() {
     console.log(`[WORKER] ✅ Auto-resume complete: active=${activeToResume} resumed=${resumed} failed=${failed} skipped=${skipped} total=${sessions.size}`);
 }
 
-async function recoverSessionConnection(sessionId, tokenHash) {
-    try {
-        const session = sessionManager.getSession(sessionId);
-        if (!session || st.isShuttingDown || !isSessionRunnable(session)) return;
+async function handleRecoveryExhaustion(sessionId, tokenHash, session, recovery, deps = {}) {
+    const stopNatural = deps.stopNaturalTimer || stopNaturalTimer;
+    const stopAutoDeaf = deps.stopAutoDeafTimer || stopAutoDeafTimer;
+    const clearRecovery = deps.clearReconnect || clearReconnect;
+    const recoveryMap = deps.recoveryTimestamps || recoveryTimestamps;
+    const markTerminal = deps.markTerminal || notifications.markTerminal;
+    const markFailed = deps.markSessionFailed || sessionManager.markSessionFailed?.bind(sessionManager);
+    const getPooledClient = deps.getSessionClientFromPool || getSessionClientFromPool;
+    const cleanupClient = deps.cleanupSessionClientIfUnused || cleanupSessionClientIfUnused;
 
-        const recovery = await notifications.recordRecoveryAttempt(sessionId, { cause: "health_check" });
-        if (Number(recovery?.attempts || 0) >= CONFIG.MAX_RECONNECT_ATTEMPTS) {
-            stopNaturalTimer(sessionId);
-            stopAutoDeafTimer(sessionId);
-            clearReconnect(sessionId);
-            recoveryTimestamps.delete(sessionId);
-            if (session.connection) {
-                try {
-                    session.connection.destroy();
-                } catch (error) {
-                    console.warn(`[HEARTBEAT] ⚠️ Failed to destroy exhausted connection. session=${sanitizeLogText(sessionId)} code=${sanitizeLifecycleError(error?.code || error?.name)}`);
-                }
-                session.connection = null;
-            }
-            await notifications.markTerminal(sessionId, EVENTS.RECOVERY_EXHAUSTED, {
-                attempts: recovery.attempts,
-                reason: "ระบบลองกู้คืนครบจำนวนที่กำหนดแล้ว แต่ยังยืนยันการเชื่อมต่อไม่ได้"
-            });
-            await sessionManager.markSessionFailed?.(sessionId, "max_reconnect_attempts", null, "health recovery exhausted");
-            const clientRef = session.client || getSessionClientFromPool(sessionId, session, tokenHash);
-            cleanupSessionClientIfUnused(tokenHash, clientRef, sessionId, session, "health-recovery-exhausted");
+    stopNatural(sessionId);
+    stopAutoDeaf(sessionId);
+    clearRecovery(sessionId);
+    recoveryMap.delete(sessionId);
+    if (session.connection) {
+        try {
+            session.connection.destroy();
+        } catch (error) {
+            console.warn(`[HEARTBEAT] ⚠️ Failed to destroy exhausted connection. session=${sanitizeLogText(sessionId)} code=${sanitizeLifecycleError(error?.code || error?.name)}`);
+        }
+        session.connection = null;
+    }
+    await markTerminal(sessionId, EVENTS.RECOVERY_EXHAUSTED, {
+        attempts: recovery.attempts,
+        reason: "ระบบลองกู้คืนครบจำนวนที่กำหนดแล้ว แต่ยังยืนยันการเชื่อมต่อไม่ได้"
+    });
+    await markFailed?.(sessionId, "max_reconnect_attempts", null, "health recovery exhausted");
+    const clientRef = session.client || getPooledClient(sessionId, session, tokenHash);
+    cleanupClient(tokenHash, clientRef, sessionId, session, "health-recovery-exhausted");
+}
+
+async function resolveRecoveryClient(sessionId, session, tokenHash, deps = {}) {
+    const getPooledClient = deps.getSessionClientFromPool || getSessionClientFromPool;
+    const resolveToken = deps.getSessionToken || getSessionToken;
+    const login = deps.resolveOrLoginSessionClient || resolveOrLoginSessionClient;
+    const markFailed = deps.markSessionFailed || sessionManager.markSessionFailed?.bind(sessionManager);
+
+    if (!session.client) session.client = getPooledClient(sessionId, session, tokenHash);
+    if (session.client?.isReady?.()) return true;
+
+    const token = resolveToken(sessionId);
+    if (!token) {
+        if (markFailed) {
+            await markFailed(
+                sessionId,
+                "token_unavailable",
+                null,
+                "health recovery could not decrypt the stored token"
+            ).catch(() => false);
+        }
+        return false;
+    }
+
+    await login(sessionId, session, tokenHash, token);
+    return session.client?.isReady?.() === true;
+}
+
+async function restoreRecoveryVoiceConnection(sessionId, tokenHash, session, deps = {}) {
+    const connect = deps.connectToVoice || connectToVoice;
+    const markReady = deps.markReady || notifications.markReady;
+    const inspectVoice = deps.getSelfVoiceStateInfo || getSelfVoiceStateInfo;
+    const startNatural = deps.startNaturalTimer || startNaturalTimer;
+    const startAutoDeaf = deps.startAutoDeafTimer || startAutoDeafTimer;
+    const conn = await connect(session.client, session.serverId, session.voiceId, tokenHash, sessionId);
+    if (conn) session.connection = conn;
+
+    console.log(`[HEARTBEAT] 💖 Restored connection for ${sanitizeLogText(sessionId)}.`);
+    const voiceInfo = inspectVoice(session.client, session);
+    await markReady(sessionId, {
+        actualChannelId: voiceInfo.channelId || conn.joinConfig?.channelId,
+        actualChannelSource: voiceInfo.channelSource || "connection_state",
+        verifiedAt: Date.now(),
+        reason: "ระบบกู้คืนสำเร็จและยืนยันตำแหน่งในช่องเสียงแล้ว"
+    });
+
+    startNatural(sessionId);
+    startAutoDeaf(sessionId);
+}
+
+function releaseRecoveryOwnership(sessionId, deps = {}) {
+    const getSession = deps.getSession || sessionManager.getSession.bind(sessionManager);
+    const unlock = deps.unlockSession || unlockSession;
+    const latest = getSession(sessionId);
+    if (latest) latest.reconnecting = false;
+    unlock(sessionId);
+}
+
+async function recoverSessionConnection(sessionId, tokenHash, deps = {}) {
+    const getSession = deps.getSession || sessionManager.getSession.bind(sessionManager);
+    const shuttingDown = deps.isShuttingDown || (() => st.isShuttingDown);
+    const runnable = deps.isSessionRunnable || isSessionRunnable;
+    const recordAttempt = deps.recordRecoveryAttempt || notifications.recordRecoveryAttempt;
+    const maxAttempts = deps.maxReconnectAttempts || CONFIG.MAX_RECONNECT_ATTEMPTS;
+    const wait = deps.delay || delay;
+    const jitter = deps.randomInt || randomInt;
+    try {
+        const session = getSession(sessionId);
+        if (!session || shuttingDown() || !runnable(session)) return;
+
+        const recovery = await recordAttempt(sessionId, { cause: "health_check" });
+        if (Number(recovery?.attempts || 0) >= maxAttempts) {
+            await handleRecoveryExhaustion(sessionId, tokenHash, session, recovery, deps);
             return;
         }
 
-        const recoveryJitter = randomInt(1000, 3000);
-        await delay(recoveryJitter);
+        await wait(jitter(1000, 3000));
 
-        if (st.isShuttingDown) return;
+        if (shuttingDown()) return;
 
-        const latest = sessionManager.getSession(sessionId);
-        if (!latest || st.isShuttingDown || !isSessionRunnable(latest)) return;
+        const latest = getSession(sessionId);
+        if (!latest || shuttingDown() || !runnable(latest)) return;
 
-        if (!latest.client) latest.client = getSessionClientFromPool(sessionId, latest, tokenHash);
-        if (!latest.client?.isReady?.()) return;
-
-        const conn = await connectToVoice(latest.client, latest.serverId, latest.voiceId, tokenHash, sessionId);
-        if (conn) latest.connection = conn;
-
-        console.log(`[HEARTBEAT] 💖 Restored connection for ${sanitizeLogText(sessionId)}.`);
-        const voiceInfo = getSelfVoiceStateInfo(latest.client, latest);
-        await notifications.markReady(sessionId, {
-            actualChannelId: voiceInfo.channelId || conn.joinConfig?.channelId,
-            actualChannelSource: voiceInfo.channelSource || "connection_state",
-            verifiedAt: Date.now(),
-            reason: "ระบบกู้คืนสำเร็จและยืนยันตำแหน่งในช่องเสียงแล้ว"
-        });
-
-        startNaturalTimer(sessionId);
-        startAutoDeafTimer(sessionId);
+        if (!await resolveRecoveryClient(sessionId, latest, tokenHash, deps)) return;
+        await restoreRecoveryVoiceConnection(sessionId, tokenHash, latest, deps);
 
     } catch (e) {
         console.error(`[HEARTBEAT] 💔 Recovery failed for ${sanitizeLogText(sessionId)}: ${e.message}`);
     } finally {
-        const latest = sessionManager.getSession(sessionId);
-        if (latest) latest.reconnecting = false;
-        unlockSession(sessionId);
+        releaseRecoveryOwnership(sessionId, deps);
     }
 }
 
@@ -1179,33 +1392,38 @@ function scheduleHealthRecovery(sessionId, session, tokenHash, now) {
     return true;
 }
 
-function processSessionHealthCheck(sessionId, session, now) {
-    if (!isSessionRunnable(session)) return;
+function processSessionHealthCheck(sessionId, session, now, deps = {}) {
+    const runnable = deps.isSessionRunnable || isSessionRunnable;
+    if (!runnable(session)) return false;
 
-    const tokenHash = getSessionTokenHash(sessionId, session);
-    if (!tokenHash) return;
+    const resolveTokenHash = deps.getSessionTokenHash || getSessionTokenHash;
+    const tokenHash = resolveTokenHash(sessionId, session);
+    if (!tokenHash) return false;
 
-    const pooledClient = getSessionClientFromPool(sessionId, session, tokenHash);
-    if (!pooledClient) return;
+    const getPooledClient = deps.getSessionClientFromPool || getSessionClientFromPool;
+    const pooledClient = getPooledClient(sessionId, session, tokenHash);
+    if (!session.client && pooledClient) session.client = pooledClient;
 
-    if (!session.client) session.client = pooledClient;
-    if (!session.client?.isReady?.()) return;
-
+    const clientReady = session.client?.isReady?.() === true;
     const connStatus = session.connection?.state?.status;
-    const needsRecovery = connStatus !== VoiceConnectionStatus.Ready;
+    const readyStatus = deps.readyStatus || VoiceConnectionStatus.Ready;
+    const needsRecovery = !clientReady || connStatus !== readyStatus;
 
-    const lastRecovered = recoveryTimestamps.get(sessionId) || 0;
-    const onCooldown = (now - lastRecovered) < RECOVERY_COOLDOWN_MS;
+    const recoveryMap = deps.recoveryTimestamps || recoveryTimestamps;
+    const lastRecovered = recoveryMap.get(sessionId) || 0;
+    const onCooldown = (now - lastRecovered) < (deps.recoveryCooldownMs || RECOVERY_COOLDOWN_MS);
     session.urgentRecovery = false;
 
     if (!needsRecovery) {
-        sessionManager.touchSession(sessionId);
-        return;
+        (deps.touchSession || sessionManager.touchSession)(sessionId);
+        return false;
     }
 
-    if (!onCooldown && !session.reconnecting && !isSessionLocked(sessionId)) {
-        scheduleHealthRecovery(sessionId, session, tokenHash, now);
+    const locked = (deps.isSessionLocked || isSessionLocked)(sessionId);
+    if (!onCooldown && !session.reconnecting && !locked) {
+        return (deps.scheduleHealthRecovery || scheduleHealthRecovery)(sessionId, session, tokenHash, now);
     }
+    return false;
 }
 
 async function healthCheck() {
@@ -1276,4 +1494,19 @@ module.exports = {
     healthCheck,
     cleanupIdleSessions,
     isInvalidTokenError,
+    _test: {
+        ensureSessionFlights,
+        ensureVoiceSessionInternal,
+        replaceExistingVoiceSession,
+        createVoiceSessionWithDuplicateRecovery,
+        startCreatedVoiceSession,
+        handleRecoveryExhaustion,
+        resolveRecoveryClient,
+        restoreRecoveryVoiceConnection,
+        releaseRecoveryOwnership,
+        supersededVoiceResult,
+        assertVoiceStartupAllowed,
+        performClientLogin,
+        processSessionHealthCheck
+    }
 };

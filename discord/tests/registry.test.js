@@ -59,12 +59,13 @@ test("slash command definitions have stable required shape", () => { // NOSONAR 
     }
 });
 
-test("announce exposes safe mention opt-in", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("announce sends raw mention content without an extra permission toggle", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const announce = slashCommandsData.find(command => command.name === "announce");
     const allowMentions = announce.options.find(option => option.name === "allow_mentions");
+    const content = announce.options.find(option => option.name === "content");
 
-    assert.equal(allowMentions.type, 5);
-    assert.equal(allowMentions.required, false);
+    assert.equal(allowMentions, undefined);
+    assert.match(content.description, /@everyone/);
 });
 
 test("restore exposes dry-run option", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.

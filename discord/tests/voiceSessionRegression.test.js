@@ -30,7 +30,6 @@ const panelInteractionsTest = require("../commands/panelInteractions")._test;
 const isOwnerGlobalControl = panelInteractionsTest.isOwnerGlobalControl;
 const getVisibleVoiceSessions = panelInteractionsTest.getVisibleVoiceSessions;
 const canControlSession = panelInteractionsTest.canControlSession;
-const buildTokenMismatchLogOptions = panelInteractionsTest.buildTokenMismatchLogOptions;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONTRACT COPIES — เฉพาะฟังก์ชันที่ยังต้อง inline เพราะพึ่ง Discord/DB runtime
@@ -249,21 +248,6 @@ test("canControlSession: returns false for null session", () => { // NOSONAR -- 
     assert.equal(canControlSession(interaction, null, "shadow-999"), false);
 });
 
-test("token mismatch warning metadata does not expose owner, actor, or guild identifiers", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    const options = buildTokenMismatchLogOptions(
-        "12345678901234567",
-        "22345678901234567",
-        "32345678901234567"
-    );
-
-    assert.deepEqual(options, {
-        dedupeKey: "token-owner-mismatch",
-        dedupeMs: 300000,
-        summaryLabel: "ตรวจพบ Token ที่เจ้าของบัญชีไม่ตรงกับผู้สั่งงาน",
-        summaryCategory: "SECURITY",
-        eventCode: "security.token.owner_mismatch"
-    });
-});
 
 // ════════════════════════════════════════════════════════════════════════════
 //  7. ensureStartAllowed — guild admin cross-guild block
@@ -310,10 +294,18 @@ test("regression: ensureVoiceSession does not reference mainClient.guilds", () =
     );
 });
 
-test("regression: ensureVoiceSession rejects cross-owner token reuse", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    const body = extractFunctionBody(readLifecycleSrc(), "reuseExistingVoiceSession");
-    assert.ok(body.includes("token_in_use_by_another_user"));
-    assert.ok(body.includes("existingSession.ownerId"));
+test("regression: Voice session startup rejects a token that belongs to another Discord account", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const src = readLifecycleSrc();
+    assert.match(src, /TOKEN_OWNER_MISMATCH/);
+    assert.equal(src.includes("token_in_use_by_another_user"), false);
+    assert.match(src, /replaceExistingVoiceSession/);
+    assert.match(src, /superseded_by_newer_request/);
+});
+
+test("panel rejects a decodable token with a different owner before session creation", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const foreignId = "111111111111111111";
+    const token = `${Buffer.from(foreignId).toString("base64url")}.abcdef.abcdefghijklmnopqrstuvwxyz0123456789`;
+    assert.equal(panelInteractionsTest.verifyTokenOwner({ user: { id: "222222222222222222" } }, token), false);
 });
 
 test("regression: ensureVoiceSession does not call resolveVoiceTarget", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.

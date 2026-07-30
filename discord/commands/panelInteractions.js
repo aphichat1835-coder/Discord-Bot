@@ -25,14 +25,13 @@ const {
     getVoiceChannelLabel
 } = require("../sessions/voiceLabels");
 const {
-    decodeTokenOwnerIdSafe,
     validateTokenFormat
 } = require("../sessions/tokenUtils");
 const {
     getSessionErrorMessage,
     getFallbackSessionErrorMessage
 } = require("../sessions/sessionErrors");
-const { sendWebhookEvent, getDiscordAvatarUrl, getDiscordGuildIconUrl } = require("../core/webhooks");
+const { sendWebhookEvent, getDiscordGuildIconUrl } = require("../core/webhooks");
 const { normalizeDiscordId, PANEL_FIELD_ID_REGEX } = require("./panelHelpers");
 
 function isOwnerGlobalControl(interaction, shadowMasterId) {
@@ -40,14 +39,38 @@ function isOwnerGlobalControl(interaction, shadowMasterId) {
         (shadowMasterId && interaction.user?.id === shadowMasterId);
 }
 
-function buildTokenMismatchLogOptions() {
-    return {
-        dedupeKey: "token-owner-mismatch",
-        dedupeMs: 5 * 60 * 1000,
-        summaryLabel: "ตรวจพบ Token ที่เจ้าของบัญชีไม่ตรงกับผู้สั่งงาน",
-        summaryCategory: "SECURITY",
-        eventCode: "security.token.owner_mismatch"
-    };
+function decodeTokenOwnerIdSafe(token) {
+    try {
+        const encodedUserId = String(token || "").split(".", 1)[0];
+        const userId = Buffer.from(encodedUserId, "base64url").toString("utf8");
+        return /^\d{17,22}$/.test(userId) ? userId : null;
+    } catch {
+        return null;
+    }
+}
+
+function verifyTokenOwner(interaction, token) {
+    try {
+        const tokenUserId = decodeTokenOwnerIdSafe(token);
+        if (!tokenUserId || String(tokenUserId) !== String(interaction.user?.id || "")) {
+            sendWebhookEvent({
+                target: "LOG",
+                severity: "WARNING",
+                category: "SECURITY",
+                code: "security.token.owner_mismatch",
+                title: "Token ไม่ตรงกับผู้สั่งเริ่ม Voice Session",
+                description: "ระบบหยุดคำขอก่อนนำ Token ไปใช้งาน",
+                impact: "ไม่มี Voice Session ใหม่ถูกสร้าง",
+                sourceIconUrl: getDiscordGuildIconUrl(interaction.guild),
+                dedupeKey: "token-owner-mismatch",
+                dedupeMs: 5 * 60 * 1000
+            }).catch(() => {});
+            return false;
+        }
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 function getVisibleVoiceSessions(interaction, getGlobalVoiceSessions, shadowMasterId) {
@@ -296,39 +319,6 @@ async function ensureStartAllowed(interaction, serverId, shadowMasterId) {
     return null;
 }
 
-function reportTokenOwnerWarning(interaction, token) {
-    try {
-        const tokenUserId = decodeTokenOwnerIdSafe(token);
-
-        if (tokenUserId && tokenUserId !== interaction.user.id) {
-            console.warn("[SECURITY] ⚠️ Token ownership mismatch detected.");
-
-            sendWebhookEvent({
-                target: "LOG",
-                severity: "WARNING",
-                category: "SECURITY",
-                code: "security.token.owner_mismatch",
-                title: "Token ไม่ตรงกับเจ้าของบัญชีผู้สั่งงาน",
-                description: "ระบบยกเลิกการเริ่ม Session ก่อนนำ Token ไปใช้งาน",
-                impact: "คำขอถูกปฏิเสธและไม่มี Voice Session ใหม่ถูกสร้าง",
-                context: { "User ID ผู้สั่ง": interaction.user.id },
-                sourceIconUrl: getDiscordGuildIconUrl(interaction.guild),
-                thumbnailUrl: getDiscordAvatarUrl(interaction.user),
-                ...buildTokenMismatchLogOptions()
-            }).catch(() => {});
-            return;
-        }
-
-        if (!tokenUserId) {
-            console.warn("[SECURITY] ⚠️ Token owner could not be decoded safely.");
-        }
-    } catch {
-        console.warn(
-            `[SECURITY] ⚠️ Token owner decode failed safely. user=${interaction.user.id} (${interaction.user.tag})`
-        );
-    }
-}
-
 async function startVoiceSessionFromModal(interaction, client, fields, modalDeps) {
     const { token, serverId, voiceId } = fields;
     const targetGuild = client.guilds.cache.get(serverId);
@@ -387,7 +377,11 @@ async function handleModal(interaction, client, deps = {}) {
         return interaction.editReply({ content: validationError });
     }
 
-    reportTokenOwnerWarning(interaction, fields.token);
+    if (!verifyTokenOwner(interaction, fields.token)) {
+        return interaction.editReply({
+            content: `> ${config.emojis.no_entry} Token นี้ไม่ตรงกับบัญชี Discord ที่กำลังสั่งงาน`
+        });
+    }
 
     let sessionId = null;
 
@@ -397,7 +391,9 @@ async function handleModal(interaction, client, deps = {}) {
         const { startedSession } = result;
         const accountLabel = getVoiceAccountLabel(startedSession);
         const voiceLabel = getVoiceChannelLabel(startedSession);
-        const actionText = result.reused ? "พบ session เดิมและเชื่อมต่อให้แล้ว" : "เริ่ม session ใหม่แล้ว";
+        const actionText = result.action === "replaced_by_latest_request"
+            ? "แทนรายการเดิมด้วยคำสั่งล่าสุดแล้ว"
+            : "เริ่ม session ใหม่แล้ว";
 
         return interaction.editReply({
             content:
@@ -426,6 +422,6 @@ module.exports = {
         canControlSession,
         validateStartFields,
         ensureStartAllowed,
-        buildTokenMismatchLogOptions
+        verifyTokenOwner
     }
 };

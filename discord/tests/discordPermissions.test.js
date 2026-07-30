@@ -7,7 +7,8 @@ const {
     canBanMember,
     canCreateInvite,
     canDeleteMessage,
-    isAdministrator
+    isAdministrator,
+    resolvePermission
 } = require("../core/discordPermissions");
 
 function permissionSet(expected, result = true) {
@@ -33,6 +34,7 @@ test("event permission helpers use Discord.js v14 permission flags", () => {
     const member = { guild, bannable: true, permissions: permissionSet(PermissionFlagsBits.Administrator) };
     const channel = {
         isTextBased: () => true,
+        createInvite: async () => ({ code: "invite" }),
         permissionsFor: value => {
             assert.equal(value, botMember);
             return permissionSet(PermissionFlagsBits.CreateInstantInvite);
@@ -43,6 +45,12 @@ test("event permission helpers use Discord.js v14 permission flags", () => {
     assert.equal(canBanMember(member), true);
     assert.equal(isAdministrator(member), true);
     assert.equal(canCreateInvite(channel, botMember), true);
+});
+
+test("permission resolver translates legacy command constants to v14 flags", () => {
+    assert.equal(resolvePermission("ADMINISTRATOR"), PermissionFlagsBits.Administrator);
+    assert.equal(resolvePermission("MANAGE_MESSAGES"), PermissionFlagsBits.ManageMessages);
+    assert.equal(resolvePermission("unknown_permission"), null);
 });
 
 test("event permission helpers fail closed when Discord state is unavailable", () => {

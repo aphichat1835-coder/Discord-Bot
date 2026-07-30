@@ -7,6 +7,7 @@ DO NOT SIMPLIFY: /serverinfo member fetch — bot/human split required.
 ================================================================================
 */
 
+const { PermissionFlagsBits } = require("discord.js");
 const { MessageEmbed, getLegacyChannelType } = require("../core/discordCompat");
 const config = require("../config.json");
 const { markCommandAccepted } = require("../guards/commandGuards");
@@ -348,15 +349,15 @@ const BADGE_LABELS = Object.freeze({
 });
 
 const IMPORTANT_PERMISSION_LABELS = Object.freeze({
-    ADMINISTRATOR: "ผู้ดูแลระบบ",
-    MANAGE_GUILD: "จัดการเซิร์ฟเวอร์",
-    MANAGE_ROLES: "จัดการยศ",
-    MANAGE_CHANNELS: "จัดการช่อง",
-    KICK_MEMBERS: "เตะสมาชิก",
-    BAN_MEMBERS: "แบนสมาชิก",
-    MODERATE_MEMBERS: "หมดเวลาสมาชิก",
-    MANAGE_WEBHOOKS: "จัดการ Webhook",
-    MANAGE_MESSAGES: "จัดการข้อความ"
+    Administrator: "ผู้ดูแลระบบ",
+    ManageGuild: "จัดการเซิร์ฟเวอร์",
+    ManageRoles: "จัดการยศ",
+    ManageChannels: "จัดการช่อง",
+    KickMembers: "เตะสมาชิก",
+    BanMembers: "แบนสมาชิก",
+    ModerateMembers: "หมดเวลาสมาชิก",
+    ManageWebhooks: "จัดการ Webhook",
+    ManageMessages: "จัดการข้อความ"
 });
 
 function accountAgeSummary(user, now = Date.now()) {
@@ -397,7 +398,7 @@ function importantPermissions(member) {
     if (!member?.permissions?.has) return "ไม่พบข้อมูลสิทธิ์";
     if (member.guild?.ownerId === member.id) return "เจ้าของเซิร์ฟเวอร์ (มีสิทธิ์สูงสุด)";
     const labels = Object.entries(IMPORTANT_PERMISSION_LABELS)
-        .filter(([permission]) => member.permissions.has(permission))
+        .filter(([permission]) => member.permissions.has(PermissionFlagsBits[permission]))
         .map(([, label]) => label);
     return labels.length ? labels.join(" • ") : "ไม่มีสิทธิ์จัดการระดับสูง";
 }

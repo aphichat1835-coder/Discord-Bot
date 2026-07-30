@@ -1,14 +1,15 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const { PermissionFlagsBits } = require("discord.js");
 
 const helpers = require("../commands/moderationHelpers");
 const moderation = require("../commands/moderation");
 const config = require("../config.json");
 
 test("moderation helpers map required permissions", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    assert.equal(helpers.requiredModerationPermission("ban"), "BAN_MEMBERS");
-    assert.equal(helpers.requiredModerationPermission("kick"), "KICK_MEMBERS");
-    assert.equal(helpers.requiredModerationPermission("timeout"), "MODERATE_MEMBERS");
+    assert.equal(helpers.requiredModerationPermission("ban"), PermissionFlagsBits.BanMembers);
+    assert.equal(helpers.requiredModerationPermission("kick"), PermissionFlagsBits.KickMembers);
+    assert.equal(helpers.requiredModerationPermission("timeout"), PermissionFlagsBits.ModerateMembers);
 });
 
 test("moderation helpers parse timeout duration", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
@@ -59,7 +60,7 @@ test("voice kick processing skips administrators and counts disconnect failures"
     const disconnected = [];
     const member = (id, administrator, fails = false) => ({
         id,
-        permissions: { has: permission => permission === "ADMINISTRATOR" && administrator },
+        permissions: { has: permission => permission === PermissionFlagsBits.Administrator && administrator },
         voice: {
             disconnect: async () => {
                 if (fails) throw new Error("disconnect failed");

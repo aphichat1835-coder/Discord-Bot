@@ -34,7 +34,7 @@ function navBar(active = "") {
         `<div class="nav-group"><span class="nav-group-label">${group}</span><div class="nav-group-links">${links.map(([href, label]) =>
             `<a href="${href}"${href === active ? " class=\"active\" aria-current=\"page\"" : ""}>${label}</a>`
         ).join("")}</div></div>`
-    ).join("")}</nav>`;
+    ).join("")}<div class="nav-actions"><button type="button" class="nav-logout" onclick="dashboardLogout(this)">🚪 ออกจากระบบ</button></div></nav>`;
 }
 
 function toastScript() {
@@ -74,6 +74,17 @@ function dashboardUxScript() {
         button.removeAttribute('aria-busy');
         if(button.dataset.idleText) button.textContent=button.dataset.idleText;
     };
+    window.dashboardLogout=async function(button){
+        window.setDashboardButtonBusy(button,true,'กำลังออก...');
+        try{
+            const response=await window.fetch('/auth/logout',{method:'POST'});
+            if(!response.ok) throw new Error('logout_failed');
+            window.location.assign('/auth/pin');
+        }catch{
+            window.setDashboardButtonBusy(button,false);
+            if(typeof window.showToast==='function') window.showToast('❌ ออกจากระบบไม่สำเร็จ','err');
+        }
+    };
     document.addEventListener('keydown',function(event){
         if(event.key!=='Escape') return;
         const openModal=[...document.querySelectorAll('.modal')].find(function(modal){
@@ -112,7 +123,13 @@ function csrfFetchScript() {
         const opts=init ? Object.assign({},init) : {};
         const method=String(opts.method || (input && input.method) || 'GET').toUpperCase();
         const rawUrl=typeof input==='string' ? input : String(input && input.url || '');
-        const sameOrigin=rawUrl.startsWith('/') || rawUrl.startsWith(window.location.origin);
+        let sameOrigin=false;
+        try{
+            const target=new URL(rawUrl || window.location.href,window.location.href);
+            sameOrigin=target.origin===window.location.origin;
+        }catch{
+            sameOrigin=false;
+        }
         if(sameOrigin && !['GET','HEAD','OPTIONS'].includes(method)){
             const headers=new Headers(opts.headers || {});
             if(!headers.has('x-csrf-token')){

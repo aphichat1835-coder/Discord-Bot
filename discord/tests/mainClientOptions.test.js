@@ -52,4 +52,5 @@ test("rejects non-finite cache and sweeper overrides", () => {
     });
     assert.equal(options.sweepers.messages.interval, 300);
     assert.equal(options.sweepers.messages.lifetime, 900);
+    assert.equal(_test.boundedNumber("999999999", 75, 20), 10_000);
 });

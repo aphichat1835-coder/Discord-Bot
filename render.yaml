@@ -2,7 +2,7 @@
 #
 # This blueprint defines the single Render Web Service used by this project.
 # It intentionally does NOT store secret environment values in the repo.
-# The runtime has exactly 13 owner-maintained environment values, matching .env.example.
+# The runtime has exactly 15 owner-maintained environment values, matching .env.example.
 # All advanced runtime controls use code defaults unless intentionally overridden.
 #
 # IMPORTANT:
@@ -28,7 +28,7 @@ services:
     rootDir: .
     buildCommand: npm install --global --ignore-scripts npm@12.0.1 && npm ci --ignore-scripts --no-audit --no-fund
     startCommand: npm start
-    healthCheckPath: /health
+    healthCheckPath: /ping
     autoDeployTrigger: off
     maxShutdownDelaySeconds: 60
     envVars:
@@ -49,6 +49,10 @@ services:
       - key: ENCRYPTION_KEY
         sync: false
       - key: DASHBOARD_PIN
+        sync: false
+      - key: SHADOW_SESSION_SECRET
+        sync: false
+      - key: SHADOW_PORTAL_PIN
         sync: false
       - key: PUBLIC_BASE_URL
         sync: false

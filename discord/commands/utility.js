@@ -15,6 +15,7 @@ const {
     getLegacyChannelType,
     resolveChannelType
 } = require("../core/discordCompat");
+const { PermissionFlagsBits } = require("discord.js");
 const crypto = require("node:crypto");
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");
@@ -64,7 +65,7 @@ function buildRestoreResultDmEmbed(input) {
             { name: "🗂️ ห้องที่สร้าง", value: `${input.restoredChannels} ห้อง`, inline: true },
             { name: "⏭️ รายการที่ข้าม", value: `${input.skippedRoles} ยศ / ${input.skippedChannels} ห้อง`, inline: true },
             { name: "❓ ชื่อซ้ำหรือไม่แน่ชัด", value: `${input.ambiguousRoles} ยศ / ${input.ambiguousChannels} ห้อง`, inline: true },
-            { name: "🔐 สิทธิ์ห้อง", value: `${input.overwriteStats.restored} สำเร็จ / ${input.overwriteStats.skippedRoleMissing + input.overwriteStats.skippedMemberMissing} ข้าม`, inline: true },
+            { name: "🔐 สิทธิ์ห้อง", value: `${input.overwriteStats.restored} สำเร็จ / ${input.overwriteStats.skippedRoleMissing + input.overwriteStats.skippedMemberMissing} หาย / ${Number(input.overwriteStats.skippedMemberUnresolved || 0)} ตรวจไม่ได้`, inline: true },
             { name: "⚠️ ข้อผิดพลาด", value: String(input.restoreErrors), inline: true },
             { name: "⏱️ หมดเวลาระหว่างทำงาน", value: input.timeoutHit ? "ใช่" : "ไม่", inline: true }
         ],
@@ -114,8 +115,8 @@ async function handle(interaction) {
 //  📢  SAY (Administrator only)
 // ════════════════════════════════════════════════════════════════════════════
 async function handleSay(interaction) {
-    if (!await requireMemberPermission(interaction, "ADMINISTRATOR", `> ${config.emojis.no_entry} ต้องเป็น Administrator เพื่อใช้คำสั่งนี้`)) return;
-    if (!await requireBotPermission(interaction, ["SEND_MESSAGES", "VIEW_CHANNEL"], `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความในช่องนี้ (ขาด SEND_MESSAGES หรือ VIEW_CHANNEL)`, interaction.channel)) return;
+    if (!await requireMemberPermission(interaction, PermissionFlagsBits.Administrator, `> ${config.emojis.no_entry} ต้องเป็น Administrator เพื่อใช้คำสั่งนี้`)) return;
+    if (!await requireBotPermission(interaction, [PermissionFlagsBits.SendMessages, PermissionFlagsBits.ViewChannel], `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความในช่องนี้ (ขาด SEND_MESSAGES หรือ VIEW_CHANNEL)`, interaction.channel)) return;
 
     const rawMsg = interaction.options.getString("message");
     const msg = sanitizeUserMessage(rawMsg, { maxLength: 2000 });
@@ -127,7 +128,10 @@ async function handleSay(interaction) {
     markCommandAccepted(interaction);
 
     if (!await safeDefer(interaction, { ephemeral: true })) return null;
-    await interaction.channel.send(msg);
+    await interaction.channel.send({
+        content: msg,
+        allowedMentions: { parse: ["users", "roles", "everyone"], repliedUser: false }
+    });
     return interaction.editReply({ content: `> ${config.emojis.success} ส่งเรียบร้อย` });
 }
 
@@ -135,27 +139,14 @@ async function handleSay(interaction) {
 //  📣  ANNOUNCE (เฟส 4 — content field นอก Embed)
 // ════════════════════════════════════════════════════════════════════════════
 async function handleAnnounce(interaction) {
-    if (!await requireMemberPermission(interaction, "MANAGE_MESSAGES", `> ${config.emojis.no_entry} ไม่มีสิทธิ์ใช้งาน`)) return;
-    if (!await requireBotPermission(interaction, ["SEND_MESSAGES", "VIEW_CHANNEL", "EMBED_LINKS"], `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความในช่องนี้ (ขาด SEND_MESSAGES, VIEW_CHANNEL หรือ EMBED_LINKS)`, interaction.channel)) return;
+    if (!await requireMemberPermission(interaction, PermissionFlagsBits.ManageMessages, `> ${config.emojis.no_entry} ไม่มีสิทธิ์ใช้งาน`)) return;
+    if (!await requireBotPermission(interaction, [PermissionFlagsBits.SendMessages, PermissionFlagsBits.ViewChannel, PermissionFlagsBits.EmbedLinks], `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความในช่องนี้ (ขาด SEND_MESSAGES, VIEW_CHANNEL หรือ EMBED_LINKS)`, interaction.channel)) return;
 
     const titleText = sanitizeUserMessage(interaction.options.getString("title"), { maxLength: 250 });
     const title = `${config.emojis.announce_icon} ${titleText}`.slice(0, 256);
     const msgStr = sanitizeUserMessage(interaction.options.getString("message"), { maxLength: 4096 });
     const rawContent = interaction.options.getString("content");
-    const allowMentions = interaction.options.getBoolean("allow_mentions") === true;
-
-    if (allowMentions && !interaction.member.permissions.has("ADMINISTRATOR") && !interaction.member.permissions.has("MANAGE_GUILD")) {
-        return interaction.reply({
-            content: `> ${config.emojis.no_entry} การเปิด mention ต้องมี Administrator หรือ Manage Server`,
-            ephemeral: true
-        });
-    }
-    let content = rawContent ? sanitizeUserMessage(rawContent, { maxLength: 2000 }) : null;
-    if (content && allowMentions) {
-        content = content
-            .replaceAll("@\u200beveryone", "@everyone")
-            .replaceAll("@\u200bhere", "@here");
-    }
+    const content = rawContent ? sanitizeUserMessage(rawContent, { maxLength: 2000 }) : null;
     if (!titleText || !msgStr) {
         return interaction.reply({ content: `> ${config.emojis.error} หัวข้อและข้อความต้องไม่ว่าง`, ephemeral: true });
     }
@@ -172,9 +163,7 @@ async function handleAnnounce(interaction) {
     await interaction.channel.send({
         content: content || undefined,
         embeds: [embed],
-        allowedMentions: allowMentions
-            ? { parse: ["users", "roles", "everyone"] }
-            : { parse: [], repliedUser: false }
+        allowedMentions: { parse: ["users", "roles", "everyone"], repliedUser: false }
     });
     return interaction.editReply({ content: `> ${config.emojis.success} ประกาศสำเร็จ` });
 }
@@ -183,8 +172,8 @@ async function handleAnnounce(interaction) {
 //  😀  STEAL (เฟส 11 — Pre-check โควตา + delay กัน API ceiling)
 // ════════════════════════════════════════════════════════════════════════════
 async function handleSteal(interaction) {
-    if (!await requireMemberPermission(interaction, "MANAGE_EMOJIS_AND_STICKERS", `> ${config.emojis.no_entry} ไม่มีสิทธิ์จัดการอิโมจิ`)) return;
-    if (!await requireBotPermission(interaction, "MANAGE_EMOJIS_AND_STICKERS", `> ${config.emojis.error} บอทไม่มีสิทธิ์จัดการอิโมจิ`)) return;
+    if (!await requireMemberPermission(interaction, PermissionFlagsBits.ManageGuildExpressions, `> ${config.emojis.no_entry} ไม่มีสิทธิ์จัดการอิโมจิ`)) return;
+    if (!await requireBotPermission(interaction, PermissionFlagsBits.ManageGuildExpressions, `> ${config.emojis.error} บอทไม่มีสิทธิ์จัดการอิโมจิ`)) return;
 
     const text = interaction.options.getString("emojis");
     const regex = /<(a?):([a-zA-Z0-9_]+):(\d+)>/g;
@@ -237,6 +226,8 @@ async function handleSteal(interaction) {
     let skipped = 0;
 
     let staticAdded = 0, animatedAdded = 0;
+    let processed = 0;
+    let lastReported = 0;
     for (let i = 0; i < matches.length; i++) {
         const match      = matches[i];
         const isAnimated = match[1] === "a";
@@ -244,8 +235,8 @@ async function handleSteal(interaction) {
         const id         = match[3];
         const url        = `https://cdn.discordapp.com/emojis/${id}.${isAnimated ? 'gif' : 'png'}`;
 
-        if (isAnimated && animatedAdded >= animatedFree) { skipped++; continue; }
-        if (!isAnimated && staticAdded >= staticFree)    { skipped++; continue; }
+        if (isAnimated && animatedAdded >= animatedFree) { skipped++; processed++; continue; }
+        if (!isAnimated && staticAdded >= staticFree)    { skipped++; processed++; continue; }
 
         try {
             await interaction.guild.emojis.create({ attachment: url, name });
@@ -255,12 +246,14 @@ async function handleSteal(interaction) {
         } catch (e) {
             failed++;
         }
+        processed++;
 
-        if (added % 10 === 0 && added > 0) {
+        if (processed - lastReported >= 10 || processed === matches.length) {
+            lastReported = processed;
             await interaction.editReply({
                 embeds: [new MessageEmbed()
                     .setColor(config.system.themeColors.warning)
-                    .setDescription(`> ${config.emojis.loading} **กำลังดึงอิโมจิ...** ${added}/${toSteal}`)]
+                    .setDescription(`> ${config.emojis.loading} **กำลังดึงอิโมจิ...** ${processed}/${matches.length} (สำเร็จ ${added}/${toSteal})`)]
             }).catch(() => {});
         }
     }
@@ -306,15 +299,29 @@ function serializeRoleForBackup(role) {
     };
 }
 
+const SUPPORTED_BACKUP_CHANNEL_TYPES = new Set([
+    "GUILD_TEXT",
+    "GUILD_VOICE",
+    "GUILD_CATEGORY",
+    "GUILD_NEWS",
+    "GUILD_STAGE_VOICE"
+]);
+
 function serializeChannelForBackup(channel) {
+    if (!channel || channel.isThread?.() === true) return null;
+    const legacyType = getLegacyChannelType(channel.type);
+    if (!SUPPORTED_BACKUP_CHANNEL_TYPES.has(legacyType)) return null;
+    const overwriteCache = channel.permissionOverwrites?.cache;
+    if (!overwriteCache?.map) return null;
+
     const out = {
         id: channel.id,
         name: channel.name,
-        type: getLegacyChannelType(channel.type),
+        type: legacyType,
         parentId: channel.parentId,
         position: channel.position,
         rawPosition: channel.rawPosition,
-        permissionOverwrites: channel.permissionOverwrites.cache.map(o => ({
+        permissionOverwrites: overwriteCache.map(o => ({
             id: o.id,
             type: o.type,
             allow: o.allow.bitfield.toString(),
@@ -392,8 +399,8 @@ function buildBackupValidationReport(data) {
     const managedRoles = roles.filter(role => role.managed).length;
     if (managedRoles) warnings.push(`${managedRoles} managed roles cannot be recreated`);
 
-    const unsupportedChannels = channels.filter(c => !["GUILD_TEXT","GUILD_VOICE","GUILD_CATEGORY","GUILD_NEWS","GUILD_STAGE_VOICE"]
-        .includes(normalizeSnapshotChannelType(c.type)));
+    const unsupportedChannels = channels.filter(c => !SUPPORTED_BACKUP_CHANNEL_TYPES
+        .has(normalizeSnapshotChannelType(c.type)));
     for (const channel of unsupportedChannels) {
         unsupportedItems.push(`channel:${normalizeSnapshotChannelType(channel.type)}:${channel.name}`);
     }
@@ -494,11 +501,16 @@ function planRestoreRole(guild, roleData, roleIdMap, plan) {
 }
 
 function planRestoreCategory(guild, channelData, categoryIdMap, plan) {
+    if (!SUPPORTED_BACKUP_CHANNEL_TYPES.has(channelData.type)) {
+        plan.channelsSkipped++;
+        return;
+    }
     const found = findExistingChannelForRestore(guild, channelData);
 
     if (found.ambiguous) {
         plan.channelsAmbiguous++;
     } else if (found.exists) {
+        plan.channelsSkipped++;
         if (channelData.id) categoryIdMap.set(channelData.id, found.exists.id);
     } else {
         plan.channelsToCreate++;
@@ -506,37 +518,168 @@ function planRestoreCategory(guild, channelData, categoryIdMap, plan) {
     }
 }
 
-function resolveRestoreOverwriteTarget(guild, overwrite, roleIdMap, oldGuildId) {
+const RESTORE_MEMBER_FETCH_CONCURRENCY = 4;
+const RESTORE_MEMBER_FETCH_TIMEOUT_MS = 5000;
+
+function collectRestoreMemberIds(channels) {
+    const memberIds = new Set();
+    for (const channelData of channels || []) {
+        for (const overwrite of channelData.permissionOverwrites || []) {
+            if (normalizeOverwriteType(overwrite.type) === "member") memberIds.add(overwrite.id);
+        }
+    }
+    return [...memberIds];
+}
+
+function isMissingRestoreMemberError(error) {
+    const code = Number(error?.code ?? error?.rawError?.code);
+    return code === 10007 || Number(error?.status) === 404;
+}
+
+async function fetchRestoreMemberWithTimeout(guild, memberId, timeoutMs) {
+    let timeout;
+    try {
+        return await Promise.race([
+            Promise.resolve().then(() => guild.members.fetch(memberId)),
+            new Promise((_, reject) => {
+                timeout = setTimeout(() => {
+                    const error = new Error(`RESTORE_MEMBER_FETCH_TIMEOUT:${memberId}`);
+                    error.code = "RESTORE_MEMBER_FETCH_TIMEOUT";
+                    reject(error);
+                }, timeoutMs);
+            })
+        ]);
+    } finally {
+        if (timeout) clearTimeout(timeout);
+    }
+}
+
+async function resolveRestoreMemberTargets(guild, channels, options = {}) {
+    const states = new Map();
+    const pending = [];
+    for (const memberId of collectRestoreMemberIds(channels)) {
+        if (guild.members.cache.has(memberId)) states.set(memberId, "resolved");
+        else pending.push(memberId);
+    }
+
+    if (pending.length === 0) return states;
+    if (typeof guild.members.fetch !== "function") {
+        for (const memberId of pending) states.set(memberId, "unresolved");
+        return states;
+    }
+
+    const requestedConcurrency = Number(options.memberFetchConcurrency);
+    const requestedTimeoutMs = Number(options.memberFetchTimeoutMs);
+    const concurrency = Number.isFinite(requestedConcurrency)
+        ? Math.max(1, Math.min(10, Math.trunc(requestedConcurrency)))
+        : RESTORE_MEMBER_FETCH_CONCURRENCY;
+    const timeoutMs = Number.isFinite(requestedTimeoutMs)
+        ? Math.max(100, Math.min(30000, Math.trunc(requestedTimeoutMs)))
+        : RESTORE_MEMBER_FETCH_TIMEOUT_MS;
+    let cursor = 0;
+    const workers = Array.from({ length: Math.min(concurrency, pending.length) }, async () => {
+        while (cursor < pending.length) {
+            const memberId = pending[cursor++];
+            try {
+                const member = await fetchRestoreMemberWithTimeout(guild, memberId, timeoutMs);
+                states.set(memberId, member ? "resolved" : "missing");
+            } catch (error) {
+                states.set(memberId, isMissingRestoreMemberError(error) ? "missing" : "unresolved");
+            }
+        }
+    });
+    await Promise.all(workers);
+    return states;
+}
+
+function resolveRestoreOverwriteTarget(guild, overwrite, roleIdMap, oldGuildId, memberTargetStates = new Map()) {
     const overwriteType = normalizeOverwriteType(overwrite.type);
     let targetId = roleIdMap.get(overwrite.id);
     if (overwrite.id === oldGuildId) targetId = guild.id;
     if (!targetId && overwriteType === "member" && guild.members.cache.has(overwrite.id)) targetId = overwrite.id;
+    if (!targetId && overwriteType === "member" && memberTargetStates.get(overwrite.id) === "resolved") targetId = overwrite.id;
     if (!targetId && overwriteType === "role" && guild.roles.cache.has(overwrite.id)) targetId = overwrite.id;
     return targetId;
 }
 
-function planRestoreOverwrites(guild, channelData, roleIdMap, oldGuildId, plan) {
+function buildResolvedOverwrites(guild, channelData, roleIdMap, oldGuildId, memberTargetStates = new Map()) {
+    const stats = {
+        restored: 0,
+        skippedRoleMissing: 0,
+        skippedMemberMissing: 0,
+        skippedMemberUnresolved: 0
+    };
+    const overwrites = [];
     for (const overwrite of channelData.permissionOverwrites || []) {
-        const targetId = resolveRestoreOverwriteTarget(guild, overwrite, roleIdMap, oldGuildId);
-        if (targetId) plan.overwritesRestored++;
-        else if (normalizeOverwriteType(overwrite.type) === "member") plan.overwritesSkippedMemberMissing++;
-        else plan.overwritesSkippedRoleMissing++;
+        const overwriteType = normalizeOverwriteType(overwrite.type);
+        const targetId = resolveRestoreOverwriteTarget(
+            guild, overwrite, roleIdMap, oldGuildId, memberTargetStates
+        );
+        if (targetId) {
+            stats.restored++;
+            overwrites.push({
+                id: targetId,
+                allow: restoreBigInt(overwrite.allow),
+                deny: restoreBigInt(overwrite.deny)
+            });
+        } else if (overwriteType === "member") {
+            if (memberTargetStates.get(overwrite.id) === "unresolved") stats.skippedMemberUnresolved++;
+            else stats.skippedMemberMissing++;
+        } else {
+            stats.skippedRoleMissing++;
+        }
     }
+    return { overwrites, stats };
 }
 
-function planRestoreChannel(guild, channelData, categoryIdMap, roleIdMap, oldGuildId, plan) {
+function addOverwriteStats(target, source, { includeRestored = true } = {}) {
+    if (includeRestored) target.restored += Number(source.restored || 0);
+    target.skippedRoleMissing += Number(source.skippedRoleMissing || 0);
+    target.skippedMemberMissing += Number(source.skippedMemberMissing || 0);
+    target.skippedMemberUnresolved = Number(target.skippedMemberUnresolved || 0) +
+        Number(source.skippedMemberUnresolved || 0);
+}
+
+function planRestoreOverwrites(guild, channelData, roleIdMap, oldGuildId, plan, memberTargetStates) {
+    const resolved = buildResolvedOverwrites(
+        guild, channelData, roleIdMap, oldGuildId, memberTargetStates
+    );
+    plan.overwritesRestored += resolved.stats.restored;
+    plan.overwritesSkippedRoleMissing += resolved.stats.skippedRoleMissing;
+    plan.overwritesSkippedMemberMissing += resolved.stats.skippedMemberMissing;
+    plan.overwritesSkippedMemberUnresolved += resolved.stats.skippedMemberUnresolved;
+}
+
+function planRestoreChannel(
+    guild, channelData, categoryIdMap, roleIdMap, oldGuildId, plan, memberTargetStates
+) {
+    if (!SUPPORTED_BACKUP_CHANNEL_TYPES.has(channelData.type)) {
+        plan.channelsSkipped++;
+        return;
+    }
     const parentId = channelData.parentId ? categoryIdMap.get(channelData.parentId) : undefined;
     const found = findExistingChannelForRestore(guild, channelData, parentId);
 
-    if (found.ambiguous) plan.channelsAmbiguous++;
-    else if (!found.exists) plan.channelsToCreate++;
-
-    planRestoreOverwrites(guild, channelData, roleIdMap, oldGuildId, plan);
+    if (found.ambiguous) {
+        plan.channelsAmbiguous++;
+        return;
+    }
+    if (found.exists) {
+        plan.channelsSkipped++;
+        return;
+    }
+    plan.channelsToCreate++;
+    planRestoreOverwrites(
+        guild, channelData, roleIdMap, oldGuildId, plan, memberTargetStates
+    );
 }
 
-function buildRestorePlan(guild, backupData, oldGuildId) {
+async function buildRestorePlan(guild, backupData, oldGuildId, options = {}) {
     const roles = Array.isArray(backupData.roles) ? backupData.roles : [];
     const channels = normalizeSnapshotChannels(backupData.channels);
+    const memberTargetStates = options.memberTargetStates instanceof Map
+        ? options.memberTargetStates
+        : await resolveRestoreMemberTargets(guild, channels, options);
     const roleIdMap = new Map();
     const categoryIdMap = new Map();
     const plan = {
@@ -549,6 +692,7 @@ function buildRestorePlan(guild, backupData, oldGuildId) {
         overwritesRestored: 0,
         overwritesSkippedRoleMissing: 0,
         overwritesSkippedMemberMissing: 0,
+        overwritesSkippedMemberUnresolved: 0,
         warnings: []
     };
 
@@ -561,7 +705,9 @@ function buildRestorePlan(guild, backupData, oldGuildId) {
     }
 
     for (const cData of channels.filter(c => c.type !== "GUILD_CATEGORY")) {
-        planRestoreChannel(guild, cData, categoryIdMap, roleIdMap, oldGuildId, plan);
+        planRestoreChannel(
+            guild, cData, categoryIdMap, roleIdMap, oldGuildId, plan, memberTargetStates
+        );
     }
 
     if (plan.rolesAmbiguous || plan.channelsAmbiguous) {
@@ -659,7 +805,7 @@ async function handleBackup(interaction) {
             channels: sortedCollectionValues(
                 interaction.guild.channels.cache,
                 (a, b) => (a.rawPosition || 0) - (b.rawPosition || 0)
-            ).map(serializeChannelForBackup)
+            ).map(serializeChannelForBackup).filter(Boolean)
         };
         data.validationReport = buildBackupValidationReport(data);
 
@@ -708,7 +854,7 @@ async function handleRestore(interaction) {
             content: `> ${config.emojis.no_entry} คุณต้องเป็น **เจ้าของเซิร์ฟเวอร์** เท่านั้น!`
         });
     }
-    if (!interaction.guild.members.me.permissions.has("ADMINISTRATOR")) {
+    if (!interaction.guild.members.me.permissions.has(PermissionFlagsBits.Administrator)) {
         return interaction.editReply({
             content: `> ${config.emojis.error} บอทต้องมีสิทธิ์ **Administrator** เพื่อกู้คืน!`
         });
@@ -735,13 +881,13 @@ async function handleRestore(interaction) {
         return interaction.editReply({ content: `> ${config.emojis.error} Backup ไม่ครบหรือ schema ไม่ถูกต้อง จึงไม่สามารถกู้คืนได้` });
     }
     markCommandAccepted(interaction);
-    const plan = buildRestorePlan(interaction.guild, backupData, backup.guildId);
+    const plan = await buildRestorePlan(interaction.guild, backupData, backup.guildId);
     const validation = backupData.validationReport || buildBackupValidationReport(backupData);
     const planText =
         `— จะสร้างยศใหม่: ${plan.rolesToCreate}\n` +
         `— จะสร้างห้องใหม่: ${plan.channelsToCreate}\n` +
         `— ข้าม/ชื่อซ้ำ: ${plan.rolesSkipped + plan.channelsSkipped} ข้าม, ${plan.rolesAmbiguous + plan.channelsAmbiguous} ชื่อซ้ำ\n` +
-        `— Permission overwrites: ${plan.overwritesRestored} ใช้ได้, ${plan.overwritesSkippedRoleMissing} role หาย, ${plan.overwritesSkippedMemberMissing} member หาย`;
+        `— Permission overwrites: ${plan.overwritesRestored} ใช้ได้, ${plan.overwritesSkippedRoleMissing} role หาย, ${plan.overwritesSkippedMemberMissing} member หาย, ${plan.overwritesSkippedMemberUnresolved} member ตรวจไม่ได้`;
 
     const embed = new MessageEmbed()
         .setColor(config.system.themeColors.error)
@@ -813,7 +959,7 @@ async function handleRestoreConfirm(interaction, sessionManager) {
             const backup = await sessionManager.SnapshotModel.findOne({ snapshotId });
             const isOwner = interaction.user.id === interaction.guild.ownerId || interaction.user.id === config.system.ownerId;
             const ownsBackup = backup?.Backup_Owner_ID === interaction.user.id || interaction.user.id === config.system.ownerId;
-            const botIsAdmin = interaction.guild.members.me.permissions.has("ADMINISTRATOR");
+            const botIsAdmin = interaction.guild.members.me.permissions.has(PermissionFlagsBits.Administrator);
             const backupData = await sessionManager.loadSnapshotData(backup);
             if (!isOwner || !ownsBackup || !botIsAdmin) {
                 return interaction.followUp({ content: `> ${config.emojis.no_entry} สิทธิ์สำหรับ Restore เปลี่ยนไป กรุณาเริ่มคำสั่งใหม่`, ephemeral: true }).catch(() => {});
@@ -825,6 +971,7 @@ async function handleRestoreConfirm(interaction, sessionManager) {
             const guild = interaction.guild;
             const roles = backupData.roles;
             const channels = normalizeSnapshotChannels(backupData.channels);
+            const memberTargetStates = await resolveRestoreMemberTargets(guild, channels);
             const oldGuildId = backup.guildId;
             const roleIdMap  = new Map();
             let restoredRoles    = 0;
@@ -837,7 +984,8 @@ async function handleRestoreConfirm(interaction, sessionManager) {
             const overwriteStats = {
                 restored: 0,
                 skippedRoleMissing: 0,
-                skippedMemberMissing: 0
+                skippedMemberMissing: 0,
+                skippedMemberUnresolved: 0
             };
             const startTime      = Date.now();
             const MAX_DUR        = 14 * 60 * 1000;
@@ -887,28 +1035,9 @@ async function handleRestoreConfirm(interaction, sessionManager) {
 
             if (Array.isArray(channels)) {
                 const categoryIdMap = new Map();
-                const validTypes = ["GUILD_TEXT","GUILD_VOICE","GUILD_CATEGORY","GUILD_NEWS","GUILD_STAGE_VOICE"];
+                const validTypes = new Set(SUPPORTED_BACKUP_CHANNEL_TYPES);
 
-                function buildOverwrites(cData) {
-                    const out = [];
-                    if (!Array.isArray(cData.permissionOverwrites)) return out;
-                    for (const ow of cData.permissionOverwrites) {
-                        const overwriteType = normalizeOverwriteType(ow.type);
-                        let targetId = roleIdMap.get(ow.id);
-                        if (ow.id === oldGuildId) targetId = guild.id;
-                        if (!targetId && overwriteType === "member" && guild.members.cache.has(ow.id)) targetId = ow.id;
-                        if (!targetId && overwriteType === "role" && guild.roles.cache.has(ow.id)) targetId = ow.id;
-                        if (targetId) {
-                            overwriteStats.restored++;
-                            out.push({ id: targetId, allow: restoreBigInt(ow.allow), deny: restoreBigInt(ow.deny) });
-                        } else if (overwriteType === "member") {
-                            overwriteStats.skippedMemberMissing++;
-                        } else {
-                            overwriteStats.skippedRoleMissing++;
-                        }
-                    }
-                    return out;
-                }
+
 
                 // Pass 1: สร้าง Category ก่อน → เก็บ old ID → new ID
                 for (const cData of channels) {
@@ -925,15 +1054,18 @@ async function handleRestoreConfirm(interaction, sessionManager) {
                         continue;
                     }
                     if (exists) {
+                        skippedChannels++;
                         if (cData.id) categoryIdMap.set(cData.id, exists.id);
                     } else {
                         try {
+                            const resolvedOverwrites = buildResolvedOverwrites(guild, cData, roleIdMap, oldGuildId, memberTargetStates);
                             const newCat = await guild.channels.create({
                                 name: cData.name,
-                                ...channelCreatePayload(cData, undefined, buildOverwrites(cData)),
+                                ...channelCreatePayload(cData, undefined, resolvedOverwrites.overwrites),
                                 type: resolveChannelType("GUILD_CATEGORY")
                             });
                             if (cData.id) categoryIdMap.set(cData.id, newCat.id);
+                            addOverwriteStats(overwriteStats, resolvedOverwrites.stats);
                             restoredChannels++;
                             await new Promise(r => setTimeout(r, 600));
                         } catch (e) {
@@ -957,13 +1089,19 @@ async function handleRestoreConfirm(interaction, sessionManager) {
                             ambiguousChannels++;
                             continue;
                         }
+                        if (exists) {
+                            skippedChannels++;
+                            continue;
+                        }
                         if (!exists) {
                             try {
-                                if (validTypes.includes(cData.type)) {
+                                if (validTypes.has(cData.type)) {
+                                    const resolvedOverwrites = buildResolvedOverwrites(guild, cData, roleIdMap, oldGuildId, memberTargetStates);
                                     await guild.channels.create({
                                         name: cData.name,
-                                        ...channelCreatePayload(cData, parentId, buildOverwrites(cData))
+                                        ...channelCreatePayload(cData, parentId, resolvedOverwrites.overwrites)
                                     });
+                                    addOverwriteStats(overwriteStats, resolvedOverwrites.stats);
                                     restoredChannels++;
                                     await new Promise(r => setTimeout(r, 600));
                                 } else {
@@ -982,10 +1120,11 @@ async function handleRestoreConfirm(interaction, sessionManager) {
             const detailMsg =
                 `\n— ข้าม: ${skippedRoles} ยศ, ${skippedChannels} ห้อง` +
                 `\n— ชื่อซ้ำ/ไม่แน่ชัด: ${ambiguousRoles} ยศ, ${ambiguousChannels} ห้อง` +
-                `\n— Permission overwrites: ${overwriteStats.restored} ใช้ได้, ${overwriteStats.skippedRoleMissing} role หาย, ${overwriteStats.skippedMemberMissing} member หาย` +
+                `\n— Permission overwrites: ${overwriteStats.restored} ใช้ได้, ${overwriteStats.skippedRoleMissing} role หาย, ${overwriteStats.skippedMemberMissing} member หาย, ${overwriteStats.skippedMemberUnresolved} member ตรวจไม่ได้` +
                 `\n— Error: ${restoreErrors}`;
             const incompleteItems = skippedChannels + ambiguousRoles + ambiguousChannels +
-                overwriteStats.skippedRoleMissing + overwriteStats.skippedMemberMissing;
+                overwriteStats.skippedRoleMissing + overwriteStats.skippedMemberMissing +
+                overwriteStats.skippedMemberUnresolved;
             let resultState = "failed";
             if (restoreErrors === 0 && !timeoutHit && incompleteItems === 0) resultState = "complete";
             else if (restoredRoles + restoredChannels > 0) resultState = "partial";
@@ -1054,6 +1193,10 @@ module.exports = {
         snapshotIdentityMatches,
         buildBackupValidationReport,
         buildRestorePlan,
+        collectRestoreMemberIds,
+        resolveRestoreMemberTargets,
+        buildResolvedOverwrites,
+        addOverwriteStats,
         normalizeOverwriteType,
         normalizeSnapshotChannelType,
         normalizeSnapshotChannels,

@@ -9,13 +9,10 @@ const verifiedMemberService = require("./services/verifiedMemberService");
 const snapshotStore = require("./services/oauthSnapshotStore");
 const ipIdentityHistory = require("./services/ipIdentityHistoryService");
 const discordAPI = require("./utils/discordAPI");
+const { readFiniteInteger } = require("../core/numbers");
 
-const OVERVIEW_MAX = Math.max(
-    50,
-    Number(process.env.INTERNAL_OVERVIEW_GUILDS_MAX || 500) || 500
-);
-const OAUTH_RECOVERY_SCAN_MAX = Math.max(100, Math.min(5000,
-    Number(process.env.OAUTH_RECOVERY_SCAN_MAX || 1000) || 1000));
+const OVERVIEW_MAX = readFiniteInteger(process.env.INTERNAL_OVERVIEW_GUILDS_MAX, { fallback: 500, min: 50, max: 5000 });
+const OAUTH_RECOVERY_SCAN_MAX = readFiniteInteger(process.env.OAUTH_RECOVERY_SCAN_MAX, { fallback: 1000, min: 100, max: 5000 });
 const REQUIRED_USER_SCOPES = Object.freeze([
     "identify", "email", "connections", "guilds", "guilds.members.read", "guilds.join"
 ]);
@@ -202,7 +199,7 @@ async function getGuildMembers(guildId, { page = 0, limit = 20, q = "" } = {}) {
         limit: safeLimit,
         q: String(q || "").trim().slice(0, 120),
         includeLegacy: true,
-        canViewSensitive: false
+        canViewSensitive: true
     });
     const members = result.members.map(member => ({ ...member, detailsAvailable: true }));
     return {
@@ -215,44 +212,6 @@ async function getGuildMembers(guildId, { page = 0, limit = 20, q = "" } = {}) {
         truncated: result.truncated === true,
         scanLimit: result.scanLimit,
         hasMore: result.hasMore
-    };
-}
-
-async function revealRawIp({ guildId, userId }) {
-
-    const log = await VerifyLog.findOne({
-        ...baseFilter(guildId),
-        userId,
-        "ipInfo.encryptedRawIp": { $exists: true, $ne: "" }
-    }).sort({ verifiedAt: -1, createdAt: -1, _id: -1 });
-    if (!log?.ipInfo?.encryptedRawIp) {
-        const error = new Error("encrypted IP not found");
-        error.code = "ip_not_found";
-        throw error;
-    }
-
-    const rawIp = decryptIP(log.ipInfo.encryptedRawIp);
-    if (!rawIp) {
-        const error = new Error("encrypted IP could not be decrypted");
-        error.code = "ip_decrypt_failed";
-        throw error;
-    }
-    return {
-        success: true,
-        guildId,
-        userId,
-        verifyLogId: String(log._id),
-        rawIp,
-        ipInfo: {
-            country: log.ipInfo.country || null,
-            countryCode: log.ipInfo.countryCode || null,
-            city: log.ipInfo.city || null,
-            isp: log.ipInfo.isp || null,
-            isVPN: !!log.ipInfo.isVPN,
-            isProxy: !!log.ipInfo.isProxy,
-            isTOR: !!log.ipInfo.isTOR,
-            hosting: !!log.ipInfo.hosting
-        }
     };
 }
 
@@ -553,27 +512,6 @@ async function getOwnerIpHistoryPage({ guildId, userId, kind, page, limit }) {
     return { success: true, guildId, userId, ...result };
 }
 
-async function revealOAuthTokens({ guildId, userId }) {
-    const safeGuildId = requireSnowflake(guildId, "Guild ID");
-    const safeUserId = requireSnowflake(userId, "User ID");
-    const association = await scopedGuildUserQuery(VerifyLog.findOne(), safeGuildId, safeUserId)
-        .select("_id")
-        .lean();
-    const user = await scopedOAuthUserQuery(OAuthUser.findOne(), safeGuildId, safeUserId, !association)
-        .select("discord.userId oauth adminOAuth")
-        .lean();
-
-    if (!user?.discord?.userId) throw memberNotFoundError();
-
-    return {
-        success: true,
-        guildId: safeGuildId,
-        userId: safeUserId,
-        oauth: revealTokenState(user.oauth || {}),
-        adminOAuth: revealTokenState(user.adminOAuth || {})
-    };
-}
-
 async function getOwnerFullMemberDetail({ guildId, userId }) {
     const safeGuildId = requireSnowflake(guildId, "Guild ID");
     const safeUserId = requireSnowflake(userId, "User ID");
@@ -605,9 +543,7 @@ module.exports = {
     getOverview,
     getGuildStats,
     getGuildMembers,
-    revealRawIp,
     getMemberDetail,
-    revealOAuthTokens,
     getOAuthRecoveryCenter,
     revokeRecoveryMemberRole,
     revokeAllRecoveryRoles,

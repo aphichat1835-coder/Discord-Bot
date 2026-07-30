@@ -14,31 +14,26 @@
 */
 
 const https = require("https");
+const { PermissionFlagsBits } = require("discord.js");
 
 const { encryptToken, decryptToken } = require("./crypto");
 const { sanitizeLogText } = require("./safeLogger");
 const dmService = require("../../dm");
+const { readFiniteInteger } = require("../../core/numbers");
 
 const BASE = "https://discord.com/api/v10";
 const MAX_DISCORD_API_RESPONSE_BYTES = 12 * 1024 * 1024;
-const DISCORD_API_RESPONSE_MAX_BYTES = Math.min(
-    MAX_DISCORD_API_RESPONSE_BYTES,
-    Math.max(
-        64 * 1024,
-        Number(process.env.DISCORD_API_RESPONSE_MAX_BYTES || MAX_DISCORD_API_RESPONSE_BYTES) ||
-            MAX_DISCORD_API_RESPONSE_BYTES
-    )
-);
-const DISCORD_API_BODY_MAX_BYTES = Math.max(
-    16 * 1024,
-    Number(process.env.DISCORD_API_BODY_MAX_BYTES || 512 * 1024) || 512 * 1024
-);
-const DISCORD_API_ROLE_MAX = Math.max(50, Number(process.env.DISCORD_API_ROLE_MAX || 500) || 500);
-const DISCORD_API_CHANNEL_MAX = Math.max(50, Number(process.env.DISCORD_API_CHANNEL_MAX || 500) || 500);
-const DISCORD_API_PERMISSION_OVERWRITE_MAX = Math.max(
-    20,
-    Number(process.env.DISCORD_API_PERMISSION_OVERWRITE_MAX || 100) || 100
-);
+const DISCORD_API_RESPONSE_MAX_BYTES = readFiniteInteger(process.env.DISCORD_API_RESPONSE_MAX_BYTES, {
+    fallback: MAX_DISCORD_API_RESPONSE_BYTES, min: 64 * 1024, max: MAX_DISCORD_API_RESPONSE_BYTES
+});
+const DISCORD_API_BODY_MAX_BYTES = readFiniteInteger(process.env.DISCORD_API_BODY_MAX_BYTES, {
+    fallback: 512 * 1024, min: 16 * 1024, max: 4 * 1024 * 1024
+});
+const DISCORD_API_ROLE_MAX = readFiniteInteger(process.env.DISCORD_API_ROLE_MAX, { fallback: 500, min: 50, max: 5000 });
+const DISCORD_API_CHANNEL_MAX = readFiniteInteger(process.env.DISCORD_API_CHANNEL_MAX, { fallback: 500, min: 50, max: 5000 });
+const DISCORD_API_PERMISSION_OVERWRITE_MAX = readFiniteInteger(process.env.DISCORD_API_PERMISSION_OVERWRITE_MAX, {
+    fallback: 100, min: 20, max: 5000
+});
 const requestDiagnostics = {
     total: 0,
     inFlight: 0,
@@ -48,14 +43,14 @@ const requestDiagnostics = {
 };
 
 const PERMISSIONS = Object.freeze({
-    KICK_MEMBERS: 1n << 1n,
-    BAN_MEMBERS: 1n << 2n,
-    VIEW_CHANNEL: 1n << 10n,
-    SEND_MESSAGES: 1n << 11n,
-    EMBED_LINKS: 1n << 14n,
-    MANAGE_ROLES: 1n << 28n,
-    MODERATE_MEMBERS: 1n << 40n,
-    ADMINISTRATOR: 1n << 3n
+    KickMembers: PermissionFlagsBits.KickMembers,
+    BanMembers: PermissionFlagsBits.BanMembers,
+    ViewChannel: PermissionFlagsBits.ViewChannel,
+    SendMessages: PermissionFlagsBits.SendMessages,
+    EmbedLinks: PermissionFlagsBits.EmbedLinks,
+    ManageRoles: PermissionFlagsBits.ManageRoles,
+    ModerateMembers: PermissionFlagsBits.ModerateMembers,
+    Administrator: PermissionFlagsBits.Administrator
 });
 
 const TEXT_CHANNEL_TYPES = new Set([
@@ -371,7 +366,7 @@ function toBigIntPermission(value) {
 function hasPermission(permissionValue, flag) {
     const perms = toBigIntPermission(permissionValue);
 
-    return (perms & PERMISSIONS.ADMINISTRATOR) === PERMISSIONS.ADMINISTRATOR ||
+    return (perms & PERMISSIONS.Administrator) === PERMISSIONS.Administrator ||
         (perms & flag) === flag;
 }
 
@@ -708,7 +703,7 @@ function computeMemberGuildPermissions(member, roles = []) {
 function applyChannelOverwrites(basePermissions, member, channel) {
     let perms = toBigIntPermission(basePermissions);
 
-    if ((perms & PERMISSIONS.ADMINISTRATOR) === PERMISSIONS.ADMINISTRATOR) {
+    if ((perms & PERMISSIONS.Administrator) === PERMISSIONS.Administrator) {
         return perms.toString();
     }
 
@@ -802,7 +797,7 @@ function validateBotCanManageRole({ botMember, roles, targetRoleId }) {
         detail: `${target.name} (${target.id})`
     });
 
-    const hasManageRoles = hasPermission(guildPerms, PERMISSIONS.MANAGE_ROLES);
+    const hasManageRoles = hasPermission(guildPerms, PERMISSIONS.ManageRoles);
 
     checks.push({
         name: "manage_roles",
@@ -854,9 +849,9 @@ function validateBotCanUseChannel({ botMember, roles, channel }) {
     const guildPerms = computeMemberGuildPermissions(botMember, roles);
     const channelPerms = applyChannelOverwrites(guildPerms, botMember, channel);
 
-    const canView = hasPermission(channelPerms, PERMISSIONS.VIEW_CHANNEL);
-    const canSend = canView && hasPermission(channelPerms, PERMISSIONS.SEND_MESSAGES);
-    const canEmbed = canSend && hasPermission(channelPerms, PERMISSIONS.EMBED_LINKS);
+    const canView = hasPermission(channelPerms, PERMISSIONS.ViewChannel);
+    const canSend = canView && hasPermission(channelPerms, PERMISSIONS.SendMessages);
+    const canEmbed = canSend && hasPermission(channelPerms, PERMISSIONS.EmbedLinks);
 
     const checks = [
         {

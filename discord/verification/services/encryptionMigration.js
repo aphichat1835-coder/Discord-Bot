@@ -9,11 +9,9 @@ const {
     decryptTokenForMigration,
     decryptIPForMigration
 } = require("../utils/crypto");
+const { readFiniteInteger } = require("../../core/numbers");
 
-const DEFAULT_SCAN_MAX = Math.max(
-    10,
-    Math.min(1000, Number(process.env.ENCRYPTION_MIGRATION_SCAN_MAX || 200) || 200)
-);
+const DEFAULT_SCAN_MAX = readFiniteInteger(process.env.ENCRYPTION_MIGRATION_SCAN_MAX, { fallback: 200, min: 10, max: 1000 });
 const CURRENT_PREFIX = "v3:gcm:";
 const migrationCursors = new Map();
 

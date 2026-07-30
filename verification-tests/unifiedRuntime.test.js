@@ -146,9 +146,9 @@ describe("single-process verification runtime contract", () => {
         expect((render.match(/^\s*-\s+type:\s+web\s*$/gm) || [])).toHaveLength(1);
         expect(render).toContain("rootDir: .");
         expect(render).toContain("startCommand: npm start");
-        expect(render).toContain("healthCheckPath: /health");
+        expect(render).toContain("healthCheckPath: /ping");
         expect(render).not.toContain("rootDir: dashboard-public");
-        expect((render.match(/^\s*- key: [A-Z][A-Z0-9_]*$/gm) || [])).toHaveLength(13);
+        expect((render.match(/^\s*- key: [A-Z][A-Z0-9_]*$/gm) || [])).toHaveLength(15);
         expect(render).not.toContain("DASHBOARD_PUBLIC_URL");
         expect(render).not.toContain("TRUST_PROXY_HOPS");
     });
@@ -247,6 +247,8 @@ describe("single-process verification runtime contract", () => {
             "API_SECRET",
             "VERIFY_STATE_SECRET",
             "DASHBOARD_PIN",
+            "SHADOW_SESSION_SECRET",
+            "SHADOW_PORTAL_PIN",
             "PUBLIC_BASE_URL",
             "WEBHOOK_LOG_URL",
             "ALERT_WEBHOOK_URL",
@@ -259,6 +261,8 @@ describe("single-process verification runtime contract", () => {
         expect(configuredKeys).toEqual(expectedKeys);
         for (const name of [
             "DASHBOARD_PIN",
+            "SHADOW_SESSION_SECRET",
+            "SHADOW_PORTAL_PIN",
             "API_SECRET",
             "VERIFY_STATE_SECRET",
             "ENCRYPTION_KEY",
@@ -267,7 +271,7 @@ describe("single-process verification runtime contract", () => {
         ]) {
             expect(security).toContain(name);
         }
-        expect(security).toContain("13 owner-maintained");
+        expect(security).toContain("15 owner-maintained");
         expect(security).toMatch(/public HTTPS\s+base URL/);
     });
 
@@ -299,15 +303,13 @@ describe("single-process verification runtime contract", () => {
         expect(guild).toContain('router.get("/api/guild/:guildId/member/:userId/detail", requireAdmin, requireGuildAdmin');
         expect(guild).toContain('router.get("/api/guild/:guildId/member/:userId/ip-history", requireAdmin, requireGuildAdmin');
         expect(guild).toContain('router.post("/api/guild/:guildId/member/:userId/full-detail", requireAdmin, requireGuildAdmin, requireCsrf');
-        expect(guild).toContain('router.post("/api/guild/:guildId/member/:userId/reveal-token", requireAdmin, requireGuildAdmin, requireCsrf');
+        expect(guild).toContain('getOwnerFullMemberDetail({ guildId, userId: targetUserId })');
+        expect(guild).not.toContain('revealSensitiveValue');
         expect(guild).toContain('res.set("Cache-Control", "no-store")');
         expect(guild).toContain('router.get("/api/guild/:guildId/preflight", requireAdmin, requireGuildAdmin');
-        const rawIpRouteIndex = verifyOwner.indexOf('"/api/verify-owner/guild/:guildId/user/:userId/reveal-ip"');
-        expect(rawIpRouteIndex).toBeGreaterThan(-1);
-        const rawIpRoute = verifyOwner.slice(rawIpRouteIndex, rawIpRouteIndex + 260);
-        expect(rawIpRoute).toContain("auth.requirePin");
-        expect(rawIpRoute).toContain("auth.requireCsrf");
-        expect(rawIpRoute).toContain("express.json()");
+        expect(verifyOwner).not.toContain("reveal-ip");
+        expect(guild).not.toContain("reveal-token");
+        expect(guild).not.toContain("reveal-ip");
         expect(guild).toContain("requireCsrf");
         expect(runtime).not.toContain("/oauth/admin");
         expect(runtime).not.toContain("/auth/admin-callback");

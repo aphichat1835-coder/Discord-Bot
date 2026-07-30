@@ -88,8 +88,7 @@ const slashCommandsData = [
         options: [
             { type: 3, name: "title",   description: "หัวข้อประกาศ", required: true, min_length: 1, max_length: 250 },
             { type: 3, name: "message", description: "เนื้อหาประกาศ", required: true, min_length: 1, max_length: 4096 },
-            { type: 3, name: "content", description: "ข้อความดิบนอก Embed (เช่น @everyone)", required: false, max_length: 2000 },
-            { type: 5, name: "allow_mentions", description: "อนุญาตให้ content ping users/roles/everyone (ต้องมีสิทธิ์สูง)", required: false }
+            { type: 3, name: "content", description: "ข้อความดิบนอก Embed (รองรับ @everyone / @here / user / role)", required: false, max_length: 2000 }
         ]
     },
 

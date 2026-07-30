@@ -87,12 +87,12 @@ test("startup dashboard URL uses the canonical unified public origin", () => { /
     assert.equal(getOwnerDashboardBaseUrl({ PUBLIC_BASE_URL: "not-a-url" }), null);
 });
 
-test("webhook payloads normalize strings and objects", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    assert.deepEqual(normalizeWebhookPayload("hello"), { content: "hello", allowedMentions: { parse: [] } });
-    assert.deepEqual(normalizeWebhookPayload({ content: "ok" }), { content: "ok", allowedMentions: { parse: [] } });
+test("webhook payloads preserve private content and caller mention policy", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    assert.deepEqual(normalizeWebhookPayload("hello"), { content: "hello" });
+    assert.deepEqual(normalizeWebhookPayload({ content: "ok" }), { content: "ok" });
     assert.deepEqual(
         normalizeWebhookPayload({ content: "@everyone", allowedMentions: { parse: ["everyone"] } }).allowedMentions,
-        { parse: [] }
+        { parse: ["everyone"] }
     );
 });
 
@@ -161,23 +161,20 @@ test("legacy text payloads receive the common event presentation", () => { // NO
     assert.match(alertPayload.embeds[0].description, /legacy alert/);
 });
 
-test("event delivery normalization removes raw credentials and IP addresses", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("private webhook events preserve full owner-visible credentials and IP values", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const token = `${"A".repeat(24)}.${"B".repeat(6)}.${"C".repeat(20)}`;
     const webhookUrl = `${LOG_URL}/unsafe`;
     const payload = normalizeWebhookPayload(buildWebhookEventPayload({
         severity: "ERROR",
         category: "SECURITY",
-        code: "security.redaction.test",
-        title: "ทดสอบข้อมูลอ่อนไหว",
+        code: "security.private-detail.test",
+        title: "ทดสอบข้อมูลลับ",
         context: { IP: "203.0.113.7", Token: token, Webhook: webhookUrl }
     }));
     const text = JSON.stringify(payload);
-    assert.equal(text.includes("203.0.113.7"), false);
-    assert.equal(text.includes(token), false);
-    assert.equal(text.includes(webhookUrl), false);
-    assert.match(text, /REDACTED_IP/);
-    assert.match(text, /REDACTED_TOKEN|REDACTED_SECRET/);
-    assert.match(text, /REDACTED_WEBHOOK/);
+    assert.equal(text.includes("203.0.113.7"), true);
+    assert.equal(text.includes(token), true);
+    assert.equal(text.includes(webhookUrl), true);
 });
 
 test("webhook URLs are restricted to HTTPS Discord webhook endpoints", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
@@ -212,7 +209,7 @@ test("sendWebhook sends to the requested target and destroys the client", async 
     assert.equal(sent, true);
     assert.deepEqual(calls, [
         ["create", LOG_URL],
-        ["send", { content: "hello", allowedMentions: { parse: [] } }],
+        ["send", { content: "hello" }],
         ["destroy"]
     ]);
 });
@@ -347,7 +344,7 @@ test("sendWebhookEvent preserves event-level summary metadata for duplicate repo
     assert.match(duplicateEmbed.footer.text, /security\.owner_mismatch\.repeated/);
 });
 
-test("normalization enforces Discord payload limits without enabling mentions", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("normalization enforces Discord payload limits without overriding mentions", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const payload = normalizeWebhookPayload({
         content: "x".repeat(3000),
         embeds: [{
@@ -365,7 +362,7 @@ test("normalization enforces Discord payload limits without enabling mentions", 
         String(embed.footer?.text || "").length + String(embed.author?.name || "").length +
         (embed.fields || []).reduce((fieldSum, field) => fieldSum + field.name.length + field.value.length, 0), 0);
     assert.ok(totalEmbedText <= 6000);
-    assert.deepEqual(payload.allowedMentions, { parse: [] });
+    assert.equal(payload.allowedMentions, undefined);
 });
 
 test("critical alerts preempt queued routine logs when the bounded queue is full", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
@@ -468,6 +465,72 @@ test("webhook dispatcher never retries a send_timeout because the original reque
     assert.equal(_test.retryable({ code: "send_timeout" }), false);
     assert.equal(_test.retryable({ status: 503 }), true);
     assert.equal(_test.retryable({ status: 429 }), true);
+});
+
+
+test("timed-out webhook operations reconcile a late success without a duplicate send", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    let release;
+    let sends = 0;
+    class LateSuccessClient {
+        async send() {
+            sends++;
+            await new Promise(resolve => { release = resolve; });
+        }
+        destroy() {}
+    }
+    const dispatcher = new WebhookDispatcher({
+        WebhookClientClass: LateSuccessClient,
+        env: { WEBHOOK_LOG_URL: LOG_URL },
+        maxAttempts: 3,
+        timeoutMs: 100
+    });
+
+    assert.equal(await dispatcher.enqueue("LOG", "late success"), true);
+    let stats = dispatcher.stats();
+    assert.equal(sends, 1);
+    assert.equal(stats.targets.LOG.timedOut, 1);
+    assert.equal(stats.targets.LOG.pendingTimedOut, 1);
+    assert.equal(stats.pendingReconciliations, 1);
+    assert.equal(stats.targets.LOG.failed, 0);
+
+    release();
+    assert.equal(await dispatcher.flush(500), true);
+    stats = dispatcher.stats();
+    assert.equal(sends, 1);
+    assert.equal(stats.targets.LOG.pendingTimedOut, 0);
+    assert.equal(stats.targets.LOG.lateSucceeded, 1);
+    assert.equal(stats.targets.LOG.sent, 1);
+    assert.equal(stats.targets.LOG.failed, 0);
+    assert.equal(stats.recentOperations.at(-1).state, "late_succeeded");
+    await dispatcher.shutdown();
+});
+
+test("timed-out webhook operations reconcile a late failure and keep flush bounded", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    let rejectSend;
+    class LateFailureClient {
+        async send() {
+            return new Promise((_, reject) => { rejectSend = reject; });
+        }
+        destroy() {}
+    }
+    const dispatcher = new WebhookDispatcher({
+        WebhookClientClass: LateFailureClient,
+        env: { WEBHOOK_LOG_URL: LOG_URL },
+        maxAttempts: 2,
+        timeoutMs: 100
+    });
+
+    assert.equal(await dispatcher.enqueue("LOG", "late failure"), true);
+    assert.equal(await dispatcher.flush(120), false);
+    rejectSend(Object.assign(new Error("late network failure"), { status: 503 }));
+    assert.equal(await dispatcher.flush(500), true);
+    const stats = dispatcher.stats();
+    assert.equal(stats.targets.LOG.lateFailed, 1);
+    assert.equal(stats.targets.LOG.failed, 1);
+    assert.equal(stats.targets.LOG.pendingTimedOut, 0);
+    assert.equal(stats.recentOperations.at(-1).state, "late_failed");
+    assert.equal(stats.recentOperations.at(-1).failureCode, "http_503");
+    await dispatcher.shutdown();
 });
 
 test("event token normalization bounds hostile input without changing webhook colors", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.

@@ -2,8 +2,8 @@
 
 const { Colors, WebhookClient } = require("discord.js");
 const crypto = require("node:crypto");
-const { sanitizeLogText } = require("./safeLogger");
 const { resolvePublicBaseUrl } = require("./publicUrl");
+const { readFiniteInteger } = require("./numbers");
 
 const WEBHOOK_TARGETS = Object.freeze({
     LOG: "WEBHOOK_LOG_URL",
@@ -60,11 +60,11 @@ const CONTENT_MAX = 2000;
 const EMBED_TOTAL_MAX = 6000;
 const EMBED_COUNT_MAX = 10;
 const FIELD_COUNT_MAX = 25;
-const DEFAULT_QUEUE_MAX = Math.max(10, Number(process.env.WEBHOOK_QUEUE_MAX || 500) || 500);
-const DEFAULT_CONCURRENCY = Math.max(1, Math.min(5, Number(process.env.WEBHOOK_CONCURRENCY || 1) || 1));
-const DEFAULT_ATTEMPTS = Math.max(1, Math.min(5, Number(process.env.WEBHOOK_MAX_ATTEMPTS || 3) || 3));
-const DEFAULT_TIMEOUT_MS = Math.max(1000, Number(process.env.WEBHOOK_SEND_TIMEOUT_MS || 15000) || 15000);
-const ROUTINE_DEDUPE_MAX = Math.max(100, Number(process.env.WEBHOOK_ROUTINE_DEDUPE_MAX || 2000) || 2000);
+const DEFAULT_QUEUE_MAX = readFiniteInteger(process.env.WEBHOOK_QUEUE_MAX, { fallback: 500, min: 10, max: 5000 });
+const DEFAULT_CONCURRENCY = readFiniteInteger(process.env.WEBHOOK_CONCURRENCY, { fallback: 1, min: 1, max: 5 });
+const DEFAULT_ATTEMPTS = readFiniteInteger(process.env.WEBHOOK_MAX_ATTEMPTS, { fallback: 3, min: 1, max: 5 });
+const DEFAULT_TIMEOUT_MS = readFiniteInteger(process.env.WEBHOOK_SEND_TIMEOUT_MS, { fallback: 15000, min: 1000, max: 120000 });
+const ROUTINE_DEDUPE_MAX = readFiniteInteger(process.env.WEBHOOK_ROUTINE_DEDUPE_MAX, { fallback: 2000, min: 100, max: 20000 });
 const EVENT_TOKEN_INPUT_MAX = 500;
 const EVENT_TOKEN_OUTPUT_MAX = 100;
 
@@ -143,7 +143,7 @@ function getWebhookDiagnostics(env = process.env) {
 function truncate(value, max) {
     const safeMax = Math.max(0, Number(max) || 0);
     if (safeMax === 0) return "";
-    const clean = sanitizeLogText(String(value ?? ""));
+    const clean = String(value ?? "").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
     if (clean.length <= safeMax) return clean;
     const suffix = "… [TRUNCATED]";
     if (safeMax <= suffix.length) return clean.slice(0, safeMax);
@@ -197,8 +197,6 @@ function normalizeWebhookPayload(payload) {
             .map(embed => normalizeEmbed(embed, budget))
             .filter(Boolean);
     }
-    // Log content is partly user-controlled. Never let it generate Discord pings.
-    normalized.allowedMentions = { parse: [] };
     return normalized;
 }
 
@@ -419,6 +417,19 @@ function withTimeout(promise, timeoutMs) {
     return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+function firstSendOutcome(sendPromise, timeoutMs) {
+    const outcome = Promise.resolve(sendPromise).then(
+        value => ({ state: "sent", value }),
+        error => ({ state: "failed", error })
+    );
+    let timer;
+    const timeout = new Promise(resolve => {
+        timer = setTimeout(() => resolve({ state: "timed_out" }), timeoutMs);
+    });
+    const first = Promise.race([outcome, timeout]).finally(() => clearTimeout(timer));
+    return { first, outcome };
+}
+
 function createTargetMetrics() {
     return {
         queued: 0,
@@ -427,6 +438,10 @@ function createTargetMetrics() {
         dropped: 0,
         retried: 0,
         warningSuppressed: 0,
+        timedOut: 0,
+        pendingTimedOut: 0,
+        lateSucceeded: 0,
+        lateFailed: 0,
         lastSuccessAt: null,
         lastFailureAt: null,
         lastFailureCode: null
@@ -449,6 +464,69 @@ class WebhookDispatcher {
         this.metrics = { LOG: createTargetMetrics(), ALERT: createTargetMetrics() };
         this.lastFailureWarningAt = { LOG: 0, ALERT: 0 };
         this.idleWaiters = [];
+        this.pendingReconciliations = new Set();
+        this.operationMax = readFiniteInteger(options.operationMax, {
+            fallback: Math.max(100, this.maxDepth * 2),
+            min: 10,
+            max: 10000
+        });
+        this.operations = new Map();
+    }
+
+    registerOperation(item, attempt) {
+        const id = crypto.randomUUID();
+        const operation = {
+            id,
+            target: item.target,
+            attempt,
+            state: "sending",
+            startedAt: Date.now(),
+            completedAt: null,
+            failureCode: null
+        };
+        this.operations.set(id, operation);
+        while (this.operations.size > this.operationMax) {
+            this.operations.delete(this.operations.keys().next().value);
+        }
+        return operation;
+    }
+
+    completeOperation(operation, state, error = null) {
+        operation.state = state;
+        operation.completedAt = Date.now();
+        operation.failureCode = error ? failureCode(error) : null;
+    }
+
+    trackTimedOutOperation(operation, outcome, metrics, url) {
+        metrics.timedOut++;
+        metrics.pendingTimedOut++;
+        metrics.lastFailureAt = Date.now();
+        metrics.lastFailureCode = "send_timeout_pending";
+        this.completeOperation(operation, "timed_out");
+        this.warnFailure(operation.target, metrics.lastFailureCode);
+
+        let reconciliation;
+        reconciliation = outcome.then(late => {
+            metrics.pendingTimedOut = Math.max(0, metrics.pendingTimedOut - 1);
+            if (late.state === "sent") {
+                metrics.lateSucceeded++;
+                metrics.sent++;
+                metrics.lastSuccessAt = Date.now();
+                this.completeOperation(operation, "late_succeeded");
+                return;
+            }
+            metrics.lateFailed++;
+            metrics.failed++;
+            metrics.lastFailureAt = Date.now();
+            metrics.lastFailureCode = failureCode(late.error);
+            this.completeOperation(operation, "late_failed", late.error);
+            this.discardClient(url);
+            this.warnFailure(operation.target, metrics.lastFailureCode);
+        }).finally(() => {
+            this.pendingReconciliations.delete(reconciliation);
+            this.resolveIdle();
+        });
+        this.pendingReconciliations.add(reconciliation);
     }
 
     warnFailure(target, code) {
@@ -532,14 +610,25 @@ class WebhookDispatcher {
         const normalized = normalizeWebhookPayload(item.payload);
         let lastError = null;
         for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
+            const operation = this.registerOperation(item, attempt);
             try {
                 const client = this.getClient(item.url);
-                await withTimeout(client.send(normalized), this.timeoutMs);
+                const { first, outcome } = firstSendOutcome(client.send(normalized), this.timeoutMs);
+                const delivery = await first;
+                if (delivery.state === "timed_out") {
+                    this.trackTimedOutOperation(operation, outcome, metrics, item.url);
+                    // The underlying HTTP request cannot be cancelled safely. Treat it as
+                    // accepted-but-pending so callers and dedupe logic do not send a duplicate.
+                    return true;
+                }
+                if (delivery.state === "failed") throw delivery.error;
+                this.completeOperation(operation, "sent");
                 metrics.sent++;
                 metrics.lastSuccessAt = Date.now();
                 return true;
             } catch (error) {
                 lastError = error;
+                this.completeOperation(operation, "failed", error);
                 if (attempt >= this.maxAttempts || !retryable(error)) break;
                 metrics.retried++;
                 await this.delayFn(Math.min(500 * 2 ** (attempt - 1), 5000));
@@ -567,14 +656,14 @@ class WebhookDispatcher {
     }
 
     resolveIdle() {
-        if (this.active || this.queue.length) return;
+        if (this.active || this.queue.length || this.pendingReconciliations.size) return;
         const waiters = this.idleWaiters;
         this.idleWaiters = [];
         for (const resolve of waiters) resolve(true);
     }
 
     async flush(timeoutMs = 5000) {
-        if (!this.active && !this.queue.length) return true;
+        if (!this.active && !this.queue.length && !this.pendingReconciliations.size) return true;
         return new Promise(resolve => {
             let settled = false;
             const finish = value => {
@@ -600,8 +689,10 @@ class WebhookDispatcher {
             accepting: this.accepting,
             queueDepth: this.queue.length,
             active: this.active,
+            pendingReconciliations: this.pendingReconciliations.size,
             maxDepth: this.maxDepth,
             concurrency: this.concurrency,
+            recentOperations: Array.from(this.operations.values()).map(operation => ({ ...operation })),
             targets: structuredClone(this.metrics)
         };
     }
@@ -812,6 +903,7 @@ module.exports = {
         failureCode,
         retryable,
         withTimeout,
+        firstSendOutcome,
         routineDedupe,
         trimEdgeCharacter,
         normalizeEventToken,

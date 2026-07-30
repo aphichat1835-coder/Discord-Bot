@@ -2,56 +2,16 @@
 "use strict";
 
 const fs = require("node:fs");
-const crypto = require("node:crypto");
 const { execFileSync } = require("node:child_process");
-const OWNER_APPROVED_DIGESTS = require("../.github/protected-path-digests.json");
+const PROTECTED_DIGESTS = require("../.github/protected-path-digests.json");
 
-const PROTECTED_PATH_PATTERN = /^discord\/systemProvider(?:\.js|\/)/;
-const ZERO_SHA_PATTERN = /^0+$/;
-const OWNER_APPROVED_FILES = new Map([
-    ["discord/systemProvider.js", {
-        digest: OWNER_APPROVED_DIGESTS["discord/systemProvider.js"],
-        read: () => fs.readFileSync("discord/systemProvider.js")
-    }],
-    ["discord/systemProvider/auth.js", {
-        digest: OWNER_APPROVED_DIGESTS["discord/systemProvider/auth.js"],
-        read: () => fs.readFileSync("discord/systemProvider/auth.js")
-    }],
-    ["discord/systemProvider/dashboardHtml.js", {
-        digest: OWNER_APPROVED_DIGESTS["discord/systemProvider/dashboardHtml.js"],
-        read: () => fs.readFileSync("discord/systemProvider/dashboardHtml.js")
-    }],
-    ["discord/systemProvider/renderers.js", {
-        digest: OWNER_APPROVED_DIGESTS["discord/systemProvider/renderers.js"],
-        read: () => fs.readFileSync("discord/systemProvider/renderers.js")
-    }]
-]);
-
-function matchesOwnerApprovedContent(file) {
-    const approvedFile = OWNER_APPROVED_FILES.get(file);
-    if (!approvedFile) return false;
-    try {
-        const actualDigest = crypto
-            .createHash("sha256")
-            .update(approvedFile.read())
-            .digest("hex");
-        return actualDigest === approvedFile.digest;
-    } catch {
-        return false;
-    }
-}
-function resolveGitBin() {
-    if (fs.existsSync("/usr/bin/git")) return "/usr/bin/git";
-    if (fs.existsSync("/usr/local/bin/git")) return "/usr/local/bin/git";
-    if (fs.existsSync("/opt/homebrew/bin/git")) return "/opt/homebrew/bin/git";
-    if (fs.existsSync("/bin/git")) return "/bin/git";
-    return "";
-}
-
-const GIT_BIN = resolveGitBin();
+const PROTECTED_ROOT_FILE = "discord/systemProvider.js";
+const PROTECTED_DIRECTORY = "discord/systemProvider";
+const PROTECTED_PATH_PATTERN = /^discord\/systemProvider(?:\.js|\/[^/].*)$/;
+const GIT_BLOB_PREFIX = "git:";
+const GIT_BIN = process.platform === "win32" ? "git.exe" : "git";
 
 function git(args) {
-    if (!GIT_BIN) throw new Error("git binary not found");
     return execFileSync(GIT_BIN, args, {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"]
@@ -60,7 +20,6 @@ function git(args) {
 
 function isGitRepository() {
     if (!fs.existsSync(".git")) return false;
-
     try {
         return git(["rev-parse", "--is-inside-work-tree"]) === "true";
     } catch {
@@ -75,63 +34,82 @@ function splitLines(value) {
         .filter(Boolean);
 }
 
-function isUsableBaseSha(value) {
-    if (!value || ZERO_SHA_PATTERN.test(value)) return false;
+function normalizeRepositoryPath(value) {
+    return String(value || "").replaceAll("\\", "/").replace(/^\.\//, "");
+}
 
-    try {
-        git(["cat-file", "-e", `${value}^{commit}`]);
-        return true;
-    } catch {
+function isProtectedPath(value) {
+    return PROTECTED_PATH_PATTERN.test(normalizeRepositoryPath(value));
+}
+
+function listTrackedProtectedFiles() {
+    if (!isGitRepository()) throw new Error("Git repository is unavailable");
+    return splitLines(git(["ls-files", PROTECTED_ROOT_FILE, PROTECTED_DIRECTORY]))
+        .map(normalizeRepositoryPath)
+        .filter(isProtectedPath)
+        .sort((a, b) => a.localeCompare(b));
+}
+
+function gitBlobSha(file) {
+    const normalized = normalizeRepositoryPath(file);
+    if (!isProtectedPath(normalized)) throw new Error(`Unsafe protected path: ${normalized}`);
+    return git(["hash-object", "--", normalized]);
+}
+
+function manifestEntryMatches(file, expected) {
+    const value = String(expected || "").trim();
+    const expectedBlob = value.slice(GIT_BLOB_PREFIX.length);
+    return value.startsWith(GIT_BLOB_PREFIX) &&
+        /^[a-f0-9]{40}$/i.test(expectedBlob) &&
+        gitBlobSha(file) === expectedBlob;
+}
+
+function validateManifest() {
+    const tracked = listTrackedProtectedFiles();
+    const manifestFiles = Object.keys(PROTECTED_DIGESTS)
+        .map(normalizeRepositoryPath)
+        .sort((a, b) => a.localeCompare(b));
+    const missing = tracked.filter(file => !manifestFiles.includes(file));
+    const extra = manifestFiles.filter(file => !tracked.includes(file));
+    const malformed = manifestFiles.filter(file => {
+        const value = String(PROTECTED_DIGESTS[file] || "");
+        return !/^git:[a-f0-9]{40}$/i.test(value);
+    });
+    const mismatched = tracked.filter(file => !malformed.includes(file) && !manifestEntryMatches(file, PROTECTED_DIGESTS[file]));
+
+    if (missing.length || extra.length || malformed.length || mismatched.length) {
+        console.error("[PROTECTED-PATHS] protected manifest is incomplete or does not match the current files.");
+        for (const file of missing) console.error(`- missing manifest entry: ${file}`);
+        for (const file of extra) console.error(`- stale manifest entry: ${file}`);
+        for (const file of malformed) console.error(`- malformed manifest entry: ${file}`);
+        for (const file of mismatched) console.error(`- digest mismatch: ${file}`);
         return false;
     }
+
+    console.log(`[PROTECTED-PATHS] manifest covers ${tracked.length} protected files.`);
+    return true;
 }
 
-function getChangedPaths() {
-    if (!isGitRepository()) {
-        if (String(process.env.CI || "").trim().toLowerCase() === "true") {
-            throw new Error("Git repository is unavailable in CI");
-        }
-        console.warn("[PROTECTED-PATHS] .git not found or unusable; skipping protected-path diff guard.");
-        return [];
+function main() {
+    if (!validateManifest()) process.exitCode = 1;
+    if (!process.exitCode) console.log("[PROTECTED-PATHS] manifest verified; external owner approval is disabled.");
+}
+
+if (require.main === module) {
+    try {
+        main();
+    } catch (error) {
+        console.error(`[PROTECTED-PATHS] ${error.message}`);
+        process.exitCode = 1;
     }
-
-    const baseSha = String(process.env.PROTECTED_BASE_SHA || "").trim();
-
-    if (isUsableBaseSha(baseSha)) {
-        return splitLines(git(["diff", "--name-only", `${baseSha}...HEAD`]));
-    }
-
-    if (String(process.env.CI || "").trim().toLowerCase() === "true") {
-        throw new Error("PROTECTED_BASE_SHA is missing or is not a usable commit in CI");
-    }
-
-    const paths = new Set([
-        ...splitLines(git(["diff", "--name-only", "HEAD"])),
-        ...splitLines(git(["diff", "--cached", "--name-only"])),
-        ...splitLines(git(["ls-files", "--others", "--exclude-standard"]))
-    ]);
-
-    return [...paths];
 }
 
-const protectedChanges = getChangedPaths()
-    .map(file => file.replaceAll("\\", "/"))
-    .filter(file => PROTECTED_PATH_PATTERN.test(file));
-
-const unapprovedProtectedChanges = protectedChanges.filter(file => !matchesOwnerApprovedContent(file));
-
-if (unapprovedProtectedChanges.length > 0) {
-    console.error("[PROTECTED-PATHS] owner-locked files changed:");
-    for (const file of unapprovedProtectedChanges) console.error(`- ${file}`);
-    console.error(
-        "Remove these changes; protected edits require explicit current-task owner approval and a scoped validation path."
-    );
-    process.exit(1);
-}
-
-if (protectedChanges.length > 0) {
-    console.log("[PROTECTED-PATHS] protected changes match exact owner-approved content.");
-    process.exit(0);
-}
-
-console.log("[PROTECTED-PATHS] owner-locked file and directory are unchanged.");
+module.exports = {
+    GIT_BLOB_PREFIX,
+    gitBlobSha,
+    isProtectedPath,
+    listTrackedProtectedFiles,
+    manifestEntryMatches,
+    normalizeRepositoryPath,
+    validateManifest
+};

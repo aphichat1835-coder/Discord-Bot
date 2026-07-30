@@ -25,15 +25,10 @@ const {
     startLookupCacheCleanup,
     stopLookupCacheCleanup
 } = require("./utils/ipUtils");
+const { readFiniteInteger } = require("../core/numbers");
 
-const RETENTION_CONFIG_SCAN_MAX = Math.max(
-    50,
-    Number(process.env.RETENTION_CONFIG_SCAN_MAX || 1000) || 1000
-);
-const RETENTION_ERROR_MAX = Math.max(
-    5,
-    Number(process.env.RETENTION_ERROR_MAX || 50) || 50
-);
+const RETENTION_CONFIG_SCAN_MAX = readFiniteInteger(process.env.RETENTION_CONFIG_SCAN_MAX, { fallback: 1000, min: 50, max: 10000 });
+const RETENTION_ERROR_MAX = readFiniteInteger(process.env.RETENTION_ERROR_MAX, { fallback: 50, min: 5, max: 1000 });
 const MAINTENANCE_INTERVAL_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 

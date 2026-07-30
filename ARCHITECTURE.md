@@ -90,7 +90,7 @@ not invent a profile image.
 │   ├── commands.js
 │   ├── commands/                 slash command modules
 │   ├── core/                     env, HTTP, feature flags, safe logging, webhooks
-│   ├── dm/                       shared DM design, profile resolution, durable outbox, and retry
+│   ├── dm/                       shared DM design, volatile outage recovery, durable outbox, and retry
 │   ├── features/                 protection, role button, Join Campaign
 │   ├── guards/                   command/dashboard guards
 │   ├── index/                    Owner web/API modules and lifecycle helpers
@@ -150,6 +150,7 @@ channel fallback when private delivery is unavailable.
 | `GET /ping` | liveness, always simple 200 while listener is running |
 | `GET /health` | combined dependency readiness; 200 when ready and 503 when degraded |
 | `GET /ready` | alias of the combined `/health` readiness response |
+| `GET /auth/start` | validates the panel state, registers a one-time execution state, and redirects to Discord OAuth |
 | `GET /auth/callback` | serves OAuth callback UI |
 | `POST /auth/callback` | rate-limited verification execution |
 
@@ -167,10 +168,10 @@ channel fallback when private delivery is unavailable.
 | write routes under `/api/guild/:guildId/*` | Owner PIN + CSRF |
 | `GET /api/guild/:guildId/member/:userId/detail` | Owner PIN |
 | `GET /api/guild/:guildId/member/:userId/ip-history` | Owner PIN; paginated canonical IP history |
-| `POST /api/guild/:guildId/member/:userId/full-detail` | Owner PIN + CSRF; audited full Owner view |
-| `POST /api/guild/:guildId/member/:userId/reveal-token` | Owner PIN + CSRF + reason + audit attempt/status |
+| `POST /api/guild/:guildId/member/:userId/full-detail` | Owner PIN + CSRF; categorized detail remains redacted |
+| `POST /api/guild/:guildId/member/:userId/reveal-token` | Owner PIN + CSRF + rate limit + automatic audit intent/result |
 | `GET /api/guild/:guildId/preflight` | Owner PIN |
-| `POST /api/verify-owner/.../reveal-ip` | Owner PIN + CSRF + reason + audit attempt/status |
+| `POST /api/verify-owner/.../reveal-ip` | Owner PIN + CSRF + rate limit + automatic audit intent/result |
 | `GET /api/verification/diagnostics` | Owner PIN |
 | `POST /api/verification/retention/dry-run` | Owner PIN + CSRF |
 

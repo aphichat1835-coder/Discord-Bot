@@ -1,7 +1,7 @@
 const {
-  redactSensitiveDiscordSnapshot,
-  redactSensitiveIpInfo
+  redactSensitiveDiscordSnapshot
 } = require("./sensitiveAccess");
+const { decryptIP } = require("./crypto");
 
 function arrayOrEmpty(value) {
   return Array.isArray(value) ? value : [];
@@ -79,12 +79,13 @@ function safeIpLookup(ipInfo = {}) {
   };
 }
 
-function safeIpInfo(ipInfo = {}) {
+function safeIpInfo(ipInfo = {}, canViewSensitive = false) {
+  const rawIp = canViewSensitive
+    ? (ipInfo.rawIp || ipInfo.ip || decryptIP(ipInfo.encryptedRawIp || "") || null)
+    : null;
   return {
-    // Raw IP is unavailable in normal list serializers and only returned by
-    // the owner-only, CSRF-protected full-detail route.
-    rawIp: null,
-    ip: null,
+    rawIp,
+    ip: rawIp,
     ...safeIpLocation(ipInfo),
     ...safeIpNetwork(ipInfo),
     ...safeIpFlags(ipInfo),
@@ -311,7 +312,7 @@ function safeRoleResult(result = {}) {
 
 function buildVerifyLogParts(rawLog = {}, canViewSensitive = false) {
   const raw = rawLog?.toObject ? rawLog.toObject() : rawLog;
-  const ipInfo = redactSensitiveIpInfo(safeIpInfo(raw.ipInfo || {}), false);
+  const ipInfo = safeIpInfo(raw.ipInfo || {}, canViewSensitive);
   const device = safeDevice(raw.device || {});
   const discord = safeDiscordSnapshot(raw.discordSnapshot || {}, canViewSensitive);
   const member = safeMemberSnapshot(

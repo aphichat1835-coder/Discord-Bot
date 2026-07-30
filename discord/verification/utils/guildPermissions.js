@@ -1,12 +1,14 @@
+const { PermissionFlagsBits } = require("discord.js");
+
 const PERMISSIONS = Object.freeze({
-    ADMINISTRATOR: 0x8n,
-    MANAGE_GUILD: 0x20n,
-    BAN_MEMBERS: 0x4n,
-    KICK_MEMBERS: 0x2n,
-    MANAGE_CHANNELS: 0x10n,
-    MANAGE_ROLES: 0x10000000n,
-    MANAGE_MESSAGES: 0x2000n,
-    VIEW_AUDIT_LOG: 0x80n
+    Administrator: PermissionFlagsBits.Administrator,
+    ManageGuild: PermissionFlagsBits.ManageGuild,
+    BanMembers: PermissionFlagsBits.BanMembers,
+    KickMembers: PermissionFlagsBits.KickMembers,
+    ManageChannels: PermissionFlagsBits.ManageChannels,
+    ManageRoles: PermissionFlagsBits.ManageRoles,
+    ManageMessages: PermissionFlagsBits.ManageMessages,
+    ViewAuditLog: PermissionFlagsBits.ViewAuditLog
 });
 
 function permissionBigInt(value) {
@@ -36,9 +38,9 @@ function permissionFlags(permissions) {
 function normalizeGuildPermissions(guild = {}) {
     const owner = !!guild.owner || !!guild.isOwner;
     const permissions = String(guild.permissions || "0");
-    const administrator = hasPerm(permissions, PERMISSIONS.ADMINISTRATOR);
-    const canManageGuild = owner || administrator || guild.canManageGuild === true || hasPerm(permissions, PERMISSIONS.MANAGE_GUILD);
-    const canManageRoles = owner || administrator || guild.canManageRoles === true || hasPerm(permissions, PERMISSIONS.MANAGE_ROLES);
+    const administrator = hasPerm(permissions, PERMISSIONS.Administrator);
+    const canManageGuild = owner || administrator || guild.canManageGuild === true || hasPerm(permissions, PERMISSIONS.ManageGuild);
+    const canManageRoles = owner || administrator || guild.canManageRoles === true || hasPerm(permissions, PERMISSIONS.ManageRoles);
     const isAdmin = owner || administrator || guild.isAdmin === true;
 
     return {
@@ -48,7 +50,7 @@ function normalizeGuildPermissions(guild = {}) {
         canManage: owner || administrator || canManageGuild,
         canManageGuild,
         canManageRoles,
-        canBanMembers: owner || administrator || guild.canBanMembers === true || hasPerm(permissions, PERMISSIONS.BAN_MEMBERS),
+        canBanMembers: owner || administrator || guild.canBanMembers === true || hasPerm(permissions, PERMISSIONS.BanMembers),
         permissionFlags: permissionFlags(permissions)
     };
 }

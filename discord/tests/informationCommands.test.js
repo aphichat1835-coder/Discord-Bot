@@ -2,7 +2,7 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { Collection } = require("discord.js");
+const { Collection, PermissionFlagsBits } = require("discord.js");
 const information = require("../commands/information");
 
 const SECOND_MS = 1000;
@@ -152,7 +152,7 @@ test("userinfo presents age as context rather than declaring a person high risk"
         joinedTimestamp: Date.now() - 3600000,
         displayHexColor: "#57F287",
         roles: { cache: roles },
-        permissions: { has: permission => permission === "MANAGE_MESSAGES" },
+        permissions: { has: permission => permission === PermissionFlagsBits.ManageMessages },
         communicationDisabledUntilTimestamp: null,
         pending: false,
         premiumSinceTimestamp: null

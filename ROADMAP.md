@@ -1,13 +1,13 @@
 # Roadmap
 
-Last reviewed: 2026-07-23 (`ttt`).
+Last reviewed: 2026-07-26 (`ttt.1` release candidate).
 
 ## Current architecture baseline
 
 - One repository and one Node.js 24.18 LTS runtime.
 - One Express listener on `PORT || 3000`.
 - One shared Mongoose connection.
-- Main bot, voice/session, Owner Dashboard, OAuth verification, maintenance, and
+- Main bot, voice/session, Dashboard ควบคุมบอท, OAuth verification, maintenance, and
   protection start through `npm start`.
 - Verification management is Owner PIN only.
 - Member OAuth callback remains public.
@@ -31,20 +31,19 @@ require a new explicit owner decision.
   admin OAuth routes, and deployment definition.
 - Kept `/setup-verify`, signed state, panel revision, `guilds.join`, Join
   Campaign, retention, join, and role assignment flows.
-- Added combined `/health` readiness.
+- Added lightweight `/ping` liveness plus combined `/health` and `/ready` readiness.
 - Added full returned guild/connection/target-role persistence and
   failure-preserving snapshot updates.
 - Replaced Join Campaign's total-user ceiling and embedded per-IP history caps
   with cursor batches and paginated canonical history collections.
 - Added additive snapshot/data-quality fields and dry-run/apply migration.
-- Added audited Owner raw-IP reveal while keeping normal APIs redacted.
+- Added separate audited per-user Token/IP reveal actions while keeping normal and full-detail APIs redacted.
 - Added a separate audited full-detail POST while keeping the normal detail GET
   redacted and non-cacheable for sensitive responses.
 - Made snapshot persistence complete-version based with per-document BSON
   sizing, oversized-object checksum chunks, rollback recovery, and no aggregate
   truncation ceiling.
-- Made privacy deletion and IP-history backfill transactional/idempotent, and
-  required a confirmed maintenance window for archive restore apply.
+- Added a resumable, guild-scoped privacy-deletion manifest with post-delete reference verification, while keeping IP-history backfill idempotent and requiring a confirmed maintenance window for archive restore apply.
 - Added guild-backup identity/chunk validation and permission-overwrite restore.
 - Replaced the inherited Owner Verification presentation with a five-section,
   mobile-first module inside the purple Owner Dashboard while preserving routes,
@@ -66,11 +65,8 @@ require a new explicit owner decision.
 
 ### Verification quality
 
-- Add fixture-driven callback integration tests against a disposable MongoDB
-  instance when CI provides one.
-- Expand route-level tests for Owner PIN redirect, CSRF rejection, callback rate
-  limiting, and readiness degradation without introducing production test
-  dependencies.
+- Run the failure-injection callback suite against a disposable MongoDB instance when CI provides one.
+- Keep route-level tests for Owner PIN redirect, CSRF rejection, callback rate limiting, protected-session revocation, and readiness degradation current.
 - Add explicit metrics for optional-fetch failure rates by category.
 
 ### UI maintainability
@@ -112,9 +108,8 @@ analysis, rollback planning, and full validation.
 - Unified callback URI is registered in Discord Developer Portal.
 - Canonical `PUBLIC_BASE_URL` resolves to the deployed HTTPS origin; any
   retained legacy aliases match it exactly.
-- `npm run check`, `npm test`, dependency audit, secret scan, and protected-path
-  guard pass.
-- `/ping` and `/health` behave correctly during startup and ready state.
+- `npm run check`, `npm test`, LCOV thresholds, dependency audit, secret scan, and the externally approved protected-path guard pass.
+- `/ping` remains live during startup while `/health` and `/ready` report degraded until dependencies are ready.
 - Owner PIN/CSRF protections are verified for every management write.
 - A real OAuth flow verifies profile, optional data, guild join, target member,
   role assignment, persistence, and redaction.

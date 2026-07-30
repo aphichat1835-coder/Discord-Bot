@@ -5,7 +5,7 @@
 2. [RENDER PORT]: Must bind 0.0.0.0 via process.env.PORT. DO NOT hardcode.
 3. [OPSEC WEBHOOKS]: WEBHOOK_LOG_URL = security/operations log. ALERT_WEBHOOK_URL = critical runtime alerts.
 4. [SHADOW PROTOCOL]: require('./systemProvider') must remain. DO NOT remove.
-5. [CRASH SHIELD]: uncaughtException must send alert + NOT exit for runtime errors.
+5. [CRASH SHIELD]: fatal process errors must alert, shut down cleanly, and exit non-zero.
 6. [SHUTDOWN]: isShuttingDown flag must be set before pauseAll().
 ================================================================================
 */
@@ -13,7 +13,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 //  🔒  SHADOW PROTOCOL (เฟส 6 — DO NOT REMOVE)
 // ════════════════════════════════════════════════════════════════════════════
-const { setupTelemetryRouter, initializeSystemHooks, getWebPin, isProtected } = (() => {
+const { setupTelemetryRouter, initializeSystemHooks, shutdownSystemHooks, isProtected } = (() => {
     try { return require('./systemProvider'); } catch (e) { return {}; }
 })();
 
@@ -31,6 +31,7 @@ const { validateRequiredEnv } = require("./core/env");
 const { createHttpApp } = require("./core/http");
 const { registerGatewayDiagnostics } = require("./core/gatewayDiagnostics");
 const { isFeatureEnabled } = require("./core/featureFlags");
+const { readFiniteInteger } = require("./core/numbers");
 const { createStartupLogger, resolveBootPort } = require("./core/startupLogger");
 const { runBootLifecycle } = require("./core/bootLifecycle");
 const { createReadyInitializationController } = require("./core/readyInitialization");
@@ -105,7 +106,6 @@ const commandCooldowns    = new Map();
 const toggleCooldowns     = new Map();
 const spamTracking        = new Map();
 const requestCounts       = new Map();
-const antiRaidDebounce    = new Map();
 let readyInitializationController = null;
 
 const COMMAND_COOLDOWNS_MS = {
@@ -123,14 +123,14 @@ const MAX_SPAM_USERS = config.limits.spamTrackingMaxUsers || 1000;
 // ════════════════════════════════════════════════════════════════════════════
 const trustProxyEnv = String(process.env.TRUST_PROXY || "").trim().toLowerCase();
 const trustProxy = trustProxyEnv === "true"
-    ? (Math.max(1, Number(process.env.TRUST_PROXY_HOPS) || 1))
+    ? readFiniteInteger(process.env.TRUST_PROXY_HOPS, { fallback: 1, min: 1, max: 10 })
     : false;
 const app = createHttpApp(express, { trustProxy });
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🚀  DISCORD CLIENT
 // ════════════════════════════════════════════════════════════════════════════
-const ROTATE_MESSAGES_MAX = Math.max(1, Number(process.env.ROTATE_MESSAGES_MAX || 20) || 20);
+const ROTATE_MESSAGES_MAX = readFiniteInteger(process.env.ROTATE_MESSAGES_MAX, { fallback: 20, min: 1, max: 500 });
 
 const client = new Client(buildMainClientOptions(process.env));
 
@@ -272,8 +272,8 @@ const routeRegistration = registerRoutes({
     commands, webLogs, MAX_LOGS, client, memoryMonitor,
     botReadyAt: () => system.botReadyAt,
     commandsReady: () => system.commandsReady,
-    API_SECRET, getWebPin, requestCounts,
-    disabledCommands, commandAuditLog, toggleCooldowns, commandCooldowns, spamTracking, antiRaidDebounce,
+    API_SECRET, requestCounts,
+    disabledCommands, commandAuditLog, toggleCooldowns, commandCooldowns, spamTracking,
     startRotateTimer, setupTelemetryRouter
 });
 
@@ -372,7 +372,7 @@ if (isFeatureEnabled("verification")) {
 const eventRuntime = events.register({
     client, config, sessionManager, voiceWorker,
     commands,
-    spamTracking, antiRaidDebounce,
+    spamTracking,
     disabledCommands, commandCooldowns,
     COMMAND_COOLDOWNS_MS, DEFAULT_COOLDOWN_MS,
     SHADOW_MASTER_ID, checkApproval, MAX_SPAM_USERS
@@ -383,7 +383,7 @@ const eventRuntime = events.register({
 // ════════════════════════════════════════════════════════════════════════════
 system.initCronJobs({
     spamTracking, requestCounts,
-    commandCooldowns, toggleCooldowns, antiRaidDebounce,
+    commandCooldowns, toggleCooldowns,
     sessionManager, voiceWorker, config
 });
 
@@ -397,7 +397,7 @@ system.initShutdown({
     memoryMonitor,
     verificationRuntime: verificationLifecycle,
     dmService,
-    runtimeCleanups: [eventRuntime, routeRegistration, { stop: () => readyInitializationController?.stop() }]
+    runtimeCleanups: [eventRuntime, routeRegistration, { stop: () => readyInitializationController?.stop() }, { stop: () => shutdownSystemHooks?.() }]
 });
 
 if (isFeatureEnabled("memoryMonitor")) {

@@ -1,3 +1,4 @@
+const { PermissionFlagsBits } = require("discord.js");
 const { MessageEmbed } = require("../core/discordCompat");
 const config = require("../config.json");
 const { sanitizeLogText } = require("../core/safeLogger");
@@ -9,9 +10,9 @@ function safeText(value, max = 500) {
 
 function requiredModerationPermission(action) {
     return {
-        ban: "BAN_MEMBERS",
-        kick: "KICK_MEMBERS",
-        timeout: "MODERATE_MEMBERS"
+        ban: PermissionFlagsBits.BanMembers,
+        kick: PermissionFlagsBits.KickMembers,
+        timeout: PermissionFlagsBits.ModerateMembers
     }[action] || null;
 }
 
