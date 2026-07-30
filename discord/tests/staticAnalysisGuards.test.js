@@ -15,19 +15,14 @@ test("voice notification storage avoids computed object injection sinks", () => 
     assert.match(source, /EVENT_TYPES\.has\(type\)/);
 });
 
-test("protected path guard inventories the complete protected tree and requires paginated external head approval", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("protected path guard inventories the complete protected tree without an external approval dependency", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const source = fs.readFileSync("scripts/checkProtectedPaths.js", "utf8");
     const manifest = JSON.parse(fs.readFileSync(".github/protected-path-digests.json", "utf8"));
 
     assert.match(source, /git\(\["ls-files", PROTECTED_ROOT_FILE, PROTECTED_DIRECTORY\]\)/);
-    assert.match(source, /protected-owner-approval:/);
-    assert.match(source, /pull_request\?\.head\?\.sha/);
-    assert.match(source, /per_page:\s*String\(APPROVAL_PAGE_SIZE\)/);
-    assert.match(source, /sort:\s*"created"/);
-    assert.match(source, /direction:\s*"desc"/);
-    assert.match(source, /for \(let page = 1; page <= APPROVAL_MAX_PAGES; page\+\+\)/);
-    assert.match(source, /hostname: "api\.github\.com"/);
-    assert.doesNotMatch(source, /fetch\(/);
+    assert.match(source, /external owner approval is disabled/);
+    assert.doesNotMatch(source, /protected-owner-approval/);
+    assert.doesNotMatch(source, /api\.github\.com/);
     assert.deepEqual(Object.keys(manifest).sort(), [
         "discord/systemProvider.js",
         "discord/systemProvider/actions.js",
