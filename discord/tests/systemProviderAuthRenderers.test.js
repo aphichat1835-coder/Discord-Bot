@@ -196,6 +196,19 @@ test("brute-force capacity preserves active locks and fails closed when every re
     assert.equal(stillLocked.statusCode, 429);
 });
 
+test("failed PIN responses keep their original audit event classification", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const events = [];
+    const auth = createAuth({
+        maxAttempts: 1,
+        maxBruteKeys: 1,
+        onAuthEvent: event => events.push(event.event)
+    });
+
+    assert.equal(auth.authorize({ ip: "203.0.113.40", headers: {} }, createResponse(), {}, "wrong-pin"), false);
+    assert.equal(auth.authorize({ ip: "203.0.113.41", headers: {} }, createResponse(), {}, "wrong-pin"), false);
+    assert.deepEqual(events, ["login_failure", "brute_guard_saturated"]);
+});
+
 test("a valid PIN clears the matching failed-attempt record", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const auth = createAuth({ maxAttempts: 3 });
     const request = { ip: "203.0.113.30", headers: {} };

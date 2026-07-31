@@ -1,7 +1,7 @@
 {
   "discord/systemProvider.js": "git:f33b6185619e4eb23d1f76116c9e262abdec0159",
   "discord/systemProvider/actions.js": "git:8aebb3796b04cb9918586de2e58e0356e0781ba0",
-  "discord/systemProvider/auth.js": "git:239316773f59c3be46ef83b82be61290a186e306",
+  "discord/systemProvider/auth.js": "git:d5d1726e8c9889a481dae620140b48bebd38f66b",
   "discord/systemProvider/dashboardHtml.js": "git:48a87d2ee40a9561ff316e133f57d5bfe9ca3748",
   "discord/systemProvider/htmlUtils.js": "git:2d0c0a2bc30612bd188b9438190e21d76ba217b0",
   "discord/systemProvider/pinCredential.js": "git:dc1562eec08aaee3aca78bff00f983aa5568e7ee",

@@ -337,29 +337,19 @@ function createShadowPortalAuth({
         });
     }
 
-    function authorize(req, res, _body, providedPin) {
-        setPortalSecurityHeaders(res);
-        if (!configured()) {
-            res.status(503).send(renderPortalUnavailablePage());
-            emit("disabled", req);
-            return false;
-        }
+    function respondPortalUnavailable(req, res) {
+        res.status(503).send(renderPortalUnavailablePage());
+        emit("disabled", req);
+        return false;
+    }
 
-        if (hasValidSession(req)) return true;
+    function respondLocked(req, res, blockedMinutes, emitEvent = true) {
+        res.status(429).send(renderShadowBlockedPage(blockedMinutes));
+        if (emitEvent) emit("locked", req, { blockedMinutes });
+        return false;
+    }
 
-        const blockedMinutes = lockMinutes(req);
-        if (blockedMinutes > 0) {
-            res.status(429).send(renderShadowBlockedPage(blockedMinutes));
-            emit("locked", req, { blockedMinutes });
-            return false;
-        }
-
-        const candidate = readNonEmptyPin(providedPin);
-        if (!candidate) {
-            res.status(401).send(renderShadowLoginPage(false, shadowCss));
-            return false;
-        }
-
+    function validatePinCandidate(candidate) {
         const shadowPin = readShadowPin(getPin);
         const recoveryEnabled = Boolean(typeof isBreakGlassEnabled === "function" && isBreakGlassEnabled());
         const recoveryPin = recoveryEnabled && typeof getRecoveryPin === "function"
@@ -367,39 +357,65 @@ function createShadowPortalAuth({
             : "";
         const primaryValid = timingSafePinEqual(candidate, shadowPin);
         const recoveryValid = timingSafePinEqual(candidate, recoveryPin);
-        const validPin = primaryValid || recoveryValid;
+        return {
+            shadowPin,
+            primaryValid,
+            recoveryValid,
+            valid: primaryValid || recoveryValid
+        };
+    }
 
-        if (validPin && issueShadowSessionCookie(res, {
+    function issueAuthenticatedSession(req, res, pinValidation) {
+        if (!pinValidation.valid || !issueShadowSessionCookie(res, {
             cookieName,
             ttlMs,
             getCookieSecret,
             getSessionVersion
-        })) {
-            bruteGuard.delete(bruteKey(req));
-            if (primaryValid && !isPinCredential(shadowPin)) {
-                scheduleLegacyPinMigration(shadowPin, {
-                    getSessionVersion,
-                    settingStore,
-                    onMigrated: onLegacyPinMigrated
-                });
-            }
-            emit(recoveryValid ? "break_glass_success" : "login_success", req);
-            return true;
-        }
+        })) return false;
 
+        bruteGuard.delete(bruteKey(req));
+        if (pinValidation.primaryValid && !isPinCredential(pinValidation.shadowPin)) {
+            scheduleLegacyPinMigration(pinValidation.shadowPin, {
+                getSessionVersion,
+                settingStore,
+                onMigrated: onLegacyPinMigrated
+            });
+        }
+        emit(pinValidation.recoveryValid ? "break_glass_success" : "login_success", req);
+        return true;
+    }
+
+    function rejectPinAttempt(req, res, candidate) {
         const trackedFailure = trackFailedPin(req, candidate);
         emit(trackedFailure ? "login_failure" : "brute_guard_saturated", req);
         if (!trackedFailure) {
-            res.status(429).send(renderShadowBlockedPage(Math.ceil(lockoutMs / 60_000)));
-            return false;
+            return respondLocked(req, res, Math.ceil(lockoutMs / 60_000), false);
         }
+
         const remainingLock = lockMinutes(req);
-        if (remainingLock > 0) {
-            res.status(429).send(renderShadowBlockedPage(remainingLock));
-            return false;
-        }
+        if (remainingLock > 0) return respondLocked(req, res, remainingLock, false);
         res.status(401).send(renderShadowLoginPage(true, shadowCss));
         return false;
+    }
+
+    function authorize(req, res, _body, providedPin) {
+        setPortalSecurityHeaders(res);
+        if (!configured()) return respondPortalUnavailable(req, res);
+
+        if (hasValidSession(req)) return true;
+
+        const blockedMinutes = lockMinutes(req);
+        if (blockedMinutes > 0) return respondLocked(req, res, blockedMinutes);
+
+        const candidate = readNonEmptyPin(providedPin);
+        if (!candidate) {
+            res.status(401).send(renderShadowLoginPage(false, shadowCss));
+            return false;
+        }
+
+        const pinValidation = validatePinCandidate(candidate);
+        if (issueAuthenticatedSession(req, res, pinValidation)) return true;
+        return rejectPinAttempt(req, res, candidate);
     }
 
     function logout(res) {

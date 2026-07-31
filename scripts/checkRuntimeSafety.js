@@ -102,9 +102,9 @@ if (/TOKEN_OWNER_MISMATCH|newClient\.user\?\.id\s*!==\s*String\(session\.ownerId
 
 const httpSource = readRepositorySource("discord/core/http.js");
 const serverSource = readRepositorySource("discord/index/server.js");
-if (/registerHealthRoute|app\.get\(\"\/health\"/.test(httpSource) ||
-    !/app\.get\(\"\/health\", sendReadiness\)/.test(serverSource) ||
-    !/app\.get\(\"\/ready\", sendReadiness\)/.test(serverSource)) {
+if (/registerHealthRoute|app\.get\("\/health"/.test(httpSource) ||
+    !/app\.get\("\/health", sendReadiness\)/.test(serverSource) ||
+    !/app\.get\("\/ready", sendReadiness\)/.test(serverSource)) {
     findings.push("health contract: /health and /ready must share the application readiness handler");
 }
 
