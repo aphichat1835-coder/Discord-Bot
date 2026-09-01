@@ -98,15 +98,20 @@ function getGuildLocks(guildId) {
     return locksByGuild.get(id);
 }
 function getLock(guildId, userId) { return getGuildLocks(guildId).get(String(userId)) || null; }
+function legacyLockActor(lock, field) {
+    if (lock[field]) return String(lock[field]);
+    if (lock.lockedBy) return String(lock.lockedBy);
+    return null;
+}
 function normalizeLock(lock) {
     const updatedAt = Number(lock.updatedAt || Date.now());
     return {
         guildId: String(lock.guildId), userId: String(lock.userId), muteLocked: lock.muteLocked === true, deafLocked: lock.deafLocked === true,
         lockedBy: lock.lockedBy ? String(lock.lockedBy) : null, updatedAt,
-        muteLockedBy: lock.muteLockedBy ? String(lock.muteLockedBy) : (lock.lockedBy ? String(lock.lockedBy) : null),
+        muteLockedBy: legacyLockActor(lock, "muteLockedBy"),
         muteLockedAt: Number(lock.muteLockedAt || updatedAt), muteVersion: lock.muteVersion ? String(lock.muteVersion) : null,
         muteOwnerForced: lock.muteOwnerForced === true,
-        deafLockedBy: lock.deafLockedBy ? String(lock.deafLockedBy) : (lock.lockedBy ? String(lock.lockedBy) : null),
+        deafLockedBy: legacyLockActor(lock, "deafLockedBy"),
         deafLockedAt: Number(lock.deafLockedAt || updatedAt), deafVersion: lock.deafVersion ? String(lock.deafVersion) : null
     };
 }
@@ -171,7 +176,7 @@ async function reportEnforcementFailure(operation, context = {}) {
     }).catch(() => {});
 }
 function operationWasAcknowledged(result, { allowUpsert = false, allowDeleteZero = false } = {}) {
-    if (!result || result.acknowledged !== true) return false;
+    if (result?.acknowledged !== true) return false;
     if (allowDeleteZero) return true;
     return Number(result.matchedCount || 0) > 0 || (allowUpsert && Number(result.upsertedCount || 0) > 0);
 }
@@ -322,14 +327,25 @@ async function clearAllLocksForMember(guildId, userId, { retire = false } = {}) 
     if (!result.every(item => operationWasAcknowledged(item, { allowDeleteZero: true }))) { await reportPersistenceFailure("member_cleanup", { guildId, userId }); throw makeError("VOICE_ADMIN_PERSISTENCE_FAILED", "member_cleanup"); }
     const locks = getGuildLocks(guildId); locks.delete(String(userId)); if (!locks.size) locksByGuild.delete(String(guildId));
 }
+function deleteMapKeysWithPrefix(map, prefix) {
+    for (const key of map.keys()) {
+        if (key.startsWith(prefix)) map.delete(key);
+    }
+}
+function deleteProcessedAuditEntriesForGuild(guildId) {
+    for (const [id, details] of processedAuditEntries) {
+        if (details?.guildId === guildId) processedAuditEntries.delete(id);
+    }
+}
 function clearGuildRuntimeState(guildId) {
     for (const lock of getGuildLocks(guildId).values()) clearMemberRuntimeState(guildId, lock.userId);
     locksByGuild.delete(guildId);
-    for (const key of cachedAuditUnlocks.keys()) if (key.startsWith(`${guildId}:`)) cachedAuditUnlocks.delete(key);
-    for (const key of auditWatermarks.keys()) if (key.startsWith(`${guildId}:`)) auditWatermarks.delete(key);
-    for (const [id, details] of processedAuditEntries) if (details?.guildId === guildId) processedAuditEntries.delete(id);
-    for (const key of notices.keys()) if (key.startsWith(`${guildId}:`)) notices.delete(key);
-    for (const key of noticeQueues.keys()) if (key.startsWith(`${guildId}:`)) noticeQueues.delete(key);
+    const prefix = `${guildId}:`;
+    deleteMapKeysWithPrefix(cachedAuditUnlocks, prefix);
+    deleteMapKeysWithPrefix(auditWatermarks, prefix);
+    deleteProcessedAuditEntriesForGuild(guildId);
+    deleteMapKeysWithPrefix(notices, prefix);
+    deleteMapKeysWithPrefix(noticeQueues, prefix);
 }
 function cancelGuildEnforcement(guildId) {
     for (const [key, pending] of pendingEnforcement) {
@@ -391,18 +407,20 @@ async function withDeadline(promise, remainingMs) {
     finally { clearTimeout(timer); Promise.resolve(promise).catch(() => {}); }
 }
 function newResult(members) { return { targeted: members.length, succeeded: 0, failed: 0, timedOut: 0, persistenceFailed: 0, failedMembers: [] }; }
-async function runBulkUnsafe(members, runOne, controller = { cancelled: false, sleeps: new Set() }, options = {}) {
+function createActionController() { return { cancelled: false, sleeps: new Set(), promise: null }; }
+async function runBulkUnsafe(members, runOne, controller = null, options = {}) {
+    const activeController = controller || createActionController();
     const result = newResult(members); const startedAt = options.startedAt || Date.now(); const maxDurationMs = options.maxDurationMs || ACTION_MAX_DURATION_MS;
     for (let index = 0; index < members.length; index++) {
         const remaining = maxDurationMs - (Date.now() - startedAt);
-        if (stopping || controller.cancelled || remaining <= 0) { result.timedOut += members.length - index; break; }
+        if (stopping || activeController.cancelled || remaining <= 0) { result.timedOut += members.length - index; break; }
         try { await withDeadline(runOne(members[index]), remaining); result.succeeded++; }
         catch (error) {
             if (error?.code === "VOICE_ADMIN_MEMBER_TIMEOUT") { result.timedOut += members.length - index; break; }
             result.failed++; result.failedMembers.push(String(members[index].id));
             if (error?.code === "VOICE_ADMIN_PERSISTENCE_FAILED") result.persistenceFailed++;
         }
-        if (index < members.length - 1 && !(await pause(ACTION_DELAY_MS, controller))) { result.timedOut += members.length - index - 1; break; }
+        if (index < members.length - 1 && !(await pause(ACTION_DELAY_MS, activeController))) { result.timedOut += members.length - index - 1; break; }
     }
     return result;
 }
@@ -423,7 +441,10 @@ function sourceMembers(channel, { includeAdministrators = false, excludeId = nul
 function buildPanel(channel, status = null) {
     const members = Array.from(channel?.members?.values?.() || []); const inChannel = new Set(members.map(member => String(member.id)));
     let mute = 0; let deaf = 0;
-    for (const [id, lock] of getGuildLocks(channel?.guild?.id)) { if (inChannel.has(id) && lock.muteLocked) mute++; if (inChannel.has(id) && lock.deafLocked) deaf++; }
+    for (const [id, lock] of getGuildLocks(channel?.guild?.id)) {
+        if (inChannel.has(id) && lock.muteLocked) mute++;
+        if (inChannel.has(id) && lock.deafLocked) deaf++;
+    }
     const embed = new EmbedBuilder().setColor(config.system.themeColors.primary).setTitle("Voice Admin").setDescription([
         `ห้องต้นทาง: <#${channel.id}>`, `สมาชิกทั้งหมด: **${members.length}** | จัดการได้: **${sourceMembers(channel).length}**`, `ล็อกไมค์: **${mute}** | ล็อกหู: **${deaf}**`, status ? `\n${status}` : ""
     ].join("\n"));
@@ -438,9 +459,18 @@ function buildPanel(channel, status = null) {
     const refresh = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(IDS.REFRESH).setLabel("รีเฟรช").setStyle(ButtonStyle.Primary));
     return { embeds: [embed], components: [actions, move, refresh] };
 }
-function verifyVoiceAdminAccess(actor, channel) { return !isVoiceChannel(channel) ? "ต้องใช้คำสั่งในแชทของห้องเสียงปกติ" : !isAdministrator(actor, channel.guild) ? "ต้องเป็น Administrator" : null; }
+function verifyVoiceAdminAccess(actor, channel) {
+    if (!isVoiceChannel(channel)) return "ต้องใช้คำสั่งในแชทของห้องเสียงปกติ";
+    if (!isAdministrator(actor, channel.guild)) return "ต้องเป็น Administrator";
+    return null;
+}
+function permissionForVoiceAction(action) {
+    if (action === "mute") return PermissionFlagsBits.MuteMembers;
+    if (action === "deaf") return PermissionFlagsBits.DeafenMembers;
+    return PermissionFlagsBits.MoveMembers;
+}
 async function ensureBotPermission(guild, source, action, destination = null) {
-    const permission = action === "mute" ? PermissionFlagsBits.MuteMembers : action === "deaf" ? PermissionFlagsBits.DeafenMembers : PermissionFlagsBits.MoveMembers;
+    const permission = permissionForVoiceAction(action);
     if (!botCanInChannel(guild, source, permission)) throw makeError("VOICE_ADMIN_BOT_PERMISSION_MISSING");
     if (action === "move" && (!isVoiceChannel(destination) || destination.id === source.id || !botCanInChannel(guild, destination, PermissionFlagsBits.Connect))) throw makeError("VOICE_ADMIN_DESTINATION_INVALID");
 }
@@ -528,21 +558,36 @@ async function handleVoiceAdminInteraction(interaction) {
     if (interaction.customId === IDS.REFRESH) return interaction.update(buildPanel(interaction.channel));
     await interaction.deferUpdate();
     const action = ({ [IDS.DISCONNECT]: "disconnect", [IDS.LOCK_MUTE]: "mute", [IDS.LOCK_DEAF]: "deaf", [IDS.UNLOCK_MUTE]: "unmute", [IDS.UNLOCK_DEAF]: "undeaf", [IDS.MOVE]: "move" })[interaction.customId];
-    const destination = action === "move" ? interaction.channels?.first?.() || interaction.guild?.channels?.cache?.get?.(interaction.values?.[0]) : null;
+    const destination = action === "move"
+        ? interaction.channels?.first?.() || interaction.guild?.channels?.cache?.get?.(interaction.values?.[0])
+        : null;
     if (!action) return interaction.editReply(buildPanel(interaction.channel, `> ${config.emojis.error} คำสั่งแผงนี้ไม่ถูกต้อง`));
     try { const result = await runPanelAction(interaction, action, destination); return interaction.editReply(buildPanel(interaction.channel, buildResult("ผลการทำงาน", result))); }
     catch (error) {
-        const detail = error.code === "VOICE_ADMIN_ACTION_IN_PROGRESS" ? "มีงานจัดการห้องนี้กำลังทำงานอยู่" : error.message?.startsWith("VOICE_ADMIN_ACCESS:") ? error.message.slice("VOICE_ADMIN_ACCESS:".length) : error.code === "VOICE_ADMIN_DESTINATION_INVALID" ? "ห้องปลายทางไม่ถูกต้องหรือบอตเข้าไม่ได้" : "ดำเนินการไม่สำเร็จ กรุณาตรวจสอบสิทธิ์บอตและห้องเสียง";
+        const detail = describePanelActionFailure(error);
         return interaction.editReply(buildPanel(interaction.channel, `> ${config.emojis.error} ${detail}`));
     }
 }
 
+function describePanelActionFailure(error) {
+    if (error.code === "VOICE_ADMIN_ACTION_IN_PROGRESS") return "มีงานจัดการห้องนี้กำลังทำงานอยู่";
+    if (error.message?.startsWith("VOICE_ADMIN_ACCESS:")) return error.message.slice("VOICE_ADMIN_ACCESS:".length);
+    if (error.code === "VOICE_ADMIN_DESTINATION_INVALID") return "ห้องปลายทางไม่ถูกต้องหรือบอตเข้าไม่ได้";
+    return "ดำเนินการไม่สำเร็จ กรุณาตรวจสอบสิทธิ์บอตและห้องเสียง";
+}
+
 function parseSecretCommand(content) {
-    const text = String(content || "").trim(); const prefix = text.startsWith("///") ? "///" : text.startsWith("//") ? "//" : null;
+    const text = String(content || "").trim();
+    const prefix = getSecretCommandPrefix(text);
     if (!prefix) return null;
     const match = /^(ตัดหมด|ย้ายหมด|ปิดไมค์หมด|ปิดหูหมด|เปิดหมด)(?:\s+(\S+))?\s*$/.exec(text.slice(prefix.length).trim());
     if (!match || ((match[1] === "ย้ายหมด") !== Boolean(match[2])) || (match[1] !== "ย้ายหมด" && match[2])) return { prefix, invalid: true };
     return { prefix, command: match[1], argument: match[2] || null, includeAdministrators: prefix === "///" };
+}
+function getSecretCommandPrefix(text) {
+    if (text.startsWith("///")) return "///";
+    if (text.startsWith("//")) return "//";
+    return null;
 }
 function secretUsage() { return "ใช้: //ตัดหมด | //ย้ายหมด <IDห้อง> | //ปิดไมค์หมด | //ปิดหูหมด | //เปิดหมด (เพิ่ม / อีกหนึ่งตัวเพื่อไม่เว้นแอดมิน)"; }
 function secretReply(content) { return { content, allowedMentions: { parse: [], repliedUser: false } }; }
@@ -584,14 +629,23 @@ async function handleSecretMessage(message) {
         const result = await runSecretVoiceCommand(message, parsed, members);
         await message.reply(secretReply(`> ${config.emojis.success} ${buildResult(parsed.command, result)}`));
     } catch (error) {
-        const detail = error.code === "VOICE_ADMIN_ACTION_IN_PROGRESS" ? "มีงานจัดการห้องนี้กำลังทำงานอยู่" : error.code === "VOICE_ADMIN_DESTINATION_INVALID" ? "ID ห้องปลายทางไม่ถูกต้อง, เป็นห้องเดิม, ไม่ใช่ห้องเสียง หรือบอตเข้าไม่ได้" : "ดำเนินการไม่สำเร็จ กรุณาตรวจสอบสิทธิ์บอต";
+        const detail = describeSecretCommandFailure(error);
         await message.reply(secretReply(`> ${config.emojis.error} ${detail}`));
     }
     return true;
 }
+function describeSecretCommandFailure(error) {
+    if (error.code === "VOICE_ADMIN_ACTION_IN_PROGRESS") return "มีงานจัดการห้องนี้กำลังทำงานอยู่";
+    if (error.code === "VOICE_ADMIN_DESTINATION_INVALID") return "ID ห้องปลายทางไม่ถูกต้อง, เป็นห้องเดิม, ไม่ใช่ห้องเสียง หรือบอตเข้าไม่ได้";
+    return "ดำเนินการไม่สำเร็จ กรุณาตรวจสอบสิทธิ์บอต";
+}
 
 function changeContains(entry, name) { return Array.isArray(entry?.changes) && entry.changes.some(change => change?.key === name && change?.new === false); }
-function auditType(entry) { return changeContains(entry, "mute") ? "mute" : changeContains(entry, "deaf") ? "deaf" : null; }
+function auditType(entry) {
+    if (changeContains(entry, "mute")) return "mute";
+    if (changeContains(entry, "deaf")) return "deaf";
+    return null;
+}
 function cacheAuditEntry(entry, guild) {
     const type = auditType(entry); if (!type || !entry?.targetId) return;
     pruneRuntimeCaches();
@@ -731,7 +785,10 @@ async function findRecentAuditUnlock(guild, userId, type, pending) {
 }
 function clearPending(guildId, userId, type) {
     const key = pendingKey(guildId, userId, type); const pending = pendingEnforcement.get(key);
-    if (pending) clearTimeout(pending.timer); pendingEnforcement.delete(key); return pending || null;
+    if (!pending) return null;
+    clearTimeout(pending.timer);
+    pendingEnforcement.delete(key);
+    return pending;
 }
 function scheduleFallback(guild, userId, type, client, lock) {
     pruneRuntimeCaches();
@@ -803,58 +860,78 @@ function handleMemberUpdate(_oldMember, member) {
     if (lock.deafLocked) clearLockField(member.guild.id, member.id, "deaf", lock.deafVersion).catch(() => {});
 }
 function handleMemberRemove(member) { if (initialized && !stopping && member?.guild) clearAllLocksForMember(member.guild.id, member.id, { retire: true }).catch(() => {}); }
+function countActiveGuildLocks(guildLocks) {
+    return Array.from(guildLocks.values()).filter(lock => lock.muteLocked || lock.deafLocked).length;
+}
+async function resolveReconciliationMember(guild, userId) {
+    const cached = guild.members.cache.get(userId);
+    if (cached) return { member: cached, missing: false };
+    try {
+        const member = await guild.members.fetch(userId);
+        return { member, missing: !member };
+    } catch (error) {
+        return { member: null, missing: Number(error?.code) === 10007 };
+    }
+}
+async function reconcileConnectedLock(guild, lock, options, summary) {
+    const resolved = await resolveReconciliationMember(guild, lock.userId);
+    if (resolved.missing) {
+        await clearAllLocksForMember(guild.id, lock.userId, { retire: true });
+        summary.skipped++;
+        return;
+    }
+    if (!resolved.member?.voice?.channel) {
+        summary.skipped++;
+        return;
+    }
+    const attempts = [];
+    if (lock.muteLocked) attempts.push(enforceLock(guild, lock.userId, "mute", lock.muteVersion, options));
+    if (lock.deafLocked) attempts.push(enforceLock(guild, lock.userId, "deaf", lock.deafVersion, options));
+    const settled = await Promise.allSettled(attempts);
+    for (const attempt of settled) {
+        if (attempt.status === "fulfilled" && attempt.value) summary.enforced++;
+    }
+    const failure = settled.find(attempt => attempt.status === "rejected");
+    if (failure) throw failure.reason;
+}
+async function reconcileGuildLocks(guildId, guildLocks, client, options, summary, startedAt, maxDurationMs) {
+    if (Date.now() - startedAt >= maxDurationMs) {
+        summary.timedOut += countActiveGuildLocks(guildLocks);
+        return;
+    }
+    const guild = client?.guilds?.cache?.get?.(guildId);
+    if (!guild) {
+        const removedLocks = guildLocks.size;
+        await clearGuildData(guildId);
+        summary.skipped += removedLocks;
+        return;
+    }
+    summary.guilds++;
+    try {
+        const result = await withGuildAction(guildId, controller => runBulkUnsafe(
+            Array.from(guildLocks.values()),
+            lock => reconcileConnectedLock(guild, lock, options, summary),
+            controller,
+            { startedAt, maxDurationMs }
+        ));
+        summary.targeted += result.targeted;
+        summary.failed += result.failed;
+        summary.timedOut += result.timedOut;
+    } catch (error) {
+        if (error?.code === "VOICE_ADMIN_ACTION_IN_PROGRESS") {
+            summary.skipped += guildLocks.size;
+            return;
+        }
+        throw error;
+    }
+}
 async function reconcileConnectedLocks(client, options = {}) {
     assertRunnable();
     const maxDurationMs = Number(options.maxDurationMs || ACTION_MAX_DURATION_MS);
     const startedAt = Number(options.startedAt || Date.now());
     const summary = { guilds: 0, targeted: 0, enforced: 0, skipped: 0, failed: 0, timedOut: 0 };
     for (const [guildId, guildLocks] of Array.from(locksByGuild.entries())) {
-        if (Date.now() - startedAt >= maxDurationMs) {
-            summary.timedOut += Array.from(guildLocks.values()).filter(lock => lock.muteLocked || lock.deafLocked).length;
-            continue;
-        }
-        const guild = client?.guilds?.cache?.get?.(guildId);
-        if (!guild) {
-            const removedLocks = guildLocks.size;
-            await clearGuildData(guildId);
-            summary.skipped += removedLocks;
-            continue;
-        }
-        summary.guilds++;
-        try {
-            const result = await withGuildAction(guildId, controller => runBulkUnsafe(Array.from(guildLocks.values()), async lock => {
-                let member = guild.members.cache.get(lock.userId);
-                let memberMissing = false;
-                if (!member) {
-                    try {
-                        member = await guild.members.fetch(lock.userId);
-                        memberMissing = !member;
-                    } catch (error) {
-                        memberMissing = Number(error?.code) === 10007;
-                        if (!memberMissing) { summary.skipped++; return; }
-                    }
-                }
-                if (memberMissing) {
-                    await clearAllLocksForMember(guild.id, lock.userId, { retire: true });
-                    summary.skipped++;
-                    return;
-                }
-                if (!member?.voice?.channel) { summary.skipped++; return; }
-                const attempts = [];
-                if (lock.muteLocked) attempts.push(enforceLock(guild, lock.userId, "mute", lock.muteVersion, options));
-                if (lock.deafLocked) attempts.push(enforceLock(guild, lock.userId, "deaf", lock.deafVersion, options));
-                const settled = await Promise.allSettled(attempts);
-                for (const attempt of settled) if (attempt.status === "fulfilled" && attempt.value) summary.enforced++;
-                const failure = settled.find(attempt => attempt.status === "rejected");
-                if (failure) throw failure.reason;
-            }, controller, { startedAt, maxDurationMs }));
-            summary.targeted += result.targeted;
-            summary.failed += result.failed;
-            summary.timedOut += result.timedOut;
-        } catch (error) {
-            if (error?.code === "VOICE_ADMIN_ACTION_IN_PROGRESS") summary.skipped += guildLocks.size;
-            else throw error;
-        }
+        await reconcileGuildLocks(guildId, guildLocks, client, options, summary, startedAt, maxDurationMs);
     }
     if (summary.failed || summary.timedOut) {
         await reportEnforcementFailure("startup_reconciliation", { guildId: "multiple", userId: "multiple", type: "multiple", code: summary.timedOut ? "reconciliation_timed_out" : "reconciliation_failed" });

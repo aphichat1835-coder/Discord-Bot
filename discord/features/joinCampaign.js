@@ -515,6 +515,12 @@ function buildJoinCampaignFailureDetails(summary, failedEntireJob) {
     };
 }
 
+function getJoinCampaignEventCode(persistenceFailed, failedEntireJob, phase) {
+    if (persistenceFailed) return "campaign.join.persistence_failed";
+    if (failedEntireJob) return "campaign.join.failed";
+    return `campaign.join.${phase}`;
+}
+
 function buildJoinCampaignEvent(summary, phase) {
     const failedEntireJob = summary.status === "failed";
     const persistenceFailed = Number(summary.persistenceFailed || 0) > 0;
@@ -523,7 +529,7 @@ function buildJoinCampaignEvent(summary, phase) {
         target: needsOwnerAction ? "ALERT" : "LOG",
         severity: resolveCampaignSeverity(summary, phase),
         category: "CAMPAIGN",
-        code: persistenceFailed ? "campaign.join.persistence_failed" : (failedEntireJob ? "campaign.join.failed" : `campaign.join.${phase}`),
+        code: getJoinCampaignEventCode(persistenceFailed, failedEntireJob, phase),
         state: needsOwnerAction ? "OPEN" : undefined,
         title: getJoinCampaignTitle(phase),
         sourceIconUrl: summary.targetGuildIconUrl,

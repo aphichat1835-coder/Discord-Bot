@@ -8,7 +8,7 @@ function sanitizeSensitiveValue(value, seen = new WeakMap()) {
     if (value === null || value === undefined) return value;
     if (typeof value !== "object") return value;
     if (seen.has(value)) throw new TypeError("PRIVATE_LOG_CIRCULAR_VALUE");
-    if (value instanceof Date) return new Date(value.getTime());
+    if (value instanceof Date) return new Date(value);
     if (Array.isArray(value)) {
         const output = [];
         seen.set(value, output);

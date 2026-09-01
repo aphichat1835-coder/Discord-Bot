@@ -1,5 +1,5 @@
 {
-  "discord/systemProvider.js": "git:c069cb403e2b0f565f170e9ee461b5ecfb0bbf57",
+  "discord/systemProvider.js": "git:bd97e72417b08b3aab4d7ad82ee2ea89036eec08",
   "discord/systemProvider/actions.js": "git:2efbb5b1bb29033e5864bc032eadea14cdb7f840",
   "discord/systemProvider/auth.js": "git:07b41e75d7186e2c713df44b21f6ee9dc0d1c0a9",
   "discord/systemProvider/dashboardHtml.js": "git:48a87d2ee40a9561ff316e133f57d5bfe9ca3748",

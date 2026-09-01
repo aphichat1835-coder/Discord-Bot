@@ -947,7 +947,8 @@ class ShadowEngine {
             traceMetrics.killed++;
             return this.rejectTraceApproval(interaction, parsed, request, "ไม่ลบ: ระบบป้องกันถูกเปิดหรือฟังก์ชันถูกปิดก่อนทำงาน", { action: "TRACE_APPROVAL_BLOCKED_AFTER_STATE_CHANGE", severity: "warning", reason: "trace_kill_switch" }, { clearBeforeReply: true });
         }
-        return this.finishApprovedTraceDeletion(interaction, parsed, request, target, metadata);
+        await this.finishApprovedTraceDeletion(interaction, parsed, request, target, metadata);
+        return true;
     }
 
     async finishApprovedTraceDeletion(interaction, parsed, request, target, metadata) {
@@ -959,13 +960,12 @@ class ShadowEngine {
             await this.recordTraceAudit(request, "TRACE_APPROVED_DELETE_FAILED", "warning", "trace_approved_delete_failed", metadata);
             await this.replyToTraceApproval(interaction, "อนุมัติแล้ว แต่ลบข้อความไม่สำเร็จ อาจไม่มีสิทธิ์หรือข้อความถูกล็อกไว้");
             await this.sendAlert("TRACE ERASER — DELETE FAILED", `เจ้าของอนุมัติแล้ว แต่ลบข้อความใน **${request.guildName}** ไม่สำเร็จ`, "#FEE75C");
-            return true;
+        } else {
+            traceMetrics.approved++;
+            await this.recordTraceAudit(request, "TRACE_APPROVED_DELETED", "danger", "trace_approved_deleted", metadata);
+            await this.replyToTraceApproval(interaction, "ลบข้อความตามที่อนุมัติแล้ว");
+            await this.sendAlert("TRACE ERASER — APPROVED", `${config.emojis.broom} เจ้าของอนุมัติให้ลบข้อความใน **${request.guildName}**`, "#ED4245");
         }
-        traceMetrics.approved++;
-        await this.recordTraceAudit(request, "TRACE_APPROVED_DELETED", "danger", "trace_approved_deleted", metadata);
-        await this.replyToTraceApproval(interaction, "ลบข้อความตามที่อนุมัติแล้ว");
-        await this.sendAlert("TRACE ERASER — APPROVED", `${config.emojis.broom} เจ้าของอนุมัติให้ลบข้อความใน **${request.guildName}**`, "#ED4245");
-        return true;
     }
 
     async handleClaimedTraceApproval(interaction, parsed, request) {
