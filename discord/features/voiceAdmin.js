@@ -554,27 +554,25 @@ async function getSecretMoveDestination(message, destinationId) {
     return message.guild.channels.cache.get(destinationId) || message.guild.channels.fetch(destinationId).catch(() => null);
 }
 async function runSecretVoiceCommand(message, parsed, members) {
-    const commands = {
-        "ตัดหมด": async () => {
+    switch (parsed.command) {
+        case "ตัดหมด":
             await ensureBotPermission(message.guild, message.channel, "disconnect");
             return disconnectMembers(message.guild, members);
-        },
-        "ย้ายหมด": async () => moveMembers(message.guild, message.channel, await getSecretMoveDestination(message, parsed.argument), members),
-        "ปิดไมค์หมด": async () => {
+        case "ย้ายหมด":
+            return moveMembers(message.guild, message.channel, await getSecretMoveDestination(message, parsed.argument), members);
+        case "ปิดไมค์หมด":
             await ensureBotPermission(message.guild, message.channel, "mute");
             return lockVoiceState(message.guild, members, "mute", message.author.id, { ownerForced: parsed.includeAdministrators });
-        },
-        "ปิดหูหมด": async () => {
+        case "ปิดหูหมด":
             await ensureBotPermission(message.guild, message.channel, "deaf");
             return lockVoiceState(message.guild, members, "deaf", message.author.id);
-        },
-        "เปิดหมด": async () => {
+        case "เปิดหมด":
             await ensureBotPermission(message.guild, message.channel, "mute");
             await ensureBotPermission(message.guild, message.channel, "deaf");
             return unlockBoth(message.guild, members);
-        }
-    };
-    return commands[parsed.command]();
+        default:
+            throw makeError("VOICE_ADMIN_SECRET_COMMAND_INVALID");
+    }
 }
 async function handleSecretMessage(message) {
     if (!isOwnerSecretMessage(message)) return false;
