@@ -2,6 +2,32 @@
 
 ## [Unreleased] - Unified Bot And Verification Runtime 2026-07-16
 
+- Replaced the retired `/voicekickall` registration with an ephemeral,
+  Administrator-only `/voiceadmin` panel for normal voice-channel chat. It
+  snapshots the room at execution time, skips Administrators in panel mode,
+  supports disconnect/move/server mute/server deafen actions, and persists
+  non-Administrator voice locks across restart and voice reconnects. Added
+  Owner-only `//` and `///` text controls, audit-log-aware lock enforcement,
+  and bounded notices for unauthorized unlock attempts without changing the
+  isolated Voice self-client or Owner Intent policies. The secret
+  `///ปิดไมค์หมด` mode now persists its mute lock for Administrators as well as
+  ordinary members and accepts release only from the configured bot Owner.
+
+- Removed the unapproved `identify.premium` OAuth scope from every new
+  verification entry point. Historical Owner records may still display an
+  already-granted premium value, but new member verification no longer depends
+  on that optional Discord permission.
+
+- Repaired the Owner diagnostics path, routed fatal boot errors through the
+  coordinated shutdown path, removed the unreachable duplicate OAuth-start
+  route, and refreshed audited transitive lockfile dependencies without changing
+  the owner-approved Voice self-client.
+- Preserved full-fidelity private event values in storage and private webhook
+  delivery by using continuation payloads rather than silent truncation.
+- Corrected protected control safety, credential migration/session-secret,
+  request-size, state-restore, and action-result contracts under explicit Owner
+  approval; aligned release workflow and active operational documentation.
+
 - Hardened the public OAuth start route with a friendly error boundary, preserved fatal shutdown exit-code escalation during overlapping graceful shutdown, and corrected privacy-deletion response totals to use the verified manifest counter.
 
 - Removed JavaScript-side dynamic path construction from the Mongoose 9 compatibility gate by feeding fixed-root source files over stdin, added CLI regression coverage, simplified finding classification, and updated Voice plaintext validation to iterate Unicode code points.

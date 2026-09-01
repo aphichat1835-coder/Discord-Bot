@@ -183,6 +183,7 @@ async function handleChangePin(body, context) {
     context.setShadowPin(credential);
     context.setShadowSessionVersion(nextVersion);
     context.resetShadowAuth?.();
+    try { await context.sessionManager.deleteSetting?.("_shadowPin"); } catch {}
     if (context.engineInstance) {
         await context.engineInstance.sendAlert("🔑 PIN CHANGED", "รหัส Dashboard ควบคุมบอทถูกเปลี่ยนแล้ว", "#fbbf24");
     }

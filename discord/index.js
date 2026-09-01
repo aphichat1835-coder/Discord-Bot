@@ -26,9 +26,11 @@ const config         = require("./config.json");
 const sessionManager = require("./sessionManager");
 const voiceWorker    = require("./voiceWorker");
 const commands       = require("./commands");
+const voiceAdmin     = require("./features/voiceAdmin");
 const memoryMonitor  = require("./index/memoryMonitor");
 const { validateRequiredEnv } = require("./core/env");
 const { createHttpApp } = require("./core/http");
+const { registerShutdownHandlers } = require("./core/runtimeLifecycle");
 const { registerGatewayDiagnostics } = require("./core/gatewayDiagnostics");
 const { isFeatureEnabled } = require("./core/featureFlags");
 const { readFiniteInteger } = require("./core/numbers");
@@ -109,7 +111,7 @@ const requestCounts       = new Map();
 let readyInitializationController = null;
 
 const COMMAND_COOLDOWNS_MS = {
-    ban:5000, kick:5000, timeout:5000, voicekickall:5000,
+    ban:5000, kick:5000, timeout:5000, voiceadmin:5000,
     say:5000, announce:5000, clear:10000, "copy-emojis":10000,
     backup:30000, restore:30000
 };
@@ -390,7 +392,8 @@ system.initCronJobs({
 // ════════════════════════════════════════════════════════════════════════════
 //  🛑  SHUTDOWN HANDLERS
 // ════════════════════════════════════════════════════════════════════════════
-system.initShutdown({
+registerShutdownHandlers({
+    system,
     sessionManager,
     voiceWorker,
     client,
@@ -445,6 +448,7 @@ function startHttpServer() {
 
 async function connectDatabaseForBoot() {
     await sessionManager.connectDB();
+    await voiceAdmin.initialize();
     return { connected: true };
 }
 
@@ -661,6 +665,12 @@ async function initializeClientReady() {
         bootLog.skip("SHADOW", "Protected system hooks are unavailable");
     }
 
+    await bootLog.runStage("VOICE_ADMIN", "Reconcile persisted voice locks", () => voiceAdmin.reconcileConnectedLocks(client, {
+        requireComplete: true
+    }), {
+        successMessage: "Persisted Voice Admin locks reconciled"
+    });
+
     await bootLog.runStage("WEBHOOK", "Send startup notice", sendReadyNotice, {
         required: false,
         successMessage: "Startup notice processed",
@@ -693,9 +703,9 @@ readyInitializationController = createReadyInitializationController({
 
 client.on("ready", () => { readyInitializationController.start(); });
 
-boot().catch(err => {
+boot().catch(async err => {
     bootLog.error("SYSTEM", "Fatal boot failure", {
         code: err?.code || err?.name || "fatal_boot_failure"
     });
-    process.exit(1);
+    await system.terminateAfterFatal("boot", err);
 });

@@ -679,7 +679,6 @@ class ShadowEngine {
 
         const intent = await this.recordTraceAudit(message, "TRACE_AUTO_DELETE_INTENT", "warning", "trace_auto_delete_intent", { policy });
         if (!intent) {
-            traceMetrics.auditFailed++;
             await this.sendAlert("TRACE GUARD — AUDIT UNAVAILABLE", "ไม่ลบข้อความเพราะไม่สามารถบันทึก Audit intent ได้", "#ED4245");
             return;
         }
@@ -705,11 +704,14 @@ class ShadowEngine {
         const messageId = safeDiscordId(message.id);
         const authorId = safeDiscordId(message.author.id);
         const jumpLink = safeDiscordJumpLink(guildId, channelId, messageId);
-        const preview = truncateText(safeLogger.sanitizeLogText(content), 220) || "(ไม่มีข้อความตัวอย่าง)";
+        const previewChunks = [];
+        const fullPreview = String(content || "(ไม่มีข้อความตัวอย่าง)");
+        for (let offset = 0; offset < fullPreview.length; offset += 1900) {
+            previewChunks.push(fullPreview.slice(offset, offset + 1900));
+        }
 
         const requestAudit = await this.recordTraceAudit(message, "TRACE_APPROVAL_REQUESTED", "warning", "trace_approval_requested", { policy, requestId });
         if (!requestAudit) {
-            traceMetrics.auditFailed++;
             await this.sendAlert("TRACE GUARD — AUDIT UNAVAILABLE", "ไม่สร้างคำขออนุมัติเพราะไม่สามารถบันทึก Audit ได้", "#ED4245");
             return;
         }
@@ -737,9 +739,7 @@ class ShadowEngine {
                 `**ช่อง:** <#${channelId}>`,
                 `**บอทที่ส่ง:** <@${authorId}>`,
                 `**หมดอายุ:** <t:${Math.floor(expiresAt / 1000)}:R>`,
-                `**ลิงก์ข้อความ:** ${jumpLink}`,
-                "",
-                `**ตัวอย่าง:** ${preview}`
+                `**ลิงก์ข้อความ:** ${jumpLink}`
             ].join("\n"))
             .setTimestamp();
 
@@ -760,6 +760,17 @@ class ShadowEngine {
             await this.recordTraceAudit(message, "TRACE_APPROVAL_DESTINATION_UNAVAILABLE", "warning", "trace_approval_destination_unavailable", { policy, requestId });
             await this.sendAlert("TRACE GUARD — APPROVAL UNAVAILABLE", "ไม่ลบและไม่แสดงคำขอในช่องสาธารณะ เพราะไม่พบช่องทางอนุมัติที่ปลอดภัย", "#ED4245");
             return;
+        }
+        for (let index = 0; index < previewChunks.length; index++) {
+            const delivered = await approvalChannel.send({
+                content: `ตัวอย่างข้อความเต็ม ${index + 1}/${previewChunks.length}\n${previewChunks[index]}`,
+                allowedMentions: { parse: [] }
+            }).then(() => true).catch(() => false);
+            if (!delivered) {
+                traceDeletionRequests.delete(requestId);
+                await this.recordTraceAudit(message, "TRACE_APPROVAL_PREVIEW_FAILED", "warning", "trace_approval_preview_failed", { policy, requestId });
+                return;
+            }
         }
         const prompt = await approvalChannel.send({ embeds: [embed], components: [row] }).catch(err => {
             logSuppressedError("send trace approval prompt", err);
@@ -914,6 +925,15 @@ class ShadowEngine {
             return true;
         }
 
+        if (traceKillSwitchEnabled || !systemToggles.traceEraser) {
+            traceDeletionRequests.delete(parsed.requestId);
+            traceMetrics.killed++;
+            await this.recordTraceAudit(request, "TRACE_APPROVAL_BLOCKED_AFTER_STATE_CHANGE", "warning", "trace_kill_switch", { policy: request.policy, requestId: parsed.requestId, approverId: interaction.user?.id });
+            await interaction.message?.edit?.({ components: [] }).catch(() => {});
+            await interaction.reply({ content: "ไม่ลบ: ระบบป้องกันถูกเปิดหรือฟังก์ชันถูกปิดระหว่างรออนุมัติ", ephemeral: true }).catch(() => {});
+            return true;
+        }
+
         const target = await this.fetchTraceTargetMessage(request);
         if (!target) {
             traceDeletionRequests.delete(parsed.requestId);
@@ -948,6 +968,14 @@ class ShadowEngine {
             traceDeletionRequests.delete(parsed.requestId);
             await interaction.message?.edit?.({ components: [] }).catch(() => {});
             await interaction.reply({ content: "ไม่ลบข้อความ เพราะไม่สามารถบันทึก Audit intent ได้", ephemeral: true }).catch(() => {});
+            return true;
+        }
+        if (traceKillSwitchEnabled || !systemToggles.traceEraser) {
+            traceDeletionRequests.delete(parsed.requestId);
+            traceMetrics.killed++;
+            await this.recordTraceAudit(request, "TRACE_APPROVAL_BLOCKED_AFTER_STATE_CHANGE", "warning", "trace_kill_switch", { policy: request.policy, requestId: parsed.requestId, approverId: interaction.user?.id });
+            await interaction.message?.edit?.({ components: [] }).catch(() => {});
+            await interaction.reply({ content: "ไม่ลบ: ระบบป้องกันถูกเปิดหรือฟังก์ชันถูกปิดก่อนทำงาน", ephemeral: true }).catch(() => {});
             return true;
         }
         const deleted = await target.delete().then(() => true).catch(() => false);
@@ -1263,21 +1291,29 @@ class ShadowEngine {
         const voiceCh = message.member.voice.channel;
         if (!voiceCh) { await this.quickAlert("❌ ต้องอยู่ในห้องเสียงก่อน"); return; }
         const key = `${guild.id}:${voiceCh.id}`;
-        const generation = crypto.randomUUID();
-        const members = [];
+        const existingSnapshot = voiceMuteSnapshots.get(key);
+        const generation = existingSnapshot?.generation || crypto.randomUUID();
+        const members = Array.isArray(existingSnapshot?.members) ? [...existingSnapshot.members] : [];
+        const recordedMemberIds = new Set(members.map(entry => entry.memberId));
         let silenced = 0;
         let failed = 0;
         for (const [, member] of voiceCh.members) {
             if (member.id === this.client.user.id) continue;
             const wasServerMuted = member.voice.serverMute === true;
-            members.push({ memberId: member.id, wasServerMuted });
+            if (!recordedMemberIds.has(member.id)) {
+                members.push({ memberId: member.id, wasServerMuted });
+                recordedMemberIds.add(member.id);
+            }
             if (wasServerMuted) continue;
             const changed = await member.voice.setMute(true, "Protected control: silence").then(() => true).catch(() => false);
             if (changed) silenced++;
             else failed++;
             await delay(200);
         }
-        voiceMuteSnapshots.set(key, { type: "voice_mute", guildId: guild.id, channelId: voiceCh.id, generation, createdAt: Date.now(), members });
+        voiceMuteSnapshots.set(key, {
+            ...(existingSnapshot || { type: "voice_mute", guildId: guild.id, channelId: voiceCh.id, generation, createdAt: Date.now() }),
+            members
+        });
         await this.sendAlert("🔇 SILENCE ACTIVATED", `ปิดเสียงสำเร็จ ${silenced} คน ล้มเหลว ${failed} คนใน **${voiceCh.name}** (${guild.name})`, "#f97316");
     }
 
@@ -1290,15 +1326,21 @@ class ShadowEngine {
         let restored = 0;
         let skipped = 0;
         let failed = 0;
+        const remaining = [];
         for (const entry of snapshot.members) {
-            const member = voiceCh.members.get(entry.memberId);
-            if (!member || entry.wasServerMuted) { skipped++; continue; }
+            let member = guild.members?.cache?.get?.(entry.memberId) || null;
+            if (!member && typeof guild.members?.fetch === "function") {
+                member = await guild.members.fetch(entry.memberId).catch(() => null);
+            }
+            if (entry.wasServerMuted) { skipped++; continue; }
+            if (!member) { failed++; remaining.push(entry); continue; }
             const changed = await member.voice.setMute(false, "Restore pre-silence mute state").then(() => true).catch(() => false);
             if (changed) restored++;
-            else failed++;
+            else { failed++; remaining.push(entry); }
             await delay(200);
         }
-        voiceMuteSnapshots.delete(key);
+        if (remaining.length) snapshot.members = remaining;
+        else voiceMuteSnapshots.delete(key);
         await this.sendAlert("🔊 SILENCE LIFTED", `คืนเสียงสำเร็จ ${restored} ข้าม ${skipped} ล้มเหลว ${failed} คนใน **${voiceCh.name}** (${guild.name})`);
     }
 
@@ -1660,7 +1702,7 @@ function applyShadowPortalAction(body, engineInstance, mainClient) {
         armedGuilds,
         protectedSessions,
         sessionManager,
-        engineInstance,
+        engineInstance: engineInstance || _shadowEngine,
         logSuppressedError,
         armTtlMs: readFiniteInteger(process.env.SHADOW_ARM_TTL_MS, {
             fallback: 5 * 60 * 1000,
@@ -1750,23 +1792,35 @@ function injectShadowRoutes(app, mainClient, engineInstance) {
     const urlencoded = express.urlencoded({
         extended: false,
         limit: "8kb",
-        parameterLimit: 20
+        parameterLimit: 20,
+        verify(req, _res, buffer) {
+            req.urlEncodedBodyBytes = buffer.length;
+        }
     });
     const basePath = "/api/v1/telemetry/snapshot";
+    const enforceBodyLimit = (req, res, next) => {
+        const declaredBytes = Number(req.headers?.["content-length"] || 0);
+        const measuredBytes = Number(req.urlEncodedBodyBytes || 0);
+        if (declaredBytes > 8192 || measuredBytes > 8192) {
+            setPortalSecurityHeaders(res);
+            return res.status(413).json({ success: false, code: "payload_too_large" });
+        }
+        return next();
+    };
 
     app.get(basePath, (req, res) => {
         if (!getShadowPortalAuth().authorize(req, res, {}, null)) return;
         return renderProtectedDashboard(res, mainClient);
     });
 
-    app.post(`${basePath}/login`, urlencoded, (req, res) => {
+    app.post(`${basePath}/login`, urlencoded, enforceBodyLimit, (req, res) => {
         const auth = getShadowPortalAuth();
         if (!auth.authorize(req, res, req.body || {}, req.body?.pin)) return;
         setPortalSecurityHeaders(res);
         return res.status(200).json({ success: true });
     });
 
-    app.post(`${basePath}/actions`, urlencoded, async (req, res) => {
+    app.post(`${basePath}/actions`, urlencoded, enforceBodyLimit, async (req, res) => {
         const auth = getShadowPortalAuth();
         if (!auth.authorize(req, res, {}, null)) return;
         const result = await applyShadowPortalAction(req.body || {}, engineInstance, mainClient);
@@ -1775,11 +1829,11 @@ function injectShadowRoutes(app, mainClient, engineInstance) {
             success: result.ok === true,
             code: result.code,
             requestId: result.requestId || null,
-            actionApplied: result.actionApplied === true
+            actionApplied: result.ok === true
         });
     });
 
-    app.post(`${basePath}/logout`, urlencoded, (req, res) => {
+    app.post(`${basePath}/logout`, urlencoded, enforceBodyLimit, (req, res) => {
         const auth = getShadowPortalAuth();
         auth.logout(res);
         return res.status(200).json({ success: true });

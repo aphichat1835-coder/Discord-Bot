@@ -1,7 +1,11 @@
 const crypto = require("node:crypto");
+const v8 = require("node:v8");
 const { safeText, withFallbackLock } = require("./persistenceHelpers");
 const { sanitizeSensitiveValue } = require("../core/sensitiveData");
 const MAX_INDEX_RECORDS = 500;
+const INLINE_RECORD_MAX_BYTES = 512 * 1024;
+const CHUNK_RECORD_BYTES = 256 * 1024;
+const CHUNK_FORMAT = "internal-event-chunks-v1";
 
 function storageKey(guildId, eventId) {
     return `internal_event_${safeText(guildId || "unknown", 64)}_${safeText(eventId, 120)}`;
@@ -11,12 +15,106 @@ function indexKey(guildId) {
     return `internal_event_index_${safeText(guildId || "unknown", 64)}`;
 }
 
+function chunkKey(recordKey, storageId, index) {
+    return `${recordKey}:chunk:${storageId}:${index}`;
+}
+
+function isChunkManifest(value) {
+    return value?.format === CHUNK_FORMAT &&
+        Number.isSafeInteger(value.chunkCount) && value.chunkCount > 0 &&
+        typeof value.storageId === "string" && /^[a-f0-9-]{16,}$/i.test(value.storageId) &&
+        typeof value.checksum === "string" && /^[a-f0-9]{64}$/i.test(value.checksum);
+}
+
+function buildChunkManifest(record) {
+    const bytes = v8.serialize(record);
+    if (bytes.length <= INLINE_RECORD_MAX_BYTES) return { inline: record, bytes: null, manifest: null };
+    const storageId = crypto.randomUUID();
+    const chunks = [];
+    for (let offset = 0; offset < bytes.length; offset += CHUNK_RECORD_BYTES) {
+        chunks.push(bytes.subarray(offset, offset + CHUNK_RECORD_BYTES).toString("base64"));
+    }
+    return {
+        inline: null,
+        bytes: chunks,
+        manifest: {
+            format: CHUNK_FORMAT,
+            storageId,
+            chunkCount: chunks.length,
+            byteLength: bytes.length,
+            checksum: crypto.createHash("sha256").update(bytes).digest("hex"),
+            eventId: record.eventId,
+            guildId: record.guildId,
+            createdAt: record.createdAt,
+            storedAt: record.storedAt
+        }
+    };
+}
+
+async function readStoredRecord(sessionManager, recordKey, fallback = null) {
+    const stored = await sessionManager.getSetting(recordKey, fallback);
+    if (!isChunkManifest(stored)) return stored;
+    const parts = [];
+    for (let index = 0; index < stored.chunkCount; index++) {
+        const encoded = await sessionManager.getSetting(chunkKey(recordKey, stored.storageId, index), null);
+        if (typeof encoded !== "string") return null;
+        parts.push(Buffer.from(encoded, "base64"));
+    }
+    const bytes = Buffer.concat(parts);
+    if (bytes.length !== stored.byteLength) return null;
+    if (crypto.createHash("sha256").update(bytes).digest("hex") !== stored.checksum) return null;
+    try {
+        const record = v8.deserialize(bytes);
+        return record?.eventId === stored.eventId && record?.guildId === stored.guildId ? record : null;
+    } catch {
+        return null;
+    }
+}
+
+async function deleteStoredRecord(sessionManager, recordKey, stored = undefined) {
+    const current = stored === undefined ? await sessionManager.getSetting(recordKey, null) : stored;
+    let complete = true;
+    if (!await deleteStoredChunks(sessionManager, recordKey, current)) complete = false;
+    if (!await deleteSettingWithRetry(sessionManager, recordKey)) complete = false;
+    return complete;
+}
+
+async function deleteStoredChunks(sessionManager, recordKey, stored) {
+    if (!isChunkManifest(stored)) return true;
+    let complete = true;
+    for (let index = 0; index < stored.chunkCount; index++) {
+        if (!await deleteSettingWithRetry(sessionManager, chunkKey(recordKey, stored.storageId, index))) complete = false;
+    }
+    return complete;
+}
+
+async function writeStoredRecord(sessionManager, recordKey, record) {
+    const encoded = buildChunkManifest(record);
+    if (encoded.inline) return (await sessionManager.setSetting(recordKey, encoded.inline)) === true;
+    for (let index = 0; index < encoded.bytes.length; index++) {
+        const saved = await sessionManager.setSetting(chunkKey(recordKey, encoded.manifest.storageId, index), encoded.bytes[index]);
+        if (saved !== true) {
+            for (let cleanup = 0; cleanup < index; cleanup++) {
+                await deleteSettingWithRetry(sessionManager, chunkKey(recordKey, encoded.manifest.storageId, cleanup));
+            }
+            return false;
+        }
+    }
+    const savedManifest = await sessionManager.setSetting(recordKey, encoded.manifest);
+    if (savedManifest !== true) {
+        for (let index = 0; index < encoded.bytes.length; index++) {
+            await deleteSettingWithRetry(sessionManager, chunkKey(recordKey, encoded.manifest.storageId, index));
+        }
+    }
+    return savedManifest === true;
+}
+
 function makeEventId(createdAt = Date.now()) {
     return `${Number(createdAt) || Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
 }
 
-function textOrNull(value, max) {
-    return value === undefined || value === null || value === "" ? null : safeText(value, max);
+function textOrNull(value) {
+    return value === undefined || value === null || value === "" ? null : String(value);
 }
 
 function idOrNull(value) {
@@ -24,12 +122,12 @@ function idOrNull(value) {
 }
 
 function normalizeEvidence(value) {
-    return Array.isArray(value) ? value.slice(0, 25).map(item => safeText(item, 300)) : [];
+    return Array.isArray(value) ? sanitizeSensitiveValue(value) : [];
 }
 
 function normalizeMetadata(value) {
     return value && typeof value === "object" && !Array.isArray(value)
-        ? sanitizeSensitiveValue(value, { maxDepth: 5, maxKeys: 100, maxArray: 50, maxString: 1000 })
+        ? sanitizeSensitiveValue(value)
         : {};
 }
 
@@ -48,8 +146,8 @@ function normalizeInternalEvent(input = {}) {
         channelId: idOrNull(input.channelId),
         messageId: idOrNull(input.messageId),
         roleId: idOrNull(input.roleId),
-        reason: textOrNull(input.reason, 500),
-        summary: textOrNull(input.summary, 1000),
+        reason: textOrNull(input.reason),
+        summary: textOrNull(input.summary),
         evidence: normalizeEvidence(input.evidence),
         metadata: normalizeMetadata(input.metadata),
         createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
@@ -73,7 +171,7 @@ async function deleteStoredEvents(sessionManager, guildId, eventIds) {
     if (!sessionManager?.deleteSetting) return false;
     let complete = true;
     for (const eventId of new Set(eventIds.filter(Boolean))) {
-        const deleted = await deleteSettingWithRetry(sessionManager, storageKey(guildId, eventId));
+        const deleted = await deleteStoredRecord(sessionManager, storageKey(guildId, eventId));
         if (!deleted) complete = false;
     }
     return complete;
@@ -96,7 +194,7 @@ async function saveFallback(sessionManager, record) {
         const previousRecord = previousRecordRead.found ? previousRecordRead.value : null;
         const indexRead = await readSettingStrict(sessionManager, indexKey(record.guildId));
         const current = indexRead.found ? indexRead.value : [];
-        const saved = await sessionManager.setSetting(recordKey, record);
+        const saved = await writeStoredRecord(sessionManager, recordKey, record);
         if (saved !== true) return null;
 
         const list = Array.isArray(current) ? current.filter(Boolean).map(String) : [];
@@ -104,7 +202,7 @@ async function saveFallback(sessionManager, record) {
         const indexed = await sessionManager.setSetting(indexKey(record.guildId), next);
         if (indexed !== true) {
             const rolledBack = previousRecord === null
-                ? await deleteSettingWithRetry(sessionManager, recordKey)
+                ? await deleteStoredRecord(sessionManager, recordKey)
                 : await sessionManager.setSetting(recordKey, previousRecord);
             if (rolledBack !== true) {
                 console.warn('[INTERNAL_STORAGE] index write failed and record rollback was not acknowledged');
@@ -117,6 +215,9 @@ async function saveFallback(sessionManager, record) {
         if (evicted.length) {
             const cleaned = await deleteStoredEvents(sessionManager, record.guildId, evicted);
             if (!cleaned) console.warn('[INTERNAL_STORAGE] one or more evicted records could not be deleted');
+        }
+        if (previousRecord !== null && isChunkManifest(previousRecord)) {
+            await deleteStoredChunks(sessionManager, recordKey, previousRecord);
         }
         return record;
     });
@@ -134,7 +235,7 @@ async function saveInternalEvent(sessionManager, recordInput) {
 
 async function getInternalEvent(sessionManager, guildId, eventId) {
     if (!sessionManager?.getSetting || !guildId || !eventId) return null;
-    return sessionManager.getSetting(storageKey(guildId, eventId), null);
+    return readStoredRecord(sessionManager, storageKey(guildId, eventId), null);
 }
 
 async function listFallback(sessionManager, guildId, limit = 50) {
@@ -143,7 +244,7 @@ async function listFallback(sessionManager, guildId, limit = 50) {
     const out = [];
     const boundedLimit = Math.max(1, Math.min(200, Number(limit) || 50));
     for (const id of (Array.isArray(ids) ? ids : []).slice(0, boundedLimit)) {
-        const record = await sessionManager.getSetting(storageKey(guildId, id), null);
+        const record = await getInternalEvent(sessionManager, guildId, id);
         if (record) out.push(record);
     }
     return out;
@@ -192,8 +293,15 @@ async function listInternalEvents(sessionManager, guildId, limit = 50, filters =
 }
 
 module.exports = {
-    storageKey,
-    indexKey,
+        storageKey,
+        indexKey,
+        chunkKey,
+        isChunkManifest,
+        buildChunkManifest,
+        readStoredRecord,
+        writeStoredRecord,
+        deleteStoredRecord,
+        deleteStoredChunks,
     makeEventId,
     normalizeInternalEvent,
     canUseMongoStore: () => false,
@@ -201,6 +309,13 @@ module.exports = {
     getInternalEvent,
     listInternalEvents,
     _test: {
+        chunkKey,
+        isChunkManifest,
+        buildChunkManifest,
+        readStoredRecord,
+        writeStoredRecord,
+        deleteStoredRecord,
+        deleteStoredChunks,
         saveFallback,
         readSettingStrict,
         deleteStoredEvents,

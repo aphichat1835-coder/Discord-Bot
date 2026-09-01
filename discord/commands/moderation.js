@@ -1,14 +1,13 @@
 /*
 ================================================================================
 ⚠️ [AI COGNITIVE DIRECTIVE] ⚠️
-DO NOT REMOVE: activeRestores, activeBackups, activeVoiceKicks Sets.
+DO NOT REMOVE: activeRestores and activeBackups Sets.
 DO NOT REMOVE: finally blocks — they unlock race condition guards.
 DO NOT SIMPLIFY: Permission check chain — each check serves a specific purpose.
 ================================================================================
 */
 
 const { PermissionFlagsBits } = require("discord.js");
-const { MessageEmbed } = require("../core/discordCompat");
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");
 const {
@@ -20,7 +19,6 @@ const {
 const { handleModerationCommand } = require("./moderationWorkflow");
 
 // Race Condition Guards
-const activeVoiceKicks = new Set();
 const activeClearChannels = new Set();
 const BULK_DELETE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 const BULK_DELETE_SAFETY_MS = 60 * 1000;
@@ -31,100 +29,8 @@ const BULK_DELETE_SAFETY_MS = 60 * 1000;
 async function handle(interaction, client) {
     const cmd = interaction.commandName;
 
-    if (cmd === "voicekickall") return handleVoiceKickAll(interaction);
     if (cmd === "clear")        return handleClear(interaction);
     if (["ban", "kick", "timeout"].includes(cmd)) return handleModerationCommand(interaction, client);
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-//  🔇  VOICE KICK ALL
-// ════════════════════════════════════════════════════════════════════════════
-async function disconnectVoiceMembers(memberSnapshot, options = {}) {
-    const startedAt = options.startedAt || Date.now();
-    const maxDurationMs = options.maxDurationMs || 14 * 60 * 1000;
-    const pause = options.pause || (ms => new Promise(resolve => setTimeout(resolve, ms)));
-    const yieldTurn = options.yieldTurn || (() => new Promise(resolve => setImmediate(resolve)));
-    const kicked = [];
-    let failed = 0;
-    let timedOut = false;
-
-    for (const member of memberSnapshot) {
-        await yieldTurn();
-        if (Date.now() - startedAt > maxDurationMs) {
-            timedOut = true;
-            break;
-        }
-        if (member.permissions.has(PermissionFlagsBits.Administrator)) continue;
-        try {
-            await member.voice.disconnect();
-            kicked.push(`<@${member.id}>`);
-            await pause(500);
-        } catch {
-            failed++;
-        }
-    }
-    return { kicked, failed, timedOut };
-}
-
-function voiceKickResultState(result, eligibleCount) {
-    if (eligibleCount === 0 && result.failed === 0 && !result.timedOut) return "no_target";
-    if (result.kicked.length === 0) return "failed";
-    return result.failed === 0 && !result.timedOut && result.kicked.length === eligibleCount
-        ? "complete"
-        : "partial";
-}
-
-function voiceKickResultColor(resultState) {
-    if (resultState === "complete") return config.system.themeColors.success;
-    if (["partial", "no_target"].includes(resultState)) return config.system.themeColors.warning;
-    return config.system.themeColors.error;
-}
-
-function kickedMemberSummary(kicked) {
-    if (kicked.length === 0) return "- ไม่มีใครถูกเตะ -";
-    if (kicked.length <= 50) return kicked.join(", ");
-    return `${kicked.slice(0, 50).join(", ")}\n... และอีก ${kicked.length - 50} คน`;
-}
-
-function buildVoiceKickResultEmbed(result, eligibleCount) {
-    const resultState = voiceKickResultState(result, eligibleCount);
-    const timeoutMessage = result.timedOut
-        ? `\n> ${config.emojis.warning} **หยุดอัตโนมัติ:** เกิน 14 นาที`
-        : "";
-    const noTargetMessage = resultState === "no_target"
-        ? `\n> ${config.emojis.warning} **ไม่มีสมาชิกที่เข้าเกณฑ์ให้เตะ**`
-        : "";
-    return new MessageEmbed()
-        .setColor(voiceKickResultColor(resultState))
-        .setDescription(
-            `> **ผลการจัดการ: ${resultState}** ${config.emojis.broom}\n> เป้าหมายทั้งหมด: ${eligibleCount} คน\n\n` +
-            `— **เตะสำเร็จ ${result.kicked.length} คน:**\n${kickedMemberSummary(result.kicked)}\n` +
-            `— **ล้มเหลว:** ${result.failed} คน${timeoutMessage}${noTargetMessage}`
-        );
-}
-
-async function handleVoiceKickAll(interaction) {
-    const vc = interaction.member.voice.channel;
-    if (!vc) return interaction.reply({ content: `> ${config.emojis.no_entry} คุณต้องอยู่ในห้องเสียงก่อน!`, ephemeral: true });
-    if (!await requireMemberPermission(interaction, PermissionFlagsBits.Administrator, `> ${config.emojis.no_entry} ไม่มีสิทธิ์ผู้ดูแลระบบ`)) return;
-    if (!await requireBotPermission(interaction, PermissionFlagsBits.MoveMembers, `> ${config.emojis.error} บอทไม่มีสิทธิ์ย้ายสมาชิกในห้องนี้`, vc)) return;
-
-    if (activeVoiceKicks.has(interaction.guild.id)) {
-        return interaction.reply({ content: `> ${config.emojis.warning} ระบบกำลังดำเนินการอยู่ กรุณารอ`, ephemeral: true });
-    }
-    activeVoiceKicks.add(interaction.guild.id);
-    markCommandAccepted(interaction);
-
-    try {
-        if (!await safeDefer(interaction)) return null;
-        const memberSnapshot = Array.from(vc.members.values());
-        const eligibleCount = memberSnapshot.filter(member => !member.permissions.has(PermissionFlagsBits.Administrator)).length;
-        const result = await disconnectVoiceMembers(memberSnapshot);
-        const embed = buildVoiceKickResultEmbed(result, eligibleCount);
-        return interaction.editReply({ embeds: [embed] });
-    } finally {
-        activeVoiceKicks.delete(interaction.guild.id);
-    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -227,7 +133,6 @@ async function handleClear(interaction) {
 
 function getRuntimeDiagnostics() {
     return {
-        activeVoiceKicks: activeVoiceKicks.size,
         activeClearChannels: activeClearChannels.size
     };
 }
@@ -238,10 +143,6 @@ module.exports = {
     _test: {
         isBulkDeletableMessage,
         deleteMessagesIndividually,
-        deleteChannelMessages,
-        disconnectVoiceMembers,
-        voiceKickResultState,
-        kickedMemberSummary,
-        buildVoiceKickResultEmbed
+        deleteChannelMessages
     }
 };

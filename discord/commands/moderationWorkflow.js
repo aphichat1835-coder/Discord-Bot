@@ -38,7 +38,15 @@ function rejectHierarchy(interaction, client, target) {
 }
 
 function rejectUnmanageableTarget(interaction, target, action) {
-    if (target.manageable || action === "ban") return null;
+    // Discord exposes a separate capability for bans. A member can be
+    // bannable even when it is not manageable for role/nickname changes, so
+    // do not use `manageable` as the ban decision.
+    if (action === "ban") {
+        if (target.bannable === true) return null;
+        return interaction.reply({ content: `> ${config.emojis.error} บอทไม่สามารถแบนสมาชิกท่านนี้ได้`, ephemeral: true });
+    }
+
+    if (target.manageable) return null;
     return interaction.reply({ content: `> ${config.emojis.error} บอทไม่มีสิทธิ์จัดการสมาชิกท่านนี้`, ephemeral: true });
 }
 

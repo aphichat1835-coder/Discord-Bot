@@ -101,6 +101,7 @@ const Intents = Object.freeze({
     FLAGS: Object.freeze({
         GUILDS: GatewayIntentBits.Guilds,
         GUILD_MEMBERS: GatewayIntentBits.GuildMembers,
+        GUILD_MODERATION: GatewayIntentBits.GuildModeration,
         GUILD_MESSAGES: GatewayIntentBits.GuildMessages,
         GUILD_VOICE_STATES: GatewayIntentBits.GuildVoiceStates,
         MESSAGE_CONTENT: GatewayIntentBits.MessageContent

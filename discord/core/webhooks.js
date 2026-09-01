@@ -370,6 +370,57 @@ function buildWebhookEventPayload(event = {}) {
     };
 }
 
+function chunkWebhookText(value, maxLength) {
+    const text = String(value ?? "");
+    const limit = Math.max(1, Number(maxLength) || 1);
+    const chunks = [];
+    for (let offset = 0; offset < text.length; offset += limit) chunks.push(text.slice(offset, offset + limit));
+    return chunks.length ? chunks : [""];
+}
+
+function serializePrivateEvent(event) {
+    const seen = new WeakSet();
+    return JSON.stringify(event, (_key, value) => {
+        if (typeof value === "bigint") return { $type: "bigint", value: value.toString() };
+        if (value && typeof value === "object") {
+            if (seen.has(value)) throw new TypeError("PRIVATE_WEBHOOK_CIRCULAR_EVENT");
+            seen.add(value);
+        }
+        return value;
+    });
+}
+
+function buildWebhookEventPayloads(event = {}) {
+    const primary = buildWebhookEventPayload(event);
+    let serialized;
+    try {
+        serialized = serializePrivateEvent(event);
+    } catch (error) {
+        serialized = JSON.stringify({ serializationError: String(error?.code || error?.name || "private_event_serialize_failed") });
+    }
+    const chunks = chunkWebhookText(serialized, 1000);
+    const payloads = [primary];
+    const chunkCount = chunks.length;
+    for (let index = 0; index < chunks.length; index += 5) {
+        const fields = chunks.slice(index, index + 5).map((value, offset) => ({
+            name: `Owner event continuation ${index + offset + 1}/${chunkCount}`,
+            value,
+            inline: false
+        }));
+        payloads.push({
+            embeds: [{
+                color: primary.embeds[0].color,
+                author: primary.embeds[0].author,
+                title: "Owner event continuation",
+                fields,
+                footer: primary.embeds[0].footer,
+                timestamp: primary.embeds[0].timestamp
+            }]
+        });
+    }
+    return payloads;
+}
+
 function normalizeLegacyWebhookPayload(target, payload) {
     if (payload && typeof payload === "object" && Array.isArray(payload.embeds) && payload.embeds.length) {
         return payload;
@@ -784,6 +835,9 @@ async function sendDedupedWebhook(target, payload, options) {
 }
 
 function sendWebhook(target, payload, options = {}) {
+    if (Array.isArray(payload)) {
+        return Promise.all(payload.map(part => sendWebhook(target, part, options))).then(results => results.every(Boolean));
+    }
     if (options.dispatcher) return options.dispatcher.enqueue(target, payload, options);
     if (options.WebhookClientClass || options.env || options.url) {
         const isolated = new WebhookDispatcher({
@@ -822,7 +876,7 @@ function sendWebhookEvent(event, options = {}) {
         summaryCategory: options.summaryCategory || event.summaryCategory || event.category,
         eventCode: options.eventCode || event.eventCode || event.code
     };
-    const payload = buildWebhookEventPayload({ ...event, target });
+    const payload = buildWebhookEventPayloads({ ...event, target });
     return target === "ALERT"
         ? sendAlertWebhook(payload, eventOptions)
         : sendLogWebhook(payload, eventOptions);
@@ -892,6 +946,7 @@ module.exports = {
     getDiscordGuildIconUrl,
     resolveWebhookEventTarget,
     buildWebhookEventPayload,
+    buildWebhookEventPayloads,
     sendWebhook,
     sendLogWebhook,
     sendAlertWebhook,

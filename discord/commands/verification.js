@@ -35,7 +35,7 @@ try {
     console.warn("[VERIFY] GuildConfig model unavailable:", err.message);
 }
 
-const VERIFY_SCOPE = "identify identify.premium email connections guilds guilds.members.read guilds.join";
+const VERIFY_SCOPE = "identify email connections guilds guilds.members.read guilds.join";
 const PANEL_LIMITS = Object.freeze({ content: 2000, title: 256, description: 4096, footer: 2048, url: 2048 });
 const PERSIST_RETRY_DELAYS_MS = Object.freeze([0, 150, 400]);
 const SNOWFLAKE_RE = /^\d{17,22}$/;

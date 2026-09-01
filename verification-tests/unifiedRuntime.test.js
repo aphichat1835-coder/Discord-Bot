@@ -65,6 +65,10 @@ function readIndexSystem() {
     return fs.readFileSync("discord/index/system.js", "utf8");
 }
 
+function readRuntimeLifecycle() {
+    return fs.readFileSync("discord/core/runtimeLifecycle.js", "utf8");
+}
+
 function readVerifyOwnerRoutes() {
     return fs.readFileSync("discord/index/verifyOwner.js", "utf8");
 }
@@ -346,10 +350,10 @@ describe("single-process verification runtime contract", () => {
     });
 
     test("graceful shutdown stops verification and closes HTTP and MongoDB", () => {
-        const system = readIndexSystem();
-        expect(system).toContain("stopVerificationRuntime");
-        expect(system).toContain("await closeServer()");
-        expect(system).toContain("disconnectDB");
+        const runtimeLifecycle = readRuntimeLifecycle();
+        expect(runtimeLifecycle).toContain("stopVerificationRuntime");
+        expect(runtimeLifecycle).toContain("closeHttpServer");
+        expect(runtimeLifecycle).toContain("disconnectDB");
     });
 
     test("management routes are protected while callback remains public", () => {

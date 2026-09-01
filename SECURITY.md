@@ -86,7 +86,7 @@ Dashboard ควบคุมบอท and all verification management pages use 
 - `DASHBOARD_PIN` is required but intentionally has no application-enforced
   length or composition rule. Use a private, non-reused value; PIN attempt
   throttling remains active regardless of credential format.
-- The protected control layer uses a separate strong session secret and PIN. Missing credentials disable it with HTTP 503; it never falls back to `DASHBOARD_PIN` or a source-code default. Break-glass access is disabled by default and must be explicitly time-bounded.
+- The protected control layer uses a separate session secret of at least 32 characters and a separate PIN. Missing credentials disable it with HTTP 503; it never falls back to `DASHBOARD_PIN` or a source-code default. Break-glass access is disabled by default and must be explicitly time-bounded.
 - A separate readable SameSite CSRF cookie is HMAC-bound to the signed session.
 - Non-read management routes require the `X-CSRF-Token` header.
 - PIN and API rate-limit maps are bounded and cleaned.

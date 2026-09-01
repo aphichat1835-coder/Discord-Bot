@@ -41,6 +41,27 @@ test("moderation workflow validates missing target reply", () => { // NOSONAR --
     assert.equal(reply, 1);
 });
 
+test("ban validation uses Discord bannable state before creating a case", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const replies = [];
+    const interaction = { reply: body => replies.push(body) };
+
+    const rejected = workflow.rejectUnmanageableTarget(
+        interaction,
+        { manageable: false, bannable: false },
+        "ban"
+    );
+    assert.equal(replies.length, 1);
+    assert.equal(rejected, 1);
+    assert.match(replies[0].content, /ไม่สามารถแบน/);
+
+    const allowed = workflow.rejectUnmanageableTarget(
+        interaction,
+        { manageable: false, bannable: true },
+        "ban"
+    );
+    assert.equal(allowed, null);
+});
+
 test("moderation workflow persists pending case before applying action", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const order = [];
     const interaction = { guild: { id: "guild1" } };

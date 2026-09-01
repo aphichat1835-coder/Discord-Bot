@@ -15,6 +15,7 @@ const {
     getDiscordGuildIconUrl,
     resolveWebhookEventTarget,
     buildWebhookEventPayload,
+    buildWebhookEventPayloads,
     sendWebhook,
     sendLogWebhook,
     sendAlertWebhook,
@@ -177,6 +178,20 @@ test("private webhook events preserve full owner-visible credentials and IP valu
     assert.equal(text.includes(webhookUrl), true);
 });
 
+test("private webhook continuations preserve every event field beyond Discord field and length limits", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const context = Object.fromEntries(Array.from({ length: 30 }, (_, index) => [`field-${index}`, `${index}:${"x".repeat(500)}`]));
+    context.boolean = true;
+    context.number = 42;
+    const event = { severity: "ERROR", category: "SECURITY", title: "รายละเอียด", context };
+    const payloads = buildWebhookEventPayloads(event);
+    assert.ok(payloads.length > 1);
+    const continuation = payloads.slice(1)
+        .flatMap(payload => payload.embeds[0].fields)
+        .map(field => field.value)
+        .join("");
+    assert.deepEqual(JSON.parse(continuation), event);
+});
+
 test("webhook URLs are restricted to HTTPS Discord webhook endpoints", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.equal(validateWebhookUrl(LOG_URL).valid, true);
     assert.equal(validateWebhookUrl("http://discord.com/api/webhooks/123/token-token-token-token").code, "https_required");
@@ -336,8 +351,8 @@ test("sendWebhookEvent preserves event-level summary metadata for duplicate repo
     await flushWebhookQueue(20);
     await new Promise(resolve => setImmediate(resolve));
 
-    assert.equal(calls.length, 2);
-    const duplicateEmbed = calls[1].payload.embeds[0];
+    assert.equal(calls.length, 3);
+    const duplicateEmbed = calls[2].payload.embeds[0];
     assert.match(duplicateEmbed.title, /สรุปเหตุการณ์ที่เกิดซ้ำ/);
     assert.equal(duplicateEmbed.description, "เหตุการณ์ทดสอบ");
     assert.match(duplicateEmbed.footer.text, /ความปลอดภัย/);

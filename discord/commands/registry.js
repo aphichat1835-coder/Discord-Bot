@@ -111,7 +111,7 @@ const slashCommandsData = [
         ]
     },
 
-    { name: "voicekickall", description: "เตะทุกคนในห้องเสียงที่คุณอยู่ (ยกเว้นผู้ดูแล)" },
+    { name: "voiceadmin", description: "เปิดแผงจัดการสมาชิกในห้องเสียงนี้ (เฉพาะผู้ดูแล)" },
 
     {
         name: "ban",

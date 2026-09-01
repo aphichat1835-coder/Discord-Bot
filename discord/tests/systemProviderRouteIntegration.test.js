@@ -88,6 +88,13 @@ test("protected portal works through the real main-auth and CSRF middleware stac
     };
 
     try {
+        const oversized = await fetch(`${baseUrl}/api/v1/telemetry/snapshot/login`, {
+            method: "POST",
+            headers: { ...headers, "x-csrf-token": csrfToken },
+            body: `pin=protected-owner-pin&padding=${"x".repeat(9000)}`
+        });
+        assert.equal(oversized.status, 413);
+
         const fakeHeader = await fetch(`${baseUrl}/api/v1/telemetry/snapshot/login`, {
             method: "POST",
             headers: {

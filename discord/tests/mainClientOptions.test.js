@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { Client, Options } = require("discord.js");
+const { GatewayIntentBits } = require("discord.js");
 const { buildMainClientOptions, _test } = require("../core/mainClientOptions");
 
 test("builds discord.js v14 client options with cache and default sweepers", async () => {
@@ -16,6 +17,7 @@ test("builds discord.js v14 client options with cache and default sweepers", asy
     assert.equal(typeof options.makeCache, "function");
     assert.equal(options.sweepers.messages.interval, 60);
     assert.equal(options.sweepers.messages.lifetime, 120);
+    assert.equal(options.intents.includes(GatewayIntentBits.GuildModeration), true);
     assert.equal(
         options.sweepers.threads.interval,
         Options.DefaultSweeperSettings.threads.interval

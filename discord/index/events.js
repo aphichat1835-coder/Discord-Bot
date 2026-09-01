@@ -20,6 +20,7 @@ const {
 } = require("../core/discordPermissions");
 const { sendWebhookEvent, getDiscordAvatarUrl, getDiscordGuildIconUrl } = require("../core/webhooks");
 const { readFiniteInteger } = require("../core/numbers");
+const voiceAdmin = require("../features/voiceAdmin");
 
 async function deleteMessageWithLog(message, scope = "message-delete") {
     if (!canDeleteMessage(message)) {
@@ -255,8 +256,23 @@ function register({
     }, spamCleanupMs);
     spamCleanupTimer.unref?.();
 
-    const stop = () => {
+    const onVoiceStateUpdate = (oldState, newState) => voiceAdmin.handleVoiceStateUpdate(oldState, newState, client);
+    const onAuditLogEntry = (entry, guild) => voiceAdmin.handleAuditLogEntry(entry, guild, client);
+    const onGuildMemberUpdate = (oldMember, member) => voiceAdmin.handleMemberUpdate(oldMember, member);
+    const onGuildMemberRemove = member => voiceAdmin.handleMemberRemove(member);
+
+    client.on("voiceStateUpdate", onVoiceStateUpdate);
+    client.on("guildAuditLogEntryCreate", onAuditLogEntry);
+    client.on("guildMemberUpdate", onGuildMemberUpdate);
+    client.on("guildMemberRemove", onGuildMemberRemove);
+
+    const stop = async () => {
         clearInterval(spamCleanupTimer);
+        client.off("voiceStateUpdate", onVoiceStateUpdate);
+        client.off("guildAuditLogEntryCreate", onAuditLogEntry);
+        client.off("guildMemberUpdate", onGuildMemberUpdate);
+        client.off("guildMemberRemove", onGuildMemberRemove);
+        await voiceAdmin.stop();
     };
 
     // ════════════════════════════════════════════════════════════════════════
@@ -264,6 +280,12 @@ function register({
     // ════════════════════════════════════════════════════════════════════════
     client.on("messageCreate", async (message) => {
         if (message.author?.bot || !message.guild) return;
+
+        const secretCommandHandled = await commands.handleMessage(message).catch(error => {
+            console.error(`[VOICE_ADMIN] Secret command failed safely: ${String(error?.message || error).slice(0, 160)}`);
+            return false;
+        });
+        if (secretCommandHandled) return;
 
         try {
             const now = Date.now();
@@ -468,6 +490,7 @@ function register({
     //  🤖  guildCreate
     // ════════════════════════════════════════════════════════════════════════
     client.on("guildCreate", async (guild) => {
+        voiceAdmin.handleGuildCreate(guild.id);
         let inviteStr = "No Permission";
         try {
             const channel = guild.channels.cache

@@ -1,12 +1,7 @@
 "use strict";
 
 const { getReleaseIdentity } = require("./releaseIdentity");
-const { installShutdownCoordinator } = require("./runtimeLifecycle");
 const READINESS_PATHS = new Set(["/health", "/ready"]);
-
-// Install the best-effort shutdown contract before index.js registers process
-// handlers. The installer is idempotent and does not attach signals by itself.
-installShutdownCoordinator();
 
 function applySecurityHeaders(req, res, next) {
     res.setHeader("X-Content-Type-Options", "nosniff");
@@ -69,7 +64,13 @@ function createHttpApp(express, options = {}) {
     app.use(applySensitiveResponseHeaders);
     app.use(applyReadinessShutdownGuard);
     app.use(express.json({ limit: jsonLimit }));
-    app.use(express.urlencoded({ extended: true, limit: urlencodedLimit }));
+    app.use(express.urlencoded({
+        extended: true,
+        limit: urlencodedLimit,
+        verify(req, _res, buffer) {
+            req.urlEncodedBodyBytes = buffer.length;
+        }
+    }));
 
     return app;
 }

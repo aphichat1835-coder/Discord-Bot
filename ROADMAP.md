@@ -37,9 +37,9 @@ require a new explicit owner decision.
 - Replaced Join Campaign's total-user ceiling and embedded per-IP history caps
   with cursor batches and paginated canonical history collections.
 - Added additive snapshot/data-quality fields and dry-run/apply migration.
-- Added separate audited per-user Token/IP reveal actions while keeping normal and full-detail APIs redacted.
-- Added a separate audited full-detail POST while keeping the normal detail GET
-  redacted and non-cacheable for sensitive responses.
+- Owner Dashboard full detail now returns Token, raw IP, and the complete
+  Owner-visible record directly after normal authentication; no reason,
+  repeated PIN, separate reveal action, or approval queue is required.
 - Made snapshot persistence complete-version based with per-document BSON
   sizing, oversized-object checksum chunks, rollback recovery, and no aggregate
   truncation ceiling.

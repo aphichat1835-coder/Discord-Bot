@@ -3,12 +3,13 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { createShutdownCoordinator } = require("../core/runtimeLifecycle");
+const { createShutdownCoordinator, registerShutdownHandlers } = require("../core/runtimeLifecycle");
 
 function fixture({ failAt = null, pauseGate = null } = {}) {
     const calls = [];
     const exitCodes = [];
     const timers = new Set();
+    const timerDelays = [];
     const step = name => async () => {
         calls.push(name);
         if (failAt === name) throw new Error(`${name} failed`);
@@ -28,9 +29,10 @@ function fixture({ failAt = null, pauseGate = null } = {}) {
             callback();
         }
     };
-    const setTimer = callback => {
-        const timer = { callback, unref() {} };
+    const setTimer = (callback, delay) => {
+        const timer = { callback, delay, unref() {} };
         timers.add(timer);
+        timerDelays.push(delay);
         return timer;
     };
     const clearTimer = timer => timers.delete(timer);
@@ -63,8 +65,14 @@ function fixture({ failAt = null, pauseGate = null } = {}) {
         clearTimer,
         logger
     });
-    return { shutdown, calls, exitCodes, timers };
+    return { shutdown, calls, exitCodes, timers, timerDelays };
 }
+
+test("default force timeout allows the full 50-second graceful shutdown window", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const { shutdown, timerDelays } = fixture();
+    await shutdown("SIGTERM", 0);
+    assert.ok(timerDelays.includes(50000));
+});
 
 test("graceful shutdown runs the complete audited cleanup order", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const { shutdown, calls, exitCodes, timers } = fixture();
@@ -139,5 +147,44 @@ test("fatal error escalates an in-progress graceful shutdown to exit code one", 
     assert.deepEqual(exitCodes, [1]);
     assert.equal(result.requestedExitCode, 1);
     assert.equal(result.exitCode, 1);
+    assert.equal(calls.filter(value => value === "pause voice").length, 1);
+});
+
+test("explicit shutdown registration installs one handler for each termination signal", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const calls = [];
+    const listeners = new Map();
+    const exits = [];
+    let fatalHandler = null;
+    const processRef = {
+        on(signal, handler) {
+            assert.equal(listeners.has(signal), false);
+            listeners.set(signal, handler);
+        },
+        exit(code) { exits.push(code); }
+    };
+    const system = {
+        setFatalShutdownHandler(handler) { fatalHandler = handler; },
+        markAppShuttingDown() { calls.push("mark shutdown"); },
+        stopCronJobs() { calls.push("stop cron"); },
+        stopRuntimeCleanups() { calls.push("stop runtime"); return { failed: 0 }; }
+    };
+    const shutdown = registerShutdownHandlers({
+        system,
+        processRef,
+        sessionManager: { saveDatabase: async () => calls.push("save database"), disconnectDB: async () => calls.push("disconnect database") },
+        voiceWorker: { setShuttingDown: () => calls.push("voice stopping"), pauseAll: async () => calls.push("pause voice") },
+        client: { destroy: () => calls.push("destroy Discord") },
+        verificationRuntime: { stopVerificationRuntime: async () => calls.push("stop verification") },
+        dmService: { stop: () => calls.push("stop DM") },
+        flushWebhookQueue: async () => true,
+        shutdownWebhookDispatcher: async () => {},
+        getServer: () => ({ close: callback => callback() }),
+        logger: { log() {}, warn() {}, error() {} }
+    });
+
+    assert.equal(fatalHandler, shutdown);
+    assert.deepEqual([...listeners.keys()], ["SIGTERM", "SIGINT"]);
+    await listeners.get("SIGTERM")();
+    assert.deepEqual(exits, [0]);
     assert.equal(calls.filter(value => value === "pause voice").length, 1);
 });

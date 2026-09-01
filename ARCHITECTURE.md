@@ -80,6 +80,12 @@ remains in the Owner Dashboard. When an event has a real Discord subject, its
 embed uses the relevant guild icon and/or account avatar; system-only events do
 not invent a profile image.
 
+Owner-only internal events preserve configured values without a fixed field,
+depth, array, or string-truncation boundary. A record beyond the safe setting
+size is stored as checksummed byte chunks; readers reject incomplete or altered
+chunks rather than returning partial data. Private webhook delivery uses ordered
+continuation payloads when one Discord message cannot hold the full event.
+
 ## 3. Repository map
 
 ```text
@@ -168,10 +174,8 @@ channel fallback when private delivery is unavailable.
 | write routes under `/api/guild/:guildId/*` | Owner PIN + CSRF |
 | `GET /api/guild/:guildId/member/:userId/detail` | Owner PIN |
 | `GET /api/guild/:guildId/member/:userId/ip-history` | Owner PIN; paginated canonical IP history |
-| `POST /api/guild/:guildId/member/:userId/full-detail` | Owner PIN + CSRF; categorized detail remains redacted |
-| `POST /api/guild/:guildId/member/:userId/reveal-token` | Owner PIN + CSRF + rate limit + automatic audit intent/result |
+| `GET`/`POST /api/guild/:guildId/member/:userId/full-detail` | Owner PIN; POST also uses CSRF; returns Owner-visible Token, raw IP, and full detail directly |
 | `GET /api/guild/:guildId/preflight` | Owner PIN |
-| `POST /api/verify-owner/.../reveal-ip` | Owner PIN + CSRF + rate limit + automatic audit intent/result |
 | `GET /api/verification/diagnostics` | Owner PIN |
 | `POST /api/verification/retention/dry-run` | Owner PIN + CSRF |
 
@@ -375,40 +379,19 @@ all finalized chunks and falls back to legacy embedded arrays for older data.
 
 ## 7. Sensitive data access
 
-Normal list serializers explicitly set raw IP fields to null and never decrypt
-them. The Owner Member Detail route returns audited full detail in one action:
+Normal list serializers explicitly set raw IP fields to null. After normal
+Owner authentication, the Owner Member Detail route returns Token, raw IP, and
+full detail directly without a reason, repeated PIN, step-up flow, or reveal queue:
 
 ```text
 POST /api/guild/:guildId/member/:userId/full-detail
 ```
 
-The stricter compatibility raw-IP route remains:
-
-```text
-POST /api/verify-owner/guild/:guildId/user/:userId/reveal-ip
-```
-
-It requires Owner PIN, CSRF, and a non-empty reason. The service decrypts the
-latest encrypted IP only for the response and attempts to append an audit entry
-with actor, reason, and time. If the audit write fails, the Owner response
-includes audit failure status. The UI does not cache or place raw IP into list
-APIs.
-
 Email, connection, and guild details are Owner-only. The former external
 guild-admin reveal-request workflow is removed.
 
-Raw OAuth access/refresh tokens are returned only by audited per-user Owner
-actions. Member Detail uses the full-detail route above; the compatibility
-token-only action remains:
-
-```text
-POST /api/guild/:guildId/member/:userId/reveal-token
-```
-
-It requires Owner PIN, CSRF, a non-empty reason, cooldown/rate-limit checks, and
-an audit attempt. If the audit write fails, the Owner response includes audit
-failure status. Normal list, detail, export, log, and migration paths do not
-decrypt or serialize raw tokens.
+Normal list, public, export, log, and migration paths do not expose raw tokens
+or raw IP. Owner-only event schemas retain their configured full-fidelity fields.
 
 ## 8. Maintenance and migration
 
@@ -437,7 +420,7 @@ field or collection.
 ### inwcloud
 
 ```text
-Custom command: npm install && npm start
+Custom command: npm ci && npm start
 Domain internal port: PORT or 3000
 Redirect URI: https://DOMAIN/auth/callback
 ```
@@ -447,9 +430,9 @@ Redirect URI: https://DOMAIN/auth/callback
 `render.yaml` contains one root Web Service:
 
 ```text
-buildCommand: npm install
+buildCommand: npm ci
 startCommand: npm start
-healthCheckPath: /health
+healthCheckPath: /ping
 ```
 
 Release/deployment verification order:
@@ -467,10 +450,11 @@ Release/deployment verification order:
 
 Authoritative placeholders are in `.env.example`.
 
-The Owner maintains exactly 13 values: `NODE_ENV`, `MONGO_URI`,
+The Owner maintains exactly 15 values: `NODE_ENV`, `MONGO_URI`,
 `TOKEN_MANAGER`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`,
 `ENCRYPTION_KEY`, `API_SECRET`, `VERIFY_STATE_SECRET`, `DASHBOARD_PIN`,
-`PUBLIC_BASE_URL`, `WEBHOOK_LOG_URL`, `ALERT_WEBHOOK_URL`, and `TRUST_PROXY`.
+`SHADOW_SESSION_SECRET`, `SHADOW_PORTAL_PIN`, `PUBLIC_BASE_URL`,
+`WEBHOOK_LOG_URL`, `ALERT_WEBHOOK_URL`, and `TRUST_PROXY`.
 The host supplies `PORT` when needed; it falls back to 3000. Advanced cache,
 batch, timeout, retention, voice, verification, migration, proxy-hop, feature,
 and memory controls use code defaults and are not owner-maintained deployment

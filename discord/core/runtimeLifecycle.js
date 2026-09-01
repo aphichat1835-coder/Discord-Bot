@@ -66,7 +66,7 @@ function createShutdownCoordinator(options = {}) {
         setTimer = setTimeout,
         clearTimer = clearTimeout,
         logger = console,
-        forceTimeoutMs = 10000,
+        forceTimeoutMs = 50000,
         httpCloseTimeoutMs = 3000,
         dmDrainTimeoutMs = 5000,
         drainDm = drainDmService
@@ -97,7 +97,7 @@ function createShutdownCoordinator(options = {}) {
             }), state);
             await runCleanupStep("runtime cleanups", async () => {
                 if (typeof system.stopRuntimeCleanups === "function") {
-                    const result = system.stopRuntimeCleanups(runtimeCleanups);
+                    const result = await system.stopRuntimeCleanups(runtimeCleanups);
                     if (Number(result?.failed || 0) > 0) {
                         throw new Error(`${result.failed} runtime cleanup(s) failed`);
                     }
@@ -146,43 +146,41 @@ function createShutdownCoordinator(options = {}) {
     return shutdown;
 }
 
-let installed = false;
-
-function installShutdownCoordinator() {
-    if (installed) return false;
-
-    const system = require("../index/system");
-    const { flushWebhookQueue, shutdownWebhookDispatcher } = require("./webhooks");
-    if (system.initShutdown?.__bestEffortCoordinator === true) {
-        installed = true;
-        return false;
+function registerShutdownHandlers(options = {}) {
+    const {
+        system,
+        processRef = process,
+        flushWebhookQueue,
+        shutdownWebhookDispatcher
+    } = options;
+    if (!system || typeof system !== "object") {
+        throw new Error("Shutdown coordinator requires the runtime system state");
+    }
+    if (!processRef || typeof processRef.on !== "function") {
+        throw new Error("Shutdown coordinator requires a process-like signal emitter");
     }
 
-    function initShutdown(options = {}) {
-        const shutdown = createShutdownCoordinator({
-            ...options,
-            system,
-            flushWebhookQueue,
-            shutdownWebhookDispatcher,
-            processRef: process,
-            getServer: () => global.server
-        });
-        system.setFatalShutdownHandler?.(shutdown);
-        process.on("SIGTERM", () => shutdown("SIGTERM", 0));
-        process.on("SIGINT", () => shutdown("SIGINT", 0));
-        return shutdown;
-    }
-
-    Object.defineProperty(initShutdown, "__bestEffortCoordinator", { value: true });
-    system.initShutdown = initShutdown;
-    installed = true;
-    return true;
+    const webhookRuntime = (typeof flushWebhookQueue === "function" && typeof shutdownWebhookDispatcher === "function")
+        ? { flushWebhookQueue, shutdownWebhookDispatcher }
+        : require("./webhooks");
+    const shutdown = createShutdownCoordinator({
+        ...options,
+        system,
+        processRef,
+        getServer: options.getServer || (() => global.server),
+        flushWebhookQueue: webhookRuntime.flushWebhookQueue,
+        shutdownWebhookDispatcher: webhookRuntime.shutdownWebhookDispatcher
+    });
+    system.setFatalShutdownHandler?.(shutdown);
+    processRef.on("SIGTERM", () => shutdown("SIGTERM", 0));
+    processRef.on("SIGINT", () => shutdown("SIGINT", 0));
+    return shutdown;
 }
 
 module.exports = {
     runCleanupStep,
     closeHttpServer,
     createShutdownCoordinator,
-    installShutdownCoordinator,
+    registerShutdownHandlers,
     normalizeExitCode
 };

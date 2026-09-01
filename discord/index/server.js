@@ -515,7 +515,6 @@ function registerRoutes({
             toggleCooldowns: toggleCooldowns?.size || 0,
             commandCooldownUsers: commandCooldowns?.size || 0,
             spamTracking: spamTracking?.size || 0,
-            antiRaidDebounce: antiRaidDebounce?.size || 0,
             pinAttempts: getPinAttemptStats(),
         };
     }

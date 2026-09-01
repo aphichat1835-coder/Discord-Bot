@@ -9,9 +9,7 @@ DO NOT SIMPLIFY: Log capture ring buffer — prevents RAM bloat.
 
 const {
     sendAlertWebhook,
-    buildWebhookEventPayload,
-    flushWebhookQueue,
-    shutdownWebhookDispatcher
+    buildWebhookEventPayload
 } = require("../core/webhooks");
 const { sanitizeLogText, safeError } = require("../core/safeLogger");
 const { normalizeRuntimeLine } = require("../core/startupLogger");
@@ -357,41 +355,13 @@ function stopCronJobs() {
 // ════════════════════════════════════════════════════════════════════════════
 //  🛑  GRACEFUL SHUTDOWN
 // ════════════════════════════════════════════════════════════════════════════
-async function closeServer() {
-    if (!global.server) return;
-
-    await new Promise((resolve) => {
-        let resolved = false;
-        const done = () => {
-            if (resolved) return;
-            resolved = true;
-            resolve();
-        };
-
-        const fallback = setTimeout(done, 3000);
-        fallback.unref?.();
-
-        try {
-            global.server.close(() => {
-                clearTimeout(fallback);
-                console.log("[SHUTDOWN] ✅ Express closed");
-                done();
-            });
-        } catch (err) {
-            clearTimeout(fallback);
-            console.warn(`[SHUTDOWN] ⚠️ Express close skipped: ${err.message}`);
-            done();
-        }
-    });
-}
-
-function stopRuntimeCleanups(runtimeCleanups = []) {
+async function stopRuntimeCleanups(runtimeCleanups = []) {
     let stopped = 0;
     let failed = 0;
     for (const cleanup of runtimeCleanups) {
         try {
             if (typeof cleanup?.stop !== "function") continue;
-            cleanup.stop();
+            await cleanup.stop();
             stopped++;
         } catch (err) {
             failed++;
@@ -399,67 +369,6 @@ function stopRuntimeCleanups(runtimeCleanups = []) {
         }
     }
     return { stopped, failed };
-}
-
-function initShutdown({
-    sessionManager,
-    voiceWorker,
-    client,
-    memoryMonitor,
-    verificationRuntime,
-    dmService,
-    runtimeCleanups = []
-}) {
-    let isShuttingDownMain = false;
-    let shutdownExitCode = 0;
-
-    async function shutdown(signal, exitCode = 0) {
-        shutdownExitCode = Math.max(shutdownExitCode, Number(exitCode) || 0);
-        if (isShuttingDownMain) return;
-        isShuttingDownMain = true;
-        markAppShuttingDown();
-        const timeout = setTimeout(() => {
-            console.error("[SHUTDOWN] ⏱️ Timeout — forcing exit");
-            process.exit(1);
-        }, 10000);
-        timeout.unref?.();
-        console.log(`\n⛔ [SHUTDOWN] ${signal} — graceful shutdown starting...`);
-        stopCronJobs();
-        dmService?.stop?.();
-        stopRuntimeCleanups(runtimeCleanups);
-        try {
-            await verificationRuntime?.stopVerificationRuntime?.();
-        } catch (err) {
-            console.warn(`[SHUTDOWN] ⚠️ Verification runtime stop skipped: ${err.message}`);
-        }
-        voiceWorker.setShuttingDown(true);
-
-        try {
-            await voiceWorker.pauseAll();
-            console.log("[SHUTDOWN] ✅ Voice paused");
-            await sessionManager.saveDatabase();
-            console.log("[SHUTDOWN] ✅ Final database state synced");
-            if (client) { client.destroy(); console.log("[SHUTDOWN] ✅ Discord destroyed"); }
-            if (memoryMonitor?.stopMemoryMonitor) memoryMonitor.stopMemoryMonitor();
-            await closeServer();
-            const webhookFlushed = await flushWebhookQueue(2500);
-            if (!webhookFlushed) console.warn("[SHUTDOWN] ⚠️ Webhook queue did not fully drain before timeout");
-            await shutdownWebhookDispatcher(500);
-            await sessionManager.disconnectDB?.();
-            console.log("[SHUTDOWN] ✅ MongoDB disconnected");
-            clearTimeout(timeout);
-            process.exit(shutdownExitCode);
-        } catch (err) {
-            console.error("[SHUTDOWN] ❌ Error:", err.message);
-            clearTimeout(timeout);
-            process.exit(1);
-        }
-    }
-
-    setFatalShutdownHandler(shutdown);
-    process.on("SIGTERM", () => shutdown("SIGTERM", 0));
-    process.on("SIGINT",  () => shutdown("SIGINT", 0));
-    return shutdown;
 }
 
 module.exports = {
@@ -473,6 +382,6 @@ module.exports = {
     get shutdownRequested() { return isShuttingDown(); },
     markAppShuttingDown, isShuttingDown,
     originalLog, originalError, originalWarn,
-    initLogCapture, initCrashShield, initCronJobs, stopCronJobs, initShutdown, setFatalShutdownHandler, terminateAfterFatal,
+    initLogCapture, initCrashShield, initCronJobs, stopCronJobs, setFatalShutdownHandler, terminateAfterFatal,
     criticalFingerprint, createCriticalAlertDispatcher, stopRuntimeCleanups
 };

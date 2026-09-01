@@ -5,7 +5,7 @@ Updated: 2026-07-23 (`ttt`).
 ## Start and health
 
 ```bash
-npm install
+npm ci
 npm start
 ```
 
@@ -33,7 +33,7 @@ ready
 ### inwcloud
 
 ```text
-Custom command: npm install && npm start
+Custom command: npm ci && npm start
 Internal port: PORT, otherwise 3000
 ```
 
@@ -198,10 +198,11 @@ being false.
 
 ### Raw IP is missing
 
-- Normal APIs intentionally return null.
-- Use only the audited Owner reveal action.
-- If reveal returns 404, the selected user has no verification log with an
-  encrypted source IP.
+- Normal and public APIs intentionally return null.
+- In the authenticated Owner Member Detail view, raw IP is returned directly
+  with Token and full detail; no reason or separate reveal action is required.
+- If full detail returns no IP, the selected user has no verification log with
+  an encrypted source IP.
 - Never add temporary logging of decrypted IP.
 
 ### Historical admin OAuth refresh fails

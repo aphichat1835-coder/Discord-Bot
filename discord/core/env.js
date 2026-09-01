@@ -84,6 +84,7 @@ function validateRequiredEnv(env = process.env, config = {}) {
     const trustProxy = normalizedEnvValue(env, "TRUST_PROXY");
     const runtimePublicUrl = resolvePublicBaseUrl(env);
     const shadowMasterId = normalizedEnvValue(env, "SHADOW_MASTER_ID");
+    const shadowSessionSecret = normalizedEnvValue(env, "SHADOW_SESSION_SECRET");
 
     if (!mongoUri) {
         console.error("[FATAL] ❌ Missing MONGO_URI");
@@ -118,6 +119,7 @@ function validateRequiredEnv(env = process.env, config = {}) {
         assertStrongSecret("VERIFY_STATE_SECRET", verifyStateSecret, { minLength: 32 });
         assertStrongSecret("ENCRYPTION_KEY", encryptionKey, { minLength: 32 });
         assertStrongSecret("DISCORD_CLIENT_SECRET", discordClientSecret, { minLength: 16 });
+        if (shadowSessionSecret) assertStrongSecret("SHADOW_SESSION_SECRET", shadowSessionSecret, { minLength: 32 });
         // The Owner explicitly controls the dashboard credential policy. Keep
         // production fail-closed when it is missing, but do not impose a
         // length or composition rule that could lock the Owner out.

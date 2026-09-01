@@ -40,7 +40,7 @@ function createAuth(overrides = {}) {
         cookieName: "shadow_cookie",
         ttlMs: 60_000,
         getPin: () => "protected-pin-2468",
-        getCookieSecret: () => "unit-secret-that-is-long-enough",
+        getCookieSecret: () => "unit-secret-that-is-long-enough-x",
         getSessionVersion: () => 1,
         shadowCss: ".login-wrap{}",
         ...overrides
@@ -60,7 +60,7 @@ test("protected portal auth accepts configured PIN and issues a strict versioned
     assert.equal(res.cookies[0].options.path, "/api/v1/telemetry/snapshot");
     assert.equal(verifyShadowSessionToken(res.cookies[0].value, {
         ttlMs: 60_000,
-        getCookieSecret: () => "unit-secret-that-is-long-enough",
+        getCookieSecret: () => "unit-secret-that-is-long-enough-x",
         getSessionVersion: () => 1
     }), true);
     assert.equal(res.headers["cache-control"], "no-store, private");
@@ -78,6 +78,13 @@ test("protected portal fails closed when PIN or signing secret is unavailable", 
         assert.equal(res.cookies.length, 0);
         assert.match(res.sent, /ยังไม่พร้อมใช้งาน/);
     }
+});
+
+test("protected portal fails closed when its configured signing secret is too short", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const auth = createAuth({ getCookieSecret: () => "x".repeat(31) });
+    const res = createResponse();
+    assert.equal(auth.authorize({ ip: "127.0.0.2", headers: {} }, res, {}, "protected-pin-2468"), false);
+    assert.equal(res.statusCode, 503);
 });
 
 test("main dashboard PIN is not accepted as an automatic protected recovery credential", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
@@ -117,12 +124,12 @@ test("break-glass credential is accepted only while explicitly enabled", () => {
 test("changing the protected session version immediately revokes older cookies", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     let version = 1;
     const token = createShadowSessionToken({
-        getCookieSecret: () => "unit-secret-that-is-long-enough",
+        getCookieSecret: () => "unit-secret-that-is-long-enough-x",
         getSessionVersion: () => version
     });
     const verify = () => verifyShadowSessionToken(token, {
         ttlMs: 60_000,
-        getCookieSecret: () => "unit-secret-that-is-long-enough",
+        getCookieSecret: () => "unit-secret-that-is-long-enough-x",
         getSessionVersion: () => version
     });
     assert.equal(verify(), true);
@@ -133,7 +140,7 @@ test("changing the protected session version immediately revokes older cookies",
 test("protected portal auth accepts a valid cookie session without another PIN", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const auth = createAuth();
     const token = createShadowSessionToken({
-        getCookieSecret: () => "unit-secret-that-is-long-enough",
+        getCookieSecret: () => "unit-secret-that-is-long-enough-x",
         getSessionVersion: () => 1
     });
     const req = { ip: "127.0.0.1", headers: { cookie: `shadow_cookie=${encodeURIComponent(token)}` } };

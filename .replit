@@ -14,36 +14,12 @@ runButton = "Project"
 
 [[workflows.workflow]]
 name = "Project"
-mode = "parallel"
+mode = "sequential"
 author = "agent"
 
 [[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "syntax-discord"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "syntax-scripts"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "memory-guards"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "mongoose9-compat"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "test-discord"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "test-voice"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "test-verification"
+task = "shell.exec"
+args = "npm run check:release"
 
 [[workflows.workflow]]
 name = "test-verification"

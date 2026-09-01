@@ -197,6 +197,8 @@ function makeBaseSummary({
         failed: 0,
         refreshed: 0,
         refreshFailed: 0,
+        persistenceFailed: 0,
+        refreshStateConflicts: 0,
         tokenInvalid: 0,
         botMissingPermission: 0,
         rateLimited: 0,
@@ -241,7 +243,37 @@ async function markTokenRefreshFailure({ model, doc, tokenField, err, now = Date
 
     if (nextFailCount >= failMax) set[`${tokenField}.revokedAt`] = now;
 
-    await model.updateOne(updateFilterForDoc(doc), { $set: set }).catch(() => {});
+    const filter = {
+        ...updateFilterForDoc(doc),
+        [`${tokenField}.encryptedRefreshToken`]: tokenState.encryptedRefreshToken
+    };
+
+    try {
+        const result = await model.updateOne(filter, { $set: set });
+        const acknowledged = result?.acknowledged === true;
+        const matchedCount = Number(result?.matchedCount ?? result?.n ?? 0);
+        if (!acknowledged) {
+            return {
+                persisted: false,
+                stateChanged: false,
+                persistenceError: "refresh_failure_write_unacknowledged"
+            };
+        }
+        if (matchedCount !== 1) {
+            return {
+                persisted: false,
+                stateChanged: true,
+                persistenceError: "refresh_failure_state_changed"
+            };
+        }
+        return { persisted: true, stateChanged: false, persistenceError: null };
+    } catch (writeError) {
+        return {
+            persisted: false,
+            stateChanged: false,
+            persistenceError: safeError(writeError)
+        };
+    }
 }
 
 async function refreshStoredToken({ model, doc, chosen, discord = discordApi, env = process.env, now = Date.now(), prepareTokenStorage = discordApi.prepareTokenStorage }) {
@@ -395,7 +427,7 @@ async function handleJoinCandidate({ doc, seenUsers, summary, targetGuildId, mod
 async function handleJoinCandidateError({ err, summary, userId, model, doc, chosen, config }) {
     if (String(err?.message || "").includes("refresh")) {
         summary.refreshFailed++;
-        await markTokenRefreshFailure({
+        const persistence = await markTokenRefreshFailure({
             model,
             doc,
             tokenField: chosen.tokenField,
@@ -403,6 +435,13 @@ async function handleJoinCandidateError({ err, summary, userId, model, doc, chos
             now: Date.now(),
             failMax: config.failMax
         });
+        if (persistence.stateChanged) {
+            summary.refreshStateConflicts++;
+            pushError(summary, userId, "refresh_failure_state_changed", persistence.persistenceError);
+        } else if (!persistence.persisted) {
+            summary.persistenceFailed++;
+            pushError(summary, userId, "refresh_failure_persistence_failed", persistence.persistenceError);
+        }
         recordJoinFailure(summary, userId, "refresh_failed", safeError(err));
         return;
     }
@@ -432,6 +471,7 @@ function formatThaiJoinCampaignLog(summary, phase = "progress") {
 
 function resolveCampaignSeverity(summary, phase) {
     if (summary.status === "failed") return "ERROR";
+    if (Number(summary.persistenceFailed || 0) > 0) return "ERROR";
     if (phase === "start") return "INFO";
     const hasPartialFailures = Number(summary.failed || 0) > 0 || Number(summary.refreshFailed || 0) > 0;
     return hasPartialFailures ? "WARNING" : "SUCCESS";
@@ -452,6 +492,8 @@ function buildJoinCampaignContext(summary) {
         "ไม่สำเร็จ": Number(summary.failed || 0),
         "Refresh สำเร็จ": Number(summary.refreshed || 0),
         "Refresh ไม่สำเร็จ": Number(summary.refreshFailed || 0),
+        "บันทึกสถานะ Refresh ไม่สำเร็จ": Number(summary.persistenceFailed || 0),
+        "สถานะ Refresh เปลี่ยนระหว่างงาน": Number(summary.refreshStateConflicts || 0),
         "ขาด Scope": Number(summary.missingScope || 0),
         "Token ใช้ไม่ได้": Number(summary.tokenInvalid || 0),
         "บอทขาดสิทธิ์": Number(summary.botMissingPermission || 0),
@@ -470,15 +512,21 @@ function buildJoinCampaignFailureDetails(summary, failedEntireJob) {
 
 function buildJoinCampaignEvent(summary, phase) {
     const failedEntireJob = summary.status === "failed";
+    const persistenceFailed = Number(summary.persistenceFailed || 0) > 0;
+    const needsOwnerAction = failedEntireJob || persistenceFailed;
     return {
-        target: failedEntireJob ? "ALERT" : "LOG",
+        target: needsOwnerAction ? "ALERT" : "LOG",
         severity: resolveCampaignSeverity(summary, phase),
         category: "CAMPAIGN",
-        code: failedEntireJob ? "campaign.join.failed" : `campaign.join.${phase}`,
-        state: failedEntireJob ? "OPEN" : undefined,
+        code: persistenceFailed ? "campaign.join.persistence_failed" : (failedEntireJob ? "campaign.join.failed" : `campaign.join.${phase}`),
+        state: needsOwnerAction ? "OPEN" : undefined,
         title: getJoinCampaignTitle(phase),
         sourceIconUrl: summary.targetGuildIconUrl,
         ...buildJoinCampaignFailureDetails(summary, failedEntireJob),
+        ...(persistenceFailed ? {
+            impact: "สถานะ Token refresh บางรายการไม่ได้ถูกบันทึก จึงอาจถูกลองใหม่ใน Campaign ถัดไป",
+            action: "ตรวจ MongoDB และรายละเอียด persistence failure ก่อนเริ่ม Campaign ใหม่"
+        } : {}),
         context: buildJoinCampaignContext(summary),
         dedupeKey: failedEntireJob ? `join-campaign-failed:${summary.campaignId}` : undefined,
         dedupeMs: 15 * 60 * 1000

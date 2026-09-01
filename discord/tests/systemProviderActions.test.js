@@ -24,11 +24,16 @@ function createContext(overrides = {}) {
         },
         sessionManager: {
             saved: null,
+            deleted: [],
             getSession(sessionId) {
                 return sessionId === "session1" ? { sessionId } : null;
             },
             async setSetting(key, value) {
                 this.saved = { key, value };
+                return true;
+            },
+            async deleteSetting(key) {
+                this.deleted.push(key);
                 return true;
             }
         },
@@ -181,6 +186,7 @@ test("PIN changes persist a scrypt credential before rotating memory and session
     assert.equal(verifyPinCredential("wrong-protected-pin", saved.pin), false);
     assert.equal(context.pin, saved.pin);
     assert.equal(context.engineInstance.alerts.length, 1);
+    assert.deepEqual(context.sessionManager.deleted, ["_shadowPin"]);
 });
 
 test("PIN persistence failure leaves in-memory credentials and session version unchanged", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.

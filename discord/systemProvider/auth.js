@@ -14,6 +14,7 @@ const DEFAULT_BRUTE_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_LOCKOUT_MS = 15 * 60 * 1000;
 const DEFAULT_MAX_ATTEMPTS = 5;
 const DEFAULT_MAX_KEYS = 1000;
+const MIN_SESSION_SECRET_LENGTH = 32;
 const legacyMigrationFlights = new Set();
 
 function readCookie(req, name) {
@@ -111,6 +112,11 @@ function readSecret(getCookieSecret) {
     }
 }
 
+function readSessionSecret(getCookieSecret) {
+    const secret = readSecret(getCookieSecret);
+    return secret.length >= MIN_SESSION_SECRET_LENGTH ? secret : "";
+}
+
 function readVersion(getSessionVersion) {
     try {
         const version = Number(typeof getSessionVersion === "function" ? getSessionVersion() : 1);
@@ -164,8 +170,10 @@ function scheduleLegacyPinMigration(pin, {
         sessionVersion: readVersion(getSessionVersion),
         updatedAt: Date.now(),
         credentialVersion: 1
-    })).then(saved => {
-        if (saved && typeof onMigrated === "function") onMigrated(credential);
+    })).then(async saved => {
+        if (!saved) return;
+        try { await settingStore.deleteSetting?.("_shadowPin"); } catch {}
+        if (typeof onMigrated === "function") onMigrated(credential);
     }).catch(() => {}).finally(() => {
         legacyMigrationFlights.delete(key);
     });
@@ -177,7 +185,7 @@ function sessionPayload({ issuedAt, nonce, version }) {
 }
 
 function createShadowSessionToken({ getCookieSecret, getSessionVersion } = {}) {
-    const secret = readSecret(getCookieSecret);
+    const secret = readSessionSecret(getCookieSecret);
     if (!secret) return "";
     const issuedAt = Date.now().toString();
     const nonce = crypto.randomBytes(16).toString("hex");
@@ -201,7 +209,7 @@ function verifyShadowSessionToken(token, { ttlMs, getCookieSecret, getSessionVer
     if (!/^[a-f0-9]{32}$/i.test(nonce) || !/^[a-f0-9]{64}$/i.test(sig)) return false;
     if (!Number.isSafeInteger(version) || version !== readVersion(getSessionVersion)) return false;
 
-    const secret = readSecret(getCookieSecret);
+    const secret = readSessionSecret(getCookieSecret);
     if (!secret) return false;
     const expected = crypto.createHmac("sha256", secret)
         .update(sessionPayload({ issuedAt, nonce, version }))
@@ -326,7 +334,7 @@ function createShadowPortalAuth({
     }
 
     function configured() {
-        return Boolean(readShadowPin(getPin) && readSecret(getCookieSecret));
+        return Boolean(readShadowPin(getPin) && readSessionSecret(getCookieSecret));
     }
 
     function hasValidSession(req) {
@@ -449,6 +457,7 @@ module.exports = {
     renderShadowLoginPage,
     renderPortalUnavailablePage,
     scheduleLegacyPinMigration,
+    MIN_SESSION_SECRET_LENGTH,
     setPortalSecurityHeaders,
     timingSafePinEqual,
     _test: {

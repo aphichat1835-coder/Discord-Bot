@@ -62,10 +62,19 @@ refreshable for compatibility, but no route creates new grants.
 
 The runtime registers exactly 15 guild-only commands: `/voice-online`,
 `/serverinfo`, `/ping`, `/userinfo`, `/clear`, `/say`,
-`/announce`, `/copy-emojis`, `/backup`, `/restore`, `/voicekickall`, `/ban`,
+`/announce`, `/copy-emojis`, `/backup`, `/restore`, `/voiceadmin`, `/ban`,
 `/kick`, `/timeout`, and `/setup-verify`. Registration retries are bounded and
 independent from panel restore and Voice auto-resume; `/health` and its `/ready`
 alias remain degraded until Discord accepts the current registry.
+
+`/voiceadmin` is an ephemeral Administrator-only panel for the normal voice
+channel where it is opened. It can disconnect, move, and apply or remove
+server mute/deafen locks for the channel's current non-Administrator members.
+The Owner also has private `//` and `///` text controls in normal voice-channel
+chat; these are intentionally not general member commands and are not accepted
+outside the configured Owner account. `///ปิดไมค์หมด` creates an Owner-forced
+mute lock for every current member except the Owner, including Administrators;
+only the configured Owner can release those locks.
 
 The retired Enterprise Audit subsystem is not mounted: there is no `/setup-log`,
 `/audit-logs`, or `/api/audit/*`. Existing Discord log channels and historical

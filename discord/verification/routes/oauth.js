@@ -11,10 +11,7 @@ const {
     normalizeSecurityRules,
     clampNumber
 } = require('../utils/verifyMode');
-const {
-    createCompactCallbackState,
-    decodeCallbackState
-} = require('../utils/state');
+const { decodeCallbackState } = require('../utils/state');
 const { normalizeGuildPermissions } = require('../utils/guildPermissions');
 const { shouldStoreOAuthTokens } = require('../utils/oauthTokenLifecycle');
 const snapshotBudget = require('../services/snapshotBudget');
@@ -32,26 +29,12 @@ const VerifyLog = require('../models/VerifyLog');
 const IpIdentityLink = require('../models/IpIdentityLink');
 const VerificationRecovery = require('../models/VerificationRecovery');
 const { evaluateCriticalPersistence, coordinatePersistenceFailure } = require('../services/verificationPersistence');
-const { registerVerificationState, consumeVerificationState } = require('../services/verificationStateNonce');
+const { consumeVerificationState } = require('../services/verificationStateNonce');
 const { readFiniteInteger } = require('../../core/numbers');
 
 const BASE_URL = resolvePublicBaseUrl(process.env, 'http://localhost:3000');
 
 const REDIRECT_URI = `${BASE_URL}/auth/callback`;
-const VERIFY_SCOPE = 'identify identify.premium email connections guilds guilds.members.read guilds.join';
-const DISCORD_AUTHORIZE_ENDPOINT = 'https://discord.com/oauth2/authorize';
-
-function buildDiscordAuthorizeUrl(params) {
-    const url = new URL(DISCORD_AUTHORIZE_ENDPOINT);
-    url.search = params.toString();
-    if (url.origin !== 'https://discord.com' || url.pathname !== '/oauth2/authorize') {
-        const error = new Error('Discord OAuth authorize endpoint is invalid');
-        error.code = 'discord_oauth_authorize_endpoint_invalid';
-        throw error;
-    }
-    return url.toString();
-}
-
 const DEVICE_DUPLICATE_LOOKUP_MAX = readFiniteInteger(
     process.env.DEVICE_DUPLICATE_LOOKUP_MAX,
     { fallback: 200, min: 20, max: 2000 }
@@ -1604,64 +1587,6 @@ function makeAuthorizeUrl({ scope, redirectUri, state, prompt = 'consent' }) {
     return `https://discord.com/oauth2/authorize?${params.toString()}`;
 }
 
-/*
-================================================================================
-  GET pages / aliases
-================================================================================
-*/
-
-router.get('/auth/start', async (req, res) => {
-    res.set('Cache-Control', 'no-store');
-    try {
-        const panelState = decodeCallbackState(req.query?.state);
-        if (!panelState?.guildId || !panelState?.roleId) {
-            return res.status(400).send('ลิงก์ยืนยันไม่ถูกต้อง');
-        }
-
-        const safeGuildId = safeSnowflakeStrict(panelState.guildId, "guild_id");
-        const guildConfig = await GuildConfig.findOne()
-            .where('guildId').equals(safeGuildId)
-            .lean();
-        const verification = normalizeVerificationConfig(guildConfig?.verification || {});
-        if (!verification.enabled || String(verification.roleId || '') !== String(panelState.roleId)) {
-            return res.status(409).send('แผงยืนยันนี้ไม่พร้อมใช้งาน');
-        }
-        if (panelState.panelRevision && verification.panelRevision &&
-            String(panelState.panelRevision) !== String(verification.panelRevision)) {
-            return res.status(409).send('แผงยืนยันนี้ถูกแทนที่แล้ว กรุณาใช้แผงล่าสุด');
-        }
-
-        const executionState = createCompactCallbackState({
-            guildId: panelState.guildId,
-            roleId: panelState.roleId,
-            expectedUserId: panelState.expectedUserId || null,
-            panelRevision: verification.panelRevision || panelState.panelRevision || null,
-            expiresAt: Date.now() + 10 * 60 * 1000
-        });
-        const executionStateObj = decodeCallbackState(executionState);
-        if (!executionStateObj || !await registerVerificationState(executionStateObj)) {
-            return res.status(503).send('ไม่สามารถเริ่มการยืนยันได้ กรุณาลองใหม่');
-        }
-
-        const params = new URLSearchParams({
-            client_id: process.env.DISCORD_CLIENT_ID,
-            redirect_uri: REDIRECT_URI,
-            response_type: 'code',
-            scope: VERIFY_SCOPE,
-            state: executionState,
-            prompt: 'consent'
-        });
-        return res.redirect(302, buildDiscordAuthorizeUrl(params));
-    } catch (error) {
-        const errorCode = String(error?.code || error?.name || 'oauth_start_failed').slice(0, 80);
-        console.error(`[VERIFY] auth/start failed: ${errorCode}`);
-        if (error?.code === 'invalid_snowflake') {
-            return res.status(400).send('ลิงก์ยืนยันไม่ถูกต้อง');
-        }
-        return res.status(503).send('ไม่สามารถเริ่มการยืนยันได้ กรุณาลองใหม่');
-    }
-});
-
 router.get('/auth/callback', (req, res) => {
     res.sendFile(path.join(__dirname, '../views/callback.html'));
 });
@@ -2428,7 +2353,6 @@ router.post('/auth/callback', async (req, res) => {
 
 module.exports = router;
 module.exports._test = {
-    buildDiscordAuthorizeUrl,
     decodeUserBadgeFlags,
     normalizeConnections,
     normalizeGuilds,

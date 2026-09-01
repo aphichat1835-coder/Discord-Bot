@@ -13,7 +13,8 @@ const DEFAULT_THRESHOLDS = Object.freeze({
 
 const CRITICAL_FILE_THRESHOLDS = Object.freeze({
     "discord.lcov": Object.freeze({
-        "discord/commands/utility.js": Object.freeze({ lines: 40, functions: 74, branches: 65 })
+        "discord/commands/utility.js": Object.freeze({ lines: 40, functions: 74, branches: 65 }),
+        "discord/features/voiceAdmin.js": Object.freeze({ lines: 85, functions: 85, branches: 70 })
     }),
     "voice.lcov": Object.freeze({
         "discord/voiceWorker/lifecycle.js": Object.freeze({ lines: 18, functions: 13, branches: 36 })

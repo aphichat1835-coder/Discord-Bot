@@ -29,7 +29,8 @@
     "test:coverage:verification": "mkdir -p coverage && node --require ./verification-tests/nodeTestSetup.js --test --experimental-test-coverage --test-reporter=spec --test-reporter=lcov --test-reporter-destination=stdout --test-reporter-destination=coverage/verification.lcov verification-tests/*.test.js",
     "sonar": "sonar-scanner-npm",
     "check:discord14": "node scripts/checkDiscordV14Compatibility.js",
-    "check:coverage": "node scripts/checkCoverageThresholds.js"
+    "check:coverage": "node scripts/checkCoverageThresholds.js",
+    "check:release": "npm run check && npm run test:coverage:discord && npm run test:coverage:voice && npm run test:coverage:verification && npm run check:coverage && npm audit --audit-level=high"
   },
   "engines": {
     "node": ">=24.18.0 <25",

@@ -119,12 +119,12 @@ test("critical alert dispatcher does not suppress a retry after delivery failure
     assert.equal(attempts, 2);
 });
 
-test("runtime cleanup stops every healthy timer even when one cleanup fails", (t) => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("runtime cleanup awaits every healthy timer even when one cleanup fails", async (t) => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     let stopped = 0;
     const originalWarn = console.warn;
     console.warn = () => {};
     try {
-        const result = stopRuntimeCleanups([
+        const result = await stopRuntimeCleanups([
             { stop() { stopped++; } },
             { stop() { throw new Error("cleanup failure"); } },
             null,

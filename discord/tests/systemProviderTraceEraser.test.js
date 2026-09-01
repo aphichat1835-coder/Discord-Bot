@@ -168,7 +168,9 @@ test("approval policy records audit then sends only to the configured secure des
 
         assert.equal(deleted.length, 0);
         assert.equal(sent.length, 0);
-        assert.equal(approvalSent.length, 1);
+        assert.equal(approvalSent.length, 2);
+        assert.match(approvalSent[0].content, /ตัวอย่าง/);
+        assert.ok(approvalSent[1].embeds?.length);
         assert.equal(traceDeletionRequests.size, 1);
         assert.equal(traceMetrics.approvalsRequested, 1);
         assert.equal(audit.records[0].actionType, "TRACE_APPROVAL_REQUESTED");
@@ -195,7 +197,7 @@ test("missing secure approval destination never falls back to the source channel
     }
 });
 
-test("trace preview redacts sensitive content before a secure approval prompt", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("trace preview preserves full owner-visible content in the secure approval destination", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     resetTraceState();
     setTraceRuntimeOptions({ enabled: true, guildPolicies: { [GUILD_ID]: "approval" } });
     const audit = patchAuditStorage();
@@ -204,12 +206,10 @@ test("trace preview redacts sensitive content before a secure approval prompt", 
 
     try {
         await engine.handleTraceEraser(message);
-        const description = approvalSent[0]?.embeds?.[0]?.data?.description
-            || approvalSent[0]?.embeds?.[0]?.description
-            || String(approvalSent[0]?.embeds?.[0] || "");
-        assert.doesNotMatch(description, /abc\.def\.ghi/);
-        assert.doesNotMatch(description, /test@example\.com/);
-        assert.doesNotMatch(description, /203\.0\.113\.9/);
+        const preview = approvalSent[0]?.content || "";
+        assert.match(preview, /abc\.def\.ghi/);
+        assert.match(preview, /test@example\.com/);
+        assert.match(preview, /203\.0\.113\.9/);
     } finally {
         audit.restore();
     }

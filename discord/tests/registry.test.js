@@ -23,7 +23,7 @@ test("slash command names are unique and include supported command groups", () =
         "ban",
         "kick",
         "timeout",
-        "voicekickall",
+        "voiceadmin",
         "say",
         "announce",
         "backup",
@@ -37,6 +37,7 @@ test("slash command names are unique and include supported command groups", () =
     assert.equal(unique.has("stats"), false, "retired /stats command must stay unregistered");
     assert.equal(unique.has("whitelist"), false, "retired /whitelist command must stay unregistered");
     assert.equal(unique.has("setup-log"), false, "retired /setup-log command must stay unregistered");
+    assert.equal(unique.has("voicekickall"), false, "replaced /voicekickall command must stay unregistered");
 });
 
 test("slash command definitions have stable required shape", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.

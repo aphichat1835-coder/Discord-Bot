@@ -58,7 +58,7 @@ test("protected portal authenticates after restart from a stored hash", () => { 
         cookieName: "shadow_cookie",
         ttlMs: 60_000,
         getPin: () => credential,
-        getCookieSecret: () => "unit-secret-that-is-long-enough",
+        getCookieSecret: () => "unit-secret-that-is-long-enough-x",
         getSessionVersion: () => 4,
         settingStore: { setSetting: async () => true }
     });
@@ -78,19 +78,21 @@ test("legacy PIN migration writes only a hash and preserves the session version"
             async setSetting(key, value) {
                 writes.push({ key, value });
                 return true;
-            }
+            },
+            async deleteSetting(key) { writes.push({ key, deleted: true }); return true; }
         },
         onMigrated(value) { migratedCredential = value; }
     }), true);
 
     await new Promise(resolve => setImmediate(resolve));
-    assert.equal(writes.length, 1);
+    assert.equal(writes.length, 2);
     assert.equal(writes[0].key, "_shadowPortalAuth");
     assert.equal(writes[0].value.sessionVersion, 7);
     assert.equal(writes[0].value.credentialVersion, 1);
     assert.equal(writes[0].value.pin.includes("legacy-protected-pin"), false);
     assert.equal(verifyPinCredential("legacy-protected-pin", writes[0].value.pin), true);
     assert.equal(migratedCredential, writes[0].value.pin);
+    assert.deepEqual(writes[1], { key: "_shadowPin", deleted: true });
 });
 
 test("failed legacy migration does not expose or replace the current credential", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.

@@ -35,12 +35,12 @@ test("Discord snowflake guard accepts only 17 to 22 digits", () => { // NOSONAR 
     assert.equal(normalizeDiscordSnowflake("invalid"), null);
 });
 
-test("private log data stays owner-visible while control characters and bounds are enforced", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("private log data stays owner-visible without silent bounds or type conversion", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const text = sanitizeSensitiveValue("token=abc.def.ghi email=user@example.com ip=203.0.113.9\u0000");
     assert.equal(text.includes("abc.def.ghi"), true);
     assert.equal(text.includes("user@example.com"), true);
     assert.equal(text.includes("203.0.113.9"), true);
-    assert.equal(text.includes("\u0000"), false);
+    assert.equal(text.includes("\u0000"), true);
 
     const object = sanitizeSensitiveValue({
         authorization: "Bearer secret-value",
@@ -52,6 +52,17 @@ test("private log data stays owner-visible while control characters and bounds a
 
     const prototypeSafe = sanitizeSensitiveValue(JSON.parse('{"__proto__":{"polluted":true}}'));
     assert.equal(Object.getPrototypeOf(prototypeSafe), null);
-    assert.equal(prototypeSafe.__proto__.polluted, "true");
+    assert.equal(prototypeSafe.__proto__.polluted, true);
     assert.equal(Object.hasOwn(prototypeSafe, "__proto__"), true);
+
+    const full = sanitizeSensitiveValue({
+        deep: { a: { b: { c: { d: { e: { value: "kept" } } } } } },
+        many: Array.from({ length: 101 }, (_, index) => index),
+        flags: [true, false, null],
+        text: "x".repeat(1001)
+    });
+    assert.equal(full.deep.a.b.c.d.e.value, "kept");
+    assert.equal(full.many.length, 101);
+    assert.deepEqual(full.flags, [true, false, null]);
+    assert.equal(full.text.length, 1001);
 });

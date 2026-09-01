@@ -1280,22 +1280,23 @@ ${navBar("/settings")}
         <div class="dot" id="natDot"></div>
         <span id="natTxt" style="font-weight:700;">กำลังโหลด...</span>
         <span id="natBadge" style="color:var(--text3);font-size:0.78em;margin-left:auto;">-- sessions</span>
+        <button type="button" id="natRetry" class="btn btn-sm" onclick="loadNatural()" style="display:none;margin-left:8px;">↻ ลองใหม่</button>
     </div>
 
     <label>เปิด/ปิด Natural Blink</label>
-    <select id="naturalEnabled">
+    <select id="naturalEnabled" disabled>
         <option value="true">✅ เปิด</option>
         <option value="false">❌ ปิด</option>
     </select>
 
     <label>Interval หน่วย ms เช่น 3600000 = 1 ชั่วโมง</label>
-    <input type="number" id="naturalInterval" min="60000" step="1000">
+    <input type="number" id="naturalInterval" min="60000" step="1000" disabled>
 
     <label>Duration หน่วย ms เช่น 30000 = 30 วินาที</label>
-    <input type="number" id="naturalDuration" min="5000" max="120000" step="1000">
+    <input type="number" id="naturalDuration" min="5000" max="120000" step="1000" disabled>
 
     <div id="natMsg" class="msg-toast"></div>
-    <button type="button" class="btn btn-primary" onclick="saveNatural()">💾 บันทึก Natural Blink</button>
+    <button type="button" id="natSave" class="btn btn-primary" onclick="saveNatural()" disabled>💾 บันทึก Natural Blink</button>
 </div>
 
 <div class="card">
@@ -1305,22 +1306,23 @@ ${navBar("/settings")}
         <div class="dot" id="adDot"></div>
         <span id="adTxt" style="font-weight:700;">กำลังโหลด...</span>
         <span id="adBadge" style="color:var(--text3);font-size:0.78em;margin-left:auto;">-- sessions</span>
+        <button type="button" id="adRetry" class="btn btn-sm" onclick="loadAutoDeaf()" style="display:none;margin-left:8px;">↻ ลองใหม่</button>
     </div>
 
     <label>เปิด/ปิด Auto Deaf</label>
-    <select id="autoDeafEnabled">
+    <select id="autoDeafEnabled" disabled>
         <option value="true">✅ เปิด</option>
         <option value="false">❌ ปิด</option>
     </select>
 
     <label>Interval หน่วย ms เช่น 3600000 = 1 ชั่วโมง</label>
-    <input type="number" id="autoDeafInterval" min="60000" step="1000">
+    <input type="number" id="autoDeafInterval" min="60000" step="1000" disabled>
 
     <label>เปิดหูนานเท่าไร หน่วย ms เช่น 60000 = 1 นาที</label>
-    <input type="number" id="autoDeafOpenDuration" min="5000" max="600000" step="1000">
+    <input type="number" id="autoDeafOpenDuration" min="5000" max="600000" step="1000" disabled>
 
     <div id="adMsg" class="msg-toast"></div>
-    <button type="button" class="btn btn-primary" onclick="saveAutoDeaf()">💾 บันทึก Auto Deaf</button>
+    <button type="button" id="adSave" class="btn btn-primary" onclick="saveAutoDeaf()" disabled>💾 บันทึก Auto Deaf</button>
 </div>
 </div>
 
@@ -1337,6 +1339,54 @@ function showMsg(msg, ok){
     el.textContent=msg;
     clearTimeout(el.__t);
     el.__t=setTimeout(()=>el.style.display='none',4500);
+}
+
+const FEATURE_CONTROL_IDS={
+    nat:['naturalEnabled','naturalInterval','naturalDuration','natSave'],
+    ad:['autoDeafEnabled','autoDeafInterval','autoDeafOpenDuration','adSave']
+};
+
+function setFeatureControls(prefix, enabled){
+    (FEATURE_CONTROL_IDS[prefix]||[]).forEach(id=>{
+        const el=document.getElementById(id);
+        if(el) el.disabled=!enabled;
+    });
+}
+
+function showFeatureLoadFailure(prefix, label, error){
+    setFeatureControls(prefix,false);
+    const dot=document.getElementById(prefix+'Dot');
+    const txt=document.getElementById(prefix+'Txt');
+    const badge=document.getElementById(prefix+'Badge');
+    const retry=document.getElementById(prefix+'Retry');
+    const msg=document.getElementById(prefix+'Msg');
+    if(dot){
+        dot.className='dot';
+        dot.style.background='var(--yellow2)';
+        dot.style.boxShadow='none';
+    }
+    if(txt){
+        txt.textContent='⚠️ โหลดสถานะ '+label+' ไม่ได้';
+        txt.style.color='var(--yellow2)';
+    }
+    if(badge) badge.textContent='ข้อมูลอาจเก่า';
+    if(retry) retry.style.display='inline-flex';
+    if(msg){
+        msg.style.display='block';
+        msg.style.color='var(--yellow2)';
+        msg.textContent='⚠️ '+(error?.message||'เชื่อมต่อไม่ได้')+' — กรุณาลองใหม่ก่อนแก้ไข';
+    }
+}
+
+function markFeatureLoaded(prefix){
+    setFeatureControls(prefix,true);
+    const retry=document.getElementById(prefix+'Retry');
+    const msg=document.getElementById(prefix+'Msg');
+    if(retry) retry.style.display='none';
+    if(msg){
+        msg.style.display='none';
+        msg.textContent='';
+    }
 }
 
 function updatePresencePreview(){
@@ -1467,10 +1517,10 @@ async function saveRotate(){
 async function loadNatural(){
     try{
         const r=await fetch('/api/settings/natural');
-        if(!r.ok) return;
+        if(!r.ok) throw new Error('HTTP '+r.status);
 
         const d=await r.json();
-        if(!d.success) return;
+        if(!d.success) throw new Error(d.error||'โหลดสถานะไม่สำเร็จ');
 
         const s=d.settings || {};
 
@@ -1495,7 +1545,10 @@ async function loadNatural(){
         }
 
         badge.textContent=(s.activeTimers || 0)+' sessions';
-    }catch(e){}
+        markFeatureLoaded('nat');
+    }catch(e){
+        showFeatureLoadFailure('nat','Natural Blink',e);
+    }
 }
 
 async function saveNatural(){
@@ -1539,10 +1592,10 @@ async function saveNatural(){
 async function loadAutoDeaf(){
     try{
         const r=await fetch('/api/settings/auto-deaf');
-        if(!r.ok) return;
+        if(!r.ok) throw new Error('HTTP '+r.status);
 
         const d=await r.json();
-        if(!d.success) return;
+        if(!d.success) throw new Error(d.error||'โหลดสถานะไม่สำเร็จ');
 
         const s=d.settings || {};
 
@@ -1567,7 +1620,10 @@ async function loadAutoDeaf(){
         }
 
         badge.textContent=(s.activeTimers || 0)+' sessions';
-    }catch(e){}
+        markFeatureLoaded('ad');
+    }catch(e){
+        showFeatureLoadFailure('ad','Auto Deaf',e);
+    }
 }
 
 async function saveAutoDeaf(){

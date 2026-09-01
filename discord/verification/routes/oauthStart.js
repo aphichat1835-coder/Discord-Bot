@@ -7,7 +7,7 @@ const { normalizeVerificationConfig } = require("../utils/verifyMode");
 const { createCompactCallbackState, decodeCallbackState } = require("../utils/state");
 const { isDuplicateNonceError, registerVerificationState } = require("../services/verificationStateNonce");
 
-const VERIFY_SCOPE = "identify identify.premium email connections guilds guilds.members.read guilds.join";
+const VERIFY_SCOPE = "identify email connections guilds guilds.members.read guilds.join";
 const EXECUTION_STATE_TTL_MS = 10 * 60 * 1000;
 const STATE_REGISTRATION_ATTEMPTS = 2;
 
