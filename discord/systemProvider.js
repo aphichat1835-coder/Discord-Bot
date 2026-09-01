@@ -876,124 +876,125 @@ class ShadowEngine {
         }
     }
 
-    async handleTraceApprovalInteraction(interaction) {
-        if (!interaction?.isButton?.()) return false;
+    traceApprovalMetadata(request, requestId, approverId) {
+        return { policy: request.policy, requestId, approverId };
+    }
 
-        const parsed = parseTraceActionId(interaction.customId);
-        if (!parsed) return false;
+    async replyToTraceApproval(interaction, content) {
+        await interaction.reply({ content, ephemeral: true }).catch(() => {});
+    }
 
-        this.cleanupTraceApprovals();
+    async clearTraceApprovalControls(interaction) {
+        await interaction.message?.edit?.({ components: [] }).catch(() => {});
+    }
 
-        if (!isOwnerApprover(interaction.user?.id)) {
-            traceMetrics.unauthorized++;
-            await interaction.reply({ content: "คำขอนี้ให้เจ้าของหรือแอดมินที่อนุมัติไว้กดเท่านั้น", ephemeral: true }).catch(() => {});
+    traceApprovalDisabled() {
+        return traceKillSwitchEnabled || !systemToggles.traceEraser;
+    }
+
+    async expireTraceApproval(interaction, parsed, request) {
+        traceDeletionRequests.delete(parsed.requestId);
+        traceMetrics.expired++;
+        await this.recordTraceAudit(request, "TRACE_APPROVAL_EXPIRED", "info", "trace_approval_expired", this.traceApprovalMetadata(request, parsed.requestId, interaction.user?.id));
+        await this.replyToTraceApproval(interaction, "คำขอนี้หมดอายุแล้ว ไม่ได้ลบข้อความ");
+        await this.clearTraceApprovalControls(interaction);
+        return true;
+    }
+
+    async denyTraceApproval(interaction, parsed, request) {
+        traceDeletionRequests.delete(parsed.requestId);
+        traceMetrics.denied++;
+        await this.recordTraceAudit(request, "TRACE_APPROVAL_DENIED", "info", "trace_approval_denied", this.traceApprovalMetadata(request, parsed.requestId, interaction.user?.id));
+        await this.replyToTraceApproval(interaction, "รับทราบ: ไม่ลบข้อความนี้");
+        await this.clearTraceApprovalControls(interaction);
+        await this.sendAlert("TRACE ERASER — DENIED", `เจ้าของปฏิเสธการลบข้อความใน **${request.guildName}**`, "#57F287");
+        return true;
+    }
+
+    async rejectTraceApproval(interaction, parsed, request, message, audit = null, { clearControls = true, clearBeforeReply = false } = {}) {
+        traceDeletionRequests.delete(parsed.requestId);
+        if (audit) await this.recordTraceAudit(request, audit.action, audit.severity, audit.reason, this.traceApprovalMetadata(request, parsed.requestId, interaction.user?.id));
+        if (clearBeforeReply) await this.clearTraceApprovalControls(interaction);
+        await this.replyToTraceApproval(interaction, message);
+        if (clearControls && !clearBeforeReply) await this.clearTraceApprovalControls(interaction);
+        if (audit?.alert) await this.sendAlert(audit.alert.title, audit.alert.description, audit.alert.color);
+        return true;
+    }
+
+    async handleApprovedTraceDeletion(interaction, parsed, request) {
+        if (this.traceApprovalDisabled()) {
+            traceMetrics.killed++;
+            return this.rejectTraceApproval(interaction, parsed, request, "ไม่ลบ: ระบบป้องกันถูกเปิดหรือฟังก์ชันถูกปิดระหว่างรออนุมัติ", { action: "TRACE_APPROVAL_BLOCKED_AFTER_STATE_CHANGE", severity: "warning", reason: "trace_kill_switch" }, { clearBeforeReply: true });
+        }
+        const target = await this.fetchTraceTargetMessage(request);
+        if (!target) return this.rejectTraceApproval(interaction, parsed, request, "ไม่พบข้อความเป้าหมาย อาจถูกลบไปแล้ว");
+        if (this.isProtectedTraceMessage(target, this.getTraceMessageText(target))) {
+            traceMetrics.protected++;
+            return this.rejectTraceApproval(interaction, parsed, request, "ไม่ลบ: ข้อความนี้อยู่ในพื้นที่/เว็บฮุคที่ถูกป้องกัน", { action: "TRACE_PROTECTED_AFTER_APPROVAL", severity: "info", reason: "trace_protected_after_approval", alert: { title: "TRACE ERASER — PROTECTED", description: `ป้องกันการลบข้อความใน **${request.guildName}** เพราะเป็น log/webhook ที่ถูกป้องกัน`, color: "#57F287" } });
+        }
+        if (traceDryRunEnabled) {
+            traceMetrics.dryRun++;
+            return this.rejectTraceApproval(interaction, parsed, request, "Dry-run เปิดอยู่: อนุมัติแล้วแต่ไม่ได้ลบจริง", { action: "TRACE_APPROVED_DRY_RUN", severity: "info", reason: "trace_approved_dry_run", alert: { title: "TRACE ERASER — APPROVED DRY RUN", description: `เจ้าของอนุมัติแล้ว แต่ dry-run เปิดอยู่ใน **${request.guildName}**`, color: "#FEE75C" } }, { clearBeforeReply: true });
+        }
+        return this.deleteApprovedTraceTarget(interaction, parsed, request, target);
+    }
+
+    async deleteApprovedTraceTarget(interaction, parsed, request, target) {
+        const metadata = this.traceApprovalMetadata(request, parsed.requestId, interaction.user?.id);
+        const deleteIntent = await this.recordTraceAudit(request, "TRACE_APPROVED_DELETE_INTENT", "warning", "trace_approved_delete_intent", metadata);
+        if (!deleteIntent) return this.rejectTraceApproval(interaction, parsed, request, "ไม่ลบข้อความ เพราะไม่สามารถบันทึก Audit intent ได้", null, { clearBeforeReply: true });
+        if (this.traceApprovalDisabled()) {
+            traceMetrics.killed++;
+            return this.rejectTraceApproval(interaction, parsed, request, "ไม่ลบ: ระบบป้องกันถูกเปิดหรือฟังก์ชันถูกปิดก่อนทำงาน", { action: "TRACE_APPROVAL_BLOCKED_AFTER_STATE_CHANGE", severity: "warning", reason: "trace_kill_switch" }, { clearBeforeReply: true });
+        }
+        return this.finishApprovedTraceDeletion(interaction, parsed, request, target, metadata);
+    }
+
+    async finishApprovedTraceDeletion(interaction, parsed, request, target, metadata) {
+        const deleted = await target.delete().then(() => true).catch(() => false);
+        traceDeletionRequests.delete(parsed.requestId);
+        await this.clearTraceApprovalControls(interaction);
+        if (!deleted) {
+            traceMetrics.deleteFailed++;
+            await this.recordTraceAudit(request, "TRACE_APPROVED_DELETE_FAILED", "warning", "trace_approved_delete_failed", metadata);
+            await this.replyToTraceApproval(interaction, "อนุมัติแล้ว แต่ลบข้อความไม่สำเร็จ อาจไม่มีสิทธิ์หรือข้อความถูกล็อกไว้");
+            await this.sendAlert("TRACE ERASER — DELETE FAILED", `เจ้าของอนุมัติแล้ว แต่ลบข้อความใน **${request.guildName}** ไม่สำเร็จ`, "#FEE75C");
             return true;
         }
+        traceMetrics.approved++;
+        await this.recordTraceAudit(request, "TRACE_APPROVED_DELETED", "danger", "trace_approved_deleted", metadata);
+        await this.replyToTraceApproval(interaction, "ลบข้อความตามที่อนุมัติแล้ว");
+        await this.sendAlert("TRACE ERASER — APPROVED", `${config.emojis.broom} เจ้าของอนุมัติให้ลบข้อความใน **${request.guildName}**`, "#ED4245");
+        return true;
+    }
 
+    async handleClaimedTraceApproval(interaction, parsed, request) {
+        if (request.expiresAt <= Date.now()) return this.expireTraceApproval(interaction, parsed, request);
+        if (parsed.action === "deny") return this.denyTraceApproval(interaction, parsed, request);
+        if (parsed.action !== "approve") return this.rejectTraceApproval(interaction, parsed, request, "ปุ่มนี้ไม่ถูกต้อง", null, { clearControls: false });
+        return this.handleApprovedTraceDeletion(interaction, parsed, request);
+    }
+
+    async handleTraceApprovalInteraction(interaction) {
+        if (!interaction?.isButton?.()) return false;
+        const parsed = parseTraceActionId(interaction.customId);
+        if (!parsed) return false;
+        this.cleanupTraceApprovals();
+        if (!isOwnerApprover(interaction.user?.id)) {
+            traceMetrics.unauthorized++;
+            await this.replyToTraceApproval(interaction, "คำขอนี้ให้เจ้าของหรือแอดมินที่อนุมัติไว้กดเท่านั้น");
+            return true;
+        }
         const request = traceDeletionRequests.get(parsed.requestId);
         if (request?.state !== "pending") {
-            await interaction.reply({ content: "คำขอนี้หมดอายุหรือกำลังถูกจัดการแล้ว", ephemeral: true }).catch(() => {});
-            await interaction.message?.edit?.({ components: [] }).catch(() => {});
+            await this.replyToTraceApproval(interaction, "คำขอนี้หมดอายุหรือกำลังถูกจัดการแล้ว");
+            await this.clearTraceApprovalControls(interaction);
             return true;
         }
         request.state = "processing";
         request.claimedBy = interaction.user?.id || null;
         request.claimedAt = Date.now();
-
-        if (request.expiresAt <= Date.now()) {
-            traceDeletionRequests.delete(parsed.requestId);
-            traceMetrics.expired++;
-            await this.recordTraceAudit(request, "TRACE_APPROVAL_EXPIRED", "info", "trace_approval_expired", { policy: request.policy, requestId: parsed.requestId, approverId: interaction.user?.id });
-            await interaction.reply({ content: "คำขอนี้หมดอายุแล้ว ไม่ได้ลบข้อความ", ephemeral: true }).catch(() => {});
-            await interaction.message?.edit?.({ components: [] }).catch(() => {});
-            return true;
-        }
-
-        if (parsed.action === "deny") {
-            traceDeletionRequests.delete(parsed.requestId);
-            traceMetrics.denied++;
-            await this.recordTraceAudit(request, "TRACE_APPROVAL_DENIED", "info", "trace_approval_denied", { policy: request.policy, requestId: parsed.requestId, approverId: interaction.user?.id });
-            await interaction.reply({ content: "รับทราบ: ไม่ลบข้อความนี้", ephemeral: true }).catch(() => {});
-            await interaction.message?.edit?.({ components: [] }).catch(() => {});
-            await this.sendAlert("TRACE ERASER — DENIED", `เจ้าของปฏิเสธการลบข้อความใน **${request.guildName}**`, "#57F287");
-            return true;
-        }
-
-        if (parsed.action !== "approve") {
-            traceDeletionRequests.delete(parsed.requestId);
-            await interaction.reply({ content: "ปุ่มนี้ไม่ถูกต้อง", ephemeral: true }).catch(() => {});
-            return true;
-        }
-
-        if (traceKillSwitchEnabled || !systemToggles.traceEraser) {
-            traceDeletionRequests.delete(parsed.requestId);
-            traceMetrics.killed++;
-            await this.recordTraceAudit(request, "TRACE_APPROVAL_BLOCKED_AFTER_STATE_CHANGE", "warning", "trace_kill_switch", { policy: request.policy, requestId: parsed.requestId, approverId: interaction.user?.id });
-            await interaction.message?.edit?.({ components: [] }).catch(() => {});
-            await interaction.reply({ content: "ไม่ลบ: ระบบป้องกันถูกเปิดหรือฟังก์ชันถูกปิดระหว่างรออนุมัติ", ephemeral: true }).catch(() => {});
-            return true;
-        }
-
-        const target = await this.fetchTraceTargetMessage(request);
-        if (!target) {
-            traceDeletionRequests.delete(parsed.requestId);
-            await interaction.reply({ content: "ไม่พบข้อความเป้าหมาย อาจถูกลบไปแล้ว", ephemeral: true }).catch(() => {});
-            await interaction.message?.edit?.({ components: [] }).catch(() => {});
-            return true;
-        }
-
-        const content = this.getTraceMessageText(target);
-        if (this.isProtectedTraceMessage(target, content)) {
-            traceDeletionRequests.delete(parsed.requestId);
-            traceMetrics.protected++;
-            await this.recordTraceAudit(request, "TRACE_PROTECTED_AFTER_APPROVAL", "info", "trace_protected_after_approval", { policy: request.policy, requestId: parsed.requestId, approverId: interaction.user?.id });
-            await interaction.reply({ content: "ไม่ลบ: ข้อความนี้อยู่ในพื้นที่/เว็บฮุคที่ถูกป้องกัน", ephemeral: true }).catch(() => {});
-            await interaction.message?.edit?.({ components: [] }).catch(() => {});
-            await this.sendAlert("TRACE ERASER — PROTECTED", `ป้องกันการลบข้อความใน **${request.guildName}** เพราะเป็น log/webhook ที่ถูกป้องกัน`, "#57F287");
-            return true;
-        }
-
-        if (traceDryRunEnabled) {
-            traceDeletionRequests.delete(parsed.requestId);
-            traceMetrics.dryRun++;
-            await this.recordTraceAudit(request, "TRACE_APPROVED_DRY_RUN", "info", "trace_approved_dry_run", { policy: request.policy, requestId: parsed.requestId, approverId: interaction.user?.id });
-            await interaction.message?.edit?.({ components: [] }).catch(() => {});
-            await interaction.reply({ content: "Dry-run เปิดอยู่: อนุมัติแล้วแต่ไม่ได้ลบจริง", ephemeral: true }).catch(() => {});
-            await this.sendAlert("TRACE ERASER — APPROVED DRY RUN", `เจ้าของอนุมัติแล้ว แต่ dry-run เปิดอยู่ใน **${request.guildName}**`, "#FEE75C");
-            return true;
-        }
-
-        const deleteIntent = await this.recordTraceAudit(request, "TRACE_APPROVED_DELETE_INTENT", "warning", "trace_approved_delete_intent", { policy: request.policy, requestId: parsed.requestId, approverId: interaction.user?.id });
-        if (!deleteIntent) {
-            traceDeletionRequests.delete(parsed.requestId);
-            await interaction.message?.edit?.({ components: [] }).catch(() => {});
-            await interaction.reply({ content: "ไม่ลบข้อความ เพราะไม่สามารถบันทึก Audit intent ได้", ephemeral: true }).catch(() => {});
-            return true;
-        }
-        if (traceKillSwitchEnabled || !systemToggles.traceEraser) {
-            traceDeletionRequests.delete(parsed.requestId);
-            traceMetrics.killed++;
-            await this.recordTraceAudit(request, "TRACE_APPROVAL_BLOCKED_AFTER_STATE_CHANGE", "warning", "trace_kill_switch", { policy: request.policy, requestId: parsed.requestId, approverId: interaction.user?.id });
-            await interaction.message?.edit?.({ components: [] }).catch(() => {});
-            await interaction.reply({ content: "ไม่ลบ: ระบบป้องกันถูกเปิดหรือฟังก์ชันถูกปิดก่อนทำงาน", ephemeral: true }).catch(() => {});
-            return true;
-        }
-        const deleted = await target.delete().then(() => true).catch(() => false);
-        traceDeletionRequests.delete(parsed.requestId);
-        await interaction.message?.edit?.({ components: [] }).catch(() => {});
-        if (!deleted) {
-            traceMetrics.deleteFailed++;
-            await this.recordTraceAudit(request, "TRACE_APPROVED_DELETE_FAILED", "warning", "trace_approved_delete_failed", { policy: request.policy, requestId: parsed.requestId, approverId: interaction.user?.id });
-            await interaction.reply({ content: "อนุมัติแล้ว แต่ลบข้อความไม่สำเร็จ อาจไม่มีสิทธิ์หรือข้อความถูกล็อกไว้", ephemeral: true }).catch(() => {});
-            await this.sendAlert("TRACE ERASER — DELETE FAILED", `เจ้าของอนุมัติแล้ว แต่ลบข้อความใน **${request.guildName}** ไม่สำเร็จ`, "#FEE75C");
-            return true;
-        }
-
-        traceMetrics.approved++;
-        await this.recordTraceAudit(request, "TRACE_APPROVED_DELETED", "danger", "trace_approved_deleted", { policy: request.policy, requestId: parsed.requestId, approverId: interaction.user?.id });
-        await interaction.reply({ content: "ลบข้อความตามที่อนุมัติแล้ว", ephemeral: true }).catch(() => {});
-        await this.sendAlert("TRACE ERASER — APPROVED", `${config.emojis.broom} เจ้าของอนุมัติให้ลบข้อความใน **${request.guildName}**`, "#ED4245");
-        return true;
+        return this.handleClaimedTraceApproval(interaction, parsed, request);
     }
 
     async fetchTraceTargetMessage(request) {

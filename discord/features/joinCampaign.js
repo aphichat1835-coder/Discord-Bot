@@ -477,28 +477,33 @@ function resolveCampaignSeverity(summary, phase) {
     return hasPartialFailures ? "WARNING" : "SUCCESS";
 }
 
+const JOIN_CAMPAIGN_CONTEXT_NUMBER_FIELDS = Object.freeze([
+    ["Records ที่ตรวจ", "scannedRecords"],
+    ["ผู้ใช้ไม่ซ้ำ", "uniqueUsers"],
+    ["ใช้ได้จริง", "usableUsers"],
+    ["ดึงเข้าสำเร็จ", "joined"],
+    ["เป็นสมาชิกอยู่แล้ว", "alreadyMember"],
+    ["ไม่สำเร็จ", "failed"],
+    ["Refresh สำเร็จ", "refreshed"],
+    ["Refresh ไม่สำเร็จ", "refreshFailed"],
+    ["บันทึกสถานะ Refresh ไม่สำเร็จ", "persistenceFailed"],
+    ["สถานะ Refresh เปลี่ยนระหว่างงาน", "refreshStateConflicts"],
+    ["ขาด Scope", "missingScope"],
+    ["Token ใช้ไม่ได้", "tokenInvalid"],
+    ["บอทขาดสิทธิ์", "botMissingPermission"],
+    ["ติด Rate Limit", "rateLimited"]
+]);
+
 function buildJoinCampaignContext(summary) {
-    return {
+    const context = {
         "รหัสงาน": summary.campaignId,
         "เซิร์ฟเวอร์": summary.targetGuildName || summary.targetGuildId,
         "Guild ID": summary.targetGuildId,
         "โหมด": summary.dryRun ? "ตรวจจำนวนเท่านั้น" : "ดึงสมาชิกจริง",
-        "สถานะงาน": summary.status,
-        "Records ที่ตรวจ": Number(summary.scannedRecords || 0),
-        "ผู้ใช้ไม่ซ้ำ": Number(summary.uniqueUsers || 0),
-        "ใช้ได้จริง": Number(summary.usableUsers || 0),
-        "ดึงเข้าสำเร็จ": Number(summary.joined || 0),
-        "เป็นสมาชิกอยู่แล้ว": Number(summary.alreadyMember || 0),
-        "ไม่สำเร็จ": Number(summary.failed || 0),
-        "Refresh สำเร็จ": Number(summary.refreshed || 0),
-        "Refresh ไม่สำเร็จ": Number(summary.refreshFailed || 0),
-        "บันทึกสถานะ Refresh ไม่สำเร็จ": Number(summary.persistenceFailed || 0),
-        "สถานะ Refresh เปลี่ยนระหว่างงาน": Number(summary.refreshStateConflicts || 0),
-        "ขาด Scope": Number(summary.missingScope || 0),
-        "Token ใช้ไม่ได้": Number(summary.tokenInvalid || 0),
-        "บอทขาดสิทธิ์": Number(summary.botMissingPermission || 0),
-        "ติด Rate Limit": Number(summary.rateLimited || 0)
+        "สถานะงาน": summary.status
     };
+    for (const [label, field] of JOIN_CAMPAIGN_CONTEXT_NUMBER_FIELDS) context[label] = Number(summary[field] || 0);
+    return context;
 }
 
 function buildJoinCampaignFailureDetails(summary, failedEntireJob) {

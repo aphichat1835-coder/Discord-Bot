@@ -322,24 +322,42 @@ async function clearAllLocksForMember(guildId, userId, { retire = false } = {}) 
     if (!result.every(item => operationWasAcknowledged(item, { allowDeleteZero: true }))) { await reportPersistenceFailure("member_cleanup", { guildId, userId }); throw makeError("VOICE_ADMIN_PERSISTENCE_FAILED", "member_cleanup"); }
     const locks = getGuildLocks(guildId); locks.delete(String(userId)); if (!locks.size) locksByGuild.delete(String(guildId));
 }
+function clearGuildRuntimeState(guildId) {
+    for (const lock of getGuildLocks(guildId).values()) clearMemberRuntimeState(guildId, lock.userId);
+    locksByGuild.delete(guildId);
+    for (const key of cachedAuditUnlocks.keys()) if (key.startsWith(`${guildId}:`)) cachedAuditUnlocks.delete(key);
+    for (const key of auditWatermarks.keys()) if (key.startsWith(`${guildId}:`)) auditWatermarks.delete(key);
+    for (const [id, details] of processedAuditEntries) if (details?.guildId === guildId) processedAuditEntries.delete(id);
+    for (const key of notices.keys()) if (key.startsWith(`${guildId}:`)) notices.delete(key);
+    for (const key of noticeQueues.keys()) if (key.startsWith(`${guildId}:`)) noticeQueues.delete(key);
+}
+function cancelGuildEnforcement(guildId) {
+    for (const [key, pending] of pendingEnforcement) {
+        if (!key.startsWith(`${guildId}:`)) continue;
+        clearTimeout(pending.timer); pendingEnforcement.delete(key);
+    }
+    for (const [key, controller] of enforcementActions) {
+        if (!key.startsWith(`${guildId}:`)) continue;
+        cancelController(controller); enforcementActions.delete(key);
+    }
+}
+async function deleteGuildRecords(guildId) {
+    let result;
+    try { result = await Promise.all([VoiceAdminLock.deleteMany({ guildId }), VoiceAdminNotice.deleteMany({ guildId })]); }
+    catch (error) { await reportPersistenceFailure("guild_cleanup", { guildId }); throw makeError("VOICE_ADMIN_PERSISTENCE_FAILED", "guild_cleanup", error); }
+    if (!result.every(item => operationWasAcknowledged(item, { allowDeleteZero: true }))) {
+        await reportPersistenceFailure("guild_cleanup", { guildId });
+        throw makeError("VOICE_ADMIN_PERSISTENCE_FAILED", "guild_cleanup");
+    }
+}
 async function clearGuildData(guildId) {
     const normalizedGuildId = String(guildId);
     retiredGuilds.add(normalizedGuildId);
     const active = activeGuildActions.get(normalizedGuildId);
     if (active) cancelController(active);
-    for (const lock of getGuildLocks(normalizedGuildId).values()) clearMemberRuntimeState(normalizedGuildId, lock.userId);
-    let result;
-    try { result = await Promise.all([VoiceAdminLock.deleteMany({ guildId: normalizedGuildId }), VoiceAdminNotice.deleteMany({ guildId: normalizedGuildId })]); }
-    catch (error) { await reportPersistenceFailure("guild_cleanup", { guildId }); throw makeError("VOICE_ADMIN_PERSISTENCE_FAILED", "guild_cleanup", error); }
-    if (!result.every(item => operationWasAcknowledged(item, { allowDeleteZero: true }))) { await reportPersistenceFailure("guild_cleanup", { guildId }); throw makeError("VOICE_ADMIN_PERSISTENCE_FAILED", "guild_cleanup"); }
-    locksByGuild.delete(normalizedGuildId);
-    for (const key of cachedAuditUnlocks.keys()) if (key.startsWith(`${normalizedGuildId}:`)) cachedAuditUnlocks.delete(key);
-    for (const key of auditWatermarks.keys()) if (key.startsWith(`${normalizedGuildId}:`)) auditWatermarks.delete(key);
-    for (const [id, details] of processedAuditEntries) if (details?.guildId === normalizedGuildId) processedAuditEntries.delete(id);
-    for (const key of notices.keys()) if (key.startsWith(`${normalizedGuildId}:`)) notices.delete(key);
-    for (const [key, pending] of pendingEnforcement) if (key.startsWith(`${normalizedGuildId}:`)) { clearTimeout(pending.timer); pendingEnforcement.delete(key); }
-    for (const [key, controller] of enforcementActions) if (key.startsWith(`${normalizedGuildId}:`)) { cancelController(controller); enforcementActions.delete(key); }
-    for (const key of noticeQueues.keys()) if (key.startsWith(`${normalizedGuildId}:`)) noticeQueues.delete(key);
+    await deleteGuildRecords(normalizedGuildId);
+    clearGuildRuntimeState(normalizedGuildId);
+    cancelGuildEnforcement(normalizedGuildId);
 }
 function handleGuildCreate(guildId) { retiredGuilds.delete(String(guildId)); }
 
@@ -527,29 +545,49 @@ function parseSecretCommand(content) {
     return { prefix, command: match[1], argument: match[2] || null, includeAdministrators: prefix === "///" };
 }
 function secretUsage() { return "ใช้: //ตัดหมด | //ย้ายหมด <IDห้อง> | //ปิดไมค์หมด | //ปิดหูหมด | //เปิดหมด (เพิ่ม / อีกหนึ่งตัวเพื่อไม่เว้นแอดมิน)"; }
+function secretReply(content) { return { content, allowedMentions: { parse: [], repliedUser: false } }; }
+function isOwnerSecretMessage(message) {
+    return Boolean(message?.guild) && !message.author?.bot && String(message.author?.id) === String(config.system.ownerId);
+}
+async function getSecretMoveDestination(message, destinationId) {
+    if (!/^\d{17,22}$/.test(destinationId)) throw makeError("VOICE_ADMIN_DESTINATION_INVALID");
+    return message.guild.channels.cache.get(destinationId) || message.guild.channels.fetch(destinationId).catch(() => null);
+}
+async function runSecretVoiceCommand(message, parsed, members) {
+    const commands = {
+        "ตัดหมด": async () => {
+            await ensureBotPermission(message.guild, message.channel, "disconnect");
+            return disconnectMembers(message.guild, members);
+        },
+        "ย้ายหมด": async () => moveMembers(message.guild, message.channel, await getSecretMoveDestination(message, parsed.argument), members),
+        "ปิดไมค์หมด": async () => {
+            await ensureBotPermission(message.guild, message.channel, "mute");
+            return lockVoiceState(message.guild, members, "mute", message.author.id, { ownerForced: parsed.includeAdministrators });
+        },
+        "ปิดหูหมด": async () => {
+            await ensureBotPermission(message.guild, message.channel, "deaf");
+            return lockVoiceState(message.guild, members, "deaf", message.author.id);
+        },
+        "เปิดหมด": async () => {
+            await ensureBotPermission(message.guild, message.channel, "mute");
+            await ensureBotPermission(message.guild, message.channel, "deaf");
+            return unlockBoth(message.guild, members);
+        }
+    };
+    return commands[parsed.command]();
+}
 async function handleSecretMessage(message) {
-    if (!message?.guild || message.author?.bot || String(message.author?.id) !== String(config.system.ownerId)) return false;
+    if (!isOwnerSecretMessage(message)) return false;
     const parsed = parseSecretCommand(message.content); if (!parsed) return false;
-    if (parsed.invalid) { await message.reply({ content: `> ${config.emojis.warning} ${secretUsage()}`, allowedMentions: { parse: [], repliedUser: false } }); return true; }
-    if (!isVoiceChannel(message.channel)) { await message.reply({ content: `> ${config.emojis.no_entry} ต้องใช้คำสั่งนี้ในแชทของห้องเสียงปกติ`, allowedMentions: { parse: [], repliedUser: false } }); return true; }
+    if (parsed.invalid) { await message.reply(secretReply(`> ${config.emojis.warning} ${secretUsage()}`)); return true; }
+    if (!isVoiceChannel(message.channel)) { await message.reply(secretReply(`> ${config.emojis.no_entry} ต้องใช้คำสั่งนี้ในแชทของห้องเสียงปกติ`)); return true; }
     const members = sourceMembers(message.channel, { includeAdministrators: parsed.includeAdministrators, excludeId: parsed.includeAdministrators ? message.author.id : null });
     try {
-        let result;
-        if (parsed.command === "ตัดหมด") { await ensureBotPermission(message.guild, message.channel, "disconnect"); result = await disconnectMembers(message.guild, members); }
-        else if (parsed.command === "ย้ายหมด") {
-            if (!/^\d{17,22}$/.test(parsed.argument)) throw makeError("VOICE_ADMIN_DESTINATION_INVALID");
-            const destination = message.guild.channels.cache.get(parsed.argument) || await message.guild.channels.fetch(parsed.argument).catch(() => null);
-            result = await moveMembers(message.guild, message.channel, destination, members);
-        } else if (parsed.command === "ปิดไมค์หมด") {
-            await ensureBotPermission(message.guild, message.channel, "mute");
-            result = await lockVoiceState(message.guild, members, "mute", message.author.id, { ownerForced: parsed.includeAdministrators });
-        }
-        else if (parsed.command === "ปิดหูหมด") { await ensureBotPermission(message.guild, message.channel, "deaf"); result = await lockVoiceState(message.guild, members, "deaf", message.author.id); }
-        else { await ensureBotPermission(message.guild, message.channel, "mute"); await ensureBotPermission(message.guild, message.channel, "deaf"); result = await unlockBoth(message.guild, members); }
-        await message.reply({ content: `> ${config.emojis.success} ${buildResult(parsed.command, result)}`, allowedMentions: { parse: [], repliedUser: false } });
+        const result = await runSecretVoiceCommand(message, parsed, members);
+        await message.reply(secretReply(`> ${config.emojis.success} ${buildResult(parsed.command, result)}`));
     } catch (error) {
         const detail = error.code === "VOICE_ADMIN_ACTION_IN_PROGRESS" ? "มีงานจัดการห้องนี้กำลังทำงานอยู่" : error.code === "VOICE_ADMIN_DESTINATION_INVALID" ? "ID ห้องปลายทางไม่ถูกต้อง, เป็นห้องเดิม, ไม่ใช่ห้องเสียง หรือบอตเข้าไม่ได้" : "ดำเนินการไม่สำเร็จ กรุณาตรวจสอบสิทธิ์บอต";
-        await message.reply({ content: `> ${config.emojis.error} ${detail}`, allowedMentions: { parse: [], repliedUser: false } });
+        await message.reply(secretReply(`> ${config.emojis.error} ${detail}`));
     }
     return true;
 }
@@ -715,25 +753,34 @@ function scheduleFallback(guild, userId, type, client, lock) {
     }, AUDIT_WAIT_MS);
     pending.timer.unref?.(); pendingEnforcement.set(key, pending);
 }
+function clearInvalidAdministratorLock(guild, userId, member, lock) {
+    if (!isAdministrator(member, guild)) return false;
+    if (!lock.muteOwnerForced) {
+        clearAllLocksForMember(guild.id, userId).catch(() => {});
+        return true;
+    }
+    if (lock.deafLocked) clearLockField(guild.id, userId, "deaf", lock.deafVersion).catch(() => {});
+    return false;
+}
+function enforceJoinedVoiceLocks(guild, userId, lock, oldState, newState) {
+    if (oldState?.channel || !newState?.channel) return false;
+    if (lock.muteLocked) enforceLock(guild, userId, "mute", lock.muteVersion).catch(() => {});
+    if (lock.deafLocked) enforceLock(guild, userId, "deaf", lock.deafVersion).catch(() => {});
+    return true;
+}
+function scheduleReleasedVoiceLocks(guild, userId, lock, oldState, newState, client) {
+    if (!newState?.channel) return;
+    if (oldState?.serverMute === true && newState.serverMute === false && lock.muteLocked) scheduleFallback(guild, userId, "mute", client, lock);
+    if (oldState?.serverDeaf === true && newState.serverDeaf === false && lock.deafLocked) scheduleFallback(guild, userId, "deaf", client, lock);
+}
 function handleVoiceStateUpdate(oldState, newState, client) {
     const guild = newState?.guild || oldState?.guild; const userId = newState?.id || oldState?.id;
     if (!initialized || stopping || !guild || !userId) return;
     const lock = getLock(guild.id, userId); if (!lock) return;
     const member = newState.member || oldState.member;
-    if (isAdministrator(member, guild) && !lock.muteOwnerForced) {
-        clearAllLocksForMember(guild.id, userId).catch(() => {});
-        return;
-    }
-    if (isAdministrator(member, guild) && lock.muteOwnerForced && lock.deafLocked) {
-        clearLockField(guild.id, userId, "deaf", lock.deafVersion).catch(() => {});
-    }
-    if (!oldState?.channel && newState?.channel) {
-        if (lock.muteLocked) enforceLock(guild, userId, "mute", lock.muteVersion).catch(() => {});
-        if (lock.deafLocked) enforceLock(guild, userId, "deaf", lock.deafVersion).catch(() => {});
-        return;
-    }
-    if (newState?.channel && oldState?.serverMute === true && newState.serverMute === false && lock.muteLocked) scheduleFallback(guild, userId, "mute", client, lock);
-    if (newState?.channel && oldState?.serverDeaf === true && newState.serverDeaf === false && lock.deafLocked) scheduleFallback(guild, userId, "deaf", client, lock);
+    if (clearInvalidAdministratorLock(guild, userId, member, lock)) return;
+    if (enforceJoinedVoiceLocks(guild, userId, lock, oldState, newState)) return;
+    scheduleReleasedVoiceLocks(guild, userId, lock, oldState, newState, client);
 }
 function handleAuditLogEntry(entry, guild, client) {
     if (!initialized || stopping || entry?.action !== AuditLogEvent.MemberUpdate || !entry?.targetId) return;
@@ -763,9 +810,9 @@ async function reconcileConnectedLocks(client, options = {}) {
     const maxDurationMs = Number(options.maxDurationMs || ACTION_MAX_DURATION_MS);
     const startedAt = Number(options.startedAt || Date.now());
     const summary = { guilds: 0, targeted: 0, enforced: 0, skipped: 0, failed: 0, timedOut: 0 };
-    for (const [guildId, guildLocks] of [...locksByGuild.entries()]) {
+    for (const [guildId, guildLocks] of Array.from(locksByGuild.entries())) {
         if (Date.now() - startedAt >= maxDurationMs) {
-            summary.timedOut += [...guildLocks.values()].filter(lock => lock.muteLocked || lock.deafLocked).length;
+            summary.timedOut += Array.from(guildLocks.values()).filter(lock => lock.muteLocked || lock.deafLocked).length;
             continue;
         }
         const guild = client?.guilds?.cache?.get?.(guildId);
@@ -777,7 +824,7 @@ async function reconcileConnectedLocks(client, options = {}) {
         }
         summary.guilds++;
         try {
-            const result = await withGuildAction(guildId, controller => runBulkUnsafe([...guildLocks.values()], async lock => {
+            const result = await withGuildAction(guildId, controller => runBulkUnsafe(Array.from(guildLocks.values()), async lock => {
                 let member = guild.members.cache.get(lock.userId);
                 let memberMissing = false;
                 if (!member) {

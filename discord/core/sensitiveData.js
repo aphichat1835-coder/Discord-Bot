@@ -4,7 +4,7 @@ function cleanPrivateLogText(value) {
     return String(value ?? "");
 }
 
-function sanitizeSensitiveValue(value, options = {}, seen = new WeakMap()) {
+function sanitizeSensitiveValue(value, seen = new WeakMap()) {
     if (value === null || value === undefined) return value;
     if (typeof value !== "object") return value;
     if (seen.has(value)) throw new TypeError("PRIVATE_LOG_CIRCULAR_VALUE");
@@ -12,14 +12,14 @@ function sanitizeSensitiveValue(value, options = {}, seen = new WeakMap()) {
     if (Array.isArray(value)) {
         const output = [];
         seen.set(value, output);
-        for (const item of value) output.push(sanitizeSensitiveValue(item, options, seen));
+        for (const item of value) output.push(sanitizeSensitiveValue(item, seen));
         return output;
     }
 
     const output = Object.create(null);
     seen.set(value, output);
     for (const [key, nested] of Object.entries(value)) {
-        output[key] = sanitizeSensitiveValue(nested, options, seen);
+        output[key] = sanitizeSensitiveValue(nested, seen);
     }
     return output;
 }
