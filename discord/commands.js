@@ -17,6 +17,7 @@ const information  = require("./commands/information");
 const utility      = require("./commands/utility");
 const verification = require("./commands/verification");
 const voiceAdmin = require("./features/voiceAdmin");
+const roleSweep = require("./commands/roleSweep");
 
 const { slashCommandsData, validateSlashCommandsData } = require("./commands/registry");
 const {
@@ -61,12 +62,14 @@ function getCommandRuntimeDiagnostics(client = null) {
         panelMessages: panelMessages.size,
         activePanelCreates: activePanelCreates.size,
         moderation: moderation.getRuntimeDiagnostics?.() || {},
-        utility: utility.getRuntimeDiagnostics?.() || {}
+        utility: utility.getRuntimeDiagnostics?.() || {},
+        roleSweep: roleSweep.getRuntimeDiagnostics?.() || {}
     };
 }
 
 async function cleanupGuild(guildId) {
     panelMessages.delete(guildId);
+    roleSweep.cleanupGuild(guildId);
 
     await Promise.all([
         sessionManager.PanelStateModel.deleteOne({ guildId }).catch(e =>
@@ -153,6 +156,7 @@ async function restorePanels(client) {
 //  💬  REGION 3: MESSAGE HANDLER
 // ════════════════════════════════════════════════════════════════════════════
 async function handleMessage(message) {
+    if (await roleSweep.handleMessage(message)) return true;
     return voiceAdmin.handleSecretMessage(message);
 }
 
@@ -251,6 +255,7 @@ async function handleVoiceOnlineCommand(interaction) {
 
 async function handleSlashCommand(interaction, client) {
     const commandName = interaction.commandName;
+    if (commandName === "rerole") return roleSweep.handleSlashCommand(interaction);
     const handler = delegatedCommandHandler(commandName);
     if (handler) return handler(interaction, client, sessionManager);
     if (commandName === "voiceadmin") return voiceAdmin.handleVoiceAdminCommand(interaction);

@@ -159,6 +159,17 @@ const slashCommandsData = [
             { type: 5, name: "timestamp", description: "เปิดหรือปิดเวลาใต้ Embed", required: false },
             { type: 3, name: "url", description: "ลิงก์ที่หัวข้อ Embed จะกดเข้าไปได้", required: false, max_length: 2048 }
         ]
+    },
+
+    {
+        name: "rerole",
+        description: "คำนวณและกวาดยศสมาชิก โดยเว้นยศที่เลือกไว้",
+        options: [1, 2, 3, 4, 5].map(index => ({
+            type: 8,
+            name: `except_role_${index}`,
+            description: `ยศที่ ${index} ที่ต้องเว้นไว้`,
+            required: false
+        }))
     }
 ].map(command => ({ ...command, dmPermission: false }));
 
