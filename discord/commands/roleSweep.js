@@ -43,22 +43,25 @@ function dedupeRoleIds(roleIds = []) {
 }
 
 function parseShortcutRoleIds(content) {
-    const match = /^\/\/รียศ(?:\s+(.*))?\s*$/u.exec(String(content || "").trim());
-    if (!match) return { matched: false, roleIds: [] };
-    const raw = String(match[1] || "").trim();
+    const shortcut = "//รียศ";
+    const input = String(content || "").trim();
+    if (!input.startsWith(shortcut)) return { matched: false, roleIds: [] };
+    const remainder = input.slice(shortcut.length);
+    if (remainder && remainder.trimStart() === remainder) return { matched: false, roleIds: [] };
+    const raw = remainder.trim();
     if (!raw) return { matched: true, roleIds: [] };
-    const input = raw.split(/\s+/u);
-    if (input.some(roleId => !ROLE_ID_PATTERN.test(roleId))) {
+    const roleIdInput = raw.split(/\s+/u);
+    if (roleIdInput.some(roleId => !ROLE_ID_PATTERN.test(roleId))) {
         return { matched: true, error: "รูปแบบ Role ID ไม่ถูกต้อง" };
     }
-    return { matched: true, roleIds: dedupeRoleIds(input) };
+    return { matched: true, roleIds: dedupeRoleIds(roleIdInput) };
 }
 
 function roleCatalogFingerprint(guild) {
     return getRoleValues(guild)
         .filter(role => !isEveryoneRole(role, guild))
         .map(role => `${role.id}:${Number(role.position || 0)}:${role.managed === true ? 1 : 0}`)
-        .sort();
+        .sort((left, right) => left.localeCompare(right));
 }
 
 function roleAssignmentFingerprint(guild, members) {
@@ -68,14 +71,14 @@ function roleAssignmentFingerprint(guild, members) {
         .map(member => `${member.id}:${getMemberRoles(member)
             .filter(role => !isEveryoneRole(role, guild))
             .map(role => String(role.id))
-            .sort()
+            .sort((left, right) => left.localeCompare(right))
             .join(",")}`)
-        .sort();
+        .sort((left, right) => left.localeCompare(right));
     const botMember = guild?.members?.me;
     const botRoles = getMemberRoles(botMember)
         .filter(role => !isEveryoneRole(role, guild))
         .map(role => String(role.id))
-        .sort();
+        .sort((left, right) => left.localeCompare(right));
     const botHighestRole = botMember?.roles?.highest;
     return crypto.createHash("sha256")
         .update(JSON.stringify({
