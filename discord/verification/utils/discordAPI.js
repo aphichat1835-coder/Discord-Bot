@@ -15,6 +15,7 @@
 
 const https = require("https");
 const { PermissionFlagsBits } = require("discord.js");
+const { MessageEmbed } = require("../../core/discordCompat");
 
 const { encryptToken, decryptToken } = require("./crypto");
 const { sanitizeLogText } = require("./safeLogger");
@@ -1212,77 +1213,85 @@ async function sendDM(userId, payload) {
 function verificationDmCopy({ ok, blocked, alreadyVerified, reasonCode }) {
     if (alreadyVerified) {
         return {
-            title: "ℹ️ บัญชีนี้ยืนยันไว้แล้ว",
-            summary: "ระบบตรวจพบว่าบัญชีนี้มียศยืนยันอยู่ก่อนแล้ว จึงไม่ได้เพิ่มยศซ้ำ",
-            nextAction: "ไม่ต้องดำเนินการเพิ่มเติม คุณสามารถกลับไปใช้งานเซิร์ฟเวอร์ได้",
+            title: "✨ ยืนยันตัวตนไว้แล้ว",
+            summary: "บัญชีของคุณพร้อมใช้งานอยู่แล้ว ระบบจึงไม่ได้เพิ่มยศซ้ำ",
             tone: "info",
-            resultLabel: "มียศอยู่แล้ว"
+            showReason: false,
+            nextAction: null
         };
     }
     if (ok) {
         return {
             title: "✅ ยืนยันตัวตนสำเร็จ",
-            summary: "Discord ยืนยันแล้วว่ากระบวนการเสร็จสมบูรณ์และผลการให้ยศสำเร็จ",
-            nextAction: "ไม่ต้องดำเนินการเพิ่มเติม คุณสามารถกลับไปใช้งานเซิร์ฟเวอร์ได้",
+            summary: "คุณผ่านการตรวจสอบและพร้อมใช้งานเซิร์ฟเวอร์แล้ว",
             tone: "success",
-            resultLabel: "สำเร็จ"
+            showReason: false,
+            nextAction: null
         };
     }
     if (blocked) {
         return {
-            title: "🛡️ ไม่ผ่านเงื่อนไขของเซิร์ฟเวอร์",
-            summary: "ระบบตรวจสอบข้อมูลสำเร็จ แต่บัญชีไม่ผ่านเงื่อนไขที่เซิร์ฟเวอร์ตั้งไว้",
+            title: "🛡️ ยังไม่ผ่านการยืนยัน",
+            summary: "บัญชีนี้ยังไม่ผ่านเงื่อนไขที่เซิร์ฟเวอร์ตั้งไว้",
             nextAction: "ติดต่อผู้ดูแลเซิร์ฟเวอร์หากต้องการสอบถามเงื่อนไขเพิ่มเติม",
             tone: "warning",
-            resultLabel: "ไม่ผ่านเงื่อนไข"
+            showReason: true
         };
     }
     const stalePanel = reasonCode === "panel_revision_mismatch" || reasonCode === "role_mismatch_latest_config";
     return {
         title: "⚠️ ยืนยันตัวตนไม่สำเร็จ",
-        summary: "กระบวนการยืนยันยังไม่เสร็จสมบูรณ์ กรุณาตรวจสอบรายละเอียดด้านล่าง",
+        summary: "ระบบยังดำเนินการยืนยันให้เสร็จสมบูรณ์ไม่ได้",
         nextAction: stalePanel
             ? "กลับไป Discord แล้วกดปุ่มจากแผงยืนยันล่าสุด"
-            : "ลองใหม่อีกครั้ง หากยังไม่สำเร็จให้แจ้งผู้ดูแลพร้อมรหัสอ้างอิง",
-        tone: "action",
-        resultLabel: "ดำเนินการไม่สำเร็จ"
+            : "ลองใหม่อีกครั้ง หรือติดต่อผู้ดูแลเซิร์ฟเวอร์",
+        tone: "danger",
+        showReason: true
     };
+}
+
+function isGuildIconUrl(value) {
+    return /^https:\/\/cdn\.discordapp\.com\/icons\/\d{17,22}\/[A-Za-z0-9_]+\.(?:png|gif|webp)(?:\?size=\d+)?$/.test(String(value || ""));
+}
+
+function buildVerificationDmEmbed(data = {}) {
+    const ok = !!data.ok;
+    const resultType = data.result || (ok ? "success" : "failed");
+    const reasonCode = String(data.reasonCode || "");
+    const alreadyVerified = ok && reasonCode === "already_verified_has_role";
+    const blocked = resultType === "blocked";
+    const copy = verificationDmCopy({ ok, blocked, alreadyVerified, reasonCode });
+    const guildName = dmService.design.markdownText(data.guildName, "Discord Server", 100);
+    const roleName = data.roleName
+        ? dmService.design.markdownText(data.roleName, "ไม่ทราบ", 100)
+        : null;
+    const reason = dmService.design.markdownText(
+        data.reason || (ok ? "ยืนยันสำเร็จ" : "ไม่สามารถระบุสาเหตุได้"),
+        "ไม่สามารถระบุสาเหตุได้",
+        500
+    );
+    const fields = [];
+    if (roleName) fields.push({ name: "🎖️ ยศยืนยัน", value: `**${roleName}**`, inline: true });
+    if (copy.showReason) fields.push({ name: "รายละเอียด", value: reason });
+    if (copy.nextAction) fields.push({ name: "ดำเนินการต่อ", value: copy.nextAction });
+
+    const embed = new MessageEmbed()
+        .setColor(dmService.design.COLORS[copy.tone] || dmService.design.COLORS.info)
+        .setAuthor({ name: `${guildName} • Verification` })
+        .setTitle(copy.title)
+        .setDescription(copy.summary)
+        .setFooter({ text: "Phomueangtai • Verification" })
+        .setTimestamp();
+    if (fields.length) embed.addFields(fields);
+    if (isGuildIconUrl(data.guildIconUrl)) embed.setThumbnail(data.guildIconUrl);
+    return embed;
 }
 
 async function sendVerificationDM(userId, data = {}) {
     if (!userId) return false;
 
     const ok = !!data.ok;
-    const guildName = data.guildName || "Discord Server";
-    const roleName = data.roleName || null;
-    const reason = data.reason || (ok ? "ยืนยันสำเร็จ" : "ยืนยันไม่สำเร็จ");
-    const resultType = data.result || (ok ? "success" : "failed");
-    const reasonCode = String(data.reasonCode || "");
-    const alreadyVerified = ok && reasonCode === "already_verified_has_role";
-    const blocked = resultType === "blocked";
-    const copy = verificationDmCopy({ ok, blocked, alreadyVerified, reasonCode });
-    const profile = await dmService.resolveProfile(userId, {
-        id: userId,
-        username: data.profile?.username,
-        globalName: data.profile?.global_name || data.profile?.globalName,
-        discriminator: data.profile?.discriminator,
-        avatarUrl: data.profile?.avatarUrl
-    });
-    const embed = dmService.design.buildDmEmbed({
-        tone: copy.tone,
-        title: copy.title,
-        summary: copy.summary,
-        profile,
-        fields: [
-            { name: "🏠 เซิร์ฟเวอร์", value: dmService.design.markdownText(guildName, "Discord Server", 100), inline: true },
-            ...(roleName ? [{ name: "🎖️ ยศยืนยัน", value: dmService.design.markdownText(roleName, "ไม่ทราบ", 100), inline: true }] : []),
-            { name: "📍 ผลการตรวจ", value: copy.resultLabel, inline: true }
-        ],
-        details: reason,
-        nextAction: copy.nextAction,
-        referenceId: data.requestId || "verification",
-        footer: "Phomueangtai • ระบบยืนยันตัวตน"
-    });
+    const embed = buildVerificationDmEmbed(data);
     const fallbackRequestId = `${userId}:${Date.now()}`;
     const delivery = await dmService.send({
         eventKey: `verification:${data.requestId || fallbackRequestId}`,
@@ -1379,6 +1388,7 @@ module.exports = {
     createDMChannel,
     sendDM,
     verificationDmCopy,
+    buildVerificationDmEmbed,
     sendVerificationDM,
 
     prepareTokenStorage

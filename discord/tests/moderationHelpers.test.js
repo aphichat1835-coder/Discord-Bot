@@ -37,6 +37,25 @@ test("moderation helpers build case input", () => { // NOSONAR -- node:test asse
     assert.equal(input.evidence.some(item => item.includes("DM sent")), false);
 });
 
+test("moderation success reply no longer reports member DM delivery", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const embed = helpers.buildModerationReplyEmbed(
+        {
+            guild: { iconURL: () => null },
+            user: { id: "mod1", tag: "mod#0001" }
+        },
+        {
+            id: "target1",
+            user: { displayAvatarURL: () => "https://cdn.discordapp.com/embed/avatars/0.png" }
+        },
+        "ban",
+        "reason",
+        42
+    ).toJSON();
+
+    assert.doesNotMatch(embed.description, /DM:/);
+    assert.match(embed.description, /Case:.*42/);
+});
+
 test("moderation helpers avoid exposing raw exception messages", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.equal(
         helpers.moderationErrorReply(new Error("database password leaked")),

@@ -2,6 +2,14 @@
 
 ## [Unreleased] - Unified Bot And Verification Runtime 2026-07-16
 
+- Removed all member DMs from `/ban`, `/kick`, and `/timeout` while preserving
+  the moderation action, ModCase lifecycle, and operational webhook behavior.
+  The DM outbox now removes unsent legacy moderation records and refuses new
+  moderation notifications.
+- Rebuilt Verification DMs as concise server-first result cards: they now use
+  the server icon as their thumbnail, show only relevant role/reason guidance,
+  and keep request references internal for delivery deduplication.
+
 - Fixed Voice Admin durable lock writes so MongoDB never receives overlapping
   update paths. Unlock actions now preserve and restore locks when a member
   leaves the source room during a state change, latest lock versions receive

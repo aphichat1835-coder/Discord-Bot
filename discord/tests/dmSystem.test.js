@@ -7,7 +7,6 @@ const dmService = require("../dm");
 const DmNotification = require("../dm/model");
 const { buildVoiceEventEmbed, createVoiceSnapshot } = require("../voiceWorker/dm");
 const { EVENTS, policyAllows, eventPriority } = require("../voiceWorker/notifications");
-const { buildModerationDmEmbed } = require("../commands/moderationHelpers");
 const utility = require("../commands/utility");
 const lifecycle = require("../voiceWorker/lifecycle");
 
@@ -143,29 +142,17 @@ test("gateway 4014 is not diagnosed as an invalid token", () => {
     assert.equal(lifecycle.isInvalidTokenError({ code: 4004, message: "Authentication failed" }), true);
 });
 
-test("moderation DM states never claim success before Discord confirms it", () => {
-    const interaction = fakeInteraction();
-    const target = { id: "111111111111111111", user: fakeUser() };
-    const pending = buildModerationDmEmbed(interaction, target, "ban", "เหตุผล", null, {
-        state: "pending",
-        caseNumber: 7
-    }).toJSON();
-    const failed = buildModerationDmEmbed(interaction, target, "ban", "เหตุผล", null, {
-        state: "failed",
-        caseNumber: 7
-    }).toJSON();
-    const succeeded = buildModerationDmEmbed(interaction, target, "timeout", "เหตุผล", 10, {
-        state: "succeeded",
-        caseNumber: 7,
-        endsAt: Date.now() + 600_000
-    }).toJSON();
+test("DM service rejects retired moderation notifications", async () => {
+    dmService._test.resetTestState();
+    const result = await dmService.send({
+        eventKey: "moderation:retired",
+        recipientId: "111111111111111111",
+        category: "moderation",
+        payload: { content: "must not send" }
+    });
 
-    assert.match(pending.description, /ยังไม่ยืนยันผล/);
-    assert.doesNotMatch(pending.description, /ยืนยันแล้ว.*สำเร็จ/);
-    assert.match(pending.fields.find(field => field.name === "💡 สิ่งที่ควรทำ").value, /ยังไม่ใช่การยืนยัน/);
-    assert.match(failed.description, /ไม่ได้ดำเนินการ/);
-    assert.match(succeeded.description, /ยืนยันแล้ว.*สำเร็จ/);
-    assert.ok(succeeded.fields.some(field => field.name === "⏰ สิ้นสุดการหมดเวลา"));
+    assert.deepEqual(result, { status: "skipped", reason: "category_retired" });
+    assert.equal(dmService._test.volatileOutbox.size, 0);
 });
 
 test("restore result DM is private-profiled Thai output", () => {
@@ -288,22 +275,52 @@ test("pending DM query sorts by priority before applying the limit", async () =>
 
     const originalFind = DmNotification.find;
     const originalUpdateMany = DmNotification.updateMany;
+    const originalDeleteMany = DmNotification.deleteMany;
     let sortSpec = null;
     let limitValue = null;
+    let query = null;
     DmNotification.updateMany = async () => ({ acknowledged: true, modifiedCount: 0 });
-    DmNotification.find = () => ({
+    DmNotification.deleteMany = async () => ({ acknowledged: true, deletedCount: 0 });
+    DmNotification.find = filter => {
+        query = filter;
+        return {
         sort(spec) { sortSpec = spec; return this; },
         limit(value) { limitValue = value; return this; },
         lean: async () => []
-    });
+        };
+    };
     try {
         const result = await dmService.processPending(25);
         assert.equal(result.processed, 0);
         assert.deepEqual(sortSpec, { priorityRank: 1, createdAt: 1 });
         assert.equal(limitValue, 25);
+        assert.deepEqual(query.category, { $nin: ["moderation"] });
     } finally {
         DmNotification.find = originalFind;
         DmNotification.updateMany = originalUpdateMany;
+        DmNotification.deleteMany = originalDeleteMany;
+        dmService._test.resetTestState();
+    }
+});
+
+test("retired moderation queue purge deletes only unsent records", async () => {
+    dmService._test.resetTestState();
+    dmService._test.setDatabaseReadyForTest(true);
+    const originalDeleteMany = DmNotification.deleteMany;
+    let filter = null;
+    DmNotification.deleteMany = async value => {
+        filter = value;
+        return { acknowledged: true, deletedCount: 3 };
+    };
+    try {
+        const result = await dmService.purgeRetiredQueue();
+        assert.deepEqual(result, { deleted: 3 });
+        assert.deepEqual(filter, {
+            category: { $in: ["moderation"] },
+            status: { $in: ["pending", "sending", "retrying", "failed_permanent"] }
+        });
+    } finally {
+        DmNotification.deleteMany = originalDeleteMany;
         dmService._test.resetTestState();
     }
 });

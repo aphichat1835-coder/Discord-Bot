@@ -1703,6 +1703,20 @@ router.post('/auth/callback', async (req, res) => {
         const roleName = getConfiguredRoleName(guildConfig);
         const guildName = getGuildName(guildConfig, guildId);
         const policySnapshot = buildPolicySnapshot(verificationConfig);
+        let verificationGuildPresentationPromise = null;
+
+        function getVerificationGuildPresentation() {
+            if (verificationGuildPresentationPromise) return verificationGuildPresentationPromise;
+            verificationGuildPresentationPromise = (async () => {
+                const guildFromOAuth = guilds.find(guild => String(guild?.id || "") === guildId) || null;
+                const guild = guildFromOAuth?.icon ? guildFromOAuth : await discord.getGuild(guildId).catch(() => null);
+                return {
+                    guildId,
+                    guildIconUrl: getGuildIconUrl(guild)
+                };
+            })();
+            return verificationGuildPresentationPromise;
+        }
 
         async function finalize({
             result,
@@ -1966,7 +1980,7 @@ router.post('/auth/callback', async (req, res) => {
                         return updateResult?.acknowledged !== false;
                     },
                     sendDm,
-                    sendFailureDm: () => discord.sendVerificationDM(profile.id, {
+                    sendFailureDm: async () => discord.sendVerificationDM(profile.id, {
                         ok: false,
                         result: "failed",
                         guildName,
@@ -1974,12 +1988,7 @@ router.post('/auth/callback', async (req, res) => {
                         reason: "ระบบบันทึกข้อมูลยืนยันไม่สมบูรณ์ กำลังตรวจสอบและกู้คืนสถานะ",
                         reasonCode: "verification_persistence_failed",
                         requestId,
-                        profile: {
-                            username: profile.username,
-                            globalName: profile.global_name,
-                            discriminator: profile.discriminator,
-                            avatarUrl: getAvatarUrl(profile)
-                        }
+                        ...await getVerificationGuildPresentation()
                     })
                 });
                 return res.status(outcome.statusCode).json(outcome.body);
@@ -1990,7 +1999,7 @@ router.post('/auth/callback', async (req, res) => {
             if (sendDm) {
                 dmSent = !!(await safeSideEffect(
                     'sendVerificationDM',
-                    () => discord.sendVerificationDM(profile.id, {
+                    async () => discord.sendVerificationDM(profile.id, {
                         ok: finalResult === 'success',
                         result: finalResult,
                         guildName,
@@ -1998,12 +2007,7 @@ router.post('/auth/callback', async (req, res) => {
                         reason: finalUserError || finalReason,
                         reasonCode: finalReason,
                         requestId,
-                        profile: {
-                            username: profile.username,
-                            globalName: profile.global_name,
-                            discriminator: profile.discriminator,
-                            avatarUrl: getAvatarUrl(profile)
-                        }
+                        ...await getVerificationGuildPresentation()
                     }),
                     false
                 ));

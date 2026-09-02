@@ -10,6 +10,8 @@ const { readFiniteInteger } = require("../core/numbers");
 const RETRY_DELAYS_MS = Object.freeze([5_000, 30_000, 120_000]);
 const PERMANENT_CODES = new Set([10013, 50007]);
 const PRIORITY_ORDER = Object.freeze({ critical: 0, high: 1, normal: 2, low: 3 });
+const RETIRED_CATEGORIES = new Set(["moderation"]);
+const RETIRED_QUEUE_STATUSES = Object.freeze(["pending", "sending", "retrying", "failed_permanent"]);
 const VOLATILE_DEDUPE_MAX = 5000;
 const PROFILE_FETCH_TIMEOUT_MS = 3000;
 const volatileDedupe = new Map();
@@ -51,6 +53,14 @@ function normalizePayload(payload = {}) {
         embeds,
         allowedMentions: { parse: [], repliedUser: false }
     };
+}
+
+function normalizeCategory(value) {
+    return safeText(value, "general", 80);
+}
+
+function isRetiredCategory(category) {
+    return RETIRED_CATEGORIES.has(normalizeCategory(category));
 }
 
 function databaseReady() {
@@ -196,10 +206,12 @@ async function attempt(record) {
 
 async function reserve(input) {
     const eventKey = normalizeEventKey(input.eventKey);
+    const category = normalizeCategory(input.category);
+    if (isRetiredCategory(category)) return { retired: true, record: null };
     const recordData = {
         eventKey,
         recipientId: String(input.recipientId || ""),
-        category: safeText(input.category, "general", 80),
+        category,
         priority: Object.hasOwn(PRIORITY_ORDER, input.priority) ? input.priority : "normal",
         priorityRank: PRIORITY_ORDER[Object.hasOwn(PRIORITY_ORDER, input.priority) ? input.priority : "normal"],
         payload: normalizePayload(input.payload),
@@ -239,6 +251,7 @@ async function send(input = {}) {
     if (!input.recipientId) return { status: "skipped", reason: "recipient_missing" };
     const reserved = await reserve(input).catch(() => null);
     if (!reserved) return { status: "failed", reason: "outbox_unavailable" };
+    if (reserved.retired) return { status: "skipped", reason: "category_retired" };
     if (reserved.duplicate) {
         diagnostics.duplicates++;
         return { status: "skipped", reason: "duplicate" };
@@ -255,6 +268,10 @@ async function persistVolatileOutbox(limit = 100) {
         .slice(0, readFiniteInteger(limit, { fallback: 100, min: 1, max: 500 }));
 
     for (const record of entries) {
+        if (isRetiredCategory(record.category)) {
+            volatileOutbox.delete(record.eventKey);
+            continue;
+        }
         try {
             const payload = volatileDelivered.has(record.eventKey)
                 ? { ...record, status: "sent", sentAt: record.sentAt || Date.now(), lastError: null }
@@ -277,6 +294,20 @@ async function persistVolatileOutbox(limit = 100) {
     return { persisted };
 }
 
+async function purgeRetiredQueue() {
+    if (!databaseReady()) return { deleted: 0 };
+    try {
+        const result = await DmNotification.deleteMany({
+            category: { $in: [...RETIRED_CATEGORIES] },
+            status: { $in: RETIRED_QUEUE_STATUSES }
+        });
+        return { deleted: Number(result?.deletedCount || 0) };
+    } catch {
+        diagnostics.persistenceErrors++;
+        return { deleted: 0 };
+    }
+}
+
 async function backfillPriorityRanks() {
     if (priorityBackfillComplete || !databaseReady()) return false;
     for (const [priority, priorityRank] of Object.entries(PRIORITY_ORDER)) {
@@ -297,10 +328,12 @@ async function processPending(limit = 25) {
     if (!databaseReady() || !client?.isReady?.() || workerBusy) return { processed: 0 };
     workerBusy = true;
     try {
+        await purgeRetiredQueue();
         await backfillPriorityRanks();
         await persistVolatileOutbox();
         const pendingLimit = readFiniteInteger(limit, { fallback: 25, min: 1, max: 100 });
         const candidates = await DmNotification.find({
+            category: { $nin: [...RETIRED_CATEGORIES] },
             status: { $in: ["pending", "retrying", "sending"] },
             nextAttemptAt: { $lte: Date.now() }
         })
@@ -318,6 +351,7 @@ async function processPending(limit = 25) {
 
 function start() {
     if (workerTimer) return false;
+    purgeRetiredQueue().catch(() => {});
     workerTimer = setInterval(() => processPending().catch(() => {}), 15_000);
     workerTimer.unref?.();
     processPending().catch(() => {});
@@ -364,17 +398,20 @@ module.exports = {
     resolveProfile,
     normalizeEventKey,
     normalizePayload,
+    normalizeCategory,
+    isRetiredCategory,
     isPermanent,
     send,
     processPending,
     persistVolatileOutbox,
+    purgeRetiredQueue,
     backfillPriorityRanks,
     start,
     stop,
     getDiagnostics,
     _test: {
         attempt, reserve, claimRecord, failureCode, safeFailure, withTimeout,
-        volatileDedupe, volatileDelivered, volatileOutbox, persistVolatileOutbox,
+        volatileDedupe, volatileDelivered, volatileOutbox, persistVolatileOutbox, purgeRetiredQueue,
         backfillPriorityRanks, queueVolatileRecord, resetTestState, setDatabaseReadyForTest
     }
 };

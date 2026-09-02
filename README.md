@@ -9,8 +9,8 @@ cases, protection features, role buttons, a private bot-control dashboard, and O
 > webhooks. The declared owner behavior must not be silently replaced by generic
 > security/privacy recommendations.
 
-Private notifications for Voice, moderation, verification, and restore results
-use a shared profile-first Thai Embed design. Delivery supports owner-intended
+Private notifications for Voice, verification, and restore results use a shared
+Thai Embed delivery service. Delivery supports owner-intended
 mentions, deduplication, and priority. A bounded in-memory recovery queue preserves delivery attempts while MongoDB is temporarily unavailable, then reconciles them into the durable MongoDB outbox.
 
 ## Runtime shape
