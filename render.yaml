@@ -2,7 +2,7 @@
 #
 # This blueprint defines the single Render Web Service used by this project.
 # It intentionally does NOT store secret environment values in the repo.
-# The runtime has exactly 15 owner-maintained environment values, matching .env.example.
+# The runtime has exactly 16 owner-maintained environment values, matching .env.example.
 # All advanced runtime controls use code defaults unless intentionally overridden.
 #
 # IMPORTANT:
@@ -37,6 +37,8 @@ services:
       - key: MONGO_URI
         sync: false
       - key: TOKEN_MANAGER
+        sync: false
+      - key: OWNER_ID
         sync: false
       - key: DISCORD_CLIENT_ID
         sync: false

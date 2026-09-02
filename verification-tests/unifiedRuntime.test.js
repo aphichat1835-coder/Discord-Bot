@@ -152,7 +152,7 @@ describe("single-process verification runtime contract", () => {
         expect(render).toContain("startCommand: npm start");
         expect(render).toContain("healthCheckPath: /ping");
         expect(render).not.toContain("rootDir: dashboard-public");
-        expect((render.match(/^\s*- key: [A-Z][A-Z0-9_]*$/gm) || [])).toHaveLength(15);
+        expect((render.match(/^\s*- key: [A-Z][A-Z0-9_]*$/gm) || [])).toHaveLength(16);
         expect(render).not.toContain("DASHBOARD_PUBLIC_URL");
         expect(render).not.toContain("TRUST_PROXY_HOPS");
     });
@@ -245,6 +245,7 @@ describe("single-process verification runtime contract", () => {
             "NODE_ENV",
             "MONGO_URI",
             "TOKEN_MANAGER",
+            "OWNER_ID",
             "DISCORD_CLIENT_ID",
             "DISCORD_CLIENT_SECRET",
             "ENCRYPTION_KEY",
@@ -275,7 +276,7 @@ describe("single-process verification runtime contract", () => {
         ]) {
             expect(security).toContain(name);
         }
-        expect(security).toContain("15 owner-maintained");
+        expect(security).toContain("16 owner-maintained");
         expect(security).toMatch(/public HTTPS\s+base URL/);
     });
 

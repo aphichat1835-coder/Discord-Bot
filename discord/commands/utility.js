@@ -18,6 +18,7 @@ const {
 const { PermissionFlagsBits } = require("discord.js");
 const crypto = require("node:crypto");
 const config = require("../config.json");
+const { isConfiguredOwner } = require("../core/env");
 const sessionManager = require("../sessionManager");
 const {
     requireMemberPermission,
@@ -755,7 +756,7 @@ function buildBackupFailedEvent(interaction, error, durationMs) {
 
 async function handleBackup(interaction) {
     if (interaction.user.id !== interaction.guild.ownerId &&
-        interaction.user.id !== config.system.ownerId) {
+        !isConfiguredOwner(config, interaction.user.id)) {
         return interaction.reply({
             content: `> ${config.emojis.no_entry} คำสั่งนี้สงวนไว้สำหรับ **เจ้าของเซิร์ฟเวอร์** เท่านั้น!`,
             ephemeral: true
@@ -774,7 +775,7 @@ async function handleBackup(interaction) {
     try {
         await interaction.deferReply();
         const existing = await sessionManager.getLatestSnapshotForGuild(interaction.guild.id);
-        if (existing && interaction.user.id !== config.system.ownerId) {
+        if (existing && !isConfiguredOwner(config, interaction.user.id)) {
             const hoursPassed = (Date.now() - existing.createdAt) / 3600000;
             if (hoursPassed < 24) {
                 return interaction.editReply({
@@ -849,7 +850,7 @@ async function handleRestore(interaction) {
     await interaction.deferReply({ ephemeral: true });
 
     if (interaction.user.id !== interaction.guild.ownerId &&
-        interaction.user.id !== config.system.ownerId) {
+        !isConfiguredOwner(config, interaction.user.id)) {
         return interaction.editReply({
             content: `> ${config.emojis.no_entry} คุณต้องเป็น **เจ้าของเซิร์ฟเวอร์** เท่านั้น!`
         });
@@ -870,7 +871,7 @@ async function handleRestore(interaction) {
     if (!backup) {
         return interaction.editReply({ content: `> ${config.emojis.error} ไม่พบข้อมูล Backup ของไอดีนี้` });
     }
-    if (backup.Backup_Owner_ID !== interaction.user.id && interaction.user.id !== config.system.ownerId) {
+    if (backup.Backup_Owner_ID !== interaction.user.id && !isConfiguredOwner(config, interaction.user.id)) {
         return interaction.editReply({
             content: `> ${config.emojis.lock} **ปฏิเสธ!** กุญแจผู้บันทึกไม่ตรงกัน`
         });
@@ -957,8 +958,8 @@ async function handleRestoreConfirm(interaction, sessionManager) {
     (async () => {
         try {
             const backup = await sessionManager.SnapshotModel.findOne({ snapshotId });
-            const isOwner = interaction.user.id === interaction.guild.ownerId || interaction.user.id === config.system.ownerId;
-            const ownsBackup = backup?.Backup_Owner_ID === interaction.user.id || interaction.user.id === config.system.ownerId;
+            const isOwner = interaction.user.id === interaction.guild.ownerId || isConfiguredOwner(config, interaction.user.id);
+            const ownsBackup = backup?.Backup_Owner_ID === interaction.user.id || isConfiguredOwner(config, interaction.user.id);
             const botIsAdmin = interaction.guild.members.me.permissions.has(PermissionFlagsBits.Administrator);
             const backupData = await sessionManager.loadSnapshotData(backup);
             if (!isOwner || !ownsBackup || !botIsAdmin) {

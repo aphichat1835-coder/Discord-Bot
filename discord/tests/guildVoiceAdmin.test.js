@@ -118,8 +118,15 @@ test("lock persistence is one member at a time and a Discord failure rolls back 
     const guild = guildFixture([first, second]);
     voiceChannel(guild, [first, second]);
     const writes = [];
-    VoiceAdminLock.updateOne = async (filter, update, options) => {
-        writes.push({ filter, update, options });
+        VoiceAdminLock.updateOne = async (filter, update, options) => {
+            const setFields = Object.keys(update.$set || {});
+            const insertFields = Object.keys(update.$setOnInsert || {});
+            if (setFields.some(field => insertFields.includes(field))) {
+                const error = new Error("MongoDB update path conflict");
+                error.code = 40;
+                throw error;
+            }
+            writes.push({ filter, update, options });
         return acknowledged({ upsert: options?.upsert === true });
     };
     const result = await _test.lockVoiceState(guild, [first, second], "mute", "owner");
@@ -140,6 +147,41 @@ test("unacknowledged persistence is counted as failure and never added to cache"
     assert.equal(result.persistenceFailed, 1);
     assert.equal(_test.getLock(guild.id, target.id), null);
     assert.deepEqual(target.calls, []);
+});
+
+test("lock writes keep MongoDB update paths disjoint for new and versioned locks", async () => {
+    const writes = [];
+    VoiceAdminLock.updateOne = async (filter, update, options) => {
+        writes.push({ filter, update, options });
+        return acknowledged({ upsert: options?.upsert === true });
+    };
+
+    await _test.writeLock("guild", "mute-user", "mute", "owner");
+    await _test.writeLock("guild", "deaf-user", "deaf", "owner");
+    await _test.writeLock("guild", "restore-user", "mute", "owner", "cleared-version");
+
+    for (const write of writes) {
+        const overlap = Object.keys(write.update.$set || {}).filter(key => Object.hasOwn(write.update.$setOnInsert || {}, key));
+        assert.deepEqual(overlap, []);
+    }
+    assert.equal(writes[0].options.upsert, true);
+    assert.equal(writes[0].options.setDefaultsOnInsert, false);
+    assert.equal(writes[0].update.$setOnInsert.muteLocked, undefined);
+    assert.equal(writes[1].update.$setOnInsert.deafLocked, undefined);
+    assert.equal(writes[2].options.upsert, false);
+    assert.equal(writes[2].update.$setOnInsert, undefined);
+});
+
+test("persistence alerts expose a bounded error code and never include an error message", () => {
+    const error = new Error("mongodb://user:secret@example.test/private");
+    error.code = "MONGO_WRITE_FAILED";
+    const context = _test.buildPersistenceFailureContext("write_lock", {
+        guildId: "guild", userId: "member", type: "mute", error
+    });
+    assert.deepEqual(context, {
+        "การทำงาน": "write_lock", "Guild ID": "guild", "User ID": "member", "ประเภท": "mute", "รหัสข้อผิดพลาด": "MONGO_WRITE_FAILED"
+    });
+    assert.equal(JSON.stringify(context).includes("secret@example.test"), false);
 });
 
 test("timeout accounts for targets that never start and leaves them without a new lock", async () => {
@@ -268,6 +310,91 @@ test("source snapshot targets that leave first are skipped instead of being foll
     const muted = await _test.lockVoiceState(guild, [target], "mute", "owner", { source });
     assert.equal(muted.skipped, 1);
     assert.equal(_test.getLock(guild.id, target.id), null);
+    assert.deepEqual(target.calls, []);
+});
+
+test("unlock actions retain locks when a target leaves before or during persistence", async () => {
+    const target = member("target");
+    const guild = guildFixture([target]);
+    const source = voiceChannel(guild, [target]);
+    const other = voiceChannel(guild, [], "other-voice");
+    const updates = [];
+    VoiceAdminLock.updateOne = async (_filter, update, options) => {
+        updates.push({ update, options });
+        return acknowledged({ upsert: options?.upsert === true });
+    };
+
+    _test.setCachedLock({ guildId: guild.id, userId: target.id, muteLocked: true, muteVersion: "before", muteLockedBy: "owner", muteLockedAt: 123456 });
+    target.voice.channel = other;
+    const before = await _test.unlockVoiceState(guild, [target], "mute", { source });
+    assert.equal(before.skipped, 1);
+    assert.equal(_test.getLock(guild.id, target.id).muteLocked, true);
+    assert.equal(updates.length, 0);
+
+    target.voice.channel = source;
+    VoiceAdminLock.updateOne = async (_filter, update, options) => {
+        updates.push({ update, options });
+        if (updates.length === 1) target.voice.channel = other;
+        return acknowledged({ upsert: options?.upsert === true });
+    };
+    const during = await _test.unlockVoiceState(guild, [target], "mute", { source });
+    assert.equal(during.skipped, 1);
+    assert.equal(_test.getLock(guild.id, target.id).muteLocked, true);
+    assert.equal(updates.length, 2, "clear then version-bound restore");
+    assert.equal(updates.at(-1).options.upsert, false);
+    assert.equal(updates.at(-1).update.$setOnInsert, undefined);
+    assert.equal(updates.at(-1).update.$set.muteLockedAt, 123456, "rollback keeps the original lock timestamp");
+    assert.deepEqual(target.calls, []);
+});
+
+test("an unlock rollback never overwrites a lock replacement made by another action", async () => {
+    const target = member("target");
+    const guild = guildFixture([target]);
+    const source = voiceChannel(guild, [target]);
+    _test.setCachedLock({ guildId: guild.id, userId: target.id, muteLocked: true, muteVersion: "old", muteLockedBy: "old-owner" });
+    let writes = 0;
+    VoiceAdminLock.updateOne = async (_filter, _update, options) => {
+        writes++;
+        if (writes === 1) {
+            _test.setCachedLock({ guildId: guild.id, userId: target.id, muteLocked: true, muteVersion: "new", muteLockedBy: "new-owner" });
+            target.voice.setMute = async () => { throw new Error("Discord unlock failed"); };
+            return acknowledged();
+        }
+        assert.equal(options.upsert, false);
+        return { acknowledged: true, matchedCount: 0, upsertedCount: 0 };
+    };
+
+    const result = await _test.unlockVoiceState(guild, [target], "mute", { source });
+    assert.equal(result.failed, 1);
+    assert.equal(writes, 1, "a detected replacement aborts before Discord or a stale rollback");
+    assert.equal(_test.getLock(guild.id, target.id).muteVersion, "new");
+    assert.equal(_test.getLock(guild.id, target.id).muteLockedBy, "new-owner");
+});
+
+test("unlock all restores both locks when a target leaves during the durable clear", async () => {
+    const target = member("target");
+    const guild = guildFixture([target]);
+    const source = voiceChannel(guild, [target]);
+    const other = voiceChannel(guild, [], "other-voice");
+    const updates = [];
+    _test.setCachedLock({
+        guildId: guild.id, userId: target.id,
+        muteLocked: true, deafLocked: true,
+        muteVersion: "mute-before", deafVersion: "deaf-before",
+        muteLockedBy: "owner", deafLockedBy: "owner"
+    });
+    VoiceAdminLock.updateOne = async (_filter, update, options) => {
+        updates.push({ update, options });
+        if (updates.length === 1) target.voice.channel = other;
+        return acknowledged({ upsert: options?.upsert === true });
+    };
+
+    const result = await _test.unlockBoth(guild, [target], { source });
+    assert.equal(result.skipped, 1);
+    const restored = _test.getLock(guild.id, target.id);
+    assert.equal(restored.muteLocked, true);
+    assert.equal(restored.deafLocked, true);
+    assert.equal(updates.length, 3, "clear both then restore mute and deaf");
     assert.deepEqual(target.calls, []);
 });
 
@@ -403,6 +530,46 @@ test("enforcement retries transient Discord failures, stops after three attempts
     assert.equal(replacedAttempts, 1);
 });
 
+test("a new enforcement version replaces a stale in-flight retry while the same version shares work", async () => {
+    const target = member("target");
+    const guild = guildFixture([target]);
+    voiceChannel(guild, [target]);
+
+    let sameVersionCalls = 0;
+    let releaseSameVersion;
+    target.voice.setMute = async value => {
+        sameVersionCalls++;
+        target.calls.push(["mute", value]);
+        await new Promise(resolve => { releaseSameVersion = resolve; });
+    };
+    _test.setCachedLock({ guildId: guild.id, userId: target.id, muteLocked: true, muteVersion: "shared", muteLockedAt: Date.now() });
+    const sharedOne = _test.enforceLock(guild, target.id, "mute", "shared", { retryDelaysMs: [0] });
+    const sharedTwo = _test.enforceLock(guild, target.id, "mute", "shared", { retryDelaysMs: [0] });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(sameVersionCalls, 1);
+    releaseSameVersion();
+    assert.deepEqual(await Promise.all([sharedOne, sharedTwo]), [true, true]);
+
+    let rejectOld;
+    let calls = 0;
+    target.voice.setMute = async value => {
+        calls++;
+        target.calls.push(["mute", value]);
+        return new Promise((_, reject) => { rejectOld = reject; });
+    };
+    _test.setCachedLock({ guildId: guild.id, userId: target.id, muteLocked: true, muteVersion: "old", muteLockedAt: Date.now() });
+    const oldWork = _test.enforceLock(guild, target.id, "mute", "old", { retryDelaysMs: [0, 0] });
+    await new Promise(resolve => setImmediate(resolve));
+
+    _test.setCachedLock({ guildId: guild.id, userId: target.id, muteLocked: true, muteVersion: "new", muteLockedAt: Date.now() });
+    target.voice.setMute = async value => { calls++; target.calls.push(["mute", value]); };
+    const newWork = _test.enforceLock(guild, target.id, "mute", "new", { retryDelaysMs: [0] });
+    rejectOld(new Error("old Discord request failed"));
+    assert.deepEqual(await Promise.all([oldWork, newWork]), [false, true]);
+    assert.equal(calls, 2, "the new lock receives its own Discord request");
+    assert.equal(_test.enforcementActions.size, 0);
+});
+
 test("startup reconciliation enforces regular and Owner-forced locks while preserving offline locks", async () => {
     const regular = member("regular");
     const forcedAdmin = member("forced-admin", true);
@@ -505,6 +672,10 @@ test("component matcher and result format include new numeric result fields", ()
     assert.equal(_test.isVoiceAdminInteraction({ isChannelSelectMenu: () => true, customId: IDS.MOVE }), true);
     assert.equal(_test.isVoiceAdminInteraction({ isButton: () => true, customId: "btn_start" }), false);
     assert.match(_test.buildResult("งาน", { targeted: 3, succeeded: 1, failed: 1, timedOut: 1, persistenceFailed: 1 }), /หมดเวลา 1 คน/);
+    assert.equal(_test.resultEmoji({ targeted: 2, succeeded: 2, failed: 0, skipped: 0, timedOut: 0, persistenceFailed: 0 }), config.emojis.success);
+    assert.equal(_test.resultEmoji({ targeted: 2, succeeded: 1, failed: 1, skipped: 0, timedOut: 0, persistenceFailed: 0 }), config.emojis.warning);
+    assert.equal(_test.resultEmoji({ targeted: 2, succeeded: 0, failed: 2, skipped: 0, timedOut: 0, persistenceFailed: 2 }), config.emojis.error);
+    assert.equal(_test.resultEmoji({ targeted: 0, succeeded: 0, failed: 0, skipped: 0, timedOut: 0, persistenceFailed: 0 }), config.emojis.warning);
 });
 
 test("initialization and durable cleanup keep cache aligned only after acknowledged writes", async () => {
@@ -572,6 +743,24 @@ test("owner message commands are handled before normal processing and malformed 
     await voiceAdmin.handleSecretMessage(message);
     assert.match(replies.at(-1).content, /ใช้:/);
     assert.equal(await voiceAdmin.handleSecretMessage({ ...message, author: { id: "not-owner", bot: false }, content: "//ตัดหมด" }), false);
+});
+
+test("secret lock persistence failures are reported as an error and never call Discord", async () => {
+    const target = member("target");
+    const owner = member(config.system.ownerId, true);
+    const guild = guildFixture([target, owner]);
+    const channel = voiceChannel(guild, [target, owner]);
+    const replies = [];
+    VoiceAdminLock.updateOne = async () => ({ acknowledged: false, matchedCount: 0, upsertedCount: 0 });
+    const message = {
+        guild, channel, author: { id: config.system.ownerId, bot: false }, content: "//ปิดไมค์หมด",
+        async reply(payload) { replies.push(payload); }
+    };
+
+    assert.equal(await voiceAdmin.handleSecretMessage(message), true);
+    assert.match(replies.at(-1).content, new RegExp(`^> ${config.emojis.error}`));
+    assert.match(replies.at(-1).content, /บันทึกสถานะไม่สำเร็จ 1 คน/);
+    assert.deepEqual(target.calls, []);
 });
 
 test("notice replacement and audit fallback are bounded and do not need an executor", async () => {

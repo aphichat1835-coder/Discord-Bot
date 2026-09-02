@@ -2,6 +2,17 @@
 
 ## [Unreleased] - Unified Bot And Verification Runtime 2026-07-16
 
+- Fixed Voice Admin durable lock writes so MongoDB never receives overlapping
+  update paths. Unlock actions now preserve and restore locks when a member
+  leaves the source room during a state change, latest lock versions receive
+  their own enforcement work, and result messages distinguish complete,
+  partial, and failed bulk actions accurately.
+
+- Moved the production bot Owner identities to required `OWNER_ID` environment
+  configuration. It accepts one or more comma-separated Discord User IDs;
+  startup rejects a missing or malformed value instead of using the
+  source-config fallback.
+
 - Reworked Voice Admin bulk work from one member plus a fixed 500ms pause at a
   time into eight bounded per-guild workers with a twelve-member shared runtime
   cap. Discord REST rate-limit handling now determines the pace; targets are

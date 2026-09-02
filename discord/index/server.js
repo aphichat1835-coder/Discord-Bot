@@ -122,6 +122,7 @@ function buildEnvReadiness(env = process.env) {
         MONGO_URI: !!env.MONGO_URI,
         API_SECRET: !!env.API_SECRET,
         TOKEN_MANAGER: !!env.TOKEN_MANAGER,
+        OWNER_ID: !!env.OWNER_ID,
         DASHBOARD_PIN: !!env.DASHBOARD_PIN,
         WEBHOOK_LOG_URL: !!env.WEBHOOK_LOG_URL,
         ALERT_WEBHOOK_URL: !!env.ALERT_WEBHOOK_URL

@@ -1,6 +1,7 @@
 const crypto = require("node:crypto");
 const { PermissionFlagsBits } = require("discord.js");
 const config = require("../config.json");
+const { isConfiguredOwner } = require("../core/env");
 const {
     requireBotPermission,
     safeDefer,
@@ -35,7 +36,7 @@ function getMemberRoles(member) {
 /** Determines whether an actor is the guild owner or the configured bot owner. */
 function isGuildOwner(actorId, guild) {
     return String(actorId || "") === String(guild?.ownerId || "") ||
-        String(actorId || "") === String(config.system.ownerId || "");
+        isConfiguredOwner(config, actorId);
 }
 
 /** Identifies the guild's built-in @everyone role by ID. */

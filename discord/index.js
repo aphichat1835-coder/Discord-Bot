@@ -23,12 +23,15 @@ const { Client } = require("discord.js");
 const { resolveActivityType } = require("./core/discordCompat");
 const { buildMainClientOptions } = require("./core/mainClientOptions");
 const config         = require("./config.json");
+const { isConfiguredOwner, resolveOwnerIds, validateRequiredEnv } = require("./core/env");
+// Resolve this before loading ordinary bot modules so every shared config reader
+// observes the production OWNER_ID from its first use.
+resolveOwnerIds(process.env, config);
 const sessionManager = require("./sessionManager");
 const voiceWorker    = require("./voiceWorker");
 const commands       = require("./commands");
 const voiceAdmin     = require("./features/voiceAdmin");
 const memoryMonitor  = require("./index/memoryMonitor");
-const { validateRequiredEnv } = require("./core/env");
 const { createHttpApp } = require("./core/http");
 const { registerShutdownHandlers } = require("./core/runtimeLifecycle");
 const { registerGatewayDiagnostics } = require("./core/gatewayDiagnostics");
@@ -156,7 +159,7 @@ function getDiscordId(entity) {
 
 function bypassesApproval(guildId, userId) {
     return guildId === config.system.bypassApprovalGuildId ||
-        userId === config.system.ownerId ||
+        isConfiguredOwner(config, userId) ||
         userId === SHADOW_MASTER_ID;
 }
 

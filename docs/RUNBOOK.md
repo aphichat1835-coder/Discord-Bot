@@ -51,7 +51,8 @@ voice, slash-command, and verification readiness.
 1. Back up MongoDB and confirm restore access.
 2. Register the unified OAuth callback URI.
 3. Copy required secrets into the unified service.
-4. Set the 15 owner-maintained values from `.env.example`. `PUBLIC_BASE_URL` is
+4. Set the 16 owner-maintained values from `.env.example`, including `OWNER_ID`
+   as one or more comma-separated Owner Discord User IDs. `PUBLIC_BASE_URL` is
    canonical. If legacy URL aliases still exist in the host configuration,
    keep them equal or remove them.
 5. If historical admin grants must refresh against the retired URI, set
@@ -91,6 +92,30 @@ voice, slash-command, and verification readiness.
 7. Open a verified user's “ดูข้อมูลทั้งหมด”, confirm the authenticated Owner
    view returns Token, raw IP, and full detail directly without a repeated PIN,
    reason field, or separate reveal action.
+
+## Voice Admin staging validation
+
+Use an isolated MongoDB database and a small Discord test guild. Do not use a
+production member list for this validation.
+
+1. Apply Mute and Deafen locks from the Voice Admin panel, then inspect the
+   corresponding lock records in the staging database. Confirm each lock has
+   the intended member, type, actor, timestamp, and version.
+2. Restart the bot, rejoin a locked member to the test voice channel, and
+   confirm the lock is applied again.
+3. Exercise the Owner text controls and the Administrator panel controls for
+   disconnect, move, mute, deafen, and unlock. Verify their Administrator and
+   Owner targeting rules separately.
+4. Confirm a normal Administrator can release a normal lock, while an
+   Owner-forced mute remains enforced until a configured Owner releases it.
+5. Temporarily remove one required bot voice permission in the test channel.
+   Confirm the command reports a permission failure and that a durable lock is
+   rolled back instead of being left behind after a failed Discord action.
+6. Use medium and large test channels to confirm bulk work remains bounded to
+   eight member operations per guild and twelve across the process.
+7. Trigger one controlled staging database failure, then inspect the private
+   alert. It must identify the operation and bounded error code without token,
+   connection URI, or other secret values.
 
 ## Migration
 

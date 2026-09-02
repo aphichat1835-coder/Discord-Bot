@@ -450,8 +450,8 @@ Release/deployment verification order:
 
 Authoritative placeholders are in `.env.example`.
 
-The Owner maintains exactly 15 values: `NODE_ENV`, `MONGO_URI`,
-`TOKEN_MANAGER`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`,
+The Owner maintains exactly 16 values: `NODE_ENV`, `MONGO_URI`,
+`TOKEN_MANAGER`, `OWNER_ID`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`,
 `ENCRYPTION_KEY`, `API_SECRET`, `VERIFY_STATE_SECRET`, `DASHBOARD_PIN`,
 `SHADOW_SESSION_SECRET`, `SHADOW_PORTAL_PIN`, `PUBLIC_BASE_URL`,
 `WEBHOOK_LOG_URL`, `ALERT_WEBHOOK_URL`, and `TRUST_PROXY`.

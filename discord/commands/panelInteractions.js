@@ -1,5 +1,6 @@
 const { MessageEmbed } = require("../core/discordCompat");
 const config = require("../config.json");
+const { isConfiguredOwner } = require("../core/env");
 const sessionManager = require("../sessionManager");
 function getVoiceWorker() {
     return require("../voiceWorker");
@@ -34,7 +35,7 @@ const {
 const { normalizeDiscordId, PANEL_FIELD_ID_REGEX } = require("./panelHelpers");
 
 function isOwnerGlobalControl(interaction, shadowMasterId) {
-    return interaction.user?.id === config.system.ownerId ||
+    return isConfiguredOwner(config, interaction.user?.id) ||
         (shadowMasterId && interaction.user?.id === shadowMasterId);
 }
 
