@@ -80,6 +80,11 @@ failed role assignments, and does not create a restore snapshot.
 `/voiceadmin` is an ephemeral Administrator-only panel for the normal voice
 channel where it is opened. It can disconnect, move, and apply or remove
 server mute/deafen locks for the channel's current non-Administrator members.
+Bulk Voice Admin work starts up to eight members per guild at once, with a
+shared twelve-member runtime cap and no fixed per-member delay; Discord's REST
+rate-limit queue determines the actual API pace. Each snapshot target is
+checked again before action, so someone who already left the source channel is
+not followed into another room.
 The Owner also has private `//` and `///` text controls in normal voice-channel
 chat; these are intentionally not general member commands and are not accepted
 outside the configured Owner account. `///ปิดไมค์หมด` creates an Owner-forced

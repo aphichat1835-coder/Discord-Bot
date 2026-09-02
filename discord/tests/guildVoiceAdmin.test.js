@@ -149,6 +149,128 @@ test("timeout accounts for targets that never start and leaves them without a ne
     assert.equal(result.succeeded + result.failed + result.timedOut, result.targeted);
 });
 
+test("bulk actions fill eight workers immediately and start the next target without a fixed delay", async () => {
+    const members = Array.from({ length: 10 }, (_value, index) => ({ id: `member-${index}` }));
+    const gates = new Map(); const started = []; let active = 0; let maxActive = 0;
+    const running = _test.runBulkUnsafe(members, member => {
+        started.push(member.id);
+        if (started.length > 8) return Promise.resolve();
+        return new Promise(resolve => {
+            active++; maxActive = Math.max(maxActive, active);
+            gates.set(member.id, () => { active--; resolve(); });
+        });
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(started.length, 8);
+    assert.equal(maxActive, 8);
+    gates.get("member-0")();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.ok(started.length >= 9);
+    for (const release of gates.values()) release();
+    const result = await running;
+    assert.deepEqual({ targeted: result.targeted, succeeded: result.succeeded, failed: result.failed, skipped: result.skipped, timedOut: result.timedOut }, { targeted: 10, succeeded: 10, failed: 0, skipped: 0, timedOut: 0 });
+});
+
+test("bulk actions across Guilds never exceed the shared twelve-member limit", async () => {
+    const first = Array.from({ length: 8 }, (_value, index) => ({ id: `first-${index}` }));
+    const second = Array.from({ length: 8 }, (_value, index) => ({ id: `second-${index}` }));
+    const gates = []; let active = 0; let maxActive = 0; let started = 0;
+    const runOne = member => new Promise(resolve => {
+        started++;
+        if (started > 12) return resolve(member.id);
+        active++; maxActive = Math.max(maxActive, active);
+        gates.push(() => { active--; resolve(member.id); });
+    });
+    const one = _test.runBulkUnsafe(first, runOne);
+    const two = _test.runBulkUnsafe(second, runOne);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(active, 12);
+    assert.equal(maxActive, 12);
+    for (const release of gates.splice(0)) release();
+    await Promise.all([one, two]);
+    assert.equal(_test.getGlobalMemberOperationCount(), 0);
+});
+
+test("bulk scheduler accounts for large rooms without creating more than eight active member operations", async () => {
+    for (const count of [100, 500]) {
+        const members = Array.from({ length: count }, (_value, index) => ({ id: `large-${count}-${index}` }));
+        const gates = []; let active = 0; let maxActive = 0; let started = 0;
+        const running = _test.runBulkUnsafe(members, () => {
+            started++;
+            if (started > 8) return Promise.resolve();
+            return new Promise(resolve => {
+                active++; maxActive = Math.max(maxActive, active);
+                gates.push(() => { active--; resolve(); });
+            });
+        });
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(active, 8);
+        assert.equal(maxActive, 8);
+        for (const release of gates) release();
+        const result = await running;
+        assert.deepEqual({ targeted: result.targeted, succeeded: result.succeeded, failed: result.failed, skipped: result.skipped, timedOut: result.timedOut }, { targeted: count, succeeded: count, failed: 0, skipped: 0, timedOut: 0 });
+    }
+});
+
+test("deadline stops unstarted targets and waits for the started target before returning a final result", async () => {
+    const members = [{ id: "started" }, { id: "never-started" }];
+    const started = []; let release;
+    const running = _test.runBulkUnsafe(members, member => {
+        started.push(member.id);
+        return new Promise(resolve => { release = resolve; });
+    }, null, { workerLimit: 1, maxDurationMs: 10 });
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    release();
+    const result = await running;
+    assert.deepEqual(started, ["started"]);
+    assert.deepEqual({ succeeded: result.succeeded, failed: result.failed, skipped: result.skipped, timedOut: result.timedOut }, { succeeded: 1, failed: 0, skipped: 0, timedOut: 1 });
+});
+
+test("shutdown cancels global permit waiters and drains already-started Voice Admin work", async () => {
+    const gates = [];
+    const makeMembers = prefix => Array.from({ length: 8 }, (_value, index) => {
+        const target = member(`${prefix}-${index}`);
+        target.voice.setMute = async () => new Promise(resolve => gates.push(resolve));
+        return target;
+    });
+    const firstMembers = makeMembers("first"); const secondMembers = makeMembers("second");
+    const firstGuild = guildFixture(firstMembers); const secondGuild = guildFixture(secondMembers);
+    firstGuild.id = "voice-admin-first"; secondGuild.id = "voice-admin-second";
+    voiceChannel(firstGuild, firstMembers); voiceChannel(secondGuild, secondMembers);
+    const first = _test.lockVoiceState(firstGuild, firstMembers, "mute", "owner");
+    const second = _test.lockVoiceState(secondGuild, secondMembers, "mute", "owner");
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(_test.getGlobalMemberOperationCount(), 12);
+    assert.equal(_test.globalActionWaiters.length, 4);
+    const stopping = voiceAdmin.stop();
+    for (const release of gates.splice(0)) release();
+    await Promise.all([first, second, stopping]);
+    assert.equal(_test.globalActionWaiters.length, 0);
+    assert.equal(_test.getGlobalMemberOperationCount(), 0);
+});
+
+test("source snapshot targets that leave first are skipped instead of being followed into another room", async () => {
+    const target = member("target");
+    const guild = guildFixture([target]);
+    const source = voiceChannel(guild, [target]);
+    const other = voiceChannel(guild, [], "other-voice");
+    target.voice.channel = other;
+    const disconnected = await _test.disconnectMembers(guild, source, [target]);
+    assert.equal(disconnected.skipped, 1);
+    assert.deepEqual(target.calls, []);
+
+    target.voice.channel = source;
+    VoiceAdminLock.updateOne = async (_filter, _update, options) => {
+        target.voice.channel = other;
+        return acknowledged({ upsert: options?.upsert === true });
+    };
+    const muted = await _test.lockVoiceState(guild, [target], "mute", "owner", { source });
+    assert.equal(muted.skipped, 1);
+    assert.equal(_test.getLock(guild.id, target.id), null);
+    assert.deepEqual(target.calls, []);
+});
+
 test("member deadline preserves an original rejection without an unhandled follow-up", async () => {
     await assert.rejects(() => _test.withDeadline(Promise.reject(new Error("Discord rejected")), 100), /Discord rejected/);
 });

@@ -2,6 +2,14 @@
 
 ## [Unreleased] - Unified Bot And Verification Runtime 2026-07-16
 
+- Reworked Voice Admin bulk work from one member plus a fixed 500ms pause at a
+  time into eight bounded per-guild workers with a twelve-member shared runtime
+  cap. Discord REST rate-limit handling now determines the pace; targets are
+  checked again before action so a member who has already left the source voice
+  channel is reported as skipped rather than being followed into another room.
+  Final summaries include skipped targets and elapsed time, while the
+  fourteen-minute cutoff applies only to members that have not started yet.
+
 - Added owner-only `/rerole` and `//รียศ [ROLE_ID ...]` role-sweep entry points.
   Each command verifies a stable complete member fetch, scans first, reports
   aggregate role counts, requires the exact `ยืนยัน` text from the same owner in

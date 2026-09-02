@@ -6,7 +6,8 @@ const config = require("../config.json");
 const { markCommandAccepted } = require("../guards/commandGuards");
 const { sendWebhookEvent } = require("../core/webhooks");
 
-const ACTION_DELAY_MS = 500;
+const ACTION_WORKER_LIMIT = 8;
+const GLOBAL_ACTION_WORKER_LIMIT = 12;
 const ACTION_MAX_DURATION_MS = 14 * 60 * 1000;
 const NOTICE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const AUDIT_WAIT_MS = 1500;
@@ -66,9 +67,12 @@ const enforcementActions = new Map();
 const sleepTimers = new Set();
 const retiredGuilds = new Set();
 const retiredMembers = new Set();
+const globalActionWaiters = [];
+let activeGlobalMemberOperations = 0;
 let initialized = false;
 let stopping = false;
 let actionSequence = 0;
+const BULK_SKIPPED = Symbol("VOICE_ADMIN_BULK_SKIPPED");
 
 function lockKey(guildId, userId) { return `${guildId}:${userId}`; }
 function noticeKey(guildId, actorId, targetId) { return `${guildId}:${actorId}:${targetId}`; }
@@ -385,16 +389,56 @@ function pause(ms, controller) {
         pending.timer.unref?.(); sleepTimers.add(pending); controller?.sleeps.add(pending);
     });
 }
+function settleGlobalWaiter(waiter, granted) {
+    if (!waiter || waiter.settled) return;
+    waiter.settled = true;
+    waiter.controller?.permitWaiters?.delete(waiter);
+    waiter.resolve(granted);
+}
+function removeGlobalWaiter(waiter) {
+    const index = globalActionWaiters.indexOf(waiter);
+    if (index >= 0) globalActionWaiters.splice(index, 1);
+}
+function acquireGlobalActionPermit(controller) {
+    if (stopping || controller?.cancelled) return Promise.resolve(false);
+    if (activeGlobalMemberOperations < GLOBAL_ACTION_WORKER_LIMIT) {
+        activeGlobalMemberOperations++;
+        return Promise.resolve(true);
+    }
+    return new Promise(resolve => {
+        const waiter = { controller, resolve, settled: false };
+        controller?.permitWaiters?.add(waiter);
+        globalActionWaiters.push(waiter);
+    });
+}
+function releaseGlobalActionPermit() {
+    if (activeGlobalMemberOperations > 0) activeGlobalMemberOperations--;
+    while (globalActionWaiters.length && activeGlobalMemberOperations < GLOBAL_ACTION_WORKER_LIMIT) {
+        const waiter = globalActionWaiters.shift();
+        if (!waiter || waiter.settled || stopping || waiter.controller?.cancelled) {
+            settleGlobalWaiter(waiter, false);
+            continue;
+        }
+        activeGlobalMemberOperations++;
+        settleGlobalWaiter(waiter, true);
+        break;
+    }
+}
 function cancelController(controller) {
     controller.cancelled = true;
     for (const pending of controller.sleeps) { clearTimeout(pending.timer); sleepTimers.delete(pending); pending.resolve(false); }
     controller.sleeps.clear();
+    for (const waiter of controller.permitWaiters || []) {
+        removeGlobalWaiter(waiter);
+        settleGlobalWaiter(waiter, false);
+    }
+    controller.permitWaiters?.clear();
 }
 async function withGuildAction(guildId, work) {
     assertRunnable();
     const id = String(guildId);
     if (activeGuildActions.has(id)) throw makeError("VOICE_ADMIN_ACTION_IN_PROGRESS");
-    const controller = { cancelled: false, sleeps: new Set(), promise: null };
+    const controller = createActionController();
     const promise = Promise.resolve().then(() => work(controller));
     controller.promise = promise; activeGuildActions.set(id, controller);
     try { return await promise; } finally { cancelController(controller); if (activeGuildActions.get(id) === controller) activeGuildActions.delete(id); }
@@ -406,28 +450,53 @@ async function withDeadline(promise, remainingMs) {
     try { return await Promise.race([Promise.resolve(promise), timeout]); }
     finally { clearTimeout(timer); Promise.resolve(promise).catch(() => {}); }
 }
-function newResult(members) { return { targeted: members.length, succeeded: 0, failed: 0, timedOut: 0, persistenceFailed: 0, failedMembers: [] }; }
-function createActionController() { return { cancelled: false, sleeps: new Set(), promise: null }; }
+function newResult(members) { return { targeted: members.length, succeeded: 0, failed: 0, skipped: 0, timedOut: 0, persistenceFailed: 0, failedMembers: [], durationMs: 0 }; }
+function createActionController() { return { cancelled: false, sleeps: new Set(), permitWaiters: new Set(), promise: null }; }
 async function runBulkUnsafe(members, runOne, controller = null, options = {}) {
     const activeController = controller || createActionController();
     const result = newResult(members); const startedAt = options.startedAt || Date.now(); const maxDurationMs = options.maxDurationMs || ACTION_MAX_DURATION_MS;
-    for (let index = 0; index < members.length; index++) {
-        const remaining = maxDurationMs - (Date.now() - startedAt);
-        if (stopping || activeController.cancelled || remaining <= 0) { result.timedOut += members.length - index; break; }
-        try { await withDeadline(runOne(members[index]), remaining); result.succeeded++; }
-        catch (error) {
-            if (error?.code === "VOICE_ADMIN_MEMBER_TIMEOUT") { result.timedOut += members.length - index; break; }
-            result.failed++; result.failedMembers.push(String(members[index].id));
-            if (error?.code === "VOICE_ADMIN_PERSISTENCE_FAILED") result.persistenceFailed++;
+    const requestedWorkers = Number(options.workerLimit || ACTION_WORKER_LIMIT);
+    const workerLimit = Math.max(1, Math.min(Number.isFinite(requestedWorkers) ? Math.floor(requestedWorkers) : ACTION_WORKER_LIMIT, members.length || 1));
+    let nextIndex = 0;
+    const claimNext = () => {
+        if (stopping || activeController.cancelled || Date.now() - startedAt >= maxDurationMs || nextIndex >= members.length) return null;
+        const index = nextIndex;
+        nextIndex++;
+        return index;
+    };
+    const worker = async () => {
+        while (true) {
+            const index = claimNext();
+            if (index === null) return;
+            const permit = await acquireGlobalActionPermit(activeController);
+            if (!permit || stopping || activeController.cancelled || Date.now() - startedAt >= maxDurationMs) {
+                result.timedOut++;
+                if (permit) releaseGlobalActionPermit();
+                return;
+            }
+            try {
+                const outcome = await runOne(members[index]);
+                if (outcome === BULK_SKIPPED) result.skipped++;
+                else result.succeeded++;
+            } catch (error) {
+                result.failed++; result.failedMembers.push(String(members[index].id));
+                if (error?.code === "VOICE_ADMIN_PERSISTENCE_FAILED") result.persistenceFailed++;
+            } finally {
+                releaseGlobalActionPermit();
+            }
         }
-        if (index < members.length - 1 && !(await pause(ACTION_DELAY_MS, activeController))) { result.timedOut += members.length - index - 1; break; }
-    }
+    };
+    await Promise.all(Array.from({ length: workerLimit }, () => worker()));
+    result.timedOut += members.length - nextIndex;
+    result.durationMs = Math.max(0, Date.now() - startedAt);
     return result;
 }
 function buildResult(action, result) {
     const timeout = result.timedOut ? ` | หมดเวลา ${result.timedOut} คน` : "";
     const persistence = result.persistenceFailed ? ` | บันทึกสถานะไม่สำเร็จ ${result.persistenceFailed} คน` : "";
-    return `**${action}** — เป้าหมาย ${result.targeted} คน | สำเร็จ ${result.succeeded} คน | ล้มเหลว ${result.failed} คน${timeout}${persistence}`;
+    const skipped = result.skipped ? ` | ออกจากห้องก่อนถึงคิว ${result.skipped} คน` : "";
+    const duration = Number.isFinite(result.durationMs) && result.durationMs > 0 ? ` | ใช้เวลา ${(result.durationMs / 1000).toFixed(1)} วินาที` : "";
+    return `**${action}** — เป้าหมาย ${result.targeted} คน | สำเร็จ ${result.succeeded} คน | ล้มเหลว ${result.failed} คน${skipped}${timeout}${persistence}${duration}`;
 }
 
 function getBotMember(guild) { return guild?.members?.me || guild?.members?.cache?.get?.(guild?.client?.user?.id) || null; }
@@ -437,6 +506,11 @@ function botCanInChannel(guild, channel, permission) {
 }
 function sourceMembers(channel, { includeAdministrators = false, excludeId = null } = {}) {
     return Array.from(channel?.members?.values?.() || []).filter(member => (!excludeId || String(member.id) !== String(excludeId)) && (includeAdministrators || !isAdministrator(member, channel.guild)));
+}
+function isStillInSource(member, source) {
+    if (!source) return true;
+    const channelId = member?.voice?.channelId || member?.voice?.channel?.id || null;
+    return String(channelId || "") === String(source.id);
 }
 function buildPanel(channel, status = null) {
     const members = Array.from(channel?.members?.values?.() || []); const inChannel = new Set(members.map(member => String(member.id)));
@@ -481,9 +555,14 @@ async function setVoiceBoth(member, enabled, reason) {
 }
 async function lockVoiceState(guild, members, type, actorId, options = {}) {
     return withGuildAction(guild.id, controller => runBulkUnsafe(members, async member => {
+        if (!isStillInSource(member, options.source)) return BULK_SKIPPED;
         const ownerForced = type === "mute" && options.ownerForced === true;
         if (isAdministrator(member, guild) && !ownerForced) return setVoice(member, type, true, "voiceadmin temporary lock");
         const written = await writeLock(guild.id, member.id, type, actorId, undefined, { ownerForced });
+        if (!isStillInSource(member, options.source)) {
+            await clearLockField(guild.id, member.id, type, written.version);
+            return BULK_SKIPPED;
+        }
         try { await setVoice(member, type, true, "voiceadmin lock"); }
         catch (error) {
             try { await clearLockField(guild.id, member.id, type, written.version); }
@@ -492,11 +571,12 @@ async function lockVoiceState(guild, members, type, actorId, options = {}) {
         }
     }, controller));
 }
-async function unlockVoiceState(guild, members, type) {
+async function unlockVoiceState(guild, members, type, options = {}) {
     return withGuildAction(guild.id, controller => runBulkUnsafe(members, async member => {
         const previous = getLock(guild.id, member.id); let cleared = null;
         if (type === "mute" && previous?.muteOwnerForced) throw makeError("VOICE_ADMIN_OWNER_LOCKED");
         if (previous?.[fieldFor(type)]) cleared = await clearLockField(guild.id, member.id, type, previous[metadataFor(type).version]);
+        if (!isStillInSource(member, options.source)) return BULK_SKIPPED;
         try { await setVoice(member, type, false, "voiceadmin unlock"); }
         catch (error) {
             if (cleared && previous?.[fieldFor(type)]) {
@@ -511,10 +591,11 @@ async function unlockVoiceState(guild, members, type) {
         }
     }, controller));
 }
-async function unlockBoth(guild, members) {
+async function unlockBoth(guild, members, options = {}) {
     return withGuildAction(guild.id, controller => runBulkUnsafe(members, async member => {
         const previous = getLock(guild.id, member.id); let cleared = null;
         if (previous) cleared = await clearBothLocks(guild.id, member.id, { mute: previous.muteVersion, deaf: previous.deafVersion });
+        if (!isStillInSource(member, options.source)) return BULK_SKIPPED;
         try { await setVoiceBoth(member, false, "voiceadmin unlock all"); }
         catch (error) {
             const restored = await Promise.allSettled([
@@ -531,16 +612,29 @@ async function unlockBoth(guild, members) {
         }
     }, controller));
 }
-async function disconnectMembers(guild, members) { return withGuildAction(guild.id, controller => runBulkUnsafe(members, member => member.voice.disconnect("voiceadmin disconnect"), controller)); }
-async function moveMembers(guild, source, destination, members) { await ensureBotPermission(guild, source, "move", destination); return withGuildAction(guild.id, controller => runBulkUnsafe(members, member => member.voice.setChannel(destination, "voiceadmin move"), controller)); }
+async function disconnectMembers(guild, sourceOrMembers, maybeMembers = null) {
+    const source = Array.isArray(sourceOrMembers) ? null : sourceOrMembers;
+    const members = Array.isArray(sourceOrMembers) ? sourceOrMembers : maybeMembers;
+    return withGuildAction(guild.id, controller => runBulkUnsafe(members, member => {
+        if (!isStillInSource(member, source)) return BULK_SKIPPED;
+        return member.voice.disconnect("voiceadmin disconnect");
+    }, controller));
+}
+async function moveMembers(guild, source, destination, members) {
+    await ensureBotPermission(guild, source, "move", destination);
+    return withGuildAction(guild.id, controller => runBulkUnsafe(members, member => {
+        if (!isStillInSource(member, source)) return BULK_SKIPPED;
+        return member.voice.setChannel(destination, "voiceadmin move");
+    }, controller));
+}
 async function runPanelAction(interaction, action, destination = null) {
     const channel = interaction.channel; const access = verifyVoiceAdminAccess(interaction.member, channel); if (access) throw makeError(`VOICE_ADMIN_ACCESS:${access}`);
     const members = sourceMembers(channel);
-    if (action === "disconnect") { await ensureBotPermission(interaction.guild, channel, "disconnect"); return disconnectMembers(interaction.guild, members); }
-    if (action === "mute") { await ensureBotPermission(interaction.guild, channel, "mute"); return lockVoiceState(interaction.guild, members, "mute", interaction.user.id); }
-    if (action === "deaf") { await ensureBotPermission(interaction.guild, channel, "deaf"); return lockVoiceState(interaction.guild, members, "deaf", interaction.user.id); }
-    if (action === "unmute") { await ensureBotPermission(interaction.guild, channel, "mute"); return unlockVoiceState(interaction.guild, members, "mute"); }
-    if (action === "undeaf") { await ensureBotPermission(interaction.guild, channel, "deaf"); return unlockVoiceState(interaction.guild, members, "deaf"); }
+    if (action === "disconnect") { await ensureBotPermission(interaction.guild, channel, "disconnect"); return disconnectMembers(interaction.guild, channel, members); }
+    if (action === "mute") { await ensureBotPermission(interaction.guild, channel, "mute"); return lockVoiceState(interaction.guild, members, "mute", interaction.user.id, { source: channel }); }
+    if (action === "deaf") { await ensureBotPermission(interaction.guild, channel, "deaf"); return lockVoiceState(interaction.guild, members, "deaf", interaction.user.id, { source: channel }); }
+    if (action === "unmute") { await ensureBotPermission(interaction.guild, channel, "mute"); return unlockVoiceState(interaction.guild, members, "mute", { source: channel }); }
+    if (action === "undeaf") { await ensureBotPermission(interaction.guild, channel, "deaf"); return unlockVoiceState(interaction.guild, members, "deaf", { source: channel }); }
     if (action === "move") return moveMembers(interaction.guild, channel, destination, members);
     throw makeError("VOICE_ADMIN_ACTION_INVALID");
 }
@@ -602,19 +696,19 @@ async function runSecretVoiceCommand(message, parsed, members) {
     switch (parsed.command) {
         case "ตัดหมด":
             await ensureBotPermission(message.guild, message.channel, "disconnect");
-            return disconnectMembers(message.guild, members);
+            return disconnectMembers(message.guild, message.channel, members);
         case "ย้ายหมด":
             return moveMembers(message.guild, message.channel, await getSecretMoveDestination(message, parsed.argument), members);
         case "ปิดไมค์หมด":
             await ensureBotPermission(message.guild, message.channel, "mute");
-            return lockVoiceState(message.guild, members, "mute", message.author.id, { ownerForced: parsed.includeAdministrators });
+            return lockVoiceState(message.guild, members, "mute", message.author.id, { ownerForced: parsed.includeAdministrators, source: message.channel });
         case "ปิดหูหมด":
             await ensureBotPermission(message.guild, message.channel, "deaf");
-            return lockVoiceState(message.guild, members, "deaf", message.author.id);
+            return lockVoiceState(message.guild, members, "deaf", message.author.id, { source: message.channel });
         case "เปิดหมด":
             await ensureBotPermission(message.guild, message.channel, "mute");
             await ensureBotPermission(message.guild, message.channel, "deaf");
-            return unlockBoth(message.guild, members);
+            return unlockBoth(message.guild, members, { source: message.channel });
         default:
             throw makeError("VOICE_ADMIN_SECRET_COMMAND_INVALID");
     }
@@ -945,6 +1039,7 @@ async function stop() {
     pendingEnforcement.clear(); cachedAuditUnlocks.clear(); processedAuditEntries.clear(); auditWatermarks.clear(); notices.clear();
     for (const controller of activeGuildActions.values()) cancelController(controller);
     for (const controller of enforcementActions.values()) cancelController(controller);
+    for (const waiter of globalActionWaiters.splice(0)) settleGlobalWaiter(waiter, false);
     for (const pending of sleepTimers) { clearTimeout(pending.timer); pending.resolve(false); }
     sleepTimers.clear();
     const active = [...activeGuildActions.values()].map(controller => controller.promise.catch(() => {}));
@@ -953,7 +1048,7 @@ async function stop() {
     let timer;
     await Promise.race([Promise.allSettled([...active, ...enforcement, ...queues]), new Promise(resolve => { timer = setTimeout(resolve, STOP_DRAIN_MS); timer.unref?.(); })]);
     clearTimeout(timer);
-    activeGuildActions.clear(); enforcementActions.clear(); noticeQueues.clear(); retiredGuilds.clear(); retiredMembers.clear(); initialized = false;
+    activeGuildActions.clear(); enforcementActions.clear(); noticeQueues.clear(); retiredGuilds.clear(); retiredMembers.clear(); activeGlobalMemberOperations = 0; initialized = false;
 }
 
 module.exports = {
@@ -961,12 +1056,13 @@ module.exports = {
     handleVoiceAdminCommand, isVoiceAdminInteraction, handleVoiceAdminInteraction, handleSecretMessage,
     handleVoiceStateUpdate, handleAuditLogEntry, handleMemberUpdate, handleMemberRemove, reconcileConnectedLocks,
     _test: {
-        parseSecretCommand, sourceMembers, isVoiceChannel, buildResult, getLock, setCachedLock, lockKey, noticeKey,
+        parseSecretCommand, sourceMembers, isVoiceChannel, isStillInSource, buildResult, getLock, setCachedLock, lockKey, noticeKey,
         changeContains, buildPanel, isAdministrator, verifyVoiceAdminAccess, runBulkUnsafe, withDeadline, isVoiceAdminInteraction,
         operationWasAcknowledged, writeLock, clearLockField, clearBothLocks, clearAllLocksForMember, lockVoiceState,
         unlockVoiceState, unlockBoth, disconnectMembers, moveMembers, ensureBotPermission, runPanelAction,
         sendUnauthorizedNotice, deletePreviousNotice, findRecentAuditUnlock, resolveExecutorMember, scheduleFallback, clearPending, enforceLock, reconcileConnectedLocks,
-        pendingEnforcement, cachedAuditUnlocks, processedAuditEntries, auditWatermarks, enforcementActions, activeGuildActions, notices, noticeQueues, retiredGuilds, retiredMembers, pruneRuntimeCaches,
+        pendingEnforcement, cachedAuditUnlocks, processedAuditEntries, auditWatermarks, enforcementActions, activeGuildActions, notices, noticeQueues, retiredGuilds, retiredMembers, globalActionWaiters, pruneRuntimeCaches,
+        getGlobalMemberOperationCount() { return activeGlobalMemberOperations; },
         setInitialized(value) { initialized = value; stopping = false; },
         reset() {
             for (const pending of pendingEnforcement.values()) clearTimeout(pending.timer);
@@ -974,6 +1070,8 @@ module.exports = {
             for (const controller of enforcementActions.values()) cancelController(controller);
             locksByGuild.clear(); notices.clear(); pendingEnforcement.clear(); cachedAuditUnlocks.clear();
             processedAuditEntries.clear(); auditWatermarks.clear(); enforcementActions.clear(); activeGuildActions.clear(); retiredGuilds.clear(); retiredMembers.clear();
+            for (const waiter of globalActionWaiters.splice(0)) settleGlobalWaiter(waiter, false);
+            activeGlobalMemberOperations = 0;
             noticeQueues.clear(); stopping = false; initialized = false;
         }
     }
