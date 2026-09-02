@@ -211,8 +211,7 @@ function assertRunnable() {
     throw makeError(stopping ? "VOICE_ADMIN_STOPPING" : "VOICE_ADMIN_NOT_INITIALIZED");
 }
 
-async function writeLock(guildId, userId, type, actorId, expectedVersion = undefined, options = {}) {
-    if (isRetiredTarget(guildId, userId)) throw makeError("VOICE_ADMIN_TARGET_RETIRED", "write_lock");
+function buildLockWrite(guildId, userId, type, actorId, expectedVersion, options = {}) {
     const field = fieldFor(type); const meta = metadataFor(type); const version = createVersion(); const now = Date.now();
     const requestedLockedAt = Number(options.lockedAt);
     const lockedAt = Number.isFinite(requestedLockedAt) && requestedLockedAt > 0 ? requestedLockedAt : now;
@@ -233,39 +232,48 @@ async function writeLock(guildId, userId, type, actorId, expectedVersion = undef
             ? { guildId: String(guildId), userId: String(userId), deafLocked: false }
             : { guildId: String(guildId), userId: String(userId), muteLocked: false, muteOwnerForced: false };
     }
+    return {
+        field, meta, version, now, lockedAt, filter, update, upsert,
+        databaseOptions: upsert ? { upsert: true, setDefaultsOnInsert: false } : { upsert: false }
+    };
+}
+function cacheWrittenLock(guildId, userId, type, actorId, options, write) {
+    const previous = getLock(guildId, userId) || { guildId, userId, muteLocked: false, deafLocked: false };
+    return setCachedLock({
+        ...previous, [write.field]: true, [write.meta.by]: actorId, [write.meta.at]: write.lockedAt, [write.meta.version]: write.version,
+        ...(type === "mute" ? { muteOwnerForced: options.ownerForced === true } : {}),
+        lockedBy: actorId, updatedAt: write.now
+    });
+}
+async function discardRetiredLock(guildId, userId, type, write) {
+    try {
+        const removed = await VoiceAdminLock.deleteOne({ guildId: String(guildId), userId: String(userId), [write.meta.version]: write.version });
+        if (!operationWasAcknowledged(removed, { allowDeleteZero: true })) throw makeError("VOICE_ADMIN_PERSISTENCE_FAILED", "discard_retired_lock");
+    } catch (error) {
+        await reportPersistenceFailure("discard_retired_lock", { guildId, userId, type, error });
+        throw makeError("VOICE_ADMIN_PERSISTENCE_FAILED", "discard_retired_lock", error);
+    }
+}
+async function writeLock(guildId, userId, type, actorId, expectedVersion = undefined, options = {}) {
+    if (isRetiredTarget(guildId, userId)) throw makeError("VOICE_ADMIN_TARGET_RETIRED", "write_lock");
+    const write = buildLockWrite(guildId, userId, type, actorId, expectedVersion, options);
     let result;
     try {
-        result = await VoiceAdminLock.updateOne(filter, update, upsert
-            ? { upsert: true, setDefaultsOnInsert: false }
-            : { upsert: false });
+        result = await VoiceAdminLock.updateOne(write.filter, write.update, write.databaseOptions);
     } catch (error) {
         await reportPersistenceFailure("write_lock", { guildId, userId, type, error });
         throw makeError("VOICE_ADMIN_PERSISTENCE_FAILED", "write_lock", error);
     }
-    if (!operationWasAcknowledged(result, { allowUpsert: upsert })) {
+    if (!operationWasAcknowledged(result, { allowUpsert: write.upsert })) {
         if (expectedVersion !== undefined) throw makeError("VOICE_ADMIN_LOCK_CONFLICT", "write_lock");
         await reportPersistenceFailure("write_lock", { guildId, userId, type });
         throw makeError("VOICE_ADMIN_PERSISTENCE_FAILED", "write_lock");
     }
     if (isRetiredTarget(guildId, userId)) {
-        try {
-            const removed = await VoiceAdminLock.deleteOne({ guildId: String(guildId), userId: String(userId), [meta.version]: version });
-            if (!operationWasAcknowledged(removed, { allowDeleteZero: true })) throw makeError("VOICE_ADMIN_PERSISTENCE_FAILED", "discard_retired_lock");
-        } catch (error) {
-            await reportPersistenceFailure("discard_retired_lock", { guildId, userId, type, error });
-            throw makeError("VOICE_ADMIN_PERSISTENCE_FAILED", "discard_retired_lock", error);
-        }
+        await discardRetiredLock(guildId, userId, type, write);
         throw makeError("VOICE_ADMIN_TARGET_RETIRED", "write_lock");
     }
-    const previous = getLock(guildId, userId) || { guildId, userId, muteLocked: false, deafLocked: false };
-    return {
-        version,
-        lock: setCachedLock({
-            ...previous, [field]: true, [meta.by]: actorId, [meta.at]: lockedAt, [meta.version]: version,
-            ...(type === "mute" ? { muteOwnerForced: options.ownerForced === true } : {}),
-            lockedBy: actorId, updatedAt: now
-        })
-    };
+    return { version: write.version, lock: cacheWrittenLock(guildId, userId, type, actorId, options, write) };
 }
 async function clearLockField(guildId, userId, type, expectedVersion = undefined) {
     const field = fieldFor(type); const meta = metadataFor(type); const version = createVersion(); const now = Date.now();
@@ -486,44 +494,49 @@ async function withDeadline(promise, remainingMs) {
 }
 function newResult(members) { return { targeted: members.length, succeeded: 0, failed: 0, skipped: 0, timedOut: 0, persistenceFailed: 0, failedMembers: [], durationMs: 0 }; }
 function createActionController() { return { cancelled: false, sleeps: new Set(), permitWaiters: new Set(), promise: null }; }
-async function runBulkUnsafe(members, runOne, controller = null, options = {}) {
-    const activeController = controller || createActionController();
-    const result = newResult(members); const startedAt = options.startedAt || Date.now(); const maxDurationMs = options.maxDurationMs || ACTION_MAX_DURATION_MS;
+function createBulkRunState(members, controller, options = {}) {
     const requestedWorkers = Number(options.workerLimit || ACTION_WORKER_LIMIT);
     const workerLimit = Math.max(1, Math.min(Number.isFinite(requestedWorkers) ? Math.floor(requestedWorkers) : ACTION_WORKER_LIMIT, members.length || 1));
-    let nextIndex = 0;
-    const claimNext = () => {
-        if (stopping || activeController.cancelled || Date.now() - startedAt >= maxDurationMs || nextIndex >= members.length) return null;
-        const index = nextIndex;
-        nextIndex++;
-        return index;
+    return {
+        controller: controller || createActionController(), result: newResult(members), workerLimit,
+        startedAt: options.startedAt || Date.now(), maxDurationMs: options.maxDurationMs || ACTION_MAX_DURATION_MS, nextIndex: 0
     };
-    const worker = async () => {
-        while (true) {
-            const index = claimNext();
-            if (index === null) return;
-            const permit = await acquireGlobalActionPermit(activeController);
-            if (!permit || stopping || activeController.cancelled || Date.now() - startedAt >= maxDurationMs) {
-                result.timedOut++;
-                if (permit) releaseGlobalActionPermit();
-                return;
-            }
-            try {
-                const outcome = await runOne(members[index]);
-                if (outcome === BULK_SKIPPED) result.skipped++;
-                else result.succeeded++;
-            } catch (error) {
-                result.failed++; result.failedMembers.push(String(members[index].id));
-                if (error?.code === "VOICE_ADMIN_PERSISTENCE_FAILED") result.persistenceFailed++;
-            } finally {
-                releaseGlobalActionPermit();
-            }
+}
+function bulkRunExpired(state) { return stopping || state.controller.cancelled || Date.now() - state.startedAt >= state.maxDurationMs; }
+function claimNextBulkMember(state, members) {
+    if (bulkRunExpired(state) || state.nextIndex >= members.length) return null;
+    return state.nextIndex++;
+}
+function recordBulkOutcome(result, member, outcome, error = null) {
+    if (!error) {
+        if (outcome === BULK_SKIPPED) result.skipped++;
+        else result.succeeded++;
+        return;
+    }
+    result.failed++; result.failedMembers.push(String(member.id));
+    if (error.code === "VOICE_ADMIN_PERSISTENCE_FAILED") result.persistenceFailed++;
+}
+async function runBulkWorker(state, members, runOne) {
+    while (true) {
+        const index = claimNextBulkMember(state, members);
+        if (index === null) return;
+        const permit = await acquireGlobalActionPermit(state.controller);
+        if (!permit || bulkRunExpired(state)) {
+            state.result.timedOut++;
+            if (permit) releaseGlobalActionPermit();
+            return;
         }
-    };
-    await Promise.all(Array.from({ length: workerLimit }, () => worker()));
-    result.timedOut += members.length - nextIndex;
-    result.durationMs = Math.max(0, Date.now() - startedAt);
-    return result;
+        try { recordBulkOutcome(state.result, members[index], await runOne(members[index])); }
+        catch (error) { recordBulkOutcome(state.result, members[index], null, error); }
+        finally { releaseGlobalActionPermit(); }
+    }
+}
+async function runBulkUnsafe(members, runOne, controller = null, options = {}) {
+    const state = createBulkRunState(members, controller, options);
+    await Promise.all(Array.from({ length: state.workerLimit }, () => runBulkWorker(state, members, runOne)));
+    state.result.timedOut += members.length - state.nextIndex;
+    state.result.durationMs = Math.max(0, Date.now() - state.startedAt);
+    return state.result;
 }
 function buildResult(action, result) {
     const timeout = result.timedOut ? ` | หมดเวลา ${result.timedOut} คน` : "";
@@ -588,7 +601,7 @@ function permissionForVoiceAction(action) {
 async function ensureBotPermission(guild, source, action, destination = null) {
     const permission = permissionForVoiceAction(action);
     if (!botCanInChannel(guild, source, permission)) throw makeError("VOICE_ADMIN_BOT_PERMISSION_MISSING");
-    if (action === "move" && (!isVoiceChannel(destination) || destination.id === source.id || !botCanInChannel(guild, destination, PermissionFlagsBits.Connect))) throw makeError("VOICE_ADMIN_DESTINATION_INVALID");
+    if (action === "move" && (!isVoiceChannel(destination) || String(destination.guild?.id) !== String(guild?.id) || destination.id === source.id || !botCanInChannel(guild, destination, PermissionFlagsBits.Connect))) throw makeError("VOICE_ADMIN_DESTINATION_INVALID");
 }
 async function setVoice(member, type, enabled, reason) { return type === "mute" ? member.voice.setMute(enabled, reason) : member.voice.setDeaf(enabled, reason); }
 async function setVoiceBoth(member, enabled, reason) {
@@ -1136,7 +1149,7 @@ module.exports = {
     handleVoiceAdminCommand, isVoiceAdminInteraction, handleVoiceAdminInteraction, handleSecretMessage,
     handleVoiceStateUpdate, handleAuditLogEntry, handleMemberUpdate, handleMemberRemove, reconcileConnectedLocks,
     _test: {
-        parseSecretCommand, sourceMembers, isVoiceChannel, isStillInSource, buildResult, resultEmoji, buildPersistenceFailureContext, getLock, setCachedLock, lockKey, noticeKey,
+        parseSecretCommand, sourceMembers, isVoiceChannel, isStillInSource, buildResult, resultEmoji, buildPersistenceFailureContext, getLock, setCachedLock, lockKey, noticeKey, BULK_SKIPPED,
         changeContains, buildPanel, isAdministrator, verifyVoiceAdminAccess, runBulkUnsafe, withDeadline, isVoiceAdminInteraction,
         operationWasAcknowledged, writeLock, clearLockField, clearBothLocks, clearAllLocksForMember, lockVoiceState,
         unlockVoiceState, unlockBoth, disconnectMembers, moveMembers, ensureBotPermission, runPanelAction,

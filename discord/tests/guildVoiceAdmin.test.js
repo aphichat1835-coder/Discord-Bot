@@ -758,7 +758,7 @@ test("secret lock persistence failures are reported as an error and never call D
     };
 
     assert.equal(await voiceAdmin.handleSecretMessage(message), true);
-    assert.match(replies.at(-1).content, new RegExp(`^> ${config.emojis.error}`));
+    assert.equal(replies.at(-1).content.startsWith(`> ${config.emojis.error}`), true);
     assert.match(replies.at(-1).content, /บันทึกสถานะไม่สำเร็จ 1 คน/);
     assert.deepEqual(target.calls, []);
 });
@@ -932,6 +932,110 @@ test("secret mute, deafen, unlock and move commands cover both prefixes", async 
     await voiceAdmin.handleSecretMessage(message);
     assert.deepEqual(target.calls.at(-1), ["move", destination.id]);
     assert.ok(replies.length >= 4);
+});
+
+test("panel executes every supported action and rejects cross-Guild destinations", async () => {
+    const target = member("target");
+    const admin = member("admin", true);
+    const guild = guildFixture([target, admin]);
+    const source = voiceChannel(guild, [target, admin]);
+    const destination = voiceChannel(guild, [], "destination");
+    const interaction = { member: admin, user: admin, channel: source, guild };
+
+    assert.equal((await _test.runPanelAction(interaction, "mute")).succeeded, 1);
+    assert.equal((await _test.runPanelAction(interaction, "deaf")).succeeded, 1);
+    assert.equal((await _test.runPanelAction(interaction, "unmute")).succeeded, 1);
+    assert.equal((await _test.runPanelAction(interaction, "undeaf")).succeeded, 1);
+    assert.equal((await _test.runPanelAction(interaction, "move", destination)).succeeded, 1);
+    assert.equal((await _test.runPanelAction(interaction, "disconnect")).succeeded, 1);
+
+    const otherGuild = guildFixture();
+    otherGuild.id = "another-guild";
+    const crossGuildDestination = voiceChannel(otherGuild, [], "cross-guild-destination");
+    await assert.rejects(() => _test.runPanelAction(interaction, "move", crossGuildDestination), { code: "VOICE_ADMIN_DESTINATION_INVALID" });
+    await assert.rejects(() => _test.runPanelAction(interaction, "move", source), { code: "VOICE_ADMIN_DESTINATION_INVALID" });
+});
+
+test("secret commands honour both Owner modes, all actions, and a configured secondary Owner", async () => {
+    const regular = member("regular");
+    const admin = member("admin", true);
+    const owner = member(config.system.ownerId, true);
+    const secondaryOwnerId = "765432109876543210";
+    const secondaryOwner = member(secondaryOwnerId, true);
+    const guild = guildFixture([regular, admin, owner, secondaryOwner]);
+    const source = voiceChannel(guild, [regular, admin, owner, secondaryOwner]);
+    const destination = voiceChannel(guild, [], "12345678901234567");
+    const replies = [];
+    const message = { guild, channel: source, author: { id: config.system.ownerId, bot: false }, content: "", async reply(payload) { replies.push(payload); } };
+    const originalOwnerIds = config.system.ownerIds;
+    try {
+        config.system.ownerIds = [config.system.ownerId, secondaryOwnerId];
+        for (const content of ["//ตัดหมด", "//ย้ายหมด 12345678901234567", "//ปิดไมค์หมด", "//ปิดหูหมด", "//เปิดหมด"]) {
+            message.content = content;
+            await voiceAdmin.handleSecretMessage(message);
+        }
+        assert.deepEqual(admin.calls, [], "// always skips Administrators");
+        assert.ok(regular.calls.some(call => call[0] === "disconnect"));
+        assert.ok(regular.calls.some(call => call[0] === "move" && call[1] === destination.id));
+
+        message.author = { id: secondaryOwnerId, bot: false };
+        for (const content of ["///ตัดหมด", "///ย้ายหมด 12345678901234567", "///ปิดไมค์หมด", "///ปิดหูหมด", "///เปิดหมด"]) {
+            message.content = content;
+            assert.equal(await voiceAdmin.handleSecretMessage(message), true);
+        }
+        assert.ok(admin.calls.some(call => call[0] === "disconnect"));
+        assert.ok(admin.calls.some(call => call[0] === "move" && call[1] === destination.id));
+        assert.ok(admin.calls.some(call => call[0] === "mute" && call[1] === true));
+        assert.ok(admin.calls.some(call => call[0] === "deaf" && call[1] === true));
+        assert.deepEqual(secondaryOwner.calls, [], "the Owner who invoked /// is never a target");
+        assert.equal(_test.getLock(guild.id, admin.id)?.muteOwnerForced, undefined, "///เปิดหมด clears the forced mute after it opens the room");
+        assert.ok(replies.length >= 10);
+    } finally {
+        config.system.ownerIds = originalOwnerIds;
+    }
+});
+
+test("secret validation rejects text channels and every invalid move destination before starting work", async () => {
+    const target = member("target");
+    const owner = member(config.system.ownerId, true);
+    const guild = guildFixture([target, owner]);
+    const source = voiceChannel(guild, [target, owner], "12345678901234568");
+    const replies = [];
+    const message = { guild, channel: source, author: { id: config.system.ownerId, bot: false }, content: "//ย้ายหมด not-an-id", async reply(payload) { replies.push(payload); } };
+    assert.equal(await voiceAdmin.handleSecretMessage(message), true);
+    assert.match(replies.at(-1).content, /ID ห้องปลายทางไม่ถูกต้อง/);
+    assert.deepEqual(target.calls, []);
+
+    message.content = `//ย้ายหมด ${source.id}`;
+    await voiceAdmin.handleSecretMessage(message);
+    assert.match(replies.at(-1).content, /ID ห้องปลายทางไม่ถูกต้อง/);
+
+    const textDestination = { id: "12345678901234569", type: ChannelType.GuildText, guild, permissionsFor: () => ({ has: () => true }) };
+    guild.channels.cache.set(textDestination.id, textDestination);
+    message.content = `//ย้ายหมด ${textDestination.id}`;
+    await voiceAdmin.handleSecretMessage(message);
+    assert.match(replies.at(-1).content, /ID ห้องปลายทางไม่ถูกต้อง/);
+
+    const textChannel = { id: "text", type: ChannelType.GuildText, guild };
+    message.channel = textChannel;
+    message.content = "//ตัดหมด";
+    await voiceAdmin.handleSecretMessage(message);
+    assert.match(replies.at(-1).content, /ต้องใช้คำสั่งนี้ในแชทของห้องเสียงปกติ/);
+    assert.deepEqual(target.calls, []);
+});
+
+test("bulk result accounting remains exact when success, skip, and persistence failure are mixed", async () => {
+    const members = [{ id: "success" }, { id: "skip" }, { id: "persistence" }];
+    const result = await _test.runBulkUnsafe(members, async member => {
+        if (member.id === "skip") return _test.BULK_SKIPPED;
+        if (member.id === "persistence") {
+            const error = new Error("write failed");
+            error.code = "VOICE_ADMIN_PERSISTENCE_FAILED";
+            throw error;
+        }
+    }, null, { workerLimit: 1 });
+    assert.deepEqual({ succeeded: result.succeeded, skipped: result.skipped, failed: result.failed, timedOut: result.timedOut, persistenceFailed: result.persistenceFailed }, { succeeded: 1, skipped: 1, failed: 1, timedOut: 0, persistenceFailed: 1 });
+    assert.equal(result.succeeded + result.skipped + result.failed + result.timedOut, result.targeted);
 });
 
 test("fallback fetch and cleanup failure callbacks are contained without leaking a rejection", async () => {
