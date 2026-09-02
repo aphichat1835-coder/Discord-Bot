@@ -14,6 +14,7 @@ const pendingByGuild = new Map();
 const activeByGuild = new Map();
 const previewingByGuild = new Map();
 
+/** Returns the values from a Discord collection, array, or plain object. */
 function valuesOf(collection) {
     if (!collection) return [];
     if (typeof collection.values === "function") return Array.from(collection.values());
@@ -21,33 +22,39 @@ function valuesOf(collection) {
     return Object.values(collection);
 }
 
+/** Returns the guild's cached roles as an array. */
 function getRoleValues(guild) {
     return valuesOf(guild?.roles?.cache);
 }
 
+/** Returns a member's cached roles as an array. */
 function getMemberRoles(member) {
     return valuesOf(member?.roles?.cache);
 }
 
+/** Determines whether an actor is the guild owner or the configured bot owner. */
 function isGuildOwner(actorId, guild) {
     return String(actorId || "") === String(guild?.ownerId || "") ||
         String(actorId || "") === String(config.system.ownerId || "");
 }
 
+/** Identifies the guild's built-in @everyone role by ID. */
 function isEveryoneRole(role, guild) {
     return String(role?.id || "") === String(guild?.id || "");
 }
 
+/** Normalizes role IDs and removes duplicates while preserving their order. */
 function dedupeRoleIds(roleIds = []) {
     return [...new Set(roleIds.map(roleId => String(roleId || "")).filter(Boolean))];
 }
 
+/** Parses the //รียศ shortcut and its optional whitespace-delimited role IDs. */
 function parseShortcutRoleIds(content) {
     const shortcut = "//รียศ";
     const input = String(content || "").trim();
     if (!input.startsWith(shortcut)) return { matched: false, roleIds: [] };
     const remainder = input.slice(shortcut.length);
-    if (remainder && remainder.trimStart() === remainder) return { matched: false, roleIds: [] };
+    if (remainder.trimStart() === remainder && remainder !== "") return { matched: false, roleIds: [] };
     const raw = remainder.trim();
     if (!raw) return { matched: true, roleIds: [] };
     const roleIdInput = raw.split(/\s+/u);
@@ -57,6 +64,7 @@ function parseShortcutRoleIds(content) {
     return { matched: true, roleIds: dedupeRoleIds(roleIdInput) };
 }
 
+/** Produces a stable, alphabetically sorted representation of the guild role catalog. */
 function roleCatalogFingerprint(guild) {
     return getRoleValues(guild)
         .filter(role => !isEveryoneRole(role, guild))
@@ -64,6 +72,7 @@ function roleCatalogFingerprint(guild) {
         .sort((left, right) => left.localeCompare(right));
 }
 
+/** Hashes role assignments and hierarchy inputs used to validate a pending sweep. */
 function roleAssignmentFingerprint(guild, members) {
     const roleCatalog = roleCatalogFingerprint(guild);
     const assignments = valuesOf(members)
@@ -95,12 +104,14 @@ function roleAssignmentFingerprint(guild, members) {
         .digest("hex");
 }
 
+/** Checks whether the bot can manage a member below its highest role. */
 function memberIsManageable(member, guild, botPosition) {
     if (!member || String(member.id) === String(guild?.ownerId || "")) return false;
     if (member.manageable === false) return false;
     return Number(member?.roles?.highest?.position || 0) < botPosition;
 }
 
+/** Scans members to calculate preview counts and removals allowed by the sweep rules. */
 function scanGuildRoles(guild, members, actorId, exceptRoleIds = []) {
     const roles = getRoleValues(guild);
     const humans = valuesOf(members).filter(member => !member?.user?.bot);
@@ -131,6 +142,7 @@ function scanGuildRoles(guild, members, actorId, exceptRoleIds = []) {
     };
 }
 
+/** Fetches every guild member and rejects incomplete or changing member lists. */
 async function fetchAllMembers(guild) {
     if (typeof guild?.members?.fetch !== "function") throw new Error("GUILD_MEMBER_FETCH_UNAVAILABLE");
     const beforeCount = Number(guild.memberCount);
@@ -147,6 +159,7 @@ async function fetchAllMembers(guild) {
     return members;
 }
 
+/** Checks that the bot has the channel and role permissions required for a sweep. */
 function botCanOperate(guild, channel) {
     const botMember = guild?.members?.me;
     const permissionTarget = channel && typeof botMember?.permissionsIn === "function"
@@ -159,10 +172,12 @@ function botCanOperate(guild, channel) {
     ]) === true;
 }
 
+/** Replies safely to a message without parsing or notifying mentions. */
 async function replyMessage(message, content) {
     return message.reply({ content, allowedMentions: { parse: [], repliedUser: false } }).catch(() => null);
 }
 
+/** Builds the two-count preview displayed before confirmation. */
 function previewText(stats) {
     return `> ${config.emojis.warning} **ตรวจพบข้อมูลก่อนกวาดยศ**\n` +
         `> ยศทั้งหมด (ไม่รวม @everyone): **${stats.totalRoles}**\n` +
@@ -170,6 +185,7 @@ function previewText(stats) {
         `> พิมพ์ **${CONFIRMATION_TEXT}** ในห้องนี้ภายใน 60 วินาทีเพื่อเริ่มดำเนินการ`;
 }
 
+/** Removes a pending sweep, optionally only when it still matches an expected job. */
 function clearPending(guildId, expectedPending = null) {
     const pending = pendingByGuild.get(String(guildId));
     if (!pending || (expectedPending && pending !== expectedPending)) return null;
@@ -178,16 +194,19 @@ function clearPending(guildId, expectedPending = null) {
     return pending;
 }
 
+/** Normalizes a confirmation timeout to a positive millisecond value. */
 function getConfirmationTimeout(timeoutMs) {
     const parsed = Number(timeoutMs);
     if (!Number.isFinite(parsed) || parsed <= 0) return CONFIRMATION_TIMEOUT_MS;
     return Math.max(1, Math.floor(parsed));
 }
 
+/** Reports whether a preview controller was cancelled or superseded. */
 function previewWasCancelled(guildId, controller) {
     return controller.cancelled || previewingByGuild.get(String(guildId)) !== controller;
 }
 
+/** Fetches, scans, and publishes a confirmation-bound role-sweep preview. */
 async function startPreview({ guild, channel, actorId, exceptRoleIds, respond, timeoutMs = CONFIRMATION_TIMEOUT_MS }) {
     const guildId = String(guild?.id || "");
     if (!guildId) return false;
@@ -258,6 +277,7 @@ async function startPreview({ guild, channel, actorId, exceptRoleIds, respond, t
     }
 }
 
+/** Revalidates a confirmed preview and removes eligible roles sequentially. */
 async function executeSweep(pending, message) {
     const controller = { cancelled: false };
     activeByGuild.set(pending.guildId, controller);
@@ -303,6 +323,7 @@ async function executeSweep(pending, message) {
     }
 }
 
+/** Handles an exact confirmation message from the owner and original channel. */
 async function handleConfirmation(message) {
     const pending = pendingByGuild.get(String(message?.guild?.id || ""));
     if (!pending || message?.content !== CONFIRMATION_TEXT) return false;
@@ -320,6 +341,7 @@ async function handleConfirmation(message) {
     return true;
 }
 
+/** Handles the //รียศ shortcut after validating ownership and bot permissions. */
 async function handleShortcut(message) {
     const parsed = parseShortcutRoleIds(message?.content);
     if (!parsed.matched) return false;
@@ -350,18 +372,21 @@ async function handleShortcut(message) {
     return true;
 }
 
+/** Routes guild messages to confirmation handling or the role-sweep shortcut. */
 async function handleMessage(message) {
     if (!message?.guild || message.author?.bot) return false;
     if (await handleConfirmation(message)) return true;
     return await handleShortcut(message);
 }
 
+/** Reads and deduplicates the five optional role exceptions from a slash command. */
 function readSlashExceptions(interaction) {
     return dedupeRoleIds([1, 2, 3, 4, 5]
         .map(index => interaction.options?.getRole?.(`except_role_${index}`)?.id)
         .filter(Boolean));
 }
 
+/** Starts a role-sweep preview from the owner-only /rerole slash command. */
 async function handleSlashCommand(interaction) {
     if (!isGuildOwner(interaction.user?.id, interaction.guild)) {
         return interaction.reply({
@@ -391,6 +416,7 @@ async function handleSlashCommand(interaction) {
     });
 }
 
+/** Cancels and clears every role-sweep state associated with a departed guild. */
 function cleanupGuild(guildId) {
     clearPending(guildId);
     const preview = previewingByGuild.get(String(guildId));
@@ -400,10 +426,12 @@ function cleanupGuild(guildId) {
     if (active) active.cancelled = true;
 }
 
+/** Exposes bounded role-sweep state counts for runtime diagnostics. */
 function getRuntimeDiagnostics() {
     return { previewing: previewingByGuild.size, pending: pendingByGuild.size, active: activeByGuild.size };
 }
 
+/** Clears in-memory role-sweep state between unit tests. */
 function resetForTests() {
     for (const guildId of pendingByGuild.keys()) clearPending(guildId);
     for (const controller of previewingByGuild.values()) controller.cancelled = true;
