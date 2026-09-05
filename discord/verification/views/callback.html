@@ -3,24 +3,20 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
-  <meta name="theme-color" content="#07110f">
-  <meta name="color-scheme" content="dark">
   <title>กำลังยืนยันตัวตน — Discord Verification</title>
   <link rel="stylesheet" href="/verification-assets/css/dashboard.css">
-  <link rel="stylesheet" href="/verification-assets/css/workspace.css">
 </head>
 
 <body class="callback-page">
   <main class="callback-center">
     <section class="callback-shell">
       <div class="callback-brand callback-brand-clean">
-        <span class="callback-brand-mark" aria-hidden="true">V</span>
-        <div><h2>ยืนยันตัวตนกับเซิร์ฟเวอร์</h2>
-        <div class="muted small">เชื่อมบัญชี ตรวจเงื่อนไข และรับยศในขั้นตอนเดียว</div></div>
+        <h2>Discord Verification</h2>
+        <div class="muted small">ระบบยืนยันตัวตนและเพิ่มยศอัตโนมัติ</div>
       </div>
 
       <div class="card callback-card callback-card-premium">
-        <output id="s-loading" class="callback-state active" aria-live="polite" tabindex="-1">
+        <div id="s-loading" class="callback-state active">
           <div class="verify-loader-wrap">
             <div class="verify-loader">
               <div class="verify-loader-ring"></div>
@@ -29,40 +25,40 @@
             </div>
           </div>
 
-          <h1 class="callback-title loading-title">กำลังตรวจสอบข้อมูลของคุณ</h1>
+          <h1 class="callback-title loading-title">กำลังยืนยันตัวตน...</h1>
 
           <p id="statusText" class="callback-subtitle">
             กำลังรับข้อมูลจาก Discord
           </p>
 
-          <ol class="verify-steps" aria-label="ขั้นตอนการยืนยันตัวตน">
-            <li class="verify-step active" data-step="discord">
+          <div class="verify-steps" aria-label="verification progress">
+            <div class="verify-step active" data-step="discord">
               <span class="step-dot"></span>
               <span>กำลังรับข้อมูลจาก Discord</span>
-            </li>
+            </div>
 
-            <li class="verify-step" data-step="account">
+            <div class="verify-step" data-step="account">
               <span class="step-dot"></span>
               <span>กำลังตรวจสอบบัญชี Discord</span>
-            </li>
+            </div>
 
-            <li class="verify-step" data-step="security">
+            <div class="verify-step" data-step="security">
               <span class="step-dot"></span>
               <span>กำลังตรวจสอบเงื่อนไขความปลอดภัย</span>
-            </li>
+            </div>
 
-            <li class="verify-step" data-step="role">
+            <div class="verify-step" data-step="role">
               <span class="step-dot"></span>
               <span>กำลังเพิ่มยศให้คุณ</span>
-            </li>
-          </ol>
+            </div>
+          </div>
 
           <div class="callback-note callback-note-blue">
-            หน้านี้จะอัปเดตสถานะให้เอง ไม่ต้องกดซ้ำหรือรีเฟรช
+            กรุณารอสักครู่ อย่าปิดหน้านี้ระหว่างระบบกำลังทำงาน
           </div>
-        </output>
+        </div>
 
-        <output id="s-success" class="callback-state" aria-live="polite" tabindex="-1">
+        <div id="s-success" class="callback-state">
           <div class="result-ring ok compact">
             <div class="result-icon ok">✓</div>
           </div>
@@ -76,7 +72,7 @@
           </p>
 
           <div class="user-mini callback-user-card">
-            <img id="avatar" class="user-mini-avatar" alt="รูปโปรไฟล์ Discord" style="display:none;">
+            <img id="avatar" class="user-mini-avatar" alt="avatar" style="display:none;">
 
             <div style="min-width:0;">
               <div id="name" class="callback-user-name truncate">Discord User</div>
@@ -94,12 +90,12 @@
 
           <div class="modal-actions callback-actions">
             <a class="btn btn-primary callback-main-btn" href="https://discord.com/">
-              เปิดแอป Discord
+              เปิด Discord
             </a>
           </div>
-        </output>
+        </div>
 
-        <div id="s-error" class="callback-state" role="alert" aria-live="assertive" tabindex="-1">
+        <div id="s-error" class="callback-state">
           <div class="error-layout">
             <div class="error-cross-wrap">
               <div class="error-cross">×</div>
