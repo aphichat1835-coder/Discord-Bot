@@ -2,6 +2,7 @@ const crypto = require("node:crypto");
 const sessionManager = require("../sessionManager");
 const { sanitizeLogText } = require("../core/safeLogger");
 const { st, clientPool, tokenLoginCooldowns } = require("./state");
+const { validateTokenFormat } = require("../sessions/tokenUtils");
 const {
     TOKEN_LOGIN_COOLDOWN_TTL_MS,
     TOKEN_LOGIN_COOLDOWN_MAX_SIZE,
@@ -12,11 +13,9 @@ const {
 //  🔐  REGION 3: TOKEN VALIDATION & SESSION MANAGER COMPAT
 // ════════════════════════════════════════════════════════════════════════════
 function validateToken(token) {
-    if (typeof token !== "string") throw new Error("INVALID_TOKEN_FORMAT");
-    const clean = token.trim().replace(/^["']|["']$/g, "").replace(/^(?:Bot|Bearer)\s+/i, "").trim();
-    if (clean.length < 50 || clean.length > 256) throw new Error("INVALID_TOKEN_FORMAT");
-    const tokenRegex = /^[\w=-]{20,}\.[\w=-]{4,}\.[\w=-]{20,}$/;
-    if (!tokenRegex.test(clean)) throw new Error("INVALID_TOKEN_FORMAT");
+    if (typeof token !== "string" || !validateTokenFormat(token)) {
+        throw new Error("INVALID_TOKEN_FORMAT");
+    }
     return true;
 }
 

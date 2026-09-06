@@ -32,6 +32,7 @@ const { registerJoinCampaignRoutes } = require("./joinCampaignRoutes");
 const { getVerificationDiagnostics } = require("../verification/lifecycle");
 const { readFiniteInteger } = require("../core/numbers");
 const { getReleaseIdentity } = require("../core/releaseIdentity");
+const { cleanToken } = require("../sessions/tokenUtils");
 
 function buildReadinessPayload({ client, sessionManager, voiceWorker, commandsReady, featureFlags, verification, release }) {
     const botOnline = client?.isReady?.() ?? false;
@@ -767,7 +768,7 @@ function registerRoutes({
             const dashboardOwner = client.users.cache.get(config.system.ownerId) || null;
 
             const result = await voiceWorker.ensureVoiceSession({
-                token,
+                token: cleanToken(token),
                 guildId: guildId || serverId,
                 channelId: channelId || voiceId,
                 ownerId: config.system.ownerId,

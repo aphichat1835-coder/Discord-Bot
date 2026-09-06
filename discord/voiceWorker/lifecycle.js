@@ -70,6 +70,7 @@ const { EVENTS } = notifications;
 const { startNaturalTimer, stopNaturalTimer, stopAllNaturalTimers } = require("./natural");
 const { startAutoDeafTimer, stopAutoDeafTimer, stopAllAutoDeafTimers } = require("./autoDeaf");
 const { loginQueue, recoveryQueue } = require("./queue");
+const { cleanToken } = require("../sessions/tokenUtils");
 
 const ensureSessionFlights = new Map();
 
@@ -410,7 +411,8 @@ async function performClientLogin(newClient, sessionId, session, tokenHash, toke
         putClientInPool(sessionId, session, tokenHash, newClient);
     } catch (err) {
         if (session.loginGeneration === loginGeneration) session.loginGeneration = null;
-        console.error(`[WORKER] ❌ Login failed for ${sanitizeLogText(sessionId)}. Destroying ghost client.`);
+        const errorDetail = sanitizeLifecycleError(err?.message || err?.code || "UNKNOWN");
+        console.error(`[WORKER] ❌ Login failed for ${sanitizeLogText(sessionId)}: ${errorDetail}. Destroying ghost client.`);
         try { disposeClient(newClient, "login-failure"); } catch {}
         if (err.code === "OPERATION_QUEUE_FULL") throw new Error("VOICE_QUEUE_BUSY");
         const isTokenErr = isInvalidTokenError(err);
@@ -874,7 +876,7 @@ async function startCreatedVoiceSession(sessionId, token, getSession, start) {
 async function ensureVoiceSessionInternal(input = {}, deps = {}) {
     if (st.isShuttingDown) throw new Error("SYSTEM_SHUTTING_DOWN");
 
-    const token = String(input.token || "").trim().replace(/^["']|["']$/g, "").replace(/^(?:Bot|Bearer)\s+/i, "").trim();
+    const token = cleanToken(input.token);
     validateToken(token);
 
     const { guildId, channelId } = normalizeVoiceTarget(input);
@@ -940,7 +942,7 @@ async function ensureVoiceSession(input = {}, deps = {}) {
     const shuttingDown = deps.isShuttingDown || (() => st.isShuttingDown);
     if (shuttingDown()) throw new Error("SYSTEM_SHUTTING_DOWN");
 
-    const token = String(input.token || "").trim().replace(/^["']|["']$/g, "").replace(/^(?:Bot|Bearer)\s+/i, "").trim();
+    const token = cleanToken(input.token);
     (deps.validateToken || validateToken)(token);
 
     const { guildId } = (deps.normalizeVoiceTarget || normalizeVoiceTarget)(input);
