@@ -52,6 +52,8 @@ and the HTTP server.
 | `GET /api/guild/:guildId/member/:userId/ip-history` | Owner PIN | Paginated canonical users/devices/role history for the member's IP |
 | `GET /quests` | Owner PIN | Owner Dashboard page for Discord Quest automation logs and statistics |
 | `GET /api/quest-logs` | Owner PIN | Recent Quest execution logs and status data |
+| `GET /api/quest-scheduled` | Owner PIN | Active Auto Daily scheduled quest runners |
+| `DELETE /api/quest-scheduled/:id` | Owner PIN | Terminate and remove a scheduled quest runner |
 | `GET /ping` | Public | Lightweight listener liveness |
 | `GET /health` | Public | Combined MongoDB, Discord, slash-command, voice, and verification readiness |
 | `GET /ready` | Public | Alias of the combined `/health` readiness response |

@@ -2,12 +2,14 @@
 
 ## [Unreleased] - Unified Bot And Verification Runtime 2026-07-16
 
-- Added Discord Quest automation subsystem (`/quest panel`), supporting
-  interactive modal submission of Discord user tokens, background multi-quest
-  video/game progress heartbeat execution, masked token display, encrypted token
-  storage (AES-256-GCM via `QUEST_TOKEN_SECRET` / `ENCRYPTION_KEY`), 30-day TTL
-  `QuestLog` persistence, operational webhooks, and an integrated Owner Dashboard
-  at `/quests` with search, stats, pagination, and CSV export.
+- Expanded Discord Quest automation subsystem to full parity with reference architecture:
+  - Subcommands: `/quest panel` (interactive panel), `/quest run` (one-shot or auto-daily execution), and `/quest stop` (interactive select menu to cancel sessions).
+  - Auto Daily scheduling engine: MongoDB `ScheduledRunner` model, Bangkok time (00:00, 08:00, 16:00 UTC+7) recurring scheduler with jitter, and 3x 5-min verification recheck loop.
+  - Live channel codeblock rendering with 2-second trailing throttle, status mutation tracking, and Thai status headers (`✅ LOGIN`, `🤖 AUTO DAILY ENABLED`, `🔎 พบ X QUESTS`, `🎉 ทำสำเร็จ Y QUESTS`, `🧹 QUEST ACTIVITY CLEARED`).
+  - Admission control locks (`withAccountAdmissionLock`, `withOwnerAdmissionLock`) preventing race conditions and duplicated executions.
+  - Lifecycle management: automatic scheduled runner restoration on bot startup and graceful termination on shutdown.
+  - Owner Dashboard `/quests` enhancement: active scheduled runners monitoring and cancellation via `GET /api/quest-scheduled` and `DELETE /api/quest-scheduled/:id`.
+  - Comprehensive unit testing suite covering all quest models, stores, scheduling, and UI components.
 
 - Removed all member DMs from `/ban`, `/kick`, and `/timeout` while preserving
   the moderation action, ModCase lifecycle, and operational webhook behavior.

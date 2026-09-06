@@ -8,7 +8,12 @@ const IDS = {
     FIELD_SERVER_ID: "server_id",
     FIELD_VOICE_ID: "voice_id",
     BTN_QUEST_RUN: "quest_panel:run",
+    BTN_QUEST_RUN_ONESHOT: "quest_panel:run_oneshot",
+    BTN_QUEST_RUN_DAILY: "quest_panel:run_daily",
     BTN_QUEST_STOP: "quest_panel:stop",
+    BTN_QUEST_REFRESH: "runner-stop:refresh",
+    BTN_QUEST_STOP_ALL: "runner-stop:all",
+    SELECT_QUEST_STOP: "runner-stop:select",
     MODAL_QUEST_RUN: "quest_run_modal",
     FIELD_QUEST_TOKENS: "user_tokens"
 };
@@ -19,7 +24,8 @@ const PREFIXES = {
     RESTORE_CONFIRM: "btn_restore_confirm_",
     STATUS_PAGE: "status_page_",
     STATUS_STOP: "status_stop_",
-    QUEST_PANEL: "quest_panel:"
+    QUEST_PANEL: "quest_panel:",
+    RUNNER_STOP: "runner-stop:"
 };
 
 function isVerifyButton(customId = "") {
@@ -28,11 +34,16 @@ function isVerifyButton(customId = "") {
 }
 
 function isQuestButton(customId = "") {
-    return customId.startsWith(PREFIXES.QUEST_PANEL);
+    return customId.startsWith(PREFIXES.QUEST_PANEL) ||
+        customId.startsWith(PREFIXES.RUNNER_STOP);
 }
 
 function isQuestModal(customId = "") {
-    return customId === IDS.MODAL_QUEST_RUN;
+    return customId.startsWith(IDS.MODAL_QUEST_RUN);
+}
+
+function isQuestSelect(customId = "") {
+    return customId === IDS.SELECT_QUEST_STOP;
 }
 
 function isRestoreConfirm(customId = "") {
@@ -61,6 +72,7 @@ module.exports = {
     isVerifyButton,
     isQuestButton,
     isQuestModal,
+    isQuestSelect,
     isRestoreConfirm,
     isStatusPage,
     getStatusPage,

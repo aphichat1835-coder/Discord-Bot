@@ -1771,6 +1771,35 @@ ${navBar("/quests")}
         <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">กำลังดำเนินการ</div>
         <div id="statRunningSessions" style="font-size:24px; font-weight:bold; color:var(--yellow2);">-</div>
     </div>
+    <div class="card" style="padding:16px; text-align:center;">
+        <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">Auto Daily บันทึกไว้</div>
+        <div id="statScheduledRunners" style="font-size:24px; font-weight:bold; color:var(--purple2, #a855f7);">-</div>
+    </div>
+</div>
+
+<div class="card" style="padding:20px; margin-bottom:20px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+        <h2 style="font-size:16px; font-weight:600; margin:0;">🤖 บัญชี Auto Daily ที่บันทึกไว้ในระบบ (ตรวจ 00:00 / 08:00 / 16:00 น.)</h2>
+        <button type="button" class="btn btn-sm" onclick="loadScheduledRunners()">🔄 รีเฟรช Auto Daily</button>
+    </div>
+    <div style="overflow-x:auto;">
+        <table class="data-table" style="width:100%; border-collapse:collapse; font-size:13px;">
+            <thead>
+                <tr style="border-bottom:1px solid var(--border); text-align:left; color:var(--text-muted);">
+                    <th style="padding:10px 8px;">ผู้ใช้ / บัญชี</th>
+                    <th style="padding:10px 8px;">Owner ID</th>
+                    <th style="padding:10px 8px;">Channel</th>
+                    <th style="padding:10px 8px;">ตรวจครั้งล่าสุด</th>
+                    <th style="padding:10px 8px;">ตรวจครั้งถัดไป</th>
+                    <th style="padding:10px 8px;">สถานะ / ข้อผิดพลาด</th>
+                    <th style="padding:10px 8px; text-align:center;">จัดการ</th>
+                </tr>
+            </thead>
+            <tbody id="scheduledRunnersBody">
+                <tr><td colspan="7" style="padding:16px; text-align:center; color:var(--text-muted);">กำลังโหลดข้อมูล...</td></tr>
+            </tbody>
+        </table>
+    </div>
 </div>
 
 <div class="card" style="padding:20px;">
@@ -2003,8 +2032,59 @@ async function loadQuestLogs() {
     }
 }
 
+async function loadScheduledRunners() {
+    try {
+        const res = await fetch('/api/quest-scheduled');
+        if (!res.ok) throw new Error('API Error ' + res.status);
+        const data = await res.json();
+        const runners = data.runners || [];
+        const tbody = document.getElementById('scheduledRunnersBody');
+        const countEl = document.getElementById('statScheduledRunners');
+        if (countEl) countEl.textContent = runners.length;
+
+        if (!runners.length) {
+            tbody.innerHTML = '<tr><td colspan="7" style="padding:16px; text-align:center; color:var(--text-muted);">ไม่มีบัญชี Auto Daily ในระบบ</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = runners.map(r => {
+            const nextTime = r.nextCheckAt ? formatDate(r.nextCheckAt) : '-';
+            const lastTime = r.lastCheckAt ? formatDate(r.lastCheckAt) : '-';
+            const errorText = r.lastError ? '<span style="color:var(--red2);">' + escapeHtmlStr(r.lastError) + '</span>' : '<span style="color:var(--green2);">ปกติ</span>';
+            return '<tr style="border-bottom:1px solid var(--border); vertical-align:middle;">' +
+                '<td style="padding:10px 8px;"><strong>' + escapeHtmlStr(r.username || 'Unknown') + '</strong><br><span style="font-size:11px; color:var(--text-muted);">ID: ' + escapeHtmlStr(r.accountId) + '</span></td>' +
+                '<td style="padding:10px 8px;">' + escapeHtmlStr(r.ownerId) + '</td>' +
+                '<td style="padding:10px 8px;">' + escapeHtmlStr(r.channelId) + '</td>' +
+                '<td style="padding:10px 8px;">' + lastTime + '</td>' +
+                '<td style="padding:10px 8px; color:var(--blue2);">' + nextTime + '</td>' +
+                '<td style="padding:10px 8px;">' + errorText + '</td>' +
+                '<td style="padding:10px 8px; text-align:center;"><button type="button" class="btn btn-sm btn-danger" onclick="deleteScheduledRunner(\'' + r._id + '\')">🛑 ลบ</button></td>' +
+            '</tr>';
+        }).join('');
+    } catch (e) {
+        document.getElementById('scheduledRunnersBody').innerHTML = '<tr><td colspan="7" style="padding:16px; text-align:center; color:var(--red2);">⚠️ ดึงข้อมูล Auto Daily ไม่สำเร็จ: ' + escapeHtmlStr(e.message) + '</td></tr>';
+    }
+}
+
+async function deleteScheduledRunner(id) {
+    if (!confirm('ต้องการลบและหยุด Auto Daily บัญชีนี้ใช่หรือไม่?')) return;
+    try {
+        const res = await fetch('/api/quest-scheduled/' + id, { method: 'DELETE' });
+        const data = await res.json();
+        if (data.success) {
+            loadScheduledRunners();
+        } else {
+            alert('ลบไม่สำเร็จ: ' + (data.error || 'Unknown error'));
+        }
+    } catch (err) {
+        alert('เกิดข้อผิดพลาด: ' + err.message);
+    }
+}
+
 loadQuestLogs();
+loadScheduledRunners();
 dashboardInterval(loadQuestLogs, 5000);
+dashboardInterval(loadScheduledRunners, 10000);
 </script>`);
 }
 

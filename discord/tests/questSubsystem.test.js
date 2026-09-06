@@ -21,12 +21,43 @@ const {
     isRunnableQuest
 } = require('../quest/core/questSession');
 const {
-    getActiveUserJobs,
-    stopAllUserQuestSessions
+    getUserJobs,
+    stopAllForUser,
+    stopJob
 } = require('../quest/core/runnerManager');
 const {
+    formatRunnerStatusContent,
+    clampCodeBlockContent
+} = require('../quest/core/runnerStatusHeader');
+const {
+    createOneShotQuestSession,
+    getNextPendingOneShotQuest,
+    markOneShotQuestRunning,
+    markOneShotProgressMutationSent,
+    recordOneShotVerifiedProgress,
+    completeOneShotQuest,
+    failOneShotQuest,
+    getOneShotSessionSummary,
+    isOneShotSessionComplete,
+    ONE_SHOT_QUEST_STATUS,
+    EXTERNAL_COMPLETION_REASON
+} = require('../quest/core/oneShotSession');
+const {
+    SCHEDULE_HOURS,
+    nextScheduledCheck,
+    nextRecheckState,
+    addScheduleJitter,
+    formatScheduleTime,
+    RECHECK_INTERVAL_MS
+} = require('../quest/core/runnerSchedule');
+const {
+    withOwnerAdmissionLock,
+    withAccountAdmissionLock
+} = require('../quest/core/admissionLock');
+const {
     handleQuestCommand,
-    handleQuestButton
+    handleQuestButton,
+    handleQuestSelect
 } = require('../commands/quest');
 
 test('tokenCrypto correctly encrypts, decrypts, and masks tokens', () => {
@@ -95,15 +126,100 @@ test('questSession correctly classifies quest event types and reward platforms',
     assert.equal(runnable, true);
 });
 
+test('runnerStatusHeader correctly formats status lines and clamps codeblocks', () => {
+    const rawContent = '```\n✅ LOGIN : TestUser\n🔎 TestUser: พบ 2 QUESTS\n🎉 TestUser: ทำสำเร็จ 1 QUESTS\n▶️ TestUser: ทำเควสต์เกม\n```';
+    const formatted = formatRunnerStatusContent(rawContent);
+    assert.ok(formatted.includes('✅ LOGIN : TestUser'));
+    assert.ok(formatted.includes('บอทตรวจพบ Quest ที่ทำได้ทั้งหมด : 2'));
+    assert.ok(formatted.includes('บอททำ Quest ให้อัตโนมัติไปแล้วทั้งหมด : 1'));
+    assert.ok(formatted.includes('────────────────────────'));
+    assert.ok(formatted.includes('▶️ TestUser: ทำเควสต์เกม'));
+
+    // Test clamp
+    const large = '```\n' + 'A'.repeat(3000) + '\n```';
+    const clamped = clampCodeBlockContent(large);
+    assert.ok(clamped.length <= 1950);
+});
+
+test('oneShotSession manages lifecycle, external completions, and final summary', () => {
+    const session = createOneShotQuestSession([
+        { id: 'q1', name: 'Quest 1', eventName: 'WATCH_VIDEO', progressSecs: 0 },
+        { id: 'q2', name: 'Quest 2', eventName: 'PLAY_ON_DESKTOP', progressSecs: 10 }
+    ]);
+
+    assert.equal(session.totalSupportedQuests, 2);
+    const q1 = getNextPendingOneShotQuest(session);
+    assert.equal(q1.id, 'q1');
+
+    // Start q1 and complete by bot
+    markOneShotQuestRunning(session, 'q1', 0);
+    markOneShotProgressMutationSent(session, 'q1');
+    recordOneShotVerifiedProgress(session, 'q1', 15, { completed: true });
+    const status1 = completeOneShotQuest(session, 'q1');
+    assert.equal(status1, ONE_SHOT_QUEST_STATUS.COMPLETED_BY_BOT);
+
+    // Complete q2 externally (without bot progress)
+    const status2 = completeOneShotQuest(session, 'q2');
+    assert.equal(status2, ONE_SHOT_QUEST_STATUS.COMPLETED_EXTERNAL);
+    assert.equal(session.quests.get('q2').reason, EXTERNAL_COMPLETION_REASON);
+
+    assert.equal(isOneShotSessionComplete(session), true);
+    const summary = getOneShotSessionSummary(session);
+    assert.equal(summary.completedByBotCount, 1);
+    assert.equal(summary.completedExternalCount, 1);
+    assert.equal(summary.failedCount, 0);
+});
+
+test('runnerSchedule calculates Bangkok scheduled checks and jitter', () => {
+    assert.deepEqual(SCHEDULE_HOURS, [0, 8, 16]);
+
+    const now = new Date('2026-09-06T03:00:00Z'); // 10:00 in Bangkok (UTC+7)
+    const nextCheck = nextScheduledCheck(now, 'Asia/Bangkok');
+    assert.ok(nextCheck.getTime() > now.getTime());
+
+    // Jitter adds bounded ms
+    const jittered = addScheduleJitter(now, () => 0.5, 60000);
+    assert.equal(jittered.getTime(), now.getTime() + 30000);
+
+    // Recheck state logic
+    const initialRecheck = nextRecheckState({ attempted: true, progressed: true });
+    assert.equal(initialRecheck.shouldRecheck, true);
+    assert.equal(initialRecheck.rechecksRemaining, 3);
+    assert.equal(initialRecheck.delayMs, RECHECK_INTERVAL_MS);
+
+    const nextRecheck = nextRecheckState({ isRecheck: true, rechecksRemaining: 3 });
+    assert.equal(nextRecheck.rechecksRemaining, 2);
+
+    const formattedTime = formatScheduleTime(now, 'Asia/Bangkok');
+    assert.ok(typeof formattedTime === 'string');
+});
+
+test('admissionLock serializes operations for owner and account', async () => {
+    const sequence = [];
+    const p1 = withAccountAdmissionLock('acc_1', async () => {
+        sequence.push('start_1');
+        await new Promise((r) => setTimeout(r, 10));
+        sequence.push('end_1');
+    });
+
+    const p2 = withAccountAdmissionLock('acc_1', async () => {
+        sequence.push('start_2');
+        sequence.push('end_2');
+    });
+
+    await Promise.all([p1, p2]);
+    assert.deepEqual(sequence, ['start_1', 'end_1', 'start_2', 'end_2']);
+});
+
 test('runnerManager tracks jobs and stops jobs for a user', () => {
-    const initialJobs = getActiveUserJobs('non_existent_user');
+    const initialJobs = getUserJobs('non_existent_user');
     assert.equal(initialJobs.length, 0);
 
-    const stopped = stopAllUserQuestSessions('non_existent_user');
+    const stopped = stopAllForUser('non_existent_user');
     assert.equal(stopped, 0);
 });
 
-test('handleQuestCommand enforces bot owner check', async () => {
+test('handleQuestCommand enforces bot owner check for panel', async () => {
     let replyPayload = null;
     const nonOwnerInteraction = {
         user: { id: '999999999999999999' },
@@ -135,25 +251,23 @@ test('handleQuestCommand enforces bot owner check', async () => {
     assert.ok(ownerReply.components && ownerReply.components.length > 0);
 });
 
-test('handleQuestButton allows all users to click run or stop', async () => {
+test('handleQuestButton allows users to open modal and view stop controls', async () => {
     let modalShown = null;
     const runInteraction = {
-        customId: 'quest_panel:run',
+        customId: 'quest_panel:run_oneshot',
         showModal: (modal) => { modalShown = modal; return Promise.resolve(); }
     };
     await handleQuestButton(runInteraction);
     assert.ok(modalShown);
-    assert.equal(modalShown.data.custom_id, 'quest_run_modal');
+    assert.ok(modalShown.data.custom_id.startsWith('quest_run_modal'));
 
     let stopReply = null;
-    let deferred = false;
     const stopInteraction = {
         customId: 'quest_panel:stop',
-        user: { id: 'some_random_user_123' },
-        deferReply: () => { deferred = true; return Promise.resolve(); },
-        editReply: (text) => { stopReply = text; return Promise.resolve(); }
+        user: { id: 'some_user_123' },
+        reply: (payload) => { stopReply = payload; return Promise.resolve(payload); }
     };
     await handleQuestButton(stopInteraction);
-    assert.ok(deferred);
-    assert.match(stopReply, /ไม่มีเควสต์ที่กำลังทำงาน/);
+    assert.ok(stopReply);
+    assert.ok(stopReply.embeds && stopReply.embeds.length > 0);
 });

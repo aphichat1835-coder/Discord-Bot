@@ -272,17 +272,32 @@ The active verification models are:
 
 The Quest subsystem automates Discord video and game quests using direct Discord user API calls:
 
-- **Command**: `/quest panel` creates an interactive panel in the target channel (Bot Owner only).
+- **Command**: `/quest` with subcommands:
+  - `/quest panel`: creates an interactive panel in the target channel (Bot Owner only).
+  - `/quest run`: starts quest automation for supplied user token(s) (supports one-shot or auto-daily).
+  - `/quest stop`: stops active quest runner or disables auto-daily for specified token/all.
 - **Interactive UI**:
-  - `quest_panel:run`: opens a modal (`quest_run_modal`) for any user to submit Discord user tokens.
-  - `quest_panel:stop`: stops active quest runners for the invoking user.
+  - `quest_panel:run`: opens a modal (`quest_run_modal`) for user to submit Discord user tokens with single-line or multi-line batch.
+  - `quest_panel:daily`: opens modal (`quest_daily_modal`) for users to enroll tokens into scheduled Auto Daily.
+  - `quest_panel:stop`: displays interactive selection menu (`quest_stop_select`) listing active/scheduled sessions, plus "Stop All".
+- **Live Channel Output & Codeblock Rendering**:
+  - Renders real-time runner status updates directly into the channel via throttled codeblocks (2-second trailing throttle to ensure final states are never dropped).
+  - Standardized status headers: `✅ LOGIN`, `🤖 AUTO DAILY ENABLED`, `🔎 พบ X QUESTS`, `🎉 ทำสำเร็จ Y QUESTS`, and `🧹 QUEST ACTIVITY CLEARED`.
+  - Distinguishes quests completed by bot (`COMPLETED_BY_BOT`) vs already completed externally (`COMPLETED_EXTERNAL`), with verification gating handling.
+- **Auto Daily & Scheduling Engine**:
+  - `ScheduledRunner` MongoDB model stores encrypted user tokens, guild/channel bindings, and schedule state.
+  - Bangkok time (UTC+7) schedule targeting runs at 00:00, 08:00, and 16:00 daily with random jitter.
+  - Verification recheck state machine: automatically retries up to 3 times every 5 minutes if phone/captcha verification is encountered.
+  - Per-account and per-owner admission locks preventing concurrent conflicting sessions.
+  - Automatic scheduled runner restoration on bot startup (`initializeClientReady`) and clean teardown on shutdown.
 - **Security & Storage**:
   - Tokens are encrypted with AES-256-GCM using `QUEST_TOKEN_SECRET` (fallback to `ENCRYPTION_KEY`) before saving.
   - Raw tokens are never logged or exposed in UI; only masked tokens (`OTIxMj...cdef`) are stored for display.
   - `QuestLog` documents record execution history with a 30-day MongoDB TTL index for automatic retention cleanup.
-- **Observability**:
+- **Observability & Management**:
   - Webhook notifications (`WEBHOOK_LOG_URL`) for session start (`quest.session.started`) and finish (`quest.session.finished`).
-  - Owner Dashboard at `/quests` with real-time status, account details, search, pagination, and CSV export.
+  - Owner Dashboard at `/quests` with real-time status, account details, active Auto Daily scheduled runners table, search, pagination, and CSV export.
+  - Owner API endpoints `GET /api/quest-scheduled` and `DELETE /api/quest-scheduled/:id`.
 
 Legacy embedded IP histories are copied additively into the canonical history
 collections. Historical `VerifyLog` records are also scanned in bounded,

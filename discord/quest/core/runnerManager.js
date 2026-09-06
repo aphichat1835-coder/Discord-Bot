@@ -15,267 +15,890 @@ const {
     isFatalAuthError
 } = require('./questSession');
 const { encryptToken, maskToken } = require('./tokenCrypto');
+const { formatRunnerStatusContent } = require('./runnerStatusHeader');
+const {
+    createOneShotQuestSession,
+    getNextPendingOneShotQuest,
+    markOneShotQuestRunning,
+    markOneShotProgressMutationSent,
+    recordOneShotVerifiedProgress,
+    completeOneShotQuest,
+    failOneShotQuest,
+    getOneShotSessionSummary,
+    isOneShotSessionComplete,
+    ONE_SHOT_QUEST_STATUS
+} = require('./oneShotSession');
+const {
+    addScheduleJitter,
+    nextScheduledCheck,
+    nextRecheckState,
+    formatScheduleTime,
+    transientRetryDelayMs,
+    RECHECK_INTERVAL_MS
+} = require('./runnerSchedule');
+const {
+    createScheduledRunner,
+    listScheduledRunners,
+    updateScheduledRunner,
+    deleteScheduledRunner,
+    decryptRunnerRecordToken
+} = require('./scheduledRunnerStore');
+const {
+    withOwnerAdmissionLock,
+    withAccountAdmissionLock
+} = require('./admissionLock');
 const QuestLog = require('../models/QuestLog');
 const { sendWebhookEvent } = require('../../core/webhooks');
 
-const activeJobs = new Map(); // key: `${invokerId}:${jobId}` -> { controller, invokerId, ... }
-const userLocks = new Map();
+const jobs = new Map(); // key: jobKey -> jobRecord
+const activeRunPromises = new Set();
+const RENDER_THROTTLE_MS = 2000;
+const CLAIM_RETRY_DELAY_MS = 15 * 60 * 1000;
+const CLAIM_LONG_RETRY_DELAY_MS = 24 * 60 * 60 * 1000;
 
-async function withUserLock(userId, fn) {
-    const prev = userLocks.get(userId) || Promise.resolve();
-    let release;
-    const gate = new Promise((resolve) => { release = resolve; });
-    const next = prev.then(() => gate);
-    userLocks.set(userId, next);
-
-    await prev;
-    try {
-        return await fn();
-    } finally {
-        release();
-        if (userLocks.get(userId) === next) {
-            userLocks.delete(userId);
+function sleep(ms, signal) {
+    return new Promise((resolve, reject) => {
+        if (signal?.aborted) {
+            reject(new Error('aborted'));
+            return;
         }
-    }
-}
-
-function buildStatusText({ username, totalQuests, completedQuests, logs = [] }) {
-    const header = [
-        `✅ ACCOUNT : ${username || 'กำลังตรวจสอบ...'}`,
-        `🔍 บอทตรวจพบ Quest ที่ทำได้ทั้งหมด : ${totalQuests ?? 'กำลังตรวจสอบ...'}`,
-        `🎉 บอททำ Quest สำเร็จไปแล้วทั้งหมด : ${completedQuests ?? 0}`,
-        '────────────────────────────────────────'
-    ];
-    const visibleLogs = [...logs].slice(-12);
-    return '```\n' + [...header, ...visibleLogs].join('\n') + '\n```';
-}
-
-class DmThrottler {
-    constructor(dmMessage, intervalMs = 1500) {
-        this.dmMessage = dmMessage;
-        this.intervalMs = intervalMs;
-        this.lastEditTime = 0;
-        this.pendingState = null;
-        this.timer = null;
-        this.isFlushing = false;
-    }
-
-    queueUpdate(state) {
-        this.pendingState = state;
-        const now = Date.now();
-        const elapsed = now - this.lastEditTime;
-
-        if (elapsed >= this.intervalMs && !this.isFlushing) {
-            this.flush();
-        } else if (!this.timer) {
-            const waitTime = Math.max(100, this.intervalMs - elapsed);
-            this.timer = setTimeout(() => {
-                this.timer = null;
-                this.flush();
-            }, waitTime);
-        }
-    }
-
-    async flush() {
-        if (!this.dmMessage || !this.pendingState || this.isFlushing) return;
-        this.isFlushing = true;
-        const state = this.pendingState;
-        this.pendingState = null;
-        this.lastEditTime = Date.now();
-
-        try {
-            const content = buildStatusText(state);
-            await this.dmMessage.edit({ content });
-        } catch (err) {
-            console.warn(`[Quest DM update warning]: ${err.message}`);
-        } finally {
-            this.isFlushing = false;
-            if (this.pendingState) {
-                this.flush();
-            }
-        }
-    }
-
-    async forceUpdate(state) {
-        if (this.timer) {
-            clearTimeout(this.timer);
-            this.timer = null;
-        }
-        this.pendingState = null;
-        if (!this.dmMessage) return;
-
-        try {
-            const content = buildStatusText(state);
-            await this.dmMessage.edit({ content });
-            this.lastEditTime = Date.now();
-        } catch (err) {
-            console.warn(`[Quest DM update warning]: ${err.message}`);
-        }
-    }
-}
-
-async function executeSingleAccountQuest({
-    token,
-    signal,
-    onLogUpdate,
-    onProgress
-}) {
-    const result = {
-        targetUserId: null,
-        targetUsername: null,
-        status: 'running',
-        questsFound: 0,
-        questsCompleted: 0,
-        details: [],
-        errorMessage: null
-    };
-
-    // 1. Fetch user account
-    let me;
-    try {
-        me = await fetchMe(token, signal);
-        result.targetUserId = me.id;
-        result.targetUsername = me.username;
-        onLogUpdate(`✅ เข้าสู่ระบบสำเร็จ: ${me.username}`);
-    } catch (err) {
-        result.status = 'failed';
-        result.errorMessage = isFatalAuthError(err) ? 'Token ไม่ถูกต้องหรือหมดอายุ' : `เข้าสู่ระบบไม่สำเร็จ: ${err.message}`;
-        onLogUpdate(`❌ ${result.errorMessage}`);
-        return result;
-    }
-
-    // 2. Fetch quests
-    let allQuests;
-    try {
-        onLogUpdate(`🔎 กำลังดึงรายการเควสต์ของ ${me.username}...`);
-        allQuests = await fetchQuests(token, signal);
-    } catch (err) {
-        result.status = 'failed';
-        result.errorMessage = `ไม่สามารถดึงรายการเควสต์ได้: ${err.message}`;
-        onLogUpdate(`❌ ${result.errorMessage}`);
-        return result;
-    }
-
-    // Filter runnable quests
-    const runnable = allQuests.filter((q) => !q.completed && isRunnableQuest(q));
-    result.questsFound = runnable.length;
-    onLogUpdate(`🎯 ตรวจพบ ${runnable.length} เควสต์ที่ระบบสามารถทำได้`);
-
-    if (runnable.length === 0) {
-        // Also check if any completed quests can be claimed
-        const claimable = allQuests.filter((q) => q.completed && !q.claimed);
-        for (const q of claimable) {
-            try {
-                const platform = selectQuestClaimPlatform(q);
-                await claimQuest(token, q.id, platform, signal);
-                onLogUpdate(`🎁 รับรางวัลเควสต์: ${q.name}`);
-            } catch {}
-        }
-        result.status = 'completed';
-        onLogUpdate(`ℹ️ ไม่มีเควสต์ที่ต้องดำเนินการเพิ่มเติมสำหรับบัญชีนี้`);
-        return result;
-    }
-
-    // 3. Run each quest
-    for (const quest of runnable) {
-        if (signal.aborted) throw new Error('aborted');
-
-        const questRecord = {
-            questId: quest.id,
-            questName: quest.name,
-            eventName: quest.eventName,
-            progress: quest.progressSecs,
-            target: quest.secondsNeeded,
-            completed: false,
-            claimed: false,
-            error: null
+        let t;
+        const onAbort = () => {
+            clearTimeout(t);
+            reject(new Error('aborted'));
         };
-        result.details.push(questRecord);
+        signal?.addEventListener('abort', onAbort, { once: true });
+        t = setTimeout(() => {
+            signal?.removeEventListener('abort', onAbort);
+            resolve();
+        }, ms);
+    });
+}
 
-        onLogUpdate(`⏭️ กำลังเตรียมเควสต์: ${quest.name}`);
+function trackRunPromise(promise) {
+    activeRunPromises.add(promise);
+    const cleanup = () => activeRunPromises.delete(promise);
+    promise.then(cleanup, cleanup);
+    return promise;
+}
 
-        // Ensure enrollment
-        let freshQuest = quest;
-        if (!freshQuest.enrolled) {
-            try {
-                await enrollQuest(token, freshQuest.id, signal);
-                freshQuest = await waitForQuestState(token, freshQuest.id, (q) => q.enrolled, signal) || freshQuest;
-                onLogUpdate(`📝 กดรับเควสต์: ${quest.name}`);
-            } catch (err) {
-                questRecord.error = `รับเควสต์ไม่สำเร็จ: ${err.message}`;
-                onLogUpdate(`⚠️ ${questRecord.error}`);
-                continue;
-            }
+function getJob(key) {
+    return jobs.get(key) ?? null;
+}
+
+function listJobs() {
+    return [...jobs.entries()].map(([key, j]) => ({ key, ...j.summary() }));
+}
+
+function getUserJobs(ownerId, { mode = null, includeStopping = false } = {}) {
+    return [...jobs.entries()]
+        .filter(([, job]) => (
+            job.ownerId === ownerId
+            && (!mode || job.mode === mode)
+            && (includeStopping || job.lifecycle !== 'stopping')
+        ))
+        .map(([key, job]) => ({ key, ...job.summary() }));
+}
+
+function findUserJobByAccount(ownerId, accountId) {
+    for (const [key, job] of jobs) {
+        if (job.ownerId === ownerId && job.accountId === accountId) {
+            return { key, ...job.summary() };
         }
+    }
+    return null;
+}
 
-        // Run progression
-        onLogUpdate(`▶️ เริ่มดำเนินการเควสต์: ${quest.name}`);
-        const runnerFn = isVideoEvent(quest.eventName) ? runVideoQuest : runGameQuest;
+function findAnyJobByAccount(accountId) {
+    for (const [key, job] of jobs) {
+        if (job.accountId === accountId) return { key, ...job.summary() };
+    }
+    return null;
+}
 
-        try {
-            let lastReportedPercent = Math.min(100, Math.floor(quest.progress));
-            freshQuest = await runnerFn(token, freshQuest, signal, async (fresh) => {
-                const pct = fresh.completed ? 100 : Math.min(100, Math.floor(fresh.progress));
-                questRecord.progress = fresh.progressSecs;
-                questRecord.completed = fresh.completed;
-                if (pct >= lastReportedPercent + 25 || fresh.completed) {
-                    lastReportedPercent = pct;
-                    onLogUpdate(`⌛ ${quest.name}: ${pct}%`);
-                }
-                if (onProgress) onProgress();
+function stopJob(ownerId, key, { removeSchedule = true } = {}) {
+    const job = jobs.get(key);
+    if (!job || job.ownerId !== ownerId) return false;
+    if (job.lifecycle !== 'stopping') {
+        job.lifecycle = 'stopping';
+        job.controller.abort();
+    }
+    if (removeSchedule && job.scheduleId != null) {
+        deleteScheduledRunner(job.scheduleId, ownerId).catch(() => {});
+    }
+    return true;
+}
+
+function stopScheduledJob(ownerId, scheduleId) {
+    const key = `scheduled:${scheduleId}`;
+    const stopped = stopJob(ownerId, key);
+    deleteScheduledRunner(scheduleId, ownerId).catch(() => {});
+    return stopped;
+}
+
+function stopAllForUser(ownerId, { mode = null } = {}) {
+    let count = 0;
+    for (const [key, job] of jobs) {
+        if (job.ownerId !== ownerId || (mode && job.mode !== mode)) continue;
+        if (stopJob(ownerId, key)) count++;
+    }
+    return count;
+}
+
+function stopRunner(ownerId, options = {}) {
+    return stopAllForUser(ownerId, options) > 0;
+}
+
+async function shutdownRunners(timeoutMs = 5000) {
+    const activeJobs = [...jobs.values()];
+    for (const job of activeJobs) job.controller.abort();
+
+    if (!activeRunPromises.size) return activeJobs.length;
+
+    let timeoutId;
+    const timeoutPromise = new Promise((resolve) => {
+        timeoutId = setTimeout(() => resolve('timeout'), timeoutMs);
+    });
+
+    await Promise.race([
+        Promise.allSettled([...activeRunPromises]),
+        timeoutPromise
+    ]);
+
+    clearTimeout(timeoutId);
+    return activeJobs.length;
+}
+
+// ── Core Runner implementation ─────────────────────────────────────────────
+
+async function startRunner({
+    jobKey,
+    ownerId,
+    userToken,
+    channelId = null,
+    client = null,
+    mode = 'oneshot',
+    scheduleId = null,
+    accountId: initialAccountId = null,
+    username: initialUsername = null,
+    initialNextCheckAt = null
+}) {
+    if (jobs.has(jobKey)) throw new Error(`Job ${jobKey} กำลังทำงานอยู่`);
+    if (!['oneshot', 'scheduled'].includes(mode)) throw new Error(`Unknown runner mode: ${mode}`);
+
+    const controller = new AbortController();
+    const { signal } = controller;
+
+    let liveMsg = null;
+    let outputChannel = null;
+    let username = initialUsername ?? '...';
+    let accountId = initialAccountId;
+    let lastRenderAt = 0;
+    let pendingTimer = null;
+    let flushPromise = Promise.resolve();
+    let nextCheckAt = initialNextCheckAt;
+    let logoutReported = false;
+    let countAlreadyReported = false;
+    let oneShotSession = null;
+    let oneShotSummaryReported = false;
+    const claimRetryAt = new Map();
+    const logLines = [];
+
+    function addLog(line) {
+        logLines.push(String(line).slice(0, 180));
+        if (logLines.length > 25) logLines.shift();
+    }
+
+    async function resolveOutputChannel() {
+        if (outputChannel?.isTextBased?.()) return outputChannel;
+        if (!client || !channelId) return null;
+        const ch = await client.channels.fetch(channelId).catch(() => null);
+        if (ch?.isTextBased?.()) outputChannel = ch;
+        return outputChannel;
+    }
+
+    async function flush() {
+        const task = flushPromise.then(async () => {
+            lastRenderAt = Date.now();
+            const visibleLines = [...logLines];
+            let rawContent = '```\n' + visibleLines.join('\n') + '\n```';
+            const formattedContent = formatRunnerStatusContent(rawContent, {
+                loginLine: `✅ LOGIN : ${username}`,
+                modeLine: mode === 'scheduled' ? '🤖 AUTO DAILY ENABLED' : null
             });
 
-            // Verify completed
-            freshQuest = await waitForQuestState(token, quest.id, (q) => q.completed, signal) || freshQuest;
-
-            if (freshQuest.completed) {
-                questRecord.completed = true;
-                result.questsCompleted++;
-                onLogUpdate(`🎉 เควสต์เสร็จสมบูรณ์: ${quest.name}`);
-
-                // Auto claim
-                if (!freshQuest.claimed) {
-                    try {
-                        const platform = selectQuestClaimPlatform(freshQuest);
-                        await claimQuest(token, freshQuest.id, platform, signal);
-                        questRecord.claimed = true;
-                        onLogUpdate(`🎁 รับรางวัลเควสต์สำเร็จ: ${quest.name}`);
-                    } catch (claimErr) {
-                        onLogUpdate(`⚠️ เคลมรางวัลไม่สำเร็จ (${quest.name}): ${claimErr.message}`);
-                    }
+            const editingExisting = Boolean(liveMsg);
+            try {
+                if (!liveMsg) {
+                    const ch = await resolveOutputChannel();
+                    if (!ch?.isTextBased?.()) return;
+                    liveMsg = await ch.send({ content: formattedContent });
+                } else {
+                    await liveMsg.edit({ content: formattedContent });
                 }
-            } else {
-                questRecord.error = 'Discord ยังไม่ยืนยันความคืบหน้าครบ 100%';
-                onLogUpdate(`⚠️ ${questRecord.error}`);
+            } catch (err) {
+                if (editingExisting) liveMsg = null;
+                console.warn(`[Quest Runner:${jobKey}] Status message update failed: ${err.message}`);
             }
-        } catch (err) {
-            if (signal.aborted) throw err;
-            questRecord.error = err.message;
-            onLogUpdate(`❌ เกิดข้อผิดพลาดในเควสต์ ${quest.name}: ${err.message}`);
+        });
+
+        flushPromise = task.catch(() => {});
+        await task;
+    }
+
+    async function render() {
+        const now = Date.now();
+        if (liveMsg && now - lastRenderAt < RENDER_THROTTLE_MS) {
+            if (!pendingTimer) {
+                const wait = RENDER_THROTTLE_MS - (now - lastRenderAt);
+                pendingTimer = setTimeout(() => {
+                    pendingTimer = null;
+                    flush();
+                }, wait);
+                pendingTimer.unref?.();
+            }
+            return;
+        }
+        if (pendingTimer) {
+            clearTimeout(pendingTimer);
+            pendingTimer = null;
+        }
+        await flush();
+    }
+
+    const jobRecord = {
+        ownerId,
+        accountId,
+        mode,
+        scheduleId,
+        controller,
+        lifecycle: 'running',
+        summary: () => ({
+            username,
+            accountId,
+            mode,
+            scheduleId,
+            lifecycle: jobRecord.lifecycle,
+            nextCheckAt,
+            status: logLines.at(-1) ?? ''
+        })
+    };
+    jobs.set(jobKey, jobRecord);
+
+    const clearPendingRender = () => {
+        if (pendingTimer) {
+            clearTimeout(pendingTimer);
+            pendingTimer = null;
+        }
+    };
+    signal.addEventListener('abort', clearPendingRender, { once: true });
+
+    function persistSchedule(values = {}) {
+        if (mode === 'scheduled' && scheduleId != null) {
+            updateScheduledRunner(scheduleId, values).catch(() => {});
         }
     }
 
-    result.status = result.questsCompleted > 0 ? 'completed' : 'failed';
-    return result;
+    function rethrowFatalAuth(error) {
+        if (isFatalAuthError(error)) throw error;
+    }
+
+    async function claimSilently(quest) {
+        if ((claimRetryAt.get(quest.id) ?? 0) > Date.now()) return false;
+        const platform = selectQuestClaimPlatform(quest);
+        if (platform == null) {
+            claimRetryAt.set(quest.id, Date.now() + CLAIM_LONG_RETRY_DELAY_MS);
+            return false;
+        }
+
+        try {
+            await claimQuest(userToken, quest.id, platform, signal);
+            const claimed = await waitForQuestState(userToken, quest.id, (fresh) => fresh.claimed, signal);
+            if (claimed) {
+                claimRetryAt.delete(quest.id);
+            } else {
+                claimRetryAt.set(quest.id, Date.now() + CLAIM_RETRY_DELAY_MS);
+            }
+            return Boolean(claimed);
+        } catch (error) {
+            if (signal.aborted) throw new Error('aborted');
+            rethrowFatalAuth(error);
+            claimRetryAt.set(quest.id, Date.now() + CLAIM_RETRY_DELAY_MS);
+            return false;
+        }
+    }
+
+    async function reportOneShotLogout() {
+        if (mode !== 'oneshot' || logoutReported) return;
+        logoutReported = true;
+        addLog(`🔒 LOGOUT : ${username}`);
+        await flush();
+    }
+
+    async function reportRunnableCount(count) {
+        addLog(`🔎 ${username}: พบ ${count} QUESTS`);
+        await render();
+    }
+
+    function questActivityLine(icon, content) {
+        return mode === 'oneshot'
+            ? `${icon} ${content}`
+            : `${icon} ${username}: ${content}`;
+    }
+
+    function oneShotSummary() {
+        return getOneShotSessionSummary(oneShotSession);
+    }
+
+    async function reportOneShotInitialState() {
+        const summary = oneShotSummary();
+        addLog(`🔎 ${username}: พบ ${summary.totalSupportedQuests} QUESTS`);
+        addLog(`🎉 ${username}: ทำสำเร็จ ${summary.completedByBotCount} QUESTS`);
+        await flush();
+    }
+
+    async function reportOneShotTerminalState() {
+        const summary = oneShotSummary();
+        addLog(`🔎 ${username}: พบ ${summary.totalSupportedQuests} QUESTS`);
+        addLog(`🎉 ${username}: ทำสำเร็จ ${summary.completedByBotCount} QUESTS`);
+        addLog('🧹 QUEST ACTIVITY CLEARED');
+        await flush();
+        return summary;
+    }
+
+    function oneShotOutcome() {
+        const summary = oneShotSummary();
+        return {
+            attempted: true,
+            progressed: true,
+            supportedCount: summary.pendingCount
+        };
+    }
+
+    async function reportOneShotFailure(quest, reason) {
+        if (mode !== 'oneshot') return null;
+        failOneShotQuest(oneShotSession, quest.id, reason);
+        await reportOneShotTerminalState();
+        return oneShotOutcome();
+    }
+
+    async function reportOneShotExternalCompletion(quest) {
+        if (mode !== 'oneshot') return null;
+        completeOneShotQuest(oneShotSession, quest.id);
+        await reportOneShotTerminalState();
+        return oneShotOutcome();
+    }
+
+    async function reportOneShotBotCompletion(quest) {
+        if (mode !== 'oneshot') return null;
+        const status = completeOneShotQuest(oneShotSession, quest.id);
+        if (status !== ONE_SHOT_QUEST_STATUS.COMPLETED_BY_BOT) {
+            return reportOneShotExternalCompletion(quest);
+        }
+        await reportOneShotTerminalState();
+        return oneShotOutcome();
+    }
+
+    async function reportOneShotSummary() {
+        if (mode !== 'oneshot' || oneShotSummaryReported) return;
+        oneShotSummaryReported = true;
+        const summary = oneShotSummary();
+        addLog(`🔎 ${username}: พบ ${summary.totalSupportedQuests} QUESTS`);
+        addLog(`🎉 ${username}: ทำสำเร็จ ${summary.completedByBotCount} QUESTS`);
+        addLog('🧹 QUEST ACTIVITY CLEARED');
+
+        if (summary.totalSupportedQuests === 0) {
+            addLog('ℹ️ ไม่พบ Quest ที่บอทสามารถทำได้ในขณะนี้');
+            await flush();
+            return;
+        }
+
+        if (summary.issues.length === 0 && summary.completedByBotCount === summary.totalSupportedQuests) {
+            addLog('🎉 บอทได้เข้าไปทำ Quest ทั้งหมดเสร็จสิ้นทั้งหมดแล้ว');
+            await flush();
+            return;
+        }
+
+        addLog(summary.completedByBotCount === 0
+            ? '❌ บอทไม่สามารถดำเนินการ Quest ให้สำเร็จได้'
+            : '⚠️ มีบาง Quest ที่บอทดำเนินการไม่สำเร็จ');
+        summary.issues.forEach((issue, index) => {
+            addLog(`${index + 1}. ${issue.name}`);
+            addLog(`   └ ${issue.reason}`);
+        });
+        await flush();
+    }
+
+    async function prepareOneShotRound(allQuests) {
+        if (!oneShotSession) {
+            const initialRunnable = allQuests.filter((quest) => !quest.completed && isRunnableQuest(quest));
+            oneShotSession = createOneShotQuestSession(initialRunnable);
+            await reportOneShotInitialState();
+        }
+        if (isOneShotSessionComplete(oneShotSession)) {
+            return { outcome: { attempted: false, progressed: false, supportedCount: 0 } };
+        }
+
+        const initialQuest = getNextPendingOneShotQuest(oneShotSession);
+        if (!initialQuest) return { outcome: { attempted: false, progressed: false, supportedCount: 0 } };
+        return { runnable: [initialQuest], initialQuest };
+    }
+
+    async function claimScheduledCompletions(allQuests) {
+        const completed = allQuests.filter((quest) => quest.completed && !quest.claimed);
+        for (const quest of completed) {
+            if (signal.aborted) throw new Error('aborted');
+            await claimSilently(quest);
+        }
+    }
+
+    async function prepareScheduledRound(allQuests) {
+        await claimScheduledCompletions(allQuests);
+        const runnable = allQuests.filter((quest) => !quest.completed && isRunnableQuest(quest));
+        if (!countAlreadyReported) await reportRunnableCount(runnable.length);
+        countAlreadyReported = false;
+        if (runnable.length === 0) return { outcome: { attempted: false, progressed: false, supportedCount: 0 } };
+        return { runnable, initialQuest: runnable[0] };
+    }
+
+    function prepareQuestRound(allQuests) {
+        return mode === 'oneshot'
+            ? prepareOneShotRound(allQuests)
+            : prepareScheduledRound(allQuests);
+    }
+
+    async function refreshRoundQuest(selection) {
+        try {
+            return {
+                quest: await fetchFreshQuest(userToken, selection.initialQuest.id, signal)
+            };
+        } catch (error) {
+            rethrowFatalAuth(error);
+            if (mode === 'oneshot') {
+                return {
+                    outcome: await reportOneShotFailure(
+                        selection.initialQuest,
+                        `ตรวจสอบข้อมูลไม่สำเร็จ: ${error.message}`
+                    )
+                };
+            }
+            addLog(`⚠️ ${username}: refresh failed — ${selection.initialQuest.name} — ${error.message}`);
+            await render();
+            return { outcome: { attempted: true, progressed: false, supportedCount: selection.runnable.length } };
+        }
+    }
+
+    async function resolveQuestAvailability(quest, selection) {
+        if (!quest.completed && isRunnableQuest(quest)) return null;
+        if (quest.completed) {
+            if (mode === 'oneshot') {
+                await claimSilently(quest);
+                return reportOneShotExternalCompletion(quest);
+            }
+            return { attempted: false, progressed: false, supportedCount: selection.runnable.length };
+        }
+        if (mode === 'oneshot') {
+            return reportOneShotFailure(quest, 'Quest ไม่พร้อมให้บอทดำเนินการ');
+        }
+        return { attempted: false, progressed: false, supportedCount: selection.runnable.length };
+    }
+
+    async function announceQuestPreparation(quest) {
+        if (mode === 'oneshot') {
+            markOneShotQuestRunning(oneShotSession, quest.id, quest.progressSecs);
+        }
+        addLog(questActivityLine('⏭️', `กำลังเตรียมทำ ${quest.name}`));
+        await render();
+    }
+
+    async function questFailureOutcome(quest, selection, reason, scheduledMessage) {
+        if (mode === 'oneshot') return reportOneShotFailure(quest, reason);
+        addLog(scheduledMessage);
+        await render();
+        return { attempted: true, progressed: false, supportedCount: selection.runnable.length };
+    }
+
+    async function ensureQuestEnrollment(quest, selection) {
+        if (quest.enrolled) return { quest };
+        try {
+            await enrollQuest(userToken, quest.id, signal);
+            const enrolled = await waitForQuestState(userToken, quest.id, (fresh) => fresh.enrolled, signal);
+            if (enrolled) return { quest: enrolled };
+            return {
+                outcome: await questFailureOutcome(
+                    quest,
+                    selection,
+                    'Discord ยังไม่ยืนยันการรับ Quest',
+                    `⚠️ ${username}: ${quest.name} — Discord ยังไม่ยืนยันการรับ Quest`
+                )
+            };
+        } catch (error) {
+            rethrowFatalAuth(error);
+            return {
+                outcome: await questFailureOutcome(
+                    quest,
+                    selection,
+                    'รับ Quest ไม่สำเร็จ',
+                    `⚠️ ${username}: enroll failed — ${quest.name} — ${error.message}`
+                )
+            };
+        }
+    }
+
+    async function announceQuestProgress(quest) {
+        addLog(questActivityLine('▶️', `กำลังทำ ${quest.name}`));
+        const initialPercent = Math.min(100, Math.max(0, Math.floor(quest.progress)));
+        addLog(questActivityLine('⌛', `${quest.name} ${initialPercent}%`));
+        await render();
+        return initialPercent;
+    }
+
+    function createQuestProgressHooks(quest, initialPercent) {
+        let nextCheckpoint = Math.max(25, (Math.floor(initialPercent / 25) + 1) * 25);
+        let lastReportedPercent = initialPercent;
+        let lastVerifiedProgressSecs = quest.progressSecs;
+        let completionSeen = quest.completed;
+
+        const onServerProgress = async (fresh) => {
+            const percent = fresh.completed ? 100 : Math.min(100, Math.floor(fresh.progress));
+            if (mode === 'oneshot') {
+                recordOneShotVerifiedProgress(oneShotSession, quest.id, fresh.progressSecs, {
+                    completed: fresh.completed
+                });
+            }
+            lastVerifiedProgressSecs = Math.max(lastVerifiedProgressSecs, fresh.progressSecs);
+            completionSeen = completionSeen || fresh.completed;
+            while (nextCheckpoint <= 100 && percent >= nextCheckpoint) {
+                if (nextCheckpoint > lastReportedPercent) {
+                    addLog(questActivityLine('⌛', `${quest.name} ${nextCheckpoint}%`));
+                    lastReportedPercent = nextCheckpoint;
+                }
+                nextCheckpoint += 25;
+            }
+            await render();
+        };
+
+        const onMutationAccepted = () => {
+            if (mode === 'oneshot') {
+                markOneShotProgressMutationSent(oneShotSession, quest.id);
+            }
+        };
+
+        return { onServerProgress, onMutationAccepted };
+    }
+
+    async function executeQuestProgress(quest, selection, hooks) {
+        const runner = isVideoEvent(quest.eventName) ? runVideoQuest : runGameQuest;
+        try {
+            await runner(
+                userToken,
+                quest,
+                signal,
+                hooks.onServerProgress
+            );
+            if (signal.aborted) throw new Error('aborted');
+            return null;
+        } catch (error) {
+            rethrowFatalAuth(error);
+            if (signal.aborted) throw new Error('aborted');
+            if (mode === 'oneshot') {
+                return reportOneShotFailure(quest, 'การส่งความคืบหน้าไม่สำเร็จ');
+            }
+            addLog(`⚠️ ${username}: ERROR ${error.message}`);
+            await render();
+            return { attempted: true, progressed: false, supportedCount: selection.runnable.length };
+        }
+    }
+
+    async function verifyQuestCompletion(quest, selection) {
+        try {
+            const fresh = await waitForQuestState(userToken, quest.id, (item) => item.completed, signal);
+            if (fresh) return { fresh };
+            return {
+                outcome: await questFailureOutcome(
+                    quest,
+                    selection,
+                    'Discord ยังไม่ยืนยันสถานะเสร็จ',
+                    `⚠️ ${username}: ${quest.name} — Discord ยังไม่ส่ง completed_at หลังตรวจ 3 ครั้ง`
+                )
+            };
+        } catch (error) {
+            rethrowFatalAuth(error);
+            return {
+                outcome: await questFailureOutcome(
+                    quest,
+                    selection,
+                    'ตรวจสอบผลลัพธ์กับ Discord ไม่สำเร็จ',
+                    `⚠️ ${username}: verify failed — ${error.message}`
+                )
+            };
+        }
+    }
+
+    async function finalizeQuestCompletion(fresh, hooks) {
+        await hooks.onServerProgress(fresh);
+        if (mode === 'oneshot') {
+            const status = completeOneShotQuest(oneShotSession, fresh.id);
+            await claimSilently(fresh);
+            return status === ONE_SHOT_QUEST_STATUS.COMPLETED_BY_BOT
+                ? reportOneShotBotCompletion(fresh)
+                : reportOneShotExternalCompletion(fresh);
+        }
+
+        await claimSilently(fresh);
+        const latestQuests = await fetchQuests(userToken, signal);
+        const supportedRemaining = latestQuests.filter((item) => !item.completed && isRunnableQuest(item)).length;
+        await reportRunnableCount(supportedRemaining);
+        countAlreadyReported = true;
+        return { attempted: true, progressed: true, supportedCount: supportedRemaining };
+    }
+
+    async function runQuestRound() {
+        const selection = await prepareQuestRound(await fetchQuests(userToken, signal));
+        if (selection.outcome) return selection.outcome;
+
+        const refreshed = await refreshRoundQuest(selection);
+        if (refreshed.outcome) return refreshed.outcome;
+
+        const availabilityOutcome = await resolveQuestAvailability(refreshed.quest, selection);
+        if (availabilityOutcome) return availabilityOutcome;
+
+        await announceQuestPreparation(refreshed.quest);
+        const enrollment = await ensureQuestEnrollment(refreshed.quest, selection);
+        if (enrollment.outcome) return enrollment.outcome;
+
+        const initialPercent = await announceQuestProgress(enrollment.quest);
+        const hooks = createQuestProgressHooks(enrollment.quest, initialPercent);
+        const progressOutcome = await executeQuestProgress(enrollment.quest, selection, hooks);
+        if (progressOutcome) return progressOutcome;
+
+        const verification = await verifyQuestCompletion(enrollment.quest, selection);
+        if (verification.outcome) return verification.outcome;
+        return finalizeQuestCompletion(verification.fresh, hooks);
+    }
+
+    async function initializeRunnerSession() {
+        if (!accountId || !initialUsername) {
+            const me = await fetchMe(userToken, signal);
+            username = me.username ?? 'unknown';
+            accountId = me.id ?? accountId;
+        }
+        const job = jobs.get(jobKey);
+        if (job) job.accountId = accountId;
+        addLog(`✅ LOGIN : ${username}`);
+        if (mode === 'scheduled') {
+            addLog('🤖 AUTO DAILY ENABLED — CHECK 00:00 / 08:00 / 16:00');
+        }
+        await render();
+    }
+
+    async function restoreInitialSchedule() {
+        if (mode !== 'scheduled' || !initialNextCheckAt) return;
+        const restoredAt = new Date(initialNextCheckAt);
+        if (!Number.isFinite(restoredAt.getTime()) || restoredAt.getTime() <= Date.now()) return;
+        nextCheckAt = restoredAt.toISOString();
+        addLog(`⏰ ${username}: NEXT CHECK ${formatScheduleTime(restoredAt)}`);
+        await render();
+        await sleep(restoredAt.getTime() - Date.now(), signal);
+    }
+
+    async function runRoundSafely() {
+        try {
+            const outcome = await runQuestRound();
+            persistSchedule({ lastCheckAt: new Date(), lastError: null });
+            return outcome;
+        } catch (error) {
+            if (error.message === 'aborted' || isFatalAuthError(error) || mode === 'oneshot') {
+                throw error;
+            }
+            addLog(`⚠️ ${username}: CHECK ERROR — ${error.message}`);
+            await render();
+            persistSchedule({
+                lastCheckAt: new Date(),
+                lastError: error.message
+            });
+            return {
+                attempted: false,
+                progressed: false,
+                supportedCount: 0,
+                transientError: true
+            };
+        }
+    }
+
+    async function waitForTransientErrorRetry(attempt) {
+        const delayMs = transientRetryDelayMs(attempt);
+        nextCheckAt = new Date(Date.now() + delayMs).toISOString();
+        persistSchedule({ nextCheckAt });
+        addLog(`🌐 ${username}: NETWORK RETRY — อีก ${Math.round(delayMs / 60000)} นาที`);
+        await render();
+        countAlreadyReported = false;
+        await sleep(delayMs, signal);
+        return attempt + 1;
+    }
+
+    async function waitForVerificationRecheck(state, outcome) {
+        const recheck = nextRecheckState({
+            isRecheck: state.isRecheck,
+            rechecksRemaining: state.rechecksRemaining,
+            attempted: outcome.attempted,
+            progressed: outcome.progressed
+        });
+        if (!recheck.shouldRecheck) return null;
+
+        const checkNumber = 4 - recheck.rechecksRemaining;
+        nextCheckAt = new Date(Date.now() + RECHECK_INTERVAL_MS).toISOString();
+        persistSchedule({ nextCheckAt });
+        addLog(`🔁 ${username}: VERIFY ${checkNumber}/3 — อีก 5 นาที`);
+        await render();
+        countAlreadyReported = false;
+        await sleep(RECHECK_INTERVAL_MS, signal);
+        return { isRecheck: true, rechecksRemaining: recheck.rechecksRemaining };
+    }
+
+    async function waitForNextScheduledCheck() {
+        const scheduledAt = addScheduleJitter(
+            nextScheduledCheck(new Date(), 'Asia/Bangkok')
+        );
+        nextCheckAt = scheduledAt.toISOString();
+        persistSchedule({ nextCheckAt });
+        addLog(`💤 ${username}: AUTO DAILY ACTIVE`);
+        addLog(`⏰ ${username}: NEXT CHECK ${formatScheduleTime(scheduledAt)}`);
+        await render();
+        countAlreadyReported = false;
+        await sleep(scheduledAt.getTime() - Date.now(), signal);
+    }
+
+    async function handleScheduledIdle(state, outcome) {
+        const recheckState = await waitForVerificationRecheck(state, outcome);
+        if (recheckState) return recheckState;
+        await waitForNextScheduledCheck();
+        return { isRecheck: false, rechecksRemaining: 0 };
+    }
+
+    // Main execution loop
+    const runTask = (async () => {
+        try {
+            await initializeRunnerSession();
+            await restoreInitialSchedule();
+
+            let scheduledState = { isRecheck: false, rechecksRemaining: 0 };
+            let transientAttempt = 0;
+
+            while (!signal.aborted) {
+                const outcome = await runRoundSafely();
+                if (signal.aborted) break;
+
+                if (mode === 'oneshot') {
+                    if (isOneShotSessionComplete(oneShotSession)) {
+                        await reportOneShotSummary();
+                        await reportOneShotLogout();
+                        break;
+                    }
+                    continue;
+                }
+
+                // Scheduled mode loop
+                if (outcome.transientError) {
+                    transientAttempt = await waitForTransientErrorRetry(transientAttempt);
+                    continue;
+                }
+                transientAttempt = 0;
+
+                scheduledState = await handleScheduledIdle(scheduledState, outcome);
+            }
+        } catch (err) {
+            if (err.message === 'aborted') {
+                addLog(`🛑 ${username}: RUNNER STOPPED`);
+            } else if (isFatalAuthError(err)) {
+                addLog(`🔒 ${username}: AUTH FAILED (Token invalid)`);
+                persistSchedule({ lastError: 'Fatal auth failure (token invalid)' });
+            } else {
+                addLog(`❌ ${username}: FATAL ERROR — ${err.message}`);
+                persistSchedule({ lastError: err.message });
+            }
+            await flush();
+        } finally {
+            clearPendingRender();
+            jobs.delete(jobKey);
+        }
+    })();
+
+    trackRunPromise(runTask);
+    return { jobKey, controller, task: runTask };
 }
 
+// ── Restore on startup ─────────────────────────────────────────────────────
+
+async function restoreScheduledRunners(client) {
+    let rows = [];
+    try {
+        rows = await listScheduledRunners();
+    } catch (err) {
+        console.warn(`[ScheduledRunner] Failed to fetch scheduled runners from DB: ${err.message}`);
+        return { restored: 0, failed: 0 };
+    }
+
+    if (!rows.length) return { restored: 0, failed: 0 };
+
+    let restored = 0;
+    let failed = 0;
+    const restoredByOwner = new Map();
+    const restoredAccounts = new Set();
+
+    for (const row of rows) {
+        const ownerCount = restoredByOwner.get(row.ownerId) ?? 0;
+        if (ownerCount >= 10) {
+            failed++;
+            continue;
+        }
+        if (restoredAccounts.has(row.accountId)) {
+            failed++;
+            continue;
+        }
+
+        try {
+            const token = decryptRunnerRecordToken(row);
+            await startRunner({
+                jobKey: `scheduled:${row._id}`,
+                ownerId: row.ownerId,
+                userToken: token,
+                channelId: row.channelId,
+                client,
+                mode: 'scheduled',
+                scheduleId: String(row._id),
+                accountId: row.accountId,
+                username: row.username,
+                initialNextCheckAt: row.nextCheckAt ? new Date(row.nextCheckAt).toISOString() : null
+            });
+            restored++;
+            restoredByOwner.set(row.ownerId, ownerCount + 1);
+            restoredAccounts.add(row.accountId);
+        } catch (err) {
+            failed++;
+            console.warn(`[ScheduledRunner] Restore failed for ${row.username} (${row._id}): ${err.message}`);
+        }
+    }
+
+    console.log(`[ScheduledRunner] Restored ${restored} scheduled runner(s) (failed: ${failed})`);
+    return { restored, failed };
+}
+
+// Compatibility wrapper for user quest session batch
 async function startUserQuestSession({
     client,
     invokerId,
     invokerTag,
     guildId = null,
     channelId = null,
-    tokens = []
+    tokens = [],
+    mode = 'oneshot'
 }) {
-    return withUserLock(invokerId, async () => {
-        const jobId = `${invokerId}_${Date.now()}`;
-        const controller = new AbortController();
-        const { signal } = controller;
+    return withOwnerAdmissionLock(invokerId, async () => {
+        const results = [];
+        let startIndex = Date.now();
 
-        const jobEntry = { jobId, invokerId, controller, startedAt: new Date() };
-        activeJobs.set(jobId, jobEntry);
-
-        // Pre-create database log entry
+        // Create QuestLog document in MongoDB
         const questLog = new QuestLog({
             invokerId,
             invokerTag,
@@ -292,29 +915,7 @@ async function startUserQuestSession({
                 };
             })
         });
-        await questLog.save().catch((err) => console.error('[Quest DB Save Error]:', err));
-
-        // Attempt to establish DM message
-        let dmMessage = null;
-        let dmError = null;
-        try {
-            const user = await client.users.fetch(invokerId);
-            if (user) {
-                const initialText = buildStatusText({
-                    username: 'กำลังเริ่มตรวจสอบ...',
-                    totalQuests: '...',
-                    completedQuests: 0,
-                    logs: ['🚀 เริ่มระบบ NeverDie Auto Quest', `📋 รับ Token ทั้งหมด ${tokens.length} บัญชี`]
-                });
-                dmMessage = await user.send({ content: initialText });
-                questLog.dmDelivered = true;
-            }
-        } catch (err) {
-            dmError = err.message;
-            questLog.dmDelivered = false;
-            questLog.dmError = err.message;
-            console.warn(`[Quest DM could not be opened for user ${invokerId}]: ${err.message}`);
-        }
+        await questLog.save().catch(() => {});
 
         // Emit startup webhook event
         sendWebhookEvent({
@@ -322,178 +923,94 @@ async function startUserQuestSession({
             category: 'COMMAND',
             code: 'quest.session.started',
             title: '🚀 มีการเริ่มระบบทำ Quest อัตโนมัติ',
-            description: `ผู้ใช้ <@${invokerId}> ได้ส่งคำขอทำ Discord Quest`,
+            description: `ผู้ใช้ <@${invokerId}> ได้ส่งคำขอทำ Discord Quest (โหมด: ${mode})`,
             context: {
                 'ผู้สั่งการ': `${invokerTag} (${invokerId})`,
-                'เซิร์ฟเวอร์': guildId ? `Guild ID: ${guildId}` : 'DM / Direct',
-                'จำนวนบัญชี': `${tokens.length} บัญชี`
+                'เซิร์ฟเวอร์': guildId ? `Guild ID: ${guildId}` : 'Direct',
+                'จำนวนบัญชี': `${tokens.length} บัญชี`,
+                'โหมด': mode
             },
-            dedupeKey: `quest-started:${jobId}`
+            dedupeKey: `quest-started:${invokerId}:${startIndex}`
         }).catch(() => {});
 
-        // Run accounts asynchronously in background
-        (async () => {
-            const throttler = new DmThrottler(dmMessage, 1500);
-            let anySuccess = false;
-            let anyFailure = false;
-            let totalDoneQuests = 0;
-
-            for (let i = 0; i < tokens.length; i++) {
-                if (signal.aborted) break;
-
-                const token = tokens[i];
-                const accountLogIndex = i;
-                const logs = [`▶️ กำลังดำเนินการบัญชีลำดับที่ ${i + 1}/${tokens.length}`];
-
-                const onLogUpdate = (line) => {
-                    logs.push(line);
-                    throttler.queueUpdate({
-                        username: questLog.accounts[accountLogIndex]?.targetUsername || `บัญชี ${i + 1}`,
-                        totalQuests: questLog.accounts[accountLogIndex]?.questsFound ?? '...',
-                        completedQuests: totalDoneQuests,
-                        logs
-                    });
-                };
-
+        for (let i = 0; i < tokens.length; i++) {
+            const token = tokens[i];
+            try {
+                let me;
                 try {
-                    questLog.accounts[accountLogIndex].status = 'running';
-                    questLog.accounts[accountLogIndex].startedAt = new Date();
-                    await questLog.save().catch(() => {});
-
-                    const accResult = await executeSingleAccountQuest({
-                        token,
-                        signal,
-                        onLogUpdate,
-                        onProgress: () => {
-                            throttler.queueUpdate({
-                                username: questLog.accounts[accountLogIndex]?.targetUsername || `บัญชี ${i + 1}`,
-                                totalQuests: questLog.accounts[accountLogIndex]?.questsFound,
-                                completedQuests: totalDoneQuests,
-                                logs
-                            });
-                        }
-                    });
-
-                    questLog.accounts[accountLogIndex].targetUserId = accResult.targetUserId;
-                    questLog.accounts[accountLogIndex].targetUsername = accResult.targetUsername;
-                    questLog.accounts[accountLogIndex].status = accResult.status;
-                    questLog.accounts[accountLogIndex].questsFound = accResult.questsFound;
-                    questLog.accounts[accountLogIndex].questsCompleted = accResult.questsCompleted;
-                    questLog.accounts[accountLogIndex].details = accResult.details;
-                    questLog.accounts[accountLogIndex].errorMessage = accResult.errorMessage;
-                    questLog.accounts[accountLogIndex].finishedAt = new Date();
-
-                    totalDoneQuests += accResult.questsCompleted;
-                    if (accResult.status === 'completed') anySuccess = true;
-                    else anyFailure = true;
-
-                } catch (accErr) {
-                    if (signal.aborted) {
-                        questLog.accounts[accountLogIndex].status = 'stopped';
-                        questLog.accounts[accountLogIndex].errorMessage = 'ผู้ใช้สั่งหยุดทำงาน (STOP ALL)';
-                    } else {
-                        questLog.accounts[accountLogIndex].status = 'failed';
-                        questLog.accounts[accountLogIndex].errorMessage = accErr.message;
-                        anyFailure = true;
-                    }
-                    questLog.accounts[accountLogIndex].finishedAt = new Date();
+                    me = await fetchMe(token);
+                } catch (authErr) {
+                    results.push({ started: false, line: `❌ Token ลำดับที่ ${i + 1} ไม่ถูกต้องหรือหมดอายุ` });
+                    continue;
                 }
 
-                await questLog.save().catch(() => {});
-            }
+                const accountId = me.id;
+                const username = me.username;
 
-            // Finalize status
-            if (signal.aborted) {
-                questLog.overallStatus = 'stopped';
-            } else if (anySuccess && !anyFailure) {
-                questLog.overallStatus = 'completed';
-            } else if (anySuccess && anyFailure) {
-                questLog.overallStatus = 'partial_failure';
-            } else {
-                questLog.overallStatus = 'failed';
-            }
+                await withAccountAdmissionLock(accountId, async () => {
+                    if (findAnyJobByAccount(accountId)) {
+                        results.push({ started: false, line: `⚠️ **${username}** มี Runner ทำงานอยู่แล้วในระบบ` });
+                        return;
+                    }
 
-            await questLog.save().catch(() => {});
-            activeJobs.delete(jobId);
+                    let scheduleId = null;
+                    if (mode === 'scheduled') {
+                        const sched = await createScheduledRunner({
+                            ownerId: invokerId,
+                            guildId,
+                            channelId,
+                            accountId,
+                            username,
+                            token
+                        });
+                        scheduleId = String(sched._id);
+                    }
 
-            // Final DM update
-            if (dmMessage) {
-                const finalLogs = [
-                    '────────────────────────────────────────',
-                    '🏁 ดำเนินการเสร็จสิ้นทุกบัญชีเรียบร้อยแล้ว',
-                    `📊 ทำเควสต์สำเร็จทั้งหมด: ${totalDoneQuests} เควสต์`,
-                    `สถานะรวม: ${questLog.overallStatus}`
-                ];
-                await throttler.forceUpdate({
-                    username: 'เสร็จสิ้นทั้งหมด',
-                    totalQuests: '-',
-                    completedQuests: totalDoneQuests,
-                    logs: finalLogs
+                    const jobKey = mode === 'scheduled'
+                        ? `scheduled:${scheduleId}`
+                        : `${invokerId}:oneshot:${startIndex++}`;
+
+                    await startRunner({
+                        jobKey,
+                        ownerId: invokerId,
+                        userToken: token,
+                        channelId,
+                        client,
+                        mode,
+                        scheduleId,
+                        accountId,
+                        username
+                    });
+
+                    results.push({
+                        started: true,
+                        username,
+                        line: mode === 'scheduled'
+                            ? `🤖 เริ่มระบบอัตโนมัติรายวัน: **${username}**\n   ตรวจทันที และตรวจประจำเวลา **00:00 / 08:00 / 16:00 น.**`
+                            : `✅ เริ่ม Quest auto : **${username}**`
+                    });
                 });
+            } catch (err) {
+                results.push({ started: false, line: `❌ บัญชีลำดับที่ ${i + 1} ไม่สำเร็จ: ${err.message}` });
             }
+        }
 
-            // Emit completion webhook event
-            const finishSeverity = (anyFailure && !anySuccess) ? 'ERROR' : anyFailure ? 'WARNING' : 'SUCCESS';
-            sendWebhookEvent({
-                severity: finishSeverity,
-                category: 'COMMAND',
-                code: 'quest.session.finished',
-                title: (anyFailure && !anySuccess)
-                    ? '❌ การทำ Quest ล้มเหลวทั้งหมด'
-                    : anyFailure
-                        ? '⚠️ การทำ Quest เสร็จสิ้น (มีข้อผิดพลาดบางส่วน)'
-                        : '🎉 การทำ Quest เสร็จสิ้นสมบูรณ์',
-                description: `ระบบดำเนินการเควสต์สำหรับ <@${invokerId}> ครบทุกบัญชีแล้ว`,
-                context: {
-                    'ผู้สั่งการ': `${invokerTag} (${invokerId})`,
-                    'สถานะรวม': questLog.overallStatus,
-                    'เควสต์สำเร็จทั้งหมด': `${totalDoneQuests} เควสต์`,
-                    'จำนวนบัญชี': `${tokens.length} บัญชี`
-                },
-                dedupeKey: `quest-finished:${jobId}`
-            }).catch(() => {});
-        })().catch((sessionErr) => {
-            console.error('[Quest Session Uncaught Error]:', sessionErr);
-            activeJobs.delete(jobId);
-        });
-
-        return {
-            jobId,
-            dmDelivered: Boolean(dmMessage),
-            dmError
-        };
+        return results;
     });
 }
 
-function stopAllUserQuestSessions(invokerId) {
-    let stoppedCount = 0;
-    for (const [jobId, job] of activeJobs.entries()) {
-        if (job.invokerId === invokerId) {
-            job.controller.abort();
-            activeJobs.delete(jobId);
-            stoppedCount++;
-        }
-    }
-    return stoppedCount;
-}
-
-function stopAllQuestSessions() {
-    let stoppedCount = 0;
-    for (const [jobId, job] of activeJobs.entries()) {
-        job.controller.abort();
-        activeJobs.delete(jobId);
-        stoppedCount++;
-    }
-    return stoppedCount;
-}
-
-function getActiveUserJobs(invokerId) {
-    return [...activeJobs.values()].filter((j) => j.invokerId === invokerId);
-}
-
 module.exports = {
-    startUserQuestSession,
-    stopAllUserQuestSessions,
-    stopAllQuestSessions,
-    getActiveUserJobs
+    startRunner,
+    getJob,
+    listJobs,
+    getUserJobs,
+    findUserJobByAccount,
+    findAnyJobByAccount,
+    stopJob,
+    stopScheduledJob,
+    stopAllForUser,
+    stopRunner,
+    shutdownRunners,
+    restoreScheduledRunners,
+    startUserQuestSession
 };

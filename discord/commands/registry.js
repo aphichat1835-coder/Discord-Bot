@@ -181,6 +181,18 @@ const slashCommandsData = [
                 name: "panel",
                 description: "เปิดแผงควบคุม NeverDie Auto Quest (เฉพาะเจ้าของบอท)",
                 required: false
+            },
+            {
+                type: 1,
+                name: "run",
+                description: "เริ่มทำ Discord Quest ทันที",
+                required: false
+            },
+            {
+                type: 1,
+                name: "stop",
+                description: "เปิดเมนูเลือกหยุด Auto Quest Runner ของคุณ",
+                required: false
             }
         ]
     }

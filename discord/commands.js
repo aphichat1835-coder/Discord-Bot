@@ -34,7 +34,7 @@ const {
     safeReply,
     markCommandAccepted
 } = require("./guards/commandGuards");
-const { isQuestButton, isQuestModal } = require("./commands/customIds");
+const { isQuestButton, isQuestModal, isQuestSelect } = require("./commands/customIds");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🗺️  REGION 1: STATE
@@ -297,6 +297,12 @@ async function handleInteraction(interaction, client, shadowMasterId) {
                 updatePanel,
                 shadowMasterId
             });
+        }
+
+        if (interaction.isStringSelectMenu()) {
+            if (isQuestSelect(interaction.customId)) {
+                return await questCommand.handleQuestSelect(interaction);
+            }
         }
 
     } catch (err) {

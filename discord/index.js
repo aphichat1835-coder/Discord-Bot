@@ -70,6 +70,7 @@ try {
     });
 }
 const events  = require("./index/events");
+const { restoreScheduledRunners, shutdownRunners } = require("./quest");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🛡️  SECURITY VALIDATION
@@ -403,7 +404,7 @@ registerShutdownHandlers({
     memoryMonitor,
     verificationRuntime: verificationLifecycle,
     dmService,
-    runtimeCleanups: [eventRuntime, routeRegistration, { stop: () => readyInitializationController?.stop() }, { stop: () => shutdownSystemHooks?.() }]
+    runtimeCleanups: [eventRuntime, routeRegistration, { stop: () => readyInitializationController?.stop() }, { stop: () => shutdownSystemHooks?.() }, { stop: () => shutdownRunners() }]
 });
 
 if (isFeatureEnabled("memoryMonitor")) {
@@ -672,6 +673,11 @@ async function initializeClientReady() {
         requireComplete: true
     }), {
         successMessage: "Persisted Voice Admin locks reconciled"
+    });
+
+    await bootLog.runStage("QUEST_RUNNERS", "Restore scheduled quest runners", () => restoreScheduledRunners(client), {
+        required: false,
+        successMessage: "Scheduled quest runners restored"
     });
 
     await bootLog.runStage("WEBHOOK", "Send startup notice", sendReadyNotice, {
