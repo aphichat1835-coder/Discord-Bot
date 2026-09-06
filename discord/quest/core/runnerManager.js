@@ -47,6 +47,12 @@ const {
     withOwnerAdmissionLock,
     withAccountAdmissionLock
 } = require('./admissionLock');
+const {
+    resolveUserDMChannel,
+    isPermanentDmError,
+    sendQuestSummaryDM,
+    sendQuestAuthFailureDM
+} = require('./questDm');
 const QuestLog = require('../models/QuestLog');
 const { sendWebhookEvent } = require('../../core/webhooks');
 
@@ -215,10 +221,26 @@ async function startRunner({
 
     async function resolveOutputChannel() {
         if (outputChannel?.isTextBased?.()) return outputChannel;
-        if (!client || !channelId) return null;
-        const ch = await client.channels.fetch(channelId).catch(() => null);
-        if (ch?.isTextBased?.()) outputChannel = ch;
-        return outputChannel;
+        if (!client) return null;
+
+        // Prefer sending to DM of the owner who started the runner (with timeout guard)
+        if (ownerId) {
+            const dm = await resolveUserDMChannel(client, ownerId);
+            if (dm) {
+                outputChannel = dm;
+                return outputChannel;
+            }
+        }
+
+        // Fallback to guild text channel
+        if (channelId) {
+            const ch = await client.channels.fetch(channelId).catch(() => null);
+            if (ch?.isTextBased?.()) {
+                outputChannel = ch;
+                return outputChannel;
+            }
+        }
+        return null;
     }
 
     async function flush() {
@@ -236,7 +258,25 @@ async function startRunner({
                 if (!liveMsg) {
                     const ch = await resolveOutputChannel();
                     if (!ch?.isTextBased?.()) return;
-                    liveMsg = await ch.send({ content: formattedContent });
+                    try {
+                        liveMsg = await ch.send({ content: formattedContent });
+                    } catch (sendErr) {
+                        // Fallback to guild channel if DM failed (e.g. user has DMs closed)
+                        if (channelId && ch?.id !== channelId) {
+                            if (isPermanentDmError(sendErr)) {
+                                console.warn(`[Quest Runner:${jobKey}] Permanent DM error (${sendErr.code || sendErr.message}); falling back to guild channel`);
+                            }
+                            const fallbackCh = await client.channels.fetch(channelId).catch(() => null);
+                            if (fallbackCh?.isTextBased?.()) {
+                                outputChannel = fallbackCh;
+                                liveMsg = await fallbackCh.send({ content: formattedContent });
+                            } else {
+                                throw sendErr;
+                            }
+                        } else {
+                            throw sendErr;
+                        }
+                    }
                 } else {
                     await liveMsg.edit({ content: formattedContent });
                 }
@@ -410,12 +450,32 @@ async function startRunner({
         if (summary.totalSupportedQuests === 0) {
             addLog('ℹ️ ไม่พบ Quest ที่บอทสามารถทำได้ในขณะนี้');
             await flush();
+            sendQuestSummaryDM({
+                ownerId,
+                accountId,
+                username,
+                mode: 'oneshot',
+                totalQuests: 0,
+                completedQuests: 0,
+                issues: [],
+                jobKey
+            }).catch(() => {});
             return;
         }
 
         if (summary.issues.length === 0 && summary.completedByBotCount === summary.totalSupportedQuests) {
             addLog('🎉 บอทได้เข้าไปทำ Quest ทั้งหมดเสร็จสิ้นทั้งหมดแล้ว');
             await flush();
+            sendQuestSummaryDM({
+                ownerId,
+                accountId,
+                username,
+                mode: 'oneshot',
+                totalQuests: summary.totalSupportedQuests,
+                completedQuests: summary.completedByBotCount,
+                issues: [],
+                jobKey
+            }).catch(() => {});
             return;
         }
 
@@ -427,6 +487,16 @@ async function startRunner({
             addLog(`   └ ${issue.reason}`);
         });
         await flush();
+        sendQuestSummaryDM({
+            ownerId,
+            accountId,
+            username,
+            mode: 'oneshot',
+            totalQuests: summary.totalSupportedQuests,
+            completedQuests: summary.completedByBotCount,
+            issues: summary.issues,
+            jobKey
+        }).catch(() => {});
     }
 
     async function prepareOneShotRound(allQuests) {
@@ -817,6 +887,12 @@ async function startRunner({
         } else if (isFatalAuthError(err)) {
             addLog(`🔒 ${username}: AUTH FAILED (Token invalid)`);
             persistSchedule({ lastError: 'Fatal auth failure (token invalid)' });
+            sendQuestAuthFailureDM({
+                ownerId,
+                accountId,
+                username,
+                jobKey
+            }).catch(() => {});
         } else {
             addLog(`❌ ${username}: FATAL ERROR — ${err.message}`);
             persistSchedule({ lastError: err.message });

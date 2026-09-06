@@ -272,10 +272,8 @@ The active verification models are:
 
 The Quest subsystem automates Discord video and game quests using direct Discord user API calls:
 
-- **Command**: `/quest` with subcommands:
-  - `/quest panel`: creates an interactive panel in the target channel (Bot Owner only).
-  - `/quest run`: starts quest automation for supplied user token(s) (supports one-shot or auto-daily).
-  - `/quest stop`: stops active quest runner or disables auto-daily for specified token/all.
+- **Command**: `/quest` (with `/quest panel`):
+  - `/quest panel`: creates an interactive panel in the target channel (Bot Owner only). From this panel, users can start one-shot runners, enable Auto Daily, or stop runners via buttons.
 - **Interactive UI**:
   - `quest_panel:run`: opens a modal (`quest_run_modal`) for user to submit Discord user tokens with single-line or multi-line batch.
   - `quest_panel:daily`: opens modal (`quest_daily_modal`) for users to enroll tokens into scheduled Auto Daily.

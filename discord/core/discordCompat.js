@@ -3,6 +3,7 @@
 const {
     ActionRowBuilder,
     ActivityType,
+    AttachmentBuilder,
     ButtonBuilder,
     ButtonStyle,
     ChannelType,
@@ -109,6 +110,7 @@ const Intents = Object.freeze({
 });
 
 module.exports = {
+    AttachmentBuilder,
     Intents,
     MessageActionRow: ActionRowBuilder,
     MessageButton,

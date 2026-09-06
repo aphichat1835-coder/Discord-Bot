@@ -600,7 +600,11 @@ function permissionForVoiceAction(action) {
 }
 async function ensureBotPermission(guild, source, action, destination = null) {
     const permission = permissionForVoiceAction(action);
-    if (!botCanInChannel(guild, source, permission)) throw makeError("VOICE_ADMIN_BOT_PERMISSION_MISSING");
+    if (!botCanInChannel(guild, source, permission)) {
+        const error = makeError("VOICE_ADMIN_BOT_PERMISSION_MISSING");
+        error.permissionAction = action;
+        throw error;
+    }
     if (action === "move" && (!isVoiceChannel(destination) || String(destination.guild?.id) !== String(guild?.id) || destination.id === source.id || !botCanInChannel(guild, destination, PermissionFlagsBits.Connect))) throw makeError("VOICE_ADMIN_DESTINATION_INVALID");
 }
 async function setVoice(member, type, enabled, reason) { return type === "mute" ? member.voice.setMute(enabled, reason) : member.voice.setDeaf(enabled, reason); }
@@ -724,8 +728,11 @@ async function handleVoiceAdminInteraction(interaction) {
     if (interaction.customId === IDS.REFRESH) return interaction.update(buildPanel(interaction.channel));
     await interaction.deferUpdate();
     const action = ({ [IDS.DISCONNECT]: "disconnect", [IDS.LOCK_MUTE]: "mute", [IDS.LOCK_DEAF]: "deaf", [IDS.UNLOCK_MUTE]: "unmute", [IDS.UNLOCK_DEAF]: "undeaf", [IDS.MOVE]: "move" })[interaction.customId];
+    const destinationId = interaction.values?.[0];
     const destination = action === "move"
-        ? interaction.channels?.first?.() || interaction.guild?.channels?.cache?.get?.(interaction.values?.[0])
+        ? (interaction.channels?.first?.() ||
+           interaction.guild?.channels?.cache?.get?.(destinationId) ||
+           (destinationId && interaction.guild?.channels?.fetch ? await interaction.guild.channels.fetch(destinationId).catch(() => null) : null))
         : null;
     if (!action) return interaction.editReply(buildPanel(interaction.channel, `> ${config.emojis.error} คำสั่งแผงนี้ไม่ถูกต้อง`));
     try {
@@ -738,6 +745,13 @@ async function handleVoiceAdminInteraction(interaction) {
     }
 }
 
+function describeBotPermissionMissing(error) {
+    if (error?.permissionAction === "mute") return "บอตไม่มีสิทธิ์ 'ปิดเสียงสมาชิก' (Mute Members) ในห้องเสียง";
+    if (error?.permissionAction === "deaf") return "บอตไม่มีสิทธิ์ 'ตัดเสียงสมาชิก' (Deafen Members) ในห้องเสียง";
+    if (error?.permissionAction === "move" || error?.permissionAction === "disconnect") return "บอตไม่มีสิทธิ์ 'ย้ายสมาชิก' (Move Members) ในห้องเสียง";
+    return "บอตไม่มีสิทธิ์ที่จำเป็นในห้องเสียง";
+}
+
 function describePanelActionFailure(error) {
     if (error.code === "VOICE_ADMIN_ACTION_IN_PROGRESS") return "มีงานจัดการห้องนี้กำลังทำงานอยู่";
     if (error.message?.startsWith("VOICE_ADMIN_ACCESS:")) return error.message.slice("VOICE_ADMIN_ACCESS:".length);
@@ -746,7 +760,7 @@ function describePanelActionFailure(error) {
     if (error.code === "VOICE_ADMIN_LOCK_CONFLICT") return "สถานะถูกเปลี่ยนโดยงานอื่น กรุณาลองใหม่";
     if (error.code === "VOICE_ADMIN_STOPPING") return "บอตกำลังปิดระบบ ลองใหม่หลังระบบพร้อม";
     if (error.code === "VOICE_ADMIN_NOT_INITIALIZED") return "ระบบ Voice Admin ยังไม่พร้อม";
-    if (error.code === "VOICE_ADMIN_BOT_PERMISSION_MISSING") return "บอตไม่มีสิทธิ์ที่จำเป็นในห้องเสียง";
+    if (error.code === "VOICE_ADMIN_BOT_PERMISSION_MISSING") return describeBotPermissionMissing(error);
     return "ดำเนินการไม่สำเร็จ กรุณาตรวจสอบสิทธิ์บอตและห้องเสียง";
 }
 
@@ -764,13 +778,94 @@ function getSecretCommandPrefix(text) {
     return null;
 }
 function secretUsage() { return "ใช้: //ตัดหมด | //ย้ายหมด <IDห้อง> | //ปิดไมค์หมด | //ปิดหูหมด | //เปิดหมด (เพิ่ม / อีกหนึ่งตัวเพื่อไม่เว้นแอดมิน)"; }
-function secretReply(content) { return { content, allowedMentions: { parse: [], repliedUser: false } }; }
+function secretReply(payload) {
+    if (typeof payload === "string") {
+        return { content: payload, allowedMentions: { parse: [], repliedUser: false } };
+    }
+    return { ...payload, allowedMentions: { parse: [], repliedUser: false } };
+}
+
+function resultColor(result) {
+    const targeted = Number(result?.targeted || 0);
+    const succeeded = Number(result?.succeeded || 0);
+    const incomplete = Number(result?.failed || 0) + Number(result?.skipped || 0) + Number(result?.timedOut || 0) + Number(result?.persistenceFailed || 0);
+    if (targeted > 0 && succeeded === targeted && incomplete === 0) return config.system?.themeColors?.success || "#57F287";
+    if (succeeded > 0 || targeted === 0 || Number(result?.skipped || 0) || Number(result?.timedOut || 0)) return config.system?.themeColors?.warning || "#FEE75C";
+    return config.system?.themeColors?.error || "#ED4245";
+}
+
+function buildSecretResultEmbed(command, result) {
+    const isFullSuccess = result.targeted > 0 && result.succeeded === result.targeted && (result.failed + result.skipped + result.timedOut + result.persistenceFailed === 0);
+    const color = isFullSuccess
+        ? (config.system?.themeColors?.success || "#57F287")
+        : (result.succeeded > 0 ? (config.system?.themeColors?.warning || "#FEE75C") : (config.system?.themeColors?.error || "#ED4245"));
+
+    const lines = [
+        `> ${config.emojis.members || "👥"} **เป้าหมายทั้งหมด:** **${result.targeted}** คน`,
+        `> ${config.emojis.success || "✅"} **ดำเนินการสำเร็จ:** **${result.succeeded}** คน`
+    ];
+    if (result.failed > 0) lines.push(`> ${config.emojis.error || "❌"} **ล้มเหลว:** **${result.failed}** คน`);
+    if (result.skipped > 0) lines.push(`> ${config.emojis.warning || "⚠️"} **ออกจากห้องก่อนถึงคิว:** **${result.skipped}** คน`);
+    if (result.timedOut > 0) lines.push(`> ${config.emojis.loading || "⏳"} **หมดเวลาการทำงาน:** **${result.timedOut}** คน`);
+    if (result.persistenceFailed > 0) lines.push(`> ${config.emojis.alert || "⚠️"} **บันทึกสถานะไม่สำเร็จ:** **${result.persistenceFailed}** คน`);
+    if (Number.isFinite(result.durationMs) && result.durationMs > 0) {
+        lines.push(`> ${config.emojis.ping || "⚡"} **เวลาที่ใช้:** **${(result.durationMs / 1000).toFixed(1)}** วินาที`);
+    }
+
+    return new EmbedBuilder()
+        .setColor(color)
+        .setTitle(`${config.emojis.universe || "👑"} Voice Admin — ${command}`)
+        .setDescription(lines.join("\n"))
+        .setFooter({ text: "Phomueangtai Personal Multi-Tool • Voice Admin" })
+        .setTimestamp();
+}
+
+function buildSecretUsageEmbed() {
+    return new EmbedBuilder()
+        .setColor(config.system?.themeColors?.warning || "#FEE75C")
+        .setTitle(`${config.emojis.warning || "⚠️"} วิธีใช้งานคำสั่งลับ Voice Admin`)
+        .setDescription(
+            `📌 **รายการคำสั่งที่ใช้งานได้:**\n` +
+            `> — \`//ตัดหมด\` หรือ \`///ตัดหมด\` : ตัดสายทุกคนในห้อง\n` +
+            `> — \`//ย้ายหมด <ID หรือ #ห้อง>\` : ย้ายทุกคนไปยังห้องเสียงเป้าหมาย\n` +
+            `> — \`//ปิดไมค์หมด\` หรือ \`///ปิดไมค์หมด\` : ปิดไมค์แดงทุกคนในห้อง\n` +
+            `> — \`//ปิดหูหมด\` หรือ \`///ปิดหูหมด\` : ปิดหูแดงทุกคนในห้อง\n` +
+            `> — \`//เปิดหมด\` หรือ \`///เปิดหมด\` : ปลดไมค์และหูให้ทุกคนในห้อง\n\n` +
+            `💡 **ข้อแตกต่าง:**\n` +
+            `> — **\`//\` (2 ขีด)** : จัดการเฉพาะคนทั่วไป (เว้นแอดมิน)\n` +
+            `> — **\`///\` (3 ขีด)** : จัดการทุกคนในห้องเสียงแบบเด็ดขาด (รวมแอดมิน)`
+        )
+        .setFooter({ text: "Phomueangtai Personal Multi-Tool • Owner Only" })
+        .setTimestamp();
+}
+
+function buildSecretWrongChannelEmbed() {
+    return new EmbedBuilder()
+        .setColor(config.system?.themeColors?.error || "#ED4245")
+        .setTitle(`${config.emojis.no_entry || "⛔"} ตำแหน่งการใช้คำสั่งไม่ถูกต้อง`)
+        .setDescription(
+            `> ${config.emojis.error || "❌"} คำสั่งนี้ต้องพิมพ์ในช่องแชทข้อความของ **ห้องเสียงปกติ (Voice Channel)** เท่านั้น`
+        )
+        .setFooter({ text: "Phomueangtai Personal Multi-Tool • Voice Admin" })
+        .setTimestamp();
+}
+
+function buildSecretErrorEmbed(detail) {
+    return new EmbedBuilder()
+        .setColor(config.system?.themeColors?.error || "#ED4245")
+        .setTitle(`${config.emojis.error || "❌"} ดำเนินการไม่สำเร็จ`)
+        .setDescription(`> ${config.emojis.error || "❌"} ${detail}`)
+        .setFooter({ text: "Phomueangtai Personal Multi-Tool • Voice Admin Error" })
+        .setTimestamp();
+}
+
 function isOwnerSecretMessage(message) {
     return Boolean(message?.guild) && !message.author?.bot && isConfiguredOwner(config, message.author?.id);
 }
 async function getSecretMoveDestination(message, destinationId) {
-    if (!/^\d{17,22}$/.test(destinationId)) throw makeError("VOICE_ADMIN_DESTINATION_INVALID");
-    return message.guild.channels.cache.get(destinationId) || message.guild.channels.fetch(destinationId).catch(() => null);
+    const rawId = String(destinationId || "").replace(/^[<#]+|[>]+$/g, "").trim();
+    if (!/^\d{17,22}$/.test(rawId)) throw makeError("VOICE_ADMIN_DESTINATION_INVALID");
+    return message.guild.channels.cache.get(rawId) || message.guild.channels.fetch(rawId).catch(() => null);
 }
 async function runSecretVoiceCommand(message, parsed, members) {
     switch (parsed.command) {
@@ -796,15 +891,33 @@ async function runSecretVoiceCommand(message, parsed, members) {
 async function handleSecretMessage(message) {
     if (!isOwnerSecretMessage(message)) return false;
     const parsed = parseSecretCommand(message.content); if (!parsed) return false;
-    if (parsed.invalid) { await message.reply(secretReply(`> ${config.emojis.warning} ${secretUsage()}`)); return true; }
-    if (!isVoiceChannel(message.channel)) { await message.reply(secretReply(`> ${config.emojis.no_entry} ต้องใช้คำสั่งนี้ในแชทของห้องเสียงปกติ`)); return true; }
+    if (parsed.invalid) {
+        await message.reply(secretReply({
+            content: `> ${config.emojis.warning} ${secretUsage()}`,
+            embeds: [buildSecretUsageEmbed()]
+        }));
+        return true;
+    }
+    if (!isVoiceChannel(message.channel)) {
+        await message.reply(secretReply({
+            content: `> ${config.emojis.no_entry} ต้องใช้คำสั่งนี้ในแชทของห้องเสียงปกติ`,
+            embeds: [buildSecretWrongChannelEmbed()]
+        }));
+        return true;
+    }
     const members = sourceMembers(message.channel, { includeAdministrators: parsed.includeAdministrators, excludeId: parsed.includeAdministrators ? message.author.id : null });
     try {
         const result = await runSecretVoiceCommand(message, parsed, members);
-        await message.reply(secretReply(`> ${resultEmoji(result)} ${buildResult(parsed.command, result)}`));
+        await message.reply(secretReply({
+            content: `> ${resultEmoji(result)} ${buildResult(parsed.command, result)}`,
+            embeds: [buildSecretResultEmbed(parsed.command, result)]
+        }));
     } catch (error) {
         const detail = describeSecretCommandFailure(error);
-        await message.reply(secretReply(`> ${config.emojis.error} ${detail}`));
+        await message.reply(secretReply({
+            content: `> ${config.emojis.error} ${detail}`,
+            embeds: [buildSecretErrorEmbed(detail)]
+        }));
     }
     return true;
 }
@@ -815,7 +928,7 @@ function describeSecretCommandFailure(error) {
     if (error.code === "VOICE_ADMIN_LOCK_CONFLICT") return "สถานะถูกเปลี่ยนโดยงานอื่น กรุณาลองใหม่";
     if (error.code === "VOICE_ADMIN_STOPPING") return "บอตกำลังปิดระบบ ลองใหม่หลังระบบพร้อม";
     if (error.code === "VOICE_ADMIN_NOT_INITIALIZED") return "ระบบ Voice Admin ยังไม่พร้อม";
-    if (error.code === "VOICE_ADMIN_BOT_PERMISSION_MISSING") return "บอตไม่มีสิทธิ์ที่จำเป็นในห้องเสียง";
+    if (error.code === "VOICE_ADMIN_BOT_PERMISSION_MISSING") return describeBotPermissionMissing(error);
     return "ดำเนินการไม่สำเร็จ กรุณาตรวจสอบสิทธิ์บอต";
 }
 
@@ -905,14 +1018,18 @@ async function deletePreviousNotice(guild, notice) {
     const previous = await channel?.messages?.fetch?.(notice.messageId).catch(() => null);
     await previous?.delete?.().catch(() => {});
 }
-async function sendUnauthorizedNotice(guild, actorId, targetId) {
+async function sendUnauthorizedNotice(guild, actorId, targetId, options = {}) {
     const key = noticeKey(guild.id, actorId, targetId); const before = noticeQueues.get(key) || Promise.resolve();
     const next = before.catch(() => {}).then(async () => {
         if (stopping) return false;
         const target = guild.members.cache.get(targetId) || await guild.members.fetch(targetId).catch(() => null);
         const channel = target?.voice?.channel; if (!isVoiceChannel(channel)) return false;
         const previous = notices.get(key); if (previous && Date.now() - Number(previous.notifiedAt || 0) < NOTICE_WINDOW_MS) await deletePreviousNotice(guild, previous);
-        const sent = await channel.send({ content: `<@${actorId}> คุณไม่มีสิทธิ์เปิดไมค์หรือหูให้ <@${targetId}> กรุณาติดต่อแอดมิน`, allowedMentions: { users: [String(actorId)], parse: [] } }).catch(() => null);
+        const actionLabel = options.type === "mute" ? "เปิดไมค์" : (options.type === "deaf" ? "เปิดหู" : "เปิดไมค์หรือหู");
+        const content = options.ownerForced
+            ? `<@${actorId}> คุณไม่มีสิทธิ์${actionLabel}ให้ <@${targetId}> เนื่องจากถูกล็อกโดยผู้ดูแลระบบบอตระดับสูงสุด (Owner)`
+            : `<@${actorId}> คุณไม่มีสิทธิ์${actionLabel}ให้ <@${targetId}> กรุณาติดต่อแอดมิน`;
+        const sent = await channel.send({ content, allowedMentions: { users: [String(actorId)], parse: [] } }).catch(() => null);
         if (!sent) return false;
         const notice = { guildId: String(guild.id), actorId: String(actorId), targetId: String(targetId), channelId: String(channel.id), messageId: String(sent.id), notifiedAt: new Date() };
         let result = null; let lastError = null;
@@ -944,12 +1061,12 @@ async function processExternalUnlock(guild, userId, type, entry, client, pending
             return true;
         }
         await enforceLock(guild, userId, type, pending.version);
-        if (executorId) await sendUnauthorizedNotice(guild, executorId, userId);
+        if (executorId) await sendUnauthorizedNotice(guild, executorId, userId, { ownerForced: true, type });
         return true;
     }
     if (isAdministrator(executor, guild)) { await clearLockField(guild.id, userId, type, pending.version); return true; }
     await enforceLock(guild, userId, type, pending.version);
-    if (executorId) await sendUnauthorizedNotice(guild, executorId, userId);
+    if (executorId) await sendUnauthorizedNotice(guild, executorId, userId, { ownerForced: false, type });
     return true;
 }
 async function findRecentAuditUnlock(guild, userId, type, pending) {

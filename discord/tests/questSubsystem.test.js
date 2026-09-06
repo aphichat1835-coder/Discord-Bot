@@ -23,7 +23,8 @@ const {
 const {
     getUserJobs,
     stopAllForUser,
-    stopJob
+    stopJob,
+    startRunner
 } = require('../quest/core/runnerManager');
 const {
     formatRunnerStatusContent,
@@ -59,6 +60,13 @@ const {
     handleQuestButton,
     handleQuestSelect
 } = require('../commands/quest');
+const {
+    questSummaryTone,
+    buildQuestSummaryEmbed,
+    buildQuestAuthFailureEmbed,
+    sendQuestSummaryDM,
+    sendQuestAuthFailureDM
+} = require('../quest/core/questDm');
 
 test('tokenCrypto correctly encrypts, decrypts, and masks tokens', () => {
     const rawToken = 'mock_quest_token_for_encryption_test_string_1234567890abcdef';
@@ -249,6 +257,8 @@ test('handleQuestCommand enforces bot owner check for panel', async () => {
     assert.ok(ownerReply);
     assert.ok(ownerReply.embeds && ownerReply.embeds.length > 0);
     assert.ok(ownerReply.components && ownerReply.components.length > 0);
+    assert.ok(ownerReply.files && ownerReply.files.length > 0);
+    assert.equal(ownerReply.embeds[0].data.image.url, 'attachment://quest-banner.gif');
 });
 
 test('handleQuestButton allows users to open modal and view stop controls', async () => {
@@ -271,3 +281,150 @@ test('handleQuestButton allows users to open modal and view stop controls', asyn
     assert.ok(stopReply);
     assert.ok(stopReply.embeds && stopReply.embeds.length > 0);
 });
+
+test('runnerManager routes status updates to DM and falls back to channel when DM fails', async () => {
+    const dmDeliveries = [];
+    const mockDm = {
+        id: 'dm_12345',
+        isTextBased: () => true,
+        send: async (payload) => {
+            dmDeliveries.push(payload);
+            return { edit: async () => {} };
+        }
+    };
+    const mockUser = {
+        createDM: async () => mockDm
+    };
+    const mockClient = {
+        users: {
+            fetch: async (id) => (id === 'user_dm_target' ? mockUser : null)
+        },
+        channels: {
+            fetch: async () => null
+        }
+    };
+
+    const runner = await startRunner({
+        jobKey: 'test:dm:routing:1',
+        ownerId: 'user_dm_target',
+        userToken: 'invalid_dummy_token_for_test',
+        channelId: 'channel_guild_fallback',
+        client: mockClient,
+        mode: 'oneshot',
+        username: 'TestUserDM'
+    });
+
+    // Wait a brief tick for the flush to run
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    runner.controller.abort();
+    await runner.task.catch(() => {});
+
+    assert.ok(dmDeliveries.length > 0, 'Status message should be delivered to DM');
+    assert.match(dmDeliveries[0].content, /✅ LOGIN : TestUserDM/);
+
+    // Test fallback when DM sending fails (e.g. DMs closed)
+    const channelDeliveries = [];
+    const mockClosedDm = {
+        id: 'dm_closed',
+        isTextBased: () => true,
+        send: async () => {
+            const err = new Error('Cannot send messages to this user');
+            err.code = 50007;
+            throw err;
+        }
+    };
+    const mockClosedUser = {
+        createDM: async () => mockClosedDm
+    };
+    const mockFallbackChannel = {
+        id: 'channel_guild_fallback_2',
+        isTextBased: () => true,
+        send: async (payload) => {
+            channelDeliveries.push(payload);
+            return { edit: async () => {} };
+        }
+    };
+    const mockFallbackClient = {
+        users: {
+            fetch: async (id) => (id === 'user_dm_closed' ? mockClosedUser : null)
+        },
+        channels: {
+            fetch: async (id) => (id === 'channel_guild_fallback_2' ? mockFallbackChannel : null)
+        }
+    };
+
+    const fallbackRunner = await startRunner({
+        jobKey: 'test:dm:routing:2',
+        ownerId: 'user_dm_closed',
+        userToken: 'invalid_dummy_token_for_test_2',
+        channelId: 'channel_guild_fallback_2',
+        client: mockFallbackClient,
+        mode: 'oneshot',
+        username: 'TestUserClosed'
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    fallbackRunner.controller.abort();
+    await fallbackRunner.task.catch(() => {});
+
+    assert.ok(channelDeliveries.length > 0, 'Status message should fall back to guild channel when DM fails');
+    assert.match(channelDeliveries[0].content, /✅ LOGIN : TestUserClosed/);
+});
+
+test('questDm builds correct tones and embeds for success, partial, danger, and auth failure', () => {
+    assert.equal(questSummaryTone({ totalQuests: 2, completedQuests: 2, issues: [] }), 'success');
+    assert.equal(questSummaryTone({ totalQuests: 2, completedQuests: 1, issues: [{ name: 'Q2', reason: 'fail' }] }), 'warning');
+    assert.equal(questSummaryTone({ totalQuests: 2, completedQuests: 0, issues: [{ name: 'Q1', reason: 'fail' }] }), 'danger');
+    assert.equal(questSummaryTone({ totalQuests: 0, completedQuests: 0, issues: [] }), 'info');
+
+    const successEmbed = buildQuestSummaryEmbed({
+        mode: 'oneshot',
+        username: 'TestHero',
+        accountId: '123456789',
+        totalQuests: 3,
+        completedQuests: 3,
+        issues: [],
+        jobKey: 'job:123'
+    });
+    assert.ok(successEmbed);
+    assert.match(successEmbed.data.title, /ทำ Quest อัตโนมัติเสร็จสิ้นแล้ว/);
+    assert.equal(successEmbed.data.color, 0x57F287); // #57F287
+
+    const authFailEmbed = buildQuestAuthFailureEmbed({
+        username: 'TestHero',
+        accountId: '123456789',
+        jobKey: 'job:123'
+    });
+    assert.ok(authFailEmbed);
+    assert.match(authFailEmbed.data.title, /Token บัญชี Quest ใช้งานไม่ได้/);
+    assert.equal(authFailEmbed.data.color, 0xED4245); // #ED4245
+});
+
+test('questDm sendQuestSummaryDM and sendQuestAuthFailureDM integrate with central dmService outbox', async () => {
+    const summaryResult = await sendQuestSummaryDM({
+        ownerId: 'owner_999',
+        accountId: 'acc_888',
+        username: 'PlayerOne',
+        mode: 'oneshot',
+        totalQuests: 2,
+        completedQuests: 2,
+        issues: [],
+        jobKey: 'test:job:key'
+    });
+
+    assert.ok(summaryResult);
+    // Even without active MongoDB, outbox saves into volatileOutbox or sends
+    assert.ok(['sent', 'retrying', 'skipped'].includes(summaryResult.status));
+
+    const authResult = await sendQuestAuthFailureDM({
+        ownerId: 'owner_999',
+        accountId: 'acc_888',
+        username: 'PlayerOne',
+        jobKey: 'test:job:key'
+    });
+
+    assert.ok(authResult);
+    assert.ok(['sent', 'retrying', 'skipped'].includes(authResult.status));
+});
+
+

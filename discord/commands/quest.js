@@ -1,6 +1,9 @@
 'use strict';
 
+const path = require('node:path');
+const fs = require('node:fs');
 const {
+    AttachmentBuilder,
     MessageEmbed,
     MessageActionRow,
     MessageButton,
@@ -21,6 +24,9 @@ const {
     startUserQuestSession
 } = require('../quest');
 
+const QUEST_BANNER_PATH = path.join(__dirname, '../quest/assets/banner.gif');
+const QUEST_BANNER_ATTACHMENT_NAME = 'quest-banner.gif';
+
 function isBotOwner(userId) {
     return isConfiguredOwner(config, userId);
 }
@@ -36,31 +42,27 @@ function shortStatus(row) {
     return 'ระบบอัตโนมัติรายวันกำลังทำงาน';
 }
 
-function buildQuestPanelEmbed(interaction = null) {
+function buildQuestPanelEmbed(interaction = null, { hasAttachment = false } = {}) {
     const primaryColor = config.system?.themeColors?.primary || '#57F287';
-    const userId = interaction?.user?.id;
-    const oneshotCount = userId ? getUserJobs(userId, { mode: 'oneshot' }).length : 0;
-    const scheduledCount = userId ? getUserJobs(userId, { mode: 'scheduled' }).length : 0;
+    const universeEmoji = config.emojis?.universe || '🔥';
+    const dreamworldEmoji = config.emojis?.dreamworld || '✨';
+    const ownerId = config.system?.ownerId || '661415152146710558';
 
     const embed = new MessageEmbed()
         .setColor(primaryColor)
-        .setTitle('🔥 AUTO QUEST SYSTEM')
-        .setDescription([
-            '```',
-            'PREMIUM PANEL ENABLED',
-            '```',
-            '• **START NOW** — เริ่ม One-shot Runner ทันที',
-            '• **AUTO DAILY** — เริ่ม Auto Daily ตรวจอัตโนมัติ 00:00 / 08:00 / 16:00 น.',
-            '• **STOP** — เลือกหยุดหรือยกเลิก Runner ของคุณ',
-            '',
-            'ข้อความรายงานสถานะ Live Status จะส่งตรงและอัปเดตแบบ Real-time ในห้องนี้'
-        ].join('\n'))
-        .setFooter({
-            text: `POWERED BY NEVERDIE AUTO QUEST™ · One-shot: ${oneshotCount} · Auto Daily: ${scheduledCount}`
-        })
-        .setTimestamp();
+        .setTitle(`${universeEmoji} : Phomueangtai ระบบทำเควสอัตโนมัติ`)
+        .setDescription(
+            `ระบบทำเควสอัตโนมัติ ${dreamworldEmoji}\n\n` +
+            `ทำเควส เเละ รับ Orbs ฟรี ${dreamworldEmoji}\n\n` +
+            `ตั้งค่าใส่Tokenควบคุมผ่านปุ่มข้างล่าง ${dreamworldEmoji}\n\n` +
+            `*Developed by <@${ownerId}>*`
+        );
 
-    if (config.system?.bannerUrl) {
+    if (hasAttachment) {
+        embed.setImage(`attachment://${QUEST_BANNER_ATTACHMENT_NAME}`);
+    } else if (config.system?.questBannerUrl) {
+        embed.setImage(config.system.questBannerUrl);
+    } else if (config.system?.bannerUrl) {
         embed.setImage(config.system.bannerUrl);
     }
 
@@ -173,22 +175,18 @@ async function handleQuestCommand(interaction) {
                 flags: 64
             });
         }
-        const embed = buildQuestPanelEmbed(interaction);
+        const hasAttachment = fs.existsSync(QUEST_BANNER_PATH);
+        const embed = buildQuestPanelEmbed(interaction, { hasAttachment });
         const row = buildQuestPanelRow();
-        return interaction.reply({ embeds: [embed], components: [row] });
-    }
-
-    if (subcommand === 'run') {
-        return showQuestModal(interaction, 'oneshot');
-    }
-
-    if (subcommand === 'stop') {
-        const payload = await buildStopPanelPayload(interaction.user.id);
-        return interaction.reply({ ...payload, flags: 64 });
+        const payload = { embeds: [embed], components: [row] };
+        if (hasAttachment) {
+            payload.files = [new AttachmentBuilder(QUEST_BANNER_PATH, { name: QUEST_BANNER_ATTACHMENT_NAME })];
+        }
+        return interaction.reply(payload);
     }
 
     return safeReply(interaction, {
-        content: '❌ คำสั่งย่อยไม่ถูกต้อง กรุณาใช้ `/quest panel`, `/quest run`, หรือ `/quest stop`',
+        content: '❌ คำสั่งย่อยไม่ถูกต้อง กรุณาใช้ `/quest panel`',
         flags: 64
     });
 }
@@ -295,9 +293,9 @@ async function handleQuestModalSubmit(interaction) {
 
     let finalContent = lines.join('\n');
     if (isDaily && anyStarted) {
-        finalContent = `**🚀 NEVERDIE AUTO DAILY QUEST เปิดใช้งานแล้ว**\n\n${finalContent}\n\nข้อความสถานะสดกำลังอัปเดตในห้องนี้ และสามารถใช้ปุ่ม **STOP** เพื่อหยุดได้ตลอดเวลา`;
+        finalContent = `**🚀 NEVERDIE AUTO DAILY QUEST เปิดใช้งานแล้ว**\n\n${finalContent}\n\nระบบได้ส่งข้อความสถานะสดไปยัง **DM (แชทส่วนตัว)** ของคุณเรียบร้อยแล้ว (หากปิดรับ DM ระบบจะส่งในห้องนี้แทน) และสามารถใช้ปุ่ม **STOP** เพื่อหยุดได้ตลอดเวลา`;
     } else if (anyStarted) {
-        finalContent = `**🚀 เริ่มต้นทำงาน ONE-SHOT QUEST แล้ว**\n\n${finalContent}\n\nระบบกำลังเริ่มทำเควสต์และอัปเดตความคืบหน้าสดในห้องนี้`;
+        finalContent = `**🚀 เริ่มต้นทำงาน ONE-SHOT QUEST แล้ว**\n\n${finalContent}\n\nระบบกำลังเริ่มทำเควสต์และส่งข้อความสถานะสดไปยัง **DM (แชทส่วนตัว)** ของคุณเรียบร้อยแล้ว (หากปิดรับ DM ระบบจะส่งในห้องนี้แทน)`;
     }
 
     return interaction.editReply({ content: finalContent });

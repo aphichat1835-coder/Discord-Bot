@@ -8,6 +8,7 @@ const runnerSchedule = require('./core/runnerSchedule');
 const scheduledRunnerStore = require('./core/scheduledRunnerStore');
 const admissionLock = require('./core/admissionLock');
 const oneShotSession = require('./core/oneShotSession');
+const questDm = require('./core/questDm');
 const QuestLog = require('./models/QuestLog');
 const ScheduledRunner = require('./models/ScheduledRunner');
 
@@ -20,6 +21,7 @@ module.exports = {
     ...scheduledRunnerStore,
     ...admissionLock,
     ...oneShotSession,
+    ...questDm,
     QuestLog,
     ScheduledRunner
 };
