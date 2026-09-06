@@ -26,7 +26,8 @@ const {
     getVoiceChannelLabel
 } = require("../sessions/voiceLabels");
 const {
-    validateTokenFormat
+    validateTokenFormat,
+    cleanToken
 } = require("../sessions/tokenUtils");
 const {
     getSessionErrorMessage,
@@ -243,7 +244,7 @@ function getModalDeps(deps = {}) {
 
 function readStartModalFields(interaction) {
     return {
-        token: interaction.fields.getTextInputValue(IDS.FIELD_TOKEN).trim(),
+        token: cleanToken(interaction.fields.getTextInputValue(IDS.FIELD_TOKEN)),
         serverId: interaction.fields.getTextInputValue(IDS.FIELD_SERVER_ID).trim(),
         voiceId: interaction.fields.getTextInputValue(IDS.FIELD_VOICE_ID).trim()
     };

@@ -22,6 +22,18 @@ test("validateTokenFormat accepts shaped tokens and rejects unsafe input", () =>
     assert.equal(validateTokenFormat(null), false);
     assert.equal(validateTokenFormat("short.token.value"), false);
     assert.equal(validateTokenFormat(`${"a".repeat(300)}.b.c`), false);
+
+    // Tokens with '=' padding
+    const tokenWithEquals = `${"a".repeat(23)}=.${"b".repeat(4)}.${"c".repeat(26)}=`;
+    assert.equal(validateTokenFormat(tokenWithEquals), true);
+
+    // Tokens wrapped in quotes
+    assert.equal(validateTokenFormat(`"${valid}"`), true);
+    assert.equal(validateTokenFormat(`'${valid}'`), true);
+
+    // Tokens with Bot or Bearer prefix
+    assert.equal(validateTokenFormat(`Bot ${valid}`), true);
+    assert.equal(validateTokenFormat(`Bearer ${valid}`), true);
 });
 
 

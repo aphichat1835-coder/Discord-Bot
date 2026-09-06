@@ -874,7 +874,7 @@ async function startCreatedVoiceSession(sessionId, token, getSession, start) {
 async function ensureVoiceSessionInternal(input = {}, deps = {}) {
     if (st.isShuttingDown) throw new Error("SYSTEM_SHUTTING_DOWN");
 
-    const token = String(input.token || "").trim();
+    const token = String(input.token || "").trim().replace(/^["']|["']$/g, "").replace(/^(?:Bot|Bearer)\s+/i, "").trim();
     validateToken(token);
 
     const { guildId, channelId } = normalizeVoiceTarget(input);
@@ -940,7 +940,7 @@ async function ensureVoiceSession(input = {}, deps = {}) {
     const shuttingDown = deps.isShuttingDown || (() => st.isShuttingDown);
     if (shuttingDown()) throw new Error("SYSTEM_SHUTTING_DOWN");
 
-    const token = String(input.token || "").trim();
+    const token = String(input.token || "").trim().replace(/^["']|["']$/g, "").replace(/^(?:Bot|Bearer)\s+/i, "").trim();
     (deps.validateToken || validateToken)(token);
 
     const { guildId } = (deps.normalizeVoiceTarget || normalizeVoiceTarget)(input);

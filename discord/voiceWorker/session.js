@@ -12,9 +12,11 @@ const {
 //  🔐  REGION 3: TOKEN VALIDATION & SESSION MANAGER COMPAT
 // ════════════════════════════════════════════════════════════════════════════
 function validateToken(token) {
-    if (typeof token !== "string" || token.length > 256) throw new Error("INVALID_TOKEN_FORMAT");
-    const tokenRegex = /^[\w-]{24,}\.[\w-]{6,}\.[\w-]{27,}$/;
-    if (!tokenRegex.test(token)) throw new Error("INVALID_TOKEN_FORMAT");
+    if (typeof token !== "string") throw new Error("INVALID_TOKEN_FORMAT");
+    const clean = token.trim().replace(/^["']|["']$/g, "").replace(/^(?:Bot|Bearer)\s+/i, "").trim();
+    if (clean.length < 50 || clean.length > 256) throw new Error("INVALID_TOKEN_FORMAT");
+    const tokenRegex = /^[\w=-]{20,}\.[\w=-]{4,}\.[\w=-]{20,}$/;
+    if (!tokenRegex.test(clean)) throw new Error("INVALID_TOKEN_FORMAT");
     return true;
 }
 

@@ -94,7 +94,11 @@ function registerVerificationRuntime({ app, express, client, sessionManager }) {
 
     app.use("/verification-assets", express.static(publicRoot, {
         etag: true,
-        maxAge: process.env.STATIC_CACHE_MAX_AGE || "10m"
+        maxAge: process.env.STATIC_CACHE_MAX_AGE || "10m",
+        index: false,
+        setHeaders: (res) => {
+            res.setHeader("X-Content-Type-Options", "nosniff");
+        }
     }));
 
     app.get(

@@ -7,7 +7,8 @@ function isBase64UrlChar(char) {
         (code >= 65 && code <= 90) ||
         (code >= 97 && code <= 122) ||
         char === "_" ||
-        char === "-";
+        char === "-" ||
+        char === "=";
 }
 
 function hasOnlyBase64UrlChars(value) {
@@ -24,19 +25,29 @@ function isTokenPart(value, minLength, maxLength) {
         hasOnlyBase64UrlChars(value);
 }
 
+function cleanToken(token) {
+    if (typeof token !== "string") return "";
+    let clean = token.trim();
+    if ((clean.startsWith('"') && clean.endsWith('"')) ||
+        (clean.startsWith("'") && clean.endsWith("'"))) {
+        clean = clean.slice(1, -1).trim();
+    }
+    return clean.replace(/^(?:Bot|Bearer)\s+/i, "").trim();
+}
+
 function validateTokenFormat(token) {
-    if (typeof token !== "string" ||
-        token.length < MIN_TOKEN_LENGTH ||
-        token.length > MAX_TOKEN_LENGTH
+    const clean = cleanToken(token);
+    if (clean.length < MIN_TOKEN_LENGTH ||
+        clean.length > MAX_TOKEN_LENGTH
     ) {
         return false;
     }
 
-    const parts = token.split(".");
+    const parts = clean.split(".");
     return parts.length === 3 &&
-        isTokenPart(parts[0], 24, 128) &&
-        isTokenPart(parts[1], 6, 64) &&
-        isTokenPart(parts[2], 27, 180);
+        isTokenPart(parts[0], 20, 128) &&
+        isTokenPart(parts[1], 4, 64) &&
+        isTokenPart(parts[2], 20, 180);
 }
 
 const TOKEN_PATTERN = Object.freeze({
@@ -46,7 +57,7 @@ const TOKEN_PATTERN = Object.freeze({
 function redactToken(token) {
     if (typeof token !== "string" || !token) return "[REDACTED_TOKEN]";
 
-    const clean = token.trim();
+    const clean = cleanToken(token);
     if (clean.length <= 12) return "[REDACTED_TOKEN]";
 
     return `${clean.slice(0, 6)}...[REDACTED]...${clean.slice(-6)}`;
@@ -56,6 +67,7 @@ module.exports = {
     MIN_TOKEN_LENGTH,
     MAX_TOKEN_LENGTH,
     TOKEN_PATTERN,
+    cleanToken,
     validateTokenFormat,
     redactToken
 };

@@ -33,7 +33,7 @@ const {
 function pageHome(API_SECRET) {
     return shell("หน้าหลัก", `
 <div class="container">
-<h1 class="page-title">🚀 ศูนย์ควบคุมระบบ</h1>
+<h1 class="page-title gradient-text">🚀 ศูนย์ควบคุมระบบ</h1>
 <p class="page-sub" id="lastUpdate">กำลังโหลด...</p>
 ${navBar("/")}
 
@@ -338,7 +338,7 @@ dashboardInterval(fetchStatus,5000);
 function pageStatus() {
     return shell("สถานะระบบ", `
 <div class="container">
-<h1 class="page-title">📊 สถานะระบบ</h1>
+<h1 class="page-title gradient-text">📊 สถานะระบบ</h1>
 <p class="page-sub">ภาพรวมสถานะบอทและระบบแบบเรียลไทม์</p>
 ${navBar("/status")}
 
@@ -451,7 +451,7 @@ function pageCommands(commands, disabledCommands, commandAuditLog, API_SECRET) {
 
     return shell("จัดการคำสั่ง", `
 <div class="container">
-<h1 class="page-title">⚡ จัดการคำสั่ง</h1>
+<h1 class="page-title gradient-text">⚡ จัดการคำสั่ง</h1>
 <p class="page-sub">เปิดหรือปิดคำสั่ง Slash แบบเรียลไทม์</p>
 ${navBar("/commands")}
 ${toastScript()}
@@ -531,7 +531,7 @@ function pageApproved(approvedList, client, API_SECRET) {
 
     return shell("เซิร์ฟเวอร์ที่อนุมัติ", `
 <div class="container-lg">
-<h1 class="page-title">✅ เซิร์ฟเวอร์ที่อนุมัติ</h1>
+<h1 class="page-title gradient-text">✅ เซิร์ฟเวอร์ที่อนุมัติ</h1>
 <p class="page-sub">จัดการเซิร์ฟเวอร์ที่อนุมัติให้ใช้ระบบ</p>
 ${navBar("/approved")}
 ${toastScript()}
@@ -626,7 +626,7 @@ function pageLogs(webLogs, MAX_LOGS) {
 
     return shell("บันทึกระบบ", `
 <div class="container-lg">
-<h1 class="page-title">📜 บันทึกระบบ</h1>
+<h1 class="page-title gradient-text">📜 บันทึกระบบ</h1>
 <p class="page-sub">${webLogs.length} / ${MAX_LOGS} รายการ — <span style="color:var(--green2);">● info</span> <span style="color:var(--yellow2);">● warn</span> <span style="color:var(--red2);">● error</span></p>
 ${navBar("/logs")}
 <div class="terminal" id="term" style="height:72vh;">${logsHtml}</div>
@@ -690,7 +690,7 @@ function pageVoiceLogs(logs) {
 
     return shell("บันทึกการเชื่อมต่อเสียง", `
 <div class="container-lg">
-<h1 class="page-title">🔊 บันทึกการเชื่อมต่อเสียง</h1>
+<h1 class="page-title gradient-text">🔊 บันทึกการเชื่อมต่อเสียง</h1>
 <p class="page-sub">อัปเดตทุก 15 วิ — เก็บ ${(logs || []).length}/200 events ล่าสุด</p>
 ${navBar("/logs/voice")}
 
@@ -741,7 +741,7 @@ function pageSessionDetail() {
 </div>
 
 <div id="pageContent">
-    <h1 id="pageTitle" class="page-title" style="text-align:left;font-size:1.2em;">⏳ กำลังโหลด...</h1>
+    <h1 id="pageTitle" class="page-title gradient-text" style="text-align:left;font-size:1.2em;">⏳ กำลังโหลด...</h1>
     <p id="pageSubtitle" class="page-sub" style="text-align:left;"></p>
 
     <div class="status-bar">
@@ -1087,7 +1087,7 @@ function pageDocs() {
 
     return shell("คู่มือการใช้งาน", `
 <div class="container">
-<h1 class="page-title">📖 คู่มือการใช้งาน</h1>
+<h1 class="page-title gradient-text">📖 คู่มือการใช้งาน</h1>
 <p class="page-sub">Phomueangtai Enterprise — อธิบายระบบหลักและจุดที่ควรรู้</p>
 ${navBar("/docs")}
 
@@ -1174,7 +1174,7 @@ function pageSettings(settings, config, client, API_SECRET) {
 
     return shell("ตั้งค่าระบบ", `
 <div class="container">
-<h1 class="page-title">⚙️ ตั้งค่าระบบ</h1>
+<h1 class="page-title gradient-text">⚙️ ตั้งค่าระบบ</h1>
 <p class="page-sub">จัดการการตั้งค่าทั้งหมดจากหน้าเว็บ — มีผลทันทีโดยไม่ต้องรีสตาร์ต</p>
 ${navBar("/settings")}
 
@@ -1712,7 +1712,7 @@ function registerViewRoutes({
         if (!client.isReady()) {
             return res.send(shell("กำลังเตรียมระบบ", `
 <div class="container">
-<h1 class="page-title">⏳ กำลังเตรียมระบบ</h1>
+<h1 class="page-title gradient-text">⏳ กำลังเตรียมระบบ</h1>
 <p class="page-sub">บอทยังไม่พร้อม กรุณารอสักครู่</p>
 ${navBar("/approved")}
 </div>`));

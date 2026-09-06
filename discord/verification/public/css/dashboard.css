@@ -43,6 +43,10 @@
   --yellow-2: #fbbf24;
   --purple: #8b5cf6;
 
+  --gt-silver-gradient: linear-gradient(110deg, #9ca3af 0%, #ffffff 22%, #e4e4e7 42%, #686870 60%, #ffffff 80%, #9ca3af 100%);
+  --gt-speed: 7s;
+  --gt-size: 260% 100%;
+
   --shadow-sm: 0 8px 24px rgba(0, 0, 0, 0.28);
   --shadow-md: 0 18px 54px rgba(0, 0, 0, 0.38);
   --shadow-lg: 0 28px 90px rgba(0, 0, 0, 0.48);
@@ -315,10 +319,59 @@ img {
 }
 
 .gradient-text {
-  background: linear-gradient(135deg, #fff 0%, #dbeafe 35%, #7dd3fc 70%, #86efac 100%);
+  display: inline-block;
+  background-image: var(--gt-silver-gradient);
+  background-size: var(--gt-size);
+  background-position: 0% 50%;
   -webkit-background-clip: text;
   background-clip: text;
-  color: transparent;
+  -webkit-text-fill-color: transparent;
+  color: #f8fafc;
+  animation: gradientTextFlow var(--gt-speed) ease-in-out infinite;
+  will-change: background-position;
+  position: relative;
+  line-height: 1.3;
+  padding: 2px 0;
+  max-width: 100%;
+  overflow-wrap: break-word;
+}
+
+.gradient-text::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 90%;
+  height: 50%;
+  background: radial-gradient(ellipse at center, rgba(255, 255, 255, 0.08) 0%, transparent 70%);
+  filter: blur(14px);
+  pointer-events: none !important;
+  z-index: -1;
+  opacity: 0.65;
+}
+
+@keyframes gradientTextFlow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@supports not ((background-clip: text) or (-webkit-background-clip: text)) {
+  .gradient-text {
+    background: none !important;
+    -webkit-text-fill-color: initial !important;
+    color: #f8fafc !important;
+  }
+  .gradient-text::after {
+    display: none !important;
+  }
 }
 
 /* Cards */
@@ -1437,12 +1490,26 @@ tbody tr:hover td {
   word-break: break-all;
 }
 
-/* Callback */
+/*
+ * Callback — Base Styles
+ * หมายเหตุ cascade: selector ที่ไม่มี body.callback-page prefix ใน section นี้
+ * จะถูก override ทั้งหมดโดย workspace.css (body.callback-page .class)
+ * เมื่อ callback.html โหลดทั้งสองไฟล์พร้อมกัน — นี่คือ base layer ที่ตั้งใจ
+ */
 
 .callback-page {
   min-height: 100vh;
   min-height: 100dvh;
   overflow-x: hidden;
+}
+
+.callback-waves {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
 }
 
 .callback-center {
@@ -2279,6 +2346,14 @@ tbody tr:hover td {
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
+  }
+  .gradient-text {
+    animation: none !important;
+    background-size: 100% 100% !important;
+    will-change: auto !important;
+  }
+  .gradient-text::after {
+    display: none !important;
   }
 }
 

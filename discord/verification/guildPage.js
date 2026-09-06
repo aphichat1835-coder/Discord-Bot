@@ -31,7 +31,7 @@ ${navBar("/verification")}
     <div id="side-icon" class="verify-server-icon" aria-hidden="true">S</div>
     <div style="min-width:0">
       <p class="verify-kicker">Verification workspace</p>
-      <h1 id="guild-title">กำลังเปิดเซิร์ฟเวอร์…</h1>
+      <h1 id="guild-title" class="gradient-text">กำลังเปิดเซิร์ฟเวอร์…</h1>
       <p id="guild-subtitle">กำลังโหลดสถานะและการตั้งค่าจริงจากระบบ</p>
     </div>
   </div>

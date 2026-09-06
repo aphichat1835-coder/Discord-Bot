@@ -92,9 +92,18 @@ function dashboardUxScript() {
         });
         if(!openModal) return;
         const close=openModal.querySelector('.modal-close');
-        if(close) close.click();
+        if (close) close.click();
         else openModal.style.display='none';
     });
+    window.applyGradientText=function(target,options){
+        var opts=options||{};
+        var el=typeof target==='string'?document.querySelector(target):target;
+        if(!el) return;
+        el.classList.add('gradient-text');
+        if(opts.speed) el.style.setProperty('--gt-speed',opts.speed+'s');
+        if(opts.accent) el.classList.add('gradient-text-accent');
+        if(opts.align) el.style.textAlign=opts.align;
+    };
 })();
 </script>`;
 }

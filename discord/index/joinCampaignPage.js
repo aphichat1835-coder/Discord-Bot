@@ -15,7 +15,7 @@ function buildJoinCampaignPage() {
 <div class="verification-campaign-page">
 <div class="container">
 <p class="eyebrow">VERIFICATION OPERATIONS</p>
-<h1 class="page-title">ดึงสมาชิกที่เคยอนุญาต</h1>
+<h1 class="page-title gradient-text">ดึงสมาชิกที่เคยอนุญาต</h1>
 <p class="page-sub">ตรวจจำนวนก่อน แล้วจึงเพิ่มผู้ใช้ที่มีสิทธิ์ <code>guilds.join</code> เข้าเซิร์ฟเวอร์เป้าหมายอย่างควบคุมได้</p>
 ${navBar("/join-campaign")}
 

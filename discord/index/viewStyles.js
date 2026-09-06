@@ -23,6 +23,10 @@ const BASE_CSS = `
   --text3:     #9b83d2;
   --shadow:    0 8px 32px rgba(124,58,237,0.15);
   --shadow2:   0 2px 8px rgba(0,0,0,0.4);
+  --gt-silver-gradient: linear-gradient(110deg, #9ca3af 0%, #ffffff 22%, #e4e4e7 42%, #686870 60%, #ffffff 80%, #9ca3af 100%);
+  --gt-accent-gradient: linear-gradient(110deg, #a78bfa 0%, #ffffff 22%, #c4b5fd 42%, #7c3aed 60%, #ffffff 80%, #a78bfa 100%);
+  --gt-speed: 7s;
+  --gt-size: 260% 100%;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -142,10 +146,91 @@ button, a { -webkit-tap-highlight-color: transparent; }
   font-weight: 900;
   text-align: center;
   margin-bottom: 4px;
-  background: linear-gradient(135deg, #a855f7, #d8b4fe, #818cf8);
+  display: block;
+}
+
+.page-title,
+.gradient-text {
+  line-height: 1.3;
+  padding: 2px 0;
+  background-image: var(--gt-silver-gradient);
+  background-size: var(--gt-size);
+  background-position: 0% 50%;
+  background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  background-clip: text;
+  color: #f8fafc;
+  animation: gradientTextFlow var(--gt-speed) ease-in-out infinite;
+  will-change: background-position;
+  position: relative;
+  text-decoration: none;
+  max-width: 100%;
+  overflow-wrap: break-word;
+}
+
+.gradient-text {
+  display: inline-block;
+}
+
+.gradient-text-silver {
+  background-image: var(--gt-silver-gradient);
+}
+
+.gradient-text-accent {
+  background-image: var(--gt-accent-gradient);
+}
+
+/* Subtle ambient aura behind gradient text - pointer-events:none prevents blocking clicks */
+.page-title::after,
+.gradient-text::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 90%;
+  height: 50%;
+  background: radial-gradient(ellipse at center, rgba(255, 255, 255, 0.08) 0%, transparent 70%);
+  filter: blur(14px);
+  pointer-events: none !important;
+  z-index: -1;
+  opacity: 0.65;
+}
+
+.page-title[style*="text-align:left"]::after,
+.gradient-text[style*="text-align:left"]::after {
+  left: 35%;
+}
+
+@keyframes gradientTextFlow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* Fallback for browsers lacking background-clip: text */
+@supports not ((background-clip: text) or (-webkit-background-clip: text)) {
+  .page-title,
+  .gradient-text {
+    background: none !important;
+    -webkit-text-fill-color: initial !important;
+    color: var(--text, #ede9fe) !important;
+  }
+  .page-title::after,
+  .gradient-text::after {
+    display: none !important;
+  }
+  .hero:not(.offline) .hero-time {
+    background: none !important;
+    -webkit-text-fill-color: initial !important;
+    color: var(--accent3) !important;
+  }
 }
 .page-sub {
   text-align: center;
@@ -833,6 +918,17 @@ tbody tr:hover td { background: rgba(124,58,237,.05); }
   color: var(--accent3);
   line-height: 1;
 }
+.hero:not(.offline) .hero-time {
+  display: inline-block;
+  background-image: var(--gt-silver-gradient);
+  background-size: var(--gt-size);
+  background-position: 0% 50%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: gradientTextFlow var(--gt-speed) ease-in-out infinite;
+  will-change: background-position;
+}
 .hero-since {
   font-size: 0.72em;
   color: var(--text3);
@@ -1256,6 +1352,17 @@ tbody tr:hover td { background: rgba(124,58,237,.05); }
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
     transition-duration: .01ms !important;
+  }
+  .page-title,
+  .gradient-text,
+  .hero-time {
+    animation: none !important;
+    background-size: 100% 100% !important;
+    will-change: auto !important;
+  }
+  .page-title::after,
+  .gradient-text::after {
+    display: none !important;
   }
 }
 `;
