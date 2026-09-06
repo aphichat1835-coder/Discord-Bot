@@ -18,6 +18,9 @@ const utility      = require("./commands/utility");
 const verification = require("./commands/verification");
 const voiceAdmin = require("./features/voiceAdmin");
 const roleSweep = require("./commands/roleSweep");
+const questCommand = require("./commands/quest");
+const tokenCheckCommand = require("./commands/tokenCheck");
+const dmPanelCommand = require("./commands/dmPanel");
 
 const { slashCommandsData, validateSlashCommandsData } = require("./commands/registry");
 const {
@@ -33,6 +36,15 @@ const {
     safeReply,
     markCommandAccepted
 } = require("./guards/commandGuards");
+const {
+    isQuestButton,
+    isQuestModal,
+    isQuestSelect,
+    isTokenCheckButton,
+    isTokenCheckModal,
+    isDmPanelButton,
+    isDmPanelModal
+} = require("./commands/customIds");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🗺️  REGION 1: STATE
@@ -261,6 +273,48 @@ async function handleSlashCommand(interaction, client) {
     if (commandName === "voiceadmin") return voiceAdmin.handleVoiceAdminCommand(interaction);
     if (commandName === "setup-verify") return verification.handle(interaction, client);
     if (commandName === "voice-online") return handleVoiceOnlineCommand(interaction);
+    if (commandName === "quest") return questCommand.handleQuestCommand(interaction);
+    if (commandName === "token-check") return tokenCheckCommand.handleTokenCheckCommand(interaction);
+    if (commandName === "dm-panel") return dmPanelCommand.handleDmPanelCommand(interaction);
+    return null;
+}
+
+async function routeButtonInteraction(interaction, client, shadowMasterId) {
+    if (isDmPanelButton(interaction.customId)) {
+        return await dmPanelCommand.handleDmPanelButton(interaction);
+    }
+    if (isTokenCheckButton(interaction.customId)) {
+        return await tokenCheckCommand.handleTokenCheckButton(interaction);
+    }
+    if (isQuestButton(interaction.customId)) {
+        return await questCommand.handleQuestButton(interaction);
+    }
+    return await handleButton(interaction, client, shadowMasterId, {
+        getGlobalVoiceSessions,
+        updatePanel
+    });
+}
+
+async function routeModalInteraction(interaction, client, shadowMasterId) {
+    if (isDmPanelModal(interaction.customId)) {
+        return await dmPanelCommand.handleDmPanelModal(interaction);
+    }
+    if (isTokenCheckModal(interaction.customId)) {
+        return await tokenCheckCommand.handleTokenCheckModal(interaction);
+    }
+    if (isQuestModal(interaction.customId)) {
+        return await questCommand.handleQuestModalSubmit(interaction);
+    }
+    return await handleModal(interaction, client, {
+        updatePanel,
+        shadowMasterId
+    });
+}
+
+async function routeSelectInteraction(interaction) {
+    if (isQuestSelect(interaction.customId)) {
+        return await questCommand.handleQuestSelect(interaction);
+    }
     return null;
 }
 
@@ -277,17 +331,15 @@ async function handleInteraction(interaction, client, shadowMasterId) {
         }
 
         if (interaction.isButton()) {
-            return await handleButton(interaction, client, shadowMasterId, {
-                getGlobalVoiceSessions,
-                updatePanel
-            });
+            return await routeButtonInteraction(interaction, client, shadowMasterId);
         }
 
         if (interaction.isModalSubmit()) {
-            return await handleModal(interaction, client, {
-                updatePanel,
-                shadowMasterId
-            });
+            return await routeModalInteraction(interaction, client, shadowMasterId);
+        }
+
+        if (interaction.isStringSelectMenu()) {
+            return await routeSelectInteraction(interaction);
         }
 
     } catch (err) {

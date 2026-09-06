@@ -15,8 +15,8 @@ test("slash command names are unique and include supported command groups", () =
     const unique = new Set(names);
 
     assert.equal(unique.size, names.length);
-    assert.equal(names.length, 16);
-    assert.equal(names.at(-1), "rerole");
+    assert.equal(names.length, 19);
+    assert.equal(names.at(-1), "dm-panel");
 
     for (const expected of [
         "voice-online",
@@ -30,7 +30,10 @@ test("slash command names are unique and include supported command groups", () =
         "announce",
         "backup",
         "restore",
-        "setup-verify"
+        "setup-verify",
+        "quest",
+        "token-check",
+        "dm-panel"
     ]) {
         assert.equal(unique.has(expected), true, `missing /${expected}`);
     }

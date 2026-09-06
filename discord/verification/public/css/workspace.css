@@ -604,7 +604,8 @@ body.callback-page .verify-step {
 
 body.callback-page .verify-step:hover:not(.active) {
   color: #f4f4f5;
-  background: linear-gradient(90deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.02) 100%);
+  background-color: #18181b;
+  background-image: linear-gradient(90deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.02) 100%);
   border-color: rgba(255, 255, 255, 0.09);
   transform: translateX(3px);
 }
@@ -618,9 +619,12 @@ body.callback-page .verify-step:focus-visible {
 body.callback-page .verify-step.active {
   color: #FFFFFF;
   font-weight: 600;
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.15) 0%, rgba(255, 255, 255, 0.06) 50%, rgba(255, 255, 255, 0.09) 100%) padding-box,
-    linear-gradient(135deg, rgba(255, 255, 255, 0.40) 0%, rgba(255, 255, 255, 0.10) 50%, rgba(255, 255, 255, 0.26) 100%) border-box;
+  background-color: #18181b;
+  background-image:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.15) 0%, rgba(255, 255, 255, 0.06) 50%, rgba(255, 255, 255, 0.09) 100%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.40) 0%, rgba(255, 255, 255, 0.10) 50%, rgba(255, 255, 255, 0.26) 100%);
+  background-origin: padding-box, border-box;
+  background-clip: padding-box, border-box;
   border: 1px solid transparent;
   box-shadow:
     0 4px 20px rgba(0, 0, 0, 0.40),
@@ -640,13 +644,14 @@ body.callback-page .verify-step.active::before {
 
 body.callback-page .verify-step.done {
   color: #a1a1aa;
-  background: rgba(255, 255, 255, 0.02);
+  background-color: #141416;
   border-color: rgba(255, 255, 255, 0.04);
 }
 
 body.callback-page .verify-step.done:hover {
   color: #f4f4f5;
-  background: linear-gradient(90deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.015) 100%);
+  background-color: #18181b;
+  background-image: linear-gradient(90deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.015) 100%);
   border-color: rgba(255, 255, 255, 0.06);
   transform: translateX(2px);
 }
@@ -695,35 +700,47 @@ body.callback-page .callback-note {
   font-size: 0.88rem;
   line-height: 1.5;
   text-align: center;
-  background:
-    linear-gradient(180deg, rgba(20, 20, 24, 0.72) 0%, rgba(15, 15, 18, 0.82) 100%) padding-box,
-    linear-gradient(180deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.03) 100%) border-box;
+  background-color: #141418;
+  background-image:
+    linear-gradient(180deg, rgba(20, 20, 24, 0.72) 0%, rgba(15, 15, 18, 0.82) 100%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.03) 100%);
+  background-origin: padding-box, border-box;
+  background-clip: padding-box, border-box;
   border: 1px solid transparent;
   color: #d4d4d8;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
 body.callback-page .callback-note-blue {
-  background:
-    linear-gradient(180deg, rgba(20, 20, 24, 0.75) 0%, rgba(15, 15, 18, 0.85) 100%) padding-box,
-    linear-gradient(180deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.04) 100%) border-box;
+  background-color: #141418;
+  background-image:
+    linear-gradient(180deg, rgba(20, 20, 24, 0.75) 0%, rgba(15, 15, 18, 0.85) 100%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.04) 100%);
+  background-origin: padding-box, border-box;
+  background-clip: padding-box, border-box;
   border: 1px solid transparent;
   color: #e4e4e7;
 }
 
 body.callback-page .callback-note-success {
-  background:
-    linear-gradient(180deg, rgba(20, 36, 26, 0.75) 0%, rgba(14, 26, 18, 0.85) 100%) padding-box,
-    linear-gradient(180deg, rgba(34, 197, 94, 0.32) 0%, rgba(34, 197, 94, 0.1) 100%) border-box;
+  background-color: #0e1a12;
+  background-image:
+    linear-gradient(180deg, rgba(20, 36, 26, 0.75) 0%, rgba(14, 26, 18, 0.85) 100%),
+    linear-gradient(180deg, rgba(34, 197, 94, 0.32) 0%, rgba(34, 197, 94, 0.1) 100%);
+  background-origin: padding-box, border-box;
+  background-clip: padding-box, border-box;
   border: 1px solid transparent;
   color: #86efac;
   box-shadow: 0 4px 20px rgba(34, 197, 94, 0.12), inset 0 1px 0 rgba(34, 197, 94, 0.2);
 }
 
 body.callback-page .callback-note-danger {
-  background:
-    linear-gradient(180deg, rgba(40, 18, 20, 0.75) 0%, rgba(26, 12, 14, 0.85) 100%) padding-box,
-    linear-gradient(180deg, rgba(239, 68, 68, 0.32) 0%, rgba(239, 68, 68, 0.1) 100%) border-box;
+  background-color: #1a0c0e;
+  background-image:
+    linear-gradient(180deg, rgba(40, 18, 20, 0.75) 0%, rgba(26, 12, 14, 0.85) 100%),
+    linear-gradient(180deg, rgba(239, 68, 68, 0.32) 0%, rgba(239, 68, 68, 0.1) 100%);
+  background-origin: padding-box, border-box;
+  background-clip: padding-box, border-box;
   border: 1px solid transparent;
   color: #fca5a5;
   box-shadow: 0 4px 20px rgba(239, 68, 68, 0.12), inset 0 1px 0 rgba(239, 68, 68, 0.2);
@@ -799,7 +816,7 @@ body.callback-page .user-mini-avatar {
 }
 
 body.callback-page .badge-ok {
-  background: rgba(34, 197, 94, 0.14);
+  background: #14281c;
   border: 1px solid rgba(34, 197, 94, 0.32);
   color: #86efac;
   font-size: 0.8rem;
@@ -859,7 +876,7 @@ body.callback-page .error-cross-wrap {
 }
 
 body.callback-page .error-cross {
-  background: linear-gradient(135deg, #f87171 0%, #ef4444 100%);
+  background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
   color: #ffffff;
   width: 48px;
   height: 48px;
@@ -909,7 +926,7 @@ body.callback-page .error-guide-item {
 }
 
 body.callback-page .error-guide-item span {
-  background: rgba(255, 255, 255, 0.08);
+  background: #1f2228;
   border: 1px solid rgba(255, 255, 255, 0.16);
   color: #F5F5F5;
   width: 24px;
@@ -930,9 +947,12 @@ body.callback-page .error-guide-item p {
 }
 
 body.callback-page .error-ref {
-  background:
-    linear-gradient(180deg, rgba(35, 26, 12, 0.7) 0%, rgba(24, 18, 8, 0.8) 100%) padding-box,
-    linear-gradient(180deg, rgba(245, 158, 11, 0.3) 0%, rgba(245, 158, 11, 0.1) 100%) border-box;
+  background-color: #181208;
+  background-image:
+    linear-gradient(180deg, rgba(35, 26, 12, 0.7) 0%, rgba(24, 18, 8, 0.8) 100%),
+    linear-gradient(180deg, rgba(245, 158, 11, 0.3) 0%, rgba(245, 158, 11, 0.1) 100%);
+  background-origin: padding-box, border-box;
+  background-clip: padding-box, border-box;
   border: 1px solid transparent;
   color: #fde68a;
   border-radius: 10px;
@@ -945,9 +965,12 @@ body.callback-page .error-ref {
 }
 
 body.callback-page .error-ref-danger {
-  background:
-    linear-gradient(180deg, rgba(38, 14, 16, 0.7) 0%, rgba(26, 10, 12, 0.8) 100%) padding-box,
-    linear-gradient(180deg, rgba(239, 68, 68, 0.3) 0%, rgba(239, 68, 68, 0.1) 100%) border-box;
+  background-color: #1a0a0c;
+  background-image:
+    linear-gradient(180deg, rgba(38, 14, 16, 0.7) 0%, rgba(26, 10, 12, 0.8) 100%),
+    linear-gradient(180deg, rgba(239, 68, 68, 0.3) 0%, rgba(239, 68, 68, 0.1) 100%);
+  background-origin: padding-box, border-box;
+  background-clip: padding-box, border-box;
   border: 1px solid transparent;
   color: #fca5a5;
   box-shadow: inset 0 1px 0 rgba(239, 68, 68, 0.15);
@@ -1045,24 +1068,29 @@ body.callback-page .callback-main-btn:focus-visible {
 }
 
 body.callback-page .btn-primary {
-  background-color: #5865f2;
-  background:
-    linear-gradient(135deg, #6573f5 0%, #5865f2 45%, #4752c4 100%) padding-box,
-    linear-gradient(135deg, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0.15) 50%, rgba(255, 255, 255, 0.32) 100%) border-box;
+  background-color: #3c45a5;
+  background-image:
+    linear-gradient(135deg, #4752c4 0%, #3c45a5 100%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0.15) 50%, rgba(255, 255, 255, 0.32) 100%);
+  background-origin: padding-box, border-box;
+  background-clip: padding-box, border-box;
   border: 1px solid transparent;
   color: #ffffff;
   box-shadow:
-    0 6px 22px rgba(88, 101, 242, 0.42),
+    0 6px 22px rgba(71, 82, 196, 0.42),
     0 2px 4px rgba(0, 0, 0, 0.25),
     inset 0 1px 1px rgba(255, 255, 255, 0.4);
 }
 
 body.callback-page .btn-primary:hover {
-  background:
-    linear-gradient(135deg, #707df6 0%, #5d6af3 45%, #4c57cb 100%) padding-box,
-    linear-gradient(135deg, rgba(255, 255, 255, 0.65) 0%, rgba(255, 255, 255, 0.22) 50%, rgba(255, 255, 255, 0.4) 100%) border-box;
+  background-color: #3c45a5;
+  background-image:
+    linear-gradient(135deg, #4f5cd6 0%, #3c45a5 100%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.65) 0%, rgba(255, 255, 255, 0.22) 50%, rgba(255, 255, 255, 0.4) 100%);
+  background-origin: padding-box, border-box;
+  background-clip: padding-box, border-box;
   box-shadow:
-    0 10px 30px rgba(88, 101, 242, 0.58),
+    0 10px 30px rgba(71, 82, 196, 0.58),
     0 3px 6px rgba(0, 0, 0, 0.3),
     inset 0 1px 1px rgba(255, 255, 255, 0.5);
   color: #ffffff;
@@ -1070,15 +1098,17 @@ body.callback-page .btn-primary:hover {
 
 body.callback-page .btn-primary:active {
   box-shadow:
-    0 3px 12px rgba(88, 101, 242, 0.35),
+    0 3px 12px rgba(71, 82, 196, 0.35),
     inset 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 
 body.callback-page .btn-soft {
-  background-color: #27272a;
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.05) 50%, rgba(255, 255, 255, 0.08) 100%) padding-box,
-    linear-gradient(135deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0.08) 50%, rgba(255, 255, 255, 0.2) 100%) border-box;
+  background-color: #18181b;
+  background-image:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.05) 50%, rgba(255, 255, 255, 0.08) 100%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0.08) 50%, rgba(255, 255, 255, 0.2) 100%);
+  background-origin: padding-box, border-box;
+  background-clip: padding-box, border-box;
   border: 1px solid transparent;
   color: #F5F5F5;
   box-shadow:
@@ -1088,9 +1118,12 @@ body.callback-page .btn-soft {
 }
 
 body.callback-page .btn-soft:hover {
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0.08) 50%, rgba(255, 255, 255, 0.14) 100%) padding-box,
-    linear-gradient(135deg, rgba(255, 255, 255, 0.48) 0%, rgba(255, 255, 255, 0.16) 50%, rgba(255, 255, 255, 0.32) 100%) border-box;
+  background-color: #18181b;
+  background-image:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0.08) 50%, rgba(255, 255, 255, 0.14) 100%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.48) 0%, rgba(255, 255, 255, 0.16) 50%, rgba(255, 255, 255, 0.32) 100%);
+  background-origin: padding-box, border-box;
+  background-clip: padding-box, border-box;
   color: #ffffff;
   box-shadow:
     0 10px 30px rgba(0, 0, 0, 0.6),

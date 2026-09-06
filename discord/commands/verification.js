@@ -993,6 +993,7 @@ module.exports = {
         disablePreviousVerificationPanel,
         persistVerificationRecovery,
         verificationRecoverySummary,
-        verificationSetupFailureMessage
+        verificationSetupFailureMessage,
+        buildDiscordAuthorizeUrl
     }
 };

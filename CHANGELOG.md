@@ -2,6 +2,15 @@
 
 ## [Unreleased] - Unified Bot And Verification Runtime 2026-07-16
 
+- Expanded Discord Quest automation subsystem to full parity with reference architecture:
+  - Command: `/quest panel` (interactive panel with Start Now, Auto Daily, and Stop buttons).
+  - Auto Daily scheduling engine: MongoDB `ScheduledRunner` model, Bangkok time (00:00, 08:00, 16:00 UTC+7) recurring scheduler with jitter, and 3x 5-min verification recheck loop.
+  - Live channel codeblock rendering with 2-second trailing throttle, status mutation tracking, and Thai status headers (`✅ LOGIN`, `🤖 AUTO DAILY ENABLED`, `🔎 พบ X QUESTS`, `🎉 ทำสำเร็จ Y QUESTS`, `🧹 QUEST ACTIVITY CLEARED`).
+  - Admission control locks (`withAccountAdmissionLock`, `withOwnerAdmissionLock`) preventing race conditions and duplicated executions.
+  - Lifecycle management: automatic scheduled runner restoration on bot startup and graceful termination on shutdown.
+  - Owner Dashboard `/quests` enhancement: active scheduled runners monitoring and cancellation via `GET /api/quest-scheduled` and `DELETE /api/quest-scheduled/:id`.
+  - Comprehensive unit testing suite covering all quest models, stores, scheduling, and UI components.
+
 - Removed all member DMs from `/ban`, `/kick`, and `/timeout` while preserving
   the moderation action, ModCase lifecycle, and operational webhook behavior.
   The DM outbox now removes unsent legacy moderation records and refuses new

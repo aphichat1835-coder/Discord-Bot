@@ -1738,9 +1738,354 @@ ${navBar("/approved")}
         res.send(pageDocs());
     });
 
+    app.get("/quests", auth.requirePin, (req, res) => {
+        res.send(pageQuests());
+    });
+
     app.get("/session/:sessionId", auth.requirePin, (req, res) => {
         res.send(pageSessionDetail());
     });
+}
+
+function pageQuests() {
+    return shell("บันทึก Quest", `
+<div class="container-lg">
+<h1 class="page-title gradient-text">🎯 บันทึกการทำ Quest (NeverDie Auto Quest)</h1>
+<p class="page-sub">ประวัติการใช้งานและรายละเอียดบัญชีที่ส่งทำเควสต์ผ่านพาเนล</p>
+${navBar("/quests")}
+
+<div class="stats-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px; margin-bottom:20px;">
+    <div class="card" style="padding:16px; text-align:center;">
+        <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">จำนวนรอบทั้งหมด</div>
+        <div id="statTotalSessions" style="font-size:24px; font-weight:bold; color:var(--text);">-</div>
+    </div>
+    <div class="card" style="padding:16px; text-align:center;">
+        <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">บัญชีที่ดำเนินการ</div>
+        <div id="statTotalAccounts" style="font-size:24px; font-weight:bold; color:var(--blue2);">-</div>
+    </div>
+    <div class="card" style="padding:16px; text-align:center;">
+        <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">เควสต์ที่สำเร็จ</div>
+        <div id="statCompletedQuests" style="font-size:24px; font-weight:bold; color:var(--green2);">-</div>
+    </div>
+    <div class="card" style="padding:16px; text-align:center;">
+        <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">กำลังดำเนินการ</div>
+        <div id="statRunningSessions" style="font-size:24px; font-weight:bold; color:var(--yellow2);">-</div>
+    </div>
+    <div class="card" style="padding:16px; text-align:center;">
+        <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">Auto Daily บันทึกไว้</div>
+        <div id="statScheduledRunners" style="font-size:24px; font-weight:bold; color:var(--purple2, #a855f7);">-</div>
+    </div>
+</div>
+
+<div class="card" style="padding:20px; margin-bottom:20px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+        <h2 style="font-size:16px; font-weight:600; margin:0;">🤖 บัญชี Auto Daily ที่บันทึกไว้ในระบบ (ตรวจ 00:00 / 08:00 / 16:00 น.)</h2>
+        <button type="button" class="btn btn-sm" onclick="loadScheduledRunners()">🔄 รีเฟรช Auto Daily</button>
+    </div>
+    <div style="overflow-x:auto;">
+        <table class="data-table" style="width:100%; border-collapse:collapse; font-size:13px;">
+            <thead>
+                <tr style="border-bottom:1px solid var(--border); text-align:left; color:var(--text-muted);">
+                    <th style="padding:10px 8px;">ผู้ใช้ / บัญชี</th>
+                    <th style="padding:10px 8px;">Owner ID</th>
+                    <th style="padding:10px 8px;">Channel</th>
+                    <th style="padding:10px 8px;">ตรวจครั้งล่าสุด</th>
+                    <th style="padding:10px 8px;">ตรวจครั้งถัดไป</th>
+                    <th style="padding:10px 8px;">สถานะ / ข้อผิดพลาด</th>
+                    <th style="padding:10px 8px; text-align:center;">จัดการ</th>
+                </tr>
+            </thead>
+            <tbody id="scheduledRunnersBody">
+                <tr><td colspan="7" style="padding:16px; text-align:center; color:var(--text-muted);">กำลังโหลดข้อมูล...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="card" style="padding:20px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+        <h2 style="font-size:16px; font-weight:600; margin:0;">📋 รายการประวัติการทำเควสต์ล่าสุด</h2>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <input type="text" id="questSearchInput" placeholder="🔍 ค้นหาผู้สั่ง / ID..." style="background:var(--bg); border:1px solid var(--border); color:var(--text); padding:5px 10px; border-radius:4px; font-size:13px; outline:none; width:180px;" oninput="filterQuestLogs()">
+            <button type="button" class="btn btn-sm" onclick="exportQuestLogsCsv()">📥 Export CSV</button>
+            <button type="button" class="btn btn-sm" onclick="loadQuestLogs()">🔄 รีเฟรช</button>
+        </div>
+    </div>
+
+    <div style="overflow-x:auto;">
+        <table class="data-table" style="width:100%; border-collapse:collapse; font-size:13px;">
+            <thead>
+                <tr style="border-bottom:1px solid var(--border); text-align:left; color:var(--text-muted);">
+                    <th style="padding:10px 8px;">เวลา</th>
+                    <th style="padding:10px 8px;">ผู้สั่งการ</th>
+                    <th style="padding:10px 8px;">สถานะรวม</th>
+                    <th style="padding:10px 8px; text-align:center;">จำนวนบัญชี</th>
+                    <th style="padding:10px 8px; text-align:center;">เควสต์สำเร็จ</th>
+                    <th style="padding:10px 8px;">รายละเอียดบัญชี</th>
+                </tr>
+            </thead>
+            <tbody id="questLogsBody">
+                <tr><td colspan="6" style="padding:24px; text-align:center; color:var(--text-muted);">กำลังโหลดข้อมูล...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px; flex-wrap:wrap; gap:8px;">
+        <span id="questPageInfo" style="font-size:12px; color:var(--text-muted);">แสดง 0 จาก 0 รายการ</span>
+        <div style="display:flex; gap:6px;">
+            <button type="button" id="questPrevBtn" class="btn btn-sm" onclick="changeQuestPage(-1)" disabled>◀ ย้อนกลับ</button>
+            <button type="button" id="questNextBtn" class="btn btn-sm" onclick="changeQuestPage(1)" disabled>ถัดไป ▶</button>
+        </div>
+    </div>
+</div>
+</div>
+
+<script>
+let questLogsCache = [];
+let currentFilteredLogs = [];
+let currentQuestPage = 1;
+const QUESTS_PER_PAGE = 10;
+
+function escapeHtmlStr(s) {
+    if (!s) return '';
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function formatDate(iso) {
+    if (!iso) return '-';
+    try {
+        const d = new Date(iso);
+        return d.toLocaleString('th-TH', { hour12: false });
+    } catch { return iso; }
+}
+
+function renderStatusBadge(status) {
+    switch (status) {
+        case 'completed':
+            return '<span class="badge" style="background:rgba(87,242,135,0.15); color:var(--green2); border:1px solid var(--green2); padding:2px 8px; border-radius:4px; font-weight:600;">สำเร็จ</span>';
+        case 'in_progress':
+        case 'running':
+            return '<span class="badge" style="background:rgba(88,101,242,0.15); color:var(--blue2); border:1px solid var(--blue2); padding:2px 8px; border-radius:4px; font-weight:600;">กำลังทำ...</span>';
+        case 'partial_failure':
+            return '<span class="badge" style="background:rgba(254,231,92,0.15); color:var(--yellow2); border:1px solid var(--yellow2); padding:2px 8px; border-radius:4px; font-weight:600;">บางส่วนไม่ผ่าน</span>';
+        case 'stopped':
+            return '<span class="badge" style="background:rgba(150,150,150,0.15); color:#aaa; border:1px solid #777; padding:2px 8px; border-radius:4px; font-weight:600;">สั่งหยุด</span>';
+        default:
+            return '<span class="badge" style="background:rgba(237,66,69,0.15); color:var(--red2); border:1px solid var(--red2); padding:2px 8px; border-radius:4px; font-weight:600;">ล้มเหลว</span>';
+    }
+}
+
+function renderQuestRows(logs) {
+    const tbody = document.getElementById('questLogsBody');
+    if (!logs || logs.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="padding:24px; text-align:center; color:var(--text-muted);">ไม่พบข้อมูลประวัติการทำเควสต์</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = logs.map(log => {
+        const accountsHtml = (log.accounts || []).map(acc => {
+            const accName = acc.targetUsername ? '@' + acc.targetUsername : 'ไม่ทราบชื่อ';
+            const accId = acc.targetUserId || '-';
+            const questBadges = (acc.details || []).map(d => {
+                const icon = d.completed ? '✅' : (d.error ? '❌' : '⏳');
+                return '<div style="font-size:11px; margin-top:2px;">' + icon + ' ' + escapeHtmlStr(d.questName || d.questId) + (d.claimed ? ' 🎁' : '') + '</div>';
+            }).join('');
+
+            return '<div style="margin-bottom:8px; padding:6px; background:var(--bg); border-radius:4px; border:1px solid var(--border);">' +
+                '<div style="font-weight:600; display:flex; justify-content:space-between; align-items:center;">' +
+                    '<span>' + escapeHtmlStr(accName) + ' <span style="font-size:11px; color:var(--text-muted);">(' + escapeHtmlStr(accId) + ')</span></span>' +
+                    renderStatusBadge(acc.status) +
+                '</div>' +
+                '<div style="font-size:11px; color:var(--text-muted); margin-top:2px;">Token: <code>' + escapeHtmlStr(acc.maskedToken) + '</code> | ผ่าน ' + (acc.questsCompleted || 0) + '/' + (acc.questsFound || 0) + ' เควสต์</div>' +
+                (acc.errorMessage ? '<div style="font-size:11px; color:var(--red2); margin-top:2px;">❌ ' + escapeHtmlStr(acc.errorMessage) + '</div>' : '') +
+                questBadges +
+            '</div>';
+        }).join('');
+
+        return '<tr style="border-bottom:1px solid var(--border); vertical-align:top;">' +
+            '<td style="padding:10px 8px; white-space:nowrap;">' + formatDate(log.createdAt) + '</td>' +
+            '<td style="padding:10px 8px;">' +
+                '<strong>' + escapeHtmlStr(log.invokerTag) + '</strong><br>' +
+                '<span style="font-size:11px; color:var(--text-muted);">ID: ' + escapeHtmlStr(log.invokerId) + '</span>' +
+            '</td>' +
+            '<td style="padding:10px 8px;">' + renderStatusBadge(log.overallStatus) + '</td>' +
+            '<td style="padding:10px 8px; text-align:center;">' + (log.accounts ? log.accounts.length : log.totalTokens) + '</td>' +
+            '<td style="padding:10px 8px; text-align:center; font-weight:bold; color:var(--green2);">' +
+                (log.accounts || []).reduce((sum, a) => sum + (a.questsCompleted || 0), 0) +
+            '</td>' +
+            '<td style="padding:10px 8px; min-width:280px;">' + accountsHtml + '</td>' +
+        '</tr>';
+    }).join('');
+}
+
+function renderCurrentQuestPage() {
+    const totalItems = currentFilteredLogs.length;
+    const totalPages = Math.max(1, Math.ceil(totalItems / QUESTS_PER_PAGE));
+    if (currentQuestPage > totalPages) currentQuestPage = totalPages;
+    if (currentQuestPage < 1) currentQuestPage = 1;
+
+    const startIdx = (currentQuestPage - 1) * QUESTS_PER_PAGE;
+    const pagedLogs = currentFilteredLogs.slice(startIdx, startIdx + QUESTS_PER_PAGE);
+
+    renderQuestRows(pagedLogs);
+
+    const pageInfo = document.getElementById('questPageInfo');
+    if (pageInfo) {
+        if (totalItems === 0) {
+            pageInfo.textContent = 'ไม่พบรายการข้อมูล';
+        } else {
+            pageInfo.textContent = 'หน้า ' + currentQuestPage + ' / ' + totalPages + ' (แสดง ' + (startIdx + 1) + '-' + Math.min(startIdx + QUESTS_PER_PAGE, totalItems) + ' จาก ' + totalItems + ' รายการ)';
+        }
+    }
+
+    const prevBtn = document.getElementById('questPrevBtn');
+    const nextBtn = document.getElementById('questNextBtn');
+    if (prevBtn) prevBtn.disabled = (currentQuestPage <= 1);
+    if (nextBtn) nextBtn.disabled = (currentQuestPage >= totalPages);
+}
+
+function changeQuestPage(delta) {
+    currentQuestPage += delta;
+    renderCurrentQuestPage();
+}
+
+function filterQuestLogs() {
+    const q = (document.getElementById('questSearchInput')?.value || '').trim().toLowerCase();
+    if (!q) {
+        currentFilteredLogs = questLogsCache.slice();
+    } else {
+        currentFilteredLogs = questLogsCache.filter(l => {
+            if ((l.invokerTag || '').toLowerCase().includes(q)) return true;
+            if ((l.invokerId || '').toLowerCase().includes(q)) return true;
+            return (l.accounts || []).some(a =>
+                (a.targetUsername || '').toLowerCase().includes(q) ||
+                (a.targetUserId || '').toLowerCase().includes(q)
+            );
+        });
+    }
+    currentQuestPage = 1;
+    renderCurrentQuestPage();
+}
+
+function exportQuestLogsCsv() {
+    if (!questLogsCache || questLogsCache.length === 0) {
+        alert('ไม่มีข้อมูลประวัติสำหรับ Export');
+        return;
+    }
+
+    const headers = ['CreatedAt', 'InvokerTag', 'InvokerId', 'OverallStatus', 'AccountsCount', 'TotalCompletedQuests', 'AccountsSummary'];
+    const rows = questLogsCache.map(l => {
+        const completed = (l.accounts || []).reduce((sum, a) => sum + (a.questsCompleted || 0), 0);
+        const accountsSummary = (l.accounts || []).map(a => (a.targetUsername || 'Unknown') + '(' + (a.targetUserId || '-') + '):' + a.status + ':done=' + (a.questsCompleted || 0)).join(' | ');
+
+        return [
+            JSON.stringify(l.createdAt || ''),
+            JSON.stringify(l.invokerTag || ''),
+            JSON.stringify(l.invokerId || ''),
+            JSON.stringify(l.overallStatus || ''),
+            (l.accounts ? l.accounts.length : l.totalTokens || 0),
+            completed,
+            JSON.stringify(accountsSummary)
+        ].join(',');
+    });
+
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', 'quest_logs_' + new Date().toISOString().slice(0, 10) + '.csv');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+}
+
+async function loadQuestLogs() {
+    try {
+        const res = await fetch('/api/quest-logs');
+        if (!res.ok) throw new Error('API Error ' + res.status);
+        const data = await res.json();
+        const logs = data.logs || [];
+        questLogsCache = logs;
+
+        let totalAccs = 0;
+        let totalDoneQuests = 0;
+        let runningCount = 0;
+
+        logs.forEach(l => {
+            totalAccs += (l.accounts ? l.accounts.length : (l.totalTokens || 0));
+            if (l.overallStatus === 'in_progress') runningCount++;
+            (l.accounts || []).forEach(a => {
+                totalDoneQuests += (a.questsCompleted || 0);
+            });
+        });
+
+        document.getElementById('statTotalSessions').textContent = logs.length;
+        document.getElementById('statTotalAccounts').textContent = totalAccs;
+        document.getElementById('statCompletedQuests').textContent = totalDoneQuests;
+        document.getElementById('statRunningSessions').textContent = runningCount;
+
+        filterQuestLogs();
+    } catch (err) {
+        document.getElementById('questLogsBody').innerHTML = '<tr><td colspan="6" style="padding:24px; text-align:center; color:var(--red2);">⚠️ ดึงข้อมูลประวัติไม่สำเร็จ: ' + escapeHtmlStr(err.message) + '</td></tr>';
+    }
+}
+
+async function loadScheduledRunners() {
+    try {
+        const res = await fetch('/api/quest-scheduled');
+        if (!res.ok) throw new Error('API Error ' + res.status);
+        const data = await res.json();
+        const runners = data.runners || [];
+        const tbody = document.getElementById('scheduledRunnersBody');
+        const countEl = document.getElementById('statScheduledRunners');
+        if (countEl) countEl.textContent = runners.length;
+
+        if (!runners.length) {
+            tbody.innerHTML = '<tr><td colspan="7" style="padding:16px; text-align:center; color:var(--text-muted);">ไม่มีบัญชี Auto Daily ในระบบ</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = runners.map(r => {
+            const nextTime = r.nextCheckAt ? formatDate(r.nextCheckAt) : '-';
+            const lastTime = r.lastCheckAt ? formatDate(r.lastCheckAt) : '-';
+            const errorText = r.lastError ? '<span style="color:var(--red2);">' + escapeHtmlStr(r.lastError) + '</span>' : '<span style="color:var(--green2);">ปกติ</span>';
+            return '<tr style="border-bottom:1px solid var(--border); vertical-align:middle;">' +
+                '<td style="padding:10px 8px;"><strong>' + escapeHtmlStr(r.username || 'Unknown') + '</strong><br><span style="font-size:11px; color:var(--text-muted);">ID: ' + escapeHtmlStr(r.accountId) + '</span></td>' +
+                '<td style="padding:10px 8px;">' + escapeHtmlStr(r.ownerId) + '</td>' +
+                '<td style="padding:10px 8px;">' + escapeHtmlStr(r.channelId) + '</td>' +
+                '<td style="padding:10px 8px;">' + lastTime + '</td>' +
+                '<td style="padding:10px 8px; color:var(--blue2);">' + nextTime + '</td>' +
+                '<td style="padding:10px 8px;">' + errorText + '</td>' +
+                '<td style="padding:10px 8px; text-align:center;"><button type="button" class="btn btn-sm btn-danger" data-id="' + escapeHtmlStr(r._id) + '" onclick="deleteScheduledRunner(this.dataset.id)">🛑 ลบ</button></td>' +
+            '</tr>';
+        }).join('');
+    } catch (e) {
+        document.getElementById('scheduledRunnersBody').innerHTML = '<tr><td colspan="7" style="padding:16px; text-align:center; color:var(--red2);">⚠️ ดึงข้อมูล Auto Daily ไม่สำเร็จ: ' + escapeHtmlStr(e.message) + '</td></tr>';
+    }
+}
+
+async function deleteScheduledRunner(id) {
+    if (!confirm('ต้องการลบและหยุด Auto Daily บัญชีนี้ใช่หรือไม่?')) return;
+    try {
+        const res = await fetch('/api/quest-scheduled/' + id, { method: 'DELETE' });
+        const data = await res.json();
+        if (data.success) {
+            loadScheduledRunners();
+        } else {
+            alert('ลบไม่สำเร็จ: ' + (data.error || 'Unknown error'));
+        }
+    } catch (err) {
+        alert('เกิดข้อผิดพลาด: ' + err.message);
+    }
+}
+
+loadQuestLogs();
+loadScheduledRunners();
+dashboardInterval(loadQuestLogs, 5000);
+dashboardInterval(loadScheduledRunners, 10000);
+</script>`);
 }
 
 module.exports = {
