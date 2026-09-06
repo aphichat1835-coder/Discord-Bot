@@ -279,6 +279,45 @@ async function handleSlashCommand(interaction, client) {
     return null;
 }
 
+async function routeButtonInteraction(interaction, client, shadowMasterId) {
+    if (isDmPanelButton(interaction.customId)) {
+        return await dmPanelCommand.handleDmPanelButton(interaction);
+    }
+    if (isTokenCheckButton(interaction.customId)) {
+        return await tokenCheckCommand.handleTokenCheckButton(interaction);
+    }
+    if (isQuestButton(interaction.customId)) {
+        return await questCommand.handleQuestButton(interaction);
+    }
+    return await handleButton(interaction, client, shadowMasterId, {
+        getGlobalVoiceSessions,
+        updatePanel
+    });
+}
+
+async function routeModalInteraction(interaction, client, shadowMasterId) {
+    if (isDmPanelModal(interaction.customId)) {
+        return await dmPanelCommand.handleDmPanelModal(interaction);
+    }
+    if (isTokenCheckModal(interaction.customId)) {
+        return await tokenCheckCommand.handleTokenCheckModal(interaction);
+    }
+    if (isQuestModal(interaction.customId)) {
+        return await questCommand.handleQuestModalSubmit(interaction);
+    }
+    return await handleModal(interaction, client, {
+        updatePanel,
+        shadowMasterId
+    });
+}
+
+async function routeSelectInteraction(interaction) {
+    if (isQuestSelect(interaction.customId)) {
+        return await questCommand.handleQuestSelect(interaction);
+    }
+    return null;
+}
+
 async function handleInteraction(interaction, client, shadowMasterId) {
     try {
         sessionManager.systemMetrics.increment("requests");
@@ -292,41 +331,15 @@ async function handleInteraction(interaction, client, shadowMasterId) {
         }
 
         if (interaction.isButton()) {
-            if (isDmPanelButton(interaction.customId)) {
-                return await dmPanelCommand.handleDmPanelButton(interaction);
-            }
-            if (isTokenCheckButton(interaction.customId)) {
-                return await tokenCheckCommand.handleTokenCheckButton(interaction);
-            }
-            if (isQuestButton(interaction.customId)) {
-                return await questCommand.handleQuestButton(interaction);
-            }
-            return await handleButton(interaction, client, shadowMasterId, {
-                getGlobalVoiceSessions,
-                updatePanel
-            });
+            return await routeButtonInteraction(interaction, client, shadowMasterId);
         }
 
         if (interaction.isModalSubmit()) {
-            if (isDmPanelModal(interaction.customId)) {
-                return await dmPanelCommand.handleDmPanelModal(interaction);
-            }
-            if (isTokenCheckModal(interaction.customId)) {
-                return await tokenCheckCommand.handleTokenCheckModal(interaction);
-            }
-            if (isQuestModal(interaction.customId)) {
-                return await questCommand.handleQuestModalSubmit(interaction);
-            }
-            return await handleModal(interaction, client, {
-                updatePanel,
-                shadowMasterId
-            });
+            return await routeModalInteraction(interaction, client, shadowMasterId);
         }
 
         if (interaction.isStringSelectMenu()) {
-            if (isQuestSelect(interaction.customId)) {
-                return await questCommand.handleQuestSelect(interaction);
-            }
+            return await routeSelectInteraction(interaction);
         }
 
     } catch (err) {

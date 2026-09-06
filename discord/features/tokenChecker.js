@@ -60,7 +60,7 @@ function resolveNitroPlan(premiumType) {
 }
 
 function resolveAvatarUrl(user) {
-    if (!user || !user.id) {
+    if (!user?.id) {
         return 'https://cdn.discordapp.com/embed/avatars/0.png';
     }
     if (user.avatar) {
@@ -118,7 +118,7 @@ async function fetchNitroSubscription(token) {
             return { expireDays: 0, expireDate: null };
         }
 
-        const nitroSub = subs.find(s => s && s.type === 1 && s.current_period_end);
+        const nitroSub = subs.find(s => s?.type === 1 && s?.current_period_end);
         if (!nitroSub) return { expireDays: 0, expireDate: null };
 
         const expireDate = new Date(nitroSub.current_period_end);
@@ -136,9 +136,9 @@ async function fetchNitroSubscription(token) {
 
 async function checkSingleToken(token) {
     let cleanToken = (token || '').trim();
-    if (cleanToken.startsWith('"') && cleanToken.endsWith('"')) {
-        cleanToken = cleanToken.slice(1, -1).trim();
-    } else if (cleanToken.startsWith("'") && cleanToken.endsWith("'")) {
+    const isQuoted = (cleanToken.startsWith('"') && cleanToken.endsWith('"')) ||
+        (cleanToken.startsWith("'") && cleanToken.endsWith("'"));
+    if (isQuoted) {
         cleanToken = cleanToken.slice(1, -1).trim();
     }
 
@@ -231,7 +231,8 @@ async function checkSingleToken(token) {
             createdAt: getAccountCreatedAt(user.id),
             category
         };
-    } catch (err) {
+    } catch {
+        // Network errors, timeouts, or unexpected response formats from Discord API are safely surfaced as an invalid token outcome
         return {
             valid: false,
             token: cleanToken,
@@ -363,11 +364,17 @@ function buildSingleTokenEmbed(result) {
         .setTimestamp();
 }
 
+function resolveBatchItemPlanTag(item) {
+    if (item.hasBoost) return '🚀 Boost';
+    if (item.hasNitro) return '💎 Nitro';
+    return '🟢 Normal';
+}
+
 function formatBatchItemLine(item, index) {
     if (!item.valid) {
         return `${index}. 🔴 \`${item.maskedToken}\` — ${item.errorMessage || 'Invalid'}`;
     }
-    const planTag = item.hasBoost ? '🚀 Boost' : (item.hasNitro ? '💎 Nitro' : '🟢 Normal');
+    const planTag = resolveBatchItemPlanTag(item);
     const expireNote = item.hasNitro ? ` · เหลือ ${item.expireDays} วัน` : '';
     return `${index}. ${planTag} **${item.username}** (\`${item.id}\`)${expireNote}`;
 }
