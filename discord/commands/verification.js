@@ -174,20 +174,31 @@ function buildDiscordAuthorizeUrl({
         throw new Error("Missing DISCORD_CLIENT_ID/Application ID");
     }
 
-    const panelState = createCompactCallbackState({
+    const redirectUri = `${dashboardUrl}/auth/callback`;
+
+    const state = createCompactCallbackState({
         guildId,
         roleId,
         expectedUserId,
         panelRevision
     });
 
-    const url = `${dashboardUrl}/auth/start?state=${encodeURIComponent(panelState)}`;
+    const params = new URLSearchParams({
+        client_id: clientId,
+        redirect_uri: redirectUri,
+        response_type: "code",
+        scope: VERIFY_SCOPE,
+        state,
+        prompt: "consent"
+    });
+
+    const url = `https://discord.com/oauth2/authorize?${params.toString()}`;
 
     if (url.length > 512) {
         throw new Error(`OAuth URL too long (${url.length}/512). Use a shorter PUBLIC_DASHBOARD_URL domain.`);
     }
 
-    return `${dashboardUrl}/auth/start?state=${encodeURIComponent(panelState)}`;
+    return url;
 }
 
 function isLikelyUnicodeEmoji(raw) {

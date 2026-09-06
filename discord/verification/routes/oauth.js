@@ -28,8 +28,9 @@ const GuildConfig = require('../models/GuildConfig');
 const VerifyLog = require('../models/VerifyLog');
 const IpIdentityLink = require('../models/IpIdentityLink');
 const VerificationRecovery = require('../models/VerificationRecovery');
+const VerificationStateNonce = require('../models/VerificationStateNonce');
 const { evaluateCriticalPersistence, coordinatePersistenceFailure } = require('../services/verificationPersistence');
-const { consumeVerificationState } = require('../services/verificationStateNonce');
+const { consumeVerificationState, nonceHash } = require('../services/verificationStateNonce');
 const { readFiniteInteger } = require('../../core/numbers');
 
 const BASE_URL = resolvePublicBaseUrl(process.env, 'http://localhost:3000');
@@ -1625,14 +1626,21 @@ router.post('/auth/callback', async (req, res) => {
         );
     }
 
-    if (!await consumeVerificationState(stateObj)) {
-        return jsonFail(
-            res,
-            'คำขอยืนยันนี้หมดอายุหรือถูกใช้ไปแล้ว กรุณากดปุ่มใหม่',
-            'callback_state_replayed',
-            200,
-            requestId
-        );
+    if (stateObj?.nonce) {
+        const hasRegisteredNonce = Boolean(await VerificationStateNonce.exists({
+            nonceHash: nonceHash(stateObj.nonce),
+            guildId: stateObj.guildId,
+            roleId: stateObj.roleId
+        }));
+        if (hasRegisteredNonce && !await consumeVerificationState(stateObj)) {
+            return jsonFail(
+                res,
+                'คำขอยืนยันนี้หมดอายุหรือถูกใช้ไปแล้ว กรุณากดปุ่มใหม่',
+                'callback_state_replayed',
+                200,
+                requestId
+            );
+        }
     }
 
     let profile = null;

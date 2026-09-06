@@ -128,7 +128,7 @@ test("verification setup failure explains each recovery state without nested for
     );
 });
 
-test("buildDiscordAuthorizeUrl builds /auth/start URL with compact state", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("buildDiscordAuthorizeUrl builds direct Discord authorize URL with compact state", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const prevBase = process.env.PUBLIC_BASE_URL;
     const prevClient = process.env.DISCORD_CLIENT_ID;
     try {
@@ -142,9 +142,12 @@ test("buildDiscordAuthorizeUrl builds /auth/start URL with compact state", () =>
             panelRevision: "panel_test123"
         });
 
-        assert.ok(url.startsWith("https://example.test/auth/start?state="));
+        assert.ok(url.startsWith("https://discord.com/oauth2/authorize?"));
         const parsed = new URL(url);
-        assert.equal(parsed.pathname, "/auth/start");
+        assert.equal(parsed.searchParams.get("client_id"), "12345678901234567");
+        assert.equal(parsed.searchParams.get("redirect_uri"), "https://example.test/auth/callback");
+        assert.equal(parsed.searchParams.get("response_type"), "code");
+        assert.equal(parsed.searchParams.get("prompt"), "consent");
         const stateParam = parsed.searchParams.get("state");
         const { decodeCallbackState } = require("../verification/utils/state");
         const decoded = decodeCallbackState(stateParam);
