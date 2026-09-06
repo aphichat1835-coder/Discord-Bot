@@ -1,6 +1,7 @@
 'use strict';
 
 const {
+    AttachmentBuilder,
     MessageEmbed,
     MessageActionRow,
     MessageButton,
@@ -19,14 +20,23 @@ const {
 } = require('../features/tokenChecker');
 
 const MAX_BATCH_TOKENS = 20;
+const TOKEN_CHECK_BANNER_ATTACHMENT_NAME = 'token-check-banner.gif';
 
-function buildTokenCheckPanelEmbed() {
+function getTokenCheckBannerPath() {
+    try {
+        return require.resolve('../assets/token-check-banner.gif');
+    } catch {
+        return null;
+    }
+}
+
+function buildTokenCheckPanelEmbed({ hasAttachment = false } = {}) {
     const primaryColor = config.system?.themeColors?.info || '#5865F2';
     const searchEmoji = config.emojis?.search || '🔍';
     const boostEmoji = config.emojis?.boost || '🚀';
     const lockEmoji = config.emojis?.lock || '🔒';
 
-    return new MessageEmbed()
+    const embed = new MessageEmbed()
         .setColor(primaryColor)
         .setTitle(`${searchEmoji} : Phomueangtai Discord Token Checker`)
         .setDescription(
@@ -43,6 +53,12 @@ function buildTokenCheckPanelEmbed() {
         )
         .setFooter({ text: 'กดปุ่มด้านล่างเพื่อเปิดแบบฟอร์มกรอก Token' })
         .setTimestamp();
+
+    if (hasAttachment) {
+        embed.setImage(`attachment://${TOKEN_CHECK_BANNER_ATTACHMENT_NAME}`);
+    }
+
+    return embed;
 }
 
 function buildTokenCheckPanelRow() {
@@ -56,14 +72,22 @@ function buildTokenCheckPanelRow() {
 }
 
 async function handleTokenCheckCommand(interaction) {
-    const embed = buildTokenCheckPanelEmbed();
+    const bannerPath = getTokenCheckBannerPath();
+    const hasAttachment = Boolean(bannerPath);
+    const embed = buildTokenCheckPanelEmbed({ hasAttachment });
     const row = buildTokenCheckPanelRow();
 
-    return interaction.reply({
+    const payload = {
         embeds: [embed],
         components: [row],
         flags: 64
-    });
+    };
+
+    if (hasAttachment) {
+        payload.files = [new AttachmentBuilder(bannerPath, { name: TOKEN_CHECK_BANNER_ATTACHMENT_NAME })];
+    }
+
+    return interaction.reply(payload);
 }
 
 async function handleTokenCheckButton(interaction) {

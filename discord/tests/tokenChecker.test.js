@@ -166,6 +166,9 @@ test('tokenCheck command and interactions behave correctly', async () => {
     assert.match(panelEmbed.data.title, /Phomueangtai Discord Token Checker/);
     assert.match(panelEmbed.data.description, /ระบบตรวจสอบสถานะ Discord Token แบบส่วนตัว/);
 
+    const panelEmbedWithAttachment = buildTokenCheckPanelEmbed({ hasAttachment: true });
+    assert.equal(panelEmbedWithAttachment.data.image.url, 'attachment://token-check-banner.gif');
+
     const panelRow = buildTokenCheckPanelRow();
     assert.equal(panelRow.components.length, 1);
     assert.equal(panelRow.components[0].data.custom_id, IDS.BTN_TOKEN_CHECK);
@@ -184,6 +187,9 @@ test('tokenCheck command and interactions behave correctly', async () => {
     assert.equal(repliedPayload.flags, 64);
     assert.equal(repliedPayload.embeds.length, 1);
     assert.equal(repliedPayload.components.length, 1);
+    assert.ok(Array.isArray(repliedPayload.files));
+    assert.equal(repliedPayload.files.length, 1);
+    assert.equal(repliedPayload.files[0].name, 'token-check-banner.gif');
 
     // 4. handleTokenCheckButton shows modal
     let shownModal = null;
