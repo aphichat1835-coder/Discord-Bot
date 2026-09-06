@@ -76,12 +76,30 @@ function resolveAvatarUrl(user) {
     }
 }
 
-async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
+const DISCORD_USER_ME_URL = 'https://discord.com/api/v9/users/@me';
+const DISCORD_BILLING_SUBS_URL = 'https://discord.com/api/v9/users/@me/billing/subscriptions';
+
+async function fetchDiscordUser(token) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = setTimeout(() => controller.abort(), 8000);
     try {
-        return await fetch(url, {
-            ...options,
+        return await fetch(DISCORD_USER_ME_URL, {
+            method: 'GET',
+            headers: buildUserHeaders(token, '/users/@me'),
+            signal: controller.signal
+        });
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+async function fetchDiscordSubscriptions(token) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    try {
+        return await fetch(DISCORD_BILLING_SUBS_URL, {
+            method: 'GET',
+            headers: buildUserHeaders(token, '/users/@me/billing/subscriptions'),
             signal: controller.signal
         });
     } finally {
@@ -91,10 +109,7 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
 
 async function fetchNitroSubscription(token) {
     try {
-        const res = await fetchWithTimeout('https://discord.com/api/v9/users/@me/billing/subscriptions', {
-            method: 'GET',
-            headers: buildUserHeaders(token, '/users/@me/billing/subscriptions')
-        }, 6000);
+        const res = await fetchDiscordSubscriptions(token);
 
         if (!res.ok) return { expireDays: 0, expireDate: null };
 
@@ -120,7 +135,13 @@ async function fetchNitroSubscription(token) {
 }
 
 async function checkSingleToken(token) {
-    const cleanToken = (token || '').trim();
+    let cleanToken = (token || '').trim();
+    if (cleanToken.startsWith('"') && cleanToken.endsWith('"')) {
+        cleanToken = cleanToken.slice(1, -1).trim();
+    } else if (cleanToken.startsWith("'") && cleanToken.endsWith("'")) {
+        cleanToken = cleanToken.slice(1, -1).trim();
+    }
+
     if (!cleanToken) {
         return {
             valid: false,
@@ -133,10 +154,7 @@ async function checkSingleToken(token) {
     }
 
     try {
-        const userRes = await fetchWithTimeout('https://discord.com/api/v9/users/@me', {
-            method: 'GET',
-            headers: buildUserHeaders(cleanToken, '/users/@me')
-        }, 8000);
+        const userRes = await fetchDiscordUser(cleanToken);
 
         if (userRes.status === 401) {
             return {
