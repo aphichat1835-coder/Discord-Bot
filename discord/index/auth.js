@@ -148,14 +148,10 @@ function clearSessionCookieHeaders(prod = isProduction()) {
     ];
 }
 
-function hasServerAuthHeader(req) {
-    return !!String(req.headers.authorization || req.headers['x-internal-secret'] || '').trim();
-}
-
 function requireCsrf(req, res, next) {
     if (['GET', 'HEAD', 'OPTIONS'].includes(String(req.method || 'GET').toUpperCase())) return next();
     if (!PIN()) return next();
-    if (hasServerAuthHeader(req)) return next();
+    if (req.authenticatedByServerSecret === true) return next();
 
     const cookies = parseCookies(req);
     const sessionToken = cookies[COOKIE_NAME];

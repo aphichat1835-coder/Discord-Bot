@@ -14,32 +14,12 @@ runButton = "Project"
 
 [[workflows.workflow]]
 name = "Project"
-mode = "parallel"
+mode = "sequential"
 author = "agent"
 
 [[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "syntax-discord"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "syntax-scripts"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "memory-guards"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "test-discord"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "test-voice"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "test-verification"
+task = "shell.exec"
+args = "npm run check:release"
 
 [[workflows.workflow]]
 name = "test-verification"
@@ -81,6 +61,17 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "npm run check:memory-guards"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "mongoose9-compat"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run check:mongoose9"
 
 [workflows.workflow.metadata]
 isValidation = true

@@ -88,8 +88,7 @@ const slashCommandsData = [
         options: [
             { type: 3, name: "title",   description: "หัวข้อประกาศ", required: true, min_length: 1, max_length: 250 },
             { type: 3, name: "message", description: "เนื้อหาประกาศ", required: true, min_length: 1, max_length: 4096 },
-            { type: 3, name: "content", description: "ข้อความดิบนอก Embed (เช่น @everyone)", required: false, max_length: 2000 },
-            { type: 5, name: "allow_mentions", description: "อนุญาตให้ content ping users/roles/everyone (ต้องมีสิทธิ์สูง)", required: false }
+            { type: 3, name: "content", description: "ข้อความดิบนอก Embed (รองรับ @everyone / @here / user / role)", required: false, max_length: 2000 }
         ]
     },
 
@@ -112,7 +111,7 @@ const slashCommandsData = [
         ]
     },
 
-    { name: "voicekickall", description: "เตะทุกคนในห้องเสียงที่คุณอยู่ (ยกเว้นผู้ดูแล)" },
+    { name: "voiceadmin", description: "เปิดแผงจัดการสมาชิกในห้องเสียงนี้ (เฉพาะผู้ดูแล)" },
 
     {
         name: "ban",
@@ -160,6 +159,17 @@ const slashCommandsData = [
             { type: 5, name: "timestamp", description: "เปิดหรือปิดเวลาใต้ Embed", required: false },
             { type: 3, name: "url", description: "ลิงก์ที่หัวข้อ Embed จะกดเข้าไปได้", required: false, max_length: 2048 }
         ]
+    },
+
+    {
+        name: "rerole",
+        description: "คำนวณและกวาดยศสมาชิก โดยเว้นยศที่เลือกไว้",
+        options: [1, 2, 3, 4, 5].map(index => ({
+            type: 8,
+            name: `except_role_${index}`,
+            description: `ยศที่ ${index} ที่ต้องเว้นไว้`,
+            required: false
+        }))
     }
 ].map(command => ({ ...command, dmPermission: false }));
 

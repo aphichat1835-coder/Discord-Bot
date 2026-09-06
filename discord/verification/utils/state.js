@@ -3,21 +3,14 @@ const crypto = require("node:crypto");
 const DEFAULT_CALLBACK_STATE_MAX_AGE_MS = 10 * 60 * 1000;
 
 function getStateSecret() {
-    return String(
-        process.env.VERIFY_STATE_SECRET ||
-        process.env.API_SECRET ||
-        process.env.INTERNAL_API_SECRET ||
-        process.env.SESSION_SECRET ||
-        process.env.ENCRYPTION_KEY ||
-        ""
-    );
+    return String(process.env.VERIFY_STATE_SECRET || "").trim();
 }
 
 function requireStateSecret() {
     const secret = getStateSecret();
 
     if (!secret) {
-        throw new Error("Missing VERIFY_STATE_SECRET/API_SECRET/INTERNAL_API_SECRET/SESSION_SECRET/ENCRYPTION_KEY");
+        throw new Error("Missing VERIFY_STATE_SECRET");
     }
 
     return secret;

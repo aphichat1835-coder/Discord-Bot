@@ -7,8 +7,9 @@ const {
     getVerificationRedirectUri,
     getAdminRedirectUri
 } = require("../verification/utils/oauthTokenLifecycle");
-const { sendLogWebhook } = require("../core/webhooks");
+const { buildWebhookEventPayload, sendWebhookEvent } = require("../core/webhooks");
 const { safeError } = require("../core/safeLogger");
+const { delay: awaitedDelay } = require("../core/timers");
 
 const TOKEN_FIELDS = Object.freeze([
     { tokenField: "oauth", label: "verify", redirectUri: getVerificationRedirectUri },
@@ -21,8 +22,8 @@ const runningState = {
     stopRequested: false
 };
 
-function readBooleanDefaultTrue(value) {
-    if (value === undefined || value === null || value === "") return true;
+function readBooleanDefaultFalse(value) {
+    if (value === undefined || value === null || value === "") return false;
     return ["1", "true", "yes", "on"].includes(String(value).trim().toLowerCase());
 }
 
@@ -43,7 +44,7 @@ function getJoinCampaignConfig(env = process.env) {
     const legacyBatchSize = readPositiveInt(env.JOIN_CAMPAIGN_MAX_USERS, 500, 1, 1000);
     const batchSize = readPositiveInt(env.JOIN_CAMPAIGN_BATCH_SIZE, legacyBatchSize, 1, 1000);
     return {
-        enabled: readBooleanDefaultTrue(env.JOIN_CAMPAIGN_ENABLED),
+        enabled: readBooleanDefaultFalse(env.JOIN_CAMPAIGN_ENABLED),
         allowedGuilds: parseIdSet(env.JOIN_CAMPAIGN_ALLOWED_GUILDS),
         batchSize,
         maxUsers: batchSize,
@@ -60,7 +61,15 @@ function isSnowflake(value) {
 
 function isGuildAllowed(guildId, config = getJoinCampaignConfig()) {
     if (!isSnowflake(guildId)) return false;
-    return config.allowedGuilds.size === 0 || config.allowedGuilds.has(String(guildId));
+    if (!(config.allowedGuilds instanceof Set) || config.allowedGuilds.size === 0) return false;
+    return config.allowedGuilds.has(String(guildId));
+}
+
+function createCampaignError(code, message, status = 400) {
+    const error = new Error(message);
+    error.code = code;
+    error.status = status;
+    return error;
 }
 
 function normalizeScope(scope) {
@@ -158,11 +167,20 @@ function makeCampaignId(now = Date.now()) {
     return `join_${now.toString(36)}_${crypto.randomBytes(4).toString("hex")}`;
 }
 
-function makeBaseSummary({ campaignId, targetGuildId, targetGuildName, dryRun = false, startedBy = "owner-dashboard", startedAt = Date.now() }) {
+function makeBaseSummary({
+    campaignId,
+    targetGuildId,
+    targetGuildName,
+    targetGuildIconUrl,
+    dryRun = false,
+    startedBy = "owner-dashboard",
+    startedAt = Date.now()
+}) {
     return {
         campaignId,
         targetGuildId: String(targetGuildId),
         targetGuildName: targetGuildName || null,
+        targetGuildIconUrl: targetGuildIconUrl || null,
         dryRun,
         startedBy,
         startedAt,
@@ -179,6 +197,8 @@ function makeBaseSummary({ campaignId, targetGuildId, targetGuildName, dryRun = 
         failed: 0,
         refreshed: 0,
         refreshFailed: 0,
+        persistenceFailed: 0,
+        refreshStateConflicts: 0,
         tokenInvalid: 0,
         botMissingPermission: 0,
         rateLimited: 0,
@@ -223,7 +243,37 @@ async function markTokenRefreshFailure({ model, doc, tokenField, err, now = Date
 
     if (nextFailCount >= failMax) set[`${tokenField}.revokedAt`] = now;
 
-    await model.updateOne(updateFilterForDoc(doc), { $set: set }).catch(() => {});
+    const filter = {
+        ...updateFilterForDoc(doc),
+        [`${tokenField}.encryptedRefreshToken`]: tokenState.encryptedRefreshToken
+    };
+
+    try {
+        const result = await model.updateOne(filter, { $set: set });
+        const acknowledged = result?.acknowledged === true;
+        const matchedCount = Number(result?.matchedCount ?? result?.n ?? 0);
+        if (!acknowledged) {
+            return {
+                persisted: false,
+                stateChanged: false,
+                persistenceError: "refresh_failure_write_unacknowledged"
+            };
+        }
+        if (matchedCount !== 1) {
+            return {
+                persisted: false,
+                stateChanged: true,
+                persistenceError: "refresh_failure_state_changed"
+            };
+        }
+        return { persisted: true, stateChanged: false, persistenceError: null };
+    } catch (writeError) {
+        return {
+            persisted: false,
+            stateChanged: false,
+            persistenceError: safeError(writeError)
+        };
+    }
 }
 
 async function refreshStoredToken({ model, doc, chosen, discord = discordApi, env = process.env, now = Date.now(), prepareTokenStorage = discordApi.prepareTokenStorage }) {
@@ -310,7 +360,6 @@ function recordJoinFailure(summary, userId, reason, detail = null) {
 async function maybeReportCampaignProgress(summary, processed, config, options) {
     if (processed % config.progressEvery !== 0) return;
     options.onSummary?.(summary);
-    await sendCampaignWebhook(summary, "progress", options.sendWebhook || sendLogWebhook);
 }
 
 async function waitBetweenJoinAttempts(config, options) {
@@ -378,7 +427,7 @@ async function handleJoinCandidate({ doc, seenUsers, summary, targetGuildId, mod
 async function handleJoinCandidateError({ err, summary, userId, model, doc, chosen, config }) {
     if (String(err?.message || "").includes("refresh")) {
         summary.refreshFailed++;
-        await markTokenRefreshFailure({
+        const persistence = await markTokenRefreshFailure({
             model,
             doc,
             tokenField: chosen.tokenField,
@@ -386,6 +435,13 @@ async function handleJoinCandidateError({ err, summary, userId, model, doc, chos
             now: Date.now(),
             failMax: config.failMax
         });
+        if (persistence.stateChanged) {
+            summary.refreshStateConflicts++;
+            pushError(summary, userId, "refresh_failure_state_changed", persistence.persistenceError);
+        } else if (!persistence.persisted) {
+            summary.persistenceFailed++;
+            pushError(summary, userId, "refresh_failure_persistence_failed", persistence.persistenceError);
+        }
         recordJoinFailure(summary, userId, "refresh_failed", safeError(err));
         return;
     }
@@ -394,10 +450,7 @@ async function handleJoinCandidateError({ err, summary, userId, model, doc, chos
 }
 
 function sleep(ms) {
-    return new Promise(resolve => {
-        const timer = setTimeout(resolve, ms);
-        timer.unref?.();
-    });
+    return awaitedDelay(ms);
 }
 
 function getJoinCampaignTitle(phase = "progress") {
@@ -413,42 +466,91 @@ function formatCampaignErrorLine(item = {}) {
 }
 
 function formatThaiJoinCampaignLog(summary, phase = "progress") {
-    const title = getJoinCampaignTitle(phase);
-    const targetName = summary.targetGuildName
-        ? `${summary.targetGuildName} (${summary.targetGuildId})`
-        : summary.targetGuildId;
-    const lines = [
-        `📥 **${title}**`,
-        `รหัสงาน: \`${summary.campaignId}\``,
-        `เซิร์ฟเวอร์เป้าหมาย: \`${targetName}\``,
-        `โหมด: ${summary.dryRun ? "ตรวจจำนวนเท่านั้น" : "ดึงจริง"}`,
-        `สถานะ: ${summary.status}`,
-        "",
-        `ตรวจพบทั้งหมด: ${summary.scannedRecords} records / ${summary.uniqueUsers} users`,
-        `ใช้ได้จริง: ${summary.usableUsers} users`,
-        `ดึงเข้าสำเร็จ: ${summary.joined}`,
-        `อยู่ในเซิร์ฟเวอร์แล้ว: ${summary.alreadyMember}`,
-        `ไม่สำเร็จ: ${summary.failed}`,
-        `refresh token แล้ว: ${summary.refreshed}`,
-        `refresh ไม่สำเร็จ: ${summary.refreshFailed}`,
-        `ขาด scope guilds.join: ${summary.missingScope}`,
-        `token ใช้ไม่ได้: ${summary.tokenInvalid}`,
-        `บอทขาดสิทธิ์: ${summary.botMissingPermission}`,
-        `โดน rate limit: ${summary.rateLimited}`
-    ];
-
-    if (summary.errors.length) {
-        lines.push("", "ตัวอย่างรายการที่ไม่สำเร็จ:");
-        for (const item of summary.errors.slice(0, 5)) {
-            lines.push(formatCampaignErrorLine(item));
-        }
-    }
-
-    return { content: lines.join("\n").slice(0, 1900) };
+    return buildWebhookEventPayload(buildJoinCampaignEvent(summary, phase));
 }
 
-async function sendCampaignWebhook(summary, phase, sendWebhook = sendLogWebhook) {
-    await sendWebhook(formatThaiJoinCampaignLog(summary, phase)).catch(() => {});
+function resolveCampaignSeverity(summary, phase) {
+    if (summary.status === "failed") return "ERROR";
+    if (Number(summary.persistenceFailed || 0) > 0) return "ERROR";
+    if (phase === "start") return "INFO";
+    const hasPartialFailures = Number(summary.failed || 0) > 0 || Number(summary.refreshFailed || 0) > 0;
+    return hasPartialFailures ? "WARNING" : "SUCCESS";
+}
+
+const JOIN_CAMPAIGN_CONTEXT_NUMBER_FIELDS = Object.freeze([
+    ["Records ที่ตรวจ", "scannedRecords"],
+    ["ผู้ใช้ไม่ซ้ำ", "uniqueUsers"],
+    ["ใช้ได้จริง", "usableUsers"],
+    ["ดึงเข้าสำเร็จ", "joined"],
+    ["เป็นสมาชิกอยู่แล้ว", "alreadyMember"],
+    ["ไม่สำเร็จ", "failed"],
+    ["Refresh สำเร็จ", "refreshed"],
+    ["Refresh ไม่สำเร็จ", "refreshFailed"],
+    ["บันทึกสถานะ Refresh ไม่สำเร็จ", "persistenceFailed"],
+    ["สถานะ Refresh เปลี่ยนระหว่างงาน", "refreshStateConflicts"],
+    ["ขาด Scope", "missingScope"],
+    ["Token ใช้ไม่ได้", "tokenInvalid"],
+    ["บอทขาดสิทธิ์", "botMissingPermission"],
+    ["ติด Rate Limit", "rateLimited"]
+]);
+
+function buildJoinCampaignContext(summary) {
+    const context = {
+        "รหัสงาน": summary.campaignId,
+        "เซิร์ฟเวอร์": summary.targetGuildName || summary.targetGuildId,
+        "Guild ID": summary.targetGuildId,
+        "โหมด": summary.dryRun ? "ตรวจจำนวนเท่านั้น" : "ดึงสมาชิกจริง",
+        "สถานะงาน": summary.status
+    };
+    for (const [label, field] of JOIN_CAMPAIGN_CONTEXT_NUMBER_FIELDS) context[label] = Number(summary[field] || 0);
+    return context;
+}
+
+function buildJoinCampaignFailureDetails(summary, failedEntireJob) {
+    const errors = (summary.errors || []).slice(0, 5).map(formatCampaignErrorLine).join("\n");
+    return {
+        description: errors ? `ตัวอย่างรายการที่ไม่สำเร็จ:\n${errors}` : undefined,
+        impact: failedEntireJob ? "งานหยุดก่อนประมวลผลครบทุกบัญชี" : undefined,
+        action: failedEntireJob ? "ตรวจ Runtime Log และสาเหตุล่าสุดก่อนเริ่ม Campaign ใหม่" : undefined
+    };
+}
+
+function getJoinCampaignEventCode(persistenceFailed, failedEntireJob, phase) {
+    if (persistenceFailed) return "campaign.join.persistence_failed";
+    if (failedEntireJob) return "campaign.join.failed";
+    return `campaign.join.${phase}`;
+}
+
+function buildJoinCampaignEvent(summary, phase) {
+    const failedEntireJob = summary.status === "failed";
+    const persistenceFailed = Number(summary.persistenceFailed || 0) > 0;
+    const needsOwnerAction = failedEntireJob || persistenceFailed;
+    return {
+        target: needsOwnerAction ? "ALERT" : "LOG",
+        severity: resolveCampaignSeverity(summary, phase),
+        category: "CAMPAIGN",
+        code: getJoinCampaignEventCode(persistenceFailed, failedEntireJob, phase),
+        state: needsOwnerAction ? "OPEN" : undefined,
+        title: getJoinCampaignTitle(phase),
+        sourceIconUrl: summary.targetGuildIconUrl,
+        ...buildJoinCampaignFailureDetails(summary, failedEntireJob),
+        ...(persistenceFailed ? {
+            impact: "สถานะ Token refresh บางรายการไม่ได้ถูกบันทึก จึงอาจถูกลองใหม่ใน Campaign ถัดไป",
+            action: "ตรวจ MongoDB และรายละเอียด persistence failure ก่อนเริ่ม Campaign ใหม่"
+        } : {}),
+        context: buildJoinCampaignContext(summary),
+        dedupeKey: failedEntireJob ? `join-campaign-failed:${summary.campaignId}` : undefined,
+        dedupeMs: 15 * 60 * 1000
+    };
+}
+
+async function sendCampaignWebhook(summary, phase, sendWebhook) {
+    const event = buildJoinCampaignEvent(summary, phase);
+    if (sendWebhook) {
+        await sendWebhook(buildWebhookEventPayload(event)).catch(() => {});
+        return;
+    }
+    await sendWebhookEvent(event).catch(() => {});
 }
 
 function buildExecutionContext(options = {}) {
@@ -471,10 +573,16 @@ function buildExecutionContext(options = {}) {
 
 function assertCampaignCanRun(targetGuildId, config) {
     if (!config.enabled) {
-        throw new Error("JOIN_CAMPAIGN_ENABLED is disabled");
+        throw createCampaignError("CAMPAIGN_DISABLED", "JOIN_CAMPAIGN_ENABLED is disabled", 503);
+    }
+    if (!(config.allowedGuilds instanceof Set) || config.allowedGuilds.size === 0) {
+        throw createCampaignError("CAMPAIGN_ALLOWLIST_REQUIRED", "JOIN_CAMPAIGN_ALLOWED_GUILDS is required", 503);
+    }
+    if (!isSnowflake(targetGuildId)) {
+        throw createCampaignError("INVALID_GUILD_ID", "Target guild ID is invalid", 400);
     }
     if (!isGuildAllowed(targetGuildId, config)) {
-        throw new Error("Target guild is not allowed");
+        throw createCampaignError("TARGET_GUILD_NOT_ALLOWED", "Target guild is not allowed", 403);
     }
 }
 
@@ -483,6 +591,7 @@ function createExecutionSummary(options, context, docs) {
         campaignId: options.campaignId || makeCampaignId(context.now),
         targetGuildId: context.targetGuildId,
         targetGuildName: options.targetGuildName || null,
+        targetGuildIconUrl: options.targetGuildIconUrl || null,
         dryRun: options.dryRun === true,
         startedBy: options.startedBy || "owner-dashboard",
         startedAt: context.now
@@ -511,7 +620,7 @@ async function completeDryRun(summary, options, now) {
     summary.finishedAt = now;
     options.onSummary?.(summary);
     if (options.sendFinishLog) {
-        await sendCampaignWebhook(summary, "finish", options.sendWebhook || sendLogWebhook);
+        await sendCampaignWebhook(summary, "finish", options.sendWebhook);
     }
     return summary;
 }
@@ -589,7 +698,7 @@ async function finishCampaignSummary(summary, options) {
     options.onSummary?.(summary);
 
     if (options.sendFinishLog !== false) {
-        await sendCampaignWebhook(summary, "finish", options.sendWebhook || sendLogWebhook);
+        await sendCampaignWebhook(summary, "finish", options.sendWebhook);
     }
 
     return summary;
@@ -604,7 +713,7 @@ async function executeJoinCampaign(options = {}) {
     options.onSummary?.(summary);
 
     if (options.sendStartLog) {
-        await sendCampaignWebhook(summary, "start", options.sendWebhook || sendLogWebhook);
+        await sendCampaignWebhook(summary, "start", options.sendWebhook);
     }
 
     if (suppliedDocs) {
@@ -625,6 +734,7 @@ function startJoinCampaign(options = {}) {
     if (runningState.active?.status === "running") {
         return {
             ok: false,
+            code: "CAMPAIGN_ALREADY_RUNNING",
             error: "campaign_already_running",
             campaign: runningState.active
         };
@@ -639,13 +749,31 @@ function startJoinCampaign(options = {}) {
     if (!config.enabled) {
         return {
             ok: false,
+            code: "CAMPAIGN_DISABLED",
             error: "campaign_disabled"
+        };
+    }
+
+    if (!(config.allowedGuilds instanceof Set) || config.allowedGuilds.size === 0) {
+        return {
+            ok: false,
+            code: "CAMPAIGN_ALLOWLIST_REQUIRED",
+            error: "campaign_allowlist_required"
+        };
+    }
+
+    if (!isSnowflake(targetGuildId)) {
+        return {
+            ok: false,
+            code: "INVALID_GUILD_ID",
+            error: "invalid_guild_id"
         };
     }
 
     if (!isGuildAllowed(targetGuildId, config)) {
         return {
             ok: false,
+            code: "TARGET_GUILD_NOT_ALLOWED",
             error: "target_guild_not_allowed"
         };
     }
@@ -656,6 +784,7 @@ function startJoinCampaign(options = {}) {
         campaignId,
         targetGuildId,
         targetGuildName: options.targetGuildName,
+        targetGuildIconUrl: options.targetGuildIconUrl,
         dryRun: false,
         startedBy: options.startedBy || "owner-dashboard"
     });
@@ -684,7 +813,7 @@ function startJoinCampaign(options = {}) {
         pushError(failed, null, "campaign_failed", safeError(err));
         runningState.active = failed;
         runningState.last = failed;
-        sendCampaignWebhook(failed, "finish", options.sendWebhook || sendLogWebhook).catch(() => {});
+        sendCampaignWebhook(failed, "finish", options.sendWebhook).catch(() => {});
     });
 
     return {
@@ -728,11 +857,16 @@ module.exports = {
     getJoinCampaignStatus,
     _test: {
         parseIdSet,
-        readBooleanDefaultTrue,
+        readBooleanDefaultFalse,
+        createCampaignError,
+        assertCampaignCanRun,
         readPositiveInt,
         makeCampaignId,
         markTokenRefreshFailure,
         recordJoinFailure,
+        buildJoinCampaignContext,
+        buildJoinCampaignFailureDetails,
+        buildJoinCampaignEvent,
         campaignBatchSize,
         mergeCandidateSummary,
         processAllCandidateBatches,

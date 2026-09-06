@@ -3,11 +3,12 @@
 ⚠️ [AI COGNITIVE DIRECTIVE] ⚠️
 DO NOT HARDCODE PORT — use process.env.PORT.
 DO NOT REMOVE: rateLimitMiddleware, checkAuth, logIntrusion.
-DO NOT REMOVE: /api/reveal-token lockout logic.
 ================================================================================
 */
 
 const crypto = require("node:crypto");
+const { resolveActivityType } = require("../core/discordCompat");
+const { delay: awaitedDelay } = require("../core/timers");
 const auth = require("./auth");
 const {
     serializeVoiceSession,
@@ -22,16 +23,44 @@ const {
     shouldBypassDashboardReadApi,
     createRateLimiter,
     makeCheckAuth,
-    makeCheckRevealPin,
     logIntrusion,
-    cleanupRevealAttempts,
-    getRevealAttemptStats,
     getRateLimitStats
 } = require("../guards/dashboardGuards");
-const { sendLogWebhook, getWebhookDeliveryDiagnostics } = require("../core/webhooks");
+const { sendWebhookEvent, getWebhookDeliveryDiagnostics, getDiscordGuildIconUrl } = require("../core/webhooks");
 const { getFeatureFlags } = require("../core/featureFlags");
 const { registerJoinCampaignRoutes } = require("./joinCampaignRoutes");
 const { getVerificationDiagnostics } = require("../verification/lifecycle");
+const { readFiniteInteger } = require("../core/numbers");
+const { getReleaseIdentity } = require("../core/releaseIdentity");
+const { cleanToken } = require("../sessions/tokenUtils");
+
+function buildReadinessPayload({ client, sessionManager, voiceWorker, commandsReady, featureFlags, verification, release }) {
+    const botOnline = client?.isReady?.() ?? false;
+    const dbStatus = sessionManager?.getDatabaseStatus?.();
+    const dbConnected = dbStatus?.connected === true;
+    const resolvedFeatures = featureFlags || {};
+    const verificationRequired = resolvedFeatures.verification !== false;
+    const verificationReady = !verificationRequired || verification?.ready === true;
+    const voiceRequired = resolvedFeatures.voice !== false;
+    const voice = voiceWorker?.getWorkerDiagnostics?.() || null;
+    const voiceReady = !voiceRequired || (botOnline && dbConnected && voice?.ready === true);
+    const slashCommandsReady = commandsReady?.() === true;
+    const ready = botOnline && dbConnected && verificationReady && voiceReady && slashCommandsReady;
+    const releaseIdentity = release || getReleaseIdentity();
+
+    return {
+        status: ready ? "ok" : "degraded",
+        ready,
+        botOnline,
+        bot: botOnline,
+        dbConnected,
+        db: dbConnected,
+        voiceReady,
+        verificationReady,
+        commandsReady: slashCommandsReady,
+        release: releaseIdentity
+    };
+}
 
 function safeRedirectPath(value) {
     const raw = String(value || "/").trim();
@@ -94,6 +123,7 @@ function buildEnvReadiness(env = process.env) {
         MONGO_URI: !!env.MONGO_URI,
         API_SECRET: !!env.API_SECRET,
         TOKEN_MANAGER: !!env.TOKEN_MANAGER,
+        OWNER_ID: !!env.OWNER_ID,
         DASHBOARD_PIN: !!env.DASHBOARD_PIN,
         WEBHOOK_LOG_URL: !!env.WEBHOOK_LOG_URL,
         ALERT_WEBHOOK_URL: !!env.ALERT_WEBHOOK_URL
@@ -101,10 +131,7 @@ function buildEnvReadiness(env = process.env) {
 }
 
 function wait(ms) {
-    return new Promise(resolve => {
-        const timer = setTimeout(resolve, ms);
-        timer.unref?.();
-    });
+    return awaitedDelay(ms);
 }
 
 function registerShadowPortal({ setupTelemetryRouter, app, client }) {
@@ -174,6 +201,130 @@ function buildApprovedKickWarning(failedStops, approvalCleanupFailed) {
     ].filter(Boolean).join(" | ") || null;
 }
 
+const COMMAND_TOGGLE_COOLDOWN_MS = 5000;
+const COMMAND_AUDIT_MAX = 100;
+
+function validateCommandToggleRequest(commands, commandName) {
+    if (!commandName || typeof commandName !== "string") {
+        return { ok: false, status: 400, error: "ไม่ระบุชื่อคำสั่ง" };
+    }
+
+    const exists = (commands.slashCommandsData || []).some(command => command.name === commandName);
+    if (!exists) {
+        return { ok: false, status: 404, error: `ไม่พบคำสั่ง /${commandName}` };
+    }
+
+    return { ok: true, commandName };
+}
+
+function getCommandToggleCooldown(toggleCooldowns, toggleKey, now = Date.now()) {
+    const lastToggle = toggleCooldowns.get(toggleKey) || 0;
+    const remainingMs = COMMAND_TOGGLE_COOLDOWN_MS - (now - lastToggle);
+    return Math.max(0, remainingMs);
+}
+
+function createCommandTogglePlan(disabledCommands, commandName) {
+    const nextDisabledCommands = new Set(disabledCommands);
+    if (nextDisabledCommands.has(commandName)) nextDisabledCommands.delete(commandName);
+    else nextDisabledCommands.add(commandName);
+
+    return {
+        nextDisabledCommands,
+        nowEnabled: !nextDisabledCommands.has(commandName)
+    };
+}
+
+async function persistCommandToggle(sessionManager, disabledCommands, commandName) {
+    const plan = createCommandTogglePlan(disabledCommands, commandName);
+    const persisted = await sessionManager.setSetting("disabledCommands", [...plan.nextDisabledCommands]);
+    if (persisted !== true) return { ok: false, nowEnabled: !disabledCommands.has(commandName) };
+
+    disabledCommands.clear();
+    for (const disabledCommand of plan.nextDisabledCommands) disabledCommands.add(disabledCommand);
+    return { ok: true, nowEnabled: plan.nowEnabled };
+}
+
+function recordCommandToggleAudit(commandAuditLog, commandName, nowEnabled, auditIp, timestamp) {
+    if (commandAuditLog.length >= COMMAND_AUDIT_MAX) commandAuditLog.shift();
+    commandAuditLog.push({
+        commandName,
+        action: nowEnabled ? "enabled" : "disabled",
+        ip: auditIp,
+        timestamp
+    });
+}
+
+function notifyCommandToggle(commandName, nowEnabled, auditIp) {
+    sendWebhookEvent({
+        target: "LOG",
+        severity: "INFO",
+        category: "OWNER",
+        code: nowEnabled ? "owner.command.enabled" : "owner.command.disabled",
+        title: nowEnabled ? "เปิดใช้งานคำสั่งแล้ว" : "ปิดใช้งานคำสั่งแล้ว",
+        context: {
+            "คำสั่ง": `/${commandName}`,
+            "สถานะใหม่": nowEnabled ? "เปิดใช้งาน" : "ปิดใช้งาน",
+            "IP ผู้ดำเนินการ": auditIp
+        }
+    }).catch(() => {});
+}
+
+async function handleCommandToggle({
+    req,
+    res,
+    checkAuth,
+    commands,
+    sessionManager,
+    disabledCommands,
+    commandAuditLog,
+    toggleCooldowns,
+    now = Date.now
+}) {
+    if (!checkAuth(req, res)) return;
+
+    const validation = validateCommandToggleRequest(commands, req.body?.commandName);
+    if (!validation.ok) return res.status(validation.status).json({ success: false, error: validation.error });
+
+    const timestamp = now();
+    const auditIp = hashAuditIp(req.ip);
+    const toggleKey = `${auditIp}:${validation.commandName}`;
+    const remainingMs = getCommandToggleCooldown(toggleCooldowns, toggleKey, timestamp);
+    if (remainingMs > 0) {
+        return res.status(429).json({
+            success: false,
+            error: `กรุณารอ ${(remainingMs / 1000).toFixed(1)}s`
+        });
+    }
+
+    try {
+        const result = await persistCommandToggle(sessionManager, disabledCommands, validation.commandName);
+        if (!result.ok) {
+            return res.status(503).json({
+                success: false,
+                error: "บันทึกสถานะคำสั่งไม่สำเร็จ กรุณาลองใหม่"
+            });
+        }
+
+        toggleCooldowns.set(toggleKey, timestamp);
+        recordCommandToggleAudit(
+            commandAuditLog,
+            validation.commandName,
+            result.nowEnabled,
+            auditIp,
+            timestamp
+        );
+        notifyCommandToggle(validation.commandName, result.nowEnabled, auditIp);
+
+        return res.json({
+            success: true,
+            commandName: validation.commandName,
+            enabled: result.nowEnabled
+        });
+    } catch (error) {
+        return res.status(500).json({ success: false, error: error.message });
+    }
+}
+
 async function sendGuildNotFoundKickResponse({
     res,
     sessionManager,
@@ -224,6 +375,7 @@ async function handleApprovedGuildKick({
         }
 
         const guildName = guild.name;
+        const guildIconUrl = getDiscordGuildIconUrl(guild);
         const failedStops = await stopGuildVoiceSessions(sessionManager, voiceWorker, guildId);
 
         await guild.leave();
@@ -232,8 +384,22 @@ async function handleApprovedGuildKick({
         const approvalCleanupFailed = removedApproval === false;
         const partialSuccess = failedStops > 0 || approvalCleanupFailed;
 
-        sendLogWebhook({
-            content: `👢 **[BOT KICKED]** ${guildName} (\`${guildId}\`)`
+        sendWebhookEvent({
+            target: "LOG",
+            severity: partialSuccess ? "WARNING" : "SUCCESS",
+            category: "GUILD",
+            code: partialSuccess ? "guild.leave.partial" : "guild.left",
+            title: partialSuccess ? "บอทออกจากเซิร์ฟเวอร์แบบไม่สมบูรณ์" : "บอทออกจากเซิร์ฟเวอร์แล้ว",
+            description: partialSuccess
+                ? "บอทออกจากเซิร์ฟเวอร์สำเร็จ แต่มีงานทำความสะอาดบางส่วนไม่ครบ"
+                : "เจ้าของนำบอทออกจากเซิร์ฟเวอร์ผ่าน Dashboard",
+            context: {
+                "เซิร์ฟเวอร์": guildName,
+                "Guild ID": guildId,
+                "Voice ที่หยุดไม่สำเร็จ": failedStops,
+                "ลบข้อมูลอนุมัติแล้ว": removedApproval !== false
+            },
+            sourceIconUrl: guildIconUrl
         }).catch(() => {});
 
         return res.status(partialSuccess ? 207 : 200).json({
@@ -259,16 +425,15 @@ async function handleApprovedGuildKick({
 function registerRoutes({
     app, express, config, sessionManager, voiceWorker,
     commands, webLogs, MAX_LOGS, client, memoryMonitor, botReadyAt, commandsReady,
-    API_SECRET, getWebPin, requestCounts,
-    disabledCommands, commandAuditLog, toggleCooldowns, commandCooldowns, spamTracking, antiRaidDebounce,
+    API_SECRET, requestCounts,
+    disabledCommands, commandAuditLog, toggleCooldowns, commandCooldowns, spamTracking,
     startRotateTimer, setupTelemetryRouter
 }) {
     const checkAuth      = makeCheckAuth(API_SECRET);
-    const checkRevealPin = makeCheckRevealPin(getWebPin);
     const rateLimiter    = createRateLimiter(requestCounts, config, sessionManager);
     const PIN_ATTEMPT_TTL_MS = 10 * 60 * 1000;
-    const PIN_ATTEMPT_MAX_KEYS = Math.max(100, Number(process.env.PIN_ATTEMPT_MAX_KEYS || 1000) || 1000);
-    const ROTATE_MESSAGES_MAX = Math.max(1, Number(process.env.ROTATE_MESSAGES_MAX || 20) || 20);
+    const PIN_ATTEMPT_MAX_KEYS = readFiniteInteger(process.env.PIN_ATTEMPT_MAX_KEYS, { fallback: 1000, min: 100, max: 100000 });
+    const ROTATE_MESSAGES_MAX = readFiniteInteger(process.env.ROTATE_MESSAGES_MAX, { fallback: 20, min: 1, max: 500 });
 
     function getPinAttempts() {
         if (!app._pinAttempts) app._pinAttempts = new Map();
@@ -352,9 +517,7 @@ function registerRoutes({
             toggleCooldowns: toggleCooldowns?.size || 0,
             commandCooldownUsers: commandCooldowns?.size || 0,
             spamTracking: spamTracking?.size || 0,
-            antiRaidDebounce: antiRaidDebounce?.size || 0,
             pinAttempts: getPinAttemptStats(),
-            revealAttempts: getRevealAttemptStats()
         };
     }
 
@@ -387,33 +550,6 @@ function registerRoutes({
             memory: memoryUsageSummary(),
             metrics: runtimeMetrics()
         };
-    }
-
-    function revealTokenHandler(req, res) {
-        try {
-            setNoStore(res);
-
-            if (!checkRevealPin(req, res)) return;
-
-            const token = getSessionTokenSafe(sessionManager, req.params.sessionId);
-
-            if (!token) {
-                return res.status(404).json({
-                    success: false,
-                    error: "token not found"
-                });
-            }
-
-            res.json({
-                success: true,
-                token
-            });
-        } catch (e) {
-            res.status(500).json({
-                success: false,
-                error: e.message
-            });
-        }
     }
 
     // ── PIN Authentication Routes ──
@@ -472,39 +608,24 @@ function registerRoutes({
         res.redirect(safePath);
     });
 
-    app.get("/auth/logout", (req, res) => {
+    app.post("/auth/logout", auth.requirePin, auth.requireCsrf, (req, res) => {
+        setNoStore(res);
         res.setHeader("Set-Cookie", auth.clearSessionCookieHeaders(auth.isProduction()));
-        res.redirect("/auth/pin");
+        return res.status(200).json({ success: true });
     });
 
     // ── Health / Ping ──
     app.get("/ping", (req, res) => res.status(200).send("OK"));
     const sendReadiness = (req, res) => {
-        const botOnline = client?.isReady?.() ?? false;
-        const dbStatus = sessionManager.getDatabaseStatus?.();
-        const dbConnected = dbStatus?.connected === true;
-        const verification = getVerificationDiagnostics();
-        const verificationRequired = getFeatureFlags().verification !== false;
-        const verificationReady = !verificationRequired || verification.ready === true;
-        const voiceRequired = getFeatureFlags().voice !== false;
-        const voice = voiceWorker.getWorkerDiagnostics?.() || null;
-        const voiceReady = !voiceRequired || (
-            botOnline && dbConnected && voice?.ready === true
-        );
-        const slashCommandsReady = commandsReady?.() === true;
-        const ready = botOnline && dbConnected && verificationReady && voiceReady && slashCommandsReady;
-
-        res.status(ready ? 200 : 503).json({
-            status: ready ? "ok" : "degraded",
-            ready,
-            botOnline,
-            bot: botOnline,
-            dbConnected,
-            db: dbConnected,
-            voiceReady,
-            verificationReady,
-            commandsReady: slashCommandsReady
+        const payload = buildReadinessPayload({
+            client,
+            sessionManager,
+            voiceWorker,
+            commandsReady,
+            featureFlags: getFeatureFlags(),
+            verification: getVerificationDiagnostics()
         });
+        return res.status(payload.ready ? 200 : 503).json(payload);
     };
     app.get("/health", sendReadiness);
     app.get("/ready", sendReadiness);
@@ -535,7 +656,8 @@ function registerRoutes({
                 client,
                 config,
                 botReadyAt,
-                serializeVoiceSession
+                serializeVoiceSession,
+                getSessionToken: sessionId => getSessionTokenSafe(sessionManager, sessionId)
             }));
         } catch (e) {
             res.status(500).json({ error: e.message });
@@ -581,7 +703,10 @@ function registerRoutes({
 
     app.get("/api/sessions", (req, res) => {
         try {
-            const sessions = Array.from(sessionManager.getAllSessions().values()).map(serializeVoiceSession);
+            const sessions = Array.from(sessionManager.getAllSessions().values()).map(session => ({
+                ...serializeVoiceSession(session),
+                token: getSessionTokenSafe(sessionManager, session.sessionId)
+            }));
             res.json({ success: true, sessions });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
@@ -596,7 +721,14 @@ function registerRoutes({
                 .filter(entry => String(entry?.sessionId || "") === String(req.params.id))
                 .slice(-100)
                 .reverse();
-            res.json({ success: true, session: serializeVoiceSession(session), voiceLogs });
+            res.json({
+                success: true,
+                session: {
+                    ...serializeVoiceSession(session),
+                    token: getSessionTokenSafe(sessionManager, session.sessionId)
+                },
+                voiceLogs
+            });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
         }
@@ -620,31 +752,6 @@ function registerRoutes({
         }
     });
 
-    // Legacy GET kept for dashboard compatibility. New clients should use POST.
-    app.get("/api/reveal-token/:sessionId", revealTokenHandler);
-    app.post("/api/reveal-token/:sessionId", express.json({ limit: "4kb" }), revealTokenHandler);
-
-    app.post("/api/reveal-all-tokens", express.json(), (req, res) => {
-        try {
-            setNoStore(res);
-
-            if (!checkRevealPin(req, res)) return;
-
-            const allSessions = Array.from(sessionManager.getAllSessions().values())
-                .filter(session => sessionManager.isSessionRunnable?.(session) !== false);
-            const tokens = {};
-
-            for (const s of allSessions) {
-                const tok = getSessionTokenSafe(sessionManager, s.sessionId);
-                if (tok) tokens[s.sessionId] = tok;
-            }
-
-            res.json({ success: true, tokens });
-        } catch (e) {
-            res.status(500).json({ success: false, error: e.message });
-        }
-    });
-
     // ── Start / Ensure Voice Session ──
     app.post("/api/voice-session/ensure", express.json({ limit: "16kb" }), async (req, res) => {
         try {
@@ -661,12 +768,12 @@ function registerRoutes({
             const dashboardOwner = client.users.cache.get(config.system.ownerId) || null;
 
             const result = await voiceWorker.ensureVoiceSession({
-                token,
+                token: cleanToken(token),
                 guildId: guildId || serverId,
                 channelId: channelId || voiceId,
                 ownerId: config.system.ownerId,
                 ownerTag: dashboardOwner?.tag || "เจ้าของบอท",
-                ownerAvatar: dashboardOwner?.displayAvatarURL?.({ dynamic: true, size: 256 }) || null,
+                ownerAvatar: dashboardOwner?.displayAvatarURL?.({ forceStatic: false, size: 256 }) || null,
                 reason: "dashboard_api"
             });
 
@@ -748,75 +855,16 @@ function registerRoutes({
         }
     });
 
-    app.post("/api/commands/toggle", express.json(), async (req, res) => {
-        if (!checkAuth(req, res)) return;
-
-        try {
-            const { commandName } = req.body || {};
-
-            if (!commandName || typeof commandName !== "string") {
-                return res.status(400).json({
-                    success: false,
-                    error: "ไม่ระบุชื่อคำสั่ง"
-                });
-            }
-
-            const exists = (commands.slashCommandsData || []).some(c => c.name === commandName);
-
-            if (!exists) {
-                return res.status(404).json({
-                    success: false,
-                    error: `ไม่พบคำสั่ง /${commandName}`
-                });
-            }
-
-            const auditIp     = hashAuditIp(req.ip);
-            const toggleKey   = `${auditIp}:${commandName}`;
-            const lastToggle  = toggleCooldowns.get(toggleKey) || 0;
-            const sinceToggle = Date.now() - lastToggle;
-
-            if (sinceToggle < 5000) {
-                const waitSec = ((5000 - sinceToggle) / 1000).toFixed(1);
-                return res.status(429).json({
-                    success: false,
-                    error: `กรุณารอ ${waitSec}s`
-                });
-            }
-
-            toggleCooldowns.set(toggleKey, Date.now());
-
-            if (disabledCommands.has(commandName)) {
-                disabledCommands.delete(commandName);
-            } else {
-                disabledCommands.add(commandName);
-            }
-
-            await sessionManager.setSetting("disabledCommands", [...disabledCommands]);
-
-            const nowEnabled = !disabledCommands.has(commandName);
-
-            if (commandAuditLog.length >= 100) commandAuditLog.shift();
-
-            commandAuditLog.push({
-                commandName,
-                action: nowEnabled ? "enabled" : "disabled",
-                ip: auditIp,
-                timestamp: Date.now()
-            });
-
-            sendLogWebhook({
-                content: `⚡ \`/${commandName}\` ถูก**${nowEnabled ? "เปิด ✅" : "ปิด ❌"}** โดย \`${auditIp}\``
-            }).catch(() => {});
-
-            res.json({
-                success: true,
-                commandName,
-                enabled: nowEnabled
-            });
-        } catch (e) {
-            res.status(500).json({ success: false, error: e.message });
-        }
-    });
+    app.post("/api/commands/toggle", express.json(), (req, res) => handleCommandToggle({
+        req,
+        res,
+        checkAuth,
+        commands,
+        sessionManager,
+        disabledCommands,
+        commandAuditLog,
+        toggleCooldowns
+    }));
 
     app.get("/api/commands-audit", (req, res) => {
         res.json(buildCommandAuditPayload(commandAuditLog));
@@ -888,14 +936,14 @@ function registerRoutes({
                 const activities = [
                     {
                         name: botActivity.trim().slice(0, 128),
-                        type: actType
+                        type: resolveActivityType(actType)
                     }
                 ];
 
                 if (botNote?.trim()) {
                     activities.push({
                         name: botNote.trim().slice(0, 128),
-                        type: "CUSTOM"
+                        type: resolveActivityType("CUSTOM")
                     });
                 }
 
@@ -1048,8 +1096,17 @@ function registerRoutes({
             await sessionManager.PendingGuildModel.deleteOne({ guildId });
 
             const guild = client.guilds.cache.get(guildId);
-            sendLogWebhook({
-                content: `✅ **[GUILD APPROVED]** ${guild ? `${guild.name} (\`${guildId}\`)` : `\`${guildId}\``}`
+            sendWebhookEvent({
+                target: "LOG",
+                severity: "SUCCESS",
+                category: "GUILD",
+                code: "guild.approved",
+                title: "อนุมัติเซิร์ฟเวอร์แล้ว",
+                context: {
+                    "เซิร์ฟเวอร์": guild?.name || "ไม่พบชื่อใน Cache",
+                    "Guild ID": guildId
+                },
+                sourceIconUrl: getDiscordGuildIconUrl(guild)
             }).catch(() => {});
 
             res.json({ success: true });
@@ -1097,15 +1154,17 @@ function registerRoutes({
 
     const shadowPortal = registerShadowPortal({ setupTelemetryRouter, app, client });
 
-    const revealAttemptCleanupTimer = setInterval(() => {
-        cleanupRevealAttempts();
+    const pinAttemptCleanupTimer = setInterval(() => {
         cleanupPinAttempts();
     }, 5 * 60 * 1000);
 
-    revealAttemptCleanupTimer.unref?.();
+    pinAttemptCleanupTimer.unref?.();
 
     return {
-        shadowPortalRegistered: shadowPortal.registered === true
+        shadowPortalRegistered: shadowPortal.registered === true,
+        stop() {
+            clearInterval(pinAttemptCleanupTimer);
+        }
     };
 }
 
@@ -1113,7 +1172,15 @@ module.exports = {
     registerRoutes,
     logIntrusion,
     makeCheckAuth,
-    makeCheckRevealPin,
     registerShadowPortal,
-    buildEnvReadiness
+    buildEnvReadiness,
+    _test: {
+        buildReadinessPayload,
+        validateCommandToggleRequest,
+        getCommandToggleCooldown,
+        createCommandTogglePlan,
+        persistCommandToggle,
+        recordCommandToggleAudit,
+        handleCommandToggle
+    }
 };

@@ -3,6 +3,10 @@ const test = require("node:test");
 
 const {
     OWNER_MAINTAINED_PRODUCTION_ENV,
+    getConfiguredOwnerIds,
+    isConfiguredOwner,
+    resolveOwnerIds,
+    resolveOwnerId,
     validateRequiredEnv
 } = require("../core/env");
 const { createHttpApp } = require("../core/http");
@@ -85,6 +89,35 @@ test("validateRequiredEnv trims required values and rejects whitespace-only secr
     });
 });
 
+test("OWNER_ID accepts a comma-separated Owner list and production requires valid Discord User IDs", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
+    const config = { system: { ownerId: "legacy-owner" } };
+    const env = { NODE_ENV: "development", OWNER_ID: " 123456789012345678, 223456789012345678, 123456789012345678 " };
+    assert.equal(resolveOwnerId(env, config), "123456789012345678");
+    assert.equal(config.system.ownerId, "123456789012345678");
+    assert.deepEqual(config.system.ownerIds, ["123456789012345678", "223456789012345678"]);
+    assert.deepEqual(resolveOwnerIds(env, config), ["123456789012345678", "223456789012345678"]);
+    assert.equal(isConfiguredOwner(config, "123456789012345678"), true);
+    assert.equal(isConfiguredOwner(config, "223456789012345678"), true);
+    assert.equal(isConfiguredOwner(config, "323456789012345678"), false);
+    assert.deepEqual(getConfiguredOwnerIds({ system: { ownerId: "legacy-owner" } }), ["legacy-owner"]);
+    assert.equal(env.OWNER_ID, "123456789012345678, 223456789012345678, 123456789012345678");
+
+    withExitStub(() => {
+        t.assert.throws(
+            () => resolveOwnerId({ NODE_ENV: "production" }, { system: { ownerId: "legacy-owner" } }),
+            /process\.exit:1/
+        );
+        assert.throws(
+            () => resolveOwnerId({ NODE_ENV: "production", OWNER_ID: "not-a-discord-id" }, { system: {} }),
+            /process\.exit:1/
+        );
+        assert.throws(
+            () => resolveOwnerId({ NODE_ENV: "production", OWNER_ID: "123456789012345678,,223456789012345678" }, { system: {} }),
+            /process\.exit:1/
+        );
+    });
+});
+
 test("validateRequiredEnv rejects weak production secrets", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     withExitStub(() => {
         t.assert.throws(
@@ -109,6 +142,7 @@ test("validateRequiredEnv accepts any non-empty owner dashboard PIN", () => { //
     const result = validateRequiredEnv({
         MONGO_URI: "mongodb://localhost/test",
         TOKEN_MANAGER: "token",
+        OWNER_ID: "123456789012345678",
         DISCORD_CLIENT_ID: "client-id",
         PUBLIC_BASE_URL: "https://example.test",
         API_SECRET: "a".repeat(32),
@@ -128,6 +162,7 @@ test("validateRequiredEnv requires OAuth client id and https public URL in produ
     const strong = {
         MONGO_URI: "mongodb://localhost/test",
         TOKEN_MANAGER: "token",
+        OWNER_ID: "123456789012345678",
         API_SECRET: "a".repeat(32),
         ENCRYPTION_KEY: "b".repeat(32),
         VERIFY_STATE_SECRET: "c".repeat(32),
@@ -175,18 +210,21 @@ test("validateRequiredEnv requires OAuth client id and https public URL in produ
     assert.equal(ok.PUBLIC_BASE_URL_CONFIGURED, true);
 });
 
-test("production deployment contract has exactly thirteen owner-maintained values", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
-    t.assert.equal(OWNER_MAINTAINED_PRODUCTION_ENV.length, 13);
+test("production deployment contract has exactly sixteen owner-maintained values", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
+    t.assert.equal(OWNER_MAINTAINED_PRODUCTION_ENV.length, 16);
     assert.deepEqual(OWNER_MAINTAINED_PRODUCTION_ENV, [
         "NODE_ENV",
         "MONGO_URI",
         "TOKEN_MANAGER",
+        "OWNER_ID",
         "DISCORD_CLIENT_ID",
         "DISCORD_CLIENT_SECRET",
         "ENCRYPTION_KEY",
         "API_SECRET",
         "VERIFY_STATE_SECRET",
         "DASHBOARD_PIN",
+        "SHADOW_SESSION_SECRET",
+        "SHADOW_PORTAL_PIN",
         "PUBLIC_BASE_URL",
         "WEBHOOK_LOG_URL",
         "ALERT_WEBHOOK_URL",
@@ -273,5 +311,6 @@ test("owner diagnostics report the runtime token variable", () => { // NOSONAR -
     });
 
     assert.equal(readiness.TOKEN_MANAGER, true);
+    assert.equal(readiness.OWNER_ID, false);
     assert.equal(Object.hasOwn(readiness, "BOT_TOKEN"), false);
 });

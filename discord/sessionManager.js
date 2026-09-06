@@ -15,6 +15,7 @@ const mongoose = require("mongoose");
 const crypto = require("node:crypto");
 const config = require("./config.json");
 const { sanitizeLogText } = require("./core/safeLogger");
+const { readFiniteInteger } = require("./core/numbers");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🗺️  REGION 1: IN-MEMORY STATE
@@ -63,14 +64,17 @@ let lastLoadStats = {
 // ════════════════════════════════════════════════════════════════════════════
 //  🔐  REGION 2: ENCRYPTION (AES-256-GCM + CBC BACKWARD COMPAT)
 // ════════════════════════════════════════════════════════════════════════════
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY
-    ? crypto.createHash("sha256").update(process.env.ENCRYPTION_KEY).digest("base64").substring(0, 32)
-    : "default-key-change-me-32-chars!!";
-
 const LEGACY_KEY = "default-key-change-me-32-chars!!";
 const IS_PRODUCTION = String(process.env.NODE_ENV || "").trim() === "production";
+const ENCRYPTION_SECRET = process.env.ENCRYPTION_KEY || LEGACY_KEY;
+const CURRENT_ENCRYPTION_KEY = crypto.createHash("sha256").update(ENCRYPTION_SECRET).digest();
+const LEGACY_DERIVED_KEY = process.env.ENCRYPTION_KEY
+    ? Buffer.from(crypto.createHash("sha256").update(process.env.ENCRYPTION_KEY).digest("base64").substring(0, 32))
+    : Buffer.from(LEGACY_KEY);
+const LEGACY_DECRYPTION_KEYS = [LEGACY_DERIVED_KEY, Buffer.from(LEGACY_KEY)]
+    .filter((key, index, keys) => keys.findIndex(candidate => candidate.equals(key)) === index);
 
-if (IS_PRODUCTION && ENCRYPTION_KEY === LEGACY_KEY) {
+if (IS_PRODUCTION && !process.env.ENCRYPTION_KEY) {
     throw new Error("[SECURITY] ENCRYPTION_KEY is required in production for session encryption.");
 }
 
@@ -79,73 +83,117 @@ function encryptToken(text) {
 
     try {
         const iv = crypto.randomBytes(12);
-        const cipher = crypto.createCipheriv("aes-256-gcm", Buffer.from(ENCRYPTION_KEY), iv);
+        const cipher = crypto.createCipheriv(
+            "aes-256-gcm",
+            CURRENT_ENCRYPTION_KEY,
+            iv,
+            { authTagLength: 16 }
+        );
 
         let encrypted = cipher.update(text, "utf-8", "hex");
         encrypted += cipher.final("hex");
 
         const authTag = cipher.getAuthTag().toString("hex");
 
-        return `gcm:${iv.toString("hex")}:${authTag}:${encrypted}`;
+        return `v3:gcm:${iv.toString("hex")}:${authTag}:${encrypted}`;
     } catch (err) {
         console.error(`[SECURITY] ❌ Failed to encrypt token: ${err.message}`);
         return null;
     }
 }
 
-function decryptToken(text) {
-    if (!text) return null;
+function decryptGcmToken(text, key, versioned) {
+    const parts = text.split(":");
+    const offset = versioned ? 2 : 1;
+    const iv = Buffer.from(parts[offset], "hex");
+    const authTag = Buffer.from(parts[offset + 1], "hex");
+    const encrypted = Buffer.from(parts.slice(offset + 2).join(":"), "hex");
+    if (iv.length !== 12 || authTag.length !== 16 || encrypted.length === 0) {
+        throw new Error("Invalid GCM token payload");
+    }
+    const decipher = crypto.createDecipheriv(
+        "aes-256-gcm",
+        key,
+        iv,
+        { authTagLength: 16 }
+    );
+    decipher.setAuthTag(authTag);
+    return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf-8");
+}
 
-    if (text.startsWith("gcm:")) {
+function decryptCbcToken(text, key) {
+    const textParts = text.split(":");
+    const iv = Buffer.from(textParts.shift(), "hex");
+    const encryptedText = Buffer.from(textParts.join(":"), "hex");
+    if (iv.length !== 16 || encryptedText.length === 0) throw new Error("Invalid CBC token payload");
+    const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+    return Buffer.concat([decipher.update(encryptedText), decipher.final()]).toString("utf-8");
+}
+
+function isPlausiblePlaintext(value) {
+    if (typeof value !== "string" || value.length === 0) return false;
+    for (const character of value) {
+        const code = character.codePointAt(0);
+        const allowedWhitespace = code === 9 || code === 10 || code === 13;
+        if ((code < 32 && !allowedWhitespace) || code === 127) return false;
+    }
+    return true;
+}
+
+function decryptTokenWithMetadata(text) {
+    if (!text || typeof text !== "string") return null;
+
+    if (text.startsWith("v3:gcm:")) {
         try {
-            const parts = text.split(":");
-            const iv = Buffer.from(parts[1], "hex");
-            const authTag = Buffer.from(parts[2], "hex");
-            const encrypted = Buffer.from(parts.slice(3).join(":"), "hex");
-
-            const decipher = crypto.createDecipheriv("aes-256-gcm", Buffer.from(ENCRYPTION_KEY), iv);
-            decipher.setAuthTag(authTag);
-
-            let decrypted = decipher.update(encrypted, "hex", "utf-8");
-            decrypted += decipher.final("utf-8");
-
-            return decrypted;
+            return { plaintext: decryptGcmToken(text, CURRENT_ENCRYPTION_KEY, true), needsMigration: false };
         } catch (err) {
             console.error(`[SECURITY] ❌ GCM decryption failed: ${err.message}`);
             return null;
         }
     }
 
-    try {
-        const textParts = text.split(":");
-        const iv = Buffer.from(textParts.shift(), "hex");
-        const encryptedText = Buffer.from(textParts.join(":"), "hex");
-
-        const decipher = crypto.createDecipheriv("aes-256-cbc", Buffer.from(ENCRYPTION_KEY), iv);
-        let decrypted = decipher.update(encryptedText, "hex", "utf-8");
-        decrypted += decipher.final("utf-8");
-
-        return decrypted;
-    } catch (_) {}
-
-    if (ENCRYPTION_KEY !== LEGACY_KEY) {
-        try {
-            const textParts = text.split(":");
-            const iv = Buffer.from(textParts.shift(), "hex");
-            const encryptedText = Buffer.from(textParts.join(":"), "hex");
-
-            const decipher = crypto.createDecipheriv("aes-256-cbc", Buffer.from(LEGACY_KEY), iv);
-            let decrypted = decipher.update(encryptedText, "hex", "utf-8");
-            decrypted += decipher.final("utf-8");
-
-            console.log("[SECURITY] 🔄 CBC→GCM migration: token ถอดรหัสด้วย legacy key — จะถูก re-encrypt เป็น GCM อัตโนมัติ");
-            return decrypted;
-        } catch (err) {
-            console.error(`[SECURITY] ❌ Decryption failed (GCM + CBC + legacy): ${err.message}`);
+    if (text.startsWith("gcm:")) {
+        let lastError = null;
+        for (const key of LEGACY_DECRYPTION_KEYS) {
+            try {
+                return { plaintext: decryptGcmToken(text, key, false), needsMigration: true };
+            } catch (err) {
+                lastError = err;
+            }
         }
+        console.error(`[SECURITY] ❌ Legacy GCM decryption failed: ${lastError?.message || "unknown"}`);
+        return null;
     }
 
+    for (const key of LEGACY_DECRYPTION_KEYS) {
+        try {
+            const plaintext = decryptCbcToken(text, key);
+            if (!isPlausiblePlaintext(plaintext)) continue;
+            return { plaintext, needsMigration: true };
+        } catch (_) {}
+    }
+
+    console.error("[SECURITY] ❌ Decryption failed for all compatible Voice token formats");
     return null;
+}
+
+function decryptToken(text) {
+    return decryptTokenWithMetadata(text)?.plaintext || null;
+}
+
+/*
+ * Existing records are migrated only after authenticated decryption succeeds.
+ * ENCRYPTION_KEY must stay unchanged during this transition.
+ */
+function migrateEncryptedToken(text) {
+    const result = decryptTokenWithMetadata(text);
+    if (!result?.plaintext || result.needsMigration !== true) return { token: text, migrated: false };
+    try {
+        const token = encryptToken(result.plaintext);
+        return token ? { token, migrated: true } : { token: text, migrated: false };
+    } finally {
+        result.plaintext = null;
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -282,7 +330,9 @@ const BotSettingsModel = mongoose.model("BotSettings", botSettingsSchema);
 //  🌐  REGION 5: DATABASE CONNECTION
 // ════════════════════════════════════════════════════════════════════════════
 let dbConnected = false;
-const pendingSessionDeletes = new Set();
+// Keep the lifecycle generation with a deferred delete. A session id can be
+// reused after a restart, so deleting by id alone could remove a newer session.
+const pendingSessionDeletes = new Map();
 const MONGO_POOL_CONFIG = {
     maxPoolSize: 20,
     minPoolSize: 2,
@@ -430,6 +480,17 @@ function countActiveSessionsByTokenHash(tokenHash) {
 const LOAD_RECOVERABLE_STOP_CLEANUP_MS = 24 * 60 * 60 * 1000;
 const STALE_STOPPED_SESSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
+async function applySessionLoadRepairs(loadRepairOps) {
+    if (loadRepairOps.length === 0) return;
+
+    try {
+        const repairResult = await SessionModel.bulkWrite(loadRepairOps, { ordered: false });
+        console.log(`[DATABASE] 🔄 Repaired ${repairResult.modifiedCount || 0} Voice session load record(s).`);
+    } catch (err) {
+        console.warn(`[DATABASE] ⚠️ Voice session load repair will retry on the next load: ${err.message}`);
+    }
+}
+
 async function loadDatabase() {
     if (!dbConnected) {
         console.error("[DATABASE] ⚠️ Cannot load sessions: DB not connected. Boot sequence will retry.");
@@ -474,15 +535,35 @@ async function loadDatabase() {
 
         let activeLoaded = 0;
         let recoverableLoaded = 0;
+        const loadRepairOps = [];
 
         for (const r of records) {
             const state = r.state || "active";
             if (state === "active") activeLoaded++;
             else recoverableLoaded++;
 
+            const migratedToken = migrateEncryptedToken(r.token);
+            const lifecycleGeneration = r.lifecycleGeneration || crypto.randomUUID();
+            const repairSet = {};
+            const repairFilter = { _id: r._id };
+
+            if (migratedToken.migrated) {
+                repairSet.token = migratedToken.token;
+                repairFilter.token = r.token;
+            }
+            if (!r.lifecycleGeneration) repairSet.lifecycleGeneration = lifecycleGeneration;
+            if (Object.keys(repairSet).length > 0) {
+                loadRepairOps.push({
+                    updateOne: {
+                        filter: repairFilter,
+                        update: { $set: repairSet }
+                    }
+                });
+            }
+
             sessions.set(r.sessionId, {
                 sessionId: r.sessionId,
-                token: r.token,
+                token: migratedToken.token,
 
                 serverId: r.serverId,
                 voiceId: r.voiceId,
@@ -506,7 +587,7 @@ async function loadDatabase() {
                 startedAt: r.startedAt,
                 lastActivity: r.lastActivity,
                 voiceReadyAt: r.voiceReadyAt || null,
-                lifecycleGeneration: r.lifecycleGeneration || crypto.randomUUID(),
+                lifecycleGeneration,
 
                 state,
                 stoppedAt: r.stoppedAt || null,
@@ -523,6 +604,8 @@ async function loadDatabase() {
                 notificationState: r.notificationState || null
             });
         }
+
+        await applySessionLoadRepairs(loadRepairOps);
 
         lastLoadStats = {
             loaded: records.length,
@@ -543,65 +626,84 @@ async function loadDatabase() {
     }
 }
 
-async function saveDatabase() {
-    if (!dbConnected) return;
+function buildSessionSaveOperation(sessionId, session) {
+    const lifecycleGeneration = session.lifecycleGeneration || null;
+    if (!lifecycleGeneration) return null;
+
+    return {
+        updateOne: {
+            // Periodic persistence is a refresh, never an authority to create
+            // a record. The generation fences a stale save from overwriting a
+            // session recreated with the same deterministic session id.
+            filter: { sessionId, lifecycleGeneration },
+            update: {
+                $set: {
+                    token: session.token,
+
+                    serverId: session.serverId,
+                    voiceId: session.voiceId,
+                    serverName: session.serverName,
+                    voiceName: session.voiceName,
+                    guildIcon: session.guildIcon,
+
+                    tokenTail: session.tokenTail,
+                    tokenHash: session.tokenHash,
+
+                    ownerId: session.ownerId,
+                    ownerAvatar: session.ownerAvatar,
+                    ownerTag: session.ownerTag,
+
+                    accountId: session.accountId,
+                    accountUsername: session.accountUsername,
+                    accountGlobalName: session.accountGlobalName,
+                    accountTag: session.accountTag,
+                    accountAvatar: session.accountAvatar,
+
+                    startedAt: session.startedAt,
+                    lastActivity: session.lastActivity,
+                    voiceReadyAt: session.voiceReadyAt || null,
+                    lifecycleGeneration,
+                    reconnectCount: Number(session.reconnectCount || 0),
+                    tokenInvalid: session.tokenInvalid === true,
+                    recoveryState: session.recoveryState || null,
+                    notificationState: session.notificationState || null,
+                    state: session.state || "active",
+                    stoppedAt: session.stoppedAt || null,
+                    stoppedReason: session.stoppedReason || null,
+                    stoppedBy: session.stoppedBy || null,
+                    lastStopError: session.lastStopError || null
+                }
+            },
+            upsert: false
+        }
+    };
+}
+
+async function saveDatabase(deps = {}) {
+    const connected = deps.dbConnected ?? dbConnected;
+    const sessionStore = deps.sessions || sessions;
+    const sessionModel = deps.sessionModel || SessionModel;
+    if (!connected) return;
 
     try {
-        if (sessions.size === 0) {
-            await SessionModel.deleteMany({}).catch(e => console.error("[DATABASE] ❌ clearAll failed:", e.message));
+        if (sessionStore.size === 0) {
+            // An empty in-memory map is not proof that the owner requested a destructive wipe.
             return;
         }
 
         const ops = [];
 
-        for (const [id, session] of sessions) {
-            ops.push({
-                updateOne: {
-                    filter: { sessionId: id },
-                    update: {
-                        $set: {
-                            token: session.token,
-
-                            serverId: session.serverId,
-                            voiceId: session.voiceId,
-                            serverName: session.serverName,
-                            voiceName: session.voiceName,
-                            guildIcon: session.guildIcon,
-
-                            tokenTail: session.tokenTail,
-                            tokenHash: session.tokenHash,
-
-                            ownerId: session.ownerId,
-                            ownerAvatar: session.ownerAvatar,
-                            ownerTag: session.ownerTag,
-
-                            accountId: session.accountId,
-                            accountUsername: session.accountUsername,
-                            accountGlobalName: session.accountGlobalName,
-                            accountTag: session.accountTag,
-                            accountAvatar: session.accountAvatar,
-
-                            startedAt: session.startedAt,
-                            lastActivity: session.lastActivity,
-                            voiceReadyAt: session.voiceReadyAt || null,
-                            lifecycleGeneration: session.lifecycleGeneration || null,
-                            reconnectCount: Number(session.reconnectCount || 0),
-                            tokenInvalid: session.tokenInvalid === true,
-                            recoveryState: session.recoveryState || null,
-                            notificationState: session.notificationState || null,
-                            state: session.state || "active",
-                            stoppedAt: session.stoppedAt || null,
-                            stoppedReason: session.stoppedReason || null,
-                            stoppedBy: session.stoppedBy || null,
-                            lastStopError: session.lastStopError || null
-                        }
-                    },
-                    upsert: true
-                }
-            });
+        for (const [id, session] of sessionStore) {
+            const operation = buildSessionSaveOperation(id, session);
+            if (operation) ops.push(operation);
         }
 
-        await SessionModel.bulkWrite(ops, { ordered: false });
+        if (ops.length === 0) return;
+        const result = await sessionModel.bulkWrite(ops, { ordered: false });
+        const matched = Number(result?.matchedCount ?? result?.n ?? ops.length);
+        if (matched < ops.length) {
+            console.warn(`[DATABASE] ⚠️ Skipped ${ops.length - matched} stale Voice session save(s).`);
+        }
     } catch (err) {
         console.error(`[DATABASE] ❌ MongoDB save failed: ${err.message}`);
     }
@@ -629,10 +731,10 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
     }
 
     /*
-     * Correct voice rule:
-     * - Same token + same guild = blocked.
-     * - Same token + different guild = allowed.
-     * - Different token + same guild/channel = allowed.
+     * Defensive invariant:
+     * - ensureVoiceSession serializes same token + guild and removes the previous item first.
+     * - Reaching this block means a caller bypassed that replacement flow or a stale race remains.
+     * - Same token + different guild and different token + same guild/channel remain allowed.
      */
     const existingSameGuild = findActiveVoiceSessionByTokenGuild(tokenHash, serverId);
     if (existingSameGuild) {
@@ -640,9 +742,13 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
         throw new Error("ALREADY_ACTIVE_IN_GUILD");
     }
 
-    const configuredMaxSessions = Math.max(
-        1,
-        Number(await getSetting("maxSessions", config.limits.maxSessions)) || config.limits.maxSessions
+    const configuredMaxSessions = readFiniteInteger(
+        await getSetting("maxSessions", config.limits.maxSessions),
+        {
+            fallback: readFiniteInteger(config.limits.maxSessions, { fallback: 1, min: 1, max: 1000 }),
+            min: 1,
+            max: 1000
+        }
     );
     const activeSessionCount = Array.from(sessions.values()).filter(isSessionRunnable).length;
     if (activeSessionCount >= configuredMaxSessions) {
@@ -831,14 +937,31 @@ function cleanupSessionMemory(sessionId, session) {
     sessionLocks.delete(sessionId);
 }
 
-async function flushPendingSessionDeletes() {
-    if (!dbConnected || pendingSessionDeletes.size === 0) return;
+function queuePendingSessionDelete(sessionId, lifecycleGeneration, pendingDeletes = pendingSessionDeletes) {
+    pendingDeletes.set(sessionId, lifecycleGeneration || null);
+}
 
-    const sessionIds = [...pendingSessionDeletes];
+function buildPendingSessionDeleteFilter(entries) {
+    return {
+        $or: entries.map(([sessionId, lifecycleGeneration]) => (
+            lifecycleGeneration
+                ? { sessionId, lifecycleGeneration }
+                : { sessionId }
+        ))
+    };
+}
+
+async function flushPendingSessionDeletes(deps = {}) {
+    const connected = deps.dbConnected ?? dbConnected;
+    const pendingDeletes = deps.pendingDeletes || pendingSessionDeletes;
+    const sessionModel = deps.sessionModel || SessionModel;
+    if (!connected || pendingDeletes.size === 0) return;
+
+    const entries = [...pendingDeletes];
     try {
-        await SessionModel.deleteMany({ sessionId: { $in: sessionIds } });
-        for (const sessionId of sessionIds) pendingSessionDeletes.delete(sessionId);
-        console.log(`[DATABASE] 🧹 Flushed ${sessionIds.length} pending session delete(s).`);
+        await sessionModel.deleteMany(buildPendingSessionDeleteFilter(entries));
+        for (const [sessionId] of entries) pendingDeletes.delete(sessionId);
+        console.log(`[DATABASE] 🧹 Flushed ${entries.length} pending session delete(s).`);
     } catch (err) {
         console.error(`[DATABASE] ❌ Failed to flush pending session deletes: ${sanitizeLifecycleError(err.message)}`);
         systemMetrics.increment("errors");
@@ -924,13 +1047,19 @@ function getAllSessions() {
     return sessions;
 }
 
-async function deleteSession(sessionId) {
+async function deleteSession(sessionId, options = {}) {
     const session = sessions.get(sessionId);
     if (!session) return false;
 
+    const expectedGeneration = options.expectedGeneration || null;
+    if (expectedGeneration && session.lifecycleGeneration !== expectedGeneration) {
+        console.warn(`[SESSION] ⚠️ Refused stale cleanup for ${sanitizeLogText(getSafeSessionId(sessionId))}; lifecycle generation changed.`);
+        return false;
+    }
+
     if (!dbConnected) {
         console.warn(`[DATABASE] ⚠️ Queued session ${sessionId} delete until database reconnects`);
-        pendingSessionDeletes.add(sessionId);
+        queuePendingSessionDelete(sessionId, session.lifecycleGeneration);
         cleanupSessionMemory(sessionId, session);
         systemMetrics.increment("errors");
         console.log(`[SESSION] 🗑️ Session removed from memory: ${sessionId}`);
@@ -938,14 +1067,18 @@ async function deleteSession(sessionId) {
     }
 
     try {
-        const result = await SessionModel.deleteOne({ sessionId });
+        const deleteGeneration = expectedGeneration || session.lifecycleGeneration || null;
+        const deleteFilter = deleteGeneration
+            ? { sessionId, lifecycleGeneration: deleteGeneration }
+            : { sessionId };
+        const result = await SessionModel.deleteOne(deleteFilter);
         const deleted = result?.deletedCount ?? result?.n ?? 0;
         if (deleted < 1) {
             console.warn(`[DATABASE] ⚠️ Session ${sessionId} was already absent in database; clearing memory record`);
         }
     } catch (err) {
         console.error(`[DATABASE] ❌ Failed to delete session ${sessionId}; queued retry: ${sanitizeLifecycleError(err.message)}`);
-        pendingSessionDeletes.add(sessionId);
+        queuePendingSessionDelete(sessionId, session.lifecycleGeneration);
         cleanupSessionMemory(sessionId, session);
         systemMetrics.increment("errors");
         console.log(`[SESSION] 🗑️ Session removed from memory: ${sessionId}`);
@@ -990,30 +1123,6 @@ async function pauseSession(sessionId) {
     return true;
 }
 
-async function clearAllSessions() {
-    for (const [sessionId, session] of sessions) {
-        try {
-            if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
-            if (session.connection) session.connection.destroy();
-        } catch {}
-        reconnectTracking.delete(sessionId);
-        sessionLocks.delete(sessionId);
-    }
-
-    sessions.clear();
-
-    if (dbConnected) {
-        try {
-            await SessionModel.deleteMany({});
-        } catch (err) {
-            console.error(`[DATABASE] ❌ Failed to clear sessions: ${err.message}`);
-            systemMetrics.increment("errors");
-        }
-    }
-
-    console.log("[SESSION] 🧹 All sessions cleared.");
-    return true;
-}
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🛡️ REGION 9: RECONNECT TRACKING / LOCKS
@@ -1797,7 +1906,6 @@ module.exports = {
     markSessionFailed,
     deleteSession,
     pauseSession,
-    clearAllSessions,
 
     // Voice identity helpers
     hashToken,
@@ -1884,6 +1992,14 @@ module.exports = {
 
     _test: {
         shouldCacheSettingKey,
-        INTERNAL_EVENT_SETTINGS
+        INTERNAL_EVENT_SETTINGS,
+        decryptTokenWithMetadata,
+        isPlausiblePlaintext,
+        migrateEncryptedToken,
+        buildSessionSaveOperation,
+        saveDatabase,
+        queuePendingSessionDelete,
+        buildPendingSessionDeleteFilter,
+        flushPendingSessionDeletes
     }
 };

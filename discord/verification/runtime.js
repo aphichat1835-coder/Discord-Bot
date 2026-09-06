@@ -6,6 +6,7 @@ const ownerAuth = require("../index/auth");
 const oauthRoutes = require("./routes/oauth");
 const guildRoutes = require("./routes/guild");
 const guildDashboardRoutes = require("./routes/guildDashboard");
+const { createOAuthStartHandler } = require("./routes/oauthStart");
 const { verificationHomePage } = require("./page");
 const { verificationGuildPage } = require("./guildPage");
 const {
@@ -51,26 +52,8 @@ function serveGuildPage(req, res) {
     return res.send(verificationGuildPage());
 }
 
-function registerVerificationRuntime({ app, express, client, sessionManager }) {
-    const publicRoot = path.join(__dirname, "public");
-    const callbackLimiter = rateLimit({
-        windowMs: 60 * 1000,
-        limit: 20,
-        standardHeaders: true,
-        legacyHeaders: false,
-        handler: (_req, res) => res.status(429).json({
-            success: false,
-            code: "rate_limited",
-            error: "มีการยืนยันถี่เกินไป กรุณารอสักครู่แล้วลองใหม่"
-        })
-    });
-
-    app.use("/verification-assets", express.static(publicRoot, {
-        etag: true,
-        maxAge: process.env.STATIC_CACHE_MAX_AGE || "10m"
-    }));
-
-    app.post("/auth/callback", callbackLimiter, (req, res, next) => {
+function verificationReadyMiddleware(sessionManager) {
+    return (_req, res, next) => {
         const db = sessionManager.getDatabaseStatus?.();
         const verification = getVerificationDiagnostics();
         if (db?.connected !== true || verification.ready !== true) {
@@ -81,7 +64,50 @@ function registerVerificationRuntime({ app, express, client, sessionManager }) {
             });
         }
         return next();
+    };
+}
+
+function createVerificationRateLimiter({ limit = 20, responseType = "json" } = {}) {
+    return rateLimit({
+        windowMs: 60 * 1000,
+        limit,
+        standardHeaders: true,
+        legacyHeaders: false,
+        handler: (_req, res) => {
+            if (responseType === "text") {
+                return res.status(429).send("มีการเริ่มยืนยันถี่เกินไป กรุณารอสักครู่แล้วลองใหม่");
+            }
+            return res.status(429).json({
+                success: false,
+                code: "rate_limited",
+                error: "มีการยืนยันถี่เกินไป กรุณารอสักครู่แล้วลองใหม่"
+            });
+        }
     });
+}
+
+function registerVerificationRuntime({ app, express, client, sessionManager }) {
+    const publicRoot = path.join(__dirname, "public");
+    const callbackLimiter = createVerificationRateLimiter({ limit: 20 });
+    const authStartLimiter = createVerificationRateLimiter({ limit: 12, responseType: "text" });
+    const requireVerificationReady = verificationReadyMiddleware(sessionManager);
+
+    app.use("/verification-assets", express.static(publicRoot, {
+        etag: true,
+        maxAge: process.env.STATIC_CACHE_MAX_AGE || "10m",
+        index: false,
+        setHeaders: (res) => {
+            res.setHeader("X-Content-Type-Options", "nosniff");
+        }
+    }));
+
+    app.get(
+        "/auth/start",
+        authStartLimiter,
+        requireVerificationReady,
+        createOAuthStartHandler()
+    );
+    app.post("/auth/callback", callbackLimiter, requireVerificationReady);
     app.use(oauthRoutes);
 
     const attachOwner = ownerContext(client);
@@ -120,5 +146,7 @@ module.exports = {
     ownerGuilds,
     ownerContext,
     serveGuildPage,
-    serveLegacyGuildPage: serveGuildPage
+    serveLegacyGuildPage: serveGuildPage,
+    createVerificationRateLimiter,
+    verificationReadyMiddleware
 };

@@ -1,11 +1,9 @@
 'use strict';
 
 const OAuthUser = require('../models/OAuthUser');
+const { readFiniteInteger } = require('../../core/numbers');
 
-const OAUTH_USER_SUMMARY_MAX = Math.max(
-    20,
-    Number(process.env.OAUTH_USER_SUMMARY_MAX || 100) || 100
-);
+const OAUTH_USER_SUMMARY_MAX = readFiniteInteger(process.env.OAUTH_USER_SUMMARY_MAX, { fallback: 100, min: 20, max: 5000 });
 
 function uniqueUserIds(userIds = []) {
     return [...new Set(

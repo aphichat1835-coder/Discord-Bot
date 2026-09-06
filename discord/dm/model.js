@@ -7,6 +7,7 @@ const dmNotificationSchema = new mongoose.Schema({
     recipientId: { type: String, required: true, index: true },
     category: { type: String, required: true, index: true },
     priority: { type: String, enum: ["critical", "high", "normal", "low"], default: "normal", index: true },
+    priorityRank: { type: Number, min: 0, max: 3, default: 2, index: true },
     payload: { type: mongoose.Schema.Types.Mixed, required: true },
     status: {
         type: String,
@@ -23,7 +24,7 @@ const dmNotificationSchema = new mongoose.Schema({
     expiresAt: { type: Date, required: true, index: { expireAfterSeconds: 0 } }
 }, { minimize: false });
 
-dmNotificationSchema.index({ status: 1, nextAttemptAt: 1, priority: 1 });
+dmNotificationSchema.index({ status: 1, nextAttemptAt: 1, priorityRank: 1, createdAt: 1 });
 
 module.exports = mongoose.models.DmNotification ||
     mongoose.model("DmNotification", dmNotificationSchema);

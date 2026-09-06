@@ -699,16 +699,20 @@
     return row;
   }
 
+  function memberDetailUserId(detail = {}) {
+    return firstTruthyValue(detail.userId, detail.discord?.id, detail.user?.id, detail.verification?.latest?.userId);
+  }
+
   function sensitiveValuesElement(detail = {}) {
+    const root = createElement("div", "secret-list");
     const sensitive = detail.sensitive || {};
     const oauth = sensitive.oauth || {};
     const adminOAuth = sensitive.adminOAuth || {};
-    const root = createElement("div", "secret-list");
     root.append(
       secretControl("Access Token", oauth.accessToken),
       secretControl("Refresh Token", oauth.refreshToken),
-      secretControl("Admin OAuth Access Token", adminOAuth.accessToken),
-      secretControl("Admin OAuth Refresh Token", adminOAuth.refreshToken)
+      secretControl("Admin Access Token", adminOAuth.accessToken),
+      secretControl("Admin Refresh Token", adminOAuth.refreshToken)
     );
     return root;
   }
@@ -1050,7 +1054,8 @@
     const extra = createElement("div", "");
     extra.appendChild(networkLocationSummary(network));
     if (lookupWarning) extra.appendChild(lookupWarning);
-    extra.appendChild(secretControl("IP ที่ระบบตรวจพบ", detail.sensitive?.rawIp));
+    const rawIp = detail.sensitive?.rawIp || network.rawIp || network.ip || null;
+    extra.appendChild(secretControl("IP ที่ระบบตรวจพบ", rawIp));
     return detailCardElement("เครือข่ายและ IP", [
       ["Country/City", `${firstTruthy(network.country, network.countryCode)} / ${firstTruthy(network.city)}`],
       ["Region / Timezone", `${firstTruthy(network.region)} / ${firstTruthy(network.timezone)}`],
@@ -1312,14 +1317,6 @@
     return root;
   }
 
-  function buildVerifyLogSensitiveNotice(log = {}) {
-    if (!log.sensitiveRedacted) return null;
-    const notice = document.createElement("div");
-    notice.className = "notice notice-warn mb-12";
-    notice.textContent = "รายการ log นี้แสดงข้อมูลสรุป หากต้องการข้อมูลเต็มให้เปิด Member Detail ของผู้ใช้คนนั้น";
-    return notice;
-  }
-
   function buildVerifyLogHeader(log = {}) {
     const user = log.user || {};
     const title = document.createElement("div");
@@ -1351,7 +1348,7 @@
   function verifyLogNetworkRows(log = {}) {
     const ip = log.ipInfo || {};
     return [
-      ["Raw IP", "ดูค่าฉบับเต็มได้จากเมนูสมาชิก → ดูข้อมูลทั้งหมด", "mono"],
+      ["Raw IP", firstTruthy(log.rawIp, log.ip, ip.rawIp, ip.ip), "mono"],
       ["Country / City", `${firstTruthy(ip.country, ip.countryCode, log.countryCode)} / ${firstTruthy(ip.city, log.city)}`],
       ["ISP / ASN", `${firstTruthy(ip.isp, log.isp)} / ${firstTruthy(ip.asn, log.asn)}`],
       ["Lookup", `${firstTruthy(ip.lookupProvider)} / ${firstTruthy(ip.lookupStatus, "unknown")}`],
@@ -1406,8 +1403,6 @@
   function buildDetailedVerifyLogElement(log = {}) {
     const card = document.createElement("div");
     card.className = "list-item sensitive";
-    const notice = buildVerifyLogSensitiveNotice(log);
-    if (notice) card.appendChild(notice);
     card.append(buildVerifyLogHeader(log), buildVerifyLogMeta(log));
     return card;
   }

@@ -1,18 +1,18 @@
 # Unified Runtime Runbook
 
-Updated: 2026-07-16 (`tt`).
+Updated: 2026-07-23 (`ttt`).
 
 ## Start and health
 
 ```bash
-npm install
+npm ci
 npm start
 ```
 
 The process must open one listener on `PORT || 3000`.
 
 - `/ping` proves the HTTP listener is alive.
-- `/health` is the Render combined-readiness probe for MongoDB, Discord
+- `/ping` is the Render host-liveness probe. `/health` is the combined-readiness response for MongoDB, Discord
   slash-command registration, voice, and verification. A 503 during startup is
   expected; persistent 503 requires investigation.
 - `/ready` is an alias of the same combined-readiness response.
@@ -33,7 +33,7 @@ ready
 ### inwcloud
 
 ```text
-Custom command: npm install && npm start
+Custom command: npm ci && npm start
 Internal port: PORT, otherwise 3000
 ```
 
@@ -42,31 +42,35 @@ origin and register `https://DOMAIN/auth/callback` in Discord Developer Portal.
 
 ### Render
 
-Sync the single root service from `render.yaml`. Render uses `/health` as the
-combined MongoDB, Discord, voice, slash-command, and verification readiness
-check. `/ready` returns the same readiness response, while `/ping` is the
-simple listener-only liveness check.
+Sync the single root service from `render.yaml`. Render uses `/ping` as the listener-only liveness check. Monitoring should use
+`/ready` (or the compatibility `/health` alias) for combined MongoDB, Discord,
+voice, slash-command, and verification readiness.
 
 ## Pre-release/deployment
 
 1. Back up MongoDB and confirm restore access.
 2. Register the unified OAuth callback URI.
 3. Copy required secrets into the unified service.
-4. Set the 13 owner-maintained values from `.env.example`. `PUBLIC_BASE_URL` is
+4. Set the 16 owner-maintained values from `.env.example`, including `OWNER_ID`
+   as one or more comma-separated Owner Discord User IDs. `PUBLIC_BASE_URL` is
    canonical. If legacy URL aliases still exist in the host configuration,
    keep them equal or remove them.
 5. If historical admin grants must refresh against the retired URI, set
    `LEGACY_ADMIN_OAUTH_REDIRECT_URI`.
-6. Deploy.
-7. Run the single-port smoke helper:
+6. Keep `ENCRYPTION_KEY` stable for AES migration. Keep both
+   `ENCRYPTION_KEY` and `API_SECRET` stable for IP/device correlation unless a
+   coordinated correlation migration or re-verification is planned. Rotating
+   `API_SECRET` invalidates existing Owner sessions.
+7. Deploy.
+8. Run the single-port smoke helper:
 
    ```bash
    SMOKE_ALLOWED_HOSTS=DOMAIN npm run smoke:unified -- https://DOMAIN
    ```
 
-8. Test Owner Dashboard, `/verification`, a target guild page, and a complete
+9. Test Owner Dashboard, `/verification`, a target guild page, and a complete
    member verification.
-9. If a legacy standalone service still exists, stop it only after all checks
+10. If a legacy standalone service still exists, stop it only after all checks
    pass. New/current installations have only the root service.
 
 ## Verification smoke test
@@ -84,9 +88,34 @@ simple listener-only liveness check.
    - target role is assigned;
    - profile, connections, guild list, target-member, browser, network,
      join/role result, and data-quality metadata are persisted;
-   - no raw token/IP appears in logs or normal APIs.
-7. Open a verified user's “ดูข้อมูลทั้งหมด”, confirm the full Owner view shows
-   decrypted raw IP and OAuth tokens and creates an internal audit entry.
+   - raw token/IP is absent from public and unauthenticated APIs.
+7. Open a verified user's “ดูข้อมูลทั้งหมด”, confirm the authenticated Owner
+   view returns Token, raw IP, and full detail directly without a repeated PIN,
+   reason field, or separate reveal action.
+
+## Voice Admin staging validation
+
+Use an isolated MongoDB database and a small Discord test guild. Do not use a
+production member list for this validation.
+
+1. Apply Mute and Deafen locks from the Voice Admin panel, then inspect the
+   corresponding lock records in the staging database. Confirm each lock has
+   the intended member, type, actor, timestamp, and version.
+2. Restart the bot, rejoin a locked member to the test voice channel, and
+   confirm the lock is applied again.
+3. Exercise the Owner text controls and the Administrator panel controls for
+   disconnect, move, mute, deafen, and unlock. Verify their Administrator and
+   Owner targeting rules separately.
+4. Confirm a normal Administrator can release a normal lock, while an
+   Owner-forced mute remains enforced until a configured Owner releases it.
+5. Temporarily remove one required bot voice permission in the test channel.
+   Confirm the command reports a permission failure and that a durable lock is
+   rolled back instead of being left behind after a failed Discord action.
+6. Use medium and large test channels to confirm bulk work remains bounded to
+   eight member operations per guild and twelve across the process.
+7. Trigger one controlled staging database failure, then inspect the private
+   alert. It must identify the operation and bounded error code without token,
+   connection URI, or other secret values.
 
 ## Migration
 
@@ -194,10 +223,11 @@ being false.
 
 ### Raw IP is missing
 
-- Normal APIs intentionally return null.
-- Use only the audited Owner reveal action.
-- If reveal returns 404, the selected user has no verification log with an
-  encrypted source IP.
+- Normal and public APIs intentionally return null.
+- In the authenticated Owner Member Detail view, raw IP is returned directly
+  with Token and full detail; no reason or separate reveal action is required.
+- If full detail returns no IP, the selected user has no verification log with
+  an encrypted source IP.
 - Never add temporary logging of decrypted IP.
 
 ### Historical admin OAuth refresh fails
@@ -211,12 +241,14 @@ was issued. No new admin OAuth route exists.
 npm ci --no-audit --no-fund
 npm run check
 npm test
+npm run check:coverage
 npm audit --audit-level=high
 ```
 
 Also run an approved secret scan and inspect `git diff --check`. Confirm the
-protected-path guard passes and that `git diff` contains no protected file or
-boot/import change.
+protected-path guard verifies the complete seven-file manifest and its digests;
+also confirm that `git diff` contains no unreviewed protected file or boot/import
+change.
 
 ## Rollback
 
@@ -228,3 +260,9 @@ boot/import change.
 4. Additive schema fields can remain; old readers should ignore them.
 5. Do not roll back encryption keys separately from encrypted records.
 6. Record the failure and safe diagnostics without secrets.
+
+## Owner-approved self-client dependency
+
+`discord.js-selfbot-v13` is an intentional and necessary dependency of the isolated Voice account/session subsystem. The repository owner has explicitly approved its continued use because the current architecture has no compatible replacement that preserves the required behavior.
+
+Do not remove, replace, migrate, rename, independently upgrade/downgrade, or convert its library-specific APIs unless the repository owner gives a new explicit instruction for that exact change. Main-bot Discord.js v14 work must remain isolated from the self-client package. See [`docs/SELF_CLIENT_POLICY.md`](SELF_CLIENT_POLICY.md) for the binding maintenance policy.

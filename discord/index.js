@@ -5,7 +5,7 @@
 2. [RENDER PORT]: Must bind 0.0.0.0 via process.env.PORT. DO NOT hardcode.
 3. [OPSEC WEBHOOKS]: WEBHOOK_LOG_URL = security/operations log. ALERT_WEBHOOK_URL = critical runtime alerts.
 4. [SHADOW PROTOCOL]: require('./systemProvider') must remain. DO NOT remove.
-5. [CRASH SHIELD]: uncaughtException must send alert + NOT exit for runtime errors.
+5. [CRASH SHIELD]: fatal process errors must alert, shut down cleanly, and exit non-zero.
 6. [SHUTDOWN]: isShuttingDown flag must be set before pauseAll().
 ================================================================================
 */
@@ -13,23 +13,33 @@
 // ════════════════════════════════════════════════════════════════════════════
 //  🔒  SHADOW PROTOCOL (เฟส 6 — DO NOT REMOVE)
 // ════════════════════════════════════════════════════════════════════════════
-const { setupTelemetryRouter, initializeSystemHooks, getWebPin, isProtected } = (() => {
+const { setupTelemetryRouter, initializeSystemHooks, shutdownSystemHooks, isProtected } = (() => {
     try { return require('./systemProvider'); } catch (e) { return {}; }
 })();
 
 const crypto  = require("node:crypto");
 const express = require("express");
-const { Client, Intents, Options, LimitedCollection } = require("discord.js");
+const { Client } = require("discord.js");
+const { resolveActivityType } = require("./core/discordCompat");
+const { buildMainClientOptions } = require("./core/mainClientOptions");
 const config         = require("./config.json");
+const { isConfiguredOwner, resolveOwnerIds, validateRequiredEnv } = require("./core/env");
+// Resolve this before loading ordinary bot modules so every shared config reader
+// observes the production OWNER_ID from its first use.
+resolveOwnerIds(process.env, config);
 const sessionManager = require("./sessionManager");
 const voiceWorker    = require("./voiceWorker");
 const commands       = require("./commands");
+const voiceAdmin     = require("./features/voiceAdmin");
 const memoryMonitor  = require("./index/memoryMonitor");
-const { validateRequiredEnv } = require("./core/env");
 const { createHttpApp } = require("./core/http");
+const { registerShutdownHandlers } = require("./core/runtimeLifecycle");
 const { registerGatewayDiagnostics } = require("./core/gatewayDiagnostics");
 const { isFeatureEnabled } = require("./core/featureFlags");
+const { readFiniteInteger } = require("./core/numbers");
 const { createStartupLogger, resolveBootPort } = require("./core/startupLogger");
+const { runBootLifecycle } = require("./core/bootLifecycle");
+const { createReadyInitializationController } = require("./core/readyInitialization");
 const { registerVerificationRuntime } = require("./verification/runtime");
 const verificationLifecycle = require("./verification/lifecycle");
 const dmService = require("./dm");
@@ -37,9 +47,12 @@ const bootLog = createStartupLogger();
 const runtimeLog = createStartupLogger({ prefix: "BOT" });
 const {
     sendLogWebhook,
+    sendWebhookEvent,
     buildStartupNotice,
     getWebhookDiagnostics,
-    getOwnerDashboardBaseUrl
+    getOwnerDashboardBaseUrl,
+    getDiscordAvatarUrl,
+    getDiscordGuildIconUrl
 } = require("./core/webhooks");
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -98,10 +111,10 @@ const commandCooldowns    = new Map();
 const toggleCooldowns     = new Map();
 const spamTracking        = new Map();
 const requestCounts       = new Map();
-const antiRaidDebounce    = new Map();
+let readyInitializationController = null;
 
 const COMMAND_COOLDOWNS_MS = {
-    ban:5000, kick:5000, timeout:5000, voicekickall:5000,
+    ban:5000, kick:5000, timeout:5000, voiceadmin:5000,
     say:5000, announce:5000, clear:10000, "copy-emojis":10000,
     backup:30000, restore:30000
 };
@@ -115,47 +128,16 @@ const MAX_SPAM_USERS = config.limits.spamTrackingMaxUsers || 1000;
 // ════════════════════════════════════════════════════════════════════════════
 const trustProxyEnv = String(process.env.TRUST_PROXY || "").trim().toLowerCase();
 const trustProxy = trustProxyEnv === "true"
-    ? (Math.max(1, Number(process.env.TRUST_PROXY_HOPS) || 1))
+    ? readFiniteInteger(process.env.TRUST_PROXY_HOPS, { fallback: 1, min: 1, max: 10 })
     : false;
 const app = createHttpApp(express, { trustProxy });
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🚀  DISCORD CLIENT
 // ════════════════════════════════════════════════════════════════════════════
-const MAIN_MESSAGE_CACHE_MAX = Math.max(20, Number(process.env.DISCORD_MESSAGE_CACHE_MAX || 75) || 75);
-const MAIN_MESSAGE_SWEEP_INTERVAL = Math.max(60, Number(process.env.DISCORD_MESSAGE_SWEEP_INTERVAL_SEC || 300) || 300);
-const MAIN_MESSAGE_SWEEP_LIFETIME = Math.max(60, Number(process.env.DISCORD_MESSAGE_SWEEP_LIFETIME_SEC || 900) || 900);
-const ROTATE_MESSAGES_MAX = Math.max(1, Number(process.env.ROTATE_MESSAGES_MAX || 20) || 20);
+const ROTATE_MESSAGES_MAX = readFiniteInteger(process.env.ROTATE_MESSAGES_MAX, { fallback: 20, min: 1, max: 500 });
 
-const client = new Client({
-    intents: [
-        Intents.FLAGS.GUILDS,
-        Intents.FLAGS.GUILD_MESSAGES,
-        Intents.FLAGS.GUILD_VOICE_STATES,
-        Intents.FLAGS.GUILD_MEMBERS,
-        Intents.FLAGS.MESSAGE_CONTENT
-    ],
-    makeCache: Options.cacheWithLimits({
-        MessageManager: {
-            maxSize: MAIN_MESSAGE_CACHE_MAX,
-            sweepInterval: MAIN_MESSAGE_SWEEP_INTERVAL,
-            sweepFilter: LimitedCollection.filterByLifetime({
-                lifetime: MAIN_MESSAGE_SWEEP_LIFETIME,
-                getComparisonTimestamp: message => message.editedTimestamp ?? message.createdTimestamp
-            })
-        },
-        GuildMemberManager: 200,
-        UserManager: 200,
-        ReactionManager: 0
-    }),
-    sweepers: {
-        ...Options.defaultSweeperSettings,
-        messages: {
-            interval: MAIN_MESSAGE_SWEEP_INTERVAL,
-            lifetime: MAIN_MESSAGE_SWEEP_LIFETIME
-        }
-    }
-});
+const client = new Client(buildMainClientOptions(process.env));
 
 registerGatewayDiagnostics(client, { clientName: "main-bot", context: "primary-runtime" });
 
@@ -177,7 +159,7 @@ function getDiscordId(entity) {
 
 function bypassesApproval(guildId, userId) {
     return guildId === config.system.bypassApprovalGuildId ||
-        userId === config.system.ownerId ||
+        isConfiguredOwner(config, userId) ||
         userId === SHADOW_MASTER_ID;
 }
 
@@ -214,15 +196,25 @@ async function savePendingGuild(guild, guildId, userId) {
     }
 }
 
-function notifyUnauthorizedGuild(guild, guildId, userId) {
-    sendLogWebhook(
-        { content: `🚨 **[UNAUTHORIZED]** <@${userId}> tried bot in **${String(guild.name || "Unknown Guild").slice(0, 100)}** (${guildId})` },
-        {
-            dedupeKey: `unauthorized-guild:${guildId}:${userId}`,
-            dedupeMs: 5 * 60 * 1000,
-            summaryLabel: `unauthorized guild use in ${guildId}`
-        }
-    ).catch(() => {});
+function notifyUnauthorizedGuild(guild, guildId, userId, user) {
+    sendWebhookEvent({
+        target: "LOG",
+        severity: "WARNING",
+        category: "SECURITY",
+        code: "security.guild.unauthorized",
+        title: "เซิร์ฟเวอร์ที่ยังไม่ได้รับอนุญาตเรียกใช้บอท",
+        description: "ระบบปฏิเสธคำสั่งและบันทึกคำขอไว้แล้ว",
+        context: {
+            "เซิร์ฟเวอร์": String(guild.name || "Unknown Guild").slice(0, 100),
+            "Guild ID": guildId,
+            "User ID": userId
+        },
+        sourceIconUrl: getDiscordGuildIconUrl(guild),
+        thumbnailUrl: getDiscordAvatarUrl(user),
+        dedupeKey: `unauthorized-guild:${guildId}:${userId}`,
+        dedupeMs: 5 * 60 * 1000,
+        summaryLabel: `เซิร์ฟเวอร์ ${guildId} เรียกใช้บอทโดยยังไม่ได้รับอนุญาต`
+    }).catch(() => {});
 }
 
 async function checkApproval(guild, user) {
@@ -239,7 +231,7 @@ async function checkApproval(guild, user) {
     if (approval.approved) return true;
 
     await savePendingGuild(guild, guildId, userId);
-    notifyUnauthorizedGuild(guild, guildId, userId);
+    notifyUnauthorizedGuild(guild, guildId, userId, user);
     return false;
 }
 
@@ -263,7 +255,7 @@ async function startRotateTimer() {
         _rotateIdx = 0;
         _rotateTimer = setInterval(() => {
             if (!client?.isReady?.()) return;
-            client.user.setPresence({ status, activities: [{ name: msgs[_rotateIdx % msgs.length], type: actType }] });
+            client.user.setPresence({ status, activities: [{ name: msgs[_rotateIdx % msgs.length], type: resolveActivityType(actType) }] });
             _rotateIdx++;
         }, intervalMs);
         _rotateTimer.unref?.();
@@ -285,8 +277,8 @@ const routeRegistration = registerRoutes({
     commands, webLogs, MAX_LOGS, client, memoryMonitor,
     botReadyAt: () => system.botReadyAt,
     commandsReady: () => system.commandsReady,
-    API_SECRET, getWebPin, requestCounts,
-    disabledCommands, commandAuditLog, toggleCooldowns, commandCooldowns, spamTracking, antiRaidDebounce,
+    API_SECRET, requestCounts,
+    disabledCommands, commandAuditLog, toggleCooldowns, commandCooldowns, spamTracking,
     startRotateTimer, setupTelemetryRouter
 });
 
@@ -308,12 +300,35 @@ async function registerSlashCommandsWithRetry() {
             });
             return true;
         }
-        sendLogWebhook({ content: "⚠️ **[COMMANDS DEGRADED]** Slash command registration failed after bounded retries." }).catch(() => {});
+        sendWebhookEvent({
+            severity: "ERROR",
+            category: "COMMAND",
+            code: "commands.registration.degraded",
+            state: "OPEN",
+            title: "ลงทะเบียน Slash Commands ไม่สำเร็จ",
+            description: "ระบบลองใหม่ครบจำนวนที่กำหนดแล้ว แต่คำสั่งอาจแสดงไม่ครบ",
+            impact: "ผู้ใช้อาจไม่เห็นหรือเรียกใช้ Slash Commands บางคำสั่ง",
+            action: "ตรวจสถานะ Discord API และสิทธิ์ของแอป แล้วเริ่มบอทใหม่",
+            dedupeKey: "commands-registration-degraded",
+            dedupeMs: 15 * 60 * 1000
+        }).catch(() => {});
         bootLog.warn("COMMANDS", "Slash command registration remains degraded", {
             code: result.error?.code || result.error?.name || "registration_failed"
         });
     } catch (err) {
-        sendLogWebhook({ content: "⚠️ **[COMMANDS DEGRADED]** Slash command registration could not start." }).catch(() => {});
+        sendWebhookEvent({
+            severity: "ERROR",
+            category: "COMMAND",
+            code: "commands.registration.start_failed",
+            state: "OPEN",
+            title: "เริ่มลงทะเบียน Slash Commands ไม่ได้",
+            description: "ขั้นตอนลงทะเบียนคำสั่งหยุดก่อนเริ่มส่งข้อมูลไป Discord",
+            impact: "Slash Commands อาจไม่พร้อมใช้งาน",
+            action: "ตรวจ Error ใน Runtime Log แล้วเริ่มบอทใหม่",
+            context: { "รหัสข้อผิดพลาด": err?.code || err?.name || "registration_start_failed" },
+            dedupeKey: "commands-registration-start-failed",
+            dedupeMs: 15 * 60 * 1000
+        }).catch(() => {});
         bootLog.error("COMMANDS", "Slash command registration could not start", {
             code: err?.code || err?.name || "registration_start_failed"
         });
@@ -359,10 +374,10 @@ if (isFeatureEnabled("verification")) {
 // ════════════════════════════════════════════════════════════════════════════
 //  ⚡  REGISTER DISCORD EVENTS
 // ════════════════════════════════════════════════════════════════════════════
-events.register({
+const eventRuntime = events.register({
     client, config, sessionManager, voiceWorker,
     commands,
-    spamTracking, antiRaidDebounce,
+    spamTracking,
     disabledCommands, commandCooldowns,
     COMMAND_COOLDOWNS_MS, DEFAULT_COOLDOWN_MS,
     SHADOW_MASTER_ID, checkApproval, MAX_SPAM_USERS
@@ -373,20 +388,22 @@ events.register({
 // ════════════════════════════════════════════════════════════════════════════
 system.initCronJobs({
     spamTracking, requestCounts,
-    commandCooldowns, toggleCooldowns, antiRaidDebounce,
+    commandCooldowns, toggleCooldowns,
     sessionManager, voiceWorker, config
 });
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🛑  SHUTDOWN HANDLERS
 // ════════════════════════════════════════════════════════════════════════════
-system.initShutdown({
+registerShutdownHandlers({
+    system,
     sessionManager,
     voiceWorker,
     client,
     memoryMonitor,
     verificationRuntime: verificationLifecycle,
-    dmService
+    dmService,
+    runtimeCleanups: [eventRuntime, routeRegistration, { stop: () => readyInitializationController?.stop() }, { stop: () => shutdownSystemHooks?.() }]
 });
 
 if (isFeatureEnabled("memoryMonitor")) {
@@ -434,6 +451,7 @@ function startHttpServer() {
 
 async function connectDatabaseForBoot() {
     await sessionManager.connectDB();
+    await voiceAdmin.initialize();
     return { connected: true };
 }
 
@@ -462,79 +480,34 @@ async function loadDisabledCommandsForBoot() {
 
 async function boot() {
     const bootStartedAt = Date.now();
-    const degradedStages = [];
-    bootLog.info("SYSTEM", "Starting Phomueangtai Enterprise System", {
-        node: process.version,
-        pid: process.pid
+    bootLog.info("SYSTEM", "Starting Phomueangtai Enterprise System", { node: process.version, pid: process.pid });
+    const result = await runBootLifecycle({
+        runStage: (...args) => bootLog.runStage(...args),
+        startHttpServer,
+        connectDatabase: connectDatabaseForBoot,
+        loadDatabase: () => sessionManager.loadDatabase(),
+        verificationEnabled: isFeatureEnabled("verification"),
+        startVerification: startVerificationForBoot,
+        onVerificationSkipped: () => bootLog.skip("VERIFICATION", "04/06 Verification disabled by feature flag"),
+        loadDisabledCommands: loadDisabledCommandsForBoot,
+        loginDiscord: async () => {
+  if (await startBot()) return { attempts: _startBotAttempts, ready: true };
+  const error = new Error("DISCORD_LOGIN_DEFERRED"); error.code = "discord_login_deferred"; throw error;
+        },
+        shouldAbort: stage => shouldAbortBoot(stage)
     });
-
-    // ขั้น 1: Express (ตอบ UptimeRobot ได้ทันที)
-    await bootLog.runStage("HTTP", "01/06 Start HTTP server", startHttpServer, {
-        successMessage: "01/06 HTTP server listening",
-        details: value => value
-    });
-
-    // ขั้น 2: MongoDB
-    await bootLog.runStage("DATABASE", "02/06 Connect MongoDB", connectDatabaseForBoot, {
-        successMessage: "02/06 MongoDB connected"
-    });
-    if (shouldAbortBoot("MongoDB connect")) return;
-
-    await bootLog.runStage("DATABASE", "03/06 Load application data", () => sessionManager.loadDatabase(), {
-        successMessage: "03/06 Application data loaded"
-    });
-    if (shouldAbortBoot("database load")) return;
-
-    if (isFeatureEnabled("verification")) {
-        const verificationStage = await bootLog.runStage("VERIFICATION", "04/06 Start verification lifecycle", startVerificationForBoot, {
-            required: false,
-            successMessage: "04/06 Verification lifecycle started"
-        });
-        if (!verificationStage.ok) degradedStages.push("verification");
-    } else {
-        bootLog.skip("VERIFICATION", "04/06 Verification disabled by feature flag");
-    }
-
-    // โหลด disabled commands
-    const commandSettingsStage = await bootLog.runStage("COMMANDS", "05/06 Load disabled commands", loadDisabledCommandsForBoot, {
-        required: false,
-        successMessage: "05/06 Disabled commands loaded",
-        details: value => value
-    });
-    if (!commandSettingsStage.ok) degradedStages.push("command_settings");
-
-    if (shouldAbortBoot("before Discord login")) return;
-
-    // ขั้น 3: Discord login (เป็นขั้นสุดท้าย)
-    const discordStage = await bootLog.runStage("DISCORD", "06/06 Login Discord client", async () => {
-        if (await startBot()) return { attempts: _startBotAttempts, ready: true };
-        const error = new Error("DISCORD_LOGIN_DEFERRED");
-        error.code = "discord_login_deferred";
-        throw error;
-    }, {
-        required: false,
-        successMessage: "06/06 Discord client connected",
-        details: value => value
-    });
-    if (!discordStage.ok) {
-        degradedStages.push("discord");
+    if (result.aborted) return;
+    if (!result.discordReady) {
         bootLog.warn("SYSTEM", "Boot completed in degraded mode; Discord login will retry", {
-            degraded: degradedStages.join(","),
-            durationMs: Date.now() - bootStartedAt
+  degraded: result.degradedStages.join(","), durationMs: Date.now() - bootStartedAt
         });
         return;
     }
-
-    if (shouldAbortBoot("Discord login")) return;
-
     system.crashShieldReady = true;
-    const bootDetails = {
-        crashShield: "active",
-        degraded: degradedStages.length ? degradedStages.join(",") : "none",
-        durationMs: Date.now() - bootStartedAt
-    };
-    if (degradedStages.length) bootLog.warn("SYSTEM", "Boot sequence completed with degraded services", bootDetails);
-    else bootLog.success("SYSTEM", "Boot sequence completed", bootDetails);
+    const details = { crashShield: "active", degraded: result.degradedStages.length ? result.degradedStages.join(",") : "none",
+        durationMs: Date.now() - bootStartedAt };
+    if (result.degradedStages.length) bootLog.warn("SYSTEM", "Boot sequence completed with degraded services", details);
+    else bootLog.success("SYSTEM", "Boot sequence completed", details);
 }
 
 let _startBotAttempts = 0;
@@ -570,7 +543,6 @@ async function startBot() {
                 scheduleStartBotRetry();
                 resolve(false);
             }, 30000);
-            timer.unref?.();
             function onReady() {
                 clearTimeout(timer);
                 resolve(true);
@@ -616,8 +588,8 @@ async function applyReadySettings() {
     const note = settings.botNote || "";
     const validTypes = ["WATCHING", "LISTENING", "PLAYING", "COMPETING"];
     const activityType = validTypes.includes(settings.botActivityType) ? settings.botActivityType : "WATCHING";
-    const activities = [{ name: activity, type: activityType }];
-    if (note.trim()) activities.push({ name: note.trim(), type: "CUSTOM" });
+    const activities = [{ name: activity, type: resolveActivityType(activityType) }];
+    if (note.trim()) activities.push({ name: note.trim(), type: resolveActivityType("CUSTOM") });
     client.user.setPresence({ status, activities });
 
     voiceWorker.applyNaturalSettings({
@@ -696,6 +668,12 @@ async function initializeClientReady() {
         bootLog.skip("SHADOW", "Protected system hooks are unavailable");
     }
 
+    await bootLog.runStage("VOICE_ADMIN", "Reconcile persisted voice locks", () => voiceAdmin.reconcileConnectedLocks(client, {
+        requireComplete: true
+    }), {
+        successMessage: "Persisted Voice Admin locks reconciled"
+    });
+
     await bootLog.runStage("WEBHOOK", "Send startup notice", sendReadyNotice, {
         required: false,
         successMessage: "Startup notice processed",
@@ -716,22 +694,21 @@ async function initializeClientReady() {
     });
 }
 
-let readyInitialization = null;
-client.on("ready", () => {
-    if (!readyInitialization) {
-        readyInitialization = initializeClientReady().catch(err => {
-            bootLog.error("READY", "Post-ready initialization failed", {
-                code: err?.code || err?.name || "ready_initialization_failed"
-            });
-        });
-        return;
-    }
-    bootLog.info("DISCORD", "Additional ready event received; initialization already started");
+readyInitializationController = createReadyInitializationController({
+    initialize: initializeClientReady,
+    isReady: () => client.isReady(),
+    isShuttingDown: () => system.isShuttingDown?.() === true,
+    retryMs: 10000,
+    onError: (err, attempt) => bootLog.error("READY", "Post-ready initialization failed; retry scheduled", {
+        attempt, code: err?.code || err?.name || "ready_initialization_failed"
+    })
 });
 
-boot().catch(err => {
+client.on("ready", () => { readyInitializationController.start(); });
+
+boot().catch(async err => {
     bootLog.error("SYSTEM", "Fatal boot failure", {
         code: err?.code || err?.name || "fatal_boot_failure"
     });
-    process.exit(1);
+    await system.terminateAfterFatal("boot", err);
 });

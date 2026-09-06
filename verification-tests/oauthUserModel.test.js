@@ -11,7 +11,7 @@ describe('OAuthUser connections schema', () => {
         expect(embeddedSchema.path('id')?.instance).toBe('String');
     });
 
-    test('accepts normalized Discord connection objects', () => {
+    test('accepts normalized Discord connection objects', async () => {
         const doc = new OAuthUser({
             discord: { userId: '123456789012345678' },
             connections: [{
@@ -23,13 +23,13 @@ describe('OAuthUser connections schema', () => {
             }]
         });
 
-        expect(doc.validateSync()).toBeUndefined();
+        await expect(doc.validate()).resolves.toBeUndefined();
         expect(doc.connections).toHaveLength(1);
         expect(doc.connections[0].type).toBe('github');
         expect(doc.connections[0].id).toBe('connection-id');
     });
 
-    test('normalizes legacy string entries during construction and hydration', () => {
+    test('normalizes legacy string entries during construction and hydration', async () => {
         const created = new OAuthUser({
             discord: { userId: '123456789012345679' },
             connections: ['github']
@@ -41,10 +41,10 @@ describe('OAuthUser connections schema', () => {
 
         expect(created.connections[0].type).toBe('github');
         expect(hydrated.connections[0].type).toBe('steam');
-        expect(hydrated.validateSync()).toBeUndefined();
+        await expect(hydrated.validate()).resolves.toBeUndefined();
     });
 
-    test('keeps complete legacy connection type strings', () => {
+    test('keeps complete legacy connection type strings', async () => {
         const longType = 'x'.repeat(120);
         const doc = new OAuthUser({
             discord: { userId: '123456789012345681' },
@@ -52,6 +52,6 @@ describe('OAuthUser connections schema', () => {
         });
 
         expect(doc.connections[0].type).toHaveLength(120);
-        expect(doc.validateSync()).toBeUndefined();
+        await expect(doc.validate()).resolves.toBeUndefined();
     });
 });

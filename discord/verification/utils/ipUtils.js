@@ -1,21 +1,22 @@
 /* eslint-disable complexity -- IP normalization helpers are behavior-sensitive; refactor separately. */
 const net = require('net');
 const { encryptIP, hmacValue } = require('./crypto');
+const { readFiniteInteger } = require('../../core/numbers');
 
 const ENABLE_CF_IP_HEADER = String(process.env.ENABLE_CF_IP_HEADER || '').toLowerCase() === 'true';
 const TRUST_PROXY_FOR_CF_HEADER = String(process.env.TRUST_PROXY || '').toLowerCase() === 'true';
-const IP_LOOKUP_TIMEOUT_MS = Math.max(1000, Number(process.env.IP_LOOKUP_TIMEOUT_MS || 3500) || 3500);
-const IP_LOOKUP_RETRIES = Math.max(1, Math.min(3, Number(process.env.IP_LOOKUP_RETRIES || 2) || 2));
-const IP_LOOKUP_CACHE_TTL_MS = Math.max(60 * 1000, Number(process.env.IP_LOOKUP_CACHE_TTL_MS || 10 * 60 * 1000) || 10 * 60 * 1000);
-const IP_LOOKUP_CACHE_MAX = Math.max(100, Number(process.env.IP_LOOKUP_CACHE_MAX || 5000) || 5000);
-const IP_LOOKUP_CIRCUIT_FAIL_THRESHOLD = Math.max(1, Number(process.env.IP_LOOKUP_CIRCUIT_FAIL_THRESHOLD || 10) || 10);
-const IP_LOOKUP_CIRCUIT_OPEN_MS = Math.max(10000, Number(process.env.IP_LOOKUP_CIRCUIT_OPEN_MS || 5 * 60 * 1000) || 5 * 60 * 1000);
+const IP_LOOKUP_TIMEOUT_MS = readFiniteInteger(process.env.IP_LOOKUP_TIMEOUT_MS, { fallback: 3500, min: 1000, max: 30000 });
+const IP_LOOKUP_RETRIES = readFiniteInteger(process.env.IP_LOOKUP_RETRIES, { fallback: 2, min: 1, max: 3 });
+const IP_LOOKUP_CACHE_TTL_MS = readFiniteInteger(process.env.IP_LOOKUP_CACHE_TTL_MS, { fallback: 10 * 60 * 1000, min: 60 * 1000, max: 24 * 60 * 60 * 1000 });
+const IP_LOOKUP_CACHE_MAX = readFiniteInteger(process.env.IP_LOOKUP_CACHE_MAX, { fallback: 5000, min: 100, max: 100000 });
+const IP_LOOKUP_CIRCUIT_FAIL_THRESHOLD = readFiniteInteger(process.env.IP_LOOKUP_CIRCUIT_FAIL_THRESHOLD, { fallback: 10, min: 1, max: 1000 });
+const IP_LOOKUP_CIRCUIT_OPEN_MS = readFiniteInteger(process.env.IP_LOOKUP_CIRCUIT_OPEN_MS, { fallback: 5 * 60 * 1000, min: 10000, max: 24 * 60 * 60 * 1000 });
 const DEFAULT_IP_LOOKUP_RESPONSE_MAX_BYTES = 256 * 1024;
 const DEFAULT_MAXMIND_CITY_URL = 'https://geoip.maxmind.com/geoip/v2.1/city/{ip}';
 function resolveResponseMaxBytes(value) {
     const parsed = Number(value);
     if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_IP_LOOKUP_RESPONSE_MAX_BYTES;
-    return Math.max(16 * 1024, Math.floor(parsed));
+    return readFiniteInteger(parsed, { fallback: DEFAULT_IP_LOOKUP_RESPONSE_MAX_BYTES, min: 16 * 1024, max: 4 * 1024 * 1024 });
 }
 const IP_LOOKUP_RESPONSE_MAX_BYTES = resolveResponseMaxBytes(process.env.IP_LOOKUP_RESPONSE_MAX_BYTES);
 const DEVICE_FINGERPRINT_VERSION = 1;
@@ -1245,11 +1246,26 @@ function getIpLookupDiagnostics() {
     };
 }
 
-const lookupCacheCleanupTimer = setInterval(
-    cleanupLookupCache,
-    Math.max(IP_LOOKUP_CACHE_TTL_MS, 60 * 1000)
-);
-lookupCacheCleanupTimer.unref?.();
+let lookupCacheCleanupTimer = null;
+
+function startLookupCacheCleanup() {
+    if (lookupCacheCleanupTimer) return false;
+    lookupCacheCleanupTimer = setInterval(
+        cleanupLookupCache,
+        Math.max(IP_LOOKUP_CACHE_TTL_MS, 60 * 1000)
+    );
+    lookupCacheCleanupTimer.unref?.();
+    return true;
+}
+
+function stopLookupCacheCleanup() {
+    if (!lookupCacheCleanupTimer) return false;
+    clearInterval(lookupCacheCleanupTimer);
+    lookupCacheCleanupTimer = null;
+    return true;
+}
+
+startLookupCacheCleanup();
 
 async function lookupIP(ip) {
     if (isPrivateIP(ip)) {
@@ -1651,6 +1667,8 @@ module.exports = {
     getIpLookupConfig,
     lookupIP,
     cleanupLookupCache,
+    startLookupCacheCleanup,
+    stopLookupCacheCleanup,
     getIpLookupDiagnostics,
     isPrivateIP,
     extractDevice,

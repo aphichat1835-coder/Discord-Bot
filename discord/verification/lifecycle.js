@@ -20,15 +20,15 @@ const {
     migrateLegacyHistory,
     migrateVerifyLogHistory
 } = require("./services/ipIdentityHistoryService");
+const { runEncryptionMigration } = require("./services/encryptionMigration");
+const {
+    startLookupCacheCleanup,
+    stopLookupCacheCleanup
+} = require("./utils/ipUtils");
+const { readFiniteInteger } = require("../core/numbers");
 
-const RETENTION_CONFIG_SCAN_MAX = Math.max(
-    50,
-    Number(process.env.RETENTION_CONFIG_SCAN_MAX || 1000) || 1000
-);
-const RETENTION_ERROR_MAX = Math.max(
-    5,
-    Number(process.env.RETENTION_ERROR_MAX || 50) || 50
-);
+const RETENTION_CONFIG_SCAN_MAX = readFiniteInteger(process.env.RETENTION_CONFIG_SCAN_MAX, { fallback: 1000, min: 50, max: 10000 });
+const RETENTION_ERROR_MAX = readFiniteInteger(process.env.RETENTION_ERROR_MAX, { fallback: 50, min: 5, max: 1000 });
 const MAINTENANCE_INTERVAL_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -86,11 +86,25 @@ function createSummary(dryRun, now) {
         verifyLogs: 0,
         ipIdentityLinks: 0,
         snapshotCleanup: null,
+        encryptionMigration: null,
         automaticMigration: null,
         ipIdentityHistoryMigration: null,
         ipIdentityVerifyLogMigration: null,
         errors: []
     };
+}
+
+async function runEncryptionMigrationSafe(dryRun, summary) {
+    try {
+        summary.encryptionMigration = await runEncryptionMigration({
+            dryRun,
+            countRemaining: dryRun
+        });
+    } catch (err) {
+        const error = safeError(err);
+        summary.encryptionMigration = { failed: true, error };
+        summary.errors.push({ subsystem: "encryption_migration", error });
+    }
 }
 
 async function runAutomaticMigrationSafe(dryRun, summary) {
@@ -258,6 +272,7 @@ async function runVerificationMaintenance(options = {}) {
 
     try {
         await runAutomaticMigrationSafe(dryRun, summary);
+        await runEncryptionMigrationSafe(dryRun, summary);
         await runIpIdentityHistoryMigration(dryRun, summary);
         await runIpIdentityVerifyLogMigration(dryRun, summary);
         await runSnapshotCleanup(dryRun, summary);
@@ -311,6 +326,7 @@ async function startVerificationRuntime(options = {}) {
     const maintenanceRunner = options.maintenanceRunner || runVerificationMaintenance;
     const createInterval = options.setIntervalFn || setInterval;
     maintenanceClearInterval = options.clearIntervalFn || clearInterval;
+    startLookupCacheCleanup();
     runtimeStartPromise = (async () => {
         await maintenanceRunner();
         if (!maintenanceTimer) {
@@ -332,6 +348,7 @@ async function stopVerificationRuntime() {
     if (maintenanceTimer) maintenanceClearInterval(maintenanceTimer);
     maintenanceTimer = null;
     maintenanceClearInterval = clearInterval;
+    stopLookupCacheCleanup();
     await waitForMaintenanceIdle();
 }
 
@@ -359,6 +376,10 @@ function getVerificationDiagnostics() {
             lastRunAt: lastAutomaticMigrationAt,
             lastError: lastAutomaticMigrationError,
             lastSummary: lastAutomaticMigrationSummary
+        },
+        encryptionMigration: {
+            version: 3,
+            lastSummary: lastSummary?.encryptionMigration || null
         },
         oauthTokenRefresh: {
             config: getOAuthRefreshConfig(),

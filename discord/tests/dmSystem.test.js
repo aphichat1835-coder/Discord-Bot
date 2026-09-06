@@ -7,7 +7,6 @@ const dmService = require("../dm");
 const DmNotification = require("../dm/model");
 const { buildVoiceEventEmbed, createVoiceSnapshot } = require("../voiceWorker/dm");
 const { EVENTS, policyAllows, eventPriority } = require("../voiceWorker/notifications");
-const { buildModerationDmEmbed } = require("../commands/moderationHelpers");
 const utility = require("../commands/utility");
 const lifecycle = require("../voiceWorker/lifecycle");
 
@@ -76,6 +75,38 @@ test("DM outbox schema keeps unique event keys, finite states and automatic expi
     assert.equal(eventKey.options.unique, true);
     assert.deepEqual(status.options.enum, ["pending", "sending", "retrying", "sent", "failed_permanent"]);
     assert.deepEqual(expiresAt.options.index, { expireAfterSeconds: 0 });
+    assert.equal(DmNotification.schema.path("priorityRank").options.default, 2);
+});
+
+test("volatile outbox retains a transient failure when MongoDB is unavailable", async () => {
+    dmService._test.resetTestState();
+    dmService._test.setDatabaseReadyForTest(false);
+    const recipient = {
+        send: async () => {
+            const error = new Error("temporary timeout");
+            error.code = "ETIMEDOUT";
+            throw error;
+        }
+    };
+    dmService.configure({
+        client: {
+            users: { cache: new Map([["volatile-dm", recipient]]), fetch: async () => recipient },
+            isReady: () => true
+        }
+    });
+
+    const result = await dmService.send({
+        eventKey: "test:volatile-dm",
+        recipientId: "volatile-dm",
+        category: "test",
+        priority: "critical",
+        payload: { content: "test" }
+    });
+
+    assert.equal(result.status, "retrying");
+    assert.equal(dmService._test.volatileOutbox.has("test:volatile-dm"), true);
+    assert.equal(dmService._test.volatileOutbox.get("test:volatile-dm").priorityRank, 0);
+    dmService._test.resetTestState();
 });
 
 test("voice important-only policy is materially different from all", () => {
@@ -111,29 +142,17 @@ test("gateway 4014 is not diagnosed as an invalid token", () => {
     assert.equal(lifecycle.isInvalidTokenError({ code: 4004, message: "Authentication failed" }), true);
 });
 
-test("moderation DM states never claim success before Discord confirms it", () => {
-    const interaction = fakeInteraction();
-    const target = { id: "111111111111111111", user: fakeUser() };
-    const pending = buildModerationDmEmbed(interaction, target, "ban", "เหตุผล", null, {
-        state: "pending",
-        caseNumber: 7
-    }).toJSON();
-    const failed = buildModerationDmEmbed(interaction, target, "ban", "เหตุผล", null, {
-        state: "failed",
-        caseNumber: 7
-    }).toJSON();
-    const succeeded = buildModerationDmEmbed(interaction, target, "timeout", "เหตุผล", 10, {
-        state: "succeeded",
-        caseNumber: 7,
-        endsAt: Date.now() + 600_000
-    }).toJSON();
+test("DM service rejects retired moderation notifications", async () => {
+    dmService._test.resetTestState();
+    const result = await dmService.send({
+        eventKey: "moderation:retired",
+        recipientId: "111111111111111111",
+        category: "moderation",
+        payload: { content: "must not send" }
+    });
 
-    assert.match(pending.description, /ยังไม่ยืนยันผล/);
-    assert.doesNotMatch(pending.description, /ยืนยันแล้ว.*สำเร็จ/);
-    assert.match(pending.fields.find(field => field.name === "💡 สิ่งที่ควรทำ").value, /ยังไม่ใช่การยืนยัน/);
-    assert.match(failed.description, /ไม่ได้ดำเนินการ/);
-    assert.match(succeeded.description, /ยืนยันแล้ว.*สำเร็จ/);
-    assert.ok(succeeded.fields.some(field => field.name === "⏰ สิ้นสุดการหมดเวลา"));
+    assert.deepEqual(result, { status: "skipped", reason: "category_retired" });
+    assert.equal(dmService._test.volatileOutbox.size, 0);
 });
 
 test("restore result DM is private-profiled Thai output", () => {
@@ -206,4 +225,102 @@ test("DM delivery queues transient failures and suppresses the same event twice"
 
     assert.equal(first.status, "retrying");
     assert.deepEqual(duplicate, { status: "skipped", reason: "duplicate" });
+});
+
+test("volatile DM delivery is persisted as sent when MongoDB recovers", async () => {
+    dmService._test.resetTestState();
+    dmService._test.setDatabaseReadyForTest(false);
+    const recipient = { send: async () => ({ id: "message-1" }) };
+    dmService.configure({
+        client: {
+            users: { cache: new Map([["volatile-user", recipient]]), fetch: async () => recipient },
+            isReady: () => true
+        }
+    });
+
+    const result = await dmService.send({
+        eventKey: "test:volatile-recovery",
+        recipientId: "volatile-user",
+        category: "test",
+        priority: "critical",
+        payload: { content: "critical" }
+    });
+    assert.equal(result.status, "sent");
+    assert.equal(dmService._test.volatileOutbox.size, 1);
+
+    const originalUpdateOne = DmNotification.updateOne;
+    let persisted = null;
+    DmNotification.updateOne = async (filter, update, options) => {
+        persisted = { filter, update, options };
+        return { acknowledged: true, upsertedCount: 1 };
+    };
+    dmService._test.setDatabaseReadyForTest(true);
+    try {
+        const migration = await dmService.persistVolatileOutbox();
+        assert.equal(migration.persisted, 1);
+        assert.equal(persisted.filter.eventKey, "test:volatile-recovery");
+        assert.equal(persisted.update.$set.status, "sent");
+        assert.equal(persisted.update.$set.priorityRank, 0);
+        assert.equal(dmService._test.volatileOutbox.size, 0);
+    } finally {
+        DmNotification.updateOne = originalUpdateOne;
+        dmService._test.resetTestState();
+    }
+});
+
+test("pending DM query sorts by priority before applying the limit", async () => {
+    dmService._test.resetTestState();
+    dmService._test.setDatabaseReadyForTest(true);
+    dmService.configure({ client: { users: { cache: new Map() }, isReady: () => true } });
+
+    const originalFind = DmNotification.find;
+    const originalUpdateMany = DmNotification.updateMany;
+    const originalDeleteMany = DmNotification.deleteMany;
+    let sortSpec = null;
+    let limitValue = null;
+    let query = null;
+    DmNotification.updateMany = async () => ({ acknowledged: true, modifiedCount: 0 });
+    DmNotification.deleteMany = async () => ({ acknowledged: true, deletedCount: 0 });
+    DmNotification.find = filter => {
+        query = filter;
+        return {
+        sort(spec) { sortSpec = spec; return this; },
+        limit(value) { limitValue = value; return this; },
+        lean: async () => []
+        };
+    };
+    try {
+        const result = await dmService.processPending(25);
+        assert.equal(result.processed, 0);
+        assert.deepEqual(sortSpec, { priorityRank: 1, createdAt: 1 });
+        assert.equal(limitValue, 25);
+        assert.deepEqual(query.category, { $nin: ["moderation"] });
+    } finally {
+        DmNotification.find = originalFind;
+        DmNotification.updateMany = originalUpdateMany;
+        DmNotification.deleteMany = originalDeleteMany;
+        dmService._test.resetTestState();
+    }
+});
+
+test("retired moderation queue purge deletes only unsent records", async () => {
+    dmService._test.resetTestState();
+    dmService._test.setDatabaseReadyForTest(true);
+    const originalDeleteMany = DmNotification.deleteMany;
+    let filter = null;
+    DmNotification.deleteMany = async value => {
+        filter = value;
+        return { acknowledged: true, deletedCount: 3 };
+    };
+    try {
+        const result = await dmService.purgeRetiredQueue();
+        assert.deepEqual(result, { deleted: 3 });
+        assert.deepEqual(filter, {
+            category: { $in: ["moderation"] },
+            status: { $in: ["pending", "sending", "retrying", "failed_permanent"] }
+        });
+    } finally {
+        DmNotification.deleteMany = originalDeleteMany;
+        dmService._test.resetTestState();
+    }
 });

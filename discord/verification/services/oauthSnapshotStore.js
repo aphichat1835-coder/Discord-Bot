@@ -10,6 +10,7 @@ const ProfileSnapshot = require("../models/OAuthUserProfileSnapshot");
 const ObjectChunkSnapshot = require("../models/OAuthObjectChunkSnapshot");
 const SnapshotRecovery = require("../models/OAuthSnapshotRecovery");
 const { jsonBytes, DEFAULT_MAX_BYTES, MAX_MAX_BYTES } = require("./snapshotBudget");
+const { readFiniteInteger } = require("../../core/numbers");
 
 const DOCUMENT_MAX_BYTES = DEFAULT_MAX_BYTES;
 const DOCUMENT_SAFETY_MARGIN_BYTES = Math.min(
@@ -20,30 +21,15 @@ const DOCUMENT_WRITE_MAX_BYTES = Math.max(
     64 * 1024,
     DOCUMENT_MAX_BYTES - DOCUMENT_SAFETY_MARGIN_BYTES
 );
-const CHUNK_MAX_BYTES = Math.min(
-    DOCUMENT_WRITE_MAX_BYTES,
-    Math.max(64 * 1024, Number(process.env.OAUTH_SNAPSHOT_CHUNK_MAX_BYTES || 512 * 1024) || 512 * 1024)
-);
-const CHUNK_MAX_ITEMS = Math.max(
-    1,
-    Math.min(500, Number(process.env.OAUTH_SNAPSHOT_CHUNK_MAX_ITEMS || 100) || 100)
-);
-const OBJECT_CHUNK_RAW_BYTES = Math.max(
-    8 * 1024,
-    Math.min(
-        512 * 1024,
-        Math.floor(DOCUMENT_WRITE_MAX_BYTES * 0.55),
-        Number(process.env.OAUTH_OBJECT_CHUNK_RAW_BYTES || 384 * 1024) || 384 * 1024
-    )
-);
-const WRITE_RETRY_ATTEMPTS = Math.max(
-    1,
-    Math.min(8, Number(process.env.OAUTH_SNAPSHOT_WRITE_RETRY_ATTEMPTS || 3) || 3)
-);
-const WRITE_RETRY_DELAY_MS = Math.max(
-    0,
-    Math.min(10_000, Number(process.env.OAUTH_SNAPSHOT_WRITE_RETRY_DELAY_MS || 150) || 150)
-);
+const CHUNK_MAX_BYTES = readFiniteInteger(process.env.OAUTH_SNAPSHOT_CHUNK_MAX_BYTES, {
+    fallback: 512 * 1024, min: 64 * 1024, max: DOCUMENT_WRITE_MAX_BYTES
+});
+const CHUNK_MAX_ITEMS = readFiniteInteger(process.env.OAUTH_SNAPSHOT_CHUNK_MAX_ITEMS, { fallback: 100, min: 1, max: 500 });
+const OBJECT_CHUNK_RAW_BYTES = readFiniteInteger(process.env.OAUTH_OBJECT_CHUNK_RAW_BYTES, {
+    fallback: 384 * 1024, min: 8 * 1024, max: Math.min(512 * 1024, Math.floor(DOCUMENT_WRITE_MAX_BYTES * 0.55))
+});
+const WRITE_RETRY_ATTEMPTS = readFiniteInteger(process.env.OAUTH_SNAPSHOT_WRITE_RETRY_ATTEMPTS, { fallback: 3, min: 1, max: 8 });
+const WRITE_RETRY_DELAY_MS = readFiniteInteger(process.env.OAUTH_SNAPSHOT_WRITE_RETRY_DELAY_MS, { fallback: 150, min: 0, max: 10_000 });
 const RECOVERY_RETRY_BASE_MS = 5 * 60 * 1000;
 const RECOVERY_RETRY_MAX_MS = 24 * 60 * 60 * 1000;
 
@@ -53,9 +39,10 @@ function createSnapshotVersion(now = Date.now()) {
 
 function delay(ms) {
     if (!ms) return Promise.resolve();
+    // This timer is awaited control flow. Keep it ref'd so the promise can settle
+    // in isolated workers and native node:test runs.
     return new Promise(resolve => {
-        const timer = setTimeout(resolve, ms);
-        timer.unref?.();
+        setTimeout(resolve, ms);
     });
 }
 

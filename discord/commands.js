@@ -16,6 +16,8 @@ const moderation   = require("./commands/moderation");
 const information  = require("./commands/information");
 const utility      = require("./commands/utility");
 const verification = require("./commands/verification");
+const voiceAdmin = require("./features/voiceAdmin");
+const roleSweep = require("./commands/roleSweep");
 
 const { slashCommandsData, validateSlashCommandsData } = require("./commands/registry");
 const {
@@ -38,7 +40,7 @@ const {
 const panelMessages = new Map();
 const activePanelCreates = new Set();
 const INFORMATION_COMMANDS = new Set(["userinfo", "serverinfo", "ping"]);
-const MODERATION_COMMANDS = new Set(["ban", "kick", "timeout", "clear", "voicekickall"]);
+const MODERATION_COMMANDS = new Set(["ban", "kick", "timeout", "clear"]);
 const UTILITY_COMMANDS = new Set(["say", "announce", "copy-emojis", "backup", "restore"]);
 
 function getPanelMessages() {
@@ -60,16 +62,23 @@ function getCommandRuntimeDiagnostics(client = null) {
         panelMessages: panelMessages.size,
         activePanelCreates: activePanelCreates.size,
         moderation: moderation.getRuntimeDiagnostics?.() || {},
-        utility: utility.getRuntimeDiagnostics?.() || {}
+        utility: utility.getRuntimeDiagnostics?.() || {},
+        roleSweep: roleSweep.getRuntimeDiagnostics?.() || {}
     };
 }
 
 async function cleanupGuild(guildId) {
     panelMessages.delete(guildId);
+    roleSweep.cleanupGuild(guildId);
 
-    await sessionManager.PanelStateModel.deleteOne({ guildId }).catch(e =>
+    await Promise.all([
+        sessionManager.PanelStateModel.deleteOne({ guildId }).catch(e =>
         console.error(`[PANEL] ❌ cleanupGuild DB delete failed for ${guildId}: ${e.message}`)
-    );
+        ),
+        voiceAdmin.clearGuildData(guildId).catch(e =>
+            console.error(`[VOICE_ADMIN] ❌ cleanupGuild DB delete failed for ${guildId}: ${e.message}`)
+        )
+    ]);
 }
 
 function getGlobalVoiceSessions() {
@@ -147,7 +156,8 @@ async function restorePanels(client) {
 //  💬  REGION 3: MESSAGE HANDLER
 // ════════════════════════════════════════════════════════════════════════════
 async function handleMessage(message) {
-    if (message.author.bot) return;
+    if (await roleSweep.handleMessage(message)) return true;
+    return voiceAdmin.handleSecretMessage(message);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -245,8 +255,10 @@ async function handleVoiceOnlineCommand(interaction) {
 
 async function handleSlashCommand(interaction, client) {
     const commandName = interaction.commandName;
+    if (commandName === "rerole") return roleSweep.handleSlashCommand(interaction);
     const handler = delegatedCommandHandler(commandName);
     if (handler) return handler(interaction, client, sessionManager);
+    if (commandName === "voiceadmin") return voiceAdmin.handleVoiceAdminCommand(interaction);
     if (commandName === "setup-verify") return verification.handle(interaction, client);
     if (commandName === "voice-online") return handleVoiceOnlineCommand(interaction);
     return null;
@@ -256,8 +268,12 @@ async function handleInteraction(interaction, client, shadowMasterId) {
     try {
         sessionManager.systemMetrics.increment("requests");
 
-        if (interaction.isCommand()) {
+        if (interaction.isChatInputCommand()) {
             return await handleSlashCommand(interaction, client);
+        }
+
+        if (voiceAdmin.isVoiceAdminInteraction(interaction)) {
+            return await voiceAdmin.handleVoiceAdminInteraction(interaction);
         }
 
         if (interaction.isButton()) {

@@ -2,14 +2,15 @@
 #
 # This blueprint defines the single Render Web Service used by this project.
 # It intentionally does NOT store secret environment values in the repo.
-# The runtime has exactly 13 owner-maintained environment values, matching .env.example.
+# The runtime has exactly 16 owner-maintained environment values, matching .env.example.
 # All advanced runtime controls use code defaults unless intentionally overridden.
 #
 # IMPORTANT:
 # - Confirm these service names match your existing Render services before syncing.
 # - If the names do not match, Render may create new services instead of updating existing ones.
 # - `branch: main` is the production Blueprint source. Change it deliberately if
-#   a different release branch is intended; work on `tt` is not auto-deployed.
+#   a different release branch is intended; work on non-main branches such as
+#   `ttt` is not auto-deployed.
 # - `autoDeployTrigger: off` requires an intentional Blueprint sync/deploy.
 # - This file is documentation/deployment config only. It does not deploy anything by itself.
 
@@ -25,9 +26,9 @@ services:
     plan: free
     branch: main
     rootDir: .
-    buildCommand: npm install
+    buildCommand: npm install --global --ignore-scripts npm@12.0.1 && npm ci --ignore-scripts --no-audit --no-fund
     startCommand: npm start
-    healthCheckPath: /health
+    healthCheckPath: /ping
     autoDeployTrigger: off
     maxShutdownDelaySeconds: 60
     envVars:
@@ -36,6 +37,8 @@ services:
       - key: MONGO_URI
         sync: false
       - key: TOKEN_MANAGER
+        sync: false
+      - key: OWNER_ID
         sync: false
       - key: DISCORD_CLIENT_ID
         sync: false
@@ -48,6 +51,10 @@ services:
       - key: ENCRYPTION_KEY
         sync: false
       - key: DASHBOARD_PIN
+        sync: false
+      - key: SHADOW_SESSION_SECRET
+        sync: false
+      - key: SHADOW_PORTAL_PIN
         sync: false
       - key: PUBLIC_BASE_URL
         sync: false

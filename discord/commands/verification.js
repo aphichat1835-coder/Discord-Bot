@@ -17,14 +17,15 @@
 ================================================================================
 */
 
+const { PermissionFlagsBits } = require("discord.js");
 const crypto = require("node:crypto");
-const { MessageEmbed, MessageActionRow, MessageButton } = require("discord.js");
+const { MessageEmbed, MessageActionRow, MessageButton } = require("../core/discordCompat");
 const config = require("../config.json");
 const sessionManager = require("../sessionManager");
 const { createCompactCallbackState } = require("../verification/utils/state");
 const { resolvePublicBaseUrl } = require("../core/publicUrl");
 const { markCommandAccepted } = require("../guards/commandGuards");
-const { sendAlertWebhook } = require("../core/webhooks");
+const { sendWebhookEvent, getDiscordGuildIconUrl } = require("../core/webhooks");
 
 let GuildConfig = null;
 
@@ -34,7 +35,7 @@ try {
     console.warn("[VERIFY] GuildConfig model unavailable:", err.message);
 }
 
-const VERIFY_SCOPE = "identify identify.premium email connections guilds guilds.members.read guilds.join";
+const VERIFY_SCOPE = "identify email connections guilds guilds.members.read guilds.join";
 const PANEL_LIMITS = Object.freeze({ content: 2000, title: 256, description: 4096, footer: 2048, url: 2048 });
 const PERSIST_RETRY_DELAYS_MS = Object.freeze([0, 150, 400]);
 const SNOWFLAKE_RE = /^\d{17,22}$/;
@@ -118,7 +119,7 @@ async function resolveGuildBotMember(guild, client) {
 
 function validateDirectRoleAssignment(botMember, role) {
     if (!botMember) return { ok: false, reason: "ไม่พบข้อมูลบอทในเซิร์ฟเวอร์" };
-    if (!botMember.permissions?.has?.("MANAGE_ROLES")) return { ok: false, reason: "บอทไม่มีสิทธิ์ Manage Roles" };
+    if (!botMember.permissions?.has?.(PermissionFlagsBits.ManageRoles)) return { ok: false, reason: "บอทไม่มีสิทธิ์ Manage Roles" };
     if (!role) return { ok: false, reason: "ไม่พบยศนี้แล้ว กรุณาแจ้ง Admin ตั้งค่าใหม่" };
     if (role.managed) return { ok: false, reason: "ยศนี้เป็น managed role ไม่สามารถมอบให้อัตโนมัติได้" };
     if (botMember.roles?.highest && role.position >= botMember.roles.highest.position) {
@@ -432,7 +433,7 @@ async function rollbackPanelConfig({ guildId, settingKey, previousLegacy, previo
     return results.every(result => result.status === "fulfilled" && result.value !== false && result.value !== null);
 }
 
-async function persistVerificationRecovery({ guildId, messageId, settingKey, rolledBack, panelDisabled, panelDeleted }) {
+async function persistVerificationRecovery({ guildId, messageId, settingKey, rolledBack, panelDisabled, panelDeleted, sourceIconUrl }) {
     const recoveryKey = `verify_recovery_${guildId}_${messageId}`;
     const recoveryRecord = {
         guildId,
@@ -449,8 +450,25 @@ async function persistVerificationRecovery({ guildId, messageId, settingKey, rol
         .catch(() => false);
     if (!persisted) {
         console.warn(`[VERIFY] recovery record persistence failed for guild=${guildId}`);
-        sendAlertWebhook({
-            content: `⚠️ **[VERIFY RECOVERY]** แผงยืนยันต้องตรวจสอบด้วยตนเองและบันทึก recovery record ไม่สำเร็จ | guild=${guildId} | message=${messageId}`
+        sendWebhookEvent({
+            severity: "ERROR",
+            category: "VERIFICATION",
+            code: "verification.panel.recovery_persistence_failed",
+            state: "OPEN",
+            title: "แผงยืนยันต้องตรวจสอบด้วยตนเอง",
+            description: "ระบบกู้คืนแผงไม่สมบูรณ์และไม่สามารถบันทึก Recovery Record ได้",
+            impact: "สถานะแผงใน Discord กับฐานข้อมูลอาจไม่ตรงกัน",
+            action: "ตรวจแผงยืนยันล่าสุดใน Discord แล้วตั้งค่าแผงใหม่หากจำเป็น",
+            context: {
+                "Guild ID": guildId,
+                "Message ID": messageId,
+                "ย้อนค่าตั้งค่าแล้ว": rolledBack,
+                "ปิดแผงเดิมแล้ว": panelDisabled,
+                "ลบแผงเดิมแล้ว": panelDeleted
+            },
+            sourceIconUrl,
+            dedupeKey: `verification-panel-recovery:${guildId}:${messageId}`,
+            dedupeMs: 15 * 60 * 1000
         }).catch(() => {});
     }
     return { required: true, persisted, key: recoveryKey };
@@ -535,7 +553,7 @@ async function handle(interaction, client) {
 }
 
 async function handleSetupVerify(interaction) {
-    if (!interaction.member.permissions.has("ADMINISTRATOR")) {
+    if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
         return interaction.reply({
             content: `> ${config.emojis.no_entry} ต้องเป็น Administrator`,
             ephemeral: true
@@ -613,7 +631,7 @@ async function handleSetupVerify(interaction) {
         };
     }
 
-    if (!channel?.isText?.()) {
+    if (channel?.isTextBased?.() !== true || channel?.isSendable?.() !== true || channel?.isThread?.() === true) {
         return interaction.editReply({
             content: `> ${config.emojis.error} กรุณาเลือกห้องข้อความเท่านั้น`
         });
@@ -622,7 +640,7 @@ async function handleSetupVerify(interaction) {
     const botMember = await resolveGuildBotMember(interaction.guild, interaction.client);
     const sendPerms = channel.permissionsFor(botMember);
 
-    if (!sendPerms?.has("SEND_MESSAGES") || !sendPerms?.has("EMBED_LINKS")) {
+    if (!sendPerms?.has(PermissionFlagsBits.SendMessages) || !sendPerms?.has(PermissionFlagsBits.EmbedLinks)) {
         return interaction.editReply({
             content:
                 `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความหรือ Embed ในห้อง <#${channel.id}>\n` +
@@ -797,7 +815,8 @@ async function handleSetupVerify(interaction) {
                     settingKey,
                     rolledBack,
                     panelDisabled: disabled,
-                    panelDeleted: deleted
+                    panelDeleted: deleted,
+                    sourceIconUrl: getDiscordGuildIconUrl(interaction.guild)
                 });
                 persistError.recoveryRequired = recovery.required;
                 persistError.recoveryPersisted = recovery.persisted;

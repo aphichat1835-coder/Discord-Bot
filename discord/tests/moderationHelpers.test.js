@@ -1,14 +1,14 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const { PermissionFlagsBits } = require("discord.js");
 
 const helpers = require("../commands/moderationHelpers");
-const moderation = require("../commands/moderation");
 const config = require("../config.json");
 
 test("moderation helpers map required permissions", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    assert.equal(helpers.requiredModerationPermission("ban"), "BAN_MEMBERS");
-    assert.equal(helpers.requiredModerationPermission("kick"), "KICK_MEMBERS");
-    assert.equal(helpers.requiredModerationPermission("timeout"), "MODERATE_MEMBERS");
+    assert.equal(helpers.requiredModerationPermission("ban"), PermissionFlagsBits.BanMembers);
+    assert.equal(helpers.requiredModerationPermission("kick"), PermissionFlagsBits.KickMembers);
+    assert.equal(helpers.requiredModerationPermission("timeout"), PermissionFlagsBits.ModerateMembers);
 });
 
 test("moderation helpers parse timeout duration", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
@@ -37,6 +37,25 @@ test("moderation helpers build case input", () => { // NOSONAR -- node:test asse
     assert.equal(input.evidence.some(item => item.includes("DM sent")), false);
 });
 
+test("moderation success reply no longer reports member DM delivery", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const embed = helpers.buildModerationReplyEmbed(
+        {
+            guild: { iconURL: () => null },
+            user: { id: "mod1", tag: "mod#0001" }
+        },
+        {
+            id: "target1",
+            user: { displayAvatarURL: () => "https://cdn.discordapp.com/embed/avatars/0.png" }
+        },
+        "ban",
+        "reason",
+        42
+    ).toJSON();
+
+    assert.doesNotMatch(embed.description, /DM:/);
+    assert.match(embed.description, /Case:.*42/);
+});
+
 test("moderation helpers avoid exposing raw exception messages", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.equal(
         helpers.moderationErrorReply(new Error("database password leaked")),
@@ -46,32 +65,4 @@ test("moderation helpers avoid exposing raw exception messages", () => { // NOSO
         helpers.moderationErrorReply(new Error("MISSING_PERMS")),
         `> ${config.emojis.error} บอทไม่มีสิทธิ์ที่จำเป็น!`
     );
-});
-
-test("voice kick result state distinguishes complete, partial, and failed", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    assert.equal(moderation._test.voiceKickResultState({ kicked: ["<@1>"], failed: 0, timedOut: false }, 1), "complete");
-    assert.equal(moderation._test.voiceKickResultState({ kicked: ["<@1>"], failed: 1, timedOut: false }, 2), "partial");
-    assert.equal(moderation._test.voiceKickResultState({ kicked: [], failed: 1, timedOut: false }, 1), "failed");
-    assert.equal(moderation._test.voiceKickResultState({ kicked: [], failed: 0, timedOut: false }, 0), "no_target");
-});
-
-test("voice kick processing skips administrators and counts disconnect failures", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    const disconnected = [];
-    const member = (id, administrator, fails = false) => ({
-        id,
-        permissions: { has: permission => permission === "ADMINISTRATOR" && administrator },
-        voice: {
-            disconnect: async () => {
-                if (fails) throw new Error("disconnect failed");
-                disconnected.push(id);
-            }
-        }
-    });
-    const result = await moderation._test.disconnectVoiceMembers(
-        [member("admin", true), member("ok", false), member("failed", false, true)],
-        { pause: async () => {}, yieldTurn: async () => {} }
-    );
-
-    assert.deepEqual(disconnected, ["ok"]);
-    assert.deepEqual(result, { kicked: ["<@ok>"], failed: 1, timedOut: false });
 });

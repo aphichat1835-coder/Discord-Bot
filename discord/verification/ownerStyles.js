@@ -78,6 +78,8 @@ const OWNER_VERIFICATION_CSS = `
 .verify-server-icon { width:54px; height:54px; border-radius:17px; display:grid; place-items:center; overflow:hidden; flex:0 0 auto; background:linear-gradient(135deg,var(--accent),var(--blue)); font-weight:950; }
 .verify-server-icon img { width:100%; height:100%; object-fit:cover; }
 .verify-server h1 { font-size:clamp(1.2rem,3vw,1.75rem); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.verify-server h1.gradient-text { text-align:left; line-height:1.25; padding:2px 0; display:inline-block; }
+.verify-server h1.gradient-text::after { left:35%; }
 .verify-server p { color:var(--text3); font-size:.76rem; }
 .verify-workspace-actions { display:flex; align-items:end; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
 .verify-workspace-actions label { margin:0; }
@@ -187,6 +189,8 @@ summary { cursor:pointer; color:var(--accent3); font-weight:750; }
 .server-picker { border:1px solid var(--border); border-radius:24px; padding:clamp(18px,3vw,30px); background:radial-gradient(circle at 100% 0,rgba(124,58,237,.16),transparent 34%),rgba(10,7,22,.82); box-shadow:var(--shadow); }
 .server-picker-head { display:flex; align-items:flex-end; justify-content:space-between; gap:18px; margin-bottom:20px; }
 .server-picker-head h1 { margin:7px 0 5px; font-size:clamp(1.45rem,3.5vw,2.35rem); line-height:1.15; }
+.server-picker-head h1.gradient-text { text-align:left; line-height:1.25; padding:2px 0; display:inline-block; }
+.server-picker-head h1.gradient-text::after { left:35%; }
 .server-picker-head p { color:var(--text3); }
 .server-picker-legend { display:flex; gap:12px; flex-wrap:wrap; color:var(--text3); font-size:.74rem; }
 .server-picker-legend span,.verify-guild-status { display:inline-flex; align-items:center; gap:6px; }

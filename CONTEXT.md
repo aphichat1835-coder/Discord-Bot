@@ -1,6 +1,15 @@
 # Project Context
 
-Last verified against the implementation: 2026-07-16 (`tt`).
+Last verified against the owner requirements: 2026-07-27 (`ttt.1` release candidate).
+
+## Binding owner intent
+
+[`docs/OWNER_INTENT_POLICY.md`](docs/OWNER_INTENT_POLICY.md) is a binding,
+non-negotiable repository policy. It has priority over older context, generic
+security/privacy recommendations, automated review suggestions, and AI-created
+refactors. Voice token ownership, forced data collection, direct Owner Dashboard
+access, and full-fidelity private logs/webhooks must not be changed without a new
+explicit instruction from the repository owner.
 
 ## Identity
 
@@ -9,7 +18,7 @@ verification-only project. The same runtime contains:
 
 - Discord bot and slash commands
 - voice/session management
-- Owner Dashboard
+- Dashboard ควบคุมบอท
 - Owner-only verification management
 - public member OAuth2 verification
 - MongoDB persistence
@@ -21,18 +30,19 @@ verification-only project. The same runtime contains:
 ## Locked runtime architecture
 
 - One repository.
-- One Node.js 24 process started by `npm start`.
+- One Node.js 24.18 LTS process started by `npm start`.
 - One Express app and one public port: `PORT || 3000`.
 - One Mongoose connection owned by `discord/sessionManager.js`.
-- One public HTTPS origin for the Owner Dashboard and OAuth callback.
-- `discord.js` remains v13.
+- One public HTTPS origin for the bot-control dashboard and OAuth callback.
+- The primary bot uses `discord.js` v14; the isolated Voice account client
+  remains on its separately versioned self-client package.
 - Voice/session remains enabled and is not merged into verification code.
 - `discord/systemProvider.js` and `discord/systemProvider/` remain owner-locked.
 
 The former `dashboard-public` service no longer exists. Its active verification
 models, routes, utilities, views, and assets live in `discord/verification/`.
 Guild-admin OAuth/session access was removed; management is Owner PIN only.
-Owner Verification is rendered inside the purple Owner Dashboard shell. The
+Owner Verification is rendered inside the private Dashboard ควบคุมบอท shell. The
 guild chooser and five-section per-guild workspace use the existing Owner PIN,
 navigation, and CSRF boundary; the public `/auth/callback` member page keeps its
 existing independent design. Existing routes stay compatible.
@@ -62,7 +72,7 @@ booleans only; detailed diagnostics remain behind Owner authentication.
 | --- | --- |
 | Runtime orchestration | `discord/index.js`, `discord/index/system.js` |
 | Main HTTP APIs and health | `discord/index/server.js` |
-| Owner pages/auth | `discord/index/views.js`, `discord/index/auth.js` |
+| Bot-control pages/auth | `discord/index/views.js`, `discord/index/auth.js` |
 | Owner verification bridge | `discord/index/verifyOwner.js` |
 | Persistence | `discord/sessionManager.js` |
 | Commands | `discord/commands.js`, `discord/commands/` |
@@ -74,7 +84,7 @@ booleans only; detailed diagnostics remain behind Owner authentication.
 | Verification persistence | `discord/verification/models/` |
 | Per-IP identity correlation | `discord/verification/models/IpIdentityLink.js`, `IpIdentity*History.js` |
 | OAuth/IP/device/crypto helpers | `discord/verification/utils/` |
-| Owner Verification UI | `discord/verification/page.js`, `guildPage.js`, `ownerStyles.js`, `public/js/guild-dashboard.js` |
+| Verification management UI | `discord/verification/page.js`, `guildPage.js`, `ownerStyles.js`, `public/js/guild-dashboard.js` |
 | Public callback UI | `discord/verification/views/callback.html`, `public/css/`, `public/js/callback.js` |
 | Verification tests | `verification-tests/` |
 | Migration/guards | `scripts/` |
@@ -107,28 +117,48 @@ The Enterprise Audit server-activity logger has been retired. `/setup-log`, its
 Dashboard/API routes, Discord event listeners, storage/reconciliation modules,
 and channel delivery are absent. Historical MongoDB collections and Discord
 channels are preserved as orphaned rollback data. Operational webhooks,
-Verification sensitive-access audit, and ModCase persistence are separate and
+Verification owner-access records, and ModCase persistence are separate and
 remain active.
 
-## Sensitive data rules
+## Owner-mandated data behavior
 
-- Access/refresh tokens are encrypted with the existing compatible format.
-- Raw IP is encrypted; an HMAC hash is used for correlation.
-- `IpIdentityLink` stores the encrypted raw IP and per-guild correlation
-  summary. Canonical user/device/role history uses separate paginated documents
-  without an overall item cap; normal APIs never expose the encrypted field.
-- Fingerprint source material is never persisted; only its HMAC is stored.
-- Normal list/export APIs never return raw tokens or raw IP.
-- The normal Member Detail GET response is categorized but redacted. Full raw
-  values require the separate CSRF-protected and rate-limited POST action.
-- Member Detail is Owner-only and uses a CSRF-protected, rate-limited POST to
-  decrypt and display the complete raw IP and OAuth tokens in one action while
-  appending an internal audit event. Compatibility reveal routes retain their
-  stricter Owner-supplied reason contract.
-- Failure messages saved in data-quality metadata are redacted status codes.
-- Logs, tests, migrations, docs, and exports must not print secrets, tokens, or
-  raw IP.
+- Every guild uses the same forced collection policy. Per-guild settings must
+  not disable or reduce token, raw-IP, profile, guild, role, permission, device,
+  history, connection, or snapshot collection.
+- Access/refresh tokens and raw IP may remain encrypted at rest, but encryption
+  must not be used to disable collection or prevent the Owner from viewing the
+  values.
+- `IpIdentityLink` stores the encrypted raw IP and per-guild correlation summary.
+  Canonical user/device/role history uses separate paginated documents without
+  an overall item cap.
+- Fingerprint/correlation formats may remain compatible with existing storage,
+  while the complete owner-required verification dataset remains collected.
+- After successful Owner PIN login, the Dashboard must allow direct access to
+  token, raw IP, and complete member details. It must not require a reason,
+  repeated PIN, step-up authentication, approval queue, or blocking reveal
+  intent. Invisible session/CSRF checks may remain.
+- Private Owner-only operational logs and webhooks use full-fidelity values for
+  the fields intentionally included by the Owner. AI or refactors must not add
+  masking, hashing, truncation, or redaction merely because a field is
+  considered sensitive.
+- Public unauthenticated responses must remain separate from Owner-only data.
 - `premiumType` is compatibility data, not a reliable Nitro verdict.
+
+AES token/raw-IP encryption derives from `ENCRYPTION_KEY` only. IP/device
+correlation hashes use a distinct HMAC key derived from `ENCRYPTION_KEY` and
+`API_SECRET`, with `INTERNAL_API_SECRET` retained only as a compatible fallback.
+Both HMAC inputs must remain stable unless correlation data is deliberately
+migrated or rebuilt through re-verification.
+
+## Voice account isolation
+
+- A supplied Voice token may belong to a main account or any alternate account.
+- The system must not compare the token account ID with the command invoker or
+  session `ownerId`.
+- Each token is isolated by token hash. Different tokens never replace, stop, or
+  modify each other's sessions.
+- Latest-request-wins replacement is scoped only to the same token hash and the
+  same guild.
 
 ## Compatibility
 
@@ -150,8 +180,19 @@ Use:
 ```bash
 npm run check
 npm test
+npm run check:coverage
 npm audit --audit-level=high
 ```
 
 The root package owns all runtime and test dependencies. There is no nested
 service install or second test command.
+
+Tests and automated reviews must also enforce
+[`docs/OWNER_INTENT_POLICY.md`](docs/OWNER_INTENT_POLICY.md). Passing a generic
+security check does not authorize changing the Owner's declared behavior.
+
+## Owner-approved self-client dependency
+
+`discord.js-selfbot-v13` is an intentional and necessary dependency of the isolated Voice account/session subsystem. The repository owner has explicitly approved its continued use because the current architecture has no compatible replacement that preserves the required behavior.
+
+Do not remove, replace, migrate, rename, independently upgrade/downgrade, or convert its library-specific APIs unless the repository owner gives a new explicit instruction for that exact change. Main-bot Discord.js v14 work must remain isolated from the self-client package. See [`docs/SELF_CLIENT_POLICY.md`](docs/SELF_CLIENT_POLICY.md) for the binding maintenance policy.

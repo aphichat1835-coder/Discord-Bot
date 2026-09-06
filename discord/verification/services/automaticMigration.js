@@ -8,6 +8,7 @@ const { archiveSourceDocument, contentHash } = require("./migrationArchive");
 const MigrationArchive = require("../models/VerificationMigrationArchive");
 const migration = require("../../../scripts/migrateVerificationSnapshots");
 const { safeError } = require("../utils/safeLogger");
+const { readFiniteInteger } = require("../../core/numbers");
 
 const TARGET_VERSION = 2;
 const STATE_ID = "verification_oauth_snapshot_v2";
@@ -23,8 +24,8 @@ function config(env = process.env) {
     return {
         enabled: enabled(env),
         targetVersion: TARGET_VERSION,
-        scanMax: Math.max(1, Math.min(1000, Number(env.AUTO_VERIFICATION_MIGRATION_SCAN_MAX || DEFAULT_SCAN_MAX) || DEFAULT_SCAN_MAX)),
-        batchSize: Math.max(10, Math.min(500, Number(env.VERIFICATION_MIGRATION_BATCH_SIZE || 100) || 100))
+        scanMax: readFiniteInteger(env.AUTO_VERIFICATION_MIGRATION_SCAN_MAX, { fallback: DEFAULT_SCAN_MAX, min: 1, max: 1000 }),
+        batchSize: readFiniteInteger(env.VERIFICATION_MIGRATION_BATCH_SIZE, { fallback: 100, min: 10, max: 500 })
     };
 }
 

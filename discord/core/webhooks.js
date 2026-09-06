@@ -1,13 +1,50 @@
 "use strict";
 
-const { WebhookClient } = require("discord.js");
+const { Colors, WebhookClient } = require("discord.js");
 const crypto = require("node:crypto");
-const { sanitizeLogText } = require("./safeLogger");
 const { resolvePublicBaseUrl } = require("./publicUrl");
+const { readFiniteInteger } = require("./numbers");
 
 const WEBHOOK_TARGETS = Object.freeze({
     LOG: "WEBHOOK_LOG_URL",
     ALERT: "ALERT_WEBHOOK_URL"
+});
+const WEBHOOK_SEVERITIES = Object.freeze({
+    INFO: "INFO",
+    SUCCESS: "SUCCESS",
+    WARNING: "WARNING",
+    ERROR: "ERROR",
+    CRITICAL: "CRITICAL"
+});
+const WEBHOOK_EVENT_STATES = Object.freeze({
+    OPEN: "OPEN",
+    UPDATE: "UPDATE",
+    RESOLVED: "RESOLVED"
+});
+const EVENT_PRESENTATION = Object.freeze({
+    INFO: { emoji: "🔵", color: Colors.Blurple, label: "ข้อมูล" },
+    SUCCESS: { emoji: "🟢", color: Colors.Green, label: "สำเร็จ" },
+    WARNING: { emoji: "🟠", color: Colors.Yellow, label: "คำเตือน" },
+    ERROR: { emoji: "🔴", color: Colors.Red, label: "ข้อผิดพลาด" },
+    CRITICAL: { emoji: "🚨", color: Colors.DarkRed, label: "วิกฤต" }
+});
+const EVENT_STATE_LABELS = Object.freeze({
+    OPEN: "เกิดปัญหา",
+    UPDATE: "กำลังติดตาม",
+    RESOLVED: "แก้ไขแล้ว"
+});
+const EVENT_CATEGORY_LABELS = Object.freeze({
+    SYSTEM: "ระบบ",
+    SECURITY: "ความปลอดภัย",
+    GUILD: "เซิร์ฟเวอร์",
+    OWNER: "การทำงานของเจ้าของ",
+    COMMAND: "คำสั่ง",
+    BACKUP: "สำรองและกู้คืน",
+    CAMPAIGN: "Join Campaign",
+    VOICE: "Voice Session",
+    MODERATION: "การดูแลสมาชิก",
+    VERIFICATION: "การยืนยันตัวตน",
+    DATA: "ความถูกต้องของข้อมูล"
 });
 const DISCORD_WEBHOOK_HOSTS = new Set([
     "discord.com",
@@ -15,15 +52,21 @@ const DISCORD_WEBHOOK_HOSTS = new Set([
     "canary.discord.com",
     "ptb.discord.com"
 ]);
+const DISCORD_MEDIA_HOSTS = new Set([
+    "cdn.discordapp.com",
+    "media.discordapp.net"
+]);
 const CONTENT_MAX = 2000;
 const EMBED_TOTAL_MAX = 6000;
 const EMBED_COUNT_MAX = 10;
 const FIELD_COUNT_MAX = 25;
-const DEFAULT_QUEUE_MAX = Math.max(10, Number(process.env.WEBHOOK_QUEUE_MAX || 500) || 500);
-const DEFAULT_CONCURRENCY = Math.max(1, Math.min(5, Number(process.env.WEBHOOK_CONCURRENCY || 1) || 1));
-const DEFAULT_ATTEMPTS = Math.max(1, Math.min(5, Number(process.env.WEBHOOK_MAX_ATTEMPTS || 3) || 3));
-const DEFAULT_TIMEOUT_MS = Math.max(1000, Number(process.env.WEBHOOK_SEND_TIMEOUT_MS || 15000) || 15000);
-const ROUTINE_DEDUPE_MAX = Math.max(100, Number(process.env.WEBHOOK_ROUTINE_DEDUPE_MAX || 2000) || 2000);
+const DEFAULT_QUEUE_MAX = readFiniteInteger(process.env.WEBHOOK_QUEUE_MAX, { fallback: 500, min: 10, max: 5000 });
+const DEFAULT_CONCURRENCY = readFiniteInteger(process.env.WEBHOOK_CONCURRENCY, { fallback: 1, min: 1, max: 5 });
+const DEFAULT_ATTEMPTS = readFiniteInteger(process.env.WEBHOOK_MAX_ATTEMPTS, { fallback: 3, min: 1, max: 5 });
+const DEFAULT_TIMEOUT_MS = readFiniteInteger(process.env.WEBHOOK_SEND_TIMEOUT_MS, { fallback: 15000, min: 1000, max: 120000 });
+const ROUTINE_DEDUPE_MAX = readFiniteInteger(process.env.WEBHOOK_ROUTINE_DEDUPE_MAX, { fallback: 2000, min: 100, max: 20000 });
+const EVENT_TOKEN_INPUT_MAX = 500;
+const EVENT_TOKEN_OUTPUT_MAX = 100;
 
 function trimTrailingSlashes(value) {
     let clean = String(value || "").trim();
@@ -100,7 +143,7 @@ function getWebhookDiagnostics(env = process.env) {
 function truncate(value, max) {
     const safeMax = Math.max(0, Number(max) || 0);
     if (safeMax === 0) return "";
-    const clean = sanitizeLogText(String(value ?? ""));
+    const clean = String(value ?? "").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
     if (clean.length <= safeMax) return clean;
     const suffix = "… [TRUNCATED]";
     if (safeMax <= suffix.length) return clean.slice(0, safeMax);
@@ -154,9 +197,244 @@ function normalizeWebhookPayload(payload) {
             .map(embed => normalizeEmbed(embed, budget))
             .filter(Boolean);
     }
-    // Log content is partly user-controlled. Never let it generate Discord pings.
-    normalized.allowedMentions = { parse: [] };
     return normalized;
+}
+
+function trimEdgeCharacter(value, character) {
+    let start = 0;
+    let end = value.length;
+    while (start < end && value[start] === character) start++;
+    while (end > start && value[end - 1] === character) end--;
+    return value.slice(start, end);
+}
+
+function normalizeEventToken(value, fallback) {
+    const replaced = String(value || fallback || "")
+        .slice(0, EVENT_TOKEN_INPUT_MAX)
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9_]+/g, "_");
+    const normalized = trimEdgeCharacter(replaced, "_").slice(0, EVENT_TOKEN_OUTPUT_MAX);
+    return normalized || fallback;
+}
+
+const DISCORD_MARKDOWN_CHARACTERS = new Set(["\\", "*", "_", "~", "|", ">", "[", "]", "(", ")"]);
+
+function escapeDiscordMarkdown(value) {
+    let output = "";
+    for (const character of String(value)) {
+        if (DISCORD_MARKDOWN_CHARACTERS.has(character)) output += "\\";
+        output += character;
+    }
+    return output;
+}
+
+function normalizeEventContextText(value, options = {}) {
+    const normalized = String(value)
+        .replace(/[\r\n\t]+/g, " ")
+        .replaceAll("`", "ˋ")
+        .trim();
+    return options.escapeMarkdown === false ? normalized : escapeDiscordMarkdown(normalized);
+}
+
+function isSafeDisplayUrl(value) {
+    if (typeof value !== "string") return false;
+    try {
+        const parsed = new URL(value);
+        return ["http:", "https:"].includes(parsed.protocol) && !parsed.username && !parsed.password;
+    } catch {
+        return false;
+    }
+}
+
+function formatEventContextValue(value) {
+    if (value === undefined || value === null || value === "") return "-";
+    if (typeof value === "boolean") return value ? "ใช่" : "ไม่";
+    if (Array.isArray(value)) return value.map(item => normalizeEventContextText(item)).join(", ");
+    if (typeof value === "object") {
+        try {
+            return normalizeEventContextText(JSON.stringify(value));
+        } catch {
+            return "[อ่านค่าไม่ได้]";
+        }
+    }
+    return normalizeEventContextText(value, { escapeMarkdown: !isSafeDisplayUrl(value) });
+}
+
+function resolveWebhookEventTarget(event = {}) {
+    const explicitTarget = normalizeEventToken(event.target, "");
+    if (explicitTarget === "LOG" || explicitTarget === "ALERT") return explicitTarget;
+    const severity = normalizeEventToken(event.severity, WEBHOOK_SEVERITIES.INFO);
+    if (event.actionRequired === true || severity === "ERROR" || severity === "CRITICAL") return "ALERT";
+    return "LOG";
+}
+
+function normalizeWebhookEventCode(value) {
+    const replaced = String(value || "system.event")
+        .slice(0, EVENT_TOKEN_INPUT_MAX)
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9._-]+/g, ".");
+    return trimEdgeCharacter(replaced, ".").slice(0, EVENT_TOKEN_OUTPUT_MAX) || "system.event";
+}
+
+function normalizeDiscordMediaUrl(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return null;
+    try {
+        const parsed = new URL(raw);
+        if (parsed.protocol !== "https:" || parsed.username || parsed.password) return null;
+        if (!DISCORD_MEDIA_HOSTS.has(parsed.hostname.toLowerCase())) return null;
+        return parsed.toString();
+    } catch {
+        return null;
+    }
+}
+
+function getDiscordAvatarUrl(user) {
+    try {
+        return normalizeDiscordMediaUrl(
+            user?.displayAvatarURL?.({ forceStatic: false, size: 256 }) ||
+            user?.avatarURL?.({ forceStatic: false, size: 256 })
+        );
+    } catch {
+        return null;
+    }
+}
+
+function getDiscordGuildIconUrl(guild) {
+    try {
+        return normalizeDiscordMediaUrl(guild?.iconURL?.({ forceStatic: false, size: 256 }));
+    } catch {
+        return null;
+    }
+}
+
+function appendEventField(fields, name, value, inline) {
+    if (value === undefined || value === null || value === "") return;
+    fields.push({
+        name: normalizeEventContextText(name),
+        value: formatEventContextValue(value),
+        inline
+    });
+}
+
+function buildEventFields(event, state) {
+    const fields = [];
+    appendEventField(fields, "สถานะ", state ? EVENT_STATE_LABELS[state] || state : null, true);
+    appendEventField(fields, "ผลกระทบ", event.impact, false);
+    appendEventField(fields, "สิ่งที่ควรทำ", event.action, false);
+
+    for (const [name, value] of Object.entries(event.context || {})) {
+        appendEventField(fields, String(name || "รายละเอียด").slice(0, 100), value, true);
+    }
+    return fields.slice(0, FIELD_COUNT_MAX);
+}
+
+function resolveEventTimestamp(value) {
+    const timestamp = new Date(Number(value || Date.now()));
+    return Number.isNaN(timestamp.getTime()) ? new Date() : timestamp;
+}
+
+function buildEventAuthor(target, sourceIconUrl) {
+    const targetLabel = target === "ALERT" ? "ACTION REQUIRED" : "ACTIVITY & AUDIT";
+    return {
+        name: `PHOMUEANGTAI • ${targetLabel}`,
+        ...(sourceIconUrl ? { icon_url: sourceIconUrl } : {})
+    };
+}
+
+function buildWebhookEventPayload(event = {}) {
+    const severity = normalizeEventToken(event.severity, WEBHOOK_SEVERITIES.INFO);
+    const presentation = EVENT_PRESENTATION[severity] || EVENT_PRESENTATION.INFO;
+    const category = normalizeEventToken(event.category, "SYSTEM");
+    const categoryLabel = EVENT_CATEGORY_LABELS[category] || category;
+    const state = event.state ? normalizeEventToken(event.state, "UPDATE") : null;
+    const code = normalizeWebhookEventCode(event.code);
+    const fields = buildEventFields(event, state);
+
+    const target = resolveWebhookEventTarget({ ...event, severity });
+    const sourceIconUrl = normalizeDiscordMediaUrl(event.sourceIconUrl);
+    const thumbnailUrl = normalizeDiscordMediaUrl(event.thumbnailUrl);
+    return {
+        embeds: [{
+            color: presentation.color,
+            author: buildEventAuthor(target, sourceIconUrl),
+            title: `${presentation.emoji} ${presentation.label} · ${String(event.title || categoryLabel)}`,
+            description: event.description ? String(event.description) : undefined,
+            fields,
+            footer: { text: `${categoryLabel} • ${code}` },
+            ...(thumbnailUrl ? { thumbnail: { url: thumbnailUrl } } : {}),
+            timestamp: resolveEventTimestamp(event.timestamp).toISOString()
+        }]
+    };
+}
+
+function chunkWebhookText(value, maxLength) {
+    const text = String(value ?? "");
+    const limit = Math.max(1, Number(maxLength) || 1);
+    const chunks = [];
+    for (let offset = 0; offset < text.length; offset += limit) chunks.push(text.slice(offset, offset + limit));
+    return chunks.length ? chunks : [""];
+}
+
+function serializePrivateEvent(event) {
+    const seen = new WeakSet();
+    return JSON.stringify(event, (_key, value) => {
+        if (typeof value === "bigint") return { $type: "bigint", value: value.toString() };
+        if (value && typeof value === "object") {
+            if (seen.has(value)) throw new TypeError("PRIVATE_WEBHOOK_CIRCULAR_EVENT");
+            seen.add(value);
+        }
+        return value;
+    });
+}
+
+function buildWebhookEventPayloads(event = {}) {
+    const primary = buildWebhookEventPayload(event);
+    let serialized;
+    try {
+        serialized = serializePrivateEvent(event);
+    } catch (error) {
+        serialized = JSON.stringify({ serializationError: String(error?.code || error?.name || "private_event_serialize_failed") });
+    }
+    const chunks = chunkWebhookText(serialized, 1000);
+    const payloads = [primary];
+    const chunkCount = chunks.length;
+    for (let index = 0; index < chunks.length; index += 5) {
+        const fields = chunks.slice(index, index + 5).map((value, offset) => ({
+            name: `Owner event continuation ${index + offset + 1}/${chunkCount}`,
+            value,
+            inline: false
+        }));
+        payloads.push({
+            embeds: [{
+                color: primary.embeds[0].color,
+                author: primary.embeds[0].author,
+                title: "Owner event continuation",
+                fields,
+                footer: primary.embeds[0].footer,
+                timestamp: primary.embeds[0].timestamp
+            }]
+        });
+    }
+    return payloads;
+}
+
+function normalizeLegacyWebhookPayload(target, payload) {
+    if (payload && typeof payload === "object" && Array.isArray(payload.embeds) && payload.embeds.length) {
+        return payload;
+    }
+    const content = typeof payload === "string" ? payload : payload?.content;
+    if (content === undefined || content === null) return payload;
+    return buildWebhookEventPayload({
+        target,
+        severity: target === "ALERT" ? "ERROR" : "INFO",
+        category: "SYSTEM",
+        code: target === "ALERT" ? "legacy.alert" : "legacy.log",
+        title: target === "ALERT" ? "การแจ้งเตือนจากระบบเดิม" : "บันทึกจากระบบเดิม",
+        description: String(content)
+    });
 }
 
 function failureCode(error) {
@@ -190,6 +468,19 @@ function withTimeout(promise, timeoutMs) {
     return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+function firstSendOutcome(sendPromise, timeoutMs) {
+    const outcome = Promise.resolve(sendPromise).then(
+        value => ({ state: "sent", value }),
+        error => ({ state: "failed", error })
+    );
+    let timer;
+    const timeout = new Promise(resolve => {
+        timer = setTimeout(() => resolve({ state: "timed_out" }), timeoutMs);
+    });
+    const first = Promise.race([outcome, timeout]).finally(() => clearTimeout(timer));
+    return { first, outcome };
+}
+
 function createTargetMetrics() {
     return {
         queued: 0,
@@ -198,6 +489,10 @@ function createTargetMetrics() {
         dropped: 0,
         retried: 0,
         warningSuppressed: 0,
+        timedOut: 0,
+        pendingTimedOut: 0,
+        lateSucceeded: 0,
+        lateFailed: 0,
         lastSuccessAt: null,
         lastFailureAt: null,
         lastFailureCode: null
@@ -220,6 +515,69 @@ class WebhookDispatcher {
         this.metrics = { LOG: createTargetMetrics(), ALERT: createTargetMetrics() };
         this.lastFailureWarningAt = { LOG: 0, ALERT: 0 };
         this.idleWaiters = [];
+        this.pendingReconciliations = new Set();
+        this.operationMax = readFiniteInteger(options.operationMax, {
+            fallback: Math.max(100, this.maxDepth * 2),
+            min: 10,
+            max: 10000
+        });
+        this.operations = new Map();
+    }
+
+    registerOperation(item, attempt) {
+        const id = crypto.randomUUID();
+        const operation = {
+            id,
+            target: item.target,
+            attempt,
+            state: "sending",
+            startedAt: Date.now(),
+            completedAt: null,
+            failureCode: null
+        };
+        this.operations.set(id, operation);
+        while (this.operations.size > this.operationMax) {
+            this.operations.delete(this.operations.keys().next().value);
+        }
+        return operation;
+    }
+
+    completeOperation(operation, state, error = null) {
+        operation.state = state;
+        operation.completedAt = Date.now();
+        operation.failureCode = error ? failureCode(error) : null;
+    }
+
+    trackTimedOutOperation(operation, outcome, metrics, url) {
+        metrics.timedOut++;
+        metrics.pendingTimedOut++;
+        metrics.lastFailureAt = Date.now();
+        metrics.lastFailureCode = "send_timeout_pending";
+        this.completeOperation(operation, "timed_out");
+        this.warnFailure(operation.target, metrics.lastFailureCode);
+
+        let reconciliation;
+        reconciliation = outcome.then(late => {
+            metrics.pendingTimedOut = Math.max(0, metrics.pendingTimedOut - 1);
+            if (late.state === "sent") {
+                metrics.lateSucceeded++;
+                metrics.sent++;
+                metrics.lastSuccessAt = Date.now();
+                this.completeOperation(operation, "late_succeeded");
+                return;
+            }
+            metrics.lateFailed++;
+            metrics.failed++;
+            metrics.lastFailureAt = Date.now();
+            metrics.lastFailureCode = failureCode(late.error);
+            this.completeOperation(operation, "late_failed", late.error);
+            this.discardClient(url);
+            this.warnFailure(operation.target, metrics.lastFailureCode);
+        }).finally(() => {
+            this.pendingReconciliations.delete(reconciliation);
+            this.resolveIdle();
+        });
+        this.pendingReconciliations.add(reconciliation);
     }
 
     warnFailure(target, code) {
@@ -303,14 +661,25 @@ class WebhookDispatcher {
         const normalized = normalizeWebhookPayload(item.payload);
         let lastError = null;
         for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
+            const operation = this.registerOperation(item, attempt);
             try {
                 const client = this.getClient(item.url);
-                await withTimeout(client.send(normalized), this.timeoutMs);
+                const { first, outcome } = firstSendOutcome(client.send(normalized), this.timeoutMs);
+                const delivery = await first;
+                if (delivery.state === "timed_out") {
+                    this.trackTimedOutOperation(operation, outcome, metrics, item.url);
+                    // The underlying HTTP request cannot be cancelled safely. Treat it as
+                    // accepted-but-pending so callers and dedupe logic do not send a duplicate.
+                    return true;
+                }
+                if (delivery.state === "failed") throw delivery.error;
+                this.completeOperation(operation, "sent");
                 metrics.sent++;
                 metrics.lastSuccessAt = Date.now();
                 return true;
             } catch (error) {
                 lastError = error;
+                this.completeOperation(operation, "failed", error);
                 if (attempt >= this.maxAttempts || !retryable(error)) break;
                 metrics.retried++;
                 await this.delayFn(Math.min(500 * 2 ** (attempt - 1), 5000));
@@ -338,14 +707,14 @@ class WebhookDispatcher {
     }
 
     resolveIdle() {
-        if (this.active || this.queue.length) return;
+        if (this.active || this.queue.length || this.pendingReconciliations.size) return;
         const waiters = this.idleWaiters;
         this.idleWaiters = [];
         for (const resolve of waiters) resolve(true);
     }
 
     async flush(timeoutMs = 5000) {
-        if (!this.active && !this.queue.length) return true;
+        if (!this.active && !this.queue.length && !this.pendingReconciliations.size) return true;
         return new Promise(resolve => {
             let settled = false;
             const finish = value => {
@@ -371,8 +740,10 @@ class WebhookDispatcher {
             accepting: this.accepting,
             queueDepth: this.queue.length,
             active: this.active,
+            pendingReconciliations: this.pendingReconciliations.size,
             maxDepth: this.maxDepth,
             concurrency: this.concurrency,
+            recentOperations: Array.from(this.operations.values()).map(operation => ({ ...operation })),
             targets: structuredClone(this.metrics)
         };
     }
@@ -389,12 +760,12 @@ function dispatcherIdentity(dispatcher) {
     return `dispatcher:${dispatcherIds.get(dispatcher)}`;
 }
 
-function routineDestinationKey(options = {}) {
+function dedupeDestinationKey(target, options = {}) {
     const dispatcher = options.dispatcher || null;
     const env = options.env || dispatcher?.env || process.env;
-    const url = normalizeWebhookUrlForCompare(options.url || getWebhookUrl("LOG", env) || "missing");
+    const url = normalizeWebhookUrlForCompare(options.url || getWebhookUrl(target, env) || "missing");
     return crypto.createHash("sha256")
-        .update(`${dispatcherIdentity(dispatcher)}\u0000${url}`)
+        .update(`${target}\u0000${dispatcherIdentity(dispatcher)}\u0000${url}`)
         .digest("hex")
         .slice(0, 20);
 }
@@ -408,27 +779,46 @@ function trimRoutineDedupe() {
     }
 }
 
-async function sendRoutineDeduped(payload, options) {
+function buildDuplicateSummaryPayload(entry, ttlMs, stopping = false) {
+    return buildWebhookEventPayload({
+        target: entry.target,
+        severity: entry.target === "ALERT" ? "ERROR" : "WARNING",
+        category: entry.category || "SYSTEM",
+        code: `${entry.eventCode || "webhook.event"}.repeated`,
+        title: "สรุปเหตุการณ์ที่เกิดซ้ำ",
+        description: entry.label,
+        state: stopping ? "UPDATE" : undefined,
+        context: {
+            "เกิดซ้ำเพิ่ม": `${entry.duplicates} ครั้ง`,
+            "ช่วงเวลา": stopping ? "ก่อนระบบหยุด" : `${Math.round(ttlMs / 1000)} วินาที`
+        }
+    });
+}
+
+async function sendDedupedWebhook(target, payload, options) {
     const baseKey = truncate(options.dedupeKey, 200) || "routine-event";
-    const key = `${routineDestinationKey(options)}:${baseKey}`;
+    const key = `${dedupeDestinationKey(target, options)}:${baseKey}`;
     const ttlMs = Math.max(1000, Number(options.dedupeMs || 5 * 60 * 1000));
     const existing = routineDedupe.get(key);
     if (existing) {
         const firstDelivered = await existing.pending;
-        if (!firstDelivered) return sendRoutineDeduped(payload, options);
+        if (!firstDelivered) return sendDedupedWebhook(target, payload, options);
         existing.duplicates++;
         return true;
     }
     const entry = {
+        target,
         duplicates: 0,
         timer: null,
         label: truncate(options.summaryLabel || "routine event", 120),
+        category: normalizeEventToken(options.summaryCategory, "SYSTEM"),
+        eventCode: normalizeWebhookEventCode(options.eventCode || "webhook.event"),
         options,
         pending: null
     };
     routineDedupe.set(key, entry);
     trimRoutineDedupe();
-    entry.pending = sendWebhook("LOG", payload, options);
+    entry.pending = sendWebhook(target, payload, options);
     const sent = await entry.pending;
     if (!sent) {
         routineDedupe.delete(key);
@@ -437,9 +827,7 @@ async function sendRoutineDeduped(payload, options) {
     entry.timer = setTimeout(() => {
         routineDedupe.delete(key);
         if (entry.duplicates > 0) {
-            sendWebhook("LOG", {
-                content: `📋 **[LOG SUMMARY]** ${entry.label}\nเกิดซ้ำเพิ่ม **${entry.duplicates}** ครั้งในช่วง ${Math.round(ttlMs / 1000)} วินาที`
-            }, entry.options).catch(() => {});
+            sendWebhook(entry.target, buildDuplicateSummaryPayload(entry, ttlMs), entry.options).catch(() => {});
         }
     }, ttlMs);
     entry.timer.unref?.();
@@ -447,6 +835,9 @@ async function sendRoutineDeduped(payload, options) {
 }
 
 function sendWebhook(target, payload, options = {}) {
+    if (Array.isArray(payload)) {
+        return Promise.all(payload.map(part => sendWebhook(target, part, options))).then(results => results.every(Boolean));
+    }
     if (options.dispatcher) return options.dispatcher.enqueue(target, payload, options);
     if (options.WebhookClientClass || options.env || options.url) {
         const isolated = new WebhookDispatcher({
@@ -464,21 +855,38 @@ function sendWebhook(target, payload, options = {}) {
 }
 
 function sendLogWebhook(payload, options = {}) {
-    if (options.dedupeKey) return sendRoutineDeduped(payload, options);
-    return sendWebhook("LOG", payload, options);
+    const normalizedPayload = normalizeLegacyWebhookPayload("LOG", payload);
+    if (options.dedupeKey) return sendDedupedWebhook("LOG", normalizedPayload, options);
+    return sendWebhook("LOG", normalizedPayload, options);
 }
 
 function sendAlertWebhook(payload, options = {}) {
-    return sendWebhook("ALERT", payload, options);
+    const normalizedPayload = normalizeLegacyWebhookPayload("ALERT", payload);
+    if (options.dedupeKey) return sendDedupedWebhook("ALERT", normalizedPayload, options);
+    return sendWebhook("ALERT", normalizedPayload, options);
+}
+
+function sendWebhookEvent(event, options = {}) {
+    const target = resolveWebhookEventTarget(event);
+    const eventOptions = {
+        ...options,
+        dedupeKey: options.dedupeKey || event.dedupeKey,
+        dedupeMs: options.dedupeMs || event.dedupeMs,
+        summaryLabel: options.summaryLabel || event.summaryLabel || event.title,
+        summaryCategory: options.summaryCategory || event.summaryCategory || event.category,
+        eventCode: options.eventCode || event.eventCode || event.code
+    };
+    const payload = buildWebhookEventPayloads({ ...event, target });
+    return target === "ALERT"
+        ? sendAlertWebhook(payload, eventOptions)
+        : sendLogWebhook(payload, eventOptions);
 }
 
 async function flushWebhookQueue(timeoutMs = 5000) {
     for (const [key, entry] of routineDedupe.entries()) {
         if (entry.timer) clearTimeout(entry.timer);
         if (entry.duplicates > 0) {
-            sendWebhook("LOG", {
-                content: `📋 **[LOG SUMMARY]** ${entry.label}\nเกิดซ้ำเพิ่ม **${entry.duplicates}** ครั้งก่อนระบบหยุด`
-            }, entry.options).catch(() => {});
+            sendWebhook(entry.target, buildDuplicateSummaryPayload(entry, 0, true), entry.options).catch(() => {});
         }
         routineDedupe.delete(key);
     }
@@ -493,29 +901,38 @@ function getWebhookDeliveryDiagnostics() {
     return {
         ...defaultDispatcher.stats(),
         configuration: getWebhookDiagnostics(process.env),
+        dedupeKeys: routineDedupe.size,
         routineDedupeKeys: routineDedupe.size
     };
 }
 
 function buildStartupNotice({ clientTag, baseUrl, includeShadowPortal = true, timestamp = Date.now() }) {
     const safeBase = getOwnerDashboardBaseUrl({ PUBLIC_BASE_URL: baseUrl });
-    const lines = [
-        `✅ **Bot พร้อมแล้ว!** \`${clientTag || "unknown"}\``,
-        ""
-    ];
+    const context = { "บัญชีบอท": clientTag || "unknown" };
     if (safeBase) {
-        lines.push(`🌐 **Dashboard:** ${safeBase}`);
-        if (includeShadowPortal) lines.push(`👁️‍🗨️ **Shadow Portal:** ${safeBase}/shadow`);
+        context.Dashboard = safeBase;
+        if (includeShadowPortal) context["เครื่องมือขั้นสูง"] = `${safeBase}/shadow`;
     } else {
-        lines.push("🌐 **Dashboard:** ยังไม่ได้ตั้งค่า public URL ที่ถูกต้อง");
+        context.Dashboard = "ยังไม่ได้ตั้งค่า public URL ที่ถูกต้อง";
     }
-    lines.push("", `⏰ <t:${Math.floor(timestamp / 1000)}:F>`);
-    return { content: lines.join("\n") };
+    return buildWebhookEventPayload({
+        target: "LOG",
+        severity: "SUCCESS",
+        category: "SYSTEM",
+        code: "system.ready",
+        title: "บอทพร้อมใช้งานแล้ว",
+        description: "ขั้นตอนเริ่มต้นหลักเสร็จสมบูรณ์",
+        context,
+        timestamp
+    });
 }
 
 module.exports = {
     WEBHOOK_TARGETS,
+    WEBHOOK_SEVERITIES,
+    WEBHOOK_EVENT_STATES,
     DISCORD_WEBHOOK_HOSTS,
+    DISCORD_MEDIA_HOSTS,
     WebhookDispatcher,
     getWebhookUrl,
     validateWebhookUrl,
@@ -523,11 +940,31 @@ module.exports = {
     getWebhookDiagnostics,
     getWebhookDeliveryDiagnostics,
     normalizeWebhookPayload,
+    normalizeLegacyWebhookPayload,
+    normalizeDiscordMediaUrl,
+    getDiscordAvatarUrl,
+    getDiscordGuildIconUrl,
+    resolveWebhookEventTarget,
+    buildWebhookEventPayload,
+    buildWebhookEventPayloads,
     sendWebhook,
     sendLogWebhook,
     sendAlertWebhook,
+    sendWebhookEvent,
     flushWebhookQueue,
     shutdownWebhookDispatcher,
     buildStartupNotice,
-    _test: { failureCode, retryable, withTimeout, routineDedupe }
+    _test: {
+        failureCode,
+        retryable,
+        withTimeout,
+        firstSendOutcome,
+        routineDedupe,
+        trimEdgeCharacter,
+        normalizeEventToken,
+        normalizeWebhookEventCode,
+        normalizeEventContextText,
+        escapeDiscordMarkdown,
+        buildEventFields
+    }
 };

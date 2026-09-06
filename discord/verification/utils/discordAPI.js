@@ -14,31 +14,27 @@
 */
 
 const https = require("https");
+const { PermissionFlagsBits } = require("discord.js");
+const { MessageEmbed } = require("../../core/discordCompat");
 
 const { encryptToken, decryptToken } = require("./crypto");
 const { sanitizeLogText } = require("./safeLogger");
 const dmService = require("../../dm");
+const { readFiniteInteger } = require("../../core/numbers");
 
 const BASE = "https://discord.com/api/v10";
 const MAX_DISCORD_API_RESPONSE_BYTES = 12 * 1024 * 1024;
-const DISCORD_API_RESPONSE_MAX_BYTES = Math.min(
-    MAX_DISCORD_API_RESPONSE_BYTES,
-    Math.max(
-        64 * 1024,
-        Number(process.env.DISCORD_API_RESPONSE_MAX_BYTES || MAX_DISCORD_API_RESPONSE_BYTES) ||
-            MAX_DISCORD_API_RESPONSE_BYTES
-    )
-);
-const DISCORD_API_BODY_MAX_BYTES = Math.max(
-    16 * 1024,
-    Number(process.env.DISCORD_API_BODY_MAX_BYTES || 512 * 1024) || 512 * 1024
-);
-const DISCORD_API_ROLE_MAX = Math.max(50, Number(process.env.DISCORD_API_ROLE_MAX || 500) || 500);
-const DISCORD_API_CHANNEL_MAX = Math.max(50, Number(process.env.DISCORD_API_CHANNEL_MAX || 500) || 500);
-const DISCORD_API_PERMISSION_OVERWRITE_MAX = Math.max(
-    20,
-    Number(process.env.DISCORD_API_PERMISSION_OVERWRITE_MAX || 100) || 100
-);
+const DISCORD_API_RESPONSE_MAX_BYTES = readFiniteInteger(process.env.DISCORD_API_RESPONSE_MAX_BYTES, {
+    fallback: MAX_DISCORD_API_RESPONSE_BYTES, min: 64 * 1024, max: MAX_DISCORD_API_RESPONSE_BYTES
+});
+const DISCORD_API_BODY_MAX_BYTES = readFiniteInteger(process.env.DISCORD_API_BODY_MAX_BYTES, {
+    fallback: 512 * 1024, min: 16 * 1024, max: 4 * 1024 * 1024
+});
+const DISCORD_API_ROLE_MAX = readFiniteInteger(process.env.DISCORD_API_ROLE_MAX, { fallback: 500, min: 50, max: 5000 });
+const DISCORD_API_CHANNEL_MAX = readFiniteInteger(process.env.DISCORD_API_CHANNEL_MAX, { fallback: 500, min: 50, max: 5000 });
+const DISCORD_API_PERMISSION_OVERWRITE_MAX = readFiniteInteger(process.env.DISCORD_API_PERMISSION_OVERWRITE_MAX, {
+    fallback: 100, min: 20, max: 5000
+});
 const requestDiagnostics = {
     total: 0,
     inFlight: 0,
@@ -48,14 +44,14 @@ const requestDiagnostics = {
 };
 
 const PERMISSIONS = Object.freeze({
-    KICK_MEMBERS: 1n << 1n,
-    BAN_MEMBERS: 1n << 2n,
-    VIEW_CHANNEL: 1n << 10n,
-    SEND_MESSAGES: 1n << 11n,
-    EMBED_LINKS: 1n << 14n,
-    MANAGE_ROLES: 1n << 28n,
-    MODERATE_MEMBERS: 1n << 40n,
-    ADMINISTRATOR: 1n << 3n
+    KickMembers: PermissionFlagsBits.KickMembers,
+    BanMembers: PermissionFlagsBits.BanMembers,
+    ViewChannel: PermissionFlagsBits.ViewChannel,
+    SendMessages: PermissionFlagsBits.SendMessages,
+    EmbedLinks: PermissionFlagsBits.EmbedLinks,
+    ManageRoles: PermissionFlagsBits.ManageRoles,
+    ModerateMembers: PermissionFlagsBits.ModerateMembers,
+    Administrator: PermissionFlagsBits.Administrator
 });
 
 const TEXT_CHANNEL_TYPES = new Set([
@@ -139,9 +135,10 @@ function isOAuthInvalidGrantError(err) {
 }
 
 function sleep(ms) {
+    // Retry backoff is awaited control flow; an unref'd timer can let Node exit
+    // while the returned promise is still pending.
     return new Promise(resolve => {
-        const timer = setTimeout(resolve, ms);
-        timer.unref?.();
+        setTimeout(resolve, ms);
     });
 }
 
@@ -180,7 +177,10 @@ function validateRequestBodySize(body) {
     const bytes = Buffer.byteLength(body);
     if (bytes > DISCORD_API_BODY_MAX_BYTES) {
         requestDiagnostics.requestBodyTooLarge += 1;
-        throw new Error(`Discord API request body too large: ${bytes} bytes`);
+        const error = new Error(`Discord API request body too large: ${bytes} bytes`);
+        error.code = "discord_request_body_too_large";
+        error.retryable = false;
+        throw error;
     }
 }
 
@@ -300,7 +300,7 @@ async function fetchWithRetry(pathAndSearch, options = {}) {
             return res;
         } catch (err) {
             lastError = err;
-            if (attempt >= attempts) throw err;
+            if (err?.retryable === false || attempt >= attempts) throw err;
             await sleep(Math.min(250 * attempt, 1500));
         } finally {
             clearTimeout(timer);
@@ -367,7 +367,7 @@ function toBigIntPermission(value) {
 function hasPermission(permissionValue, flag) {
     const perms = toBigIntPermission(permissionValue);
 
-    return (perms & PERMISSIONS.ADMINISTRATOR) === PERMISSIONS.ADMINISTRATOR ||
+    return (perms & PERMISSIONS.Administrator) === PERMISSIONS.Administrator ||
         (perms & flag) === flag;
 }
 
@@ -704,7 +704,7 @@ function computeMemberGuildPermissions(member, roles = []) {
 function applyChannelOverwrites(basePermissions, member, channel) {
     let perms = toBigIntPermission(basePermissions);
 
-    if ((perms & PERMISSIONS.ADMINISTRATOR) === PERMISSIONS.ADMINISTRATOR) {
+    if ((perms & PERMISSIONS.Administrator) === PERMISSIONS.Administrator) {
         return perms.toString();
     }
 
@@ -798,7 +798,7 @@ function validateBotCanManageRole({ botMember, roles, targetRoleId }) {
         detail: `${target.name} (${target.id})`
     });
 
-    const hasManageRoles = hasPermission(guildPerms, PERMISSIONS.MANAGE_ROLES);
+    const hasManageRoles = hasPermission(guildPerms, PERMISSIONS.ManageRoles);
 
     checks.push({
         name: "manage_roles",
@@ -850,9 +850,9 @@ function validateBotCanUseChannel({ botMember, roles, channel }) {
     const guildPerms = computeMemberGuildPermissions(botMember, roles);
     const channelPerms = applyChannelOverwrites(guildPerms, botMember, channel);
 
-    const canView = hasPermission(channelPerms, PERMISSIONS.VIEW_CHANNEL);
-    const canSend = canView && hasPermission(channelPerms, PERMISSIONS.SEND_MESSAGES);
-    const canEmbed = canSend && hasPermission(channelPerms, PERMISSIONS.EMBED_LINKS);
+    const canView = hasPermission(channelPerms, PERMISSIONS.ViewChannel);
+    const canSend = canView && hasPermission(channelPerms, PERMISSIONS.SendMessages);
+    const canEmbed = canSend && hasPermission(channelPerms, PERMISSIONS.EmbedLinks);
 
     const checks = [
         {
@@ -1213,77 +1213,85 @@ async function sendDM(userId, payload) {
 function verificationDmCopy({ ok, blocked, alreadyVerified, reasonCode }) {
     if (alreadyVerified) {
         return {
-            title: "ℹ️ บัญชีนี้ยืนยันไว้แล้ว",
-            summary: "ระบบตรวจพบว่าบัญชีนี้มียศยืนยันอยู่ก่อนแล้ว จึงไม่ได้เพิ่มยศซ้ำ",
-            nextAction: "ไม่ต้องดำเนินการเพิ่มเติม คุณสามารถกลับไปใช้งานเซิร์ฟเวอร์ได้",
+            title: "✨ ยืนยันตัวตนไว้แล้ว",
+            summary: "บัญชีของคุณพร้อมใช้งานอยู่แล้ว ระบบจึงไม่ได้เพิ่มยศซ้ำ",
             tone: "info",
-            resultLabel: "มียศอยู่แล้ว"
+            showReason: false,
+            nextAction: null
         };
     }
     if (ok) {
         return {
             title: "✅ ยืนยันตัวตนสำเร็จ",
-            summary: "Discord ยืนยันแล้วว่ากระบวนการเสร็จสมบูรณ์และผลการให้ยศสำเร็จ",
-            nextAction: "ไม่ต้องดำเนินการเพิ่มเติม คุณสามารถกลับไปใช้งานเซิร์ฟเวอร์ได้",
+            summary: "คุณผ่านการตรวจสอบและพร้อมใช้งานเซิร์ฟเวอร์แล้ว",
             tone: "success",
-            resultLabel: "สำเร็จ"
+            showReason: false,
+            nextAction: null
         };
     }
     if (blocked) {
         return {
-            title: "🛡️ ไม่ผ่านเงื่อนไขของเซิร์ฟเวอร์",
-            summary: "ระบบตรวจสอบข้อมูลสำเร็จ แต่บัญชีไม่ผ่านเงื่อนไขที่เซิร์ฟเวอร์ตั้งไว้",
+            title: "🛡️ ยังไม่ผ่านการยืนยัน",
+            summary: "บัญชีนี้ยังไม่ผ่านเงื่อนไขที่เซิร์ฟเวอร์ตั้งไว้",
             nextAction: "ติดต่อผู้ดูแลเซิร์ฟเวอร์หากต้องการสอบถามเงื่อนไขเพิ่มเติม",
             tone: "warning",
-            resultLabel: "ไม่ผ่านเงื่อนไข"
+            showReason: true
         };
     }
     const stalePanel = reasonCode === "panel_revision_mismatch" || reasonCode === "role_mismatch_latest_config";
     return {
         title: "⚠️ ยืนยันตัวตนไม่สำเร็จ",
-        summary: "กระบวนการยืนยันยังไม่เสร็จสมบูรณ์ กรุณาตรวจสอบรายละเอียดด้านล่าง",
+        summary: "ระบบยังดำเนินการยืนยันให้เสร็จสมบูรณ์ไม่ได้",
         nextAction: stalePanel
             ? "กลับไป Discord แล้วกดปุ่มจากแผงยืนยันล่าสุด"
-            : "ลองใหม่อีกครั้ง หากยังไม่สำเร็จให้แจ้งผู้ดูแลพร้อมรหัสอ้างอิง",
-        tone: "action",
-        resultLabel: "ดำเนินการไม่สำเร็จ"
+            : "ลองใหม่อีกครั้ง หรือติดต่อผู้ดูแลเซิร์ฟเวอร์",
+        tone: "danger",
+        showReason: true
     };
+}
+
+function isGuildIconUrl(value) {
+    return /^https:\/\/cdn\.discordapp\.com\/icons\/\d{17,22}\/[A-Za-z0-9_]+\.(?:png|gif|webp)(?:\?size=\d+)?$/.test(String(value || ""));
+}
+
+function buildVerificationDmEmbed(data = {}) {
+    const ok = !!data.ok;
+    const resultType = data.result || (ok ? "success" : "failed");
+    const reasonCode = String(data.reasonCode || "");
+    const alreadyVerified = ok && reasonCode === "already_verified_has_role";
+    const blocked = resultType === "blocked";
+    const copy = verificationDmCopy({ ok, blocked, alreadyVerified, reasonCode });
+    const guildName = dmService.design.markdownText(data.guildName, "Discord Server", 100);
+    const roleName = data.roleName
+        ? dmService.design.markdownText(data.roleName, "ไม่ทราบ", 100)
+        : null;
+    const reason = dmService.design.markdownText(
+        data.reason || (ok ? "ยืนยันสำเร็จ" : "ไม่สามารถระบุสาเหตุได้"),
+        "ไม่สามารถระบุสาเหตุได้",
+        500
+    );
+    const fields = [];
+    if (roleName) fields.push({ name: "🎖️ ยศยืนยัน", value: `**${roleName}**`, inline: true });
+    if (copy.showReason) fields.push({ name: "รายละเอียด", value: reason });
+    if (copy.nextAction) fields.push({ name: "ดำเนินการต่อ", value: copy.nextAction });
+
+    const embed = new MessageEmbed()
+        .setColor(dmService.design.COLORS[copy.tone] || dmService.design.COLORS.info)
+        .setAuthor({ name: `${guildName} • Verification` })
+        .setTitle(copy.title)
+        .setDescription(copy.summary)
+        .setFooter({ text: "Phomueangtai • Verification" })
+        .setTimestamp();
+    if (fields.length) embed.addFields(fields);
+    if (isGuildIconUrl(data.guildIconUrl)) embed.setThumbnail(data.guildIconUrl);
+    return embed;
 }
 
 async function sendVerificationDM(userId, data = {}) {
     if (!userId) return false;
 
     const ok = !!data.ok;
-    const guildName = data.guildName || "Discord Server";
-    const roleName = data.roleName || null;
-    const reason = data.reason || (ok ? "ยืนยันสำเร็จ" : "ยืนยันไม่สำเร็จ");
-    const resultType = data.result || (ok ? "success" : "failed");
-    const reasonCode = String(data.reasonCode || "");
-    const alreadyVerified = ok && reasonCode === "already_verified_has_role";
-    const blocked = resultType === "blocked";
-    const copy = verificationDmCopy({ ok, blocked, alreadyVerified, reasonCode });
-    const profile = await dmService.resolveProfile(userId, {
-        id: userId,
-        username: data.profile?.username,
-        globalName: data.profile?.global_name || data.profile?.globalName,
-        discriminator: data.profile?.discriminator,
-        avatarUrl: data.profile?.avatarUrl
-    });
-    const embed = dmService.design.buildDmEmbed({
-        tone: copy.tone,
-        title: copy.title,
-        summary: copy.summary,
-        profile,
-        fields: [
-            { name: "🏠 เซิร์ฟเวอร์", value: dmService.design.markdownText(guildName, "Discord Server", 100), inline: true },
-            ...(roleName ? [{ name: "🎖️ ยศยืนยัน", value: dmService.design.markdownText(roleName, "ไม่ทราบ", 100), inline: true }] : []),
-            { name: "📍 ผลการตรวจ", value: copy.resultLabel, inline: true }
-        ],
-        details: reason,
-        nextAction: copy.nextAction,
-        referenceId: data.requestId || "verification",
-        footer: "Phomueangtai • ระบบยืนยันตัวตน"
-    });
+    const embed = buildVerificationDmEmbed(data);
     const fallbackRequestId = `${userId}:${Date.now()}`;
     const delivery = await dmService.send({
         eventKey: `verification:${data.requestId || fallbackRequestId}`,
@@ -1380,6 +1388,7 @@ module.exports = {
     createDMChannel,
     sendDM,
     verificationDmCopy,
+    buildVerificationDmEmbed,
     sendVerificationDM,
 
     prepareTokenStorage

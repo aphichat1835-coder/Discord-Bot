@@ -59,7 +59,8 @@
 
     verify_internal_error: "ระบบยืนยันตัวตนมีปัญหาภายใน กรุณาลองใหม่อีกครั้ง",
     internal_error: "ระบบมีปัญหาภายใน กรุณาลองใหม่อีกครั้ง",
-    invalid_json_response: "ระบบตอบกลับไม่ถูกต้อง กรุณาลองใหม่"
+    invalid_json_response: "ระบบตอบกลับไม่ถูกต้อง กรุณาลองใหม่",
+    callback_state_replayed: "ลิงก์ยืนยันถูกใช้ไปแล้วหรือหมดอายุ กรุณากดปุ่มยืนยันใหม่ใน Discord"
   };
 
   const stepOrder = ["discord", "account", "security", "role"];
@@ -69,15 +70,21 @@
   }
 
   function show(id) {
+    const target = $(id);
+
     document.querySelectorAll(".callback-state").forEach((el) => {
-      el.classList.remove("active");
-      el.setAttribute("aria-hidden", "true");
+      if (el !== target) {
+        el.classList.remove("active");
+        el.setAttribute("aria-hidden", "true");
+      }
     });
 
-    const target = $(id);
     if (target) {
       target.classList.add("active");
       target.setAttribute("aria-hidden", "false");
+      if (!target.hasAttribute("tabindex")) {
+        target.setAttribute("tabindex", "-1");
+      }
       target.focus({ preventScroll: true });
     }
   }
@@ -149,6 +156,7 @@
       }
     }
 
+    document.title = "ยืนยันไม่สำเร็จ — Discord Verification";
     show("s-error");
   }
 
@@ -176,6 +184,7 @@
       if (rolePill) rolePill.style.display = "inline-flex";
     }
 
+    document.title = "ยืนยันตัวตนสำเร็จ — Discord Verification";
     show("s-success");
   }
 
@@ -271,6 +280,7 @@
 
       document.querySelectorAll(".verify-step").forEach((el) => {
         el.classList.remove("active");
+        el.removeAttribute("aria-current");
         el.classList.add("done");
       });
 

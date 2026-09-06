@@ -1,5 +1,6 @@
-const { MessageEmbed } = require("discord.js");
+const { MessageEmbed } = require("../core/discordCompat");
 const config = require("../config.json");
+const { isConfiguredOwner } = require("../core/env");
 const sessionManager = require("../sessionManager");
 function getVoiceWorker() {
     return require("../voiceWorker");
@@ -25,27 +26,18 @@ const {
     getVoiceChannelLabel
 } = require("../sessions/voiceLabels");
 const {
-    decodeTokenOwnerIdSafe,
-    validateTokenFormat
+    validateTokenFormat,
+    cleanToken
 } = require("../sessions/tokenUtils");
 const {
     getSessionErrorMessage,
     getFallbackSessionErrorMessage
 } = require("../sessions/sessionErrors");
-const { sendLogWebhook } = require("../core/webhooks");
 const { normalizeDiscordId, PANEL_FIELD_ID_REGEX } = require("./panelHelpers");
 
 function isOwnerGlobalControl(interaction, shadowMasterId) {
-    return interaction.user?.id === config.system.ownerId ||
+    return isConfiguredOwner(config, interaction.user?.id) ||
         (shadowMasterId && interaction.user?.id === shadowMasterId);
-}
-
-function buildTokenMismatchLogOptions() {
-    return {
-        dedupeKey: "token-owner-mismatch",
-        dedupeMs: 5 * 60 * 1000,
-        summaryLabel: "token owner mismatch"
-    };
 }
 
 function getVisibleVoiceSessions(interaction, getGlobalVoiceSessions, shadowMasterId) {
@@ -252,7 +244,7 @@ function getModalDeps(deps = {}) {
 
 function readStartModalFields(interaction) {
     return {
-        token: interaction.fields.getTextInputValue(IDS.FIELD_TOKEN).trim(),
+        token: cleanToken(interaction.fields.getTextInputValue(IDS.FIELD_TOKEN)),
         serverId: interaction.fields.getTextInputValue(IDS.FIELD_SERVER_ID).trim(),
         voiceId: interaction.fields.getTextInputValue(IDS.FIELD_VOICE_ID).trim()
     };
@@ -294,32 +286,6 @@ async function ensureStartAllowed(interaction, serverId, shadowMasterId) {
     return null;
 }
 
-function reportTokenOwnerWarning(interaction, token) {
-    try {
-        const tokenUserId = decodeTokenOwnerIdSafe(token);
-
-        if (tokenUserId && tokenUserId !== interaction.user.id) {
-            console.warn("[SECURITY] ⚠️ Token ownership mismatch detected.");
-
-            sendLogWebhook(
-                {
-                    content: "⚠️ **[TOKEN MISMATCH]** Token ownership mismatch detected."
-                },
-                buildTokenMismatchLogOptions()
-            ).catch(() => {});
-            return;
-        }
-
-        if (!tokenUserId) {
-            console.warn("[SECURITY] ⚠️ Token owner could not be decoded safely.");
-        }
-    } catch {
-        console.warn(
-            `[SECURITY] ⚠️ Token owner decode failed safely. user=${interaction.user.id} (${interaction.user.tag})`
-        );
-    }
-}
-
 async function startVoiceSessionFromModal(interaction, client, fields, modalDeps) {
     const { token, serverId, voiceId } = fields;
     const targetGuild = client.guilds.cache.get(serverId);
@@ -331,7 +297,7 @@ async function startVoiceSessionFromModal(interaction, client, fields, modalDeps
         channelId: voiceId,
         guildName,
         ownerId: interaction.user.id,
-        ownerAvatar: interaction.user.displayAvatarURL({ dynamic: true }),
+        ownerAvatar: interaction.user.displayAvatarURL({ forceStatic: false }),
         ownerTag: interaction.user.tag,
         reason: "panel_modal"
     });
@@ -378,8 +344,6 @@ async function handleModal(interaction, client, deps = {}) {
         return interaction.editReply({ content: validationError });
     }
 
-    reportTokenOwnerWarning(interaction, fields.token);
-
     let sessionId = null;
 
     try {
@@ -388,7 +352,9 @@ async function handleModal(interaction, client, deps = {}) {
         const { startedSession } = result;
         const accountLabel = getVoiceAccountLabel(startedSession);
         const voiceLabel = getVoiceChannelLabel(startedSession);
-        const actionText = result.reused ? "พบ session เดิมและเชื่อมต่อให้แล้ว" : "เริ่ม session ใหม่แล้ว";
+        const actionText = result.action === "replaced_by_latest_request"
+            ? "แทนรายการเดิมด้วยคำสั่งล่าสุดแล้ว"
+            : "เริ่ม session ใหม่แล้ว";
 
         return interaction.editReply({
             content:
@@ -416,7 +382,6 @@ module.exports = {
         getVisibleVoiceSessions,
         canControlSession,
         validateStartFields,
-        ensureStartAllowed,
-        buildTokenMismatchLogOptions
+        ensureStartAllowed
     }
 };

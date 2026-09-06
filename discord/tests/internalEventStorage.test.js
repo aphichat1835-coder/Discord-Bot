@@ -119,6 +119,33 @@ test("internal event save aborts before writing when a strict read fails", async
     assert.equal(writes, 0);
 });
 
+test("large private events use checksummed chunks and reconstruct every value", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const values = new Map();
+    const sessionManager = {
+        async getSetting(key, fallback) { return values.has(key) ? values.get(key) : fallback; },
+        async getSettingStrict(key) { return { found: values.has(key), value: values.get(key) ?? null }; },
+        async setSetting(key, value) { values.set(key, value); return true; },
+        async deleteSetting(key) { values.delete(key); return true; }
+    };
+    const record = {
+        guildId: "guild",
+        eventId: "large-event",
+        createdAt: 1,
+        metadata: { payload: "x".repeat(600_000), active: true, count: 42 },
+        evidence: [null, false, 7]
+    };
+
+    assert.deepEqual(await storage._test.saveFallback(sessionManager, record), record);
+    const key = storage.storageKey(record.guildId, record.eventId);
+    const manifest = values.get(key);
+    assert.equal(storage._test.isChunkManifest(manifest), true);
+    const restored = await storage.getInternalEvent(sessionManager, record.guildId, record.eventId);
+    assert.deepEqual(restored, record);
+
+    values.set(storage._test.chunkKey(key, manifest.storageId, 0), "corrupt");
+    assert.equal(await storage.getInternalEvent(sessionManager, record.guildId, record.eventId), null);
+});
+
 test("general settings loader excludes internal event namespaces before applying its limit", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const sessionManager = require("../sessionManager");
     assert.equal(sessionManager._test.INTERNAL_EVENT_SETTINGS.test("internal_event_guild_1"), true);

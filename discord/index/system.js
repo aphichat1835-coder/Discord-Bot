@@ -9,11 +9,11 @@ DO NOT SIMPLIFY: Log capture ring buffer — prevents RAM bloat.
 
 const {
     sendAlertWebhook,
-    flushWebhookQueue,
-    shutdownWebhookDispatcher
+    buildWebhookEventPayload
 } = require("../core/webhooks");
 const { sanitizeLogText, safeError } = require("../core/safeLogger");
 const { normalizeRuntimeLine } = require("../core/startupLogger");
+const { readFiniteInteger } = require("../core/numbers");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🗂️  SHARED STATE (exported สำหรับ server.js / views.js ใช้)
@@ -23,6 +23,8 @@ const MAX_LOGS_DEFAULT = 500;
 
 let crashShieldReady = false;
 let botReadyAt = null;
+let fatalShutdownHandler = null;
+let fatalShutdownStarted = false;
 let commandsReady = false;
 let isAppShuttingDown = global.__APP_SHUTTING_DOWN === true;
 
@@ -40,12 +42,12 @@ const originalLog   = console.log;
 const originalError = console.error;
 const originalWarn  = console.warn;
 const cronTimers = [];
-const CRITICAL_ALERT_COOLDOWN_MS = Math.max(1000, Number(process.env.CRITICAL_ALERT_COOLDOWN_MS || 5 * 60 * 1000) || 5 * 60 * 1000);
-const CRITICAL_ALERT_MAX_FINGERPRINTS = Math.max(10, Number(process.env.CRITICAL_ALERT_MAX_FINGERPRINTS || 100) || 100);
-const REQUEST_COUNT_MAX_BUCKETS = Math.max(100, Number(process.env.RATE_LIMIT_MAX_BUCKETS || 5000) || 5000);
-const COMMAND_COOLDOWN_MAX_USERS = Math.max(100, Number(process.env.COMMAND_COOLDOWN_MAX_USERS || 5000) || 5000);
-const TOGGLE_COOLDOWN_MAX_KEYS = Math.max(100, Number(process.env.TOGGLE_COOLDOWN_MAX_KEYS || 1000) || 1000);
-const ANTI_RAID_DEBOUNCE_MAX_KEYS = Math.max(100, Number(process.env.ANTI_RAID_DEBOUNCE_MAX_KEYS || 5000) || 5000);
+const CRITICAL_ALERT_COOLDOWN_MS = readFiniteInteger(process.env.CRITICAL_ALERT_COOLDOWN_MS, { fallback: 5 * 60 * 1000, min: 1000, max: 24 * 60 * 60 * 1000 });
+const CRITICAL_ALERT_MAX_FINGERPRINTS = readFiniteInteger(process.env.CRITICAL_ALERT_MAX_FINGERPRINTS, { fallback: 100, min: 10, max: 10000 });
+const REQUEST_COUNT_MAX_BUCKETS = readFiniteInteger(process.env.RATE_LIMIT_MAX_BUCKETS, { fallback: 5000, min: 100, max: 100000 });
+const COMMAND_COOLDOWN_MAX_USERS = readFiniteInteger(process.env.COMMAND_COOLDOWN_MAX_USERS, { fallback: 5000, min: 100, max: 100000 });
+const TOGGLE_COOLDOWN_MAX_KEYS = readFiniteInteger(process.env.TOGGLE_COOLDOWN_MAX_KEYS, { fallback: 1000, min: 100, max: 100000 });
+
 
 // ════════════════════════════════════════════════════════════════════════════
 //  📜  LOG CAPTURE — Ring Buffer (กัน RAM บวม)
@@ -115,9 +117,22 @@ function createCriticalAlertDispatcher(options = {}) {
         if (!entry) return;
         entries.delete(key);
         if (entry.duplicates < 1) return;
-        await send({
-            content: `🚨 **[CRITICAL SUMMARY] ${entry.type}**\n\`\`\`\n${entry.message}\nRepeated ${entry.duplicates} additional time(s) within ${Math.round(cooldownMs / 1000)}s.\n\`\`\``
-        }).catch(() => {});
+        await send(buildWebhookEventPayload({
+            target: "ALERT",
+            severity: "CRITICAL",
+            category: "SYSTEM",
+            code: `runtime.${entry.type}.repeated`,
+            state: "UPDATE",
+            title: "ข้อผิดพลาดระดับวิกฤตเกิดซ้ำ",
+            description: entry.message,
+            impact: "Process ยังพบข้อผิดพลาดชนิดเดิมซ้ำภายในช่วงควบคุมข้อความ",
+            action: "ตรวจ Runtime Log และ Stack Trace ของเหตุการณ์แรก",
+            context: {
+                "ประเภท": entry.type,
+                "เกิดซ้ำเพิ่ม": `${entry.duplicates} ครั้ง`,
+                "ช่วงเวลา": `${Math.round(cooldownMs / 1000)} วินาที`
+            }
+        })).catch(() => {});
     }
 
     async function dispatch(type, error, payload) {
@@ -161,30 +176,69 @@ function createCriticalAlertDispatcher(options = {}) {
     return { dispatch, sendSummary, stop, entries };
 }
 
+async function terminateAfterFatal(type, error) {
+    if (fatalShutdownStarted) return;
+    fatalShutdownStarted = true;
+
+    if (typeof fatalShutdownHandler === "function") {
+        try {
+            await fatalShutdownHandler(`FATAL_${type}`, 1);
+            return;
+        } catch (shutdownError) {
+            originalError(`[CRITICAL] fatal shutdown failed: ${shutdownError?.message || shutdownError}`);
+        }
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 250));
+    process.exit(1);
+}
+
+function setFatalShutdownHandler(handler) {
+    fatalShutdownHandler = typeof handler === "function" ? handler : null;
+}
+
 function initCrashShield(config) {
     const criticalAlerts = createCriticalAlertDispatcher();
     process.on("uncaughtException", async (err) => {
         originalError(sanitizeLogText(`[CRITICAL] uncaughtException: ${err.message}\n${err.stack || ""}`));
-        await criticalAlerts.dispatch("uncaughtException", err, {
-            content: `🚨 **[CRITICAL] uncaughtException**\n\`\`\`\n${safeError(err)}\n${sanitizeLogText(err.stack || "").substring(0, 800)}\n\`\`\``
-        });
+        await criticalAlerts.dispatch("uncaughtException", err, buildWebhookEventPayload({
+            target: "ALERT",
+            severity: "CRITICAL",
+            category: "SYSTEM",
+            code: "runtime.uncaught_exception",
+            state: "OPEN",
+            title: "Runtime เกิด Uncaught Exception",
+            description: `${safeError(err)}\n\n${sanitizeLogText(err.stack || "").substring(0, 800)}`,
+            impact: "Process อาจอยู่ในสถานะไม่สมบูรณ์หรือหยุดทำงานระหว่างเริ่มระบบ",
+            action: "ตรวจ Stack Trace และ Runtime Log ทันที"
+        }));
         if (!crashShieldReady) {
             await new Promise(r => setTimeout(r, 1500));
             process.exit(1);
         }
+        await terminateAfterFatal("uncaughtException", err);
     });
 
     process.on("unhandledRejection", async (reason) => {
         const error = reason instanceof Error ? reason : new Error(String(reason));
         const msg = error.message;
         originalError(sanitizeLogText(`[CRITICAL] unhandledRejection: ${msg}`));
-        await criticalAlerts.dispatch("unhandledRejection", error, {
-            content: `🚨 **[CRITICAL] unhandledRejection**\n\`\`\`\n${sanitizeLogText(msg).substring(0, 900)}\n\`\`\``
-        });
+        await criticalAlerts.dispatch("unhandledRejection", error, buildWebhookEventPayload({
+            target: "ALERT",
+            severity: "CRITICAL",
+            category: "SYSTEM",
+            code: "runtime.unhandled_rejection",
+            state: "OPEN",
+            title: "Runtime พบ Promise ที่ไม่มีตัวจัดการข้อผิดพลาด",
+            description: sanitizeLogText(msg).substring(0, 900),
+            impact: "งานเบื้องหลังบางส่วนอาจหยุดหรือทิ้งสถานะไม่สมบูรณ์",
+            action: "ตรวจ Runtime Log เพื่อหาต้นทางของ Promise"
+        }));
         if (!crashShieldReady) {
             await new Promise(r => setTimeout(r, 1500));
             process.exit(1);
         }
+        await terminateAfterFatal("unhandledRejection", error);
     });
     return criticalAlerts;
 }
@@ -232,7 +286,7 @@ function pruneCommandCooldowns(commandCooldowns, now, ttlMs) {
 
 function cleanupVolatileMaps({
     spamTracking, requestCounts,
-    commandCooldowns, toggleCooldowns, antiRaidDebounce,
+    commandCooldowns, toggleCooldowns,
     voiceWorker, config
 }, now) {
     const windowMs = config.limits.rateLimitWindowMs || 60000;
@@ -241,18 +295,16 @@ function cleanupVolatileMaps({
     pruneTimestampListMap(requestCounts, now, windowMs);
     pruneCommandCooldowns(commandCooldowns, now, 30000);
     pruneTimestampMap(toggleCooldowns, now, 5000);
-    pruneTimestampMap(antiRaidDebounce, now, 10000);
     trimMapToMaxSize(spamTracking, config.limits.spamTrackingMaxUsers || 1000);
     trimMapToMaxSize(requestCounts, REQUEST_COUNT_MAX_BUCKETS);
     trimMapToMaxSize(commandCooldowns, COMMAND_COOLDOWN_MAX_USERS);
     trimMapToMaxSize(toggleCooldowns, TOGGLE_COOLDOWN_MAX_KEYS);
-    trimMapToMaxSize(antiRaidDebounce, ANTI_RAID_DEBOUNCE_MAX_KEYS);
     voiceWorker.cleanupVolatileState?.(now);
 }
 
 function initCronJobs({
     spamTracking, requestCounts,
-    commandCooldowns, toggleCooldowns, antiRaidDebounce,
+    commandCooldowns, toggleCooldowns,
     sessionManager, voiceWorker, config
 }) {
     stopCronJobs();
@@ -263,7 +315,7 @@ function initCronJobs({
             const now = Date.now();
             cleanupVolatileMaps({
                 spamTracking, requestCounts,
-                commandCooldowns, toggleCooldowns, antiRaidDebounce,
+                commandCooldowns, toggleCooldowns,
                 voiceWorker, config
             }, now);
         } catch (err) {
@@ -303,87 +355,20 @@ function stopCronJobs() {
 // ════════════════════════════════════════════════════════════════════════════
 //  🛑  GRACEFUL SHUTDOWN
 // ════════════════════════════════════════════════════════════════════════════
-async function closeServer() {
-    if (!global.server) return;
-
-    await new Promise((resolve) => {
-        let resolved = false;
-        const done = () => {
-            if (resolved) return;
-            resolved = true;
-            resolve();
-        };
-
-        const fallback = setTimeout(done, 3000);
-        fallback.unref?.();
-
+async function stopRuntimeCleanups(runtimeCleanups = []) {
+    let stopped = 0;
+    let failed = 0;
+    for (const cleanup of runtimeCleanups) {
         try {
-            global.server.close(() => {
-                clearTimeout(fallback);
-                console.log("[SHUTDOWN] ✅ Express closed");
-                done();
-            });
+            if (typeof cleanup?.stop !== "function") continue;
+            await cleanup.stop();
+            stopped++;
         } catch (err) {
-            clearTimeout(fallback);
-            console.warn(`[SHUTDOWN] ⚠️ Express close skipped: ${err.message}`);
-            done();
-        }
-    });
-}
-
-function initShutdown({
-    sessionManager,
-    voiceWorker,
-    client,
-    memoryMonitor,
-    verificationRuntime,
-    dmService
-}) {
-    let isShuttingDownMain = false;
-
-    async function shutdown(signal) {
-        if (isShuttingDownMain) return;
-        isShuttingDownMain = true;
-        markAppShuttingDown();
-        const timeout = setTimeout(() => {
-            console.error("[SHUTDOWN] ⏱️ Timeout — forcing exit");
-            process.exit(1);
-        }, 10000);
-        timeout.unref?.();
-        console.log(`\n⛔ [SHUTDOWN] ${signal} — graceful shutdown starting...`);
-        stopCronJobs();
-        dmService?.stop?.();
-        try {
-            await verificationRuntime?.stopVerificationRuntime?.();
-        } catch (err) {
-            console.warn(`[SHUTDOWN] ⚠️ Verification runtime stop skipped: ${err.message}`);
-        }
-        voiceWorker.setShuttingDown(true);
-
-        try {
-            await sessionManager.saveDatabase();
-            console.log("[SHUTDOWN] ✅ Database synced");
-            await voiceWorker.pauseAll();
-            console.log("[SHUTDOWN] ✅ Voice paused");
-            if (client) { client.destroy(); console.log("[SHUTDOWN] ✅ Discord destroyed"); }
-            if (memoryMonitor?.stopMemoryMonitor) memoryMonitor.stopMemoryMonitor();
-            await closeServer();
-            const webhookFlushed = await flushWebhookQueue(2500);
-            if (!webhookFlushed) console.warn("[SHUTDOWN] ⚠️ Webhook queue did not fully drain before timeout");
-            await shutdownWebhookDispatcher(500);
-            await sessionManager.disconnectDB?.();
-            console.log("[SHUTDOWN] ✅ MongoDB disconnected");
-            clearTimeout(timeout);
-            process.exit(0);
-        } catch (err) {
-            console.error("[SHUTDOWN] ❌ Error:", err.message);
-            clearTimeout(timeout);
-            process.exit(1);
+            failed++;
+            console.warn(`[SHUTDOWN] ⚠️ Runtime cleanup skipped: ${err?.message || "unknown error"}`);
         }
     }
-
-    process.on("SIGTERM", () => shutdown("SIGTERM"));
-    process.on("SIGINT",  () => shutdown("SIGINT"));
+    return { stopped, failed };
 }
 
 module.exports = {
@@ -397,6 +382,6 @@ module.exports = {
     get shutdownRequested() { return isShuttingDown(); },
     markAppShuttingDown, isShuttingDown,
     originalLog, originalError, originalWarn,
-    initLogCapture, initCrashShield, initCronJobs, stopCronJobs, initShutdown,
-    criticalFingerprint, createCriticalAlertDispatcher
+    initLogCapture, initCrashShield, initCronJobs, stopCronJobs, setFatalShutdownHandler, terminateAfterFatal,
+    criticalFingerprint, createCriticalAlertDispatcher, stopRuntimeCleanups
 };

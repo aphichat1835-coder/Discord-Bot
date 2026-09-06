@@ -128,7 +128,7 @@ describe("verification additive migration", () => {
             },
             snapshotMeta: patch.snapshotMeta
         });
-        expect(readable.validateSync()).toBeUndefined();
+        await expect(readable.validate()).resolves.toBeUndefined();
         expect(readable.discord.displayTag).toBe("legacy#1234");
         expect(readable.snapshotMeta.version).toBe(2);
         expect(JSON.stringify(writes)).not.toMatch(/encryptedAccessToken|encryptedRefreshToken|rawIp/i);

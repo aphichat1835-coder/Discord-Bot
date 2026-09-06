@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const { PermissionFlagsBits } = require("discord.js");
 
 const { validateRoleChange } = require("../features/roleButton");
 
@@ -9,7 +10,7 @@ function guildWithBot({ canManageRoles = true, highestPosition = 10 } = {}) {
             me: {
                 permissions: {
                     has(permission) {
-                        return permission === "MANAGE_ROLES" && canManageRoles;
+                        return permission === PermissionFlagsBits.ManageRoles && canManageRoles;
                     }
                 },
                 roles: {

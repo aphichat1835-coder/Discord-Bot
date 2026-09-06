@@ -2,6 +2,138 @@
 
 ## [Unreleased] - Unified Bot And Verification Runtime 2026-07-16
 
+- Removed all member DMs from `/ban`, `/kick`, and `/timeout` while preserving
+  the moderation action, ModCase lifecycle, and operational webhook behavior.
+  The DM outbox now removes unsent legacy moderation records and refuses new
+  moderation notifications.
+- Rebuilt Verification DMs as concise server-first result cards: they now use
+  the server icon as their thumbnail, show only relevant role/reason guidance,
+  and keep request references internal for delivery deduplication.
+
+- Fixed Voice Admin durable lock writes so MongoDB never receives overlapping
+  update paths. Unlock actions now preserve and restore locks when a member
+  leaves the source room during a state change, latest lock versions receive
+  their own enforcement work, and result messages distinguish complete,
+  partial, and failed bulk actions accurately.
+
+- Moved the production bot Owner identities to required `OWNER_ID` environment
+  configuration. It accepts one or more comma-separated Discord User IDs;
+  startup rejects a missing or malformed value instead of using the
+  source-config fallback.
+
+- Reworked Voice Admin bulk work from one member plus a fixed 500ms pause at a
+  time into eight bounded per-guild workers with a twelve-member shared runtime
+  cap. Discord REST rate-limit handling now determines the pace; targets are
+  checked again before action so a member who has already left the source voice
+  channel is reported as skipped rather than being followed into another room.
+  Final summaries include skipped targets and elapsed time, while the
+  fourteen-minute cutoff applies only to members that have not started yet.
+
+- Added owner-only `/rerole` and `//รียศ [ROLE_ID ...]` role-sweep entry points.
+  Each command verifies a stable complete member fetch, scans first, reports
+  aggregate role counts, requires the exact `ยืนยัน` text from the same owner in
+  the same channel before an absolute 60-second deadline, and rechecks bot
+  permission plus the member/role/bot-hierarchy fingerprint before removal.
+  Membership or hierarchy changes cancel the work. Results report changed
+  members and successful/failed role assignments. The command removes only
+  eligible roles from manageable human members while preserving selected role
+  exceptions and the invoker, and intentionally creates no snapshot or
+  automatic restore path.
+
+- Replaced the retired `/voicekickall` registration with an ephemeral,
+  Administrator-only `/voiceadmin` panel for normal voice-channel chat. It
+  snapshots the room at execution time, skips Administrators in panel mode,
+  supports disconnect/move/server mute/server deafen actions, and persists
+  non-Administrator voice locks across restart and voice reconnects. Added
+  Owner-only `//` and `///` text controls, audit-log-aware lock enforcement,
+  and bounded notices for unauthorized unlock attempts without changing the
+  isolated Voice self-client or Owner Intent policies. The secret
+  `///ปิดไมค์หมด` mode now persists its mute lock for Administrators as well as
+  ordinary members and accepts release only from the configured bot Owner.
+
+- Removed the unapproved `identify.premium` OAuth scope from every new
+  verification entry point. Historical Owner records may still display an
+  already-granted premium value, but new member verification no longer depends
+  on that optional Discord permission.
+
+- Repaired the Owner diagnostics path, routed fatal boot errors through the
+  coordinated shutdown path, removed the unreachable duplicate OAuth-start
+  route, and refreshed audited transitive lockfile dependencies without changing
+  the owner-approved Voice self-client.
+- Preserved full-fidelity private event values in storage and private webhook
+  delivery by using continuation payloads rather than silent truncation.
+- Corrected protected control safety, credential migration/session-secret,
+  request-size, state-restore, and action-result contracts under explicit Owner
+  approval; aligned release workflow and active operational documentation.
+
+- Hardened the public OAuth start route with a friendly error boundary, preserved fatal shutdown exit-code escalation during overlapping graceful shutdown, and corrected privacy-deletion response totals to use the verified manifest counter.
+
+- Removed JavaScript-side dynamic path construction from the Mongoose 9 compatibility gate by feeding fixed-root source files over stdin, added CLI regression coverage, simplified finding classification, and updated Voice plaintext validation to iterate Unicode code points.
+
+- Closed the remaining Discord.js v14 permission boundary in event protection and invite handling, replaced the Mongoose 9 regex scanner with AST analysis, rejected unsupported legacy Store channels explicitly, escaped untrusted Discord Markdown in webhook events, and clarified dedupe diagnostics. Added degraded Discord-login coverage, bounded encryption-migration counting during recurring maintenance, and connected Node test LCOV output to CI-based Sonar analysis.
+
+- Upgraded the primary runtime to Node.js 24.18 LTS, npm 12, `discord.js`
+  14.27, Mongoose 9.8, and `express-rate-limit` 8.6. Added a narrow Discord v14
+  compatibility boundary for existing Embed/component contracts, migrated
+  interaction, activity, channel, emoji, backup, and restore APIs, and kept all
+  slash-command names, custom IDs, routes, collections, and environment values
+  unchanged.
+- Replaced the Jest runner with Node's built-in test runner plus focused
+  `expect` and `jest-mock` adapters. This removes the obsolete `glob@7` and
+  `inflight` test dependency chain while preserving the 435 Verification
+  regression contracts.
+- Removed unused `tweetnacl` and the mismatched `opusscript` dependency. Voice
+  has no audio-player/resource path, so no native Opus build is required for
+  its connection-only lifecycle.
+- Updated GitHub Actions to pinned `checkout` v6.0.2 and `setup-node` v6.3.0,
+  added least-privilege workflow permissions, aligned Render and `.node-version`,
+  pinned the CI/Render bootstrap to npm 12.0.1, and kept project dependency
+  installation in lockfile-based `npm ci` mode.
+- Hardened the npm bootstrap in CI and Render with lifecycle scripts disabled.
+  Command toggles now persist the proposed state before mutating runtime state,
+  return an unavailable response when MongoDB cannot acknowledge the write, and
+  avoid recording a cooldown or audit event for a change that never committed.
+- Bounded webhook event identifiers before normalization, replaced the
+  backtracking edge-trim expressions with linear scanning, and split webhook and
+  Join Campaign presentation builders into focused helpers without changing the
+  emitted Discord payload contract.
+- Restored Voice-session migration compatibility for legacy GCM records created
+  before `ENCRYPTION_KEY` was configured, normalized numeric channel types in
+  Backup/Restore planning and execution, preserved event-level metadata in
+  duplicate webhook summaries, and restored structured reporting when a Restore
+  result cannot be delivered privately.
+- Removed the inactive duplicate Owner renderer implementation after the routed
+  renderer module became authoritative, while preserving its protected-file
+  digest and focused render/auth tests.
+- Aligned the active documentation and agent instructions with the
+  owner-approved `discord.js` v14 primary runtime, documented the separate AES
+  and IP/device-correlation key contracts, removed a secret-like legacy test
+  fixture in favor of a byte-level historical fallback compatibility vector,
+  expanded duplicate-webhook metadata assertions, and made the 16-byte
+  AES-GCM authentication-tag contract explicit during Voice token encryption
+  and decryption.
+
+- Upgraded new Verification and Voice secrets to versioned `v3:gcm` payloads
+  derived from the full 32-byte SHA-256 digest. Existing Service-compatible
+  GCM/CBC records remain readable and are conditionally re-encrypted after
+  successful authenticated decryption. Verification maintenance now reports
+  remaining legacy encrypted records, and Voice migrates loaded sessions
+  without overwriting concurrent database changes.
+- Added explicit graceful-shutdown cleanup for spam tracking, reveal-attempt,
+  and IP lookup cache intervals; `.unref()` remains as a secondary safeguard.
+
+- Standardized both operational webhooks behind one event envelope with stable
+  codes, categories, severities, Thai presentation, impact/action fields,
+  target-aware duplicate summaries, and legacy-payload compatibility. Routine
+  activity remains in the audit webhook while process, security, persistence,
+  and data-integrity failures route to the action-required webhook. Individual
+  Voice disconnect/recovery/terminal outcomes and routine Backup/Restore-result
+  delivery no longer notify the Owner webhook; Voice alerts only when durable
+  state cannot be reconciled. Join Campaign no longer emits repeated progress
+  webhooks between its start and finish summaries. Relevant guild and account
+  events now include their Discord icon/avatar so Owner messages are easier to
+  identify at a glance.
+
 - Closed the remaining confirmed PR review defects in Owner member access and snapshot
   maintenance. OAuth profile/token reads now require a verification association
   with the selected guild, and cleanup shares the per-user snapshot mutation
@@ -57,7 +189,7 @@
   directly, and Shadow authentication rejects unset PINs while accepting the
   Owner `DASHBOARD_PIN` as a timing-safe recovery credential.
 
-- Synchronized all repository documentation with the current `tt` runtime:
+- Synchronized all repository documentation with the current `ttt` runtime:
   exact boot/maintenance lifecycle, 15-command and 13-variable contracts,
   redacted versus audited Member Detail access, complete snapshot storage,
   backup/restore validation, and one-service deployment guidance.
@@ -309,7 +441,7 @@
 - Added the protected-path guard to local validation and CI, and excluded the protected directory from broad syntax scanning.
 - Documented the five memory-trend diagnostic threshold variables already consumed by `scripts/checkMemoryTrend.js`.
 - Added Owner-only per-user member detail and audited OAuth2 token reveal, plus read-only legacy verified-member listing from `OAuthUser.lastVerify`.
-- Updated Join Campaign defaults so Owner can target any guild currently cached by the bot unless `JOIN_CAMPAIGN_ALLOWED_GUILDS` restricts it; this joins authorized users only and does not sync roles.
+- Join Campaign is now fail-closed: `JOIN_CAMPAIGN_ENABLED` defaults to disabled and `JOIN_CAMPAIGN_ALLOWED_GUILDS` must explicitly list every target guild.
 - Switched Render liveness to `/ping`, added `/ready`, `/guilds`, and `/guild/:guildId` compatibility aliases, and added production secret strength checks.
 - Hardened verification review findings: degraded verification startup, dry-run
   diagnostics isolation, graceful verification shutdown drain, redacted member
@@ -510,7 +642,7 @@
 - Updated `.env.example`, `SECURITY.md`, and `ARCHITECTURE.md` with non-secret Trace Eraser guard controls while keeping hidden owner/system operational details out of public documentation.
 - Updated session documentation and placeholders for owner dashboard and Dashboard Public rolling session controls.
 - Updated OAuth token storage documentation and placeholders to reflect persistent encrypted token storage with refresh maintenance.
-- Historical behavior: Join Campaign execution originally required an explicit target-guild allowlist. Current behavior is documented above: an empty `JOIN_CAMPAIGN_ALLOWED_GUILDS` permits any guild currently cached by the bot, under Owner-only controls. Admin OAuth originally remained scoped to `identify guilds`; the later OAuth scope update above adds `guilds.join`.
+- Historical note: a prior revision allowed an empty Join Campaign allow-list to target any cached guild. The hardened runtime no longer permits that behavior; an explicit allow-list is mandatory. Admin OAuth originally remained scoped to `identify guilds`; the later OAuth scope update above adds `guilds.join`.
 
 ### Notes
 
@@ -541,3 +673,9 @@ Historical work before this consolidation included:
 - Safer dashboard serializers for normal session responses.
 - Verification flow improvements including `/setup-verify`, OAuth callback success/failure behavior, repeat verification handling, and panel compatibility.
 - Documentation baseline work for architecture, file responsibilities, owner decisions, AI workflow, security/privacy, deployment, and validation.
+
+## Owner-approved self-client dependency
+
+`discord.js-selfbot-v13` is an intentional and necessary dependency of the isolated Voice account/session subsystem. The repository owner has explicitly approved its continued use because the current architecture has no compatible replacement that preserves the required behavior.
+
+Do not remove, replace, migrate, rename, independently upgrade/downgrade, or convert its library-specific APIs unless the repository owner gives a new explicit instruction for that exact change. Main-bot Discord.js v14 work must remain isolated from the self-client package. See [`docs/SELF_CLIENT_POLICY.md`](docs/SELF_CLIENT_POLICY.md) for the binding maintenance policy.

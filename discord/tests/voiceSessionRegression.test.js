@@ -30,7 +30,6 @@ const panelInteractionsTest = require("../commands/panelInteractions")._test;
 const isOwnerGlobalControl = panelInteractionsTest.isOwnerGlobalControl;
 const getVisibleVoiceSessions = panelInteractionsTest.getVisibleVoiceSessions;
 const canControlSession = panelInteractionsTest.canControlSession;
-const buildTokenMismatchLogOptions = panelInteractionsTest.buildTokenMismatchLogOptions;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONTRACT COPIES — เฉพาะฟังก์ชันที่ยังต้อง inline เพราะพึ่ง Discord/DB runtime
@@ -249,19 +248,6 @@ test("canControlSession: returns false for null session", () => { // NOSONAR -- 
     assert.equal(canControlSession(interaction, null, "shadow-999"), false);
 });
 
-test("token mismatch warning metadata does not expose owner, actor, or guild identifiers", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    const options = buildTokenMismatchLogOptions(
-        "12345678901234567",
-        "22345678901234567",
-        "32345678901234567"
-    );
-
-    assert.deepEqual(options, {
-        dedupeKey: "token-owner-mismatch",
-        dedupeMs: 300000,
-        summaryLabel: "token owner mismatch"
-    });
-});
 
 // ════════════════════════════════════════════════════════════════════════════
 //  7. ensureStartAllowed — guild admin cross-guild block
@@ -302,16 +288,29 @@ test("regression: ensureVoiceSession does not reference mainClient.guilds", () =
     const src = readLifecycleSrc();
     const body = extractFunctionBody(src, "ensureVoiceSession");
     assert.ok(body, "ensureVoiceSession must exist in lifecycle.js");
-    assert.ok(
-        !body.includes("mainClient.guilds") && !body.includes("mainClient?.guilds"),
+    assert.equal(
+        body.includes("mainClient.guilds"),
+        false,
         "ensureVoiceSession must NOT call mainClient.guilds — violates separation from main bot"
+    );
+    assert.equal(
+        body.includes("mainClient?.guilds"),
+        false,
+        "ensureVoiceSession must NOT call mainClient?.guilds — violates separation from main bot"
     );
 });
 
-test("regression: ensureVoiceSession rejects cross-owner token reuse", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    const body = extractFunctionBody(readLifecycleSrc(), "reuseExistingVoiceSession");
-    assert.ok(body.includes("token_in_use_by_another_user"));
-    assert.ok(body.includes("existingSession.ownerId"));
+test("regression: Voice session startup does not bind a token to the requester account", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const src = readLifecycleSrc();
+    assert.doesNotMatch(src, /TOKEN_OWNER_MISMATCH/);
+    assert.equal(src.includes("token_in_use_by_another_user"), false);
+    assert.match(src, /replaceExistingVoiceSession/);
+    assert.match(src, /superseded_by_newer_request/);
+});
+
+test("panel has no decoded-token owner gate before session creation", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const src = fs.readFileSync(path.join(__dirname, "../commands/panelInteractions.js"), "utf8"); // nosemgrep
+    assert.doesNotMatch(src, /verifyTokenOwner|decodeTokenOwnerIdSafe|TOKEN_OWNER_MISMATCH/);
 });
 
 test("regression: ensureVoiceSession does not call resolveVoiceTarget", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
@@ -332,9 +331,15 @@ test("regression: connectToVoice resolves guild via self-client param, not mainC
         body.includes("client.guilds"),
         "connectToVoice must resolve guild via self-client parameter"
     );
-    assert.ok(
-        !body.includes("mainClient.guilds") && !body.includes("st.mainClient.guilds"),
+    assert.equal(
+        body.includes("mainClient.guilds"),
+        false,
         "connectToVoice must NOT use mainClient.guilds"
+    );
+    assert.equal(
+        body.includes("st.mainClient.guilds"),
+        false,
+        "connectToVoice must NOT use st.mainClient.guilds"
     );
 });
 
@@ -398,4 +403,13 @@ test("source contract: panel normalizeDiscordId uses 17-22 regex (consistent wit
         src.includes("/^\\d{17,22}$/.test(id)") || src.includes("\\d{17,22}"),
         "normalizeDiscordId in panelHelpers must use 17-22 regex matching worker"
     );
+});
+
+test("voice webhooks ignore individual connection outcomes and alert only on persistence failure", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const source = require("node:fs").readFileSync("discord/voiceWorker/lifecycle.js", "utf8");
+    assert.doesNotMatch(source, /code:\s*"voice\.session\.reconnect_unstable"/);
+    assert.doesNotMatch(source, /code:\s*"voice\.session\.recovered"/);
+    assert.doesNotMatch(source, /code:\s*"voice\.session\.dead"/);
+    assert.match(source, /code:\s*"voice\.session\.failure_state_persistence_failed"/);
+    assert.match(source, /category:\s*"DATA"/);
 });

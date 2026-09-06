@@ -11,9 +11,7 @@ const {
     normalizeSecurityRules,
     clampNumber
 } = require('../utils/verifyMode');
-const {
-    decodeCallbackState
-} = require('../utils/state');
+const { decodeCallbackState } = require('../utils/state');
 const { normalizeGuildPermissions } = require('../utils/guildPermissions');
 const { shouldStoreOAuthTokens } = require('../utils/oauthTokenLifecycle');
 const snapshotBudget = require('../services/snapshotBudget');
@@ -29,14 +27,17 @@ const OAuthUser = require('../models/OAuthUser');
 const GuildConfig = require('../models/GuildConfig');
 const VerifyLog = require('../models/VerifyLog');
 const IpIdentityLink = require('../models/IpIdentityLink');
+const VerificationRecovery = require('../models/VerificationRecovery');
+const { evaluateCriticalPersistence, coordinatePersistenceFailure } = require('../services/verificationPersistence');
+const { consumeVerificationState } = require('../services/verificationStateNonce');
+const { readFiniteInteger } = require('../../core/numbers');
 
 const BASE_URL = resolvePublicBaseUrl(process.env, 'http://localhost:3000');
 
 const REDIRECT_URI = `${BASE_URL}/auth/callback`;
-const VERIFY_SCOPE = 'identify identify.premium email connections guilds guilds.members.read guilds.join';
-const DEVICE_DUPLICATE_LOOKUP_MAX = Math.max(
-    20,
-    Number(process.env.DEVICE_DUPLICATE_LOOKUP_MAX || 200) || 200
+const DEVICE_DUPLICATE_LOOKUP_MAX = readFiniteInteger(
+    process.env.DEVICE_DUPLICATE_LOOKUP_MAX,
+    { fallback: 200, min: 20, max: 2000 }
 );
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -86,7 +87,14 @@ function getAccountAgeDays(userId) {
 
 function getAvatarUrl(profile) {
     if (!profile?.avatar) {
-        const fallback = Number(profile?.discriminator || 0) % 5;
+        let fallback = Number(profile?.discriminator || 0) % 5;
+        if (!profile?.discriminator || profile.discriminator === "0") {
+            try {
+                fallback = Number((BigInt(profile.id) >> 22n) % 6n);
+            } catch {
+                fallback = 0;
+            }
+        }
         return `https://cdn.discordapp.com/embed/avatars/${fallback}.png`;
     }
 
@@ -701,14 +709,13 @@ function mergeCompleteSnapshotRefs(previousRefs = {}, stored = {}) {
     return next;
 }
 
-function applyOAuthTokenStorage(updateSet, tokenData) {
-    /*
-      ค่า default เก็บ OAuth token แบบเข้ารหัสเพื่อ refresh สิทธิ์ต่อเนื่อง
-      ถ้าต้องการปิดให้ตั้ง STORE_OAUTH_TOKENS=false
-    */
-    if (shouldStoreOAuthTokens() && typeof discord.prepareTokenStorage === 'function') {
-        updateSet.oauth = discord.prepareTokenStorage(tokenData);
+function applyForcedOAuthTokenStorage(updateSet, tokenData) {
+    if (typeof discord.prepareTokenStorage !== 'function') {
+        const error = new Error('OAuth token storage is unavailable');
+        error.code = 'oauth_token_storage_unavailable';
+        throw error;
     }
+    updateSet.oauth = discord.prepareTokenStorage(tokenData);
 }
 
 function buildDiscordSnapshot(profile, connections, memberInfo, stateObj, extra = {}) {
@@ -843,6 +850,61 @@ async function safeSideEffect(label, fn, fallback = null) {
 
         return fallback;
     }
+}
+
+async function finalizeCriticalPersistenceFailure({
+    requestId,
+    guildId,
+    userId,
+    roleId,
+    result,
+    roleAssignResult,
+    persistence,
+    sendDm,
+    removeRole,
+    saveRecovery,
+    sendFailureDm,
+    coordinate = coordinatePersistenceFailure,
+    runSideEffect = safeSideEffect
+}) {
+    const recovery = await coordinate({
+        requestId,
+        guildId,
+        userId,
+        roleId,
+        result,
+        roleAssignResult,
+        persistence,
+        removeRole,
+        saveRecovery
+    });
+
+    if (!recovery.recoveryPersisted) {
+        console.error("[VERIFY] recovery record persistence failed:", JSON.stringify({
+            code: "verification_recovery_persistence_failed",
+            requestId
+        }));
+    }
+
+    let dmSent = false;
+    if (sendDm && typeof sendFailureDm === "function") {
+        dmSent = !!(await runSideEffect(
+            "sendVerificationPersistenceFailureDM",
+            sendFailureDm,
+            false
+        ));
+    }
+
+    return {
+        statusCode: 503,
+        body: {
+            ...recovery.response,
+            recoveryRequired: true,
+            rollbackAttempted: recovery.rollbackAttempted,
+            rollbackSucceeded: recovery.rollbackSucceeded,
+            dmSent
+        }
+    };
 }
 
 function minimalVerifyLog(payload, budgetErr) {
@@ -1018,7 +1080,8 @@ async function updateIpIdentityTrackingSafe({
                 },
                 $inc: { totalVerifications: 1 },
                 $min: { firstSeenAt: nowMs },
-                $set: setFields
+                $set: setFields,
+                $unset: { deletedAt: 1, deletionReason: 1 }
             },
             { upsert: true, new: true, setDefaultsOnInsert: true }
         );
@@ -1113,6 +1176,31 @@ async function saveOAuthUserSafe({
                     snapshotWrites: storedSnapshots
                 };
             }
+
+            const stagedRefs = stagedSnapshotRefs(storedSnapshots);
+            const reconstructed = await snapshotStore.loadOAuthSnapshots({
+                userId: profileUserId,
+                refs: stagedRefs,
+                guildId
+            }).catch(() => null);
+            const reconstructionComplete = Boolean(
+                reconstructed?.profile &&
+                (fetchMetadata.connectionsFetchFailed || Array.isArray(reconstructed.connections)) &&
+                (fetchMetadata.guildsFetchFailed || Array.isArray(reconstructed.guilds)) &&
+                (!memberInfo || reconstructed.member)
+            );
+            if (!reconstructionComplete) {
+                const rollback = await rollbackStoredSnapshots(profileUserId, storedSnapshots);
+                return {
+                    saved: false,
+                    code: "snapshot_reconstruction_failed",
+                    snapshotVersion: null,
+                    attemptedSnapshotVersion: storedSnapshots.version,
+                    snapshotRefs: null,
+                    snapshotWrites: storedSnapshots,
+                    rollback
+                };
+            }
             // Read after staging completes so optional-fetch preservation and ref
             // merging use the freshest active state available before activation.
             let existing;
@@ -1175,7 +1263,7 @@ async function saveOAuthUserSafe({
                 updatedAt: nowMs
             };
 
-            applyOAuthTokenStorage(updateSet, tokenData);
+            applyForcedOAuthTokenStorage(updateSet, tokenData);
             let activated = null;
             try {
                 applySnapshotBudgetGuard(updateSet);
@@ -1499,12 +1587,6 @@ function makeAuthorizeUrl({ scope, redirectUri, state, prompt = 'consent' }) {
     return `https://discord.com/oauth2/authorize?${params.toString()}`;
 }
 
-/*
-================================================================================
-  GET pages / aliases
-================================================================================
-*/
-
 router.get('/auth/callback', (req, res) => {
     res.sendFile(path.join(__dirname, '../views/callback.html'));
 });
@@ -1538,6 +1620,16 @@ router.post('/auth/callback', async (req, res) => {
             res,
             'ลิงก์ยืนยันไม่ถูกต้อง กรุณากดปุ่มใหม่อีกครั้ง',
             'invalid_callback_state',
+            200,
+            requestId
+        );
+    }
+
+    if (!await consumeVerificationState(stateObj)) {
+        return jsonFail(
+            res,
+            'คำขอยืนยันนี้หมดอายุหรือถูกใช้ไปแล้ว กรุณากดปุ่มใหม่',
+            'callback_state_replayed',
             200,
             requestId
         );
@@ -1611,6 +1703,20 @@ router.post('/auth/callback', async (req, res) => {
         const roleName = getConfiguredRoleName(guildConfig);
         const guildName = getGuildName(guildConfig, guildId);
         const policySnapshot = buildPolicySnapshot(verificationConfig);
+        let verificationGuildPresentationPromise = null;
+
+        function getVerificationGuildPresentation() {
+            if (verificationGuildPresentationPromise) return verificationGuildPresentationPromise;
+            verificationGuildPresentationPromise = (async () => {
+                const guildFromOAuth = guilds.find(guild => String(guild?.id || "") === guildId) || null;
+                const guild = guildFromOAuth?.icon ? guildFromOAuth : await discord.getGuild(guildId).catch(() => null);
+                return {
+                    guildId,
+                    guildIconUrl: getGuildIconUrl(guild)
+                };
+            })();
+            return verificationGuildPresentationPromise;
+        }
 
         async function finalize({
             result,
@@ -1679,6 +1785,18 @@ router.post('/auth/callback', async (req, res) => {
                 fetchMetadata,
                 attemptStartedAt: oauthAttemptStartedAt
             });
+            // Discord role assignment and MongoDB snapshot activation are two
+            // external effects. Do not report a completed verification when
+            // the durable owner record is missing; the role may exist, but the
+            // callback must preserve that partial truth for reconciliation.
+            const persistenceIncomplete = result === 'success' && oauthPersistence?.saved !== true;
+            const finalResult = persistenceIncomplete ? 'failed' : result;
+            const finalReason = persistenceIncomplete
+                ? 'verification_persistence_failed'
+                : reason;
+            const finalUserError = persistenceIncomplete
+                ? 'เพิ่มยศใน Discord แล้ว แต่บันทึกข้อมูลยืนยันไม่สมบูรณ์ กรุณาแจ้งแอดมินเพื่อตรวจสอบ'
+                : userError;
             const connectionsWrite = oauthPersistence?.snapshotWrites?.connections;
             const guildsWrite = oauthPersistence?.snapshotWrites?.guilds;
             const memberWrite = oauthPersistence?.snapshotWrites?.member;
@@ -1700,13 +1818,13 @@ router.post('/auth/callback', async (req, res) => {
                 memberFailureReason = memberWrite?.failureReason || null;
             }
 
-            await saveVerifyLogSafe({
+            const verifyLogSaved = await saveVerifyLogSafe({
                 guildId,
                 userId: profile.id,
                 roleId: configuredRoleId,
                 requestId,
-                result,
-                reason,
+                result: finalResult,
+                reason: finalReason,
                 findings: allFindings,
                 oauthScope: tokenData.scope || '',
                 stateMode: stateObj.mode || null,
@@ -1832,44 +1950,84 @@ router.post('/auth/callback', async (req, res) => {
                 verifiedAt: Date.now()
             });
 
+            const trackingRequired = Boolean(ipInfo?.ipHash);
+            const persistenceResult = evaluateCriticalPersistence({
+                oauthSaved: oauthPersistence?.saved === true,
+                verifyLogSaved: verifyLogSaved === true,
+                trackingRequired,
+                trackingSaved: Boolean(trackingSnapshot)
+            });
+
+            if (!persistenceResult.ok) {
+                const outcome = await finalizeCriticalPersistenceFailure({
+                    requestId,
+                    guildId,
+                    userId: profile.id,
+                    roleId: configuredRoleId,
+                    result,
+                    roleAssignResult,
+                    persistence: persistenceResult.persistence,
+                    removeRole: () => discord.removeRoleFromMember(guildId, profile.id, configuredRoleId),
+                    saveRecovery: async recoveryRecord => {
+                        const updateResult = await VerificationRecovery.updateOne(
+                            { requestId },
+                            {
+                                $set: recoveryRecord,
+                                $setOnInsert: { createdAt: Date.now() }
+                            },
+                            { upsert: true }
+                        );
+                        return updateResult?.acknowledged !== false;
+                    },
+                    sendDm,
+                    sendFailureDm: async () => discord.sendVerificationDM(profile.id, {
+                        ok: false,
+                        result: "failed",
+                        guildName,
+                        roleName,
+                        reason: "ระบบบันทึกข้อมูลยืนยันไม่สมบูรณ์ กำลังตรวจสอบและกู้คืนสถานะ",
+                        reasonCode: "verification_persistence_failed",
+                        requestId,
+                        ...await getVerificationGuildPresentation()
+                    })
+                });
+                return res.status(outcome.statusCode).json(outcome.body);
+            }
+
             let dmSent = false;
 
             if (sendDm) {
                 dmSent = !!(await safeSideEffect(
                     'sendVerificationDM',
-                    () => discord.sendVerificationDM(profile.id, {
-                        ok: result === 'success',
-                        result,
+                    async () => discord.sendVerificationDM(profile.id, {
+                        ok: finalResult === 'success',
+                        result: finalResult,
                         guildName,
                         roleName,
-                        reason: userError || reason,
-                        reasonCode: reason,
+                        reason: finalUserError || finalReason,
+                        reasonCode: finalReason,
                         requestId,
-                        profile: {
-                            username: profile.username,
-                            globalName: profile.global_name,
-                            discriminator: profile.discriminator,
-                            avatarUrl: getAvatarUrl(profile)
-                        }
+                        ...await getVerificationGuildPresentation()
                     }),
                     false
                 ));
             }
 
             return res.json({
-                success: result === 'success',
+                success: finalResult === 'success',
 
-                error: result === 'success' ? undefined : userError,
-                message: result === 'success'
+                error: finalResult === 'success' ? undefined : finalUserError,
+                message: finalResult === 'success'
                     ? (message || 'ระบบเพิ่มยศให้เรียบร้อยแล้ว')
                     : undefined,
 
-                code: result === 'success' ? undefined : publicDebugCode(reason),
-                debugCode: result === 'success' ? undefined : publicDebugCode(reason),
+                code: finalResult === 'success' ? undefined : publicDebugCode(finalReason),
+                debugCode: finalResult === 'success' ? undefined : publicDebugCode(finalReason),
                 requestId,
+                recoveryRequired: persistenceIncomplete || undefined,
 
                 roleName,
-                alreadyHasRole: reason === 'already_verified_has_role',
+                alreadyHasRole: finalReason === 'already_verified_has_role',
                 dmSent,
 
                 user: {
@@ -2222,5 +2380,6 @@ module.exports._test = {
     activeSnapshotVersion,
     stagedSnapshotRefs,
     withOAuthSnapshotLock,
-    oauthSnapshotLocks
+    oauthSnapshotLocks,
+    finalizeCriticalPersistenceFailure
 };

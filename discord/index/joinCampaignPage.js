@@ -15,7 +15,7 @@ function buildJoinCampaignPage() {
 <div class="verification-campaign-page">
 <div class="container">
 <p class="eyebrow">VERIFICATION OPERATIONS</p>
-<h1 class="page-title">ดึงสมาชิกที่เคยอนุญาต</h1>
+<h1 class="page-title gradient-text">ดึงสมาชิกที่เคยอนุญาต</h1>
 <p class="page-sub">ตรวจจำนวนก่อน แล้วจึงเพิ่มผู้ใช้ที่มีสิทธิ์ <code>guilds.join</code> เข้าเซิร์ฟเวอร์เป้าหมายอย่างควบคุมได้</p>
 ${navBar("/join-campaign")}
 
@@ -43,6 +43,7 @@ ${navBar("/join-campaign")}
 
 <div class="card">
     <h3>📊 สถานะงาน</h3>
+    <p id="campaignFreshness" role="status" aria-live="polite" style="color:var(--text3);font-size:0.82em;margin:-4px 0 12px;">กำลังโหลดสถานะ...</p>
     <div class="mini-grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));">
         <div class="mini-stat"><span>สถานะ</span><b id="campaignStatus" role="status" aria-live="polite">ยังไม่มีงาน</b></div>
         <div class="mini-stat"><span>Records</span><b id="scannedRecords">0</b></div>
@@ -50,6 +51,7 @@ ${navBar("/join-campaign")}
         <div class="mini-stat"><span>Refresh แล้ว</span><b id="refreshedUsers">0</b></div>
         <div class="mini-stat"><span>ขาด scope</span><b id="missingScope">0</b></div>
         <div class="mini-stat"><span>Rate limit</span><b id="rateLimited">0</b></div>
+        <div class="mini-stat"><span>บันทึกสถานะไม่สำเร็จ</span><b id="persistenceFailed">0</b></div>
     </div>
     <div class="terminal" id="campaignLog" style="height:240px;margin-top:14px;"></div>
 </div>
@@ -97,6 +99,7 @@ function renderSummary(summary){
     setText('refreshedUsers',summary.refreshed || 0);
     setText('missingScope',summary.missingScope || 0);
     setText('rateLimited',summary.rateLimited || 0);
+    setText('persistenceFailed',summary.persistenceFailed || 0);
 
     const lines=[
         'รหัสงาน: '+(summary.campaignId || '-'),
@@ -108,6 +111,8 @@ function renderSummary(summary){
         'ไม่สำเร็จ: '+(summary.failed || 0),
         'refresh แล้ว: '+(summary.refreshed || 0),
         'refresh ไม่สำเร็จ: '+(summary.refreshFailed || 0),
+        'บันทึกสถานะ refresh ไม่สำเร็จ: '+(summary.persistenceFailed || 0),
+        'สถานะ refresh เปลี่ยนระหว่างงาน: '+(summary.refreshStateConflicts || 0),
         'ขาด guilds.join: '+(summary.missingScope || 0),
         'บอทขาดสิทธิ์: '+(summary.botMissingPermission || 0),
         'token ใช้ไม่ได้: '+(summary.tokenInvalid || 0),
@@ -128,18 +133,31 @@ async function loadTargets(){
         select.innerHTML='<option value="">ระบบถูกปิดด้วย JOIN_CAMPAIGN_ENABLED=false</option>';
         return;
     }
+    if(!data.allowlistConfigured){
+        select.innerHTML='<option value="">ยังไม่ได้ตั้งค่า JOIN_CAMPAIGN_ALLOWED_GUILDS</option>';
+        return;
+    }
     if(!data.targets || !data.targets.length){
-        select.innerHTML='<option value="">ไม่พบเซิร์ฟเวอร์ที่บอทอยู่หรืออนุญาต</option>';
+        select.innerHTML='<option value="">ไม่พบเซิร์ฟเวอร์ที่อยู่ใน Allow-list</option>';
         return;
     }
     select.innerHTML=data.targets.map(g=>'<option value="'+esc(g.id)+'">'+esc(g.name)+' ('+esc(g.id)+')</option>').join('');
+}
+function setFreshness(message, isError){
+    const el=document.getElementById('campaignFreshness');
+    if(!el) return;
+    el.textContent=message;
+    el.style.color=isError?'var(--yellow2)':'var(--text3)';
 }
 async function refreshStatus(){
     try{
         const data=await api('/api/join-campaign/status');
         const status=data.status || {};
         renderSummary(status.active || status.last);
-    }catch(e){}
+        setFreshness('อัปเดตล่าสุด: '+new Date().toLocaleTimeString('th-TH'),false);
+    }catch(e){
+        setFreshness('⚠️ โหลดสถานะไม่ได้ — ข้อมูลด้านล่างอาจเก่า',true);
+    }
 }
 async function dryRun(){
     const guildId=selectedGuildId();

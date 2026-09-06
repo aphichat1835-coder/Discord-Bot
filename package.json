@@ -1,18 +1,21 @@
 {
   "name": "phomueangtai-enterprise",
-  "version": "4.0.1",
+  "version": "5.0.0",
   "description": "Phomueangtai personal multi-tool Discord bot and owner dashboard",
   "private": true,
   "main": "discord/index.js",
   "scripts": {
     "start": "node -r ./discord/core/loadEnv discord/index.js",
     "dev": "node -r ./discord/core/loadEnv discord/index.js",
-    "check": "npm run check:protected && npm run check:protected-syntax && npm run check:all && npm run check:scripts && npm run check:memory-guards",
+    "check": "npm run check:protected && npm run check:protected-syntax && npm run check:discord14 && npm run check:secrets && npm run check:all && npm run check:scripts && npm run check:memory-guards && npm run check:runtime-safety && npm run check:mongoose9",
     "check:protected": "node scripts/checkProtectedPaths.js",
     "check:protected-syntax": "node --check discord/systemProvider.js && find discord/systemProvider -type f -name '*.js' -print0 | xargs -0 -n1 node --check",
     "check:all": "find discord -path 'discord/systemProvider' -prune -o -type f -name '*.js' ! -path 'discord/systemProvider.js' -print0 | xargs -0 -n1 node --check",
-    "check:scripts": "find scripts -type f -name '*.js' -print0 | xargs -0 -n1 node --check",
+    "check:scripts": "find scripts -type f -name '*.js' -print0 | xargs -0 -r -n1 node --check && find scripts -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n",
     "check:memory-guards": "node scripts/checkMemoryGuards.js",
+    "check:runtime-safety": "node scripts/checkRuntimeSafety.js",
+    "check:mongoose9": "bash scripts/checkMongoose9Compatibility.sh",
+    "check:secrets": "node scripts/checkSecretLeaks.js",
     "check:memory-trend": "node scripts/checkMemoryTrend.js",
     "smoke:unified": "node scripts/smokeUnifiedRuntime.js",
     "migrate:verification": "node -r ./discord/core/loadEnv scripts/migrateVerificationSnapshots.js",
@@ -20,29 +23,33 @@
     "test": "npm run test:discord && npm run test:voice && npm run test:verification",
     "test:discord": "find discord/tests -name '*.test.js' ! -name 'voice*.test.js' -print0 | xargs -0 -r node --test",
     "test:voice": "node --test discord/tests/voice*.test.js",
-    "test:verification": "jest --runInBand --testPathPatterns=verification-tests/"
+    "test:verification": "node --require ./verification-tests/nodeTestSetup.js --test verification-tests/*.test.js",
+    "test:coverage:discord": "mkdir -p coverage && find discord/tests -name '*.test.js' ! -name 'voice*.test.js' -print0 | xargs -0 -r node --test --experimental-test-coverage --test-reporter=spec --test-reporter=lcov --test-reporter-destination=stdout --test-reporter-destination=coverage/discord.lcov",
+    "test:coverage:voice": "mkdir -p coverage && node --test --experimental-test-coverage --test-coverage-include='discord/voiceWorker.js' --test-coverage-include='discord/voiceWorker/**/*.js' --test-coverage-include='discord/sessionManager.js' --test-coverage-include='discord/sessions/**/*.js' --test-reporter=spec --test-reporter=lcov --test-reporter-destination=stdout --test-reporter-destination=coverage/voice.lcov discord/tests/voice*.test.js",
+    "test:coverage:verification": "mkdir -p coverage && node --require ./verification-tests/nodeTestSetup.js --test --experimental-test-coverage --test-reporter=spec --test-reporter=lcov --test-reporter-destination=stdout --test-reporter-destination=coverage/verification.lcov verification-tests/*.test.js",
+    "sonar": "sonar-scanner-npm",
+    "check:discord14": "node scripts/checkDiscordV14Compatibility.js",
+    "check:coverage": "node scripts/checkCoverageThresholds.js",
+    "check:release": "npm run check && npm run test:coverage:discord && npm run test:coverage:voice && npm run test:coverage:verification && npm run check:coverage && npm audit --audit-level=high"
   },
   "engines": {
-    "node": "24.x"
+    "node": ">=24.18.0 <25",
+    "npm": ">=12 <13"
   },
+  "packageManager": "npm@12.0.1",
   "dependencies": {
     "@discordjs/voice": "^0.19.2",
-    "discord.js": "^13.17.1",
+    "discord.js": "^14.27.0",
     "discord.js-selfbot-v13": "^3.7.1",
     "express": "^5.2.1",
-    "express-rate-limit": "^8.5.2",
+    "express-rate-limit": "^8.6.0",
     "libsodium-wrappers": "^0.8.4",
-    "mongoose": "^8.24.1",
-    "opusscript": "^0.1.1",
-    "tweetnacl": "^1.0.3"
+    "mongoose": "^9.8.0"
   },
   "devDependencies": {
-    "jest": "^30.4.2"
-  },
-  "jest": {
-    "testEnvironment": "node",
-    "testMatch": [
-      "<rootDir>/verification-tests/**/*.test.js"
-    ]
+    "@sonar/scan": "5.0.0",
+    "acorn": "8.17.0",
+    "expect": "^30.4.1",
+    "jest-mock": "^30.4.1"
   }
 }

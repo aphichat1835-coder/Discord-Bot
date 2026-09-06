@@ -6,7 +6,7 @@ const verifiedMemberService = require("../discord/verification/services/verified
 const snapshotBudget = require("../discord/verification/services/snapshotBudget");
 
 describe("member detail serialization and leak guards", () => {
-    test("normal member detail exposes rich metadata but not raw or encrypted secrets", () => {
+    test("owner member detail exposes full network metadata but not encrypted credential storage", () => {
         const detail = serializeMemberDetail({
             guildId: "guild",
             userId: "user",
@@ -62,7 +62,7 @@ describe("member detail serialization and leak guards", () => {
         expect(serialized).not.toContain("access_token");
         expect(serialized).not.toContain("refresh_token");
         expect(serialized).not.toContain("encrypted-ip");
-        expect(serialized).not.toContain("203.0.113.10");
+        expect(serialized).toContain("203.0.113.10");
     });
 
     test("member detail redacts email, connections, and guilds when sensitive view is disabled", () => {

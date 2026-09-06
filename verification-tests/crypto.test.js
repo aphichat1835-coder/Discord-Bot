@@ -79,10 +79,29 @@ describe('Dashboard Public crypto compatibility', () => {
         else process.env.API_SECRET = oldApiSecret;
     });
 
-    test('round-trips current v2 GCM values', () => {
+    test('round-trips current v3 GCM values', () => {
         const encrypted = cryptoUtils.encryptData('current-value');
-        expect(encrypted).toMatch(/^v2:gcm:/);
+        expect(encrypted).toMatch(/^v3:gcm:/);
         expect(cryptoUtils.decryptData(encrypted)).toBe('current-value');
+    });
+
+    test('current v3 writes use the full binary SHA-256 key', () => {
+        const encrypted = cryptoUtils.encryptData('full-entropy-value');
+        const [, , iv, tag, ciphertext] = encrypted.split(':');
+        const decipher = crypto.createDecipheriv(
+            'aes-256-gcm',
+            rawLegacyKey(secret),
+            Buffer.from(iv, 'base64url'),
+            { authTagLength: 16 }
+        );
+        decipher.setAuthTag(Buffer.from(tag, 'base64url'));
+        const plaintext = Buffer.concat([
+            decipher.update(Buffer.from(ciphertext, 'base64url')),
+            decipher.final()
+        ]).toString('utf8');
+
+        expect(plaintext).toBe('full-entropy-value');
+        expect(cryptoUtils.isCurrentEncryptedPayload(encrypted)).toBe(true);
     });
 
     test('reads v2 GCM values written with the former raw SHA-256 key', () => {
@@ -91,6 +110,24 @@ describe('Dashboard Public crypto compatibility', () => {
             encoding: 'base64url'
         });
         expect(cryptoUtils.decryptData(encrypted)).toBe('raw-key-value');
+    });
+
+    test('marks legacy payloads for migration without marking v3 values', () => {
+        const legacy = encryptGcm('legacy-token-value', serviceKey(secret), {
+            prefix: 'v2:gcm',
+            encoding: 'base64url'
+        });
+        const current = cryptoUtils.encryptToken('current-token-value');
+
+        expect(cryptoUtils.decryptTokenForMigration(legacy)).toMatchObject({
+            plaintext: 'legacy-token-value',
+            needsMigration: true
+        });
+        expect(cryptoUtils.decryptTokenForMigration(current)).toMatchObject({
+            plaintext: 'current-token-value',
+            needsMigration: false,
+            format: 'v3_gcm'
+        });
     });
 
     test('reads original Service 1-compatible hex GCM values', () => {

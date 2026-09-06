@@ -1,6 +1,6 @@
 const { safeText } = require("../logging/persistenceHelpers");
 const modCaseManager = require("../logging/modCaseManager");
-const { sendAlertWebhook } = require("../core/webhooks");
+const { sendWebhookEvent } = require("../core/webhooks");
 
 function normalizeEvidenceItem(item) {
     if (item === undefined || item === null) return null;
@@ -51,7 +51,9 @@ function buildProtectionEvent(input = {}) {
         evidence: createEvidence(input),
         actionResult: createActionResult(input.actionResult || input),
         createdAt: input.createdAt || Date.now(),
-        metadata: input.metadata && typeof input.metadata === "object" ? input.metadata : {}
+        metadata: input.metadata && typeof input.metadata === "object" ? input.metadata : {},
+        ...(input.sourceIconUrl ? { sourceIconUrl: input.sourceIconUrl } : {}),
+        ...(input.thumbnailUrl ? { thumbnailUrl: input.thumbnailUrl } : {})
     };
 }
 
@@ -124,8 +126,27 @@ async function recordProtectionResult({ sessionManager, event, createCase = fals
         const code = protectionCaseErrorCode(err);
         const reconciliationPersisted = await persistProtectionReconciliation(sessionManager, event, code);
         console.warn(`[PROTECTION] case persistence failed | guild=${safeText(event.guildId, 64)} | code=${code} | reconciliation=${reconciliationPersisted}`);
-        sendAlertWebhook({
-            content: `⚠️ **[PROTECTION CASE]** การลงโทษสำเร็จแต่บันทึก ModCase ไม่สำเร็จ | guild=${safeText(event.guildId, 64)} | reconciliation=${reconciliationPersisted ? "stored" : "missing"}`
+        sendWebhookEvent({
+            severity: "ERROR",
+            category: "DATA",
+            code: "protection.case.reconciliation_required",
+            state: "OPEN",
+            title: "ผลการป้องกันต้องตรวจสอบกับ ModCase",
+            description: "Discord ดำเนินการลงโทษแล้ว แต่การบันทึก ModCase ไม่สมบูรณ์",
+            impact: "ประวัติการดูแลสมาชิกอาจไม่ตรงกับการดำเนินการจริง",
+            action: reconciliationPersisted
+                ? "ตรวจ Reconciliation Record และสร้าง ModCase ให้ครบ"
+                : "ตรวจ Runtime Log และสร้าง ModCase ด้วยตนเองทันที",
+            context: {
+                "Guild ID": safeText(event.guildId, 64),
+                "User ID": safeText(event.userId, 64),
+                "บันทึกรายการรอตรวจแล้ว": reconciliationPersisted,
+                "รหัสข้อผิดพลาด": code
+            },
+            sourceIconUrl: event.sourceIconUrl,
+            thumbnailUrl: event.thumbnailUrl,
+            dedupeKey: `protection-case:${safeText(event.guildId, 64)}:${safeText(event.userId, 64)}`,
+            dedupeMs: 10 * 60 * 1000
         }).catch(() => {});
         event.actionResult = {
             ...event.actionResult,
