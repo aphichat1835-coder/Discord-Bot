@@ -50,6 +50,8 @@ and the HTTP server.
 | `GET /api/guild/:guildId/member/:userId/detail` | Owner PIN | Complete Owner-visible per-user verification detail |
 | `POST /api/guild/:guildId/member/:userId/full-detail` | Owner PIN + automatic CSRF | Complete Owner-visible member data without a manual reason or repeated PIN |
 | `GET /api/guild/:guildId/member/:userId/ip-history` | Owner PIN | Paginated canonical users/devices/role history for the member's IP |
+| `GET /quests` | Owner PIN | Owner Dashboard page for Discord Quest automation logs and statistics |
+| `GET /api/quest-logs` | Owner PIN | Recent Quest execution logs and status data |
 | `GET /ping` | Public | Lightweight listener liveness |
 | `GET /health` | Public | Combined MongoDB, Discord, slash-command, voice, and verification readiness |
 | `GET /ready` | Public | Alias of the combined `/health` readiness response |
@@ -60,10 +62,10 @@ refreshable for compatibility, but no route creates new grants.
 
 ## Slash commands
 
-The runtime registers exactly 16 guild-only commands: `/voice-online`,
+The runtime registers exactly 17 guild-only commands: `/voice-online`,
 `/serverinfo`, `/ping`, `/userinfo`, `/clear`, `/say`,
 `/announce`, `/copy-emojis`, `/backup`, `/restore`, `/voiceadmin`, `/ban`,
-`/kick`, `/timeout`, `/setup-verify`, and `/rerole`. Registration retries are bounded and
+`/kick`, `/timeout`, `/setup-verify`, `/rerole`, and `/quest`. Registration retries are bounded and
 independent from panel restore and Voice auto-resume; `/health` and its `/ready`
 alias remain degraded until Discord accepts the current registry.
 

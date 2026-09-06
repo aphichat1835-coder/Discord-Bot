@@ -33,6 +33,7 @@ const { getVerificationDiagnostics } = require("../verification/lifecycle");
 const { readFiniteInteger } = require("../core/numbers");
 const { getReleaseIdentity } = require("../core/releaseIdentity");
 const { cleanToken } = require("../sessions/tokenUtils");
+const QuestLog = require("../quest/models/QuestLog");
 
 function buildReadinessPayload({ client, sessionManager, voiceWorker, commandsReady, featureFlags, verification, release }) {
     const botOnline = client?.isReady?.() ?? false;
@@ -691,6 +692,16 @@ function registerRoutes({
 
     app.get("/api/logs", (req, res) => {
         res.json(webLogs.slice(-MAX_LOGS).reverse());
+    });
+
+    app.get("/api/quest-logs", auth.requirePin, async (req, res) => {
+        try {
+            const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50));
+            const logs = await QuestLog.find().sort({ createdAt: -1 }).limit(limit).lean();
+            res.json({ success: true, logs });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
     });
 
     app.get("/api/voice-logs", (req, res) => {

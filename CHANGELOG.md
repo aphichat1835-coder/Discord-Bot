@@ -2,6 +2,13 @@
 
 ## [Unreleased] - Unified Bot And Verification Runtime 2026-07-16
 
+- Added Discord Quest automation subsystem (`/quest panel`), supporting
+  interactive modal submission of Discord user tokens, background multi-quest
+  video/game progress heartbeat execution, masked token display, encrypted token
+  storage (AES-256-GCM via `QUEST_TOKEN_SECRET` / `ENCRYPTION_KEY`), 30-day TTL
+  `QuestLog` persistence, operational webhooks, and an integrated Owner Dashboard
+  at `/quests` with search, stats, pagination, and CSV export.
+
 - Removed all member DMs from `/ban`, `/kick`, and `/timeout` while preserving
   the moderation action, ModCase lifecycle, and operational webhook behavior.
   The DM outbox now removes unsent legacy moderation records and refuses new

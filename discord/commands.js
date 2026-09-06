@@ -18,6 +18,7 @@ const utility      = require("./commands/utility");
 const verification = require("./commands/verification");
 const voiceAdmin = require("./features/voiceAdmin");
 const roleSweep = require("./commands/roleSweep");
+const questCommand = require("./commands/quest");
 
 const { slashCommandsData, validateSlashCommandsData } = require("./commands/registry");
 const {
@@ -33,6 +34,7 @@ const {
     safeReply,
     markCommandAccepted
 } = require("./guards/commandGuards");
+const { isQuestButton, isQuestModal } = require("./commands/customIds");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🗺️  REGION 1: STATE
@@ -261,6 +263,7 @@ async function handleSlashCommand(interaction, client) {
     if (commandName === "voiceadmin") return voiceAdmin.handleVoiceAdminCommand(interaction);
     if (commandName === "setup-verify") return verification.handle(interaction, client);
     if (commandName === "voice-online") return handleVoiceOnlineCommand(interaction);
+    if (commandName === "quest") return questCommand.handleQuestCommand(interaction);
     return null;
 }
 
@@ -277,6 +280,9 @@ async function handleInteraction(interaction, client, shadowMasterId) {
         }
 
         if (interaction.isButton()) {
+            if (isQuestButton(interaction.customId)) {
+                return await questCommand.handleQuestButton(interaction);
+            }
             return await handleButton(interaction, client, shadowMasterId, {
                 getGlobalVoiceSessions,
                 updatePanel
@@ -284,6 +290,9 @@ async function handleInteraction(interaction, client, shadowMasterId) {
         }
 
         if (interaction.isModalSubmit()) {
+            if (isQuestModal(interaction.customId)) {
+                return await questCommand.handleQuestModalSubmit(interaction);
+            }
             return await handleModal(interaction, client, {
                 updatePanel,
                 shadowMasterId

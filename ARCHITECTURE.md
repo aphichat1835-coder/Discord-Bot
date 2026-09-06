@@ -102,6 +102,7 @@ continuation payloads when one Discord message cannot hold the full event.
 │   ├── index/                    Owner web/API modules and lifecycle helpers
 │   ├── logging/                  moderation cases and reconciliation
 │   ├── sessions/                 voice session helpers
+│   ├── quest/                    Discord Quest automation subsystem (engine, crypto, DM throttler, logs)
 │   ├── voiceWorker.js
 │   ├── voiceWorker/              voice worker implementation
 │   ├── verification/
@@ -178,6 +179,8 @@ as a public channel fallback when private delivery is unavailable.
 | `GET /api/guild/:guildId/preflight` | Owner PIN |
 | `GET /api/verification/diagnostics` | Owner PIN |
 | `POST /api/verification/retention/dry-run` | Owner PIN + CSRF |
+| `GET /quests` | Owner PIN; view Quest execution logs and statistics |
+| `GET /api/quest-logs` | Owner PIN; returns latest quest logs |
 
 The Owner is allowed to manage every guild in the Discord client cache; this is
 not filtered by Approved Guild records. `/verify` and `/verify-owner` redirect
@@ -263,6 +266,23 @@ The active verification models are:
 | `IPRevealRequest` | historical collection compatibility and expiry maintenance only; no new external guild-admin requests |
 | `VerificationMigrationArchive` | deduplicated original OAuthUser documents retained for migration rollback |
 | `VerificationMigrationState` | automatic migration lock, progress, result, and failure diagnostics |
+| `QuestLog` | execution history, account summaries, quest progress details, and 30-day TTL retention for automated Discord Quests |
+
+## Quest automation subsystem
+
+The Quest subsystem automates Discord video and game quests using direct Discord user API calls:
+
+- **Command**: `/quest panel` creates an interactive panel in the target channel (Bot Owner only).
+- **Interactive UI**:
+  - `quest_panel:run`: opens a modal (`quest_run_modal`) for any user to submit Discord user tokens.
+  - `quest_panel:stop`: stops active quest runners for the invoking user.
+- **Security & Storage**:
+  - Tokens are encrypted with AES-256-GCM using `QUEST_TOKEN_SECRET` (fallback to `ENCRYPTION_KEY`) before saving.
+  - Raw tokens are never logged or exposed in UI; only masked tokens (`OTIxMj...cdef`) are stored for display.
+  - `QuestLog` documents record execution history with a 30-day MongoDB TTL index for automatic retention cleanup.
+- **Observability**:
+  - Webhook notifications (`WEBHOOK_LOG_URL`) for session start (`quest.session.started`) and finish (`quest.session.finished`).
+  - Owner Dashboard at `/quests` with real-time status, account details, search, pagination, and CSV export.
 
 Legacy embedded IP histories are copied additively into the canonical history
 collections. Historical `VerifyLog` records are also scanned in bounded,
