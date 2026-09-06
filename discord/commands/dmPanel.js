@@ -328,7 +328,7 @@ async function handleDmPanelModal(interaction) {
             { name: '🌐 เซิร์ฟเวอร์เป้าหมาย', value: `**${checkResult.guild.name}** (\`${checkResult.guild.id}\`)`, inline: true },
             { name: '👥 สมาชิกเป้าหมาย', value: `**${checkResult.targetCount}** คน (คัดแยกบอทออกแล้ว)`, inline: true },
             { name: '💬 ตัวอย่างข้อความที่จะส่ง', value: `\`\`\`\n${previewMessage}\n\`\`\``, inline: false },
-            { name: '🖼️ รูปภาพแนบ', value: imageUrl ? imageUrl : '*(ไม่มี)*', inline: true },
+            { name: '🖼️ รูปภาพแนบ', value: imageUrl || '*(ไม่มี)*', inline: true },
             { name: '🪝 Webhook รับ Log', value: `\`${webhookUrl.slice(0, 45)}...\``, inline: true }
         )
         .setFooter({ text: 'กดปุ่ม ยืนยันเริ่มส่ง เพื่อเริ่มการทำงาน หรือ ยกเลิก หากต้องการแก้ไข' })
