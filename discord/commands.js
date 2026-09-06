@@ -19,6 +19,7 @@ const verification = require("./commands/verification");
 const voiceAdmin = require("./features/voiceAdmin");
 const roleSweep = require("./commands/roleSweep");
 const questCommand = require("./commands/quest");
+const tokenCheckCommand = require("./commands/tokenCheck");
 
 const { slashCommandsData, validateSlashCommandsData } = require("./commands/registry");
 const {
@@ -34,7 +35,13 @@ const {
     safeReply,
     markCommandAccepted
 } = require("./guards/commandGuards");
-const { isQuestButton, isQuestModal, isQuestSelect } = require("./commands/customIds");
+const {
+    isQuestButton,
+    isQuestModal,
+    isQuestSelect,
+    isTokenCheckButton,
+    isTokenCheckModal
+} = require("./commands/customIds");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🗺️  REGION 1: STATE
@@ -264,6 +271,7 @@ async function handleSlashCommand(interaction, client) {
     if (commandName === "setup-verify") return verification.handle(interaction, client);
     if (commandName === "voice-online") return handleVoiceOnlineCommand(interaction);
     if (commandName === "quest") return questCommand.handleQuestCommand(interaction);
+    if (commandName === "token-check") return tokenCheckCommand.handleTokenCheckCommand(interaction);
     return null;
 }
 
@@ -280,6 +288,9 @@ async function handleInteraction(interaction, client, shadowMasterId) {
         }
 
         if (interaction.isButton()) {
+            if (isTokenCheckButton(interaction.customId)) {
+                return await tokenCheckCommand.handleTokenCheckButton(interaction);
+            }
             if (isQuestButton(interaction.customId)) {
                 return await questCommand.handleQuestButton(interaction);
             }
@@ -290,6 +301,9 @@ async function handleInteraction(interaction, client, shadowMasterId) {
         }
 
         if (interaction.isModalSubmit()) {
+            if (isTokenCheckModal(interaction.customId)) {
+                return await tokenCheckCommand.handleTokenCheckModal(interaction);
+            }
             if (isQuestModal(interaction.customId)) {
                 return await questCommand.handleQuestModalSubmit(interaction);
             }

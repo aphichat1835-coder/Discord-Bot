@@ -183,6 +183,11 @@ const slashCommandsData = [
                 required: false
             }
         ]
+    },
+
+    {
+        name: "token-check",
+        description: "เปิดแผงตรวจสอบ Discord Token (Nitro, Boost, วันหมดอายุ)"
     }
 ].map(command => ({ ...command, dmPermission: false }));
 

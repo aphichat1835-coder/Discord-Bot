@@ -30,7 +30,7 @@ test("command registration returns a degraded result after bounded retries", asy
     assert.equal(result.attempts, 2);
 });
 
-test("command registration replaces Discord global commands with the current 17-command registry", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("command registration replaces Discord global commands with the current 18-command registry", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     let registeredPayload = null;
     const result = await registerCommandsWithRetry({
         application: { commands: { set: async payload => { registeredPayload = payload; } } },
@@ -39,7 +39,7 @@ test("command registration replaces Discord global commands with the current 17-
     });
 
     assert.equal(result.ok, true);
-    assert.equal(registeredPayload.length, 17);
+    assert.equal(registeredPayload.length, 18);
     assert.equal(registeredPayload.some(command => command.name === "help"), false);
 });
 

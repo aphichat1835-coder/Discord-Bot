@@ -15,7 +15,10 @@ const IDS = {
     BTN_QUEST_STOP_ALL: "runner-stop:all",
     SELECT_QUEST_STOP: "runner-stop:select",
     MODAL_QUEST_RUN: "quest_run_modal",
-    FIELD_QUEST_TOKENS: "user_tokens"
+    FIELD_QUEST_TOKENS: "user_tokens",
+    BTN_TOKEN_CHECK: "token_check:btn",
+    MODAL_TOKEN_CHECK: "token_check:modal",
+    FIELD_TOKEN_INPUT: "token_check:input"
 };
 
 const PREFIXES = {
@@ -66,6 +69,14 @@ function getStatusStopSessionId(customId = "") {
     return customId.replace(PREFIXES.STATUS_STOP, "");
 }
 
+function isTokenCheckButton(customId = "") {
+    return customId === IDS.BTN_TOKEN_CHECK;
+}
+
+function isTokenCheckModal(customId = "") {
+    return customId === IDS.MODAL_TOKEN_CHECK;
+}
+
 module.exports = {
     IDS,
     PREFIXES,
@@ -77,5 +88,7 @@ module.exports = {
     isStatusPage,
     getStatusPage,
     isStatusStop,
-    getStatusStopSessionId
+    getStatusStopSessionId,
+    isTokenCheckButton,
+    isTokenCheckModal
 };
