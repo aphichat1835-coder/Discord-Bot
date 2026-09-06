@@ -9,11 +9,11 @@
 </head>
 
 <body class="callback-page">
-  <canvas id="callback-waves" class="callback-waves" aria-hidden="true"></canvas>
+  <canvas id="callback-waves" class="callback-waves"></canvas>
   <main class="callback-center">
     <section class="callback-shell">
       <div class="card callback-card callback-card-premium">
-        <div id="s-loading" class="callback-state active" role="status" aria-live="polite" aria-hidden="false" tabindex="-1">
+        <output id="s-loading" class="callback-state active" aria-live="polite" aria-hidden="false" tabindex="-1">
           <div class="verify-loader-wrap">
             <div class="verify-loader">
               <div class="verify-loader-ring"></div>
@@ -28,34 +28,34 @@
             กำลังรับข้อมูลจาก Discord
           </p>
 
-          <div class="verify-steps" role="list" aria-label="ขั้นตอนการยืนยันตัวตน">
-            <div class="verify-step active" data-step="discord" role="listitem" aria-current="step">
+          <ol class="verify-steps" aria-label="ขั้นตอนการยืนยันตัวตน">
+            <li class="verify-step active" data-step="discord" aria-current="step">
               <span class="step-dot" aria-hidden="true"></span>
               <span>กำลังรับข้อมูลจาก Discord</span>
-            </div>
+            </li>
 
-            <div class="verify-step" data-step="account" role="listitem">
+            <li class="verify-step" data-step="account">
               <span class="step-dot" aria-hidden="true"></span>
               <span>กำลังตรวจสอบบัญชี Discord</span>
-            </div>
+            </li>
 
-            <div class="verify-step" data-step="security" role="listitem">
+            <li class="verify-step" data-step="security">
               <span class="step-dot" aria-hidden="true"></span>
               <span>กำลังตรวจสอบเงื่อนไขความปลอดภัย</span>
-            </div>
+            </li>
 
-            <div class="verify-step" data-step="role" role="listitem">
+            <li class="verify-step" data-step="role">
               <span class="step-dot" aria-hidden="true"></span>
               <span>กำลังเพิ่มยศให้คุณ</span>
-            </div>
-          </div>
+            </li>
+          </ol>
 
           <div class="callback-note callback-note-blue">
             กรุณารอสักครู่ อย่าปิดหน้านี้ระหว่างระบบกำลังทำงาน
           </div>
-        </div>
+        </output>
 
-        <div id="s-success" class="callback-state" role="status" aria-live="polite" aria-hidden="true" tabindex="-1">
+        <output id="s-success" class="callback-state" aria-live="polite" aria-hidden="true" tabindex="-1">
           <div class="result-ring ok compact">
             <div class="result-icon ok">✓</div>
           </div>
@@ -93,7 +93,7 @@
               <span>เปิด Discord</span>
             </a>
           </div>
-        </div>
+        </output>
 
         <div id="s-error" class="callback-state" role="alert" aria-live="assertive" aria-hidden="true" tabindex="-1">
           <div class="error-layout">

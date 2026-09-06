@@ -1251,7 +1251,7 @@ function verificationDmCopy({ ok, blocked, alreadyVerified, reasonCode }) {
 }
 
 function isGuildIconUrl(value) {
-    return /^https:\/\/cdn\.discordapp\.com\/icons\/\d{17,22}\/[A-Za-z0-9_]+\.(?:png|gif|webp)(?:\?size=\d+)?$/.test(String(value || ""));
+    return /^https:\/\/cdn\.discordapp\.com\/icons\/\d{17,22}\/\w+\.(?:png|gif|webp)(?:\?size=\d+)?$/.test(String(value || ""));
 }
 
 function buildVerificationDmEmbed(data = {}) {
