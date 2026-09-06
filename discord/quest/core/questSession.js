@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const { buildUserHeaders } = require('./clientProfile');
 const { fetchWithRetry } = require('../utils/httpRetry');
 const { abortableDelay, abortFailure } = require('../utils/abortableDelay');
@@ -365,19 +366,20 @@ async function enrollQuest(token, questId, signal) {
     });
 }
 
-async function claimQuest(token, questId, platform = 0, signal) {
+async function claimQuest(token, questId, platform, signal) {
+    const selectedPlatform = platform ?? 0;
     const perform = async () => {
         try {
             return await discordFetch(token, `/quests/${questId}/claim-reward`, {
                 method: 'POST',
-                body: JSON.stringify({ location: 11, platform }),
+                body: JSON.stringify({ location: 11, platform: selectedPlatform }),
                 signal
             });
         } catch (error) {
             if (error?.status !== 404) throw error;
             return discordFetch(token, `/quests/${questId}/claim`, {
                 method: 'POST',
-                body: JSON.stringify({ location: 1, platform }),
+                body: JSON.stringify({ location: 1, platform: selectedPlatform }),
                 signal
             });
         }
@@ -392,7 +394,8 @@ async function claimQuest(token, questId, platform = 0, signal) {
 }
 
 async function sendVideoProgress(token, questId, timestamp, signal) {
-    const ts = Math.round(timestamp + Math.random() * 0.5);
+    const jitter = crypto.randomInt(0, 501) / 1000;
+    const ts = Math.round(timestamp + jitter);
     return verifiedQuestMutation({
         token,
         questId,
@@ -471,6 +474,22 @@ function nextVideoTimestamp(current, target, enrolledAtMs, now = Date.now()) {
     );
 }
 
+async function executeVideoQuestStep({
+    token,
+    questId,
+    timestamp,
+    signal,
+    onMutationAccepted,
+    onServerProgress
+}) {
+    const mutation = await sendVideoProgress(token, questId, timestamp, signal);
+    if (!mutation?.verifiedAfterFailure) onMutationAccepted();
+    await sleep(1000, signal);
+    const fresh = await fetchFreshQuest(token, questId, signal);
+    if (onServerProgress) await onServerProgress(fresh);
+    return fresh;
+}
+
 async function runVideoQuest(
     token,
     quest,
@@ -494,11 +513,14 @@ async function runVideoQuest(
             continue;
         }
 
-        const mutation = await sendVideoProgress(token, quest.id, timestamp, signal);
-        if (!mutation?.verifiedAfterFailure) onMutationAccepted();
-        await sleep(1000, signal);
-        fresh = await fetchFreshQuest(token, quest.id, signal);
-        if (onServerProgress) await onServerProgress(fresh);
+        fresh = await executeVideoQuestStep({
+            token,
+            questId: quest.id,
+            timestamp,
+            signal,
+            onMutationAccepted,
+            onServerProgress
+        });
 
         unchangedChecks = fresh.progressSecs > current || fresh.completed ? 0 : unchangedChecks + 1;
         if (unchangedChecks >= 8) {
@@ -510,6 +532,23 @@ async function runVideoQuest(
             await sleep((VIDEO_SUBMISSION_INTERVAL_SECS - 1) * 1000, signal);
         }
     }
+    return fresh;
+}
+
+async function executeGameHeartbeatStep({
+    token,
+    quest,
+    terminal,
+    forceApplicationPayload,
+    signal,
+    onMutationAccepted,
+    onServerProgress
+}) {
+    const mutation = await sendQuestHeartbeat(token, quest, terminal, forceApplicationPayload, signal);
+    if (!mutation?.verifiedAfterFailure) onMutationAccepted();
+    await sleep(1000, signal);
+    const fresh = await fetchFreshQuest(token, quest.id, signal);
+    if (onServerProgress) await onServerProgress(fresh);
     return fresh;
 }
 
@@ -530,11 +569,15 @@ async function runGameQuest(
 
     while (!fresh.completed && current < fresh.secondsNeeded) {
         if (signal?.aborted) throw abortFailure();
-        const mutation = await sendQuestHeartbeat(token, fresh, false, forceApplicationPayload, signal);
-        if (!mutation?.verifiedAfterFailure) onMutationAccepted();
-        await sleep(1000, signal);
-        fresh = await fetchFreshQuest(token, quest.id, signal);
-        if (onServerProgress) await onServerProgress(fresh);
+        fresh = await executeGameHeartbeatStep({
+            token,
+            quest: fresh,
+            terminal: false,
+            forceApplicationPayload,
+            signal,
+            onMutationAccepted,
+            onServerProgress
+        });
 
         if (fresh.progressSecs > current || fresh.completed) {
             unchangedChecks = 0;
@@ -554,12 +597,15 @@ async function runGameQuest(
     }
 
     if (fresh.completed) return fresh;
-    const finalMutation = await sendQuestHeartbeat(token, fresh, true, forceApplicationPayload, signal);
-    if (!finalMutation?.verifiedAfterFailure) onMutationAccepted();
-    await sleep(1000, signal);
-    fresh = await fetchFreshQuest(token, quest.id, signal);
-    if (onServerProgress) await onServerProgress(fresh);
-    return fresh;
+    return executeGameHeartbeatStep({
+        token,
+        quest: fresh,
+        terminal: true,
+        forceApplicationPayload,
+        signal,
+        onMutationAccepted,
+        onServerProgress
+    });
 }
 
 module.exports = {

@@ -75,6 +75,10 @@ function sleep(ms, signal) {
     });
 }
 
+function rethrowFatalAuth(error) {
+    if (isFatalAuthError(error)) throw error;
+}
+
 function trackRunPromise(promise) {
     activeRunPromises.add(promise);
     const cleanup = () => activeRunPromises.delete(promise);
@@ -161,7 +165,7 @@ async function shutdownRunners(timeoutMs = 5000) {
     });
 
     await Promise.race([
-        Promise.allSettled([...activeRunPromises]),
+        Promise.allSettled(activeRunPromises),
         timeoutPromise
     ]);
 
@@ -297,10 +301,6 @@ async function startRunner({
         if (mode === 'scheduled' && scheduleId != null) {
             updateScheduledRunner(scheduleId, values).catch(() => {});
         }
-    }
-
-    function rethrowFatalAuth(error) {
-        if (isFatalAuthError(error)) throw error;
     }
 
     async function claimSilently(quest) {
@@ -779,59 +779,64 @@ async function startRunner({
         return { isRecheck: false, rechecksRemaining: 0 };
     }
 
+    async function executeOneShotModeLoop() {
+        let noProgressRounds = 0;
+        while (!signal.aborted) {
+            const outcome = await runRoundSafely();
+            if (signal.aborted || isOneShotSessionComplete(oneShotSession) || outcome.supportedCount === 0) {
+                break;
+            }
+            noProgressRounds = outcome.progressed ? 0 : noProgressRounds + 1;
+            if (noProgressRounds >= 3) {
+                break;
+            }
+        }
+        await reportOneShotSummary();
+        await reportOneShotLogout();
+    }
+
+    async function executeScheduledModeLoop() {
+        let scheduledState = { isRecheck: false, rechecksRemaining: 0 };
+        let transientAttempt = 0;
+        while (!signal.aborted) {
+            const outcome = await runRoundSafely();
+            if (signal.aborted) break;
+
+            if (outcome.transientError) {
+                transientAttempt = await waitForTransientErrorRetry(transientAttempt);
+                continue;
+            }
+            transientAttempt = 0;
+            scheduledState = await handleScheduledIdle(scheduledState, outcome);
+        }
+    }
+
+    async function handleRunnerFatalError(err) {
+        if (err.message === 'aborted') {
+            addLog(`🛑 ${username}: RUNNER STOPPED`);
+        } else if (isFatalAuthError(err)) {
+            addLog(`🔒 ${username}: AUTH FAILED (Token invalid)`);
+            persistSchedule({ lastError: 'Fatal auth failure (token invalid)' });
+        } else {
+            addLog(`❌ ${username}: FATAL ERROR — ${err.message}`);
+            persistSchedule({ lastError: err.message });
+        }
+        await flush();
+    }
+
     // Main execution loop
     const runTask = (async () => {
         try {
             await initializeRunnerSession();
             await restoreInitialSchedule();
 
-            let scheduledState = { isRecheck: false, rechecksRemaining: 0 };
-            let transientAttempt = 0;
-            let noProgressRounds = 0;
-
-            while (!signal.aborted) {
-                const outcome = await runRoundSafely();
-                if (signal.aborted) break;
-
-                if (mode === 'oneshot') {
-                    if (isOneShotSessionComplete(oneShotSession)) {
-                        break;
-                    }
-                    if (outcome.supportedCount === 0) {
-                        break;
-                    }
-                    noProgressRounds = outcome.progressed ? 0 : noProgressRounds + 1;
-                    if (noProgressRounds >= 3) {
-                        break;
-                    }
-                    continue;
-                }
-
-                // Scheduled mode loop
-                if (outcome.transientError) {
-                    transientAttempt = await waitForTransientErrorRetry(transientAttempt);
-                    continue;
-                }
-                transientAttempt = 0;
-
-                scheduledState = await handleScheduledIdle(scheduledState, outcome);
-            }
-
             if (mode === 'oneshot') {
-                await reportOneShotSummary();
-                await reportOneShotLogout();
+                await executeOneShotModeLoop();
+            } else {
+                await executeScheduledModeLoop();
             }
         } catch (err) {
-            if (err.message === 'aborted') {
-                addLog(`🛑 ${username}: RUNNER STOPPED`);
-            } else if (isFatalAuthError(err)) {
-                addLog(`🔒 ${username}: AUTH FAILED (Token invalid)`);
-                persistSchedule({ lastError: 'Fatal auth failure (token invalid)' });
-            } else {
-                addLog(`❌ ${username}: FATAL ERROR — ${err.message}`);
-                persistSchedule({ lastError: err.message });
-            }
-            await flush();
+            await handleRunnerFatalError(err);
         } finally {
             clearPendingRender();
             jobs.delete(jobKey);

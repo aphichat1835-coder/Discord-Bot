@@ -23,7 +23,7 @@ function encryptToken(token, ownerId = 'system', accountId = 'default') {
     const secret = getSecretKey();
     const salt = crypto.randomBytes(16);
     const iv = crypto.randomBytes(12);
-    const cipher = crypto.createCipheriv('aes-256-gcm', deriveKey(secret, salt), iv);
+    const cipher = crypto.createCipheriv('aes-256-gcm', deriveKey(secret, salt), iv, { authTagLength: 16 });
     cipher.setAAD(Buffer.from(`${ownerId}:${accountId}`));
     const ciphertext = Buffer.concat([cipher.update(token, 'utf8'), cipher.final()]);
 
@@ -58,7 +58,8 @@ function decryptToken(encryptedData, ownerId = 'system', accountId = 'default') 
     const decipher = crypto.createDecipheriv(
         'aes-256-gcm',
         deriveKey(secret, salt),
-        iv
+        iv,
+        { authTagLength: 16 }
     );
     decipher.setAAD(Buffer.from(`${ownerId}:${accountId}`));
     decipher.setAuthTag(tag);

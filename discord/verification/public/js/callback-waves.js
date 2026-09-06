@@ -395,8 +395,6 @@
     };
     if (typeof motionQuery.addEventListener === "function") {
       motionQuery.addEventListener("change", handleMotionChange);
-    } else if (typeof motionQuery["addListener"] === "function") {
-      motionQuery["addListener"](handleMotionChange);
     }
   }
 

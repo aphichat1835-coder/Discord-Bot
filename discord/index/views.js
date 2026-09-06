@@ -2058,7 +2058,7 @@ async function loadScheduledRunners() {
                 '<td style="padding:10px 8px;">' + lastTime + '</td>' +
                 '<td style="padding:10px 8px; color:var(--blue2);">' + nextTime + '</td>' +
                 '<td style="padding:10px 8px;">' + errorText + '</td>' +
-                '<td style="padding:10px 8px; text-align:center;"><button type="button" class="btn btn-sm btn-danger" onclick="deleteScheduledRunner(\'' + r._id + '\')">🛑 ลบ</button></td>' +
+                '<td style="padding:10px 8px; text-align:center;"><button type="button" class="btn btn-sm btn-danger" data-id="' + escapeHtmlStr(r._id) + '" onclick="deleteScheduledRunner(this.dataset.id)">🛑 ลบ</button></td>' +
             '</tr>';
         }).join('');
     } catch (e) {
