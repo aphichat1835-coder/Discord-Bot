@@ -471,7 +471,15 @@ function nextVideoTimestamp(current, target, enrolledAtMs, now = Date.now()) {
     );
 }
 
-async function runVideoQuest(token, quest, signal, onServerProgress) {
+async function runVideoQuest(
+    token,
+    quest,
+    signal,
+    onServerProgress,
+    _speedMultiplier,
+    _heartbeatSecs,
+    onMutationAccepted = () => {}
+) {
     let fresh = quest;
     let current = fresh.progressSecs;
     const target = fresh.secondsNeeded;
@@ -486,7 +494,8 @@ async function runVideoQuest(token, quest, signal, onServerProgress) {
             continue;
         }
 
-        await sendVideoProgress(token, quest.id, timestamp, signal);
+        const mutation = await sendVideoProgress(token, quest.id, timestamp, signal);
+        if (!mutation?.verifiedAfterFailure) onMutationAccepted();
         await sleep(1000, signal);
         fresh = await fetchFreshQuest(token, quest.id, signal);
         if (onServerProgress) await onServerProgress(fresh);
@@ -504,7 +513,15 @@ async function runVideoQuest(token, quest, signal, onServerProgress) {
     return fresh;
 }
 
-async function runGameQuest(token, quest, signal, onServerProgress, heartbeatSecs = 30) {
+async function runGameQuest(
+    token,
+    quest,
+    signal,
+    onServerProgress,
+    _speedMultiplier,
+    heartbeatSecs = 30,
+    onMutationAccepted = () => {}
+) {
     let fresh = quest;
     let current = fresh.progressSecs;
     const intervalSecs = Math.max(1, Number(heartbeatSecs) || 30);
@@ -513,7 +530,8 @@ async function runGameQuest(token, quest, signal, onServerProgress, heartbeatSec
 
     while (!fresh.completed && current < fresh.secondsNeeded) {
         if (signal?.aborted) throw abortFailure();
-        await sendQuestHeartbeat(token, fresh, false, forceApplicationPayload, signal);
+        const mutation = await sendQuestHeartbeat(token, fresh, false, forceApplicationPayload, signal);
+        if (!mutation?.verifiedAfterFailure) onMutationAccepted();
         await sleep(1000, signal);
         fresh = await fetchFreshQuest(token, quest.id, signal);
         if (onServerProgress) await onServerProgress(fresh);
@@ -536,7 +554,8 @@ async function runGameQuest(token, quest, signal, onServerProgress, heartbeatSec
     }
 
     if (fresh.completed) return fresh;
-    await sendQuestHeartbeat(token, fresh, true, forceApplicationPayload, signal);
+    const finalMutation = await sendQuestHeartbeat(token, fresh, true, forceApplicationPayload, signal);
+    if (!finalMutation?.verifiedAfterFailure) onMutationAccepted();
     await sleep(1000, signal);
     fresh = await fetchFreshQuest(token, quest.id, signal);
     if (onServerProgress) await onServerProgress(fresh);

@@ -594,7 +594,10 @@ async function startRunner({
                 userToken,
                 quest,
                 signal,
-                hooks.onServerProgress
+                hooks.onServerProgress,
+                5,
+                30,
+                hooks.onMutationAccepted
             );
             if (signal.aborted) throw new Error('aborted');
             return null;
@@ -784,6 +787,7 @@ async function startRunner({
 
             let scheduledState = { isRecheck: false, rechecksRemaining: 0 };
             let transientAttempt = 0;
+            let noProgressRounds = 0;
 
             while (!signal.aborted) {
                 const outcome = await runRoundSafely();
@@ -791,8 +795,13 @@ async function startRunner({
 
                 if (mode === 'oneshot') {
                     if (isOneShotSessionComplete(oneShotSession)) {
-                        await reportOneShotSummary();
-                        await reportOneShotLogout();
+                        break;
+                    }
+                    if (outcome.supportedCount === 0) {
+                        break;
+                    }
+                    noProgressRounds = outcome.progressed ? 0 : noProgressRounds + 1;
+                    if (noProgressRounds >= 3) {
                         break;
                     }
                     continue;
@@ -806,6 +815,11 @@ async function startRunner({
                 transientAttempt = 0;
 
                 scheduledState = await handleScheduledIdle(scheduledState, outcome);
+            }
+
+            if (mode === 'oneshot') {
+                await reportOneShotSummary();
+                await reportOneShotLogout();
             }
         } catch (err) {
             if (err.message === 'aborted') {
