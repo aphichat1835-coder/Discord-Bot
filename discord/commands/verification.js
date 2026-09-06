@@ -174,31 +174,20 @@ function buildDiscordAuthorizeUrl({
         throw new Error("Missing DISCORD_CLIENT_ID/Application ID");
     }
 
-    const redirectUri = `${dashboardUrl}/auth/callback`;
-
-    const state = createCompactCallbackState({
+    const panelState = createCompactCallbackState({
         guildId,
         roleId,
         expectedUserId,
         panelRevision
     });
 
-    const params = new URLSearchParams({
-        client_id: clientId,
-        redirect_uri: redirectUri,
-        response_type: "code",
-        scope: VERIFY_SCOPE,
-        state,
-        prompt: "consent"
-    });
-
-    const url = `https://discord.com/oauth2/authorize?${params.toString()}`;
+    const url = `${dashboardUrl}/auth/start?state=${encodeURIComponent(panelState)}`;
 
     if (url.length > 512) {
         throw new Error(`OAuth URL too long (${url.length}/512). Use a shorter PUBLIC_DASHBOARD_URL domain.`);
     }
 
-    return url;
+    return `${dashboardUrl}/auth/start?state=${encodeURIComponent(panelState)}`;
 }
 
 function isLikelyUnicodeEmoji(raw) {
@@ -993,6 +982,7 @@ module.exports = {
         disablePreviousVerificationPanel,
         persistVerificationRecovery,
         verificationRecoverySummary,
-        verificationSetupFailureMessage
+        verificationSetupFailureMessage,
+        buildDiscordAuthorizeUrl
     }
 };
