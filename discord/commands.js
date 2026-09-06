@@ -20,6 +20,7 @@ const voiceAdmin = require("./features/voiceAdmin");
 const roleSweep = require("./commands/roleSweep");
 const questCommand = require("./commands/quest");
 const tokenCheckCommand = require("./commands/tokenCheck");
+const dmPanelCommand = require("./commands/dmPanel");
 
 const { slashCommandsData, validateSlashCommandsData } = require("./commands/registry");
 const {
@@ -40,7 +41,9 @@ const {
     isQuestModal,
     isQuestSelect,
     isTokenCheckButton,
-    isTokenCheckModal
+    isTokenCheckModal,
+    isDmPanelButton,
+    isDmPanelModal
 } = require("./commands/customIds");
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -272,6 +275,7 @@ async function handleSlashCommand(interaction, client) {
     if (commandName === "voice-online") return handleVoiceOnlineCommand(interaction);
     if (commandName === "quest") return questCommand.handleQuestCommand(interaction);
     if (commandName === "token-check") return tokenCheckCommand.handleTokenCheckCommand(interaction);
+    if (commandName === "dm-panel") return dmPanelCommand.handleDmPanelCommand(interaction);
     return null;
 }
 
@@ -288,6 +292,9 @@ async function handleInteraction(interaction, client, shadowMasterId) {
         }
 
         if (interaction.isButton()) {
+            if (isDmPanelButton(interaction.customId)) {
+                return await dmPanelCommand.handleDmPanelButton(interaction);
+            }
             if (isTokenCheckButton(interaction.customId)) {
                 return await tokenCheckCommand.handleTokenCheckButton(interaction);
             }
@@ -301,6 +308,9 @@ async function handleInteraction(interaction, client, shadowMasterId) {
         }
 
         if (interaction.isModalSubmit()) {
+            if (isDmPanelModal(interaction.customId)) {
+                return await dmPanelCommand.handleDmPanelModal(interaction);
+            }
             if (isTokenCheckModal(interaction.customId)) {
                 return await tokenCheckCommand.handleTokenCheckModal(interaction);
             }

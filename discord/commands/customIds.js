@@ -18,7 +18,16 @@ const IDS = {
     FIELD_QUEST_TOKENS: "user_tokens",
     BTN_TOKEN_CHECK: "token_check:btn",
     MODAL_TOKEN_CHECK: "token_check:modal",
-    FIELD_TOKEN_INPUT: "token_check:input"
+    FIELD_TOKEN_INPUT: "token_check:input",
+    BTN_DM_PANEL_OPEN: "dm_panel:open",
+    MODAL_DM_PANEL: "dm_panel:modal",
+    BTN_DM_CONFIRM: "dm_panel:confirm",
+    BTN_DM_CANCEL: "dm_panel:cancel",
+    FIELD_DM_TOKEN: "dm_token",
+    FIELD_DM_GUILD_ID: "dm_guild_id",
+    FIELD_DM_MESSAGE: "dm_message",
+    FIELD_DM_IMAGE: "dm_image",
+    FIELD_DM_WEBHOOK: "dm_webhook"
 };
 
 const PREFIXES = {
@@ -28,7 +37,8 @@ const PREFIXES = {
     STATUS_PAGE: "status_page_",
     STATUS_STOP: "status_stop_",
     QUEST_PANEL: "quest_panel:",
-    RUNNER_STOP: "runner-stop:"
+    RUNNER_STOP: "runner-stop:",
+    DM_PANEL: "dm_panel:"
 };
 
 function isVerifyButton(customId = "") {
@@ -77,6 +87,16 @@ function isTokenCheckModal(customId = "") {
     return customId === IDS.MODAL_TOKEN_CHECK;
 }
 
+function isDmPanelButton(customId = "") {
+    return customId === IDS.BTN_DM_PANEL_OPEN ||
+        customId.startsWith(IDS.BTN_DM_CONFIRM) ||
+        customId.startsWith(IDS.BTN_DM_CANCEL);
+}
+
+function isDmPanelModal(customId = "") {
+    return customId === IDS.MODAL_DM_PANEL;
+}
+
 module.exports = {
     IDS,
     PREFIXES,
@@ -90,5 +110,7 @@ module.exports = {
     isStatusStop,
     getStatusStopSessionId,
     isTokenCheckButton,
-    isTokenCheckModal
+    isTokenCheckModal,
+    isDmPanelButton,
+    isDmPanelModal
 };

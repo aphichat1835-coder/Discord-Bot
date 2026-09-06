@@ -188,6 +188,11 @@ const slashCommandsData = [
     {
         name: "token-check",
         description: "เปิดแผงตรวจสอบ Discord Token (Nitro, Boost, วันหมดอายุ)"
+    },
+
+    {
+        name: "dm-panel",
+        description: "เปิดแผงควบคุมระบบกระจายข้อความ DM ผ่านบอทตัวรอง (เฉพาะเจ้าของบอท)"
     }
 ].map(command => ({ ...command, dmPermission: false }));
 
