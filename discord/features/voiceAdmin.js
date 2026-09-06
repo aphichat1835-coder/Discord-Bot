@@ -729,11 +729,13 @@ async function handleVoiceAdminInteraction(interaction) {
     await interaction.deferUpdate();
     const action = ({ [IDS.DISCONNECT]: "disconnect", [IDS.LOCK_MUTE]: "mute", [IDS.LOCK_DEAF]: "deaf", [IDS.UNLOCK_MUTE]: "unmute", [IDS.UNLOCK_DEAF]: "undeaf", [IDS.MOVE]: "move" })[interaction.customId];
     const destinationId = interaction.values?.[0];
-    const destination = action === "move"
-        ? (interaction.channels?.first?.() ||
-           interaction.guild?.channels?.cache?.get?.(destinationId) ||
-           (destinationId && interaction.guild?.channels?.fetch ? await interaction.guild.channels.fetch(destinationId).catch(() => null) : null))
-        : null;
+    let destination = null;
+    if (action === "move") {
+        destination = interaction.channels?.first?.() || interaction.guild?.channels?.cache?.get?.(destinationId) || null;
+        if (!destination && destinationId && typeof interaction.guild?.channels?.fetch === "function") {
+            destination = await interaction.guild.channels.fetch(destinationId).catch(() => null);
+        }
+    }
     if (!action) return interaction.editReply(buildPanel(interaction.channel, `> ${config.emojis.error} คำสั่งแผงนี้ไม่ถูกต้อง`));
     try {
         const result = await runPanelAction(interaction, action, destination);
@@ -796,9 +798,12 @@ function resultColor(result) {
 
 function buildSecretResultEmbed(command, result) {
     const isFullSuccess = result.targeted > 0 && result.succeeded === result.targeted && (result.failed + result.skipped + result.timedOut + result.persistenceFailed === 0);
-    const color = isFullSuccess
-        ? (config.system?.themeColors?.success || "#57F287")
-        : (result.succeeded > 0 ? (config.system?.themeColors?.warning || "#FEE75C") : (config.system?.themeColors?.error || "#ED4245"));
+    let color = config.system?.themeColors?.error || "#ED4245";
+    if (isFullSuccess) {
+        color = config.system?.themeColors?.success || "#57F287";
+    } else if (result.succeeded > 0) {
+        color = config.system?.themeColors?.warning || "#FEE75C";
+    }
 
     const lines = [
         `> ${config.emojis.members || "👥"} **เป้าหมายทั้งหมด:** **${result.targeted}** คน`,
@@ -862,8 +867,16 @@ function buildSecretErrorEmbed(detail) {
 function isOwnerSecretMessage(message) {
     return Boolean(message?.guild) && !message.author?.bot && isConfiguredOwner(config, message.author?.id);
 }
+function extractChannelId(input) {
+    const str = String(input || "").trim();
+    if (str.startsWith("<#") && str.endsWith(">")) {
+        return str.slice(2, -1).trim();
+    }
+    return str;
+}
+
 async function getSecretMoveDestination(message, destinationId) {
-    const rawId = String(destinationId || "").replace(/^[<#]+|[>]+$/g, "").trim();
+    const rawId = extractChannelId(destinationId);
     if (!/^\d{17,22}$/.test(rawId)) throw makeError("VOICE_ADMIN_DESTINATION_INVALID");
     return message.guild.channels.cache.get(rawId) || message.guild.channels.fetch(rawId).catch(() => null);
 }
@@ -1018,33 +1031,71 @@ async function deletePreviousNotice(guild, notice) {
     const previous = await channel?.messages?.fetch?.(notice.messageId).catch(() => null);
     await previous?.delete?.().catch(() => {});
 }
+function getNoticeActionLabel(type) {
+    if (type === "mute") return "เปิดไมค์";
+    if (type === "deaf") return "เปิดหู";
+    return "เปิดไมค์หรือหู";
+}
+
+async function persistNoticeRecord(notice) {
+    let result = null;
+    let lastError = null;
+    for (let attempt = 0; attempt < 2 && !stopping; attempt++) {
+        try {
+            result = await VoiceAdminNotice.updateOne(
+                { guildId: notice.guildId, actorId: notice.actorId, targetId: notice.targetId },
+                { $set: notice },
+                { upsert: true }
+            );
+            if (operationWasAcknowledged(result, { allowUpsert: true })) break;
+        } catch (error) {
+            lastError = error;
+            result = null;
+        }
+    }
+    return { result, lastError };
+}
+
 async function sendUnauthorizedNotice(guild, actorId, targetId, options = {}) {
-    const key = noticeKey(guild.id, actorId, targetId); const before = noticeQueues.get(key) || Promise.resolve();
+    const key = noticeKey(guild.id, actorId, targetId);
+    const before = noticeQueues.get(key) || Promise.resolve();
     const next = before.catch(() => {}).then(async () => {
         if (stopping) return false;
         const target = guild.members.cache.get(targetId) || await guild.members.fetch(targetId).catch(() => null);
-        const channel = target?.voice?.channel; if (!isVoiceChannel(channel)) return false;
-        const previous = notices.get(key); if (previous && Date.now() - Number(previous.notifiedAt || 0) < NOTICE_WINDOW_MS) await deletePreviousNotice(guild, previous);
-        const actionLabel = options.type === "mute" ? "เปิดไมค์" : (options.type === "deaf" ? "เปิดหู" : "เปิดไมค์หรือหู");
+        const channel = target?.voice?.channel;
+        if (!isVoiceChannel(channel)) return false;
+
+        const previous = notices.get(key);
+        if (previous && Date.now() - Number(previous.notifiedAt || 0) < NOTICE_WINDOW_MS) {
+            await deletePreviousNotice(guild, previous);
+        }
+
+        const actionLabel = getNoticeActionLabel(options.type);
         const content = options.ownerForced
             ? `<@${actorId}> คุณไม่มีสิทธิ์${actionLabel}ให้ <@${targetId}> เนื่องจากถูกล็อกโดยผู้ดูแลระบบบอตระดับสูงสุด (Owner)`
             : `<@${actorId}> คุณไม่มีสิทธิ์${actionLabel}ให้ <@${targetId}> กรุณาติดต่อแอดมิน`;
         const sent = await channel.send({ content, allowedMentions: { users: [String(actorId)], parse: [] } }).catch(() => null);
         if (!sent) return false;
-        const notice = { guildId: String(guild.id), actorId: String(actorId), targetId: String(targetId), channelId: String(channel.id), messageId: String(sent.id), notifiedAt: new Date() };
-        let result = null; let lastError = null;
-        for (let attempt = 0; attempt < 2 && !stopping; attempt++) {
-            try {
-                result = await VoiceAdminNotice.updateOne({ guildId: notice.guildId, actorId: notice.actorId, targetId: notice.targetId }, { $set: notice }, { upsert: true });
-                if (operationWasAcknowledged(result, { allowUpsert: true })) break;
-            } catch (error) {
-                lastError = error;
-                result = null;
-            }
+
+        const notice = {
+            guildId: String(guild.id),
+            actorId: String(actorId),
+            targetId: String(targetId),
+            channelId: String(channel.id),
+            messageId: String(sent.id),
+            notifiedAt: new Date()
+        };
+
+        const { result, lastError } = await persistNoticeRecord(notice);
+        if (!operationWasAcknowledged(result, { allowUpsert: true })) {
+            await reportPersistenceFailure("notice_pointer", { guildId: guild.id, userId: targetId, type: "notice", error: lastError });
+            return false;
         }
-        if (!operationWasAcknowledged(result, { allowUpsert: true })) { await reportPersistenceFailure("notice_pointer", { guildId: guild.id, userId: targetId, type: "notice", error: lastError }); return false; }
-        notices.set(key, notice); return true;
-    }).finally(() => { if (noticeQueues.get(key) === next) noticeQueues.delete(key); });
+        notices.set(key, notice);
+        return true;
+    }).finally(() => {
+        if (noticeQueues.get(key) === next) noticeQueues.delete(key);
+    });
     noticeQueues.set(key, next);
     return next;
 }

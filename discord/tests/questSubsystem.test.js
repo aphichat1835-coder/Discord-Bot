@@ -388,7 +388,7 @@ test('questDm builds correct tones and embeds for success, partial, danger, and 
     });
     assert.ok(successEmbed);
     assert.match(successEmbed.data.title, /ทำ Quest อัตโนมัติเสร็จสิ้นแล้ว/);
-    assert.equal(successEmbed.data.color, 0x57F287); // #57F287
+    assert.equal(successEmbed.data.color, parseInt('57F287', 16));
 
     const authFailEmbed = buildQuestAuthFailureEmbed({
         username: 'TestHero',
@@ -397,7 +397,7 @@ test('questDm builds correct tones and embeds for success, partial, danger, and 
     });
     assert.ok(authFailEmbed);
     assert.match(authFailEmbed.data.title, /Token บัญชี Quest ใช้งานไม่ได้/);
-    assert.equal(authFailEmbed.data.color, 0xED4245); // #ED4245
+    assert.equal(authFailEmbed.data.color, parseInt('ED4245', 16));
 });
 
 test('questDm sendQuestSummaryDM and sendQuestAuthFailureDM integrate with central dmService outbox', async () => {

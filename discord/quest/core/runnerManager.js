@@ -243,6 +243,25 @@ async function startRunner({
         return null;
     }
 
+    async function sendWithChannelFallback(ch, formattedContent) {
+        try {
+            return await ch.send({ content: formattedContent });
+        } catch (sendErr) {
+            // Fallback to guild channel if DM failed (e.g. user has DMs closed)
+            if (channelId && ch?.id !== channelId) {
+                if (isPermanentDmError(sendErr)) {
+                    console.warn(`[Quest Runner:${jobKey}] Permanent DM error (${sendErr.code || sendErr.message}); falling back to guild channel`);
+                }
+                const fallbackCh = await client.channels.fetch(channelId).catch(() => null);
+                if (fallbackCh?.isTextBased?.()) {
+                    outputChannel = fallbackCh;
+                    return await fallbackCh.send({ content: formattedContent });
+                }
+            }
+            throw sendErr;
+        }
+    }
+
     async function flush() {
         const task = flushPromise.then(async () => {
             lastRenderAt = Date.now();
@@ -258,25 +277,7 @@ async function startRunner({
                 if (!liveMsg) {
                     const ch = await resolveOutputChannel();
                     if (!ch?.isTextBased?.()) return;
-                    try {
-                        liveMsg = await ch.send({ content: formattedContent });
-                    } catch (sendErr) {
-                        // Fallback to guild channel if DM failed (e.g. user has DMs closed)
-                        if (channelId && ch?.id !== channelId) {
-                            if (isPermanentDmError(sendErr)) {
-                                console.warn(`[Quest Runner:${jobKey}] Permanent DM error (${sendErr.code || sendErr.message}); falling back to guild channel`);
-                            }
-                            const fallbackCh = await client.channels.fetch(channelId).catch(() => null);
-                            if (fallbackCh?.isTextBased?.()) {
-                                outputChannel = fallbackCh;
-                                liveMsg = await fallbackCh.send({ content: formattedContent });
-                            } else {
-                                throw sendErr;
-                            }
-                        } else {
-                            throw sendErr;
-                        }
-                    }
+                    liveMsg = await sendWithChannelFallback(ch, formattedContent);
                 } else {
                     await liveMsg.edit({ content: formattedContent });
                 }

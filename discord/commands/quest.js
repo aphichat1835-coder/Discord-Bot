@@ -1,7 +1,5 @@
 'use strict';
 
-const path = require('node:path');
-const fs = require('node:fs');
 const {
     AttachmentBuilder,
     MessageEmbed,
@@ -24,8 +22,15 @@ const {
     startUserQuestSession
 } = require('../quest');
 
-const QUEST_BANNER_PATH = path.join(__dirname, '../quest/assets/banner.gif');
 const QUEST_BANNER_ATTACHMENT_NAME = 'quest-banner.gif';
+
+function getQuestBannerPath() {
+    try {
+        return require.resolve('../quest/assets/banner.gif');
+    } catch {
+        return null;
+    }
+}
 
 function isBotOwner(userId) {
     return isConfiguredOwner(config, userId);
@@ -175,12 +180,13 @@ async function handleQuestCommand(interaction) {
                 flags: 64
             });
         }
-        const hasAttachment = fs.existsSync(QUEST_BANNER_PATH);
+        const bannerPath = getQuestBannerPath();
+        const hasAttachment = Boolean(bannerPath);
         const embed = buildQuestPanelEmbed(interaction, { hasAttachment });
         const row = buildQuestPanelRow();
         const payload = { embeds: [embed], components: [row] };
         if (hasAttachment) {
-            payload.files = [new AttachmentBuilder(QUEST_BANNER_PATH, { name: QUEST_BANNER_ATTACHMENT_NAME })];
+            payload.files = [new AttachmentBuilder(bannerPath, { name: QUEST_BANNER_ATTACHMENT_NAME })];
         }
         return interaction.reply(payload);
     }
