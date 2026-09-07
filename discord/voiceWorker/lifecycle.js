@@ -187,9 +187,11 @@ async function attemptSelfVoiceDisconnect(clientRef, session, sessionId, tokenHa
     if (otherActive <= 0) {
         cleanupSessionClientIfUnused(tokenHash, clientRef, sessionId, session, "self-voice-fallback");
         const afterDestroy = await waitForSelfVoiceExit(clientRef, session, 500);
-        return afterDestroy.inTargetChannel
-            ? afterDestroy
-            : { inspectable: true, inTargetGuild: false, inTargetChannel: false, channelId: null };
+        if (!afterDestroy.inTargetChannel) {
+            errors.length = 0;
+            return { inspectable: true, inTargetGuild: false, inTargetChannel: false, channelId: null };
+        }
+        return afterDestroy;
     }
 
     errors.push(`selfVoiceStillConnected:activeSessions=${otherActive}`);
@@ -321,6 +323,8 @@ async function markTokenInvalid(sessionId, source) {
         reason: "Discord ปฏิเสธ Token หรือบัญชีถูกยกเลิกการเข้าสู่ระบบ",
         action: "เปลี่ยน Token หรือใช้บัญชีอื่น แล้วเริ่ม Session ใหม่"
     });
+    notifications.cleanupSession(sessionId);
+    await sessionManager.deleteSession(sessionId).catch(() => false);
     return true;
 }
 
@@ -724,6 +728,8 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
             action: "ตรวจสอบสิทธิ์และช่องเสียง แล้วสั่งเริ่ม Session ใหม่"
         });
 
+        notifications.cleanupSession(sessionId);
+        await sessionManager.deleteSession(sessionId).catch(() => false);
     }
 
     async function handlePassiveReconnect(reconnectAttempts) {
@@ -1116,6 +1122,15 @@ async function stopSession(sessionId, options = {}) {
         clearReconnect(sessionId);
 
         if (!cleanup.ok || !cleanup.shouldDeleteRecord) {
+            if (session.state === "failed" || session.tokenInvalid === true) {
+                console.log(`[WORKER] 🧹 Forcing cleanup of already failed session: ${sanitizeLogText(sessionId)}`);
+                if (tokenHash && clientRef) {
+                    cleanupSessionClientIfUnused(tokenHash, clientRef, sessionId, session, "failed-session-stop");
+                }
+                notifications.cleanupSession(sessionId);
+                const deleted = await sessionManager.deleteSession(sessionId).catch(() => false);
+                return !!deleted;
+            }
             await persistStopFailure(sessionId, options, cleanup);
             return false;
         }
@@ -1256,6 +1271,8 @@ async function handleRecoveryExhaustion(sessionId, tokenHash, session, recovery,
     const markFailed = deps.markSessionFailed || sessionManager.markSessionFailed?.bind(sessionManager);
     const getPooledClient = deps.getSessionClientFromPool || getSessionClientFromPool;
     const cleanupClient = deps.cleanupSessionClientIfUnused || cleanupSessionClientIfUnused;
+    const deleteSession = deps.deleteSession || sessionManager.deleteSession?.bind(sessionManager);
+    const cleanupSessionNotif = deps.cleanupSessionNotification || notifications.cleanupSession;
 
     stopNatural(sessionId);
     stopAutoDeaf(sessionId);
@@ -1276,6 +1293,10 @@ async function handleRecoveryExhaustion(sessionId, tokenHash, session, recovery,
     await markFailed?.(sessionId, "max_reconnect_attempts", null, "health recovery exhausted");
     const clientRef = session.client || getPooledClient(sessionId, session, tokenHash);
     cleanupClient(tokenHash, clientRef, sessionId, session, "health-recovery-exhausted");
+    cleanupSessionNotif?.(sessionId);
+    if (deleteSession) {
+        await deleteSession(sessionId).catch(() => false);
+    }
 }
 
 async function resolveRecoveryClient(sessionId, session, tokenHash, deps = {}) {

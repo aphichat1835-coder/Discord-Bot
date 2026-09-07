@@ -7,9 +7,12 @@ DO NOT SIMPLIFY: /serverinfo member fetch — bot/human split required.
 ================================================================================
 */
 
-const { PermissionFlagsBits } = require("discord.js");
-const { MessageEmbed, getLegacyChannelType } = require("../core/discordCompat");
+const os = require("node:os");
+const mongoose = require("mongoose");
+const { PermissionFlagsBits, UserFlagsBitField } = require("discord.js");
+const { MessageEmbed, MessageActionRow, MessageButton, getLegacyChannelType } = require("../core/discordCompat");
 const config = require("../config.json");
+const { isConfiguredOwner } = require("../core/env");
 const { markCommandAccepted } = require("../guards/commandGuards");
 const { code, markdownText, safeText } = require("../dm/design");
 const SERVERINFO_CACHE_TTL_MS = 60 * 1000;
@@ -18,11 +21,65 @@ const SERVERINFO_FULL_FETCH_MAX_MEMBERS = 2500;
 const serverInfoCounts = new Map();
 const serverInfoInFlight = new Map();
 
+function isVerifiedBotUser(user) {
+    if (!user?.bot) return false;
+    if (user.flags && typeof user.flags.has === "function") {
+        return user.flags.has(UserFlagsBitField.Flags.VerifiedBot);
+    }
+    const bitfield = Number(user.flags?.bitfield ?? user.flags ?? 0);
+    return (bitfield & 65536) === 65536;
+}
+
 function countCachedMembers(members) {
-    return {
-        human: members.filter(member => !member.user.bot).size,
-        bots: members.filter(member => member.user.bot).size
-    };
+    const list = Array.isArray(members)
+        ? members
+        : (typeof members?.values === "function"
+            ? Array.from(members.values())
+            : null);
+
+    if (list) {
+        let human = 0;
+        let bots = 0;
+        let verifiedBots = 0;
+        for (const member of list) {
+            if (member?.user?.bot) {
+                bots++;
+                if (isVerifiedBotUser(member.user)) verifiedBots++;
+            } else {
+                human++;
+            }
+        }
+        return {
+            human,
+            bots,
+            verifiedBots,
+            unverifiedBots: Math.max(0, bots - verifiedBots)
+        };
+    }
+
+    if (typeof members?.filter === "function") {
+        const humanRes = members.filter(member => !member?.user?.bot);
+        const botRes = members.filter(member => member?.user?.bot);
+        const humanCount = Number(humanRes?.size ?? humanRes?.length ?? 0);
+        const botCount = Number(botRes?.size ?? botRes?.length ?? 0);
+
+        let verifiedCount = 0;
+        try {
+            const vRes = members.filter(member => member?.user?.bot && isVerifiedBotUser(member?.user));
+            verifiedCount = Number(vRes?.size ?? vRes?.length ?? 0);
+        } catch {
+            verifiedCount = 0;
+        }
+
+        return {
+            human: humanCount,
+            bots: botCount,
+            verifiedBots: verifiedCount,
+            unverifiedBots: Math.max(0, botCount - verifiedCount)
+        };
+    }
+
+    return { human: 0, bots: 0, verifiedBots: 0, unverifiedBots: 0 };
 }
 
 function unknownMemberCounts(guild, source) {
@@ -30,6 +87,8 @@ function unknownMemberCounts(guild, source) {
     return {
         human: null,
         bots: null,
+        verifiedBots: null,
+        unverifiedBots: null,
         total: Number.isFinite(total) && total >= 0 ? total : null,
         source,
         at: Date.now()
@@ -188,7 +247,7 @@ function sendLoadingState(interaction, kind) {
 function channelCounts(guild) {
     const channels = guild.channels?.cache;
     const count = type => channels?.filter?.(channel => getLegacyChannelType(channel.type) === type).size || 0;
-    const known = ["GUILD_TEXT", "GUILD_VOICE", "GUILD_CATEGORY", "GUILD_NEWS", "GUILD_STAGE_VOICE"];
+    const known = ["GUILD_TEXT", "GUILD_VOICE", "GUILD_CATEGORY", "GUILD_NEWS", "GUILD_STAGE_VOICE", "GUILD_FORUM", "GUILD_MEDIA"];
     const knownTotal = known.reduce((total, type) => total + count(type), 0);
     return {
         text: count("GUILD_TEXT"),
@@ -196,6 +255,8 @@ function channelCounts(guild) {
         category: count("GUILD_CATEGORY"),
         announcement: count("GUILD_NEWS"),
         stage: count("GUILD_STAGE_VOICE"),
+        forum: count("GUILD_FORUM"),
+        media: count("GUILD_MEDIA"),
         other: Math.max(0, Number(channels?.size || 0) - knownTotal)
     };
 }
@@ -246,7 +307,7 @@ function channelMention(channelId) {
     return channelId ? `<#${channelId}>` : "ไม่ได้ตั้งค่า";
 }
 
-function buildServerInfoEmbed(guild, owner, memberCounts) {
+function buildServerInfoEmbed(guild, owner, memberCounts, extra = {}) {
     const channels = channelCounts(guild);
     const ownerId = owner?.id || guild.ownerId;
     const humanCount = formatCount(memberCounts.human, "ประเมินไม่ได้");
@@ -255,6 +316,10 @@ function buildServerInfoEmbed(guild, owner, memberCounts) {
     const roleCount = Math.max(0, Number(guild.roles?.cache?.size || 0) - 1);
     const emojiCount = Number(guild.emojis?.cache?.size || 0);
     const stickerCount = Number(guild.stickers?.cache?.size || 0);
+    const totalChannels = (channels.text || 0) + (channels.voice || 0) + (channels.category || 0) +
+        (channels.announcement || 0) + (channels.stage || 0) + (channels.forum || 0) +
+        (channels.media || 0) + (channels.other || 0);
+
     const ownerValue = ownerId ? `<@${ownerId}>\n` + code(ownerId) : "ไม่ทราบ";
     const vanityValue = guild.vanityURLCode
         ? markdownText("discord.gg/" + guild.vanityURLCode, "-", 100)
@@ -262,62 +327,130 @@ function buildServerInfoEmbed(guild, owner, memberCounts) {
     const description = guild.description
         ? `> ${markdownText(guild.description, "", 300)}\n\n`
         : "";
+
+    const maxUploadMb = [25, 25, 50, 100][Number(guild.premiumTier) || 0] || 25;
+    const maxBitrateKbps = Math.round(Number(guild.maximumBitrate || 96000) / 1000);
+    const autoModSummary = extra.autoModSummary || "ไม่ได้เปิดใช้";
+
+    const otherChannelParts = [];
+    if (channels.announcement > 0) otherChannelParts.push(`ประกาศ **${formatCount(channels.announcement)}**`);
+    if (channels.stage > 0) otherChannelParts.push(`Stage **${formatCount(channels.stage)}**`);
+    if (channels.forum > 0) otherChannelParts.push(`ฟอรัม **${formatCount(channels.forum)}**`);
+    if (channels.other > 0) otherChannelParts.push(`อื่น ๆ **${formatCount(channels.other)}**`);
+    const otherChannelsLine = otherChannelParts.length > 0
+        ? `> **ช่องอื่น ๆ:** ${otherChannelParts.join(" • ")}\n`
+        : "";
+
+    const specialChannels = [];
+    if (guild.safetyAlertsChannelId) {
+        specialChannels.push(`แจ้งเตือนความปลอดภัย ${channelMention(guild.safetyAlertsChannelId)}`);
+    }
+    if (guild.publicUpdatesChannelId) {
+        specialChannels.push(`ข่าวสารทางการ ${channelMention(guild.publicUpdatesChannelId)}`);
+    }
+    const specialChannelsLine = specialChannels.length > 0
+        ? `> **ช่องพิเศษ:** ${specialChannels.join(" • ")}\n`
+        : "";
+
+    const botBreakdown = (memberCounts.verifiedBots !== null && memberCounts.unverifiedBots !== null)
+        ? ` (ยืนยันแล้ว: **${formatCount(memberCounts.verifiedBots)}** • ยังไม่ยืนยัน: **${formatCount(memberCounts.unverifiedBots)}**)`
+        : "";
+
+    const memberLines =
+        `> **สมาชิกทั้งหมด:** **${totalMembers}** คน\n` +
+        `> • 👥 คนจริง: **${humanCount}** คน\n` +
+        `> • 🤖 บอท: **${botCount}** ตัว${botBreakdown}`;
+
     const embed = new MessageEmbed()
         .setColor(guild.available === false ? config.system.themeColors.warning : config.system.themeColors.primary)
         .setTitle(`📊 ข้อมูลเซิร์ฟเวอร์ • ${safeText(guild.name, "ไม่ทราบชื่อ", 180)}`)
         .setDescription(`${description}ข้อมูลด้านล่างมาจาก Discord และข้อมูลชั่วคราวที่บอทมองเห็นในขณะเรียกคำสั่ง`)
         .addFields(
             {
-                name: "🏠 ตัวตนของเซิร์ฟเวอร์",
-                value: `ชื่อ: **${markdownText(guild.name, "ไม่ทราบชื่อ", 100)}**\nID: ${code(guild.id)}\nเจ้าของ: ${ownerValue}`,
-                inline: true
-            },
-            {
-                name: "🗓️ วันที่สร้าง",
-                value: `${discordTimestamp(guild.createdTimestamp, "F")}\n${discordTimestamp(guild.createdTimestamp, "R")}\nภาษาเริ่มต้น: **${markdownText(guild.preferredLocale || "ไม่ทราบ", "ไม่ทราบ", 40)}**`,
-                inline: true
-            },
-            {
-                name: "👥 สมาชิก",
-                value: `ทั้งหมด **${totalMembers}**\nคน **${humanCount}** • บอท **${botCount}**\nแหล่งข้อมูล: ${markdownText(memberCounts.source, "ไม่ทราบ", 220)}`,
+                name: "🏠 ข้อมูลทั่วไป & สมาชิก",
+                value:
+                    `> **เจ้าของ:** ${ownerValue}\n` +
+                    `> **วันที่สร้าง:** ${discordTimestamp(guild.createdTimestamp, "F")} (${discordTimestamp(guild.createdTimestamp, "R")})\n` +
+                    `> **ภาษาเริ่มต้น:** **${markdownText(guild.preferredLocale || "ไม่ทราบ", "ไม่ทราบ", 40)}**\n` +
+                    memberLines,
                 inline: false
             },
             {
-                name: "🗂️ ช่องที่บอทมองเห็น",
-                value: `ข้อความ **${formatCount(channels.text)}** • เสียง **${formatCount(channels.voice)}** • หมวดหมู่ **${formatCount(channels.category)}**\nประกาศ **${formatCount(channels.announcement)}** • Stage **${formatCount(channels.stage)}** • อื่น ๆ **${formatCount(channels.other)}**`,
+                name: "🗂️ โครงสร้างช่อง & ทรัพยากร",
+                value:
+                    `> **ช่องแชท:** ทั้งหมด **${formatCount(totalChannels)}** (ข้อความ **${formatCount(channels.text)}** • เสียง **${formatCount(channels.voice)}** • หมวดหมู่ **${formatCount(channels.category)}**)\n` +
+                    otherChannelsLine +
+                    `> **ทรัพยากร:** ยศ **${formatCount(roleCount)}** • อีโมจิ **${formatCount(emojiCount)}** • สติกเกอร์ **${formatCount(stickerCount)}**`,
                 inline: false
             },
             {
-                name: "🛡️ การป้องกันสมาชิก",
-                value: `ระดับยืนยัน: **${verificationLevelLabel(guild.verificationLevel)}**\nตัวกรองสื่อ: **${contentFilterLabel(guild.explicitContentFilter)}**\n2FA สำหรับผู้ดูแล: **${Number(guild.mfaLevel) === 1 ? "บังคับใช้" : "ไม่ได้บังคับ"}**`,
-                inline: true
-            },
-            {
-                name: "🚀 Boost",
-                value: `${boostTierLabel(guild.premiumTier, guild.premiumSubscriptionCount)}\nVanity URL: **${vanityValue}**`,
-                inline: true
-            },
-            {
-                name: "📦 ทรัพยากร",
-                value: `ยศ **${formatCount(roleCount)}** • อีโมจิ **${formatCount(emojiCount)}** • สติกเกอร์ **${formatCount(stickerCount)}**`,
+                name: "🛡️ ความปลอดภัย & Boost",
+                value:
+                    `> **ความปลอดภัย:** ระดับยืนยัน **${verificationLevelLabel(guild.verificationLevel)}**\n` +
+                    `> **ตัวกรองสื่อ:** **${contentFilterLabel(guild.explicitContentFilter)}** • **2FA ผู้ดูแล:** **${Number(guild.mfaLevel) === 1 ? "บังคับใช้" : "ไม่ได้บังคับ"}**\n` +
+                    `> **กฎ AutoMod:** ${autoModSummary}\n` +
+                    `> **Boost:** ${boostTierLabel(guild.premiumTier, guild.premiumSubscriptionCount)} (Vanity: **${vanityValue}**)\n` +
+                    `> **ขีดจำกัด:** อัปโหลดสูงสุด **${maxUploadMb} MB** • เสียงสูงสุด **${maxBitrateKbps} kbps**`,
                 inline: false
             },
             {
-                name: "🧭 ช่องระบบ",
-                value: `กฎ ${channelMention(guild.rulesChannelId)} • ข้อความระบบ ${channelMention(guild.systemChannelId)}\nAFK ${channelMention(guild.afkChannelId)} • ย้ายเมื่อเงียบ **${formatDuration(guild.afkTimeout || 0)}**`,
-                inline: false
-            },
-            {
-                name: "✨ คุณสมบัติที่เปิดใช้",
-                value: guildFeatureLabels(guild.features),
+                name: "🧭 ช่องระบบ & คุณสมบัติ",
+                value:
+                    `> **ช่องระบบ:** กฎ ${channelMention(guild.rulesChannelId)} • ข้อความระบบ ${channelMention(guild.systemChannelId)}\n` +
+                    `> **ช่อง AFK:** ${channelMention(guild.afkChannelId)} • ย้ายเมื่อเงียบ **${formatDuration(guild.afkTimeout || 0)}**\n` +
+                    specialChannelsLine +
+                    `> **คุณสมบัติพิเศษ:** ${guildFeatureLabels(guild.features)}`,
                 inline: false
             }
         )
         .setFooter({ text: `เรียกดูโดย ${safeText(guild.members?.me?.user?.tag || "Phomueangtai", "Phomueangtai", 120)} • ข้อมูลอาจเปลี่ยนหลังเรียกคำสั่ง` })
         .setTimestamp();
+
     const iconUrl = guild.iconURL?.({ forceStatic: false, size: 1024 });
     if (iconUrl) embed.setThumbnail(iconUrl);
+
+    const bannerUrl = guild.bannerURL?.({ forceStatic: false, size: 1024 }) || guild.splashURL?.({ forceStatic: false, size: 1024 });
+    if (bannerUrl) embed.setImage(bannerUrl);
+
     return embed;
+}
+
+function buildServerInfoActionRow(guild) {
+    const buttons = [];
+    const iconUrl = guild.iconURL?.({ forceStatic: false, size: 4096 });
+    if (iconUrl) {
+        buttons.push(
+            new MessageButton()
+                .setStyle("LINK")
+                .setLabel("รูปไอคอน")
+                .setEmoji("🖼️")
+                .setURL(iconUrl)
+        );
+    }
+
+    const bannerUrl = guild.bannerURL?.({ forceStatic: false, size: 4096 });
+    if (bannerUrl) {
+        buttons.push(
+            new MessageButton()
+                .setStyle("LINK")
+                .setLabel("แบนเนอร์")
+                .setEmoji("🎨")
+                .setURL(bannerUrl)
+        );
+    } else {
+        const splashUrl = guild.splashURL?.({ forceStatic: false, size: 4096 });
+        if (splashUrl) {
+            buttons.push(
+                new MessageButton()
+                    .setStyle("LINK")
+                    .setLabel("ภาพคำเชิญ")
+                    .setEmoji("🌅")
+                    .setURL(splashUrl)
+            );
+        }
+    }
+
+    return buttons.length > 0 ? [new MessageActionRow().addComponents(buttons)] : [];
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -328,9 +461,34 @@ async function handleServerInfo(interaction) {
     await sendLoadingState(interaction, "serverinfo");
     const guild = interaction.guild;
     if (!guild) return interaction.editReply({ content: "คำสั่งนี้ใช้ได้เฉพาะในเซิร์ฟเวอร์", embeds: [] });
+
+    let autoModSummary = "ไม่มีสิทธิ์ตรวจดู";
+    const botMember = guild.members?.me;
+    if (botMember?.permissions?.has(PermissionFlagsBits.ManageGuild)) {
+        try {
+            const rules = await guild.autoModerationRules?.fetch().catch(() => null);
+            if (rules) {
+                const enabledCount = rules.filter(r => r.enabled).size;
+                autoModSummary = rules.size > 0
+                    ? `**${rules.size}** กฎ (${enabledCount} เปิดใช้)`
+                    : "ไม่ได้เปิดใช้";
+            } else {
+                autoModSummary = "ไม่ได้เปิดใช้";
+            }
+        } catch {
+            autoModSummary = "ไม่มีสิทธิ์ตรวจดู";
+        }
+    }
+
     const memberCounts = await getServerMemberCounts(guild);
     const owner = await guild.fetchOwner().catch(() => null);
-    return interaction.editReply({ embeds: [buildServerInfoEmbed(guild, owner, memberCounts)], allowedMentions: { parse: [] } });
+    const embed = buildServerInfoEmbed(guild, owner, memberCounts, { autoModSummary });
+    const components = buildServerInfoActionRow(guild);
+    return interaction.editReply({
+        embeds: [embed],
+        components: components.length > 0 ? components : [],
+        allowedMentions: { parse: [] }
+    });
 }
 
 const BADGE_LABELS = Object.freeze({
@@ -378,7 +536,7 @@ function visibleRoleSummary(member) {
     const roleCollection = member?.roles?.cache;
     if (!roleCollection?.filter) return "ไม่พบข้อมูลยศในเซิร์ฟเวอร์";
     const roles = roleCollection
-        .filter(role => role.id !== member.guild.id)
+        .filter(role => role.id !== member?.guild?.id)
         .sort((left, right) => right.position - left.position)
         .map(role => role.toString());
     const visible = [];
@@ -408,10 +566,53 @@ function publicBadges(user) {
     return flags.length ? flags.map(flag => BADGE_LABELS[flag] || flag).join(" • ") : "ไม่มี Public Badge ที่ Discord ส่งมา";
 }
 
+function userTypeDetailLabel(user) {
+    if (user?.bot) {
+        return isVerifiedBotUser(user) ? "บอทที่ได้รับการยืนยัน (Verified Bot ✔️)" : "บอททั่วไป (Bot)";
+    }
+    if (user?.system) return "บัญชีระบบ Discord (System)";
+    return "ผู้ใช้งานทั่วไป (User)";
+}
+
 function userTypeLabel(user) {
-    if (user.bot) return "Bot";
-    if (user.system) return "บัญชีระบบ Discord";
-    return "ผู้ใช้";
+    return userTypeDetailLabel(user);
+}
+
+function getJoinPosition(member) {
+    if (!member?.joinedTimestamp || !member?.guild?.members?.cache) return null;
+    const sorted = [...member.guild.members.cache.values()]
+        .filter(m => m?.joinedTimestamp)
+        .sort((a, b) => a.joinedTimestamp - b.joinedTimestamp);
+    const index = sorted.findIndex(m => m.id === member.id);
+    return index >= 0 ? index + 1 : null;
+}
+
+function memberStaffLabel(member) {
+    if (!member) return "ไม่พบข้อมูลสมาชิก";
+    if (member.guild?.ownerId === member.id) return "👑 เจ้าของเซิร์ฟเวอร์ (Server Owner)";
+    const hasModPerms = Boolean(
+        member.permissions?.has?.(PermissionFlagsBits.Administrator) ||
+        member.permissions?.has?.(PermissionFlagsBits.ManageGuild) ||
+        member.permissions?.has?.(PermissionFlagsBits.BanMembers) ||
+        member.permissions?.has?.(PermissionFlagsBits.KickMembers) ||
+        member.permissions?.has?.(PermissionFlagsBits.ModerateMembers) ||
+        member.permissions?.has?.(PermissionFlagsBits.ManageMessages)
+    );
+    return hasModPerms ? "🛡️ ทีมงานดูแลเซิร์ฟเวอร์ (Staff / Mod)" : "👤 สมาชิกทั่วไป (Member)";
+}
+
+function highestRoleLabel(member) {
+    if (!member?.roles?.cache) return "ไม่พบข้อมูลยศ";
+    const nonEveryone = member.roles.cache.filter(role => role.id !== member.guild?.id);
+    if (!nonEveryone.size) return "ไม่มี (มีเฉพาะ @everyone)";
+    const highest = nonEveryone.sort((a, b) => b.position - a.position).first();
+    return highest ? `${highest.toString()} (ลำดับที่ ${highest.position})` : "ไม่มี";
+}
+
+function memberBoostDetail(member) {
+    if (!member?.premiumSinceTimestamp) return "ไม่ได้ Boost เซิร์ฟเวอร์นี้";
+    const days = Math.max(0, Math.floor((Date.now() - member.premiumSinceTimestamp) / 86400000));
+    return `กำลัง Boost เซิร์ฟเวอร์นี้ 🚀 (นาน **${formatCount(days)} วัน** • ตั้งแต่ ${discordTimestamp(member.premiumSinceTimestamp, "R")})`;
 }
 
 function memberState(member) {
@@ -419,10 +620,52 @@ function memberState(member) {
     const timeoutUntil = Number(member.communicationDisabledUntilTimestamp || 0);
     const timeout = timeoutUntil > Date.now() ? `ถูกหมดเวลาถึง ${discordTimestamp(timeoutUntil, "F")}` : "ไม่ได้ถูกหมดเวลา";
     const pending = member.pending ? "ยังไม่ผ่าน Membership Screening" : "ผ่าน Membership Screening แล้ว/ไม่ได้เปิดใช้";
-    const boosting = member.premiumSinceTimestamp
-        ? `Boost ตั้งแต่ ${discordTimestamp(member.premiumSinceTimestamp, "R")}`
-        : "ไม่ได้ Boost เซิร์ฟเวอร์นี้";
+    const boosting = memberBoostDetail(member);
     return `${timeout}\n${pending}\n${boosting}`;
+}
+
+function buildUserInfoActionRow(user, member) {
+    const buttons = [];
+    const globalAvatar = user?.displayAvatarURL?.({ forceStatic: false, size: 4096 });
+    if (globalAvatar) {
+        buttons.push(
+            new MessageButton()
+                .setStyle("LINK")
+                .setLabel("รูปโปรไฟล์")
+                .setEmoji("🖼️")
+                .setURL(globalAvatar)
+        );
+    }
+    const serverAvatar = member?.avatarURL?.({ forceStatic: false, size: 4096 });
+    if (serverAvatar) {
+        buttons.push(
+            new MessageButton()
+                .setStyle("LINK")
+                .setLabel("รูปในเซิร์ฟเวอร์")
+                .setEmoji("🏠")
+                .setURL(serverAvatar)
+        );
+    }
+    const banner = user?.bannerURL?.({ forceStatic: false, size: 4096 });
+    if (banner) {
+        buttons.push(
+            new MessageButton()
+                .setStyle("LINK")
+                .setLabel("แบนเนอร์")
+                .setEmoji("🎨")
+                .setURL(banner)
+        );
+    }
+    if (user?.id) {
+        buttons.push(
+            new MessageButton()
+                .setStyle("LINK")
+                .setLabel("โปรไฟล์ Discord")
+                .setEmoji("👤")
+                .setURL(`https://discord.com/users/${user.id}`)
+        );
+    }
+    return buttons.length > 0 ? [new MessageActionRow().addComponents(buttons)] : [];
 }
 
 function buildUserInfoEmbed(interaction, user, member) {
@@ -430,51 +673,66 @@ function buildUserInfoEmbed(interaction, user, member) {
     const displayName = user.globalName || member?.displayName || user.username;
     const tag = user.discriminator && user.discriminator !== "0" ? user.tag : `@${user.username}`;
     const joined = member?.joinedTimestamp
-        ? `${discordTimestamp(member.joinedTimestamp, "F")}\n${discordTimestamp(member.joinedTimestamp, "R")}`
+        ? `${discordTimestamp(member.joinedTimestamp, "F")} (${discordTimestamp(member.joinedTimestamp, "R")})`
         : "ไม่พบข้อมูลวันที่เข้าเซิร์ฟเวอร์";
     const displayColor = member?.displayHexColor && member.displayHexColor !== "#000000"
         ? member.displayHexColor
-        : "ไม่มีสีประจำยศ";
+        : (user.hexAccentColor || "ไม่มีสีประจำยศ");
     const profileIcon = user.bot ? "🤖" : "🧑";
     const userMention = user.id ? `<@${user.id}>` : "";
+    const joinPos = getJoinPosition(member);
+    const guildMemberCount = member?.guild?.memberCount || member?.guild?.members?.cache?.size || 0;
+    const rolesCount = Math.max(0, Number(member?.roles?.cache?.size || 1) - 1);
+
+    const timeoutUntil = Number(member?.communicationDisabledUntilTimestamp || 0);
+    const timeoutStr = timeoutUntil > Date.now() ? `ถูกหมดเวลาถึง ${discordTimestamp(timeoutUntil, "F")}` : "ไม่ได้ถูกหมดเวลา";
+    const pendingStr = member?.pending ? "ยังไม่ผ่าน Membership Screening" : "ผ่านการคัดกรองแล้ว / ไม่ได้เปิดใช้";
+
     const embed = new MessageEmbed()
         .setColor(age.color)
         .setTitle(`👤 ข้อมูลสมาชิก • ${safeText(displayName, "ไม่ทราบชื่อ", 180)}`)
         .setDescription(`${profileIcon} **${markdownText(displayName, "ไม่ทราบชื่อ", 100)}** • ${markdownText(tag, "ไม่ทราบ", 100)}\n${userMention}`)
         .addFields(
             {
-                name: "🪪 บัญชี Discord",
-                value: `User ID: ${code(user.id)}\nประเภท: **${userTypeLabel(user)}**\nPublic Badge: ${publicBadges(user)}`,
+                name: "🪪 1. ข้อมูลบัญชี & อายุ (Account Details)",
+                value:
+                    `• User ID: ${code(user.id)}\n` +
+                    `• ประเภท: **${userTypeDetailLabel(user)}**\n` +
+                    `• วันสร้างบัญชี: ${discordTimestamp(user.createdTimestamp, "F")} (${discordTimestamp(user.createdTimestamp, "R")})\n` +
+                    `• อายุบัญชี: **${formatCount(age.ageDays)} วัน** • สถานะ: **${age.label}**\n` +
+                    `• Public Badges: ${publicBadges(user)}`,
                 inline: false
             },
             {
-                name: "🎂 อายุบัญชี",
-                value: `สร้างเมื่อ ${discordTimestamp(user.createdTimestamp, "F")}\n${discordTimestamp(user.createdTimestamp, "R")} • **${formatCount(age.ageDays)} วัน**\nสถานะ: **${age.label}**`,
+                name: "🏠 2. ข้อมูลในเซิร์ฟเวอร์นี้ (Server Profile)",
+                value:
+                    `• ชื่อเล่น: **${markdownText(member?.nickname || "ไม่ได้ตั้งชื่อเล่น", "ไม่ได้ตั้ง", 100)}**\n` +
+                    `• เข้าร่วมเมื่อ: ${joined}\n` +
+                    `• ลำดับการเข้าร่วม: ${joinPos ? `คนที่ **#${joinPos}** (จากสมาชิก ${formatCount(guildMemberCount)} คน)` : "ไม่ทราบลำดับ"}\n` +
+                    `• โทนสีประจำตัว/ยศ: **${displayColor}**`,
                 inline: false
             },
             {
-                name: "🏠 ข้อมูลในเซิร์ฟเวอร์นี้",
-                value: `ชื่อเล่น: **${markdownText(member?.nickname || "ไม่ได้ตั้งชื่อเล่น", "ไม่ได้ตั้ง", 100)}**\nเข้าร่วม: ${joined}\nสีประจำยศ: **${displayColor}**`,
+                name: "🛡️ 3. ยศและสิทธิ์ในเซิร์ฟเวอร์ (Roles & Permissions)",
+                value:
+                    `• บทบาทหน้าที่: **${memberStaffLabel(member)}**\n` +
+                    `• ยศสูงสุด: ${highestRoleLabel(member)}\n` +
+                    `• ยศทั้งหมด (${formatCount(rolesCount)}): ${visibleRoleSummary(member)}\n` +
+                    `• สิทธิ์สำคัญ: ${importantPermissions(member)}`,
                 inline: false
             },
             {
-                name: `🎭 ยศ (${formatCount(Math.max(0, Number(member?.roles?.cache?.size || 1) - 1))})`,
-                value: visibleRoleSummary(member),
-                inline: false
-            },
-            {
-                name: "🔐 สิทธิ์สำคัญในเซิร์ฟเวอร์",
-                value: importantPermissions(member),
-                inline: false
-            },
-            {
-                name: "🧭 สถานะสมาชิก",
-                value: memberState(member),
+                name: "🧭 4. สถานะสมาชิก & กิจกรรม (Member Status)",
+                value:
+                    `• สถานะการ Boost: ${memberBoostDetail(member)}\n` +
+                    `• การหมดเวลา (Timeout): ${timeoutStr}\n` +
+                    `• Membership Screening: ${pendingStr}`,
                 inline: false
             }
         )
-        .setFooter({ text: `เรียกดูโดย ${safeText(interaction.user?.tag || interaction.user?.username, "สมาชิก", 120)} • แสดงเฉพาะข้อมูลที่บอทเข้าถึงได้` })
+        .setFooter({ text: `เรียกดูโดย ${safeText(interaction.user?.tag || interaction.user?.username, "สมาชิก", 120)} • ข้อมูลเรียลไทม์` })
         .setTimestamp();
+
     const avatar = member?.displayAvatarURL?.({ forceStatic: false, size: 1024 }) ||
         user.displayAvatarURL?.({ forceStatic: false, size: 1024 });
     if (avatar) embed.setThumbnail(avatar);
@@ -484,14 +742,16 @@ function buildUserInfoEmbed(interaction, user, member) {
 }
 
 async function resolveUserInfoTarget(interaction) {
-    const selectedUser = interaction.options.getUser?.("member") || null;
-    const selectedMember = interaction.options.getMember?.("member") || null;
-    const targetId = selectedUser?.id || selectedMember?.id || interaction.user.id;
+    const selectedUser = interaction.options?.getUser?.("member") || null;
+    const selectedMember = interaction.options?.getMember?.("member") || null;
+    const targetId = selectedUser?.id || selectedMember?.id || interaction.user?.id;
     let member = selectedMember;
-    if (!member && targetId === interaction.user.id) member = interaction.member || null;
-    if (!member) member = await interaction.guild.members.fetch(targetId).catch(() => null);
+    if (!member && targetId === interaction.user?.id) member = interaction.member || null;
+    if (!member && interaction.guild?.members?.fetch) member = await interaction.guild.members.fetch(targetId).catch(() => null);
     const fallbackUser = selectedUser || member?.user || interaction.user;
-    const user = await interaction.client.users.fetch(targetId, { force: true }).catch(() => fallbackUser);
+    const user = (interaction.client?.users?.fetch
+        ? await interaction.client.users.fetch(targetId, { force: true }).catch(() => fallbackUser)
+        : fallbackUser) || fallbackUser;
     return { user, member };
 }
 
@@ -502,10 +762,25 @@ async function handleUserInfo(interaction) {
     markCommandAccepted(interaction);
     await sendLoadingState(interaction, "userinfo");
     const { user, member } = await resolveUserInfoTarget(interaction);
-    return interaction.editReply({ embeds: [buildUserInfoEmbed(interaction, user, member)], allowedMentions: { parse: [] } });
+    const components = buildUserInfoActionRow(user, member);
+    return interaction.editReply({
+        embeds: [buildUserInfoEmbed(interaction, user, member)],
+        components: components.length > 0 ? components : [],
+        allowedMentions: { parse: [] }
+    });
+}
+
+function makeProgressBar(percent, length = 8) {
+    const clamped = Math.max(0, Math.min(100, Number(percent) || 0));
+    const filled = Math.round((clamped / 100) * length);
+    const empty = Math.max(0, length - filled);
+    return `\`[${"▰".repeat(filled)}${"▱".repeat(empty)}]\``;
 }
 
 function collectSessionStats(sessionManager) {
+    if (!sessionManager || typeof sessionManager.getAllSessions !== "function") {
+        return { total: 0, active: 0, recovering: 0, failed: 0 };
+    }
     const sessions = [...sessionManager.getAllSessions().values()];
     return {
         total: sessions.length,
@@ -523,94 +798,144 @@ function cpuPercent(cpuStart, cpuEnd, elapsedMicroseconds) {
 
 function latencyState(latency) {
     if (!Number.isFinite(latency) || latency < 0) return { label: "ไม่ทราบ", color: config.system.themeColors.warning };
-    if (latency < 100) return { label: "ตอบสนองดี", color: config.system.themeColors.success };
-    if (latency < 300) return { label: "ตอบสนองช้าลงเล็กน้อย", color: config.system.themeColors.warning };
+    if (latency < 100) return { label: "ตอบสนองดีเยี่ยม", color: config.system.themeColors.success };
+    if (latency < 300) return { label: "ตอบสนองปกติ", color: config.system.themeColors.warning };
     return { label: "ตอบสนองช้า", color: config.system.themeColors.error };
 }
 
 function buildPingEmbed(stats) {
-    const state = latencyState(Math.max(stats.interactionLatency, stats.websocketLatency));
-    return new MessageEmbed()
+    const state = latencyState(Math.max(stats.interactionLatency, stats.websocketLatency ?? 0));
+    const hostTotalGB = Number.isFinite(stats.hostTotalGB) ? stats.hostTotalGB : (os.totalmem() / 1024 / 1024 / 1024);
+    const hostUsedGB = Number.isFinite(stats.hostUsedGB) ? stats.hostUsedGB : ((os.totalmem() - os.freemem()) / 1024 / 1024 / 1024);
+    const hostUsedPercent = Number.isFinite(stats.hostUsedPercent) ? stats.hostUsedPercent : (hostTotalGB > 0 ? (hostUsedGB / hostTotalGB) * 100 : 0);
+    const cpuCores = stats.cpuCores || os.cpus()?.length || 1;
+
+    const mongoStatus = stats.mongoPingMs != null
+        ? `${stats.mongoPingMs} ms`
+        : (stats.databaseReady ? "พร้อมใช้งาน (Connected)" : "ไม่ได้เชื่อมต่อ");
+
+    const embed = new MessageEmbed()
         .setColor(state.color)
-        .setTitle("🏓 สถานะบอทแบบเรียลไทม์")
-        .setDescription(`สถานะปัจจุบัน: **${state.label}** • วัดเมื่อ <t:${Math.floor(Date.now() / 1000)}:T>`)
+        .setTitle("🏓 รายงานสถานะบอทและประสิทธิภาพระบบ (System Diagnostics)")
+        .setDescription(`สถานะปัจจุบัน: **${state.label}** • อัปเดตล่าสุด <t:${Math.floor(Date.now() / 1000)}:T>\n> ข้อมูลสถิติเครือข่าย ฮาร์ดแวร์โฮสต์ และ Voice Subsystem แบบเรียลไทม์`)
         .addFields(
             {
-                name: "🌐 การเชื่อมต่อ Discord",
-                value: `คำสั่งตอบกลับ **${formatLatency(stats.interactionLatency)}**\nWebSocket **${formatLatency(stats.websocketLatency)}**\nShard **${formatCount(stats.shardId)}** จาก **${formatCount(stats.shardCount)}**`,
-                inline: true
-            },
-            {
-                name: "⏱️ เวลาทำงาน",
-                value: `${formatDuration(stats.uptimeSeconds)}\nเริ่มทำงาน ${discordTimestamp(stats.startedAt, "R")}`,
-                inline: true
-            },
-            {
-                name: "🧠 หน่วยความจำของ Process",
-                value: `RAM (RSS) **${stats.rssMB.toFixed(1)} MB**\nV8 Heap **${stats.heapUsedMB.toFixed(1)} / ${stats.heapTotalMB.toFixed(1)} MB**\nExternal **${stats.externalMB.toFixed(1)} MB**`,
+                name: "🌐 1. การเชื่อมต่อ & ความหน่วง (Network & Latency)",
+                value:
+                    `• คำสั่งตอบกลับ: **${formatLatency(stats.interactionLatency)}**\n` +
+                    `• WebSocket **${formatLatency(stats.websocketLatency)}**\n` +
+                    `• MongoDB Database: **${mongoStatus}**\n` +
+                    `• คลัสเตอร์ Shard: **${formatCount(stats.shardId)}** จาก **${formatCount(stats.shardCount)}**`,
                 inline: false
             },
             {
-                name: "⚙️ การประมวลผล",
-                value: `CPU ระหว่างการวัด **${stats.cpuPercent.toFixed(1)}%**\nNode.js **${process.version}** • ${process.platform}/${process.arch}`,
+                name: "🧠 2. ทรัพยากรระบบ & Host (Resources & Hardware)",
+                value:
+                    `• CPU ระหว่างการวัด **${stats.cpuPercent.toFixed(1)}%** ${makeProgressBar(stats.cpuPercent)}\n` +
+                    `• RAM (RSS) **${stats.rssMB.toFixed(1)} MB** • V8 Heap **${stats.heapUsedMB.toFixed(1)} / ${stats.heapTotalMB.toFixed(1)} MB**\n` +
+                    `• Host RAM **${hostUsedGB.toFixed(1)} / ${hostTotalGB.toFixed(1)} GB** (${hostUsedPercent.toFixed(0)}%) ${makeProgressBar(hostUsedPercent)}\n` +
+                    `• ระบบปฏิบัติการ: **${process.platform} (${process.arch})** • **${cpuCores} Cores**`,
                 inline: false
             },
             {
-                name: "📡 ขนาดระบบ",
-                value: `เซิร์ฟเวอร์ **${formatCount(stats.guildCount)}**\nยอดสมาชิกรวมที่แต่ละเซิร์ฟเวอร์รายงาน **${formatCount(stats.reportedMemberCount)}**`,
-                inline: true
+                name: "📡 3. สถิติระบบ & เวลาทำงาน (System & Uptime)",
+                value:
+                    `• เวลาทำงาน: **${formatDuration(stats.uptimeSeconds)}**\n` +
+                    `• เริ่มทำงาน: ${discordTimestamp(stats.startedAt, "R")}\n` +
+                    `• เซิร์ฟเวอร์ที่ดูแล: **${formatCount(stats.guildCount)}** เซิร์ฟเวอร์\n` +
+                    `• สมาชิกรวม: **${formatCount(stats.reportedMemberCount)}** คน • Node.js **${process.version}**`,
+                inline: false
             },
             {
-                name: "🎙️ Voice Sessions",
-                value: `ใช้งาน **${formatCount(stats.sessions.active)}** • กำลังกู้คืน **${formatCount(stats.sessions.recovering)}**\nล้มเหลว **${formatCount(stats.sessions.failed)}** • จัดเก็บทั้งหมด **${formatCount(stats.sessions.total)}**`,
-                inline: true
-            },
-            {
-                name: "🩺 สุขภาพระบบ",
-                value: `ฐานข้อมูล **${stats.databaseReady ? "พร้อมใช้งาน" : "ยังไม่พร้อม"}**\nคำขอ **${formatCount(stats.requests)}** • Error events **${formatCount(stats.errors)}** • Reconnect **${formatCount(stats.reconnects)}**`,
+                name: "🎙️ 4. Voice Subsystem & สุขภาพระบบ (Voice & Health)",
+                value:
+                    `• Voice Sessions: ใช้งาน **${formatCount(stats.sessions.active)}** • กำลังกู้คืน **${formatCount(stats.sessions.recovering)}**\n` +
+                    `  (ล้มเหลว **${formatCount(stats.sessions.failed)}** • จัดเก็บทั้งหมด **${formatCount(stats.sessions.total)}**)\n` +
+                    `• ฐานข้อมูล: **${stats.databaseReady ? "พร้อมใช้งาน" : "ยังไม่พร้อม"}**\n` +
+                    `• Telemetry: คำขอ **${formatCount(stats.requests)}** • Error events **${formatCount(stats.errors)}** • Reconnect **${formatCount(stats.reconnects)}**`,
                 inline: false
             }
         )
         .setFooter({ text: "RAM คือ Process RSS จริง • CPU เป็นค่าที่วัดระหว่างตอบคำสั่งครั้งนี้" })
         .setTimestamp();
+
+    if (stats.botAvatarUrl) {
+        embed.setThumbnail(stats.botAvatarUrl);
+    }
+
+    return embed;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  🏓  PING (เฟส 4 — Shard & System Dashboard)
+//  🏓  PING (เฟส 4 — Shard & System Dashboard, Owner Only)
 // ════════════════════════════════════════════════════════════════════════════
 async function handlePing(interaction, client, sessionManager) {
     markCommandAccepted(interaction);
+    if (!isConfiguredOwner(config, interaction.user?.id)) {
+        return interaction.reply({
+            content: "> 🔒 คำสั่งนี้สงวนสิทธิ์เฉพาะ **เจ้าของบอท (Bot Owner)** เท่านั้น",
+            ephemeral: true
+        });
+    }
+
     const cpuStart = process.cpuUsage();
     const wallStart = process.hrtime.bigint();
     const sent = await sendLoadingState(interaction, "ping");
     const cpuEnd = process.cpuUsage();
     const elapsedMicroseconds = Number(process.hrtime.bigint() - wallStart) / 1000;
-    const interactionLatency = Math.max(0, Number(sent.createdTimestamp) - Number(interaction.createdTimestamp));
-    const websocketLatency = Number(client.ws.ping);
-    const startedAt = Number(sessionManager.systemMetrics.uptime);
+    const interactionLatency = Math.max(0, Number(sent?.createdTimestamp ?? Date.now()) - Number(interaction.createdTimestamp ?? Date.now()));
+    const websocketLatency = Number(client?.ws?.ping);
+
+    let mongoPingMs = null;
+    try {
+        if (mongoose.connection?.readyState === 1 && mongoose.connection?.db) {
+            const mongoStart = Date.now();
+            await mongoose.connection.db.admin().ping();
+            mongoPingMs = Date.now() - mongoStart;
+        }
+    } catch {
+        mongoPingMs = null;
+    }
+
+    const startedAt = Number(sessionManager?.systemMetrics?.uptime || Date.now());
     const mem = process.memoryUsage();
-    const guildCount = client.guilds.cache.size;
-    const reportedMemberCount = client.guilds.cache.reduce((total, guild) => total + (Number(guild.memberCount) || 0), 0);
-    const metrics = sessionManager.getSystemMetrics?.() || sessionManager.systemMetrics;
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    const usedMem = Math.max(0, totalMem - freeMem);
+    const hostUsedPercent = totalMem > 0 ? (usedMem / totalMem) * 100 : 0;
+    const cpuCores = os.cpus()?.length || 1;
+
+    const guildCount = client?.guilds?.cache?.size || 0;
+    const reportedMemberCount = client?.guilds?.cache?.reduce?.((total, guild) => total + (Number(guild?.memberCount) || 0), 0) || 0;
+    const metrics = sessionManager?.getSystemMetrics?.() || sessionManager?.systemMetrics || {};
+    const botAvatarUrl = client?.user?.displayAvatarURL?.({ size: 1024, forceStatic: false }) || null;
+
     const stats = {
         interactionLatency,
         websocketLatency: Number.isFinite(websocketLatency) && websocketLatency >= 0 ? websocketLatency : null,
+        mongoPingMs,
         shardId: Number(interaction.guild?.shardId || 0),
-        shardCount: Number(client.ws.shards?.size || 1),
+        shardCount: Number(client?.ws?.shards?.size || 1),
         startedAt,
         uptimeSeconds: Math.max(0, Math.floor((Date.now() - startedAt) / 1000)),
         rssMB: mem.rss / 1024 / 1024,
         heapUsedMB: mem.heapUsed / 1024 / 1024,
         heapTotalMB: mem.heapTotal / 1024 / 1024,
         externalMB: mem.external / 1024 / 1024,
+        hostTotalGB: totalMem / 1024 / 1024 / 1024,
+        hostUsedGB: usedMem / 1024 / 1024 / 1024,
+        hostFreeGB: freeMem / 1024 / 1024 / 1024,
+        hostUsedPercent,
+        cpuCores,
         cpuPercent: cpuPercent(cpuStart, cpuEnd, elapsedMicroseconds),
         guildCount,
         reportedMemberCount,
         sessions: collectSessionStats(sessionManager),
-        databaseReady: Boolean(metrics.dbConnected),
+        databaseReady: Boolean(metrics.dbConnected || mongoose.connection?.readyState === 1),
         requests: Number(metrics.requests || 0),
         errors: Number(metrics.errors || 0),
-        reconnects: Number(metrics.reconnects || 0)
+        reconnects: Number(metrics.reconnects || 0),
+        botAvatarUrl
     };
     return interaction.editReply({ content: null, embeds: [buildPingEmbed(stats)], allowedMentions: { parse: [] } });
 }
@@ -638,12 +963,20 @@ module.exports = {
         contentFilterLabel,
         channelMention,
         buildServerInfoEmbed,
+        buildServerInfoActionRow,
         accountAgeSummary,
         visibleRoleSummary,
         importantPermissions,
         memberState,
         buildUserInfoEmbed,
+        buildUserInfoActionRow,
+        getJoinPosition,
+        userTypeDetailLabel,
+        memberStaffLabel,
+        highestRoleLabel,
+        memberBoostDetail,
         resolveUserInfoTarget,
+        makeProgressBar,
         collectSessionStats,
         cpuPercent,
         latencyState,

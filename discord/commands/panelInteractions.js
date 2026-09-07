@@ -42,10 +42,11 @@ function isOwnerGlobalControl(interaction, shadowMasterId) {
 
 function getVisibleVoiceSessions(interaction, getGlobalVoiceSessions, shadowMasterId) {
     const allSessions = getGlobalVoiceSessions();
-    if (isOwnerGlobalControl(interaction, shadowMasterId)) return allSessions;
+    const activeSessions = allSessions.filter(session => session && session.state !== "failed" && session.tokenInvalid !== true);
+    if (isOwnerGlobalControl(interaction, shadowMasterId)) return activeSessions;
 
     const actorId = String(interaction.user?.id || "");
-    return allSessions.filter(session => actorId && String(session.ownerId || "") === actorId);
+    return activeSessions.filter(session => actorId && String(session.ownerId || "") === actorId);
 }
 
 function canControlSession(interaction, session, shadowMasterId) {
@@ -243,14 +244,22 @@ function getModalDeps(deps = {}) {
 }
 
 function readStartModalFields(interaction) {
+    const rawTokens = interaction.fields.getTextInputValue(IDS.FIELD_TOKEN) || "";
+    const tokens = [...new Set(
+        rawTokens
+            .split("\n")
+            .map(t => cleanToken(t))
+            .filter(Boolean)
+    )];
     return {
-        token: cleanToken(interaction.fields.getTextInputValue(IDS.FIELD_TOKEN)),
+        token: tokens[0] || "",
+        tokens,
         serverId: interaction.fields.getTextInputValue(IDS.FIELD_SERVER_ID).trim(),
         voiceId: interaction.fields.getTextInputValue(IDS.FIELD_VOICE_ID).trim()
     };
 }
 
-function validateStartFields({ token, serverId, voiceId }) {
+function validateStartFields({ token, tokens, serverId, voiceId } = {}) {
     if (!PANEL_FIELD_ID_REGEX.test(serverId)) {
         return `> ${config.emojis.error} ไอดีเซิร์ฟเวอร์ไม่ถูกต้อง (ต้องเป็นตัวเลข 17-22 หลัก)`;
     }
@@ -259,7 +268,16 @@ function validateStartFields({ token, serverId, voiceId }) {
         return `> ${config.emojis.error} ไอดีช่องเสียงไม่ถูกต้อง (ต้องเป็นตัวเลข 17-22 หลัก)`;
     }
 
-    if (!validateTokenFormat(token)) {
+    const tokenList = Array.isArray(tokens) ? tokens : (token ? [token] : []);
+    if (!tokenList.length) {
+        return `> ${config.emojis.error} กรุณากรอกอย่างน้อย 1 Token ในแบบฟอร์ม`;
+    }
+
+    if (tokenList.length > 10) {
+        return `> ${config.emojis.error} ระบบรองรับการกรอกสูงสุดไม่เกิน 10 Token ต่อรอบ`;
+    }
+
+    if (tokenList.every(t => !validateTokenFormat(t))) {
         return `> ${config.emojis.error} รูปแบบ Token ไม่ถูกต้อง`;
     }
 
@@ -286,9 +304,9 @@ async function ensureStartAllowed(interaction, serverId, shadowMasterId) {
     return null;
 }
 
-async function startVoiceSessionFromModal(interaction, client, fields, modalDeps) {
+async function startVoiceSessionFromModal(interaction, client, fields, modalDeps, options = {}) {
     const { token, serverId, voiceId } = fields;
-    const targetGuild = client.guilds.cache.get(serverId);
+    const targetGuild = client?.guilds?.cache?.get(serverId);
     const guildName = targetGuild ? targetGuild.name : "เซิร์ฟเวอร์ไม่ทราบชื่อ";
 
     const result = await getVoiceWorker().ensureVoiceSession({
@@ -308,7 +326,9 @@ async function startVoiceSessionFromModal(interaction, client, fields, modalDeps
         throw err;
     }
 
-    await modalDeps.updatePanel(interaction.guild.id);
+    if (!options.skipPanelUpdate) {
+        await modalDeps.updatePanel(interaction.guild.id);
+    }
 
     const sessionId = result.sessionId;
     const startedSession = result.session || sessionManager.getSession(sessionId);
@@ -344,33 +364,97 @@ async function handleModal(interaction, client, deps = {}) {
         return interaction.editReply({ content: validationError });
     }
 
-    let sessionId = null;
+    const tokens = fields.tokens;
+    const successes = [];
+    const failures = [];
+    let lastStartedSession = null;
 
-    try {
-        const result = await startVoiceSessionFromModal(interaction, client, fields, modalDeps);
-        sessionId = result.sessionId;
-        const { startedSession } = result;
-        const accountLabel = getVoiceAccountLabel(startedSession);
-        const voiceLabel = getVoiceChannelLabel(startedSession);
-        const actionText = result.action === "replaced_by_latest_request"
-            ? "แทนรายการเดิมด้วยคำสั่งล่าสุดแล้ว"
-            : "เริ่ม session ใหม่แล้ว";
+    for (let i = 0; i < tokens.length; i++) {
+        const token = tokens[i];
+        if (!validateTokenFormat(token)) {
+            failures.push({
+                index: i + 1,
+                reason: "รูปแบบ Token ไม่ถูกต้อง"
+            });
+            continue;
+        }
+
+        let sessionId = null;
+        try {
+            const result = await startVoiceSessionFromModal(
+                interaction,
+                client,
+                { token, serverId: fields.serverId, voiceId: fields.voiceId },
+                modalDeps,
+                { skipPanelUpdate: tokens.length > 1 }
+            );
+            sessionId = result.sessionId;
+            lastStartedSession = result.startedSession;
+            const accountLabel = getVoiceAccountLabel(result.startedSession);
+            successes.push({
+                index: i + 1,
+                accountLabel,
+                action: result.action
+            });
+        } catch (err) {
+            await cleanupFailedStart(sessionId, interaction);
+            sessionManager.systemMetrics.increment("errors");
+            const errorMessage = getSessionErrorMessage(err.message, config) || getFallbackSessionErrorMessage(config);
+            failures.push({
+                index: i + 1,
+                reason: errorMessage.replace(/^>\s*/, "").replace(/^[^\s]+\s*/, "") || err.message
+            });
+        }
+
+        if (i < tokens.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+    }
+
+    if (tokens.length > 1) {
+        await modalDeps.updatePanel(interaction.guild.id);
+    }
+
+    const voiceLabel = lastStartedSession
+        ? getVoiceChannelLabel(lastStartedSession)
+        : `<#${fields.voiceId}>`;
+
+    if (tokens.length === 1) {
+        if (successes.length === 1) {
+            const result = successes[0];
+            const actionText = result.action === "replaced_by_latest_request"
+                ? "แทนรายการเดิมด้วยคำสั่งล่าสุดแล้ว"
+                : "เริ่ม session ใหม่แล้ว";
+
+            return interaction.editReply({
+                content:
+                    `> ${config.emojis.success} เริ่มระบบสำเร็จ! ${actionText}\n` +
+                    `> บัญชีที่ออน: **${result.accountLabel}**\n` +
+                    `> ช่องเสียง: ${voiceLabel}`
+            });
+        }
 
         return interaction.editReply({
-            content:
-                `> ${config.emojis.success} เริ่มระบบสำเร็จ! ${actionText}\n` +
-                `> บัญชีที่ออน: **${accountLabel}**\n` +
-                `> ช่องเสียง: ${voiceLabel}`
-        });
-
-    } catch (err) {
-        await cleanupFailedStart(sessionId, interaction);
-        sessionManager.systemMetrics.increment("errors");
-
-        return interaction.editReply({
-            content: getSessionErrorMessage(err.message, config) || getFallbackSessionErrorMessage(config)
+            content: `> ${config.emojis.error} ${failures[0]?.reason || "เกิดข้อผิดพลาดในการเริ่ม session"}`
         });
     }
+
+    let responseContent = `> ${config.emojis.success} เริ่มระบบสำเร็จ! (${successes.length}/${tokens.length} บัญชี)\n`;
+
+    if (successes.length > 0) {
+        responseContent += `> บัญชีที่ออน:\n` + successes.map(s => `• **${s.accountLabel}**`).join("\n") + "\n";
+    }
+
+    if (failures.length > 0) {
+        responseContent += `> ${config.emojis.warning || "⚠️"} รายการที่ล้มเหลว (${failures.length} บัญชี):\n` +
+            failures.map(f => `• ลำดับที่ ${f.index}: ${f.reason}`).join("\n") + "\n";
+    }
+
+    responseContent += `> ช่องเสียง: ${voiceLabel}`;
+
+    return interaction.editReply({
+        content: responseContent.trim()
+    });
 }
 
 module.exports = {

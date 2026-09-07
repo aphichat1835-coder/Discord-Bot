@@ -201,13 +201,19 @@ test("preview performs no role mutation and confirmation removes the planned rol
     });
 
     assert.equal(fixture.target.calls.length, 0);
-    assert.match(responses[0], /ยศทั้งหมด \(ไม่รวม @everyone\): \*\*5\*\*/);
-    assert.match(responses[0], /ยศที่สมาชิกถือรวมแบบนับซ้ำ: \*\*7\*\*/);
+    const previewContent = typeof responses[0] === "string" ? responses[0] : responses[0].content;
+    assert.match(previewContent, /ยศทั้งหมด \(ไม่รวม @everyone\): \*\*5\*\*/);
+    assert.match(previewContent, /ยศที่สมาชิกถือรวมแบบนับซ้ำ: \*\*7\*\*/);
+    assert.match(previewContent, new RegExp(`<@&${fixture.exempt.id}>`));
+    assert.ok(responses[0].embeds?.[0]);
+    assert.ok(responses[0].components?.[0]);
 
     const message = confirmationMessage(fixture.guild);
     assert.equal(await roleSweep._test.handleConfirmation(message), true);
     assert.deepEqual(fixture.target.calls, [[fixture.regular.id]]);
     assert.match(message.replies.at(-1).content, /กวาดยศเสร็จแล้ว/);
+    assert.match(message.replies.at(-1).content, new RegExp(`<@&${fixture.exempt.id}>`));
+    assert.ok(message.replies.at(-1).embeds?.[0]);
 });
 
 test("only the initiating owner can confirm in the original channel", async () => {
@@ -860,3 +866,211 @@ test("guild cleanup clears a pending sweep and prevents its later confirmation",
     assert.equal(fixture.target.calls.length, 0);
     assert.deepEqual(roleSweep.getRuntimeDiagnostics(), { previewing: 0, pending: 0, active: 0 });
 });
+
+test("parseShortcutRoleIds parses role mentions, commas, and multiline inputs", () => {
+    const parsed = roleSweep._test.parseShortcutRoleIds(
+        "//รียศ <@&100000000000000101>, 100000000000000102\n<@&100000000000000103>   100000000000000101"
+    );
+    assert.equal(parsed.matched, true);
+    assert.deepEqual(parsed.roleIds, [
+        "100000000000000101",
+        "100000000000000102",
+        "100000000000000103"
+    ]);
+});
+
+test("chat shortcut deletes the trigger message on invocation", async () => {
+    const fixture = guildFixture();
+    let deleted = false;
+    const message = {
+        guild: fixture.guild,
+        author: { id: ACTOR_ID, bot: false },
+        channel: { id: "channel" },
+        content: "//รียศ",
+        delete: async () => { deleted = true; },
+        reply: async payload => payload
+    };
+
+    assert.equal(await roleSweep.handleMessage(message), true);
+    assert.equal(deleted, true);
+});
+
+test("confirmation text message deletes the trigger message", async () => {
+    const fixture = guildFixture();
+    await roleSweep._test.startPreview({
+        guild: fixture.guild,
+        channel: { id: "channel" },
+        actorId: ACTOR_ID,
+        exceptRoleIds: [],
+        respond: async () => {}
+    });
+
+    let deleted = false;
+    const message = confirmationMessage(fixture.guild);
+    message.delete = async () => { deleted = true; };
+
+    assert.equal(await roleSweep._test.handleConfirmation(message), true);
+    assert.equal(deleted, true);
+});
+
+test("button confirm executes sweep, disables components, and edits reply with rich summary embed", async () => {
+    const fixture = guildFixture();
+    fixture.guild.iconURL = () => "https://cdn.discordapp.com/icons/guild/icon.png";
+
+    let previewPayload = null;
+    await roleSweep._test.startPreview({
+        guild: fixture.guild,
+        channel: { id: "channel" },
+        actorId: ACTOR_ID,
+        exceptRoleIds: [fixture.exempt.id],
+        respond: async payload => { previewPayload = payload; return payload; }
+    });
+
+    assert.ok(previewPayload);
+    assert.ok(previewPayload.embeds?.[0]);
+    assert.equal(previewPayload.embeds[0].data.thumbnail?.url, "https://cdn.discordapp.com/icons/guild/icon.png");
+    assert.ok(previewPayload.components?.[0]);
+
+    const updates = [];
+    const edits = [];
+    const interaction = {
+        customId: "rolesweep:confirm",
+        guild: fixture.guild,
+        channel: { id: "channel" },
+        user: { id: ACTOR_ID },
+        isButton: () => true,
+        update: async payload => { updates.push(payload); return payload; },
+        editReply: async payload => { edits.push(payload); return payload; }
+    };
+
+    assert.equal(roleSweep.isRoleSweepButton(interaction.customId), true);
+    assert.equal(await roleSweep.handleRoleSweepButton(interaction), true);
+
+    // Initial update set loading message and removed components
+    assert.equal(updates.length, 1);
+    assert.match(updates[0].content, /กำลังเริ่มกวาดยศ/);
+    assert.deepEqual(updates[0].components, []);
+
+    // Roles removed
+    assert.deepEqual(fixture.target.calls, [[fixture.regular.id]]);
+
+    // Summary delivered via editReply
+    assert.equal(edits.length, 1);
+    assert.match(edits[0].content, /กวาดยศเสร็จแล้ว/);
+    assert.match(edits[0].content, new RegExp(`<@&${fixture.exempt.id}>`));
+    assert.ok(edits[0].embeds?.[0]);
+    assert.equal(edits[0].embeds[0].data.thumbnail?.url, "https://cdn.discordapp.com/icons/guild/icon.png");
+    assert.match(edits[0].embeds[0].data.description, new RegExp(`<@&${fixture.exempt.id}>`));
+    assert.deepEqual(edits[0].components, []);
+});
+
+test("button cancel cancels the pending sweep without modifying roles", async () => {
+    const fixture = guildFixture();
+    await roleSweep._test.startPreview({
+        guild: fixture.guild,
+        channel: { id: "channel" },
+        actorId: ACTOR_ID,
+        exceptRoleIds: [],
+        respond: async () => {}
+    });
+
+    const updates = [];
+    const interaction = {
+        customId: "rolesweep:cancel",
+        guild: fixture.guild,
+        channel: { id: "channel" },
+        user: { id: ACTOR_ID },
+        isButton: () => true,
+        update: async payload => { updates.push(payload); return payload; }
+    };
+
+    assert.equal(roleSweep.isRoleSweepButton(interaction.customId), true);
+    assert.ok(await roleSweep.handleRoleSweepButton(interaction));
+    assert.equal(updates.length, 1);
+    assert.match(updates[0].content, /ยกเลิกการกวาดยศแล้ว/);
+    assert.equal(roleSweep._test.pendingByGuild.has(GUILD_ID), false);
+    assert.equal(fixture.target.calls.length, 0);
+});
+
+test("button rejects non-initiator user with ephemeral message", async () => {
+    const fixture = guildFixture();
+    await roleSweep._test.startPreview({
+        guild: fixture.guild,
+        channel: { id: "channel" },
+        actorId: ACTOR_ID,
+        exceptRoleIds: [],
+        respond: async () => {}
+    });
+
+    const replies = [];
+    const interaction = {
+        customId: "rolesweep:confirm",
+        guild: fixture.guild,
+        channel: { id: "channel" },
+        user: { id: "stranger" },
+        isButton: () => true,
+        reply: async payload => { replies.push(payload); return payload; }
+    };
+
+    await roleSweep.handleRoleSweepButton(interaction);
+    assert.equal(replies.length, 1);
+    assert.equal(replies[0].ephemeral, true);
+    assert.match(replies[0].content, /เฉพาะผู้ที่เรียกคำสั่งเท่านั้น/);
+    assert.equal(fixture.target.calls.length, 0);
+});
+
+test("button rejects expired pending sweep", async () => {
+    const fixture = guildFixture();
+    await roleSweep._test.startPreview({
+        guild: fixture.guild,
+        channel: { id: "channel" },
+        actorId: ACTOR_ID,
+        exceptRoleIds: [],
+        respond: async () => {}
+    });
+    roleSweep._test.pendingByGuild.get(GUILD_ID).expiresAt = Date.now() - 1;
+
+    const updates = [];
+    const interaction = {
+        customId: "rolesweep:confirm",
+        guild: fixture.guild,
+        channel: { id: "channel" },
+        user: { id: ACTOR_ID },
+        isButton: () => true,
+        update: async payload => { updates.push(payload); return payload; }
+    };
+
+    await roleSweep.handleRoleSweepButton(interaction);
+    assert.equal(updates.length, 1);
+    assert.match(updates[0].content, /หมดเวลายืนยันแล้ว/);
+    assert.equal(fixture.target.calls.length, 0);
+});
+
+test("routeButtonInteraction in commands.js routes role sweep buttons", async () => {
+    const fixture = guildFixture();
+    await roleSweep._test.startPreview({
+        guild: fixture.guild,
+        channel: { id: "channel" },
+        actorId: ACTOR_ID,
+        exceptRoleIds: [],
+        respond: async () => {}
+    });
+
+    const updates = [];
+    const interaction = {
+        customId: "rolesweep:cancel",
+        guild: fixture.guild,
+        channel: { id: "channel" },
+        user: { id: ACTOR_ID },
+        isButton: () => true,
+        isChatInputCommand: () => false,
+        isModalSubmit: () => false,
+        isStringSelectMenu: () => false,
+        update: async payload => { updates.push(payload); return payload; }
+    };
+
+    await commands.handleInteraction(interaction);
+    assert.equal(updates.length, 1);
+    assert.match(updates[0].content, /ยกเลิกการกวาดยศแล้ว/);
+});
+

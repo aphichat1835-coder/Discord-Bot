@@ -51,11 +51,11 @@ test("rerole exposes five optional role exceptions", () => {
     assert.ok(rerole);
     assert.equal(rerole.options.length, 5);
     assert.deepEqual(rerole.options.map(option => option.name), [
-        "except_role_1",
-        "except_role_2",
-        "except_role_3",
-        "except_role_4",
-        "except_role_5"
+        "role_1",
+        "role_2",
+        "role_3",
+        "role_4",
+        "role_5"
     ]);
     assert.equal(rerole.options.every(option => option.type === 8 && option.required === false), true);
 });

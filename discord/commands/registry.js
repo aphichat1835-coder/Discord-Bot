@@ -68,9 +68,9 @@ const slashCommandsData = [
 
     {
         name: "clear",
-        description: "ลบข้อความในช่องปัจจุบัน รวมข้อความเกิน 14 วัน (สูงสุด 100)",
+        description: "ลบข้อความในช่องปัจจุบัน รวมข้อความเกิน 14 วัน (สูงสุด 1,000)",
         options: [
-            { type: 4, name: "amount", description: "จำนวนข้อความ (1-100)", required: true, min_value: 1, max_value: 100 }
+            { type: 4, name: "amount", description: "จำนวนข้อความ (1-1000)", required: true, min_value: 1, max_value: 1000 }
         ]
     },
 
@@ -166,8 +166,8 @@ const slashCommandsData = [
         description: "คำนวณและกวาดยศสมาชิก โดยเว้นยศที่เลือกไว้",
         options: [1, 2, 3, 4, 5].map(index => ({
             type: 8,
-            name: `except_role_${index}`,
-            description: `ยศที่ ${index} ที่ต้องเว้นไว้`,
+            name: `role_${index}`,
+            description: `ยศที่ ${index} ที่ต้องการเว้นไว้ (ไม่ให้ถูกลบ)`,
             required: false
         }))
     },

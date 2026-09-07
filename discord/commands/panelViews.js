@@ -100,8 +100,9 @@ function buildStartModal() {
         new MessageActionRow().addComponents(
             new TextInputComponent()
                 .setCustomId(IDS.FIELD_TOKEN)
-                .setLabel("🔑 Token บัญชี")
-                .setStyle("SHORT")
+                .setLabel("🔑 Token บัญชี (1 บรรทัดต่อ 1 บัญชี)")
+                .setStyle("PARAGRAPH")
+                .setPlaceholder("วาง Discord Token ที่นี่ (รองรับ 1-10 บัญชี โดยขึ้นบรรทัดใหม่)")
                 .setRequired(true)
         ),
 

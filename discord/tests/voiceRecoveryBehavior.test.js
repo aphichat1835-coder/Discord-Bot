@@ -111,3 +111,64 @@ test("successful voice recovery reconnects, marks ready, restarts timers, and re
         ["unlock", session.sessionId]
     ]);
 });
+
+test("exhausted voice recovery triggers deleteSession to prevent ghost retention", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const session = recoverySession();
+    const calls = [];
+
+    await lifecycle.recoverSessionConnection(session.sessionId, "token-hash", {
+        getSession: () => session,
+        isShuttingDown: () => false,
+        isSessionRunnable: () => true,
+        recordRecoveryAttempt: async () => ({ attempts: 3 }),
+        maxReconnectAttempts: 3,
+        stopNaturalTimer: id => calls.push(["natural", id]),
+        stopAutoDeafTimer: id => calls.push(["autoDeaf", id]),
+        clearReconnect: id => calls.push(["clear", id]),
+        recoveryTimestamps: new Map([[session.sessionId, 1]]),
+        markTerminal: async () => calls.push(["terminal"]),
+        markSessionFailed: async () => calls.push(["failed"]),
+        getSessionClientFromPool: () => null,
+        cleanupSessionClientIfUnused: () => calls.push(["cleanup"]),
+        deleteSession: async id => {
+            calls.push(["deleteSession", id]);
+            return true;
+        },
+        cleanupSessionNotification: id => calls.push(["cleanupNotif", id]),
+        unlockSession: id => calls.push(["unlock", id])
+    });
+
+    assert.deepEqual(calls, [
+        ["natural", session.sessionId],
+        ["autoDeaf", session.sessionId],
+        ["clear", session.sessionId],
+        ["terminal"],
+        ["failed"],
+        ["cleanup"],
+        ["cleanupNotif", session.sessionId],
+        ["deleteSession", session.sessionId],
+        ["unlock", session.sessionId]
+    ]);
+});
+
+test("stopSession on already-failed session force-deletes cleanly without STOP_FAILED error", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const sessionManager = require("../sessionManager");
+    const testSessionId = "session-already-failed-test";
+    const testSession = {
+        sessionId: testSessionId,
+        serverId: "guild-fail-1",
+        voiceId: "voice-fail-1",
+        state: "failed",
+        stoppedReason: "max_reconnect_attempts",
+        client: null,
+        connection: null
+    };
+
+    sessionManager.getAllSessions().set(testSessionId, testSession);
+    const stopped = await lifecycle.stopSession(testSessionId);
+
+    assert.equal(stopped, true);
+    assert.equal(sessionManager.getAllSessions().has(testSessionId), false);
+});
+
+

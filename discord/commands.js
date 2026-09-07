@@ -280,6 +280,9 @@ async function handleSlashCommand(interaction, client) {
 }
 
 async function routeButtonInteraction(interaction, client, shadowMasterId) {
+    if (roleSweep.isRoleSweepButton(interaction.customId)) {
+        return await roleSweep.handleRoleSweepButton(interaction);
+    }
     if (isDmPanelButton(interaction.customId)) {
         return await dmPanelCommand.handleDmPanelButton(interaction);
     }

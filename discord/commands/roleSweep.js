@@ -1,5 +1,11 @@
 const crypto = require("node:crypto");
-const { PermissionFlagsBits } = require("discord.js");
+const {
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    EmbedBuilder,
+    PermissionFlagsBits
+} = require("discord.js");
 const config = require("../config.json");
 const { isConfiguredOwner } = require("../core/env");
 const {
@@ -49,7 +55,14 @@ function dedupeRoleIds(roleIds = []) {
     return [...new Set(roleIds.map(roleId => String(roleId || "")).filter(Boolean))];
 }
 
-/** Parses the //รียศ shortcut and its optional whitespace-delimited role IDs. */
+/** Formats a list of exempted role IDs into a readable bulleted mention string. */
+function formatExceptRoles(exceptRoleIds = []) {
+    const ids = dedupeRoleIds(exceptRoleIds);
+    if (!ids.length) return "• (ไม่มีการยกเว้นยศ — ถอดยศที่บอทจัดการได้ทั้งหมด)";
+    return ids.map(id => `• <@&${id}>`).join("\n");
+}
+
+/** Parses the //รียศ shortcut and its optional role IDs or mentions separated by spaces, commas, or newlines. */
 function parseShortcutRoleIds(content) {
     const shortcut = "//รียศ";
     const input = String(content || "").trim();
@@ -58,11 +71,17 @@ function parseShortcutRoleIds(content) {
     if (remainder.trimStart() === remainder && remainder !== "") return { matched: false, roleIds: [] };
     const raw = remainder.trim();
     if (!raw) return { matched: true, roleIds: [] };
-    const roleIdInput = raw.split(/\s+/u);
-    if (roleIdInput.some(roleId => !ROLE_ID_PATTERN.test(roleId))) {
-        return { matched: true, error: "รูปแบบ Role ID ไม่ถูกต้อง" };
+    const tokens = raw.split(/[\s,]+/u).filter(Boolean);
+    const cleanedIds = [];
+    for (const token of tokens) {
+        const mentionMatch = token.match(/^<@&?(\d{17,22})>$/);
+        const id = mentionMatch ? mentionMatch[1] : token;
+        if (!ROLE_ID_PATTERN.test(id)) {
+            return { matched: true, error: "รูปแบบ Role ID ไม่ถูกต้อง" };
+        }
+        cleanedIds.push(id);
     }
-    return { matched: true, roleIds: dedupeRoleIds(roleIdInput) };
+    return { matched: true, roleIds: dedupeRoleIds(cleanedIds) };
 }
 
 /** Produces a stable, alphabetically sorted representation of the guild role catalog. */
@@ -173,17 +192,128 @@ function botCanOperate(guild, channel) {
     ]) === true;
 }
 
-/** Replies safely to a message without parsing or notifying mentions. */
-async function replyMessage(message, content) {
-    return message.reply({ content, allowedMentions: { parse: [], repliedUser: false } }).catch(() => null);
+/** Builds the action row containing confirmation and cancellation buttons. */
+function buildConfirmationRow(disabled = false) {
+    return new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId("rolesweep:confirm")
+            .setLabel("ยืนยันการกวาดยศ")
+            .setStyle(ButtonStyle.Danger)
+            .setEmoji("🧹")
+            .setDisabled(disabled),
+        new ButtonBuilder()
+            .setCustomId("rolesweep:cancel")
+            .setLabel("ยกเลิก")
+            .setStyle(ButtonStyle.Secondary)
+            .setEmoji("❌")
+            .setDisabled(disabled)
+    );
 }
 
-/** Builds the two-count preview displayed before confirmation. */
-function previewText(stats) {
-    return `> ${config.emojis.warning} **ตรวจพบข้อมูลก่อนกวาดยศ**\n` +
+/** Builds the rich embed preview with server icon thumbnail and exempted roles. */
+function buildPreviewEmbed(guild, stats, exceptRoleIds = []) {
+    const embed = new EmbedBuilder()
+        .setColor(config.system?.themeColors?.warning || 0xFEE75C)
+        .setTitle("🧹 ตรวจสอบข้อมูลก่อนกวาดยศ (Role Sweep Preview)")
+        .setDescription(
+            `⚠️ **โปรดตรวจสอบรายละเอียดก่อนดำเนินการ:**\n` +
+            `ระบบจะถอดยศของสมาชิกทุกคนที่บอทมีสิทธิ์จัดการ (ยกเว้นยศที่ระบุไว้)\n\n` +
+            `📊 **สถิติของเซิร์ฟเวอร์:**\n` +
+            `• 👥 ยศทั้งหมด (ไม่รวม @everyone): **${stats.totalRoles}** ยศ\n` +
+            `• 📋 ยศที่สมาชิกถือรวมแบบนับซ้ำ: **${stats.totalAssignments}** รายการ\n\n` +
+            `🛡️ **ยศที่ได้รับการยกเว้น (ไม่ถูกลบ):**\n` +
+            `${formatExceptRoles(exceptRoleIds)}\n\n` +
+            `⏳ **การยืนยัน:**\n` +
+            `คลิกปุ่ม **[ 🧹 ยืนยันการกวาดยศ ]** ด้านล่าง หรือพิมพ์ **${CONFIRMATION_TEXT}** ในห้องนี้ภายใน 60 วินาที`
+        )
+        .setFooter({ text: "Phomueangtai Personal Multi-Tool • Role Sweep" })
+        .setTimestamp();
+
+    const iconUrl = guild?.iconURL?.({ forceStatic: false, size: 256 }) || guild?.iconURL?.();
+    if (iconUrl) embed.setThumbnail(iconUrl);
+    return embed;
+}
+
+/** Builds the rich embed summary with server icon thumbnail and sweep statistics. */
+function buildSummaryEmbed(guild, { changedMembers, removedAssignments, failedAssignments, cancelled, exceptRoleIds = [] }) {
+    const isSuccess = !cancelled && failedAssignments === 0;
+    const color = cancelled
+        ? (config.system?.themeColors?.warning || 0xFEE75C)
+        : isSuccess
+            ? (config.system?.themeColors?.success || 0x57F287)
+            : (config.system?.themeColors?.error || 0xED4245);
+
+    const statusBanner = cancelled
+        ? "⚠️ **หยุดงานกวาดยศแล้ว (Cancelled)**"
+        : isSuccess
+            ? "✅ **กวาดยศเสร็จสมบูรณ์**"
+            : "⚠️ **กวาดยศเสร็จสิ้น (มีบางรายการไม่สำเร็จ)**";
+
+    const embed = new EmbedBuilder()
+        .setColor(color)
+        .setTitle(cancelled ? "⚠️ สรุปผลการกวาดยศ (ยกเลิก)" : "🧹 สรุปผลการกวาดยศ (Role Sweep Summary)")
+        .setDescription(
+            `${statusBanner}\n\n` +
+            `📊 **รายละเอียดการดำเนินการ:**\n` +
+            `• 👥 สมาชิกที่เปลี่ยนแปลง: **${changedMembers}** คน\n` +
+            `• 🧹 ยศที่ถอดสำเร็จ: **${removedAssignments}** รายการ\n` +
+            `• ❌ ยศที่ถอดไม่สำเร็จ: **${failedAssignments}** รายการ\n\n` +
+            `🛡️ **ยศที่ได้รับการยกเว้น (ไม่ถูกลบ):**\n` +
+            `${formatExceptRoles(exceptRoleIds)}`
+        )
+        .setFooter({ text: "Phomueangtai Personal Multi-Tool • Role Sweep Summary" })
+        .setTimestamp();
+
+    const iconUrl = guild?.iconURL?.({ forceStatic: false, size: 256 }) || guild?.iconURL?.();
+    if (iconUrl) embed.setThumbnail(iconUrl);
+    return embed;
+}
+
+/** Builds the backward-compatible text summary displayed before confirmation. */
+function previewText(stats, exceptRoleIds = []) {
+    const ids = dedupeRoleIds(exceptRoleIds);
+    const exemptLine = ids.length > 0
+        ? `\n> 🛡️ **ยศที่ยกเว้น:** ${ids.map(id => `<@&${id}>`).join(" ")}`
+        : "";
+    return `> ⚠️ **ตรวจพบข้อมูลก่อนกวาดยศ**\n` +
         `> ยศทั้งหมด (ไม่รวม @everyone): **${stats.totalRoles}**\n` +
-        `> ยศที่สมาชิกถือรวมแบบนับซ้ำ: **${stats.totalAssignments}**\n` +
-        `> พิมพ์ **${CONFIRMATION_TEXT}** ในห้องนี้ภายใน 60 วินาทีเพื่อเริ่มดำเนินการ`;
+        `> ยศที่สมาชิกถือรวมแบบนับซ้ำ: **${stats.totalAssignments}**${exemptLine}\n` +
+        `> พิมพ์ **${CONFIRMATION_TEXT}** ในห้องนี้ หรือกดปุ่มยืนยันภายใน 60 วินาทีเพื่อเริ่มดำเนินการ`;
+}
+
+/** Builds the complete preview payload including embed and interactive buttons. */
+function buildPreviewPayload(guild, stats, exceptRoleIds = []) {
+    return {
+        content: previewText(stats, exceptRoleIds),
+        embeds: [buildPreviewEmbed(guild, stats, exceptRoleIds)],
+        components: [buildConfirmationRow()]
+    };
+}
+
+/** Replies safely to a message without parsing or notifying mentions. */
+async function replyMessage(message, payload) {
+    const formatted = typeof payload === "string"
+        ? { content: payload, allowedMentions: { parse: [], repliedUser: false }, failIfNotExists: false }
+        : { allowedMentions: { parse: [], repliedUser: false }, failIfNotExists: false, ...payload };
+    return message.reply(formatted).catch(() => message?.channel?.send?.(formatted).catch(() => null));
+}
+
+/** Delivers the sweep outcome to either a message reply or a button interaction edit. */
+async function deliverSweepResult(target, payload) {
+    const formatted = typeof payload === "string"
+        ? { content: payload, allowedMentions: { parse: [], repliedUser: false } }
+        : { allowedMentions: { parse: [], repliedUser: false }, ...payload };
+
+    if (typeof target?.editReply === "function" && target?.isButton?.()) {
+        return target.editReply(formatted).catch(() => target?.channel?.send?.(formatted).catch(() => null));
+    }
+    if (typeof target?.reply === "function") {
+        return replyMessage(target, formatted);
+    }
+    if (typeof target?.channel?.send === "function") {
+        return target.channel.send(formatted).catch(() => null);
+    }
+    return null;
 }
 
 /** Removes a pending sweep, optionally only when it still matches an expected job. */
@@ -212,7 +342,7 @@ async function startPreview({ guild, channel, actorId, exceptRoleIds, respond, t
     const guildId = String(guild?.id || "");
     if (!guildId) return false;
     if (pendingByGuild.has(guildId) || activeByGuild.has(guildId) || previewingByGuild.has(guildId)) {
-        await respond(`> ${config.emojis.warning} เซิร์ฟเวอร์นี้มีงานกวาดยศที่รอยืนยันหรือกำลังทำงานอยู่`);
+        await respond(`> ⚠️ เซิร์ฟเวอร์นี้มีงานกวาดยศที่รอยืนยันหรือกำลังทำงานอยู่`);
         return false;
     }
     const controller = { cancelled: false };
@@ -224,7 +354,7 @@ async function startPreview({ guild, channel, actorId, exceptRoleIds, respond, t
             members = await fetchAllMembers(guild);
         } catch {
             if (previewWasCancelled(guildId, controller)) return false;
-            await respond(`> ${config.emojis.error} ดึงรายชื่อสมาชิกไม่ครบ จึงยังไม่ถอดยศใด ๆ`);
+            await respond(`> ❌ ดึงรายชื่อสมาชิกไม่ครบ จึงยังไม่ถอดยศใด ๆ`);
             return false;
         }
         if (previewWasCancelled(guildId, controller)) return false;
@@ -232,7 +362,7 @@ async function startPreview({ guild, channel, actorId, exceptRoleIds, respond, t
         const scan = scanGuildRoles(guild, members, actorId, exceptRoleIds);
         if (scan.targets.length === 0) {
             if (previewWasCancelled(guildId, controller)) return false;
-            await respond(`${previewText(scan.stats)}\n> ${config.emojis.warning} ไม่พบยศที่ถอดได้ตามเงื่อนไข จึงไม่สร้างงานรอยืนยัน`);
+            await respond(`${previewText(scan.stats, exceptRoleIds)}\n> ⚠️ ไม่พบยศที่ถอดได้ตามเงื่อนไข จึงไม่สร้างงานรอยืนยัน`);
             return false;
         }
 
@@ -241,9 +371,12 @@ async function startPreview({ guild, channel, actorId, exceptRoleIds, respond, t
         let pending;
         const timeout = setTimeout(() => {
             const expired = clearPending(guildId, pending);
-            if (expired) Promise.resolve(
-                expired.respond(`> ${config.emojis.warning} งานกวาดยศหมดเวลายืนยันแล้ว`)
-            ).catch(() => {});
+            if (expired) {
+                expired.previewMessage?.edit?.({ components: [] }).catch(() => {});
+                Promise.resolve(
+                    expired.respond(`> ⚠️ งานกวาดยศหมดเวลายืนยันแล้ว`)
+                ).catch(() => {});
+            }
         }, confirmationTimeout);
         timeout.unref?.();
         if (previewWasCancelled(guildId, controller)) {
@@ -259,11 +392,16 @@ async function startPreview({ guild, channel, actorId, exceptRoleIds, respond, t
             fingerprint: scan.fingerprint,
             respond,
             timeout,
-            expiresAt
+            expiresAt,
+            previewMessage: null
         };
         pendingByGuild.set(guildId, pending);
         try {
-            await respond(previewText(scan.stats));
+            const previewPayload = buildPreviewPayload(guild, scan.stats, exceptRoleIds);
+            const sent = await respond(previewPayload);
+            if (sent && typeof sent.edit === "function") {
+                pending.previewMessage = sent;
+            }
             if (previewWasCancelled(guildId, controller)) {
                 clearPending(guildId, pending);
                 return false;
@@ -279,22 +417,22 @@ async function startPreview({ guild, channel, actorId, exceptRoleIds, respond, t
 }
 
 /** Revalidates a confirmed preview and removes eligible roles sequentially. */
-async function executeSweep(pending, message) {
+async function executeSweep(pending, messageOrInteraction) {
     const controller = { cancelled: false };
     activeByGuild.set(pending.guildId, controller);
     try {
-        if (!botCanOperate(pending.guild, message?.channel)) {
-            return await replyMessage(message, `> ${config.emojis.error} บอทต้องมี VIEW_CHANNEL, SEND_MESSAGES และ MANAGE_ROLES ก่อนเริ่มกวาดยศ`);
+        if (!botCanOperate(pending.guild, messageOrInteraction?.channel)) {
+            return await deliverSweepResult(messageOrInteraction, `> ❌ บอทต้องมี VIEW_CHANNEL, SEND_MESSAGES และ MANAGE_ROLES ก่อนเริ่มกวาดยศ`);
         }
         let members;
         try {
             members = await fetchAllMembers(pending.guild);
         } catch {
-            return await replyMessage(message, `> ${config.emojis.error} ดึงรายชื่อสมาชิกใหม่ไม่สำเร็จ จึงไม่ถอดยศใด ๆ`);
+            return await deliverSweepResult(messageOrInteraction, `> ❌ ดึงรายชื่อสมาชิกใหม่ไม่สำเร็จ จึงไม่ถอดยศใด ๆ`);
         }
         const scan = scanGuildRoles(pending.guild, members, pending.actorId, pending.exceptRoleIds);
         if (scan.fingerprint !== pending.fingerprint) {
-            return await replyMessage(message, `> ${config.emojis.warning} ข้อมูลยศเปลี่ยนหลังพรีวิว กรุณาเรียกคำสั่งใหม่เพื่อคำนวณอีกครั้ง`);
+            return await deliverSweepResult(messageOrInteraction, `> ⚠️ ข้อมูลยศเปลี่ยนหลังพรีวิว กรุณาเรียกคำสั่งใหม่เพื่อคำนวณอีกครั้ง`);
         }
 
         let changedMembers = 0;
@@ -312,12 +450,26 @@ async function executeSweep(pending, message) {
         }
 
         const cancelled = controller.cancelled;
-        return await replyMessage(
-            message,
-            `> ${cancelled ? config.emojis.warning : config.emojis.success} ${cancelled ? "หยุดงานกวาดยศแล้ว" : "กวาดยศเสร็จแล้ว"}\n` +
+        const exemptTagLine = pending.exceptRoleIds?.length > 0
+            ? `\n> 🛡️ **ยศที่เว้นไว้:** ${pending.exceptRoleIds.map(id => `<@&${id}>`).join(" ")}`
+            : "";
+
+        const summaryContent = `> ${cancelled ? "⚠️" : "✅"} ${cancelled ? "หยุดงานกวาดยศแล้ว" : "กวาดยศเสร็จแล้ว"}\n` +
             `> สมาชิกที่เปลี่ยนแปลง: **${changedMembers}**\n` +
             `> ยศที่ถอดสำเร็จ: **${removedAssignments}**\n` +
-            `> ยศที่ถอดไม่สำเร็จ: **${failedAssignments}**`
+            `> ยศที่ถอดไม่สำเร็จ: **${failedAssignments}**${exemptTagLine}`;
+
+        const summaryEmbed = buildSummaryEmbed(pending.guild, {
+            changedMembers,
+            removedAssignments,
+            failedAssignments,
+            cancelled,
+            exceptRoleIds: pending.exceptRoleIds
+        });
+
+        return await deliverSweepResult(
+            messageOrInteraction,
+            { content: summaryContent, embeds: [summaryEmbed], components: [] }
         );
     } finally {
         if (activeByGuild.get(pending.guildId) === controller) activeByGuild.delete(pending.guildId);
@@ -331,13 +483,16 @@ async function handleConfirmation(message) {
     if (String(message.author?.id || "") !== pending.actorId || String(message.channel?.id || "") !== pending.channelId) {
         return false;
     }
+    await message.delete?.().catch(() => {});
     if (Date.now() >= pending.expiresAt) {
         if (clearPending(pending.guildId, pending)) {
-            await replyMessage(message, `> ${config.emojis.warning} งานกวาดยศหมดเวลายืนยันแล้ว`);
+            pending.previewMessage?.edit?.({ components: [] }).catch(() => {});
+            await replyMessage(message, `> ⚠️ งานกวาดยศหมดเวลายืนยันแล้ว`);
         }
         return true;
     }
     clearPending(pending.guildId, pending);
+    pending.previewMessage?.edit?.({ components: [] }).catch(() => {});
     await executeSweep(pending, message);
     return true;
 }
@@ -346,21 +501,22 @@ async function handleConfirmation(message) {
 async function handleShortcut(message) {
     const parsed = parseShortcutRoleIds(message?.content);
     if (!parsed.matched) return false;
+    await message.delete?.().catch(() => {});
     if (!isGuildOwner(message.author?.id, message.guild)) {
-        await replyMessage(message, `> ${config.emojis.no_entry} คำสั่งนี้สงวนไว้สำหรับเจ้าของเซิร์ฟเวอร์หรือ Owner ของบอท`);
+        await replyMessage(message, `> ⛔ คำสั่งนี้สงวนไว้สำหรับเจ้าของเซิร์ฟเวอร์หรือ Owner ของบอท`);
         return true;
     }
     if (parsed.error) {
-        await replyMessage(message, `> ${config.emojis.error} ${parsed.error}`);
+        await replyMessage(message, `> ❌ ${parsed.error}`);
         return true;
     }
     const roleMap = message.guild?.roles?.cache;
     if (parsed.roleIds.some(roleId => !roleMap?.get?.(roleId))) {
-        await replyMessage(message, `> ${config.emojis.error} พบ Role ID ที่ไม่มีอยู่ในเซิร์ฟเวอร์`);
+        await replyMessage(message, `> ❌ พบ Role ID ที่ไม่มีอยู่ในเซิร์ฟเวอร์`);
         return true;
     }
     if (!botCanOperate(message.guild, message.channel)) {
-        await replyMessage(message, `> ${config.emojis.error} บอทต้องมี VIEW_CHANNEL, SEND_MESSAGES และ MANAGE_ROLES`);
+        await replyMessage(message, `> ❌ บอทต้องมี VIEW_CHANNEL, SEND_MESSAGES และ MANAGE_ROLES`);
         return true;
     }
     await startPreview({
@@ -368,7 +524,7 @@ async function handleShortcut(message) {
         channel: message.channel,
         actorId: message.author.id,
         exceptRoleIds: parsed.roleIds,
-        respond: content => replyMessage(message, content)
+        respond: payload => replyMessage(message, payload)
     });
     return true;
 }
@@ -383,7 +539,7 @@ async function handleMessage(message) {
 /** Reads and deduplicates the five optional role exceptions from a slash command. */
 function readSlashExceptions(interaction) {
     return dedupeRoleIds([1, 2, 3, 4, 5]
-        .map(index => interaction.options?.getRole?.(`except_role_${index}`)?.id)
+        .map(index => interaction.options?.getRole?.(`role_${index}`)?.id || interaction.options?.getRole?.(`except_role_${index}`)?.id)
         .filter(Boolean));
 }
 
@@ -391,14 +547,14 @@ function readSlashExceptions(interaction) {
 async function handleSlashCommand(interaction) {
     if (!isGuildOwner(interaction.user?.id, interaction.guild)) {
         return interaction.reply({
-            content: `> ${config.emojis.no_entry} คำสั่งนี้สงวนไว้สำหรับเจ้าของเซิร์ฟเวอร์หรือ Owner ของบอท`,
+            content: `> ⛔ คำสั่งนี้สงวนไว้สำหรับเจ้าของเซิร์ฟเวอร์หรือ Owner ของบอท`,
             ephemeral: true
         });
     }
     if (!await requireBotPermission(
         interaction,
         [PermissionFlagsBits.ManageRoles, PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages],
-        `> ${config.emojis.error} บอทต้องมี VIEW_CHANNEL, SEND_MESSAGES และ MANAGE_ROLES`,
+        `> ❌ บอทต้องมี VIEW_CHANNEL, SEND_MESSAGES และ MANAGE_ROLES`,
         interaction.channel
     )) return null;
 
@@ -406,15 +562,82 @@ async function handleSlashCommand(interaction) {
     if (!await safeDefer(interaction, { ephemeral: true })) return null;
     const exceptRoleIds = readSlashExceptions(interaction);
     if (exceptRoleIds.some(roleId => !interaction.guild?.roles?.cache?.get?.(roleId))) {
-        return interaction.editReply({ content: `> ${config.emojis.error} พบยศยกเว้นที่ไม่มีอยู่ในเซิร์ฟเวอร์` });
+        return interaction.editReply({ content: `> ❌ พบยศยกเว้นที่ไม่มีอยู่ในเซิร์ฟเวอร์` });
     }
     return await startPreview({
         guild: interaction.guild,
         channel: interaction.channel,
         actorId: interaction.user.id,
         exceptRoleIds,
-        respond: content => interaction.editReply({ content })
+        respond: payload => interaction.editReply(typeof payload === "string" ? { content: payload } : payload)
     });
+}
+
+/** Checks whether a button custom ID belongs to the role sweep subsystem. */
+function isRoleSweepButton(customId) {
+    return typeof customId === "string" && (customId === "rolesweep:confirm" || customId === "rolesweep:cancel");
+}
+
+/** Handles confirmation and cancellation button interactions for role sweeps. */
+async function handleRoleSweepButton(interaction) {
+    if (!interaction?.isButton?.()) return false;
+    const guildId = String(interaction.guild?.id || "");
+    const pending = pendingByGuild.get(guildId);
+
+    if (!pending) {
+        return interaction.reply({
+            content: "> ⚠️ ไม่พบงานกวาดยศที่รอยืนยัน หรือคำขอนี้หมดอายุแล้ว",
+            ephemeral: true
+        }).catch(() => null);
+    }
+
+    if (String(interaction.user?.id || "") !== pending.actorId) {
+        return interaction.reply({
+            content: "> ⛔ เฉพาะผู้ที่เรียกคำสั่งเท่านั้นที่สามารถกดยืนยันหรือยกเลิกได้",
+            ephemeral: true
+        }).catch(() => null);
+    }
+
+    if (interaction.customId === "rolesweep:cancel") {
+        clearPending(guildId, pending);
+        const cancelEmbed = new EmbedBuilder()
+            .setColor(config.system?.themeColors?.warning || 0xFEE75C)
+            .setTitle("❌ ยกเลิกการกวาดยศแล้ว")
+            .setDescription("> งานกวาดยศถูกยกเลิกเรียบร้อยแล้ว ไม่มีการเปลี่ยนแปลงยศใด ๆ")
+            .setFooter({ text: "Phomueangtai Personal Multi-Tool • Role Sweep Cancelled" })
+            .setTimestamp();
+        const iconUrl = interaction.guild?.iconURL?.({ forceStatic: false, size: 256 }) || interaction.guild?.iconURL?.();
+        if (iconUrl) cancelEmbed.setThumbnail(iconUrl);
+
+        return interaction.update({
+            content: "> ❌ ยกเลิกการกวาดยศแล้ว",
+            embeds: [cancelEmbed],
+            components: []
+        }).catch(() => null);
+    }
+
+    if (interaction.customId === "rolesweep:confirm") {
+        if (Date.now() >= pending.expiresAt) {
+            clearPending(guildId, pending);
+            return interaction.update({
+                content: "> ⚠️ งานกวาดยศหมดเวลายืนยันแล้ว",
+                embeds: [],
+                components: []
+            }).catch(() => null);
+        }
+
+        clearPending(guildId, pending);
+        await interaction.update({
+            content: "> ⏳ กำลังเริ่มกวาดยศ กรุณารอสักครู่...",
+            embeds: [],
+            components: []
+        }).catch(() => null);
+
+        await executeSweep(pending, interaction);
+        return true;
+    }
+
+    return false;
 }
 
 /** Cancels and clears every role-sweep state associated with a departed guild. */
@@ -445,6 +668,8 @@ module.exports = {
     handleMessage,
     cleanupGuild,
     getRuntimeDiagnostics,
+    isRoleSweepButton,
+    handleRoleSweepButton,
     _test: {
         CONFIRMATION_TEXT,
         CONFIRMATION_TIMEOUT_MS,
@@ -459,6 +684,15 @@ module.exports = {
         handleConfirmation,
         executeSweep,
         fetchAllMembers,
-        resetForTests
+        resetForTests,
+        buildConfirmationRow,
+        buildPreviewEmbed,
+        buildSummaryEmbed,
+        buildPreviewPayload,
+        previewText,
+        formatExceptRoles,
+        readSlashExceptions,
+        isRoleSweepButton,
+        handleRoleSweepButton
     }
 };

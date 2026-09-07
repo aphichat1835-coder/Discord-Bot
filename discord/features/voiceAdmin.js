@@ -593,6 +593,8 @@ function buildPanel(channel, status = null) {
         .setDescription(descriptionLines.join("\n"))
         .setFooter({ text: "Phomueangtai Personal Multi-Tool • Voice Admin" })
         .setTimestamp();
+    const iconUrl = channel?.guild?.iconURL?.({ forceStatic: false, size: 256 }) || channel?.guild?.iconURL?.();
+    if (iconUrl) embed.setThumbnail(iconUrl);
     const actions = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(IDS.DISCONNECT).setLabel("ตัดสายทั้งหมด").setEmoji("🚪").setStyle(ButtonStyle.Danger),
         new ButtonBuilder().setCustomId(IDS.LOCK_MUTE).setLabel("ปิดไมค์").setEmoji("🔇").setStyle(ButtonStyle.Secondary),
@@ -795,12 +797,17 @@ function getSecretCommandPrefix(text) {
     if (text.startsWith("//")) return "//";
     return null;
 }
-function secretUsage() { return "ใช้: //ตัดหมด | //ย้ายหมด <IDห้อง> | //ปิดไมค์หมด | //ปิดหูหมด | //เปิดหมด (เพิ่ม / อีกหนึ่งตัวเพื่อไม่เว้นแอดมิน)"; }
-function secretReply(payload) {
-    if (typeof payload === "string") {
-        return { content: payload, allowedMentions: { parse: [], repliedUser: false } };
+async function sendSecretMessage(message, payload) {
+    const formatted = typeof payload === "string"
+        ? { content: payload, allowedMentions: { parse: [], repliedUser: false }, failIfNotExists: false }
+        : { ...payload, allowedMentions: { parse: [], repliedUser: false }, failIfNotExists: false };
+    if (typeof message?.reply === "function") {
+        return message.reply(formatted);
     }
-    return { ...payload, allowedMentions: { parse: [], repliedUser: false } };
+    if (typeof message?.channel?.send === "function") {
+        return message.channel.send(formatted);
+    }
+    return null;
 }
 
 function resultColor(result) {
@@ -812,7 +819,7 @@ function resultColor(result) {
     return config.system?.themeColors?.error || "#ED4245";
 }
 
-function buildSecretResultEmbed(command, result) {
+function buildSecretResultEmbed(command, result, guild = null) {
     const isFullSuccess = result.targeted > 0 && result.succeeded === result.targeted && (result.failed + result.skipped + result.timedOut + result.persistenceFailed === 0);
     const color = resultColor(result);
     let statusBanner = "❌ **การดำเนินการล้มเหลว**";
@@ -837,55 +844,19 @@ function buildSecretResultEmbed(command, result) {
         lines.push(`• ⏱️ **เวลาที่ใช้:** **${(result.durationMs / 1000).toFixed(1)}** วินาที`);
     }
 
-    return new EmbedBuilder()
+    const embed = new EmbedBuilder()
         .setColor(color)
         .setTitle(`⚡ Voice Admin — ${command}`)
         .setDescription(lines.join("\n"))
         .setFooter({ text: "Phomueangtai Personal Multi-Tool • Voice Admin" })
         .setTimestamp();
+    const iconUrl = guild?.iconURL?.({ forceStatic: false, size: 256 }) || guild?.iconURL?.();
+    if (iconUrl) embed.setThumbnail(iconUrl);
+    return embed;
 }
 
-function buildSecretUsageEmbed() {
-    return new EmbedBuilder()
-        .setColor(config.system?.themeColors?.warning || "#FEE75C")
-        .setTitle("📖 วิธีใช้งานคำสั่งลับ Voice Admin")
-        .setDescription(
-            `### ⚡ รายการคำสั่งด่วน (Quick Commands)\n` +
-            `> ควบคุมสมาชิกในห้องเสียงได้ทันทีผ่านการพิมพ์ในแชทห้องเสียง\n\n` +
-            `• \`//ตัดหมด\` หรือ \`///ตัดหมด\`\n` +
-            `  └ 🚪 ตัดการเชื่อมต่อของสมาชิกทุกคนในห้องทันที\n` +
-            `• \`//ย้ายหมด <ID หรือ #ห้อง>\` หรือ \`///ย้ายหมด <ID หรือ #ห้อง>\`\n` +
-            `  └ 🚀 ย้ายสมาชิกทุกคนไปยังห้องเสียงเป้าหมาย\n` +
-            `• \`//ปิดไมค์หมด\` หรือ \`///ปิดไมค์หมด\`\n` +
-            `  └ 🔇 บังคับปิดไมค์แดง (Server Mute) สมาชิกทุกคนในห้อง\n` +
-            `• \`//ปิดหูหมด\` หรือ \`///ปิดหูหมด\`\n` +
-            `  └ 🎧 บังคับปิดหูแดง (Server Deafen) สมาชิกทุกคนในห้อง\n` +
-            `• \`//เปิดหมด\` หรือ \`///เปิดหมด\`\n` +
-            `  └ 🎙️ ปลดล็อกทั้งไมค์และหูให้ทุกคนกลับมาใช้งานปกติ\n\n` +
-            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-            `### 💡 โหมดการทำงาน (Prefix Mode)\n` +
-            `• **\`//\` (2 ขีด - โหมดทั่วไป):** จัดการเฉพาะคนทั่วไป *(เว้นแอดมิน)*\n` +
-            `• **\`///\` (3 ขีด - โหมดเด็ดขาด):** บังคับใช้กับทุกคนในห้องเสียง *(รวมแอดมิน)*`
-        )
-        .setFooter({ text: "Phomueangtai Personal Multi-Tool • Owner Only" })
-        .setTimestamp();
-}
-
-function buildSecretWrongChannelEmbed() {
-    return new EmbedBuilder()
-        .setColor(config.system?.themeColors?.error || "#ED4245")
-        .setTitle("⛔ ตำแหน่งการใช้คำสั่งไม่ถูกต้อง")
-        .setDescription(
-            `> ❌ **ไม่สามารถประมวลผลคำสั่งได้**\n` +
-            `> คำสั่งนี้ต้องพิมพ์ในช่องแชทข้อความของ **ห้องเสียงปกติ (Voice Channel)** เท่านั้น\n` +
-            `> กรุณาเข้าไปในห้องเสียงที่ต้องการจัดการ แล้วพิมพ์คำสั่งในห้องนั้นอีกครั้ง`
-        )
-        .setFooter({ text: "Phomueangtai Personal Multi-Tool • Voice Admin" })
-        .setTimestamp();
-}
-
-function buildSecretErrorEmbed(detail) {
-    return new EmbedBuilder()
+function buildSecretErrorEmbed(detail, guild = null) {
+    const embed = new EmbedBuilder()
         .setColor(config.system?.themeColors?.error || "#ED4245")
         .setTitle("❌ ดำเนินการไม่สำเร็จ")
         .setDescription(
@@ -894,6 +865,9 @@ function buildSecretErrorEmbed(detail) {
         )
         .setFooter({ text: "Phomueangtai Personal Multi-Tool • Voice Admin Error" })
         .setTimestamp();
+    const iconUrl = guild?.iconURL?.({ forceStatic: false, size: 256 }) || guild?.iconURL?.();
+    if (iconUrl) embed.setThumbnail(iconUrl);
+    return embed;
 }
 
 function isOwnerSecretMessage(message) {
@@ -935,34 +909,38 @@ async function runSecretVoiceCommand(message, parsed, members) {
 }
 async function handleSecretMessage(message) {
     if (!isOwnerSecretMessage(message)) return false;
-    const parsed = parseSecretCommand(message.content); if (!parsed) return false;
-    if (parsed.invalid) {
-        await message.reply(secretReply({
-            content: `> ⚠️ ${secretUsage()}`,
-            embeds: [buildSecretUsageEmbed()]
-        }));
-        return true;
-    }
-    if (!isVoiceChannel(message.channel)) {
-        await message.reply(secretReply({
-            content: `> ⛔ ต้องใช้คำสั่งนี้ในแชทของห้องเสียงปกติ`,
-            embeds: [buildSecretWrongChannelEmbed()]
-        }));
-        return true;
-    }
-    const members = sourceMembers(message.channel, { includeAdministrators: parsed.includeAdministrators, excludeId: parsed.includeAdministrators ? message.author.id : null });
+    const prefix = getSecretCommandPrefix(String(message?.content || "").trim());
+    if (!prefix) return false;
+
+    await message.delete?.().catch(() => {});
+
+    const parsed = parseSecretCommand(message.content);
+    if (!parsed || parsed.invalid) return true;
+    if (!isVoiceChannel(message.channel)) return true;
+
+    const members = sourceMembers(message.channel, {
+        includeAdministrators: parsed.includeAdministrators,
+        excludeId: parsed.includeAdministrators ? message.author.id : null
+    });
+
+    const pendingMessage = await sendSecretMessage(message, {
+        content: "> ⏳ กำลังดำเนินการ..."
+    });
+
     try {
         const result = await runSecretVoiceCommand(message, parsed, members);
-        await message.reply(secretReply({
+        await pendingMessage?.delete?.().catch(() => {});
+        await sendSecretMessage(message, {
             content: `> ${resultEmoji(result)} ${buildResult(parsed.command, result)}`,
-            embeds: [buildSecretResultEmbed(parsed.command, result)]
-        }));
+            embeds: [buildSecretResultEmbed(parsed.command, result, message.guild)]
+        });
     } catch (error) {
+        await pendingMessage?.delete?.().catch(() => {});
         const detail = describeSecretCommandFailure(error);
-        await message.reply(secretReply({
+        await sendSecretMessage(message, {
             content: `> ❌ ${detail}`,
-            embeds: [buildSecretErrorEmbed(detail)]
-        }));
+            embeds: [buildSecretErrorEmbed(detail, message.guild)]
+        });
     }
     return true;
 }

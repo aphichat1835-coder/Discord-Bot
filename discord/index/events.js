@@ -427,8 +427,11 @@ function register({
                 commandCooldowns.delete(commandCooldowns.keys().next().value);
             }
             if (!commandCooldowns.has(userId)) commandCooldowns.set(userId, new Map());
+            const isChannelScoped = cmdName === "clear";
+            const channelId = interaction.channelId || interaction.channel?.id || "";
+            const cooldownKey = isChannelScoped && channelId ? `${cmdName}:${channelId}` : cmdName;
             const userCmds = commandCooldowns.get(userId);
-            const lastUsed = userCmds.get(cmdName) || 0;
+            const lastUsed = userCmds.get(cooldownKey) || 0;
             const remaining = cooldownMs - (now - lastUsed);
 
             if (remaining > 0) {
@@ -440,18 +443,20 @@ function register({
                 if (interaction.replied || interaction.deferred) return interaction.followUp(reply).catch(() => {});
                 return interaction.reply(reply).catch(() => {});
             }
-            commandKey = `${userId}:${cmdName}`;
+            commandKey = isChannelScoped && channelId ? `${userId}:${cmdName}:${channelId}` : `${userId}:${cmdName}`;
             if (commandInFlight.has(commandKey)) {
                 return interaction.reply({
-                    content: `> ⏳ คำสั่ง \`/${cmdName}\` รอบก่อนกำลังทำงานอยู่ กรุณารอ`,
+                    content: isChannelScoped
+                        ? `> ⏳ คำสั่ง \`/${cmdName}\` ในห้องนี้รอบก่อนกำลังทำงานอยู่ กรุณารอ`
+                        : `> ⏳ คำสั่ง \`/${cmdName}\` รอบก่อนกำลังทำงานอยู่ กรุณารอ`,
                     ephemeral: true
                 }).catch(() => {});
             }
             commandInFlight.add(commandKey);
-            commandCooldownContext = { userCmds, cmdName, recorded: false };
+            commandCooldownContext = { userCmds, cooldownKey, recorded: false };
             interaction.__onCommandAccepted = () => {
                 if (commandCooldownContext.recorded) return;
-                commandCooldownContext.userCmds.set(commandCooldownContext.cmdName, Date.now());
+                commandCooldownContext.userCmds.set(commandCooldownContext.cooldownKey, Date.now());
                 commandCooldownContext.recorded = true;
                 delete interaction.__onCommandAccepted;
             };
@@ -480,7 +485,7 @@ function register({
         }).finally(() => {
             if (commandKey) commandInFlight.delete(commandKey);
             if (commandCooldownContext && !commandCooldownContext.recorded && interaction.__commandAccepted === true) {
-                commandCooldownContext.userCmds.set(commandCooldownContext.cmdName, Date.now());
+                commandCooldownContext.userCmds.set(commandCooldownContext.cooldownKey, Date.now());
             }
             delete interaction.__onCommandAccepted;
         });
