@@ -268,7 +268,12 @@ function validateStartFields({ token, tokens, serverId, voiceId } = {}) {
         return `> ${config.emojis.error} ไอดีช่องเสียงไม่ถูกต้อง (ต้องเป็นตัวเลข 17-22 หลัก)`;
     }
 
-    const tokenList = Array.isArray(tokens) ? tokens : (token ? [token] : []);
+    let tokenList = [];
+    if (Array.isArray(tokens)) {
+        tokenList = tokens;
+    } else if (token) {
+        tokenList = [token];
+    }
     if (!tokenList.length) {
         return `> ${config.emojis.error} กรุณากรอกอย่างน้อย 1 Token ในแบบฟอร์ม`;
     }
@@ -364,7 +369,30 @@ async function handleModal(interaction, client, deps = {}) {
         return interaction.editReply({ content: validationError });
     }
 
-    const tokens = fields.tokens;
+    const { successes, failures, lastStartedSession } = await executeBatchModalLogins(
+        fields.tokens,
+        fields,
+        interaction,
+        client,
+        modalDeps
+    );
+
+    if (fields.tokens.length > 1) {
+        await modalDeps.updatePanel(interaction.guild.id);
+    }
+
+    const voiceLabel = lastStartedSession
+        ? getVoiceChannelLabel(lastStartedSession)
+        : `<#${fields.voiceId}>`;
+
+    const content = fields.tokens.length === 1
+        ? formatSingleTokenResult(successes[0], failures[0], voiceLabel)
+        : formatMultiTokenResult(fields.tokens.length, successes, failures, voiceLabel);
+
+    return interaction.editReply({ content });
+}
+
+async function executeBatchModalLogins(tokens, fields, interaction, client, modalDeps) {
     const successes = [];
     const failures = [];
     let lastStartedSession = null;
@@ -411,35 +439,25 @@ async function handleModal(interaction, client, deps = {}) {
         }
     }
 
-    if (tokens.length > 1) {
-        await modalDeps.updatePanel(interaction.guild.id);
+    return { successes, failures, lastStartedSession };
+}
+
+function formatSingleTokenResult(success, failure, voiceLabel) {
+    if (success) {
+        const actionText = success.action === "replaced_by_latest_request"
+            ? "แทนรายการเดิมด้วยคำสั่งล่าสุดแล้ว"
+            : "เริ่ม session ใหม่แล้ว";
+
+        return `> ${config.emojis.success} เริ่มระบบสำเร็จ! ${actionText}\n` +
+            `> บัญชีที่ออน: **${success.accountLabel}**\n` +
+            `> ช่องเสียง: ${voiceLabel}`;
     }
 
-    const voiceLabel = lastStartedSession
-        ? getVoiceChannelLabel(lastStartedSession)
-        : `<#${fields.voiceId}>`;
+    return `> ${config.emojis.error} ${failure?.reason || "เกิดข้อผิดพลาดในการเริ่ม session"}`;
+}
 
-    if (tokens.length === 1) {
-        if (successes.length === 1) {
-            const result = successes[0];
-            const actionText = result.action === "replaced_by_latest_request"
-                ? "แทนรายการเดิมด้วยคำสั่งล่าสุดแล้ว"
-                : "เริ่ม session ใหม่แล้ว";
-
-            return interaction.editReply({
-                content:
-                    `> ${config.emojis.success} เริ่มระบบสำเร็จ! ${actionText}\n` +
-                    `> บัญชีที่ออน: **${result.accountLabel}**\n` +
-                    `> ช่องเสียง: ${voiceLabel}`
-            });
-        }
-
-        return interaction.editReply({
-            content: `> ${config.emojis.error} ${failures[0]?.reason || "เกิดข้อผิดพลาดในการเริ่ม session"}`
-        });
-    }
-
-    let responseContent = `> ${config.emojis.success} เริ่มระบบสำเร็จ! (${successes.length}/${tokens.length} บัญชี)\n`;
+function formatMultiTokenResult(tokensCount, successes, failures, voiceLabel) {
+    let responseContent = `> ${config.emojis.success} เริ่มระบบสำเร็จ! (${successes.length}/${tokensCount} บัญชี)\n`;
 
     if (successes.length > 0) {
         responseContent += `> บัญชีที่ออน:\n` + successes.map(s => `• **${s.accountLabel}**`).join("\n") + "\n";
@@ -451,10 +469,7 @@ async function handleModal(interaction, client, deps = {}) {
     }
 
     responseContent += `> ช่องเสียง: ${voiceLabel}`;
-
-    return interaction.editReply({
-        content: responseContent.trim()
-    });
+    return responseContent.trim();
 }
 
 module.exports = {

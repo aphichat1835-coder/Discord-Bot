@@ -17,6 +17,7 @@ const {
 const CONFIRMATION_TEXT = "ยืนยัน";
 const CONFIRMATION_TIMEOUT_MS = 60_000;
 const ROLE_ID_PATTERN = /^\d{17,22}$/;
+const ROLE_MENTION_PATTERN = /^<@&?(\d{17,22})>$/;
 const pendingByGuild = new Map();
 const activeByGuild = new Map();
 const previewingByGuild = new Map();
@@ -45,14 +46,16 @@ function isGuildOwner(actorId, guild) {
         isConfiguredOwner(config, actorId);
 }
 
-/** Identifies the guild's built-in @everyone role by ID. */
+/** Matches the everyone role without relying on name comparison alone. */
 function isEveryoneRole(role, guild) {
-    return String(role?.id || "") === String(guild?.id || "");
+    if (!role) return false;
+    return role.id === guild?.id || role.id === guild?.roles?.everyone?.id;
 }
 
-/** Normalizes role IDs and removes duplicates while preserving their order. */
+/** Normalizes and deduplicates an array of role IDs. */
 function dedupeRoleIds(roleIds = []) {
-    return [...new Set(roleIds.map(roleId => String(roleId || "")).filter(Boolean))];
+    if (!Array.isArray(roleIds)) return [];
+    return Array.from(new Set(roleIds.map(id => String(id || "").trim()).filter(Boolean)));
 }
 
 /** Formats a list of exempted role IDs into a readable bulleted mention string. */
@@ -74,7 +77,7 @@ function parseShortcutRoleIds(content) {
     const tokens = raw.split(/[\s,]+/u).filter(Boolean);
     const cleanedIds = [];
     for (const token of tokens) {
-        const mentionMatch = token.match(/^<@&?(\d{17,22})>$/);
+        const mentionMatch = ROLE_MENTION_PATTERN.exec(token);
         const id = mentionMatch ? mentionMatch[1] : token;
         if (!ROLE_ID_PATTERN.test(id)) {
             return { matched: true, error: "รูปแบบ Role ID ไม่ถูกต้อง" };
@@ -237,17 +240,19 @@ function buildPreviewEmbed(guild, stats, exceptRoleIds = []) {
 /** Builds the rich embed summary with server icon thumbnail and sweep statistics. */
 function buildSummaryEmbed(guild, { changedMembers, removedAssignments, failedAssignments, cancelled, exceptRoleIds = [] }) {
     const isSuccess = !cancelled && failedAssignments === 0;
-    const color = cancelled
-        ? (config.system?.themeColors?.warning || 0xFEE75C)
-        : isSuccess
-            ? (config.system?.themeColors?.success || 0x57F287)
-            : (config.system?.themeColors?.error || 0xED4245);
+    let color = config.system?.themeColors?.error || 0xED4245;
+    if (cancelled) {
+        color = config.system?.themeColors?.warning || 0xFEE75C;
+    } else if (isSuccess) {
+        color = config.system?.themeColors?.success || 0x57F287;
+    }
 
-    const statusBanner = cancelled
-        ? "⚠️ **หยุดงานกวาดยศแล้ว (Cancelled)**"
-        : isSuccess
-            ? "✅ **กวาดยศเสร็จสมบูรณ์**"
-            : "⚠️ **กวาดยศเสร็จสิ้น (มีบางรายการไม่สำเร็จ)**";
+    let statusBanner = "⚠️ **กวาดยศเสร็จสิ้น (มีบางรายการไม่สำเร็จ)**";
+    if (cancelled) {
+        statusBanner = "⚠️ **หยุดงานกวาดยศแล้ว (Cancelled)**";
+    } else if (isSuccess) {
+        statusBanner = "✅ **กวาดยศเสร็จสมบูรณ์**";
+    }
 
     const embed = new EmbedBuilder()
         .setColor(color)
@@ -272,8 +277,9 @@ function buildSummaryEmbed(guild, { changedMembers, removedAssignments, failedAs
 /** Builds the backward-compatible text summary displayed before confirmation. */
 function previewText(stats, exceptRoleIds = []) {
     const ids = dedupeRoleIds(exceptRoleIds);
+    const formattedExceptList = ids.map(id => `<@&${id}>`).join(" ");
     const exemptLine = ids.length > 0
-        ? `\n> 🛡️ **ยศที่ยกเว้น:** ${ids.map(id => `<@&${id}>`).join(" ")}`
+        ? `\n> 🛡️ **ยศที่ยกเว้น:** ${formattedExceptList}`
         : "";
     return `> ⚠️ **ตรวจพบข้อมูลก่อนกวาดยศ**\n` +
         `> ยศทั้งหมด (ไม่รวม @everyone): **${stats.totalRoles}**\n` +
@@ -450,8 +456,9 @@ async function executeSweep(pending, messageOrInteraction) {
         }
 
         const cancelled = controller.cancelled;
+        const formattedPendingExcept = pending.exceptRoleIds?.map(id => `<@&${id}>`).join(" ") || "";
         const exemptTagLine = pending.exceptRoleIds?.length > 0
-            ? `\n> 🛡️ **ยศที่เว้นไว้:** ${pending.exceptRoleIds.map(id => `<@&${id}>`).join(" ")}`
+            ? `\n> 🛡️ **ยศที่เว้นไว้:** ${formattedPendingExcept}`
             : "";
 
         const summaryContent = `> ${cancelled ? "⚠️" : "✅"} ${cancelled ? "หยุดงานกวาดยศแล้ว" : "กวาดยศเสร็จแล้ว"}\n` +

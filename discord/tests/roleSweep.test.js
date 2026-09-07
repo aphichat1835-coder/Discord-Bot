@@ -204,7 +204,7 @@ test("preview performs no role mutation and confirmation removes the planned rol
     const previewContent = typeof responses[0] === "string" ? responses[0] : responses[0].content;
     assert.match(previewContent, /ยศทั้งหมด \(ไม่รวม @everyone\): \*\*5\*\*/);
     assert.match(previewContent, /ยศที่สมาชิกถือรวมแบบนับซ้ำ: \*\*7\*\*/);
-    assert.match(previewContent, new RegExp(`<@&${fixture.exempt.id}>`));
+    assert.ok(previewContent.includes(`<@&${fixture.exempt.id}>`));
     assert.ok(responses[0].embeds?.[0]);
     assert.ok(responses[0].components?.[0]);
 
@@ -212,7 +212,7 @@ test("preview performs no role mutation and confirmation removes the planned rol
     assert.equal(await roleSweep._test.handleConfirmation(message), true);
     assert.deepEqual(fixture.target.calls, [[fixture.regular.id]]);
     assert.match(message.replies.at(-1).content, /กวาดยศเสร็จแล้ว/);
-    assert.match(message.replies.at(-1).content, new RegExp(`<@&${fixture.exempt.id}>`));
+    assert.ok(message.replies.at(-1).content.includes(`<@&${fixture.exempt.id}>`));
     assert.ok(message.replies.at(-1).embeds?.[0]);
 });
 
@@ -957,10 +957,10 @@ test("button confirm executes sweep, disables components, and edits reply with r
     // Summary delivered via editReply
     assert.equal(edits.length, 1);
     assert.match(edits[0].content, /กวาดยศเสร็จแล้ว/);
-    assert.match(edits[0].content, new RegExp(`<@&${fixture.exempt.id}>`));
+    assert.ok(edits[0].content.includes(`<@&${fixture.exempt.id}>`));
     assert.ok(edits[0].embeds?.[0]);
     assert.equal(edits[0].embeds[0].data.thumbnail?.url, "https://cdn.discordapp.com/icons/guild/icon.png");
-    assert.match(edits[0].embeds[0].data.description, new RegExp(`<@&${fixture.exempt.id}>`));
+    assert.ok(edits[0].embeds[0].data.description.includes(`<@&${fixture.exempt.id}>`));
     assert.deepEqual(edits[0].components, []);
 });
 

@@ -30,12 +30,36 @@ function isVerifiedBotUser(user) {
     return (bitfield & 65536) === 65536;
 }
 
+function toMemberList(members) {
+    if (Array.isArray(members)) return members;
+    if (typeof members?.values === "function") return Array.from(members.values());
+    return null;
+}
+
+function countMembersFromCollection(members) {
+    const humanRes = members.filter(member => !member?.user?.bot);
+    const botRes = members.filter(member => member?.user?.bot);
+    const humanCount = Number(humanRes?.size ?? humanRes?.length ?? 0);
+    const botCount = Number(botRes?.size ?? botRes?.length ?? 0);
+
+    let verifiedCount = 0;
+    try {
+        const vRes = members.filter(member => member?.user?.bot && isVerifiedBotUser(member?.user));
+        verifiedCount = Number(vRes?.size ?? vRes?.length ?? 0);
+    } catch {
+        verifiedCount = 0;
+    }
+
+    return {
+        human: humanCount,
+        bots: botCount,
+        verifiedBots: verifiedCount,
+        unverifiedBots: Math.max(0, botCount - verifiedCount)
+    };
+}
+
 function countCachedMembers(members) {
-    const list = Array.isArray(members)
-        ? members
-        : (typeof members?.values === "function"
-            ? Array.from(members.values())
-            : null);
+    const list = toMemberList(members);
 
     if (list) {
         let human = 0;
@@ -58,25 +82,7 @@ function countCachedMembers(members) {
     }
 
     if (typeof members?.filter === "function") {
-        const humanRes = members.filter(member => !member?.user?.bot);
-        const botRes = members.filter(member => member?.user?.bot);
-        const humanCount = Number(humanRes?.size ?? humanRes?.length ?? 0);
-        const botCount = Number(botRes?.size ?? botRes?.length ?? 0);
-
-        let verifiedCount = 0;
-        try {
-            const vRes = members.filter(member => member?.user?.bot && isVerifiedBotUser(member?.user));
-            verifiedCount = Number(vRes?.size ?? vRes?.length ?? 0);
-        } catch {
-            verifiedCount = 0;
-        }
-
-        return {
-            human: humanCount,
-            bots: botCount,
-            verifiedBots: verifiedCount,
-            unverifiedBots: Math.max(0, botCount - verifiedCount)
-        };
+        return countMembersFromCollection(members);
     }
 
     return { human: 0, bots: 0, verifiedBots: 0, unverifiedBots: 0 };
@@ -307,6 +313,30 @@ function channelMention(channelId) {
     return channelId ? `<#${channelId}>` : "ไม่ได้ตั้งค่า";
 }
 
+function buildOtherChannelsLine(channels) {
+    const otherChannelParts = [];
+    if (channels.announcement > 0) otherChannelParts.push(`ประกาศ **${formatCount(channels.announcement)}**`);
+    if (channels.stage > 0) otherChannelParts.push(`Stage **${formatCount(channels.stage)}**`);
+    if (channels.forum > 0) otherChannelParts.push(`ฟอรัม **${formatCount(channels.forum)}**`);
+    if (channels.other > 0) otherChannelParts.push(`อื่น ๆ **${formatCount(channels.other)}**`);
+    return otherChannelParts.length > 0
+        ? `> **ช่องอื่น ๆ:** ${otherChannelParts.join(" • ")}\n`
+        : "";
+}
+
+function buildSpecialChannelsLine(guild) {
+    const specialChannels = [];
+    if (guild.safetyAlertsChannelId) {
+        specialChannels.push(`แจ้งเตือนความปลอดภัย ${channelMention(guild.safetyAlertsChannelId)}`);
+    }
+    if (guild.publicUpdatesChannelId) {
+        specialChannels.push(`ข่าวสารทางการ ${channelMention(guild.publicUpdatesChannelId)}`);
+    }
+    return specialChannels.length > 0
+        ? `> **ช่องพิเศษ:** ${specialChannels.join(" • ")}\n`
+        : "";
+}
+
 function buildServerInfoEmbed(guild, owner, memberCounts, extra = {}) {
     const channels = channelCounts(guild);
     const ownerId = owner?.id || guild.ownerId;
@@ -332,25 +362,8 @@ function buildServerInfoEmbed(guild, owner, memberCounts, extra = {}) {
     const maxBitrateKbps = Math.round(Number(guild.maximumBitrate || 96000) / 1000);
     const autoModSummary = extra.autoModSummary || "ไม่ได้เปิดใช้";
 
-    const otherChannelParts = [];
-    if (channels.announcement > 0) otherChannelParts.push(`ประกาศ **${formatCount(channels.announcement)}**`);
-    if (channels.stage > 0) otherChannelParts.push(`Stage **${formatCount(channels.stage)}**`);
-    if (channels.forum > 0) otherChannelParts.push(`ฟอรัม **${formatCount(channels.forum)}**`);
-    if (channels.other > 0) otherChannelParts.push(`อื่น ๆ **${formatCount(channels.other)}**`);
-    const otherChannelsLine = otherChannelParts.length > 0
-        ? `> **ช่องอื่น ๆ:** ${otherChannelParts.join(" • ")}\n`
-        : "";
-
-    const specialChannels = [];
-    if (guild.safetyAlertsChannelId) {
-        specialChannels.push(`แจ้งเตือนความปลอดภัย ${channelMention(guild.safetyAlertsChannelId)}`);
-    }
-    if (guild.publicUpdatesChannelId) {
-        specialChannels.push(`ข่าวสารทางการ ${channelMention(guild.publicUpdatesChannelId)}`);
-    }
-    const specialChannelsLine = specialChannels.length > 0
-        ? `> **ช่องพิเศษ:** ${specialChannels.join(" • ")}\n`
-        : "";
+    const otherChannelsLine = buildOtherChannelsLine(channels);
+    const specialChannelsLine = buildSpecialChannelsLine(guild);
 
     const botBreakdown = (memberCounts.verifiedBots !== null && memberCounts.unverifiedBots !== null)
         ? ` (ยืนยันแล้ว: **${formatCount(memberCounts.verifiedBots)}** • ยังไม่ยืนยัน: **${formatCount(memberCounts.unverifiedBots)}**)`
@@ -682,6 +695,9 @@ function buildUserInfoEmbed(interaction, user, member) {
     const userMention = user.id ? `<@${user.id}>` : "";
     const joinPos = getJoinPosition(member);
     const guildMemberCount = member?.guild?.memberCount || member?.guild?.members?.cache?.size || 0;
+    const joinOrderStr = joinPos
+        ? `คนที่ **#${joinPos}** (จากสมาชิก ${formatCount(guildMemberCount)} คน)`
+        : "ไม่ทราบลำดับ";
     const rolesCount = Math.max(0, Number(member?.roles?.cache?.size || 1) - 1);
 
     const timeoutUntil = Number(member?.communicationDisabledUntilTimestamp || 0);
@@ -708,7 +724,7 @@ function buildUserInfoEmbed(interaction, user, member) {
                 value:
                     `• ชื่อเล่น: **${markdownText(member?.nickname || "ไม่ได้ตั้งชื่อเล่น", "ไม่ได้ตั้ง", 100)}**\n` +
                     `• เข้าร่วมเมื่อ: ${joined}\n` +
-                    `• ลำดับการเข้าร่วม: ${joinPos ? `คนที่ **#${joinPos}** (จากสมาชิก ${formatCount(guildMemberCount)} คน)` : "ไม่ทราบลำดับ"}\n` +
+                    `• ลำดับการเข้าร่วม: ${joinOrderStr}\n` +
                     `• โทนสีประจำตัว/ยศ: **${displayColor}**`,
                 inline: false
             },
@@ -807,12 +823,17 @@ function buildPingEmbed(stats) {
     const state = latencyState(Math.max(stats.interactionLatency, stats.websocketLatency ?? 0));
     const hostTotalGB = Number.isFinite(stats.hostTotalGB) ? stats.hostTotalGB : (os.totalmem() / 1024 / 1024 / 1024);
     const hostUsedGB = Number.isFinite(stats.hostUsedGB) ? stats.hostUsedGB : ((os.totalmem() - os.freemem()) / 1024 / 1024 / 1024);
-    const hostUsedPercent = Number.isFinite(stats.hostUsedPercent) ? stats.hostUsedPercent : (hostTotalGB > 0 ? (hostUsedGB / hostTotalGB) * 100 : 0);
+    let calculatedHostPercent = 0;
+    if (hostTotalGB > 0) {
+        calculatedHostPercent = (hostUsedGB / hostTotalGB) * 100;
+    }
+    const hostUsedPercent = Number.isFinite(stats.hostUsedPercent) ? stats.hostUsedPercent : calculatedHostPercent;
     const cpuCores = stats.cpuCores || os.cpus()?.length || 1;
 
+    const dbFallbackStatus = stats.databaseReady ? "พร้อมใช้งาน (Connected)" : "ไม่ได้เชื่อมต่อ";
     const mongoStatus = stats.mongoPingMs != null
         ? `${stats.mongoPingMs} ms`
-        : (stats.databaseReady ? "พร้อมใช้งาน (Connected)" : "ไม่ได้เชื่อมต่อ");
+        : dbFallbackStatus;
 
     const embed = new MessageEmbed()
         .setColor(state.color)

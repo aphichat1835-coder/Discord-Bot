@@ -47,9 +47,8 @@ function isBulkDeletableMessage(message, now = Date.now()) {
 
 async function deleteMessagesIndividually(messages, options = {}) {
     const batchSize = Math.max(1, Number(options.batchSize) || PARALLEL_BATCH_SIZE);
-    const delayMs = typeof options.delayMs === "number"
-        ? options.delayMs
-        : (process.env.NODE_ENV === "test" ? 0 : BATCH_DELAY_MS);
+    const defaultDelay = process.env.NODE_ENV === "test" ? 0 : BATCH_DELAY_MS;
+    const delayMs = typeof options.delayMs === "number" ? options.delayMs : defaultDelay;
 
     let deleted = 0;
     let failed = 0;
@@ -69,6 +68,35 @@ async function deleteMessagesIndividually(messages, options = {}) {
         }
     }
     return { deleted, failed };
+}
+
+async function executeBatchDeletion(channel, messages, now, options) {
+    const recent = messages.filter(message => isBulkDeletableMessage(message, now));
+    const historical = messages.filter(message => !isBulkDeletableMessage(message, now));
+    const bulkDeletedIds = new Set();
+    let batchBulkDeleted = 0;
+
+    if (recent.length >= 2) {
+        try {
+            const deleted = await channel.bulkDelete(recent, true);
+            batchBulkDeleted = Number(deleted?.size || 0);
+            for (const id of deleted?.keys?.() || []) bulkDeletedIds.add(String(id));
+        } catch {
+            // Fall through to parallel deletion
+        }
+    }
+
+    const remainingRecent = recent.filter(message => !bulkDeletedIds.has(String(message.id)));
+    const toDeleteIndividually = [...remainingRecent, ...historical];
+    const individualResult = toDeleteIndividually.length > 0
+        ? await deleteMessagesIndividually(toDeleteIndividually, options)
+        : { deleted: 0, failed: 0 };
+
+    return {
+        batchBulkDeleted,
+        individualResult,
+        recentCount: recent.length
+    };
 }
 
 async function deleteChannelMessages(channel, amount, now = Date.now(), options = {}) {
@@ -95,33 +123,14 @@ async function deleteChannelMessages(channel, amount, now = Date.now(), options 
         if (messages.length === 0) break;
 
         totalFetched += messages.length;
-        const recent = messages.filter(message => isBulkDeletableMessage(message, now));
-        const historical = messages.filter(message => !isBulkDeletableMessage(message, now));
-        const bulkDeletedIds = new Set();
-        let batchBulkDeleted = 0;
-
-        if (recent.length >= 2) {
-            try {
-                const deleted = await channel.bulkDelete(recent, true);
-                batchBulkDeleted = Number(deleted?.size || 0);
-                for (const id of deleted?.keys?.() || []) bulkDeletedIds.add(String(id));
-            } catch {
-                // Fall through to parallel deletion
-            }
-        }
-
-        const remainingRecent = recent.filter(message => !bulkDeletedIds.has(String(message.id)));
-        const toDeleteIndividually = [...remainingRecent, ...historical];
-        const individualResult = toDeleteIndividually.length > 0
-            ? await deleteMessagesIndividually(toDeleteIndividually, options)
-            : { deleted: 0, failed: 0 };
+        const { batchBulkDeleted, individualResult, recentCount } = await executeBatchDeletion(channel, messages, now, options);
 
         totalBulkDeleted += batchBulkDeleted;
         totalIndividualDeleted += individualResult.deleted;
         totalFailed += individualResult.failed;
 
-        if (individualResult.failed > 0 || batchBulkDeleted < recent.length) {
-            lastMessageId = messages[messages.length - 1]?.id || null;
+        if (individualResult.failed > 0 || batchBulkDeleted < recentCount) {
+            lastMessageId = messages.at(-1)?.id || null;
         } else {
             lastMessageId = null;
         }
