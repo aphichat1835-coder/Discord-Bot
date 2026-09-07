@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const config = require('../config.json');
 
 const {
     maskToken,
@@ -174,22 +175,48 @@ test('tokenCheck command and interactions behave correctly', async () => {
     assert.equal(panelRow.components[0].data.custom_id, IDS.BTN_TOKEN_CHECK);
     assert.equal(panelRow.components[0].data.label, 'เช็คโทเคน');
 
-    // 3. handleTokenCheckCommand replies ephemeral
+    // 3. handleTokenCheckCommand replies publicly with deferral and checks owner permission
     let repliedPayload = null;
     const mockInteraction = {
+        user: { id: config.system?.ownerId || '661415152146710558' },
+        deferReply: async (options) => {
+            mockInteraction.deferred = true;
+            mockInteraction.deferOptions = options;
+        },
+        editReply: async (payload) => {
+            repliedPayload = payload;
+            return payload;
+        },
         reply: async (payload) => {
             repliedPayload = payload;
             return payload;
-        }
+        },
+        deferred: false,
+        replied: false
     };
     await handleTokenCheckCommand(mockInteraction);
     assert.ok(repliedPayload);
-    assert.equal(repliedPayload.flags, 64);
+    assert.equal(repliedPayload.flags, undefined); // Public panel
     assert.equal(repliedPayload.embeds.length, 1);
     assert.equal(repliedPayload.components.length, 1);
     assert.ok(Array.isArray(repliedPayload.files));
     assert.equal(repliedPayload.files.length, 1);
     assert.equal(repliedPayload.files[0].name, 'token-check-banner.gif');
+    assert.equal(mockInteraction.deferred, true);
+
+    // 3.1 Non-owner permission rejection
+    let deniedPayload = null;
+    const mockNonOwnerInteraction = {
+        user: { id: '999999999999999999' },
+        reply: async (p) => { deniedPayload = p; return p; },
+        followUp: async (p) => { deniedPayload = p; return p; },
+        deferred: false,
+        replied: false
+    };
+    await handleTokenCheckCommand(mockNonOwnerInteraction);
+    assert.ok(deniedPayload);
+    assert.match(deniedPayload.content, /เจ้าของบอท/);
+    assert.equal(deniedPayload.flags, 64);
 
     // 4. handleTokenCheckButton shows modal
     let shownModal = null;

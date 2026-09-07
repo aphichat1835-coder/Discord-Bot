@@ -187,7 +187,7 @@ const slashCommandsData = [
 
     {
         name: "token-check",
-        description: "เปิดแผงตรวจสอบ Discord Token (Nitro, Boost, วันหมดอายุ)"
+        description: "เปิดแผงตรวจสอบ Discord Token (เฉพาะเจ้าของบอท)"
     },
 
     {

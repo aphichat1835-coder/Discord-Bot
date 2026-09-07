@@ -10,7 +10,8 @@ const {
 } = require('../core/discordCompat');
 const config = require('../config.json');
 const { IDS } = require('./customIds');
-const { safeReply } = require('../guards/commandGuards');
+const { safeReply, safeDefer, markCommandAccepted } = require('../guards/commandGuards');
+const { isConfiguredOwner } = require('../core/env');
 const {
     checkSingleToken,
     checkBatchTokens,
@@ -21,6 +22,10 @@ const {
 
 const MAX_BATCH_TOKENS = 20;
 const TOKEN_CHECK_BANNER_ATTACHMENT_NAME = 'token-check-banner.gif';
+
+function isBotOwner(userId) {
+    return isConfiguredOwner(config, userId);
+}
 
 function getTokenCheckBannerPath() {
     try {
@@ -56,6 +61,10 @@ function buildTokenCheckPanelEmbed({ hasAttachment = false } = {}) {
 
     if (hasAttachment) {
         embed.setImage(`attachment://${TOKEN_CHECK_BANNER_ATTACHMENT_NAME}`);
+    } else if (config.system?.tokenCheckBannerUrl) {
+        embed.setImage(config.system.tokenCheckBannerUrl);
+    } else if (config.system?.bannerUrl) {
+        embed.setImage(config.system.bannerUrl);
     }
 
     return embed;
@@ -72,6 +81,17 @@ function buildTokenCheckPanelRow() {
 }
 
 async function handleTokenCheckCommand(interaction) {
+    markCommandAccepted(interaction);
+
+    if (!isBotOwner(interaction.user?.id)) {
+        return safeReply(interaction, {
+            content: '🔒 คำสั่งเปิดแผงควบคุม `/token-check` สงวนสิทธิ์เฉพาะ **เจ้าของบอท (Bot Owner)** เท่านั้น',
+            flags: 64
+        });
+    }
+
+    await safeDefer(interaction);
+
     const bannerPath = getTokenCheckBannerPath();
     const hasAttachment = Boolean(bannerPath);
     const embed = buildTokenCheckPanelEmbed({ hasAttachment });
@@ -79,15 +99,14 @@ async function handleTokenCheckCommand(interaction) {
 
     const payload = {
         embeds: [embed],
-        components: [row],
-        flags: 64
+        components: [row]
     };
 
     if (hasAttachment) {
         payload.files = [new AttachmentBuilder(bannerPath, { name: TOKEN_CHECK_BANNER_ATTACHMENT_NAME })];
     }
 
-    return interaction.reply(payload);
+    return safeReply(interaction, payload);
 }
 
 async function handleTokenCheckButton(interaction) {
