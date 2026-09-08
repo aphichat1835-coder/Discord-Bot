@@ -179,6 +179,8 @@ function createVoiceNotificationSystem(options = {}) {
                 incidentId: null,
                 openedAt: null,
                 attempts: 0,
+                hibernateCycle: 0,
+                hibernateUntil: null,
                 lifetimeAttempts: Number(session.reconnectCount || 0)
             };
         }
@@ -421,6 +423,21 @@ function createVoiceNotificationSystem(options = {}) {
         });
     }
 
+    async function recordHibernateCycle(sessionId, cycle, hibernateUntil) {
+        return serialize(sessionId, async () => {
+            const session = getSession(sessionId);
+            if (!session) return null;
+            ensureRuntimeState(session);
+            session.recoveryState.hibernateCycle = Number(cycle || 0);
+            session.recoveryState.hibernateUntil = Number(hibernateUntil || 0);
+            session.recoveryState.phase = "hibernate";
+            session.recoveryState.attempts = 0;
+            session.reconnecting = false;
+            await persist(sessionId);
+            return { ...session.recoveryState };
+        });
+    }
+
     async function markReady(sessionId, context = {}) {
         const transition = await serialize(sessionId, async () => {
             const session = getSession(sessionId);
@@ -437,6 +454,8 @@ function createVoiceNotificationSystem(options = {}) {
                 incidentId: null,
                 openedAt: null,
                 attempts: 0,
+                hibernateCycle: 0,
+                hibernateUntil: null,
                 lifetimeAttempts: Number(previous.lifetimeAttempts || session.reconnectCount || 0),
                 lastIncidentId: previous.incidentId || null,
                 resolvedAt: previous.incidentId ? readyAt : null
@@ -537,6 +556,7 @@ function createVoiceNotificationSystem(options = {}) {
         emit,
         beginIncident,
         recordRecoveryAttempt,
+        recordHibernateCycle,
         markReady,
         markTerminal,
         cleanupSession,
