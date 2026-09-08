@@ -563,7 +563,7 @@ async function startSession(sessionId, tokenString, options = {}) {
 //  🔊  REGION 7: VOICE CONNECTION & PREFLIGHT
 // ════════════════════════════════════════════════════════════════════════════
 async function verifyTargetVoiceChannel(client, session) {
-    if (!session || !client || !client.isReady?.()) {
+    if (!session || !client?.isReady?.()) {
         return { ok: false, reason: "CLIENT_NOT_READY" };
     }
     if (!client.guilds || typeof client.guilds !== "object") {
@@ -1471,48 +1471,71 @@ function releaseRecoveryOwnership(sessionId, deps = {}) {
     unlock(sessionId);
 }
 
+function resolveMaxHibernateCycles(deps) {
+    if (deps.maxHibernateCycles !== undefined) {
+        return deps.maxHibernateCycles;
+    }
+    if (deps.recordRecoveryAttempt) {
+        return 0;
+    }
+    return 2;
+}
+
+function isSessionEligibleForRecovery(session, shuttingDown, runnable) {
+    if (!session || shuttingDown() || !runnable(session)) {
+        return false;
+    }
+    const nowMs = Date.now();
+    if (session.recoveryState?.phase === "hibernate" && nowMs < (session.recoveryState.hibernateUntil || 0)) {
+        return false;
+    }
+    return true;
+}
+
+async function performRecoveryPreflight(sessionId, tokenHash, session, deps) {
+    if (!session.client?.isReady?.()) return true;
+    const preflightCheck = deps.verifyTargetVoiceChannel || verifyTargetVoiceChannel;
+    const preflight = await preflightCheck(session.client, session);
+    if (!preflight.ok && preflight.reason !== "CLIENT_NOT_READY") {
+        console.warn(`[HEARTBEAT] 🛑 Pre-flight failed in recovery for ${sanitizeLogText(sessionId)}: ${preflight.reason}`);
+        const preflightHandler = deps.handlePreflightFailure || handlePreflightFailure;
+        await preflightHandler(sessionId, tokenHash, session, session.client, "channel_not_found", deps);
+        return false;
+    }
+    return true;
+}
+
+async function checkRecoveryAttemptLimits(sessionId, tokenHash, session, deps, maxAttempts) {
+    const recordAttempt = deps.recordRecoveryAttempt || notifications.recordRecoveryAttempt;
+    const recovery = await recordAttempt(sessionId, { cause: "health_check" });
+    if (Number(recovery?.attempts || 0) < maxAttempts) {
+        return true;
+    }
+    const hibernateCycle = Number(session.recoveryState?.hibernateCycle || 0);
+    const maxHibernateCycles = resolveMaxHibernateCycles(deps);
+    if (maxHibernateCycles > 0 && hibernateCycle < maxHibernateCycles) {
+        const hibernateHandler = deps.handleHibernateTransition || handleHibernateTransition;
+        await hibernateHandler(sessionId, tokenHash, session, hibernateCycle, deps);
+        return false;
+    }
+    await handleRecoveryExhaustion(sessionId, tokenHash, session, recovery, deps);
+    return false;
+}
+
 async function recoverSessionConnection(sessionId, tokenHash, deps = {}) {
     const getSession = deps.getSession || sessionManager.getSession.bind(sessionManager);
     const shuttingDown = deps.isShuttingDown || (() => st.isShuttingDown);
     const runnable = deps.isSessionRunnable || isSessionRunnable;
-    const recordAttempt = deps.recordRecoveryAttempt || notifications.recordRecoveryAttempt;
     const maxAttempts = deps.maxReconnectAttempts || CONFIG.MAX_RECONNECT_ATTEMPTS;
     const wait = deps.delay || delay;
     const jitter = deps.randomInt || randomInt;
     try {
         const session = getSession(sessionId);
-        if (!session || shuttingDown() || !runnable(session)) return;
+        if (!isSessionEligibleForRecovery(session, shuttingDown, runnable)) return;
 
-        const nowMs = Date.now();
-        if (session.recoveryState?.phase === "hibernate" && nowMs < (session.recoveryState.hibernateUntil || 0)) {
-            return;
-        }
+        if (!await performRecoveryPreflight(sessionId, tokenHash, session, deps)) return;
 
-        if (session.client?.isReady?.()) {
-            const preflightCheck = deps.verifyTargetVoiceChannel || verifyTargetVoiceChannel;
-            const preflight = await preflightCheck(session.client, session);
-            if (!preflight.ok && preflight.reason !== "CLIENT_NOT_READY") {
-                console.warn(`[HEARTBEAT] 🛑 Pre-flight failed in recovery for ${sanitizeLogText(sessionId)}: ${preflight.reason}`);
-                const preflightHandler = deps.handlePreflightFailure || handlePreflightFailure;
-                await preflightHandler(sessionId, tokenHash, session, session.client, "channel_not_found", deps);
-                return;
-            }
-        }
-
-        const recovery = await recordAttempt(sessionId, { cause: "health_check" });
-        if (Number(recovery?.attempts || 0) >= maxAttempts) {
-            const hibernateCycle = Number(session.recoveryState?.hibernateCycle || 0);
-            const maxHibernateCycles = deps.maxHibernateCycles !== undefined
-                ? deps.maxHibernateCycles
-                : (deps.recordRecoveryAttempt ? 0 : 2);
-            if (maxHibernateCycles > 0 && hibernateCycle < maxHibernateCycles) {
-                const hibernateHandler = deps.handleHibernateTransition || handleHibernateTransition;
-                await hibernateHandler(sessionId, tokenHash, session, hibernateCycle, deps);
-                return;
-            }
-            await handleRecoveryExhaustion(sessionId, tokenHash, session, recovery, deps);
-            return;
-        }
+        if (!await checkRecoveryAttemptLimits(sessionId, tokenHash, session, deps, maxAttempts)) return;
 
         await wait(jitter(1000, 3000));
 
