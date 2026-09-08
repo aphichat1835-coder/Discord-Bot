@@ -26,6 +26,14 @@ function validateOption(option, commandName, index) {
     if (option.required !== undefined && typeof option.required !== "boolean") {
         throw new Error(`${label} has invalid required flag`);
     }
+    if (option.choices !== undefined) {
+        if (!Array.isArray(option.choices)) throw new Error(`${label} choices must be an array`);
+        for (const choice of option.choices) {
+            if (!choice || typeof choice !== "object" || typeof choice.name !== "string" || choice.value === undefined) {
+                throw new Error(`${label} has invalid choice`);
+            }
+        }
+    }
 }
 
 function validateSlashCommandsData(commands) {
@@ -84,11 +92,23 @@ const slashCommandsData = [
 
     {
         name: "announce",
-        description: "ส่งข้อความประกาศแบบ Embed",
+        description: "ส่งข้อความประกาศแบบ Embed ปรับแต่งได้อิสระ",
         options: [
-            { type: 3, name: "title",   description: "หัวข้อประกาศ", required: true, min_length: 1, max_length: 250 },
-            { type: 3, name: "message", description: "เนื้อหาประกาศ", required: true, min_length: 1, max_length: 4096 },
-            { type: 3, name: "content", description: "ข้อความดิบนอก Embed (รองรับ @everyone / @here / user / role)", required: false, max_length: 2000 }
+            { type: 3, name: "message", description: String.raw`เนื้อหาประกาศใน Embed (รองรับ Markdown และ \n)`, required: true, min_length: 1, max_length: 4096 },
+            { type: 3, name: "title",   description: "หัวข้อประกาศ", required: false, max_length: 256 },
+            { type: 7, name: "channel", description: "ห้องที่จะส่งประกาศ (ถ้าไม่ระบุจะส่งห้องนี้)", required: false },
+            { type: 3, name: "content", description: "ข้อความดิบนอก Embed (รองรับ @everyone / @here / user / role)", required: false, max_length: 2000 },
+            { type: 3, name: "color", description: "สีขอบ Embed แบบ HEX เช่น #5865F2 หรือ FF0000", required: false },
+            { type: 3, name: "image", description: "ลิงก์รูปภาพหลักขนาดใหญ่ใน Embed", required: false, max_length: 2048 },
+            { type: 3, name: "thumbnail", description: "ลิงก์รูปภาพเล็กมุมขวาของ Embed", required: false, max_length: 2048 },
+            { type: 3, name: "footer", description: "ข้อความท้าย Embed", required: false, max_length: 2048 },
+            { type: 3, name: "footer_icon", description: "ลิงก์ไอคอนท้าย Embed", required: false, max_length: 2048 },
+            { type: 3, name: "author_name", description: "ชื่อผู้เขียนด้านบน Embed", required: false, max_length: 256 },
+            { type: 3, name: "author_icon", description: "ลิงก์ไอคอนผู้เขียนด้านบน Embed", required: false, max_length: 2048 },
+            { type: 3, name: "url", description: "ลิงก์ที่หัวข้อ Embed จะกดเข้าไปได้", required: false, max_length: 2048 },
+            { type: 5, name: "timestamp", description: "เปิดหรือปิดเวลาใต้ Embed", required: false },
+            { type: 3, name: "button_text", description: "ข้อความบนปุ่มลิงก์แนบประกาศ", required: false, max_length: 80 },
+            { type: 3, name: "button_url", description: "ลิงก์ URL ปลายทางของปุ่ม (ต้องขึ้นต้นด้วย http:// หรือ https://)", required: false, max_length: 2048 }
         ]
     },
 
@@ -115,29 +135,55 @@ const slashCommandsData = [
 
     {
         name: "ban",
-        description: "แบนสมาชิก พร้อม DM แจ้งเตือน",
+        description: "แบนสมาชิกออกจากเซิร์ฟเวอร์ พร้อมเก็บบันทึกประวัติ",
         options: [
-            { type: 6, name: "target", description: "เป้าหมาย", required: true },
-            { type: 3, name: "reason", description: "เหตุผล", required: false }
+            { type: 6, name: "target", description: "สมาชิกเป้าหมายที่ต้องการแบน", required: true },
+            {
+                type: 4,
+                name: "delete_messages",
+                description: "เลือกลบประวัติข้อความย้อนหลังของสมาชิก",
+                required: false,
+                choices: [
+                    { name: "ไม่ลบข้อความ", value: 0 },
+                    { name: "ย้อนหลัง 1 ชั่วโมง", value: 3600 },
+                    { name: "ย้อนหลัง 6 ชั่วโมง", value: 21600 },
+                    { name: "ย้อนหลัง 24 ชั่วโมง (1 วัน)", value: 86400 },
+                    { name: "ย้อนหลัง 3 วัน", value: 259200 },
+                    { name: "ย้อนหลัง 7 วัน", value: 604800 }
+                ]
+            },
+            { type: 3, name: "reason", description: "เหตุผลในการแบน", required: false, max_length: 500 }
         ]
     },
 
     {
         name: "kick",
-        description: "เตะสมาชิก พร้อม DM แจ้งเตือน",
+        description: "เตะสมาชิกออกจากเซิร์ฟเวอร์ พร้อมเก็บบันทึกประวัติ",
         options: [
-            { type: 6, name: "target", description: "เป้าหมาย", required: true },
-            { type: 3, name: "reason", description: "เหตุผล", required: false }
+            { type: 6, name: "target", description: "สมาชิกเป้าหมายที่ต้องการเตะ", required: true },
+            { type: 3, name: "reason", description: "เหตุผลในการเตะ", required: false, max_length: 500 }
         ]
     },
 
     {
         name: "timeout",
-        description: "ระงับสมาชิกชั่วคราว พร้อม DM แจ้งเตือน",
+        description: "ระงับการใช้งานสมาชิกชั่วคราว หรือระบุ 0 เพื่อปลด",
         options: [
-            { type: 6, name: "target",  description: "เป้าหมาย", required: true },
-            { type: 4, name: "minutes", description: "จำนวนนาที (1-40000)", required: true, min_value: 1, max_value: 40000 },
-            { type: 3, name: "reason",  description: "เหตุผล", required: false }
+            { type: 6, name: "target", description: "สมาชิกเป้าหมายที่ต้องการระงับการใช้งาน", required: true },
+            { type: 4, name: "duration", description: "จำนวนระยะเวลา (ใส่ 0 เพื่อปลด Timeout)", required: true, min_value: 0 },
+            {
+                type: 3,
+                name: "unit",
+                description: "หน่วยของระยะเวลา (ค่าเริ่มต้น: นาที)",
+                required: false,
+                choices: [
+                    { name: "นาที (Minutes)", value: "minutes" },
+                    { name: "ชั่วโมง (Hours)", value: "hours" },
+                    { name: "วัน (Days)", value: "days" },
+                    { name: "วินาที (Seconds)", value: "seconds" }
+                ]
+            },
+            { type: 3, name: "reason", description: "เหตุผลในการระงับการใช้งาน", required: false, max_length: 500 }
         ]
     },
 

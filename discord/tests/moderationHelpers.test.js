@@ -66,3 +66,69 @@ test("moderation helpers avoid exposing raw exception messages", () => { // NOSO
         `> ${config.emojis.error} บอทไม่มีสิทธิ์ที่จำเป็น!`
     );
 });
+
+test("moderation helpers support timeout units and auto-clamp to 28 days", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const hoursInteraction = {
+        options: {
+            getInteger: name => (name === "duration" ? 2 : null),
+            getString: name => (name === "unit" ? "hours" : null)
+        }
+    };
+    const hoursRes = helpers.parseTimeoutDuration(hoursInteraction, "timeout");
+    assert.equal(hoursRes.ok, true);
+    assert.equal(hoursRes.durationMs, 2 * 60 * 60 * 1000);
+    assert.equal(hoursRes.minutes, 120);
+    assert.equal(hoursRes.clamped, false);
+
+    const clampInteraction = {
+        options: {
+            getInteger: name => (name === "duration" ? 50 : null),
+            getString: name => (name === "unit" ? "days" : null)
+        }
+    };
+    const clampRes = helpers.parseTimeoutDuration(clampInteraction, "timeout");
+    assert.equal(clampRes.ok, true);
+    assert.equal(clampRes.clamped, true);
+    assert.equal(clampRes.durationMs, 28 * 24 * 60 * 60 * 1000);
+
+    const untimeoutInteraction = {
+        options: {
+            getInteger: name => (name === "duration" ? 0 : null)
+        }
+    };
+    const untimeoutRes = helpers.parseTimeoutDuration(untimeoutInteraction, "timeout");
+    assert.equal(untimeoutRes.ok, true);
+    assert.equal(untimeoutRes.isUntimeout, true);
+    assert.equal(untimeoutRes.durationMs, null);
+});
+
+test("moderation helpers format delete seconds accurately", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    assert.equal(helpers.formatDeleteSeconds(0), "ไม่ลบข้อความ");
+    assert.equal(helpers.formatDeleteSeconds(3600), "1 ชั่วโมง");
+    assert.equal(helpers.formatDeleteSeconds(86400), "1 วัน");
+    assert.equal(helpers.formatDeleteSeconds(604800), "7 วัน");
+});
+
+test("moderation helpers build rich reply embeds with appropriate colors and titles", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const interaction = {
+        guild: { name: "Test Server", iconURL: () => "https://example.com/icon.png" },
+        user: { id: "mod1", tag: "Mod#0001", displayAvatarURL: () => "https://example.com/mod.png" }
+    };
+    const target = {
+        id: "target1",
+        user: { tag: "Target#0002", displayAvatarURL: () => "https://example.com/user.png" }
+    };
+
+    const banEmbed = helpers.buildModerationReplyEmbed(interaction, target, "ban", "spamming", 101, {
+        deleteMessageSeconds: 86400
+    }).toJSON();
+    assert.match(banEmbed.author.name, /แบน/);
+    assert.match(banEmbed.description, /ลบข้อความ.*1 วัน/);
+
+    const untimeoutEmbed = helpers.buildModerationReplyEmbed(interaction, target, "timeout", "reformed", 102, {
+        isUntimeout: true
+    }).toJSON();
+    assert.match(untimeoutEmbed.author.name, /ปลดระงับ/);
+    assert.match(untimeoutEmbed.description, /UNTIMEOUT/);
+});
+
