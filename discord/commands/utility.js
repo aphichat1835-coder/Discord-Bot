@@ -155,6 +155,22 @@ function resolveEmbedColor(colorHex, fallback) {
     return /^[0-9A-Fa-f]{6}$/.test(cleaned) ? `#${cleaned}` : fallback;
 }
 
+function applyEmbedAuthor(embed, name, iconUrl) {
+    if (!name) return;
+    embed.setAuthor({
+        name,
+        iconURL: (iconUrl && isValidHttpUrl(iconUrl)) ? iconUrl.trim() : undefined
+    });
+}
+
+function applyEmbedFooter(embed, text, iconUrl) {
+    if (!text) return;
+    embed.setFooter({
+        text,
+        iconURL: (iconUrl && isValidHttpUrl(iconUrl)) ? iconUrl.trim() : undefined
+    });
+}
+
 function buildAnnouncementEmbed(options) {
     const embed = new MessageEmbed()
         .setColor(resolveEmbedColor(options.colorHex, config.system.themeColors.primary || "#5865F2"))
@@ -166,24 +182,14 @@ function buildAnnouncementEmbed(options) {
     if (options.url && isValidHttpUrl(options.url)) {
         embed.setURL(options.url.trim());
     }
-    if (options.authorName) {
-        embed.setAuthor({
-            name: options.authorName,
-            iconURL: (options.authorIcon && isValidHttpUrl(options.authorIcon)) ? options.authorIcon.trim() : undefined
-        });
-    }
+    applyEmbedAuthor(embed, options.authorName, options.authorIcon);
     if (options.thumbnailUrl && isValidHttpUrl(options.thumbnailUrl)) {
         embed.setThumbnail(options.thumbnailUrl.trim());
     }
     if (options.imageUrl && isValidHttpUrl(options.imageUrl)) {
         embed.setImage(options.imageUrl.trim());
     }
-    if (options.footerText) {
-        embed.setFooter({
-            text: options.footerText,
-            iconURL: (options.footerIcon && isValidHttpUrl(options.footerIcon)) ? options.footerIcon.trim() : undefined
-        });
-    }
+    applyEmbedFooter(embed, options.footerText, options.footerIcon);
     if (options.timestamp === true) {
         embed.setTimestamp();
     }
@@ -225,11 +231,11 @@ async function handleAnnounce(interaction) {
     )) return;
 
     const rawMessage = interaction.options.getString("message");
-    if (!rawMessage || !rawMessage.trim()) {
+    if (!rawMessage?.trim()) {
         return interaction.reply({ content: `> ${config.emojis.error} ข้อความประกาศต้องไม่ว่าง`, ephemeral: true });
     }
 
-    const messageText = sanitizeUserMessage(rawMessage.replace(/\\n/g, "\n"), { maxLength: 4096 });
+    const messageText = sanitizeUserMessage(rawMessage.replaceAll("\\n", "\n"), { maxLength: 4096 });
     const rawTitle = interaction.options.getString("title");
     const rawContent = interaction.options.getString("content");
     const authorName = interaction.options.getString("author_name");

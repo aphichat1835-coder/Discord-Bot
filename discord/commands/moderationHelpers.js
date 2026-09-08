@@ -39,10 +39,28 @@ function formatDeleteSeconds(seconds) {
     return `${Math.round(s / 86400)} วัน`;
 }
 
-function safeGetOption(options, method, name) {
-    if (!options || typeof options[method] !== "function") return undefined;
+function getMemberOption(options, name) {
+    if (!options || typeof options.getMember !== "function") return undefined;
     try {
-        return options[method](name);
+        return options.getMember(name);
+    } catch {
+        return undefined;
+    }
+}
+
+function getStringOption(options, name) {
+    if (!options || typeof options.getString !== "function") return undefined;
+    try {
+        return options.getString(name);
+    } catch {
+        return undefined;
+    }
+}
+
+function getIntegerOption(options, name) {
+    if (!options || typeof options.getInteger !== "function") return undefined;
+    try {
+        return options.getInteger(name);
     } catch {
         return undefined;
     }
@@ -50,11 +68,11 @@ function safeGetOption(options, method, name) {
 
 function readModerationInput(interaction) {
     const isBan = interaction?.commandName === "ban";
-    const deleteSeconds = isBan ? (safeGetOption(interaction?.options, "getInteger", "delete_messages") ?? 0) : 0;
+    const deleteSeconds = isBan ? (getIntegerOption(interaction?.options, "delete_messages") ?? 0) : 0;
     return {
         action: interaction.commandName,
-        target: safeGetOption(interaction?.options, "getMember", "target"),
-        reason: safeText(safeGetOption(interaction?.options, "getString", "reason") || "ไม่มีเหตุผลระบุ", 500),
+        target: getMemberOption(interaction?.options, "target"),
+        reason: safeText(getStringOption(interaction?.options, "reason") || "ไม่มีเหตุผลระบุ", 500),
         deleteMessageSeconds: Math.max(0, Number(deleteSeconds) || 0)
     };
 }
@@ -63,9 +81,9 @@ function parseTimeoutDuration(interaction, action) {
     if (action !== "timeout") {
         return { ok: true, durationMs: null, minutes: null, formatted: null, isUntimeout: false, clamped: false };
     }
-    let rawVal = safeGetOption(interaction?.options, "getInteger", "duration");
+    let rawVal = getIntegerOption(interaction?.options, "duration");
     if (rawVal === null || rawVal === undefined) {
-        rawVal = safeGetOption(interaction?.options, "getInteger", "minutes");
+        rawVal = getIntegerOption(interaction?.options, "minutes");
     }
     if (rawVal === null || rawVal === undefined) {
         return { ok: false, content: `> ${config.emojis.error} กรุณาระบุระยะเวลา` };
@@ -85,7 +103,7 @@ function parseTimeoutDuration(interaction, action) {
         };
     }
 
-    const unit = safeGetOption(interaction?.options, "getString", "unit") || "minutes";
+    const unit = getStringOption(interaction?.options, "unit") || "minutes";
     const mult = TIMEOUT_UNIT_MULTIPLIERS[unit] || TIMEOUT_UNIT_MULTIPLIERS.minutes;
     let durationMs = num * mult;
     let clamped = false;
@@ -181,8 +199,10 @@ function buildModerationReplyEmbed(interaction, target, action, reason, caseNumb
         lines.push(`> 🗑️ **ลบข้อความ:** ${formatDeleteSeconds(extra.deleteMessageSeconds)}`);
     }
 
-    lines.push(`> 👮 **ผู้ลงโทษ:** <@${interaction.user.id}>`);
-    lines.push(`> ${config.emojis.note || "📝"} **เหตุผล:** ${reason}`);
+    lines.push(
+        `> 👮 **ผู้ลงโทษ:** <@${interaction.user.id}>`,
+        `> ${config.emojis.note || "📝"} **เหตุผล:** ${reason}`
+    );
 
     const embed = new MessageEmbed()
         .setColor(meta.color)
