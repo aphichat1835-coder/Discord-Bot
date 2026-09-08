@@ -235,7 +235,7 @@ async function handleAnnounce(interaction) {
         return interaction.reply({ content: `> ${config.emojis.error} ข้อความประกาศต้องไม่ว่าง`, ephemeral: true });
     }
 
-    const messageText = sanitizeUserMessage(rawMessage.replaceAll("\\n", "\n"), { maxLength: 4096 });
+    const messageText = sanitizeUserMessage(rawMessage.replaceAll(String.raw`\n`, "\n"), { maxLength: 4096 });
     const rawTitle = interaction.options.getString("title");
     const rawContent = interaction.options.getString("content");
     const authorName = interaction.options.getString("author_name");
