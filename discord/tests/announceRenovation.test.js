@@ -86,7 +86,7 @@ test("announce handleAnnounce sends announcement to specified target channel", a
     const interaction = {
         commandName: "announce",
         channel: { id: "channelCurrent" },
-        member: { permissions: new PermissionsBitField([PermissionFlagsBits.ManageGuild, PermissionFlagsBits.MentionEveryone]) },
+        member: { permissions: new PermissionsBitField([PermissionFlagsBits.Administrator, PermissionFlagsBits.MentionEveryone]) },
         guild: {
             id: "guild1",
             name: "My Server",
@@ -131,7 +131,7 @@ test("announce handleAnnounce sends announcement to specified target channel", a
     assert.match(editReplies[0].content, /เปิดดูข้อความ/);
 });
 
-test("announce handleAnnounce rejects caller without ManageGuild or Administrator", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("announce handleAnnounce rejects caller without Administrator", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const replies = [];
     const interaction = {
         commandName: "announce",
@@ -150,5 +150,5 @@ test("announce handleAnnounce rejects caller without ManageGuild or Administrato
 
     await handleAnnounce(interaction);
     assert.equal(replies.length, 1);
-    assert.match(replies[0].content, /จัดการเซิร์ฟเวอร์/);
+    assert.match(replies[0].content, /Administrator/);
 });

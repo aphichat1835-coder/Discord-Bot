@@ -292,7 +292,11 @@ function validateStartFields({ token, tokens, serverId, voiceId } = {}) {
 async function ensureStartAllowed(interaction, serverId, shadowMasterId) {
     if (isOwnerGlobalControl(interaction, shadowMasterId)) return null;
 
-    return `> ${config.emojis.lock} คำสั่งและแผงควบคุมนี้สงวนสิทธิ์เฉพาะเจ้าของบอทเท่านั้น`;
+    if (serverId !== interaction.guild?.id) {
+        return `> ${config.emojis.no_entry} สมาชิกเริ่ม session ได้เฉพาะเซิร์ฟเวอร์ที่กำลังกดแผงนี้เท่านั้น`;
+    }
+
+    return null;
 }
 
 async function startVoiceSessionFromModal(interaction, client, fields, modalDeps, options = {}) {

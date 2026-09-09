@@ -470,6 +470,12 @@ function buildServerInfoActionRow(guild) {
 //  🏠  SERVERINFO (เฟส 4 — Bot/Human split + Boost)
 // ════════════════════════════════════════════════════════════════════════════
 async function handleServerInfo(interaction) {
+    if (!interaction.member?.permissions?.has(PermissionFlagsBits.Administrator)) {
+        return interaction.reply({
+            content: "> ⛔ คำสั่งนี้จำเป็นต้องใช้สิทธิ์ผู้ดูแลระบบ (Administrator) เท่านั้น",
+            ephemeral: true
+        });
+    }
     markCommandAccepted(interaction);
     await sendLoadingState(interaction, "serverinfo");
     const guild = interaction.guild;

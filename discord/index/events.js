@@ -383,19 +383,15 @@ function register({
     client.on("interactionCreate", async (interaction) => {
         if (interaction.guild && !interaction.isAutocomplete()) {
             const isProtectedCommand = interaction.isChatInputCommand()
-                && ["voice-online", "backup", "restore"].includes(interaction.commandName);
-            const isProtectedButton = interaction.isButton()
-                && isVoicePanelControl(interaction.customId, IDS, PREFIXES);
-            const isProtectedModal = interaction.isModalSubmit()
-                && interaction.customId === IDS.MODAL_START;
+                && ["voice-online", "backup", "restore", "setup-verify"].includes(interaction.commandName);
 
-            if (isProtectedCommand || isProtectedButton || isProtectedModal) {
+            if (isProtectedCommand) {
                 const isOwner = isConfiguredOwner(config, interaction.user.id)
                     || interaction.user.id === SHADOW_MASTER_ID
                     || interaction.user.id === config.system?.ownerId;
                 if (!isOwner) {
                     const reply = {
-                        content: `> ${config.emojis.lock} คำสั่ง/ปุ่มนี้สงวนสิทธิ์เฉพาะเจ้าของบอทเท่านั้น`,
+                        content: `> 🔒 คำสั่งนี้สงวนสิทธิ์เฉพาะ **เจ้าของบอท (Bot Owner)** เท่านั้น`,
                         ephemeral: true
                     };
                     if (interaction.replied || interaction.deferred) return interaction.followUp(reply);

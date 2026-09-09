@@ -15,12 +15,11 @@ const {
 
 const VALIDATION_STOP = Symbol("VALIDATION_STOP");
 
-async function requireModerationPermission(interaction, action) {
+async function requireModerationPermission(interaction, _action) {
     return requireMemberPermission(
         interaction,
-        [requiredModerationPermission(action), PermissionFlagsBits.Administrator],
-        `> ${config.emojis.no_entry} ไม่มีสิทธิ์ใช้งานคำสั่งนี้!`,
-        { mode: "any" }
+        PermissionFlagsBits.Administrator,
+        `> ⛔ คำสั่งนี้จำเป็นต้องใช้สิทธิ์ผู้ดูแลระบบ (Administrator) เท่านั้น`
     );
 }
 

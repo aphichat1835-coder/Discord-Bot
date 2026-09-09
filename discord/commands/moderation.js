@@ -151,7 +151,7 @@ async function deleteChannelMessages(channel, amount, now = Date.now(), options 
 }
 
 async function handleClear(interaction) {
-    if (!await requireMemberPermission(interaction, PermissionFlagsBits.ManageMessages, `> ${config.emojis.no_entry} ไม่มีสิทธิ์ลบข้อความ`)) return;
+    if (!await requireMemberPermission(interaction, PermissionFlagsBits.Administrator, `> ⛔ คำสั่งนี้จำเป็นต้องใช้สิทธิ์ผู้ดูแลระบบ (Administrator) เท่านั้น`)) return;
     if (!await requireBotPermission(interaction, [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageMessages], `> ${config.emojis.error} บอทไม่มีสิทธิ์ดูประวัติหรือลบข้อความในช่องนี้`, interaction.channel)) return;
 
     const amt = interaction.options.getInteger("amount");

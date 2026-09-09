@@ -210,9 +210,8 @@ function buildAnnouncementComponents(buttonText, buttonUrl) {
 async function handleAnnounce(interaction) {
     if (!await requireMemberPermission(
         interaction,
-        [PermissionFlagsBits.ManageGuild, PermissionFlagsBits.Administrator],
-        `> ${config.emojis.no_entry} คำสั่งนี้จำเป็นต้องใช้สิทธิ์จัดการเซิร์ฟเวอร์ (Manage Server)`,
-        { mode: "any" }
+        PermissionFlagsBits.Administrator,
+        `> ⛔ คำสั่งนี้จำเป็นต้องใช้สิทธิ์ผู้ดูแลระบบ (Administrator) เท่านั้น`
     )) return;
 
     const targetChannel = interaction.options.getChannel("channel") || interaction.channel;
@@ -292,7 +291,7 @@ async function handleAnnounce(interaction) {
 //  😀  STEAL (เฟส 11 — Pre-check โควตา + delay กัน API ceiling)
 // ════════════════════════════════════════════════════════════════════════════
 async function handleSteal(interaction) {
-    if (!await requireMemberPermission(interaction, PermissionFlagsBits.ManageGuildExpressions, `> ${config.emojis.no_entry} ไม่มีสิทธิ์จัดการอิโมจิ`)) return;
+    if (!await requireMemberPermission(interaction, PermissionFlagsBits.Administrator, `> ⛔ คำสั่งนี้จำเป็นต้องใช้สิทธิ์ผู้ดูแลระบบ (Administrator) เท่านั้น`)) return;
     if (!await requireBotPermission(interaction, PermissionFlagsBits.ManageGuildExpressions, `> ${config.emojis.error} บอทไม่มีสิทธิ์จัดการอิโมจิ`)) return;
 
     const text = interaction.options.getString("emojis");
