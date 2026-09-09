@@ -512,7 +512,11 @@ function pageApproved(guildList, client, API_SECRET) {
         const name = guild.name || g.guildName || "ไม่พบชื่อเซิร์ฟเวอร์";
         const members = guild.memberCount ?? g.memberCount ?? "-";
         const guildId = g.guildId || g.id || "";
-        const joined = g.joinedAt ? new Date(g.joinedAt).toLocaleString("th-TH") : (guild.joinedTimestamp ? new Date(guild.joinedTimestamp).toLocaleString("th-TH") : "-");
+        let joined = "-";
+        const joinedRaw = g.joinedAt || guild.joinedTimestamp;
+        if (joinedRaw) {
+            joined = new Date(joinedRaw).toLocaleString("th-TH");
+        }
 
         return `
 <tr>
@@ -2071,5 +2075,8 @@ dashboardInterval(loadScheduledRunners, 10000);
 module.exports = {
     registerViewRoutes,
     escapeHtml,
-    BASE_CSS
+    BASE_CSS,
+    _test: {
+        pageApproved
+    }
 };

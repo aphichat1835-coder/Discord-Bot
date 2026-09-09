@@ -7,7 +7,11 @@ const lifecycle = require("../voiceWorker/lifecycle");
 const {
     ensureSessionFlights,
     performClientLogin,
-    processSessionHealthCheck
+    processSessionHealthCheck,
+    advanceHibernationState,
+    handleWrongChannelState,
+    isSessionConnectionReady,
+    safeRejoinConnection
 } = lifecycle._test;
 
 test("same token and guild uses latest-request-wins while skipping stale queued work", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
@@ -169,4 +173,60 @@ test("health check schedules recovery when the pooled client disappeared", () =>
     assert.equal(result, true);
     assert.equal(scheduled[0], "session-3");
     assert.equal(scheduled[2], "token-hash");
+});
+
+test("advanceHibernationState correctly tracks hibernation transition", () => { // NOSONAR
+    const nonHibernate = { recoveryState: { phase: "running" } };
+    assert.equal(advanceHibernationState(nonHibernate, 1000), false);
+
+    const activeHibernate = {
+        recoveryState: { phase: "hibernate", hibernateUntil: 2000 }
+    };
+    assert.equal(advanceHibernationState(activeHibernate, 1500), true);
+    assert.equal(activeHibernate.recoveryState.phase, "hibernate");
+
+    const expiredHibernate = {
+        recoveryState: { phase: "hibernate", hibernateUntil: 2000 }
+    };
+    assert.equal(advanceHibernationState(expiredHibernate, 2500), false);
+    assert.equal(expiredHibernate.recoveryState.phase, "degraded");
+    assert.equal(expiredHibernate.recoveryState.hibernateUntil, null);
+});
+
+test("safeRejoinConnection safely handles rejoins and errors", () => { // NOSONAR
+    assert.doesNotThrow(() => safeRejoinConnection(null, "vc-1"));
+    assert.doesNotThrow(() => safeRejoinConnection({}, "vc-1"));
+
+    let targetArgs = null;
+    const workingConn = {
+        rejoin: (args) => { targetArgs = args; }
+    };
+    safeRejoinConnection(workingConn, "vc-target");
+    assert.deepEqual(targetArgs, { channelId: "vc-target", selfMute: true, selfDeaf: true });
+
+    const throwingConn = {
+        rejoin: () => { throw new Error("rejoin failure"); }
+    };
+    assert.doesNotThrow(() => safeRejoinConnection(throwingConn, "vc-target"));
+});
+
+test("isSessionConnectionReady evaluates client readiness and voice connection status", () => { // NOSONAR
+    const readySession = {
+        client: { isReady: () => true },
+        connection: { state: { status: "ready" } }
+    };
+    assert.equal(isSessionConnectionReady(readySession, "ready"), true);
+    assert.equal(isSessionConnectionReady(readySession, "other"), false);
+
+    const notReadySession = {
+        client: { isReady: () => false },
+        connection: { state: { status: "ready" } }
+    };
+    assert.equal(isSessionConnectionReady(notReadySession, "ready"), false);
+
+    const noConnSession = {
+        client: { isReady: () => true },
+        connection: null
+    };
+    assert.equal(isSessionConnectionReady(noConnSession, "ready"), false);
 });

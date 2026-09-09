@@ -1588,17 +1588,47 @@ function scheduleHealthRecovery(sessionId, session, tokenHash, now) {
     return true;
 }
 
+function advanceHibernationState(session, now) {
+    if (session.recoveryState?.phase !== "hibernate") return false;
+    if (now < (session.recoveryState.hibernateUntil || 0)) {
+        return true;
+    }
+    session.recoveryState.phase = "degraded";
+    session.recoveryState.hibernateUntil = null;
+    return false;
+}
+
+function safeRejoinConnection(connection, channelId) {
+    if (!connection || typeof connection.rejoin !== "function") return;
+    try {
+        connection.rejoin({
+            channelId,
+            selfMute: true,
+            selfDeaf: true
+        });
+    } catch {}
+}
+
+function handleWrongChannelState(sessionId, session, deps = {}) {
+    const inspectVoice = deps.getSelfVoiceStateInfo || getSelfVoiceStateInfo;
+    const voiceInfo = inspectVoice(session.client, session);
+    if (voiceInfo?.inspectable && voiceInfo.inTargetGuild && !voiceInfo.inTargetChannel) {
+        console.log(`[HEARTBEAT] 🧲 Bot in wrong channel (${voiceInfo.channelId}) — returning to target channel ${session.voiceId} (${sanitizeLogText(sessionId)})`);
+        safeRejoinConnection(session.connection, session.voiceId);
+    }
+}
+
+function isSessionConnectionReady(session, readyStatus) {
+    const clientReady = session.client?.isReady?.() === true;
+    const connStatus = session.connection?.state?.status;
+    return clientReady && connStatus === readyStatus;
+}
+
 function processSessionHealthCheck(sessionId, session, now, deps = {}) {
     const runnable = deps.isSessionRunnable || isSessionRunnable;
     if (!runnable(session)) return false;
 
-    if (session.recoveryState?.phase === "hibernate") {
-        if (now < (session.recoveryState.hibernateUntil || 0)) {
-            return false;
-        }
-        session.recoveryState.phase = "degraded";
-        session.recoveryState.hibernateUntil = null;
-    }
+    if (advanceHibernationState(session, now)) return false;
 
     const resolveTokenHash = deps.getSessionTokenHash || getSessionTokenHash;
     const tokenHash = resolveTokenHash(sessionId, session);
@@ -1608,10 +1638,8 @@ function processSessionHealthCheck(sessionId, session, now, deps = {}) {
     const pooledClient = getPooledClient(sessionId, session, tokenHash);
     if (!session.client && pooledClient) session.client = pooledClient;
 
-    const clientReady = session.client?.isReady?.() === true;
-    const connStatus = session.connection?.state?.status;
     const readyStatus = deps.readyStatus || VoiceConnectionStatus.Ready;
-    const needsRecovery = !clientReady || connStatus !== readyStatus;
+    const needsRecovery = !isSessionConnectionReady(session, readyStatus);
 
     const recoveryMap = deps.recoveryTimestamps || recoveryTimestamps;
     const lastRecovered = recoveryMap.get(sessionId) || 0;
@@ -1619,20 +1647,7 @@ function processSessionHealthCheck(sessionId, session, now, deps = {}) {
     session.urgentRecovery = false;
 
     if (!needsRecovery) {
-        const inspectVoice = deps.getSelfVoiceStateInfo || getSelfVoiceStateInfo;
-        const voiceInfo = inspectVoice(session.client, session);
-        if (voiceInfo.inspectable && voiceInfo.inTargetGuild && !voiceInfo.inTargetChannel) {
-            console.log(`[HEARTBEAT] 🧲 Bot in wrong channel (${voiceInfo.channelId}) — returning to target channel ${session.voiceId} (${sanitizeLogText(sessionId)})`);
-            if (session.connection && typeof session.connection.rejoin === "function") {
-                try {
-                    session.connection.rejoin({
-                        channelId: session.voiceId,
-                        selfMute: true,
-                        selfDeaf: true
-                    });
-                } catch {}
-            }
-        }
+        handleWrongChannelState(sessionId, session, deps);
         (deps.touchSession || sessionManager.touchSession)(sessionId);
         return false;
     }
@@ -1727,6 +1742,10 @@ module.exports = {
         assertVoiceStartupAllowed,
         performClientLogin,
         processSessionHealthCheck,
+        advanceHibernationState,
+        handleWrongChannelState,
+        isSessionConnectionReady,
+        safeRejoinConnection,
         verifyTargetVoiceChannel,
         handlePreflightFailure,
         handleHibernateTransition

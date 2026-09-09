@@ -117,3 +117,28 @@ test("view styles remain available through the split style module and views comp
     assert.match(BASE_CSS, /\.detail-grid/);
     assert.equal(views.BASE_CSS, BASE_CSS);
 });
+
+test("pageApproved formats joined dates and handles missing dates", () => { // NOSONAR
+    const pageApproved = views._test.pageApproved;
+    const mockClient = {
+        guilds: {
+            cache: new Map([
+                ["111111111111111111", { name: "Guild One", memberCount: 42, joinedTimestamp: 1700000000000 }]
+            ])
+        }
+    };
+    const guildList = [
+        { guildId: "111111111111111111" },
+        { guildId: "222222222222222222", guildName: "Guild Two", memberCount: 10, joinedAt: new Date(1710000000000) },
+        { guildId: "333333333333333333", guildName: "Guild Three" }
+    ];
+
+    const html = pageApproved(guildList, mockClient, "secret");
+    assert.match(html, /Guild One/);
+    assert.match(html, /Guild Two/);
+    assert.match(html, /Guild Three/);
+    assert.match(html, /42/);
+    assert.match(html, /10/);
+    assert.match(html, /นำบอทออก/);
+    assert.match(html, /<td style="color:var\(--text3\);">-<\/td>/);
+});
