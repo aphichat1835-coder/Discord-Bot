@@ -1173,3 +1173,40 @@ test("slash /rerole validates target_role and handles targeted preview", async (
     assert.equal(pending.targetRoleId, fixture.regular.id);
 });
 
+test("startPreview responds with warning and creates no pending job when targets are empty", async () => {
+    const fixture = guildFixture();
+    const responses = [];
+    // Exempt all removable roles (fixture.regular)
+    const result = await roleSweep._test.startPreview({
+        guild: fixture.guild,
+        channel: { id: "channel" },
+        actorId: ACTOR_ID,
+        exceptRoleIds: [fixture.regular.id, fixture.exempt.id],
+        respond: async msg => responses.push(msg)
+    });
+
+    assert.equal(result, false);
+    assert.equal(roleSweep._test.pendingByGuild.has(GUILD_ID), false);
+    assert.match(responses[0], /ไม่พบยศที่ถอดได้ตามเงื่อนไข จึงไม่สร้างงานรอยืนยัน/);
+});
+
+test("startPreview responds with warning when no member holds targetRoleId", async () => {
+    const fixture = guildFixture();
+    const responses = [];
+    const unusedRole = role("100000000000000999", 1);
+    fixture.guild.roles.cache.set(unusedRole.id, unusedRole);
+
+    const result = await roleSweep._test.startPreview({
+        guild: fixture.guild,
+        channel: { id: "channel" },
+        actorId: ACTOR_ID,
+        exceptRoleIds: [],
+        targetRoleId: unusedRole.id,
+        respond: async msg => responses.push(msg)
+    });
+
+    assert.equal(result, false);
+    assert.equal(roleSweep._test.pendingByGuild.has(GUILD_ID), false);
+    assert.match(responses[0], /ไม่พบสมาชิกที่ถือยศ .* ที่บอทสามารถจัดการได้ จึงไม่สร้างงานรอยืนยัน/);
+});
+

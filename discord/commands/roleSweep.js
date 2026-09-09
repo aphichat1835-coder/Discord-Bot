@@ -484,11 +484,86 @@ function previewWasCancelled(guildId, controller) {
     return controller.cancelled || previewingByGuild.get(String(guildId)) !== controller;
 }
 
+/** Reports whether a guild already has an active, pending, or previewing sweep. */
+function isGuildBusy(guildId) {
+    return pendingByGuild.has(guildId) || activeByGuild.has(guildId) || previewingByGuild.has(guildId);
+}
+
+/** Fetches members for preview, reporting any failure if not cancelled. */
+async function fetchPreviewMembers(guild, guildId, controller, respond) {
+    try {
+        return await fetchAllMembers(guild);
+    } catch {
+        if (!previewWasCancelled(guildId, controller)) {
+            await respond(`> ❌ ดึงรายชื่อสมาชิกไม่ครบ จึงยังไม่ถอดยศใด ๆ`);
+        }
+        return null;
+    }
+}
+
+/** Formats the warning message when no eligible targets were found. */
+function formatEmptyTargetsMessage(targetRoleId, scanStats, exceptRoleIds) {
+    if (targetRoleId) {
+        return `> ⚠️ ไม่พบสมาชิกที่ถือยศ <@&${targetRoleId}> ที่บอทสามารถจัดการได้ จึงไม่สร้างงานรอยืนยัน`;
+    }
+    return `${previewText(scanStats, exceptRoleIds)}\n> ⚠️ ไม่พบยศที่ถอดได้ตามเงื่อนไข จึงไม่สร้างงานรอยืนยัน`;
+}
+
+/** Registers a pending sweep entry with its auto-expiry timer. */
+function registerPendingPreview({ guild, guildId, channel, actorId, exceptRoleIds, targetRoleId, scan, respond, timeoutMs }) {
+    const confirmationTimeout = getConfirmationTimeout(timeoutMs);
+    const expiresAt = Date.now() + confirmationTimeout;
+    let pending;
+    const timeout = setTimeout(() => {
+        const expired = clearPending(guildId, pending);
+        if (!expired) return;
+        expired.previewMessage?.edit?.({ components: [] }).catch(() => {});
+        Promise.resolve(
+            expired.respond({
+                content: `> ⚠️ งานกวาดยศหมดเวลายืนยันแล้ว`,
+                embeds: [buildExpiredEmbed(guild)],
+                components: []
+            })
+        ).catch(() => {});
+    }, confirmationTimeout);
+    timeout.unref?.();
+
+    pending = {
+        guild,
+        guildId,
+        channelId: String(channel?.id || ""),
+        actorId: String(actorId),
+        exceptRoleIds: dedupeRoleIds(exceptRoleIds),
+        targetRoleId: targetRoleId ? String(targetRoleId) : null,
+        fingerprint: scan.fingerprint,
+        respond,
+        timeout,
+        expiresAt,
+        previewMessage: null
+    };
+    pendingByGuild.set(guildId, pending);
+    return pending;
+}
+
+/** Sends the preview payload and binds the sent message reference to the pending sweep. */
+async function deliverPreviewPayload(pending, scan, exceptRoleIds, actorId, targetRoleId) {
+    try {
+        const previewPayload = buildPreviewPayload(pending.guild, scan.stats, exceptRoleIds, actorId, targetRoleId);
+        const sent = await pending.respond(previewPayload);
+        if (sent && typeof sent.edit === "function") {
+            pending.previewMessage = sent;
+        }
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 /** Fetches, scans, and publishes a confirmation-bound role-sweep preview. */
 async function startPreview({ guild, channel, actorId, exceptRoleIds, targetRoleId = null, respond, timeoutMs = CONFIRMATION_TIMEOUT_MS }) {
     const guildId = String(guild?.id || "");
     if (!guildId) return false;
-    if (pendingByGuild.has(guildId) || activeByGuild.has(guildId) || previewingByGuild.has(guildId)) {
+    if (isGuildBusy(guildId)) {
         await respond(`> ⚠️ เซิร์ฟเวอร์นี้มีงานกวาดยศที่รอยืนยันหรือกำลังทำงานอยู่`);
         return false;
     }
@@ -496,76 +571,40 @@ async function startPreview({ guild, channel, actorId, exceptRoleIds, targetRole
     previewingByGuild.set(guildId, controller);
 
     try {
-        let members;
-        try {
-            members = await fetchAllMembers(guild);
-        } catch {
-            if (previewWasCancelled(guildId, controller)) return false;
-            await respond(`> ❌ ดึงรายชื่อสมาชิกไม่ครบ จึงยังไม่ถอดยศใด ๆ`);
-            return false;
-        }
-        if (previewWasCancelled(guildId, controller)) return false;
+        const members = await fetchPreviewMembers(guild, guildId, controller, respond);
+        if (!members || previewWasCancelled(guildId, controller)) return false;
 
         const scan = scanGuildRoles(guild, members, actorId, exceptRoleIds, targetRoleId);
         if (scan.targets.length === 0) {
-            if (previewWasCancelled(guildId, controller)) return false;
-            const msg = targetRoleId
-                ? `> ⚠️ ไม่พบสมาชิกที่ถือยศ <@&${targetRoleId}> ที่บอทสามารถจัดการได้ จึงไม่สร้างงานรอยืนยัน`
-                : `${previewText(scan.stats, exceptRoleIds)}\n> ⚠️ ไม่พบยศที่ถอดได้ตามเงื่อนไข จึงไม่สร้างงานรอยืนยัน`;
-            await respond(msg);
+            if (!previewWasCancelled(guildId, controller)) {
+                await respond(formatEmptyTargetsMessage(targetRoleId, scan.stats, exceptRoleIds));
+            }
             return false;
         }
 
-        const confirmationTimeout = getConfirmationTimeout(timeoutMs);
-        const expiresAt = Date.now() + confirmationTimeout;
-        let pending;
-        const timeout = setTimeout(() => {
-            const expired = clearPending(guildId, pending);
-            if (expired) {
-                expired.previewMessage?.edit?.({ components: [] }).catch(() => {});
-                Promise.resolve(
-                    expired.respond({
-                        content: `> ⚠️ งานกวาดยศหมดเวลายืนยันแล้ว`,
-                        embeds: [buildExpiredEmbed(guild)],
-                        components: []
-                    })
-                ).catch(() => {});
-            }
-        }, confirmationTimeout);
-        timeout.unref?.();
-        if (previewWasCancelled(guildId, controller)) {
-            clearTimeout(timeout);
-            return false;
-        }
-        pending = {
+        const pending = registerPendingPreview({
             guild,
             guildId,
-            channelId: String(channel?.id || ""),
-            actorId: String(actorId),
-            exceptRoleIds: dedupeRoleIds(exceptRoleIds),
-            targetRoleId: targetRoleId ? String(targetRoleId) : null,
-            fingerprint: scan.fingerprint,
+            channel,
+            actorId,
+            exceptRoleIds,
+            targetRoleId,
+            scan,
             respond,
-            timeout,
-            expiresAt,
-            previewMessage: null
-        };
-        pendingByGuild.set(guildId, pending);
-        try {
-            const previewPayload = buildPreviewPayload(guild, scan.stats, exceptRoleIds, actorId, targetRoleId);
-            const sent = await respond(previewPayload);
-            if (sent && typeof sent.edit === "function") {
-                pending.previewMessage = sent;
-            }
-            if (previewWasCancelled(guildId, controller)) {
-                clearPending(guildId, pending);
-                return false;
-            }
-            return true;
-        } catch {
+            timeoutMs
+        });
+
+        if (previewWasCancelled(guildId, controller)) {
             clearPending(guildId, pending);
             return false;
         }
+
+        const delivered = await deliverPreviewPayload(pending, scan, exceptRoleIds, actorId, targetRoleId);
+        if (!delivered || previewWasCancelled(guildId, controller)) {
+            clearPending(guildId, pending);
+            return false;
+        }
+        return true;
     } finally {
         if (previewingByGuild.get(guildId) === controller) previewingByGuild.delete(guildId);
     }
