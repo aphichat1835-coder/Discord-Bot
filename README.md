@@ -72,14 +72,17 @@ independent from panel restore and Voice auto-resume; `/health` and its `/ready`
 alias remain degraded until Discord accepts the current registry.
 
 `/rerole` is available only to the guild owner or configured bot Owner. It
-accepts up to five role exceptions, verifies a stable complete member fetch,
-reports role counts, then waits for the exact text `ยืนยัน` from the same owner
-in the same channel for at most 60 seconds. The equivalent text command is
-`//รียศ [ROLE_ID ...]`. Before removal it rechecks bot permissions and the role
-fingerprint, including the bot's own hierarchy; membership or hierarchy changes
-cancel the work. It removes only manageable human members' eligible roles,
-always skips the invoking account, reports changed members plus successful and
-failed role assignments, and does not create a restore snapshot.
+accepts an optional `target_role` (to sweep only a specific role from all holders)
+and up to five role exceptions, verifies a complete member collection fetch,
+reports role counts, then waits for the exact text `ยืนยัน` or button confirmation
+from the same owner in the same channel for at most 60 seconds. The equivalent text
+commands are `//รียศ [ROLE_ID ...]` (for broad sweep with optional exceptions) and
+`//ถอดยศ [ROLE_ID/MENTION]` (for targeted removal of a single role). Before removal
+it rechecks bot permissions and the role fingerprint, including the bot's own
+hierarchy; role catalog, hierarchy, or member role assignment changes cancel the
+work. It removes only manageable human members' eligible roles, always skips the
+invoking account, reports changed members plus successful and failed role assignments,
+and does not create a restore snapshot.
 
 `/voiceadmin` is an ephemeral Administrator-only panel for the normal voice
 channel where it is opened. It can disconnect, move, and apply or remove

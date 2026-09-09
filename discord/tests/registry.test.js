@@ -45,12 +45,13 @@ test("slash command names are unique and include supported command groups", () =
     assert.equal(unique.has("voicekickall"), false, "replaced /voicekickall command must stay unregistered");
 });
 
-test("rerole exposes five optional role exceptions", () => {
+test("rerole exposes target role and five optional role exceptions", () => {
     const rerole = slashCommandsData.find(command => command.name === "rerole");
 
     assert.ok(rerole);
-    assert.equal(rerole.options.length, 5);
+    assert.equal(rerole.options.length, 6);
     assert.deepEqual(rerole.options.map(option => option.name), [
+        "target_role",
         "role_1",
         "role_2",
         "role_3",

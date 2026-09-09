@@ -38,16 +38,18 @@
   Final summaries include skipped targets and elapsed time, while the
   fourteen-minute cutoff applies only to members that have not started yet.
 
-- Added owner-only `/rerole` and `//รียศ [ROLE_ID ...]` role-sweep entry points.
-  Each command verifies a stable complete member fetch, scans first, reports
-  aggregate role counts, requires the exact `ยืนยัน` text from the same owner in
-  the same channel before an absolute 60-second deadline, and rechecks bot
-  permission plus the member/role/bot-hierarchy fingerprint before removal.
-  Membership or hierarchy changes cancel the work. Results report changed
-  members and successful/failed role assignments. The command removes only
-  eligible roles from manageable human members while preserving selected role
-  exceptions and the invoker, and intentionally creates no snapshot or
-  automatic restore path.
+- Added owner-only `/rerole` and `//รียศ [ROLE_ID ...]` role-sweep entry points,
+  along with dedicated `target_role` slash option and `//ถอดยศ [ROLE_ID/MENTION]`
+  targeted removal shortcut. Each command fetches a complete member collection, scans
+  first, reports aggregate role counts, requires the exact `ยืนยัน` text or button
+  confirmation from the same owner in the same channel before an absolute 60-second
+  deadline, and rechecks bot permission plus the member/role/bot-hierarchy fingerprint
+  before removal. Role catalog, hierarchy, or member assignment changes cancel the work.
+  Results report changed members and successful/failed role assignments via rich
+  Modern Enterprise Embeds with dedicated fields, server thumbnail, and interactive
+  confirmation controls. The command removes only eligible roles from manageable human
+  members while preserving selected role exceptions and the invoker, and intentionally
+  creates no snapshot or automatic restore path.
 
 - Replaced the retired `/voicekickall` registration with an ephemeral,
   Administrator-only `/voiceadmin` panel for normal voice-channel chat. It

@@ -209,13 +209,21 @@ const slashCommandsData = [
 
     {
         name: "rerole",
-        description: "คำนวณและกวาดยศสมาชิก โดยเว้นยศที่เลือกไว้",
-        options: [1, 2, 3, 4, 5].map(index => ({
-            type: 8,
-            name: `role_${index}`,
-            description: `ยศที่ ${index} ที่ต้องการเว้นไว้ (ไม่ให้ถูกลบ)`,
-            required: false
-        }))
+        description: "คำนวณและกวาดยศสมาชิก โดยเว้นยศที่เลือกไว้ หรือระบุยศเป้าหมายเพื่อถอดยศเฉพาะ",
+        options: [
+            {
+                type: 8,
+                name: "target_role",
+                description: "ยศเป้าหมายที่ต้องการถอดออก (หากไม่ระบุ จะกวาดยศทั้งหมด)",
+                required: false
+            },
+            ...[1, 2, 3, 4, 5].map(index => ({
+                type: 8,
+                name: `role_${index}`,
+                description: `ยศที่ ${index} ที่ต้องการเว้นไว้ (ไม่ให้ถูกลบ)`,
+                required: false
+            }))
+        ]
     },
 
     {
