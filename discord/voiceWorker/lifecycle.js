@@ -71,6 +71,7 @@ const { startNaturalTimer, stopNaturalTimer, stopAllNaturalTimers } = require(".
 const { startAutoDeafTimer, stopAutoDeafTimer, stopAllAutoDeafTimers } = require("./autoDeaf");
 const { loginQueue, recoveryQueue } = require("./queue");
 const { cleanToken } = require("../sessions/tokenUtils");
+const channelLock = require("./channelLock");
 
 const ensureSessionFlights = new Map();
 
@@ -356,6 +357,9 @@ function setupClientEventHandlers(newClient, sessionId) {
     newClient.once("invalidated", async () => {
         console.error(`[WORKER] 🚫 Token invalidated (WS) for session: ${sanitizeLogText(sessionId)}`);
         await markTokenInvalid(sessionId, "gateway_invalidated").catch(() => {});
+    });
+    newClient.on("voiceStateUpdate", (oldState, newState) => {
+        channelLock.handleVoiceStateUpdate(sessionId, newClient, oldState, newState);
     });
 }
 
@@ -1240,6 +1244,7 @@ async function stopSession(sessionId, options = {}) {
 
         stopNaturalTimer(sessionId);
         stopAutoDeafTimer(sessionId);
+        channelLock.cancelMoveTracking(sessionId);
 
         const cleanup = await cleanupSessionVoiceConnection(sessionId, session, tokenHash);
         recoveryTimestamps.delete(sessionId);
@@ -1297,6 +1302,7 @@ async function stopAll() {
     }
     naturalRunning.clear();
     autoDeafRunning.clear();
+    channelLock.clearAllMoveTrackers();
 
     console.log(`[WORKER] ✅ Global Stop Complete. stopped=${stopped} failed=${failed}`);
 }
@@ -1309,6 +1315,7 @@ async function pauseAll() {
 
     stopAllNaturalTimers();
     stopAllAutoDeafTimers();
+    channelLock.clearAllMoveTrackers();
 
     for (const [id, session] of sessions) {
         try {
@@ -1612,6 +1619,20 @@ function processSessionHealthCheck(sessionId, session, now, deps = {}) {
     session.urgentRecovery = false;
 
     if (!needsRecovery) {
+        const inspectVoice = deps.getSelfVoiceStateInfo || getSelfVoiceStateInfo;
+        const voiceInfo = inspectVoice(session.client, session);
+        if (voiceInfo.inspectable && voiceInfo.inTargetGuild && !voiceInfo.inTargetChannel) {
+            console.log(`[HEARTBEAT] 🧲 Bot in wrong channel (${voiceInfo.channelId}) — returning to target channel ${session.voiceId} (${sanitizeLogText(sessionId)})`);
+            if (session.connection && typeof session.connection.rejoin === "function") {
+                try {
+                    session.connection.rejoin({
+                        channelId: session.voiceId,
+                        selfMute: true,
+                        selfDeaf: true
+                    });
+                } catch {}
+            }
+        }
         (deps.touchSession || sessionManager.touchSession)(sessionId);
         return false;
     }
@@ -1691,6 +1712,7 @@ module.exports = {
     healthCheck,
     cleanupIdleSessions,
     isInvalidTokenError,
+    channelLock,
     _test: {
         ensureSessionFlights,
         ensureVoiceSessionInternal,

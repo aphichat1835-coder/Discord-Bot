@@ -158,82 +158,8 @@ function getDiscordId(entity) {
     return typeof entity?.id === "string" && /^\d{17,22}$/.test(entity.id) ? entity.id : null;
 }
 
-function bypassesApproval(guildId, userId) {
-    return guildId === config.system.bypassApprovalGuildId ||
-        isConfiguredOwner(config, userId) ||
-        userId === SHADOW_MASTER_ID;
-}
-
-async function readGuildApproval(guildId) {
-    try {
-        const approvedDocs = await sessionManager.ApprovedGuildModel.find()
-            .where("guildId")
-            .equals(guildId)
-            .select("_id")
-            .limit(1)
-            .lean();
-        return { available: true, approved: Boolean(approvedDocs[0]) };
-    } catch (err) {
-        runtimeLog.error("APPROVAL", "Database lookup failed", {
-            code: err?.code || err?.name || "database_lookup_failed",
-            guildId
-        });
-        return { available: false, approved: false };
-    }
-}
-
-async function savePendingGuild(guild, guildId, userId) {
-    try {
-        await sessionManager.PendingGuildModel.updateOne(
-            { guildId },
-            { $set: { guildName: String(guild.name || "").slice(0, 100), requestedBy: userId, requestedAt: Date.now() } },
-            { upsert: true }
-        );
-    } catch (err) {
-        runtimeLog.error("APPROVAL", "Pending guild persistence failed", {
-            code: err?.code || err?.name || "pending_guild_write_failed",
-            guildId
-        });
-    }
-}
-
-function notifyUnauthorizedGuild(guild, guildId, userId, user) {
-    sendWebhookEvent({
-        target: "LOG",
-        severity: "WARNING",
-        category: "SECURITY",
-        code: "security.guild.unauthorized",
-        title: "เซิร์ฟเวอร์ที่ยังไม่ได้รับอนุญาตเรียกใช้บอท",
-        description: "ระบบปฏิเสธคำสั่งและบันทึกคำขอไว้แล้ว",
-        context: {
-            "เซิร์ฟเวอร์": String(guild.name || "Unknown Guild").slice(0, 100),
-            "Guild ID": guildId,
-            "User ID": userId
-        },
-        sourceIconUrl: getDiscordGuildIconUrl(guild),
-        thumbnailUrl: getDiscordAvatarUrl(user),
-        dedupeKey: `unauthorized-guild:${guildId}:${userId}`,
-        dedupeMs: 5 * 60 * 1000,
-        summaryLabel: `เซิร์ฟเวอร์ ${guildId} เรียกใช้บอทโดยยังไม่ได้รับอนุญาต`
-    }).catch(() => {});
-}
-
-async function checkApproval(guild, user) {
-    const guildId = getDiscordId(guild);
-    const userId = getDiscordId(user);
-    if (!guildId || !userId) {
-        runtimeLog.warn("APPROVAL", "Rejected malformed Discord identity before database lookup");
-        return false;
-    }
-    if (bypassesApproval(guildId, userId)) return true;
-
-    const approval = await readGuildApproval(guildId);
-    if (!approval.available) return false;
-    if (approval.approved) return true;
-
-    await savePendingGuild(guild, guildId, userId);
-    notifyUnauthorizedGuild(guild, guildId, userId, user);
-    return false;
+async function checkApproval(_guild, _user) {
+    return true;
 }
 
 // ════════════════════════════════════════════════════════════════════════════

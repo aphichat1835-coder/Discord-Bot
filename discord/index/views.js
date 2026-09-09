@@ -504,35 +504,36 @@ async function toggleCmd(commandName, el){
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  ✅  หน้า APPROVED GUILDS
+//  🌐  หน้า ALL GUILDS
 // ════════════════════════════════════════════════════════════════════════════
-function pageApproved(approvedList, client, API_SECRET) {
-    const rows = (approvedList || []).map(g => {
-        const guild = client.guilds.cache.get(g.guildId);
-        const name = guild?.name || g.guildName || "ไม่พบชื่อเซิร์ฟเวอร์";
-        const members = guild?.memberCount || "-";
+function pageApproved(guildList, client, API_SECRET) {
+    const rows = (guildList || []).map(g => {
+        const guild = client.guilds.cache.get(g.guildId || g.id) || g;
+        const name = guild.name || g.guildName || "ไม่พบชื่อเซิร์ฟเวอร์";
+        const members = guild.memberCount ?? g.memberCount ?? "-";
+        const guildId = g.guildId || g.id || "";
+        const joined = g.joinedAt ? new Date(g.joinedAt).toLocaleString("th-TH") : (guild.joinedTimestamp ? new Date(guild.joinedTimestamp).toLocaleString("th-TH") : "-");
 
         return `
 <tr>
     <td>
         <div style="font-weight:700;color:var(--text);">${escapeHtml(name)}</div>
-        <div style="font-family:monospace;color:var(--text3);font-size:0.75em;">${escapeHtml(g.guildId || "-")}</div>
+        <div style="font-family:monospace;color:var(--text3);font-size:0.75em;">${escapeHtml(guildId)}</div>
     </td>
     <td style="color:var(--text3);">${members}</td>
-    <td style="color:var(--text3);">${new Date(g.approvedAt || Date.now()).toLocaleString("th-TH")}</td>
+    <td style="color:var(--text3);">${joined}</td>
     <td>
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
-            <button type="button" class="btn btn-danger btn-sm" onclick="removeGuild('${escapeHtml(g.guildId || "")}')">ลบ</button>
-            <button type="button" class="btn btn-warning btn-sm" onclick="kickGuild('${escapeHtml(g.guildId || "")}')">นำบอทออก</button>
+            <button type="button" class="btn btn-warning btn-sm" onclick="kickGuild('${escapeHtml(guildId)}')">นำบอทออก</button>
         </div>
     </td>
 </tr>`;
     }).join("");
 
-    return shell("เซิร์ฟเวอร์ที่อนุมัติ", `
+    return shell("เซิร์ฟเวอร์ทั้งหมด", `
 <div class="container-lg">
-<h1 class="page-title gradient-text">✅ เซิร์ฟเวอร์ที่อนุมัติ</h1>
-<p class="page-sub">จัดการเซิร์ฟเวอร์ที่อนุมัติให้ใช้ระบบ</p>
+<h1 class="page-title gradient-text">🌐 เซิร์ฟเวอร์ทั้งหมด</h1>
+<p class="page-sub">รายชื่อเซิร์ฟเวอร์ทั้งหมดที่บอทอาศัยอยู่ พร้อมคำสั่งนำบอทออก</p>
 ${navBar("/approved")}
 ${toastScript()}
 
@@ -543,7 +544,7 @@ ${toastScript()}
             <tr>
                 <th>เซิร์ฟเวอร์</th>
                 <th>สมาชิก</th>
-                <th>อนุมัติเมื่อ</th>
+                <th>เข้าร่วมเมื่อ</th>
                 <th>จัดการ</th>
             </tr>
         </thead>
@@ -557,32 +558,6 @@ ${toastScript()}
 
 <script>
 const SECRET='';
-
-async function removeGuild(guildId){
-    if(!confirm('นำเซิร์ฟเวอร์ '+guildId+' ออกจากรายการอนุมัติหรือไม่?')) return;
-
-    try{
-        const r=await fetch('/api/approved/remove',{
-            method:'POST',
-            headers:{
-                'Content-Type':'application/json',
-                'Authorization':SECRET
-            },
-            body:JSON.stringify({guildId})
-        });
-
-        const d=await r.json();
-
-        if(d.success){
-            showToast('✅ ลบออกแล้ว','ok');
-            setTimeout(()=>location.reload(),900);
-        }else{
-            showToast('❌ '+(d.error||'Unknown'),'err');
-        }
-    }catch(e){
-        showToast('❌ เชื่อมต่อไม่ได้','err');
-    }
-}
 
 async function kickGuild(guildId){
     if(!confirm('นำบอทออกจากเซิร์ฟเวอร์ '+guildId+' หรือไม่? Session ของเซิร์ฟเวอร์นี้จะหยุดทำงาน')) return;
@@ -1034,7 +1009,7 @@ function pageDocs() {
                 ["📊 /status", "ภาพรวมสถานะบอท, uptime, RAM, success rate"],
                 ["⚙️ /settings", "ตั้งค่า presence, rotate, natural, auto deaf, general config"],
                 ["⚡ /commands", "เปิด/ปิด slash commands แบบ realtime"],
-                ["✅ /approved", "จัดการเซิร์ฟเวอร์ที่อนุมัติ"],
+                ["🌐 /approved", "รายชื่อเซิร์ฟเวอร์ทั้งหมด และสั่งนำบอทออก"],
                 ["🔊 /logs/voice", "ประวัติ voice event"],
                 ["🖥️ /session/:id", "ดูรายละเอียด session, ดู Token แบบ PIN protected, สั่งหยุดได้"]
             ]
@@ -1718,8 +1693,13 @@ ${navBar("/approved")}
 </div>`));
         }
 
-        const approvedList = await sessionManager.getApprovedGuildDocs().catch(() => []);
-        res.send(pageApproved(approvedList, client, API_SECRET));
+        const guildList = [...client.guilds.cache.values()].map(g => ({
+            guildId: g.id,
+            guildName: g.name,
+            memberCount: g.memberCount,
+            joinedAt: g.joinedTimestamp
+        }));
+        res.send(pageApproved(guildList, client, API_SECRET));
     });
 
     app.get("/join-campaign", auth.requirePin, (req, res) => {

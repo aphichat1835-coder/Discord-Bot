@@ -228,6 +228,7 @@ module.exports = {
     startAutoDeafTimer,
     stopAutoDeafTimer,
     getAutoDeafSettings,
+    channelLock: require("./channelLock"),
 
     _test: {
         cleanupLeanClientCache,

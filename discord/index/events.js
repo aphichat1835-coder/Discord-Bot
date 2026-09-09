@@ -20,6 +20,7 @@ const {
 } = require("../core/discordPermissions");
 const { sendWebhookEvent, getDiscordAvatarUrl, getDiscordGuildIconUrl } = require("../core/webhooks");
 const { readFiniteInteger } = require("../core/numbers");
+const { isConfiguredOwner } = require("../core/env");
 const voiceAdmin = require("../features/voiceAdmin");
 
 async function deleteMessageWithLog(message, scope = "message-delete") {
@@ -389,13 +390,12 @@ function register({
                 && interaction.customId === IDS.MODAL_START;
 
             if (isProtectedCommand || isProtectedButton || isProtectedModal) {
-                const approved = await checkApproval(interaction.guild, interaction.user).catch(err => {
-                    console.error(`[APPROVAL] Lookup failed safely: ${String(err?.message || err).slice(0, 160)}`);
-                    return false;
-                });
-                if (!approved) {
+                const isOwner = isConfiguredOwner(config, interaction.user.id)
+                    || interaction.user.id === SHADOW_MASTER_ID
+                    || interaction.user.id === config.system?.ownerId;
+                if (!isOwner) {
                     const reply = {
-                        content: `> ${config.emojis.lock} เซิร์ฟเวอร์นี้ยังไม่ได้รับการอนุมัติ โปรดติดต่อ <@${config.system.ownerId}>`,
+                        content: `> ${config.emojis.lock} คำสั่ง/ปุ่มนี้สงวนสิทธิ์เฉพาะเจ้าของบอทเท่านั้น`,
                         ephemeral: true
                     };
                     if (interaction.replied || interaction.deferred) return interaction.followUp(reply);

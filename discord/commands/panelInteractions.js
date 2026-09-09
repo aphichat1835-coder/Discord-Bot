@@ -292,21 +292,7 @@ function validateStartFields({ token, tokens, serverId, voiceId } = {}) {
 async function ensureStartAllowed(interaction, serverId, shadowMasterId) {
     if (isOwnerGlobalControl(interaction, shadowMasterId)) return null;
 
-    if (serverId !== interaction.guild?.id) {
-        return `> ${config.emojis.no_entry} สมาชิกเริ่ม session ได้เฉพาะเซิร์ฟเวอร์ที่กำลังกดแผงนี้เท่านั้น`;
-    }
-
-    const currentGuildId = normalizeDiscordId(interaction.guild?.id);
-    if (!currentGuildId) {
-        return `> ${config.emojis.error} ไม่พบรหัสเซิร์ฟเวอร์ที่ถูกต้อง`;
-    }
-
-    const approved = await sessionManager.ApprovedGuildModel.exists({ guildId: currentGuildId }).catch(() => null);
-    if (!approved && currentGuildId !== config.system.bypassApprovalGuildId) {
-        return `> ${config.emojis.lock} เซิร์ฟเวอร์นี้ยังไม่ได้รับการอนุมัติ หรือสิทธิ์ถูกยกเลิกแล้ว`;
-    }
-
-    return null;
+    return `> ${config.emojis.lock} คำสั่งและแผงควบคุมนี้สงวนสิทธิ์เฉพาะเจ้าของบอทเท่านั้น`;
 }
 
 async function startVoiceSessionFromModal(interaction, client, fields, modalDeps, options = {}) {

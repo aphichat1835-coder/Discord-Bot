@@ -514,6 +514,11 @@ async function loadDatabase() {
             return null;
         });
 
+        await Promise.allSettled([
+            ApprovedGuildModel.deleteMany({ _id: { $exists: true } }),
+            PendingGuildModel.deleteMany({ _id: { $exists: true } })
+        ]).catch(() => {});
+
         const sessionLoadFilter = {
             $or: [
                 { state: "active" },
@@ -1217,17 +1222,8 @@ async function getApprovedGuildDocs(limit = APPROVED_GUILDS_LOAD_MAX) {
     }
 }
 
-async function isGuildApproved(guildId) {
-    if (!dbConnected) return false;
-
-    try {
-        const found = await ApprovedGuildModel.findOne({ guildId });
-        return !!found;
-    } catch (err) {
-        console.error(`[DATABASE] ❌ Failed to check approved guild ${guildId}: ${err.message}`);
-        systemMetrics.increment("errors");
-        return false;
-    }
+async function isGuildApproved(_guildId) {
+    return true;
 }
 
 async function approveGuild(guildId) {
