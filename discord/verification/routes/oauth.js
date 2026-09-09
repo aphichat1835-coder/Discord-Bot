@@ -1084,7 +1084,7 @@ async function updateIpIdentityTrackingSafe({
                 $set: setFields,
                 $unset: { deletedAt: 1, deletionReason: 1 }
             },
-            { upsert: true, new: true, setDefaultsOnInsert: true }
+            { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }
         );
 
         return {
@@ -1283,7 +1283,7 @@ async function saveOAuthUserSafe({
                     },
                     {
                         upsert: !existing,
-                        new: true
+                        returnDocument: "after"
                     }
                 );
                 if (!activated) {

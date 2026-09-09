@@ -562,7 +562,7 @@ async function storeMemberSnapshot({ userId, guildId, version, member, now = Dat
         await retrySnapshotWrite("snapshot_member_write", () => MemberSnapshot.findOneAndUpdate(
             { userId, guildId, snapshotVersion: version },
             { $set: documentSet },
-            { upsert: true, new: true }
+            { upsert: true, returnDocument: "after" }
         ));
         const finalized = await retrySnapshotWrite("snapshot_member_finalize", () => MemberSnapshot.updateOne(
             { userId, guildId, snapshotVersion: version },
@@ -631,7 +631,7 @@ async function storeProfileSnapshot({ userId, version, profile, now = Date.now()
         await retrySnapshotWrite("snapshot_profile_write", () => ProfileSnapshot.findOneAndUpdate(
             { userId, snapshotVersion: version },
             { $set: documentSet },
-            { upsert: true, new: true }
+            { upsert: true, returnDocument: "after" }
         ));
         const finalized = await retrySnapshotWrite("snapshot_profile_finalize", () => ProfileSnapshot.updateOne(
             { userId, snapshotVersion: version },
@@ -770,7 +770,7 @@ async function persistRecoveryMetadata(RecoveryModel, metadata, now) {
     };
     const write = typeof RecoveryModel.updateOne === "function"
         ? () => RecoveryModel.updateOne(filter, update, { upsert: true })
-        : () => RecoveryModel.findOneAndUpdate(filter, update, { upsert: true, new: true });
+        : () => RecoveryModel.findOneAndUpdate(filter, update, { upsert: true, returnDocument: "after" });
     const result = await retrySnapshotWrite("rollback_recovery_metadata", async () => assertAcknowledged(
         await write(),
         "rollback_recovery_metadata_unacknowledged"

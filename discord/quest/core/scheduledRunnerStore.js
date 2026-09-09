@@ -61,7 +61,7 @@ async function updateScheduledRunner(id, updates = {}) {
     if (updates.lastError !== undefined) setFields.lastError = updates.lastError;
     if (updates.enabled !== undefined) setFields.enabled = updates.enabled;
 
-    return ScheduledRunner.findByIdAndUpdate(id, { $set: setFields }, { new: true }).lean();
+    return ScheduledRunner.findByIdAndUpdate(id, { $set: setFields }, { returnDocument: "after" }).lean();
 }
 
 async function deleteScheduledRunner(id, ownerId = null) {

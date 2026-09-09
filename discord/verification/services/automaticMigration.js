@@ -49,7 +49,7 @@ async function acquireLock(StateModel, now, owner) {
                 lastError: null,
                 updatedAt: now
             }
-        }, { upsert: true, new: true });
+        }, { upsert: true, returnDocument: "after" });
     } catch (err) {
         if (err?.code === 11000) return null;
         throw err;

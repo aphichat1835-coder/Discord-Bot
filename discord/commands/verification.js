@@ -413,7 +413,7 @@ async function syncGuildConfig(interaction, role, channel, panelMsg, panelData) 
                     "security.retentionMode": "until_admin_delete"
                 }
             },
-            { upsert: true, new: true }
+            { upsert: true, returnDocument: "after" }
         );
 }
 
@@ -527,7 +527,7 @@ async function lazyMigrateDirectConfig(interaction, role) {
                 "security.storeOAuthTokens": true
             }
         },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: "after" }
     ));
 }
 

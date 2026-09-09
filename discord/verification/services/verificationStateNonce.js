@@ -49,7 +49,7 @@ async function consumeVerificationState(stateObj) {
                 consumedAt: now
             }
         },
-        { new: true }
+        { returnDocument: "after" }
     ).lean();
     return Boolean(updated);
 }

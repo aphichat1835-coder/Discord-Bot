@@ -740,8 +740,16 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
         sameAccountSessions: countActiveSessionsForAccountId(client.user?.id || session.accountId)
     });
 
+    let lastVoiceReadyAt = 0;
+    const VOICE_READY_THROTTLE_MS = 10000;
+
     connection.on(VoiceConnectionStatus.Ready, () => {
         sessionManager.touchSession(sessionId);
+        const now = Date.now();
+        if (now - lastVoiceReadyAt < VOICE_READY_THROTTLE_MS) {
+            return;
+        }
+        lastVoiceReadyAt = now;
         refreshSessionMetadataFast(sessionId, 1200)
             .finally(() => cleanupLeanSessionClient(sessionId, "voice-ready"))
             .catch(() => {});

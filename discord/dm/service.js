@@ -152,7 +152,7 @@ async function claimRecord(record) {
                 updatedAt: Date.now()
             }
         },
-        { new: true }
+        { returnDocument: "after" }
     ).lean();
 }
 
