@@ -150,6 +150,79 @@ async function deleteChannelMessages(channel, amount, now = Date.now(), options 
     };
 }
 
+function buildClearLoadingEmbed(interaction, amt) {
+    return new MessageEmbed()
+        .setColor(config.system.themeColors.info || "#5865F2")
+        .setAuthor({
+            name: "กำลังทำความสะอาดห้องแชท...",
+            iconURL: interaction.guild?.iconURL() || undefined
+        })
+        .setDescription(
+            `> ${config.emojis.broom || "🧹"} กำลังสแกนและลบข้อความเป้าหมาย **${amt.toLocaleString()}** ข้อความ...\n` +
+            `> ${config.emojis.loading || "⏳"} กรุณารอสักครู่ ระบบกำลังเร่งดำเนินการด้วยความเร็วสูงสุด ⚡`
+        )
+        .setFooter({
+            text: `ผู้สั่งการ: ${interaction.user.tag}`,
+            iconURL: interaction.user.displayAvatarURL?.() || undefined
+        });
+}
+
+function buildClearResultEmbed(interaction, result) {
+    if (result.deleted === 0) {
+        return new MessageEmbed()
+            .setColor(config.system.themeColors.warning || "#FEE75C")
+            .setAuthor({
+                name: "ผลการทำความสะอาดห้องแชท",
+                iconURL: interaction.guild?.iconURL() || undefined
+            })
+            .setDescription(
+                result.fetched === 0
+                    ? `> ${config.emojis.warning} ไม่พบข้อความให้ลบในช่องนี้`
+                    : `> ${config.emojis.warning} ลบไม่สำเร็จ **${result.failed}** ข้อความ`
+            );
+    }
+
+    const embed = new MessageEmbed()
+        .setColor(config.system.themeColors.success || "#57F287")
+        .setAuthor({
+            name: "กวาดล้างห้องแชทเรียบร้อย",
+            iconURL: interaction.guild?.iconURL() || undefined
+        })
+        .setDescription(
+            `> ${config.emojis.success} **ลบข้อความสำเร็จทั้งหมด \`${result.deleted.toLocaleString()}\` ข้อความ!**`
+        )
+        .addFields([
+            { name: "⚡ ลบความเร็วสูง (Bulk)", value: `\`${result.bulkDeleted.toLocaleString()}\` ข้อความ`, inline: true },
+            { name: "⏳ ลบรายข้อความ/เก่า", value: `\`${result.individualDeleted.toLocaleString()}\` ข้อความ`, inline: true },
+            { name: "📌 ช่องแชท", value: `<#${interaction.channel.id}>`, inline: true }
+        ]);
+
+    if (result.failed > 0) {
+        embed.addFields([
+            { name: "⚠️ ล้มเหลว", value: `\`${result.failed.toLocaleString()}\` ข้อความ`, inline: true }
+        ]);
+    }
+
+    embed.setFooter({
+        text: `ผู้ดำเนินการ: ${interaction.user.tag}`,
+        iconURL: interaction.user.displayAvatarURL?.() || undefined
+    });
+    embed.setTimestamp();
+    return embed;
+}
+
+function buildClearErrorEmbed(e) {
+    let errorMsg = `> ${config.emojis.error} ลบข้อความไม่สำเร็จ กรุณาลองใหม่`;
+    if (e.code === 50013) {
+        errorMsg = `> ${config.emojis.error} บอทไม่มีสิทธิ์ลบข้อความในช่องนี้`;
+    } else if (e.code === 10003 || e.code === 50001) {
+        errorMsg = `> ${config.emojis.error} บอทไม่สามารถเข้าถึงช่องหรือประวัติข้อความได้`;
+    }
+    return new MessageEmbed()
+        .setColor(config.system.themeColors.error || "#ED4245")
+        .setDescription(errorMsg);
+}
+
 async function handleClear(interaction) {
     if (!await requireMemberPermission(interaction, PermissionFlagsBits.Administrator, `> ⛔ คำสั่งนี้จำเป็นต้องใช้สิทธิ์ผู้ดูแลระบบ (Administrator) เท่านั้น`)) return;
     if (!await requireBotPermission(interaction, [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageMessages], `> ${config.emojis.error} บอทไม่มีสิทธิ์ดูประวัติหรือลบข้อความในช่องนี้`, interaction.channel)) return;
@@ -176,77 +249,11 @@ async function handleClear(interaction) {
     markCommandAccepted(interaction);
     try {
         if (!await safeDefer(interaction, { ephemeral: true })) return null;
-
-        const loadingEmbed = new MessageEmbed()
-            .setColor(config.system.themeColors.info || "#5865F2")
-            .setAuthor({
-                name: "กำลังทำความสะอาดห้องแชท...",
-                iconURL: interaction.guild?.iconURL() || undefined
-            })
-            .setDescription(
-                `> ${config.emojis.broom || "🧹"} กำลังสแกนและลบข้อความเป้าหมาย **${amt.toLocaleString()}** ข้อความ...\n` +
-                `> ${config.emojis.loading || "⏳"} กรุณารอสักครู่ ระบบกำลังเร่งดำเนินการด้วยความเร็วสูงสุด ⚡`
-            )
-            .setFooter({
-                text: `ผู้สั่งการ: ${interaction.user.tag}`,
-                iconURL: interaction.user.displayAvatarURL?.() || undefined
-            });
-        await interaction.editReply({ embeds: [loadingEmbed] }).catch(() => {});
-
+        await interaction.editReply({ embeds: [buildClearLoadingEmbed(interaction, amt)] }).catch(() => {});
         const result = await deleteChannelMessages(interaction.channel, amt);
-        if (result.deleted === 0) {
-            const emptyEmbed = new MessageEmbed()
-                .setColor(config.system.themeColors.warning || "#FEE75C")
-                .setAuthor({
-                    name: "ผลการทำความสะอาดห้องแชท",
-                    iconURL: interaction.guild?.iconURL() || undefined
-                })
-                .setDescription(
-                    result.fetched === 0
-                        ? `> ${config.emojis.warning} ไม่พบข้อความให้ลบในช่องนี้`
-                        : `> ${config.emojis.warning} ลบไม่สำเร็จ **${result.failed}** ข้อความ`
-                );
-            return interaction.editReply({ embeds: [emptyEmbed] });
-        }
-
-        const successEmbed = new MessageEmbed()
-            .setColor(config.system.themeColors.success || "#57F287")
-            .setAuthor({
-                name: "กวาดล้างห้องแชทเรียบร้อย",
-                iconURL: interaction.guild?.iconURL() || undefined
-            })
-            .setDescription(
-                `> ${config.emojis.success} **ลบข้อความสำเร็จทั้งหมด \`${result.deleted.toLocaleString()}\` ข้อความ!**`
-            )
-            .addFields([
-                { name: "⚡ ลบความเร็วสูง (Bulk)", value: `\`${result.bulkDeleted.toLocaleString()}\` ข้อความ`, inline: true },
-                { name: "⏳ ลบรายข้อความ/เก่า", value: `\`${result.individualDeleted.toLocaleString()}\` ข้อความ`, inline: true },
-                { name: "📌 ช่องแชท", value: `<#${interaction.channel.id}>`, inline: true }
-            ]);
-
-        if (result.failed > 0) {
-            successEmbed.addFields([
-                { name: "⚠️ ล้มเหลว", value: `\`${result.failed.toLocaleString()}\` ข้อความ`, inline: true }
-            ]);
-        }
-
-        successEmbed.setFooter({
-            text: `ผู้ดำเนินการ: ${interaction.user.tag}`,
-            iconURL: interaction.user.displayAvatarURL?.() || undefined
-        });
-        successEmbed.setTimestamp();
-        return interaction.editReply({ embeds: [successEmbed] });
+        return interaction.editReply({ embeds: [buildClearResultEmbed(interaction, result)] });
     } catch (e) {
-        let errorMsg = `> ${config.emojis.error} ลบข้อความไม่สำเร็จ กรุณาลองใหม่`;
-        if (e.code === 50013) {
-            errorMsg = `> ${config.emojis.error} บอทไม่มีสิทธิ์ลบข้อความในช่องนี้`;
-        } else if ([10003, 50001].includes(e.code)) {
-            errorMsg = `> ${config.emojis.error} บอทไม่สามารถเข้าถึงช่องหรือประวัติข้อความได้`;
-        }
-        const errorEmbed = new MessageEmbed()
-            .setColor(config.system.themeColors.error || "#ED4245")
-            .setDescription(errorMsg);
-        return interaction.editReply({ embeds: [errorEmbed] });
+        return interaction.editReply({ embeds: [buildClearErrorEmbed(e)] });
     } finally {
         activeClearChannels.delete(interaction.channel.id);
     }

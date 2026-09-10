@@ -177,16 +177,8 @@ function resolveModerationMeta(action, extra = {}) {
     };
 }
 
-function buildModerationReplyEmbed(interaction, target, action, reason, caseNumber, extra = {}) {
-    const meta = resolveModerationMeta(action, extra);
-    const targetTag = target.user?.tag ? ` (\`${target.user.tag}\`)` : "";
-    const lines = [
-        `> ${config.emojis.success || "✅"} **ดำเนินการสำเร็จ!**`,
-        `> ${config.emojis.mod_icon || "📋"} **Case:** #${caseNumber}`,
-        `> ${config.emojis.user || "👤"} **เป้าหมาย:** <@${target.id}>${targetTag}`,
-        `> ${config.emojis.hammer || "⚖️"} **การดำเนินการ:** **${meta.label}**`
-    ];
-
+function buildModerationActionDetailLines(action, extra = {}) {
+    const lines = [];
     if (action === "timeout") {
         const durFormatted = extra.duration?.formatted || (extra.duration?.minutes ? `${extra.duration.minutes} นาที` : null);
         if (durFormatted) {
@@ -198,11 +190,22 @@ function buildModerationReplyEmbed(interaction, target, action, reason, caseNumb
     } else if (action === "ban" && extra.deleteMessageSeconds !== undefined) {
         lines.push(`> 🗑️ **ลบข้อความ:** ${formatDeleteSeconds(extra.deleteMessageSeconds)}`);
     }
+    return lines;
+}
 
-    lines.push(
+function buildModerationReplyEmbed(interaction, target, action, reason, caseNumber, extra = {}) {
+    const meta = resolveModerationMeta(action, extra);
+    const targetTag = target.user?.tag ? ` (\`${target.user.tag}\`)` : "";
+    const detailLines = buildModerationActionDetailLines(action, extra);
+    const lines = [
+        `> ${config.emojis.success || "✅"} **ดำเนินการสำเร็จ!**`,
+        `> ${config.emojis.mod_icon || "📋"} **Case:** #${caseNumber}`,
+        `> ${config.emojis.user || "👤"} **เป้าหมาย:** <@${target.id}>${targetTag}`,
+        `> ${config.emojis.hammer || "⚖️"} **การดำเนินการ:** **${meta.label}**`,
+        ...detailLines,
         `> 👮 **ผู้ลงโทษ:** <@${interaction.user.id}>`,
         `> ${config.emojis.note || "📝"} **เหตุผล:** ${reason}`
-    );
+    ];
 
     const embed = new MessageEmbed()
         .setColor(meta.color)

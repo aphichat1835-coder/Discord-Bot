@@ -337,34 +337,11 @@ function buildSpecialChannelsLine(guild) {
         : "";
 }
 
-function buildServerInfoEmbed(guild, owner, memberCounts, extra = {}) {
-    const channels = channelCounts(guild);
-    const ownerId = owner?.id || guild.ownerId;
+function buildServerGeneralField(guild, ownerId, memberCounts) {
+    const ownerValue = ownerId ? `<@${ownerId}>\n` + code(ownerId) : "ไม่ทราบ";
     const humanCount = formatCount(memberCounts.human, "ประเมินไม่ได้");
     const botCount = formatCount(memberCounts.bots, "ประเมินไม่ได้");
     const totalMembers = formatCount(memberCounts.total ?? guild.memberCount);
-    const roleCount = Math.max(0, Number(guild.roles?.cache?.size || 0) - 1);
-    const emojiCount = Number(guild.emojis?.cache?.size || 0);
-    const stickerCount = Number(guild.stickers?.cache?.size || 0);
-    const totalChannels = (channels.text || 0) + (channels.voice || 0) + (channels.category || 0) +
-        (channels.announcement || 0) + (channels.stage || 0) + (channels.forum || 0) +
-        (channels.media || 0) + (channels.other || 0);
-
-    const ownerValue = ownerId ? `<@${ownerId}>\n` + code(ownerId) : "ไม่ทราบ";
-    const vanityValue = guild.vanityURLCode
-        ? markdownText("discord.gg/" + guild.vanityURLCode, "-", 100)
-        : "ไม่มี";
-    const description = guild.description
-        ? `> ${markdownText(guild.description, "", 300)}\n\n`
-        : "";
-
-    const maxUploadMb = [25, 25, 50, 100][Number(guild.premiumTier) || 0] || 25;
-    const maxBitrateKbps = Math.round(Number(guild.maximumBitrate || 96000) / 1000);
-    const autoModSummary = extra.autoModSummary || "ไม่ได้เปิดใช้";
-
-    const otherChannelsLine = buildOtherChannelsLine(channels);
-    const specialChannelsLine = buildSpecialChannelsLine(guild);
-
     const botBreakdown = (memberCounts.verifiedBots !== null && memberCounts.unverifiedBots !== null)
         ? ` (ยืนยันแล้ว: **${formatCount(memberCounts.verifiedBots)}** • ยังไม่ยืนยัน: **${formatCount(memberCounts.unverifiedBots)}**)`
         : "";
@@ -374,47 +351,85 @@ function buildServerInfoEmbed(guild, owner, memberCounts, extra = {}) {
         `> • 👥 คนจริง: **${humanCount}** คน\n` +
         `> • 🤖 บอท: **${botCount}** ตัว${botBreakdown}`;
 
+    return {
+        name: "🏠 ข้อมูลทั่วไป & สมาชิก",
+        value:
+            `> **เจ้าของ:** ${ownerValue}\n` +
+            `> **วันที่สร้าง:** ${discordTimestamp(guild.createdTimestamp, "F")} (${discordTimestamp(guild.createdTimestamp, "R")})\n` +
+            `> **ภาษาเริ่มต้น:** **${markdownText(guild.preferredLocale || "ไม่ทราบ", "ไม่ทราบ", 40)}**\n` +
+            memberLines,
+        inline: false
+    };
+}
+
+function buildServerChannelsAndResourcesField(guild, channels) {
+    const roleCount = Math.max(0, Number(guild.roles?.cache?.size || 0) - 1);
+    const emojiCount = Number(guild.emojis?.cache?.size || 0);
+    const stickerCount = Number(guild.stickers?.cache?.size || 0);
+    const totalChannels = (channels.text || 0) + (channels.voice || 0) + (channels.category || 0) +
+        (channels.announcement || 0) + (channels.stage || 0) + (channels.forum || 0) +
+        (channels.media || 0) + (channels.other || 0);
+    const otherChannelsLine = buildOtherChannelsLine(channels);
+
+    return {
+        name: "🗂️ โครงสร้างช่อง & ทรัพยากร",
+        value:
+            `> **ช่องแชท:** ทั้งหมด **${formatCount(totalChannels)}** (ข้อความ **${formatCount(channels.text)}** • เสียง **${formatCount(channels.voice)}** • หมวดหมู่ **${formatCount(channels.category)}**)\n` +
+            otherChannelsLine +
+            `> **ทรัพยากร:** ยศ **${formatCount(roleCount)}** • อีโมจิ **${formatCount(emojiCount)}** • สติกเกอร์ **${formatCount(stickerCount)}**`,
+        inline: false
+    };
+}
+
+function buildServerSecurityAndBoostField(guild, extra = {}) {
+    const vanityValue = guild.vanityURLCode
+        ? markdownText("discord.gg/" + guild.vanityURLCode, "-", 100)
+        : "ไม่มี";
+    const maxUploadMb = [25, 25, 50, 100][Number(guild.premiumTier) || 0] || 25;
+    const maxBitrateKbps = Math.round(Number(guild.maximumBitrate || 96000) / 1000);
+    const autoModSummary = extra.autoModSummary || "ไม่ได้เปิดใช้";
+
+    return {
+        name: "🛡️ ความปลอดภัย & Boost",
+        value:
+            `> **ความปลอดภัย:** ระดับยืนยัน **${verificationLevelLabel(guild.verificationLevel)}**\n` +
+            `> **ตัวกรองสื่อ:** **${contentFilterLabel(guild.explicitContentFilter)}** • **2FA ผู้ดูแล:** **${Number(guild.mfaLevel) === 1 ? "บังคับใช้" : "ไม่ได้บังคับ"}**\n` +
+            `> **กฎ AutoMod:** ${autoModSummary}\n` +
+            `> **Boost:** ${boostTierLabel(guild.premiumTier, guild.premiumSubscriptionCount)} (Vanity: **${vanityValue}**)\n` +
+            `> **ขีดจำกัด:** อัปโหลดสูงสุด **${maxUploadMb} MB** • เสียงสูงสุด **${maxBitrateKbps} kbps**`,
+        inline: false
+    };
+}
+
+function buildServerSystemAndFeaturesField(guild) {
+    const specialChannelsLine = buildSpecialChannelsLine(guild);
+    return {
+        name: "🧭 ช่องระบบ & คุณสมบัติ",
+        value:
+            `> **ช่องระบบ:** กฎ ${channelMention(guild.rulesChannelId)} • ข้อความระบบ ${channelMention(guild.systemChannelId)}\n` +
+            `> **ช่อง AFK:** ${channelMention(guild.afkChannelId)} • ย้ายเมื่อเงียบ **${formatDuration(guild.afkTimeout || 0)}**\n` +
+            specialChannelsLine +
+            `> **คุณสมบัติพิเศษ:** ${guildFeatureLabels(guild.features)}`,
+        inline: false
+    };
+}
+
+function buildServerInfoEmbed(guild, owner, memberCounts, extra = {}) {
+    const channels = channelCounts(guild);
+    const ownerId = owner?.id || guild.ownerId;
+    const description = guild.description
+        ? `> ${markdownText(guild.description, "", 300)}\n\n`
+        : "";
+
     const embed = new MessageEmbed()
         .setColor(guild.available === false ? config.system.themeColors.warning : config.system.themeColors.primary)
         .setTitle(`📊 ข้อมูลเซิร์ฟเวอร์ • ${safeText(guild.name, "ไม่ทราบชื่อ", 180)}`)
         .setDescription(`${description}ข้อมูลด้านล่างมาจาก Discord และข้อมูลชั่วคราวที่บอทมองเห็นในขณะเรียกคำสั่ง`)
         .addFields(
-            {
-                name: "🏠 ข้อมูลทั่วไป & สมาชิก",
-                value:
-                    `> **เจ้าของ:** ${ownerValue}\n` +
-                    `> **วันที่สร้าง:** ${discordTimestamp(guild.createdTimestamp, "F")} (${discordTimestamp(guild.createdTimestamp, "R")})\n` +
-                    `> **ภาษาเริ่มต้น:** **${markdownText(guild.preferredLocale || "ไม่ทราบ", "ไม่ทราบ", 40)}**\n` +
-                    memberLines,
-                inline: false
-            },
-            {
-                name: "🗂️ โครงสร้างช่อง & ทรัพยากร",
-                value:
-                    `> **ช่องแชท:** ทั้งหมด **${formatCount(totalChannels)}** (ข้อความ **${formatCount(channels.text)}** • เสียง **${formatCount(channels.voice)}** • หมวดหมู่ **${formatCount(channels.category)}**)\n` +
-                    otherChannelsLine +
-                    `> **ทรัพยากร:** ยศ **${formatCount(roleCount)}** • อีโมจิ **${formatCount(emojiCount)}** • สติกเกอร์ **${formatCount(stickerCount)}**`,
-                inline: false
-            },
-            {
-                name: "🛡️ ความปลอดภัย & Boost",
-                value:
-                    `> **ความปลอดภัย:** ระดับยืนยัน **${verificationLevelLabel(guild.verificationLevel)}**\n` +
-                    `> **ตัวกรองสื่อ:** **${contentFilterLabel(guild.explicitContentFilter)}** • **2FA ผู้ดูแล:** **${Number(guild.mfaLevel) === 1 ? "บังคับใช้" : "ไม่ได้บังคับ"}**\n` +
-                    `> **กฎ AutoMod:** ${autoModSummary}\n` +
-                    `> **Boost:** ${boostTierLabel(guild.premiumTier, guild.premiumSubscriptionCount)} (Vanity: **${vanityValue}**)\n` +
-                    `> **ขีดจำกัด:** อัปโหลดสูงสุด **${maxUploadMb} MB** • เสียงสูงสุด **${maxBitrateKbps} kbps**`,
-                inline: false
-            },
-            {
-                name: "🧭 ช่องระบบ & คุณสมบัติ",
-                value:
-                    `> **ช่องระบบ:** กฎ ${channelMention(guild.rulesChannelId)} • ข้อความระบบ ${channelMention(guild.systemChannelId)}\n` +
-                    `> **ช่อง AFK:** ${channelMention(guild.afkChannelId)} • ย้ายเมื่อเงียบ **${formatDuration(guild.afkTimeout || 0)}**\n` +
-                    specialChannelsLine +
-                    `> **คุณสมบัติพิเศษ:** ${guildFeatureLabels(guild.features)}`,
-                inline: false
-            }
+            buildServerGeneralField(guild, ownerId, memberCounts),
+            buildServerChannelsAndResourcesField(guild, channels),
+            buildServerSecurityAndBoostField(guild, extra),
+            buildServerSystemAndFeaturesField(guild)
         )
         .setFooter({ text: `เรียกดูโดย ${safeText(guild.members?.me?.user?.tag || "Phomueangtai", "Phomueangtai", 120)} • ข้อมูลอาจเปลี่ยนหลังเรียกคำสั่ง` })
         .setTimestamp();
@@ -687,70 +702,87 @@ function buildUserInfoActionRow(user, member) {
     return buttons.length > 0 ? [new MessageActionRow().addComponents(buttons)] : [];
 }
 
-function buildUserInfoEmbed(interaction, user, member) {
-    const age = accountAgeSummary(user);
-    const displayName = user.globalName || member?.displayName || user.username;
-    const tag = user.discriminator && user.discriminator !== "0" ? user.tag : `@${user.username}`;
+function buildUserAccountDetailsField(user, age) {
+    return {
+        name: "🪪 1. ข้อมูลบัญชี & อายุ (Account Details)",
+        value:
+            `• User ID: ${code(user.id)}\n` +
+            `• ประเภท: **${userTypeDetailLabel(user)}**\n` +
+            `• วันสร้างบัญชี: ${discordTimestamp(user.createdTimestamp, "F")} (${discordTimestamp(user.createdTimestamp, "R")})\n` +
+            `• อายุบัญชี: **${formatCount(age.ageDays)} วัน** • สถานะ: **${age.label}**\n` +
+            `• Public Badges: ${publicBadges(user)}`,
+        inline: false
+    };
+}
+
+function buildUserServerProfileField(member, displayColor) {
     const joined = member?.joinedTimestamp
         ? `${discordTimestamp(member.joinedTimestamp, "F")} (${discordTimestamp(member.joinedTimestamp, "R")})`
         : "ไม่พบข้อมูลวันที่เข้าเซิร์ฟเวอร์";
-    const displayColor = member?.displayHexColor && member.displayHexColor !== "#000000"
-        ? member.displayHexColor
-        : (user.hexAccentColor || "ไม่มีสีประจำยศ");
-    const profileIcon = user.bot ? "🤖" : "🧑";
-    const userMention = user.id ? `<@${user.id}>` : "";
     const joinPos = getJoinPosition(member);
     const guildMemberCount = member?.guild?.memberCount || member?.guild?.members?.cache?.size || 0;
     const joinOrderStr = joinPos
         ? `คนที่ **#${joinPos}** (จากสมาชิก ${formatCount(guildMemberCount)} คน)`
         : "ไม่ทราบลำดับ";
-    const rolesCount = Math.max(0, Number(member?.roles?.cache?.size || 1) - 1);
 
+    return {
+        name: "🏠 2. ข้อมูลในเซิร์ฟเวอร์นี้ (Server Profile)",
+        value:
+            `• ชื่อเล่น: **${markdownText(member?.nickname || "ไม่ได้ตั้งชื่อเล่น", "ไม่ได้ตั้ง", 100)}**\n` +
+            `• เข้าร่วมเมื่อ: ${joined}\n` +
+            `• ลำดับการเข้าร่วม: ${joinOrderStr}\n` +
+            `• โทนสีประจำตัว/ยศ: **${displayColor}**`,
+        inline: false
+    };
+}
+
+function buildUserRolesAndPermsField(member) {
+    const rolesCount = Math.max(0, Number(member?.roles?.cache?.size || 1) - 1);
+    return {
+        name: "🛡️ 3. ยศและสิทธิ์ในเซิร์ฟเวอร์ (Roles & Permissions)",
+        value:
+            `• บทบาทหน้าที่: **${memberStaffLabel(member)}**\n` +
+            `• ยศสูงสุด: ${highestRoleLabel(member)}\n` +
+            `• ยศทั้งหมด (${formatCount(rolesCount)}): ${visibleRoleSummary(member)}\n` +
+            `• สิทธิ์สำคัญ: ${importantPermissions(member)}`,
+        inline: false
+    };
+}
+
+function buildUserStatusAndActivityField(member) {
     const timeoutUntil = Number(member?.communicationDisabledUntilTimestamp || 0);
     const timeoutStr = timeoutUntil > Date.now() ? `ถูกหมดเวลาถึง ${discordTimestamp(timeoutUntil, "F")}` : "ไม่ได้ถูกหมดเวลา";
     const pendingStr = member?.pending ? "ยังไม่ผ่าน Membership Screening" : "ผ่านการคัดกรองแล้ว / ไม่ได้เปิดใช้";
+
+    return {
+        name: "🧭 4. สถานะสมาชิก & กิจกรรม (Member Status)",
+        value:
+            `• สถานะการ Boost: ${memberBoostDetail(member)}\n` +
+            `• การหมดเวลา (Timeout): ${timeoutStr}\n` +
+            `• Membership Screening: ${pendingStr}`,
+        inline: false
+    };
+}
+
+function buildUserInfoEmbed(interaction, user, member) {
+    const age = accountAgeSummary(user);
+    const displayName = user.globalName || member?.displayName || user.username;
+    const tag = user.discriminator && user.discriminator !== "0" ? user.tag : `@${user.username}`;
+    const displayColor = member?.displayHexColor && member.displayHexColor !== "#000000"
+        ? member.displayHexColor
+        : (user.hexAccentColor || "ไม่มีสีประจำยศ");
+    const profileIcon = user.bot ? "🤖" : "🧑";
+    const userMention = user.id ? `<@${user.id}>` : "";
 
     const embed = new MessageEmbed()
         .setColor(age.color)
         .setTitle(`👤 ข้อมูลสมาชิก • ${safeText(displayName, "ไม่ทราบชื่อ", 180)}`)
         .setDescription(`${profileIcon} **${markdownText(displayName, "ไม่ทราบชื่อ", 100)}** • ${markdownText(tag, "ไม่ทราบ", 100)}\n${userMention}`)
         .addFields(
-            {
-                name: "🪪 1. ข้อมูลบัญชี & อายุ (Account Details)",
-                value:
-                    `• User ID: ${code(user.id)}\n` +
-                    `• ประเภท: **${userTypeDetailLabel(user)}**\n` +
-                    `• วันสร้างบัญชี: ${discordTimestamp(user.createdTimestamp, "F")} (${discordTimestamp(user.createdTimestamp, "R")})\n` +
-                    `• อายุบัญชี: **${formatCount(age.ageDays)} วัน** • สถานะ: **${age.label}**\n` +
-                    `• Public Badges: ${publicBadges(user)}`,
-                inline: false
-            },
-            {
-                name: "🏠 2. ข้อมูลในเซิร์ฟเวอร์นี้ (Server Profile)",
-                value:
-                    `• ชื่อเล่น: **${markdownText(member?.nickname || "ไม่ได้ตั้งชื่อเล่น", "ไม่ได้ตั้ง", 100)}**\n` +
-                    `• เข้าร่วมเมื่อ: ${joined}\n` +
-                    `• ลำดับการเข้าร่วม: ${joinOrderStr}\n` +
-                    `• โทนสีประจำตัว/ยศ: **${displayColor}**`,
-                inline: false
-            },
-            {
-                name: "🛡️ 3. ยศและสิทธิ์ในเซิร์ฟเวอร์ (Roles & Permissions)",
-                value:
-                    `• บทบาทหน้าที่: **${memberStaffLabel(member)}**\n` +
-                    `• ยศสูงสุด: ${highestRoleLabel(member)}\n` +
-                    `• ยศทั้งหมด (${formatCount(rolesCount)}): ${visibleRoleSummary(member)}\n` +
-                    `• สิทธิ์สำคัญ: ${importantPermissions(member)}`,
-                inline: false
-            },
-            {
-                name: "🧭 4. สถานะสมาชิก & กิจกรรม (Member Status)",
-                value:
-                    `• สถานะการ Boost: ${memberBoostDetail(member)}\n` +
-                    `• การหมดเวลา (Timeout): ${timeoutStr}\n` +
-                    `• Membership Screening: ${pendingStr}`,
-                inline: false
-            }
+            buildUserAccountDetailsField(user, age),
+            buildUserServerProfileField(member, displayColor),
+            buildUserRolesAndPermsField(member),
+            buildUserStatusAndActivityField(member)
         )
         .setFooter({ text: `เรียกดูโดย ${safeText(interaction.user?.tag || interaction.user?.username, "สมาชิก", 120)} • ข้อมูลเรียลไทม์` })
         .setTimestamp();
@@ -896,6 +928,41 @@ function buildPingEmbed(stats) {
 // ════════════════════════════════════════════════════════════════════════════
 //  🏓  PING (เฟส 4 — Shard & System Dashboard, Owner Only)
 // ════════════════════════════════════════════════════════════════════════════
+async function measureMongoPing() {
+    try {
+        if (mongoose.connection?.readyState === 1 && mongoose.connection?.db) {
+            const mongoStart = Date.now();
+            await mongoose.connection.db.admin().ping();
+            return Date.now() - mongoStart;
+        }
+    } catch {
+        return null;
+    }
+    return null;
+}
+
+function collectHostResourceStats(cpuStart, cpuEnd, elapsedMicroseconds) {
+    const mem = process.memoryUsage();
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    const usedMem = Math.max(0, totalMem - freeMem);
+    const hostUsedPercent = totalMem > 0 ? (usedMem / totalMem) * 100 : 0;
+    const cpuCores = os.cpus()?.length || 1;
+
+    return {
+        rssMB: mem.rss / 1024 / 1024,
+        heapUsedMB: mem.heapUsed / 1024 / 1024,
+        heapTotalMB: mem.heapTotal / 1024 / 1024,
+        externalMB: mem.external / 1024 / 1024,
+        hostTotalGB: totalMem / 1024 / 1024 / 1024,
+        hostUsedGB: usedMem / 1024 / 1024 / 1024,
+        hostFreeGB: freeMem / 1024 / 1024 / 1024,
+        hostUsedPercent,
+        cpuCores,
+        cpuPercent: cpuPercent(cpuStart, cpuEnd, elapsedMicroseconds)
+    };
+}
+
 async function handlePing(interaction, client, sessionManager) {
     markCommandAccepted(interaction);
     if (!isConfiguredOwner(config, interaction.user?.id)) {
@@ -912,26 +979,10 @@ async function handlePing(interaction, client, sessionManager) {
     const elapsedMicroseconds = Number(process.hrtime.bigint() - wallStart) / 1000;
     const interactionLatency = Math.max(0, Number(sent?.createdTimestamp ?? Date.now()) - Number(interaction.createdTimestamp ?? Date.now()));
     const websocketLatency = Number(client?.ws?.ping);
-
-    let mongoPingMs = null;
-    try {
-        if (mongoose.connection?.readyState === 1 && mongoose.connection?.db) {
-            const mongoStart = Date.now();
-            await mongoose.connection.db.admin().ping();
-            mongoPingMs = Date.now() - mongoStart;
-        }
-    } catch {
-        mongoPingMs = null;
-    }
+    const mongoPingMs = await measureMongoPing();
 
     const startedAt = Number(sessionManager?.systemMetrics?.uptime || Date.now());
-    const mem = process.memoryUsage();
-    const totalMem = os.totalmem();
-    const freeMem = os.freemem();
-    const usedMem = Math.max(0, totalMem - freeMem);
-    const hostUsedPercent = totalMem > 0 ? (usedMem / totalMem) * 100 : 0;
-    const cpuCores = os.cpus()?.length || 1;
-
+    const hostStats = collectHostResourceStats(cpuStart, cpuEnd, elapsedMicroseconds);
     const guildCount = client?.guilds?.cache?.size || 0;
     const reportedMemberCount = client?.guilds?.cache?.reduce?.((total, guild) => total + (Number(guild?.memberCount) || 0), 0) || 0;
     const metrics = sessionManager?.getSystemMetrics?.() || sessionManager?.systemMetrics || {};
@@ -945,16 +996,7 @@ async function handlePing(interaction, client, sessionManager) {
         shardCount: Number(client?.ws?.shards?.size || 1),
         startedAt,
         uptimeSeconds: Math.max(0, Math.floor((Date.now() - startedAt) / 1000)),
-        rssMB: mem.rss / 1024 / 1024,
-        heapUsedMB: mem.heapUsed / 1024 / 1024,
-        heapTotalMB: mem.heapTotal / 1024 / 1024,
-        externalMB: mem.external / 1024 / 1024,
-        hostTotalGB: totalMem / 1024 / 1024 / 1024,
-        hostUsedGB: usedMem / 1024 / 1024 / 1024,
-        hostFreeGB: freeMem / 1024 / 1024 / 1024,
-        hostUsedPercent,
-        cpuCores,
-        cpuPercent: cpuPercent(cpuStart, cpuEnd, elapsedMicroseconds),
+        ...hostStats,
         guildCount,
         reportedMemberCount,
         sessions: collectSessionStats(sessionManager),

@@ -813,7 +813,11 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
             console.log(`[WORKER] ⚠️ Voice dropped for ${sanitizeLogText(sessionId)}. Attempt ${reconnectAttempts}/${CONFIG.MAX_RECONNECT_ATTEMPTS} (Hibernate cycle ${hibernateCycle}/2)`);
 
             if (reconnectAttempts >= CONFIG.MAX_RECONNECT_ATTEMPTS) {
-                await handleHibernateTransition(sessionId, tokenHash, currentSession, hibernateCycle);
+                if (hibernateCycle < 2) {
+                    await handleHibernateTransition(sessionId, tokenHash, currentSession, hibernateCycle);
+                    return;
+                }
+                await handleMaxReconnectReached();
                 return;
             }
 
