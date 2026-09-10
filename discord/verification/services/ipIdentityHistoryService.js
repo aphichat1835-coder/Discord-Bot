@@ -310,29 +310,7 @@ function incrementMigrationCounter(counter, category) {
     });
 }
 
-async function migrateLegacyLink(link, models, now) {
-    const summary = {
-        scanned: { users: 0, devices: 0, roles: 0 },
-        written: { users: 0, devices: 0, roles: 0 },
-        failed: 0,
-        failures: []
-    };
-    const recordFailure = (category, index, error) => {
-        summary.failed++;
-        if (summary.failures.length < MAX_MIGRATION_FAILURES) {
-            summary.failures.push({ category, index, code: migrationErrorCode(error) });
-        }
-    };
-    const write = async (category, index, operation) => {
-        incrementMigrationCounter(summary.scanned, category);
-        try {
-            await operation();
-            incrementMigrationCounter(summary.written, category);
-        } catch (error) {
-            recordFailure(category, index, error);
-        }
-    };
-
+async function migrateLegacyUsers(link, models, now, summary, write, recordFailure) {
     for (const [index, user] of (link.users || []).entries()) {
         if (!user?.userId) {
             summary.scanned.users++;
@@ -345,6 +323,9 @@ async function migrateLegacyLink(link, models, now) {
             userId: String(user.userId)
         }, { $setOnInsert: { ...user, guildId: link.guildId, ipHash: link.ipHash, createdAt: now, updatedAt: now } }, { upsert: true }));
     }
+}
+
+async function migrateLegacyDevices(link, models, now, summary, write, recordFailure) {
     for (const [index, device] of (link.deviceFingerprints || []).entries()) {
         if (!device?.fingerprintHash || !device?.userId) {
             summary.scanned.devices++;
@@ -358,6 +339,9 @@ async function migrateLegacyLink(link, models, now) {
             userId: String(device.userId)
         }, { $setOnInsert: { ...device, guildId: link.guildId, ipHash: link.ipHash, createdAt: now, updatedAt: now } }, { upsert: true }));
     }
+}
+
+async function migrateLegacyRoles(link, models, now, summary, write, recordFailure) {
     for (const [index, role] of (link.roleSnapshots || []).entries()) {
         if (!role?.userId) {
             summary.scanned.roles++;
@@ -385,6 +369,35 @@ async function migrateLegacyLink(link, models, now) {
             }
         }, { upsert: true }));
     }
+}
+
+async function migrateLegacyLink(link, models, now) {
+    const summary = {
+        scanned: { users: 0, devices: 0, roles: 0 },
+        written: { users: 0, devices: 0, roles: 0 },
+        failed: 0,
+        failures: []
+    };
+    const recordFailure = (category, index, error) => {
+        summary.failed++;
+        if (summary.failures.length < MAX_MIGRATION_FAILURES) {
+            summary.failures.push({ category, index, code: migrationErrorCode(error) });
+        }
+    };
+    const write = async (category, index, operation) => {
+        incrementMigrationCounter(summary.scanned, category);
+        try {
+            await operation();
+            incrementMigrationCounter(summary.written, category);
+        } catch (error) {
+            recordFailure(category, index, error);
+        }
+    };
+
+    await migrateLegacyUsers(link, models, now, summary, write, recordFailure);
+    await migrateLegacyDevices(link, models, now, summary, write, recordFailure);
+    await migrateLegacyRoles(link, models, now, summary, write, recordFailure);
+
     return { ...summary, complete: summary.failed === 0 };
 }
 
@@ -541,6 +554,28 @@ async function withMigrationTransaction(VerifyLogModel, operation, transactionRu
     }
 }
 
+async function migrateSingleVerifyLog(log, VerifyLogModel, models, now, transactionRunner) {
+    return withMigrationTransaction(VerifyLogModel, async session => {
+        const marker = await VerifyLogModel.updateOne({
+            _id: log._id,
+            ipHistoryMigrationVersion: { $ne: HISTORY_MIGRATION_VERSION }
+        }, {
+            $set: { ipHistoryMigrationVersion: HISTORY_MIGRATION_VERSION, ipHistoryMigratedAt: now }
+        }, transactionOptions(session));
+        if (Number(marker?.matchedCount ?? marker?.modifiedCount ?? 0) === 0) {
+            return { alreadyMigrated: true, copied: false };
+        }
+        return { alreadyMigrated: false, copied: await backfillVerifyLog(log, models, now, session) };
+    }, transactionRunner);
+}
+
+async function updateTouchedLinkCounts(touched, models, now) {
+    for (const item of touched.values()) {
+        const uniqueUsers = await models.UserHistory.countDocuments(item);
+        await models.IpIdentityLink.updateOne(item, { $set: { uniqueUsers, updatedAt: now } });
+    }
+}
+
 async function migrateVerifyLogHistory(options = {}) {
     const models = defaultModels(options);
     const VerifyLogModel = options.VerifyLogModel || VerifyLog;
@@ -554,19 +589,9 @@ async function migrateVerifyLogHistory(options = {}) {
     const touched = new Map();
     let migrated = 0;
     let skipped = 0;
+
     for (const log of logs) {
-        const outcome = await withMigrationTransaction(VerifyLogModel, async session => {
-            const marker = await VerifyLogModel.updateOne({
-                _id: log._id,
-                ipHistoryMigrationVersion: { $ne: HISTORY_MIGRATION_VERSION }
-            }, {
-                $set: { ipHistoryMigrationVersion: HISTORY_MIGRATION_VERSION, ipHistoryMigratedAt: now }
-            }, transactionOptions(session));
-            if (Number(marker?.matchedCount ?? marker?.modifiedCount ?? 0) === 0) {
-                return { alreadyMigrated: true, copied: false };
-            }
-            return { alreadyMigrated: false, copied: await backfillVerifyLog(log, models, now, session) };
-        }, transactionRunner);
+        const outcome = await migrateSingleVerifyLog(log, VerifyLogModel, models, now, transactionRunner);
         if (outcome.copied) {
             const key = `${log.guildId}\u0000${log.ipInfo.ipHash}`;
             touched.set(key, { guildId: log.guildId, ipHash: log.ipInfo.ipHash });
@@ -575,10 +600,9 @@ async function migrateVerifyLogHistory(options = {}) {
         }
         if (!outcome.alreadyMigrated) migrated++;
     }
-    for (const item of touched.values()) {
-        const uniqueUsers = await models.UserHistory.countDocuments(item);
-        await models.IpIdentityLink.updateOne(item, { $set: { uniqueUsers, updatedAt: now } });
-    }
+
+    await updateTouchedLinkCounts(touched, models, now);
+
     return {
         scanned: logs.length,
         migrated,
