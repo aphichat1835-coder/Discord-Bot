@@ -719,6 +719,23 @@ function applyForcedOAuthTokenStorage(updateSet, tokenData) {
     updateSet.oauth = discord.prepareTokenStorage(tokenData);
 }
 
+function buildMemberSnapshot(memberInfo, profileId, guildId) {
+    if (!memberInfo) return null;
+    return {
+        guildId,
+        nick: memberInfo.nick || null,
+        roles: memberInfo.roles || [],
+        roleCount: (memberInfo.roles || []).length,
+        joinedAt: memberInfo.joined_at || null,
+        pending: !!memberInfo.pending,
+        avatar: memberInfo.avatar || null,
+        avatarUrl: getMemberAvatarUrl(profileId, guildId, memberInfo.avatar),
+        flags: memberInfo.flags || 0,
+        communicationDisabledUntil: memberInfo.communication_disabled_until || null,
+        snapshot: compactMemberInfo(memberInfo)
+    };
+}
+
 function buildDiscordSnapshot(profile, connections, memberInfo, stateObj, extra = {}) {
     return {
         userId: profile.id,
@@ -752,20 +769,7 @@ function buildDiscordSnapshot(profile, connections, memberInfo, stateObj, extra 
         callbackStateMode: stateObj?.mode || null,
         panelRevision: stateObj?.panelRevision || null,
 
-        member: memberInfo ? {
-            guildId: stateObj.guildId,
-            nick: memberInfo.nick || null,
-            roles: memberInfo.roles || [],
-            roleCount: (memberInfo.roles || []).length,
-            joinedAt: memberInfo.joined_at || null,
-            pending: !!memberInfo.pending,
-            avatar: memberInfo.avatar || null,
-            avatarUrl: getMemberAvatarUrl(profile.id, stateObj.guildId, memberInfo.avatar),
-            flags: memberInfo.flags || 0,
-            communicationDisabledUntil: memberInfo.communication_disabled_until || null,
-            snapshot: compactMemberInfo(memberInfo)
-        } : null,
-
+        member: buildMemberSnapshot(memberInfo, profile.id, stateObj.guildId),
         profileSnapshot: compactDiscordProfile(profile),
 
         ...extra
@@ -1133,6 +1137,149 @@ function rollbackStoredSnapshots(userId, storedSnapshots) {
     });
 }
 
+async function verifyStagedSnapshots({ profileUserId, storedSnapshots, fetchMetadata, memberInfo, guildId }) {
+    if (!isCompleteSnapshotSet(storedSnapshots)) {
+        const activeState = await loadOAuthSnapshotState(profileUserId).catch(() => null);
+        return {
+            ok: false,
+            fallback: {
+                saved: false,
+                snapshotVersion: activeSnapshotVersion(activeState),
+                attemptedSnapshotVersion: storedSnapshots.version,
+                snapshotRefs: activeState?.snapshotRefs || null,
+                snapshotWrites: storedSnapshots
+            }
+        };
+    }
+
+    const stagedRefs = stagedSnapshotRefs(storedSnapshots);
+    const reconstructed = await snapshotStore.loadOAuthSnapshots({
+        userId: profileUserId,
+        refs: stagedRefs,
+        guildId
+    }).catch(() => null);
+    const reconstructionComplete = Boolean(
+        reconstructed?.profile &&
+        (fetchMetadata.connectionsFetchFailed || Array.isArray(reconstructed.connections)) &&
+        (fetchMetadata.guildsFetchFailed || Array.isArray(reconstructed.guilds)) &&
+        (!memberInfo || reconstructed.member)
+    );
+    if (!reconstructionComplete) {
+        const rollback = await rollbackStoredSnapshots(profileUserId, storedSnapshots);
+        return {
+            ok: false,
+            fallback: {
+                saved: false,
+                code: "snapshot_reconstruction_failed",
+                snapshotVersion: null,
+                attemptedSnapshotVersion: storedSnapshots.version,
+                snapshotRefs: null,
+                snapshotWrites: storedSnapshots,
+                rollback
+            }
+        };
+    }
+    return { ok: true, stagedRefs };
+}
+
+function assembleActivatedSnapshotMeta({
+    previousMeta,
+    fetchMetadata,
+    connections,
+    connectionSnapshot,
+    guilds,
+    guildSnapshot,
+    memberInfo,
+    nowMs,
+    storedSnapshots,
+    safeAttemptStartedAt
+}) {
+    let snapshotMeta = buildSnapshotMetaUpdate(
+        previousMeta,
+        fetchMetadata,
+        {
+            connectionsSource: connections,
+            connectionsStored: connectionSnapshot,
+            guildsSource: guilds,
+            guildsStored: guildSnapshot
+        },
+        memberInfo,
+        nowMs
+    );
+    snapshotMeta = applyStoredSnapshotMeta(snapshotMeta, "connections", storedSnapshots.connections);
+    snapshotMeta = applyStoredSnapshotMeta(snapshotMeta, "guilds", storedSnapshots.guilds);
+    snapshotMeta = applyStoredSnapshotMeta(snapshotMeta, "member", storedSnapshots.member);
+    snapshotMeta = applyStoredSnapshotMeta(snapshotMeta, "profile", storedSnapshots.profile);
+    snapshotMeta = preserveFailedMemberAttempt(snapshotMeta, previousMeta, fetchMetadata, nowMs);
+    return {
+        ...snapshotMeta,
+        activation: {
+            attemptStartedAt: safeAttemptStartedAt,
+            snapshotVersion: storedSnapshots.version,
+            activatedAt: nowMs
+        }
+    };
+}
+
+async function commitOAuthUserActivation({
+    profileUserId,
+    updateSet,
+    safeAttemptStartedAt,
+    nowMs,
+    existing,
+    storedSnapshots
+}) {
+    try {
+        applySnapshotBudgetGuard(updateSet);
+        const activationFilter = {
+            'discord.userId': profileUserId,
+            $or: [
+                { 'snapshotMeta.activation.attemptStartedAt': { $exists: false } },
+                { 'snapshotMeta.activation.attemptStartedAt': { $lte: safeAttemptStartedAt } }
+            ]
+        };
+        const activated = await OAuthUser.findOneAndUpdate(
+            activationFilter,
+            {
+                $set: updateSet,
+                $setOnInsert: { createdAt: nowMs }
+            },
+            {
+                upsert: !existing,
+                returnDocument: "after"
+            }
+        );
+        if (!activated) {
+            const stale = new Error("A newer OAuth snapshot attempt is already active");
+            stale.code = "snapshot_activation_stale";
+            throw stale;
+        }
+        return { ok: true, activated };
+    } catch (err) {
+        const duplicateDiscordUser = Number(err?.code) === 11000 && (
+            err?.keyPattern?.["discord.userId"] || err?.keyValue?.["discord.userId"]
+        );
+        if (duplicateDiscordUser) err.code = "snapshot_activation_stale";
+        const rollback = await rollbackStoredSnapshots(profileUserId, storedSnapshots);
+        console.error("[VERIFY] saveOAuthUser core failed:", JSON.stringify(sanitizeSideEffectError(err)));
+        const active = err?.code === "snapshot_activation_stale"
+            ? await loadOAuthSnapshotState(profileUserId).catch(() => null)
+            : null;
+        return {
+            ok: false,
+            fallback: {
+                saved: false,
+                code: err?.code || "oauth_user_write_failed",
+                snapshotVersion: activeSnapshotVersion(active || existing),
+                attemptedSnapshotVersion: storedSnapshots.version,
+                snapshotRefs: active?.snapshotRefs || existing?.snapshotRefs || null,
+                snapshotWrites: storedSnapshots,
+                rollback
+            }
+        };
+    }
+}
+
 async function saveOAuthUserSafe({
     profile,
     tokenData,
@@ -1167,41 +1314,18 @@ async function saveOAuthUserSafe({
                 fetchMetadata,
                 now: nowMs
             });
-            if (!isCompleteSnapshotSet(storedSnapshots)) {
-                const activeState = await loadOAuthSnapshotState(profileUserId).catch(() => null);
-                return {
-                    saved: false,
-                    snapshotVersion: activeSnapshotVersion(activeState),
-                    attemptedSnapshotVersion: storedSnapshots.version,
-                    snapshotRefs: activeState?.snapshotRefs || null,
-                    snapshotWrites: storedSnapshots
-                };
+
+            const stagedResult = await verifyStagedSnapshots({
+                profileUserId,
+                storedSnapshots,
+                fetchMetadata,
+                memberInfo,
+                guildId
+            });
+            if (!stagedResult.ok) {
+                return stagedResult.fallback;
             }
 
-            const stagedRefs = stagedSnapshotRefs(storedSnapshots);
-            const reconstructed = await snapshotStore.loadOAuthSnapshots({
-                userId: profileUserId,
-                refs: stagedRefs,
-                guildId
-            }).catch(() => null);
-            const reconstructionComplete = Boolean(
-                reconstructed?.profile &&
-                (fetchMetadata.connectionsFetchFailed || Array.isArray(reconstructed.connections)) &&
-                (fetchMetadata.guildsFetchFailed || Array.isArray(reconstructed.guilds)) &&
-                (!memberInfo || reconstructed.member)
-            );
-            if (!reconstructionComplete) {
-                const rollback = await rollbackStoredSnapshots(profileUserId, storedSnapshots);
-                return {
-                    saved: false,
-                    code: "snapshot_reconstruction_failed",
-                    snapshotVersion: null,
-                    attemptedSnapshotVersion: storedSnapshots.version,
-                    snapshotRefs: null,
-                    snapshotWrites: storedSnapshots,
-                    rollback
-                };
-            }
             // Read after staging completes so optional-fetch preservation and ref
             // merging use the freshest active state available before activation.
             let existing;
@@ -1221,31 +1345,18 @@ async function saveOAuthUserSafe({
                 };
             }
             const previousMeta = existing?.snapshotMeta || {};
-            let snapshotMeta = buildSnapshotMetaUpdate(
+            const snapshotMeta = assembleActivatedSnapshotMeta({
                 previousMeta,
                 fetchMetadata,
-                {
-                    connectionsSource: connections,
-                    connectionsStored: connectionSnapshot,
-                    guildsSource: guilds,
-                    guildsStored: guildSnapshot
-                },
+                connections,
+                connectionSnapshot,
+                guilds,
+                guildSnapshot,
                 memberInfo,
-                nowMs
-            );
-            snapshotMeta = applyStoredSnapshotMeta(snapshotMeta, "connections", storedSnapshots.connections);
-            snapshotMeta = applyStoredSnapshotMeta(snapshotMeta, "guilds", storedSnapshots.guilds);
-            snapshotMeta = applyStoredSnapshotMeta(snapshotMeta, "member", storedSnapshots.member);
-            snapshotMeta = applyStoredSnapshotMeta(snapshotMeta, "profile", storedSnapshots.profile);
-            snapshotMeta = preserveFailedMemberAttempt(snapshotMeta, previousMeta, fetchMetadata, nowMs);
-            snapshotMeta = {
-                ...snapshotMeta,
-                activation: {
-                    attemptStartedAt: safeAttemptStartedAt,
-                    snapshotVersion: storedSnapshots.version,
-                    activatedAt: nowMs
-                }
-            };
+                nowMs,
+                storedSnapshots,
+                safeAttemptStartedAt
+            });
             const snapshotRefs = mergeCompleteSnapshotRefs(existing?.snapshotRefs, storedSnapshots);
 
             const updateSet = {
@@ -1265,67 +1376,54 @@ async function saveOAuthUserSafe({
             };
 
             applyForcedOAuthTokenStorage(updateSet, tokenData);
-            let activated = null;
-            try {
-                applySnapshotBudgetGuard(updateSet);
-                const activationFilter = {
-                    'discord.userId': profileUserId,
-                    $or: [
-                        { 'snapshotMeta.activation.attemptStartedAt': { $exists: false } },
-                        { 'snapshotMeta.activation.attemptStartedAt': { $lte: safeAttemptStartedAt } }
-                    ]
-                };
-                activated = await OAuthUser.findOneAndUpdate(
-                    activationFilter,
-                    {
-                        $set: updateSet,
-                        $setOnInsert: { createdAt: nowMs }
-                    },
-                    {
-                        upsert: !existing,
-                        returnDocument: "after"
-                    }
-                );
-                if (!activated) {
-                    const stale = new Error("A newer OAuth snapshot attempt is already active");
-                    stale.code = "snapshot_activation_stale";
-                    throw stale;
-                }
-            } catch (err) {
-                const duplicateDiscordUser = Number(err?.code) === 11000 && (
-                    err?.keyPattern?.["discord.userId"] || err?.keyValue?.["discord.userId"]
-                );
-                if (duplicateDiscordUser) err.code = "snapshot_activation_stale";
-                const rollback = await rollbackStoredSnapshots(profileUserId, storedSnapshots);
-                console.error("[VERIFY] saveOAuthUser core failed:", JSON.stringify(sanitizeSideEffectError(err)));
-                const active = err?.code === "snapshot_activation_stale"
-                    ? await loadOAuthSnapshotState(profileUserId).catch(() => null)
-                    : null;
-                return {
-                    saved: false,
-                    code: err?.code || "oauth_user_write_failed",
-                    snapshotVersion: activeSnapshotVersion(active || existing),
-                    attemptedSnapshotVersion: storedSnapshots.version,
-                    snapshotRefs: active?.snapshotRefs || existing?.snapshotRefs || null,
-                    snapshotWrites: storedSnapshots,
-                    rollback
-                };
+
+            const commitResult = await commitOAuthUserActivation({
+                profileUserId,
+                updateSet,
+                safeAttemptStartedAt,
+                nowMs,
+                existing,
+                storedSnapshots
+            });
+            if (!commitResult.ok) {
+                return commitResult.fallback;
             }
 
             return {
                 saved: true,
                 snapshotVersion: storedSnapshots.version,
-                snapshotRefs: activated?.snapshotRefs || snapshotRefs,
+                snapshotRefs: commitResult.activated?.snapshotRefs || snapshotRefs,
                 snapshotWrites: storedSnapshots
             };
         });
     }, {
         saved: false,
+        code: 'save_oauth_user_failed_safely',
         snapshotVersion: null,
         attemptedSnapshotVersion: null,
         snapshotRefs: null,
         snapshotWrites: null
     });
+}
+
+function addMatchingFingerprintUsers(userIds, list, hashField, targetHash) {
+    for (const item of list || []) {
+        if (String(item?.[hashField] || '') === targetHash && item?.userId) {
+            userIds.add(String(item.userId));
+        }
+    }
+}
+
+function collectMatchingDeviceUserIds(links, fingerprintHash) {
+    const userIds = new Set();
+    const targetHash = String(fingerprintHash || '');
+    if (!targetHash) return userIds;
+
+    for (const link of links || []) {
+        addMatchingFingerprintUsers(userIds, link.deviceFingerprints, 'fingerprintHash', targetHash);
+        addMatchingFingerprintUsers(userIds, link.users, 'lastDeviceFingerprintHash', targetHash);
+    }
+    return userIds;
 }
 
 async function getDeviceDuplicateSummary({ guildId, fingerprintHash, currentUserId }) {
@@ -1347,28 +1445,7 @@ async function getDeviceDuplicateSummary({ guildId, fingerprintHash, currentUser
             .limit(DEVICE_DUPLICATE_LOOKUP_MAX)
             .lean();
 
-        const userIds = new Set();
-
-        for (const link of links || []) {
-            for (const fp of link.deviceFingerprints || []) {
-                if (
-                    String(fp?.fingerprintHash || '') === String(fingerprintHash) &&
-                    fp?.userId
-                ) {
-                    userIds.add(String(fp.userId));
-                }
-            }
-
-            for (const user of link.users || []) {
-                if (
-                    String(user?.lastDeviceFingerprintHash || '') === String(fingerprintHash) &&
-                    user?.userId
-                ) {
-                    userIds.add(String(user.userId));
-                }
-            }
-        }
-
+        const userIds = collectMatchingDeviceUserIds(links, fingerprintHash);
         if (currentUserId) userIds.add(String(currentUserId));
 
         return {
@@ -1592,6 +1669,593 @@ router.get('/auth/callback', (req, res) => {
     res.sendFile(path.join(__dirname, '../views/callback.html'));
 });
 
+function collectPolicyFindings(ipInfo, policyFindings = []) {
+    const findings = [...policyFindings];
+    if (ipInfo?.isVPN) pushUnique(findings, 'vpn');
+    if (ipInfo?.isProxy) pushUnique(findings, 'proxy');
+    if (ipInfo?.isTOR) pushUnique(findings, 'tor');
+    if (ipInfo?.hosting) pushUnique(findings, 'hosting');
+    if (ipInfo?.spoofSuspected) pushUnique(findings, 'spoof_suspected');
+    if (ipInfo?.lookupStatus === 'lookup_failed') pushUnique(findings, 'lookup_failed');
+    if (ipInfo?.lookupStatus === 'ip_unknown') pushUnique(findings, 'ip_unknown');
+    for (const finding of ipInfo?.findings || []) pushUnique(findings, finding);
+    return findings;
+}
+
+function resolveFinalPersistenceStatus(result, reason, userError, oauthPersistence) {
+    const persistenceIncomplete = result === 'success' && oauthPersistence?.saved !== true;
+    return {
+        persistenceIncomplete,
+        finalResult: persistenceIncomplete ? 'failed' : result,
+        finalReason: persistenceIncomplete ? 'verification_persistence_failed' : reason,
+        finalUserError: persistenceIncomplete
+            ? 'เพิ่มยศใน Discord แล้ว แต่บันทึกข้อมูลยืนยันไม่สมบูรณ์ กรุณาแจ้งแอดมินเพื่อตรวจสอบ'
+            : userError
+    };
+}
+
+function buildProfileQuality(profileWrite) {
+    const isComplete = profileWrite?.complete === true;
+    return {
+        status: isComplete ? "success" : "failed",
+        attemptedAt: Date.now(),
+        fetchedAt: Date.now(),
+        returnedCount: 1,
+        storedCount: Number(profileWrite?.storedCount || 0),
+        complete: isComplete,
+        chunkCount: Number(profileWrite?.chunkCount || 0),
+        snapshotVersion: profileWrite?.version || null,
+        truncated: false,
+        failureReason: profileWrite?.failureReason || null,
+        source: "discord_oauth"
+    };
+}
+
+function buildConnectionsQuality(fetchMetadata, connections, connectionsWrite) {
+    const isFailed = fetchMetadata.connectionsFetchFailed;
+    const isComplete = !isFailed && connectionsWrite?.complete === true;
+    return {
+        status: isComplete ? "success" : "failed",
+        attemptedAt: Date.now(),
+        fetchedAt: isFailed ? null : Date.now(),
+        returnedCount: Array.isArray(connections) ? connections.length : 0,
+        storedCount: isFailed ? null : Number(connectionsWrite?.storedCount || 0),
+        complete: connectionsWrite?.complete === true,
+        chunkCount: Number(connectionsWrite?.chunkCount || 0),
+        snapshotVersion: connectionsWrite?.version || null,
+        truncated: false,
+        failureReason: isFailed
+            ? (fetchMetadata.connectionsFailureReason || `discord_http_${fetchMetadata.connectionsFetchStatus || "unknown"}`)
+            : (connectionsWrite?.failureReason || null),
+        source: "discord_oauth"
+    };
+}
+
+function buildGuildsQuality(fetchMetadata, guilds, guildsWrite) {
+    const isFailed = fetchMetadata.guildsFetchFailed;
+    const isComplete = !isFailed && guildsWrite?.complete === true;
+    return {
+        status: isComplete ? "success" : "failed",
+        attemptedAt: Date.now(),
+        fetchedAt: isFailed ? null : Date.now(),
+        returnedCount: Array.isArray(guilds) ? guilds.length : 0,
+        storedCount: isFailed ? null : Number(guildsWrite?.storedCount || 0),
+        complete: guildsWrite?.complete === true,
+        chunkCount: Number(guildsWrite?.chunkCount || 0),
+        snapshotVersion: guildsWrite?.version || null,
+        truncated: false,
+        failureReason: isFailed
+            ? (fetchMetadata.guildsFailureReason || `discord_http_${fetchMetadata.guildsFetchStatus || "unknown"}`)
+            : (guildsWrite?.failureReason || null),
+        source: "discord_oauth"
+    };
+}
+
+function buildMemberQuality(fetchMetadata, memberInfo, memberWrite) {
+    let memberStatus = memberFetchQualityStatus(fetchMetadata, memberInfo);
+    let memberFailureReason = fetchMetadata.memberFetchAttempted && !memberInfo
+        ? (fetchMetadata.memberFailureReason || `discord_http_${fetchMetadata.memberFetchStatus || "unknown"}`)
+        : null;
+    if (memberInfo && fetchMetadata.memberFetchFailed !== true) {
+        memberStatus = memberWrite?.complete ? "success" : "failed";
+        memberFailureReason = memberWrite?.failureReason || null;
+    }
+    return {
+        status: memberStatus,
+        attemptedAt: fetchMetadata.memberFetchAttempted ? Date.now() : null,
+        fetchedAt: memberInfo ? Date.now() : null,
+        returnedCount: memberInfo ? 1 : 0,
+        storedCount: memberInfo ? Number(memberWrite?.storedCount || 0) : null,
+        complete: memberWrite?.complete === true,
+        roleReturnedCount: Number(memberWrite?.roleReturnedCount || 0),
+        roleStoredCount: Number(memberWrite?.roleStoredCount || 0),
+        roleChunkCount: Number(memberWrite?.roleChunkCount || 0),
+        snapshotVersion: memberWrite?.version || null,
+        truncated: false,
+        failureReason: memberFailureReason,
+        source: fetchMetadata.memberFetchSource || "discord_oauth"
+    };
+}
+
+function buildDeviceQuality(device) {
+    const isFailed = device?.extractionStatus === "failed";
+    return {
+        status: isFailed ? "failed" : "success",
+        attemptedAt: Date.now(),
+        fetchedAt: isFailed ? null : Date.now(),
+        returnedCount: isFailed ? 0 : 1,
+        storedCount: isFailed ? 0 : 1,
+        truncated: false,
+        failureReason: device?.extractionFailureReason || null,
+        source: "browser"
+    };
+}
+
+function buildNetworkQuality(ipInfo) {
+    const isOk = ["success", "lookup_ok", "ok"].includes(ipInfo?.lookupStatus);
+    return {
+        status: ipInfo?.lookupStatus || "unknown",
+        attemptedAt: Date.now(),
+        fetchedAt: ipInfo?.lookupAt || null,
+        returnedCount: ipInfo ? 1 : 0,
+        storedCount: ipInfo ? 1 : 0,
+        truncated: false,
+        failureReason: isOk ? null : `ip_lookup_${ipInfo?.lookupStatus || "unavailable"}`,
+        source: "request_ip_lookup"
+    };
+}
+
+function buildVerificationDataQuality({
+    oauthPersistence,
+    fetchMetadata,
+    connections,
+    guilds,
+    memberInfo,
+    device,
+    ipInfo
+}) {
+    return {
+        version: 2,
+        capturedAt: Date.now(),
+        profile: buildProfileQuality(oauthPersistence?.snapshotWrites?.profile),
+        connections: buildConnectionsQuality(fetchMetadata, connections, oauthPersistence?.snapshotWrites?.connections),
+        guilds: buildGuildsQuality(fetchMetadata, guilds, oauthPersistence?.snapshotWrites?.guilds),
+        member: buildMemberQuality(fetchMetadata, memberInfo, oauthPersistence?.snapshotWrites?.member),
+        device: buildDeviceQuality(device),
+        network: buildNetworkQuality(ipInfo)
+    };
+}
+
+function checkCallbackPreconditions({
+    expectedUserId,
+    profile,
+    guildConfig,
+    configuredRoleId,
+    stateObj,
+    stateRoleId,
+    verificationConfig
+}) {
+    if (expectedUserId && profile.id !== expectedUserId) {
+        return {
+            result: 'failed',
+            reason: 'oauth_user_mismatch',
+            userError: 'บัญชี Discord ไม่ตรงกับผู้ที่กดปุ่มยืนยัน',
+            discordSnapshotExtra: { expectedUserId, actualUserId: profile.id }
+        };
+    }
+    if (!guildConfig || !configuredRoleId) {
+        return {
+            result: 'failed',
+            reason: 'guild_config_missing_role',
+            userError: 'ระบบยังไม่ได้ตั้งค่า Role ID กรุณาแจ้งแอดมิน'
+        };
+    }
+    const revisionCheck = isPanelRevisionValid(guildConfig, stateObj);
+    if (!revisionCheck.ok) {
+        return {
+            result: 'failed',
+            reason: 'panel_revision_mismatch',
+            userError: 'แผงยืนยันนี้ไม่ใช่แผงล่าสุด กรุณากดปุ่มจากแผงยืนยันล่าสุดใน Discord',
+            discordSnapshotExtra: { panelRevisionCheck: revisionCheck }
+        };
+    }
+    if (verificationConfig.enabled === false) {
+        return {
+            result: 'blocked',
+            reason: 'verification_disabled',
+            userError: 'ระบบยืนยันตัวตนของเซิร์ฟเวอร์นี้ยังไม่เปิดใช้งาน'
+        };
+    }
+    if (String(stateRoleId) !== String(configuredRoleId)) {
+        return {
+            result: 'failed',
+            reason: 'role_mismatch_latest_config',
+            userError: 'ลิงก์ยืนยันไม่ตรงกับการตั้งค่าปัจจุบัน กรุณาใช้แผงยืนยันล่าสุด',
+            discordSnapshotExtra: { stateRoleId, configuredRoleId }
+        };
+    }
+    return null;
+}
+
+function checkAccountEligibilityRequirements({
+    accountAgeDays,
+    policySnapshot,
+    emailOk,
+    connectionOk,
+    connectionCount
+}) {
+    if (accountAgeDays < policySnapshot.minAccountAgeDays) {
+        return {
+            result: 'blocked',
+            reason: `new_account:${accountAgeDays}`,
+            userError: `บัญชีอายุน้อยเกินไป (${accountAgeDays} วัน ต้องการ ${policySnapshot.minAccountAgeDays} วัน)`
+        };
+    }
+    if (policySnapshot.requireEmail && !emailOk) {
+        return {
+            result: 'blocked',
+            reason: 'email_requirement_failed',
+            userError: 'บัญชีนี้ไม่มี Email หรือ Email ยังไม่ผ่านเงื่อนไขของเซิร์ฟเวอร์'
+        };
+    }
+    if (policySnapshot.requireConnections && !connectionOk) {
+        return {
+            result: 'blocked',
+            reason: `connection_requirement_failed:${connectionCount}`,
+            userError: `บัญชีนี้มี Connections ไม่พอ (${connectionCount}/${policySnapshot.minConnections})`
+        };
+    }
+    return null;
+}
+
+function checkCountryPolicy(policySnapshot, countryCode) {
+    if (policySnapshot.allowedCountries.length && !policySnapshot.allowedCountries.includes(countryCode)) {
+        return {
+            result: 'blocked',
+            reason: `country_not_allowed:${countryCode || 'unknown'}`,
+            userError: 'ประเทศ/ภูมิภาคของเครือข่ายนี้ไม่อยู่ในรายการที่อนุญาต'
+        };
+    }
+    if (policySnapshot.blockedCountries.includes(countryCode)) {
+        return {
+            result: 'blocked',
+            reason: `country_blocked:${countryCode || 'unknown'}`,
+            userError: 'ประเทศ/ภูมิภาคของเครือข่ายนี้ถูกบล็อก'
+        };
+    }
+    return null;
+}
+
+async function collectSecurityPolicyViolations({
+    ipInfo,
+    existingIpLink,
+    trackedUsers,
+    securityRules,
+    profile,
+    device,
+    guildId
+}) {
+    const policyFindings = [];
+    const policyViolations = [];
+    const recordRule = (key, reason, userError) => {
+        const violation = makeRuleViolation(key, securityRules[key], reason, userError);
+        if (!violation) return;
+        pushUnique(policyFindings, reason.split(':')[0]);
+        policyViolations.push(violation);
+    };
+
+    if (ipInfo?.isVPN || ipInfo?.isProxy || ipInfo?.isTOR) {
+        recordRule('vpnProxyTor', 'network_vpn_proxy_tor', 'ตรวจพบ VPN, Proxy หรือ TOR ตามเงื่อนไขของเซิร์ฟเวอร์');
+    }
+    if (ipInfo?.hosting) {
+        recordRule('hosting', 'network_hosting', 'เครือข่ายนี้เป็น Hosting หรือ Datacenter ตามเงื่อนไขของเซิร์ฟเวอร์');
+    }
+    if (ipInfo?.spoofSuspected) {
+        recordRule('spoofedHeader', 'spoofed_ip_header', 'ข้อมูล IP จากเบราว์เซอร์ไม่ตรงกัน กรุณาเปลี่ยนเครือข่ายแล้วลองใหม่');
+    }
+    if (
+        ipInfo?.lookupStatus === 'lookup_failed' ||
+        ipInfo?.lookupProvider === 'lookup_failed' ||
+        ipInfo?.lookupStatus === 'ip_unknown'
+    ) {
+        recordRule('unknownLookup', ipInfo?.lookupStatus === 'ip_unknown' ? 'ip_unknown' : 'ip_lookup_failed', 'ระบบตรวจสอบเครือข่ายไม่สำเร็จ กรุณารอสักครู่แล้วลองใหม่');
+    }
+    if (existingIpLink) {
+        const otherUsers = trackedUsers.filter(user => String(user.userId || '') !== String(profile.id));
+        const projectedUniqueUsers = otherUsers.length + 1;
+        if (projectedUniqueUsers > Number(securityRules.ipDuplicate?.threshold || 3)) {
+            recordRule('ipDuplicate', `ip_duplicate_limit:${projectedUniqueUsers}`, 'เครือข่ายนี้มีหลายบัญชีเกินจำนวนที่เซิร์ฟเวอร์กำหนด');
+        }
+        const previouslyBlocked = existingIpLink.lastResult === 'blocked' || trackedUsers.some(user =>
+            Number(user.blockedCount || 0) > 0 ||
+            (Array.isArray(user.lastFindings) && user.lastFindings.some(finding => /blocked|vpn|proxy|tor|spoof|duplicate|hosting/i.test(finding)))
+        );
+        if (previouslyBlocked) {
+            recordRule('previouslyBlockedIp', 'previously_blocked_ip', 'IP นี้เคยมีการยืนยันที่ถูกปฏิเสธ กรุณาติดต่อผู้ดูแล');
+        }
+    }
+    if (device?.fingerprintHash && securityRules.deviceDuplicate?.enabled) {
+        const deviceSummary = await getDeviceDuplicateSummary({
+            guildId,
+            fingerprintHash: device.fingerprintHash,
+            currentUserId: profile.id
+        });
+        if (deviceSummary.uniqueUsers > Number(securityRules.deviceDuplicate?.threshold || 2)) {
+            recordRule('deviceDuplicate', `device_duplicate_limit:${deviceSummary.uniqueUsers}`, 'อุปกรณ์นี้มีหลายบัญชีเกินจำนวนที่เซิร์ฟเวอร์กำหนด');
+        }
+    }
+
+    return { policyFindings, policyViolations };
+}
+
+async function enforceSelectedPolicyViolation({ selectedViolation, guildId, profile, memberInfo }) {
+    if (!selectedViolation || selectedViolation.action === 'allow') return null;
+
+    const moderationResult = await safeSideEffect(
+        'verificationPolicyModeration',
+        () => executeRuleViolation({
+            violation: selectedViolation,
+            guildId,
+            userId: profile.id,
+            memberInfo
+        }),
+        {
+            blocked: true,
+            ok: false,
+            action: selectedViolation.action,
+            status: 'failed',
+            error: 'verification_moderation_failed_safely'
+        }
+    );
+    return {
+        result: 'blocked',
+        reason: selectedViolation.reason,
+        userError: moderationResult?.ok === false && selectedViolation.action !== 'deny_role'
+            ? `${selectedViolation.userError} ระบบไม่สามารถดำเนินการลงโทษใน Discord ได้ แต่ยังไม่มอบยศให้บัญชีนี้`
+            : selectedViolation.userError,
+        roleAssignResult: {
+            ok: false,
+            skipped: true,
+            status: 'denied_by_security_rule',
+            moderation: moderationResult,
+            rule: selectedViolation.key
+        }
+    };
+}
+
+function buildVerificationOutcomeResponse({
+    finalResult,
+    finalUserError,
+    finalReason,
+    message,
+    requestId,
+    persistenceIncomplete,
+    roleName,
+    dmSent,
+    profile
+}) {
+    return {
+        success: finalResult === 'success',
+        error: finalResult === 'success' ? undefined : finalUserError,
+        message: finalResult === 'success'
+            ? (message || 'ระบบเพิ่มยศให้เรียบร้อยแล้ว')
+            : undefined,
+        code: finalResult === 'success' ? undefined : publicDebugCode(finalReason),
+        debugCode: finalResult === 'success' ? undefined : publicDebugCode(finalReason),
+        requestId,
+        recoveryRequired: persistenceIncomplete || undefined,
+        roleName,
+        alreadyHasRole: finalReason === 'already_verified_has_role',
+        dmSent,
+        user: {
+            id: profile.id,
+            username: profile.global_name || profile.username,
+            globalName: profile.global_name || profile.username,
+            tag: displayTag(profile),
+            avatarUrl: getAvatarUrl(profile)
+        }
+    };
+}
+
+async function handleCriticalPersistenceFailureHelper({
+    requestId,
+    guildId,
+    profile,
+    configuredRoleId,
+    result,
+    roleAssignResult,
+    persistenceResult,
+    sendDm,
+    guildName,
+    roleName,
+    getVerificationGuildPresentation
+}) {
+    return finalizeCriticalPersistenceFailure({
+        requestId,
+        guildId,
+        userId: profile.id,
+        roleId: configuredRoleId,
+        result,
+        roleAssignResult,
+        persistence: persistenceResult.persistence,
+        removeRole: () => discord.removeRoleFromMember(guildId, profile.id, configuredRoleId),
+        saveRecovery: async recoveryRecord => {
+            const updateResult = await VerificationRecovery.updateOne(
+                { requestId },
+                {
+                    $set: recoveryRecord,
+                    $setOnInsert: { createdAt: Date.now() }
+                },
+                { upsert: true }
+            );
+            return updateResult?.acknowledged !== false;
+        },
+        sendDm,
+        sendFailureDm: async () => discord.sendVerificationDM(profile.id, {
+            ok: false,
+            result: "failed",
+            guildName,
+            roleName,
+            reason: "ระบบบันทึกข้อมูลยืนยันไม่สมบูรณ์ กำลังตรวจสอบและกู้คืนสถานะ",
+            reasonCode: "verification_persistence_failed",
+            requestId,
+            ...await getVerificationGuildPresentation()
+        })
+    });
+}
+
+async function validateCallbackStateNonce(body, res, requestId) {
+    const { code, state } = body || {};
+
+    if (!code) {
+        return {
+            ok: false,
+            response: jsonFail(
+                res,
+                'ยกเลิกการยืนยันตัวตน หรือไม่พบรหัส OAuth',
+                'missing_oauth_code',
+                200,
+                requestId
+            )
+        };
+    }
+
+    const stateObj = decodeCallbackState(state);
+    if (!stateObj) {
+        return {
+            ok: false,
+            response: jsonFail(
+                res,
+                'ลิงก์ยืนยันไม่ถูกต้อง กรุณากดปุ่มใหม่อีกครั้ง',
+                'invalid_callback_state',
+                200,
+                requestId
+            )
+        };
+    }
+
+    if (stateObj?.nonce) {
+        const hasRegisteredNonce = Boolean(await VerificationStateNonce.exists({
+            nonceHash: nonceHash(stateObj.nonce),
+            guildId: stateObj.guildId,
+            roleId: stateObj.roleId
+        }));
+        if (hasRegisteredNonce && !await consumeVerificationState(stateObj)) {
+            return {
+                ok: false,
+                response: jsonFail(
+                    res,
+                    'คำขอยืนยันนี้หมดอายุหรือถูกใช้ไปแล้ว กรุณากดปุ่มใหม่',
+                    'callback_state_replayed',
+                    200,
+                    requestId
+                )
+            };
+        }
+    }
+
+    return { ok: true, code, stateObj };
+}
+
+async function fetchDiscordOAuthData(code) {
+    const tokenData = await discord.exchangeCode(code, REDIRECT_URI);
+    const accessToken = tokenData.access_token;
+
+    const resolved = await Promise.all([
+        discord.getUserProfile(accessToken),
+        discord.getUserConnections(accessToken),
+        discord.getUserGuilds(accessToken)
+    ]);
+
+    const fetchMetadata = {
+        connectionsFetchFailed: resolved[1]?.fetchFailed === true,
+        connectionsFetchStatus: resolved[1]?.fetchStatus || null,
+        connectionsFailureReason: resolved[1]?.fetchFailureReason || null,
+        guildsFetchFailed: resolved[2]?.fetchFailed === true,
+        guildsFetchStatus: resolved[2]?.fetchStatus || null,
+        guildsFailureReason: resolved[2]?.fetchFailureReason || null,
+        memberFetchAttempted: false,
+        memberFetchFailed: false,
+        memberFetchStatus: null,
+        memberFailureReason: null,
+        memberFetchSource: null
+    };
+
+    return {
+        tokenData,
+        accessToken,
+        profile: resolved[0],
+        connections: Array.isArray(resolved[1]) ? resolved[1] : [],
+        guilds: Array.isArray(resolved[2]) ? resolved[2] : [],
+        fetchMetadata
+    };
+}
+
+async function performGuildJoinAndRoleAssignment({
+    memberInfo,
+    guildId,
+    profileId,
+    accessToken,
+    configuredRoleId,
+    fetchMetadata
+}) {
+    const joinResult = memberInfo
+        ? { ok: true, status: 204, alreadyMember: true }
+        : await safeSideEffect(
+            'addMemberToGuild',
+            () => discord.addMemberToGuild(guildId, profileId, accessToken),
+            { ok: false, skipped: true, error: 'join_failed_safely' }
+        );
+
+    if (!joinResult?.ok) {
+        return {
+            ok: false,
+            failure: {
+                result: 'failed',
+                reason: 'guild_join_failed',
+                userError: 'ระบบไม่สามารถพาคุณเข้าเซิร์ฟเวอร์ได้ กรุณาเข้าดิสก่อนแล้วลองใหม่',
+                roleAssignResult: {
+                    ok: false,
+                    skipped: true,
+                    error: 'guild_join_failed'
+                }
+            }
+        };
+    }
+
+    const roleAssignResult = await safeSideEffect(
+        'addRoleToMember',
+        () => discord.addRoleToMember(guildId, profileId, configuredRoleId),
+        { ok: false, error: 'role_assign_failed_safely' }
+    );
+
+    if (!roleAssignResult?.ok) {
+        return {
+            ok: false,
+            failure: {
+                result: 'failed',
+                reason: roleAssignResult?.error || 'role_assign_failed',
+                userError: 'ระบบไม่สามารถเพิ่มยศให้ได้ กรุณาแจ้งแอดมิน',
+                roleAssignResult
+            }
+        };
+    }
+
+    const refreshedMember = await safeSideEffect(
+        'getGuildMemberAfterRole',
+        () => discord.getGuildMemberWithBot(guildId, profileId),
+        null
+    );
+    const updatedMemberInfo = recordPostRoleMemberFetch(fetchMetadata, refreshedMember) || memberInfo;
+
+    return {
+        ok: true,
+        joinResult,
+        roleAssignResult,
+        memberInfo: updatedMemberInfo
+    };
+}
+
 /*
 ================================================================================
   Verification callback
@@ -1602,46 +2266,12 @@ router.get('/auth/callback', (req, res) => {
 router.post('/auth/callback', async (req, res) => {
     const requestId = makeRequestId('verify');
     const oauthAttemptStartedAt = Date.now();
-    const { code, state } = req.body || {};
 
-    if (!code) {
-        return jsonFail(
-            res,
-            'ยกเลิกการยืนยันตัวตน หรือไม่พบรหัส OAuth',
-            'missing_oauth_code',
-            200,
-            requestId
-        );
+    const validation = await validateCallbackStateNonce(req.body, res, requestId);
+    if (!validation.ok) {
+        return validation.response;
     }
-
-    const stateObj = decodeCallbackState(state);
-
-    if (!stateObj) {
-        return jsonFail(
-            res,
-            'ลิงก์ยืนยันไม่ถูกต้อง กรุณากดปุ่มใหม่อีกครั้ง',
-            'invalid_callback_state',
-            200,
-            requestId
-        );
-    }
-
-    if (stateObj?.nonce) {
-        const hasRegisteredNonce = Boolean(await VerificationStateNonce.exists({
-            nonceHash: nonceHash(stateObj.nonce),
-            guildId: stateObj.guildId,
-            roleId: stateObj.roleId
-        }));
-        if (hasRegisteredNonce && !await consumeVerificationState(stateObj)) {
-            return jsonFail(
-                res,
-                'คำขอยืนยันนี้หมดอายุหรือถูกใช้ไปแล้ว กรุณากดปุ่มใหม่',
-                'callback_state_replayed',
-                200,
-                requestId
-            );
-        }
-    }
+    const { code, stateObj } = validation;
 
     let profile = null;
     let tokenData = null;
@@ -1654,43 +2284,16 @@ router.post('/auth/callback', async (req, res) => {
     let joinResult = null;
     let existingIpLink = null;
     const policyFindings = [];
-    const fetchMetadata = {
-        connectionsFetchFailed: false,
-        connectionsFetchStatus: null,
-        connectionsFailureReason: null,
-        guildsFetchFailed: false,
-        guildsFetchStatus: null,
-        guildsFailureReason: null,
-        memberFetchAttempted: false,
-        memberFetchFailed: false,
-        memberFetchStatus: null,
-        memberFailureReason: null,
-        memberFetchSource: null
-    };
+    let fetchMetadata = null;
 
     try {
-        tokenData = await discord.exchangeCode(code, REDIRECT_URI);
-        const accessToken = tokenData.access_token;
-
-        const profilePromise = discord.getUserProfile(accessToken);
-        const connectionsPromise = discord.getUserConnections(accessToken);
-        const guildsPromise = discord.getUserGuilds(accessToken);
-
-        const resolved = await Promise.all([
-            profilePromise,
-            connectionsPromise,
-            guildsPromise
-        ]);
-
-        profile = resolved[0];
-        connections = Array.isArray(resolved[1]) ? resolved[1] : [];
-        guilds = Array.isArray(resolved[2]) ? resolved[2] : [];
-        fetchMetadata.connectionsFetchFailed = resolved[1]?.fetchFailed === true;
-        fetchMetadata.connectionsFetchStatus = resolved[1]?.fetchStatus || null;
-        fetchMetadata.connectionsFailureReason = resolved[1]?.fetchFailureReason || null;
-        fetchMetadata.guildsFetchFailed = resolved[2]?.fetchFailed === true;
-        fetchMetadata.guildsFetchStatus = resolved[2]?.fetchStatus || null;
-        fetchMetadata.guildsFailureReason = resolved[2]?.fetchFailureReason || null;
+        const discordData = await fetchDiscordOAuthData(code);
+        tokenData = discordData.tokenData;
+        const accessToken = discordData.accessToken;
+        profile = discordData.profile;
+        connections = discordData.connections;
+        guilds = discordData.guilds;
+        fetchMetadata = discordData.fetchMetadata;
 
         ipInfo = await safeProcessIP(req);
         device = safeExtractDevice(req);
@@ -1747,16 +2350,7 @@ router.post('/auth/callback', async (req, res) => {
                 )
             });
 
-            if (ipInfo?.isVPN) pushUnique(policyFindings, 'vpn');
-            if (ipInfo?.isProxy) pushUnique(policyFindings, 'proxy');
-            if (ipInfo?.isTOR) pushUnique(policyFindings, 'tor');
-            if (ipInfo?.hosting) pushUnique(policyFindings, 'hosting');
-            if (ipInfo?.spoofSuspected) pushUnique(policyFindings, 'spoof_suspected');
-            if (ipInfo?.lookupStatus === 'lookup_failed') pushUnique(policyFindings, 'lookup_failed');
-            if (ipInfo?.lookupStatus === 'ip_unknown') pushUnique(policyFindings, 'ip_unknown');
-            for (const finding of ipInfo?.findings || []) pushUnique(policyFindings, finding);
-
-            const allFindings = uniqueStrings([...findings, ...policyFindings]);
+            const allFindings = uniqueStrings([...findings, ...collectPolicyFindings(ipInfo, policyFindings)]);
 
             const discordSnapshot = {
                 ...buildDiscordSnapshot(profile, connections, memberInfo, stateObj),
@@ -1797,34 +2391,12 @@ router.post('/auth/callback', async (req, res) => {
             // external effects. Do not report a completed verification when
             // the durable owner record is missing; the role may exist, but the
             // callback must preserve that partial truth for reconciliation.
-            const persistenceIncomplete = result === 'success' && oauthPersistence?.saved !== true;
-            const finalResult = persistenceIncomplete ? 'failed' : result;
-            const finalReason = persistenceIncomplete
-                ? 'verification_persistence_failed'
-                : reason;
-            const finalUserError = persistenceIncomplete
-                ? 'เพิ่มยศใน Discord แล้ว แต่บันทึกข้อมูลยืนยันไม่สมบูรณ์ กรุณาแจ้งแอดมินเพื่อตรวจสอบ'
-                : userError;
-            const connectionsWrite = oauthPersistence?.snapshotWrites?.connections;
-            const guildsWrite = oauthPersistence?.snapshotWrites?.guilds;
-            const memberWrite = oauthPersistence?.snapshotWrites?.member;
-            let connectionsStatus = "failed";
-            let guildsStatus = "failed";
-            if (!fetchMetadata.connectionsFetchFailed && connectionsWrite?.complete) {
-                connectionsStatus = "success";
-            }
-            if (!fetchMetadata.guildsFetchFailed && guildsWrite?.complete) {
-                guildsStatus = "success";
-            }
-            let memberStatus = memberFetchQualityStatus(fetchMetadata, memberInfo);
-            let memberFailureReason = fetchMetadata.memberFetchAttempted && !memberInfo
-                ? (fetchMetadata.memberFailureReason ||
-                    `discord_http_${fetchMetadata.memberFetchStatus || "unknown"}`)
-                : null;
-            if (memberInfo && fetchMetadata.memberFetchFailed !== true) {
-                memberStatus = memberWrite?.complete ? "success" : "failed";
-                memberFailureReason = memberWrite?.failureReason || null;
-            }
+            const { persistenceIncomplete, finalResult, finalReason, finalUserError } = resolveFinalPersistenceStatus(
+                result,
+                reason,
+                userError,
+                oauthPersistence
+            );
 
             const verifyLogSaved = await saveVerifyLogSafe({
                 guildId,
@@ -1857,104 +2429,15 @@ router.post('/auth/callback', async (req, res) => {
                 trackingSnapshot,
                 ipInfo,
                 device,
-                dataQuality: {
-                    version: 2,
-                    capturedAt: Date.now(),
-                    profile: {
-                        status: oauthPersistence?.snapshotWrites?.profile?.complete ? "success" : "failed",
-                        attemptedAt: Date.now(),
-                        fetchedAt: Date.now(),
-                        returnedCount: 1,
-                        storedCount: Number(oauthPersistence?.snapshotWrites?.profile?.storedCount || 0),
-                        complete: oauthPersistence?.snapshotWrites?.profile?.complete === true,
-                        chunkCount: Number(oauthPersistence?.snapshotWrites?.profile?.chunkCount || 0),
-                        snapshotVersion: oauthPersistence?.snapshotWrites?.profile?.version || null,
-                        truncated: false,
-                        failureReason: oauthPersistence?.snapshotWrites?.profile?.failureReason || null,
-                        source: "discord_oauth"
-                    },
-                    connections: {
-                        status: connectionsStatus,
-                        attemptedAt: Date.now(),
-                        fetchedAt: fetchMetadata.connectionsFetchFailed ? null : Date.now(),
-                        returnedCount: Array.isArray(connections) ? connections.length : 0,
-                        storedCount: fetchMetadata.connectionsFetchFailed
-                            ? null
-                            : Number(connectionsWrite?.storedCount || 0),
-                        complete: connectionsWrite?.complete === true,
-                        chunkCount: Number(connectionsWrite?.chunkCount || 0),
-                        snapshotVersion: connectionsWrite?.version || null,
-                        truncated: false,
-                        failureReason: fetchMetadata.connectionsFetchFailed
-                            ? (fetchMetadata.connectionsFailureReason ||
-                                `discord_http_${fetchMetadata.connectionsFetchStatus || "unknown"}`)
-                            : (connectionsWrite?.failureReason || null),
-                        source: "discord_oauth"
-                    },
-                    guilds: {
-                        status: guildsStatus,
-                        attemptedAt: Date.now(),
-                        fetchedAt: fetchMetadata.guildsFetchFailed ? null : Date.now(),
-                        returnedCount: Array.isArray(guilds) ? guilds.length : 0,
-                        storedCount: fetchMetadata.guildsFetchFailed
-                            ? null
-                            : Number(guildsWrite?.storedCount || 0),
-                        complete: guildsWrite?.complete === true,
-                        chunkCount: Number(guildsWrite?.chunkCount || 0),
-                        snapshotVersion: guildsWrite?.version || null,
-                        truncated: false,
-                        failureReason: fetchMetadata.guildsFetchFailed
-                            ? (fetchMetadata.guildsFailureReason ||
-                                `discord_http_${fetchMetadata.guildsFetchStatus || "unknown"}`)
-                            : (guildsWrite?.failureReason || null),
-                        source: "discord_oauth"
-                    },
-                    member: {
-                        status: memberStatus,
-                        attemptedAt: fetchMetadata.memberFetchAttempted ? Date.now() : null,
-                        fetchedAt: memberInfo ? Date.now() : null,
-                        returnedCount: memberInfo ? 1 : 0,
-                        storedCount: memberInfo
-                            ? Number(memberWrite?.storedCount || 0)
-                            : null,
-                        complete: memberWrite?.complete === true,
-                        roleReturnedCount: Number(
-                            memberWrite?.roleReturnedCount || 0
-                        ),
-                        roleStoredCount: Number(
-                            memberWrite?.roleStoredCount || 0
-                        ),
-                        roleChunkCount: Number(
-                            memberWrite?.roleChunkCount || 0
-                        ),
-                        snapshotVersion: memberWrite?.version || null,
-                        truncated: false,
-                        failureReason: memberFailureReason,
-                        source: fetchMetadata.memberFetchSource || "discord_oauth"
-                    },
-                    device: {
-                        status: device?.extractionStatus === "failed" ? "failed" : "success",
-                        attemptedAt: Date.now(),
-                        fetchedAt: device?.extractionStatus === "failed" ? null : Date.now(),
-                        returnedCount: device?.extractionStatus === "failed" ? 0 : 1,
-                        storedCount: device?.extractionStatus === "failed" ? 0 : 1,
-                        truncated: false,
-                        failureReason: device?.extractionFailureReason || null,
-                        source: "browser"
-                    },
-                    network: {
-                        status: ipInfo?.lookupStatus || "unknown",
-                        attemptedAt: Date.now(),
-                        fetchedAt: ipInfo?.lookupAt || null,
-                        returnedCount: ipInfo ? 1 : 0,
-                        storedCount: ipInfo ? 1 : 0,
-                        truncated: false,
-                        failureReason: ["success", "lookup_ok", "ok"].includes(ipInfo?.lookupStatus)
-                            ? null
-                            : `ip_lookup_${ipInfo?.lookupStatus || "unavailable"}`,
-                        source: "request_ip_lookup"
-                    }
-                },
+                dataQuality: buildVerificationDataQuality({
+                    oauthPersistence,
+                    fetchMetadata,
+                    connections,
+                    guilds,
+                    memberInfo,
+                    device,
+                    ipInfo
+                }),
                 verifiedAt: Date.now()
             });
 
@@ -1967,37 +2450,18 @@ router.post('/auth/callback', async (req, res) => {
             });
 
             if (!persistenceResult.ok) {
-                const outcome = await finalizeCriticalPersistenceFailure({
+                const outcome = await handleCriticalPersistenceFailureHelper({
                     requestId,
                     guildId,
-                    userId: profile.id,
-                    roleId: configuredRoleId,
+                    profile,
+                    configuredRoleId,
                     result,
                     roleAssignResult,
-                    persistence: persistenceResult.persistence,
-                    removeRole: () => discord.removeRoleFromMember(guildId, profile.id, configuredRoleId),
-                    saveRecovery: async recoveryRecord => {
-                        const updateResult = await VerificationRecovery.updateOne(
-                            { requestId },
-                            {
-                                $set: recoveryRecord,
-                                $setOnInsert: { createdAt: Date.now() }
-                            },
-                            { upsert: true }
-                        );
-                        return updateResult?.acknowledged !== false;
-                    },
+                    persistenceResult,
                     sendDm,
-                    sendFailureDm: async () => discord.sendVerificationDM(profile.id, {
-                        ok: false,
-                        result: "failed",
-                        guildName,
-                        roleName,
-                        reason: "ระบบบันทึกข้อมูลยืนยันไม่สมบูรณ์ กำลังตรวจสอบและกู้คืนสถานะ",
-                        reasonCode: "verification_persistence_failed",
-                        requestId,
-                        ...await getVerificationGuildPresentation()
-                    })
+                    guildName,
+                    roleName,
+                    getVerificationGuildPresentation
                 });
                 return res.status(outcome.statusCode).json(outcome.body);
             }
@@ -2021,110 +2485,31 @@ router.post('/auth/callback', async (req, res) => {
                 ));
             }
 
-            return res.json({
-                success: finalResult === 'success',
-
-                error: finalResult === 'success' ? undefined : finalUserError,
-                message: finalResult === 'success'
-                    ? (message || 'ระบบเพิ่มยศให้เรียบร้อยแล้ว')
-                    : undefined,
-
-                code: finalResult === 'success' ? undefined : publicDebugCode(finalReason),
-                debugCode: finalResult === 'success' ? undefined : publicDebugCode(finalReason),
+            return res.json(buildVerificationOutcomeResponse({
+                finalResult,
+                finalUserError,
+                finalReason,
+                message,
                 requestId,
-                recoveryRequired: persistenceIncomplete || undefined,
-
+                persistenceIncomplete,
                 roleName,
-                alreadyHasRole: finalReason === 'already_verified_has_role',
                 dmSent,
-
-                user: {
-                    id: profile.id,
-                    username: profile.global_name || profile.username,
-                    globalName: profile.global_name || profile.username,
-                    tag: displayTag(profile),
-                    avatarUrl: getAvatarUrl(profile)
-                }
-            });
+                profile
+            }));
         }
 
-        if (expectedUserId && profile.id !== expectedUserId) {
-            return finalize({
-                result: 'failed',
-                reason: 'oauth_user_mismatch',
-                userError: 'บัญชี Discord ไม่ตรงกับผู้ที่กดปุ่มยืนยัน',
-                discordSnapshotExtra: {
-                    expectedUserId,
-                    actualUserId: profile.id
-                }
-            });
+        const preconditionFailure = checkCallbackPreconditions({
+            expectedUserId,
+            profile,
+            guildConfig,
+            configuredRoleId,
+            stateObj,
+            stateRoleId,
+            verificationConfig
+        });
+        if (preconditionFailure) {
+            return finalize(preconditionFailure);
         }
-
-        if (!guildConfig || !configuredRoleId) {
-            return finalize({
-                result: 'failed',
-                reason: 'guild_config_missing_role',
-                userError: 'ระบบยังไม่ได้ตั้งค่า Role ID กรุณาแจ้งแอดมิน'
-            });
-        }
-
-        /*
-          สำคัญ:
-          เช็ก panelRevision ล่าสุด
-          - ถ้า DB มี revision แล้ว state ต้องเป็น v4 และ revision ต้องตรง
-          - ถ้ากดแผงเก่าหรือ URL เก่า จะได้ panel_revision_mismatch
-        */
-        const revisionCheck = isPanelRevisionValid(guildConfig, stateObj);
-
-        if (!revisionCheck.ok) {
-            return finalize({
-                result: 'failed',
-                reason: 'panel_revision_mismatch',
-                userError: 'แผงยืนยันนี้ไม่ใช่แผงล่าสุด กรุณากดปุ่มจากแผงยืนยันล่าสุดใน Discord',
-                discordSnapshotExtra: {
-                    panelRevisionCheck: revisionCheck
-                }
-            });
-        }
-
-        if (verificationConfig.enabled === false) {
-            return finalize({
-                result: 'blocked',
-                reason: 'verification_disabled',
-                userError: 'ระบบยืนยันตัวตนของเซิร์ฟเวอร์นี้ยังไม่เปิดใช้งาน'
-            });
-        }
-
-        if (String(stateRoleId) !== String(configuredRoleId)) {
-            return finalize({
-                result: 'failed',
-                reason: 'role_mismatch_latest_config',
-                userError: 'ลิงก์ยืนยันไม่ตรงกับการตั้งค่าปัจจุบัน กรุณาใช้แผงยืนยันล่าสุด',
-                discordSnapshotExtra: {
-                    stateRoleId,
-                    configuredRoleId
-                }
-            });
-        }
-
-        const accountAgeDays = getAccountAgeDays(profile.id);
-        const emailOk = !!profile.email && (
-            policySnapshot.requireEmailVerified
-                ? profile.verified === true
-                : true
-        );
-
-        const connectionCount = connections.length;
-        const connectionOk = connectionCount >= policySnapshot.minConnections;
-        const countryCode = String(ipInfo?.countryCode || '').toUpperCase();
-        const securityRules = policySnapshot.securityRules || {};
-        const policyViolations = [];
-        const recordRule = (key, reason, userError) => {
-            const violation = makeRuleViolation(key, securityRules[key], reason, userError);
-            if (!violation) return;
-            pushUnique(policyFindings, reason.split(':')[0]);
-            policyViolations.push(violation);
-        };
 
         if (ipInfo?.ipHash) {
             const safeIpHash = safeIpHashStrict(ipInfo.ipHash);
@@ -2142,85 +2527,42 @@ router.post('/auth/callback', async (req, res) => {
         const trackedUsers = existingIpLink && Array.isArray(existingIpLink.users)
             ? existingIpLink.users
             : [];
+        const securityRules = policySnapshot.securityRules || {};
+        const { policyFindings: newFindings, policyViolations } = await collectSecurityPolicyViolations({
+            ipInfo,
+            existingIpLink,
+            trackedUsers,
+            securityRules,
+            profile,
+            device,
+            guildId
+        });
+        policyFindings.push(...newFindings);
 
-        if (ipInfo?.isVPN || ipInfo?.isProxy || ipInfo?.isTOR) {
-            recordRule('vpnProxyTor', 'network_vpn_proxy_tor', 'ตรวจพบ VPN, Proxy หรือ TOR ตามเงื่อนไขของเซิร์ฟเวอร์');
-        }
-        if (ipInfo?.hosting) {
-            recordRule('hosting', 'network_hosting', 'เครือข่ายนี้เป็น Hosting หรือ Datacenter ตามเงื่อนไขของเซิร์ฟเวอร์');
-        }
-        if (ipInfo?.spoofSuspected) {
-            recordRule('spoofedHeader', 'spoofed_ip_header', 'ข้อมูล IP จากเบราว์เซอร์ไม่ตรงกัน กรุณาเปลี่ยนเครือข่ายแล้วลองใหม่');
-        }
-        if (
-            ipInfo?.lookupStatus === 'lookup_failed' ||
-            ipInfo?.lookupProvider === 'lookup_failed' ||
-            ipInfo?.lookupStatus === 'ip_unknown'
-        ) {
-            recordRule('unknownLookup', ipInfo?.lookupStatus === 'ip_unknown' ? 'ip_unknown' : 'ip_lookup_failed', 'ระบบตรวจสอบเครือข่ายไม่สำเร็จ กรุณารอสักครู่แล้วลองใหม่');
-        }
-        if (existingIpLink) {
-            const otherUsers = trackedUsers.filter(user => String(user.userId || '') !== String(profile.id));
-            const projectedUniqueUsers = otherUsers.length + 1;
-            if (projectedUniqueUsers > Number(securityRules.ipDuplicate?.threshold || 3)) {
-                recordRule('ipDuplicate', `ip_duplicate_limit:${projectedUniqueUsers}`, 'เครือข่ายนี้มีหลายบัญชีเกินจำนวนที่เซิร์ฟเวอร์กำหนด');
-            }
-            const previouslyBlocked = existingIpLink.lastResult === 'blocked' || trackedUsers.some(user =>
-                Number(user.blockedCount || 0) > 0 ||
-                (Array.isArray(user.lastFindings) && user.lastFindings.some(finding => /blocked|vpn|proxy|tor|spoof|duplicate|hosting/i.test(finding)))
-            );
-            if (previouslyBlocked) {
-                recordRule('previouslyBlockedIp', 'previously_blocked_ip', 'IP นี้เคยมีการยืนยันที่ถูกปฏิเสธ กรุณาติดต่อผู้ดูแล');
-            }
-        }
-        if (device?.fingerprintHash && securityRules.deviceDuplicate?.enabled) {
-            const deviceSummary = await getDeviceDuplicateSummary({
-                guildId,
-                fingerprintHash: device.fingerprintHash,
-                currentUserId: profile.id
-            });
-            if (deviceSummary.uniqueUsers > Number(securityRules.deviceDuplicate?.threshold || 2)) {
-                recordRule('deviceDuplicate', `device_duplicate_limit:${deviceSummary.uniqueUsers}`, 'อุปกรณ์นี้มีหลายบัญชีเกินจำนวนที่เซิร์ฟเวอร์กำหนด');
-            }
+        const accountAgeDays = getAccountAgeDays(profile.id);
+        const emailOk = !!profile.email && (
+            policySnapshot.requireEmailVerified
+                ? profile.verified === true
+                : true
+        );
+        const connectionCount = connections.length;
+        const connectionOk = connectionCount >= policySnapshot.minConnections;
+
+        const eligibilityFailure = checkAccountEligibilityRequirements({
+            accountAgeDays,
+            policySnapshot,
+            emailOk,
+            connectionOk,
+            connectionCount
+        });
+        if (eligibilityFailure) {
+            return finalize(eligibilityFailure);
         }
 
-        if (accountAgeDays < policySnapshot.minAccountAgeDays) {
-            return finalize({
-                result: 'blocked',
-                reason: `new_account:${accountAgeDays}`,
-                userError: `บัญชีอายุน้อยเกินไป (${accountAgeDays} วัน ต้องการ ${policySnapshot.minAccountAgeDays} วัน)`
-            });
-        }
-
-        if (policySnapshot.requireEmail && !emailOk) {
-            return finalize({
-                result: 'blocked',
-                reason: 'email_requirement_failed',
-                userError: 'บัญชีนี้ไม่มี Email หรือ Email ยังไม่ผ่านเงื่อนไขของเซิร์ฟเวอร์'
-            });
-        }
-        if (policySnapshot.requireConnections && !connectionOk) {
-            return finalize({
-                result: 'blocked',
-                reason: `connection_requirement_failed:${connectionCount}`,
-                userError: `บัญชีนี้มี Connections ไม่พอ (${connectionCount}/${policySnapshot.minConnections})`
-            });
-        }
-
-        if (policySnapshot.allowedCountries.length && !policySnapshot.allowedCountries.includes(countryCode)) {
-            return finalize({
-                result: 'blocked',
-                reason: `country_not_allowed:${countryCode || 'unknown'}`,
-                userError: 'ประเทศ/ภูมิภาคของเครือข่ายนี้ไม่อยู่ในรายการที่อนุญาต'
-            });
-        }
-
-        if (policySnapshot.blockedCountries.includes(countryCode)) {
-            return finalize({
-                result: 'blocked',
-                reason: `country_blocked:${countryCode || 'unknown'}`,
-                userError: 'ประเทศ/ภูมิภาคของเครือข่ายนี้ถูกบล็อก'
-            });
+        const countryCode = String(ipInfo?.countryCode || '').toUpperCase();
+        const countryFailure = checkCountryPolicy(policySnapshot, countryCode);
+        if (countryFailure) {
+            return finalize(countryFailure);
         }
 
         fetchMetadata.memberFetchAttempted = true;
@@ -2242,37 +2584,14 @@ router.post('/auth/callback', async (req, res) => {
         fetchMetadata.memberFailureReason = memberLookup?.failureReason || null;
 
         const selectedViolation = strongestRuleViolation(policyViolations);
-        if (selectedViolation && selectedViolation.action !== 'allow') {
-            const moderationResult = await safeSideEffect(
-                'verificationPolicyModeration',
-                () => executeRuleViolation({
-                    violation: selectedViolation,
-                    guildId,
-                    userId: profile.id,
-                    memberInfo
-                }),
-                {
-                    blocked: true,
-                    ok: false,
-                    action: selectedViolation.action,
-                    status: 'failed',
-                    error: 'verification_moderation_failed_safely'
-                }
-            );
-            return finalize({
-                result: 'blocked',
-                reason: selectedViolation.reason,
-                userError: moderationResult?.ok === false && selectedViolation.action !== 'deny_role'
-                    ? `${selectedViolation.userError} ระบบไม่สามารถดำเนินการลงโทษใน Discord ได้ แต่ยังไม่มอบยศให้บัญชีนี้`
-                    : selectedViolation.userError,
-                roleAssignResult: {
-                    ok: false,
-                    skipped: true,
-                    status: 'denied_by_security_rule',
-                    moderation: moderationResult,
-                    rule: selectedViolation.key
-                }
-            });
+        const violationOutcome = await enforceSelectedPolicyViolation({
+            selectedViolation,
+            guildId,
+            profile,
+            memberInfo
+        });
+        if (violationOutcome) {
+            return finalize(violationOutcome);
         }
 
         const memberRoles = memberInfo?.roles || [];
@@ -2290,54 +2609,26 @@ router.post('/auth/callback', async (req, res) => {
             });
         }
 
-        joinResult = memberInfo
-            ? { ok: true, status: 204, alreadyMember: true }
-            : await safeSideEffect(
-                'addMemberToGuild',
-                () => discord.addMemberToGuild(guildId, profile.id, accessToken),
-                { ok: false, skipped: true, error: 'join_failed_safely' }
-            );
-
-        if (!joinResult?.ok) {
-            return finalize({
-                result: 'failed',
-                reason: 'guild_join_failed',
-                userError: 'ระบบไม่สามารถพาคุณเข้าเซิร์ฟเวอร์ได้ กรุณาเข้าดิสก่อนแล้วลองใหม่',
-                roleAssignResult: {
-                    ok: false,
-                    skipped: true,
-                    error: 'guild_join_failed'
-                }
-            });
+        const assignOutcome = await performGuildJoinAndRoleAssignment({
+            memberInfo,
+            guildId,
+            profileId: profile.id,
+            accessToken,
+            configuredRoleId,
+            fetchMetadata
+        });
+        if (!assignOutcome.ok) {
+            return finalize(assignOutcome.failure);
         }
 
-        const roleAssignResult = await safeSideEffect(
-            'addRoleToMember',
-            () => discord.addRoleToMember(guildId, profile.id, configuredRoleId),
-            { ok: false, error: 'role_assign_failed_safely' }
-        );
-
-        if (!roleAssignResult?.ok) {
-            return finalize({
-                result: 'failed',
-                reason: roleAssignResult?.error || 'role_assign_failed',
-                userError: 'ระบบไม่สามารถเพิ่มยศให้ได้ กรุณาแจ้งแอดมิน',
-                roleAssignResult
-            });
-        }
-
-        const refreshedMember = await safeSideEffect(
-            'getGuildMemberAfterRole',
-            () => discord.getGuildMemberWithBot(guildId, profile.id),
-            null
-        );
-        memberInfo = recordPostRoleMemberFetch(fetchMetadata, refreshedMember) || memberInfo;
+        joinResult = assignOutcome.joinResult;
+        memberInfo = assignOutcome.memberInfo;
 
         return finalize({
             result: 'success',
             reason: 'verified',
             message: 'ระบบเพิ่มยศให้เรียบร้อยแล้ว',
-            roleAssignResult
+            roleAssignResult: assignOutcome.roleAssignResult
         });
     } catch (err) {
         if (discord.isOAuthInvalidGrantError(err)) {
