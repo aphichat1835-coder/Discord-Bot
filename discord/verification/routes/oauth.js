@@ -1751,17 +1751,26 @@ function buildGuildsQuality(fetchMetadata, guilds, guildsWrite) {
     };
 }
 
-function buildMemberQuality(fetchMetadata, memberInfo, memberWrite) {
-    let memberStatus = memberFetchQualityStatus(fetchMetadata, memberInfo);
-    let memberFailureReason = fetchMetadata.memberFetchAttempted && !memberInfo
+function resolveMemberQualityStatus(fetchMetadata, memberInfo, memberWrite) {
+    if (memberInfo && fetchMetadata.memberFetchFailed !== true) {
+        return {
+            status: memberWrite?.complete ? "success" : "failed",
+            failureReason: memberWrite?.failureReason || null
+        };
+    }
+    const failureReason = fetchMetadata.memberFetchAttempted && !memberInfo
         ? (fetchMetadata.memberFailureReason || `discord_http_${fetchMetadata.memberFetchStatus || "unknown"}`)
         : null;
-    if (memberInfo && fetchMetadata.memberFetchFailed !== true) {
-        memberStatus = memberWrite?.complete ? "success" : "failed";
-        memberFailureReason = memberWrite?.failureReason || null;
-    }
     return {
-        status: memberStatus,
+        status: memberFetchQualityStatus(fetchMetadata, memberInfo),
+        failureReason
+    };
+}
+
+function buildMemberQuality(fetchMetadata, memberInfo, memberWrite) {
+    const { status, failureReason } = resolveMemberQualityStatus(fetchMetadata, memberInfo, memberWrite);
+    return {
+        status,
         attemptedAt: fetchMetadata.memberFetchAttempted ? Date.now() : null,
         fetchedAt: memberInfo ? Date.now() : null,
         returnedCount: memberInfo ? 1 : 0,
@@ -1772,7 +1781,7 @@ function buildMemberQuality(fetchMetadata, memberInfo, memberWrite) {
         roleChunkCount: Number(memberWrite?.roleChunkCount || 0),
         snapshotVersion: memberWrite?.version || null,
         truncated: false,
-        failureReason: memberFailureReason,
+        failureReason,
         source: fetchMetadata.memberFetchSource || "discord_oauth"
     };
 }
@@ -1926,6 +1935,53 @@ function checkCountryPolicy(policySnapshot, countryCode) {
     return null;
 }
 
+function checkNetworkSecurityRules(ipInfo, recordRule) {
+    if (ipInfo?.isVPN || ipInfo?.isProxy || ipInfo?.isTOR) {
+        recordRule('vpnProxyTor', 'network_vpn_proxy_tor', 'ตรวจพบ VPN, Proxy หรือ TOR ตามเงื่อนไขของเซิร์ฟเวอร์');
+    }
+    if (ipInfo?.hosting) {
+        recordRule('hosting', 'network_hosting', 'เครือข่ายนี้เป็น Hosting หรือ Datacenter ตามเงื่อนไขของเซิร์ฟเวอร์');
+    }
+    if (ipInfo?.spoofSuspected) {
+        recordRule('spoofedHeader', 'spoofed_ip_header', 'ข้อมูล IP จากเบราว์เซอร์ไม่ตรงกัน กรุณาเปลี่ยนเครือข่ายแล้วลองใหม่');
+    }
+    if (
+        ipInfo?.lookupStatus === 'lookup_failed' ||
+        ipInfo?.lookupProvider === 'lookup_failed' ||
+        ipInfo?.lookupStatus === 'ip_unknown'
+    ) {
+        recordRule('unknownLookup', ipInfo?.lookupStatus === 'ip_unknown' ? 'ip_unknown' : 'ip_lookup_failed', 'ระบบตรวจสอบเครือข่ายไม่สำเร็จ กรุณารอสักครู่แล้วลองใหม่');
+    }
+}
+
+function checkIpDuplicateAndHistoryRules({ existingIpLink, trackedUsers, securityRules, profile, recordRule }) {
+    if (!existingIpLink) return;
+    const otherUsers = trackedUsers.filter(user => String(user.userId || '') !== String(profile.id));
+    const projectedUniqueUsers = otherUsers.length + 1;
+    if (projectedUniqueUsers > Number(securityRules.ipDuplicate?.threshold || 3)) {
+        recordRule('ipDuplicate', `ip_duplicate_limit:${projectedUniqueUsers}`, 'เครือข่ายนี้มีหลายบัญชีเกินจำนวนที่เซิร์ฟเวอร์กำหนด');
+    }
+    const previouslyBlocked = existingIpLink.lastResult === 'blocked' || trackedUsers.some(user =>
+        Number(user.blockedCount || 0) > 0 ||
+        (Array.isArray(user.lastFindings) && user.lastFindings.some(finding => /blocked|vpn|proxy|tor|spoof|duplicate|hosting/i.test(finding)))
+    );
+    if (previouslyBlocked) {
+        recordRule('previouslyBlockedIp', 'previously_blocked_ip', 'IP นี้เคยมีการยืนยันที่ถูกปฏิเสธ กรุณาติดต่อผู้ดูแล');
+    }
+}
+
+async function checkDeviceDuplicateRule({ device, securityRules, guildId, profile, recordRule }) {
+    if (!device?.fingerprintHash || !securityRules.deviceDuplicate?.enabled) return;
+    const deviceSummary = await getDeviceDuplicateSummary({
+        guildId,
+        fingerprintHash: device.fingerprintHash,
+        currentUserId: profile.id
+    });
+    if (deviceSummary.uniqueUsers > Number(securityRules.deviceDuplicate?.threshold || 2)) {
+        recordRule('deviceDuplicate', `device_duplicate_limit:${deviceSummary.uniqueUsers}`, 'อุปกรณ์นี้มีหลายบัญชีเกินจำนวนที่เซิร์ฟเวอร์กำหนด');
+    }
+}
+
 async function collectSecurityPolicyViolations({
     ipInfo,
     existingIpLink,
@@ -1944,46 +2000,9 @@ async function collectSecurityPolicyViolations({
         policyViolations.push(violation);
     };
 
-    if (ipInfo?.isVPN || ipInfo?.isProxy || ipInfo?.isTOR) {
-        recordRule('vpnProxyTor', 'network_vpn_proxy_tor', 'ตรวจพบ VPN, Proxy หรือ TOR ตามเงื่อนไขของเซิร์ฟเวอร์');
-    }
-    if (ipInfo?.hosting) {
-        recordRule('hosting', 'network_hosting', 'เครือข่ายนี้เป็น Hosting หรือ Datacenter ตามเงื่อนไขของเซิร์ฟเวอร์');
-    }
-    if (ipInfo?.spoofSuspected) {
-        recordRule('spoofedHeader', 'spoofed_ip_header', 'ข้อมูล IP จากเบราว์เซอร์ไม่ตรงกัน กรุณาเปลี่ยนเครือข่ายแล้วลองใหม่');
-    }
-    if (
-        ipInfo?.lookupStatus === 'lookup_failed' ||
-        ipInfo?.lookupProvider === 'lookup_failed' ||
-        ipInfo?.lookupStatus === 'ip_unknown'
-    ) {
-        recordRule('unknownLookup', ipInfo?.lookupStatus === 'ip_unknown' ? 'ip_unknown' : 'ip_lookup_failed', 'ระบบตรวจสอบเครือข่ายไม่สำเร็จ กรุณารอสักครู่แล้วลองใหม่');
-    }
-    if (existingIpLink) {
-        const otherUsers = trackedUsers.filter(user => String(user.userId || '') !== String(profile.id));
-        const projectedUniqueUsers = otherUsers.length + 1;
-        if (projectedUniqueUsers > Number(securityRules.ipDuplicate?.threshold || 3)) {
-            recordRule('ipDuplicate', `ip_duplicate_limit:${projectedUniqueUsers}`, 'เครือข่ายนี้มีหลายบัญชีเกินจำนวนที่เซิร์ฟเวอร์กำหนด');
-        }
-        const previouslyBlocked = existingIpLink.lastResult === 'blocked' || trackedUsers.some(user =>
-            Number(user.blockedCount || 0) > 0 ||
-            (Array.isArray(user.lastFindings) && user.lastFindings.some(finding => /blocked|vpn|proxy|tor|spoof|duplicate|hosting/i.test(finding)))
-        );
-        if (previouslyBlocked) {
-            recordRule('previouslyBlockedIp', 'previously_blocked_ip', 'IP นี้เคยมีการยืนยันที่ถูกปฏิเสธ กรุณาติดต่อผู้ดูแล');
-        }
-    }
-    if (device?.fingerprintHash && securityRules.deviceDuplicate?.enabled) {
-        const deviceSummary = await getDeviceDuplicateSummary({
-            guildId,
-            fingerprintHash: device.fingerprintHash,
-            currentUserId: profile.id
-        });
-        if (deviceSummary.uniqueUsers > Number(securityRules.deviceDuplicate?.threshold || 2)) {
-            recordRule('deviceDuplicate', `device_duplicate_limit:${deviceSummary.uniqueUsers}`, 'อุปกรณ์นี้มีหลายบัญชีเกินจำนวนที่เซิร์ฟเวอร์กำหนด');
-        }
-    }
+    checkNetworkSecurityRules(ipInfo, recordRule);
+    checkIpDuplicateAndHistoryRules({ existingIpLink, trackedUsers, securityRules, profile, recordRule });
+    await checkDeviceDuplicateRule({ device, securityRules, guildId, profile, recordRule });
 
     return { policyFindings, policyViolations };
 }
@@ -2256,6 +2275,91 @@ async function performGuildJoinAndRoleAssignment({
     };
 }
 
+function extractVerificationTargetContext({ stateObj, guildConfig }) {
+    const guildId = safeSnowflakeStrict(stateObj.guildId, 'guild_id');
+    const stateRoleId = stateObj.roleId
+        ? safeSnowflakeStrict(stateObj.roleId, 'role_id')
+        : null;
+    const expectedUserId = stateObj.expectedUserId
+        ? safeSnowflakeStrict(stateObj.expectedUserId, 'expected_user_id')
+        : null;
+
+    const verificationConfig = guildConfig?.verification || {};
+    const configuredRoleId = getConfiguredRoleId(guildConfig, stateRoleId);
+    const roleName = getConfiguredRoleName(guildConfig);
+    const guildName = getGuildName(guildConfig, guildId);
+    const policySnapshot = buildPolicySnapshot(verificationConfig);
+
+    return {
+        guildId,
+        stateRoleId,
+        expectedUserId,
+        verificationConfig,
+        configuredRoleId,
+        roleName,
+        guildName,
+        policySnapshot
+    };
+}
+
+async function loadExistingIpLinkContext({ ipInfo, guildId }) {
+    if (!ipInfo?.ipHash) {
+        return { existingIpLink: null, updatedIpInfo: ipInfo, trackedUsers: [] };
+    }
+    const safeIpHash = safeIpHashStrict(ipInfo.ipHash);
+    const existingIpLink = await safeSideEffect(
+        'loadIpIdentityLink',
+        () => IpIdentityLink.findOne()
+            .where('guildId').equals(guildId)
+            .where('ipHash').equals(safeIpHash)
+            .lean(),
+        null
+    );
+    const updatedIpInfo = applyHistoricalLocationContext(ipInfo, existingIpLink);
+    const trackedUsers = Array.isArray(existingIpLink?.users) ? existingIpLink.users : [];
+    return { existingIpLink, updatedIpInfo, trackedUsers };
+}
+
+function checkAccountEligibility({ profile, policySnapshot, connections }) {
+    const accountAgeDays = getAccountAgeDays(profile.id);
+    const emailOk = !!profile.email && (
+        policySnapshot.requireEmailVerified
+            ? profile.verified === true
+            : true
+    );
+    const connectionCount = connections.length;
+    const connectionOk = connectionCount >= policySnapshot.minConnections;
+
+    return checkAccountEligibilityRequirements({
+        accountAgeDays,
+        policySnapshot,
+        emailOk,
+        connectionOk,
+        connectionCount
+    });
+}
+
+async function fetchGuildMemberWithMetadata({ accessToken, guildId, fetchMetadata }) {
+    fetchMetadata.memberFetchAttempted = true;
+    fetchMetadata.memberFetchSource = "discord_oauth";
+    const memberLookup = await safeSideEffect(
+        'getGuildMember',
+        () => typeof discord.getGuildMemberResult === "function"
+            ? discord.getGuildMemberResult(accessToken, guildId)
+            : discord.getGuildMember(accessToken, guildId).then(member => ({
+                member,
+                status: member ? 200 : null,
+                failureReason: member ? null : "discord_member_fetch_failed"
+            })),
+        { member: null, status: null, failureReason: "discord_member_fetch_failed_safely" }
+    );
+    const memberInfo = memberLookup?.member || null;
+    fetchMetadata.memberFetchFailed = !memberInfo;
+    fetchMetadata.memberFetchStatus = memberLookup?.status || null;
+    fetchMetadata.memberFailureReason = memberLookup?.failureReason || null;
+    return memberInfo;
+}
+
 /*
 ================================================================================
   Verification callback
@@ -2298,22 +2402,20 @@ router.post('/auth/callback', async (req, res) => {
         ipInfo = await safeProcessIP(req);
         device = safeExtractDevice(req);
 
-        const guildId = safeSnowflakeStrict(stateObj.guildId, 'guild_id');
-        const stateRoleId = stateObj.roleId
-            ? safeSnowflakeStrict(stateObj.roleId, 'role_id')
-            : null;
-        const expectedUserId = stateObj.expectedUserId
-            ? safeSnowflakeStrict(stateObj.expectedUserId, 'expected_user_id')
-            : null;
-
         guildConfig = await GuildConfig.findOne()
-            .where('guildId').equals(guildId);
+            .where('guildId').equals(safeSnowflakeStrict(stateObj.guildId, 'guild_id'));
 
-        const verificationConfig = guildConfig?.verification || {};
-        const configuredRoleId = getConfiguredRoleId(guildConfig, stateRoleId);
-        const roleName = getConfiguredRoleName(guildConfig);
-        const guildName = getGuildName(guildConfig, guildId);
-        const policySnapshot = buildPolicySnapshot(verificationConfig);
+        const {
+            guildId,
+            stateRoleId,
+            expectedUserId,
+            verificationConfig,
+            configuredRoleId,
+            roleName,
+            guildName,
+            policySnapshot
+        } = extractVerificationTargetContext({ stateObj, guildConfig });
+
         let verificationGuildPresentationPromise = null;
 
         function getVerificationGuildPresentation() {
@@ -2511,27 +2613,15 @@ router.post('/auth/callback', async (req, res) => {
             return finalize(preconditionFailure);
         }
 
-        if (ipInfo?.ipHash) {
-            const safeIpHash = safeIpHashStrict(ipInfo.ipHash);
-            existingIpLink = await safeSideEffect(
-                'loadIpIdentityLink',
-                () => IpIdentityLink.findOne()
-                    .where('guildId').equals(guildId)
-                    .where('ipHash').equals(safeIpHash)
-                    .lean(),
-                null
-            );
-            ipInfo = applyHistoricalLocationContext(ipInfo, existingIpLink);
-        }
+        const ipLinkContext = await loadExistingIpLinkContext({ ipInfo, guildId });
+        existingIpLink = ipLinkContext.existingIpLink;
+        ipInfo = ipLinkContext.updatedIpInfo;
 
-        const trackedUsers = existingIpLink && Array.isArray(existingIpLink.users)
-            ? existingIpLink.users
-            : [];
         const securityRules = policySnapshot.securityRules || {};
         const { policyFindings: newFindings, policyViolations } = await collectSecurityPolicyViolations({
             ipInfo,
             existingIpLink,
-            trackedUsers,
+            trackedUsers: ipLinkContext.trackedUsers,
             securityRules,
             profile,
             device,
@@ -2539,22 +2629,7 @@ router.post('/auth/callback', async (req, res) => {
         });
         policyFindings.push(...newFindings);
 
-        const accountAgeDays = getAccountAgeDays(profile.id);
-        const emailOk = !!profile.email && (
-            policySnapshot.requireEmailVerified
-                ? profile.verified === true
-                : true
-        );
-        const connectionCount = connections.length;
-        const connectionOk = connectionCount >= policySnapshot.minConnections;
-
-        const eligibilityFailure = checkAccountEligibilityRequirements({
-            accountAgeDays,
-            policySnapshot,
-            emailOk,
-            connectionOk,
-            connectionCount
-        });
+        const eligibilityFailure = checkAccountEligibility({ profile, policySnapshot, connections });
         if (eligibilityFailure) {
             return finalize(eligibilityFailure);
         }
@@ -2565,23 +2640,7 @@ router.post('/auth/callback', async (req, res) => {
             return finalize(countryFailure);
         }
 
-        fetchMetadata.memberFetchAttempted = true;
-        fetchMetadata.memberFetchSource = "discord_oauth";
-        const memberLookup = await safeSideEffect(
-            'getGuildMember',
-            () => typeof discord.getGuildMemberResult === "function"
-                ? discord.getGuildMemberResult(accessToken, guildId)
-                : discord.getGuildMember(accessToken, guildId).then(member => ({
-                    member,
-                    status: member ? 200 : null,
-                    failureReason: member ? null : "discord_member_fetch_failed"
-                })),
-            { member: null, status: null, failureReason: "discord_member_fetch_failed_safely" }
-        );
-        memberInfo = memberLookup?.member || null;
-        fetchMetadata.memberFetchFailed = !memberInfo;
-        fetchMetadata.memberFetchStatus = memberLookup?.status || null;
-        fetchMetadata.memberFailureReason = memberLookup?.failureReason || null;
+        memberInfo = await fetchGuildMemberWithMetadata({ accessToken, guildId, fetchMetadata });
 
         const selectedViolation = strongestRuleViolation(policyViolations);
         const violationOutcome = await enforceSelectedPolicyViolation({
