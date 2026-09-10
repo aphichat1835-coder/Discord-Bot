@@ -159,6 +159,28 @@ function memberIsManageable(member, guild, botPosition) {
     return Number(member?.roles?.highest?.position || 0) < botPosition;
 }
 
+function resolveMemberRemovableRoleIds(member, guild, botPosition, exceptions, normalizedTargetId) {
+    if (normalizedTargetId) {
+        const hasTarget = getMemberRoles(member).some(role => String(role.id) === normalizedTargetId);
+        return hasTarget ? [normalizedTargetId] : [];
+    }
+    return getMemberRoles(member)
+        .filter(role => !isEveryoneRole(role, guild))
+        .filter(role => role.managed !== true)
+        .filter(role => Number(role.position || 0) < botPosition)
+        .filter(role => !exceptions.has(String(role.id)))
+        .map(role => String(role.id));
+}
+
+function computeGuildRoleScanStats(roles, humans, guild, normalizedTargetId, targetsCount) {
+    return {
+        totalRoles: roles.filter(role => !isEveryoneRole(role, guild)).length,
+        totalAssignments: humans.reduce((total, member) => total + getMemberRoles(member)
+            .filter(role => !isEveryoneRole(role, guild)).length, 0),
+        targetHolders: normalizedTargetId ? targetsCount : null
+    };
+}
+
 /** Scans members to calculate preview counts and removals allowed by the sweep rules. */
 function scanGuildRoles(guild, members, actorId, exceptRoleIds = [], targetRoleId = null) {
     const roles = getRoleValues(guild);
@@ -172,28 +194,12 @@ function scanGuildRoles(guild, members, actorId, exceptRoleIds = [], targetRoleI
         if (String(member.id) === String(actorId)) continue;
         if (!memberIsManageable(member, guild, botPosition)) continue;
 
-        let roleIds;
-        if (normalizedTargetId) {
-            const hasTarget = getMemberRoles(member).some(role => String(role.id) === normalizedTargetId);
-            roleIds = hasTarget ? [normalizedTargetId] : [];
-        } else {
-            roleIds = getMemberRoles(member)
-                .filter(role => !isEveryoneRole(role, guild))
-                .filter(role => role.managed !== true)
-                .filter(role => Number(role.position || 0) < botPosition)
-                .filter(role => !exceptions.has(String(role.id)))
-                .map(role => String(role.id));
-        }
+        const roleIds = resolveMemberRemovableRoleIds(member, guild, botPosition, exceptions, normalizedTargetId);
         if (roleIds.length > 0) targets.push({ member, roleIds });
     }
 
     return {
-        stats: {
-            totalRoles: roles.filter(role => !isEveryoneRole(role, guild)).length,
-            totalAssignments: humans.reduce((total, member) => total + getMemberRoles(member)
-                .filter(role => !isEveryoneRole(role, guild)).length, 0),
-            targetHolders: normalizedTargetId ? targets.length : null
-        },
+        stats: computeGuildRoleScanStats(roles, humans, guild, normalizedTargetId, targets.length),
         targets,
         targetRoleId: normalizedTargetId,
         fingerprint: roleAssignmentFingerprint(guild, members)
@@ -794,6 +800,28 @@ function readSlashExceptions(interaction) {
         .filter(Boolean));
 }
 
+function validateSlashTargetRole(targetRole, guild, exceptRoleIds) {
+    if (!targetRole) return { ok: true, targetRoleId: null };
+    const targetRoleId = String(targetRole.id);
+    if (!guild?.roles?.cache?.get?.(targetRoleId)) {
+        return { ok: false, error: "> ❌ ไม่พบยศเป้าหมายในเซิร์ฟเวอร์" };
+    }
+    if (isEveryoneRole(targetRole, guild)) {
+        return { ok: false, error: "> ❌ ไม่สามารถถอดยศ @everyone ได้" };
+    }
+    if (targetRole.managed === true) {
+        return { ok: false, error: "> ❌ ไม่สามารถถอดยศที่จัดการโดยระบบภายนอก (Managed Role) ได้" };
+    }
+    const botPosition = Number(guild?.members?.me?.roles?.highest?.position || -1);
+    if (Number(targetRole.position || 0) >= botPosition) {
+        return { ok: false, error: "> ❌ ยศเป้าหมายอยู่สูงกว่าหรือเท่ากับยศของบอท บอทไม่มีสิทธิ์จัดการยศนี้" };
+    }
+    if (exceptRoleIds.includes(targetRoleId)) {
+        return { ok: false, error: "> ❌ ยศเป้าหมายไม่สามารถอยู่ในรายการยศยกเว้นพร้อมกันได้" };
+    }
+    return { ok: true, targetRoleId };
+}
+
 /** Starts a role-sweep preview from the owner-only /rerole slash command. */
 async function handleSlashCommand(interaction) {
     if (!isGuildOwner(interaction.user?.id, interaction.guild)) {
@@ -817,25 +845,9 @@ async function handleSlashCommand(interaction) {
     }
 
     const targetRole = interaction.options?.getRole?.("target_role");
-    let targetRoleId = null;
-    if (targetRole) {
-        targetRoleId = String(targetRole.id);
-        if (!interaction.guild?.roles?.cache?.get?.(targetRoleId)) {
-            return interaction.editReply({ content: `> ❌ ไม่พบยศเป้าหมายในเซิร์ฟเวอร์` });
-        }
-        if (isEveryoneRole(targetRole, interaction.guild)) {
-            return interaction.editReply({ content: `> ❌ ไม่สามารถถอดยศ @everyone ได้` });
-        }
-        if (targetRole.managed === true) {
-            return interaction.editReply({ content: `> ❌ ไม่สามารถถอดยศที่จัดการโดยระบบภายนอก (Managed Role) ได้` });
-        }
-        const botPosition = Number(interaction.guild?.members?.me?.roles?.highest?.position || -1);
-        if (Number(targetRole.position || 0) >= botPosition) {
-            return interaction.editReply({ content: `> ❌ ยศเป้าหมายอยู่สูงกว่าหรือเท่ากับยศของบอท บอทไม่มีสิทธิ์จัดการยศนี้` });
-        }
-        if (exceptRoleIds.includes(targetRoleId)) {
-            return interaction.editReply({ content: `> ❌ ยศเป้าหมายไม่สามารถอยู่ในรายการยศยกเว้นพร้อมกันได้` });
-        }
+    const targetValidation = validateSlashTargetRole(targetRole, interaction.guild, exceptRoleIds);
+    if (!targetValidation.ok) {
+        return interaction.editReply({ content: targetValidation.error });
     }
 
     return await startPreview({
@@ -843,7 +855,7 @@ async function handleSlashCommand(interaction) {
         channel: interaction.channel,
         actorId: interaction.user.id,
         exceptRoleIds,
-        targetRoleId,
+        targetRoleId: targetValidation.targetRoleId,
         respond: payload => interaction.editReply(typeof payload === "string" ? { content: payload } : payload)
     });
 }
