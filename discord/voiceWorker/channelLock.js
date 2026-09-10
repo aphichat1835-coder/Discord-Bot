@@ -81,38 +81,44 @@ async function sendMoveNotification(sessionId, deps = {}) {
     }
 }
 
+function createInitialMoveTrackingRecord({ sessionId, session, client, newState, toChannelName, now }) {
+    return {
+        sessionId,
+        ownerId: session.ownerId,
+        accountId: client.user?.id || session.accountId,
+        accountName: client.user?.tag || session.accountTag || session.accountName || "บัญชีไม่ทราบชื่อ",
+        accountAvatar: typeof client.user?.displayAvatarURL === "function" ? client.user.displayAvatarURL() : session.accountAvatar || null,
+        guildId: session.serverId,
+        guildName: session.serverName || newState.guild?.name || "เซิร์ฟเวอร์ไม่ทราบชื่อ",
+        targetChannelId: session.voiceId,
+        targetChannelName: session.voiceName || "ช่องเป้าหมาย",
+        lastMovedToChannelId: newState.channelId,
+        lastMovedToChannelName: toChannelName,
+        moveCount: 1,
+        firstMovedAt: now,
+        lastMovedAt: now,
+        timer: null
+    };
+}
+
+function updateExistingMoveTrackingRecord(record, newState, toChannelName, now) {
+    if (record.timer) clearTimeout(record.timer);
+    record.moveCount++;
+    record.lastMovedAt = now;
+    record.lastMovedToChannelId = newState.channelId;
+    record.lastMovedToChannelName = toChannelName;
+    return record;
+}
+
 function recordMoveIncident(sessionId, session, client, oldState, newState, deps = {}) {
     const debounceMs = Number.isFinite(Number(deps.debounceMs)) ? Number(deps.debounceMs) : MOVE_DEBOUNCE_MS;
-    let record = moveTracking.get(sessionId);
-
     const now = Date.now();
     const toChannelName = newState.channel?.name || newState.channelId || "ห้องเสียงไม่ทราบชื่อ";
+    const existing = moveTracking.get(sessionId);
 
-    if (record) {
-        if (record.timer) clearTimeout(record.timer);
-        record.moveCount++;
-        record.lastMovedAt = now;
-        record.lastMovedToChannelId = newState.channelId;
-        record.lastMovedToChannelName = toChannelName;
-    } else {
-        record = {
-            sessionId,
-            ownerId: session.ownerId,
-            accountId: client.user?.id || session.accountId,
-            accountName: client.user?.tag || session.accountTag || session.accountName || "บัญชีไม่ทราบชื่อ",
-            accountAvatar: typeof client.user?.displayAvatarURL === "function" ? client.user.displayAvatarURL() : session.accountAvatar || null,
-            guildId: session.serverId,
-            guildName: session.serverName || newState.guild?.name || "เซิร์ฟเวอร์ไม่ทราบชื่อ",
-            targetChannelId: session.voiceId,
-            targetChannelName: session.voiceName || "ช่องเป้าหมาย",
-            lastMovedToChannelId: newState.channelId,
-            lastMovedToChannelName: toChannelName,
-            moveCount: 1,
-            firstMovedAt: now,
-            lastMovedAt: now,
-            timer: null
-        };
-    }
+    const record = existing
+        ? updateExistingMoveTrackingRecord(existing, newState, toChannelName, now)
+        : createInitialMoveTrackingRecord({ sessionId, session, client, newState, toChannelName, now });
 
     const setTimer = deps.setTimeout || setTimeout;
     record.timer = setTimer(() => {
@@ -124,57 +130,58 @@ function recordMoveIncident(sessionId, session, client, oldState, newState, deps
     return record;
 }
 
-function handleVoiceStateUpdate(sessionId, client, oldState, newState, deps = {}) {
-    if (st.isShuttingDown) return false;
+function isVoiceMoveEventApplicable(sessionId, client, newState, deps = {}) {
+    if (st.isShuttingDown) return null;
 
-    // Must be the self-client user
     const selfUserId = client?.user?.id;
     if (!selfUserId || String(newState?.id || "") !== String(selfUserId)) {
-        return false;
+        return null;
     }
 
     const getSession = deps.getSession || (id => sessionManager.getSession(id));
     const session = getSession(sessionId);
     const runnable = deps.isSessionRunnable || isSessionRunnable;
     if (!session || !runnable(session)) {
-        return false;
+        return null;
     }
 
-    // Must match the session's guild
     if (String(newState.guild?.id || "") !== String(session.serverId || "")) {
-        return false;
+        return null;
     }
 
-    // Disconnect from voice completely is handled by VoiceConnectionStatus.Disconnected
-    if (!newState.channelId) {
-        return false;
+    if (!newState.channelId || String(newState.channelId) === String(session.voiceId)) {
+        return null;
     }
 
-    // Already in target channel
-    if (String(newState.channelId) === String(session.voiceId)) {
-        return false;
+    return session;
+}
+
+function executeFlybackRejoin(session, sessionId) {
+    const conn = session.connection;
+    if (!conn || conn.state?.status === VoiceConnectionStatus.Destroyed) {
+        return;
     }
 
-    // Bot was moved to a different voice channel in the guild!
+    try {
+        conn.rejoin({
+            channelId: session.voiceId,
+            selfMute: true,
+            selfDeaf: true
+        });
+    } catch (err) {
+        console.warn(`[WORKER] ⚠️ Flyback rejoin failed for ${sanitizeLogText(sessionId)}: ${err.message}`);
+    }
+}
+
+function handleVoiceStateUpdate(sessionId, client, oldState, newState, deps = {}) {
+    const session = isVoiceMoveEventApplicable(sessionId, client, newState, deps);
+    if (!session) return false;
+
     const fromName = oldState?.channel?.name || oldState?.channelId || "ห้องเดิม";
     const toName = newState.channel?.name || newState.channelId || "ห้องใหม่";
     console.log(`[WORKER] 🧲 Bot moved from ${fromName} to ${toName} — flying back to target channel ${session.voiceName || session.voiceId} (${sanitizeLogText(sessionId)})`);
 
-    // Immediate Flyback
-    const conn = session.connection;
-    if (conn && conn.state?.status !== VoiceConnectionStatus.Destroyed) {
-        try {
-            conn.rejoin({
-                channelId: session.voiceId,
-                selfMute: true,
-                selfDeaf: true
-            });
-        } catch (err) {
-            console.warn(`[WORKER] ⚠️ Flyback rejoin failed for ${sanitizeLogText(sessionId)}: ${err.message}`);
-        }
-    }
-
-    // Record incident and schedule 3-minute trailing debounce notification
+    executeFlybackRejoin(session, sessionId);
     recordMoveIncident(sessionId, session, client, oldState, newState, deps);
     return true;
 }
