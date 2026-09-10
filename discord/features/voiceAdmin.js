@@ -136,12 +136,14 @@ function makeError(code, operation, cause = null) {
 function trimOldestEntries(map, maxSize) {
     while (map.size > maxSize) map.delete(map.keys().next().value);
 }
-function pruneRuntimeCaches(now = Date.now()) {
+function pruneCachedAuditUnlocks(now) {
     for (const [key, entries] of cachedAuditUnlocks) {
         const fresh = entries.filter(entry => now - Number(entry?.createdTimestamp || 0) <= AUDIT_CACHE_WINDOW_MS);
         if (fresh.length) cachedAuditUnlocks.set(key, fresh.slice(-8));
         else cachedAuditUnlocks.delete(key);
     }
+}
+function pruneAuditWatermarksAndEntries(now) {
     for (const [id, details] of processedAuditEntries) {
         const at = typeof details === "object" ? Number(details.at) : Number(details);
         if (now - at > PROCESSED_AUDIT_WINDOW_MS) processedAuditEntries.delete(id);
@@ -149,9 +151,16 @@ function pruneRuntimeCaches(now = Date.now()) {
     for (const [key, at] of auditWatermarks) {
         if (now - Number(at) > PROCESSED_AUDIT_WINDOW_MS) auditWatermarks.delete(key);
     }
+}
+function pruneNoticePointers(now) {
     for (const [key, notice] of notices) {
         if (now - Number(notice?.notifiedAt || 0) >= NOTICE_WINDOW_MS) notices.delete(key);
     }
+}
+function pruneRuntimeCaches(now = Date.now()) {
+    pruneCachedAuditUnlocks(now);
+    pruneAuditWatermarksAndEntries(now);
+    pruneNoticePointers(now);
     trimOldestEntries(cachedAuditUnlocks, MAX_AUDIT_CACHE_KEYS);
     trimOldestEntries(processedAuditEntries, MAX_PROCESSED_AUDIT_ENTRIES);
     trimOldestEntries(notices, MAX_NOTICE_POINTERS);
@@ -655,56 +664,62 @@ async function restoreBothLockSnapshots(guildId, userId, previous, versions) {
     if (failure) throw failure.reason;
     return restored;
 }
+async function lockSingleMemberVoiceState(guild, member, type, actorId, options) {
+    if (!isStillInSource(member, options.source)) return BULK_SKIPPED;
+    const ownerForced = type === "mute" && options.ownerForced === true;
+    if (isAdministrator(member, guild) && !ownerForced) return setVoice(member, type, true, "voiceadmin temporary lock");
+    const written = await writeLock(guild.id, member.id, type, actorId, undefined, { ownerForced });
+    if (!isStillInSource(member, options.source)) {
+        await clearLockField(guild.id, member.id, type, written.version);
+        return BULK_SKIPPED;
+    }
+    try { await setVoice(member, type, true, "voiceadmin lock"); }
+    catch (error) {
+        try { await clearLockField(guild.id, member.id, type, written.version); }
+        catch (rollbackError) { if (rollbackError.code === "VOICE_ADMIN_PERSISTENCE_FAILED") throw rollbackError; }
+        throw error;
+    }
+}
 async function lockVoiceState(guild, members, type, actorId, options = {}) {
-    return withGuildAction(guild.id, controller => runBulkUnsafe(members, async member => {
-        if (!isStillInSource(member, options.source)) return BULK_SKIPPED;
-        const ownerForced = type === "mute" && options.ownerForced === true;
-        if (isAdministrator(member, guild) && !ownerForced) return setVoice(member, type, true, "voiceadmin temporary lock");
-        const written = await writeLock(guild.id, member.id, type, actorId, undefined, { ownerForced });
-        if (!isStillInSource(member, options.source)) {
-            await clearLockField(guild.id, member.id, type, written.version);
-            return BULK_SKIPPED;
-        }
-        try { await setVoice(member, type, true, "voiceadmin lock"); }
-        catch (error) {
-            try { await clearLockField(guild.id, member.id, type, written.version); }
-            catch (rollbackError) { if (rollbackError.code === "VOICE_ADMIN_PERSISTENCE_FAILED") throw rollbackError; }
-            throw error;
-        }
-    }, controller));
+    return withGuildAction(guild.id, controller => runBulkUnsafe(members, member =>
+        lockSingleMemberVoiceState(guild, member, type, actorId, options), controller));
+}
+async function unlockSingleMemberVoiceState(guild, member, type, options) {
+    if (!isStillInSource(member, options.source)) return BULK_SKIPPED;
+    const previous = getLock(guild.id, member.id); let cleared = null;
+    if (type === "mute" && previous?.muteOwnerForced) throw makeError("VOICE_ADMIN_OWNER_LOCKED");
+    if (previous?.[fieldFor(type)]) cleared = await clearLockField(guild.id, member.id, type, previous[metadataFor(type).version]);
+    if (!isStillInSource(member, options.source)) {
+        if (cleared) await restoreLockSnapshot(guild.id, member.id, type, previous, cleared.version);
+        return BULK_SKIPPED;
+    }
+    try { await setVoice(member, type, false, "voiceadmin unlock"); }
+    catch (error) {
+        if (cleared) await restoreLockSnapshot(guild.id, member.id, type, previous, cleared.version);
+        throw error;
+    }
 }
 async function unlockVoiceState(guild, members, type, options = {}) {
-    return withGuildAction(guild.id, controller => runBulkUnsafe(members, async member => {
-        if (!isStillInSource(member, options.source)) return BULK_SKIPPED;
-        const previous = getLock(guild.id, member.id); let cleared = null;
-        if (type === "mute" && previous?.muteOwnerForced) throw makeError("VOICE_ADMIN_OWNER_LOCKED");
-        if (previous?.[fieldFor(type)]) cleared = await clearLockField(guild.id, member.id, type, previous[metadataFor(type).version]);
-        if (!isStillInSource(member, options.source)) {
-            if (cleared) await restoreLockSnapshot(guild.id, member.id, type, previous, cleared.version);
-            return BULK_SKIPPED;
-        }
-        try { await setVoice(member, type, false, "voiceadmin unlock"); }
-        catch (error) {
-            if (cleared) await restoreLockSnapshot(guild.id, member.id, type, previous, cleared.version);
-            throw error;
-        }
-    }, controller));
+    return withGuildAction(guild.id, controller => runBulkUnsafe(members, member =>
+        unlockSingleMemberVoiceState(guild, member, type, options), controller));
+}
+async function unlockSingleMemberBothVoiceStates(guild, member, options) {
+    if (!isStillInSource(member, options.source)) return BULK_SKIPPED;
+    const previous = getLock(guild.id, member.id); let cleared = null;
+    if (previous) cleared = await clearBothLocks(guild.id, member.id, { mute: previous.muteVersion, deaf: previous.deafVersion });
+    if (!isStillInSource(member, options.source)) {
+        if (cleared) await restoreBothLockSnapshots(guild.id, member.id, previous, cleared.versions);
+        return BULK_SKIPPED;
+    }
+    try { await setVoiceBoth(member, false, "voiceadmin unlock all"); }
+    catch (error) {
+        if (cleared) await restoreBothLockSnapshots(guild.id, member.id, previous, cleared.versions);
+        throw error;
+    }
 }
 async function unlockBoth(guild, members, options = {}) {
-    return withGuildAction(guild.id, controller => runBulkUnsafe(members, async member => {
-        if (!isStillInSource(member, options.source)) return BULK_SKIPPED;
-        const previous = getLock(guild.id, member.id); let cleared = null;
-        if (previous) cleared = await clearBothLocks(guild.id, member.id, { mute: previous.muteVersion, deaf: previous.deafVersion });
-        if (!isStillInSource(member, options.source)) {
-            if (cleared) await restoreBothLockSnapshots(guild.id, member.id, previous, cleared.versions);
-            return BULK_SKIPPED;
-        }
-        try { await setVoiceBoth(member, false, "voiceadmin unlock all"); }
-        catch (error) {
-            if (cleared) await restoreBothLockSnapshots(guild.id, member.id, previous, cleared.versions);
-            throw error;
-        }
-    }, controller));
+    return withGuildAction(guild.id, controller => runBulkUnsafe(members, member =>
+        unlockSingleMemberBothVoiceStates(guild, member, options), controller));
 }
 async function disconnectMembers(guild, sourceOrMembers, maybeMembers = null) {
     const source = Array.isArray(sourceOrMembers) ? null : sourceOrMembers;
@@ -1002,6 +1017,17 @@ async function enforceLockOnce(guild, userId, type, expectedVersion = undefined)
         return { complete: false, enforced: false, error };
     }
 }
+async function runLockEnforcementLoop(guild, userId, type, requestedVersion, delays, controller) {
+    let lastError = null;
+    for (const delay of delays) {
+        if (controller.cancelled) return { done: true, value: false };
+        if (delay > 0 && !(await pause(delay, controller))) return { done: true, value: false };
+        const result = await enforceLockOnce(guild, userId, type, requestedVersion);
+        if (result.complete) return { done: true, value: result.enforced };
+        lastError = result.error || lastError;
+    }
+    return { done: false, lastError };
+}
 async function enforceLock(guild, userId, type, expectedVersion = undefined, options = {}) {
     const key = pendingKey(guild.id, userId, type);
     const currentLock = getLock(guild.id, userId);
@@ -1016,15 +1042,10 @@ async function enforceLock(guild, userId, type, expectedVersion = undefined, opt
         : ENFORCEMENT_RETRY_DELAYS_MS;
     const controller = { cancelled: false, sleeps: new Set(), promise: null, version: requestedVersion };
     controller.promise = Promise.resolve().then(async () => {
-        let lastError = null;
-        for (const delay of delays) {
-            if (controller.cancelled) return false;
-            if (delay > 0 && !(await pause(delay, controller))) return false;
-            const result = await enforceLockOnce(guild, userId, type, requestedVersion);
-            if (result.complete) return result.enforced;
-            lastError = result.error || lastError;
-        }
+        const loopResult = await runLockEnforcementLoop(guild, userId, type, requestedVersion, delays, controller);
+        if (loopResult.done) return loopResult.value;
         if (!stopping && !controller.cancelled) {
+            const lastError = loopResult.lastError;
             await reportEnforcementFailure("lock_enforcement", { guildId: guild.id, userId, type, code: lastError?.code || lastError?.name || "discord_api_failed" });
             throw makeError("VOICE_ADMIN_ENFORCEMENT_FAILED", "lock_enforcement", lastError);
         }
@@ -1066,44 +1087,58 @@ async function persistNoticeRecord(notice) {
     return { result, lastError };
 }
 
+async function resolveVoiceChannelForNotice(guild, targetId) {
+    const target = guild.members.cache.get(targetId) || await guild.members.fetch(targetId).catch(() => null);
+    const channel = target?.voice?.channel;
+    return isVoiceChannel(channel) ? channel : null;
+}
+
+function buildUnauthorizedNoticeContent(actorId, targetId, options) {
+    const actionLabel = getNoticeActionLabel(options.type);
+    return options.ownerForced
+        ? `<@${actorId}> คุณไม่มีสิทธิ์${actionLabel}ให้ <@${targetId}> เนื่องจากถูกล็อกโดยผู้ดูแลระบบบอตระดับสูงสุด (Owner)`
+        : `<@${actorId}> คุณไม่มีสิทธิ์${actionLabel}ให้ <@${targetId}> กรุณาติดต่อแอดมิน`;
+}
+
+async function deliverUnauthorizedNotice(guild, channel, actorId, targetId, options, key) {
+    const previous = notices.get(key);
+    if (previous && Date.now() - Number(previous.notifiedAt || 0) < NOTICE_WINDOW_MS) {
+        await deletePreviousNotice(guild, previous);
+    }
+    const content = buildUnauthorizedNoticeContent(actorId, targetId, options);
+    const sent = await channel.send({ content, allowedMentions: { users: [String(actorId)], parse: [] } }).catch(() => null);
+    if (!sent) return null;
+    return {
+        guildId: String(guild.id),
+        actorId: String(actorId),
+        targetId: String(targetId),
+        channelId: String(channel.id),
+        messageId: String(sent.id),
+        notifiedAt: new Date()
+    };
+}
+
+async function executeUnauthorizedNotice(guild, actorId, targetId, options, key) {
+    if (stopping) return false;
+    const channel = await resolveVoiceChannelForNotice(guild, targetId);
+    if (!channel) return false;
+    const notice = await deliverUnauthorizedNotice(guild, channel, actorId, targetId, options, key);
+    if (!notice) return false;
+    const { result, lastError } = await persistNoticeRecord(notice);
+    if (!operationWasAcknowledged(result, { allowUpsert: true })) {
+        await reportPersistenceFailure("notice_pointer", { guildId: guild.id, userId: targetId, type: "notice", error: lastError });
+        return false;
+    }
+    notices.set(key, notice);
+    return true;
+}
+
 async function sendUnauthorizedNotice(guild, actorId, targetId, options = {}) {
     const key = noticeKey(guild.id, actorId, targetId);
     const before = noticeQueues.get(key) || Promise.resolve();
-    const next = before.catch(() => {}).then(async () => {
-        if (stopping) return false;
-        const target = guild.members.cache.get(targetId) || await guild.members.fetch(targetId).catch(() => null);
-        const channel = target?.voice?.channel;
-        if (!isVoiceChannel(channel)) return false;
-
-        const previous = notices.get(key);
-        if (previous && Date.now() - Number(previous.notifiedAt || 0) < NOTICE_WINDOW_MS) {
-            await deletePreviousNotice(guild, previous);
-        }
-
-        const actionLabel = getNoticeActionLabel(options.type);
-        const content = options.ownerForced
-            ? `<@${actorId}> คุณไม่มีสิทธิ์${actionLabel}ให้ <@${targetId}> เนื่องจากถูกล็อกโดยผู้ดูแลระบบบอตระดับสูงสุด (Owner)`
-            : `<@${actorId}> คุณไม่มีสิทธิ์${actionLabel}ให้ <@${targetId}> กรุณาติดต่อแอดมิน`;
-        const sent = await channel.send({ content, allowedMentions: { users: [String(actorId)], parse: [] } }).catch(() => null);
-        if (!sent) return false;
-
-        const notice = {
-            guildId: String(guild.id),
-            actorId: String(actorId),
-            targetId: String(targetId),
-            channelId: String(channel.id),
-            messageId: String(sent.id),
-            notifiedAt: new Date()
-        };
-
-        const { result, lastError } = await persistNoticeRecord(notice);
-        if (!operationWasAcknowledged(result, { allowUpsert: true })) {
-            await reportPersistenceFailure("notice_pointer", { guildId: guild.id, userId: targetId, type: "notice", error: lastError });
-            return false;
-        }
-        notices.set(key, notice);
-        return true;
-    }).finally(() => {
+    const next = before.catch(() => {}).then(() =>
+        executeUnauthorizedNotice(guild, actorId, targetId, options, key)
+    ).finally(() => {
         if (noticeQueues.get(key) === next) noticeQueues.delete(key);
     });
     noticeQueues.set(key, next);
