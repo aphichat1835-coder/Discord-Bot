@@ -56,3 +56,51 @@ test("anti-raid evidence chooses bounded raid deletion once", () => {
     assert.equal(merged.action, "ban");
     assert.equal(merged.deleteMode, "raid");
 });
+
+test("checkProtectedCommandAccess allows normal commands and restricts owner commands", async () => {
+    const config = { system: { ownerId: "owner_123" } };
+    const normalCmd = {
+        guild: { id: "guild_1" },
+        isAutocomplete: () => false,
+        isChatInputCommand: () => true,
+        commandName: "ping",
+        user: { id: "user_456" }
+    };
+    const normalRes = await _test.checkProtectedCommandAccess(normalCmd, config, "shadow_master");
+    assert.equal(normalRes.allowed, true);
+
+    const replies = [];
+    const protectedCmdUnauthorized = {
+        guild: { id: "guild_1" },
+        isAutocomplete: () => false,
+        isChatInputCommand: () => true,
+        commandName: "backup",
+        user: { id: "unauthorized_user" },
+        reply: (payload) => replies.push(payload)
+    };
+    const unauthRes = await _test.checkProtectedCommandAccess(protectedCmdUnauthorized, config, "shadow_master");
+    assert.equal(unauthRes.allowed, false);
+    assert.match(replies[0].content, /เจ้าของบอท/);
+});
+
+test("checkDisabledCommand blocks disabled commands with notice", async () => {
+    const disabledCommands = new Set(["disabled_cmd"]);
+    const replies = [];
+    const interaction = {
+        isChatInputCommand: () => true,
+        commandName: "disabled_cmd",
+        reply: async (payload) => replies.push(payload)
+    };
+
+    const res = await _test.checkDisabledCommand(interaction, disabledCommands);
+    assert.equal(res.allowed, false);
+    assert.match(replies[0].content, /ถูกปิดใช้งานชั่วคราว/);
+
+    const activeInteraction = {
+        isChatInputCommand: () => true,
+        commandName: "active_cmd"
+    };
+    const activeRes = await _test.checkDisabledCommand(activeInteraction, disabledCommands);
+    assert.equal(activeRes.allowed, true);
+});
+

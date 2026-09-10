@@ -228,6 +228,224 @@ function mergeProtectionFindings(findings = []) {
     };
 }
 
+async function applyProtectionEnforcementAndNotice({ message, member, pConf, result, findings, sessionManager, touchedKeys, spamTracking }) {
+    const actionResult = canEnforceProtection(pConf)
+        ? await executeProtectionAction({
+            member,
+            result,
+            message,
+            deleteMode: result.deleteMode
+        })
+        : buildAuditOnlyProtectionResult(result);
+
+    await recordProtectionResult({
+        guild: message.guild,
+        sessionManager,
+        result,
+        member,
+        message,
+        actionResult
+    });
+
+    for (const key of touchedKeys) spamTracking.delete(key);
+
+    if (
+        canEnforceProtection(pConf) &&
+        findings.some(finding => finding.shouldDelete) &&
+        actionResult.deletedMessages > 0
+    ) {
+        const notice = await message.channel.send({
+            content: `> 🔗 <@${message.author.id}> ข้อความถูกบล็อกโดยระบบ`,
+            allowedMentions: { parse: [] }
+        }).catch(() => null);
+        if (notice) {
+            const timer = setTimeout(() => notice.delete().catch(() => {}), 5000);
+            timer.unref?.();
+        }
+    }
+}
+
+function collectMessageProtectionFindings({
+    message,
+    member,
+    pConf,
+    spamTracking,
+    now,
+    antiRaidEnabled,
+    config
+}) {
+    const findings = [];
+    const touchedKeys = [];
+    const isAdmin = member
+        ? isAdministrator(member) || member.roles?.cache?.has?.(config.roles.fallbackAdminId)
+        : false;
+    const isOwner = message.author.id === message.guild.ownerId;
+
+    if (member && antiRaidEnabled && message.mentions?.everyone && !isAdmin && !isOwner) {
+        const key = `${message.guild.id}_${message.author.id}`;
+        const windowMs = pConf?.antiRaid?.spamWindowMs || 60000;
+        const history = (spamTracking.get(key) || []).filter(timestamp => now - timestamp < windowMs);
+        history.push(now);
+        spamTracking.set(key, history);
+        touchedKeys.push(key);
+        const finding = protection.checkAntiRaid(member, history, pConf);
+        if (finding) findings.push(finding);
+    }
+
+    if (member && pConf?.antiSpam?.enabled) {
+        const key = `spam_${message.guild.id}_${message.author.id}`;
+        const windowMs = pConf?.antiSpam?.windowMs || 5000;
+        const history = (spamTracking.get(key) || []).filter(timestamp => now - timestamp < windowMs);
+        history.push(now);
+        spamTracking.set(key, history);
+        touchedKeys.push(key);
+        const finding = protection.checkAntiSpam(member, history, pConf);
+        if (finding) findings.push(finding);
+    }
+
+    if (pConf?.linkFilter?.enabled) {
+        const finding = protection.checkLinkFilter(message, pConf);
+        if (finding) findings.push({ ...finding, action: "delete_message", shouldDelete: true, shouldCreateCase: false });
+    }
+
+    return { findings, touchedKeys };
+}
+
+async function runMessageProtectionPipeline({
+    message,
+    sessionManager,
+    spamTracking,
+    config,
+    antiRaidState,
+    MAX_SPAM_USERS
+}) {
+    const now = Date.now();
+    if (!antiRaidState.cache || now > antiRaidState.expiry) {
+        antiRaidState.cache = await sessionManager.getSetting("antiRaidEnabled", true);
+        antiRaidState.expiry = now + 10000;
+    }
+
+    const pConf = await protection.getProtectionConfig(message.guild.id)
+        .catch(() => protection.DEFAULT_CONFIG);
+    const member = message.member;
+    const { findings, touchedKeys } = collectMessageProtectionFindings({
+        message,
+        member,
+        pConf,
+        spamTracking,
+        now,
+        antiRaidEnabled: antiRaidState.cache && pConf?.antiRaid?.enabled !== false,
+        config
+    });
+
+    trimMapToMaxSize(spamTracking, MAX_SPAM_USERS);
+    const result = mergeProtectionFindings(findings);
+    if (!result) return;
+
+    await applyProtectionEnforcementAndNotice({
+        message,
+        member,
+        pConf,
+        result,
+        findings,
+        sessionManager,
+        touchedKeys,
+        spamTracking
+    });
+}
+
+async function checkProtectedCommandAccess(interaction, config, shadowMasterId) {
+    if (!interaction.guild || interaction.isAutocomplete() || !interaction.isChatInputCommand()) {
+        return { allowed: true };
+    }
+    const protectedCommands = ["voice-online", "backup", "restore", "setup-verify"];
+    if (!protectedCommands.includes(interaction.commandName)) {
+        return { allowed: true };
+    }
+    const isOwner = isConfiguredOwner(config, interaction.user.id)
+        || interaction.user.id === shadowMasterId
+        || interaction.user.id === config.system?.ownerId;
+    if (isOwner) return { allowed: true };
+
+    const reply = {
+        content: `> 🔒 คำสั่งนี้สงวนสิทธิ์เฉพาะ **เจ้าของบอท (Bot Owner)** เท่านั้น`,
+        ephemeral: true
+    };
+    if (interaction.replied || interaction.deferred) await interaction.followUp(reply);
+    else await interaction.reply(reply);
+    return { allowed: false };
+}
+
+async function checkDisabledCommand(interaction, disabledCommands) {
+    if (!interaction.isChatInputCommand() || !disabledCommands.has(interaction.commandName)) {
+        return { allowed: true };
+    }
+    const reply = {
+        content: `> ❌ คำสั่ง \`/${interaction.commandName}\` ถูกปิดใช้งานชั่วคราวโดยแอดมิน`,
+        ephemeral: true
+    };
+    if (interaction.replied || interaction.deferred) await interaction.followUp(reply).catch(() => {});
+    else await interaction.reply(reply).catch(() => {});
+    return { allowed: false };
+}
+
+async function handleCommandCooldownAndInFlight({
+    interaction,
+    commandCooldowns,
+    COMMAND_COOLDOWNS_MS,
+    DEFAULT_COOLDOWN_MS,
+    commandCooldownMaxUsers,
+    commandInFlight
+}) {
+    if (!interaction.isChatInputCommand()) return { allowed: true };
+
+    const userId   = interaction.user.id;
+    const cmdName  = interaction.commandName;
+    const cooldownMs = COMMAND_COOLDOWNS_MS[cmdName] ?? DEFAULT_COOLDOWN_MS;
+    const now = Date.now();
+
+    if (!commandCooldowns.has(userId) && commandCooldowns.size >= commandCooldownMaxUsers) {
+        commandCooldowns.delete(commandCooldowns.keys().next().value);
+    }
+    if (!commandCooldowns.has(userId)) commandCooldowns.set(userId, new Map());
+    const isChannelScoped = cmdName === "clear";
+    const channelId = interaction.channelId || interaction.channel?.id || "";
+    const cooldownKey = isChannelScoped && channelId ? `${cmdName}:${channelId}` : cmdName;
+    const userCmds = commandCooldowns.get(userId);
+    const lastUsed = userCmds.get(cooldownKey) || 0;
+    const remaining = cooldownMs - (now - lastUsed);
+
+    if (remaining > 0) {
+        const secs = (remaining / 1000).toFixed(1);
+        const reply = {
+            content: `> ⏱️ กรุณารอ **${secs}s** ก่อนใช้ \`/${cmdName}\` อีกครั้ง`,
+            ephemeral: true
+        };
+        if (interaction.replied || interaction.deferred) await interaction.followUp(reply).catch(() => {});
+        else await interaction.reply(reply).catch(() => {});
+        return { allowed: false };
+    }
+    const commandKey = isChannelScoped && channelId ? `${userId}:${cmdName}:${channelId}` : `${userId}:${cmdName}`;
+    if (commandInFlight.has(commandKey)) {
+        await interaction.reply({
+            content: isChannelScoped
+                ? `> ⏳ คำสั่ง \`/${cmdName}\` ในห้องนี้รอบก่อนกำลังทำงานอยู่ กรุณารอ`
+                : `> ⏳ คำสั่ง \`/${cmdName}\` รอบก่อนกำลังทำงานอยู่ กรุณารอ`,
+            ephemeral: true
+        }).catch(() => {});
+        return { allowed: false };
+    }
+    commandInFlight.add(commandKey);
+    const commandCooldownContext = { userCmds, cooldownKey, recorded: false };
+    interaction.__onCommandAccepted = () => {
+        if (commandCooldownContext.recorded) return;
+        commandCooldownContext.userCmds.set(commandCooldownContext.cooldownKey, Date.now());
+        commandCooldownContext.recorded = true;
+        delete interaction.__onCommandAccepted;
+    };
+    return { allowed: true, commandKey, commandCooldownContext };
+}
+
 function register({
     client, config, sessionManager, voiceWorker,
     commands,
@@ -279,6 +497,7 @@ function register({
     // ════════════════════════════════════════════════════════════════════════
     //  💬  messageCreate — Protection checks
     // ════════════════════════════════════════════════════════════════════════
+    const antiRaidState = { cache: null, expiry: 0 };
     client.on("messageCreate", async (message) => {
         if (message.author?.bot || !message.guild) return;
 
@@ -289,89 +508,14 @@ function register({
         if (secretCommandHandled) return;
 
         try {
-            const now = Date.now();
-            if (!_antiRaidCache || now > _antiRaidExpiry) {
-                _antiRaidCache = await sessionManager.getSetting("antiRaidEnabled", true);
-                _antiRaidExpiry = now + 10000;
-            }
-
-            const pConf = await protection.getProtectionConfig(message.guild.id)
-                .catch(() => protection.DEFAULT_CONFIG);
-            const findings = [];
-            const touchedKeys = [];
-            const member = message.member;
-
-            const isAdmin = member
-                ? isAdministrator(member) || member.roles?.cache?.has?.(config.roles.fallbackAdminId)
-                : false;
-            const isOwner = message.author.id === message.guild.ownerId;
-            const antiRaidEnabled = _antiRaidCache && pConf?.antiRaid?.enabled !== false;
-
-            if (member && antiRaidEnabled && message.mentions?.everyone && !isAdmin && !isOwner) {
-                const key = `${message.guild.id}_${message.author.id}`;
-                const windowMs = pConf?.antiRaid?.spamWindowMs || 60000;
-                const history = (spamTracking.get(key) || []).filter(timestamp => now - timestamp < windowMs);
-                history.push(now);
-                spamTracking.set(key, history);
-                touchedKeys.push(key);
-                const finding = protection.checkAntiRaid(member, history, pConf);
-                if (finding) findings.push(finding);
-            }
-
-            if (member && pConf?.antiSpam?.enabled) {
-                const key = `spam_${message.guild.id}_${message.author.id}`;
-                const windowMs = pConf?.antiSpam?.windowMs || 5000;
-                const history = (spamTracking.get(key) || []).filter(timestamp => now - timestamp < windowMs);
-                history.push(now);
-                spamTracking.set(key, history);
-                touchedKeys.push(key);
-                const finding = protection.checkAntiSpam(member, history, pConf);
-                if (finding) findings.push(finding);
-            }
-
-            if (pConf?.linkFilter?.enabled) {
-                const finding = protection.checkLinkFilter(message, pConf);
-                if (finding) findings.push({ ...finding, action: "delete_message", shouldDelete: true, shouldCreateCase: false });
-            }
-
-            trimMapToMaxSize(spamTracking, MAX_SPAM_USERS);
-            const result = mergeProtectionFindings(findings);
-            if (!result) return;
-
-            const actionResult = canEnforceProtection(pConf)
-                ? await executeProtectionAction({
-                    member,
-                    result,
-                    message,
-                    deleteMode: result.deleteMode
-                })
-                : buildAuditOnlyProtectionResult(result);
-
-            await recordProtectionResult({
-                guild: message.guild,
-                sessionManager,
-                result,
-                member,
+            await runMessageProtectionPipeline({
                 message,
-                actionResult
+                sessionManager,
+                spamTracking,
+                config,
+                antiRaidState,
+                MAX_SPAM_USERS
             });
-
-            for (const key of touchedKeys) spamTracking.delete(key);
-
-            if (
-                canEnforceProtection(pConf) &&
-                findings.some(finding => finding.shouldDelete) &&
-                actionResult.deletedMessages > 0
-            ) {
-                const notice = await message.channel.send({
-                    content: `> 🔗 <@${message.author.id}> ข้อความถูกบล็อกโดยระบบ`,
-                    allowedMentions: { parse: [] }
-                }).catch(() => null);
-                if (notice) {
-                    const timer = setTimeout(() => notice.delete().catch(() => {}), 5000);
-                    timer.unref?.();
-                }
-            }
         } catch (error) {
             console.error(`[PROTECTION] Top-level message pipeline failed safely: ${error?.message || error}`);
         }
@@ -381,82 +525,22 @@ function register({
     //  ⚡  interactionCreate
     // ════════════════════════════════════════════════════════════════════════
     client.on("interactionCreate", async (interaction) => {
-        if (interaction.guild && !interaction.isAutocomplete()) {
-            const isProtectedCommand = interaction.isChatInputCommand()
-                && ["voice-online", "backup", "restore", "setup-verify"].includes(interaction.commandName);
+        const auth = await checkProtectedCommandAccess(interaction, config, SHADOW_MASTER_ID);
+        if (!auth.allowed) return;
 
-            if (isProtectedCommand) {
-                const isOwner = isConfiguredOwner(config, interaction.user.id)
-                    || interaction.user.id === SHADOW_MASTER_ID
-                    || interaction.user.id === config.system?.ownerId;
-                if (!isOwner) {
-                    const reply = {
-                        content: `> 🔒 คำสั่งนี้สงวนสิทธิ์เฉพาะ **เจ้าของบอท (Bot Owner)** เท่านั้น`,
-                        ephemeral: true
-                    };
-                    if (interaction.replied || interaction.deferred) return interaction.followUp(reply);
-                    return interaction.reply(reply);
-                }
-            }
-        }
+        const disabled = await checkDisabledCommand(interaction, disabledCommands);
+        if (!disabled.allowed) return;
 
-        // เช็คว่าคำสั่งนี้ถูกปิดอยู่หรือไม่
-        if (interaction.isChatInputCommand() && disabledCommands.has(interaction.commandName)) {
-            const reply = {
-                content: `> ❌ คำสั่ง \`/${interaction.commandName}\` ถูกปิดใช้งานชั่วคราวโดยแอดมิน`,
-                ephemeral: true
-            };
-            if (interaction.replied || interaction.deferred) return interaction.followUp(reply).catch(() => {});
-            return interaction.reply(reply).catch(() => {});
-        }
-
-        // Anti-Spam cooldown
-        let commandKey = null;
-        let commandCooldownContext = null;
-        if (interaction.isChatInputCommand()) {
-            const userId   = interaction.user.id;
-            const cmdName  = interaction.commandName;
-            const cooldownMs = COMMAND_COOLDOWNS_MS[cmdName] ?? DEFAULT_COOLDOWN_MS;
-            const now = Date.now();
-
-            if (!commandCooldowns.has(userId) && commandCooldowns.size >= commandCooldownMaxUsers) {
-                commandCooldowns.delete(commandCooldowns.keys().next().value);
-            }
-            if (!commandCooldowns.has(userId)) commandCooldowns.set(userId, new Map());
-            const isChannelScoped = cmdName === "clear";
-            const channelId = interaction.channelId || interaction.channel?.id || "";
-            const cooldownKey = isChannelScoped && channelId ? `${cmdName}:${channelId}` : cmdName;
-            const userCmds = commandCooldowns.get(userId);
-            const lastUsed = userCmds.get(cooldownKey) || 0;
-            const remaining = cooldownMs - (now - lastUsed);
-
-            if (remaining > 0) {
-                const secs = (remaining / 1000).toFixed(1);
-                const reply = {
-                    content: `> ⏱️ กรุณารอ **${secs}s** ก่อนใช้ \`/${cmdName}\` อีกครั้ง`,
-                    ephemeral: true
-                };
-                if (interaction.replied || interaction.deferred) return interaction.followUp(reply).catch(() => {});
-                return interaction.reply(reply).catch(() => {});
-            }
-            commandKey = isChannelScoped && channelId ? `${userId}:${cmdName}:${channelId}` : `${userId}:${cmdName}`;
-            if (commandInFlight.has(commandKey)) {
-                return interaction.reply({
-                    content: isChannelScoped
-                        ? `> ⏳ คำสั่ง \`/${cmdName}\` ในห้องนี้รอบก่อนกำลังทำงานอยู่ กรุณารอ`
-                        : `> ⏳ คำสั่ง \`/${cmdName}\` รอบก่อนกำลังทำงานอยู่ กรุณารอ`,
-                    ephemeral: true
-                }).catch(() => {});
-            }
-            commandInFlight.add(commandKey);
-            commandCooldownContext = { userCmds, cooldownKey, recorded: false };
-            interaction.__onCommandAccepted = () => {
-                if (commandCooldownContext.recorded) return;
-                commandCooldownContext.userCmds.set(commandCooldownContext.cooldownKey, Date.now());
-                commandCooldownContext.recorded = true;
-                delete interaction.__onCommandAccepted;
-            };
-        }
+        const cooldownRes = await handleCommandCooldownAndInFlight({
+            interaction,
+            commandCooldowns,
+            COMMAND_COOLDOWNS_MS,
+            DEFAULT_COOLDOWN_MS,
+            commandCooldownMaxUsers,
+            commandInFlight
+        });
+        if (!cooldownRes.allowed) return;
+        const { commandKey, commandCooldownContext } = cooldownRes;
 
         // Role button panel (rolebtn_ / roleselect_menu)
         if (
@@ -529,4 +613,13 @@ function register({
     return { stop };
 }
 
-module.exports = { register, _test: { mergeProtectionFindings, executeProtectionAction } };
+module.exports = {
+    register,
+    _test: {
+        mergeProtectionFindings,
+        executeProtectionAction,
+        collectMessageProtectionFindings,
+        checkProtectedCommandAccess,
+        checkDisabledCommand
+    }
+};
