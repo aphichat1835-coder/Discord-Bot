@@ -297,22 +297,40 @@ function revealTokenState(token = {}) {
     };
 }
 
-function tokenRecoveryReasons(token = {}, now = Date.now()) {
+function collectMissingScopeReasons(tokenScope) {
+    const scopes = new Set(String(tokenScope || "").split(/\s+/).filter(Boolean));
+    const missing = [];
+    for (const scope of REQUIRED_USER_SCOPES) {
+        if (!scopes.has(scope)) missing.push(`missing_scope:${scope}`);
+    }
+    return missing;
+}
+
+function checkTokenCryptoReasons(token, now) {
     const reasons = [];
     const accessToken = token.encryptedAccessToken ? decryptToken(token.encryptedAccessToken) : null;
     const refreshToken = token.encryptedRefreshToken ? decryptToken(token.encryptedRefreshToken) : null;
+
     if (!token.encryptedAccessToken) reasons.push("missing_access_token");
     else if (!accessToken) reasons.push("access_token_decrypt_failed");
+
     if (!token.encryptedRefreshToken) reasons.push("missing_refresh_token");
     else if (!refreshToken) reasons.push("refresh_token_decrypt_failed");
+
     if (token.revokedAt) reasons.push("token_revoked");
-    if (Number(token.expiresAt || 0) > 0 && Number(token.expiresAt) <= now && !refreshToken) {
+
+    const isExpired = Number(token.expiresAt || 0) > 0 && Number(token.expiresAt) <= now;
+    if (isExpired && !refreshToken) {
         reasons.push("access_token_expired_without_refresh");
     }
-    const scopes = new Set(String(token.scope || "").split(/\s+/).filter(Boolean));
-    for (const scope of REQUIRED_USER_SCOPES) {
-        if (!scopes.has(scope)) reasons.push(`missing_scope:${scope}`);
-    }
+    return reasons;
+}
+
+function tokenRecoveryReasons(token = {}, now = Date.now()) {
+    const reasons = [
+        ...checkTokenCryptoReasons(token, now),
+        ...collectMissingScopeReasons(token.scope)
+    ];
     return [...new Set(reasons)];
 }
 

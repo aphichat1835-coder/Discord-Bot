@@ -154,31 +154,43 @@ function resolveRunnerProgressFieldValue({ isDaily, isStandby, state }) {
     return `เควสต์ทั้งหมด: **${total}**\nทำสำเร็จแล้ว: **${done}** เควสต์`;
 }
 
-function buildRunnerLiveEmbed(state = {}, activityLines = []) {
-    const isDaily = state.mode === 'scheduled' || Boolean(state.modeLine);
-    const isStopped = state.status === 'stopped'
-        || (state.status !== 'running' && activityLines.some((l) => typeof l === 'string' && l.includes('RUNNER STOPPED')));
-    const isStandby = isDaily && !isStopped && (state.status === 'standby'
-        || (state.status !== 'running' && activityLines.some((l) => typeof l === 'string' && (l.includes('AUTO DAILY ACTIVE') || l.includes('NEXT CHECK')))));
-    const isAllCompleted = !isDaily && !isStopped && !isStandby
-        && typeof state.totalQuestCount === 'number' && state.totalQuestCount > 0
-        && (state.completedQuestCount ?? 0) >= state.totalQuestCount;
+function hasLogMatching(activityLines, pattern) {
+    return activityLines.some((l) => typeof l === 'string' && l.includes(pattern));
+}
 
-    const statusContext = { isDaily, isStopped, isStandby, isAllCompleted };
+function resolveRunnerEmbedStatus(state, activityLines) {
+    const isDaily = state.mode === 'scheduled' || Boolean(state.modeLine);
+    const hasStoppedLog = state.status !== 'running' && hasLogMatching(activityLines, 'RUNNER STOPPED');
+    const isStopped = state.status === 'stopped' || hasStoppedLog;
+
+    const hasStandbyLog = state.status !== 'running' && (hasLogMatching(activityLines, 'AUTO DAILY ACTIVE') || hasLogMatching(activityLines, 'NEXT CHECK'));
+    const isStandby = isDaily && !isStopped && (state.status === 'standby' || hasStandbyLog);
+
+    const hasTotal = typeof state.totalQuestCount === 'number' && state.totalQuestCount > 0;
+    const isAllCompleted = !isDaily && !isStopped && !isStandby && hasTotal && (state.completedQuestCount ?? 0) >= state.totalQuestCount;
+
+    return { isDaily, isStopped, isStandby, isAllCompleted };
+}
+
+function resolveRunnerUsername(state) {
+    if (state.username) return state.username;
+    if (state.loginLine) {
+        return state.loginLine.replace(/^✅ (?:LOGIN|ACCOUNT) : /, '').trim() || 'ไม่ทราบชื่อ';
+    }
+    return 'ไม่ทราบชื่อ';
+}
+
+function buildRunnerLiveEmbed(state = {}, activityLines = []) {
+    const statusContext = resolveRunnerEmbedStatus(state, activityLines);
     const tone = resolveRunnerEmbedTone(statusContext);
     const title = resolveRunnerEmbedTitle(statusContext);
     const description = resolveRunnerEmbedDescription(statusContext);
 
-    let rawUsername = state.username;
-    if (!rawUsername && state.loginLine) {
-        rawUsername = state.loginLine.replace(/^✅ (?:LOGIN|ACCOUNT) : /, '').trim();
-    }
-    const username = rawUsername || 'ไม่ทราบชื่อ';
-
+    const username = resolveRunnerUsername(state);
     const accountPart = state.accountId ? `\n${code(state.accountId)}` : '';
     const userFieldVal = `**${markdownText(username)}**${accountPart}`;
-    const modeFieldVal = isDaily ? '🤖 Auto Daily (รายวัน)' : '🚀 One-shot (รอบเดียว)';
-    const progressFieldVal = resolveRunnerProgressFieldValue({ isDaily, isStandby, state });
+    const modeFieldVal = statusContext.isDaily ? '🤖 Auto Daily (รายวัน)' : '🚀 One-shot (รอบเดียว)';
+    const progressFieldVal = resolveRunnerProgressFieldValue({ isDaily: statusContext.isDaily, isStandby: statusContext.isStandby, state });
     const logFieldVal = extractLogBlock(activityLines);
 
     const embed = new MessageEmbed()

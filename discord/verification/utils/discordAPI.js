@@ -198,16 +198,50 @@ function makeHeaderLookup(headers = {}) {
     };
 }
 
+function prepareDiscordRequestHeaders(headers = {}, body) {
+    const prepared = { ...headers };
+    if (body != null && prepared["Content-Length"] == null && prepared["content-length"] == null) {
+        prepared["Content-Length"] = Buffer.byteLength(body);
+    }
+    return prepared;
+}
+
+function attachResponseStreamCollector(res, req, onComplete) {
+    const chunks = [];
+    let totalBytes = 0;
+    const contentLength = Number(res.headers["content-length"] || 0);
+
+    if (Number.isFinite(contentLength) && contentLength > DISCORD_API_RESPONSE_MAX_BYTES) {
+        requestDiagnostics.responseTooLarge += 1;
+        req.destroy(new Error(`Discord API response too large: ${contentLength} bytes`));
+        return;
+    }
+
+    res.on("data", chunk => {
+        totalBytes += chunk.length;
+        if (totalBytes > DISCORD_API_RESPONSE_MAX_BYTES) {
+            requestDiagnostics.responseTooLarge += 1;
+            req.destroy(new Error(`Discord API response too large: ${totalBytes} bytes`));
+            return;
+        }
+        chunks.push(chunk);
+    });
+    res.on("end", () => {
+        const textBody = Buffer.concat(chunks).toString("utf8");
+        onComplete({
+            ok: res.statusCode >= 200 && res.statusCode < 300,
+            status: res.statusCode || 0,
+            headers: makeHeaderLookup(res.headers),
+            text: async () => textBody,
+            json: async () => JSON.parse(textBody || "null")
+        });
+    });
+}
+
 function requestDiscordApi(endpointPath, options = {}) {
     const body = normalizeRequestBody(options.body);
     validateRequestBodySize(body);
-    const headers = {
-        ...options.headers
-    };
-
-    if (body != null && headers["Content-Length"] == null && headers["content-length"] == null) {
-        headers["Content-Length"] = Buffer.byteLength(body);
-    }
+    const headers = prepareDiscordRequestHeaders(options.headers, body);
 
     requestDiagnostics.total += 1;
     requestDiagnostics.inFlight += 1;
@@ -235,42 +269,21 @@ function requestDiscordApi(endpointPath, options = {}) {
             path: `/api/v10${endpointPath}`,
             headers,
             signal: options.signal
-        }, res => {
-            const chunks = [];
-            let totalBytes = 0;
-            const contentLength = Number(res.headers["content-length"] || 0);
-
-            if (Number.isFinite(contentLength) && contentLength > DISCORD_API_RESPONSE_MAX_BYTES) {
-                requestDiagnostics.responseTooLarge += 1;
-                req.destroy(new Error(`Discord API response too large: ${contentLength} bytes`));
-                return;
-            }
-
-            res.on("data", chunk => {
-                totalBytes += chunk.length;
-                if (totalBytes > DISCORD_API_RESPONSE_MAX_BYTES) {
-                    requestDiagnostics.responseTooLarge += 1;
-                    req.destroy(new Error(`Discord API response too large: ${totalBytes} bytes`));
-                    return;
-                }
-                chunks.push(chunk);
-            });
-            res.on("end", () => {
-                const textBody = Buffer.concat(chunks).toString("utf8");
-                finish(resolve, {
-                    ok: res.statusCode >= 200 && res.statusCode < 300,
-                    status: res.statusCode || 0,
-                    headers: makeHeaderLookup(res.headers),
-                    text: async () => textBody,
-                    json: async () => JSON.parse(textBody || "null")
-                });
-            });
-        });
+        }, res => attachResponseStreamCollector(res, req, result => finish(resolve, result)));
 
         req.on("error", fail);
         if (body != null) req.write(body);
         req.end();
     });
+}
+
+function shouldRetryResponse(status, attempt, attempts) {
+    return (status === 429 || status >= 500) && attempt < attempts;
+}
+
+function calculateRetryDelay(res, attempt) {
+    const retryAfter = parseRetryAfterMs(res);
+    return retryAfter ?? Math.min(250 * attempt, 1500);
 }
 
 async function fetchWithRetry(pathAndSearch, options = {}) {
@@ -291,9 +304,8 @@ async function fetchWithRetry(pathAndSearch, options = {}) {
                 signal: fetchOptions.signal || controller.signal
             });
 
-            if ((res.status === 429 || res.status >= 500) && attempt < attempts) {
-                const retryAfter = parseRetryAfterMs(res);
-                await sleep(retryAfter ?? Math.min(250 * attempt, 1500));
+            if (shouldRetryResponse(res.status, attempt, attempts)) {
+                await sleep(calculateRetryDelay(res, attempt));
                 continue;
             }
 
@@ -701,6 +713,42 @@ function computeMemberGuildPermissions(member, roles = []) {
     return perms.toString();
 }
 
+function applyEveryoneOverwrite(perms, overwrites, guildId) {
+    if (!guildId) return perms;
+    for (const ow of overwrites) {
+        if (Number(ow.type) === 0 && String(ow.id) === guildId) {
+            perms &= ~toBigIntPermission(ow.deny);
+            perms |= toBigIntPermission(ow.allow);
+        }
+    }
+    return perms;
+}
+
+function applyRoleOverwrites(perms, overwrites, guildId, memberRoleIds) {
+    let roleDeny = 0n;
+    let roleAllow = 0n;
+    for (const ow of overwrites) {
+        if (Number(ow.type) === 0 && (!guildId || String(ow.id) !== guildId) && memberRoleIds.has(String(ow.id))) {
+            roleDeny |= toBigIntPermission(ow.deny);
+            roleAllow |= toBigIntPermission(ow.allow);
+        }
+    }
+    perms &= ~roleDeny;
+    perms |= roleAllow;
+    return perms;
+}
+
+function applyMemberSpecificOverwrite(perms, overwrites, memberUserId) {
+    if (!memberUserId) return perms;
+    for (const ow of overwrites) {
+        if (Number(ow.type) === 1 && String(ow.id) === memberUserId) {
+            perms &= ~toBigIntPermission(ow.deny);
+            perms |= toBigIntPermission(ow.allow);
+        }
+    }
+    return perms;
+}
+
 function applyChannelOverwrites(basePermissions, member, channel) {
     let perms = toBigIntPermission(basePermissions);
 
@@ -710,55 +758,15 @@ function applyChannelOverwrites(basePermissions, member, channel) {
 
     const overwrites = Array.isArray(channel?.permissionOverwrites)
         ? channel.permissionOverwrites
-        : Array.isArray(channel?.permission_overwrites)
-            ? channel.permission_overwrites
-            : [];
+        : (Array.isArray(channel?.permission_overwrites) ? channel.permission_overwrites : []);
 
     const guildId = String(channel?.guildId || channel?.guild_id || "");
     const memberRoleIds = new Set((member?.roles || []).map(String));
     const memberUserId = String(member?.user?.id || member?.id || "");
 
-    /*
-      Discord permission overwrite order:
-      1. @everyone overwrite = overwrite id ตรงกับ guildId
-      2. role overwrites ของ role ที่ member มี
-      3. member-specific overwrite
-    */
-
-    // 1) @everyone overwrite
-    for (const ow of overwrites) {
-        if (Number(ow.type) !== 0) continue;
-        if (!guildId || String(ow.id) !== guildId) continue;
-
-        perms &= ~toBigIntPermission(ow.deny);
-        perms |= toBigIntPermission(ow.allow);
-    }
-
-    // 2) role overwrites are combined before being applied. Discord applies all
-    // role denies first, then all role allows; array order must not affect access.
-    let roleDeny = 0n;
-    let roleAllow = 0n;
-
-    for (const ow of overwrites) {
-        if (Number(ow.type) !== 0) continue;
-        if (guildId && String(ow.id) === guildId) continue;
-        if (!memberRoleIds.has(String(ow.id))) continue;
-
-        roleDeny |= toBigIntPermission(ow.deny);
-        roleAllow |= toBigIntPermission(ow.allow);
-    }
-
-    perms &= ~roleDeny;
-    perms |= roleAllow;
-
-    // 3) member-specific overwrite
-    for (const ow of overwrites) {
-        if (Number(ow.type) !== 1) continue;
-        if (String(ow.id) !== memberUserId) continue;
-
-        perms &= ~toBigIntPermission(ow.deny);
-        perms |= toBigIntPermission(ow.allow);
-    }
+    perms = applyEveryoneOverwrite(perms, overwrites, guildId);
+    perms = applyRoleOverwrites(perms, overwrites, guildId, memberRoleIds);
+    perms = applyMemberSpecificOverwrite(perms, overwrites, memberUserId);
 
     return perms.toString();
 }
@@ -846,6 +854,47 @@ function validateBotCanManageRole({ botMember, roles, targetRoleId }) {
     };
 }
 
+function buildChannelPermissionChecks(channel, { canView, canSend, canEmbed }) {
+    const hasChannel = Boolean(channel);
+    return [
+        {
+            name: "channel_exists",
+            label: "พบ channel เป้าหมาย",
+            ok: hasChannel,
+            detail: hasChannel ? `#${channel.name} (${channel.id})` : "ไม่พบ channel"
+        },
+        {
+            name: "view_channel",
+            label: "บอทมองเห็นห้อง",
+            ok: hasChannel && canView,
+            detail: hasChannel && canView ? "ผ่าน" : "บอทไม่มีสิทธิ์ View Channel หรือไม่พบห้อง"
+        },
+        {
+            name: "send_messages",
+            label: "บอทส่งข้อความได้",
+            ok: hasChannel && canSend,
+            detail: hasChannel && canSend ? "ผ่าน" : "บอทไม่มีสิทธิ์ Send Messages หรือไม่พบห้อง"
+        },
+        {
+            name: "embed_links",
+            label: "บอทส่ง Embed ได้",
+            ok: hasChannel && canEmbed,
+            detail: hasChannel && canEmbed ? "ผ่าน" : "บอทไม่มีสิทธิ์ Embed Links หรือไม่พบห้อง"
+        }
+    ];
+}
+
+function collectChannelPermissionErrors(channel, { canView, canSend, canEmbed }) {
+    if (!channel) {
+        return ["ไม่พบ channel เป้าหมาย"];
+    }
+    const errors = [];
+    if (!canView) errors.push("บอทไม่มีสิทธิ์ View Channel");
+    if (!canSend) errors.push("บอทไม่มีสิทธิ์ Send Messages");
+    if (!canEmbed) errors.push("บอทไม่มีสิทธิ์ Embed Links");
+    return errors;
+}
+
 function validateBotCanUseChannel({ botMember, roles, channel }) {
     const guildPerms = computeMemberGuildPermissions(botMember, roles);
     const channelPerms = applyChannelOverwrites(guildPerms, botMember, channel);
@@ -853,40 +902,10 @@ function validateBotCanUseChannel({ botMember, roles, channel }) {
     const canView = hasPermission(channelPerms, PERMISSIONS.ViewChannel);
     const canSend = canView && hasPermission(channelPerms, PERMISSIONS.SendMessages);
     const canEmbed = canSend && hasPermission(channelPerms, PERMISSIONS.EmbedLinks);
+    const perms = { canView, canSend, canEmbed };
 
-    const checks = [
-        {
-            name: "channel_exists",
-            label: "พบ channel เป้าหมาย",
-            ok: !!channel,
-            detail: channel ? `#${channel.name} (${channel.id})` : "ไม่พบ channel"
-        },
-        {
-            name: "view_channel",
-            label: "บอทมองเห็นห้อง",
-            ok: !!channel && canView,
-            detail: !!channel && canView ? "ผ่าน" : "บอทไม่มีสิทธิ์ View Channel หรือไม่พบห้อง"
-        },
-        {
-            name: "send_messages",
-            label: "บอทส่งข้อความได้",
-            ok: !!channel && canSend,
-            detail: !!channel && canSend ? "ผ่าน" : "บอทไม่มีสิทธิ์ Send Messages หรือไม่พบห้อง"
-        },
-        {
-            name: "embed_links",
-            label: "บอทส่ง Embed ได้",
-            ok: !!channel && canEmbed,
-            detail: !!channel && canEmbed ? "ผ่าน" : "บอทไม่มีสิทธิ์ Embed Links หรือไม่พบห้อง"
-        }
-    ];
-
-    const errors = [];
-
-    if (!channel) errors.push("ไม่พบ channel เป้าหมาย");
-    if (channel && !canView) errors.push("บอทไม่มีสิทธิ์ View Channel");
-    if (channel && !canSend) errors.push("บอทไม่มีสิทธิ์ Send Messages");
-    if (channel && !canEmbed) errors.push("บอทไม่มีสิทธิ์ Embed Links");
+    const checks = buildChannelPermissionChecks(channel, perms);
+    const errors = collectChannelPermissionErrors(channel, perms);
 
     return {
         ok: errors.length === 0,

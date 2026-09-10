@@ -67,3 +67,50 @@ test("role button validation rejects managed and too-high roles", () => {
     assert.equal(tooHigh.ok, false);
     assert.match(tooHigh.reason, /สูงกว่า|ยศสูง/);
 });
+
+test("formatRoleSelectionSummary accurately summarizes additions, removals, and skips", () => {
+    const { _test } = require("../features/roleButton");
+    const emptySummary = _test.formatRoleSelectionSummary({
+        added: [],
+        removed: [],
+        skipped: [],
+        failed: []
+    });
+    assert.equal(emptySummary, "ไม่มีการเปลี่ยนแปลง");
+
+    const fullSummary = _test.formatRoleSelectionSummary({
+        added: ["RoleA", "RoleB"],
+        removed: ["RoleC"],
+        skipped: ["RoleD: managed"],
+        failed: ["RoleE: timeout"]
+    });
+    assert.match(fullSummary, /✅ เพิ่ม: RoleA, RoleB/);
+    assert.match(fullSummary, /❌ ลบ: RoleC/);
+    assert.match(fullSummary, /⚠️ ข้าม: RoleD: managed/);
+    assert.match(fullSummary, /🚫 ไม่สำเร็จ: RoleE: timeout/);
+});
+
+test("applySingleRoleChange performs add or remove based on selection state", async () => {
+    const { _test } = require("../features/roleButton");
+    const addedIds = [];
+    const removedIds = [];
+    const testMember = {
+        roles: {
+            cache: new Map([["role1", true]]),
+            async add(id) { addedIds.push(id); },
+            async remove(id) { removedIds.push(id); }
+        }
+    };
+
+    const results = { added: [], removed: [], skipped: [], failed: [] };
+    // Should add role2 (not in cache)
+    await _test.applySingleRoleChange(testMember, { id: "role2", name: "Role Two" }, true, results);
+    assert.deepEqual(addedIds, ["role2"]);
+    assert.deepEqual(results.added, ["Role Two"]);
+
+    // Should remove role1 (in cache)
+    await _test.applySingleRoleChange(testMember, { id: "role1", name: "Role One" }, false, results);
+    assert.deepEqual(removedIds, ["role1"]);
+    assert.deepEqual(results.removed, ["Role One"]);
+});
+
