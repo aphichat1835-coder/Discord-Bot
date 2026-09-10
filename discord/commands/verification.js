@@ -553,6 +553,336 @@ async function handle(interaction, client) {
     }
 }
 
+async function validateSetupChannelAndRole(interaction, channel, role) {
+    if (channel?.isTextBased?.() !== true || channel?.isSendable?.() !== true || channel?.isThread?.() === true) {
+        return { ok: false, error: `> ${config.emojis.error} กรุณาเลือกห้องข้อความเท่านั้น` };
+    }
+    const botMember = await resolveGuildBotMember(interaction.guild, interaction.client);
+    const sendPerms = channel.permissionsFor(botMember);
+
+    if (!sendPerms?.has(PermissionFlagsBits.SendMessages) || !sendPerms?.has(PermissionFlagsBits.EmbedLinks)) {
+        return {
+            ok: false,
+            error:
+                `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความหรือ Embed ในห้อง <#${channel.id}>\n` +
+                `> เปิดสิทธิ์ Send Messages และ Embed Links ให้บอทก่อน`
+        };
+    }
+
+    if (role?.id === interaction.guild.id) {
+        return { ok: false, error: `> ${config.emojis.error} ไม่สามารถใช้ยศ @everyone เป็นยศยืนยันตัวตนได้` };
+    }
+    const roleCheck = validateDirectRoleAssignment(botMember, role);
+    if (!roleCheck.ok) {
+        return { ok: false, error: `> ${config.emojis.error} ${roleCheck.reason}` };
+    }
+    return { ok: true, botMember };
+}
+
+function parseVerificationButtonParts(interaction, role, verifyType) {
+    const newButtonText = interaction.options.getString("button_text");
+    const oldButtonLabel = interaction.options.getString("button_label");
+    const oldButtonEmoji = interaction.options.getString("button_emoji");
+
+    const fallbackButtonText = verifyType
+        ? DEFAULT_PANEL.oauthButtonText
+        : `${DEFAULT_PANEL.directButtonText} ${role.name}`;
+
+    if (newButtonText) {
+        return extractButtonTextParts(newButtonText, fallbackButtonText, interaction.client);
+    }
+    const label = cleanText(
+        oldButtonLabel,
+        verifyType ? "ยืนยันตัวตนเข้าดิส" : `รับยศ ${role.name}`
+    );
+    const emojiInput = cleanText(
+        oldButtonEmoji,
+        verifyType ? "✅" : "🎭"
+    );
+    const resolved = resolveButtonEmoji(
+        emojiInput,
+        verifyType ? "✅" : "🎭",
+        interaction.client
+    );
+    return {
+        label: label.slice(0, 80),
+        emojiInput,
+        emojiDisplay: emojiToDisplay(resolved, emojiInput),
+        usedFallback: !!emojiInput && emojiToDisplay(resolved, emojiInput) !== emojiInput
+    };
+}
+
+function parseVerificationPanelOptions(interaction, role, verifyType) {
+    const content = normalizeNewlines(interaction.options.getString("content")) || DEFAULT_PANEL.content;
+    const title = normalizeNewlines(interaction.options.getString("title")) || DEFAULT_PANEL.title;
+    const description = normalizeNewlines(interaction.options.getString("description")) || DEFAULT_PANEL.description;
+    const colorHex = normalizeColor(interaction.options.getString("color"));
+    const footerText = normalizeNewlines(interaction.options.getString("footer")) || DEFAULT_PANEL.footer;
+    const showTs = interaction.options.getBoolean("timestamp") ?? false;
+
+    validatePanelText(content, "content", PANEL_LIMITS.content);
+    validatePanelText(title, "title", PANEL_LIMITS.title);
+    validatePanelText(description, "description", PANEL_LIMITS.description);
+    validatePanelText(footerText, "footer", PANEL_LIMITS.footer);
+
+    const imageUrl = cleanHttpsUrl(interaction.options.getString("image"), "image");
+    const thumbUrl = cleanHttpsUrl(interaction.options.getString("thumbnail"), "thumbnail");
+    const titleUrl = cleanHttpsUrl(interaction.options.getString("url"), "url");
+    const buttonParts = parseVerificationButtonParts(interaction, role, verifyType);
+
+    return {
+        content,
+        title,
+        description,
+        colorHex,
+        footerText,
+        showTs,
+        imageUrl,
+        thumbUrl,
+        titleUrl,
+        buttonParts
+    };
+}
+
+function buildVerificationPanelComponents({ interaction, verifyType, role, panelRevision, panelOptions }) {
+    const embed = new MessageEmbed()
+        .setColor(panelOptions.colorHex)
+        .setTitle(panelOptions.title)
+        .setDescription(panelOptions.description);
+
+    if (panelOptions.titleUrl) embed.setURL(panelOptions.titleUrl);
+    if (panelOptions.imageUrl) embed.setImage(panelOptions.imageUrl);
+    if (panelOptions.thumbUrl) embed.setThumbnail(panelOptions.thumbUrl);
+    if (panelOptions.footerText) embed.setFooter({ text: panelOptions.footerText });
+    if (panelOptions.showTs) embed.setTimestamp();
+
+    const row = new MessageActionRow();
+
+    if (verifyType) {
+        let authorizeUrl;
+        try {
+            authorizeUrl = buildDiscordAuthorizeUrl({
+                interaction,
+                guildId: interaction.guild.id,
+                roleId: role.id,
+                panelRevision
+            });
+        } catch (err) {
+            console.error("[VERIFY] Direct OAuth URL build failed:", err.message);
+            return {
+                ok: false,
+                error:
+                    `> ${config.emojis.error} สร้างลิงก์ OAuth ไม่สำเร็จ\n` +
+                    `> กรุณาตรวจการตั้งค่า OAuth และ public URL แล้วลองใหม่`
+            };
+        }
+
+        const button = new MessageButton()
+            .setStyle("LINK")
+            .setURL(authorizeUrl)
+            .setLabel(panelOptions.buttonParts.label);
+
+        row.addComponents(
+            applyEmoji(button, panelOptions.buttonParts.emojiInput, "✅", interaction.client)
+        );
+    } else {
+        const button = new MessageButton()
+            .setCustomId(`verify_role_${role.id}`)
+            .setLabel(panelOptions.buttonParts.label)
+            .setStyle("SUCCESS");
+
+        row.addComponents(
+            applyEmoji(button, panelOptions.buttonParts.emojiInput, "🎭", interaction.client)
+        );
+    }
+
+    return { ok: true, embed, row };
+}
+
+async function sendAndPersistVerificationPanel({
+    interaction,
+    guildId,
+    role,
+    channel,
+    verifyType,
+    panelOptions,
+    panelComponents,
+    panelRevision,
+    panelRevisionUpdatedAt
+}) {
+    const settingKey = `verify_config_${guildId}_${role.id}`;
+    const previousLegacyRecord = await sessionManager.getSettingStrict(settingKey);
+    const previousLegacy = previousLegacyRecord.found ? previousLegacyRecord.value : null;
+    const previousGuildConfig = await GuildConfig.findOne()
+        .where("guildId")
+        .equals(guildId)
+        .lean();
+    const panelPayload = {
+        embeds: [panelComponents.embed],
+        components: [panelComponents.row]
+    };
+
+    if (panelOptions.content) {
+        panelPayload.content = panelOptions.content;
+    }
+
+    const panelMsg = await channel.send(panelPayload);
+
+    const dashboardVerifyType = boolToDashboardVerifyType(verifyType);
+    const legacyOauthMode = boolToLegacyOauthMode(verifyType);
+
+    const legacyConfig = {
+        roleId: role.id,
+        roleName: role.name,
+        guildId: interaction.guild.id,
+        guildName: interaction.guild.name,
+        channelId: channel.id,
+        channelName: channel.name,
+        messageId: panelMsg.id,
+
+        panelRevision,
+        panelRevisionUpdatedAt,
+
+        verifyType,
+        dashboardVerifyType,
+        oauthMode: dashboardVerifyType,
+        legacyOauthMode,
+
+        panel: {
+            content: panelOptions.content,
+            title: panelOptions.title,
+            description: panelOptions.description,
+            color: panelOptions.colorHex,
+            imageUrl: panelOptions.imageUrl,
+            thumbnailUrl: panelOptions.thumbUrl,
+            footerText: panelOptions.footerText,
+            titleUrl: panelOptions.titleUrl,
+            showTimestamp: panelOptions.showTs,
+
+            buttonText: panelOptions.buttonParts.label,
+            buttonLabel: panelOptions.buttonParts.label,
+            buttonEmoji: panelOptions.buttonParts.emojiDisplay,
+
+            verifyType: dashboardVerifyType,
+            legacyVerifyType: verifyType ? "oauth2" : "direct-role"
+        },
+
+        setBy: interaction.user.id,
+        updatedAt: Date.now(),
+        createdAt: Date.now()
+    };
+
+    try {
+        await retryPersistence(() => sessionManager.setSetting(settingKey, legacyConfig));
+        await retryPersistence(() => syncGuildConfig(interaction, role, channel, panelMsg, {
+            verifyType,
+            content: panelOptions.content,
+            title: panelOptions.title,
+            description: panelOptions.description,
+            colorHex: panelOptions.colorHex,
+            imageUrl: panelOptions.imageUrl,
+            thumbUrl: panelOptions.thumbUrl,
+            footerText: panelOptions.footerText,
+            titleUrl: panelOptions.titleUrl,
+            showTs: panelOptions.showTs,
+            buttonLabel: panelOptions.buttonParts.label,
+            buttonEmoji: panelOptions.buttonParts.emojiDisplay,
+            panelRevision,
+            panelRevisionUpdatedAt
+        }));
+        if (!await disablePreviousVerificationPanel(interaction, previousGuildConfig, panelMsg.id)) {
+            throw Object.assign(new Error("PREVIOUS_PANEL_DISABLE_FAILED"), { code: "PREVIOUS_PANEL_DISABLE_FAILED" });
+        }
+    } catch (persistError) {
+        const disabled = await panelMsg.edit({ components: [] }).then(() => true).catch(() => false);
+        const deleted = await panelMsg.delete().then(() => true).catch(() => false);
+        const rolledBack = await rollbackPanelConfig({
+            guildId: interaction.guild.id,
+            settingKey,
+            previousLegacy,
+            previousGuildConfig
+        });
+        if (!rolledBack || (!disabled && !deleted)) {
+            const recovery = await persistVerificationRecovery({
+                guildId,
+                messageId: panelMsg.id,
+                settingKey,
+                rolledBack,
+                panelDisabled: disabled,
+                panelDeleted: deleted,
+                sourceIconUrl: getDiscordGuildIconUrl(interaction.guild)
+            });
+            persistError.recoveryRequired = recovery.required;
+            persistError.recoveryPersisted = recovery.persisted;
+        }
+        throw persistError;
+    }
+
+    return panelMsg;
+}
+
+function buildVerificationSetupResultEmbed({
+    interaction,
+    channel,
+    role,
+    verifyType,
+    panelOptions,
+    panelMsgId,
+    panelRevision
+}) {
+    return new MessageEmbed()
+        .setColor(config.system.themeColors.success)
+        .setTitle(`${config.emojis.success} ติดตั้งแผงยืนยันสำเร็จ`)
+        .setDescription(
+            `แผงยืนยันถูกส่งไปที่ <#${channel.id}> แล้ว\n` +
+            `ระบบบันทึกการตั้งค่าและพร้อมให้สมาชิกยืนยันตัวตน`
+        )
+        .addFields(
+            {
+                name: "📌 ช่อง",
+                value: `<#${channel.id}>`,
+                inline: true
+            },
+            {
+                name: "🎭 ยศ",
+                value: `<@&${role.id}>`,
+                inline: true
+            },
+            {
+                name: "🔒 ประเภท",
+                value: verifyType ? "OAuth2 Direct Authorize" : "กดรับยศทันที",
+                inline: true
+            },
+            {
+                name: "🧩 ปุ่ม",
+                value: `${panelOptions.buttonParts.emojiDisplay || ""} ${panelOptions.buttonParts.label}`.trim(),
+                inline: false
+            },
+            {
+                name: "🎨 สี",
+                value: panelOptions.colorHex,
+                inline: true
+            },
+            {
+                name: "🕐 เวลา",
+                value: panelOptions.showTs ? "เปิด" : "ปิด",
+                inline: true
+            },
+            {
+                name: "🆔 Message ID",
+                value: `\`${panelMsgId}\``,
+                inline: false
+            },
+            {
+                name: "🧬 Panel Revision",
+                value: `\`${panelRevision}\``,
+                inline: false
+            }
+        )
+        .setFooter({ text: `ตั้งค่าโดย ${interaction.user.tag}` })
+        .setTimestamp();
+}
+
 async function handleSetupVerify(interaction) {
     if (!isConfiguredOwner(config, interaction.user?.id)) {
         return interaction.reply({
@@ -571,317 +901,61 @@ async function handleSetupVerify(interaction) {
         return interaction.editReply({ content: `> ${config.emojis.error} ไม่พบเซิร์ฟเวอร์หรือยศที่ถูกต้อง` });
     }
 
+    const preflight = await validateSetupChannelAndRole(interaction, channel, role);
+    if (!preflight.ok) {
+        return interaction.editReply({ content: preflight.error });
+    }
+    markCommandAccepted(interaction);
+
     const verifyType = interaction.options.getBoolean("verify_type") ?? true;
-
-    const content = normalizeNewlines(interaction.options.getString("content")) || DEFAULT_PANEL.content;
-    const title = normalizeNewlines(interaction.options.getString("title")) || DEFAULT_PANEL.title;
-    const description = normalizeNewlines(interaction.options.getString("description")) || DEFAULT_PANEL.description;
-    const colorHex = normalizeColor(interaction.options.getString("color"));
-    let imageUrl;
-    let thumbUrl;
-    const footerText = normalizeNewlines(interaction.options.getString("footer")) || DEFAULT_PANEL.footer;
-    const showTs = interaction.options.getBoolean("timestamp") ?? false;
-    let titleUrl;
-
+    let panelOptions;
     try {
-        validatePanelText(content, "content", PANEL_LIMITS.content);
-        validatePanelText(title, "title", PANEL_LIMITS.title);
-        validatePanelText(description, "description", PANEL_LIMITS.description);
-        validatePanelText(footerText, "footer", PANEL_LIMITS.footer);
-        imageUrl = cleanHttpsUrl(interaction.options.getString("image"), "image");
-        thumbUrl = cleanHttpsUrl(interaction.options.getString("thumbnail"), "thumbnail");
-        titleUrl = cleanHttpsUrl(interaction.options.getString("url"), "url");
+        panelOptions = parseVerificationPanelOptions(interaction, role, verifyType);
     } catch (err) {
         return interaction.editReply({ content: `> ${config.emojis.error} ${err.safeMessage || "ข้อมูลแผงไม่ถูกต้อง"}` });
     }
 
-    const newButtonText = interaction.options.getString("button_text");
-    const oldButtonLabel = interaction.options.getString("button_label");
-    const oldButtonEmoji = interaction.options.getString("button_emoji");
-
-    const fallbackButtonText = verifyType
-        ? DEFAULT_PANEL.oauthButtonText
-        : `${DEFAULT_PANEL.directButtonText} ${role.name}`;
-
-    let buttonParts;
-
-    if (newButtonText) {
-        buttonParts = extractButtonTextParts(newButtonText, fallbackButtonText, interaction.client);
-    } else {
-        const label = cleanText(
-            oldButtonLabel,
-            verifyType ? "ยืนยันตัวตนเข้าดิส" : `รับยศ ${role.name}`
-        );
-
-        const emojiInput = cleanText(
-            oldButtonEmoji,
-            verifyType ? "✅" : "🎭"
-        );
-
-        const resolved = resolveButtonEmoji(
-            emojiInput,
-            verifyType ? "✅" : "🎭",
-            interaction.client
-        );
-
-        buttonParts = {
-            label: label.slice(0, 80),
-            emojiInput,
-            emojiDisplay: emojiToDisplay(resolved, emojiInput),
-            usedFallback: !!emojiInput && emojiToDisplay(resolved, emojiInput) !== emojiInput
-        };
-    }
-
-    if (channel?.isTextBased?.() !== true || channel?.isSendable?.() !== true || channel?.isThread?.() === true) {
-        return interaction.editReply({
-            content: `> ${config.emojis.error} กรุณาเลือกห้องข้อความเท่านั้น`
-        });
-    }
-
-    const botMember = await resolveGuildBotMember(interaction.guild, interaction.client);
-    const sendPerms = channel.permissionsFor(botMember);
-
-    if (!sendPerms?.has(PermissionFlagsBits.SendMessages) || !sendPerms?.has(PermissionFlagsBits.EmbedLinks)) {
-        return interaction.editReply({
-            content:
-                `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความหรือ Embed ในห้อง <#${channel.id}>\n` +
-                `> เปิดสิทธิ์ Send Messages และ Embed Links ให้บอทก่อน`
-        });
-    }
-
-    const roleCheck = validateDirectRoleAssignment(botMember, role);
-    if (role?.id === interaction.guild.id) {
-        return interaction.editReply({ content: `> ${config.emojis.error} ไม่สามารถใช้ยศ @everyone เป็นยศยืนยันตัวตนได้` });
-    }
-    if (!roleCheck.ok) {
-        return interaction.editReply({
-            content: `> ${config.emojis.error} ${roleCheck.reason}`
-        });
-    }
-    markCommandAccepted(interaction);
-
     const panelRevision = makePanelRevision("panel");
     const panelRevisionUpdatedAt = Date.now();
 
-    const embed = new MessageEmbed()
-        .setColor(colorHex)
-        .setTitle(title)
-        .setDescription(description);
-
-    if (titleUrl) embed.setURL(titleUrl);
-    if (imageUrl) embed.setImage(imageUrl);
-    if (thumbUrl) embed.setThumbnail(thumbUrl);
-    if (footerText) embed.setFooter({ text: footerText });
-    if (showTs) embed.setTimestamp();
-
-    const row = new MessageActionRow();
-
-    if (verifyType) {
-        let authorizeUrl;
-
-        try {
-            authorizeUrl = buildDiscordAuthorizeUrl({
-                interaction,
-                guildId: interaction.guild.id,
-                roleId: role.id,
-                panelRevision
-            });
-        } catch (err) {
-            console.error("[VERIFY] Direct OAuth URL build failed:", err.message);
-
-            return interaction.editReply({
-                content:
-                    `> ${config.emojis.error} สร้างลิงก์ OAuth ไม่สำเร็จ\n` +
-                    `> กรุณาตรวจการตั้งค่า OAuth และ public URL แล้วลองใหม่`
-            });
-        }
-
-        const button = new MessageButton()
-            .setStyle("LINK")
-            .setURL(authorizeUrl)
-            .setLabel(buttonParts.label);
-
-        row.addComponents(
-            applyEmoji(button, buttonParts.emojiInput, "✅", interaction.client)
-        );
-    } else {
-        const button = new MessageButton()
-            .setCustomId(`verify_role_${role.id}`)
-            .setLabel(buttonParts.label)
-            .setStyle("SUCCESS");
-
-        row.addComponents(
-            applyEmoji(button, buttonParts.emojiInput, "🎭", interaction.client)
-        );
+    const panelComponents = buildVerificationPanelComponents({
+        interaction,
+        verifyType,
+        role,
+        panelRevision,
+        panelOptions
+    });
+    if (!panelComponents.ok) {
+        return interaction.editReply({ content: panelComponents.error });
     }
 
     try {
         if (!GuildConfig) throw new Error("GUILD_CONFIG_MODEL_UNAVAILABLE");
-        const settingKey = `verify_config_${guildId}_${role.id}`;
-        const previousLegacyRecord = await sessionManager.getSettingStrict(settingKey);
-        const previousLegacy = previousLegacyRecord.found ? previousLegacyRecord.value : null;
-        const previousGuildConfig = await GuildConfig.findOne()
-            .where("guildId")
-            .equals(guildId)
-            .lean();
-        const panelPayload = {
-            embeds: [embed],
-            components: [row]
-        };
-
-        if (content) {
-            panelPayload.content = content;
-        }
-
-        const panelMsg = await channel.send(panelPayload);
-
-        const dashboardVerifyType = boolToDashboardVerifyType(verifyType);
-        const legacyOauthMode = boolToLegacyOauthMode(verifyType);
-
-        const legacyConfig = {
-            roleId: role.id,
-            roleName: role.name,
-            guildId: interaction.guild.id,
-            guildName: interaction.guild.name,
-            channelId: channel.id,
-            channelName: channel.name,
-            messageId: panelMsg.id,
-
-            panelRevision,
-            panelRevisionUpdatedAt,
-
+        const panelMsg = await sendAndPersistVerificationPanel({
+            interaction,
+            guildId,
+            role,
+            channel,
             verifyType,
-            dashboardVerifyType,
-            oauthMode: dashboardVerifyType,
-            legacyOauthMode,
+            panelOptions,
+            panelComponents,
+            panelRevision,
+            panelRevisionUpdatedAt
+        });
 
-            panel: {
-                content,
-                title,
-                description,
-                color: colorHex,
-                imageUrl,
-                thumbnailUrl: thumbUrl,
-                footerText,
-                titleUrl,
-                showTimestamp: showTs,
-
-                buttonText: buttonParts.label,
-                buttonLabel: buttonParts.label,
-                buttonEmoji: buttonParts.emojiDisplay,
-
-                verifyType: dashboardVerifyType,
-                legacyVerifyType: verifyType ? "oauth2" : "direct-role"
-            },
-
-            setBy: interaction.user.id,
-            updatedAt: Date.now(),
-            createdAt: Date.now()
-        };
-
-        try {
-            await retryPersistence(() => sessionManager.setSetting(settingKey, legacyConfig));
-            await retryPersistence(() => syncGuildConfig(interaction, role, channel, panelMsg, {
-                verifyType,
-                content,
-                title,
-                description,
-                colorHex,
-                imageUrl,
-                thumbUrl,
-                footerText,
-                titleUrl,
-                showTs,
-                buttonLabel: buttonParts.label,
-                buttonEmoji: buttonParts.emojiDisplay,
-                panelRevision,
-                panelRevisionUpdatedAt
-            }));
-            if (!await disablePreviousVerificationPanel(interaction, previousGuildConfig, panelMsg.id)) {
-                throw Object.assign(new Error("PREVIOUS_PANEL_DISABLE_FAILED"), { code: "PREVIOUS_PANEL_DISABLE_FAILED" });
-            }
-        } catch (persistError) {
-            const disabled = await panelMsg.edit({ components: [] }).then(() => true).catch(() => false);
-            const deleted = await panelMsg.delete().then(() => true).catch(() => false);
-            const rolledBack = await rollbackPanelConfig({
-                guildId: interaction.guild.id,
-                settingKey,
-                previousLegacy,
-                previousGuildConfig
-            });
-            if (!rolledBack || (!disabled && !deleted)) {
-                const recovery = await persistVerificationRecovery({
-                    guildId,
-                    messageId: panelMsg.id,
-                    settingKey,
-                    rolledBack,
-                    panelDisabled: disabled,
-                    panelDeleted: deleted,
-                    sourceIconUrl: getDiscordGuildIconUrl(interaction.guild)
-                });
-                persistError.recoveryRequired = recovery.required;
-                persistError.recoveryPersisted = recovery.persisted;
-            }
-            throw persistError;
-        }
-
-        const resultEmbed = new MessageEmbed()
-            .setColor(config.system.themeColors.success)
-            .setTitle(`${config.emojis.success} ติดตั้งแผงยืนยันสำเร็จ`)
-            .setDescription(
-                `แผงยืนยันถูกส่งไปที่ <#${channel.id}> แล้ว\n` +
-                `ระบบบันทึกการตั้งค่าและพร้อมให้สมาชิกยืนยันตัวตน`
-            )
-            .addFields(
-                {
-                    name: "📌 ช่อง",
-                    value: `<#${channel.id}>`,
-                    inline: true
-                },
-                {
-                    name: "🎭 ยศ",
-                    value: `<@&${role.id}>`,
-                    inline: true
-                },
-                {
-                    name: "🔒 ประเภท",
-                    value: verifyType ? "OAuth2 Direct Authorize" : "กดรับยศทันที",
-                    inline: true
-                },
-                {
-                    name: "🧩 ปุ่ม",
-                    value: `${buttonParts.emojiDisplay || ""} ${buttonParts.label}`.trim(),
-                    inline: false
-                },
-                {
-                    name: "🎨 สี",
-                    value: colorHex,
-                    inline: true
-                },
-                {
-                    name: "🕐 เวลา",
-                    value: showTs ? "เปิด" : "ปิด",
-                    inline: true
-                },
-                {
-                    name: "🆔 Message ID",
-                    value: `\`${panelMsg.id}\``,
-                    inline: false
-                },
-                {
-                    name: "🧬 Panel Revision",
-                    value: `\`${panelRevision}\``,
-                    inline: false
-                }
-            )
-            .setFooter({ text: `ตั้งค่าโดย ${interaction.user.tag}` })
-            .setTimestamp();
+        const resultEmbed = buildVerificationSetupResultEmbed({
+            interaction,
+            channel,
+            role,
+            verifyType,
+            panelOptions,
+            panelMsgId: panelMsg.id,
+            panelRevision
+        });
 
         return interaction.editReply({ embeds: [resultEmbed] });
-
     } catch (err) {
         console.error(`[VERIFY] ❌ setup-verify failed: ${err.message}`);
-
         return interaction.editReply({ content: verificationSetupFailureMessage(err) });
     }
 }
@@ -995,6 +1069,11 @@ module.exports = {
         persistVerificationRecovery,
         verificationRecoverySummary,
         verificationSetupFailureMessage,
-        buildDiscordAuthorizeUrl
+        buildDiscordAuthorizeUrl,
+        validateSetupChannelAndRole,
+        parseVerificationButtonParts,
+        parseVerificationPanelOptions,
+        buildVerificationPanelComponents,
+        buildVerificationSetupResultEmbed
     }
 };

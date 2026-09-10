@@ -193,3 +193,56 @@ test("buildDiscordAuthorizeUrl throws when public URL or client ID is missing", 
         else process.env.DISCORD_CLIENT_ID = prevClient;
     }
 });
+
+test("validateSetupChannelAndRole rejects non-text channels and everyone role", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const interaction = {
+        guild: { id: "guild_123" },
+        client: {}
+    };
+    const invalidChannel = { isTextBased: () => false };
+    const validRole = { id: "role_123", name: "Member" };
+
+    const channelRes = await _test.validateSetupChannelAndRole(interaction, invalidChannel, validRole);
+    assert.equal(channelRes.ok, false);
+    assert.match(channelRes.error, /เลือกห้องข้อความเท่านั้น/);
+
+    const validChannel = {
+        id: "ch_123",
+        isTextBased: () => true,
+        isSendable: () => true,
+        isThread: () => false,
+        permissionsFor: () => ({ has: () => true })
+    };
+    const everyoneRole = { id: "guild_123", name: "@everyone" };
+    const everyoneRes = await _test.validateSetupChannelAndRole(interaction, validChannel, everyoneRole);
+    assert.equal(everyoneRes.ok, false);
+    assert.match(everyoneRes.error, /ไม่สามารถใช้ยศ @everyone/);
+});
+
+test("parseVerificationButtonParts parses single text and fallback options", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const interactionWithButtonText = {
+        options: {
+            getString: (name) => (name === "button_text" ? "🚀 Join Server" : null)
+        },
+        client: {}
+    };
+    const role = { name: "VIP" };
+    const parts = _test.parseVerificationButtonParts(interactionWithButtonText, role, true);
+    assert.equal(parts.label, "Join Server");
+    assert.equal(parts.emojiDisplay, "🚀");
+
+    const interactionLegacy = {
+        options: {
+            getString: (name) => {
+                if (name === "button_label") return "Click Here";
+                if (name === "button_emoji") return "🔒";
+                return null;
+            }
+        },
+        client: {}
+    };
+    const partsLegacy = _test.parseVerificationButtonParts(interactionLegacy, role, false);
+    assert.equal(partsLegacy.label, "Click Here");
+    assert.equal(partsLegacy.emojiInput, "🔒");
+});
+
