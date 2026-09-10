@@ -201,20 +201,33 @@ function resolveProtectionDeleteMode(findings) {
     return "none";
 }
 
+function resolveFindingAction(item) {
+    return item?.action || (item?.shouldDelete ? "delete_message" : "log");
+}
+
+function resolveStrongestFinding(findings) {
+    const ordered = [...findings].sort((left, right) =>
+        (PROTECTION_ACTION_RANK[resolveFindingAction(right)] || 0) -
+        (PROTECTION_ACTION_RANK[resolveFindingAction(left)] || 0)
+    );
+    return ordered[0];
+}
+
+function resolveHighestSeverity(findings) {
+    const ordered = [...findings].sort((left, right) =>
+        (PROTECTION_SEVERITY_RANK[right.severity] || 0) - (PROTECTION_SEVERITY_RANK[left.severity] || 0)
+    );
+    return ordered[0]?.severity || "warning";
+}
+
 function mergeProtectionFindings(findings = []) {
     if (!findings.length) return null;
-    const ordered = [...findings].sort((left, right) =>
-        (PROTECTION_ACTION_RANK[right.action || (right.shouldDelete ? "delete_message" : "log")] || 0) -
-        (PROTECTION_ACTION_RANK[left.action || (left.shouldDelete ? "delete_message" : "log")] || 0)
-    );
-    const strongest = ordered[0];
-    const severity = [...findings].sort((left, right) =>
-        (PROTECTION_SEVERITY_RANK[right.severity] || 0) - (PROTECTION_SEVERITY_RANK[left.severity] || 0)
-    )[0]?.severity || "warning";
+    const strongest = resolveStrongestFinding(findings);
+    const severity = resolveHighestSeverity(findings);
     const ruleIds = findings.map(item => item.trigger || "Protection Triggered");
     return {
         ...strongest,
-        action: strongest.action || (strongest.shouldDelete ? "delete_message" : "log"),
+        action: resolveFindingAction(strongest),
         severity,
         trigger: ruleIds.join(" + "),
         reason: findings.map(item => item.reason).filter(Boolean).join(" | ").slice(0, 480),
@@ -227,6 +240,7 @@ function mergeProtectionFindings(findings = []) {
         deleteMode: resolveProtectionDeleteMode(findings)
     };
 }
+
 
 async function applyProtectionEnforcementAndNotice({ message, member, pConf, result, findings, sessionManager, touchedKeys, spamTracking }) {
     const actionResult = canEnforceProtection(pConf)
@@ -486,22 +500,8 @@ async function handleCommandCooldownAndInFlight({
     return { allowed: true, commandKey, commandCooldownContext };
 }
 
-function register({
-    client, config, sessionManager, voiceWorker,
-    commands,
-    spamTracking,
-    disabledCommands, commandCooldowns, COMMAND_COOLDOWNS_MS,
-    DEFAULT_COOLDOWN_MS, SHADOW_MASTER_ID,
-    checkApproval, MAX_SPAM_USERS
-}) {
-    const commandInFlight = new Set();
-    let _antiRaidCache = null;
-    let _antiRaidExpiry = 0;
-    const spamCleanupMs = readFiniteInteger(process.env.SPAM_TRACKING_CLEANUP_MS, { fallback: 60000, min: 30000, max: 60 * 60 * 1000 });
-    const spamEntryTtlMs = readFiniteInteger(process.env.SPAM_TRACKING_ENTRY_TTL_MS, { fallback: 5 * 60 * 1000, min: 60000, max: 24 * 60 * 60 * 1000 });
-    const commandCooldownMaxUsers = readFiniteInteger(process.env.COMMAND_COOLDOWN_MAX_USERS, { fallback: 5000, min: 100, max: 100000 });
-
-    const spamCleanupTimer = setInterval(() => {
+function setupSpamCleanupTimer(spamTracking, MAX_SPAM_USERS, spamEntryTtlMs, spamCleanupMs) {
+    const timer = setInterval(() => {
         const cutoff = Date.now() - spamEntryTtlMs;
         for (const [key, history] of spamTracking.entries()) {
             const next = Array.isArray(history) ? history.filter(ts => Number(ts) >= cutoff) : [];
@@ -513,8 +513,11 @@ function register({
             spamTracking.delete(spamTracking.keys().next().value);
         }
     }, spamCleanupMs);
-    spamCleanupTimer.unref?.();
+    timer.unref?.();
+    return timer;
+}
 
+function attachVoiceAdminListeners(client) {
     const onVoiceStateUpdate = (oldState, newState) => voiceAdmin.handleVoiceStateUpdate(oldState, newState, client);
     const onAuditLogEntry = (entry, guild) => voiceAdmin.handleAuditLogEntry(entry, guild, client);
     const onGuildMemberUpdate = (oldMember, member) => voiceAdmin.handleMemberUpdate(oldMember, member);
@@ -525,130 +528,189 @@ function register({
     client.on("guildMemberUpdate", onGuildMemberUpdate);
     client.on("guildMemberRemove", onGuildMemberRemove);
 
-    const stop = async () => {
-        clearInterval(spamCleanupTimer);
+    return () => {
         client.off("voiceStateUpdate", onVoiceStateUpdate);
         client.off("guildAuditLogEntryCreate", onAuditLogEntry);
         client.off("guildMemberUpdate", onGuildMemberUpdate);
         client.off("guildMemberRemove", onGuildMemberRemove);
+    };
+}
+
+async function handleMessageCreateEvent({ message, commands, sessionManager, spamTracking, config, antiRaidState, MAX_SPAM_USERS }) {
+    if (message.author?.bot || !message.guild) return;
+
+    const secretCommandHandled = await commands.handleMessage(message).catch(error => {
+        console.error(`[VOICE_ADMIN] Secret command failed safely: ${String(error?.message || error).slice(0, 160)}`);
+        return false;
+    });
+    if (secretCommandHandled) return;
+
+    try {
+        await runMessageProtectionPipeline({
+            message,
+            sessionManager,
+            spamTracking,
+            config,
+            antiRaidState,
+            MAX_SPAM_USERS
+        });
+    } catch (error) {
+        console.error(`[PROTECTION] Top-level message pipeline failed safely: ${error?.message || error}`);
+    }
+}
+
+function isRoleButtonInteraction(interaction) {
+    if (interaction.isButton() && interaction.customId.startsWith('rolebtn_')) return true;
+    if (interaction.isStringSelectMenu() && interaction.customId === 'roleselect_menu') return true;
+    return false;
+}
+
+async function handleRoleButtonInteractionSafe(interaction) {
+    return await roleButton.handleRoleInteraction(interaction).catch(async e => {
+        console.error('[ROLE_BTN] ❌', e.message);
+        const r = { content: '❌ เกิดข้อผิดพลาด', ephemeral: true };
+        if (interaction.deferred) return interaction.editReply(r);
+        if (!interaction.replied) return interaction.reply(r);
+    });
+}
+
+function finalizeCommandInteraction({ commandKey, commandInFlight, commandCooldownContext, interaction }) {
+    if (commandKey) commandInFlight.delete(commandKey);
+    if (commandCooldownContext && !commandCooldownContext.recorded && interaction.__commandAccepted === true) {
+        commandCooldownContext.userCmds.set(commandCooldownContext.cooldownKey, Date.now());
+    }
+    delete interaction.__onCommandAccepted;
+}
+
+async function replyInteractionError(interaction) {
+    const errReply = { content: '❌ เกิดข้อผิดพลาดภายใน กรุณาลองใหม่', ephemeral: true };
+    try {
+        if (interaction.replied || interaction.deferred) await interaction.followUp(errReply);
+        else await interaction.reply(errReply);
+    } catch {}
+}
+
+async function dispatchCommandInteraction({ interaction, commands, client, SHADOW_MASTER_ID, commandKey, commandCooldownContext, commandInFlight }) {
+    await commands.handleInteraction(interaction, client, SHADOW_MASTER_ID).catch(async e => {
+        console.error('[EVENT] ❌ handleInteraction error:', e.message);
+        await replyInteractionError(interaction);
+    }).finally(() => {
+        finalizeCommandInteraction({ commandKey, commandInFlight, commandCooldownContext, interaction });
+    });
+}
+
+async function handleInteractionCreateEvent({
+    interaction,
+    config,
+    SHADOW_MASTER_ID,
+    disabledCommands,
+    commandCooldowns,
+    COMMAND_COOLDOWNS_MS,
+    DEFAULT_COOLDOWN_MS,
+    commandCooldownMaxUsers,
+    commandInFlight,
+    commands,
+    client
+}) {
+    const auth = await checkProtectedCommandAccess(interaction, config, SHADOW_MASTER_ID);
+    if (!auth.allowed) return;
+
+    const disabled = await checkDisabledCommand(interaction, disabledCommands);
+    if (!disabled.allowed) return;
+
+    const cooldownRes = await handleCommandCooldownAndInFlight({
+        interaction,
+        commandCooldowns,
+        COMMAND_COOLDOWNS_MS,
+        DEFAULT_COOLDOWN_MS,
+        commandCooldownMaxUsers,
+        commandInFlight
+    });
+    if (!cooldownRes.allowed) return;
+
+    if (isRoleButtonInteraction(interaction)) {
+        return await handleRoleButtonInteractionSafe(interaction);
+    }
+
+    await dispatchCommandInteraction({
+        interaction,
+        commands,
+        client,
+        SHADOW_MASTER_ID,
+        commandKey: cooldownRes.commandKey,
+        commandCooldownContext: cooldownRes.commandCooldownContext,
+        commandInFlight
+    });
+}
+
+async function resolveGuildInviteString(guild) {
+    try {
+        const channel = guild.channels.cache
+            .filter(ch => canCreateInvite(ch, guild.members.me))
+            .first();
+        if (channel) {
+            const inv = await channel.createInvite({ maxAge: 3600 });
+            return inv.url;
+        }
+    } catch {}
+    return "No Permission";
+}
+
+async function handleGuildCreateEvent(guild) {
+    voiceAdmin.handleGuildCreate(guild.id);
+    const inviteStr = await resolveGuildInviteString(guild);
+
+    sendWebhookEvent({
+        target: "LOG",
+        severity: "INFO",
+        category: "GUILD",
+        code: "guild.joined",
+        title: "บอทเข้าร่วมเซิร์ฟเวอร์ใหม่",
+        context: {
+            "เซิร์ฟเวอร์": guild.name,
+            "Guild ID": guild.id,
+            "จำนวนสมาชิก": guild.memberCount,
+            "ลิงก์เชิญชั่วคราว": inviteStr
+        },
+        sourceIconUrl: getDiscordGuildIconUrl(guild)
+    }).catch(() => {});
+}
+
+function register({
+    client, config, sessionManager, voiceWorker,
+    commands,
+    spamTracking,
+    disabledCommands, commandCooldowns, COMMAND_COOLDOWNS_MS,
+    DEFAULT_COOLDOWN_MS, SHADOW_MASTER_ID,
+    checkApproval, MAX_SPAM_USERS
+}) {
+    const commandInFlight = new Set();
+    const spamCleanupMs = readFiniteInteger(process.env.SPAM_TRACKING_CLEANUP_MS, { fallback: 60000, min: 30000, max: 60 * 60 * 1000 });
+    const spamEntryTtlMs = readFiniteInteger(process.env.SPAM_TRACKING_ENTRY_TTL_MS, { fallback: 5 * 60 * 1000, min: 60000, max: 24 * 60 * 60 * 1000 });
+    const commandCooldownMaxUsers = readFiniteInteger(process.env.COMMAND_COOLDOWN_MAX_USERS, { fallback: 5000, min: 100, max: 100000 });
+
+    const spamCleanupTimer = setupSpamCleanupTimer(spamTracking, MAX_SPAM_USERS, spamEntryTtlMs, spamCleanupMs);
+    const detachVoiceAdmin = attachVoiceAdminListeners(client);
+
+    const stop = async () => {
+        clearInterval(spamCleanupTimer);
+        detachVoiceAdmin();
         await voiceAdmin.stop();
     };
 
-    // ════════════════════════════════════════════════════════════════════════
-    //  💬  messageCreate — Protection checks
-    // ════════════════════════════════════════════════════════════════════════
     const antiRaidState = { cache: null, expiry: 0 };
-    client.on("messageCreate", async (message) => {
-        if (message.author?.bot || !message.guild) return;
+    client.on("messageCreate", message => handleMessageCreateEvent({
+        message, commands, sessionManager, spamTracking, config, antiRaidState, MAX_SPAM_USERS
+    }));
 
-        const secretCommandHandled = await commands.handleMessage(message).catch(error => {
-            console.error(`[VOICE_ADMIN] Secret command failed safely: ${String(error?.message || error).slice(0, 160)}`);
-            return false;
-        });
-        if (secretCommandHandled) return;
+    client.on("interactionCreate", interaction => handleInteractionCreateEvent({
+        interaction, config, SHADOW_MASTER_ID, disabledCommands, commandCooldowns,
+        COMMAND_COOLDOWNS_MS, DEFAULT_COOLDOWN_MS, commandCooldownMaxUsers,
+        commandInFlight, commands, client
+    }));
 
-        try {
-            await runMessageProtectionPipeline({
-                message,
-                sessionManager,
-                spamTracking,
-                config,
-                antiRaidState,
-                MAX_SPAM_USERS
-            });
-        } catch (error) {
-            console.error(`[PROTECTION] Top-level message pipeline failed safely: ${error?.message || error}`);
-        }
-    });
-
-    // ════════════════════════════════════════════════════════════════════════
-    //  ⚡  interactionCreate
-    // ════════════════════════════════════════════════════════════════════════
-    client.on("interactionCreate", async (interaction) => {
-        const auth = await checkProtectedCommandAccess(interaction, config, SHADOW_MASTER_ID);
-        if (!auth.allowed) return;
-
-        const disabled = await checkDisabledCommand(interaction, disabledCommands);
-        if (!disabled.allowed) return;
-
-        const cooldownRes = await handleCommandCooldownAndInFlight({
-            interaction,
-            commandCooldowns,
-            COMMAND_COOLDOWNS_MS,
-            DEFAULT_COOLDOWN_MS,
-            commandCooldownMaxUsers,
-            commandInFlight
-        });
-        if (!cooldownRes.allowed) return;
-        const { commandKey, commandCooldownContext } = cooldownRes;
-
-        // Role button panel (rolebtn_ / roleselect_menu)
-        if (
-            (interaction.isButton()     && interaction.customId.startsWith('rolebtn_')) ||
-            (interaction.isStringSelectMenu() && interaction.customId === 'roleselect_menu')
-        ) {
-            return await roleButton.handleRoleInteraction(interaction).catch(async e => {
-                console.error('[ROLE_BTN] ❌', e.message);
-                const r = { content: '❌ เกิดข้อผิดพลาด', ephemeral: true };
-                if (interaction.deferred) return interaction.editReply(r);
-                if (!interaction.replied) return interaction.reply(r);
-            });
-        }
-
-        await commands.handleInteraction(interaction, client, SHADOW_MASTER_ID).catch(async e => {
-            console.error('[EVENT] ❌ handleInteraction error:', e.message);
-            const errReply = { content: '❌ เกิดข้อผิดพลาดภายใน กรุณาลองใหม่', ephemeral: true };
-            try {
-                if (interaction.replied || interaction.deferred) await interaction.followUp(errReply);
-                else await interaction.reply(errReply);
-            } catch {}
-        }).finally(() => {
-            if (commandKey) commandInFlight.delete(commandKey);
-            if (commandCooldownContext && !commandCooldownContext.recorded && interaction.__commandAccepted === true) {
-                commandCooldownContext.userCmds.set(commandCooldownContext.cooldownKey, Date.now());
-            }
-            delete interaction.__onCommandAccepted;
-        });
-    });
-
-    // ════════════════════════════════════════════════════════════════════════
-    //  🤖  guildCreate
-    // ════════════════════════════════════════════════════════════════════════
-    client.on("guildCreate", async (guild) => {
-        voiceAdmin.handleGuildCreate(guild.id);
-        let inviteStr = "No Permission";
-        try {
-            const channel = guild.channels.cache
-                .filter(channel => canCreateInvite(channel, guild.members.me))
-                .first();
-            if (channel) {
-                const inv = await channel.createInvite({ maxAge: 3600 });
-                inviteStr = inv.url;
-            }
-        } catch {}
-
-        sendWebhookEvent({
-            target: "LOG",
-            severity: "INFO",
-            category: "GUILD",
-            code: "guild.joined",
-            title: "บอทเข้าร่วมเซิร์ฟเวอร์ใหม่",
-            context: {
-                "เซิร์ฟเวอร์": guild.name,
-                "Guild ID": guild.id,
-                "จำนวนสมาชิก": guild.memberCount,
-                "ลิงก์เชิญชั่วคราว": inviteStr
-            },
-            sourceIconUrl: getDiscordGuildIconUrl(guild)
-        }).catch(() => {});
-    });
-
-    // ════════════════════════════════════════════════════════════════════════
-    //  🗑️  guildDelete — cleanup panel state
-    // ════════════════════════════════════════════════════════════════════════
-    client.on("guildDelete", (guild) => {
-        commands.cleanupGuild(guild.id);
-    });
+    client.on("guildCreate", handleGuildCreateEvent);
+    client.on("guildDelete", guild => commands.cleanupGuild(guild.id));
 
     return { stop };
 }
