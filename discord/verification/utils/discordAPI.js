@@ -701,6 +701,42 @@ function computeMemberGuildPermissions(member, roles = []) {
     return perms.toString();
 }
 
+function applyEveryoneOverwrite(perms, overwrites, guildId) {
+    if (!guildId) return perms;
+    for (const ow of overwrites) {
+        if (Number(ow.type) === 0 && String(ow.id) === guildId) {
+            perms &= ~toBigIntPermission(ow.deny);
+            perms |= toBigIntPermission(ow.allow);
+        }
+    }
+    return perms;
+}
+
+function applyRoleOverwrites(perms, overwrites, guildId, memberRoleIds) {
+    let roleDeny = 0n;
+    let roleAllow = 0n;
+    for (const ow of overwrites) {
+        if (Number(ow.type) === 0 && (!guildId || String(ow.id) !== guildId) && memberRoleIds.has(String(ow.id))) {
+            roleDeny |= toBigIntPermission(ow.deny);
+            roleAllow |= toBigIntPermission(ow.allow);
+        }
+    }
+    perms &= ~roleDeny;
+    perms |= roleAllow;
+    return perms;
+}
+
+function applyMemberSpecificOverwrite(perms, overwrites, memberUserId) {
+    if (!memberUserId) return perms;
+    for (const ow of overwrites) {
+        if (Number(ow.type) === 1 && String(ow.id) === memberUserId) {
+            perms &= ~toBigIntPermission(ow.deny);
+            perms |= toBigIntPermission(ow.allow);
+        }
+    }
+    return perms;
+}
+
 function applyChannelOverwrites(basePermissions, member, channel) {
     let perms = toBigIntPermission(basePermissions);
 
@@ -710,55 +746,15 @@ function applyChannelOverwrites(basePermissions, member, channel) {
 
     const overwrites = Array.isArray(channel?.permissionOverwrites)
         ? channel.permissionOverwrites
-        : Array.isArray(channel?.permission_overwrites)
-            ? channel.permission_overwrites
-            : [];
+        : (Array.isArray(channel?.permission_overwrites) ? channel.permission_overwrites : []);
 
     const guildId = String(channel?.guildId || channel?.guild_id || "");
     const memberRoleIds = new Set((member?.roles || []).map(String));
     const memberUserId = String(member?.user?.id || member?.id || "");
 
-    /*
-      Discord permission overwrite order:
-      1. @everyone overwrite = overwrite id ตรงกับ guildId
-      2. role overwrites ของ role ที่ member มี
-      3. member-specific overwrite
-    */
-
-    // 1) @everyone overwrite
-    for (const ow of overwrites) {
-        if (Number(ow.type) !== 0) continue;
-        if (!guildId || String(ow.id) !== guildId) continue;
-
-        perms &= ~toBigIntPermission(ow.deny);
-        perms |= toBigIntPermission(ow.allow);
-    }
-
-    // 2) role overwrites are combined before being applied. Discord applies all
-    // role denies first, then all role allows; array order must not affect access.
-    let roleDeny = 0n;
-    let roleAllow = 0n;
-
-    for (const ow of overwrites) {
-        if (Number(ow.type) !== 0) continue;
-        if (guildId && String(ow.id) === guildId) continue;
-        if (!memberRoleIds.has(String(ow.id))) continue;
-
-        roleDeny |= toBigIntPermission(ow.deny);
-        roleAllow |= toBigIntPermission(ow.allow);
-    }
-
-    perms &= ~roleDeny;
-    perms |= roleAllow;
-
-    // 3) member-specific overwrite
-    for (const ow of overwrites) {
-        if (Number(ow.type) !== 1) continue;
-        if (String(ow.id) !== memberUserId) continue;
-
-        perms &= ~toBigIntPermission(ow.deny);
-        perms |= toBigIntPermission(ow.allow);
-    }
+    perms = applyEveryoneOverwrite(perms, overwrites, guildId);
+    perms = applyRoleOverwrites(perms, overwrites, guildId, memberRoleIds);
+    perms = applyMemberSpecificOverwrite(perms, overwrites, memberUserId);
 
     return perms.toString();
 }
