@@ -186,6 +186,34 @@ async function readSettingStrict(sessionManager, key) {
     return sessionManager.getSettingStrict(key);
 }
 
+function computeNextIndexRecords(current, eventId) {
+    const list = Array.isArray(current) ? current.filter(Boolean).map(String) : [];
+    const next = [eventId, ...list.filter(id => id !== eventId)].slice(0, MAX_INDEX_RECORDS);
+    return { list, next };
+}
+
+async function rollbackFailedRecordIndex(sessionManager, recordKey, previousRecord) {
+    const rolledBack = previousRecord === null
+        ? await deleteStoredRecord(sessionManager, recordKey)
+        : await sessionManager.setSetting(recordKey, previousRecord);
+    if (rolledBack !== true) {
+        console.warn('[INTERNAL_STORAGE] index write failed and record rollback was not acknowledged');
+    }
+}
+
+async function cleanupEvictedRecords(sessionManager, guildId, list, retained) {
+    const evicted = list.filter(eventId => !retained.has(eventId));
+    if (!evicted.length) return;
+    const cleaned = await deleteStoredEvents(sessionManager, guildId, evicted);
+    if (!cleaned) console.warn('[INTERNAL_STORAGE] one or more evicted records could not be deleted');
+}
+
+async function cleanupPreviousRecordChunks(sessionManager, recordKey, previousRecord) {
+    if (previousRecord !== null && isChunkManifest(previousRecord)) {
+        await deleteStoredChunks(sessionManager, recordKey, previousRecord);
+    }
+}
+
 async function saveFallback(sessionManager, record) {
     if (!sessionManager?.setSetting || !sessionManager?.getSettingStrict) return null;
     return withFallbackLock(`internal-event:${record.guildId}`, async () => {
@@ -197,28 +225,16 @@ async function saveFallback(sessionManager, record) {
         const saved = await writeStoredRecord(sessionManager, recordKey, record);
         if (saved !== true) return null;
 
-        const list = Array.isArray(current) ? current.filter(Boolean).map(String) : [];
-        const next = [record.eventId, ...list.filter(id => id !== record.eventId)].slice(0, MAX_INDEX_RECORDS);
+        const { list, next } = computeNextIndexRecords(current, record.eventId);
         const indexed = await sessionManager.setSetting(indexKey(record.guildId), next);
         if (indexed !== true) {
-            const rolledBack = previousRecord === null
-                ? await deleteStoredRecord(sessionManager, recordKey)
-                : await sessionManager.setSetting(recordKey, previousRecord);
-            if (rolledBack !== true) {
-                console.warn('[INTERNAL_STORAGE] index write failed and record rollback was not acknowledged');
-            }
+            await rollbackFailedRecordIndex(sessionManager, recordKey, previousRecord);
             return null;
         }
 
         const retained = new Set(next);
-        const evicted = list.filter(eventId => !retained.has(eventId));
-        if (evicted.length) {
-            const cleaned = await deleteStoredEvents(sessionManager, record.guildId, evicted);
-            if (!cleaned) console.warn('[INTERNAL_STORAGE] one or more evicted records could not be deleted');
-        }
-        if (previousRecord !== null && isChunkManifest(previousRecord)) {
-            await deleteStoredChunks(sessionManager, recordKey, previousRecord);
-        }
+        await cleanupEvictedRecords(sessionManager, record.guildId, list, retained);
+        await cleanupPreviousRecordChunks(sessionManager, recordKey, previousRecord);
         return record;
     });
 }
