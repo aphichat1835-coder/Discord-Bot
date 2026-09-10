@@ -207,19 +207,20 @@ function buildAnnouncementComponents(buttonText, buttonUrl) {
     return [new MessageActionRow().addComponents(button)];
 }
 
-async function handleAnnounce(interaction) {
+async function validateAnnounceTarget(interaction) {
     if (!await requireMemberPermission(
         interaction,
         PermissionFlagsBits.Administrator,
         `> ⛔ คำสั่งนี้จำเป็นต้องใช้สิทธิ์ผู้ดูแลระบบ (Administrator) เท่านั้น`
-    )) return;
+    )) return null;
 
     const targetChannel = interaction.options.getChannel("channel") || interaction.channel;
     if (!targetChannel || typeof targetChannel.send !== "function") {
-        return interaction.reply({
+        await interaction.reply({
             content: `> ${config.emojis.error} ช่องเป้าหมายต้องเป็นห้องข้อความที่ส่งข้อความได้`,
             ephemeral: true
         });
+        return null;
     }
 
     if (!await requireBotPermission(
@@ -227,20 +228,20 @@ async function handleAnnounce(interaction) {
         [PermissionFlagsBits.SendMessages, PermissionFlagsBits.ViewChannel, PermissionFlagsBits.EmbedLinks],
         `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความในช่อง <#${targetChannel.id}> (ต้องการสิทธิ์ ส่งข้อความ, ดูช่อง, และ แนบลิงก์)`,
         targetChannel
-    )) return;
+    )) return null;
 
+    return targetChannel;
+}
+
+function buildAnnouncePayload(interaction) {
     const rawMessage = interaction.options.getString("message");
-    if (!rawMessage?.trim()) {
-        return interaction.reply({ content: `> ${config.emojis.error} ข้อความประกาศต้องไม่ว่าง`, ephemeral: true });
-    }
+    if (!rawMessage?.trim()) return null;
 
     const messageText = sanitizeUserMessage(rawMessage.replaceAll(String.raw`\n`, "\n"), { maxLength: 4096 });
     const rawTitle = interaction.options.getString("title");
     const rawContent = interaction.options.getString("content");
     const authorName = interaction.options.getString("author_name");
     const footerText = interaction.options.getString("footer");
-
-    markCommandAccepted(interaction);
 
     const embed = buildAnnouncementEmbed({
         messageText,
@@ -263,15 +264,29 @@ async function handleAnnounce(interaction) {
 
     const content = rawContent ? sanitizeUserMessage(rawContent, { maxLength: 2000 }) : null;
 
+    return {
+        content: content || undefined,
+        embeds: [embed],
+        components: components.length > 0 ? components : undefined,
+        allowedMentions: { parse: ["users", "roles", "everyone"], repliedUser: false }
+    };
+}
+
+async function handleAnnounce(interaction) {
+    const targetChannel = await validateAnnounceTarget(interaction);
+    if (!targetChannel) return;
+
+    const payload = buildAnnouncePayload(interaction);
+    if (!payload) {
+        return interaction.reply({ content: `> ${config.emojis.error} ข้อความประกาศต้องไม่ว่าง`, ephemeral: true });
+    }
+
+    markCommandAccepted(interaction);
+
     if (!await safeDefer(interaction, { ephemeral: true })) return null;
 
     try {
-        const sentMsg = await targetChannel.send({
-            content: content || undefined,
-            embeds: [embed],
-            components: components.length > 0 ? components : undefined,
-            allowedMentions: { parse: ["users", "roles", "everyone"], repliedUser: false }
-        });
+        const sentMsg = await targetChannel.send(payload);
 
         const successText = targetChannel.id === interaction.channel.id
             ? `> ${config.emojis.success} ส่งประกาศเรียบร้อยแล้ว`
@@ -474,28 +489,68 @@ function formatSkippedEmojiList(emojis) {
     return res.slice(0, 1024);
 }
 
-function buildEmojiResultEmbed({ total, added, skipped, failed, createdStatic, createdAnimated, skippedEmojis, failedEmojis, guild, user }) {
-    let resultState = "failed";
-    if (added === total) resultState = "complete";
-    else if (added > 0) resultState = "partial";
-
-    let color = config.system.themeColors.error || "#ED4245";
-    let title = `${config.emojis.error || "❌"} นำเข้าอิโมจิไม่สำเร็จ`;
-    if (resultState === "complete") {
-        color = config.system.themeColors.success || "#57F287";
-        title = `${config.emojis.success || "✅"} นำเข้าอิโมจิเสร็จสมบูรณ์ 100%`;
-    } else if (resultState === "partial") {
-        color = config.system.themeColors.warning || "#FEE75C";
-        title = `${config.emojis.warning || "⚠️"} นำเข้าอิโมจิสำเร็จบางส่วน`;
+function getEmojiResultTheme(added, total) {
+    if (added === total) {
+        return {
+            color: config.system.themeColors.success || "#57F287",
+            title: `${config.emojis.success || "✅"} นำเข้าอิโมจิเสร็จสมบูรณ์ 100%`
+        };
     }
+    if (added > 0) {
+        return {
+            color: config.system.themeColors.warning || "#FEE75C",
+            title: `${config.emojis.warning || "⚠️"} นำเข้าอิโมจิสำเร็จบางส่วน`
+        };
+    }
+    return {
+        color: config.system.themeColors.error || "#ED4245",
+        title: `${config.emojis.error || "❌"} นำเข้าอิโมจิไม่สำเร็จ`
+    };
+}
+
+function buildEmojiResultFields({ createdStatic, createdAnimated, skippedEmojis, failedEmojis }) {
+    const fields = [];
+    if (createdStatic.length > 0) {
+        fields.push({
+            name: `🖼️ อิโมจิทั่วไป (Static) — ${createdStatic.length} ตัว`,
+            value: formatEmojiShowcase(createdStatic, false) || "—",
+            inline: false
+        });
+    }
+    if (createdAnimated.length > 0) {
+        fields.push({
+            name: `✨ อิโมจิเคลื่อนไหว (Animated) — ${createdAnimated.length} ตัว`,
+            value: formatEmojiShowcase(createdAnimated, true) || "—",
+            inline: false
+        });
+    }
+    if (skippedEmojis.length > 0) {
+        fields.push({
+            name: `⚠️ ข้ามเนื่องจากโควตาเต็ม — ${skippedEmojis.length} ตัว`,
+            value: formatSkippedEmojiList(skippedEmojis) || "—",
+            inline: false
+        });
+    }
+    if (failedEmojis.length > 0) {
+        fields.push({
+            name: `❌ รายการที่ล้มเหลว — ${failedEmojis.length} ตัว`,
+            value: formatFailedEmojiList(failedEmojis) || "—",
+            inline: false
+        });
+    }
+    return fields;
+}
+
+function buildEmojiResultEmbed({ total, added, skipped, failed, createdStatic, createdAnimated, skippedEmojis, failedEmojis, guild, user }) {
+    const theme = getEmojiResultTheme(added, total);
 
     const embed = new MessageEmbed()
-        .setColor(color)
+        .setColor(theme.color)
         .setAuthor({
             name: "ผลการนำเข้าอิโมจิเข้าสู่เซิร์ฟเวอร์",
             iconURL: guild?.iconURL?.({ dynamic: true }) || undefined
         })
-        .setTitle(title)
+        .setTitle(theme.title)
         .setDescription(
             `> 📊 **สรุปการดำเนินการ:** นำเข้าสำเร็จ **${added}** จากทั้งหมด **${total}** ตัว\n` +
             `> 🟢 **สำเร็จ:** \`${added}\` ตัว | 🟡 **ข้าม (โควตาเต็ม):** \`${skipped}\` ตัว | 🔴 **ล้มเหลว:** \`${failed}\` ตัว`
@@ -506,32 +561,9 @@ function buildEmojiResultEmbed({ total, added, skipped, failed, createdStatic, c
         })
         .setTimestamp();
 
-    if (createdStatic.length > 0) {
-        const showcase = formatEmojiShowcase(createdStatic, false);
-        embed.addFields([
-            { name: `🖼️ อิโมจิทั่วไป (Static) — ${createdStatic.length} ตัว`, value: showcase || "—", inline: false }
-        ]);
-    }
-
-    if (createdAnimated.length > 0) {
-        const showcase = formatEmojiShowcase(createdAnimated, true);
-        embed.addFields([
-            { name: `✨ อิโมจิเคลื่อนไหว (Animated) — ${createdAnimated.length} ตัว`, value: showcase || "—", inline: false }
-        ]);
-    }
-
-    if (skippedEmojis.length > 0) {
-        const skippedList = formatSkippedEmojiList(skippedEmojis);
-        embed.addFields([
-            { name: `⚠️ ข้ามเนื่องจากโควตาเต็ม — ${skippedEmojis.length} ตัว`, value: skippedList || "—", inline: false }
-        ]);
-    }
-
-    if (failedEmojis.length > 0) {
-        const failedList = formatFailedEmojiList(failedEmojis);
-        embed.addFields([
-            { name: `❌ รายการที่ล้มเหลว — ${failedEmojis.length} ตัว`, value: failedList || "—", inline: false }
-        ]);
+    const fields = buildEmojiResultFields({ createdStatic, createdAnimated, skippedEmojis, failedEmojis });
+    if (fields.length > 0) {
+        embed.addFields(fields);
     }
 
     return embed;
