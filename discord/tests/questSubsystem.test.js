@@ -28,6 +28,8 @@ const {
 } = require('../quest/core/runnerManager');
 const {
     formatRunnerStatusContent,
+    formatRunnerStatusEmbed,
+    buildRunnerLiveEmbed,
     clampCodeBlockContent
 } = require('../quest/core/runnerStatusHeader');
 const {
@@ -49,6 +51,7 @@ const {
     nextRecheckState,
     addScheduleJitter,
     formatScheduleTime,
+    zonedParts,
     RECHECK_INTERVAL_MS
 } = require('../quest/core/runnerSchedule');
 const {
@@ -64,6 +67,7 @@ const {
     questSummaryTone,
     buildQuestSummaryEmbed,
     buildQuestAuthFailureEmbed,
+    buildQuestStoppedEmbed,
     sendQuestSummaryDM,
     sendQuestAuthFailureDM
 } = require('../quest/core/questDm');
@@ -320,7 +324,8 @@ test('runnerManager routes status updates to DM and falls back to channel when D
     await runner.task.catch(() => {});
 
     assert.ok(dmDeliveries.length > 0, 'Status message should be delivered to DM');
-    assert.match(dmDeliveries[0].content, /✅ LOGIN : TestUserDM/);
+    assert.ok(dmDeliveries[0].embeds && dmDeliveries[0].embeds.length > 0);
+    assert.match(dmDeliveries[0].embeds[0].data.fields[0].value, /TestUserDM/);
 
     // Test fallback when DM sending fails (e.g. DMs closed)
     const channelDeliveries = [];
@@ -368,7 +373,8 @@ test('runnerManager routes status updates to DM and falls back to channel when D
     await fallbackRunner.task.catch(() => {});
 
     assert.ok(channelDeliveries.length > 0, 'Status message should fall back to guild channel when DM fails');
-    assert.match(channelDeliveries[0].content, /✅ LOGIN : TestUserClosed/);
+    assert.ok(channelDeliveries[0].embeds && channelDeliveries[0].embeds.length > 0);
+    assert.match(channelDeliveries[0].embeds[0].data.fields[0].value, /TestUserClosed/);
 });
 
 test('questDm builds correct tones and embeds for success, partial, danger, and auth failure', () => {
@@ -426,5 +432,112 @@ test('questDm sendQuestSummaryDM and sendQuestAuthFailureDM integrate with centr
     assert.ok(authResult);
     assert.ok(['sent', 'retrying', 'skipped'].includes(authResult.status));
 });
+
+test('runnerStatusHeader builds valid Live Embeds for running, standby, completed, and stopped states', () => {
+    // 1. Running state (One-shot)
+    const runningEmbed = buildRunnerLiveEmbed({
+        username: 'GamerX',
+        accountId: 'acc_111',
+        mode: 'oneshot',
+        status: 'running',
+        totalQuestCount: 4,
+        completedQuestCount: 1
+    }, ['▶️ GamerX: RUNNING Genshin Quest', '⏳ GamerX: WAITING 30s (25%)']);
+
+    assert.ok(runningEmbed);
+    assert.equal(runningEmbed.data.title, '🔄 กำลังทำ Discord Quest...');
+    assert.equal(runningEmbed.data.color, parseInt('F59E0B', 16));
+    assert.ok(runningEmbed.data.fields.some((f) => f.name.includes('บัญชี Discord') && f.value.includes('GamerX')));
+    assert.ok(runningEmbed.data.fields.some((f) => f.name.includes('Terminal Log') && f.value.includes('RUNNING Genshin Quest')));
+
+    // 2. Standby state (Auto Daily)
+    const standbyEmbed = buildRunnerLiveEmbed({
+        username: 'DailyHero',
+        accountId: 'acc_222',
+        mode: 'scheduled',
+        modeLine: '🤖 AUTO DAILY ENABLED',
+        status: 'standby',
+        latestQuestCount: 0,
+        nextCheckAt: new Date(Date.UTC(2026, 8, 10, 9, 0, 0))
+    }, ['💤 DailyHero: AUTO DAILY ACTIVE', '⏰ DailyHero: NEXT CHECK 16:00']);
+
+    assert.ok(standbyEmbed);
+    assert.equal(standbyEmbed.data.title, '💤 AUTO DAILY กำลังสแตนด์บาย');
+    assert.equal(standbyEmbed.data.color, parseInt('5865F2', 16));
+    assert.ok(standbyEmbed.data.fields.some((f) => f.name.includes('โหมดการทำงาน') && f.value.includes('Auto Daily')));
+    assert.ok(standbyEmbed.data.fields.some((f) => f.name.includes('ความคืบหน้า') && f.value.includes('รอบต่อไป')));
+
+    // 3. Stopped state
+    const stoppedEmbed = buildRunnerLiveEmbed({
+        username: 'StoppedUser',
+        accountId: 'acc_333',
+        status: 'stopped'
+    }, ['🛑 StoppedUser: RUNNER STOPPED']);
+
+    assert.ok(stoppedEmbed);
+    assert.equal(stoppedEmbed.data.title, '🛑 สั่งหยุดการทำงานของ Quest แล้ว');
+    assert.equal(stoppedEmbed.data.color, parseInt('ED4245', 16));
+
+    // 4. formatRunnerStatusEmbed from raw content string
+    const rawContent = '```\n✅ LOGIN : ParserBot\n🤖 AUTO DAILY ENABLED\n🔎 ParserBot: พบ 3 QUESTS\n▶️ Doing Quest\n```';
+    const parsedEmbed = formatRunnerStatusEmbed(rawContent, { accountId: 'acc_444' });
+    assert.ok(parsedEmbed);
+    assert.ok(parsedEmbed.data.fields.some((f) => f.name.includes('บัญชี Discord') && f.value.includes('ParserBot')));
+    assert.ok(parsedEmbed.data.fields.some((f) => f.name.includes('ความคืบหน้า') && f.value.includes('3')));
+});
+
+test('questDm buildQuestStoppedEmbed creates danger embed with abort reason', () => {
+    const embed = buildQuestStoppedEmbed({
+        username: 'OperatorUser',
+        accountId: '999888777',
+        reason: 'สั่งหยุดการทำงานจากแผงควบคุม (/quest panel)',
+        jobKey: 'job:test:stopped'
+    });
+
+    assert.ok(embed);
+    assert.equal(embed.data.title, '🛑 สั่งหยุดการทำงานของ Quest แล้ว');
+    assert.equal(embed.data.color, parseInt('ED4245', 16));
+    assert.ok(embed.data.fields.some((f) => f.name.includes('บัญชีที่หยุดทำงาน') && f.value.includes('OperatorUser')));
+    assert.ok(embed.data.fields.some((f) => f.name.includes('เหตุผลที่หยุด') && f.value.includes('/quest panel')));
+});
+
+test('questDm sendQuestSummaryDM supports in-place message edit via targetMessage', async () => {
+    let editedData = null;
+    const mockTargetMessage = {
+        edit: async (payload) => {
+            editedData = payload;
+            return mockTargetMessage;
+        }
+    };
+
+    const result = await sendQuestSummaryDM({
+        targetMessage: mockTargetMessage,
+        ownerId: 'owner_in_place',
+        accountId: 'acc_in_place',
+        username: 'HeroInPlace',
+        mode: 'oneshot',
+        totalQuests: 2,
+        completedQuests: 2,
+        issues: []
+    });
+
+    assert.equal(result.status, 'delivered');
+    assert.equal(result.target, 'message_edit');
+    assert.ok(editedData);
+    assert.ok(Array.isArray(editedData.embeds));
+    assert.equal(editedData.embeds.length, 1);
+    assert.match(editedData.embeds[0].data.title, /ทำ Quest อัตโนมัติเสร็จสิ้นแล้ว/);
+});
+
+test('runnerSchedule zonedParts extracts correct local time components', () => {
+    const fixedUtc = new Date('2026-09-10T09:00:00.000Z'); // 16:00 BKK
+    const parts = zonedParts(fixedUtc, 'Asia/Bangkok');
+    assert.equal(parts.year, 2026);
+    assert.equal(parts.month, 9);
+    assert.equal(parts.day, 10);
+    assert.equal(parts.hour, 16);
+    assert.equal(parts.minute, 0);
+});
+
 
 

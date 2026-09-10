@@ -124,5 +124,6 @@ module.exports = {
     addScheduleJitter,
     nextScheduledCheck,
     nextRecheckState,
-    formatScheduleTime
+    formatScheduleTime,
+    zonedParts
 };

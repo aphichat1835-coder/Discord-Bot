@@ -164,7 +164,47 @@ function buildQuestAuthFailureEmbed({
 }
 
 /**
- * Sends a quest summary DM via the central dmService outbox.
+ * Builds an embed for runner stopped / aborted state.
+ */
+function buildQuestStoppedEmbed({
+    username = 'บัญชีไม่ทราบชื่อ',
+    accountId = 'ไม่ทราบ',
+    reason = 'สั่งหยุดการทำงานจากแผงควบคุม (/quest panel)',
+    jobKey = '',
+    profile = null,
+    timestamp = Date.now()
+} = {}) {
+    return buildDmEmbed({
+        tone: 'danger',
+        title: '🛑 สั่งหยุดการทำงานของ Quest แล้ว',
+        summary: 'ระบบได้รับการสั่งหยุดการทำงาน จึงได้ยุติกระบวนการทำเควสต์สำหรับบัญชีนี้ทันที',
+        profile: profile || profileFromUser(null, {
+            id: accountId,
+            username,
+            displayName: username
+        }),
+        fields: [
+            {
+                name: '🎮 บัญชีที่หยุดทำงาน',
+                value: `${markdownText(username)}\n${code(accountId)}`,
+                inline: true
+            },
+            {
+                name: '🛑 เหตุผลที่หยุด',
+                value: markdownText(reason),
+                inline: true
+            }
+        ],
+        nextAction: 'สามารถเปิดแผงควบคุม `/quest panel` เพื่อเริ่มการทำงานใหม่อีกครั้งได้ทุกเมื่อ',
+        referenceId: jobKey ? safeText(jobKey.slice(-16), 'quest', 32) : 'quest',
+        timestamp,
+        footer: 'Phomueangtai • ระบบทำ Discord Quest อัตโนมัติ'
+    });
+}
+
+/**
+ * Sends a quest summary DM via the central dmService outbox,
+ * or edits the existing live message in-place if provided.
  */
 async function sendQuestSummaryDM({
     ownerId,
@@ -174,16 +214,20 @@ async function sendQuestSummaryDM({
     totalQuests = 0,
     completedQuests = 0,
     issues = [],
-    jobKey = ''
+    jobKey = '',
+    targetMessage = null
 }) {
-    if (!ownerId) return { status: 'skipped', reason: 'owner_missing' };
+    if (!ownerId && !targetMessage) return { status: 'skipped', reason: 'owner_missing' };
 
     try {
-        const profile = await dmService.resolveProfile(ownerId, {
-            id: ownerId,
-            username,
-            displayName: username
-        });
+        let profile = null;
+        if (ownerId) {
+            profile = await dmService.resolveProfile(ownerId, {
+                id: ownerId,
+                username,
+                displayName: username
+            });
+        }
 
         const embed = buildQuestSummaryEmbed({
             mode,
@@ -196,6 +240,18 @@ async function sendQuestSummaryDM({
             profile,
             timestamp: Date.now()
         });
+
+        if (targetMessage && typeof targetMessage.edit === 'function') {
+            try {
+                await targetMessage.edit({ embeds: [embed] });
+                return { status: 'delivered', target: 'message_edit' };
+            } catch (editErr) {
+                console.warn(`[Quest DM] Failed to edit existing message into summary: ${editErr.message}`);
+                if (!ownerId) {
+                    return { status: 'failed', reason: editErr.message };
+                }
+            }
+        }
 
         const tone = questSummaryTone({ totalQuests, completedQuests, issues });
         const priority = tone === 'danger' ? 'high' : 'normal';
@@ -261,6 +317,7 @@ module.exports = {
     questSummaryTone,
     buildQuestSummaryEmbed,
     buildQuestAuthFailureEmbed,
+    buildQuestStoppedEmbed,
     sendQuestSummaryDM,
     sendQuestAuthFailureDM
 };

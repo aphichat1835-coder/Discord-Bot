@@ -15,7 +15,7 @@ const {
     isFatalAuthError
 } = require('./questSession');
 const { encryptToken, maskToken } = require('./tokenCrypto');
-const { formatRunnerStatusContent } = require('./runnerStatusHeader');
+const { formatRunnerStatusContent, formatRunnerStatusEmbed } = require('./runnerStatusHeader');
 const {
     createOneShotQuestSession,
     getNextPendingOneShotQuest,
@@ -34,7 +34,8 @@ const {
     nextRecheckState,
     formatScheduleTime,
     transientRetryDelayMs,
-    RECHECK_INTERVAL_MS
+    RECHECK_INTERVAL_MS,
+    zonedParts
 } = require('./runnerSchedule');
 const {
     createScheduledRunner,
@@ -50,6 +51,8 @@ const {
 const {
     resolveUserDMChannel,
     isPermanentDmError,
+    buildQuestAuthFailureEmbed,
+    buildQuestStoppedEmbed,
     sendQuestSummaryDM,
     sendQuestAuthFailureDM
 } = require('./questDm');
@@ -243,9 +246,10 @@ async function startRunner({
         return null;
     }
 
-    async function sendWithChannelFallback(ch, formattedContent) {
+    async function sendWithChannelFallback(ch, payload) {
+        const body = typeof payload === 'string' ? { content: payload } : payload;
         try {
-            return await ch.send({ content: formattedContent });
+            return await ch.send(body);
         } catch (sendErr) {
             // Fallback to guild channel if DM failed (e.g. user has DMs closed)
             if (channelId && ch?.id !== channelId) {
@@ -255,31 +259,40 @@ async function startRunner({
                 const fallbackCh = await client.channels.fetch(channelId).catch(() => null);
                 if (fallbackCh?.isTextBased?.()) {
                     outputChannel = fallbackCh;
-                    return await fallbackCh.send({ content: formattedContent });
+                    return await fallbackCh.send(body);
                 }
             }
             throw sendErr;
         }
     }
 
-    async function flush() {
+    async function flush({ silentRollover = false } = {}) {
         const task = flushPromise.then(async () => {
             lastRenderAt = Date.now();
             const visibleLines = [...logLines];
             let rawContent = '```\n' + visibleLines.join('\n') + '\n```';
-            const formattedContent = formatRunnerStatusContent(rawContent, {
-                loginLine: `✅ LOGIN : ${username}`,
-                modeLine: mode === 'scheduled' ? '🤖 AUTO DAILY ENABLED' : null
-            });
+            const embedState = {
+                username,
+                accountId,
+                mode,
+                modeLine: mode === 'scheduled' ? '🤖 AUTO DAILY ENABLED' : null,
+                nextCheckAt,
+                status: signal.aborted ? 'stopped' : undefined
+            };
+            const liveEmbed = formatRunnerStatusEmbed(rawContent, embedState);
+            const payload = { embeds: [liveEmbed] };
+            if (silentRollover) {
+                payload.flags = 4096;
+            }
 
             const editingExisting = Boolean(liveMsg);
             try {
                 if (!liveMsg) {
                     const ch = await resolveOutputChannel();
                     if (!ch?.isTextBased?.()) return;
-                    liveMsg = await sendWithChannelFallback(ch, formattedContent);
+                    liveMsg = await sendWithChannelFallback(ch, payload);
                 } else {
-                    await liveMsg.edit({ content: formattedContent });
+                    await liveMsg.edit(payload);
                 }
             } catch (err) {
                 if (editingExisting) liveMsg = null;
@@ -448,55 +461,32 @@ async function startRunner({
         addLog(`🎉 ${username}: ทำสำเร็จ ${summary.completedByBotCount} QUESTS`);
         addLog('🧹 QUEST ACTIVITY CLEARED');
 
+        let issues = [];
         if (summary.totalSupportedQuests === 0) {
             addLog('ℹ️ ไม่พบ Quest ที่บอทสามารถทำได้ในขณะนี้');
-            await flush();
-            sendQuestSummaryDM({
-                ownerId,
-                accountId,
-                username,
-                mode: 'oneshot',
-                totalQuests: 0,
-                completedQuests: 0,
-                issues: [],
-                jobKey
-            }).catch(() => {});
-            return;
-        }
-
-        if (summary.issues.length === 0 && summary.completedByBotCount === summary.totalSupportedQuests) {
+        } else if (summary.issues.length === 0 && summary.completedByBotCount === summary.totalSupportedQuests) {
             addLog('🎉 บอทได้เข้าไปทำ Quest ทั้งหมดเสร็จสิ้นทั้งหมดแล้ว');
-            await flush();
-            sendQuestSummaryDM({
-                ownerId,
-                accountId,
-                username,
-                mode: 'oneshot',
-                totalQuests: summary.totalSupportedQuests,
-                completedQuests: summary.completedByBotCount,
-                issues: [],
-                jobKey
-            }).catch(() => {});
-            return;
+        } else {
+            addLog(summary.completedByBotCount === 0
+                ? '❌ บอทไม่สามารถดำเนินการ Quest ให้สำเร็จได้'
+                : '⚠️ มีบาง Quest ที่บอทดำเนินการไม่สำเร็จ');
+            summary.issues.forEach((issue, index) => {
+                addLog(`${index + 1}. ${issue.name}`);
+                addLog(`   └ ${issue.reason}`);
+            });
+            issues = summary.issues;
         }
 
-        addLog(summary.completedByBotCount === 0
-            ? '❌ บอทไม่สามารถดำเนินการ Quest ให้สำเร็จได้'
-            : '⚠️ มีบาง Quest ที่บอทดำเนินการไม่สำเร็จ');
-        summary.issues.forEach((issue, index) => {
-            addLog(`${index + 1}. ${issue.name}`);
-            addLog(`   └ ${issue.reason}`);
-        });
-        await flush();
-        sendQuestSummaryDM({
+        await sendQuestSummaryDM({
             ownerId,
             accountId,
             username,
             mode: 'oneshot',
             totalQuests: summary.totalSupportedQuests,
             completedQuests: summary.completedByBotCount,
-            issues: summary.issues,
-            jobKey
+            issues,
+            jobKey,
+            targetMessage: liveMsg
         }).catch(() => {});
     }
 
@@ -836,9 +826,24 @@ async function startRunner({
         );
         nextCheckAt = scheduledAt.toISOString();
         persistSchedule({ nextCheckAt });
+
+        const bkkLocal = zonedParts(scheduledAt, 'Asia/Bangkok');
+        const isEndOfDayRollover = bkkLocal.hour === 0;
+
+        if (isEndOfDayRollover && liveMsg) {
+            await liveMsg.delete().catch(() => {});
+            liveMsg = null;
+        }
+
         addLog(`💤 ${username}: AUTO DAILY ACTIVE`);
         addLog(`⏰ ${username}: NEXT CHECK ${formatScheduleTime(scheduledAt)}`);
-        await render();
+
+        if (isEndOfDayRollover) {
+            await flush({ silentRollover: true });
+        } else {
+            await render();
+        }
+
         countAlreadyReported = false;
         await sleep(scheduledAt.getTime() - Date.now(), signal);
     }
@@ -885,15 +890,34 @@ async function startRunner({
     async function handleRunnerFatalError(err) {
         if (err.message === 'aborted') {
             addLog(`🛑 ${username}: RUNNER STOPPED`);
+            if (liveMsg) {
+                const stoppedEmbed = buildQuestStoppedEmbed({
+                    username,
+                    accountId,
+                    reason: 'สั่งหยุดการทำงานจากแผงควบคุม (/quest panel)',
+                    jobKey
+                });
+                await liveMsg.edit({ embeds: [stoppedEmbed] }).catch(() => {});
+                return;
+            }
         } else if (isFatalAuthError(err)) {
             addLog(`🔒 ${username}: AUTH FAILED (Token invalid)`);
             persistSchedule({ lastError: 'Fatal auth failure (token invalid)' });
+            if (liveMsg) {
+                const authFailEmbed = buildQuestAuthFailureEmbed({
+                    username,
+                    accountId,
+                    jobKey
+                });
+                await liveMsg.edit({ embeds: [authFailEmbed] }).catch(() => {});
+            }
             sendQuestAuthFailureDM({
                 ownerId,
                 accountId,
                 username,
                 jobKey
             }).catch(() => {});
+            return;
         } else {
             addLog(`❌ ${username}: FATAL ERROR — ${err.message}`);
             persistSchedule({ lastError: err.message });
