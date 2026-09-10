@@ -715,6 +715,29 @@ function maxmindName(value = {}) {
     return value.en || Object.values(value).find(Boolean) || null;
 }
 
+function extractMaxMindTraitsFlags(traits = {}) {
+    return {
+        mobile: traits.connection_type === 'Cellular',
+        proxy: traits.is_anonymous_proxy === true || traits.is_public_proxy === true,
+        hosting: traits.user_type === 'hosting' || traits.user_type === 'content_delivery_network',
+        vpn: traits.is_anonymous_vpn === true,
+        tor: traits.is_tor_exit_node === true,
+        anycast: traits.is_anycast === true,
+        networkType: traits.connection_type || traits.user_type || null
+    };
+}
+
+function extractMaxMindConfidence(data = {}, location = {}, subdivision = {}) {
+    return {
+        accuracyRadiusKm: safeNumber(location.accuracy_radius, null),
+        locationAccuracy: location.accuracy_radius == null ? null : `±${location.accuracy_radius} km`,
+        countryConfidence: safeNumber(data.country?.confidence, null),
+        regionConfidence: safeNumber(subdivision.confidence, null),
+        cityConfidence: safeNumber(data.city?.confidence, null),
+        postalConfidence: safeNumber(data.postal?.confidence, null)
+    };
+}
+
 function normalizeMaxMindResponse(data = {}, hostname = '') {
     if (data.error || data.code) {
         throw new Error(String(data.error || data.code || 'MaxMind lookup failed'));
@@ -732,20 +755,9 @@ function normalizeMaxMindResponse(data = {}, hostname = '') {
         org: traits.organization || traits.autonomous_system_organization,
         as: asNumber ? `AS${asNumber}` : null,
         asname: traits.autonomous_system_organization, reverse: traits.domain || null,
-        mobile: traits.connection_type === 'Cellular',
-        proxy: traits.is_anonymous_proxy === true || traits.is_public_proxy === true,
-        hosting: traits.user_type === 'hosting' || traits.user_type === 'content_delivery_network',
-        vpn: traits.is_anonymous_vpn === true,
-        tor: traits.is_tor_exit_node === true,
-        anycast: traits.is_anycast === true,
-        networkType: traits.connection_type || traits.user_type || null,
+        ...extractMaxMindTraitsFlags(traits),
         query: null, message: null,
-        accuracyRadiusKm: safeNumber(location.accuracy_radius, null),
-        locationAccuracy: location.accuracy_radius == null ? null : `±${location.accuracy_radius} km`,
-        countryConfidence: safeNumber(data.country?.confidence, null),
-        regionConfidence: safeNumber(subdivision.confidence, null),
-        cityConfidence: safeNumber(data.city?.confidence, null),
-        postalConfidence: safeNumber(data.postal?.confidence, null),
+        ...extractMaxMindConfidence(data, location, subdivision),
         securitySignalsAvailable: true
     };
 }
@@ -1642,11 +1654,8 @@ function buildFailedIpLookup(err) {
     };
 }
 
-function assembleIpProcessingResult({ rawIp, trustedIp, headerMeta, lookup, flags, findings }) {
+function buildIpLocationResult(lookup) {
     return {
-        encryptedRawIp: encryptIP(rawIp),
-        ipHash: hmacValue(rawIp, 'ip'),
-
         country: lookup.country || 'unknown',
         countryCode: lookup.countryCode || 'unknown',
         region: lookup.region || 'unknown',
@@ -1654,24 +1663,22 @@ function assembleIpProcessingResult({ rawIp, trustedIp, headerMeta, lookup, flag
         zip: lookup.zip || 'unknown',
         lat: typeof lookup.lat === 'number' ? lookup.lat : null,
         lon: typeof lookup.lon === 'number' ? lookup.lon : null,
-        timezone: lookup.timezone || 'unknown',
+        timezone: lookup.timezone || 'unknown'
+    };
+}
 
+function buildIpAsnResult(lookup) {
+    return {
         isp: lookup.isp || 'unknown',
         org: lookup.org || 'unknown',
         as: lookup.as || 'unknown',
         asname: lookup.asname || 'unknown',
-        reverse: lookup.reverse || 'unknown',
+        reverse: lookup.reverse || 'unknown'
+    };
+}
 
-        isProxy: flags.isProxy,
-        isVPN: flags.isVPN,
-        isTOR: flags.isTOR,
-        hosting: flags.hosting,
-        mobile: flags.mobile,
-        anycast: flags.anycast,
-        networkType: flags.networkType,
-
-        findings,
-
+function buildIpLookupMetaResult(lookup, rawIp) {
+    return {
         lookupProvider: lookup.provider || 'unknown',
         lookupStatus: lookup.status || 'unknown',
         lookupMessage: sanitizedLookupMessage(lookup.message, rawIp),
@@ -1692,7 +1699,29 @@ function assembleIpProcessingResult({ rawIp, trustedIp, headerMeta, lookup, flag
         browserTimezoneMatches: lookup.browserTimezoneMatches ?? null,
         historyConsistency: null,
         securitySignalsAvailable: lookup.securitySignalsAvailable === true,
-        lookupRaw: compactLookupRaw(lookup, rawIp),
+        lookupRaw: compactLookupRaw(lookup, rawIp)
+    };
+}
+
+function assembleIpProcessingResult({ rawIp, trustedIp, headerMeta, lookup, flags, findings }) {
+    return {
+        encryptedRawIp: encryptIP(rawIp),
+        ipHash: hmacValue(rawIp, 'ip'),
+
+        ...buildIpLocationResult(lookup),
+        ...buildIpAsnResult(lookup),
+
+        isProxy: flags.isProxy,
+        isVPN: flags.isVPN,
+        isTOR: flags.isTOR,
+        hosting: flags.hosting,
+        mobile: flags.mobile,
+        anycast: flags.anycast,
+        networkType: flags.networkType,
+
+        findings,
+
+        ...buildIpLookupMetaResult(lookup, rawIp),
 
         ipSource: trustedIp.source,
         headerIps: storedHeaderIpMetadata(headerMeta.headerIps),
