@@ -616,16 +616,61 @@ async function createSingleEmoji(interaction, item) {
     }
 }
 
+function isEmojiQuotaExceeded(item, staticCount, animatedCount, quotas) {
+    return item.isAnimated
+        ? animatedCount >= quotas.animatedFree
+        : staticCount >= quotas.staticFree;
+}
+
+function applyEmojiImportResult(res, item, state) {
+    if (res.success) {
+        state.added++;
+        if (item.isAnimated) {
+            state.animatedAdded++;
+            state.createdAnimated.push(res.created);
+        } else {
+            state.staticAdded++;
+            state.createdStatic.push(res.created);
+        }
+    } else {
+        state.failed++;
+        state.failedEmojis.push({ ...item, reason: res.reason });
+    }
+}
+
+async function maybeReportCopyProgress(interaction, { processed, matches, state }) {
+    if (processed >= matches.length) return;
+    const isPeriodic = processed % 2 === 0;
+    const isSmallBatch = matches.length <= 5;
+    if (!isSmallBatch && !isPeriodic) return;
+
+    const nextItem = matches[processed];
+    const progressEmbed = buildEmojiProgressEmbed({
+        current: processed,
+        total: matches.length,
+        added: state.added,
+        skipped: state.skipped,
+        failed: state.failed,
+        currentEmojiName: nextItem.name,
+        isAnimated: nextItem.isAnimated,
+        guild: interaction.guild,
+        user: interaction.user
+    });
+    await interaction.editReply({ embeds: [progressEmbed] }).catch(() => {});
+}
+
 async function executeEmojiCopyWorkflow(interaction, { matches, quotas, delayMs }) {
-    let added = 0;
-    let failed = 0;
-    let skipped = 0;
-    let staticAdded = 0;
-    let animatedAdded = 0;
-    const createdStatic = [];
-    const createdAnimated = [];
-    const skippedEmojis = [];
-    const failedEmojis = [];
+    const state = {
+        added: 0,
+        failed: 0,
+        skipped: 0,
+        staticAdded: 0,
+        animatedAdded: 0,
+        createdStatic: [],
+        createdAnimated: [],
+        skippedEmojis: [],
+        failedEmojis: []
+    };
 
     const initialEmbed = buildEmojiProgressEmbed({
         current: 0,
@@ -642,15 +687,10 @@ async function executeEmojiCopyWorkflow(interaction, { matches, quotas, delayMs 
 
     for (let i = 0; i < matches.length; i++) {
         const item = matches[i];
-        const isAnimated = item.isAnimated;
 
-        const isQuotaExceeded = isAnimated
-            ? animatedAdded >= quotas.animatedFree
-            : staticAdded >= quotas.staticFree;
-
-        if (isQuotaExceeded) {
-            skipped++;
-            skippedEmojis.push(item);
+        if (isEmojiQuotaExceeded(item, state.staticAdded, state.animatedAdded, quotas)) {
+            state.skipped++;
+            state.skippedEmojis.push(item);
             continue;
         }
 
@@ -659,48 +699,19 @@ async function executeEmojiCopyWorkflow(interaction, { matches, quotas, delayMs 
             await new Promise(r => setTimeout(r, delayMs));
         }
 
-        if (res.success) {
-            added++;
-            if (isAnimated) {
-                animatedAdded++;
-                createdAnimated.push(res.created);
-            } else {
-                staticAdded++;
-                createdStatic.push(res.created);
-            }
-        } else {
-            failed++;
-            failedEmojis.push({ ...item, reason: res.reason });
-        }
-
-        const processed = i + 1;
-        const shouldReport = matches.length <= 5 || (processed % 2 === 0) || (processed === matches.length);
-        if (shouldReport && processed < matches.length) {
-            const nextItem = matches[processed] || item;
-            const progressEmbed = buildEmojiProgressEmbed({
-                current: processed,
-                total: matches.length,
-                added,
-                skipped,
-                failed,
-                currentEmojiName: nextItem.name,
-                isAnimated: nextItem.isAnimated,
-                guild: interaction.guild,
-                user: interaction.user
-            });
-            await interaction.editReply({ embeds: [progressEmbed] }).catch(() => {});
-        }
+        applyEmojiImportResult(res, item, state);
+        await maybeReportCopyProgress(interaction, { processed: i + 1, matches, state });
     }
 
     return buildEmojiResultEmbed({
         total: matches.length,
-        added,
-        skipped,
-        failed,
-        createdStatic,
-        createdAnimated,
-        skippedEmojis,
-        failedEmojis,
+        added: state.added,
+        skipped: state.skipped,
+        failed: state.failed,
+        createdStatic: state.createdStatic,
+        createdAnimated: state.createdAnimated,
+        skippedEmojis: state.skippedEmojis,
+        failedEmojis: state.failedEmojis,
         guild: interaction.guild,
         user: interaction.user
     });
