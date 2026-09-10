@@ -15,12 +15,11 @@ const {
 
 const VALIDATION_STOP = Symbol("VALIDATION_STOP");
 
-async function requireModerationPermission(interaction, action) {
+async function requireModerationPermission(interaction, _action) {
     return requireMemberPermission(
         interaction,
-        [requiredModerationPermission(action), PermissionFlagsBits.Administrator],
-        `> ${config.emojis.no_entry} ไม่มีสิทธิ์ใช้งานคำสั่งนี้!`,
-        { mode: "any" }
+        PermissionFlagsBits.Administrator,
+        `> ⛔ คำสั่งนี้จำเป็นต้องใช้สิทธิ์ผู้ดูแลระบบ (Administrator) เท่านั้น`
     );
 }
 
@@ -71,7 +70,11 @@ async function applyRemovalAction(action) {
 
 async function applyBan(interaction, input, pendingCase) {
     assertBotPermission(interaction, PermissionFlagsBits.BanMembers);
-    return applyRemovalAction(() => input.target.ban({ reason: input.reason }));
+    const options = { reason: input.reason };
+    if (typeof input.deleteMessageSeconds === "number" && input.deleteMessageSeconds > 0) {
+        options.deleteMessageSeconds = input.deleteMessageSeconds;
+    }
+    return applyRemovalAction(() => input.target.ban(options));
 }
 
 async function applyKick(interaction, input, pendingCase) {
@@ -81,7 +84,11 @@ async function applyKick(interaction, input, pendingCase) {
 
 async function applyTimeout(interaction, input, pendingCase) {
     assertBotPermission(interaction, PermissionFlagsBits.ModerateMembers);
-    await input.target.timeout(input.duration.durationMs, input.reason);
+    if (input.duration?.isUntimeout || input.duration?.durationMs === null || input.duration?.durationMs === 0) {
+        await input.target.timeout(null, input.reason);
+    } else {
+        await input.target.timeout(input.duration.durationMs, input.reason);
+    }
 }
 
 const ACTION_HANDLERS = Object.freeze({
@@ -179,7 +186,12 @@ function successReply(interaction, input, result) {
         input.target,
         input.action,
         input.reason,
-        result.caseDoc.caseNumber
+        result.caseDoc.caseNumber,
+        {
+            duration: input.duration,
+            isUntimeout: input.duration?.isUntimeout,
+            deleteMessageSeconds: input.deleteMessageSeconds
+        }
     );
     return interaction.editReply({
         content: result.caseCompleted

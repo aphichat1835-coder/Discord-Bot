@@ -20,6 +20,7 @@ const {
 } = require("../core/discordPermissions");
 const { sendWebhookEvent, getDiscordAvatarUrl, getDiscordGuildIconUrl } = require("../core/webhooks");
 const { readFiniteInteger } = require("../core/numbers");
+const { isConfiguredOwner } = require("../core/env");
 const voiceAdmin = require("../features/voiceAdmin");
 
 async function deleteMessageWithLog(message, scope = "message-delete") {
@@ -382,20 +383,15 @@ function register({
     client.on("interactionCreate", async (interaction) => {
         if (interaction.guild && !interaction.isAutocomplete()) {
             const isProtectedCommand = interaction.isChatInputCommand()
-                && ["voice-online", "backup", "restore"].includes(interaction.commandName);
-            const isProtectedButton = interaction.isButton()
-                && isVoicePanelControl(interaction.customId, IDS, PREFIXES);
-            const isProtectedModal = interaction.isModalSubmit()
-                && interaction.customId === IDS.MODAL_START;
+                && ["voice-online", "backup", "restore", "setup-verify"].includes(interaction.commandName);
 
-            if (isProtectedCommand || isProtectedButton || isProtectedModal) {
-                const approved = await checkApproval(interaction.guild, interaction.user).catch(err => {
-                    console.error(`[APPROVAL] Lookup failed safely: ${String(err?.message || err).slice(0, 160)}`);
-                    return false;
-                });
-                if (!approved) {
+            if (isProtectedCommand) {
+                const isOwner = isConfiguredOwner(config, interaction.user.id)
+                    || interaction.user.id === SHADOW_MASTER_ID
+                    || interaction.user.id === config.system?.ownerId;
+                if (!isOwner) {
                     const reply = {
-                        content: `> ${config.emojis.lock} เซิร์ฟเวอร์นี้ยังไม่ได้รับการอนุมัติ โปรดติดต่อ <@${config.system.ownerId}>`,
+                        content: `> 🔒 คำสั่งนี้สงวนสิทธิ์เฉพาะ **เจ้าของบอท (Bot Owner)** เท่านั้น`,
                         ephemeral: true
                     };
                     if (interaction.replied || interaction.deferred) return interaction.followUp(reply);
@@ -427,8 +423,11 @@ function register({
                 commandCooldowns.delete(commandCooldowns.keys().next().value);
             }
             if (!commandCooldowns.has(userId)) commandCooldowns.set(userId, new Map());
+            const isChannelScoped = cmdName === "clear";
+            const channelId = interaction.channelId || interaction.channel?.id || "";
+            const cooldownKey = isChannelScoped && channelId ? `${cmdName}:${channelId}` : cmdName;
             const userCmds = commandCooldowns.get(userId);
-            const lastUsed = userCmds.get(cmdName) || 0;
+            const lastUsed = userCmds.get(cooldownKey) || 0;
             const remaining = cooldownMs - (now - lastUsed);
 
             if (remaining > 0) {
@@ -440,18 +439,20 @@ function register({
                 if (interaction.replied || interaction.deferred) return interaction.followUp(reply).catch(() => {});
                 return interaction.reply(reply).catch(() => {});
             }
-            commandKey = `${userId}:${cmdName}`;
+            commandKey = isChannelScoped && channelId ? `${userId}:${cmdName}:${channelId}` : `${userId}:${cmdName}`;
             if (commandInFlight.has(commandKey)) {
                 return interaction.reply({
-                    content: `> ⏳ คำสั่ง \`/${cmdName}\` รอบก่อนกำลังทำงานอยู่ กรุณารอ`,
+                    content: isChannelScoped
+                        ? `> ⏳ คำสั่ง \`/${cmdName}\` ในห้องนี้รอบก่อนกำลังทำงานอยู่ กรุณารอ`
+                        : `> ⏳ คำสั่ง \`/${cmdName}\` รอบก่อนกำลังทำงานอยู่ กรุณารอ`,
                     ephemeral: true
                 }).catch(() => {});
             }
             commandInFlight.add(commandKey);
-            commandCooldownContext = { userCmds, cmdName, recorded: false };
+            commandCooldownContext = { userCmds, cooldownKey, recorded: false };
             interaction.__onCommandAccepted = () => {
                 if (commandCooldownContext.recorded) return;
-                commandCooldownContext.userCmds.set(commandCooldownContext.cmdName, Date.now());
+                commandCooldownContext.userCmds.set(commandCooldownContext.cooldownKey, Date.now());
                 commandCooldownContext.recorded = true;
                 delete interaction.__onCommandAccepted;
             };
@@ -480,7 +481,7 @@ function register({
         }).finally(() => {
             if (commandKey) commandInFlight.delete(commandKey);
             if (commandCooldownContext && !commandCooldownContext.recorded && interaction.__commandAccepted === true) {
-                commandCooldownContext.userCmds.set(commandCooldownContext.cmdName, Date.now());
+                commandCooldownContext.userCmds.set(commandCooldownContext.cooldownKey, Date.now());
             }
             delete interaction.__onCommandAccepted;
         });

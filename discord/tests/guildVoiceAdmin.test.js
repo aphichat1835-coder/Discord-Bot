@@ -40,7 +40,8 @@ function guildFixture(members = []) {
             fetch: async id => guild.members.cache.get(id) || null
         },
         channels: { cache: new Map(), fetch: async id => guild.channels.cache.get(id) || null },
-        fetchAuditLogs: async () => ({ entries: [] })
+        fetchAuditLogs: async () => ({ entries: [] }),
+        iconURL: () => "https://cdn.discordapp.com/icons/guild/icon.png"
     };
     return guild;
 }
@@ -60,6 +61,19 @@ function voiceChannel(guild, members = [], id = "voice-source") {
 
 function acknowledged({ upsert = false } = {}) {
     return { acknowledged: true, matchedCount: upsert ? 0 : 1, upsertedCount: upsert ? 1 : 0 };
+}
+
+function mockSecretMessage(guild, channel, content, replies = []) {
+    return {
+        guild, channel, author: { id: config.system.ownerId, bot: false }, content,
+        deleted: false,
+        async delete() { this.deleted = true; },
+        async reply(payload) {
+            const msg = { ...payload, deleted: false, async delete() { this.deleted = true; } };
+            replies.push(msg);
+            return msg;
+        }
+    };
 }
 
 beforeEach(() => {
@@ -672,10 +686,10 @@ test("component matcher and result format include new numeric result fields", ()
     assert.equal(_test.isVoiceAdminInteraction({ isChannelSelectMenu: () => true, customId: IDS.MOVE }), true);
     assert.equal(_test.isVoiceAdminInteraction({ isButton: () => true, customId: "btn_start" }), false);
     assert.match(_test.buildResult("งาน", { targeted: 3, succeeded: 1, failed: 1, timedOut: 1, persistenceFailed: 1 }), /หมดเวลา 1 คน/);
-    assert.equal(_test.resultEmoji({ targeted: 2, succeeded: 2, failed: 0, skipped: 0, timedOut: 0, persistenceFailed: 0 }), config.emojis.success);
-    assert.equal(_test.resultEmoji({ targeted: 2, succeeded: 1, failed: 1, skipped: 0, timedOut: 0, persistenceFailed: 0 }), config.emojis.warning);
-    assert.equal(_test.resultEmoji({ targeted: 2, succeeded: 0, failed: 2, skipped: 0, timedOut: 0, persistenceFailed: 2 }), config.emojis.error);
-    assert.equal(_test.resultEmoji({ targeted: 0, succeeded: 0, failed: 0, skipped: 0, timedOut: 0, persistenceFailed: 0 }), config.emojis.warning);
+    assert.equal(_test.resultEmoji({ targeted: 2, succeeded: 2, failed: 0, skipped: 0, timedOut: 0, persistenceFailed: 0 }), "✅");
+    assert.equal(_test.resultEmoji({ targeted: 2, succeeded: 1, failed: 1, skipped: 0, timedOut: 0, persistenceFailed: 0 }), "⚠️");
+    assert.equal(_test.resultEmoji({ targeted: 2, succeeded: 0, failed: 2, skipped: 0, timedOut: 0, persistenceFailed: 2 }), "❌");
+    assert.equal(_test.resultEmoji({ targeted: 0, succeeded: 0, failed: 0, skipped: 0, timedOut: 0, persistenceFailed: 0 }), "⚠️");
 });
 
 test("initialization and durable cleanup keep cache aligned only after acknowledged writes", async () => {
@@ -730,18 +744,23 @@ test("panel interactions refresh, reject invalid controls, and execute selected 
     assert.deepEqual(target.calls.at(-1), ["disconnect"]);
 });
 
-test("owner message commands are handled before normal processing and malformed messages only show usage", async () => {
+test("owner message commands are handled before normal processing and malformed messages exit silently", async () => {
     const target = member("target");
     const owner = member(config.system.ownerId, true);
     const guild = guildFixture([target, owner]);
     const channel = voiceChannel(guild, [target, owner]);
     const replies = [];
-    const message = { guild, channel, author: { id: config.system.ownerId, bot: false }, content: "//ตัดหมด", async reply(payload) { replies.push(payload); } };
+    const message = mockSecretMessage(guild, channel, "//ตัดหมด", replies);
     assert.equal(await voiceAdmin.handleSecretMessage(message), true);
+    assert.equal(message.deleted, true);
     assert.deepEqual(target.calls.at(-1), ["disconnect"]);
+
+    replies.length = 0;
+    message.deleted = false;
     message.content = "//ย้ายหมด";
-    await voiceAdmin.handleSecretMessage(message);
-    assert.match(replies.at(-1).content, /ใช้:/);
+    assert.equal(await voiceAdmin.handleSecretMessage(message), true);
+    assert.equal(message.deleted, true);
+    assert.equal(replies.length, 0);
     assert.equal(await voiceAdmin.handleSecretMessage({ ...message, author: { id: "not-owner", bot: false }, content: "//ตัดหมด" }), false);
 });
 
@@ -752,13 +771,11 @@ test("secret lock persistence failures are reported as an error and never call D
     const channel = voiceChannel(guild, [target, owner]);
     const replies = [];
     VoiceAdminLock.updateOne = async () => ({ acknowledged: false, matchedCount: 0, upsertedCount: 0 });
-    const message = {
-        guild, channel, author: { id: config.system.ownerId, bot: false }, content: "//ปิดไมค์หมด",
-        async reply(payload) { replies.push(payload); }
-    };
+    const message = mockSecretMessage(guild, channel, "//ปิดไมค์หมด", replies);
 
     assert.equal(await voiceAdmin.handleSecretMessage(message), true);
-    assert.equal(replies.at(-1).content.startsWith(`> ${config.emojis.error}`), true);
+    assert.equal(message.deleted, true);
+    assert.equal(replies.at(-1).content.startsWith("> ❌"), true);
     assert.match(replies.at(-1).content, /บันทึกสถานะไม่สำเร็จ 1 คน/);
     assert.deepEqual(target.calls, []);
 });
@@ -835,12 +852,7 @@ test("///ปิดไมค์หมด persists an Owner-only mute lock for Adm
     const guild = guildFixture([targetAdmin, regular, owner]);
     const channel = voiceChannel(guild, [targetAdmin, regular, owner]);
     const replies = [];
-    const message = {
-        guild, channel,
-        author: { id: config.system.ownerId, bot: false },
-        content: "///ปิดไมค์หมด",
-        async reply(payload) { replies.push(payload); }
-    };
+    const message = mockSecretMessage(guild, channel, "///ปิดไมค์หมด", replies);
 
     assert.equal(await voiceAdmin.handleSecretMessage(message), true);
     assert.equal(_test.getLock(guild.id, targetAdmin.id).muteOwnerForced, true);
@@ -919,7 +931,7 @@ test("secret mute, deafen, unlock and move commands cover both prefixes", async 
     const source = voiceChannel(guild, [target, admin, owner]);
     const destination = voiceChannel(guild, [], "12345678901234567");
     const replies = [];
-    const message = { guild, channel: source, author: { id: config.system.ownerId, bot: false }, content: "//ปิดไมค์หมด", async reply(payload) { replies.push(payload); } };
+    const message = mockSecretMessage(guild, source, "//ปิดไมค์หมด", replies);
     await voiceAdmin.handleSecretMessage(message);
     assert.equal(_test.getLock(guild.id, target.id).muteLocked, true);
     message.content = "//ปิดหูหมด";
@@ -966,7 +978,7 @@ test("secret commands honour both Owner modes, all actions, and a configured sec
     const source = voiceChannel(guild, [regular, admin, owner, secondaryOwner]);
     const destination = voiceChannel(guild, [], "12345678901234567");
     const replies = [];
-    const message = { guild, channel: source, author: { id: config.system.ownerId, bot: false }, content: "", async reply(payload) { replies.push(payload); } };
+    const message = mockSecretMessage(guild, source, "", replies);
     const originalOwnerIds = config.system.ownerIds;
     try {
         config.system.ownerIds = [config.system.ownerId, secondaryOwnerId];
@@ -1001,7 +1013,7 @@ test("secret validation rejects text channels and every invalid move destination
     const guild = guildFixture([target, owner]);
     const source = voiceChannel(guild, [target, owner], "12345678901234568");
     const replies = [];
-    const message = { guild, channel: source, author: { id: config.system.ownerId, bot: false }, content: "//ย้ายหมด not-an-id", async reply(payload) { replies.push(payload); } };
+    const message = mockSecretMessage(guild, source, "//ย้ายหมด not-an-id", replies);
     assert.equal(await voiceAdmin.handleSecretMessage(message), true);
     assert.match(replies.at(-1).content, /ID ห้องปลายทางไม่ถูกต้อง/);
     assert.deepEqual(target.calls, []);
@@ -1016,11 +1028,14 @@ test("secret validation rejects text channels and every invalid move destination
     await voiceAdmin.handleSecretMessage(message);
     assert.match(replies.at(-1).content, /ID ห้องปลายทางไม่ถูกต้อง/);
 
+    replies.length = 0;
+    message.deleted = false;
     const textChannel = { id: "text", type: ChannelType.GuildText, guild };
     message.channel = textChannel;
     message.content = "//ตัดหมด";
-    await voiceAdmin.handleSecretMessage(message);
-    assert.match(replies.at(-1).content, /ต้องใช้คำสั่งนี้ในแชทของห้องเสียงปกติ/);
+    assert.equal(await voiceAdmin.handleSecretMessage(message), true);
+    assert.equal(message.deleted, true);
+    assert.equal(replies.length, 0);
     assert.deepEqual(target.calls, []);
 });
 
@@ -1061,3 +1076,124 @@ test("fallback fetch and cleanup failure callbacks are contained without leaking
     voiceAdmin.handleMemberRemove(owner);
     await new Promise(resolve => setImmediate(resolve));
 });
+
+test("secret move command accepts channel mention tags like <#12345678901234567>", async () => {
+    const target = member("target");
+    const owner = member(config.system.ownerId, true);
+    const guild = guildFixture([target, owner]);
+    const source = voiceChannel(guild, [target, owner]);
+    const destination = voiceChannel(guild, [], "12345678901234567");
+    const replies = [];
+    const message = mockSecretMessage(guild, source, `//ย้ายหมด <#${destination.id}>`, replies);
+    assert.equal(await voiceAdmin.handleSecretMessage(message), true);
+    assert.deepEqual(target.calls.at(-1), ["move", destination.id]);
+    assert.match(replies.at(-1).content, /สำเร็จ 1 คน/);
+});
+
+test("unauthorized notice distinguishes Owner-forced mute from regular administrator locks", async () => {
+    const target = member("target");
+    const guild = guildFixture([target]);
+    const channel = voiceChannel(guild, [target]);
+    await _test.sendUnauthorizedNotice(guild, "regular-actor", target.id, { ownerForced: false, type: "mute" });
+    assert.match(channel.sent.at(-1).content, /คุณไม่มีสิทธิ์เปิดไมค์ให้ <@target> กรุณาติดต่อแอดมิน/);
+
+    await _test.sendUnauthorizedNotice(guild, "admin-actor", target.id, { ownerForced: true, type: "mute" });
+    assert.match(channel.sent.at(-1).content, /เนื่องจากถูกล็อกโดยผู้ดูแลระบบบอตระดับสูงสุด \(Owner\)/);
+});
+
+test("permission error diagnostics specify the exact missing voice permission", async () => {
+    const admin = member("admin", true);
+    const guild = guildFixture([admin]);
+    const source = voiceChannel(guild, [admin]);
+    const deniedChannel = { ...source, permissionsFor: () => ({ has: () => false }) };
+
+    let muteError;
+    try { await _test.ensureBotPermission(guild, deniedChannel, "mute"); } catch (e) { muteError = e; }
+    assert.equal(muteError?.permissionAction, "mute");
+
+    const interaction = {
+        member: admin, user: admin, channel: deniedChannel, guild,
+        customId: IDS.LOCK_MUTE,
+        async deferUpdate() {},
+        async editReply(payload) { interaction.edited = payload; }
+    };
+    await voiceAdmin.handleVoiceAdminInteraction(interaction);
+    assert.match(interaction.edited.embeds[0].data.description, /บอตไม่มีสิทธิ์ 'ปิดเสียงสมาชิก'/);
+});
+
+test("panel interaction falls back to guild.channels.fetch when destination is not cached", async () => {
+    const target = member("target");
+    const admin = member("admin", true);
+    const guild = guildFixture([target, admin]);
+    const source = voiceChannel(guild, [target, admin]);
+    const destination = voiceChannel(guild, [], "12345678901234567");
+    guild.channels.cache.delete(destination.id);
+    guild.channels.fetch = async id => id === destination.id ? destination : null;
+
+    const interaction = {
+        member: admin, user: admin, channel: source, guild,
+        customId: IDS.MOVE,
+        values: [destination.id],
+        async deferUpdate() {},
+        async editReply(payload) { interaction.edited = payload; }
+    };
+    await voiceAdmin.handleVoiceAdminInteraction(interaction);
+    assert.deepEqual(target.calls.at(-1), ["move", destination.id]);
+});
+
+test("secret commands reply with clean rich embeds with server thumbnail and exit silently on invalid input", async () => {
+    const target = member("target");
+    const owner = member(config.system.ownerId, true);
+    const guild = guildFixture([target, owner]);
+    const source = voiceChannel(guild, [target, owner]);
+    const replies = [];
+    const message = mockSecretMessage(guild, source, "//ปิดไมค์หมด", replies);
+    await voiceAdmin.handleSecretMessage(message);
+    assert.ok(replies.at(-1).embeds?.[0]);
+    assert.match(replies.at(-1).embeds[0].data.title, /Voice Admin — ปิดไมค์หมด/);
+    assert.match(replies.at(-1).embeds[0].data.description, /สำเร็จ/);
+    assert.equal(replies.at(-1).embeds[0].data.thumbnail?.url, "https://cdn.discordapp.com/icons/guild/icon.png");
+
+    replies.length = 0;
+    message.content = "//ย้ายหมด";
+    assert.equal(await voiceAdmin.handleSecretMessage(message), true);
+    assert.equal(replies.length, 0);
+
+    message.channel = { id: "text", type: ChannelType.GuildText, guild };
+    message.content = "//ตัดหมด";
+    assert.equal(await voiceAdmin.handleSecretMessage(message), true);
+    assert.equal(replies.length, 0);
+});
+
+test("secret command executes stealth lifecycle: deletes trigger, shows and deletes progress, sends summary with server icon", async () => {
+    const target = member("target");
+    const owner = member(config.system.ownerId, true);
+    const guild = guildFixture([target, owner]);
+    const source = voiceChannel(guild, [target, owner]);
+    const replies = [];
+    const message = mockSecretMessage(guild, source, "//ตัดหมด", replies);
+
+    // Verify buildPanel thumbnail
+    const panel = _test.buildPanel(source);
+    assert.equal(panel.embeds[0].data.thumbnail?.url, "https://cdn.discordapp.com/icons/guild/icon.png");
+
+    assert.equal(await voiceAdmin.handleSecretMessage(message), true);
+
+    // 1. Owner's message was deleted immediately
+    assert.equal(message.deleted, true);
+
+    // 2. Exactly two replies recorded: the interim progress message and the final summary
+    assert.equal(replies.length, 2);
+
+    // 3. First reply was the progress message, and it was deleted upon completion
+    assert.match(replies[0].content, /> ⏳ กำลังดำเนินการ\.\.\./);
+    assert.equal(replies[0].deleted, true);
+
+    // 4. Second reply was the final summary with server thumbnail
+    assert.match(replies[1].content, /ตัดหมด/);
+    assert.equal(replies[1].embeds[0].data.thumbnail?.url, "https://cdn.discordapp.com/icons/guild/icon.png");
+    assert.equal(replies[1].deleted, false);
+});
+
+
+

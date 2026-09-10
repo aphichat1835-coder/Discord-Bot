@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const { createVoiceNotificationSystem, EVENTS } = require("../voiceWorker/notifications");
-const { createVoiceSnapshot, buildVoiceEventEmbed } = require("../voiceWorker/dm");
+const { createVoiceSnapshot, buildVoiceEventEmbed, buildVoiceTrackerEmbed } = require("../voiceWorker/dm");
 const sessionManager = require("../sessionManager");
 
 function makeSession(id = "session-1", ownerId = "owner-1") {
@@ -28,16 +28,33 @@ function makeHarness(sessionList = [makeSession()]) {
     const sent = [];
     const digests = [];
     const timers = [];
+    const trackerCalls = [];
+    const trackerEdits = [];
     let timestamp = 1_000_000;
     const manager = {
         getSession: id => sessions.get(id),
         getSetting: async () => "all",
         saveVoiceRuntimeState: async () => true
     };
+    const fakeMessage = {
+        id: "msg-tracker-1",
+        channelId: "dm-channel-1",
+        async edit(payload) {
+            return payload;
+        }
+    };
     const dm = {
         createVoiceSnapshot,
         async sendVoiceEventDM(snapshot) { sent.push(snapshot); return { status: "sent" }; },
-        async sendVoiceDigestDM(ownerId, items) { digests.push({ ownerId, items }); return { status: "sent" }; }
+        async sendVoiceDigestDM(ownerId, items) { digests.push({ ownerId, items }); return { status: "sent" }; },
+        async sendVoiceRecoveryTrackerDM(snapshot, state) {
+            trackerCalls.push({ snapshot, state });
+            return { status: "sent", message: fakeMessage };
+        },
+        async editVoiceRecoveryTrackerDM(trackerRef, snapshot, state) {
+            trackerEdits.push({ trackerRef, snapshot, state });
+            return { status: "updated" };
+        }
     };
     const options = {
         sessionManager: manager,
@@ -52,7 +69,7 @@ function makeHarness(sessionList = [makeSession()]) {
         clearTimer(timer) { timer.cleared = true; }
     };
     return {
-        sessions, sent, digests, timers, options,
+        sessions, sent, digests, timers, trackerCalls, trackerEdits, fakeMessage, options,
         advance(ms) { timestamp += ms; }
     };
 }
@@ -123,23 +140,39 @@ test("owner notification budget combines excess session events into one digest",
     assert.equal(harness.digests[0].items.length, 17);
 });
 
-test("brief disconnect recovers silently but a delayed incident sends recovery updates", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("disconnect triggers immediate notification and recovery summarizes outage duration", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const harness = makeHarness();
     const system = createVoiceNotificationSystem(harness.options);
     await system.beginIncident("session-1");
+    assert.equal(harness.sent.length, 1);
+    assert.equal(harness.sent[0].type, EVENTS.VOICE_DISCONNECTED);
+
     harness.advance(30_000);
-    const brief = await system.markReady("session-1", { actualChannelId: "voice-session-1" });
-    assert.equal(brief.reason, "brief_recovery");
-    assert.equal(harness.sent.length, 0);
+    const recovered = await system.markReady("session-1", { actualChannelId: "voice-session-1" });
+    assert.equal(recovered.status, "sent");
+    assert.equal(harness.sent.length, 2);
+    assert.equal(harness.sent[1].type, EVENTS.SESSION_RECOVERED);
+    assert.equal(harness.sent[1].outageDurationMs, 30_000);
 
     await system.beginIncident("session-1");
+    assert.equal(harness.sent[2].type, EVENTS.VOICE_DISCONNECTED);
+
     const timer = harness.timers.at(-1);
     harness.advance(timer.delay);
     await timer.callback();
     await new Promise(resolve => setImmediate(resolve));
+    assert.equal(harness.sent[3].type, EVENTS.RECOVERY_DELAYED);
+
     harness.advance(10_000);
     await system.markReady("session-1", { actualChannelId: "voice-session-1" });
-    assert.deepEqual(harness.sent.map(item => item.type), [EVENTS.RECOVERY_DELAYED, EVENTS.SESSION_RECOVERED]);
+    assert.equal(harness.sent[4].type, EVENTS.SESSION_RECOVERED);
+    assert.deepEqual(harness.sent.map(item => item.type), [
+        EVENTS.VOICE_DISCONNECTED,
+        EVENTS.SESSION_RECOVERED,
+        EVENTS.VOICE_DISCONNECTED,
+        EVENTS.RECOVERY_DELAYED,
+        EVENTS.SESSION_RECOVERED
+    ]);
 });
 
 test("voice embed reports explicit verified state without exposing a token", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
@@ -243,4 +276,118 @@ test("recovery notification preserves the prior online duration", async () => { 
 
     const recovered = harness.sent.find(item => item.type === EVENTS.SESSION_RECOVERED);
     assert.ok(recovered.onlineDurationMs > 0);
+});
+
+test("buildVoiceTrackerEmbed formats all tracker phases with appropriate tone and fields", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const session = makeSession("track-test");
+    const snapshot = createVoiceSnapshot(session, EVENTS.VOICE_DISCONNECTED, {
+        verifiedAt: 1_000_000
+    });
+
+    const startEmbed = buildVoiceTrackerEmbed(snapshot, {
+        phase: "starting",
+        attempts: 0,
+        maxAttempts: 15,
+        openedAt: 1_000_000
+    }).toJSON();
+    assert.match(startEmbed.title, /กำลังกู้คืนช่องเสียงแบบเรียลไทม์/);
+    assert.match(JSON.stringify(startEmbed.fields), /เริ่มกระบวนการกู้คืน/);
+
+    const attemptEmbed = buildVoiceTrackerEmbed(snapshot, {
+        phase: "attempt",
+        attempts: 3,
+        maxAttempts: 15,
+        openedAt: 950_000,
+        statusText: "กำลังลองเชื่อมต่อรอบที่ 3/15..."
+    }).toJSON();
+    assert.match(JSON.stringify(attemptEmbed.fields), /3\/15/);
+    assert.match(JSON.stringify(attemptEmbed.fields), /กำลังลองเชื่อมต่อ/);
+
+    const hibernateEmbed = buildVoiceTrackerEmbed(snapshot, {
+        phase: "hibernate",
+        cycle: 1,
+        attempts: 15,
+        maxAttempts: 15,
+        openedAt: 900_000,
+        statusText: "พักรอ 5 นาที"
+    }).toJSON();
+    assert.match(hibernateEmbed.title, /ช่วงพักกู้คืน/);
+    assert.match(JSON.stringify(hibernateEmbed.fields), /พักรอบที่ 1\/2/);
+
+    const recoveredEmbed = buildVoiceTrackerEmbed(snapshot, {
+        phase: "recovered",
+        attempts: 2,
+        openedAt: 900_000
+    }).toJSON();
+    assert.match(recoveredEmbed.title, /กู้คืนการเชื่อมต่อสำเร็จเรียบร้อย/);
+    assert.match(JSON.stringify(recoveredEmbed.fields), /ออนไลน์ในช่องเป้าหมาย/);
+
+    const exhaustedEmbed = buildVoiceTrackerEmbed(snapshot, {
+        phase: "exhausted",
+        attempts: 15,
+        openedAt: 800_000
+    }).toJSON();
+    assert.match(exhaustedEmbed.title, /กู้คืนไม่สำเร็จ/);
+});
+
+test("live recovery progress tracker sends on disconnect, edits on attempt, and finalizes on recovery", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const session = makeSession("track-session");
+    const harness = makeHarness([session]);
+    const system = createVoiceNotificationSystem(harness.options);
+
+    await system.beginIncident(session.sessionId);
+    assert.equal(harness.sent.length, 1);
+    assert.equal(harness.sent[0].type, EVENTS.VOICE_DISCONNECTED);
+    assert.equal(harness.trackerCalls.length, 1);
+    assert.equal(harness.trackerCalls[0].state.phase, "starting");
+    assert.equal(system.getDiagnostics().recoveryTrackers, 1);
+
+    await system.recordRecoveryAttempt(session.sessionId);
+    assert.equal(harness.trackerEdits.length, 1);
+    assert.equal(harness.trackerEdits[0].state.phase, "attempt");
+    assert.equal(harness.trackerEdits[0].state.attempts, 1);
+
+    await system.recordRecoveryAttempt(session.sessionId);
+    assert.equal(harness.trackerEdits.length, 2);
+    assert.equal(harness.trackerEdits[1].state.phase, "attempt");
+    assert.equal(harness.trackerEdits[1].state.attempts, 2);
+
+    await system.markReady(session.sessionId, { actualChannelId: session.voiceId });
+    assert.equal(harness.trackerEdits.length, 3);
+    assert.equal(harness.trackerEdits[2].state.phase, "recovered");
+    assert.equal(system.getDiagnostics().recoveryTrackers, 0);
+
+    const summaryEvent = harness.sent.find(item => item.type === EVENTS.SESSION_RECOVERED);
+    assert.ok(summaryEvent);
+});
+
+test("live recovery progress tracker edits on recordHibernateCycle", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const session = makeSession("hibernate-session");
+    const harness = makeHarness([session]);
+    const system = createVoiceNotificationSystem(harness.options);
+
+    await system.beginIncident(session.sessionId);
+    assert.equal(harness.trackerCalls.length, 1);
+
+    await system.recordHibernateCycle(session.sessionId, 1, harness.options.now() + 300_000);
+    assert.equal(harness.trackerEdits.length, 1);
+    assert.equal(harness.trackerEdits[0].state.phase, "hibernate");
+    assert.equal(harness.trackerEdits[0].state.cycle, 1);
+});
+
+test("live recovery progress tracker edits to exhausted on terminal failure", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const session = makeSession("exhausted-session");
+    const harness = makeHarness([session]);
+    const system = createVoiceNotificationSystem(harness.options);
+
+    await system.beginIncident(session.sessionId);
+    assert.equal(harness.trackerCalls.length, 1);
+
+    await system.markTerminal(session.sessionId, EVENTS.RECOVERY_EXHAUSTED, { attempts: 15 });
+    assert.equal(harness.trackerEdits.length, 1);
+    assert.equal(harness.trackerEdits[0].state.phase, "exhausted");
+    assert.equal(system.getDiagnostics().recoveryTrackers, 0);
+
+    const exhaustedSent = harness.sent.find(item => item.type === EVENTS.RECOVERY_EXHAUSTED);
+    assert.ok(exhaustedSent);
 });

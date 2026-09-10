@@ -40,12 +40,26 @@ test("custom ID helpers preserve the routing parser contract", () => {
 });
 
 test("buildVoiceStatusControls uses shared custom ID prefixes", () => {
-    const row = buildVoiceStatusControls({ sessionId: "vc_session_1" }, 3);
-    const customIds = row.components.map(component => component.customId);
+    const readyRow = buildVoiceStatusControls({
+        sessionId: "vc_session_1",
+        connection: { state: { status: "ready" } },
+        reconnecting: false
+    }, 3);
+    const readyCustomIds = readyRow.components.map(component => component.customId);
 
-    assert.deepEqual(customIds, [
+    assert.deepEqual(readyCustomIds, [
         `${PREFIXES.STATUS_PAGE}2`,
         `${PREFIXES.STATUS_STOP}vc_session_1`,
+        `${PREFIXES.STATUS_PAGE}4`
+    ]);
+
+    const reconnectRow = buildVoiceStatusControls({ sessionId: "vc_session_1" }, 3);
+    const reconnectCustomIds = reconnectRow.components.map(component => component.customId);
+
+    assert.deepEqual(reconnectCustomIds, [
+        `${PREFIXES.STATUS_PAGE}2`,
+        `${PREFIXES.STATUS_STOP}vc_session_1`,
+        `${PREFIXES.STATUS_RECONNECT}vc_session_1`,
         `${PREFIXES.STATUS_PAGE}4`
     ]);
 });
@@ -116,4 +130,29 @@ test("view styles remain available through the split style module and views comp
     assert.match(BASE_CSS, /\.table-scroll/);
     assert.match(BASE_CSS, /\.detail-grid/);
     assert.equal(views.BASE_CSS, BASE_CSS);
+});
+
+test("pageApproved formats joined dates and handles missing dates", () => { // NOSONAR
+    const pageApproved = views._test.pageApproved;
+    const mockClient = {
+        guilds: {
+            cache: new Map([
+                ["111111111111111111", { name: "Guild One", memberCount: 42, joinedTimestamp: Date.parse("2023-11-15T00:00:00.000Z") }]
+            ])
+        }
+    };
+    const guildList = [
+        { guildId: "111111111111111111" },
+        { guildId: "222222222222222222", guildName: "Guild Two", memberCount: 10, joinedAt: new Date("2024-03-09T16:00:00.000Z") },
+        { guildId: "333333333333333333", guildName: "Guild Three" }
+    ];
+
+    const html = pageApproved(guildList, mockClient, "secret");
+    assert.match(html, /Guild One/);
+    assert.match(html, /Guild Two/);
+    assert.match(html, /Guild Three/);
+    assert.match(html, /42/);
+    assert.match(html, /10/);
+    assert.match(html, /นำบอทออก/);
+    assert.match(html, /<td style="color:var\(--text3\);">-<\/td>/);
 });

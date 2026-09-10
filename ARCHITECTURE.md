@@ -102,6 +102,7 @@ continuation payloads when one Discord message cannot hold the full event.
 │   ├── index/                    Owner web/API modules and lifecycle helpers
 │   ├── logging/                  moderation cases and reconciliation
 │   ├── sessions/                 voice session helpers
+│   ├── quest/                    Discord Quest automation subsystem (engine, crypto, DM throttler, logs)
 │   ├── voiceWorker.js
 │   ├── voiceWorker/              voice worker implementation
 │   ├── verification/
@@ -178,6 +179,8 @@ as a public channel fallback when private delivery is unavailable.
 | `GET /api/guild/:guildId/preflight` | Owner PIN |
 | `GET /api/verification/diagnostics` | Owner PIN |
 | `POST /api/verification/retention/dry-run` | Owner PIN + CSRF |
+| `GET /quests` | Owner PIN; view Quest execution logs and statistics |
+| `GET /api/quest-logs` | Owner PIN; returns latest quest logs |
 
 The Owner is allowed to manage every guild in the Discord client cache; this is
 not filtered by Approved Guild records. `/verify` and `/verify-owner` redirect
@@ -263,6 +266,36 @@ The active verification models are:
 | `IPRevealRequest` | historical collection compatibility and expiry maintenance only; no new external guild-admin requests |
 | `VerificationMigrationArchive` | deduplicated original OAuthUser documents retained for migration rollback |
 | `VerificationMigrationState` | automatic migration lock, progress, result, and failure diagnostics |
+| `QuestLog` | execution history, account summaries, quest progress details, and 30-day TTL retention for automated Discord Quests |
+
+## Quest automation subsystem
+
+The Quest subsystem automates Discord video and game quests using direct Discord user API calls:
+
+- **Command**: `/quest` (with `/quest panel`):
+  - `/quest panel`: creates an interactive panel in the target channel (Bot Owner only). From this panel, users can start one-shot runners, enable Auto Daily, or stop runners via buttons.
+- **Interactive UI**:
+  - `quest_panel:run`: opens a modal (`quest_run_modal`) for user to submit Discord user tokens with single-line or multi-line batch.
+  - `quest_panel:daily`: opens modal (`quest_daily_modal`) for users to enroll tokens into scheduled Auto Daily.
+  - `quest_panel:stop`: displays interactive selection menu (`quest_stop_select`) listing active/scheduled sessions, plus "Stop All".
+- **Live Channel Output & Codeblock Rendering**:
+  - Renders real-time runner status updates directly into the channel via throttled codeblocks (2-second trailing throttle to ensure final states are never dropped).
+  - Standardized status headers: `✅ LOGIN`, `🤖 AUTO DAILY ENABLED`, `🔎 พบ X QUESTS`, `🎉 ทำสำเร็จ Y QUESTS`, and `🧹 QUEST ACTIVITY CLEARED`.
+  - Distinguishes quests completed by bot (`COMPLETED_BY_BOT`) vs already completed externally (`COMPLETED_EXTERNAL`), with verification gating handling.
+- **Auto Daily & Scheduling Engine**:
+  - `ScheduledRunner` MongoDB model stores encrypted user tokens, guild/channel bindings, and schedule state.
+  - Bangkok time (UTC+7) schedule targeting runs at 00:00, 08:00, and 16:00 daily with random jitter.
+  - Verification recheck state machine: automatically retries up to 3 times every 5 minutes if phone/captcha verification is encountered.
+  - Per-account and per-owner admission locks preventing concurrent conflicting sessions.
+  - Automatic scheduled runner restoration on bot startup (`initializeClientReady`) and clean teardown on shutdown.
+- **Security & Storage**:
+  - Tokens are encrypted with AES-256-GCM using `QUEST_TOKEN_SECRET` (fallback to `ENCRYPTION_KEY`) before saving.
+  - Raw tokens are never logged or exposed in UI; only masked tokens (`OTIxMj...cdef`) are stored for display.
+  - `QuestLog` documents record execution history with a 30-day MongoDB TTL index for automatic retention cleanup.
+- **Observability & Management**:
+  - Webhook notifications (`WEBHOOK_LOG_URL`) for session start (`quest.session.started`) and finish (`quest.session.finished`).
+  - Owner Dashboard at `/quests` with real-time status, account details, active Auto Daily scheduled runners table, search, pagination, and CSV export.
+  - Owner API endpoints `GET /api/quest-scheduled` and `DELETE /api/quest-scheduled/:id`.
 
 Legacy embedded IP histories are copied additively into the canonical history
 collections. Historical `VerifyLog` records are also scanned in bounded,

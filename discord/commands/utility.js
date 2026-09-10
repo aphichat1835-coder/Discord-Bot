@@ -137,43 +137,161 @@ async function handleSay(interaction) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  📣  ANNOUNCE (เฟส 4 — content field นอก Embed)
+//  📣  ANNOUNCE (Custom Embed & Target Channel Renovation)
 // ════════════════════════════════════════════════════════════════════════════
-async function handleAnnounce(interaction) {
-    if (!await requireMemberPermission(interaction, PermissionFlagsBits.ManageMessages, `> ${config.emojis.no_entry} ไม่มีสิทธิ์ใช้งาน`)) return;
-    if (!await requireBotPermission(interaction, [PermissionFlagsBits.SendMessages, PermissionFlagsBits.ViewChannel, PermissionFlagsBits.EmbedLinks], `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความในช่องนี้ (ขาด SEND_MESSAGES, VIEW_CHANNEL หรือ EMBED_LINKS)`, interaction.channel)) return;
-
-    const titleText = sanitizeUserMessage(interaction.options.getString("title"), { maxLength: 250 });
-    const title = `${config.emojis.announce_icon} ${titleText}`.slice(0, 256);
-    const msgStr = sanitizeUserMessage(interaction.options.getString("message"), { maxLength: 4096 });
-    const rawContent = interaction.options.getString("content");
-    const content = rawContent ? sanitizeUserMessage(rawContent, { maxLength: 2000 }) : null;
-    if (!titleText || !msgStr) {
-        return interaction.reply({ content: `> ${config.emojis.error} หัวข้อและข้อความต้องไม่ว่าง`, ephemeral: true });
+function isValidHttpUrl(str) {
+    if (!str || typeof str !== "string") return false;
+    try {
+        const u = new URL(str);
+        return u.protocol === "http:" || u.protocol === "https:";
+    } catch {
+        return false;
     }
+}
+
+function resolveEmbedColor(colorHex, fallback) {
+    if (!colorHex || typeof colorHex !== "string") return fallback;
+    const cleaned = colorHex.trim().replace(/^#/, "");
+    return /^[0-9A-Fa-f]{6}$/.test(cleaned) ? `#${cleaned}` : fallback;
+}
+
+function applyEmbedAuthor(embed, name, iconUrl) {
+    if (!name) return;
+    embed.setAuthor({
+        name,
+        iconURL: (iconUrl && isValidHttpUrl(iconUrl)) ? iconUrl.trim() : undefined
+    });
+}
+
+function applyEmbedFooter(embed, text, iconUrl) {
+    if (!text) return;
+    embed.setFooter({
+        text,
+        iconURL: (iconUrl && isValidHttpUrl(iconUrl)) ? iconUrl.trim() : undefined
+    });
+}
+
+function buildAnnouncementEmbed(options) {
+    const embed = new MessageEmbed()
+        .setColor(resolveEmbedColor(options.colorHex, config.system.themeColors.primary || "#5865F2"))
+        .setDescription(options.messageText);
+
+    if (options.title) {
+        embed.setTitle(options.title);
+    }
+    if (options.url && isValidHttpUrl(options.url)) {
+        embed.setURL(options.url.trim());
+    }
+    applyEmbedAuthor(embed, options.authorName, options.authorIcon);
+    if (options.thumbnailUrl && isValidHttpUrl(options.thumbnailUrl)) {
+        embed.setThumbnail(options.thumbnailUrl.trim());
+    }
+    if (options.imageUrl && isValidHttpUrl(options.imageUrl)) {
+        embed.setImage(options.imageUrl.trim());
+    }
+    applyEmbedFooter(embed, options.footerText, options.footerIcon);
+    if (options.timestamp === true) {
+        embed.setTimestamp();
+    }
+    return embed;
+}
+
+function buildAnnouncementComponents(buttonText, buttonUrl) {
+    if (!buttonText || !buttonUrl || !isValidHttpUrl(buttonUrl)) {
+        return [];
+    }
+    const button = new MessageButton()
+        .setLabel(buttonText.slice(0, 80))
+        .setStyle("LINK")
+        .setURL(buttonUrl.trim());
+    return [new MessageActionRow().addComponents(button)];
+}
+
+async function handleAnnounce(interaction) {
+    if (!await requireMemberPermission(
+        interaction,
+        PermissionFlagsBits.Administrator,
+        `> ⛔ คำสั่งนี้จำเป็นต้องใช้สิทธิ์ผู้ดูแลระบบ (Administrator) เท่านั้น`
+    )) return;
+
+    const targetChannel = interaction.options.getChannel("channel") || interaction.channel;
+    if (!targetChannel || typeof targetChannel.send !== "function") {
+        return interaction.reply({
+            content: `> ${config.emojis.error} ช่องเป้าหมายต้องเป็นห้องข้อความที่ส่งข้อความได้`,
+            ephemeral: true
+        });
+    }
+
+    if (!await requireBotPermission(
+        interaction,
+        [PermissionFlagsBits.SendMessages, PermissionFlagsBits.ViewChannel, PermissionFlagsBits.EmbedLinks],
+        `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความในช่อง <#${targetChannel.id}> (ต้องการสิทธิ์ ส่งข้อความ, ดูช่อง, และ แนบลิงก์)`,
+        targetChannel
+    )) return;
+
+    const rawMessage = interaction.options.getString("message");
+    if (!rawMessage?.trim()) {
+        return interaction.reply({ content: `> ${config.emojis.error} ข้อความประกาศต้องไม่ว่าง`, ephemeral: true });
+    }
+
+    const messageText = sanitizeUserMessage(rawMessage.replaceAll(String.raw`\n`, "\n"), { maxLength: 4096 });
+    const rawTitle = interaction.options.getString("title");
+    const rawContent = interaction.options.getString("content");
+    const authorName = interaction.options.getString("author_name");
+    const footerText = interaction.options.getString("footer");
+
     markCommandAccepted(interaction);
 
-    const embed = new MessageEmbed()
-        .setColor(config.system.themeColors.primary)
-        .setTitle(title)
-        .setDescription(msgStr)
-        .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() })
-        .setTimestamp();
+    const embed = buildAnnouncementEmbed({
+        messageText,
+        title: rawTitle ? sanitizeUserMessage(rawTitle, { maxLength: 256 }) : null,
+        colorHex: interaction.options.getString("color"),
+        imageUrl: interaction.options.getString("image"),
+        thumbnailUrl: interaction.options.getString("thumbnail"),
+        footerText: footerText ? sanitizeUserMessage(footerText, { maxLength: 2048 }) : null,
+        footerIcon: interaction.options.getString("footer_icon"),
+        authorName: authorName ? sanitizeUserMessage(authorName, { maxLength: 256 }) : null,
+        authorIcon: interaction.options.getString("author_icon"),
+        url: interaction.options.getString("url"),
+        timestamp: interaction.options.getBoolean("timestamp")
+    });
+
+    const components = buildAnnouncementComponents(
+        interaction.options.getString("button_text"),
+        interaction.options.getString("button_url")
+    );
+
+    const content = rawContent ? sanitizeUserMessage(rawContent, { maxLength: 2000 }) : null;
 
     if (!await safeDefer(interaction, { ephemeral: true })) return null;
-    await interaction.channel.send({
-        content: content || undefined,
-        embeds: [embed],
-        allowedMentions: { parse: ["users", "roles", "everyone"], repliedUser: false }
-    });
-    return interaction.editReply({ content: `> ${config.emojis.success} ประกาศสำเร็จ` });
+
+    try {
+        const sentMsg = await targetChannel.send({
+            content: content || undefined,
+            embeds: [embed],
+            components: components.length > 0 ? components : undefined,
+            allowedMentions: { parse: ["users", "roles", "everyone"], repliedUser: false }
+        });
+
+        const successText = targetChannel.id === interaction.channel.id
+            ? `> ${config.emojis.success} ส่งประกาศเรียบร้อยแล้ว`
+            : `> ${config.emojis.success} ส่งประกาศไปยังห้อง <#${targetChannel.id}> เรียบร้อยแล้ว`;
+
+        return interaction.editReply({
+            content: sentMsg?.url ? `${successText} • [เปิดดูข้อความ](${sentMsg.url})` : successText
+        });
+    } catch (err) {
+        return interaction.editReply({
+            content: `> ${config.emojis.error} ส่งประกาศไม่สำเร็จ: ${err?.message || "เกิดข้อผิดพลาด"}`
+        });
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 //  😀  STEAL (เฟส 11 — Pre-check โควตา + delay กัน API ceiling)
 // ════════════════════════════════════════════════════════════════════════════
 async function handleSteal(interaction) {
-    if (!await requireMemberPermission(interaction, PermissionFlagsBits.ManageGuildExpressions, `> ${config.emojis.no_entry} ไม่มีสิทธิ์จัดการอิโมจิ`)) return;
+    if (!await requireMemberPermission(interaction, PermissionFlagsBits.Administrator, `> ⛔ คำสั่งนี้จำเป็นต้องใช้สิทธิ์ผู้ดูแลระบบ (Administrator) เท่านั้น`)) return;
     if (!await requireBotPermission(interaction, PermissionFlagsBits.ManageGuildExpressions, `> ${config.emojis.error} บอทไม่มีสิทธิ์จัดการอิโมจิ`)) return;
 
     const text = interaction.options.getString("emojis");
@@ -1190,6 +1308,11 @@ module.exports = {
     getRuntimeDiagnostics,
     _test: {
         handleSay,
+        handleAnnounce,
+        buildAnnouncementEmbed,
+        buildAnnouncementComponents,
+        isValidHttpUrl,
+        resolveEmbedColor,
         isValidSnapshotSchema,
         snapshotIdentityMatches,
         buildBackupValidationReport,

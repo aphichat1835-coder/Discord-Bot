@@ -80,3 +80,52 @@ test("clear reports individual failures without stopping later deletions", async
     assert.equal(result.failed, 1);
     assert.deepEqual(deleted, ["deleted"]);
 });
+
+test("clear supports multi-batch deletion beyond 100 messages", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const now = Date.now();
+    let totalMessagesInChannel = 250;
+    const fetchCalls = [];
+    const channel = {
+        messages: {
+            fetch: async (options) => {
+                fetchCalls.push(options);
+                const count = Math.min(options.limit || 100, totalMessagesInChannel);
+                totalMessagesInChannel -= count;
+                const batch = [];
+                for (let i = 0; i < count; i++) {
+                    batch.push(message(`msg-${i}`, DAY_MS, now, () => {}));
+                }
+                return new Map(batch.map(item => [item.id, item]));
+            }
+        },
+        bulkDelete: async (items) => new Map(items.map(item => [item.id, item]))
+    };
+
+    const result = await moderation._test.deleteChannelMessages(channel, 250, now);
+
+    assert.equal(result.requested, 250);
+    assert.equal(result.fetched, 250);
+    assert.equal(result.bulkDeleted, 250);
+    assert.equal(result.deleted, 250);
+    assert.equal(result.failed, 0);
+    assert.equal(fetchCalls.length, 3); // 100, 100, 50
+    assert.equal(fetchCalls[0].limit, 100);
+    assert.equal(fetchCalls[1].limit, 100);
+    assert.equal(fetchCalls[2].limit, 50);
+});
+
+test("clear deleteMessagesIndividually processes items in parallel batches", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const deleted = [];
+    const messages = Array.from({ length: 12 }, (_, i) => ({
+        id: `msg-${i}`,
+        delete: async () => {
+            deleted.push(i);
+        }
+    }));
+
+    const result = await moderation._test.deleteMessagesIndividually(messages, { batchSize: 5, delayMs: 0 });
+
+    assert.equal(result.deleted, 12);
+    assert.equal(result.failed, 0);
+    assert.equal(deleted.length, 12);
+});

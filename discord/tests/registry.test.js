@@ -15,8 +15,8 @@ test("slash command names are unique and include supported command groups", () =
     const unique = new Set(names);
 
     assert.equal(unique.size, names.length);
-    assert.equal(names.length, 16);
-    assert.equal(names.at(-1), "rerole");
+    assert.equal(names.length, 19);
+    assert.equal(names.at(-1), "dm-panel");
 
     for (const expected of [
         "voice-online",
@@ -30,7 +30,10 @@ test("slash command names are unique and include supported command groups", () =
         "announce",
         "backup",
         "restore",
-        "setup-verify"
+        "setup-verify",
+        "quest",
+        "token-check",
+        "dm-panel"
     ]) {
         assert.equal(unique.has(expected), true, `missing /${expected}`);
     }
@@ -42,17 +45,18 @@ test("slash command names are unique and include supported command groups", () =
     assert.equal(unique.has("voicekickall"), false, "replaced /voicekickall command must stay unregistered");
 });
 
-test("rerole exposes five optional role exceptions", () => {
+test("rerole exposes target role and five optional role exceptions", () => {
     const rerole = slashCommandsData.find(command => command.name === "rerole");
 
     assert.ok(rerole);
-    assert.equal(rerole.options.length, 5);
+    assert.equal(rerole.options.length, 6);
     assert.deepEqual(rerole.options.map(option => option.name), [
-        "except_role_1",
-        "except_role_2",
-        "except_role_3",
-        "except_role_4",
-        "except_role_5"
+        "target_role",
+        "role_1",
+        "role_2",
+        "role_3",
+        "role_4",
+        "role_5"
     ]);
     assert.equal(rerole.options.every(option => option.type === 8 && option.required === false), true);
 });

@@ -28,6 +28,10 @@ function registerGatewayDiagnostics(client, options = {}) {
     client.on("shardReconnecting", shardId => {
         console.warn(`${prefix} event=shardReconnecting shard=${safeLabel(shardId, "unknown")}`);
     });
+    client.on("shardResume", (shardId, replayedEvents) => {
+        const replayed = Number.isFinite(Number(replayedEvents)) ? Number(replayedEvents) : 0;
+        console.log(`${prefix} event=shardResume shard=${safeLabel(shardId, "unknown")} replayed=${replayed}`);
+    });
     return true;
 }
 

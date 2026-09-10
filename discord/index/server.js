@@ -33,6 +33,9 @@ const { getVerificationDiagnostics } = require("../verification/lifecycle");
 const { readFiniteInteger } = require("../core/numbers");
 const { getReleaseIdentity } = require("../core/releaseIdentity");
 const { cleanToken } = require("../sessions/tokenUtils");
+const QuestLog = require("../quest/models/QuestLog");
+const ScheduledRunner = require("../quest/models/ScheduledRunner");
+const { stopScheduledJob } = require("../quest");
 
 function buildReadinessPayload({ client, sessionManager, voiceWorker, commandsReady, featureFlags, verification, release }) {
     const botOnline = client?.isReady?.() ?? false;
@@ -419,6 +422,50 @@ async function handleApprovedGuildKick({
     }
 }
 
+async function handleReconnectSession({
+    req,
+    res,
+    checkAuth,
+    sessionManager,
+    voiceWorker
+}) {
+    if (!checkAuth(req, res)) return;
+
+    try {
+        const { sessionId } = req.body || {};
+
+        if (!sessionId) {
+            return res.status(400).json({
+                success: false,
+                error: "ไม่ระบุ sessionId"
+            });
+        }
+
+        const session = sessionManager.getSession(sessionId);
+
+        if (!session) {
+            return res.status(404).json({
+                success: false,
+                error: "ไม่พบ session ในระบบ"
+            });
+        }
+
+        const result = await voiceWorker.forceReconnectSession(sessionId);
+
+        if (!result?.ok) {
+            return res.status(400).json({
+                success: false,
+                error: result?.error || "ไม่สามารถเชื่อมต่อใหม่ได้"
+            });
+        }
+
+        console.log("[DASHBOARD] 🔄 Session reconnect triggered via dashboard");
+        return res.json({ success: true, ready: !!result.ready });
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  🔌  REGISTER ALL API ROUTES
 // ════════════════════════════════════════════════════════════════════════════
@@ -693,6 +740,36 @@ function registerRoutes({
         res.json(webLogs.slice(-MAX_LOGS).reverse());
     });
 
+    app.get("/api/quest-logs", auth.requirePin, async (req, res) => {
+        try {
+            const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50));
+            const logs = await QuestLog.find().sort({ createdAt: -1 }).limit(limit).lean();
+            res.json({ success: true, logs });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    app.get("/api/quest-scheduled", auth.requirePin, async (req, res) => {
+        try {
+            const list = await ScheduledRunner.find().sort({ createdAt: -1 }).lean();
+            res.json({ success: true, runners: list });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    app.delete("/api/quest-scheduled/:id", auth.requirePin, async (req, res) => {
+        try {
+            const { id } = req.params;
+            const stopped = stopScheduledJob(null, id);
+            const deleted = await ScheduledRunner.findByIdAndDelete(id);
+            res.json({ success: true, deleted: Boolean(deleted), stopped });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
     app.get("/api/voice-logs", (req, res) => {
         try {
             res.json(voiceWorker.getVoiceLogs().slice(-300).reverse());
@@ -846,6 +923,18 @@ function registerRoutes({
             res.status(500).json({ success: false, error: e.message });
         }
     });
+
+    // ── Reconnect Session ──
+    const onReconnectSession = (req, res) => handleReconnectSession({
+        req,
+        res,
+        checkAuth,
+        sessionManager,
+        voiceWorker
+    });
+
+    app.post("/api/reconnect-session", express.json({ limit: "8kb" }), onReconnectSession);
+    app.post("/api/voice/session/reconnect", express.json({ limit: "8kb" }), onReconnectSession);
         // ── Commands Status / Toggle / Audit ──
     app.get("/api/commands-status", (req, res) => {
         try {
@@ -1181,6 +1270,7 @@ module.exports = {
         createCommandTogglePlan,
         persistCommandToggle,
         recordCommandToggleAudit,
-        handleCommandToggle
+        handleCommandToggle,
+        handleReconnectSession
     }
 };

@@ -18,7 +18,7 @@ const { readFiniteInteger } = require("../core/numbers");
 // ════════════════════════════════════════════════════════════════════════════
 const voiceWorkerConfig = config.voice_worker ?? {};
 const CONFIG = {
-    MAX_RECONNECT_ATTEMPTS: readFiniteInteger(voiceWorkerConfig.maxReconnectAttempts, { fallback: 7, min: 1, max: 50 }),
+    MAX_RECONNECT_ATTEMPTS: readFiniteInteger(voiceWorkerConfig.maxReconnectAttempts, { fallback: 15, min: 1, max: 50 }),
     LOGIN_TIMEOUT: readFiniteInteger(voiceWorkerConfig.loginTimeout, { fallback: 35000, min: 5000, max: 120000 }),
     CONNECTION_TIMEOUT: readFiniteInteger(voiceWorkerConfig.connectionTimeout, { fallback: 15000, min: 3000, max: 60000 }),
     DM_THROTTLE_MS: readFiniteInteger(voiceWorkerConfig.dmThrottleMs, { fallback: 20000, min: 1000, max: 10 * 60 * 1000 }),

@@ -21,6 +21,7 @@ const { PermissionFlagsBits } = require("discord.js");
 const crypto = require("node:crypto");
 const { MessageEmbed, MessageActionRow, MessageButton } = require("../core/discordCompat");
 const config = require("../config.json");
+const { isConfiguredOwner } = require("../core/env");
 const sessionManager = require("../sessionManager");
 const { createCompactCallbackState } = require("../verification/utils/state");
 const { resolvePublicBaseUrl } = require("../core/publicUrl");
@@ -413,7 +414,7 @@ async function syncGuildConfig(interaction, role, channel, panelMsg, panelData) 
                     "security.retentionMode": "until_admin_delete"
                 }
             },
-            { upsert: true, new: true }
+            { upsert: true, returnDocument: "after" }
         );
 }
 
@@ -527,7 +528,7 @@ async function lazyMigrateDirectConfig(interaction, role) {
                 "security.storeOAuthTokens": true
             }
         },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: "after" }
     ));
 }
 
@@ -553,9 +554,9 @@ async function handle(interaction, client) {
 }
 
 async function handleSetupVerify(interaction) {
-    if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+    if (!isConfiguredOwner(config, interaction.user?.id)) {
         return interaction.reply({
-            content: `> ${config.emojis.no_entry} ต้องเป็น Administrator`,
+            content: `> 🔒 คำสั่งนี้สงวนสิทธิ์เฉพาะ **เจ้าของบอท (Bot Owner)** เท่านั้น`,
             ephemeral: true
         });
     }
@@ -993,6 +994,7 @@ module.exports = {
         disablePreviousVerificationPanel,
         persistVerificationRecovery,
         verificationRecoverySummary,
-        verificationSetupFailureMessage
+        verificationSetupFailureMessage,
+        buildDiscordAuthorizeUrl
     }
 };

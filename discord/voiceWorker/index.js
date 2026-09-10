@@ -10,6 +10,7 @@ const {
     lastDMSent,
     lastOnlineDMSent,
     recoveryTimestamps,
+    hibernateTimers,
     setShuttingDown,
     setProtectedChecker,
     setMainClient,
@@ -63,8 +64,10 @@ const {
     stopAll,
     pauseAll,
     autoResume,
+    forceReconnectSession,
     healthCheck,
     cleanupIdleSessions,
+    clearHibernateTimer,
 } = require("./lifecycle");
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -176,6 +179,7 @@ function cleanupVolatileState(now = Date.now(), options = {}) {
     deleteInactiveSessionIds(autoDeafRunning, activeSessionIds);
     stopInactiveSessionTimers(naturalTimers, activeSessionIds, stopNaturalTimer);
     stopInactiveSessionTimers(autoDeafTimers, activeSessionIds, stopAutoDeafTimer);
+    stopInactiveSessionTimers(hibernateTimers, activeSessionIds, clearHibernateTimer);
 
     const selfClientCacheCleanup = options.cleanupSelfClientCaches
         ? cleanupSelfClientCaches(now)
@@ -211,8 +215,10 @@ module.exports = {
     pauseAll,
 
     autoResume,
+    forceReconnectSession,
     healthCheck,
     cleanupIdleSessions,
+    clearHibernateTimer,
 
     getVoiceLogs,
     sendSessionStoppedDM,
@@ -228,6 +234,7 @@ module.exports = {
     startAutoDeafTimer,
     stopAutoDeafTimer,
     getAutoDeafSettings,
+    channelLock: require("./channelLock"),
 
     _test: {
         cleanupLeanClientCache,
