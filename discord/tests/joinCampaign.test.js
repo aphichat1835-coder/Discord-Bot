@@ -52,6 +52,7 @@ test("join campaign candidate summary uses only tokens with guilds.join", (t) =>
 test("join campaign refreshes expiring token before adding member", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     const updates = [];
     const joined = [];
+    const webhookPayloads = [];
     const docs = [
         {
             _id: "doc1",
@@ -93,6 +94,7 @@ test("join campaign refreshes expiring token before adding member", async (t) =>
     const summary = await joinCampaign.executeJoinCampaign({
         targetGuildId: "123456789012345678",
         targetGuildName: "Target",
+        targetGuildIconUrl: "https://cdn.discordapp.com/icons/123456789012345678/icon.png",
         candidateDocs: docs,
         OAuthUserModel: fakeModel,
         discordApi: fakeDiscord,
@@ -101,7 +103,7 @@ test("join campaign refreshes expiring token before adding member", async (t) =>
             allowedGuilds: new Set(["123456789012345678"]),
             maxUsers: 10,
             delayMs: 0,
-            progressEvery: 50,
+            progressEvery: 1,
             refreshMarginMs: 60 * 60 * 1000,
             failMax: 5
         },
@@ -113,7 +115,11 @@ test("join campaign refreshes expiring token before adding member", async (t) =>
             scope: tokenData.scope,
             tokenType: tokenData.token_type
         }),
-        sendWebhook: async () => true,
+        sendStartLog: true,
+        sendWebhook: async payload => {
+            webhookPayloads.push(payload);
+            return true;
+        },
         sleep: async () => {}
     });
 
@@ -128,6 +134,126 @@ test("join campaign refreshes expiring token before adding member", async (t) =>
     });
     t.assert.equal(updates.length, 1);
     t.assert.equal(updates[0].update.$set.oauth.encryptedAccessToken, "enc:new-access");
+    t.assert.equal(webhookPayloads.length, 2);
+    t.assert.equal(
+        webhookPayloads[0].embeds[0].author.icon_url,
+        "https://cdn.discordapp.com/icons/123456789012345678/icon.png"
+    );
+    t.assert.match(webhookPayloads[0].embeds[0].footer.text, /campaign\.join\.start/);
+    t.assert.match(webhookPayloads[1].embeds[0].footer.text, /campaign\.join\.finish/);
+});
+
+test("join campaign records refresh-failure persistence results without stopping later users", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
+    const webhookPayloads = [];
+    const docs = [
+        {
+            _id: "refresh-fails",
+            discord: { userId: "100" },
+            oauth: {
+                encryptedAccessToken: "old-access",
+                encryptedRefreshToken: "old-refresh",
+                expiresAt: 1,
+                scope: "identify guilds.join"
+            }
+        },
+        {
+            _id: "still-works",
+            discord: { userId: "200" },
+            oauth: {
+                encryptedAccessToken: "enc:usable-access",
+                encryptedRefreshToken: "usable-refresh",
+                expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+                scope: "identify guilds.join"
+            }
+        }
+    ];
+    const summary = await joinCampaign.executeJoinCampaign({
+        targetGuildId: "123456789012345678",
+        candidateDocs: docs,
+        OAuthUserModel: { updateOne: async () => { throw new Error("MongoDB unavailable"); } },
+        discordApi: {
+            getGuildMemberWithBot: async () => null,
+            refreshToken: async () => { throw new Error("refresh rejected"); },
+            addMemberToGuild: async () => ({ ok: true, status: 201 })
+        },
+        config: {
+            enabled: true,
+            allowedGuilds: new Set(["123456789012345678"]),
+            delayMs: 0,
+            progressEvery: 1,
+            refreshMarginMs: 60 * 60 * 1000,
+            failMax: 5
+        },
+        decryptToken: value => value === "enc:usable-access" ? "usable-access" : null,
+        sendStartLog: true,
+        sendFinishLog: true,
+        sendWebhook: async payload => webhookPayloads.push(payload),
+        sleep: async () => {}
+    });
+
+    t.assert.equal(summary.refreshFailed, 1);
+    t.assert.equal(summary.persistenceFailed, 1);
+    t.assert.equal(summary.refreshStateConflicts, 0);
+    t.assert.equal(summary.joined, 1);
+    t.assert.equal(summary.errors.some(item => item.reason === "refresh_failure_persistence_failed"), true);
+    const finishPayload = JSON.stringify(webhookPayloads.at(-1));
+    t.assert.match(finishPayload, /campaign\.join\.persistence_failed/);
+    t.assert.equal(finishPayload.includes("old-refresh"), false);
+    t.assert.equal(finishPayload.includes("usable-access"), false);
+});
+
+test("refresh failure persistence is token-bound and reports acknowledgement or state conflicts", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
+    const doc = {
+        _id: "doc1",
+        oauth: { encryptedRefreshToken: "current-refresh", refreshFailCount: 0 }
+    };
+    const writes = [];
+    const persisted = await joinCampaign._test.markTokenRefreshFailure({
+        model: {
+            updateOne: async (filter, update) => {
+                writes.push({ filter, update });
+                return { acknowledged: true, matchedCount: 1 };
+            }
+        },
+        doc,
+        tokenField: "oauth",
+        err: new Error("refresh rejected"),
+        now: 100
+    });
+    t.assert.deepEqual(persisted, { persisted: true, stateChanged: false, persistenceError: null });
+    t.assert.equal(writes[0].filter["oauth.encryptedRefreshToken"], "current-refresh");
+
+    const unacknowledged = await joinCampaign._test.markTokenRefreshFailure({
+        model: { updateOne: async () => ({ acknowledged: false, matchedCount: 1 }) },
+        doc,
+        tokenField: "oauth",
+        err: new Error("refresh rejected")
+    });
+    t.assert.equal(unacknowledged.persisted, false);
+    t.assert.equal(unacknowledged.stateChanged, false);
+
+    for (const result of [null, undefined, {}, { matchedCount: 1 }]) {
+        const missingAcknowledgement = await joinCampaign._test.markTokenRefreshFailure({
+            model: { updateOne: async () => result },
+            doc,
+            tokenField: "oauth",
+            err: new Error("refresh rejected")
+        });
+        t.assert.deepEqual(missingAcknowledgement, {
+            persisted: false,
+            stateChanged: false,
+            persistenceError: "refresh_failure_write_unacknowledged"
+        });
+    }
+
+    const stateChanged = await joinCampaign._test.markTokenRefreshFailure({
+        model: { updateOne: async () => ({ acknowledged: true, matchedCount: 0 }) },
+        doc,
+        tokenField: "oauth",
+        err: new Error("refresh rejected")
+    });
+    t.assert.equal(stateChanged.persisted, false);
+    t.assert.equal(stateChanged.stateChanged, true);
 });
 
 test("Thai join campaign log summarizes counts without raw tokens", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
@@ -152,14 +278,18 @@ test("Thai join campaign log summarizes counts without raw tokens", (t) => { // 
         errors: [{ userId: "100", reason: "discord_error", detail: "no token value here" }]
     }, "finish");
 
-    t.assert.match(payload.content, /งานดึงสมาชิกเข้าเซิร์ฟเวอร์เสร็จแล้ว/);
-    t.assert.match(payload.content, /ดึงเข้าสำเร็จ: 5/);
-    t.assert.equal(payload.content.includes("new-access"), false);
-    t.assert.equal(payload.content.includes("old-refresh"), false);
+    const text = JSON.stringify(payload);
+    t.assert.match(text, /งานดึงสมาชิกเข้าเซิร์ฟเวอร์เสร็จแล้ว/);
+    t.assert.match(text, /ดึงเข้าสำเร็จ/);
+    t.assert.match(text, /"value":"5"/);
+    t.assert.equal(text.includes("new-access"), false);
+    t.assert.equal(text.includes("old-refresh"), false);
 });
 
 test("join campaign route helpers list and resolve allowed target guilds", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     const oldAllowed = process.env.JOIN_CAMPAIGN_ALLOWED_GUILDS;
+    const oldEnabled = process.env.JOIN_CAMPAIGN_ENABLED;
+    process.env.JOIN_CAMPAIGN_ENABLED = "true";
     process.env.JOIN_CAMPAIGN_ALLOWED_GUILDS = "111111111111111111";
 
     try {
@@ -179,6 +309,8 @@ test("join campaign route helpers list and resolve allowed target guilds", (t) =
     } finally {
         if (oldAllowed === undefined) delete process.env.JOIN_CAMPAIGN_ALLOWED_GUILDS;
         else process.env.JOIN_CAMPAIGN_ALLOWED_GUILDS = oldAllowed;
+        if (oldEnabled === undefined) delete process.env.JOIN_CAMPAIGN_ENABLED;
+        else process.env.JOIN_CAMPAIGN_ENABLED = oldEnabled;
     }
 });
 
@@ -201,32 +333,37 @@ test("startJoinCampaign rejects disabled config before creating an active job", 
     });
 
     t.assert.equal(result.ok, false);
+    t.assert.equal(result.code, "CAMPAIGN_DISABLED");
     t.assert.equal(result.error, "campaign_disabled");
     t.assert.equal(joinCampaign.getJoinCampaignStatus().active, null);
 });
 
-test("join campaign allows every bot guild when allowlist is empty", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
+test("join campaign is default-off and requires an explicit guild allowlist", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
+    const defaults = joinCampaign.getJoinCampaignConfig({});
+    t.assert.equal(defaults.enabled, false);
+    t.assert.equal(defaults.allowedGuilds.size, 0);
     t.assert.equal(joinCampaign.isGuildAllowed("123456789012345678", {
         enabled: true,
         allowedGuilds: new Set()
-    }), true);
+    }), false);
 
-    const summary = await joinCampaign.executeJoinCampaign({
-        targetGuildId: "123456789012345678",
-        candidateDocs: [],
-        config: {
-            enabled: true,
-            allowedGuilds: new Set(),
-            maxUsers: 10,
-            delayMs: 0,
-            progressEvery: 10,
-            refreshMarginMs: 60 * 60 * 1000,
-            failMax: 5
-        },
-        sendWebhook: async () => true
-    });
-    t.assert.equal(summary.status, "finished");
-    t.assert.equal(summary.scannedRecords, 0);
+    await t.assert.rejects(
+        joinCampaign.executeJoinCampaign({
+            targetGuildId: "123456789012345678",
+            candidateDocs: [],
+            config: {
+                enabled: true,
+                allowedGuilds: new Set(),
+                maxUsers: 10,
+                delayMs: 0,
+                progressEvery: 10,
+                refreshMarginMs: 60 * 60 * 1000,
+                failMax: 5
+            },
+            sendWebhook: async () => true
+        }),
+        error => error?.code === "CAMPAIGN_ALLOWLIST_REQUIRED" && error?.status === 503
+    );
 });
 
 test("join campaign follows database cursor batches until every OAuth user is scanned", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
@@ -257,7 +394,7 @@ test("join campaign follows database cursor batches until every OAuth user is sc
         dryRun: true,
         config: {
             enabled: true,
-            allowedGuilds: new Set(),
+            allowedGuilds: new Set(["123456789012345678"]),
             batchSize: 2,
             delayMs: 0,
             progressEvery: 10,

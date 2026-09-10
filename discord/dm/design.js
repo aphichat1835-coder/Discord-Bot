@@ -1,6 +1,6 @@
 "use strict";
 
-const { MessageEmbed } = require("discord.js");
+const { MessageEmbed } = require("../core/discordCompat");
 
 const COLORS = Object.freeze({
     success: "#57F287",
@@ -47,7 +47,7 @@ function profileFromUser(user, fallback = {}) {
     const tag = discriminator && discriminator !== "0" ? `${username}#${discriminator}` : `@${username}`;
     let avatarUrl = fallback.avatarUrl || fallback.avatar || null;
     if (typeof user?.displayAvatarURL === "function") {
-        avatarUrl = user.displayAvatarURL({ dynamic: true, size: 256 });
+        avatarUrl = user.displayAvatarURL({ forceStatic: false, size: 256 });
     }
     return { id, username, globalName, tag, avatarUrl };
 }

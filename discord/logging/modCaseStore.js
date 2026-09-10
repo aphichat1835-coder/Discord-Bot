@@ -44,7 +44,7 @@ async function nextCaseNumber(guildId) {
     const doc = await ModCaseCounterModel.findOneAndUpdate(
         { guildId: String(guildId) },
         { $inc: { seq: 1 }, $set: { updatedAt: Date.now() } },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
+        { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }
     ).lean();
     return doc.seq;
 }
@@ -82,7 +82,7 @@ async function updateCase(guildId, caseNumber, patch = {}) {
     const updated = await ModCaseModel.findOneAndUpdate(
         { guildId: String(guildId), caseNumber: Number(caseNumber) },
         { $set: { ...patch, updatedAt: Date.now() } },
-        { new: true }
+        { returnDocument: "after" }
     ).lean();
     return updated;
 }

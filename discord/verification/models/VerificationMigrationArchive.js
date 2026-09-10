@@ -8,6 +8,7 @@ const schema = new mongoose.Schema({
     sourceId: { type: String, required: true },
     contentHash: { type: String, required: true },
     payload: { type: mongoose.Schema.Types.Mixed, required: true },
+    privacyRedactions: { type: [mongoose.Schema.Types.Mixed], default: [] },
     backedUpAt: { type: Number, default: Date.now }
 }, { minimize: false });
 

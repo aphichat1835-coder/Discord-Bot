@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const { PermissionsBitField, PermissionFlagsBits } = require("discord.js");
 
 const {
     hasPermission,
@@ -14,14 +15,7 @@ const {
 const { IDS, PREFIXES } = require("../commands/customIds");
 
 function permissionTarget(allowed = []) {
-    const set = new Set(allowed);
-    return {
-        permissions: {
-            has(permission) {
-                return set.has(permission);
-            }
-        }
-    };
+    return { permissions: new PermissionsBitField(allowed) };
 }
 
 function createInteraction(overrides = {}) {
@@ -32,11 +26,11 @@ function createInteraction(overrides = {}) {
         deferred: false,
         replied: false,
         user: { id: "user-1" },
-        member: permissionTarget(["VIEW_CHANNEL"]),
+        member: permissionTarget([PermissionFlagsBits.ViewChannel]),
         guild: {
             ownerId: "owner-1",
             members: {
-                me: permissionTarget(["SEND_MESSAGES"])
+                me: permissionTarget([PermissionFlagsBits.SendMessages])
             }
         },
         reply(payload) {
@@ -62,13 +56,15 @@ function createInteraction(overrides = {}) {
 }
 
 test("hasPermission supports all and any matching modes", () => {
-    const target = permissionTarget(["SEND_MESSAGES", "VIEW_CHANNEL"]);
+    const target = permissionTarget([PermissionFlagsBits.SendMessages, PermissionFlagsBits.ViewChannel]);
 
+    assert.equal(hasPermission(target, PermissionFlagsBits.SendMessages), true);
     assert.equal(hasPermission(target, "SEND_MESSAGES"), true);
-    assert.equal(hasPermission(target, ["SEND_MESSAGES", "VIEW_CHANNEL"]), true);
-    assert.equal(hasPermission(target, ["SEND_MESSAGES", "MANAGE_MESSAGES"]), false);
-    assert.equal(hasPermission(target, ["MANAGE_MESSAGES", "SEND_MESSAGES"], "any"), true);
+    assert.equal(hasPermission(target, [PermissionFlagsBits.SendMessages, PermissionFlagsBits.ViewChannel]), true);
+    assert.equal(hasPermission(target, [PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageMessages]), false);
+    assert.equal(hasPermission(target, [PermissionFlagsBits.ManageMessages, PermissionFlagsBits.SendMessages], "any"), true);
     assert.equal(hasPermission(null, "SEND_MESSAGES"), false);
+    assert.equal(hasPermission(target, "NOT_A_REAL_PERMISSION"), false);
 });
 
 test("safeReply chooses reply, followUp, or editReply from interaction state", async () => {
@@ -106,7 +102,7 @@ test("safeDefer does not defer already handled interactions", async () => {
 
 test("member and bot permission guards reply on missing permissions", async () => {
     const memberInteraction = createInteraction({
-        member: permissionTarget(["VIEW_CHANNEL"])
+        member: permissionTarget([PermissionFlagsBits.ViewChannel])
     });
     assert.equal(await requireMemberPermission(memberInteraction, "ADMINISTRATOR", "need admin"), false);
     assert.equal(memberInteraction.calls[0][0], "reply");
@@ -118,7 +114,7 @@ test("member and bot permission guards reply on missing permissions", async () =
             members: {
                 me: {
                     permissionsIn() {
-                        return permissionTarget(["VIEW_CHANNEL"]);
+                        return permissionTarget([PermissionFlagsBits.ViewChannel]);
                     }
                 }
             }
@@ -152,10 +148,22 @@ test("checkRoleHierarchy rejects protected targets and allows lower targets", ()
     }).ok, true);
 });
 
-test("sanitizeUserMessage neutralizes mentions and blocks risky links", () => {
-    const clean = sanitizeUserMessage("@everyone join discord.gg/test run https://x.test/file.exe");
+test("sanitizeUserMessage preserves administrator-authored content exactly", () => {
+    const message = "  @everyone join discord.gg/test run https://x.test/file.exe  ";
+    const clean = sanitizeUserMessage(message, { maxLength: 2000 });
 
-    assert.match(clean, /@\u200beveryone/);
+    assert.equal(clean, message);
+    assert.equal(sanitizeUserMessage("   ", { maxLength: 2000 }), "");
+    assert.equal(sanitizeUserMessage("abcdef", { maxLength: 3 }), "abc");
+});
+
+test("sanitizeUserMessage can still filter risky links when explicitly requested", () => {
+    const clean = sanitizeUserMessage(
+        "@everyone join discord.gg/test run https://x.test/file.exe",
+        { filterRiskyLinks: true }
+    );
+
+    assert.match(clean, /@everyone/);
     assert.equal(clean.includes("discord.gg/test"), false);
     assert.equal(clean.includes("file.exe"), false);
 });

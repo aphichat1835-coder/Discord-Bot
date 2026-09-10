@@ -225,6 +225,9 @@ describe("unified verification data contract", () => {
                 storedCount: 1, chunkCount: 1, complete: true
             }
         });
+        jest.spyOn(snapshotStore, "loadOAuthSnapshots").mockResolvedValue({
+            profile: { id: "12345678901234567", username: "test" }
+        });
         try {
             await saveOAuthUserSafe({
                 profile: {
@@ -319,6 +322,11 @@ describe("unified verification data contract", () => {
                 storedCount: 1, chunkCount: 1, complete: true
             }
         });
+        jest.spyOn(snapshotStore, "loadOAuthSnapshots").mockResolvedValue({
+            profile: { id: "12345678901234567", username: "old" },
+            connections: [],
+            guilds: []
+        });
         const rollback = jest.spyOn(snapshotStore, "rollbackSnapshotVersion")
             .mockResolvedValue({ complete: true, failedModels: [] });
         jest.spyOn(console, "error").mockImplementation(() => {});
@@ -376,6 +384,11 @@ describe("unified verification data contract", () => {
             version: "v-older", complete: true, expectedKinds: ["profile"],
             profile: { kind: "profile", version: "v-older", returnedCount: 1, storedCount: 1, chunkCount: 1, complete: true }
         });
+        jest.spyOn(snapshotStore, "loadOAuthSnapshots").mockResolvedValue({
+            profile: { id: "12345678901234567", username: "old" },
+            connections: [],
+            guilds: []
+        });
         const rollback = jest.spyOn(snapshotStore, "rollbackSnapshotVersion")
             .mockResolvedValue({ complete: true, failedModels: [] });
         jest.spyOn(console, "error").mockImplementation(() => {});
@@ -418,7 +431,11 @@ describe("unified verification data contract", () => {
         jest.spyOn(snapshotStore, "storeOAuthSnapshots").mockResolvedValue({
             version: "v-complete",
             complete: true,
-            expectedKinds: ["guilds", "connections"],
+            expectedKinds: ["profile", "guilds", "connections"],
+            profile: {
+                kind: "profile", version: "v-complete", returnedCount: 1,
+                storedCount: 1, chunkCount: 1, complete: true
+            },
             guilds: {
                 kind: "guilds", version: "v-complete", returnedCount: 1,
                 storedCount: 1, chunkCount: 1, complete: true
@@ -427,6 +444,11 @@ describe("unified verification data contract", () => {
                 kind: "connections", version: "v-complete", returnedCount: 1,
                 storedCount: 1, chunkCount: 1, complete: true
             }
+        });
+        jest.spyOn(snapshotStore, "loadOAuthSnapshots").mockResolvedValue({
+            profile: { id: "12345678901234567", username: "test" },
+            guilds: [{ id: "76543210987654321" }],
+            connections: [{ type: "github", id: "1" }]
         });
         const rollbackResult = {
             complete: false,
@@ -464,6 +486,7 @@ describe("unified verification data contract", () => {
                 userId: "12345678901234567",
                 version: "v-complete",
                 refs: {
+                    profile: expect.objectContaining({ complete: true }),
                     guilds: expect.objectContaining({ complete: true }),
                     connections: expect.objectContaining({ complete: true })
                 }
@@ -566,20 +589,19 @@ describe("unified verification data contract", () => {
         expect(detail.oauthTokens).toEqual({ oauth: null, adminOAuth: null });
     });
 
-    test("normal owner serializers never decrypt or expose raw IP", () => {
+    test("owner log serializers expose raw IP directly inside the authenticated dashboard", () => {
         const serialized = snapshots.buildVerifyLogCommon(
             snapshots.buildVerifyLogParts({
                 ipInfo: {
                     rawIp: "203.0.113.10",
-                    ip: "203.0.113.10",
-                    encryptedRawIp: "encrypted"
+                    ip: "203.0.113.10"
                 }
             }, true),
             { canViewSensitive: true }
         );
-        expect(serialized.rawIp).toBeNull();
-        expect(serialized.ip).toBeNull();
-        expect(serialized.ipInfo.rawIp).toBeNull();
+        expect(serialized.rawIp).toBe("203.0.113.10");
+        expect(serialized.ip).toBe("203.0.113.10");
+        expect(serialized.ipInfo.rawIp).toBe("203.0.113.10");
     });
 
     test("normal serializers retain all returned guilds, connections, and member roles", () => {

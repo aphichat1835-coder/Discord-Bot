@@ -1,10 +1,10 @@
 # Architecture
 
-Last implementation verification: 2026-07-20 (`tt`).
+Last implementation verification: 2026-07-23 (`ttt`).
 
 ## 1. System shape
 
-Phomueangtai runs as one deployable Node.js 24 application:
+Phomueangtai runs as one deployable Node.js 24.18 LTS application:
 
 ```text
                          one HTTPS origin
@@ -66,6 +66,26 @@ mention suppression, and redacted delivery diagnostics. Critical alerts take
 priority over queued routine logs. The retired Enterprise Audit event capture,
 channel routing, queues, reconciliation, and dashboard are not part of runtime.
 
+Webhook producers use a shared event envelope with a stable event code,
+category, severity, optional lifecycle state, impact, action, and bounded
+context. `WEBHOOK_LOG_URL` receives informational, successful, and recoverable
+warning events; `ALERT_WEBHOOK_URL` receives errors, critical failures, and
+events requiring Owner action. Duplicate fingerprints are isolated by target
+and summarized after a bounded window. Voice notifications distinguish an
+individual session outcome from an Owner-level system incident: reconnect,
+recovery, and terminal exhaustion stay in the session DM/Dashboard flow, while
+an unacknowledged database state transition reaches the action-required
+webhook. Join Campaign sends only start and finish summaries; live progress
+remains in the Owner Dashboard. When an event has a real Discord subject, its
+embed uses the relevant guild icon and/or account avatar; system-only events do
+not invent a profile image.
+
+Owner-only internal events preserve configured values without a fixed field,
+depth, array, or string-truncation boundary. A record beyond the safe setting
+size is stored as checksummed byte chunks; readers reject incomplete or altered
+chunks rather than returning partial data. Private webhook delivery uses ordered
+continuation payloads when one Discord message cannot hold the full event.
+
 ## 3. Repository map
 
 ```text
@@ -76,12 +96,13 @@ channel routing, queues, reconciliation, and dashboard are not part of runtime.
 │   ├── commands.js
 │   ├── commands/                 slash command modules
 │   ├── core/                     env, HTTP, feature flags, safe logging, webhooks
-│   ├── dm/                       shared DM design, profile resolution, durable outbox, and retry
+│   ├── dm/                       shared DM design, volatile outage recovery, durable outbox, and retry
 │   ├── features/                 protection, role button, Join Campaign
 │   ├── guards/                   command/dashboard guards
 │   ├── index/                    Owner web/API modules and lifecycle helpers
 │   ├── logging/                  moderation cases and reconciliation
 │   ├── sessions/                 voice session helpers
+│   ├── quest/                    Discord Quest automation subsystem (engine, crypto, DM throttler, logs)
 │   ├── voiceWorker.js
 │   ├── voiceWorker/              voice worker implementation
 │   ├── verification/
@@ -97,7 +118,7 @@ channel routing, queues, reconciliation, and dashboard are not part of runtime.
 │   │   ├── views/                public callback HTML
 │   │   └── public/               verification CSS/browser JavaScript
 │   └── tests/                    Node built-in tests
-├── verification-tests/          Jest verification contracts/regressions
+├── verification-tests/          Node built-in tests with focused expect/mock adapters
 ├── scripts/                     guards, diagnostics, additive migration
 ├── docs/                        focused operational notes
 ├── render.yaml                  one root Web Service
@@ -111,9 +132,10 @@ it does not restore the retired Enterprise Audit subsystem.
 
 ### Direct-message delivery
 
-Voice, moderation, verification, and restore-result notifications share the
-DM service under `discord/dm/`. Every delivered payload disables mentions and
-uses the same profile-first Thai Embed hierarchy. `DmNotification` is a
+Voice, verification, and restore-result notifications share the DM service
+under `discord/dm/`. Every delivered payload disables mentions; Verification
+uses its own concise server-first Embed while Voice and Restore retain their
+existing presentation. `DmNotification` is a
 30-day MongoDB outbox with a unique event key, bounded retry schedule, delivery
 state, and priority ordering. Closed DMs and unknown users are terminal;
 transient delivery failures remain retryable across process restarts.
@@ -121,11 +143,10 @@ transient delivery failures remain retryable across process restarts.
 Voice keeps its lifecycle-specific incident deduplication and routine digest,
 but high/critical failures bypass the routine DM budget. A recovered event is
 sent in important-only mode when it closes a previously announced outage.
-Moderation ban/kick messages begin in an explicitly unconfirmed state and are
-edited only after Discord returns the real action result. Verification
-distinguishes a newly successful verification, an already-held role, policy
-denial, and an operational failure. Restore detail is never used as a public
-channel fallback when private delivery is unavailable.
+Moderation actions do not send a DM and retain their ModCase reconciliation.
+Verification distinguishes a newly successful verification, an already-held
+role, policy denial, and an operational failure. Restore detail is never used
+as a public channel fallback when private delivery is unavailable.
 
 ## 4. HTTP boundary
 
@@ -136,6 +157,7 @@ channel fallback when private delivery is unavailable.
 | `GET /ping` | liveness, always simple 200 while listener is running |
 | `GET /health` | combined dependency readiness; 200 when ready and 503 when degraded |
 | `GET /ready` | alias of the combined `/health` readiness response |
+| `GET /auth/start` | validates the panel state, registers a one-time execution state, and redirects to Discord OAuth |
 | `GET /auth/callback` | serves OAuth callback UI |
 | `POST /auth/callback` | rate-limited verification execution |
 
@@ -153,12 +175,12 @@ channel fallback when private delivery is unavailable.
 | write routes under `/api/guild/:guildId/*` | Owner PIN + CSRF |
 | `GET /api/guild/:guildId/member/:userId/detail` | Owner PIN |
 | `GET /api/guild/:guildId/member/:userId/ip-history` | Owner PIN; paginated canonical IP history |
-| `POST /api/guild/:guildId/member/:userId/full-detail` | Owner PIN + CSRF; audited full Owner view |
-| `POST /api/guild/:guildId/member/:userId/reveal-token` | Owner PIN + CSRF + reason + audit attempt/status |
+| `GET`/`POST /api/guild/:guildId/member/:userId/full-detail` | Owner PIN; POST also uses CSRF; returns Owner-visible Token, raw IP, and full detail directly |
 | `GET /api/guild/:guildId/preflight` | Owner PIN |
-| `POST /api/verify-owner/.../reveal-ip` | Owner PIN + CSRF + reason + audit attempt/status |
 | `GET /api/verification/diagnostics` | Owner PIN |
 | `POST /api/verification/retention/dry-run` | Owner PIN + CSRF |
+| `GET /quests` | Owner PIN; view Quest execution logs and statistics |
+| `GET /api/quest-logs` | Owner PIN; returns latest quest logs |
 
 The Owner is allowed to manage every guild in the Discord client cache; this is
 not filtered by Approved Guild records. `/verify` and `/verify-owner` redirect
@@ -244,6 +266,36 @@ The active verification models are:
 | `IPRevealRequest` | historical collection compatibility and expiry maintenance only; no new external guild-admin requests |
 | `VerificationMigrationArchive` | deduplicated original OAuthUser documents retained for migration rollback |
 | `VerificationMigrationState` | automatic migration lock, progress, result, and failure diagnostics |
+| `QuestLog` | execution history, account summaries, quest progress details, and 30-day TTL retention for automated Discord Quests |
+
+## Quest automation subsystem
+
+The Quest subsystem automates Discord video and game quests using direct Discord user API calls:
+
+- **Command**: `/quest` (with `/quest panel`):
+  - `/quest panel`: creates an interactive panel in the target channel (Bot Owner only). From this panel, users can start one-shot runners, enable Auto Daily, or stop runners via buttons.
+- **Interactive UI**:
+  - `quest_panel:run`: opens a modal (`quest_run_modal`) for user to submit Discord user tokens with single-line or multi-line batch.
+  - `quest_panel:daily`: opens modal (`quest_daily_modal`) for users to enroll tokens into scheduled Auto Daily.
+  - `quest_panel:stop`: displays interactive selection menu (`quest_stop_select`) listing active/scheduled sessions, plus "Stop All".
+- **Live Channel Output & Codeblock Rendering**:
+  - Renders real-time runner status updates directly into the channel via throttled codeblocks (2-second trailing throttle to ensure final states are never dropped).
+  - Standardized status headers: `✅ LOGIN`, `🤖 AUTO DAILY ENABLED`, `🔎 พบ X QUESTS`, `🎉 ทำสำเร็จ Y QUESTS`, and `🧹 QUEST ACTIVITY CLEARED`.
+  - Distinguishes quests completed by bot (`COMPLETED_BY_BOT`) vs already completed externally (`COMPLETED_EXTERNAL`), with verification gating handling.
+- **Auto Daily & Scheduling Engine**:
+  - `ScheduledRunner` MongoDB model stores encrypted user tokens, guild/channel bindings, and schedule state.
+  - Bangkok time (UTC+7) schedule targeting runs at 00:00, 08:00, and 16:00 daily with random jitter.
+  - Verification recheck state machine: automatically retries up to 3 times every 5 minutes if phone/captcha verification is encountered.
+  - Per-account and per-owner admission locks preventing concurrent conflicting sessions.
+  - Automatic scheduled runner restoration on bot startup (`initializeClientReady`) and clean teardown on shutdown.
+- **Security & Storage**:
+  - Tokens are encrypted with AES-256-GCM using `QUEST_TOKEN_SECRET` (fallback to `ENCRYPTION_KEY`) before saving.
+  - Raw tokens are never logged or exposed in UI; only masked tokens (`OTIxMj...cdef`) are stored for display.
+  - `QuestLog` documents record execution history with a 30-day MongoDB TTL index for automatic retention cleanup.
+- **Observability & Management**:
+  - Webhook notifications (`WEBHOOK_LOG_URL`) for session start (`quest.session.started`) and finish (`quest.session.finished`).
+  - Owner Dashboard at `/quests` with real-time status, account details, active Auto Daily scheduled runners table, search, pagination, and CSV export.
+  - Owner API endpoints `GET /api/quest-scheduled` and `DELETE /api/quest-scheduled/:id`.
 
 Legacy embedded IP histories are copied additively into the canonical history
 collections. Historical `VerifyLog` records are also scanned in bounded,
@@ -257,8 +309,18 @@ versions older than the cleanup grace period are eligible for bounded deletion.
 Object chunks use guild-scoped identity and participate in the same reference
 checks; startup maintenance migrates the legacy non-guild-scoped index safely.
 
-Model names, collection behavior, and current/historical token/IP encryption
-read compatibility are preserved.
+Model names and collection behavior are preserved. New token/IP and Voice
+session writes use versioned `v3:gcm` encryption with the full binary SHA-256
+key. Historical key derivations remain read-compatible during a bounded,
+conditional migration; deployment must keep `ENCRYPTION_KEY` unchanged until
+maintenance diagnostics report no legacy records.
+
+AES encryption keys are derived from `ENCRYPTION_KEY` only. A separate
+IP/device correlation HMAC key is derived from `ENCRYPTION_KEY` plus
+`API_SECRET` (or the legacy-compatible `INTERNAL_API_SECRET` fallback).
+Deployments must keep both HMAC inputs stable unless a coordinated correlation
+migration or re-verification plan is executed; rotating `API_SECRET` also
+invalidates Owner sessions.
 
 Join Campaign scans OAuth users in stable `_id` cursor batches until the query
 is exhausted or the Owner stops the job. Its batch-size setting bounds memory;
@@ -350,46 +412,27 @@ all finalized chunks and falls back to legacy embedded arrays for older data.
 
 ## 7. Sensitive data access
 
-Normal list serializers explicitly set raw IP fields to null and never decrypt
-them. The Owner Member Detail route returns audited full detail in one action:
+Normal list serializers explicitly set raw IP fields to null. After normal
+Owner authentication, the Owner Member Detail route returns Token, raw IP, and
+full detail directly without a reason, repeated PIN, step-up flow, or reveal queue:
 
 ```text
 POST /api/guild/:guildId/member/:userId/full-detail
 ```
 
-The stricter compatibility raw-IP route remains:
-
-```text
-POST /api/verify-owner/guild/:guildId/user/:userId/reveal-ip
-```
-
-It requires Owner PIN, CSRF, and a non-empty reason. The service decrypts the
-latest encrypted IP only for the response and attempts to append an audit entry
-with actor, reason, and time. If the audit write fails, the Owner response
-includes audit failure status. The UI does not cache or place raw IP into list
-APIs.
-
 Email, connection, and guild details are Owner-only. The former external
 guild-admin reveal-request workflow is removed.
 
-Raw OAuth access/refresh tokens are returned only by audited per-user Owner
-actions. Member Detail uses the full-detail route above; the compatibility
-token-only action remains:
-
-```text
-POST /api/guild/:guildId/member/:userId/reveal-token
-```
-
-It requires Owner PIN, CSRF, a non-empty reason, cooldown/rate-limit checks, and
-an audit attempt. If the audit write fails, the Owner response includes audit
-failure status. Normal list, detail, export, log, and migration paths do not
-decrypt or serialize raw tokens.
+Normal list, public, export, log, and migration paths do not expose raw tokens
+or raw IP. Owner-only event schemas retain their configured full-fidelity fields.
 
 ## 8. Maintenance and migration
 
 `discord/verification/lifecycle.js` runs after MongoDB is ready and periodically:
 
 - applies configured soft-delete retention to verification/IP correlation data;
+- migrates bounded batches of legacy OAuth token and encrypted-IP fields to
+  `v3:gcm`, reporting migrated, failed, and remaining counts;
 - expires legacy pending reveal requests;
 - refreshes encrypted verification and historical admin OAuth tokens.
 
@@ -410,7 +453,7 @@ field or collection.
 ### inwcloud
 
 ```text
-Custom command: npm install && npm start
+Custom command: npm ci && npm start
 Domain internal port: PORT or 3000
 Redirect URI: https://DOMAIN/auth/callback
 ```
@@ -420,9 +463,9 @@ Redirect URI: https://DOMAIN/auth/callback
 `render.yaml` contains one root Web Service:
 
 ```text
-buildCommand: npm install
+buildCommand: npm ci
 startCommand: npm start
-healthCheckPath: /health
+healthCheckPath: /ping
 ```
 
 Release/deployment verification order:
@@ -440,10 +483,11 @@ Release/deployment verification order:
 
 Authoritative placeholders are in `.env.example`.
 
-The Owner maintains exactly 13 values: `NODE_ENV`, `MONGO_URI`,
-`TOKEN_MANAGER`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`,
+The Owner maintains exactly 16 values: `NODE_ENV`, `MONGO_URI`,
+`TOKEN_MANAGER`, `OWNER_ID`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`,
 `ENCRYPTION_KEY`, `API_SECRET`, `VERIFY_STATE_SECRET`, `DASHBOARD_PIN`,
-`PUBLIC_BASE_URL`, `WEBHOOK_LOG_URL`, `ALERT_WEBHOOK_URL`, and `TRUST_PROXY`.
+`SHADOW_SESSION_SECRET`, `SHADOW_PORTAL_PIN`, `PUBLIC_BASE_URL`,
+`WEBHOOK_LOG_URL`, `ALERT_WEBHOOK_URL`, and `TRUST_PROXY`.
 The host supplies `PORT` when needed; it falls back to 3000. Advanced cache,
 batch, timeout, retention, voice, verification, migration, proxy-hop, feature,
 and memory controls use code defaults and are not owner-maintained deployment
@@ -467,3 +511,9 @@ npm audit --audit-level=high
 
 CI installs only the root lockfile, runs all three suites, checks the protected
 paths, and audits the root dependency graph.
+
+## Owner-approved self-client dependency
+
+`discord.js-selfbot-v13` is an intentional and necessary dependency of the isolated Voice account/session subsystem. The repository owner has explicitly approved its continued use because the current architecture has no compatible replacement that preserves the required behavior.
+
+Do not remove, replace, migrate, rename, independently upgrade/downgrade, or convert its library-specific APIs unless the repository owner gives a new explicit instruction for that exact change. Main-bot Discord.js v14 work must remain isolated from the self-client package. See [`docs/SELF_CLIENT_POLICY.md`](docs/SELF_CLIENT_POLICY.md) for the binding maintenance policy.

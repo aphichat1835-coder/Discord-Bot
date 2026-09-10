@@ -37,3 +37,28 @@ test("compact callback state round-trips through shared helper", () => withSecre
     expect(decoded.panelRevision).toBe("panel_rev");
     expect(decoded.mode).toBe("compact-direct-oauth-panel-revision");
 }));
+
+
+test("verification state signing fails closed without its dedicated secret", () => {
+    const names = [
+        "VERIFY_STATE_SECRET",
+        "API_SECRET",
+        "INTERNAL_API_SECRET",
+        "SESSION_SECRET",
+        "ENCRYPTION_KEY"
+    ];
+    const previous = Object.fromEntries(names.map(name => [name, process.env[name]]));
+    try {
+        delete process.env.VERIFY_STATE_SECRET;
+        process.env.API_SECRET = "must-not-be-used";
+        process.env.INTERNAL_API_SECRET = "must-not-be-used";
+        process.env.SESSION_SECRET = "must-not-be-used";
+        process.env.ENCRYPTION_KEY = "must-not-be-used";
+        expect(() => state.encodeSignedState({ guildId: "123" })).toThrow("Missing VERIFY_STATE_SECRET");
+    } finally {
+        for (const name of names) {
+            if (previous[name] === undefined) delete process.env[name];
+            else process.env[name] = previous[name];
+        }
+    }
+});

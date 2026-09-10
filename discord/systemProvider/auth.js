@@ -1,5 +1,21 @@
+"use strict";
+
 const crypto = require("node:crypto");
+const sessionManager = require("../sessionManager");
 const { escapeHtml, safeStyleContent } = require("./htmlUtils");
+const {
+    hashPinCredential,
+    isPinCredential,
+    verifyPinCredential
+} = require("./pinCredential");
+
+const MAIN_CSRF_COOKIE = "__da_csrf";
+const DEFAULT_BRUTE_TTL_MS = 30 * 60 * 1000;
+const DEFAULT_LOCKOUT_MS = 15 * 60 * 1000;
+const DEFAULT_MAX_ATTEMPTS = 5;
+const DEFAULT_MAX_KEYS = 1000;
+const MIN_SESSION_SECRET_LENGTH = 32;
+const legacyMigrationFlights = new Set();
 
 function readCookie(req, name) {
     const raw = String(req.headers?.cookie || "");
@@ -17,86 +33,104 @@ function readCookie(req, name) {
     return "";
 }
 
+function setPortalSecurityHeaders(res) {
+    res.setHeader?.("Cache-Control", "no-store, private");
+    res.setHeader?.("Pragma", "no-cache");
+    res.setHeader?.("Referrer-Policy", "no-referrer");
+    res.setHeader?.("X-Frame-Options", "DENY");
+}
+
 function renderShadowBlockedPage(minutes) {
     const safeMinutes = Math.max(1, Number(minutes || 1) || 1);
     return `<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8"><title>⛔ Blocked</title><style>body{background:#0f0f13;color:#ef4444;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;}</style></head><body><div><div style="font-size:3em;margin-bottom:12px;">⛔</div><b>ลองผิดเกินกำหนด</b><br>ล็อกอีก ${escapeHtml(safeMinutes)} นาที</div></body></html>`;
 }
 
+function renderPortalUnavailablePage() {
+    return "<!DOCTYPE html><html lang=\"th\"><head><meta charset=\"UTF-8\"><title>Unavailable</title></head><body><p>ระบบควบคุมยังไม่พร้อมใช้งาน</p></body></html>";
+}
+
 function renderShadowLoginPage(showInvalidPin, shadowCss = "") {
     return `<!DOCTYPE html><html lang="th"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>🔐 Shadow Portal</title>
+<title>🔐 Dashboard ควบคุมบอท</title>
 <style>${safeStyleContent(shadowCss)}</style>
 </head><body>
 <div class="login-wrap">
 <div class="login-box">
-    <div class="login-icon">👁️‍🗨️</div>
-    <div class="login-title">SHADOW PORTAL</div>
-       <div class="login-sub">ศูนย์บัญชาการลับ — ระบุตัวตนก่อนเข้าถึง</div>
+    <div class="login-icon">🔐</div>
+    <div class="login-title">DASHBOARD CONTROL</div>
+    <div class="login-sub">ยืนยันตัวตนก่อนดำเนินการ</div>
     ${showInvalidPin ? '<p style="color:var(--red2);margin-bottom:10px;font-size:0.82em;">❌ รหัสผ่านไม่ถูกต้อง</p>' : ''}
-    <form method="POST">
-        <input type="password" name="pin" placeholder="🔑 กรอกรหัสผ่านลับ..." style="text-align:center;margin-bottom:14px;">
-        <button type="submit" class="btn btn-danger">เข้าสู่ Shadow Portal</button>
+    <form id="shadow-login-form" method="POST" autocomplete="off">
+        <input type="password" name="pin" placeholder="🔑 กรอกรหัสผ่าน..." style="text-align:center;margin-bottom:14px;" autocomplete="current-password" required>
+        <button type="submit" class="btn btn-danger">เข้าสู่ระบบ</button>
     </form>
-    <p style="color:var(--text3);font-size:0.72em;margin-top:14px;">ใช้ Shadow PIN ที่ตั้งไว้ หรือ DASHBOARD_PIN ของเจ้าของบอท</p>
-    <p style="color:var(--text3);font-size:0.7em;margin-top:16px;">Unauthorized access is monitored & logged.</p>
+    <p id="shadow-login-error" style="color:var(--red2);font-size:0.75em;margin-top:12px;" hidden></p>
 </div>
 </div>
-    </body></html>`;
-}
-
-function createShadowSessionToken({ ttlMs, getCookieSecret }) {
-    const issuedAt = Date.now().toString();
-    const sig = crypto
-        .createHmac("sha256", String(getCookieSecret()).trim())
-        .update(`shadow:${issuedAt}`)
-        .digest("hex")
-        .slice(0, 40);
-    return `${issuedAt}.${sig}`;
-}
-
-function verifyShadowSessionToken(token, { ttlMs, getCookieSecret }) {
-    if (!token || typeof token !== "string") return false;
-    const dot = token.lastIndexOf(".");
-    if (dot < 0) return false;
-
-    const issuedAt = token.slice(0, dot);
-    const sig = token.slice(dot + 1);
-    const issuedMs = Number.parseInt(issuedAt, 10);
-    if (!Number.isFinite(issuedMs) || Date.now() - issuedMs > ttlMs || issuedMs > Date.now() + 60000) return false;
-
-    const expected = crypto
-        .createHmac("sha256", String(getCookieSecret()).trim())
-        .update(`shadow:${issuedAt}`)
-        .digest("hex")
-        .slice(0, 40);
-    if (sig.length !== expected.length) return false;
-    return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
-}
-
-function issueShadowSessionCookie(res, { cookieName, ttlMs, getCookieSecret }) {
-    res.cookie(cookieName, createShadowSessionToken({ ttlMs, getCookieSecret }), {
-        httpOnly: true,
-        sameSite: "lax",
-        secure: String(process.env.NODE_ENV || "").trim() === "production",
-        maxAge: ttlMs
-    });
-}
-
-function bruteKey(req) {
-    return req.ip || "unknown";
+<script>
+(function(){
+  function cookie(name){
+    for(const part of String(document.cookie||'').split(';')){
+      const idx=part.indexOf('='); if(idx<0) continue;
+      if(part.slice(0,idx).trim()!==name) continue;
+      try{return decodeURIComponent(part.slice(idx+1).trim());}catch{return '';}
+    }
+    return '';
+  }
+  const form=document.getElementById('shadow-login-form');
+  const errorBox=document.getElementById('shadow-login-error');
+  form?.addEventListener('submit',async event=>{
+    event.preventDefault();
+    const body=new URLSearchParams(new FormData(form));
+    const response=await fetch('/api/v1/telemetry/snapshot/login',{
+      method:'POST',
+      headers:{'content-type':'application/x-www-form-urlencoded','x-csrf-token':cookie('${MAIN_CSRF_COOKIE}')},
+      body:body.toString(),
+      credentials:'same-origin'
+    }).catch(()=>null);
+    if(response?.ok){ window.location.replace('/api/v1/telemetry/snapshot'); return; }
+    errorBox.hidden=false;
+    errorBox.textContent=response?.status===429?'ลองผิดเกินกำหนด กรุณารอแล้วลองใหม่':'ไม่สามารถเข้าสู่ระบบได้';
+  });
+})();
+</script>
+</body></html>`;
 }
 
 function readNonEmptyPin(value) {
     if (value === undefined || value === null) return "";
-    const pin = String(value);
-    return pin.trim() ? pin : "";
+    const pin = String(value).trim();
+    return pin || "";
+}
+
+function readSecret(getCookieSecret) {
+    try {
+        return readNonEmptyPin(typeof getCookieSecret === "function" ? getCookieSecret() : "");
+    } catch {
+        return "";
+    }
+}
+
+function readSessionSecret(getCookieSecret) {
+    const secret = readSecret(getCookieSecret);
+    return secret.length >= MIN_SESSION_SECRET_LENGTH ? secret : "";
+}
+
+function readVersion(getSessionVersion) {
+    try {
+        const version = Number(typeof getSessionVersion === "function" ? getSessionVersion() : 1);
+        return Number.isSafeInteger(version) && version > 0 ? version : 1;
+    } catch {
+        return 1;
+    }
 }
 
 function timingSafePinEqual(providedPin, expectedPin) {
     const provided = readNonEmptyPin(providedPin);
     const expected = readNonEmptyPin(expectedPin);
     if (!provided || !expected) return false;
+    if (isPinCredential(expected)) return verifyPinCredential(provided, expected);
     const providedBuffer = Buffer.from(provided, "utf8");
     const expectedBuffer = Buffer.from(expected, "utf8");
     return providedBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(providedBuffer, expectedBuffer);
@@ -110,59 +144,299 @@ function readShadowPin(getPin) {
     }
 }
 
+function legacyMigrationKey(pin) {
+    return crypto.createHash("sha256").update(String(pin || "")).digest("hex");
+}
+
+function scheduleLegacyPinMigration(pin, {
+    getSessionVersion,
+    settingStore = sessionManager,
+    onMigrated = null
+} = {}) {
+    const legacyPin = readNonEmptyPin(pin);
+    if (!legacyPin || isPinCredential(legacyPin)) return false;
+    const key = legacyMigrationKey(legacyPin);
+    if (legacyMigrationFlights.has(key)) return false;
+
+    let credential;
+    try {
+        credential = hashPinCredential(legacyPin);
+    } catch {
+        return false;
+    }
+    legacyMigrationFlights.add(key);
+    Promise.resolve(settingStore.setSetting("_shadowPortalAuth", {
+        pin: credential,
+        sessionVersion: readVersion(getSessionVersion),
+        updatedAt: Date.now(),
+        credentialVersion: 1
+    })).then(async saved => {
+        if (!saved) return;
+        try { await settingStore.deleteSetting?.("_shadowPin"); } catch {}
+        if (typeof onMigrated === "function") onMigrated(credential);
+    }).catch(() => {}).finally(() => {
+        legacyMigrationFlights.delete(key);
+    });
+    return true;
+}
+
+function sessionPayload({ issuedAt, nonce, version }) {
+    return `shadow:${issuedAt}:${nonce}:${version}`;
+}
+
+function createShadowSessionToken({ getCookieSecret, getSessionVersion } = {}) {
+    const secret = readSessionSecret(getCookieSecret);
+    if (!secret) return "";
+    const issuedAt = Date.now().toString();
+    const nonce = crypto.randomBytes(16).toString("hex");
+    const version = readVersion(getSessionVersion);
+    const sig = crypto.createHmac("sha256", secret)
+        .update(sessionPayload({ issuedAt, nonce, version }))
+        .digest("hex");
+    return `${issuedAt}.${nonce}.${version}.${sig}`;
+}
+
+function verifyShadowSessionToken(token, { ttlMs, getCookieSecret, getSessionVersion } = {}) {
+    if (!token || typeof token !== "string") return false;
+    const [issuedAt, nonce, rawVersion, sig, ...extra] = token.split(".");
+    if (extra.length || !issuedAt || !nonce || !rawVersion || !sig) return false;
+
+    const issuedMs = Number.parseInt(issuedAt, 10);
+    const version = Number(rawVersion);
+    const maxAge = Number(ttlMs);
+    if (!Number.isFinite(issuedMs) || !Number.isFinite(maxAge) || maxAge <= 0) return false;
+    if (Date.now() - issuedMs > maxAge || issuedMs > Date.now() + 60_000) return false;
+    if (!/^[a-f0-9]{32}$/i.test(nonce) || !/^[a-f0-9]{64}$/i.test(sig)) return false;
+    if (!Number.isSafeInteger(version) || version !== readVersion(getSessionVersion)) return false;
+
+    const secret = readSessionSecret(getCookieSecret);
+    if (!secret) return false;
+    const expected = crypto.createHmac("sha256", secret)
+        .update(sessionPayload({ issuedAt, nonce, version }))
+        .digest("hex");
+    return crypto.timingSafeEqual(Buffer.from(sig, "hex"), Buffer.from(expected, "hex"));
+}
+
+function issueShadowSessionCookie(res, { cookieName, ttlMs, getCookieSecret, getSessionVersion }) {
+    const token = createShadowSessionToken({ ttlMs, getCookieSecret, getSessionVersion });
+    if (!token) return false;
+    res.cookie(cookieName, token, {
+        httpOnly: true,
+        sameSite: "strict",
+        secure: String(process.env.NODE_ENV || "").trim() === "production",
+        path: "/api/v1/telemetry/snapshot",
+        maxAge: ttlMs
+    });
+    return true;
+}
+
+function clearShadowSessionCookie(res, cookieName) {
+    const options = {
+        httpOnly: true,
+        sameSite: "strict",
+        secure: String(process.env.NODE_ENV || "").trim() === "production",
+        path: "/api/v1/telemetry/snapshot"
+    };
+    if (typeof res.clearCookie === "function") res.clearCookie(cookieName, options);
+    else res.cookie?.(cookieName, "", { ...options, maxAge: 0 });
+}
+
+function shortHash(value) {
+    return crypto.createHash("sha256").update(String(value || "unknown")).digest("hex").slice(0, 16);
+}
+
+function bruteKey(req) {
+    const ip = String(req.ip || "unknown");
+    const verifiedActor = req?.authenticatedByServerSecret === true
+        ? String(req.authenticatedOwnerId || req.user?.id || "server-secret")
+        : "anonymous";
+    return `${shortHash(ip)}:${shortHash(verifiedActor)}`;
+}
+
 function createShadowPortalAuth({
     cookieName,
     ttlMs,
     getPin,
     getCookieSecret,
-    shadowCss = ""
+    getSessionVersion,
+    getRecoveryPin,
+    isBreakGlassEnabled = () => false,
+    shadowCss = "",
+    maxAttempts = DEFAULT_MAX_ATTEMPTS,
+    lockoutMs = DEFAULT_LOCKOUT_MS,
+    bruteTtlMs = DEFAULT_BRUTE_TTL_MS,
+    maxBruteKeys = DEFAULT_MAX_KEYS,
+    onAuthEvent = null,
+    onLegacyPinMigrated = null,
+    settingStore = sessionManager
 } = {}) {
     const bruteGuard = new Map();
+    const boundedMaxBruteKeys = Math.max(1, Math.floor(Number(maxBruteKeys) || DEFAULT_MAX_KEYS));
 
-    function trackFailedPin(req, body) {
-        if (!body.pin) return;
+    function emit(event, req, extra = {}) {
+        if (typeof onAuthEvent !== "function") return;
+        try {
+            onAuthEvent({ event, ipHash: shortHash(req?.ip), at: Date.now(), ...extra });
+        } catch {
+            // Authentication must not fail because a best-effort alert callback threw.
+        }
+    }
+
+    function cleanup(now = Date.now()) {
+        for (const [key, rec] of bruteGuard) {
+            const lockActive = Number(rec?.lockUntil || 0) > now;
+            if (!rec || (!lockActive && now - Number(rec.updatedAt || 0) > bruteTtlMs)) {
+                bruteGuard.delete(key);
+            }
+        }
+    }
+
+    function reserveBruteRecord(key, now = Date.now()) {
+        if (bruteGuard.has(key) || bruteGuard.size < boundedMaxBruteKeys) return true;
+
+        let oldestUnlockedKey = null;
+        let oldestUpdatedAt = Number.POSITIVE_INFINITY;
+        for (const [candidateKey, record] of bruteGuard) {
+            if (Number(record?.lockUntil || 0) > now) continue;
+            const updatedAt = Number(record?.updatedAt || 0);
+            if (updatedAt < oldestUpdatedAt) {
+                oldestUnlockedKey = candidateKey;
+                oldestUpdatedAt = updatedAt;
+            }
+        }
+        if (!oldestUnlockedKey) return false;
+        bruteGuard.delete(oldestUnlockedKey);
+        return true;
+    }
+
+    function trackFailedPin(req, providedPin) {
+        if (!readNonEmptyPin(providedPin)) return true;
+        const now = Date.now();
+        cleanup(now);
         const key = bruteKey(req);
-        const rec = bruteGuard.get(key) || { attempts: 0, lockUntil: 0 };
-        rec.attempts++;
-        if (rec.attempts >= 5) {
-            rec.lockUntil = Date.now() + 15 * 60 * 1000;
+        if (!reserveBruteRecord(key, now)) return false;
+        const rec = bruteGuard.get(key) || { attempts: 0, lockUntil: 0, updatedAt: 0 };
+        rec.attempts += 1;
+        rec.updatedAt = now;
+        if (rec.attempts >= maxAttempts) {
+            rec.lockUntil = now + lockoutMs;
             rec.attempts = 0;
         }
         bruteGuard.set(key, rec);
+        return true;
     }
 
     function lockMinutes(req) {
+        cleanup();
         const rec = bruteGuard.get(bruteKey(req));
         if (!rec || rec.lockUntil <= Date.now()) return 0;
-        return Math.ceil((rec.lockUntil - Date.now()) / 60000);
+        return Math.ceil((rec.lockUntil - Date.now()) / 60_000);
     }
 
-    function authorize(req, res, body, providedPin) {
-        const requestBody = body || {};
-        const options = { cookieName, ttlMs, getCookieSecret };
+    function configured() {
+        return Boolean(readShadowPin(getPin) && readSessionSecret(getCookieSecret));
+    }
+
+    function hasValidSession(req) {
+        return verifyShadowSessionToken(readCookie(req, cookieName), {
+            ttlMs,
+            getCookieSecret,
+            getSessionVersion
+        });
+    }
+
+    function respondPortalUnavailable(req, res) {
+        res.status(503).send(renderPortalUnavailablePage());
+        emit("disabled", req);
+        return false;
+    }
+
+    function respondLocked(req, res, blockedMinutes, emitEvent = true) {
+        res.status(429).send(renderShadowBlockedPage(blockedMinutes));
+        if (emitEvent) emit("locked", req, { blockedMinutes });
+        return false;
+    }
+
+    function validatePinCandidate(candidate) {
         const shadowPin = readShadowPin(getPin);
-        const ownerRecoveryPin = readNonEmptyPin(process.env.DASHBOARD_PIN);
-        const validPin = timingSafePinEqual(providedPin, shadowPin) || timingSafePinEqual(providedPin, ownerRecoveryPin);
-        if (validPin) {
-            bruteGuard.delete(bruteKey(req));
-            issueShadowSessionCookie(res, options);
-            return true;
+        const recoveryEnabled = Boolean(typeof isBreakGlassEnabled === "function" && isBreakGlassEnabled());
+        const recoveryPin = recoveryEnabled && typeof getRecoveryPin === "function"
+            ? readNonEmptyPin(getRecoveryPin())
+            : "";
+        const primaryValid = timingSafePinEqual(candidate, shadowPin);
+        const recoveryValid = timingSafePinEqual(candidate, recoveryPin);
+        return {
+            shadowPin,
+            primaryValid,
+            recoveryValid,
+            valid: primaryValid || recoveryValid
+        };
+    }
+
+    function issueAuthenticatedSession(req, res, pinValidation) {
+        if (!pinValidation.valid || !issueShadowSessionCookie(res, {
+            cookieName,
+            ttlMs,
+            getCookieSecret,
+            getSessionVersion
+        })) return false;
+
+        bruteGuard.delete(bruteKey(req));
+        if (pinValidation.primaryValid && !isPinCredential(pinValidation.shadowPin)) {
+            scheduleLegacyPinMigration(pinValidation.shadowPin, {
+                getSessionVersion,
+                settingStore,
+                onMigrated: onLegacyPinMigrated
+            });
         }
-        if (verifyShadowSessionToken(readCookie(req, cookieName), options)) return true;
+        emit(pinValidation.recoveryValid ? "break_glass_success" : "login_success", req);
+        return true;
+    }
+
+    function rejectPinAttempt(req, res, candidate) {
+        const trackedFailure = trackFailedPin(req, candidate);
+        emit(trackedFailure ? "login_failure" : "brute_guard_saturated", req);
+        if (!trackedFailure) {
+            return respondLocked(req, res, Math.ceil(lockoutMs / 60_000), false);
+        }
+
+        const remainingLock = lockMinutes(req);
+        if (remainingLock > 0) return respondLocked(req, res, remainingLock, false);
+        res.status(401).send(renderShadowLoginPage(true, shadowCss));
+        return false;
+    }
+
+    function authorize(req, res, _body, providedPin) {
+        setPortalSecurityHeaders(res);
+        if (!configured()) return respondPortalUnavailable(req, res);
+
+        if (hasValidSession(req)) return true;
 
         const blockedMinutes = lockMinutes(req);
-        if (blockedMinutes > 0) {
-            res.status(429).send(renderShadowBlockedPage(blockedMinutes));
+        if (blockedMinutes > 0) return respondLocked(req, res, blockedMinutes);
+
+        const candidate = readNonEmptyPin(providedPin);
+        if (!candidate) {
+            res.status(401).send(renderShadowLoginPage(false, shadowCss));
             return false;
         }
 
-        trackFailedPin(req, requestBody);
-        res.send(renderShadowLoginPage(Boolean(requestBody.pin), shadowCss));
-        return false;
+        const pinValidation = validatePinCandidate(candidate);
+        if (issueAuthenticatedSession(req, res, pinValidation)) return true;
+        return rejectPinAttempt(req, res, candidate);
+    }
+
+    function logout(res) {
+        setPortalSecurityHeaders(res);
+        clearShadowSessionCookie(res, cookieName);
     }
 
     return {
         authorize,
+        hasValidSession,
+        configured,
+        logout,
+        cleanup,
         bruteGuard,
         _test: {
             bruteKey,
@@ -177,13 +451,22 @@ module.exports = {
     createShadowSessionToken,
     verifyShadowSessionToken,
     issueShadowSessionCookie,
+    clearShadowSessionCookie,
     readCookie,
     renderShadowBlockedPage,
     renderShadowLoginPage,
+    renderPortalUnavailablePage,
+    scheduleLegacyPinMigration,
+    MIN_SESSION_SECRET_LENGTH,
+    setPortalSecurityHeaders,
+    timingSafePinEqual,
     _test: {
         escapeHtml,
+        legacyMigrationFlights,
         readNonEmptyPin,
         timingSafePinEqual,
-        readShadowPin
+        readShadowPin,
+        bruteKey,
+        shortHash
     }
 };

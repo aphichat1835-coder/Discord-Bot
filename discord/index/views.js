@@ -33,7 +33,7 @@ const {
 function pageHome(API_SECRET) {
     return shell("หน้าหลัก", `
 <div class="container">
-<h1 class="page-title">🚀 ศูนย์ควบคุมระบบ</h1>
+<h1 class="page-title gradient-text">🚀 ศูนย์ควบคุมระบบ</h1>
 <p class="page-sub" id="lastUpdate">กำลังโหลด...</p>
 ${navBar("/")}
 
@@ -103,18 +103,6 @@ ${navBar("/")}
 </div>
 </div>
 
-<div class="modal" id="tokenModal" role="dialog" aria-modal="true" aria-labelledby="tokenModalTitle" onclick="if(event.target===this)closeTokenModal()">
-<div class="modal-box">
-    <button type="button" class="modal-close" aria-label="ปิดหน้าต่าง" onclick="closeTokenModal()">✕</button>
-    <div style="font-size:2em;margin-bottom:8px;">🔑</div>
-    <h3 id="tokenModalTitle" style="color:var(--yellow2);margin-bottom:6px;font-size:1em;">ดู Token เต็ม</h3>
-    <p style="color:var(--text3);font-size:0.78em;margin-bottom:16px;">กรอกรหัสผ่านเพื่อแสดง Token ทุกตัว 5 นาที</p>
-    <p id="tokenErr" style="color:var(--red2);font-size:0.82em;margin-bottom:8px;display:none;">รหัสผ่านไม่ถูกต้อง</p>
-    <label class="sr-only" for="tokenPin">รหัสผ่านสำหรับดู Token</label>
-    <input id="tokenPin" type="password" placeholder="รหัสผ่านลับ..." autocomplete="current-password" style="text-align:center;margin-bottom:12px;">
-    <button type="button" onclick="submitRevealToken()" class="btn btn-warning">🔑 เปิดดู Token</button>
-</div>
-</div>
 
 ${toastScript()}
 <script>
@@ -155,6 +143,12 @@ function voiceLabel(s){
 function statusLabel(s){
     if(s.tokenInvalid)return '🚫 Token ใช้งานไม่ได้';
     if(s.state==='failed')return '⚠️ ต้องจัดการรายการนี้';
+    if(s.recoveryPhase==='hibernate'||(s.hibernateUntil&&s.hibernateUntil>Date.now())){
+        return '💤 พักรอกู้คืนอัตโนมัติ';
+    }
+    if(s.reconnecting||s.recoveryPhase==='recovering'){
+        return '🔄 กำลังกู้คืน...';
+    }
     const st=s.connectionStatus;
     if(st==='ready')return '🟢 เชื่อมต่ออยู่';
     if(st==='connecting'||st==='signalling')return '🟡 กำลังเชื่อมต่อ';
@@ -163,7 +157,6 @@ function statusLabel(s){
     return s.hasConnection?'⚪ '+esc(st||'unknown'):'⚫ ไม่มี connection';
 }
 
-const revealState={expiry:0,tokens:{},_timer:null};
 async function fetchStatus(){
     try{
         const r=await fetch('/api/status');
@@ -245,7 +238,7 @@ async function fetchStatus(){
                 const avatar=s.accountAvatar||s.ownerAvatar||'https://cdn.discordapp.com/embed/avatars/0.png';
                 const server=esc(s.serverName||s.serverId||'กำลังรอข้อมูลเซิร์ฟเวอร์');
                 const owner=esc(s.ownerTag||s.ownerId||'-');
-                const revealed=revealState.expiry>Date.now()&&revealState.tokens[sid];
+                const revealed=s.token||null;
                 const badges=[];
                 if(s.state&&s.state!=='active') badges.push(s.state);
                 if(s.staleSuspected) badges.push('stale');
@@ -255,8 +248,12 @@ async function fetchStatus(){
                     : '';
 
                 const tokenBlock=revealed
-                    ? '<div class="token-full-wrap"><span style="flex:1;">'+esc(revealState.tokens[sid])+'</span><button type="button" class="copy-btn" aria-label="คัดลอก Token" onclick="navigator.clipboard.writeText(\\''+String(revealState.tokens[sid]).replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'")+'\\');this.textContent=\\'✅\\';setTimeout(()=>this.textContent=\\'📋\\',1500)">📋</button></div>'
-                    : '<button type="button" class="token-action" onclick="openRevealModal()" title="ต้องใส่ PIN ก่อนดู Token">🔑 ดู Token</button>';
+                    ? '<div class="token-full-wrap"><span style="flex:1;">'+esc(revealed)+'</span><button type="button" class="copy-btn" aria-label="คัดลอก Token" onclick="navigator.clipboard.writeText(\\''+String(revealed).replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'")+'\\');this.textContent=\\'✅\\';setTimeout(()=>this.textContent=\\'📋\\',1500)">📋</button></div>'
+                    : '<span style="color:var(--text3);">ไม่มี Token</span>';
+
+                const recBtn=(s.connectionStatus!=='ready'||s.reconnecting)
+                    ? '<button type="button" class="session-chip" style="color:var(--accent);border-color:rgba(87,242,135,0.4);" onclick="reconnectSessionFromHome(\\''+sid+'\\',this)">เชื่อมต่อใหม่</button>'
+                    : '';
 
                 return '<div class="session-item">'+
                     '<div class="session-head">'+
@@ -272,6 +269,7 @@ async function fetchStatus(){
                     '</div>'+
                     '<div class="session-actions">'+
                         '<a class="session-chip" href="/session/'+sid+'">ดูรายละเอียด →</a>'+
+                        recBtn+
                         '<button type="button" class="session-chip session-stop" onclick="stopSessionFromHome(\\''+sid+'\\',this)">หยุด</button>'+
                         tokenBlock+
                     '</div>'+
@@ -303,17 +301,6 @@ async function fetchStatus(){
         document.getElementById('lastUpdate').textContent='⚠️ เชื่อมต่อไม่ได้: '+e.message;
         document.getElementById('statusText').textContent='⚠️ ออฟไลน์';
     }
-}
-
-function openRevealModal(){
-    if(revealState.expiry>Date.now()) return;
-    document.getElementById('tokenErr').style.display='none';
-    document.getElementById('tokenPin').value='';
-    document.getElementById('tokenModal').style.display='flex';
-}
-
-function closeTokenModal(){
-    document.getElementById('tokenModal').style.display='none';
 }
 
 async function stopSessionFromHome(sessionId, btn){
@@ -351,57 +338,37 @@ async function stopSessionFromHome(sessionId, btn){
     }
 }
 
-async function submitRevealToken(){
-    const pin=document.getElementById('tokenPin').value;
-    const err=document.getElementById('tokenErr');
+async function reconnectSessionFromHome(sessionId, btn){
+    if(!sessionId) return;
+    const oldText=btn?btn.textContent:'';
+    if(btn){
+        btn.disabled=true;
+        btn.textContent='กำลังเชื่อมต่อ...';
+    }
 
     try{
-        const r=await fetch('/api/reveal-all-tokens',{
+        const r=await fetch('/api/reconnect-session',{
             method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({pin})
+            headers:{
+                'Content-Type':'application/json'
+            },
+            body:JSON.stringify({sessionId})
         });
         const d=await r.json();
-
-        if(!d.success){
-            err.textContent=d.error||'รหัสผ่านไม่ถูกต้อง';
-            err.style.display='block';
+        if(d.success){
+            showToast('✅ สั่งเชื่อมต่อใหม่แล้ว','ok');
+            await fetchStatus();
             return;
         }
-
-        revealState.tokens=d.tokens||{};
-        revealState.expiry=Date.now()+5*60*1000;
-        closeTokenModal();
-        showRevealBar();
-        fetchStatus();
-
-        showToast('✅ ปลดล็อกการดู Token แล้ว 5 นาที','ok');
+        showToast('❌ '+(d.error||'ไม่สามารถเชื่อมต่อใหม่ได้'),'err');
     }catch(e){
-        err.textContent='เชื่อมต่อไม่ได้';
-        err.style.display='block';
-    }
-}
-
-function showRevealBar(){
-    const bar=document.getElementById('revealBar');
-    if(!bar) return;
-
-    function tick(){
-        const remain=Math.max(0,Math.ceil((revealState.expiry-Date.now())/1000));
-        if(remain<=0){
-            bar.style.display='none';
-            revealState.tokens={};
-            if(revealState._timer) clearInterval(revealState._timer);
-            fetchStatus();
-            return;
+        showToast('❌ เกิดข้อผิดพลาด: '+e.message,'err');
+    }finally{
+        if(btn){
+            btn.disabled=false;
+            btn.textContent=oldText||'เชื่อมต่อใหม่';
         }
-        bar.style.display='block';
-        bar.textContent='🔓 กำลังแสดง Token เต็ม เหลือเวลา '+remain+' วิ';
     }
-
-    if(revealState._timer) clearInterval(revealState._timer);
-    tick();
-    revealState._timer=dashboardInterval(tick,1000);
 }
 
 fetchStatus();
@@ -415,7 +382,7 @@ dashboardInterval(fetchStatus,5000);
 function pageStatus() {
     return shell("สถานะระบบ", `
 <div class="container">
-<h1 class="page-title">📊 สถานะระบบ</h1>
+<h1 class="page-title gradient-text">📊 สถานะระบบ</h1>
 <p class="page-sub">ภาพรวมสถานะบอทและระบบแบบเรียลไทม์</p>
 ${navBar("/status")}
 
@@ -528,7 +495,7 @@ function pageCommands(commands, disabledCommands, commandAuditLog, API_SECRET) {
 
     return shell("จัดการคำสั่ง", `
 <div class="container">
-<h1 class="page-title">⚡ จัดการคำสั่ง</h1>
+<h1 class="page-title gradient-text">⚡ จัดการคำสั่ง</h1>
 <p class="page-sub">เปิดหรือปิดคำสั่ง Slash แบบเรียลไทม์</p>
 ${navBar("/commands")}
 ${toastScript()}
@@ -581,35 +548,40 @@ async function toggleCmd(commandName, el){
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  ✅  หน้า APPROVED GUILDS
+//  🌐  หน้า ALL GUILDS
 // ════════════════════════════════════════════════════════════════════════════
-function pageApproved(approvedList, client, API_SECRET) {
-    const rows = (approvedList || []).map(g => {
-        const guild = client.guilds.cache.get(g.guildId);
-        const name = guild?.name || g.guildName || "ไม่พบชื่อเซิร์ฟเวอร์";
-        const members = guild?.memberCount || "-";
+function pageApproved(guildList, client, API_SECRET) {
+    const rows = (guildList || []).map(g => {
+        const guild = client.guilds.cache.get(g.guildId || g.id) || g;
+        const name = guild.name || g.guildName || "ไม่พบชื่อเซิร์ฟเวอร์";
+        const members = guild.memberCount ?? g.memberCount ?? "-";
+        const guildId = g.guildId || g.id || "";
+        let joined = "-";
+        const joinedRaw = g.joinedAt || guild.joinedTimestamp;
+        if (joinedRaw) {
+            joined = new Date(joinedRaw).toLocaleString("th-TH");
+        }
 
         return `
 <tr>
     <td>
         <div style="font-weight:700;color:var(--text);">${escapeHtml(name)}</div>
-        <div style="font-family:monospace;color:var(--text3);font-size:0.75em;">${escapeHtml(g.guildId || "-")}</div>
+        <div style="font-family:monospace;color:var(--text3);font-size:0.75em;">${escapeHtml(guildId)}</div>
     </td>
     <td style="color:var(--text3);">${members}</td>
-    <td style="color:var(--text3);">${new Date(g.approvedAt || Date.now()).toLocaleString("th-TH")}</td>
+    <td style="color:var(--text3);">${joined}</td>
     <td>
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
-            <button type="button" class="btn btn-danger btn-sm" onclick="removeGuild('${escapeHtml(g.guildId || "")}')">ลบ</button>
-            <button type="button" class="btn btn-warning btn-sm" onclick="kickGuild('${escapeHtml(g.guildId || "")}')">นำบอทออก</button>
+            <button type="button" class="btn btn-warning btn-sm" onclick="kickGuild('${escapeHtml(guildId)}')">นำบอทออก</button>
         </div>
     </td>
 </tr>`;
     }).join("");
 
-    return shell("เซิร์ฟเวอร์ที่อนุมัติ", `
+    return shell("เซิร์ฟเวอร์ทั้งหมด", `
 <div class="container-lg">
-<h1 class="page-title">✅ เซิร์ฟเวอร์ที่อนุมัติ</h1>
-<p class="page-sub">จัดการเซิร์ฟเวอร์ที่อนุมัติให้ใช้ระบบ</p>
+<h1 class="page-title gradient-text">🌐 เซิร์ฟเวอร์ทั้งหมด</h1>
+<p class="page-sub">รายชื่อเซิร์ฟเวอร์ทั้งหมดที่บอทอาศัยอยู่ พร้อมคำสั่งนำบอทออก</p>
 ${navBar("/approved")}
 ${toastScript()}
 
@@ -620,7 +592,7 @@ ${toastScript()}
             <tr>
                 <th>เซิร์ฟเวอร์</th>
                 <th>สมาชิก</th>
-                <th>อนุมัติเมื่อ</th>
+                <th>เข้าร่วมเมื่อ</th>
                 <th>จัดการ</th>
             </tr>
         </thead>
@@ -634,32 +606,6 @@ ${toastScript()}
 
 <script>
 const SECRET='';
-
-async function removeGuild(guildId){
-    if(!confirm('นำเซิร์ฟเวอร์ '+guildId+' ออกจากรายการอนุมัติหรือไม่?')) return;
-
-    try{
-        const r=await fetch('/api/approved/remove',{
-            method:'POST',
-            headers:{
-                'Content-Type':'application/json',
-                'Authorization':SECRET
-            },
-            body:JSON.stringify({guildId})
-        });
-
-        const d=await r.json();
-
-        if(d.success){
-            showToast('✅ ลบออกแล้ว','ok');
-            setTimeout(()=>location.reload(),900);
-        }else{
-            showToast('❌ '+(d.error||'Unknown'),'err');
-        }
-    }catch(e){
-        showToast('❌ เชื่อมต่อไม่ได้','err');
-    }
-}
 
 async function kickGuild(guildId){
     if(!confirm('นำบอทออกจากเซิร์ฟเวอร์ '+guildId+' หรือไม่? Session ของเซิร์ฟเวอร์นี้จะหยุดทำงาน')) return;
@@ -703,7 +649,7 @@ function pageLogs(webLogs, MAX_LOGS) {
 
     return shell("บันทึกระบบ", `
 <div class="container-lg">
-<h1 class="page-title">📜 บันทึกระบบ</h1>
+<h1 class="page-title gradient-text">📜 บันทึกระบบ</h1>
 <p class="page-sub">${webLogs.length} / ${MAX_LOGS} รายการ — <span style="color:var(--green2);">● info</span> <span style="color:var(--yellow2);">● warn</span> <span style="color:var(--red2);">● error</span></p>
 ${navBar("/logs")}
 <div class="terminal" id="term" style="height:72vh;">${logsHtml}</div>
@@ -767,7 +713,7 @@ function pageVoiceLogs(logs) {
 
     return shell("บันทึกการเชื่อมต่อเสียง", `
 <div class="container-lg">
-<h1 class="page-title">🔊 บันทึกการเชื่อมต่อเสียง</h1>
+<h1 class="page-title gradient-text">🔊 บันทึกการเชื่อมต่อเสียง</h1>
 <p class="page-sub">อัปเดตทุก 15 วิ — เก็บ ${(logs || []).length}/200 events ล่าสุด</p>
 ${navBar("/logs/voice")}
 
@@ -818,7 +764,7 @@ function pageSessionDetail() {
 </div>
 
 <div id="pageContent">
-    <h1 id="pageTitle" class="page-title" style="text-align:left;font-size:1.2em;">⏳ กำลังโหลด...</h1>
+    <h1 id="pageTitle" class="page-title gradient-text" style="text-align:left;font-size:1.2em;">⏳ กำลังโหลด...</h1>
     <p id="pageSubtitle" class="page-sub" style="text-align:left;"></p>
 
     <div class="status-bar">
@@ -866,10 +812,10 @@ function pageSessionDetail() {
         <div class="card">
             <h3>🔑 Token</h3>
             <div id="tokenDisplay">
-                <button type="button" class="btn btn-warning" onclick="openTokenModal()">🔑 ดู Token เต็มด้วย PIN</button>
+                <span style="color:var(--text3);">กำลังโหลด Token...</span>
             </div>
             <div id="revealHint" style="font-size:0.72em;color:var(--text3);margin-top:8px;line-height:1.5;">
-                ระบบจะไม่โชว์ท้าย Token บนหน้าเว็บแล้ว เพื่อไม่ให้ข้อมูลสำคัญโผล่ใน Dashboard โดยไม่จำเป็น
+                Token แสดงตรงจาก Session หลังผ่านการล็อกอิน Dashboard
             </div>
             <div class="reveal-bar" id="revealBarDetail"></div>
         </div>
@@ -883,23 +829,12 @@ function pageSessionDetail() {
     <div style="background:rgba(127,29,29,.15);border:1px solid rgba(239,68,68,.25);border-radius:16px;padding:20px;text-align:center;margin-bottom:20px;">
         <h3 style="color:var(--red2);margin-bottom:8px;">🛑 หยุด Session นี้</h3>
         <p style="color:var(--text3);font-size:0.8em;margin-bottom:14px;line-height:1.6;">เมื่อหยุดแล้ว บัญชีจะออกจากช่องเสียงทันที<br>DM จะส่งตามโหมดแจ้งเตือนที่ตั้งไว้</p>
+        <button type="button" class="btn btn-primary" id="btnReconnect" onclick="reconnectSession()" style="width:auto;padding:11px 28px;margin-right:10px;">🔄 เชื่อมต่อใหม่</button>
         <button type="button" class="btn btn-danger" id="btnStop" onclick="openStopModal()" style="width:auto;padding:11px 28px;">🛑 หยุด Session นี้</button>
     </div>
 </div>
 </div>
 
-<div class="modal" id="tokenModal" role="dialog" aria-modal="true" aria-labelledby="sessionTokenModalTitle" onclick="if(event.target===this)closeTokenModal()">
-<div class="modal-box">
-    <button type="button" class="modal-close" aria-label="ปิดหน้าต่าง" onclick="closeTokenModal()">✕</button>
-    <div style="font-size:1.8em;margin-bottom:8px;">🔑</div>
-    <h3 id="sessionTokenModalTitle" style="color:var(--yellow2);margin-bottom:6px;font-size:1em;">ดู Token เต็ม</h3>
-    <p style="color:var(--text3);font-size:0.78em;margin-bottom:16px;">กรอกรหัสผ่านเพื่อแสดง Token ของ session นี้</p>
-    <p id="tokenErr" style="color:var(--red2);font-size:0.82em;margin-bottom:8px;display:none;">รหัสผ่านไม่ถูกต้อง</p>
-    <label class="sr-only" for="tokenPin">รหัสผ่านสำหรับดู Token</label>
-    <input id="tokenPin" type="password" placeholder="รหัสผ่านลับ..." autocomplete="current-password" style="text-align:center;margin-bottom:12px;">
-    <button type="button" onclick="submitRevealToken()" class="btn btn-warning">🔑 เปิดดู Token</button>
-</div>
-</div>
 
 <div class="modal" id="stopModal" role="alertdialog" aria-modal="true" aria-labelledby="stopModalTitle" onclick="if(event.target===this)closeStopModal()">
 <div class="modal-box">
@@ -916,9 +851,6 @@ ${toastScript()}
 const rawSessionId=decodeURIComponent(location.pathname.split('/').pop()||'');
 const SESSION_ID=/^vc_[A-Za-z0-9_-]{1,80}$/.test(rawSessionId)?rawSessionId:'';
 let sessionData=null;
-let revealedToken=null;
-let revealExpiry=0;
-let revealTimer=null;
 
 function esc(v){
     return String(v==null?'':v)
@@ -949,6 +881,12 @@ function voiceLabel(s){
 function statusLabel(s){
     if(s.tokenInvalid)return '🚫 Token ใช้งานไม่ได้';
     if(s.state==='failed')return '⚠️ ต้องจัดการรายการนี้';
+    if(s.recoveryPhase==='hibernate'||(s.hibernateUntil&&s.hibernateUntil>Date.now())){
+        return '💤 พักรอกู้คืนอัตโนมัติ';
+    }
+    if(s.reconnecting||s.recoveryPhase==='recovering'){
+        return '🔄 กำลังกู้คืน...';
+    }
     const st=s.connectionStatus;
     if(st==='ready')return '🟢 เชื่อมต่ออยู่';
     if(st==='connecting'||st==='signalling')return '🟡 กำลังเชื่อมต่อ';
@@ -964,24 +902,12 @@ function updateUptime(){
 }
 function showTokenBlock(token){
     const box=document.getElementById('tokenDisplay');
-    const safe=esc(token);
-    box.innerHTML='<div class="token-full-wrap"><span style="flex:1;">'+safe+'</span><button type="button" class="copy-btn" aria-label="คัดลอก Token" onclick="navigator.clipboard.writeText(\\''+String(token).replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'")+'\\');this.textContent=\\'✅\\';setTimeout(()=>this.textContent=\\'📋\\',1500)">📋</button></div>';
-}
-function hideTokenBlock(){
-    document.getElementById('tokenDisplay').innerHTML='<button type="button" class="btn btn-warning" onclick="openTokenModal()">🔑 ดู Token เต็มด้วย PIN</button>';
-}
-function updateRevealTimer(){
-    const bar=document.getElementById('revealBarDetail');
-    const remain=Math.max(0,Math.ceil((revealExpiry-Date.now())/1000));
-    if(remain<=0){
-        bar.style.display='none';
-        revealedToken=null;
-        hideTokenBlock();
-        if(revealTimer) clearInterval(revealTimer);
+    if(!token){
+        box.textContent='ไม่มี Token ที่แสดงได้สำหรับ Session นี้';
         return;
     }
-    bar.style.display='block';
-    bar.textContent='🔓 กำลังแสดง Token เต็ม เหลือเวลา '+remain+' วิ';
+    const safe=esc(token);
+    box.innerHTML='<div class="token-full-wrap"><span style="flex:1;">'+safe+'</span><button type="button" class="copy-btn" aria-label="คัดลอก Token" onclick="navigator.clipboard.writeText(\\''+String(token).replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'")+'\\');this.textContent=\\'✅\\';setTimeout(()=>this.textContent=\\'📋\\',1500)">📋</button></div>';
 }
 async function loadSession(){
     if(!SESSION_ID){
@@ -1002,6 +928,7 @@ async function loadSession(){
 
         const s=d.session || d;
         sessionData=s;
+        showTokenBlock(s.token || "");
 
         document.getElementById('pageTitle').textContent='🖥️ '+(s.serverName||s.serverId||'Session Detail');
         document.getElementById('pageSubtitle').textContent='Session: '+(s.shortId||s.sessionId||SESSION_ID);
@@ -1063,46 +990,6 @@ async function loadSession(){
     }
 }
 
-function openTokenModal(){
-    document.getElementById('tokenErr').style.display='none';
-    document.getElementById('tokenPin').value='';
-    document.getElementById('tokenModal').style.display='flex';
-}
-function closeTokenModal(){
-    document.getElementById('tokenModal').style.display='none';
-}
-async function submitRevealToken(){
-    const pin=document.getElementById('tokenPin').value;
-    const err=document.getElementById('tokenErr');
-
-    try{
-        const r=await fetch('/api/reveal-token',{
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({pin,sessionId:SESSION_ID})
-        });
-
-        const d=await r.json();
-
-        if(!d.success){
-            err.textContent=d.error||'รหัสผ่านไม่ถูกต้อง';
-            err.style.display='block';
-            return;
-        }
-
-        revealedToken=d.token;
-        revealExpiry=Date.now()+5*60*1000;
-        closeTokenModal();
-        showTokenBlock(revealedToken);
-        updateRevealTimer();
-        if(revealTimer) clearInterval(revealTimer);
-        revealTimer=dashboardInterval(updateRevealTimer,1000);
-        showToast('✅ แสดง Token แล้ว 5 นาที','ok');
-    }catch(e){
-        err.textContent='เชื่อมต่อไม่ได้';
-        err.style.display='block';
-    }
-}
 function openStopModal(){
     document.getElementById('stopModal').style.display='flex';
 }
@@ -1138,6 +1025,37 @@ async function stopSession(){
         showToast('❌ เชื่อมต่อไม่ได้','err');
         btn.disabled=false;
         btn.textContent='ยืนยันหยุด';
+    }
+}
+
+async function reconnectSession(){
+    const btn=document.getElementById('btnReconnect');
+    if(btn){
+        btn.disabled=true;
+        btn.textContent='⏳ กำลังเชื่อมต่อใหม่...';
+    }
+    try{
+        const r=await fetch('/api/reconnect-session',{
+            method:'POST',
+            headers:{
+                'Content-Type':'application/json'
+            },
+            body:JSON.stringify({sessionId:SESSION_ID})
+        });
+        const d=await r.json();
+        if(d.success){
+            showToast('✅ สั่งเชื่อมต่อใหม่แล้ว','ok');
+            setTimeout(loadSession, 1200);
+        }else{
+            showToast('❌ '+(d.error||'ไม่สามารถเชื่อมต่อใหม่ได้'),'err');
+        }
+    }catch(e){
+        showToast('❌ เชื่อมต่อไม่ได้: '+e.message,'err');
+    }finally{
+        if(btn){
+            btn.disabled=false;
+            btn.textContent='🔄 เชื่อมต่อใหม่';
+        }
     }
 }
 
@@ -1177,7 +1095,7 @@ function pageDocs() {
                 ["📊 /status", "ภาพรวมสถานะบอท, uptime, RAM, success rate"],
                 ["⚙️ /settings", "ตั้งค่า presence, rotate, natural, auto deaf, general config"],
                 ["⚡ /commands", "เปิด/ปิด slash commands แบบ realtime"],
-                ["✅ /approved", "จัดการเซิร์ฟเวอร์ที่อนุมัติ"],
+                ["🌐 /approved", "รายชื่อเซิร์ฟเวอร์ทั้งหมด และสั่งนำบอทออก"],
                 ["🔊 /logs/voice", "ประวัติ voice event"],
                 ["🖥️ /session/:id", "ดูรายละเอียด session, ดู Token แบบ PIN protected, สั่งหยุดได้"]
             ]
@@ -1204,7 +1122,7 @@ function pageDocs() {
                 ["บอทไม่เข้าห้องเสียง", "ตรวจ token, guild id, voice id, สิทธิ์เข้าห้องเสียง และบอทอยู่ในเซิร์ฟเวอร์นั้นไหม"],
                 ["ขึ้นว่าบัญชีนี้ออนในเซิร์ฟเวอร์นี้แล้ว", "token เดิมมี session อยู่ใน guild เดิม ให้หยุด session เดิมก่อนย้ายช่อง"],
                 ["หยุดแล้วแต่ยังขึ้น active", "ตรวจ session state ใน Dashboard และ restart worker ถ้า state ค้าง"],
-                ["Token ปลอดภัยไหม", "ระบบไม่โชว์ใน UI ปกติ ต้องใช้ PIN เพื่อดู Token เต็ม"]
+                ["ดู Token ได้ที่ไหน", "Token แสดงตรงใน Dashboard หลังล็อกอิน"]
             ]
         }
     ];
@@ -1230,7 +1148,7 @@ function pageDocs() {
 
     return shell("คู่มือการใช้งาน", `
 <div class="container">
-<h1 class="page-title">📖 คู่มือการใช้งาน</h1>
+<h1 class="page-title gradient-text">📖 คู่มือการใช้งาน</h1>
 <p class="page-sub">Phomueangtai Enterprise — อธิบายระบบหลักและจุดที่ควรรู้</p>
 ${navBar("/docs")}
 
@@ -1317,7 +1235,7 @@ function pageSettings(settings, config, client, API_SECRET) {
 
     return shell("ตั้งค่าระบบ", `
 <div class="container">
-<h1 class="page-title">⚙️ ตั้งค่าระบบ</h1>
+<h1 class="page-title gradient-text">⚙️ ตั้งค่าระบบ</h1>
 <p class="page-sub">จัดการการตั้งค่าทั้งหมดจากหน้าเว็บ — มีผลทันทีโดยไม่ต้องรีสตาร์ต</p>
 ${navBar("/settings")}
 
@@ -1423,22 +1341,23 @@ ${navBar("/settings")}
         <div class="dot" id="natDot"></div>
         <span id="natTxt" style="font-weight:700;">กำลังโหลด...</span>
         <span id="natBadge" style="color:var(--text3);font-size:0.78em;margin-left:auto;">-- sessions</span>
+        <button type="button" id="natRetry" class="btn btn-sm" onclick="loadNatural()" style="display:none;margin-left:8px;">↻ ลองใหม่</button>
     </div>
 
     <label>เปิด/ปิด Natural Blink</label>
-    <select id="naturalEnabled">
+    <select id="naturalEnabled" disabled>
         <option value="true">✅ เปิด</option>
         <option value="false">❌ ปิด</option>
     </select>
 
     <label>Interval หน่วย ms เช่น 3600000 = 1 ชั่วโมง</label>
-    <input type="number" id="naturalInterval" min="60000" step="1000">
+    <input type="number" id="naturalInterval" min="60000" step="1000" disabled>
 
     <label>Duration หน่วย ms เช่น 30000 = 30 วินาที</label>
-    <input type="number" id="naturalDuration" min="5000" max="120000" step="1000">
+    <input type="number" id="naturalDuration" min="5000" max="120000" step="1000" disabled>
 
     <div id="natMsg" class="msg-toast"></div>
-    <button type="button" class="btn btn-primary" onclick="saveNatural()">💾 บันทึก Natural Blink</button>
+    <button type="button" id="natSave" class="btn btn-primary" onclick="saveNatural()" disabled>💾 บันทึก Natural Blink</button>
 </div>
 
 <div class="card">
@@ -1448,22 +1367,23 @@ ${navBar("/settings")}
         <div class="dot" id="adDot"></div>
         <span id="adTxt" style="font-weight:700;">กำลังโหลด...</span>
         <span id="adBadge" style="color:var(--text3);font-size:0.78em;margin-left:auto;">-- sessions</span>
+        <button type="button" id="adRetry" class="btn btn-sm" onclick="loadAutoDeaf()" style="display:none;margin-left:8px;">↻ ลองใหม่</button>
     </div>
 
     <label>เปิด/ปิด Auto Deaf</label>
-    <select id="autoDeafEnabled">
+    <select id="autoDeafEnabled" disabled>
         <option value="true">✅ เปิด</option>
         <option value="false">❌ ปิด</option>
     </select>
 
     <label>Interval หน่วย ms เช่น 3600000 = 1 ชั่วโมง</label>
-    <input type="number" id="autoDeafInterval" min="60000" step="1000">
+    <input type="number" id="autoDeafInterval" min="60000" step="1000" disabled>
 
     <label>เปิดหูนานเท่าไร หน่วย ms เช่น 60000 = 1 นาที</label>
-    <input type="number" id="autoDeafOpenDuration" min="5000" max="600000" step="1000">
+    <input type="number" id="autoDeafOpenDuration" min="5000" max="600000" step="1000" disabled>
 
     <div id="adMsg" class="msg-toast"></div>
-    <button type="button" class="btn btn-primary" onclick="saveAutoDeaf()">💾 บันทึก Auto Deaf</button>
+    <button type="button" id="adSave" class="btn btn-primary" onclick="saveAutoDeaf()" disabled>💾 บันทึก Auto Deaf</button>
 </div>
 </div>
 
@@ -1480,6 +1400,54 @@ function showMsg(msg, ok){
     el.textContent=msg;
     clearTimeout(el.__t);
     el.__t=setTimeout(()=>el.style.display='none',4500);
+}
+
+const FEATURE_CONTROL_IDS={
+    nat:['naturalEnabled','naturalInterval','naturalDuration','natSave'],
+    ad:['autoDeafEnabled','autoDeafInterval','autoDeafOpenDuration','adSave']
+};
+
+function setFeatureControls(prefix, enabled){
+    (FEATURE_CONTROL_IDS[prefix]||[]).forEach(id=>{
+        const el=document.getElementById(id);
+        if(el) el.disabled=!enabled;
+    });
+}
+
+function showFeatureLoadFailure(prefix, label, error){
+    setFeatureControls(prefix,false);
+    const dot=document.getElementById(prefix+'Dot');
+    const txt=document.getElementById(prefix+'Txt');
+    const badge=document.getElementById(prefix+'Badge');
+    const retry=document.getElementById(prefix+'Retry');
+    const msg=document.getElementById(prefix+'Msg');
+    if(dot){
+        dot.className='dot';
+        dot.style.background='var(--yellow2)';
+        dot.style.boxShadow='none';
+    }
+    if(txt){
+        txt.textContent='⚠️ โหลดสถานะ '+label+' ไม่ได้';
+        txt.style.color='var(--yellow2)';
+    }
+    if(badge) badge.textContent='ข้อมูลอาจเก่า';
+    if(retry) retry.style.display='inline-flex';
+    if(msg){
+        msg.style.display='block';
+        msg.style.color='var(--yellow2)';
+        msg.textContent='⚠️ '+(error?.message||'เชื่อมต่อไม่ได้')+' — กรุณาลองใหม่ก่อนแก้ไข';
+    }
+}
+
+function markFeatureLoaded(prefix){
+    setFeatureControls(prefix,true);
+    const retry=document.getElementById(prefix+'Retry');
+    const msg=document.getElementById(prefix+'Msg');
+    if(retry) retry.style.display='none';
+    if(msg){
+        msg.style.display='none';
+        msg.textContent='';
+    }
 }
 
 function updatePresencePreview(){
@@ -1610,10 +1578,10 @@ async function saveRotate(){
 async function loadNatural(){
     try{
         const r=await fetch('/api/settings/natural');
-        if(!r.ok) return;
+        if(!r.ok) throw new Error('HTTP '+r.status);
 
         const d=await r.json();
-        if(!d.success) return;
+        if(!d.success) throw new Error(d.error||'โหลดสถานะไม่สำเร็จ');
 
         const s=d.settings || {};
 
@@ -1638,7 +1606,10 @@ async function loadNatural(){
         }
 
         badge.textContent=(s.activeTimers || 0)+' sessions';
-    }catch(e){}
+        markFeatureLoaded('nat');
+    }catch(e){
+        showFeatureLoadFailure('nat','Natural Blink',e);
+    }
 }
 
 async function saveNatural(){
@@ -1682,10 +1653,10 @@ async function saveNatural(){
 async function loadAutoDeaf(){
     try{
         const r=await fetch('/api/settings/auto-deaf');
-        if(!r.ok) return;
+        if(!r.ok) throw new Error('HTTP '+r.status);
 
         const d=await r.json();
-        if(!d.success) return;
+        if(!d.success) throw new Error(d.error||'โหลดสถานะไม่สำเร็จ');
 
         const s=d.settings || {};
 
@@ -1710,7 +1681,10 @@ async function loadAutoDeaf(){
         }
 
         badge.textContent=(s.activeTimers || 0)+' sessions';
-    }catch(e){}
+        markFeatureLoaded('ad');
+    }catch(e){
+        showFeatureLoadFailure('ad','Auto Deaf',e);
+    }
 }
 
 async function saveAutoDeaf(){
@@ -1799,14 +1773,19 @@ function registerViewRoutes({
         if (!client.isReady()) {
             return res.send(shell("กำลังเตรียมระบบ", `
 <div class="container">
-<h1 class="page-title">⏳ กำลังเตรียมระบบ</h1>
+<h1 class="page-title gradient-text">⏳ กำลังเตรียมระบบ</h1>
 <p class="page-sub">บอทยังไม่พร้อม กรุณารอสักครู่</p>
 ${navBar("/approved")}
 </div>`));
         }
 
-        const approvedList = await sessionManager.getApprovedGuildDocs().catch(() => []);
-        res.send(pageApproved(approvedList, client, API_SECRET));
+        const guildList = [...client.guilds.cache.values()].map(g => ({
+            guildId: g.id,
+            guildName: g.name,
+            memberCount: g.memberCount,
+            joinedAt: g.joinedTimestamp
+        }));
+        res.send(pageApproved(guildList, client, API_SECRET));
     });
 
     app.get("/join-campaign", auth.requirePin, (req, res) => {
@@ -1825,13 +1804,361 @@ ${navBar("/approved")}
         res.send(pageDocs());
     });
 
+    app.get("/quests", auth.requirePin, (req, res) => {
+        res.send(pageQuests());
+    });
+
     app.get("/session/:sessionId", auth.requirePin, (req, res) => {
         res.send(pageSessionDetail());
     });
 }
 
+function pageQuests() {
+    return shell("บันทึก Quest", `
+<div class="container-lg">
+<h1 class="page-title gradient-text">🎯 บันทึกการทำ Quest (NeverDie Auto Quest)</h1>
+<p class="page-sub">ประวัติการใช้งานและรายละเอียดบัญชีที่ส่งทำเควสต์ผ่านพาเนล</p>
+${navBar("/quests")}
+
+<div class="stats-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px; margin-bottom:20px;">
+    <div class="card" style="padding:16px; text-align:center;">
+        <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">จำนวนรอบทั้งหมด</div>
+        <div id="statTotalSessions" style="font-size:24px; font-weight:bold; color:var(--text);">-</div>
+    </div>
+    <div class="card" style="padding:16px; text-align:center;">
+        <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">บัญชีที่ดำเนินการ</div>
+        <div id="statTotalAccounts" style="font-size:24px; font-weight:bold; color:var(--blue2);">-</div>
+    </div>
+    <div class="card" style="padding:16px; text-align:center;">
+        <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">เควสต์ที่สำเร็จ</div>
+        <div id="statCompletedQuests" style="font-size:24px; font-weight:bold; color:var(--green2);">-</div>
+    </div>
+    <div class="card" style="padding:16px; text-align:center;">
+        <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">กำลังดำเนินการ</div>
+        <div id="statRunningSessions" style="font-size:24px; font-weight:bold; color:var(--yellow2);">-</div>
+    </div>
+    <div class="card" style="padding:16px; text-align:center;">
+        <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">Auto Daily บันทึกไว้</div>
+        <div id="statScheduledRunners" style="font-size:24px; font-weight:bold; color:var(--purple2, #a855f7);">-</div>
+    </div>
+</div>
+
+<div class="card" style="padding:20px; margin-bottom:20px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+        <h2 style="font-size:16px; font-weight:600; margin:0;">🤖 บัญชี Auto Daily ที่บันทึกไว้ในระบบ (ตรวจ 00:00 / 08:00 / 16:00 น.)</h2>
+        <button type="button" class="btn btn-sm" onclick="loadScheduledRunners()">🔄 รีเฟรช Auto Daily</button>
+    </div>
+    <div style="overflow-x:auto;">
+        <table class="data-table" style="width:100%; border-collapse:collapse; font-size:13px;">
+            <thead>
+                <tr style="border-bottom:1px solid var(--border); text-align:left; color:var(--text-muted);">
+                    <th style="padding:10px 8px;">ผู้ใช้ / บัญชี</th>
+                    <th style="padding:10px 8px;">Owner ID</th>
+                    <th style="padding:10px 8px;">Channel</th>
+                    <th style="padding:10px 8px;">ตรวจครั้งล่าสุด</th>
+                    <th style="padding:10px 8px;">ตรวจครั้งถัดไป</th>
+                    <th style="padding:10px 8px;">สถานะ / ข้อผิดพลาด</th>
+                    <th style="padding:10px 8px; text-align:center;">จัดการ</th>
+                </tr>
+            </thead>
+            <tbody id="scheduledRunnersBody">
+                <tr><td colspan="7" style="padding:16px; text-align:center; color:var(--text-muted);">กำลังโหลดข้อมูล...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="card" style="padding:20px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+        <h2 style="font-size:16px; font-weight:600; margin:0;">📋 รายการประวัติการทำเควสต์ล่าสุด</h2>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <input type="text" id="questSearchInput" placeholder="🔍 ค้นหาผู้สั่ง / ID..." style="background:var(--bg); border:1px solid var(--border); color:var(--text); padding:5px 10px; border-radius:4px; font-size:13px; outline:none; width:180px;" oninput="filterQuestLogs()">
+            <button type="button" class="btn btn-sm" onclick="exportQuestLogsCsv()">📥 Export CSV</button>
+            <button type="button" class="btn btn-sm" onclick="loadQuestLogs()">🔄 รีเฟรช</button>
+        </div>
+    </div>
+
+    <div style="overflow-x:auto;">
+        <table class="data-table" style="width:100%; border-collapse:collapse; font-size:13px;">
+            <thead>
+                <tr style="border-bottom:1px solid var(--border); text-align:left; color:var(--text-muted);">
+                    <th style="padding:10px 8px;">เวลา</th>
+                    <th style="padding:10px 8px;">ผู้สั่งการ</th>
+                    <th style="padding:10px 8px;">สถานะรวม</th>
+                    <th style="padding:10px 8px; text-align:center;">จำนวนบัญชี</th>
+                    <th style="padding:10px 8px; text-align:center;">เควสต์สำเร็จ</th>
+                    <th style="padding:10px 8px;">รายละเอียดบัญชี</th>
+                </tr>
+            </thead>
+            <tbody id="questLogsBody">
+                <tr><td colspan="6" style="padding:24px; text-align:center; color:var(--text-muted);">กำลังโหลดข้อมูล...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px; flex-wrap:wrap; gap:8px;">
+        <span id="questPageInfo" style="font-size:12px; color:var(--text-muted);">แสดง 0 จาก 0 รายการ</span>
+        <div style="display:flex; gap:6px;">
+            <button type="button" id="questPrevBtn" class="btn btn-sm" onclick="changeQuestPage(-1)" disabled>◀ ย้อนกลับ</button>
+            <button type="button" id="questNextBtn" class="btn btn-sm" onclick="changeQuestPage(1)" disabled>ถัดไป ▶</button>
+        </div>
+    </div>
+</div>
+</div>
+
+<script>
+let questLogsCache = [];
+let currentFilteredLogs = [];
+let currentQuestPage = 1;
+const QUESTS_PER_PAGE = 10;
+
+function escapeHtmlStr(s) {
+    if (!s) return '';
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function formatDate(iso) {
+    if (!iso) return '-';
+    try {
+        const d = new Date(iso);
+        return d.toLocaleString('th-TH', { hour12: false });
+    } catch { return iso; }
+}
+
+function renderStatusBadge(status) {
+    switch (status) {
+        case 'completed':
+            return '<span class="badge" style="background:rgba(87,242,135,0.15); color:var(--green2); border:1px solid var(--green2); padding:2px 8px; border-radius:4px; font-weight:600;">สำเร็จ</span>';
+        case 'in_progress':
+        case 'running':
+            return '<span class="badge" style="background:rgba(88,101,242,0.15); color:var(--blue2); border:1px solid var(--blue2); padding:2px 8px; border-radius:4px; font-weight:600;">กำลังทำ...</span>';
+        case 'partial_failure':
+            return '<span class="badge" style="background:rgba(254,231,92,0.15); color:var(--yellow2); border:1px solid var(--yellow2); padding:2px 8px; border-radius:4px; font-weight:600;">บางส่วนไม่ผ่าน</span>';
+        case 'stopped':
+            return '<span class="badge" style="background:rgba(150,150,150,0.15); color:#aaa; border:1px solid #777; padding:2px 8px; border-radius:4px; font-weight:600;">สั่งหยุด</span>';
+        default:
+            return '<span class="badge" style="background:rgba(237,66,69,0.15); color:var(--red2); border:1px solid var(--red2); padding:2px 8px; border-radius:4px; font-weight:600;">ล้มเหลว</span>';
+    }
+}
+
+function renderQuestRows(logs) {
+    const tbody = document.getElementById('questLogsBody');
+    if (!logs || logs.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="padding:24px; text-align:center; color:var(--text-muted);">ไม่พบข้อมูลประวัติการทำเควสต์</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = logs.map(log => {
+        const accountsHtml = (log.accounts || []).map(acc => {
+            const accName = acc.targetUsername ? '@' + acc.targetUsername : 'ไม่ทราบชื่อ';
+            const accId = acc.targetUserId || '-';
+            const questBadges = (acc.details || []).map(d => {
+                const icon = d.completed ? '✅' : (d.error ? '❌' : '⏳');
+                return '<div style="font-size:11px; margin-top:2px;">' + icon + ' ' + escapeHtmlStr(d.questName || d.questId) + (d.claimed ? ' 🎁' : '') + '</div>';
+            }).join('');
+
+            return '<div style="margin-bottom:8px; padding:6px; background:var(--bg); border-radius:4px; border:1px solid var(--border);">' +
+                '<div style="font-weight:600; display:flex; justify-content:space-between; align-items:center;">' +
+                    '<span>' + escapeHtmlStr(accName) + ' <span style="font-size:11px; color:var(--text-muted);">(' + escapeHtmlStr(accId) + ')</span></span>' +
+                    renderStatusBadge(acc.status) +
+                '</div>' +
+                '<div style="font-size:11px; color:var(--text-muted); margin-top:2px;">Token: <code>' + escapeHtmlStr(acc.maskedToken) + '</code> | ผ่าน ' + (acc.questsCompleted || 0) + '/' + (acc.questsFound || 0) + ' เควสต์</div>' +
+                (acc.errorMessage ? '<div style="font-size:11px; color:var(--red2); margin-top:2px;">❌ ' + escapeHtmlStr(acc.errorMessage) + '</div>' : '') +
+                questBadges +
+            '</div>';
+        }).join('');
+
+        return '<tr style="border-bottom:1px solid var(--border); vertical-align:top;">' +
+            '<td style="padding:10px 8px; white-space:nowrap;">' + formatDate(log.createdAt) + '</td>' +
+            '<td style="padding:10px 8px;">' +
+                '<strong>' + escapeHtmlStr(log.invokerTag) + '</strong><br>' +
+                '<span style="font-size:11px; color:var(--text-muted);">ID: ' + escapeHtmlStr(log.invokerId) + '</span>' +
+            '</td>' +
+            '<td style="padding:10px 8px;">' + renderStatusBadge(log.overallStatus) + '</td>' +
+            '<td style="padding:10px 8px; text-align:center;">' + (log.accounts ? log.accounts.length : log.totalTokens) + '</td>' +
+            '<td style="padding:10px 8px; text-align:center; font-weight:bold; color:var(--green2);">' +
+                (log.accounts || []).reduce((sum, a) => sum + (a.questsCompleted || 0), 0) +
+            '</td>' +
+            '<td style="padding:10px 8px; min-width:280px;">' + accountsHtml + '</td>' +
+        '</tr>';
+    }).join('');
+}
+
+function renderCurrentQuestPage() {
+    const totalItems = currentFilteredLogs.length;
+    const totalPages = Math.max(1, Math.ceil(totalItems / QUESTS_PER_PAGE));
+    if (currentQuestPage > totalPages) currentQuestPage = totalPages;
+    if (currentQuestPage < 1) currentQuestPage = 1;
+
+    const startIdx = (currentQuestPage - 1) * QUESTS_PER_PAGE;
+    const pagedLogs = currentFilteredLogs.slice(startIdx, startIdx + QUESTS_PER_PAGE);
+
+    renderQuestRows(pagedLogs);
+
+    const pageInfo = document.getElementById('questPageInfo');
+    if (pageInfo) {
+        if (totalItems === 0) {
+            pageInfo.textContent = 'ไม่พบรายการข้อมูล';
+        } else {
+            pageInfo.textContent = 'หน้า ' + currentQuestPage + ' / ' + totalPages + ' (แสดง ' + (startIdx + 1) + '-' + Math.min(startIdx + QUESTS_PER_PAGE, totalItems) + ' จาก ' + totalItems + ' รายการ)';
+        }
+    }
+
+    const prevBtn = document.getElementById('questPrevBtn');
+    const nextBtn = document.getElementById('questNextBtn');
+    if (prevBtn) prevBtn.disabled = (currentQuestPage <= 1);
+    if (nextBtn) nextBtn.disabled = (currentQuestPage >= totalPages);
+}
+
+function changeQuestPage(delta) {
+    currentQuestPage += delta;
+    renderCurrentQuestPage();
+}
+
+function filterQuestLogs() {
+    const q = (document.getElementById('questSearchInput')?.value || '').trim().toLowerCase();
+    if (!q) {
+        currentFilteredLogs = questLogsCache.slice();
+    } else {
+        currentFilteredLogs = questLogsCache.filter(l => {
+            if ((l.invokerTag || '').toLowerCase().includes(q)) return true;
+            if ((l.invokerId || '').toLowerCase().includes(q)) return true;
+            return (l.accounts || []).some(a =>
+                (a.targetUsername || '').toLowerCase().includes(q) ||
+                (a.targetUserId || '').toLowerCase().includes(q)
+            );
+        });
+    }
+    currentQuestPage = 1;
+    renderCurrentQuestPage();
+}
+
+function exportQuestLogsCsv() {
+    if (!questLogsCache || questLogsCache.length === 0) {
+        alert('ไม่มีข้อมูลประวัติสำหรับ Export');
+        return;
+    }
+
+    const headers = ['CreatedAt', 'InvokerTag', 'InvokerId', 'OverallStatus', 'AccountsCount', 'TotalCompletedQuests', 'AccountsSummary'];
+    const rows = questLogsCache.map(l => {
+        const completed = (l.accounts || []).reduce((sum, a) => sum + (a.questsCompleted || 0), 0);
+        const accountsSummary = (l.accounts || []).map(a => (a.targetUsername || 'Unknown') + '(' + (a.targetUserId || '-') + '):' + a.status + ':done=' + (a.questsCompleted || 0)).join(' | ');
+
+        return [
+            JSON.stringify(l.createdAt || ''),
+            JSON.stringify(l.invokerTag || ''),
+            JSON.stringify(l.invokerId || ''),
+            JSON.stringify(l.overallStatus || ''),
+            (l.accounts ? l.accounts.length : l.totalTokens || 0),
+            completed,
+            JSON.stringify(accountsSummary)
+        ].join(',');
+    });
+
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', 'quest_logs_' + new Date().toISOString().slice(0, 10) + '.csv');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+}
+
+async function loadQuestLogs() {
+    try {
+        const res = await fetch('/api/quest-logs');
+        if (!res.ok) throw new Error('API Error ' + res.status);
+        const data = await res.json();
+        const logs = data.logs || [];
+        questLogsCache = logs;
+
+        let totalAccs = 0;
+        let totalDoneQuests = 0;
+        let runningCount = 0;
+
+        logs.forEach(l => {
+            totalAccs += (l.accounts ? l.accounts.length : (l.totalTokens || 0));
+            if (l.overallStatus === 'in_progress') runningCount++;
+            (l.accounts || []).forEach(a => {
+                totalDoneQuests += (a.questsCompleted || 0);
+            });
+        });
+
+        document.getElementById('statTotalSessions').textContent = logs.length;
+        document.getElementById('statTotalAccounts').textContent = totalAccs;
+        document.getElementById('statCompletedQuests').textContent = totalDoneQuests;
+        document.getElementById('statRunningSessions').textContent = runningCount;
+
+        filterQuestLogs();
+    } catch (err) {
+        document.getElementById('questLogsBody').innerHTML = '<tr><td colspan="6" style="padding:24px; text-align:center; color:var(--red2);">⚠️ ดึงข้อมูลประวัติไม่สำเร็จ: ' + escapeHtmlStr(err.message) + '</td></tr>';
+    }
+}
+
+async function loadScheduledRunners() {
+    try {
+        const res = await fetch('/api/quest-scheduled');
+        if (!res.ok) throw new Error('API Error ' + res.status);
+        const data = await res.json();
+        const runners = data.runners || [];
+        const tbody = document.getElementById('scheduledRunnersBody');
+        const countEl = document.getElementById('statScheduledRunners');
+        if (countEl) countEl.textContent = runners.length;
+
+        if (!runners.length) {
+            tbody.innerHTML = '<tr><td colspan="7" style="padding:16px; text-align:center; color:var(--text-muted);">ไม่มีบัญชี Auto Daily ในระบบ</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = runners.map(r => {
+            const nextTime = r.nextCheckAt ? formatDate(r.nextCheckAt) : '-';
+            const lastTime = r.lastCheckAt ? formatDate(r.lastCheckAt) : '-';
+            const errorText = r.lastError ? '<span style="color:var(--red2);">' + escapeHtmlStr(r.lastError) + '</span>' : '<span style="color:var(--green2);">ปกติ</span>';
+            return '<tr style="border-bottom:1px solid var(--border); vertical-align:middle;">' +
+                '<td style="padding:10px 8px;"><strong>' + escapeHtmlStr(r.username || 'Unknown') + '</strong><br><span style="font-size:11px; color:var(--text-muted);">ID: ' + escapeHtmlStr(r.accountId) + '</span></td>' +
+                '<td style="padding:10px 8px;">' + escapeHtmlStr(r.ownerId) + '</td>' +
+                '<td style="padding:10px 8px;">' + escapeHtmlStr(r.channelId) + '</td>' +
+                '<td style="padding:10px 8px;">' + lastTime + '</td>' +
+                '<td style="padding:10px 8px; color:var(--blue2);">' + nextTime + '</td>' +
+                '<td style="padding:10px 8px;">' + errorText + '</td>' +
+                '<td style="padding:10px 8px; text-align:center;"><button type="button" class="btn btn-sm btn-danger" data-id="' + escapeHtmlStr(r._id) + '" onclick="deleteScheduledRunner(this.dataset.id)">🛑 ลบ</button></td>' +
+            '</tr>';
+        }).join('');
+    } catch (e) {
+        document.getElementById('scheduledRunnersBody').innerHTML = '<tr><td colspan="7" style="padding:16px; text-align:center; color:var(--red2);">⚠️ ดึงข้อมูล Auto Daily ไม่สำเร็จ: ' + escapeHtmlStr(e.message) + '</td></tr>';
+    }
+}
+
+async function deleteScheduledRunner(id) {
+    if (!confirm('ต้องการลบและหยุด Auto Daily บัญชีนี้ใช่หรือไม่?')) return;
+    try {
+        const res = await fetch('/api/quest-scheduled/' + id, { method: 'DELETE' });
+        const data = await res.json();
+        if (data.success) {
+            loadScheduledRunners();
+        } else {
+            alert('ลบไม่สำเร็จ: ' + (data.error || 'Unknown error'));
+        }
+    } catch (err) {
+        alert('เกิดข้อผิดพลาด: ' + err.message);
+    }
+}
+
+loadQuestLogs();
+loadScheduledRunners();
+dashboardInterval(loadQuestLogs, 5000);
+dashboardInterval(loadScheduledRunners, 10000);
+</script>`);
+}
+
 module.exports = {
     registerViewRoutes,
     escapeHtml,
-    BASE_CSS
+    BASE_CSS,
+    _test: {
+        pageApproved
+    }
 };

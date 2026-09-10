@@ -13,7 +13,7 @@ ${navBar("/verification")}
 
 <section class="server-picker" aria-labelledby="guild-directory-title">
   <div class="server-picker-head">
-    <div><p class="verify-kicker">ระบบยืนยันตัวตน</p><h1 id="guild-directory-title">เลือกเซิร์ฟเวอร์ที่ต้องการจัดการ</h1><p>ดูสถานะและเปิดการตั้งค่าของแต่ละเซิร์ฟเวอร์ได้จากรายการด้านล่าง</p></div>
+    <div><p class="verify-kicker">ระบบยืนยันตัวตน</p><h1 id="guild-directory-title" class="gradient-text">เลือกเซิร์ฟเวอร์ที่ต้องการจัดการ</h1><p>ดูสถานะและเปิดการตั้งค่าของแต่ละเซิร์ฟเวอร์ได้จากรายการด้านล่าง</p></div>
     <div class="server-picker-legend" aria-label="คำอธิบายสถานะ"><span><i class="status-dot on"></i>เปิดใช้งาน</span><span><i class="status-dot off"></i>ปิดใช้งาน</span></div>
   </div>
   <div class="verify-toolbar">

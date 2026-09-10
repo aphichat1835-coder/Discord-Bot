@@ -15,21 +15,21 @@ function safeCryptoError(err) {
     return sanitizeLogText(err?.message || err?.name || err || 'unknown').slice(0, 180);
 }
 
-function getKey() {
+function getLegacyServiceKey() {
     const secret = process.env.ENCRYPTION_KEY;
     if (!secret) throw new Error('[CRYPTO] Missing ENCRYPTION_KEY');
     // Matches Service 1 key derivation: base64(sha256(key)).slice(0,32) as ASCII bytes
     return Buffer.from(crypto.createHash('sha256').update(String(secret)).digest('base64').substring(0, 32));
 }
 
-function getLegacyRawKey() {
+function getCurrentKey() {
     const secret = process.env.ENCRYPTION_KEY;
     if (!secret) throw new Error('[CRYPTO] Missing ENCRYPTION_KEY');
     return crypto.createHash('sha256').update(String(secret)).digest();
 }
 
-function getCompatibleKeys() {
-    const keys = [getKey(), getLegacyRawKey()];
+function getLegacyCompatibleKeys() {
+    const keys = [getLegacyServiceKey(), getCurrentKey()];
     return keys.filter((key, index) =>
         keys.findIndex(candidate => candidate.equals(key)) === index
     );
@@ -52,7 +52,7 @@ function encryptData(value) {
 
     const plain = typeof value === 'string' ? value : JSON.stringify(value);
     const iv = crypto.randomBytes(12);
-    const cipher = crypto.createCipheriv('aes-256-gcm', getKey(), iv, { authTagLength: 16 });
+    const cipher = crypto.createCipheriv('aes-256-gcm', getCurrentKey(), iv, { authTagLength: 16 });
 
     const ciphertext = Buffer.concat([
         cipher.update(plain, 'utf8'),
@@ -61,7 +61,7 @@ function encryptData(value) {
 
     const tag = cipher.getAuthTag();
 
-    return `v2:gcm:${iv.toString('base64url')}:${tag.toString('base64url')}:${ciphertext.toString('base64url')}`;
+    return `v3:gcm:${iv.toString('base64url')}:${tag.toString('base64url')}:${ciphertext.toString('base64url')}`;
 }
 
 const reportedDecryptFailures = new Set();
@@ -92,7 +92,8 @@ function decodePart(value, encoding, expectedBytes = null) {
 
 function parseGcmPayload(payload) {
     const parts = payload.split(':');
-    const versioned = parts[0] === 'v2';
+    const versioned = parts[0] === 'v2' || parts[0] === 'v3';
+    const version = versioned ? parts[0] : 'legacy';
     const offset = versioned ? 2 : 1;
 
     if ((versioned && parts[1] !== 'gcm') || parts.length < offset + 3) {
@@ -107,6 +108,7 @@ function parseGcmPayload(payload) {
     const encoding = looksLikeLegacyHex ? 'hex' : 'base64url';
 
     return {
+        version,
         iv: decodePart(parts[offset], encoding, 12),
         tag: decodePart(parts[offset + 1], encoding, 16),
         ciphertext: decodePart(parts.slice(offset + 2).join(':'), encoding)
@@ -155,10 +157,11 @@ function isJsonPlaintext(value) {
 }
 
 function decryptGcm(payload) {
-    const { iv, tag, ciphertext } = parseGcmPayload(payload);
+    const { version, iv, tag, ciphertext } = parseGcmPayload(payload);
     let lastError = null;
+    const keys = version === 'v3' ? [getCurrentKey()] : getLegacyCompatibleKeys();
 
-    for (const key of getCompatibleKeys()) {
+    for (const key of keys) {
         try {
             const decipher = crypto.createDecipheriv(
                 'aes-256-gcm',
@@ -172,7 +175,13 @@ function decryptGcm(payload) {
                 decipher.final()
             ]);
             const decoded = decodePlaintext(plaintext);
-            if (decoded !== null) return decoded;
+            if (decoded !== null) {
+                return {
+                    plaintext: decoded,
+                    format: version === 'v3' ? 'v3_gcm' : `${version}_gcm`,
+                    needsMigration: version !== 'v3'
+                };
+            }
             lastError = new Error('GCM plaintext is not valid UTF-8');
         } catch (err) {
             lastError = err;
@@ -190,7 +199,7 @@ function decryptLegacyCbc(payload, validatePlaintext = isPlausiblePlaintext) {
     const ciphertext = decodePart(parts.join(':'), 'hex');
     let lastError = null;
 
-    for (const key of getCompatibleKeys()) {
+    for (const key of getLegacyCompatibleKeys()) {
         try {
             const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
             const plaintext = Buffer.concat([
@@ -200,7 +209,11 @@ function decryptLegacyCbc(payload, validatePlaintext = isPlausiblePlaintext) {
             const decoded = decodePlaintext(plaintext);
 
             if (decoded !== null && validatePlaintext(decoded)) {
-                return decoded;
+                return {
+                    plaintext: decoded,
+                    format: 'legacy_cbc',
+                    needsMigration: true
+                };
             }
             lastError = new Error('CBC plaintext validation failed');
         } catch (err) {
@@ -211,16 +224,16 @@ function decryptLegacyCbc(payload, validatePlaintext = isPlausiblePlaintext) {
     throw lastError || new Error('No compatible CBC key');
 }
 
-function decryptData(payload, validatePlaintext = isPlausiblePlaintext) {
+function decryptDataForMigration(payload, validatePlaintext = isPlausiblePlaintext) {
     if (!payload || typeof payload !== 'string') return null;
 
-    if (payload.startsWith('v2:gcm:') || payload.startsWith('gcm:')) {
+    if (payload.startsWith('v3:gcm:') || payload.startsWith('v2:gcm:') || payload.startsWith('gcm:')) {
         try {
-            const plaintext = decryptGcm(payload);
-            if (!validatePlaintext(plaintext)) {
+            const result = decryptGcm(payload);
+            if (!validatePlaintext(result.plaintext)) {
                 throw new Error('GCM plaintext validation failed');
             }
-            return plaintext;
+            return result;
         } catch (err) {
             reportDecryptFailure('gcm', err);
             return null;
@@ -235,12 +248,28 @@ function decryptData(payload, validatePlaintext = isPlausiblePlaintext) {
     }
 }
 
+function decryptData(payload, validatePlaintext = isPlausiblePlaintext) {
+    return decryptDataForMigration(payload, validatePlaintext)?.plaintext || null;
+}
+
 function decryptToken(payload) {
     return decryptData(payload, isOAuthTokenPlaintext);
 }
 
+function decryptTokenForMigration(payload) {
+    return decryptDataForMigration(payload, isOAuthTokenPlaintext);
+}
+
 function decryptIP(payload) {
     return decryptData(payload, isIpPlaintext);
+}
+
+function decryptIPForMigration(payload) {
+    return decryptDataForMigration(payload, isIpPlaintext);
+}
+
+function isCurrentEncryptedPayload(payload) {
+    return typeof payload === 'string' && payload.startsWith('v3:gcm:');
 }
 
 function hmacValue(value, prefix = 'value') {
@@ -266,6 +295,7 @@ function safeJsonDecrypt(payload, fallback = null) {
 module.exports = {
     encryptData,
     decryptData,
+    decryptDataForMigration,
     safeJsonDecrypt,
     hmacValue,
 
@@ -274,9 +304,12 @@ module.exports = {
 
     encryptToken: encryptData,
     decryptToken,
+    decryptTokenForMigration,
 
     encryptIP: encryptData,
     decryptIP,
+    decryptIPForMigration,
+    isCurrentEncryptedPayload,
 
     hashIP: (ip) => hmacValue(ip, 'ip'),
     hashFingerprint: (fp) => hmacValue(fp, 'fingerprint'),

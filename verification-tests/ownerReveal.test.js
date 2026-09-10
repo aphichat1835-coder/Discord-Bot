@@ -36,55 +36,20 @@ describe("Owner full member data", () => {
 
   afterEach(() => jest.restoreAllMocks());
 
-  test("decrypts the latest stored IP without an extra approval workflow", async () => {
-    jest.spyOn(VerifyLog, "findOne").mockReturnValue({
-      sort: jest.fn().mockResolvedValue({
-        _id: "log-id",
-        ipInfo: {
-          encryptedRawIp: cryptoUtils.encryptIP("203.0.113.25"),
-          country: "Thailand",
-          city: "Bangkok",
-          isVPN: false
-        }
-      })
-    });
+  test("owner full-detail is the only Token/IP access path and has no separate reveal service", () => {
+    const fs = require("node:fs");
+    const ownerSource = fs.readFileSync("discord/verification/ownerService.js", "utf8");
+    const routeSource = fs.readFileSync("discord/verification/routes/guild.js", "utf8");
+    const frontendSource = fs.readFileSync("discord/verification/public/js/guild-dashboard.js", "utf8");
 
-    await expect(ownerService.revealRawIp({ guildId: "guild", userId: "user" }))
-      .resolves.toMatchObject({ success: true, rawIp: "203.0.113.25", ipInfo: { country: "Thailand" } });
-  });
-
-  test("decrypts OAuth tokens directly for the authenticated Owner route", async () => {
-    jest.spyOn(VerifyLog, "findOne").mockReturnValue(queryResult({ _id: "association" }));
-    jest.spyOn(OAuthUser, "findOne").mockReturnValue(queryResult({
-        discord: { userId },
-        oauth: {
-          encryptedAccessToken: cryptoUtils.encryptToken("access-token-value"),
-          encryptedRefreshToken: cryptoUtils.encryptToken("refresh-token-value"),
-          scope: "identify guilds email"
-        }
-    }));
-
-    await expect(ownerService.revealOAuthTokens({ guildId, userId }))
-      .resolves.toMatchObject({
-        success: true,
-        oauth: {
-          accessToken: "access-token-value",
-          refreshToken: "refresh-token-value",
-          scope: "identify guilds email"
-        }
-      });
-  });
-
-  test("rejects OAuth token access when the user is unrelated to the selected guild", async () => {
-    jest.spyOn(VerifyLog, "findOne").mockReturnValue(queryResult(null));
-    jest.spyOn(OAuthUser, "findOne").mockReturnValue(queryResult(null));
-
-    await expect(ownerService.revealOAuthTokens({ guildId, userId }))
-      .rejects.toMatchObject({ code: "member_not_found" });
-
-    const oauthQuery = OAuthUser.findOne.mock.results[0].value;
-    expect(oauthQuery.where).toHaveBeenCalledWith("lastVerify.guildId");
-    expect(oauthQuery.equals).toHaveBeenCalledWith(guildId);
+    expect(ownerSource).toContain("getOwnerFullMemberDetail");
+    expect(ownerSource).not.toContain("async function revealRawIp");
+    expect(ownerSource).not.toContain("async function revealOAuthTokens");
+    expect(routeSource).not.toContain("/reveal-token");
+    expect(routeSource).not.toContain("/reveal-ip");
+    expect(routeSource).toContain("getOwnerFullMemberDetail");
+    expect(frontendSource).toContain("detail.sensitive?.rawIp");
+    expect(frontendSource).toContain("sensitive.oauth");
   });
 
   test("rejects member and full-detail reads before loading unrelated OAuth secrets", async () => {

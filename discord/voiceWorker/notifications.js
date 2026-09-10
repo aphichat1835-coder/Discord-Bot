@@ -5,6 +5,7 @@ const sessionManager = require("../sessionManager");
 const dm = require("./dm");
 
 const EVENTS = Object.freeze({
+    VOICE_DISCONNECTED: "VOICE_DISCONNECTED",
     SESSION_READY: "SESSION_READY",
     RECOVERY_DELAYED: "RECOVERY_DELAYED",
     SESSION_RECOVERED: "SESSION_RECOVERED",
@@ -21,6 +22,7 @@ const EVENTS = Object.freeze({
 });
 const EVENT_TYPES = new Set(Object.values(EVENTS));
 const IMPORTANT_EVENTS = new Set([
+    EVENTS.VOICE_DISCONNECTED,
     EVENTS.RECOVERY_DELAYED,
     EVENTS.RECOVERY_EXHAUSTED,
     EVENTS.TOKEN_INVALID,
@@ -38,6 +40,7 @@ const CRITICAL_EVENTS = new Set([
     EVENTS.STOP_FAILED
 ]);
 const HIGH_EVENTS = new Set([
+    EVENTS.VOICE_DISCONNECTED,
     EVENTS.LOGIN_FAILED,
     EVENTS.GUILD_NOT_FOUND,
     EVENTS.CHANNEL_NOT_FOUND,
@@ -139,7 +142,7 @@ const DEFAULTS = Object.freeze({
 
 function createVoiceNotificationSystem(options = {}) {
     const manager = options.sessionManager || sessionManager;
-    const dmSender = options.dm || dm;
+    const dmSender = { ...dm, ...options.dm };
     const now = options.now || Date.now;
     const randomUUID = options.randomUUID || crypto.randomUUID;
     const setTimer = options.setTimer || setTimeout;
@@ -150,6 +153,7 @@ function createVoiceNotificationSystem(options = {}) {
     const incidentTimers = new Map();
     const ownerBudgets = new Map();
     const ownerDigests = new Map();
+    const recoveryTrackers = new Map();
     const diagnostics = {
         candidates: 0,
         sent: 0,
@@ -179,6 +183,8 @@ function createVoiceNotificationSystem(options = {}) {
                 incidentId: null,
                 openedAt: null,
                 attempts: 0,
+                hibernateCycle: 0,
+                hibernateUntil: null,
                 lifetimeAttempts: Number(session.reconnectCount || 0)
             };
         }
@@ -391,10 +397,12 @@ function createVoiceNotificationSystem(options = {}) {
             }
 
             const incidentId = randomUUID();
+            const openedAt = now();
+            const previousVoiceReadyAt = Number(session.voiceReadyAt || 0);
             session.recoveryState = {
                 phase: "degraded",
                 incidentId,
-                openedAt: now(),
+                openedAt,
                 attempts: 0,
                 lifetimeAttempts: Number(session.recoveryState.lifetimeAttempts || session.reconnectCount || 0),
                 cause: context.cause || "voice_disconnected"
@@ -402,13 +410,45 @@ function createVoiceNotificationSystem(options = {}) {
             session.reconnecting = true;
             await persist(sessionId);
             scheduleIncidentNotice(sessionId, incidentId);
+
+            if (context.notifyDisconnect !== false) {
+                await emit(sessionId, EVENTS.VOICE_DISCONNECTED, {
+                    ...context,
+                    incidentId,
+                    onlineSince: previousVoiceReadyAt,
+                    verifiedAt: openedAt
+                }).catch(() => {});
+
+                const snapshot = dmSender.createVoiceSnapshot(session, EVENTS.VOICE_DISCONNECTED, {
+                    ...context,
+                    incidentId,
+                    verifiedAt: openedAt
+                });
+                const trackerResult = await dmSender.sendVoiceRecoveryTrackerDM?.(snapshot, {
+                    incidentId,
+                    phase: "starting",
+                    attempts: 0,
+                    maxAttempts: 15,
+                    openedAt,
+                    statusText: "🔄 เริ่มกระบวนการกู้คืนและตรวจสอบช่องเสียง..."
+                }).catch(() => null);
+
+                if (trackerResult?.message) {
+                    recoveryTrackers.set(sessionId, {
+                        incidentId,
+                        message: trackerResult.message,
+                        openedAt
+                    });
+                }
+            }
+
             return { ...session.recoveryState };
         });
     }
 
     async function recordRecoveryAttempt(sessionId, context = {}) {
         await beginIncident(sessionId, context);
-        return serialize(sessionId, async () => {
+        const recovery = await serialize(sessionId, async () => {
             const session = getSession(sessionId);
             if (!session) return null;
             ensureRuntimeState(session);
@@ -419,6 +459,59 @@ function createVoiceNotificationSystem(options = {}) {
             await persist(sessionId);
             return { ...session.recoveryState };
         });
+
+        const tracker = recoveryTrackers.get(sessionId);
+        if (tracker && recovery) {
+            const session = getSession(sessionId);
+            if (session) {
+                const snapshot = dmSender.createVoiceSnapshot(session, EVENTS.VOICE_DISCONNECTED, context);
+                dmSender.editVoiceRecoveryTrackerDM?.(tracker, snapshot, {
+                    incidentId: tracker.incidentId,
+                    phase: "attempt",
+                    attempts: recovery.attempts,
+                    maxAttempts: 15,
+                    openedAt: tracker.openedAt,
+                    statusText: `🔄 กำลังลองเชื่อมต่อเข้าสู่ช่องเสียง (รอบที่ ${recovery.attempts}/15)...`
+                }).catch(() => {});
+            }
+        }
+        return recovery;
+    }
+
+    async function recordHibernateCycle(sessionId, cycle, hibernateUntil) {
+        const recovery = await serialize(sessionId, async () => {
+            const session = getSession(sessionId);
+            if (!session) return null;
+            ensureRuntimeState(session);
+            session.recoveryState.hibernateCycle = Number(cycle || 0);
+            session.recoveryState.hibernateUntil = Number(hibernateUntil || 0);
+            session.recoveryState.phase = "hibernate";
+            session.recoveryState.attempts = 0;
+            session.reconnecting = false;
+            await persist(sessionId);
+            return { ...session.recoveryState };
+        });
+
+        const tracker = recoveryTrackers.get(sessionId);
+        if (tracker && recovery) {
+            const session = getSession(sessionId);
+            if (session) {
+                const waitMinutes = Math.round(Math.max(0, (hibernateUntil - now()) / 60000));
+                const targetDate = new Date(hibernateUntil);
+                const timeStr = `${String(targetDate.getHours()).padStart(2, "0")}:${String(targetDate.getMinutes()).padStart(2, "0")}:${String(targetDate.getSeconds()).padStart(2, "0")}`;
+                const snapshot = dmSender.createVoiceSnapshot(session, EVENTS.VOICE_DISCONNECTED);
+                dmSender.editVoiceRecoveryTrackerDM?.(tracker, snapshot, {
+                    incidentId: tracker.incidentId,
+                    phase: "hibernate",
+                    cycle: Number(cycle || 1),
+                    attempts: 15,
+                    maxAttempts: 15,
+                    openedAt: tracker.openedAt,
+                    statusText: `⏸️ เข้าสู่โหมดพักกู้คืน (รอบที่ ${cycle}/2) พัก ${waitMinutes} นาที — จะเริ่มรอบใหม่เวลา ${timeStr} น.`
+                }).catch(() => {});
+            }
+        }
+        return recovery;
     }
 
     async function markReady(sessionId, context = {}) {
@@ -437,6 +530,8 @@ function createVoiceNotificationSystem(options = {}) {
                 incidentId: null,
                 openedAt: null,
                 attempts: 0,
+                hibernateCycle: 0,
+                hibernateUntil: null,
                 lifetimeAttempts: Number(previous.lifetimeAttempts || session.reconnectCount || 0),
                 lastIncidentId: previous.incidentId || null,
                 resolvedAt: previous.incidentId ? readyAt : null
@@ -447,6 +542,23 @@ function createVoiceNotificationSystem(options = {}) {
         });
         if (!transition) return { status: "skipped", reason: "session_missing" };
 
+        const tracker = recoveryTrackers.get(sessionId);
+        if (tracker) {
+            recoveryTrackers.delete(sessionId);
+            const session = getSession(sessionId);
+            if (session) {
+                const snapshot = dmSender.createVoiceSnapshot(session, EVENTS.SESSION_RECOVERED, context);
+                dmSender.editVoiceRecoveryTrackerDM?.(tracker, snapshot, {
+                    incidentId: tracker.incidentId,
+                    phase: "recovered",
+                    attempts: transition.previous.attempts,
+                    maxAttempts: 15,
+                    openedAt: tracker.openedAt,
+                    statusText: "🟢 กู้คืนการเชื่อมต่อสำเร็จ และยืนยันสถานะในช่องเสียงเรียบร้อยแล้ว"
+                }).catch(() => {});
+            }
+        }
+
         if (transition.previous.incidentId) {
             const outageDurationMs = transition.readyAt - Number(transition.previous.openedAt || transition.readyAt);
             const session = getSession(sessionId);
@@ -456,18 +568,15 @@ function createVoiceNotificationSystem(options = {}) {
             const delayedRecorded = Boolean(
                 delayedKey && getEventRecordValue(session?.notificationState?.events, delayedKey)
             );
-            if (delayedRecorded || outageDurationMs >= config.recoveryGraceMs) {
-                return emit(sessionId, EVENTS.SESSION_RECOVERED, {
-                    ...context,
-                    incidentId: transition.previous.incidentId,
-                    outageDurationMs,
-                    attempts: transition.previous.attempts,
-                    onlineSince: transition.previousVoiceReadyAt,
-                    recoveryNoticeSent: delayedRecorded
-                });
-            }
-            diagnostics.suppressed++;
-            return { status: "skipped", reason: "brief_recovery" };
+            return emit(sessionId, EVENTS.SESSION_RECOVERED, {
+                ...context,
+                incidentId: transition.previous.incidentId,
+                outageDurationMs,
+                attempts: transition.previous.attempts,
+                onlineSince: transition.previousVoiceReadyAt,
+                recoveryNoticeSent: true,
+                delayedNoticeSent: delayedRecorded
+            });
         }
 
         if (context.notifyInitial === false) return { status: "skipped", reason: "initial_notification_disabled" };
@@ -493,12 +602,34 @@ function createVoiceNotificationSystem(options = {}) {
             return incidentId;
         });
         if (!transition) return { status: "skipped", reason: "session_missing" };
+
+        const tracker = recoveryTrackers.get(sessionId);
+        if (tracker) {
+            recoveryTrackers.delete(sessionId);
+            const session = getSession(sessionId);
+            if (session) {
+                const isExhausted = type === EVENTS.RECOVERY_EXHAUSTED;
+                const snapshot = dmSender.createVoiceSnapshot(session, type, context);
+                dmSender.editVoiceRecoveryTrackerDM?.(tracker, snapshot, {
+                    incidentId: tracker.incidentId,
+                    phase: isExhausted ? "exhausted" : "terminal",
+                    attempts: context.attempts || session.recoveryState?.attempts || 15,
+                    maxAttempts: 15,
+                    openedAt: tracker.openedAt,
+                    statusText: isExhausted
+                        ? "⛔ สิ้นสุดความพยายาม (ลองกู้คืนครบกำหนดแล้ว)"
+                        : `🛑 การกู้คืนสิ้นสุดลง (${context.reason || type})`
+                }).catch(() => {});
+            }
+        }
+
         return emit(sessionId, type, { ...context, incidentId: transition });
     }
 
     function cleanupSession(sessionId) {
         cancelIncidentTimer(sessionId);
         transitions.delete(sessionId);
+        recoveryTrackers.delete(sessionId);
     }
 
     function cleanupVolatileState(timestamp = now()) {
@@ -529,7 +660,8 @@ function createVoiceNotificationSystem(options = {}) {
             transitions: transitions.size,
             incidents: incidentTimers.size,
             ownerBudgets: ownerBudgets.size,
-            ownerDigests: ownerDigests.size
+            ownerDigests: ownerDigests.size,
+            recoveryTrackers: recoveryTrackers.size
         };
     }
 
@@ -537,6 +669,7 @@ function createVoiceNotificationSystem(options = {}) {
         emit,
         beginIncident,
         recordRecoveryAttempt,
+        recordHibernateCycle,
         markReady,
         markTerminal,
         cleanupSession,

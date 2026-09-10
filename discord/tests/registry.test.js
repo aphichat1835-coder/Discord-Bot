@@ -15,7 +15,8 @@ test("slash command names are unique and include supported command groups", () =
     const unique = new Set(names);
 
     assert.equal(unique.size, names.length);
-    assert.equal(names.length, 15);
+    assert.equal(names.length, 19);
+    assert.equal(names.at(-1), "dm-panel");
 
     for (const expected of [
         "voice-online",
@@ -23,12 +24,16 @@ test("slash command names are unique and include supported command groups", () =
         "ban",
         "kick",
         "timeout",
-        "voicekickall",
+        "rerole",
+        "voiceadmin",
         "say",
         "announce",
         "backup",
         "restore",
-        "setup-verify"
+        "setup-verify",
+        "quest",
+        "token-check",
+        "dm-panel"
     ]) {
         assert.equal(unique.has(expected), true, `missing /${expected}`);
     }
@@ -37,6 +42,23 @@ test("slash command names are unique and include supported command groups", () =
     assert.equal(unique.has("stats"), false, "retired /stats command must stay unregistered");
     assert.equal(unique.has("whitelist"), false, "retired /whitelist command must stay unregistered");
     assert.equal(unique.has("setup-log"), false, "retired /setup-log command must stay unregistered");
+    assert.equal(unique.has("voicekickall"), false, "replaced /voicekickall command must stay unregistered");
+});
+
+test("rerole exposes target role and five optional role exceptions", () => {
+    const rerole = slashCommandsData.find(command => command.name === "rerole");
+
+    assert.ok(rerole);
+    assert.equal(rerole.options.length, 6);
+    assert.deepEqual(rerole.options.map(option => option.name), [
+        "target_role",
+        "role_1",
+        "role_2",
+        "role_3",
+        "role_4",
+        "role_5"
+    ]);
+    assert.equal(rerole.options.every(option => option.type === 8 && option.required === false), true);
 });
 
 test("slash command definitions have stable required shape", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
@@ -59,12 +81,13 @@ test("slash command definitions have stable required shape", () => { // NOSONAR 
     }
 });
 
-test("announce exposes safe mention opt-in", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("announce sends raw mention content without an extra permission toggle", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const announce = slashCommandsData.find(command => command.name === "announce");
     const allowMentions = announce.options.find(option => option.name === "allow_mentions");
+    const content = announce.options.find(option => option.name === "content");
 
-    assert.equal(allowMentions.type, 5);
-    assert.equal(allowMentions.required, false);
+    assert.equal(allowMentions, undefined);
+    assert.match(content.description, /@everyone/);
 });
 
 test("restore exposes dry-run option", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.

@@ -18,7 +18,8 @@ const { requireCsrf } = require('../../index/auth');
 const router = require("express").Router();
 const crypto = require("node:crypto");
 const mongoose = require("mongoose");
-const { resolvePublicBaseUrl } = require("../../core/publicUrl");
+const { requirePublicBaseUrl } = require("../../core/publicUrl");
+const { decryptIP } = require("../utils/crypto");
 const { verificationGuildPage } = require("../guildPage");
 
 const GuildConfig = require("../models/GuildConfig");
@@ -58,6 +59,7 @@ const {
 } = require("../utils/verificationSnapshots");
 const verifiedMemberService = require("../services/verifiedMemberService");
 const verificationOwnerService = require("../ownerService");
+const { runMemberPrivacyDeletion } = require("../services/privacyDeletion");
 const { runGuildPreflight } = require("../services/guildPreflightService");
 
 const SNOWFLAKE_RE = /^\d{17,22}$/;
@@ -353,14 +355,10 @@ function pagination(page, limit, total) {
   };
 }
 
-function getPublicBaseUrl(req) {
-  const envUrl = resolvePublicBaseUrl(process.env, process.env.RENDER_EXTERNAL_URL || "");
-
-  if (envUrl) return trimTrailingSlashes(envUrl);
-
-  const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
-  const host = req.headers["x-forwarded-host"] || req.headers.host;
-  return trimTrailingSlashes(`${proto}://${host}`);
+function getPublicBaseUrl() {
+  return trimTrailingSlashes(requirePublicBaseUrl(process.env, {
+    developmentFallback: "http://localhost:3000"
+  }));
 }
 
 function trimTrailingSlashes(value) {
@@ -516,7 +514,12 @@ function mergeVerificationConfig(existing = {}, incoming = {}) {
 function serializeConfig(doc) {
   const raw = doc?.toObject ? doc.toObject() : doc || {};
   const verification = normalizeVerificationConfig(raw.verification || {});
-  const security = { ...raw.security };
+  const security = {
+    ...raw.security,
+    storeOAuthTokens: true,
+    storeRawIpEncrypted: true,
+    retentionMode: "until_admin_delete"
+  };
   delete security.sensitiveDataAccess;
   delete security.ipRevealRequiresOwnerApproval;
 
@@ -550,6 +553,11 @@ function serializeVerifyLog(log = {}, options = {}) {
   const canViewSensitive = options.canViewSensitive === true;
   const parts = buildVerifyLogParts(log, canViewSensitive);
   const { raw } = parts;
+  if (canViewSensitive && raw?.ipInfo?.encryptedRawIp) {
+    const rawIp = decryptIP(raw.ipInfo.encryptedRawIp);
+    parts.ipInfo.rawIp = rawIp || null;
+    parts.ipInfo.ip = rawIp || null;
+  }
   const common = buildVerifyLogCommon(parts, {
     canViewSensitive,
     defaultResult: "failed"
@@ -609,31 +617,20 @@ function makePanelRevision(prefix = "panel") {
 }
 
 function buildDiscordAuthorizeUrl(req, { guildId, roleId, panelRevision = null }) {
-  const dashboardUrl = getPublicBaseUrl(req);
+  const dashboardUrl = getPublicBaseUrl();
   const clientId = process.env.DISCORD_CLIENT_ID;
 
   if (!dashboardUrl) throw new Error("Missing PUBLIC_BASE_URL/DASHBOARD_PUBLIC_URL");
   if (!clientId) throw new Error("Missing DISCORD_CLIENT_ID");
 
-  const redirectUri = `${dashboardUrl}/auth/callback`;
-
-  const state = createCompactCallbackState({
+  const panelState = createCompactCallbackState({
     guildId,
     roleId,
     expectedUserId: null,
     panelRevision
   });
 
-  const params = new URLSearchParams({
-    client_id: clientId,
-    redirect_uri: redirectUri,
-    response_type: "code",
-    scope: "identify identify.premium email connections guilds guilds.members.read guilds.join",
-    state,
-    prompt: "consent"
-  });
-
-  return `https://discord.com/oauth2/authorize?${params.toString()}`;
+  return `${dashboardUrl}/auth/start?state=${encodeURIComponent(panelState)}`;
 }
 
 function makePanelPayload(req, { guildId, verification }) {
@@ -848,9 +845,9 @@ async function validateVerificationConfig(req, guildId, verification) {
     if (mode === "oauth") {
       const guildPermissions = discordAPI.computeMemberGuildPermissions(context.botMember, context.roles);
       const moderationPermissions = [
-        ["timeout", discordAPI.PERMISSIONS.MODERATE_MEMBERS, "หมดเวลา", "Moderate Members"],
-        ["kick", discordAPI.PERMISSIONS.KICK_MEMBERS, "เตะสมาชิก", "Kick Members"],
-        ["ban", discordAPI.PERMISSIONS.BAN_MEMBERS, "แบนสมาชิก", "Ban Members"]
+        ["timeout", discordAPI.PERMISSIONS.ModerateMembers, "หมดเวลา", "Moderate Members"],
+        ["kick", discordAPI.PERMISSIONS.KickMembers, "เตะสมาชิก", "Kick Members"],
+        ["ban", discordAPI.PERMISSIONS.BanMembers, "แบนสมาชิก", "Ban Members"]
       ];
 
       for (const [action, permission, thaiLabel, discordLabel] of moderationPermissions) {
@@ -1043,8 +1040,8 @@ router.get("/api/guild/:guildId/preflight", requireAdmin, requireGuildAdmin, asy
 router.get("/api/guild/:guildId/verify/panel/sync", requireAdmin, requireGuildAdmin, async (req, res) => {
   try {
     const { guildId } = req.params;
-    const config = await ensureGuildConfig(guildId, req.adminGuild?.name);
-    const verification = normalizeVerificationConfig(config.verification || {});
+    const config = await GuildConfig.findOne({ guildId }).lean();
+    const verification = normalizeVerificationConfig(config?.verification || {});
     const channelId = cleanSnowflake(verification.channelId);
     const messageId = cleanSnowflake(verification.messageId);
     if (!channelId || !messageId) {
@@ -1431,7 +1428,7 @@ router.get("/api/guild/:guildId/logs", requireAdmin, requireGuildAdmin, async (r
         .limit(limit)
         .lean()
     ]);
-    const canViewSensitive = req.verificationOwner === true;
+    const canViewSensitive = true;
     res.json({
       success: true,
       logs: logs.map(log => serializeVerifyLog(log, { canViewSensitive })),
@@ -1453,7 +1450,7 @@ router.get("/api/guild/:guildId/members", requireAdmin, requireGuildAdmin, async
       limit,
       q,
       includeLegacy: true,
-      canViewSensitive: req.verificationOwner === true
+      canViewSensitive: true
     });
     res.json({
       success: true,
@@ -1480,11 +1477,10 @@ router.get("/api/guild/:guildId/member/:userId/detail", requireAdmin, requireGui
     if (!targetUserId) {
       return res.status(400).json({ success: false, code: "invalid_user_id", error: "User ID ไม่ถูกต้อง" });
     }
-    const canViewSensitive = req.verificationOwner === true;
-    const detail = await verificationOwnerService.getMemberDetail(guildId, targetUserId, {
-      canViewSensitive
-    });
-    res.json(detail);
+    res.json(await verificationOwnerService.getOwnerFullMemberDetail({
+      guildId,
+      userId: targetUserId
+    }));
   } catch (err) {
     if (err?.code === "member_not_found") {
       return res.status(404).json({
@@ -1505,10 +1501,7 @@ router.post("/api/guild/:guildId/member/:userId/full-detail", requireAdmin, requ
       return res.status(400).json({ success: false, code: "invalid_user_id", error: "User ID ไม่ถูกต้อง" });
     }
     res.set("Cache-Control", "no-store");
-    res.json(await verificationOwnerService.getOwnerFullMemberDetail({
-      guildId,
-      userId: targetUserId
-    }));
+    res.json(await verificationOwnerService.getOwnerFullMemberDetail({ guildId, userId: targetUserId }));
   } catch (err) {
     if (err?.code === "member_not_found") {
       return res.status(404).json({ success: false, code: err.code, error: "ไม่พบรายละเอียดสมาชิก" });
@@ -1542,28 +1535,6 @@ router.get("/api/guild/:guildId/member/:userId/ip-history", requireAdmin, requir
       success: false,
       code: err?.code || "ip_history_failed",
       error: "โหลดประวัติ IP ไม่สำเร็จ"
-    });
-  }
-});
-
-router.post("/api/guild/:guildId/member/:userId/reveal-token", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
-  try {
-    const { guildId, userId } = req.params;
-    const targetUserId = cleanSnowflake(userId);
-    if (!targetUserId) {
-      return res.status(400).json({ success: false, code: "invalid_user_id", error: "User ID ไม่ถูกต้อง" });
-    }
-    res.set("Cache-Control", "no-store");
-    res.json(await verificationOwnerService.revealOAuthTokens({
-      guildId,
-      userId: targetUserId
-    }));
-  } catch (err) {
-    const status = tokenRevealErrorStatus(err?.code);
-    res.status(status).json({
-      success: false,
-      code: err?.code || "token_reveal_failed",
-      error: "เปิด OAuth token ไม่สำเร็จ"
     });
   }
 });
@@ -1638,63 +1609,6 @@ router.get("/api/guild/:guildId/stats", requireAdmin, requireGuildAdmin, async (
   }
 });
 
-async function deleteMemberDataAtomically({ guildId, targetUserId, deletedAt, deletedBy }) {
-  const session = await mongoose.startSession();
-  let results;
-  try {
-    await session.withTransaction(async () => {
-      results = await Promise.all([
-        VerifyLog.updateMany(
-          { guildId, userId: targetUserId, deletedAt: { $exists: false } },
-          { $set: { deletedAt, deletedBy } },
-          { session }
-        ),
-        OAuthUser.updateOne(
-          { "discord.userId": targetUserId, deletedAt: { $exists: false } },
-          { $pull: { guilds: { id: guildId } }, $set: { updatedAt: deletedAt } },
-          { session }
-        ),
-        OAuthUser.updateOne(
-          {
-            "discord.userId": targetUserId,
-            $or: [{ "lastVerify.guildId": guildId }, { "lastMember.guildId": guildId }],
-            deletedAt: { $exists: false }
-          },
-          { $unset: { lastVerify: "", lastMember: "" }, $set: { updatedAt: deletedAt } },
-          { session }
-        ),
-        IpIdentityLink.updateMany(
-          {
-            guildId,
-            "users.userId": targetUserId,
-            uniqueUsers: { $lte: 1 },
-            deletedAt: { $exists: false }
-          },
-          { $set: { deletedAt, deletedBy, updatedAt: deletedAt } },
-          { session }
-        ),
-        IpIdentityLink.updateMany(
-          {
-            guildId,
-            "users.userId": targetUserId,
-            uniqueUsers: { $gt: 1 },
-            deletedAt: { $exists: false }
-          },
-          {
-            $pull: { users: { userId: targetUserId }, roleSnapshots: { userId: targetUserId } },
-            $inc: { uniqueUsers: -1 },
-            $set: { updatedAt: deletedAt }
-          },
-          { session }
-        )
-      ]);
-    });
-    return results;
-  } finally {
-    await session.endSession();
-  }
-}
-
 router.delete("/api/guild/:guildId/member/:userId", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
   try {
     const { guildId, userId } = req.params;
@@ -1709,22 +1623,20 @@ router.delete("/api/guild/:guildId/member/:userId", requireAdmin, requireGuildAd
       });
     }
 
-    const deletedAt = now();
-    const deletedBy = adminId || "owner-dashboard";
-
-    const [verifyLogs, oauthGuildData, oauthLastData, singleIpLinks, sharedIpLinks] =
-      await deleteMemberDataAtomically({ guildId, targetUserId, deletedAt, deletedBy });
+    const deletion = await runMemberPrivacyDeletion({
+      guildId,
+      userId: targetUserId,
+      requestedBy: adminId || "dashboard-control"
+    });
 
     res.json({
       success: true,
-      deletedCount: verifyLogs.modifiedCount || 0,
-      details: {
-        verifyLogs: verifyLogs.modifiedCount || 0,
-        oauthGuildsPulled: oauthGuildData.modifiedCount || 0,
-        oauthLastSnapshotsCleared: oauthLastData.modifiedCount || 0,
-        ipIdentityLinksDeleted: singleIpLinks.modifiedCount || 0,
-        ipIdentityLinksUpdated: sharedIpLinks.modifiedCount || 0
-      }
+      jobId: deletion.jobId,
+      status: deletion.status || "completed",
+      reused: deletion.reused === true,
+      pending: deletion.pending === true,
+      deletedCount: Number(deletion.manifest?.deletedCount || 0),
+      details: deletion.manifest
     });
   } catch (err) {
     return sendServerError(res, "delete-member-data", err, "ลบข้อมูลสมาชิกไม่สำเร็จ");

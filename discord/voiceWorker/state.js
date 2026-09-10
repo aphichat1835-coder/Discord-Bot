@@ -20,6 +20,7 @@ const lastOnlineDMSent = new Map();
 
 // ── Recovery state (declared here so lifecycle can share) ──
 const recoveryTimestamps = new Map();
+const hibernateTimers = new Map();
 
 /*
  * Mutable primitive flags — wrapped in `st` object so that cross-module
@@ -67,6 +68,7 @@ module.exports = {
     lastDMSent,
     lastOnlineDMSent,
     recoveryTimestamps,
+    hibernateTimers,
     setShuttingDown,
     setProtectedChecker,
     setMainClient,

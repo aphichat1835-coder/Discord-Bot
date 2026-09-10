@@ -30,7 +30,8 @@ function buildRuntimeStatusPayload({
     client,
     config,
     botReadyAt,
-    serializeVoiceSession
+    serializeVoiceSession,
+    getSessionToken
 }) {
     const sessions = Array.from(sessionManager.getAllSessions().values())
         .filter(session => sessionManager.isSessionRunnable?.(session) !== false);
@@ -67,7 +68,12 @@ function buildRuntimeStatusPayload({
         maxSessions: Number.isFinite(dynamicMaxSessions) && dynamicMaxSessions > 0
             ? dynamicMaxSessions
             : config.limits.maxSessions,
-        sessionList: sessions.map(session => serializeVoiceSession(session)),
+        sessionList: sessions.map(session => ({
+            ...serializeVoiceSession(session),
+            ...(typeof getSessionToken === "function"
+    ? { token: getSessionToken(session.sessionId) }
+    : {})
+        })),
         clientPool: voiceWorker.getClientPoolSize(),
         clientPoolSize: workerDiagnostics.clientPool ?? voiceWorker.getClientPoolSize(),
         naturalTimers: workerDiagnostics.naturalTimers ?? 0,

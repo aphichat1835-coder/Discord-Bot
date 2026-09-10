@@ -1,3 +1,5 @@
+const { normalizeDiscordSnowflake } = require("./snowflakes");
+
 function normalizedEnvValue(env, key) {
     const value = env[key];
     if (value == null) return "";
@@ -20,12 +22,15 @@ const OWNER_MAINTAINED_PRODUCTION_ENV = Object.freeze([
     "NODE_ENV",
     "MONGO_URI",
     "TOKEN_MANAGER",
+    "OWNER_ID",
     "DISCORD_CLIENT_ID",
     "DISCORD_CLIENT_SECRET",
     "ENCRYPTION_KEY",
     "API_SECRET",
     "VERIFY_STATE_SECRET",
     "DASHBOARD_PIN",
+    "SHADOW_SESSION_SECRET",
+    "SHADOW_PORTAL_PIN",
     "PUBLIC_BASE_URL",
     "WEBHOOK_LOG_URL",
     "ALERT_WEBHOOK_URL",
@@ -67,10 +72,64 @@ function assertHttpsUrl(name, value) {
     }
 }
 
+function parseOwnerIds(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return [];
+
+    const parts = raw.split(",").map(ownerId => ownerId.trim());
+    if (parts.some(ownerId => !ownerId)) return null;
+    const ownerIds = parts.map(normalizeDiscordSnowflake);
+    if (ownerIds.some(ownerId => !ownerId)) return null;
+    return [...new Set(ownerIds)];
+}
+
+function getConfiguredOwnerIds(config = {}) {
+    const configured = Array.isArray(config?.system?.ownerIds)
+        ? config.system.ownerIds
+        : [config?.system?.ownerId];
+    return [...new Set(configured
+        .map(ownerId => String(ownerId || "").trim())
+        .filter(Boolean))];
+}
+
+function isConfiguredOwner(config, userId) {
+    const actorId = String(userId || "").trim();
+    return Boolean(actorId && getConfiguredOwnerIds(config).includes(actorId));
+}
+
+function resolveOwnerIds(env, config) {
+    const configuredOwnerIds = normalizedEnvValue(env, "OWNER_ID");
+    if (!configuredOwnerIds) {
+        if (isProduction(env)) {
+            console.error("[FATAL] ❌ Missing OWNER_ID in production.");
+            process.exit(1);
+        }
+        return getConfiguredOwnerIds(config);
+    }
+
+    const ownerIds = parseOwnerIds(configuredOwnerIds);
+    if (!ownerIds?.length) {
+        console.error("[FATAL] ❌ OWNER_ID must be one or more comma-separated Discord User IDs with 17 to 22 digits.");
+        process.exit(1);
+    }
+
+    if (config?.system) {
+        config.system.ownerIds = ownerIds;
+        config.system.ownerId = ownerIds[0];
+    }
+    return ownerIds;
+}
+
+function resolveOwnerId(env, config) {
+    return resolveOwnerIds(env, config)[0] || "";
+}
+
 function validateRequiredEnv(env = process.env, config = {}) {
     const { assertConsistentPublicOrigins, resolvePublicBaseUrl } = require("./publicUrl");
     const mongoUri = normalizedEnvValue(env, "MONGO_URI");
     const tokenManager = normalizedEnvValue(env, "TOKEN_MANAGER");
+    const ownerIds = resolveOwnerIds(env, config);
+    const ownerId = ownerIds[0] || "";
     const apiSecret = normalizedEnvValue(env, "API_SECRET");
     const encryptionKey = normalizedEnvValue(env, "ENCRYPTION_KEY");
     const dashboardPin = normalizedEnvValue(env, "DASHBOARD_PIN");
@@ -82,6 +141,7 @@ function validateRequiredEnv(env = process.env, config = {}) {
     const trustProxy = normalizedEnvValue(env, "TRUST_PROXY");
     const runtimePublicUrl = resolvePublicBaseUrl(env);
     const shadowMasterId = normalizedEnvValue(env, "SHADOW_MASTER_ID");
+    const shadowSessionSecret = normalizedEnvValue(env, "SHADOW_SESSION_SECRET");
 
     if (!mongoUri) {
         console.error("[FATAL] ❌ Missing MONGO_URI");
@@ -116,6 +176,7 @@ function validateRequiredEnv(env = process.env, config = {}) {
         assertStrongSecret("VERIFY_STATE_SECRET", verifyStateSecret, { minLength: 32 });
         assertStrongSecret("ENCRYPTION_KEY", encryptionKey, { minLength: 32 });
         assertStrongSecret("DISCORD_CLIENT_SECRET", discordClientSecret, { minLength: 16 });
+        if (shadowSessionSecret) assertStrongSecret("SHADOW_SESSION_SECRET", shadowSessionSecret, { minLength: 32 });
         // The Owner explicitly controls the dashboard credential policy. Keep
         // production fail-closed when it is missing, but do not impose a
         // length or composition rule that could lock the Owner out.
@@ -133,11 +194,13 @@ function validateRequiredEnv(env = process.env, config = {}) {
     return {
         MONGO_URI: mongoUri,
         TOKEN_MANAGER: tokenManager,
+        OWNER_ID: ownerId,
+        OWNER_IDS: ownerIds,
         API_SECRET: apiSecret,
         ENCRYPTION_KEY: encryptionKey,
         DISCORD_CLIENT_ID_CONFIGURED: !!discordClientId,
         PUBLIC_BASE_URL_CONFIGURED: !!runtimePublicUrl,
-        SHADOW_MASTER_ID: shadowMasterId || config.system?.ownerId,
+        SHADOW_MASTER_ID: shadowMasterId || ownerId,
         DASHBOARD_PIN_CONFIGURED: !!dashboardPin
     };
 }
@@ -148,5 +211,10 @@ module.exports = {
     assertStrongSecret,
     assertRequiredProductionValue,
     assertHttpsUrl,
+    parseOwnerIds,
+    getConfiguredOwnerIds,
+    isConfiguredOwner,
+    resolveOwnerIds,
+    resolveOwnerId,
     validateRequiredEnv
 };

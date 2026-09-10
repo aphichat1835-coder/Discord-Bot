@@ -1,18 +1,19 @@
 # Roadmap
 
-Last reviewed: 2026-07-16 (`tt`).
+Last reviewed: 2026-07-26 (`ttt.1` release candidate).
 
 ## Current architecture baseline
 
-- One repository and one Node.js 24 runtime.
+- One repository and one Node.js 24.18 LTS runtime.
 - One Express listener on `PORT || 3000`.
 - One shared Mongoose connection.
-- Main bot, voice/session, Owner Dashboard, OAuth verification, maintenance, and
+- Main bot, voice/session, Dashboard ควบคุมบอท, OAuth verification, maintenance, and
   protection start through `npm start`.
 - Verification management is Owner PIN only.
 - Member OAuth callback remains public.
 - Existing MongoDB collections and encryption compatibility are retained.
-- `discord.js` remains v13.
+- The primary bot runs `discord.js` v14; the isolated Voice account client is
+  retained until a supported replacement can preserve that lifecycle.
 - Protected owner/system files remain locked.
 
 Changes that would reintroduce a second service, second port, second runtime
@@ -30,20 +31,19 @@ require a new explicit owner decision.
   admin OAuth routes, and deployment definition.
 - Kept `/setup-verify`, signed state, panel revision, `guilds.join`, Join
   Campaign, retention, join, and role assignment flows.
-- Added combined `/health` readiness.
+- Added lightweight `/ping` liveness plus combined `/health` and `/ready` readiness.
 - Added full returned guild/connection/target-role persistence and
   failure-preserving snapshot updates.
 - Replaced Join Campaign's total-user ceiling and embedded per-IP history caps
   with cursor batches and paginated canonical history collections.
 - Added additive snapshot/data-quality fields and dry-run/apply migration.
-- Added audited Owner raw-IP reveal while keeping normal APIs redacted.
-- Added a separate audited full-detail POST while keeping the normal detail GET
-  redacted and non-cacheable for sensitive responses.
+- Owner Dashboard full detail now returns Token, raw IP, and the complete
+  Owner-visible record directly after normal authentication; no reason,
+  repeated PIN, separate reveal action, or approval queue is required.
 - Made snapshot persistence complete-version based with per-document BSON
   sizing, oversized-object checksum chunks, rollback recovery, and no aggregate
   truncation ceiling.
-- Made privacy deletion and IP-history backfill transactional/idempotent, and
-  required a confirmed maintenance window for archive restore apply.
+- Added a resumable, guild-scoped privacy-deletion manifest with post-delete reference verification, while keeping IP-history backfill idempotent and requiring a confirmed maintenance window for archive restore apply.
 - Added guild-backup identity/chunk validation and permission-overwrite restore.
 - Replaced the inherited Owner Verification presentation with a five-section,
   mobile-first module inside the purple Owner Dashboard while preserving routes,
@@ -65,11 +65,8 @@ require a new explicit owner decision.
 
 ### Verification quality
 
-- Add fixture-driven callback integration tests against a disposable MongoDB
-  instance when CI provides one.
-- Expand route-level tests for Owner PIN redirect, CSRF rejection, callback rate
-  limiting, and readiness degradation without introducing production test
-  dependencies.
+- Run the failure-injection callback suite against a disposable MongoDB instance when CI provides one.
+- Keep route-level tests for Owner PIN redirect, CSRF rejection, callback rate limiting, protected-session revocation, and readiness degradation current.
 - Add explicit metrics for optional-fetch failure rates by category.
 
 ### UI maintainability
@@ -91,7 +88,9 @@ require a new explicit owner decision.
 
 These are not approved by this roadmap:
 
-- `discord.js` v14 migration
+- reverting the primary bot from the approved `discord.js` v14 baseline
+- replacing the isolated `discord.js-selfbot-v13` Voice client without a
+  supported lifecycle-compatible alternative
 - replacement of MongoDB
 - rewrite of voice/session
 - splitting the repository or verification runtime again
@@ -109,12 +108,17 @@ analysis, rollback planning, and full validation.
 - Unified callback URI is registered in Discord Developer Portal.
 - Canonical `PUBLIC_BASE_URL` resolves to the deployed HTTPS origin; any
   retained legacy aliases match it exactly.
-- `npm run check`, `npm test`, dependency audit, secret scan, and protected-path
-  guard pass.
-- `/ping` and `/health` behave correctly during startup and ready state.
+- `npm run check`, `npm test`, LCOV thresholds, dependency audit, secret scan, and the externally approved protected-path guard pass.
+- `/ping` remains live during startup while `/health` and `/ready` report degraded until dependencies are ready.
 - Owner PIN/CSRF protections are verified for every management write.
 - A real OAuth flow verifies profile, optional data, guild join, target member,
   role assignment, persistence, and redaction.
 - Existing records remain readable before and after migration.
 - If a legacy standalone service still exists, it is stopped only after the
   unified runtime passes; current installations otherwise deploy one service.
+
+## Owner-approved self-client dependency
+
+`discord.js-selfbot-v13` is an intentional and necessary dependency of the isolated Voice account/session subsystem. The repository owner has explicitly approved its continued use because the current architecture has no compatible replacement that preserves the required behavior.
+
+Do not remove, replace, migrate, rename, independently upgrade/downgrade, or convert its library-specific APIs unless the repository owner gives a new explicit instruction for that exact change. Main-bot Discord.js v14 work must remain isolated from the self-client package. See [`docs/SELF_CLIENT_POLICY.md`](docs/SELF_CLIENT_POLICY.md) for the binding maintenance policy.

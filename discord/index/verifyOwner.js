@@ -95,26 +95,6 @@ function registerVerifyOwnerRoutes({ app, express }) {
         }
     );
 
-    app.post(
-        "/api/verify-owner/guild/:guildId/user/:userId/reveal-ip",
-        auth.requirePin,
-        auth.requireCsrf,
-        express.json(),
-        async (req, res) => {
-            const guildId = safeGuildId(req.params.guildId);
-            const userId = safeGuildId(req.params.userId);
-            if (!guildId) return sendInvalidGuildId(res);
-            if (!userId) return sendInvalidUserId(res);
-            try {
-                res.json(await verificationOwnerService.revealRawIp({
-                    guildId,
-                    userId
-                }));
-            } catch (err) {
-                sendError(res, err);
-            }
-        }
-    );
 }
 
 module.exports = {

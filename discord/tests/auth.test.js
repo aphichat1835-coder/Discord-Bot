@@ -103,3 +103,35 @@ test("dashboard auth can identify sessions that need rolling refresh", () => {
     restoreEnv("DASHBOARD_SESSION_MAX_AGE_MS", oldMaxAge);
     restoreEnv("DASHBOARD_SESSION_REFRESH_AFTER_MS", oldRefresh);
 });
+
+test("csrf middleware trusts only the authenticated server-secret flag, not header presence", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const oldPin = process.env.DASHBOARD_PIN;
+    process.env.DASHBOARD_PIN = "owner-pin";
+    try {
+        const fakeHeaderRequest = {
+            method: "POST",
+            headers: { authorization: "Bearer fake", "x-internal-secret": "fake" },
+            authenticatedByServerSecret: false
+        };
+        const rejected = {
+            statusCode: 200,
+            body: null,
+            status(code) { this.statusCode = code; return this; },
+            json(body) { this.body = body; return this; }
+        };
+        let nextCalls = 0;
+        auth.requireCsrf(fakeHeaderRequest, rejected, () => { nextCalls++; });
+        assert.equal(rejected.statusCode, 403);
+        assert.equal(nextCalls, 0);
+
+        const authenticatedRequest = {
+            method: "POST",
+            headers: {},
+            authenticatedByServerSecret: true
+        };
+        auth.requireCsrf(authenticatedRequest, rejected, () => { nextCalls++; });
+        assert.equal(nextCalls, 1);
+    } finally {
+        restoreEnv("DASHBOARD_PIN", oldPin);
+    }
+});

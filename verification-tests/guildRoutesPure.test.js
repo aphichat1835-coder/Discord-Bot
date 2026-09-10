@@ -71,3 +71,17 @@ test("OAuth recovery role mutations require owner auth, current guild access, an
   expect(source).toContain('confirmation !== "REVOKE_OAUTH_RECOVERY_ROLES"');
   expect(source).toContain("oauth_recovery_confirmation_mismatch");
 });
+
+
+test("panel sync GET is read-only and never creates guild configuration", () => {
+  const source = fs.readFileSync("discord/verification/routes/guild.js", "utf8");
+  const start = source.indexOf('router.get("/api/guild/:guildId/verify/panel/sync"');
+  const end = source.indexOf('router.post("/api/guild/:guildId/verify/validate"', start);
+  const route = source.slice(start, end);
+
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(start);
+  expect(route).toContain("GuildConfig.findOne({ guildId }).lean()");
+  expect(route).not.toContain("ensureGuildConfig(");
+  expect(route).not.toMatch(/updateOne|findOneAndUpdate|save\(/);
+});

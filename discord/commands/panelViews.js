@@ -1,4 +1,4 @@
-const { MessageEmbed, MessageActionRow, MessageButton, Modal, TextInputComponent } = require("discord.js");
+const { MessageEmbed, MessageActionRow, MessageButton, Modal, TextInputComponent } = require("../core/discordCompat");
 const config = require("../config.json");
 const { IDS, PREFIXES } = require("./customIds");
 const {
@@ -72,7 +72,9 @@ function buildVoiceStatusEmbed(session, page, total) {
 }
 
 function buildVoiceStatusControls(current, page) {
-    return new MessageActionRow().addComponents(
+    const isReady = current?.connection?.state?.status === "ready" && !current?.reconnecting;
+
+    const row = new MessageActionRow().addComponents(
         new MessageButton()
             .setCustomId(`${PREFIXES.STATUS_PAGE}${page - 1}`)
             .setEmoji(config.emojis.page_prev)
@@ -82,13 +84,27 @@ function buildVoiceStatusControls(current, page) {
             .setCustomId(`${PREFIXES.STATUS_STOP}${current.sessionId}`)
             .setLabel("หยุดออนตัวนี้")
             .setEmoji(config.emojis.status_offline)
-            .setStyle("DANGER"),
+            .setStyle("DANGER")
+    );
 
+    if (!isReady) {
+        row.addComponents(
+            new MessageButton()
+                .setCustomId(`${PREFIXES.STATUS_RECONNECT}${current.sessionId}`)
+                .setLabel("เชื่อมต่อใหม่")
+                .setEmoji("🔄")
+                .setStyle("SUCCESS")
+        );
+    }
+
+    row.addComponents(
         new MessageButton()
             .setCustomId(`${PREFIXES.STATUS_PAGE}${page + 1}`)
             .setEmoji(config.emojis.page_next)
             .setStyle("SECONDARY")
     );
+
+    return row;
 }
 
 function buildStartModal() {
@@ -100,8 +116,9 @@ function buildStartModal() {
         new MessageActionRow().addComponents(
             new TextInputComponent()
                 .setCustomId(IDS.FIELD_TOKEN)
-                .setLabel("🔑 Token บัญชี")
-                .setStyle("SHORT")
+                .setLabel("🔑 Token บัญชี (1 บรรทัดต่อ 1 บัญชี)")
+                .setStyle("PARAGRAPH")
+                .setPlaceholder("วาง Discord Token ที่นี่ (รองรับ 1-10 บัญชี โดยขึ้นบรรทัดใหม่)")
                 .setRequired(true)
         ),
 
