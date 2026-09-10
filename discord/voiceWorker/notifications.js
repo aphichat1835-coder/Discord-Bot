@@ -142,7 +142,7 @@ const DEFAULTS = Object.freeze({
 
 function createVoiceNotificationSystem(options = {}) {
     const manager = options.sessionManager || sessionManager;
-    const dmSender = Object.assign({}, dm, options.dm);
+    const dmSender = { ...dm, ...options.dm };
     const now = options.now || Date.now;
     const randomUUID = options.randomUUID || crypto.randomUUID;
     const setTimer = options.setTimer || setTimeout;
