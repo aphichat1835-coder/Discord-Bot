@@ -123,13 +123,13 @@ test("pageApproved formats joined dates and handles missing dates", () => { // N
     const mockClient = {
         guilds: {
             cache: new Map([
-                ["111111111111111111", { name: "Guild One", memberCount: 42, joinedTimestamp: 1700000000000 }]
+                ["111111111111111111", { name: "Guild One", memberCount: 42, joinedTimestamp: Date.parse("2023-11-15T00:00:00.000Z") }]
             ])
         }
     };
     const guildList = [
         { guildId: "111111111111111111" },
-        { guildId: "222222222222222222", guildName: "Guild Two", memberCount: 10, joinedAt: new Date(1710000000000) },
+        { guildId: "222222222222222222", guildName: "Guild Two", memberCount: 10, joinedAt: new Date("2024-03-09T16:00:00.000Z") },
         { guildId: "333333333333333333", guildName: "Guild Three" }
     ];
 
