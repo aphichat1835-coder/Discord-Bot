@@ -537,6 +537,175 @@ function buildEmojiResultEmbed({ total, added, skipped, failed, createdStatic, c
     return embed;
 }
 
+function validateStealInput(interaction, rawText) {
+    const matches = parseCustomEmojis(rawText);
+    if (matches.length === 0) {
+        return {
+            ok: false,
+            matches: [],
+            noticeEmbed: buildEmojiNoticeEmbed({
+                title: "ไม่พบอิโมจิ Custom ในข้อความที่ระบุ",
+                description:
+                    `> ${config.emojis.warning} กรุณาวางอิโมจิที่เป็น Custom ของ Discord เช่น \`<:name:id>\` หรือ \`<a:name:id>\`\n` +
+                    `> 💡 *ไม่รองรับอิโมจิมาตรฐานของระบบ (Unicode Standard Emojis เช่น 😀, 🎉)*`,
+                color: config.system.themeColors.warning || "#FEE75C",
+                guild: interaction.guild,
+                user: interaction.user
+            })
+        };
+    }
+
+    if (matches.length > 50) {
+        return {
+            ok: false,
+            matches,
+            noticeEmbed: buildEmojiNoticeEmbed({
+                title: "จำนวนอิโมจิเกินขีดจำกัด",
+                description:
+                    `> ${config.emojis.error} สามารถนำเข้าได้สูงสุด **50 ตัว** ต่อครั้ง (คุณระบุมา \`${matches.length}\` ตัว)\n` +
+                    `> 💡 *กรุณาแบ่งการนำเข้าเป็นชุดละไม่เกิน 50 ตัว*`,
+                color: config.system.themeColors.error || "#ED4245",
+                guild: interaction.guild,
+                user: interaction.user
+            })
+        };
+    }
+
+    if (activeEmojiCopies.has(interaction.guild.id)) {
+        return {
+            ok: false,
+            matches,
+            noticeEmbed: buildEmojiNoticeEmbed({
+                title: "เซิร์ฟเวอร์กำลังดำเนินการคัดลอกอิโมจิอยู่",
+                description:
+                    `> ${config.emojis.warning} มีกระบวนการคัดลอกอิโมจิกำลังทำงานอยู่ในเซิร์ฟเวอร์นี้\n` +
+                    `> 💡 *กรุณารอให้กระบวนการก่อนหน้าเสร็จสิ้นก่อนเริ่มคำสั่งใหม่*`,
+                color: config.system.themeColors.warning || "#FEE75C",
+                guild: interaction.guild,
+                user: interaction.user
+            })
+        };
+    }
+
+    return { ok: true, matches };
+}
+
+function resolveEmojiCreateFailureReason(err) {
+    if (err?.code === 40005 || err?.message?.includes("large")) {
+        return "ไฟล์ใหญ่เกินขนาดที่อนุญาต (สูงสุด 256KB)";
+    }
+    if (err?.code === 50035 || err?.message?.includes("name")) {
+        return "ชื่ออิโมจิไม่ถูกต้องตามกฎ";
+    }
+    if (err?.message) {
+        return err.message.slice(0, 100);
+    }
+    return "Discord ปฏิเสธการสร้าง";
+}
+
+async function createSingleEmoji(interaction, item) {
+    try {
+        const created = await interaction.guild.emojis.create({
+            attachment: item.url,
+            name: item.name,
+            reason: `คัดลอกโดย ${interaction.user.tag} (${interaction.user.id}) ผ่านคำสั่ง /copy-emojis`
+        });
+        return { success: true, created: created || item };
+    } catch (err) {
+        return { success: false, reason: resolveEmojiCreateFailureReason(err) };
+    }
+}
+
+async function executeEmojiCopyWorkflow(interaction, { matches, quotas, delayMs }) {
+    let added = 0;
+    let failed = 0;
+    let skipped = 0;
+    let staticAdded = 0;
+    let animatedAdded = 0;
+    const createdStatic = [];
+    const createdAnimated = [];
+    const skippedEmojis = [];
+    const failedEmojis = [];
+
+    const initialEmbed = buildEmojiProgressEmbed({
+        current: 0,
+        total: matches.length,
+        added: 0,
+        skipped: 0,
+        failed: 0,
+        currentEmojiName: matches[0]?.name,
+        isAnimated: matches[0]?.isAnimated,
+        guild: interaction.guild,
+        user: interaction.user
+    });
+    await interaction.editReply({ embeds: [initialEmbed] }).catch(() => {});
+
+    for (let i = 0; i < matches.length; i++) {
+        const item = matches[i];
+        const isAnimated = item.isAnimated;
+
+        const isQuotaExceeded = isAnimated
+            ? animatedAdded >= quotas.animatedFree
+            : staticAdded >= quotas.staticFree;
+
+        if (isQuotaExceeded) {
+            skipped++;
+            skippedEmojis.push(item);
+            continue;
+        }
+
+        const res = await createSingleEmoji(interaction, item);
+        if (delayMs > 0) {
+            await new Promise(r => setTimeout(r, delayMs));
+        }
+
+        if (res.success) {
+            added++;
+            if (isAnimated) {
+                animatedAdded++;
+                createdAnimated.push(res.created);
+            } else {
+                staticAdded++;
+                createdStatic.push(res.created);
+            }
+        } else {
+            failed++;
+            failedEmojis.push({ ...item, reason: res.reason });
+        }
+
+        const processed = i + 1;
+        const shouldReport = matches.length <= 5 || (processed % 2 === 0) || (processed === matches.length);
+        if (shouldReport && processed < matches.length) {
+            const nextItem = matches[processed] || item;
+            const progressEmbed = buildEmojiProgressEmbed({
+                current: processed,
+                total: matches.length,
+                added,
+                skipped,
+                failed,
+                currentEmojiName: nextItem.name,
+                isAnimated: nextItem.isAnimated,
+                guild: interaction.guild,
+                user: interaction.user
+            });
+            await interaction.editReply({ embeds: [progressEmbed] }).catch(() => {});
+        }
+    }
+
+    return buildEmojiResultEmbed({
+        total: matches.length,
+        added,
+        skipped,
+        failed,
+        createdStatic,
+        createdAnimated,
+        skippedEmojis,
+        failedEmojis,
+        guild: interaction.guild,
+        user: interaction.user
+    });
+}
+
 async function handleSteal(interaction, { delayMs = 1200 } = {}) {
     if (!await requireMemberPermission(
         interaction,
@@ -550,46 +719,9 @@ async function handleSteal(interaction, { delayMs = 1200 } = {}) {
         `> ${config.emojis.error} บอทไม่มีสิทธิ์จัดการอิโมจิและสติกเกอร์ (ต้องการสิทธิ์ MANAGE_GUILD_EXPRESSIONS)`
     )) return;
 
-    const rawText = interaction.options.getString("emojis");
-    const matches = parseCustomEmojis(rawText);
-
-    if (matches.length === 0) {
-        const noticeEmbed = buildEmojiNoticeEmbed({
-            title: "ไม่พบอิโมจิ Custom ในข้อความที่ระบุ",
-            description:
-                `> ${config.emojis.warning} กรุณาวางอิโมจิที่เป็น Custom ของ Discord เช่น \`<:name:id>\` หรือ \`<a:name:id>\`\n` +
-                `> 💡 *ไม่รองรับอิโมจิมาตรฐานของระบบ (Unicode Standard Emojis เช่น 😀, 🎉)*`,
-            color: config.system.themeColors.warning || "#FEE75C",
-            guild: interaction.guild,
-            user: interaction.user
-        });
-        return interaction.reply({ embeds: [noticeEmbed], ephemeral: true });
-    }
-
-    if (matches.length > 50) {
-        const noticeEmbed = buildEmojiNoticeEmbed({
-            title: "จำนวนอิโมจิเกินขีดจำกัด",
-            description:
-                `> ${config.emojis.error} สามารถนำเข้าได้สูงสุด **50 ตัว** ต่อครั้ง (คุณระบุมา \`${matches.length}\` ตัว)\n` +
-                `> 💡 *กรุณาแบ่งการนำเข้าเป็นชุดละไม่เกิน 50 ตัว*`,
-            color: config.system.themeColors.error || "#ED4245",
-            guild: interaction.guild,
-            user: interaction.user
-        });
-        return interaction.reply({ embeds: [noticeEmbed], ephemeral: true });
-    }
-
-    if (activeEmojiCopies.has(interaction.guild.id)) {
-        const noticeEmbed = buildEmojiNoticeEmbed({
-            title: "เซิร์ฟเวอร์กำลังดำเนินการคัดลอกอิโมจิอยู่",
-            description:
-                `> ${config.emojis.warning} มีกระบวนการคัดลอกอิโมจิกำลังทำงานอยู่ในเซิร์ฟเวอร์นี้\n` +
-                `> 💡 *กรุณารอให้กระบวนการก่อนหน้าเสร็จสิ้นก่อนเริ่มคำสั่งใหม่*`,
-            color: config.system.themeColors.warning || "#FEE75C",
-            guild: interaction.guild,
-            user: interaction.user
-        });
-        return interaction.reply({ embeds: [noticeEmbed], ephemeral: true });
+    const validation = validateStealInput(interaction, interaction.options.getString("emojis"));
+    if (!validation.ok) {
+        return interaction.reply({ embeds: [validation.noticeEmbed], ephemeral: true });
     }
 
     if (typeof interaction.guild?.emojis?.fetch === "function") {
@@ -597,7 +729,7 @@ async function handleSteal(interaction, { delayMs = 1200 } = {}) {
     }
 
     const quotas = calculateEmojiQuotas(interaction.guild);
-    const quotaCheck = checkSmartEmojiQuota(quotas, matches);
+    const quotaCheck = checkSmartEmojiQuota(quotas, validation.matches);
 
     if (!quotaCheck.allowed) {
         const noticeEmbed = buildEmojiNoticeEmbed({
@@ -615,107 +747,10 @@ async function handleSteal(interaction, { delayMs = 1200 } = {}) {
 
     try {
         if (!await safeDefer(interaction)) return null;
-
-        let added = 0;
-        let failed = 0;
-        let skipped = 0;
-        let staticAdded = 0;
-        let animatedAdded = 0;
-        const createdStatic = [];
-        const createdAnimated = [];
-        const skippedEmojis = [];
-        const failedEmojis = [];
-
-        const initialEmbed = buildEmojiProgressEmbed({
-            current: 0,
-            total: matches.length,
-            added: 0,
-            skipped: 0,
-            failed: 0,
-            currentEmojiName: matches[0]?.name,
-            isAnimated: matches[0]?.isAnimated,
-            guild: interaction.guild,
-            user: interaction.user
-        });
-        await interaction.editReply({ embeds: [initialEmbed] }).catch(() => {});
-
-        for (let i = 0; i < matches.length; i++) {
-            const item = matches[i];
-            const isAnimated = item.isAnimated;
-
-            if (isAnimated && animatedAdded >= quotas.animatedFree) {
-                skipped++;
-                skippedEmojis.push(item);
-                continue;
-            }
-            if (!isAnimated && staticAdded >= quotas.staticFree) {
-                skipped++;
-                skippedEmojis.push(item);
-                continue;
-            }
-
-            try {
-                const created = await interaction.guild.emojis.create({
-                    attachment: item.url,
-                    name: item.name,
-                    reason: `คัดลอกโดย ${interaction.user.tag} (${interaction.user.id}) ผ่านคำสั่ง /copy-emojis`
-                });
-
-                if (isAnimated) {
-                    animatedAdded++;
-                    createdAnimated.push(created || item);
-                } else {
-                    staticAdded++;
-                    createdStatic.push(created || item);
-                }
-                added++;
-            } catch (err) {
-                failed++;
-                let reason = "Discord ปฏิเสธการสร้าง";
-                if (err?.code === 40005 || err?.message?.includes("large")) {
-                    reason = "ไฟล์ใหญ่เกินขนาดที่อนุญาต (สูงสุด 256KB)";
-                } else if (err?.code === 50035 || err?.message?.includes("name")) {
-                    reason = "ชื่ออิโมจิไม่ถูกต้องตามกฎ";
-                } else if (err?.message) {
-                    reason = err.message.slice(0, 100);
-                }
-                failedEmojis.push({ ...item, reason });
-            } finally {
-                if (delayMs > 0) {
-                    await new Promise(r => setTimeout(r, delayMs));
-                }
-            }
-
-            const processed = i + 1;
-            const shouldReport = matches.length <= 5 || (processed % 2 === 0) || (processed === matches.length);
-            if (shouldReport && processed < matches.length) {
-                const nextItem = matches[processed] || item;
-                const progressEmbed = buildEmojiProgressEmbed({
-                    current: processed,
-                    total: matches.length,
-                    added,
-                    skipped,
-                    failed,
-                    currentEmojiName: nextItem.name,
-                    isAnimated: nextItem.isAnimated,
-                    guild: interaction.guild,
-                    user: interaction.user
-                });
-                await interaction.editReply({ embeds: [progressEmbed] }).catch(() => {});
-            }
-        }
-
-        const resultEmbed = buildEmojiResultEmbed({
-            total: matches.length,
-            added,
-            skipped,
-            failed,
-            createdStatic,
-            createdAnimated,
-            skippedEmojis,
-            failedEmojis,
-            guild: interaction.guild,
-            user: interaction.user
+        const resultEmbed = await executeEmojiCopyWorkflow(interaction, {
+            matches: validation.matches,
+            quotas,
+            delayMs
         });
         return interaction.editReply({ embeds: [resultEmbed] });
     } finally {
