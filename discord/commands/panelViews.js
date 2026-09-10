@@ -72,7 +72,9 @@ function buildVoiceStatusEmbed(session, page, total) {
 }
 
 function buildVoiceStatusControls(current, page) {
-    return new MessageActionRow().addComponents(
+    const isReady = current?.connection?.state?.status === "ready" && !current?.reconnecting;
+
+    const row = new MessageActionRow().addComponents(
         new MessageButton()
             .setCustomId(`${PREFIXES.STATUS_PAGE}${page - 1}`)
             .setEmoji(config.emojis.page_prev)
@@ -82,13 +84,27 @@ function buildVoiceStatusControls(current, page) {
             .setCustomId(`${PREFIXES.STATUS_STOP}${current.sessionId}`)
             .setLabel("หยุดออนตัวนี้")
             .setEmoji(config.emojis.status_offline)
-            .setStyle("DANGER"),
+            .setStyle("DANGER")
+    );
 
+    if (!isReady) {
+        row.addComponents(
+            new MessageButton()
+                .setCustomId(`${PREFIXES.STATUS_RECONNECT}${current.sessionId}`)
+                .setLabel("เชื่อมต่อใหม่")
+                .setEmoji("🔄")
+                .setStyle("SUCCESS")
+        );
+    }
+
+    row.addComponents(
         new MessageButton()
             .setCustomId(`${PREFIXES.STATUS_PAGE}${page + 1}`)
             .setEmoji(config.emojis.page_next)
             .setStyle("SECONDARY")
     );
+
+    return row;
 }
 
 function buildStartModal() {

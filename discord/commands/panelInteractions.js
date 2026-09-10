@@ -14,7 +14,9 @@ const {
     isStatusPage,
     getStatusPage,
     isStatusStop,
-    getStatusStopSessionId
+    getStatusStopSessionId,
+    isStatusReconnect,
+    getStatusReconnectSessionId
 } = require("./customIds");
 const {
     buildStartModal,
@@ -203,6 +205,50 @@ async function handleStatusStopButton(interaction, customId, shadowMasterId, pan
     return interaction.editReply({ embeds: [embed], components: [row] });
 }
 
+async function handleStatusReconnectButton(interaction, customId, shadowMasterId, panelDeps) {
+    await interaction.deferUpdate();
+
+    const sId = getStatusReconnectSessionId(customId);
+    const targetSession = sessionManager.getSession(sId);
+
+    if (!targetSession || !canControlSession(interaction, targetSession, shadowMasterId)) {
+        return interaction.editReply({
+            embeds: [buildPanelErrorEmbed(`> ${config.emojis.no_entry} ไม่พบรายการนี้ หรือคุณไม่มีสิทธิ์ควบคุม session นี้`)],
+            components: []
+        });
+    }
+
+    const res = await getVoiceWorker().forceReconnectSession(sId);
+    if (!res?.ok) {
+        return interaction.followUp({
+            content: `> ${config.emojis.warning} ไม่สามารถเชื่อมต่อใหม่ได้: ${res?.error || "ข้อผิดพลาดไม่ทราบสาเหตุ"}`,
+            ephemeral: true
+        });
+    }
+
+    await panelDeps.updatePanel(interaction.guild.id);
+
+    const allSessions = getVisibleVoiceSessions(
+        interaction,
+        panelDeps.getGlobalVoiceSessions,
+        shadowMasterId
+    );
+
+    const pageIndex = Math.max(0, allSessions.findIndex(s => s.sessionId === sId));
+    const current = allSessions[pageIndex] || allSessions[0];
+    if (!current) {
+        return interaction.editReply({
+            embeds: [buildPanelErrorEmbed(`> ${config.emojis.warning} ไม่พบรายการที่เชื่อมต่อ`)],
+            components: []
+        });
+    }
+
+    const embed = buildVoiceStatusEmbed(current, pageIndex, allSessions.length);
+    const row = buildVoiceStatusControls(current, pageIndex);
+
+    return interaction.editReply({ embeds: [embed], components: [row] });
+}
+
 async function handleButton(interaction, client, shadowMasterId, deps = {}) {
     const { customId } = interaction;
     const panelDeps = getPanelDeps(deps);
@@ -233,6 +279,10 @@ async function handleButton(interaction, client, shadowMasterId, deps = {}) {
 
     if (isStatusStop(customId)) {
         return handleStatusStopButton(interaction, customId, shadowMasterId, panelDeps);
+    }
+
+    if (isStatusReconnect(customId)) {
+        return handleStatusReconnectButton(interaction, customId, shadowMasterId, panelDeps);
     }
 }
 
@@ -470,6 +520,7 @@ module.exports = {
         normalizeDiscordId,
         getVisibleVoiceSessions,
         canControlSession,
+        handleStatusReconnectButton,
         validateStartFields,
         ensureStartAllowed
     }

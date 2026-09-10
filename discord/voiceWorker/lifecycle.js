@@ -19,6 +19,7 @@ const {
     naturalRunning,
     autoDeafRunning,
     recoveryTimestamps,
+    hibernateTimers,
 } = require("./state");
 const {
     CONFIG,
@@ -639,13 +640,21 @@ async function handlePreflightFailure(sessionId, tokenHash, session, clientRef, 
     }
 }
 
+function clearHibernateTimer(sessionId) {
+    const timer = hibernateTimers.get(sessionId);
+    if (timer) {
+        clearTimeout(timer);
+        hibernateTimers.delete(sessionId);
+    }
+}
+
 async function handleHibernateTransition(sessionId, tokenHash, session, currentCycle, deps = {}) {
     const nextCycle = currentCycle + 1;
-    const pauseMs = nextCycle === 1 ? 5 * 60 * 1000 : 10 * 60 * 1000;
+    const pauseMs = nextCycle === 1 ? 5 * 60 * 1000 : (nextCycle === 2 ? 10 * 60 * 1000 : 5 * 60 * 1000);
     const hibernateUntil = Date.now() + pauseMs;
     const recordHibernate = deps.recordHibernateCycle || notifications.recordHibernateCycle;
 
-    console.log(`[WORKER] 💤 Max burst attempts reached for ${sanitizeLogText(sessionId)}. Entering Hibernate Cycle ${nextCycle}/2: pausing for ${pauseMs / 60000} minutes.`);
+    console.log(`[WORKER] 💤 Max burst attempts reached for ${sanitizeLogText(sessionId)}. Entering Hibernate Cycle ${nextCycle}: pausing for ${pauseMs / 60000} minutes.`);
 
     if (session?.connection) {
         try { session.connection.destroy(); } catch {}
@@ -659,14 +668,23 @@ async function handleHibernateTransition(sessionId, tokenHash, session, currentC
         await recordHibernate(sessionId, nextCycle, hibernateUntil).catch(() => {});
     }
 
+    clearHibernateTimer(sessionId);
+
     const setTimer = deps.setTimeout || setTimeout;
     const wakeTimer = setTimer(() => {
+        hibernateTimers.delete(sessionId);
         const currentSession = sessionManager.getSession(sessionId);
         if (!currentSession || st.isShuttingDown) return;
         console.log(`[WORKER] ⏰ Hibernate pause ended for ${sanitizeLogText(sessionId)}. Resuming recovery queue...`);
+        if (currentSession.recoveryState) {
+            currentSession.recoveryState.phase = "degraded";
+            currentSession.recoveryState.attempts = 0;
+            currentSession.recoveryState.hibernateUntil = null;
+        }
         healthCheck().catch(() => {});
     }, pauseMs);
     wakeTimer.unref?.();
+    hibernateTimers.set(sessionId, wakeTimer);
 }
 
 async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) {
@@ -788,11 +806,7 @@ async function connectToVoice(client, guildId, channelId, tokenHash, sessionId) 
             console.log(`[WORKER] ⚠️ Voice dropped for ${sanitizeLogText(sessionId)}. Attempt ${reconnectAttempts}/${CONFIG.MAX_RECONNECT_ATTEMPTS} (Hibernate cycle ${hibernateCycle}/2)`);
 
             if (reconnectAttempts >= CONFIG.MAX_RECONNECT_ATTEMPTS) {
-                if (hibernateCycle < 2) {
-                    await handleHibernateTransition(sessionId, tokenHash, currentSession, hibernateCycle);
-                    return;
-                }
-                await handleMaxReconnectReached();
+                await handleHibernateTransition(sessionId, tokenHash, currentSession, hibernateCycle);
                 return;
             }
 
@@ -1244,6 +1258,7 @@ async function stopSession(sessionId, options = {}) {
 
         stopNaturalTimer(sessionId);
         stopAutoDeafTimer(sessionId);
+        clearHibernateTimer(sessionId);
         channelLock.cancelMoveTracking(sessionId);
 
         const cleanup = await cleanupSessionVoiceConnection(sessionId, session, tokenHash);
@@ -1493,7 +1508,7 @@ function resolveMaxHibernateCycles(deps) {
     if (deps.recordRecoveryAttempt) {
         return 0;
     }
-    return 2;
+    return Infinity;
 }
 
 function isSessionEligibleForRecovery(session, shuttingDown, runnable) {
@@ -1659,6 +1674,60 @@ function processSessionHealthCheck(sessionId, session, now, deps = {}) {
     return false;
 }
 
+async function forceReconnectSession(sessionId, deps = {}) {
+    const getSession = deps.getSession || sessionManager.getSession.bind(sessionManager);
+    const session = getSession(sessionId);
+    if (!session) {
+        return { ok: false, error: "ไม่พบ Session ในระบบ" };
+    }
+    if (st.isShuttingDown) {
+        return { ok: false, error: "ระบบกำลังปิดการทำงาน" };
+    }
+
+    const resolveTokenHash = deps.getSessionTokenHash || getSessionTokenHash;
+    const tokenHash = resolveTokenHash(sessionId, session);
+    if (!tokenHash) {
+        return { ok: false, error: "ไม่พบ Token สำหรับ Session นี้" };
+    }
+
+    clearHibernateTimer(sessionId);
+    recoveryTimestamps.delete(sessionId);
+    clearReconnect(sessionId);
+    unlockSession(sessionId);
+
+    session.state = "active";
+    delete session.failedReason;
+    delete session.tokenInvalid;
+
+    if (session.recoveryState) {
+        session.recoveryState.phase = "recovering";
+        session.recoveryState.attempts = 0;
+        session.recoveryState.hibernateUntil = null;
+        session.recoveryState.lastAttemptAt = Date.now();
+    }
+    session.reconnecting = true;
+    session.lastActivity = Date.now();
+
+    if (session.connection) {
+        try { session.connection.destroy(); } catch {}
+        session.connection = null;
+    }
+
+    console.log(`[WORKER] 🚀 Force reconnect triggered for ${sanitizeLogText(sessionId)}`);
+
+    try {
+        const recover = deps.recoverSessionConnection || recoverSessionConnection;
+        await recover(sessionId, tokenHash, deps);
+        const updated = getSession(sessionId);
+        const readyStatus = deps.readyStatus || VoiceConnectionStatus.Ready;
+        const isReady = updated?.client?.isReady?.() && updated?.connection?.state?.status === readyStatus;
+        return { ok: true, ready: isReady };
+    } catch (err) {
+        console.error(`[WORKER] ❌ Force reconnect failed for ${sanitizeLogText(sessionId)}: ${err.message}`);
+        return { ok: false, error: err.message };
+    }
+}
+
 async function healthCheck() {
     if (st.isShuttingDown) return;
     if (st.healthCheckRunning) {
@@ -1723,9 +1792,11 @@ module.exports = {
     pauseAll,
     autoResume,
     recoverSessionConnection,
+    forceReconnectSession,
     scheduleHealthRecovery,
     healthCheck,
     cleanupIdleSessions,
+    clearHibernateTimer,
     isInvalidTokenError,
     channelLock,
     _test: {

@@ -143,6 +143,12 @@ function voiceLabel(s){
 function statusLabel(s){
     if(s.tokenInvalid)return '🚫 Token ใช้งานไม่ได้';
     if(s.state==='failed')return '⚠️ ต้องจัดการรายการนี้';
+    if(s.recoveryPhase==='hibernate'||(s.hibernateUntil&&s.hibernateUntil>Date.now())){
+        return '💤 พักรอกู้คืนอัตโนมัติ';
+    }
+    if(s.reconnecting||s.recoveryPhase==='recovering'){
+        return '🔄 กำลังกู้คืน...';
+    }
     const st=s.connectionStatus;
     if(st==='ready')return '🟢 เชื่อมต่ออยู่';
     if(st==='connecting'||st==='signalling')return '🟡 กำลังเชื่อมต่อ';
@@ -245,6 +251,10 @@ async function fetchStatus(){
                     ? '<div class="token-full-wrap"><span style="flex:1;">'+esc(revealed)+'</span><button type="button" class="copy-btn" aria-label="คัดลอก Token" onclick="navigator.clipboard.writeText(\\''+String(revealed).replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'")+'\\');this.textContent=\\'✅\\';setTimeout(()=>this.textContent=\\'📋\\',1500)">📋</button></div>'
                     : '<span style="color:var(--text3);">ไม่มี Token</span>';
 
+                const recBtn=(s.connectionStatus!=='ready'||s.reconnecting)
+                    ? '<button type="button" class="session-chip" style="color:var(--accent);border-color:rgba(87,242,135,0.4);" onclick="reconnectSessionFromHome(\\''+sid+'\\',this)">เชื่อมต่อใหม่</button>'
+                    : '';
+
                 return '<div class="session-item">'+
                     '<div class="session-head">'+
                         '<img class="session-avatar" src="'+esc(avatar)+'" alt="avatar" onerror="this.src=\\'https://cdn.discordapp.com/embed/avatars/0.png\\'">'+
@@ -259,6 +269,7 @@ async function fetchStatus(){
                     '</div>'+
                     '<div class="session-actions">'+
                         '<a class="session-chip" href="/session/'+sid+'">ดูรายละเอียด →</a>'+
+                        recBtn+
                         '<button type="button" class="session-chip session-stop" onclick="stopSessionFromHome(\\''+sid+'\\',this)">หยุด</button>'+
                         tokenBlock+
                     '</div>'+
@@ -323,6 +334,39 @@ async function stopSessionFromHome(sessionId, btn){
         if(btn){
             btn.disabled=false;
             btn.textContent=oldText||'หยุด';
+        }
+    }
+}
+
+async function reconnectSessionFromHome(sessionId, btn){
+    if(!sessionId) return;
+    const oldText=btn?btn.textContent:'';
+    if(btn){
+        btn.disabled=true;
+        btn.textContent='กำลังเชื่อมต่อ...';
+    }
+
+    try{
+        const r=await fetch('/api/reconnect-session',{
+            method:'POST',
+            headers:{
+                'Content-Type':'application/json'
+            },
+            body:JSON.stringify({sessionId})
+        });
+        const d=await r.json();
+        if(d.success){
+            showToast('✅ สั่งเชื่อมต่อใหม่แล้ว','ok');
+            await fetchStatus();
+            return;
+        }
+        showToast('❌ '+(d.error||'ไม่สามารถเชื่อมต่อใหม่ได้'),'err');
+    }catch(e){
+        showToast('❌ เกิดข้อผิดพลาด: '+e.message,'err');
+    }finally{
+        if(btn){
+            btn.disabled=false;
+            btn.textContent=oldText||'เชื่อมต่อใหม่';
         }
     }
 }
@@ -785,6 +829,7 @@ function pageSessionDetail() {
     <div style="background:rgba(127,29,29,.15);border:1px solid rgba(239,68,68,.25);border-radius:16px;padding:20px;text-align:center;margin-bottom:20px;">
         <h3 style="color:var(--red2);margin-bottom:8px;">🛑 หยุด Session นี้</h3>
         <p style="color:var(--text3);font-size:0.8em;margin-bottom:14px;line-height:1.6;">เมื่อหยุดแล้ว บัญชีจะออกจากช่องเสียงทันที<br>DM จะส่งตามโหมดแจ้งเตือนที่ตั้งไว้</p>
+        <button type="button" class="btn btn-primary" id="btnReconnect" onclick="reconnectSession()" style="width:auto;padding:11px 28px;margin-right:10px;">🔄 เชื่อมต่อใหม่</button>
         <button type="button" class="btn btn-danger" id="btnStop" onclick="openStopModal()" style="width:auto;padding:11px 28px;">🛑 หยุด Session นี้</button>
     </div>
 </div>
@@ -836,6 +881,12 @@ function voiceLabel(s){
 function statusLabel(s){
     if(s.tokenInvalid)return '🚫 Token ใช้งานไม่ได้';
     if(s.state==='failed')return '⚠️ ต้องจัดการรายการนี้';
+    if(s.recoveryPhase==='hibernate'||(s.hibernateUntil&&s.hibernateUntil>Date.now())){
+        return '💤 พักรอกู้คืนอัตโนมัติ';
+    }
+    if(s.reconnecting||s.recoveryPhase==='recovering'){
+        return '🔄 กำลังกู้คืน...';
+    }
     const st=s.connectionStatus;
     if(st==='ready')return '🟢 เชื่อมต่ออยู่';
     if(st==='connecting'||st==='signalling')return '🟡 กำลังเชื่อมต่อ';
@@ -974,6 +1025,37 @@ async function stopSession(){
         showToast('❌ เชื่อมต่อไม่ได้','err');
         btn.disabled=false;
         btn.textContent='ยืนยันหยุด';
+    }
+}
+
+async function reconnectSession(){
+    const btn=document.getElementById('btnReconnect');
+    if(btn){
+        btn.disabled=true;
+        btn.textContent='⏳ กำลังเชื่อมต่อใหม่...';
+    }
+    try{
+        const r=await fetch('/api/reconnect-session',{
+            method:'POST',
+            headers:{
+                'Content-Type':'application/json'
+            },
+            body:JSON.stringify({sessionId:SESSION_ID})
+        });
+        const d=await r.json();
+        if(d.success){
+            showToast('✅ สั่งเชื่อมต่อใหม่แล้ว','ok');
+            setTimeout(loadSession, 1200);
+        }else{
+            showToast('❌ '+(d.error||'ไม่สามารถเชื่อมต่อใหม่ได้'),'err');
+        }
+    }catch(e){
+        showToast('❌ เชื่อมต่อไม่ได้: '+e.message,'err');
+    }finally{
+        if(btn){
+            btn.disabled=false;
+            btn.textContent='🔄 เชื่อมต่อใหม่';
+        }
     }
 }
 

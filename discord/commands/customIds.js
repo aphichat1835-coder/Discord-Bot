@@ -36,6 +36,7 @@ const PREFIXES = {
     RESTORE_CONFIRM: "btn_restore_confirm_",
     STATUS_PAGE: "status_page_",
     STATUS_STOP: "status_stop_",
+    STATUS_RECONNECT: "status_reconnect_",
     QUEST_PANEL: "quest_panel:",
     RUNNER_STOP: "runner-stop:",
     DM_PANEL: "dm_panel:"
@@ -79,6 +80,14 @@ function getStatusStopSessionId(customId = "") {
     return customId.replace(PREFIXES.STATUS_STOP, "");
 }
 
+function isStatusReconnect(customId = "") {
+    return customId.startsWith(PREFIXES.STATUS_RECONNECT);
+}
+
+function getStatusReconnectSessionId(customId = "") {
+    return customId.replace(PREFIXES.STATUS_RECONNECT, "");
+}
+
 function isTokenCheckButton(customId = "") {
     return customId === IDS.BTN_TOKEN_CHECK;
 }
@@ -109,6 +118,8 @@ module.exports = {
     getStatusPage,
     isStatusStop,
     getStatusStopSessionId,
+    isStatusReconnect,
+    getStatusReconnectSessionId,
     isTokenCheckButton,
     isTokenCheckModal,
     isDmPanelButton,

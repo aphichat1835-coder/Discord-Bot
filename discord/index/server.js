@@ -422,6 +422,50 @@ async function handleApprovedGuildKick({
     }
 }
 
+async function handleReconnectSession({
+    req,
+    res,
+    checkAuth,
+    sessionManager,
+    voiceWorker
+}) {
+    if (!checkAuth(req, res)) return;
+
+    try {
+        const { sessionId } = req.body || {};
+
+        if (!sessionId) {
+            return res.status(400).json({
+                success: false,
+                error: "ไม่ระบุ sessionId"
+            });
+        }
+
+        const session = sessionManager.getSession(sessionId);
+
+        if (!session) {
+            return res.status(404).json({
+                success: false,
+                error: "ไม่พบ session ในระบบ"
+            });
+        }
+
+        const result = await voiceWorker.forceReconnectSession(sessionId);
+
+        if (!result?.ok) {
+            return res.status(400).json({
+                success: false,
+                error: result?.error || "ไม่สามารถเชื่อมต่อใหม่ได้"
+            });
+        }
+
+        console.log("[DASHBOARD] 🔄 Session reconnect triggered via dashboard");
+        return res.json({ success: true, ready: !!result.ready });
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  🔌  REGISTER ALL API ROUTES
 // ════════════════════════════════════════════════════════════════════════════
@@ -879,6 +923,18 @@ function registerRoutes({
             res.status(500).json({ success: false, error: e.message });
         }
     });
+
+    // ── Reconnect Session ──
+    const onReconnectSession = (req, res) => handleReconnectSession({
+        req,
+        res,
+        checkAuth,
+        sessionManager,
+        voiceWorker
+    });
+
+    app.post("/api/reconnect-session", express.json({ limit: "8kb" }), onReconnectSession);
+    app.post("/api/voice/session/reconnect", express.json({ limit: "8kb" }), onReconnectSession);
         // ── Commands Status / Toggle / Audit ──
     app.get("/api/commands-status", (req, res) => {
         try {
@@ -1214,6 +1270,7 @@ module.exports = {
         createCommandTogglePlan,
         persistCommandToggle,
         recordCommandToggleAudit,
-        handleCommandToggle
+        handleCommandToggle,
+        handleReconnectSession
     }
 };

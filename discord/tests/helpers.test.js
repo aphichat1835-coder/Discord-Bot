@@ -40,12 +40,26 @@ test("custom ID helpers preserve the routing parser contract", () => {
 });
 
 test("buildVoiceStatusControls uses shared custom ID prefixes", () => {
-    const row = buildVoiceStatusControls({ sessionId: "vc_session_1" }, 3);
-    const customIds = row.components.map(component => component.customId);
+    const readyRow = buildVoiceStatusControls({
+        sessionId: "vc_session_1",
+        connection: { state: { status: "ready" } },
+        reconnecting: false
+    }, 3);
+    const readyCustomIds = readyRow.components.map(component => component.customId);
 
-    assert.deepEqual(customIds, [
+    assert.deepEqual(readyCustomIds, [
         `${PREFIXES.STATUS_PAGE}2`,
         `${PREFIXES.STATUS_STOP}vc_session_1`,
+        `${PREFIXES.STATUS_PAGE}4`
+    ]);
+
+    const reconnectRow = buildVoiceStatusControls({ sessionId: "vc_session_1" }, 3);
+    const reconnectCustomIds = reconnectRow.components.map(component => component.customId);
+
+    assert.deepEqual(reconnectCustomIds, [
+        `${PREFIXES.STATUS_PAGE}2`,
+        `${PREFIXES.STATUS_STOP}vc_session_1`,
+        `${PREFIXES.STATUS_RECONNECT}vc_session_1`,
         `${PREFIXES.STATUS_PAGE}4`
     ]);
 });

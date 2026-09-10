@@ -79,6 +79,8 @@ function serializeRuntimeFields(session) {
         reconnectCount: session.reconnectCount || 0,
         tokenInvalid: !!session.tokenInvalid,
         reconnecting: !!session.reconnecting,
+        recoveryPhase: session.recoveryState?.phase || null,
+        hibernateUntil: toEpochMs(session.recoveryState?.hibernateUntil),
         hasConnection: !!session.connection,
         connectionStatus: session.connection?.state?.status || null,
         state: session.state || "active",
