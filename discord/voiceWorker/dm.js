@@ -276,12 +276,163 @@ function sendSessionOnlineDM(sessionId) {
     return require("./notifications").markReady(sessionId);
 }
 
+const TRACKER_PHASE_VIEW = Object.freeze({
+    starting: {
+        tone: "warning",
+        title: "🔄 กำลังกู้คืนช่องเสียงแบบเรียลไทม์",
+        summary: "ระบบกำลังดำเนินการกู้คืนการเชื่อมต่อให้อัตโนมัติ ข้อความนี้จะอัปเดตสถานะแบบเรียลไทม์",
+        defaultStatus: "🔄 เริ่มกระบวนการกู้คืนและตรวจสอบช่องเสียง..."
+    },
+    attempt: {
+        tone: "warning",
+        title: "🔄 กำลังกู้คืนช่องเสียงแบบเรียลไทม์",
+        summary: "ระบบกำลังดำเนินการกู้คืนการเชื่อมต่อให้อัตโนมัติ ข้อความนี้จะอัปเดตสถานะแบบเรียลไทม์",
+        defaultStatus: "🔄 กำลังลองเชื่อมต่อเข้าสู่ช่องเสียง..."
+    },
+    hibernate: {
+        tone: "warning",
+        title: "⏸️ อยู่ในช่วงพักกู้คืนช่องเสียง",
+        summary: "ระบบเข้าสู่โหมดพักรอเพื่อป้องกันการถูกจำกัดสัญญาณ และจะเริ่มพยายามใหม่อัตโนมัติเมื่อครบกำหนด",
+        defaultStatus: "⏸️ พักรอชั่วคราวก่อนเริ่มรอบถัดไป"
+    },
+    recovered: {
+        tone: "success",
+        title: "✅ กู้คืนการเชื่อมต่อสำเร็จเรียบร้อย",
+        summary: "ระบบกู้คืนการเชื่อมต่อช่องเสียงสำเร็จ และตรวจสอบยืนยันสถานะการออนไลน์ในห้องเสียงเรียบร้อยแล้ว",
+        defaultStatus: "🟢 ยืนยันแล้วว่าออนไลน์ในช่องเป้าหมาย"
+    },
+    exhausted: {
+        tone: "danger",
+        title: "⛔ กู้คืนไม่สำเร็จ (สิ้นสุดความพยายาม)",
+        summary: "ระบบลองกู้คืนครบตามจำนวนที่กำหนดแล้ว แต่ยังไม่สามารถเชื่อมต่อได้",
+        defaultStatus: "⚫ หยุดแล้วหลังลองเชื่อมต่อครบกำหนด"
+    },
+    terminal: {
+        tone: "danger",
+        title: "🛑 ยกเลิกการกู้คืนช่องเสียง",
+        summary: "การกู้คืนช่องเสียงสิ้นสุดลงเนื่องจากเซสชันถูกสั่งหยุดหรือโทเคนหมดอายุ",
+        defaultStatus: "⚫ การกู้คืนสิ้นสุดลง"
+    }
+});
+
+function buildTrackerFields(snapshot, trackerState, phaseView) {
+    const statusText = trackerState.statusText || phaseView.defaultStatus;
+    const fields = [
+        { name: "📍 สถานะปัจจุบัน", value: statusText },
+        { name: "🏠 เซิร์ฟเวอร์", value: formatGuildField(snapshot.guildName, snapshot.guildId), inline: true },
+        { name: "🔊 ช่องเป้าหมาย", value: formatChannelField(snapshot.targetChannelName, snapshot.targetChannelId, snapshot.guildId), inline: true }
+    ];
+
+    const openedAt = Number(trackerState.openedAt || snapshot.verifiedAt || 0);
+    if (openedAt > 0) {
+        const elapsed = Math.max(0, Date.now() - openedAt);
+        fields.push({ name: "⏱️ ระยะเวลาที่พยายาม", value: duration(elapsed), inline: true });
+    }
+
+    if (trackerState.attempts !== undefined || trackerState.cycle !== undefined) {
+        const attempts = Number(trackerState.attempts || 0);
+        const maxAttempts = Number(trackerState.maxAttempts || 15);
+        let attemptText = `${attempts}/${maxAttempts} ครั้ง`;
+        if (trackerState.cycle > 0) {
+            attemptText += ` (พักรอบที่ ${trackerState.cycle}/2)`;
+        }
+        fields.push({ name: "🔁 รอบความพยายาม", value: attemptText, inline: true });
+    }
+
+    fields.push({ name: "🧩 รหัสการออน", value: code(getSessionShortId(snapshot.sessionId)), inline: true });
+    return fields;
+}
+
+function resolveTrackerAction(phase) {
+    if (phase === "recovered") return "ไม่ต้องทำอะไร ระบบกลับมาทำงานตามปกติแล้ว";
+    if (phase === "exhausted") return "ตรวจสอบช่องเสียงและสิทธิ์ จากนั้นเริ่ม Session ใหม่";
+    return "ไม่ต้องกดเริ่มซ้ำ ระบบกำลังดูแลการเชื่อมต่อให้อัตโนมัติ";
+}
+
+function buildVoiceTrackerEmbed(snapshot, trackerState = {}, profile = null) {
+    const phase = trackerState.phase || "starting";
+    const phaseView = TRACKER_PHASE_VIEW[phase] || TRACKER_PHASE_VIEW.starting;
+    const fields = buildTrackerFields(snapshot, trackerState, phaseView);
+
+    const isDone = ["recovered", "exhausted", "terminal"].includes(phase);
+    const details = trackerState.details || (isDone ? "กระบวนการกู้คืนเสร็จสิ้นแล้ว" : "ระบบจะอัปเดตสถานะในข้อความนี้ต่อเนื่องแบบเรียลไทม์");
+    const nextAction = resolveTrackerAction(phase);
+
+    return buildDmEmbed({
+        tone: phaseView.tone,
+        title: phaseView.title,
+        summary: phaseView.summary,
+        profile: profile || profileFromUser(null, {
+            id: snapshot.accountId,
+            displayName: snapshot.accountName,
+            username: snapshot.accountName,
+            avatarUrl: snapshot.accountAvatar
+        }),
+        fields,
+        details,
+        nextAction,
+        referenceId: `track-${getSessionShortId(snapshot.sessionId)}`,
+        timestamp: Date.now(),
+        footer: "Phomueangtai • Live Recovery Tracker"
+    });
+}
+
+async function sendVoiceRecoveryTrackerDM(snapshot, trackerState = {}) {
+    try {
+        const profile = await dmService.resolveProfile(snapshot.accountId, {
+            id: snapshot.accountId,
+            displayName: snapshot.accountName,
+            username: snapshot.accountName,
+            avatarUrl: snapshot.accountAvatar
+        });
+        const eventKey = `voice:tracker:${snapshot.sessionId}:${trackerState.incidentId || Date.now()}`;
+        const embed = buildVoiceTrackerEmbed(snapshot, trackerState, profile);
+        const result = await dmService.send({
+            eventKey,
+            recipientId: snapshot.ownerId,
+            category: "voice_tracker",
+            priority: "high",
+            payload: { embeds: [embed] }
+        });
+        return {
+            status: result?.status || "failed",
+            message: result?.message || null
+        };
+    } catch (error) {
+        return { status: "failed", reason: plain(error?.code || error?.name, "UNKNOWN") };
+    }
+}
+
+async function editVoiceRecoveryTrackerDM(trackerRef, snapshot, trackerState = {}) {
+    if (!trackerRef) return { status: "skipped", reason: "tracker_missing" };
+    try {
+        const profile = await dmService.resolveProfile(snapshot.accountId, {
+            id: snapshot.accountId,
+            displayName: snapshot.accountName,
+            username: snapshot.accountName,
+            avatarUrl: snapshot.accountAvatar
+        });
+        const embed = buildVoiceTrackerEmbed(snapshot, trackerState, profile);
+        if (trackerRef.message && typeof trackerRef.message.edit === "function") {
+            await trackerRef.message.edit({ embeds: [embed] });
+            return { status: "updated" };
+        }
+        return { status: "skipped", reason: "no_edit_method" };
+    } catch (error) {
+        return { status: "failed", reason: plain(error?.code || error?.name, "UNKNOWN") };
+    }
+}
+
 module.exports = {
     EVENT_VIEW,
+    TRACKER_PHASE_VIEW,
     createVoiceSnapshot,
     buildVoiceEventEmbed,
+    buildVoiceTrackerEmbed,
     sendVoiceEventDM,
     sendVoiceDigestDM,
+    sendVoiceRecoveryTrackerDM,
+    editVoiceRecoveryTrackerDM,
     sendSessionStoppedDM,
     sendTokenInvalidDM,
     sendSessionOnlineDM
