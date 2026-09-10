@@ -5,6 +5,7 @@ const sessionManager = require("../sessionManager");
 const dm = require("./dm");
 
 const EVENTS = Object.freeze({
+    VOICE_DISCONNECTED: "VOICE_DISCONNECTED",
     SESSION_READY: "SESSION_READY",
     RECOVERY_DELAYED: "RECOVERY_DELAYED",
     SESSION_RECOVERED: "SESSION_RECOVERED",
@@ -21,6 +22,7 @@ const EVENTS = Object.freeze({
 });
 const EVENT_TYPES = new Set(Object.values(EVENTS));
 const IMPORTANT_EVENTS = new Set([
+    EVENTS.VOICE_DISCONNECTED,
     EVENTS.RECOVERY_DELAYED,
     EVENTS.RECOVERY_EXHAUSTED,
     EVENTS.TOKEN_INVALID,
@@ -38,6 +40,7 @@ const CRITICAL_EVENTS = new Set([
     EVENTS.STOP_FAILED
 ]);
 const HIGH_EVENTS = new Set([
+    EVENTS.VOICE_DISCONNECTED,
     EVENTS.LOGIN_FAILED,
     EVENTS.GUILD_NOT_FOUND,
     EVENTS.CHANNEL_NOT_FOUND,
@@ -139,7 +142,7 @@ const DEFAULTS = Object.freeze({
 
 function createVoiceNotificationSystem(options = {}) {
     const manager = options.sessionManager || sessionManager;
-    const dmSender = options.dm || dm;
+    const dmSender = Object.assign({}, dm, options.dm);
     const now = options.now || Date.now;
     const randomUUID = options.randomUUID || crypto.randomUUID;
     const setTimer = options.setTimer || setTimeout;
@@ -393,10 +396,12 @@ function createVoiceNotificationSystem(options = {}) {
             }
 
             const incidentId = randomUUID();
+            const openedAt = now();
+            const previousVoiceReadyAt = Number(session.voiceReadyAt || 0);
             session.recoveryState = {
                 phase: "degraded",
                 incidentId,
-                openedAt: now(),
+                openedAt,
                 attempts: 0,
                 lifetimeAttempts: Number(session.recoveryState.lifetimeAttempts || session.reconnectCount || 0),
                 cause: context.cause || "voice_disconnected"
@@ -404,6 +409,16 @@ function createVoiceNotificationSystem(options = {}) {
             session.reconnecting = true;
             await persist(sessionId);
             scheduleIncidentNotice(sessionId, incidentId);
+
+            if (context.notifyDisconnect !== false) {
+                await emit(sessionId, EVENTS.VOICE_DISCONNECTED, {
+                    ...context,
+                    incidentId,
+                    onlineSince: previousVoiceReadyAt,
+                    verifiedAt: openedAt
+                }).catch(() => {});
+            }
+
             return { ...session.recoveryState };
         });
     }
@@ -475,18 +490,15 @@ function createVoiceNotificationSystem(options = {}) {
             const delayedRecorded = Boolean(
                 delayedKey && getEventRecordValue(session?.notificationState?.events, delayedKey)
             );
-            if (delayedRecorded || outageDurationMs >= config.recoveryGraceMs) {
-                return emit(sessionId, EVENTS.SESSION_RECOVERED, {
-                    ...context,
-                    incidentId: transition.previous.incidentId,
-                    outageDurationMs,
-                    attempts: transition.previous.attempts,
-                    onlineSince: transition.previousVoiceReadyAt,
-                    recoveryNoticeSent: delayedRecorded
-                });
-            }
-            diagnostics.suppressed++;
-            return { status: "skipped", reason: "brief_recovery" };
+            return emit(sessionId, EVENTS.SESSION_RECOVERED, {
+                ...context,
+                incidentId: transition.previous.incidentId,
+                outageDurationMs,
+                attempts: transition.previous.attempts,
+                onlineSince: transition.previousVoiceReadyAt,
+                recoveryNoticeSent: true,
+                delayedNoticeSent: delayedRecorded
+            });
         }
 
         if (context.notifyInitial === false) return { status: "skipped", reason: "initial_notification_disabled" };

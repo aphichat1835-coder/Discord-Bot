@@ -123,23 +123,39 @@ test("owner notification budget combines excess session events into one digest",
     assert.equal(harness.digests[0].items.length, 17);
 });
 
-test("brief disconnect recovers silently but a delayed incident sends recovery updates", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("disconnect triggers immediate notification and recovery summarizes outage duration", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const harness = makeHarness();
     const system = createVoiceNotificationSystem(harness.options);
     await system.beginIncident("session-1");
+    assert.equal(harness.sent.length, 1);
+    assert.equal(harness.sent[0].type, EVENTS.VOICE_DISCONNECTED);
+
     harness.advance(30_000);
-    const brief = await system.markReady("session-1", { actualChannelId: "voice-session-1" });
-    assert.equal(brief.reason, "brief_recovery");
-    assert.equal(harness.sent.length, 0);
+    const recovered = await system.markReady("session-1", { actualChannelId: "voice-session-1" });
+    assert.equal(recovered.status, "sent");
+    assert.equal(harness.sent.length, 2);
+    assert.equal(harness.sent[1].type, EVENTS.SESSION_RECOVERED);
+    assert.equal(harness.sent[1].outageDurationMs, 30_000);
 
     await system.beginIncident("session-1");
+    assert.equal(harness.sent[2].type, EVENTS.VOICE_DISCONNECTED);
+
     const timer = harness.timers.at(-1);
     harness.advance(timer.delay);
     await timer.callback();
     await new Promise(resolve => setImmediate(resolve));
+    assert.equal(harness.sent[3].type, EVENTS.RECOVERY_DELAYED);
+
     harness.advance(10_000);
     await system.markReady("session-1", { actualChannelId: "voice-session-1" });
-    assert.deepEqual(harness.sent.map(item => item.type), [EVENTS.RECOVERY_DELAYED, EVENTS.SESSION_RECOVERED]);
+    assert.equal(harness.sent[4].type, EVENTS.SESSION_RECOVERED);
+    assert.deepEqual(harness.sent.map(item => item.type), [
+        EVENTS.VOICE_DISCONNECTED,
+        EVENTS.SESSION_RECOVERED,
+        EVENTS.VOICE_DISCONNECTED,
+        EVENTS.RECOVERY_DELAYED,
+        EVENTS.SESSION_RECOVERED
+    ]);
 });
 
 test("voice embed reports explicit verified state without exposing a token", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.

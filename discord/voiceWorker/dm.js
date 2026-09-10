@@ -6,6 +6,7 @@ const dmService = require("../dm");
 const { buildDmEmbed, profileFromUser, safeText, markdownText, code } = dmService.design;
 
 const EVENT_VIEW = Object.freeze({
+    VOICE_DISCONNECTED: { color: "#FFA500", title: "⚠️ การเชื่อมต่อช่องเสียงหลุด", status: "🟠 กำลังเริ่มกู้คืนอัตโนมัติ" },
     SESSION_READY: { color: "#57F287", title: "✅ เริ่มออนช่องเสียงแล้ว", status: "🟢 ออนไลน์ในช่องเป้าหมาย" },
     RECOVERY_DELAYED: { color: "#FEE75C", title: "🛠️ กำลังกู้คืนช่องเสียง", status: "🟠 การเชื่อมต่อยังไม่กลับมาปกติ" },
     SESSION_RECOVERED: { color: "#57F287", title: "✅ กลับมาออนช่องเสียงแล้ว", status: "🟢 ยืนยันแล้วว่าออนไลน์ในช่องเป้าหมาย" },
@@ -22,6 +23,7 @@ const EVENT_VIEW = Object.freeze({
 });
 
 const EVENT_COPY = Object.freeze({
+    VOICE_DISCONNECTED: ["การเชื่อมต่อช่องเสียงหลุดออกจากเซิร์ฟเวอร์", "ระบบกำลังเริ่มกระบวนการกู้คืนและเชื่อมต่อใหม่อัตโนมัติ"],
     SESSION_READY: ["ระบบยืนยันแล้วว่าบัญชีอยู่ในช่องเสียงเป้าหมาย", "ไม่ต้องทำอะไร ระบบกำลังทำงานตามปกติ"],
     RECOVERY_DELAYED: ["การเชื่อมต่อหลุดและยังไม่กลับมาภายในเวลาผ่อนผัน", "ระบบกำลังกู้คืนอัตโนมัติ ไม่ต้องกดเริ่มซ้ำ"],
     SESSION_RECOVERED: ["ระบบกู้คืนสำเร็จและตรวจพบช่องเสียงตรงกับเป้าหมาย", "ไม่ต้องทำอะไร ระบบกลับมาทำงานตามปกติแล้ว"],
@@ -50,9 +52,13 @@ function duration(ms) {
     const seconds = Math.max(0, Math.floor(Number(ms || 0) / 1000));
     if (seconds < 60) return `${seconds} วินาที`;
     const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes} นาที ${seconds % 60} วินาที`;
+    const remainingSeconds = seconds % 60;
+    if (minutes < 60) {
+        return remainingSeconds > 0 ? `${minutes} นาที ${remainingSeconds} วินาที` : `${minutes} นาที`;
+    }
     const hours = Math.floor(minutes / 60);
-    return `${hours} ชั่วโมง ${minutes % 60} นาที`;
+    const remainingMinutes = minutes % 60;
+    return remainingMinutes > 0 ? `${hours} ชั่วโมง ${remainingMinutes} นาที` : `${hours} ชั่วโมง`;
 }
 
 function createVoiceSnapshot(session, type, context = {}) {
@@ -87,37 +93,97 @@ function createVoiceSnapshot(session, type, context = {}) {
 function voiceTone(type) {
     if (["TOKEN_INVALID", "RECOVERY_EXHAUSTED", "STOP_FAILED"].includes(type)) return "danger";
     if (["LOGIN_FAILED", "GUILD_NOT_FOUND", "CHANNEL_NOT_FOUND", "VOICE_PERMISSION_DENIED", "VOICE_CONNECTION_FAILED"].includes(type)) return "action";
-    if (["RECOVERY_DELAYED", "SESSION_STOPPED_IDLE"].includes(type)) return "warning";
+    if (["VOICE_DISCONNECTED", "RECOVERY_DELAYED", "SESSION_STOPPED_IDLE"].includes(type)) return "warning";
     if (["SESSION_READY", "SESSION_RECOVERED"].includes(type)) return "success";
     return "info";
+}
+
+const SNOWFLAKE_PATTERN = /^\d{17,20}$/;
+
+function formatGuildField(guildName, guildId) {
+    const safeName = markdownText(guildName, "เซิร์ฟเวอร์ไม่ทราบชื่อ");
+    if (SNOWFLAKE_PATTERN.test(String(guildId || ""))) {
+        return `[🏠 ${safeName}](https://discord.com/channels/${guildId})\n${code(guildId)}`;
+    }
+    return `${safeName}\n${code(guildId)}`;
+}
+
+function formatChannelField(channelName, channelId, guildId) {
+    const safeName = markdownText(channelName, "ช่องเสียงไม่ทราบชื่อ");
+    const isChanSnowflake = SNOWFLAKE_PATTERN.test(String(channelId || ""));
+    const isGuildSnowflake = SNOWFLAKE_PATTERN.test(String(guildId || ""));
+
+    if (isChanSnowflake && isGuildSnowflake) {
+        return `<#${channelId}> ([🔊 ${safeName}](https://discord.com/channels/${guildId}/${channelId}))\n${code(channelId)}`;
+    }
+    if (isChanSnowflake) {
+        return `<#${channelId}>\n${code(channelId)}`;
+    }
+    return `${safeName}\n${code(channelId)}`;
+}
+
+function formatActualChannelField(actualChannelId, guildId) {
+    const isChanSnowflake = SNOWFLAKE_PATTERN.test(String(actualChannelId || ""));
+    const isGuildSnowflake = SNOWFLAKE_PATTERN.test(String(guildId || ""));
+    if (isChanSnowflake && isGuildSnowflake) {
+        return `<#${actualChannelId}> ([🔊 ลิงก์ห้อง](https://discord.com/channels/${guildId}/${actualChannelId}))\n${code(actualChannelId)}`;
+    }
+    if (isChanSnowflake) {
+        return `<#${actualChannelId}>\n${code(actualChannelId)}`;
+    }
+    return code(actualChannelId);
+}
+
+function getVoiceSummary(snapshot) {
+    if (snapshot.actualChannelSource === "connection_state") {
+        return "สถานะนี้อ้างอิงการเชื่อมต่อที่พร้อมใช้งาน แต่ Discord ยังไม่ส่ง Voice State ที่ยืนยันช่องกลับมา";
+    }
+    if (snapshot.type === "VOICE_DISCONNECTED") {
+        return "ระบบตรวจพบว่าการเชื่อมต่อช่องเสียงหลุดออก และกำลังเริ่มกู้คืนให้อัตโนมัติ";
+    }
+    if (snapshot.type === "SESSION_RECOVERED") {
+        return "ระบบกู้คืนการเชื่อมต่อช่องเสียงสำเร็จ และตรวจสอบยืนยันสถานะการออนไลน์ในห้องเสียงเรียบร้อยแล้ว";
+    }
+    if (snapshot.type === "SESSION_READY") {
+        return "ระบบเริ่มการออนช่องเสียงสำเร็จ และยืนยันสถานะเรียบร้อยแล้ว";
+    }
+    return "สรุปสถานะล่าสุดของบัญชีที่ระบบตรวจสอบได้ ณ เวลาที่ระบุ";
 }
 
 function buildVoiceEventEmbed(snapshot, profile = null) {
     const view = EVENT_VIEW[snapshot.type] || { color: "#5865F2", title: "🔔 แจ้งเตือนระบบช่องเสียง", status: "ℹ️ มีการเปลี่ยนแปลง" };
     const fields = [
         { name: "📍 สถานะ", value: view.status },
-        { name: "🏠 เซิร์ฟเวอร์", value: `${markdownText(snapshot.guildName)}\n${code(snapshot.guildId)}`, inline: true },
-        { name: "🔊 ช่องเป้าหมาย", value: `${markdownText(snapshot.targetChannelName)}\n${code(snapshot.targetChannelId)}`, inline: true }
+        { name: "🏠 เซิร์ฟเวอร์", value: formatGuildField(snapshot.guildName, snapshot.guildId), inline: true },
+        { name: "🔊 ช่องเป้าหมาย", value: formatChannelField(snapshot.targetChannelName, snapshot.targetChannelId, snapshot.guildId), inline: true }
     ];
 
     if (snapshot.actualChannelId) {
         const verified = snapshot.actualChannelSource === "voice_state";
         fields.push({
             name: verified ? "✅ ช่องที่อ่านจากสถานะเสียง" : "ℹ️ ช่องจากสถานะการเชื่อมต่อ",
-            value: code(snapshot.actualChannelId),
+            value: formatActualChannelField(snapshot.actualChannelId, snapshot.guildId),
             inline: true
         });
     }
-    if (snapshot.outageDurationMs > 0) fields.push({ name: "⏱️ ระยะเวลาที่หลุด", value: duration(snapshot.outageDurationMs), inline: true });
-    if (snapshot.attempts > 0) fields.push({ name: "🔁 จำนวนครั้งที่ลองกู้คืน", value: String(snapshot.attempts), inline: true });
-    if (snapshot.onlineDurationMs > 0) fields.push({ name: "🟢 ออนไลน์ต่อเนื่องก่อนเหตุการณ์", value: duration(snapshot.onlineDurationMs), inline: true });
+    if (snapshot.outageDurationMs > 0) {
+        fields.push({ name: "⏱️ ระยะเวลาที่หลุด", value: duration(snapshot.outageDurationMs), inline: true });
+    }
+    if (snapshot.attempts > 0) {
+        fields.push({ name: "🔁 จำนวนครั้งที่ลองกู้คืน", value: `${snapshot.attempts} ครั้ง`, inline: true });
+    }
+    if (snapshot.onlineDurationMs > 0) {
+        fields.push({
+            name: snapshot.type === "VOICE_DISCONNECTED" ? "🟢 ออนไลน์ต่อเนื่องก่อนหลุด" : "🟢 ออนไลน์ต่อเนื่องก่อนเหตุการณ์",
+            value: duration(snapshot.onlineDurationMs),
+            inline: true
+        });
+    }
     fields.push({ name: "🧩 รหัสการออน", value: code(getSessionShortId(snapshot.sessionId)), inline: true });
     return buildDmEmbed({
         tone: voiceTone(snapshot.type),
         title: view.title,
-        summary: snapshot.actualChannelSource === "connection_state"
-            ? "สถานะนี้อ้างอิงการเชื่อมต่อที่พร้อมใช้งาน แต่ Discord ยังไม่ส่ง Voice State ที่ยืนยันช่องกลับมา"
-            : "สรุปสถานะล่าสุดของบัญชีที่ระบบตรวจสอบได้ ณ เวลาที่ระบุ",
+        summary: getVoiceSummary(snapshot),
         profile: profile || profileFromUser(null, {
             id: snapshot.accountId,
             displayName: snapshot.accountName,
