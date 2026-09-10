@@ -971,77 +971,85 @@ function verificationSetupFailureMessage(err = {}) {
         `> ตรวจสอบสิทธิ์ของบอทและสถานะฐานข้อมูล แล้วลองใหม่`;
 }
 
+async function executeDirectRoleAssignment(interaction, member, role, roleId) {
+    try {
+        if (member.roles.cache.has(roleId)) {
+            return interaction.reply({
+                content: `> ${config.emojis.success} คุณมียศ ${role.toString()} อยู่แล้ว`,
+                ephemeral: true
+            });
+        }
+
+        await member.roles.add(roleId);
+
+        return interaction.reply({
+            embeds: [
+                new MessageEmbed()
+                    .setColor(config.system.themeColors.success)
+                    .setTitle("Added Roles")
+                    .setDescription(`+ ${role.toString()} (user)`)
+                    .setTimestamp()
+            ],
+            ephemeral: true
+        });
+    } catch (err) {
+        const errorCode = String(err?.code || err?.name || "unknown")
+            .replace(/[^a-zA-Z0-9_.-]/g, "_")
+            .slice(0, 80);
+        console.warn(`[VERIFY] role interaction failed: ${errorCode}`);
+        return interaction.reply({
+            content: `> ${config.emojis.error} ไม่สามารถจัดการยศได้ กรุณาลองใหม่หรือติดต่อผู้ดูแล`,
+            ephemeral: true
+        });
+    }
+}
+
+async function handleVerifyRoleButton(interaction, roleId) {
+    const { member, guild } = interaction;
+    const role = guild.roles.cache.get(roleId);
+
+    if (!role) {
+        return interaction.reply({
+            content: `> ${config.emojis.error} ไม่พบยศนี้แล้ว กรุณาแจ้ง Admin ตั้งค่าใหม่`,
+            ephemeral: true
+        });
+    }
+
+    const botMember = await resolveGuildBotMember(guild, interaction.client);
+    const roleCheck = validateDirectRoleAssignment(botMember, role);
+    if (!roleCheck.ok) {
+        return interaction.reply({
+            content: `> ${config.emojis.error} ${roleCheck.reason}`,
+            ephemeral: true
+        });
+    }
+
+    let currentConfig;
+    try {
+        currentConfig = await loadCurrentDirectConfig(interaction, role);
+    } catch (err) {
+        console.error(`[VERIFY] Direct panel config read failed: ${String(err?.code || err?.name || "database_error").slice(0, 80)}`);
+        return interaction.reply({
+            content: `> ${config.emojis.warning} ตรวจสอบสถานะแผงล่าสุดจากฐานข้อมูลไม่ได้ กรุณาลองใหม่ภายหลัง`,
+            ephemeral: true
+        });
+    }
+    if (!currentConfig) {
+        return interaction.reply({
+            content: `> ${config.emojis.warning} แผงนี้ไม่ใช่แผงล่าสุดแล้ว กรุณาใช้แผงยืนยันตัวตนล่าสุด`,
+            ephemeral: true
+        });
+    }
+
+    return executeDirectRoleAssignment(interaction, member, role, roleId);
+}
+
 async function handleVerifyButton(interaction) {
-    const { customId, member, guild } = interaction;
+    const { customId } = interaction;
 
     if (customId.startsWith("verify_role_")) {
         const roleId = customId.replace("verify_role_", "");
-        const role = guild.roles.cache.get(roleId);
-
-        if (!role) {
-            return interaction.reply({
-                content: `> ${config.emojis.error} ไม่พบยศนี้แล้ว กรุณาแจ้ง Admin ตั้งค่าใหม่`,
-                ephemeral: true
-            });
-        }
-
-        const botMember = await resolveGuildBotMember(guild, interaction.client);
-        const roleCheck = validateDirectRoleAssignment(botMember, role);
-        if (!roleCheck.ok) {
-            return interaction.reply({
-                content: `> ${config.emojis.error} ${roleCheck.reason}`,
-                ephemeral: true
-            });
-        }
-
-        let currentConfig;
-        try {
-            currentConfig = await loadCurrentDirectConfig(interaction, role);
-        } catch (err) {
-            console.error(`[VERIFY] Direct panel config read failed: ${String(err?.code || err?.name || "database_error").slice(0, 80)}`);
-            return interaction.reply({
-                content: `> ${config.emojis.warning} ตรวจสอบสถานะแผงล่าสุดจากฐานข้อมูลไม่ได้ กรุณาลองใหม่ภายหลัง`,
-                ephemeral: true
-            });
-        }
-        if (!currentConfig) {
-            return interaction.reply({
-                content: `> ${config.emojis.warning} แผงนี้ไม่ใช่แผงล่าสุดแล้ว กรุณาใช้แผงยืนยันตัวตนล่าสุด`,
-                ephemeral: true
-            });
-        }
-
-        try {
-            if (member.roles.cache.has(roleId)) {
-                return interaction.reply({
-                    content: `> ${config.emojis.success} คุณมียศ ${role.toString()} อยู่แล้ว`,
-                    ephemeral: true
-                });
-            }
-
-            await member.roles.add(roleId);
-
-            return interaction.reply({
-                embeds: [
-                    new MessageEmbed()
-                        .setColor(config.system.themeColors.success)
-                        .setTitle("Added Roles")
-                        .setDescription(`+ ${role.toString()} (user)`)
-                        .setTimestamp()
-                ],
-                ephemeral: true
-            });
-
-        } catch (err) {
-            const errorCode = String(err?.code || err?.name || "unknown")
-                .replace(/[^a-zA-Z0-9_.-]/g, "_")
-                .slice(0, 80);
-            console.warn(`[VERIFY] role interaction failed: ${errorCode}`);
-            return interaction.reply({
-                content: `> ${config.emojis.error} ไม่สามารถจัดการยศได้ กรุณาลองใหม่หรือติดต่อผู้ดูแล`,
-                ephemeral: true
-            });
-        }
+        return handleVerifyRoleButton(interaction, roleId);
     }
 
     if (customId.startsWith("verify_oauth_")) {
