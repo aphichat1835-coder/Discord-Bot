@@ -1078,20 +1078,17 @@ async function fetchRestoreMemberWithTimeout(guild, memberId, timeoutMs) {
     }
 }
 
-async function resolveRestoreMemberTargets(guild, channels, options = {}) {
+function categorizeInitialRestoreMemberTargets(guild, channels) {
     const states = new Map();
     const pending = [];
     for (const memberId of collectRestoreMemberIds(channels)) {
         if (guild.members.cache.has(memberId)) states.set(memberId, "resolved");
         else pending.push(memberId);
     }
+    return { states, pending };
+}
 
-    if (pending.length === 0) return states;
-    if (typeof guild.members.fetch !== "function") {
-        for (const memberId of pending) states.set(memberId, "unresolved");
-        return states;
-    }
-
+function parseRestoreFetchOptions(options = {}) {
     const requestedConcurrency = Number(options.memberFetchConcurrency);
     const requestedTimeoutMs = Number(options.memberFetchTimeoutMs);
     const concurrency = Number.isFinite(requestedConcurrency)
@@ -1100,21 +1097,39 @@ async function resolveRestoreMemberTargets(guild, channels, options = {}) {
     const timeoutMs = Number.isFinite(requestedTimeoutMs)
         ? Math.max(100, Math.min(30000, Math.trunc(requestedTimeoutMs)))
         : RESTORE_MEMBER_FETCH_TIMEOUT_MS;
-    let cursor = 0;
-    const workers = Array.from({ length: Math.min(concurrency, pending.length) }, async () => {
-        while (cursor < pending.length) {
-            const memberId = pending[cursor++];
-            try {
-                const member = await fetchRestoreMemberWithTimeout(guild, memberId, timeoutMs);
-                states.set(memberId, member ? "resolved" : "missing");
-            } catch (error) {
-                states.set(memberId, isMissingRestoreMemberError(error) ? "missing" : "unresolved");
-            }
+    return { concurrency, timeoutMs };
+}
+
+async function executeRestoreMemberWorker(guild, pending, stateRef, timeoutMs) {
+    while (stateRef.cursor < pending.length) {
+        const memberId = pending[stateRef.cursor++];
+        try {
+            const member = await fetchRestoreMemberWithTimeout(guild, memberId, timeoutMs);
+            stateRef.states.set(memberId, member ? "resolved" : "missing");
+        } catch (error) {
+            stateRef.states.set(memberId, isMissingRestoreMemberError(error) ? "missing" : "unresolved");
         }
-    });
+    }
+}
+
+async function resolveRestoreMemberTargets(guild, channels, options = {}) {
+    const { states, pending } = categorizeInitialRestoreMemberTargets(guild, channels);
+    if (pending.length === 0) return states;
+    if (typeof guild.members.fetch !== "function") {
+        for (const memberId of pending) states.set(memberId, "unresolved");
+        return states;
+    }
+
+    const { concurrency, timeoutMs } = parseRestoreFetchOptions(options);
+    const stateRef = { cursor: 0, states };
+    const workerCount = Math.min(concurrency, pending.length);
+    const workers = Array.from({ length: workerCount }, () =>
+        executeRestoreMemberWorker(guild, pending, stateRef, timeoutMs)
+    );
     await Promise.all(workers);
     return states;
 }
+
 
 function resolveRestoreOverwriteTarget(guild, overwrite, roleIdMap, oldGuildId, memberTargetStates = new Map()) {
     const overwriteType = normalizeOverwriteType(overwrite.type);
