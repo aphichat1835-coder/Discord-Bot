@@ -648,9 +648,16 @@ function clearHibernateTimer(sessionId) {
     }
 }
 
+function resolveHibernatePauseMs(cycle) {
+    if (cycle === 2) {
+        return 10 * 60 * 1000;
+    }
+    return 5 * 60 * 1000;
+}
+
 async function handleHibernateTransition(sessionId, tokenHash, session, currentCycle, deps = {}) {
     const nextCycle = currentCycle + 1;
-    const pauseMs = nextCycle === 1 ? 5 * 60 * 1000 : (nextCycle === 2 ? 10 * 60 * 1000 : 5 * 60 * 1000);
+    const pauseMs = resolveHibernatePauseMs(nextCycle);
     const hibernateUntil = Date.now() + pauseMs;
     const recordHibernate = deps.recordHibernateCycle || notifications.recordHibernateCycle;
 
@@ -1819,6 +1826,7 @@ module.exports = {
         safeRejoinConnection,
         verifyTargetVoiceChannel,
         handlePreflightFailure,
-        handleHibernateTransition
+        handleHibernateTransition,
+        resolveHibernatePauseMs
     }
 };

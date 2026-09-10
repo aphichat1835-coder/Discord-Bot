@@ -9,6 +9,13 @@ const { buildVoiceStatusControls } = require("../commands/panelViews");
 const voiceWorker = require("../voiceWorker");
 const { handleStatusReconnectButton } = require("../commands/panelInteractions")._test;
 const { serializeVoiceSession } = require("../index/sessionSerializer");
+const { resolveHibernatePauseMs } = require("../voiceWorker/lifecycle")._test;
+
+test("resolveHibernatePauseMs: returns 10m for cycle 2 and 5m for other cycles", () => {
+    assert.equal(resolveHibernatePauseMs(1), 5 * 60 * 1000);
+    assert.equal(resolveHibernatePauseMs(2), 10 * 60 * 1000);
+    assert.equal(resolveHibernatePauseMs(3), 5 * 60 * 1000);
+});
 
 test("voiceLabels: getVoiceStatusLabel formats ready, reconnecting, hibernate, and clean offline", () => {
     // Ready
@@ -235,6 +242,7 @@ test("panelInteractions: handleStatusReconnectButton permission check and respon
 });
 
 test("sessionSerializer: serializeVoiceSession includes recoveryPhase and hibernateUntil", () => {
+    const testTimestamp = Date.parse("2026-06-12T01:02:03.000Z");
     const session = {
         sessionId: "sess-serial-test",
         serverId: "guild-1",
@@ -247,14 +255,14 @@ test("sessionSerializer: serializeVoiceSession includes recoveryPhase and hibern
         reconnecting: true,
         recoveryState: {
             phase: "hibernate",
-            hibernateUntil: 1700000000000
+            hibernateUntil: testTimestamp
         }
     };
 
     const serialized = serializeVoiceSession(session);
     assert.equal(serialized.reconnecting, true);
     assert.equal(serialized.recoveryPhase, "hibernate");
-    assert.equal(serialized.hibernateUntil, 1700000000000);
+    assert.equal(serialized.hibernateUntil, testTimestamp);
 });
 
 test("dashboard: handleReconnectSession handles auth, validation, not found, failure, and success", async () => {
