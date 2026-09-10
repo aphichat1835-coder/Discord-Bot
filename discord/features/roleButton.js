@@ -39,6 +39,49 @@ function validateRoleChange(guild, member, role) {
  * @param {Object} options.embed   - embed options
  * @param {string} options.type    - 'button' | 'select'
  */
+function buildRolePanelEmbed(embed = {}) {
+    const embedObj = new MessageEmbed()
+        .setColor(embed.color || config.system.themeColors.primary)
+        .setTitle(embed.title || 'เลือกยศของคุณ');
+    if (embed.description) embedObj.setDescription(embed.description);
+    if (embed.footer)      embedObj.setFooter({ text: embed.footer });
+    if (embed.image)       embedObj.setImage(embed.image);
+    if (embed.thumbnail)   embedObj.setThumbnail(embed.thumbnail);
+    return embedObj;
+}
+
+function buildRoleSelectMenu(roles = []) {
+    const menu = new MessageSelectMenu()
+        .setCustomId('roleselect_menu')
+        .setPlaceholder('เลือกยศที่ต้องการ...')
+        .setMinValues(0)
+        .setMaxValues(Math.min(roles.length, 25))
+        .addOptions(roles.slice(0, 25).map(r => ({
+            label:       r.label || `ยศ ${r.roleId}`,
+            value:       `role_${r.roleId}`,
+            emoji:       r.emoji  || '🎭',
+            ...(r.desc ? { description: String(r.desc).slice(0, 100) } : {})
+        })));
+    return [new MessageActionRow().addComponents(menu)];
+}
+
+function buildRoleButtonRows(roles = []) {
+    const rows = [];
+    for (let i = 0; i < roles.length; i += MAX_BUTTONS_PER_ROW) {
+        const chunk = roles.slice(i, i + MAX_BUTTONS_PER_ROW);
+        const row = new MessageActionRow().addComponents(
+            chunk.map(r => new MessageButton()
+                .setCustomId(`rolebtn_${r.roleId}`)
+                .setLabel(r.label || `ยศ`)
+                .setEmoji(r.emoji || '🎭')
+                .setStyle(r.style || 'SECONDARY')
+            )
+        );
+        rows.push(row);
+    }
+    return rows;
+}
+
 function buildRolePanel(options = {}) {
     const {
         roles  = [],
@@ -49,47 +92,10 @@ function buildRolePanel(options = {}) {
     if (!roles.length) throw new Error('ต้องมีอย่างน้อย 1 ยศ');
     if (roles.length > MAX_ROLES) throw new Error(`ไม่เกิน ${MAX_ROLES} ยศ`);
 
-    const embedObj = new MessageEmbed()
-        .setColor(embed.color || config.system.themeColors.primary)
-        .setTitle(embed.title || 'เลือกยศของคุณ');
-    if (embed.description) embedObj.setDescription(embed.description);
-    if (embed.footer)      embedObj.setFooter({ text: embed.footer });
-    if (embed.image)       embedObj.setImage(embed.image);
-    if (embed.thumbnail)   embedObj.setThumbnail(embed.thumbnail);
-
-    let components = [];
-
-    if (type === 'select') {
-        // Dropdown menu
-        const menu = new MessageSelectMenu()
-            .setCustomId('roleselect_menu')
-            .setPlaceholder('เลือกยศที่ต้องการ...')
-            .setMinValues(0)
-            .setMaxValues(Math.min(roles.length, 25))
-            .addOptions(roles.slice(0, 25).map(r => ({
-                label:       r.label || `ยศ ${r.roleId}`,
-                value:       `role_${r.roleId}`,
-                emoji:       r.emoji  || '🎭',
-                ...(r.desc ? { description: String(r.desc).slice(0, 100) } : {})
-            })));
-        components = [new MessageActionRow().addComponents(menu)];
-    } else {
-        // Buttons (max 5 per row, max 5 rows)
-        const rows = [];
-        for (let i = 0; i < roles.length; i += MAX_BUTTONS_PER_ROW) {
-            const chunk = roles.slice(i, i + MAX_BUTTONS_PER_ROW);
-            const row = new MessageActionRow().addComponents(
-                chunk.map(r => new MessageButton()
-                    .setCustomId(`rolebtn_${r.roleId}`)
-                    .setLabel(r.label || `ยศ`)
-                    .setEmoji(r.emoji || '🎭')
-                    .setStyle(r.style || 'SECONDARY')
-                )
-            );
-            rows.push(row);
-        }
-        components = rows;
-    }
+    const embedObj = buildRolePanelEmbed(embed);
+    const components = type === 'select'
+        ? buildRoleSelectMenu(roles)
+        : buildRoleButtonRows(roles);
 
     return { embeds: [embedObj], components };
 }
