@@ -1,84 +1,105 @@
 "use strict";
 
-function createReadyInitializationController(options = {}) {
-    if (typeof options.initialize !== "function") throw new TypeError("initialize must be a function");
-    const isReady = options.isReady || (() => true);
-    const isShuttingDown = options.isShuttingDown || (() => false);
-    const onError = options.onError || (() => {});
-    const setTimer = options.setTimer || setTimeout;
-    const clearTimer = options.clearTimer || clearTimeout;
-    const requestedRetryMs = options.retryMs ?? 10000;
+function parseRetryDelay(requestedRetryMs) {
     const parsedRetryMs = Number(requestedRetryMs);
-    const retryMs = Number.isFinite(parsedRetryMs)
+    return Number.isFinite(parsedRetryMs)
         ? Math.max(100, parsedRetryMs)
         : 10000;
-    let inFlight = null;
-    let retryTimer = null;
-    let completed = false;
-    let stopped = false;
-    let attempts = 0;
-    let lastError = null;
+}
 
-    function clearRetry() {
-        if (!retryTimer) return;
-        clearTimer(retryTimer);
-        retryTimer = null;
+class ReadyInitializationController {
+    constructor(options = {}) {
+        if (typeof options.initialize !== "function") throw new TypeError("initialize must be a function");
+        this.initialize = options.initialize;
+        this.isReady = options.isReady || (() => true);
+        this.isShuttingDown = options.isShuttingDown || (() => false);
+        this.onError = options.onError || (() => {});
+        this.setTimer = options.setTimer || setTimeout;
+        this.clearTimer = options.clearTimer || clearTimeout;
+        this.retryMs = parseRetryDelay(options.retryMs ?? 10000);
+        this.inFlight = null;
+        this.retryTimer = null;
+        this.completed = false;
+        this.stopped = false;
+        this.attempts = 0;
+        this.lastError = null;
     }
 
-    function scheduleRetry() {
-        if (stopped || completed || retryTimer || isShuttingDown()) return false;
-        retryTimer = setTimer(() => {
-            retryTimer = null;
-            if (!stopped && !isShuttingDown() && isReady()) start();
-        }, retryMs);
-        retryTimer?.unref?.();
+    clearRetry() {
+        if (!this.retryTimer) return;
+        this.clearTimer(this.retryTimer);
+        this.retryTimer = null;
+    }
+
+    canScheduleRetry() {
+        return !this.stopped && !this.completed && !this.retryTimer && !this.isShuttingDown();
+    }
+
+    canStart() {
+        return !this.stopped && !this.isShuttingDown() && this.isReady();
+    }
+
+    scheduleRetry() {
+        if (!this.canScheduleRetry()) return false;
+        this.retryTimer = this.setTimer(() => {
+            this.retryTimer = null;
+            if (this.canStart()) this.start();
+        }, this.retryMs);
+        this.retryTimer?.unref?.();
         return true;
     }
 
-    function start() {
-        if (stopped) return Promise.resolve(false);
-        if (completed) return Promise.resolve(true);
-        if (isShuttingDown() || !isReady()) return Promise.resolve(false);
-        if (inFlight) return inFlight;
-        attempts++;
-        inFlight = Promise.resolve()
-            .then(() => options.initialize())
+    start() {
+        if (this.stopped) return Promise.resolve(false);
+        if (this.completed) return Promise.resolve(true);
+        if (!this.canStart()) return Promise.resolve(false);
+        if (this.inFlight) return this.inFlight;
+        this.attempts++;
+        this.inFlight = Promise.resolve()
+            .then(() => this.initialize())
             .then(() => {
-                completed = true;
-                lastError = null;
-                clearRetry();
+                this.completed = true;
+                this.lastError = null;
+                this.clearRetry();
                 return true;
             })
             .catch(error => {
-                lastError = error;
-                onError(error, attempts);
-                scheduleRetry();
+                this.lastError = error;
+                this.onError(error, this.attempts);
+                this.scheduleRetry();
                 return false;
             })
             .finally(() => {
-                inFlight = null;
+                this.inFlight = null;
             });
-        return inFlight;
+        return this.inFlight;
     }
 
-    function stop() {
-        stopped = true;
-        clearRetry();
+    stop() {
+        this.stopped = true;
+        this.clearRetry();
     }
 
-    function diagnostics() {
+    diagnostics() {
         return {
-            completed,
-            stopped,
-            inFlight: Boolean(inFlight),
-            retryScheduled: Boolean(retryTimer),
-            retryMs,
-            attempts,
-            lastError: lastError?.code || lastError?.name || lastError?.message || null
+            completed: this.completed,
+            stopped: this.stopped,
+            inFlight: Boolean(this.inFlight),
+            retryScheduled: Boolean(this.retryTimer),
+            retryMs: this.retryMs,
+            attempts: this.attempts,
+            lastError: this.lastError?.code || this.lastError?.name || this.lastError?.message || null
         };
     }
+}
 
-    return { start, stop, diagnostics };
+function createReadyInitializationController(options = {}) {
+    const controller = new ReadyInitializationController(options);
+    return {
+        start: controller.start.bind(controller),
+        stop: controller.stop.bind(controller),
+        diagnostics: controller.diagnostics.bind(controller)
+    };
 }
 
 module.exports = { createReadyInitializationController };
