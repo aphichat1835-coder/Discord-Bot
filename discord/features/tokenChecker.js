@@ -134,13 +134,85 @@ async function fetchNitroSubscription(token) {
     }
 }
 
-async function checkSingleToken(token) {
+function sanitizeTokenInput(token) {
     let cleanToken = (token || '').trim();
     const isQuoted = (cleanToken.startsWith('"') && cleanToken.endsWith('"')) ||
         (cleanToken.startsWith("'") && cleanToken.endsWith("'"));
     if (isQuoted) {
         cleanToken = cleanToken.slice(1, -1).trim();
     }
+    return cleanToken;
+}
+
+function classifyUserResponseError(status, cleanToken) {
+    if (status === 401) {
+        return {
+            valid: false,
+            token: cleanToken,
+            maskedToken: maskToken(cleanToken),
+            errorType: 'INVALID',
+            errorMessage: 'Token ไม่ถูกต้อง หรือหมดอายุแล้ว',
+            category: 'invalid'
+        };
+    }
+    if (status === 403) {
+        return {
+            valid: false,
+            token: cleanToken,
+            maskedToken: maskToken(cleanToken),
+            errorType: 'LOCKED',
+            errorMessage: 'บัญชีถูกระงับ หรือติดด่านยืนยันความปลอดภัย',
+            category: 'invalid'
+        };
+    }
+    return {
+        valid: false,
+        token: cleanToken,
+        maskedToken: maskToken(cleanToken),
+        errorType: `HTTP_${status}`,
+        errorMessage: `Discord API ส่งกลับสถานะ ${status}`,
+        category: 'invalid'
+    };
+}
+
+function resolveTokenCategory(premiumType, hasNitro) {
+    if (premiumType === 2) return 'boost';
+    if (hasNitro) return 'nitro';
+    return 'normal';
+}
+
+function buildValidTokenProfile(user, cleanToken, nitroData) {
+    const premiumType = Number(user.premium_type || 0);
+    const hasNitro = premiumType > 0;
+    const nitroPlan = resolveNitroPlan(premiumType);
+    const category = resolveTokenCategory(premiumType, hasNitro);
+
+    return {
+        valid: true,
+        token: cleanToken,
+        maskedToken: maskToken(cleanToken),
+        id: String(user.id),
+        username: String(user.username || 'Unknown'),
+        globalName: user.global_name ? String(user.global_name) : null,
+        avatarUrl: resolveAvatarUrl(user),
+        email: user.email ? String(user.email) : null,
+        emailVerified: Boolean(user.verified),
+        phone: user.phone ? String(user.phone) : null,
+        phoneVerified: Boolean(user.phone),
+        mfaEnabled: Boolean(user.mfa_enabled),
+        premiumType,
+        hasNitro,
+        nitroPlan,
+        hasBoost: premiumType === 2,
+        expireDays: nitroData.expireDays,
+        expireDate: nitroData.expireDate,
+        createdAt: getAccountCreatedAt(user.id),
+        category
+    };
+}
+
+async function checkSingleToken(token) {
+    const cleanToken = sanitizeTokenInput(token);
 
     if (!cleanToken) {
         return {
@@ -156,81 +228,17 @@ async function checkSingleToken(token) {
     try {
         const userRes = await fetchDiscordUser(cleanToken);
 
-        if (userRes.status === 401) {
-            return {
-                valid: false,
-                token: cleanToken,
-                maskedToken: maskToken(cleanToken),
-                errorType: 'INVALID',
-                errorMessage: 'Token ไม่ถูกต้อง หรือหมดอายุแล้ว',
-                category: 'invalid'
-            };
-        }
-
-        if (userRes.status === 403) {
-            return {
-                valid: false,
-                token: cleanToken,
-                maskedToken: maskToken(cleanToken),
-                errorType: 'LOCKED',
-                errorMessage: 'บัญชีถูกระงับ หรือติดด่านยืนยันความปลอดภัย',
-                category: 'invalid'
-            };
-        }
-
         if (!userRes.ok) {
-            return {
-                valid: false,
-                token: cleanToken,
-                maskedToken: maskToken(cleanToken),
-                errorType: `HTTP_${userRes.status}`,
-                errorMessage: `Discord API ส่งกลับสถานะ ${userRes.status}`,
-                category: 'invalid'
-            };
+            return classifyUserResponseError(userRes.status, cleanToken);
         }
 
         const user = await userRes.json();
-        const premiumType = Number(user.premium_type || 0);
-        const hasNitro = premiumType > 0;
-        const nitroPlan = resolveNitroPlan(premiumType);
+        const hasNitro = Number(user.premium_type || 0) > 0;
+        const nitroData = hasNitro
+            ? await fetchNitroSubscription(cleanToken)
+            : { expireDays: 0, expireDate: null };
 
-        let expireDays = 0;
-        let expireDate = null;
-        if (hasNitro) {
-            const subData = await fetchNitroSubscription(cleanToken);
-            expireDays = subData.expireDays;
-            expireDate = subData.expireDate;
-        }
-
-        let category = 'normal';
-        if (premiumType === 2) {
-            category = 'boost';
-        } else if (hasNitro) {
-            category = 'nitro';
-        }
-
-        return {
-            valid: true,
-            token: cleanToken,
-            maskedToken: maskToken(cleanToken),
-            id: String(user.id),
-            username: String(user.username || 'Unknown'),
-            globalName: user.global_name ? String(user.global_name) : null,
-            avatarUrl: resolveAvatarUrl(user),
-            email: user.email ? String(user.email) : null,
-            emailVerified: Boolean(user.verified),
-            phone: user.phone ? String(user.phone) : null,
-            phoneVerified: Boolean(user.phone),
-            mfaEnabled: Boolean(user.mfa_enabled),
-            premiumType,
-            hasNitro,
-            nitroPlan,
-            hasBoost: premiumType === 2,
-            expireDays,
-            expireDate,
-            createdAt: getAccountCreatedAt(user.id),
-            category
-        };
+        return buildValidTokenProfile(user, cleanToken, nitroData);
     } catch {
         // Network errors, timeouts, or unexpected response formats from Discord API are safely surfaced as an invalid token outcome
         return {

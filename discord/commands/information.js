@@ -101,6 +101,65 @@ function unknownMemberCounts(guild, source) {
     };
 }
 
+function resolveEffectiveMemberCount(guild, cachedMembers) {
+    const rawMemberCount = Number(guild.memberCount);
+    return Number.isFinite(rawMemberCount) && rawMemberCount >= 0
+        ? rawMemberCount
+        : cachedMembers.size;
+}
+
+function resolveOversizedMemberCounts(guild, cachedMembers, memberCount) {
+    const completeCache = memberCount > 0 && cachedMembers.size >= memberCount;
+    if (completeCache) {
+        return {
+            ...countCachedMembers(cachedMembers),
+            total: memberCount,
+            source: "ข้อมูลที่บอทเก็บไว้ครบตามยอดสมาชิก",
+            at: Date.now()
+        };
+    }
+    return unknownMemberCounts(guild, `มีสมาชิก ${memberCount} คน จึงไม่โหลดรายชื่อทั้งหมดเพื่อป้องกันคำสั่งทำงานหนักเกินไป`);
+}
+
+function resolveFallbackMemberCounts(guild, cachedMembers, memberCount) {
+    if (cachedMembers.size > 0) {
+        return {
+            ...countCachedMembers(cachedMembers),
+            total: memberCount || cachedMembers.size,
+            source: "คำนวณจากข้อมูลที่บอทเก็บไว้ เพราะโหลดรายชื่อสมาชิกล่าสุดไม่สำเร็จ",
+            at: Date.now()
+        };
+    }
+    return unknownMemberCounts(guild, "ประเมินจำนวนคนและบอทไม่ได้ เพราะ Discord ไม่ส่งรายชื่อกลับมาและบอทยังไม่มีข้อมูลเก็บไว้");
+}
+
+async function fetchServerMemberCountsTask(guild) {
+    const cachedMembers = guild.members.cache;
+    const memberCount = resolveEffectiveMemberCount(guild, cachedMembers);
+
+    if (memberCount > SERVERINFO_FULL_FETCH_MAX_MEMBERS) {
+        const result = resolveOversizedMemberCounts(guild, cachedMembers, memberCount);
+        serverInfoCounts.set(guild.id, result);
+        return result;
+    }
+
+    try {
+        const members = await guild.members.fetch({ time: SERVERINFO_FETCH_TIMEOUT_MS });
+        const result = {
+            ...countCachedMembers(members),
+            total: memberCount || members.size,
+            source: "ข้อมูลล่าสุดที่บอทโหลดจาก Discord (เก็บไว้ไม่เกิน 60 วินาที)",
+            at: Date.now()
+        };
+        serverInfoCounts.set(guild.id, result);
+        return result;
+    } catch {
+        const result = resolveFallbackMemberCounts(guild, cachedMembers, memberCount);
+        serverInfoCounts.set(guild.id, result);
+        return result;
+    }
+}
+
 async function getServerMemberCounts(guild, now = Date.now()) {
     const cached = serverInfoCounts.get(guild.id);
     if (cached && now - cached.at < SERVERINFO_CACHE_TTL_MS) return cached;
@@ -108,38 +167,7 @@ async function getServerMemberCounts(guild, now = Date.now()) {
     if (!serverInfoCounts.has(guild.id) && serverInfoCounts.size >= 500) {
         serverInfoCounts.delete(serverInfoCounts.keys().next().value);
     }
-    const task = (async () => {
-        const cachedMembers = guild.members.cache;
-        const rawMemberCount = Number(guild.memberCount);
-        const memberCount = Number.isFinite(rawMemberCount) && rawMemberCount >= 0
-            ? rawMemberCount
-            : cachedMembers.size;
-        if (memberCount > SERVERINFO_FULL_FETCH_MAX_MEMBERS) {
-            const completeCache = memberCount > 0 && cachedMembers.size >= memberCount;
-            const result = completeCache
-                ? { ...countCachedMembers(cachedMembers), total: memberCount, source: "ข้อมูลที่บอทเก็บไว้ครบตามยอดสมาชิก", at: Date.now() }
-                : unknownMemberCounts(guild, `มีสมาชิก ${memberCount} คน จึงไม่โหลดรายชื่อทั้งหมดเพื่อป้องกันคำสั่งทำงานหนักเกินไป`);
-            serverInfoCounts.set(guild.id, result);
-            return result;
-        }
-        try {
-            const members = await guild.members.fetch({ time: SERVERINFO_FETCH_TIMEOUT_MS });
-            const result = {
-                ...countCachedMembers(members),
-                total: memberCount || members.size,
-                source: "ข้อมูลล่าสุดที่บอทโหลดจาก Discord (เก็บไว้ไม่เกิน 60 วินาที)",
-                at: Date.now()
-            };
-            serverInfoCounts.set(guild.id, result);
-            return result;
-        } catch {
-            const result = cachedMembers.size > 0
-                ? { ...countCachedMembers(cachedMembers), total: memberCount || cachedMembers.size, source: "คำนวณจากข้อมูลที่บอทเก็บไว้ เพราะโหลดรายชื่อสมาชิกล่าสุดไม่สำเร็จ", at: Date.now() }
-                : unknownMemberCounts(guild, "ประเมินจำนวนคนและบอทไม่ได้ เพราะ Discord ไม่ส่งรายชื่อกลับมาและบอทยังไม่มีข้อมูลเก็บไว้");
-            serverInfoCounts.set(guild.id, result);
-            return result;
-        }
-    })().finally(() => serverInfoInFlight.delete(guild.id));
+    const task = fetchServerMemberCountsTask(guild).finally(() => serverInfoInFlight.delete(guild.id));
     serverInfoInFlight.set(guild.id, task);
     return task;
 }
@@ -962,35 +990,26 @@ function collectHostResourceStats(cpuStart, cpuEnd, elapsedMicroseconds) {
         cpuPercent: cpuPercent(cpuStart, cpuEnd, elapsedMicroseconds)
     };
 }
+function resolveReportedMemberCount(client) {
+    if (!client?.guilds?.cache?.reduce) return 0;
+    return client.guilds.cache.reduce((total, guild) => total + (Number(guild?.memberCount) || 0), 0);
+}
 
-async function handlePing(interaction, client, sessionManager) {
-    markCommandAccepted(interaction);
-    if (!isConfiguredOwner(config, interaction.user?.id)) {
-        return interaction.reply({
-            content: "> 🔒 คำสั่งนี้สงวนสิทธิ์เฉพาะ **เจ้าของบอท (Bot Owner)** เท่านั้น",
-            ephemeral: true
-        });
-    }
-
-    const cpuStart = process.cpuUsage();
-    const wallStart = process.hrtime.bigint();
-    const sent = await sendLoadingState(interaction, "ping");
-    const cpuEnd = process.cpuUsage();
-    const elapsedMicroseconds = Number(process.hrtime.bigint() - wallStart) / 1000;
+function buildPingStats({ interaction, client, sessionManager, sent, cpuStart, cpuEnd, elapsedMicroseconds, mongoPingMs }) {
     const interactionLatency = Math.max(0, Number(sent?.createdTimestamp ?? Date.now()) - Number(interaction.createdTimestamp ?? Date.now()));
-    const websocketLatency = Number(client?.ws?.ping);
-    const mongoPingMs = await measureMongoPing();
+    const rawWsLatency = Number(client?.ws?.ping);
+    const websocketLatency = Number.isFinite(rawWsLatency) && rawWsLatency >= 0 ? rawWsLatency : null;
 
     const startedAt = Number(sessionManager?.systemMetrics?.uptime || Date.now());
     const hostStats = collectHostResourceStats(cpuStart, cpuEnd, elapsedMicroseconds);
     const guildCount = client?.guilds?.cache?.size || 0;
-    const reportedMemberCount = client?.guilds?.cache?.reduce?.((total, guild) => total + (Number(guild?.memberCount) || 0), 0) || 0;
+    const reportedMemberCount = resolveReportedMemberCount(client);
     const metrics = sessionManager?.getSystemMetrics?.() || sessionManager?.systemMetrics || {};
     const botAvatarUrl = client?.user?.displayAvatarURL?.({ size: 1024, forceStatic: false }) || null;
 
-    const stats = {
+    return {
         interactionLatency,
-        websocketLatency: Number.isFinite(websocketLatency) && websocketLatency >= 0 ? websocketLatency : null,
+        websocketLatency,
         mongoPingMs,
         shardId: Number(interaction.guild?.shardId || 0),
         shardCount: Number(client?.ws?.shards?.size || 1),
@@ -1006,6 +1025,34 @@ async function handlePing(interaction, client, sessionManager) {
         reconnects: Number(metrics.reconnects || 0),
         botAvatarUrl
     };
+}
+
+async function handlePing(interaction, client, sessionManager) {
+    markCommandAccepted(interaction);
+    if (!isConfiguredOwner(config, interaction.user?.id)) {
+        return interaction.reply({
+            content: "> 🔒 คำสั่งนี้สงวนสิทธิ์เฉพาะ **เจ้าของบอท (Bot Owner)** เท่านั้น",
+            ephemeral: true
+        });
+    }
+
+    const cpuStart = process.cpuUsage();
+    const wallStart = process.hrtime.bigint();
+    const sent = await sendLoadingState(interaction, "ping");
+    const cpuEnd = process.cpuUsage();
+    const elapsedMicroseconds = Number(process.hrtime.bigint() - wallStart) / 1000;
+    const mongoPingMs = await measureMongoPing();
+
+    const stats = buildPingStats({
+        interaction,
+        client,
+        sessionManager,
+        sent,
+        cpuStart,
+        cpuEnd,
+        elapsedMicroseconds,
+        mongoPingMs
+    });
     return interaction.editReply({ content: null, embeds: [buildPingEmbed(stats)], allowedMentions: { parse: [] } });
 }
 

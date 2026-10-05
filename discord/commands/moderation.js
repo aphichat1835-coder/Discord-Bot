@@ -99,41 +99,52 @@ async function executeBatchDeletion(channel, messages, now, options) {
     };
 }
 
+async function fetchMessageBatch(channel, remaining, lastMessageId) {
+    const fetchLimit = Math.min(remaining, 100);
+    const fetchOptions = { limit: fetchLimit };
+    if (lastMessageId) {
+        fetchOptions.before = lastMessageId;
+    }
+
+    const fetched = await channel.messages.fetch(fetchOptions);
+    if (!fetched) return [];
+
+    return Array.from(fetched.values ? fetched.values() : fetched);
+}
+
+function resolveNextDeletionCursor(messages, individualResult, batchBulkDeleted, recentCount) {
+    if (individualResult.failed > 0 || batchBulkDeleted < recentCount) {
+        return messages.at(-1)?.id || null;
+    }
+    return null;
+}
+
+function applyBatchDeletionStats(stats, batchResult) {
+    const { batchBulkDeleted, individualResult, messagesLength } = batchResult;
+    stats.totalFetched += messagesLength;
+    stats.totalBulkDeleted += batchBulkDeleted;
+    stats.totalIndividualDeleted += individualResult.deleted;
+    stats.totalFailed += individualResult.failed;
+}
+
 async function deleteChannelMessages(channel, amount, now = Date.now(), options = {}) {
-    let totalBulkDeleted = 0;
-    let totalIndividualDeleted = 0;
-    let totalFetched = 0;
-    let totalFailed = 0;
+    const stats = {
+        totalBulkDeleted: 0,
+        totalIndividualDeleted: 0,
+        totalFetched: 0,
+        totalFailed: 0
+    };
     let lastMessageId = null;
 
-    while (totalBulkDeleted + totalIndividualDeleted + totalFailed < amount) {
-        const remaining = amount - (totalBulkDeleted + totalIndividualDeleted + totalFailed);
-        const fetchLimit = Math.min(remaining, 100);
-        const fetchOptions = { limit: fetchLimit };
-        if (lastMessageId) {
-            fetchOptions.before = lastMessageId;
-        }
-
-        const fetched = await channel.messages.fetch(fetchOptions);
-        if (!fetched || (fetched.size ?? fetched.length ?? 0) === 0) {
-            break;
-        }
-
-        const messages = Array.from(fetched.values ? fetched.values() : fetched);
+    while (stats.totalBulkDeleted + stats.totalIndividualDeleted + stats.totalFailed < amount) {
+        const remaining = amount - (stats.totalBulkDeleted + stats.totalIndividualDeleted + stats.totalFailed);
+        const messages = await fetchMessageBatch(channel, remaining, lastMessageId);
         if (messages.length === 0) break;
 
-        totalFetched += messages.length;
         const { batchBulkDeleted, individualResult, recentCount } = await executeBatchDeletion(channel, messages, now, options);
+        applyBatchDeletionStats(stats, { batchBulkDeleted, individualResult, messagesLength: messages.length });
 
-        totalBulkDeleted += batchBulkDeleted;
-        totalIndividualDeleted += individualResult.deleted;
-        totalFailed += individualResult.failed;
-
-        if (individualResult.failed > 0 || batchBulkDeleted < recentCount) {
-            lastMessageId = messages.at(-1)?.id || null;
-        } else {
-            lastMessageId = null;
-        }
+        lastMessageId = resolveNextDeletionCursor(messages, individualResult, batchBulkDeleted, recentCount);
 
         if (batchBulkDeleted === 0 && individualResult.deleted === 0) {
             break;
@@ -142,11 +153,11 @@ async function deleteChannelMessages(channel, amount, now = Date.now(), options 
 
     return {
         requested: amount,
-        fetched: totalFetched,
-        bulkDeleted: totalBulkDeleted,
-        individualDeleted: totalIndividualDeleted,
-        deleted: totalBulkDeleted + totalIndividualDeleted,
-        failed: totalFailed
+        fetched: stats.totalFetched,
+        bulkDeleted: stats.totalBulkDeleted,
+        individualDeleted: stats.totalIndividualDeleted,
+        deleted: stats.totalBulkDeleted + stats.totalIndividualDeleted,
+        failed: stats.totalFailed
     };
 }
 

@@ -189,51 +189,51 @@ function isIpv4InCidr(ip, base, bits) {
     return (value & mask) === (baseValue & mask);
 }
 
-function detectSpoofedHeaders(req, trustedIp) {
-    const headerIps = getHeaderIps(req);
-    const spoofFlags = [];
-    const trusted = normalizeIP(trustedIp);
-    const comparableTrusted = trusted !== 'unknown' ? trusted : null;
-
+function checkCloudflareSpoofFlags(headerIps) {
+    const flags = [];
     if (headerIps.cfConnectingIp && !ENABLE_CF_IP_HEADER) {
-        spoofFlags.push('cf_header_without_trust');
+        flags.push('cf_header_without_trust');
     }
-
     if (headerIps.cfConnectingIp && ENABLE_CF_IP_HEADER && !TRUST_PROXY_FOR_CF_HEADER) {
-        spoofFlags.push('cf_header_requires_trust_proxy');
+        flags.push('cf_header_requires_trust_proxy');
     }
-
     if (headerIps.xForwardedForChainLength > 3) {
-        spoofFlags.push('xff_chain_too_long');
+        flags.push('xff_chain_too_long');
     }
+    return flags;
+}
 
-    const namedHeaders = [
-        ['cf-connecting-ip', headerIps.cfConnectingIp],
-        ['true-client-ip', headerIps.trueClientIp],
-        ['x-real-ip', headerIps.xRealIp],
-        ['x-client-ip', headerIps.xClientIp],
-        ['x-forwarded-for', headerIps.xForwardedForFirst]
-    ];
-
+function checkNamedHeaderSpoofFlags(namedHeaders, comparableTrusted) {
+    const flags = [];
     for (const [name, ip] of namedHeaders) {
         if (!ip) continue;
-        if (!isValidIP(ip)) spoofFlags.push(`${name}_invalid`);
-        if (isValidIP(ip) && isPrivateIP(ip) && comparableTrusted && !isPrivateIP(comparableTrusted)) {
-            spoofFlags.push(`${name}_private_ip`);
+        if (!isValidIP(ip)) {
+            flags.push(`${name}_invalid`);
+        } else if (isPrivateIP(ip) && comparableTrusted && !isPrivateIP(comparableTrusted)) {
+            flags.push(`${name}_private_ip`);
         }
     }
+    return flags;
+}
 
-    for (const ip of headerIps.xForwardedForChain || []) {
-        if (!isValidIP(ip)) spoofFlags.push('xff_chain_invalid_ip');
-        if (isValidIP(ip) && isPrivateIP(ip) && comparableTrusted && !isPrivateIP(comparableTrusted)) {
-            spoofFlags.push('xff_chain_private_ip');
+function checkXffChainSpoofFlags(chain = [], comparableTrusted) {
+    const flags = [];
+    for (const ip of chain) {
+        if (!isValidIP(ip)) {
+            flags.push('xff_chain_invalid_ip');
+        } else if (isPrivateIP(ip) && comparableTrusted && !isPrivateIP(comparableTrusted)) {
+            flags.push('xff_chain_private_ip');
         }
     }
+    return flags;
+}
 
+function checkHeaderConflicts(headerIps, namedHeaders, comparableTrusted) {
+    const conflictFlags = [];
     for (const name of ['xRealIp', 'xClientIp']) {
         const ip = headerIps[name];
         if (ip && comparableTrusted && normalizeIP(ip) !== comparableTrusted) {
-            spoofFlags.push(`${name}_conflicts_with_trusted_ip`);
+            conflictFlags.push(`${name}_conflicts_with_trusted_ip`);
         }
     }
 
@@ -243,7 +243,30 @@ function detectSpoofedHeaders(req, trustedIp) {
     const uniquePublicHeaderIps = Array.from(new Set(publicHeaderIps));
     const headerIpConflict = uniquePublicHeaderIps.length > 1 || uniquePublicHeaderIps.some(ip => comparableTrusted && ip !== comparableTrusted);
 
-    if (headerIpConflict) spoofFlags.push('header_ip_conflict');
+    if (headerIpConflict) conflictFlags.push('header_ip_conflict');
+    return { conflictFlags, headerIpConflict };
+}
+
+function detectSpoofedHeaders(req, trustedIp) {
+    const headerIps = getHeaderIps(req);
+    const trusted = normalizeIP(trustedIp);
+    const comparableTrusted = trusted !== 'unknown' ? trusted : null;
+
+    const namedHeaders = [
+        ['cf-connecting-ip', headerIps.cfConnectingIp],
+        ['true-client-ip', headerIps.trueClientIp],
+        ['x-real-ip', headerIps.xRealIp],
+        ['x-client-ip', headerIps.xClientIp],
+        ['x-forwarded-for', headerIps.xForwardedForFirst]
+    ];
+
+    const { conflictFlags, headerIpConflict } = checkHeaderConflicts(headerIps, namedHeaders, comparableTrusted);
+    const spoofFlags = [
+        ...checkCloudflareSpoofFlags(headerIps),
+        ...checkNamedHeaderSpoofFlags(namedHeaders, comparableTrusted),
+        ...checkXffChainSpoofFlags(headerIps.xForwardedForChain, comparableTrusted),
+        ...conflictFlags
+    ];
 
     return {
         headerIps: {
@@ -324,23 +347,32 @@ function parseBrowser(ua) {
     return 'Unknown';
 }
 
-function parseOS(ua, platform) {
-    const rawPlatform = String(platform || '').trim();
-
+function detectOsFromUserAgent(ua) {
     if (/Android/i.test(ua)) return 'Android';
     if (/iPhone|iPad|iPod/i.test(ua)) return 'iOS';
     if (/Windows/i.test(ua)) return 'Windows';
     if (/CrOS/i.test(ua)) return 'Chrome OS';
     if (/Mac OS X|Macintosh/i.test(ua)) return 'macOS';
+    return null;
+}
 
-    if (rawPlatform && rawPlatform !== 'Unknown') {
-        if (/iphone|ipad|ipod/i.test(rawPlatform)) return 'iOS';
-        if (/android/i.test(rawPlatform)) return 'Android';
-        if (/win/i.test(rawPlatform)) return 'Windows';
-        if (/mac/i.test(rawPlatform)) return 'macOS';
-        if (/linux/i.test(rawPlatform)) return 'Linux';
-        return rawPlatform.slice(0, 64);
-    }
+function detectOsFromPlatform(rawPlatform) {
+    if (!rawPlatform || rawPlatform === 'Unknown') return null;
+    if (/iphone|ipad|ipod/i.test(rawPlatform)) return 'iOS';
+    if (/android/i.test(rawPlatform)) return 'Android';
+    if (/win/i.test(rawPlatform)) return 'Windows';
+    if (/mac/i.test(rawPlatform)) return 'macOS';
+    if (/linux/i.test(rawPlatform)) return 'Linux';
+    return rawPlatform.slice(0, 64);
+}
+
+function parseOS(ua, platform) {
+    const osFromUa = detectOsFromUserAgent(ua);
+    if (osFromUa) return osFromUa;
+
+    const rawPlatform = String(platform || '').trim();
+    const osFromPlatform = detectOsFromPlatform(rawPlatform);
+    if (osFromPlatform) return osFromPlatform;
 
     if (/Linux/i.test(ua)) return 'Linux';
 
@@ -424,6 +456,52 @@ function safeLanguages(value, fallbackLanguage = '') {
     return [];
 }
 
+function parseClientHints(hints) {
+    if (!hints || typeof hints !== 'object' || Array.isArray(hints)) return null;
+    return {
+        brands: Array.isArray(hints.brands)
+            ? hints.brands.slice(0, 8).map(item => ({
+                brand: safeSmallString(item?.brand || ''),
+                version: safeSmallString(item?.version || '')
+            })).filter(item => item.brand)
+            : [],
+        mobile: hints.mobile === true,
+        platform: safeSmallString(hints.platform || '')
+    };
+}
+
+function buildDeviceFingerprintSource({
+    ua,
+    language,
+    languages,
+    timezone,
+    screenSize,
+    viewportSize,
+    platform,
+    os,
+    browser,
+    deviceType,
+    colorDepth,
+    devicePixelRatio,
+    touchPoints
+}) {
+    return [
+        ua,
+        language,
+        languages.join(','),
+        timezone,
+        screenSize,
+        viewportSize,
+        platform,
+        os,
+        browser,
+        deviceType,
+        colorDepth ?? '',
+        devicePixelRatio ?? '',
+        touchPoints ?? ''
+    ].join('|');
+}
+
 function extractDevice(req) {
     const ua = safeBoundedString(req.headers['user-agent'] || '', 2048);
     const body = req.body || {};
@@ -432,18 +510,7 @@ function extractDevice(req) {
     const platform = safeSmallString(body.platform || 'Unknown', 'Unknown');
     const os = parseOS(ua, platform);
     const deviceType = parseDeviceType(ua, body);
-    const clientHints = body.clientHints && typeof body.clientHints === 'object' && !Array.isArray(body.clientHints)
-        ? {
-            brands: Array.isArray(body.clientHints.brands)
-                ? body.clientHints.brands.slice(0, 8).map(item => ({
-                    brand: safeSmallString(item?.brand || ''),
-                    version: safeSmallString(item?.version || '')
-                })).filter(item => item.brand)
-                : [],
-            mobile: body.clientHints.mobile === true,
-            platform: safeSmallString(body.clientHints.platform || '')
-        }
-        : null;
+    const clientHints = parseClientHints(body.clientHints);
     const userAgentFlags = detectUserAgentAnomalies({
         ua,
         reportedUa: safeBoundedString(body.userAgent || '', 2048),
@@ -475,10 +542,10 @@ function extractDevice(req) {
         Math.min(1000, Math.max(0, Number(body.languagesReportedCount) || languages.length))
     );
 
-    const fingerprintSource = [
+    const fingerprintSource = buildDeviceFingerprintSource({
         ua,
         language,
-        languages.join(','),
+        languages,
         timezone,
         screenSize,
         viewportSize,
@@ -486,10 +553,10 @@ function extractDevice(req) {
         os,
         browser,
         deviceType,
-        colorDepth ?? '',
-        devicePixelRatio ?? '',
-        touchPoints ?? ''
-    ].join('|');
+        colorDepth,
+        devicePixelRatio,
+        touchPoints
+    });
 
     return {
         userAgent: safeString(ua, ''),
@@ -648,6 +715,29 @@ function maxmindName(value = {}) {
     return value.en || Object.values(value).find(Boolean) || null;
 }
 
+function extractMaxMindTraitsFlags(traits = {}) {
+    return {
+        mobile: traits.connection_type === 'Cellular',
+        proxy: traits.is_anonymous_proxy === true || traits.is_public_proxy === true,
+        hosting: traits.user_type === 'hosting' || traits.user_type === 'content_delivery_network',
+        vpn: traits.is_anonymous_vpn === true,
+        tor: traits.is_tor_exit_node === true,
+        anycast: traits.is_anycast === true,
+        networkType: traits.connection_type || traits.user_type || null
+    };
+}
+
+function extractMaxMindConfidence(data = {}, location = {}, subdivision = {}) {
+    return {
+        accuracyRadiusKm: safeNumber(location.accuracy_radius, null),
+        locationAccuracy: location.accuracy_radius == null ? null : `±${location.accuracy_radius} km`,
+        countryConfidence: safeNumber(data.country?.confidence, null),
+        regionConfidence: safeNumber(subdivision.confidence, null),
+        cityConfidence: safeNumber(data.city?.confidence, null),
+        postalConfidence: safeNumber(data.postal?.confidence, null)
+    };
+}
+
 function normalizeMaxMindResponse(data = {}, hostname = '') {
     if (data.error || data.code) {
         throw new Error(String(data.error || data.code || 'MaxMind lookup failed'));
@@ -665,20 +755,9 @@ function normalizeMaxMindResponse(data = {}, hostname = '') {
         org: traits.organization || traits.autonomous_system_organization,
         as: asNumber ? `AS${asNumber}` : null,
         asname: traits.autonomous_system_organization, reverse: traits.domain || null,
-        mobile: traits.connection_type === 'Cellular',
-        proxy: traits.is_anonymous_proxy === true || traits.is_public_proxy === true,
-        hosting: traits.user_type === 'hosting' || traits.user_type === 'content_delivery_network',
-        vpn: traits.is_anonymous_vpn === true,
-        tor: traits.is_tor_exit_node === true,
-        anycast: traits.is_anycast === true,
-        networkType: traits.connection_type || traits.user_type || null,
+        ...extractMaxMindTraitsFlags(traits),
         query: null, message: null,
-        accuracyRadiusKm: safeNumber(location.accuracy_radius, null),
-        locationAccuracy: location.accuracy_radius == null ? null : `±${location.accuracy_radius} km`,
-        countryConfidence: safeNumber(data.country?.confidence, null),
-        regionConfidence: safeNumber(subdivision.confidence, null),
-        cityConfidence: safeNumber(data.city?.confidence, null),
-        postalConfidence: safeNumber(data.postal?.confidence, null),
+        ...extractMaxMindConfidence(data, location, subdivision),
         securitySignalsAvailable: true
     };
 }
@@ -1547,58 +1626,36 @@ function makeUnknownIpInfo({ trustedIp, headerMeta }) {
     };
 }
 
-async function processIP(req) {
-    const trustedIp = getTrustedRequestIp(req);
-    const rawIp = trustedIp.ip;
-    const headerMeta = detectSpoofedHeaders(req, rawIp);
-
-    if (!isValidIP(rawIp) || isPrivateIP(rawIp)) {
-        return makeUnknownIpInfo({ trustedIp, headerMeta });
-    }
-
-    let lookup = {};
-
-    try {
-        lookup = await lookupIP(rawIp);
-    } catch (err) {
-        lookup = {
-            provider: 'lookup_failed',
-            raw: null,
-            status: 'lookup_failed',
-            message: safeSmallString(err?.name || 'IP lookup failed', 'IP lookup failed'),
-            query: null,
-
-            country: 'unknown',
-            countryCode: 'unknown',
-            region: 'unknown',
-            city: 'unknown',
-            zip: 'unknown',
-            lat: null,
-            lon: null,
-            timezone: 'unknown',
-
-            isp: 'unknown',
-            org: 'unknown',
-            as: 'unknown',
-            asname: 'unknown',
-            reverse: 'unknown',
-
-            mobile: false,
-            proxy: false,
-            hosting: false,
-            vpn: false,
-            tor: false
-        };
-    }
-
-    lookup = applyRequestLocationContext(lookup, req, headerMeta);
-    const flags = normalizeNetworkSignals(lookup);
-    const findings = buildNetworkFindings(flags, lookup.status || 'unknown', headerMeta);
-
+function buildFailedIpLookup(err) {
     return {
-        encryptedRawIp: encryptIP(rawIp),
-        ipHash: hmacValue(rawIp, 'ip'),
+        provider: 'lookup_failed',
+        raw: null,
+        status: 'lookup_failed',
+        message: safeSmallString(err?.name || 'IP lookup failed', 'IP lookup failed'),
+        query: null,
+        country: 'unknown',
+        countryCode: 'unknown',
+        region: 'unknown',
+        city: 'unknown',
+        zip: 'unknown',
+        lat: null,
+        lon: null,
+        timezone: 'unknown',
+        isp: 'unknown',
+        org: 'unknown',
+        as: 'unknown',
+        asname: 'unknown',
+        reverse: 'unknown',
+        mobile: false,
+        proxy: false,
+        hosting: false,
+        vpn: false,
+        tor: false
+    };
+}
 
+function buildIpLocationResult(lookup) {
+    return {
         country: lookup.country || 'unknown',
         countryCode: lookup.countryCode || 'unknown',
         region: lookup.region || 'unknown',
@@ -1606,24 +1663,22 @@ async function processIP(req) {
         zip: lookup.zip || 'unknown',
         lat: typeof lookup.lat === 'number' ? lookup.lat : null,
         lon: typeof lookup.lon === 'number' ? lookup.lon : null,
-        timezone: lookup.timezone || 'unknown',
+        timezone: lookup.timezone || 'unknown'
+    };
+}
 
+function buildIpAsnResult(lookup) {
+    return {
         isp: lookup.isp || 'unknown',
         org: lookup.org || 'unknown',
         as: lookup.as || 'unknown',
         asname: lookup.asname || 'unknown',
-        reverse: lookup.reverse || 'unknown',
+        reverse: lookup.reverse || 'unknown'
+    };
+}
 
-        isProxy: flags.isProxy,
-        isVPN: flags.isVPN,
-        isTOR: flags.isTOR,
-        hosting: flags.hosting,
-        mobile: flags.mobile,
-        anycast: flags.anycast,
-        networkType: flags.networkType,
-
-        findings,
-
+function buildIpLookupMetaResult(lookup, rawIp) {
+    return {
         lookupProvider: lookup.provider || 'unknown',
         lookupStatus: lookup.status || 'unknown',
         lookupMessage: sanitizedLookupMessage(lookup.message, rawIp),
@@ -1644,7 +1699,29 @@ async function processIP(req) {
         browserTimezoneMatches: lookup.browserTimezoneMatches ?? null,
         historyConsistency: null,
         securitySignalsAvailable: lookup.securitySignalsAvailable === true,
-        lookupRaw: compactLookupRaw(lookup, rawIp),
+        lookupRaw: compactLookupRaw(lookup, rawIp)
+    };
+}
+
+function assembleIpProcessingResult({ rawIp, trustedIp, headerMeta, lookup, flags, findings }) {
+    return {
+        encryptedRawIp: encryptIP(rawIp),
+        ipHash: hmacValue(rawIp, 'ip'),
+
+        ...buildIpLocationResult(lookup),
+        ...buildIpAsnResult(lookup),
+
+        isProxy: flags.isProxy,
+        isVPN: flags.isVPN,
+        isTOR: flags.isTOR,
+        hosting: flags.hosting,
+        mobile: flags.mobile,
+        anycast: flags.anycast,
+        networkType: flags.networkType,
+
+        findings,
+
+        ...buildIpLookupMetaResult(lookup, rawIp),
 
         ipSource: trustedIp.source,
         headerIps: storedHeaderIpMetadata(headerMeta.headerIps),
@@ -1658,6 +1735,29 @@ async function processIP(req) {
 
         lookupAt: Date.now()
     };
+}
+
+async function processIP(req) {
+    const trustedIp = getTrustedRequestIp(req);
+    const rawIp = trustedIp.ip;
+    const headerMeta = detectSpoofedHeaders(req, rawIp);
+
+    if (!isValidIP(rawIp) || isPrivateIP(rawIp)) {
+        return makeUnknownIpInfo({ trustedIp, headerMeta });
+    }
+
+    let lookup;
+    try {
+        lookup = await lookupIP(rawIp);
+    } catch (err) {
+        lookup = buildFailedIpLookup(err);
+    }
+
+    lookup = applyRequestLocationContext(lookup, req, headerMeta);
+    const flags = normalizeNetworkSignals(lookup);
+    const findings = buildNetworkFindings(flags, lookup.status || 'unknown', headerMeta);
+
+    return assembleIpProcessingResult({ rawIp, trustedIp, headerMeta, lookup, flags, findings });
 }
 
 module.exports = {
@@ -1692,6 +1792,12 @@ module.exports = {
         providerUrl,
         providerHeaders,
         detectUserAgentAnomalies,
-        validateLookupTarget
+        validateLookupTarget,
+        detectSpoofedHeaders,
+        parseOS,
+        checkCloudflareSpoofFlags,
+        checkNamedHeaderSpoofFlags,
+        checkXffChainSpoofFlags,
+        checkHeaderConflicts
     }
 };

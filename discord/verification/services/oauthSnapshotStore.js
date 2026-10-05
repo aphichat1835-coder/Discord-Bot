@@ -109,6 +109,37 @@ function assertDocumentSetSafe(documentSet, label = "snapshot_document") {
     return { ok: true, bytes, maxBytes: DOCUMENT_WRITE_MAX_BYTES };
 }
 
+function assertDocumentFits(documentSet, hardMaxBytes, errorCode, message) {
+    const bytes = documentSetBytes(documentSet);
+    if (!Number.isFinite(bytes) || bytes >= hardMaxBytes) {
+        const error = new Error(message);
+        error.code = errorCode;
+        error.bytes = bytes;
+        error.maxBytes = hardMaxBytes;
+        throw error;
+    }
+}
+
+function validateChunkEnvelope(chunks, buildDocument, hardMaxBytes) {
+    for (let index = 0; index < chunks.length; index++) {
+        assertDocumentFits(
+            buildDocument(chunks[index], index),
+            hardMaxBytes,
+            "snapshot_document_too_large",
+            "snapshot chunk exceeds the normal document envelope"
+        );
+    }
+}
+
+function shouldOverflowChunk(current, candidateBytes, maxItems, maxBytes) {
+    if (current.length === 0) return false;
+    return (
+        current.length >= maxItems ||
+        !Number.isFinite(candidateBytes) ||
+        candidateBytes > maxBytes
+    );
+}
+
 function chunkItems(items = [], {
     maxBytes = CHUNK_MAX_BYTES,
     maxItems = CHUNK_MAX_ITEMS,
@@ -119,28 +150,16 @@ function chunkItems(items = [], {
     const chunks = [];
     let current = [];
 
-    const assertSingleItemFits = (item, chunkIndex) => {
-        const documentSet = buildDocument([item], chunkIndex);
-        const bytes = documentSetBytes(documentSet);
-        if (!Number.isFinite(bytes) || bytes >= hardMaxBytes) {
-            const error = new Error("snapshot item cannot fit in a normal document envelope");
-            error.code = "snapshot_item_document_too_large";
-            error.bytes = bytes;
-            error.maxBytes = hardMaxBytes;
-            throw error;
-        }
-    };
-
     for (const item of source) {
-        assertSingleItemFits(item, chunks.length);
+        assertDocumentFits(
+            buildDocument([item], chunks.length),
+            hardMaxBytes,
+            "snapshot_item_document_too_large",
+            "snapshot item cannot fit in a normal document envelope"
+        );
         const candidate = [...current, item];
         const candidateBytes = documentSetBytes(buildDocument(candidate, chunks.length));
-        const wouldOverflowTarget = current.length > 0 && (
-            current.length >= maxItems ||
-            !Number.isFinite(candidateBytes) ||
-            candidateBytes > maxBytes
-        );
-        if (wouldOverflowTarget) {
+        if (shouldOverflowChunk(current, candidateBytes, maxItems, maxBytes)) {
             chunks.push(current);
             current = [item];
         } else {
@@ -149,16 +168,7 @@ function chunkItems(items = [], {
     }
 
     if (current.length || source.length === 0) chunks.push(current);
-    for (let index = 0; index < chunks.length; index++) {
-        const bytes = documentSetBytes(buildDocument(chunks[index], index));
-        if (!Number.isFinite(bytes) || bytes >= hardMaxBytes) {
-            const error = new Error("snapshot chunk exceeds the normal document envelope");
-            error.code = "snapshot_document_too_large";
-            error.bytes = bytes;
-            error.maxBytes = hardMaxBytes;
-            throw error;
-        }
-    }
+    validateChunkEnvelope(chunks, buildDocument, hardMaxBytes);
     return chunks;
 }
 
@@ -903,20 +913,28 @@ function snapshotQuery(Model, userId, version) {
         .where("complete").equals(true);
 }
 
+function areSnapshotDocsValid(docs, expectedChunkCount) {
+    if (docs.length !== expectedChunkCount) return false;
+    return !docs.some((doc, index) => doc.chunkIndex !== index || doc.complete !== true);
+}
+
+async function loadJsonBase64ArraySnapshot(safeUserId, ref) {
+    const value = await loadObjectChunkSnapshot(safeUserId, ref, { kind: ref.kind });
+    return Array.isArray(value) && value.length === Number(ref.storedCount || 0) ? value : null;
+}
+
 async function loadArraySnapshot(Model, userId, ref) {
     if (!ref?.version || ref.complete !== true) return null;
     const safeUserId = safeSnapshotKey(userId, /^\d{17,22}$/, 22);
     const safeVersion = safeSnapshotKey(ref.version, /^[a-zA-Z0-9._:-]+$/, 120);
     if (!safeUserId || !safeVersion) return null;
     if (ref.format === "json-base64-chunks-v1") {
-        const value = await loadObjectChunkSnapshot(safeUserId, ref, { kind: ref.kind });
-        return Array.isArray(value) && value.length === Number(ref.storedCount || 0) ? value : null;
+        return loadJsonBase64ArraySnapshot(safeUserId, ref);
     }
     const docs = await snapshotQuery(Model, safeUserId, safeVersion)
         .sort({ chunkIndex: 1 })
         .lean();
-    if (docs.length !== Number(ref.chunkCount || 0)) return null;
-    if (docs.some((doc, index) => doc.chunkIndex !== index || doc.complete !== true)) return null;
+    if (!areSnapshotDocsValid(docs, Number(ref.chunkCount || 0))) return null;
     const items = docs.flatMap(doc => Array.isArray(doc.items) ? doc.items : []);
     return items.length === Number(ref.storedCount || 0) ? items : null;
 }

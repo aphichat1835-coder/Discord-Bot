@@ -260,12 +260,45 @@ async function send(input = {}) {
     return attempt(reserved.record);
 }
 
+function compareOutboxEntries(left, right) {
+    const leftRank = Number(left.priorityRank ?? 2);
+    const rightRank = Number(right.priorityRank ?? 2);
+    if (leftRank !== rightRank) return leftRank - rightRank;
+    return Number(left.createdAt || 0) - Number(right.createdAt || 0);
+}
+
+function getSortedVolatileEntries(limit) {
+    const max = readFiniteInteger(limit, { fallback: 100, min: 1, max: 500 });
+    return [...volatileOutbox.values()]
+        .sort(compareOutboxEntries)
+        .slice(0, max);
+}
+
+function buildPersistedOutboxPayload(record) {
+    if (volatileDelivered.has(record.eventKey)) {
+        return { ...record, status: "sent", sentAt: record.sentAt || Date.now(), lastError: null };
+    }
+    return record;
+}
+
+async function persistSingleOutboxRecord(record) {
+    const payload = buildPersistedOutboxPayload(record);
+    const { _id, eventKey, createdAt, ...persistedPayload } = payload;
+    await DmNotification.updateOne(
+        { eventKey: record.eventKey },
+        {
+            $set: persistedPayload,
+            $setOnInsert: { eventKey, createdAt: createdAt || Date.now() }
+        },
+        { upsert: true }
+    );
+    volatileOutbox.delete(record.eventKey);
+}
+
 async function persistVolatileOutbox(limit = 100) {
     if (!databaseReady() || volatileOutbox.size === 0) return { persisted: 0 };
     let persisted = 0;
-    const entries = [...volatileOutbox.values()]
-        .sort((left, right) => Number(left.priorityRank ?? 2) - Number(right.priorityRank ?? 2) || Number(left.createdAt || 0) - Number(right.createdAt || 0))
-        .slice(0, readFiniteInteger(limit, { fallback: 100, min: 1, max: 500 }));
+    const entries = getSortedVolatileEntries(limit);
 
     for (const record of entries) {
         if (isRetiredCategory(record.category)) {
@@ -273,19 +306,7 @@ async function persistVolatileOutbox(limit = 100) {
             continue;
         }
         try {
-            const payload = volatileDelivered.has(record.eventKey)
-                ? { ...record, status: "sent", sentAt: record.sentAt || Date.now(), lastError: null }
-                : record;
-            const { _id, eventKey, createdAt, ...persistedPayload } = payload;
-            await DmNotification.updateOne(
-                { eventKey: record.eventKey },
-                {
-                    $set: persistedPayload,
-                    $setOnInsert: { eventKey, createdAt: createdAt || Date.now() }
-                },
-                { upsert: true }
-            );
-            volatileOutbox.delete(record.eventKey);
+            await persistSingleOutboxRecord(record);
             persisted++;
         } catch (error) {
             if (Number(error?.code) !== 11000) diagnostics.persistenceErrors++;

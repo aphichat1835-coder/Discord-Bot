@@ -39,6 +39,49 @@ function validateRoleChange(guild, member, role) {
  * @param {Object} options.embed   - embed options
  * @param {string} options.type    - 'button' | 'select'
  */
+function buildRolePanelEmbed(embed = {}) {
+    const embedObj = new MessageEmbed()
+        .setColor(embed.color || config.system.themeColors.primary)
+        .setTitle(embed.title || 'เลือกยศของคุณ');
+    if (embed.description) embedObj.setDescription(embed.description);
+    if (embed.footer)      embedObj.setFooter({ text: embed.footer });
+    if (embed.image)       embedObj.setImage(embed.image);
+    if (embed.thumbnail)   embedObj.setThumbnail(embed.thumbnail);
+    return embedObj;
+}
+
+function buildRoleSelectMenu(roles = []) {
+    const menu = new MessageSelectMenu()
+        .setCustomId('roleselect_menu')
+        .setPlaceholder('เลือกยศที่ต้องการ...')
+        .setMinValues(0)
+        .setMaxValues(Math.min(roles.length, 25))
+        .addOptions(roles.slice(0, 25).map(r => ({
+            label:       r.label || `ยศ ${r.roleId}`,
+            value:       `role_${r.roleId}`,
+            emoji:       r.emoji  || '🎭',
+            ...(r.desc ? { description: String(r.desc).slice(0, 100) } : {})
+        })));
+    return [new MessageActionRow().addComponents(menu)];
+}
+
+function buildRoleButtonRows(roles = []) {
+    const rows = [];
+    for (let i = 0; i < roles.length; i += MAX_BUTTONS_PER_ROW) {
+        const chunk = roles.slice(i, i + MAX_BUTTONS_PER_ROW);
+        const row = new MessageActionRow().addComponents(
+            chunk.map(r => new MessageButton()
+                .setCustomId(`rolebtn_${r.roleId}`)
+                .setLabel(r.label || `ยศ`)
+                .setEmoji(r.emoji || '🎭')
+                .setStyle(r.style || 'SECONDARY')
+            )
+        );
+        rows.push(row);
+    }
+    return rows;
+}
+
 function buildRolePanel(options = {}) {
     const {
         roles  = [],
@@ -49,49 +92,74 @@ function buildRolePanel(options = {}) {
     if (!roles.length) throw new Error('ต้องมีอย่างน้อย 1 ยศ');
     if (roles.length > MAX_ROLES) throw new Error(`ไม่เกิน ${MAX_ROLES} ยศ`);
 
-    const embedObj = new MessageEmbed()
-        .setColor(embed.color || config.system.themeColors.primary)
-        .setTitle(embed.title || 'เลือกยศของคุณ');
-    if (embed.description) embedObj.setDescription(embed.description);
-    if (embed.footer)      embedObj.setFooter({ text: embed.footer });
-    if (embed.image)       embedObj.setImage(embed.image);
-    if (embed.thumbnail)   embedObj.setThumbnail(embed.thumbnail);
-
-    let components = [];
-
-    if (type === 'select') {
-        // Dropdown menu
-        const menu = new MessageSelectMenu()
-            .setCustomId('roleselect_menu')
-            .setPlaceholder('เลือกยศที่ต้องการ...')
-            .setMinValues(0)
-            .setMaxValues(Math.min(roles.length, 25))
-            .addOptions(roles.slice(0, 25).map(r => ({
-                label:       r.label || `ยศ ${r.roleId}`,
-                value:       `role_${r.roleId}`,
-                emoji:       r.emoji  || '🎭',
-                ...(r.desc ? { description: String(r.desc).slice(0, 100) } : {})
-            })));
-        components = [new MessageActionRow().addComponents(menu)];
-    } else {
-        // Buttons (max 5 per row, max 5 rows)
-        const rows = [];
-        for (let i = 0; i < roles.length; i += MAX_BUTTONS_PER_ROW) {
-            const chunk = roles.slice(i, i + MAX_BUTTONS_PER_ROW);
-            const row = new MessageActionRow().addComponents(
-                chunk.map(r => new MessageButton()
-                    .setCustomId(`rolebtn_${r.roleId}`)
-                    .setLabel(r.label || `ยศ`)
-                    .setEmoji(r.emoji || '🎭')
-                    .setStyle(r.style || 'SECONDARY')
-                )
-            );
-            rows.push(row);
-        }
-        components = rows;
-    }
+    const embedObj = buildRolePanelEmbed(embed);
+    const components = type === 'select'
+        ? buildRoleSelectMenu(roles)
+        : buildRoleButtonRows(roles);
 
     return { embeds: [embedObj], components };
+}
+
+/**
+ * Handle role button / select interaction
+ */
+async function applySingleRoleChange(member, role, shouldAdd, results) {
+    const has = member.roles.cache.has(role.id);
+    if (shouldAdd && !has) {
+        try {
+            await member.roles.add(role.id);
+            results.added.push(role.name);
+        } catch (err) {
+            results.failed.push(`${role.name}: ${err.message}`);
+        }
+    } else if (!shouldAdd && has) {
+        try {
+            await member.roles.remove(role.id);
+            results.removed.push(role.name);
+        } catch (err) {
+            results.failed.push(`${role.name}: ${err.message}`);
+        }
+    }
+}
+
+async function processRoleSelection(guild, member, rid, selectedRoleIds, results) {
+    const role = guild.roles.cache.get(rid);
+    const check = validateRoleChange(guild, member, role);
+    if (!check.ok) {
+        results.skipped.push(`${role?.name || rid}: ${check.reason}`);
+        return;
+    }
+    await applySingleRoleChange(member, role, selectedRoleIds.includes(rid), results);
+}
+
+function formatRoleSelectionSummary(results) {
+    const lines = [];
+    if (results.added.length)   lines.push(`✅ เพิ่ม: ${results.added.join(', ')}`);
+    if (results.removed.length) lines.push(`❌ ลบ: ${results.removed.join(', ')}`);
+    if (results.skipped.length) lines.push(`⚠️ ข้าม: ${results.skipped.slice(0, 6).join(' | ')}`);
+    if (results.failed.length)  lines.push(`🚫 ไม่สำเร็จ: ${results.failed.slice(0, 6).join(' | ')}`);
+    if (!lines.length)          lines.push('ไม่มีการเปลี่ยนแปลง');
+    return lines.join('\n');
+}
+
+async function handleRoleSelectMenu(interaction, member, guild) {
+    const selectedRoleIds = interaction.values.map(v => v.replace('role_', ''));
+    const allPanelRoleIds = interaction.component.options.map(o => o.value.replace('role_', ''));
+
+    await interaction.deferReply({ ephemeral: true });
+
+    const results = {
+        added: [],
+        removed: [],
+        skipped: [],
+        failed: []
+    };
+
+    for (const rid of allPanelRoleIds) {
+        await processRoleSelection(guild, member, rid, selectedRoleIds, results);
+    }
+
+    return interaction.editReply({ content: formatRoleSelectionSummary(results) });
 }
 
 /**
@@ -108,51 +176,7 @@ async function handleRoleInteraction(interaction) {
 
     // Select menu: roleselect_menu
     if (interaction.isStringSelectMenu() && customId === 'roleselect_menu') {
-        const selectedRoleIds = interaction.values.map(v => v.replace('role_', ''));
-        // ยศทั้งหมดที่มีใน panel นี้
-        const allPanelRoleIds = interaction.component.options.map(o => o.value.replace('role_', ''));
-
-        await interaction.deferReply({ ephemeral: true });
-
-        const added   = [];
-        const removed = [];
-        const skipped = [];
-        const failed  = [];
-
-        for (const rid of allPanelRoleIds) {
-            const role = guild.roles.cache.get(rid);
-            const check = validateRoleChange(guild, member, role);
-            if (!check.ok) {
-                skipped.push(`${role?.name || rid}: ${check.reason}`);
-                continue;
-            }
-
-            const has = member.roles.cache.has(rid);
-            if (selectedRoleIds.includes(rid) && !has) {
-                try {
-                    await member.roles.add(rid);
-                    added.push(role.name);
-                } catch (err) {
-                    failed.push(`${role.name}: ${err.message}`);
-                }
-            } else if (!selectedRoleIds.includes(rid) && has) {
-                try {
-                    await member.roles.remove(rid);
-                    removed.push(role.name);
-                } catch (err) {
-                    failed.push(`${role.name}: ${err.message}`);
-                }
-            }
-        }
-
-        const lines = [];
-        if (added.length)   lines.push(`✅ เพิ่ม: ${added.join(', ')}`);
-        if (removed.length) lines.push(`❌ ลบ: ${removed.join(', ')}`);
-        if (skipped.length) lines.push(`⚠️ ข้าม: ${skipped.slice(0, 6).join(' | ')}`);
-        if (failed.length)  lines.push(`🚫 ไม่สำเร็จ: ${failed.slice(0, 6).join(' | ')}`);
-        if (!lines.length)  lines.push('ไม่มีการเปลี่ยนแปลง');
-
-        return interaction.editReply({ content: lines.join('\n') });
+        return handleRoleSelectMenu(interaction, member, guild);
     }
 }
 
@@ -190,4 +214,15 @@ async function toggleRole(interaction, member, guild, roleId) {
     }
 }
 
-module.exports = { buildRolePanel, handleRoleInteraction, toggleRole, validateRoleChange };
+module.exports = {
+    buildRolePanel,
+    handleRoleInteraction,
+    toggleRole,
+    validateRoleChange,
+    _test: {
+        applySingleRoleChange,
+        processRoleSelection,
+        formatRoleSelectionSummary,
+        handleRoleSelectMenu
+    }
+};

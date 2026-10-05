@@ -140,31 +140,29 @@ function isPlausiblePlaintext(value) {
     return true;
 }
 
-function decryptTokenWithMetadata(text) {
-    if (!text || typeof text !== "string") return null;
-
-    if (text.startsWith("v3:gcm:")) {
-        try {
-            return { plaintext: decryptGcmToken(text, CURRENT_ENCRYPTION_KEY, true), needsMigration: false };
-        } catch (err) {
-            console.error(`[SECURITY] ❌ GCM decryption failed: ${err.message}`);
-            return null;
-        }
-    }
-
-    if (text.startsWith("gcm:")) {
-        let lastError = null;
-        for (const key of LEGACY_DECRYPTION_KEYS) {
-            try {
-                return { plaintext: decryptGcmToken(text, key, false), needsMigration: true };
-            } catch (err) {
-                lastError = err;
-            }
-        }
-        console.error(`[SECURITY] ❌ Legacy GCM decryption failed: ${lastError?.message || "unknown"}`);
+function decryptV3GcmToken(text) {
+    try {
+        return { plaintext: decryptGcmToken(text, CURRENT_ENCRYPTION_KEY, true), needsMigration: false };
+    } catch (err) {
+        console.error(`[SECURITY] ❌ GCM decryption failed: ${err.message}`);
         return null;
     }
+}
 
+function decryptLegacyGcmToken(text) {
+    let lastError = null;
+    for (const key of LEGACY_DECRYPTION_KEYS) {
+        try {
+            return { plaintext: decryptGcmToken(text, key, false), needsMigration: true };
+        } catch (err) {
+            lastError = err;
+        }
+    }
+    console.error(`[SECURITY] ❌ Legacy GCM decryption failed: ${lastError?.message || "unknown"}`);
+    return null;
+}
+
+function decryptLegacyCbcToken(text) {
     for (const key of LEGACY_DECRYPTION_KEYS) {
         try {
             const plaintext = decryptCbcToken(text, key);
@@ -172,6 +170,16 @@ function decryptTokenWithMetadata(text) {
             return { plaintext, needsMigration: true };
         } catch (_) {}
     }
+    return null;
+}
+
+function decryptTokenWithMetadata(text) {
+    if (!text || typeof text !== "string") return null;
+    if (text.startsWith("v3:gcm:")) return decryptV3GcmToken(text);
+    if (text.startsWith("gcm:")) return decryptLegacyGcmToken(text);
+
+    const cbcResult = decryptLegacyCbcToken(text);
+    if (cbcResult) return cbcResult;
 
     console.error("[SECURITY] ❌ Decryption failed for all compatible Voice token formats");
     return null;
@@ -491,6 +499,87 @@ async function applySessionLoadRepairs(loadRepairOps) {
     }
 }
 
+async function cleanStaleSessionsAndLegacyModels(now) {
+    const staleCutoff = now - STALE_STOPPED_SESSION_RETENTION_MS;
+    const cleanup = await SessionModel.deleteMany({
+        state: { $in: ["failed", "stopped"] },
+        stoppedAt: { $lte: staleCutoff },
+        stoppedReason: { $ne: "stop_cleanup_failed" }
+    }).catch(err => {
+        console.warn(`[DATABASE] ⚠️ stale stopped session cleanup skipped: ${err.message}`);
+        return null;
+    });
+
+    await Promise.allSettled([
+        ApprovedGuildModel.deleteMany({ _id: { $exists: true } }),
+        PendingGuildModel.deleteMany({ _id: { $exists: true } })
+    ]).catch(() => {});
+
+    return cleanup;
+}
+
+function hydrateLoadedSessionRecord(r) {
+    const state = r.state || "active";
+    const migratedToken = migrateEncryptedToken(r.token);
+    const lifecycleGeneration = r.lifecycleGeneration || crypto.randomUUID();
+
+    let repairOp = null;
+    const repairSet = {};
+    const repairFilter = { _id: r._id };
+
+    if (migratedToken.migrated) {
+        repairSet.token = migratedToken.token;
+        repairFilter.token = r.token;
+    }
+    if (!r.lifecycleGeneration) repairSet.lifecycleGeneration = lifecycleGeneration;
+    if (Object.keys(repairSet).length > 0) {
+        repairOp = {
+            updateOne: {
+                filter: repairFilter,
+                update: { $set: repairSet }
+            }
+        };
+    }
+
+    const sessionData = {
+        sessionId: r.sessionId,
+        token: migratedToken.token,
+        serverId: r.serverId,
+        voiceId: r.voiceId,
+        serverName: r.serverName,
+        voiceName: r.voiceName,
+        guildIcon: r.guildIcon,
+        tokenTail: r.tokenTail,
+        tokenHash: r.tokenHash,
+        ownerId: r.ownerId,
+        ownerAvatar: r.ownerAvatar,
+        ownerTag: r.ownerTag,
+        accountId: r.accountId,
+        accountUsername: r.accountUsername,
+        accountGlobalName: r.accountGlobalName,
+        accountTag: r.accountTag,
+        accountAvatar: r.accountAvatar,
+        startedAt: r.startedAt,
+        lastActivity: r.lastActivity,
+        voiceReadyAt: r.voiceReadyAt || null,
+        lifecycleGeneration,
+        state,
+        stoppedAt: r.stoppedAt || null,
+        stoppedReason: r.stoppedReason || null,
+        stoppedBy: r.stoppedBy || null,
+        lastStopError: r.lastStopError || null,
+        connection: null,
+        reconnecting: false,
+        client: null,
+        reconnectCount: Number(r.reconnectCount || 0),
+        tokenInvalid: r.tokenInvalid === true,
+        recoveryState: r.recoveryState || null,
+        notificationState: r.notificationState || null
+    };
+
+    return { sessionData, repairOp, isActive: state === "active" };
+}
+
 async function loadDatabase() {
     if (!dbConnected) {
         console.error("[DATABASE] ⚠️ Cannot load sessions: DB not connected. Boot sequence will retry.");
@@ -503,21 +592,7 @@ async function loadDatabase() {
         });
         const now = Date.now();
         const recoverableCutoff = now - LOAD_RECOVERABLE_STOP_CLEANUP_MS;
-        const staleCutoff = now - STALE_STOPPED_SESSION_RETENTION_MS;
-
-        const cleanup = await SessionModel.deleteMany({
-            state: { $in: ["failed", "stopped"] },
-            stoppedAt: { $lte: staleCutoff },
-            stoppedReason: { $ne: "stop_cleanup_failed" }
-        }).catch(err => {
-            console.warn(`[DATABASE] ⚠️ stale stopped session cleanup skipped: ${err.message}`);
-            return null;
-        });
-
-        await Promise.allSettled([
-            ApprovedGuildModel.deleteMany({ _id: { $exists: true } }),
-            PendingGuildModel.deleteMany({ _id: { $exists: true } })
-        ]).catch(() => {});
+        const cleanup = await cleanStaleSessionsAndLegacyModels(now);
 
         const sessionLoadFilter = {
             $or: [
@@ -543,71 +618,14 @@ async function loadDatabase() {
         const loadRepairOps = [];
 
         for (const r of records) {
-            const state = r.state || "active";
-            if (state === "active") activeLoaded++;
+            const { sessionData, repairOp, isActive } = hydrateLoadedSessionRecord(r);
+            if (isActive) activeLoaded++;
             else recoverableLoaded++;
 
-            const migratedToken = migrateEncryptedToken(r.token);
-            const lifecycleGeneration = r.lifecycleGeneration || crypto.randomUUID();
-            const repairSet = {};
-            const repairFilter = { _id: r._id };
-
-            if (migratedToken.migrated) {
-                repairSet.token = migratedToken.token;
-                repairFilter.token = r.token;
+            if (repairOp) {
+                loadRepairOps.push(repairOp);
             }
-            if (!r.lifecycleGeneration) repairSet.lifecycleGeneration = lifecycleGeneration;
-            if (Object.keys(repairSet).length > 0) {
-                loadRepairOps.push({
-                    updateOne: {
-                        filter: repairFilter,
-                        update: { $set: repairSet }
-                    }
-                });
-            }
-
-            sessions.set(r.sessionId, {
-                sessionId: r.sessionId,
-                token: migratedToken.token,
-
-                serverId: r.serverId,
-                voiceId: r.voiceId,
-                serverName: r.serverName,
-                voiceName: r.voiceName,
-                guildIcon: r.guildIcon,
-
-                tokenTail: r.tokenTail,
-                tokenHash: r.tokenHash,
-
-                ownerId: r.ownerId,
-                ownerAvatar: r.ownerAvatar,
-                ownerTag: r.ownerTag,
-
-                accountId: r.accountId,
-                accountUsername: r.accountUsername,
-                accountGlobalName: r.accountGlobalName,
-                accountTag: r.accountTag,
-                accountAvatar: r.accountAvatar,
-
-                startedAt: r.startedAt,
-                lastActivity: r.lastActivity,
-                voiceReadyAt: r.voiceReadyAt || null,
-                lifecycleGeneration,
-
-                state,
-                stoppedAt: r.stoppedAt || null,
-                stoppedReason: r.stoppedReason || null,
-                stoppedBy: r.stoppedBy || null,
-                lastStopError: r.lastStopError || null,
-
-                connection: null,
-                reconnecting: false,
-                client: null,
-                reconnectCount: Number(r.reconnectCount || 0),
-                tokenInvalid: r.tokenInvalid === true,
-                recoveryState: r.recoveryState || null,
-                notificationState: r.notificationState || null
-            });
+            sessions.set(sessionData.sessionId, sessionData);
         }
 
         await applySessionLoadRepairs(loadRepairOps);
@@ -1436,6 +1454,26 @@ async function reconcileSnapshotPointers() {
     return { guilds: guildIds.length, activated };
 }
 
+function isSnapshotChunkDocValid(doc, index) {
+    const items = Array.isArray(doc.items) ? doc.items : [];
+    return doc.complete &&
+        doc.chunkIndex === index &&
+        doc.itemCount === items.length &&
+        doc.byteSize === Buffer.byteLength(JSON.stringify(items), "utf8");
+}
+
+async function loadValidatedSnapshotChunkKind(source, kind) {
+    const meta = source.chunkMeta[kind];
+    if (!meta?.complete || !Number.isInteger(meta.chunkCount) || meta.chunkCount < 1) return null;
+    const docs = await SnapshotChunkModel.find({ snapshotId: source.snapshotId, kind }).sort({ chunkIndex: 1 }).lean();
+    if (docs.length !== meta.chunkCount || docs.some((doc, index) => !isSnapshotChunkDocValid(doc, index))) {
+        return null;
+    }
+    const items = docs.flatMap(doc => Array.isArray(doc.items) ? doc.items : []);
+    if (items.length !== meta.returnedCount || items.length !== meta.storedCount) return null;
+    return items;
+}
+
 async function loadSnapshotData(snapshot) {
     if (!snapshot) return null;
     const source = snapshot.toObject?.() || snapshot;
@@ -1443,18 +1481,9 @@ async function loadSnapshotData(snapshot) {
     if (!source.complete || !source.chunkMeta) return null;
     const data = { ...source.data };
     for (const kind of ["roles", "channels"]) {
-        const meta = source.chunkMeta[kind];
-        if (!meta?.complete || !Number.isInteger(meta.chunkCount) || meta.chunkCount < 1) return null;
-        const docs = await SnapshotChunkModel.find({ snapshotId: source.snapshotId, kind }).sort({ chunkIndex: 1 }).lean();
-        if (docs.length !== meta.chunkCount || docs.some((doc, index) => {
-            const items = Array.isArray(doc.items) ? doc.items : [];
-            return !doc.complete ||
-                doc.chunkIndex !== index ||
-                doc.itemCount !== items.length ||
-                doc.byteSize !== Buffer.byteLength(JSON.stringify(items), "utf8");
-        })) return null;
-        data[kind] = docs.flatMap(doc => Array.isArray(doc.items) ? doc.items : []);
-        if (data[kind].length !== meta.returnedCount || data[kind].length !== meta.storedCount) return null;
+        const items = await loadValidatedSnapshotChunkKind(source, kind);
+        if (!items) return null;
+        data[kind] = items;
     }
     return data;
 }
@@ -1771,6 +1800,34 @@ function getDatabaseStatus() {
     };
 }
 
+function buildVoiceSessionAccountSummary(session) {
+    return {
+        ownerId: session.ownerId,
+        ownerTag: session.ownerTag || null,
+        ownerAvatar: session.ownerAvatar || null,
+        accountId: session.accountId || null,
+        accountUsername: session.accountUsername || null,
+        accountGlobalName: session.accountGlobalName || null,
+        accountTag: session.accountTag || null,
+        accountAvatar: session.accountAvatar || null
+    };
+}
+
+function buildVoiceSessionStateSummary(session) {
+    const sessionState = session.state || "active";
+    return {
+        state: sessionState,
+        stoppedAt: session.stoppedAt || null,
+        stoppedReason: session.stoppedReason || null,
+        stoppedBy: session.stoppedBy || null,
+        lastStopError: session.lastStopError || null,
+        clientReady: !!session.client?.isReady?.(),
+        staleSuspected: sessionState === "active" && !session.connection,
+        ghostSuspected: session.stoppedReason === "stop_cleanup_failed",
+        connectionStatus: session.connection?.state?.status || null
+    };
+}
+
 function getVoiceSessionSummary(session) {
     if (!session) return null;
 
@@ -1781,36 +1838,14 @@ function getVoiceSessionSummary(session) {
         serverName: session.serverName || null,
         voiceName: session.voiceName || null,
         guildIcon: session.guildIcon || null,
-
-        ownerId: session.ownerId,
-        ownerTag: session.ownerTag || null,
-        ownerAvatar: session.ownerAvatar || null,
-
-        accountId: session.accountId || null,
-        accountUsername: session.accountUsername || null,
-        accountGlobalName: session.accountGlobalName || null,
-        accountTag: session.accountTag || null,
-        accountAvatar: session.accountAvatar || null,
-
+        ...buildVoiceSessionAccountSummary(session),
         startedAt: session.startedAt,
         lastActivity: session.lastActivity,
         reconnecting: !!session.reconnecting,
         reconnectCount: session.reconnectCount || 0,
         tokenInvalid: !!session.tokenInvalid,
         hasConnection: !!session.connection,
-        state: session.state || "active",
-        stoppedAt: session.stoppedAt || null,
-        stoppedReason: session.stoppedReason || null,
-        stoppedBy: session.stoppedBy || null,
-        lastStopError: session.lastStopError || null,
-        clientReady: !!session.client?.isReady?.(),
-        staleSuspected: (session.state || "active") === "active" && !session.connection,
-        ghostSuspected: session.stoppedReason === "stop_cleanup_failed",
-
-        /*
-         * Do not expose token, encrypted token, tokenTail, or tokenHash here.
-         */
-        connectionStatus: session.connection?.state?.status || null
+        ...buildVoiceSessionStateSummary(session)
     };
 }
 

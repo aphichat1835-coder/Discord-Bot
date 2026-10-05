@@ -95,85 +95,99 @@ function criticalFingerprint(type, error) {
     return [type, safeError(error), sanitizeLogText(firstStackFrame(error))].join("|");
 }
 
-function createCriticalAlertDispatcher(options = {}) {
-    const send = options.send || sendAlertWebhook;
-    const cooldownMs = Math.max(1000, Number(options.cooldownMs || CRITICAL_ALERT_COOLDOWN_MS));
-    const maxFingerprints = Math.max(1, Number(options.maxFingerprints || CRITICAL_ALERT_MAX_FINGERPRINTS));
-    const now = options.now || Date.now;
-    const setTimer = options.setTimer || setTimeout;
-    const clearTimer = options.clearTimer || clearTimeout;
-    const entries = new Map();
+function buildCriticalSummaryPayload(entry, cooldownMs) {
+    return buildWebhookEventPayload({
+        target: "ALERT",
+        severity: "CRITICAL",
+        category: "SYSTEM",
+        code: `runtime.${entry.type}.repeated`,
+        state: "UPDATE",
+        title: "ข้อผิดพลาดระดับวิกฤตเกิดซ้ำ",
+        description: entry.message,
+        impact: "Process ยังพบข้อผิดพลาดชนิดเดิมซ้ำภายในช่วงควบคุมข้อความ",
+        action: "ตรวจ Runtime Log และ Stack Trace ของเหตุการณ์แรก",
+        context: {
+            "ประเภท": entry.type,
+            "เกิดซ้ำเพิ่ม": `${entry.duplicates} ครั้ง`,
+            "ช่วงเวลา": `${Math.round(cooldownMs / 1000)} วินาที`
+        }
+    });
+}
 
-    function forgetOldestEntry() {
-        if (entries.size < maxFingerprints) return;
-        const oldestKey = entries.keys().next().value;
-        const oldest = entries.get(oldestKey);
-        if (oldest?.timer) clearTimer(oldest.timer);
-        entries.delete(oldestKey);
+class CriticalAlertDispatcher {
+    constructor(options = {}) {
+        this.send = options.send || sendAlertWebhook;
+        this.cooldownMs = Math.max(1000, Number(options.cooldownMs || CRITICAL_ALERT_COOLDOWN_MS));
+        this.maxFingerprints = Math.max(1, Number(options.maxFingerprints || CRITICAL_ALERT_MAX_FINGERPRINTS));
+        this.now = options.now || Date.now;
+        this.setTimer = options.setTimer || setTimeout;
+        this.clearTimer = options.clearTimer || clearTimeout;
+        this.entries = new Map();
     }
 
-    async function sendSummary(key) {
-        const entry = entries.get(key);
+    forgetOldestEntry() {
+        if (this.entries.size < this.maxFingerprints) return;
+        const oldestKey = this.entries.keys().next().value;
+        const oldest = this.entries.get(oldestKey);
+        if (oldest?.timer) this.clearTimer(oldest.timer);
+        this.entries.delete(oldestKey);
+    }
+
+    async sendSummary(key) {
+        const entry = this.entries.get(key);
         if (!entry) return;
-        entries.delete(key);
+        this.entries.delete(key);
         if (entry.duplicates < 1) return;
-        await send(buildWebhookEventPayload({
-            target: "ALERT",
-            severity: "CRITICAL",
-            category: "SYSTEM",
-            code: `runtime.${entry.type}.repeated`,
-            state: "UPDATE",
-            title: "ข้อผิดพลาดระดับวิกฤตเกิดซ้ำ",
-            description: entry.message,
-            impact: "Process ยังพบข้อผิดพลาดชนิดเดิมซ้ำภายในช่วงควบคุมข้อความ",
-            action: "ตรวจ Runtime Log และ Stack Trace ของเหตุการณ์แรก",
-            context: {
-                "ประเภท": entry.type,
-                "เกิดซ้ำเพิ่ม": `${entry.duplicates} ครั้ง`,
-                "ช่วงเวลา": `${Math.round(cooldownMs / 1000)} วินาที`
-            }
-        })).catch(() => {});
+        await this.send(buildCriticalSummaryPayload(entry, this.cooldownMs)).catch(() => {});
     }
 
-    async function dispatch(type, error, payload) {
+    async dispatch(type, error, payload) {
         const key = criticalFingerprint(type, error);
-        const existing = entries.get(key);
-        if (existing && now() - existing.startedAt < cooldownMs) {
+        const existing = this.entries.get(key);
+        if (existing && this.now() - existing.startedAt < this.cooldownMs) {
             existing.duplicates++;
             return false;
         }
-        if (existing?.timer) clearTimer(existing.timer);
-        if (existing) entries.delete(key);
-        forgetOldestEntry();
+        if (existing?.timer) this.clearTimer(existing.timer);
+        if (existing) this.entries.delete(key);
+        this.forgetOldestEntry();
         const entry = {
             type,
             message: safeError(error),
-            startedAt: now(),
+            startedAt: this.now(),
             duplicates: 0,
             timer: null
         };
-        entry.timer = setTimer(() => {
-            sendSummary(key).catch(() => {});
-        }, cooldownMs);
+        entry.timer = this.setTimer(() => {
+            this.sendSummary(key).catch(() => {});
+        }, this.cooldownMs);
         entry.timer?.unref?.();
-        entries.set(key, entry);
-        const delivered = await send(payload).catch(() => false);
+        this.entries.set(key, entry);
+        const delivered = await this.send(payload).catch(() => false);
         if (delivered !== true) {
-            if (entry.timer) clearTimer(entry.timer);
-            entries.delete(key);
+            if (entry.timer) this.clearTimer(entry.timer);
+            this.entries.delete(key);
             return false;
         }
         return true;
     }
 
-    function stop() {
-        for (const entry of entries.values()) {
-            if (entry.timer) clearTimer(entry.timer);
+    stop() {
+        for (const entry of this.entries.values()) {
+            if (entry.timer) this.clearTimer(entry.timer);
         }
-        entries.clear();
+        this.entries.clear();
     }
+}
 
-    return { dispatch, sendSummary, stop, entries };
+function createCriticalAlertDispatcher(options = {}) {
+    const instance = new CriticalAlertDispatcher(options);
+    return {
+        dispatch: instance.dispatch.bind(instance),
+        sendSummary: instance.sendSummary.bind(instance),
+        stop: instance.stop.bind(instance),
+        entries: instance.entries
+    };
 }
 
 async function terminateAfterFatal(type, error) {

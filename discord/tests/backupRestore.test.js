@@ -373,3 +373,88 @@ test("restore member targets fetch uncached members once and distinguish missing
     assert.equal(plan.overwritesSkippedMemberMissing, resolved.stats.skippedMemberMissing);
     assert.equal(plan.overwritesSkippedMemberUnresolved, resolved.stats.skippedMemberUnresolved);
 });
+
+test("restore formatRestoreOutcome correctly classifies complete, partial, and failed states", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const completeStats = {
+        restoredRoles: 2,
+        restoredChannels: 3,
+        skippedRoles: 0,
+        skippedChannels: 0,
+        ambiguousRoles: 0,
+        ambiguousChannels: 0,
+        restoreErrors: 0,
+        timeoutHit: false,
+        overwriteStats: { restored: 5, skippedRoleMissing: 0, skippedMemberMissing: 0, skippedMemberUnresolved: 0 }
+    };
+    const completeOutcome = utility._test.formatRestoreOutcome(completeStats);
+    assert.equal(completeOutcome.resultState, "complete");
+    assert.match(completeOutcome.resultMsg, /สร้างยศใหม่: 2 ยศ/);
+    assert.match(completeOutcome.resultMsg, /สร้างห้องใหม่: 3 ห้อง/);
+
+    const partialStats = {
+        ...completeStats,
+        restoreErrors: 1
+    };
+    const partialOutcome = utility._test.formatRestoreOutcome(partialStats);
+    assert.equal(partialOutcome.resultState, "partial");
+    assert.match(partialOutcome.resultMsg, /Error: 1/);
+
+    const timeoutStats = {
+        ...completeStats,
+        restoredRoles: 0,
+        restoredChannels: 0,
+        timeoutHit: true,
+        restoreErrors: 2
+    };
+    const timeoutOutcome = utility._test.formatRestoreOutcome(timeoutStats);
+    assert.equal(timeoutOutcome.resultState, "failed");
+    assert.match(timeoutOutcome.resultMsg, /เกิน 14 นาที/);
+});
+
+test("restoreRolesPass creates missing roles and records position and mapping", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const createdRoles = [];
+    const setPositionCalls = [];
+    const guild = {
+        roles: {
+            cache: new Collection([
+                ["111111", { id: "111111", name: "@everyone" }]
+            ]),
+            everyone: { id: "111111", name: "@everyone" },
+            async create(payload) {
+                const newRole = {
+                    id: `new-${payload.name}`,
+                    name: payload.name,
+                    async setPosition(pos) {
+                        setPositionCalls.push({ name: payload.name, pos });
+                    }
+                };
+                createdRoles.push(newRole);
+                return newRole;
+            }
+        }
+    };
+
+    const roles = [
+        { id: "old-1", name: "@everyone" },
+        { id: "old-2", name: "ManagedRole", managed: true },
+        { id: "old-3", name: "Member", position: 5 }
+    ];
+    const roleIdMap = new Map();
+    const stats = {
+        restoredRoles: 0,
+        skippedRoles: 0,
+        ambiguousRoles: 0,
+        restoreErrors: 0,
+        timeoutHit: false
+    };
+
+    await utility._test.restoreRolesPass(guild, roles, roleIdMap, stats, Date.now(), 60000);
+
+    assert.equal(stats.restoredRoles, 1);
+    assert.equal(stats.skippedRoles, 1);
+    assert.equal(roleIdMap.get("old-1"), "111111");
+    assert.equal(roleIdMap.get("old-3"), "new-Member");
+    assert.equal(setPositionCalls.length, 1);
+    assert.equal(setPositionCalls[0].pos, 5);
+});
+

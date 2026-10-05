@@ -371,9 +371,8 @@ function makeRequestId(prefix = "req") {
   return `${prefix}_${Date.now().toString(36)}_${crypto.randomBytes(4).toString("hex")}`;
 }
 
-function sanitizeVerification(input = {}) {
+function sanitizeVerificationBasicFlags(input = {}) {
   const out = {};
-
   if ("enabled" in input) out.enabled = !!input.enabled;
   if ("blockVPN" in input) out.blockVPN = !!input.blockVPN;
   if ("blockHosting" in input) out.blockHosting = !!input.blockHosting;
@@ -395,65 +394,89 @@ function sanitizeVerification(input = {}) {
 
   if ("allowedCountries" in input) out.allowedCountries = normalizeStringArray(input.allowedCountries);
   if ("blockedCountries" in input) out.blockedCountries = normalizeStringArray(input.blockedCountries);
+  return out;
+}
 
-  if ("securityRules" in input && input.securityRules && typeof input.securityRules === "object" && !Array.isArray(input.securityRules)) {
-    out.securityRules = {};
-    for (const key of SECURITY_RULE_KEYS) {
-      const rawRule = input.securityRules[key];
-      if (!rawRule || typeof rawRule !== "object" || Array.isArray(rawRule)) continue;
-      const rule = {};
-      if ("enabled" in rawRule) rule.enabled = rawRule.enabled === true || rawRule.enabled === "true" || rawRule.enabled === "on";
-      if ("action" in rawRule) rule.action = normalizeRuleAction(rawRule.action, "allow");
-      if ("timeoutMinutes" in rawRule) rule.timeoutMinutes = clampNumber(rawRule.timeoutMinutes, 1, 40320, 60);
-      if ((key === "ipDuplicate" || key === "deviceDuplicate") && "threshold" in rawRule) {
-        rule.threshold = clampNumber(rawRule.threshold, 1, 20, key === "ipDuplicate" ? 3 : 2);
-      }
-      out.securityRules[key] = rule;
-    }
+function sanitizeSingleSecurityRule(rawRule, key) {
+  if (!rawRule || typeof rawRule !== "object" || Array.isArray(rawRule)) return null;
+  const rule = {};
+  if ("enabled" in rawRule) rule.enabled = rawRule.enabled === true || rawRule.enabled === "true" || rawRule.enabled === "on";
+  if ("action" in rawRule) rule.action = normalizeRuleAction(rawRule.action, "allow");
+  if ("timeoutMinutes" in rawRule) rule.timeoutMinutes = clampNumber(rawRule.timeoutMinutes, 1, 40320, 60);
+  if ((key === "ipDuplicate" || key === "deviceDuplicate") && "threshold" in rawRule) {
+    rule.threshold = clampNumber(rawRule.threshold, 1, 20, key === "ipDuplicate" ? 3 : 2);
+  }
+  return rule;
+}
+
+function sanitizeVerificationSecurityRules(rawRules) {
+  if (!rawRules || typeof rawRules !== "object" || Array.isArray(rawRules)) return undefined;
+  const securityRules = {};
+  for (const key of SECURITY_RULE_KEYS) {
+    const rule = sanitizeSingleSecurityRule(rawRules[key], key);
+    if (rule) securityRules[key] = rule;
+  }
+  return securityRules;
+}
+
+function applyPanelButtonFields(rawPanel, panel) {
+  if ("buttonText" in rawPanel) {
+    const buttonText = cleanText(rawPanel.buttonText, 80) || undefined;
+    panel.buttonLabel = buttonText;
+    panel.buttonText = buttonText;
+  }
+  if ("buttonLabel" in rawPanel) {
+    const buttonText = cleanText(rawPanel.buttonLabel, 80) || undefined;
+    panel.buttonLabel = buttonText;
+    panel.buttonText = buttonText;
+  }
+  if ("buttonEmoji" in rawPanel) panel.buttonEmoji = cleanText(rawPanel.buttonEmoji, 80) || undefined;
+}
+
+function applyPanelMediaFields(rawPanel, panel) {
+  const color = cleanHexColor(rawPanel.color);
+  if (color !== undefined) panel.color = color;
+  const imageUrl = cleanUrl(rawPanel.imageUrl);
+  if (imageUrl !== undefined) panel.imageUrl = imageUrl;
+  const thumbnailUrl = cleanUrl(rawPanel.thumbnailUrl);
+  if (thumbnailUrl !== undefined) panel.thumbnailUrl = thumbnailUrl;
+  const titleUrl = cleanUrl(rawPanel.titleUrl);
+  if (titleUrl !== undefined) panel.titleUrl = titleUrl;
+}
+
+function sanitizeVerificationPanel(rawPanel) {
+  if (!rawPanel || typeof rawPanel !== "object" || Array.isArray(rawPanel)) return undefined;
+  const panel = {};
+
+  if ("content" in rawPanel) panel.content = cleanText(rawPanel.content, 2000) || "";
+  if ("title" in rawPanel) panel.title = cleanText(rawPanel.title, 256) || undefined;
+  if ("description" in rawPanel) panel.description = cleanText(rawPanel.description, 4000) || undefined;
+  if ("footerText" in rawPanel) panel.footerText = cleanText(rawPanel.footerText, 2048) || undefined;
+
+  applyPanelButtonFields(rawPanel, panel);
+
+  if ("verifyType" in rawPanel) {
+    panel.verifyType = normalizeVerifyMode(rawPanel.verifyType);
   }
 
-  if ("panel" in input && input.panel && typeof input.panel === "object") {
-    const rawPanel = input.panel;
-    const panel = {};
+  if ("showTimestamp" in rawPanel) panel.showTimestamp = !!rawPanel.showTimestamp;
 
-    if ("content" in rawPanel) panel.content = cleanText(rawPanel.content, 2000) || "";
-    if ("title" in rawPanel) panel.title = cleanText(rawPanel.title, 256) || undefined;
-    if ("description" in rawPanel) panel.description = cleanText(rawPanel.description, 4000) || undefined;
-    if ("footerText" in rawPanel) panel.footerText = cleanText(rawPanel.footerText, 2048) || undefined;
+  applyPanelMediaFields(rawPanel, panel);
 
-    if ("buttonText" in rawPanel) {
-      const buttonText = cleanText(rawPanel.buttonText, 80) || undefined;
-      panel.buttonLabel = buttonText;
-      panel.buttonText = buttonText;
-    }
+  return panel;
+}
 
-    if ("buttonLabel" in rawPanel) {
-      const buttonText = cleanText(rawPanel.buttonLabel, 80) || undefined;
-      panel.buttonLabel = buttonText;
-      panel.buttonText = buttonText;
-    }
+function sanitizeVerification(input = {}) {
+  const out = sanitizeVerificationBasicFlags(input);
 
-    if ("buttonEmoji" in rawPanel) panel.buttonEmoji = cleanText(rawPanel.buttonEmoji, 80) || undefined;
+  if ("securityRules" in input) {
+    const sanitizedRules = sanitizeVerificationSecurityRules(input.securityRules);
+    if (sanitizedRules) out.securityRules = sanitizedRules;
+  }
 
-    if ("verifyType" in rawPanel) {
-      panel.verifyType = normalizeVerifyMode(rawPanel.verifyType);
-    }
-
-    if ("showTimestamp" in rawPanel) panel.showTimestamp = !!rawPanel.showTimestamp;
-
-    const color = cleanHexColor(rawPanel.color);
-    if (color !== undefined) panel.color = color;
-
-    const imageUrl = cleanUrl(rawPanel.imageUrl);
-    if (imageUrl !== undefined) panel.imageUrl = imageUrl;
-
-    const thumbnailUrl = cleanUrl(rawPanel.thumbnailUrl);
-    if (thumbnailUrl !== undefined) panel.thumbnailUrl = thumbnailUrl;
-
-    const titleUrl = cleanUrl(rawPanel.titleUrl);
-    if (titleUrl !== undefined) panel.titleUrl = titleUrl;
-
-    out.panel = panel;
+  if ("panel" in input) {
+    const sanitizedPanel = sanitizeVerificationPanel(input.panel);
+    if (sanitizedPanel) out.panel = sanitizedPanel;
   }
 
   out.updatedAt = now();
@@ -700,14 +723,9 @@ async function loadValidationContext(guildId, verification) {
   };
 }
 
-async function validateVerificationConfig(req, guildId, verification) {
+function validatePreflightTokensAndIds(roleId, channelId) {
   const checks = [];
-  const warnings = [];
   const errors = [];
-
-  const roleId = cleanSnowflake(verification.roleId);
-  const channelId = cleanSnowflake(verification.channelId);
-  const mode = normalizeVerifyMode(verification.panel?.verifyType || verification.verifyType || verification.oauthMode);
 
   checks.push({
     name: "guild_admin_access",
@@ -716,24 +734,14 @@ async function validateVerificationConfig(req, guildId, verification) {
     detail: "ผ่านจาก session guard"
   });
 
-  if (!discordAPI.hasBotToken()) {
-    errors.push("ไม่มี Bot Token ใน env");
-    checks.push({
-      name: "bot_token",
-      label: "Bot Token พร้อมใช้งาน",
-      ok: false,
-      detail: "ไม่พบ BOT_TOKEN / DISCORD_BOT_TOKEN / TOKEN_MANAGER"
-    });
-
-    return buildValidationSummary({ ok: false, checks, warnings, errors });
-  }
-
+  const hasToken = discordAPI.hasBotToken();
   checks.push({
     name: "bot_token",
     label: "Bot Token พร้อมใช้งาน",
-    ok: true,
-    detail: "พบ token จาก env"
+    ok: hasToken,
+    detail: hasToken ? "พบ token จาก env" : "ไม่พบ BOT_TOKEN / DISCORD_BOT_TOKEN / TOKEN_MANAGER"
   });
+  if (!hasToken) errors.push("ไม่มี Bot Token ใน env");
 
   if (!roleId) errors.push("ยังไม่ได้ตั้ง Role ID หรือ Role ID ไม่ถูกต้อง");
   if (!channelId) errors.push("ยังไม่ได้ตั้ง Channel ID หรือ Channel ID ไม่ถูกต้อง");
@@ -752,32 +760,12 @@ async function validateVerificationConfig(req, guildId, verification) {
     detail: channelId || "Channel ID ต้องเป็นตัวเลข 17–22 หลัก"
   });
 
-  if (!roleId || !channelId) {
-    return buildValidationSummary({ ok: false, checks, warnings, errors });
-  }
+  return { checks, errors, valid: hasToken && !!roleId && !!channelId };
+}
 
-  let context = null;
-
-  try {
-    context = await loadValidationContext(guildId, verification);
-  } catch (err) {
-    errors.push("โหลดข้อมูลจาก Discord API ไม่สำเร็จ");
-    checks.push({
-      name: "discord_api",
-      label: "Discord API ใช้งานได้",
-      ok: false,
-      detail: err.message
-    });
-
-    return buildValidationSummary({ ok: false, checks, warnings, errors });
-  }
-
-  checks.push({
-    name: "discord_api",
-    label: "Discord API ใช้งานได้",
-    ok: true,
-    detail: "โหลด guild/roles/channels/bot member สำเร็จ"
-  });
+function validateBotPresence(context, guildId) {
+  const checks = [];
+  const errors = [];
 
   if (!context.guild) {
     errors.push("บอทไม่อยู่ใน guild นี้ หรือไม่มีสิทธิ์อ่าน guild");
@@ -813,13 +801,128 @@ async function validateVerificationConfig(req, guildId, verification) {
     });
   }
 
+  return { checks, errors };
+}
+
+function validateModerationPermissions({ mode, verification, context }) {
+  const checks = [];
+  const warnings = [];
+  const errors = [];
+
+  const securityRules = normalizeSecurityRules(verification.securityRules || {}, verification);
+  const enabledRules = Object.values(securityRules).filter(rule => rule.enabled === true);
+  const enabledActions = new Set(enabledRules.map(rule => rule.action));
+
+  if (mode !== "oauth" && enabledRules.length > 0) {
+    warnings.push("เงื่อนไขเครือข่ายและอุปกรณ์จะทำงานเฉพาะโหมด OAuth เพราะโหมดรับยศทันทีไม่มีข้อมูลสำหรับตรวจสอบ");
+  }
+
+  if (mode === "oauth") {
+    const guildPermissions = discordAPI.computeMemberGuildPermissions(context.botMember, context.roles);
+    const moderationPermissions = [
+      ["timeout", discordAPI.PERMISSIONS.ModerateMembers, "หมดเวลา", "Moderate Members"],
+      ["kick", discordAPI.PERMISSIONS.KickMembers, "เตะสมาชิก", "Kick Members"],
+      ["ban", discordAPI.PERMISSIONS.BanMembers, "แบนสมาชิก", "Ban Members"]
+    ];
+
+    for (const [action, permission, thaiLabel, discordLabel] of moderationPermissions) {
+      if (!enabledActions.has(action)) continue;
+      const permitted = discordAPI.hasPermission(guildPermissions, permission);
+      checks.push({
+        name: `moderation_permission_${action}`,
+        label: `บอทมีสิทธิ์${thaiLabel}`,
+        ok: permitted,
+        detail: permitted ? `มีสิทธิ์ ${discordLabel}` : `ต้องเปิดสิทธิ์ ${discordLabel} ให้บอท`
+      });
+      if (!permitted) errors.push(`บอทไม่มีสิทธิ์ ${discordLabel} สำหรับการทำงาน “${thaiLabel}”`);
+    }
+  }
+
+  return { checks, warnings, errors };
+}
+
+function validateOAuthSecrets(mode) {
+  const checks = [];
+  const errors = [];
+  if (mode !== "oauth") return { checks, errors };
+
+  const hasClient = !!process.env.DISCORD_CLIENT_ID;
+  const hasSecret = !!process.env.DISCORD_CLIENT_SECRET;
+  const hasStateSecret = !!getStateSecret();
+
+  checks.push({
+    name: "oauth_client_id",
+    label: "DISCORD_CLIENT_ID พร้อม",
+    ok: hasClient,
+    detail: hasClient ? "ผ่าน" : "ไม่พบ DISCORD_CLIENT_ID"
+  });
+
+  checks.push({
+    name: "oauth_client_secret",
+    label: "DISCORD_CLIENT_SECRET พร้อม",
+    ok: hasSecret,
+    detail: hasSecret ? "ผ่าน" : "ไม่พบ DISCORD_CLIENT_SECRET"
+  });
+
+  checks.push({
+    name: "state_secret",
+    label: "State secret พร้อม",
+    ok: hasStateSecret,
+    detail: hasStateSecret ? "ผ่าน" : "ต้องมี VERIFY_STATE_SECRET หรือ secret สำรอง"
+  });
+
+  if (!hasClient) errors.push("ไม่พบ DISCORD_CLIENT_ID");
+  if (!hasSecret) errors.push("ไม่พบ DISCORD_CLIENT_SECRET");
+  if (!hasStateSecret) errors.push("ไม่พบ VERIFY_STATE_SECRET/API_SECRET/SESSION_SECRET/ENCRYPTION_KEY");
+
+  return { checks, errors };
+}
+
+async function validateVerificationConfig(req, guildId, verification) {
+  const roleId = cleanSnowflake(verification.roleId);
+  const channelId = cleanSnowflake(verification.channelId);
+  const mode = normalizeVerifyMode(verification.panel?.verifyType || verification.verifyType || verification.oauthMode);
+
+  const preflight = validatePreflightTokensAndIds(roleId, channelId);
+  const checks = [...preflight.checks];
+  const warnings = [];
+  const errors = [...preflight.errors];
+
+  if (!preflight.valid) {
+    return buildValidationSummary({ ok: false, checks, warnings, errors });
+  }
+
+  let context = null;
+  try {
+    context = await loadValidationContext(guildId, verification);
+  } catch (err) {
+    errors.push("โหลดข้อมูลจาก Discord API ไม่สำเร็จ");
+    checks.push({
+      name: "discord_api",
+      label: "Discord API ใช้งานได้",
+      ok: false,
+      detail: err.message
+    });
+    return buildValidationSummary({ ok: false, checks, warnings, errors });
+  }
+
+  checks.push({
+    name: "discord_api",
+    label: "Discord API ใช้งานได้",
+    ok: true,
+    detail: "โหลด guild/roles/channels/bot member สำเร็จ"
+  });
+
+  const presence = validateBotPresence(context, guildId);
+  checks.push(...presence.checks);
+  errors.push(...presence.errors);
+
   if (context.botMember) {
     const roleResult = discordAPI.validateBotCanManageRole({
       botMember: context.botMember,
       roles: context.roles,
       targetRoleId: roleId
     });
-
     checks.push(...roleResult.checks);
     warnings.push(...roleResult.warnings);
     errors.push(...roleResult.errors);
@@ -829,82 +932,28 @@ async function validateVerificationConfig(req, guildId, verification) {
       roles: context.roles,
       channel: context.channel
     });
-
     checks.push(...channelResult.checks);
     warnings.push(...channelResult.warnings);
     errors.push(...channelResult.errors);
 
-    const securityRules = normalizeSecurityRules(verification.securityRules || {}, verification);
-    const enabledRules = Object.values(securityRules).filter(rule => rule.enabled === true);
-    const enabledActions = new Set(enabledRules.map(rule => rule.action));
-
-    if (mode !== "oauth" && enabledRules.length > 0) {
-      warnings.push("เงื่อนไขเครือข่ายและอุปกรณ์จะทำงานเฉพาะโหมด OAuth เพราะโหมดรับยศทันทีไม่มีข้อมูลสำหรับตรวจสอบ");
-    }
-
-    if (mode === "oauth") {
-      const guildPermissions = discordAPI.computeMemberGuildPermissions(context.botMember, context.roles);
-      const moderationPermissions = [
-        ["timeout", discordAPI.PERMISSIONS.ModerateMembers, "หมดเวลา", "Moderate Members"],
-        ["kick", discordAPI.PERMISSIONS.KickMembers, "เตะสมาชิก", "Kick Members"],
-        ["ban", discordAPI.PERMISSIONS.BanMembers, "แบนสมาชิก", "Ban Members"]
-      ];
-
-      for (const [action, permission, thaiLabel, discordLabel] of moderationPermissions) {
-        if (!enabledActions.has(action)) continue;
-        const permitted = discordAPI.hasPermission(guildPermissions, permission);
-        checks.push({
-          name: `moderation_permission_${action}`,
-          label: `บอทมีสิทธิ์${thaiLabel}`,
-          ok: permitted,
-          detail: permitted ? `มีสิทธิ์ ${discordLabel}` : `ต้องเปิดสิทธิ์ ${discordLabel} ให้บอท`
-        });
-        if (!permitted) errors.push(`บอทไม่มีสิทธิ์ ${discordLabel} สำหรับการทำงาน “${thaiLabel}”`);
-      }
-    }
+    const modResult = validateModerationPermissions({ mode, verification, context });
+    checks.push(...modResult.checks);
+    warnings.push(...modResult.warnings);
+    errors.push(...modResult.errors);
   }
 
   const panel = normalizePanelInput(verification.panel || {});
-
   checks.push({
     name: "button_text",
     label: "ข้อความปุ่มไม่เกิน 80 ตัว",
     ok: panel.buttonText.length <= 80,
     detail: `${panel.buttonText.length}/80`
   });
-
   if (panel.buttonText.length > 80) errors.push("ข้อความปุ่มยาวเกิน 80 ตัว");
 
-  if (mode === "oauth") {
-    const hasClient = !!process.env.DISCORD_CLIENT_ID;
-    const hasSecret = !!process.env.DISCORD_CLIENT_SECRET;
-    const hasStateSecret = !!getStateSecret();
-
-    checks.push({
-      name: "oauth_client_id",
-      label: "DISCORD_CLIENT_ID พร้อม",
-      ok: hasClient,
-      detail: hasClient ? "ผ่าน" : "ไม่พบ DISCORD_CLIENT_ID"
-    });
-
-    checks.push({
-      name: "oauth_client_secret",
-      label: "DISCORD_CLIENT_SECRET พร้อม",
-      ok: hasSecret,
-      detail: hasSecret ? "ผ่าน" : "ไม่พบ DISCORD_CLIENT_SECRET"
-    });
-
-    checks.push({
-      name: "state_secret",
-      label: "State secret พร้อม",
-      ok: hasStateSecret,
-      detail: hasStateSecret ? "ผ่าน" : "ต้องมี VERIFY_STATE_SECRET หรือ secret สำรอง"
-    });
-
-    if (!hasClient) errors.push("ไม่พบ DISCORD_CLIENT_ID");
-    if (!hasSecret) errors.push("ไม่พบ DISCORD_CLIENT_SECRET");
-    if (!hasStateSecret) errors.push("ไม่พบ VERIFY_STATE_SECRET/API_SECRET/SESSION_SECRET/ENCRYPTION_KEY");
-  }
+  const oauthSecrets = validateOAuthSecrets(mode);
+  checks.push(...oauthSecrets.checks);
+  errors.push(...oauthSecrets.errors);
 
   return buildValidationSummary({
     ok: errors.length === 0,

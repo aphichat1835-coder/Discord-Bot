@@ -166,25 +166,29 @@ function safeDiscordVisuals(profile = {}, snapshot = {}) {
   };
 }
 
-function safeDiscordSecurity(profile = {}, snapshot = {}) {
-  let badgeFlags = [];
-  if (Array.isArray(profile.badgeFlags)) {
-    badgeFlags = profile.badgeFlags;
-  } else if (Array.isArray(snapshot.badgeFlags)) {
-    badgeFlags = snapshot.badgeFlags;
+function coalesceFirstDefined(...values) {
+  for (const v of values) {
+    if (v !== undefined && v !== null) return v;
   }
+  return null;
+}
+
+function safeDiscordSecurity(profile = {}, snapshot = {}) {
+  const badgeFlags = Array.isArray(profile.badgeFlags)
+    ? profile.badgeFlags
+    : (Array.isArray(snapshot.badgeFlags) ? snapshot.badgeFlags : []);
 
   return {
-    email: profile.email ?? snapshot.email ?? null,
-    emailVerified: profile.emailVerified ?? profile.verified ?? snapshot.emailVerified ?? snapshot.verified ?? null,
-    locale: profile.locale ?? snapshot.locale ?? "",
-    mfaEnabled: profile.mfaEnabled ?? profile.mfa_enabled ?? snapshot.mfaEnabled ?? snapshot.mfa_enabled ?? null,
-    premiumType: profile.premiumType ?? profile.premium_type ?? snapshot.premiumType ?? snapshot.premium_type ?? null,
-    flags: profile.flags ?? snapshot.flags ?? 0,
-    publicFlags: profile.publicFlags ?? profile.public_flags ?? snapshot.publicFlags ?? snapshot.public_flags ?? 0,
+    email: coalesceFirstDefined(profile.email, snapshot.email),
+    emailVerified: coalesceFirstDefined(profile.emailVerified, profile.verified, snapshot.emailVerified, snapshot.verified),
+    locale: coalesceFirstDefined(profile.locale, snapshot.locale) ?? "",
+    mfaEnabled: coalesceFirstDefined(profile.mfaEnabled, profile.mfa_enabled, snapshot.mfaEnabled, snapshot.mfa_enabled),
+    premiumType: coalesceFirstDefined(profile.premiumType, profile.premium_type, snapshot.premiumType, snapshot.premium_type),
+    flags: coalesceFirstDefined(profile.flags, snapshot.flags) ?? 0,
+    publicFlags: coalesceFirstDefined(profile.publicFlags, profile.public_flags, snapshot.publicFlags, snapshot.public_flags) ?? 0,
     badgeFlags,
-    accountCreatedAt: profile.accountCreatedAt ?? snapshot.accountCreatedAt ?? null,
-    accountAgeDays: profile.accountAgeDays ?? snapshot.accountAgeDays ?? null
+    accountCreatedAt: coalesceFirstDefined(profile.accountCreatedAt, snapshot.accountCreatedAt),
+    accountAgeDays: coalesceFirstDefined(profile.accountAgeDays, snapshot.accountAgeDays)
   };
 }
 
