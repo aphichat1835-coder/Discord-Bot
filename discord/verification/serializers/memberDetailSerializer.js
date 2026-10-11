@@ -11,16 +11,20 @@ const {
 } = require("../utils/verificationSnapshots");
 
 function tokenStatus(token = {}) {
-    const issuedAt = Number(token.rawTokenMeta?.receivedAt || 0) || null;
+    const issuedAt = Number(token.issuedAt || token.rawTokenMeta?.receivedAt || 0) || null;
     const expiresAt = Number(token.expiresAt || 0) || null;
     return {
-        hasAccessToken: !!token.encryptedAccessToken,
-        hasRefreshToken: !!token.encryptedRefreshToken,
+        hasAccessToken: typeof token.hasAccessToken === "boolean"
+            ? token.hasAccessToken
+            : Boolean(token.hasToken || token.accessToken),
+        hasRefreshToken: typeof token.hasRefreshToken === "boolean"
+            ? token.hasRefreshToken
+            : Boolean(token.hasRefreshToken || token.refreshToken),
         scope: token.scope || "",
         tokenType: token.tokenType || "",
         issuedAt,
         expiresAt,
-        lifetimeMs: issuedAt && expiresAt ? Math.max(0, expiresAt - issuedAt) : null,
+        lifetimeMs: typeof token.lifetimeMs === "number" ? token.lifetimeMs : (issuedAt && expiresAt ? Math.max(0, expiresAt - issuedAt) : null),
         lastRefreshAt: token.lastRefreshAt || null,
         refreshFailCount: Number(token.refreshFailCount || 0),
         lastRefreshError: token.lastRefreshError || null,
@@ -100,11 +104,15 @@ function buildVerification(oauth = {}, logSummary = null) {
     };
 }
 
-function buildOAuthTokenStatuses(oauth = {}, canViewSensitive = false) {
-    if (!canViewSensitive) return { oauth: null, adminOAuth: null };
+function buildOAuthTokenStatuses(oauth = {}, canViewSensitive = false, tokenStatuses = null) {
+    if (!canViewSensitive) return { oauth: null };
+    if (tokenStatuses && typeof tokenStatuses === "object") {
+        return {
+            oauth: tokenStatuses.oauth || null
+        };
+    }
     return {
-        oauth: tokenStatus(oauth.oauth || {}),
-        adminOAuth: tokenStatus(oauth.adminOAuth || {})
+        oauth: tokenStatus(oauth.oauth || {})
     };
 }
 
@@ -126,7 +134,7 @@ function buildRawSnapshots(oauth = {}, targetMember = {}, canViewSensitive = fal
     };
 }
 
-function serializeMemberDetail({ guildId, userId, oauthUser = null, latestLog = null, canViewSensitive = false } = {}) {
+function serializeMemberDetail({ guildId, userId, oauthUser = null, latestLog = null, canViewSensitive = false, tokenStatuses = null } = {}) {
     const oauth = oauthUser?.toObject ? oauthUser.toObject() : oauthUser || {};
     const log = latestLog?.toObject ? latestLog.toObject() : latestLog || null;
     const oauthDiscord = oauthUserDiscord(oauth, canViewSensitive);
@@ -150,7 +158,7 @@ function serializeMemberDetail({ guildId, userId, oauthUser = null, latestLog = 
         network: log ? safeIpInfo(log.ipInfo || {}) : {},
         tracking: buildTracking(log, oauth),
         verification: buildVerification(oauth, logSummary),
-        oauthTokens: buildOAuthTokenStatuses(oauth, canViewSensitive),
+        oauthTokens: buildOAuthTokenStatuses(oauth, canViewSensitive, tokenStatuses),
         rawSnapshots: buildRawSnapshots(oauth, targetMember, canViewSensitive)
     };
 }

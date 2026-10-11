@@ -10,9 +10,12 @@ The project includes:
 
 - Main Discord bot runtime.
 - Slash commands.
-- Voice/session subsystem.
-- Owner dashboard.
+- Voice/session subsystem with Voice Lean caching, AutoDeaf, and Natural presence automation.
+- Master Token Coordinator (Token Hub) with concurrency control, 429 rate-limit backoff, and quarantine lifecycle.
+- Discord Quest automation subsystem (scheduler, interactive panel, and admission control).
+- Owner dashboard with integrated Token Hub, Quest management, and Verification views.
 - Owner-only verification dashboard integrated into the main web runtime.
+- Transient Gateway Crash Shield protecting against Cloudflare and WebSocket disconnects.
 - OAuth2 verification.
 - MongoDB persistence.
 - Verification owner-data access and moderation cases.

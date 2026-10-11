@@ -1,5 +1,6 @@
 'use strict';
 
+const config = require('../../config.json');
 const dmService = require('../../dm');
 const { buildDmEmbed, profileFromUser, safeText, markdownText, code } = dmService.design;
 const { withTimeoutValue } = require('../../core/timers');
@@ -61,18 +62,18 @@ function buildQuestSummaryEmbed({
     let title;
     let summary;
     if (tone === 'success') {
-        title = '🎉 ทำ Quest อัตโนมัติเสร็จสิ้นแล้ว';
+        title = `${config.emojis?.check_alt || config.emojis?.success || '🎉'} ทำ Quest อัตโนมัติเสร็จสิ้นแล้ว`;
         summary = isDaily
             ? 'ระบบ Auto Daily ได้ดำเนินการตรวจสอบและทำ Quest ประจำรอบให้บัญชีของคุณเสร็จสิ้นทั้งหมดแล้ว'
             : 'ระบบ One-shot ได้เข้าไปทำ Quest ให้บัญชีของคุณสำเร็จเรียบร้อยครบถ้วนแล้ว';
     } else if (tone === 'warning') {
-        title = '⚠️ ผลการทำ Quest (สำเร็จบางส่วน)';
+        title = `${config.emojis?.warning || '⚠️'} ผลการทำ Quest (สำเร็จบางส่วน)`;
         summary = 'ระบบได้ดำเนินการทำ Quest บางส่วนสำเร็จ แต่พบข้อผิดพลาดในบางรายการ กรุณาตรวจสอบรายละเอียด';
     } else if (tone === 'danger') {
-        title = '❌ ไม่สามารถทำ Quest ได้สำเร็จ';
+        title = `${config.emojis?.red_card || config.emojis?.error || '❌'} ไม่สามารถทำ Quest ได้สำเร็จ`;
         summary = 'ระบบไม่สามารถดำเนินการทำ Quest ให้สำเร็จได้ กรุณาตรวจสอบ Token และสิทธิ์ของบัญชี';
     } else {
-        title = 'ℹ️ ไม่พบ Quest ที่ต้องดำเนินการ';
+        title = `${config.emojis?.alert || 'ℹ️'} ไม่พบ Quest ที่ต้องดำเนินการ`;
         summary = isDaily
             ? 'ระบบ Auto Daily ได้ตรวจสอบบัญชีแล้ว แต่ไม่พบ Quest ใหม่ที่สามารถทำได้ในรอบนี้'
             : 'ไม่พบ Quest ที่สามารถทำได้ในบัญชีนี้ในขณะนี้';
@@ -86,7 +87,7 @@ function buildQuestSummaryEmbed({
         },
         {
             name: '⚙️ โหมดการทำงาน',
-            value: isDaily ? '🤖 Auto Daily (รายวัน)' : '🚀 One-shot (รอบเดียว)',
+            value: isDaily ? '🤖 Auto Daily (รายวัน)' : `${config.emojis?.boost || '🚀'} One-shot (รอบเดียว)`,
             inline: true
         },
         {
@@ -99,7 +100,7 @@ function buildQuestSummaryEmbed({
     if (issues.length > 0) {
         const issueLines = issues.slice(0, 5).map((iss) => `• ${markdownText(iss.name)}: ${markdownText(iss.reason)}`).join('\n');
         fields.push({
-            name: '⚠️ รายการที่พบปัญหา',
+            name: `${config.emojis?.warning || '⚠️'} รายการที่พบปัญหา`,
             value: safeText(issueLines, 'มีข้อผิดพลาดบางรายการ', 1024)
         });
     }
@@ -121,7 +122,7 @@ function buildQuestSummaryEmbed({
         nextAction,
         referenceId: jobKey ? safeText(jobKey.slice(-16), 'quest', 32) : 'quest',
         timestamp,
-        footer: 'Phomueangtai • ระบบทำ Discord Quest อัตโนมัติ'
+        footer: 'ระบบ Discord Quest อัตโนมัติ'
     });
 }
 
@@ -137,7 +138,7 @@ function buildQuestAuthFailureEmbed({
 } = {}) {
     return buildDmEmbed({
         tone: 'danger',
-        title: '🚫 Token บัญชี Quest ใช้งานไม่ได้',
+        title: `${config.emojis?.red_card || config.emojis?.error || '🚫'} Token บัญชี Quest ใช้งานไม่ได้`,
         summary: 'Discord ปฏิเสธการเข้าสู่ระบบ Token ของบัญชีนี้อาจหมดอายุ ถูกรีเซ็ตรหัสผ่าน หรือไม่ถูกต้อง',
         profile: profile || profileFromUser(null, {
             id: accountId,
@@ -151,7 +152,7 @@ function buildQuestAuthFailureEmbed({
                 inline: true
             },
             {
-                name: '🔒 สาเหตุ',
+                name: `${config.emojis?.lock || '🔒'} สาเหตุ`,
                 value: 'Authentication Token Invalid หรือ Expired',
                 inline: true
             }
@@ -159,7 +160,7 @@ function buildQuestAuthFailureEmbed({
         nextAction: 'กรุณารับ Token ใหม่ของบัญชีนี้ แล้วใช้คำสั่ง `/quest panel` เพื่อเปิดใช้งานใหม่อีกครั้ง',
         referenceId: jobKey ? safeText(jobKey.slice(-16), 'quest', 32) : 'quest',
         timestamp,
-        footer: 'Phomueangtai • ระบบทำ Discord Quest อัตโนมัติ'
+        footer: 'ระบบ Discord Quest อัตโนมัติ'
     });
 }
 
@@ -176,7 +177,7 @@ function buildQuestStoppedEmbed({
 } = {}) {
     return buildDmEmbed({
         tone: 'danger',
-        title: '🛑 สั่งหยุดการทำงานของ Quest แล้ว',
+        title: `${config.emojis?.stop || '🛑'} สั่งหยุดการทำงานของ Quest แล้ว`,
         summary: 'ระบบได้รับการสั่งหยุดการทำงาน จึงได้ยุติกระบวนการทำเควสต์สำหรับบัญชีนี้ทันที',
         profile: profile || profileFromUser(null, {
             id: accountId,
@@ -190,7 +191,7 @@ function buildQuestStoppedEmbed({
                 inline: true
             },
             {
-                name: '🛑 เหตุผลที่หยุด',
+                name: `${config.emojis?.stop || '🛑'} เหตุผลที่หยุด`,
                 value: markdownText(reason),
                 inline: true
             }
@@ -198,7 +199,7 @@ function buildQuestStoppedEmbed({
         nextAction: 'สามารถเปิดแผงควบคุม `/quest panel` เพื่อเริ่มการทำงานใหม่อีกครั้งได้ทุกเมื่อ',
         referenceId: jobKey ? safeText(jobKey.slice(-16), 'quest', 32) : 'quest',
         timestamp,
-        footer: 'Phomueangtai • ระบบทำ Discord Quest อัตโนมัติ'
+        footer: 'ระบบ Discord Quest อัตโนมัติ'
     });
 }
 

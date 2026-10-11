@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "levels": {
+    "micro": {"initial_reference_limit": 1, "finding_limit": 5, "output_tail_chars": 1200, "tool_depth": 2},
+    "standard": {"initial_reference_limit": 3, "finding_limit": 8, "output_tail_chars": 2000, "tool_depth": 4},
+    "deep": {"initial_reference_limit": 4, "finding_limit": 12, "output_tail_chars": 4000, "tool_depth": 6},
+    "incident": {"initial_reference_limit": 6, "finding_limit": 20, "output_tail_chars": 8000, "tool_depth": 7}
+  },
+  "risk_floor": {"low": "micro", "medium": "standard", "high": "deep", "critical": "incident"},
+  "forced_deep_profiles": ["defect", "moderation", "verification", "tickets", "music", "migration", "retirement", "github_review", "github_ci"],
+  "forced_incident_profiles": ["economy", "dashboard", "monetization", "incident", "github_security", "github_release"],
+  "protected_context": ["user_intent", "scope_and_prohibitions", "repository_instructions", "security_and_permissions", "root_cause", "failed_checks", "blockers", "material_diff", "unknowns", "live_boundary", "success_criteria"],
+  "escalation_triggers": ["material_unknown", "conflicting_evidence", "security_boundary", "destructive_or_irreversible_effect", "money_or_entitlement", "production_or_live_state", "failed_required_check", "cross_service_impact", "version_sensitive_api", "reopened_defect"],
+  "tool_order": ["search_symbols", "read_neighborhood", "compact_project_model", "applicable_static_or_domain_analysis", "semantic_impact", "current_primary_documentation_or_github", "integration_or_live_verification"],
+  "policy": "Budgets govern context loading and presentation, never whether a required safety, correctness, or completion check is performed. Escalate when evidence requires it."
+}

@@ -1,5 +1,6 @@
 const { MessageEmbed, MessageActionRow, MessageButton, Modal, TextInputComponent } = require("../core/discordCompat");
 const config = require("../config.json");
+const { getPrimaryOwnerId } = require("../core/env");
 const { IDS, PREFIXES } = require("./customIds");
 const {
     getVoiceAccountLabel,
@@ -10,6 +11,7 @@ const {
 const CB = "```";
 
 function buildControlPanelEmbed(_total = null) {
+    const primaryOwnerId = getPrimaryOwnerId();
     return new MessageEmbed()
         .setColor(config.system.themeColors.primary)
         .setTitle(`${config.emojis.universe} : Phomueangtai ระบบออนช่องเสียง`)
@@ -17,7 +19,7 @@ function buildControlPanelEmbed(_total = null) {
             `ระบบออนช่องเสียงอัตโนมัติ ${config.emojis.dreamworld}\n\n` +
             `ออนไลน์ฟรีครบ 24. ${config.emojis.dreamworld}\n\n` +
             `ตั้งค่าควบคุมผ่านปุ่มแผงควบคุมด้านล่าง ${config.emojis.dreamworld}\n\n` +
-            `*Developed by <@${config.system.ownerId}>*`
+            `*Developed by <@${primaryOwnerId}>*`
         )
         .setImage(config.system.bannerUrl || null);
 }
@@ -92,7 +94,7 @@ function buildVoiceStatusControls(current, page) {
             new MessageButton()
                 .setCustomId(`${PREFIXES.STATUS_RECONNECT}${current.sessionId}`)
                 .setLabel("เชื่อมต่อใหม่")
-                .setEmoji("🔄")
+                .setEmoji(config.emojis?.loading_circle || config.emojis?.loading || "🔄")
                 .setStyle("SUCCESS")
         );
     }
@@ -105,6 +107,15 @@ function buildVoiceStatusControls(current, page) {
     );
 
     return row;
+}
+
+function formatModalInputLabel(emoji, labelText) {
+    if (!emoji) return labelText;
+    if (emoji.startsWith("<") && emoji.endsWith(">")) {
+        return labelText;
+    }
+    const combined = `${emoji} ${labelText}`;
+    return combined.length <= 45 ? combined : labelText;
 }
 
 function buildStartModal() {
@@ -125,7 +136,7 @@ function buildStartModal() {
         new MessageActionRow().addComponents(
             new TextInputComponent()
                 .setCustomId(IDS.FIELD_SERVER_ID)
-                .setLabel(`${config.emojis.server_icon} ไอดีเซิร์ฟเวอร์`)
+                .setLabel(formatModalInputLabel(config.emojis?.server_icon, "ไอดีเซิร์ฟเวอร์"))
                 .setStyle("SHORT")
                 .setRequired(true)
         ),
@@ -133,7 +144,7 @@ function buildStartModal() {
         new MessageActionRow().addComponents(
             new TextInputComponent()
                 .setCustomId(IDS.FIELD_VOICE_ID)
-                .setLabel(`${config.emojis.voice_ch} ไอดีช่องเสียง`)
+                .setLabel(formatModalInputLabel(config.emojis?.voice_ch, "ไอดีช่องเสียง"))
                 .setStyle("SHORT")
                 .setRequired(true)
         )

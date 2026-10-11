@@ -1,21 +1,19 @@
 /* eslint-disable complexity -- Session persistence compatibility is behavior-sensitive; refactor separately. */
-/*
-================================================================================
-⚠️ [AI COGNITIVE DIRECTIVE & ARCHITECTURE GUARD] ⚠️
-ATTENTION AI ASSISTANT: DO NOT MODIFY, REFACTOR, OR SIMPLIFY THIS FILE.
-1. [DATABASE]: MONGO_URI is the ONLY storage. Local JSON fallback is REMOVED.
-2. [ENCRYPTION]: AES-256-GCM with CBC fallback must remain intact.
-3. [POOL]: maxPoolSize: 20 MUST remain in mongoose.connect().
-4. [SCHEMAS]: Do NOT remove PanelStateModel or BotSettingsModel.
-5. [METRICS]: increment() calls must remain for Dashboard accuracy.
-================================================================================
-*/
+/**
+ * Voice Session & Settings Persistence Manager
+ * - Database Architecture: MONGO_URI is authoritative for sessions and identity; SQLite for operational cache.
+ * - Token Encryption: AES-256-GCM with legacy CBC fallback preserved.
+ * - Pool Sizing: maxPoolSize: 20 in mongoose.connect().
+ * - Models: PanelStateModel and BotSettingsModel schemas.
+ * - Metrics: System telemetry increment counters.
+ */
 
 const mongoose = require("mongoose");
 const crypto = require("node:crypto");
 const config = require("./config.json");
 const { sanitizeLogText } = require("./core/safeLogger");
 const { readFiniteInteger } = require("./core/numbers");
+const webhooks = require("./core/webhooks");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🗺️  REGION 1: IN-MEMORY STATE
@@ -271,36 +269,6 @@ const sessionSchema = new mongoose.Schema({
 });
 const SessionModel = mongoose.model("Session", sessionSchema);
 
-// --- Snapshot Schema (Backup/Restore) ---
-const snapshotSchema = new mongoose.Schema({
-    snapshotId: { type: String, required: true, unique: true },
-    guildId: String,
-    Backup_Owner_ID: String,
-    data: Object,
-    storageMode: { type: String, default: "legacy" },
-    chunkMeta: Object,
-    complete: { type: Boolean, default: true },
-    activationPending: { type: Boolean, default: false },
-    active: { type: Boolean, default: false },
-    supersededAt: { type: Number, default: null },
-    supersededBy: { type: String, default: null },
-    createdAt: { type: Number, default: Date.now }
-});
-snapshotSchema.index({ guildId: 1 }, { unique: true, partialFilterExpression: { active: true } });
-const SnapshotModel = mongoose.model("Snapshot", snapshotSchema);
-const snapshotChunkSchema = new mongoose.Schema({
-    snapshotId: { type: String, required: true, index: true },
-    kind: { type: String, required: true },
-    chunkIndex: { type: Number, required: true },
-    items: { type: [mongoose.Schema.Types.Mixed], default: [] },
-    itemCount: { type: Number, required: true },
-    byteSize: { type: Number, required: true },
-    complete: { type: Boolean, default: true },
-    createdAt: { type: Number, default: Date.now }
-});
-snapshotChunkSchema.index({ snapshotId: 1, kind: 1, chunkIndex: 1 }, { unique: true });
-const SnapshotChunkModel = mongoose.model("SnapshotChunk", snapshotChunkSchema);
-
 // --- Approved Guild Schema ---
 const approvedGuildSchema = new mongoose.Schema({
     guildId: { type: String, required: true, unique: true },
@@ -338,6 +306,9 @@ const BotSettingsModel = mongoose.model("BotSettings", botSettingsSchema);
 //  🌐  REGION 5: DATABASE CONNECTION
 // ════════════════════════════════════════════════════════════════════════════
 let dbConnected = false;
+let hadPreviousConnectionLoss = false;
+let lastConnectionLostAlertAt = 0;
+const DB_DUAL_INCIDENT_WINDOW_MS = 15000;
 // Keep the lifecycle generation with a deferred delete. A session id can be
 // reused after a restart, so deleting by id alone could remove a newer session.
 const pendingSessionDeletes = new Map();
@@ -351,19 +322,70 @@ const MONGO_POOL_CONFIG = {
 mongoose.connection.on("connected", () => {
     console.log("[DATABASE] 🟢 MongoDB Connection Active.");
     dbConnected = true;
+    lastConnectionLostAlertAt = 0;
     flushPendingSessionDeletes().catch((err) => {
         console.error(`[DATABASE] ❌ Pending session delete flush failed: ${sanitizeLifecycleError(err.message)}`);
     });
+    if (hadPreviousConnectionLoss) {
+        hadPreviousConnectionLoss = false;
+        webhooks.sendWebhookEvent({
+            target: "ALERT",
+            severity: "SUCCESS",
+            category: "DATABASE",
+            code: "database.connection_restored",
+            state: "RESOLVED",
+            title: "CONNECTION RESTORED",
+            description: "การเชื่อมต่อกับ MongoDB กลับมาใช้งานได้ตามปกติแล้ว",
+            impact: "ระบบกลับมาทำงานและบันทึกข้อมูลได้ตามปกติ",
+            action: "ไม่ต้องดำเนินการใดๆ ระบบจัดการต่อเนื่องอัตโนมัติ"
+        }).catch(() => {});
+    }
 });
 
 mongoose.connection.on("disconnected", () => {
     console.error("[DATABASE] 🔴 MongoDB Connection Lost.");
     dbConnected = false;
+    hadPreviousConnectionLoss = true;
+    lastConnectionLostAlertAt = Date.now();
+    webhooks.sendWebhookEvent({
+        target: "ALERT",
+        severity: "CRITICAL",
+        category: "DATABASE",
+        code: "database.connection_lost",
+        state: "OPEN",
+        title: "CONNECTION LOST",
+        description: "การเชื่อมต่อกับ MongoDB ขาดหาย ระบบไม่สามารถบันทึกหรืออ่านข้อมูลได้ชั่วคราว",
+        impact: "Session, Verification, ModCase และ Token state อาจไม่ถูกบันทึก",
+        action: "ตรวจสอบสถานะ MongoDB Server หรือ URL การเชื่อมต่อ",
+        dedupeKey: "database-connection-lost",
+        dedupeMs: 5 * 60 * 1000
+    }).catch(() => {});
 });
 
 mongoose.connection.on("error", (err) => {
     console.error(`[DATABASE] ❌ MongoDB Error: ${err.message}`);
     dbConnected = false;
+    hadPreviousConnectionLoss = true;
+    // Dual-incident guard: suppress secondary error alert if connection_lost CRITICAL alert was just dispatched
+    if (Date.now() - lastConnectionLostAlertAt < DB_DUAL_INCIDENT_WINDOW_MS) {
+        return;
+    }
+    webhooks.sendWebhookEvent({
+        target: "ALERT",
+        severity: "ERROR",
+        category: "DATABASE",
+        code: "database.error",
+        state: "OPEN",
+        title: "CONNECTION ERROR",
+        description: `เกิดข้อผิดพลาดในการเชื่อมต่อ MongoDB: ${err?.message || "unknown"}`,
+        impact: "คำสั่งที่ต้องใช้ฐานข้อมูลอาจทำงานล้มเหลว",
+        action: "ตรวจสอบสถานะและการเชื่อมต่อของ MongoDB",
+        context: {
+            "รหัสข้อผิดพลาด": String(err?.code || err?.name || "database_error")
+        },
+        dedupeKey: "database-error",
+        dedupeMs: 5 * 60 * 1000
+    }).catch(() => {});
 });
 
 async function connectDB() {
@@ -384,18 +406,25 @@ async function connectDB() {
 }
 
 async function disconnectDB() {
+    try {
+        if (mongoose.connection.readyState !== 0) {
+            await flushPendingSessionDeletes();
+        }
+    } catch (_) {}
+
+    try {
+        const db = require("../database");
+        await db.shutdown();
+    } catch (_) {}
+
     if (mongoose.connection.readyState === 0) {
         dbConnected = false;
         return;
     }
     try {
-        await flushPendingSessionDeletes();
+        await mongoose.disconnect();
     } finally {
-        try {
-            await mongoose.disconnect();
-        } finally {
-            dbConnected = false;
-        }
+        dbConnected = false;
     }
 }
 
@@ -587,9 +616,6 @@ async function loadDatabase() {
     }
 
     try {
-        await reconcileSnapshotPointers().catch(err => {
-            console.warn(`[DATABASE] ⚠️ Snapshot pointer reconciliation deferred: ${String(err?.message || err).slice(0, 180)}`);
-        });
         const now = Date.now();
         const recoverableCutoff = now - LOAD_RECOVERABLE_STOP_CLEANUP_MS;
         const cleanup = await cleanStaleSessionsAndLegacyModels(now);
@@ -643,6 +669,26 @@ async function loadDatabase() {
 
         const deleted = cleanup?.deletedCount ? `, cleaned=${cleanup.deletedCount}` : "";
         console.log(`[DATABASE] 📂 Loaded ${sessions.size} active/recoverable sessions from MongoDB${deleted}.`);
+
+        // Startup reconciliation: purge orphan SQLite voice runtimes that have no active MongoDB counterpart
+        try {
+            const voiceRepo = getVoiceRuntimeRepository();
+            if (voiceRepo && typeof voiceRepo.listActiveSessionRuntimes === "function") {
+                const activeRuntimes = voiceRepo.listActiveSessionRuntimes() || [];
+                let orphanPurged = 0;
+                for (const rt of activeRuntimes) {
+                    if (rt && rt.session_id && !sessions.has(rt.session_id)) {
+                        voiceRepo.deleteSessionRuntime(rt.session_id);
+                        orphanPurged++;
+                    }
+                }
+                if (orphanPurged > 0) {
+                    console.log(`[SESSION] 🧹 Reconciled SQLite voice runtimes: purged ${orphanPurged} orphan record(s).`);
+                }
+            }
+        } catch (reconcileErr) {
+            console.warn(`[SESSION] ⚠️ SQLite voice runtime reconciliation warning: ${reconcileErr.message}`);
+        }
     } catch (err) {
         console.error(`[DATABASE] ❌ Failed to load sessions: ${err.message}`);
         throw err;
@@ -729,6 +775,22 @@ async function saveDatabase(deps = {}) {
         }
     } catch (err) {
         console.error(`[DATABASE] ❌ MongoDB save failed: ${err.message}`);
+        webhooks.sendWebhookEvent({
+            target: "ALERT",
+            severity: "ERROR",
+            category: "DATABASE",
+            code: "session.persistence_failed",
+            state: "OPEN",
+            title: "SESSION PERSISTENCE FAILED",
+            description: `ไม่สามารถบันทึกสถานะเซสชันเสียงลง MongoDB ได้: ${err?.message || "unknown"}`,
+            impact: "สถานะ Voice Session ล่าสุดอาจไม่ถูกบันทึกหากบอทรีสตาร์ทกะทันหัน",
+            action: "ตรวจสอบการเชื่อมต่อ MongoDB และพื้นที่จัดเก็บ",
+            context: {
+                "รหัสข้อผิดพลาด": String(err?.code || err?.name || "save_failed")
+            },
+            dedupeKey: "session-persistence-failed",
+            dedupeMs: 10 * 60 * 1000
+        }).catch(() => {});
     }
 }
 // ════════════════════════════════════════════════════════════════════════════
@@ -776,6 +838,23 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
     const activeSessionCount = Array.from(sessions.values()).filter(isSessionRunnable).length;
     if (activeSessionCount >= configuredMaxSessions) {
         console.log(`[SESSION] ⛔ System limit reached for owner=${sanitizeLogText(ownerId || "unknown")}`);
+        webhooks.sendWebhookEvent({
+            target: "ALERT",
+            severity: "WARNING",
+            category: "VOICE",
+            code: "voice.capacity_reached",
+            state: "OPEN",
+            title: "VOICE CAPACITY REACHED",
+            description: `ระบบเปิดเซสชันเสียงเต็มขีดจำกัดแล้ว (${activeSessionCount}/${configuredMaxSessions} เซสชัน)`,
+            impact: "ผู้ใช้ไม่สามารถเพิ่มเซสชันเสียงใหม่ได้จนกว่าจะมีเซสชันเดิมถูกลบหรือหยุดทำงาน",
+            action: "ตรวจสอบจำนวนเซสชันในระบบ หรือพิจารณาปรับเพิ่ม maxSessions ในการตั้งค่า",
+            context: {
+                "จำนวนเซสชันปัจจุบัน": `${activeSessionCount}/${configuredMaxSessions}`,
+                "ผู้ขอดำเนินการ": sanitizeLogText(ownerId || "unknown")
+            },
+            dedupeKey: "voice-capacity-reached",
+            dedupeMs: 5 * 60 * 1000
+        }).catch(() => {});
         throw new Error("SYSTEM_LIMIT");
     }
 
@@ -851,7 +930,42 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
         throw new Error("SESSION_PERSIST_FAILED");
     }
 
+    try {
+        const repo = getVoiceRuntimeRepository();
+        if (repo) {
+            repo.upsertSessionRuntime({
+                sessionId,
+                serverId,
+                ownerId,
+                state: "active",
+                lastHeartbeat: Date.now(),
+                lastActivity: Date.now(),
+                reconnectCount: 0,
+                statusLabel: "active"
+            });
+        }
+    } catch (_) {}
+
+    try {
+        const db = require("../database");
+        db?.repositories?.sessionEvent?.record({
+            sessionId,
+            accountId: ownerId,
+            eventType: "voice_session_created",
+            metadata: { serverId, state: "active" }
+        });
+    } catch (_) {}
+
     return sessionId;
+}
+
+function getVoiceRuntimeRepository() {
+    try {
+        const db = require("../database");
+        return db?.repositories?.voiceSessionRuntime || null;
+    } catch (_) {
+        return null;
+    }
 }
 
 function getSession(sessionId) {
@@ -860,7 +974,13 @@ function getSession(sessionId) {
 
 function touchSession(sessionId) {
     const session = sessions.get(sessionId);
-    if (session) session.lastActivity = Date.now();
+    if (session) {
+        session.lastActivity = Date.now();
+        try {
+            const repo = getVoiceRuntimeRepository();
+            if (repo) repo.recordHeartbeat(sessionId, session.lastActivity);
+        } catch (_) {}
+    }
     return session;
 }
 
@@ -915,6 +1035,23 @@ async function updateSessionMetadata(sessionId, metadata = {}) {
 async function saveVoiceRuntimeState(sessionId) {
     const session = sessions.get(sessionId);
     if (!session) return false;
+
+    try {
+        const repo = getVoiceRuntimeRepository();
+        if (repo) {
+            repo.upsertSessionRuntime({
+                sessionId,
+                serverId: session.serverId,
+                ownerId: session.ownerId,
+                state: session.state || "active",
+                lastHeartbeat: Date.now(),
+                lastActivity: session.lastActivity || Date.now(),
+                reconnectCount: Number(session.reconnectCount || 0),
+                statusLabel: session.recoveryState?.phase || session.statusLabel || "active"
+            });
+        }
+    } catch (_) {}
+
     if (!dbConnected) return false;
 
     try {
@@ -983,7 +1120,13 @@ async function flushPendingSessionDeletes(deps = {}) {
     const entries = [...pendingDeletes];
     try {
         await sessionModel.deleteMany(buildPendingSessionDeleteFilter(entries));
-        for (const [sessionId] of entries) pendingDeletes.delete(sessionId);
+        const voiceRepo = deps.voiceRuntimeRepo || getVoiceRuntimeRepository();
+        for (const [sessionId] of entries) {
+            pendingDeletes.delete(sessionId);
+            if (voiceRepo && typeof voiceRepo.deleteSessionRuntime === "function") {
+                try { voiceRepo.deleteSessionRuntime(sessionId); } catch (_) {}
+            }
+        }
         console.log(`[DATABASE] 🧹 Flushed ${entries.length} pending session delete(s).`);
     } catch (err) {
         console.error(`[DATABASE] ❌ Failed to flush pending session deletes: ${sanitizeLifecycleError(err.message)}`);
@@ -1083,6 +1226,10 @@ async function deleteSession(sessionId, options = {}) {
     if (!dbConnected) {
         console.warn(`[DATABASE] ⚠️ Queued session ${sessionId} delete until database reconnects`);
         queuePendingSessionDelete(sessionId, session.lifecycleGeneration);
+        try {
+            const repo = getVoiceRuntimeRepository();
+            if (repo) repo.deleteSessionRuntime(sessionId);
+        } catch (_) {}
         cleanupSessionMemory(sessionId, session);
         systemMetrics.increment("errors");
         console.log(`[SESSION] 🗑️ Session removed from memory: ${sessionId}`);
@@ -1102,6 +1249,10 @@ async function deleteSession(sessionId, options = {}) {
     } catch (err) {
         console.error(`[DATABASE] ❌ Failed to delete session ${sessionId}; queued retry: ${sanitizeLifecycleError(err.message)}`);
         queuePendingSessionDelete(sessionId, session.lifecycleGeneration);
+        try {
+            const repo = getVoiceRuntimeRepository();
+            if (repo) repo.deleteSessionRuntime(sessionId);
+        } catch (_) {}
         cleanupSessionMemory(sessionId, session);
         systemMetrics.increment("errors");
         console.log(`[SESSION] 🗑️ Session removed from memory: ${sessionId}`);
@@ -1110,6 +1261,20 @@ async function deleteSession(sessionId, options = {}) {
 
     pendingSessionDeletes.delete(sessionId);
     cleanupSessionMemory(sessionId, session);
+
+    try {
+        const repo = getVoiceRuntimeRepository();
+        if (repo) repo.deleteSessionRuntime(sessionId);
+    } catch (_) {}
+
+    try {
+        const db = require("../database");
+        db?.repositories?.sessionEvent?.record({
+            sessionId,
+            eventType: "voice_session_deleted",
+            metadata: { stoppedReason: session?.stoppedReason || "manual_or_error" }
+        });
+    } catch (_) {}
 
     console.log(`[SESSION] 🗑️ Session removed: ${sessionId}`);
 
@@ -1323,216 +1488,6 @@ async function removePendingGuild(guildId) {
         return true;
     } catch (err) {
         console.error(`[DATABASE] ❌ Failed to remove pending guild ${guildId}: ${err.message}`);
-        systemMetrics.increment("errors");
-        return false;
-    }
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-//  💾 REGION 11: BACKUP SNAPSHOTS
-// ════════════════════════════════════════════════════════════════════════════
-const SNAPSHOT_CHUNK_MAX_BYTES = 512 * 1024;
-
-function chunkSnapshotItems(items, maxBytes = SNAPSHOT_CHUNK_MAX_BYTES) {
-    const chunks = [];
-    let current = [];
-    let currentBytes = 2;
-    for (const item of Array.isArray(items) ? items : []) {
-        const itemBytes = Buffer.byteLength(JSON.stringify(item), "utf8") + 1;
-        if (itemBytes > maxBytes) throw new Error("SNAPSHOT_ITEM_TOO_LARGE");
-        if (current.length && currentBytes + itemBytes > maxBytes) {
-            chunks.push(current);
-            current = [];
-            currentBytes = 2;
-        }
-        current.push(item);
-        currentBytes += itemBytes;
-    }
-    if (current.length || chunks.length === 0) chunks.push(current);
-    return chunks;
-}
-
-async function saveChunkedSnapshot(snapshotId, guildId, backupOwnerId, data) {
-    if (!dbConnected) return false;
-    const normalizedGuildId = String(guildId);
-    const oldSnapshot = await getLatestSnapshotForGuild(normalizedGuildId);
-    const createdAt = Date.now();
-    const kinds = ["roles", "channels"];
-    const chunkMeta = {};
-    try {
-        for (const kind of kinds) {
-            const source = Array.isArray(data?.[kind]) ? data[kind] : [];
-            const chunks = chunkSnapshotItems(source);
-            chunkMeta[kind] = { returnedCount: source.length, storedCount: 0, chunkCount: chunks.length, complete: false };
-            for (let index = 0; index < chunks.length; index++) {
-                const items = chunks[index];
-                const byteSize = Buffer.byteLength(JSON.stringify(items), "utf8");
-                await SnapshotChunkModel.create({ snapshotId, kind, chunkIndex: index, items, itemCount: items.length, byteSize, complete: true, createdAt });
-                chunkMeta[kind].storedCount += items.length;
-            }
-            chunkMeta[kind].complete = chunkMeta[kind].storedCount === source.length;
-            if (!chunkMeta[kind].complete) throw new Error("SNAPSHOT_CHUNK_INCOMPLETE");
-        }
-        const metadata = { ...data };
-        delete metadata.roles;
-        delete metadata.channels;
-        await SnapshotModel.create({
-            snapshotId,
-            guildId: normalizedGuildId,
-            Backup_Owner_ID: String(backupOwnerId),
-            data: metadata,
-            storageMode: "chunked",
-            chunkMeta,
-            complete: true,
-            activationPending: true,
-            active: false,
-            createdAt
-        });
-
-        await SnapshotModel.updateMany(
-            { guildId: normalizedGuildId, snapshotId: { $ne: snapshotId } },
-            { $set: { active: false, supersededAt: createdAt, supersededBy: snapshotId } }
-        );
-        try {
-            const activated = await SnapshotModel.updateOne(
-                { snapshotId, complete: true, activationPending: true },
-                { $set: { active: true, activationPending: false, supersededAt: null, supersededBy: null } }
-            );
-            if ((activated?.matchedCount ?? activated?.n ?? 0) !== 1) throw new Error("SNAPSHOT_ACTIVATION_FAILED");
-        } catch (activationError) {
-            if (oldSnapshot?.snapshotId) {
-                await SnapshotModel.updateOne(
-                    { snapshotId: oldSnapshot.snapshotId },
-                    { $set: { active: true, supersededAt: null, supersededBy: null } }
-                ).catch(() => null);
-            }
-            throw activationError;
-        }
-        return true;
-    } catch (err) {
-        await SnapshotChunkModel.deleteMany({ snapshotId }).catch(() => null);
-        await SnapshotModel.deleteOne({ snapshotId, active: { $ne: true } }).catch(() => null);
-        await reconcileSnapshotPointers().catch(() => null);
-        console.error(`[DATABASE] ❌ Failed to save chunked snapshot: ${err.message}`);
-        systemMetrics.increment("errors");
-        return false;
-    }
-}
-
-async function getLatestSnapshotForGuild(guildId) {
-    const normalizedGuildId = String(guildId || "");
-    if (!normalizedGuildId || !dbConnected) return null;
-    const readable = { complete: { $ne: false }, activationPending: { $ne: true } };
-    const active = await SnapshotModel.findOne({ guildId: normalizedGuildId, active: true, ...readable })
-        .sort({ createdAt: -1, _id: -1 });
-    if (active) return active;
-    return SnapshotModel.findOne({ guildId: normalizedGuildId, ...readable })
-        .sort({ createdAt: -1, _id: -1 });
-}
-
-async function reconcileSnapshotPointers() {
-    if (!dbConnected) return { guilds: 0, activated: 0 };
-    const guildIds = await SnapshotModel.distinct("guildId", { guildId: { $type: "string", $ne: "" } });
-    let activated = 0;
-    for (const guildId of guildIds) {
-        const latest = await SnapshotModel.findOne({ guildId, complete: { $ne: false }, activationPending: { $ne: true } })
-            .sort({ createdAt: -1, _id: -1 })
-            .select("snapshotId")
-            .lean();
-        if (!latest) continue;
-        const now = Date.now();
-        await SnapshotModel.updateMany(
-            { guildId, snapshotId: { $ne: latest.snapshotId } },
-            { $set: { active: false, supersededAt: now, supersededBy: latest.snapshotId } }
-        );
-        await SnapshotModel.updateOne(
-            { snapshotId: latest.snapshotId },
-            { $set: { active: true, activationPending: false, supersededAt: null, supersededBy: null } }
-        );
-        activated++;
-    }
-    return { guilds: guildIds.length, activated };
-}
-
-function isSnapshotChunkDocValid(doc, index) {
-    const items = Array.isArray(doc.items) ? doc.items : [];
-    return doc.complete &&
-        doc.chunkIndex === index &&
-        doc.itemCount === items.length &&
-        doc.byteSize === Buffer.byteLength(JSON.stringify(items), "utf8");
-}
-
-async function loadValidatedSnapshotChunkKind(source, kind) {
-    const meta = source.chunkMeta[kind];
-    if (!meta?.complete || !Number.isInteger(meta.chunkCount) || meta.chunkCount < 1) return null;
-    const docs = await SnapshotChunkModel.find({ snapshotId: source.snapshotId, kind }).sort({ chunkIndex: 1 }).lean();
-    if (docs.length !== meta.chunkCount || docs.some((doc, index) => !isSnapshotChunkDocValid(doc, index))) {
-        return null;
-    }
-    const items = docs.flatMap(doc => Array.isArray(doc.items) ? doc.items : []);
-    if (items.length !== meta.returnedCount || items.length !== meta.storedCount) return null;
-    return items;
-}
-
-async function loadSnapshotData(snapshot) {
-    if (!snapshot) return null;
-    const source = snapshot.toObject?.() || snapshot;
-    if (source.storageMode !== "chunked") return source.data || null;
-    if (!source.complete || !source.chunkMeta) return null;
-    const data = { ...source.data };
-    for (const kind of ["roles", "channels"]) {
-        const items = await loadValidatedSnapshotChunkKind(source, kind);
-        if (!items) return null;
-        data[kind] = items;
-    }
-    return data;
-}
-
-async function saveSnapshot(snapshotId, guildId, backupOwnerId, data) {
-    if (!dbConnected) return false;
-
-    try {
-        await SnapshotModel.updateOne(
-            { snapshotId },
-            {
-                $set: {
-                    snapshotId,
-                    guildId,
-                    Backup_Owner_ID: backupOwnerId,
-                    data,
-                    createdAt: Date.now()
-                }
-            },
-            { upsert: true }
-        );
-        return true;
-    } catch (err) {
-        console.error(`[DATABASE] ❌ Failed to save snapshot ${snapshotId}: ${err.message}`);
-        systemMetrics.increment("errors");
-        return false;
-    }
-}
-
-async function getSnapshot(snapshotId) {
-    if (!dbConnected) return null;
-
-    try {
-        return await SnapshotModel.findOne({ snapshotId });
-    } catch (err) {
-        console.error(`[DATABASE] ❌ Failed to get snapshot ${snapshotId}: ${err.message}`);
-        systemMetrics.increment("errors");
-        return null;
-    }
-}
-
-async function deleteSnapshot(snapshotId) {
-    if (!dbConnected) return false;
-
-    try {
-        await SnapshotModel.deleteOne({ snapshotId });
-        return true;
-    } catch (err) {
-        console.error(`[DATABASE] ❌ Failed to delete snapshot ${snapshotId}: ${err.message}`);
         systemMetrics.increment("errors");
         return false;
     }
@@ -1979,16 +1934,6 @@ module.exports = {
     getPendingGuilds,
     removePendingGuild,
 
-    // Snapshots
-    saveSnapshot,
-    saveChunkedSnapshot,
-    loadSnapshotData,
-    getLatestSnapshotForGuild,
-    reconcileSnapshotPointers,
-    chunkSnapshotItems,
-    getSnapshot,
-    deleteSnapshot,
-
     // Panel state
     savePanelState,
     getPanelState,
@@ -2010,8 +1955,6 @@ module.exports = {
 
     // Raw models for existing internal dashboards/tools
     SessionModel,
-    SnapshotModel,
-    SnapshotChunkModel,
     ApprovedGuildModel,
     PendingGuildModel,
     PanelStateModel,
@@ -2031,6 +1974,7 @@ module.exports = {
         saveDatabase,
         queuePendingSessionDelete,
         buildPendingSessionDeleteFilter,
-        flushPendingSessionDeletes
+        flushPendingSessionDeletes,
+        resetDbAlertState: () => { lastConnectionLostAlertAt = 0; }
     }
 };

@@ -11,9 +11,9 @@ const {
     getAccountAgeString,
     resolveNitroPlan,
     resolveAvatarUrl,
+    resolveInvalidTokenErrorMessage,
     buildSingleTokenEmbed,
     buildBatchSummaryEmbed,
-    createCategoryAttachments,
     THEME_COLORS
 } = require('../features/tokenChecker');
 
@@ -108,7 +108,7 @@ test('tokenChecker embed builders produce correct outputs', () => {
     };
     const boostEmbed = buildSingleTokenEmbed(boostResult);
     assert.equal(boostEmbed.data.color, parseInt(THEME_COLORS.BOOST.replace('#', ''), 16));
-    assert.match(boostEmbed.data.title, /ข้อมูลบัญชี Discord Token/);
+    assert.match(boostEmbed.data.title, /ข้อมูลบัญชี Discord/);
     assert.equal(boostEmbed.data.thumbnail.url, boostResult.avatarUrl);
 
     // 3. Batch summary embed
@@ -135,24 +135,53 @@ test('tokenChecker embed builders produce correct outputs', () => {
     };
     const batchEmbed = buildBatchSummaryEmbed(batchData);
     assert.equal(batchEmbed.data.color, parseInt(THEME_COLORS.BOOST.replace('#', ''), 16));
-    assert.match(batchEmbed.data.description, /สรุปผลการตรวจสอบทั้งหมด.*3.*บัญชี/);
+    assert.match(batchEmbed.data.description, /สรุปผลการตรวจสอบทั้งหมด.*3.*Token/);
     assert.match(batchEmbed.data.description, /Apichat/);
     assert.match(batchEmbed.data.description, /NormalUser/);
 
-    // 4. Category attachments
-    const groups = {
-        boost: [{ token: 'token_boost_1' }],
-        nitro: [],
-        normal: [{ token: 'token_normal_1' }, { token: 'token_normal_2' }],
-        invalid: [{ token: 'token_invalid_1' }]
+    // 4. Bot token embed
+    const botResult = {
+        valid: true,
+        isBot: true,
+        maskedToken: 'MTUzMD...5678',
+        id: '153012345678901234',
+        username: 'BroadcastHelperBot',
+        globalName: 'Broadcast Helper',
+        avatarUrl: 'https://cdn.discordapp.com/avatars/153/bot.png',
+        createdAt: new Date('2022-01-01T00:00:00Z'),
+        category: 'bot'
     };
-    const files = createCategoryAttachments(groups);
-    assert.equal(files.length, 3);
-    const names = files.map(f => f.name);
-    assert.ok(names.includes('tokens_boost.txt'));
-    assert.ok(!names.includes('tokens_nitro.txt'));
-    assert.ok(names.includes('tokens_normal.txt'));
-    assert.ok(names.includes('tokens_invalid.txt'));
+    const botEmbed = buildSingleTokenEmbed(botResult);
+    assert.match(botEmbed.data.title, /ข้อมูลบัญชี Discord.*Bot/);
+    assert.match(botEmbed.data.description, /Valid Bot Token/);
+    assert.match(botEmbed.data.description, /Broadcast Helper/);
+    assert.match(botEmbed.data.description, /\[BOT\]/);
+
+    // 5. resolveInvalidTokenErrorMessage sanitizes technical errors
+    assert.equal(resolveInvalidTokenErrorMessage({ errorType: 'INVALID' }), 'Token ไม่ถูกต้อง หรือหมดอายุแล้ว');
+    assert.equal(resolveInvalidTokenErrorMessage({ errorType: 'LOCKED' }), 'บัญชีถูกระงับ หรือติดด่านยืนยันความปลอดภัย');
+    assert.equal(resolveInvalidTokenErrorMessage({ errorType: 'QUARANTINED' }), 'Token ติดสถานะกักกัน ไม่สามารถใช้งานได้');
+    assert.equal(resolveInvalidTokenErrorMessage({ errorType: 'NETWORK_ERROR' }), 'การเชื่อมต่อขัดข้องหรือหมดเวลา');
+    assert.equal(resolveInvalidTokenErrorMessage({ errorType: 'HTTP_500' }), 'ตรวจสอบ Token ไม่สำเร็จ');
+    assert.equal(resolveInvalidTokenErrorMessage({ errorType: 'HTTP_429' }), 'ตรวจสอบ Token ไม่สำเร็จ');
+
+    // 6. Batch summary displays all 20 tokens without truncation
+    const batch20Results = Array.from({ length: 20 }, (_, i) => ({
+        valid: true,
+        maskedToken: `to******_${i + 1}`,
+        username: `User${i + 1}`,
+        id: `10000000000000000${i + 1}`,
+        hasNitro: false,
+        hasBoost: false
+    }));
+    const batch20Embed = buildBatchSummaryEmbed({
+        summary: { total: 20, boost: 0, nitro: 0, normal: 20, bot: 0, invalid: 0, valid: 20 },
+        results: batch20Results
+    });
+    assert.match(batch20Embed.data.description, /1\. (?:<a:g03_pmt:\d+>|🟢) ปกติ \*\*User1\*\*/);
+    assert.match(batch20Embed.data.description, /20\. (?:<a:g03_pmt:\d+>|🟢) ปกติ \*\*User20\*\*/);
+    assert.equal(batch20Embed.data.description.includes('และอีก'), false);
+    assert.equal(Boolean(batch20Embed.data.footer), false);
 });
 
 test('tokenCheck command and interactions behave correctly', async () => {
@@ -164,8 +193,8 @@ test('tokenCheck command and interactions behave correctly', async () => {
 
     // 2. buildTokenCheckPanelEmbed and Row
     const panelEmbed = buildTokenCheckPanelEmbed();
-    assert.match(panelEmbed.data.title, /Phomueangtai Discord Token Checker/);
-    assert.match(panelEmbed.data.description, /ระบบตรวจสอบสถานะ Discord Token แบบส่วนตัว/);
+    assert.match(panelEmbed.data.title, /ตรวจสอบ Discord Token/);
+    assert.match(panelEmbed.data.description, /ตรวจสอบสถานะบัญชี Nitro/);
 
     const panelEmbedWithAttachment = buildTokenCheckPanelEmbed({ hasAttachment: true });
     assert.equal(panelEmbedWithAttachment.data.image.url, 'attachment://token-check-banner.gif');
@@ -173,7 +202,7 @@ test('tokenCheck command and interactions behave correctly', async () => {
     const panelRow = buildTokenCheckPanelRow();
     assert.equal(panelRow.components.length, 1);
     assert.equal(panelRow.components[0].data.custom_id, IDS.BTN_TOKEN_CHECK);
-    assert.equal(panelRow.components[0].data.label, 'เช็คโทเคน');
+    assert.equal(panelRow.components[0].data.label, 'ตรวจสอบ Token');
 
     // 3. handleTokenCheckCommand replies publicly with deferral and checks owner permission
     let repliedPayload = null;
@@ -258,5 +287,142 @@ test('tokenCheck command and interactions behave correctly', async () => {
         replied: false
     };
     await handleTokenCheckModal(mockOverflowModalInteraction);
-    assert.match(overflowReplyContent.content, /สูงสุดครั้งละ \*\*20 บัญชี\*\*/);
+    // 7. handleTokenCheckModal error handling sanitizes raw exceptions
+    let errorReplyContent = null;
+    const mockErrorModalInteraction = {
+        fields: {
+            getTextInputValue: () => 'valid_looking_token_123'
+        },
+        deferReply: async () => {},
+        editReply: async (p) => { errorReplyContent = p; return p; },
+        deferred: true,
+        replied: false
+    };
+    const originalCheckSingle = require('../features/tokenChecker').checkSingleToken;
+    const tcModule = require('../features/tokenChecker');
+    tcModule.checkSingleToken = async () => { throw new Error('DB connection pool failed at 127.0.0.1:27017'); };
+    try {
+        await handleTokenCheckModal(mockErrorModalInteraction);
+        assert.match(errorReplyContent.content, /ตรวจสอบ Token ไม่สำเร็จ/);
+        assert.ok(!errorReplyContent.content.includes('127.0.0.1'));
+        assert.ok(!errorReplyContent.content.includes('DB connection pool failed'));
+    } finally {
+        tcModule.checkSingleToken = originalCheckSingle;
+    }
+});
+
+test('checkSingleToken utilizes tokenCoordinator profile cache and quarantine', async () => {
+    const { checkSingleToken } = require('../features/tokenChecker');
+    const tokenCoordinator = require('../core/tokenCoordinator');
+
+    const mockToken = 'mock_cached_token_abc123';
+    const mockProfile = {
+        valid: true,
+        token: mockToken,
+        maskedToken: 'mock_c...c123',
+        id: '123456789012345678',
+        username: 'CachedHero',
+        category: 'nitro'
+    };
+
+    // Pre-populate cache in tokenCoordinator
+    tokenCoordinator.cacheTokenProfile(mockToken, mockProfile, 60000);
+
+    // Call checkSingleToken; should resolve immediately from cache without calling Discord API
+    const cachedResult = await checkSingleToken(mockToken);
+    assert.deepEqual(cachedResult, mockProfile);
+
+    // Quarantine the token
+    const deadToken = 'mock_dead_token_xyz999';
+    tokenCoordinator.quarantineToken(deadToken, '401 Unauthorized Account Terminated');
+
+    const quarantinedResult = await checkSingleToken(deadToken);
+    assert.equal(quarantinedResult.valid, false);
+    assert.equal(quarantinedResult.errorType, 'QUARANTINED');
+    assert.match(quarantinedResult.errorMessage, /Quarantine/);
+
+    tokenCoordinator.reset();
+});
+
+test('checkBatchTokens processes tokens in parallel batches and categorizes results accurately', async () => {
+    const { checkBatchTokens } = require('../features/tokenChecker');
+    const tokenCoordinator = require('../core/tokenCoordinator');
+
+    // Pre-populate 7 tokens in profile cache to test chunking across batches of 5
+    const mockTokens = [];
+    for (let i = 1; i <= 7; i++) {
+        const t = `mock_batch_token_${i}`;
+        mockTokens.push(t);
+        tokenCoordinator.cacheTokenProfile(t, {
+            valid: true,
+            token: t,
+            maskedToken: 'mock...123',
+            id: `id-${i}`,
+            username: `User${i}`,
+            category: (i % 2 === 0) ? 'boost' : 'normal'
+        }, 60000);
+    }
+
+    const res = await checkBatchTokens(mockTokens, { batchSize: 5, delayMs: 10 });
+    assert.equal(res.results.length, 7);
+    assert.equal(res.summary.total, 7);
+    assert.equal(res.summary.valid, 7);
+    assert.equal(res.summary.boost, 3);
+    assert.equal(res.summary.normal, 4);
+
+    tokenCoordinator.reset();
+});
+
+test('checkSingleToken auto-detects Bot Token on 401 fallback and auto-unquarantines', async () => {
+    const { checkSingleToken } = require('../features/tokenChecker');
+    const tokenCoordinator = require('../core/tokenCoordinator');
+
+    const botToken = 'MTUzMDk5OTk5OTk5OTk5OTk5.G_XXXX.YYYYZZZZ12345678';
+    const originalFetch = global.fetch;
+
+    const calls = [];
+    global.fetch = async (url, options) => {
+        calls.push({ url, headers: options?.headers });
+        const auth = options?.headers?.Authorization || options?.headers?.authorization;
+        if (auth && auth.startsWith('Bot ')) {
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    id: '153099999999999999',
+                    username: 'AutoDetectedBot',
+                    global_name: 'Auto Bot',
+                    bot: true,
+                    mfa_enabled: false
+                })
+            };
+        }
+        // User probe fails with 401
+        return {
+            ok: false,
+            status: 401,
+            json: async () => ({ message: '401: Unauthorized', code: 0 })
+        };
+    };
+
+    try {
+        const result = await checkSingleToken(botToken, { forceRefresh: true });
+        assert.equal(result.valid, true);
+        assert.equal(result.isBot, true);
+        assert.equal(result.tokenType, 'bot');
+        assert.equal(result.username, 'AutoDetectedBot');
+        assert.equal(result.category, 'bot');
+
+        // Check that 2 probes occurred (first as user, second as bot)
+        assert.equal(calls.length, 2);
+        assert.equal(calls[0].headers.Authorization, botToken);
+        assert.equal(calls[1].headers.Authorization, `Bot ${botToken}`);
+
+        // Check tokenCoordinator state: NOT quarantined and tokenType is 'bot'
+        assert.equal(tokenCoordinator.isQuarantined(botToken), false);
+        assert.equal(tokenCoordinator.getTokenType(botToken), 'bot');
+    } finally {
+        global.fetch = originalFetch;
+        tokenCoordinator.reset();
+    }
 });

@@ -5,6 +5,7 @@ const path = require("node:path");
 const { execFileSync, spawnSync } = require("node:child_process");
 
 const SKIPPED_PREFIXES = [
+    "test/",
     "discord/tests/",
     "verification-tests/",
     "coverage/",

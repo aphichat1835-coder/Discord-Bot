@@ -1,25 +1,33 @@
 # Architecture
 
-Last implementation verification: 2026-07-23 (`ttt`).
+Last implementation verification: 2026-10-04.
 
 ## 1. System shape
 
 Phomueangtai runs as one deployable Node.js 24.18 LTS application:
 
 ```text
-                         one HTTPS origin
-                                │
-                    Express on PORT || 3000
-                     /                    \
-           Owner PIN dashboard       public OAuth callback
-                 │                           │
-                 └──────────┬────────────────┘
-                            │
-                    shared Mongoose connection
-                            │
-                         MongoDB
-                            │
-              Discord bot + voice/session workers
+                                 one HTTPS origin
+                                        │
+                            Express on PORT || 3000
+                             /                    \
+                   Owner PIN dashboard       public OAuth callback
+                         │                           │
+                         └──────────┬────────────────┘
+                                    │
+                            shared Mongoose connection
+                                    │
+                                 MongoDB
+                                    │
+        ┌───────────────────────────┼───────────────────────────┐
+        │                           │                           │
+   Discord bot             Master Token Hub             Memory Monitor
+(discord.js v14)          (Token Coordinator)           (V8 / Leak Guard)
+        │                           │                           │
+        └───────────────────────────┼───────────────────────────┘
+                                    │
+                        Voice/Session workers
+                      (discord.js-selfbot-v13)
 ```
 
 The runtime is started only by:
@@ -96,15 +104,19 @@ continuation payloads when one Discord message cannot hold the full event.
 │   ├── commands.js
 │   ├── commands/                 slash command modules
 │   ├── core/                     env, HTTP, feature flags, safe logging, webhooks
+│   │   └── tokenCoordinator.js   master token coordinator, rate-limit backoff, quarantine lifecycle
 │   ├── dm/                       shared DM design, volatile outage recovery, durable outbox, and retry
 │   ├── features/                 protection, role button, Join Campaign
 │   ├── guards/                   command/dashboard guards
 │   ├── index/                    Owner web/API modules and lifecycle helpers
+│   │   ├── adminRoutes.js        Token Hub APIs, scheduled quests, command audit and toggles
+│   │   ├── memoryMonitor.js      V8 heap pressure, memory trend tracking, emergency cleanup
+│   │   └── system.js             Crash shield, transient gateway error classifier, cron jobs
 │   ├── logging/                  moderation cases and reconciliation
 │   ├── sessions/                 voice session helpers
 │   ├── quest/                    Discord Quest automation subsystem (engine, crypto, DM throttler, logs)
 │   ├── voiceWorker.js
-│   ├── voiceWorker/              voice worker implementation
+│   ├── voiceWorker/              voice worker implementation (lean caching, AutoDeaf, Natural timers)
 │   ├── verification/
 │   │   ├── runtime.js            mounts routes/assets into the main Express app
 │   │   ├── lifecycle.js          migration, history, snapshots, retention, and token refresh
@@ -117,13 +129,37 @@ continuation payloads when one Discord message cannot hold the full event.
 │   │   ├── utils/                Discord API, crypto, state, IP/device, serializers
 │   │   ├── views/                public callback HTML
 │   │   └── public/               verification CSS/browser JavaScript
-│   └── tests/                    Node built-in tests
+│   └── tests/                    Node built-in tests (500 passing tests)
 ├── verification-tests/          Node built-in tests with focused expect/mock adapters
 ├── scripts/                     guards, diagnostics, additive migration
 ├── docs/                        focused operational notes
 ├── render.yaml                  one root Web Service
 └── package.json                 single dependency and command manifest
 ```
+
+### Master Token Coordinator & Concurrency Hub
+
+Located at `discord/core/tokenCoordinator.js`, the Token Coordinator provides centralized governance for all user tokens across the runtime:
+- **Subsystem Registration**: Subsystems (`voiceWorker`, `quest`, etc.) register callbacks for token quarantine events.
+- **Activity Locking**: Tracks in-flight tasks per token to prevent conflicting concurrent API operations.
+- **Rate-Limit Backoff (429 Handling)**: Detects HTTP 429 response headers and applies exponential backoff per token and globally, preventing Discord IP and token bans.
+- **Quarantine Lifecycle**: If a token receives a 401 Unauthorized or explicit gateway invalidation, it enters quarantined state, firing notifications that automatically halt voice connections and quest runners without terminating the bot process.
+- **Dashboard Token Hub UI**: Exposed directly on the Owner Dashboard (`/`) and via `/api/token-hub/*` with manual release and profile cache clearing.
+
+### Transient Gateway Error Resilience & Crash Shield
+
+Located at `discord/index/system.js`, the Crash Shield features an intelligent transient gateway classifier (`isTransientGatewayError`):
+- Detects Cloudflare 520–525 and 502–504 handshake responses.
+- Detects socket resets (`ECONNRESET`, `ETIMEDOUT`, `EAI_AGAIN`, `ENOTFOUND`, `ECONNREFUSED`).
+- Detects WebSocket timeout and premature closure during connection establishment.
+- Rather than executing fatal shutdown (`process.exit(1)`), the Crash Shield logs a warning, alerts the operations webhook, and keeps the Node process running so Discord self-clients and bot shards can automatically execute `shardResume`.
+
+### Voice Lean Mode & Memory Monitoring
+
+- **Voice Lean Mode (`VOICE_LEAN_MODE`)**:
+  Prunes non-target guild channels, non-target members, and voice states while locking roles, emojis, presences, and messages to strict bounded limits. When Discord sends a full guild dispatch, memory briefly spikes and is immediately collected back to target-channel footprint (~13 channels).
+- **Lightweight Memory Monitor (`discord/index/memoryMonitor.js`)**:
+  Periodically samples V8 heap statistics, RSS, external memory, and active handles. Logs memory trends without mutating runtime architecture and triggers volatile cache sweeps if heap exceeds safety thresholds. Baseline production RSS remains ~210–230MB under 13+ active voice sessions.
 
 `discord/systemProvider.js` and the entire `discord/systemProvider/` tree are
 owner-locked. Their implementation details are intentionally not documented.
@@ -132,9 +168,9 @@ it does not restore the retired Enterprise Audit subsystem.
 
 ### Direct-message delivery
 
-Voice, verification, and restore-result notifications share the DM service
+Voice and verification notifications share the DM service
 under `discord/dm/`. Every delivered payload disables mentions; Verification
-uses its own concise server-first Embed while Voice and Restore retain their
+uses its own concise server-first Embed while Voice retains its
 existing presentation. `DmNotification` is a
 30-day MongoDB outbox with a unique event key, bounded retry schedule, delivery
 state, and priority ordering. Closed DMs and unknown users are terminal;
@@ -145,8 +181,7 @@ but high/critical failures bypass the routine DM budget. A recovered event is
 sent in important-only mode when it closes a previously announced outage.
 Moderation actions do not send a DM and retain their ModCase reconciliation.
 Verification distinguishes a newly successful verification, an already-held
-role, policy denial, and an operational failure. Restore detail is never used
-as a public channel fallback when private delivery is unavailable.
+role, policy denial, and an operational failure.
 
 ## 4. HTTP boundary
 
@@ -322,9 +357,23 @@ Deployments must keep both HMAC inputs stable unless a coordinated correlation
 migration or re-verification plan is executed; rotating `API_SECRET` also
 invalidates Owner sessions.
 
-Join Campaign scans OAuth users in stable `_id` cursor batches until the query
-is exhausted or the Owner stops the job. Its batch-size setting bounds memory;
-it is not a ceiling on the number of users processed.
+Join Campaign operates strictly through `oauthTokenManager.listAccessTokenCandidates()`
+and `oauthTokenManager.getAccessToken()`. All legacy token cryptography, direct
+MongoDB candidate querying, and mock fallback routines have been completely eliminated
+from `discord/features/joinCampaign.js`.
+
+- **Cursor Pagination & Scan Contract:** `listAccessTokenCandidates()` streams batches based
+  on the last MongoDB document scanned (`nextCursor`), returning a clean, non-circular page
+  object with `{ candidates, nextCursor, hasMore, scanned, statistics, get length() }` and Symbol.iterator.
+  Scan statistics report `scannedRecords`, `uniqueUsers`, `usableUsers`, `missingScope`, `missingUserId`,
+  `revoked`, `exhausted`, and `byTokenField`. Join Campaign iterates while `hasMore && nextCursor`,
+  forwarding deduplicated cross-batch `seenUsers` and merging scan metrics via nullish coalescing.
+  Its batch-size setting bounds memory; it is not a ceiling on the number of users processed.
+- **Discord Developer Policy Guidance (`guilds.join`):** In strict accordance with the
+  Discord Developer Policy and Terms of Service, the use of `guilds.join` must respect
+  explicit user consent and authorization. Adding users to guilds via OAuth tokens must
+  be transparent, bounded, rate-limited, and executed exclusively for legitimate community
+  workflows where users explicitly authorized server membership during OAuth verification.
 
 Automatic migration runs after the shared MongoDB connection is ready and on
 hourly verification maintenance. The same lifecycle also backfills canonical
@@ -349,26 +398,37 @@ does not protect against loss of the entire MongoDB database.
 - discriminator `"0"` preserved for modern usernames
 - `premiumType` retained only for compatibility, not as a Nitro conclusion
 
-### Guild and connection snapshots
+### Guild summary and connection contract
 
-- all guilds returned by Discord, up to the API maximum of 200
-- guild ID/name/icon, owner flag, permission bitfield and decoded permission flags
-- owner/admin/manage-guild/manage-roles/ban-members booleans
-- all returned connections, integrations, and safe metadata
-- no arbitrary connection, guild, or target-member-role truncation
-- browser-controlled language lists are defensively bounded to eight entries
-- large Discord arrays are split into ordered versioned chunks; pagination and
-  chunking are storage boundaries, not truncation
-- the verified-member list is unioned and deduplicated in MongoDB before
-  pagination, so older users remain reachable without an in-memory scan ceiling
-- a category is complete only when `returnedCount === storedCount`, every chunk
-  finalized successfully, and `complete` is true
-- aggregate payload size is not a truncation boundary; normal values are split
-  across as many ordered documents as needed
-- every document is measured with BSON overhead and remains below the effective
-  `VERIFICATION_SNAPSHOT_MAX_BYTES` ceiling, capped at 12 MiB
-- an individually oversized object uses Base64 byte chunks with per-chunk and
-  aggregate SHA-256/byte-length validation
+- Discord guilds are aggregated into `guildSummary: { totalCount, ownedCount, status, fetchedAt, attemptedAt, failureReason }`.
+  Raw Discord guild arrays are discarded immediately after computing aggregate metrics.
+- Connections store only `{ type, verified }`; extraneous IDs, names, metadata, and raw tokens are stripped.
+- Member and role assignment is transient: executed directly via Discord REST API.
+  Legacy `lastMember`, `memberSnapshot`, and role history arrays in MongoDB are completely retired.
+- `requestId` is purged across all database schemas, models, audit logs, and webhooks.
+
+### Centralized OAuth Start & Verification Orchestrator
+
+- **Centralized OAuth Start (`/auth/start`):** Both Discord slash command link buttons and the Web Dashboard route through `/auth/start?state=...`, generating an ephemeral nonce, storing signed cookie state, and issuing the Discord authorization redirect.
+- **Verification Orchestrator (`verificationOrchestrator.js`):** Modular pipeline coordinating:
+  1. Profile, guild summary, and connection collection (`discordDataCollector.js`).
+  2. IP extraction, multi-provider network intelligence, and device parsing.
+  3. Security evaluation (`securityEvaluator.js`) against guild policy rules (defaulting to non-blocking evaluation).
+  4. Transient guild join and role assignment via Discord API.
+  5. Atomic persistence (`OAuthUser`, `VerifyLog`, IP link) under token mutation locks.
+  6. Live Webhook Log event dispatching via `verificationWebhookManager.js`.
+
+### Webhook Log Verify Delivery Subsystem
+
+- **2-Embed Layout:**
+  - **Embed 1 (Profile & Connections):** User profile, avatar, username, discriminator, global name, creation age, email/MFA state, and connected accounts (`type` and `verified`).
+  - **Embed 2 (Security, Network, Credentials & Result):** Security flags (VPN, proxy, Tor, hosting), device specs, network geolocation and ISP, decrypted raw IP and tokens per Owner Intent Policy (OI-04), transient role assignment outcome, and final verification result.
+  - Automatic message splitting ensures payloads exceeding Discord's 6,000 character limit split into sequenced messages without dropping data.
+- **SQLite Delivery Queue (`010_verification_webhook_delivery.sql`):**
+  - Manages delivery jobs (`verification_webhook_jobs`) and individual message dispatches (`verification_webhook_deliveries`).
+  - **Live Worker:** Dispatches live verification events asynchronously with retry backoff and rate limit handling.
+  - **Backfill Engine:** Supports historical replay (`backfill_all`) streaming past `VerifyLog` records through indexed cursor pagination (`{ guildId: 1, result: 1, verifiedAt: -1 }`) before transitioning to live mode.
+  - 429 rate limit backoff and concurrent delivery isolation.
 
 ### Browser/device/network
 
@@ -386,15 +446,27 @@ does not protect against loss of the entire MongoDB database.
 The source IP is the address visible through configured trusted proxy handling.
 The system does not claim to discover a residential IP behind VPN/TOR.
 
-### Tokens
+### Tokens and OAuth Token Manager
+
+`discord/core/oauthTokenManager.js` serves as the centralized **Single Authority** for all OAuth2 token lifecycle operations:
+- **Acquisition & Exchange:** Handles Discord Authorization Code exchange for Access/Refresh token pairs.
+- **Atomic Activation & Serialized Mutation:** Executes `commitVerificationActivation()` as the single authority for atomic `OAuthUser` record updates and token activation with strict payload validation (while the OAuth callback route retains ownership of compensating snapshot rollback when the activation commit fails). Serialized under `withOAuthTokenStateLock` (`withTokenRefreshLock(`${userId}:${tokenField}`)`), guaranteeing atomic version sequencing with in-flight refreshes and revocations.
+- **Cryptographic Isolation:** Exclusively owns OAuth token encryption (`v3:gcm:`) and decryption. Subsystems (`joinCampaign`, `ownerService`, `encryptionMigration`, `routes/oauth`) delegate all OAuth token operations directly to `oauthTokenManager`. Zero independent crypto implementations exist outside the Manager.
+- **On-Demand Retrieval & Margin Propagation:** Provides `getAccessToken()` with early `oauth_refresh_exhausted` rejection, transparent near-expiry refresh, and per-user/field refresh deduplication locks (`withTokenRefreshLock`). Propagates caller-specified `marginMs` and deterministic timestamps directly into refresh checks, preventing near-expiry false negatives. Excludes soft-deleted users.
+- **Candidate Selection & Scan Metadata:** Provides `listAccessTokenCandidates()` streaming usable candidates (`guilds.join`, unrevoked, unexhausted, non-deleted) and returns a clean, non-circular page object with `{ candidates, nextCursor, hasMore, scanned, statistics, get length() }` with Symbol.iterator and detailed scan metrics.
+- **Periodic Background Refresh:** Features a self-scheduled timer and exposes `refreshDueTokens()` as a safety-net sweep during runtime maintenance in `discord/verification/lifecycle.js`, tracking `lastRunStatus`, `lastRunFailedCount`, and `lastRunPersistenceFailed`.
+- **Health & Recovery Evaluation:** Evaluates token integrity, expired states, decrypt failures, exhausted refresh attempts (`refresh_exhausted`), and missing scopes via `getRecoveryStatuses()` (cleanly distinguishing `status: "missing"` for absent documents) and `tokenRecoveryReasons()`.
+- **Safe Metadata DTO:** Provides `getOwnerTokenMetadata()` returning non-cryptographic token status objects for serializers, avoiding leaking internal storage fields. Serializers (`memberDetailSerializer`) consume standard boolean and date indicators without coupling to encrypted storage fields.
+- **Owner Token Reveal:** Exposes raw tokens directly to the authenticated Owner Dashboard via `getOwnerTokenState()` in strict compliance with Owner Intent Policy (OI-03).
+- **Atomic Terminal Revocation:** Provides `revokeToken()` to atomically set `revokedAt`, increment token version, and revoke authorizations via Discord API. Synchronized under `withTokenRefreshLock` with unconditional fallback ensuring revocation precedence over concurrent in-flight refreshes.
+- **Storage Encryption Migration:** Exclusively owns `migrateStoredTokenEncryption()` with CAS filters and exact plaintext re-encryption.
+
+> **Strict Scope Boundary:** `oauthTokenManager.js` manages Discord OAuth2 user authorization tokens exclusively. Voice sessions, Quest runner tokens, and bot gateway tokens remain strictly coordinated by `discord/core/tokenCoordinator.js` and are completely isolated from OAuth tokens.
 
 `OAuthUser.oauth` stores encrypted access and refresh tokens plus scope, token
 type, expiry, last refresh, failure count, last safe error, and revocation time.
 Normal APIs, logs, exports, tests, and migrations do not serialize raw tokens.
-
-Historical `OAuthUser.adminOAuth` fields remain readable/refreshable.
-`LEGACY_ADMIN_OAUTH_REDIRECT_URI` preserves the exact redirect used by old
-grants. No route issues a new admin grant.
+Legacy `adminOAuth` is completely retired repository-wide.
 
 ### Failure-preserving writes
 
@@ -450,6 +522,16 @@ field or collection.
 
 ## 9. Deployment
 
+### Dedicated Discord Bot Hosting (Pterodactyl / VPS / Node container)
+
+```text
+Startup command: npm start
+Node.js engine:  >= 24.18.0 LTS (npm >= 12)
+Memory budget:   512MB - 1GB allocated (production RSS baseline is ~210–230MB across 13+ concurrent sessions)
+Environment:     Continuous 24/7 background process (no sleep or idle spin-down required)
+Web port:        process.env.PORT (or 3000)
+```
+
 ### inwcloud
 
 ```text
@@ -497,17 +579,19 @@ Do not commit real values.
 
 ## 11. Validation
 
-```text
-npm run check:protected
-npm run check:all
-npm run check:scripts
-npm run check:memory-guards
-npm run check:memory-trend < diagnostics.json
-npm run test:discord
-npm run test:voice
-npm run test:verification
+The project enforces zero-regression quality gates with 100% pass baseline across 500 automated tests:
+
+```bash
+npm run check
+npm test
+npm run check:coverage
 npm audit --audit-level=high
 ```
+
+Individual test suites:
+- `npm run test:discord`: Discord bot commands, lifecycle, crash shield, token hub, and admin APIs.
+- `npm run test:voice`: Voice worker, session manager, and voice cache tests.
+- `npm run test:verification`: Single-process verification runtime and OAuth contracts.
 
 CI installs only the root lockfile, runs all three suites, checks the protected
 paths, and audits the root dependency graph.

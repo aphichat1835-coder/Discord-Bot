@@ -204,7 +204,7 @@ function buildRunnerLiveEmbed(state = {}, activityLines = []) {
             { name: '📋 บันทึกการทำงานล่าสุด (Terminal Log)', value: logFieldVal, inline: false }
         )
         .setTimestamp(Number(state.timestamp || Date.now()))
-        .setFooter({ text: 'Phomueangtai • ระบบทำ Discord Quest อัตโนมัติ' });
+        .setFooter({ text: 'ระบบ Discord Quest อัตโนมัติ' });
 
     if (state.avatarUrl) {
         embed.setThumbnail(state.avatarUrl);

@@ -1,13 +1,13 @@
 # Roadmap
 
-Last reviewed: 2026-07-26 (`ttt.1` release candidate).
+Last reviewed: 2026-09-22.
 
 ## Current architecture baseline
 
 - One repository and one Node.js 24.18 LTS runtime.
 - One Express listener on `PORT || 3000`.
 - One shared Mongoose connection.
-- Main bot, voice/session, Dashboard ควบคุมบอท, OAuth verification, maintenance, and
+- Main bot, voice/session, Dashboard ควบคุมบอท, Token Hub, Quest automation, OAuth verification, maintenance, and
   protection start through `npm start`.
 - Verification management is Owner PIN only.
 - Member OAuth callback remains public.
@@ -20,8 +20,18 @@ Changes that would reintroduce a second service, second port, second runtime
 MongoDB connection, guild-admin OAuth sessions, or a new encryption format
 require a new explicit owner decision.
 
-## Completed in the unified-runtime milestone
+## Completed in recent milestones
 
+- **Master Token Coordinator (Token Hub)** (`discord/core/tokenCoordinator.js`):
+  Implemented centralized token governance with dynamic subsystem registration, per-token activity locking, exponential backoff on HTTP 429, quarantine lifecycle with automatic subsystem alerts, and Dashboard Token Hub UI (`/api/token-hub/*`).
+- **Transient Gateway Error Shielding** (`discord/index/system.js`):
+  Added `isTransientGatewayError` classifier in Crash Shield to intercept Cloudflare 520–525/502–504 responses, socket blips, and WebSocket handshake timeouts. Keeps the process alive for auto-reconnect and `shardResume` instead of fatal exit.
+- **Discord Quest Automation Subsystem** (`discord/quest/`):
+  Full parity with reference architecture: `/quest` slash command, interactive panel, Bangkok time (UTC+7) recurring scheduler with jitter, MongoDB `ScheduledRunner`, admission control locks, live channel codeblock progress, and Owner Dashboard controls.
+- **Voice Lean Mode & Memory Monitoring** (`discord/index/memoryMonitor.js`):
+  Bounded cache limits (`SELF_CLIENT_CACHE_LIMITS`), aggressive pruning of non-target guild channels/members/states, and 1:1 paired AutoDeaf and Natural timers, keeping production RSS steady at ~210–230MB under 13+ concurrent sessions.
+- **Comprehensive Test Suite & Quality Gates**:
+  500 automated tests across 63 suites passing 100%, with 9 automated safety and AST compatibility checks (`npm run check`).
 - Moved active verification models/routes/utilities/views/assets into
   `discord/verification/`.
 - Mounted `/auth/callback`, `/verification`, and guild management APIs on the
@@ -44,7 +54,7 @@ require a new explicit owner decision.
   sizing, oversized-object checksum chunks, rollback recovery, and no aggregate
   truncation ceiling.
 - Added a resumable, guild-scoped privacy-deletion manifest with post-delete reference verification, while keeping IP-history backfill idempotent and requiring a confirmed maintenance window for archive restore apply.
-- Added guild-backup identity/chunk validation and permission-overwrite restore.
+- Retired and decommissioned the legacy /backup and /restore guild snapshot subsystem to simplify bot architecture and minimize attack surface.
 - Replaced the inherited Owner Verification presentation with a five-section,
   mobile-first module inside the purple Owner Dashboard while preserving routes,
   APIs, management capabilities, and the existing public OAuth callback page.

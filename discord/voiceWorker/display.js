@@ -1,4 +1,5 @@
 const { VoiceConnectionStatus } = require("@discordjs/voice");
+const config = require("../config.json");
 const sessionManager = require("../sessionManager");
 const { st } = require("./state");
 const { withTimeoutValue } = require("./config");
@@ -75,11 +76,11 @@ function getUptimeString(session) {
 
 function getConnectionStatusText(session) {
     const status = session?.connection?.state?.status || "unknown";
-    if (status === VoiceConnectionStatus.Ready) return "🟢 กำลังออน";
+    if (status === VoiceConnectionStatus.Ready) return `${config.emojis?.status_online || config.emojis?.armed_on || "🟢"} กำลังออน`;
     if (status === VoiceConnectionStatus.Connecting) return "🟡 กำลังเชื่อมต่อ";
     if (status === VoiceConnectionStatus.Signalling) return "🟡 กำลังส่งสัญญาณ";
     if (status === VoiceConnectionStatus.Disconnected) return "🟠 หลุด กำลังกู้คืน";
-    if (status === VoiceConnectionStatus.Destroyed) return "🔴 หยุดแล้ว";
+    if (status === VoiceConnectionStatus.Destroyed) return `${config.emojis?.status_offline || config.emojis?.armed_off || "🔴"} หยุดแล้ว`;
     return `⚪ ${status}`;
 }
 
@@ -159,20 +160,20 @@ async function refreshSessionMetadataFast(sessionId, timeoutMs = 1500) {
 
 function buildVoiceFields(session, extra = {}) {
     const fields = [
-        { name: "👤 บัญชีที่ออน", value: getAccountLabel(session), inline: true },
+        { name: `${config.emojis?.user || "👤"} บัญชีที่ออน`, value: getAccountLabel(session), inline: true },
         { name: "🆔 User ID", value: session.accountId ? `\`${session.accountId}\`` : "-", inline: true },
-        { name: "🖥️ เซิร์ฟเวอร์", value: getGuildLabel(session), inline: true },
-        { name: "🎙️ ช่องเสียง", value: getVoiceLabel(session), inline: true },
+        { name: `${config.emojis?.server_icon || "🖥️"} เซิร์ฟเวอร์`, value: getGuildLabel(session), inline: true },
+        { name: `${config.emojis?.voice_ch || "🎙️"} ช่องเสียง`, value: getVoiceLabel(session), inline: true },
         { name: "📌 สถานะ", value: getConnectionStatusText(session), inline: true },
         { name: "⏱️ ออนมาทั้งหมด", value: getUptimeString(session), inline: true },
     ];
 
     if (session.reconnectCount > 0) {
-        fields.push({ name: "🔄 Reconnect", value: `${session.reconnectCount} ครั้ง`, inline: true });
+        fields.push({ name: `${config.emojis?.loading_circle || config.emojis?.loading || "🔄"} Reconnect`, value: `${session.reconnectCount} ครั้ง`, inline: true });
     }
 
     if (extra.reason) {
-        fields.push({ name: "📋 สาเหตุ", value: extra.reason });
+        fields.push({ name: `${config.emojis?.alert || config.emojis?.warning || "⚠️"} สาเหตุ`, value: extra.reason });
     }
 
     if (extra.action) {

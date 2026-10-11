@@ -1,6 +1,7 @@
 "use strict";
 
 const mongoose = require("mongoose");
+const { getVerificationRecoveryRepository } = require("../../../database/repositories/verification");
 
 const schema = new mongoose.Schema({
     requestId: { type: String, required: true, unique: true, index: true },
@@ -25,5 +26,25 @@ const schema = new mongoose.Schema({
 
 schema.index({ status: 1, updatedAt: 1 });
 
-module.exports = mongoose.models.VerificationRecovery ||
-    mongoose.model("VerificationRecovery", schema);
+// Note: Source of truth is SQLite VerificationRecoveryRepository.
+// We preserve schema for contract inspection without calling mongoose.model("VerificationRecovery", schema).
+const VerificationRecoveryFacade = {
+    schema,
+    async create(data) {
+        return getVerificationRecoveryRepository().create(data);
+    },
+    async updateOne(filter, update, options) {
+        return getVerificationRecoveryRepository().updateOne(filter, update, options);
+    },
+    async findOne(filter) {
+        return getVerificationRecoveryRepository().findOne(filter);
+    },
+    async deleteMany(filter) {
+        return getVerificationRecoveryRepository().deleteMany(filter);
+    },
+    async countDocuments(filter) {
+        return getVerificationRecoveryRepository().countDocuments(filter);
+    }
+};
+
+module.exports = VerificationRecoveryFacade;

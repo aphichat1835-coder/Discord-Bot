@@ -16,13 +16,13 @@ function fixture({ content, memberPermissions = [], botPermissions = [], role = 
     const roles = new Map();
     if (role) roles.set(role.id, role);
     const interaction = {
-        commandName: "announce",
+        commandName: "embed",
         deferred: false,
         replied: false,
         options: {
             getString(name) {
                 if (name === "content") return content;
-                return name === "title" ? "title" : "message";
+                return name === "title" ? "title" : "description";
             }
         },
         member: { permissions: new PermissionsBitField(memberPermissions) },
@@ -52,7 +52,7 @@ function fixture({ content, memberPermissions = [], botPermissions = [], role = 
 const BASE_MEMBER = [PermissionFlagsBits.ManageMessages];
 const BASE_BOT = [PermissionFlagsBits.SendMessages, PermissionFlagsBits.ViewChannel, PermissionFlagsBits.EmbedLinks];
 
-test("announce mass mentions require the caller MentionEveryone permission", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("embed mass mentions require the caller MentionEveryone permission", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const { interaction, replies } = fixture({
         content: "@everyone update",
         memberPermissions: BASE_MEMBER,
@@ -64,7 +64,7 @@ test("announce mass mentions require the caller MentionEveryone permission", asy
     assert.match(replies[0].content, /ไม่มีสิทธิ์ Mention/);
 });
 
-test("announce mass mentions require the bot MentionEveryone permission", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("embed mass mentions require the bot MentionEveryone permission", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const { interaction, replies, channel } = fixture({
         content: "@here update",
         memberPermissions: [...BASE_MEMBER, PermissionFlagsBits.MentionEveryone],

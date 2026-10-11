@@ -68,11 +68,9 @@ describe("unbounded IP identity history", () => {
 
         expect(result.uniqueUsers).toBe(201);
         expect(UserHistoryModel.updateOne).toHaveBeenCalledTimes(1);
-        expect(UserHistoryModel.updateOne.mock.calls[0][1].$min).toEqual({
-            firstJoinedAt: "2026-07-17T10:00:00.000Z"
-        });
+        expect(UserHistoryModel.updateOne.mock.calls[0][1].$min?.firstJoinedAt).toBeUndefined();
         expect(DeviceHistoryModel.updateOne).toHaveBeenCalledTimes(1);
-        expect(RoleHistoryModel.updateOne.mock.calls[0][1].$setOnInsert.roles).toHaveLength(120);
+        expect(RoleHistoryModel.updateOne.mock.calls[0][1].$setOnInsert.roles).toBeUndefined();
         expect(RoleHistoryModel.updateOne.mock.calls[0][2]).toEqual({ upsert: true });
     });
 

@@ -1,6 +1,6 @@
 # Unified Runtime Runbook
 
-Updated: 2026-07-23 (`ttt`).
+Updated: 2026-10-05 (`main`).
 
 ## Start and health
 
@@ -61,16 +61,22 @@ voice, slash-command, and verification readiness.
    `ENCRYPTION_KEY` and `API_SECRET` stable for IP/device correlation unless a
    coordinated correlation migration or re-verification is planned. Rotating
    `API_SECRET` invalidates existing Owner sessions.
-7. Deploy.
-8. Run the single-port smoke helper:
+7. Mount persistent volume storage for the local SQLite operational database
+   (e.g. `/persistent`) and set `SQLITE_DB_PATH=/persistent/discordbot.sqlite`,
+   `SQLITE_BACKUP_DIR=/persistent/backups`,
+   `SQLITE_ASSET_DIR=/persistent/cache-assets`, and
+   `SQLITE_PERSISTENCE_CONFIRMED=true`. Run `npm run check:storage`
+   to verify filesystem write permissions, path isolation, and persistence confirmation before deployment.
+8. Deploy.
+9. Run the single-port smoke helper:
 
    ```bash
    SMOKE_ALLOWED_HOSTS=DOMAIN npm run smoke:unified -- https://DOMAIN
    ```
 
-9. Test Owner Dashboard, `/verification`, a target guild page, and a complete
+10. Test Owner Dashboard, `/verification`, a target guild page, and a complete
    member verification.
-10. If a legacy standalone service still exists, stop it only after all checks
+11. If a legacy standalone service still exists, stop it only after all checks
    pass. New/current installations have only the root service.
 
 ## Verification smoke test
@@ -230,10 +236,26 @@ being false.
   an encrypted source IP.
 - Never add temporary logging of decrypted IP.
 
-### Historical admin OAuth refresh fails
+### Webhook Log Verify Operations & Troubleshooting
 
-Set `LEGACY_ADMIN_OAUTH_REDIRECT_URI` to the exact URI used when the old grant
-was issued. No new admin OAuth route exists.
+The server verification log delivery subsystem sends 2-embed verification records to a configured Discord webhook URL.
+
+1. **Setup & URL Validation:**
+   - On the Guild Dashboard, navigate to the **ส่งบันทึก Webhook** tab.
+   - Paste the Discord Webhook URL (`https://discord.com/api/webhooks/...`) and click **ตรวจสอบและบันทึก URL**.
+   - The system validates that the URL matches Discord's webhook endpoint schema and persists it to `GuildConfig.webhookLog.url`.
+
+2. **Starting Delivery Modes:**
+   - **ส่งเฉพาะรายการใหม่ (Live-only):** Click `เริ่มทำงานระบบ Webhook`. Activates real-time delivery for newly verified members immediately.
+   - **ส่งประวัติเดิมทั้งหมดและทำงานต่อ (Backfill-then-live):** Click `เริ่มตรวจส่ง Webhook ทั้งหมดและทำงานต่อ`.
+     - Initializes a SQLite background backfill job (`verification_webhook_jobs`).
+     - Streams past verification logs in chronological order using the indexed cursor (`{ guildId: 1, result: 1, verifiedAt: -1 }`).
+     - UI displays real-time progress bar and percentage until complete, then transitions automatically to live mode.
+
+3. **Rate Limits & Delivery Safety:**
+   - Discord webhook rate limits (429 Too Many Requests) trigger automatic exponential backoff in the SQLite delivery worker without dropping events.
+   - Webhook payloads exceeding Discord's 6,000 character limit split automatically into sequenced messages.
+   - If a webhook returns `404 Not Found` (deleted webhook) or `401 Unauthorized` (invalid token), the delivery job fails closed and status is updated to `error`. Re-enter a valid webhook URL to resume.
 
 ## Validation before release
 

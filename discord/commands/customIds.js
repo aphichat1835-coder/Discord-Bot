@@ -2,7 +2,6 @@ const IDS = {
     BTN_START: "btn_start",
     BTN_STATUS: "btn_status",
     BTN_STOP_ALL: "btn_stop_all",
-    BTN_RESTORE_CANCEL: "btn_restore_cancel",
     MODAL_START: "modal_start",
     FIELD_TOKEN: "token",
     FIELD_SERVER_ID: "server_id",
@@ -27,19 +26,19 @@ const IDS = {
     FIELD_DM_GUILD_ID: "dm_guild_id",
     FIELD_DM_MESSAGE: "dm_message",
     FIELD_DM_IMAGE: "dm_image",
-    FIELD_DM_WEBHOOK: "dm_webhook"
+    FIELD_DM_WEBHOOK: "dm_webhook",
+    BTN_ROLESWEEP_CONFIRM: "rolesweep:confirm",
+    BTN_ROLESWEEP_CANCEL: "rolesweep:cancel"
 };
 
 const PREFIXES = {
     VERIFY_ROLE: "verify_role_",
     VERIFY_OAUTH: "verify_oauth_",
-    RESTORE_CONFIRM: "btn_restore_confirm_",
     STATUS_PAGE: "status_page_",
     STATUS_STOP: "status_stop_",
     STATUS_RECONNECT: "status_reconnect_",
     QUEST_PANEL: "quest_panel:",
-    RUNNER_STOP: "runner-stop:",
-    DM_PANEL: "dm_panel:"
+    RUNNER_STOP: "runner-stop:"
 };
 
 function isVerifyButton(customId = "") {
@@ -58,10 +57,6 @@ function isQuestModal(customId = "") {
 
 function isQuestSelect(customId = "") {
     return customId === IDS.SELECT_QUEST_STOP;
-}
-
-function isRestoreConfirm(customId = "") {
-    return customId.startsWith(PREFIXES.RESTORE_CONFIRM);
 }
 
 function isStatusPage(customId = "") {
@@ -113,7 +108,6 @@ module.exports = {
     isQuestButton,
     isQuestModal,
     isQuestSelect,
-    isRestoreConfirm,
     isStatusPage,
     getStatusPage,
     isStatusStop,

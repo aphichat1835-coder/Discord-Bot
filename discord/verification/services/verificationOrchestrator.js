@@ -1,0 +1,761 @@
+"use strict";
+
+const crypto = require("node:crypto");
+const discord = require("../utils/discordAPI");
+const { processIP, extractDevice } = require("../utils/ipUtils");
+const {
+    normalizeVerificationConfig,
+    normalizeSecurityRules
+} = require("../utils/verifyMode");
+const {
+    collectDiscordData,
+    getAccountCreatedAt,
+    getAccountAgeDays,
+    getAvatarUrl,
+    getBannerUrl,
+    displayTag
+} = require("./collectors/discordDataCollector");
+const { evaluateSecurity } = require("./securityEvaluator");
+const { evaluateCriticalPersistence, coordinatePersistenceFailure } = require("./verificationPersistence");
+const { verificationWebhookManager } = require("./webhook/verificationWebhookManager");
+const oauthTokenManager = require("../../core/oauthTokenManager");
+const snapshotBudget = require("./snapshotBudget");
+const snapshotStore = require("./oauthSnapshotStore");
+const ipIdentityHistory = require("./ipIdentityHistoryService");
+const { withSnapshotMutationLock } = require("./snapshotMutationLock");
+
+const GuildConfig = require("../models/GuildConfig");
+const OAuthUser = require("../models/OAuthUser");
+const VerifyLog = require("../models/VerifyLog");
+const IpIdentityLink = require("../models/IpIdentityLink");
+const VerificationRecovery = require("../models/VerificationRecovery");
+
+function safeString(value, maxLen = 0) {
+    if (value === undefined || value === null) return "";
+    const cleaned = String(value).replace(/[\u0000-\u001F\u007F]/g, "");
+    const max = Number(maxLen || 0);
+    return Number.isFinite(max) && max > 0 ? cleaned.slice(0, max) : cleaned;
+}
+
+function safeNullableString(value, maxLen = 0) {
+    const v = safeString(value, maxLen);
+    return v || null;
+}
+
+function safeNumberOrNull(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+}
+
+function safeSnowflakeStrict(value, label = "discord_id") {
+    const text = String(value || "").trim();
+    if (/^\d{17,22}$/.test(text)) return text;
+    const err = new Error(`invalid ${label}`);
+    err.code = "invalid_snowflake";
+    throw err;
+}
+
+function safeIpHashStrict(value) {
+    const text = String(value || "").trim().toLowerCase();
+    if (/^[a-f0-9]{64}$/.test(text)) return text;
+    const err = new Error("invalid ip_hash");
+    err.code = "invalid_ip_hash";
+    throw err;
+}
+
+function objectOrEmpty(value) {
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function sanitizeSideEffectError(err) {
+    if (!err) return null;
+    return {
+        message: err.message || String(err),
+        code: err.code || null
+    };
+}
+
+async function safeSideEffect(label, fn, fallback = null) {
+    try {
+        return await fn();
+    } catch (err) {
+        console.error(`[VERIFY:${label}] failed:`, JSON.stringify(sanitizeSideEffectError(err)));
+        return fallback;
+    }
+}
+
+function getGuildName(guildConfig, fallback = "Discord Server") {
+    return guildConfig?.guildName || guildConfig?.name || fallback;
+}
+
+function getConfiguredRoleId(guildConfig, fallbackRoleId = null) {
+    return guildConfig?.verification?.roleId || fallbackRoleId || null;
+}
+
+function getConfiguredRoleName(guildConfig, fallback = "Member") {
+    return guildConfig?.verification?.roleName || fallback;
+}
+
+function getLatestPanelRevision(guildConfig) {
+    return Number(guildConfig?.verification?.panelRevision || 1);
+}
+
+function getStatePanelRevision(stateObj = {}) {
+    return Number(stateObj?.panelRevision || 1);
+}
+
+function isPanelRevisionValid(guildConfig, stateObj = {}) {
+    if (!guildConfig || !guildConfig.verification) return { ok: true };
+    const latest = getLatestPanelRevision(guildConfig);
+    const stateRev = getStatePanelRevision(stateObj);
+    if (stateRev !== latest) {
+        return { ok: false, stateRev, latest };
+    }
+    return { ok: true, stateRev, latest };
+}
+
+function fitVerifyLogBudget(doc, payload) {
+    try {
+        snapshotBudget.assertSnapshotBudget(doc, { label: "verify_log" });
+        return doc;
+    } catch (budgetErr) {
+        return {
+            guildId: payload.guildId,
+            userId: payload.userId,
+            roleId: payload.roleId,
+            result: payload.result,
+            reason: payload.reason,
+            verifiedAt: payload.verifiedAt || Date.now()
+        };
+    }
+}
+
+async function saveVerifyLogSafe(payload) {
+    return safeSideEffect("saveVerifyLog", async () => {
+        let doc = {
+            ...payload,
+            ...(payload.trackingSnapshot ? {
+                ipHistoryMigrationVersion: 1,
+                ipHistoryMigratedAt: Date.now()
+            } : {})
+        };
+        doc = fitVerifyLogBudget(doc, payload);
+        const created = await VerifyLog.create(doc);
+        return created;
+    }, null);
+}
+
+async function updateIpIdentityTrackingSafe({
+    guildId,
+    guildName,
+    profile,
+    ipInfo,
+    device,
+    roleId,
+    result,
+    findings
+}) {
+    return safeSideEffect("updateIpIdentityTracking", async () => {
+        if (!guildId || !profile?.id || !ipInfo?.ipHash) return null;
+
+        const nowMs = Date.now();
+        const safeGuildId = safeSnowflakeStrict(guildId, "guild_id");
+        const safeProfileId = safeSnowflakeStrict(profile.id, "discord_user_id");
+        const safeIpHash = safeIpHashStrict(ipInfo.ipHash);
+
+        const existing = await IpIdentityLink.findOne()
+            .where("guildId").equals(safeGuildId)
+            .where("ipHash").equals(safeIpHash);
+        if (existing) await ipIdentityHistory.ensureLegacyLinkMigrated(existing, { now: nowMs });
+
+        await ipIdentityHistory.recordIpIdentityHistory({
+            guildId: safeGuildId,
+            ipHash: safeIpHash,
+            profile: {
+                ...profile,
+                id: safeProfileId,
+                displayTag: displayTag(profile),
+                avatarUrl: getAvatarUrl(profile)
+            },
+            ipInfo,
+            device,
+            memberInfo: null,
+            roleId,
+            result,
+            findings,
+            now: nowMs
+        });
+
+        const setFields = {
+            guildName: guildName || existing?.guildName || safeGuildId,
+            lastSeenAt: nowMs,
+            lastResult: result,
+            lastRoleId: roleId,
+            lastFindings: Array.isArray(findings) ? findings : [],
+            lastCountry: ipInfo.country,
+            lastCountryCode: ipInfo.countryCode,
+            lastRegion: ipInfo.region,
+            lastCity: ipInfo.city,
+            lastTimezone: ipInfo.timezone,
+            lastIsp: ipInfo.isp,
+            lastOrg: ipInfo.org,
+            lastAs: ipInfo.as,
+            lastAsname: ipInfo.asname,
+            isVPN: !!ipInfo.isVPN,
+            isProxy: !!ipInfo.isProxy,
+            isTOR: !!ipInfo.isTOR,
+            hosting: !!ipInfo.hosting,
+            mobile: !!ipInfo.mobile,
+            anycast: !!ipInfo.anycast,
+            networkType: ipInfo.networkType || null
+        };
+
+        const updated = await IpIdentityLink.findOneAndUpdate(
+            { guildId: safeGuildId, ipHash: safeIpHash },
+            {
+                $setOnInsert: {
+                    firstSeenAt: nowMs,
+                    createdAt: nowMs
+                },
+                $set: setFields,
+                $inc: { totalVerifications: 1 }
+            },
+            { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
+
+        return {
+            ipHash: safeIpHash,
+            firstSeenAt: updated?.firstSeenAt || nowMs,
+            lastSeenAt: updated?.lastSeenAt || nowMs,
+            totalVerifications: updated?.totalVerifications || 1,
+            uniqueUsers: updated?.uniqueUsers || 1
+        };
+    }, null);
+}
+
+async function saveOAuthUserSafe({
+    profile,
+    tokenData,
+    connections,
+    guildSummary,
+    guildId,
+    roleId,
+    result,
+    findings,
+    trackingSnapshot,
+    attemptStartedAt = Date.now()
+}) {
+    return safeSideEffect("saveOAuthUser", async () => {
+        const profileUserId = safeSnowflakeStrict(profile.id, "discord_user_id");
+        return withSnapshotMutationLock(profileUserId, async () => {
+            const nowMs = Date.now();
+            const safeAttemptStartedAt = Math.max(0, Number(attemptStartedAt) || nowMs);
+
+            const updateSet = {
+                discord: {
+                    userId: profileUserId,
+                    username: safeNullableString(profile.username, 80),
+                    discriminator: safeNullableString(profile.discriminator, 8),
+                    globalName: safeNullableString(profile.globalName || profile.global_name, 120),
+                    displayTag: safeNullableString(displayTag(profile), 160),
+                    avatarHash: safeNullableString(profile.avatar, 120),
+                    avatarUrl: safeNullableString(getAvatarUrl(profile), 512),
+                    bannerHash: safeNullableString(profile.banner, 120),
+                    bannerUrl: safeNullableString(getBannerUrl(profile), 512),
+                    accentColor: safeNumberOrNull(profile.accentColor || profile.accent_color),
+                    email: safeNullableString(profile.email, 320),
+                    emailVerified: profile.emailVerified === true,
+                    locale: safeNullableString(profile.locale, 32),
+                    mfaEnabled: profile.mfaEnabled === true,
+                    premiumType: safeNumberOrNull(profile.premiumType),
+                    flags: safeNumberOrNull(profile.flags) || 0,
+                    publicFlags: safeNumberOrNull(profile.publicFlags) || 0,
+                    badgeFlags: Array.isArray(profile.badgeFlags) ? profile.badgeFlags : [],
+                    accountCreatedAt: profile.accountCreatedAt,
+                    accountAgeDays: profile.accountAgeDays
+                },
+                connections: Array.isArray(connections) ? connections : [],
+                guildSummary: guildSummary || null,
+                lastVerify: {
+                    guildId,
+                    roleId,
+                    result,
+                    attemptStartedAt: safeAttemptStartedAt,
+                    verifiedAt: nowMs,
+                    findings: Array.isArray(findings) ? findings : []
+                },
+                lastIpTracking: trackingSnapshot || null,
+                updatedAt: nowMs
+            };
+
+            const commitResult = await oauthTokenManager.commitVerificationActivation({
+                profileUserId,
+                tokenData,
+                updateSet,
+                safeAttemptStartedAt,
+                tokenField: "oauth",
+                model: OAuthUser,
+                now: nowMs
+            });
+
+            return {
+                saved: true,
+                activated: commitResult?.activated
+            };
+        });
+    }, { saved: false, code: "save_oauth_user_failed_safely" });
+}
+
+async function loadExistingIpLinkContext({ ipInfo, guildId }) {
+    if (!ipInfo?.ipHash || !guildId) {
+        return { existingIpLink: null, updatedIpInfo: ipInfo, trackedUsers: [] };
+    }
+    const safeGuildId = safeSnowflakeStrict(guildId, "guild_id");
+    const safeIpHash = safeIpHashStrict(ipInfo.ipHash);
+
+    const existingIpLink = await IpIdentityLink.findOne()
+        .where("guildId").equals(safeGuildId)
+        .where("ipHash").equals(safeIpHash)
+        .lean();
+
+    const trackedUsers = await ipIdentityHistory.listTrackedUsersForLink(safeGuildId, safeIpHash);
+
+    return {
+        existingIpLink,
+        updatedIpInfo: ipInfo,
+        trackedUsers
+    };
+}
+
+async function executeVerification({
+    req,
+    code,
+    stateObj,
+    redirectUri
+}) {
+    const oauthAttemptStartedAt = Date.now();
+    const guildId = safeSnowflakeStrict(stateObj.guildId, "guild_id");
+    const stateRoleId = stateObj.roleId ? safeSnowflakeStrict(stateObj.roleId, "role_id") : null;
+    const expectedUserId = stateObj.expectedUserId ? safeSnowflakeStrict(stateObj.expectedUserId, "expected_user_id") : null;
+
+    // --- Step 1: Preconditions (GuildConfig) ---
+    const guildConfig = await GuildConfig.findOne()
+        .where("guildId").equals(guildId);
+
+    if (!guildConfig) {
+        return {
+            statusCode: 200,
+            body: {
+                success: false,
+                error: "ไม่พบการตั้งค่าระบบยืนยันตัวตนของเซิร์ฟเวอร์นี้ กรุณาติดต่อผู้ดูแล",
+                code: "guild_config_not_found"
+            }
+        };
+    }
+
+    const verificationConfig = normalizeVerificationConfig(guildConfig.verification || {});
+    if (verificationConfig.enabled === false) {
+        return {
+            statusCode: 200,
+            body: {
+                success: false,
+                error: "ระบบยืนยันตัวตนของเซิร์ฟเวอร์นี้ยังไม่เปิดใช้งานในขณะนี้",
+                code: "verification_disabled"
+            }
+        };
+    }
+
+    const configuredRoleId = getConfiguredRoleId(guildConfig, stateRoleId);
+    if (!configuredRoleId) {
+        return {
+            statusCode: 200,
+            body: {
+                success: false,
+                error: "เซิร์ฟเวอร์ยังไม่ได้กำหนดยศสำหรับผู้ยืนยันตัวตน กรุณาแจ้งผู้ดูแล",
+                code: "missing_configured_role"
+            }
+        };
+    }
+
+    const revisionCheck = isPanelRevisionValid(guildConfig, stateObj);
+    if (!revisionCheck.ok) {
+        return {
+            statusCode: 200,
+            body: {
+                success: false,
+                error: "ปุ่มยืนยันนี้ไม่ใช่รุ่นล่าสุด กรุณากลับไปกดปุ่มยืนยันใหม่ในห้อง Discord",
+                code: "panel_revision_mismatch"
+            }
+        };
+    }
+
+    const roleName = getConfiguredRoleName(guildConfig);
+    const guildName = getGuildName(guildConfig);
+
+    // --- Step 2: Collect Discord Data via OAuth ---
+    let discordData;
+    try {
+        discordData = await collectDiscordData({ code, redirectUri });
+    } catch (discordErr) {
+        if (discord.isOAuthInvalidGrantError(discordErr)) {
+            return {
+                statusCode: 200,
+                body: {
+                    success: false,
+                    error: "ลิงก์ยืนยันตัวตนหมดอายุแล้ว กรุณากลับไปกดปุ่มยืนยันใน Discord ใหม่อีกครั้ง",
+                    code: "oauth_code_expired"
+                }
+            };
+        }
+        console.error("[VERIFY] collectDiscordData failed:", discordErr.message);
+        return {
+            statusCode: 200,
+            body: {
+                success: false,
+                error: "ไม่สามารถเชื่อมต่อกับ Discord เพื่อดึงข้อมูลได้ กรุณาลองใหม่อีกครั้ง",
+                code: "discord_api_error"
+            }
+        };
+    }
+
+    const { tokenData, accessToken, profile, connections, guildSummary, fetchMetadata } = discordData;
+
+    if (expectedUserId && String(profile.id) !== String(expectedUserId)) {
+        return {
+            statusCode: 200,
+            body: {
+                success: false,
+                error: "บัญชี Discord ที่เข้าสู่ระบบไม่ตรงกับบัญชีที่กดปุ่มในห้องแชท กรุณาลองใหม่อีกครั้ง",
+                code: "oauth_user_mismatch"
+            }
+        };
+    }
+
+    // --- Step 3: IP Intelligence & Device Extraction ---
+    const ipInfo = await safeSideEffect("processIP", () => processIP(req), {
+        encryptedRawIp: null,
+        ipHash: null,
+        isVPN: false,
+        isProxy: false,
+        isTOR: false,
+        hosting: false
+    });
+
+    const device = safeSideEffect("extractDevice", () => extractDevice(req), {
+        userAgent: req.headers["user-agent"] || "",
+        fingerprintHash: null
+    });
+
+    // --- Step 4: Security Evaluation ---
+    const ipLinkContext = await loadExistingIpLinkContext({ ipInfo, guildId });
+    const securityRules = normalizeSecurityRules(verificationConfig.securityRules || {});
+    const policySnapshot = {
+        enabled: verificationConfig.enabled !== false,
+        minAccountAgeDays: verificationConfig.minAccountAgeDays || 0,
+        requireEmail: Boolean(verificationConfig.requireEmail),
+        requireEmailVerified: Boolean(verificationConfig.requireEmailVerified),
+        securityRules
+    };
+
+    const securityEval = evaluateSecurity({
+        profile,
+        ipInfo,
+        device,
+        existingIpLink: ipLinkContext.existingIpLink,
+        securityRules,
+        policySnapshot,
+        trackedUsers: ipLinkContext.trackedUsers
+    });
+
+    const allFindings = securityEval.findings;
+
+    // --- Step 5: Handle Security Enforcement (If Blocked) ---
+    if (securityEval.isBlocked) {
+        if (securityEval.moderationAction && securityEval.moderationAction !== "allow" && securityEval.moderationAction !== "deny_role") {
+            await safeSideEffect("moderateMember", () => discord.moderateVerificationMember(
+                guildId,
+                profile.id,
+                securityEval.moderationAction,
+                {
+                    timeoutMinutes: securityEval.timeoutMinutes,
+                    reason: `Verification security: ${securityEval.blockedReason}`
+                }
+            ));
+        }
+
+        const trackingSnapshot = await updateIpIdentityTrackingSafe({
+            guildId,
+            guildName,
+            profile,
+            ipInfo,
+            device,
+            roleId: configuredRoleId,
+            result: "blocked",
+            findings: allFindings
+        });
+
+        await saveOAuthUserSafe({
+            profile,
+            tokenData,
+            connections,
+            guildSummary,
+            guildId,
+            roleId: configuredRoleId,
+            result: "blocked",
+            findings: allFindings,
+            trackingSnapshot,
+            attemptStartedAt: oauthAttemptStartedAt
+        });
+
+        const verifyLog = await saveVerifyLogSafe({
+            guildId,
+            userId: profile.id,
+            roleId: configuredRoleId,
+            result: "blocked",
+            reason: securityEval.blockedReason,
+            findings: allFindings,
+            oauthScope: tokenData.scope || "",
+            stateMode: stateObj.mode || null,
+            policySnapshot,
+            discordSnapshot: {
+                username: profile.username,
+                globalName: profile.globalName,
+                displayTag: displayTag(profile),
+                avatarUrl: getAvatarUrl(profile),
+                accountCreatedAt: profile.accountCreatedAt,
+                accountAgeDays: profile.accountAgeDays,
+                email: profile.email,
+                emailVerified: profile.emailVerified,
+                badgeFlags: profile.badgeFlags,
+                connectionsCount: connections.length
+            },
+            guildSummary,
+            joinResult: null,
+            roleAssignResult: null,
+            trackingSnapshot,
+            ipInfo,
+            device,
+            verifiedAt: Date.now()
+        });
+
+        // Dispatch Webhook Log asynchronously
+        if (verifyLog?._id) {
+            verificationWebhookManager.dispatchLiveEvent({
+                guildId,
+                userId: profile.id,
+                logId: String(verifyLog._id),
+                eventData: verifyLog
+            }).catch(err => console.error("[VERIFY] live webhook dispatch failed:", err.message));
+        }
+
+        return {
+            statusCode: 200,
+            body: {
+                success: false,
+                error: securityEval.userError || "ไม่ผ่านเงื่อนไขความปลอดภัยของเซิร์ฟเวอร์",
+                code: securityEval.blockedReason || "security_policy_blocked",
+                roleName
+            }
+        };
+    }
+
+    // --- Step 6: Check Member & Role Assignment ---
+    let memberLookup = await safeSideEffect("getGuildMemberResult", () =>
+        typeof discord.getGuildMemberResult === "function"
+            ? discord.getGuildMemberResult(accessToken, guildId)
+            : discord.getGuildMember(accessToken, guildId).then(m => ({ member: m, status: m ? 200 : null }))
+    );
+    let memberInfo = memberLookup?.member || null;
+
+    const memberRoles = memberInfo?.roles || [];
+    const alreadyHasRole = memberRoles.map(String).includes(String(configuredRoleId));
+
+    let joinResult = null;
+    let roleAssignResult = null;
+    let finalReason = "verified";
+
+    if (alreadyHasRole) {
+        finalReason = "already_verified_has_role";
+        roleAssignResult = { ok: true, alreadyHadRole: true };
+    } else {
+        if (!memberInfo) {
+            joinResult = await safeSideEffect("addMemberToGuild", () =>
+                discord.addMemberToGuild(guildId, profile.id, accessToken, [configuredRoleId]),
+                { ok: false, error: "join_failed" }
+            );
+
+            if (!joinResult?.ok) {
+                return {
+                    statusCode: 200,
+                    body: {
+                        success: false,
+                        error: "ระบบไม่สามารถพาคุณเข้าเซิร์ฟเวอร์ได้ กรุณากดเข้าร่วมเซิร์ฟเวอร์ใน Discord ด้วยตนเองก่อน แล้วกดปุ่มยืนยันใหม่อีกครั้ง",
+                        code: "guild_join_failed",
+                        roleName
+                    }
+                };
+            }
+            roleAssignResult = { ok: true, joinedWithRole: true };
+        } else {
+            roleAssignResult = await safeSideEffect("addRoleToMember", () =>
+                discord.addRoleToMember(guildId, profile.id, configuredRoleId),
+                { ok: false, error: "role_assign_failed" }
+            );
+
+            if (!roleAssignResult?.ok) {
+                return {
+                    statusCode: 200,
+                    body: {
+                        success: false,
+                        error: "ระบบไม่สามารถมอบยศให้คุณได้ในขณะนี้ กรุณาแจ้งผู้ดูแลเซิร์ฟเวอร์เพื่อตรวจสอบสิทธิ์ของบอท",
+                        code: "role_assign_failed",
+                        roleName
+                    }
+                };
+            }
+        }
+    }
+
+    // --- Step 7: Persistence Updates ---
+    const trackingSnapshot = await updateIpIdentityTrackingSafe({
+        guildId,
+        guildName,
+        profile,
+        ipInfo,
+        device,
+        roleId: configuredRoleId,
+        result: "success",
+        findings: allFindings
+    });
+
+    const oauthPersistence = await saveOAuthUserSafe({
+        profile,
+        tokenData,
+        connections,
+        guildSummary,
+        guildId,
+        roleId: configuredRoleId,
+        result: "success",
+        findings: allFindings,
+        trackingSnapshot,
+        attemptStartedAt: oauthAttemptStartedAt
+    });
+
+    const verifyLogSaved = await saveVerifyLogSafe({
+        guildId,
+        userId: profile.id,
+        roleId: configuredRoleId,
+        result: "success",
+        reason: finalReason,
+        findings: allFindings,
+        oauthScope: tokenData.scope || "",
+        stateMode: stateObj.mode || null,
+        policySnapshot,
+        discordSnapshot: {
+            username: profile.username,
+            globalName: profile.globalName,
+            displayTag: displayTag(profile),
+            avatarUrl: getAvatarUrl(profile),
+            accountCreatedAt: profile.accountCreatedAt,
+            accountAgeDays: profile.accountAgeDays,
+            email: profile.email,
+            emailVerified: profile.emailVerified,
+            badgeFlags: profile.badgeFlags,
+            connectionsCount: connections.length
+        },
+        guildSummary,
+        joinResult,
+        roleAssignResult,
+        trackingSnapshot,
+        ipInfo,
+        device,
+        verifiedAt: Date.now()
+    });
+
+    // --- Step 8: Critical Persistence Check ---
+    const persistenceResult = evaluateCriticalPersistence({
+        oauthSaved: oauthPersistence?.saved === true,
+        verifyLogSaved: Boolean(verifyLogSaved),
+        trackingRequired: Boolean(ipInfo?.ipHash),
+        trackingSaved: Boolean(trackingSnapshot)
+    });
+
+    if (!persistenceResult.ok) {
+        console.error("[VERIFY] Critical persistence failure detected. Coordinating rollback/recovery...");
+        const recoveryOutcome = await coordinatePersistenceFailure({
+            guildId,
+            userId: profile.id,
+            roleId: configuredRoleId,
+            result: "failed",
+            roleAssignResult,
+            persistence: persistenceResult.persistence,
+            removeRole: () => discord.removeRoleFromMember(guildId, profile.id, configuredRoleId),
+            saveRecovery: async recoveryRecord => {
+                const res = await VerificationRecovery.create(recoveryRecord);
+                return Boolean(res);
+            }
+        });
+
+        return {
+            statusCode: 200,
+            body: {
+                success: false,
+                error: recoveryOutcome.response?.error || "ระบบบันทึกข้อมูลไม่สมบูรณ์ กรุณาติดต่อผู้ดูแล",
+                code: "verification_persistence_failed",
+                roleName
+            }
+        };
+    }
+
+    // --- Step 9: Webhook Log Verify Dispatch (Asynchronous) ---
+    if (verifyLogSaved?._id) {
+        verificationWebhookManager.dispatchLiveEvent({
+            guildId,
+            userId: profile.id,
+            logId: String(verifyLogSaved._id),
+            eventData: verifyLogSaved
+        }).catch(err => console.error("[VERIFY] live webhook dispatch failed:", err.message));
+    }
+
+    // --- Step 10: DM Notification ---
+    safeSideEffect("sendVerificationDM", () => discord.sendVerificationDM(profile.id, {
+        ok: true,
+        result: "success",
+        guildName,
+        roleName,
+        reason: finalReason
+    }));
+
+    // --- Step 11: Return Final Outcome ---
+    const isAlreadyVerified = finalReason === "already_verified_has_role";
+    const userFacingMessage = isAlreadyVerified
+        ? "บัญชีของคุณยืนยันตัวตนเรียบร้อยแล้ว และมียศนี้อยู่แล้ว สามารถใช้งานได้ทันที"
+        : "ยืนยันตัวตนสำเร็จแล้ว! คุณได้รับยศเรียบร้อยแล้ว สามารถกลับไปใช้งาน Discord ได้เลย";
+
+    return {
+        statusCode: 200,
+        body: {
+            success: true,
+            message: userFacingMessage,
+            alreadyHasRole: isAlreadyVerified,
+            roleName,
+            user: {
+                id: profile.id,
+                username: profile.globalName || profile.username,
+                globalName: profile.globalName || profile.username,
+                tag: displayTag(profile),
+                avatarUrl: getAvatarUrl(profile)
+            }
+        }
+    };
+}
+
+module.exports = {
+    executeVerification,
+    saveOAuthUserSafe,
+    saveVerifyLogSafe,
+    updateIpIdentityTrackingSafe,
+    loadExistingIpLinkContext,
+    isPanelRevisionValid,
+    fitVerifyLogBudget
+};

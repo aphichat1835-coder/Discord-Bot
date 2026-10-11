@@ -1,6 +1,6 @@
 'use strict';
 
-const ScheduledRunner = require('../models/ScheduledRunner');
+const { getScheduledRunnerRepository } = require('../../../database/repositories/quest');
 const { encryptToken, decryptToken } = require('./tokenCrypto');
 
 async function createScheduledRunner({
@@ -13,7 +13,7 @@ async function createScheduledRunner({
     nextCheckAt = null
 }) {
     const encrypted = encryptToken(token, ownerId, accountId);
-    const doc = await ScheduledRunner.create({
+    return getScheduledRunnerRepository().create({
         ownerId,
         guildId,
         channelId,
@@ -27,53 +27,36 @@ async function createScheduledRunner({
         enabled: true,
         nextCheckAt
     });
-    return doc.toObject();
 }
 
 async function getScheduledRunner(id) {
-    if (ScheduledRunner.db?.readyState !== 1) return null;
-    return ScheduledRunner.findById(id).lean();
+    return getScheduledRunnerRepository().findById(id);
 }
 
 async function findScheduledRunner(ownerId, accountId) {
-    if (ScheduledRunner.db?.readyState !== 1) return null;
-    return ScheduledRunner.findOne({ ownerId, accountId }).lean();
+    return getScheduledRunnerRepository().findOne({ ownerId, accountId });
 }
 
 async function findAnyScheduledRunner(accountId) {
-    if (ScheduledRunner.db?.readyState !== 1) return null;
-    return ScheduledRunner.findOne({ accountId, enabled: true }).lean();
+    return getScheduledRunnerRepository().findOne({ accountId, enabled: true });
 }
 
 async function listScheduledRunners(ownerId = null) {
-    if (ScheduledRunner.db?.readyState !== 1) return [];
     const filter = { enabled: true };
     if (ownerId != null) filter.ownerId = ownerId;
-    return ScheduledRunner.find(filter).sort({ createdAt: 1 }).lean();
+    return getScheduledRunnerRepository().find(filter);
 }
 
 async function updateScheduledRunner(id, updates = {}) {
-    const setFields = {};
-    if (updates.username !== undefined) setFields.username = updates.username;
-    if (updates.channelId !== undefined) setFields.channelId = updates.channelId;
-    if (updates.nextCheckAt !== undefined) setFields.nextCheckAt = updates.nextCheckAt;
-    if (updates.lastCheckAt !== undefined) setFields.lastCheckAt = updates.lastCheckAt;
-    if (updates.lastError !== undefined) setFields.lastError = updates.lastError;
-    if (updates.enabled !== undefined) setFields.enabled = updates.enabled;
-
-    return ScheduledRunner.findByIdAndUpdate(id, { $set: setFields }, { returnDocument: "after" }).lean();
+    return getScheduledRunnerRepository().updateById(id, updates);
 }
 
 async function deleteScheduledRunner(id, ownerId = null) {
-    const filter = { _id: id };
-    if (ownerId != null) filter.ownerId = ownerId;
-    const res = await ScheduledRunner.deleteOne(filter);
-    return res.deletedCount > 0;
+    return getScheduledRunnerRepository().deleteById(id, ownerId);
 }
 
 async function deleteAllScheduledRunners(ownerId) {
-    const res = await ScheduledRunner.deleteMany({ ownerId });
-    return res.deletedCount;
+    return getScheduledRunnerRepository().deleteMany({ ownerId });
 }
 
 function decryptRunnerRecordToken(record) {

@@ -58,6 +58,7 @@ function createShutdownCoordinator(options = {}) {
         memoryMonitor = null,
         verificationRuntime = null,
         dmService = null,
+        campaignWorker = null,
         runtimeCleanups = [],
         flushWebhookQueue = async () => true,
         shutdownWebhookDispatcher = async () => {},
@@ -106,6 +107,16 @@ function createShutdownCoordinator(options = {}) {
                 for (const cleanup of runtimeCleanups) await cleanup?.stop?.();
             }, state);
             await runCleanupStep("verification stop", () => verificationRuntime?.stopVerificationRuntime?.(), state);
+            await runCleanupStep("join campaign stop", async () => {
+                const worker = campaignWorker || options.joinCampaignWorker;
+                if (worker?.isRunning) {
+                    worker.stopCurrentWorker();
+                    await Promise.race([
+                        worker.waitForCompletion?.(),
+                        new Promise(resolve => setTimer(resolve, 3000))
+                    ]);
+                }
+            }, state);
             await runCleanupStep("voice intake stop", () => voiceWorker?.setShuttingDown?.(true), state);
             await runCleanupStep("voice pause", () => voiceWorker?.pauseAll?.(), state);
             await runCleanupStep("database save", () => sessionManager?.saveDatabase?.(), state);

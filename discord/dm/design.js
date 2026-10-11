@@ -87,7 +87,7 @@ function buildDmEmbed(options = {}) {
     const profile = options.profile || profileFromUser(null);
     const title = safeText(options.title, "🔔 การแจ้งเตือน", 256);
     const summary = safeText(options.summary, "มีการเปลี่ยนแปลงที่ควรตรวจสอบ", 2048);
-    const footer = safeText(options.footer, "Phomueangtai • แจ้งเตือนส่วนตัว", 2048);
+    const footer = safeText(options.footer, "ระบบแจ้งเตือนส่วนตัว", 2048);
     const fieldCandidates = [profileField(profile), ...normalizeFields(options.fields)];
     if (options.details) fieldCandidates.push({ name: "📋 รายละเอียด", value: markdownText(options.details, "-", 1024) });
     if (options.nextAction) fieldCandidates.push({ name: "💡 สิ่งที่ควรทำ", value: safeText(options.nextAction, "-", 1024) });

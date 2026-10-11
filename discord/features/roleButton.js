@@ -110,14 +110,14 @@ async function applySingleRoleChange(member, role, shouldAdd, results) {
             await member.roles.add(role.id);
             results.added.push(role.name);
         } catch (err) {
-            results.failed.push(`${role.name}: ${err.message}`);
+            results.failed.push(`${role.name}: บอทไม่มีสิทธิ์จัดการยศนี้`);
         }
     } else if (!shouldAdd && has) {
         try {
             await member.roles.remove(role.id);
             results.removed.push(role.name);
         } catch (err) {
-            results.failed.push(`${role.name}: ${err.message}`);
+            results.failed.push(`${role.name}: บอทไม่มีสิทธิ์จัดการยศนี้`);
         }
     }
 }
@@ -134,10 +134,10 @@ async function processRoleSelection(guild, member, rid, selectedRoleIds, results
 
 function formatRoleSelectionSummary(results) {
     const lines = [];
-    if (results.added.length)   lines.push(`✅ เพิ่ม: ${results.added.join(', ')}`);
-    if (results.removed.length) lines.push(`❌ ลบ: ${results.removed.join(', ')}`);
-    if (results.skipped.length) lines.push(`⚠️ ข้าม: ${results.skipped.slice(0, 6).join(' | ')}`);
-    if (results.failed.length)  lines.push(`🚫 ไม่สำเร็จ: ${results.failed.slice(0, 6).join(' | ')}`);
+    if (results.added.length)   lines.push(`${config.emojis?.activate || config.emojis?.check_alt || config.emojis?.success || '✅'} เพิ่ม: ${results.added.join(', ')}`);
+    if (results.removed.length) lines.push(`${config.emojis?.disable || config.emojis?.stop || config.emojis?.error || '❌'} ลบ: ${results.removed.join(', ')}`);
+    if (results.skipped.length) lines.push(`${config.emojis?.warning || '⚠️'} ข้าม: ${results.skipped.slice(0, 6).join(' | ')}`);
+    if (results.failed.length)  lines.push(`${config.emojis?.red_card || config.emojis?.error || '🚫'} ไม่สำเร็จ: ${results.failed.slice(0, 6).join(' | ')}`);
     if (!lines.length)          lines.push('ไม่มีการเปลี่ยนแปลง');
     return lines.join('\n');
 }
@@ -183,11 +183,11 @@ async function handleRoleInteraction(interaction) {
 async function toggleRole(interaction, member, guild, roleId) {
     const role = guild.roles.cache.get(roleId);
     if (!role) {
-        return interaction.reply({ content: `> ❌ ไม่พบยศนี้`, ephemeral: true });
+        return interaction.reply({ content: `> ${config.emojis?.error || '❌'} ไม่พบยศนี้`, ephemeral: true });
     }
     const check = validateRoleChange(guild, member, role);
     if (!check.ok) {
-        return interaction.reply({ content: `> ❌ จัดการยศไม่ได้: ${check.reason}`, ephemeral: true });
+        return interaction.reply({ content: `> ${config.emojis?.error || '❌'} จัดการยศไม่ได้: ${check.reason}`, ephemeral: true });
     }
 
     try {
@@ -196,21 +196,21 @@ async function toggleRole(interaction, member, guild, roleId) {
             await member.roles.remove(roleId);
             const embed = new MessageEmbed()
                 .setColor(config.system.themeColors.error)
-                .setTitle('Removed Roles')
-                .setDescription(`- ${role.toString()} (user)`)
+                .setTitle(`${config.emojis?.disable || config.emojis?.success || '✅'} ปลดยศเรียบร้อย`)
+                .setDescription(`ปลดยศ ${role.toString()} ออกจากบัญชีของคุณแล้ว`)
                 .setTimestamp();
             return interaction.reply({ embeds: [embed], ephemeral: true });
         } else {
             await member.roles.add(roleId);
             const embed = new MessageEmbed()
                 .setColor(config.system.themeColors.success)
-                .setTitle('Added Roles')
-                .setDescription(`+ ${role.toString()} (user)`)
+                .setTitle(`${config.emojis?.activate || config.emojis?.check_alt || config.emojis?.success || '✅'} รับยศเรียบร้อย`)
+                .setDescription(`เพิ่มยศ ${role.toString()} ให้บัญชีของคุณแล้ว`)
                 .setTimestamp();
             return interaction.reply({ embeds: [embed], ephemeral: true });
         }
     } catch (err) {
-        return interaction.reply({ content: `> ❌ จัดการยศไม่ได้: ${err.message}`, ephemeral: true });
+        return interaction.reply({ content: `> ${config.emojis?.error || '❌'} ไม่สามารถจัดการยศได้ในขณะนี้ โปรดตรวจสอบสิทธิ์ของบอทหรือติดต่อผู้ดูแลระบบ`, ephemeral: true });
     }
 }
 

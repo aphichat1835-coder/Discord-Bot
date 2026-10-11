@@ -155,27 +155,6 @@ test("DM service rejects retired moderation notifications", async () => {
     assert.equal(dmService._test.volatileOutbox.size, 0);
 });
 
-test("restore result DM is private-profiled Thai output", () => {
-    const interaction = fakeInteraction();
-    const embed = utility._test.buildRestoreResultDmEmbed({
-        interaction,
-        resultState: "partial",
-        restoredRoles: 3,
-        restoredChannels: 4,
-        skippedRoles: 1,
-        skippedChannels: 2,
-        ambiguousRoles: 0,
-        ambiguousChannels: 1,
-        overwriteStats: { restored: 5, skippedRoleMissing: 1, skippedMemberMissing: 0 },
-        restoreErrors: 1,
-        timeoutHit: false
-    }).toJSON();
-
-    assert.match(embed.description, /สำเร็จบางส่วน/);
-    assert.ok(embed.fields.some(field => field.name === "👤 บัญชีที่เกี่ยวข้อง"));
-    assert.doesNotMatch(JSON.stringify(embed), /\bpartial\b/);
-});
-
 test("DM delivery classifies closed DMs as permanent without retrying forever", async () => {
     const recipient = {
         send: async () => {

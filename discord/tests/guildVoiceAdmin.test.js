@@ -686,10 +686,10 @@ test("component matcher and result format include new numeric result fields", ()
     assert.equal(_test.isVoiceAdminInteraction({ isChannelSelectMenu: () => true, customId: IDS.MOVE }), true);
     assert.equal(_test.isVoiceAdminInteraction({ isButton: () => true, customId: "btn_start" }), false);
     assert.match(_test.buildResult("งาน", { targeted: 3, succeeded: 1, failed: 1, timedOut: 1, persistenceFailed: 1 }), /หมดเวลา 1 คน/);
-    assert.equal(_test.resultEmoji({ targeted: 2, succeeded: 2, failed: 0, skipped: 0, timedOut: 0, persistenceFailed: 0 }), "✅");
-    assert.equal(_test.resultEmoji({ targeted: 2, succeeded: 1, failed: 1, skipped: 0, timedOut: 0, persistenceFailed: 0 }), "⚠️");
-    assert.equal(_test.resultEmoji({ targeted: 2, succeeded: 0, failed: 2, skipped: 0, timedOut: 0, persistenceFailed: 2 }), "❌");
-    assert.equal(_test.resultEmoji({ targeted: 0, succeeded: 0, failed: 0, skipped: 0, timedOut: 0, persistenceFailed: 0 }), "⚠️");
+    assert.equal(_test.resultEmoji({ targeted: 2, succeeded: 2, failed: 0, skipped: 0, timedOut: 0, persistenceFailed: 0 }), config.emojis?.success || "✅");
+    assert.equal(_test.resultEmoji({ targeted: 2, succeeded: 1, failed: 1, skipped: 0, timedOut: 0, persistenceFailed: 0 }), config.emojis?.warning || "⚠️");
+    assert.equal(_test.resultEmoji({ targeted: 2, succeeded: 0, failed: 2, skipped: 0, timedOut: 0, persistenceFailed: 2 }), config.emojis?.error || "❌");
+    assert.equal(_test.resultEmoji({ targeted: 0, succeeded: 0, failed: 0, skipped: 0, timedOut: 0, persistenceFailed: 0 }), config.emojis?.warning || "⚠️");
 });
 
 test("initialization and durable cleanup keep cache aligned only after acknowledged writes", async () => {
@@ -776,7 +776,7 @@ test("secret lock persistence failures are reported as an error and never call D
     assert.equal(await voiceAdmin.handleSecretMessage(message), true);
     assert.equal(message.deleted, true);
     assert.ok(replies.at(-1).embeds?.[0]);
-    assert.match(replies.at(-1).embeds[0].data.description, /บันทึกสถานะไม่สำเร็จ.*1.*คน/);
+    assert.match(replies.at(-1).embeds[0].data.description, /ไม่สำเร็จ.*1.*คน/);
     assert.deepEqual(target.calls, []);
 });
 
@@ -1207,7 +1207,7 @@ test("secret command executes stealth lifecycle: deletes trigger, shows and dele
     assert.equal(replies.length, 2);
 
     // 3. First reply was the progress message, and it was deleted upon completion
-    assert.match(replies[0].content, /> ⏳ กำลังดำเนินการ\.\.\./);
+    assert.match(replies[0].content, /> (?:<a:Loadingg_pmt:\d+>|⏳) กำลังดำเนินการ\.\.\./);
     assert.equal(replies[0].deleted, true);
 
     // 4. Second reply was the final summary with server thumbnail

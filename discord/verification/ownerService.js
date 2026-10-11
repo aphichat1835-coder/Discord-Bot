@@ -3,7 +3,8 @@
 const GuildConfig = require("./models/GuildConfig");
 const VerifyLog = require("./models/VerifyLog");
 const OAuthUser = require("./models/OAuthUser");
-const { decryptIP, decryptToken } = require("./utils/crypto");
+const { decryptIP } = require("./utils/crypto");
+const oauthTokenManager = require("../core/oauthTokenManager");
 const { serializeMemberDetail } = require("./serializers/memberDetailSerializer");
 const verifiedMemberService = require("./services/verifiedMemberService");
 const snapshotStore = require("./services/oauthSnapshotStore");
@@ -246,8 +247,6 @@ async function getMemberDetail(guildId, userId, { canViewSensitive = false } = {
                 lastIpTracking: 1,
                 snapshotMeta: 1,
                 snapshotRefs: 1,
-                oauth: 1,
-                adminOAuth: 1,
                 createdAt: 1,
                 updatedAt: 1
             })
@@ -259,6 +258,10 @@ async function getMemberDetail(guildId, userId, { canViewSensitive = false } = {
     ]);
 
     if (!oauthUser && !latestLog) throw memberNotFoundError();
+
+    const tokenStatuses = canViewSensitive
+        ? await oauthTokenManager.getOwnerTokenMetadata(safeUserId)
+        : null;
 
     let hydratedOAuthUser = oauthUser;
     const snapshotRefs = {
@@ -287,78 +290,20 @@ async function getMemberDetail(guildId, userId, { canViewSensitive = false } = {
         userId: safeUserId,
         oauthUser: hydratedOAuthUser,
         latestLog,
-        canViewSensitive
+        canViewSensitive,
+        tokenStatuses
       }),
       history: historyLogs.map(safeRecent),
       historyTruncated: historyLogs.length >= 100
     };
 }
 
-function revealTokenState(token = {}) {
-    const issuedAt = Number(token.rawTokenMeta?.receivedAt || 0) || null;
-    const expiresAt = Number(token.expiresAt || 0) || null;
-    return {
-        accessToken: token.encryptedAccessToken ? decryptToken(token.encryptedAccessToken) : null,
-        refreshToken: token.encryptedRefreshToken ? decryptToken(token.encryptedRefreshToken) : null,
-        scope: token.scope || "",
-        tokenType: token.tokenType || "",
-        issuedAt,
-        expiresAt,
-        lifetimeMs: issuedAt && expiresAt ? Math.max(0, expiresAt - issuedAt) : null,
-        lastRefreshAt: token.lastRefreshAt || null,
-        refreshFailCount: Number(token.refreshFailCount || 0),
-        revokedAt: token.revokedAt || null
-    };
-}
-
-function collectMissingScopeReasons(tokenScope) {
-    const scopes = new Set(String(tokenScope || "").split(/\s+/).filter(Boolean));
-    const missing = [];
-    for (const scope of REQUIRED_USER_SCOPES) {
-        if (!scopes.has(scope)) missing.push(`missing_scope:${scope}`);
-    }
-    return missing;
-}
-
-function checkTokenCryptoReasons(token, now) {
-    const reasons = [];
-    const accessToken = token.encryptedAccessToken ? decryptToken(token.encryptedAccessToken) : null;
-    const refreshToken = token.encryptedRefreshToken ? decryptToken(token.encryptedRefreshToken) : null;
-
-    if (!token.encryptedAccessToken) reasons.push("missing_access_token");
-    else if (!accessToken) reasons.push("access_token_decrypt_failed");
-
-    if (!token.encryptedRefreshToken) reasons.push("missing_refresh_token");
-    else if (!refreshToken) reasons.push("refresh_token_decrypt_failed");
-
-    if (token.revokedAt) reasons.push("token_revoked");
-
-    const isExpired = Number(token.expiresAt || 0) > 0 && Number(token.expiresAt) <= now;
-    if (isExpired && !refreshToken) {
-        reasons.push("access_token_expired_without_refresh");
-    }
-    return reasons;
-}
-
-function tokenRecoveryReasons(token = {}, now = Date.now()) {
-    const reasons = [
-        ...checkTokenCryptoReasons(token, now),
-        ...collectMissingScopeReasons(token.scope)
-    ];
-    return [...new Set(reasons)];
+function tokenRecoveryReasons(token = {}, now = Date.now(), ...args) {
+    return oauthTokenManager.tokenRecoveryReasons(token, now, ...args);
 }
 
 function recoveryReasonLabel(reason) {
-    const labels = {
-        missing_access_token: "ไม่มี Access Token",
-        access_token_decrypt_failed: "ถอดรหัส Access Token ไม่สำเร็จ",
-        missing_refresh_token: "ไม่มี Refresh Token",
-        refresh_token_decrypt_failed: "ถอดรหัส Refresh Token ไม่สำเร็จ",
-        token_revoked: "Token ถูกยกเลิก",
-        access_token_expired_without_refresh: "Access Token หมดอายุและต่ออายุไม่ได้"
-    };
-    if (String(reason).startsWith("missing_scope:")) return `ขาด Scope ${String(reason).slice(14)}`;
-    return labels[reason] || String(reason);
+    return oauthTokenManager.recoveryReasonLabel(reason);
 }
 
 async function getOAuthRecoveryCenter(guildId) {
@@ -373,17 +318,26 @@ async function getOAuthRecoveryCenter(guildId) {
         ])
     ]);
     const userIds = recipients.map(item => String(item._id || "")).filter(Boolean);
-    const oauthUsers = userIds.length ? await OAuthUser.find({ "discord.userId": { $in: userIds } })
-        .select("discord.userId discord.username discord.globalName discord.displayTag discord.avatarUrl oauth")
-        .lean() : [];
-    const oauthMap = new Map(oauthUsers.map(item => [String(item.discord?.userId || ""), item]));
+    const [recoveryMap, oauthUsers] = await Promise.all([
+        oauthTokenManager.getRecoveryStatuses(userIds),
+        userIds.length ? OAuthUser.find({
+            "discord.userId": { $in: userIds },
+            $or: [
+                { deletedAt: { $exists: false } },
+                { deletedAt: null }
+            ]
+        })
+            .select("discord.userId discord.username discord.globalName discord.displayTag discord.avatarUrl")
+            .lean() : []
+    ]);
+    const userMap = new Map(oauthUsers.map(item => [String(item.discord?.userId || ""), item]));
     const defaultRoleId = config?.verification?.roleId || null;
     const members = [];
     for (const recipient of recipients) {
         const userId = String(recipient._id || "");
-        const oauthUser = oauthMap.get(userId);
-        const reasons = tokenRecoveryReasons(oauthUser?.oauth || {});
-        if (!reasons.length) continue;
+        const recovery = recoveryMap.get(userId);
+        if (!recovery || !recovery.reasons || !recovery.reasons.length) continue;
+        const oauthUser = userMap.get(userId);
         members.push({
             userId,
             username: oauthUser?.discord?.username || null,
@@ -392,8 +346,8 @@ async function getOAuthRecoveryCenter(guildId) {
             avatarUrl: oauthUser?.discord?.avatarUrl || null,
             roleId: recipient.roleId || defaultRoleId,
             lastVerifiedAt: recipient.verifiedAt || null,
-            reasons,
-            reasonLabels: reasons.map(recoveryReasonLabel)
+            reasons: recovery.reasons,
+            reasonLabels: recovery.reasonLabels
         });
     }
     return {
@@ -556,10 +510,8 @@ async function getOwnerFullMemberDetail({ guildId, userId }) {
     const safeGuildId = requireSnowflake(guildId, "Guild ID");
     const safeUserId = requireSnowflake(userId, "User ID");
     const detail = await getMemberDetail(safeGuildId, safeUserId, { canViewSensitive: true });
-    const [user, log, identityLink] = await Promise.all([
-        scopedOAuthUserQuery(OAuthUser.findOne(), safeGuildId, safeUserId)
-            .select("discord.userId oauth adminOAuth")
-            .lean(),
+    const [tokenStates, log, identityLink] = await Promise.all([
+        oauthTokenManager.getOwnerTokenState(safeUserId),
         scopedGuildUserQuery(VerifyLog.findOne(), safeGuildId, safeUserId)
             .where("ipInfo.encryptedRawIp").exists(true).ne("")
             .sort({ verifiedAt: -1, createdAt: -1, _id: -1 }),
@@ -572,8 +524,7 @@ async function getOwnerFullMemberDetail({ guildId, userId }) {
         ...detail,
         sensitive: {
             rawIp: decryptIP(log?.ipInfo?.encryptedRawIp || identityLink?.encryptedRawIp || ""),
-            oauth: revealTokenState(user?.oauth || {}),
-            adminOAuth: revealTokenState(user?.adminOAuth || {}),
+            oauth: tokenStates.oauth,
             ipIdentity: ownerIpIdentityDetail(identityLink, history)
         }
     };

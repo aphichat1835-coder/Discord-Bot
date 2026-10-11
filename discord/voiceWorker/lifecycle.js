@@ -1,12 +1,9 @@
 /* eslint-disable complexity -- Voice/session lifecycle is behavior-sensitive; refactor separately. */
-/*
-================================================================================
-⚠️ [AI COGNITIVE DIRECTIVE] ⚠️
-DO NOT MODIFY: MAX_RECONNECT_ATTEMPTS, CONNECTION_TIMEOUT, LOGIN_TIMEOUT.
-DO NOT REMOVE: isShuttingDown flag — critical for SIGTERM safety (เฟส 8+18).
-DO NOT SIMPLIFY: OperationQueue concurrency — prevents IP ban from Discord.
-================================================================================
-*/
+/**
+ * Voice Session Lifecycle Management
+ * - Self-client authentication, voice channel connections, and gateway heartbeats.
+ * - Reconnect backoff scheduling and Token Coordinator quarantine integration.
+ */
 const crypto = require("node:crypto");
 const { Client: SelfClient } = require("discord.js-selfbot-v13");
 const { joinVoiceChannel, getVoiceConnection, VoiceConnectionStatus, entersState } = require("@discordjs/voice");
@@ -14,6 +11,7 @@ const sessionManager = require("../sessionManager");
 const { sendWebhookEvent, getDiscordGuildIconUrl } = require("../core/webhooks");
 const { sanitizeLogText } = require("../core/safeLogger");
 const { registerGatewayDiagnostics } = require("../core/gatewayDiagnostics");
+const tokenCoordinator = require("../core/tokenCoordinator");
 const {
     st,
     naturalRunning,
@@ -76,195 +74,49 @@ const channelLock = require("./channelLock");
 
 const ensureSessionFlights = new Map();
 
-
-// ════════════════════════════════════════════════════════════════════════════
-//  🛑  REGION 9 (helpers): Connection cleanup utilities
-// ════════════════════════════════════════════════════════════════════════════
-function getVoiceGroup(client, guildId, session = null) {
-    const userId = client?.user?.id || session?.accountId;
-    if (!userId || !guildId) return null;
-    return `${userId}:${guildId}`;
-}
-
-function destroyConnectionObject(connection) {
-    if (!connection || connection.state?.status === VoiceConnectionStatus.Destroyed) return false;
-    connection.destroy();
-    return true;
-}
-
-function resolveSelfMember(guild, userId) {
-    if (!guild || !userId) return null;
-    return guild.members?.me || guild.me || guild.members?.cache?.get?.(userId) || null;
-}
-
-function resolveVoiceChannelId(memberVoice, cachedState) {
-    return memberVoice?.channelId ||
-        memberVoice?.channel?.id ||
-        cachedState?.channelId ||
-        cachedState?.channel?.id ||
-        null;
-}
-
-function getSelfVoiceStateInfo(client, session) {
-    const guild = client?.guilds?.cache?.get?.(session.serverId) || null;
-    const userId = client?.user?.id || null;
-    const member = resolveSelfMember(guild, userId);
-    const memberVoice = member?.voice || null;
-    const cachedState = guild && userId ? guild.voiceStates?.cache?.get?.(userId) : null;
-    const voiceState = memberVoice || cachedState || null;
-    const channelId = resolveVoiceChannelId(memberVoice, cachedState);
-    const inTargetChannel = Boolean(channelId && String(channelId) === String(session.voiceId));
-
-    return {
-        inspectable: Boolean(guild && (memberVoice || cachedState)),
-        inTargetGuild: Boolean(channelId),
-        inTargetChannel,
-        channelId,
-        channelSource: channelId ? "voice_state" : null,
-        voiceState,
-        memberVoice
-    };
-}
-
-async function waitForSelfVoiceExit(clientRef, session, timeoutMs = 1200) {
-    const started = Date.now();
-    let lastInfo = getSelfVoiceStateInfo(clientRef, session);
-
-    while (Date.now() - started < timeoutMs) {
-        if (!lastInfo.inTargetChannel) return lastInfo;
-        await delay(150);
-        lastInfo = getSelfVoiceStateInfo(clientRef, session);
-    }
-
-    return lastInfo;
-}
-
-async function waitForTargetVoice(clientRef, session, timeoutMs = 3000, connection = null) {
-    const started = Date.now();
-    let info = getSelfVoiceStateInfo(clientRef, session);
-    while (Date.now() - started < timeoutMs) {
-        if (info.inTargetChannel) return info;
-        await delay(150);
-        info = getSelfVoiceStateInfo(clientRef, session);
-    }
-    const connectionReady = connection?.state?.status === VoiceConnectionStatus.Ready;
-    const joinedChannelId = connection?.joinConfig?.channelId || null;
-    if (!info.inspectable && connectionReady && String(joinedChannelId) === String(session.voiceId)) {
-        return {
-            ...info,
-            inTargetGuild: true,
-            inTargetChannel: true,
-            channelId: joinedChannelId,
-            channelSource: "connection_state"
-        };
-    }
-    return info;
-}
-
-async function attemptSelfVoiceDisconnect(clientRef, session, sessionId, tokenHash, errors) {
-    let info = getSelfVoiceStateInfo(clientRef, session);
-    if (!info.inTargetChannel) return info;
-
-    const started = Date.now();
-    const budgetMs = 1500;
-    const disconnectors = [
-        { target: info.memberVoice, method: "disconnect", args: ["Voice session stopped"] },
-        { target: info.voiceState, method: "disconnect", args: ["Voice session stopped"] },
-        { target: info.memberVoice, method: "setChannel", args: [null, "Voice session stopped"] },
-        { target: info.voiceState, method: "setChannel", args: [null, "Voice session stopped"] }
-    ].filter(item => item.target && typeof item.target[item.method] === "function");
-
-    for (const item of disconnectors) {
-        info = getSelfVoiceStateInfo(clientRef, session);
-        if (!info.inTargetChannel) return info;
-        if (Date.now() - started >= budgetMs) break;
-
+tokenCoordinator.registerSubsystem({
+    name: "voiceWorker",
+    onTokenQuarantined: (tokenHash, reason) => {
         try {
-            await item.target[item.method](...item.args);
-            const remainingMs = Math.max(150, budgetMs - (Date.now() - started));
-            const after = await waitForSelfVoiceExit(clientRef, session, Math.min(remainingMs, 750));
-            if (!after.inTargetChannel) return after;
-        } catch (err) {
-            errors.push(`selfVoiceDisconnect:${sanitizeLifecycleError(err.message)}`);
+            const reasonStr = String(reason || "").toLowerCase();
+            const isRateLimit = reasonStr.includes("429") || reasonStr.includes("rate limit") || reasonStr.includes("backoff");
+            if (isRateLimit) {
+                // Policy: 429 rate limit must NOT terminate or disconnect healthy Voice sessions
+                console.warn(`[WORKER] ℹ️ Token ${tokenHash ? tokenHash.slice(0, 8) : "unknown"} quarantined for rate limit (${reason}); keeping healthy active voice connection intact.`);
+                return;
+            }
+
+            const allSessions = sessionManager.getAllSessions();
+            if (allSessions && typeof allSessions.entries === "function") {
+                for (const [id, s] of allSessions.entries()) {
+                    const h = getSessionTokenHash(id, s);
+                    if (h === tokenHash) {
+                        console.warn(`[WORKER] 🚨 Stopping voice session ${sanitizeLogText(id)} due to fatal token quarantine: ${reason}`);
+                        stopSession(id, { reason: `Token Quarantined: ${reason}` }).catch((err) => {
+                            console.error(`[WORKER] Failed to stop quarantined session ${id}:`, err?.message || err);
+                        });
+                    }
+                }
+            }
+        } catch {
+            // safe swallow
         }
     }
+});
 
-    info = getSelfVoiceStateInfo(clientRef, session);
-    if (!info.inTargetChannel) return info;
 
-    const otherActive = countOtherActiveSessionsForClient(tokenHash, sessionId, session);
-    if (otherActive <= 0) {
-        cleanupSessionClientIfUnused(tokenHash, clientRef, sessionId, session, "self-voice-fallback");
-        const afterDestroy = await waitForSelfVoiceExit(clientRef, session, 500);
-        if (!afterDestroy.inTargetChannel) {
-            errors.length = 0;
-            return { inspectable: true, inTargetGuild: false, inTargetChannel: false, channelId: null };
-        }
-        return afterDestroy;
-    }
-
-    errors.push(`selfVoiceStillConnected:activeSessions=${otherActive}`);
-    return getSelfVoiceStateInfo(clientRef, session);
-}
-
-function verifyCleanupState(registryAfter, ownConnection, selfVoiceInfo, errors, clientRef) {
-    const registryAlive = !!registryAfter && registryAfter.state?.status !== VoiceConnectionStatus.Destroyed;
-    const ownConnectionAlive = !!ownConnection && ownConnection.state?.status !== VoiceConnectionStatus.Destroyed;
-    const selfStillInTargetVoice = !!selfVoiceInfo.inTargetChannel;
-
-    if (registryAlive) errors.push("voiceRegistry:still_active");
-    if (ownConnectionAlive) errors.push("session.connection:still_active");
-    if (selfStillInTargetVoice) {
-        errors.push("selfVoiceStillConnected:target_channel");
-    }
-
-    const ok = errors.length === 0 && !registryAlive && !ownConnectionAlive && !selfStillInTargetVoice;
-
-    return {
-        ok,
-        verified: ok && (selfVoiceInfo.inspectable || !clientRef?.isReady?.()),
-        reason: ok ? "cleanup_verified" : "cleanup_not_confirmed",
-        safeError: errors.join("; ") || null
-    };
-}
-
-async function cleanupSessionVoiceConnection(sessionId, session, tokenHash) {
-    const errors = [];
-    const clientRef = session.client || getSessionClientFromPool(sessionId, session, tokenHash);
-    const group = getVoiceGroup(clientRef, session.serverId, session);
-
-    const ownConnection = session.connection;
-
-    try {
-        if (ownConnection) destroyConnectionObject(ownConnection);
-    } catch (err) {
-        errors.push(`session.connection:${sanitizeLifecycleError(err.message)}`);
-    }
-
-    try {
-        const registryConnection = group ? getVoiceConnection(session.serverId, group) : null;
-        if (registryConnection) destroyConnectionObject(registryConnection);
-    } catch (err) {
-        errors.push(`voiceRegistry:${sanitizeLifecycleError(err.message)}`);
-    }
-
-    let selfVoiceInfo = { inspectable: false, inTargetGuild: false, inTargetChannel: false, channelId: null };
-    if (clientRef) {
-        selfVoiceInfo = await attemptSelfVoiceDisconnect(clientRef, session, sessionId, tokenHash, errors);
-    }
-
-    const registryAfter = group ? getVoiceConnection(session.serverId, group) : null;
-    const ownConnectionAlive = !!ownConnection && ownConnection.state?.status !== VoiceConnectionStatus.Destroyed;
-    session.connection = ownConnectionAlive ? ownConnection : null;
-
-    const verification = verifyCleanupState(registryAfter, ownConnection, selfVoiceInfo, errors, clientRef);
-
-    return {
-        ...verification,
-        shouldDeleteRecord: verification.ok,
-        clientRef
-    };
-}
+const {
+    getVoiceGroup,
+    destroyConnectionObject,
+    resolveSelfMember,
+    resolveVoiceChannelId,
+    getSelfVoiceStateInfo,
+    waitForSelfVoiceExit,
+    waitForTargetVoice,
+    attemptSelfVoiceDisconnect,
+    verifyCleanupState,
+    cleanupSessionVoiceConnection
+} = require("./lifecycleCleanup");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🔧  ensureVoiceSession helpers
@@ -377,13 +229,16 @@ function isLoginGenerationActive(current, session, loginGeneration, isShuttingDo
     return current.loginGeneration === loginGeneration;
 }
 
-async function handleLoginFailure(err, { newClient, sessionId, session, loginGeneration, markInvalid, disposeClient }) {
+async function handleLoginFailure(err, { newClient, sessionId, session, tokenHash, loginGeneration, markInvalid, disposeClient }) {
     if (session.loginGeneration === loginGeneration) session.loginGeneration = null;
     const errorDetail = sanitizeLifecycleError(err?.message || err?.code || "UNKNOWN");
     console.error(`[WORKER] ❌ Login failed for ${sanitizeLogText(sessionId)}: ${errorDetail}. Destroying ghost client.`);
     try { disposeClient(newClient, "login-failure"); } catch {}
     if (err.code === "OPERATION_QUEUE_FULL") throw new Error("VOICE_QUEUE_BUSY");
     if (isInvalidTokenError(err)) {
+        if (tokenHash) {
+            tokenCoordinator.quarantineToken(tokenHash, `Voice login rejected: ${errorDetail}`);
+        }
         await markInvalid(sessionId, "login_rejected");
         throw new Error("TOKEN_INVALID");
     }
@@ -435,7 +290,7 @@ async function performClientLogin(newClient, sessionId, session, tokenHash, toke
         session.loginGeneration = null;
         putClientInPool(sessionId, session, tokenHash, newClient);
     } catch (err) {
-        await handleLoginFailure(err, { newClient, sessionId, session, loginGeneration, markInvalid, disposeClient });
+        await handleLoginFailure(err, { newClient, sessionId, session, tokenHash, loginGeneration, markInvalid, disposeClient });
     }
 }
 
@@ -534,6 +389,10 @@ async function startSession(sessionId, tokenString, options = {}) {
         assertVoiceStartupAllowed(sessionId, session, "pre_login", startupDeps);
         tokenHash = getSessionTokenHash(sessionId, session);
         if (!tokenHash) throw new Error("TOKEN_DECRYPTION_FAILED");
+        if (tokenCoordinator.isQuarantined(tokenHash)) {
+            const q = tokenCoordinator.getQuarantineDetails(tokenHash);
+            throw new Error(`TOKEN_QUARANTINED: Cannot start voice session, token is quarantined (${q?.reason || 'Invalid'})`);
+        }
 
         /*
          * Client ownership is token+guild scoped. Same token in different guilds
@@ -904,10 +763,19 @@ function setupVoiceConnectionListeners({ connection, client, guild, guildId, tok
             return;
         }
         lastVoiceReadyAt = now;
+        tokenCoordinator.registerVoiceActivity(tokenHash, {
+            guildId,
+            channelId: session?.voiceId || connection?.joinConfig?.channelId,
+            sessionId
+        });
         refreshSessionMetadataFast(sessionId, 1200)
             .finally(() => cleanupLeanSessionClient(sessionId, "voice-ready"))
             .catch(() => {});
         console.log(`[WORKER] 💚 Voice Ready for ${sanitizeLogText(sessionId)}`);
+    });
+
+    connection.on(VoiceConnectionStatus.Destroyed, () => {
+        tokenCoordinator.unregisterVoiceActivity(tokenHash);
     });
 
     let disconnectHandling = false;
@@ -1481,356 +1349,30 @@ async function autoResume() {
     console.log(`[WORKER] ✅ Auto-resume complete: active=${activeToResume} resumed=${resumed} failed=${failed} skipped=${skipped} total=${sessions.size}`);
 }
 
-function resolveRecoveryExhaustionDeps(deps = {}) {
-    return {
-        stopNatural: deps.stopNaturalTimer || stopNaturalTimer,
-        stopAutoDeaf: deps.stopAutoDeafTimer || stopAutoDeafTimer,
-        clearRecovery: deps.clearReconnect || clearReconnect,
-        recoveryMap: deps.recoveryTimestamps || recoveryTimestamps,
-        markTerminal: deps.markTerminal || notifications.markTerminal,
-        markFailed: deps.markSessionFailed || sessionManager.markSessionFailed?.bind(sessionManager),
-        getPooledClient: deps.getSessionClientFromPool || getSessionClientFromPool,
-        cleanupClient: deps.cleanupSessionClientIfUnused || cleanupSessionClientIfUnused,
-        deleteSession: deps.deleteSession || sessionManager.deleteSession?.bind(sessionManager),
-        cleanupSessionNotif: deps.cleanupSessionNotification || notifications.cleanupSession
-    };
-}
-
-async function handleRecoveryExhaustion(sessionId, tokenHash, session, recovery, deps = {}) {
-    const d = resolveRecoveryExhaustionDeps(deps);
-
-    d.stopNatural(sessionId);
-    d.stopAutoDeaf(sessionId);
-    d.clearRecovery(sessionId);
-    d.recoveryMap.delete(sessionId);
-    if (session.connection) {
-        try {
-            session.connection.destroy();
-        } catch (error) {
-            console.warn(`[HEARTBEAT] ⚠️ Failed to destroy exhausted connection. session=${sanitizeLogText(sessionId)} code=${sanitizeLifecycleError(error?.code || error?.name)}`);
-        }
-        session.connection = null;
-    }
-    await d.markTerminal(sessionId, EVENTS.RECOVERY_EXHAUSTED, {
-        attempts: recovery.attempts,
-        reason: "ระบบลองกู้คืนครบจำนวนที่กำหนดแล้ว แต่ยังยืนยันการเชื่อมต่อไม่ได้"
-    });
-    await d.markFailed?.(sessionId, "max_reconnect_attempts", null, "health recovery exhausted");
-    const clientRef = session.client || d.getPooledClient(sessionId, session, tokenHash);
-    d.cleanupClient(tokenHash, clientRef, sessionId, session, "health-recovery-exhausted");
-    d.cleanupSessionNotif?.(sessionId);
-    if (d.deleteSession) {
-        await d.deleteSession(sessionId).catch(() => false);
-    }
-}
-
-async function resolveRecoveryClient(sessionId, session, tokenHash, deps = {}) {
-    const getPooledClient = deps.getSessionClientFromPool || getSessionClientFromPool;
-    const resolveToken = deps.getSessionToken || getSessionToken;
-    const login = deps.resolveOrLoginSessionClient || resolveOrLoginSessionClient;
-    const markFailed = deps.markSessionFailed || sessionManager.markSessionFailed?.bind(sessionManager);
-
-    if (!session.client) session.client = getPooledClient(sessionId, session, tokenHash);
-    if (session.client?.isReady?.()) return true;
-
-    const token = resolveToken(sessionId);
-    if (!token) {
-        if (markFailed) {
-            await markFailed(
-                sessionId,
-                "token_unavailable",
-                null,
-                "health recovery could not decrypt the stored token"
-            ).catch(() => false);
-        }
-        return false;
-    }
-
-    await login(sessionId, session, tokenHash, token);
-    return session.client?.isReady?.() === true;
-}
-
-async function restoreRecoveryVoiceConnection(sessionId, tokenHash, session, deps = {}) {
-    const connect = deps.connectToVoice || connectToVoice;
-    const markReady = deps.markReady || notifications.markReady;
-    const inspectVoice = deps.getSelfVoiceStateInfo || getSelfVoiceStateInfo;
-    const startNatural = deps.startNaturalTimer || startNaturalTimer;
-    const startAutoDeaf = deps.startAutoDeafTimer || startAutoDeafTimer;
-    const conn = await connect(session.client, session.serverId, session.voiceId, tokenHash, sessionId, deps);
-    if (conn) session.connection = conn;
-
-    console.log(`[HEARTBEAT] 💖 Restored connection for ${sanitizeLogText(sessionId)}.`);
-    const voiceInfo = inspectVoice(session.client, session);
-    await markReady(sessionId, {
-        actualChannelId: voiceInfo.channelId || conn.joinConfig?.channelId,
-        actualChannelSource: voiceInfo.channelSource || "connection_state",
-        verifiedAt: Date.now(),
-        reason: "ระบบกู้คืนสำเร็จและยืนยันตำแหน่งในช่องเสียงแล้ว"
-    });
-
-    startNatural(sessionId);
-    startAutoDeaf(sessionId);
-}
-
-function releaseRecoveryOwnership(sessionId, deps = {}) {
-    const getSession = deps.getSession || sessionManager.getSession.bind(sessionManager);
-    const unlock = deps.unlockSession || unlockSession;
-    const latest = getSession(sessionId);
-    if (latest) latest.reconnecting = false;
-    unlock(sessionId);
-}
-
-function resolveMaxHibernateCycles(deps) {
-    if (deps.maxHibernateCycles !== undefined) {
-        return deps.maxHibernateCycles;
-    }
-    if (deps.recordRecoveryAttempt) {
-        return 0;
-    }
-    return Infinity;
-}
-
-function isSessionEligibleForRecovery(session, shuttingDown, runnable) {
-    if (!session || shuttingDown() || !runnable(session)) {
-        return false;
-    }
-    const nowMs = Date.now();
-    if (session.recoveryState?.phase === "hibernate" && nowMs < (session.recoveryState.hibernateUntil || 0)) {
-        return false;
-    }
-    return true;
-}
-
-async function performRecoveryPreflight(sessionId, tokenHash, session, deps) {
-    if (!session.client?.isReady?.()) return true;
-    const preflightCheck = deps.verifyTargetVoiceChannel || verifyTargetVoiceChannel;
-    const preflight = await preflightCheck(session.client, session);
-    if (!preflight.ok && preflight.reason !== "CLIENT_NOT_READY") {
-        console.warn(`[HEARTBEAT] 🛑 Pre-flight failed in recovery for ${sanitizeLogText(sessionId)}: ${preflight.reason}`);
-        const preflightHandler = deps.handlePreflightFailure || handlePreflightFailure;
-        await preflightHandler(sessionId, tokenHash, session, session.client, "channel_not_found", deps);
-        return false;
-    }
-    return true;
-}
-
-async function checkRecoveryAttemptLimits(sessionId, tokenHash, session, deps, maxAttempts) {
-    const recordAttempt = deps.recordRecoveryAttempt || notifications.recordRecoveryAttempt;
-    const recovery = await recordAttempt(sessionId, { cause: "health_check" });
-    if (Number(recovery?.attempts || 0) < maxAttempts) {
-        return true;
-    }
-    const hibernateCycle = Number(session.recoveryState?.hibernateCycle || 0);
-    const maxHibernateCycles = resolveMaxHibernateCycles(deps);
-    if (maxHibernateCycles > 0 && hibernateCycle < maxHibernateCycles) {
-        const hibernateHandler = deps.handleHibernateTransition || handleHibernateTransition;
-        await hibernateHandler(sessionId, tokenHash, session, hibernateCycle, deps);
-        return false;
-    }
-    await handleRecoveryExhaustion(sessionId, tokenHash, session, recovery, deps);
-    return false;
-}
-
-function resolveRecoveryDeps(deps = {}) {
-    return {
-        getSession: deps.getSession || sessionManager.getSession.bind(sessionManager),
-        shuttingDown: deps.isShuttingDown || (() => st.isShuttingDown),
-        runnable: deps.isSessionRunnable || isSessionRunnable,
-        maxAttempts: deps.maxReconnectAttempts || CONFIG.MAX_RECONNECT_ATTEMPTS,
-        wait: deps.delay || delay,
-        jitter: deps.randomInt || randomInt
-    };
-}
-
-function isPostJitterSessionValid(session, shuttingDown, runnable) {
-    if (!session || shuttingDown()) return false;
-    return Boolean(runnable(session));
-}
-
-async function recoverSessionConnection(sessionId, tokenHash, deps = {}) {
-    const { getSession, shuttingDown, runnable, maxAttempts, wait, jitter } = resolveRecoveryDeps(deps);
-    try {
-        const session = getSession(sessionId);
-        if (!isSessionEligibleForRecovery(session, shuttingDown, runnable)) return;
-
-        if (!await performRecoveryPreflight(sessionId, tokenHash, session, deps)) return;
-
-        if (!await checkRecoveryAttemptLimits(sessionId, tokenHash, session, deps, maxAttempts)) return;
-
-        await wait(jitter(1000, 3000));
-
-        if (shuttingDown()) return;
-
-        const latest = getSession(sessionId);
-        if (!isPostJitterSessionValid(latest, shuttingDown, runnable)) return;
-
-        if (!await resolveRecoveryClient(sessionId, latest, tokenHash, deps)) return;
-        await restoreRecoveryVoiceConnection(sessionId, tokenHash, latest, deps);
-
-    } catch (e) {
-        console.error(`[HEARTBEAT] 💔 Recovery failed for ${sanitizeLogText(sessionId)}: ${e.message}`);
-    } finally {
-        releaseRecoveryOwnership(sessionId, deps);
-    }
-}
-
-function scheduleHealthRecovery(sessionId, session, tokenHash, now) {
-    if (!lockSession(sessionId)) return false;
-
-    session.reconnecting = true;
-    recoveryTimestamps.set(sessionId, now);
-    notifications.beginIncident(sessionId, { cause: "health_check" }).catch(() => {});
-
-    console.log(`[HEARTBEAT] 🩺 Queueing dead connection recovery for ${sanitizeLogText(sessionId)}...`);
-
-    recoveryQueue.add(() => recoverSessionConnection(sessionId, tokenHash)).catch((e) => {
-        console.error(`[HEARTBEAT] 💔 Recovery queue failed for ${sanitizeLogText(sessionId)}: ${e.message}`);
-        const latest = sessionManager.getSession(sessionId);
-        if (latest) latest.reconnecting = false;
-        unlockSession(sessionId);
-    });
-
-    return true;
-}
-
-function advanceHibernationState(session, now) {
-    if (session.recoveryState?.phase !== "hibernate") return false;
-    if (now < (session.recoveryState.hibernateUntil || 0)) {
-        return true;
-    }
-    session.recoveryState.phase = "degraded";
-    session.recoveryState.hibernateUntil = null;
-    return false;
-}
-
-function safeRejoinConnection(connection, channelId) {
-    if (!connection || typeof connection.rejoin !== "function") return;
-    try {
-        connection.rejoin({
-            channelId,
-            selfMute: true,
-            selfDeaf: true
-        });
-    } catch {}
-}
-
-function handleWrongChannelState(sessionId, session, deps = {}) {
-    const inspectVoice = deps.getSelfVoiceStateInfo || getSelfVoiceStateInfo;
-    const voiceInfo = inspectVoice(session.client, session);
-    if (voiceInfo?.inspectable && voiceInfo.inTargetGuild && !voiceInfo.inTargetChannel) {
-        console.log(`[HEARTBEAT] 🧲 Bot in wrong channel (${voiceInfo.channelId}) — returning to target channel ${session.voiceId} (${sanitizeLogText(sessionId)})`);
-        safeRejoinConnection(session.connection, session.voiceId);
-    }
-}
-
-function isSessionConnectionReady(session, readyStatus, deps = {}) {
-    const clientReady = session?.client?.isReady?.() === true;
-    const connStatus = session?.connection?.state?.status;
-    if (!clientReady || connStatus !== readyStatus) return false;
-
-    // Check for ghost connection: connection claims Ready, but Discord Gateway confirms user is NOT in voice!
-    const inspectVoice = deps.getSelfVoiceStateInfo || getSelfVoiceStateInfo;
-    const voiceInfo = inspectVoice(session.client, session);
-    if (voiceInfo?.inspectable && !voiceInfo.inTargetGuild) {
-        return false;
-    }
-    return true;
-}
-
-function isOnRecoveryCooldown(sessionId, now, deps = {}) {
-    const recoveryMap = deps.recoveryTimestamps || recoveryTimestamps;
-    const lastRecovered = recoveryMap.get(sessionId) || 0;
-    return (now - lastRecovered) < (deps.recoveryCooldownMs || RECOVERY_COOLDOWN_MS);
-}
-
-function syncSessionClientFromPool(sessionId, session, tokenHash, deps = {}) {
-    const getPooledClient = deps.getSessionClientFromPool || getSessionClientFromPool;
-    const pooledClient = getPooledClient(sessionId, session, tokenHash);
-    if (!session.client && pooledClient) session.client = pooledClient;
-}
-
-function processSessionHealthCheck(sessionId, session, now, deps = {}) {
-    const runnable = deps.isSessionRunnable || isSessionRunnable;
-    if (!runnable(session) || advanceHibernationState(session, now)) return false;
-
-    const resolveTokenHash = deps.getSessionTokenHash || getSessionTokenHash;
-    const tokenHash = resolveTokenHash(sessionId, session);
-    if (!tokenHash) return false;
-
-    syncSessionClientFromPool(sessionId, session, tokenHash, deps);
-
-    const readyStatus = deps.readyStatus || VoiceConnectionStatus.Ready;
-    const needsRecovery = !isSessionConnectionReady(session, readyStatus, deps);
-    const isUrgent = Boolean(session.urgentRecovery);
-    session.urgentRecovery = false;
-
-    if (!needsRecovery) {
-        handleWrongChannelState(sessionId, session, deps);
-        (deps.touchSession || sessionManager.touchSession)(sessionId);
-        return false;
-    }
-
-    const onCooldown = isOnRecoveryCooldown(sessionId, now, deps);
-    const locked = (deps.isSessionLocked || isSessionLocked)(sessionId);
-    if ((isUrgent || !onCooldown) && !session.reconnecting && !locked) {
-        return (deps.scheduleHealthRecovery || scheduleHealthRecovery)(sessionId, session, tokenHash, now);
-    }
-    return false;
-}
-
-async function forceReconnectSession(sessionId, deps = {}) {
-    const getSession = deps.getSession || sessionManager.getSession.bind(sessionManager);
-    const session = getSession(sessionId);
-    if (!session) {
-        return { ok: false, error: "ไม่พบ Session ในระบบ" };
-    }
-    if (st.isShuttingDown) {
-        return { ok: false, error: "ระบบกำลังปิดการทำงาน" };
-    }
-
-    const resolveTokenHash = deps.getSessionTokenHash || getSessionTokenHash;
-    const tokenHash = resolveTokenHash(sessionId, session);
-    if (!tokenHash) {
-        return { ok: false, error: "ไม่พบ Token สำหรับ Session นี้" };
-    }
-
-    clearHibernateTimer(sessionId);
-    recoveryTimestamps.delete(sessionId);
-    clearReconnect(sessionId);
-    unlockSession(sessionId);
-
-    session.state = "active";
-    delete session.failedReason;
-    delete session.tokenInvalid;
-
-    if (session.recoveryState) {
-        session.recoveryState.phase = "recovering";
-        session.recoveryState.attempts = 0;
-        session.recoveryState.hibernateUntil = null;
-        session.recoveryState.lastAttemptAt = Date.now();
-    }
-    session.reconnecting = true;
-    session.lastActivity = Date.now();
-
-    if (session.connection) {
-        try { session.connection.destroy(); } catch {}
-        session.connection = null;
-    }
-
-    console.log(`[WORKER] 🚀 Force reconnect triggered for ${sanitizeLogText(sessionId)}`);
-
-    try {
-        const recover = deps.recoverSessionConnection || recoverSessionConnection;
-        await recover(sessionId, tokenHash, deps);
-        const updated = getSession(sessionId);
-        const readyStatus = deps.readyStatus || VoiceConnectionStatus.Ready;
-        const isReady = updated?.client?.isReady?.() && updated?.connection?.state?.status === readyStatus;
-        return { ok: true, ready: isReady };
-    } catch (err) {
-        console.error(`[WORKER] ❌ Force reconnect failed for ${sanitizeLogText(sessionId)}: ${err.message}`);
-        return { ok: false, error: err.message };
-    }
-}
+const {
+    resolveRecoveryExhaustionDeps,
+    handleRecoveryExhaustion,
+    resolveRecoveryClient,
+    restoreRecoveryVoiceConnection,
+    releaseRecoveryOwnership,
+    resolveMaxHibernateCycles,
+    isSessionEligibleForRecovery,
+    performRecoveryPreflight,
+    checkRecoveryAttemptLimits,
+    resolveRecoveryDeps,
+    isPostJitterSessionValid,
+    recoverSessionConnection,
+    scheduleHealthRecovery,
+    advanceHibernationState,
+    safeRejoinConnection,
+    handleWrongChannelState,
+    isSessionConnectionReady,
+    isOnRecoveryCooldown,
+    syncSessionClientFromPool,
+    processSessionHealthCheck,
+    forceReconnectSession,
+    cleanupIdleSessions: recoveryCleanupIdleSessions
+} = require("./lifecycleRecovery");
 
 async function healthCheck() {
     if (st.isShuttingDown) return;
@@ -1855,27 +1397,7 @@ async function healthCheck() {
 }
 
 async function cleanupIdleSessions() {
-    if (st.isShuttingDown) return;
-
-    const now = Date.now();
-    const savedHrs = await sessionManager.getSetting("idleTimeoutHrs", null).catch(() => null);
-    const parsedHrs = Number.parseInt(savedHrs, 10);
-    const maxIdle = (savedHrs && parsedHrs > 0)
-        ? parsedHrs * 3600000
-        : config.limits.idleTimeoutMs;
-    const sessions = sessionManager.getAllSessions();
-
-    for (const [id, session] of sessions) {
-        const lastSeen = session.lastActivity ?? session.startedAt;
-
-        if (now - lastSeen > maxIdle) {
-            console.log(`[CLEANUP] 🧹 Session ${id} idle for ${Math.round((now - lastSeen) / 3600000)}h — shutting down.`);
-            const stopped = await stopSession(id, { notifyReason: "idle" });
-            if (!stopped) {
-                console.warn(`[CLEANUP] ⚠️ Idle cleanup could not stop ${id}; session remains visible for review.`);
-            }
-        }
-    }
+    return recoveryCleanupIdleSessions({ stopSession });
 }
 
 module.exports = {

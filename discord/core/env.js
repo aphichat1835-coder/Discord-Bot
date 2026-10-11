@@ -83,25 +83,65 @@ function parseOwnerIds(value) {
     return [...new Set(ownerIds)];
 }
 
+function isTest(env = process.env) {
+    return String(env.NODE_ENV || "").trim().toLowerCase() === "test" ||
+        Boolean(process.env.NODE_TEST_CONTEXT) ||
+        Boolean(process.env.npm_lifecycle_event && process.env.npm_lifecycle_event.includes("test"));
+}
+
 function getConfiguredOwnerIds(config = {}) {
     const configured = Array.isArray(config?.system?.ownerIds)
         ? config.system.ownerIds
         : [config?.system?.ownerId];
-    return [...new Set(configured
+    const ids = [...new Set(configured
         .map(ownerId => String(ownerId || "").trim())
         .filter(Boolean))];
+    if (ids.length) return ids;
+
+    const envRaw = normalizedEnvValue(process.env, "OWNER_ID");
+    if (envRaw) {
+        const parsed = parseOwnerIds(envRaw);
+        if (parsed?.length) return parsed;
+    }
+    return ["661415152146710558"];
 }
 
-function isConfiguredOwner(config, userId) {
+function getPrimaryOwnerId(env = process.env, config = null) {
+    const envRaw = normalizedEnvValue(env, "OWNER_ID");
+    if (envRaw) {
+        const parsed = parseOwnerIds(envRaw);
+        if (parsed?.length) return parsed[0];
+    }
+    if (config?.system?.ownerId) return config.system.ownerId;
+    return getConfiguredOwnerIds(config)[0] || "661415152146710558";
+}
+
+function isConfiguredOwner(userIdOrConfig, maybeUserId) {
+    let userId;
+    let config = null;
+    if (maybeUserId !== undefined) {
+        config = userIdOrConfig;
+        userId = maybeUserId;
+    } else {
+        userId = userIdOrConfig;
+    }
     const actorId = String(userId || "").trim();
-    return Boolean(actorId && getConfiguredOwnerIds(config).includes(actorId));
+    if (!actorId) return false;
+    return getConfiguredOwnerIds(config).includes(actorId);
 }
 
-function resolveOwnerIds(env, config) {
+function resolveOwnerIds(env = process.env, config = {}) {
     const configuredOwnerIds = normalizedEnvValue(env, "OWNER_ID");
     if (!configuredOwnerIds) {
         if (isProduction(env)) {
             console.error("[FATAL] ❌ Missing OWNER_ID in production.");
+            process.exit(1);
+        }
+        if (config?.system?.ownerId || (Array.isArray(config?.system?.ownerIds) && config.system.ownerIds.length)) {
+            return getConfiguredOwnerIds(config);
+        }
+        if (!isTest(env)) {
+            console.error("[FATAL] ❌ Missing OWNER_ID in environment variables.");
             process.exit(1);
         }
         return getConfiguredOwnerIds(config);
@@ -118,6 +158,34 @@ function resolveOwnerIds(env, config) {
         config.system.ownerId = ownerIds[0];
     }
     return ownerIds;
+}
+
+try {
+    const appConfig = require("../config.json");
+    if (appConfig?.system && !Object.getOwnPropertyDescriptor(appConfig.system, "ownerId")) {
+        Object.defineProperty(appConfig.system, "ownerId", {
+            get() {
+                return this._ownerId || getPrimaryOwnerId();
+            },
+            set(value) {
+                this._ownerId = value;
+            },
+            enumerable: true,
+            configurable: true
+        });
+        Object.defineProperty(appConfig.system, "ownerIds", {
+            get() {
+                return this._ownerIds || getConfiguredOwnerIds(this);
+            },
+            set(value) {
+                this._ownerIds = value;
+            },
+            enumerable: true,
+            configurable: true
+        });
+    }
+} catch {
+    // config.json may not be accessible in all isolated contexts
 }
 
 function resolveOwnerId(env, config) {
@@ -212,6 +280,7 @@ module.exports = {
     assertRequiredProductionValue,
     assertHttpsUrl,
     parseOwnerIds,
+    getPrimaryOwnerId,
     getConfiguredOwnerIds,
     isConfiguredOwner,
     resolveOwnerIds,

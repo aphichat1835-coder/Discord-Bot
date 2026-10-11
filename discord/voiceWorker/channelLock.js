@@ -6,6 +6,7 @@ const { st } = require("./state");
 const { sanitizeLogText } = require("../core/safeLogger");
 const { getSessionShortId, isSessionRunnable } = require("./session");
 const dmService = require("../dm");
+const config = require("../config.json");
 
 const MOVE_DEBOUNCE_MS = 3 * 60 * 1000; // 3 minutes trailing debounce
 
@@ -37,8 +38,8 @@ async function sendMoveNotification(sessionId, deps = {}) {
         : `ตั้งแต่ ${firstTime} ถึง ${lastTime}`;
 
     const fields = [
-        { name: "🏠 เซิร์ฟเวอร์", value: `**${markdownText(record.guildName)}**\n${code(record.guildId)}`, inline: true },
-        { name: "🔊 ห้องเป้าหมาย", value: `**${markdownText(record.targetChannelName)}**\n${code(record.targetChannelId)}`, inline: true },
+        { name: `${config.emojis?.server_icon || "🏠"} เซิร์ฟเวอร์`, value: `**${markdownText(record.guildName)}**\n${code(record.guildId)}`, inline: true },
+        { name: `${config.emojis?.voice_ch || "🔊"} ห้องเป้าหมาย`, value: `**${markdownText(record.targetChannelName)}**\n${code(record.targetChannelId)}`, inline: true },
         { name: "📍 ห้องที่โดนลากไป (ล่าสุด)", value: `**${markdownText(record.lastMovedToChannelName)}**\n${code(record.lastMovedToChannelId)}`, inline: true },
         { name: "🔁 จำนวนครั้งที่โดนลาก", value: `**${record.moveCount}** ครั้ง`, inline: true },
         { name: "⏱️ เวลาที่เกิดเหตุ", value: timeRange, inline: true },
@@ -47,7 +48,7 @@ async function sendMoveNotification(sessionId, deps = {}) {
 
     const embed = buildDmEmbed({
         tone: "warning",
-        title: "🧲 แจ้งเตือน: ตรวจพบการย้ายห้องเสียง (ดึงกลับแล้ว)",
+        title: `${config.emojis?.intrusion_icon || "🧲"} แจ้งเตือน: ตรวจพบการย้ายห้องเสียง (ดึงกลับแล้ว)`,
         summary: "ตรวจพบว่ามีคนย้ายบัญชีออกจากห้องเสียงเป้าหมาย และระบบได้ดึงกลับห้องเดิมเรียบร้อยแล้ว ขณะนี้สถานการณ์ในห้องเสียงกลับมานิ่งเกิน 3 นาทีแล้ว",
         profile: {
             id: record.accountId,
@@ -60,7 +61,7 @@ async function sendMoveNotification(sessionId, deps = {}) {
         nextAction: "ไม่ต้องดำเนินการใดๆ บัญชียังคงออนไลน์อยู่ในห้องเป้าหมายตามปกติ หากมีการแกล้งลากบ่อยครั้ง อาจพิจารณาปรับสิทธิ์ Move Members ในเซิร์ฟเวอร์",
         referenceId: getSessionShortId(sessionId),
         timestamp: record.lastMovedAt,
-        footer: "Phomueangtai • ระบบล็อกช่องเสียง"
+        footer: "ระบบล็อกช่องเสียง"
     });
 
     const eventKey = `voice:moved:${sessionId}:${record.lastMovedAt}`;

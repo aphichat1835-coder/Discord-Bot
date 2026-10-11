@@ -74,7 +74,7 @@ test("checkProtectedCommandAccess allows normal commands and restricts owner com
         guild: { id: "guild_1" },
         isAutocomplete: () => false,
         isChatInputCommand: () => true,
-        commandName: "backup",
+        commandName: "voice-online",
         user: { id: "unauthorized_user" },
         reply: (payload) => replies.push(payload)
     };

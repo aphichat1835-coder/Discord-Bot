@@ -5,11 +5,12 @@
 ================================================================================
 */
 
+const config = require("../../config.json");
 const { normalizeVerifyMode } = require("./verifyMode");
 
 const DEFAULT_PANEL = Object.freeze({
   content: "",
-  title: "🔐 ยืนยันตัวตนเพื่อเข้าดิส",
+  title: `${config.emojis?.lock || "🔐"} ยืนยันตัวตนเพื่อเข้าดิส`,
   description: "กดปุ่มด้านล่างเพื่อยืนยันตัวตนผ่าน Discord OAuth2",
   color: "#5865F2",
   imageUrl: "",

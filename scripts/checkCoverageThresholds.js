@@ -22,7 +22,7 @@ const CRITICAL_FILE_THRESHOLDS = Object.freeze({
     "verification.lcov": Object.freeze({
         "discord/verification/services/privacyDeletion.js": Object.freeze({ lines: 89, functions: 80, branches: 68 }),
         "discord/verification/services/verificationStateNonce.js": Object.freeze({ lines: 98, functions: 98, branches: 42 }),
-        "discord/verification/utils/oauthTokenLifecycle.js": Object.freeze({ lines: 51, functions: 56, branches: 52 }),
+        "discord/core/oauthTokenManager.js": Object.freeze({ lines: 60, functions: 60, branches: 50 }),
         "discord/verification/routes/guild.js": Object.freeze({ lines: 21, functions: 18, branches: 34 }),
         "discord/verification/routes/oauth.js": Object.freeze({ lines: 40, functions: 66, branches: 67 }),
         "discord/verification/routes/oauthStart.js": Object.freeze({ lines: 95, functions: 98, branches: 68 })

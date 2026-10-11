@@ -8,9 +8,7 @@ const {
     parseCustomEmojis,
     calculateEmojiQuotas,
     checkSmartEmojiQuota,
-    renderEmojiProgressBar,
     buildEmojiNoticeEmbed,
-    buildEmojiProgressEmbed,
     buildEmojiResultEmbed,
     formatEmojiShowcase,
     formatFailedEmojiList,
@@ -179,18 +177,23 @@ test("checkSmartEmojiQuota detects ALL_FULL, STATIC_FULL, and ANIMATED_FULL accu
     assert.equal(check4.willSkipAnimated, 0);
 });
 
-test("renderEmojiProgressBar renders clamped graphical progress bar", () => {
-    const bar0 = renderEmojiProgressBar(0, 10);
-    assert.ok(bar0.includes("▱▱▱▱▱▱▱▱▱▱"));
-    assert.ok(bar0.includes("`0%`"));
+test("copy-emojis reports clean progress text without graphical bar", async () => {
+    const { interaction, edits } = createInteractionFixture({
+        emojisText: "<:e1:1001> <:e2:1002> <:e3:1003>",
+        createEmojiImpl: async payload => ({ id: "new_id", name: payload.name, animated: false })
+    });
 
-    const bar50 = renderEmojiProgressBar(5, 10);
-    assert.ok(bar50.includes("▰▰▰▰▰▱▱▱▱▱"));
-    assert.ok(bar50.includes("`50%`"));
+    await handleSteal(interaction, { delayMs: 0 });
 
-    const bar100 = renderEmojiProgressBar(10, 10);
-    assert.ok(bar100.includes("▰▰▰▰▰▰▰▰▰▰"));
-    assert.ok(bar100.includes("`100%`"));
+    const progressEdits = edits.filter(e => typeof e.content === "string" && e.content.includes("กำลังนำเข้าอิโมจิ"));
+    assert.ok(progressEdits.length >= 2);
+    assert.match(progressEdits[0].content, /กำลังนำเข้าอิโมจิ \(0\/3\)/);
+    assert.match(progressEdits[1].content, /กำลังนำเข้าอิโมจิ \(1\/3\)/);
+    for (const edit of progressEdits) {
+        assert.equal(edit.content.includes("▰"), false);
+        assert.equal(edit.content.includes("▱"), false);
+        assert.equal(edit.content.includes("%"), false);
+    }
 });
 
 test("formatEmojiShowcase, formatFailedEmojiList, formatSkippedEmojiList format correctly", () => {
@@ -226,7 +229,7 @@ test("buildEmojiResultEmbed builds complete, partial, and failed states", () => 
         guild,
         user
     });
-    assert.ok(completeEmbed.data.title.includes("เสร็จสมบูรณ์"));
+    assert.ok(completeEmbed.data.title.includes("เรียบร้อย"));
 
     // Partial state
     const partialEmbed = buildEmojiResultEmbed({
@@ -241,7 +244,7 @@ test("buildEmojiResultEmbed builds complete, partial, and failed states", () => 
         guild,
         user
     });
-    assert.ok(partialEmbed.data.title.includes("สำเร็จบางส่วน"));
+    assert.ok(partialEmbed.data.title.includes("บางส่วน"));
 
     // Failed state
     const failedEmbed = buildEmojiResultEmbed({
@@ -342,7 +345,7 @@ test("handleSteal successfully imports emojis and sends progress and result embe
     const finalEdit = edits[edits.length - 1];
     assert.ok(finalEdit.embeds);
     assert.equal(finalEdit.embeds.length, 1);
-    assert.ok(finalEdit.embeds[0].data.title.includes("เสร็จสมบูรณ์"));
+    assert.ok(finalEdit.embeds[0].data.title.includes("เรียบร้อย"));
 });
 
 test("handleSteal handles individual emoji creation failures gracefully and reports them", async () => {
@@ -363,9 +366,9 @@ test("handleSteal handles individual emoji creation failures gracefully and repo
     assert.equal(activeEmojiCopies.has(interaction.guild.id), false);
     const finalEdit = edits[edits.length - 1];
     assert.ok(finalEdit.embeds);
-    assert.ok(finalEdit.embeds[0].data.title.includes("สำเร็จบางส่วน"));
+    assert.ok(finalEdit.embeds[0].data.title.includes("บางส่วน"));
     const fields = finalEdit.embeds[0].data.fields;
-    const failedField = fields.find(f => f.name.includes("รายการที่ล้มเหลว"));
+    const failedField = fields.find(f => f.name.includes("รายการที่ไม่สำเร็จ"));
     assert.ok(failedField);
     assert.ok(failedField.value.includes("256KB"));
 });

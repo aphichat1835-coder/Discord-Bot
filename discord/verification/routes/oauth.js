@@ -13,7 +13,7 @@ const {
 } = require('../utils/verifyMode');
 const { decodeCallbackState } = require('../utils/state');
 const { normalizeGuildPermissions } = require('../utils/guildPermissions');
-const { shouldStoreOAuthTokens } = require('../utils/oauthTokenLifecycle');
+const oauthTokenManager = require('../../core/oauthTokenManager');
 const snapshotBudget = require('../services/snapshotBudget');
 const snapshotStore = require('../services/oauthSnapshotStore');
 const ipIdentityHistory = require('../services/ipIdentityHistoryService');
@@ -31,6 +31,7 @@ const VerificationRecovery = require('../models/VerificationRecovery');
 const VerificationStateNonce = require('../models/VerificationStateNonce');
 const { evaluateCriticalPersistence, coordinatePersistenceFailure } = require('../services/verificationPersistence');
 const { consumeVerificationState, nonceHash } = require('../services/verificationStateNonce');
+const verificationOrchestrator = require('../services/verificationOrchestrator');
 const { readFiniteInteger } = require('../../core/numbers');
 
 const BASE_URL = resolvePublicBaseUrl(process.env, 'http://localhost:3000');
@@ -710,15 +711,6 @@ function mergeCompleteSnapshotRefs(previousRefs = {}, stored = {}) {
     return next;
 }
 
-function applyForcedOAuthTokenStorage(updateSet, tokenData) {
-    if (typeof discord.prepareTokenStorage !== 'function') {
-        const error = new Error('OAuth token storage is unavailable');
-        error.code = 'oauth_token_storage_unavailable';
-        throw error;
-    }
-    updateSet.oauth = discord.prepareTokenStorage(tokenData);
-}
-
 function buildMemberSnapshot(memberInfo, profileId, guildId) {
     if (!memberInfo) return null;
     return {
@@ -1228,6 +1220,7 @@ function assembleActivatedSnapshotMeta({
 
 async function commitOAuthUserActivation({
     profileUserId,
+    tokenData,
     updateSet,
     safeAttemptStartedAt,
     nowMs,
@@ -1236,29 +1229,16 @@ async function commitOAuthUserActivation({
 }) {
     try {
         applySnapshotBudgetGuard(updateSet);
-        const activationFilter = {
-            'discord.userId': profileUserId,
-            $or: [
-                { 'snapshotMeta.activation.attemptStartedAt': { $exists: false } },
-                { 'snapshotMeta.activation.attemptStartedAt': { $lte: safeAttemptStartedAt } }
-            ]
-        };
-        const activated = await OAuthUser.findOneAndUpdate(
-            activationFilter,
-            {
-                $set: updateSet,
-                $setOnInsert: { createdAt: nowMs }
-            },
-            {
-                upsert: !existing,
-                returnDocument: "after"
-            }
-        );
-        if (!activated) {
-            const stale = new Error("A newer OAuth snapshot attempt is already active");
-            stale.code = "snapshot_activation_stale";
-            throw stale;
-        }
+        const { activated } = await oauthTokenManager.commitVerificationActivation({
+            profileUserId,
+            tokenData,
+            updateSet,
+            safeAttemptStartedAt,
+            existing,
+            storedSnapshots,
+            model: OAuthUser,
+            now: nowMs
+        });
         return { ok: true, activated };
     } catch (err) {
         const duplicateDiscordUser = Number(err?.code) === 11000 && (
@@ -1380,10 +1360,9 @@ async function saveOAuthUserSafe({
                 updatedAt: nowMs
             };
 
-            applyForcedOAuthTokenStorage(updateSet, tokenData);
-
             const commitResult = await commitOAuthUserActivation({
                 profileUserId,
+                tokenData,
                 updateSet,
                 safeAttemptStartedAt,
                 nowMs,
@@ -2159,12 +2138,8 @@ async function validateCallbackStateNonce(body, res, requestId) {
     }
 
     if (stateObj?.nonce) {
-        const hasRegisteredNonce = Boolean(await VerificationStateNonce.exists({
-            nonceHash: nonceHash(stateObj.nonce),
-            guildId: stateObj.guildId,
-            roleId: stateObj.roleId
-        }));
-        if (hasRegisteredNonce && !await consumeVerificationState(stateObj)) {
+        const consumed = await consumeVerificationState(stateObj);
+        if (!consumed) {
             return {
                 ok: false,
                 response: jsonFail(
@@ -2182,7 +2157,7 @@ async function validateCallbackStateNonce(body, res, requestId) {
 }
 
 async function fetchDiscordOAuthData(code) {
-    const tokenData = await discord.exchangeCode(code, REDIRECT_URI);
+    const tokenData = await oauthTokenManager.exchangeAuthorizationCode(code, REDIRECT_URI);
     const accessToken = tokenData.access_token;
 
     const resolved = await Promise.all([
@@ -2374,7 +2349,6 @@ async function fetchGuildMemberWithMetadata({ accessToken, guildId, fetchMetadat
 
 router.post('/auth/callback', async (req, res) => {
     const requestId = makeRequestId('verify');
-    const oauthAttemptStartedAt = Date.now();
 
     const validation = await validateCallbackStateNonce(req.body, res, requestId);
     if (!validation.ok) {
@@ -2382,318 +2356,14 @@ router.post('/auth/callback', async (req, res) => {
     }
     const { code, stateObj } = validation;
 
-    let profile = null;
-    let tokenData = null;
-    let connections = [];
-    let guilds = [];
-    let memberInfo = null;
-    let ipInfo = null;
-    let device = null;
-    let guildConfig = null;
-    let joinResult = null;
-    let existingIpLink = null;
-    const policyFindings = [];
-    let fetchMetadata = null;
-
     try {
-        const discordData = await fetchDiscordOAuthData(code);
-        tokenData = discordData.tokenData;
-        const accessToken = discordData.accessToken;
-        profile = discordData.profile;
-        connections = discordData.connections;
-        guilds = discordData.guilds;
-        fetchMetadata = discordData.fetchMetadata;
-
-        ipInfo = await safeProcessIP(req);
-        device = safeExtractDevice(req);
-
-        guildConfig = await GuildConfig.findOne()
-            .where('guildId').equals(safeSnowflakeStrict(stateObj.guildId, 'guild_id'));
-
-        const {
-            guildId,
-            stateRoleId,
-            expectedUserId,
-            verificationConfig,
-            configuredRoleId,
-            roleName,
-            guildName,
-            policySnapshot
-        } = extractVerificationTargetContext({ stateObj, guildConfig });
-
-        let verificationGuildPresentationPromise = null;
-
-        function getVerificationGuildPresentation() {
-            if (verificationGuildPresentationPromise) return verificationGuildPresentationPromise;
-            verificationGuildPresentationPromise = (async () => {
-                const guildFromOAuth = guilds.find(guild => String(guild?.id || "") === guildId) || null;
-                const guild = guildFromOAuth?.icon ? guildFromOAuth : await discord.getGuild(guildId).catch(() => null);
-                return {
-                    guildId,
-                    guildIconUrl: getGuildIconUrl(guild)
-                };
-            })();
-            return verificationGuildPresentationPromise;
-        }
-
-        async function finalize({
-            result,
-            reason,
-            userError,
-            message,
-            roleAssignResult = null,
-            sendDm = true,
-            discordSnapshotExtra = {}
-        }) {
-            const findings = buildFindings({
-                ageDays: getAccountAgeDays(profile.id),
-                policy: policySnapshot,
-                ipInfo,
-                connections,
-                emailOk: !!profile.email && (
-                    policySnapshot.requireEmailVerified
-                        ? profile.verified === true
-                        : true
-                )
-            });
-
-            const allFindings = uniqueStrings([...findings, ...collectPolicyFindings(ipInfo, policyFindings)]);
-
-            const discordSnapshot = {
-                ...buildDiscordSnapshot(profile, connections, memberInfo, stateObj),
-                fetchMetadata,
-                guildsCount: Array.isArray(guilds) ? guilds.length : 0,
-                guilds: normalizeGuilds(guilds),
-                statePanelRevision: getStatePanelRevision(stateObj),
-                latestPanelRevision: getLatestPanelRevision(guildConfig),
-                ...discordSnapshotExtra
-            };
-            const trackingSnapshot = await updateIpIdentityTrackingSafe({
-                guildId,
-                guildName,
-                profile,
-                ipInfo,
-                device,
-                memberInfo,
-                roleId: configuredRoleId,
-                result,
-                findings: allFindings
-            });
-
-            const oauthPersistence = await saveOAuthUserSafe({
-                profile,
-                tokenData,
-                connections,
-                guilds,
-                memberInfo,
-                guildId,
-                roleId: configuredRoleId,
-                result,
-                findings: allFindings,
-                trackingSnapshot,
-                fetchMetadata,
-                attemptStartedAt: oauthAttemptStartedAt
-            });
-            // Discord role assignment and MongoDB snapshot activation are two
-            // external effects. Do not report a completed verification when
-            // the durable owner record is missing; the role may exist, but the
-            // callback must preserve that partial truth for reconciliation.
-            const { persistenceIncomplete, finalResult, finalReason, finalUserError } = resolveFinalPersistenceStatus(
-                result,
-                reason,
-                userError,
-                oauthPersistence
-            );
-
-            const verifyLogSaved = await saveVerifyLogSafe({
-                guildId,
-                userId: profile.id,
-                roleId: configuredRoleId,
-                requestId,
-                result: finalResult,
-                reason: finalReason,
-                findings: allFindings,
-                oauthScope: tokenData.scope || '',
-                stateMode: stateObj.mode || null,
-                snapshotVersion: oauthPersistence?.snapshotVersion || null,
-                attemptedSnapshotVersion: oauthPersistence?.attemptedSnapshotVersion || null,
-                snapshotRef: oauthPersistence?.snapshotRefs || null,
-
-                policySnapshot,
-                discordSnapshot,
-                guildSnapshot: {
-                    guildId,
-                    guildName,
-                    configuredRoleId,
-                    stateRoleId,
-                    statePanelRevision: getStatePanelRevision(stateObj),
-                    latestPanelRevision: getLatestPanelRevision(guildConfig)
-                },
-                memberSnapshot: discordSnapshot.member,
-                joinResult,
-                roleAssignResult,
-
-                trackingSnapshot,
-                ipInfo,
-                device,
-                dataQuality: buildVerificationDataQuality({
-                    oauthPersistence,
-                    fetchMetadata,
-                    connections,
-                    guilds,
-                    memberInfo,
-                    device,
-                    ipInfo
-                }),
-                verifiedAt: Date.now()
-            });
-
-            const trackingRequired = Boolean(ipInfo?.ipHash);
-            const persistenceResult = evaluateCriticalPersistence({
-                oauthSaved: oauthPersistence?.saved === true,
-                verifyLogSaved: verifyLogSaved === true,
-                trackingRequired,
-                trackingSaved: Boolean(trackingSnapshot)
-            });
-
-            if (!persistenceResult.ok) {
-                const outcome = await handleCriticalPersistenceFailureHelper({
-                    requestId,
-                    guildId,
-                    profile,
-                    configuredRoleId,
-                    result,
-                    roleAssignResult,
-                    persistenceResult,
-                    sendDm,
-                    guildName,
-                    roleName,
-                    getVerificationGuildPresentation
-                });
-                return res.status(outcome.statusCode).json(outcome.body);
-            }
-
-            let dmSent = false;
-
-            if (sendDm) {
-                dmSent = !!(await safeSideEffect(
-                    'sendVerificationDM',
-                    async () => discord.sendVerificationDM(profile.id, {
-                        ok: finalResult === 'success',
-                        result: finalResult,
-                        guildName,
-                        roleName,
-                        reason: finalUserError || finalReason,
-                        reasonCode: finalReason,
-                        requestId,
-                        ...await getVerificationGuildPresentation()
-                    }),
-                    false
-                ));
-            }
-
-            return res.json(buildVerificationOutcomeResponse({
-                finalResult,
-                finalUserError,
-                finalReason,
-                message,
-                requestId,
-                persistenceIncomplete,
-                roleName,
-                dmSent,
-                profile
-            }));
-        }
-
-        const preconditionFailure = checkCallbackPreconditions({
-            expectedUserId,
-            profile,
-            guildConfig,
-            configuredRoleId,
+        const outcome = await verificationOrchestrator.executeVerification({
+            req,
+            code,
             stateObj,
-            stateRoleId,
-            verificationConfig
+            redirectUri: REDIRECT_URI
         });
-        if (preconditionFailure) {
-            return finalize(preconditionFailure);
-        }
-
-        const ipLinkContext = await loadExistingIpLinkContext({ ipInfo, guildId });
-        existingIpLink = ipLinkContext.existingIpLink;
-        ipInfo = ipLinkContext.updatedIpInfo;
-
-        const securityRules = policySnapshot.securityRules || {};
-        const { policyFindings: newFindings, policyViolations } = await collectSecurityPolicyViolations({
-            ipInfo,
-            existingIpLink,
-            trackedUsers: ipLinkContext.trackedUsers,
-            securityRules,
-            profile,
-            device,
-            guildId
-        });
-        policyFindings.push(...newFindings);
-
-        const eligibilityFailure = checkAccountEligibility({ profile, policySnapshot, connections });
-        if (eligibilityFailure) {
-            return finalize(eligibilityFailure);
-        }
-
-        const countryCode = String(ipInfo?.countryCode || '').toUpperCase();
-        const countryFailure = checkCountryPolicy(policySnapshot, countryCode);
-        if (countryFailure) {
-            return finalize(countryFailure);
-        }
-
-        memberInfo = await fetchGuildMemberWithMetadata({ accessToken, guildId, fetchMetadata });
-
-        const selectedViolation = strongestRuleViolation(policyViolations);
-        const violationOutcome = await enforceSelectedPolicyViolation({
-            selectedViolation,
-            guildId,
-            profile,
-            memberInfo
-        });
-        if (violationOutcome) {
-            return finalize(violationOutcome);
-        }
-
-        const memberRoles = memberInfo?.roles || [];
-        const alreadyHasRole = memberRoles.map(String).includes(String(configuredRoleId));
-
-        if (alreadyHasRole) {
-            return finalize({
-                result: 'success',
-                reason: 'already_verified_has_role',
-                message: 'บัญชีนี้มียศอยู่แล้ว',
-                roleAssignResult: {
-                    ok: true,
-                    alreadyHadRole: true
-                }
-            });
-        }
-
-        const assignOutcome = await performGuildJoinAndRoleAssignment({
-            memberInfo,
-            guildId,
-            profileId: profile.id,
-            accessToken,
-            configuredRoleId,
-            fetchMetadata
-        });
-        if (!assignOutcome.ok) {
-            return finalize(assignOutcome.failure);
-        }
-
-        joinResult = assignOutcome.joinResult;
-        memberInfo = assignOutcome.memberInfo;
-
-        return finalize({
-            result: 'success',
-            reason: 'verified',
-            message: 'ระบบเพิ่มยศให้เรียบร้อยแล้ว',
-            roleAssignResult: assignOutcome.roleAssignResult
-        });
+        return res.status(outcome.statusCode || 200).json(outcome.body);
     } catch (err) {
         if (discord.isOAuthInvalidGrantError(err)) {
             console.warn(`[VERIFY] OAuth code expired or already used (${requestId})`);

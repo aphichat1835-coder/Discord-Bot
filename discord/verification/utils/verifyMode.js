@@ -31,7 +31,7 @@ const SECURITY_RULE_KEYS = Object.freeze([
 ]);
 
 const DEFAULT_SECURITY_RULES = Object.freeze({
-  vpnProxyTor: Object.freeze({ enabled: true, action: "deny_role", timeoutMinutes: 60 }),
+  vpnProxyTor: Object.freeze({ enabled: false, action: "deny_role", timeoutMinutes: 60 }),
   hosting: Object.freeze({ enabled: false, action: "deny_role", timeoutMinutes: 60 }),
   ipDuplicate: Object.freeze({ enabled: false, action: "allow", timeoutMinutes: 60, threshold: 3 }),
   deviceDuplicate: Object.freeze({ enabled: false, action: "allow", timeoutMinutes: 60, threshold: 2 }),
